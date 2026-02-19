@@ -1,6 +1,7 @@
 {
   "name": "@intentius/chant-lexicon-aws",
-  "version": "0.0.3",
+  "version": "0.0.4",
+  "license": "Apache-2.0",
   "type": "module",
   "files": ["src/", "dist/"],
   "publishConfig": { "access": "public" },
