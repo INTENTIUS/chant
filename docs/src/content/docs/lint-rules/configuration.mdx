@@ -1,0 +1,74 @@
+---
+title: Rule Configuration
+description: Configuring lint rule severities, presets, and overrides
+---
+
+Lint rules are configured in `chant.config.ts` under the `lint` key.
+
+## Basic Configuration
+
+```typescript
+export default {
+  lint: {
+    rules: {
+      "EVL001": "error",
+      "COR004": "warning",
+      "COR008": "off",
+    },
+  },
+} satisfies ChantConfig;
+```
+
+## Severity Levels
+
+| Severity | Effect |
+|----------|--------|
+| `"error"` | Fails the lint run (non-zero exit code) |
+| `"warning"` | Reported but does not fail |
+| `"info"` | Informational notice |
+| `"off"` | Disables the rule entirely |
+
+## Presets
+
+Use `extends` to inherit rule configurations:
+
+```typescript
+export default {
+  lint: {
+    extends: ["@intentius/chant/lint/presets/strict"],
+    rules: {
+      "COR004": "off",  // override preset
+    },
+  },
+} satisfies ChantConfig;
+```
+
+Presets are resolved recursively. Local rules override inherited ones.
+
+## File-Specific Overrides
+
+Apply different rule settings to specific file patterns:
+
+```typescript
+export default {
+  lint: {
+    rules: { "COR004": "warning" },
+    overrides: [
+      {
+        files: ["src/legacy/**/*.ts"],
+        rules: { "COR004": "off" },
+      },
+    ],
+  },
+} satisfies ChantConfig;
+```
+
+## Rule Options
+
+Some rules accept an options object as the second element of a tuple:
+
+```typescript
+rules: {
+  "COR009": ["warning", { max: 12 }],
+}
+```

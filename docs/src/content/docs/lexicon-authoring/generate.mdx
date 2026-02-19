@@ -1,0 +1,203 @@
+---
+title: Implement Generate
+description: Wire up generatePipeline with your upstream spec
+---
+
+The `generate` lifecycle method is the heart of a lexicon — it fetches upstream schemas, parses them, and produces TypeScript types, a runtime index, and a registry. Core provides `generatePipeline` to orchestrate this; you supply provider-specific callbacks.
+
+## Generation Pipeline
+
+```typescript
+import { generatePipeline, type GeneratePipelineConfig } from "@intentius/chant/codegen/generate";
+
+const result = await generatePipeline({
+  fetchSchemas: async (opts) => fetchMySchemas(opts.force),
+  parseSchema: (name, data) => parseMySchema(data),
+  createNaming: (results) => new NamingStrategy(results, myConfig),
+  generateRegistry: (results, naming) => buildLexiconJSON(results, naming),
+  generateTypes: (results, naming) => buildTypesDTS(results, naming),
+  generateRuntimeIndex: (results, naming) => buildRuntimeIndex(results, naming),
+  augmentSchemas: async (schemas, opts, log) => { /* patches, overlays */ },
+  augmentResults: (results, opts, log) => { /* fallbacks, synthetic resources */ },
+});
+```
+
+> See `lexicons/aws/src/codegen/generate.ts` for the complete AWS generation pipeline.
+
+### Pipeline data flow
+
+The pipeline executes these steps in order:
+
+1. **`fetchSchemas(opts)`** → `Map<typeName, Buffer>` — raw schema files keyed by type name
+2. **`augmentSchemas(schemas, opts, log)`** *(optional)* — patch or overlay schemas before parsing. Skipped when `opts.schemaSource` is provided (e.g. during testing). Returns `{ schemas, extraResults?, warnings? }`
+3. **`parseSchema(typeName, data)`** → `T | null` — parse each schema buffer. Return `null` to skip a file
+4. **`augmentResults(results, opts, log)`** *(optional)* — add synthetic resources or fallbacks after parsing. Returns `{ results, warnings? }`
+5. **`createNaming(results)`** → `NamingStrategy` — build the naming strategy from all parsed results
+6. **`generateRegistry(results, naming)`** → `string` — JSON content for the lexicon registry
+7. **`generateTypes(results, naming)`** → `string` — TypeScript declaration content (`.d.ts`)
+8. **`generateRuntimeIndex(results, naming)`** → `string` — runtime index with factory exports (`index.ts`)
+
+### `ParsedResult` contract
+
+Your parser's return type must extend `ParsedResult`:
+
+```typescript
+interface ParsedResult {
+  propertyTypes: Array<{ name: string }>;  // property type definitions
+  enums: Array<unknown>;                    // enum definitions
+}
+```
+
+The pipeline uses `.propertyTypes.length` and `.enums.length` for stats only — the arrays are passed through untouched to your generate callbacks. Extend `ParsedResult` with any additional fields your callbacks need:
+
+```typescript
+interface MyParsedResult extends ParsedResult {
+  typeName: string;
+  description: string;
+  properties: Map<string, PropertyDef>;
+  attributes: string[];
+}
+```
+
+> See `lexicons/aws/src/spec/parse.ts` for the AWS parser that produces a `ParsedResult`.
+
+## Naming Strategy
+
+The `NamingStrategy` class implements a 5-phase collision-free naming algorithm for TypeScript class names. Supply your provider's data tables via `NamingConfig`:
+
+```typescript
+import { NamingStrategy, type NamingConfig, type NamingInput } from "@intentius/chant/codegen/naming";
+
+const config: NamingConfig = {
+  priorityNames: { "Provider::S3::Bucket": "Bucket" },
+  priorityAliases: {},
+  priorityPropertyAliases: {},
+  serviceAbbreviations: {},
+  shortName: (t) => t.split("::").pop()!,
+  serviceName: (t) => t.split("::")[1],
+};
+
+const naming = new NamingStrategy(inputs, config);
+```
+
+> See `lexicons/aws/src/codegen/naming.ts` for the AWS naming configuration with real data tables.
+
+## Fetch Utilities
+
+`fetchWithCache` and `extractFromZip` handle HTTP download + caching + zip extraction:
+
+```typescript
+import { fetchWithCache, extractFromZip } from "@intentius/chant/codegen/fetch";
+
+const zipData = await fetchWithCache({ url: SCHEMA_URL, cacheFile: CACHE_PATH });
+const schemas = await extractFromZip(zipData, (name) => name.endsWith(".json"));
+```
+
+> See `lexicons/aws/src/spec/fetch.ts` for the AWS schema fetcher.
+
+## Runtime Factories
+
+Use `createResource` and `createProperty` to generate Declarable-marked constructors:
+
+```typescript
+import { createResource, createProperty } from "@intentius/chant/runtime";
+
+const MyResource = createResource("Provider::Service::Type", "my-lexicon", { arn: "Arn" });
+const MyProperty = createProperty("Provider::Service::Type.PropType", "my-lexicon");
+```
+
+## Writing Generated Artifacts
+
+After `generatePipeline` returns a `GenerateResult`, write the files using `writeGeneratedArtifacts`:
+
+```typescript
+import { writeGeneratedArtifacts } from "@intentius/chant/codegen/generate";
+
+writeGeneratedArtifacts({
+  baseDir: pkgDir,                    // root of your lexicon package
+  generatedSubdir: "src/generated",   // default; can be customized
+  files: {
+    "lexicon.json": result.lexiconJSON,
+    "index.d.ts": result.typesDTS,
+    "index.ts": result.indexTS,
+  },
+  snapshot: (dir) => takeSnapshot(dir), // optional: auto-snapshot before overwriting
+});
+```
+
+> See `lexicons/aws/src/codegen/generate.ts` for the complete generate + write flow.
+
+## Helper Utilities
+
+### Runtime Index Generator
+
+```typescript
+import { generateRuntimeIndex, type RuntimeIndexConfig } from "@intentius/chant/codegen/generate-runtime-index";
+
+const indexTS = generateRuntimeIndex({
+  resources: results,
+  naming,
+  lexiconName: "my-lexicon",
+  attributeMap: (r) => r.attributes,
+});
+```
+
+### Registry Builder
+
+```typescript
+import { buildRegistry, serializeRegistry } from "@intentius/chant/codegen/generate-registry";
+
+const registry = buildRegistry({ resources: results, naming, lexiconName: "my-lexicon" });
+const lexiconJSON = serializeRegistry(registry);
+```
+
+### JSON Schema Utilities
+
+For lexicons with JSON Schema-based specs:
+
+```typescript
+import { resolvePropertyType, extractConstraints, isEnumDefinition } from "@intentius/chant/codegen/json-schema";
+```
+
+- **`resolvePropertyType(prop, schema, resolveDefName)`** — resolve a schema property to a TypeScript type string. Handles `$ref`, `oneOf`/`anyOf`, arrays, objects, and primitives. Inline `enum` arrays produce sorted string-literal union types (e.g. `"Allow" | "Deny"`). When a `$ref` points to an enum definition, it calls `resolveDefName` to produce a named enum type (e.g. `Bucket_Status`); pass `null` to fall back to `"string"`
+- **`extractConstraints(prop)`** — extract validation constraints (min/max, pattern, allowed values, enum arrays)
+- **`isEnumDefinition(def)`** — detect if a schema definition is a pure string enum (has `enum` array, no `properties`)
+
+### PseudoParameter
+
+```typescript
+import { PseudoParameter, createPseudoParameters } from "@intentius/chant/pseudo-parameter";
+
+const pseudos = createPseudoParameters("my-lexicon", {
+  "My::Region": "The deployment region",
+  "My::AccountId": "The account identifier",
+});
+```
+
+### Import Utilities
+
+For template import (converting existing templates to chant TypeScript):
+
+```typescript
+import { BaseValueParser } from "@intentius/chant/import/base-parser";
+import { hasIntrinsicInValue, irUsesIntrinsic, collectDependencies } from "@intentius/chant/import/ir-utils";
+```
+
+- **`BaseValueParser`** — abstract base class for parsing template values into IR nodes
+- **`hasIntrinsicInValue(value)`** — check if a raw value contains intrinsic function calls
+- **`irUsesIntrinsic(node, name)`** — check if an IR node uses a specific intrinsic
+- **`collectDependencies(ir)`** — collect all resource dependencies from an IR tree
+
+### Intrinsic Interpolation
+
+For lexicons with string interpolation intrinsics (like CloudFormation's `Fn::Sub`):
+
+```typescript
+import { buildInterpolatedString, defaultInterpolationSerializer } from "@intentius/chant/intrinsic-interpolation";
+
+const result = buildInterpolatedString(templateString, variables);
+```
+
+## Next Steps
+
+With generation working, the next step is to [create a serializer](/lexicon-authoring/serializer/) that converts evaluated resources to your target format.

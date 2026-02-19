@@ -1,0 +1,64 @@
+---
+title: Auto-Fix
+description: Automatically fixing lint issues
+---
+
+Some lint rules provide structured fixes that can be applied automatically.
+
+## Usage
+
+```bash
+npx chant lint --fix
+```
+
+When `--fix` is not set, fixable diagnostics are annotated with `[fixable]` in text output:
+
+```
+src/storage.ts:3:5 warning [COR005] [fixable] Exported names should be camelCase
+```
+
+`--fix` runs once and exits. In watch mode, fixes are applied on each re-run.
+
+## Fixable Rules
+
+| Rule | Fix Kind | Description |
+|------|----------|-------------|
+| COR002 | `replace-import` | Rewrites barrel imports to namespace syntax |
+| COR005 | `rename` | Renames PascalCase exports to camelCase |
+| COR006 | `replace-import` | Rewrites lexicon imports to namespace syntax |
+| COR012 | `delete` | Removes redundant `import type` line |
+| COR014 | `replace-import` | Rewrites direct lexicon import to barrel import (requires `_.ts`) |
+| COR015 | TextEdit | Removes redundant `as Value<...>` cast |
+| COR016 | `write-file` | Generates or regenerates `_.d.ts` barrel type declarations |
+| COR017 | TextEdit | Inserts or replaces Composite name to match variable |
+| EVL006 | TextEdit | Wraps barrel() in `export const $` |
+
+## Examples
+
+### COR005 — Naming Convention
+
+```typescript
+// Before
+export const MyBucket = new _.Resource({ ... });
+
+// After fix
+export const myBucket = new _.Resource({ ... });
+```
+
+### COR002 — Barrel Import Style
+
+```typescript
+// Before
+import { bucket } from "./_";
+
+// After fix
+import * as _ from "./_";
+```
+
+## How Fixes Are Applied
+
+1. Diagnostics with available fixes are collected during the lint pass
+2. Fixes are sorted in reverse source order (bottom-to-top) to preserve positions
+3. Overlapping fixes are skipped to avoid conflicts
+4. Each fix is applied to the source text and the file is written back
+5. Lint is re-run to show remaining unfixable issues

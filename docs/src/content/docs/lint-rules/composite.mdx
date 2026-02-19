@@ -1,0 +1,145 @@
+---
+title: Composite Rules
+description: Rules for Composite() factory definitions and usage
+---
+
+Composite rules enforce best practices in `Composite()` factory definitions. They ensure composites stay clean, consistent, and use lexicon types wherever possible.
+
+---
+
+## EVL009: No Extractable Constants
+
+Object literals and arrays-of-objects inside a Composite factory that don't reference `props`, sibling members, or barrel refs (`_.$.name`) are extractable constants. Move them to a separate file (e.g. `defaults.ts`) and reference via the barrel.
+
+| | |
+|---|---|
+| **Severity** | Warning |
+| **Category** | Style |
+
+```typescript
+// ❌ Triggers EVL009
+const LambdaApi = Composite<Props>((props) => {
+  const role = new _.Role({
+    assumeRolePolicyDocument: {
+      Version: "2012-10-17",
+      Statement: [{ Effect: "Allow", Principal: { Service: "lambda.amazonaws.com" }, Action: "sts:AssumeRole" }],
+    },
+  });
+  return { role };
+}, "LambdaApi");
+```
+
+```typescript
+// ✅ Fixed — extract to defaults.ts, reference via barrel
+const LambdaApi = Composite<Props>((props) => {
+  const role = new _.Role({
+    assumeRolePolicyDocument: _.$.lambdaTrustPolicy,
+  });
+  return { role };
+}, "LambdaApi");
+```
+
+Simple string, number, and boolean literals are allowed inline — only object literals and arrays containing objects are flagged.
+
+---
+
+## EVL010: No Data Transformation
+
+Composite factories should only compose resources from props, not transform data. Array methods like `.map()`, `.filter()`, `.reduce()`, and `.flatMap()` should be called before passing props to the composite.
+
+| | |
+|---|---|
+| **Severity** | Warning |
+| **Category** | Style |
+
+```typescript
+// ❌ Triggers EVL010
+const LambdaApi = Composite<Props>((props) => {
+  const role = new _.Role({
+    policies: props.policyStatements.map(s =>
+      new _.Role_Policy({ policyDocument: s })
+    ),
+  });
+  return { role };
+}, "LambdaApi");
+```
+
+```typescript
+// ✅ Fixed — caller constructs Role_Policy[] before passing
+const LambdaApi = Composite<Props>((props) => {
+  const role = new _.Role({
+    policies: props.policies,
+  });
+  return { role };
+}, "LambdaApi");
+```
+
+---
+
+## COR017: Composite Name Must Match Variable
+
+The second argument to `Composite()` must be a string literal that matches the `const` variable name. This name is used in resource expansion (e.g. `healthApi_role`, `healthApi_func`) and error messages.
+
+| | |
+|---|---|
+| **Severity** | Error |
+| **Category** | Correctness |
+| **Auto-fix** | Yes |
+
+```typescript
+// ❌ Triggers COR017 — name mismatch
+const LambdaApi = Composite<Props>((props) => {
+  return { role: new _.Role({}) };
+}, "MyFunction");
+
+// ❌ Triggers COR017 — missing name
+const LambdaApi = Composite<Props>((props) => {
+  return { role: new _.Role({}) };
+});
+```
+
+```typescript
+// ✅ Fixed
+const LambdaApi = Composite<Props>((props) => {
+  return { role: new _.Role({}) };
+}, "LambdaApi");
+```
+
+---
+
+## COR018: Prefer Lexicon Property Types
+
+Composite prop interfaces should use lexicon property types instead of locally-declared interfaces. If the lexicon already provides a matching type (e.g. `Role_Policy`), use `InstanceType<typeof _.Role_Policy>` instead of defining a custom interface.
+
+| | |
+|---|---|
+| **Severity** | Info |
+| **Category** | Style |
+
+```typescript
+// ❌ Triggers COR018 — local interface duplicates lexicon type
+interface PolicyStatement {
+  effect: string;
+  action: string[];
+  resource: string[];
+}
+
+interface LambdaApiProps {
+  policies?: PolicyStatement[];
+}
+
+const LambdaApi = Composite<LambdaApiProps>((props) => {
+  // ...
+}, "LambdaApi");
+```
+
+```typescript
+// ✅ Fixed — use lexicon property type
+interface LambdaApiProps {
+  policies?: InstanceType<typeof _.Role_Policy>[];
+}
+
+const LambdaApi = Composite<LambdaApiProps>((props) => {
+  // ...
+}, "LambdaApi");
+```

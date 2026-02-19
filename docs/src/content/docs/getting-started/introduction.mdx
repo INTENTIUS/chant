@@ -1,0 +1,20 @@
+---
+title: Introduction
+description: What chant is and why it exists
+---
+
+chant is a TypeScript-first infrastructure tool. You define cloud resources as plain TypeScript objects, chant type-checks them against a provider lexicon, and emits deployment-ready output. No YAML, no string templating, no runtime execution.
+
+```
+TypeScript source → chant build → provider-specific output
+```
+
+You get real `import`/`export`, editor autocompletion, and semantic lint rules that catch misconfigurations before deployment — all in a single local pass.
+
+## Choose Your Path
+
+- **Use chant with AWS** — [Quick Start](/getting-started/quick-start/), then the [AWS Examples](/lexicons/aws/examples/) for a real S3/IAM/Lambda walkthrough.
+- **Create a lexicon** — [Philosophy](/concepts/philosophy/) for the design rationale, then [Lexicon Authoring](/lexicon-authoring/overview/) to build a plugin.
+- **Contribute to chant** — [Development Setup](/contributing/development/), then the [Architecture Overview](/architecture/overview/).
+
+If you're already using AWS CloudFormation, browse the [AWS lexicon reference](/lexicons/aws/) for intrinsic functions, composites, and examples.

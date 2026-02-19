@@ -1,0 +1,69 @@
+---
+title: Custom Rules
+description: Defining project-specific lint rules
+---
+
+You can define project-specific lint rules using the declarative `rule({...})` format. Custom rules are TypeScript files that are parsed as data — no code is executed.
+
+## Setup
+
+Add your rule files to the `plugins` array in your chant config:
+
+```json
+{
+  "plugins": ["./lint-rules/org-standards.ts"]
+}
+```
+
+## Rule Format
+
+Each rule is a top-level `rule({...})` call:
+
+```typescript
+rule({
+  id: "ORG001",
+  severity: "warning",
+  message: "Storage resources must have versioning enabled",
+  match: match.property("versioning").on(match.anyResource()),
+  pattern: "true",
+});
+```
+
+### Required Fields
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `id` | string | Unique rule identifier |
+| `severity` | `"error"` \| `"warning"` \| `"info"` | Default severity level |
+| `message` | string | Diagnostic message |
+| `match` | selector | Structural selector for AST nodes |
+
+### Optional Fields
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `pattern` | string | Regex pattern the matched value must satisfy |
+| `require` | string | Comma-separated list of required property names |
+| `max` | number | Numeric threshold |
+
+## Match Selectors
+
+| Selector | Matches |
+|----------|---------|
+| `match.resource("ClassName")` | `new ClassName({...})` expressions |
+| `match.anyResource()` | Any `new` expression |
+| `match.stringLiteral()` | String literal values |
+| `match.exportName()` | Exported declaration names |
+| `match.importSource()` | Import module specifiers |
+| `match.property("name")` | Object property with given key |
+| `match.exportedConst()` | `export const` declarations |
+
+Narrow a selector with `.on()`:
+
+```typescript
+match.property("tags").on(match.resource("StorageType"))
+```
+
+## Duplicate Detection
+
+If a custom rule ID collides with a built-in rule, the linter reports an error at startup. Choose IDs namespaced to your organization (e.g., `ORG001`, `ACME001`).

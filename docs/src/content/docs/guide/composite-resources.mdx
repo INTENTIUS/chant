@@ -1,0 +1,96 @@
+---
+title: Composite Resources
+description: Grouping related resources into reusable units
+---
+
+A composite groups related resources into a single reusable unit. Instead of defining multiple related resources separately every time, you define them once as a composite and instantiate it with props.
+
+## Defining a Composite
+
+Use `Composite<Props>` from `@intentius/chant`. The factory function receives props and returns a record of named resources:
+
+```typescript
+import { Composite } from "@intentius/chant";
+import * as _ from "./_";
+
+interface ServiceProps {
+  name: string;
+  handler: string;
+}
+
+export const Service = Composite<ServiceProps>((props) => {
+  const role = new _.RoleType({
+    roleName: props.name + "-role",
+  });
+  const func = new _.FunctionType({
+    functionName: props.name,
+    handler: props.handler,
+    role: role.arn,
+  });
+  return { role, func };
+});
+```
+
+This defines a `Service` composite that creates two resources: a role and a function. The actual resource types come from whichever lexicon your project uses.
+
+## Using a Composite
+
+Instantiate a composite by calling it with props:
+
+```typescript
+import { Service } from "./service";
+
+export const api = Service({ name: "api", handler: "index.handler" });
+```
+
+This produces all underlying resources with names derived from the props. The composite instance exposes its members directly, so `api.role` and `api.func` are accessible for cross-references.
+
+## The `resource()` Helper
+
+The `resource()` helper is a marker function for constructing resources within composites:
+
+```typescript
+import { resource } from "@intentius/chant";
+
+const bucket = resource(_.BucketType, { bucketName: "data" });
+```
+
+At runtime it calls `new Type(props)` and returns the result. It exists so lint tooling can validate composite member construction (EVL005).
+
+## Referencing Members
+
+Within the factory, you can reference other members directly since they're just variables in the same scope:
+
+```typescript
+export const Service = Composite<ServiceProps>((props) => {
+  const role = new _.RoleType({ roleName: props.name + "-role" });
+  const func = new _.FunctionType({
+    functionName: props.name,
+    role: role.arn, // direct reference to the role
+  });
+  return { role, func };
+});
+```
+
+Outside the composite, access members via the instance:
+
+```typescript
+export const monitor = new _.MonitorType({
+  name: "api-errors",
+  target: api.func.arn,
+});
+```
+
+## When to Use Composites
+
+Composites are useful when:
+
+- **Multiple resources always appear together** — a function always needs a role and log destination
+- **You want consistent naming** — derive all resource names from a single `name` prop
+- **Cross-resource wiring is complex** — encapsulate the references inside the composite
+
+For sharing default *property values* across resources of the same type, see [Presets](/guide/presets/) instead.
+
+Some lexicons also support **child projects** — subdirectories with their own barrel file that build to separate output files. The parent references a child project via a lexicon-specific function (e.g. AWS `nestedStack()`), and cross-stack values are explicitly exported with `stackOutput()`. See [Multi-Stack Projects](/guide/multi-stack/) for an overview.
+
+See your lexicon's documentation for working composite examples with concrete resource types.

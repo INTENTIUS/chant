@@ -1,0 +1,27 @@
+{
+  "name": "@intentius/chant-lexicon-aws",
+  "version": "0.0.2",
+  "type": "module",
+  "files": ["src/", "dist/"],
+  "publishConfig": { "access": "public" },
+  "exports": {
+    ".": "./src/index.ts",
+    "./*": "./src/*",
+    "./manifest": "./dist/manifest.json",
+    "./meta": "./dist/meta.json",
+    "./types": "./dist/types/index.d.ts"
+  },
+  "scripts": {
+    "generate": "bun run src/codegen/generate-cli.ts",
+    "validate": "bun run src/validate-cli.ts",
+    "docs": "bun src/codegen/docs-cli.ts",
+    "prepack": "bun run generate && bun run validate"
+  },
+  "dependencies": {
+    "@intentius/chant": "workspace:*",
+    "fflate": "^0.8.2"
+  },
+  "devDependencies": {
+    "typescript": "^5.9.3"
+  }
+}

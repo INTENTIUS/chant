@@ -1,0 +1,92 @@
+---
+title: Package & Publish
+description: Bundle your lexicon for distribution with packagePipeline
+---
+
+The `package` lifecycle method bundles your lexicon's generated artifacts into a distributable format. Core provides `packagePipeline` to orchestrate this.
+
+## Packaging Pipeline
+
+```typescript
+import { packagePipeline, collectSkills } from "@intentius/chant/codegen/package";
+
+const result = await packagePipeline({
+  generate: (opts) => myGenerate(opts),
+  buildManifest: (genResult) => ({ name: "my-lexicon", version: "1.0.0" }),
+  srcDir: __dirname,
+  collectSkills: () => collectSkills(myPlugin.skills()),
+});
+```
+
+> See `lexicons/aws/src/codegen/package.ts` for the AWS packaging pipeline.
+
+## Bundle Layout
+
+The pipeline produces a `dist/` directory:
+
+| Artifact | Description |
+|----------|-------------|
+| `manifest.json` | Lexicon metadata (name, version, intrinsics, pseudo-parameters) |
+| `meta.json` | `Record<shortName, LexiconEntry>` resource registry |
+| `integrity.json` | xxhash64 per-artifact hashes + composite hash |
+| `types/index.d.ts` | TypeScript declarations for all resource and property types |
+| `rules/*.ts` | Lint rule implementations |
+| `skills/*.md` | AI assistant skill definitions |
+
+## `LexiconManifest` Fields
+
+The `buildManifest` callback must return a `LexiconManifest`:
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `name` | `string` | Yes | Lexicon identifier (e.g. `"aws"`, `"k8s"`) |
+| `version` | `string` | Yes | Lexicon version (e.g. `"1.0.0"`) |
+| `chantVersion` | `string` | No | Minimum chant version required |
+| `namespace` | `string` | No | Type namespace prefix (e.g. `"AWS"`) |
+| `intrinsics` | `IntrinsicDef[]` | No | Intrinsic function definitions |
+| `pseudoParameters` | `Record<string, string>` | No | Pseudo-parameter names and descriptions |
+
+## Documentation Pipeline
+
+Core provides `docsPipeline` and `writeDocsSite` for generating a standalone Starlight docs site from your lexicon's `dist/` artifacts:
+
+```typescript
+import { docsPipeline, writeDocsSite } from "@intentius/chant/codegen/docs";
+
+const config = {
+  name: "my-lexicon",
+  displayName: "My Lexicon",
+  description: "Description for page metadata",
+  distDir: "./dist",
+  outDir: "./docs",
+  serviceFromType: (type) => type.split("::")[1],
+  resourceTypeUrl: (type) => `https://docs.example.com/${type}`,
+};
+
+const result = docsPipeline(config);
+writeDocsSite(config, result);
+```
+
+This creates a self-contained Starlight site with pages for resources, intrinsics, pseudo-parameters, rules, and serialization. Build it with `cd docs && bun install && bun run build`.
+
+Add a `docs()` method to your plugin and a `"docs"` script to your `package.json` so documentation stays in sync with each generation cycle.
+
+## Publishing to npm
+
+Once the bundle is built:
+
+1. Verify the `dist/` directory contains all expected artifacts
+2. Ensure `package.json` has the correct `files` field pointing to `dist/`
+3. Publish with `bun pm pack` (for testing) or `npm publish`
+
+Users install your lexicon with:
+
+```bash
+npm install --save-dev @intentius/chant-lexicon-<name>
+```
+
+## CLI Commands
+
+- [`chant dev generate`](/cli/generate/) — run the generation pipeline
+- [`chant dev publish`](/cli/package/) — build the distributable bundle
+- [`chant dev rollback`](/cli/rollback/) — list or restore generation snapshots

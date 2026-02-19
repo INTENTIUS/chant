@@ -1,0 +1,4 @@
+.snapshots/
+dist/
+node_modules/
+.cache/

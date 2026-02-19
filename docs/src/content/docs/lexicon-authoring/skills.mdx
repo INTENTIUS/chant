@@ -1,0 +1,55 @@
+---
+title: Skills
+description: AI agent skill files contributed by lexicons
+---
+
+Lexicon authors can include skill files — markdown documents that teach AI agents how to work with the lexicon's resource types and patterns.
+
+## Skill File Format
+
+Each skill file is a markdown document with YAML frontmatter:
+
+```markdown
+---
+metadata:
+  source: chant-lexicon
+---
+# Resource Authoring
+
+When writing resources with chant and this lexicon:
+
+1. Import types from the lexicon barrel (`_`)
+2. Use intrinsic functions for dynamic values
+3. Reference other resources via the barrel symbol (`$`)
+```
+
+The `source: chant-lexicon` metadata marker identifies the skill as lexicon-contributed.
+
+## Installation
+
+Skills are installed automatically when you initialize a project:
+
+```bash
+npx chant init my-infra
+```
+
+## Lifecycle
+
+- **Install**: `npx chant init` copies skills to `.chant/skills/`
+- **Update**: `npx chant update` refreshes skills when a lexicon is updated
+
+## Collecting Skills for Packaging
+
+When building a lexicon bundle, use `collectSkills` from core to gather skill definitions:
+
+```typescript
+import { collectSkills } from "@intentius/chant/codegen/package";
+
+const skills = collectSkills(myPlugin.skills());
+```
+
+This is passed to `packagePipeline` as part of the bundle configuration.
+
+## Next Steps
+
+With skills defined, the final step is to [package and publish](/lexicon-authoring/package/) your lexicon.

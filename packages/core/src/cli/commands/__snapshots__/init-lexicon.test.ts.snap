@@ -1,0 +1,222 @@
+// Bun Snapshot v1, https://bun.sh/docs/test/snapshots
+
+exports[`init-lexicon fixture snapshot fixture generate.ts matches snapshot 1`] = `
+"import { generatePipeline, writeGeneratedArtifacts } from "@intentius/chant/codegen/generate";
+import type { GenerateResult } from "@intentius/chant/codegen/generate";
+import { dirname } from "path";
+import { fileURLToPath } from "url";
+
+/**
+ * Run the code generation pipeline.
+ *
+ * Each callback has a TODO describing what to implement.
+ */
+export async function generate(options?: { verbose?: boolean }): Promise<GenerateResult> {
+  const result = await generatePipeline({
+    // Must return Map<typeName, Buffer> — each entry is one schema file.
+    // Example: fetch a zip, extract JSON files, key by type name.
+    // See lexicons/aws/src/spec/fetch.ts for a working example.
+    fetchSchemas: async (opts) => {
+      throw new Error("TODO: implement fetchSchemas — download your upstream spec");
+    },
+
+    // Must return a ParsedResult (with propertyTypes[] and enums[] at minimum).
+    // Return null to skip a schema file.
+    // See lexicons/aws/src/spec/parse.ts for a working example.
+    parseSchema: (name, data) => {
+      throw new Error("TODO: implement parseSchema — parse a single schema file");
+    },
+
+    // Must return a NamingStrategy instance.
+    // See lexicons/aws/src/codegen/naming.ts and ./naming.ts for setup.
+    createNaming: (results) => {
+      throw new Error("TODO: implement createNaming — return a NamingStrategy instance");
+    },
+
+    // Must return a string of JSON (the lexicon registry).
+    // Use buildRegistry + serializeRegistry from @intentius/chant/codegen/generate-registry.
+    // See lexicons/aws/src/codegen/generate.ts for a working example.
+    generateRegistry: (results, naming) => {
+      throw new Error("TODO: implement generateRegistry — produce lexicon JSON");
+    },
+
+    // Must return a string of TypeScript declarations (.d.ts content).
+    // See lexicons/aws/src/codegen/generate.ts for a working example.
+    generateTypes: (results, naming) => {
+      throw new Error("TODO: implement generateTypes — produce .d.ts content");
+    },
+
+    // Must return a string of TypeScript (runtime index with factory exports).
+    // Use generateRuntimeIndex from @intentius/chant/codegen/generate-runtime-index.
+    // See lexicons/aws/src/codegen/generate.ts for a working example.
+    generateRuntimeIndex: (results, naming) => {
+      throw new Error("TODO: implement generateRuntimeIndex — produce index.ts content");
+    },
+  });
+
+  if (options?.verbose) {
+    console.error(\`Generated \${result.resources} resources, \${result.properties} property types\`);
+  }
+
+  return result;
+}
+
+/**
+ * Write generated files to the package directory.
+ */
+export function writeGeneratedFiles(result: GenerateResult, pkgDir?: string): void {
+  const dir = pkgDir ?? dirname(dirname(fileURLToPath(import.meta.url)));
+  writeGeneratedArtifacts({
+    baseDir: dir,
+    files: {
+      "lexicon.json": result.lexiconJSON,
+      "index.d.ts": result.typesDTS,
+      "index.ts": result.indexTS,
+    },
+  });
+}
+"
+`;
+
+exports[`init-lexicon fixture snapshot fixture package.ts matches snapshot 1`] = `
+"import { packagePipeline } from "@intentius/chant/codegen/package";
+import type { PackagePipelineConfig } from "@intentius/chant/codegen/package";
+import { generate } from "./generate";
+import { dirname } from "path";
+import { fileURLToPath } from "url";
+
+/**
+ * Package the fixture lexicon for distribution.
+ */
+export async function packageLexicon(options?: { verbose?: boolean; force?: boolean }) {
+  const srcDir = dirname(fileURLToPath(import.meta.url));
+
+  const { spec, stats } = await packagePipeline({
+    generate: (opts) => generate({ verbose: opts?.verbose, force: opts?.force }),
+    buildManifest: (genResult) => ({
+      name: "fixture",
+      version: "0.0.1",
+    }),
+    srcDir,
+    collectSkills: () => new Map(),
+  });
+
+  console.error(\`Packaged \${stats.resources} resources, \${stats.ruleCount} rules\`);
+  return { spec, stats };
+}
+"
+`;
+
+exports[`init-lexicon fixture snapshot fixture plugin.ts matches snapshot 1`] = `
+"import type { LexiconPlugin } from "@intentius/chant/lexicon";
+import { fixtureSerializer } from "./serializer";
+
+/**
+ * fixture lexicon plugin.
+ *
+ * Implements all required LexiconPlugin lifecycle methods.
+ */
+export const fixturePlugin: LexiconPlugin = {
+  name: "fixture",
+  serializer: fixtureSerializer,
+
+  // ── Required lifecycle methods ────────────────────────────────
+
+  async generate(options?: { verbose?: boolean }): Promise<void> {
+    const { generate } = await import("./codegen/generate");
+    await generate(options);
+  },
+
+  async validate(options?: { verbose?: boolean }): Promise<void> {
+    const { validate } = await import("./validate");
+    await validate(options);
+  },
+
+  async coverage(options?: { verbose?: boolean; minOverall?: number }): Promise<void> {
+    // TODO: Implement coverage analysis
+    console.error("Coverage analysis not yet implemented");
+  },
+
+  async package(options?: { verbose?: boolean; force?: boolean }): Promise<void> {
+    const { packageLexicon } = await import("./codegen/package");
+    await packageLexicon(options);
+  },
+
+  async rollback(options?: { restore?: string; verbose?: boolean }): Promise<void> {
+    const { listSnapshots, restoreSnapshot } = await import("./codegen/rollback");
+    const { join, dirname } = await import("path");
+    const { fileURLToPath } = await import("url");
+
+    const pkgDir = dirname(dirname(fileURLToPath(import.meta.url)));
+    const snapshotsDir = join(pkgDir, ".snapshots");
+
+    if (options?.restore) {
+      const generatedDir = join(pkgDir, "src", "generated");
+      restoreSnapshot(String(options.restore), generatedDir);
+      console.error(\`Restored snapshot: \${options.restore}\`);
+    } else {
+      const snapshots = listSnapshots(snapshotsDir);
+      if (snapshots.length === 0) {
+        console.error("No snapshots available.");
+      } else {
+        console.error(\`Available snapshots (\${snapshots.length}):\`);
+        for (const s of snapshots) {
+          console.error(\`  \${s.timestamp}  \${s.resources} resources  \${s.path}\`);
+        }
+      }
+    }
+  },
+
+  // ── Optional extensions (uncomment and implement as needed) ───
+
+  // lintRules(): LintRule[] {
+  //   return [];
+  // },
+
+  // declarativeRules(): RuleSpec[] {
+  //   return [];
+  // },
+
+  // postSynthChecks(): PostSynthCheck[] {
+  //   return [];
+  // },
+
+  // intrinsics(): IntrinsicDef[] {
+  //   return [];
+  // },
+
+  // pseudoParameters(): string[] {
+  //   return [];
+  // },
+
+  // detectTemplate(data: unknown): boolean {
+  //   return false;
+  // },
+
+  // templateParser(): TemplateParser {
+  //   // return new MyParser();
+  // },
+
+  // templateGenerator(): TypeScriptGenerator {
+  //   // return new MyGenerator();
+  // },
+
+  // skills(): SkillDefinition[] {
+  //   return [];
+  // },
+
+  // completionProvider(ctx: CompletionContext): CompletionItem[] {
+  //   return [];
+  // },
+
+  // hoverProvider(ctx: HoverContext): HoverInfo | undefined {
+  //   return undefined;
+  // },
+
+  // docs(options?: { verbose?: boolean }): Promise<void> {
+  //   const { generateDocs } = await import("./codegen/docs");
+  //   return generateDocs(options);
+  // },
+};
+"
+`;

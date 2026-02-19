@@ -1,0 +1,14 @@
+{
+  "name": "gitlab-getting-started-example",
+  "version": "0.0.1",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "build": "chant build src --lexicon gitlab",
+    "dev": "chant build src --lexicon gitlab --watch"
+  },
+  "dependencies": {
+    "@intentius/chant-lexicon-gitlab": "workspace:*",
+    "@intentius/chant": "workspace:*"
+  }
+}

@@ -1,0 +1,78 @@
+---
+title: Scaffold a Lexicon
+description: Use chant init lexicon to generate a new lexicon project
+---
+
+The fastest way to start a new lexicon is with `chant init lexicon`:
+
+```bash
+chant init lexicon k8s
+cd lexicons/k8s
+bun install
+```
+
+This scaffolds a complete lexicon project with compilable stubs for every required lifecycle method. Follow the TODO comments in the generated files to wire up your upstream spec.
+
+See the [init lexicon CLI reference](/cli/init-lexicon/) for the full list of options and flags.
+
+## Generated File Walkthrough
+
+The scaffold creates a standard lexicon project layout:
+
+```
+lexicons/k8s/
+├── package.json           npm package config
+├── tsconfig.json          TypeScript config
+├── src/
+│   ├── index.ts           LexiconPlugin export
+│   ├── serializer.ts      Serializer stub
+│   ├── codegen/
+│   │   ├── generate.ts    Generation pipeline stub
+│   │   ├── naming.ts      NamingStrategy config
+│   │   └── package.ts     Packaging pipeline stub
+│   ├── spec/
+│   │   └── fetch.ts       Schema fetching stub
+│   ├── lsp/
+│   │   ├── completions.ts LSP completion provider
+│   │   └── hover.ts       LSP hover provider
+│   └── generated/         (output directory for generatePipeline)
+│       ├── index.ts       Runtime factories (createResource/createProperty)
+│       ├── index.d.ts     TypeScript declarations
+│       └── lexicon.json   Resource registry
+└── dist/                  (output directory for packagePipeline)
+    ├── manifest.json
+    ├── meta.json
+    ├── integrity.json
+    ├── types/index.d.ts
+    ├── rules/
+    └── skills/
+```
+
+### Key files
+
+**`src/index.ts`** — The entry point. Exports the `LexiconPlugin` object that wires together all the lifecycle methods:
+
+```typescript
+import type { LexiconPlugin } from "@intentius/chant";
+import { mySerializer } from "./serializer";
+
+export const myPlugin: LexiconPlugin = {
+  name: "k8s",
+  serializer: mySerializer,
+  async generate(opts) { /* ... */ },
+  async validate(opts) { /* ... */ },
+  async coverage(opts) { /* ... */ },
+  async package(opts) { /* ... */ },
+  async rollback(opts) { /* ... */ },
+};
+```
+
+**`src/codegen/generate.ts`** — Where you call core's `generatePipeline` with your provider-specific callbacks. This is where most of the implementation work happens. See [Implement Generate](/lexicon-authoring/generate/).
+
+**`src/serializer.ts`** — Converts evaluated resources to your target format. See [Create a Serializer](/lexicon-authoring/serializer/).
+
+**`src/codegen/package.ts`** — Calls core's `packagePipeline` to produce a distributable bundle. See [Package & Publish](/lexicon-authoring/package/).
+
+## Next Steps
+
+With the scaffold in place, your next step is to [implement the generation pipeline](/lexicon-authoring/generate/) — connecting your upstream spec to chant's `generatePipeline`.

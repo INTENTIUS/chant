@@ -1,0 +1,87 @@
+---
+title: Development Setup
+description: Setting up a development environment for chant
+---
+
+## Prerequisites
+
+- **[Bun](https://bun.sh/)** — runtime, package manager, and test runner
+- **Git** — for version control
+- **[just](https://just.systems/)** — task runner (optional, but recommended)
+
+## Clone and Install
+
+```bash
+git clone https://github.com/intentius/chant.git
+cd chant
+bun install
+```
+
+## Justfile Commands
+
+The project uses `just` for common tasks. Run `just` with no arguments to see all available commands:
+
+```bash
+just              # list all commands
+just install      # install all dependencies (including docs)
+just build        # type-check the project (bun run tsc --noEmit)
+just test         # run all tests
+just lint         # run eslint on packages/
+just check        # run build + lint + test
+just docs         # start the docs dev server
+just bench        # run performance benchmarks
+just smoke        # build and run the Docker smoke test
+just docs-build   # build the unified documentation site
+```
+
+## Run Tests
+
+```bash
+bun test                    # all tests
+bun test packages/core/     # core package only
+bun test lexicons/aws/      # AWS lexicon only
+```
+
+### Test Patterns
+
+- Unit tests live next to source files or in `__tests__/` directories
+- Integration tests (like example projects) are in `examples/` directories with `*.test.ts` files
+- The `packages/test-utils/` directory provides shared test fixtures and assertions
+
+## Type Checking
+
+```bash
+bun run tsc --noEmit
+```
+
+## Project Layout
+
+```
+chant/
+├── packages/
+│   ├── core/           @intentius/chant — type system, pipeline, CLI, and codegen infrastructure
+│   │   └── src/
+│   │       ├── runtime.ts              createResource/createProperty factories
+│   │       ├── codegen/
+│   │       │   ├── naming.ts           NamingStrategy (collision-free class names)
+│   │       │   ├── generate.ts         generatePipeline (schema → artifacts)
+│   │       │   ├── package.ts          packagePipeline (artifacts → BundleSpec)
+│   │       │   └── fetch.ts            fetchWithCache, extractFromZip
+│   │       └── lsp/
+│   │           └── lexicon-providers.ts LexiconIndex, completions, hover
+│   └── test-utils/     @intentius/chant-test-utils — test helpers
+├── lexicons/
+│   ├── aws/            @intentius/chant-lexicon-aws — AWS lexicon (wraps core pipelines)
+│   └── chant/          @intentius/chant-lexicon-chant — core lint rules
+├── docs/               Astro Starlight documentation site
+└── package.json
+```
+
+### Core codegen infrastructure
+
+The `packages/core/src/codegen/` directory contains reusable infrastructure for lexicon code generation pipelines. Lexicons supply provider-specific callbacks and data tables; core handles orchestration, logging, warning collection, stats counting, and artifact writing. The AWS lexicon (`lexicons/aws/`) demonstrates this pattern — its codegen files are thin wrappers around core pipelines.
+
+## What's Next
+
+- [Architecture Overview](/architecture/overview/) — understand how the pieces fit together
+- [Core Type System](/architecture/core-type-system/) — Declarable, Resource, Property types

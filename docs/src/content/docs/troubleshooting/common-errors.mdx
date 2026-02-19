@@ -1,0 +1,42 @@
+---
+title: Common Errors
+description: Solutions for frequently encountered chant errors
+---
+
+## EVL001: Expression Not Statically Evaluable
+
+A resource property contains a function call, method call, or other dynamic expression.
+
+```
+src/bucket.ts:5:3 error [EVL001] expression in property "name" is not statically evaluable
+```
+
+**Fix:** Replace dynamic expressions with literal values or `const` references.
+
+## EVL002: Resource Inside Control Flow
+
+A resource declaration is wrapped in `if`, `for`, `while`, `switch`, or `try`.
+
+**Fix:** Move the resource to the top level. Use separate files for different environments.
+
+## EVL003–EVL004
+
+See [Evaluability Rules](/lint-rules/evaluability/) for details on dynamic property access and non-const spread sources.
+
+## EVL005: Block Body in resource() Callback
+
+**Fix:** Use an expression body: `(props) => ({ ... })`.
+
+## EVL006: Invalid barrel() Usage
+
+**Fix:** Use exactly `export const $ = barrel(import.meta.dir)`.
+
+## COR011: Circular Dependency
+
+**Fix:** Restructure imports to break the cycle by extracting shared types into a separate file.
+
+## Unknown Resource Type
+
+The resource class isn't recognized by the installed lexicon.
+
+**Fix:** Check for typos, then update the lexicon (`npm update`), run `npx chant update` to sync lexicon types, and `npx chant lint --fix` to regenerate barrel declarations.

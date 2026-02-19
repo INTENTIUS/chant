@@ -1,0 +1,21 @@
+{
+  "AWSTemplateFormatVersion": "2010-09-09",
+  "Description": "Template with conditions",
+  "Parameters": {
+    "Environment": {
+      "Type": "String",
+      "Default": "dev"
+    }
+  },
+  "Conditions": {
+    "IsProd": { "Fn::Equals": [{ "Ref": "Environment" }, "prod"] }
+  },
+  "Resources": {
+    "MyBucket": {
+      "Type": "AWS::S3::Bucket",
+      "Properties": {
+        "BucketName": { "Fn::If": ["IsProd", "prod-bucket", "dev-bucket"] }
+      }
+    }
+  }
+}

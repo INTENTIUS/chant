@@ -1,0 +1,85 @@
+---
+title: Quick Start
+description: Get a chant project running in under five minutes
+---
+
+import { Code } from '@astrojs/starlight/components';
+import barrelSrc from '../../../../../lexicons/aws/examples/getting-started/src/_.ts?raw';
+import defaultsSrc from '../../../../../lexicons/aws/examples/getting-started/src/defaults.ts?raw';
+import dataBucketSrc from '../../../../../lexicons/aws/examples/getting-started/src/data-bucket.ts?raw';
+
+## Step 1: Install chant
+
+Install a lexicon for your target platform (this also installs chant):
+
+```bash
+npm install --save-dev @intentius/chant-lexicon-aws  # or another lexicon
+```
+
+The AWS lexicon gives you 1500+ typed CloudFormation resources, intrinsic functions like `Sub` and `Ref`, and pseudo-parameters — all with full editor autocompletion.
+
+Verify it works:
+
+```bash
+npx chant --version
+```
+
+See [Installation](/getting-started/installation/) for details.
+
+## Step 2: Initialize a Project
+
+```bash
+npx chant init my-infra
+cd my-infra
+```
+
+This scaffolds a project structure with a `chant.config.ts`, a barrel file (`src/_.ts`), and starter resources. The config file specifies which lexicon to use.
+
+## Step 3: Sync Types
+
+Generate barrel type declarations:
+
+```bash
+npx chant lint --fix
+```
+
+This generates `_.d.ts` files so your editor provides autocompletion and type-checking for resource properties.
+
+## Step 4: Write Resources
+
+The **barrel file** (`src/_.ts`) is the central import hub for your project. It re-exports everything from the lexicon and creates the `$` cross-resource proxy:
+
+<Code code={barrelSrc} lang="typescript" title="src/_.ts" />
+
+For the full barrel pattern — including `barrel()` and the `$` cross-resource proxy — see [Barrel Concepts](/concepts/barrels/).
+
+Shared defaults are regular exports that other files reference through `$`:
+
+<Code code={defaultsSrc} lang="typescript" title="src/defaults.ts" />
+
+Resource files reference types and siblings through the barrel:
+
+<Code code={dataBucketSrc} lang="typescript" title="src/data-bucket.ts" />
+
+Every property is typed — your editor autocompletes `bucketName`, `versioningConfiguration`, `sseAlgorithm`, and catches typos immediately. The `$` proxy resolves cross-file references like `$.versioningEnabled` at build time.
+
+See the [AWS CloudFormation lexicon reference](/lexicons/aws/) for intrinsic functions, composites, custom lint rules, and examples.
+
+:::tip[AWS walkthrough]
+For a complete walkthrough with S3 buckets, IAM roles, Lambda functions, and cross-resource references, see the [AWS Examples](/lexicons/aws/examples/).
+:::
+
+## Step 5: Build
+
+```bash
+npx chant build
+```
+
+The build command discovers all `.ts` files, collects exported declarables, resolves dependencies, and serializes to the target format.
+
+## Next Steps
+
+- [Project Structure](/getting-started/project-structure/) — understand what `chant init` created
+- [Core Concepts](/concepts/philosophy/) — learn the design principles behind chant
+- [Writing Resources](/guide/writing-resources/) — the full guide to defining resources
+- [Linting & Type-Checking](/guide/linting/) — validate your definitions

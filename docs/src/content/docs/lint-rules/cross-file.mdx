@@ -1,0 +1,40 @@
+---
+title: Cross-File Rules
+description: Rules that analyze the import graph across your project
+---
+
+Cross-file rules analyze the import graph across your entire project. They run after single-file analysis completes.
+
+---
+
+## COR010: Unused Exports
+
+**Severity:** warning
+
+Flags exported symbols that are never imported by any other file. Unused exports add dead code to your project.
+
+```typescript
+// storage.ts
+export const bucket = new _.Resource({ ... });
+export const unusedHelper = { key: "value" };
+//           ~~~~~~~~~~~~ ⚠ COR010: 'unusedHelper' is exported but never imported
+```
+
+**Fix:** Remove the unused export, or convert it to a non-exported `const` if it's used locally.
+
+---
+
+## COR011: Circular Dependencies
+
+**Severity:** error
+
+Detects circular import chains between files. Circular dependencies prevent deterministic evaluation order.
+
+```
+error[COR011]: circular dependency detected
+  ┌─ src/networking.ts
+  │
+  │   networking.ts → security.ts → compute.ts → networking.ts
+```
+
+**Fix:** Break the cycle by extracting shared declarations into a separate file.

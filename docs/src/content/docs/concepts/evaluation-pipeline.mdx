@@ -1,0 +1,136 @@
+---
+title: Evaluation Pipeline
+description: How chant transforms TypeScript source files into deployment-ready output
+---
+
+When you run `npx chant build`, the tool takes your TypeScript source files through a series of stages to produce deployment-ready output.
+
+## Pipeline Overview
+
+```
+  .ts files
+     |
+     v
++-----------+     +----------------+     +---------+
+| Discovery | --> | Parse + Check  | --> | Resolve |
++-----------+     +----------------+     | Imports |
+                                         +---------+
+                                              |
+                                              v
+                                       +-----------+
+                                       |  Resolve  |
+                                       |  Barrels  |
+                                       +-----------+
+                                              |
+                                              v
++-----------+     +----------+     +-----------+
+|   Emit    | <-- | Expand   | <-- | Extract + |
+| (serialize|     | Compos-  |     | Evaluate  |
+|  output)  |     | ites     |     | Resources |
++-----------+     +----------+     +-----------+
+     |
+     v
+  Output
+```
+
+## Stage 1: File Discovery
+
+The evaluator scans the project directory for TypeScript source files, applying standard filters:
+
+- Include all `.ts` files in the source directory
+- Exclude files starting with `_` (barrel files are handled separately)
+- Exclude `*.test.ts` and `*.spec.ts`
+- Exclude `node_modules`
+
+**Related:** [Project Structure](/getting-started/project-structure/)
+
+## Stage 2: Parse and Type-Check
+
+Each discovered file is parsed into an AST and run through the type checker. Type errors are reported with file paths, line numbers, and diagnostic messages.
+
+At this stage, the evaluability lint rules (EVL) also run. These catch patterns that are valid TypeScript but not statically evaluable — function calls in resource props, control flow around resources, dynamic property access, and so on. See [TypeScript as Data](/concepts/typescript-as-data/) for the full list.
+
+**Related:** [Evaluability Rules](/lint-rules/evaluability/)
+
+## Stage 3: Resolve Imports
+
+The tool builds a module graph by following `import` statements. This handles:
+
+- Relative imports (`import { tags } from "./shared"`)
+- Lexicon imports (`import * as _ from "./_"`)
+- Re-exports (`export { bucket } from "./bucket"`)
+
+The module graph determines which files depend on which, and ensures that cross-file `const` references can be resolved during evaluation.
+
+**Related:** [Module Graph](/architecture/module-graph/)
+
+## Stage 4: Resolve Barrels
+
+For any file containing `export const $ = barrel(import.meta.dir)`, the evaluator builds a symbol table of sibling resource exports:
+
+1. Identify the directory from the barrel file's path
+2. Scan sibling `.ts` files (applying the same exclusion rules as discovery)
+3. Parse each file's AST and extract named exports with their types
+4. Build the `$` symbol table mapping export names to their source files and resource types
+
+This symbol table is built once per directory and cached.
+
+**Related:** [Barrel Files & the $ Symbol](/concepts/barrels/)
+
+## Stage 5: Extract and Evaluate Resources
+
+The evaluator walks each file's AST looking for the resource pattern:
+
+```typescript
+export const <name> = new <ResourceType>({...})
+```
+
+For each match, it:
+
+1. Resolves the resource type from the lexicon registry
+2. Evaluates the object literal argument, which may involve:
+   - Resolving `const` variable references (lazy evaluation with caching)
+   - Following cross-file imports to evaluate referenced bindings
+   - Expanding spread operators from known `const` sources
+   - Converting tagged template literals to intrinsic objects
+   - Resolving `$.resource.attribute` to symbolic reference values
+
+**Related:** [Evaluator Engine](/architecture/evaluator/)
+
+## Stage 6: Expand Composites
+
+Composite resources are factory patterns that produce multiple related resources from a single declaration. After all resources are extracted, the evaluator expands composite instances:
+
+1. Identify composite instances in the extracted resources
+2. Substitute prop values into the composite's template
+3. Resolve `siblings` references within the composite
+4. Emit prefixed child resources (e.g., `myApi.function`, `myApi.role`)
+
+Note: nested deployment units (e.g. AWS nested stacks) are not composites — they are **child projects**. A child project is a separate directory with its own barrel file that builds independently. The parent references it via a lexicon-specific function (e.g. `nestedStack()`), and discovery skips child project directories entirely. See [Multi-Stack Projects](/guide/multi-stack/) for an overview.
+
+**Related:** [Composite Resources](/guide/composite-resources/), [Multi-Stack Projects](/guide/multi-stack/), [Child Projects (Lexicon Authoring)](/lexicon-authoring/serializer/#child-projects)
+
+## Stage 7: Emit
+
+The evaluated resources are passed to the lexicon serializer, which produces the target output format. During serialization, the emitter:
+
+- Converts reference values to the target format's reference mechanism
+- Maps TypeScript property names to the target format's naming convention
+- Omits `null` and missing properties
+
+See your lexicon's serialization documentation for concrete output examples.
+
+**Related:** [Serializer](/architecture/serializer/), [Lexicon Registry](/architecture/lexicon-registry/)
+
+## Error Handling
+
+Errors are non-fatal per resource. If one resource fails evaluation, the evaluator reports the error (with file path, line, and column) and continues to the next resource. All errors are collected and reported at the end.
+
+## Caching
+
+The evaluator caches two things during a single `chant build` run:
+
+- **Evaluated `const` bindings** — each binding is evaluated once, even if referenced by multiple resources
+- **Barrel symbol tables** — each directory's `$` table is built once, even if multiple files in that directory use barrel references
+
+There is no persistent cache across runs.

@@ -1,0 +1,197 @@
+// Bun Snapshot v1, https://bun.sh/docs/test/snapshots
+
+exports[`snapshot tests Bucket lexicon entry 1`] = `
+{
+  "attrs": {
+    "arn": "Arn",
+  },
+  "createOnly": [
+    "BucketName",
+  ],
+  "kind": "resource",
+  "lexicon": "aws",
+  "primaryIdentifier": [
+    "BucketName",
+  ],
+  "propertyConstraints": {
+    "BucketName": {
+      "maxLength": 63,
+      "minLength": 3,
+      "pattern": "^[a-z0-9][a-z0-9.-]*[a-z0-9]$",
+    },
+  },
+  "resourceType": "AWS::S3::Bucket",
+}
+`;
+
+exports[`snapshot tests Function lexicon entry 1`] = `
+{
+  "attrs": {
+    "arn": "Arn",
+  },
+  "kind": "resource",
+  "lexicon": "aws",
+  "primaryIdentifier": [
+    "FunctionName",
+  ],
+  "propertyConstraints": {
+    "FunctionName": {
+      "maxLength": 64,
+      "minLength": 1,
+    },
+    "Handler": {
+      "maxLength": 128,
+      "pattern": "^[^\\s]+$",
+    },
+    "MemorySize": {
+      "maximum": 10240,
+      "minimum": 128,
+    },
+    "Role": {
+      "pattern": "^arn:(aws[a-zA-Z-]*)?:iam::\\d{12}:role/?[a-zA-Z_0-9+=,.@\\-_/]+$",
+    },
+    "Runtime": {
+      "enum": [
+        "nodejs20.x",
+        "nodejs18.x",
+        "python3.12",
+        "python3.11",
+        "java21",
+        "java17",
+      ],
+    },
+  },
+  "resourceType": "AWS::Lambda::Function",
+  "runtimeDeprecations": {
+    "dotnet6": "deprecated",
+    "java8": "deprecated",
+    "nodejs14.x": "deprecated",
+    "nodejs16.x": "deprecated",
+    "nodejs18.x": "approaching_eol",
+    "python3.7": "deprecated",
+    "python3.8": "deprecated",
+    "python3.9": "approaching_eol",
+    "ruby2.7": "deprecated",
+  },
+}
+`;
+
+exports[`snapshot tests Role lexicon entry 1`] = `
+{
+  "attrs": {
+    "arn": "Arn",
+    "roleId": "RoleId",
+  },
+  "kind": "resource",
+  "lexicon": "aws",
+  "primaryIdentifier": [
+    "RoleName",
+  ],
+  "propertyConstraints": {
+    "RoleName": {
+      "maxLength": 64,
+      "minLength": 1,
+      "pattern": "^[\\w+=,.@-]+$",
+    },
+  },
+  "resourceType": "AWS::IAM::Role",
+}
+`;
+
+exports[`snapshot tests generated resource names 1`] = `
+[
+  "Api",
+  "Api_Auth",
+  "Api_CorsConfiguration",
+  "Application",
+  "AttributeDefinition",
+  "Auth",
+  "Bucket",
+  "BucketEncryption",
+  "Bucket_BucketEncryption",
+  "Bucket_Tag",
+  "Bucket_VersioningConfiguration",
+  "Code",
+  "Connector",
+  "DeadLetterQueue",
+  "DeploymentPreference",
+  "EventSource",
+  "Function",
+  "Function_Code",
+  "Function_Tag",
+  "GraphQLApi",
+  "HttpApi",
+  "HttpApi_CorsConfiguration",
+  "KeySchema",
+  "LayerVersion",
+  "LogGroup",
+  "Policy",
+  "PrimaryKey",
+  "Role",
+  "Role_Policy",
+  "Role_Tag",
+  "SSESpecification",
+  "ServerlessFunction",
+  "ServerlessFunction_DeadLetterQueue",
+  "ServerlessFunction_DeploymentPreference",
+  "ServerlessFunction_Environment",
+  "ServerlessFunction_EventSource",
+  "ServerlessFunction_S3Location",
+  "ServerlessFunction_VpcConfig",
+  "SimpleTable",
+  "SimpleTable_PrimaryKey",
+  "StateMachine",
+  "StateMachine_S3Location",
+  "Subscription",
+  "Table",
+  "Table_AttributeDefinition",
+  "Table_KeySchema",
+  "Table_SSESpecification",
+  "Table_Tag",
+  "Topic",
+  "Topic_Subscription",
+  "Topic_Tag",
+  "VersioningConfiguration",
+  "VpcConfig",
+]
+`;
+
+exports[`snapshot tests Bucket .d.ts class declaration 1`] = `
+"export declare class Bucket {
+  constructor(props: {
+    /** A name for the bucket. */
+    bucketName: string;
+    /** The Amazon Resource Name (ARN) of the bucket. */
+    arn?: string;
+    /** Specifies default encryption for a bucket. */
+    bucketEncryption?: Bucket_BucketEncryption;
+    /** An arbitrary set of tags (key-value pairs) for this S3 bucket. */
+    tags?: Bucket_Tag[];
+    /** Enables multiple versions of all objects in this bucket. */
+    versioningConfiguration?: Bucket_VersioningConfiguration;
+  });
+  readonly arn: string;
+}"
+`;
+
+exports[`snapshot tests Function .d.ts class declaration 1`] = `
+"export declare class Function {
+  constructor(props: {
+    /** The code for the function. */
+    code: Function_Code;
+    /** The ARN of the function's execution role. */
+    role: string;
+    /** The ARN of the function. */
+    arn?: string;
+    /** The name of the Lambda function. */
+    functionName?: string;
+    /** The name of the method within your code that Lambda calls to run your function. */
+    handler?: string;
+    /** The amount of memory available to the function at runtime. */
+    memorySize?: number;
+    /** The identifier of the function's runtime. */
+    runtime?: "java17" | "java21" | "nodejs18.x" | "nodejs20.x" | "python3.11" | "python3.12";
+  });
+  readonly arn: string;
+}"
+`;

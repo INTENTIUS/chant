@@ -1,0 +1,138 @@
+---
+title: Architecture Overview
+description: Understanding chant's architecture and the build/lint pipeline
+---
+
+chant is a type system for operations. You declare intent in TypeScript, the system validates it with semantic rules, and synthesizes artifacts for your target platform.
+
+## Concepts
+
+### Lexicons
+
+A lexicon is a collection of types and semantic lint rules for an operational area. Each lexicon brings its own vocabulary (types) and grammar (semantic rules). The system is extensible — implement the `Serializer` interface to create a lexicon for any operational area.
+
+### The Pipeline
+
+```
+build  →  lint
+```
+
+**Build** resolves declarations into artifacts — TypeScript in, deployment-ready output out. **Lint** validates meaning, not structure — semantic rules catch misalignment between what you declared and what you probably meant.
+
+## Package Structure
+
+### @intentius/chant
+
+The foundation — lexicon-agnostic type system, pipeline, and codegen infrastructure:
+
+- **Type system** — `Declarable`, `Intrinsic`, `Value<T>`, `AttrRef`
+- **Discovery** — file scanning, module imports, entity collection, dependency graph
+- **Build pipeline** — resolves references, topological sort, serialization
+- **Semantic lint engine** — rule execution, configuration, reporting
+- **Serializer interface** — the contract lexicons implement
+- **Codegen infrastructure** — reusable pipelines for schema fetching, naming, code generation, and packaging
+- **LSP providers** — generic lexicon-based completion and hover
+- **Runtime factories** — `createResource`/`createProperty` for Declarable-marked constructors
+
+The core has no lexicon-specific knowledge. It provides the machinery that lexicons plug into. The codegen layer provides parameterized pipelines — lexicons supply callbacks and data tables, core handles orchestration.
+
+The CLI is included in this package:
+
+- **`chant build`** — resolve declarations into artifacts
+- **`chant lint`** — validate declarations with semantic rules
+- **Formatters** — stylish, JSON, SARIF output
+- **MCP server** — Model Context Protocol integration
+
+### @intentius/chant-test-utils
+
+Shared testing utilities — mock entities, test directories, assertion helpers.
+
+## Data Flow
+
+```
+1. User writes TypeScript files using lexicon resources
+   ↓
+2. CLI invokes discovery system
+   ↓
+3. Discovery scans files, imports modules, collects entities
+   ↓
+4. Core resolves AttrRefs and builds dependency graph
+   ↓
+5. Core sorts entities topologically
+   ↓
+6. Serializer serializes entities to target format
+   ↓
+7. CLI outputs the final template
+```
+
+## Key Interactions
+
+### CLI ↔ Core
+
+The CLI imports the `build()` function from core and passes it:
+- **Input directory** — where to find infrastructure files
+- **Serializer** — which serializer to use
+
+The core returns:
+- **Output** — serialized template string
+- **Entities** — map of discovered declarables
+- **Errors** — any errors encountered
+
+### Core ↔ Serializer
+
+The core defines a `Serializer` interface that lexicons must implement:
+
+```typescript
+interface Serializer {
+  name: string;
+  rulePrefix: string;
+  serialize(entities: Map<string, Declarable>, outputs?: LexiconOutput[]): string;
+}
+```
+
+The core calls `serializer.serialize()` after resolving all entities and their dependencies.
+
+## Extension Points
+
+### Custom Lexicons
+
+Create new lexicons by implementing the `LexiconPlugin` interface. Core provides reusable infrastructure for code generation:
+
+- **`createResource`/`createProperty`** — runtime factories for Declarable constructors
+- **`NamingStrategy`** — collision-free TypeScript class name generation, parameterized by data tables
+- **`generatePipeline`** — orchestrates fetch → parse → name → generate with provider-specific callbacks
+- **`packagePipeline`** — bundles generated artifacts into a distributable `BundleSpec`
+- **`fetchWithCache`/`extractFromZip`** — HTTP fetch with caching and zip extraction
+- **`LexiconIndex`/`lexiconCompletions`/`lexiconHover`** — LSP completion and hover from lexicon JSON
+
+See the [Lexicon Authoring Guide](/lexicons/authoring/) for the full walkthrough.
+
+### Custom Resources
+
+Extend existing lexicons with new resource types by implementing `Declarable`.
+
+### Custom Lint Rules
+
+Add lexicon-specific or project-specific lint rules. See [Custom Rules](/lint-rules/custom-rules/).
+
+## Declarable Kinds
+
+Declarables come in two kinds:
+
+- **Resource-kind** — becomes a top-level entry in the output. Gets its own logical name and can be referenced.
+- **Property-kind** — inlined into its parent resource's properties during serialization. Does not get its own logical name.
+
+Each declarable has a `kind` field set to either `"resource"` or `"property"`. During serialization, resource-kind declarables are emitted as top-level resources, while property-kind declarables are folded into their parent's property map.
+
+## Build Process
+
+1. **Lexicon detection** — scan imports to identify which lexicon is used
+2. **File discovery** — find all `.ts` files in the input directory
+3. **Module import** — dynamically load TypeScript modules
+4. **Entity collection** — extract all `Declarable` exports
+5. **Reference resolution** — assign logical names and resolve `AttrRef` instances
+6. **Dependency graph** — build graph of entity dependencies
+7. **Cycle detection** — verify no circular dependencies exist
+8. **Topological sort** — order entities by dependencies
+9. **Serialization** — call serializer's `serialize()` method
+10. **Output** — write the final template

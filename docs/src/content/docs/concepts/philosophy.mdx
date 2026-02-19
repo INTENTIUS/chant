@@ -1,0 +1,31 @@
+---
+title: Philosophy
+description: Why chant exists
+---
+
+Infrastructure tools give you syntax — YAML schemas, HCL blocks, SDK constructors. What they don't give you is semantics: whether what you declared actually makes sense in context. That's the gap chant closes.
+
+## Two Ideas
+
+**Lexicons** are collections of types and semantic lint rules for an operational area. A lexicon knows what resources exist in its domain and can validate whether your declarations are coherent — not just structurally correct, but semantically meaningful.
+
+**Synthesis** takes typed TypeScript declarations in and produces validated artifacts out. You write TypeScript objects, chant resolves dependencies, and serializes to the target format.
+
+## TypeScript as Data
+
+Most IaC tools that use general-purpose languages — CDK, Pulumi, Terraform's CDK — work by *executing* your code. Your program runs, makes API calls, and the tool captures the result.
+
+chant doesn't execute your code. It parses `.ts` files, resolves types and imports, evaluates the static subset of expressions it understands, and emits output. Your TypeScript is a declaration of intent, not a program.
+
+This constraint is the point. Because nothing executes:
+
+- **Evaluation is fast and deterministic** — no side effects, no nondeterminism.
+- **Analysis is single-pass** — type checking, linting, and evaluation in one invocation.
+- **Output is auditable** — every value traces to a literal, a const binding, or a cross-resource reference.
+- **IDEs work fully** — types drive the API surface, so autocompletion, inline errors, and go-to-definition come for free.
+
+## What chant Doesn't Do
+
+chant produces artifacts — it doesn't deploy them. Anything with a schema is a potential lexicon target.
+
+chant doesn't replace your cloud tooling. It's a semantic layer on top of it. You can import existing templates, give them types, and lint them alongside everything else.

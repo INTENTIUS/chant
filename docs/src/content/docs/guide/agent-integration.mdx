@@ -1,0 +1,53 @@
+---
+title: Agent Integration
+description: Integrating chant with AI coding agents via MCP
+---
+
+chant integrates with AI coding agents like Claude and Cursor through the MCP (Model Context Protocol) server and a skills system.
+
+## Setup
+
+`chant init` handles agent integration automatically:
+
+1. **Writes MCP config** — adds a `chant` entry to `.mcp.json` so agents can run builds, invoke lint checks, and import templates.
+2. **Installs skills** — copies lexicon-contributed skill files (markdown guides) into `.chant/skills/`.
+
+```bash
+npx chant init my-infra
+```
+
+To refresh skills after a lexicon update:
+
+```bash
+npx chant update
+```
+
+### Manual MCP Configuration
+
+If your editor doesn't auto-detect `.mcp.json`, add the chant MCP server manually. The server runs over stdio:
+
+```json
+{
+  "mcpServers": {
+    "chant": {
+      "command": "npx",
+      "args": ["chant", "serve", "mcp"]
+    }
+  }
+}
+```
+
+## MCP Server Capabilities
+
+When an agent connects via MCP, the chant server exposes:
+
+**Tools:**
+- `lint` — Run lint checks on TypeScript intent definitions
+- `build` — Synthesize and write infrastructure output
+- `import` — Import infrastructure templates and generate TypeScript files
+
+**Resources:**
+- `chant://context` — Lexicon-specific instructions and patterns for chant development
+- `chant://examples/list` — List of available chant examples
+
+Lexicon plugins can contribute additional tools and resources.

@@ -1,0 +1,15 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Transform: AWS::Serverless-2016-10-31
+Description: SAM Layer Version
+
+Resources:
+  MyLayer:
+    Type: AWS::Serverless::LayerVersion
+    Properties:
+      LayerName: my-layer
+      Description: Shared dependencies
+      ContentUri: s3://bucket/layer.zip
+      CompatibleRuntimes:
+        - nodejs18.x
+        - nodejs20.x
+      RetentionPolicy: Retain

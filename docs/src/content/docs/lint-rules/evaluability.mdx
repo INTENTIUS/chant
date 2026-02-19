@@ -1,0 +1,172 @@
+---
+title: Evaluability Rules (EVL)
+description: Rules that flag TypeScript patterns the evaluator cannot statically resolve
+---
+
+Evaluability rules flag TypeScript patterns that the chant evaluator cannot statically resolve. All evaluability rules have severity **error**.
+
+---
+
+## EVL001: Non-Literal Expression
+
+Resource property values must be statically evaluable. Function calls, method calls, and other dynamic expressions are not allowed.
+
+```typescript
+// ❌ Triggers EVL001
+export const bucket = new _.Resource({
+  bucketName: getName(),
+  tags: Object.assign({}, baseTags),
+});
+```
+
+```typescript
+// ✅ Fixed
+const name = "my-data-bucket";
+const tags = { ...baseTags, env: "prod" };
+
+export const bucket = new _.Resource({
+  bucketName: name,
+  tags: tags,
+});
+```
+
+---
+
+## EVL002: Control Flow Wrapping Resources
+
+Resource instantiation cannot appear inside control flow blocks (`if`, `for`, `while`, `switch`, `try`). Resources must be declared at the top level.
+
+```typescript
+// ❌ Triggers EVL002
+if (env === "prod") {
+  export const bucket = new _.Resource({
+    bucketName: "prod-data",
+  });
+}
+```
+
+```typescript
+// ✅ Fixed
+export const bucket = new _.Resource({
+  bucketName: "my-data",
+});
+```
+
+---
+
+## EVL003: Dynamic Property Access
+
+Computed property access with a non-literal key cannot be evaluated statically.
+
+```typescript
+// ❌ Triggers EVL003
+const region = config[key];
+```
+
+```typescript
+// ✅ Fixed
+const region = config["production"];
+```
+
+---
+
+## EVL004: Spread From Non-Const Source
+
+The spread operator requires the source to be traceable to a `const` declaration.
+
+```typescript
+// ❌ Triggers EVL004
+export const bucket = new _.Resource({
+  ...getDefaults(),
+});
+```
+
+```typescript
+// ✅ Fixed
+const defaults = { versioning: true, encryption: "AES256" };
+
+export const bucket = new _.Resource({
+  ...defaults,
+});
+```
+
+---
+
+## EVL005: Block Body in resource() Callback
+
+Callbacks passed to `resource()` must use expression body syntax. Block bodies with `return` statements cannot be statically evaluated.
+
+```typescript
+// ❌ Triggers EVL005
+resource(_.Resource, (props) => {
+  const name = props.name + "-data";
+  return { bucketName: name };
+});
+```
+
+```typescript
+// ✅ Fixed — use expression body
+resource(_.Resource, (props) => ({
+  bucketName: props.name + "-data",
+}));
+```
+
+---
+
+## EVL006: Incorrect barrel() Usage
+
+`barrel()` has two constraints:
+
+1. The argument must be `import.meta.dir` — not a string literal.
+2. The result must be assigned to `export const $`.
+
+```typescript
+// ❌ Triggers EVL006
+const $ = barrel("./some/path");
+export const myBarrel = barrel(import.meta.dir);
+```
+
+```typescript
+// ✅ Fixed
+export const $ = barrel(import.meta.dir);
+```
+
+---
+
+## EVL007: Invalid Siblings Access
+
+In composite resources, accessing `siblings.key.attr` where `key` does not exist in the resource map is an error.
+
+```typescript
+// ❌ Triggers EVL007
+resource(_.ServiceType, (props, siblings) => ({
+  role: siblings.typo.arn,
+}));
+```
+
+```typescript
+// ✅ Fixed
+resource(_.ServiceType, (props, siblings) => ({
+  role: siblings.executionRole.arn,
+}));
+```
+
+---
+
+## EVL008: Unresolvable Barrel Reference
+
+Barrel access (`$.resourceName`) must refer to a resource that exists in the barrel's exports.
+
+```typescript
+// ❌ Triggers EVL008
+export const fn = new _.ServiceType({
+  bucket: $.nonExistent.bucketName,
+});
+```
+
+```typescript
+// ✅ Fixed
+export const fn = new _.ServiceType({
+  bucket: $.dataBucket.bucketName,
+});
+```

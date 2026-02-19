@@ -1,0 +1,132 @@
+---
+title: Core Type System
+description: "Deep dive into chant's fundamental types — Declarable, Value<T>, Intrinsic, AttrRef"
+---
+
+chant provides a lexicon-agnostic declarative specification system. This guide covers the core types you'll use when building with chant.
+
+## Declarables
+
+A **Declarable** is any entity that can be declared in a specification. All declarables share a common marker and an `entityType` property for runtime identification.
+
+```typescript
+import * as core from "@intentius/chant";
+
+if (core.isDeclarable(value)) {
+  console.log(value.entityType);
+}
+```
+
+### CoreParameter
+
+Parameters that can be passed to declarable entities extend `CoreParameter`:
+
+```typescript
+interface CoreParameter extends Declarable {
+  readonly parameterType: string;
+}
+```
+
+### CoreOutput
+
+Outputs from declarable entities extend `CoreOutput`:
+
+```typescript
+interface CoreOutput extends Declarable {
+  readonly value: unknown;
+}
+```
+
+## Intrinsics
+
+An **Intrinsic** represents a lexicon-provided function that will be resolved at build time. Intrinsics are placeholders for values that depend on other resources or runtime information.
+
+```typescript
+if (core.isIntrinsic(value)) {
+  const serialized = value.toJSON();
+}
+```
+
+### AttrRef
+
+`AttrRef` is a built-in intrinsic for referencing attributes of other entities. It uses deferred resolution — the logical name is assigned during discovery, not construction.
+
+```typescript
+const arnRef = new core.AttrRef(bucket, "arn");
+arnRef.toJSON();
+// Produces the lexicon's reference format
+```
+
+## Values
+
+The `Value<T>` type represents a property that can either be a concrete value or an intrinsic:
+
+```typescript
+import type { Value } from "@intentius/chant";
+
+interface MyConfig {
+  endpoint: Value<string>;
+  port: Value<number>;
+}
+```
+
+This allows specifications to reference values that aren't known until build time.
+
+## Error Handling
+
+### DiscoveryError
+
+Thrown during file discovery and module loading:
+
+```typescript
+// Types: "import" | "resolution" | "circular"
+throw new core.DiscoveryError("config.ts", "Module not found", "import");
+```
+
+### BuildError
+
+Thrown during the build/serialization phase:
+
+```typescript
+throw new core.BuildError("MyResource", "Invalid configuration");
+```
+
+### LintError
+
+Represents a lint rule violation with location information:
+
+```typescript
+const error = new core.LintError(
+  "config.ts", 10, 5, "no-unused",
+  "Variable is declared but never used"
+);
+```
+
+## Serializer Interface
+
+```typescript
+const mySerializer: Serializer = {
+  name: "my-lexicon",
+  rulePrefix: "MD",
+  serialize(entities: Map<string, Declarable>): string {
+    return JSON.stringify({ entities: Array.from(entities.keys()) });
+  }
+};
+```
+
+## Lint System
+
+```typescript
+const myRule: LintRule = {
+  id: "my-rule",
+  severity: "error",
+  category: "correctness",
+  check(context: LintContext): LintDiagnostic[] {
+    return [];
+  },
+};
+```
+
+Severity levels: `"error"` | `"warning"` | `"info"`
+
+Categories: `"correctness"` | `"style"` | `"performance"` | `"security"`

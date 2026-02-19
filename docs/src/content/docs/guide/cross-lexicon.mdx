@@ -1,0 +1,83 @@
+---
+title: Cross-Lexicon Projects
+description: Combine multiple lexicons (e.g. AWS + GitLab) in a single chant project
+---
+
+A cross-lexicon project uses **two or more lexicons** in one project — for example, AWS CloudFormation infrastructure alongside a GitLab CI pipeline that deploys to it. Chant auto-detects cross-lexicon references, generates the necessary outputs, and orders deployments correctly.
+
+## Setup
+
+Add both lexicons to `chant.config.json`:
+
+```json
+{
+  "lexicons": ["aws", "gitlab"],
+  "extends": ["@intentius/chant/lint/presets/strict"]
+}
+```
+
+Install both lexicon packages:
+
+```bash
+bun add @intentius/chant-lexicon-aws @intentius/chant-lexicon-gitlab
+```
+
+## Barrel pattern with namespaced imports
+
+When two lexicons might export the same name, namespace one of them:
+
+```typescript
+// src/_.ts
+export * from "@intentius/chant-lexicon-aws";
+export * as gl from "@intentius/chant-lexicon-gitlab";
+import * as core from "@intentius/chant";
+export const $ = core.barrel(import.meta.dir);
+```
+
+AWS entities are imported flat (`_.Bucket`, `_.Role`) while GitLab entities are namespaced (`_.gl.Job`, `_.gl.Rule`).
+
+## Cross-lexicon references
+
+When a GitLab entity references an attribute from an AWS entity, chant automatically detects the **cross-lexicon AttrRef**:
+
+```typescript
+// src/pipeline.ts
+import * as _ from "./_";
+
+export const deploy = new _.gl.Job({
+  stage: "deploy",
+  script: ["aws s3 sync dist/ s3://$DEPLOY_BUCKET/"],
+  variables: { DEPLOY_BUCKET: _.$.deployBucket.arn },
+});
+```
+
+Here `_.$.deployBucket.arn` is an `AttrRef` pointing to an AWS `Bucket` entity. Because the consuming entity (a GitLab `Job`) belongs to a different lexicon than the source entity (an AWS `Bucket`), chant:
+
+1. **Adds an Output** to the AWS CloudFormation template (e.g. `Outputs.deployBucket_Arn`)
+2. **Sets deploy order** to `["aws", "gitlab"]` — AWS deploys first so the output value is available
+
+:::caution
+The AttrRef must be a **direct property value** for the walker to detect it. Embedding it inside a JS template literal (`s3://${bucket.arn}`) coerces it to a string and loses the reference. Use a `variables` map instead.
+:::
+
+## Build output
+
+`chant build` produces a multi-output result keyed by lexicon name:
+
+```bash
+chant build src
+# Outputs JSON with both "aws" (CloudFormation) and "gitlab" (.gitlab-ci.yml) sections
+```
+
+The build manifest includes:
+- `lexicons` — which lexicons are present
+- `outputs` — auto-generated cross-lexicon outputs
+- `deployOrder` — ordered list of lexicons to deploy
+
+## Linting
+
+Both lexicon rule sets run in a single `chant lint` invocation. AWS rules (WAW*) and GitLab rules (WGL*) are applied to their respective entities.
+
+## Example
+
+See the complete working example at [`examples/cross-lexicon/`](https://github.com/intentius/chant/tree/main/examples/cross-lexicon).

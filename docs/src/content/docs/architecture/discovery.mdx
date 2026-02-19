@@ -1,0 +1,111 @@
+---
+title: File Discovery
+description: Understanding chant's file discovery and entity resolution system
+---
+
+chant includes utilities for discovering infrastructure files in a project and resolving entity dependencies. This guide covers the complete discovery pipeline.
+
+## File Discovery
+
+### findInfraFiles
+
+Recursively scans a directory for TypeScript infrastructure files:
+
+```typescript
+import * as core from "@intentius/chant";
+
+const files = await core.findInfraFiles("./src");
+// ["/project/src/resources.ts", "/project/src/config.ts"]
+```
+
+The function:
+- Returns absolute paths to `.ts` files
+- Excludes `node_modules/` directories
+- Excludes test files (`*.test.ts`, `*.spec.ts`)
+
+### importModule
+
+Dynamically imports a TypeScript module and returns its exports:
+
+```typescript
+import * as core from "@intentius/chant";
+
+const exports = await core.importModule("./src/resources.ts");
+```
+
+On import failure, throws a `DiscoveryError` with type `"import"`.
+
+### collectEntities
+
+Collects all `Declarable` entities from imported modules:
+
+```typescript
+import * as core from "@intentius/chant";
+
+const entities = core.collectEntities(modules);
+// Map { "MyResource" => {...}, "MyFunction" => {...} }
+```
+
+## Dependency Analysis
+
+### detectCycles
+
+Detects circular dependencies in an entity graph using DFS:
+
+```typescript
+const cycles = core.detectCycles(graph);
+```
+
+### topologicalSort
+
+Orders entities so dependencies appear before dependents:
+
+```typescript
+const order = core.topologicalSort(deps);
+// ["Database", "Cache", "App"]
+```
+
+### buildDependencyGraph
+
+Builds a dependency graph from entity relationships, detecting dependencies from `AttrRef` references and direct `Declarable` property values.
+
+## Reference Resolution
+
+### resolveAttrRefs
+
+Resolves all `AttrRef` instances by setting their logical names:
+
+```typescript
+core.resolveAttrRefs(entities);
+```
+
+This enables `AttrRef.toJSON()` to work correctly during serialization.
+
+## Complete Discovery Pipeline
+
+### discover
+
+The main discovery pipeline that orchestrates all steps:
+
+```typescript
+const result = await core.discover("./src/infra");
+// result.entities: Map of entity name to Declarable
+// result.dependencies: Map of entity to dependency set
+// result.sourceFiles: Array of discovered file paths
+// result.errors: Array of any errors encountered
+```
+
+The pipeline runs these steps in sequence:
+1. **File scan** — find all infrastructure TypeScript files
+2. **Import** — dynamically load modules
+3. **Collect** — extract declarable entities from exports
+4. **Resolve** — set logical names and resolve AttrRefs
+5. **Graph** — build dependency graph
+
+## Error Handling
+
+Discovery operations can throw `DiscoveryError` with different types:
+
+- `"import"` — module loading failed
+- `"resolution"` — entity name conflicts or resolution issues
+- `"circular"` — circular dependencies detected

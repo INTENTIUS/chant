@@ -1,0 +1,125 @@
+---
+title: "chant serve mcp"
+description: Start an MCP server for AI agent integration
+---
+
+## Synopsis
+
+```
+npx chant serve mcp [path]
+```
+
+## Description
+
+`chant serve mcp` starts an MCP (Model Context Protocol) server over stdio. This allows AI agents that support MCP — such as Claude Code, Cursor, and Windsurf — to interact with your chant project programmatically.
+
+Typically you don't run this directly. `chant init` writes the MCP config to `.mcp.json`, and your agent picks it up automatically. See [Agent Integration](/guide/agent-integration/).
+
+## Tools
+
+The server exposes three core tools that agents can invoke:
+
+### `build`
+
+Build chant infrastructure code and generate output for the target lexicon.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `path` | `string` | Yes | Path to the infrastructure directory or file |
+| `output` | `string` | No | Output file path (returns in response if omitted) |
+| `format` | `"json" \| "yaml"` | No | Output format (default: `json`) |
+
+Returns `{ success, resourceCount, output, format }`.
+
+### `lint`
+
+Lint chant infrastructure code and report issues.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `path` | `string` | Yes | Path to the infrastructure directory or file |
+| `fix` | `boolean` | No | Auto-fix fixable issues (default: `false`) |
+
+Returns `{ success, errorCount, warningCount, diagnostics, output }`.
+
+### `import`
+
+Import external templates and convert them to chant TypeScript.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `source` | `string` | Yes | Path to the template file to import |
+| `output` | `string` | No | Output directory (default: `./infra/`) |
+
+Returns `{ success, lexicon, generatedFiles, warnings }`.
+
+### Plugin Tools
+
+Lexicon plugins can contribute additional tools. Plugin tools are namespaced as `{pluginName}:{toolName}` to avoid conflicts with core tools.
+
+## Resources
+
+The server provides resources that agents can read for context:
+
+| URI | MIME Type | Description |
+|-----|-----------|-------------|
+| `chant://context` | `text/markdown` | Lexicon-specific instructions, patterns, and best practices |
+| `chant://examples/list` | `application/json` | JSON array of available examples (`[{ name, description }]`) |
+| `chant://examples/<name>` | `text/typescript` | Source code of a specific example |
+
+### Plugin Resources
+
+Lexicon plugins can contribute additional resources, namespaced as `chant://{pluginName}/{path}`. Plugin resources with `/examples/` in their URI are automatically included in the examples list.
+
+## Configuration
+
+### Automatic Setup
+
+`chant init` adds the MCP server to `.mcp.json`:
+
+```json
+{
+  "mcpServers": {
+    "chant": {
+      "command": "npx",
+      "args": ["chant", "serve", "mcp"]
+    }
+  }
+}
+```
+
+### Manual Setup
+
+If your agent doesn't auto-detect `.mcp.json`, configure the server manually. The command is:
+
+```bash
+npx chant serve mcp
+```
+
+The server communicates over stdin/stdout using JSON-RPC 2.0 with line-based framing (one JSON object per line).
+
+## Protocol Details
+
+The MCP server implements the [Model Context Protocol](https://modelcontextprotocol.io/) specification version `2024-11-05`.
+
+### Supported Methods
+
+| Method | Description |
+|--------|-------------|
+| `initialize` | Handshake — returns protocol version, capabilities, and server info |
+| `tools/list` | List all available tools (core + plugin-contributed) |
+| `tools/call` | Invoke a tool by name with parameters |
+| `resources/list` | List all available resources (core + plugin-contributed) |
+| `resources/read` | Read a resource by URI |
+
+## Exit Codes
+
+| Code | Meaning |
+|------|---------|
+| 0 | Clean shutdown |
+| 1 | Unknown subcommand or startup failure |
+
+## See Also
+
+- [Agent Integration](/guide/agent-integration/) — Setup guide and `.mcp.json` configuration
+- [`chant serve lsp`](/cli/lsp/) — LSP server for editor integration

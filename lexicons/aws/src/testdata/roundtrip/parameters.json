@@ -1,0 +1,23 @@
+{
+  "AWSTemplateFormatVersion": "2010-09-09",
+  "Description": "Template with parameters",
+  "Parameters": {
+    "Environment": {
+      "Type": "String",
+      "Default": "dev",
+      "Description": "Deployment environment"
+    },
+    "BucketPrefix": {
+      "Type": "String",
+      "Description": "Prefix for bucket name"
+    }
+  },
+  "Resources": {
+    "MyBucket": {
+      "Type": "AWS::S3::Bucket",
+      "Properties": {
+        "BucketName": { "Ref": "BucketPrefix" }
+      }
+    }
+  }
+}

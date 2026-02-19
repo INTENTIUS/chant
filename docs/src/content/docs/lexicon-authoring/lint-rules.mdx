@@ -1,0 +1,80 @@
+---
+title: Write Lint Rules
+description: Imperative rules, declarative rules, and post-synth checks for your lexicon
+---
+
+Lexicons can contribute three kinds of validation: **imperative rules** (TypeScript compiler API), **declarative rules** (pattern matching DSL), and **post-synth checks** (validate serialized output).
+
+## Imperative Rules
+
+Imperative rules use the TypeScript compiler API to inspect AST nodes:
+
+```typescript
+import type { LintRule, LintContext, LintDiagnostic } from "@intentius/chant";
+
+export const myRule: LintRule = {
+  id: "MYD001",
+  severity: "warning",
+  category: "style",
+  description: "Example custom rule",
+
+  check(context: LintContext): LintDiagnostic[] {
+    // Your rule logic here
+    return [];
+  },
+};
+```
+
+Return these from your plugin's `lintRules()` method.
+
+## Declarative Rules
+
+Declarative rules use the `rule()` builder for common patterns:
+
+```typescript
+import type { RuleSpec } from "@intentius/chant";
+
+const spec: RuleSpec = {
+  id: "MYD002",
+  severity: "warning",
+  category: "style",
+  description: "Resource names must be lowercase",
+  selector: "resource > property",
+  match: { pattern: /^[A-Z]/ },
+  message: "Property name '{node}' should be lowercase",
+};
+```
+
+Return these from your plugin's `declarativeRules()` method.
+
+## Post-synth Checks
+
+Post-synth checks validate the serialized output after the build pipeline completes:
+
+```typescript
+import type { PostSynthCheck, PostSynthDiagnostic } from "@intentius/chant";
+
+const myCheck: PostSynthCheck = {
+  id: "MYD010",
+  description: "Check output constraints",
+
+  check(context): PostSynthDiagnostic[] {
+    // Validate the serialized output
+    return [];
+  },
+};
+```
+
+Return these from your plugin's `postSynthChecks()` method.
+
+## Rule ID Conventions
+
+Rule IDs follow the pattern `{PREFIX}{CATEGORY}{NUMBER}`:
+
+- **Prefix** — your lexicon's `rulePrefix` (e.g. `MY`, `AWS`, `K8S`)
+- **Category** — single letter: `D` (declarative), `S` (style), `C` (correctness), `E` (evaluability)
+- **Number** — three-digit sequential number
+
+## Next Steps
+
+With rules in place, add [LSP & MCP providers](/lexicon-authoring/lsp-mcp/) for editor integration.

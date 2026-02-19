@@ -1,0 +1,52 @@
+---
+title: Multi-Stack Projects
+description: Splitting resources across multiple stacks
+---
+
+chant supports splitting resources across multiple stacks with automatic cross-stack reference resolution.
+
+When resources in different stacks reference each other, chant generates cross-stack outputs and imports using the appropriate provider-specific mechanism.
+
+## Multi-lexicon partitioning
+
+When a project uses multiple lexicons, each lexicon's resources are serialized into a separate output file. chant resolves cross-lexicon references automatically via `LexiconOutput`.
+
+## Child projects (nested stacks)
+
+chant supports **child projects** — subdirectories with their own barrel file (`_.ts`) that build to separate, independently-valid templates. The parent references a child project via a lexicon-specific function, and cross-stack outputs are declared explicitly with `stackOutput()`.
+
+For example, the AWS lexicon's `nestedStack()` function references a child project directory and produces separate CloudFormation child templates:
+
+```
+src/
+  _.ts              # parent barrel
+  app.ts            # parent resources
+  network/          # ← child project
+    _.ts            # child barrel
+    vpc.ts          # child resources
+    outputs.ts      # stackOutput() declarations
+```
+
+```typescript
+// src/network/outputs.ts — child declares what the parent can reference
+import * as _ from "./_";
+import { stackOutput } from "@intentius/chant";
+
+export const vpcId = stackOutput(_.$.vpc.vpcId);
+export const subnetId = stackOutput(_.$.subnet.subnetId);
+```
+
+```typescript
+// src/app.ts — parent references child outputs
+import * as _ from "./_";
+
+const network = _.nestedStack("network", import.meta.dir + "/network");
+
+export const handler = new _.Function({
+  vpcConfig: { subnetIds: [network.outputs.subnetId] },
+});
+```
+
+The child can be built independently (`chant build src/network/`), and the parent build produces multiple template files. See your lexicon's documentation for details — for AWS, see the [Nested Stacks](/lexicons/aws/nested-stacks) guide.
+
+For details on how multi-stack serialization works, see [Multi-Stack Output](/serialization/multi-stack/).

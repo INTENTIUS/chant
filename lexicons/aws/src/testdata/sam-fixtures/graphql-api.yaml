@@ -1,0 +1,13 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Transform: AWS::Serverless-2016-10-31
+Description: SAM GraphQL API
+
+Resources:
+  MyGraphQLApi:
+    Type: AWS::Serverless::GraphQLApi
+    Properties:
+      Name: my-graphql-api
+      SchemaUri: schema.graphql
+      Auth:
+        Type: API_KEY
+      XrayEnabled: true

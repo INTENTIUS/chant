@@ -1,0 +1,48 @@
+---
+title: "chant build"
+description: Synthesize infrastructure output from TypeScript definitions
+---
+
+## Synopsis
+
+```
+npx chant build [path] [flags]
+```
+
+## Description
+
+`chant build` loads the project at the given path, parses all TypeScript source files, evaluates resource definitions, and serializes the output.
+
+## Flags
+
+| Flag | Type | Default | Description |
+|------|------|---------|-------------|
+| `-o, --output` | `string` | stdout | Write output to file |
+| `-f, --format` | `string` | `json` | Output format: `json` or `yaml` |
+| `-w, --watch` | `bool` | `false` | Watch for file changes and rebuild |
+
+## Usage
+
+```bash
+# Build from current directory
+npx chant build
+
+# Build from specific directory
+npx chant build ./infra
+
+# Output to file
+npx chant build --output stack.json
+
+# YAML output
+npx chant build --format yaml --output stack.yaml
+
+# Watch mode
+npx chant build --watch
+```
+
+## Exit Codes
+
+| Code | Meaning |
+|------|---------|
+| 0 | Success |
+| 1 | Errors found |

@@ -1,0 +1,101 @@
+---
+title: "chant init lexicon"
+description: Scaffold a new lexicon plugin project
+---
+
+Scaffold a new lexicon plugin project with compilable stubs for all required `LexiconPlugin` lifecycle methods.
+
+## Synopsis
+
+```
+chant init lexicon <name> [path] [flags]
+```
+
+## Arguments
+
+| Argument | Description |
+|----------|-------------|
+| `<name>` | Lexicon name (e.g. `k8s`, `gcp`). Used to derive package name, variable names, and rule prefix. |
+| `[path]` | Target directory (default: `./lexicons/<name>`) |
+
+## Flags
+
+| Flag | Description |
+|------|-------------|
+| `--force` | Initialize even if the target directory is not empty |
+
+## Description
+
+`chant init lexicon` creates a complete lexicon plugin project with stubs for every required lifecycle method. The generated code compiles out of the box, imports from `@intentius/chant`, and mirrors the structure of the AWS lexicon.
+
+### Name derivations
+
+From the provided name, the command derives:
+
+| Derived value | Formula | Example (`k8s`) |
+|---------------|---------|------------------|
+| Plugin variable | `camelCase(name) + "Plugin"` | `k8sPlugin` |
+| Serializer variable | `camelCase(name) + "Serializer"` | `k8sSerializer` |
+| Rule prefix | `name.toUpperCase()` (first 3 alphanumeric chars) | `K8S` |
+| Package name | `@intentius/chant-lexicon-<name>` | `@intentius/chant-lexicon-k8s` |
+
+### Generated files
+
+| File | Purpose |
+|------|---------|
+| `src/plugin.ts` | `LexiconPlugin` with all 5 required lifecycle methods |
+| `src/index.ts` | Re-exports plugin and serializer |
+| `src/serializer.ts` | Stub `Serializer` producing minimal JSON |
+| `src/codegen/generate.ts` | Calls core `generatePipeline` with TODO callbacks |
+| `src/codegen/generate-cli.ts` | Bun entry point for `just generate` |
+| `src/codegen/naming.ts` | `NamingStrategy` with empty data tables |
+| `src/codegen/package.ts` | Calls core `packagePipeline` |
+| `src/codegen/rollback.ts` | Snapshot list/restore helpers |
+| `src/codegen/docs.ts` | Calls core `docsPipeline` |
+| `src/spec/fetch.ts` | `fetchWithCache` stub with TODO URL |
+| `src/spec/parse.ts` | `parseSchema` stub with `ParseResult` type |
+| `src/lint/rules/sample.ts` | Example `LintRule` using derived prefix |
+| `src/lint/rules/index.ts` | Barrel re-export |
+| `src/lsp/completions.ts` | Stub using core `lexiconCompletions` |
+| `src/lsp/hover.ts` | Stub using core `lexiconHover` |
+| `src/import/parser.ts` | Stub `TemplateParser` |
+| `src/import/generator.ts` | Stub `TypeScriptGenerator` |
+| `src/coverage.ts` | Stub coverage analysis |
+| `src/validate.ts` | Stub validation checks |
+| `src/validate-cli.ts` | Bun entry point for `just validate` |
+| `package.json` | Package config with `workspace:*` dep on `@intentius/chant` |
+| `tsconfig.json` | Extends root TypeScript config |
+| `justfile` | `generate`, `validate`, `docs`, `package` recipes |
+| `.gitignore` | Ignores snapshots, dist, cache |
+| `README.md` | Getting started guide |
+
+## Usage
+
+```bash
+# Scaffold a new lexicon
+chant init lexicon k8s
+
+# Scaffold at a custom path
+chant init lexicon gcp ./my-gcp-lexicon
+
+# Overwrite an existing directory
+chant init lexicon k8s --force
+```
+
+## Next steps
+
+After scaffolding:
+
+1. `cd lexicons/<name>`
+2. `bun install`
+3. Edit `src/spec/fetch.ts` — point at your upstream schema source
+4. Edit `src/spec/parse.ts` — parse your schema format
+5. `chant dev generate` to generate types
+6. `chant dev publish` to package for distribution
+
+## Exit codes
+
+| Code | Meaning |
+|------|---------|
+| 0 | Lexicon project created successfully |
+| 1 | Error (missing name, target directory not empty without `--force`) |

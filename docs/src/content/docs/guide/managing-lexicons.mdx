@@ -1,0 +1,37 @@
+---
+title: Managing Lexicons
+description: How to add, update, and remove lexicon packages
+---
+
+Lexicons are provider-specific type packages that define resource constructors, property types, and intrinsic functions.
+
+## Adding a Lexicon
+
+Install the lexicon package and add it to your `chant.config.ts`:
+
+```bash
+npm install --save-dev @intentius/chant-lexicon-<name>
+```
+
+```typescript
+import type { ChantConfig } from "@intentius/chant";
+
+export default {
+  lexicons: ["<name>"],
+  lint: {
+    extends: ["@intentius/chant/lint/presets/strict"],
+  },
+} satisfies ChantConfig;
+```
+
+## Updating Versions
+
+Update the lexicon package version:
+
+```bash
+npm update @intentius/chant-lexicon-<name>
+```
+
+## How Lexicons Work
+
+See [Lexicons Overview](/lexicons/overview/) for the full architecture, including how lexicons provide type definitions, property mappings, and lint rules.

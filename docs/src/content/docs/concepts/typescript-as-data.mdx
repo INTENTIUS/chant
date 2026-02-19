@@ -1,0 +1,190 @@
+---
+title: TypeScript as Data
+description: How chant reads TypeScript source files as structured data
+---
+
+chant reads your TypeScript source files as structured data. It understands a specific subset of the language — the part that can be evaluated statically without executing code. This page documents exactly which patterns are supported and which are not.
+
+## Supported Patterns
+
+### Resource declarations
+
+The core pattern: export a `const` binding initialized with `new _.ResourceType({...})`.
+
+```typescript
+import * as _ from "./_";
+
+export const store = new _.StorageType({
+  name: "my-data",
+  versioned: true,
+});
+```
+
+The evaluator extracts the export name (`store`), resolves the resource type from the lexicon, and evaluates the constructor argument.
+
+### Literal values
+
+Strings, numbers, booleans, `null`, arrays, and nested object literals are evaluated directly.
+
+```typescript
+export const service = new _.ServiceType({
+  name: "handler",
+  timeout: 30,
+  memorySize: 128,
+  environment: {
+    variables: {
+      DEBUG: "false",
+    },
+  },
+});
+```
+
+### Const variable references
+
+`const` bindings with literal initializers can be referenced by name. The evaluator traces the reference to its initializer and evaluates it.
+
+```typescript
+const tags = { project: "myapp", env: "prod" };
+
+export const store = new _.StorageType({
+  name: "data",
+  tags: tags,
+});
+```
+
+Only `const` bindings are supported. `let` and `var` are mutable and cannot be statically traced.
+
+### Spread from const sources
+
+Object spread is supported when the source is a `const` binding with a known literal value.
+
+```typescript
+const defaults = { timeout: 30, memorySize: 128 };
+
+export const service = new _.ServiceType({
+  ...defaults,
+  name: "handler",
+});
+```
+
+### Import and re-export
+
+Standard `import` statements are followed through the module graph. The evaluator resolves imported names to their definitions in other files.
+
+```typescript
+import { sharedTags } from "./shared";
+import * as _ from "./_";
+
+export const store = new _.StorageType({
+  name: "data",
+  tags: sharedTags,
+});
+```
+
+### Barrel references
+
+The `$` symbol table provides directory-scoped access to sibling resource exports. See [Barrel Files & the $ Symbol](/concepts/barrels/) for the full explanation.
+
+```typescript
+import * as _ from "./_";
+
+export const service = new _.ServiceType({
+  environment: {
+    variables: {
+      TABLE_ARN: _.$.dataTable.arn,
+    },
+  },
+});
+```
+
+### Intrinsic tagged templates
+
+Lexicons can register tagged template literals for provider-specific intrinsics (e.g., string substitution with deploy-time values):
+
+```typescript
+export const store = new _.StorageType({
+  name: _.Intrinsic`${_.Params.StackName}-data`,
+});
+```
+
+See your lexicon's documentation for available intrinsics.
+
+### Typed property-kind constructors
+
+Sub-resource properties can use typed constructors for autocompletion and validation:
+
+```typescript
+export const config = new _.EncryptionConfig({
+  algorithm: "AES256",
+});
+
+export const access = new _.AccessConfig({
+  publicAccess: false,
+});
+```
+
+### Nullish coalescing for defaults
+
+The `??` operator is supported for providing default values, particularly useful in composite props.
+
+```typescript
+timeout: props.timeout ?? 30,
+```
+
+## Unsupported Patterns
+
+The following patterns are caught by the evaluability lint rules (EVL) before the evaluator runs. Your editor shows these as lint errors, and `npx chant lint` reports them in CI.
+
+### Function calls as values
+
+```typescript
+// EVL001: Expression not statically evaluable
+export const store = new _.StorageType({
+  name: getName(),  // function call — not a literal
+});
+```
+
+### Control flow around resources
+
+```typescript
+// EVL002: Resource inside control flow
+if (env === "prod") {
+  export const store = new _.StorageType({...});
+}
+```
+
+Resources must be top-level exports. For environment-specific configuration, use separate files or composites with different prop values.
+
+### Dynamic property access
+
+```typescript
+// EVL003: Dynamic property access
+const name = config[key];
+```
+
+### Spread from dynamic sources
+
+```typescript
+// EVL004: Spread from non-const source
+export const store = new _.StorageType({
+  ...getDefaults(),
+});
+```
+
+### Other unsupported patterns
+
+- **`let`/`var` bindings** — only `const` is statically traceable
+- **Class declarations** — `class MyStore extends StorageType {...}`
+- **Template literals without known tags** — only lexicon-registered tags
+- **Computed property names** — `{ [key]: value }`
+- **`require()`** — only `import` statements
+- **Top-level `await`**
+- **Decorators**
+
+For the full EVL rule reference with configuration options, see [Evaluability Rules](/lint-rules/evaluability/).
+
+## Why These Constraints?
+
+The supported subset is the set of TypeScript patterns that can be evaluated without executing code — patterns where every value is either a literal, a reference to a known constant, or a symbolic cross-resource reference.
+
+This makes the evaluator fast (no interpretation overhead), deterministic (same source always produces the same output), and auditable (every output value traces to a specific line in the source).

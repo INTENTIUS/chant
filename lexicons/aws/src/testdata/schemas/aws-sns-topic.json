@@ -1,0 +1,71 @@
+{
+  "typeName": "AWS::SNS::Topic",
+  "description": "The AWS::SNS::Topic resource creates a topic to which notifications can be published.",
+  "properties": {
+    "TopicName": {
+      "type": "string",
+      "description": "The name of the topic.",
+      "minLength": 1,
+      "maxLength": 256
+    },
+    "TopicArn": {
+      "type": "string",
+      "description": "The Amazon Resource Name (ARN) of the topic."
+    },
+    "DisplayName": {
+      "type": "string",
+      "description": "The display name to use for an SNS topic with SMS subscriptions."
+    },
+    "Subscription": {
+      "type": "array",
+      "items": {
+        "$ref": "#/definitions/Subscription"
+      },
+      "description": "The SNS subscriptions (endpoints) for this topic."
+    },
+    "Tags": {
+      "type": "array",
+      "items": {
+        "$ref": "#/definitions/Tag"
+      },
+      "description": "The list of tags to add to a new topic."
+    }
+  },
+  "definitions": {
+    "Subscription": {
+      "type": "object",
+      "description": "An SNS subscription associated with the topic.",
+      "properties": {
+        "Protocol": {
+          "type": "string",
+          "description": "The subscription's protocol.",
+          "enum": ["http", "https", "email", "email-json", "sms", "sqs", "application", "lambda"]
+        },
+        "Endpoint": {
+          "type": "string",
+          "description": "The endpoint that receives notifications from the topic."
+        }
+      },
+      "required": ["Protocol", "Endpoint"]
+    },
+    "Tag": {
+      "type": "object",
+      "description": "A key-value pair to associate with a resource.",
+      "properties": {
+        "Key": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "Value": {
+          "type": "string",
+          "maxLength": 256
+        }
+      },
+      "required": ["Key", "Value"]
+    }
+  },
+  "readOnlyProperties": ["/properties/TopicArn"],
+  "primaryIdentifier": ["/properties/TopicArn"],
+  "additionalProperties": false
+}

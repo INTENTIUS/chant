@@ -1,0 +1,50 @@
+---
+title: Disable Directives
+description: Suppressing specific lint diagnostics using comments
+---
+
+Suppress specific lint diagnostics using comments in your source files.
+
+## Disable for Entire File
+
+Place at the top of the file:
+
+```typescript
+// chant-disable COR005
+// chant-disable
+```
+
+- `// chant-disable` — suppresses all rules for the entire file
+- `// chant-disable COR005` — suppresses only COR005 for the entire file
+
+## Disable for Current Line
+
+```typescript
+export const myBucket = new _.Resource({ // chant-disable-line COR005
+  bucketName: "my-bucket",
+});
+```
+
+## Disable for Next Line
+
+```typescript
+// chant-disable-next-line COR005
+export const myBucket = new _.Resource({
+  bucketName: "my-bucket",
+});
+```
+
+## Block Comment Syntax
+
+All directives also work with block comments:
+
+```typescript
+/* chant-disable-next-line COR010 */
+export const helper = { key: "value" };
+```
+
+## Usage Guidelines
+
+- Prefer the narrowest scope possible (`disable-next-line` over `disable`)
+- Always specify the rule ID rather than suppressing all rules
+- Use file-level `disable` sparingly — typically only for generated files

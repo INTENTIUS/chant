@@ -1,0 +1,23 @@
+---
+title: Importing Templates
+description: Converting existing infrastructure templates into chant TypeScript definitions
+---
+
+Some lexicons provide an `import` command that converts existing infrastructure templates into chant TypeScript resource definitions. This lets you adopt chant incrementally by importing your current infrastructure rather than rewriting it from scratch.
+
+## General Workflow
+
+```bash
+npx chant import <template-file> --output src/
+npx chant build
+```
+
+The import process:
+
+1. Reads the existing template
+2. Maps resources to lexicon types
+3. Converts property names to TypeScript conventions
+4. Generates TypeScript files organized by resource
+5. Creates a barrel file for cross-resource references
+
+See your lexicon's documentation for provider-specific import commands and options.

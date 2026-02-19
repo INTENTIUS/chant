@@ -1,0 +1,34 @@
+---
+title: "chant list"
+description: List exported declarations in a project
+---
+
+## Synopsis
+
+```
+npx chant list [path] [flags]
+```
+
+## Description
+
+`chant list` scans all TypeScript source files in the project and lists every exported declaration with its name and kind.
+
+## Flags
+
+| Flag | Type | Default | Description |
+|------|------|---------|-------------|
+| `-f, --format` | `string` | `text` | Output format: `text` or `json` |
+
+## Usage
+
+```bash
+npx chant list
+npx chant list --format json
+```
+
+## Exit Codes
+
+| Code | Meaning |
+|------|---------|
+| 0 | Listed successfully |
+| 1 | Error |

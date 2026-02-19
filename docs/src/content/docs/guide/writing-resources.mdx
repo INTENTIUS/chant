@@ -1,0 +1,82 @@
+---
+title: Writing Resources
+description: How to define infrastructure resources in chant
+---
+
+Resources are the building blocks of a chant project. Each resource maps to a single infrastructure component defined by the lexicon you're using.
+
+## Defining a Resource
+
+Import the barrel and instantiate a typed resource constructor:
+
+```typescript
+import * as _ from "./_";
+
+export const myResource = new _.ResourceType({
+  name: "my-resource",
+  property: "value",
+});
+```
+
+Every resource definition follows this pattern:
+
+1. **Import** the barrel with `import * as _ from "./_"` — this provides lexicon types, the `$` symbol table, and intrinsic helpers in one namespace
+2. **Instantiate** with `new _.ResourceType({...})` using the constructor provided by your lexicon
+3. **Export** the result as a `const`
+
+The export is required — chant discovers resources by scanning exports across your `src/` directory.
+
+See your lexicon's documentation for available resource types and concrete examples.
+
+## Property Rules
+
+chant reads TypeScript as data. It never executes your code. This means resource properties must be **statically evaluable** — the evaluator must be able to resolve every value at build time.
+
+**Allowed expressions:**
+
+| Expression | Example |
+|---|---|
+| Literals | `"us-east-1"`, `42`, `true` |
+| `const` references | `const name = "my-resource";` then `name` |
+| Arrays and objects | `[1, 2, 3]`, `{ key: "val" }` |
+| Spread from `const` | `...defaults` |
+| Barrel references | `_.$.otherResource.arn` |
+| Typed sub-resource constructors | `new _.SubResourceType({...})` |
+| Intrinsics | Lexicon-specific helpers (see your lexicon's docs) |
+
+**Not allowed** (caught by lint before build):
+
+| Expression | Lint Rule |
+|---|---|
+| Function calls (`getName()`) | EVL001 |
+| Control flow wrapping resources (`if`/`for`) | EVL002 |
+| Dynamic property access (`config[key]`) | EVL003 |
+| Spread from non-`const` source | EVL004 |
+| `let` / `var` bindings | EVL001 |
+
+## Extracting Shared Values
+
+Use `const` variables to share values across properties or files:
+
+```typescript
+import * as _ from "./_";
+
+const defaultTags = [
+  { key: "Team", value: "platform" },
+];
+
+export const myResource = new _.ResourceType({
+  name: "my-resource",
+  tags: defaultTags,
+});
+```
+
+## Multiple Resources per File
+
+A file can export more than one resource. There is no hard rule on one resource per file, but keeping related resources together and unrelated ones apart makes projects easier to navigate.
+
+## Next Steps
+
+- [Cross-File References](/guide/cross-file-references/) — reference resources defined in other files
+- [Composite Resources](/guide/composite-resources/) — group related resources into reusable units
+- [Presets](/guide/presets/) — share default property values across resources

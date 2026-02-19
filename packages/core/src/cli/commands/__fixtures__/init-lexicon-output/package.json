@@ -1,0 +1,29 @@
+{
+  "name": "@intentius/chant-lexicon-fixture",
+  "version": "0.0.1",
+  "type": "module",
+  "private": true,
+  "files": [
+    "src/",
+    "dist/"
+  ],
+  "exports": {
+    ".": "./src/index.ts",
+    "./*": "./src/*",
+    "./manifest": "./dist/manifest.json",
+    "./meta": "./dist/meta.json",
+    "./types": "./dist/types/index.d.ts"
+  },
+  "scripts": {
+    "generate": "bun run src/codegen/generate-cli.ts",
+    "validate": "bun run src/validate-cli.ts",
+    "docs": "bun src/codegen/docs-cli.ts",
+    "prepack": "bun run generate && bun run validate"
+  },
+  "dependencies": {
+    "@intentius/chant": "workspace:*"
+  },
+  "devDependencies": {
+    "typescript": "^5.9.3"
+  }
+}

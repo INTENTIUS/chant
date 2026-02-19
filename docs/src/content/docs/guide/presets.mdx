@@ -1,0 +1,45 @@
+---
+title: Presets
+description: Sharing default property values across resources
+---
+
+Presets are shared default values that you spread into resource definitions. They reduce repetition when multiple resources of the same type share common configuration.
+
+## Defining a Preset
+
+Extract shared properties into a `const` object:
+
+```typescript
+// src/defaults.ts
+import * as _ from "./_";
+
+export const secureDefaults = {
+  encrypted: true,
+  versioned: true,
+  accessControl: "private",
+};
+```
+
+## Using a Preset
+
+Import and spread the preset into each resource, then add or override properties:
+
+```typescript
+// src/store-a.ts
+import * as _ from "./_";
+
+export const storeA = new _.StorageType({
+  ..._.$.secureDefaults,
+  name: "app-store-a",
+});
+```
+
+Properties listed after the spread override the preset.
+
+## Rules
+
+- The spread source must be a `const` binding. Spreading from `let`, `var`, or function calls triggers lint rule EVL004.
+- Preset objects are plain data — they are not resource instances.
+- Properties in the spread are merged shallowly. Nested objects are replaced entirely, not deep-merged.
+
+See your lexicon's documentation for working preset examples with concrete resource types.

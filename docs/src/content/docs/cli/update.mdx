@@ -1,0 +1,31 @@
+---
+title: "chant update"
+description: Sync lexicon type definitions
+---
+
+## Synopsis
+
+```
+npx chant update [path]
+```
+
+## Description
+
+`chant update` syncs lexicon type definitions into `.chant/types/` for the project. It also refreshes lexicon skill files in `.chant/skills/`.
+
+## Usage
+
+```bash
+# Sync in current project
+npx chant update
+
+# Sync a specific project
+npx chant update ./my-project
+```
+
+## Exit Codes
+
+| Code | Meaning |
+|------|---------|
+| 0 | Sync completed successfully |
+| 1 | Error |

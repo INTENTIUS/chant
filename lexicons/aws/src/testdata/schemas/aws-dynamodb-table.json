@@ -1,0 +1,126 @@
+{
+  "typeName": "AWS::DynamoDB::Table",
+  "description": "The AWS::DynamoDB::Table resource creates a DynamoDB table.",
+  "properties": {
+    "TableName": {
+      "type": "string",
+      "description": "A name for the table.",
+      "minLength": 3,
+      "maxLength": 255,
+      "pattern": "^[a-zA-Z0-9._-]+$"
+    },
+    "Arn": {
+      "type": "string",
+      "description": "The Amazon Resource Name (ARN) of the DynamoDB table."
+    },
+    "KeySchema": {
+      "type": "array",
+      "items": {
+        "$ref": "#/definitions/KeySchema"
+      },
+      "description": "Specifies the attributes that make up the primary key for the table."
+    },
+    "AttributeDefinitions": {
+      "type": "array",
+      "items": {
+        "$ref": "#/definitions/AttributeDefinition"
+      },
+      "description": "A list of attributes that describe the key schema for the table."
+    },
+    "BillingMode": {
+      "type": "string",
+      "description": "Specify how you are charged for read and write throughput.",
+      "enum": ["PROVISIONED", "PAY_PER_REQUEST"]
+    },
+    "SSESpecification": {
+      "$ref": "#/definitions/SSESpecification",
+      "description": "Specifies the settings to enable server-side encryption."
+    },
+    "Tags": {
+      "type": "array",
+      "items": {
+        "$ref": "#/definitions/Tag"
+      },
+      "description": "An array of key-value pairs to apply to this resource."
+    }
+  },
+  "definitions": {
+    "KeySchema": {
+      "type": "object",
+      "description": "Represents a single element of a key schema.",
+      "properties": {
+        "AttributeName": {
+          "type": "string",
+          "description": "The name of a key attribute.",
+          "minLength": 1,
+          "maxLength": 255
+        },
+        "KeyType": {
+          "type": "string",
+          "description": "The role that this key attribute will assume.",
+          "enum": ["HASH", "RANGE"]
+        }
+      },
+      "required": ["AttributeName", "KeyType"]
+    },
+    "AttributeDefinition": {
+      "type": "object",
+      "description": "Represents an attribute for describing the schema for the table.",
+      "properties": {
+        "AttributeName": {
+          "type": "string",
+          "description": "A name for the attribute.",
+          "minLength": 1,
+          "maxLength": 255
+        },
+        "AttributeType": {
+          "type": "string",
+          "description": "The data type for the attribute.",
+          "enum": ["S", "N", "B"]
+        }
+      },
+      "required": ["AttributeName", "AttributeType"]
+    },
+    "SSESpecification": {
+      "type": "object",
+      "description": "Represents the settings used to enable server-side encryption.",
+      "properties": {
+        "SSEEnabled": {
+          "type": "boolean",
+          "description": "Indicates whether server-side encryption is done using an AWS managed key or a customer managed key."
+        },
+        "SSEType": {
+          "type": "string",
+          "description": "Server-side encryption type.",
+          "enum": ["AES256", "KMS"]
+        },
+        "KMSMasterKeyId": {
+          "type": "string",
+          "description": "The KMS key that should be used for the KMS encryption."
+        }
+      },
+      "required": ["SSEEnabled"]
+    },
+    "Tag": {
+      "type": "object",
+      "description": "A key-value pair to associate with a resource.",
+      "properties": {
+        "Key": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "Value": {
+          "type": "string",
+          "maxLength": 256
+        }
+      },
+      "required": ["Key", "Value"]
+    }
+  },
+  "required": ["KeySchema", "AttributeDefinitions"],
+  "readOnlyProperties": ["/properties/Arn"],
+  "createOnlyProperties": ["/properties/TableName"],
+  "primaryIdentifier": ["/properties/TableName"],
+  "additionalProperties": false
+}

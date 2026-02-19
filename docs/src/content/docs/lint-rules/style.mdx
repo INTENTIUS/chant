@@ -1,0 +1,237 @@
+---
+title: Style Rules
+description: Structural and naming convention rules
+---
+
+Core style rules enforce structural and naming conventions in chant projects. These rules apply to all projects regardless of lexicon.
+
+---
+
+## COR001: Inline Object in Constructor
+
+Resource constructor properties must not contain inline object literals or arrays-of-objects. Each config value should be its own named, exported `const`.
+
+**Severity:** warning
+
+```typescript
+// ❌ Triggers COR001
+export const bucket = new _.Bucket({
+  bucketEncryption: {
+    serverSideEncryptionConfiguration: [
+      { serverSideEncryptionByDefault: { sseAlgorithm: "AES256" } },
+    ],
+  },
+});
+```
+
+```typescript
+// ✅ Fixed — extract each config value
+export const encryptionDefault = new _.ServerSideEncryptionByDefault({
+  sseAlgorithm: "AES256",
+});
+
+export const encryptionRule = new _.ServerSideEncryptionRule({
+  serverSideEncryptionByDefault: encryptionDefault,
+});
+
+export const bucketEncryption = new _.BucketEncryption({
+  serverSideEncryptionConfiguration: [encryptionRule],
+});
+
+export const bucket = new _.Bucket({
+  bucketEncryption: bucketEncryption,
+});
+```
+
+Simple string, number, and boolean properties are allowed inline. Only nested object literals and arrays containing objects are flagged.
+
+:::note
+This rule is automatically skipped inside `Composite()` factory callbacks, where inline construction is expected. See [Composite Rules](/lint-rules/composite/).
+:::
+
+---
+
+## COR002: Barrel Import Style
+
+Barrel files must be imported with namespace syntax, not named imports.
+
+**Severity:** error
+
+```typescript
+// ❌ Triggers COR002
+import { bucketEncryption, versioningEnabled } from "./_";
+```
+
+```typescript
+// ✅ Fixed
+import * as _ from "./_";
+```
+
+Type-only imports (`import type { ... } from "./_"`) are allowed.
+
+---
+
+## COR005: Naming Convention
+
+Exported declarable instances should use camelCase naming. PascalCase and UPPER_SNAKE_CASE are reserved for types and constants.
+
+**Severity:** warning
+
+```typescript
+// ❌ Triggers COR005
+export const DataBucket = new _.Bucket({
+  bucketName: "my-data",
+});
+
+export const DATA_BUCKET = new _.Bucket({
+  bucketName: "my-data",
+});
+```
+
+```typescript
+// ✅ Fixed
+export const dataBucket = new _.Bucket({
+  bucketName: "my-data",
+});
+```
+
+Only applies to exported variables initialized with `new` expressions.
+
+---
+
+## COR006: Prefer Namespace Import
+
+Lexicon packages (`@intentius/chant`, `@intentius/chant-lexicon-*`) must use namespace imports, not named imports.
+
+**Severity:** error
+
+```typescript
+// ❌ Triggers COR006
+import { Bucket, Function } from "@intentius/chant-lexicon-aws";
+```
+
+```typescript
+// ✅ Fixed
+import * as aws from "@intentius/chant-lexicon-aws";
+```
+
+In practice, you should import through the barrel instead. See [COR014](#cor014-missing-barrel-import). Type-only imports are allowed.
+
+---
+
+## COR009: File Declarable Limit
+
+Files should not contain too many resource declarations. The default limit is 8.
+
+**Severity:** warning
+
+```
+⚠ COR009: File contains 12 Declarable instances (limit: 8) — consider splitting into separate files by concern
+```
+
+**Fix:** Split the file by concern. For example, separate networking resources from compute resources.
+
+The limit can be configured:
+
+```typescript
+// chant.config.ts
+export default {
+  lint: {
+    rules: {
+      COR009: ["warning", { max: 12 }],
+    },
+  },
+};
+```
+
+---
+
+## COR012: Redundant Type Import
+
+When a namespace import already exists for a package, a separate `import type` from the same package is redundant.
+
+**Severity:** warning
+
+```typescript
+// ❌ Triggers COR012
+import * as core from "@intentius/chant";
+import type { Declarable } from "@intentius/chant";
+```
+
+```typescript
+// ✅ Fixed — access types through the namespace
+import * as core from "@intentius/chant";
+
+const d: core.Declarable = /* ... */;
+```
+
+This rule is auto-fixable — `chant lint --fix` removes the redundant `import type` line.
+
+---
+
+## COR013: Single-Concern File
+
+Files should not mix resource declarations with configuration/property declarations. Resources (e.g., `Bucket`, `Function`, `Role`) and properties (e.g., `BucketEncryption`, `VersioningConfiguration`, `PublicAccessBlockConfiguration`) belong in separate files.
+
+**Severity:** info
+
+```typescript
+// ❌ Triggers COR013 — mixes resource and configuration
+export const encryptionDefault = new _.ServerSideEncryptionByDefault({
+  sseAlgorithm: "AES256",
+});
+
+export const bucket = new _.Bucket({
+  bucketEncryption: _.$.bucketEncryption,
+});
+```
+
+**Fix:** Move configuration declarations to a `defaults.ts` file and resources to their own files.
+
+---
+
+## COR014: Missing Barrel Import
+
+Non-barrel files should import lexicon packages through the barrel (`_.ts`), not directly.
+
+**Severity:** warning
+
+```typescript
+// ❌ Triggers COR014
+import * as aws from "@intentius/chant-lexicon-aws";
+
+export const bucket = new aws.Bucket({ ... });
+```
+
+```typescript
+// ✅ Fixed — import through barrel
+import * as _ from "./_";
+
+export const bucket = new _.Bucket({ ... });
+```
+
+This rule is auto-fixable when a `_.ts` barrel file exists in the same directory. If no barrel exists, the diagnostic provides instructions to create one.
+
+Barrel files (`_.ts`) themselves are exempt — they are the one place where direct lexicon imports are expected. Subpath imports (e.g., `@intentius/chant/lint/rule`) are also exempt.
+
+---
+
+## COR015: Redundant Value Cast
+
+`AttrRef` and other intrinsic types already satisfy `Value<T>`, so casting with `as Value<...>` is redundant.
+
+**Severity:** warning
+
+```typescript
+// ❌ Triggers COR015
+export const fn = new _.Function({
+  role: functionRole.arn as Value<string>,
+});
+```
+
+```typescript
+// ✅ Fixed — use directly without cast
+export const fn = new _.Function({
+  role: functionRole.arn,
+});
+```

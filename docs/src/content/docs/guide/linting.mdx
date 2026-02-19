@@ -1,0 +1,48 @@
+---
+title: "Linting & Type-Checking"
+description: Running lint and type checks on your chant project
+---
+
+chant includes a built-in linter that validates your resource files. Run it with:
+
+```bash
+npx chant lint
+```
+
+A clean project produces no output. Errors and warnings are printed to stderr:
+
+```
+src/data-bucket.ts:5:3 error [EVL001] expression in property "name" is not statically evaluable
+src/api.ts:12:1 error [EVL002] resource declaration must not be inside an if statement
+```
+
+## What Gets Checked
+
+Lint runs two layers in one pass:
+
+1. **Evaluability rules (EVL)** — ensures all resource property expressions can be statically evaluated. See [Evaluability Rules](/lint-rules/evaluability/).
+2. **Correctness & style rules (COR)** — structural constraints like missing exports, circular dependencies, naming conventions. See [Correctness Rules](/lint-rules/correctness/).
+
+## Output Formats
+
+| Flag | Format |
+|------|--------|
+| (default) | Styled terminal output |
+| `--format json` | JSON array of diagnostics |
+| `--format sarif` | SARIF 2.1.0 for CI integrations |
+
+```bash
+npx chant lint --format json
+```
+
+## Watch Mode
+
+Re-run lint automatically on file changes:
+
+```bash
+npx chant lint --watch
+```
+
+## Configuring Rules
+
+Rules are configured in `chant.config.ts`. See [Rule Configuration](/lint-rules/configuration/).

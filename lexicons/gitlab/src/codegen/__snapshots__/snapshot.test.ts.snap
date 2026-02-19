@@ -1,0 +1,33 @@
+// Bun Snapshot v1, https://bun.sh/docs/test/snapshots
+
+exports[`generated lexicon-gitlab.json entries match snapshot 1`] = `
+{
+  "kind": "resource",
+  "lexicon": "gitlab",
+  "resourceType": "GitLab::CI::Job",
+}
+`;
+
+exports[`generated lexicon-gitlab.json entries match snapshot 2`] = `
+{
+  "kind": "property",
+  "lexicon": "gitlab",
+  "resourceType": "GitLab::CI::Artifacts",
+}
+`;
+
+exports[`generated lexicon-gitlab.json entries match snapshot 3`] = `
+{
+  "kind": "property",
+  "lexicon": "gitlab",
+  "resourceType": "GitLab::CI::Cache",
+}
+`;
+
+exports[`generated lexicon-gitlab.json entries match snapshot 4`] = `
+{
+  "kind": "property",
+  "lexicon": "gitlab",
+  "resourceType": "GitLab::CI::Image",
+}
+`;

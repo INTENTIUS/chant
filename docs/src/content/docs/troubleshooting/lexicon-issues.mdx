@@ -1,0 +1,42 @@
+---
+title: Lexicon Issues
+description: Troubleshooting lexicon-related problems
+---
+
+## Missing Type Declarations
+
+**Symptom:** Missing type declarations in your IDE, or import errors.
+
+**Fix:**
+
+```bash
+# Sync lexicon type definitions
+npx chant update
+
+# Regenerate barrel type declarations (_.d.ts)
+npx chant lint --fix
+```
+
+`chant update` syncs lexicon types into `.chant/types/`. `chant lint --fix` regenerates barrel declarations (`_.d.ts`).
+
+## Unknown Resource Type
+
+**Symptom:** `Unknown resource type 'X'` error during build or lint.
+
+**Cause:** The resource type isn't in the installed lexicon. Either the lexicon is outdated or there's a typo.
+
+**Fix:**
+
+1. Check for typos in the resource class name
+2. Update the lexicon package: `npm update @intentius/chant-lexicon-<name>`
+3. Run `npx chant update`
+
+## No IDE Autocomplete
+
+**Symptom:** Your editor doesn't provide autocomplete for resource properties.
+
+**Fix:**
+
+1. Run `npx chant update` then `npx chant lint --fix` to ensure types are generated
+2. Verify `tsconfig.json` is configured correctly (see [TypeScript Configuration](/configuration/tsconfig/))
+3. Restart your editor's TypeScript language server

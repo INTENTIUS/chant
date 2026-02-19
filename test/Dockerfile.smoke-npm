@@ -1,0 +1,73 @@
+# npm install smoke test — validates chant packages work via tarball install
+FROM oven/bun:latest
+
+WORKDIR /app
+
+# Install system deps
+RUN apt-get update && apt-get install -y jq curl && rm -rf /var/lib/apt/lists/*
+
+# Copy workspace
+COPY . .
+
+# Install workspace dependencies
+RUN bun install
+
+# Generate lexicon artifacts (lexicon-aws.json, index.d.ts, index.ts)
+RUN bun run lexicons/aws/src/codegen/generate-cli.ts
+
+# Build dist/ artifacts (manifest, meta, types, rules, skills, integrity)
+RUN bun run test/build-dist.ts
+
+# Verify dist was created
+RUN ls -la lexicons/aws/dist/
+
+# Strip prepack scripts and fix workspace: protocol for standalone install
+RUN cd packages/core && jq 'del(.scripts)' package.json > tmp.json && mv tmp.json package.json
+RUN cd lexicons/aws && \
+    jq 'del(.scripts) | .dependencies["@intentius/chant"] = "0.0.1"' package.json > tmp.json && \
+    mv tmp.json package.json
+
+# Pack into tarballs
+RUN cd packages/core && bun pm pack && mv *.tgz /app/chant-core.tgz
+RUN cd lexicons/aws && bun pm pack && mv *.tgz /app/lexicon-aws.tgz
+
+# Verify dist is in tarball
+RUN tar tzf /app/lexicon-aws.tgz | grep dist/ | head -5
+
+# Generate GitLab lexicon artifacts
+RUN bun run lexicons/gitlab/src/codegen/generate-cli.ts
+
+# Build GitLab dist/ artifacts
+RUN bun run test/build-dist-gitlab.ts
+
+# Verify GitLab dist was created
+RUN ls -la lexicons/gitlab/dist/
+
+# Strip scripts and fix workspace dep for GitLab
+RUN cd lexicons/gitlab && \
+    jq 'del(.scripts) | .dependencies["@intentius/chant"] = "0.0.1"' package.json > tmp.json && \
+    mv tmp.json package.json
+
+# Pack GitLab tarball
+RUN cd lexicons/gitlab && bun pm pack && mv *.tgz /app/lexicon-gitlab.tgz
+
+# Verify GitLab dist is in tarball
+RUN tar tzf /app/lexicon-gitlab.tgz | grep dist/ | head -5
+
+# Create an isolated test project outside the workspace
+RUN mkdir -p /test-project/src
+
+# Install from tarballs manually (bun can't resolve workspace deps from registry)
+WORKDIR /test-project
+RUN bun init -y
+
+# Extract tarballs into node_modules (they pack with a "package/" prefix)
+RUN mkdir -p node_modules/@intentius/chant node_modules/@intentius/chant-lexicon-aws node_modules/@intentius/chant-lexicon-gitlab && \
+    tar xzf /app/chant-core.tgz -C node_modules/@intentius/chant --strip-components=1 && \
+    tar xzf /app/lexicon-aws.tgz -C node_modules/@intentius/chant-lexicon-aws --strip-components=1 && \
+    tar xzf /app/lexicon-gitlab.tgz -C node_modules/@intentius/chant-lexicon-gitlab --strip-components=1
+
+# Validate the installed packages
+COPY test/npm-smoke-validate.sh /test-project/validate.sh
+RUN chmod +x /test-project/validate.sh
+CMD ["/test-project/validate.sh"]

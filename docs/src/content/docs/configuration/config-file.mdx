@@ -1,0 +1,104 @@
+---
+title: Config File
+description: "Complete reference for chant.config.ts"
+---
+
+chant uses a `chant.config.ts` file at the project root for configuration.
+
+## Minimal Config
+
+```typescript
+import type { ChantConfig } from "@intentius/chant";
+
+export default {
+  lint: {
+    rules: {}
+  }
+} satisfies ChantConfig;
+```
+
+## Full Config
+
+```typescript
+import type { ChantConfig } from "@intentius/chant";
+
+export default {
+  lexicons: ["aws"],
+
+  lint: {
+    extends: ["@intentius/chant/lint/presets/strict"],
+
+    rules: {
+      "EVL001": "error",
+      "COR002": "warning",
+      "COR009": "off",
+    },
+
+    overrides: [
+      {
+        files: ["src/legacy/**/*.ts"],
+        rules: {
+          "EVL001": "warning",
+          "COR005": "off",
+        },
+      },
+    ],
+
+    plugins: ["./lint-rules/org-standards.ts"],
+  },
+} satisfies ChantConfig;
+```
+
+## Fields
+
+### `lexicons`
+
+An array of lexicon names the project uses.
+
+### `lint.extends`
+
+An array of preset configuration paths to inherit from:
+
+```typescript
+extends: ["@intentius/chant/lint/presets/strict"]
+```
+
+### `lint.rules`
+
+A map of rule ID to severity or `[severity, options]` tuple:
+
+```typescript
+rules: {
+  "EVL001": "error",
+  "COR009": ["warning", { max: 12 }],
+}
+```
+
+### `lint.overrides`
+
+File-specific rule overrides using glob patterns:
+
+```typescript
+overrides: [
+  {
+    files: ["src/legacy/**/*.ts"],
+    rules: { "EVL001": "warning" },
+  },
+]
+```
+
+### `lint.plugins`
+
+An array of plugin paths to load custom lint rules:
+
+```typescript
+plugins: ["./lint-rules/org-standards.ts"]
+```
+
+## Config Resolution
+
+1. Load `chant.config.ts` from the project root
+2. Resolve and merge all `extends` presets (in order)
+3. Apply local `rules` on top
+4. Load `plugins`
+5. At lint time, apply `overrides` to matching files

@@ -1,0 +1,31 @@
+---
+title: Module Graph
+description: How chant tracks import relationships between files
+---
+
+The module graph tracks import relationships between TypeScript files in a chant project. It is used for incremental rebuilds in watch mode and for cross-file lint rules.
+
+## Construction
+
+The module graph walks all import declarations across source files, resolving each module specifier. The result is a directed graph where edges point from a file to its dependencies.
+
+## File Discovery
+
+| Category | Pattern | Example |
+|----------|---------|---------|
+| Sources | `*.ts` (excluding tests and declarations) | `src/data-bucket.ts` |
+| Barrels | `_.ts` | `src/_.ts` |
+| Excluded | `.test.ts`, `.spec.ts`, `.d.ts`, `node_modules/` | — |
+
+## Incremental Rebuilds
+
+The module graph computes affected files for incremental rebuilds by performing a reverse walk from changed files, returning all files that transitively depend on them.
+
+## Watch Mode Integration
+
+When `--watch` is active:
+
+1. File system events are debounced
+2. If a file was modified, the module graph computes dependents
+3. Only affected files are re-evaluated
+4. If a file was created or deleted, a full rebuild runs

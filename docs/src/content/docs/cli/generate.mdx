@@ -1,0 +1,34 @@
+---
+title: "chant dev generate"
+description: Generate lexicon artifacts from upstream specs
+---
+
+## Synopsis
+
+```
+npx chant dev generate [path] [--verbose]
+```
+
+## Description
+
+`chant dev generate` runs the full code generation pipeline for each configured lexicon plugin. It fetches upstream specs (e.g. CloudFormation resource schemas), parses them, produces the lexicon's type declarations, runtime index, and lint rules, then automatically runs **validation** and **coverage analysis**.
+
+This is a **lexicon authoring** command — project users don't typically need it.
+
+## What it runs
+
+1. **Generate** — fetch specs and produce artifacts
+2. **Validate** — check generated artifacts are correct and consistent
+3. **Coverage** — analyze spec coverage across resource dimensions
+
+## Options
+
+| Option | Description |
+|--------|-------------|
+| `-v, --verbose` | Show detailed generation progress |
+
+## See Also
+
+- [`chant dev publish`](/cli/package/) — package lexicon for distribution
+- [`chant dev rollback`](/cli/rollback/) — restore previous generation snapshots
+- [Authoring Lexicons](/lexicons/authoring/) — full authoring guide

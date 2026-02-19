@@ -1,0 +1,20 @@
+{
+  "name": "@intentius/chant",
+  "version": "0.0.1",
+  "type": "module",
+  "files": ["src/"],
+  "publishConfig": { "access": "public" },
+  "bin": {
+    "chant": "./src/cli/main.ts"
+  },
+  "exports": {
+    ".": "./src/index.ts",
+    "./cli": "./src/cli/index.ts",
+    "./cli/*": "./src/cli/*",
+    "./*": "./src/*"
+  },
+  "dependencies": {
+    "fflate": "^0.8.2",
+    "zod": "^4.3.6"
+  }
+}

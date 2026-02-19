@@ -1,0 +1,85 @@
+{
+  "typeName": "AWS::IAM::Role",
+  "description": "Creates an IAM role with a trust policy and optional inline policies.",
+  "properties": {
+    "RoleName": {
+      "type": "string",
+      "description": "A name for the IAM role.",
+      "minLength": 1,
+      "maxLength": 64,
+      "pattern": "^[\\w+=,.@-]+$"
+    },
+    "Arn": {
+      "type": "string",
+      "description": "The Amazon Resource Name (ARN) for the role."
+    },
+    "RoleId": {
+      "type": "string",
+      "description": "The stable and unique string identifying the role."
+    },
+    "AssumeRolePolicyDocument": {
+      "type": "object",
+      "description": "The trust policy that is associated with this role."
+    },
+    "Policies": {
+      "type": "array",
+      "items": {
+        "$ref": "#/definitions/Policy"
+      },
+      "description": "Adds or updates an inline policy document that is embedded in the role."
+    },
+    "ManagedPolicyArns": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "description": "A list of Amazon Resource Names (ARNs) of the IAM managed policies to attach."
+    },
+    "Tags": {
+      "type": "array",
+      "items": {
+        "$ref": "#/definitions/Tag"
+      },
+      "description": "A list of tags attached to the role."
+    }
+  },
+  "definitions": {
+    "Policy": {
+      "type": "object",
+      "description": "An inline policy document embedded in the role.",
+      "properties": {
+        "PolicyName": {
+          "type": "string",
+          "description": "The friendly name of the policy.",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "PolicyDocument": {
+          "type": "object",
+          "description": "The policy document."
+        }
+      },
+      "required": ["PolicyName", "PolicyDocument"]
+    },
+    "Tag": {
+      "type": "object",
+      "description": "A key-value pair to associate with a resource.",
+      "properties": {
+        "Key": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "Value": {
+          "type": "string",
+          "maxLength": 256
+        }
+      },
+      "required": ["Key", "Value"]
+    }
+  },
+  "required": ["AssumeRolePolicyDocument"],
+  "readOnlyProperties": ["/properties/Arn", "/properties/RoleId"],
+  "primaryIdentifier": ["/properties/RoleName"],
+  "additionalProperties": false
+}

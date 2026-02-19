@@ -1,0 +1,22 @@
+---
+title: Output Formats
+description: How lexicons serialize evaluated resources into output formats
+---
+
+Each lexicon defines its own output format for serialized resources. The core evaluation pipeline produces a provider-agnostic resource graph; the lexicon's serializer converts this into the target platform's native format.
+
+## How Serialization Works
+
+1. **Evaluation** — chant resolves all TypeScript expressions, imports, and references into concrete values
+2. **Property mapping** — Property names are converted from TypeScript conventions to the target format's conventions
+3. **Output generation** — The lexicon serializer emits the final output
+
+## Common Behaviors
+
+All lexicon serializers share these behaviors:
+
+- **Deterministic output** — Resources are serialized in a stable order, making output safe for version control and diff-based review
+- **Null handling** — Properties set to `null` are omitted from output objects; `null` values inside arrays are preserved
+- **Reference resolution** — Cross-resource references are converted to the target format's reference mechanism
+
+See your lexicon's documentation for the specific output format.

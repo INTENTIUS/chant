@@ -1,0 +1,14 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Transform: AWS::Serverless-2016-10-31
+Description: SAM State Machine
+
+Resources:
+  MyStateMachine:
+    Type: AWS::Serverless::StateMachine
+    Properties:
+      Name: my-state-machine
+      Type: STANDARD
+      DefinitionUri: statemachine/definition.asl.json
+      Policies:
+        - LambdaInvokePolicy:
+            FunctionName: my-function

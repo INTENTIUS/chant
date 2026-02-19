@@ -1,0 +1,153 @@
+---
+title: Lexicon Authoring Overview
+description: When and how to create a custom lexicon plugin for chant
+---
+
+A **lexicon** is a plugin that teaches chant about a specific operational area — types, lint rules, serialization, and build validation. You can create lexicons for any infrastructure platform, internal tool, or custom domain.
+
+## When You Need This Section
+
+You're in the right place if you want to:
+
+- Add support for a new cloud provider (GCP, Azure, Kubernetes)
+- Create an internal lexicon for your organization's infrastructure patterns
+- Extend chant with custom resource types and lint rules
+
+If you're **using** an existing lexicon (like AWS CloudFormation), see the [User Guide](/guide/writing-resources/) instead.
+
+## The LexiconPlugin Interface
+
+Every lexicon exports a `LexiconPlugin` object:
+
+```typescript
+import type { LexiconPlugin } from "@intentius/chant";
+
+export const myPlugin: LexiconPlugin = {
+  name: "my-lexicon",
+  serializer: mySerializer,
+  // ... lifecycle methods
+};
+```
+
+### Required fields
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `name` | `string` | Human-readable name (e.g. `"aws"`, `"gcp"`) |
+| `serializer` | `Serializer` | Serializer for build output |
+
+### Required lifecycle methods
+
+Every lexicon must implement these 5 methods to support the full generation and distribution workflow:
+
+| Method | Signature | Description |
+|--------|-----------|-------------|
+| `generate` | `(options?) => Promise<void>` | Generate lexicon artifacts (types, registry, runtime) from upstream spec |
+| `validate` | `(options?) => Promise<void>` | Validate generated artifacts |
+| `coverage` | `(options?) => Promise<void>` | Analyze spec coverage across resource dimensions |
+| `package` | `(options?) => Promise<void>` | Package lexicon into a distributable bundle |
+| `rollback` | `(options?) => Promise<void>` | List or restore generation snapshots |
+
+### Optional methods
+
+| Method | Returns | Description |
+|--------|---------|-------------|
+| `lintRules()` | `LintRule[]` | Imperative lint rules |
+| `declarativeRules()` | `RuleSpec[]` | Declarative lint rules (compiled via `rule()`) |
+| `postSynthChecks()` | `PostSynthCheck[]` | Post-build validation checks |
+| `intrinsics()` | `IntrinsicDef[]` | Lexicon-specific intrinsic functions |
+| `pseudoParameters()` | `string[]` | Pseudo-parameter names |
+| `detectTemplate()` | `boolean` | Detect if a template belongs to this lexicon |
+| `templateParser()` | `TemplateParser` | Parser for importing external templates |
+| `templateGenerator()` | `TypeScriptGenerator` | Generator for converting IR to TypeScript |
+| `initTemplates()` | `Record<string, string>` | Source file templates for `chant init` scaffolding |
+| `skills()` | `SkillDefinition[]` | AI assistant skills |
+| `completionProvider()` | `CompletionItem[]` | LSP completions for resource/property names |
+| `hoverProvider()` | `HoverInfo` | LSP hover information for resource types |
+| `docs()` | `Promise<void>` | Generate documentation pages |
+| `mcpTools()` | `McpToolContribution[]` | MCP tool contributions |
+| `mcpResources()` | `McpResourceContribution[]` | MCP resource contributions |
+
+## Registering in chant.config.ts
+
+Users register lexicons in their project config:
+
+```typescript
+import type { ChantConfig } from "@intentius/chant";
+
+export default {
+  lexicons: ["my-lexicon"],
+} satisfies ChantConfig;
+```
+
+The CLI resolves lexicons by looking for `@intentius/chant-lexicon-{name}` packages in `node_modules`.
+
+:::tip[Reference Implementation]
+The **AWS CloudFormation lexicon** (`lexicons/aws/`) is the canonical reference implementation. Each page in this section notes which AWS source file demonstrates the pattern. When in doubt, read the AWS code — it exercises every core API.
+:::
+
+## Authoring Workflow
+
+Building a lexicon follows these steps:
+
+1. **[Scaffold](/lexicon-authoring/scaffold/)** — `chant init lexicon` generates the project structure
+2. **[Implement Generate](/lexicon-authoring/generate/)** — wire up `generatePipeline` with your upstream spec
+3. **[Create a Serializer](/lexicon-authoring/serializer/)** — convert evaluated resources to your target format
+4. **[Write Lint Rules](/lexicon-authoring/lint-rules/)** — imperative, declarative, and post-synth checks
+5. **[LSP & MCP Providers](/lexicon-authoring/lsp-mcp/)** — editor completions, hover, and AI tool support
+6. **[Skills](/lexicon-authoring/skills/)** — AI agent skill files
+7. **[Package & Publish](/lexicon-authoring/package/)** — bundle and publish to npm
+
+## Example: Minimal Custom Lexicon
+
+```typescript
+import type { LexiconPlugin, Serializer, Declarable } from "@intentius/chant";
+
+const serializer: Serializer = {
+  name: "k8s",
+  rulePrefix: "K8S",
+  serialize(entities: Map<string, Declarable>): string {
+    const manifests = [];
+    for (const [name, entity] of entities) {
+      manifests.push({
+        apiVersion: "v1",
+        kind: entity.entityType,
+        metadata: { name },
+      });
+    }
+    return JSON.stringify(manifests, null, 2);
+  },
+};
+
+export const k8sPlugin: LexiconPlugin = {
+  name: "k8s",
+  serializer,
+
+  async generate() {
+    // TODO: Fetch upstream schemas and run generatePipeline
+    throw new Error("Not yet implemented");
+  },
+
+  async validate() {
+    // TODO: Validate generated artifacts
+    console.error("All checks passed.");
+  },
+
+  async coverage() {
+    // TODO: Analyze spec coverage
+    console.error("Coverage analysis not yet implemented.");
+  },
+
+  async package() {
+    // TODO: Run packagePipeline to produce a distributable bundle
+    throw new Error("Not yet implemented");
+  },
+
+  async rollback() {
+    // TODO: List/restore generation snapshots
+    console.error("No snapshots available.");
+  },
+};
+```
+
+Publish this as `@intentius/chant-lexicon-k8s` (or `@yourorg/lexicon-k8s`) and users can add it to their project.

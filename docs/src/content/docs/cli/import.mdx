@@ -1,0 +1,54 @@
+---
+title: "chant import"
+description: Import infrastructure templates and generate TypeScript files
+---
+
+## Synopsis
+
+```
+npx chant import <template-file> [flags]
+```
+
+## Description
+
+`chant import` reads an existing infrastructure template (e.g. a CloudFormation JSON template), detects which lexicon handles it, and generates TypeScript resource definitions. This lets you adopt chant incrementally by importing your current infrastructure rather than rewriting it from scratch.
+
+The import process:
+
+1. Reads and parses the template file (JSON)
+2. Asks each lexicon plugin if it recognizes the template via `detectTemplate()`
+3. Uses the matching lexicon's `templateParser()` to extract resources into an intermediate representation
+4. Uses the lexicon's `templateGenerator()` to produce TypeScript files
+5. Organizes generated files by resource category (storage, compute, network, other)
+
+## Flags
+
+| Flag | Description |
+|------|-------------|
+| `-o, --output <dir>` | Output directory (default: `./infra/`) |
+| `--force` | Overwrite existing files |
+
+## Usage
+
+```bash
+# Import a template
+npx chant import template.json
+
+# Import to a specific directory
+npx chant import template.json --output src/
+
+# Overwrite existing files
+npx chant import template.json --force
+```
+
+## Exit Codes
+
+| Code | Meaning |
+|------|---------|
+| 0 | Import completed successfully |
+| 1 | Error (unrecognized template format, parse error, or write failure) |
+
+## See Also
+
+- [Importing Templates](/guide/importing-templates/) — user guide
+- [Lexicon Authoring](/lexicons/authoring/) — implementing `detectTemplate()` and `templateParser()`

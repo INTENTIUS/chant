@@ -1,0 +1,16 @@
+node_modules/
+dist/
+*.tsbuildinfo
+.DS_Store
+.cache/
+.snapshots/
+
+# All generated lexicon source (covers both AWS and GitLab)
+lexicons/*/src/generated/
+
+# Auto-generated barrel type declarations in examples
+**/examples/**/_.d.ts
+
+# Generated lexicon docs sites
+lexicons/*/docs/
+.docs-dist

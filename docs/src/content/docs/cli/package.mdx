@@ -1,0 +1,39 @@
+---
+title: "chant dev publish"
+description: Package lexicon into a distributable bundle
+---
+
+## Synopsis
+
+```
+npx chant dev publish [path] [--force] [--verbose]
+```
+
+## Description
+
+`chant dev publish` assembles a lexicon's generated artifacts — types, runtime index, lint rules, and skills — into a lexicon bundle written to `dist/`.
+
+The bundle contains:
+
+| Artifact | Description |
+|----------|-------------|
+| `manifest.json` | Lexicon metadata (name, version, intrinsics, pseudo-parameters) |
+| `lexicon.json` | Resource registry mapping type names to definitions |
+| `index.d.ts` | TypeScript declarations for all resource and property types |
+| `rules/` | Lint rule implementations |
+| `skills/` | AI assistant skill definitions |
+
+This is a **lexicon authoring** command — project users don't typically need it.
+
+## Options
+
+| Option | Description |
+|--------|-------------|
+| `--force` | Overwrite existing package output |
+| `-v, --verbose` | Show detailed packaging output |
+
+## See Also
+
+- [`chant dev generate`](/cli/generate/) — generate lexicon artifacts
+- [`chant dev rollback`](/cli/rollback/) — restore previous generation snapshots
+- [Authoring Lexicons](/lexicons/authoring/) — full authoring guide

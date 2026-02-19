@@ -1,0 +1,31 @@
+{
+  "compilerOptions": {
+    "target": "ES2020",
+    "module": "ESNext",
+    "lib": ["ES2015", "ES2020", "ES2021"],
+    "types": ["bun-types"],
+    "moduleResolution": "node",
+    "strict": true,
+    "esModuleInterop": true,
+    "resolveJsonModule": true,
+    "skipLibCheck": true,
+    "forceConsistentCasingInFileNames": true,
+    "declaration": true,
+    "declarationMap": true,
+    "sourceMap": true,
+    "noEmit": true,
+    "baseUrl": ".",
+    "paths": {
+      "@intentius/chant": ["packages/core/src/index.ts"],
+      "@intentius/chant/*": ["packages/core/src/*"],
+      "@intentius/chant-lexicon-aws": ["lexicons/aws/src/index.ts"],
+      "@intentius/chant-lexicon-aws/*": ["lexicons/aws/src/*"],
+      "@intentius/chant-lexicon-gitlab": ["lexicons/gitlab/src/index.ts"],
+      "@intentius/chant-lexicon-gitlab/*": ["lexicons/gitlab/src/*"],
+      "@intentius/chant-test-utils": ["packages/test-utils/src/index.ts"],
+      "@intentius/chant-test-utils/*": ["packages/test-utils/src/*"]
+    }
+  },
+  "include": ["packages/**/*", "lexicons/**/*"],
+  "exclude": ["node_modules", "**/dist/**", "**/docs/**", "**/*.test.ts"]
+}

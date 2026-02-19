@@ -1,0 +1,36 @@
+---
+title: Watch Mode
+description: Automatic rebuilds and re-linting on file changes
+---
+
+chant includes a watch mode that monitors your source files and automatically re-runs on changes. Available on both `build` and `lint` commands.
+
+## Usage
+
+```bash
+npx chant build --watch
+npx chant lint --watch
+```
+
+## How It Works
+
+1. **File system monitoring** — watches for file create, modify, and delete events
+2. **Debouncing** — changes are batched with a short debounce window
+3. **Dependency-aware re-runs** — only affected files (the changed file plus its dependents) are re-checked
+4. **Full re-runs on structure changes** — file creations, deletions, and renames trigger a full re-run
+
+## Watched and Ignored Paths
+
+Watch mode monitors all `.ts` files, with these exclusions:
+
+| Ignored Pattern | Reason |
+|---|---|
+| `node_modules/` | Dependencies don't change during development |
+| `.git/` | Version control metadata |
+| `*.d.ts` | Type declaration files (generated) |
+| Hidden directories (`.*/`) | Editor configs, tool caches |
+
+## Tips
+
+- **Large projects:** The dependency-aware rebuild keeps re-runs fast for localized changes
+- **Terminal multiplexing:** Run watch mode in one terminal pane and your editor in another

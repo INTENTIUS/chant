@@ -1,0 +1,19 @@
+{
+  "rules": {
+    "COR001": "error",
+    "COR002": "error",
+    "COR003": "warning",
+    "COR004": "warning",
+    "COR005": "warning",
+    "COR006": "error",
+    "COR007": "warning",
+    "COR008": "error",
+    "COR009": "warning",
+    "COR010": "warning",
+    "COR011": "error",
+    "COR012": "warning",
+    "COR013": "info",
+    "COR014": "warning",
+    "COR015": "warning"
+  }
+}

@@ -1,0 +1,101 @@
+---
+title: "chant serve lsp"
+description: Start the LSP server for editor integration
+---
+
+## Synopsis
+
+```
+npx chant serve lsp [path]
+```
+
+## Description
+
+`chant serve lsp` starts a Language Server Protocol server over stdio with Content-Length framing. This enables editor features like completions, hover documentation, diagnostics, and code actions for chant projects.
+
+You typically don't invoke this directly — your editor or IDE plugin launches the server automatically.
+
+## Capabilities
+
+The server advertises capabilities based on which lexicon plugin providers are available:
+
+| Capability | Condition | Description |
+|------------|-----------|-------------|
+| `textDocumentSync` | Always | Full document sync on open/change |
+| `diagnosticProvider` | Always | Lint diagnostics for open `.ts` files |
+| `completionProvider` | Plugin has `completionProvider()` | Resource and property name completions |
+| `hoverProvider` | Plugin has `hoverProvider()` | Hover documentation for resource types |
+| `codeActionProvider` | Plugin has `codeActionProvider()` | Quick-fix code actions |
+
+### Completions
+
+When a lexicon plugin provides completions, the server triggers on these characters:
+
+```
+.  (space)  "  '  `  (
+```
+
+Completions include resource type names, property names, intrinsic functions, and barrel references.
+
+### Diagnostics
+
+The server runs lint rules on every document open and change, publishing diagnostics in real time. Only `.ts` files are linted — other file types return empty diagnostics.
+
+Diagnostics use the same rule set as `chant lint`, including all configured core rules (COR, EVL) and lexicon-specific rules.
+
+### Hover
+
+When a lexicon plugin provides hover, the server returns documentation for resource types, property types, and attribute references at the cursor position.
+
+## Editor Setup
+
+### VS Code
+
+Add this to your `.vscode/settings.json` or configure a VS Code extension that launches stdio-based LSP servers:
+
+```json
+{
+  "chant.lsp.path": "npx",
+  "chant.lsp.args": ["chant", "serve", "lsp"]
+}
+```
+
+### Neovim (nvim-lspconfig)
+
+```lua
+local lspconfig = require('lspconfig')
+local configs = require('lspconfig.configs')
+
+configs.chant = {
+  default_config = {
+    cmd = { 'npx', 'chant', 'serve', 'lsp' },
+    filetypes = { 'typescript' },
+    root_dir = lspconfig.util.root_pattern('chant.config.ts', 'package.json'),
+  },
+}
+
+lspconfig.chant.setup({})
+```
+
+### Other Editors
+
+Any editor that supports stdio-based LSP servers can use chant. The command is:
+
+```bash
+npx chant serve lsp
+```
+
+The server communicates over stdin/stdout using the standard LSP protocol with Content-Length framing.
+
+## Exit Codes
+
+| Code | Meaning |
+|------|---------|
+| 0 | Clean shutdown |
+| 1 | Unknown subcommand or startup failure |
+
+## See Also
+
+- [Agent Integration](/guide/agent-integration/) — MCP setup for AI agents
+- [`chant serve mcp`](/cli/mcp/) — MCP server for AI agent integration
+- [`chant lint`](/cli/lint/) — CLI linting (same rules as LSP diagnostics)

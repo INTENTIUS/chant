@@ -1,0 +1,90 @@
+{
+  "typeName": "AWS::Lambda::Function",
+  "description": "The AWS::Lambda::Function resource creates a Lambda function.",
+  "properties": {
+    "FunctionName": {
+      "type": "string",
+      "description": "The name of the Lambda function.",
+      "minLength": 1,
+      "maxLength": 64
+    },
+    "Arn": {
+      "type": "string",
+      "description": "The ARN of the function."
+    },
+    "Runtime": {
+      "type": "string",
+      "description": "The identifier of the function's runtime.",
+      "enum": ["nodejs20.x", "nodejs18.x", "python3.12", "python3.11", "java21", "java17"]
+    },
+    "Handler": {
+      "type": "string",
+      "description": "The name of the method within your code that Lambda calls to run your function.",
+      "maxLength": 128,
+      "pattern": "^[^\\s]+$"
+    },
+    "Code": {
+      "$ref": "#/definitions/Code",
+      "description": "The code for the function."
+    },
+    "Role": {
+      "type": "string",
+      "description": "The ARN of the function's execution role.",
+      "pattern": "^arn:(aws[a-zA-Z-]*)?:iam::\\d{12}:role/?[a-zA-Z_0-9+=,.@\\-_/]+$"
+    },
+    "MemorySize": {
+      "type": "integer",
+      "description": "The amount of memory available to the function at runtime.",
+      "minimum": 128,
+      "maximum": 10240
+    }
+  },
+  "definitions": {
+    "Code": {
+      "type": "object",
+      "description": "The deployment package for a Lambda function.",
+      "properties": {
+        "S3Bucket": {
+          "type": "string",
+          "description": "An Amazon S3 bucket in the same AWS Region as your function.",
+          "minLength": 3,
+          "maxLength": 63
+        },
+        "S3Key": {
+          "type": "string",
+          "description": "The Amazon S3 key of the deployment package.",
+          "minLength": 1,
+          "maxLength": 1024
+        },
+        "S3ObjectVersion": {
+          "type": "string",
+          "description": "For versioned objects, the version of the deployment package."
+        },
+        "ZipFile": {
+          "type": "string",
+          "description": "The source code of your Lambda function (Node.js and Python)."
+        }
+      }
+    },
+    "Tag": {
+      "type": "object",
+      "description": "A key-value pair to associate with a resource.",
+      "properties": {
+        "Key": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "Value": {
+          "type": "string",
+          "maxLength": 256
+        }
+      },
+      "required": ["Key", "Value"]
+    }
+  },
+  "required": ["Code", "Role"],
+  "readOnlyProperties": ["/properties/Arn"],
+  "primaryIdentifier": ["/properties/FunctionName"],
+  "additionalProperties": false
+}

@@ -1,0 +1,90 @@
+---
+title: LSP & MCP Providers
+description: Editor completions, hover info, and AI tool support for your lexicon
+---
+
+Lexicons can provide editor integration through LSP (Language Server Protocol) and MCP (Model Context Protocol) contributions.
+
+## LSP Providers
+
+Core provides `LexiconIndex`, `lexiconCompletions`, and `lexiconHover` — generic implementations that work with any lexicon's registry data:
+
+```typescript
+import { LexiconIndex, lexiconCompletions, lexiconHover } from "@intentius/chant/lsp/lexicon-providers";
+
+const index = new LexiconIndex(lexiconData);
+
+// In your completionProvider():
+return lexiconCompletions(ctx, index, "My resource");
+
+// In your hoverProvider():
+return lexiconHover(ctx, index, myCustomHoverFormatter);
+```
+
+### Completions
+
+The `completionProvider()` method on your plugin returns completion items for resource and property type names. Use `lexiconCompletions` to generate standard completions from your registry:
+
+```typescript
+completionProvider(ctx) {
+  return lexiconCompletions(ctx, index, "K8s resource");
+}
+```
+
+> See `lexicons/aws/src/lsp/completions.ts` for the AWS completion provider.
+
+### Hover
+
+The `hoverProvider()` method returns hover information when users mouse over resource type constructors. Use `lexiconHover` with an optional custom formatter:
+
+```typescript
+hoverProvider(ctx) {
+  return lexiconHover(ctx, index, (entry) => {
+    return `**${entry.name}**\n\n${entry.description}`;
+  });
+}
+```
+
+> See `lexicons/aws/src/lsp/hover.ts` for the AWS hover provider.
+
+## MCP Contributions
+
+Lexicons can contribute MCP tools and resources for AI agent integration:
+
+### Tools
+
+```typescript
+mcpTools() {
+  return [
+    {
+      name: "lookup-resource",
+      description: "Look up a resource type definition",
+      inputSchema: { type: "object", properties: { name: { type: "string" } } },
+      handler: async (input) => {
+        // Return resource type info
+      },
+    },
+  ];
+}
+```
+
+### Resources
+
+```typescript
+mcpResources() {
+  return [
+    {
+      uri: "chant://lexicon/k8s/catalog",
+      name: "K8s Resource Catalog",
+      description: "All available Kubernetes resource types",
+      handler: async () => {
+        // Return catalog data
+      },
+    },
+  ];
+}
+```
+
+## Next Steps
+
+Add [skills](/lexicon-authoring/skills/) for AI agent guidance, then [package and publish](/lexicon-authoring/package/) your lexicon.

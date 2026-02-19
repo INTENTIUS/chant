@@ -1,0 +1,52 @@
+---
+title: "chant doctor"
+description: Check project health and configuration
+---
+
+## Synopsis
+
+```
+npx chant doctor [path]
+```
+
+## Description
+
+`chant doctor` runs a series of health checks on your chant project and reports any issues. It verifies that your project structure, configuration, and type definitions are correctly set up.
+
+## Checks
+
+| Check | What it verifies |
+|-------|-----------------|
+| `config-exists` | `chant.config.ts` or `chant.config.json` exists and parses |
+| `src-directory` | `src/` directory exists and contains `.ts` files |
+| `core-types` | `.chant/types/core/` exists and is populated |
+| `lexicon-types` | `.chant/types/lexicon-<name>/` exists for each configured lexicon |
+| `lexicon-compat` | Lexicon manifest version is compatible with current chant version |
+| `stale-dirs` | No orphaned `.chant/types/lexicon-*` directories for unconfigured lexicons |
+| `tsconfig-paths` | `tsconfig.json` has `compilerOptions.paths` configured |
+| `mcp-config` | `.mcp.json` exists with a `chant` server entry |
+| `skills-<name>` | Lexicon skill files are installed in `.chant/skills/<name>/` |
+
+## Usage
+
+```bash
+npx chant doctor
+
+# Check a specific project
+npx chant doctor ./my-infra
+```
+
+## Output
+
+Each check reports one of:
+
+- **OK** — check passed
+- **WARN** — non-blocking issue found
+- **FAIL** — blocking issue found
+
+## Exit Codes
+
+| Code | Meaning |
+|------|---------|
+| 0 | All checks passed (no failures, warnings are allowed) |
+| 1 | One or more checks failed |

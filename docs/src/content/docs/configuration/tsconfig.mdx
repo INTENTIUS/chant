@@ -1,0 +1,47 @@
+---
+title: TypeScript Configuration
+description: Configuring tsconfig.json for chant projects
+---
+
+chant projects use a standard `tsconfig.json` for TypeScript configuration.
+
+## Basic tsconfig.json
+
+```json
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "strict": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "forceConsistentCasingInFileNames": true,
+    "resolveJsonModule": true
+  },
+  "include": ["src/**/*"]
+}
+```
+
+## Recommended Settings
+
+### `strict: true`
+
+Enables all strict type-checking options. chant resource definitions benefit from strict mode because it catches:
+
+- Missing required properties on resources
+- Incorrect property types
+- Null/undefined assignment errors
+
+### `moduleResolution: "bundler"`
+
+The `bundler` resolution mode (TypeScript 5.0+) works well with chant because it supports package.json `exports` fields and extensionless imports.
+
+## Editor Integration
+
+With `tsconfig.json` configured, your editor provides:
+
+- **Autocomplete** for resource property names
+- **Type errors** for invalid property values
+- **Go-to-definition** navigation into lexicon type definitions
+- **Hover documentation** for resource types

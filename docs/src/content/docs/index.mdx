@@ -1,0 +1,34 @@
+---
+title: chant
+description: A type system for operations
+template: splash
+hero:
+  tagline: A type system for operations. Declare intent in TypeScript, validate with semantic rules, synthesize artifacts.
+  actions:
+    - text: Get Started
+      link: /getting-started/introduction/
+      icon: right-arrow
+    - text: AWS Lexicon Reference
+      link: /lexicons/aws/
+      icon: external
+      variant: minimal
+---
+
+import { Card, CardGrid } from '@astrojs/starlight/components';
+
+## Features
+
+<CardGrid stagger>
+	<Card title="Semantic Linting" icon="approve-check">
+		Lint rules validate meaning, not structure. Rules operate on concepts like "resource has encryption" rather than cloud-specific property names.
+	</Card>
+	<Card title="Plain TypeScript" icon="puzzle">
+		Declare operations as exported TypeScript objects — no DSL, no YAML, no decorators. Full type safety and IDE support.
+	</Card>
+	<Card title="Lexicons" icon="rocket">
+		Each operational area is a lexicon. [AWS CloudFormation](/lexicons/aws/) ships today — 1500+ resources with full type coverage. Build your own for any operational area.
+	</Card>
+	<Card title="Composable" icon="document">
+		Build reusable presets and composite resources with plain functions and the spread operator.
+	</Card>
+</CardGrid>

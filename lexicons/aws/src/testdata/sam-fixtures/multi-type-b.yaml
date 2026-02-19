@@ -1,0 +1,29 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Transform: AWS::Serverless-2016-10-31
+Description: Multi-type SAM template B - Function with Table and Layer
+
+Resources:
+  SharedLayer:
+    Type: AWS::Serverless::LayerVersion
+    Properties:
+      LayerName: shared-deps
+      ContentUri: s3://bucket/layer.zip
+      CompatibleRuntimes:
+        - nodejs18.x
+
+  DataTable:
+    Type: AWS::Serverless::SimpleTable
+    Properties:
+      TableName: data-table
+
+  ProcessFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Handler: index.handler
+      Runtime: nodejs18.x
+      CodeUri: s3://bucket/code.zip
+      Layers:
+        - !Ref SharedLayer
+      Environment:
+        Variables:
+          TABLE_NAME: !Ref DataTable

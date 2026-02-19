@@ -1,0 +1,229 @@
+---
+title: Create a Serializer
+description: Convert evaluated resources to your target platform's output format
+---
+
+The serializer converts chant's evaluated resource graph into your target platform's format (e.g. CloudFormation JSON, Kubernetes YAML, Terraform HCL).
+
+## Basic Serializer
+
+```typescript
+import type { Serializer, Declarable } from "@intentius/chant";
+
+const mySerializer: Serializer = {
+  name: "my-lexicon",
+  rulePrefix: "MY",
+
+  serialize(entities: Map<string, Declarable>): string {
+    const resources: Record<string, unknown> = {};
+
+    for (const [name, entity] of entities) {
+      resources[name] = {
+        type: entity.entityType,
+      };
+    }
+
+    return JSON.stringify({ resources }, null, 2);
+  },
+};
+```
+
+## Using `walkValue` and `SerializerVisitor`
+
+The basic example above only emits `entity.entityType`. A real serializer must handle property values — including `AttrRef` (attribute references like `bucket.arn`), nested `Declarable` references (property types), `Intrinsic` values (Sub, Ref, etc.), and key transformation (e.g. camelCase to PascalCase).
+
+Use `walkValue` and `SerializerVisitor` from `@intentius/chant/serializer-walker` to handle all of these generically:
+
+```typescript
+import type { Serializer, Declarable } from "@intentius/chant";
+import { walkValue, type SerializerVisitor } from "@intentius/chant/serializer-walker";
+
+const visitor: SerializerVisitor = {
+  // Convert AttrRef → your format (e.g. CFN's Fn::GetAtt)
+  attrRef(logicalName, attribute) {
+    return { "Fn::GetAtt": [logicalName, attribute] };
+  },
+
+  // Convert resource Declarable reference → your format (e.g. CFN's Ref)
+  resourceRef(logicalName) {
+    return { Ref: logicalName };
+  },
+
+  // Convert property Declarable → walked object of its properties
+  propertyDeclarable(entity, walk) {
+    const props: Record<string, unknown> = {};
+    for (const [key, val] of Object.entries(entity)) {
+      if (key === "entityType" || key === "lexicon") continue;
+      props[key] = walk(val);
+    }
+    return props;
+  },
+
+  // Optional: transform property keys (e.g. camelCase → PascalCase)
+  transformKey(key) {
+    return key.charAt(0).toUpperCase() + key.slice(1);
+  },
+};
+
+const mySerializer: Serializer = {
+  name: "my-lexicon",
+  rulePrefix: "MY",
+
+  serialize(entities: Map<string, Declarable>): string {
+    // Build a reverse map: Declarable instance → logical name
+    const entityNames = new Map<Declarable, string>();
+    for (const [name, entity] of entities) {
+      entityNames.set(entity, name);
+    }
+
+    const resources: Record<string, unknown> = {};
+    for (const [name, entity] of entities) {
+      const properties: Record<string, unknown> = {};
+      for (const [key, val] of Object.entries(entity)) {
+        if (key === "entityType" || key === "lexicon") continue;
+        properties[key] = walkValue(val, entityNames, visitor);
+      }
+      resources[name] = { type: entity.entityType, properties };
+    }
+
+    return JSON.stringify({ resources }, null, 2);
+  },
+};
+```
+
+> See `lexicons/aws/src/serializer.ts` for the full AWS CloudFormation serializer.
+
+## Multi-file output
+
+If your lexicon supports splitting resources across multiple output files (e.g. nested stacks), return a `SerializerResult` instead of a plain string:
+
+```typescript
+import type { Serializer, SerializerResult } from "@intentius/chant";
+
+const mySerializer: Serializer = {
+  name: "my-lexicon",
+  rulePrefix: "MY",
+
+  serialize(entities): string | SerializerResult {
+    // ... detect if multi-file output is needed ...
+
+    if (hasChildProjects) {
+      return {
+        primary: JSON.stringify(parentTemplate, null, 2),
+        files: {
+          "child.template.json": JSON.stringify(childTemplate, null, 2),
+        },
+      };
+    }
+
+    return JSON.stringify(template, null, 2);
+  },
+};
+```
+
+The build pipeline writes each entry in `files` alongside the primary output file. File keys are relative filenames (not paths).
+
+## Child Projects
+
+If your lexicon needs to split resources into separate deployment units (like AWS nested stacks, Terraform modules, or Azure linked templates), use the core **child project** pattern. A child project is a subdirectory with its own barrel file (`_.ts`) that builds independently to a valid template.
+
+### Core primitives
+
+Two core types support child projects:
+
+- **`stackOutput(ref)`** from `@intentius/chant/stack-output` — wraps an `AttrRef` into a `Declarable` with `kind: "output"`. The serializer emits it into the template's `Outputs` section.
+- **`ChildProjectInstance`** from `@intentius/chant/child-project` — a `Declarable` representing a reference to a child project directory. The build pipeline detects these, recursively builds the child, and attaches the `BuildResult`.
+
+### 1. Create your lexicon's factory function
+
+Your lexicon provides a function that creates a `ChildProjectInstance`. This is the user-facing API for referencing child projects:
+
+```typescript
+import { CHILD_PROJECT_MARKER, type ChildProjectInstance } from "@intentius/chant/child-project";
+import { DECLARABLE_MARKER } from "@intentius/chant/declarable";
+import { INTRINSIC_MARKER } from "@intentius/chant/intrinsic";
+
+// Output ref class for your format's cross-stack reference syntax
+export class ModuleOutputRef {
+  readonly [INTRINSIC_MARKER] = true;
+  constructor(readonly moduleName: string, readonly outputName: string) {}
+  toJSON() {
+    // Your format's reference syntax
+    return `\${module.${this.moduleName}.${this.outputName}}`;
+  }
+}
+
+export function nestedModule(
+  name: string,
+  projectPath: string,
+  options?: Record<string, unknown>,
+): ChildProjectInstance {
+  const outputsProxy = new Proxy({} as Record<string, ModuleOutputRef>, {
+    get(_, prop: string) {
+      if (typeof prop === "symbol") return undefined;
+      return new ModuleOutputRef(name, prop);
+    },
+  });
+
+  return {
+    [CHILD_PROJECT_MARKER]: true,
+    [DECLARABLE_MARKER]: true,
+    lexicon: "my-lexicon",
+    entityType: "Module",
+    kind: "resource",
+    projectPath,
+    logicalName: name,
+    outputs: outputsProxy,
+    options: options ?? {},
+  } as ChildProjectInstance;
+}
+```
+
+The `outputs` Proxy creates output ref objects on demand — `network.outputs.vpcId` returns a `ModuleOutputRef("network", "vpcId")` that serializes via `toJSON()`.
+
+### 2. Handle `ChildProjectInstance` in your serializer
+
+Use `isChildProject()` to detect child project entities and emit the appropriate resource type:
+
+```typescript
+import { isChildProject, type ChildProjectInstance } from "@intentius/chant/child-project";
+
+for (const [name, entity] of entities) {
+  if (isChildProject(entity)) {
+    const child = entity as ChildProjectInstance;
+    // Emit your format's nested module/stack resource
+    // child.buildResult contains the child's serialized output
+    // child.logicalName, child.projectPath, child.options available
+  }
+}
+```
+
+### 3. Handle `StackOutput` in your serializer
+
+Use `isStackOutput()` to detect output declarations and emit them in the appropriate section:
+
+```typescript
+import { isStackOutput, type StackOutput } from "@intentius/chant/stack-output";
+
+for (const [name, entity] of entities) {
+  if (isStackOutput(entity)) {
+    const output = entity as StackOutput;
+    // Emit into your format's outputs section
+    // output.sourceRef is the AttrRef being exported
+    // output.description is optional
+  }
+}
+```
+
+### How it works at build time
+
+1. **Discovery** stops at barrel boundaries — `findInfraFiles()` skips subdirectories with `_.ts`
+2. **Build** detects `ChildProjectInstance` entities and recursively builds each child project
+3. **Cycle detection** tracks the build stack and errors on circular references
+4. **Serialization** receives entities with populated `buildResult` — the serializer extracts child templates and emits parent references
+
+> See `lexicons/aws/src/nested-stack.ts` and `lexicons/aws/src/serializer.ts` for a complete working example.
+
+## Next Steps
+
+With serialization in place, the next step is to [write lint rules](/lexicon-authoring/lint-rules/) for your provider.

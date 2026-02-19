@@ -1,0 +1,66 @@
+---
+title: Lexicons
+description: How chant lexicons provide types and semantic rules for operational areas
+---
+
+A **lexicon** is a collection of types and semantic lint rules for an operational area. The core system is lexicon-agnostic — it discovers files, collects exports, resolves dependencies, and runs semantic lint rules. Each lexicon plugs into this pipeline with its own types and rules.
+
+## Available Lexicons
+
+| Lexicon | Package | Resources | Reference |
+|---------|---------|-----------|-----------|
+| AWS CloudFormation | `@intentius/chant-lexicon-aws` | 1500+ | [Reference](/lexicons/aws/) |
+| GitLab CI/CD | `@intentius/chant-lexicon-gitlab` | 3 resources, 13 properties | [Reference](/lexicons/gitlab/) |
+
+## What a Lexicon Provides
+
+### Types
+
+TypeScript definition files that describe available resource classes, their properties, and intrinsic functions. These types power editor autocompletion, inline documentation, and compile-time checks.
+
+### Rules
+
+Lint rules specific to the target ecosystem. These integrate with `npx chant lint` to catch provider-specific mistakes like invalid resource configurations or naming convention violations.
+
+### Serialization
+
+Each lexicon implements the Serializer interface to convert evaluated resources into the target platform's output format.
+
+```typescript
+interface Serializer {
+  name: string;
+  rulePrefix: string;
+  serialize(entities: Map<string, Declarable>, outputs?: LexiconOutput[]): string;
+}
+```
+
+## Bundles
+
+A **bundle** is the distributable form of a lexicon — a `dist/` directory containing everything chant needs at build time:
+
+| Artifact | Description |
+|----------|-------------|
+| `manifest.json` | Lexicon metadata (name, version, intrinsics, pseudo-parameters) |
+| `lexicon.json` | Resource registry mapping type names to definitions |
+| `index.d.ts` | TypeScript declarations for all resource and property types |
+| `rules/` | Lint rule implementations |
+| `skills/` | AI assistant skill definitions |
+
+When you install a lexicon package (e.g. `@intentius/chant-lexicon-aws`), the bundle is what ships inside it. Lexicon authors produce bundles with `chant dev publish`.
+
+## Why Lexicons Exist
+
+chant is provider-agnostic by design. The core handles parsing, module resolution, evaluation, and serialization — but knows nothing about specific infrastructure platforms.
+
+Lexicons bridge this gap:
+
+- **The core stays lean** — no bundled provider SDKs or type catalogs
+- **Providers update independently** — new resource types ship as lexicon updates
+- **Custom targets are first-class** — organizations can author internal lexicons
+- **Projects declare exactly what they need** — explicit, reproducible dependencies
+
+## Next Steps
+
+- [Managing Lexicons](/guide/managing-lexicons/) — add, remove, and update lexicons
+- [Sync Mechanism](/lexicons/sync/) — how type definitions stay in sync
+- [Lexicon Authoring](/lexicon-authoring/overview/) — create and publish your own lexicons

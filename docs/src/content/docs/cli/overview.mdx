@@ -1,0 +1,112 @@
+---
+title: CLI Overview
+description: Complete command-line interface reference for chant
+---
+
+chant provides a CLI for building, linting, and managing infrastructure definitions.
+
+## Installation
+
+The CLI is included in `@intentius/chant`. Install a lexicon package to get everything:
+
+```bash
+npm install --save-dev @intentius/chant-lexicon-aws
+```
+
+## Usage
+
+```
+npx chant <command> [options] [path]
+```
+
+## Commands
+
+| Command | Description |
+|---------|-------------|
+| [`init`](/cli/init/) | Scaffold a new chant project |
+| [`init lexicon`](/cli/init-lexicon/) | Scaffold a new lexicon plugin project |
+| [`build`](/cli/build/) | Synthesize and write infrastructure output |
+| [`lint`](/cli/lint/) | Lint intent definitions with semantic rules |
+| [`list`](/cli/list/) | List exported declarations in a project |
+| [`import`](/cli/import/) | Import infrastructure templates and generate TypeScript |
+| [`update`](/cli/update/) | Sync lexicon type definitions |
+| [`doctor`](/cli/doctor/) | Check project health and configuration |
+
+## Lexicon Development Commands
+
+These commands are for **lexicon authors** — project users don't typically need them.
+
+| Command | Description |
+|---------|-------------|
+| [`dev generate`](/cli/generate/) | Generate lexicon artifacts (+ validate + coverage) |
+| [`dev publish`](/cli/package/) | Package lexicon for distribution |
+| [`dev rollback`](/cli/rollback/) | List or restore generation snapshots |
+
+## Server Commands
+
+| Command | Description |
+|---------|-------------|
+| [`serve lsp`](/cli/lsp/) | Start the LSP server for editor integration |
+| [`serve mcp`](/cli/mcp/) | Start MCP server for AI agent integration |
+
+## Common Workflows
+
+```bash
+# Initialize and build a project
+npx chant init my-infra --lexicon aws
+cd my-infra
+npx chant build
+
+# Lint definitions
+npx chant lint
+
+# Import existing templates
+npx chant import template.json
+
+# Check project health
+npx chant doctor
+```
+
+## File Discovery
+
+The CLI automatically discovers infrastructure files based on these rules:
+
+**Included:**
+- All `.ts` files in the specified directory and subdirectories
+
+**Excluded:**
+- Files in `node_modules/` directories
+- Test files: `*.test.ts`, `*.spec.ts`
+- TypeScript declaration files: `*.d.ts`
+
+## Error Handling
+
+The CLI provides structured error output for different types of errors:
+
+### Discovery Errors
+
+Reported when files can't be loaded or imported. Common causes: missing dependencies, syntax errors, invalid import paths, circular dependencies.
+
+### Build Errors
+
+Reported during serialization. Common causes: circular dependencies between resources, invalid attribute references, missing required properties.
+
+## Global Options
+
+### `--verbose, -v`
+
+Show stack traces on errors.
+
+### `--help, -h`
+
+Display help information for the CLI or a specific command.
+
+```bash
+npx chant --help
+npx chant build --help
+```
+
+## See Also
+
+- [Getting Started Guide](/getting-started/quick-start/) — learn the basics
+- [Core Type System](/architecture/core-type-system/) — understand the type system

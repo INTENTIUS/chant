@@ -1,0 +1,37 @@
+---
+title: Evaluator Engine
+description: How chant statically extracts and evaluates resource declarations
+---
+
+The evaluator performs static extraction of resource declarations from TypeScript AST nodes. It converts `new ResourceType({...})` expressions into structured data that lexicon serializers can consume.
+
+## How It Works
+
+The evaluator walks top-level statements in each source file, looking for exported variable declarations with `new Type({...})` initializers. For each resource found, it recursively evaluates the property object into a value tree.
+
+The evaluator never executes TypeScript. It reads the AST as data, resolving only what can be determined statically.
+
+## Supported Expressions
+
+- **Literals**: strings, numbers, booleans, `null`, arrays, object literals
+- **Identifiers**: references to `const` bindings (traced to their initializer)
+- **Property access**: `obj.key` on known objects
+- **Spread**: `{...defaults, name: "x"}` from `const` sources
+- **Ternary**: `cond ? a : b`
+- **Binary expressions**: arithmetic, string concatenation
+- **Nullish coalescing**: `left ?? right`
+- **Tagged templates**: lexicon-registered intrinsic tags
+
+Expressions that cannot be statically resolved are rejected by lint rules before the evaluator runs.
+
+## Output
+
+Each extracted resource produces an evaluated resource with:
+
+- **LogicalName** — derived from the export binding name
+- **ResourceType** — provider type string from the resource registry
+- **Props** — ordered map of evaluated property values
+
+## Composite Support
+
+The evaluator detects `Composite({...})` definitions and stores them in a composite registry. When a composite is instantiated, the evaluator expands its resource map, resolving `siblings` references between member resources.

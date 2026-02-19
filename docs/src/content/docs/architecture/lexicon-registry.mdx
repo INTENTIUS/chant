@@ -1,0 +1,47 @@
+---
+title: Lexicon Registry
+description: How lexicons are managed and loaded
+---
+
+The lexicon registry manages the lifecycle of lexicon bundles — loading, validating, and making them available to the evaluator and lint system.
+
+## What a Lexicon Provides
+
+### Types
+
+TypeScript definition files (`.d.ts`) that describe available resource classes, their properties, and intrinsic functions. These types power editor autocompletion and compile-time checks.
+
+### Rules
+
+Lint rules specific to the target ecosystem. These integrate with `npx chant lint` to catch provider-specific mistakes.
+
+### Resource Registry Metadata
+
+Metadata that maps resource type identifiers to their definitions. The evaluator uses this at build time to resolve resource types and validate configurations.
+
+## Codegen Infrastructure
+
+The core package provides reusable codegen infrastructure so that new lexicons don't need to reimplement common patterns:
+
+| Module | What it provides |
+|--------|-----------------|
+| `@intentius/chant/runtime` | `createResource`, `createProperty` — Declarable-marked constructor factories |
+| `@intentius/chant/codegen/naming` | `NamingStrategy` — collision-free TypeScript class name generation |
+| `@intentius/chant/codegen/generate` | `generatePipeline` — orchestrates fetch, parse, name, generate |
+| `@intentius/chant/codegen/package` | `packagePipeline` — bundles artifacts into `BundleSpec` |
+| `@intentius/chant/codegen/fetch` | `fetchWithCache`, `extractFromZip` — HTTP caching and zip extraction |
+| `@intentius/chant/lsp/lexicon-providers` | `LexiconIndex`, `lexiconCompletions`, `lexiconHover` — LSP helpers |
+
+Each lexicon supplies provider-specific callbacks and data tables. Core handles the orchestration, logging, warning collection, stats, and integrity computation.
+
+## Why Lexicons Exist
+
+chant is provider-agnostic by design. The core handles parsing, module resolution, evaluation, and serialization — but knows nothing about specific infrastructure platforms.
+
+Lexicons bridge this gap:
+
+- **The core stays lean** — no bundled provider SDKs
+- **Providers update independently** — new resource types ship as lexicon updates
+- **Custom targets are first-class** — organizations can author internal lexicons
+- **Projects declare exactly what they need** — explicit, reproducible dependencies
+- **New lexicons reuse core infrastructure** — naming, generation, bundling, and LSP patterns are provided by core

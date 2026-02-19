@@ -1,0 +1,27 @@
+# Workspace smoke test — validates chant CLI in a Bun workspace
+FROM oven/bun:latest
+
+WORKDIR /app
+
+# Install system deps
+RUN apt-get update && apt-get install -y jq curl && rm -rf /var/lib/apt/lists/*
+
+# Install Claude Code
+RUN bun install -g @anthropic-ai/claude-code
+
+# Copy workspace
+COPY . .
+
+# Install dependencies
+RUN bun install
+
+# Run integration tests during build — build fails if tests fail
+COPY test/integration.sh /app/test/integration.sh
+RUN chmod +x /app/test/integration.sh && /app/test/integration.sh
+
+# Put chant on the PATH
+ENV PATH="/app/lexicons/gitlab/node_modules/.bin:/app/lexicons/aws/node_modules/.bin:${PATH}"
+
+WORKDIR /app/lexicons/aws/examples/getting-started
+
+CMD ["bash"]

@@ -1,0 +1,70 @@
+---
+title: "chant init"
+description: Scaffold a new chant project or lexicon plugin
+---
+
+Scaffold a new chant project with the standard directory structure and configuration files.
+
+## Synopsis
+
+```
+npx chant init <path> --lexicon <name> [flags]
+```
+
+## Flags
+
+| Flag | Description |
+|------|-------------|
+| `-d, --lexicon <name>` | Select lexicon (**required**) |
+| `--force` | Overwrite existing files |
+
+## Description
+
+`chant init` creates a new project at the specified path. It generates the full directory layout, TypeScript configuration, lint configuration, and a sample resource file so you can begin writing definitions immediately.
+
+### Generated files
+
+| File | Purpose |
+|------|---------|
+| `src/_.ts` | Barrel file that re-exports the lexicon and creates `$` |
+| `src/` sample resources | Starter resource definitions |
+| `chant.config.ts` | Project configuration (lexicons, strict lint preset) |
+| `tsconfig.json` | TypeScript compiler options |
+| `package.json` | Dependencies |
+| `.gitignore` | Ignores generated files |
+
+## Usage
+
+```bash
+npx chant init my-infra --lexicon aws
+cd my-infra
+npx chant build
+
+# Overwrite existing files
+npx chant init my-infra --lexicon aws --force
+```
+
+## Lexicon scaffold mode
+
+To scaffold a new **lexicon plugin** project (for lexicon authors), use:
+
+```
+npx chant init lexicon <name> [path] [--force]
+```
+
+This creates a complete lexicon plugin project with stubs for every required lifecycle method. See [`init lexicon`](/cli/init-lexicon/) for full details.
+
+```bash
+# Scaffold a new lexicon
+npx chant init lexicon k8s
+
+# Scaffold at a custom path
+npx chant init lexicon gcp ./my-gcp-lexicon
+```
+
+## Exit Codes
+
+| Code | Meaning |
+|------|---------|
+| 0 | Project created successfully |
+| 1 | Error (target path is not empty or could not be created) |

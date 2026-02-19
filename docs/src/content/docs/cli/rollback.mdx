@@ -1,0 +1,28 @@
+---
+title: "chant dev rollback"
+description: List or restore generation snapshots
+---
+
+## Synopsis
+
+```
+npx chant dev rollback [path] [--verbose]
+```
+
+## Description
+
+`chant dev rollback` lists or restores previous generation snapshots for a lexicon. This allows reverting to an earlier generation if a new run introduces issues.
+
+This is a **lexicon authoring** command — project users don't typically need it.
+
+## Options
+
+| Option | Description |
+|--------|-------------|
+| `-v, --verbose` | Show detailed snapshot information |
+
+## See Also
+
+- [`chant dev generate`](/cli/generate/) — generate lexicon artifacts
+- [`chant dev publish`](/cli/package/) — package lexicon for distribution
+- [Authoring Lexicons](/lexicons/authoring/) — full authoring guide

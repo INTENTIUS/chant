@@ -1,0 +1,57 @@
+---
+title: "chant lint"
+description: Lint infrastructure definitions with semantic rules
+---
+
+## Synopsis
+
+```
+npx chant lint [path] [flags]
+```
+
+## Description
+
+`chant lint` loads the project at the given path, runs all configured lint rules, and reports diagnostics. Each diagnostic includes a rule ID (e.g. `COR010`, `EVL001`) alongside the file location and message.
+
+## Flags
+
+| Flag | Type | Default | Description |
+|------|------|---------|-------------|
+| `--format` | `string` | `stylish` | Output format: `stylish`, `json`, or `sarif` |
+| `--fix` | `bool` | `false` | Auto-fix fixable issues |
+| `-w, --watch` | `bool` | `false` | Watch for file changes and re-lint |
+
+## Usage
+
+```bash
+# Lint current directory
+npx chant lint
+
+# JSON output for CI
+npx chant lint --format json
+
+# SARIF for GitHub Code Scanning
+npx chant lint --format sarif > results.sarif
+
+# Auto-fix
+npx chant lint --fix
+
+# Watch mode
+npx chant lint --watch
+```
+
+## COR016: Stale Barrel Types
+
+The `COR016` rule checks that `_.d.ts` barrel type declarations are up-to-date. It fires when linting `_.ts` barrel files and compares the existing `_.d.ts` content against what the current project scan would generate.
+
+- **Missing `_.d.ts`**: emits a warning suggesting `chant lint --fix`
+- **Stale `_.d.ts`**: emits a warning when the content doesn't match
+
+When `--fix` is passed, `_.d.ts` is regenerated automatically.
+
+## Exit Codes
+
+| Code | Meaning |
+|------|---------|
+| 0 | No errors found |
+| 1 | Lint errors found |

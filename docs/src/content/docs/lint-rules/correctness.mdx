@@ -1,0 +1,143 @@
+---
+title: Correctness Rules
+description: Rules that catch structural errors causing evaluation or deployment failures
+---
+
+Correctness rules catch structural errors that would cause evaluation or deployment failures.
+
+---
+
+## COR003: String-Based Reference
+
+Use typed property access instead of string-based `GetAtt()` or `Ref()` calls. String references bypass type checking and break if a resource is renamed.
+
+**Severity:** warning
+
+```typescript
+// ❌ Triggers COR003
+export const fn = new _.Function({
+  role: GetAtt("functionRole", "Arn"),
+  bucket: Ref("dataBucket"),
+});
+```
+
+```typescript
+// ✅ Fixed — use typed AttrRef properties
+export const fn = new _.Function({
+  role: _.$.functionRole.arn,
+  bucket: _.$.dataBucket.ref,
+});
+```
+
+---
+
+## COR004: Unused Declarable
+
+Exported declarables that are never referenced by another resource in the same file may be dead infrastructure code.
+
+**Severity:** warning
+
+```typescript
+// ❌ Triggers COR004
+export const logsBucket = new _.Bucket({
+  bucketName: "logs",
+});
+
+export const dataBucket = new _.Bucket({
+  bucketName: "data",
+});
+// logsBucket is never used — flagged
+```
+
+```typescript
+// ✅ Fixed — reference it or remove it
+export const logsBucket = new _.Bucket({
+  bucketName: "logs",
+});
+
+export const dataBucket = new _.Bucket({
+  bucketName: "data",
+  loggingConfiguration: { destinationBucketName: logsBucket.ref },
+});
+```
+
+:::note
+When using the barrel pattern (`_.$`), resources referenced from other files appear unused within their own file. If your project uses barrels, set `COR004: "off"` in your config:
+
+```typescript
+// chant.config.ts
+export default {
+  lint: {
+    rules: { COR004: "off" },
+  },
+};
+```
+:::
+
+---
+
+## COR007: Enforce Barrel Reference
+
+Sibling resources should be accessed through the barrel (`_.$`) instead of direct relative imports. Direct imports bypass the barrel's lazy-loading and cross-file resolution.
+
+**Severity:** warning
+
+```typescript
+// ❌ Triggers COR007
+import { dataBucket } from "./data-bucket";
+
+export const fn = new _.Function({
+  bucket: dataBucket.arn,
+});
+```
+
+```typescript
+// ✅ Fixed — access via barrel proxy
+import * as _ from "./_";
+
+export const fn = new _.Function({
+  bucket: _.$.dataBucket.arn,
+});
+```
+
+Barrel files (`_.ts`) are exempt — they need direct imports to re-export siblings.
+
+---
+
+## COR008: Export Required
+
+All declarable instances must be exported so chant can discover them during synthesis. Non-exported resources are invisible to the build pipeline.
+
+**Severity:** error
+
+```typescript
+// ❌ Triggers COR008
+const bucket = new _.Bucket({
+  bucketName: "my-data",
+});
+```
+
+```typescript
+// ✅ Fixed
+export const bucket = new _.Bucket({
+  bucketName: "my-data",
+});
+```
+
+---
+
+## COR016: Stale Barrel Types
+
+The `_.d.ts` barrel type declaration file must stay in sync with the project's exports. This rule fires on barrel files (`_.ts`) when the corresponding `_.d.ts` is missing or out of date.
+
+**Severity:** warning
+
+```
+⚠ COR016: Stale _.d.ts barrel type declarations. Run 'chant lint --fix' to regenerate.
+```
+
+```
+⚠ COR016: Missing _.d.ts barrel type declarations. Run 'chant lint --fix' to generate.
+```
+
+This rule is auto-fixable — `chant lint --fix` generates or regenerates `_.d.ts` from the project's current exports, giving you typed `_.$` access with full autocomplete.
