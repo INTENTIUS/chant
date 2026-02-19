@@ -1,6 +1,6 @@
 # @intentius/chant
 
-> Part of the [chant](../../README.md) monorepo. Not yet published to npm.
+> Part of the [chant](../../README.md) monorepo. Published as [`@intentius/chant`](https://www.npmjs.com/package/@intentius/chant) on npm.
 
 Core functionality for chant - a lexicon-agnostic declarative infrastructure specification system.
 

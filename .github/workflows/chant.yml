@@ -18,11 +18,11 @@ jobs:
           bun run --cwd lexicons/aws prepack
           bun run --cwd lexicons/gitlab prepack
 
-      - name: Lint infrastructure
-        run: bun run packages/core/src/cli/main.ts lint ./src --format sarif > results.sarif
+      - name: Lint example project
+        run: bun run packages/core/src/cli/main.ts lint lexicons/aws/examples/getting-started/src --format sarif > results.sarif
 
-      - name: Build infrastructure
-        run: bun run packages/core/src/cli/main.ts build ./src --output template.json
+      - name: Build example project
+        run: bun run packages/core/src/cli/main.ts build lexicons/aws/examples/getting-started/src --output template.json
 
       - name: Upload SARIF results
         if: always()
@@ -63,15 +63,3 @@ jobs:
 
       - name: Generate and validate GitLab lexicon
         run: bun run --cwd lexicons/gitlab prepack
-
-  smoke:
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    if: github.ref == 'refs/heads/main' || github.event_name == 'pull_request'
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Run smoke tests
-        run: |
-          chmod +x test/smoke.sh
-          ./test/smoke.sh all

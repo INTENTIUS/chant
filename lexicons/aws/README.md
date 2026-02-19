@@ -1,6 +1,6 @@
 # @intentius/chant-lexicon-aws
 
-> Part of the [chant](../../README.md) monorepo. Not yet published to npm.
+> Part of the [chant](../../README.md) monorepo. Published as [`@intentius/chant-lexicon-aws`](https://www.npmjs.com/package/@intentius/chant-lexicon-aws) on npm.
 
 AWS CloudFormation lexicon for chant — declare infrastructure as flat, typed TypeScript that serializes to CloudFormation JSON templates.
 
