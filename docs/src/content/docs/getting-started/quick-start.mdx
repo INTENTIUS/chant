@@ -24,7 +24,7 @@ Verify it works:
 npx chant --version
 ```
 
-See [Installation](/getting-started/installation/) for details.
+See [Installation](/chant/getting-started/installation/) for details.
 
 ## Step 2: Initialize a Project
 
@@ -51,7 +51,7 @@ The **barrel file** (`src/_.ts`) is the central import hub for your project. It 
 
 <Code code={barrelSrc} lang="typescript" title="src/_.ts" />
 
-For the full barrel pattern — including `barrel()` and the `$` cross-resource proxy — see [Barrel Concepts](/concepts/barrels/).
+For the full barrel pattern — including `barrel()` and the `$` cross-resource proxy — see [Barrel Concepts](/chant/concepts/barrels/).
 
 Shared defaults are regular exports that other files reference through `$`:
 
@@ -63,10 +63,10 @@ Resource files reference types and siblings through the barrel:
 
 Every property is typed — your editor autocompletes `bucketName`, `versioningConfiguration`, `sseAlgorithm`, and catches typos immediately. The `$` proxy resolves cross-file references like `$.versioningEnabled` at build time.
 
-See the [AWS CloudFormation lexicon reference](/lexicons/aws/) for intrinsic functions, composites, custom lint rules, and examples.
+See the [AWS CloudFormation lexicon reference](/chant/lexicons/aws/) for intrinsic functions, composites, custom lint rules, and examples.
 
 :::tip[AWS walkthrough]
-For a complete walkthrough with S3 buckets, IAM roles, Lambda functions, and cross-resource references, see the [AWS Examples](/lexicons/aws/examples/).
+For a complete walkthrough with S3 buckets, IAM roles, Lambda functions, and cross-resource references, see the [AWS Examples](/chant/lexicons/aws/examples/).
 :::
 
 ## Step 5: Build
@@ -79,7 +79,7 @@ The build command discovers all `.ts` files, collects exported declarables, reso
 
 ## Next Steps
 
-- [Project Structure](/getting-started/project-structure/) — understand what `chant init` created
-- [Core Concepts](/concepts/philosophy/) — learn the design principles behind chant
-- [Writing Resources](/guide/writing-resources/) — the full guide to defining resources
-- [Linting & Type-Checking](/guide/linting/) — validate your definitions
+- [Project Structure](/chant/getting-started/project-structure/) — understand what `chant init` created
+- [Core Concepts](/chant/concepts/philosophy/) — learn the design principles behind chant
+- [Writing Resources](/chant/guide/writing-resources/) — the full guide to defining resources
+- [Linting & Type-Checking](/chant/guide/linting/) — validate your definitions

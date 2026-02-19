@@ -13,7 +13,7 @@ bun install
 
 This scaffolds a complete lexicon project with compilable stubs for every required lifecycle method. Follow the TODO comments in the generated files to wire up your upstream spec.
 
-See the [init lexicon CLI reference](/cli/init-lexicon/) for the full list of options and flags.
+See the [init lexicon CLI reference](/chant/cli/init-lexicon/) for the full list of options and flags.
 
 ## Generated File Walkthrough
 
@@ -67,12 +67,12 @@ export const myPlugin: LexiconPlugin = {
 };
 ```
 
-**`src/codegen/generate.ts`** — Where you call core's `generatePipeline` with your provider-specific callbacks. This is where most of the implementation work happens. See [Implement Generate](/lexicon-authoring/generate/).
+**`src/codegen/generate.ts`** — Where you call core's `generatePipeline` with your provider-specific callbacks. This is where most of the implementation work happens. See [Implement Generate](/chant/lexicon-authoring/generate/).
 
-**`src/serializer.ts`** — Converts evaluated resources to your target format. See [Create a Serializer](/lexicon-authoring/serializer/).
+**`src/serializer.ts`** — Converts evaluated resources to your target format. See [Create a Serializer](/chant/lexicon-authoring/serializer/).
 
-**`src/codegen/package.ts`** — Calls core's `packagePipeline` to produce a distributable bundle. See [Package & Publish](/lexicon-authoring/package/).
+**`src/codegen/package.ts`** — Calls core's `packagePipeline` to produce a distributable bundle. See [Package & Publish](/chant/lexicon-authoring/package/).
 
 ## Next Steps
 
-With the scaffold in place, your next step is to [implement the generation pipeline](/lexicon-authoring/generate/) — connecting your upstream spec to chant's `generatePipeline`.
+With the scaffold in place, your next step is to [implement the generation pipeline](/chant/lexicon-authoring/generate/) — connecting your upstream spec to chant's `generatePipeline`.

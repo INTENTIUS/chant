@@ -20,8 +20,8 @@ src/api.ts:12:1 error [EVL002] resource declaration must not be inside an if sta
 
 Lint runs two layers in one pass:
 
-1. **Evaluability rules (EVL)** — ensures all resource property expressions can be statically evaluated. See [Evaluability Rules](/lint-rules/evaluability/).
-2. **Correctness & style rules (COR)** — structural constraints like missing exports, circular dependencies, naming conventions. See [Correctness Rules](/lint-rules/correctness/).
+1. **Evaluability rules (EVL)** — ensures all resource property expressions can be statically evaluated. See [Evaluability Rules](/chant/lint-rules/evaluability/).
+2. **Correctness & style rules (COR)** — structural constraints like missing exports, circular dependencies, naming conventions. See [Correctness Rules](/chant/lint-rules/correctness/).
 
 ## Output Formats
 
@@ -45,4 +45,4 @@ npx chant lint --watch
 
 ## Configuring Rules
 
-Rules are configured in `chant.config.ts`. See [Rule Configuration](/lint-rules/configuration/).
+Rules are configured in `chant.config.ts`. See [Rule Configuration](/chant/lint-rules/configuration/).

@@ -89,8 +89,8 @@ Composites are useful when:
 - **You want consistent naming** — derive all resource names from a single `name` prop
 - **Cross-resource wiring is complex** — encapsulate the references inside the composite
 
-For sharing default *property values* across resources of the same type, see [Presets](/guide/presets/) instead.
+For sharing default *property values* across resources of the same type, see [Presets](/chant/guide/presets/) instead.
 
-Some lexicons also support **child projects** — subdirectories with their own barrel file that build to separate output files. The parent references a child project via a lexicon-specific function (e.g. AWS `nestedStack()`), and cross-stack values are explicitly exported with `stackOutput()`. See [Multi-Stack Projects](/guide/multi-stack/) for an overview.
+Some lexicons also support **child projects** — subdirectories with their own barrel file that build to separate output files. The parent references a child project via a lexicon-specific function (e.g. AWS `nestedStack()`), and cross-stack values are explicitly exported with `stackOutput()`. See [Multi-Stack Projects](/chant/guide/multi-stack/) for an overview.
 
 See your lexicon's documentation for working composite examples with concrete resource types.

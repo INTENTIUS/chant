@@ -13,7 +13,7 @@ You're in the right place if you want to:
 - Create an internal lexicon for your organization's infrastructure patterns
 - Extend chant with custom resource types and lint rules
 
-If you're **using** an existing lexicon (like AWS CloudFormation), see the [User Guide](/guide/writing-resources/) instead.
+If you're **using** an existing lexicon (like AWS CloudFormation), see the [User Guide](/chant/guide/writing-resources/) instead.
 
 ## The LexiconPlugin Interface
 
@@ -90,13 +90,13 @@ The **AWS CloudFormation lexicon** (`lexicons/aws/`) is the canonical reference 
 
 Building a lexicon follows these steps:
 
-1. **[Scaffold](/lexicon-authoring/scaffold/)** — `chant init lexicon` generates the project structure
-2. **[Implement Generate](/lexicon-authoring/generate/)** — wire up `generatePipeline` with your upstream spec
-3. **[Create a Serializer](/lexicon-authoring/serializer/)** — convert evaluated resources to your target format
-4. **[Write Lint Rules](/lexicon-authoring/lint-rules/)** — imperative, declarative, and post-synth checks
-5. **[LSP & MCP Providers](/lexicon-authoring/lsp-mcp/)** — editor completions, hover, and AI tool support
-6. **[Skills](/lexicon-authoring/skills/)** — AI agent skill files
-7. **[Package & Publish](/lexicon-authoring/package/)** — bundle and publish to npm
+1. **[Scaffold](/chant/lexicon-authoring/scaffold/)** — `chant init lexicon` generates the project structure
+2. **[Implement Generate](/chant/lexicon-authoring/generate/)** — wire up `generatePipeline` with your upstream spec
+3. **[Create a Serializer](/chant/lexicon-authoring/serializer/)** — convert evaluated resources to your target format
+4. **[Write Lint Rules](/chant/lexicon-authoring/lint-rules/)** — imperative, declarative, and post-synth checks
+5. **[LSP & MCP Providers](/chant/lexicon-authoring/lsp-mcp/)** — editor completions, hover, and AI tool support
+6. **[Skills](/chant/lexicon-authoring/skills/)** — AI agent skill files
+7. **[Package & Publish](/chant/lexicon-authoring/package/)** — bundle and publish to npm
 
 ## Example: Minimal Custom Lexicon
 
