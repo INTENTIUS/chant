@@ -51,8 +51,8 @@ export default defineConfig({
 					label: 'Lexicons',
 					items: [
 						{ label: 'Overview', slug: 'lexicons/overview' },
-						{ label: 'AWS CloudFormation', link: '/chant/lexicons/aws/' },
-						{ label: 'GitLab CI/CD', link: '/chant/lexicons/gitlab/' },
+						{ label: 'AWS CloudFormation', link: '/lexicons/aws/' },
+						{ label: 'GitLab CI/CD', link: '/lexicons/gitlab/' },
 						{ label: 'Sync Mechanism', slug: 'lexicons/sync' },
 					],
 				},
