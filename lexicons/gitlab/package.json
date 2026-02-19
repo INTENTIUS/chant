@@ -1,6 +1,6 @@
 {
   "name": "@intentius/chant-lexicon-gitlab",
-  "version": "0.0.1",
+  "version": "0.0.2",
   "type": "module",
   "files": ["src/", "dist/"],
   "publishConfig": { "access": "public" },
