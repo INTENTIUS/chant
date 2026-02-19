@@ -29,29 +29,3 @@ export const dataBucket = new aws.Bucket({
 | [@intentius/chant-lexicon-chant](lexicons/chant) | Core lint rules (COR, EVL) |
 | [@intentius/chant-lexicon-aws](lexicons/aws) | AWS lexicon — S3, Lambda, IAM types + semantic lint rules |
 | [@intentius/chant-test-utils](packages/test-utils) | Shared testing utilities |
-
-## Development
-
-### Prerequisites
-
-- [Bun](https://bun.sh) — package manager, runtime, and test runner
-- [just](https://just.systems) — task runner (optional)
-
-### Setup
-
-```bash
-git clone <repo-url>
-cd chant
-bun install
-just check    # type-check + lint + test
-```
-
-### Commands
-
-```bash
-just build    # Type check
-just test     # Run tests
-just lint     # Run linter
-just check    # All of the above
-just docs     # Start docs dev server
-```
