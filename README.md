@@ -4,7 +4,7 @@ A type system for operations.
 
 Declare your infrastructure and configuration as typed TypeScript objects. chant discovers your declarations, validates them with semantic lint rules, resolves dependencies, and builds artifacts for your target platform.
 
-> chant is in active development. Packages are not yet published to npm.
+> chant is in active development. Packages are published under the [`@intentius`](https://www.npmjs.com/org/intentius) org on npm.
 
 ## What It Looks Like
 

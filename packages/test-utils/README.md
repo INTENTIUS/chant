@@ -1,6 +1,6 @@
 # @intentius/chant-test-utils
 
-> Part of the [chant](../../README.md) monorepo. Not yet published to npm.
+> Part of the [chant](../../README.md) monorepo. Internal package — not published to npm.
 
 Shared testing utilities for chant packages.
 
