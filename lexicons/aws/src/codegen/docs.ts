@@ -115,7 +115,7 @@ export async function generateDocs(options?: { verbose?: boolean }): Promise<voi
 
   const config: DocsConfig = {
     name: "aws",
-    basePath: process.env.DOCS_BASE_PATH ?? "/lexicons/aws/",
+    basePath: process.env.DOCS_BASE_PATH ?? "/chant/lexicons/aws/",
     displayName: "AWS CloudFormation",
     description: "AWS CloudFormation lexicon for chant — resource types, intrinsics, and lint rules",
     distDir,

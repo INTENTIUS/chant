@@ -4,6 +4,8 @@ import starlight from '@astrojs/starlight';
 
 // https://astro.build/config
 export default defineConfig({
+	site: 'https://intentius.github.io',
+	base: '/chant',
 	integrations: [
 		starlight({
 			title: 'chant',
@@ -49,8 +51,8 @@ export default defineConfig({
 					label: 'Lexicons',
 					items: [
 						{ label: 'Overview', slug: 'lexicons/overview' },
-						{ label: 'AWS CloudFormation', link: '/lexicons/aws/' },
-						{ label: 'GitLab CI/CD', link: '/lexicons/gitlab/' },
+						{ label: 'AWS CloudFormation', link: '/chant/lexicons/aws/' },
+						{ label: 'GitLab CI/CD', link: '/chant/lexicons/gitlab/' },
 						{ label: 'Sync Mechanism', slug: 'lexicons/sync' },
 					],
 				},

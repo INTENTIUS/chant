@@ -948,7 +948,7 @@ deploy:
 `,
       },
     ],
-    basePath: "/lexicons/gitlab/",
+    basePath: "/chant/lexicons/gitlab/",
   };
 
   const result = await docsPipeline(config);
