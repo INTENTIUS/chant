@@ -27,18 +27,18 @@ jobs:
 
       - name: Publish @intentius/chant
         working-directory: packages/core
-        run: bun publish --access public
+        run: bun publish --access public --tolerate-republish
         env:
-          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+          NPM_CONFIG_TOKEN: ${{ secrets.NPM_TOKEN }}
 
       - name: Publish @intentius/chant-lexicon-aws
         working-directory: lexicons/aws
-        run: bun publish --access public
+        run: bun publish --access public --tolerate-republish
         env:
-          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+          NPM_CONFIG_TOKEN: ${{ secrets.NPM_TOKEN }}
 
       - name: Publish @intentius/chant-lexicon-gitlab
         working-directory: lexicons/gitlab
-        run: bun publish --access public
+        run: bun publish --access public --tolerate-republish
         env:
-          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+          NPM_CONFIG_TOKEN: ${{ secrets.NPM_TOKEN }}
