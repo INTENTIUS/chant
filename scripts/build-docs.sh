@@ -13,6 +13,7 @@ cp -r docs/dist "$OUT"
 # 2. Generate + build AWS lexicon docs
 echo "Building AWS lexicon docs..."
 cd lexicons/aws
+bun run prepack
 bun run src/codegen/docs-cli.ts
 cd docs && bun install && bun run build && cd ../../..
 mkdir -p "$OUT/lexicons/aws"
@@ -21,6 +22,7 @@ cp -r lexicons/aws/docs/dist/* "$OUT/lexicons/aws/"
 # 3. Generate + build GitLab lexicon docs
 echo "Building GitLab lexicon docs..."
 cd lexicons/gitlab
+bun run prepack
 bun run src/codegen/docs-cli.ts
 cd docs && bun install && bun run build && cd ../../..
 mkdir -p "$OUT/lexicons/gitlab"

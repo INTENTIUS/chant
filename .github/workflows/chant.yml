@@ -47,6 +47,9 @@ jobs:
       - name: Install dependencies
         run: bun install
 
+      - name: Generate lexicon artifacts
+        run: bun run --cwd lexicons/aws prepack
+
       - name: Validate lexicon artifacts
         run: bun run lexicons/aws/src/plugin.ts validate
 
@@ -59,6 +62,9 @@ jobs:
 
       - name: Install dependencies
         run: bun install
+
+      - name: Generate GitLab lexicon artifacts
+        run: bun run --cwd lexicons/gitlab prepack
 
       - name: Validate GitLab lexicon artifacts
         run: bun run lexicons/gitlab/src/plugin.ts validate
