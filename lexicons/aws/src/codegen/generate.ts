@@ -144,6 +144,13 @@ export function writeGeneratedFiles(result: GenerateResult, baseDir: string): vo
       "lexicon-aws.json": result.lexiconJSON,
       "index.d.ts": result.typesDTS,
       "index.ts": result.indexTS,
+      "runtime.ts": [
+        "/**",
+        " * Runtime factory constructors — re-exported from core.",
+        " */",
+        'export { createResource, createProperty } from "@intentius/chant/runtime";',
+        "",
+      ].join("\n"),
     },
     snapshot: (generatedDir) => {
       const { snapshotArtifacts, saveSnapshot } = require("./rollback");

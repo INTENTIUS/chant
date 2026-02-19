@@ -19,7 +19,8 @@
   },
   "dependencies": {
     "@intentius/chant": "workspace:*",
-    "fflate": "^0.8.2"
+    "fflate": "^0.8.2",
+    "js-yaml": "^4.1.0"
   },
   "devDependencies": {
     "typescript": "^5.9.3"
