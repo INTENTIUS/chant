@@ -2,6 +2,10 @@ name: chant
 
 on: [push, pull_request]
 
+permissions:
+  contents: read
+  security-events: write
+
 jobs:
   check:
     runs-on: ubuntu-latest
