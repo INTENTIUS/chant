@@ -66,9 +66,9 @@ else
   echo "  SKIP: gitlab getting-started example not found"
 fi
 
-# ---- test_existing_example (cross-lexicon) ----
-log "test_existing_example (cross-lexicon)"
-CROSS_EXAMPLE_DIR="/app/examples/cross-lexicon"
+# ---- test_existing_example (gitlab-aws) ----
+log "test_existing_example (gitlab-aws)"
+CROSS_EXAMPLE_DIR="/app/examples/gitlab-aws"
 if [ -d "$CROSS_EXAMPLE_DIR/src" ]; then
   # Lint
   if LINT_OUT=$($CHANT lint "$CROSS_EXAMPLE_DIR/src" 2>&1); then
