@@ -13,8 +13,9 @@
   },
   "scripts": {
     "generate": "bun run src/codegen/generate-cli.ts",
+    "package": "bun run src/package-cli.ts",
     "validate": "bun run src/validate-cli.ts",
-    "prepack": "bun run generate && bun run validate"
+    "prepack": "bun run package && bun run validate"
   },
   "dependencies": {
     "@intentius/chant": "workspace:*"

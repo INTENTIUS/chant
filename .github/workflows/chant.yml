@@ -5,6 +5,7 @@ on: [push, pull_request]
 jobs:
   check:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
       - uses: oven-sh/setup-bun@v2
@@ -12,11 +13,16 @@ jobs:
       - name: Install dependencies
         run: bun install
 
+      - name: Generate lexicon artifacts
+        run: |
+          bun run --cwd lexicons/aws prepack
+          bun run --cwd lexicons/gitlab prepack
+
       - name: Lint infrastructure
-        run: chant lint ./src --format sarif > results.sarif
+        run: bun run packages/core/src/cli/main.ts lint ./src --format sarif > results.sarif
 
       - name: Build infrastructure
-        run: chant build ./src --output template.json
+        run: bun run packages/core/src/cli/main.ts build ./src --output template.json
 
       - name: Upload SARIF results
         if: always()
@@ -26,7 +32,7 @@ jobs:
 
   test:
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
       - uses: oven-sh/setup-bun@v2
@@ -44,7 +50,7 @@ jobs:
 
   validate:
     runs-on: ubuntu-latest
-    timeout-minutes: 2
+    timeout-minutes: 5
     steps:
       - uses: actions/checkout@v4
       - uses: oven-sh/setup-bun@v2
@@ -52,27 +58,11 @@ jobs:
       - name: Install dependencies
         run: bun install
 
-      - name: Generate lexicon artifacts
+      - name: Generate and validate AWS lexicon
         run: bun run --cwd lexicons/aws prepack
 
-      - name: Validate lexicon artifacts
-        run: bun run lexicons/aws/src/plugin.ts validate
-
-  validate-gitlab:
-    runs-on: ubuntu-latest
-    timeout-minutes: 2
-    steps:
-      - uses: actions/checkout@v4
-      - uses: oven-sh/setup-bun@v2
-
-      - name: Install dependencies
-        run: bun install
-
-      - name: Generate GitLab lexicon artifacts
+      - name: Generate and validate GitLab lexicon
         run: bun run --cwd lexicons/gitlab prepack
-
-      - name: Validate GitLab lexicon artifacts
-        run: bun run lexicons/gitlab/src/plugin.ts validate
 
   smoke:
     runs-on: ubuntu-latest
