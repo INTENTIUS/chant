@@ -26,6 +26,5 @@ export const dataBucket = new aws.Bucket({
 | Package | Description |
 |---------|-------------|
 | [@intentius/chant](packages/core) | Type system, discovery, build pipeline, semantic lint engine, CLI |
-| [@intentius/chant-lexicon-chant](lexicons/chant) | Core lint rules (COR, EVL) |
 | [@intentius/chant-lexicon-aws](lexicons/aws) | AWS lexicon — S3, Lambda, IAM types + semantic lint rules |
-| [@intentius/chant-test-utils](packages/test-utils) | Shared testing utilities |
+| [@intentius/chant-lexicon-gitlab](lexicons/gitlab) | GitLab CI lexicon |
