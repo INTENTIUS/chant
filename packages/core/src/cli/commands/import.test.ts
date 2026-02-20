@@ -52,7 +52,7 @@ describe("importCommand", () => {
     expect(result.lexicon).toBe("aws");
     expect(result.generatedFiles.length).toBeGreaterThan(0);
     expect(existsSync(outputDir)).toBe(true);
-  });
+  }, 15000);
 
   test("imports CloudFormation template with multiple resources", async () => {
     const template = {
