@@ -53,6 +53,8 @@ export function partitionByLexicon(
   const partitions = new Map<string, Map<string, Declarable>>();
 
   for (const [name, entity] of entities) {
+    // LexiconOutput instances are collected separately; skip them here
+    if (isLexiconOutput(entity)) continue;
     const lexicon = entity.lexicon;
     if (!partitions.has(lexicon)) {
       partitions.set(lexicon, new Map());
