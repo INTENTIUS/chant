@@ -366,8 +366,15 @@ function buildSidebar(
   config: DocsConfig,
   result: DocsResult,
 ): Array<Record<string, unknown>> {
+  // Starlight prepends basePath to every sidebar `link`, so a site-root-relative
+  // path like "/chant/" becomes "/chant/lexicons/aws/chant/" — a 404.  Instead
+  // we use relative traversal: "../../" is prepended to become
+  // "/chant/lexicons/aws/../../" which the browser resolves to "/chant/".
+  const segments = (config.basePath ?? "/").replace(/^\/|\/$/g, "").split("/");
+  const backLink = segments.length > 1 ? "../".repeat(segments.length - 1) : "/";
+
   const items: Array<Record<string, unknown>> = [
-    { label: "← chant docs", link: "/chant/" },
+    { label: "← chant docs", link: backLink },
     { label: "Overview", slug: "index" },
   ];
 
