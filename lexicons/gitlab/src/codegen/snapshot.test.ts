@@ -10,7 +10,7 @@ describe("generated lexicon-gitlab.json", () => {
   const registry = JSON.parse(content);
 
   test("is valid JSON with expected entries", () => {
-    expect(Object.keys(registry)).toHaveLength(15);
+    expect(Object.keys(registry)).toHaveLength(16);
   });
 
   test("contains all resource entities", () => {
@@ -30,7 +30,7 @@ describe("generated lexicon-gitlab.json", () => {
     const propertyNames = [
       "AllowFailure", "Artifacts", "AutoCancel", "Cache",
       "Environment", "Image", "Include", "Parallel",
-      "Release", "Retry", "Rule", "Trigger",
+      "Release", "Retry", "Rule", "Service", "Trigger",
     ];
     for (const name of propertyNames) {
       expect(registry[name]).toBeDefined();
@@ -55,7 +55,7 @@ describe("generated index.d.ts", () => {
       "Job", "Default", "Workflow",
       "AllowFailure", "Artifacts", "AutoCancel", "Cache",
       "Environment", "Image", "Include", "Parallel",
-      "Release", "Retry", "Rule", "Trigger",
+      "Release", "Retry", "Rule", "Service", "Trigger",
     ];
     for (const cls of expectedClasses) {
       expect(content).toContain(`export declare class ${cls}`);

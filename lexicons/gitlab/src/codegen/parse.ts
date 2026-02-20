@@ -132,6 +132,7 @@ const PROPERTY_ENTITIES: Array<{
   { typeName: "GitLab::CI::Artifacts", source: "#/definitions/artifacts", description: "Job artifact configuration" },
   { typeName: "GitLab::CI::Cache", source: "#/definitions/cache_item", description: "Cache configuration" },
   { typeName: "GitLab::CI::Image", source: "#/definitions/image", description: "Docker image for a job" },
+  { typeName: "GitLab::CI::Service", source: "#/definitions/services:item", description: "Docker service container for a job" },
   { typeName: "GitLab::CI::Rule", source: "#/definitions/rules:item", description: "Conditional rule for job execution" },
   { typeName: "GitLab::CI::Retry", source: "#/definitions/retry", description: "Job retry configuration" },
   { typeName: "GitLab::CI::AllowFailure", source: "#/definitions/allow_failure", description: "Allow failure configuration" },
@@ -266,17 +267,14 @@ function extractPropertyEntity(
  * Resolve a source path to a schema definition.
  */
 function resolveSource(schema: CISchema, source: string): CISchemaDefinition | null {
-  // Special case: rules array item extraction
-  if (source === "#/definitions/rules:item") {
-    const rulesDef = schema.definitions?.rules;
-    if (!rulesDef) return null;
-    // rules is an array — get items
-    const items = rulesDef.items;
-    if (!items) return null;
-    return findObjectVariant(items);
-  }
-
   if (source.startsWith("#/definitions/")) {
+    // Array item extraction: "#/definitions/foo:item" → foo.items object variant
+    if (source.includes(":item")) {
+      const defName = source.slice("#/definitions/".length).replace(":item", "");
+      const arrayDef = schema.definitions?.[defName];
+      if (!arrayDef?.items) return null;
+      return findObjectVariant(arrayDef.items);
+    }
     const defName = source.slice("#/definitions/".length);
     return schema.definitions?.[defName] ?? null;
   }

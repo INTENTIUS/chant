@@ -13,7 +13,7 @@ export type { ValidateCheck, ValidateResult } from "@intentius/chant/codegen/val
 
 const REQUIRED_NAMES = [
   "Job", "Default", "Workflow",
-  "Artifacts", "Cache", "Image", "Rule", "Retry",
+  "Artifacts", "Cache", "Image", "Service", "Rule", "Retry",
   "AllowFailure", "Parallel", "Include", "Release",
   "Environment", "Trigger", "AutoCancel",
 ];

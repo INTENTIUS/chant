@@ -5,9 +5,9 @@ import { loadSchemaFixture } from "../testdata/load-fixtures";
 const fixture = loadSchemaFixture();
 
 describe("parseCISchema", () => {
-  test("returns 15 entities", () => {
+  test("returns 16 entities", () => {
     const results = parseCISchema(fixture);
-    expect(results).toHaveLength(15);
+    expect(results).toHaveLength(16);
   });
 
   test("returns 3 resource entities", () => {
@@ -20,14 +20,15 @@ describe("parseCISchema", () => {
     expect(names).toContain("GitLab::CI::Workflow");
   });
 
-  test("returns 12 property entities", () => {
+  test("returns 13 property entities", () => {
     const results = parseCISchema(fixture);
     const properties = results.filter((r) => r.isProperty);
-    expect(properties).toHaveLength(12);
+    expect(properties).toHaveLength(13);
     const names = properties.map((r) => r.resource.typeName);
     expect(names).toContain("GitLab::CI::Artifacts");
     expect(names).toContain("GitLab::CI::Cache");
     expect(names).toContain("GitLab::CI::Image");
+    expect(names).toContain("GitLab::CI::Service");
     expect(names).toContain("GitLab::CI::Rule");
     expect(names).toContain("GitLab::CI::Retry");
     expect(names).toContain("GitLab::CI::AllowFailure");
