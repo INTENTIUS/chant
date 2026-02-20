@@ -158,13 +158,9 @@ The lexicon provides 3 resource types and 13 property types:
 | \`Release\` | Job | GitLab Release creation |
 | \`AutoCancel\` | Workflow | Pipeline auto-cancellation settings |
 
-## The barrel file
+## Shared config
 
-Every chant project has a barrel file (conventionally \`_.ts\`) that re-exports the lexicon:
-
-{{file:getting-started/src/_.ts}}
-
-Other files import the barrel and use its exports:
+Extract reusable objects into a shared config file and import them across your pipeline files:
 
 {{file:docs-snippets/src/pipeline-barrel.ts}}
 
@@ -458,16 +454,9 @@ bun test       # runs the example's tests
 
 \`\`\`
 src/
-├── _.ts           # Barrel — re-exports lexicon + shared config
 ├── config.ts      # Shared config: images, caches, artifacts, rules, environments
 └── pipeline.ts    # Job definitions: build, test, deploy
 \`\`\`
-
-### Barrel file
-
-The barrel re-exports both the lexicon and shared config, so pipeline files only need one import:
-
-{{file:getting-started/src/_.ts}}
 
 ### Shared configuration
 
@@ -477,7 +466,7 @@ The barrel re-exports both the lexicon and shared config, so pipeline files only
 
 ### Pipeline jobs
 
-\`pipeline.ts\` defines three jobs that reference shared config via the barrel:
+\`pipeline.ts\` defines three jobs that import shared config directly:
 
 {{file:getting-started/src/pipeline.ts}}
 
