@@ -178,4 +178,115 @@ describe("CFGenerator", () => {
 
     expect(sourcePos).toBeLessThan(depPos);
   });
+
+  test("Sub template refs create topo sort dependencies", () => {
+    const ir: TemplateIR = {
+      parameters: [],
+      resources: [
+        {
+          logicalId: "DependentResource",
+          type: "AWS::S3::Bucket",
+          properties: {
+            BucketName: { __intrinsic: "Sub", template: "${SourceBucket}-copy" },
+          },
+        },
+        {
+          logicalId: "SourceBucket",
+          type: "AWS::S3::Bucket",
+          properties: {},
+        },
+      ],
+    };
+
+    const files = generator.generate(ir);
+    const content = files[0].content;
+
+    const sourcePos = content.indexOf("SourceBucket");
+    const depPos = content.indexOf("DependentResource");
+
+    expect(sourcePos).toBeLessThan(depPos);
+  });
+
+  test("generates GetAZs with no argument", () => {
+    const ir: TemplateIR = {
+      parameters: [],
+      resources: [
+        {
+          logicalId: "MyBucket",
+          type: "AWS::S3::Bucket",
+          properties: {
+            BucketName: { __intrinsic: "GetAZs", region: "" },
+          },
+        },
+      ],
+    };
+
+    const files = generator.generate(ir);
+
+    expect(files[0].content).toContain("GetAZs()");
+    expect(files[0].content).toContain("import { GetAZs");
+  });
+
+  test("generates GetAZs with region argument", () => {
+    const ir: TemplateIR = {
+      parameters: [],
+      resources: [
+        {
+          logicalId: "MyBucket",
+          type: "AWS::S3::Bucket",
+          properties: {
+            BucketName: { __intrinsic: "GetAZs", region: "us-east-1" },
+          },
+        },
+      ],
+    };
+
+    const files = generator.generate(ir);
+
+    expect(files[0].content).toContain('GetAZs("us-east-1")');
+  });
+
+  test("escapes backticks in Sub template", () => {
+    const ir: TemplateIR = {
+      parameters: [],
+      resources: [
+        {
+          logicalId: "MyBucket",
+          type: "AWS::S3::Bucket",
+          properties: {
+            BucketName: { __intrinsic: "Sub", template: "stats `field-name` query" },
+          },
+        },
+      ],
+    };
+
+    const files = generator.generate(ir);
+
+    expect(files[0].content).toContain("\\`field-name\\`");
+  });
+
+  test("generates nested GetAtt attribute with GetAtt function call", () => {
+    const ir: TemplateIR = {
+      parameters: [],
+      resources: [
+        {
+          logicalId: "ELB",
+          type: "AWS::ElasticLoadBalancing::LoadBalancer",
+          properties: {},
+        },
+        {
+          logicalId: "MyBucket",
+          type: "AWS::S3::Bucket",
+          properties: {
+            BucketName: { __intrinsic: "GetAtt", logicalId: "ELB", attribute: "SourceSecurityGroup.OwnerAlias" },
+          },
+        },
+      ],
+    };
+
+    const files = generator.generate(ir);
+
+    expect(files[0].content).toContain('GetAtt(ELB, "SourceSecurityGroup.OwnerAlias")');
+    expect(files[0].content).toContain("import { GetAtt");
+  });
 });

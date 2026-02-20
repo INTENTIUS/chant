@@ -221,3 +221,30 @@ export class Base64Intrinsic implements Intrinsic {
 export function Base64(value: string | Intrinsic): Base64Intrinsic {
   return new Base64Intrinsic(value);
 }
+
+/**
+ * Fn::GetAZs intrinsic function
+ * Returns a list of Availability Zones for a region
+ */
+export class GetAZsIntrinsic implements Intrinsic {
+  readonly [INTRINSIC_MARKER] = true as const;
+  private region: string | Intrinsic;
+
+  constructor(region: string | Intrinsic = "") {
+    this.region = region;
+  }
+
+  toJSON(): { "Fn::GetAZs": unknown } {
+    const regionValue = typeof this.region === "string"
+      ? this.region
+      : (this.region as Intrinsic & { toJSON(): unknown }).toJSON();
+    return { "Fn::GetAZs": regionValue };
+  }
+}
+
+/**
+ * Create a GetAZs intrinsic
+ */
+export function GetAZs(region?: string | Intrinsic): GetAZsIntrinsic {
+  return new GetAZsIntrinsic(region);
+}

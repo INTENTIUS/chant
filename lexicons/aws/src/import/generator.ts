@@ -68,7 +68,7 @@ export class CFGenerator implements TypeScriptGenerator {
   private collectImportedSymbols(ir: TemplateIR): Set<string> {
     const symbols = new Set<string>();
     if (ir.parameters.length > 0) symbols.add("Parameter");
-    const intrinsics = ["Sub", "Ref", "If", "Join", "Select", "Split", "Base64"] as const;
+    const intrinsics = ["Sub", "Ref", "If", "Join", "Select", "Split", "Base64", "GetAZs", "GetAtt"] as const;
     for (const name of intrinsics) {
       if (irUsesIntrinsic(ir, name)) symbols.add(name);
     }
@@ -101,7 +101,7 @@ export class CFGenerator implements TypeScriptGenerator {
     }
 
     // Check for intrinsics
-    const intrinsics = ["Sub", "Ref", "If", "Join", "Select", "Split", "Base64"] as const;
+    const intrinsics = ["Sub", "Ref", "If", "Join", "Select", "Split", "Base64", "GetAZs", "GetAtt"] as const;
     for (const name of intrinsics) {
       if (irUsesIntrinsic(ir, name)) imports.add(name);
     }
@@ -199,19 +199,38 @@ export class CFGenerator implements TypeScriptGenerator {
    * Sort resources by dependencies
    */
   private sortByDependencies(resources: ResourceIR[]): ResourceIR[] {
+    const resourceIds = new Set(resources.map((r) => r.logicalId));
     return topoSort(
       resources,
       (r) => r.logicalId,
-      (r) => [...collectDependencies(r.properties, (obj) => {
-        if (obj.__intrinsic === "Ref") {
-          const name = obj.name as string;
-          return name.startsWith("AWS::") ? null : name;
-        }
-        if (obj.__intrinsic === "GetAtt") {
-          return obj.logicalId as string;
-        }
-        return null;
-      })],
+      (r) => {
+        const extraDeps = new Set<string>();
+        const deps = collectDependencies(r.properties, (obj) => {
+          if (obj.__intrinsic === "Ref") {
+            const name = obj.name as string;
+            return name.startsWith("AWS::") ? null : name;
+          }
+          if (obj.__intrinsic === "GetAtt") {
+            return obj.logicalId as string;
+          }
+          if (obj.__intrinsic === "Sub") {
+            const tpl = obj.template as string;
+            const re = /\$\{([^}]+)\}/g;
+            let m;
+            while ((m = re.exec(tpl)) !== null) {
+              const expr = m[1];
+              if (!expr.startsWith("AWS::")) {
+                const id = expr.split(".")[0];
+                if (resourceIds.has(id)) extraDeps.add(id);
+              }
+            }
+            return null;
+          }
+          return null;
+        });
+        for (const d of extraDeps) deps.add(d);
+        return [...deps];
+      },
     );
   }
 
@@ -308,6 +327,9 @@ export class CFGenerator implements TypeScriptGenerator {
         const logicalId = obj.logicalId as string;
         const attribute = obj.attribute as string;
         const varName = this.safeVarName(logicalId, importedSymbols);
+        if (attribute.includes(".")) {
+          return `GetAtt(${varName}, "${attribute}")`;
+        }
         const attrName = this.toPropName(attribute);
         return `${varName}.${attrName}`;
       }
@@ -346,6 +368,14 @@ export class CFGenerator implements TypeScriptGenerator {
         return `Base64(${value})`;
       }
 
+      if (obj.__intrinsic === "GetAZs") {
+        const region = obj.region;
+        if (region === undefined || region === "" || region === null) {
+          return "GetAZs()";
+        }
+        return `GetAZs(${this.generateValue(region, ir, importedSymbols)})`;
+      }
+
       // Regular object — quote keys that aren't valid JS identifiers
       const entries = Object.entries(obj).map(([key, val]) => {
         const safeKey = /^[a-zA-Z_$][a-zA-Z0-9_$]*$/.test(key) ? key : JSON.stringify(key);
@@ -361,6 +391,8 @@ export class CFGenerator implements TypeScriptGenerator {
    * Generate Sub intrinsic as tagged template literal
    */
   private generateSubIntrinsic(template: string, variables: Record<string, unknown> | undefined, ir: TemplateIR, importedSymbols: Set<string>): string {
+    const escapePart = (s: string) => s.replace(/\\/g, "\\\\").replace(/`/g, "\\`").replace(/\$\{/g, "\\${");
+
     // Parse ${...} interpolations from the Sub template
     const parts: string[] = [];
     const expressions: string[] = [];
@@ -378,10 +410,16 @@ export class CFGenerator implements TypeScriptGenerator {
       } else if (variables && expr in variables) {
         expressions.push(this.generateValue(variables[expr], ir, importedSymbols));
       } else if (expr.includes(".")) {
-        const [logicalId, attr] = expr.split(".");
+        const dotIdx = expr.indexOf(".");
+        const logicalId = expr.slice(0, dotIdx);
+        const attr = expr.slice(dotIdx + 1);
         const varName = this.safeVarName(logicalId, importedSymbols);
-        const attrName = this.toPropName(attr);
-        expressions.push(`${varName}.${attrName}`);
+        if (attr.includes(".")) {
+          expressions.push(`GetAtt(${varName}, "${attr}")`);
+        } else {
+          const attrName = this.toPropName(attr);
+          expressions.push(`${varName}.${attrName}`);
+        }
       } else {
         expressions.push(this.safeVarName(expr, importedSymbols));
       }
@@ -392,12 +430,12 @@ export class CFGenerator implements TypeScriptGenerator {
     parts.push(template.slice(currentPos));
 
     if (expressions.length === 0) {
-      return `Sub\`${template}\``;
+      return `Sub\`${escapePart(template)}\``;
     }
 
     let result = "Sub`";
     for (let i = 0; i < parts.length; i++) {
-      result += parts[i];
+      result += escapePart(parts[i]);
       if (i < expressions.length) {
         result += `\${${expressions[i]}}`;
       }

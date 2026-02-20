@@ -36,7 +36,7 @@ describe("awsPlugin", () => {
 
   test("returns intrinsics", () => {
     const intrinsics = awsPlugin.intrinsics!();
-    expect(intrinsics.length).toBe(8);
+    expect(intrinsics.length).toBe(9);
     const names = intrinsics.map((i) => i.name);
     expect(names).toContain("Sub");
     expect(names).toContain("Ref");

@@ -35,6 +35,7 @@ export const awsPlugin: LexiconPlugin = {
       { name: "Select", description: "Fn::Select — select value by index" },
       { name: "Split", description: "Fn::Split — split string by delimiter" },
       { name: "Base64", description: "Fn::Base64 — encode to Base64" },
+      { name: "GetAZs", description: "Fn::GetAZs — list Availability Zones" },
     ];
   },
 

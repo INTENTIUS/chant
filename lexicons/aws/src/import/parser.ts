@@ -221,7 +221,7 @@ export class CFParser extends BaseValueParser implements TemplateParser {
         return { __intrinsic: "GetAtt", logicalId: value[0], attribute: value[1] };
       }
       if (typeof value === "string") {
-        const [logicalId, attribute] = value.split(".");
+        const [logicalId, attribute] = value.split(".", 2);
         return { __intrinsic: "GetAtt", logicalId, attribute };
       }
     }

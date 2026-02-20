@@ -29,6 +29,7 @@ export {
   Select,
   Split,
   Base64,
+  GetAZs,
   SubIntrinsic,
   RefIntrinsic,
   GetAttIntrinsic,
@@ -37,6 +38,7 @@ export {
   SelectIntrinsic,
   SplitIntrinsic,
   Base64Intrinsic,
+  GetAZsIntrinsic,
 } from "./intrinsics";
 
 // Pseudo-parameters
