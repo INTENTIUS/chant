@@ -44,8 +44,7 @@ export default defineConfig({
 						{ label: 'Importing Templates', slug: 'guide/importing-templates' },
 						{ label: 'Multi-Stack Projects', slug: 'guide/multi-stack' },
 						{ label: 'Managing Lexicons', slug: 'guide/managing-lexicons' },
-						{ label: 'Cross-Lexicon Projects', slug: 'guide/cross-lexicon' },
-					{ label: 'Agent Integration', slug: 'guide/agent-integration' },
+						{ label: 'Agent Integration', slug: 'guide/agent-integration' },
 					],
 				},
 				{

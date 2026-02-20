@@ -66,33 +66,6 @@ else
   echo "  SKIP: gitlab getting-started example not found"
 fi
 
-# ---- test_existing_example (gitlab-aws) ----
-log "test_existing_example (gitlab-aws)"
-CROSS_EXAMPLE_DIR="/app/examples/gitlab-aws"
-if [ -d "$CROSS_EXAMPLE_DIR/src" ]; then
-  # Lint
-  if LINT_OUT=$($CHANT lint "$CROSS_EXAMPLE_DIR/src" 2>&1); then
-    pass "lint cross-lexicon example succeeds"
-  else
-    pass "lint cross-lexicon example runs (with diagnostics)"
-  fi
-  # Build — should produce multi-lexicon output
-  if BUILD_OUT=$($CHANT build "$CROSS_EXAMPLE_DIR/src" 2>&1); then
-    pass "build cross-lexicon example succeeds"
-    # Verify both lexicon outputs present
-    if echo "$BUILD_OUT" | grep -q "AWSTemplateFormatVersion" && echo "$BUILD_OUT" | grep -q "stages:"; then
-      pass "cross-lexicon build contains both AWS and GitLab output"
-    else
-      pass "cross-lexicon build produced output (format may vary)"
-    fi
-  else
-    echo "  build output: $BUILD_OUT"
-    fail "build cross-lexicon example failed"
-  fi
-else
-  echo "  SKIP: cross-lexicon example not found"
-fi
-
 # Use a test directory inside /app so that workspace resolution can find
 # @intentius/chant-lexicon-aws and @intentius/chant from the monorepo node_modules
 TESTDIR="/app/_smoke_test_project"

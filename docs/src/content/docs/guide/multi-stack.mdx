@@ -7,10 +7,6 @@ chant supports splitting resources across multiple stacks with automatic cross-s
 
 When resources in different stacks reference each other, chant generates cross-stack outputs and imports using the appropriate provider-specific mechanism.
 
-## Multi-lexicon partitioning
-
-When a project uses multiple lexicons, each lexicon's resources are serialized into a separate output file. chant resolves cross-lexicon references automatically via `LexiconOutput`.
-
 ## Child projects (nested stacks)
 
 chant supports **child projects** — subdirectories with their own barrel file (`_.ts`) that build to separate, independently-valid templates. The parent references a child project via a lexicon-specific function, and cross-stack outputs are declared explicitly with `stackOutput()`.
