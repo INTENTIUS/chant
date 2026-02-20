@@ -1,46 +1,21 @@
 # @intentius/chant-lexicon-gitlab
 
-> Part of the [chant](../../README.md) monorepo. Published as [`@intentius/chant-lexicon-gitlab`](https://www.npmjs.com/package/@intentius/chant-lexicon-gitlab) on npm.
+GitLab CI lexicon for [chant](https://intentius.io/chant/) — declare CI/CD pipelines as typed TypeScript that serializes to `.gitlab-ci.yml`.
 
-GitLab CI lexicon for chant — declare CI/CD pipelines as flat, typed TypeScript that serializes to `.gitlab-ci.yml`.
+This package provides typed constructors for all GitLab CI keywords (Jobs, Workflows, Defaults, and property types like Artifacts, Cache, Image, Rule, Environment, and Trigger), the `CI` pseudo-parameter object for predefined variables, the `reference()` intrinsic for YAML `!reference` tags, and GitLab-specific lint rules. It also includes LSP and MCP server support for editor completions and hover.
 
-## Overview
+```bash
+npm install --save-dev @intentius/chant @intentius/chant-lexicon-gitlab
+```
 
-This package provides:
-
-- **GitLab CI serializer** — converts chant declarables to GitLab CI YAML
-- **Resource types** — typed constructors for `Job`, `Default`, `Workflow`, and all GitLab CI keywords
-- **Property types** — `Artifacts`, `Cache`, `Image`, `Rule`, `Retry`, `Environment`, `Trigger`, and more
-- **Lint rules** — GitLab-specific validation (e.g. missing script, deprecated only/except)
-- **Code generation** — generates TypeScript types from the GitLab CI JSON schema
-- **LSP/MCP support** — completions and hover for GitLab CI keywords
-
-## Usage
-
-Declare CI/CD pipelines as typed TypeScript — see the [GitLab CI documentation](https://intentius.io/chant/lexicons/gitlab/) for examples and usage.
-
-## Lint Rules
-
-| Rule | Description |
-|------|-------------|
-| `missing-script` | Job must have a `script` keyword |
-| `missing-stage` | Job should declare a `stage` |
-| `deprecated-only-except` | Flags use of deprecated `only`/`except` keywords |
-| `artifact-no-expiry` | Artifacts should have `expire_in` set |
-
-## Code Generation
-
-The GitLab lexicon generates types from the [GitLab CI JSON schema](https://gitlab.com/gitlab-org/gitlab/-/raw/master/app/assets/javascripts/editor/schema/ci.json):
-
-- `codegen/generate.ts` — calls core `generatePipeline<GitLabParseResult>` with GitLab callbacks
-- `codegen/naming.ts` — extends core `NamingStrategy` for GitLab CI keywords
-- `codegen/package.ts` — calls core `packagePipeline` with GitLab manifest
-- `codegen/parse.ts` — parses the GitLab CI JSON schema into typed entities
+**[Documentation →](https://intentius.io/chant/lexicons/gitlab/)**
 
 ## Related Packages
 
-- `@intentius/chant` — core functionality, type system, and CLI
-- `@intentius/chant-lexicon-aws` — AWS CloudFormation lexicon
+| Package | Role |
+|---------|------|
+| [@intentius/chant](https://www.npmjs.com/package/@intentius/chant) | Core type system, CLI, build pipeline |
+| [@intentius/chant-lexicon-aws](https://www.npmjs.com/package/@intentius/chant-lexicon-aws) | AWS CloudFormation lexicon |
 
 ## License
 
