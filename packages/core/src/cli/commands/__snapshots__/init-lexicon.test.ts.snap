@@ -129,7 +129,9 @@ export const fixturePlugin: LexiconPlugin = {
 
   async validate(options?: { verbose?: boolean }): Promise<void> {
     const { validate } = await import("./validate");
-    await validate(options);
+    const { printValidationResult } = await import("@intentius/chant/codegen/validate");
+    const result = await validate();
+    printValidationResult(result);
   },
 
   async coverage(options?: { verbose?: boolean; minOverall?: number }): Promise<void> {
@@ -139,7 +141,15 @@ export const fixturePlugin: LexiconPlugin = {
 
   async package(options?: { verbose?: boolean; force?: boolean }): Promise<void> {
     const { packageLexicon } = await import("./codegen/package");
-    await packageLexicon(options);
+    const { writeBundleSpec } = await import("@intentius/chant/codegen/package");
+    const { join, dirname } = await import("path");
+    const { fileURLToPath } = await import("url");
+
+    const { spec, stats } = await packageLexicon(options);
+    const pkgDir = dirname(dirname(fileURLToPath(import.meta.url)));
+    writeBundleSpec(spec, join(pkgDir, "dist"));
+
+    console.error(\`Packaged \${stats.resources} resources, \${stats.ruleCount} rules, \${stats.skillCount} skills\`);
   },
 
   async rollback(options?: { restore?: string; verbose?: boolean }): Promise<void> {

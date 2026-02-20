@@ -200,7 +200,7 @@ function generateRuntimeIndex(
     for (const pt of r.propertyTypes) {
       const defName = extractDefName(pt.name, shortName);
       const ptName = propertyTypeName(tsName, defName);
-      const ptCfnType = `${cfnType}.${pt.cfnType}`;
+      const ptCfnType = `${cfnType}.${pt.specType}`;
       propertyEntries.push({ tsName: ptName, resourceType: ptCfnType });
 
       if (ptAliases) {

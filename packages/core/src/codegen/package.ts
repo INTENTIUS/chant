@@ -5,7 +5,7 @@
  * assemble BundleSpec → compute integrity → attach metadata.
  */
 
-import { readFileSync, readdirSync } from "fs";
+import { readFileSync, readdirSync, writeFileSync, mkdirSync } from "fs";
 import { join } from "path";
 import type { BundleSpec, LexiconManifest } from "../lexicon";
 import { computeIntegrity } from "../lexicon-integrity";
@@ -145,6 +145,33 @@ export function collectRules(
   }
 
   return rules;
+}
+
+/**
+ * Write a BundleSpec to the given dist directory.
+ *
+ * Creates the directory structure and writes all artifacts:
+ * manifest.json, meta.json, types/index.d.ts, rules/*, skills/*, integrity.json.
+ */
+export function writeBundleSpec(spec: BundleSpec, distDir: string): void {
+  mkdirSync(join(distDir, "types"), { recursive: true });
+  mkdirSync(join(distDir, "rules"), { recursive: true });
+  mkdirSync(join(distDir, "skills"), { recursive: true });
+
+  writeFileSync(join(distDir, "manifest.json"), JSON.stringify(spec.manifest, null, 2));
+  writeFileSync(join(distDir, "meta.json"), spec.registry);
+  writeFileSync(join(distDir, "types", "index.d.ts"), spec.typesDTS);
+
+  for (const [name, content] of spec.rules) {
+    writeFileSync(join(distDir, "rules", name), content);
+  }
+  for (const [name, content] of spec.skills) {
+    writeFileSync(join(distDir, "skills", name), content);
+  }
+
+  if (spec.integrity) {
+    writeFileSync(join(distDir, "integrity.json"), JSON.stringify(spec.integrity, null, 2));
+  }
 }
 
 /**

@@ -69,7 +69,7 @@ describe("buildRegistry", () => {
         typeName: "Test::S3::Bucket",
         attributes: [],
         properties: [],
-        propertyTypes: [{ name: "Bucket_Versioning", cfnType: "Versioning" }],
+        propertyTypes: [{ name: "Bucket_Versioning", specType: "Versioning" }],
       },
     ];
     const naming = makeNaming(resources);

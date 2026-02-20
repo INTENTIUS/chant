@@ -141,18 +141,9 @@ export const test = new Job({
 
   async validate(options?: { verbose?: boolean }): Promise<void> {
     const { validate } = await import("./validate");
+    const { printValidationResult } = await import("@intentius/chant/codegen/validate");
     const result = await validate();
-
-    for (const check of result.checks) {
-      const status = check.ok ? "OK" : "FAIL";
-      const msg = check.error ? ` — ${check.error}` : "";
-      console.error(`  [${status}] ${check.name}${msg}`);
-    }
-
-    if (!result.success) {
-      throw new Error("Validation failed");
-    }
-    console.error("All validation checks passed.");
+    printValidationResult(result);
   },
 
   async coverage(options?: { verbose?: boolean; minOverall?: number }): Promise<void> {
@@ -165,7 +156,7 @@ export const test = new Job({
 
   async package(options?: { verbose?: boolean; force?: boolean }): Promise<void> {
     const { packageLexicon } = await import("./codegen/package");
-    const { writeFileSync, mkdirSync } = await import("fs");
+    const { writeBundleSpec } = await import("@intentius/chant/codegen/package");
     const { join, dirname } = await import("path");
     const { fileURLToPath } = await import("url");
 
@@ -173,24 +164,7 @@ export const test = new Job({
 
     const pkgDir = dirname(dirname(fileURLToPath(import.meta.url)));
     const distDir = join(pkgDir, "dist");
-    mkdirSync(join(distDir, "types"), { recursive: true });
-    mkdirSync(join(distDir, "rules"), { recursive: true });
-    mkdirSync(join(distDir, "skills"), { recursive: true });
-
-    writeFileSync(join(distDir, "manifest.json"), JSON.stringify(spec.manifest, null, 2));
-    writeFileSync(join(distDir, "meta.json"), spec.registry);
-    writeFileSync(join(distDir, "types", "index.d.ts"), spec.typesDTS);
-
-    for (const [name, content] of spec.rules) {
-      writeFileSync(join(distDir, "rules", name), content);
-    }
-    for (const [name, content] of spec.skills) {
-      writeFileSync(join(distDir, "skills", name), content);
-    }
-
-    if (spec.integrity) {
-      writeFileSync(join(distDir, "integrity.json"), JSON.stringify(spec.integrity, null, 2));
-    }
+    writeBundleSpec(spec, distDir);
 
     console.error(`Packaged ${stats.resources} entities, ${stats.ruleCount} rules, ${stats.skillCount} skills`);
   },

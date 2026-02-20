@@ -83,7 +83,9 @@ export const ${names.pluginVarName}: LexiconPlugin = {
 
   async validate(options?: { verbose?: boolean }): Promise<void> {
     const { validate } = await import("./validate");
-    await validate(options);
+    const { printValidationResult } = await import("@intentius/chant/codegen/validate");
+    const result = await validate();
+    printValidationResult(result);
   },
 
   async coverage(options?: { verbose?: boolean; minOverall?: number }): Promise<void> {
@@ -93,7 +95,15 @@ export const ${names.pluginVarName}: LexiconPlugin = {
 
   async package(options?: { verbose?: boolean; force?: boolean }): Promise<void> {
     const { packageLexicon } = await import("./codegen/package");
-    await packageLexicon(options);
+    const { writeBundleSpec } = await import("@intentius/chant/codegen/package");
+    const { join, dirname } = await import("path");
+    const { fileURLToPath } = await import("url");
+
+    const { spec, stats } = await packageLexicon(options);
+    const pkgDir = dirname(dirname(fileURLToPath(import.meta.url)));
+    writeBundleSpec(spec, join(pkgDir, "dist"));
+
+    console.error(\`Packaged \${stats.resources} resources, \${stats.ruleCount} rules, \${stats.skillCount} skills\`);
   },
 
   async rollback(options?: { restore?: string; verbose?: boolean }): Promise<void> {
@@ -612,28 +622,32 @@ export async function analyzeCoverage(options?: { verbose?: boolean }): Promise<
 
 function generateValidateTs(name: string): string {
   return `/**
- * Validate generated artifacts for the ${name} lexicon.
+ * Validate generated lexicon-${name} artifacts.
  *
- * TODO: Add validation checks for your generated files.
+ * Thin wrapper around the core validation framework
+ * with ${name}-specific configuration.
  */
-export async function validate(options?: { verbose?: boolean }): Promise<void> {
-  const checks = [
-    // TODO: Add checks — e.g. verify lexicon JSON exists, types compile,
-    // registry has expected resources, etc.
-    { name: "placeholder", ok: true, error: undefined as string | undefined },
-  ];
 
-  for (const check of checks) {
-    const status = check.ok ? "OK" : "FAIL";
-    const msg = check.error ? \` — \${check.error}\` : "";
-    console.error(\`  [\${status}] \${check.name}\${msg}\`);
-  }
+import { dirname } from "path";
+import { fileURLToPath } from "url";
+import { validateLexiconArtifacts, type ValidateResult } from "@intentius/chant/codegen/validate";
 
-  const failed = checks.filter((c) => !c.ok);
-  if (failed.length > 0) {
-    throw new Error("Validation failed");
-  }
-  console.error("All validation checks passed.");
+export type { ValidateCheck, ValidateResult } from "@intentius/chant/codegen/validate";
+
+// TODO: Add names of required entities for your lexicon
+const REQUIRED_NAMES: string[] = [];
+
+/**
+ * Validate the generated lexicon-${name} artifacts.
+ */
+export async function validate(opts?: { basePath?: string }): Promise<ValidateResult> {
+  const basePath = opts?.basePath ?? dirname(dirname(fileURLToPath(import.meta.url)));
+
+  return validateLexiconArtifacts({
+    lexiconJsonFilename: "lexicon-${name}.json",
+    requiredNames: REQUIRED_NAMES,
+    basePath,
+  });
 }
 `;
 }

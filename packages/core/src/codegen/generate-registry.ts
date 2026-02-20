@@ -15,11 +15,11 @@ export interface RegistryResource {
   typeName: string;
   attributes: { name: string }[];
   properties: { name: string; constraints: PropertyConstraints }[];
-  propertyTypes: { name: string; cfnType: string }[];
+  propertyTypes: { name: string; specType: string }[];
 }
 
 export interface RegistryConfig<E> {
-  /** Short name extractor (e.g. cfnShortName). */
+  /** Short name extractor (e.g. shortName from the spec type). */
   shortName: (typeName: string) => string;
   /** Build a resource entry from parsed data. */
   buildEntry: (
@@ -80,7 +80,7 @@ export function buildRegistry<E>(
     for (const pt of r.propertyTypes) {
       const defName = extractDefName(pt.name, shortName);
       const ptName = propertyTypeName(tsName, defName);
-      const ptEntry = config.buildPropertyEntry(typeName, pt.cfnType);
+      const ptEntry = config.buildPropertyEntry(typeName, pt.specType);
       entries[ptName] = ptEntry;
 
       if (ptAliases) {

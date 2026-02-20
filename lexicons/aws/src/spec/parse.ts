@@ -36,7 +36,7 @@ export interface ParsedAttribute {
 
 export interface ParsedPropertyType {
   name: string;
-  cfnType: string;
+  specType: string;
   properties: ParsedProperty[];
 }
 
@@ -130,7 +130,7 @@ export function parseCFNSchema(data: string | Buffer): SchemaParseResult {
         }
         propertyTypes.push({
           name: `${shortName}_${defName}`,
-          cfnType: defName,
+          specType: defName,
           properties: defProps,
         });
       }

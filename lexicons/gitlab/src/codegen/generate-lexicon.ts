@@ -29,7 +29,7 @@ export function generateLexiconJSON(
     typeName: r.resource.typeName,
     attributes: r.resource.attributes,
     properties: r.resource.properties,
-    propertyTypes: r.propertyTypes.map((pt) => ({ name: pt.name, cfnType: pt.defType })),
+    propertyTypes: r.propertyTypes.map((pt) => ({ name: pt.name, specType: pt.defType })),
   }));
 
   const entries = buildRegistry<LexiconEntry>(registryResources, naming, {

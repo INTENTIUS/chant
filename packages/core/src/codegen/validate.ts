@@ -141,3 +141,19 @@ export async function validateLexiconArtifacts(config: LexiconValidationConfig):
     checks,
   };
 }
+
+/**
+ * Print validation results to stderr and throw on failure.
+ */
+export function printValidationResult(result: ValidateResult): void {
+  for (const check of result.checks) {
+    const status = check.ok ? "OK" : "FAIL";
+    const msg = check.error ? ` — ${check.error}` : "";
+    console.error(`  [${status}] ${check.name}${msg}`);
+  }
+
+  if (!result.success) {
+    throw new Error("Validation failed");
+  }
+  console.error("All validation checks passed.");
+}
