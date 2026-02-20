@@ -254,7 +254,8 @@ export class CFGenerator implements TypeScriptGenerator {
   private generateResource(resource: ResourceIR, ir: TemplateIR, importedSymbols: Set<string>): string {
     const parsed = this.parseResourceType(resource.type);
     if (!parsed) {
-      return `// Skipped: ${resource.logicalId} (unsupported type ${resource.type})`;
+      const varName = this.safeVarName(resource.logicalId, importedSymbols);
+      return `// Unsupported type: ${resource.type}\nexport const ${varName} = "${resource.logicalId}";`;
     }
     const varName = this.safeVarName(resource.logicalId, importedSymbols);
     const { resourceClass } = parsed;
