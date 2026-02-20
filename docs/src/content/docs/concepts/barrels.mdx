@@ -3,6 +3,10 @@ title: "Barrel Files & the $ Symbol"
 description: How barrels provide directory-scoped access to sibling resources
 ---
 
+import { Code } from '@astrojs/starlight/components';
+import barrelSrc from '../../../../../lexicons/aws/examples/core-concepts/src/_.ts?raw';
+import barrelRefSrc from '../../../../../lexicons/aws/examples/core-concepts/src/cross-ref-barrel.ts?raw';
+
 Barrels provide directory-scoped access to sibling resources through a `$` symbol table. They are chant's mechanism for cross-resource references within a directory — without explicit imports between every pair of files.
 
 ## The Problem
@@ -29,30 +33,13 @@ This works, but it creates tight coupling between files and requires updating im
 
 A barrel file (conventionally named `_.ts`) re-exports the lexicon and declares a `$` symbol table that automatically includes all sibling resource exports:
 
-```typescript
-// _.ts
-export * from "@intentius/chant-lexicon-<name>";
-import { barrel } from "@intentius/chant";
-export const $ = barrel(import.meta.dir);
-```
+<Code code={barrelSrc} lang="typescript" title="src/_.ts" />
 
 Sibling files use `import * as _ from "./_"` to access everything in one namespace:
 
-```typescript
-// service.ts
-import * as _ from "./_";
+<Code code={barrelRefSrc} lang="typescript" title="src/cross-ref-barrel.ts" />
 
-export const queryService = new _.ServiceType({
-  name: "query-handler",
-  environment: {
-    variables: {
-      TABLE_ARN: _.$.dataTable.arn,
-    },
-  },
-});
-```
-
-`_.$.dataTable.arn` resolves to a symbolic cross-resource reference in the evaluated output.
+`_.$.dataBucket.arn` resolves to a symbolic cross-resource reference in the evaluated output.
 
 ## How Resolution Works
 
@@ -60,7 +47,7 @@ export const queryService = new _.ServiceType({
 2. **Scan siblings.** All `.ts` files in the same directory are scanned, excluding barrel files, test files, and `node_modules`.
 3. **Extract exports.** Each sibling file's AST is parsed, and named exports are extracted along with their types.
 4. **Build the symbol table.** The result maps export names to their source files and resource types.
-5. **Resolve property access.** When the evaluator encounters `$.dataTable.arn`, it looks up `dataTable` in the symbol table, finds its resource type, and resolves `arn` through the lexicon's attribute registry.
+5. **Resolve property access.** When the evaluator encounters `$.dataBucket.arn`, it looks up `dataBucket` in the symbol table, finds its resource type, and resolves `arn` through the lexicon's attribute registry.
 
 The symbol table is built once per directory and cached for the duration of the build.
 

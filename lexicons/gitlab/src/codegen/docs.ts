@@ -28,20 +28,7 @@ npm install --save-dev @intentius/chant-lexicon-gitlab
 
 ## Quick Start
 
-\`\`\`typescript
-import { Job, Image, Cache, Artifacts, CI } from "@intentius/chant-lexicon-gitlab";
-
-export const test = new Job({
-  stage: "test",
-  image: new Image({ name: "node:20" }),
-  cache: new Cache({ key: CI.CommitRef, paths: ["node_modules/"] }),
-  script: ["npm ci", "npm test"],
-  artifacts: new Artifacts({
-    paths: ["coverage/"],
-    expireIn: "1 week",
-  }),
-});
-\`\`\`
+{{file:docs-snippets/src/quickstart.ts}}
 
 The lexicon provides **3 resources** (Job, Workflow, Default), **13 property types** (Image, Cache, Artifacts, Rule, Environment, Trigger, and more), the \`CI\` pseudo-parameter object for predefined variables, and the \`reference()\` intrinsic for YAML \`!reference\` tags.
 `;
@@ -113,6 +100,7 @@ export async function generateDocs(opts?: { verbose?: boolean }): Promise<void> 
     outputFormat,
     serviceFromType,
     suppressPages: ["intrinsics", "rules"],
+    examplesDir: join(pkgDir, "examples"),
     extraPages: [
       {
         slug: "pipeline-concepts",
@@ -125,14 +113,7 @@ export async function generateDocs(opts?: { verbose?: boolean }): Promise<void> 
 - Collects stages from all jobs into a \`stages:\` list
 - Collapses single-property objects (\`new Image({ name: "node:20" })\` → \`image: node:20\`)
 
-\`\`\`typescript
-// This chant declaration...
-export const buildApp = new Job({
-  stage: "build",
-  image: new Image({ name: "node:20" }),
-  script: ["npm ci", "npm run build"],
-});
-\`\`\`
+{{file:docs-snippets/src/job-basic.ts}}
 
 Produces this YAML:
 
@@ -181,43 +162,17 @@ The lexicon provides 3 resource types and 13 property types:
 
 Every chant project has a barrel file (conventionally \`_.ts\`) that re-exports the lexicon:
 
-\`\`\`typescript
-// _.ts — the barrel file
-export * from "@intentius/chant-lexicon-gitlab";
-export * from "./config";
-\`\`\`
+{{file:getting-started/src/_.ts}}
 
 Other files import the barrel and use its exports:
 
-\`\`\`typescript
-// pipeline.ts
-import * as _ from "./_";
-
-export const build = new _.Job({
-  stage: "build",
-  image: _.nodeImage,        // from config.ts via barrel
-  cache: _.npmCache,         // from config.ts via barrel
-  script: ["npm ci", "npm run build"],
-  artifacts: _.buildArtifacts,
-});
-\`\`\`
+{{file:docs-snippets/src/pipeline-barrel.ts}}
 
 ## Jobs
 
 A \`Job\` is the fundamental unit. Every exported \`Job\` becomes a job entry in the YAML:
 
-\`\`\`typescript
-export const test = new Job({
-  stage: "test",
-  image: new Image({ name: "node:20-alpine" }),
-  script: ["npm ci", "npm test"],
-  artifacts: new Artifacts({
-    paths: ["coverage/"],
-    expireIn: "1 week",
-    reports: { junit: "coverage/junit.xml" },
-  }),
-});
-\`\`\`
+{{file:docs-snippets/src/job-test.ts}}
 
 Key properties:
 - \`script\` — **required** (or \`trigger\`/\`run\`). Array of shell commands to execute.
@@ -229,12 +184,7 @@ Key properties:
 
 Stages define the execution order of a pipeline. The serializer automatically collects unique stage values from all jobs:
 
-\`\`\`typescript
-export const lint = new Job({ stage: "test", script: ["npm run lint"] });
-export const test = new Job({ stage: "test", script: ["npm test"] });
-export const build = new Job({ stage: "build", script: ["npm run build"] });
-export const deploy = new Job({ stage: "deploy", script: ["npm run deploy"] });
-\`\`\`
+{{file:docs-snippets/src/stages.ts}}
 
 Produces:
 
@@ -249,30 +199,9 @@ Jobs in the same stage run in parallel. Stages run sequentially in declaration o
 
 ## Artifacts and caching
 
-**Artifacts** are files produced by a job and passed to later stages or stored for download:
+**Artifacts** are files produced by a job and passed to later stages or stored for download. **Caches** persist files between pipeline runs to speed up builds. Both are shown in the shared config:
 
-\`\`\`typescript
-export const buildArtifacts = new Artifacts({
-  paths: ["dist/"],
-  expireIn: "1 hour",         // always set expiry (WGL004 warns if missing)
-});
-
-export const testArtifacts = new Artifacts({
-  paths: ["coverage/"],
-  expireIn: "1 week",
-  reports: { junit: "coverage/junit.xml" },  // parsed by GitLab for MR display
-});
-\`\`\`
-
-**Caches** persist files between pipeline runs to speed up builds:
-
-\`\`\`typescript
-export const npmCache = new Cache({
-  key: "$CI_COMMIT_REF_SLUG",   // cache per branch
-  paths: ["node_modules/"],
-  policy: "pull-push",          // "pull" for read-only, "push" for write-only
-});
-\`\`\`
+{{file:docs-snippets/src/config.ts:4-22}}
 
 The key difference: artifacts are for passing files between **stages in the same pipeline**; caches are for speeding up **repeated pipeline runs**.
 
@@ -280,22 +209,7 @@ The key difference: artifacts are for passing files between **stages in the same
 
 \`Rule\` objects control when a job runs. They map to \`rules:\` entries in the YAML:
 
-\`\`\`typescript
-export const onMergeRequest = new Rule({
-  ifCondition: CI.MergeRequestIid,    // → if: $CI_MERGE_REQUEST_IID
-});
-
-export const onDefaultBranch = new Rule({
-  ifCondition: \`\${CI.CommitBranch} == \${CI.DefaultBranch}\`,
-  when: "manual",                      // require manual trigger
-});
-
-export const deploy = new Job({
-  stage: "deploy",
-  script: ["npm run deploy"],
-  rules: [onDefaultBranch],
-});
-\`\`\`
+{{file:docs-snippets/src/rules-conditions.ts}}
 
 Produces:
 
@@ -315,19 +229,7 @@ The \`ifCondition\` property maps to \`if:\` in the YAML (since \`if\` is a rese
 
 \`Environment\` defines a deployment target:
 
-\`\`\`typescript
-export const productionEnv = new Environment({
-  name: "production",
-  url: "https://example.com",
-});
-
-export const deploy = new Job({
-  stage: "deploy",
-  script: ["npm run deploy"],
-  environment: productionEnv,
-  rules: [onDefaultBranch],
-});
-\`\`\`
+{{file:docs-snippets/src/environment.ts}}
 
 GitLab tracks deployments to environments and provides rollback capabilities in the UI.
 
@@ -335,44 +237,19 @@ GitLab tracks deployments to environments and provides rollback capabilities in 
 
 \`Image\` specifies the Docker image for a job:
 
-\`\`\`typescript
-export const nodeImage = new Image({ name: "node:20-alpine" });
-
-// With entrypoint override
-export const customImage = new Image({
-  name: "registry.example.com/my-image:latest",
-  entrypoint: ["/bin/sh", "-c"],
-});
-\`\`\`
+{{file:docs-snippets/src/images.ts}}
 
 ## Workflow
 
 \`Workflow\` controls pipeline-level settings — when pipelines run, auto-cancellation, and global includes:
 
-\`\`\`typescript
-export const workflow = new Workflow({
-  name: "CI Pipeline for $CI_COMMIT_REF_NAME",
-  rules: [
-    new Rule({ ifCondition: CI.MergeRequestIid }),
-    new Rule({ ifCondition: CI.CommitBranch }),
-  ],
-  autoCancel: new AutoCancel({
-    onNewCommit: "interruptible",
-  }),
-});
-\`\`\`
+{{file:docs-snippets/src/workflow.ts}}
 
 ## Default
 
 \`Default\` sets shared configuration inherited by all jobs:
 
-\`\`\`typescript
-export const defaults = new Default({
-  image: new Image({ name: "node:20-alpine" }),
-  cache: new Cache({ key: CI.CommitRef, paths: ["node_modules/"] }),
-  retry: new Retry({ max: 2, when: ["runner_system_failure"] }),
-});
-\`\`\`
+{{file:docs-snippets/src/defaults.ts}}
 
 Jobs can override any default property individually.
 
@@ -380,16 +257,7 @@ Jobs can override any default property individually.
 
 \`Trigger\` creates downstream pipeline jobs:
 
-\`\`\`typescript
-export const deployInfra = new Job({
-  stage: "deploy",
-  trigger: new Trigger({
-    project: "my-group/infra-repo",
-    branch: "main",
-    strategy: "depend",
-  }),
-});
-\`\`\``,
+{{file:docs-snippets/src/trigger.ts}}`,
       },
       {
         slug: "variables",
@@ -397,25 +265,7 @@ export const deployInfra = new Job({
         description: "GitLab CI/CD predefined variable references",
         content: `The \`CI\` object provides type-safe access to GitLab CI/CD predefined variables. These map to \`$CI_*\` environment variables at runtime.
 
-\`\`\`typescript
-import { CI, Job, Rule } from "@intentius/chant-lexicon-gitlab";
-
-// Use in rule conditions
-const onDefault = new Rule({
-  ifCondition: \`\${CI.CommitBranch} == \${CI.DefaultBranch}\`,
-});
-
-// Use in cache keys
-const cache = new Cache({
-  key: CI.CommitRef,       // → $CI_COMMIT_REF_NAME
-  paths: ["node_modules/"],
-});
-
-// Use in workflow names
-const workflow = new Workflow({
-  name: \`Pipeline for \${CI.CommitRef}\`,
-});
-\`\`\`
+{{file:docs-snippets/src/variables-usage.ts}}
 
 ## Variable reference
 
@@ -442,44 +292,7 @@ const workflow = new Workflow({
 
 ## Common patterns
 
-**Conditional on branch type:**
-
-\`\`\`typescript
-// Only on merge requests
-new Rule({ ifCondition: CI.MergeRequestIid })
-
-// Only on default branch
-new Rule({ ifCondition: \`\${CI.CommitBranch} == \${CI.DefaultBranch}\` })
-
-// Only on tags
-new Rule({ ifCondition: CI.CommitTag })
-\`\`\`
-
-**Dynamic naming:**
-
-\`\`\`typescript
-export const deploy = new Job({
-  stage: "deploy",
-  environment: new Environment({
-    name: \`review/\${CI.CommitRef}\`,
-    url: \`https://\${CI.CommitRef}.preview.example.com\`,
-  }),
-  script: ["deploy-preview"],
-});
-\`\`\`
-
-**Container registry:**
-
-\`\`\`typescript
-export const buildImage = new Job({
-  stage: "build",
-  image: new Image({ name: "docker:24" }),
-  script: [
-    \`docker build -t \${CI.RegistryImage}:\${CI.CommitSha} .\`,
-    \`docker push \${CI.RegistryImage}:\${CI.CommitSha}\`,
-  ],
-});
-\`\`\`
+{{file:docs-snippets/src/variables-patterns.ts}}
 `,
       },
       {
@@ -488,21 +301,11 @@ export const buildImage = new Job({
         description: "GitLab CI/CD intrinsic functions and their chant syntax",
         content: `The GitLab lexicon provides one intrinsic function: \`reference()\`, which maps to GitLab's \`!reference\` YAML tag.
 
-\`\`\`typescript
-import { reference } from "@intentius/chant-lexicon-gitlab";
-\`\`\`
-
 ## \`reference()\` — reuse job properties
 
 The \`reference()\` intrinsic lets you reuse properties from other jobs or hidden keys. It produces the \`!reference\` YAML tag:
 
-\`\`\`typescript
-import { reference, Job } from "@intentius/chant-lexicon-gitlab";
-
-export const deploy = new Job({
-  script: reference(".setup", "script"),
-});
-\`\`\`
+{{file:docs-snippets/src/reference-basic.ts}}
 
 Serializes to:
 
@@ -522,24 +325,7 @@ reference(jobName: string, property: string): ReferenceTag
 
 ### Use cases
 
-**Shared setup scripts:**
-
-\`\`\`typescript
-// Hidden key with shared setup (defined in .gitlab-ci.yml or included)
-// Reference its script from multiple jobs:
-
-export const test = new Job({
-  stage: "test",
-  beforeScript: reference(".node-setup", "before_script"),
-  script: ["npm test"],
-});
-
-export const lint = new Job({
-  stage: "test",
-  beforeScript: reference(".node-setup", "before_script"),
-  script: ["npm run lint"],
-});
-\`\`\`
+{{file:docs-snippets/src/reference-shared.ts}}
 
 Produces:
 
@@ -557,46 +343,9 @@ lint:
     - npm run lint
 \`\`\`
 
-**Shared rules:**
-
-\`\`\`typescript
-export const build = new Job({
-  stage: "build",
-  rules: reference(".default-rules", "rules"),
-  script: ["npm run build"],
-});
-\`\`\`
-
-**Nested references (multi-level):**
-
-\`\`\`typescript
-// Reference a specific nested element
-export const deploy = new Job({
-  script: reference(".setup", "script"),
-  environment: reference(".deploy-defaults", "environment"),
-});
-\`\`\`
-
 ### When to use \`reference()\` vs barrel imports
 
-Use **barrel imports** (\`_.$\`) when referencing chant-managed objects — the serializer resolves them at build time:
-
-\`\`\`typescript
-// Preferred for chant-managed config
-export const test = new Job({
-  cache: _.npmCache,           // resolved at build time
-  artifacts: _.testArtifacts,  // resolved at build time
-});
-\`\`\`
-
-Use **\`reference()\`** when referencing jobs or hidden keys defined outside chant (e.g. in included YAML files or templates):
-
-\`\`\`typescript
-// For external/included YAML definitions
-export const test = new Job({
-  beforeScript: reference(".ci-setup", "before_script"),
-});
-\`\`\`
+{{file:docs-snippets/src/reference-vs-barrel.ts}}
 `,
       },
       {
@@ -615,23 +364,7 @@ Lint rules analyze your TypeScript source code before build.
 
 Flags usage of \`only:\` and \`except:\` keywords, which are deprecated in favor of \`rules:\`. The \`rules:\` syntax is more flexible and is the recommended approach.
 
-\`\`\`typescript
-// Triggers WGL001
-export const deploy = new Job({
-  stage: "deploy",
-  script: ["npm run deploy"],
-  only: ["main"],                // deprecated
-});
-
-// Fixed — use rules instead
-export const deploy = new Job({
-  stage: "deploy",
-  script: ["npm run deploy"],
-  rules: [new Rule({
-    ifCondition: \`\${CI.CommitBranch} == \${CI.DefaultBranch}\`,
-  })],
-});
-\`\`\`
+{{file:docs-snippets/src/lint-wgl001.ts}}
 
 ### WGL002 — Missing script
 
@@ -639,26 +372,7 @@ export const deploy = new Job({
 
 A GitLab CI job must have \`script\`, \`trigger\`, or \`run\` defined. Jobs without any of these will fail pipeline validation.
 
-\`\`\`typescript
-// Triggers WGL002
-export const build = new Job({
-  stage: "build",
-  image: new Image({ name: "node:20" }),
-  // Missing script!
-});
-
-// Fixed — add script
-export const build = new Job({
-  stage: "build",
-  image: new Image({ name: "node:20" }),
-  script: ["npm run build"],
-});
-
-// Also valid — trigger job (no script needed)
-export const downstream = new Job({
-  trigger: new Trigger({ project: "my-group/other-repo" }),
-});
-\`\`\`
+{{file:docs-snippets/src/lint-wgl002.ts}}
 
 ### WGL003 — Missing stage
 
@@ -666,19 +380,7 @@ export const downstream = new Job({
 
 Jobs should declare a \`stage\` property. Without it, the job defaults to the \`test\` stage, which may not be the intended behavior.
 
-\`\`\`typescript
-// Triggers WGL003
-export const build = new Job({
-  script: ["npm run build"],
-  // No stage — defaults to "test"
-});
-
-// Fixed — declare the stage
-export const build = new Job({
-  stage: "build",
-  script: ["npm run build"],
-});
-\`\`\`
+{{file:docs-snippets/src/lint-wgl003.ts}}
 
 ### WGL004 — Artifacts without expiry
 
@@ -686,25 +388,7 @@ export const build = new Job({
 
 Flags \`Artifacts\` without \`expireIn\`. Artifacts without expiry are kept indefinitely, consuming storage. Always set an expiration.
 
-\`\`\`typescript
-// Triggers WGL004
-export const build = new Job({
-  script: ["npm run build"],
-  artifacts: new Artifacts({
-    paths: ["dist/"],
-    // Missing expireIn!
-  }),
-});
-
-// Fixed — set expiry
-export const build = new Job({
-  script: ["npm run build"],
-  artifacts: new Artifacts({
-    paths: ["dist/"],
-    expireIn: "1 hour",
-  }),
-});
-\`\`\`
+{{file:docs-snippets/src/lint-wgl004.ts}}
 
 ## Post-synth checks
 
@@ -722,16 +406,7 @@ Flags jobs that reference a stage not present in the collected stages list. This
 
 Flags jobs where all \`rules:\` entries have \`when: "never"\`, making the job unreachable. This usually indicates a configuration error.
 
-\`\`\`typescript
-// Triggers WGL011 — job can never run
-export const noop = new Job({
-  script: ["echo unreachable"],
-  rules: [
-    new Rule({ ifCondition: CI.CommitBranch, when: "never" }),
-    new Rule({ ifCondition: CI.CommitTag, when: "never" }),
-  ],
-});
-\`\`\`
+{{file:docs-snippets/src/lint-wgl011.ts}}
 
 ## Running lint
 
@@ -756,7 +431,7 @@ To suppress globally in \`chant.config.ts\`:
 export default {
   lint: {
     rules: {
-      WGL003: "off",  // don't require stage on every job
+      WGL003: "off",
     },
   },
 };
@@ -792,91 +467,19 @@ src/
 
 The barrel re-exports both the lexicon and shared config, so pipeline files only need one import:
 
-\`\`\`typescript
-// _.ts
-export * from "@intentius/chant-lexicon-gitlab";
-export * from "./config";
-\`\`\`
+{{file:getting-started/src/_.ts}}
 
 ### Shared configuration
 
 \`config.ts\` extracts reusable objects — images, caches, artifacts, rules, and environments — so jobs stay concise:
 
-\`\`\`typescript
-// config.ts
-import * as _ from "./_";
-
-export const nodeImage = new _.Image({ name: "node:20-alpine" });
-
-export const npmCache = new _.Cache({
-  key: "$CI_COMMIT_REF_SLUG",
-  paths: ["node_modules/"],
-  policy: "pull-push",
-});
-
-export const buildArtifacts = new _.Artifacts({
-  paths: ["dist/"],
-  expireIn: "1 hour",
-});
-
-export const testArtifacts = new _.Artifacts({
-  paths: ["coverage/"],
-  expireIn: "1 week",
-  reports: { junit: "coverage/junit.xml" },
-});
-
-export const onMergeRequest = new _.Rule({
-  ifCondition: _.CI.MergeRequestIid,
-});
-
-export const onCommit = new _.Rule({
-  ifCondition: _.CI.CommitBranch,
-});
-
-export const onDefaultBranch = new _.Rule({
-  ifCondition: \`\${_.CI.CommitBranch} == \${_.CI.DefaultBranch}\`,
-  when: "manual",
-});
-
-export const productionEnv = new _.Environment({
-  name: "production",
-  url: "https://example.com",
-});
-\`\`\`
+{{file:getting-started/src/config.ts}}
 
 ### Pipeline jobs
 
 \`pipeline.ts\` defines three jobs that reference shared config via the barrel:
 
-\`\`\`typescript
-// pipeline.ts
-import * as _ from "./_";
-
-export const build = new _.Job({
-  stage: "build",
-  image: _.nodeImage,
-  cache: _.npmCache,
-  script: ["npm ci", "npm run build"],
-  artifacts: _.buildArtifacts,
-});
-
-export const test = new _.Job({
-  stage: "test",
-  image: _.nodeImage,
-  cache: _.npmCache,
-  script: ["npm ci", "npm test"],
-  artifacts: _.testArtifacts,
-  rules: [_.onMergeRequest, _.onCommit],
-});
-
-export const deploy = new _.Job({
-  stage: "deploy",
-  image: _.nodeImage,
-  script: ["npm run deploy"],
-  environment: _.productionEnv,
-  rules: [_.onDefaultBranch],
-});
-\`\`\`
+{{file:getting-started/src/pipeline.ts}}
 
 ### Generated output
 

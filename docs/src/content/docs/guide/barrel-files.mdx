@@ -3,6 +3,10 @@ title: Using Barrel Files
 description: How to use barrel files for sharing resources and types across files
 ---
 
+import { Code } from '@astrojs/starlight/components';
+import barrelSrc from '../../../../../lexicons/aws/examples/core-concepts/src/_.ts?raw';
+import barrelRefSrc from '../../../../../lexicons/aws/examples/core-concepts/src/cross-ref-barrel.ts?raw';
+
 Barrel files (`_.ts`) are the mechanism for sharing resources and types across files in a chant project. They re-export the lexicon and provide the `$` symbol table for cross-file references.
 
 For a full explanation of how barrels work, see [Barrel Files & the $ Symbol](/chant/concepts/barrels/).
@@ -11,22 +15,11 @@ For a full explanation of how barrels work, see [Barrel Files & the $ Symbol](/c
 
 Create a barrel file at `src/_.ts`:
 
-```typescript
-export * from "@intentius/chant-lexicon-<name>";
-import { barrel } from "@intentius/chant";
-export const $ = barrel(import.meta.dir);
-```
+<Code code={barrelSrc} lang="typescript" title="src/_.ts" />
 
 Import it in resource files:
 
-```typescript
-import * as _ from "./_";
-
-export const myStore = new _.StorageType({
-  name: "my-data",
-  config: _.$.sharedDefaults,
-});
-```
+<Code code={barrelRefSrc} lang="typescript" title="src/cross-ref-barrel.ts" />
 
 - `_.*` — lexicon types, intrinsics, and pseudo-parameters
 - `_.$.*` — sibling resource exports discovered automatically

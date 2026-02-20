@@ -5,6 +5,10 @@ description: Declare CloudFormation parameters and stack outputs in chant
 
 import { Code } from '@astrojs/starlight/components';
 import environmentSrc from '../../../../../lexicons/aws/examples/getting-started/src/environment.ts?raw';
+import parameterDeclarationSrc from '../../../../../lexicons/aws/examples/docs-snippets/src/parameter-declaration.ts?raw';
+import parameterRefSrc from '../../../../../lexicons/aws/examples/docs-snippets/src/parameter-ref.ts?raw';
+import parameterBarrelRefSrc from '../../../../../lexicons/aws/examples/docs-snippets/src/parameter-barrel-ref.ts?raw';
+import outputExplicitSrc from '../../../../../lexicons/aws/examples/docs-snippets/src/output-explicit.ts?raw';
 
 Parameters let you customize a stack at deploy time. Outputs expose values from the stack for use by other stacks or scripts.
 
@@ -16,14 +20,7 @@ Parameters let you customize a stack at deploy time. Outputs expose values from 
 
 Export a `Parameter` to add it to the template's `Parameters` section:
 
-```typescript
-import { Parameter } from "@intentius/chant-lexicon-aws";
-
-export const environment = new Parameter("String", {
-  description: "Deployment environment",
-  defaultValue: "dev",
-});
-```
+<Code code={parameterDeclarationSrc} lang="typescript" title="src/parameter-declaration.ts" />
 
 The first argument is the CloudFormation parameter type (`"String"`, `"Number"`, `"List<Number>"`, `"CommaDelimitedList"`, or an AWS SSM type). The second argument supports all CloudFormation parameter properties:
 
@@ -40,33 +37,17 @@ The exported variable name becomes the logical parameter name (PascalCased). `en
 
 Use `Ref` to reference a parameter's value inside resource properties:
 
-```typescript
-import { Ref, Sub } from "@intentius/chant-lexicon-aws";
-
-export const bucket = new Bucket({
-  bucketName: Sub`${Ref("Environment")}-data`,
-});
-```
+<Code code={parameterRefSrc} lang="typescript" title="src/parameter-ref.ts" />
 
 Or reference it through the barrel when the parameter is in another file:
 
-```typescript
-import * as _ from "./_";
-
-export const bucket = new _.Bucket({
-  bucketName: _.Sub`${_.Ref(_.$.environment)}-data`,
-});
-```
+<Code code={parameterBarrelRefSrc} lang="typescript" title="src/parameter-barrel-ref.ts" />
 
 ## Outputs
 
 Use `output()` to create explicit stack outputs. An output wraps an `AttrRef` (a resource attribute reference) with a name:
 
-```typescript
-import { output } from "@intentius/chant";
-
-export const dataBucketArn = output($.dataBucket.arn, "DataBucketArn");
-```
+<Code code={outputExplicitSrc} lang="typescript" title="src/output-explicit.ts" />
 
 This produces:
 
@@ -77,10 +58,6 @@ This produces:
   }
 }
 ```
-
-### Auto-detected outputs
-
-Cross-resource `AttrRef` usage is also auto-detected and promoted to outputs when needed — for example, when a nested stack parent references a child stack's value. You only need explicit `output()` calls for values you want exposed in the template's `Outputs` section.
 
 ## Next steps
 

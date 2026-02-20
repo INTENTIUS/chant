@@ -190,10 +190,11 @@ export function docsPipeline(config: DocsConfig): DocsResult {
   // Generate pages
   const pages = new Map<string, string>();
 
-  pages.set(
-    "index.mdx",
-    generateOverview(config, manifest, resources, properties, serviceGroups, rules),
-  );
+  let overviewContent = generateOverview(config, manifest, resources, properties, serviceGroups, rules);
+  if (config.examplesDir) {
+    overviewContent = expandFileMarkers(overviewContent, config.examplesDir);
+  }
+  pages.set("index.mdx", overviewContent);
   const suppress = new Set(config.suppressPages ?? []);
 
   // Extra pages from lexicon config

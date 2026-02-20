@@ -3,51 +3,19 @@ title: Config File
 description: "Complete reference for chant.config.ts"
 ---
 
+import { Code } from '@astrojs/starlight/components';
+import configMinimalSrc from '../../../../../lexicons/aws/examples/docs-snippets/src/chant-config-minimal.ts?raw';
+import configFullSrc from '../../../../../lexicons/aws/examples/docs-snippets/src/chant-config-full.ts?raw';
+
 chant uses a `chant.config.ts` file at the project root for configuration.
 
 ## Minimal Config
 
-```typescript
-import type { ChantConfig } from "@intentius/chant";
-
-export default {
-  lint: {
-    rules: {}
-  }
-} satisfies ChantConfig;
-```
+<Code code={configMinimalSrc} lang="typescript" title="chant.config.ts" />
 
 ## Full Config
 
-```typescript
-import type { ChantConfig } from "@intentius/chant";
-
-export default {
-  lexicons: ["aws"],
-
-  lint: {
-    extends: ["@intentius/chant/lint/presets/strict"],
-
-    rules: {
-      "EVL001": "error",
-      "COR002": "warning",
-      "COR009": "off",
-    },
-
-    overrides: [
-      {
-        files: ["src/legacy/**/*.ts"],
-        rules: {
-          "EVL001": "warning",
-          "COR005": "off",
-        },
-      },
-    ],
-
-    plugins: ["./lint-rules/org-standards.ts"],
-  },
-} satisfies ChantConfig;
-```
+<Code code={configFullSrc} lang="typescript" title="chant.config.ts" />
 
 ## Fields
 

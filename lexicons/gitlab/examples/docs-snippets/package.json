@@ -1,0 +1,10 @@
+{
+  "name": "gitlab-docs-snippets-example",
+  "version": "0.0.1",
+  "type": "module",
+  "private": true,
+  "dependencies": {
+    "@intentius/chant-lexicon-gitlab": "workspace:*",
+    "@intentius/chant": "workspace:*"
+  }
+}

@@ -3,20 +3,17 @@ title: Writing Resources
 description: How to define infrastructure resources in chant
 ---
 
+import { Code } from '@astrojs/starlight/components';
+import resourceBasicSrc from '../../../../../lexicons/aws/examples/core-concepts/src/resource-basic.ts?raw';
+import resourceTagsSrc from '../../../../../lexicons/aws/examples/core-concepts/src/resource-tags.ts?raw';
+
 Resources are the building blocks of a chant project. Each resource maps to a single infrastructure component defined by the lexicon you're using.
 
 ## Defining a Resource
 
-Import the barrel and instantiate a typed resource constructor:
+Import the barrel and instantiate a typed resource constructor. Here's a basic S3 bucket using the AWS lexicon:
 
-```typescript
-import * as _ from "./_";
-
-export const myResource = new _.ResourceType({
-  name: "my-resource",
-  property: "value",
-});
-```
+<Code code={resourceBasicSrc} lang="typescript" title="src/resource-basic.ts" />
 
 Every resource definition follows this pattern:
 
@@ -58,18 +55,7 @@ chant reads TypeScript as data. It never executes your code. This means resource
 
 Use `const` variables to share values across properties or files:
 
-```typescript
-import * as _ from "./_";
-
-const defaultTags = [
-  { key: "Team", value: "platform" },
-];
-
-export const myResource = new _.ResourceType({
-  name: "my-resource",
-  tags: defaultTags,
-});
-```
+<Code code={resourceTagsSrc} lang="typescript" title="src/resource-tags.ts" />
 
 ## Multiple Resources per File
 

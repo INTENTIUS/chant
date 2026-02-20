@@ -203,23 +203,13 @@ Produces:
 
 Reference parameters with \`Ref\`:
 
-\`\`\`typescript
-import { Ref } from "@intentius/chant-lexicon-aws";
-
-export const bucket = new Bucket({
-  bucketName: Sub\`\${Ref("Environment")}-data\`,
-});
-\`\`\`
+{{file:docs-snippets/src/parameter-ref.ts}}
 
 ## Outputs
 
 Use \`output()\` to create explicit stack outputs. Cross-resource \`AttrRef\` usage is also auto-detected and promoted to outputs when needed.
 
-\`\`\`typescript
-import { output } from "@intentius/chant";
-
-export const bucketArn = output(dataBucket.arn, "DataBucketArn");
-\`\`\`
+{{file:docs-snippets/src/output-explicit.ts}}
 
 Produces:
 
@@ -235,11 +225,7 @@ Produces:
 
 Runtime context values available in every template, accessed via the \`AWS\` namespace:
 
-\`\`\`typescript
-import { AWS, Sub } from "@intentius/chant-lexicon-aws";
-
-const endpoint = Sub\`https://s3.\${AWS.Region}.\${AWS.URLSuffix}\`;
-\`\`\`
+{{file:docs-snippets/src/pseudo-params.ts}}
 
 | Pseudo-parameter | Description |
 |---|---|
@@ -282,56 +268,15 @@ Policy documents use **PascalCase keys** (\`Effect\`, \`Action\`, \`Resource\`) 
 
 The recommended pattern is to extract policies into your \`defaults.ts\` and reference them via the barrel:
 
-\`\`\`typescript
-// defaults.ts — shared trust policies and permission policies
-import { Sub, AWS, type PolicyDocument } from "@intentius/chant-lexicon-aws";
-
-export const lambdaTrustPolicy: PolicyDocument = {
-  Version: "2012-10-17",
-  Statement: [{
-    Effect: "Allow",
-    Principal: { Service: "lambda.amazonaws.com" },
-    Action: "sts:AssumeRole",
-  }],
-};
-
-export const s3ReadPolicy: PolicyDocument = {
-  Statement: [{
-    Effect: "Allow",
-    Action: ["s3:GetObject", "s3:ListBucket"],
-    Resource: "*",
-  }],
-};
-\`\`\`
+{{file:docs-snippets/src/policy-trust.ts}}
 
 Then reference them from resource files:
 
-\`\`\`typescript
-// role.ts
-import * as _ from "./_";
-
-export const functionRole = new _.Role({
-  assumeRolePolicyDocument: _.$.lambdaTrustPolicy,
-});
-
-export const readPolicy = new _.ManagedPolicy({
-  policyDocument: _.$.s3ReadPolicy,
-  roles: [_.$.functionRole],
-});
-\`\`\`
+{{file:docs-snippets/src/policy-role.ts}}
 
 For scoped resource ARNs, use \`Sub\` in the policy constant:
 
-\`\`\`typescript
-// defaults.ts
-export const bucketWritePolicy: PolicyDocument = {
-  Statement: [{
-    Effect: "Allow",
-    Action: ["s3:PutObject"],
-    Resource: Sub\`arn:aws:s3:::\${AWS.StackName}-data/*\`,
-  }],
-};
-\`\`\`
+{{file:docs-snippets/src/policy-scoped.ts}}
 
 The \`IamPolicyPrincipal\` type supports all principal forms — wildcard (\`"*"\`), AWS accounts, services, and federated providers:
 
@@ -361,19 +306,7 @@ CloudFormation \`Conditions\` blocks are recognized by the serializer when impor
 
 CloudFormation Mappings are a static lookup mechanism. In chant, use TypeScript objects instead — they're evaluated at build time and produce the same result:
 
-\`\`\`typescript
-const regionAMIs: Record<string, string> = {
-  "us-east-1": "ami-12345678",
-  "us-west-2": "ami-87654321",
-  "eu-west-1": "ami-abcdef01",
-};
-
-// Use directly in resource properties
-export const server = new Instance({
-  imageId: regionAMIs["us-east-1"],
-  instanceType: "t3.micro",
-});
-\`\`\`
+{{file:docs-snippets/src/mappings.ts}}
 
 For deploy-time region lookups, combine \`AWS.Region\` with \`If\` or use \`Fn::Sub\` with SSM parameter store references.
 
@@ -381,24 +314,9 @@ For deploy-time region lookups, combine \`AWS.Region\` with \`If\` or use \`Fn::
 
 CloudFormation nested stacks (\`AWS::CloudFormation::Stack\`) let you decompose large templates into smaller, reusable child templates. Use \`nestedStack()\` to reference a child project directory — a subdirectory with its own barrel file that builds independently:
 
-\`\`\`typescript
-// Child project declares outputs with stackOutput()
-// src/network/outputs.ts
-export const vpcId = stackOutput(_.$.vpc.vpcId);
-export const subnetId = stackOutput(_.$.subnet.subnetId);
-export const lambdaSgId = stackOutput(_.$.lambdaSg.groupId);
+{{file:nested-stacks/src/network/outputs.ts}}
 
-// Parent references the child project
-// src/app.ts
-const network = _.nestedStack("network", import.meta.dir + "/network");
-
-export const handler = new _.Function({
-  vpcConfig: {
-    subnetIds: [network.outputs.subnetId],      // cross-stack ref
-    securityGroupIds: [network.outputs.lambdaSgId],
-  },
-});
-\`\`\`
+{{file:nested-stacks/src/app.ts}}
 
 chant handles the wiring: child template gets an \`Outputs\` section, parent uses \`Fn::GetAtt\` on the stack resource. A \`TemplateBasePath\` parameter lets you configure child template URLs per environment.
 
@@ -412,14 +330,7 @@ Tags are standard CloudFormation \`Key\`/\`Value\` arrays. Pass them on any reso
 
 To apply tags across all members of a composite, use [\`propagate\`](./composites#propagate--shared-properties):
 
-\`\`\`typescript
-import { propagate } from "@intentius/chant";
-
-export const api = propagate(
-  LambdaApi({ name: "myApi", code: lambdaCode }),
-  { tags: [{ key: "env", value: "prod" }] },
-);
-\`\`\``,
+{{file:docs-snippets/src/propagate.ts}}`,
       },
       {
         slug: "intrinsics",
@@ -435,18 +346,7 @@ Here is a complete example using all intrinsic functions:
 
 Tagged template literal that produces \`Fn::Sub\`. The most common intrinsic — use it for dynamic naming with pseudo-parameters and attribute references:
 
-\`\`\`typescript
-// Simple pseudo-parameter substitution
-const bucketName = Sub\`\${AWS.StackName}-data\`;
-// → { "Fn::Sub": "\${AWS::StackName}-data" }
-
-// Multiple pseudo-parameters
-const arn = Sub\`arn:aws:s3:::\${AWS.AccountId}:\${AWS.Region}:*\`;
-
-// With resource attribute references
-const url = Sub\`https://\${bucket.domainName}/path\`;
-// → { "Fn::Sub": "https://\${DataBucket.DomainName}/path" }
-\`\`\`
+{{file:docs-snippets/src/intrinsics-detail.ts:3-5}}
 
 \`Sub\` is a tagged template — use it with backticks, not as a function call.
 
@@ -454,27 +354,11 @@ const url = Sub\`https://\${bucket.domainName}/path\`;
 
 References a resource's physical ID or a parameter's value:
 
-\`\`\`typescript
-// Reference a parameter
-const envRef = Ref("Environment");
-// → { "Ref": "Environment" }
-
-// Reference a resource (returns its physical ID)
-const bucketRef = Ref("DataBucket");
-// → { "Ref": "DataBucket" }
-\`\`\`
+{{file:docs-snippets/src/intrinsics-detail.ts:7-9}}
 
 In most cases you don't need \`Ref\` directly — the serializer automatically generates \`Ref\` when you reference a resource via the barrel (e.g. \`_.$.dataBucket\`).
 
 ## \`GetAtt\` — resource attributes
-
-Retrieves an attribute from a resource:
-
-\`\`\`typescript
-// Explicit GetAtt
-const bucketArn = GetAtt("DataBucket", "Arn");
-// → { "Fn::GetAtt": ["DataBucket", "Arn"] }
-\`\`\`
 
 **Preferred:** Use AttrRef directly via the resource's typed properties. When you write \`$.dataBucket.arn\`, the serializer automatically emits \`Fn::GetAtt\`. Explicit \`GetAtt\` is only needed for dynamic or imported resource names.
 
@@ -482,61 +366,33 @@ const bucketArn = GetAtt("DataBucket", "Arn");
 
 Returns one of two values based on a condition:
 
-\`\`\`typescript
-const value = If("IsProduction", "prod-value", "dev-value");
-// → { "Fn::If": ["IsProduction", "prod-value", "dev-value"] }
-\`\`\`
+{{file:docs-snippets/src/intrinsics-detail.ts:11-12}}
 
-Use with \`AWS.NoValue\` to conditionally omit a property:
-
-\`\`\`typescript
-export const bucket = new Bucket({
-  bucketName: "my-bucket",
-  accelerateConfiguration: If("EnableAcceleration",
-    { accelerationStatus: "Enabled" },
-    AWS.NoValue,
-  ),
-});
-\`\`\`
+Use with \`AWS.NoValue\` to conditionally omit a property — see [Conditions](#conditions) on the CloudFormation Concepts page.
 
 ## \`Join\` — join values
 
 Joins values with a delimiter:
 
-\`\`\`typescript
-const joined = Join("-", ["prefix", AWS.StackName, "suffix"]);
-// → { "Fn::Join": ["-", ["prefix", { "Ref": "AWS::StackName" }, "suffix"]] }
-\`\`\`
+{{file:docs-snippets/src/intrinsics-detail.ts:14-15}}
 
 ## \`Select\` — select by index
 
 Selects a value from a list by index:
 
-\`\`\`typescript
-const first = Select(0, Split(",", "a,b,c"));
-// → { "Fn::Select": [0, { "Fn::Split": [",", "a,b,c"] }] }
-\`\`\`
+{{file:docs-snippets/src/intrinsics-detail.ts:17-18}}
 
 ## \`Split\` — split string
 
 Splits a string by a delimiter:
 
-\`\`\`typescript
-const parts = Split(",", "a,b,c");
-// → { "Fn::Split": [",", "a,b,c"] }
-\`\`\`
+{{file:docs-snippets/src/intrinsics-detail.ts:20-21}}
 
 ## \`Base64\` — encode to Base64
 
 Encodes a string to Base64, commonly used for EC2 user data:
 
-\`\`\`typescript
-const userData = Base64(Sub\`#!/bin/bash
-echo "Stack: \${AWS.StackName}"
-yum update -y
-\`);
-// → { "Fn::Base64": { "Fn::Sub": "..." } }
-\`\`\``,
+{{file:docs-snippets/src/intrinsics-detail.ts:23-27}}`,
       },
       {
         slug: "composites",
@@ -544,46 +400,11 @@ yum update -y
         description: "Composite resources, withDefaults presets, and propagate in the AWS CloudFormation lexicon",
         content: `Composites group related resources into reusable factories. See also the core [Composite Resources](/guide/composite-resources/) guide.
 
-\`\`\`typescript
-import * as _ from "./_";
-
-export const LambdaApi = _.Composite<LambdaApiProps>((props) => {
-  const role = new _.Role({
-    assumeRolePolicyDocument: _.$.lambdaTrustPolicy,
-    managedPolicyArns: [_.$.lambdaBasicExecutionArn],
-    policies: props.policies,
-  });
-
-  const func = new _.Function({
-    functionName: props.name,
-    runtime: props.runtime,
-    handler: props.handler,
-    code: props.code,
-    role: role.arn,
-    timeout: props.timeout,
-    memorySize: props.memorySize,
-  });
-
-  const permission = new _.Permission({
-    functionName: func.arn,
-    action: "lambda:InvokeFunction",
-    principal: "apigateway.amazonaws.com",
-  });
-
-  return { role, func, permission };
-}, "LambdaApi");
-\`\`\`
+{{file:advanced/src/lambda-api.ts}}
 
 Instantiate and export:
 
-\`\`\`typescript
-export const healthApi = LambdaApi({
-  name: Sub\`\${AWS.StackName}-health\`,
-  runtime: "nodejs20.x",
-  handler: "index.handler",
-  code: { zipFile: \`exports.handler = async () => ({ statusCode: 200 });\` },
-});
-\`\`\`
+{{file:advanced/src/health-api.ts}}
 
 During build, composites expand to flat CloudFormation resources: \`healthApi_role\` → \`HealthApiRole\`, \`healthApi_func\` → \`HealthApiFunc\`, \`healthApi_permission\` → \`HealthApiPermission\`.
 
@@ -591,25 +412,7 @@ During build, composites expand to flat CloudFormation resources: \`healthApi_ro
 
 Wrap a composite with pre-applied defaults. Defaulted props become optional:
 
-\`\`\`typescript
-import { withDefaults } from "@intentius/chant";
-
-const SecureApi = withDefaults(LambdaApi, {
-  runtime: "nodejs20.x",
-  handler: "index.handler",
-  timeout: 10,
-  memorySize: 256,
-});
-
-// Only name and code are required now
-export const healthApi = SecureApi({
-  name: Sub\`\${AWS.StackName}-health\`,
-  code: { zipFile: \`exports.handler = async () => ({ statusCode: 200 });\` },
-});
-
-// Composable — stack defaults on top of defaults
-const HighMemoryApi = withDefaults(SecureApi, { memorySize: 2048, timeout: 25 });
-\`\`\`
+{{file:docs-snippets/src/with-defaults.ts}}
 
 \`withDefaults\` preserves the original composite's identity — same \`_id\` and \`compositeName\`, no new registry entry.
 
@@ -617,15 +420,7 @@ const HighMemoryApi = withDefaults(SecureApi, { memorySize: 2048, timeout: 25 })
 
 Attach properties that merge into every member during expansion:
 
-\`\`\`typescript
-import { propagate } from "@intentius/chant";
-
-export const api = propagate(
-  LambdaApi({ name: "myApi", code: lambdaCode }),
-  { tags: [{ key: "env", value: "prod" }] },
-);
-// role, func, and permission all receive the env tag
-\`\`\`
+{{file:docs-snippets/src/propagate.ts}}
 
 Merge semantics:
 - **Scalars** — member-specific value wins over shared
@@ -636,15 +431,7 @@ Merge semantics:
 
 When resources should produce a separate CloudFormation template instead of expanding into the parent, use a **child project** — a subdirectory with its own barrel file (\`_.ts\`) that builds independently. The parent references it with \`nestedStack()\`:
 
-\`\`\`typescript
-// src/app.ts — parent references child project directory
-const network = _.nestedStack("network", import.meta.dir + "/network");
-
-// Cross-stack reference via outputs proxy
-export const handler = new _.Function({
-  vpcConfig: { subnetIds: [network.outputs.subnetId] },
-});
-\`\`\`
+{{file:nested-stacks/src/app.ts}}
 
 See [Nested Stacks](./nested-stacks) for the full guide.`,
       },
@@ -673,15 +460,7 @@ src/
 
 Use \`stackOutput()\` to mark values that the parent can reference. Each \`stackOutput()\` becomes an entry in the child template's \`Outputs\` section:
 
-\`\`\`typescript
-// src/network/outputs.ts
-import * as _ from "./_";
-import { stackOutput } from "@intentius/chant";
-
-export const vpcId = stackOutput(_.$.vpc.vpcId, { description: "VPC ID" });
-export const subnetId = stackOutput(_.$.subnet.subnetId, { description: "Public subnet ID" });
-export const lambdaSgId = stackOutput(_.$.lambdaSg.groupId, { description: "Lambda security group ID" });
-\`\`\`
+{{file:nested-stacks/src/network/outputs.ts}}
 
 The child can be built independently:
 
@@ -694,24 +473,7 @@ chant build src/network/ -o network.json
 
 Use \`nestedStack()\` in the parent to reference a child project directory. It returns an object with an \`outputs\` proxy for cross-stack references:
 
-\`\`\`typescript
-// src/app.ts
-import * as _ from "./_";
-
-const network = _.nestedStack("network", import.meta.dir + "/network");
-
-export const handler = new _.Function({
-  functionName: _.Sub\`\${_.AWS.StackName}-handler\`,
-  runtime: "nodejs20.x",
-  handler: "index.handler",
-  role: _.Ref("LambdaExecutionRole"),
-  code: { zipFile: "exports.handler = async () => ({ statusCode: 200 });" },
-  vpcConfig: {
-    subnetIds: [network.outputs.subnetId],
-    securityGroupIds: [network.outputs.lambdaSgId],
-  },
-});
-\`\`\`
+{{file:nested-stacks/src/app.ts}}
 
 \`network.outputs.subnetId\` produces a \`NestedStackOutputRef\` that serializes to \`{ "Fn::GetAtt": ["Network", "Outputs.SubnetId"] }\`.
 
@@ -941,67 +703,17 @@ See also [Custom Lint Rules](./custom-rules) for writing project-specific rules.
 
 ## Anatomy of a lint rule
 
-\`\`\`typescript
-import type { LintRule, LintDiagnostic, LintContext } from "@intentius/chant/lint/rule";
-import * as ts from "typescript";
+The advanced example includes a full custom rule implementation:
 
-export const apiTimeoutRule: LintRule = {
-  id: "WAW012",               // unique ID (WAW = AWS-specific prefix)
-  severity: "error",           // "error" | "warning"
-  category: "correctness",     // "correctness" | "style" | "security"
+{{file:advanced/src/lint/api-timeout.ts}}
 
-  check(context: LintContext): LintDiagnostic[] {
-    const { sourceFile } = context;
-    const diagnostics: LintDiagnostic[] = [];
-
-    function visit(node: ts.Node): void {
-      // Walk the AST looking for violations
-      if (ts.isCallExpression(node)) {
-        // Inspect arguments, report diagnostics
-      }
-      ts.forEachChild(node, visit);
-    }
-
-    visit(sourceFile);
-    return diagnostics;
-  },
-};
-\`\`\`
-
-## Example: API Gateway timeout (WAW012)
-
-The advanced example includes a rule that flags Lambda API composites with \`timeout > 29\` — API Gateway's synchronous limit:
-
-\`\`\`typescript
-const API_FACTORIES = new Set(["LambdaApi", "SecureApi", "HighMemoryApi"]);
-
-export const apiTimeoutRule: LintRule = {
-  id: "WAW012",
-  severity: "error",
-  category: "correctness",
-
-  check(context: LintContext): LintDiagnostic[] {
-    // Walks AST for calls to API factory functions,
-    // inspects the timeout property, reports if > 29
-  },
-};
-\`\`\`
+The \`check\` function receives a \`LintContext\` containing the TypeScript \`sourceFile\` and returns an array of diagnostics with file, line, column, and message.
 
 ## Registering custom rules
 
 Add a \`chant.config.ts\` to your project:
 
-\`\`\`typescript
-export default {
-  lint: {
-    extends: ["@intentius/chant/lint/presets/strict"],
-    rules: {
-      COR004: "off",                   // disable a built-in rule
-    },
-    plugins: ["./lint/api-timeout.ts"], // load custom rules
-  },
-};
-\`\`\`
+{{file:advanced/src/chant.config.ts}}
 
 The \`plugins\` array accepts relative paths. Each plugin module should export a \`LintRule\` object.`,
       },

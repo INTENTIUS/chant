@@ -8,18 +8,7 @@ A type system for operations.
 
 ## What It Looks Like
 
-```typescript
-import * as aws from "@intentius/chant-lexicon-aws";
-
-export const versioningEnabled = new aws.VersioningConfiguration({
-  status: "Enabled",
-});
-
-export const dataBucket = new aws.Bucket({
-  bucketName: "my-app-data",
-  versioningConfiguration: versioningEnabled,
-});
-```
+Declare infrastructure as typed TypeScript — see the [Quick Start](https://intentius.io/chant/getting-started/quick-start/) for a walkthrough.
 
 ## Packages
 

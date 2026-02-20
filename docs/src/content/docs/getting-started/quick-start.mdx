@@ -17,8 +17,6 @@ Install a lexicon for your target platform (this also installs chant):
 npm install --save-dev @intentius/chant-lexicon-aws  # or another lexicon
 ```
 
-The AWS lexicon gives you 1500+ typed CloudFormation resources, intrinsic functions like `Sub` and `Ref`, and pseudo-parameters — all with full editor autocompletion.
-
 Verify it works:
 
 ```bash
@@ -30,11 +28,11 @@ See [Installation](/chant/getting-started/installation/) for details.
 ## Step 2: Initialize a Project
 
 ```bash
-npx chant init my-infra
+npx chant init --lexicon aws my-infra
 cd my-infra
 ```
 
-This scaffolds a project structure with a `chant.config.ts`, a barrel file (`src/_.ts`), and starter resources. The config file specifies which lexicon to use.
+This scaffolds a project with a `chant.config.ts`, a barrel file (`src/_.ts`), and starter resources.
 
 ## Step 3: Sync Types
 

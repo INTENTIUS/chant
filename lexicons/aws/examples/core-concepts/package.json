@@ -1,0 +1,10 @@
+{
+  "name": "core-concepts-example",
+  "version": "0.0.1",
+  "type": "module",
+  "private": true,
+  "dependencies": {
+    "@intentius/chant-lexicon-aws": "workspace:*",
+    "@intentius/chant": "workspace:*"
+  }
+}

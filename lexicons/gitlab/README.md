@@ -17,19 +17,7 @@ This package provides:
 
 ## Usage
 
-```typescript
-import { Job, Artifacts, Image } from "@intentius/chant-lexicon-gitlab";
-
-export const testJob = new Job({
-  stage: "test",
-  image: new Image({ name: "node:20" }),
-  script: ["npm ci", "npm test"],
-  artifacts: new Artifacts({
-    paths: ["coverage/"],
-    expireIn: "1 week",
-  }),
-});
-```
+Declare CI/CD pipelines as typed TypeScript — see the [GitLab CI documentation](https://intentius.io/chant/lexicons/gitlab/) for examples and usage.
 
 ## Lint Rules
 

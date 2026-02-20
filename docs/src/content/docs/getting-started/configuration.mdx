@@ -3,19 +3,16 @@ title: Configuration
 description: Getting started with chant project configuration
 ---
 
+import { Code } from '@astrojs/starlight/components';
+import chantConfigMinimalSrc from '../../../../../lexicons/aws/examples/docs-snippets/src/chant-config-minimal.ts?raw';
+
 chant projects use two configuration files at the project root.
 
 ## chant.config.ts
 
 Controls lexicon declarations, linting rules, presets, per-file overrides, and plugins:
 
-```typescript
-import type { ChantConfig } from "@intentius/chant";
-
-export default {
-  lexicons: ["aws"],
-} satisfies ChantConfig;
-```
+<Code code={chantConfigMinimalSrc} lang="typescript" title="chant.config.ts" />
 
 See [Config File Reference](/chant/configuration/config-file/) for lint presets, rule overrides, and all configuration options.
 

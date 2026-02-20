@@ -3,47 +3,28 @@ title: Cross-File References
 description: How to reference resources defined in other files
 ---
 
+import { Code } from '@astrojs/starlight/components';
+import storageSrc from '../../../../../lexicons/aws/examples/core-concepts/src/cross-ref-storage.ts?raw';
+import policySrc from '../../../../../lexicons/aws/examples/core-concepts/src/cross-ref-policy.ts?raw';
+import barrelRefSrc from '../../../../../lexicons/aws/examples/core-concepts/src/cross-ref-barrel.ts?raw';
+
 Resources often depend on each other — a policy needs a storage resource's ARN, a function needs a table's name. chant provides two ways to reference resources across files: **direct imports** and **barrel references**.
 
 ## Direct Imports
 
 Import a resource from another file and access its attributes:
 
-```typescript
-// src/storage.ts
-import * as _ from "./_";
+<Code code={storageSrc} lang="typescript" title="src/cross-ref-storage.ts" />
 
-export const dataStore = new _.StorageType({
-  name: "app-data",
-});
-```
-
-```typescript
-// src/policy.ts
-import * as _ from "./_";
-import { dataStore } from "./storage";
-
-export const accessPolicy = new _.PolicyType({
-  name: "data-access",
-  target: dataStore.arn,
-});
-```
+<Code code={policySrc} lang="typescript" title="src/cross-ref-policy.ts" />
 
 ## Barrel References with `_.$.resource`
 
 The recommended approach uses barrel references via `_.$`:
 
-```typescript
-// src/policy.ts
-import * as _ from "./_";
+<Code code={barrelRefSrc} lang="typescript" title="src/cross-ref-barrel.ts" />
 
-export const accessPolicy = new _.PolicyType({
-  name: "data-access",
-  target: _.$.dataStore.arn,
-});
-```
-
-`_.$.dataStore.arn` is equivalent to importing `dataStore` from `./storage` and accessing `.arn`, but without needing to know which file defines it.
+`_.$.dataBucket.arn` is equivalent to importing `dataBucket` from `./cross-ref-storage` and accessing `.arn`, but without needing to know which file defines it.
 
 ## Build-Time Resolution
 
