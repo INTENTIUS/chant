@@ -2,43 +2,53 @@
  * Network resources — VPC, subnet, internet gateway, and routing
  */
 
-import * as _ from "./_";
+import {
+  Vpc,
+  Subnet,
+  InternetGateway,
+  VPCGatewayAttachment,
+  RouteTable,
+  EC2Route,
+  SubnetRouteTableAssociation,
+  Sub,
+  AWS,
+} from "@intentius/chant-lexicon-aws";
 
-export const vpc = new _.Vpc({
+export const vpc = new Vpc({
   cidrBlock: "10.0.0.0/16",
   enableDnsSupport: true,
   enableDnsHostnames: true,
-  tags: [{ key: "Name", value: _.Sub`${_.AWS.StackName}-vpc` }],
+  tags: [{ key: "Name", value: Sub`${AWS.StackName}-vpc` }],
 });
 
-export const subnet = new _.Subnet({
+export const subnet = new Subnet({
   vpcId: vpc.vpcId,
   cidrBlock: "10.0.1.0/24",
   mapPublicIpOnLaunch: true,
-  tags: [{ key: "Name", value: _.Sub`${_.AWS.StackName}-public` }],
+  tags: [{ key: "Name", value: Sub`${AWS.StackName}-public` }],
 });
 
-export const igw = new _.InternetGateway({
-  tags: [{ key: "Name", value: _.Sub`${_.AWS.StackName}-igw` }],
+export const igw = new InternetGateway({
+  tags: [{ key: "Name", value: Sub`${AWS.StackName}-igw` }],
 });
 
-export const igwAttachment = new _.VPCGatewayAttachment({
+export const igwAttachment = new VPCGatewayAttachment({
   vpcId: vpc.vpcId,
   internetGatewayId: igw.internetGatewayId,
 });
 
-export const routeTable = new _.RouteTable({
+export const routeTable = new RouteTable({
   vpcId: vpc.vpcId,
-  tags: [{ key: "Name", value: _.Sub`${_.AWS.StackName}-public-rt` }],
+  tags: [{ key: "Name", value: Sub`${AWS.StackName}-public-rt` }],
 });
 
-export const defaultRoute = new _.EC2Route({
+export const defaultRoute = new EC2Route({
   routeTableId: routeTable.routeTableId,
   destinationCidrBlock: "0.0.0.0/0",
   gatewayId: igw.internetGatewayId,
 });
 
-export const subnetRouteTableAssoc = new _.SubnetRouteTableAssociation({
+export const subnetRouteTableAssoc = new SubnetRouteTableAssociation({
   subnetId: subnet.subnetId,
   routeTableId: routeTable.routeTableId,
 });

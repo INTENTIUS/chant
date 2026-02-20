@@ -18,7 +18,6 @@ chant determines single-stack vs. multi-stack mode based on your `src/` director
 my-project/
 ├── chant.config.ts
 ├── src/
-│   ├── _.ts                     # barrel file
 │   ├── networking/
 │   │   ├── vpc.ts
 │   │   └── subnets.ts
@@ -37,18 +36,18 @@ my-project/
 
 ## Cross-Stack References
 
-Resources in one stack can reference resources in another stack through the barrel file. chant resolves these references and generates cross-stack outputs and imports using the appropriate provider-specific mechanism.
+Resources in one stack can reference resources in another stack through direct imports. chant resolves these references and generates cross-stack outputs and imports using the appropriate provider-specific mechanism.
 
 ## Child projects (lexicon-specific nested stacks)
 
-Some lexicons support **child projects** — subdirectories with their own barrel file that build to separate output files within a single lexicon. Unlike directory-based partitioning, these are declared in code and produce child templates that the parent references.
+Some lexicons support **child projects** — subdirectories that build to separate output files within a single lexicon. Unlike directory-based partitioning, these are declared in code and produce child templates that the parent references.
 
 chant's core provides two primitives for this:
 
 - **`stackOutput(ref)`** — marks a value for cross-stack export. When the serializer encounters a `StackOutput` entity, it emits it into the template's `Outputs` section.
 - **`ChildProjectInstance`** — a `Declarable` representing a reference to a child project directory. The build pipeline detects these, recursively builds the child, and attaches the child's `BuildResult` for the serializer.
 
-Discovery stops at barrel boundaries — when `findInfraFiles()` encounters a subdirectory containing a `_.ts` file, it does not recurse into it. That directory is a separate project scope, only built when referenced by a `ChildProjectInstance`.
+Discovery stops at child project boundaries — `findInfraFiles()` does not recurse into child project subdirectories. Each child project is a separate project scope, only built when referenced by a `ChildProjectInstance`.
 
 When a serializer produces multiple files, it returns a `SerializerResult` with a primary template plus additional files:
 

@@ -1,4 +1,4 @@
-import * as _ from "./_";
+import { Role, Sub, AWS } from "@intentius/chant-lexicon-aws";
 
 export const assumeRolePolicy = {
   Version: "2012-10-17",
@@ -11,7 +11,7 @@ export const assumeRolePolicy = {
   ],
 };
 
-export const functionRole = new _.Role({
-  roleName: _.Sub`${_.AWS.StackName}-function-role`,
+export const functionRole = new Role({
+  roleName: Sub`${AWS.StackName}-function-role`,
   assumeRolePolicyDocument: assumeRolePolicy,
 });

@@ -41,20 +41,19 @@ export const gitlabPlugin: LexiconPlugin = {
 
   initTemplates(): Record<string, string> {
     return {
-      "_.ts": `export * from "./config";\n`,
       "config.ts": `/**
  * Shared pipeline configuration
  */
 
-import * as gl from "@intentius/chant-lexicon-gitlab";
+import { Image, Cache } from "@intentius/chant-lexicon-gitlab";
 
 // Default image for all jobs
-export const defaultImage = new gl.Image({
+export const defaultImage = new Image({
   name: "node:20-alpine",
 });
 
 // Standard cache configuration
-export const npmCache = new gl.Cache({
+export const npmCache = new Cache({
   key: "$CI_COMMIT_REF_SLUG",
   paths: ["node_modules/"],
   policy: "pull-push",
@@ -64,15 +63,15 @@ export const npmCache = new gl.Cache({
  * Test job
  */
 
-import * as gl from "@intentius/chant-lexicon-gitlab";
-import * as _ from "./_";
+import { Job, Artifacts } from "@intentius/chant-lexicon-gitlab";
+import { defaultImage, npmCache } from "./config";
 
-export const test = new gl.Job({
+export const test = new Job({
   stage: "test",
-  image: _.defaultImage,
-  cache: _.npmCache,
+  image: defaultImage,
+  cache: npmCache,
   script: ["npm ci", "npm test"],
-  artifacts: new gl.Artifacts({
+  artifacts: new Artifacts({
     reports: { junit: "coverage/junit.xml" },
     paths: ["coverage/"],
     expireIn: "1 week",

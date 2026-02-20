@@ -1,38 +1,38 @@
-import * as _ from "./_";
+import { Image, Cache, Artifacts, Rule, Environment, CI } from "@intentius/chant-lexicon-gitlab";
 
-export const nodeImage = new _.Image({ name: "node:20-alpine" });
+export const nodeImage = new Image({ name: "node:20-alpine" });
 
-export const npmCache = new _.Cache({
+export const npmCache = new Cache({
   key: "$CI_COMMIT_REF_SLUG",
   paths: ["node_modules/"],
   policy: "pull-push",
 });
 
-export const buildArtifacts = new _.Artifacts({
+export const buildArtifacts = new Artifacts({
   paths: ["dist/"],
   expireIn: "1 hour",
 });
 
-export const testArtifacts = new _.Artifacts({
+export const testArtifacts = new Artifacts({
   paths: ["coverage/"],
   expireIn: "1 week",
   reports: { junit: "coverage/junit.xml" },
 });
 
-export const onMergeRequest = new _.Rule({
-  ifCondition: _.CI.MergeRequestIid,
+export const onMergeRequest = new Rule({
+  ifCondition: CI.MergeRequestIid,
 });
 
-export const onCommit = new _.Rule({
-  ifCondition: _.CI.CommitBranch,
+export const onCommit = new Rule({
+  ifCondition: CI.CommitBranch,
 });
 
-export const onDefaultBranch = new _.Rule({
-  ifCondition: `${_.CI.CommitBranch} == ${_.CI.DefaultBranch}`,
+export const onDefaultBranch = new Rule({
+  ifCondition: `${CI.CommitBranch} == ${CI.DefaultBranch}`,
   when: "manual",
 });
 
-export const productionEnv = new _.Environment({
+export const productionEnv = new Environment({
   name: "production",
   url: "https://example.com",
 });

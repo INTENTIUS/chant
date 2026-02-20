@@ -1,17 +1,17 @@
-import * as _ from "./_";
+import { Job, Image, Trigger } from "@intentius/chant-lexicon-gitlab";
 
 // chant-disable-next-line WGL002
-export const buildBad = new _.Job({
+export const buildBad = new Job({
   stage: "build",
-  image: new _.Image({ name: "node:20" }),
+  image: new Image({ name: "node:20" }),
 });
 
-export const buildGood = new _.Job({
+export const buildGood = new Job({
   stage: "build",
-  image: new _.Image({ name: "node:20" }),
+  image: new Image({ name: "node:20" }),
   script: ["npm run build"],
 });
 
-export const downstream = new _.Job({
-  trigger: new _.Trigger({ project: "my-group/other-repo" }),
+export const downstream = new Job({
+  trigger: new Trigger({ project: "my-group/other-repo" }),
 });

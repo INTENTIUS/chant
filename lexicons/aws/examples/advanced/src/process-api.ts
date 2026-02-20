@@ -1,4 +1,6 @@
-import * as _ from "./_";
+import { Role_Policy, Sub, AWS } from "@intentius/chant-lexicon-aws";
+import { dataBucket } from "./data-bucket";
+import { HighMemoryApi } from "./lambda-api";
 
 export const processPolicyDocument = {
   Version: "2012-10-17",
@@ -6,18 +8,18 @@ export const processPolicyDocument = {
     {
       Effect: "Allow",
       Action: ["s3:GetObject", "s3:PutObject"],
-      Resource: [_.Sub`${_.$.dataBucket.arn}/*`],
+      Resource: [Sub`${dataBucket.arn}/*`],
     },
   ],
 };
 
-export const processS3Policy = new _.Role_Policy({
+export const processS3Policy = new Role_Policy({
   policyName: "S3ReadWriteAccess",
   policyDocument: processPolicyDocument,
 });
 
-export const processApi = _.$.HighMemoryApi({
-  name: _.Sub`${_.AWS.StackName}-process`,
+export const processApi = HighMemoryApi({
+  name: Sub`${AWS.StackName}-process`,
   runtime: "nodejs20.x",
   handler: "index.handler",
   code: {
@@ -28,7 +30,7 @@ export const processApi = _.$.HighMemoryApi({
   },
   environment: {
     variables: {
-      BUCKET_NAME: _.$.dataBucket.arn,
+      BUCKET_NAME: dataBucket.arn,
     },
   },
   policies: [processS3Policy],

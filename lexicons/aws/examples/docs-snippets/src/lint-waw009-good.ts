@@ -1,7 +1,7 @@
-import * as _ from "./_";
+import { Role, ManagedPolicy, Sub, AWS } from "@intentius/chant-lexicon-aws";
 
-export const functionRole = new _.Role({
-  roleName: _.Sub`${_.AWS.StackName}-role`,
+export const functionRole = new Role({
+  roleName: Sub`${AWS.StackName}-role`,
   assumeRolePolicyDocument: {
     Version: "2012-10-17",
     Statement: [
@@ -14,15 +14,15 @@ export const functionRole = new _.Role({
   },
 });
 
-export const readPolicy = new _.ManagedPolicy({
+export const readPolicy = new ManagedPolicy({
   policyDocument: {
     Statement: [
       {
         Effect: "Allow",
         Action: ["s3:GetObject"],
-        Resource: _.Sub`arn:aws:s3:::${_.AWS.StackName}-data/*`,
+        Resource: Sub`arn:aws:s3:::${AWS.StackName}-data/*`,
       },
     ],
   },
-  roles: [_.$.functionRole],
+  roles: [functionRole],
 });

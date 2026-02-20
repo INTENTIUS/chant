@@ -36,15 +36,13 @@ describe("CF roundtrip fixtures", () => {
       // Verify at least one file was generated
       expect(files.length).toBeGreaterThanOrEqual(1);
 
-      // Verify barrel/main file exists
-      const hasBarrel = files.some(
-        (f) => f.path === "main.ts" || f.path === "_.ts",
-      );
-      expect(hasBarrel).toBe(true);
+      // Verify main file exists
+      const hasMain = files.some((f) => f.path === "main.ts");
+      expect(hasMain).toBe(true);
 
       // Verify resource count: each resource should be represented in generated output
       const resourceNames = Object.keys(template.Resources ?? {});
-      const mainFile = files.find((f) => f.path === "main.ts" || f.path === "_.ts");
+      const mainFile = files.find((f) => f.path === "main.ts");
       expect(mainFile).toBeDefined();
 
       for (const name of resourceNames) {
@@ -81,27 +79,8 @@ describe("parameters.json build roundtrip", () => {
     const srcDir = join(dir, "src");
     mkdirSync(srcDir);
 
-    writeFileSync(join(srcDir, "_.ts"), [
-      `export * from "@intentius/chant-lexicon-aws";`,
-      `import * as core from "@intentius/chant";`,
-      `export const $ = core.barrel(import.meta.dir);`,
-    ].join("\n"));
-
-    // Rewrite the import to use the barrel
-    const rewritten = mainFile.content.replace(
-      /import \{[^}]+\} from "@intentius\/chant-lexicon-aws";/,
-      `import * as _ from "./_";`,
-    );
-    // Replace bare symbol references with _.Symbol
-    const symbols = extractImportedSymbols(mainFile.content);
-    let code = rewritten;
-    for (const sym of symbols) {
-      code = code.replace(new RegExp(`\\bnew ${sym}\\(`, "g"), `new _.${sym}(`);
-      code = code.replace(new RegExp(`(?<!\\.)\\b${sym}\``, "g"), `_.${sym}\``);
-      code = code.replace(new RegExp(`(?<!\\.)\\b${sym}\\(`, "g"), `_.${sym}(`);
-      code = code.replace(new RegExp(`(?<!\\.)\\b${sym}\\.`, "g"), `_.${sym}.`);
-    }
-    writeFileSync(join(srcDir, "main.ts"), code);
+    // Write generated code as-is (direct imports)
+    writeFileSync(join(srcDir, "main.ts"), mainFile.content);
 
     // Build and verify
     const result = await build(srcDir, [awsSerializer]);

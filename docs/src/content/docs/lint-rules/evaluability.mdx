@@ -113,26 +113,6 @@ resource(_.Resource, (props) => ({
 
 ---
 
-## EVL006: Incorrect barrel() Usage
-
-`barrel()` has two constraints:
-
-1. The argument must be `import.meta.dir` — not a string literal.
-2. The result must be assigned to `export const $`.
-
-```typescript
-// ❌ Triggers EVL006
-const $ = barrel("./some/path");
-export const myBarrel = barrel(import.meta.dir);
-```
-
-```typescript
-// ✅ Fixed
-export const $ = barrel(import.meta.dir);
-```
-
----
-
 ## EVL007: Invalid Siblings Access
 
 In composite resources, accessing `siblings.key.attr` where `key` does not exist in the resource map is an error.
@@ -153,20 +133,24 @@ resource(_.ServiceType, (props, siblings) => ({
 
 ---
 
-## EVL008: Unresolvable Barrel Reference
+## EVL008: Unresolvable Cross-File Reference
 
-Barrel access (`$.resourceName`) must refer to a resource that exists in the barrel's exports.
+An imported resource reference cannot be resolved. The imported name does not exist in the source file.
 
 ```typescript
 // ❌ Triggers EVL008
-export const fn = new _.ServiceType({
-  bucket: $.nonExistent.bucketName,
+import { nonExistent } from "./storage";
+
+export const fn = new ServiceType({
+  bucket: nonExistent.bucketName,
 });
 ```
 
 ```typescript
 // ✅ Fixed
-export const fn = new _.ServiceType({
-  bucket: $.dataBucket.bucketName,
+import { dataBucket } from "./storage";
+
+export const fn = new ServiceType({
+  bucket: dataBucket.bucketName,
 });
 ```

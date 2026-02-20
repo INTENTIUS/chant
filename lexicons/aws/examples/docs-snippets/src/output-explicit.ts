@@ -1,3 +1,7 @@
-import * as _ from "./_";
+import { Bucket, Sub, AWS, output } from "@intentius/chant-lexicon-aws";
 
-export const dataBucketArn = _.output(_.$.dataBucket.arn, "DataBucketArn");
+const dataBucket = new Bucket({
+  bucketName: Sub`${AWS.StackName}-data`,
+});
+
+export const dataBucketArn = output(dataBucket.arn, "DataBucketArn");

@@ -2,15 +2,16 @@
  * Cross-stack outputs — values the parent can reference
  */
 
-import * as _ from "./_";
 import { stackOutput } from "@intentius/chant";
+import { vpc, subnet } from "./vpc";
+import { lambdaSg } from "./security";
 
-export const vpcId = stackOutput(_.$.vpc.vpcId, {
+export const vpcId = stackOutput(vpc.vpcId, {
   description: "VPC ID",
 });
-export const subnetId = stackOutput(_.$.subnet.subnetId, {
+export const subnetId = stackOutput(subnet.subnetId, {
   description: "Public subnet ID",
 });
-export const lambdaSgId = stackOutput(_.$.lambdaSg.groupId, {
+export const lambdaSgId = stackOutput(lambdaSg.groupId, {
   description: "Lambda security group ID",
 });

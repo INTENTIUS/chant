@@ -31,7 +31,7 @@ describe("EVL009: composite-no-constant", () => {
     expect(diags).toHaveLength(1);
     expect(diags[0].ruleId).toBe("EVL009");
     expect(diags[0].message).toContain("assumeRolePolicyDocument");
-    expect(diags[0].message).toContain("_.$.name");
+    expect(diags[0].message).toContain("import directly");
   });
 
   test("flags inline array with objects that doesn't reference props", () => {
@@ -61,11 +61,25 @@ describe("EVL009: composite-no-constant", () => {
     expect(diags[0].message).toContain("policies");
   });
 
-  test("allows barrel refs (_.$.name)", () => {
+  test("allows imported refs (direct import)", () => {
     const ctx = createContext(`
-      const MyComp = _.Composite((props) => {
+      import { lambdaTrustPolicy } from "./defaults";
+      const MyComp = Composite((props) => {
         const role = new Role({
-          assumeRolePolicyDocument: _.$.lambdaTrustPolicy,
+          assumeRolePolicyDocument: lambdaTrustPolicy,
+        });
+        return { role };
+      }, "MyComp");
+    `);
+    expect(evl009CompositeNoConstantRule.check(ctx)).toHaveLength(0);
+  });
+
+  test("allows namespace import refs", () => {
+    const ctx = createContext(`
+      import * as defaults from "./defaults";
+      const MyComp = Composite((props) => {
+        const role = new Role({
+          assumeRolePolicyDocument: defaults.lambdaTrustPolicy,
         });
         return { role };
       }, "MyComp");
@@ -99,8 +113,9 @@ describe("EVL009: composite-no-constant", () => {
 
   test("allows sibling member reference", () => {
     const ctx = createContext(`
+      import { trustPolicy } from "./defaults";
       const MyComp = Composite((props) => {
-        const role = new Role({ assumeRolePolicyDocument: _.$.trustPolicy });
+        const role = new Role({ assumeRolePolicyDocument: trustPolicy });
         const func = new Function({
           config: { roleArn: role.arn },
         });
@@ -146,16 +161,17 @@ describe("EVL009: composite-no-constant", () => {
     expect(diags).toHaveLength(2);
   });
 
-  test("allows array wrapping barrel ref", () => {
+  test("allows array wrapping imported ref", () => {
     const ctx = createContext(`
+      import { lambdaBasicExecutionArn } from "./defaults";
       const MyComp = Composite((props) => {
         const role = new Role({
-          managedPolicyArns: [_.$.lambdaBasicExecutionArn],
+          managedPolicyArns: [lambdaBasicExecutionArn],
         });
         return { role };
       }, "MyComp");
     `);
-    // Array with barrel ref inside — not flagged (contains barrel ref)
+    // Array with imported ref inside — not flagged
     // Also it's an array of identifiers, no objects inside
     expect(evl009CompositeNoConstantRule.check(ctx)).toHaveLength(0);
   });

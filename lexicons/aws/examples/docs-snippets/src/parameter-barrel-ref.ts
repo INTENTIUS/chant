@@ -1,5 +1,6 @@
-import * as _ from "./_";
+import { Bucket, Sub, Ref } from "@intentius/chant-lexicon-aws";
+import { environment } from "./parameter-declaration";
 
-export const bucket = new _.Bucket({
-  bucketName: _.Sub`${_.Ref(_.$.environment)}-data`,
+export const bucket = new Bucket({
+  bucketName: Sub`${Ref(environment)}-data`,
 });

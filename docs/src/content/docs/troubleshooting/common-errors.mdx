@@ -27,10 +27,6 @@ See [Evaluability Rules](/chant/lint-rules/evaluability/) for details on dynamic
 
 **Fix:** Use an expression body: `(props) => ({ ... })`.
 
-## EVL006: Invalid barrel() Usage
-
-**Fix:** Use exactly `export const $ = barrel(import.meta.dir)`.
-
 ## COR011: Circular Dependency
 
 **Fix:** Restructure imports to break the cycle by extracting shared types into a separate file.
@@ -39,4 +35,4 @@ See [Evaluability Rules](/chant/lint-rules/evaluability/) for details on dynamic
 
 The resource class isn't recognized by the installed lexicon.
 
-**Fix:** Check for typos, then update the lexicon (`npm update`), run `npx chant update` to sync lexicon types, and `npx chant lint --fix` to regenerate barrel declarations.
+**Fix:** Check for typos, then update the lexicon (`npm update`) and run `npx chant update` to sync lexicon types.

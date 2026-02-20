@@ -23,15 +23,10 @@ src/storage.ts:3:5 warning [COR005] [fixable] Exported names should be camelCase
 
 | Rule | Fix Kind | Description |
 |------|----------|-------------|
-| COR002 | `replace-import` | Rewrites barrel imports to namespace syntax |
 | COR005 | `rename` | Renames PascalCase exports to camelCase |
-| COR006 | `replace-import` | Rewrites lexicon imports to namespace syntax |
 | COR012 | `delete` | Removes redundant `import type` line |
-| COR014 | `replace-import` | Rewrites direct lexicon import to barrel import (requires `_.ts`) |
 | COR015 | TextEdit | Removes redundant `as Value<...>` cast |
-| COR016 | `write-file` | Generates or regenerates `_.d.ts` barrel type declarations |
 | COR017 | TextEdit | Inserts or replaces Composite name to match variable |
-| EVL006 | TextEdit | Wraps barrel() in `export const $` |
 
 ## Examples
 
@@ -43,16 +38,6 @@ export const MyBucket = new _.Resource({ ... });
 
 // After fix
 export const myBucket = new _.Resource({ ... });
-```
-
-### COR002 — Barrel Import Style
-
-```typescript
-// Before
-import { bucket } from "./_";
-
-// After fix
-import * as _ from "./_";
 ```
 
 ## How Fixes Are Applied

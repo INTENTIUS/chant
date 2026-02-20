@@ -1,24 +1,26 @@
-import * as _ from "./_";
+import { Role, Function, Permission, Code, Environment, Sub, Role_Policy } from "@intentius/chant-lexicon-aws";
+import { Composite } from "@intentius/chant";
+import { lambdaTrustPolicy, lambdaBasicExecutionArn } from "./defaults";
 
 export interface LambdaApiProps {
-  name: string | ReturnType<typeof _.Sub>;
+  name: string | ReturnType<typeof Sub>;
   runtime: string;
   handler: string;
-  code: InstanceType<typeof _.Code> | { zipFile: string };
+  code: InstanceType<typeof Code> | { zipFile: string };
   timeout?: number;
   memorySize?: number;
-  environment?: InstanceType<typeof _.Environment> | { variables: Record<string, unknown> };
-  policies?: InstanceType<typeof _.Role_Policy>[];
+  environment?: InstanceType<typeof Environment> | { variables: Record<string, unknown> };
+  policies?: InstanceType<typeof Role_Policy>[];
 }
 
-export const LambdaApi = _.Composite<LambdaApiProps>((props) => {
-  const role = new _.Role({
-    assumeRolePolicyDocument: _.$.lambdaTrustPolicy,
-    managedPolicyArns: [_.$.lambdaBasicExecutionArn],
+export const LambdaApi = Composite<LambdaApiProps>((props) => {
+  const role = new Role({
+    assumeRolePolicyDocument: lambdaTrustPolicy,
+    managedPolicyArns: [lambdaBasicExecutionArn],
     policies: props.policies,
   });
 
-  const func = new _.Function({
+  const func = new Function({
     functionName: props.name,
     runtime: props.runtime,
     handler: props.handler,
@@ -29,7 +31,7 @@ export const LambdaApi = _.Composite<LambdaApiProps>((props) => {
     environment: props.environment,
   });
 
-  const permission = new _.Permission({
+  const permission = new Permission({
     functionName: func.arn,
     action: "lambda:InvokeFunction",
     principal: "apigateway.amazonaws.com",

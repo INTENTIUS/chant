@@ -1,21 +1,21 @@
-import * as _ from "./_";
+import { Job, reference } from "@intentius/chant-lexicon-gitlab";
 
 // Shared setup scripts from external YAML
-export const testRef = new _.Job({
+export const testRef = new Job({
   stage: "test",
-  beforeScript: _.reference(".node-setup", "before_script"),
+  beforeScript: reference(".node-setup", "before_script"),
   script: ["npm test"],
 });
 
-export const lintRef = new _.Job({
+export const lintRef = new Job({
   stage: "test",
-  beforeScript: _.reference(".node-setup", "before_script"),
+  beforeScript: reference(".node-setup", "before_script"),
   script: ["npm run lint"],
 });
 
 // Shared rules
-export const buildRef = new _.Job({
+export const buildRef = new Job({
   stage: "build",
-  rules: _.reference(".default-rules", "rules"),
+  rules: reference(".default-rules", "rules"),
   script: ["npm run build"],
 });

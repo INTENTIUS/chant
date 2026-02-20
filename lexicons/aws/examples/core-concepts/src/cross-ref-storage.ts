@@ -1,5 +1,5 @@
-import * as _ from "./_";
+import { Bucket } from "@intentius/chant-lexicon-aws";
 
-export const dataBucket = new _.Bucket({
+export const dataBucket = new Bucket({
   bucketName: "app-data",
 });

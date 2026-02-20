@@ -1,6 +1,7 @@
-import * as _ from "./_";
+import { Sub, AWS } from "@intentius/chant-lexicon-aws";
+import { LambdaService } from "./composite-definition";
 
-export const api = _.$.LambdaService({
-  name: _.Sub`${_.AWS.StackName}-api`,
+export const api = LambdaService({
+  name: Sub`${AWS.StackName}-api`,
   handler: "index.handler",
 });

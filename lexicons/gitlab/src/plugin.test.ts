@@ -96,7 +96,6 @@ describe("gitlabPlugin", () => {
   test("returns init templates", () => {
     const templates = gitlabPlugin.initTemplates!();
     expect(templates).toBeDefined();
-    expect(templates["_.ts"]).toBeDefined();
     expect(templates["config.ts"]).toBeDefined();
     expect(templates["test.ts"]).toBeDefined();
   });

@@ -28,14 +28,12 @@ export default defineConfig({
 						{ label: 'Philosophy', slug: 'concepts/philosophy' },
 						{ label: 'TypeScript as Data', slug: 'concepts/typescript-as-data' },
 						{ label: 'Evaluation Pipeline', slug: 'concepts/evaluation-pipeline' },
-						{ label: 'Barrel Files & $', slug: 'concepts/barrels' },
 					],
 				},
 				{
 					label: 'User Guide',
 					items: [
 						{ label: 'Writing Resources', slug: 'guide/writing-resources' },
-						{ label: 'Using Barrel Files', slug: 'guide/barrel-files' },
 						{ label: 'Cross-File References', slug: 'guide/cross-file-references' },
 						{ label: 'Composite Resources', slug: 'guide/composite-resources' },
 						{ label: 'Presets', slug: 'guide/presets' },
@@ -53,7 +51,6 @@ export default defineConfig({
 						{ label: 'Overview', slug: 'lexicons/overview' },
 						{ label: 'AWS CloudFormation', link: '/lexicons/aws/' },
 						{ label: 'GitLab CI/CD', link: '/lexicons/gitlab/' },
-						{ label: 'Sync Mechanism', slug: 'lexicons/sync' },
 					],
 				},
 				{

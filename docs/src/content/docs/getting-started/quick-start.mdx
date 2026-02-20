@@ -4,7 +4,6 @@ description: Get a chant project running in under five minutes
 ---
 
 import { Code } from '@astrojs/starlight/components';
-import barrelSrc from '../../../../../lexicons/aws/examples/getting-started/src/_.ts?raw';
 import defaultsSrc from '../../../../../lexicons/aws/examples/getting-started/src/defaults.ts?raw';
 import dataBucketSrc from '../../../../../lexicons/aws/examples/getting-started/src/data-bucket.ts?raw';
 import environmentSrc from '../../../../../lexicons/aws/examples/getting-started/src/environment.ts?raw';
@@ -32,35 +31,19 @@ npx chant init --lexicon aws my-infra
 cd my-infra
 ```
 
-This scaffolds a project with a `chant.config.ts`, a barrel file (`src/_.ts`), and starter resources.
+This scaffolds a project with a `chant.config.ts` and starter resources.
 
-## Step 3: Sync Types
+## Step 3: Write Resources
 
-Generate barrel type declarations:
-
-```bash
-npx chant lint --fix
-```
-
-This generates `_.d.ts` files so your editor provides autocompletion and type-checking for resource properties.
-
-## Step 4: Write Resources
-
-The **barrel file** (`src/_.ts`) is the central import hub for your project. It re-exports everything from the lexicon and creates the `$` cross-resource proxy:
-
-<Code code={barrelSrc} lang="typescript" title="src/_.ts" />
-
-For the full barrel pattern — including `barrel()` and the `$` cross-resource proxy — see [Barrel Concepts](/chant/concepts/barrels/).
-
-Shared defaults are regular exports that other files reference through `$`:
+Shared defaults are regular exports that other files import directly:
 
 <Code code={defaultsSrc} lang="typescript" title="src/defaults.ts" />
 
-Resource files reference types and siblings through the barrel:
+Resource files import types from the lexicon and reference sibling exports through direct imports:
 
 <Code code={dataBucketSrc} lang="typescript" title="src/data-bucket.ts" />
 
-Every property is typed — your editor autocompletes `bucketName`, `versioningConfiguration`, `sseAlgorithm`, and catches typos immediately. The `$` proxy resolves cross-file references like `$.versioningEnabled` at build time.
+Every property is typed — your editor autocompletes `bucketName`, `versioningConfiguration`, `sseAlgorithm`, and catches typos immediately. Cross-file references like `versioningEnabled` are resolved through standard imports at build time.
 
 ### Parameters & Outputs
 
@@ -76,7 +59,7 @@ See the [AWS CloudFormation lexicon reference](/chant/lexicons/aws/) for intrins
 For a complete walkthrough with S3 buckets, IAM roles, Lambda functions, and cross-resource references, see the [AWS Examples](/chant/lexicons/aws/examples/).
 :::
 
-## Step 5: Build
+## Step 4: Build
 
 ```bash
 npx chant build

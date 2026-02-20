@@ -1,5 +1,5 @@
-import * as _ from "./_";
+import { ServerSideEncryptionByDefault } from "@intentius/chant-lexicon-aws";
 
-export const encryptionDefault = new _.ServerSideEncryptionByDefault({
+export const encryptionDefault = new ServerSideEncryptionByDefault({
   sseAlgorithm: "AES256",
 });

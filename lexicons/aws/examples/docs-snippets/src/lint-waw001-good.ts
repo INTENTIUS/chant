@@ -1,3 +1,3 @@
-import * as _ from "./_";
+import { Sub, AWS } from "@intentius/chant-lexicon-aws";
 
-export const endpoint = _.Sub`s3.${_.AWS.Region}.amazonaws.com/${_.AWS.StackName}`;
+export const endpoint = Sub`s3.${AWS.Region}.amazonaws.com/${AWS.StackName}`;

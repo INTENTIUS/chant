@@ -30,12 +30,12 @@ export async function findInfraFiles(path: string): Promise<string[]> {
       }
 
       if (entry.isDirectory()) {
-        // Child project boundary — a directory with its own barrel file is a
-        // separate scope, but only if we've already found the project's own
-        // source root (the first barrel directory). The project's own src/
-        // with _.ts is the source root, not a child project.
-        const barrelPath = join(fullPath, "_.ts");
-        if (existsSync(barrelPath)) {
+        // Child project boundary — a directory with its own chant.config.ts
+        // is a separate scope, but only if we've already found the project's
+        // own source root. The first config directory is the source root, not
+        // a child project.
+        const configPath = join(fullPath, "chant.config.ts");
+        if (existsSync(configPath)) {
           if (sourceRoot === null) {
             sourceRoot = fullPath;
           } else {

@@ -41,40 +41,9 @@ if (import.meta.main) {
       const srcDir = join(dir, "src");
       mkdirSync(srcDir);
 
-      // Create barrel file
-      writeFileSync(join(srcDir, "_.ts"), [
-        `export * from "@intentius/chant-lexicon-aws";`,
-        `import * as core from "@intentius/chant";`,
-        `export const $ = core.barrel(import.meta.dir);`,
-      ].join("\n"));
-
-      // Rewrite imports to use barrel and write each generated file
+      // Write each generated file as-is (direct imports)
       for (const f of files) {
-        let code = f.content;
-
-        // Extract symbols from the import statement
-        const importMatch = code.match(/import\s*\{([^}]+)\}\s*from\s*"@intentius\/chant-lexicon-aws";/);
-        if (importMatch) {
-          const symbols = importMatch[1].split(",").map((s) => s.trim()).filter(Boolean);
-
-          // Replace the import with barrel import
-          code = code.replace(
-            /import\s*\{[^}]+\}\s*from\s*"@intentius\/chant-lexicon-aws";/,
-            `import * as _ from "./_";`,
-          );
-
-          // Prefix bare class usages with _.
-          for (const sym of symbols) {
-            code = code.replace(new RegExp(`\\bnew ${sym}\\(`, "g"), `new _.${sym}(`);
-            // Also handle function calls like Sub`, If(, Join(, etc.
-            code = code.replace(new RegExp(`(?<!\\.)\\b${sym}\``, "g"), `_.${sym}\``);
-            code = code.replace(new RegExp(`(?<!\\.)\\b${sym}\\(`, "g"), `_.${sym}(`);
-            // Handle property access like AWS.StackName
-            code = code.replace(new RegExp(`(?<!\\.)\\b${sym}\\.`, "g"), `_.${sym}.`);
-          }
-        }
-
-        writeFileSync(join(srcDir, f.path), code);
+        writeFileSync(join(srcDir, f.path), f.content);
       }
 
       // Import the generated main module — this proves the code actually works

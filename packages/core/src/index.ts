@@ -42,7 +42,6 @@ export * from "./lexicon-schema";
 export * from "./config";
 export * from "./validation";
 export * from "./project-validation";
-export { barrel } from "./barrel";
 export * from "./codegen/naming";
 export * from "./codegen/fetch";
 export * from "./codegen/generate";

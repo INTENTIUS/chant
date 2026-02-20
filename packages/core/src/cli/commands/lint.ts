@@ -1,7 +1,7 @@
 import { resolve, join } from "path";
 import { readFileSync, writeFileSync, readdirSync, statSync } from "fs";
 import { runLint } from "../../lint/engine";
-import type { LintRule, LintDiagnostic, LintFix, LintRunOptions } from "../../lint/rule";
+import type { LintRule, LintDiagnostic, LintFix } from "../../lint/rule";
 import { loadPlugins, resolveProjectLexicons } from "../plugins";
 import { formatStylish, formatJson, formatSarif } from "../reporters/stylish";
 import { loadLocalRules } from "../../lint/rule-loader";
@@ -241,54 +241,30 @@ export async function lintCommand(options: LintOptions): Promise<LintResult> {
   // Get all TypeScript files
   const files = getTypeScriptFiles(infraPath);
 
-  // Build barrel exports context for EVL008
-  let runOptions: LintRunOptions | undefined;
-  try {
-    const { scanProject } = require("../../project/scan");
-    const scan = scanProject(infraPath);
-    const barrelExports = new Set<string>(scan.exports.map((e: { name: string }) => e.name));
-    const projectExports = new Map<string, { file: string; className: string }>();
-    for (const exp of scan.exports) {
-      projectExports.set(exp.name, { file: exp.file, className: exp.className });
-    }
-    runOptions = { barrelExports, projectExports, projectScan: scan };
-  } catch {
-    // No barrel file found — EVL008/COR016 will be no-ops
-  }
-
   // Run lint — use per-file rules when overrides are present
   let diagnostics: LintDiagnostic[];
   if (options.rules) {
-    diagnostics = await runLint(files, options.rules, undefined, runOptions);
+    diagnostics = await runLint(files, options.rules, undefined);
   } else if (hasOverrides) {
     diagnostics = [];
     for (const file of files) {
       const relativePath = file.slice(infraPath.length + 1);
       const { rules: fileRules, ruleOptions } = getDefaultRules(infraPath, relativePath, allRules);
-      const fileDiagnostics = await runLint([file], fileRules, ruleOptions, runOptions);
+      const fileDiagnostics = await runLint([file], fileRules, ruleOptions);
       diagnostics.push(...fileDiagnostics);
     }
   } else {
     const { rules, ruleOptions } = getDefaultRules(infraPath, undefined, allRules);
-    diagnostics = await runLint(files, rules, ruleOptions, runOptions);
+    diagnostics = await runLint(files, rules, ruleOptions);
   }
 
   // Apply fixes if requested
   if (options.fix) {
-    // Handle cross-file write fixes (COR016) separately
-    for (const diag of diagnostics) {
-      if (diag.fix?.kind === "write-file" && diag.fix.params) {
-        const path = diag.fix.params.path as string;
-        const content = diag.fix.params.content as string;
-        writeFileSync(path, content, "utf-8");
-      }
-    }
-
-    // Group remaining fixes by file (exclude write-file fixes)
+    // Group fixes by file
     const fixesByFile = new Map<string, LintFix[]>();
 
     for (const diag of diagnostics) {
-      if (diag.fix && diag.fix.kind !== "write-file") {
+      if (diag.fix) {
         const existing = fixesByFile.get(diag.file) ?? [];
         existing.push(diag.fix);
         fixesByFile.set(diag.file, existing);
@@ -303,18 +279,18 @@ export async function lintCommand(options: LintOptions): Promise<LintResult> {
     // Re-lint after fixes to get updated diagnostics
     let postFixDiagnostics: LintDiagnostic[];
     if (options.rules) {
-      postFixDiagnostics = await runLint(files, options.rules, undefined, runOptions);
+      postFixDiagnostics = await runLint(files, options.rules, undefined);
     } else if (hasOverrides) {
       postFixDiagnostics = [];
       for (const file of files) {
         const relativePath = file.slice(infraPath.length + 1);
         const { rules: fileRules, ruleOptions } = getDefaultRules(infraPath, relativePath, allRules);
-        const fileDiagnostics = await runLint([file], fileRules, ruleOptions, runOptions);
+        const fileDiagnostics = await runLint([file], fileRules, ruleOptions);
         postFixDiagnostics.push(...fileDiagnostics);
       }
     } else {
       const { rules, ruleOptions } = getDefaultRules(infraPath, undefined, allRules);
-      postFixDiagnostics = await runLint(files, rules, ruleOptions, runOptions);
+      postFixDiagnostics = await runLint(files, rules, ruleOptions);
     }
     diagnostics.length = 0;
     diagnostics.push(...postFixDiagnostics);

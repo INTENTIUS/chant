@@ -1,3 +1,3 @@
-import * as _ from "./_";
+import { Sub, AWS } from "@intentius/chant-lexicon-aws";
 
-export const endpoint = _.Sub`https://s3.${_.AWS.Region}.${_.AWS.URLSuffix}`;
+export const endpoint = Sub`https://s3.${AWS.Region}.${AWS.URLSuffix}`;

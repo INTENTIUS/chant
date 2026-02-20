@@ -54,7 +54,6 @@ export const awsPlugin: LexiconPlugin = {
 
   initTemplates(): Record<string, string> {
     return {
-      "_.ts": `export * from "./config";\n`,
       "config.ts": `/**
  * Shared bucket configuration — encryption, versioning, public access
  */
@@ -93,29 +92,29 @@ export const versioningEnabled = new aws.VersioningConfiguration({
  * Data bucket — primary storage with encryption and versioning
  */
 
-import * as aws from "@intentius/chant-lexicon-aws";
-import * as _ from "./_";
+import { Bucket, Sub, AWS } from "@intentius/chant-lexicon-aws";
+import { versioningEnabled, bucketEncryption, publicAccessBlock } from "./config";
 
-export const dataBucket = new aws.Bucket({
-  bucketName: aws.Sub\`\${aws.AWS.StackName}-data\`,
-  versioningConfiguration: _.versioningEnabled,
-  bucketEncryption: _.bucketEncryption,
-  publicAccessBlockConfiguration: _.publicAccessBlock,
+export const dataBucket = new Bucket({
+  bucketName: Sub\`\${AWS.StackName}-data\`,
+  versioningConfiguration: versioningEnabled,
+  bucketEncryption: bucketEncryption,
+  publicAccessBlockConfiguration: publicAccessBlock,
 });
 `,
       "logs-bucket.ts": `/**
  * Logs bucket — log delivery with encryption and versioning
  */
 
-import * as aws from "@intentius/chant-lexicon-aws";
-import * as _ from "./_";
+import { Bucket, Sub, AWS } from "@intentius/chant-lexicon-aws";
+import { versioningEnabled, bucketEncryption, publicAccessBlock } from "./config";
 
-export const logsBucket = new aws.Bucket({
-  bucketName: aws.Sub\`\${aws.AWS.StackName}-logs\`,
+export const logsBucket = new Bucket({
+  bucketName: Sub\`\${AWS.StackName}-logs\`,
   accessControl: "LogDeliveryWrite",
-  versioningConfiguration: _.versioningEnabled,
-  bucketEncryption: _.bucketEncryption,
-  publicAccessBlockConfiguration: _.publicAccessBlock,
+  versioningConfiguration: versioningEnabled,
+  bucketEncryption: bucketEncryption,
+  publicAccessBlockConfiguration: publicAccessBlock,
 });
 `,
     };
@@ -349,7 +348,7 @@ description: AWS CloudFormation best practices and common patterns
 3. **Use least-privilege IAM** — Avoid \`*\` in IAM policy actions and resources
 4. **Enable versioning** — Turn on \`VersioningConfiguration\` for data buckets
 5. **Use Sub for dynamic names** — \`Sub\\\`\\\${AWS::StackName}-suffix\\\`\` for unique naming
-6. **Share config via barrel files** — Put common settings in \`_.ts\` and import as \`* as _\`
+6. **Share config via direct imports** — Put common settings in a config file and import directly
 `,
         triggers: [
           { type: "file-pattern", value: "**/*.aws.ts" },

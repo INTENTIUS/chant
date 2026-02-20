@@ -1,4 +1,4 @@
-import * as _ from "./_";
+import { Sub, AWS } from "@intentius/chant-lexicon-aws";
 
 // chant-disable-next-line WAW001
-export const endpoint = _.Sub`s3.us-east-1.amazonaws.com/${_.AWS.StackName}`;
+export const endpoint = Sub`s3.us-east-1.amazonaws.com/${AWS.StackName}`;

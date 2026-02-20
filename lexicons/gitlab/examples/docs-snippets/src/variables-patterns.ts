@@ -1,32 +1,32 @@
-import * as _ from "./_";
+import { Rule, Job, Image, Environment, CI } from "@intentius/chant-lexicon-gitlab";
 
 // Only on merge requests
-export const onMR = new _.Rule({ ifCondition: _.CI.MergeRequestIid });
+export const onMR = new Rule({ ifCondition: CI.MergeRequestIid });
 
 // Only on default branch
-export const onMain = new _.Rule({
-  ifCondition: `${_.CI.CommitBranch} == ${_.CI.DefaultBranch}`,
+export const onMain = new Rule({
+  ifCondition: `${CI.CommitBranch} == ${CI.DefaultBranch}`,
 });
 
 // Only on tags
-export const onTag = new _.Rule({ ifCondition: _.CI.CommitTag });
+export const onTag = new Rule({ ifCondition: CI.CommitTag });
 
 // Dynamic environment naming
-export const reviewDeploy = new _.Job({
+export const reviewDeploy = new Job({
   stage: "deploy",
-  environment: new _.Environment({
-    name: `review/${_.CI.CommitRef}`,
-    url: `https://${_.CI.CommitRef}.preview.example.com`,
+  environment: new Environment({
+    name: `review/${CI.CommitRef}`,
+    url: `https://${CI.CommitRef}.preview.example.com`,
   }),
   script: ["deploy-preview"],
 });
 
 // Container registry
-export const buildImage = new _.Job({
+export const buildImage = new Job({
   stage: "build",
-  image: new _.Image({ name: "docker:24" }),
+  image: new Image({ name: "docker:24" }),
   script: [
-    `docker build -t ${_.CI.RegistryImage}:${_.CI.CommitSha} .`,
-    `docker push ${_.CI.RegistryImage}:${_.CI.CommitSha}`,
+    `docker build -t ${CI.RegistryImage}:${CI.CommitSha} .`,
+    `docker push ${CI.RegistryImage}:${CI.CommitSha}`,
   ],
 });

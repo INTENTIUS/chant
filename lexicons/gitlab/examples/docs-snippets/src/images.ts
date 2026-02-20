@@ -1,8 +1,8 @@
-import * as _ from "./_";
+import { Image } from "@intentius/chant-lexicon-gitlab";
 
-export const nodeImage = new _.Image({ name: "node:20-alpine" });
+export const nodeImage = new Image({ name: "node:20-alpine" });
 
-export const customImage = new _.Image({
+export const customImage = new Image({
   name: "registry.example.com/my-image:latest",
   entrypoint: ["/bin/sh", "-c"],
 });

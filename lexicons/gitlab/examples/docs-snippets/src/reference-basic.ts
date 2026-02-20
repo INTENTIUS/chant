@@ -1,5 +1,5 @@
-import * as _ from "./_";
+import { Job, reference } from "@intentius/chant-lexicon-gitlab";
 
-export const deployRef = new _.Job({
-  script: _.reference(".setup", "script"),
+export const deployRef = new Job({
+  script: reference(".setup", "script"),
 });

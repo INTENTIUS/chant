@@ -51,26 +51,6 @@ This rule is automatically skipped inside `Composite()` factory callbacks, where
 
 ---
 
-## COR002: Barrel Import Style
-
-Barrel files must be imported with namespace syntax, not named imports.
-
-**Severity:** error
-
-```typescript
-// ❌ Triggers COR002
-import { bucketEncryption, versioningEnabled } from "./_";
-```
-
-```typescript
-// ✅ Fixed
-import * as _ from "./_";
-```
-
-Type-only imports (`import type { ... } from "./_"`) are allowed.
-
----
-
 ## COR005: Naming Convention
 
 Exported declarable instances should use camelCase naming. PascalCase and UPPER_SNAKE_CASE are reserved for types and constants.
@@ -96,26 +76,6 @@ export const dataBucket = new _.Bucket({
 ```
 
 Only applies to exported variables initialized with `new` expressions.
-
----
-
-## COR006: Prefer Namespace Import
-
-Lexicon packages (`@intentius/chant`, `@intentius/chant-lexicon-*`) must use namespace imports, not named imports.
-
-**Severity:** error
-
-```typescript
-// ❌ Triggers COR006
-import { Bucket, Function } from "@intentius/chant-lexicon-aws";
-```
-
-```typescript
-// ✅ Fixed
-import * as aws from "@intentius/chant-lexicon-aws";
-```
-
-In practice, you should import through the barrel instead. See [COR014](#cor014-missing-barrel-import). Type-only imports are allowed.
 
 ---
 
@@ -182,37 +142,11 @@ export const encryptionDefault = new _.ServerSideEncryptionByDefault({
 });
 
 export const bucket = new _.Bucket({
-  bucketEncryption: _.$.bucketEncryption,
+  bucketEncryption: _.bucketEncryption,
 });
 ```
 
 **Fix:** Move configuration declarations to a `defaults.ts` file and resources to their own files.
-
----
-
-## COR014: Missing Barrel Import
-
-Non-barrel files should import lexicon packages through the barrel (`_.ts`), not directly.
-
-**Severity:** warning
-
-```typescript
-// ❌ Triggers COR014
-import * as aws from "@intentius/chant-lexicon-aws";
-
-export const bucket = new aws.Bucket({ ... });
-```
-
-```typescript
-// ✅ Fixed — import through barrel
-import * as _ from "./_";
-
-export const bucket = new _.Bucket({ ... });
-```
-
-This rule is auto-fixable when a `_.ts` barrel file exists in the same directory. If no barrel exists, the diagnostic provides instructions to create one.
-
-Barrel files (`_.ts`) themselves are exempt — they are the one place where direct lexicon imports are expected. Subpath imports (e.g., `@intentius/chant/lint/rule`) are also exempt.
 
 ---
 

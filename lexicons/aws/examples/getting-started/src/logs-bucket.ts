@@ -1,9 +1,10 @@
-import * as _ from "./_";
+import { Bucket, Sub, AWS } from "@intentius/chant-lexicon-aws";
+import { versioningEnabled, bucketEncryption, publicAccessBlock } from "./defaults";
 
-export const logsBucket = new _.Bucket({
-  bucketName: _.Sub`${_.AWS.StackName}-logs`,
+export const logsBucket = new Bucket({
+  bucketName: Sub`${AWS.StackName}-logs`,
   accessControl: "LogDeliveryWrite",
-  versioningConfiguration: _.$.versioningEnabled,
-  bucketEncryption: _.$.bucketEncryption,
-  publicAccessBlockConfiguration: _.$.publicAccessBlock,
+  versioningConfiguration: versioningEnabled,
+  bucketEncryption: bucketEncryption,
+  publicAccessBlockConfiguration: publicAccessBlock,
 });

@@ -161,7 +161,7 @@ const registry: CommandDef[] = [
   { name: "import", handler: runImport },
   { name: "init", handler: runInit },
   { name: "init lexicon", handler: runInitLexicon },
-  { name: "update", handler: runUpdate },
+{ name: "update", handler: runUpdate },
   { name: "doctor", handler: runDoctor },
 
   // Dev subcommands

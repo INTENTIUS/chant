@@ -23,9 +23,12 @@ export const fn = new _.Function({
 
 ```typescript
 // ✅ Fixed — use typed AttrRef properties
+import { functionRole } from "./role";
+import { dataBucket } from "./storage";
+
 export const fn = new _.Function({
-  role: _.$.functionRole.arn,
-  bucket: _.$.dataBucket.ref,
+  role: functionRole.arn,
+  bucket: dataBucket.ref,
 });
 ```
 
@@ -62,45 +65,8 @@ export const dataBucket = new _.Bucket({
 ```
 
 :::note
-When using the barrel pattern (`_.$`), resources referenced from other files appear unused within their own file. If your project uses barrels, set `COR004: "off"` in your config:
-
-```typescript
-// chant.config.ts
-export default {
-  lint: {
-    rules: { COR004: "off" },
-  },
-};
-```
+Resources that are imported and referenced from other files are tracked through the module graph. If a resource is only used via cross-file imports, it may still appear as referenced.
 :::
-
----
-
-## COR007: Enforce Barrel Reference
-
-Sibling resources should be accessed through the barrel (`_.$`) instead of direct relative imports. Direct imports bypass the barrel's lazy-loading and cross-file resolution.
-
-**Severity:** warning
-
-```typescript
-// ❌ Triggers COR007
-import { dataBucket } from "./data-bucket";
-
-export const fn = new _.Function({
-  bucket: dataBucket.arn,
-});
-```
-
-```typescript
-// ✅ Fixed — access via barrel proxy
-import * as _ from "./_";
-
-export const fn = new _.Function({
-  bucket: _.$.dataBucket.arn,
-});
-```
-
-Barrel files (`_.ts`) are exempt — they need direct imports to re-export siblings.
 
 ---
 
@@ -126,18 +92,3 @@ export const bucket = new _.Bucket({
 
 ---
 
-## COR016: Stale Barrel Types
-
-The `_.d.ts` barrel type declaration file must stay in sync with the project's exports. This rule fires on barrel files (`_.ts`) when the corresponding `_.d.ts` is missing or out of date.
-
-**Severity:** warning
-
-```
-⚠ COR016: Stale _.d.ts barrel type declarations. Run 'chant lint --fix' to regenerate.
-```
-
-```
-⚠ COR016: Missing _.d.ts barrel type declarations. Run 'chant lint --fix' to generate.
-```
-
-This rule is auto-fixable — `chant lint --fix` generates or regenerates `_.d.ts` from the project's current exports, giving you typed `_.$` access with full autocomplete.

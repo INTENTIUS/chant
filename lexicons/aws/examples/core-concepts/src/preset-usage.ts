@@ -1,12 +1,13 @@
-import * as _ from "./_";
+import { Bucket, BucketEncryption, ServerSideEncryptionRule } from "@intentius/chant-lexicon-aws";
+import { publicAccessBlock, encryptionDefault } from "./preset-defaults";
 
-export const secureBucket = new _.Bucket({
+export const secureBucket = new Bucket({
   bucketName: "secure-data",
-  publicAccessBlockConfiguration: _.$.publicAccessBlock,
-  bucketEncryption: new _.BucketEncryption({
+  publicAccessBlockConfiguration: publicAccessBlock,
+  bucketEncryption: new BucketEncryption({
     serverSideEncryptionConfiguration: [
-      new _.ServerSideEncryptionRule({
-        serverSideEncryptionByDefault: _.$.encryptionDefault,
+      new ServerSideEncryptionRule({
+        serverSideEncryptionByDefault: encryptionDefault,
       }),
     ],
   }),

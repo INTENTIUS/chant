@@ -1,16 +1,16 @@
-import * as _ from "./_";
+import { Job, Artifacts } from "@intentius/chant-lexicon-gitlab";
 
 // chant-disable-next-line WGL004
-export const buildBad = new _.Job({
+export const buildBad = new Job({
   script: ["npm run build"],
-  artifacts: new _.Artifacts({
+  artifacts: new Artifacts({
     paths: ["dist/"],
   }),
 });
 
-export const buildGood = new _.Job({
+export const buildGood = new Job({
   script: ["npm run build"],
-  artifacts: new _.Artifacts({
+  artifacts: new Artifacts({
     paths: ["dist/"],
     expireIn: "1 hour",
   }),

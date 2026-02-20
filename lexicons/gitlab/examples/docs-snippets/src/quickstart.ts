@@ -1,11 +1,11 @@
-import * as _ from "./_";
+import { Job, Image, Cache, Artifacts, CI } from "@intentius/chant-lexicon-gitlab";
 
-export const test = new _.Job({
+export const test = new Job({
   stage: "test",
-  image: new _.Image({ name: "node:20" }),
-  cache: new _.Cache({ key: _.CI.CommitRef, paths: ["node_modules/"] }),
+  image: new Image({ name: "node:20" }),
+  cache: new Cache({ key: CI.CommitRef, paths: ["node_modules/"] }),
   script: ["npm ci", "npm test"],
-  artifacts: new _.Artifacts({
+  artifacts: new Artifacts({
     paths: ["coverage/"],
     expireIn: "1 week",
   }),

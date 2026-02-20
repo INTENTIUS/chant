@@ -1,7 +1,7 @@
-import * as _ from "./_";
+import { Role, ManagedPolicy } from "@intentius/chant-lexicon-aws";
 import { dataBucket } from "./cross-ref-storage";
 
-export const accessRole = new _.Role({
+export const accessRole = new Role({
   assumeRolePolicyDocument: {
     Version: "2012-10-17",
     Statement: [{
@@ -12,7 +12,7 @@ export const accessRole = new _.Role({
   },
 });
 
-export const readPolicy = new _.ManagedPolicy({
+export const readPolicy = new ManagedPolicy({
   policyDocument: {
     Statement: [{
       Effect: "Allow",

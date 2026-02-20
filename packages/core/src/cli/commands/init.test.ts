@@ -22,14 +22,13 @@ describe("initCommand", () => {
       expect(result.createdFiles).toContain("tsconfig.json");
       expect(result.createdFiles).toContain("chant.config.ts");
       expect(result.createdFiles).toContain(".gitignore");
-      expect(result.createdFiles).toContain("src/_.ts");
       expect(result.createdFiles).toContain("src/config.ts");
       expect(result.createdFiles).toContain("src/data-bucket.ts");
       expect(result.createdFiles).toContain("src/logs-bucket.ts");
     });
   });
 
-  test("aws source files use namespace imports", async () => {
+  test("aws source files use direct imports", async () => {
     await withTestDir(async (testDir) => {
       const options: InitOptions = {
         path: testDir,
@@ -41,15 +40,15 @@ describe("initCommand", () => {
       await initCommand(options);
 
       const configContent = readFileSync(join(testDir, "src", "config.ts"), "utf-8");
-      expect(configContent).toContain('import * as aws from "@intentius/chant-lexicon-aws"');
+      expect(configContent).toContain('from "@intentius/chant-lexicon-aws"');
 
       const dataBucketContent = readFileSync(join(testDir, "src", "data-bucket.ts"), "utf-8");
-      expect(dataBucketContent).toContain('import * as aws from "@intentius/chant-lexicon-aws"');
-      expect(dataBucketContent).toContain('import * as _ from "./_"');
+      expect(dataBucketContent).toContain('from "@intentius/chant-lexicon-aws"');
+      expect(dataBucketContent).toContain('from "./config"');
 
       const logsBucketContent = readFileSync(join(testDir, "src", "logs-bucket.ts"), "utf-8");
-      expect(logsBucketContent).toContain('import * as aws from "@intentius/chant-lexicon-aws"');
-      expect(logsBucketContent).toContain('import * as _ from "./_"');
+      expect(logsBucketContent).toContain('from "@intentius/chant-lexicon-aws"');
+      expect(logsBucketContent).toContain('from "./config"');
     });
   });
 
@@ -177,7 +176,7 @@ describe("initCommand", () => {
     });
   });
 
-  test("generates barrel file", async () => {
+  test("does not generate barrel file", async () => {
     await withTestDir(async (testDir) => {
       const options: InitOptions = {
         path: testDir,
@@ -188,13 +187,11 @@ describe("initCommand", () => {
 
       await initCommand(options);
 
+      // No _.ts barrel — direct imports are used instead
       const barrelPath = join(testDir, "src", "_.ts");
-      expect(existsSync(barrelPath)).toBe(true);
+      expect(existsSync(barrelPath)).toBe(false);
 
-      const barrelContent = readFileSync(barrelPath, "utf-8");
-      expect(barrelContent).toContain('export * from "./config"');
-
-      // No index.ts — barrel re-exports cause duplicate entity errors during build
+      // No index.ts either
       const indexPath = join(testDir, "src", "index.ts");
       expect(existsSync(indexPath)).toBe(false);
     });
@@ -218,7 +215,6 @@ describe("initCommand", () => {
       expect(coreContent).toContain("Value<T>");
       expect(coreContent).toContain("Serializer");
       expect(coreContent).toContain("ChantConfig");
-      expect(coreContent).toContain("barrel");
 
       const corePkg = join(testDir, ".chant", "types", "core", "package.json");
       expect(existsSync(corePkg)).toBe(true);

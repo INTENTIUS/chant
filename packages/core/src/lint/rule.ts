@@ -56,24 +56,6 @@ export interface LintContext {
   filePath: string;
   /** Optional lexicon context (undefined for core rules) */
   lexicon?: string;
-  /** Export names from the barrel file (for EVL008) */
-  barrelExports?: Set<string>;
-  /** All project exports keyed by name (for EVL008) */
-  projectExports?: Map<string, { file: string; className: string }>;
-  /** Project scan result (for COR016) */
-  projectScan?: import("../project/scan").ProjectScan;
-}
-
-/**
- * Options for extending the lint context with project-level information
- */
-export interface LintRunOptions {
-  /** Export names from the barrel file */
-  barrelExports?: Set<string>;
-  /** All project exports keyed by name */
-  projectExports?: Map<string, { file: string; className: string }>;
-  /** Project scan result (for COR016) */
-  projectScan?: import("../project/scan").ProjectScan;
 }
 
 /**

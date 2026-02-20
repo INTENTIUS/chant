@@ -13,16 +13,14 @@ When resources in different stacks reference each other, chant generates cross-s
 
 ## Child projects (nested stacks)
 
-chant supports **child projects** — subdirectories with their own barrel file (`_.ts`) that build to separate, independently-valid templates. The parent references a child project via a lexicon-specific function, and cross-stack outputs are declared explicitly with `stackOutput()`.
+chant supports **child projects** — subdirectories that build to separate, independently-valid templates. The parent references a child project via a lexicon-specific function, and cross-stack outputs are declared explicitly with `stackOutput()`.
 
 For example, the AWS lexicon's `nestedStack()` function references a child project directory and produces separate CloudFormation child templates:
 
 ```
 src/
-  _.ts              # parent barrel
   app.ts            # parent resources
   network/          # ← child project
-    _.ts            # child barrel
     vpc.ts          # child resources
     outputs.ts      # stackOutput() declarations
 ```

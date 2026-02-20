@@ -1,11 +1,11 @@
-import * as _ from "./_";
+import { Bucket, If, AWS } from "@intentius/chant-lexicon-aws";
 
-export const bucket = new _.Bucket({
+export const bucket = new Bucket({
   bucketName: "my-bucket",
-  accelerateConfiguration: _.If(
+  accelerateConfiguration: If(
     "EnableAcceleration",
     { accelerationStatus: "Enabled" },
-    _.AWS.NoValue,
+    AWS.NoValue,
   ),
   bucketEncryption: {
     serverSideEncryptionConfiguration: [

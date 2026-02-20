@@ -1,26 +1,36 @@
-import * as _ from "./_";
+import { Job } from "@intentius/chant-lexicon-gitlab";
+import {
+  nodeImage,
+  npmCache,
+  buildArtifacts,
+  testArtifacts,
+  onMergeRequest,
+  onCommit,
+  onDefaultBranch,
+  productionEnv,
+} from "./config";
 
-export const build = new _.Job({
+export const build = new Job({
   stage: "build",
-  image: _.nodeImage,
-  cache: _.npmCache,
+  image: nodeImage,
+  cache: npmCache,
   script: ["npm ci", "npm run build"],
-  artifacts: _.buildArtifacts,
+  artifacts: buildArtifacts,
 });
 
-export const test = new _.Job({
+export const test = new Job({
   stage: "test",
-  image: _.nodeImage,
-  cache: _.npmCache,
+  image: nodeImage,
+  cache: npmCache,
   script: ["npm ci", "npm test"],
-  artifacts: _.testArtifacts,
-  rules: [_.onMergeRequest, _.onCommit],
+  artifacts: testArtifacts,
+  rules: [onMergeRequest, onCommit],
 });
 
-export const deploy = new _.Job({
+export const deploy = new Job({
   stage: "deploy",
-  image: _.nodeImage,
+  image: nodeImage,
   script: ["npm run deploy"],
-  environment: _.productionEnv,
-  rules: [_.onDefaultBranch],
+  environment: productionEnv,
+  rules: [onDefaultBranch],
 });

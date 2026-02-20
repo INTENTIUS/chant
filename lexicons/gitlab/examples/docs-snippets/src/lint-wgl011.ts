@@ -1,10 +1,10 @@
-import * as _ from "./_";
+import { Job, Rule, CI } from "@intentius/chant-lexicon-gitlab";
 
 // chant-disable-next-line WGL011
-export const noop = new _.Job({
+export const noop = new Job({
   script: ["echo unreachable"],
   rules: [
-    new _.Rule({ ifCondition: _.CI.CommitBranch, when: "never" }),
-    new _.Rule({ ifCondition: _.CI.CommitTag, when: "never" }),
+    new Rule({ ifCondition: CI.CommitBranch, when: "never" }),
+    new Rule({ ifCondition: CI.CommitTag, when: "never" }),
   ],
 });

@@ -11,14 +11,14 @@ Resources are the building blocks of a chant project. Each resource maps to a si
 
 ## Defining a Resource
 
-Import the barrel and instantiate a typed resource constructor. Here's a basic S3 bucket using the AWS lexicon:
+Import the lexicon types and instantiate a typed resource constructor. Here's a basic S3 bucket using the AWS lexicon:
 
 <Code code={resourceBasicSrc} lang="typescript" title="src/resource-basic.ts" />
 
 Every resource definition follows this pattern:
 
-1. **Import** the barrel with `import * as _ from "./_"` — this provides lexicon types, the `$` symbol table, and intrinsic helpers in one namespace
-2. **Instantiate** with `new _.ResourceType({...})` using the constructor provided by your lexicon
+1. **Import** types directly from the lexicon package (e.g., `import { Bucket } from "@intentius/chant-lexicon-aws"`)
+2. **Instantiate** with `new ResourceType({...})` using the constructor provided by your lexicon
 3. **Export** the result as a `const`
 
 The export is required — chant discovers resources by scanning exports across your `src/` directory.
@@ -37,8 +37,8 @@ chant reads TypeScript as data. It never executes your code. This means resource
 | `const` references | `const name = "my-resource";` then `name` |
 | Arrays and objects | `[1, 2, 3]`, `{ key: "val" }` |
 | Spread from `const` | `...defaults` |
-| Barrel references | `_.$.otherResource.arn` |
-| Typed sub-resource constructors | `new _.SubResourceType({...})` |
+| Cross-file resource references | `otherResource.arn` (via import) |
+| Typed sub-resource constructors | `new SubResourceType({...})` |
 | Intrinsics | Lexicon-specific helpers (see your lexicon's docs) |
 
 **Not allowed** (caught by lint before build):

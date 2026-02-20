@@ -21,7 +21,7 @@ describe("docs-snippets example", () => {
     const glob = new Bun.Glob("*.ts");
     const files: string[] = [];
     for await (const file of glob.scan({ cwd: srcDir })) {
-      if (file === "_.ts" || file === "_.d.ts") continue;
+      if (file === "_.ts") continue;
       files.push(file);
     }
 

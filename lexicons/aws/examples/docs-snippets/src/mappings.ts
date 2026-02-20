@@ -1,4 +1,4 @@
-import * as _ from "./_";
+import { Instance } from "@intentius/chant-lexicon-aws";
 
 const regionAMIs: Record<string, string> = {
   "us-east-1": "ami-12345678",
@@ -6,7 +6,7 @@ const regionAMIs: Record<string, string> = {
   "eu-west-1": "ami-abcdef01",
 };
 
-export const server = new _.Instance({
+export const server = new Instance({
   imageId: regionAMIs["us-east-1"],
   instanceType: "t3.micro",
 });

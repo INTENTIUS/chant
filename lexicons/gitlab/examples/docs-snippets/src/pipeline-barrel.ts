@@ -1,9 +1,10 @@
-import * as _ from "./_";
+import { Job } from "@intentius/chant-lexicon-gitlab";
+import { nodeImage, npmCache, buildArtifacts } from "./config";
 
-export const build = new _.Job({
+export const build = new Job({
   stage: "build",
-  image: _.nodeImage,
-  cache: _.npmCache,
+  image: nodeImage,
+  cache: npmCache,
   script: ["npm ci", "npm run build"],
-  artifacts: _.buildArtifacts,
+  artifacts: buildArtifacts,
 });

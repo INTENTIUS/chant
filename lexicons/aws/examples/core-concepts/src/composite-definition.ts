@@ -1,14 +1,15 @@
-import * as _ from "./_";
+import { Sub, Role, Function } from "@intentius/chant-lexicon-aws";
+import { Composite } from "@intentius/chant";
 
 interface LambdaServiceProps {
-  name: string | ReturnType<typeof _.Sub>;
+  name: string | ReturnType<typeof Sub>;
   handler: string;
   runtime?: string;
   timeout?: number;
 }
 
-export const LambdaService = _.Composite<LambdaServiceProps>((props) => {
-  const role = new _.Role({
+export const LambdaService = Composite<LambdaServiceProps>((props) => {
+  const role = new Role({
     assumeRolePolicyDocument: {
       Version: "2012-10-17",
       Statement: [{
@@ -19,7 +20,7 @@ export const LambdaService = _.Composite<LambdaServiceProps>((props) => {
     },
   });
 
-  const func = new _.Function({
+  const func = new Function({
     functionName: props.name,
     handler: props.handler,
     runtime: props.runtime ?? "nodejs20.x",

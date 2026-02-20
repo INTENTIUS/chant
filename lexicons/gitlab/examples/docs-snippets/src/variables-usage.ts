@@ -1,12 +1,12 @@
-import * as _ from "./_";
+import { Rule, Cache, CI } from "@intentius/chant-lexicon-gitlab";
 
 // Use in rule conditions
-export const onDefault = new _.Rule({
-  ifCondition: `${_.CI.CommitBranch} == ${_.CI.DefaultBranch}`,
+export const onDefault = new Rule({
+  ifCondition: `${CI.CommitBranch} == ${CI.DefaultBranch}`,
 });
 
 // Use in cache keys
-export const cache = new _.Cache({
-  key: _.CI.CommitRef,
+export const cache = new Cache({
+  key: CI.CommitRef,
   paths: ["node_modules/"],
 });

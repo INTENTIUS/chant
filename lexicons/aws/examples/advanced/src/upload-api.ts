@@ -1,4 +1,6 @@
-import * as _ from "./_";
+import { Role_Policy, Sub, AWS } from "@intentius/chant-lexicon-aws";
+import { dataBucket } from "./data-bucket";
+import { SecureApi } from "./lambda-api";
 
 export const uploadPolicyDocument = {
   Version: "2012-10-17",
@@ -6,18 +8,18 @@ export const uploadPolicyDocument = {
     {
       Effect: "Allow",
       Action: ["s3:PutObject"],
-      Resource: [_.Sub`${_.$.dataBucket.arn}/*`],
+      Resource: [Sub`${dataBucket.arn}/*`],
     },
   ],
 };
 
-export const uploadS3Policy = new _.Role_Policy({
+export const uploadS3Policy = new Role_Policy({
   policyName: "S3PutAccess",
   policyDocument: uploadPolicyDocument,
 });
 
-export const uploadApi = _.$.SecureApi({
-  name: _.Sub`${_.AWS.StackName}-upload`,
+export const uploadApi = SecureApi({
+  name: Sub`${AWS.StackName}-upload`,
   runtime: "nodejs20.x",
   handler: "index.handler",
   code: {
@@ -28,7 +30,7 @@ export const uploadApi = _.$.SecureApi({
   },
   environment: {
     variables: {
-      BUCKET_NAME: _.$.dataBucket.arn,
+      BUCKET_NAME: dataBucket.arn,
     },
   },
   policies: [uploadS3Policy],

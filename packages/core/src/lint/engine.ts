@@ -1,4 +1,4 @@
-import type { LintRule, LintDiagnostic, LintContext, LintRunOptions } from "./rule";
+import type { LintRule, LintDiagnostic, LintContext } from "./rule";
 import { parseFile } from "./parser";
 import { readFileSync } from "fs";
 
@@ -120,7 +120,6 @@ export async function runLint(
   files: string[],
   rules: LintRule[],
   ruleOptions?: Map<string, Record<string, unknown>>,
-  runOptions?: LintRunOptions,
 ): Promise<LintDiagnostic[]> {
   const allDiagnostics: LintDiagnostic[] = [];
   const allRuleIds = new Set(rules.map((r) => r.id));
@@ -140,9 +139,6 @@ export async function runLint(
         entities: [],
         filePath,
         lexicon: undefined,
-        barrelExports: runOptions?.barrelExports,
-        projectExports: runOptions?.projectExports,
-        projectScan: runOptions?.projectScan,
       };
 
       // Execute each rule

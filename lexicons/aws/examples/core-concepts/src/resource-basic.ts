@@ -1,8 +1,8 @@
-import * as _ from "./_";
+import { Bucket, VersioningConfiguration } from "@intentius/chant-lexicon-aws";
 
-export const appBucket = new _.Bucket({
+export const appBucket = new Bucket({
   bucketName: "my-app-data",
-  versioningConfiguration: new _.VersioningConfiguration({
+  versioningConfiguration: new VersioningConfiguration({
     status: "Enabled",
   }),
 });

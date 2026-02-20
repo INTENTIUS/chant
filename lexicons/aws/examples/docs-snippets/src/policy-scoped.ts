@@ -1,9 +1,9 @@
-import * as _ from "./_";
+import { Sub, AWS } from "@intentius/chant-lexicon-aws";
 
 export const bucketWritePolicy = {
   Statement: [{
     Effect: "Allow",
     Action: ["s3:PutObject"],
-    Resource: _.Sub`arn:aws:s3:::${_.AWS.StackName}-data/*`,
+    Resource: Sub`arn:aws:s3:::${AWS.StackName}-data/*`,
   }],
 };

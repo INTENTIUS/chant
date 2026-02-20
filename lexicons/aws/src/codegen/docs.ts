@@ -171,17 +171,13 @@ Common resources get fixed short names for stability. When two services define t
 
 **Discovering available resources:** Your editor's autocomplete is the best tool — every resource is a named export from the lexicon. You can also run \`chant list\` to see all resource types, or browse the generated TypeScript types.
 
-## The barrel file
+## Imports and cross-file references
 
-Every chant project has a barrel file (conventionally \`_.ts\`) that re-exports the lexicon and provides cross-file references:
-
-{{file:getting-started/src/_.ts}}
-
-Other files import the barrel and use \`$\` to reference sibling exports:
+Chant projects use standard TypeScript imports. Lexicon types come from the lexicon package, and sibling exports are imported directly from the file that defines them:
 
 {{file:getting-started/src/data-bucket.ts}}
 
-The \`$\` proxy lazily resolves exports from other files in the same directory. When the serializer encounters \`_.$.encryptionDefault\`, it resolves to the actual exported value and serializes the reference as \`Fn::GetAtt\` or \`Ref\` as appropriate. This is how cross-file references work without circular imports.
+When you reference a resource or attribute from another file (e.g. \`dataBucket.arn\`), the serializer resolves it to \`Fn::GetAtt\` or \`Ref\` as appropriate. This is how cross-file references work — standard imports, no indirection.
 
 ## Parameters
 
@@ -266,7 +262,7 @@ The \`PolicyDocument\` interface and its supporting types:
 
 Policy documents use **PascalCase keys** (\`Effect\`, \`Action\`, \`Resource\`) because they follow the IAM JSON Policy Language spec — CloudFormation passes them through to IAM as-is, unlike resource properties which are automatically converted from camelCase.
 
-The recommended pattern is to extract policies into your \`defaults.ts\` and reference them via the barrel:
+The recommended pattern is to extract policies into your \`defaults.ts\` and import them directly:
 
 {{file:docs-snippets/src/policy-trust.ts}}
 
@@ -312,7 +308,7 @@ For deploy-time region lookups, combine \`AWS.Region\` with \`If\` or use \`Fn::
 
 ## Nested stacks
 
-CloudFormation nested stacks (\`AWS::CloudFormation::Stack\`) let you decompose large templates into smaller, reusable child templates. Use \`nestedStack()\` to reference a child project directory — a subdirectory with its own barrel file that builds independently:
+CloudFormation nested stacks (\`AWS::CloudFormation::Stack\`) let you decompose large templates into smaller, reusable child templates. Use \`nestedStack()\` to reference a child project directory — a subdirectory that builds independently:
 
 {{file:nested-stacks/src/network/outputs.ts}}
 
@@ -356,11 +352,11 @@ References a resource's physical ID or a parameter's value:
 
 {{file:docs-snippets/src/intrinsics-detail.ts:7-9}}
 
-In most cases you don't need \`Ref\` directly — the serializer automatically generates \`Ref\` when you reference a resource via the barrel (e.g. \`_.$.dataBucket\`).
+In most cases you don't need \`Ref\` directly — the serializer automatically generates \`Ref\` when you reference an imported resource (e.g. \`dataBucket\` imported from another file).
 
 ## \`GetAtt\` — resource attributes
 
-**Preferred:** Use AttrRef directly via the resource's typed properties. When you write \`$.dataBucket.arn\`, the serializer automatically emits \`Fn::GetAtt\`. Explicit \`GetAtt\` is only needed for dynamic or imported resource names.
+**Preferred:** Use AttrRef directly via the resource's typed properties. When you write \`dataBucket.arn\` (imported from the file that defines it), the serializer automatically emits \`Fn::GetAtt\`. Explicit \`GetAtt\` is only needed for dynamic or imported resource names.
 
 ## \`If\` — conditional values
 
@@ -429,7 +425,7 @@ Merge semantics:
 
 ## Nested stacks
 
-When resources should produce a separate CloudFormation template instead of expanding into the parent, use a **child project** — a subdirectory with its own barrel file (\`_.ts\`) that builds independently. The parent references it with \`nestedStack()\`:
+When resources should produce a separate CloudFormation template instead of expanding into the parent, use a **child project** — a subdirectory that builds independently to its own CloudFormation template. The parent references it with \`nestedStack()\`:
 
 {{file:nested-stacks/src/app.ts}}
 
@@ -439,18 +435,16 @@ See [Nested Stacks](./nested-stacks) for the full guide.`,
         slug: "nested-stacks",
         title: "Nested Stacks",
         description: "Splitting resources into child CloudFormation templates with automatic cross-stack reference wiring",
-        content: `CloudFormation nested stacks (\`AWS::CloudFormation::Stack\`) let you decompose large templates into smaller, reusable child templates. The AWS lexicon's \`nestedStack()\` function references a **child project directory** — a subdirectory with its own barrel file that builds independently to a valid CloudFormation template.
+        content: `CloudFormation nested stacks (\`AWS::CloudFormation::Stack\`) let you decompose large templates into smaller, reusable child templates. The AWS lexicon's \`nestedStack()\` function references a **child project directory** — a subdirectory that builds independently to a valid CloudFormation template.
 
 ## Project structure
 
-A nested stack is a child project — a subdirectory with its own \`_.ts\` barrel, resource files, and explicit \`stackOutput()\` declarations:
+A nested stack is a child project — a subdirectory with its own resource files and explicit \`stackOutput()\` declarations:
 
 \`\`\`
 src/
-  _.ts                    # parent barrel
   app.ts                  # parent resources
   network/                # ← child project (nested stack)
-    _.ts                  # its own barrel
     vpc.ts                # VPC, subnet, internet gateway, routing
     security.ts           # security group for Lambda
     outputs.ts            # declares cross-stack outputs
@@ -521,7 +515,9 @@ Child templates also receive the \`TemplateBasePath\` parameter so it propagates
 Pass CloudFormation Parameters to child stacks with the \`parameters\` option:
 
 \`\`\`typescript
-const network = _.nestedStack("network", import.meta.dir + "/network", {
+import { nestedStack } from "@intentius/chant-lexicon-aws";
+
+const network = nestedStack("network", import.meta.dir + "/network", {
   parameters: { Environment: "prod", CidrBlock: "10.0.0.0/16" },
 });
 \`\`\`
@@ -532,16 +528,12 @@ Child projects can themselves reference grandchild projects. Each level produces
 
 \`\`\`
 src/
-  _.ts
   app.ts
   infra/
-    _.ts
     network/
-      _.ts
       vpc.ts
       outputs.ts
     database/
-      _.ts
       cluster.ts
       outputs.ts
 \`\`\`
@@ -737,9 +729,8 @@ bun test       # runs the example's tests
 
 \`\`\`
 src/
-├── _.ts              # Barrel — re-exports lexicon + auto-discovers siblings
 ├── defaults.ts       # Shared config: encryption, versioning, public access block
-├── data-bucket.ts    # S3 bucket using barrel defaults
+├── data-bucket.ts    # S3 bucket using shared defaults
 ├── logs-bucket.ts    # S3 bucket for access logs
 ├── role.ts           # IAM role with Lambda assume-role policy
 └── handler.ts        # Lambda function referencing role and bucket
@@ -747,9 +738,9 @@ src/
 
 **Patterns demonstrated:**
 
-1. **Barrel file** — \`_.ts\` re-exports the AWS lexicon and creates the \`$\` proxy for cross-file references
-2. **Shared defaults** — \`defaults.ts\` exports reusable property objects (\`encryptionDefault\`, \`publicAccessBlock\`) that other files reference via \`_.$\`
-3. **Cross-resource references** — \`_.$.dataBucket.arn\` in \`handler.ts\` serializes to \`Fn::GetAtt\` in the template
+1. **Direct imports** — lexicon types come from \`@intentius/chant-lexicon-aws\`, sibling exports are imported from the file that defines them
+2. **Shared defaults** — \`defaults.ts\` exports reusable property objects (\`bucketEncryption\`, \`publicAccessBlock\`) that other files import directly
+3. **Cross-resource references** — \`dataBucket.arn\` in \`handler.ts\` serializes to \`Fn::GetAtt\` in the template
 4. **Intrinsics** — \`Sub\` tagged templates with pseudo-parameters for dynamic naming
 
 {{file:getting-started/src/handler.ts}}
@@ -760,7 +751,6 @@ src/
 
 \`\`\`
 src/
-├── _.ts              # Barrel + re-exports Composite from core
 ├── chant.config.ts   # Lint config: strict preset + custom plugin
 ├── defaults.ts       # Encryption, versioning, access block, Lambda trust policy
 ├── data-bucket.ts    # S3 bucket
@@ -788,10 +778,8 @@ The example produces 10 CloudFormation resources: 1 S3 bucket + 3 composites × 
 
 \`\`\`
 src/
-├── _.ts              # Parent barrel
 ├── app.ts            # Lambda function (references network outputs)
 └── network/          # Child project (nested stack)
-    ├── _.ts          # Child barrel
     ├── vpc.ts        # VPC, subnet, internet gateway, route table
     ├── security.ts   # Security group for Lambda
     └── outputs.ts    # stackOutput() declarations
@@ -799,7 +787,7 @@ src/
 
 **Patterns demonstrated:**
 
-1. **Child project** — \`network/\` is a separate project directory with its own barrel, resources, and \`stackOutput()\` exports
+1. **Child project** — \`network/\` is a separate project directory with its own resources and \`stackOutput()\` exports
 2. **Cross-stack references** — \`app.ts\` accesses \`network.outputs.subnetId\` and \`network.outputs.lambdaSgId\`, which serialize to \`Fn::GetAtt\` on the parent's \`AWS::CloudFormation::Stack\` resource
 3. **Multi-file output** — build produces \`template.json\` (parent) and \`network.template.json\` (child)
 4. **TemplateBasePath** — auto-generated parameter for configuring child template URLs per environment

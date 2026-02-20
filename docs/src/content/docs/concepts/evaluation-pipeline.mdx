@@ -17,12 +17,6 @@ When you run `npx chant build`, the tool takes your TypeScript source files thro
                                          +---------+
                                               |
                                               v
-                                       +-----------+
-                                       |  Resolve  |
-                                       |  Barrels  |
-                                       +-----------+
-                                              |
-                                              v
 +-----------+     +----------+     +-----------+
 |   Emit    | <-- | Expand   | <-- | Extract + |
 | (serialize|     | Compos-  |     | Evaluate  |
@@ -38,7 +32,6 @@ When you run `npx chant build`, the tool takes your TypeScript source files thro
 The evaluator scans the project directory for TypeScript source files, applying standard filters:
 
 - Include all `.ts` files in the source directory
-- Exclude files starting with `_` (barrel files are handled separately)
 - Exclude `*.test.ts` and `*.spec.ts`
 - Exclude `node_modules`
 
@@ -57,27 +50,14 @@ At this stage, the evaluability lint rules (EVL) also run. These catch patterns 
 The tool builds a module graph by following `import` statements. This handles:
 
 - Relative imports (`import { tags } from "./shared"`)
-- Lexicon imports (`import * as _ from "./_"`)
+- Lexicon imports (`import { Bucket, Sub } from "@intentius/chant-lexicon-aws"`)
 - Re-exports (`export { bucket } from "./bucket"`)
 
 The module graph determines which files depend on which, and ensures that cross-file `const` references can be resolved during evaluation.
 
 **Related:** [Module Graph](/chant/architecture/module-graph/)
 
-## Stage 4: Resolve Barrels
-
-For any file containing `export const $ = barrel(import.meta.dir)`, the evaluator builds a symbol table of sibling resource exports:
-
-1. Identify the directory from the barrel file's path
-2. Scan sibling `.ts` files (applying the same exclusion rules as discovery)
-3. Parse each file's AST and extract named exports with their types
-4. Build the `$` symbol table mapping export names to their source files and resource types
-
-This symbol table is built once per directory and cached.
-
-**Related:** [Barrel Files & the $ Symbol](/chant/concepts/barrels/)
-
-## Stage 5: Extract and Evaluate Resources
+## Stage 4: Extract and Evaluate Resources
 
 The evaluator walks each file's AST looking for the resource pattern:
 
@@ -93,11 +73,11 @@ For each match, it:
    - Following cross-file imports to evaluate referenced bindings
    - Expanding spread operators from known `const` sources
    - Converting tagged template literals to intrinsic objects
-   - Resolving `$.resource.attribute` to symbolic reference values
+   - Resolving `resource.attribute` to symbolic reference values (via direct imports)
 
 **Related:** [Evaluator Engine](/chant/architecture/evaluator/)
 
-## Stage 6: Expand Composites
+## Stage 5: Expand Composites
 
 Composite resources are factory patterns that produce multiple related resources from a single declaration. After all resources are extracted, the evaluator expands composite instances:
 
@@ -106,11 +86,11 @@ Composite resources are factory patterns that produce multiple related resources
 3. Resolve `siblings` references within the composite
 4. Emit prefixed child resources (e.g., `myApi.function`, `myApi.role`)
 
-Note: nested deployment units (e.g. AWS nested stacks) are not composites — they are **child projects**. A child project is a separate directory with its own barrel file that builds independently. The parent references it via a lexicon-specific function (e.g. `nestedStack()`), and discovery skips child project directories entirely. See [Multi-Stack Projects](/chant/guide/multi-stack/) for an overview.
+Note: nested deployment units (e.g. AWS nested stacks) are not composites — they are **child projects**. A child project is a separate subdirectory that builds independently. The parent references it via a lexicon-specific function (e.g. `nestedStack()`), and discovery skips child project directories entirely. See [Multi-Stack Projects](/chant/guide/multi-stack/) for an overview.
 
 **Related:** [Composite Resources](/chant/guide/composite-resources/), [Multi-Stack Projects](/chant/guide/multi-stack/), [Child Projects (Lexicon Authoring)](/chant/lexicon-authoring/serializer/#child-projects)
 
-## Stage 7: Emit
+## Stage 6: Emit
 
 The evaluated resources are passed to the lexicon serializer, which produces the target output format. During serialization, the emitter:
 
@@ -131,6 +111,6 @@ Errors are non-fatal per resource. If one resource fails evaluation, the evaluat
 The evaluator caches two things during a single `chant build` run:
 
 - **Evaluated `const` bindings** — each binding is evaluated once, even if referenced by multiple resources
-- **Barrel symbol tables** — each directory's `$` table is built once, even if multiple files in that directory use barrel references
+- **Import resolution** — each imported binding is resolved once, even if referenced from multiple files
 
 There is no persistent cache across runs.

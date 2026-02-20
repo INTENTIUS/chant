@@ -6,9 +6,8 @@ description: How to reference resources defined in other files
 import { Code } from '@astrojs/starlight/components';
 import storageSrc from '../../../../../lexicons/aws/examples/core-concepts/src/cross-ref-storage.ts?raw';
 import policySrc from '../../../../../lexicons/aws/examples/core-concepts/src/cross-ref-policy.ts?raw';
-import barrelRefSrc from '../../../../../lexicons/aws/examples/core-concepts/src/cross-ref-barrel.ts?raw';
 
-Resources often depend on each other — a policy needs a storage resource's ARN, a function needs a table's name. chant provides two ways to reference resources across files: **direct imports** and **barrel references**.
+Resources often depend on each other — a policy needs a storage resource's ARN, a function needs a table's name. chant uses standard TypeScript imports for cross-file references.
 
 ## Direct Imports
 
@@ -18,27 +17,23 @@ Import a resource from another file and access its attributes:
 
 <Code code={policySrc} lang="typescript" title="src/cross-ref-policy.ts" />
 
-## Barrel References with `_.$.resource`
-
-The recommended approach uses barrel references via `_.$`:
-
-<Code code={barrelRefSrc} lang="typescript" title="src/cross-ref-barrel.ts" />
-
-`_.$.dataBucket.arn` is equivalent to importing `dataBucket` from `./cross-ref-storage` and accessing `.arn`, but without needing to know which file defines it.
+`dataBucket.arn` resolves to a symbolic cross-resource reference in the evaluated output. The evaluator traces the import back to the source file, identifies the resource type, and resolves the attribute through the lexicon's attribute registry.
 
 ## Build-Time Resolution
 
-Barrel references are resolved at build time, not at runtime. This means:
+Cross-file references are resolved at build time, not at runtime. This means:
 
-- `$` is not a JavaScript object — you cannot iterate over it, log it, or pass it to functions
+- References are resolved statically — the evaluator follows imports to build the resource graph
 - References to nonexistent resources produce a build error
 - Circular dependencies between resources are detected and reported
 
-## When to Use Each Approach
+## Importing Patterns
 
-| Approach | Best for |
+| Pattern | Example |
 |---|---|
-| Direct imports | Small projects, explicit dependencies |
-| Barrel `_.$.resource` | Larger projects, many cross-file references |
+| Import a resource | `import { dataBucket } from "./data-bucket"` |
+| Import shared config | `import { encryptionDefault } from "./defaults"` |
+| Import from lexicon | `import { Bucket, Sub, AWS } from "@intentius/chant-lexicon-aws"` |
+| Import from core | `import { Composite, output } from "@intentius/chant"` |
 
-Both approaches produce identical output. The choice is about code organization, not behavior.
+All imports use standard TypeScript `import` statements. The evaluator follows imports through the module graph and resolves each referenced binding to its definition.

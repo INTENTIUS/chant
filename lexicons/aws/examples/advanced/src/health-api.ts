@@ -1,7 +1,8 @@
-import * as _ from "./_";
+import { Sub, AWS } from "@intentius/chant-lexicon-aws";
+import { SecureApi } from "./lambda-api";
 
-export const healthApi = _.$.SecureApi({
-  name: _.Sub`${_.AWS.StackName}-health`,
+export const healthApi = SecureApi({
+  name: Sub`${AWS.StackName}-health`,
   runtime: "nodejs20.x",
   handler: "index.handler",
   code: {

@@ -40,15 +40,6 @@ npx chant lint --fix
 npx chant lint --watch
 ```
 
-## COR016: Stale Barrel Types
-
-The `COR016` rule checks that `_.d.ts` barrel type declarations are up-to-date. It fires when linting `_.ts` barrel files and compares the existing `_.d.ts` content against what the current project scan would generate.
-
-- **Missing `_.d.ts`**: emits a warning suggesting `chant lint --fix`
-- **Stale `_.d.ts`**: emits a warning when the content doesn't match
-
-When `--fix` is passed, `_.d.ts` is regenerated automatically.
-
 ## Exit Codes
 
 | Code | Meaning |

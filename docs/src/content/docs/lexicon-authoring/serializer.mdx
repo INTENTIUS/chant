@@ -125,7 +125,7 @@ The build pipeline writes each entry in `files` alongside the primary output fil
 
 ## Child Projects
 
-If your lexicon needs to split resources into separate deployment units (like AWS nested stacks, Terraform modules, or Azure linked templates), use the core **child project** pattern. A child project is a subdirectory with its own barrel file (`_.ts`) that builds independently to a valid template.
+If your lexicon needs to split resources into separate deployment units (like AWS nested stacks, Terraform modules, or Azure linked templates), use the core **child project** pattern. A child project is a subdirectory that builds independently to a valid template.
 
 ### Core primitives
 
@@ -217,7 +217,7 @@ for (const [name, entity] of entities) {
 
 ### How it works at build time
 
-1. **Discovery** stops at barrel boundaries — `findInfraFiles()` skips subdirectories with `_.ts`
+1. **Discovery** stops at child project boundaries — `findInfraFiles()` skips child project subdirectories
 2. **Build** detects `ChildProjectInstance` entities and recursively builds each child project
 3. **Cycle detection** tracks the build stack and errors on circular references
 4. **Serialization** receives entities with populated `buildResult` — the serializer extracts child templates and emits parent references

@@ -1,32 +1,32 @@
-import * as _ from "./_";
+import { Sub, AWS, Ref, GetAtt, If, Join, Select, Split, Base64, GetAZs } from "@intentius/chant-lexicon-aws";
 
 // Sub — string substitution (tagged template literal)
-export const bucketName = _.Sub`${_.AWS.StackName}-data`;
-export const arn = _.Sub`arn:aws:s3:::${_.AWS.AccountId}:${_.AWS.Region}:*`;
+export const bucketName = Sub`${AWS.StackName}-data`;
+export const arn = Sub`arn:aws:s3:::${AWS.AccountId}:${AWS.Region}:*`;
 
 // Ref — resource and parameter references
-export const envRef = _.Ref("Environment");
+export const envRef = Ref("Environment");
 
 // GetAtt — resource attributes
-export const bucketArn = _.GetAtt("DataBucket", "Arn");
+export const bucketArn = GetAtt("DataBucket", "Arn");
 
 // If — conditional values
-export const conditionalName = _.If("IsProduction", "prod-data", "dev-data");
+export const conditionalName = If("IsProduction", "prod-data", "dev-data");
 
 // Join — join values with delimiter
-export const joined = _.Join("-", ["prefix", _.AWS.StackName, "suffix"]);
+export const joined = Join("-", ["prefix", AWS.StackName, "suffix"]);
 
 // Select + Split — select by index from split string
-export const first = _.Select(0, _.Split(",", "a,b,c"));
+export const first = Select(0, Split(",", "a,b,c"));
 
 // Split — split string by delimiter
-export const parts = _.Split(",", "a,b,c");
+export const parts = Split(",", "a,b,c");
 
 // Base64 — encode to Base64
-export const userData = _.Base64(_.Sub`#!/bin/bash
-echo "Stack: ${_.AWS.StackName}"
+export const userData = Base64(Sub`#!/bin/bash
+echo "Stack: ${AWS.StackName}"
 yum update -y
 `);
 
 // GetAZs — availability zones for a region
-export const azs = _.GetAZs();
+export const azs = GetAZs();

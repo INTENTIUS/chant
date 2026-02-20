@@ -12,7 +12,7 @@ describe("expandFileMarkers", () => {
     mkdirSync(join(dir, "sub"), { recursive: true });
     writeFileSync(
       join(dir, "example.ts"),
-      'import * as _ from "./_";\n\nexport const bucket = new _.Bucket({\n  bucketName: "test",\n});\n',
+      'import { Bucket } from "@intentius/chant-lexicon-aws";\n\nexport const bucket = new Bucket({\n  bucketName: "test",\n});\n',
     );
     writeFileSync(
       join(dir, "sub", "nested.ts"),
@@ -27,7 +27,7 @@ describe("expandFileMarkers", () => {
   test("expands full file marker", () => {
     const result = expandFileMarkers("Before\n\n{{file:example.ts}}\n\nAfter", dir);
     expect(result).toContain('```typescript title="example.ts"');
-    expect(result).toContain('import * as _ from "./_";');
+    expect(result).toContain('import { Bucket } from "@intentius/chant-lexicon-aws";');
     expect(result).toContain("```");
     expect(result).toStartWith("Before\n\n");
     expect(result).toEndWith("\n\nAfter");

@@ -1,10 +1,11 @@
-import * as _ from "./_";
+import { Role, ManagedPolicy } from "@intentius/chant-lexicon-aws";
+import { lambdaTrustPolicy, s3ReadPolicy } from "./policy-trust";
 
-export const functionRole = new _.Role({
-  assumeRolePolicyDocument: _.$.lambdaTrustPolicy,
+export const functionRole = new Role({
+  assumeRolePolicyDocument: lambdaTrustPolicy,
 });
 
-export const readPolicy = new _.ManagedPolicy({
-  policyDocument: _.$.s3ReadPolicy,
-  roles: [_.$.functionRole],
+export const readPolicy = new ManagedPolicy({
+  policyDocument: s3ReadPolicy,
+  roles: [functionRole],
 });

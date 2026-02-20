@@ -1,12 +1,14 @@
-import * as _ from "./_";
+import { ManagedPolicy } from "@intentius/chant-lexicon-aws";
+import { dataBucket } from "./cross-ref-storage";
+import { accessRole } from "./cross-ref-policy";
 
-export const barrelReadPolicy = new _.ManagedPolicy({
+export const barrelReadPolicy = new ManagedPolicy({
   policyDocument: {
     Statement: [{
       Effect: "Allow",
       Action: ["s3:GetObject"],
-      Resource: _.$.dataBucket.arn,
+      Resource: dataBucket.arn,
     }],
   },
-  roles: [_.$.accessRole],
+  roles: [accessRole],
 });

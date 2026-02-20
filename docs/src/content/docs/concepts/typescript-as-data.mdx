@@ -9,12 +9,12 @@ chant reads your TypeScript source files as structured data. It understands a sp
 
 ### Resource declarations
 
-The core pattern: export a `const` binding initialized with `new _.ResourceType({...})`.
+The core pattern: export a `const` binding initialized with a typed resource constructor.
 
 ```typescript
-import * as _ from "./_";
+import { StorageType } from "@intentius/chant-lexicon-<name>";
 
-export const store = new _.StorageType({
+export const store = new StorageType({
   name: "my-data",
   versioned: true,
 });
@@ -27,7 +27,9 @@ The evaluator extracts the export name (`store`), resolves the resource type fro
 Strings, numbers, booleans, `null`, arrays, and nested object literals are evaluated directly.
 
 ```typescript
-export const service = new _.ServiceType({
+import { ServiceType } from "@intentius/chant-lexicon-<name>";
+
+export const service = new ServiceType({
   name: "handler",
   timeout: 30,
   memorySize: 128,
@@ -44,9 +46,11 @@ export const service = new _.ServiceType({
 `const` bindings with literal initializers can be referenced by name. The evaluator traces the reference to its initializer and evaluates it.
 
 ```typescript
+import { StorageType } from "@intentius/chant-lexicon-<name>";
+
 const tags = { project: "myapp", env: "prod" };
 
-export const store = new _.StorageType({
+export const store = new StorageType({
   name: "data",
   tags: tags,
 });
@@ -59,9 +63,11 @@ Only `const` bindings are supported. `let` and `var` are mutable and cannot be s
 Object spread is supported when the source is a `const` binding with a known literal value.
 
 ```typescript
+import { ServiceType } from "@intentius/chant-lexicon-<name>";
+
 const defaults = { timeout: 30, memorySize: 128 };
 
-export const service = new _.ServiceType({
+export const service = new ServiceType({
   ...defaults,
   name: "handler",
 });
@@ -72,26 +78,27 @@ export const service = new _.ServiceType({
 Standard `import` statements are followed through the module graph. The evaluator resolves imported names to their definitions in other files.
 
 ```typescript
+import { StorageType } from "@intentius/chant-lexicon-<name>";
 import { sharedTags } from "./shared";
-import * as _ from "./_";
 
-export const store = new _.StorageType({
+export const store = new StorageType({
   name: "data",
   tags: sharedTags,
 });
 ```
 
-### Barrel references
+### Cross-file resource references
 
-The `$` symbol table provides directory-scoped access to sibling resource exports. See [Barrel Files & the $ Symbol](/chant/concepts/barrels/) for the full explanation.
+Import a resource from another file and access its attributes. The evaluator resolves the attribute through the lexicon's attribute registry.
 
 ```typescript
-import * as _ from "./_";
+import { ServiceType } from "@intentius/chant-lexicon-<name>";
+import { dataTable } from "./table";
 
-export const service = new _.ServiceType({
+export const service = new ServiceType({
   environment: {
     variables: {
-      TABLE_ARN: _.$.dataTable.arn,
+      TABLE_ARN: dataTable.arn,
     },
   },
 });
@@ -102,8 +109,10 @@ export const service = new _.ServiceType({
 Lexicons can register tagged template literals for provider-specific intrinsics (e.g., string substitution with deploy-time values):
 
 ```typescript
-export const store = new _.StorageType({
-  name: _.Intrinsic`${_.Params.StackName}-data`,
+import { StorageType, Intrinsic, Params } from "@intentius/chant-lexicon-<name>";
+
+export const store = new StorageType({
+  name: Intrinsic`${Params.StackName}-data`,
 });
 ```
 
@@ -114,11 +123,13 @@ See your lexicon's documentation for available intrinsics.
 Sub-resource properties can use typed constructors for autocompletion and validation:
 
 ```typescript
-export const config = new _.EncryptionConfig({
+import { EncryptionConfig, AccessConfig } from "@intentius/chant-lexicon-<name>";
+
+export const config = new EncryptionConfig({
   algorithm: "AES256",
 });
 
-export const access = new _.AccessConfig({
+export const access = new AccessConfig({
   publicAccess: false,
 });
 ```
@@ -139,7 +150,7 @@ The following patterns are caught by the evaluability lint rules (EVL) before th
 
 ```typescript
 // EVL001: Expression not statically evaluable
-export const store = new _.StorageType({
+export const store = new StorageType({
   name: getName(),  // function call — not a literal
 });
 ```
@@ -149,7 +160,7 @@ export const store = new _.StorageType({
 ```typescript
 // EVL002: Resource inside control flow
 if (env === "prod") {
-  export const store = new _.StorageType({...});
+  export const store = new StorageType({...});
 }
 ```
 
@@ -166,7 +177,7 @@ const name = config[key];
 
 ```typescript
 // EVL004: Spread from non-const source
-export const store = new _.StorageType({
+export const store = new StorageType({
   ...getDefaults(),
 });
 ```

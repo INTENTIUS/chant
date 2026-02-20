@@ -11,7 +11,7 @@ export async function importModule(
   path: string
 ): Promise<Record<string, unknown>> {
   try {
-    return require(path);
+    return await import(path);
   } catch (error) {
     const message =
       error instanceof Error ? error.message : "Unknown import error";

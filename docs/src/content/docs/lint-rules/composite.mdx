@@ -9,7 +9,7 @@ Composite rules enforce best practices in `Composite()` factory definitions. The
 
 ## EVL009: No Extractable Constants
 
-Object literals and arrays-of-objects inside a Composite factory that don't reference `props`, sibling members, or barrel refs (`_.$.name`) are extractable constants. Move them to a separate file (e.g. `defaults.ts`) and reference via the barrel.
+Object literals and arrays-of-objects inside a Composite factory that don't reference `props` or sibling members are extractable constants. Move them to a separate file (e.g. `defaults.ts`) and import directly.
 
 | | |
 |---|---|
@@ -30,10 +30,10 @@ const LambdaApi = Composite<Props>((props) => {
 ```
 
 ```typescript
-// ✅ Fixed — extract to defaults.ts, reference via barrel
+// ✅ Fixed — extract to defaults.ts, import directly
 const LambdaApi = Composite<Props>((props) => {
-  const role = new _.Role({
-    assumeRolePolicyDocument: _.$.lambdaTrustPolicy,
+  const role = new Role({
+    assumeRolePolicyDocument: lambdaTrustPolicy,
   });
   return { role };
 }, "LambdaApi");

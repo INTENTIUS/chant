@@ -1,8 +1,8 @@
-import * as _ from "./_";
+import { Job, Trigger } from "@intentius/chant-lexicon-gitlab";
 
-export const deployInfra = new _.Job({
+export const deployInfra = new Job({
   stage: "deploy",
-  trigger: new _.Trigger({
+  trigger: new Trigger({
     project: "my-group/infra-repo",
     branch: "main",
     strategy: "depend",

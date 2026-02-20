@@ -1,12 +1,12 @@
-import * as _ from "./_";
+import { Workflow, Rule, AutoCancel, CI } from "@intentius/chant-lexicon-gitlab";
 
-export const workflow = new _.Workflow({
-  name: `CI Pipeline for ${_.CI.CommitRef}`,
+export const workflow = new Workflow({
+  name: `CI Pipeline for ${CI.CommitRef}`,
   rules: [
-    new _.Rule({ ifCondition: _.CI.MergeRequestIid }),
-    new _.Rule({ ifCondition: _.CI.CommitBranch }),
+    new Rule({ ifCondition: CI.MergeRequestIid }),
+    new Rule({ ifCondition: CI.CommitBranch }),
   ],
-  autoCancel: new _.AutoCancel({
+  autoCancel: new AutoCancel({
     onNewCommit: "interruptible",
   }),
 });

@@ -1,6 +1,7 @@
-import * as _ from "./_";
+import { propagate } from "@intentius/chant";
+import { healthApi } from "./with-defaults";
 
-export const api = _.propagate(
-  _.$.healthApi,
+export const api = propagate(
+  healthApi,
   { tags: [{ key: "env", value: "prod" }] },
 );

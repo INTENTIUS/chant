@@ -214,8 +214,6 @@ export interface ChantConfig {
   };
 }
 
-/** Barrel proxy — lazy-loads all sibling exports */
-export declare function barrel(dir: string): Record<string, unknown>;
 `;
 }
 
@@ -345,7 +343,7 @@ export async function initCommand(options: InitOptions): Promise<InitResult> {
     warnings,
   );
 
-  // Generate source files from plugin (or fallback to a minimal barrel)
+  // Generate source files from plugin (if available)
   let sourceFiles: Record<string, string> = {};
   try {
     const plugin = await loadPlugin(options.lexicon);
@@ -353,10 +351,7 @@ export async function initCommand(options: InitOptions): Promise<InitResult> {
       sourceFiles = plugin.initTemplates();
     }
   } catch {
-    // Plugin not yet installed — write a minimal barrel stub
-    sourceFiles = {
-      "_.ts": "// Barrel — re-export shared config here\n",
-    };
+    // Plugin not yet installed — no source files to scaffold
   }
   for (const [filename, content] of Object.entries(sourceFiles)) {
     writeIfNotExists(

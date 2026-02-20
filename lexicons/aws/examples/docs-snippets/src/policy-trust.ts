@@ -1,4 +1,4 @@
-import * as _ from "./_";
+import { Sub, AWS } from "@intentius/chant-lexicon-aws";
 
 // Trust policy — allows Lambda service to assume this role
 export const lambdaTrustPolicy = {
@@ -15,6 +15,6 @@ export const s3ReadPolicy = {
   Statement: [{
     Effect: "Allow",
     Action: ["s3:GetObject", "s3:ListBucket"],
-    Resource: _.Sub`arn:aws:s3:::${_.AWS.StackName}-data/*`,
+    Resource: Sub`arn:aws:s3:::${AWS.StackName}-data/*`,
   }],
 };
