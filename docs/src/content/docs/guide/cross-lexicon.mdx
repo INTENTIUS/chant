@@ -3,6 +3,10 @@ title: Cross-Lexicon Projects
 description: Combine multiple lexicons (e.g. AWS + GitLab) in a single chant project
 ---
 
+import { Code } from '@astrojs/starlight/components';
+import barrelSrc from '../../../../../examples/gitlab-aws/src/_.ts?raw';
+import pipelineSrc from '../../../../../examples/gitlab-aws/src/pipeline.ts?raw';
+
 A cross-lexicon project uses **two or more lexicons** in one project — for example, AWS CloudFormation infrastructure alongside a GitLab CI pipeline that deploys to it. Chant auto-detects cross-lexicon references, generates the necessary outputs, and orders deployments correctly.
 
 ## Setup
@@ -26,13 +30,7 @@ bun add @intentius/chant-lexicon-aws @intentius/chant-lexicon-gitlab
 
 When two lexicons might export the same name, namespace one of them:
 
-```typescript
-// src/_.ts
-export * from "@intentius/chant-lexicon-aws";
-export * as gl from "@intentius/chant-lexicon-gitlab";
-import * as core from "@intentius/chant";
-export const $ = core.barrel(import.meta.dir);
-```
+<Code code={barrelSrc} lang="typescript" title="src/_.ts" />
 
 AWS entities are imported flat (`_.Bucket`, `_.Role`) while GitLab entities are namespaced (`_.gl.Job`, `_.gl.Rule`).
 
@@ -40,16 +38,7 @@ AWS entities are imported flat (`_.Bucket`, `_.Role`) while GitLab entities are 
 
 When a GitLab entity references an attribute from an AWS entity, chant automatically detects the **cross-lexicon AttrRef**:
 
-```typescript
-// src/pipeline.ts
-import * as _ from "./_";
-
-export const deploy = new _.gl.Job({
-  stage: "deploy",
-  script: ["aws s3 sync dist/ s3://$DEPLOY_BUCKET/"],
-  variables: { DEPLOY_BUCKET: _.$.deployBucket.arn },
-});
-```
+<Code code={pipelineSrc} lang="typescript" title="src/pipeline.ts" />
 
 Here `_.$.deployBucket.arn` is an `AttrRef` pointing to an AWS `Bucket` entity. Because the consuming entity (a GitLab `Job`) belongs to a different lexicon than the source entity (an AWS `Bucket`), chant:
 

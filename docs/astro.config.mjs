@@ -17,6 +17,7 @@ export default defineConfig({
 						{ label: 'Introduction', slug: 'getting-started/introduction' },
 						{ label: 'Installation', slug: 'getting-started/installation' },
 						{ label: 'Quick Start', slug: 'getting-started/quick-start' },
+						{ label: 'Parameters & Outputs', slug: 'getting-started/parameters-and-outputs' },
 						{ label: 'Project Structure', slug: 'getting-started/project-structure' },
 						{ label: 'Configuration', slug: 'getting-started/configuration' },
 					],

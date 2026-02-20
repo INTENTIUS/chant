@@ -1,0 +1,14 @@
+{
+  "name": "docs-snippets-example",
+  "version": "0.0.1",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "build": "chant build src --lexicon aws",
+    "lint": "chant lint src --lexicon aws"
+  },
+  "dependencies": {
+    "@intentius/chant-lexicon-aws": "workspace:*",
+    "@intentius/chant": "workspace:*"
+  }
+}

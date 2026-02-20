@@ -7,6 +7,7 @@ import { Code } from '@astrojs/starlight/components';
 import barrelSrc from '../../../../../lexicons/aws/examples/getting-started/src/_.ts?raw';
 import defaultsSrc from '../../../../../lexicons/aws/examples/getting-started/src/defaults.ts?raw';
 import dataBucketSrc from '../../../../../lexicons/aws/examples/getting-started/src/data-bucket.ts?raw';
+import environmentSrc from '../../../../../lexicons/aws/examples/getting-started/src/environment.ts?raw';
 
 ## Step 1: Install chant
 
@@ -62,6 +63,14 @@ Resource files reference types and siblings through the barrel:
 <Code code={dataBucketSrc} lang="typescript" title="src/data-bucket.ts" />
 
 Every property is typed — your editor autocompletes `bucketName`, `versioningConfiguration`, `sseAlgorithm`, and catches typos immediately. The `$` proxy resolves cross-file references like `$.versioningEnabled` at build time.
+
+### Parameters & Outputs
+
+Declare CloudFormation parameters and stack outputs alongside your resources:
+
+<Code code={environmentSrc} lang="typescript" title="src/environment.ts" />
+
+`Parameter` adds an entry to the template's `Parameters` section. `output()` wraps an `AttrRef` with a name and promotes it to the `Outputs` section. See [Parameters & Outputs](/chant/getting-started/parameters-and-outputs/) for the full guide.
 
 See the [AWS CloudFormation lexicon reference](/chant/lexicons/aws/) for intrinsic functions, composites, custom lint rules, and examples.
 

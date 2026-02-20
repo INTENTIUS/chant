@@ -11,8 +11,8 @@
         "typescript": "^5.9.3",
       },
     },
-    "examples/cross-lexicon": {
-      "name": "cross-lexicon-example",
+    "examples/gitlab-aws": {
+      "name": "gitlab-aws-example",
       "version": "0.0.1",
       "dependencies": {
         "@intentius/chant": "workspace:*",
@@ -22,7 +22,7 @@
     },
     "lexicons/aws": {
       "name": "@intentius/chant-lexicon-aws",
-      "version": "0.0.2",
+      "version": "0.0.4",
       "dependencies": {
         "@intentius/chant": "workspace:*",
         "fflate": "^0.8.2",
@@ -43,6 +43,14 @@
         "typescript": "*",
       },
     },
+    "lexicons/aws/examples/docs-snippets": {
+      "name": "docs-snippets-example",
+      "version": "0.0.1",
+      "dependencies": {
+        "@intentius/chant": "workspace:*",
+        "@intentius/chant-lexicon-aws": "workspace:*",
+      },
+    },
     "lexicons/aws/examples/getting-started": {
       "name": "getting-started-example",
       "version": "0.0.1",
@@ -61,7 +69,7 @@
     },
     "lexicons/gitlab": {
       "name": "@intentius/chant-lexicon-gitlab",
-      "version": "0.0.1",
+      "version": "0.0.3",
       "dependencies": {
         "@intentius/chant": "workspace:*",
       },
@@ -79,7 +87,7 @@
     },
     "packages/core": {
       "name": "@intentius/chant",
-      "version": "0.0.1",
+      "version": "0.0.3",
       "bin": {
         "chant": "./src/cli/main.ts",
       },
@@ -176,13 +184,13 @@
 
     "concat-map": ["concat-map@0.0.1", "", {}, "sha512-/Srv4dswyQNBfohGpz9o6Yb3Gz3SrUDqBH5rTuhGR7ahtlbYKnVxw2bCFMRljaA7EXHaXZ8wsHdodFvbkhKmqg=="],
 
-    "cross-lexicon-example": ["cross-lexicon-example@workspace:examples/cross-lexicon"],
-
     "cross-spawn": ["cross-spawn@7.0.6", "", { "dependencies": { "path-key": "^3.1.0", "shebang-command": "^2.0.0", "which": "^2.0.1" } }, "sha512-uV2QOWP2nWzsy2aMp8aRibhi9dlzF5Hgh5SHaB9OiTGEyDTiJJyx0uy51QXdyWbtAHNua4XJzUKca3OzKUd3vA=="],
 
     "debug": ["debug@4.4.3", "", { "dependencies": { "ms": "^2.1.3" } }, "sha512-RGwwWnwQvkVfavKVt22FGLw+xYSdzARwm0ru6DhTVA3umU5hZc28V3kO4stgYryrTlLpuvgI9GiijltAjNbcqA=="],
 
     "deep-is": ["deep-is@0.1.4", "", {}, "sha512-oIPzksmTg4/MriiaYGO+okXDT7ztn/w3Eptv/+gSIdMdKsJo0u4CfYNFJPy+4SKMuCqGw2wxnA+URMg3t8a/bQ=="],
+
+    "docs-snippets-example": ["docs-snippets-example@workspace:lexicons/aws/examples/docs-snippets"],
 
     "escape-string-regexp": ["escape-string-regexp@4.0.0", "", {}, "sha512-TtpcNJ3XAzx3Gq8sWRzJaVajRs0uVxA2YAkdb1jm2YkPz4G6egUFAyA3n5vtEIZefPk5Wa4UXbKuS5fKkJWdgA=="],
 
@@ -221,6 +229,8 @@
     "flatted": ["flatted@3.3.3", "", {}, "sha512-GX+ysw4PBCz0PzosHDepZGANEuFCMLrnRTiEy9McGjmkCQYwRq4A/X786G/fjM/+OjsWSU1ZrY5qyARZmO/uwg=="],
 
     "getting-started-example": ["getting-started-example@workspace:lexicons/aws/examples/getting-started"],
+
+    "gitlab-aws-example": ["gitlab-aws-example@workspace:examples/gitlab-aws"],
 
     "gitlab-getting-started-example": ["gitlab-getting-started-example@workspace:lexicons/gitlab/examples/getting-started"],
 

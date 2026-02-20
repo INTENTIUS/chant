@@ -125,6 +125,7 @@ export async function generateDocs(options?: { verbose?: boolean }): Promise<voi
     outputFormat,
     serviceFromType,
     suppressPages: ["pseudo-parameters", "intrinsics", "rules"],
+    examplesDir: join(pkgDir, "examples"),
     extraPages: [
       {
         slug: "cloudformation",
@@ -137,13 +138,7 @@ export async function generateDocs(options?: { verbose?: boolean }): Promise<voi
 - Resolves \`AttrRef\` references to \`Fn::GetAtt\`
 - Resolves resource references to \`Ref\` intrinsics
 
-\`\`\`typescript
-// This chant declaration...
-export const dataBucket = new Bucket({
-  bucketName: Sub\`\${AWS.StackName}-data\`,
-  versioningConfiguration: $.versioningEnabled,
-});
-\`\`\`
+{{file:getting-started/src/data-bucket.ts}}
 
 Produces this CloudFormation resource:
 
@@ -180,24 +175,11 @@ Common resources get fixed short names for stability. When two services define t
 
 Every chant project has a barrel file (conventionally \`_.ts\`) that re-exports the lexicon and provides cross-file references:
 
-\`\`\`typescript
-// _.ts — the barrel file
-export * from "@intentius/chant-lexicon-aws";
-import * as core from "@intentius/chant";
-export const $ = core.barrel(import.meta.dir);
-\`\`\`
+{{file:getting-started/src/_.ts}}
 
 Other files import the barrel and use \`$\` to reference sibling exports:
 
-\`\`\`typescript
-// data-bucket.ts
-import * as _ from "./_";
-
-export const dataBucket = new _.Bucket({
-  bucketName: _.Sub\`\${_.AWS.StackName}-data\`,
-  serverSideEncryptionConfiguration: _.$.encryptionDefault, // from defaults.ts
-});
-\`\`\`
+{{file:getting-started/src/data-bucket.ts}}
 
 The \`$\` proxy lazily resolves exports from other files in the same directory. When the serializer encounters \`_.$.encryptionDefault\`, it resolves to the actual exported value and serializes the reference as \`Fn::GetAtt\` or \`Ref\` as appropriate. This is how cross-file references work without circular imports.
 
@@ -205,14 +187,7 @@ The \`$\` proxy lazily resolves exports from other files in the same directory. 
 
 CloudFormation parameters let you customize a stack at deploy time. Export a \`Parameter\` to add it to the template's \`Parameters\` section:
 
-\`\`\`typescript
-import { Parameter } from "@intentius/chant-lexicon-aws";
-
-export const environment = new Parameter("String", {
-  description: "Deployment environment",
-  defaultValue: "dev",
-});
-\`\`\`
+{{file:getting-started/src/environment.ts}}
 
 Produces:
 
@@ -287,13 +262,7 @@ CloudFormation automatically creates dependencies between resources when you use
 
 For cases where you need an explicit dependency without a property reference, set \`dependsOn\`:
 
-\`\`\`typescript
-export const appServer = new Instance({
-  imageId: "ami-12345678",
-  instanceType: "t3.micro",
-  dependsOn: ["DatabaseCluster"],
-});
-\`\`\`
+{{file:docs-snippets/src/depends-on.ts}}
 
 The \`WAW010\` post-synth check warns if a \`DependsOn\` target is already referenced via \`Ref\` or \`Fn::GetAtt\` in properties — in that case the explicit dependency is redundant.
 
@@ -384,13 +353,7 @@ Principal: { Service: ["lambda.amazonaws.com", "edgelambda.amazonaws.com"] },
 
 Use the \`If\` intrinsic for conditional values within resource properties:
 
-\`\`\`typescript
-import { If } from "@intentius/chant-lexicon-aws";
-
-export const bucket = new Bucket({
-  bucketName: If("IsProduction", "prod-data", "dev-data"),
-});
-\`\`\`
+{{file:docs-snippets/src/conditions.ts}}
 
 CloudFormation \`Conditions\` blocks are recognized by the serializer when importing existing templates. For new stacks, use TypeScript logic for build-time decisions and \`If\` for deploy-time decisions.
 
@@ -445,15 +408,7 @@ See [Nested Stacks](./nested-stacks) for the full guide.
 
 Tags are standard CloudFormation \`Key\`/\`Value\` arrays. Pass them on any resource that supports tagging:
 
-\`\`\`typescript
-export const bucket = new Bucket({
-  bucketName: "my-bucket",
-  tags: [
-    { key: "Environment", value: "production" },
-    { key: "Team", value: "platform" },
-  ],
-});
-\`\`\`
+{{file:docs-snippets/src/tagging.ts}}
 
 To apply tags across all members of a composite, use [\`propagate\`](./composites#propagate--shared-properties):
 
@@ -472,9 +427,9 @@ export const api = propagate(
         description: "CloudFormation intrinsic functions and their chant syntax",
         content: `CloudFormation intrinsic functions are available as imports from the lexicon. They produce the corresponding \`Fn::\` calls in the serialized template.
 
-\`\`\`typescript
-import { Sub, Ref, GetAtt, If, Join, Select, Split, Base64, AWS } from "@intentius/chant-lexicon-aws";
-\`\`\`
+Here is a complete example using all intrinsic functions:
+
+{{file:docs-snippets/src/intrinsics.ts}}
 
 ## \`Sub\` — string substitution
 
@@ -871,13 +826,13 @@ Lint rules analyze your TypeScript source code before build.
 
 Flags hardcoded AWS region strings like \`us-east-1\`. Use \`AWS.Region\` instead so templates are portable across regions.
 
-\`\`\`typescript
-// Triggers WAW001
-const endpoint = "s3.us-east-1.amazonaws.com";
+**Bad** — triggers WAW001:
 
-// Fixed
-const endpoint = Sub\`s3.\${AWS.Region}.amazonaws.com\`;
-\`\`\`
+{{file:docs-snippets/src/lint-waw001-bad.ts}}
+
+**Good** — uses \`AWS.Region\`:
+
+{{file:docs-snippets/src/lint-waw001-good.ts}}
 
 ### WAW006 — S3 Bucket Encryption
 
@@ -885,20 +840,13 @@ const endpoint = Sub\`s3.\${AWS.Region}.amazonaws.com\`;
 
 Flags S3 buckets that don't configure server-side encryption. AWS recommends enabling encryption on all buckets.
 
-\`\`\`typescript
-// Triggers WAW006
-export const bucket = new Bucket({ bucketName: "my-bucket" });
+**Bad** — triggers WAW006:
 
-// Fixed — add encryption configuration
-export const bucket = new Bucket({
-  bucketName: "my-bucket",
-  bucketEncryption: {
-    serverSideEncryptionConfiguration: [{
-      serverSideEncryptionByDefault: { sseAlgorithm: "AES256" },
-    }],
-  },
-});
-\`\`\`
+{{file:docs-snippets/src/lint-waw006-bad.ts}}
+
+**Good** — encryption configured:
+
+{{file:docs-snippets/src/lint-waw006-good.ts}}
 
 ### WAW009 — IAM Wildcard Resource
 
@@ -906,13 +854,13 @@ export const bucket = new Bucket({
 
 Flags IAM policy statements that use \`"Resource": "*"\`. Prefer scoped resource ARNs following the principle of least privilege.
 
-\`\`\`typescript
-// Triggers WAW009
-{ Effect: "Allow", Action: ["s3:GetObject"], Resource: "*" }
+**Bad** — triggers WAW009:
 
-// Fixed — scope to a specific bucket
-{ Effect: "Allow", Action: ["s3:GetObject"], Resource: Sub\`arn:aws:s3:::\${AWS.StackName}-data/*\` }
-\`\`\`
+{{file:docs-snippets/src/lint-waw009-bad.ts}}
+
+**Good** — scoped ARN:
+
+{{file:docs-snippets/src/lint-waw009-good.ts}}
 
 IAM policy documents use PascalCase keys (\`Effect\`, \`Action\`, \`Resource\`) matching the IAM JSON Policy Language spec. The \`PolicyDocument\` and \`IamPolicyStatement\` types provide full autocomplete for these fields.
 
@@ -1092,23 +1040,7 @@ src/
 3. **Cross-resource references** — \`_.$.dataBucket.arn\` in \`handler.ts\` serializes to \`Fn::GetAtt\` in the template
 4. **Intrinsics** — \`Sub\` tagged templates with pseudo-parameters for dynamic naming
 
-\`\`\`typescript
-// handler.ts — Lambda function referencing other resources
-import * as _ from "./_";
-
-const lambdaCode = { zipFile: "exports.handler = async () => ({ statusCode: 200 });" };
-
-export const handler = new _.Function({
-  functionName: _.Sub\`\${_.AWS.StackName}-handler\`,
-  handler: "index.handler",
-  runtime: "nodejs20.x",
-  role: _.$.functionRole.arn,          // → Fn::GetAtt
-  code: lambdaCode,
-  environment: {
-    variables: { BUCKET_ARN: _.$.dataBucket.arn },  // → Fn::GetAtt
-  },
-});
-\`\`\`
+{{file:getting-started/src/handler.ts}}
 
 ## Advanced
 
@@ -1160,34 +1092,9 @@ src/
 3. **Multi-file output** — build produces \`template.json\` (parent) and \`network.template.json\` (child)
 4. **TemplateBasePath** — auto-generated parameter for configuring child template URLs per environment
 
-\`\`\`typescript
-// network/outputs.ts — child declares what the parent can reference
-import * as _ from "./_";
-import { stackOutput } from "@intentius/chant";
+{{file:nested-stacks/src/network/outputs.ts}}
 
-export const vpcId = stackOutput(_.$.vpc.vpcId, { description: "VPC ID" });
-export const subnetId = stackOutput(_.$.subnet.subnetId, { description: "Public subnet ID" });
-export const lambdaSgId = stackOutput(_.$.lambdaSg.groupId, { description: "Lambda security group ID" });
-\`\`\`
-
-\`\`\`typescript
-// app.ts — parent references child project
-import * as _ from "./_";
-
-const network = _.nestedStack("network", import.meta.dir + "/network");
-
-export const handler = new _.Function({
-  functionName: _.Sub\`\${_.AWS.StackName}-handler\`,
-  runtime: "nodejs20.x",
-  handler: "index.handler",
-  role: _.Ref("LambdaExecutionRole"),
-  code: { zipFile: "exports.handler = async () => ({ statusCode: 200 });" },
-  vpcConfig: {
-    subnetIds: [network.outputs.subnetId],
-    securityGroupIds: [network.outputs.lambdaSgId],
-  },
-});
-\`\`\`
+{{file:nested-stacks/src/app.ts}}
 
 See [Nested Stacks](./nested-stacks) for the full guide.`,
       },
