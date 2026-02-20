@@ -367,6 +367,7 @@ function buildSidebar(
   result: DocsResult,
 ): Array<Record<string, unknown>> {
   const items: Array<Record<string, unknown>> = [
+    { label: "← chant docs", link: "/chant/" },
     { label: "Overview", slug: "index" },
   ];
 
