@@ -25,6 +25,7 @@ describe("CloudFormation round-trip", () => {
 
     expect(files[0].content).toContain("Bucket");
     expect(files[0].content).toContain('bucketName: "my-bucket"');
+    expect(files[0].content).toContain("export const MyBucket");
   });
 
   test("round-trips template with parameters", () => {
@@ -51,8 +52,8 @@ describe("CloudFormation round-trip", () => {
     const files = generator.generate(ir);
 
     expect(files[0].content).toContain("Parameter");
-    expect(files[0].content).toContain("environment");
-    expect(files[0].content).toContain("bucketName: environment");
+    expect(files[0].content).toContain("Environment");
+    expect(files[0].content).toContain("bucketName: Ref(Environment)");
   });
 
   test("round-trips template with Fn::Sub", () => {
@@ -114,7 +115,7 @@ describe("CloudFormation round-trip", () => {
 
     expect(files[0].content).toContain("Role");
     expect(files[0].content).toContain("Function");
-    expect(files[0].content).toContain("lambdaRole.arn");
+    expect(files[0].content).toContain("LambdaRole.arn");
   });
 
   test("round-trips complex nested properties", () => {
@@ -147,8 +148,8 @@ describe("CloudFormation round-trip", () => {
     const files = generator.generate(ir);
 
     expect(files[0].content).toContain("Function");
-    expect(files[0].content).toContain("environment");
-    expect(files[0].content).toContain("vpcConfig");
+    expect(files[0].content).toContain("environment:");
+    expect(files[0].content).toContain("vpcConfig:");
   });
 
   test("round-trips empty template", () => {

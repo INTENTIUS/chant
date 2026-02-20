@@ -100,7 +100,18 @@ export function collectLexiconOutputs(
   for (const [name, entity] of entities) {
     if (isLexiconOutput(entity as unknown)) {
       const lexiconOutput = entity as unknown as LexiconOutput;
-      lexiconOutput._setSourceEntity(name);
+      // Resolve source entity name from the WeakRef parent identity
+      const parent = lexiconOutput._sourceParent.deref();
+      let sourceName = name;
+      if (parent) {
+        for (const [entityName, e] of entities) {
+          if (e === parent) {
+            sourceName = entityName;
+            break;
+          }
+        }
+      }
+      lexiconOutput._setSourceEntity(sourceName);
       outputs.push(lexiconOutput);
       continue;
     }

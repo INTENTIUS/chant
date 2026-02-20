@@ -47,5 +47,19 @@ describe("getting-started example", () => {
     expect(role).toBeDefined();
     expect(JSON.stringify(role)).toContain("functionRole");
     expect(JSON.stringify(role)).toContain("Arn");
+
+    // Parameter: environment exists with correct Type/Description/Default
+    expect(parsed.Parameters).toBeDefined();
+    expect(parsed.Parameters.environment).toBeDefined();
+    expect(parsed.Parameters.environment.Type).toBe("String");
+    expect(parsed.Parameters.environment.Description).toBe("Deployment environment");
+    expect(parsed.Parameters.environment.Default).toBe("dev");
+
+    // Output: dataBucketArn exists
+    expect(parsed.Outputs).toBeDefined();
+    expect(parsed.Outputs.DataBucketArn).toBeDefined();
+    expect(parsed.Outputs.DataBucketArn.Value).toEqual({
+      "Fn::GetAttr": ["dataBucket", "Arn"],
+    });
   });
 });

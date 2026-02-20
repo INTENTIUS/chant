@@ -1,3 +1,6 @@
+// Parameter
+export { Parameter } from "./parameter";
+
 // Serializer
 export { awsSerializer } from "./serializer";
 
@@ -5,11 +8,13 @@ export { awsSerializer } from "./serializer";
 export { nestedStack, isNestedStackInstance, NestedStackOutputRef, isNestedStackOutputRef, NESTED_STACK_MARKER } from "./nested-stack";
 export type { NestedStackOptions, NestedStackInstance } from "./nested-stack";
 
-// Re-export core child project and stack output primitives
+// Re-export core child project, stack output, and lexicon output primitives
 export { isChildProject, CHILD_PROJECT_MARKER } from "@intentius/chant/child-project";
 export type { ChildProjectInstance } from "@intentius/chant/child-project";
 export { stackOutput, isStackOutput, STACK_OUTPUT_MARKER } from "@intentius/chant/stack-output";
 export type { StackOutput } from "@intentius/chant/stack-output";
+export { output, isLexiconOutput } from "@intentius/chant/lexicon-output";
+export type { LexiconOutput } from "@intentius/chant/lexicon-output";
 
 // Plugin
 export { awsPlugin } from "./plugin";

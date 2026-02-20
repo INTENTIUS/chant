@@ -34,7 +34,7 @@ describe("CFGenerator", () => {
     const files = generator.generate(ir);
 
     expect(files[0].content).toContain("import { Bucket }");
-    expect(files[0].content).toContain("export const myBucket = new Bucket({");
+    expect(files[0].content).toContain("export const MyBucket = new Bucket({");
     expect(files[0].content).toContain('bucketName: "my-bucket"');
   });
 
@@ -57,7 +57,7 @@ describe("CFGenerator", () => {
     const files = generator.generate(ir);
 
     expect(files[0].content).toContain("import { Function }");
-    expect(files[0].content).toContain("export const myFunction = new Function({");
+    expect(files[0].content).toContain("export const MyFunction = new Function({");
     expect(files[0].content).toContain('functionName: "my-function"');
     expect(files[0].content).toContain('runtime: "nodejs18.x"');
   });
@@ -78,7 +78,7 @@ describe("CFGenerator", () => {
 
     const files = generator.generate(ir);
 
-    expect(files[0].content).toContain("bucketName: bucketName");
+    expect(files[0].content).toContain("bucketName: Ref(BucketName)");
   });
 
   test("generates GetAtt as property access", () => {
@@ -102,7 +102,7 @@ describe("CFGenerator", () => {
 
     const files = generator.generate(ir);
 
-    expect(files[0].content).toContain("sourceArn: sourceBucket.arn");
+    expect(files[0].content).toContain("sourceArn: SourceBucket.arn");
   });
 
   test("generates Sub as tagged template", () => {
@@ -173,8 +173,8 @@ describe("CFGenerator", () => {
     const files = generator.generate(ir);
     const content = files[0].content;
 
-    const sourcePos = content.indexOf("sourceBucket");
-    const depPos = content.indexOf("dependentBucket");
+    const sourcePos = content.indexOf("SourceBucket");
+    const depPos = content.indexOf("DependentBucket");
 
     expect(sourcePos).toBeLessThan(depPos);
   });

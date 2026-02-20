@@ -1,14 +1,26 @@
 import { describe, test, expect } from "bun:test";
-import { readdirSync, readFileSync } from "fs";
+import { readdirSync, readFileSync, mkdtempSync, writeFileSync, mkdirSync, rmSync } from "fs";
 import { join } from "path";
 import { CFParser } from "./parser";
 import { CFGenerator } from "./generator";
+import { build } from "@intentius/chant/build";
+import { awsSerializer } from "../serializer";
+import * as awsLexicon from "../index";
 
 const parser = new CFParser();
 const generator = new CFGenerator();
 
 const roundtripDir = join(import.meta.dir, "../testdata/roundtrip");
 const samDir = join(import.meta.dir, "../testdata/sam-fixtures");
+
+/** Extract imported symbols from `import { A, B } from "..."` statements */
+function extractImportedSymbols(code: string): string[] {
+  const match = code.match(/import\s*\{([^}]+)\}\s*from\s*/);
+  if (!match) return [];
+  return match[1].split(",").map((s) => s.trim()).filter(Boolean);
+}
+
+const lexiconExports = new Set(Object.keys(awsLexicon));
 
 describe("CF roundtrip fixtures", () => {
   const fixtures = readdirSync(roundtripDir).filter((f) => f.endsWith(".json"));
@@ -36,18 +48,88 @@ describe("CF roundtrip fixtures", () => {
       expect(mainFile).toBeDefined();
 
       for (const name of resourceNames) {
-        const varName = name.charAt(0).toLowerCase() + name.slice(1);
-        expect(mainFile!.content).toContain(varName);
+        expect(mainFile!.content).toContain(name);
       }
 
       // If parameters exist, verify they appear in the output
       const paramNames = Object.keys(template.Parameters ?? {});
       for (const name of paramNames) {
-        const varName = name.charAt(0).toLowerCase() + name.slice(1);
-        expect(mainFile!.content).toContain(varName);
+        expect(mainFile!.content).toContain(name);
+      }
+
+      // Verify all imported symbols actually exist as exports from the lexicon
+      const importedSymbols = extractImportedSymbols(mainFile!.content);
+      for (const sym of importedSymbols) {
+        expect(lexiconExports.has(sym)).toBe(true);
       }
     });
   }
+});
+
+describe("parameters.json build roundtrip", () => {
+  test("generated code builds and produces correct CF Parameters", async () => {
+    const content = readFileSync(join(roundtripDir, "parameters.json"), "utf-8");
+    const source = JSON.parse(content);
+
+    const ir = parser.parse(content);
+    const files = generator.generate(ir);
+    const mainFile = files.find((f) => f.path === "main.ts")!;
+
+    // Write generated code to a temp directory inside the monorepo (so workspace packages resolve)
+    const dir = mkdtempSync(join(import.meta.dir, "../../.roundtrip-tmp-"));
+    try {
+    const srcDir = join(dir, "src");
+    mkdirSync(srcDir);
+
+    writeFileSync(join(srcDir, "_.ts"), [
+      `export * from "@intentius/chant-lexicon-aws";`,
+      `import * as core from "@intentius/chant";`,
+      `export const $ = core.barrel(import.meta.dir);`,
+    ].join("\n"));
+
+    // Rewrite the import to use the barrel
+    const rewritten = mainFile.content.replace(
+      /import \{[^}]+\} from "@intentius\/chant-lexicon-aws";/,
+      `import * as _ from "./_";`,
+    );
+    // Replace bare symbol references with _.Symbol
+    const symbols = extractImportedSymbols(mainFile.content);
+    let code = rewritten;
+    for (const sym of symbols) {
+      code = code.replace(new RegExp(`\\bnew ${sym}\\(`, "g"), `new _.${sym}(`);
+      code = code.replace(new RegExp(`(?<!\\.)\\b${sym}\``, "g"), `_.${sym}\``);
+      code = code.replace(new RegExp(`(?<!\\.)\\b${sym}\\(`, "g"), `_.${sym}(`);
+      code = code.replace(new RegExp(`(?<!\\.)\\b${sym}\\.`, "g"), `_.${sym}.`);
+    }
+    writeFileSync(join(srcDir, "main.ts"), code);
+
+    // Build and verify
+    const result = await build(srcDir, [awsSerializer]);
+    expect(result.errors).toHaveLength(0);
+
+    const template = JSON.parse(result.outputs.get("aws")!);
+
+    // Verify parameters round-tripped correctly (names preserved as-is)
+    for (const [name, param] of Object.entries(source.Parameters ?? {})) {
+      const p = param as Record<string, unknown>;
+      expect(template.Parameters[name]).toBeDefined();
+      expect(template.Parameters[name].Type).toBe(p.Type);
+      if (p.Description) {
+        expect(template.Parameters[name].Description).toBe(p.Description);
+      }
+      if (p.Default !== undefined) {
+        expect(template.Parameters[name].Default).toBe(p.Default);
+      }
+    }
+
+    // Verify resources round-tripped (names preserved as-is)
+    for (const name of Object.keys(source.Resources ?? {})) {
+      expect(template.Resources[name]).toBeDefined();
+    }
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
 });
 
 describe("SAM roundtrip fixtures", () => {

@@ -1,7 +1,7 @@
 import { describe, test, expect } from "bun:test";
 import { awsSerializer } from "./serializer";
 import { AttrRef } from "@intentius/chant/attrref";
-import { DECLARABLE_MARKER, type Declarable, type CoreParameter } from "@intentius/chant/declarable";
+import { DECLARABLE_MARKER, type Declarable } from "@intentius/chant/declarable";
 import { LexiconOutput } from "@intentius/chant/lexicon-output";
 import { Sub } from "./intrinsics";
 import { AWS } from "./pseudo";
@@ -10,6 +10,7 @@ import { stackOutput } from "@intentius/chant/stack-output";
 import { createResource } from "@intentius/chant/runtime";
 import type { SerializerResult } from "@intentius/chant/serializer";
 import type { BuildResult } from "@intentius/chant/build";
+import { Parameter } from "./parameter";
 
 // Mock S3 Bucket for testing
 class MockBucket implements Declarable {
@@ -22,22 +23,6 @@ class MockBucket implements Declarable {
   constructor(props: { bucketName?: string; versioningConfiguration?: { status: string } } = {}) {
     this.props = props;
     this.arn = new AttrRef(this, "Arn");
-  }
-}
-
-// Mock Parameter for testing
-class MockParameter implements CoreParameter {
-  readonly [DECLARABLE_MARKER] = true as const;
-  readonly lexicon = "aws";
-  readonly entityType = "AWS::CloudFormation::Parameter";
-  readonly parameterType: string;
-  readonly description?: string;
-  readonly defaultValue?: unknown;
-
-  constructor(type: string, options: { description?: string; defaultValue?: unknown } = {}) {
-    this.parameterType = type;
-    this.description = options.description;
-    this.defaultValue = options.defaultValue;
   }
 }
 
@@ -84,7 +69,7 @@ describe("awsSerializer.serialize", () => {
 
   test("serializes parameters", () => {
     const entities = new Map<string, Declarable>();
-    entities.set("Environment", new MockParameter("String", {
+    entities.set("Environment", new Parameter("String", {
       description: "Environment name",
       defaultValue: "dev",
     }));
@@ -139,7 +124,7 @@ describe("awsSerializer.serialize", () => {
 
   test("handles resources and parameters together", () => {
     const entities = new Map<string, Declarable>();
-    entities.set("Env", new MockParameter("String"));
+    entities.set("Env", new Parameter("String"));
     entities.set("MyBucket", new MockBucket({ bucketName: "bucket" }));
 
     const output = awsSerializer.serialize(entities);

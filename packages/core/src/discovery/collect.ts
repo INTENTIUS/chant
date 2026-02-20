@@ -1,11 +1,14 @@
 import { isDeclarable, type Declarable } from "../declarable";
 import { isCompositeInstance, expandComposite } from "../composite";
+import { isLexiconOutput } from "../lexicon-output";
 import { DiscoveryError } from "../errors";
 
 /**
  * Collects all declarable entities from imported modules.
  * CompositeInstance exports are expanded into individual entities
  * with `{exportName}_{memberName}` naming.
+ * LexiconOutput exports are also collected so that build() can
+ * extract them and pass them to the serializer.
  *
  * @param modules - Array of module records with their exports
  * @returns Map of export name to Declarable entity
@@ -43,6 +46,10 @@ export function collectEntities(
           }
           entities.set(expandedName, entity);
         }
+      } else if (isLexiconOutput(value)) {
+        // LexiconOutput is not a Declarable but build() expects to find them
+        // in the entities map so it can collect and pass them to serializers
+        entities.set(name, value as unknown as Declarable);
       }
     }
   }
