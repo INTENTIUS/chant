@@ -6,7 +6,7 @@ description: Start an MCP server for AI agent integration
 ## Synopsis
 
 ```
-npx chant serve mcp [path]
+chant serve mcp [path]
 ```
 
 ## Description
@@ -93,7 +93,7 @@ Lexicon plugins can contribute additional resources, namespaced as `chant://{plu
 If your agent doesn't auto-detect `.mcp.json`, configure the server manually. The command is:
 
 ```bash
-npx chant serve mcp
+chant serve mcp
 ```
 
 The server communicates over stdin/stdout using JSON-RPC 2.0 with line-based framing (one JSON object per line).

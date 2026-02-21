@@ -6,7 +6,7 @@ description: Running lint and type checks on your chant project
 chant includes a built-in linter that validates your resource files. Run it with:
 
 ```bash
-npx chant lint
+chant lint
 ```
 
 A clean project produces no output. Errors and warnings are printed to stderr:
@@ -32,7 +32,7 @@ Lint runs two layers in one pass:
 | `--format sarif` | SARIF 2.1.0 for CI integrations |
 
 ```bash
-npx chant lint --format json
+chant lint --format json
 ```
 
 ## Watch Mode
@@ -40,7 +40,7 @@ npx chant lint --format json
 Re-run lint automatically on file changes:
 
 ```bash
-npx chant lint --watch
+chant lint --watch
 ```
 
 ## Configuring Rules

@@ -6,7 +6,7 @@ description: Lint infrastructure definitions with semantic rules
 ## Synopsis
 
 ```
-npx chant lint [path] [flags]
+chant lint [path] [flags]
 ```
 
 ## Description
@@ -25,19 +25,19 @@ npx chant lint [path] [flags]
 
 ```bash
 # Lint current directory
-npx chant lint
+chant lint
 
 # JSON output for CI
-npx chant lint --format json
+chant lint --format json
 
 # SARIF for GitHub Code Scanning
-npx chant lint --format sarif > results.sarif
+chant lint --format sarif > results.sarif
 
 # Auto-fix
-npx chant lint --fix
+chant lint --fix
 
 # Watch mode
-npx chant lint --watch
+chant lint --watch
 ```
 
 ## Exit Codes

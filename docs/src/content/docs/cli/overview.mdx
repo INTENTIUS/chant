@@ -16,7 +16,7 @@ npm install --save-dev @intentius/chant-lexicon-aws
 ## Usage
 
 ```
-npx chant <command> [options] [path]
+chant <command> [options] [path]
 ```
 
 ## Commands
@@ -52,18 +52,18 @@ These commands are for **lexicon authors** — project users don't typically nee
 
 ```bash
 # Initialize and build a project
-npx chant init my-infra --lexicon aws
+chant init my-infra --lexicon aws
 cd my-infra
-npx chant build
+chant build
 
 # Lint definitions
-npx chant lint
+chant lint
 
 # Import existing templates
-npx chant import template.json
+chant import template.json
 
 # Check project health
-npx chant doctor
+chant doctor
 ```
 
 ## File Discovery
@@ -101,8 +101,8 @@ Show stack traces on errors.
 Display help information for the CLI or a specific command.
 
 ```bash
-npx chant --help
-npx chant build --help
+chant --help
+chant build --help
 ```
 
 ## See Also

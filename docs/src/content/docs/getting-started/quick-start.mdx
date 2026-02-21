@@ -19,7 +19,7 @@ npm install --save-dev @intentius/chant-lexicon-aws  # or another lexicon
 Verify it works:
 
 ```bash
-npx chant --version
+chant --version
 ```
 
 See [Installation](/chant/getting-started/installation/) for details.
@@ -27,7 +27,7 @@ See [Installation](/chant/getting-started/installation/) for details.
 ## Step 2: Initialize a Project
 
 ```bash
-npx chant init --lexicon aws my-infra
+chant init --lexicon aws my-infra
 cd my-infra
 ```
 
@@ -62,7 +62,7 @@ For a complete walkthrough with S3 buckets, IAM roles, Lambda functions, and cro
 ## Step 4: Build
 
 ```bash
-npx chant build
+chant build
 ```
 
 The build command discovers all `.ts` files, collects exported declarables, resolves dependencies, and serializes to the target format.

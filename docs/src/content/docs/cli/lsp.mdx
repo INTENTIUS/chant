@@ -6,7 +6,7 @@ description: Start the LSP server for editor integration
 ## Synopsis
 
 ```
-npx chant serve lsp [path]
+chant serve lsp [path]
 ```
 
 ## Description
@@ -82,7 +82,7 @@ lspconfig.chant.setup({})
 Any editor that supports stdio-based LSP servers can use chant. The command is:
 
 ```bash
-npx chant serve lsp
+chant serve lsp
 ```
 
 The server communicates over stdin/stdout using the standard LSP protocol with Content-Length framing.

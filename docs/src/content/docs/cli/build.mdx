@@ -6,7 +6,7 @@ description: Synthesize infrastructure output from TypeScript definitions
 ## Synopsis
 
 ```
-npx chant build [path] [flags]
+chant build [path] [flags]
 ```
 
 ## Description
@@ -25,19 +25,19 @@ npx chant build [path] [flags]
 
 ```bash
 # Build from current directory
-npx chant build
+chant build
 
 # Build from specific directory
-npx chant build ./infra
+chant build ./infra
 
 # Output to file
-npx chant build --output stack.json
+chant build --output stack.json
 
 # YAML output
-npx chant build --format yaml --output stack.yaml
+chant build --format yaml --output stack.yaml
 
 # Watch mode
-npx chant build --watch
+chant build --watch
 ```
 
 ## Exit Codes

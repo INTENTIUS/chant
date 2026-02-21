@@ -3,14 +3,14 @@ title: Building
 description: Synthesizing TypeScript resource definitions into deployment-ready output
 ---
 
-Use `npx chant build` to synthesize your TypeScript resource definitions into deployment-ready output.
+Use `chant build` to synthesize your TypeScript resource definitions into deployment-ready output.
 
 ```bash
-npx chant build                # Build from current directory
-npx chant build ./infra        # Build from a specific path
-npx chant build -o stack.json  # Output to file
-npx chant build --format yaml  # YAML output
-npx chant build --watch        # Re-run on file changes
+chant build                # Build from current directory
+chant build ./infra        # Build from a specific path
+chant build -o stack.json  # Output to file
+chant build --format yaml  # YAML output
+chant build --watch        # Re-run on file changes
 ```
 
 See the [build CLI reference](/chant/cli/build/) for full flag documentation.
@@ -31,7 +31,7 @@ The build command:
 When your project uses child projects (e.g. nested stacks), the build may produce multiple output files. For example, the AWS lexicon's `nestedStack()` generates a parent template plus one child template per child project:
 
 ```bash
-npx chant build -o template.json
+chant build -o template.json
 # Produces:
 #   template.json              — parent template
 #   network.template.json      — child template (one per nestedStack)

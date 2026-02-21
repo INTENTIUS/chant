@@ -11,7 +11,7 @@ description: Troubleshooting lexicon-related problems
 
 ```bash
 # Sync lexicon type definitions
-npx chant update
+chant update
 ```
 
 `chant update` syncs lexicon types into `.chant/types/`.
@@ -26,7 +26,7 @@ npx chant update
 
 1. Check for typos in the resource class name
 2. Update the lexicon package: `npm update @intentius/chant-lexicon-<name>`
-3. Run `npx chant update`
+3. Run `chant update`
 
 ## No IDE Autocomplete
 
@@ -34,6 +34,6 @@ npx chant update
 
 **Fix:**
 
-1. Run `npx chant update` then `npx chant lint --fix` to ensure types are generated
+1. Run `chant update` then `chant lint --fix` to ensure types are generated
 2. Verify `tsconfig.json` is configured correctly (see [TypeScript Configuration](/chant/configuration/tsconfig/))
 3. Restart your editor's TypeScript language server
