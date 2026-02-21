@@ -227,6 +227,21 @@ if MCP_OUTPUT=$(echo "$MCP_INPUT" | $CHANT serve mcp "$TESTDIR" 2>/dev/null); th
   else
     fail "mcp tools missing build"
   fi
+  if echo "$MCP_OUTPUT" | grep -q '"explain"'; then
+    pass "mcp tools include explain"
+  else
+    fail "mcp tools missing explain"
+  fi
+  if echo "$MCP_OUTPUT" | grep -q '"scaffold"'; then
+    pass "mcp tools include scaffold"
+  else
+    fail "mcp tools missing scaffold"
+  fi
+  if echo "$MCP_OUTPUT" | grep -q '"search"'; then
+    pass "mcp tools include search"
+  else
+    fail "mcp tools missing search"
+  fi
 else
   # MCP server may exit non-zero when stdin closes, check output anyway
   MCP_OUTPUT=$(echo "$MCP_INPUT" | $CHANT serve mcp "$TESTDIR" 2>/dev/null || true)
@@ -244,6 +259,21 @@ else
     pass "mcp tools include build"
   else
     fail "mcp tools missing build"
+  fi
+  if echo "$MCP_OUTPUT" | grep -q '"explain"'; then
+    pass "mcp tools include explain"
+  else
+    fail "mcp tools missing explain"
+  fi
+  if echo "$MCP_OUTPUT" | grep -q '"scaffold"'; then
+    pass "mcp tools include scaffold"
+  else
+    fail "mcp tools missing scaffold"
+  fi
+  if echo "$MCP_OUTPUT" | grep -q '"search"'; then
+    pass "mcp tools include search"
+  else
+    fail "mcp tools missing search"
   fi
 fi
 
@@ -286,19 +316,26 @@ rm -rf "$SKILLS_DIR"
 mkdir -p "$SKILLS_DIR"
 
 if $CHANT init --lexicon aws "$SKILLS_DIR" > /dev/null 2>&1; then
-  # Check that skill files were installed
-  if [ -f "$SKILLS_DIR/.chant/skills/aws/aws-cloudformation.md" ]; then
-    pass "init installs aws-cloudformation skill"
+  # Check that skill files were installed to .chant/skills/
+  if [ -f "$SKILLS_DIR/.chant/skills/aws/chant-aws.md" ]; then
+    pass "init installs chant-aws skill to .chant/"
   else
-    fail "init did not install aws-cloudformation skill"
+    fail "init did not install chant-aws skill to .chant/"
+  fi
+
+  # Check that skill files were installed to .claude/skills/ for Claude Code
+  if [ -f "$SKILLS_DIR/.claude/skills/chant-aws/SKILL.md" ]; then
+    pass "init installs chant-aws skill to .claude/skills/"
+  else
+    fail "init did not install chant-aws skill to .claude/skills/"
   fi
 
   # Check skill file content
-  if [ -f "$SKILLS_DIR/.chant/skills/aws/aws-cloudformation.md" ]; then
-    if grep -q "name: aws-cloudformation" "$SKILLS_DIR/.chant/skills/aws/aws-cloudformation.md"; then
-      pass "skill file contains name frontmatter"
+  if [ -f "$SKILLS_DIR/.claude/skills/chant-aws/SKILL.md" ]; then
+    if grep -q "skill: chant-aws" "$SKILLS_DIR/.claude/skills/chant-aws/SKILL.md"; then
+      pass "skill file contains Claude Code frontmatter"
     else
-      pass "skill file exists (frontmatter format may vary)"
+      fail "skill file missing Claude Code frontmatter"
     fi
   fi
 
@@ -537,6 +574,21 @@ if MCP_OUTPUT=$(echo "$MCP_INPUT" | $CHANT serve mcp "$GITLAB_TESTDIR" 2>/dev/nu
   else
     fail "gitlab mcp tools/list missing tools"
   fi
+  if echo "$MCP_OUTPUT" | grep -q '"explain"'; then
+    pass "gitlab mcp tools include explain"
+  else
+    fail "gitlab mcp tools missing explain"
+  fi
+  if echo "$MCP_OUTPUT" | grep -q '"scaffold"'; then
+    pass "gitlab mcp tools include scaffold"
+  else
+    fail "gitlab mcp tools missing scaffold"
+  fi
+  if echo "$MCP_OUTPUT" | grep -q '"search"'; then
+    pass "gitlab mcp tools include search"
+  else
+    fail "gitlab mcp tools missing search"
+  fi
 else
   MCP_OUTPUT=$(echo "$MCP_INPUT" | $CHANT serve mcp "$GITLAB_TESTDIR" 2>/dev/null || true)
   if echo "$MCP_OUTPUT" | grep -q '"protocolVersion"'; then
@@ -548,6 +600,21 @@ else
     pass "gitlab mcp tools/list returns tools"
   else
     fail "gitlab mcp tools/list failed"
+  fi
+  if echo "$MCP_OUTPUT" | grep -q '"explain"'; then
+    pass "gitlab mcp tools include explain"
+  else
+    fail "gitlab mcp tools missing explain"
+  fi
+  if echo "$MCP_OUTPUT" | grep -q '"scaffold"'; then
+    pass "gitlab mcp tools include scaffold"
+  else
+    fail "gitlab mcp tools missing scaffold"
+  fi
+  if echo "$MCP_OUTPUT" | grep -q '"search"'; then
+    pass "gitlab mcp tools include search"
+  else
+    fail "gitlab mcp tools missing search"
   fi
 fi
 
@@ -583,11 +650,18 @@ if $CHANT init --lexicon gitlab "$GITLAB_INIT_DIR" > /dev/null 2>&1; then
     fail "gitlab init missing source files"
   fi
 
-  # Check skill file
-  if [ -f "$GITLAB_INIT_DIR/.chant/skills/gitlab/gitlab-ci.md" ]; then
-    pass "gitlab init installs gitlab-ci skill"
+  # Check skill file in .chant/
+  if [ -f "$GITLAB_INIT_DIR/.chant/skills/gitlab/chant-gitlab.md" ]; then
+    pass "gitlab init installs chant-gitlab skill to .chant/"
   else
-    fail "gitlab init did not install gitlab-ci skill"
+    fail "gitlab init did not install chant-gitlab skill to .chant/"
+  fi
+
+  # Check skill file in .claude/skills/ for Claude Code
+  if [ -f "$GITLAB_INIT_DIR/.claude/skills/chant-gitlab/SKILL.md" ]; then
+    pass "gitlab init installs chant-gitlab skill to .claude/skills/"
+  else
+    fail "gitlab init did not install chant-gitlab skill to .claude/skills/"
   fi
 
   # Build the scaffolded project

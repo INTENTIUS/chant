@@ -798,6 +798,61 @@ src/
 
 See [Nested Stacks](./nested-stacks) for the full guide.`,
       },
+      {
+        slug: "skills",
+        title: "AI Skills",
+        description: "AI agent skills bundled with the AWS CloudFormation lexicon",
+        content: `The AWS lexicon ships an AI skill called **chant-aws** that teaches AI coding agents (like Claude Code) how to build, validate, and deploy CloudFormation templates from a chant project.
+
+## What are skills?
+
+Skills are structured markdown documents bundled with a lexicon. When an AI agent works in a chant project, it discovers and loads relevant skills automatically — giving it operational knowledge about the deployment workflow without requiring the user to explain each step.
+
+## Installation
+
+When you scaffold a new project with \`chant init --lexicon aws\`, the skill is installed to \`.claude/skills/chant-aws/SKILL.md\` for automatic discovery by Claude Code.
+
+For existing projects, create the file manually:
+
+\`\`\`
+.claude/
+  skills/
+    chant-aws/
+      SKILL.md    # skill content (see below)
+\`\`\`
+
+## Skill: chant-aws
+
+The \`chant-aws\` skill covers the full deployment lifecycle:
+
+- **Build** — \`chant build src/ --output stack.json\`
+- **Validate** — \`chant lint src/\` + \`aws cloudformation validate-template\`
+- **Deploy** — \`aws cloudformation deploy\` with capabilities
+- **Update** — change sets for preview, or direct deploy
+- **Delete** — \`aws cloudformation delete-stack\`
+- **Status** — \`describe-stacks\` and \`describe-stack-events\`
+- **Troubleshooting** — event inspection, rollback recovery, drift detection
+
+The skill is invocable as a slash command: \`/chant-aws\`
+
+## MCP integration
+
+The lexicon also provides MCP (Model Context Protocol) tools and resources that AI agents can use programmatically:
+
+| MCP tool | Description |
+|----------|-------------|
+| \`build\` | Build the chant project |
+| \`lint\` | Run lint rules |
+| \`explain\` | Summarize project resources |
+| \`scaffold\` | Generate starter files |
+| \`search\` | Search available resource types |
+| \`aws:diff\` | Compare current build output against previous |
+
+| MCP resource | Description |
+|--------------|-------------|
+| \`resource-catalog\` | JSON list of all supported CloudFormation resource types |
+| \`examples/basic-stack\` | Example stack with S3 bucket and IAM role |`,
+      },
     ],
   };
 

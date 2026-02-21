@@ -539,6 +539,61 @@ deploy:
 5. **JUnit reports** — test artifacts include JUnit XML for GitLab MR display
 `,
       },
+      {
+        slug: "skills",
+        title: "AI Skills",
+        description: "AI agent skills bundled with the GitLab CI/CD lexicon",
+        content: `The GitLab lexicon ships an AI skill called **chant-gitlab** that teaches AI coding agents (like Claude Code) how to build, validate, and deploy GitLab CI pipelines from a chant project.
+
+## What are skills?
+
+Skills are structured markdown documents bundled with a lexicon. When an AI agent works in a chant project, it discovers and loads relevant skills automatically — giving it operational knowledge about the deployment workflow without requiring the user to explain each step.
+
+## Installation
+
+When you scaffold a new project with \`chant init --lexicon gitlab\`, the skill is installed to \`.claude/skills/chant-gitlab/SKILL.md\` for automatic discovery by Claude Code.
+
+For existing projects, create the file manually:
+
+\`\`\`
+.claude/
+  skills/
+    chant-gitlab/
+      SKILL.md    # skill content (see below)
+\`\`\`
+
+## Skill: chant-gitlab
+
+The \`chant-gitlab\` skill covers the full deployment lifecycle:
+
+- **Build** — \`chant build src/ --output .gitlab-ci.yml\`
+- **Validate** — \`chant lint src/\` + GitLab CI Lint API
+- **Deploy** — commit and push the generated YAML
+- **Status** — GitLab UI or pipelines API
+- **Retry** — retry failed jobs via UI or API
+- **Cancel** — cancel running pipelines via API
+- **Troubleshooting** — job logs, lint rule codes (WGL001–WGL004), post-synth checks (WGL010, WGL011)
+
+The skill is invocable as a slash command: \`/chant-gitlab\`
+
+## MCP integration
+
+The lexicon also provides MCP (Model Context Protocol) tools and resources that AI agents can use programmatically:
+
+| MCP tool | Description |
+|----------|-------------|
+| \`build\` | Build the chant project |
+| \`lint\` | Run lint rules |
+| \`explain\` | Summarize project resources |
+| \`scaffold\` | Generate starter files |
+| \`search\` | Search available resource types |
+| \`gitlab:diff\` | Compare current build output against previous |
+
+| MCP resource | Description |
+|--------------|-------------|
+| \`resource-catalog\` | JSON list of all supported GitLab CI entity types |
+| \`examples/basic-pipeline\` | Example pipeline with build, test, and deploy jobs |`,
+      },
     ],
     basePath: "/chant/lexicons/gitlab/",
   };

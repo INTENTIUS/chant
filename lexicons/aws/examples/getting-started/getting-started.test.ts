@@ -59,7 +59,7 @@ describe("getting-started example", () => {
     expect(parsed.Outputs).toBeDefined();
     expect(parsed.Outputs.DataBucketArn).toBeDefined();
     expect(parsed.Outputs.DataBucketArn.Value).toEqual({
-      "Fn::GetAttr": ["dataBucket", "Arn"],
+      "Fn::GetAtt": ["dataBucket", "Arn"],
     });
   });
 });

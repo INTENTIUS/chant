@@ -81,7 +81,7 @@ describe("McpServer", () => {
   // -----------------------------------------------------------------------
 
   describe("tools/list", () => {
-    test("returns core tools (build, lint, import)", async () => {
+    test("returns core tools (build, lint, import, explain, scaffold, search)", async () => {
       const response = await server.handleRequest({
         jsonrpc: "2.0",
         id: 1,
@@ -94,6 +94,9 @@ describe("McpServer", () => {
       expect(toolNames).toContain("build");
       expect(toolNames).toContain("lint");
       expect(toolNames).toContain("import");
+      expect(toolNames).toContain("explain");
+      expect(toolNames).toContain("scaffold");
+      expect(toolNames).toContain("search");
     });
 
     test("each tool has name, description, and inputSchema", async () => {
@@ -148,6 +151,46 @@ describe("McpServer", () => {
       expect(props.source).toBeDefined();
       expect(props.output).toBeDefined();
     });
+
+    test("explain tool schema has path and format properties", async () => {
+      const response = await server.handleRequest({
+        jsonrpc: "2.0",
+        id: 1,
+        method: "tools/list",
+      });
+      const result = response.result as { tools: Array<{ name: string; inputSchema: Record<string, unknown> }> };
+      const tool = result.tools.find((t) => t.name === "explain")!;
+      const props = tool.inputSchema.properties as Record<string, unknown>;
+      expect(props.path).toBeDefined();
+      expect(props.format).toBeDefined();
+    });
+
+    test("scaffold tool schema has pattern and lexicon properties", async () => {
+      const response = await server.handleRequest({
+        jsonrpc: "2.0",
+        id: 1,
+        method: "tools/list",
+      });
+      const result = response.result as { tools: Array<{ name: string; inputSchema: Record<string, unknown> }> };
+      const tool = result.tools.find((t) => t.name === "scaffold")!;
+      const props = tool.inputSchema.properties as Record<string, unknown>;
+      expect(props.pattern).toBeDefined();
+      expect(props.lexicon).toBeDefined();
+    });
+
+    test("search tool schema has query, lexicon, and limit properties", async () => {
+      const response = await server.handleRequest({
+        jsonrpc: "2.0",
+        id: 1,
+        method: "tools/list",
+      });
+      const result = response.result as { tools: Array<{ name: string; inputSchema: Record<string, unknown> }> };
+      const tool = result.tools.find((t) => t.name === "search")!;
+      const props = tool.inputSchema.properties as Record<string, unknown>;
+      expect(props.query).toBeDefined();
+      expect(props.lexicon).toBeDefined();
+      expect(props.limit).toBeDefined();
+    });
   });
 
   describe("tools/call", () => {
@@ -193,6 +236,166 @@ describe("McpServer", () => {
       const result = response.result as { content: Array<{ text: string }>; isError: boolean };
       expect(result.isError).toBe(true);
       expect(result.content[0].text).toContain("Error:");
+    });
+
+    test("calls explain tool on empty directory", async () => {
+      const response = await server.handleRequest({
+        jsonrpc: "2.0",
+        id: 1,
+        method: "tools/call",
+        params: { name: "explain", arguments: { path: testDir } },
+      });
+
+      expect(response.error).toBeUndefined();
+      const result = response.result as { content: Array<{ type: string; text: string }> };
+      expect(result.content[0].type).toBe("text");
+      expect(result.content[0].text).toContain("Project Summary");
+    });
+
+    test("calls explain tool with json format", async () => {
+      const response = await server.handleRequest({
+        jsonrpc: "2.0",
+        id: 1,
+        method: "tools/call",
+        params: { name: "explain", arguments: { path: testDir, format: "json" } },
+      });
+
+      expect(response.error).toBeUndefined();
+      const result = response.result as { content: Array<{ text: string }> };
+      const parsed = JSON.parse(result.content[0].text);
+      expect(parsed.totalEntities).toBe(0);
+      expect(parsed.sourceFiles).toBeDefined();
+    });
+
+    test("calls scaffold tool with generic fallback", async () => {
+      const response = await server.handleRequest({
+        jsonrpc: "2.0",
+        id: 1,
+        method: "tools/call",
+        params: { name: "scaffold", arguments: { pattern: "my-service" } },
+      });
+
+      expect(response.error).toBeUndefined();
+      const result = response.result as { content: Array<{ text: string }> };
+      const parsed = JSON.parse(result.content[0].text);
+      expect(parsed.pattern).toBe("my-service");
+      expect(parsed.files).toBeDefined();
+      expect(parsed.files.length).toBeGreaterThan(0);
+    });
+
+    test("calls search tool with no plugins", async () => {
+      const response = await server.handleRequest({
+        jsonrpc: "2.0",
+        id: 1,
+        method: "tools/call",
+        params: { name: "search", arguments: { query: "bucket" } },
+      });
+
+      expect(response.error).toBeUndefined();
+      const result = response.result as { content: Array<{ text: string }> };
+      const parsed = JSON.parse(result.content[0].text);
+      expect(parsed.query).toBe("bucket");
+      expect(parsed.total).toBe(0);
+      expect(parsed.results).toEqual([]);
+    });
+  });
+
+  // -----------------------------------------------------------------------
+  // Search tool with plugins
+  // -----------------------------------------------------------------------
+
+  describe("search with plugins", () => {
+    test("searches plugin resource catalogs", async () => {
+      const plugin = createMockPlugin({
+        name: "test-lex",
+        mcpResources: () => [
+          {
+            uri: "resource-catalog",
+            name: "Test Catalog",
+            description: "Test resource catalog",
+            mimeType: "application/json",
+            handler: async () => JSON.stringify([
+              { className: "Bucket", resourceType: "AWS::S3::Bucket", kind: "resource" },
+              { className: "Table", resourceType: "AWS::DynamoDB::Table", kind: "resource" },
+            ]),
+          },
+        ],
+      });
+
+      const s = new McpServer([plugin]);
+      const response = await s.handleRequest({
+        jsonrpc: "2.0",
+        id: 1,
+        method: "tools/call",
+        params: { name: "search", arguments: { query: "bucket" } },
+      });
+
+      const result = response.result as { content: Array<{ text: string }> };
+      const parsed = JSON.parse(result.content[0].text);
+      expect(parsed.total).toBe(1);
+      expect(parsed.results[0].className).toBe("Bucket");
+      expect(parsed.results[0].lexicon).toBe("test-lex");
+    });
+
+    test("search respects limit parameter", async () => {
+      const entries = Array.from({ length: 30 }, (_, i) => ({
+        className: `Type${i}`,
+        resourceType: `NS::Type${i}`,
+        kind: "resource",
+      }));
+      const plugin = createMockPlugin({
+        name: "big",
+        mcpResources: () => [
+          {
+            uri: "resource-catalog",
+            name: "Big Catalog",
+            description: "Big catalog",
+            mimeType: "application/json",
+            handler: async () => JSON.stringify(entries),
+          },
+        ],
+      });
+
+      const s = new McpServer([plugin]);
+      const response = await s.handleRequest({
+        jsonrpc: "2.0",
+        id: 1,
+        method: "tools/call",
+        params: { name: "search", arguments: { query: "type", limit: 5 } },
+      });
+
+      const parsed = JSON.parse((response.result as { content: Array<{ text: string }> }).content[0].text);
+      expect(parsed.total).toBe(30);
+      expect(parsed.results.length).toBe(5);
+    });
+  });
+
+  // -----------------------------------------------------------------------
+  // Scaffold tool with plugins
+  // -----------------------------------------------------------------------
+
+  describe("scaffold with plugins", () => {
+    test("matches plugin init templates", async () => {
+      const plugin = createMockPlugin({
+        name: "test-lex",
+        initTemplates: () => ({
+          "config.ts": "export const config = {};",
+          "data-bucket.ts": "export const dataBucket = {};",
+        }),
+      });
+
+      const s = new McpServer([plugin]);
+      const response = await s.handleRequest({
+        jsonrpc: "2.0",
+        id: 1,
+        method: "tools/call",
+        params: { name: "scaffold", arguments: { pattern: "bucket", lexicon: "test-lex" } },
+      });
+
+      const parsed = JSON.parse((response.result as { content: Array<{ text: string }> }).content[0].text);
+      expect(parsed.lexicon).toBe("test-lex");
+      expect(parsed.files.length).toBe(1);
+      expect(parsed.files[0].filename).toBe("data-bucket.ts");
     });
   });
 
@@ -729,8 +932,8 @@ describe("McpServer", () => {
 
       const toolsRes = await s.handleRequest({ jsonrpc: "2.0", id: 2, method: "tools/list" });
       const tools = (toolsRes.result as { tools: Array<{ name: string }> }).tools;
-      expect(tools).toHaveLength(3);
-      expect(tools.map((t) => t.name).sort()).toEqual(["build", "import", "lint"]);
+      expect(tools).toHaveLength(6);
+      expect(tools.map((t) => t.name).sort()).toEqual(["build", "explain", "import", "lint", "scaffold", "search"]);
 
       const resourcesRes = await s.handleRequest({ jsonrpc: "2.0", id: 3, method: "resources/list" });
       const resources = (resourcesRes.result as { resources: Array<{ uri: string }> }).resources;
@@ -741,7 +944,7 @@ describe("McpServer", () => {
       const s = new McpServer([]);
       const toolsRes = await s.handleRequest({ jsonrpc: "2.0", id: 1, method: "tools/list" });
       const tools = (toolsRes.result as { tools: Array<{ name: string }> }).tools;
-      expect(tools).toHaveLength(3);
+      expect(tools).toHaveLength(6);
     });
   });
 });

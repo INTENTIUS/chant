@@ -36,11 +36,11 @@ bench:
 
 # Build and run Bun smoke test (drops into bash at getting-started example)
 smoke-bun:
-    docker build -f test/Dockerfile.smoke -t chant-smoke-bun . && docker run -it --rm -v "$HOME/.claude:/root/.claude" -v "$HOME/.claude.json:/root/.claude.json" chant-smoke-bun
+    docker build -f test/Dockerfile.smoke -t chant-smoke-bun . && docker run -it --rm -v "$HOME/.claude:/root/.claude" -v "$HOME/.claude.json:/root/.claude.json" -v "$HOME/.aws:/root/.aws:ro" chant-smoke-bun
 
 # Build and run Node.js smoke test
 smoke-node:
-    docker build -f test/Dockerfile.smoke-node -t chant-smoke-node . && docker run -it --rm chant-smoke-node
+    docker build -f test/Dockerfile.smoke-node -t chant-smoke-node . && docker run -it --rm -v "$HOME/.aws:/root/.aws:ro" chant-smoke-node
 
 # Run all smoke tests
 smoke: smoke-bun smoke-node

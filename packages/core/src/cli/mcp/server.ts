@@ -3,6 +3,9 @@ import { resolve } from "node:path";
 import { buildTool, handleBuild } from "./tools/build";
 import { lintTool, handleLint } from "./tools/lint";
 import { importTool, handleImport } from "./tools/import";
+import { explainTool, handleExplain } from "./tools/explain";
+import { scaffoldTool, createScaffoldHandler } from "./tools/scaffold";
+import { searchTool, createSearchHandler } from "./tools/search";
 import { getContext } from "./resources/context";
 import type { LexiconPlugin } from "../../lexicon";
 import type { McpToolContribution, McpResourceContribution } from "../../mcp/types";
@@ -70,6 +73,9 @@ export class McpServer {
     this.registerTool(buildTool, handleBuild);
     this.registerTool(lintTool, handleLint);
     this.registerTool(importTool, handleImport);
+    this.registerTool(explainTool, handleExplain);
+    this.registerTool(scaffoldTool, createScaffoldHandler(plugins ?? []));
+    this.registerTool(searchTool, createSearchHandler(plugins ?? []));
 
     // Register plugin contributions
     if (plugins) {

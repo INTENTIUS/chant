@@ -159,9 +159,12 @@ describe("gitlabPlugin", () => {
   test("returns skills", () => {
     const skills = gitlabPlugin.skills!();
     expect(skills).toHaveLength(1);
-    expect(skills[0].name).toBe("gitlab-ci");
+    expect(skills[0].name).toBe("chant-gitlab");
     expect(skills[0].description).toBeDefined();
-    expect(skills[0].content).toContain("GitLab CI/CD");
+    expect(skills[0].content).toContain("skill: chant-gitlab");
+    expect(skills[0].content).toContain("user-invocable: true");
+    expect(skills[0].content).toContain("chant build");
+    expect(skills[0].content).toContain("chant lint");
     expect(skills[0].triggers).toHaveLength(2);
     expect(skills[0].examples).toHaveLength(1);
   });

@@ -260,45 +260,67 @@ export const deploy = new Job({
   skills(): SkillDefinition[] {
     return [
       {
-        name: "gitlab-ci",
-        description: "GitLab CI/CD best practices and common patterns",
+        name: "chant-gitlab",
+        description: "GitLab CI/CD pipeline management — workflows, patterns, and troubleshooting",
         content: `---
-name: gitlab-ci
-description: GitLab CI/CD best practices and common patterns
+skill: chant-gitlab
+description: Build, validate, and deploy GitLab CI pipelines from a chant project
+user-invocable: true
 ---
 
-# GitLab CI/CD with Chant
+# Deploying GitLab CI Pipelines from Chant
 
-## Common Entity Types
+This project defines GitLab CI jobs as TypeScript in \`src/\`. Use these steps to build, validate, and deploy.
 
-- \`Job\` — Pipeline job definition
-- \`Default\` — Default settings inherited by all jobs
-- \`Workflow\` — Pipeline-level configuration
-- \`Artifacts\` — Job artifact configuration
-- \`Cache\` — Cache configuration
-- \`Image\` — Docker image for a job
-- \`Rule\` — Conditional execution rule
-- \`Environment\` — Deployment environment
-- \`Trigger\` — Trigger downstream pipeline
-- \`Include\` — Include external CI configuration
+## Build the pipeline
 
-## Predefined Variables
+\`\`\`bash
+chant build src/ --output .gitlab-ci.yml
+\`\`\`
 
-- \`CI.CommitBranch\` — Current branch name
-- \`CI.CommitSha\` — Current commit SHA
-- \`CI.PipelineSource\` — What triggered the pipeline
-- \`CI.ProjectPath\` — Project path (group/project)
-- \`CI.Registry\` — Container registry URL
-- \`CI.MergeRequestIid\` — MR internal ID
+## Validate before pushing
 
-## Best Practices
+\`\`\`bash
+chant lint src/
+\`\`\`
 
-1. **Use stages** — Organize jobs into logical stages (build, test, deploy)
-2. **Cache dependencies** — Cache node_modules, pip packages, etc.
-3. **Use rules** — Prefer \`rules:\` over \`only:/except:\` for conditional execution
-4. **Minimize artifacts** — Only preserve files needed by later stages
-5. **Use includes** — Share common configuration across projects
-6. **Set timeouts** — Prevent stuck jobs from blocking pipelines
+For API-level validation against your GitLab instance:
+\`\`\`bash
+curl --header "PRIVATE-TOKEN: $GITLAB_TOKEN" \\
+  "https://gitlab.com/api/v4/ci/lint" \\
+  --data "{\\"content\\": \\"$(cat .gitlab-ci.yml)\\"}"
+\`\`\`
+
+## Deploy
+
+Commit and push the generated \`.gitlab-ci.yml\` — GitLab runs the pipeline automatically:
+
+\`\`\`bash
+chant build src/ --output .gitlab-ci.yml
+git add .gitlab-ci.yml
+git commit -m "Update pipeline"
+git push
+\`\`\`
+
+## Check pipeline status
+
+- GitLab UI: project → CI/CD → Pipelines
+- API: \`curl --header "PRIVATE-TOKEN: $GITLAB_TOKEN" "https://gitlab.com/api/v4/projects/$PROJECT_ID/pipelines?per_page=5"\`
+
+## Retry a failed job
+
+- GitLab UI: click Retry on the failed job
+- API: \`curl --request POST --header "PRIVATE-TOKEN: $GITLAB_TOKEN" "https://gitlab.com/api/v4/projects/$PROJECT_ID/jobs/$JOB_ID/retry"\`
+
+## Cancel a running pipeline
+
+- API: \`curl --request POST --header "PRIVATE-TOKEN: $GITLAB_TOKEN" "https://gitlab.com/api/v4/projects/$PROJECT_ID/pipelines/$PIPELINE_ID/cancel"\`
+
+## Troubleshooting
+
+- Check job logs in GitLab UI: project → CI/CD → Jobs → click the job
+- \`chant lint src/\` catches: missing scripts (WGL002), deprecated only/except (WGL001), missing stages (WGL003), artifacts without expiry (WGL004)
+- Post-synth checks (WGL010, WGL011) run during build
 `,
         triggers: [
           { type: "file-pattern", value: "**/*.gitlab.ts" },

@@ -68,7 +68,7 @@ interface CFOutput {
  */
 function cfnVisitor(entityNames: Map<Declarable, string>): SerializerVisitor {
   return {
-    attrRef: (name, attr) => ({ "Fn::GetAttr": [name, attr] }),
+    attrRef: (name, attr) => ({ "Fn::GetAtt": [name, attr] }),
     resourceRef: (name) => ({ Ref: name }),
     propertyDeclarable: (entity, walk) => {
       if (!("props" in entity) || typeof entity.props !== "object" || entity.props === null) {
@@ -231,7 +231,7 @@ function serializeToTemplate(
       const logicalName = ref.getLogicalName();
       if (logicalName) {
         const output: CFOutput = {
-          Value: { "Fn::GetAttr": [logicalName, ref.attribute] },
+          Value: { "Fn::GetAtt": [logicalName, ref.attribute] },
         };
         if (stackOutput.description) {
           output.Description = stackOutput.description;
@@ -247,7 +247,7 @@ function serializeToTemplate(
     for (const output of outputs) {
       template.Outputs[output.outputName] = {
         Value: {
-          "Fn::GetAttr": [output.sourceEntity, output.sourceAttribute],
+          "Fn::GetAtt": [output.sourceEntity, output.sourceAttribute],
         },
       };
     }

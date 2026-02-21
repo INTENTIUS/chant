@@ -98,7 +98,7 @@ import { Bucket, Sub, AWS } from "@intentius/chant-lexicon-aws";
 import { versioningEnabled, bucketEncryption, publicAccessBlock } from "./config";
 
 export const dataBucket = new Bucket({
-  bucketName: Sub\`\${AWS.StackName}-data\`,
+  bucketName: Sub\`\${AWS.StackName}-\${AWS.AccountId}-data\`,
   versioningConfiguration: versioningEnabled,
   bucketEncryption: bucketEncryption,
   publicAccessBlockConfiguration: publicAccessBlock,
@@ -112,7 +112,7 @@ import { Bucket, Sub, AWS } from "@intentius/chant-lexicon-aws";
 import { versioningEnabled, bucketEncryption, publicAccessBlock } from "./config";
 
 export const logsBucket = new Bucket({
-  bucketName: Sub\`\${AWS.StackName}-logs\`,
+  bucketName: Sub\`\${AWS.StackName}-\${AWS.AccountId}-logs\`,
   accessControl: "LogDeliveryWrite",
   versioningConfiguration: versioningEnabled,
   bucketEncryption: bucketEncryption,
@@ -253,49 +253,80 @@ export const logsBucket = new Bucket({
   skills(): SkillDefinition[] {
     return [
       {
-        name: "aws-cloudformation",
-        description: "AWS CloudFormation best practices and common patterns",
+        name: "chant-aws",
+        description: "AWS CloudFormation template management — workflows, patterns, and troubleshooting",
         content: `---
-name: aws-cloudformation
-description: AWS CloudFormation best practices and common patterns
+skill: chant-aws
+description: Build, validate, and deploy CloudFormation templates from a chant project
+user-invocable: true
 ---
 
-# AWS CloudFormation with Chant
+# Deploying CloudFormation from Chant
 
-## Common Resource Types
+This project defines CloudFormation resources as TypeScript in \`src/\`. Use these steps to build, validate, and deploy.
 
-- \`AWS::S3::Bucket\` — Object storage
-- \`AWS::Lambda::Function\` — Serverless compute
-- \`AWS::DynamoDB::Table\` — NoSQL database
-- \`AWS::IAM::Role\` — Identity and access management
-- \`AWS::SNS::Topic\` — Pub/sub messaging
-- \`AWS::SQS::Queue\` — Message queue
-- \`AWS::EC2::SecurityGroup\` — Network firewall rules
+## Build the template
 
-## Intrinsic Functions
+\`\`\`bash
+chant build src/ --output stack.json
+\`\`\`
 
-- \`Sub\` — String interpolation with \`\${}\` syntax
-- \`Ref\` — Reference a resource or parameter
-- \`GetAtt\` — Get a resource attribute (e.g. ARN)
-- \`If\` — Conditional value based on a condition
-- \`Join\` — Join strings with a delimiter
-- \`Select\` — Pick an item from a list by index
+## Validate before deploying
 
-## Pseudo Parameters
+\`\`\`bash
+chant lint src/
+aws cloudformation validate-template --template-body file://stack.json
+\`\`\`
 
-- \`AWS::StackName\` — Name of the current stack
-- \`AWS::Region\` — Current deployment region
-- \`AWS::AccountId\` — Current AWS account ID
-- \`AWS::Partition\` — Partition (aws, aws-cn, aws-us-gov)
+## Deploy a new stack
 
-## Best Practices
+\`\`\`bash
+aws cloudformation deploy \\
+  --template-file stack.json \\
+  --stack-name <stack-name> \\
+  --capabilities CAPABILITY_NAMED_IAM
+\`\`\`
 
-1. **Always enable encryption** — Use \`BucketEncryption\` for S3, \`SSESpecification\` for DynamoDB
-2. **Block public access** — Set \`PublicAccessBlockConfiguration\` on all S3 buckets
-3. **Use least-privilege IAM** — Avoid \`*\` in IAM policy actions and resources
-4. **Enable versioning** — Turn on \`VersioningConfiguration\` for data buckets
-5. **Use Sub for dynamic names** — \`Sub\\\`\\\${AWS::StackName}-suffix\\\`\` for unique naming
-6. **Share config via direct imports** — Put common settings in a config file and import directly
+Add \`--parameter-overrides Key=Value\` if the template has parameters.
+
+## Update an existing stack
+
+1. Edit the TypeScript source
+2. Rebuild: \`chant build src/ --output stack.json\`
+3. Preview changes:
+   \`\`\`bash
+   aws cloudformation create-change-set \\
+     --stack-name <stack-name> \\
+     --template-body file://stack.json \\
+     --change-set-name update-$(date +%s) \\
+     --capabilities CAPABILITY_NAMED_IAM
+   aws cloudformation describe-change-set \\
+     --stack-name <stack-name> \\
+     --change-set-name update-<id>
+   \`\`\`
+4. Execute: \`aws cloudformation execute-change-set --stack-name <stack-name> --change-set-name update-<id>\`
+
+Or deploy directly: \`aws cloudformation deploy --template-file stack.json --stack-name <stack-name> --capabilities CAPABILITY_NAMED_IAM\`
+
+## Delete a stack
+
+\`\`\`bash
+aws cloudformation delete-stack --stack-name <stack-name>
+aws cloudformation wait stack-delete-complete --stack-name <stack-name>
+\`\`\`
+
+## Check stack status
+
+\`\`\`bash
+aws cloudformation describe-stacks --stack-name <stack-name>
+aws cloudformation describe-stack-events --stack-name <stack-name> --max-items 10
+\`\`\`
+
+## Troubleshooting deploy failures
+
+- Check events: \`aws cloudformation describe-stack-events --stack-name <stack-name>\`
+- Rollback stuck: \`aws cloudformation continue-update-rollback --stack-name <stack-name>\`
+- Drift: \`aws cloudformation detect-stack-drift --stack-name <stack-name>\`
 `,
         triggers: [
           { type: "file-pattern", value: "**/*.aws.ts" },
@@ -419,9 +450,9 @@ export const versioningEnabled = new VersioningConfiguration({
   status: "Enabled",
 });
 
-// Create a versioned bucket with encryption
+// Create a versioned bucket with encryption (AccountId ensures global uniqueness)
 export const dataBucket = new Bucket({
-  bucketName: Sub\`\${AWS.StackName}-data\`,
+  bucketName: Sub\`\${AWS.StackName}-\${AWS.AccountId}-data\`,
   versioningConfiguration: versioningEnabled,
   bucketEncryption: bucketEncryption,
 });

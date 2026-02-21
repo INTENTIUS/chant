@@ -426,17 +426,28 @@ export async function initCommand(options: InitOptions): Promise<InitResult> {
   }
 
   // Install skills from the lexicon's plugin
+  // Write to both .chant/skills/ (chant's own location) and .claude/skills/ (Claude Code discovery)
   try {
     const plugin = await loadPlugin(options.lexicon);
     if (plugin.skills) {
       const skills = plugin.skills();
       if (skills.length > 0) {
-        const skillsDir = join(targetDir, ".chant", "skills", options.lexicon);
-        mkdirSync(skillsDir, { recursive: true });
+        // .chant/skills/ — chant's own skill storage
+        const chantSkillsDir = join(targetDir, ".chant", "skills", options.lexicon);
+        mkdirSync(chantSkillsDir, { recursive: true });
         for (const skill of skills) {
-          const skillPath = join(skillsDir, `${skill.name}.md`);
+          const skillPath = join(chantSkillsDir, `${skill.name}.md`);
           writeFileSync(skillPath, skill.content);
           createdFiles.push(`.chant/skills/${options.lexicon}/${skill.name}.md`);
+        }
+
+        // .claude/skills/ — Claude Code skill discovery format
+        for (const skill of skills) {
+          const claudeSkillDir = join(targetDir, ".claude", "skills", skill.name);
+          mkdirSync(claudeSkillDir, { recursive: true });
+          const claudeSkillPath = join(claudeSkillDir, "SKILL.md");
+          writeFileSync(claudeSkillPath, skill.content);
+          createdFiles.push(`.claude/skills/${skill.name}/SKILL.md`);
         }
       }
     }

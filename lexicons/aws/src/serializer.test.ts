@@ -256,7 +256,7 @@ describe("intrinsic serialization", () => {
     const template = JSON.parse(output);
 
     expect(template.Resources.Replication.Properties.SourceArn).toEqual({
-      "Fn::GetAttr": ["SourceBucket", "Arn"],
+      "Fn::GetAtt": ["SourceBucket", "Arn"],
     });
   });
 });
@@ -275,7 +275,7 @@ describe("LexiconOutput serialization", () => {
 
     expect(template.Outputs).toBeDefined();
     expect(template.Outputs.DataBucketArn).toEqual({
-      Value: { "Fn::GetAttr": ["dataBucket", "Arn"] },
+      Value: { "Fn::GetAtt": ["dataBucket", "Arn"] },
     });
   });
 
@@ -298,10 +298,10 @@ describe("LexiconOutput serialization", () => {
     expect(template.Outputs).toBeDefined();
     expect(Object.keys(template.Outputs)).toHaveLength(2);
     expect(template.Outputs.DataBucketArn.Value).toEqual({
-      "Fn::GetAttr": ["dataBucket", "Arn"],
+      "Fn::GetAtt": ["dataBucket", "Arn"],
     });
     expect(template.Outputs.LogsBucketArn.Value).toEqual({
-      "Fn::GetAttr": ["logsBucket", "Arn"],
+      "Fn::GetAtt": ["logsBucket", "Arn"],
     });
   });
 
@@ -460,7 +460,7 @@ describe("nested stack serialization", () => {
         subnet: { Type: "AWS::EC2::Subnet" },
       },
       Outputs: {
-        subnetId: { Value: { "Fn::GetAttr": ["subnet", "SubnetId"] } },
+        subnetId: { Value: { "Fn::GetAtt": ["subnet", "SubnetId"] } },
       },
     });
 
