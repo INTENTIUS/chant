@@ -2,12 +2,13 @@ import { readFileSync, existsSync } from "fs";
 import { join, dirname, resolve } from "path";
 import { z } from "zod";
 import type { Severity, RuleConfig } from "./rule";
+import { moduleDir, getRuntime } from "../runtime-adapter";
 import strictPreset from "./presets/strict.json";
 
 /** Mapping of built-in preset names to their file paths */
 const BUILTIN_PRESETS: Record<string, string> = {
-  "@intentius/chant/lint/presets/strict": resolve(import.meta.dir, "presets/strict.json"),
-  "@intentius/chant/lint/presets/relaxed": resolve(import.meta.dir, "presets/relaxed.json"),
+  "@intentius/chant/lint/presets/strict": resolve(moduleDir(import.meta.url), "presets/strict.json"),
+  "@intentius/chant/lint/presets/relaxed": resolve(moduleDir(import.meta.url), "presets/relaxed.json"),
 };
 
 // ── Zod schemas for lint config validation ─────────────────────────
@@ -362,8 +363,7 @@ export function resolveRulesForFile(config: LintConfig, filePath: string): Recor
 
   for (const override of config.overrides) {
     const matches = override.files.some((pattern) => {
-      const glob = new Bun.Glob(pattern);
-      return glob.match(filePath);
+      return getRuntime().globMatch(pattern, filePath);
     });
 
     if (matches) {

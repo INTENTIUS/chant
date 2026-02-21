@@ -38,6 +38,10 @@ bench:
 smoke:
     docker build -f test/Dockerfile.smoke -t chant-smoke . && docker run -it --rm -v "$HOME/.claude:/root/.claude" -v "$HOME/.claude.json:/root/.claude.json" chant-smoke
 
+# Build and run Node.js smoke test container
+smoke-node:
+    docker build -f test/Dockerfile.smoke-node -t chant-smoke-node . && docker run -it --rm chant-smoke-node
+
 # Build unified documentation site (main + lexicon docs)
 docs-build:
     bash scripts/build-docs.sh

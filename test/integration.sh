@@ -3,7 +3,12 @@ set -euo pipefail
 
 PASS=0
 FAIL=0
-CHANT="bun run /app/packages/core/src/cli/main.ts"
+RUNTIME="${CHANT_RUNTIME:-bun}"
+if [ "$RUNTIME" = "bun" ]; then
+  CHANT="bun run /app/packages/core/src/cli/main.ts"
+else
+  CHANT="npx tsx /app/packages/core/src/cli/main.ts"
+fi
 
 log() { echo "=== $1 ==="; }
 pass() { echo "  PASS: $1"; PASS=$((PASS + 1)); }
@@ -374,9 +379,8 @@ if $CHANT init lexicon smoke-test "$LEXICON_DIR" > /dev/null 2>&1; then
   if grep -q "async generate" "$LEXICON_DIR/src/plugin.ts" && \
      grep -q "async validate" "$LEXICON_DIR/src/plugin.ts" && \
      grep -q "async coverage" "$LEXICON_DIR/src/plugin.ts" && \
-     grep -q "async package" "$LEXICON_DIR/src/plugin.ts" && \
-     grep -q "async rollback" "$LEXICON_DIR/src/plugin.ts"; then
-    pass "init-lexicon plugin.ts has all 5 lifecycle methods"
+     grep -q "async package" "$LEXICON_DIR/src/plugin.ts"; then
+    pass "init-lexicon plugin.ts has all 4 lifecycle methods"
   else
     fail "init-lexicon plugin.ts missing lifecycle methods"
   fi

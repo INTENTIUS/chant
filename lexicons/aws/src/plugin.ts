@@ -58,25 +58,25 @@ export const awsPlugin: LexiconPlugin = {
  * Shared bucket configuration — encryption, versioning, public access
  */
 
-import * as aws from "@intentius/chant-lexicon-aws";
+import { ServerSideEncryptionByDefault, ServerSideEncryptionRule, BucketEncryption, PublicAccessBlockConfiguration, VersioningConfiguration } from "@intentius/chant-lexicon-aws";
 
 // Encryption default — AES256 server-side encryption
-export const encryptionDefault = new aws.ServerSideEncryptionByDefault({
+export const encryptionDefault = new ServerSideEncryptionByDefault({
   sseAlgorithm: "AES256",
 });
 
 // Encryption rule wrapping the default
-export const encryptionRule = new aws.ServerSideEncryptionRule({
+export const encryptionRule = new ServerSideEncryptionRule({
   serverSideEncryptionByDefault: encryptionDefault,
 });
 
 // Bucket encryption configuration
-export const bucketEncryption = new aws.BucketEncryption({
+export const bucketEncryption = new BucketEncryption({
   serverSideEncryptionConfiguration: [encryptionRule],
 });
 
 // Public access block — deny all public access
-export const publicAccessBlock = new aws.PublicAccessBlockConfiguration({
+export const publicAccessBlock = new PublicAccessBlockConfiguration({
   blockPublicAcls: true,
   blockPublicPolicy: true,
   ignorePublicAcls: true,
@@ -84,7 +84,7 @@ export const publicAccessBlock = new aws.PublicAccessBlockConfiguration({
 });
 
 // Versioning — enabled
-export const versioningEnabled = new aws.VersioningConfiguration({
+export const versioningEnabled = new VersioningConfiguration({
   status: "Enabled",
 });
 `,
@@ -229,44 +229,17 @@ export const logsBucket = new Bucket({
 
     console.error(`Packaged ${stats.resources} resources, ${stats.ruleCount} rules, ${stats.skillCount} skills`);
 
-    // Produce .tgz via bun pm pack
-    const packProc = Bun.spawn(["bun", "pm", "pack"], {
-      cwd: pkgDir,
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const packOut = await new Response(packProc.stdout).text();
-    const packErr = await new Response(packProc.stderr).text();
-    const packExit = await packProc.exited;
+    // Produce .tgz via pack command
+    const { getRuntime } = await import("@intentius/chant/runtime-adapter");
+    const rt = getRuntime();
+    const { stdout: packOut, stderr: packErr, exitCode: packExit } = await rt.spawn(
+      rt.commands.packCmd,
+      { cwd: pkgDir },
+    );
     if (packExit === 0) {
       console.error(`Tarball: ${packOut.trim()}`);
     } else {
-      console.error(`bun pm pack failed: ${packErr}`);
-    }
-  },
-
-  async rollback(options?: { restore?: string; verbose?: boolean }): Promise<void> {
-    const { listSnapshots, restoreSnapshot } = await import("./codegen/rollback");
-    const { join, dirname } = await import("path");
-    const { fileURLToPath } = await import("url");
-
-    const pkgDir = dirname(dirname(fileURLToPath(import.meta.url)));
-    const snapshotsDir = join(pkgDir, ".snapshots");
-
-    if (options?.restore) {
-      const generatedDir = join(pkgDir, "src", "generated");
-      restoreSnapshot(String(options.restore), generatedDir);
-      console.error(`Restored snapshot: ${options.restore}`);
-    } else {
-      const snapshots = listSnapshots(snapshotsDir);
-      if (snapshots.length === 0) {
-        console.error("No snapshots available.");
-      } else {
-        console.error(`Available snapshots (${snapshots.length}):`);
-        for (const s of snapshots) {
-          console.error(`  ${s.timestamp}  ${s.resourceCount} resources  ${s.path}`);
-        }
-      }
+      console.error(`${rt.commands.packCmd.join(" ")} failed: ${packErr}`);
     }
   },
 
@@ -424,29 +397,29 @@ description: AWS CloudFormation best practices and common patterns
         description: "AWS S3 bucket with versioning and encryption",
         mimeType: "text/typescript",
         async handler(): Promise<string> {
-          return `import * as aws from "@intentius/chant-lexicon-aws";
+          return `import { ServerSideEncryptionByDefault, ServerSideEncryptionRule, BucketEncryption, VersioningConfiguration, Bucket, Sub, AWS } from "@intentius/chant-lexicon-aws";
 
 // Encryption configuration
-export const encryptionDefault = new aws.ServerSideEncryptionByDefault({
+export const encryptionDefault = new ServerSideEncryptionByDefault({
   sseAlgorithm: "AES256",
 });
 
-export const encryptionRule = new aws.ServerSideEncryptionRule({
+export const encryptionRule = new ServerSideEncryptionRule({
   serverSideEncryptionByDefault: encryptionDefault,
 });
 
-export const bucketEncryption = new aws.BucketEncryption({
+export const bucketEncryption = new BucketEncryption({
   serverSideEncryptionConfiguration: [encryptionRule],
 });
 
 // Versioning
-export const versioningEnabled = new aws.VersioningConfiguration({
+export const versioningEnabled = new VersioningConfiguration({
   status: "Enabled",
 });
 
 // Create a versioned bucket with encryption
-export const dataBucket = new aws.Bucket({
-  bucketName: aws.Sub\`\${aws.AWS.StackName}-data\`,
+export const dataBucket = new Bucket({
+  bucketName: Sub\`\${AWS.StackName}-data\`,
   versioningConfiguration: versioningEnabled,
   bucketEncryption: bucketEncryption,
 });
@@ -459,16 +432,16 @@ export const dataBucket = new aws.Bucket({
         description: "Using AttrRefs for cross-resource references",
         mimeType: "text/typescript",
         async handler(): Promise<string> {
-          return `import * as aws from "@intentius/chant-lexicon-aws";
+          return `import { Bucket, VersioningConfiguration, Role } from "@intentius/chant-lexicon-aws";
 
 // Create a bucket
-export const dataBucket = new aws.Bucket({
+export const dataBucket = new Bucket({
   bucketName: "my-data-bucket",
-  versioningConfiguration: new aws.VersioningConfiguration({ status: "Enabled" }),
+  versioningConfiguration: new VersioningConfiguration({ status: "Enabled" }),
 });
 
 // Create a role that references the bucket's ARN
-export const role = new aws.Role({
+export const role = new Role({
   assumeRolePolicyDocument: {
     Version: "2012-10-17",
     Statement: [{

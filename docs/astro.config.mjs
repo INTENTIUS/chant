@@ -117,7 +117,6 @@ export default defineConfig({
 								{ label: 'init lexicon', slug: 'cli/init-lexicon' },
 								{ label: 'dev generate', slug: 'cli/generate' },
 								{ label: 'dev publish', slug: 'cli/package' },
-								{ label: 'dev rollback', slug: 'cli/rollback' },
 							],
 						},
 					],

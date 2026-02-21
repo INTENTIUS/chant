@@ -106,31 +106,6 @@ export const ${names.pluginVarName}: LexiconPlugin = {
     console.error(\`Packaged \${stats.resources} resources, \${stats.ruleCount} rules, \${stats.skillCount} skills\`);
   },
 
-  async rollback(options?: { restore?: string; verbose?: boolean }): Promise<void> {
-    const { listSnapshots, restoreSnapshot } = await import("./codegen/rollback");
-    const { join, dirname } = await import("path");
-    const { fileURLToPath } = await import("url");
-
-    const pkgDir = dirname(dirname(fileURLToPath(import.meta.url)));
-    const snapshotsDir = join(pkgDir, ".snapshots");
-
-    if (options?.restore) {
-      const generatedDir = join(pkgDir, "src", "generated");
-      restoreSnapshot(String(options.restore), generatedDir);
-      console.error(\`Restored snapshot: \${options.restore}\`);
-    } else {
-      const snapshots = listSnapshots(snapshotsDir);
-      if (snapshots.length === 0) {
-        console.error("No snapshots available.");
-      } else {
-        console.error(\`Available snapshots (\${snapshots.length}):\`);
-        for (const s of snapshots) {
-          console.error(\`  \${s.timestamp}  \${s.resources} resources  \${s.path}\`);
-        }
-      }
-    }
-  },
-
   // ── Optional extensions (uncomment and implement as needed) ───
 
   // lintRules(): LintRule[] {
@@ -378,55 +353,6 @@ export async function packageLexicon(options?: { verbose?: boolean; force?: bool
 
   console.error(\`Packaged \${stats.resources} resources, \${stats.ruleCount} rules\`);
   return { spec, stats };
-}
-`;
-}
-
-function generateCodegenRollbackTs(): string {
-  return `import { existsSync, readdirSync, readFileSync, mkdirSync, writeFileSync, cpSync } from "fs";
-import { join, basename } from "path";
-
-export interface Snapshot {
-  timestamp: string;
-  resources: number;
-  path: string;
-}
-
-/**
- * List available generation snapshots.
- */
-export function listSnapshots(snapshotsDir: string): Snapshot[] {
-  if (!existsSync(snapshotsDir)) return [];
-
-  return readdirSync(snapshotsDir)
-    .filter((d) => !d.startsWith("."))
-    .sort()
-    .reverse()
-    .map((dir) => {
-      const fullPath = join(snapshotsDir, dir);
-      const metaPath = join(fullPath, "meta.json");
-      let resources = 0;
-      if (existsSync(metaPath)) {
-        try {
-          const meta = JSON.parse(readFileSync(metaPath, "utf-8"));
-          resources = meta.resources ?? 0;
-        } catch {}
-      }
-      return { timestamp: dir, resources, path: fullPath };
-    });
-}
-
-/**
- * Restore a snapshot to the generated directory.
- */
-export function restoreSnapshot(timestamp: string, generatedDir: string): void {
-  const snapshotsDir = join(generatedDir, "..", "..", ".snapshots");
-  const snapshotDir = join(snapshotsDir, timestamp);
-  if (!existsSync(snapshotDir)) {
-    throw new Error(\`Snapshot not found: \${timestamp}\`);
-  }
-  mkdirSync(generatedDir, { recursive: true });
-  cpSync(snapshotDir, generatedDir, { recursive: true });
 }
 `;
 }
@@ -735,8 +661,7 @@ package: generate validate
 }
 
 function generateGitignore(): string {
-  return `.snapshots/
-dist/
+  return `dist/
 node_modules/
 .cache/
 `;
@@ -899,7 +824,6 @@ export async function initLexiconCommand(options: InitLexiconOptions): Promise<I
     "docs/src/content",
     "docs/src/content/docs",
     "examples/getting-started",
-    ".snapshots",
   ];
 
   for (const dir of dirs) {
@@ -918,7 +842,6 @@ export async function initLexiconCommand(options: InitLexiconOptions): Promise<I
     "src/codegen/generate-cli.ts": generateCodegenGenerateCliTs(),
     "src/codegen/naming.ts": generateCodegenNamingTs(),
     "src/codegen/package.ts": generateCodegenPackageTs(name),
-    "src/codegen/rollback.ts": generateCodegenRollbackTs(),
     "src/codegen/docs.ts": generateCodegenDocsTs(name),
     "src/spec/fetch.ts": generateSpecFetchTs(),
     "src/spec/parse.ts": generateSpecParseTs(),
@@ -947,7 +870,6 @@ export async function initLexiconCommand(options: InitLexiconOptions): Promise<I
   const gitkeeps = [
     "src/generated/.gitkeep",
     "examples/getting-started/.gitkeep",
-    ".snapshots/.gitkeep",
   ];
 
   for (const gk of gitkeeps) {

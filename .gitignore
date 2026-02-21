@@ -4,7 +4,6 @@ dist/
 *.tgz
 .DS_Store
 .cache/
-.snapshots/
 
 # All generated lexicon source (covers both AWS and GitLab)
 lexicons/*/src/generated/

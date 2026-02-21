@@ -85,7 +85,7 @@ export function isNestedStackInstance(value: unknown): value is NestedStackInsta
  *
  * @example
  * ```ts
- * const network = _.nestedStack("network", import.meta.dir + "/network", {
+ * const network = _.nestedStack("network", import.meta.dirname + "/network", {
  *   parameters: { Environment: "prod" },
  * });
  *

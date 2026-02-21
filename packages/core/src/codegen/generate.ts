@@ -180,25 +180,14 @@ export interface WriteConfig {
   generatedSubdir?: string;
   /** Map of filename → content to write. */
   files: Record<string, string>;
-  /** Optional snapshot function called before overwriting. */
-  snapshot?: (generatedDir: string) => void;
 }
 
 /**
- * Write generated artifacts to disk with optional auto-snapshot.
+ * Write generated artifacts to disk.
  */
 export function writeGeneratedArtifacts(config: WriteConfig): void {
   const generatedDir = join(config.baseDir, config.generatedSubdir ?? "src/generated");
   mkdirSync(generatedDir, { recursive: true });
-
-  // Auto-snapshot before overwriting
-  if (config.snapshot) {
-    try {
-      config.snapshot(generatedDir);
-    } catch {
-      // Best effort — don't fail generation if snapshot fails
-    }
-  }
 
   for (const [filename, content] of Object.entries(config.files)) {
     writeFileSync(join(generatedDir, filename), content);

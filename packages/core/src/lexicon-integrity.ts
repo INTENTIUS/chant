@@ -2,18 +2,19 @@
  * Content hashing and integrity verification for lexicon artifacts.
  */
 import type { BundleSpec } from "./lexicon";
+import { getRuntime } from "./runtime-adapter";
 
 export interface ArtifactIntegrity {
-  algorithm: "xxhash64";
+  algorithm: string;
   artifacts: Record<string, string>;
   composite: string;
 }
 
 /**
- * Hash a single artifact's content using xxhash64.
+ * Hash a single artifact's content using the runtime's hash algorithm.
  */
 export function hashArtifact(content: string): string {
-  return Bun.hash(content).toString(16);
+  return getRuntime().hash(content);
 }
 
 /**
@@ -39,7 +40,7 @@ export function computeIntegrity(spec: BundleSpec): ArtifactIntegrity {
   const compositeInput = sorted.map(([k, v]) => `${k}:${v}`).join("\n");
   const composite = hashArtifact(compositeInput);
 
-  return { algorithm: "xxhash64", artifacts, composite };
+  return { algorithm: getRuntime().hashAlgorithm, artifacts, composite };
 }
 
 /**

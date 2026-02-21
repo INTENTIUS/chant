@@ -22,7 +22,6 @@ function makePlugin(
     validate: noopAsync,
     coverage: noopAsync,
     package: noopAsync,
-    rollback: noopAsync,
   };
 
   if (opts.rules) {

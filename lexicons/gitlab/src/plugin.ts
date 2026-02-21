@@ -169,31 +169,6 @@ export const test = new Job({
     console.error(`Packaged ${stats.resources} entities, ${stats.ruleCount} rules, ${stats.skillCount} skills`);
   },
 
-  async rollback(options?: { restore?: string; verbose?: boolean }): Promise<void> {
-    const { listSnapshots, restoreSnapshot } = await import("./codegen/rollback");
-    const { join, dirname } = await import("path");
-    const { fileURLToPath } = await import("url");
-
-    const pkgDir = dirname(dirname(fileURLToPath(import.meta.url)));
-    const snapshotsDir = join(pkgDir, ".snapshots");
-
-    if (options?.restore) {
-      const generatedDir = join(pkgDir, "src", "generated");
-      restoreSnapshot(String(options.restore), generatedDir);
-      console.error(`Restored snapshot: ${options.restore}`);
-    } else {
-      const snapshots = listSnapshots(snapshotsDir);
-      if (snapshots.length === 0) {
-        console.error("No snapshots available.");
-      } else {
-        console.error(`Available snapshots (${snapshots.length}):`);
-        for (const s of snapshots) {
-          console.error(`  ${s.timestamp}  ${s.resourceCount} resources  ${s.path}`);
-        }
-      }
-    }
-  },
-
   mcpTools() {
     return [
       {

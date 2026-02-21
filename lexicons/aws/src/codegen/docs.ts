@@ -517,7 +517,7 @@ Pass CloudFormation Parameters to child stacks with the \`parameters\` option:
 \`\`\`typescript
 import { nestedStack } from "@intentius/chant-lexicon-aws";
 
-const network = nestedStack("network", import.meta.dir + "/network", {
+const network = nestedStack("network", import.meta.dirname + "/network", {
   parameters: { Environment: "prod", CidrBlock: "10.0.0.0/16" },
 });
 \`\`\`

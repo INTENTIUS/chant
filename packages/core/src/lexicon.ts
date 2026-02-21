@@ -101,7 +101,7 @@ export interface IntrinsicDef {
  * Plugin interface for lexicon packages.
  *
  * Required lifecycle methods enforce consistency: every lexicon must support
- * generate, validate, coverage, package, and rollback operations.
+ * generate, validate, coverage, and package operations.
  */
 export interface LexiconPlugin {
   // ── Required ──────────────────────────────────────────────
@@ -122,9 +122,6 @@ export interface LexiconPlugin {
 
   /** Package lexicon into distributable tarball */
   package(options?: { verbose?: boolean; force?: boolean }): Promise<void>;
-
-  /** List or restore generation snapshots */
-  rollback(options?: { restore?: string; verbose?: boolean }): Promise<void>;
 
   // ── Optional extensions ───────────────────────────────────
   /** Return lint rules provided by this lexicon */
@@ -206,7 +203,6 @@ export function isLexiconPlugin(value: unknown): value is LexiconPlugin {
     typeof obj.generate === "function" &&
     typeof obj.validate === "function" &&
     typeof obj.coverage === "function" &&
-    typeof obj.package === "function" &&
-    typeof obj.rollback === "function"
+    typeof obj.package === "function"
   );
 }

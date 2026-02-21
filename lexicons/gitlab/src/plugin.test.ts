@@ -217,10 +217,6 @@ describe("gitlabPlugin", () => {
     expect(typeof gitlabPlugin.coverage).toBe("function");
   });
 
-  test("has rollback method", () => {
-    expect(typeof gitlabPlugin.rollback).toBe("function");
-  });
-
   test("has docs method", () => {
     expect(typeof gitlabPlugin.docs).toBe("function");
   });

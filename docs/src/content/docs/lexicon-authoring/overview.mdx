@@ -46,7 +46,6 @@ Every lexicon must implement these 5 methods to support the full generation and 
 | `validate` | `(options?) => Promise<void>` | Validate generated artifacts |
 | `coverage` | `(options?) => Promise<void>` | Analyze spec coverage across resource dimensions |
 | `package` | `(options?) => Promise<void>` | Package lexicon into a distributable bundle |
-| `rollback` | `(options?) => Promise<void>` | List or restore generation snapshots |
 
 ### Optional methods
 
@@ -141,11 +140,6 @@ export const k8sPlugin: LexiconPlugin = {
   async package() {
     // TODO: Run packagePipeline to produce a distributable bundle
     throw new Error("Not yet implemented");
-  },
-
-  async rollback() {
-    // TODO: List/restore generation snapshots
-    console.error("No snapshots available.");
   },
 };
 ```

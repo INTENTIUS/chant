@@ -4,9 +4,11 @@ import { resolve } from "node:path";
 import { formatSuccess, formatError } from "./format";
 import { loadPlugins, resolveProjectLexicons } from "./plugins";
 import { resolveCommand, type CommandDef, type ParsedArgs } from "./registry";
+import { loadChantConfig } from "../config";
+import { initRuntime } from "../runtime-adapter";
 import { runBuild } from "./handlers/build";
 import { runLint } from "./handlers/lint";
-import { runDevGenerate, runDevPublish, runDevRollback, runDevUnknown } from "./handlers/dev";
+import { runDevGenerate, runDevPublish, runDevUnknown } from "./handlers/dev";
 import { runServeLsp, runServeMcp, runServeUnknown } from "./handlers/serve";
 import { runInit, runInitLexicon } from "./handlers/init";
 import { runList, runImport, runUpdate, runDoctor } from "./handlers/misc";
@@ -89,7 +91,6 @@ Commands:
 Lexicon development:
   dev generate          Generate lexicon artifacts (+ validate + coverage)
   dev publish           Package lexicon for distribution
-  dev rollback          List or restore generation snapshots
 
 Servers:
   serve lsp             Start the LSP server (stdio)
@@ -167,7 +168,6 @@ const registry: CommandDef[] = [
   // Dev subcommands
   { name: "dev generate", requiresPlugins: true, handler: runDevGenerate },
   { name: "dev publish", requiresPlugins: true, handler: runDevPublish },
-  { name: "dev rollback", requiresPlugins: true, handler: runDevRollback },
 
   // Serve subcommands
   { name: "serve lsp", requiresPlugins: true, handler: runServeLsp },
@@ -187,6 +187,16 @@ async function main(): Promise<void> {
   if (args.help || !args.command) {
     printHelp();
     process.exit(args.help ? 0 : 1);
+  }
+
+  // Initialize runtime adapter early — before plugins or commands run
+  const projectPath0 = resolve(args.path === "." ? "." : args.path);
+  try {
+    const { config } = await loadChantConfig(projectPath0);
+    initRuntime(config.runtime);
+  } catch {
+    // Config may not exist yet (e.g. `chant init`); auto-detect runtime
+    initRuntime();
   }
 
   const match = resolveCommand(args, registry);

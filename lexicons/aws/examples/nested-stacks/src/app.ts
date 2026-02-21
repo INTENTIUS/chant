@@ -6,7 +6,7 @@
 import { Function, Sub, AWS, Ref, nestedStack } from "@intentius/chant-lexicon-aws";
 
 // nestedStack() references a child project directory
-const network = nestedStack("network", import.meta.dir + "/network", {
+const network = nestedStack("network", import.meta.dirname + "/network", {
   parameters: { Environment: "prod" },
 });
 

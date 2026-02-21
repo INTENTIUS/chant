@@ -152,17 +152,6 @@ export function writeGeneratedFiles(result: GenerateResult, baseDir: string): vo
         "",
       ].join("\n"),
     },
-    snapshot: (generatedDir) => {
-      const { snapshotArtifacts, saveSnapshot } = require("./rollback");
-      const lexiconPath = join(generatedDir, "lexicon-aws.json");
-      if (existsSync(lexiconPath)) {
-        const snapshot = snapshotArtifacts(generatedDir);
-        if (Object.keys(snapshot.files).length > 0) {
-          const snapshotsDir = join(baseDir, ".snapshots");
-          saveSnapshot(snapshot, snapshotsDir);
-        }
-      }
-    },
   });
 }
 

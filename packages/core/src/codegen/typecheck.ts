@@ -4,6 +4,7 @@
 import { writeFileSync, mkdirSync, rmSync } from "fs";
 import { join } from "path";
 import { tmpdir } from "os";
+import { getRuntime } from "../runtime-adapter";
 
 export interface TypeCheckResult {
   ok: boolean;
@@ -39,17 +40,11 @@ export async function typecheckDTS(content: string): Promise<TypeCheckResult> {
     writeFileSync(join(dir, "tsconfig.json"), JSON.stringify(tsconfig, null, 2));
 
     // Run tsc
-    const proc = Bun.spawn(["bunx", "tsc", "--noEmit", "--project", "tsconfig.json"], {
-      cwd: dir,
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-
-    const [stdout, stderr] = await Promise.all([
-      new Response(proc.stdout).text(),
-      new Response(proc.stderr).text(),
-    ]);
-    const exitCode = await proc.exited;
+    const rt = getRuntime();
+    const { stdout, stderr, exitCode } = await rt.spawn(
+      [rt.commands.exec, "tsc", "--noEmit", "--project", "tsconfig.json"],
+      { cwd: dir },
+    );
 
     // Parse diagnostics from stdout (tsc writes errors to stdout)
     const output = stdout + stderr;

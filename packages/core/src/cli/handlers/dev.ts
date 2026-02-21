@@ -21,18 +21,10 @@ export async function runDevPublish(ctx: CommandContext): Promise<number> {
   return 0;
 }
 
-export async function runDevRollback(ctx: CommandContext): Promise<number> {
-  for (const plugin of ctx.plugins) {
-    await plugin.rollback({ verbose: ctx.args.verbose });
-    console.error(formatSuccess(`${plugin.name}: rollback complete`));
-  }
-  return 0;
-}
-
 export async function runDevUnknown(ctx: CommandContext): Promise<number> {
   console.error(formatError({
     message: `Unknown dev subcommand: ${ctx.args.path}`,
-    hint: "Available: chant dev generate, chant dev publish, chant dev rollback",
+    hint: "Available: chant dev generate, chant dev publish",
   }));
   return 1;
 }

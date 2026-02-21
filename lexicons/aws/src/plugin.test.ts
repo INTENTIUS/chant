@@ -174,9 +174,6 @@ describe("awsPlugin", () => {
       expect(typeof awsPlugin.package).toBe("function");
     });
 
-    test("rollback is a function", () => {
-      expect(typeof awsPlugin.rollback).toBe("function");
-    });
   });
 
   // -----------------------------------------------------------------------

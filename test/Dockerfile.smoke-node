@@ -1,0 +1,14 @@
+# Node.js smoke test — validates chant CLI under Node.js + tsx
+FROM node:22-slim
+WORKDIR /app
+
+RUN apt-get update && apt-get install -y jq curl && rm -rf /var/lib/apt/lists/*
+RUN npm i -g tsx
+
+COPY . .
+RUN npm install
+
+COPY test/integration.sh /app/test/integration.sh
+RUN chmod +x /app/test/integration.sh && CHANT_RUNTIME=node /app/test/integration.sh
+
+CMD ["bash"]

@@ -40,7 +40,6 @@ describe("initLexiconCommand", () => {
       "src/codegen/generate-cli.ts",
       "src/codegen/naming.ts",
       "src/codegen/package.ts",
-      "src/codegen/rollback.ts",
       "src/codegen/docs.ts",
       "src/spec/fetch.ts",
       "src/spec/parse.ts",
@@ -65,7 +64,6 @@ describe("initLexiconCommand", () => {
       "docs/src/content/docs/index.mdx",
       "src/generated/.gitkeep",
       "examples/getting-started/.gitkeep",
-      ".snapshots/.gitkeep",
     ];
 
     for (const file of expectedFiles) {
@@ -83,7 +81,6 @@ describe("initLexiconCommand", () => {
     expect(pluginContent).toContain("async validate(");
     expect(pluginContent).toContain("async coverage(");
     expect(pluginContent).toContain("async package(");
-    expect(pluginContent).toContain("async rollback(");
   });
 
   test("package name uses the provided lexicon name", async () => {
