@@ -7,6 +7,10 @@
  */
 import { dirname } from "path";
 import { fileURLToPath } from "url";
+import { createHash } from "crypto";
+import { execFile } from "child_process";
+// @ts-ignore — picomatch has no types declaration
+import picomatch from "picomatch";
 
 export interface SpawnResult {
   stdout: string;
@@ -90,19 +94,14 @@ class NodeRuntimeAdapter implements RuntimeAdapter {
   }
 
   hash(content: string): string {
-    // Dynamic import to avoid pulling in crypto under Bun
-    const { createHash } = require("crypto") as typeof import("crypto");
     return createHash("sha256").update(content).digest("hex");
   }
 
   globMatch(pattern: string, filePath: string): boolean {
-    // picomatch is a regular dependency, only loaded under Node
-    const picomatch = require("picomatch") as typeof import("picomatch");
     return picomatch(pattern)(filePath);
   }
 
   async spawn(cmd: string[], opts?: { cwd?: string }): Promise<SpawnResult> {
-    const { execFile } = require("child_process") as typeof import("child_process");
     return new Promise((resolve) => {
       execFile(cmd[0], cmd.slice(1), { cwd: opts?.cwd, maxBuffer: 10 * 1024 * 1024 }, (err, stdout, stderr) => {
         resolve({

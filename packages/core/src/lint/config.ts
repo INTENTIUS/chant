@@ -1,5 +1,6 @@
 import { readFileSync, existsSync } from "fs";
 import { join, dirname, resolve } from "path";
+import { createRequire } from "module";
 import { z } from "zod";
 import type { Severity, RuleConfig } from "./rule";
 import { moduleDir, getRuntime } from "../runtime-adapter";
@@ -308,11 +309,12 @@ function loadConfigFile(configPath: string, visited: Set<string> = new Set()): L
  * @returns Loaded and merged configuration, or default config if not found
  */
 export function loadConfig(dir: string): LintConfig {
-  // Try chant.config.ts first — Bun supports synchronous require() for .ts
+  // Try chant.config.ts first — Bun has native require() for .ts, Node uses tsx's loader
   const tsConfigPath = join(dir, "chant.config.ts");
   if (existsSync(tsConfigPath)) {
     try {
-      const mod = require(tsConfigPath);
+      const _require = createRequire(join(dir, "package.json"));
+      const mod = _require(tsConfigPath);
       const config = mod.default ?? mod.config ?? mod;
       if (typeof config === "object" && config !== null) {
         // ChantConfig format: extract lint property

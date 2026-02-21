@@ -1,5 +1,7 @@
+import { createRequire } from "module";
 import type { HoverContext, HoverInfo } from "@intentius/chant/lsp/types";
 import { LexiconIndex, lexiconHover, type LexiconEntry } from "@intentius/chant/lsp/lexicon-providers";
+const require = createRequire(import.meta.url);
 
 let cachedIndex: LexiconIndex | null = null;
 

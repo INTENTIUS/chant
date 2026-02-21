@@ -1,4 +1,6 @@
+import { createRequire } from "module";
 import type { TemplateIR, ResourceIR, ParameterIR } from "@intentius/chant/import/parser";
+const require = createRequire(import.meta.url);
 import type { TypeScriptGenerator, GeneratedFile } from "@intentius/chant/import/generator";
 import { topoSort } from "@intentius/chant/codegen/topo-sort";
 import { hasIntrinsicInValue, irUsesIntrinsic, collectDependencies } from "@intentius/chant/import/ir-utils";

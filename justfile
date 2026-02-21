@@ -34,13 +34,16 @@ docs-lexicon lexicon:
 bench:
     bun test bench
 
-# Build and run smoke test container (drops into bash at getting-started example)
-smoke:
-    docker build -f test/Dockerfile.smoke -t chant-smoke . && docker run -it --rm -v "$HOME/.claude:/root/.claude" -v "$HOME/.claude.json:/root/.claude.json" chant-smoke
+# Build and run Bun smoke test (drops into bash at getting-started example)
+smoke-bun:
+    docker build -f test/Dockerfile.smoke -t chant-smoke-bun . && docker run -it --rm -v "$HOME/.claude:/root/.claude" -v "$HOME/.claude.json:/root/.claude.json" chant-smoke-bun
 
-# Build and run Node.js smoke test container
+# Build and run Node.js smoke test
 smoke-node:
     docker build -f test/Dockerfile.smoke-node -t chant-smoke-node . && docker run -it --rm chant-smoke-node
+
+# Run all smoke tests
+smoke: smoke-bun smoke-node
 
 # Build unified documentation site (main + lexicon docs)
 docs-build:

@@ -3,7 +3,9 @@
  * with GitLab-specific manifest building and skill collection.
  */
 
+import { createRequire } from "module";
 import { readFileSync } from "fs";
+const require = createRequire(import.meta.url);
 import { join, dirname } from "path";
 import { fileURLToPath } from "url";
 import type { IntrinsicDef } from "@intentius/chant/lexicon";

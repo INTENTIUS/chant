@@ -11,6 +11,8 @@
  * - required_xor: exactly one of the listed properties must exist
  */
 
+import { readFileSync } from "fs";
+import { join } from "path";
 import type { PostSynthCheck, PostSynthContext, PostSynthDiagnostic } from "@intentius/chant/lint/post-synth";
 import { parseCFTemplate, type CFResource } from "./cf-refs";
 
@@ -34,10 +36,6 @@ interface LexiconEntry {
 function loadLexiconConstraints(): Map<string, ExtensionConstraint[]> {
   const map = new Map<string, ExtensionConstraint[]>();
   try {
-    const { readFileSync } = require("fs");
-    const { join, dirname } = require("path");
-    const { fileURLToPath } = require("url");
-
     // Navigate from src/lint/post-synth/ up to the package root
     const pkgDir = join(__dirname, "..", "..", "..");
     const lexiconPath = join(pkgDir, "src", "generated", "lexicon-aws.json");

@@ -8,7 +8,7 @@
     "access": "public"
   },
   "bin": {
-    "chant": "./bin/chant.mjs"
+    "chant": "./bin/chant"
   },
   "exports": {
     ".": "./src/index.ts",

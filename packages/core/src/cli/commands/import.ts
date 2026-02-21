@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, writeFileSync, readFileSync } from "fs";
+import { existsSync, mkdirSync, writeFileSync, readFileSync, readdirSync } from "fs";
 import { join, resolve, basename } from "path";
 import { formatSuccess, formatWarning, formatError } from "../format";
 import type { TemplateIR, ResourceIR, TemplateParser } from "../../import/parser";
@@ -266,7 +266,7 @@ export async function importCommand(options: ImportOptions): Promise<ImportResul
 
   // Check output directory
   if (existsSync(outputDir) && !options.force) {
-    const files = require("fs").readdirSync(outputDir);
+    const files = readdirSync(outputDir);
     if (files.length > 0) {
       warnings.push(`Output directory ${outputDir} is not empty. Use --force to overwrite.`);
     }

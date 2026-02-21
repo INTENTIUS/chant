@@ -1,4 +1,6 @@
+import { createRequire } from "module";
 import type { LexiconPlugin, IntrinsicDef, SkillDefinition } from "@intentius/chant/lexicon";
+const require = createRequire(import.meta.url);
 import type { LintRule } from "@intentius/chant/lint/rule";
 import type { PostSynthCheck } from "@intentius/chant/lint/post-synth";
 import type { TemplateParser } from "@intentius/chant/import/parser";

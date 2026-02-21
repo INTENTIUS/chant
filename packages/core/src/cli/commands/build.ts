@@ -5,7 +5,7 @@ import { runPostSynthChecks } from "../../lint/post-synth";
 import type { PostSynthCheck } from "../../lint/post-synth";
 import { formatError, formatWarning, formatSuccess, formatBold, formatInfo } from "../format";
 import { writeFileSync } from "fs";
-import { resolve } from "path";
+import { resolve, dirname, join } from "path";
 import { watchDirectory, formatTimestamp, formatChangedFiles } from "../watch";
 
 /**
@@ -172,7 +172,6 @@ export async function buildCommand(options: BuildOptions): Promise<BuildResult> 
 
         // Write additional files (e.g. nested stack templates) alongside the primary output
         if (additionalFiles.size > 0) {
-          const { dirname, join } = require("path");
           const outputDir = dirname(outputPath);
           for (const [filename, content] of additionalFiles) {
             let fileContent = content;

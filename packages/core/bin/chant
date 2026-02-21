@@ -1,0 +1,20 @@
+#!/bin/sh
+# Cross-runtime CLI wrapper. Tries bun first, falls back to npx tsx.
+set -e
+
+# Resolve symlinks to find the real script location
+SELF="$0"
+while [ -L "$SELF" ]; do
+  DIR="$(cd "$(dirname "$SELF")" && pwd)"
+  SELF="$(readlink "$SELF")"
+  # Handle relative symlink targets
+  case "$SELF" in /*) ;; *) SELF="$DIR/$SELF" ;; esac
+done
+SCRIPT_DIR="$(cd "$(dirname "$SELF")" && pwd)"
+MAIN_TS="$SCRIPT_DIR/../src/cli/main.ts"
+
+if command -v bun >/dev/null 2>&1; then
+  exec bun "$MAIN_TS" "$@"
+else
+  exec npx tsx "$MAIN_TS" "$@"
+fi
