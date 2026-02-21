@@ -1,10 +1,22 @@
 import { existsSync, mkdirSync, writeFileSync, readdirSync, readFileSync } from "fs";
-import { join, resolve } from "path";
+import { join, resolve, dirname } from "path";
+import { fileURLToPath } from "url";
 import { homedir } from "os";
 import { createInterface } from "readline";
 import { z } from "zod";
 import { formatSuccess, formatWarning } from "../format";
 import { loadPlugin } from "../plugins";
+
+/** Read the current chant package version from our own package.json. */
+function getChantVersion(): string {
+  try {
+    const pkgDir = dirname(dirname(dirname(dirname(dirname(fileURLToPath(import.meta.url))))));
+    const pkg = JSON.parse(readFileSync(join(pkgDir, "package.json"), "utf-8"));
+    return pkg.version ?? "0.0.8";
+  } catch {
+    return "0.0.8";
+  }
+}
 
 /**
  * Schema for validating generated package.json — catches template bugs early.
@@ -82,14 +94,15 @@ function getMcpConfigDir(ide: "claude-code" | "cursor" | "generic"): string {
  * Generate package.json content
  */
 function generatePackageJson(lexicon: string): string {
+  const ver = getChantVersion();
   const dependencies: Record<string, string> = {
-    "@intentius/chant": "^0.1.0",
-    [`@intentius/chant-lexicon-${lexicon}`]: "^0.1.0",
+    "@intentius/chant": `^${ver}`,
+    [`@intentius/chant-lexicon-${lexicon}`]: `^${ver}`,
   };
 
   const pkg = {
     name: "chant-project",
-    version: "0.1.0",
+    version: ver,
     type: "module" as const,
     scripts: {
       build: `chant build src --lexicon ${lexicon}`,
