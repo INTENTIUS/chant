@@ -23,7 +23,7 @@ export function collectEntities(
     for (const [name, value] of Object.entries(exports)) {
       if (isDeclarable(value)) {
         if (entities.has(name)) {
-          // Same object re-exported from multiple files (e.g. barrel re-exports) is fine
+          // Same object re-exported from multiple files (e.g. re-exports from multiple files) is fine
           if (entities.get(name) !== value) {
             throw new DiscoveryError(
               file,

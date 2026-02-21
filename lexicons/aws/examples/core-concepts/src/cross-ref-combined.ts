@@ -2,7 +2,7 @@ import { ManagedPolicy } from "@intentius/chant-lexicon-aws";
 import { dataBucket } from "./cross-ref-storage";
 import { accessRole } from "./cross-ref-policy";
 
-export const barrelReadPolicy = new ManagedPolicy({
+export const combinedReadPolicy = new ManagedPolicy({
   PolicyDocument: {
     Statement: [{
       Effect: "Allow",

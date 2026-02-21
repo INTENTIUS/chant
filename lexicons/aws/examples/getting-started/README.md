@@ -16,16 +16,16 @@ bun run build
 
 ```
 src/
-├── _.ts              # Shared config: encryption, versioning, public access
-├── data-bucket.ts    # Data bucket (uses barrel)
-├── logs-bucket.ts    # Logs bucket (uses barrel)
+├── defaults.ts       # Shared config: encryption, versioning, public access
+├── data-bucket.ts    # Data bucket (uses shared defaults)
+├── logs-bucket.ts    # Logs bucket (uses shared defaults)
 ├── role.ts           # IAM role + assume policy
 └── handler.ts        # Lambda function (references bucket + role)
 ```
 
 ## Patterns Demonstrated
 
-1. **Flat declarations** — every sub-resource is its own named export (`_.ts`)
-2. **Barrel sharing** — `import * as _ from "./_"` shares config across files
+1. **Flat declarations** — every sub-resource is its own named export
+2. **Shared config** — `defaults.ts` shares config across files via direct imports
 3. **Cross-resource references** — `dataBucket.arn` and `functionRole.arn` serialize to `Fn::GetAtt`
 4. **Intrinsics** — `aws.Sub` for dynamic naming with pseudo-parameters

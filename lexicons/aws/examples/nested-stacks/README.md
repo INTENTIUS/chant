@@ -14,10 +14,8 @@ bun run build
 
 ```
 src/
-├── _.ts              # Parent barrel
 ├── app.ts            # Lambda function (references network outputs)
 └── network/          # Child project (nested stack)
-    ├── _.ts          # Child barrel
     ├── vpc.ts        # VPC, subnet, internet gateway, route table
     ├── security.ts   # Security group for Lambda
     └── outputs.ts    # stackOutput() declarations
@@ -25,7 +23,7 @@ src/
 
 ## Patterns Demonstrated
 
-1. **Child project** — `network/` has its own barrel and builds independently
+1. **Child project** — `network/` has its own config and builds independently
 2. **`stackOutput()`** — child declares which values the parent can reference
 3. **`nestedStack()`** — parent references the child directory, gets an `outputs` proxy
 4. **Cross-stack references** — `network.outputs.subnetId` serializes to `Fn::GetAtt` on `AWS::CloudFormation::Stack`

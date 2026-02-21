@@ -176,7 +176,7 @@ describe("initCommand", () => {
     });
   });
 
-  test("does not generate barrel file", async () => {
+  test("does not generate re-export file", async () => {
     await withTestDir(async (testDir) => {
       const options: InitOptions = {
         path: testDir,
@@ -187,9 +187,9 @@ describe("initCommand", () => {
 
       await initCommand(options);
 
-      // No _.ts barrel — direct imports are used instead
-      const barrelPath = join(testDir, "src", "_.ts");
-      expect(existsSync(barrelPath)).toBe(false);
+      // No _.ts re-export — direct imports are used instead
+      const reexportPath = join(testDir, "src", "_.ts");
+      expect(existsSync(reexportPath)).toBe(false);
 
       // No index.ts either
       const indexPath = join(testDir, "src", "index.ts");

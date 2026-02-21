@@ -161,7 +161,7 @@ The lexicon provides 3 resource types and 13 property types:
 
 Extract reusable objects into a shared config file and import them across your pipeline files:
 
-{{file:docs-snippets/src/pipeline-barrel.ts}}
+{{file:docs-snippets/src/pipeline-shared-config.ts}}
 
 ## Jobs
 
@@ -338,9 +338,9 @@ lint:
     - npm run lint
 \`\`\`
 
-### When to use \`reference()\` vs barrel imports
+### When to use \`reference()\` vs direct imports
 
-{{file:docs-snippets/src/reference-vs-barrel.ts}}
+{{file:docs-snippets/src/reference-vs-import.ts}}
 `,
       },
       {
@@ -537,11 +537,10 @@ deploy:
 
 **Patterns demonstrated:**
 
-1. **Barrel file** — single import point for lexicon types and shared config
-2. **Shared config** — reusable images, caches, artifacts, and rules extracted into \`config.ts\`
-3. **Conditional execution** — merge request and branch rules control when jobs run
-4. **Manual deployment** — deploy requires manual trigger on the default branch
-5. **JUnit reports** — test artifacts include JUnit XML for GitLab MR display
+1. **Shared config** — reusable images, caches, artifacts, and rules extracted into \`config.ts\`
+2. **Conditional execution** — merge request and branch rules control when jobs run
+3. **Manual deployment** — deploy requires manual trigger on the default branch
+4. **JUnit reports** — test artifacts include JUnit XML for GitLab MR display
 `,
       },
       {

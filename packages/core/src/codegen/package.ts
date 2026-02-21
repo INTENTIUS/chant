@@ -113,7 +113,7 @@ export async function packagePipeline(
 /**
  * Collect lint rule source files from a lexicon package.
  * Auto-discovers .ts files in the specified directories,
- * skipping test files, barrel files (index.ts), and non-.ts files.
+ * skipping test files, re-export files (index.ts), and non-.ts files.
  */
 export function collectRules(
   srcDir: string,

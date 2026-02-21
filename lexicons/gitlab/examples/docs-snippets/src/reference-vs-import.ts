@@ -2,7 +2,7 @@ import { Job, reference } from "@intentius/chant-lexicon-gitlab";
 import { npmCache, testArtifacts } from "./config";
 
 // Preferred for chant-managed config — resolved at build time
-export const testBarrel = new Job({
+export const testImported = new Job({
   cache: npmCache,
   artifacts: testArtifacts,
   script: ["npm test"],

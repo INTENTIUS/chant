@@ -213,7 +213,7 @@ describe("detectLexicons", () => {
   });
 
   test("detects lexicon from export statement", async () => {
-    const file = join(testDir, "barrel.ts");
+    const file = join(testDir, "reexport.ts");
     await writeFile(
       file,
       'export * from "@intentius/chant-lexicon-testdom";\nimport * as core from "@intentius/chant";'
@@ -224,7 +224,7 @@ describe("detectLexicons", () => {
   });
 
   test("detects lexicon from export with curly braces", async () => {
-    const file = join(testDir, "barrel.ts");
+    const file = join(testDir, "reexport.ts");
     await writeFile(
       file,
       'export { Bucket, Interpolate } from "@intentius/chant-lexicon-testdom";'
