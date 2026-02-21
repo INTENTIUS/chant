@@ -72,6 +72,14 @@ export const LexiconEntrySchema = z.object({
   createOnly: z.array(z.string()).optional(),
   writeOnly: z.array(z.string()).optional(),
   primaryIdentifier: z.array(z.string()).optional(),
+  deprecatedProperties: z.array(z.string()).optional(),
+  conditionalCreateOnly: z.array(z.string()).optional(),
+  replacementStrategy: z.enum(["delete_then_create", "create_then_delete"]).optional(),
+  tagging: z.object({
+    taggable: z.boolean(),
+    tagOnCreate: z.boolean(),
+    tagUpdatable: z.boolean(),
+  }).optional(),
   runtimeDeprecations: z.record(z.string(), z.string()).optional(),
 });
 

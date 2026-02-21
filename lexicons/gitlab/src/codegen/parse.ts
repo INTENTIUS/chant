@@ -46,6 +46,7 @@ export interface ParsedResource {
   description?: string;
   properties: ParsedProperty[];
   attributes: Array<{ name: string; tsType: string }>;
+  deprecatedProperties: string[];
 }
 
 export interface GitLabParseResult {
@@ -204,12 +205,15 @@ function extractResourceEntity(
   // Extract nested property types from definition properties
   const { propertyTypes, enums } = extractNestedTypes(objectDef, shortName, schema);
 
+  const deprecatedProperties = mineDeprecatedProperties(properties);
+
   return {
     resource: {
       typeName: entity.typeName,
       description: entity.description ?? objectDef.description,
       properties,
       attributes: [], // CI entities have no read-only attributes
+      deprecatedProperties,
     },
     propertyTypes,
     enums,
@@ -237,6 +241,7 @@ function extractPropertyEntity(
         description: entity.description ?? def.description,
         properties: [],
         attributes: [],
+        deprecatedProperties: [],
       },
       propertyTypes: [],
       enums: [],
@@ -248,6 +253,7 @@ function extractPropertyEntity(
   const shortName = gitlabShortName(entity.typeName);
 
   const { propertyTypes, enums } = extractNestedTypes(objectDef, shortName, schema);
+  const deprecatedProperties = mineDeprecatedProperties(properties);
 
   return {
     resource: {
@@ -255,6 +261,7 @@ function extractPropertyEntity(
       description: entity.description ?? objectDef.description,
       properties,
       attributes: [],
+      deprecatedProperties,
     },
     propertyTypes,
     enums,
@@ -510,6 +517,21 @@ function extractNestedTypes(
   // The main nested types (Artifacts, Cache, etc.) are extracted as
   // top-level property entities instead.
   return { propertyTypes: [], enums: [] };
+}
+
+const DEPRECATION_RE = /\bDeprecated\b|\bdeprecated\b|\blegacy\b|no longer (available|recommended|used|supported)|is not recommended/i;
+
+/**
+ * Mine property descriptions for deprecation signals.
+ */
+function mineDeprecatedProperties(properties: ParsedProperty[]): string[] {
+  const deprecated: string[] = [];
+  for (const prop of properties) {
+    if (prop.description && DEPRECATION_RE.test(prop.description)) {
+      deprecated.push(prop.name);
+    }
+  }
+  return deprecated;
 }
 
 /**

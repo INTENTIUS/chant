@@ -19,6 +19,10 @@ export interface LexiconEntry {
   createOnly?: string[];
   writeOnly?: string[];
   primaryIdentifier?: string[];
+  deprecatedProperties?: string[];
+  conditionalCreateOnly?: string[];
+  replacementStrategy?: "delete_then_create" | "create_then_delete";
+  tagging?: { taggable: boolean; tagOnCreate: boolean; tagUpdatable: boolean };
 }
 
 // ── LexiconIndex ───────────────────────────────────────────────────
@@ -109,8 +113,10 @@ export function lexiconCompletions(
 
   if (constructorMatch) {
     const className = constructorMatch[1];
+    const entry = index.getEntry(className);
     const props = index.getPropertyNames(className);
     if (props.length > 0) {
+      const deprecatedSet = new Set(entry?.deprecatedProperties ?? []);
       const filtered = wordAtCursor
         ? props.filter((p) => p.toLowerCase().startsWith(wordAtCursor.toLowerCase()))
         : props;
@@ -119,6 +125,7 @@ export function lexiconCompletions(
         insertText: p,
         kind: "property" as const,
         detail: `Property of ${className}`,
+        ...(deprecatedSet.has(p) && { deprecated: true }),
       }));
     }
   }

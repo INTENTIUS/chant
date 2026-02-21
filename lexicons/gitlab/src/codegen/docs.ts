@@ -403,6 +403,12 @@ Flags jobs where all \`rules:\` entries have \`when: "never"\`, making the job u
 
 {{file:docs-snippets/src/lint-wgl011.ts}}
 
+### WGL012 — Deprecated property usage
+
+**Severity:** warning
+
+Flags properties marked as deprecated in the GitLab CI schema. Deprecation signals are mined from property descriptions (keywords like "deprecated", "legacy", "no longer available"). Using deprecated properties may cause unexpected behavior in future GitLab versions.
+
 ## Running lint
 
 \`\`\`bash
@@ -571,7 +577,7 @@ The \`chant-gitlab\` skill covers the full deployment lifecycle:
 - **Status** — GitLab UI or pipelines API
 - **Retry** — retry failed jobs via UI or API
 - **Cancel** — cancel running pipelines via API
-- **Troubleshooting** — job logs, lint rule codes (WGL001–WGL004), post-synth checks (WGL010, WGL011)
+- **Troubleshooting** — job logs, lint rule codes (WGL001–WGL004), post-synth checks (WGL010–WGL012)
 
 The skill is invocable as a slash command: \`/chant-gitlab\`
 

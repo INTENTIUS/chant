@@ -106,6 +106,9 @@ export const dataBucket = new Bucket({
 `,
       "logs-bucket.ts": `/**
  * Logs bucket — log delivery with encryption and versioning
+ *
+ * Note: AccessControl is a legacy property. Use a bucket policy to grant
+ * log delivery access instead (s3:PutObject permission for the logging service principal).
  */
 
 import { Bucket, Sub, AWS } from "@intentius/chant-lexicon-aws";
@@ -113,7 +116,6 @@ import { versioningEnabled, bucketEncryption, publicAccessBlock } from "./config
 
 export const logsBucket = new Bucket({
   BucketName: Sub\`\${AWS.StackName}-\${AWS.AccountId}-logs\`,
-  AccessControl: "LogDeliveryWrite",
   VersioningConfiguration: versioningEnabled,
   BucketEncryption: bucketEncryption,
   PublicAccessBlockConfiguration: publicAccessBlock,
@@ -163,7 +165,9 @@ export const logsBucket = new Bucket({
     const { waw013 } = require("./lint/post-synth/waw013");
     const { waw014 } = require("./lint/post-synth/waw014");
     const { waw015 } = require("./lint/post-synth/waw015");
-    return [waw010, waw011, cor020, ext001, waw013, waw014, waw015];
+    const { waw016 } = require("./lint/post-synth/waw016");
+    const { waw017 } = require("./lint/post-synth/waw017");
+    return [waw010, waw011, cor020, ext001, waw013, waw014, waw015, waw016, waw017];
   },
 
   async generate(options?: { verbose?: boolean }): Promise<void> {

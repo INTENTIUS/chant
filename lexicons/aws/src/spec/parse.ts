@@ -52,6 +52,10 @@ export interface ParsedResource {
   createOnly: string[];
   writeOnly: string[];
   primaryIdentifier: string[];
+  deprecatedProperties: string[];
+  conditionalCreateOnly: string[];
+  replacementStrategy?: "delete_then_create" | "create_then_delete";
+  tagging?: { taggable: boolean; tagOnCreate: boolean; tagUpdatable: boolean };
 }
 
 export interface SchemaParseResult {
@@ -137,6 +141,38 @@ export function parseCFNSchema(data: string | Buffer): SchemaParseResult {
     }
   }
 
+  // --- Deprecated properties: explicit + description-mined ---
+  const deprecatedSet = new Set<string>(
+    stripPointerPaths(schema.deprecatedProperties ?? []),
+  );
+
+  const DEPRECATION_RE = /\bdeprecated\b|\blegacy\b|no longer (available|recommended|used|supported)|is not recommended|has been discontinued/i;
+
+  // Mine top-level property descriptions
+  if (schema.properties) {
+    for (const [name, prop] of Object.entries(schema.properties)) {
+      if (prop.description && DEPRECATION_RE.test(prop.description)) {
+        deprecatedSet.add(name);
+      }
+    }
+  }
+
+  // --- Tagging ---
+  let tagging: ParsedResource["tagging"];
+  if (schema.tagging && schema.tagging.taggable) {
+    tagging = {
+      taggable: true,
+      tagOnCreate: schema.tagging.tagOnCreate ?? false,
+      tagUpdatable: schema.tagging.tagUpdatable ?? false,
+    };
+  }
+
+  // --- Replacement strategy ---
+  let replacementStrategy: ParsedResource["replacementStrategy"];
+  if (schema.replacementStrategy === "delete_then_create" || schema.replacementStrategy === "create_then_delete") {
+    replacementStrategy = schema.replacementStrategy;
+  }
+
   return {
     resource: {
       typeName: schema.typeName,
@@ -145,6 +181,10 @@ export function parseCFNSchema(data: string | Buffer): SchemaParseResult {
       createOnly: stripPointerPaths(schema.createOnlyProperties ?? []),
       writeOnly: stripPointerPaths(schema.writeOnlyProperties ?? []),
       primaryIdentifier: stripPointerPaths(schema.primaryIdentifier ?? []),
+      deprecatedProperties: [...deprecatedSet],
+      conditionalCreateOnly: stripPointerPaths(schema.conditionalCreateOnlyProperties ?? []),
+      ...(replacementStrategy && { replacementStrategy }),
+      ...(tagging && { tagging }),
     },
     propertyTypes,
     enums,

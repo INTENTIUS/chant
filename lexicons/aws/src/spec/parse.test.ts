@@ -20,6 +20,7 @@ const sampleBucketSchema = JSON.stringify({
     },
     AccessControl: {
       type: "string",
+      description: "This is a legacy property, and it is not recommended for most use cases.",
       enum: ["Private", "PublicRead", "PublicReadWrite"],
     },
   },
@@ -42,6 +43,7 @@ const sampleBucketSchema = JSON.stringify({
       additionalProperties: false,
     },
   },
+  deprecatedProperties: ["/properties/AccessControl"],
   readOnlyProperties: [
     "/properties/Arn",
     "/properties/DomainName",
@@ -133,6 +135,145 @@ describe("parseCFNSchema", () => {
     expect(result.resource.typeName).toBe("AWS::Test::Empty");
     expect(result.resource.properties).toEqual([]);
     expect(result.resource.attributes).toEqual([]);
+  });
+
+  // --- Deprecated properties ---
+
+  test("parses explicit deprecatedProperties", () => {
+    const result = parseCFNSchema(sampleBucketSchema);
+    expect(result.resource.deprecatedProperties).toContain("AccessControl");
+  });
+
+  test("mines deprecation from property description", () => {
+    const schema = JSON.stringify({
+      typeName: "AWS::Test::DescMined",
+      properties: {
+        OldProp: { type: "string", description: "This property is deprecated. Use NewProp instead." },
+        NewProp: { type: "string", description: "The replacement property" },
+      },
+      additionalProperties: false,
+    });
+    const result = parseCFNSchema(schema);
+    expect(result.resource.deprecatedProperties).toContain("OldProp");
+    expect(result.resource.deprecatedProperties).not.toContain("NewProp");
+  });
+
+  test("mines 'legacy' keyword from description", () => {
+    const schema = JSON.stringify({
+      typeName: "AWS::Test::Legacy",
+      properties: {
+        LegacyProp: { type: "string", description: "This is a legacy property, not recommended." },
+      },
+      additionalProperties: false,
+    });
+    const result = parseCFNSchema(schema);
+    expect(result.resource.deprecatedProperties).toContain("LegacyProp");
+  });
+
+  test("deduplicates when both explicit and description flag same property", () => {
+    // sampleBucketSchema has AccessControl in both deprecatedProperties array and description
+    const result = parseCFNSchema(sampleBucketSchema);
+    const count = result.resource.deprecatedProperties.filter((p) => p === "AccessControl").length;
+    expect(count).toBe(1);
+  });
+
+  test("empty deprecatedProperties when none found", () => {
+    const schema = JSON.stringify({
+      typeName: "AWS::Test::Clean",
+      properties: {
+        Name: { type: "string", description: "A normal property" },
+      },
+      additionalProperties: false,
+    });
+    const result = parseCFNSchema(schema);
+    expect(result.resource.deprecatedProperties).toEqual([]);
+  });
+
+  // --- Tagging metadata ---
+
+  test("parses tagging metadata when taggable", () => {
+    const schema = JSON.stringify({
+      typeName: "AWS::Test::Taggable",
+      properties: { Tags: { type: "array" } },
+      tagging: { taggable: true, tagOnCreate: true, tagUpdatable: true },
+      additionalProperties: false,
+    });
+    const result = parseCFNSchema(schema);
+    expect(result.resource.tagging).toEqual({
+      taggable: true,
+      tagOnCreate: true,
+      tagUpdatable: true,
+    });
+  });
+
+  test("omits tagging when not taggable", () => {
+    const schema = JSON.stringify({
+      typeName: "AWS::Test::NotTaggable",
+      properties: { Name: { type: "string" } },
+      tagging: { taggable: false },
+      additionalProperties: false,
+    });
+    const result = parseCFNSchema(schema);
+    expect(result.resource.tagging).toBeUndefined();
+  });
+
+  test("omits tagging when absent", () => {
+    const schema = JSON.stringify({
+      typeName: "AWS::Test::NoTagging",
+      properties: { Name: { type: "string" } },
+      additionalProperties: false,
+    });
+    const result = parseCFNSchema(schema);
+    expect(result.resource.tagging).toBeUndefined();
+  });
+
+  // --- Replacement strategy ---
+
+  test("parses replacementStrategy", () => {
+    const schema = JSON.stringify({
+      typeName: "AWS::Test::DeleteFirst",
+      properties: { Name: { type: "string" } },
+      replacementStrategy: "delete_then_create",
+      additionalProperties: false,
+    });
+    const result = parseCFNSchema(schema);
+    expect(result.resource.replacementStrategy).toBe("delete_then_create");
+  });
+
+  test("omits replacementStrategy when absent", () => {
+    const schema = JSON.stringify({
+      typeName: "AWS::Test::NoStrategy",
+      properties: { Name: { type: "string" } },
+      additionalProperties: false,
+    });
+    const result = parseCFNSchema(schema);
+    expect(result.resource.replacementStrategy).toBeUndefined();
+  });
+
+  // --- Conditional create-only ---
+
+  test("parses conditionalCreateOnlyProperties", () => {
+    const schema = JSON.stringify({
+      typeName: "AWS::Test::ConditionalCreate",
+      properties: {
+        Name: { type: "string" },
+        Engine: { type: "string" },
+      },
+      conditionalCreateOnlyProperties: ["/properties/Engine"],
+      additionalProperties: false,
+    });
+    const result = parseCFNSchema(schema);
+    expect(result.resource.conditionalCreateOnly).toContain("Engine");
+  });
+
+  test("empty conditionalCreateOnly when absent", () => {
+    const schema = JSON.stringify({
+      typeName: "AWS::Test::NoConditional",
+      properties: { Name: { type: "string" } },
+      additionalProperties: false,
+    });
+    const result = parseCFNSchema(schema);
+    expect(result.resource.conditionalCreateOnly).toEqual([]);
   });
 });
 

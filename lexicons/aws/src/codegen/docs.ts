@@ -656,6 +656,28 @@ Flags \`nestedStack()\` references whose outputs are never used from the parent.
 
 Detects circular references between child projects (e.g. project A references project B which references project A). Circular project dependencies cause infinite build recursion.
 
+### WAW016 — Deprecated Property Usage
+
+**Severity:** warning | **Category:** correctness
+
+Flags properties marked as deprecated in the CloudFormation Registry. Data comes from two sources: the explicit \`deprecatedProperties\` array in the Registry schema, and description text mining (keywords like "deprecated", "legacy", "no longer recommended").
+
+For example, \`AccessControl\` on \`AWS::S3::Bucket\` is a legacy property — use a bucket policy to grant access instead.
+
+\`\`\`
+WAW016: Resource "MyBucket" (AWS::S3::Bucket) uses deprecated property "AccessControl" — consider alternatives
+\`\`\`
+
+### WAW017 — Missing Tags on Taggable Resource
+
+**Severity:** info | **Category:** best practice
+
+Flags resources that support tagging but have no \`Tags\` property set. Tags are important for cost allocation, compliance, and operational visibility. The check uses the \`tagging\` metadata from the CloudFormation Registry to determine which resources are taggable.
+
+\`\`\`
+WAW017: Resource "MyBucket" (AWS::S3::Bucket) supports tagging but has no Tags — consider adding tags for cost allocation and compliance
+\`\`\`
+
 ## Running lint
 
 \`\`\`bash

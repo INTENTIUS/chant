@@ -31,6 +31,7 @@ export interface CompletionItem {
   kind?: CompletionItemKind;
   detail?: string;
   documentation?: string;
+  deprecated?: boolean;
 }
 
 export interface CompletionContext {

@@ -15,6 +15,16 @@ export interface CFNSchema {
   createOnlyProperties?: string[];
   writeOnlyProperties?: string[];
   primaryIdentifier?: string[];
+  deprecatedProperties?: string[];
+  conditionalCreateOnlyProperties?: string[];
+  replacementStrategy?: string;
+  tagging?: {
+    taggable?: boolean;
+    tagOnCreate?: boolean;
+    tagUpdatable?: boolean;
+    cloudFormationSystemTags?: boolean;
+    tagProperty?: string;
+  };
   additionalProperties?: boolean;
 }
 

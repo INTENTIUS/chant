@@ -27,7 +27,8 @@ export const gitlabPlugin: LexiconPlugin = {
   postSynthChecks(): PostSynthCheck[] {
     const { wgl010 } = require("./lint/post-synth/wgl010");
     const { wgl011 } = require("./lint/post-synth/wgl011");
-    return [wgl010, wgl011];
+    const { wgl012 } = require("./lint/post-synth/wgl012");
+    return [wgl010, wgl011, wgl012];
   },
 
   intrinsics(): IntrinsicDef[] {

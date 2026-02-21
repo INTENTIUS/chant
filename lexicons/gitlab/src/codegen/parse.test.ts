@@ -141,6 +141,51 @@ describe("property types and enums", () => {
   });
 });
 
+describe("deprecatedProperties", () => {
+  test("all entities have a deprecatedProperties array", () => {
+    const results = parseCISchema(fixture);
+    for (const r of results) {
+      expect(Array.isArray(r.resource.deprecatedProperties)).toBe(true);
+    }
+  });
+
+  test("mines deprecation from property description", () => {
+    const schema = JSON.stringify({
+      definitions: {
+        job_template: {
+          properties: {
+            script: { type: "string" },
+            oldProp: { type: "string", description: "Deprecated in 12.0: use newProp instead." },
+            newProp: { type: "string", description: "The replacement property" },
+          },
+        },
+      },
+    });
+    const results = parseCISchema(schema);
+    const job = results.find((r) => r.resource.typeName === "GitLab::CI::Job");
+    expect(job).toBeDefined();
+    expect(job!.resource.deprecatedProperties).toContain("oldProp");
+    expect(job!.resource.deprecatedProperties).not.toContain("newProp");
+    expect(job!.resource.deprecatedProperties).not.toContain("script");
+  });
+
+  test("empty deprecatedProperties when no deprecation signals", () => {
+    const schema = JSON.stringify({
+      definitions: {
+        job_template: {
+          properties: {
+            script: { type: "string", description: "Commands to run" },
+            stage: { type: "string", description: "Pipeline stage" },
+          },
+        },
+      },
+    });
+    const results = parseCISchema(schema);
+    const job = results.find((r) => r.resource.typeName === "GitLab::CI::Job");
+    expect(job!.resource.deprecatedProperties).toEqual([]);
+  });
+});
+
 describe("edge cases", () => {
   test("empty schema returns empty results", () => {
     const emptySchema = JSON.stringify({ definitions: {} });

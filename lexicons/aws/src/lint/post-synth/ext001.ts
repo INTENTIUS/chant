@@ -16,7 +16,7 @@ import { join } from "path";
 import type { PostSynthCheck, PostSynthContext, PostSynthDiagnostic } from "@intentius/chant/lint/post-synth";
 import { parseCFTemplate, type CFResource } from "./cf-refs";
 
-interface ExtensionConstraint {
+export interface ExtensionConstraint {
   name: string;
   type: "if_then" | "dependent_excluded" | "required_or" | "required_xor";
   condition?: unknown;
@@ -25,7 +25,7 @@ interface ExtensionConstraint {
 
 interface LexiconEntry {
   kind: string;
-  cfn?: string;
+  resourceType: string;
   constraints?: ExtensionConstraint[];
   [key: string]: unknown;
 }
@@ -43,8 +43,8 @@ function loadLexiconConstraints(): Map<string, ExtensionConstraint[]> {
     const data = JSON.parse(content) as Record<string, LexiconEntry>;
 
     for (const [_name, entry] of Object.entries(data)) {
-      if (entry.kind === "resource" && entry.cfn && entry.constraints && entry.constraints.length > 0) {
-        map.set(entry.cfn, entry.constraints);
+      if (entry.kind === "resource" && entry.resourceType && entry.constraints && entry.constraints.length > 0) {
+        map.set(entry.resourceType, entry.constraints);
       }
     }
   } catch {
@@ -193,28 +193,37 @@ function validateResource(
   return diagnostics;
 }
 
+/**
+ * Core detection logic — exported for direct testing with synthetic data.
+ */
+export function checkExtensionConstraints(
+  ctx: PostSynthContext,
+  constraintMap: Map<string, ExtensionConstraint[]>,
+): PostSynthDiagnostic[] {
+  if (constraintMap.size === 0) return [];
+
+  const diagnostics: PostSynthDiagnostic[] = [];
+
+  for (const [_lexicon, output] of ctx.outputs) {
+    const template = parseCFTemplate(output);
+    if (!template?.Resources) continue;
+
+    for (const [logicalId, resource] of Object.entries(template.Resources)) {
+      const constraints = constraintMap.get(resource.Type);
+      if (!constraints) continue;
+
+      diagnostics.push(...validateResource(logicalId, resource, constraints));
+    }
+  }
+
+  return diagnostics;
+}
+
 export const ext001: PostSynthCheck = {
   id: "EXT001",
   description: "Extension constraint violation — cross-property validation from cfn-lint extension schemas",
 
   check(ctx: PostSynthContext): PostSynthDiagnostic[] {
-    const lexiconConstraints = loadLexiconConstraints();
-    if (lexiconConstraints.size === 0) return [];
-
-    const diagnostics: PostSynthDiagnostic[] = [];
-
-    for (const [_lexicon, output] of ctx.outputs) {
-      const template = parseCFTemplate(output);
-      if (!template?.Resources) continue;
-
-      for (const [logicalId, resource] of Object.entries(template.Resources)) {
-        const constraints = lexiconConstraints.get(resource.Type);
-        if (!constraints) continue;
-
-        diagnostics.push(...validateResource(logicalId, resource, constraints));
-      }
-    }
-
-    return diagnostics;
+    return checkExtensionConstraints(ctx, loadLexiconConstraints());
   },
 };

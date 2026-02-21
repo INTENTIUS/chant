@@ -16,6 +16,7 @@ export interface LexiconEntry {
   resourceType: string;
   kind: "resource" | "property";
   lexicon: "gitlab";
+  deprecatedProperties?: string[];
 }
 
 /**
@@ -40,6 +41,7 @@ export function generateLexiconJSON(
         resourceType: resource.typeName,
         kind: (r?.isProperty ? "property" : "resource") as "resource" | "property",
         lexicon: "gitlab" as const,
+        ...(r?.resource.deprecatedProperties?.length && { deprecatedProperties: r.resource.deprecatedProperties }),
       };
     },
     buildPropertyEntry: (resourceType, propertyType) => ({
