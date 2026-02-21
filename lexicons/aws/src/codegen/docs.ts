@@ -152,7 +152,7 @@ Produces this CloudFormation resource:
 }
 \`\`\`
 
-Notice how \`dataBucket\` becomes \`DataBucket\` (PascalCase logical ID), and \`bucketName\` becomes \`BucketName\`. This mapping is automatic.
+Notice how \`dataBucket\` becomes \`DataBucket\` (PascalCase logical ID). Property names like \`BucketName\` use the CloudFormation spec-native PascalCase directly.
 
 ## Resource types and naming
 
@@ -739,8 +739,8 @@ src/
 **Patterns demonstrated:**
 
 1. **Direct imports** — lexicon types come from \`@intentius/chant-lexicon-aws\`, sibling exports are imported from the file that defines them
-2. **Shared defaults** — \`defaults.ts\` exports reusable property objects (\`bucketEncryption\`, \`publicAccessBlock\`) that other files import directly
-3. **Cross-resource references** — \`dataBucket.arn\` in \`handler.ts\` serializes to \`Fn::GetAtt\` in the template
+2. **Shared defaults** — \`defaults.ts\` exports reusable property objects (\`BucketEncryption\`, \`PublicAccessBlockConfiguration\`) that other files import directly
+3. **Cross-resource references** — \`dataBucket.Arn\` in \`handler.ts\` serializes to \`Fn::GetAtt\` in the template
 4. **Intrinsics** — \`Sub\` tagged templates with pseudo-parameters for dynamic naming
 
 {{file:getting-started/src/handler.ts}}

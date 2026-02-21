@@ -11,14 +11,14 @@ const network = nestedStack("network", import.meta.dirname + "/network", {
 });
 
 export const handler = new Function({
-  functionName: Sub`${AWS.StackName}-handler`,
-  runtime: "nodejs20.x",
-  handler: "index.handler",
-  role: Ref("LambdaExecutionRole"),
-  code: { zipFile: "exports.handler = async () => ({ statusCode: 200 });" },
-  vpcConfig: {
-    subnetIds: [network.outputs.subnetId],
-    securityGroupIds: [network.outputs.lambdaSgId],
+  FunctionName: Sub`${AWS.StackName}-handler`,
+  Runtime: "nodejs20.x",
+  Handler: "index.handler",
+  Role: Ref("LambdaExecutionRole"),
+  Code: { ZipFile: "exports.handler = async () => ({ statusCode: 200 });" },
+  VpcConfig: {
+    SubnetIds: [network.outputs.subnetId],
+    SecurityGroupIds: [network.outputs.lambdaSgId],
   },
 });
 

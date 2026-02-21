@@ -8,14 +8,14 @@ export const uploadPolicyDocument = {
     {
       Effect: "Allow",
       Action: ["s3:PutObject"],
-      Resource: [Sub`${dataBucket.arn}/*`],
+      Resource: [Sub`${dataBucket.Arn}/*`],
     },
   ],
 };
 
 export const uploadS3Policy = new Role_Policy({
-  policyName: "S3PutAccess",
-  policyDocument: uploadPolicyDocument,
+  PolicyName: "S3PutAccess",
+  PolicyDocument: uploadPolicyDocument,
 });
 
 export const uploadApi = SecureApi({
@@ -23,14 +23,14 @@ export const uploadApi = SecureApi({
   runtime: "nodejs20.x",
   handler: "index.handler",
   code: {
-    zipFile: `exports.handler = async (event) => {
+    ZipFile: `exports.handler = async (event) => {
       // Handle file upload
       return { statusCode: 200 };
     };`,
   },
   environment: {
-    variables: {
-      BUCKET_NAME: dataBucket.arn,
+    Variables: {
+      BUCKET_NAME: dataBucket.Arn,
     },
   },
   policies: [uploadS3Policy],

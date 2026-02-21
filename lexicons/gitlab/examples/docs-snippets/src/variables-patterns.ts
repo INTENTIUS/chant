@@ -1,15 +1,15 @@
 import { Rule, Job, Image, Environment, CI } from "@intentius/chant-lexicon-gitlab";
 
 // Only on merge requests
-export const onMR = new Rule({ ifCondition: CI.MergeRequestIid });
+export const onMR = new Rule({ if: CI.MergeRequestIid });
 
 // Only on default branch
 export const onMain = new Rule({
-  ifCondition: `${CI.CommitBranch} == ${CI.DefaultBranch}`,
+  if: `${CI.CommitBranch} == ${CI.DefaultBranch}`,
 });
 
 // Only on tags
-export const onTag = new Rule({ ifCondition: CI.CommitTag });
+export const onTag = new Rule({ if: CI.CommitTag });
 
 // Dynamic environment naming
 export const reviewDeploy = new Job({

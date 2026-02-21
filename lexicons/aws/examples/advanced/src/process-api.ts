@@ -8,14 +8,14 @@ export const processPolicyDocument = {
     {
       Effect: "Allow",
       Action: ["s3:GetObject", "s3:PutObject"],
-      Resource: [Sub`${dataBucket.arn}/*`],
+      Resource: [Sub`${dataBucket.Arn}/*`],
     },
   ],
 };
 
 export const processS3Policy = new Role_Policy({
-  policyName: "S3ReadWriteAccess",
-  policyDocument: processPolicyDocument,
+  PolicyName: "S3ReadWriteAccess",
+  PolicyDocument: processPolicyDocument,
 });
 
 export const processApi = HighMemoryApi({
@@ -23,14 +23,14 @@ export const processApi = HighMemoryApi({
   runtime: "nodejs20.x",
   handler: "index.handler",
   code: {
-    zipFile: `exports.handler = async (event) => {
+    ZipFile: `exports.handler = async (event) => {
       // Process large datasets
       return { statusCode: 200 };
     };`,
   },
   environment: {
-    variables: {
-      BUCKET_NAME: dataBucket.arn,
+    Variables: {
+      BUCKET_NAME: dataBucket.Arn,
     },
   },
   policies: [processS3Policy],

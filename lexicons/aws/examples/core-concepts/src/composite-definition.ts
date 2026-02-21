@@ -10,7 +10,7 @@ interface LambdaServiceProps {
 
 export const LambdaService = Composite<LambdaServiceProps>((props) => {
   const role = new Role({
-    assumeRolePolicyDocument: {
+    AssumeRolePolicyDocument: {
       Version: "2012-10-17",
       Statement: [{
         Effect: "Allow",
@@ -21,12 +21,12 @@ export const LambdaService = Composite<LambdaServiceProps>((props) => {
   });
 
   const func = new Function({
-    functionName: props.name,
-    handler: props.handler,
-    runtime: props.runtime ?? "nodejs20.x",
-    role: role.arn,
-    timeout: props.timeout ?? 30,
-    code: { zipFile: "exports.handler = async () => ({});" },
+    FunctionName: props.name,
+    Handler: props.handler,
+    Runtime: props.runtime ?? "nodejs20.x",
+    Role: role.Arn,
+    Timeout: props.timeout ?? 30,
+    Code: { ZipFile: "exports.handler = async () => ({});" },
   });
 
   return { role, func };

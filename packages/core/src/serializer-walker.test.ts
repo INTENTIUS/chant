@@ -93,15 +93,6 @@ describe("walkValue", () => {
     expect(walkValue({ a: 1, b: { c: 2 } }, names, mockVisitor)).toEqual({ a: 1, b: { c: 2 } });
   });
 
-  test("applies transformKey when provided", () => {
-    const visitor: SerializerVisitor = {
-      ...mockVisitor,
-      transformKey: (k) => k.toUpperCase(),
-    };
-    const names = new Map<Declarable, string>();
-    expect(walkValue({ foo: 1, bar: 2 }, names, visitor)).toEqual({ FOO: 1, BAR: 2 });
-  });
-
   test("complex nested structure", () => {
     const resource = makeDeclarable("Test::Role");
     const ref = new AttrRef(resource, "arn");

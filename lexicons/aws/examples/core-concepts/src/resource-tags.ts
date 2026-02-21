@@ -1,11 +1,11 @@
 import { Bucket } from "@intentius/chant-lexicon-aws";
 
 const defaultTags = [
-  { key: "Team", value: "platform" },
-  { key: "Environment", value: "production" },
+  { Key: "Team", Value: "platform" },
+  { Key: "Environment", Value: "production" },
 ];
 
 export const taggedBucket = new Bucket({
-  bucketName: "app-data",
-  tags: defaultTags,
+  BucketName: "app-data",
+  Tags: defaultTags,
 });

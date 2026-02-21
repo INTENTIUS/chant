@@ -7,6 +7,6 @@ const regionAMIs: Record<string, string> = {
 };
 
 export const server = new Instance({
-  imageId: regionAMIs["us-east-1"],
-  instanceType: "t3.micro",
+  ImageId: regionAMIs["us-east-1"],
+  InstanceType: "t3.micro",
 });

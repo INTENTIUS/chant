@@ -35,7 +35,7 @@ describe("CFGenerator", () => {
 
     expect(files[0].content).toContain("import { Bucket }");
     expect(files[0].content).toContain("export const MyBucket = new Bucket({");
-    expect(files[0].content).toContain('bucketName: "my-bucket"');
+    expect(files[0].content).toContain('BucketName: "my-bucket"');
   });
 
   test("generates Lambda Function", () => {
@@ -58,8 +58,8 @@ describe("CFGenerator", () => {
 
     expect(files[0].content).toContain("import { Function }");
     expect(files[0].content).toContain("export const MyFunction = new Function({");
-    expect(files[0].content).toContain('functionName: "my-function"');
-    expect(files[0].content).toContain('runtime: "nodejs18.x"');
+    expect(files[0].content).toContain('FunctionName: "my-function"');
+    expect(files[0].content).toContain('Runtime: "nodejs18.x"');
   });
 
   test("generates Ref as variable reference", () => {
@@ -78,7 +78,7 @@ describe("CFGenerator", () => {
 
     const files = generator.generate(ir);
 
-    expect(files[0].content).toContain("bucketName: Ref(BucketName)");
+    expect(files[0].content).toContain("BucketName: Ref(BucketName)");
   });
 
   test("generates GetAtt as property access", () => {
@@ -102,7 +102,7 @@ describe("CFGenerator", () => {
 
     const files = generator.generate(ir);
 
-    expect(files[0].content).toContain("sourceArn: SourceBucket.arn");
+    expect(files[0].content).toContain("SourceArn: SourceBucket.Arn");
   });
 
   test("generates Sub as tagged template", () => {

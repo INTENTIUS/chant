@@ -65,7 +65,7 @@ workflow:
     expect(workflow!.properties.name).toBe("My Pipeline");
   });
 
-  test("converts snake_case keys to camelCase", () => {
+  test("preserves spec-native snake_case property keys", () => {
     const yaml = `
 test-job:
   stage: test
@@ -77,8 +77,8 @@ test-job:
     - npm test
 `;
     const ir = parser.parse(yaml);
-    expect(ir.resources[0].properties.beforeScript).toEqual(["echo setup"]);
-    expect(ir.resources[0].properties.afterScript).toEqual(["echo done"]);
+    expect(ir.resources[0].properties.before_script).toEqual(["echo setup"]);
+    expect(ir.resources[0].properties.after_script).toEqual(["echo done"]);
   });
 
   test("converts kebab-case job names to camelCase", () => {

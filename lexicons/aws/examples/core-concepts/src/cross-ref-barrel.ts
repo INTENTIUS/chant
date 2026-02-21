@@ -3,12 +3,12 @@ import { dataBucket } from "./cross-ref-storage";
 import { accessRole } from "./cross-ref-policy";
 
 export const barrelReadPolicy = new ManagedPolicy({
-  policyDocument: {
+  PolicyDocument: {
     Statement: [{
       Effect: "Allow",
       Action: ["s3:GetObject"],
-      Resource: dataBucket.arn,
+      Resource: dataBucket.Arn,
     }],
   },
-  roles: [accessRole],
+  Roles: [accessRole],
 });

@@ -1,0 +1,123 @@
+{
+  "AWSTemplateFormatVersion": "2010-09-09",
+  "Outputs": {
+    "DataBucketArn": {
+      "Value": {
+        "Fn::GetAtt": [
+          "dataBucket",
+          "Arn"
+        ]
+      }
+    }
+  },
+  "Parameters": {
+    "environment": {
+      "Default": "dev",
+      "Description": "Deployment environment",
+      "Type": "String"
+    }
+  },
+  "Resources": {
+    "dataBucket": {
+      "Properties": {
+        "BucketEncryption": {
+          "ServerSideEncryptionConfiguration": [
+            {
+              "ServerSideEncryptionByDefault": {
+                "SSEAlgorithm": "AES256"
+              }
+            }
+          ]
+        },
+        "BucketName": {
+          "Fn::Sub": "${AWS::StackName}-${AWS::AccountId}-data"
+        },
+        "PublicAccessBlockConfiguration": {
+          "BlockPublicAcls": true,
+          "BlockPublicPolicy": true,
+          "IgnorePublicAcls": true,
+          "RestrictPublicBuckets": true
+        },
+        "VersioningConfiguration": {
+          "Status": "Enabled"
+        }
+      },
+      "Type": "AWS::S3::Bucket"
+    },
+    "functionRole": {
+      "Properties": {
+        "AssumeRolePolicyDocument": {
+          "Statement": [
+            {
+              "Action": "sts:AssumeRole",
+              "Effect": "Allow",
+              "Principal": {
+                "Service": "lambda.amazonaws.com"
+              }
+            }
+          ],
+          "Version": "2012-10-17"
+        },
+        "RoleName": {
+          "Fn::Sub": "${AWS::StackName}-function-role"
+        }
+      },
+      "Type": "AWS::IAM::Role"
+    },
+    "handler": {
+      "Properties": {
+        "Code": {
+          "ZipFile": "exports.handler = async () => ({ statusCode: 200 });"
+        },
+        "Environment": {
+          "Variables": {
+            "BUCKET_ARN": {
+              "Fn::GetAtt": [
+                "dataBucket",
+                "Arn"
+              ]
+            }
+          }
+        },
+        "FunctionName": {
+          "Fn::Sub": "${AWS::StackName}-handler"
+        },
+        "Handler": "index.handler",
+        "Role": {
+          "Fn::GetAtt": [
+            "functionRole",
+            "Arn"
+          ]
+        },
+        "Runtime": "nodejs20.x"
+      },
+      "Type": "AWS::Lambda::Function"
+    },
+    "logsBucket": {
+      "Properties": {
+        "BucketEncryption": {
+          "ServerSideEncryptionConfiguration": [
+            {
+              "ServerSideEncryptionByDefault": {
+                "SSEAlgorithm": "AES256"
+              }
+            }
+          ]
+        },
+        "BucketName": {
+          "Fn::Sub": "${AWS::StackName}-${AWS::AccountId}-logs"
+        },
+        "PublicAccessBlockConfiguration": {
+          "BlockPublicAcls": true,
+          "BlockPublicPolicy": true,
+          "IgnorePublicAcls": true,
+          "RestrictPublicBuckets": true
+        },
+        "VersioningConfiguration": {
+          "Status": "Enabled"
+        }
+      },
+      "Type": "AWS::S3::Bucket"
+    }
+  }
+}

@@ -121,12 +121,12 @@ describe("gitlabSerializer.serialize", () => {
     expect(output).toContain("my-test-job:");
   });
 
-  test("converts camelCase property keys to snake_case", () => {
+  test("passes through spec-native snake_case property keys", () => {
     const entities = new Map<string, Declarable>();
     entities.set("job", new MockJob({
-      beforeScript: ["echo hello"],
-      afterScript: ["echo done"],
-      expireIn: "1 week",
+      before_script: ["echo hello"],
+      after_script: ["echo done"],
+      expire_in: "1 week",
     }));
 
     const output = gitlabSerializer.serialize(entities);
@@ -270,7 +270,7 @@ describe("nested objects and arrays", () => {
 
     const output = gitlabSerializer.serialize(entities);
     expect(output).toContain("variables:");
-    expect(output).toContain("node_env: production");
+    expect(output).toContain("NODE_ENV: production");
   });
 
   test("serializes arrays of strings", () => {
@@ -289,7 +289,7 @@ describe("nested objects and arrays", () => {
     const entities = new Map<string, Declarable>();
     entities.set("job", new MockJob({
       interruptible: true,
-      allowFailure: false,
+      allow_failure: false,
     }));
 
     const output = gitlabSerializer.serialize(entities);

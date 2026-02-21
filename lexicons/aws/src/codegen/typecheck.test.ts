@@ -6,7 +6,7 @@ describe("typecheckDTS", () => {
     const content = `
       export declare class Bucket {
         readonly type: string;
-        readonly bucketName?: string;
+        readonly BucketName?: string;
       }
     `;
     const result = await typecheckDTS(content);

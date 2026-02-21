@@ -6,35 +6,35 @@ export interface LambdaApiProps {
   name: string | ReturnType<typeof Sub>;
   runtime: string;
   handler: string;
-  code: InstanceType<typeof Code> | { zipFile: string };
+  code: InstanceType<typeof Code> | { ZipFile: string };
   timeout?: number;
   memorySize?: number;
-  environment?: InstanceType<typeof Environment> | { variables: Record<string, unknown> };
+  environment?: InstanceType<typeof Environment> | { Variables: Record<string, unknown> };
   policies?: InstanceType<typeof Role_Policy>[];
 }
 
 export const LambdaApi = Composite<LambdaApiProps>((props) => {
   const role = new Role({
-    assumeRolePolicyDocument: lambdaTrustPolicy,
-    managedPolicyArns: [lambdaBasicExecutionArn],
-    policies: props.policies,
+    AssumeRolePolicyDocument: lambdaTrustPolicy,
+    ManagedPolicyArns: [lambdaBasicExecutionArn],
+    Policies: props.policies,
   });
 
   const func = new Function({
-    functionName: props.name,
-    runtime: props.runtime,
-    handler: props.handler,
-    code: props.code,
-    role: role.arn,
-    timeout: props.timeout,
-    memorySize: props.memorySize,
-    environment: props.environment,
+    FunctionName: props.name,
+    Runtime: props.runtime,
+    Handler: props.handler,
+    Code: props.code,
+    Role: role.Arn,
+    Timeout: props.timeout,
+    MemorySize: props.memorySize,
+    Environment: props.environment,
   });
 
   const permission = new Permission({
-    functionName: func.arn,
-    action: "lambda:InvokeFunction",
-    principal: "apigateway.amazonaws.com",
+    FunctionName: func.Arn,
+    Action: "lambda:InvokeFunction",
+    Principal: "apigateway.amazonaws.com",
   });
 
   return { role, func, permission };

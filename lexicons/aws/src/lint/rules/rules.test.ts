@@ -65,7 +65,7 @@ describe("AWS Lint Rules", () => {
   describe("WAW006: S3 Encryption", () => {
     test("warns on Bucket without encryption", () => {
       const context = createContext(`
-        const bucket = new Bucket({ bucketName: "my-bucket" });
+        const bucket = new Bucket({ BucketName: "my-bucket" });
       `);
       const diagnostics = s3EncryptionRule.check(context);
       expect(diagnostics).toHaveLength(1);
@@ -73,22 +73,22 @@ describe("AWS Lint Rules", () => {
       expect(diagnostics[0].message).toContain("encryption");
     });
 
-    test("passes with bucketEncryption property", () => {
+    test("passes with BucketEncryption property", () => {
       const context = createContext(`
         const bucket = new Bucket({
-          bucketName: "my-bucket",
-          bucketEncryption: { serverSideEncryptionConfiguration: [] },
+          BucketName: "my-bucket",
+          BucketEncryption: { ServerSideEncryptionConfiguration: [] },
         });
       `);
       const diagnostics = s3EncryptionRule.check(context);
       expect(diagnostics).toHaveLength(0);
     });
 
-    test("passes with encryption property", () => {
+    test("passes with ServerSideEncryptionConfiguration property", () => {
       const context = createContext(`
         const bucket = new Bucket({
-          bucketName: "my-bucket",
-          encryption: "AES256",
+          BucketName: "my-bucket",
+          ServerSideEncryptionConfiguration: [],
         });
       `);
       const diagnostics = s3EncryptionRule.check(context);
@@ -97,7 +97,7 @@ describe("AWS Lint Rules", () => {
 
     test("ignores non-Bucket constructors", () => {
       const context = createContext(`
-        const fn = new Function({ functionName: "my-fn" });
+        const fn = new Function({ FunctionName: "my-fn" });
       `);
       const diagnostics = s3EncryptionRule.check(context);
       expect(diagnostics).toHaveLength(0);

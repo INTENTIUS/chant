@@ -8,7 +8,6 @@
 
 import type { NamingStrategy } from "./naming";
 import { propertyTypeName, extractDefName } from "./naming";
-import { toCamelCase } from "./case";
 import { constraintsIsEmpty, type PropertyConstraints } from "./json-schema";
 
 export interface RegistryResource {
@@ -47,12 +46,12 @@ export function buildRegistry<E>(
     const tsName = naming.resolve(typeName);
     if (!tsName) continue;
 
-    // Build attrs map: camelCase → raw name
+    // Build attrs map: name → raw name (identity mapping)
     let attrs: Record<string, string> | undefined;
     if (r.attributes.length > 0) {
       attrs = {};
       for (const a of r.attributes) {
-        attrs[toCamelCase(a.name)] = a.name;
+        attrs[a.name] = a.name;
       }
     }
 

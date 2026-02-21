@@ -15,40 +15,40 @@ import {
 } from "@intentius/chant-lexicon-aws";
 
 export const vpc = new Vpc({
-  cidrBlock: "10.0.0.0/16",
-  enableDnsSupport: true,
-  enableDnsHostnames: true,
-  tags: [{ key: "Name", value: Sub`${AWS.StackName}-vpc` }],
+  CidrBlock: "10.0.0.0/16",
+  EnableDnsSupport: true,
+  EnableDnsHostnames: true,
+  Tags: [{ Key: "Name", Value: Sub`${AWS.StackName}-vpc` }],
 });
 
 export const subnet = new Subnet({
-  vpcId: vpc.vpcId,
-  cidrBlock: "10.0.1.0/24",
-  mapPublicIpOnLaunch: true,
-  tags: [{ key: "Name", value: Sub`${AWS.StackName}-public` }],
+  VpcId: vpc.VpcId,
+  CidrBlock: "10.0.1.0/24",
+  MapPublicIpOnLaunch: true,
+  Tags: [{ Key: "Name", Value: Sub`${AWS.StackName}-public` }],
 });
 
 export const igw = new InternetGateway({
-  tags: [{ key: "Name", value: Sub`${AWS.StackName}-igw` }],
+  Tags: [{ Key: "Name", Value: Sub`${AWS.StackName}-igw` }],
 });
 
 export const igwAttachment = new VPCGatewayAttachment({
-  vpcId: vpc.vpcId,
-  internetGatewayId: igw.internetGatewayId,
+  VpcId: vpc.VpcId,
+  InternetGatewayId: igw.InternetGatewayId,
 });
 
 export const routeTable = new RouteTable({
-  vpcId: vpc.vpcId,
-  tags: [{ key: "Name", value: Sub`${AWS.StackName}-public-rt` }],
+  VpcId: vpc.VpcId,
+  Tags: [{ Key: "Name", Value: Sub`${AWS.StackName}-public-rt` }],
 });
 
 export const defaultRoute = new EC2Route({
-  routeTableId: routeTable.routeTableId,
-  destinationCidrBlock: "0.0.0.0/0",
-  gatewayId: igw.internetGatewayId,
+  RouteTableId: routeTable.RouteTableId,
+  DestinationCidrBlock: "0.0.0.0/0",
+  GatewayId: igw.InternetGatewayId,
 });
 
 export const subnetRouteTableAssoc = new SubnetRouteTableAssociation({
-  subnetId: subnet.subnetId,
-  routeTableId: routeTable.routeTableId,
+  SubnetId: subnet.SubnetId,
+  RouteTableId: routeTable.RouteTableId,
 });

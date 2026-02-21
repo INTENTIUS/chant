@@ -30,7 +30,7 @@ const mySerializer: Serializer = {
 
 ## Using `walkValue` and `SerializerVisitor`
 
-The basic example above only emits `entity.entityType`. A real serializer must handle property values — including `AttrRef` (attribute references like `bucket.arn`), nested `Declarable` references (property types), `Intrinsic` values (Sub, Ref, etc.), and key transformation (e.g. camelCase to PascalCase).
+The basic example above only emits `entity.entityType`. A real serializer must handle property values — including `AttrRef` (attribute references like `bucket.Arn`), nested `Declarable` references (property types), and `Intrinsic` values (Sub, Ref, etc.). Property names use spec-native casing and are passed through verbatim.
 
 Use `walkValue` and `SerializerVisitor` from `@intentius/chant/serializer-walker` to handle all of these generically:
 
@@ -59,10 +59,6 @@ const visitor: SerializerVisitor = {
     return props;
   },
 
-  // Optional: transform property keys (e.g. camelCase → PascalCase)
-  transformKey(key) {
-    return key.charAt(0).toUpperCase() + key.slice(1);
-  },
 };
 
 const mySerializer: Serializer = {

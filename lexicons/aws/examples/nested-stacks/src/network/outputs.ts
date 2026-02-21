@@ -6,12 +6,12 @@ import { stackOutput } from "@intentius/chant";
 import { vpc, subnet } from "./vpc";
 import { lambdaSg } from "./security";
 
-export const vpcId = stackOutput(vpc.vpcId, {
+export const vpcId = stackOutput(vpc.VpcId, {
   description: "VPC ID",
 });
-export const subnetId = stackOutput(subnet.subnetId, {
+export const subnetId = stackOutput(subnet.SubnetId, {
   description: "Public subnet ID",
 });
-export const lambdaSgId = stackOutput(lambdaSg.groupId, {
+export const lambdaSgId = stackOutput(lambdaSg.GroupId, {
   description: "Lambda security group ID",
 });

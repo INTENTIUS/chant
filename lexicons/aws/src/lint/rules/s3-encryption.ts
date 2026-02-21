@@ -38,9 +38,8 @@ export const s3EncryptionRule: LintRule = {
           if (ts.isObjectLiteralExpression(props)) {
             const hasEncryption = props.properties.some((prop) => {
               if (ts.isPropertyAssignment(prop) && ts.isIdentifier(prop.name)) {
-                return prop.name.text === "bucketEncryption" ||
-                       prop.name.text === "encryption" ||
-                       prop.name.text === "serverSideEncryptionConfiguration";
+                return prop.name.text === "BucketEncryption" ||
+                       prop.name.text === "ServerSideEncryptionConfiguration";
               }
               return false;
             });

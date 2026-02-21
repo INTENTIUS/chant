@@ -10,6 +10,6 @@ export const testBarrel = new Job({
 
 // For external/included YAML definitions — produces !reference tags
 export const testExternal = new Job({
-  beforeScript: reference(".ci-setup", "before_script"),
+  before_script: reference(".ci-setup", "before_script"),
   script: ["npm test"],
 });

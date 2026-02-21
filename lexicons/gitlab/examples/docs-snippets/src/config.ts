@@ -10,25 +10,25 @@ export const npmCache = new Cache({
 
 export const buildArtifacts = new Artifacts({
   paths: ["dist/"],
-  expireIn: "1 hour",
+  expire_in: "1 hour",
 });
 
 export const testArtifacts = new Artifacts({
   paths: ["coverage/"],
-  expireIn: "1 week",
+  expire_in: "1 week",
   reports: { junit: "coverage/junit.xml" },
 });
 
 export const onMergeRequest = new Rule({
-  ifCondition: CI.MergeRequestIid,
+  if: CI.MergeRequestIid,
 });
 
 export const onCommit = new Rule({
-  ifCondition: CI.CommitBranch,
+  if: CI.CommitBranch,
 });
 
 export const onDefaultBranch = new Rule({
-  ifCondition: `${CI.CommitBranch} == ${CI.DefaultBranch}`,
+  if: `${CI.CommitBranch} == ${CI.DefaultBranch}`,
   when: "manual",
 });
 

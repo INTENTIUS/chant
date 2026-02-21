@@ -12,6 +12,6 @@ export const assumeRolePolicy = {
 };
 
 export const functionRole = new Role({
-  roleName: Sub`${AWS.StackName}-function-role`,
-  assumeRolePolicyDocument: assumeRolePolicy,
+  RoleName: Sub`${AWS.StackName}-function-role`,
+  AssumeRolePolicyDocument: assumeRolePolicy,
 });

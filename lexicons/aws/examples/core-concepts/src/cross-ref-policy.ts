@@ -2,7 +2,7 @@ import { Role, ManagedPolicy } from "@intentius/chant-lexicon-aws";
 import { dataBucket } from "./cross-ref-storage";
 
 export const accessRole = new Role({
-  assumeRolePolicyDocument: {
+  AssumeRolePolicyDocument: {
     Version: "2012-10-17",
     Statement: [{
       Effect: "Allow",
@@ -13,12 +13,12 @@ export const accessRole = new Role({
 });
 
 export const readPolicy = new ManagedPolicy({
-  policyDocument: {
+  PolicyDocument: {
     Statement: [{
       Effect: "Allow",
       Action: ["s3:GetObject"],
-      Resource: dataBucket.arn,
+      Resource: dataBucket.Arn,
     }],
   },
-  roles: [accessRole],
+  Roles: [accessRole],
 });

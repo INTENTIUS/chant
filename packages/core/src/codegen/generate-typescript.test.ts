@@ -18,8 +18,8 @@ describe("writeResourceClass", () => {
     );
     const output = lines.join("\n");
     expect(output).toContain("export declare class Bucket {");
-    expect(output).toContain("bucketName: string;");
-    expect(output).toContain("readonly arn: string;");
+    expect(output).toContain("BucketName: string;");
+    expect(output).toContain("readonly Arn: string;");
     expect(output).toContain("}");
   });
 
@@ -34,7 +34,7 @@ describe("writeResourceClass", () => {
       remap,
     );
     const output = lines.join("\n");
-    expect(output).toContain("readonly config: BucketConfig;");
+    expect(output).toContain("readonly Config: BucketConfig;");
   });
 });
 
@@ -48,7 +48,7 @@ describe("writePropertyClass", () => {
     );
     const output = lines.join("\n");
     expect(output).toContain("export declare class BucketConfig {");
-    expect(output).toContain("enabled?: boolean;");
+    expect(output).toContain("Enabled?: boolean;");
     expect(output).toContain("}");
   });
 });
@@ -71,8 +71,8 @@ describe("writeConstructor", () => {
       undefined,
     );
     const output = lines.join("\n");
-    const reqIdx = output.indexOf("required:");
-    const optIdx = output.indexOf("optional?:");
+    const reqIdx = output.indexOf("Required:");
+    const optIdx = output.indexOf("Optional?:");
     expect(reqIdx).toBeLessThan(optIdx);
   });
 

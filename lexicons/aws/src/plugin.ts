@@ -64,30 +64,30 @@ import { ServerSideEncryptionByDefault, ServerSideEncryptionRule, BucketEncrypti
 
 // Encryption default — AES256 server-side encryption
 export const encryptionDefault = new ServerSideEncryptionByDefault({
-  sseAlgorithm: "AES256",
+  SSEAlgorithm: "AES256",
 });
 
 // Encryption rule wrapping the default
 export const encryptionRule = new ServerSideEncryptionRule({
-  serverSideEncryptionByDefault: encryptionDefault,
+  ServerSideEncryptionByDefault: encryptionDefault,
 });
 
 // Bucket encryption configuration
 export const bucketEncryption = new BucketEncryption({
-  serverSideEncryptionConfiguration: [encryptionRule],
+  ServerSideEncryptionConfiguration: [encryptionRule],
 });
 
 // Public access block — deny all public access
 export const publicAccessBlock = new PublicAccessBlockConfiguration({
-  blockPublicAcls: true,
-  blockPublicPolicy: true,
-  ignorePublicAcls: true,
-  restrictPublicBuckets: true,
+  BlockPublicAcls: true,
+  BlockPublicPolicy: true,
+  IgnorePublicAcls: true,
+  RestrictPublicBuckets: true,
 });
 
 // Versioning — enabled
 export const versioningEnabled = new VersioningConfiguration({
-  status: "Enabled",
+  Status: "Enabled",
 });
 `,
       "data-bucket.ts": `/**
@@ -98,10 +98,10 @@ import { Bucket, Sub, AWS } from "@intentius/chant-lexicon-aws";
 import { versioningEnabled, bucketEncryption, publicAccessBlock } from "./config";
 
 export const dataBucket = new Bucket({
-  bucketName: Sub\`\${AWS.StackName}-\${AWS.AccountId}-data\`,
-  versioningConfiguration: versioningEnabled,
-  bucketEncryption: bucketEncryption,
-  publicAccessBlockConfiguration: publicAccessBlock,
+  BucketName: Sub\`\${AWS.StackName}-\${AWS.AccountId}-data\`,
+  VersioningConfiguration: versioningEnabled,
+  BucketEncryption: bucketEncryption,
+  PublicAccessBlockConfiguration: publicAccessBlock,
 });
 `,
       "logs-bucket.ts": `/**
@@ -112,11 +112,11 @@ import { Bucket, Sub, AWS } from "@intentius/chant-lexicon-aws";
 import { versioningEnabled, bucketEncryption, publicAccessBlock } from "./config";
 
 export const logsBucket = new Bucket({
-  bucketName: Sub\`\${AWS.StackName}-\${AWS.AccountId}-logs\`,
-  accessControl: "LogDeliveryWrite",
-  versioningConfiguration: versioningEnabled,
-  bucketEncryption: bucketEncryption,
-  publicAccessBlockConfiguration: publicAccessBlock,
+  BucketName: Sub\`\${AWS.StackName}-\${AWS.AccountId}-logs\`,
+  AccessControl: "LogDeliveryWrite",
+  VersioningConfiguration: versioningEnabled,
+  BucketEncryption: bucketEncryption,
+  PublicAccessBlockConfiguration: publicAccessBlock,
 });
 `,
     };
@@ -434,27 +434,27 @@ aws cloudformation describe-stack-events --stack-name <stack-name> --max-items 1
 
 // Encryption configuration
 export const encryptionDefault = new ServerSideEncryptionByDefault({
-  sseAlgorithm: "AES256",
+  SSEAlgorithm: "AES256",
 });
 
 export const encryptionRule = new ServerSideEncryptionRule({
-  serverSideEncryptionByDefault: encryptionDefault,
+  ServerSideEncryptionByDefault: encryptionDefault,
 });
 
 export const bucketEncryption = new BucketEncryption({
-  serverSideEncryptionConfiguration: [encryptionRule],
+  ServerSideEncryptionConfiguration: [encryptionRule],
 });
 
 // Versioning
 export const versioningEnabled = new VersioningConfiguration({
-  status: "Enabled",
+  Status: "Enabled",
 });
 
 // Create a versioned bucket with encryption (AccountId ensures global uniqueness)
 export const dataBucket = new Bucket({
-  bucketName: Sub\`\${AWS.StackName}-\${AWS.AccountId}-data\`,
-  versioningConfiguration: versioningEnabled,
-  bucketEncryption: bucketEncryption,
+  BucketName: Sub\`\${AWS.StackName}-\${AWS.AccountId}-data\`,
+  VersioningConfiguration: versioningEnabled,
+  BucketEncryption: bucketEncryption,
 });
 `;
         },
@@ -469,13 +469,13 @@ export const dataBucket = new Bucket({
 
 // Create a bucket
 export const dataBucket = new Bucket({
-  bucketName: "my-data-bucket",
-  versioningConfiguration: new VersioningConfiguration({ status: "Enabled" }),
+  BucketName: "my-data-bucket",
+  VersioningConfiguration: new VersioningConfiguration({ Status: "Enabled" }),
 });
 
 // Create a role that references the bucket's ARN
 export const role = new Role({
-  assumeRolePolicyDocument: {
+  AssumeRolePolicyDocument: {
     Version: "2012-10-17",
     Statement: [{
       Effect: "Allow",

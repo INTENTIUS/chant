@@ -17,7 +17,7 @@ describe("AWS Integration", () => {
 
     test("serializes S3 bucket with properties", () => {
       const bucket = new (Bucket as any)({
-        bucketName: "my-bucket",
+        BucketName: "my-bucket",
       });
 
       const entities = new Map<string, Declarable>();
@@ -61,12 +61,12 @@ describe("AWS Integration", () => {
 
   describe("Cross-resource references", () => {
     test("GetAtt for bucket ARN", () => {
-      const bucket = new (Bucket as any)({ bucketName: "source" });
+      const bucket = new (Bucket as any)({ BucketName: "source" });
       // Set logical name for the AttrRef
-      (bucket.arn as Record<string, unknown>)._setLogicalName("SourceBucket");
+      (bucket.Arn as Record<string, unknown>)._setLogicalName("SourceBucket");
 
-      expect(bucket.arn.getLogicalName()).toBe("SourceBucket");
-      expect(bucket.arn.attribute).toBe("Arn");
+      expect(bucket.Arn.getLogicalName()).toBe("SourceBucket");
+      expect(bucket.Arn.attribute).toBe("Arn");
     });
   });
 
@@ -79,10 +79,10 @@ describe("AWS Integration", () => {
 
     test("Lambda Function has correct entity type", () => {
       const fn = new (Function as any)({
-        runtime: "nodejs18.x",
-        handler: "index.handler",
-        code: { s3Bucket: "my-bucket", s3Key: "code.zip" },
-        role: "arn:aws:iam::123456789012:role/lambda-role",
+        Runtime: "nodejs18.x",
+        Handler: "index.handler",
+        Code: { S3Bucket: "my-bucket", S3Key: "code.zip" },
+        Role: "arn:aws:iam::123456789012:role/lambda-role",
       });
       expect(fn.entityType).toBe("AWS::Lambda::Function");
       expect(fn[DECLARABLE_MARKER]).toBe(true);
@@ -90,7 +90,7 @@ describe("AWS Integration", () => {
 
     test("IAM Role has correct entity type", () => {
       const role = new (Role as any)({
-        assumeRolePolicyDocument: {
+        AssumeRolePolicyDocument: {
           Version: "2012-10-17",
           Statement: [],
         },
@@ -103,27 +103,27 @@ describe("AWS Integration", () => {
   describe("AttrRefs", () => {
     test("Bucket has expected AttrRefs", () => {
       const bucket = new (Bucket as any)({});
-      expect(bucket.arn).toBeDefined();
-      expect(bucket.domainName).toBeDefined();
-      expect(bucket.websiteURL).toBeDefined();
+      expect(bucket.Arn).toBeDefined();
+      expect(bucket.DomainName).toBeDefined();
+      expect(bucket.WebsiteURL).toBeDefined();
     });
 
     test("Lambda Function has expected AttrRefs", () => {
       const fn = new (Function as any)({
-        runtime: "nodejs18.x",
-        handler: "index.handler",
-        code: { s3Bucket: "bucket", s3Key: "key" },
-        role: "role-arn",
+        Runtime: "nodejs18.x",
+        Handler: "index.handler",
+        Code: { S3Bucket: "bucket", S3Key: "key" },
+        Role: "role-arn",
       });
-      expect(fn.arn).toBeDefined();
+      expect(fn.Arn).toBeDefined();
     });
 
     test("IAM Role has expected AttrRefs", () => {
       const role = new (Role as any)({
-        assumeRolePolicyDocument: {},
+        AssumeRolePolicyDocument: {},
       });
-      expect(role.arn).toBeDefined();
-      expect(role.roleId).toBeDefined();
+      expect(role.Arn).toBeDefined();
+      expect(role.RoleId).toBeDefined();
     });
   });
 });

@@ -3,7 +3,7 @@
 exports[`snapshot tests Bucket lexicon entry 1`] = `
 {
   "attrs": {
-    "arn": "Arn",
+    "Arn": "Arn",
   },
   "createOnly": [
     "BucketName",
@@ -27,7 +27,7 @@ exports[`snapshot tests Bucket lexicon entry 1`] = `
 exports[`snapshot tests Function lexicon entry 1`] = `
 {
   "attrs": {
-    "arn": "Arn",
+    "Arn": "Arn",
   },
   "kind": "resource",
   "lexicon": "aws",
@@ -79,8 +79,8 @@ exports[`snapshot tests Function lexicon entry 1`] = `
 exports[`snapshot tests Role lexicon entry 1`] = `
 {
   "attrs": {
-    "arn": "Arn",
-    "roleId": "RoleId",
+    "Arn": "Arn",
+    "RoleId": "RoleId",
   },
   "kind": "resource",
   "lexicon": "aws",
@@ -160,17 +160,17 @@ exports[`snapshot tests Bucket .d.ts class declaration 1`] = `
 "export declare class Bucket {
   constructor(props: {
     /** A name for the bucket. */
-    bucketName: string;
+    BucketName: string;
     /** The Amazon Resource Name (ARN) of the bucket. */
-    arn?: string;
+    Arn?: string;
     /** Specifies default encryption for a bucket. */
-    bucketEncryption?: Bucket_BucketEncryption;
+    BucketEncryption?: Bucket_BucketEncryption;
     /** An arbitrary set of tags (key-value pairs) for this S3 bucket. */
-    tags?: Bucket_Tag[];
+    Tags?: Bucket_Tag[];
     /** Enables multiple versions of all objects in this bucket. */
-    versioningConfiguration?: Bucket_VersioningConfiguration;
+    VersioningConfiguration?: Bucket_VersioningConfiguration;
   });
-  readonly arn: string;
+  readonly Arn: string;
 }"
 `;
 
@@ -178,20 +178,20 @@ exports[`snapshot tests Function .d.ts class declaration 1`] = `
 "export declare class Function {
   constructor(props: {
     /** The code for the function. */
-    code: Function_Code;
+    Code: Function_Code;
     /** The ARN of the function's execution role. */
-    role: string;
+    Role: string;
     /** The ARN of the function. */
-    arn?: string;
+    Arn?: string;
     /** The name of the Lambda function. */
-    functionName?: string;
+    FunctionName?: string;
     /** The name of the method within your code that Lambda calls to run your function. */
-    handler?: string;
+    Handler?: string;
     /** The amount of memory available to the function at runtime. */
-    memorySize?: number;
+    MemorySize?: number;
     /** The identifier of the function's runtime. */
-    runtime?: "java17" | "java21" | "nodejs18.x" | "nodejs20.x" | "python3.11" | "python3.12";
+    Runtime?: "java17" | "java21" | "nodejs18.x" | "nodejs20.x" | "python3.11" | "python3.12";
   });
-  readonly arn: string;
+  readonly Arn: string;
 }"
 `;

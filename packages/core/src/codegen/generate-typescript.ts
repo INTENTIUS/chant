@@ -51,7 +51,7 @@ export function writeResourceClass(
   const attrs = [...attributes].sort((a, b) => a.name.localeCompare(b.name));
   for (const a of attrs) {
     const attrType = resolveConstructorType(a.type, remap);
-    lines.push(`  readonly ${toCamelCase(a.name)}: ${attrType};`);
+    lines.push(`  readonly ${a.name}: ${attrType};`);
   }
 
   lines.push("}");
@@ -98,7 +98,7 @@ export function writeConstructor(
     if (p.description) {
       lines.push(`    /** ${p.description} */`);
     }
-    lines.push(`    ${toCamelCase(p.name)}${optional}: ${tsType};`);
+    lines.push(`    ${p.name}${optional}: ${tsType};`);
   }
   lines.push("  });");
 }
@@ -154,8 +154,4 @@ export function resolveConstructorType(tsType: string, remap: Map<string, string
   }
 
   return tsType;
-}
-
-function toCamelCase(name: string): string {
-  return name.charAt(0).toLowerCase() + name.slice(1);
 }

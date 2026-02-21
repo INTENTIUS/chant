@@ -6,12 +6,12 @@ import { SecurityGroup, Sub, AWS } from "@intentius/chant-lexicon-aws";
 import { vpc } from "./vpc";
 
 export const lambdaSg = new SecurityGroup({
-  groupDescription: Sub`${AWS.StackName} Lambda security group`,
-  vpcId: vpc.vpcId,
-  securityGroupEgress: [{
-    ipProtocol: "-1",
-    cidrIp: "0.0.0.0/0",
-    description: "Allow all outbound",
+  GroupDescription: Sub`${AWS.StackName} Lambda security group`,
+  VpcId: vpc.VpcId,
+  SecurityGroupEgress: [{
+    IpProtocol: "-1",
+    CidrIp: "0.0.0.0/0",
+    Description: "Allow all outbound",
   }],
-  tags: [{ key: "Name", value: Sub`${AWS.StackName}-lambda-sg` }],
+  Tags: [{ Key: "Name", Value: Sub`${AWS.StackName}-lambda-sg` }],
 });

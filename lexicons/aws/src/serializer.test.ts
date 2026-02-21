@@ -18,9 +18,9 @@ class MockBucket implements Declarable {
   readonly lexicon = "aws";
   readonly entityType = "AWS::S3::Bucket";
   readonly arn: AttrRef;
-  readonly props: { bucketName?: string; versioningConfiguration?: { status: string } };
+  readonly props: { BucketName?: string; VersioningConfiguration?: { Status: string } };
 
-  constructor(props: { bucketName?: string; versioningConfiguration?: { status: string } } = {}) {
+  constructor(props: { BucketName?: string; VersioningConfiguration?: { Status: string } } = {}) {
     this.props = props;
     this.arn = new AttrRef(this, "Arn");
   }
@@ -57,7 +57,7 @@ describe("awsSerializer.serialize", () => {
 
   test("serializes resources", () => {
     const entities = new Map<string, Declarable>();
-    entities.set("MyBucket", new MockBucket({ bucketName: "my-bucket" }));
+    entities.set("MyBucket", new MockBucket({ BucketName: "my-bucket" }));
 
     const output = awsSerializer.serialize(entities);
     const template = JSON.parse(output);
@@ -86,8 +86,8 @@ describe("awsSerializer.serialize", () => {
   test("serializes nested properties", () => {
     const entities = new Map<string, Declarable>();
     entities.set("MyBucket", new MockBucket({
-      bucketName: "my-bucket",
-      versioningConfiguration: { status: "Enabled" },
+      BucketName: "my-bucket",
+      VersioningConfiguration: { Status: "Enabled" },
     }));
 
     const output = awsSerializer.serialize(entities);
@@ -98,21 +98,20 @@ describe("awsSerializer.serialize", () => {
     });
   });
 
-  test("converts property names to PascalCase", () => {
+  test("passes through property names verbatim", () => {
     const entities = new Map<string, Declarable>();
-    entities.set("MyBucket", new MockBucket({ bucketName: "test" }));
+    entities.set("MyBucket", new MockBucket({ BucketName: "test" }));
 
     const output = awsSerializer.serialize(entities);
     const template = JSON.parse(output);
 
     expect(template.Resources.MyBucket.Properties.BucketName).toBeDefined();
-    expect(template.Resources.MyBucket.Properties.bucketName).toBeUndefined();
   });
 
   test("handles multiple resources", () => {
     const entities = new Map<string, Declarable>();
-    entities.set("DataBucket", new MockBucket({ bucketName: "data-bucket" }));
-    entities.set("LogsBucket", new MockBucket({ bucketName: "logs-bucket" }));
+    entities.set("DataBucket", new MockBucket({ BucketName: "data-bucket" }));
+    entities.set("LogsBucket", new MockBucket({ BucketName: "logs-bucket" }));
 
     const output = awsSerializer.serialize(entities);
     const template = JSON.parse(output);
@@ -125,7 +124,7 @@ describe("awsSerializer.serialize", () => {
   test("handles resources and parameters together", () => {
     const entities = new Map<string, Declarable>();
     entities.set("Env", new Parameter("String"));
-    entities.set("MyBucket", new MockBucket({ bucketName: "bucket" }));
+    entities.set("MyBucket", new MockBucket({ BucketName: "bucket" }));
 
     const output = awsSerializer.serialize(entities);
     const template = JSON.parse(output);
@@ -154,9 +153,9 @@ class MockEncryption implements Declarable {
   readonly lexicon = "aws";
   readonly entityType = "AWS::S3::Bucket.BucketEncryption";
   readonly kind = "property" as const;
-  readonly props: { serverSideEncryptionConfiguration: unknown[] };
+  readonly props: { ServerSideEncryptionConfiguration: unknown[] };
 
-  constructor(props: { serverSideEncryptionConfiguration: unknown[] }) {
+  constructor(props: { ServerSideEncryptionConfiguration: unknown[] }) {
     this.props = props;
   }
 }
@@ -164,14 +163,14 @@ class MockEncryption implements Declarable {
 describe("property-kind Declarables", () => {
   test("property-kind Declarables are inlined into parent properties", () => {
     const encryption = new MockEncryption({
-      serverSideEncryptionConfiguration: [
-        { serverSideEncryptionByDefault: { sseAlgorithm: "AES256" } },
+      ServerSideEncryptionConfiguration: [
+        { ServerSideEncryptionByDefault: { SSEAlgorithm: "AES256" } },
       ],
     });
 
-    const bucket = new MockBucket({ bucketName: "my-bucket" });
+    const bucket = new MockBucket({ BucketName: "my-bucket" });
     // Manually set encryption as a prop
-    (bucket.props as Record<string, unknown>).encryption = encryption;
+    (bucket.props as Record<string, unknown>).BucketEncryption = encryption;
 
     const entities = new Map<string, Declarable>();
     entities.set("DataEncryption", encryption);
@@ -181,23 +180,23 @@ describe("property-kind Declarables", () => {
     const template = JSON.parse(output);
 
     // Encryption should be inlined, not a Ref
-    expect(template.Resources.MyBucket.Properties.Encryption).toEqual({
+    expect(template.Resources.MyBucket.Properties.BucketEncryption).toEqual({
       ServerSideEncryptionConfiguration: [
-        { ServerSideEncryptionByDefault: { SseAlgorithm: "AES256" } },
+        { ServerSideEncryptionByDefault: { SSEAlgorithm: "AES256" } },
       ],
     });
   });
 
   test("property-kind Declarables do NOT appear as standalone Resources", () => {
     const encryption = new MockEncryption({
-      serverSideEncryptionConfiguration: [
-        { serverSideEncryptionByDefault: { sseAlgorithm: "AES256" } },
+      ServerSideEncryptionConfiguration: [
+        { ServerSideEncryptionByDefault: { SSEAlgorithm: "AES256" } },
       ],
     });
 
     const entities = new Map<string, Declarable>();
     entities.set("DataEncryption", encryption);
-    entities.set("MyBucket", new MockBucket({ bucketName: "my-bucket" }));
+    entities.set("MyBucket", new MockBucket({ BucketName: "my-bucket" }));
 
     const output = awsSerializer.serialize(entities);
     const template = JSON.parse(output);
@@ -207,16 +206,16 @@ describe("property-kind Declarables", () => {
   });
 
   test("resource-kind Declarables still emit Ref when referenced", () => {
-    const sourceBucket = new MockBucket({ bucketName: "source" });
+    const sourceBucket = new MockBucket({ BucketName: "source" });
 
     class MockConfig implements Declarable {
       readonly [DECLARABLE_MARKER] = true as const;
       readonly lexicon = "aws";
       readonly entityType = "AWS::S3::ReplicationDestination";
-      readonly props: { bucket: Declarable };
+      readonly props: { Bucket: Declarable };
 
-      constructor(bucket: Declarable) {
-        this.props = { bucket };
+      constructor(Bucket: Declarable) {
+        this.props = { Bucket };
       }
     }
 
@@ -233,7 +232,7 @@ describe("property-kind Declarables", () => {
 
 describe("intrinsic serialization", () => {
   test("handles AttrRef in properties", () => {
-    const source = new MockBucket({ bucketName: "source" });
+    const source = new MockBucket({ BucketName: "source" });
     // Set the logical name on the AttrRef before using it
     (source.arn as Record<string, unknown>)._setLogicalName("SourceBucket");
 
@@ -241,10 +240,10 @@ describe("intrinsic serialization", () => {
       readonly [DECLARABLE_MARKER] = true as const;
       readonly lexicon = "aws";
       readonly entityType = "AWS::S3::ReplicationConfiguration";
-      readonly props: { sourceArn: AttrRef };
+      readonly props: { SourceArn: AttrRef };
 
-      constructor(sourceArn: AttrRef) {
-        this.props = { sourceArn };
+      constructor(SourceArn: AttrRef) {
+        this.props = { SourceArn };
       }
     }
 
@@ -263,7 +262,7 @@ describe("intrinsic serialization", () => {
 
 describe("LexiconOutput serialization", () => {
   test("generates CF Outputs section for LexiconOutputs", () => {
-    const bucket = new MockBucket({ bucketName: "data-bucket" });
+    const bucket = new MockBucket({ BucketName: "data-bucket" });
     const lexiconOutput = new LexiconOutput(bucket.arn, "DataBucketArn");
     lexiconOutput._setSourceEntity("dataBucket");
 
@@ -280,8 +279,8 @@ describe("LexiconOutput serialization", () => {
   });
 
   test("generates multiple CF Outputs", () => {
-    const dataBucket = new MockBucket({ bucketName: "data-bucket" });
-    const logsBucket = new MockBucket({ bucketName: "logs-bucket" });
+    const dataBucket = new MockBucket({ BucketName: "data-bucket" });
+    const logsBucket = new MockBucket({ BucketName: "logs-bucket" });
 
     const dataOutput = new LexiconOutput(dataBucket.arn, "DataBucketArn");
     dataOutput._setSourceEntity("dataBucket");
@@ -307,7 +306,7 @@ describe("LexiconOutput serialization", () => {
 
   test("omits Outputs section when no LexiconOutputs provided", () => {
     const entities = new Map<string, Declarable>();
-    entities.set("MyBucket", new MockBucket({ bucketName: "bucket" }));
+    entities.set("MyBucket", new MockBucket({ BucketName: "bucket" }));
 
     const result = awsSerializer.serialize(entities);
     const template = JSON.parse(result);
@@ -317,7 +316,7 @@ describe("LexiconOutput serialization", () => {
 
   test("omits Outputs section when empty LexiconOutputs array", () => {
     const entities = new Map<string, Declarable>();
-    entities.set("MyBucket", new MockBucket({ bucketName: "bucket" }));
+    entities.set("MyBucket", new MockBucket({ BucketName: "bucket" }));
 
     const result = awsSerializer.serialize(entities, []);
     const template = JSON.parse(result as string);
@@ -430,7 +429,7 @@ describe("nested stack serialization", () => {
       Resources: {},
     });
 
-    const bucket = new MockBucket({ bucketName: "data" });
+    const bucket = new MockBucket({ BucketName: "data" });
 
     const entities = new Map<string, Declarable>();
     entities.set("network", stack as unknown as Declarable);
@@ -446,7 +445,7 @@ describe("nested stack serialization", () => {
 
   test("without nested stacks returns plain string", () => {
     const entities = new Map<string, Declarable>();
-    entities.set("MyBucket", new MockBucket({ bucketName: "bucket" }));
+    entities.set("MyBucket", new MockBucket({ BucketName: "bucket" }));
 
     const result = awsSerializer.serialize(entities);
     expect(typeof result).toBe("string");
@@ -472,7 +471,7 @@ describe("nested stack serialization", () => {
       entityType: "AWS::Lambda::Function",
       kind: "resource" as const,
       props: {
-        vpcConfig: { subnetIds: [subnetRef] },
+        VpcConfig: { SubnetIds: [subnetRef] },
       },
     } as unknown as Declarable;
 

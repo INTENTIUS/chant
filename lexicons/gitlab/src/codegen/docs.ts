@@ -58,8 +58,7 @@ The generated file includes:
 | Chant (TypeScript) | YAML output | Rule |
 |--------------------|-------------|------|
 | \`export const buildApp = new Job({...})\` | \`build-app:\` | Export name → kebab-case job key |
-| \`expireIn: "1 week"\` | \`expire_in: 1 week\` | camelCase → snake_case |
-| \`ifCondition: ...\` | \`if: ...\` | Reserved word properties use suffixed names |
+| \`expire_in: "1 week"\` | \`expire_in: 1 week\` | Property names use spec-native snake_case |
 | \`new Image({ name: "node:20" })\` | \`image: node:20\` | Single-property objects are collapsed |
 
 ## Validating locally
@@ -108,7 +107,7 @@ export async function generateDocs(opts?: { verbose?: boolean }): Promise<void> 
         description: "Jobs, stages, artifacts, caching, images, rules, environments, and triggers in the GitLab CI/CD lexicon",
         content: `Every exported \`Job\` declaration becomes a job entry in the generated \`.gitlab-ci.yml\`. The serializer handles the translation automatically:
 
-- Converts camelCase property names to snake_case (\`expireIn\` → \`expire_in\`)
+- Property names use spec-native snake_case (\`expire_in\`, \`allow_failure\`)
 - Converts export names to kebab-case job keys (\`buildApp\` → \`build-app\`)
 - Collects stages from all jobs into a \`stages:\` list
 - Collapses single-property objects (\`new Image({ name: "node:20" })\` → \`image: node:20\`)

@@ -173,8 +173,7 @@ function generateRuntimeIndex(
     // Build attrs map
     const attrs: Record<string, string> = {};
     for (const a of r.resource.attributes) {
-      const camelName = a.name.charAt(0).toLowerCase() + a.name.slice(1);
-      attrs[camelName] = a.name;
+      attrs[a.name] = a.name;
     }
 
     resourceEntries.push({ tsName, resourceType: cfnType, attrs });

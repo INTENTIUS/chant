@@ -1,15 +1,15 @@
 import { Bucket } from "@intentius/chant-lexicon-aws";
 
 export const bucket = new Bucket({
-  bucketName: "my-bucket",
-  tags: [
-    { key: "Environment", value: "production" },
-    { key: "Team", value: "platform" },
+  BucketName: "my-bucket",
+  Tags: [
+    { Key: "Environment", Value: "production" },
+    { Key: "Team", Value: "platform" },
   ],
-  bucketEncryption: {
-    serverSideEncryptionConfiguration: [
+  BucketEncryption: {
+    ServerSideEncryptionConfiguration: [
       {
-        serverSideEncryptionByDefault: { sseAlgorithm: "AES256" },
+        ServerSideEncryptionByDefault: { SSEAlgorithm: "AES256" },
       },
     ],
   },

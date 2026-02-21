@@ -1,16 +1,16 @@
 import { Bucket, If, AWS } from "@intentius/chant-lexicon-aws";
 
 export const bucket = new Bucket({
-  bucketName: "my-bucket",
-  accelerateConfiguration: If(
+  BucketName: "my-bucket",
+  AccelerateConfiguration: If(
     "EnableAcceleration",
-    { accelerationStatus: "Enabled" },
+    { AccelerationStatus: "Enabled" },
     AWS.NoValue,
   ),
-  bucketEncryption: {
-    serverSideEncryptionConfiguration: [
+  BucketEncryption: {
+    ServerSideEncryptionConfiguration: [
       {
-        serverSideEncryptionByDefault: { sseAlgorithm: "AES256" },
+        ServerSideEncryptionByDefault: { SSEAlgorithm: "AES256" },
       },
     ],
   },

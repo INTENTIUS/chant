@@ -26,7 +26,7 @@ describe("WAW012: API Gateway Lambda Timeout", () => {
         name: "test",
         runtime: "nodejs20.x",
         handler: "index.handler",
-        code: { zipFile: "..." },
+        code: { ZipFile: "..." },
         timeout: 29,
       });
     `;
@@ -41,7 +41,7 @@ describe("WAW012: API Gateway Lambda Timeout", () => {
         name: "test",
         runtime: "nodejs20.x",
         handler: "index.handler",
-        code: { zipFile: "..." },
+        code: { ZipFile: "..." },
         timeout: 25,
       });
     `;
@@ -56,7 +56,7 @@ describe("WAW012: API Gateway Lambda Timeout", () => {
         name: "test",
         runtime: "nodejs20.x",
         handler: "index.handler",
-        code: { zipFile: "..." },
+        code: { ZipFile: "..." },
       });
     `;
 
@@ -70,7 +70,7 @@ describe("WAW012: API Gateway Lambda Timeout", () => {
         name: "test",
         runtime: "nodejs20.x",
         handler: "index.handler",
-        code: { zipFile: "..." },
+        code: { ZipFile: "..." },
         timeout: 30,
       });
     `;
@@ -89,7 +89,7 @@ describe("WAW012: API Gateway Lambda Timeout", () => {
         name: "bad",
         runtime: "nodejs20.x",
         handler: "index.handler",
-        code: { zipFile: "..." },
+        code: { ZipFile: "..." },
         timeout: 60,
       });
     `;
@@ -125,7 +125,7 @@ describe("WAW012: API Gateway Lambda Timeout", () => {
         name: "api1",
         runtime: "nodejs20.x",
         handler: "index.handler",
-        code: { zipFile: "..." },
+        code: { ZipFile: "..." },
         timeout: 30,
       });
 
@@ -133,7 +133,7 @@ describe("WAW012: API Gateway Lambda Timeout", () => {
         name: "api2",
         runtime: "nodejs20.x",
         handler: "index.handler",
-        code: { zipFile: "..." },
+        code: { ZipFile: "..." },
         timeout: 35,
       });
 
@@ -141,7 +141,7 @@ describe("WAW012: API Gateway Lambda Timeout", () => {
         name: "api3",
         runtime: "nodejs20.x",
         handler: "index.handler",
-        code: { zipFile: "..." },
+        code: { ZipFile: "..." },
         timeout: 25, // Valid
       });
     `;
@@ -155,12 +155,12 @@ describe("WAW012: API Gateway Lambda Timeout", () => {
   it("should not flag non-API-factory calls", () => {
     const code = `
       const func = new Function({
-        functionName: "test",
-        runtime: "nodejs20.x",
-        handler: "index.handler",
-        code: { zipFile: "..." },
-        role: "arn:aws:iam::123456789012:role/test",
-        timeout: 300, // Valid for raw Lambda (up to 900s)
+        FunctionName: "test",
+        Runtime: "nodejs20.x",
+        Handler: "index.handler",
+        Code: { ZipFile: "..." },
+        Role: "arn:aws:iam::123456789012:role/test",
+        Timeout: 300, // Valid for raw Lambda (up to 900s)
       });
     `;
 

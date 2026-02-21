@@ -3,7 +3,6 @@ import { isPropertyDeclarable } from "@intentius/chant/declarable";
 import type { Serializer, SerializerResult } from "@intentius/chant/serializer";
 import type { LexiconOutput } from "@intentius/chant/lexicon-output";
 import { walkValue, type SerializerVisitor } from "@intentius/chant/serializer-walker";
-import { toPascalCase } from "@intentius/chant/codegen/case";
 import { isChildProject, type ChildProjectInstance } from "@intentius/chant/child-project";
 import { isStackOutput, type StackOutput } from "@intentius/chant/stack-output";
 
@@ -78,26 +77,19 @@ function cfnVisitor(entityNames: Map<Declarable, string>): SerializerVisitor {
       const cfProps: Record<string, unknown> = {};
       for (const [key, value] of Object.entries(props)) {
         if (value !== undefined) {
-          const cfKey = toPascalCase(key);
-          cfProps[cfKey] = walk(value);
+          cfProps[key] = walk(value);
         }
       }
       return Object.keys(cfProps).length > 0 ? cfProps : undefined;
     },
-    transformKey: toPascalCase,
   };
 }
 
 /**
  * Convert a value to CF-compatible JSON using the generic walker.
  */
-function toCFValue(value: unknown, entityNames: Map<Declarable, string>, convertKeys = false): unknown {
-  const visitor = cfnVisitor(entityNames);
-  if (!convertKeys) {
-    // When not converting keys, use a visitor without transformKey
-    return walkValue(value, entityNames, { ...visitor, transformKey: undefined });
-  }
-  return walkValue(value, entityNames, visitor);
+function toCFValue(value: unknown, entityNames: Map<Declarable, string>): unknown {
+  return walkValue(value, entityNames, cfnVisitor(entityNames));
 }
 
 /**
@@ -116,8 +108,7 @@ function toProperties(
 
   for (const [key, value] of Object.entries(props)) {
     if (value !== undefined) {
-      const cfKey = toPascalCase(key);
-      cfProps[cfKey] = toCFValue(value, entityNames, true);
+      cfProps[key] = toCFValue(value, entityNames);
     }
   }
 

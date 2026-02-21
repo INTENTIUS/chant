@@ -457,11 +457,9 @@ export class CFGenerator implements TypeScriptGenerator {
   }
 
   /**
-   * Convert a property name to camelCase (lowercase first char).
-   * Used for resource property access (e.g., GetAtt attribute names)
-   * which matches chant's camelCase property convention.
+   * Property names use spec-native casing (PascalCase for CloudFormation).
    */
   private toPropName(name: string): string {
-    return name.charAt(0).toLowerCase() + name.slice(1);
+    return name;
   }
 }

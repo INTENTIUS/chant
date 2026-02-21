@@ -7,17 +7,17 @@ interface LambdaApiProps {
   handler: string;
   timeout: number;
   memorySize: number;
-  code: { zipFile: string };
+  code: { ZipFile: string };
 }
 
 const LambdaApi = Composite<LambdaApiProps>((props) => ({
   fn: new LambdaFunction({
-    functionName: props.name,
-    runtime: props.runtime,
-    handler: props.handler,
-    timeout: props.timeout,
-    memorySize: props.memorySize,
-    code: props.code,
+    FunctionName: props.name,
+    Runtime: props.runtime,
+    Handler: props.handler,
+    Timeout: props.timeout,
+    MemorySize: props.memorySize,
+    Code: props.code,
   }),
 }), "LambdaApi");
 
@@ -30,7 +30,7 @@ const SecureApi = withDefaults(LambdaApi, {
 
 export const healthApi = SecureApi({
   name: Sub`${AWS.StackName}-health`,
-  code: { zipFile: `exports.handler = async () => ({ statusCode: 200 });` },
+  code: { ZipFile: `exports.handler = async () => ({ statusCode: 200 });` },
 });
 
 // Composable — stack defaults on top of defaults

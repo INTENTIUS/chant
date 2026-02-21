@@ -51,7 +51,7 @@ describe("buildRegistry", () => {
     const entries = buildRegistry(resources, naming, testConfig);
 
     expect(entries["Bucket"]).toBeDefined();
-    expect(entries["Bucket"].attrs).toEqual({ arn: "Arn", domainName: "DomainName" });
+    expect(entries["Bucket"].attrs).toEqual({ Arn: "Arn", DomainName: "DomainName" });
   });
 
   test("omits attrs when empty", () => {

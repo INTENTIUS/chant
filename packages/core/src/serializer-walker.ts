@@ -17,8 +17,6 @@ export interface SerializerVisitor {
   resourceRef(logicalName: string): unknown;
   /** Format a property-level Declarable by walking its props. */
   propertyDeclarable(entity: Declarable, walk: (v: unknown) => unknown): unknown;
-  /** Optional key transformation (e.g. camelCase → PascalCase). */
-  transformKey?(key: string): string;
 }
 
 /**
@@ -73,7 +71,7 @@ export function walkValue(
   if (typeof value === "object") {
     const result: Record<string, unknown> = {};
     for (const [key, val] of Object.entries(value)) {
-      const outKey = visitor.transformKey ? visitor.transformKey(key) : key;
+      const outKey = key;
       result[outKey] = walkValue(val, entityNames, visitor);
     }
     return result;

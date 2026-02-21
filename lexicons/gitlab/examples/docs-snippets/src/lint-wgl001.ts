@@ -11,6 +11,6 @@ export const deployGood = new Job({
   stage: "deploy",
   script: ["npm run deploy"],
   rules: [new Rule({
-    ifCondition: `${CI.CommitBranch} == ${CI.DefaultBranch}`,
+    if: `${CI.CommitBranch} == ${CI.DefaultBranch}`,
   })],
 });

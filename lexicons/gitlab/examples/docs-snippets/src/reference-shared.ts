@@ -3,13 +3,13 @@ import { Job, reference } from "@intentius/chant-lexicon-gitlab";
 // Shared setup scripts from external YAML
 export const testRef = new Job({
   stage: "test",
-  beforeScript: reference(".node-setup", "before_script"),
+  before_script: reference(".node-setup", "before_script"),
   script: ["npm test"],
 });
 
 export const lintRef = new Job({
   stage: "test",
-  beforeScript: reference(".node-setup", "before_script"),
+  before_script: reference(".node-setup", "before_script"),
   script: ["npm run lint"],
 });
 

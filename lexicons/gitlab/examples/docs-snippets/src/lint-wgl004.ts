@@ -12,6 +12,6 @@ export const buildGood = new Job({
   script: ["npm run build"],
   artifacts: new Artifacts({
     paths: ["dist/"],
-    expireIn: "1 hour",
+    expire_in: "1 hour",
   }),
 });

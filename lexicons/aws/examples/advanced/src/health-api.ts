@@ -6,7 +6,7 @@ export const healthApi = SecureApi({
   runtime: "nodejs20.x",
   handler: "index.handler",
   code: {
-    zipFile: `exports.handler = async () => ({
+    ZipFile: `exports.handler = async () => ({
       statusCode: 200,
       body: JSON.stringify({ status: 'healthy' })
     });`,

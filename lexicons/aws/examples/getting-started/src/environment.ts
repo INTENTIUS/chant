@@ -7,4 +7,4 @@ export const environment = new Parameter("String", {
   defaultValue: "dev",
 });
 
-export const dataBucketArn = output(dataBucket.arn, "DataBucketArn");
+export const dataBucketArn = output(dataBucket.Arn, "DataBucketArn");

@@ -10,6 +10,14 @@ import type { TemplateParser, TemplateIR, ResourceIR } from "@intentius/chant/im
 /**
  * Reserved top-level keys in .gitlab-ci.yml that are NOT job definitions.
  */
+/**
+ * Convert snake_case to camelCase — used only for TS variable names (logicalId),
+ * NOT for spec property names.
+ */
+function snakeToCamelCase(name: string): string {
+  return name.replace(/_([a-z])/g, (_, c: string) => c.toUpperCase());
+}
+
 const RESERVED_KEYS = new Set([
   "stages",
   "variables",
@@ -24,28 +32,6 @@ const RESERVED_KEYS = new Set([
   "pages",
 ]);
 
-/**
- * Map snake_case GitLab CI keys to camelCase for Chant properties.
- */
-function toCamelCase(name: string): string {
-  return name.replace(/_([a-z])/g, (_, c) => c.toUpperCase());
-}
-
-/**
- * Recursively convert snake_case keys in an object to camelCase.
- */
-function camelCaseKeys(value: unknown): unknown {
-  if (value === null || value === undefined) return value;
-  if (Array.isArray(value)) return value.map(camelCaseKeys);
-  if (typeof value === "object") {
-    const result: Record<string, unknown> = {};
-    for (const [key, val] of Object.entries(value as Record<string, unknown>)) {
-      result[toCamelCase(key)] = camelCaseKeys(val);
-    }
-    return result;
-  }
-  return value;
-}
 
 /**
  * Parse a YAML document into a plain object.
@@ -227,7 +213,7 @@ export class GitLabParser implements TemplateParser {
       resources.push({
         logicalId: "defaults",
         type: "GitLab::CI::Default",
-        properties: camelCaseKeys(doc.default) as Record<string, unknown>,
+        properties: doc.default as Record<string, unknown>,
       });
     }
 
@@ -236,7 +222,7 @@ export class GitLabParser implements TemplateParser {
       resources.push({
         logicalId: "workflow",
         type: "GitLab::CI::Workflow",
-        properties: camelCaseKeys(doc.workflow) as Record<string, unknown>,
+        properties: doc.workflow as Record<string, unknown>,
       });
     }
 
@@ -256,9 +242,9 @@ export class GitLabParser implements TemplateParser {
         obj.needs !== undefined
       ) {
         resources.push({
-          logicalId: toCamelCase(key.replace(/-/g, "_")),
+          logicalId: snakeToCamelCase(key.replace(/-/g, "_")),
           type: "GitLab::CI::Job",
-          properties: camelCaseKeys(obj) as Record<string, unknown>,
+          properties: obj as Record<string, unknown>,
           metadata: {
             originalName: key,
             stage: typeof obj.stage === "string" ? obj.stage : undefined,

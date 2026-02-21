@@ -4,7 +4,7 @@ import { Job, Rule, CI } from "@intentius/chant-lexicon-gitlab";
 export const noop = new Job({
   script: ["echo unreachable"],
   rules: [
-    new Rule({ ifCondition: CI.CommitBranch, when: "never" }),
-    new Rule({ ifCondition: CI.CommitTag, when: "never" }),
+    new Rule({ if: CI.CommitBranch, when: "never" }),
+    new Rule({ if: CI.CommitTag, when: "never" }),
   ],
 });

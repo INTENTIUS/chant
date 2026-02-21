@@ -15,13 +15,6 @@ import { walkValue, type SerializerVisitor } from "@intentius/chant/serializer-w
 import { INTRINSIC_MARKER } from "@intentius/chant/intrinsic";
 
 /**
- * Convert camelCase or PascalCase to snake_case.
- */
-function toSnakeCase(name: string): string {
-  return name.replace(/([a-z0-9])([A-Z])/g, "$1_$2").toLowerCase();
-}
-
-/**
  * GitLab CI visitor for the generic serializer walker.
  */
 function gitlabVisitor(entityNames: Map<Declarable, string>): SerializerVisitor {
@@ -36,12 +29,11 @@ function gitlabVisitor(entityNames: Map<Declarable, string>): SerializerVisitor 
       const result: Record<string, unknown> = {};
       for (const [key, value] of Object.entries(props)) {
         if (value !== undefined) {
-          result[toSnakeCase(key)] = walk(value);
+          result[key] = walk(value);
         }
       }
       return Object.keys(result).length > 0 ? result : undefined;
     },
-    transformKey: toSnakeCase,
   };
 }
 

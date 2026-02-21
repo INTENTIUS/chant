@@ -2,12 +2,12 @@ import { Bucket, BucketEncryption, ServerSideEncryptionRule } from "@intentius/c
 import { publicAccessBlock, encryptionDefault } from "./preset-defaults";
 
 export const secureBucket = new Bucket({
-  bucketName: "secure-data",
-  publicAccessBlockConfiguration: publicAccessBlock,
-  bucketEncryption: new BucketEncryption({
-    serverSideEncryptionConfiguration: [
+  BucketName: "secure-data",
+  PublicAccessBlockConfiguration: publicAccessBlock,
+  BucketEncryption: new BucketEncryption({
+    ServerSideEncryptionConfiguration: [
       new ServerSideEncryptionRule({
-        serverSideEncryptionByDefault: encryptionDefault,
+        ServerSideEncryptionByDefault: encryptionDefault,
       }),
     ],
   }),

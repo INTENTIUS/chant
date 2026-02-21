@@ -7,26 +7,26 @@ import {
 } from "@intentius/chant-lexicon-aws";
 
 export const encryptionDefault = new ServerSideEncryptionByDefault({
-  sseAlgorithm: "AES256",
+  SSEAlgorithm: "AES256",
 });
 
 export const encryptionRule = new ServerSideEncryptionRule({
-  serverSideEncryptionByDefault: encryptionDefault,
+  ServerSideEncryptionByDefault: encryptionDefault,
 });
 
 export const bucketEncryption = new BucketEncryption({
-  serverSideEncryptionConfiguration: [encryptionRule],
+  ServerSideEncryptionConfiguration: [encryptionRule],
 });
 
 export const publicAccessBlock = new PublicAccessBlockConfiguration({
-  blockPublicAcls: true,
-  blockPublicPolicy: true,
-  ignorePublicAcls: true,
-  restrictPublicBuckets: true,
+  BlockPublicAcls: true,
+  BlockPublicPolicy: true,
+  IgnorePublicAcls: true,
+  RestrictPublicBuckets: true,
 });
 
 export const versioningEnabled = new VersioningConfiguration({
-  status: "Enabled",
+  Status: "Enabled",
 });
 
 export const lambdaTrustPolicy = {

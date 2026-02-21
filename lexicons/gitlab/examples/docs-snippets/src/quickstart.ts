@@ -7,6 +7,6 @@ export const test = new Job({
   script: ["npm ci", "npm test"],
   artifacts: new Artifacts({
     paths: ["coverage/"],
-    expireIn: "1 week",
+    expire_in: "1 week",
   }),
 });
