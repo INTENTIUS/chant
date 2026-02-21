@@ -12,9 +12,9 @@ chant includes utilities for discovering infrastructure files in a project and r
 Recursively scans a directory for TypeScript infrastructure files:
 
 ```typescript
-import * as core from "@intentius/chant";
+import { findInfraFiles } from "@intentius/chant";
 
-const files = await core.findInfraFiles("./src");
+const files = await findInfraFiles("./src");
 // ["/project/src/resources.ts", "/project/src/config.ts"]
 ```
 
@@ -28,9 +28,9 @@ The function:
 Dynamically imports a TypeScript module and returns its exports:
 
 ```typescript
-import * as core from "@intentius/chant";
+import { importModule } from "@intentius/chant";
 
-const exports = await core.importModule("./src/resources.ts");
+const exports = await importModule("./src/resources.ts");
 ```
 
 On import failure, throws a `DiscoveryError` with type `"import"`.
@@ -40,9 +40,9 @@ On import failure, throws a `DiscoveryError` with type `"import"`.
 Collects all `Declarable` entities from imported modules:
 
 ```typescript
-import * as core from "@intentius/chant";
+import { collectEntities } from "@intentius/chant";
 
-const entities = core.collectEntities(modules);
+const entities = collectEntities(modules);
 // Map { "MyResource" => {...}, "MyFunction" => {...} }
 ```
 
@@ -53,7 +53,9 @@ const entities = core.collectEntities(modules);
 Detects circular dependencies in an entity graph using DFS:
 
 ```typescript
-const cycles = core.detectCycles(graph);
+import { detectCycles } from "@intentius/chant";
+
+const cycles = detectCycles(graph);
 ```
 
 ### topologicalSort
@@ -61,7 +63,9 @@ const cycles = core.detectCycles(graph);
 Orders entities so dependencies appear before dependents:
 
 ```typescript
-const order = core.topologicalSort(deps);
+import { topologicalSort } from "@intentius/chant";
+
+const order = topologicalSort(deps);
 // ["Database", "Cache", "App"]
 ```
 
@@ -76,7 +80,9 @@ Builds a dependency graph from entity relationships, detecting dependencies from
 Resolves all `AttrRef` instances by setting their logical names:
 
 ```typescript
-core.resolveAttrRefs(entities);
+import { resolveAttrRefs } from "@intentius/chant";
+
+resolveAttrRefs(entities);
 ```
 
 This enables `AttrRef.toJSON()` to work correctly during serialization.
@@ -88,7 +94,9 @@ This enables `AttrRef.toJSON()` to work correctly during serialization.
 The main discovery pipeline that orchestrates all steps:
 
 ```typescript
-const result = await core.discover("./src/infra");
+import { discover } from "@intentius/chant";
+
+const result = await discover("./src/infra");
 // result.entities: Map of entity name to Declarable
 // result.dependencies: Map of entity to dependency set
 // result.sourceFiles: Array of discovered file paths

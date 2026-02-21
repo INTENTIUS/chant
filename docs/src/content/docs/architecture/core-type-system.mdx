@@ -10,9 +10,9 @@ chant provides a lexicon-agnostic declarative specification system. This guide c
 A **Declarable** is any entity that can be declared in a specification. All declarables share a common marker and an `entityType` property for runtime identification.
 
 ```typescript
-import * as core from "@intentius/chant";
+import { isDeclarable } from "@intentius/chant";
 
-if (core.isDeclarable(value)) {
+if (isDeclarable(value)) {
   console.log(value.entityType);
 }
 ```
@@ -42,7 +42,9 @@ interface CoreOutput extends Declarable {
 An **Intrinsic** represents a lexicon-provided function that will be resolved at build time. Intrinsics are placeholders for values that depend on other resources or runtime information.
 
 ```typescript
-if (core.isIntrinsic(value)) {
+import { isIntrinsic } from "@intentius/chant";
+
+if (isIntrinsic(value)) {
   const serialized = value.toJSON();
 }
 ```
@@ -52,7 +54,9 @@ if (core.isIntrinsic(value)) {
 `AttrRef` is a built-in intrinsic for referencing attributes of other entities. It uses deferred resolution — the logical name is assigned during discovery, not construction.
 
 ```typescript
-const arnRef = new core.AttrRef(bucket, "arn");
+import { AttrRef } from "@intentius/chant";
+
+const arnRef = new AttrRef(bucket, "arn");
 arnRef.toJSON();
 // Produces the lexicon's reference format
 ```
@@ -80,7 +84,9 @@ Thrown during file discovery and module loading:
 
 ```typescript
 // Types: "import" | "resolution" | "circular"
-throw new core.DiscoveryError("config.ts", "Module not found", "import");
+import { DiscoveryError } from "@intentius/chant";
+
+throw new DiscoveryError("config.ts", "Module not found", "import");
 ```
 
 ### BuildError
@@ -88,7 +94,9 @@ throw new core.DiscoveryError("config.ts", "Module not found", "import");
 Thrown during the build/serialization phase:
 
 ```typescript
-throw new core.BuildError("MyResource", "Invalid configuration");
+import { BuildError } from "@intentius/chant";
+
+throw new BuildError("MyResource", "Invalid configuration");
 ```
 
 ### LintError
@@ -96,7 +104,9 @@ throw new core.BuildError("MyResource", "Invalid configuration");
 Represents a lint rule violation with location information:
 
 ```typescript
-const error = new core.LintError(
+import { LintError } from "@intentius/chant";
+
+const error = new LintError(
   "config.ts", 10, 5, "no-unused",
   "Variable is declared but never used"
 );

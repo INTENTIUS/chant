@@ -114,15 +114,15 @@ When a namespace import already exists for a package, a separate `import type` f
 
 ```typescript
 // ❌ Triggers COR012
-import * as core from "@intentius/chant";
+import { isDeclarable } from "@intentius/chant";
 import type { Declarable } from "@intentius/chant";
 ```
 
 ```typescript
-// ✅ Fixed — access types through the namespace
-import * as core from "@intentius/chant";
+// ✅ Fixed — import the type as a named import
+import { isDeclarable, type Declarable } from "@intentius/chant";
 
-const d: core.Declarable = /* ... */;
+const d: Declarable = /* ... */;
 ```
 
 This rule is auto-fixable — `chant lint --fix` removes the redundant `import type` line.

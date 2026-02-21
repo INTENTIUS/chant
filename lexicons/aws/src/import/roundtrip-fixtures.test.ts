@@ -5,7 +5,8 @@ import { CFParser } from "./parser";
 import { CFGenerator } from "./generator";
 import { build } from "@intentius/chant/build";
 import { awsSerializer } from "../serializer";
-import * as awsLexicon from "../index";
+// Dynamic import to get all export keys for validation (not a runtime barrel import)
+const awsLexicon = await import("../index");
 
 const parser = new CFParser();
 const generator = new CFGenerator();
