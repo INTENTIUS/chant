@@ -39,8 +39,8 @@ The `hoverProvider()` method returns hover information when users mouse over res
 
 ```typescript
 hoverProvider(ctx) {
-  return lexiconHover(ctx, index, (entry) => {
-    return `**${entry.name}**\n\n${entry.description}`;
+  return lexiconHover(ctx, index, (className, entry) => {
+    return { contents: `**${className}** — \`${entry.resourceType}\`` };
   });
 }
 ```

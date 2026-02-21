@@ -13,7 +13,7 @@ chant integrates with AI coding agents like Claude and Cursor through the MCP (M
 2. **Installs skills** — copies lexicon-contributed skill files (markdown guides) into `.chant/skills/`.
 
 ```bash
-chant init my-infra
+chant init --lexicon aws my-infra
 ```
 
 To refresh skills after a lexicon update:
@@ -42,9 +42,12 @@ If your editor doesn't auto-detect `.mcp.json`, add the chant MCP server manuall
 When an agent connects via MCP, the chant server exposes:
 
 **Tools:**
-- `lint` — Run lint checks on TypeScript intent definitions
 - `build` — Synthesize and write infrastructure output
+- `lint` — Run lint checks on TypeScript intent definitions
 - `import` — Import infrastructure templates and generate TypeScript files
+- `explain` — Summarize project resources by lexicon and kind
+- `scaffold` — Generate starter files from lexicon templates
+- `search` — Search available resource types across lexicons
 
 **Resources:**
 - `chant://context` — Lexicon-specific instructions and patterns for chant development

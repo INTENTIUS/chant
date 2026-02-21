@@ -43,14 +43,13 @@ From the provided name, the command derives:
 
 | File | Purpose |
 |------|---------|
-| `src/plugin.ts` | `LexiconPlugin` with all 5 required lifecycle methods |
+| `src/plugin.ts` | `LexiconPlugin` with all 4 required lifecycle methods |
 | `src/index.ts` | Re-exports plugin and serializer |
 | `src/serializer.ts` | Stub `Serializer` producing minimal JSON |
 | `src/codegen/generate.ts` | Calls core `generatePipeline` with TODO callbacks |
 | `src/codegen/generate-cli.ts` | Bun entry point for `just generate` |
 | `src/codegen/naming.ts` | `NamingStrategy` with empty data tables |
 | `src/codegen/package.ts` | Calls core `packagePipeline` |
-| `src/codegen/rollback.ts` | Snapshot list/restore helpers |
 | `src/codegen/docs.ts` | Calls core `docsPipeline` |
 | `src/spec/fetch.ts` | `fetchWithCache` stub with TODO URL |
 | `src/spec/parse.ts` | `parseSchema` stub with `ParseResult` type |

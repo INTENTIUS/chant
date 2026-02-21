@@ -121,7 +121,6 @@ writeGeneratedArtifacts({
     "index.d.ts": result.typesDTS,
     "index.ts": result.indexTS,
   },
-  snapshot: (dir) => takeSnapshot(dir), // optional: auto-snapshot before overwriting
 });
 ```
 
@@ -134,11 +133,10 @@ writeGeneratedArtifacts({
 ```typescript
 import { generateRuntimeIndex, type RuntimeIndexConfig } from "@intentius/chant/codegen/generate-runtime-index";
 
-const indexTS = generateRuntimeIndex({
-  resources: results,
-  naming,
+const indexTS = generateRuntimeIndex(resources, properties, {
   lexiconName: "my-lexicon",
-  attributeMap: (r) => r.attributes,
+  intrinsicReExports: [],
+  pseudoReExports: [],
 });
 ```
 
@@ -147,7 +145,11 @@ const indexTS = generateRuntimeIndex({
 ```typescript
 import { buildRegistry, serializeRegistry } from "@intentius/chant/codegen/generate-registry";
 
-const registry = buildRegistry({ resources: results, naming, lexiconName: "my-lexicon" });
+const registry = buildRegistry(results, naming, {
+  shortName: (t) => naming.shortName(t),
+  buildEntry: (r, shortName) => ({ resourceType: r.typeName, kind: "resource" }),
+  buildPropertyEntry: (r, shortName) => ({ resourceType: r.typeName, kind: "property" }),
+});
 const lexiconJSON = serializeRegistry(registry);
 ```
 
@@ -168,7 +170,7 @@ import { resolvePropertyType, extractConstraints, isEnumDefinition } from "@inte
 ```typescript
 import { PseudoParameter, createPseudoParameters } from "@intentius/chant/pseudo-parameter";
 
-const pseudos = createPseudoParameters("my-lexicon", {
+const pseudos = createPseudoParameters({
   "My::Region": "The deployment region",
   "My::AccountId": "The account identifier",
 });

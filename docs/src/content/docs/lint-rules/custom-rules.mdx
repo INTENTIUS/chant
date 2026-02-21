@@ -3,16 +3,18 @@ title: Custom Rules
 description: Defining project-specific lint rules
 ---
 
-You can define project-specific lint rules using the declarative `rule({...})` format. Custom rules are TypeScript files that are parsed as data — no code is executed.
+You can define project-specific lint rules using the declarative `rule({...})` format.
 
 ## Setup
 
-Add your rule files to the `plugins` array in your chant config:
+Add your rule files to the `plugins` array in `chant.config.ts`:
 
-```json
-{
-  "plugins": ["./lint-rules/org-standards.ts"]
-}
+```typescript
+export default {
+  lint: {
+    plugins: ["./lint-rules/org-standards.ts"],
+  },
+};
 ```
 
 ## Rule Format

@@ -9,10 +9,10 @@ chant includes a semantic lint system that validates the meaning of your declara
 
 | Category | ID Range | Scope | Description |
 |----------|----------|-------|-------------|
-| **Evaluability** | EVL001–EVL010 | Single file | Flag TypeScript patterns that cannot be statically evaluated |
-| **Style** | COR001–COR009, COR012–COR016, COR018 | Single file | Structural and naming conventions |
+| **Evaluability** | EVL001–EVL005, EVL007, EVL009–EVL010 | Single file | Flag TypeScript patterns that cannot be statically evaluated |
+| **Style** | COR001–COR009, COR012–COR015 | Single file | Structural and naming conventions |
 | **Cross-File** | COR010–COR011 | Multi-file | Unused exports and circular dependencies |
-| **Correctness** | COR003, COR004, COR007, COR008, COR016, COR017 | Single file | Structural errors |
+| **Correctness** | COR003, COR004, COR007, COR008, COR017 | Single file | Structural errors |
 | **Composite** | EVL009, EVL010, COR017, COR018 | Single file | Best practices for Composite() factories |
 | **Lexicon** | Varies by lexicon | Varies | Provider-specific rules (see lexicon docs) |
 
@@ -59,10 +59,7 @@ Rules are configured via `chant.config.ts` in your project root. When no config 
 | COR013 | info |
 | COR014 | warning |
 | COR015 | warning |
-| COR016 | warning |
-| COR017 | error |
-| COR018 | info |
-| EVL001–EVL008 | error |
+| EVL001–EVL005, EVL007 | error |
 | EVL009 | warning |
 | EVL010 | warning |
 
@@ -83,10 +80,10 @@ See [Disable Directives](/chant/lint-rules/disable-directives/) for details.
 
 ## See Also
 
-- [Evaluability Rules](/chant/lint-rules/evaluability/) — EVL001–EVL008
+- [Evaluability Rules](/chant/lint-rules/evaluability/) — EVL001–EVL005, EVL007
 - [Style Rules](/chant/lint-rules/style/) — COR001, COR002, COR005, etc.
 - [Cross-File Rules](/chant/lint-rules/cross-file/) — COR010, COR011
-- [Correctness Rules](/chant/lint-rules/correctness/) — COR003, COR004, COR007, COR008, COR016
+- [Correctness Rules](/chant/lint-rules/correctness/) — COR003, COR004, COR007, COR008
 - [Composite Rules](/chant/lint-rules/composite/) — EVL009, EVL010, COR017, COR018
 - [Custom Rules](/chant/lint-rules/custom-rules/) — project-specific rules
 - [Configuration](/chant/lint-rules/configuration/) — severity, presets, overrides

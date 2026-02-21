@@ -17,7 +17,7 @@ Typically you don't run this directly. `chant init` writes the MCP config to `.m
 
 ## Tools
 
-The server exposes three core tools that agents can invoke:
+The server exposes six core tools that agents can invoke:
 
 ### `build`
 
@@ -52,6 +52,40 @@ Import external templates and convert them to chant TypeScript.
 | `output` | `string` | No | Output directory (default: `./infra/`) |
 
 Returns `{ success, lexicon, generatedFiles, warnings }`.
+
+### `explain`
+
+Summarize the resources in a chant project.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `path` | `string` | Yes | Path to the infrastructure directory |
+| `format` | `"markdown" \| "json"` | No | Output format (default: `markdown`) |
+
+Returns a structured summary of resource counts, entity types, and lexicon groupings.
+
+### `scaffold`
+
+Generate starter files for a chant project.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `pattern` | `string` | Yes | Resource pattern to scaffold (e.g. `"s3-bucket"`, `"pipeline"`) |
+| `lexicon` | `string` | No | Lexicon to use for templates |
+
+Returns `{ success, files }` with generated file contents.
+
+### `search`
+
+Search available resource types across loaded lexicons.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `query` | `string` | Yes | Search query (case-insensitive substring match) |
+| `lexicon` | `string` | No | Filter to a specific lexicon |
+| `limit` | `number` | No | Maximum results (default: `20`) |
+
+Returns matching resource type entries sorted by relevance.
 
 ### Plugin Tools
 

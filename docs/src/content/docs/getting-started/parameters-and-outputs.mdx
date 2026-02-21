@@ -22,14 +22,10 @@ Export a `Parameter` to add it to the template's `Parameters` section:
 
 <Code code={parameterDeclarationSrc} lang="typescript" title="src/parameter-declaration.ts" />
 
-The first argument is the CloudFormation parameter type (`"String"`, `"Number"`, `"List<Number>"`, `"CommaDelimitedList"`, or an AWS SSM type). The second argument supports all CloudFormation parameter properties:
+The first argument is the CloudFormation parameter type (`"String"`, `"Number"`, `"List<Number>"`, `"CommaDelimitedList"`, or an AWS SSM type). The second argument supports:
 
 - `description` — human-readable description
 - `defaultValue` — value used when none is provided at deploy time
-- `allowedValues` — constrain to a set of valid values
-- `allowedPattern` — regex constraint for string parameters
-- `minLength` / `maxLength` — string length bounds
-- `minValue` / `maxValue` — numeric bounds
 
 The exported variable name becomes the logical parameter name (PascalCased). `environment` becomes `Environment` in the template.
 
