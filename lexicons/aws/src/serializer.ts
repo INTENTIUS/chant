@@ -230,7 +230,13 @@ function serializeToTemplate(
             resolved.push(dep);
           } else if (typeof dep === "object" && dep !== null && "entityType" in dep) {
             const depName = entityNames.get(dep as Declarable);
-            if (depName) resolved.push(depName);
+            if (depName) {
+              resolved.push(depName);
+            } else {
+              console.warn(
+                `[chant] warning: dependsOn in "${name}" references a declarable not found in the build — is the target resource exported?`
+              );
+            }
           }
         }
         if (resolved.length > 0) {

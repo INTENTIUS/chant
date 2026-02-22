@@ -178,10 +178,12 @@ export const logsBucket = new Bucket({
     const { waw026 } = require("./lint/post-synth/waw026");
     const { waw027 } = require("./lint/post-synth/waw027");
     const { waw028 } = require("./lint/post-synth/waw028");
+    const { waw029 } = require("./lint/post-synth/waw029");
+    const { waw030 } = require("./lint/post-synth/waw030");
     return [
       waw010, waw011, cor020, ext001, waw013, waw014, waw015, waw016, waw017,
       waw018, waw019, waw020, waw021, waw022, waw023, waw024, waw025,
-      waw026, waw027, waw028,
+      waw026, waw027, waw028, waw029, waw030,
     ];
   },
 
