@@ -72,7 +72,7 @@ sam deploy --template-file dist/template.json --stack-name my-stack
 
 ## Multi-file output (nested stacks)
 
-When your project uses [nested stacks](../nested-stacks/), \`chant build\` produces multiple template files:
+When your project uses nested stacks, \`chant build\` produces multiple template files:
 
 \`\`\`bash
 chant build -o template.json
@@ -308,15 +308,11 @@ For deploy-time region lookups, combine \`AWS.Region\` with \`If\` or use \`Fn::
 
 ## Nested stacks
 
-CloudFormation nested stacks (\`AWS::CloudFormation::Stack\`) let you decompose large templates into smaller, reusable child templates. Use \`nestedStack()\` to reference a child project directory — a subdirectory that builds independently:
+:::caution
+Nested stacks add deployment complexity and are not recommended for most projects. Prefer [flat composites](../composites/) instead.
+:::
 
-{{file:nested-stacks/src/network/outputs.ts}}
-
-{{file:nested-stacks/src/app.ts}}
-
-chant handles the wiring: child template gets an \`Outputs\` section, parent uses \`Fn::GetAtt\` on the stack resource. A \`TemplateBasePath\` parameter lets you configure child template URLs per environment.
-
-See [Nested Stacks](../nested-stacks/) for the full guide.
+CloudFormation nested stacks (\`AWS::CloudFormation::Stack\`) split resources into child templates. The lexicon supports them via \`nestedStack()\` for cases where you exceed the 500-resource limit or need to package reusable infrastructure as a black box. See the [Nested Stacks](../nested-stacks/) page for details.
 
 ## Tagging
 
@@ -468,17 +464,22 @@ Merge semantics:
 
 ## Nested stacks
 
-When resources should produce a separate CloudFormation template instead of expanding into the parent, use a **child project** — a subdirectory that builds independently to its own CloudFormation template. The parent references it with \`nestedStack()\`:
+:::caution
+Nested stacks add deployment complexity and are not recommended for most projects. Prefer flat composites instead.
+:::
 
-{{file:nested-stacks/src/app.ts}}
-
-See [Nested Stacks](../nested-stacks/) for the full guide.`,
+When you need to split resources into a separate CloudFormation template, the lexicon supports nested stacks via \`nestedStack()\`. See the [Nested Stacks](../nested-stacks/) page for details.`,
       },
       {
         slug: "nested-stacks",
         title: "Nested Stacks",
+        sidebar: false,
         description: "Splitting resources into child CloudFormation templates with automatic cross-stack reference wiring",
         content: `CloudFormation nested stacks (\`AWS::CloudFormation::Stack\`) let you decompose large templates into smaller, reusable child templates. The AWS lexicon's \`nestedStack()\` function references a **child project directory** — a subdirectory that builds independently to a valid CloudFormation template.
+
+:::caution[Consider alternatives first]
+Nested stacks add deployment complexity: child templates must be uploaded to S3, rollbacks are all-or-nothing at the parent level, drift detection doesn't recurse into children, and debugging failures requires drilling into child stack events. For most projects, [flat composites](../composites/) are simpler. Nested stacks are supported for specific cases — exceeding CloudFormation's 500-resource limit or packaging reusable infrastructure as a black box — but are not the recommended default.
+:::
 
 ## Project structure
 
@@ -595,15 +596,12 @@ Three lint rules help catch common nested stack issues:
 
 ## When to use nested stacks
 
-**Use nested stacks when:**
-- Your template exceeds CloudFormation's 500-resource limit
-- You want to reuse a group of resources across multiple parent stacks
-- You need independent update/rollback boundaries for parts of your infrastructure
+**Prefer flat composites** for most projects. Composites expand into a single template, deploy atomically, and are simpler to debug.
 
-**Use flat composites when:**
-- Resources are tightly coupled and always deploy together
-- You don't need independent update boundaries
-- Your template is within resource limits
+**Use nested stacks only when:**
+- Your template exceeds CloudFormation's 500-resource limit
+- You're packaging reusable infrastructure for other teams to deploy as a black box
+- You need independent update/rollback boundaries (rare — this usually means the resources should be separate stacks entirely)
 
 See [Composites](../composites/) for the flat composite approach, and [Examples](../examples/#nested-stacks) for a runnable nested stack example.`,
       },
@@ -894,7 +892,7 @@ src/
 
 {{file:nested-stacks/src/app.ts}}
 
-See [Nested Stacks](../nested-stacks/) for the full guide.`,
+See [CloudFormation Concepts — Nested Stacks](../cloudformation/#nested-stacks) for more on nested stacks.`,
       },
       {
         slug: "skills",

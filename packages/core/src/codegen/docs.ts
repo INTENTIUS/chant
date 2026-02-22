@@ -32,7 +32,7 @@ export interface DocsConfig {
   /** Custom sections to append to overview page */
   extraSections?: Array<{ title: string; content: string }>;
   /** Standalone pages added to the sidebar after Overview */
-  extraPages?: Array<{ slug: string; title: string; description?: string; content: string }>;
+  extraPages?: Array<{ slug: string; title: string; description?: string; content: string; sidebar?: boolean }>;
   /** Slugs of auto-generated pages to suppress (e.g. "pseudo-parameters") */
   suppressPages?: string[];
   /** Source directory for scanning rule files (defaults to srcDir sibling of distDir) */
@@ -385,6 +385,7 @@ function buildSidebar(
   // Extra pages from lexicon config (appear after Overview)
   if (config.extraPages) {
     for (const page of config.extraPages) {
+      if (page.sidebar === false) continue;
       items.push({ label: page.title, slug: page.slug });
     }
   }
@@ -447,6 +448,7 @@ function generateOverview(
   // Extra pages listed first in reference links
   if (config.extraPages && config.extraPages.length > 0) {
     for (const page of config.extraPages) {
+      if (page.sidebar === false) continue;
       lines.push(`- [${page.title}](./${page.slug})`);
     }
   }
