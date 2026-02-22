@@ -716,6 +716,37 @@ Flags resources that support tagging but have no \`Tags\` property set. Tags are
 WAW017: Resource "MyBucket" (AWS::S3::Bucket) supports tagging but has no Tags — consider adding tags for cost allocation and compliance
 \`\`\`
 
+### WAW029 — Invalid DependsOn Target
+
+**Severity:** error | **Category:** correctness
+
+Flags \`DependsOn\` entries that reference a non-existent resource (typo or deleted resource) or that create a self-reference. Both cases cause CloudFormation deployments to fail immediately.
+
+\`\`\`
+WAW029: Resource "MyService" has DependsOn "MyBukcet" which does not exist in the template
+WAW029: Resource "MyBucket" has a DependsOn on itself — self-references are invalid
+\`\`\`
+
+### WAW030 — Missing DependsOn for Known Patterns
+
+**Severity:** warning | **Category:** best practice
+
+Flags resources that are likely missing a required explicit \`DependsOn\` based on well-known CloudFormation ordering requirements:
+
+- **ECS Service + Listener**: An ECS Service with \`LoadBalancers\` should depend on the ALB Listener so the target group is fully configured before the service starts registering tasks.
+- **EC2 Route + VPCGatewayAttachment**: A Route using a \`GatewayId\` should depend on the VPCGatewayAttachment so the gateway is attached to the VPC before the route is created.
+- **API Gateway Deployment + Method**: A Deployment only references \`RestApiId\` — it needs an explicit \`DependsOn\` on its Methods or CloudFormation may create the deployment before any methods exist.
+- **API Gateway V2 Deployment + Route**: Same as above for HTTP APIs — a V2 Deployment needs \`DependsOn\` on its Routes.
+- **DynamoDB Table + ScalableTarget**: A ScalableTarget with \`ServiceNamespace: "dynamodb"\` references the table by string \`ResourceId\`, not \`Ref\` — it needs \`DependsOn\` so the table exists before scaling is registered.
+- **ECS Service + ScalableTarget**: A ScalableTarget with \`ServiceNamespace: "ecs"\` references the service by string — it needs \`DependsOn\` so the ECS Service exists first.
+
+\`\`\`
+WAW030: ECS Service "MyService" has LoadBalancers but no DependsOn on a Listener
+WAW030: Route "PublicRoute" uses a Gateway but has no dependency on VPCGatewayAttachment
+WAW030: API Gateway Deployment "MyDeployment" has no DependsOn on any Method
+WAW030: ScalableTarget "MyTarget" targets DynamoDB but has no DependsOn on any Table
+\`\`\`
+
 ## Running lint
 
 \`\`\`bash
