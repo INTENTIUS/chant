@@ -1,5 +1,7 @@
 import { INTRINSIC_MARKER, resolveIntrinsicValue, type Intrinsic } from "@intentius/chant/intrinsic";
 import { buildInterpolatedString, defaultInterpolationSerializer } from "@intentius/chant/intrinsic-interpolation";
+import { type Declarable } from "@intentius/chant/declarable";
+import { getLogicalName } from "@intentius/chant/utils";
 
 /**
  * Fn::Sub intrinsic function implementation
@@ -37,26 +39,32 @@ export function Sub(
 
 /**
  * Ref intrinsic function
- * References a parameter or resource by logical name
+ * References a parameter or resource by logical name.
+ * Accepts either a string name or a Declarable entity (e.g. Parameter).
+ * When given a Declarable, the logical name is resolved at serialization time.
  */
 export class RefIntrinsic implements Intrinsic {
   readonly [INTRINSIC_MARKER] = true as const;
-  private name: string;
+  private target: string | Declarable;
 
-  constructor(name: string) {
-    this.name = name;
+  constructor(target: string | Declarable) {
+    this.target = target;
   }
 
   toJSON(): { Ref: string } {
-    return { Ref: this.name };
+    if (typeof this.target === "string") {
+      return { Ref: this.target };
+    }
+    return { Ref: getLogicalName(this.target) };
   }
 }
 
 /**
- * Create a Ref intrinsic
+ * Create a Ref intrinsic.
+ * Pass a string for direct parameter/resource names, or a Declarable (e.g. Parameter) for type-safe references.
  */
-export function Ref(name: string): RefIntrinsic {
-  return new RefIntrinsic(name);
+export function Ref(target: string | Declarable): RefIntrinsic {
+  return new RefIntrinsic(target);
 }
 
 /**
