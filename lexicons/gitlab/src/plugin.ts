@@ -28,7 +28,10 @@ export const gitlabPlugin: LexiconPlugin = {
     const { wgl010 } = require("./lint/post-synth/wgl010");
     const { wgl011 } = require("./lint/post-synth/wgl011");
     const { wgl012 } = require("./lint/post-synth/wgl012");
-    return [wgl010, wgl011, wgl012];
+    const { wgl013 } = require("./lint/post-synth/wgl013");
+    const { wgl014 } = require("./lint/post-synth/wgl014");
+    const { wgl015 } = require("./lint/post-synth/wgl015");
+    return [wgl010, wgl011, wgl012, wgl013, wgl014, wgl015];
   },
 
   intrinsics(): IntrinsicDef[] {
@@ -321,7 +324,7 @@ git push
 
 - Check job logs in GitLab UI: project → CI/CD → Jobs → click the job
 - \`chant lint src/\` catches: missing scripts (WGL002), deprecated only/except (WGL001), missing stages (WGL003), artifacts without expiry (WGL004)
-- Post-synth checks (WGL010, WGL011) run during build
+- Post-synth checks (WGL010–WGL015) run during build: undefined stages, unreachable jobs, deprecated properties, invalid needs/extends targets, circular needs chains
 `,
         triggers: [
           { type: "file-pattern", value: "**/*.gitlab.ts" },

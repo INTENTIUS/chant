@@ -409,6 +409,24 @@ Flags jobs where all \`rules:\` entries have \`when: "never"\`, making the job u
 
 Flags properties marked as deprecated in the GitLab CI schema. Deprecation signals are mined from property descriptions (keywords like "deprecated", "legacy", "no longer available"). Using deprecated properties may cause unexpected behavior in future GitLab versions.
 
+### WGL013 — Invalid \`needs:\` target
+
+**Severity:** error
+
+Flags jobs whose \`needs:\` entries reference a job not defined in the pipeline, or reference themselves. Both cause GitLab pipeline validation failures. When \`include:\` is present, the check is skipped since needed jobs may come from included files.
+
+### WGL014 — Invalid \`extends:\` target
+
+**Severity:** error
+
+Flags jobs whose \`extends:\` references a template or hidden job not defined in the pipeline. GitLab rejects pipelines with unresolved extends references. When \`include:\` is present, the check is skipped since templates may come from included files.
+
+### WGL015 — Circular \`needs:\` chain
+
+**Severity:** error
+
+Detects cycles in the \`needs:\` dependency graph. If job A needs B and B needs A (directly or transitively), GitLab rejects the pipeline. Reports the full cycle chain in the diagnostic message.
+
 ## Running lint
 
 \`\`\`bash
@@ -576,7 +594,7 @@ The \`chant-gitlab\` skill covers the full deployment lifecycle:
 - **Status** — GitLab UI or pipelines API
 - **Retry** — retry failed jobs via UI or API
 - **Cancel** — cancel running pipelines via API
-- **Troubleshooting** — job logs, lint rule codes (WGL001–WGL004), post-synth checks (WGL010–WGL012)
+- **Troubleshooting** — job logs, lint rule codes (WGL001–WGL004), post-synth checks (WGL010–WGL015)
 
 The skill is invocable as a slash command: \`/chant-gitlab\`
 
