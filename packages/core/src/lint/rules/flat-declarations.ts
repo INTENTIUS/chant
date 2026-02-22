@@ -1,6 +1,5 @@
 import * as ts from "typescript";
 import type { LintRule, LintContext, LintDiagnostic } from "../rule";
-import { isInsideCompositeFactory } from "./composite-scope";
 
 /**
  * COR001: No inline objects in Declarable constructors
@@ -17,8 +16,7 @@ import { isInsideCompositeFactory } from "./composite-scope";
 
 function checkNode(node: ts.Node, context: LintContext, diagnostics: LintDiagnostic[]): void {
   // Check for NewExpression nodes (constructor calls)
-  // Skip resource constructors inside Composite() factory callbacks
-  if (ts.isNewExpression(node) && !isInsideCompositeFactory(node)) {
+  if (ts.isNewExpression(node)) {
     // Check if the first argument is an object literal
     if (node.arguments && node.arguments.length > 0) {
       const firstArg = node.arguments[0];

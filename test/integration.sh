@@ -23,26 +23,26 @@ else
 fi
 
 # ---- test_existing_example ----
-log "test_existing_example (lambda-list-bucket)"
-EXAMPLE_DIR="/app/lexicons/aws/examples/lambda-list-bucket"
+log "test_existing_example (lambda-function)"
+EXAMPLE_DIR="/app/lexicons/aws/examples/lambda-function"
 if [ -d "$EXAMPLE_DIR/src" ]; then
-  # Lint the lambda-list-bucket example (lint is more reliable than build for smoke testing)
+  # Lint the lambda-function example (lint is more reliable than build for smoke testing)
   if LINT_OUT=$($CHANT lint "$EXAMPLE_DIR/src" 2>&1); then
-    pass "lint lambda-list-bucket example succeeds"
+    pass "lint lambda-function example succeeds"
   else
     # Lint may exit non-zero if there are warnings, that is acceptable
-    pass "lint lambda-list-bucket example runs (with diagnostics)"
+    pass "lint lambda-function example runs (with diagnostics)"
   fi
 
-  # Build the lambda-list-bucket example
+  # Build the lambda-function example
   if BUILD_OUT=$($CHANT build "$EXAMPLE_DIR/src" 2>&1); then
-    pass "build lambda-list-bucket example succeeds"
+    pass "build lambda-function example succeeds"
   else
     echo "  build output: $BUILD_OUT"
-    fail "build lambda-list-bucket example failed"
+    fail "build lambda-function example failed"
   fi
 else
-  echo "  SKIP: lambda-list-bucket example not found"
+  echo "  SKIP: lambda-function example not found"
 fi
 
 # ---- test_existing_example (gitlab) ----

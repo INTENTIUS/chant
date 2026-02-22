@@ -1,0 +1,34 @@
+# Lambda DynamoDB
+
+A Lambda function that reads and writes items to a DynamoDB table, built using the `LambdaDynamoDB` composite — the standard pattern for Lambda-to-DynamoDB access with automatic IAM scoping, table creation, and environment wiring.
+
+## Quick Start
+
+```bash
+bun run build
+```
+
+## What It Does
+
+The stack creates 3 CloudFormation resources:
+
+- **DynamoDB Table** — on-demand billing (`PAY_PER_REQUEST`), partition key `pk` of type String
+- **IAM Role** — execution role with an inline policy scoped to DynamoDB read/write actions on the table
+- **Lambda Function** — Node.js 20.x function that handles `POST` (put item) and `GET` (get item by id)
+
+The composite automatically injects `TABLE_NAME` into the function's environment variables, so the handler can reference `process.env.TABLE_NAME` without manual wiring.
+
+## Project Structure
+
+```
+src/
+└── main.ts       # LambdaDynamoDB composite instantiation + inline handler
+```
+
+## Patterns Demonstrated
+
+1. **Composites** — `LambdaDynamoDB` creates the table, role, and function as a single unit with correct wiring
+2. **Key schema** — `partitionKey` (required) and `sortKey` (optional) configure the table's key schema and attribute definitions
+3. **Access levels** — `access: "ReadWrite"` scopes the IAM policy to read/write DynamoDB actions; other options are `"ReadOnly"` and `"Full"`
+4. **Action constants** — the composite uses `DynamoDBActions.ReadWrite` internally for typed IAM action arrays
+5. **Automatic environment injection** — `TABLE_NAME` is added to the function environment without explicit configuration

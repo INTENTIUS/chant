@@ -4,8 +4,8 @@ description: Declare CloudFormation parameters and stack outputs in chant
 ---
 
 import { Code } from '@astrojs/starlight/components';
-import configSrc from '../../../../../lexicons/aws/examples/lambda-list-bucket/src/config.ts?raw';
-import defaultsSrc from '../../../../../lexicons/aws/examples/lambda-list-bucket/src/defaults.ts?raw';
+import parameterExampleSrc from '../../../../../lexicons/aws/examples/docs-snippets/src/parameter-declaration.ts?raw';
+import defaultsSrc from '../../../../../lexicons/aws/examples/lambda-api/src/defaults.ts?raw';
 import parameterDeclarationSrc from '../../../../../lexicons/aws/examples/docs-snippets/src/parameter-declaration.ts?raw';
 import parameterRefSrc from '../../../../../lexicons/aws/examples/docs-snippets/src/parameter-ref.ts?raw';
 import parameterCrossFileRefSrc from '../../../../../lexicons/aws/examples/docs-snippets/src/parameter-cross-file-ref.ts?raw';
@@ -16,7 +16,7 @@ Parameters let you customize a stack at deploy time. Outputs expose values from 
 ## Full example
 
 <Code code={defaultsSrc} lang="typescript" title="src/defaults.ts" />
-<Code code={configSrc} lang="typescript" title="src/config.ts" />
+<Code code={parameterExampleSrc} lang="typescript" title="src/parameter.ts" />
 
 ## Parameters
 

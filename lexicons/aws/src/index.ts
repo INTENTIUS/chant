@@ -68,8 +68,16 @@ export type { SchemaParseResult, ParsedResource, ParsedProperty, ParsedAttribute
 export { S3Actions, LambdaActions, DynamoDBActions, SQSActions, SNSActions, IAMActions } from "./actions/index";
 
 // Built-in composites
-export { LambdaFunction, NodeLambda, PythonLambda, LambdaApi, ScheduledLambda } from "./composites/index";
-export type { LambdaFunctionProps, LambdaApiProps, ScheduledLambdaProps } from "./composites/index";
+export {
+  LambdaFunction, LambdaNode, LambdaPython, NodeLambda, PythonLambda,
+  LambdaApi,
+  LambdaScheduled, ScheduledLambda,
+  LambdaSqs, LambdaEventBridge, LambdaDynamoDB, LambdaS3, LambdaSns,
+} from "./composites/index";
+export type {
+  LambdaFunctionProps, LambdaApiProps, ScheduledLambdaProps,
+  LambdaSqsProps, LambdaEventBridgeProps, LambdaDynamoDBProps, LambdaS3Props, LambdaSnsProps,
+} from "./composites/index";
 
 // Code generation pipeline
 export { generate, writeGeneratedFiles } from "./codegen/generate";

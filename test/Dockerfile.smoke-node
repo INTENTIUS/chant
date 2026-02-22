@@ -20,6 +20,6 @@ RUN chmod +x /app/test/integration.sh && CHANT_RUNTIME=node /app/test/integratio
 RUN rm -rf /root/.bun
 ENV PATH="/app/lexicons/gitlab/node_modules/.bin:/app/lexicons/aws/node_modules/.bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 
-WORKDIR /app/lexicons/aws/examples/lambda-list-bucket
+WORKDIR /app/lexicons/aws/examples/lambda-function
 
 CMD ["bash"]

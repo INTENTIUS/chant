@@ -1,6 +1,16 @@
-export { LambdaFunction, NodeLambda, PythonLambda } from "./lambda-function";
+export { LambdaFunction, LambdaNode, LambdaPython, NodeLambda, PythonLambda } from "./lambda-function";
 export type { LambdaFunctionProps } from "./lambda-function";
 export { LambdaApi } from "./lambda-api";
 export type { LambdaApiProps } from "./lambda-api";
-export { ScheduledLambda } from "./scheduled-lambda";
+export { LambdaScheduled, ScheduledLambda } from "./scheduled-lambda";
 export type { ScheduledLambdaProps } from "./scheduled-lambda";
+export { LambdaSqs } from "./lambda-sqs";
+export type { LambdaSqsProps } from "./lambda-sqs";
+export { LambdaEventBridge } from "./lambda-eventbridge";
+export type { LambdaEventBridgeProps } from "./lambda-eventbridge";
+export { LambdaDynamoDB } from "./lambda-dynamodb";
+export type { LambdaDynamoDBProps } from "./lambda-dynamodb";
+export { LambdaS3 } from "./lambda-s3";
+export type { LambdaS3Props } from "./lambda-s3";
+export { LambdaSns } from "./lambda-sns";
+export type { LambdaSnsProps } from "./lambda-sns";

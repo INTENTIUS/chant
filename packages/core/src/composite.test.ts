@@ -151,8 +151,8 @@ describe("expandComposite", () => {
 
     const expanded = expandComposite("storage", MyComp({}));
     expect(expanded.size).toBe(2);
-    expect(expanded.get("storage_bucket")?.entityType).toBe("Bucket");
-    expect(expanded.get("storage_role")?.entityType).toBe("Role");
+    expect(expanded.get("storageBucket")?.entityType).toBe("Bucket");
+    expect(expanded.get("storageRole")?.entityType).toBe("Role");
   });
 
   test("handles nested composites", () => {
@@ -167,8 +167,8 @@ describe("expandComposite", () => {
 
     const expanded = expandComposite("app", Outer({}));
     expect(expanded.size).toBe(2);
-    expect(expanded.get("app_bucket")?.entityType).toBe("Bucket");
-    expect(expanded.get("app_nested_table")?.entityType).toBe("Table");
+    expect(expanded.get("appBucket")?.entityType).toBe("Bucket");
+    expect(expanded.get("appNestedTable")?.entityType).toBe("Table");
   });
 
   test("preserves Declarable identity (same object reference)", () => {
@@ -176,7 +176,7 @@ describe("expandComposite", () => {
     const MyComp = Composite<{}>(() => ({ bucket }));
 
     const expanded = expandComposite("s", MyComp({}));
-    expect(expanded.get("s_bucket")).toBe(bucket);
+    expect(expanded.get("sBucket")).toBe(bucket);
   });
 
   test("handles empty composite", () => {
@@ -374,8 +374,8 @@ describe("withDefaults", () => {
     const expanded = expandComposite("api", Wrapped({ name: "test" }));
 
     expect(expanded.size).toBe(2);
-    expect(expanded.get("api_fn")?.entityType).toBe("Fn-test");
-    expect(expanded.get("api_role")?.entityType).toBe("Role-test");
+    expect(expanded.get("apiFn")?.entityType).toBe("Fn-test");
+    expect(expanded.get("apiRole")?.entityType).toBe("Role-test");
   });
 });
 
@@ -393,8 +393,8 @@ describe("propagate", () => {
     const instance = propagate(MyComp({}), { env: "prod" });
     const expanded = expandComposite("s", instance);
 
-    const bucketProps = (expanded.get("s_bucket") as any).props;
-    const roleProps = (expanded.get("s_role") as any).props;
+    const bucketProps = (expanded.get("sBucket") as any).props;
+    const roleProps = (expanded.get("sRole") as any).props;
     expect(bucketProps.env).toBe("prod");
     expect(roleProps.env).toBe("prod");
   });
@@ -410,7 +410,7 @@ describe("propagate", () => {
       tags: [{ key: "env", value: "prod" }],
     });
     const expanded = expandComposite("s", instance);
-    const tags = (expanded.get("s_bucket") as any).props.tags;
+    const tags = (expanded.get("sBucket") as any).props.tags;
 
     expect(tags).toEqual([
       { key: "env", value: "prod" },
@@ -425,7 +425,7 @@ describe("propagate", () => {
 
     const instance = propagate(MyComp({}), { region: "eu-west-1" });
     const expanded = expandComposite("s", instance);
-    expect((expanded.get("s_bucket") as any).props.region).toBe("us-west-2");
+    expect((expanded.get("sBucket") as any).props.region).toBe("us-west-2");
   });
 
   test("undefined values in shared props are stripped", () => {
@@ -435,7 +435,7 @@ describe("propagate", () => {
 
     const instance = propagate(MyComp({}), { name: undefined, extra: "yes" });
     const expanded = expandComposite("s", instance);
-    const props = (expanded.get("s_bucket") as any).props;
+    const props = (expanded.get("sBucket") as any).props;
     expect(props.name).toBe("data");
     expect(props.extra).toBe("yes");
   });
@@ -453,8 +453,8 @@ describe("propagate", () => {
     const instance = propagate(Outer({}), { env: "prod" });
     const expanded = expandComposite("app", instance);
 
-    expect((expanded.get("app_bucket") as any).props.env).toBe("prod");
-    expect((expanded.get("app_nested_table") as any).props.env).toBe("prod");
+    expect((expanded.get("appBucket") as any).props.env).toBe("prod");
+    expect((expanded.get("appNestedTable") as any).props.env).toBe("prod");
   });
 
   test("expanded declarables are same object references", () => {
@@ -463,7 +463,7 @@ describe("propagate", () => {
 
     const instance = propagate(MyComp({}), { env: "prod" });
     const expanded = expandComposite("s", instance);
-    expect(expanded.get("s_bucket")).toBe(bucket);
+    expect(expanded.get("sBucket")).toBe(bucket);
   });
 
   test("composites without propagate work unchanged", () => {
@@ -472,6 +472,6 @@ describe("propagate", () => {
     }));
 
     const expanded = expandComposite("s", MyComp({}));
-    expect((expanded.get("s_bucket") as any).props.name).toBe("data");
+    expect((expanded.get("sBucket") as any).props.name).toBe("data");
   });
 });

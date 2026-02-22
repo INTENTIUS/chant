@@ -22,6 +22,6 @@ RUN chmod +x /app/test/integration.sh && /app/test/integration.sh
 # Put chant on the PATH
 ENV PATH="/app/lexicons/gitlab/node_modules/.bin:/app/lexicons/aws/node_modules/.bin:${PATH}"
 
-WORKDIR /app/lexicons/aws/examples/lambda-list-bucket
+WORKDIR /app/lexicons/aws/examples/lambda-function
 
 CMD ["bash"]

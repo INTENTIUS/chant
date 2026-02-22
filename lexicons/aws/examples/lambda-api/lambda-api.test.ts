@@ -41,19 +41,19 @@ describe("lambda-api example", () => {
 
     // Composite resources expand as {exportName}_{memberName}
     // healthApi
-    expect(parsed.Resources.healthApi_role).toBeDefined();
-    expect(parsed.Resources.healthApi_func).toBeDefined();
-    expect(parsed.Resources.healthApi_permission).toBeDefined();
+    expect(parsed.Resources.healthApiRole).toBeDefined();
+    expect(parsed.Resources.healthApiFunc).toBeDefined();
+    expect(parsed.Resources.healthApiPermission).toBeDefined();
 
     // uploadApi
-    expect(parsed.Resources.uploadApi_role).toBeDefined();
-    expect(parsed.Resources.uploadApi_func).toBeDefined();
-    expect(parsed.Resources.uploadApi_permission).toBeDefined();
+    expect(parsed.Resources.uploadApiRole).toBeDefined();
+    expect(parsed.Resources.uploadApiFunc).toBeDefined();
+    expect(parsed.Resources.uploadApiPermission).toBeDefined();
 
     // processApi
-    expect(parsed.Resources.processApi_role).toBeDefined();
-    expect(parsed.Resources.processApi_func).toBeDefined();
-    expect(parsed.Resources.processApi_permission).toBeDefined();
+    expect(parsed.Resources.processApiRole).toBeDefined();
+    expect(parsed.Resources.processApiFunc).toBeDefined();
+    expect(parsed.Resources.processApiPermission).toBeDefined();
 
     // Total: 1 bucket + 3 composites * 3 resources = 10
     expect(Object.keys(parsed.Resources)).toHaveLength(10);

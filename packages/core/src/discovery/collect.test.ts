@@ -262,8 +262,8 @@ describe("collectEntities with composites", () => {
       { file: "test.ts", exports: { myComp: instance } },
     ]);
 
-    expect(entities.has("myComp_a")).toBe(true);
-    expect(entities.has("myComp_b")).toBe(true);
+    expect(entities.has("myCompA")).toBe(true);
+    expect(entities.has("myCompB")).toBe(true);
     expect(entities.has("myComp")).toBe(false);
   });
 });

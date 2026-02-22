@@ -60,12 +60,17 @@ export const LambdaFunction = Composite<LambdaFunctionProps>((props) => {
   return { role, func };
 }, "LambdaFunction");
 
-export const NodeLambda = withDefaults(LambdaFunction, {
+export const LambdaNode = withDefaults(LambdaFunction, {
   Runtime: "nodejs20.x",
   Handler: "index.handler",
 });
 
-export const PythonLambda = withDefaults(LambdaFunction, {
+export const LambdaPython = withDefaults(LambdaFunction, {
   Runtime: "python3.12",
   Handler: "handler.handler",
 });
+
+/** @deprecated Use `LambdaNode` instead */
+export const NodeLambda = LambdaNode;
+/** @deprecated Use `LambdaPython` instead */
+export const PythonLambda = LambdaPython;

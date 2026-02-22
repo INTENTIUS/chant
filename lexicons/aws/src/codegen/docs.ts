@@ -138,20 +138,9 @@ export async function generateDocs(options?: { verbose?: boolean }): Promise<voi
 - Resolves \`AttrRef\` references to \`Fn::GetAtt\`
 - Resolves resource references to \`Ref\` intrinsics
 
-{{file:lambda-list-bucket/src/data-bucket.ts}}
+{{file:lambda-s3/src/main.ts}}
 
-Produces this CloudFormation resource:
-
-\`\`\`json
-"DataBucket": {
-  "Type": "AWS::S3::Bucket",
-  "Properties": {
-    "BucketName": { "Fn::Sub": "\${AWS::AccountId}-\${name}-chant-data" }
-  }
-}
-\`\`\`
-
-Notice how \`dataBucket\` becomes \`DataBucket\` (PascalCase logical ID). Property names like \`BucketName\` use the CloudFormation spec-native PascalCase directly.
+The \`LambdaS3\` composite expands to 3 CloudFormation resources: an S3 Bucket, an IAM Role (with S3 read policy), and a Lambda Function. Property names like \`BucketName\` use the CloudFormation spec-native PascalCase directly, and the export name \`app\` becomes the resource name prefix (e.g. \`appBucket\`, \`appRole\`, \`appFunc\`).
 
 ## Resource types and naming
 
@@ -172,17 +161,17 @@ Common resources get fixed short names for stability. When two services define t
 
 ## Imports and cross-file references
 
-Chant projects use standard TypeScript imports. Lexicon types come from the lexicon package, and sibling exports are imported directly from the file that defines them:
+Chant projects use standard TypeScript imports. Lexicon types come from the lexicon package, and cross-file references are standard imports:
 
-{{file:lambda-list-bucket/src/data-bucket.ts}}
+{{file:lambda-api/src/health-api.ts}}
 
-When you reference a resource or attribute from another file (e.g. \`dataBucket.arn\`), the serializer resolves it to \`Fn::GetAtt\` or \`Ref\` as appropriate. This is how cross-file references work — standard imports, no indirection.
+When you reference a resource or attribute from another file (e.g. \`dataBucket.Arn\`), the serializer resolves it to \`Fn::GetAtt\` or \`Ref\` as appropriate. This is how cross-file references work — standard imports, no indirection.
 
 ## Parameters
 
 CloudFormation parameters let you customize a stack at deploy time. Export a \`Parameter\` to add it to the template's \`Parameters\` section:
 
-{{file:lambda-list-bucket/src/defaults.ts}}
+{{file:docs-snippets/src/parameter-ref.ts}}
 
 Produces:
 
@@ -396,7 +385,7 @@ Instantiate and export:
 
 {{file:lambda-api/src/health-api.ts}}
 
-During build, composites expand to flat CloudFormation resources: \`healthApi_role\` → \`HealthApiRole\`, \`healthApi_func\` → \`HealthApiFunc\`, \`healthApi_permission\` → \`HealthApiPermission\`.
+During build, composites expand to flat CloudFormation resources: \`healthApiRole\`, \`healthApiFunc\`, \`healthApiPermission\`.
 
 ## Built-in composites
 
@@ -407,10 +396,15 @@ The AWS lexicon ships ready-to-use composites for common patterns. Import them f
 | Composite | Members | Description |
 |-----------|---------|-------------|
 | \`LambdaFunction\` | \`role\`, \`func\` | IAM Role + Lambda Function. Auto-attaches \`AWSLambdaBasicExecutionRole\`; adds \`AWSLambdaVPCAccessExecutionRole\` when \`VpcConfig\` is provided. |
-| \`NodeLambda\` | \`role\`, \`func\` | \`LambdaFunction\` preset with \`Runtime: "nodejs20.x"\` and \`Handler: "index.handler"\` |
-| \`PythonLambda\` | \`role\`, \`func\` | \`LambdaFunction\` preset with \`Runtime: "python3.12"\` and \`Handler: "handler.handler"\` |
+| \`LambdaNode\` | \`role\`, \`func\` | \`LambdaFunction\` preset with \`Runtime: "nodejs20.x"\` and \`Handler: "index.handler"\` |
+| \`LambdaPython\` | \`role\`, \`func\` | \`LambdaFunction\` preset with \`Runtime: "python3.12"\` and \`Handler: "handler.handler"\` |
 | \`LambdaApi\` | \`role\`, \`func\`, \`permission\` | \`LambdaFunction\` + Lambda Permission for API Gateway invocation |
-| \`ScheduledLambda\` | \`role\`, \`func\`, \`rule\`, \`permission\` | \`LambdaFunction\` + EventBridge Rule + Lambda Permission |
+| \`LambdaScheduled\` | \`role\`, \`func\`, \`rule\`, \`permission\` | \`LambdaFunction\` + EventBridge Rule + Lambda Permission |
+| \`LambdaSqs\` | \`queue\`, \`role\`, \`func\` | SQS Queue + Lambda + EventSourceMapping. Auto-attaches SQS receive policy. |
+| \`LambdaEventBridge\` | \`rule\`, \`role\`, \`func\`, \`permission\` | EventBridge Rule + Lambda. Supports \`schedule\` and/or \`eventPattern\`. |
+| \`LambdaDynamoDB\` | \`table\`, \`role\`, \`func\` | DynamoDB Table + Lambda. Auto-attaches DynamoDB policy and injects \`TABLE_NAME\` env var. |
+| \`LambdaS3\` | \`bucket\`, \`role\`, \`func\` | S3 Bucket (encrypted, public access blocked) + Lambda. Auto-attaches S3 policy and injects \`BUCKET_NAME\` env var. |
+| \`LambdaSns\` | \`topic\`, \`role\`, \`func\`, \`subscription\`, \`permission\` | SNS Topic + Lambda via Subscription. Auto-attaches invoke permission for SNS. |
 
 All built-in composites accept \`ManagedPolicyArns\` and \`Policies\` for adding IAM permissions to the auto-created role.
 
@@ -774,43 +768,75 @@ The \`plugins\` array accepts relative paths. Each plugin module should export a
         slug: "examples",
         title: "Examples",
         description: "Walkthrough of the AWS CloudFormation lexicon examples",
-        content: `Two runnable examples live in the lexicon's \`examples/\` directory. Clone the repo and try them:
+        content: `Runnable examples live in the lexicon's \`examples/\` directory — one per built-in composite. Clone the repo and try them:
 
 \`\`\`bash
-cd examples/lambda-list-bucket
+cd examples/lambda-function
 bun install
 chant build    # produces CloudFormation JSON
 chant lint     # runs lint rules
 bun test       # runs the example's tests
 \`\`\`
 
-## Lambda List Bucket
+## Lambda Function
 
-\`examples/lambda-list-bucket/\` — 3 resources across separate files: an S3 bucket, an IAM role with scoped S3 read permissions, and a Lambda function that lists bucket objects.
+\`examples/lambda-function/\` — the simplest possible example. Uses \`LambdaNode\` to create a basic Lambda.
 
-\`\`\`
-src/
-├── defaults.ts       # Shared config: encryption, public access block, Lambda trust policy
-├── config.ts         # Name parameter and outputs
-├── data-bucket.ts    # S3 bucket using shared defaults
-├── role.ts           # IAM role with S3 read-only inline policy
-└── handler.ts        # Lambda function that lists S3 objects
-\`\`\`
+{{file:lambda-function/src/main.ts}}
 
-**Patterns demonstrated:**
+Produces 2 CloudFormation resources: IAM Role + Lambda Function.
 
-1. **Direct imports** — lexicon types come from \`@intentius/chant-lexicon-aws\`, sibling exports are imported from the file that defines them
-2. **Shared defaults** — \`defaults.ts\` exports reusable property objects (\`BucketEncryption\`, \`PublicAccessBlockConfiguration\`, trust policy) that other files import directly
-3. **Cross-resource references** — \`dataBucket.Arn\` in \`role.ts\` serializes to \`Fn::GetAtt\` in the template
-4. **Intrinsics** — \`Sub\` tagged templates with \`AWS.AccountId\` and \`Ref("name")\` for dynamic naming
-5. **Action constants** — \`S3Actions.ListObjects\` and \`S3Actions.GetObject\` for typed IAM policies
-6. **Inline policies** — \`Role_Policy\` for scoped S3 read access
+## Lambda S3
 
-{{file:lambda-list-bucket/src/handler.ts}}
+\`examples/lambda-s3/\` — Lambda that lists S3 objects using the \`LambdaS3\` composite.
 
-## Lambda API
+{{file:lambda-s3/src/main.ts}}
 
-\`examples/lambda-api/\` — composites, preset factories, inline IAM policies, and a custom lint rule.
+Produces 3 resources: S3 Bucket (encrypted, public access blocked) + IAM Role (with S3 read policy) + Lambda Function. The \`BUCKET_NAME\` environment variable is auto-injected.
+
+## Lambda DynamoDB
+
+\`examples/lambda-dynamodb/\` — Lambda that reads/writes DynamoDB items using the \`LambdaDynamoDB\` composite.
+
+{{file:lambda-dynamodb/src/main.ts}}
+
+Produces 3 resources: DynamoDB Table + IAM Role (with DynamoDB read/write policy) + Lambda Function. The \`TABLE_NAME\` environment variable is auto-injected.
+
+## Lambda SQS
+
+\`examples/lambda-sqs/\` — Lambda processing messages from an SQS queue using the \`LambdaSqs\` composite.
+
+{{file:lambda-sqs/src/main.ts}}
+
+Produces 4 resources: SQS Queue + IAM Role (with SQS receive policy) + Lambda Function + EventSourceMapping.
+
+## Lambda SNS
+
+\`examples/lambda-sns/\` — Lambda triggered by SNS notifications using the \`LambdaSns\` composite.
+
+{{file:lambda-sns/src/main.ts}}
+
+Produces 5 resources: SNS Topic + IAM Role + Lambda Function + SNS Subscription + Lambda Permission.
+
+## Lambda Scheduled
+
+\`examples/lambda-scheduled/\` — Lambda on a cron schedule using the \`LambdaScheduled\` composite.
+
+{{file:lambda-scheduled/src/main.ts}}
+
+Produces 4 resources: IAM Role + Lambda Function + EventBridge Rule + Lambda Permission.
+
+## Lambda EventBridge
+
+\`examples/lambda-eventbridge/\` — Lambda triggered by EventBridge events using the \`LambdaEventBridge\` composite.
+
+{{file:lambda-eventbridge/src/main.ts}}
+
+Produces 4 resources: EventBridge Rule + IAM Role + Lambda Function + Lambda Permission.
+
+## Lambda API (Custom Composite)
+
+\`examples/lambda-api/\` — demonstrates building your own composite factory with presets and a custom lint rule. This is the only example that teaches custom composite authoring.
 
 \`\`\`
 src/
@@ -825,48 +851,13 @@ src/
     └── api-timeout.ts  # Custom WAW012 rule
 \`\`\`
 
-**What it adds:**
+**Patterns demonstrated:**
 
-- **Composites** — \`LambdaApi\` groups Role + Function + Permission into a reusable unit (see [Composites](../composites/))
-- **Composite presets** — \`SecureApi\` (low memory, short timeout) and \`HighMemoryApi\` (high memory, longer timeout) created with \`withDefaults\`
-- **Action constants** — \`upload-api.ts\` and \`process-api.ts\` use \`S3Actions\` for typed IAM action arrays instead of hand-typed strings (see [Action Constants](../composites/#action-constants))
-- **Inline IAM policies** — \`upload-api.ts\` and \`process-api.ts\` attach \`Role_Policy\` objects for scoped S3 access
+- **Custom composites** — \`LambdaApi\` groups Role + Function + Permission into a reusable unit (see [Composites](../composites/))
+- **Composite presets** — \`SecureApi\` (low memory, short timeout) and \`HighMemoryApi\` (high memory, longer timeout)
 - **Custom lint rule** — \`api-timeout.ts\` enforces API Gateway's 29-second timeout limit (see [Custom Lint Rules](../custom-rules/))
-- **Lint config** — \`chant.config.ts\` extends the strict preset and loads the custom plugin
 
-The example produces 10 CloudFormation resources: 1 S3 bucket + 3 composites × 3 members each.
-
-## Lambda Service
-
-\`examples/lambda-service/\` — showcases the built-in composites and action constants in a realistic multi-Lambda project.
-
-\`\`\`
-src/
-├── chant.config.ts        # Lint config: strict preset
-├── defaults.ts            # Shared encryption config
-├── data-table.ts          # DynamoDB table
-├── output-bucket.ts       # Encrypted S3 bucket
-├── alert-topic.ts         # SNS topic
-├── api.ts                 # LambdaApi — API endpoint with DynamoDB access
-├── worker.ts              # NodeLambda — background worker with S3 write access
-├── scheduled-cleanup.ts   # ScheduledLambda — daily cleanup with EventBridge
-└── notifier.ts            # NodeLambda — SNS publisher
-\`\`\`
-
-**What it adds:**
-
-- **Built-in composites** — \`LambdaApi\`, \`NodeLambda\`, \`ScheduledLambda\` instead of hand-built Role + Function + Permission (see [Built-in Composites](../composites/#built-in-composites))
-- **Action constants** — \`DynamoDBActions.ReadWrite\`, \`S3Actions.PutObject\`, \`SNSActions.Publish\` for typed IAM policies (see [Action Constants](../composites/#action-constants))
-- **Extracted policies** — policy documents as named \`export const\` values, avoiding COR001 inline warnings
-- **Runtime presets** — \`NodeLambda\` defaults to \`nodejs20.x\` + \`index.handler\`
-- **Scheduled execution** — \`ScheduledLambda\` auto-creates EventBridge Rule + Permission
-- **Cross-resource references** — Lambda environment variables reference DynamoDB, S3, and SNS ARNs
-
-{{file:lambda-service/src/api.ts}}
-
-{{file:lambda-service/src/scheduled-cleanup.ts}}
-
-The example produces 14 CloudFormation resources: 3 standalone (table, bucket, topic) + 3 (api) + 2 (worker) + 4 (cleanup) + 2 (notifier).`,
+The example produces 10 CloudFormation resources: 1 S3 bucket + 3 composites × 3 members each.`,
       },
       {
         slug: "skills",

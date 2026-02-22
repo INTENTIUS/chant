@@ -123,7 +123,7 @@ export function expandComposite(
   const shared = (instance as any)[SHARED_PROPS] as Record<string, unknown> | undefined;
 
   for (const [memberName, member] of Object.entries(instance.members)) {
-    const fullName = `${prefix}_${memberName}`;
+    const fullName = `${prefix}${memberName[0].toUpperCase()}${memberName.slice(1)}`;
 
     if (isCompositeInstance(member)) {
       const nested = expandComposite(fullName, member);
