@@ -126,7 +126,7 @@ export function generateTypeScriptDeclarations(
   lines.push("");
   lines.push("// --- Resource classes ---");
   for (const re of resources) {
-    writeResourceClass(lines, re.tsName, re.properties, re.attributes, re.remap);
+    writeResourceClass(lines, re.tsName, re.properties, re.attributes, re.remap, "CFResourceAttributes");
   }
 
   // Section 2: Property classes
@@ -223,6 +223,30 @@ function staticTypeScript(): string {
   // Type interfaces
   lines.push("");
   lines.push("// --- Type interfaces ---");
+  lines.push("");
+  lines.push("export interface Declarable {");
+  lines.push("  readonly entityType: string;");
+  lines.push("}");
+  lines.push("");
+  lines.push("export interface CFResourceAttributes {");
+  lines.push("  DependsOn?: Declarable | Declarable[] | string | string[];");
+  lines.push("  Condition?: string;");
+  lines.push('  DeletionPolicy?: "Delete" | "Retain" | "RetainExceptOnCreate" | "Snapshot";');
+  lines.push('  UpdateReplacePolicy?: "Delete" | "Retain" | "Snapshot";');
+  lines.push("  UpdatePolicy?: {");
+  lines.push("    AutoScalingReplacingUpdate?: { WillReplace?: boolean };");
+  lines.push("    AutoScalingRollingUpdate?: {");
+  lines.push("      MaxBatchSize?: number;");
+  lines.push("      MinInstancesInService?: number;");
+  lines.push("      PauseTime?: string;");
+  lines.push("      WaitOnResourceSignals?: boolean;");
+  lines.push("    };");
+  lines.push("  };");
+  lines.push("  CreationPolicy?: {");
+  lines.push("    ResourceSignal?: { Count?: number; Timeout?: string };");
+  lines.push("  };");
+  lines.push("  Metadata?: Record<string, unknown>;");
+  lines.push("}");
   lines.push("");
   lines.push("export interface PolicyDocument {");
   lines.push('  Version?: "2012-10-17" | "2008-10-17";');

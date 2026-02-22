@@ -230,6 +230,22 @@ describe("resource() helper", () => {
     const instance = resource(MockResource, {});
     expect(instance.arn).toBeInstanceOf(AttrRef);
   });
+
+  test("forwards attributes as second constructor argument", () => {
+    // MockResource doesn't store attributes, so use createResource which does
+    const { createResource } = require("./runtime");
+    const TestRes = createResource("Test::Resource", "test", { arn: "Arn" });
+    const attrs = { DependsOn: ["Other"], Condition: "IsProd" };
+    const instance = resource(TestRes as any, { name: "test" }, attrs);
+    expect((instance as any).attributes).toEqual(attrs);
+  });
+
+  test("without attributes, resource() creates instance with empty attributes", () => {
+    const { createResource } = require("./runtime");
+    const TestRes = createResource("Test::Resource", "test", { arn: "Arn" });
+    const instance = resource(TestRes as any, { name: "test" });
+    expect((instance as any).attributes).toEqual({});
+  });
 });
 
 function mockDeclarableWithProps(type: string, props: Record<string, unknown>): Declarable {

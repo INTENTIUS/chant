@@ -224,16 +224,18 @@ export const FargateAlb = Composite<FargateAlbProps>((props) => {
     AwsvpcConfiguration: awsVpcConfig,
   });
 
-  const service = new EcsService({
-    Cluster: cluster.Arn,
-    TaskDefinition: taskDef.TaskDefinitionArn,
-    LaunchType: "FARGATE",
-    DesiredCount: desiredCount,
-    HealthCheckGracePeriodSeconds: 60,
-    LoadBalancers: [serviceLoadBalancer],
-    NetworkConfiguration: networkConfig,
-    dependsOn: [listener],
-  } as any);
+  const service = new EcsService(
+    {
+      Cluster: cluster.Arn,
+      TaskDefinition: taskDef.TaskDefinitionArn,
+      LaunchType: "FARGATE",
+      DesiredCount: desiredCount,
+      HealthCheckGracePeriodSeconds: 60,
+      LoadBalancers: [serviceLoadBalancer],
+      NetworkConfiguration: networkConfig,
+    },
+    { DependsOn: [listener] },
+  );
 
   return {
     cluster,

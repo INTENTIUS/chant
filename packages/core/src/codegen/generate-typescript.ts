@@ -42,10 +42,11 @@ export function writeResourceClass(
   properties: DtsProperty[],
   attributes: DtsAttribute[],
   remap?: Map<string, string>,
+  resourceAttributesType?: string,
 ): void {
   lines.push("");
   lines.push(`export declare class ${tsName} {`);
-  writeConstructor(lines, properties, remap);
+  writeConstructor(lines, properties, remap, resourceAttributesType);
 
   // Attributes as readonly properties (sorted)
   const attrs = [...attributes].sort((a, b) => a.name.localeCompare(b.name));
@@ -79,9 +80,14 @@ export function writeConstructor(
   lines: string[],
   props: DtsProperty[],
   remap: Map<string, string> | undefined,
+  resourceAttributesType?: string,
 ): void {
   if (props.length === 0) {
-    lines.push("  constructor(props: Record<string, unknown>);");
+    if (resourceAttributesType) {
+      lines.push(`  constructor(props: Record<string, unknown>, attributes?: ${resourceAttributesType});`);
+    } else {
+      lines.push("  constructor(props: Record<string, unknown>);");
+    }
     return;
   }
 
@@ -100,7 +106,11 @@ export function writeConstructor(
     }
     lines.push(`    ${p.name}${optional}: ${tsType};`);
   }
-  lines.push("  });");
+  if (resourceAttributesType) {
+    lines.push(`  }, attributes?: ${resourceAttributesType});`);
+  } else {
+    lines.push("  });");
+  }
 }
 
 /**

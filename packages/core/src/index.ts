@@ -52,6 +52,7 @@ export * from "./codegen/validate";
 export * from "./codegen/docs";
 export * from "./runtime";
 export * from "./runtime-adapter";
+export * from "./resource-attributes";
 export * from "./stack-output";
 export * from "./child-project";
 export * from "./lsp/types";

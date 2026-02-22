@@ -207,11 +207,31 @@ The lexicon provides 8 intrinsic functions (\`Sub\`, \`Ref\`, \`GetAtt\`, \`If\`
 
 CloudFormation automatically creates dependencies between resources when you use \`Ref\` or \`Fn::GetAtt\`. Chant leverages this — when you reference \`$.myBucket.arn\`, the serializer emits \`Fn::GetAtt\` and CloudFormation infers the dependency.
 
-For cases where you need an explicit dependency without a property reference, set \`dependsOn\`:
+For cases where you need an explicit dependency without a property reference, pass \`DependsOn\` as a resource-level attribute (second constructor argument):
 
 {{file:docs-snippets/src/depends-on.ts}}
 
+\`DependsOn\` values can be string logical names or references to other resource objects — Declarable references are resolved to their logical names automatically at build time.
+
 The \`WAW010\` post-synth check warns if a \`DependsOn\` target is already referenced via \`Ref\` or \`Fn::GetAtt\` in properties — in that case the explicit dependency is redundant.
+
+## Resource attributes
+
+Every resource constructor accepts an optional second argument for CloudFormation resource-level attributes. These control lifecycle behavior, conditional creation, and metadata — they are distinct from resource *properties* (the first argument).
+
+{{file:docs-snippets/src/resource-attributes.ts}}
+
+| Attribute | Type | Description |
+|-----------|------|-------------|
+| \`DependsOn\` | \`Declarable \\| Declarable[] \\| string \\| string[]\` | Explicit ordering dependency. Accepts resource references or logical name strings. |
+| \`Condition\` | \`string\` | Only create this resource when the named Condition evaluates to true. |
+| \`DeletionPolicy\` | \`"Delete" \\| "Retain" \\| "RetainExceptOnCreate" \\| "Snapshot"\` | What happens when the resource is removed from the template or the stack is deleted. |
+| \`UpdateReplacePolicy\` | \`"Delete" \\| "Retain" \\| "Snapshot"\` | What happens to the old resource when CloudFormation replaces it during an update. |
+| \`UpdatePolicy\` | \`object\` | Controls how Auto Scaling Groups perform rolling updates (\`AutoScalingRollingUpdate\`, \`AutoScalingReplacingUpdate\`). |
+| \`CreationPolicy\` | \`object\` | Wait for resource signals before marking creation complete (\`ResourceSignal\` with \`Count\` and \`Timeout\`). |
+| \`Metadata\` | \`Record<string, unknown>\` | Arbitrary metadata. Commonly used for \`AWS::CloudFormation::Init\` (cfn-init bootstrapping). Intrinsic functions in metadata values are resolved at build time. |
+
+All attributes are optional. When omitted, CloudFormation uses its defaults (e.g. \`DeletionPolicy: "Delete"\`).
 
 ## Policy documents
 

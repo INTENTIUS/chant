@@ -237,8 +237,9 @@ export function propagate<M extends CompositeMembers>(
  * Exists so lint tooling can validate composite member construction (EVL005).
  */
 export function resource<T extends Declarable, P>(
-  Type: new (props: P) => T,
+  Type: new (props: P, attributes?: Record<string, unknown>) => T,
   props: P,
+  attributes?: Record<string, unknown>,
 ): T {
-  return new Type(props);
+  return new Type(props, attributes);
 }

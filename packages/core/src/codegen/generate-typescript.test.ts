@@ -88,6 +88,70 @@ describe("writeConstructor", () => {
   });
 });
 
+describe("writeConstructor with resourceAttributesType", () => {
+  test("empty props with attributes type emits both params", () => {
+    const lines: string[] = [];
+    writeConstructor(lines, [], undefined, "CFResourceAttributes");
+    expect(lines.join("\n")).toContain(
+      "constructor(props: Record<string, unknown>, attributes?: CFResourceAttributes);",
+    );
+  });
+
+  test("props with attributes type emits second param after closing brace", () => {
+    const lines: string[] = [];
+    writeConstructor(
+      lines,
+      [{ name: "BucketName", type: "string", required: true }],
+      undefined,
+      "CFResourceAttributes",
+    );
+    const output = lines.join("\n");
+    expect(output).toContain("constructor(props: {");
+    expect(output).toContain("BucketName: string;");
+    expect(output).toContain("}, attributes?: CFResourceAttributes);");
+  });
+
+  test("without attributes type, closing brace has no second param", () => {
+    const lines: string[] = [];
+    writeConstructor(
+      lines,
+      [{ name: "Name", type: "string", required: true }],
+      undefined,
+    );
+    const output = lines.join("\n");
+    expect(output).toContain("  });");
+    expect(output).not.toContain("attributes?");
+  });
+});
+
+describe("writeResourceClass with resourceAttributesType", () => {
+  test("resource class constructor includes attributes param", () => {
+    const lines: string[] = [];
+    writeResourceClass(
+      lines,
+      "Bucket",
+      [{ name: "BucketName", type: "string", required: false }],
+      [{ name: "Arn", type: "string" }],
+      undefined,
+      "CFResourceAttributes",
+    );
+    const output = lines.join("\n");
+    expect(output).toContain("}, attributes?: CFResourceAttributes);");
+    expect(output).toContain("readonly Arn: string;");
+  });
+
+  test("property class does not get attributes param", () => {
+    const lines: string[] = [];
+    writePropertyClass(
+      lines,
+      "BucketConfig",
+      [{ name: "Enabled", type: "boolean", required: false }],
+    );
+    const output = lines.join("\n");
+    expect(output).not.toContain("attributes?");
+  });
+});
+
 describe("writeEnumType", () => {
   test("writes single-line for short enum", () => {
     const lines: string[] = [];

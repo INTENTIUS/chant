@@ -169,7 +169,7 @@ exports[`snapshot tests Bucket .d.ts class declaration 1`] = `
     Tags?: Bucket_Tag[];
     /** Enables multiple versions of all objects in this bucket. */
     VersioningConfiguration?: Bucket_VersioningConfiguration;
-  });
+  }, attributes?: CFResourceAttributes);
   readonly Arn: string;
 }"
 `;
@@ -191,7 +191,7 @@ exports[`snapshot tests Function .d.ts class declaration 1`] = `
     MemorySize?: number;
     /** The identifier of the function's runtime. */
     Runtime?: "java17" | "java21" | "nodejs18.x" | "nodejs20.x" | "python3.11" | "python3.12";
-  });
+  }, attributes?: CFResourceAttributes);
   readonly Arn: string;
 }"
 `;

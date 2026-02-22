@@ -76,11 +76,14 @@ export const VpcDefault = Composite<VpcDefaultProps>((props) => {
     VpcId: vpc.VpcId,
   });
 
-  const publicRoute = new EC2Route({
-    RouteTableId: publicRouteTable.RouteTableId,
-    DestinationCidrBlock: "0.0.0.0/0",
-    GatewayId: igw.InternetGatewayId,
-  });
+  const publicRoute = new EC2Route(
+    {
+      RouteTableId: publicRouteTable.RouteTableId,
+      DestinationCidrBlock: "0.0.0.0/0",
+      GatewayId: igw.InternetGatewayId,
+    },
+    { DependsOn: [igwAttachment] },
+  );
 
   const publicRta1 = new SubnetRouteTableAssociation({
     SubnetId: publicSubnet1.SubnetId,

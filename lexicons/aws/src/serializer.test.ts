@@ -491,6 +491,198 @@ describe("nested stack serialization", () => {
   });
 });
 
+// ── Resource-Level CF Attributes ──────────────────────────
+
+// Mock resource that supports the second constructor `attributes` argument
+class MockResourceWithAttrs implements Declarable {
+  readonly [DECLARABLE_MARKER] = true as const;
+  readonly lexicon = "aws";
+  readonly entityType: string;
+  readonly props: Record<string, unknown>;
+  readonly attributes: Record<string, unknown>;
+
+  constructor(
+    type: string,
+    props: Record<string, unknown>,
+    attributes: Record<string, unknown> = {},
+  ) {
+    this.entityType = type;
+    this.props = props;
+    Object.defineProperty(this, "attributes", { value: attributes, enumerable: false, configurable: true });
+  }
+}
+
+describe("resource-level CF attributes", () => {
+  function serialize(...entries: [string, Declarable][]) {
+    const entities = new Map<string, Declarable>(entries);
+    const output = awsSerializer.serialize(entities);
+    return JSON.parse(output as string);
+  }
+
+  test("DependsOn with string logical name", () => {
+    const res = new MockResourceWithAttrs(
+      "AWS::EC2::Instance", { InstanceType: "t3.micro" }, { DependsOn: "Database" },
+    );
+    const template = serialize(["Server", res]);
+    expect(template.Resources.Server.DependsOn).toBe("Database");
+  });
+
+  test("DependsOn with Declarable reference resolves to logical name", () => {
+    const bucket = new MockBucket({ BucketName: "data" });
+    const fn = new MockResourceWithAttrs(
+      "AWS::Lambda::Function", { Runtime: "nodejs20.x" }, { DependsOn: bucket },
+    );
+    const template = serialize(["DataBucket", bucket], ["Handler", fn]);
+    expect(template.Resources.Handler.DependsOn).toBe("DataBucket");
+  });
+
+  test("DependsOn with array of mixed strings and Declarables", () => {
+    const bucket = new MockBucket({ BucketName: "data" });
+    const fn = new MockResourceWithAttrs(
+      "AWS::Lambda::Function", { Runtime: "nodejs20.x" },
+      { DependsOn: [bucket, "ExternalResource"] },
+    );
+    const template = serialize(["DataBucket", bucket], ["Handler", fn]);
+    expect(template.Resources.Handler.DependsOn).toEqual(["DataBucket", "ExternalResource"]);
+  });
+
+  test("single DependsOn array item serializes as string, not array", () => {
+    const fn = new MockResourceWithAttrs(
+      "AWS::Lambda::Function", { Runtime: "nodejs20.x" }, { DependsOn: ["OnlyOne"] },
+    );
+    const template = serialize(["Handler", fn]);
+    expect(template.Resources.Handler.DependsOn).toBe("OnlyOne");
+  });
+
+  test("Condition attribute", () => {
+    const res = new MockResourceWithAttrs(
+      "AWS::S3::Bucket", { BucketName: "cond-bucket" }, { Condition: "CreateProdResources" },
+    );
+    const template = serialize(["MyBucket", res]);
+    expect(template.Resources.MyBucket.Condition).toBe("CreateProdResources");
+  });
+
+  test("DeletionPolicy attribute", () => {
+    const res = new MockResourceWithAttrs(
+      "AWS::RDS::DBInstance", { DBInstanceClass: "db.t3.micro" }, { DeletionPolicy: "Retain" },
+    );
+    const template = serialize(["Database", res]);
+    expect(template.Resources.Database.DeletionPolicy).toBe("Retain");
+  });
+
+  test("UpdateReplacePolicy attribute", () => {
+    const res = new MockResourceWithAttrs(
+      "AWS::RDS::DBInstance", { DBInstanceClass: "db.t3.micro" }, { UpdateReplacePolicy: "Snapshot" },
+    );
+    const template = serialize(["Database", res]);
+    expect(template.Resources.Database.UpdateReplacePolicy).toBe("Snapshot");
+  });
+
+  test("UpdatePolicy attribute", () => {
+    const policy = {
+      AutoScalingRollingUpdate: {
+        MaxBatchSize: 2,
+        MinInstancesInService: 1,
+        PauseTime: "PT5M",
+        WaitOnResourceSignals: true,
+      },
+    };
+    const res = new MockResourceWithAttrs(
+      "AWS::AutoScaling::AutoScalingGroup", { MinSize: "1", MaxSize: "4" },
+      { UpdatePolicy: policy },
+    );
+    const template = serialize(["ASG", res]);
+    expect(template.Resources.ASG.UpdatePolicy).toEqual(policy);
+  });
+
+  test("CreationPolicy attribute", () => {
+    const policy = { ResourceSignal: { Count: 3, Timeout: "PT15M" } };
+    const res = new MockResourceWithAttrs(
+      "AWS::AutoScaling::AutoScalingGroup", { MinSize: "3", MaxSize: "3" },
+      { CreationPolicy: policy },
+    );
+    const template = serialize(["ASG", res]);
+    expect(template.Resources.ASG.CreationPolicy).toEqual(policy);
+  });
+
+  test("Metadata attribute with plain object", () => {
+    const res = new MockResourceWithAttrs(
+      "AWS::EC2::Instance", { InstanceType: "t3.micro" },
+      { Metadata: { "AWS::CloudFormation::Init": { config: { packages: { yum: { httpd: [] } } } } } },
+    );
+    const template = serialize(["Server", res]);
+    expect(template.Resources.Server.Metadata).toEqual({
+      "AWS::CloudFormation::Init": { config: { packages: { yum: { httpd: [] } } } },
+    });
+  });
+
+  test("Metadata with intrinsic values resolves them", () => {
+    const res = new MockResourceWithAttrs(
+      "AWS::EC2::Instance", { InstanceType: "t3.micro" },
+      { Metadata: { StackInfo: Sub`${AWS.StackName}-metadata` } },
+    );
+    const template = serialize(["Server", res]);
+    expect(template.Resources.Server.Metadata.StackInfo).toEqual({
+      "Fn::Sub": "${AWS::StackName}-metadata",
+    });
+  });
+
+  test("all 7 attributes on a single resource", () => {
+    const dependency = new MockBucket({ BucketName: "dep" });
+    const res = new MockResourceWithAttrs(
+      "AWS::RDS::DBInstance", { DBInstanceClass: "db.t3.micro", Engine: "postgres" },
+      {
+        DependsOn: dependency,
+        Condition: "CreateDatabase",
+        DeletionPolicy: "Snapshot",
+        UpdateReplacePolicy: "Retain",
+        UpdatePolicy: { AutoScalingReplacingUpdate: { WillReplace: true } },
+        CreationPolicy: { ResourceSignal: { Count: 1, Timeout: "PT10M" } },
+        Metadata: { Version: "1.0" },
+      },
+    );
+    const template = serialize(["DepBucket", dependency], ["Database", res]);
+
+    const db = template.Resources.Database;
+    expect(db.DependsOn).toBe("DepBucket");
+    expect(db.Condition).toBe("CreateDatabase");
+    expect(db.DeletionPolicy).toBe("Snapshot");
+    expect(db.UpdateReplacePolicy).toBe("Retain");
+    expect(db.UpdatePolicy).toEqual({ AutoScalingReplacingUpdate: { WillReplace: true } });
+    expect(db.CreationPolicy).toEqual({ ResourceSignal: { Count: 1, Timeout: "PT10M" } });
+    expect(db.Metadata).toEqual({ Version: "1.0" });
+  });
+
+  test("undefined attributes are omitted from CF template", () => {
+    const res = new MockResourceWithAttrs(
+      "AWS::S3::Bucket", { BucketName: "bucket" },
+      { DependsOn: undefined, Condition: undefined },
+    );
+    const template = serialize(["MyBucket", res]);
+    expect(template.Resources.MyBucket.DependsOn).toBeUndefined();
+    expect(template.Resources.MyBucket.Condition).toBeUndefined();
+  });
+
+  test("empty attributes object produces no resource-level attributes", () => {
+    const res = new MockResourceWithAttrs("AWS::S3::Bucket", { BucketName: "bucket" }, {});
+    const template = serialize(["MyBucket", res]);
+    const r = template.Resources.MyBucket;
+    expect(r.DependsOn).toBeUndefined();
+    expect(r.Condition).toBeUndefined();
+    expect(r.DeletionPolicy).toBeUndefined();
+    expect(r.Metadata).toBeUndefined();
+  });
+
+  test("resource without attributes property works unchanged", () => {
+    // MockBucket has no `attributes` property — should still serialize fine
+    const bucket = new MockBucket({ BucketName: "legacy" });
+    const template = serialize(["MyBucket", bucket]);
+    expect(template.Resources.MyBucket.Type).toBe("AWS::S3::Bucket");
+    expect(template.Resources.MyBucket.Properties.BucketName).toBe("legacy");
+    expect(template.Resources.MyBucket.DependsOn).toBeUndefined();
+  });
+});
+
 // ── Default Tags Serialization ──────────────────────────
 
 // Mock Lambda Permission (non-taggable) for testing

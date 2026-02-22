@@ -5,6 +5,7 @@ import type { LexiconOutput } from "@intentius/chant/lexicon-output";
 import { walkValue, type SerializerVisitor } from "@intentius/chant/serializer-walker";
 import { isChildProject, type ChildProjectInstance } from "@intentius/chant/child-project";
 import { isStackOutput, type StackOutput } from "@intentius/chant/stack-output";
+import { resolveDependsOn } from "@intentius/chant/resource-attributes";
 import { isDefaultTags, type TagEntry } from "./default-tags";
 import { loadTaggableResources } from "./taggable";
 
@@ -51,6 +52,10 @@ interface CFResource {
   Properties?: Record<string, unknown>;
   DependsOn?: string | string[];
   Condition?: string;
+  DeletionPolicy?: string;
+  UpdateReplacePolicy?: string;
+  UpdatePolicy?: unknown;
+  CreationPolicy?: unknown;
   Metadata?: Record<string, unknown>;
 }
 
@@ -217,36 +222,30 @@ function serializeToTemplate(
         Type: entity.entityType,
       };
 
-      // Extract dependsOn before converting props — resolve declarable refs to logical names
-      const rawProps = ("props" in entity && typeof entity.props === "object" && entity.props !== null)
-        ? entity.props as Record<string, unknown>
+      // Read resource-level attributes from the second constructor arg
+      const attrs = ("attributes" in entity && typeof entity.attributes === "object" && entity.attributes !== null)
+        ? entity.attributes as Record<string, unknown>
         : undefined;
-      if (rawProps && "dependsOn" in rawProps && rawProps.dependsOn !== undefined) {
-        const deps = rawProps.dependsOn;
-        const resolved: string[] = [];
-        const items = Array.isArray(deps) ? deps : [deps];
-        for (const dep of items) {
-          if (typeof dep === "string") {
-            resolved.push(dep);
-          } else if (typeof dep === "object" && dep !== null && "entityType" in dep) {
-            const depName = entityNames.get(dep as Declarable);
-            if (depName) {
-              resolved.push(depName);
-            } else {
-              console.warn(
-                `[chant] warning: dependsOn in "${name}" references a declarable not found in the build — is the target resource exported?`
-              );
-            }
+
+      if (attrs) {
+        // DependsOn — resolve Declarable refs to logical names
+        if (attrs.DependsOn !== undefined) {
+          const resolved = resolveDependsOn(attrs.DependsOn, entityNames, name);
+          if (resolved.length > 0) {
+            resource.DependsOn = resolved.length === 1 ? resolved[0] : resolved;
           }
         }
-        if (resolved.length > 0) {
-          resource.DependsOn = resolved.length === 1 ? resolved[0] : resolved;
-        }
+        // Pass-through attributes
+        if (attrs.Condition) resource.Condition = attrs.Condition as string;
+        if (attrs.DeletionPolicy) resource.DeletionPolicy = attrs.DeletionPolicy as string;
+        if (attrs.UpdateReplacePolicy) resource.UpdateReplacePolicy = attrs.UpdateReplacePolicy as string;
+        if (attrs.UpdatePolicy) resource.UpdatePolicy = attrs.UpdatePolicy;
+        if (attrs.CreationPolicy) resource.CreationPolicy = attrs.CreationPolicy;
+        if (attrs.Metadata) resource.Metadata = toCFValue(attrs.Metadata, entityNames) as Record<string, unknown>;
       }
 
       const properties = toProperties(entity, entityNames);
       if (properties) {
-        delete properties.dependsOn;
         if (Object.keys(properties).length > 0) {
           resource.Properties = properties;
         }

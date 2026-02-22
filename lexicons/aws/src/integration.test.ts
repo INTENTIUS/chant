@@ -100,6 +100,77 @@ describe("AWS Integration", () => {
     });
   });
 
+  describe("Resource-level attributes (second constructor arg)", () => {
+    test("DependsOn with Declarable reference in real generated class", () => {
+      const bucket = new (Bucket as any)({ BucketName: "data" });
+      const fn = new (Function as any)(
+        {
+          Runtime: "nodejs20.x",
+          Handler: "index.handler",
+          Code: { S3Bucket: "my-bucket", S3Key: "code.zip" },
+          Role: "arn:aws:iam::123456789012:role/role",
+        },
+        { DependsOn: [bucket] },
+      );
+
+      expect(fn.attributes).toBeDefined();
+      expect(fn.attributes.DependsOn).toEqual([bucket]);
+
+      const entities = new Map<string, Declarable>();
+      entities.set("DataBucket", bucket);
+      entities.set("Handler", fn);
+
+      const output = awsSerializer.serialize(entities);
+      const template = JSON.parse(output);
+      expect(template.Resources.Handler.DependsOn).toBe("DataBucket");
+    });
+
+    test("DeletionPolicy and Condition on real generated class", () => {
+      const bucket = new (Bucket as any)(
+        { BucketName: "important-data" },
+        { DeletionPolicy: "Retain", Condition: "CreateBucket" },
+      );
+
+      const entities = new Map<string, Declarable>();
+      entities.set("DataBucket", bucket);
+
+      const output = awsSerializer.serialize(entities);
+      const template = JSON.parse(output);
+
+      expect(template.Resources.DataBucket.DeletionPolicy).toBe("Retain");
+      expect(template.Resources.DataBucket.Condition).toBe("CreateBucket");
+    });
+
+    test("resource without attributes works unchanged", () => {
+      const bucket = new (Bucket as any)({ BucketName: "simple" });
+      expect(bucket.attributes).toEqual({});
+
+      const entities = new Map<string, Declarable>();
+      entities.set("SimpleBucket", bucket);
+
+      const output = awsSerializer.serialize(entities);
+      const template = JSON.parse(output);
+      expect(template.Resources.SimpleBucket.DeletionPolicy).toBeUndefined();
+      expect(template.Resources.SimpleBucket.Condition).toBeUndefined();
+    });
+
+    test("Metadata with intrinsics resolves correctly", () => {
+      const bucket = new (Bucket as any)(
+        { BucketName: "meta" },
+        { Metadata: { DeployedWith: Sub`${AWS.StackName}-chant` } },
+      );
+
+      const entities = new Map<string, Declarable>();
+      entities.set("MetaBucket", bucket);
+
+      const output = awsSerializer.serialize(entities);
+      const template = JSON.parse(output);
+      expect(template.Resources.MetaBucket.Metadata.DeployedWith).toEqual({
+        "Fn::Sub": "${AWS::StackName}-chant",
+      });
+    });
+  });
+
   describe("AttrRefs", () => {
     test("Bucket has expected AttrRefs", () => {
       const bucket = new (Bucket as any)({});
