@@ -20,7 +20,7 @@ import { INTRINSIC_MARKER } from "@intentius/chant/intrinsic";
 function gitlabVisitor(entityNames: Map<Declarable, string>): SerializerVisitor {
   return {
     attrRef: (name, _attr) => name,
-    resourceRef: (name) => name,
+    resourceRef: (name) => name.replace(/([a-z0-9])([A-Z])/g, "$1-$2").toLowerCase(),
     propertyDeclarable: (entity, walk) => {
       if (!("props" in entity) || typeof entity.props !== "object" || entity.props === null) {
         return undefined;

@@ -8,10 +8,12 @@
 export const CI = {
   CommitBranch: "$CI_COMMIT_BRANCH",
   CommitRef: "$CI_COMMIT_REF_NAME",
+  CommitRefSlug: "$CI_COMMIT_REF_SLUG",
   CommitSha: "$CI_COMMIT_SHA",
   CommitTag: "$CI_COMMIT_TAG",
   DefaultBranch: "$CI_DEFAULT_BRANCH",
   Environment: "$CI_ENVIRONMENT_NAME",
+  EnvironmentSlug: "$CI_ENVIRONMENT_SLUG",
   JobId: "$CI_JOB_ID",
   JobName: "$CI_JOB_NAME",
   JobStage: "$CI_JOB_STAGE",
@@ -24,4 +26,6 @@ export const CI = {
   ProjectPath: "$CI_PROJECT_PATH",
   Registry: "$CI_REGISTRY",
   RegistryImage: "$CI_REGISTRY_IMAGE",
+  RegistryUser: "$CI_REGISTRY_USER",
+  RegistryPassword: "$CI_REGISTRY_PASSWORD",
 } as const;
