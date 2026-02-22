@@ -5,6 +5,8 @@ import type { LexiconOutput } from "@intentius/chant/lexicon-output";
 import { walkValue, type SerializerVisitor } from "@intentius/chant/serializer-walker";
 import { isChildProject, type ChildProjectInstance } from "@intentius/chant/child-project";
 import { isStackOutput, type StackOutput } from "@intentius/chant/stack-output";
+import { isDefaultTags, type TagEntry } from "./default-tags";
+import { loadTaggableResources } from "./taggable";
 
 /**
  * Check if a declarable is a CoreParameter
@@ -141,10 +143,23 @@ function serializeToTemplate(
     entityNames.set(entity, name);
   }
 
+  // Collect default tags
+  const defaultTagEntries: TagEntry[] = [];
+  for (const [, entity] of entities) {
+    if (isDefaultTags(entity)) {
+      defaultTagEntries.push(...entity.tags);
+    }
+  }
+
   // Process entities
   for (const [name, entity] of entities) {
     // Skip StackOutput entities — they go in the Outputs section
     if (isStackOutput(entity)) {
+      continue;
+    }
+
+    // Skip DefaultTags entities — handled via tag injection below
+    if (isDefaultTags(entity)) {
       continue;
     }
 
@@ -202,12 +217,53 @@ function serializeToTemplate(
         Type: entity.entityType,
       };
 
+      // Extract dependsOn before converting props — resolve declarable refs to logical names
+      const rawProps = ("props" in entity && typeof entity.props === "object" && entity.props !== null)
+        ? entity.props as Record<string, unknown>
+        : undefined;
+      if (rawProps && "dependsOn" in rawProps && rawProps.dependsOn !== undefined) {
+        const deps = rawProps.dependsOn;
+        const resolved: string[] = [];
+        const items = Array.isArray(deps) ? deps : [deps];
+        for (const dep of items) {
+          if (typeof dep === "string") {
+            resolved.push(dep);
+          } else if (typeof dep === "object" && dep !== null && "entityType" in dep) {
+            const depName = entityNames.get(dep as Declarable);
+            if (depName) resolved.push(depName);
+          }
+        }
+        if (resolved.length > 0) {
+          resource.DependsOn = resolved.length === 1 ? resolved[0] : resolved;
+        }
+      }
+
       const properties = toProperties(entity, entityNames);
       if (properties) {
-        resource.Properties = properties;
+        delete properties.dependsOn;
+        if (Object.keys(properties).length > 0) {
+          resource.Properties = properties;
+        }
       }
 
       template.Resources[name] = resource;
+    }
+  }
+
+  // Inject default tags into taggable resources
+  if (defaultTagEntries.length > 0) {
+    const taggable = loadTaggableResources();
+    for (const [, resource] of Object.entries(template.Resources)) {
+      if (!taggable.has(resource.Type)) continue;
+      const resolved = defaultTagEntries.map(t => ({
+        Key: t.Key,
+        Value: toCFValue(t.Value, entityNames),
+      }));
+      const explicit = (resource.Properties?.Tags ?? []) as Array<{ Key: string }>;
+      const explicitKeys = new Set(explicit.map(t => t.Key));
+      const merged = [...resolved.filter(t => !explicitKeys.has(t.Key)), ...explicit];
+      if (!resource.Properties) resource.Properties = {};
+      resource.Properties.Tags = merged;
     }
   }
 

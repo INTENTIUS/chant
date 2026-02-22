@@ -11,6 +11,7 @@ import { createResource } from "@intentius/chant/runtime";
 import type { SerializerResult } from "@intentius/chant/serializer";
 import type { BuildResult } from "@intentius/chant/build";
 import { Parameter } from "./parameter";
+import { defaultTags } from "./default-tags";
 
 // Mock S3 Bucket for testing
 class MockBucket implements Declarable {
@@ -18,9 +19,9 @@ class MockBucket implements Declarable {
   readonly lexicon = "aws";
   readonly entityType = "AWS::S3::Bucket";
   readonly arn: AttrRef;
-  readonly props: { BucketName?: string; VersioningConfiguration?: { Status: string } };
+  readonly props: Record<string, unknown>;
 
-  constructor(props: { BucketName?: string; VersioningConfiguration?: { Status: string } } = {}) {
+  constructor(props: { BucketName?: string; VersioningConfiguration?: { Status: string }; Tags?: unknown[] } = {}) {
     this.props = props;
     this.arn = new AttrRef(this, "Arn");
   }
@@ -487,5 +488,140 @@ describe("nested stack serialization", () => {
     expect(vpcConfig.SubnetIds[0]).toEqual({
       "Fn::GetAtt": ["network", "Outputs.subnetId"],
     });
+  });
+});
+
+// ── Default Tags Serialization ──────────────────────────
+
+// Mock Lambda Permission (non-taggable) for testing
+class MockPermission implements Declarable {
+  readonly [DECLARABLE_MARKER] = true as const;
+  readonly lexicon = "aws";
+  readonly entityType = "AWS::Lambda::Permission";
+  readonly props: { Action: string; FunctionName: string; Principal: string };
+
+  constructor(props: { Action: string; FunctionName: string; Principal: string }) {
+    this.props = props;
+  }
+}
+
+// Mock Lambda Function (taggable) for testing
+class MockFunction implements Declarable {
+  readonly [DECLARABLE_MARKER] = true as const;
+  readonly lexicon = "aws";
+  readonly entityType = "AWS::Lambda::Function";
+  readonly props: Record<string, unknown>;
+
+  constructor(props: Record<string, unknown> = {}) {
+    this.props = props;
+  }
+}
+
+describe("default tags serialization", () => {
+  test("DefaultTags entity is not emitted as a CF Resource", () => {
+    const entities = new Map<string, Declarable>();
+    entities.set("MyBucket", new MockBucket({ BucketName: "bucket" }));
+    entities.set("tags", defaultTags([{ Key: "Env", Value: "prod" }]) as unknown as Declarable);
+
+    const output = awsSerializer.serialize(entities);
+    const template = JSON.parse(output as string);
+
+    expect(template.Resources.tags).toBeUndefined();
+    expect(template.Resources.MyBucket).toBeDefined();
+  });
+
+  test("taggable resource gets default tags injected", () => {
+    const entities = new Map<string, Declarable>();
+    entities.set("MyBucket", new MockBucket({ BucketName: "bucket" }));
+    entities.set("tags", defaultTags([{ Key: "Env", Value: "prod" }]) as unknown as Declarable);
+
+    const output = awsSerializer.serialize(entities);
+    const template = JSON.parse(output as string);
+
+    expect(template.Resources.MyBucket.Properties.Tags).toEqual([
+      { Key: "Env", Value: "prod" },
+    ]);
+  });
+
+  test("non-taggable resource does NOT get tags", () => {
+    const entities = new Map<string, Declarable>();
+    entities.set("Perm", new MockPermission({
+      Action: "lambda:InvokeFunction",
+      FunctionName: "fn",
+      Principal: "apigateway.amazonaws.com",
+    }));
+    entities.set("tags", defaultTags([{ Key: "Env", Value: "prod" }]) as unknown as Declarable);
+
+    const output = awsSerializer.serialize(entities);
+    const template = JSON.parse(output as string);
+
+    expect(template.Resources.Perm.Properties.Tags).toBeUndefined();
+  });
+
+  test("explicit tags win over defaults on same key", () => {
+    const entities = new Map<string, Declarable>();
+    entities.set("MyBucket", new MockBucket({
+      BucketName: "bucket",
+      Tags: [{ Key: "Env", Value: "staging" }],
+    }));
+    entities.set("tags", defaultTags([
+      { Key: "Env", Value: "prod" },
+      { Key: "Team", Value: "platform" },
+    ]) as unknown as Declarable);
+
+    const output = awsSerializer.serialize(entities);
+    const template = JSON.parse(output as string);
+
+    const tags = template.Resources.MyBucket.Properties.Tags;
+    expect(tags).toHaveLength(2);
+    // Explicit "Env" wins, default "Team" is added
+    const envTag = tags.find((t: { Key: string }) => t.Key === "Env");
+    const teamTag = tags.find((t: { Key: string }) => t.Key === "Team");
+    expect(envTag.Value).toBe("staging");
+    expect(teamTag.Value).toBe("platform");
+  });
+
+  test("intrinsic tag values resolve correctly", () => {
+    const entities = new Map<string, Declarable>();
+    entities.set("MyBucket", new MockBucket({ BucketName: "bucket" }));
+    entities.set("tags", defaultTags([
+      { Key: "Stack", Value: Sub`${AWS.StackName}` },
+    ]) as unknown as Declarable);
+
+    const output = awsSerializer.serialize(entities);
+    const template = JSON.parse(output as string);
+
+    const tags = template.Resources.MyBucket.Properties.Tags;
+    expect(tags).toHaveLength(1);
+    expect(tags[0].Key).toBe("Stack");
+    expect(tags[0].Value).toEqual({ "Fn::Sub": "${AWS::StackName}" });
+  });
+
+  test("parameter tag values resolve to Ref", () => {
+    const env = new Parameter("String", { defaultValue: "dev" });
+    const entities = new Map<string, Declarable>();
+    entities.set("Env", env as unknown as Declarable);
+    entities.set("MyBucket", new MockBucket({ BucketName: "bucket" }));
+    entities.set("tags", defaultTags([
+      { Key: "Environment", Value: env },
+    ]) as unknown as Declarable);
+
+    const output = awsSerializer.serialize(entities);
+    const template = JSON.parse(output as string);
+
+    const tags = template.Resources.MyBucket.Properties.Tags;
+    expect(tags).toHaveLength(1);
+    expect(tags[0].Key).toBe("Environment");
+    expect(tags[0].Value).toEqual({ Ref: "Env" });
+  });
+
+  test("no defaultTags = no injection (existing behavior)", () => {
+    const entities = new Map<string, Declarable>();
+    entities.set("MyBucket", new MockBucket({ BucketName: "bucket" }));
+
+    const output = awsSerializer.serialize(entities);
+    const template = JSON.parse(output as string);
+
+    expect(template.Resources.MyBucket.Properties.Tags).toBeUndefined();
   });
 });

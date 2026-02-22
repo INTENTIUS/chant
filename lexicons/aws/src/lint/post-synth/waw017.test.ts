@@ -15,7 +15,7 @@ describe("WAW017: Missing Tags on Taggable Resource", () => {
     expect(waw017.description).toContain("tags");
   });
 
-  test("emits info for taggable resource without Tags", () => {
+  test("emits warning for taggable resource without Tags", () => {
     const ctx = makeCtx({
       Resources: {
         MyBucket: {
@@ -27,7 +27,7 @@ describe("WAW017: Missing Tags on Taggable Resource", () => {
     const diags = checkMissingTags(ctx, taggable);
     expect(diags).toHaveLength(1);
     expect(diags[0].checkId).toBe("WAW017");
-    expect(diags[0].severity).toBe("info");
+    expect(diags[0].severity).toBe("warning");
     expect(diags[0].message).toContain("tagging");
     expect(diags[0].message).toContain("MyBucket");
     expect(diags[0].entity).toBe("MyBucket");

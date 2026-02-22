@@ -1,5 +1,5 @@
 import { Sub, AWS } from "@intentius/chant-lexicon-aws";
-import { LambdaNode, LambdaApi, LambdaScheduled, S3Actions } from "@intentius/chant-lexicon-aws";
+import { LambdaNode, LambdaApi, LambdaScheduled, S3Actions, VpcDefault, FargateAlb } from "@intentius/chant-lexicon-aws";
 import { Role_Policy } from "@intentius/chant-lexicon-aws";
 
 // LambdaNode: Role + Function with nodejs20.x defaults
@@ -25,6 +25,17 @@ export const cron = LambdaScheduled({
   Handler: "handler.handler",
   Code: { ZipFile: `def handler(event, context): return {"statusCode": 200}` },
   schedule: "rate(5 minutes)",
+});
+
+// VpcDefault: Production-ready VPC (17 resources)
+export const network = VpcDefault({});
+
+// FargateAlb: Fargate service behind an ALB (11 resources)
+export const web = FargateAlb({
+  image: "nginx:latest",
+  vpcId: network.vpc.VpcId,
+  publicSubnetIds: [network.publicSubnet1.SubnetId, network.publicSubnet2.SubnetId],
+  privateSubnetIds: [network.privateSubnet1.SubnetId, network.privateSubnet2.SubnetId],
 });
 
 // Composites accept extra IAM policies

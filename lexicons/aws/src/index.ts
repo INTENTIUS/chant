@@ -1,6 +1,10 @@
 // Parameter
 export { Parameter } from "./parameter";
 
+// Default Tags
+export { defaultTags, isDefaultTags, DEFAULT_TAGS_MARKER } from "./default-tags";
+export type { DefaultTags, TagEntry } from "./default-tags";
+
 // Serializer
 export { awsSerializer } from "./serializer";
 
@@ -65,7 +69,7 @@ export { parseCFNSchema, cfnShortName, cfnServiceName } from "./spec/parse";
 export type { SchemaParseResult, ParsedResource, ParsedProperty, ParsedAttribute, ParsedPropertyType, ParsedEnum, PropertyConstraints } from "./spec/parse";
 
 // Action constants
-export { S3Actions, LambdaActions, DynamoDBActions, SQSActions, SNSActions, IAMActions } from "./actions/index";
+export { S3Actions, LambdaActions, DynamoDBActions, SQSActions, SNSActions, IAMActions, ECRActions, LogsActions, ECSActions } from "./actions/index";
 
 // Built-in composites
 export {
@@ -73,10 +77,12 @@ export {
   LambdaApi,
   LambdaScheduled, ScheduledLambda,
   LambdaSqs, LambdaEventBridge, LambdaDynamoDB, LambdaS3, LambdaSns,
+  VpcDefault, FargateAlb,
 } from "./composites/index";
 export type {
   LambdaFunctionProps, LambdaApiProps, ScheduledLambdaProps,
   LambdaSqsProps, LambdaEventBridgeProps, LambdaDynamoDBProps, LambdaS3Props, LambdaSnsProps,
+  VpcDefaultProps, FargateAlbProps,
 } from "./composites/index";
 
 // Code generation pipeline

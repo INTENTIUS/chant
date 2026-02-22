@@ -303,13 +303,13 @@ CloudFormation nested stacks (\`AWS::CloudFormation::Stack\`) split resources in
 
 ## Tagging
 
-Tags are standard CloudFormation \`Key\`/\`Value\` arrays. Pass them on any resource that supports tagging:
+Use \`defaultTags()\` to declare project-wide tags. The serializer automatically injects them into every taggable resource at synthesis time:
 
 {{file:docs-snippets/src/tagging.ts}}
 
-To apply tags across all members of a composite, use [\`propagate\`](../composites/#propagate--shared-properties):
+No other changes needed — all taggable resources in the project get these tags automatically. Resources with explicit \`Tags\` keep them (explicit key wins over default). Non-taggable resources like \`AWS::Lambda::Permission\` are never tagged.
 
-{{file:docs-snippets/src/propagate.ts}}`,
+Tag values support strings, \`Parameter\` references, and intrinsic functions (\`Sub\`, \`Ref\`, etc.).`,
       },
       {
         slug: "intrinsics",
@@ -405,6 +405,8 @@ The AWS lexicon ships ready-to-use composites for common patterns. Import them f
 | \`LambdaDynamoDB\` | \`table\`, \`role\`, \`func\` | DynamoDB Table + Lambda. Auto-attaches DynamoDB policy and injects \`TABLE_NAME\` env var. |
 | \`LambdaS3\` | \`bucket\`, \`role\`, \`func\` | S3 Bucket (encrypted, public access blocked) + Lambda. Auto-attaches S3 policy and injects \`BUCKET_NAME\` env var. |
 | \`LambdaSns\` | \`topic\`, \`role\`, \`func\`, \`subscription\`, \`permission\` | SNS Topic + Lambda via Subscription. Auto-attaches invoke permission for SNS. |
+| \`VpcDefault\` | \`vpc\`, \`igw\`, \`igwAttachment\`, \`publicSubnet1\`, \`publicSubnet2\`, \`privateSubnet1\`, \`privateSubnet2\`, \`publicRouteTable\`, \`publicRoute\`, \`publicRta1\`, \`publicRta2\`, \`privateRouteTable\`, \`privateRta1\`, \`privateRta2\`, \`natEip\`, \`natGateway\`, \`privateRoute\` | Production-ready VPC: 2 public + 2 private subnets across 2 AZs, internet gateway, single NAT gateway. |
+| \`FargateAlb\` | \`cluster\`, \`executionRole\`, \`taskRole\`, \`logGroup\`, \`taskDef\`, \`albSg\`, \`taskSg\`, \`alb\`, \`targetGroup\`, \`listener\`, \`service\` | Fargate service behind an ALB. Accepts VPC outputs as props. |
 
 All built-in composites accept \`ManagedPolicyArns\` and \`Policies\` for adding IAM permissions to the auto-created role.
 
@@ -424,6 +426,9 @@ Available constants:
 | \`SQSActions\` | \`SendMessage\`, \`ReceiveMessage\`, \`Full\` |
 | \`SNSActions\` | \`Publish\`, \`Subscribe\`, \`Full\` |
 | \`IAMActions\` | \`PassRole\` |
+| \`ECRActions\` | \`Pull\`, \`Full\` |
+| \`LogsActions\` | \`Write\`, \`Full\` |
+| \`ECSActions\` | \`RunTask\`, \`Service\`, \`Full\` |
 
 Broad groups like \`ReadWrite\` are always supersets of their narrow counterparts (\`ReadOnly\` + \`WriteOnly\`). All values are \`as const\` arrays for full type safety.
 
@@ -833,6 +838,24 @@ Produces 4 resources: IAM Role + Lambda Function + EventBridge Rule + Lambda Per
 {{file:lambda-eventbridge/src/main.ts}}
 
 Produces 4 resources: EventBridge Rule + IAM Role + Lambda Function + Lambda Permission.
+
+## VPC
+
+\`examples/vpc/\` — production-ready VPC using the \`VpcDefault\` composite.
+
+{{file:vpc/src/main.ts}}
+
+Produces 17 CloudFormation resources: VPC, Internet Gateway, 2 public + 2 private subnets, NAT Gateway with EIP, route tables, routes, and associations.
+
+## Fargate ALB
+
+\`examples/fargate-alb/\` — Fargate service behind an ALB, consuming a VPC. Demonstrates composite composability.
+
+{{file:fargate-alb/src/network.ts}}
+
+{{file:fargate-alb/src/service.ts}}
+
+Produces 28 CloudFormation resources: 17 from VpcDefault + 11 from FargateAlb (ECS Cluster, execution/task roles, log group, task definition, security groups, ALB, target group, listener, and ECS service).
 
 ## Lambda API (Custom Composite)
 

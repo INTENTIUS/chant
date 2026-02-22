@@ -9,6 +9,8 @@ import { LambdaEventBridge } from "./lambda-eventbridge";
 import { LambdaDynamoDB } from "./lambda-dynamodb";
 import { LambdaS3 } from "./lambda-s3";
 import { LambdaSns } from "./lambda-sns";
+import { VpcDefault } from "./vpc-default";
+import { FargateAlb } from "./fargate-alb";
 
 const baseProps = {
   name: "TestFunc",
@@ -262,5 +264,179 @@ describe("LambdaSns", () => {
     const instance = LambdaSns(baseProps);
     const permProps = (instance.permission as any).props;
     expect(permProps.Principal).toBe("sns.amazonaws.com");
+  });
+});
+
+describe("VpcDefault", () => {
+  test("returns 17 members", () => {
+    const instance = VpcDefault({});
+    expect(Object.keys(instance.members)).toHaveLength(17);
+  });
+
+  test("has all expected member names", () => {
+    const instance = VpcDefault({});
+    const names = Object.keys(instance.members);
+    expect(names).toContain("vpc");
+    expect(names).toContain("igw");
+    expect(names).toContain("igwAttachment");
+    expect(names).toContain("publicSubnet1");
+    expect(names).toContain("publicSubnet2");
+    expect(names).toContain("privateSubnet1");
+    expect(names).toContain("privateSubnet2");
+    expect(names).toContain("publicRouteTable");
+    expect(names).toContain("publicRoute");
+    expect(names).toContain("publicRta1");
+    expect(names).toContain("publicRta2");
+    expect(names).toContain("privateRouteTable");
+    expect(names).toContain("privateRta1");
+    expect(names).toContain("privateRta2");
+    expect(names).toContain("natEip");
+    expect(names).toContain("natGateway");
+    expect(names).toContain("privateRoute");
+  });
+
+  test("VPC has DNS enabled", () => {
+    const instance = VpcDefault({});
+    const vpcProps = (instance.vpc as any).props;
+    expect(vpcProps.EnableDnsSupport).toBe(true);
+    expect(vpcProps.EnableDnsHostnames).toBe(true);
+  });
+
+  test("public subnets have MapPublicIpOnLaunch", () => {
+    const instance = VpcDefault({});
+    const pub1Props = (instance.publicSubnet1 as any).props;
+    const pub2Props = (instance.publicSubnet2 as any).props;
+    expect(pub1Props.MapPublicIpOnLaunch).toBe(true);
+    expect(pub2Props.MapPublicIpOnLaunch).toBe(true);
+  });
+
+  test("vpc.VpcId is wired to subnets", () => {
+    const instance = VpcDefault({});
+    const sub1Props = (instance.publicSubnet1 as any).props;
+    expect(sub1Props.VpcId).toBeInstanceOf(AttrRef);
+  });
+
+  test("NAT gateway is present", () => {
+    const instance = VpcDefault({});
+    expect(instance.natGateway).toBeDefined();
+    expect(instance.natEip).toBeDefined();
+  });
+
+  test("expandComposite produces 17 entries", () => {
+    const expanded = expandComposite("net", VpcDefault({}));
+    expect(expanded.size).toBe(17);
+    expect(expanded.has("netVpc")).toBe(true);
+    expect(expanded.has("netIgw")).toBe(true);
+    expect(expanded.has("netNatGateway")).toBe(true);
+  });
+
+  test("custom CIDR overrides defaults", () => {
+    const instance = VpcDefault({ cidr: "172.16.0.0/16" });
+    const vpcProps = (instance.vpc as any).props;
+    expect(vpcProps.CidrBlock).toBe("172.16.0.0/16");
+  });
+});
+
+describe("FargateAlb", () => {
+  const fargateProps = {
+    image: "nginx:latest",
+    vpcId: "vpc-123",
+    publicSubnetIds: ["subnet-pub1", "subnet-pub2"],
+    privateSubnetIds: ["subnet-priv1", "subnet-priv2"],
+  };
+
+  test("returns 11 members", () => {
+    const instance = FargateAlb(fargateProps);
+    expect(Object.keys(instance.members)).toHaveLength(11);
+  });
+
+  test("has all expected member names", () => {
+    const instance = FargateAlb(fargateProps);
+    const names = Object.keys(instance.members);
+    expect(names).toEqual([
+      "cluster", "executionRole", "taskRole", "logGroup", "taskDef",
+      "albSg", "taskSg", "alb", "targetGroup", "listener", "service",
+    ]);
+  });
+
+  test("expandComposite produces correct logical names", () => {
+    const expanded = expandComposite("web", FargateAlb(fargateProps));
+    expect(expanded.has("webCluster")).toBe(true);
+    expect(expanded.has("webExecutionRole")).toBe(true);
+    expect(expanded.has("webTaskRole")).toBe(true);
+    expect(expanded.has("webLogGroup")).toBe(true);
+    expect(expanded.has("webTaskDef")).toBe(true);
+    expect(expanded.has("webAlbSg")).toBe(true);
+    expect(expanded.has("webTaskSg")).toBe(true);
+    expect(expanded.has("webAlb")).toBe(true);
+    expect(expanded.has("webTargetGroup")).toBe(true);
+    expect(expanded.has("webListener")).toBe(true);
+    expect(expanded.has("webService")).toBe(true);
+  });
+
+  test("execution role has ECR and Logs policies", () => {
+    const instance = FargateAlb(fargateProps);
+    const roleProps = (instance.executionRole as any).props;
+    expect(roleProps.Policies).toHaveLength(1);
+    const policyDoc = (roleProps.Policies[0] as any).props.PolicyDocument;
+    expect(policyDoc.Statement).toHaveLength(2);
+    expect(policyDoc.Statement[0].Action).toContain("ecr:GetAuthorizationToken");
+    expect(policyDoc.Statement[1].Action).toContain("logs:CreateLogStream");
+  });
+
+  test("task role receives custom policies", () => {
+    const { Role_Policy } = require("../generated");
+    const customPolicy = new Role_Policy({
+      PolicyName: "Custom",
+      PolicyDocument: { Version: "2012-10-17", Statement: [] },
+    });
+    const instance = FargateAlb({ ...fargateProps, Policies: [customPolicy] });
+    const roleProps = (instance.taskRole as any).props;
+    expect(roleProps.Policies).toHaveLength(1);
+  });
+
+  test("task definition has awsvpc and FARGATE", () => {
+    const instance = FargateAlb(fargateProps);
+    const tdProps = (instance.taskDef as any).props;
+    expect(tdProps.NetworkMode).toBe("awsvpc");
+    expect(tdProps.RequiresCompatibilities).toEqual(["FARGATE"]);
+  });
+
+  test("ALB SG allows ingress on listener port", () => {
+    const instance = FargateAlb(fargateProps);
+    const sgProps = (instance.albSg as any).props;
+    expect(sgProps.SecurityGroupIngress).toHaveLength(1);
+    const ingress = (sgProps.SecurityGroupIngress[0] as any).props;
+    expect(ingress.FromPort).toBe(80);
+    expect(ingress.CidrIp).toBe("0.0.0.0/0");
+  });
+
+  test("task SG references ALB SG GroupId", () => {
+    const instance = FargateAlb(fargateProps);
+    const sgProps = (instance.taskSg as any).props;
+    const ingress = (sgProps.SecurityGroupIngress[0] as any).props;
+    expect(ingress.SourceSecurityGroupId).toBeInstanceOf(AttrRef);
+  });
+
+  test("default container port is 80", () => {
+    const instance = FargateAlb(fargateProps);
+    const tdProps = (instance.taskDef as any).props;
+    const containerDef = (tdProps.ContainerDefinitions[0] as any).props;
+    const portMapping = (containerDef.PortMappings[0] as any).props;
+    expect(portMapping.ContainerPort).toBe(80);
+  });
+
+  test("default desired count is 2", () => {
+    const instance = FargateAlb(fargateProps);
+    const svcProps = (instance.service as any).props;
+    expect(svcProps.DesiredCount).toBe(2);
+  });
+
+  test("custom listener port is applied", () => {
+    const instance = FargateAlb({ ...fargateProps, listenerPort: 8080 });
+    const sgProps = (instance.albSg as any).props;
+    const ingress = (sgProps.SecurityGroupIngress[0] as any).props;
+    expect(ingress.FromPort).toBe(8080);
+    expect(ingress.ToPort).toBe(8080);
   });
 });

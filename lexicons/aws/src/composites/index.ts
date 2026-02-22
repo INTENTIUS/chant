@@ -14,3 +14,7 @@ export { LambdaS3 } from "./lambda-s3";
 export type { LambdaS3Props } from "./lambda-s3";
 export { LambdaSns } from "./lambda-sns";
 export type { LambdaSnsProps } from "./lambda-sns";
+export { VpcDefault } from "./vpc-default";
+export type { VpcDefaultProps } from "./vpc-default";
+export { FargateAlb } from "./fargate-alb";
+export type { FargateAlbProps } from "./fargate-alb";

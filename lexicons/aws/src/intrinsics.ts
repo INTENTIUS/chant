@@ -147,22 +147,25 @@ export function Join(delimiter: string, values: unknown[]): JoinIntrinsic {
 export class SelectIntrinsic implements Intrinsic {
   readonly [INTRINSIC_MARKER] = true as const;
   private index: number;
-  private values: unknown[];
+  private values: unknown[] | Intrinsic;
 
-  constructor(index: number, values: unknown[]) {
+  constructor(index: number, values: unknown[] | Intrinsic) {
     this.index = index;
     this.values = values;
   }
 
-  toJSON(): { "Fn::Select": [string, unknown[]] } {
-    return { "Fn::Select": [String(this.index), this.values.map(resolveIntrinsicValue)] };
+  toJSON(): { "Fn::Select": [string, unknown] } {
+    const resolvedValues = Array.isArray(this.values)
+      ? this.values.map(resolveIntrinsicValue)
+      : (this.values as Intrinsic & { toJSON(): unknown }).toJSON();
+    return { "Fn::Select": [String(this.index), resolvedValues] };
   }
 }
 
 /**
  * Create a Select intrinsic
  */
-export function Select(index: number, values: unknown[]): SelectIntrinsic {
+export function Select(index: number, values: unknown[] | Intrinsic): SelectIntrinsic {
   return new SelectIntrinsic(index, values);
 }
 

@@ -5,6 +5,9 @@ import { DynamoDBActions } from "./dynamodb";
 import { SQSActions } from "./sqs";
 import { SNSActions } from "./sns";
 import { IAMActions } from "./iam";
+import { ECRActions } from "./ecr";
+import { LogsActions } from "./logs";
+import { ECSActions } from "./ecs";
 
 const allConstants = {
   S3Actions,
@@ -13,6 +16,9 @@ const allConstants = {
   SQSActions,
   SNSActions,
   IAMActions,
+  ECRActions,
+  LogsActions,
+  ECSActions,
 };
 
 describe("Action Constants", () => {

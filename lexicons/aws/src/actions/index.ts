@@ -4,3 +4,6 @@ export { DynamoDBActions } from "./dynamodb";
 export { SQSActions } from "./sqs";
 export { SNSActions } from "./sns";
 export { IAMActions } from "./iam";
+export { ECRActions } from "./ecr";
+export { LogsActions } from "./logs";
+export { ECSActions } from "./ecs";
