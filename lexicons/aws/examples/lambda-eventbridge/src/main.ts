@@ -1,8 +1,9 @@
-import { LambdaEventBridge, Sub, AWS } from "@intentius/chant-lexicon-aws";
+import { LambdaEventBridge, Sub, AWS, Ref } from "@intentius/chant-lexicon-aws";
+import { environment } from "./params";
 
 export const app = LambdaEventBridge({
-  name: Sub`${AWS.StackName}-fn`,
-  ruleName: Sub`${AWS.StackName}-rule`,
+  name: Sub`${AWS.StackName}-${Ref(environment)}-fn`,
+  ruleName: Sub`${AWS.StackName}-${Ref(environment)}-rule`,
   Runtime: "nodejs20.x",
   Handler: "index.handler",
   Code: {

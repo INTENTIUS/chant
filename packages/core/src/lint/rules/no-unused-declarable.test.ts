@@ -124,6 +124,14 @@ describe("COR004: no-unused-declarable", () => {
     expect(diags).toHaveLength(0);
   });
 
+  test("OK for Parameter declarations (inherently cross-file)", () => {
+    const ctx = createContext(
+      `export const environment = new Parameter("String", { description: "env" });`,
+    );
+    const diags = noUnusedDeclarableRule.check(ctx);
+    expect(diags).toHaveLength(0);
+  });
+
   test("detects reference in array literal", () => {
     const ctx = createContext(
       `export const bucket = new Bucket({});\n` + `export const list = [bucket];`,

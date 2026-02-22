@@ -1,8 +1,9 @@
-import { LambdaSns, Sub, AWS } from "@intentius/chant-lexicon-aws";
+import { LambdaSns, Sub, AWS, Ref } from "@intentius/chant-lexicon-aws";
+import { environment } from "./params";
 
 export const app = LambdaSns({
-  name: Sub`${AWS.StackName}-fn`,
-  topicName: Sub`${AWS.StackName}-topic`,
+  name: Sub`${AWS.StackName}-${Ref(environment)}-fn`,
+  topicName: Sub`${AWS.StackName}-${Ref(environment)}-topic`,
   Runtime: "nodejs20.x",
   Handler: "index.handler",
   Code: {

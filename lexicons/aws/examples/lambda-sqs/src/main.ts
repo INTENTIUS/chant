@@ -1,8 +1,9 @@
-import { LambdaSqs, Sub, AWS } from "@intentius/chant-lexicon-aws";
+import { LambdaSqs, Sub, AWS, Ref } from "@intentius/chant-lexicon-aws";
+import { environment } from "./params";
 
 export const app = LambdaSqs({
-  name: Sub`${AWS.StackName}-fn`,
-  queueName: Sub`${AWS.StackName}-queue`,
+  name: Sub`${AWS.StackName}-${Ref(environment)}-fn`,
+  queueName: Sub`${AWS.StackName}-${Ref(environment)}-queue`,
   Runtime: "nodejs20.x",
   Handler: "index.handler",
   Code: {

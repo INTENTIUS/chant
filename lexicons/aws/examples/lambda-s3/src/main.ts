@@ -1,8 +1,9 @@
-import { LambdaS3, Sub, AWS } from "@intentius/chant-lexicon-aws";
+import { LambdaS3, Sub, AWS, Ref } from "@intentius/chant-lexicon-aws";
+import { environment } from "./params";
 
 export const app = LambdaS3({
-  name: Sub`${AWS.StackName}-fn`,
-  bucketName: Sub`${AWS.StackName}-bucket`,
+  name: Sub`${AWS.StackName}-${Ref(environment)}-fn`,
+  bucketName: Sub`${AWS.StackName}-${Ref(environment)}-bucket`,
   Runtime: "nodejs20.x",
   Handler: "index.handler",
   Code: {

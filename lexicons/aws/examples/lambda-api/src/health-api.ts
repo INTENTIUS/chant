@@ -1,8 +1,9 @@
-import { Sub, AWS } from "@intentius/chant-lexicon-aws";
+import { Sub, AWS, Ref } from "@intentius/chant-lexicon-aws";
 import { SecureApi } from "./lambda-api";
+import { environment } from "./params";
 
 export const healthApi = SecureApi({
-  name: Sub`${AWS.StackName}-health`,
+  name: Sub`${AWS.StackName}-${Ref(environment)}-health`,
   runtime: "nodejs20.x",
   handler: "index.handler",
   code: {

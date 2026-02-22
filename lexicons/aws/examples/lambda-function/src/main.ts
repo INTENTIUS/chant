@@ -1,7 +1,8 @@
-import { LambdaNode, Sub, AWS } from "@intentius/chant-lexicon-aws";
+import { LambdaNode, Sub, AWS, Ref } from "@intentius/chant-lexicon-aws";
+import { environment } from "./params";
 
 export const app = LambdaNode({
-  name: Sub`${AWS.StackName}-fn`,
+  name: Sub`${AWS.StackName}-${Ref(environment)}-fn`,
   Code: {
     ZipFile: `exports.handler = async (event) => {
   console.log("Event:", JSON.stringify(event));

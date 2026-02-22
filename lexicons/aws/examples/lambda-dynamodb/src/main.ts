@@ -1,8 +1,9 @@
-import { LambdaDynamoDB, Sub, AWS } from "@intentius/chant-lexicon-aws";
+import { LambdaDynamoDB, Sub, AWS, Ref } from "@intentius/chant-lexicon-aws";
+import { environment } from "./params";
 
 export const app = LambdaDynamoDB({
-  name: Sub`${AWS.StackName}-fn`,
-  tableName: Sub`${AWS.StackName}-table`,
+  name: Sub`${AWS.StackName}-${Ref(environment)}-fn`,
+  tableName: Sub`${AWS.StackName}-${Ref(environment)}-table`,
   Runtime: "nodejs20.x",
   Handler: "index.handler",
   Code: {

@@ -51,6 +51,9 @@ function collectExportedDeclarables(sourceFile: ts.SourceFile): DeclarableInfo[]
       const className = getNewExpressionClassName(decl.initializer);
       if (!className || !isCapitalized(className)) continue;
 
+      // Parameters are inherently cross-file (declared in params.ts, consumed via Ref() elsewhere)
+      if (className === "Parameter") continue;
+
       declarables.push({
         name: decl.name.text,
         node,

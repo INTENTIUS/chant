@@ -1,6 +1,7 @@
-import { Role_Policy, Sub, AWS, S3Actions } from "@intentius/chant-lexicon-aws";
+import { Role_Policy, Sub, AWS, Ref, S3Actions } from "@intentius/chant-lexicon-aws";
 import { dataBucket } from "./data-bucket";
 import { SecureApi } from "./lambda-api";
+import { environment } from "./params";
 
 export const uploadPolicyDocument = {
   Version: "2012-10-17",
@@ -19,7 +20,7 @@ export const uploadS3Policy = new Role_Policy({
 });
 
 export const uploadApi = SecureApi({
-  name: Sub`${AWS.StackName}-upload`,
+  name: Sub`${AWS.StackName}-${Ref(environment)}-upload`,
   runtime: "nodejs20.x",
   handler: "index.handler",
   code: {

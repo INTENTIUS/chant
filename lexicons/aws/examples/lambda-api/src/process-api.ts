@@ -1,6 +1,7 @@
-import { Role_Policy, Sub, AWS, S3Actions } from "@intentius/chant-lexicon-aws";
+import { Role_Policy, Sub, AWS, Ref, S3Actions } from "@intentius/chant-lexicon-aws";
 import { dataBucket } from "./data-bucket";
 import { HighMemoryApi } from "./lambda-api";
+import { environment } from "./params";
 
 export const processPolicyDocument = {
   Version: "2012-10-17",
@@ -19,7 +20,7 @@ export const processS3Policy = new Role_Policy({
 });
 
 export const processApi = HighMemoryApi({
-  name: Sub`${AWS.StackName}-process`,
+  name: Sub`${AWS.StackName}-${Ref(environment)}-process`,
   runtime: "nodejs20.x",
   handler: "index.handler",
   code: {
