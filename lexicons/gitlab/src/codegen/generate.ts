@@ -30,61 +30,56 @@ export interface GitLabGenerateOptions extends GenerateOptions {
   schemaVersion?: string;
 }
 
-// Captured from generate() call so the pipeline config can access it
-let activeSchemaVersion: string | undefined;
-
-const gitlabPipelineConfig: GeneratePipelineConfig<GitLabParseResult> = {
-  fetchSchemas: async (opts) => {
-    return fetchSchemas(opts.force, activeSchemaVersion);
-  },
-
-  parseSchema: (_typeName, data) => {
-    // The CI schema is a single document — parseCISchema returns multiple results.
-    // The pipeline calls this once per schema entry. We return the first result
-    // and use augmentResults to inject the rest.
-    const results = parseCISchema(data);
-    if (results.length === 0) return null;
-    // Return the first result; stash the rest for augmentResults
-    pendingResults = results.slice(1);
-    return results[0];
-  },
-
-  createNaming: (results) => new NamingStrategy(results),
-
-  augmentResults: (results, _opts, log) => {
-    // Add the remaining results from the single-schema parse
-    if (pendingResults.length > 0) {
-      results.push(...pendingResults);
-      log(`Added ${pendingResults.length} additional CI entities from single schema`);
-      pendingResults = [];
-    }
-    log(`Total: ${results.length} CI entity schemas`);
-    return { results };
-  },
-
-  generateRegistry: (results, naming) => {
-    return generateLexiconJSON(results, naming as NamingStrategy);
-  },
-
-  generateTypes: (results, naming) => {
-    return generateTypeScriptDeclarations(results, naming as NamingStrategy);
-  },
-
-  generateRuntimeIndex: (results, naming) => {
-    return generateRuntimeIndex(results, naming as NamingStrategy);
-  },
-};
-
-// Shared state between parseSchema and augmentResults
-let pendingResults: GitLabParseResult[] = [];
-
 /**
  * Run the full GitLab generation pipeline.
  */
 export async function generate(opts: GitLabGenerateOptions = {}): Promise<GenerateResult> {
-  pendingResults = [];
-  activeSchemaVersion = opts.schemaVersion;
-  return generatePipeline(gitlabPipelineConfig, opts);
+  // Pipeline state captured in closure — no module-level mutation
+  let pendingResults: GitLabParseResult[] = [];
+
+  const config: GeneratePipelineConfig<GitLabParseResult> = {
+    fetchSchemas: async (fetchOpts) => {
+      return fetchSchemas(fetchOpts.force, opts.schemaVersion);
+    },
+
+    parseSchema: (_typeName, data) => {
+      // The CI schema is a single document — parseCISchema returns multiple results.
+      // The pipeline calls this once per schema entry. We return the first result
+      // and use augmentResults to inject the rest.
+      const results = parseCISchema(data);
+      if (results.length === 0) return null;
+      // Return the first result; stash the rest for augmentResults
+      pendingResults = results.slice(1);
+      return results[0];
+    },
+
+    createNaming: (results) => new NamingStrategy(results),
+
+    augmentResults: (results, _opts, log) => {
+      // Add the remaining results from the single-schema parse
+      if (pendingResults.length > 0) {
+        results.push(...pendingResults);
+        log(`Added ${pendingResults.length} additional CI entities from single schema`);
+        pendingResults = [];
+      }
+      log(`Total: ${results.length} CI entity schemas`);
+      return { results };
+    },
+
+    generateRegistry: (results, naming) => {
+      return generateLexiconJSON(results, naming as NamingStrategy);
+    },
+
+    generateTypes: (results, naming) => {
+      return generateTypeScriptDeclarations(results, naming as NamingStrategy);
+    },
+
+    generateRuntimeIndex: (results, naming) => {
+      return generateRuntimeIndex(results, naming as NamingStrategy);
+    },
+  };
+
+  return generatePipeline(config, opts);
 }
 
 /**

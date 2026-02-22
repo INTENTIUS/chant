@@ -198,7 +198,7 @@ describe("gitlabPlugin", () => {
     const result = await catalog.handler();
     const parsed = JSON.parse(result);
     expect(Array.isArray(parsed)).toBe(true);
-    expect(parsed.length).toBe(16);
+    expect(parsed.length).toBe(19);
     const job = parsed.find((e: { className: string }) => e.className === "Job");
     expect(job).toBeDefined();
     expect(job.kind).toBe("resource");

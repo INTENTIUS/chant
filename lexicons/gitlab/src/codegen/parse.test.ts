@@ -5,9 +5,9 @@ import { loadSchemaFixture } from "../testdata/load-fixtures";
 const fixture = loadSchemaFixture();
 
 describe("parseCISchema", () => {
-  test("returns 16 entities", () => {
+  test("returns 19 entities", () => {
     const results = parseCISchema(fixture);
-    expect(results).toHaveLength(16);
+    expect(results).toHaveLength(19);
   });
 
   test("returns 3 resource entities", () => {
@@ -20,10 +20,10 @@ describe("parseCISchema", () => {
     expect(names).toContain("GitLab::CI::Workflow");
   });
 
-  test("returns 13 property entities", () => {
+  test("returns 16 property entities", () => {
     const results = parseCISchema(fixture);
     const properties = results.filter((r) => r.isProperty);
-    expect(properties).toHaveLength(13);
+    expect(properties).toHaveLength(16);
     const names = properties.map((r) => r.resource.typeName);
     expect(names).toContain("GitLab::CI::Artifacts");
     expect(names).toContain("GitLab::CI::Cache");
@@ -38,6 +38,9 @@ describe("parseCISchema", () => {
     expect(names).toContain("GitLab::CI::Environment");
     expect(names).toContain("GitLab::CI::Trigger");
     expect(names).toContain("GitLab::CI::AutoCancel");
+    expect(names).toContain("GitLab::CI::WorkflowRule");
+    expect(names).toContain("GitLab::CI::Need");
+    expect(names).toContain("GitLab::CI::Inherit");
   });
 
   test("property entities have isProperty set to true", () => {
@@ -122,6 +125,108 @@ describe("Cache entity", () => {
     expect(propNames).toContain("key");
     expect(propNames).toContain("paths");
     expect(propNames).toContain("policy");
+  });
+});
+
+describe("spec conformance — type mappings", () => {
+  const results = parseCISchema(fixture);
+  const findEntity = (name: string) => results.find((r) => r.resource.typeName === `GitLab::CI::${name}`);
+  const findProp = (entityName: string, propName: string) =>
+    findEntity(entityName)?.resource.properties.find((p) => p.name === propName);
+
+  test("Job.environment → Environment | string", () => {
+    expect(findProp("Job", "environment")?.tsType).toBe("Environment | string");
+  });
+
+  test("Job.trigger → Trigger | string", () => {
+    expect(findProp("Job", "trigger")?.tsType).toBe("Trigger | string");
+  });
+
+  test("Job.release → Release", () => {
+    expect(findProp("Job", "release")?.tsType).toBe("Release");
+  });
+
+  test("Job.needs → Need[]", () => {
+    expect(findProp("Job", "needs")?.tsType).toBe("Need[]");
+  });
+
+  test("Job.inherit → Inherit", () => {
+    expect(findProp("Job", "inherit")?.tsType).toBe("Inherit");
+  });
+
+  test("Workflow.rules → WorkflowRule[]", () => {
+    expect(findProp("Workflow", "rules")?.tsType).toBe("WorkflowRule[]");
+  });
+
+  test("AllowFailure.exit_codes → number | number[]", () => {
+    expect(findProp("AllowFailure", "exit_codes")?.tsType).toBe("number | number[]");
+  });
+
+  test("Image.pull_policy has no duplicate enum values", () => {
+    const pp = findProp("Image", "pull_policy");
+    expect(pp).toBeDefined();
+    // Should be clean union with parens on array form
+    expect(pp!.tsType).toContain("always");
+    expect(pp!.tsType).toContain("never");
+    expect(pp!.tsType).toContain("if-not-present");
+    // Array variant should use parens
+    expect(pp!.tsType).toContain(")[]");
+  });
+
+  test("Include has local, remote, template, component fields", () => {
+    const include = findEntity("Include");
+    expect(include).toBeDefined();
+    const propNames = include!.resource.properties.map((p) => p.name);
+    expect(propNames).toContain("project");
+    expect(propNames).toContain("file");
+    expect(propNames).toContain("local");
+    expect(propNames).toContain("remote");
+    expect(propNames).toContain("template");
+    expect(propNames).toContain("component");
+  });
+
+  test("Trigger has include field for child pipelines", () => {
+    const trigger = findEntity("Trigger");
+    expect(trigger).toBeDefined();
+    const propNames = trigger!.resource.properties.map((p) => p.name);
+    expect(propNames).toContain("project");
+    expect(propNames).toContain("include");
+    expect(propNames).toContain("strategy");
+    expect(propNames).toContain("forward");
+  });
+
+  test("Need has merged properties from all object variants", () => {
+    const need = findEntity("Need");
+    expect(need).toBeDefined();
+    const propNames = need!.resource.properties.map((p) => p.name);
+    expect(propNames).toContain("job");
+    expect(propNames).toContain("artifacts");
+    expect(propNames).toContain("project");
+    expect(propNames).toContain("ref");
+    expect(propNames).toContain("pipeline");
+    expect(propNames).toContain("optional");
+    // job should be required (in all object variants)
+    const jobProp = need!.resource.properties.find((p) => p.name === "job");
+    expect(jobProp?.required).toBe(true);
+  });
+
+  test("WorkflowRule has restricted when enum", () => {
+    const wr = findEntity("WorkflowRule");
+    expect(wr).toBeDefined();
+    const propNames = wr!.resource.properties.map((p) => p.name);
+    expect(propNames).toContain("if");
+    expect(propNames).toContain("when");
+    expect(propNames).toContain("auto_cancel");
+    const whenProp = wr!.resource.properties.find((p) => p.name === "when");
+    expect(whenProp?.tsType).toBe('"always" | "never"');
+  });
+
+  test("Inherit has default and variables properties", () => {
+    const inherit = findEntity("Inherit");
+    expect(inherit).toBeDefined();
+    const propNames = inherit!.resource.properties.map((p) => p.name);
+    expect(propNames).toContain("default");
+    expect(propNames).toContain("variables");
   });
 });
 

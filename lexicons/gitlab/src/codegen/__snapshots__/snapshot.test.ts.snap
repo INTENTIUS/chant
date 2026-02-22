@@ -2,6 +2,12 @@
 
 exports[`generated lexicon-gitlab.json entries match snapshot 1`] = `
 {
+  "constraints": {
+    "coverage": {
+      "format": "regex",
+      "pattern": "^/.+/$",
+    },
+  },
   "kind": "resource",
   "lexicon": "gitlab",
   "resourceType": "GitLab::CI::Job",
@@ -10,6 +16,30 @@ exports[`generated lexicon-gitlab.json entries match snapshot 1`] = `
 
 exports[`generated lexicon-gitlab.json entries match snapshot 2`] = `
 {
+  "constraints": {
+    "access": {
+      "default": "all",
+      "enum": [
+        "none",
+        "developer",
+        "all",
+      ],
+    },
+    "expire_in": {
+      "default": "30 days",
+    },
+    "untracked": {
+      "default": false,
+    },
+    "when": {
+      "default": "on_success",
+      "enum": [
+        "on_success",
+        "on_failure",
+        "always",
+      ],
+    },
+  },
   "kind": "property",
   "lexicon": "gitlab",
   "resourceType": "GitLab::CI::Artifacts",
@@ -18,6 +48,26 @@ exports[`generated lexicon-gitlab.json entries match snapshot 2`] = `
 
 exports[`generated lexicon-gitlab.json entries match snapshot 3`] = `
 {
+  "constraints": {
+    "policy": {
+      "default": "pull-push",
+      "pattern": "pull-push|pull|push|\\$\\w{1,255}",
+    },
+    "unprotect": {
+      "default": false,
+    },
+    "untracked": {
+      "default": false,
+    },
+    "when": {
+      "default": "on_success",
+      "enum": [
+        "on_success",
+        "on_failure",
+        "always",
+      ],
+    },
+  },
   "kind": "property",
   "lexicon": "gitlab",
   "resourceType": "GitLab::CI::Cache",
@@ -26,6 +76,14 @@ exports[`generated lexicon-gitlab.json entries match snapshot 3`] = `
 
 exports[`generated lexicon-gitlab.json entries match snapshot 4`] = `
 {
+  "constraints": {
+    "name": {
+      "minLength": 1,
+    },
+    "pull_policy": {
+      "default": "always",
+    },
+  },
   "kind": "property",
   "lexicon": "gitlab",
   "resourceType": "GitLab::CI::Image",

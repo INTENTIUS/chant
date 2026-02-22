@@ -1,4 +1,4 @@
-import { Instance, RDSDBCluster } from "@intentius/chant-lexicon-aws";
+import { Instance, DbCluster } from "@intentius/chant-lexicon-aws";
 
 // DependsOn with a string logical name
 export const appServer = new Instance(
@@ -10,7 +10,7 @@ export const appServer = new Instance(
 );
 
 // DependsOn with a Declarable reference (resolved automatically)
-export const database = new RDSDBCluster({
+export const database = new DbCluster({
   Engine: "aurora-postgresql",
   MasterUsername: "admin",
   MasterUserPassword: "changeme",

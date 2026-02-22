@@ -16,6 +16,7 @@ const REQUIRED_NAMES = [
   "Artifacts", "Cache", "Image", "Service", "Rule", "Retry",
   "AllowFailure", "Parallel", "Include", "Release",
   "Environment", "Trigger", "AutoCancel",
+  "WorkflowRule", "Need", "Inherit",
 ];
 
 /**

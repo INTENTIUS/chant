@@ -38,10 +38,39 @@ function gitlabVisitor(entityNames: Map<Declarable, string>): SerializerVisitor 
 }
 
 /**
+ * Pre-process values to convert intrinsics to their YAML representation
+ * before the walker (which would call toJSON instead of toYAML).
+ */
+function preprocessIntrinsics(value: unknown): unknown {
+  if (value === null || value === undefined) return value;
+
+  if (typeof value === "object" && INTRINSIC_MARKER in value) {
+    if ("toYAML" in value && typeof value.toYAML === "function") {
+      return (value as { toYAML(): unknown }).toYAML();
+    }
+  }
+
+  if (Array.isArray(value)) {
+    return value.map(preprocessIntrinsics);
+  }
+
+  if (typeof value === "object") {
+    const result: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
+      result[k] = preprocessIntrinsics(v);
+    }
+    return result;
+  }
+
+  return value;
+}
+
+/**
  * Convert a value to YAML-compatible form using the walker.
  */
 function toYAMLValue(value: unknown, entityNames: Map<Declarable, string>): unknown {
-  return walkValue(value, entityNames, gitlabVisitor(entityNames));
+  const preprocessed = preprocessIntrinsics(value);
+  return walkValue(preprocessed, entityNames, gitlabVisitor(entityNames));
 }
 
 /**
@@ -112,7 +141,16 @@ function emitYAML(value: unknown, indent: number): string {
   }
 
   if (typeof value === "object") {
-    const entries = Object.entries(value as Record<string, unknown>);
+    const obj = value as Record<string, unknown>;
+
+    // Handle tagged values (intrinsics like !reference)
+    if ("tag" in obj && "value" in obj && typeof obj.tag === "string") {
+      if (obj.tag === "!reference" && Array.isArray(obj.value)) {
+        return `!reference [${(obj.value as string[]).join(", ")}]`;
+      }
+    }
+
+    const entries = Object.entries(obj);
     if (entries.length === 0) return "{}";
     const lines: string[] = [];
     for (const [key, val] of entries) {

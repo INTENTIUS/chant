@@ -1,7 +1,7 @@
-import { Bucket, RDSDBInstance, Instance } from "@intentius/chant-lexicon-aws";
+import { Bucket, DbInstance, Instance } from "@intentius/chant-lexicon-aws";
 
 // DeletionPolicy — protect data from accidental stack deletion
-export const database = new RDSDBInstance(
+export const database = new DbInstance(
   {
     DBInstanceClass: "db.t3.micro",
     Engine: "postgres",
