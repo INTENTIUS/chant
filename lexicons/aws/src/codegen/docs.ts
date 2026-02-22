@@ -70,28 +70,6 @@ rain deploy dist/template.json my-stack
 sam deploy --template-file dist/template.json --stack-name my-stack
 \`\`\`
 
-## Multi-file output (nested stacks)
-
-When your project uses nested stacks, \`chant build\` produces multiple template files:
-
-\`\`\`bash
-chant build -o template.json
-# Produces:
-#   template.json              — parent template
-#   network.template.json      — child template (one per nestedStack)
-\`\`\`
-
-The parent template includes a \`TemplateBasePath\` parameter that controls where CloudFormation looks for child templates. Override it at deploy time to point to an S3 bucket:
-
-\`\`\`bash
-aws cloudformation deploy \\
-  --template-file template.json \\
-  --stack-name my-stack \\
-  --parameter-overrides TemplateBasePath=https://my-bucket.s3.amazonaws.com/templates
-\`\`\`
-
-All child template files must be uploaded alongside the parent template (or to the S3 path specified by \`TemplateBasePath\`).
-
 ## Compatibility
 
 The output is compatible with:
@@ -495,7 +473,7 @@ src/
 
 Use \`stackOutput()\` to mark values that the parent can reference. Each \`stackOutput()\` becomes an entry in the child template's \`Outputs\` section:
 
-{{file:nested-stacks/src/network/outputs.ts}}
+{{file:../src/testdata/nested-stacks/network/outputs.ts}}
 
 The child can be built independently:
 
@@ -508,7 +486,7 @@ chant build src/network/ -o network.json
 
 Use \`nestedStack()\` in the parent to reference a child project directory. It returns an object with an \`outputs\` proxy for cross-stack references:
 
-{{file:nested-stacks/src/app.ts}}
+{{file:../src/testdata/nested-stacks/app.ts}}
 
 \`network.outputs.subnetId\` produces a \`NestedStackOutputRef\` that serializes to \`{ "Fn::GetAtt": ["Network", "Outputs.SubnetId"] }\`.
 
@@ -550,6 +528,8 @@ aws cloudformation deploy \\
 \`\`\`
 
 Child templates also receive the \`TemplateBasePath\` parameter so it propagates through all nesting levels.
+
+All child template files must be uploaded alongside the parent template (or to the S3 path specified by \`TemplateBasePath\`).
 
 ## Explicit parameters
 
@@ -600,7 +580,7 @@ Three lint rules help catch common nested stack issues:
 - You're packaging reusable infrastructure for other teams to deploy as a black box
 - You need independent update/rollback boundaries (rare — this usually means the resources should be separate stacks entirely)
 
-See [Composites](../composites/) for the flat composite approach, and [Examples](../examples/#nested-stacks) for a runnable nested stack example.`,
+See [Composites](../composites/) for the flat composite approach.`,
       },
       {
         slug: "lint-rules",

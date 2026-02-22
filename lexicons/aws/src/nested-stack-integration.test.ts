@@ -1,12 +1,12 @@
 import { describe, test, expect } from "bun:test";
-import { build } from "../../../../packages/core/src/build";
+import { build } from "../../../packages/core/src/build";
 import { resolve } from "path";
-import { awsSerializer } from "../../src/serializer";
-import type { SerializerResult } from "../../../../packages/core/src/serializer";
+import { awsSerializer } from "./serializer";
+import type { SerializerResult } from "../../../packages/core/src/serializer";
 
-const srcDir = resolve(import.meta.dir, "src");
+const srcDir = resolve(import.meta.dir, "testdata/nested-stacks");
 
-describe("nested-stacks example", () => {
+describe("nested-stacks integration", () => {
   test("build produces valid CloudFormation with nested stack", async () => {
     const result = await build(srcDir, [awsSerializer]);
 
