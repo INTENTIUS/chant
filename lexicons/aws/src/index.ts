@@ -64,6 +64,13 @@ export type { CFNSchema, SchemaProperty, SchemaDefinition } from "./spec/fetch";
 export { parseCFNSchema, cfnShortName, cfnServiceName } from "./spec/parse";
 export type { SchemaParseResult, ParsedResource, ParsedProperty, ParsedAttribute, ParsedPropertyType, ParsedEnum, PropertyConstraints } from "./spec/parse";
 
+// Action constants
+export { S3Actions, LambdaActions, DynamoDBActions, SQSActions, SNSActions, IAMActions } from "./actions/index";
+
+// Built-in composites
+export { LambdaFunction, NodeLambda, PythonLambda, LambdaApi, ScheduledLambda } from "./composites/index";
+export type { LambdaFunctionProps, LambdaApiProps, ScheduledLambdaProps } from "./composites/index";
+
 // Code generation pipeline
 export { generate, writeGeneratedFiles } from "./codegen/generate";
 export { packageLexicon } from "./codegen/package";

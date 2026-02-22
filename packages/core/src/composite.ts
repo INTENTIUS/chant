@@ -182,10 +182,11 @@ type Simplify<T> = { [K in keyof T]: T[K] };
  */
 export function withDefaults<P, M extends CompositeMembers, D extends Partial<P>>(
   definition: CompositeDefinition<P, M>,
-  defaults: D,
+  defaults: D | ((props: Partial<P>) => D),
 ): CompositeDefinition<Simplify<PartialByDefault<P, D>>, M> {
   const wrapped = ((props: Simplify<PartialByDefault<P, D>>) => {
-    return definition({ ...defaults, ...props } as P);
+    const resolved = typeof defaults === "function" ? defaults(props as Partial<P>) : defaults;
+    return definition({ ...resolved, ...props } as P);
   }) as CompositeDefinition<Simplify<PartialByDefault<P, D>>, M>;
 
   Object.defineProperty(wrapped, "compositeName", {

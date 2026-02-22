@@ -393,7 +393,7 @@ Encodes a string to Base64, commonly used for EC2 user data:
       {
         slug: "composites",
         title: "Composites",
-        description: "Composite resources, withDefaults presets, and propagate in the AWS CloudFormation lexicon",
+        description: "Composite resources, built-in composites, action constants, and withDefaults presets in the AWS CloudFormation lexicon",
         content: `Composites group related resources into reusable factories. See also the core [Composite Resources](/guide/composite-resources/) guide.
 
 {{file:advanced/src/lambda-api.ts}}
@@ -404,6 +404,41 @@ Instantiate and export:
 
 During build, composites expand to flat CloudFormation resources: \`healthApi_role\` → \`HealthApiRole\`, \`healthApi_func\` → \`HealthApiFunc\`, \`healthApi_permission\` → \`HealthApiPermission\`.
 
+## Built-in composites
+
+The AWS lexicon ships ready-to-use composites for common patterns. Import them from \`@intentius/chant-lexicon-aws\`:
+
+{{file:docs-snippets/src/builtin-composites.ts}}
+
+| Composite | Members | Description |
+|-----------|---------|-------------|
+| \`LambdaFunction\` | \`role\`, \`func\` | IAM Role + Lambda Function. Auto-attaches \`AWSLambdaBasicExecutionRole\`; adds \`AWSLambdaVPCAccessExecutionRole\` when \`VpcConfig\` is provided. |
+| \`NodeLambda\` | \`role\`, \`func\` | \`LambdaFunction\` preset with \`Runtime: "nodejs20.x"\` and \`Handler: "index.handler"\` |
+| \`PythonLambda\` | \`role\`, \`func\` | \`LambdaFunction\` preset with \`Runtime: "python3.12"\` and \`Handler: "handler.handler"\` |
+| \`LambdaApi\` | \`role\`, \`func\`, \`permission\` | \`LambdaFunction\` + Lambda Permission for API Gateway invocation |
+| \`ScheduledLambda\` | \`role\`, \`func\`, \`rule\`, \`permission\` | \`LambdaFunction\` + EventBridge Rule + Lambda Permission |
+
+All built-in composites accept \`ManagedPolicyArns\` and \`Policies\` for adding IAM permissions to the auto-created role.
+
+## Action constants
+
+Typed IAM action constants for common AWS services. Use them in policy documents instead of hand-typing action strings:
+
+{{file:docs-snippets/src/action-constants.ts}}
+
+Available constants:
+
+| Constant | Key groups |
+|----------|------------|
+| \`S3Actions\` | \`ReadOnly\`, \`WriteOnly\`, \`ReadWrite\`, \`Full\`, \`GetObject\`, \`PutObject\`, \`DeleteObject\`, \`ListObjects\` |
+| \`LambdaActions\` | \`Invoke\`, \`ReadOnly\`, \`Full\` |
+| \`DynamoDBActions\` | \`ReadOnly\`, \`WriteOnly\`, \`ReadWrite\`, \`Full\`, \`GetItem\`, \`PutItem\`, \`Query\`, \`Scan\` |
+| \`SQSActions\` | \`SendMessage\`, \`ReceiveMessage\`, \`Full\` |
+| \`SNSActions\` | \`Publish\`, \`Subscribe\`, \`Full\` |
+| \`IAMActions\` | \`PassRole\` |
+
+Broad groups like \`ReadWrite\` are always supersets of their narrow counterparts (\`ReadOnly\` + \`WriteOnly\`). All values are \`as const\` arrays for full type safety.
+
 ## \`withDefaults\` — composite presets
 
 Wrap a composite with pre-applied defaults. Defaulted props become optional:
@@ -411,6 +446,14 @@ Wrap a composite with pre-applied defaults. Defaulted props become optional:
 {{file:docs-snippets/src/with-defaults.ts}}
 
 \`withDefaults\` preserves the original composite's identity — same \`_id\` and \`compositeName\`, no new registry entry.
+
+### Computed defaults
+
+\`withDefaults\` also accepts a function that receives the caller's props and returns defaults. This enables conditional logic without generating extra resources:
+
+{{file:docs-snippets/src/computed-defaults.ts}}
+
+Merge order: computed defaults are applied first, then user-provided props override them.
 
 ## \`propagate\` — shared properties
 
@@ -788,11 +831,39 @@ src/
 
 - **Composites** — \`LambdaApi\` groups Role + Function + Permission into a reusable unit (see [Composites](./composites))
 - **Composite presets** — \`SecureApi\` (low memory, short timeout) and \`HighMemoryApi\` (high memory, longer timeout) created with \`withDefaults\`
+- **Action constants** — \`upload-api.ts\` and \`process-api.ts\` use \`S3Actions\` for typed IAM action arrays instead of hand-typed strings (see [Action Constants](./composites#action-constants))
 - **Inline IAM policies** — \`upload-api.ts\` and \`process-api.ts\` attach \`Role_Policy\` objects for scoped S3 access
 - **Custom lint rule** — \`api-timeout.ts\` enforces API Gateway's 29-second timeout limit (see [Custom Lint Rules](./custom-rules))
 - **Lint config** — \`chant.config.ts\` extends the strict preset and loads the custom plugin
 
 The example produces 10 CloudFormation resources: 1 S3 bucket + 3 composites × 3 members each.
+
+## Lambda Patterns
+
+\`examples/lambda-patterns/\` — showcases the built-in composites and action constants in a realistic multi-Lambda project.
+
+\`\`\`
+src/
+├── data-table.ts          # DynamoDB table
+├── api.ts                 # LambdaApi — API endpoint with DynamoDB access
+├── worker.ts              # NodeLambda — background worker with S3 write access
+├── scheduled-cleanup.ts   # ScheduledLambda — daily cleanup with EventBridge
+└── notifier.ts            # NodeLambda — SNS publisher
+\`\`\`
+
+**What it adds:**
+
+- **Built-in composites** — \`LambdaApi\`, \`NodeLambda\`, \`ScheduledLambda\` instead of hand-built Role + Function + Permission (see [Built-in Composites](./composites#built-in-composites))
+- **Action constants** — \`DynamoDBActions.ReadWrite\`, \`S3Actions.PutObject\`, \`SNSActions.Publish\` for typed IAM policies (see [Action Constants](./composites#action-constants))
+- **Runtime presets** — \`NodeLambda\` defaults to \`nodejs20.x\` + \`index.handler\`
+- **Scheduled execution** — \`ScheduledLambda\` auto-creates EventBridge Rule + Permission
+- **Cross-resource references** — Lambda environment variables reference DynamoDB, S3, and SNS ARNs
+
+{{file:lambda-patterns/src/api.ts}}
+
+{{file:lambda-patterns/src/scheduled-cleanup.ts}}
+
+The example produces 14 CloudFormation resources: 3 standalone (table, bucket, topic) + 3 (api) + 2 (worker) + 4 (cleanup) + 2 (notifier).
 
 ## Nested Stacks
 

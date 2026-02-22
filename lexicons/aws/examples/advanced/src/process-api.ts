@@ -1,4 +1,4 @@
-import { Role_Policy, Sub, AWS } from "@intentius/chant-lexicon-aws";
+import { Role_Policy, Sub, AWS, S3Actions } from "@intentius/chant-lexicon-aws";
 import { dataBucket } from "./data-bucket";
 import { HighMemoryApi } from "./lambda-api";
 
@@ -7,7 +7,7 @@ export const processPolicyDocument = {
   Statement: [
     {
       Effect: "Allow",
-      Action: ["s3:GetObject", "s3:PutObject"],
+      Action: S3Actions.ReadWrite,
       Resource: [Sub`${dataBucket.Arn}/*`],
     },
   ],

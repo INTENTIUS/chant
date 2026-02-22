@@ -313,6 +313,57 @@ describe("withDefaults", () => {
     expect(CompositeRegistry.size).toBe(1);
   });
 
+  test("function-based defaults receive caller props", () => {
+    let receivedByFn: Partial<{ name: string; timeout: number }> | undefined;
+    const Base = Composite<{ name: string; timeout: number }>((props) => ({
+      item: mockDeclarable(props.name),
+    }));
+
+    const Wrapped = withDefaults(Base, (props) => {
+      receivedByFn = props;
+      return { timeout: 30 } as { timeout: number };
+    });
+    Wrapped({ name: "test" });
+    expect(receivedByFn).toEqual({ name: "test" });
+  });
+
+  test("user props override computed defaults", () => {
+    let received: { timeout: number } | undefined;
+    const Base = Composite<{ timeout: number }>((props) => {
+      received = props;
+      return { item: mockDeclarable() };
+    });
+
+    const Wrapped = withDefaults(Base, () => ({ timeout: 30 }) as { timeout: number });
+    Wrapped({ timeout: 60 });
+    expect(received!.timeout).toBe(60);
+  });
+
+  test("stacking: withDefaults(withDefaults(base, static), fn) works", () => {
+    let received: { a: number; b: number; c: number } | undefined;
+    const Base = Composite<{ a: number; b: number; c: number }>((props) => {
+      received = props;
+      return { item: mockDeclarable() };
+    });
+
+    const Step1 = withDefaults(Base, { a: 1 });
+    const Step2 = withDefaults(Step1, (props) => ({ b: (props.c ?? 0) + 10 }) as { b: number });
+    Step2({ c: 3 });
+    expect(received).toEqual({ a: 1, b: 13, c: 3 });
+  });
+
+  test("undefined computed values don't overwrite user props", () => {
+    let received: { name: string; timeout: number } | undefined;
+    const Base = Composite<{ name: string; timeout: number }>((props) => {
+      received = props;
+      return { item: mockDeclarable() };
+    });
+
+    const Wrapped = withDefaults(Base, () => ({ timeout: undefined }) as unknown as { timeout: number });
+    Wrapped({ name: "test", timeout: 42 });
+    expect(received!.timeout).toBe(42);
+  });
+
   test("expandComposite works identically on defaulted composites", () => {
     const Base = Composite<{ name: string; timeout: number }>((props) => ({
       fn: mockDeclarable(`Fn-${props.name}`),
