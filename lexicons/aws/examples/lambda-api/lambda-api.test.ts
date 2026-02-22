@@ -6,7 +6,7 @@ import { awsSerializer } from "../../src/serializer";
 
 const srcDir = resolve(import.meta.dir, "src");
 
-describe("advanced example", () => {
+describe("lambda-api example", () => {
   test("passes strict lint", async () => {
     const result = await lintCommand({
       path: srcDir,

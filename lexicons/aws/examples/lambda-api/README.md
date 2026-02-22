@@ -1,4 +1,4 @@
-# Advanced Patterns
+# Lambda API
 
 Three API endpoints backed by Lambda functions, each with different memory/timeout profiles and scoped IAM policies — built using composite factories, preset defaults, and a custom lint rule that enforces API Gateway's 29-second timeout limit.
 

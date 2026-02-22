@@ -1,4 +1,4 @@
-# Lambda Patterns
+# Lambda Service
 
 Four Lambda functions in a realistic multi-service architecture — an API endpoint reading from DynamoDB, a background worker writing to S3, a scheduled cleanup job, and an SNS notifier — all using built-in composites that auto-create IAM roles and permissions.
 

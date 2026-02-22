@@ -23,17 +23,6 @@
         "typescript": "^5.9.3",
       },
     },
-    "lexicons/aws/examples/advanced": {
-      "name": "advanced-example",
-      "version": "0.0.1",
-      "dependencies": {
-        "@intentius/chant": "workspace:*",
-        "@intentius/chant-lexicon-aws": "workspace:*",
-      },
-      "devDependencies": {
-        "typescript": "*",
-      },
-    },
     "lexicons/aws/examples/core-concepts": {
       "name": "core-concepts-example",
       "version": "0.0.1",
@@ -50,16 +39,27 @@
         "@intentius/chant-lexicon-aws": "workspace:*",
       },
     },
-    "lexicons/aws/examples/getting-started": {
-      "name": "getting-started-example",
+    "lexicons/aws/examples/lambda-api": {
+      "name": "lambda-api-example",
+      "version": "0.0.1",
+      "dependencies": {
+        "@intentius/chant": "workspace:*",
+        "@intentius/chant-lexicon-aws": "workspace:*",
+      },
+      "devDependencies": {
+        "typescript": "*",
+      },
+    },
+    "lexicons/aws/examples/lambda-list-bucket": {
+      "name": "lambda-list-bucket-example",
       "version": "0.0.1",
       "dependencies": {
         "@intentius/chant": "workspace:*",
         "@intentius/chant-lexicon-aws": "workspace:*",
       },
     },
-    "lexicons/aws/examples/lambda-patterns": {
-      "name": "lambda-patterns-example",
+    "lexicons/aws/examples/lambda-service": {
+      "name": "lambda-service-example",
       "version": "0.0.1",
       "dependencies": {
         "@intentius/chant": "workspace:*",
@@ -179,8 +179,6 @@
 
     "acorn-jsx": ["acorn-jsx@5.3.2", "", { "peerDependencies": { "acorn": "^6.0.0 || ^7.0.0 || ^8.0.0" } }, "sha512-rq9s+JNhf0IChjtDXxllJ7g41oZk5SlXtp0LHwyA5cejwn7vKmKp4pPri6YEePv2PU65sAsegbXtIinmDFDXgQ=="],
 
-    "advanced-example": ["advanced-example@workspace:lexicons/aws/examples/advanced"],
-
     "ajv": ["ajv@6.14.0", "", { "dependencies": { "fast-deep-equal": "^3.1.1", "fast-json-stable-stringify": "^2.0.0", "json-schema-traverse": "^0.4.1", "uri-js": "^4.2.2" } }, "sha512-IWrosm/yrn43eiKqkfkHis7QioDleaXQHdDVPKg0FSwwd/DuvyX79TZnFOnYpB7dcsFAMmtFztZuXPDvSePkFw=="],
 
     "ansi-styles": ["ansi-styles@4.3.0", "", { "dependencies": { "color-convert": "^2.0.1" } }, "sha512-zbB9rCJAT1rbjiVDb2hqKFHNYLxgtk8NURxZ3IZwD3F6NtxbXZQCnnSi1Lkx+IDohdPlFp222wVALIheZJQSEg=="],
@@ -249,8 +247,6 @@
 
     "flatted": ["flatted@3.3.3", "", {}, "sha512-GX+ysw4PBCz0PzosHDepZGANEuFCMLrnRTiEy9McGjmkCQYwRq4A/X786G/fjM/+OjsWSU1ZrY5qyARZmO/uwg=="],
 
-    "getting-started-example": ["getting-started-example@workspace:lexicons/aws/examples/getting-started"],
-
     "gitlab-docs-snippets-example": ["gitlab-docs-snippets-example@workspace:lexicons/gitlab/examples/docs-snippets"],
 
     "gitlab-getting-started-example": ["gitlab-getting-started-example@workspace:lexicons/gitlab/examples/getting-started"],
@@ -283,7 +279,11 @@
 
     "keyv": ["keyv@4.5.4", "", { "dependencies": { "json-buffer": "3.0.1" } }, "sha512-oxVHkHR/EJf2CNXnWxRLW6mg7JyCCUcG0DtEGmL2ctUo1PNTin1PUil+r/+4r5MpVgC/fn1kjsx7mjSujKqIpw=="],
 
-    "lambda-patterns-example": ["lambda-patterns-example@workspace:lexicons/aws/examples/lambda-patterns"],
+    "lambda-api-example": ["lambda-api-example@workspace:lexicons/aws/examples/lambda-api"],
+
+    "lambda-list-bucket-example": ["lambda-list-bucket-example@workspace:lexicons/aws/examples/lambda-list-bucket"],
+
+    "lambda-service-example": ["lambda-service-example@workspace:lexicons/aws/examples/lambda-service"],
 
     "levn": ["levn@0.4.1", "", { "dependencies": { "prelude-ls": "^1.2.1", "type-check": "~0.4.0" } }, "sha512-+bT2uH4E5LGE7h/n3evcS/sQlJXCpIp6ym8OWJ5eV6+67Dsql/LaaT7qJBAt2rzfoa/5QBGBhxDix1dMt2kQKQ=="],
 

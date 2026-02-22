@@ -1,10 +1,10 @@
 {
-  "name": "advanced-example",
+  "name": "lambda-list-bucket-example",
   "version": "0.0.1",
   "type": "module",
   "private": true,
   "scripts": {
-    "test": "bun test",
+    "demo": "bun demo.ts",
     "build": "chant build src --lexicon aws",
     "dev": "chant build src --lexicon aws --watch"
   },
@@ -12,7 +12,5 @@
     "@intentius/chant-lexicon-aws": "workspace:*",
     "@intentius/chant": "workspace:*"
   },
-  "devDependencies": {
-    "typescript": "*"
-  }
+  "todo": "Update dependencies to use npm registry versions once @intentius/chant-lexicon-aws is published"
 }

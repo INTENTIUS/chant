@@ -34,7 +34,7 @@ docs-lexicon lexicon:
 bench:
     bun test bench
 
-# Build and run Bun smoke test (drops into bash at getting-started example)
+# Build and run Bun smoke test (drops into bash at lambda-list-bucket example)
 smoke-bun:
     docker build -f test/Dockerfile.smoke -t chant-smoke-bun . && docker run -it --rm -v "$HOME/.claude:/root/.claude" -v "$HOME/.claude.json:/root/.claude.json" -v "$HOME/.aws:/root/.aws:ro" chant-smoke-bun
 

@@ -1,10 +1,10 @@
 {
-  "name": "getting-started-example",
+  "name": "lambda-api-example",
   "version": "0.0.1",
   "type": "module",
   "private": true,
   "scripts": {
-    "demo": "bun demo.ts",
+    "test": "bun test",
     "build": "chant build src --lexicon aws",
     "dev": "chant build src --lexicon aws --watch"
   },
@@ -12,5 +12,7 @@
     "@intentius/chant-lexicon-aws": "workspace:*",
     "@intentius/chant": "workspace:*"
   },
-  "todo": "Update dependencies to use npm registry versions once @intentius/chant-lexicon-aws is published"
+  "devDependencies": {
+    "typescript": "*"
+  }
 }

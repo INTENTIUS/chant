@@ -138,7 +138,7 @@ export async function generateDocs(options?: { verbose?: boolean }): Promise<voi
 - Resolves \`AttrRef\` references to \`Fn::GetAtt\`
 - Resolves resource references to \`Ref\` intrinsics
 
-{{file:getting-started/src/data-bucket.ts}}
+{{file:lambda-list-bucket/src/data-bucket.ts}}
 
 Produces this CloudFormation resource:
 
@@ -174,7 +174,7 @@ Common resources get fixed short names for stability. When two services define t
 
 Chant projects use standard TypeScript imports. Lexicon types come from the lexicon package, and sibling exports are imported directly from the file that defines them:
 
-{{file:getting-started/src/data-bucket.ts}}
+{{file:lambda-list-bucket/src/data-bucket.ts}}
 
 When you reference a resource or attribute from another file (e.g. \`dataBucket.arn\`), the serializer resolves it to \`Fn::GetAtt\` or \`Ref\` as appropriate. This is how cross-file references work — standard imports, no indirection.
 
@@ -182,7 +182,7 @@ When you reference a resource or attribute from another file (e.g. \`dataBucket.
 
 CloudFormation parameters let you customize a stack at deploy time. Export a \`Parameter\` to add it to the template's \`Parameters\` section:
 
-{{file:getting-started/src/defaults.ts}}
+{{file:lambda-list-bucket/src/defaults.ts}}
 
 Produces:
 
@@ -390,11 +390,11 @@ Encodes a string to Base64, commonly used for EC2 user data:
         description: "Composite resources, built-in composites, action constants, and withDefaults presets in the AWS CloudFormation lexicon",
         content: `Composites group related resources into reusable factories. See also the core [Composite Resources](/guide/composite-resources/) guide.
 
-{{file:advanced/src/lambda-api.ts}}
+{{file:lambda-api/src/lambda-api.ts}}
 
 Instantiate and export:
 
-{{file:advanced/src/health-api.ts}}
+{{file:lambda-api/src/health-api.ts}}
 
 During build, composites expand to flat CloudFormation resources: \`healthApi_role\` → \`HealthApiRole\`, \`healthApi_func\` → \`HealthApiFunc\`, \`healthApi_permission\` → \`HealthApiPermission\`.
 
@@ -756,9 +756,9 @@ See also [Custom Lint Rules](../custom-rules/) for writing project-specific rule
 
 ## Anatomy of a lint rule
 
-The advanced example includes a full custom rule implementation:
+The lambda-api example includes a full custom rule implementation:
 
-{{file:advanced/src/lint/api-timeout.ts}}
+{{file:lambda-api/src/lint/api-timeout.ts}}
 
 The \`check\` function receives a \`LintContext\` containing the TypeScript \`sourceFile\` and returns an array of diagnostics with file, line, column, and message.
 
@@ -766,27 +766,27 @@ The \`check\` function receives a \`LintContext\` containing the TypeScript \`so
 
 Add a \`chant.config.ts\` to your project:
 
-{{file:advanced/src/chant.config.ts}}
+{{file:lambda-api/src/chant.config.ts}}
 
 The \`plugins\` array accepts relative paths. Each plugin module should export a \`LintRule\` object.`,
       },
       {
         slug: "examples",
         title: "Examples",
-        description: "Walkthrough of the getting-started and advanced AWS CloudFormation examples",
+        description: "Walkthrough of the AWS CloudFormation lexicon examples",
         content: `Two runnable examples live in the lexicon's \`examples/\` directory. Clone the repo and try them:
 
 \`\`\`bash
-cd examples/getting-started
+cd examples/lambda-list-bucket
 bun install
 chant build    # produces CloudFormation JSON
 chant lint     # runs lint rules
 bun test       # runs the example's tests
 \`\`\`
 
-## Getting Started
+## Lambda List Bucket
 
-\`examples/getting-started/\` — 3 resources across separate files: an S3 bucket, an IAM role with scoped S3 read permissions, and a Lambda function that lists bucket objects.
+\`examples/lambda-list-bucket/\` — 3 resources across separate files: an S3 bucket, an IAM role with scoped S3 read permissions, and a Lambda function that lists bucket objects.
 
 \`\`\`
 src/
@@ -806,11 +806,11 @@ src/
 5. **Action constants** — \`S3Actions.ListObjects\` and \`S3Actions.GetObject\` for typed IAM policies
 6. **Inline policies** — \`Role_Policy\` for scoped S3 read access
 
-{{file:getting-started/src/handler.ts}}
+{{file:lambda-list-bucket/src/handler.ts}}
 
-## Advanced
+## Lambda API
 
-\`examples/advanced/\` — builds on getting-started with composites, presets, inline IAM policies, and a custom lint rule.
+\`examples/lambda-api/\` — composites, preset factories, inline IAM policies, and a custom lint rule.
 
 \`\`\`
 src/
@@ -836,9 +836,9 @@ src/
 
 The example produces 10 CloudFormation resources: 1 S3 bucket + 3 composites × 3 members each.
 
-## Lambda Patterns
+## Lambda Service
 
-\`examples/lambda-patterns/\` — showcases the built-in composites and action constants in a realistic multi-Lambda project.
+\`examples/lambda-service/\` — showcases the built-in composites and action constants in a realistic multi-Lambda project.
 
 \`\`\`
 src/
@@ -862,9 +862,9 @@ src/
 - **Scheduled execution** — \`ScheduledLambda\` auto-creates EventBridge Rule + Permission
 - **Cross-resource references** — Lambda environment variables reference DynamoDB, S3, and SNS ARNs
 
-{{file:lambda-patterns/src/api.ts}}
+{{file:lambda-service/src/api.ts}}
 
-{{file:lambda-patterns/src/scheduled-cleanup.ts}}
+{{file:lambda-service/src/scheduled-cleanup.ts}}
 
 The example produces 14 CloudFormation resources: 3 standalone (table, bucket, topic) + 3 (api) + 2 (worker) + 4 (cleanup) + 2 (notifier).`,
       },

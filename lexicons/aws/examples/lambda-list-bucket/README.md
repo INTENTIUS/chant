@@ -1,4 +1,4 @@
-# Getting Started with chant AWS
+# Lambda List Bucket
 
 A Lambda that lists objects in an S3 bucket — the simplest real-world pattern: one bucket, one role with scoped read permissions, and one function wired together with typed cross-resource references.
 

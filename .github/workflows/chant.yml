@@ -23,10 +23,10 @@ jobs:
           bun run --cwd lexicons/gitlab prepack
 
       - name: Lint example project
-        run: bun run packages/core/src/cli/main.ts lint lexicons/aws/examples/getting-started/src --format sarif > results.sarif
+        run: bun run packages/core/src/cli/main.ts lint lexicons/aws/examples/lambda-list-bucket/src --format sarif > results.sarif
 
       - name: Build example project
-        run: bun run packages/core/src/cli/main.ts build lexicons/aws/examples/getting-started/src --output template.json
+        run: bun run packages/core/src/cli/main.ts build lexicons/aws/examples/lambda-list-bucket/src --output template.json
 
       - name: Upload SARIF results
         if: always()
