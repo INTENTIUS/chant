@@ -6,7 +6,7 @@ description: Get a chant project running in under five minutes
 import { Code } from '@astrojs/starlight/components';
 import defaultsSrc from '../../../../../lexicons/aws/examples/getting-started/src/defaults.ts?raw';
 import dataBucketSrc from '../../../../../lexicons/aws/examples/getting-started/src/data-bucket.ts?raw';
-import environmentSrc from '../../../../../lexicons/aws/examples/getting-started/src/environment.ts?raw';
+import configSrc from '../../../../../lexicons/aws/examples/getting-started/src/config.ts?raw';
 
 ## Step 1: Install chant
 
@@ -43,13 +43,13 @@ Resource files import types from the lexicon and reference sibling exports throu
 
 <Code code={dataBucketSrc} lang="typescript" title="src/data-bucket.ts" />
 
-Every property is typed — your editor autocompletes `bucketName`, `versioningConfiguration`, `sseAlgorithm`, and catches typos immediately. Cross-file references like `versioningEnabled` are resolved through standard imports at build time.
+Every property is typed — your editor autocompletes `bucketName`, `bucketEncryption`, `sseAlgorithm`, and catches typos immediately. Cross-file references like `bucketEncryption` are resolved through standard imports at build time.
 
 ### Parameters & Outputs
 
 Declare CloudFormation parameters and stack outputs alongside your resources:
 
-<Code code={environmentSrc} lang="typescript" title="src/environment.ts" />
+<Code code={configSrc} lang="typescript" title="src/config.ts" />
 
 `Parameter` adds an entry to the template's `Parameters` section. `output()` wraps an `AttrRef` with a name and promotes it to the `Outputs` section. See [Parameters & Outputs](/chant/getting-started/parameters-and-outputs/) for the full guide.
 

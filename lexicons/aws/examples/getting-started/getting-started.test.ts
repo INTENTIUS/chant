@@ -36,9 +36,8 @@ describe("getting-started example", () => {
     expect(parsed.AWSTemplateFormatVersion).toBe("2010-09-09");
     expect(parsed.Resources).toBeDefined();
 
-    // All 4 resources exist
+    // All 3 resources exist
     expect(parsed.Resources.dataBucket).toBeDefined();
-    expect(parsed.Resources.logsBucket).toBeDefined();
     expect(parsed.Resources.functionRole).toBeDefined();
     expect(parsed.Resources.handler).toBeDefined();
 
@@ -48,12 +47,12 @@ describe("getting-started example", () => {
     expect(JSON.stringify(role)).toContain("functionRole");
     expect(JSON.stringify(role)).toContain("Arn");
 
-    // Parameter: environment exists with correct Type/Description/Default
+    // Parameter: name exists with correct Type/Description, no default
     expect(parsed.Parameters).toBeDefined();
-    expect(parsed.Parameters.environment).toBeDefined();
-    expect(parsed.Parameters.environment.Type).toBe("String");
-    expect(parsed.Parameters.environment.Description).toBe("Deployment environment");
-    expect(parsed.Parameters.environment.Default).toBe("dev");
+    expect(parsed.Parameters.name).toBeDefined();
+    expect(parsed.Parameters.name.Type).toBe("String");
+    expect(parsed.Parameters.name.Description).toBe("Project name used in resource naming");
+    expect(parsed.Parameters.name.Default).toBeUndefined();
 
     // Output: dataBucketArn exists
     expect(parsed.Outputs).toBeDefined();

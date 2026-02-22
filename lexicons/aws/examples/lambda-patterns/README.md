@@ -1,7 +1,6 @@
 # Lambda Patterns
 
-Built-in composites, action constants, and multiple Lambda patterns —
-API endpoints, background workers, scheduled tasks, and event publishers.
+Four Lambda functions in a realistic multi-service architecture — an API endpoint reading from DynamoDB, a background worker writing to S3, a scheduled cleanup job, and an SNS notifier — all using built-in composites that auto-create IAM roles and permissions.
 
 > **Note:** This example uses local workspace dependencies (`workspace:*`).
 > Once `@intentius/chant-lexicon-aws` is published to npm, update `package.json` to use versioned dependencies.
@@ -11,6 +10,18 @@ API endpoints, background workers, scheduled tasks, and event publishers.
 ```bash
 bun run build
 ```
+
+## What It Does
+
+The stack creates 14 CloudFormation resources: 3 standalone + 4 composites:
+
+- **Data table** — DynamoDB table for application data
+- **Output bucket** — encrypted S3 bucket for processed results
+- **Alert topic** — SNS topic for notifications
+- **API** (`LambdaApi`) — API endpoint with DynamoDB read/write access → Role + Function + Permission
+- **Worker** (`NodeLambda`) — background processor with S3 write access → Role + Function
+- **Scheduled cleanup** (`ScheduledLambda`) — daily EventBridge-triggered job → Role + Function + Rule + Permission
+- **Notifier** (`NodeLambda`) — SNS publisher → Role + Function
 
 ## Project Structure
 

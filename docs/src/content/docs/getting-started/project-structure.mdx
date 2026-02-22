@@ -13,9 +13,9 @@ Running `chant init` creates a project layout designed to keep your resource def
 ```
 my-infra/
 ├── src/
-│   ├── config.ts        # Shared sub-resource configurations
+│   ├── defaults.ts      # Shared config: encryption, access block, parameters
+│   ├── config.ts        # Outputs
 │   ├── data-bucket.ts   # Data bucket resource
-│   └── logs-bucket.ts   # Logs bucket resource
 ├── .chant/
 │   ├── types/           # Generated type definitions (gitignored)
 │   └── skills/          # Lexicon skill files (gitignored)

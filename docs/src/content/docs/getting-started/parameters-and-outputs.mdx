@@ -4,7 +4,8 @@ description: Declare CloudFormation parameters and stack outputs in chant
 ---
 
 import { Code } from '@astrojs/starlight/components';
-import environmentSrc from '../../../../../lexicons/aws/examples/getting-started/src/environment.ts?raw';
+import configSrc from '../../../../../lexicons/aws/examples/getting-started/src/config.ts?raw';
+import defaultsSrc from '../../../../../lexicons/aws/examples/getting-started/src/defaults.ts?raw';
 import parameterDeclarationSrc from '../../../../../lexicons/aws/examples/docs-snippets/src/parameter-declaration.ts?raw';
 import parameterRefSrc from '../../../../../lexicons/aws/examples/docs-snippets/src/parameter-ref.ts?raw';
 import parameterCrossFileRefSrc from '../../../../../lexicons/aws/examples/docs-snippets/src/parameter-cross-file-ref.ts?raw';
@@ -14,7 +15,8 @@ Parameters let you customize a stack at deploy time. Outputs expose values from 
 
 ## Full example
 
-<Code code={environmentSrc} lang="typescript" title="src/environment.ts" />
+<Code code={defaultsSrc} lang="typescript" title="src/defaults.ts" />
+<Code code={configSrc} lang="typescript" title="src/config.ts" />
 
 ## Parameters
 
@@ -27,7 +29,7 @@ The first argument is the CloudFormation parameter type (`"String"`, `"Number"`,
 - `description` — human-readable description
 - `defaultValue` — value used when none is provided at deploy time
 
-The exported variable name becomes the logical parameter name (PascalCased). `environment` becomes `Environment` in the template.
+The exported variable name becomes the logical parameter name (PascalCased). `name` becomes `Name` in the template.
 
 ### Referencing parameters
 

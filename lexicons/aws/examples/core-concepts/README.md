@@ -1,7 +1,6 @@
 # Core Concepts
 
-Standalone snippets demonstrating each chant concept: resources, cross-file
-references, shared config, and composites.
+Nine standalone snippets that each demonstrate a single chant concept — from declaring a basic S3 bucket to building a multi-resource composite. Designed for copy-paste reference, not as a connected project.
 
 > **Note:** This example uses local workspace dependencies (`workspace:*`).
 > Once `@intentius/chant-lexicon-aws` is published to npm, update `package.json` to use versioned dependencies.
@@ -25,6 +24,6 @@ src/
 
 1. **Basic resources** — simple typed declarations with properties
 2. **Tags** — array of key/value tag objects
-3. **Cross-file references** — resource.Arn serializes to Fn::GetAtt
+3. **Cross-file references** — `resource.Arn` serializes to `Fn::GetAtt`
 4. **Shared config** — extract reusable property objects into a defaults file
 5. **Composites** — multi-resource abstractions returning structured objects

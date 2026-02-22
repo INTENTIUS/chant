@@ -146,8 +146,7 @@ Produces this CloudFormation resource:
 "DataBucket": {
   "Type": "AWS::S3::Bucket",
   "Properties": {
-    "BucketName": { "Fn::Sub": "\${AWS::StackName}-data" },
-    "VersioningConfiguration": { "Status": "Enabled" }
+    "BucketName": { "Fn::Sub": "\${AWS::AccountId}-\${name}-chant-data" }
   }
 }
 \`\`\`
@@ -183,16 +182,15 @@ When you reference a resource or attribute from another file (e.g. \`dataBucket.
 
 CloudFormation parameters let you customize a stack at deploy time. Export a \`Parameter\` to add it to the template's \`Parameters\` section:
 
-{{file:getting-started/src/environment.ts}}
+{{file:getting-started/src/defaults.ts}}
 
 Produces:
 
 \`\`\`json
 "Parameters": {
-  "Environment": {
+  "Name": {
     "Type": "String",
-    "Description": "Deployment environment",
-    "Default": "dev"
+    "Description": "Project name used in resource naming"
   }
 }
 \`\`\`
@@ -788,23 +786,25 @@ bun test       # runs the example's tests
 
 ## Getting Started
 
-\`examples/getting-started/\` — 4 resources across separate files: two S3 buckets, an IAM role, and a Lambda function.
+\`examples/getting-started/\` — 3 resources across separate files: an S3 bucket, an IAM role with scoped S3 read permissions, and a Lambda function that lists bucket objects.
 
 \`\`\`
 src/
-├── defaults.ts       # Shared config: encryption, versioning, public access block
+├── defaults.ts       # Shared config: encryption, public access block, Lambda trust policy
+├── config.ts         # Name parameter and outputs
 ├── data-bucket.ts    # S3 bucket using shared defaults
-├── logs-bucket.ts    # S3 bucket for access logs
-├── role.ts           # IAM role with Lambda assume-role policy
-└── handler.ts        # Lambda function referencing role and bucket
+├── role.ts           # IAM role with S3 read-only inline policy
+└── handler.ts        # Lambda function that lists S3 objects
 \`\`\`
 
 **Patterns demonstrated:**
 
 1. **Direct imports** — lexicon types come from \`@intentius/chant-lexicon-aws\`, sibling exports are imported from the file that defines them
-2. **Shared defaults** — \`defaults.ts\` exports reusable property objects (\`BucketEncryption\`, \`PublicAccessBlockConfiguration\`) that other files import directly
-3. **Cross-resource references** — \`dataBucket.Arn\` in \`handler.ts\` serializes to \`Fn::GetAtt\` in the template
-4. **Intrinsics** — \`Sub\` tagged templates with pseudo-parameters for dynamic naming
+2. **Shared defaults** — \`defaults.ts\` exports reusable property objects (\`BucketEncryption\`, \`PublicAccessBlockConfiguration\`, trust policy) that other files import directly
+3. **Cross-resource references** — \`dataBucket.Arn\` in \`role.ts\` serializes to \`Fn::GetAtt\` in the template
+4. **Intrinsics** — \`Sub\` tagged templates with \`AWS.AccountId\` and \`Ref("name")\` for dynamic naming
+5. **Action constants** — \`S3Actions.ListObjects\` and \`S3Actions.GetObject\` for typed IAM policies
+6. **Inline policies** — \`Role_Policy\` for scoped S3 read access
 
 {{file:getting-started/src/handler.ts}}
 
@@ -866,33 +866,7 @@ src/
 
 {{file:lambda-patterns/src/scheduled-cleanup.ts}}
 
-The example produces 14 CloudFormation resources: 3 standalone (table, bucket, topic) + 3 (api) + 2 (worker) + 4 (cleanup) + 2 (notifier).
-
-## Nested Stacks
-
-\`examples/nested-stacks/\` — demonstrates child projects for splitting resources into child CloudFormation templates with automatic cross-stack reference wiring.
-
-\`\`\`
-src/
-├── app.ts            # Lambda function (references network outputs)
-└── network/          # Child project (nested stack)
-    ├── vpc.ts        # VPC, subnet, internet gateway, route table
-    ├── security.ts   # Security group for Lambda
-    └── outputs.ts    # stackOutput() declarations
-\`\`\`
-
-**Patterns demonstrated:**
-
-1. **Child project** — \`network/\` is a separate project directory with its own resources and \`stackOutput()\` exports
-2. **Cross-stack references** — \`app.ts\` accesses \`network.outputs.subnetId\` and \`network.outputs.lambdaSgId\`, which serialize to \`Fn::GetAtt\` on the parent's \`AWS::CloudFormation::Stack\` resource
-3. **Multi-file output** — build produces \`template.json\` (parent) and \`network.template.json\` (child)
-4. **TemplateBasePath** — auto-generated parameter for configuring child template URLs per environment
-
-{{file:nested-stacks/src/network/outputs.ts}}
-
-{{file:nested-stacks/src/app.ts}}
-
-See [CloudFormation Concepts — Nested Stacks](../cloudformation/#nested-stacks) for more on nested stacks.`,
+The example produces 14 CloudFormation resources: 3 standalone (table, bucket, topic) + 3 (api) + 2 (worker) + 4 (cleanup) + 2 (notifier).`,
       },
       {
         slug: "skills",
