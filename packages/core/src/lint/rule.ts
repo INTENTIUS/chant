@@ -34,6 +34,10 @@ export interface LintDiagnostic {
   line: number;
   /** Column number (1-based) */
   column: number;
+  /** End line number (1-based), when the diagnostic spans a range */
+  endLine?: number;
+  /** End column number (1-based), when the diagnostic spans a range */
+  endColumn?: number;
   /** ID of the rule that produced this diagnostic */
   ruleId: string;
   /** Severity level */
@@ -73,6 +77,10 @@ export interface LintRule {
   severity: Severity;
   /** Category for grouping */
   category: Category;
+  /** Human-readable description of what this rule checks */
+  description?: string;
+  /** Link to rule documentation */
+  helpUri?: string;
   /** Check the code and return diagnostics */
   check(context: LintContext, options?: Record<string, unknown>): LintDiagnostic[];
   /** Optionally provide fixes for issues found */

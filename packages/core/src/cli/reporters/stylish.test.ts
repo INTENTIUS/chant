@@ -1,6 +1,6 @@
 import { describe, test, expect, beforeEach, afterEach } from "bun:test";
 import { formatStylish, formatSummary, formatJson, formatSarif } from "./stylish";
-import type { LintDiagnostic } from "../../lint/rule";
+import type { LintDiagnostic, LintRule } from "../../lint/rule";
 
 describe("formatStylish", () => {
   const originalNoColor = process.env.NO_COLOR;
@@ -278,5 +278,216 @@ describe("formatSarif", () => {
 
     // Should have 2 unique rules
     expect(parsed.runs[0].tool.driver.rules).toHaveLength(2);
+  });
+
+  test("enriches rules with descriptions when LintRule objects are provided", () => {
+    const diagnostics: LintDiagnostic[] = [
+      {
+        file: "test.ts",
+        line: 1,
+        column: 1,
+        ruleId: "COR001",
+        severity: "warning",
+        message: "Issue",
+      },
+    ];
+
+    const rules: LintRule[] = [
+      {
+        id: "COR001",
+        severity: "warning",
+        category: "style",
+        description: "No inline objects in Declarable constructors",
+        check: () => [],
+      },
+    ];
+
+    const result = formatSarif(diagnostics, rules);
+    const parsed = JSON.parse(result);
+    const sarifRule = parsed.runs[0].tool.driver.rules[0];
+
+    expect(sarifRule.shortDescription.text).toBe("No inline objects in Declarable constructors");
+    expect(sarifRule.fullDescription.text).toBe("No inline objects in Declarable constructors");
+    expect(sarifRule.helpUri).toContain("cor001");
+    expect(sarifRule.defaultConfiguration.level).toBe("warning");
+    expect(sarifRule.properties.category).toBe("style");
+  });
+
+  test("includes fingerprints in results", () => {
+    const diagnostics: LintDiagnostic[] = [
+      {
+        file: "test.ts",
+        line: 10,
+        column: 5,
+        ruleId: "COR001",
+        severity: "warning",
+        message: "Something",
+      },
+    ];
+
+    const result = formatSarif(diagnostics);
+    const parsed = JSON.parse(result);
+
+    expect(parsed.runs[0].results[0].fingerprints).toBeDefined();
+    expect(parsed.runs[0].results[0].fingerprints["chant/v1"]).toBe("COR001:test.ts:10:5");
+  });
+
+  test("includes ruleIndex in results", () => {
+    const diagnostics: LintDiagnostic[] = [
+      {
+        file: "test.ts",
+        line: 1,
+        column: 1,
+        ruleId: "COR001",
+        severity: "warning",
+        message: "Issue",
+      },
+    ];
+
+    const result = formatSarif(diagnostics);
+    const parsed = JSON.parse(result);
+
+    expect(parsed.runs[0].results[0].ruleIndex).toBe(0);
+  });
+
+  test("includes endLine/endColumn when provided", () => {
+    const diagnostics: LintDiagnostic[] = [
+      {
+        file: "test.ts",
+        line: 10,
+        column: 5,
+        endLine: 12,
+        endColumn: 20,
+        ruleId: "COR001",
+        severity: "warning",
+        message: "Something",
+      },
+    ];
+
+    const result = formatSarif(diagnostics);
+    const parsed = JSON.parse(result);
+    const region = parsed.runs[0].results[0].locations[0].physicalLocation.region;
+
+    expect(region.startLine).toBe(10);
+    expect(region.startColumn).toBe(5);
+    expect(region.endLine).toBe(12);
+    expect(region.endColumn).toBe(20);
+  });
+
+  test("omits endLine/endColumn when not provided", () => {
+    const diagnostics: LintDiagnostic[] = [
+      {
+        file: "test.ts",
+        line: 10,
+        column: 5,
+        ruleId: "COR001",
+        severity: "warning",
+        message: "Something",
+      },
+    ];
+
+    const result = formatSarif(diagnostics);
+    const parsed = JSON.parse(result);
+    const region = parsed.runs[0].results[0].locations[0].physicalLocation.region;
+
+    expect(region.endLine).toBeUndefined();
+    expect(region.endColumn).toBeUndefined();
+  });
+
+  test("includes suppressed diagnostics with suppressions array", () => {
+    const diagnostics: LintDiagnostic[] = [
+      {
+        file: "test.ts",
+        line: 1,
+        column: 1,
+        ruleId: "COR001",
+        severity: "warning",
+        message: "Active issue",
+      },
+    ];
+
+    const suppressed: Array<LintDiagnostic & { reason?: string }> = [
+      {
+        file: "test.ts",
+        line: 5,
+        column: 1,
+        ruleId: "COR001",
+        severity: "warning",
+        message: "Suppressed issue",
+        reason: "backwards compat",
+      },
+    ];
+
+    const result = formatSarif(diagnostics, undefined, suppressed);
+    const parsed = JSON.parse(result);
+
+    // Should have 2 results total (1 active + 1 suppressed)
+    expect(parsed.runs[0].results).toHaveLength(2);
+
+    // First result: no suppressions
+    expect(parsed.runs[0].results[0].suppressions).toBeUndefined();
+
+    // Second result: has suppressions
+    expect(parsed.runs[0].results[1].suppressions).toHaveLength(1);
+    expect(parsed.runs[0].results[1].suppressions[0].kind).toBe("inSource");
+    expect(parsed.runs[0].results[1].suppressions[0].justification).toBe("backwards compat");
+  });
+
+  test("suppressed diagnostics without reason omit justification", () => {
+    const suppressed: Array<LintDiagnostic & { reason?: string }> = [
+      {
+        file: "test.ts",
+        line: 5,
+        column: 1,
+        ruleId: "COR001",
+        severity: "warning",
+        message: "Suppressed issue",
+      },
+    ];
+
+    const result = formatSarif([], undefined, suppressed);
+    const parsed = JSON.parse(result);
+
+    expect(parsed.runs[0].results[0].suppressions[0].kind).toBe("inSource");
+    expect(parsed.runs[0].results[0].suppressions[0].justification).toBeUndefined();
+  });
+
+  test("falls back to rule ID when no description available", () => {
+    const diagnostics: LintDiagnostic[] = [
+      {
+        file: "test.ts",
+        line: 1,
+        column: 1,
+        ruleId: "UNKNOWN",
+        severity: "warning",
+        message: "Issue",
+      },
+    ];
+
+    const result = formatSarif(diagnostics);
+    const parsed = JSON.parse(result);
+    const sarifRule = parsed.runs[0].tool.driver.rules[0];
+
+    expect(sarifRule.shortDescription.text).toBe("UNKNOWN");
+    expect(sarifRule.helpUri).toContain("unknown");
+  });
+
+  test("converts absolute file paths to file:// URIs", () => {
+    const diagnostics: LintDiagnostic[] = [
+      {
+        file: "/Users/test/project/test.ts",
+        line: 1,
+        column: 1,
+        ruleId: "COR001",
+        severity: "warning",
+        message: "Issue",
+      },
+    ];
+
+    const result = formatSarif(diagnostics);
+    const parsed = JSON.parse(result);
+    const uri = parsed.runs[0].results[0].locations[0].physicalLocation.artifactLocation.uri;
+
+    expect(uri).toMatch(/^file:\/\//);
   });
 });

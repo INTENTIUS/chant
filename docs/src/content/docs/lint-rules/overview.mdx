@@ -29,7 +29,7 @@ Severity can be overridden per-rule in your configuration. See [Rule Configurati
 ```bash
 chant lint                   # Lint all files
 chant lint --format json     # Machine-readable output
-chant lint --format sarif    # SARIF 2.1.0 for CI integrations
+chant lint --format sarif    # SARIF 2.1.0 for CI integrations (includes rule descriptions, fingerprints, suppressions)
 chant lint --watch           # Watch for changes
 chant lint --fix             # Auto-fix fixable issues
 ```
@@ -70,10 +70,11 @@ Rules are configured via `chant.config.ts` in your project root. When no config 
 Suppress rules with comments:
 
 ```typescript
-// chant-disable — disable all rules for entire file
-// chant-disable COR001 COR006 — disable specific rules for file
-// chant-disable-line — disable all rules for this line
-// chant-disable-next-line COR001 — disable COR001 for next line
+// chant-disable                          — disable all rules for entire file
+// chant-disable COR001 COR006            — disable specific rules for file
+// chant-disable-line                     — disable all rules for this line
+// chant-disable-next-line COR001         — disable COR001 for next line
+// chant-disable COR001 -- reason text    — suppress with an audit reason
 ```
 
 See [Disable Directives](/chant/lint-rules/disable-directives/) for details.

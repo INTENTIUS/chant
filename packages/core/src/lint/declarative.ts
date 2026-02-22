@@ -39,6 +39,10 @@ export interface RuleSpec {
   severity: Severity;
   /** Category for grouping */
   category: Category;
+  /** Human-readable description of what this rule checks */
+  description?: string;
+  /** Link to rule documentation */
+  helpUri?: string;
   /** Selector name (or compound) to find target nodes */
   selector: string;
   /** Optional match condition to further filter nodes */
@@ -61,6 +65,8 @@ export function rule(spec: RuleSpec): LintRule {
     id: spec.id,
     severity: spec.severity,
     category: spec.category,
+    description: spec.description,
+    helpUri: spec.helpUri,
     check(context: LintContext): LintDiagnostic[] {
       const diagnostics: LintDiagnostic[] = [];
       const sf = context.sourceFile;

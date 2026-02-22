@@ -161,6 +161,7 @@ export const cor018CompositePreferLexiconTypeRule: LintRule = {
   id: "COR018",
   severity: "info",
   category: "style",
+  description: "Prefer lexicon property types over local interfaces in Composite props",
   check(context: LintContext): LintDiagnostic[] {
     return checkFile(context);
   },

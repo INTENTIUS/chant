@@ -60,6 +60,7 @@ export const flatDeclarationsRule: LintRule = {
   id: "COR001",
   severity: "warning",
   category: "style",
+  description: "Detects inline object literals in Declarable constructors — extract to named exports",
   check(context: LintContext): LintDiagnostic[] {
     const diagnostics: LintDiagnostic[] = [];
     checkNode(context.sourceFile, context, diagnostics);

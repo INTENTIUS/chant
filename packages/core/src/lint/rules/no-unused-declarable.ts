@@ -92,6 +92,7 @@ export const noUnusedDeclarableRule: LintRule = {
   id: "COR004",
   severity: "warning",
   category: "correctness",
+  description: "Detects exported declarables that are never referenced in the same file",
   check(context: LintContext): LintDiagnostic[] {
     const diagnostics: LintDiagnostic[] = [];
     const declarables = collectExportedDeclarables(context.sourceFile);

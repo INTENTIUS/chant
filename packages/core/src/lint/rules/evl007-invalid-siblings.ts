@@ -131,6 +131,7 @@ export const evl007InvalidSiblingsRule: LintRule = {
   id: "EVL007",
   severity: "error",
   category: "correctness",
+  description: "Validates that siblings access in Composite factories references existing member keys",
   check(context: LintContext): LintDiagnostic[] {
     const diagnostics: LintDiagnostic[] = [];
     checkNode(context.sourceFile, context, diagnostics);

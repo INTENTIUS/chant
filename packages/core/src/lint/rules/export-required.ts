@@ -149,6 +149,7 @@ export const exportRequiredRule: LintRule = {
   id: "COR008",
   severity: "warning",
   category: "correctness",
+  description: "Detects declarable instances that are not exported for chant discovery",
   check(context: LintContext): LintDiagnostic[] {
     const diagnostics: LintDiagnostic[] = [];
     const exportInfo = collectExportInfo(context.sourceFile);

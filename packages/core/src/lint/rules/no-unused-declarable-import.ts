@@ -77,6 +77,7 @@ export const noUnusedDeclarableImportRule: LintRule = {
   id: "COR010",
   severity: "warning",
   category: "style",
+  description: "Flags unused namespace imports from @intentius/chant packages",
   check(context: LintContext): LintDiagnostic[] {
     const diagnostics: LintDiagnostic[] = [];
     const imports = collectNamespaceImports(context.sourceFile);

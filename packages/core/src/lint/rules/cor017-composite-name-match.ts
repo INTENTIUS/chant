@@ -100,6 +100,7 @@ export const cor017CompositeNameMatchRule: LintRule = {
   id: "COR017",
   severity: "error",
   category: "correctness",
+  description: "Composite name argument must match the variable it is assigned to",
   check(context: LintContext): LintDiagnostic[] {
     const diagnostics: LintDiagnostic[] = [];
     checkNode(context.sourceFile, context, diagnostics);

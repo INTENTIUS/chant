@@ -131,7 +131,7 @@ describe("performance benchmarks", () => {
     for (const size of sizes) {
       await withTestDir(async (dir) => {
         const files = await generateFixture(dir, size);
-        const { avg } = await benchmark(() => runLint(files, coreRules), 3);
+        const { avg } = await benchmark(() => runLint(files, coreRules).then(r => r.diagnostics), 3);
         output.push(`  ${pad(size.name, 10)} ${fmt(avg)} (avg of 3 runs)`);
       });
     }

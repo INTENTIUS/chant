@@ -64,6 +64,7 @@ export const singleConcernFileRule: LintRule = {
   id: "COR013",
   severity: "info",
   category: "style",
+  description: "Flags files mixing resource Declarables with configuration Declarables",
   check(context: LintContext): LintDiagnostic[] {
     const newExpressions: NewExpressionInfo[] = [];
     collectNewExpressions(context.sourceFile, context.sourceFile, newExpressions);

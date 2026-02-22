@@ -183,6 +183,7 @@ export const evl009CompositeNoConstantRule: LintRule = {
   id: "EVL009",
   severity: "warning",
   category: "style",
+  description: "Flags extractable constants inside Composite factories — move to a separate file",
   check(context: LintContext): LintDiagnostic[] {
     const diagnostics: LintDiagnostic[] = [];
     const importedNames = collectImportedNames(context.sourceFile);

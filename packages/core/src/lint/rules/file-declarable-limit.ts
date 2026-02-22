@@ -73,6 +73,7 @@ export const fileDeclarableLimitRule: LintRule = {
   id: "COR009",
   severity: "warning",
   category: "style",
+  description: "Limits the number of Declarable instances per file to encourage splitting by concern",
   check(context: LintContext, options?: Record<string, unknown>): LintDiagnostic[] {
     const limit = (typeof options?.max === "number" ? options.max : null) ?? DECLARABLE_LIMIT;
     const instances: ts.NewExpression[] = [];

@@ -167,7 +167,22 @@ export const logsBucket = new Bucket({
     const { waw015 } = require("./lint/post-synth/waw015");
     const { waw016 } = require("./lint/post-synth/waw016");
     const { waw017 } = require("./lint/post-synth/waw017");
-    return [waw010, waw011, cor020, ext001, waw013, waw014, waw015, waw016, waw017];
+    const { waw018 } = require("./lint/post-synth/waw018");
+    const { waw019 } = require("./lint/post-synth/waw019");
+    const { waw020 } = require("./lint/post-synth/waw020");
+    const { waw021 } = require("./lint/post-synth/waw021");
+    const { waw022 } = require("./lint/post-synth/waw022");
+    const { waw023 } = require("./lint/post-synth/waw023");
+    const { waw024 } = require("./lint/post-synth/waw024");
+    const { waw025 } = require("./lint/post-synth/waw025");
+    const { waw026 } = require("./lint/post-synth/waw026");
+    const { waw027 } = require("./lint/post-synth/waw027");
+    const { waw028 } = require("./lint/post-synth/waw028");
+    return [
+      waw010, waw011, cor020, ext001, waw013, waw014, waw015, waw016, waw017,
+      waw018, waw019, waw020, waw021, waw022, waw023, waw024, waw025,
+      waw026, waw027, waw028,
+    ];
   },
 
   async generate(options?: { verbose?: boolean }): Promise<void> {

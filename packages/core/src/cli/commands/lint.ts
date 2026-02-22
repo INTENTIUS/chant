@@ -243,19 +243,25 @@ export async function lintCommand(options: LintOptions): Promise<LintResult> {
 
   // Run lint — use per-file rules when overrides are present
   let diagnostics: LintDiagnostic[];
+  let suppressed: Array<LintDiagnostic & { reason?: string }> = [];
   if (options.rules) {
-    diagnostics = await runLint(files, options.rules, undefined);
+    const result = await runLint(files, options.rules, undefined);
+    diagnostics = result.diagnostics;
+    suppressed = result.suppressed;
   } else if (hasOverrides) {
     diagnostics = [];
     for (const file of files) {
       const relativePath = file.slice(infraPath.length + 1);
       const { rules: fileRules, ruleOptions } = getDefaultRules(infraPath, relativePath, allRules);
-      const fileDiagnostics = await runLint([file], fileRules, ruleOptions);
-      diagnostics.push(...fileDiagnostics);
+      const result = await runLint([file], fileRules, ruleOptions);
+      diagnostics.push(...result.diagnostics);
+      suppressed.push(...result.suppressed);
     }
   } else {
     const { rules, ruleOptions } = getDefaultRules(infraPath, undefined, allRules);
-    diagnostics = await runLint(files, rules, ruleOptions);
+    const result = await runLint(files, rules, ruleOptions);
+    diagnostics = result.diagnostics;
+    suppressed = result.suppressed;
   }
 
   // Apply fixes if requested
@@ -277,23 +283,26 @@ export async function lintCommand(options: LintOptions): Promise<LintResult> {
     }
 
     // Re-lint after fixes to get updated diagnostics
-    let postFixDiagnostics: LintDiagnostic[];
     if (options.rules) {
-      postFixDiagnostics = await runLint(files, options.rules, undefined);
+      const postResult = await runLint(files, options.rules, undefined);
+      diagnostics = postResult.diagnostics;
+      suppressed = postResult.suppressed;
     } else if (hasOverrides) {
-      postFixDiagnostics = [];
+      diagnostics = [];
+      suppressed = [];
       for (const file of files) {
         const relativePath = file.slice(infraPath.length + 1);
         const { rules: fileRules, ruleOptions } = getDefaultRules(infraPath, relativePath, allRules);
-        const fileDiagnostics = await runLint([file], fileRules, ruleOptions);
-        postFixDiagnostics.push(...fileDiagnostics);
+        const postResult = await runLint([file], fileRules, ruleOptions);
+        diagnostics.push(...postResult.diagnostics);
+        suppressed.push(...postResult.suppressed);
       }
     } else {
       const { rules, ruleOptions } = getDefaultRules(infraPath, undefined, allRules);
-      postFixDiagnostics = await runLint(files, rules, ruleOptions);
+      const postResult = await runLint(files, rules, ruleOptions);
+      diagnostics = postResult.diagnostics;
+      suppressed = postResult.suppressed;
     }
-    diagnostics.length = 0;
-    diagnostics.push(...postFixDiagnostics);
   }
 
   // Count errors and warnings
@@ -308,6 +317,11 @@ export async function lintCommand(options: LintOptions): Promise<LintResult> {
     }
   }
 
+  // Collect all loaded rules for SARIF enrichment
+  const allLoadedRules = options.rules
+    ? options.rules
+    : [...allRules.values()];
+
   // Format output
   let output: string;
   switch (options.format) {
@@ -315,7 +329,7 @@ export async function lintCommand(options: LintOptions): Promise<LintResult> {
       output = formatJson(diagnostics);
       break;
     case "sarif":
-      output = formatSarif(diagnostics);
+      output = formatSarif(diagnostics, allLoadedRules, suppressed);
       break;
     case "stylish":
     default:
