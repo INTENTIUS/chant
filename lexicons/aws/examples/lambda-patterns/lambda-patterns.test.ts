@@ -14,12 +14,13 @@ describe("lambda-patterns example", () => {
       fix: true,
     });
 
-    if (!result.success || result.errorCount > 0) {
+    if (!result.success || result.errorCount > 0 || result.warningCount > 0) {
       console.log(result.output);
     }
 
     expect(result.success).toBe(true);
     expect(result.errorCount).toBe(0);
+    expect(result.warningCount).toBe(0);
   });
 
   test("build produces valid CloudFormation", async () => {

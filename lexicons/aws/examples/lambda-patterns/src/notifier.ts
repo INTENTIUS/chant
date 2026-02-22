@@ -1,14 +1,20 @@
-import {
-  Sub,
-  AWS,
-  Role_Policy,
-  NodeLambda,
-  SNSActions,
-  Topic,
-} from "@intentius/chant-lexicon-aws";
+import { Sub, AWS, Role_Policy, NodeLambda, SNSActions } from "@intentius/chant-lexicon-aws";
+import { alertTopic } from "./alert-topic";
 
-export const alertTopic = new Topic({
-  TopicName: Sub`${AWS.StackName}-alerts`,
+export const notifierPolicyDocument = {
+  Version: "2012-10-17",
+  Statement: [
+    {
+      Effect: "Allow",
+      Action: SNSActions.Publish,
+      Resource: alertTopic.Arn,
+    },
+  ],
+};
+
+export const notifierPolicy = new Role_Policy({
+  PolicyName: "SNSPublish",
+  PolicyDocument: notifierPolicyDocument,
 });
 
 // NodeLambda with SNS publish permissions
@@ -26,19 +32,5 @@ exports.handler = async (event) => {
 };`,
   },
   Environment: { Variables: { TOPIC_ARN: alertTopic.Arn } },
-  Policies: [
-    new Role_Policy({
-      PolicyName: "SNSPublish",
-      PolicyDocument: {
-        Version: "2012-10-17",
-        Statement: [
-          {
-            Effect: "Allow",
-            Action: SNSActions.Publish,
-            Resource: alertTopic.Arn,
-          },
-        ],
-      },
-    }),
-  ],
+  Policies: [notifierPolicy],
 });

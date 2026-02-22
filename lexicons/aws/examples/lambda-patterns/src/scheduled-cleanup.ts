@@ -1,11 +1,21 @@
-import {
-  Sub,
-  AWS,
-  Role_Policy,
-  ScheduledLambda,
-  DynamoDBActions,
-} from "@intentius/chant-lexicon-aws";
+import { Sub, AWS, Role_Policy, ScheduledLambda, DynamoDBActions } from "@intentius/chant-lexicon-aws";
 import { dataTable } from "./data-table";
+
+export const cleanupPolicyDocument = {
+  Version: "2012-10-17",
+  Statement: [
+    {
+      Effect: "Allow",
+      Action: DynamoDBActions.ReadWrite,
+      Resource: dataTable.Arn,
+    },
+  ],
+};
+
+export const cleanupPolicy = new Role_Policy({
+  PolicyName: "DynamoDBCleanup",
+  PolicyDocument: cleanupPolicyDocument,
+});
 
 // ScheduledLambda: Role + Function + EventBridge Rule + Permission
 export const cleanup = ScheduledLambda({
@@ -21,19 +31,5 @@ def handler(event, context):
   },
   schedule: "rate(1 day)",
   Environment: { Variables: { TABLE_NAME: dataTable.Arn } },
-  Policies: [
-    new Role_Policy({
-      PolicyName: "DynamoDBCleanup",
-      PolicyDocument: {
-        Version: "2012-10-17",
-        Statement: [
-          {
-            Effect: "Allow",
-            Action: DynamoDBActions.ReadWrite,
-            Resource: dataTable.Arn,
-          },
-        ],
-      },
-    }),
-  ],
+  Policies: [cleanupPolicy],
 });

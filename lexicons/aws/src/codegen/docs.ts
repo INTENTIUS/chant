@@ -72,7 +72,7 @@ sam deploy --template-file dist/template.json --stack-name my-stack
 
 ## Multi-file output (nested stacks)
 
-When your project uses [nested stacks](./nested-stacks), \`chant build\` produces multiple template files:
+When your project uses [nested stacks](../nested-stacks/), \`chant build\` produces multiple template files:
 
 \`\`\`bash
 chant build -o template.json
@@ -236,7 +236,7 @@ Runtime context values available in every template, accessed via the \`AWS\` nam
 
 ## Intrinsic functions
 
-The lexicon provides 8 intrinsic functions (\`Sub\`, \`Ref\`, \`GetAtt\`, \`If\`, \`Join\`, \`Select\`, \`Split\`, \`Base64\`) that map directly to CloudFormation \`Fn::\` calls. See [Intrinsic Functions](./intrinsics) for full usage examples.
+The lexicon provides 8 intrinsic functions (\`Sub\`, \`Ref\`, \`GetAtt\`, \`If\`, \`Join\`, \`Select\`, \`Split\`, \`Base64\`) that map directly to CloudFormation \`Fn::\` calls. See [Intrinsic Functions](../intrinsics/) for full usage examples.
 
 ## Dependencies
 
@@ -316,7 +316,7 @@ CloudFormation nested stacks (\`AWS::CloudFormation::Stack\`) let you decompose 
 
 chant handles the wiring: child template gets an \`Outputs\` section, parent uses \`Fn::GetAtt\` on the stack resource. A \`TemplateBasePath\` parameter lets you configure child template URLs per environment.
 
-See [Nested Stacks](./nested-stacks) for the full guide.
+See [Nested Stacks](../nested-stacks/) for the full guide.
 
 ## Tagging
 
@@ -324,7 +324,7 @@ Tags are standard CloudFormation \`Key\`/\`Value\` arrays. Pass them on any reso
 
 {{file:docs-snippets/src/tagging.ts}}
 
-To apply tags across all members of a composite, use [\`propagate\`](./composites#propagate--shared-properties):
+To apply tags across all members of a composite, use [\`propagate\`](../composites/#propagate--shared-properties):
 
 {{file:docs-snippets/src/propagate.ts}}`,
       },
@@ -472,7 +472,7 @@ When resources should produce a separate CloudFormation template instead of expa
 
 {{file:nested-stacks/src/app.ts}}
 
-See [Nested Stacks](./nested-stacks) for the full guide.`,
+See [Nested Stacks](../nested-stacks/) for the full guide.`,
       },
       {
         slug: "nested-stacks",
@@ -605,7 +605,7 @@ Three lint rules help catch common nested stack issues:
 - You don't need independent update boundaries
 - Your template is within resource limits
 
-See [Composites](./composites) for the flat composite approach, and [Examples](./examples#nested-stacks) for a runnable nested stack example.`,
+See [Composites](../composites/) for the flat composite approach, and [Examples](../examples/#nested-stacks) for a runnable nested stack example.`,
       },
       {
         slug: "lint-rules",
@@ -750,7 +750,7 @@ export default {
 };
 \`\`\`
 
-See also [Custom Lint Rules](./custom-rules) for writing project-specific rules.`,
+See also [Custom Lint Rules](../custom-rules/) for writing project-specific rules.`,
       },
       {
         slug: "custom-rules",
@@ -829,11 +829,11 @@ src/
 
 **What it adds:**
 
-- **Composites** — \`LambdaApi\` groups Role + Function + Permission into a reusable unit (see [Composites](./composites))
+- **Composites** — \`LambdaApi\` groups Role + Function + Permission into a reusable unit (see [Composites](../composites/))
 - **Composite presets** — \`SecureApi\` (low memory, short timeout) and \`HighMemoryApi\` (high memory, longer timeout) created with \`withDefaults\`
-- **Action constants** — \`upload-api.ts\` and \`process-api.ts\` use \`S3Actions\` for typed IAM action arrays instead of hand-typed strings (see [Action Constants](./composites#action-constants))
+- **Action constants** — \`upload-api.ts\` and \`process-api.ts\` use \`S3Actions\` for typed IAM action arrays instead of hand-typed strings (see [Action Constants](../composites/#action-constants))
 - **Inline IAM policies** — \`upload-api.ts\` and \`process-api.ts\` attach \`Role_Policy\` objects for scoped S3 access
-- **Custom lint rule** — \`api-timeout.ts\` enforces API Gateway's 29-second timeout limit (see [Custom Lint Rules](./custom-rules))
+- **Custom lint rule** — \`api-timeout.ts\` enforces API Gateway's 29-second timeout limit (see [Custom Lint Rules](../custom-rules/))
 - **Lint config** — \`chant.config.ts\` extends the strict preset and loads the custom plugin
 
 The example produces 10 CloudFormation resources: 1 S3 bucket + 3 composites × 3 members each.
@@ -844,7 +844,11 @@ The example produces 10 CloudFormation resources: 1 S3 bucket + 3 composites × 
 
 \`\`\`
 src/
+├── chant.config.ts        # Lint config: strict preset
+├── defaults.ts            # Shared encryption config
 ├── data-table.ts          # DynamoDB table
+├── output-bucket.ts       # Encrypted S3 bucket
+├── alert-topic.ts         # SNS topic
 ├── api.ts                 # LambdaApi — API endpoint with DynamoDB access
 ├── worker.ts              # NodeLambda — background worker with S3 write access
 ├── scheduled-cleanup.ts   # ScheduledLambda — daily cleanup with EventBridge
@@ -853,8 +857,9 @@ src/
 
 **What it adds:**
 
-- **Built-in composites** — \`LambdaApi\`, \`NodeLambda\`, \`ScheduledLambda\` instead of hand-built Role + Function + Permission (see [Built-in Composites](./composites#built-in-composites))
-- **Action constants** — \`DynamoDBActions.ReadWrite\`, \`S3Actions.PutObject\`, \`SNSActions.Publish\` for typed IAM policies (see [Action Constants](./composites#action-constants))
+- **Built-in composites** — \`LambdaApi\`, \`NodeLambda\`, \`ScheduledLambda\` instead of hand-built Role + Function + Permission (see [Built-in Composites](../composites/#built-in-composites))
+- **Action constants** — \`DynamoDBActions.ReadWrite\`, \`S3Actions.PutObject\`, \`SNSActions.Publish\` for typed IAM policies (see [Action Constants](../composites/#action-constants))
+- **Extracted policies** — policy documents as named \`export const\` values, avoiding COR001 inline warnings
 - **Runtime presets** — \`NodeLambda\` defaults to \`nodejs20.x\` + \`index.handler\`
 - **Scheduled execution** — \`ScheduledLambda\` auto-creates EventBridge Rule + Permission
 - **Cross-resource references** — Lambda environment variables reference DynamoDB, S3, and SNS ARNs
@@ -889,7 +894,7 @@ src/
 
 {{file:nested-stacks/src/app.ts}}
 
-See [Nested Stacks](./nested-stacks) for the full guide.`,
+See [Nested Stacks](../nested-stacks/) for the full guide.`,
       },
       {
         slug: "skills",
