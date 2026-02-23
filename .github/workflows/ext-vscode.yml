@@ -49,22 +49,22 @@ jobs:
         env:
           VSCE_PAT: ${{ secrets.VSCE_PAT }}
 
-  publish-openvsx:
-    needs: build
-    if: startsWith(github.ref, 'refs/tags/ext-vscode-v')
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: "22"
-      - run: npm install
-        working-directory: editors/vscode
-      - run: npm run build
-        working-directory: editors/vscode
-
-      - name: Publish to Open VSX Registry
-        working-directory: editors/vscode
-        run: npx ovsx publish --no-dependencies -p "$OVSX_PAT"
-        env:
-          OVSX_PAT: ${{ secrets.OVSX_PAT }}
+  # TODO: Re-enable once Open VSX namespace is approved
+  # publish-openvsx:
+  #   needs: build
+  #   if: startsWith(github.ref, 'refs/tags/ext-vscode-v')
+  #   runs-on: ubuntu-latest
+  #   steps:
+  #     - uses: actions/checkout@v4
+  #     - uses: actions/setup-node@v4
+  #       with:
+  #         node-version: "22"
+  #     - run: npm install
+  #       working-directory: editors/vscode
+  #     - run: npm run build
+  #       working-directory: editors/vscode
+  #     - name: Publish to Open VSX Registry
+  #       working-directory: editors/vscode
+  #       run: npx ovsx publish --no-dependencies -p "$OVSX_PAT"
+  #       env:
+  #         OVSX_PAT: ${{ secrets.OVSX_PAT }}
