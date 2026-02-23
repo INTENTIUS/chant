@@ -46,6 +46,12 @@ export default defineConfig({
 					],
 				},
 				{
+					label: 'Tutorials',
+					items: [
+						{ label: 'GitLab CI + AWS ALB', slug: 'tutorials/gitlab-aws-alb' },
+					],
+				},
+				{
 					label: 'Lexicons',
 					items: [
 						{ label: 'Overview', slug: 'lexicons/overview' },
