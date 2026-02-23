@@ -26,6 +26,7 @@ export default defineConfig({
 					label: 'Core Concepts',
 					items: [
 						{ label: 'Philosophy', slug: 'concepts/philosophy' },
+						{ label: 'How chant compares', slug: 'concepts/comparison' },
 						{ label: 'TypeScript as Data', slug: 'concepts/typescript-as-data' },
 						{ label: 'Evaluation Pipeline', slug: 'concepts/evaluation-pipeline' },
 					],

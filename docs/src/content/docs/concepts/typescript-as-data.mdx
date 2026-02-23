@@ -199,3 +199,5 @@ For the full EVL rule reference with configuration options, see [Evaluability Ru
 The supported subset is the set of TypeScript patterns that can be evaluated without executing code — patterns where every value is either a literal, a reference to a known constant, or a symbolic cross-resource reference.
 
 This makes the evaluator fast (no interpretation overhead), deterministic (same source always produces the same output), and auditable (every output value traces to a specific line in the source).
+
+The static boundary also defines a natural division of labor with agentic workflows: agents resolve dynamic values (looking up VPC IDs, reading secrets, querying state), then write or populate chant source files. chant synthesizes the deterministic structure. Agents handle what changes; chant handles what shouldn't.

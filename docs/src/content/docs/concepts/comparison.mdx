@@ -1,0 +1,73 @@
+---
+title: How chant compares
+description: Where chant fits in the infrastructure tooling landscape.
+---
+
+## What chant is (and isn't)
+
+chant is a **synthesis compiler**: TypeScript in, spec-native output out. You declare infrastructure as typed TypeScript objects, chant validates them against a lexicon's semantic rules, and emits the target format — CloudFormation, GitLab CI, or whatever the lexicon targets.
+
+chant **doesn't manage deployment, state, or drift**. Those are operational concerns. chant's scope is deliberately limited to synthesis: parsing, type-checking, linting, and emitting artifacts.
+
+This isn't a reaction to other tools' failures — it's an approach that was always available. Nobody built it because the industry was racing to own the full lifecycle. chant does one thing and stops.
+
+**The agentic angle:** the operational layer — deploying, monitoring, remediating — is increasingly handled by agents and automation. chant handles the part that should be deterministic and auditable: turning typed declarations into spec-native output. The two layers are complementary.
+
+## Design decisions and their consequences
+
+These tools make different design decisions. Each decision has consequences — some favorable for certain workflows, some not. This isn't a feature matrix; it's a comparison of architectural choices.
+
+| Decision | Terraform | CDK | Pulumi | chant |
+|---|---|---|---|---|
+| **Language** | Custom DSL (HCL) | General-purpose (executed) | General-purpose (executed) | General-purpose (as data) |
+| **Spec fidelity** | Provider-mapped | Abstracted (L2/L3) | Provider-mapped | Spec-true |
+| **Output** | State + API calls | CloudFormation | State + API calls | Native spec output |
+| **Lifecycle scope** | Full | Full (via CloudFormation) | Full | Synthesis only |
+| **Determinism** | Mostly | No (code executes) | No (code executes) | Yes (by design) |
+| **Walk-away cost** | High (state, HCL) | Medium (CloudFormation remains) | High (state, SDK) | Zero (output is native) |
+| **Semantic validation** | None built-in | None built-in | None built-in | Built-in (lexicon rules) |
+
+**Spec fidelity** means whether the tool's resource model matches the underlying spec 1:1. CDK's L2 and L3 constructs deliberately abstract away from CloudFormation — that's a feature for productivity and a cost for transparency. Terraform providers and Pulumi map closely but not identically to provider APIs. chant lexicons are generated directly from the target spec.
+
+**Walk-away cost** is what happens if you stop using the tool. Terraform and Pulumi leave you with state files and tool-specific code. CDK leaves CloudFormation templates that continue to work. chant leaves native spec output — standard CloudFormation templates, GitLab CI files, whatever the lexicon targets. There's nothing chant-specific in the output.
+
+## The execution model difference
+
+The core architectural difference is what happens when you "run" each tool:
+
+**Terraform:** HCL is parsed, a dependency graph is built, the provider checks current state against desired state, and changes are applied. The state file is the source of truth.
+
+**CDK:** Your TypeScript *executes*. Constructors run, methods are called, side effects happen. The result is captured as a CloudFormation template, which is then deployed. The execution can be nondeterministic — same code, different environment, potentially different output.
+
+**Pulumi:** Your TypeScript *executes* similarly to CDK, but the output is state + direct API calls rather than a CloudFormation template. Same nondeterminism concern applies.
+
+**chant:** Your TypeScript is *parsed as data*. Nothing executes. The evaluator reads literals, follows `const` references, resolves cross-file imports, and emits output. Same source always produces the same output.
+
+This matters for:
+- **Determinism** — chant's output is a pure function of its input. No environment variables, no network calls, no runtime state.
+- **Auditability** — every value in the output traces to a specific line in the source.
+- **Speed** — no interpreter, no runtime, no provider calls. Synthesis is fast.
+- **IDE support** — because the API surface is defined by types (not runtime behavior), autocompletion, inline errors, and go-to-definition work without executing anything.
+- **Agent-friendliness** — agents can generate chant source files and know exactly what output they'll produce. No surprises from execution-time behavior.
+
+## What each tool optimizes for
+
+**Terraform** optimizes for multi-cloud lifecycle management with a unified workflow. One tool, one language, one state model across AWS, Azure, GCP, and hundreds of providers. The trade-off: HCL is a custom DSL with limited expressiveness, and the state file creates operational overhead.
+
+**CDK** optimizes for AWS-native development with familiar languages and high-level abstractions. L2/L3 constructs encode AWS best practices and reduce boilerplate. The trade-off: abstractions obscure what's actually deployed, and code execution means builds can be nondeterministic.
+
+**Pulumi** optimizes for general-purpose language IaC with state management and multi-cloud support. Real TypeScript/Python/Go with the full language available. The trade-off: code execution brings nondeterminism, and state management has the same operational burden as Terraform.
+
+**chant** optimizes for typed, linted, deterministic synthesis that's true to the underlying spec. The output is native to the target platform with zero lock-in. The trade-off: chant doesn't deploy anything — you need something else for that.
+
+## Honest trade-offs
+
+chant's design decisions have real consequences:
+
+- **chant doesn't deploy.** You need a deployment mechanism: the CloudFormation CLI, a CI pipeline, an agent, or whatever your workflow uses. chant produces the artifact; something else applies it.
+
+- **Static evaluation means no runtime lookups at build time.** You can't call an API during synthesis to get a VPC ID or read a secret. Cross-resource references within a project work (via attribute references). For values that need to be resolved at deploy time, lexicons provide intrinsics. For values that need to be resolved before synthesis, agents or scripts can populate source files.
+
+- **Lexicon coverage is early.** AWS CloudFormation and GitLab CI are public today. The architecture supports any spec-based operational domain, but the ecosystem is young.
+
+- **The static subset of TypeScript is a constraint.** No function calls, no control flow around resources, no dynamic property access. This is deliberate — it's what makes synthesis deterministic — but it means some patterns that work in CDK or Pulumi don't work in chant. See [TypeScript as Data](/chant/concepts/typescript-as-data/) for exactly what's supported.
