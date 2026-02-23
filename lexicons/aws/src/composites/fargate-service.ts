@@ -1,6 +1,5 @@
 import { Composite } from "@intentius/chant";
 import {
-  EcsCluster,
   EcsService,
   EcsService_LoadBalancer,
   EcsService_NetworkConfiguration,
@@ -10,10 +9,12 @@ import {
   TaskDefinition_PortMapping,
   TaskDefinition_LogConfiguration,
   TaskDefinition_KeyValuePair,
-  LoadBalancer,
   TargetGroup,
-  Listener,
-  Listener_Action,
+  ListenerRule,
+  ListenerRule_Action,
+  ListenerRule_RuleCondition,
+  ListenerRule_PathPatternConfig,
+  ListenerRule_HostHeaderConfig,
   SecurityGroup,
   SecurityGroup_Ingress,
   LogGroup,
@@ -21,66 +22,54 @@ import {
   Role_Policy,
 } from "../generated";
 import { Sub } from "../intrinsics";
-import { ECRActions } from "../actions/ecr";
-import { LogsActions } from "../actions/logs";
 import { ecsTrustPolicy } from "./ecs-trust-policy";
 
-export interface FargateAlbProps {
+export interface FargateServiceProps {
+  // Wiring to shared ALB
+  clusterArn: string;
+  listenerArn: string;
+  albSecurityGroupId: string;
+  executionRoleArn: string;
+
+  // Routing — at least one required
+  priority: number;
+  pathPatterns?: string[];
+  hostHeaders?: string[];
+
+  // Container
   image: string;
   containerPort?: number;
   cpu?: string;
   memory?: string;
   desiredCount?: number;
-  vpcId: string;
-  publicSubnetIds: string[];
-  privateSubnetIds: string[];
-  healthCheckPath?: string;
-  listenerPort?: number;
   environment?: Record<string, string>;
   command?: string[];
+
+  // Networking
+  vpcId: string;
+  privateSubnetIds: string[];
+  healthCheckPath?: string;
+
+  // IAM
   ManagedPolicyArns?: string[];
   Policies?: InstanceType<typeof Role_Policy>[];
   logRetentionDays?: number;
 }
 
-export const FargateAlb = Composite<FargateAlbProps>((props) => {
+export const FargateService = Composite<FargateServiceProps>((props) => {
+  if (!props.pathPatterns && !props.hostHeaders) {
+    throw new Error("FargateService requires at least one of pathPatterns or hostHeaders");
+  }
+  if (props.priority < 1 || props.priority > 50000) {
+    throw new Error("FargateService priority must be between 1 and 50000");
+  }
+
   const containerPort = props.containerPort ?? 80;
   const cpu = props.cpu ?? "256";
   const memory = props.memory ?? "512";
   const desiredCount = props.desiredCount ?? 2;
   const healthCheckPath = props.healthCheckPath ?? "/";
-  const listenerPort = props.listenerPort ?? 80;
   const logRetentionDays = props.logRetentionDays ?? 30;
-
-  // ECS Cluster
-  const cluster = new EcsCluster({});
-
-  // Execution role — ECR pull + CloudWatch Logs write
-  const executionPolicyDocument = {
-    Version: "2012-10-17",
-    Statement: [
-      {
-        Effect: "Allow",
-        Action: ECRActions.Pull,
-        Resource: "*",
-      },
-      {
-        Effect: "Allow",
-        Action: LogsActions.Write,
-        Resource: "*",
-      },
-    ],
-  };
-
-  const executionPolicy = new Role_Policy({
-    PolicyName: "ExecutionPolicy",
-    PolicyDocument: executionPolicyDocument,
-  });
-
-  const executionRole = new Role({
-    AssumeRolePolicyDocument: ecsTrustPolicy,
-    Policies: [executionPolicy],
-  });
 
   // Task role — app permissions
   const taskRole = new Role({
@@ -134,23 +123,9 @@ export const FargateAlb = Composite<FargateAlbProps>((props) => {
     RequiresCompatibilities: ["FARGATE"],
     Cpu: cpu,
     Memory: memory,
-    ExecutionRoleArn: executionRole.Arn,
+    ExecutionRoleArn: props.executionRoleArn,
     TaskRoleArn: taskRole.Arn,
     ContainerDefinitions: [container],
-  });
-
-  // ALB security group — ingress on listener port from anywhere
-  const albIngress = new SecurityGroup_Ingress({
-    IpProtocol: "tcp",
-    FromPort: listenerPort,
-    ToPort: listenerPort,
-    CidrIp: "0.0.0.0/0",
-  });
-
-  const albSg = new SecurityGroup({
-    GroupDescription: "ALB security group",
-    VpcId: props.vpcId,
-    SecurityGroupIngress: [albIngress],
   });
 
   // Task security group — ingress on container port from ALB SG
@@ -158,21 +133,13 @@ export const FargateAlb = Composite<FargateAlbProps>((props) => {
     IpProtocol: "tcp",
     FromPort: containerPort,
     ToPort: containerPort,
-    SourceSecurityGroupId: albSg.GroupId,
+    SourceSecurityGroupId: props.albSecurityGroupId,
   });
 
   const taskSg = new SecurityGroup({
     GroupDescription: "Fargate task security group",
     VpcId: props.vpcId,
     SecurityGroupIngress: [taskIngress],
-  });
-
-  // Application Load Balancer
-  const alb = new LoadBalancer({
-    Type: "application",
-    Scheme: "internet-facing",
-    Subnets: props.publicSubnetIds,
-    SecurityGroups: [albSg.GroupId],
   });
 
   // Target group
@@ -184,17 +151,44 @@ export const FargateAlb = Composite<FargateAlbProps>((props) => {
     HealthCheckPath: healthCheckPath,
   });
 
-  // Listener
-  const defaultAction = new Listener_Action({
+  // Listener rule conditions
+  const conditions: InstanceType<typeof ListenerRule_RuleCondition>[] = [];
+
+  if (props.pathPatterns) {
+    const pathConfig = new ListenerRule_PathPatternConfig({
+      Values: props.pathPatterns,
+    });
+    conditions.push(
+      new ListenerRule_RuleCondition({
+        Field: "path-pattern",
+        PathPatternConfig: pathConfig,
+      }),
+    );
+  }
+
+  if (props.hostHeaders) {
+    const hostConfig = new ListenerRule_HostHeaderConfig({
+      Values: props.hostHeaders,
+    });
+    conditions.push(
+      new ListenerRule_RuleCondition({
+        Field: "host-header",
+        HostHeaderConfig: hostConfig,
+      }),
+    );
+  }
+
+  // Listener rule
+  const ruleAction = new ListenerRule_Action({
     Type: "forward",
     TargetGroupArn: targetGroup.TargetGroupArn,
   });
 
-  const listener = new Listener({
-    LoadBalancerArn: alb.LoadBalancerArn,
-    Port: listenerPort,
-    Protocol: "HTTP",
-    DefaultActions: [defaultAction],
+  const rule = new ListenerRule({
+    ListenerArn: props.listenerArn,
+    Priority: props.priority,
+    Actions: [ruleAction],
+    Conditions: conditions,
   });
 
   // ECS Service
@@ -216,7 +210,7 @@ export const FargateAlb = Composite<FargateAlbProps>((props) => {
 
   const service = new EcsService(
     {
-      Cluster: cluster.Arn,
+      Cluster: props.clusterArn,
       TaskDefinition: taskDef.TaskDefinitionArn,
       LaunchType: "FARGATE",
       DesiredCount: desiredCount,
@@ -224,20 +218,16 @@ export const FargateAlb = Composite<FargateAlbProps>((props) => {
       LoadBalancers: [serviceLoadBalancer],
       NetworkConfiguration: networkConfig,
     },
-    { DependsOn: [listener] },
+    { DependsOn: [rule] },
   );
 
   return {
-    cluster,
-    executionRole,
     taskRole,
     logGroup,
     taskDef,
-    albSg,
     taskSg,
-    alb,
     targetGroup,
-    listener,
+    rule,
     service,
   };
-}, "FargateAlb");
+}, "FargateService");

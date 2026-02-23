@@ -405,6 +405,8 @@ The AWS lexicon ships ready-to-use composites for common patterns. Import them f
 | \`LambdaSns\` | \`topic\`, \`role\`, \`func\`, \`subscription\`, \`permission\` | SNS Topic + Lambda via Subscription. Auto-attaches invoke permission for SNS. |
 | \`VpcDefault\` | \`vpc\`, \`igw\`, \`igwAttachment\`, \`publicSubnet1\`, \`publicSubnet2\`, \`privateSubnet1\`, \`privateSubnet2\`, \`publicRouteTable\`, \`publicRoute\`, \`publicRta1\`, \`publicRta2\`, \`privateRouteTable\`, \`privateRta1\`, \`privateRta2\`, \`natEip\`, \`natGateway\`, \`privateRoute\` | Production-ready VPC: 2 public + 2 private subnets across 2 AZs, internet gateway, single NAT gateway. |
 | \`FargateAlb\` | \`cluster\`, \`executionRole\`, \`taskRole\`, \`logGroup\`, \`taskDef\`, \`albSg\`, \`taskSg\`, \`alb\`, \`targetGroup\`, \`listener\`, \`service\` | Fargate service behind an ALB. Accepts VPC outputs as props. |
+| \`AlbShared\` | \`cluster\`, \`executionRole\`, \`albSg\`, \`alb\`, \`listener\` | Shared ALB infrastructure (ECS cluster, execution role, ALB, listener with 404 default). Created once, consumed by multiple \`FargateService\` instances. |
+| \`FargateService\` | \`taskRole\`, \`logGroup\`, \`taskDef\`, \`taskSg\`, \`targetGroup\`, \`rule\`, \`service\` | Per-service Fargate resources with listener rule routing. Wire to an \`AlbShared\` instance for multi-service ALB patterns. |
 
 All built-in composites accept \`ManagedPolicyArns\` and \`Policies\` for adding IAM permissions to the auto-created role.
 
@@ -887,6 +889,16 @@ Produces 17 CloudFormation resources: VPC, Internet Gateway, 2 public + 2 privat
 {{file:fargate-alb/src/service.ts}}
 
 Produces 28 CloudFormation resources: 17 from VpcDefault + 11 from FargateAlb (ECS Cluster, execution/task roles, log group, task definition, security groups, ALB, target group, listener, and ECS service).
+
+## Multi-Service ALB
+
+\`examples/multi-service-alb/\` — multiple Fargate services behind a single shared ALB using \`AlbShared\` + \`FargateService\`.
+
+{{file:multi-service-alb/src/shared.ts}}
+
+{{file:multi-service-alb/src/services.ts}}
+
+Produces 36 CloudFormation resources: 17 from VpcDefault + 5 from AlbShared + 7×2 from FargateService (task role, log group, task definition, task security group, target group, listener rule, and ECS service per service).
 
 ## Lambda API (Custom Composite)
 

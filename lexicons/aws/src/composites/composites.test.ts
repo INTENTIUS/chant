@@ -11,6 +11,8 @@ import { LambdaS3 } from "./lambda-s3";
 import { LambdaSns } from "./lambda-sns";
 import { VpcDefault } from "./vpc-default";
 import { FargateAlb } from "./fargate-alb";
+import { AlbShared } from "./alb-shared";
+import { FargateService } from "./fargate-service";
 
 const baseProps = {
   name: "TestFunc",
@@ -438,5 +440,196 @@ describe("FargateAlb", () => {
     const ingress = (sgProps.SecurityGroupIngress[0] as any).props;
     expect(ingress.FromPort).toBe(8080);
     expect(ingress.ToPort).toBe(8080);
+  });
+});
+
+describe("AlbShared", () => {
+  const sharedProps = {
+    vpcId: "vpc-123",
+    publicSubnetIds: ["subnet-pub1", "subnet-pub2"],
+  };
+
+  test("returns 5 members with correct names", () => {
+    const instance = AlbShared(sharedProps);
+    const names = Object.keys(instance.members);
+    expect(names).toEqual(["cluster", "executionRole", "albSg", "alb", "listener"]);
+  });
+
+  test("expandComposite produces correct logical names", () => {
+    const expanded = expandComposite("shared", AlbShared(sharedProps));
+    expect(expanded.has("sharedCluster")).toBe(true);
+    expect(expanded.has("sharedExecutionRole")).toBe(true);
+    expect(expanded.has("sharedAlbSg")).toBe(true);
+    expect(expanded.has("sharedAlb")).toBe(true);
+    expect(expanded.has("sharedListener")).toBe(true);
+    expect(expanded.size).toBe(5);
+  });
+
+  test("listener default action is fixed-response 404", () => {
+    const instance = AlbShared(sharedProps);
+    const listenerProps = (instance.listener as any).props;
+    expect(listenerProps.DefaultActions).toHaveLength(1);
+    const action = (listenerProps.DefaultActions[0] as any).props;
+    expect(action.Type).toBe("fixed-response");
+    const fixedResponse = (action.FixedResponseConfig as any).props;
+    expect(fixedResponse.StatusCode).toBe("404");
+    expect(fixedResponse.ContentType).toBe("text/plain");
+    expect(fixedResponse.MessageBody).toBe("Not Found");
+  });
+
+  test("ALB SG allows ingress on listener port (default 80)", () => {
+    const instance = AlbShared(sharedProps);
+    const sgProps = (instance.albSg as any).props;
+    expect(sgProps.SecurityGroupIngress).toHaveLength(1);
+    const ingress = (sgProps.SecurityGroupIngress[0] as any).props;
+    expect(ingress.FromPort).toBe(80);
+    expect(ingress.ToPort).toBe(80);
+    expect(ingress.CidrIp).toBe("0.0.0.0/0");
+  });
+
+  test("custom listener port is applied", () => {
+    const instance = AlbShared({ ...sharedProps, listenerPort: 443 });
+    const sgProps = (instance.albSg as any).props;
+    const ingress = (sgProps.SecurityGroupIngress[0] as any).props;
+    expect(ingress.FromPort).toBe(443);
+    expect(ingress.ToPort).toBe(443);
+  });
+
+  test("execution role has ECR + Logs policies", () => {
+    const instance = AlbShared(sharedProps);
+    const roleProps = (instance.executionRole as any).props;
+    expect(roleProps.Policies).toHaveLength(1);
+    const policyDoc = (roleProps.Policies[0] as any).props.PolicyDocument;
+    expect(policyDoc.Statement).toHaveLength(2);
+    expect(policyDoc.Statement[0].Action).toContain("ecr:GetAuthorizationToken");
+    expect(policyDoc.Statement[1].Action).toContain("logs:CreateLogStream");
+  });
+
+  test("HTTPS adds certificate to listener", () => {
+    const instance = AlbShared({
+      ...sharedProps,
+      protocol: "HTTPS",
+      certificateArn: "arn:aws:acm:us-east-1:123:certificate/abc",
+    });
+    const listenerProps = (instance.listener as any).props;
+    expect(listenerProps.Protocol).toBe("HTTPS");
+    expect(listenerProps.Certificates).toHaveLength(1);
+    const cert = (listenerProps.Certificates[0] as any).props;
+    expect(cert.CertificateArn).toBe("arn:aws:acm:us-east-1:123:certificate/abc");
+  });
+});
+
+describe("FargateService", () => {
+  const serviceProps = {
+    clusterArn: "arn:aws:ecs:us-east-1:123:cluster/my-cluster",
+    listenerArn: "arn:aws:elasticloadbalancing:us-east-1:123:listener/app/my-alb/abc/def",
+    albSecurityGroupId: "sg-alb123",
+    executionRoleArn: "arn:aws:iam::123:role/execution-role",
+    image: "nginx:latest",
+    priority: 100,
+    pathPatterns: ["/api/*"],
+    vpcId: "vpc-123",
+    privateSubnetIds: ["subnet-priv1", "subnet-priv2"],
+  };
+
+  test("returns 7 members with correct names", () => {
+    const instance = FargateService(serviceProps);
+    const names = Object.keys(instance.members);
+    expect(names).toEqual(["taskRole", "logGroup", "taskDef", "taskSg", "targetGroup", "rule", "service"]);
+  });
+
+  test("expandComposite produces correct logical names", () => {
+    const expanded = expandComposite("api", FargateService(serviceProps));
+    expect(expanded.has("apiTaskRole")).toBe(true);
+    expect(expanded.has("apiLogGroup")).toBe(true);
+    expect(expanded.has("apiTaskDef")).toBe(true);
+    expect(expanded.has("apiTaskSg")).toBe(true);
+    expect(expanded.has("apiTargetGroup")).toBe(true);
+    expect(expanded.has("apiRule")).toBe(true);
+    expect(expanded.has("apiService")).toBe(true);
+    expect(expanded.size).toBe(7);
+  });
+
+  test("ListenerRule has correct priority and path conditions", () => {
+    const instance = FargateService(serviceProps);
+    const ruleProps = (instance.rule as any).props;
+    expect(ruleProps.Priority).toBe(100);
+    expect(ruleProps.Conditions).toHaveLength(1);
+    const condition = (ruleProps.Conditions[0] as any).props;
+    expect(condition.Field).toBe("path-pattern");
+    const pathConfig = (condition.PathPatternConfig as any).props;
+    expect(pathConfig.Values).toEqual(["/api/*"]);
+  });
+
+  test("host-header routing produces HostHeaderConfig condition", () => {
+    const instance = FargateService({
+      ...serviceProps,
+      pathPatterns: undefined,
+      hostHeaders: ["api.example.com"],
+    });
+    const ruleProps = (instance.rule as any).props;
+    expect(ruleProps.Conditions).toHaveLength(1);
+    const condition = (ruleProps.Conditions[0] as any).props;
+    expect(condition.Field).toBe("host-header");
+    const hostConfig = (condition.HostHeaderConfig as any).props;
+    expect(hostConfig.Values).toEqual(["api.example.com"]);
+  });
+
+  test("combined path + host conditions both present", () => {
+    const instance = FargateService({
+      ...serviceProps,
+      hostHeaders: ["api.example.com"],
+    });
+    const ruleProps = (instance.rule as any).props;
+    expect(ruleProps.Conditions).toHaveLength(2);
+    const fields = ruleProps.Conditions.map((c: any) => c.props.Field);
+    expect(fields).toContain("path-pattern");
+    expect(fields).toContain("host-header");
+  });
+
+  test("task SG references ALB SG via SourceSecurityGroupId", () => {
+    const instance = FargateService(serviceProps);
+    const sgProps = (instance.taskSg as any).props;
+    const ingress = (sgProps.SecurityGroupIngress[0] as any).props;
+    expect(ingress.SourceSecurityGroupId).toBe("sg-alb123");
+  });
+
+  test("service has DependsOn on rule", () => {
+    const instance = FargateService(serviceProps);
+    const serviceAttributes = (instance.service as any).attributes;
+    expect(serviceAttributes.DependsOn).toBeDefined();
+    expect(serviceAttributes.DependsOn).toContain(instance.rule);
+  });
+
+  test("throws if neither pathPatterns nor hostHeaders provided", () => {
+    expect(() =>
+      FargateService({
+        ...serviceProps,
+        pathPatterns: undefined,
+      }),
+    ).toThrow("FargateService requires at least one of pathPatterns or hostHeaders");
+  });
+
+  test("throws if priority is out of range", () => {
+    expect(() =>
+      FargateService({ ...serviceProps, priority: 0 }),
+    ).toThrow("FargateService priority must be between 1 and 50000");
+    expect(() =>
+      FargateService({ ...serviceProps, priority: 50001 }),
+    ).toThrow("FargateService priority must be between 1 and 50000");
+  });
+
+  test("default values (cpu, memory, containerPort, desiredCount)", () => {
+    const instance = FargateService(serviceProps);
+    const tdProps = (instance.taskDef as any).props;
+    expect(tdProps.Cpu).toBe("256");
+    expect(tdProps.Memory).toBe("512");
+
+    const containerDef = (tdProps.ContainerDefinitions[0] as any).props;
+    const portMapping = (containerDef.PortMappings[0] as any).props;
+    expect(portMapping.ContainerPort).toBe(80);
+
+    const svcProps = (instance.service as any).props;
+    expect(svcProps.DesiredCount).toBe(2);
   });
 });

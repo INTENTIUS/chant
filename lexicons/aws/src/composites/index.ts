@@ -18,3 +18,7 @@ export { VpcDefault } from "./vpc-default";
 export type { VpcDefaultProps } from "./vpc-default";
 export { FargateAlb } from "./fargate-alb";
 export type { FargateAlbProps } from "./fargate-alb";
+export { AlbShared } from "./alb-shared";
+export type { AlbSharedProps } from "./alb-shared";
+export { FargateService } from "./fargate-service";
+export type { FargateServiceProps } from "./fargate-service";
