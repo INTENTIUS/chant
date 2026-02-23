@@ -27,6 +27,7 @@ export function parseArgs(args: string[]): ParsedArgs {
     force: undefined,
     fix: false,
     lexicon: undefined,
+    template: undefined,
     watch: false,
     verbose: false,
     help: false,
@@ -44,6 +45,8 @@ export function parseArgs(args: string[]): ParsedArgs {
       result.format = args[++i];
     } else if (arg === "--lexicon" || arg === "-d") {
       result.lexicon = args[++i];
+    } else if (arg === "--template" || arg === "-t") {
+      result.template = args[++i];
     } else if (arg === "--force") {
       result.force = true;
     } else if (arg === "--fix") {
@@ -107,6 +110,7 @@ Options:
                         - list: text (default) or json
                         - lint: stylish (default), json, or sarif
   -d, --lexicon <name>  Build only the specified lexicon (e.g. aws, gitlab)
+  -t, --template <name> Init template (e.g. node-pipeline, docker-build)
   --fix                 Auto-fix fixable issues (lint command)
   --force               Force overwrite existing files (import command)
   -w, --watch           Watch for changes and rebuild/re-lint (build, lint)

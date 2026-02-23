@@ -54,8 +54,8 @@ export const awsPlugin: LexiconPlugin = {
     ];
   },
 
-  initTemplates(): Record<string, string> {
-    return {
+  initTemplates() {
+    return { src: {
       "config.ts": `/**
  * Shared bucket configuration — encryption, versioning, public access
  */
@@ -121,7 +121,7 @@ export const logsBucket = new Bucket({
   PublicAccessBlockConfiguration: publicAccessBlock,
 });
 `,
-    };
+    } };
   },
 
   detectTemplate(data: unknown): boolean {

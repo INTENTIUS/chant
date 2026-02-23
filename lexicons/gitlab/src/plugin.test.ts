@@ -97,17 +97,37 @@ describe("gitlabPlugin", () => {
   // Init templates
   // -----------------------------------------------------------------------
 
-  test("returns init templates", () => {
-    const templates = gitlabPlugin.initTemplates!();
-    expect(templates).toBeDefined();
-    expect(templates["config.ts"]).toBeDefined();
-    expect(templates["test.ts"]).toBeDefined();
+  test("returns default init templates with src files", () => {
+    const result = gitlabPlugin.initTemplates!();
+    expect(result.src).toBeDefined();
+    expect(result.src["config.ts"]).toBeDefined();
+    expect(result.src["pipeline.ts"]).toBeDefined();
   });
 
-  test("init templates import from gitlab lexicon", () => {
-    const templates = gitlabPlugin.initTemplates!();
-    expect(templates["config.ts"]).toContain("@intentius/chant-lexicon-gitlab");
-    expect(templates["test.ts"]).toContain("@intentius/chant-lexicon-gitlab");
+  test("default init templates import from gitlab lexicon", () => {
+    const result = gitlabPlugin.initTemplates!();
+    expect(result.src["config.ts"]).toContain("@intentius/chant-lexicon-gitlab");
+    expect(result.src["pipeline.ts"]).toContain("@intentius/chant-lexicon-gitlab");
+  });
+
+  test("node-pipeline template uses NodePipeline composite", () => {
+    const result = gitlabPlugin.initTemplates!("node-pipeline");
+    expect(result.src["pipeline.ts"]).toContain("NodePipeline");
+  });
+
+  test("python-pipeline template uses PythonPipeline composite", () => {
+    const result = gitlabPlugin.initTemplates!("python-pipeline");
+    expect(result.src["pipeline.ts"]).toContain("PythonPipeline");
+  });
+
+  test("docker-build template uses DockerBuild composite", () => {
+    const result = gitlabPlugin.initTemplates!("docker-build");
+    expect(result.src["pipeline.ts"]).toContain("DockerBuild");
+  });
+
+  test("review-app template uses ReviewApp composite", () => {
+    const result = gitlabPlugin.initTemplates!("review-app");
+    expect(result.src["pipeline.ts"]).toContain("ReviewApp");
   });
 
   // -----------------------------------------------------------------------
@@ -169,8 +189,10 @@ describe("gitlabPlugin", () => {
     expect(skills[0].content).toContain("user-invocable: true");
     expect(skills[0].content).toContain("chant build");
     expect(skills[0].content).toContain("chant lint");
-    expect(skills[0].triggers).toHaveLength(2);
-    expect(skills[0].examples).toHaveLength(1);
+    expect(skills[0].triggers).toHaveLength(5);
+    expect(skills[0].examples).toHaveLength(5);
+    expect(skills[0].preConditions).toHaveLength(3);
+    expect(skills[0].postConditions).toHaveLength(2);
   });
 
   // -----------------------------------------------------------------------

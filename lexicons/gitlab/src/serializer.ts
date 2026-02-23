@@ -40,6 +40,10 @@ function gitlabVisitor(entityNames: Map<Declarable, string>): SerializerVisitor 
 /**
  * Pre-process values to convert intrinsics to their YAML representation
  * before the walker (which would call toJSON instead of toYAML).
+ *
+ * IMPORTANT: Must not touch Declarable objects — their identity markers
+ * (DECLARABLE_MARKER, entityType, kind, props) are non-enumerable and
+ * would be stripped by Object.entries(), producing empty `{}` output.
  */
 function preprocessIntrinsics(value: unknown): unknown {
   if (value === null || value === undefined) return value;
@@ -48,6 +52,11 @@ function preprocessIntrinsics(value: unknown): unknown {
     if ("toYAML" in value && typeof value.toYAML === "function") {
       return (value as { toYAML(): unknown }).toYAML();
     }
+  }
+
+  // Leave Declarables untouched — the walker handles them
+  if (typeof value === "object" && value !== null && "entityType" in value) {
+    return value;
   }
 
   if (Array.isArray(value)) {
@@ -127,10 +136,21 @@ function emitYAML(value: unknown, indent: number): string {
         const entries = Object.entries(item as Record<string, unknown>);
         if (entries.length > 0) {
           const [firstKey, firstVal] = entries[0];
-          lines.push(`${prefix}- ${firstKey}: ${emitYAML(firstVal, indent + 2).trimStart()}`);
+          const firstEmitted = emitYAML(firstVal, indent + 2);
+          if (firstEmitted.startsWith("\n")) {
+            // Multi-line value: put on next line, indented under the key
+            lines.push(`${prefix}- ${firstKey}:${firstEmitted}`);
+          } else {
+            lines.push(`${prefix}- ${firstKey}: ${firstEmitted}`);
+          }
           for (let i = 1; i < entries.length; i++) {
             const [key, val] = entries[i];
-            lines.push(`${prefix}  ${key}: ${emitYAML(val, indent + 2).trimStart()}`);
+            const emitted = emitYAML(val, indent + 2);
+            if (emitted.startsWith("\n")) {
+              lines.push(`${prefix}  ${key}:${emitted}`);
+            } else {
+              lines.push(`${prefix}  ${key}: ${emitted}`);
+            }
           }
         }
       } else {

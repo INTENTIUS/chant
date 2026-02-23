@@ -6,7 +6,7 @@ import { gitlabSerializer } from "../../src/serializer";
 
 const srcDir = resolve(import.meta.dir, "src");
 
-describe("gitlab getting-started example", () => {
+describe("gitlab python-pipeline example", () => {
   test("passes strict lint", async () => {
     const result = await lintCommand({
       path: srcDir,
@@ -31,11 +31,10 @@ describe("gitlab getting-started example", () => {
     const output = result.outputs.get("gitlab");
     expect(output).toBeDefined();
 
-    // GitLab CI output is YAML — verify key structural elements
     expect(output).toContain("stages:");
-    expect(output).toContain("build:");
     expect(output).toContain("test:");
     expect(output).toContain("stage:");
     expect(output).toContain("script:");
+    expect(output).toContain("python");
   });
 });

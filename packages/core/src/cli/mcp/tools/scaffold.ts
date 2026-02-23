@@ -39,14 +39,14 @@ export function createScaffoldHandler(
 
     // Search plugin init templates for a pattern match
     for (const plugin of candidates) {
-      const templates = plugin.initTemplates?.();
-      if (!templates) continue;
+      const templateSet = plugin.initTemplates?.();
+      if (!templateSet) continue;
 
       // Match template filenames against the pattern (case-insensitive substring)
       const lowerPattern = pattern.toLowerCase();
       const matched: Array<{ filename: string; content: string }> = [];
 
-      for (const [filename, content] of Object.entries(templates)) {
+      for (const [filename, content] of Object.entries(templateSet.src)) {
         if (filename.toLowerCase().includes(lowerPattern)) {
           matched.push({ filename, content });
         }

@@ -98,6 +98,18 @@ export interface IntrinsicDef {
 }
 
 /**
+ * Structured init template output from a lexicon plugin.
+ */
+export interface InitTemplateSet {
+  /** Source files written to src/ */
+  src: Record<string, string>;
+  /** Application scaffold files written to project root */
+  root?: Record<string, string>;
+  /** Scripts merged into generated package.json */
+  scripts?: Record<string, string>;
+}
+
+/**
  * Plugin interface for lexicon packages.
  *
  * Required lifecycle methods enforce consistency: every lexicon must support
@@ -156,7 +168,7 @@ export interface LexiconPlugin {
   skills?(): SkillDefinition[];
 
   /** Return source file templates for `chant init` project scaffolding */
-  initTemplates?(): Record<string, string>;
+  initTemplates?(template?: string): InitTemplateSet;
 
   /** Optional initialization hook */
   init?(): void | Promise<void>;

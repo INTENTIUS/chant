@@ -37,6 +37,8 @@ export interface InitOptions {
   path?: string;
   /** Lexicon to use */
   lexicon: string;
+  /** Template name (e.g. "node-pipeline", "docker-build") */
+  template?: string;
   /** Force init even in non-empty directory */
   force?: boolean;
   /** Skip MCP config generation */
@@ -93,7 +95,7 @@ function getMcpConfigDir(ide: "claude-code" | "cursor" | "generic"): string {
 /**
  * Generate package.json content
  */
-function generatePackageJson(lexicon: string): string {
+function generatePackageJson(lexicon: string, extraScripts?: Record<string, string>): string {
   const ver = getChantVersion();
   const dependencies: Record<string, string> = {
     "@intentius/chant": `^${ver}`,
@@ -108,6 +110,7 @@ function generatePackageJson(lexicon: string): string {
       build: `chant build src --lexicon ${lexicon}`,
       lint: "chant lint src",
       dev: `chant build src --lexicon ${lexicon} --watch`,
+      ...extraScripts,
     },
     dependencies,
     devDependencies: {
@@ -314,6 +317,17 @@ export async function initCommand(options: InitOptions): Promise<InitResult> {
     mkdirSync(targetDir, { recursive: true });
   }
 
+  // Load plugin early to get template set (used for scripts + source files)
+  let templateSet: import("../../lexicon").InitTemplateSet | undefined;
+  try {
+    const plugin = await loadPlugin(options.lexicon);
+    if (plugin.initTemplates) {
+      templateSet = plugin.initTemplates(options.template);
+    }
+  } catch {
+    // Plugin not yet installed — no source files to scaffold
+  }
+
   // Create src directory
   const srcDir = join(targetDir, "src");
   if (!existsSync(srcDir)) {
@@ -323,7 +337,7 @@ export async function initCommand(options: InitOptions): Promise<InitResult> {
   // Generate package.json
   writeIfNotExists(
     join(targetDir, "package.json"),
-    generatePackageJson(options.lexicon),
+    generatePackageJson(options.lexicon, templateSet?.scripts),
     "package.json",
     createdFiles,
     warnings,
@@ -356,24 +370,29 @@ export async function initCommand(options: InitOptions): Promise<InitResult> {
     warnings,
   );
 
-  // Generate source files from plugin (if available)
-  let sourceFiles: Record<string, string> = {};
-  try {
-    const plugin = await loadPlugin(options.lexicon);
-    if (plugin.initTemplates) {
-      sourceFiles = plugin.initTemplates();
+  // Write source files from plugin template set
+  if (templateSet) {
+    for (const [filename, content] of Object.entries(templateSet.src)) {
+      writeIfNotExists(
+        join(srcDir, filename),
+        content,
+        `src/${filename}`,
+        createdFiles,
+        warnings,
+      );
     }
-  } catch {
-    // Plugin not yet installed — no source files to scaffold
-  }
-  for (const [filename, content] of Object.entries(sourceFiles)) {
-    writeIfNotExists(
-      join(srcDir, filename),
-      content,
-      `src/${filename}`,
-      createdFiles,
-      warnings,
-    );
+    // Write root scaffold files (e.g. index.js, test.js, Dockerfile)
+    if (templateSet.root) {
+      for (const [filename, content] of Object.entries(templateSet.root)) {
+        writeIfNotExists(
+          join(targetDir, filename),
+          content,
+          filename,
+          createdFiles,
+          warnings,
+        );
+      }
+    }
   }
 
   // Scaffold .chant/types/core/ with embedded type definitions

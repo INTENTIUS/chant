@@ -1,36 +1,25 @@
-import { Job } from "@intentius/chant-lexicon-gitlab";
-import {
-  nodeImage,
-  npmCache,
-  buildArtifacts,
-  testArtifacts,
-  onMergeRequest,
-  onCommit,
-  onDefaultBranch,
-  productionEnv,
-} from "./config";
+import { Job, Artifacts } from "@intentius/chant-lexicon-gitlab";
+import { defaultImage, npmCache } from "./config";
+
+export const junitReports = { junit: "coverage/junit.xml" };
+
+export const testArtifacts = new Artifacts({
+  reports: junitReports,
+  paths: ["coverage/"],
+  expire_in: "1 week",
+});
 
 export const build = new Job({
   stage: "build",
-  image: nodeImage,
+  image: defaultImage,
   cache: npmCache,
-  script: ["npm ci", "npm run build"],
-  artifacts: buildArtifacts,
+  script: ["npm install", "npm run build"],
 });
 
 export const test = new Job({
   stage: "test",
-  image: nodeImage,
+  image: defaultImage,
   cache: npmCache,
-  script: ["npm ci", "npm test"],
+  script: ["npm install", "npm test"],
   artifacts: testArtifacts,
-  rules: [onMergeRequest, onCommit],
-});
-
-export const deploy = new Job({
-  stage: "deploy",
-  image: nodeImage,
-  script: ["npm run deploy"],
-  environment: productionEnv,
-  rules: [onDefaultBranch],
 });

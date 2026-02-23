@@ -1,6 +1,7 @@
 import { describe, test, expect } from "bun:test";
 import { gitlabSerializer } from "./serializer";
 import { DECLARABLE_MARKER, type Declarable } from "@intentius/chant/declarable";
+import { createProperty, createResource } from "@intentius/chant/runtime";
 
 // ── Mock entities ──────────────────────────────────────────────────
 
@@ -255,6 +256,145 @@ describe("string quoting", () => {
 
     const output = gitlabSerializer.serialize(entities);
     expect(output).toContain("stage: test");
+  });
+});
+
+describe("runtime-style entities (non-enumerable props)", () => {
+  // Real generated entities use createResource/createProperty which define
+  // DECLARABLE_MARKER, entityType, kind, and props as non-enumerable.
+  // Object.entries() skips non-enumerable properties — the serializer must
+  // handle these correctly.
+
+  const RuntimeImage = createProperty("GitLab::CI::Image", "gitlab");
+  const RuntimeCache = createProperty("GitLab::CI::Cache", "gitlab");
+  const RuntimeArtifacts = createProperty("GitLab::CI::Artifacts", "gitlab");
+  const RuntimeRule = createProperty("GitLab::CI::Rule", "gitlab");
+  const RuntimeEnvironment = createProperty("GitLab::CI::Environment", "gitlab");
+  const RuntimeJob = createResource("GitLab::CI::Job", "gitlab", {});
+
+  test("serializes runtime-style property entities in jobs", () => {
+    const image = new RuntimeImage({ name: "node:20-alpine" });
+    const cache = new RuntimeCache({
+      key: "$CI_COMMIT_REF_SLUG",
+      paths: ["node_modules/"],
+      policy: "pull-push",
+    });
+    const artifacts = new RuntimeArtifacts({
+      paths: ["dist/"],
+      expire_in: "1 hour",
+    });
+    const job = new RuntimeJob({
+      stage: "build",
+      image,
+      cache,
+      script: ["npm ci", "npm run build"],
+      artifacts,
+    });
+
+    const entities = new Map<string, Declarable>();
+    entities.set("build", job as unknown as Declarable);
+
+    const output = gitlabSerializer.serialize(entities);
+
+    // Image must expand to its properties, not {}
+    expect(output).toContain("image:");
+    expect(output).toContain("name: node:20-alpine");
+    expect(output).not.toContain("image: {}");
+
+    // Cache must expand
+    expect(output).toContain("cache:");
+    expect(output).toContain("paths:");
+    expect(output).toContain("- node_modules/");
+    expect(output).not.toContain("cache: {}");
+
+    // Artifacts must expand
+    expect(output).toContain("artifacts:");
+    expect(output).toContain("- dist/");
+    expect(output).not.toContain("artifacts: {}");
+  });
+
+  test("serializes runtime-style rules array", () => {
+    const rule1 = new RuntimeRule({ if: "$CI_MERGE_REQUEST_IID" });
+    const rule2 = new RuntimeRule({ if: "$CI_COMMIT_BRANCH" });
+    const job = new RuntimeJob({
+      stage: "test",
+      script: ["npm test"],
+      rules: [rule1, rule2],
+    });
+
+    const entities = new Map<string, Declarable>();
+    entities.set("test", job as unknown as Declarable);
+
+    const output = gitlabSerializer.serialize(entities);
+    expect(output).toContain("rules:");
+    expect(output).toContain("if: '$CI_MERGE_REQUEST_IID'");
+    expect(output).toContain("if: '$CI_COMMIT_BRANCH'");
+  });
+
+  test("serializes runtime-style environment", () => {
+    const env = new RuntimeEnvironment({
+      name: "production",
+      url: "https://example.com",
+    });
+    const job = new RuntimeJob({
+      stage: "deploy",
+      script: ["deploy.sh"],
+      environment: env,
+    });
+
+    const entities = new Map<string, Declarable>();
+    entities.set("deploy", job as unknown as Declarable);
+
+    const output = gitlabSerializer.serialize(entities);
+    expect(output).toContain("environment:");
+    expect(output).toContain("name: production");
+    expect(output).toContain("url: https://example.com");
+    expect(output).not.toContain("environment: {}");
+  });
+});
+
+describe("array-of-objects YAML formatting", () => {
+  test("serializes cache array with nested key object correctly", () => {
+    const entities = new Map<string, Declarable>();
+    entities.set("job", new MockJob({
+      stage: "build",
+      script: ["npm ci"],
+      cache: [
+        {
+          key: { files: ["package-lock.json"] },
+          paths: [".npm/"],
+          policy: "pull-push",
+        },
+      ],
+    }));
+
+    const output = gitlabSerializer.serialize(entities);
+    // The key object should be on a new line, properly indented
+    expect(output).toContain("cache:");
+    expect(output).toContain("- key:");
+    expect(output).toContain("files:");
+    expect(output).toContain("- package-lock.json");
+    expect(output).toContain("paths:");
+    expect(output).toContain("- .npm/");
+    expect(output).toContain("policy: pull-push");
+    // The key value should NOT be inlined as "key: files:"
+    expect(output).not.toMatch(/key: files:/);
+  });
+
+  test("serializes services array with nested objects", () => {
+    const entities = new Map<string, Declarable>();
+    entities.set("job", new MockJob({
+      stage: "build",
+      script: ["docker build ."],
+      services: [
+        { name: "docker:27-dind", alias: "docker" },
+      ],
+    }));
+
+    const output = gitlabSerializer.serialize(entities);
+    expect(output).toContain("services:");
+    expect(output).toContain("- name: docker:27-dind");
+    expect(output).toContain("alias: docker");
   });
 });
 

@@ -378,10 +378,10 @@ describe("McpServer", () => {
     test("matches plugin init templates", async () => {
       const plugin = createMockPlugin({
         name: "test-lex",
-        initTemplates: () => ({
+        initTemplates: () => ({ src: {
           "config.ts": "export const config = {};",
           "data-bucket.ts": "export const dataBucket = {};",
-        }),
+        } }),
       });
 
       const s = new McpServer([plugin]);

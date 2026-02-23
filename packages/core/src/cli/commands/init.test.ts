@@ -309,5 +309,45 @@ describe("initCommand", () => {
       expect(existsSync(newDir)).toBe(true);
     });
   });
+
+  test("gitlab init creates src files", async () => {
+    await withTestDir(async (testDir) => {
+      const options: InitOptions = {
+        path: testDir,
+        lexicon: "gitlab",
+        skipMcp: true,
+        skipInstall: true,
+      };
+
+      const result = await initCommand(options);
+
+      expect(result.success).toBe(true);
+      expect(result.createdFiles).toContain("src/config.ts");
+      expect(result.createdFiles).toContain("src/pipeline.ts");
+
+      const pkg = JSON.parse(readFileSync(join(testDir, "package.json"), "utf-8"));
+      expect(pkg.scripts.build).toContain("gitlab");
+    });
+  });
+
+  test("gitlab init with --template passes template to plugin", async () => {
+    await withTestDir(async (testDir) => {
+      const options: InitOptions = {
+        path: testDir,
+        lexicon: "gitlab",
+        template: "node-pipeline",
+        skipMcp: true,
+        skipInstall: true,
+      };
+
+      const result = await initCommand(options);
+
+      expect(result.success).toBe(true);
+      expect(result.createdFiles).toContain("src/pipeline.ts");
+
+      const pipeline = readFileSync(join(testDir, "src", "pipeline.ts"), "utf-8");
+      expect(pipeline).toContain("NodePipeline");
+    });
+  });
 });
 
