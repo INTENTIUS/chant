@@ -900,6 +900,36 @@ Produces 28 CloudFormation resources: 17 from VpcDefault + 11 from FargateAlb (E
 
 Produces 36 CloudFormation resources: 17 from VpcDefault + 5 from AlbShared + 7×2 from FargateService (task role, log group, task definition, task security group, target group, listener rule, and ECS service per service).
 
+## Shared ALB (Separate Projects)
+
+\`examples/shared-alb/\`, \`examples/shared-alb-api/\`, \`examples/shared-alb-ui/\` — the same multi-service ALB pattern as above, but split across separate CloudFormation stacks for independent deployment.
+
+### Infra stack
+
+The shared-alb stack contains VPC, ALB, ECS cluster, and ECR repositories. It exports outputs that service stacks consume as parameters:
+
+{{file:shared-alb/src/alb.ts}}
+
+{{file:shared-alb/src/ecr.ts}}
+
+{{file:shared-alb/src/outputs.ts}}
+
+### Service stacks
+
+Each service stack receives shared infrastructure as parameters and deploys a single Fargate service:
+
+{{file:shared-alb-api/src/params.ts}}
+
+{{file:shared-alb-api/src/service.ts}}
+
+**Deployment pattern:**
+
+1. Deploy the infra stack first — creates VPC, ALB, ECS cluster, and ECR repos
+2. Deploy each service stack independently with \`--parameter-overrides\` mapping infra outputs to service parameters
+3. Each service gets its own \`image\` parameter for CI/CD pipelines to inject the container image URI
+
+The separate-project pattern enables independent team ownership and deployment cadences. See the [GitLab CI/CD lexicon examples](/chant/lexicons/gitlab/examples/) for pipeline definitions that automate this workflow.
+
 ## Lambda API (Custom Composite)
 
 \`examples/lambda-api/\` — demonstrates building your own composite factory with presets and a custom lint rule. This is the only example that teaches custom composite authoring.

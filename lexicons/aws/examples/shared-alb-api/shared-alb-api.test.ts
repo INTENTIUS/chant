@@ -59,5 +59,6 @@ describe("shared-alb-api example", () => {
     expect(parsed.Parameters.vpcId).toBeDefined();
     expect(parsed.Parameters.privateSubnet1).toBeDefined();
     expect(parsed.Parameters.privateSubnet2).toBeDefined();
+    expect(parsed.Parameters.image).toBeDefined();
   });
 });

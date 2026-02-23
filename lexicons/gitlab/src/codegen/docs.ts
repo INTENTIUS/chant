@@ -460,8 +460,8 @@ export default {
       {
         slug: "examples",
         title: "Examples",
-        description: "Walkthrough of the getting-started GitLab CI/CD example",
-        content: `A runnable example lives in the lexicon's \`examples/\` directory. Clone the repo and try it:
+        description: "Walkthrough of GitLab CI/CD examples — pipelines, composites, and cross-lexicon patterns",
+        content: `Runnable examples live in the lexicon's \`examples/\` directory. Clone the repo and try them:
 
 \`\`\`bash
 cd examples/getting-started
@@ -559,6 +559,111 @@ deploy:
 2. **Conditional execution** — merge request and branch rules control when jobs run
 3. **Manual deployment** — deploy requires manual trigger on the default branch
 4. **JUnit reports** — test artifacts include JUnit XML for GitLab MR display
+
+## Docker Build
+
+\`examples/docker-build/\` — builds and pushes a Docker image using the \`DockerBuild\` composite.
+
+{{file:docker-build/src/pipeline.ts}}
+
+The \`DockerBuild\` composite expands to a job with Docker-in-Docker service, registry login, build, and push steps.
+
+## Node Pipeline
+
+\`examples/node-pipeline/\` — a full Node.js CI pipeline using the \`NodePipeline\` composite.
+
+{{file:node-pipeline/src/pipeline.ts}}
+
+## Python Pipeline
+
+\`examples/python-pipeline/\` — a Python CI pipeline using the \`PythonPipeline\` composite.
+
+{{file:python-pipeline/src/pipeline.ts}}
+
+## Review App
+
+\`examples/review-app/\` — deploys a review environment per merge request using the \`ReviewApp\` composite.
+
+{{file:review-app/src/pipeline.ts}}
+
+## AWS ALB Deployment
+
+A cross-lexicon example showing how to deploy AWS CloudFormation stacks from GitLab CI. Three separate pipelines mirror the separate-project AWS ALB pattern:
+
+### Infra pipeline
+
+Deploys the shared ALB stack (VPC, ALB, ECS cluster, ECR repos):
+
+\`\`\`typescript
+import { Job, Image, Rule } from "@intentius/chant-lexicon-gitlab";
+
+const awsImage = new Image({ name: "amazon/aws-cli:latest" });
+
+export const deployInfra = new Job({
+  stage: "deploy",
+  image: awsImage,
+  script: [
+    "aws cloudformation deploy --template-file templates/template.json --stack-name shared-alb --capabilities CAPABILITY_IAM --no-fail-on-empty-changeset",
+  ],
+  rules: [
+    new Rule({ if: "$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH" }),
+  ],
+});
+\`\`\`
+
+### Service pipeline (API)
+
+Builds a Docker image, pushes to ECR, and deploys the API service stack with cross-stack parameter passing:
+
+\`\`\`typescript
+import { Job, Image, Service, Need, Rule } from "@intentius/chant-lexicon-gitlab";
+import { CI } from "@intentius/chant-lexicon-gitlab";
+
+const ECR_URL = "$AWS_ACCOUNT_ID.dkr.ecr.$AWS_DEFAULT_REGION.amazonaws.com";
+const ECR_REPO = "alb-api";
+const fullImage = \\\`\\\${ECR_URL}/\\\${ECR_REPO}\\\`;
+
+const dockerImage = new Image({ name: "docker:27-cli" });
+const dind = new Service({ name: "docker:27-dind", alias: "docker" });
+
+export const buildImage = new Job({
+  stage: "build",
+  image: dockerImage,
+  services: [dind],
+  variables: { DOCKER_TLS_CERTDIR: "/certs" },
+  before_script: [
+    "apk add --no-cache aws-cli",
+    \\\`aws ecr get-login-password | docker login --username AWS --password-stdin \\\${ECR_URL}\\\`,
+  ],
+  script: [
+    \\\`docker build -t \\\${fullImage}:\\\${CI.CommitRefSlug} .\\\`,
+    \\\`docker push \\\${fullImage}:\\\${CI.CommitRefSlug}\\\`,
+  ],
+  rules: [new Rule({ if: "$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH" })],
+});
+
+export const deployService = new Job({
+  stage: "deploy",
+  image: new Image({ name: "amazon/aws-cli:latest" }),
+  needs: [new Need({ job: "build-image" })],
+  script: [
+    // Fetch shared ALB outputs and map to CF parameter overrides
+    "OUTPUTS=$(aws cloudformation describe-stacks --stack-name shared-alb --query 'Stacks[0].Outputs' --output json)",
+    'PARAMS=$(echo "$OUTPUTS" | jq -r \\'[...output-to-param mapping...] | join(" ")\\')',
+    "aws cloudformation deploy --template-file templates/template.json --stack-name shared-alb-api --capabilities CAPABILITY_IAM --no-fail-on-empty-changeset --parameter-overrides $PARAMS",
+  ],
+  rules: [new Rule({ if: "$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH" })],
+});
+\`\`\`
+
+**Key patterns:**
+
+1. **ECR login** — uses \`aws ecr get-login-password\` instead of GitLab registry credentials
+2. **Cross-stack parameter passing** — \`describe-stacks\` fetches outputs from the infra stack, \`jq\` maps them to \`--parameter-overrides\`
+3. **Job naming** — \`buildImage\` serializes to \`build-image\` in YAML; \`Need\` references must use kebab-case
+4. **Docker-in-Docker** — \`docker:27-cli\` image with \`docker:27-dind\` service for container builds
+
+The full examples live in \`examples/gitlab-aws-alb-infra/\`, \`examples/gitlab-aws-alb-api/\`, and \`examples/gitlab-aws-alb-ui/\`.
 `,
       },
       {

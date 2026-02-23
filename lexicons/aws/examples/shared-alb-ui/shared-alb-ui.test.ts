@@ -54,5 +54,11 @@ describe("shared-alb-ui example", () => {
     expect(parsed.Parameters).toBeDefined();
     expect(parsed.Parameters.clusterArn).toBeDefined();
     expect(parsed.Parameters.listenerArn).toBeDefined();
+    expect(parsed.Parameters.albSgId).toBeDefined();
+    expect(parsed.Parameters.executionRoleArn).toBeDefined();
+    expect(parsed.Parameters.vpcId).toBeDefined();
+    expect(parsed.Parameters.privateSubnet1).toBeDefined();
+    expect(parsed.Parameters.privateSubnet2).toBeDefined();
+    expect(parsed.Parameters.image).toBeDefined();
   });
 });

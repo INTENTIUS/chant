@@ -11,6 +11,30 @@
         "typescript": "^5.9.3",
       },
     },
+    "examples/gitlab-aws-alb-api": {
+      "name": "gitlab-aws-alb-api-example",
+      "version": "0.0.1",
+      "dependencies": {
+        "@intentius/chant": "workspace:*",
+        "@intentius/chant-lexicon-gitlab": "workspace:*",
+      },
+    },
+    "examples/gitlab-aws-alb-infra": {
+      "name": "gitlab-aws-alb-infra-example",
+      "version": "0.0.1",
+      "dependencies": {
+        "@intentius/chant": "workspace:*",
+        "@intentius/chant-lexicon-gitlab": "workspace:*",
+      },
+    },
+    "examples/gitlab-aws-alb-ui": {
+      "name": "gitlab-aws-alb-ui-example",
+      "version": "0.0.1",
+      "dependencies": {
+        "@intentius/chant": "workspace:*",
+        "@intentius/chant-lexicon-gitlab": "workspace:*",
+      },
+    },
     "lexicons/aws": {
       "name": "@intentius/chant-lexicon-aws",
       "version": "0.0.10",
@@ -397,6 +421,12 @@
     "flat-cache": ["flat-cache@4.0.1", "", { "dependencies": { "flatted": "^3.2.9", "keyv": "^4.5.4" } }, "sha512-f7ccFPK3SXFHpx15UIGyRJ/FJQctuKZ0zVuN3frBo4HnK3cay9VEW0R6yPYFHC0AgqhukPzKjq22t5DmAyqGyw=="],
 
     "flatted": ["flatted@3.3.3", "", {}, "sha512-GX+ysw4PBCz0PzosHDepZGANEuFCMLrnRTiEy9McGjmkCQYwRq4A/X786G/fjM/+OjsWSU1ZrY5qyARZmO/uwg=="],
+
+    "gitlab-aws-alb-api-example": ["gitlab-aws-alb-api-example@workspace:examples/gitlab-aws-alb-api"],
+
+    "gitlab-aws-alb-infra-example": ["gitlab-aws-alb-infra-example@workspace:examples/gitlab-aws-alb-infra"],
+
+    "gitlab-aws-alb-ui-example": ["gitlab-aws-alb-ui-example@workspace:examples/gitlab-aws-alb-ui"],
 
     "gitlab-docker-build-example": ["gitlab-docker-build-example@workspace:lexicons/gitlab/examples/docker-build"],
 

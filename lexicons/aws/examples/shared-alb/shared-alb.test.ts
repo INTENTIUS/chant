@@ -39,8 +39,8 @@ describe("shared-alb example", () => {
     expect(parsed.AWSTemplateFormatVersion).toBe("2010-09-09");
     expect(parsed.Resources).toBeDefined();
 
-    // 17 VPC resources + 5 AlbShared = 22 total
-    expect(Object.keys(parsed.Resources)).toHaveLength(22);
+    // 17 VPC resources + 5 AlbShared + 2 ECR repos = 24 total
+    expect(Object.keys(parsed.Resources)).toHaveLength(24);
 
     // VPC resources
     expect(parsed.Resources.networkVpc).toBeDefined();
@@ -62,5 +62,7 @@ describe("shared-alb example", () => {
     expect(parsed.Outputs.VpcId).toBeDefined();
     expect(parsed.Outputs.PrivateSubnet1).toBeDefined();
     expect(parsed.Outputs.PrivateSubnet2).toBeDefined();
+    expect(parsed.Outputs.ApiRepoUri).toBeDefined();
+    expect(parsed.Outputs.UiRepoUri).toBeDefined();
   });
 });

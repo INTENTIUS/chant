@@ -1,6 +1,7 @@
 import { output } from "@intentius/chant-lexicon-aws";
 import { network } from "./network";
 import { shared } from "./alb";
+import * as ecr from "./ecr";
 
 // ALB outputs — service stacks reference these
 export const clusterArn = output(shared.cluster.Arn, "ClusterArn");
@@ -13,3 +14,7 @@ export const albDnsName = output(shared.alb.DNSName, "AlbDnsName");
 export const vpcId = output(network.vpc.VpcId, "VpcId");
 export const privateSubnet1 = output(network.privateSubnet1.SubnetId, "PrivateSubnet1");
 export const privateSubnet2 = output(network.privateSubnet2.SubnetId, "PrivateSubnet2");
+
+// ECR repository outputs — service pipelines use these for docker push targets
+export const apiRepoUri = output(ecr.apiRepo.RepositoryUri, "ApiRepoUri");
+export const uiRepoUri = output(ecr.uiRepo.RepositoryUri, "UiRepoUri");

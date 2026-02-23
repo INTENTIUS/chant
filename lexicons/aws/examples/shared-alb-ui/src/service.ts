@@ -1,5 +1,10 @@
-import { FargateService, Ref } from "@intentius/chant-lexicon-aws";
+import { FargateService, Ref, Parameter } from "@intentius/chant-lexicon-aws";
 import { clusterArn, listenerArn, albSgId, executionRoleArn, vpcId, privateSubnet1, privateSubnet2 } from "./params";
+
+export const image = new Parameter("String", {
+  description: "Container image URI",
+  defaultValue: "nginx:latest",
+});
 
 export const ui = FargateService({
   clusterArn: Ref(clusterArn),
@@ -8,7 +13,7 @@ export const ui = FargateService({
   executionRoleArn: Ref(executionRoleArn),
   vpcId: Ref(vpcId),
   privateSubnetIds: [Ref(privateSubnet1), Ref(privateSubnet2)],
-  image: "nginx:latest",
+  image: Ref(image),
   priority: 200,
   pathPatterns: ["/", "/*"],
 });
