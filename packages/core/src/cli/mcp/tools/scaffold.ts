@@ -17,6 +17,10 @@ export const scaffoldTool = {
         type: "string",
         description: "Lexicon to use for scaffolding (e.g. 'aws', 'gitlab'). Auto-detected if omitted.",
       },
+      template: {
+        type: "string",
+        description: "Named init template (e.g. 'node-pipeline', 'docker-build'). When provided, returns the template's source files instead of pattern-matching.",
+      },
     },
     required: ["pattern"],
   },
@@ -31,6 +35,7 @@ export function createScaffoldHandler(
   return async (params) => {
     const pattern = params.pattern as string;
     const lexiconName = params.lexicon as string | undefined;
+    const templateName = params.template as string | undefined;
 
     // Try to find a matching plugin
     const candidates = lexiconName
@@ -39,8 +44,21 @@ export function createScaffoldHandler(
 
     // Search plugin init templates for a pattern match
     for (const plugin of candidates) {
-      const templateSet = plugin.initTemplates?.();
+      const templateSet = plugin.initTemplates?.(templateName);
       if (!templateSet) continue;
+
+      // If a named template was requested, return all its source files
+      if (templateName) {
+        const files = Object.entries(templateSet.src).map(([filename, content]) => ({ filename, content }));
+        if (files.length > 0) {
+          return {
+            lexicon: plugin.name,
+            pattern,
+            template: templateName,
+            files,
+          };
+        }
+      }
 
       // Match template filenames against the pattern (case-insensitive substring)
       const lowerPattern = pattern.toLowerCase();

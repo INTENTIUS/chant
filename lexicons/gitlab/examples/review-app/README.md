@@ -14,10 +14,10 @@ review-deploy:
   environment:
     name: review/$CI_COMMIT_REF_SLUG
     url: https://$CI_ENVIRONMENT_SLUG.example.com
-    auto_stop_in: 1 week
+    auto_stop_in: '1 week'
     on_stop: review-stop
   rules:
-    - if: $CI_MERGE_REQUEST_IID
+    - if: '$CI_MERGE_REQUEST_IID'
   script:
     - echo deploy
 
@@ -27,14 +27,15 @@ review-stop:
     name: review/$CI_COMMIT_REF_SLUG
     action: stop
   rules:
-    - if: $CI_MERGE_REQUEST_IID
+    - if: '$CI_MERGE_REQUEST_IID'
       when: manual
   script:
     - echo "Stopping review app..."
 
 test:
   stage: test
-  image: node:22-alpine
+  image:
+    name: node:22-alpine
   script:
     - node test.js
 ```

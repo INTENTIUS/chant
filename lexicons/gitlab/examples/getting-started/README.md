@@ -11,20 +11,35 @@ stages:
 
 build:
   stage: build
-  image: node:20-alpine
+  image:
+    name: node:20-alpine
+  cache:
+    key: '$CI_COMMIT_REF_SLUG'
+    paths:
+      - node_modules/
+    policy: pull-push
   script:
     - npm install
     - npm run build
 
 test:
   stage: test
-  image: node:20-alpine
+  image:
+    name: node:20-alpine
+  cache:
+    key: '$CI_COMMIT_REF_SLUG'
+    paths:
+      - node_modules/
+    policy: pull-push
   script:
     - npm install
     - npm test
   artifacts:
     reports:
       junit: coverage/junit.xml
+    paths:
+      - coverage/
+    expire_in: '1 week'
 ```
 
 ## Try it on GitLab

@@ -11,19 +11,27 @@ stages:
 
 docker-build:
   stage: build
-  image: docker:27-cli
+  image:
+    name: docker:27-cli
   services:
     - name: docker:27-dind
       alias: docker
+  variables:
+    DOCKER_TLS_CERTDIR: /certs
   before_script:
     - docker login -u $CI_REGISTRY_USER -p $CI_REGISTRY_PASSWORD $CI_REGISTRY
   script:
     - docker build -t $CI_REGISTRY_IMAGE:$CI_COMMIT_REF_SLUG -f Dockerfile .
     - docker push $CI_REGISTRY_IMAGE:$CI_COMMIT_REF_SLUG
+    - >-
+      if [ "$CI_COMMIT_BRANCH" = "$CI_DEFAULT_BRANCH" ]; then docker tag
+      $CI_REGISTRY_IMAGE:$CI_COMMIT_REF_SLUG $CI_REGISTRY_IMAGE:latest &&
+      docker push $CI_REGISTRY_IMAGE:latest; fi
 
 test:
   stage: test
-  image: node:22-alpine
+  image:
+    name: node:22-alpine
   script:
     - node test.js
 ```

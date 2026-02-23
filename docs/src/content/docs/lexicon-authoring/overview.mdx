@@ -59,7 +59,7 @@ Every lexicon must implement these 4 methods to support the full generation and 
 | `detectTemplate()` | `boolean` | Detect if a template belongs to this lexicon |
 | `templateParser()` | `TemplateParser` | Parser for importing external templates |
 | `templateGenerator()` | `TypeScriptGenerator` | Generator for converting IR to TypeScript |
-| `initTemplates()` | `Record<string, string>` | Source file templates for `chant init` scaffolding |
+| `initTemplates(template?)` | `InitTemplateSet` | Source file templates for `chant init` scaffolding (accepts optional template name) |
 | `skills()` | `SkillDefinition[]` | AI assistant skills |
 | `completionProvider()` | `CompletionItem[]` | LSP completions for resource/property names |
 | `hoverProvider()` | `HoverInfo` | LSP hover information for resource types |

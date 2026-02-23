@@ -9,11 +9,16 @@ stages:
   - test
 
 default:
-  image: python:3.12-slim
+  image:
+    name: python:3.12-slim
   cache:
     - key:
-        files: [requirements.txt]
-      paths: [.pip-cache/, .venv/]
+        files:
+          - requirements.txt
+      paths:
+        - .pip-cache/
+        - .venv/
+      policy: pull-push
   before_script:
     - python -m venv .venv
     - source .venv/bin/activate
@@ -21,12 +26,15 @@ default:
 
 app-test:
   stage: test
+  variables:
+    PIP_CACHE_DIR: '$CI_PROJECT_DIR/.pip-cache'
   script:
     - source .venv/bin/activate
     - pytest --junitxml=report.xml --cov
   artifacts:
     reports:
       junit: report.xml
+    when: always
 ```
 
 ## Try it on GitLab

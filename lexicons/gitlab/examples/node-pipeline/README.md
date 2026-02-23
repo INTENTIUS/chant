@@ -10,11 +10,15 @@ stages:
   - test
 
 default:
-  image: node:22-alpine
+  image:
+    name: node:22-alpine
   cache:
     - key:
-        files: [package-lock.json]
-      paths: [.npm/]
+        files:
+          - package-lock.json
+      paths:
+        - .npm/
+      policy: pull-push
 
 app-build:
   stage: build
@@ -22,7 +26,11 @@ app-build:
     - npm install
     - npm run build
   artifacts:
-    paths: [dist/]
+    paths:
+      - dist/
+    expire_in: '1 hour'
+  variables:
+    npm_config_cache: '$CI_PROJECT_DIR/.npm/'
 
 app-test:
   stage: test
@@ -32,6 +40,9 @@ app-test:
   artifacts:
     reports:
       junit: junit.xml
+    when: always
+  variables:
+    npm_config_cache: '$CI_PROJECT_DIR/.npm/'
 ```
 
 ## Try it on GitLab

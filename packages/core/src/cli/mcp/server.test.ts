@@ -397,6 +397,32 @@ describe("McpServer", () => {
       expect(parsed.files.length).toBe(1);
       expect(parsed.files[0].filename).toBe("data-bucket.ts");
     });
+
+    test("passes template name to initTemplates", async () => {
+      const plugin = createMockPlugin({
+        name: "test-lex",
+        initTemplates: (template?: string) => {
+          if (template === "special") {
+            return { src: { "special.ts": "export const special = {};" } };
+          }
+          return { src: { "default.ts": "export const def = {};" } };
+        },
+      });
+
+      const s = new McpServer([plugin]);
+      const response = await s.handleRequest({
+        jsonrpc: "2.0",
+        id: 1,
+        method: "tools/call",
+        params: { name: "scaffold", arguments: { pattern: "special", lexicon: "test-lex", template: "special" } },
+      });
+
+      const parsed = JSON.parse((response.result as { content: Array<{ text: string }> }).content[0].text);
+      expect(parsed.lexicon).toBe("test-lex");
+      expect(parsed.template).toBe("special");
+      expect(parsed.files.length).toBe(1);
+      expect(parsed.files[0].filename).toBe("special.ts");
+    });
   });
 
   // -----------------------------------------------------------------------
