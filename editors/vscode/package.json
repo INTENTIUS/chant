@@ -2,7 +2,7 @@
   "name": "chant",
   "displayName": "Chant",
   "description": "Infrastructure-as-code toolkit — LSP integration for chant projects",
-  "version": "0.0.2",
+  "version": "0.0.3",
   "publisher": "intentius",
   "license": "MIT",
   "engines": {
