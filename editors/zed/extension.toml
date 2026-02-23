@@ -1,0 +1,11 @@
+id = "chant"
+name = "Chant"
+description = "Infrastructure-as-code toolkit — LSP integration for chant projects"
+version = "0.0.1"
+schema_version = 1
+authors = ["Intentius <hello@intentius.com>"]
+repository = "https://github.com/intentius/chant"
+
+[language_servers.chant-lsp]
+name = "Chant"
+languages = ["TypeScript"]

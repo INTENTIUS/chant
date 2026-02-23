@@ -52,3 +52,15 @@ docs-build:
 # Build and serve unified docs locally
 docs-serve: docs-build
     bunx serve .docs-dist
+
+# Build VS Code extension
+ext-vscode-build:
+    cd editors/vscode && npm install && npm run build
+
+# Package VS Code extension (.vsix)
+ext-vscode-package:
+    cd editors/vscode && npm install && npm run build && npm run package
+
+# Build Zed extension (WASM)
+ext-zed-build:
+    cd editors/zed && cargo build --release --target wasm32-wasip1
