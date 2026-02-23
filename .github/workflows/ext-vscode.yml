@@ -51,6 +51,6 @@ jobs:
 
       - name: Publish to Open VSX Registry
         working-directory: editors/vscode
-        run: npx ovsx publish --no-dependencies
+        run: npx ovsx publish --no-dependencies -p "$OVSX_PAT"
         env:
           OVSX_PAT: ${{ secrets.OVSX_PAT }}
