@@ -578,6 +578,104 @@ const { daemonSet, serviceAccount, clusterRole, clusterRoleBinding, configMap } 
   namespace: "monitoring",
 });
 \`\`\`
+
+## Deploying composites
+
+Composites produce plain prop objects. To deploy them, write each resource to a \`.k8s.ts\` file then use the standard chant build → kubectl apply workflow.
+
+### Step 1 — Write a chant source file
+
+\`\`\`typescript
+// src/infra.k8s.ts
+import { AutoscaledService, NamespaceEnv, WorkerPool, NodeAgent } from "@intentius/chant-lexicon-k8s";
+
+// Namespace with guardrails
+const nsEnv = NamespaceEnv({
+  name: "production",
+  cpuQuota: "16",
+  memoryQuota: "32Gi",
+  defaultCpuRequest: "100m",
+  defaultMemoryRequest: "128Mi",
+  defaultCpuLimit: "1",
+  defaultMemoryLimit: "512Mi",
+});
+export const { namespace, resourceQuota, limitRange, networkPolicy } = nsEnv;
+
+// API with autoscaling
+const api = AutoscaledService({
+  name: "api",
+  image: "api:1.0",
+  port: 8080,
+  maxReplicas: 10,
+  cpuRequest: "200m",
+  memoryRequest: "256Mi",
+  topologySpread: true,
+  namespace: "production",
+});
+export const { deployment, service, hpa, pdb } = api;
+
+// Background workers
+const workers = WorkerPool({
+  name: "email-worker",
+  image: "worker:1.0",
+  command: ["bundle", "exec", "sidekiq"],
+  config: { REDIS_URL: "redis://redis:6379" },
+  autoscaling: { minReplicas: 2, maxReplicas: 20 },
+  namespace: "production",
+});
+export const workerDeployment = workers.deployment;
+export const workerSA = workers.serviceAccount;
+export const workerRole = workers.role;
+export const workerRoleBinding = workers.roleBinding;
+export const workerConfig = workers.configMap;
+export const workerHPA = workers.hpa;
+\`\`\`
+
+### Step 2 — Build and validate
+
+\`\`\`bash
+# Build YAML manifests
+chant build src/ --output manifests.yaml
+
+# Lint for common issues
+chant lint src/
+
+# Server-side dry run (validates with admission webhooks)
+kubectl apply -f manifests.yaml --dry-run=server
+\`\`\`
+
+### Step 3 — Deploy
+
+\`\`\`bash
+# Diff before applying
+kubectl diff -f manifests.yaml
+
+# Apply
+kubectl apply -f manifests.yaml
+
+# Verify rollout
+kubectl rollout status deployment/api -n production
+kubectl get pods,svc,hpa -n production
+\`\`\`
+
+### k3d local validation
+
+For local testing before pushing to a real cluster:
+
+\`\`\`bash
+cd lexicons/k8s
+
+# Create a k3d cluster, apply composites, verify, and delete
+just k3d-validate-composites
+
+# Keep the cluster for manual inspection
+just k3d-validate-composites --keep-cluster
+
+# Reuse an existing cluster
+just k3d-validate-composites --reuse-cluster --verbose
+\`\`\`
+
+The \`/chant-k8s\` AI skill covers the full lifecycle — scaffold, build, lint, apply, rollback, and troubleshooting.
 `,
       },
       {
