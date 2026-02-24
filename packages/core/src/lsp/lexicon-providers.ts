@@ -108,6 +108,7 @@ export function lexiconCompletions(
   }
 
   // Inside constructor props — look for `new ClassName({` pattern
+  if (!ctx.content) return [];
   const constructorMatch = ctx.content.slice(0, ctx.content.split("\n").slice(0, ctx.position.line + 1).join("\n").length)
     .match(/\bnew\s+(\w+)\s*\(\s*(?:["'][^"']*["']\s*,\s*)?{[^}]*$/s);
 

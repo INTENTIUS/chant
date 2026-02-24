@@ -14,20 +14,17 @@ describe("LSP completions", () => {
     async () => {
       const { k8sCompletions } = await import("./completions");
       const result = k8sCompletions({
-        prefix: "new D",
-        line: "const x = new D",
+        uri: "file:///test.ts",
+        content: "const x = new D",
+        linePrefix: "const x = new D",
+        wordAtCursor: "D",
         position: { line: 0, character: 15 },
-        triggerKind: 1,
       } as any);
 
       expect(result).toBeDefined();
-      if (Array.isArray(result)) {
-        // Should include Deployment, DaemonSet
-        const labels = result.map((c: any) => c.label ?? c);
-        expect(labels.some((l: string) => l.includes("Deployment"))).toBe(
-          true,
-        );
-      }
+      expect(Array.isArray(result)).toBe(true);
+      const labels = result.map((c: any) => c.label ?? c);
+      expect(labels.some((l: string) => l.includes("Deployment"))).toBe(true);
     },
   );
 
@@ -36,34 +33,32 @@ describe("LSP completions", () => {
     async () => {
       const { k8sCompletions } = await import("./completions");
       const result = k8sCompletions({
-        prefix: "",
-        line: "const x = 42",
+        uri: "file:///test.ts",
+        content: "const x = 42",
+        linePrefix: "const x = 42",
+        wordAtCursor: "",
         position: { line: 0, character: 12 },
-        triggerKind: 1,
       } as any);
 
-      // Should return empty or undefined for non-constructor context
-      if (Array.isArray(result)) {
-        // It may return all completions when prefix is empty — that's OK
-        expect(result).toBeDefined();
-      }
+      expect(Array.isArray(result)).toBe(true);
+      expect(result.length).toBe(0);
     },
   );
 
   test.skipIf(!hasGenerated)("filters by prefix correctly", async () => {
     const { k8sCompletions } = await import("./completions");
     const result = k8sCompletions({
-      prefix: "new StatefulS",
-      line: "const x = new StatefulS",
+      uri: "file:///test.ts",
+      content: "const x = new StatefulS",
+      linePrefix: "const x = new StatefulS",
+      wordAtCursor: "StatefulS",
       position: { line: 0, character: 23 },
-      triggerKind: 1,
     } as any);
 
-    if (Array.isArray(result) && result.length > 0) {
+    expect(Array.isArray(result)).toBe(true);
+    if (result.length > 0) {
       const labels = result.map((c: any) => c.label ?? c);
-      expect(labels.some((l: string) => l.includes("StatefulSet"))).toBe(
-        true,
-      );
+      expect(labels.some((l: string) => l.includes("StatefulSet"))).toBe(true);
     }
   });
 });
