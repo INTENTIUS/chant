@@ -20,3 +20,7 @@ docs-build:
 
 # Package the lexicon (generate)
 package: generate
+
+# Run import samples roundtrip test
+import-samples *FLAGS:
+    bash scripts/import-k8s-samples.sh {{FLAGS}}

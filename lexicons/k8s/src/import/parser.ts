@@ -141,7 +141,7 @@ export class K8sParser implements TemplateParser {
     const documents = content
       .split(/^---\s*$/m)
       .map((d) => d.trim())
-      .filter((d) => d.length > 0 && !d.startsWith("#"));
+      .filter((d) => d.length > 0 && !/^[\s#]*$/.test(d.replace(/#[^\n]*/g, "")));
 
     for (const docStr of documents) {
       const doc = parseYAML(docStr);

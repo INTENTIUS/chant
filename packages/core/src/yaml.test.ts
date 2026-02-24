@@ -139,6 +139,20 @@ describe("parseYAML", () => {
     expect(result).toEqual({ a: "true", b: "42" });
   });
 
+  test("handles CRLF line endings", () => {
+    const result = parseYAML("apiVersion: v1\r\nkind: Pod\r\nmetadata:\r\n  name: test\r\n");
+    expect(result).toEqual({
+      apiVersion: "v1",
+      kind: "Pod",
+      metadata: { name: "test" },
+    });
+  });
+
+  test("handles bare CR line endings", () => {
+    const result = parseYAML("a: 1\rb: 2\r");
+    expect(result).toEqual({ a: 1, b: 2 });
+  });
+
   test("array of objects", () => {
     const result = parseYAML("items:\n  - name: x\n    value: 1\n  - name: y\n    value: 2");
     expect(result).toEqual({

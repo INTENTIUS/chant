@@ -144,7 +144,7 @@ export function parseYAML(content: string): Record<string, unknown> {
     // Fall through to YAML parsing
   }
 
-  const lines = content.split("\n");
+  const lines = content.replace(/\r\n?/g, "\n").split("\n");
   return parseYAMLLines(lines, 0, 0).value as Record<string, unknown>;
 }
 
