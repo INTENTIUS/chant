@@ -18,7 +18,7 @@ const REQUIRED_NAMES = [
   // Apps
   "Deployment", "StatefulSet", "DaemonSet", "ReplicaSet",
   // Batch
-  "K8sJob", "CronJob",
+  "Job", "CronJob",
   // Networking
   "Ingress", "NetworkPolicy",
   // RBAC

@@ -21,6 +21,7 @@ jobs:
         run: |
           bun run --cwd lexicons/aws prepack
           bun run --cwd lexicons/gitlab prepack
+          bun run --cwd lexicons/k8s prepack
 
       - name: Lint example project
         run: bun run packages/core/src/cli/main.ts lint lexicons/aws/examples/lambda-function/src --format sarif > results.sarif
@@ -48,6 +49,7 @@ jobs:
         run: |
           bun run --cwd lexicons/aws prepack
           bun run --cwd lexicons/gitlab prepack
+          bun run --cwd lexicons/k8s prepack
 
       - name: Run tests
         run: bun test
@@ -67,3 +69,6 @@ jobs:
 
       - name: Generate and validate GitLab lexicon
         run: bun run --cwd lexicons/gitlab prepack
+
+      - name: Generate and validate K8s lexicon
+        run: bun run --cwd lexicons/k8s prepack

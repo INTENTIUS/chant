@@ -145,7 +145,7 @@ const PROPERTY_TYPE_DEFS: Record<string, { typeName: string; description: string
   "io.k8s.api.rbac.v1.RoleRef": { typeName: "K8s::Rbac::RoleRef", description: "RBAC role reference" },
   "io.k8s.api.rbac.v1.Subject": { typeName: "K8s::Rbac::Subject", description: "RBAC subject" },
   "io.k8s.api.autoscaling.v2.MetricSpec": { typeName: "K8s::Autoscaling::MetricSpec", description: "HPA metric specification" },
-  "io.k8s.api.autoscaling.v2.HorizontalPodAutoscalerBehavior": { typeName: "K8s::Autoscaling::HPABehavior", description: "HPA scaling behavior" },
+  "io.k8s.api.autoscaling.v2.HorizontalPodAutoscalerBehavior": { typeName: "K8s::Autoscaling::HorizontalPodAutoscalerBehavior", description: "HPA scaling behavior" },
   "io.k8s.api.policy.v1.PodDisruptionBudgetSpec": { typeName: "K8s::Policy::PodDisruptionBudgetSpec", description: "PDB specification" },
   "io.k8s.apimachinery.pkg.apis.meta.v1.ObjectMeta": { typeName: "K8s::Meta::ObjectMeta", description: "Standard object metadata" },
   "io.k8s.apimachinery.pkg.apis.meta.v1.LabelSelector": { typeName: "K8s::Meta::LabelSelector", description: "Label selector" },

@@ -37,7 +37,7 @@ const k8sNamingConfig: NamingConfig = {
     "K8s::Apps::ControllerRevision": "ControllerRevision",
 
     // Batch
-    "K8s::Batch::Job": "K8sJob",
+    "K8s::Batch::Job": "Job",
     "K8s::Batch::CronJob": "CronJob",
 
     // Networking
@@ -124,9 +124,9 @@ const k8sNamingConfig: NamingConfig = {
     "K8s::Networking::NetworkPolicyPort": "NetworkPolicyPort",
     "K8s::Rbac::PolicyRule": "PolicyRule",
     "K8s::Rbac::RoleRef": "RoleRef",
-    "K8s::Rbac::Subject": "RBACSubject",
+    "K8s::Rbac::Subject": "Subject",
     "K8s::Autoscaling::MetricSpec": "MetricSpec",
-    "K8s::Autoscaling::HPABehavior": "HPABehavior",
+    "K8s::Autoscaling::HorizontalPodAutoscalerBehavior": "HorizontalPodAutoscalerBehavior",
     "K8s::Policy::PodDisruptionBudgetSpec": "PodDisruptionBudgetSpec",
     "K8s::Meta::ObjectMeta": "ObjectMeta",
     "K8s::Meta::LabelSelector": "LabelSelector",
