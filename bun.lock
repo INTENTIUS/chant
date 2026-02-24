@@ -37,7 +37,7 @@
     },
     "lexicons/aws": {
       "name": "@intentius/chant-lexicon-aws",
-      "version": "0.0.10",
+      "version": "0.0.11",
       "dependencies": {
         "@intentius/chant": "workspace:*",
         "fflate": "^0.8.2",
@@ -219,7 +219,7 @@
     },
     "lexicons/gitlab": {
       "name": "@intentius/chant-lexicon-gitlab",
-      "version": "0.0.10",
+      "version": "0.0.11",
       "dependencies": {
         "@intentius/chant": "workspace:*",
       },
@@ -275,9 +275,19 @@
         "@intentius/chant-lexicon-gitlab": "workspace:*",
       },
     },
+    "lexicons/k8s": {
+      "name": "@intentius/chant-lexicon-k8s",
+      "version": "0.0.1",
+      "dependencies": {
+        "@intentius/chant": "workspace:*",
+      },
+      "devDependencies": {
+        "typescript": "^5.9.3",
+      },
+    },
     "packages/core": {
       "name": "@intentius/chant",
-      "version": "0.0.10",
+      "version": "0.0.11",
       "bin": {
         "chant": "./bin/chant",
       },
@@ -321,6 +331,8 @@
     "@intentius/chant-lexicon-aws": ["@intentius/chant-lexicon-aws@workspace:lexicons/aws"],
 
     "@intentius/chant-lexicon-gitlab": ["@intentius/chant-lexicon-gitlab@workspace:lexicons/gitlab"],
+
+    "@intentius/chant-lexicon-k8s": ["@intentius/chant-lexicon-k8s@workspace:lexicons/k8s"],
 
     "@types/estree": ["@types/estree@1.0.8", "", {}, "sha512-dWHzHa2WqEXI/O1E9OjrocMTKJl2mSrEolh1Iomrv6U+JuNwaHXsXx9bLu5gG7BUWFIN0skIQJQ/L1rIex4X6w=="],
 

@@ -5,6 +5,7 @@
     "lexicons/*",
     "lexicons/aws/examples/*",
     "lexicons/gitlab/examples/*",
+    "lexicons/k8s/examples/*",
     "examples/*"
   ],
   "scripts": {
