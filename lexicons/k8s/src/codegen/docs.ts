@@ -333,8 +333,8 @@ export default {
       },
       {
         slug: "examples",
-        title: "Examples",
-        description: "Walkthrough of Kubernetes examples — deployments, stateful apps, and composites",
+        title: "Examples: Resources",
+        description: "Walkthrough of Kubernetes resource examples — deployments, services, autoscaling",
         content: `## Basic Deployment
 
 A Deployment with Service — the most common pattern for stateless web apps:
@@ -432,7 +432,7 @@ export const pdb = new PodDisruptionBudget({
 
 ## Stateful Application
 
-Database deployment with persistent storage:
+Database deployment with persistent storage using the StatefulApp composite:
 
 \`\`\`typescript
 import { StatefulApp } from "@intentius/chant-lexicon-k8s";
@@ -446,10 +446,17 @@ const { statefulSet, service } = StatefulApp({
   env: [{ name: "POSTGRES_DB", value: "mydb" }],
 });
 \`\`\`
+`,
+      },
+      {
+        slug: "composite-examples",
+        title: "Examples: Composites",
+        description: "Composite examples — WebApp, CronWorkload, AutoscaledService, WorkerPool, NamespaceEnv, NodeAgent",
+        content: `Composites are higher-level constructs that produce multiple coordinated K8s resources from a single function call.
 
-## WebApp Composite
+## WebApp
 
-Quick deployment with the WebApp composite:
+Quick deployment with Deployment + Service + optional Ingress:
 
 \`\`\`typescript
 import { WebApp } from "@intentius/chant-lexicon-k8s";
@@ -464,9 +471,9 @@ const { deployment, service, ingress } = WebApp({
 });
 \`\`\`
 
-## CronJob with RBAC
+## CronWorkload
 
-Scheduled workload with proper permissions:
+Scheduled workload with RBAC:
 
 \`\`\`typescript
 import { CronWorkload } from "@intentius/chant-lexicon-k8s";
@@ -482,9 +489,9 @@ const { cronJob, serviceAccount, role, roleBinding } = CronWorkload({
 });
 \`\`\`
 
-## AutoscaledService Composite
+## AutoscaledService
 
-Production HTTP service with HPA and PodDisruptionBudget:
+Production HTTP service with HPA, PDB, and configurable probes:
 
 \`\`\`typescript
 import { AutoscaledService } from "@intentius/chant-lexicon-k8s";
@@ -501,11 +508,14 @@ const { deployment, service, hpa, pdb } = AutoscaledService({
   memoryRequest: "256Mi",
   cpuLimit: "1",
   memoryLimit: "1Gi",
+  livenessPath: "/healthz",
+  readinessPath: "/readyz",
+  topologySpread: true,
   namespace: "production",
 });
 \`\`\`
 
-## WorkerPool Composite
+## WorkerPool
 
 Background queue worker with RBAC and optional autoscaling:
 
@@ -521,7 +531,9 @@ const { deployment, serviceAccount, role, roleBinding, configMap, hpa } = Worker
 });
 \`\`\`
 
-## NamespaceEnv Composite
+Pass \`rbacRules: []\` to opt out of RBAC resource creation entirely.
+
+## NamespaceEnv
 
 Multi-tenant namespace with resource guardrails and network isolation:
 
@@ -542,7 +554,9 @@ const { namespace, resourceQuota, limitRange, networkPolicy } = NamespaceEnv({
 });
 \`\`\`
 
-## NodeAgent Composite
+Setting a ResourceQuota without LimitRange defaults will emit a warning — pods without explicit resource requests will fail to schedule.
+
+## NodeAgent
 
 Per-node DaemonSet agent with cluster-wide RBAC and host path mounts:
 

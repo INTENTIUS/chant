@@ -80,7 +80,7 @@ export function StatefulApp(props: StatefulAppProps): StatefulAppResult {
     metadata: {
       name,
       ...(namespace && { namespace }),
-      labels: commonLabels,
+      labels: { ...commonLabels, "app.kubernetes.io/component": "database" },
     },
     spec: {
       serviceName: name,
@@ -121,7 +121,7 @@ export function StatefulApp(props: StatefulAppProps): StatefulAppResult {
     metadata: {
       name,
       ...(namespace && { namespace }),
-      labels: commonLabels,
+      labels: { ...commonLabels, "app.kubernetes.io/component": "database" },
     },
     spec: {
       selector: { "app.kubernetes.io/name": name },

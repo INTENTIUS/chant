@@ -79,7 +79,7 @@ export function NamespaceEnv(props: NamespaceEnvProps): NamespaceEnvResult {
   const namespaceProps: Record<string, unknown> = {
     metadata: {
       name,
-      labels: commonLabels,
+      labels: { ...commonLabels, "app.kubernetes.io/component": "namespace" },
     },
   };
 
@@ -99,7 +99,7 @@ export function NamespaceEnv(props: NamespaceEnvProps): NamespaceEnvResult {
       metadata: {
         name: `${name}-quota`,
         namespace: name,
-        labels: commonLabels,
+        labels: { ...commonLabels, "app.kubernetes.io/component": "quota" },
       },
       spec: { hard },
     };
@@ -107,6 +107,13 @@ export function NamespaceEnv(props: NamespaceEnvProps): NamespaceEnvResult {
 
   // LimitRange — only if at least one default limit prop is set
   const hasLimits = defaultCpuRequest || defaultMemoryRequest || defaultCpuLimit || defaultMemoryLimit;
+
+  if (hasQuota && !hasLimits) {
+    console.warn(
+      `[NamespaceEnv] "${name}": ResourceQuota set but no LimitRange defaults. ` +
+      `Pods without explicit resource requests will fail to schedule.`
+    );
+  }
   if (hasLimits) {
     const defaultLimits: Record<string, string> = {};
     const defaultRequests: Record<string, string> = {};
@@ -124,7 +131,7 @@ export function NamespaceEnv(props: NamespaceEnvProps): NamespaceEnvResult {
       metadata: {
         name: `${name}-limits`,
         namespace: name,
-        labels: commonLabels,
+        labels: { ...commonLabels, "app.kubernetes.io/component": "limits" },
       },
       spec: {
         limits: [limit],
@@ -143,7 +150,7 @@ export function NamespaceEnv(props: NamespaceEnvProps): NamespaceEnvResult {
       metadata: {
         name: `${name}-default-deny`,
         namespace: name,
-        labels: commonLabels,
+        labels: { ...commonLabels, "app.kubernetes.io/component": "network-policy" },
       },
       spec: {
         podSelector: {},

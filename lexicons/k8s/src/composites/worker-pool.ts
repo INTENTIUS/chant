@@ -48,9 +48,9 @@ export interface WorkerPoolProps {
 
 export interface WorkerPoolResult {
   deployment: Record<string, unknown>;
-  serviceAccount: Record<string, unknown>;
-  role: Record<string, unknown>;
-  roleBinding: Record<string, unknown>;
+  serviceAccount?: Record<string, unknown>;
+  role?: Record<string, unknown>;
+  roleBinding?: Record<string, unknown>;
   configMap?: Record<string, unknown>;
   hpa?: Record<string, unknown>;
 }
@@ -79,7 +79,7 @@ export function WorkerPool(props: WorkerPoolProps): WorkerPoolResult {
     args,
     replicas = 1,
     config,
-    rbacRules = [],
+    rbacRules,
     autoscaling,
     cpuRequest = "100m",
     memoryRequest = "128Mi",
@@ -100,6 +100,12 @@ export function WorkerPool(props: WorkerPoolProps): WorkerPoolResult {
     "app.kubernetes.io/managed-by": "chant",
     ...extraLabels,
   };
+
+  // undefined → default RBAC rules; explicit [] → no RBAC resources
+  const createRbac = rbacRules === undefined || rbacRules.length > 0;
+  const effectiveRbacRules = rbacRules === undefined
+    ? [{ apiGroups: [""], resources: ["secrets", "configmaps"], verbs: ["get"] }]
+    : rbacRules;
 
   const effectiveReplicas = autoscaling ? autoscaling.minReplicas : replicas;
 
@@ -122,7 +128,7 @@ export function WorkerPool(props: WorkerPoolProps): WorkerPoolResult {
     metadata: {
       name,
       ...(namespace && { namespace }),
-      labels: commonLabels,
+      labels: { ...commonLabels, "app.kubernetes.io/component": "worker" },
     },
     spec: {
       replicas: effectiveReplicas,
@@ -130,65 +136,62 @@ export function WorkerPool(props: WorkerPoolProps): WorkerPoolResult {
       template: {
         metadata: { labels: { "app.kubernetes.io/name": name, ...extraLabels } },
         spec: {
-          serviceAccountName: saName,
+          ...(createRbac && { serviceAccountName: saName }),
           containers: [container],
         },
       },
     },
   };
 
-  const serviceAccountProps: Record<string, unknown> = {
-    metadata: {
-      name: saName,
-      ...(namespace && { namespace }),
-      labels: commonLabels,
-    },
-  };
-
-  const roleProps: Record<string, unknown> = {
-    metadata: {
-      name: roleName,
-      ...(namespace && { namespace }),
-      labels: commonLabels,
-    },
-    rules: rbacRules.length > 0
-      ? rbacRules
-      : [{ apiGroups: [""], resources: ["secrets", "configmaps"], verbs: ["get"] }],
-  };
-
-  const roleBindingProps: Record<string, unknown> = {
-    metadata: {
-      name: bindingName,
-      ...(namespace && { namespace }),
-      labels: commonLabels,
-    },
-    roleRef: {
-      apiGroup: "rbac.authorization.k8s.io",
-      kind: "Role",
-      name: roleName,
-    },
-    subjects: [
-      {
-        kind: "ServiceAccount",
-        name: saName,
-        ...(namespace && { namespace }),
-      },
-    ],
-  };
-
   const result: WorkerPoolResult = {
     deployment: deploymentProps,
-    serviceAccount: serviceAccountProps,
-    role: roleProps,
-    roleBinding: roleBindingProps,
   };
+
+  if (createRbac) {
+    result.serviceAccount = {
+      metadata: {
+        name: saName,
+        ...(namespace && { namespace }),
+        labels: { ...commonLabels, "app.kubernetes.io/component": "worker" },
+      },
+    };
+
+    result.role = {
+      metadata: {
+        name: roleName,
+        ...(namespace && { namespace }),
+        labels: { ...commonLabels, "app.kubernetes.io/component": "rbac" },
+      },
+      rules: effectiveRbacRules,
+    };
+
+    result.roleBinding = {
+      metadata: {
+        name: bindingName,
+        ...(namespace && { namespace }),
+        labels: { ...commonLabels, "app.kubernetes.io/component": "rbac" },
+      },
+      roleRef: {
+        apiGroup: "rbac.authorization.k8s.io",
+        kind: "Role",
+        name: roleName,
+      },
+      subjects: [
+        {
+          kind: "ServiceAccount",
+          name: saName,
+          ...(namespace && { namespace }),
+        },
+      ],
+    };
+  }
 
   if (config) {
     result.configMap = {
       metadata: {
         name: configMapName,
         ...(namespace && { namespace }),
-        labels: commonLabels,
+        labels: { ...commonLabels, "app.kubernetes.io/component": "config" },
       },
       data: config,
     };
@@ -200,7 +203,7 @@ export function WorkerPool(props: WorkerPoolProps): WorkerPoolResult {
       metadata: {
         name,
         ...(namespace && { namespace }),
-        labels: commonLabels,
+        labels: { ...commonLabels, "app.kubernetes.io/component": "autoscaler" },
       },
       spec: {
         scaleTargetRef: {

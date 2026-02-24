@@ -91,7 +91,7 @@ export function CronWorkload(props: CronWorkloadProps): CronWorkloadResult {
     metadata: {
       name,
       ...(namespace && { namespace }),
-      labels: commonLabels,
+      labels: { ...commonLabels, "app.kubernetes.io/component": "worker" },
     },
     spec: {
       schedule,
@@ -123,7 +123,7 @@ export function CronWorkload(props: CronWorkloadProps): CronWorkloadResult {
     metadata: {
       name: saName,
       ...(namespace && { namespace }),
-      labels: commonLabels,
+      labels: { ...commonLabels, "app.kubernetes.io/component": "worker" },
     },
   };
 
@@ -131,7 +131,7 @@ export function CronWorkload(props: CronWorkloadProps): CronWorkloadResult {
     metadata: {
       name: roleName,
       ...(namespace && { namespace }),
-      labels: commonLabels,
+      labels: { ...commonLabels, "app.kubernetes.io/component": "rbac" },
     },
     rules: rbacRules.length > 0 ? rbacRules : [
       { apiGroups: [""], resources: ["pods"], verbs: ["get", "list"] },
@@ -142,7 +142,7 @@ export function CronWorkload(props: CronWorkloadProps): CronWorkloadResult {
     metadata: {
       name: bindingName,
       ...(namespace && { namespace }),
-      labels: commonLabels,
+      labels: { ...commonLabels, "app.kubernetes.io/component": "rbac" },
     },
     roleRef: {
       apiGroup: "rbac.authorization.k8s.io",

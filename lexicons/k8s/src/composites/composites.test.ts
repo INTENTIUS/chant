@@ -1,4 +1,4 @@
-import { describe, test, expect } from "bun:test";
+import { describe, test, expect, jest } from "bun:test";
 import { WebApp } from "./web-app";
 import { StatefulApp } from "./stateful-app";
 import { CronWorkload } from "./cron-workload";
@@ -104,6 +104,17 @@ describe("WebApp", () => {
     const container = spec.template.spec.containers[0];
     expect(container.env).toEqual([{ name: "FOO", value: "bar" }]);
   });
+
+  test("component labels on each resource", () => {
+    const result = WebApp({
+      name: "app",
+      image: "app:1.0",
+      ingressHost: "app.example.com",
+    });
+    expect((result.deployment.metadata as any).labels["app.kubernetes.io/component"]).toBe("server");
+    expect((result.service.metadata as any).labels["app.kubernetes.io/component"]).toBe("server");
+    expect((result.ingress!.metadata as any).labels["app.kubernetes.io/component"]).toBe("ingress");
+  });
 });
 
 // ── StatefulApp ─────────────────────────────────────────────────────
@@ -161,6 +172,12 @@ describe("StatefulApp", () => {
     });
     const spec = result.statefulSet.spec as any;
     expect(spec.volumeClaimTemplates[0].spec.storageClassName).toBe("ssd");
+  });
+
+  test("component labels on each resource", () => {
+    const result = StatefulApp({ name: "db", image: "postgres:16" });
+    expect((result.statefulSet.metadata as any).labels["app.kubernetes.io/component"]).toBe("database");
+    expect((result.service.metadata as any).labels["app.kubernetes.io/component"]).toBe("database");
   });
 });
 
@@ -277,6 +294,18 @@ describe("CronWorkload", () => {
       const meta = resource.metadata as any;
       expect(meta.labels["app.kubernetes.io/name"]).toBe("backup");
     }
+  });
+
+  test("component labels on each resource", () => {
+    const result = CronWorkload({
+      name: "backup",
+      image: "backup:1.0",
+      schedule: "0 2 * * *",
+    });
+    expect((result.cronJob.metadata as any).labels["app.kubernetes.io/component"]).toBe("worker");
+    expect((result.serviceAccount.metadata as any).labels["app.kubernetes.io/component"]).toBe("worker");
+    expect((result.role.metadata as any).labels["app.kubernetes.io/component"]).toBe("rbac");
+    expect((result.roleBinding.metadata as any).labels["app.kubernetes.io/component"]).toBe("rbac");
   });
 });
 
@@ -410,6 +439,90 @@ describe("AutoscaledService", () => {
     const container = spec.template.spec.containers[0];
     expect(container.env).toEqual([{ name: "LOG_LEVEL", value: "debug" }]);
   });
+
+  test("component labels on each resource", () => {
+    const result = AutoscaledService(minProps);
+    expect((result.deployment.metadata as any).labels["app.kubernetes.io/component"]).toBe("server");
+    expect((result.service.metadata as any).labels["app.kubernetes.io/component"]).toBe("server");
+    expect((result.hpa.metadata as any).labels["app.kubernetes.io/component"]).toBe("autoscaler");
+    expect((result.pdb.metadata as any).labels["app.kubernetes.io/component"]).toBe("disruption-budget");
+  });
+
+  test("default probe paths are /healthz and /readyz", () => {
+    const result = AutoscaledService(minProps);
+    const spec = result.deployment.spec as any;
+    const container = spec.template.spec.containers[0];
+    expect(container.livenessProbe.httpGet.path).toBe("/healthz");
+    expect(container.readinessProbe.httpGet.path).toBe("/readyz");
+  });
+
+  test("custom probe paths override defaults", () => {
+    const result = AutoscaledService({
+      ...minProps,
+      livenessPath: "/alive",
+      readinessPath: "/ready",
+    });
+    const spec = result.deployment.spec as any;
+    const container = spec.template.spec.containers[0];
+    expect(container.livenessProbe.httpGet.path).toBe("/alive");
+    expect(container.readinessProbe.httpGet.path).toBe("/ready");
+  });
+
+  test("probe targets container port", () => {
+    const result = AutoscaledService({ ...minProps, port: 8080 });
+    const spec = result.deployment.spec as any;
+    const container = spec.template.spec.containers[0];
+    expect(container.livenessProbe.httpGet.port).toBe(8080);
+    expect(container.readinessProbe.httpGet.port).toBe(8080);
+  });
+
+  test("topologySpread not present by default", () => {
+    const result = AutoscaledService(minProps);
+    const spec = result.deployment.spec as any;
+    expect(spec.template.spec.topologySpreadConstraints).toBeUndefined();
+  });
+
+  test("topologySpread: true adds zone constraint", () => {
+    const result = AutoscaledService({ ...minProps, topologySpread: true });
+    const spec = result.deployment.spec as any;
+    const tsc = spec.template.spec.topologySpreadConstraints;
+    expect(tsc).toHaveLength(1);
+    expect(tsc[0].topologyKey).toBe("topology.kubernetes.io/zone");
+    expect(tsc[0].maxSkew).toBe(1);
+    expect(tsc[0].whenUnsatisfiable).toBe("DoNotSchedule");
+    expect(tsc[0].labelSelector.matchLabels["app.kubernetes.io/name"]).toBe("api");
+  });
+
+  test("topologySpread custom object", () => {
+    const result = AutoscaledService({
+      ...minProps,
+      topologySpread: { maxSkew: 2, topologyKey: "kubernetes.io/hostname" },
+    });
+    const spec = result.deployment.spec as any;
+    const tsc = spec.template.spec.topologySpreadConstraints;
+    expect(tsc[0].maxSkew).toBe(2);
+    expect(tsc[0].topologyKey).toBe("kubernetes.io/hostname");
+  });
+
+  test("minAvailable as string percentage", () => {
+    const result = AutoscaledService({ ...minProps, minAvailable: "50%" });
+    const pdbSpec = result.pdb.spec as any;
+    expect(pdbSpec.minAvailable).toBe("50%");
+  });
+
+  test("custom targetCPUPercent", () => {
+    const result = AutoscaledService({ ...minProps, targetCPUPercent: 85 });
+    const hpaSpec = result.hpa.spec as any;
+    expect(hpaSpec.metrics[0].resource.target.averageUtilization).toBe(85);
+  });
+
+  test("pod template labels include extra labels", () => {
+    const result = AutoscaledService({ ...minProps, labels: { team: "platform" } });
+    const spec = result.deployment.spec as any;
+    const podLabels = spec.template.metadata.labels;
+    expect(podLabels.team).toBe("platform");
+    expect(podLabels["app.kubernetes.io/name"]).toBe("api");
+  });
 });
 
 // ── WorkerPool ─────────────────────────────────────────────────────
@@ -439,9 +552,9 @@ describe("WorkerPool", () => {
 
   test("RBAC naming convention", () => {
     const result = WorkerPool(minProps);
-    const saMeta = result.serviceAccount.metadata as any;
-    const roleMeta = result.role.metadata as any;
-    const bindingMeta = result.roleBinding.metadata as any;
+    const saMeta = result.serviceAccount!.metadata as any;
+    const roleMeta = result.role!.metadata as any;
+    const bindingMeta = result.roleBinding!.metadata as any;
     expect(saMeta.name).toBe("worker-sa");
     expect(roleMeta.name).toBe("worker-role");
     expect(bindingMeta.name).toBe("worker-binding");
@@ -449,7 +562,7 @@ describe("WorkerPool", () => {
 
   test("default RBAC rules for secrets and configmaps", () => {
     const result = WorkerPool(minProps);
-    const role = result.role as any;
+    const role = result.role! as any;
     expect(role.rules[0].resources).toEqual(["secrets", "configmaps"]);
     expect(role.rules[0].verbs).toEqual(["get"]);
   });
@@ -459,7 +572,7 @@ describe("WorkerPool", () => {
       ...minProps,
       rbacRules: [{ apiGroups: ["batch"], resources: ["jobs"], verbs: ["create"] }],
     });
-    const role = result.role as any;
+    const role = result.role! as any;
     expect(role.rules[0].resources).toEqual(["jobs"]);
   });
 
@@ -522,7 +635,7 @@ describe("WorkerPool", () => {
 
   test("includes common labels on all resources", () => {
     const result = WorkerPool(minProps);
-    for (const resource of [result.deployment, result.serviceAccount, result.role, result.roleBinding]) {
+    for (const resource of [result.deployment, result.serviceAccount!, result.role!, result.roleBinding!]) {
       const meta = resource.metadata as any;
       expect(meta.labels["app.kubernetes.io/name"]).toBe("worker");
       expect(meta.labels["app.kubernetes.io/managed-by"]).toBe("chant");
@@ -531,10 +644,82 @@ describe("WorkerPool", () => {
 
   test("namespace propagated", () => {
     const result = WorkerPool({ ...minProps, namespace: "jobs" });
-    for (const resource of [result.deployment, result.serviceAccount, result.role, result.roleBinding]) {
+    for (const resource of [result.deployment, result.serviceAccount!, result.role!, result.roleBinding!]) {
       const meta = resource.metadata as any;
       expect(meta.namespace).toBe("jobs");
     }
+  });
+
+  test("rbacRules: [] produces no RBAC resources", () => {
+    const result = WorkerPool({ ...minProps, rbacRules: [] });
+    expect(result.serviceAccount).toBeUndefined();
+    expect(result.role).toBeUndefined();
+    expect(result.roleBinding).toBeUndefined();
+    const spec = result.deployment.spec as any;
+    expect(spec.template.spec.serviceAccountName).toBeUndefined();
+  });
+
+  test("rbacRules undefined produces default RBAC", () => {
+    const result = WorkerPool(minProps);
+    expect(result.serviceAccount).toBeDefined();
+    expect(result.role).toBeDefined();
+    expect(result.roleBinding).toBeDefined();
+    const role = result.role as any;
+    expect(role.rules[0].resources).toEqual(["secrets", "configmaps"]);
+  });
+
+  test("env vars on container", () => {
+    const result = WorkerPool({
+      ...minProps,
+      env: [{ name: "LOG_LEVEL", value: "debug" }],
+    });
+    const spec = result.deployment.spec as any;
+    const container = spec.template.spec.containers[0];
+    expect(container.env).toEqual([{ name: "LOG_LEVEL", value: "debug" }]);
+  });
+
+  test("ConfigMap carries namespace and labels", () => {
+    const result = WorkerPool({
+      ...minProps,
+      config: { KEY: "val" },
+      namespace: "jobs",
+    });
+    const meta = (result.configMap as any).metadata;
+    expect(meta.namespace).toBe("jobs");
+    expect(meta.labels["app.kubernetes.io/name"]).toBe("worker");
+  });
+
+  test("HPA carries namespace", () => {
+    const result = WorkerPool({
+      ...minProps,
+      autoscaling: { minReplicas: 1, maxReplicas: 5 },
+      namespace: "jobs",
+    });
+    const meta = (result.hpa as any).metadata;
+    expect(meta.namespace).toBe("jobs");
+  });
+
+  test("autoscaling default targetCPUPercent is 70", () => {
+    const result = WorkerPool({
+      ...minProps,
+      autoscaling: { minReplicas: 1, maxReplicas: 5 },
+    });
+    const hpaSpec = (result.hpa as any).spec;
+    expect(hpaSpec.metrics[0].resource.target.averageUtilization).toBe(70);
+  });
+
+  test("component labels on each resource", () => {
+    const result = WorkerPool({
+      ...minProps,
+      config: { K: "V" },
+      autoscaling: { minReplicas: 1, maxReplicas: 5 },
+    });
+    expect((result.deployment.metadata as any).labels["app.kubernetes.io/component"]).toBe("worker");
+    expect((result.serviceAccount!.metadata as any).labels["app.kubernetes.io/component"]).toBe("worker");
+    expect((result.role!.metadata as any).labels["app.kubernetes.io/component"]).toBe("rbac");
+    expect((result.roleBinding!.metadata as any).labels["app.kubernetes.io/component"]).toBe("rbac");
+    expect((result.configMap!.metadata as any).labels["app.kubernetes.io/component"]).toBe("config");
+    expect((result.hpa!.metadata as any).labels["app.kubernetes.io/component"]).toBe("autoscaler");
   });
 });
 
@@ -627,6 +812,82 @@ describe("NamespaceEnv", () => {
     const result = NamespaceEnv({ name: "team-alpha" });
     const meta = result.namespace.metadata as any;
     expect(meta.namespace).toBeUndefined();
+  });
+
+  test("warns when quota set without limits", () => {
+    const warnSpy = jest.spyOn(console, "warn").mockImplementation(() => {});
+    NamespaceEnv({ name: "warn-test", cpuQuota: "4", defaultDenyIngress: false });
+    expect(warnSpy).toHaveBeenCalledWith(
+      expect.stringContaining("ResourceQuota set but no LimitRange defaults"),
+    );
+    warnSpy.mockRestore();
+  });
+
+  test("no warning when both quota and limits set", () => {
+    const warnSpy = jest.spyOn(console, "warn").mockImplementation(() => {});
+    NamespaceEnv({
+      name: "both-test",
+      cpuQuota: "4",
+      defaultCpuRequest: "100m",
+      defaultDenyIngress: false,
+    });
+    expect(warnSpy).not.toHaveBeenCalled();
+    warnSpy.mockRestore();
+  });
+
+  test("no warning when limits only (no quota)", () => {
+    const warnSpy = jest.spyOn(console, "warn").mockImplementation(() => {});
+    NamespaceEnv({
+      name: "limits-only",
+      defaultCpuRequest: "100m",
+      defaultDenyIngress: false,
+    });
+    expect(warnSpy).not.toHaveBeenCalled();
+    warnSpy.mockRestore();
+  });
+
+  test("egress-only deny (no ingress)", () => {
+    const result = NamespaceEnv({
+      name: "egress-only",
+      defaultDenyIngress: false,
+      defaultDenyEgress: true,
+    });
+    expect(result.networkPolicy).toBeDefined();
+    const spec = result.networkPolicy!.spec as any;
+    expect(spec.policyTypes).toEqual(["Egress"]);
+  });
+
+  test("NetworkPolicy namespace is the namespace name", () => {
+    const result = NamespaceEnv({ name: "team-beta", defaultDenyIngress: true });
+    const meta = result.networkPolicy!.metadata as any;
+    expect(meta.namespace).toBe("team-beta");
+  });
+
+  test("extra labels on all resources", () => {
+    const result = NamespaceEnv({
+      name: "team-gamma",
+      cpuQuota: "4",
+      defaultCpuRequest: "100m",
+      defaultDenyIngress: true,
+      labels: { env: "staging" },
+    });
+    for (const resource of [result.namespace, result.resourceQuota!, result.limitRange!, result.networkPolicy!]) {
+      const meta = resource.metadata as any;
+      expect(meta.labels.env).toBe("staging");
+    }
+  });
+
+  test("component labels on each resource", () => {
+    const result = NamespaceEnv({
+      name: "team-delta",
+      cpuQuota: "4",
+      defaultCpuRequest: "100m",
+      defaultDenyIngress: true,
+    });
+    expect((result.namespace.metadata as any).labels["app.kubernetes.io/component"]).toBe("namespace");
+    expect((result.resourceQuota!.metadata as any).labels["app.kubernetes.io/component"]).toBe("quota");
+    expect((result.limitRange!.metadata as any).labels["app.kubernetes.io/component"]).toBe("limits");
+    expect((result.networkPolicy!.metadata as any).labels["app.kubernetes.io/component"]).toBe("network-policy");
   });
 });
 
@@ -782,5 +1043,67 @@ describe("NodeAgent", () => {
     const result = NodeAgent(minProps);
     const spec = result.daemonSet.spec as any;
     expect(spec.template.spec.serviceAccountName).toBe("log-agent-sa");
+  });
+
+  test("default resource requests and limits on container", () => {
+    const result = NodeAgent(minProps);
+    const spec = result.daemonSet.spec as any;
+    const container = spec.template.spec.containers[0];
+    expect(container.resources.requests.cpu).toBe("50m");
+    expect(container.resources.requests.memory).toBe("64Mi");
+    expect(container.resources.limits.cpu).toBe("200m");
+    expect(container.resources.limits.memory).toBe("128Mi");
+  });
+
+  test("custom resource limits", () => {
+    const result = NodeAgent({
+      ...minProps,
+      cpuRequest: "100m",
+      memoryRequest: "256Mi",
+      cpuLimit: "500m",
+      memoryLimit: "512Mi",
+    });
+    const spec = result.daemonSet.spec as any;
+    const container = spec.template.spec.containers[0];
+    expect(container.resources.requests.cpu).toBe("100m");
+    expect(container.resources.requests.memory).toBe("256Mi");
+    expect(container.resources.limits.cpu).toBe("500m");
+    expect(container.resources.limits.memory).toBe("512Mi");
+  });
+
+  test("multiple hostPaths", () => {
+    const result = NodeAgent({
+      ...minProps,
+      hostPaths: [
+        { name: "varlog", hostPath: "/var/log", mountPath: "/var/log" },
+        { name: "run", hostPath: "/run", mountPath: "/run", readOnly: false },
+      ],
+    });
+    const spec = result.daemonSet.spec as any;
+    expect(spec.template.spec.volumes).toHaveLength(2);
+    expect(spec.template.spec.containers[0].volumeMounts).toHaveLength(2);
+    expect(spec.template.spec.containers[0].volumeMounts[1].readOnly).toBe(false);
+  });
+
+  test("configMap carries namespace", () => {
+    const result = NodeAgent({
+      ...minProps,
+      config: { key: "val" },
+      namespace: "monitoring",
+    });
+    const meta = (result.configMap as any).metadata;
+    expect(meta.namespace).toBe("monitoring");
+  });
+
+  test("component labels on each resource", () => {
+    const result = NodeAgent({
+      ...minProps,
+      config: { key: "val" },
+    });
+    expect((result.daemonSet.metadata as any).labels["app.kubernetes.io/component"]).toBe("agent");
+    expect((result.serviceAccount.metadata as any).labels["app.kubernetes.io/component"]).toBe("agent");
+    expect((result.clusterRole.metadata as any).labels["app.kubernetes.io/component"]).toBe("rbac");
+    expect((result.clusterRoleBinding.metadata as any).labels["app.kubernetes.io/component"]).toBe("rbac");
+    expect((result.configMap!.metadata as any).labels["app.kubernetes.io/component"]).toBe("config");
   });
 });

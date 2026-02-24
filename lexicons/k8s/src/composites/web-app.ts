@@ -86,7 +86,7 @@ export function WebApp(props: WebAppProps): WebAppResult {
     metadata: {
       name,
       ...(namespace && { namespace }),
-      labels: commonLabels,
+      labels: { ...commonLabels, "app.kubernetes.io/component": "server" },
     },
     spec: {
       replicas,
@@ -125,7 +125,7 @@ export function WebApp(props: WebAppProps): WebAppResult {
     metadata: {
       name,
       ...(namespace && { namespace }),
-      labels: commonLabels,
+      labels: { ...commonLabels, "app.kubernetes.io/component": "server" },
     },
     spec: {
       selector: { "app.kubernetes.io/name": name },
@@ -144,7 +144,7 @@ export function WebApp(props: WebAppProps): WebAppResult {
       metadata: {
         name,
         ...(namespace && { namespace }),
-        labels: commonLabels,
+        labels: { ...commonLabels, "app.kubernetes.io/component": "ingress" },
       },
       spec: {
         rules: [

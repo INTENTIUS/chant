@@ -31,6 +31,15 @@ export interface AutoscaledServiceProps {
   cpuLimit?: string;
   /** Memory limit (optional — left unset if not provided). */
   memoryLimit?: string;
+  /** Topology spread constraints (default: false). true → zone spreading, object → custom. */
+  topologySpread?: boolean | {
+    maxSkew?: number;
+    topologyKey?: string;
+  };
+  /** Liveness probe path (default: "/healthz"). */
+  livenessPath?: string;
+  /** Readiness probe path (default: "/readyz"). */
+  readinessPath?: string;
   /** Additional labels to apply to all resources. */
   labels?: Record<string, string>;
   /** Namespace for all resources. */
@@ -77,6 +86,9 @@ export function AutoscaledService(props: AutoscaledServiceProps): AutoscaledServ
     memoryRequest,
     cpuLimit,
     memoryLimit,
+    topologySpread = false,
+    livenessPath = "/healthz",
+    readinessPath = "/readyz",
     labels: extraLabels = {},
     namespace,
     env,
@@ -87,6 +99,21 @@ export function AutoscaledService(props: AutoscaledServiceProps): AutoscaledServ
     "app.kubernetes.io/managed-by": "chant",
     ...extraLabels,
   };
+
+  // Build topologySpreadConstraints if enabled
+  const topologyConstraints: Array<Record<string, unknown>> | undefined = (() => {
+    if (!topologySpread) return undefined;
+    const maxSkew = typeof topologySpread === "object" ? (topologySpread.maxSkew ?? 1) : 1;
+    const topologyKey = typeof topologySpread === "object"
+      ? (topologySpread.topologyKey ?? "topology.kubernetes.io/zone")
+      : "topology.kubernetes.io/zone";
+    return [{
+      maxSkew,
+      topologyKey,
+      whenUnsatisfiable: "DoNotSchedule",
+      labelSelector: { matchLabels: { "app.kubernetes.io/name": name } },
+    }];
+  })();
 
   const resources: Record<string, unknown> = {
     requests: { cpu: cpuRequest, memory: memoryRequest },
@@ -104,7 +131,7 @@ export function AutoscaledService(props: AutoscaledServiceProps): AutoscaledServ
     metadata: {
       name,
       ...(namespace && { namespace }),
-      labels: commonLabels,
+      labels: { ...commonLabels, "app.kubernetes.io/component": "server" },
     },
     spec: {
       replicas: minReplicas,
@@ -119,18 +146,19 @@ export function AutoscaledService(props: AutoscaledServiceProps): AutoscaledServ
               ports: [{ containerPort: port, name: "http" }],
               resources,
               livenessProbe: {
-                httpGet: { path: "/", port },
+                httpGet: { path: livenessPath, port },
                 initialDelaySeconds: 10,
                 periodSeconds: 10,
               },
               readinessProbe: {
-                httpGet: { path: "/", port },
+                httpGet: { path: readinessPath, port },
                 initialDelaySeconds: 5,
                 periodSeconds: 5,
               },
               ...(env && { env }),
             },
           ],
+          ...(topologyConstraints && { topologySpreadConstraints: topologyConstraints }),
         },
       },
     },
@@ -140,7 +168,7 @@ export function AutoscaledService(props: AutoscaledServiceProps): AutoscaledServ
     metadata: {
       name,
       ...(namespace && { namespace }),
-      labels: commonLabels,
+      labels: { ...commonLabels, "app.kubernetes.io/component": "server" },
     },
     spec: {
       selector: { "app.kubernetes.io/name": name },
@@ -173,7 +201,7 @@ export function AutoscaledService(props: AutoscaledServiceProps): AutoscaledServ
     metadata: {
       name,
       ...(namespace && { namespace }),
-      labels: commonLabels,
+      labels: { ...commonLabels, "app.kubernetes.io/component": "autoscaler" },
     },
     spec: {
       scaleTargetRef: {
@@ -191,7 +219,7 @@ export function AutoscaledService(props: AutoscaledServiceProps): AutoscaledServ
     metadata: {
       name,
       ...(namespace && { namespace }),
-      labels: commonLabels,
+      labels: { ...commonLabels, "app.kubernetes.io/component": "disruption-budget" },
     },
     spec: {
       minAvailable,

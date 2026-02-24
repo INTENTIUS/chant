@@ -33,6 +33,14 @@ export interface NodeAgentProps {
   namespace?: string;
   /** Additional labels to apply to all resources. */
   labels?: Record<string, string>;
+  /** CPU request (default: "50m"). */
+  cpuRequest?: string;
+  /** Memory request (default: "64Mi"). */
+  memoryRequest?: string;
+  /** CPU limit (default: "200m"). */
+  cpuLimit?: string;
+  /** Memory limit (default: "128Mi"). */
+  memoryLimit?: string;
   /** Environment variables for the container. */
   env?: Array<{ name: string; value: string }>;
 }
@@ -73,6 +81,10 @@ export function NodeAgent(props: NodeAgentProps): NodeAgentResult {
     rbacRules,
     tolerateAllTaints = true,
     namespace,
+    cpuRequest = "50m",
+    memoryRequest = "64Mi",
+    cpuLimit = "200m",
+    memoryLimit = "128Mi",
     labels: extraLabels = {},
     env,
   } = props;
@@ -121,6 +133,10 @@ export function NodeAgent(props: NodeAgentProps): NodeAgentResult {
     name,
     image,
     ...(port && { ports: [{ containerPort: port, name: "metrics" }] }),
+    resources: {
+      requests: { cpu: cpuRequest, memory: memoryRequest },
+      limits: { cpu: cpuLimit, memory: memoryLimit },
+    },
     ...(env && { env }),
     ...(volumeMounts.length > 0 && { volumeMounts }),
   };
@@ -138,7 +154,7 @@ export function NodeAgent(props: NodeAgentProps): NodeAgentResult {
     metadata: {
       name,
       ...(namespace && { namespace }),
-      labels: commonLabels,
+      labels: { ...commonLabels, "app.kubernetes.io/component": "agent" },
     },
     spec: {
       selector: { matchLabels: { "app.kubernetes.io/name": name } },
@@ -153,7 +169,7 @@ export function NodeAgent(props: NodeAgentProps): NodeAgentResult {
     metadata: {
       name: saName,
       ...(namespace && { namespace }),
-      labels: commonLabels,
+      labels: { ...commonLabels, "app.kubernetes.io/component": "agent" },
     },
   };
 
@@ -161,7 +177,7 @@ export function NodeAgent(props: NodeAgentProps): NodeAgentResult {
   const clusterRoleProps: Record<string, unknown> = {
     metadata: {
       name: clusterRoleName,
-      labels: commonLabels,
+      labels: { ...commonLabels, "app.kubernetes.io/component": "rbac" },
     },
     rules: rbacRules,
   };
@@ -170,7 +186,7 @@ export function NodeAgent(props: NodeAgentProps): NodeAgentResult {
   const clusterRoleBindingProps: Record<string, unknown> = {
     metadata: {
       name: bindingName,
-      labels: commonLabels,
+      labels: { ...commonLabels, "app.kubernetes.io/component": "rbac" },
     },
     roleRef: {
       apiGroup: "rbac.authorization.k8s.io",
@@ -198,7 +214,7 @@ export function NodeAgent(props: NodeAgentProps): NodeAgentResult {
       metadata: {
         name: configMapName,
         ...(namespace && { namespace }),
-        labels: commonLabels,
+        labels: { ...commonLabels, "app.kubernetes.io/component": "config" },
       },
       data: config,
     };
