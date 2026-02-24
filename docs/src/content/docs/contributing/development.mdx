@@ -40,6 +40,24 @@ just docs-build   # build the unified documentation site
 bun test                    # all tests
 bun test packages/core/     # core package only
 bun test lexicons/aws/      # AWS lexicon only
+bun test lexicons/k8s/      # K8s lexicon only
+```
+
+#### Kubernetes roundtrip tests
+
+The K8s lexicon has additional integration tests that run against real manifests from `kubernetes/examples`:
+
+```bash
+cd lexicons/k8s
+
+# Parse-only roundtrip (parse → generate)
+just import-samples --skip-clone --verbose
+
+# Full roundtrip (parse → generate → import → serialize → compare)
+just full-roundtrip --skip-clone --verbose
+
+# k3d cluster validation (requires k3d + kubectl + Docker)
+just k3d-validate --verbose
 ```
 
 ### Test Patterns
@@ -72,7 +90,8 @@ chant/
 │   └── test-utils/     shared test fixtures and assertions
 ├── lexicons/
 │   ├── aws/            @intentius/chant-lexicon-aws — AWS CloudFormation lexicon
-│   └── gitlab/         @intentius/chant-lexicon-gitlab — GitLab CI/CD lexicon
+│   ├── gitlab/         @intentius/chant-lexicon-gitlab — GitLab CI/CD lexicon
+│   └── k8s/            @intentius/chant-lexicon-k8s — Kubernetes lexicon
 ├── docs/               Astro Starlight documentation site
 └── package.json
 ```

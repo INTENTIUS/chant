@@ -21,3 +21,15 @@ The import process:
 5. Generates import statements for cross-resource references
 
 See your lexicon's documentation for provider-specific import commands and options.
+
+## Verifying Imports
+
+Lexicons may provide roundtrip tests that verify the full import pipeline:
+
+1. **Parse** the original template into an intermediate representation
+2. **Generate** TypeScript source from the IR
+3. **Import** the generated code (verifying constructors resolve)
+4. **Serialize** back to the target format
+5. **Compare** the output structurally against the original
+
+The Kubernetes lexicon includes a full roundtrip suite and optional k3d cluster validation. See the [K8s Testing & Validation](/chant/lexicons/k8s/testing/) docs for details.

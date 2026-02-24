@@ -24,3 +24,11 @@ package: generate
 # Run import samples roundtrip test
 import-samples *FLAGS:
     bash scripts/import-k8s-samples.sh {{FLAGS}}
+
+# Run full roundtrip test (parse → generate → import → serialize → compare)
+full-roundtrip *FLAGS:
+    bash scripts/full-roundtrip.sh {{FLAGS}}
+
+# Validate serialized YAML against a real k3d cluster
+k3d-validate *FLAGS:
+    bash scripts/k3d-validate.sh {{FLAGS}}

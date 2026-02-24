@@ -484,6 +484,100 @@ const { cronJob, serviceAccount, role, roleBinding } = CronWorkload({
 `,
       },
       {
+        slug: "testing",
+        title: "Testing & Validation",
+        description: "Roundtrip tests and k3d cluster validation for the Kubernetes lexicon",
+        content: `The Kubernetes lexicon includes scripts to verify the full import–serialize roundtrip and validate serialized YAML against a real cluster.
+
+## Roundtrip tests
+
+The roundtrip test suite clones \`kubernetes/examples\` and runs each manifest through the full pipeline:
+
+\`\`\`
+Input YAML → parse → generate TS → dynamic import → serialize YAML → re-parse → compare
+\`\`\`
+
+**"Pass" means** the serialized YAML, when re-parsed, produces the same number of resources with matching \`kind\` values. Exact YAML comparison is intentionally skipped — key ordering, quoting, and comments differ between input and output.
+
+### Running
+
+\`\`\`bash
+cd lexicons/k8s
+
+# Full roundtrip (clones repo on first run)
+just full-roundtrip
+
+# Skip clone if repo is already cached
+just full-roundtrip --skip-clone
+
+# Parse + generate only (skip serialize phase)
+just full-roundtrip --skip-clone --skip-serialize
+
+# Verbose output + filter to a specific manifest
+just full-roundtrip --skip-clone --verbose --manifest guestbook
+\`\`\`
+
+The test requires \`just generate\` to have been run first so the generated index exports real constructors. If the generated index is empty, the test falls back to parse-only mode automatically.
+
+### Parse-only roundtrip
+
+The original parse-only roundtrip test is still available:
+
+\`\`\`bash
+just import-samples --skip-clone --verbose
+\`\`\`
+
+## k3d cluster validation
+
+The k3d validation script applies serialized YAML to a real Kubernetes cluster to verify the output is valid and deployable.
+
+### Prerequisites
+
+- [k3d](https://k3d.io/) — lightweight K8s cluster in Docker
+- [kubectl](https://kubernetes.io/docs/tasks/tools/) — Kubernetes CLI
+- Docker running
+
+### Running
+
+\`\`\`bash
+cd lexicons/k8s
+
+# Create cluster, run tests, delete cluster
+just k3d-validate
+
+# Keep cluster for manual inspection
+just k3d-validate --keep-cluster
+
+# Reuse an existing cluster
+just k3d-validate --reuse-cluster --verbose
+\`\`\`
+
+After \`--keep-cluster\`, inspect resources manually:
+
+\`\`\`bash
+kubectl get all
+kubectl get deployments,services
+\`\`\`
+
+### Safe manifest allowlist
+
+The script uses a curated allowlist of ~14 manifests known to work on bare k3d (no cloud volumes, CRDs, or GPUs). These include:
+
+- **Guestbook** — Deployments and Services for frontend + Redis
+- **Cassandra** — Headless Service
+- **vLLM** — Service
+
+### What it validates
+
+For each manifest the script:
+
+1. Runs the full roundtrip (YAML → Chant DSL → YAML)
+2. Applies the serialized YAML with \`kubectl apply\`
+3. Verifies the resource exists with \`kubectl get\`
+
+A failure at any stage is reported with the specific phase that failed.`,
+      },
+      {
         slug: "skills",
         title: "AI Skills",
         description: "AI agent skills bundled with the Kubernetes lexicon",
