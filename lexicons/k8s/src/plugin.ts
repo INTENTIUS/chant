@@ -565,10 +565,171 @@ kubectl rollout status deployment/my-app --timeout=300s
 - **Canary**: Deploy a second Deployment with 1 replica + same selector labels. Route percentage via Ingress annotations or service mesh.
 - **Blue/Green**: Two full Deployments (blue/green), switch Service selector between them.
 
+## Composites
+
+Composites are higher-level functions that produce multiple coordinated K8s resources from a single call. They return plain prop objects — not class instances — that you pass to generated constructors or serialize directly.
+
+### WebApp — Deployment + Service + optional Ingress
+
+\`\`\`typescript
+import { WebApp } from "@intentius/chant-lexicon-k8s";
+
+const { deployment, service, ingress } = WebApp({
+  name: "frontend",
+  image: "frontend:1.0",
+  port: 3000,
+  replicas: 3,
+  ingressHost: "frontend.example.com",
+  ingressTlsSecret: "frontend-tls",
+});
+\`\`\`
+
+### StatefulApp — StatefulSet + headless Service + PVC
+
+\`\`\`typescript
+import { StatefulApp } from "@intentius/chant-lexicon-k8s";
+
+const { statefulSet, service } = StatefulApp({
+  name: "postgres",
+  image: "postgres:16",
+  storageSize: "20Gi",
+  env: [{ name: "POSTGRES_DB", value: "mydb" }],
+});
+\`\`\`
+
+### CronWorkload — CronJob + ServiceAccount + Role + RoleBinding
+
+\`\`\`typescript
+import { CronWorkload } from "@intentius/chant-lexicon-k8s";
+
+const { cronJob, serviceAccount, role, roleBinding } = CronWorkload({
+  name: "db-backup",
+  image: "postgres:16",
+  schedule: "0 2 * * *",
+  command: ["pg_dump", "-h", "postgres", "mydb"],
+  rbacRules: [{ apiGroups: [""], resources: ["secrets"], verbs: ["get"] }],
+});
+\`\`\`
+
+### AutoscaledService — Deployment + Service + HPA + PDB
+
+Production HTTP service with autoscaling, health probes, and optional topology spreading.
+
+\`\`\`typescript
+import { AutoscaledService } from "@intentius/chant-lexicon-k8s";
+
+const { deployment, service, hpa, pdb } = AutoscaledService({
+  name: "api",
+  image: "api:2.0",
+  port: 8080,
+  maxReplicas: 10,
+  minReplicas: 3,
+  cpuRequest: "200m",
+  memoryRequest: "256Mi",
+  cpuLimit: "1",
+  memoryLimit: "1Gi",
+  // Probe paths — defaults: /healthz and /readyz
+  livenessPath: "/healthz",
+  readinessPath: "/readyz",
+  // Zone-aware topology spreading (default: false)
+  topologySpread: true,
+  // Custom: topologySpread: { maxSkew: 2, topologyKey: "kubernetes.io/hostname" }
+});
+\`\`\`
+
+Key features:
+- **Probe paths**: \`livenessPath\` (default \`/healthz\`) and \`readinessPath\` (default \`/readyz\`) — override for apps that don't serve those routes
+- **Topology spread**: \`topologySpread: true\` adds zone-aware spreading (maxSkew=1, DoNotSchedule); pass an object for custom key/skew
+- **PDB minAvailable**: accepts number or string percentage (e.g., \`"50%"\`)
+
+### WorkerPool — Deployment + RBAC + optional ConfigMap + optional HPA
+
+Background queue workers with optional RBAC and autoscaling.
+
+\`\`\`typescript
+import { WorkerPool } from "@intentius/chant-lexicon-k8s";
+
+const { deployment, serviceAccount, role, roleBinding, configMap, hpa } = WorkerPool({
+  name: "email-worker",
+  image: "worker:1.0",
+  command: ["bundle", "exec", "sidekiq"],
+  config: { REDIS_URL: "redis://redis:6379", QUEUE: "emails" },
+  autoscaling: { minReplicas: 2, maxReplicas: 20, targetCPUPercent: 60 },
+});
+\`\`\`
+
+Key features:
+- **RBAC opt-out**: Pass \`rbacRules: []\` to skip ServiceAccount/Role/RoleBinding creation entirely. Omitting \`rbacRules\` (undefined) creates default rules for secrets/configmaps.
+- \`serviceAccount\`, \`role\`, \`roleBinding\` are optional in the result — check before use
+
+### NamespaceEnv — Namespace + ResourceQuota + LimitRange + NetworkPolicy
+
+Multi-tenant namespace provisioning with resource guardrails and network isolation.
+
+\`\`\`typescript
+import { NamespaceEnv } from "@intentius/chant-lexicon-k8s";
+
+const { namespace, resourceQuota, limitRange, networkPolicy } = NamespaceEnv({
+  name: "team-alpha",
+  cpuQuota: "8",
+  memoryQuota: "16Gi",
+  maxPods: 50,
+  defaultCpuRequest: "100m",
+  defaultMemoryRequest: "128Mi",
+  defaultCpuLimit: "500m",
+  defaultMemoryLimit: "512Mi",
+  defaultDenyIngress: true,
+  defaultDenyEgress: true,
+});
+\`\`\`
+
+Key features:
+- **Quota-without-limits warning**: Setting ResourceQuota without LimitRange defaults emits a warning — pods without explicit resource requests will fail to schedule
+- **Network policies**: \`defaultDenyIngress\` (default true), \`defaultDenyEgress\` (default false) — can be combined or used individually
+
+### NodeAgent — DaemonSet + ServiceAccount + ClusterRole + ClusterRoleBinding + optional ConfigMap
+
+Per-node agents (log collectors, security scanners, monitoring exporters).
+
+\`\`\`typescript
+import { NodeAgent } from "@intentius/chant-lexicon-k8s";
+
+const { daemonSet, serviceAccount, clusterRole, clusterRoleBinding, configMap } = NodeAgent({
+  name: "log-collector",
+  image: "fluentd:v1.16",
+  port: 24224,
+  hostPaths: [
+    { name: "varlog", hostPath: "/var/log", mountPath: "/var/log" },
+  ],
+  config: { "fluent.conf": "..." },
+  rbacRules: [{ apiGroups: [""], resources: ["pods", "namespaces"], verbs: ["get", "list", "watch"] }],
+  cpuRequest: "50m",       // default: 50m
+  memoryRequest: "64Mi",   // default: 64Mi
+  cpuLimit: "200m",        // default: 200m
+  memoryLimit: "128Mi",    // default: 128Mi
+  namespace: "monitoring",
+});
+\`\`\`
+
+Key features:
+- **Container resources**: Always set with sensible defaults (50m/64Mi requests, 200m/128Mi limits) — override per-agent
+- **Host paths**: Mounted read-only by default; set \`readOnly: false\` to enable writes
+- **Tolerations**: \`tolerateAllTaints: true\` (default) ensures agent runs on every node
+- Uses **ClusterRole/ClusterRoleBinding** (cluster-scoped) for node-level access
+
+### Common patterns across all composites
+
+- All resources carry \`app.kubernetes.io/name\`, \`app.kubernetes.io/managed-by: chant\`, and \`app.kubernetes.io/component\` labels
+- Pass \`labels: { team: "platform" }\` to add extra labels to all resources
+- Pass \`namespace: "prod"\` to set namespace on all namespaced resources
+- Pass \`env: [{ name: "KEY", value: "val" }]\` for container environment variables
+
 ## Namespace management
 
+Use the **NamespaceEnv** composite (above) to manage namespaces declaratively. For manual kubectl management:
+
 \`\`\`bash
-# Create namespace with resource limits
+# Create namespace
 kubectl create namespace my-project
 
 # Set default resource quotas
@@ -666,6 +827,11 @@ kubectl get events --sort-by=.lastTimestamp
           { type: "context", value: "kubectl" },
           { type: "context", value: "deployment" },
           { type: "context", value: "pod" },
+          { type: "context", value: "composite" },
+          { type: "context", value: "autoscaled" },
+          { type: "context", value: "workerpool" },
+          { type: "context", value: "namespace-env" },
+          { type: "context", value: "node-agent" },
         ],
         preConditions: [
           "chant CLI is installed (chant --version succeeds)",
@@ -708,6 +874,39 @@ kubectl get events --sort-by=.lastTimestamp
 kubectl apply -f manifests.yaml --dry-run=server
 kubectl apply -f manifests.yaml
 kubectl rollout status deployment/my-app`,
+          },
+          {
+            title: "AutoscaledService composite",
+            description: "Production HTTP service with HPA, PDB, and zone spreading",
+            input: "Create an autoscaled API service",
+            output: `import { AutoscaledService } from "@intentius/chant-lexicon-k8s";
+
+const { deployment, service, hpa, pdb } = AutoscaledService({
+  name: "api",
+  image: "api:1.0",
+  port: 8080,
+  maxReplicas: 10,
+  cpuRequest: "100m",
+  memoryRequest: "128Mi",
+  topologySpread: true,
+});`,
+          },
+          {
+            title: "NamespaceEnv composite",
+            description: "Multi-tenant namespace with guardrails",
+            input: "Set up a team namespace with quotas and network isolation",
+            output: `import { NamespaceEnv } from "@intentius/chant-lexicon-k8s";
+
+const { namespace, resourceQuota, limitRange, networkPolicy } = NamespaceEnv({
+  name: "team-alpha",
+  cpuQuota: "8",
+  memoryQuota: "16Gi",
+  defaultCpuRequest: "100m",
+  defaultMemoryRequest: "128Mi",
+  defaultCpuLimit: "500m",
+  defaultMemoryLimit: "512Mi",
+  defaultDenyIngress: true,
+});`,
           },
         ],
       },
