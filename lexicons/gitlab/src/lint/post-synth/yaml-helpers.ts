@@ -7,14 +7,7 @@
  * without a full YAML parser dependency.
  */
 
-import type { SerializerResult } from "@intentius/chant/serializer";
-
-/**
- * Extract the primary output string from a serializer result.
- */
-export function getPrimaryOutput(output: string | SerializerResult): string {
-  return typeof output === "string" ? output : output.primary;
-}
+export { getPrimaryOutput } from "@intentius/chant/lint/post-synth";
 
 /**
  * Parse a serialized GitLab CI YAML into a structured object.

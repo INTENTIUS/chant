@@ -13,6 +13,7 @@ import type { Serializer } from "@intentius/chant/serializer";
 import type { LexiconOutput } from "@intentius/chant/lexicon-output";
 import { walkValue, type SerializerVisitor } from "@intentius/chant/serializer-walker";
 import { INTRINSIC_MARKER } from "@intentius/chant/intrinsic";
+import { emitYAML } from "@intentius/chant/yaml";
 
 /**
  * GitLab CI visitor for the generic serializer walker.
@@ -80,111 +81,6 @@ function preprocessIntrinsics(value: unknown): unknown {
 function toYAMLValue(value: unknown, entityNames: Map<Declarable, string>): unknown {
   const preprocessed = preprocessIntrinsics(value);
   return walkValue(preprocessed, entityNames, gitlabVisitor(entityNames));
-}
-
-/**
- * Emit a YAML value with proper indentation.
- */
-function emitYAML(value: unknown, indent: number): string {
-  const prefix = "  ".repeat(indent);
-
-  if (value === null || value === undefined) {
-    return "null";
-  }
-
-  if (typeof value === "boolean") {
-    return value ? "true" : "false";
-  }
-
-  if (typeof value === "number") {
-    return String(value);
-  }
-
-  if (typeof value === "string") {
-    // Quote strings that could be misinterpreted
-    if (
-      value === "" ||
-      value === "true" ||
-      value === "false" ||
-      value === "null" ||
-      value === "yes" ||
-      value === "no" ||
-      value.includes(": ") ||
-      value.includes("#") ||
-      value.startsWith("*") ||
-      value.startsWith("&") ||
-      value.startsWith("!") ||
-      value.startsWith("{") ||
-      value.startsWith("[") ||
-      value.startsWith("'") ||
-      value.startsWith('"') ||
-      value.startsWith("$") ||
-      /^\d/.test(value)
-    ) {
-      // Use single quotes, escaping internal single quotes
-      return `'${value.replace(/'/g, "''")}'`;
-    }
-    return value;
-  }
-
-  if (Array.isArray(value)) {
-    if (value.length === 0) return "[]";
-    const lines: string[] = [];
-    for (const item of value) {
-      if (typeof item === "object" && item !== null && !Array.isArray(item)) {
-        // Object items in arrays
-        const entries = Object.entries(item as Record<string, unknown>);
-        if (entries.length > 0) {
-          const [firstKey, firstVal] = entries[0];
-          const firstEmitted = emitYAML(firstVal, indent + 2);
-          if (firstEmitted.startsWith("\n")) {
-            // Multi-line value: put on next line, indented under the key
-            lines.push(`${prefix}- ${firstKey}:${firstEmitted}`);
-          } else {
-            lines.push(`${prefix}- ${firstKey}: ${firstEmitted}`);
-          }
-          for (let i = 1; i < entries.length; i++) {
-            const [key, val] = entries[i];
-            const emitted = emitYAML(val, indent + 2);
-            if (emitted.startsWith("\n")) {
-              lines.push(`${prefix}  ${key}:${emitted}`);
-            } else {
-              lines.push(`${prefix}  ${key}: ${emitted}`);
-            }
-          }
-        }
-      } else {
-        lines.push(`${prefix}- ${emitYAML(item, indent + 1).trimStart()}`);
-      }
-    }
-    return "\n" + lines.join("\n");
-  }
-
-  if (typeof value === "object") {
-    const obj = value as Record<string, unknown>;
-
-    // Handle tagged values (intrinsics like !reference)
-    if ("tag" in obj && "value" in obj && typeof obj.tag === "string") {
-      if (obj.tag === "!reference" && Array.isArray(obj.value)) {
-        return `!reference [${(obj.value as string[]).join(", ")}]`;
-      }
-    }
-
-    const entries = Object.entries(obj);
-    if (entries.length === 0) return "{}";
-    const lines: string[] = [];
-    for (const [key, val] of entries) {
-      const emitted = emitYAML(val, indent + 1);
-      if (emitted.startsWith("\n")) {
-        lines.push(`${prefix}${key}:${emitted}`);
-      } else {
-        lines.push(`${prefix}${key}: ${emitted}`);
-      }
-    }
-    return "\n" + lines.join("\n");
-  }
-
-  return String(value);
 }
 
 /**
