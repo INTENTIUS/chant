@@ -2,6 +2,10 @@ import { describe, test, expect } from "bun:test";
 import { WebApp } from "./web-app";
 import { StatefulApp } from "./stateful-app";
 import { CronWorkload } from "./cron-workload";
+import { AutoscaledService } from "./autoscaled-service";
+import { WorkerPool } from "./worker-pool";
+import { NamespaceEnv } from "./namespace-env";
+import { NodeAgent } from "./node-agent";
 
 // ── WebApp ──────────────────────────────────────────────────────────
 
@@ -273,5 +277,510 @@ describe("CronWorkload", () => {
       const meta = resource.metadata as any;
       expect(meta.labels["app.kubernetes.io/name"]).toBe("backup");
     }
+  });
+});
+
+// ── AutoscaledService ──────────────────────────────────────────────
+
+describe("AutoscaledService", () => {
+  const minProps = {
+    name: "api",
+    image: "api:1.0",
+    maxReplicas: 10,
+    cpuRequest: "100m",
+    memoryRequest: "128Mi",
+  };
+
+  test("returns deployment, service, hpa, pdb", () => {
+    const result = AutoscaledService(minProps);
+    expect(result.deployment).toBeDefined();
+    expect(result.service).toBeDefined();
+    expect(result.hpa).toBeDefined();
+    expect(result.pdb).toBeDefined();
+  });
+
+  test("default port is 80", () => {
+    const result = AutoscaledService(minProps);
+    const spec = result.deployment.spec as any;
+    const container = spec.template.spec.containers[0];
+    expect(container.ports[0].containerPort).toBe(80);
+  });
+
+  test("default minReplicas is 2", () => {
+    const result = AutoscaledService(minProps);
+    const spec = result.deployment.spec as any;
+    expect(spec.replicas).toBe(2);
+    const hpaSpec = result.hpa.spec as any;
+    expect(hpaSpec.minReplicas).toBe(2);
+  });
+
+  test("HPA scaleTargetRef references the deployment", () => {
+    const result = AutoscaledService(minProps);
+    const hpaSpec = result.hpa.spec as any;
+    expect(hpaSpec.scaleTargetRef.kind).toBe("Deployment");
+    expect(hpaSpec.scaleTargetRef.name).toBe("api");
+  });
+
+  test("HPA has CPU metric with default 70%", () => {
+    const result = AutoscaledService(minProps);
+    const hpaSpec = result.hpa.spec as any;
+    expect(hpaSpec.metrics[0].resource.name).toBe("cpu");
+    expect(hpaSpec.metrics[0].resource.target.averageUtilization).toBe(70);
+  });
+
+  test("HPA includes memory metric when targetMemoryPercent set", () => {
+    const result = AutoscaledService({ ...minProps, targetMemoryPercent: 80 });
+    const hpaSpec = result.hpa.spec as any;
+    expect(hpaSpec.metrics).toHaveLength(2);
+    expect(hpaSpec.metrics[1].resource.name).toBe("memory");
+    expect(hpaSpec.metrics[1].resource.target.averageUtilization).toBe(80);
+  });
+
+  test("no memory metric by default", () => {
+    const result = AutoscaledService(minProps);
+    const hpaSpec = result.hpa.spec as any;
+    expect(hpaSpec.metrics).toHaveLength(1);
+  });
+
+  test("PDB selector matches deployment pod labels", () => {
+    const result = AutoscaledService(minProps);
+    const pdbSpec = result.pdb.spec as any;
+    expect(pdbSpec.selector.matchLabels["app.kubernetes.io/name"]).toBe("api");
+    expect(pdbSpec.minAvailable).toBe(1);
+  });
+
+  test("resource requests are always set", () => {
+    const result = AutoscaledService(minProps);
+    const spec = result.deployment.spec as any;
+    const container = spec.template.spec.containers[0];
+    expect(container.resources.requests.cpu).toBe("100m");
+    expect(container.resources.requests.memory).toBe("128Mi");
+  });
+
+  test("resource limits only set when provided", () => {
+    const result = AutoscaledService(minProps);
+    const spec = result.deployment.spec as any;
+    const container = spec.template.spec.containers[0];
+    expect(container.resources.limits).toBeUndefined();
+
+    const withLimits = AutoscaledService({ ...minProps, cpuLimit: "1", memoryLimit: "512Mi" });
+    const spec2 = withLimits.deployment.spec as any;
+    const container2 = spec2.template.spec.containers[0];
+    expect(container2.resources.limits.cpu).toBe("1");
+    expect(container2.resources.limits.memory).toBe("512Mi");
+  });
+
+  test("includes health probes", () => {
+    const result = AutoscaledService(minProps);
+    const spec = result.deployment.spec as any;
+    const container = spec.template.spec.containers[0];
+    expect(container.livenessProbe).toBeDefined();
+    expect(container.readinessProbe).toBeDefined();
+  });
+
+  test("service type is ClusterIP", () => {
+    const result = AutoscaledService(minProps);
+    const spec = result.service.spec as any;
+    expect(spec.type).toBe("ClusterIP");
+  });
+
+  test("includes common labels on all resources", () => {
+    const result = AutoscaledService(minProps);
+    for (const resource of [result.deployment, result.service, result.hpa, result.pdb]) {
+      const meta = resource.metadata as any;
+      expect(meta.labels["app.kubernetes.io/name"]).toBe("api");
+      expect(meta.labels["app.kubernetes.io/managed-by"]).toBe("chant");
+    }
+  });
+
+  test("namespace propagated to all resources", () => {
+    const result = AutoscaledService({ ...minProps, namespace: "prod" });
+    for (const resource of [result.deployment, result.service, result.hpa, result.pdb]) {
+      const meta = resource.metadata as any;
+      expect(meta.namespace).toBe("prod");
+    }
+  });
+
+  test("env vars passed to container", () => {
+    const result = AutoscaledService({
+      ...minProps,
+      env: [{ name: "LOG_LEVEL", value: "debug" }],
+    });
+    const spec = result.deployment.spec as any;
+    const container = spec.template.spec.containers[0];
+    expect(container.env).toEqual([{ name: "LOG_LEVEL", value: "debug" }]);
+  });
+});
+
+// ── WorkerPool ─────────────────────────────────────────────────────
+
+describe("WorkerPool", () => {
+  const minProps = { name: "worker", image: "worker:1.0" };
+
+  test("returns deployment, serviceAccount, role, roleBinding", () => {
+    const result = WorkerPool(minProps);
+    expect(result.deployment).toBeDefined();
+    expect(result.serviceAccount).toBeDefined();
+    expect(result.role).toBeDefined();
+    expect(result.roleBinding).toBeDefined();
+  });
+
+  test("no configMap or hpa by default", () => {
+    const result = WorkerPool(minProps);
+    expect(result.configMap).toBeUndefined();
+    expect(result.hpa).toBeUndefined();
+  });
+
+  test("default replicas is 1", () => {
+    const result = WorkerPool(minProps);
+    const spec = result.deployment.spec as any;
+    expect(spec.replicas).toBe(1);
+  });
+
+  test("RBAC naming convention", () => {
+    const result = WorkerPool(minProps);
+    const saMeta = result.serviceAccount.metadata as any;
+    const roleMeta = result.role.metadata as any;
+    const bindingMeta = result.roleBinding.metadata as any;
+    expect(saMeta.name).toBe("worker-sa");
+    expect(roleMeta.name).toBe("worker-role");
+    expect(bindingMeta.name).toBe("worker-binding");
+  });
+
+  test("default RBAC rules for secrets and configmaps", () => {
+    const result = WorkerPool(minProps);
+    const role = result.role as any;
+    expect(role.rules[0].resources).toEqual(["secrets", "configmaps"]);
+    expect(role.rules[0].verbs).toEqual(["get"]);
+  });
+
+  test("custom RBAC rules are used", () => {
+    const result = WorkerPool({
+      ...minProps,
+      rbacRules: [{ apiGroups: ["batch"], resources: ["jobs"], verbs: ["create"] }],
+    });
+    const role = result.role as any;
+    expect(role.rules[0].resources).toEqual(["jobs"]);
+  });
+
+  test("command and args passed through", () => {
+    const result = WorkerPool({
+      ...minProps,
+      command: ["bundle", "exec", "sidekiq"],
+      args: ["-c", "5"],
+    });
+    const spec = result.deployment.spec as any;
+    const container = spec.template.spec.containers[0];
+    expect(container.command).toEqual(["bundle", "exec", "sidekiq"]);
+    expect(container.args).toEqual(["-c", "5"]);
+  });
+
+  test("config creates ConfigMap with envFrom", () => {
+    const result = WorkerPool({
+      ...minProps,
+      config: { REDIS_URL: "redis://redis:6379" },
+    });
+    expect(result.configMap).toBeDefined();
+    const data = (result.configMap as any).data;
+    expect(data.REDIS_URL).toBe("redis://redis:6379");
+
+    const spec = result.deployment.spec as any;
+    const container = spec.template.spec.containers[0];
+    expect(container.envFrom[0].configMapRef.name).toBe("worker-config");
+  });
+
+  test("autoscaling creates HPA and overrides replicas", () => {
+    const result = WorkerPool({
+      ...minProps,
+      autoscaling: { minReplicas: 2, maxReplicas: 8, targetCPUPercent: 60 },
+    });
+    expect(result.hpa).toBeDefined();
+    const hpaSpec = (result.hpa as any).spec;
+    expect(hpaSpec.minReplicas).toBe(2);
+    expect(hpaSpec.maxReplicas).toBe(8);
+    expect(hpaSpec.scaleTargetRef.name).toBe("worker");
+
+    const spec = result.deployment.spec as any;
+    expect(spec.replicas).toBe(2);
+  });
+
+  test("default resource limits", () => {
+    const result = WorkerPool(minProps);
+    const spec = result.deployment.spec as any;
+    const container = spec.template.spec.containers[0];
+    expect(container.resources.requests.cpu).toBe("100m");
+    expect(container.resources.requests.memory).toBe("128Mi");
+    expect(container.resources.limits.cpu).toBe("500m");
+    expect(container.resources.limits.memory).toBe("256Mi");
+  });
+
+  test("serviceAccountName on pod spec", () => {
+    const result = WorkerPool(minProps);
+    const spec = result.deployment.spec as any;
+    expect(spec.template.spec.serviceAccountName).toBe("worker-sa");
+  });
+
+  test("includes common labels on all resources", () => {
+    const result = WorkerPool(minProps);
+    for (const resource of [result.deployment, result.serviceAccount, result.role, result.roleBinding]) {
+      const meta = resource.metadata as any;
+      expect(meta.labels["app.kubernetes.io/name"]).toBe("worker");
+      expect(meta.labels["app.kubernetes.io/managed-by"]).toBe("chant");
+    }
+  });
+
+  test("namespace propagated", () => {
+    const result = WorkerPool({ ...minProps, namespace: "jobs" });
+    for (const resource of [result.deployment, result.serviceAccount, result.role, result.roleBinding]) {
+      const meta = resource.metadata as any;
+      expect(meta.namespace).toBe("jobs");
+    }
+  });
+});
+
+// ── NamespaceEnv ───────────────────────────────────────────────────
+
+describe("NamespaceEnv", () => {
+  test("returns namespace only with minimal props", () => {
+    const result = NamespaceEnv({
+      name: "team-alpha",
+      defaultDenyIngress: false,
+    });
+    expect(result.namespace).toBeDefined();
+    expect(result.resourceQuota).toBeUndefined();
+    expect(result.limitRange).toBeUndefined();
+    expect(result.networkPolicy).toBeUndefined();
+  });
+
+  test("default-deny ingress NetworkPolicy created by default", () => {
+    const result = NamespaceEnv({ name: "team-alpha" });
+    expect(result.networkPolicy).toBeDefined();
+    const spec = result.networkPolicy!.spec as any;
+    expect(spec.policyTypes).toEqual(["Ingress"]);
+    expect(spec.podSelector).toEqual({});
+  });
+
+  test("egress deny when enabled", () => {
+    const result = NamespaceEnv({
+      name: "team-alpha",
+      defaultDenyEgress: true,
+    });
+    const spec = result.networkPolicy!.spec as any;
+    expect(spec.policyTypes).toContain("Ingress");
+    expect(spec.policyTypes).toContain("Egress");
+  });
+
+  test("ResourceQuota created when quota props set", () => {
+    const result = NamespaceEnv({
+      name: "team-alpha",
+      cpuQuota: "8",
+      memoryQuota: "16Gi",
+      maxPods: 50,
+    });
+    expect(result.resourceQuota).toBeDefined();
+    const spec = result.resourceQuota!.spec as any;
+    expect(spec.hard["limits.cpu"]).toBe("8");
+    expect(spec.hard["limits.memory"]).toBe("16Gi");
+    expect(spec.hard.pods).toBe("50");
+  });
+
+  test("ResourceQuota in correct namespace", () => {
+    const result = NamespaceEnv({ name: "team-alpha", cpuQuota: "4" });
+    const meta = result.resourceQuota!.metadata as any;
+    expect(meta.namespace).toBe("team-alpha");
+    expect(meta.name).toBe("team-alpha-quota");
+  });
+
+  test("LimitRange created when limit defaults set", () => {
+    const result = NamespaceEnv({
+      name: "team-alpha",
+      defaultCpuRequest: "100m",
+      defaultMemoryRequest: "128Mi",
+      defaultCpuLimit: "500m",
+      defaultMemoryLimit: "512Mi",
+    });
+    expect(result.limitRange).toBeDefined();
+    const spec = result.limitRange!.spec as any;
+    const limit = spec.limits[0];
+    expect(limit.type).toBe("Container");
+    expect(limit.default.cpu).toBe("500m");
+    expect(limit.default.memory).toBe("512Mi");
+    expect(limit.defaultRequest.cpu).toBe("100m");
+    expect(limit.defaultRequest.memory).toBe("128Mi");
+  });
+
+  test("LimitRange in correct namespace", () => {
+    const result = NamespaceEnv({ name: "team-alpha", defaultCpuLimit: "1" });
+    const meta = result.limitRange!.metadata as any;
+    expect(meta.namespace).toBe("team-alpha");
+    expect(meta.name).toBe("team-alpha-limits");
+  });
+
+  test("includes common labels", () => {
+    const result = NamespaceEnv({ name: "team-alpha" });
+    const meta = result.namespace.metadata as any;
+    expect(meta.labels["app.kubernetes.io/name"]).toBe("team-alpha");
+    expect(meta.labels["app.kubernetes.io/managed-by"]).toBe("chant");
+  });
+
+  test("namespace resource has no namespace field (cluster-scoped)", () => {
+    const result = NamespaceEnv({ name: "team-alpha" });
+    const meta = result.namespace.metadata as any;
+    expect(meta.namespace).toBeUndefined();
+  });
+});
+
+// ── NodeAgent ──────────────────────────────────────────────────────
+
+describe("NodeAgent", () => {
+  const minProps = {
+    name: "log-agent",
+    image: "fluentd:v1.16",
+    rbacRules: [
+      { apiGroups: [""], resources: ["pods", "namespaces"], verbs: ["get", "list", "watch"] },
+    ],
+  };
+
+  test("returns daemonSet, serviceAccount, clusterRole, clusterRoleBinding", () => {
+    const result = NodeAgent(minProps);
+    expect(result.daemonSet).toBeDefined();
+    expect(result.serviceAccount).toBeDefined();
+    expect(result.clusterRole).toBeDefined();
+    expect(result.clusterRoleBinding).toBeDefined();
+  });
+
+  test("no configMap by default", () => {
+    const result = NodeAgent(minProps);
+    expect(result.configMap).toBeUndefined();
+  });
+
+  test("uses ClusterRole/ClusterRoleBinding (not Role)", () => {
+    const result = NodeAgent(minProps);
+    const binding = result.clusterRoleBinding as any;
+    expect(binding.roleRef.kind).toBe("ClusterRole");
+    expect(binding.roleRef.apiGroup).toBe("rbac.authorization.k8s.io");
+  });
+
+  test("ClusterRole/ClusterRoleBinding are cluster-scoped (no namespace)", () => {
+    const result = NodeAgent({ ...minProps, namespace: "monitoring" });
+    const crMeta = result.clusterRole.metadata as any;
+    const crbMeta = result.clusterRoleBinding.metadata as any;
+    expect(crMeta.namespace).toBeUndefined();
+    expect(crbMeta.namespace).toBeUndefined();
+  });
+
+  test("namespaced resources get namespace", () => {
+    const result = NodeAgent({ ...minProps, namespace: "monitoring" });
+    const dsMeta = result.daemonSet.metadata as any;
+    const saMeta = result.serviceAccount.metadata as any;
+    expect(dsMeta.namespace).toBe("monitoring");
+    expect(saMeta.namespace).toBe("monitoring");
+  });
+
+  test("tolerateAllTaints adds Exists toleration by default", () => {
+    const result = NodeAgent(minProps);
+    const spec = result.daemonSet.spec as any;
+    const tolerations = spec.template.spec.tolerations;
+    expect(tolerations).toEqual([{ operator: "Exists" }]);
+  });
+
+  test("tolerateAllTaints can be disabled", () => {
+    const result = NodeAgent({ ...minProps, tolerateAllTaints: false });
+    const spec = result.daemonSet.spec as any;
+    expect(spec.template.spec.tolerations).toBeUndefined();
+  });
+
+  test("hostPaths mounted with readOnly true by default", () => {
+    const result = NodeAgent({
+      ...minProps,
+      hostPaths: [{ name: "varlog", hostPath: "/var/log", mountPath: "/var/log" }],
+    });
+    const spec = result.daemonSet.spec as any;
+    const volumes = spec.template.spec.volumes;
+    expect(volumes[0].name).toBe("varlog");
+    expect(volumes[0].hostPath.path).toBe("/var/log");
+
+    const mounts = spec.template.spec.containers[0].volumeMounts;
+    expect(mounts[0].mountPath).toBe("/var/log");
+    expect(mounts[0].readOnly).toBe(true);
+  });
+
+  test("hostPaths readOnly can be set to false", () => {
+    const result = NodeAgent({
+      ...minProps,
+      hostPaths: [{ name: "data", hostPath: "/data", mountPath: "/data", readOnly: false }],
+    });
+    const spec = result.daemonSet.spec as any;
+    const mounts = spec.template.spec.containers[0].volumeMounts;
+    expect(mounts[0].readOnly).toBe(false);
+  });
+
+  test("config creates ConfigMap mounted at /etc/{name}/", () => {
+    const result = NodeAgent({
+      ...minProps,
+      config: { "fluent.conf": "some config" },
+    });
+    expect(result.configMap).toBeDefined();
+    const data = (result.configMap as any).data;
+    expect(data["fluent.conf"]).toBe("some config");
+
+    const spec = result.daemonSet.spec as any;
+    const volumes = spec.template.spec.volumes;
+    const configVol = volumes.find((v: any) => v.name === "config");
+    expect(configVol.configMap.name).toBe("log-agent-config");
+
+    const mounts = spec.template.spec.containers[0].volumeMounts;
+    const configMount = mounts.find((m: any) => m.name === "config");
+    expect(configMount.mountPath).toBe("/etc/log-agent");
+    expect(configMount.readOnly).toBe(true);
+  });
+
+  test("port creates metrics port on container", () => {
+    const result = NodeAgent({ ...minProps, port: 9100 });
+    const spec = result.daemonSet.spec as any;
+    const container = spec.template.spec.containers[0];
+    expect(container.ports[0].containerPort).toBe(9100);
+    expect(container.ports[0].name).toBe("metrics");
+  });
+
+  test("RBAC naming convention", () => {
+    const result = NodeAgent(minProps);
+    const saMeta = result.serviceAccount.metadata as any;
+    const crMeta = result.clusterRole.metadata as any;
+    const crbMeta = result.clusterRoleBinding.metadata as any;
+    expect(saMeta.name).toBe("log-agent-sa");
+    expect(crMeta.name).toBe("log-agent-role");
+    expect(crbMeta.name).toBe("log-agent-binding");
+  });
+
+  test("RBAC rules passed through to ClusterRole", () => {
+    const result = NodeAgent(minProps);
+    const cr = result.clusterRole as any;
+    expect(cr.rules[0].resources).toEqual(["pods", "namespaces"]);
+  });
+
+  test("includes common labels on all resources", () => {
+    const result = NodeAgent(minProps);
+    for (const resource of [result.daemonSet, result.serviceAccount, result.clusterRole, result.clusterRoleBinding]) {
+      const meta = resource.metadata as any;
+      expect(meta.labels["app.kubernetes.io/name"]).toBe("log-agent");
+      expect(meta.labels["app.kubernetes.io/managed-by"]).toBe("chant");
+    }
+  });
+
+  test("env vars passed to container", () => {
+    const result = NodeAgent({
+      ...minProps,
+      env: [{ name: "LOG_LEVEL", value: "info" }],
+    });
+    const spec = result.daemonSet.spec as any;
+    const container = spec.template.spec.containers[0];
+    expect(container.env).toEqual([{ name: "LOG_LEVEL", value: "info" }]);
+  });
+
+  test("serviceAccountName on pod spec", () => {
+    const result = NodeAgent(minProps);
+    const spec = result.daemonSet.spec as any;
+    expect(spec.template.spec.serviceAccountName).toBe("log-agent-sa");
   });
 });

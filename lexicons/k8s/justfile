@@ -32,3 +32,7 @@ full-roundtrip *FLAGS:
 # Validate serialized YAML against a real k3d cluster
 k3d-validate *FLAGS:
     bash scripts/k3d-validate.sh {{FLAGS}}
+
+# Validate composite resources against a real k3d cluster
+k3d-validate-composites *FLAGS:
+    bash scripts/k3d-validate-composites.sh {{FLAGS}}

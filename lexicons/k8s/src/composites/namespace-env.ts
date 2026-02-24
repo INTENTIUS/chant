@@ -1,0 +1,156 @@
+/**
+ * NamespaceEnv composite — Namespace + optional ResourceQuota + LimitRange + NetworkPolicy.
+ *
+ * A higher-level construct for multi-tenant namespace provisioning with
+ * resource guardrails and network isolation.
+ */
+
+export interface NamespaceEnvProps {
+  /** Namespace name. */
+  name: string;
+  /** Total namespace CPU quota (e.g., "8"). */
+  cpuQuota?: string;
+  /** Total namespace memory quota (e.g., "16Gi"). */
+  memoryQuota?: string;
+  /** Maximum pods in namespace. */
+  maxPods?: number;
+  /** LimitRange default CPU request (e.g., "100m"). */
+  defaultCpuRequest?: string;
+  /** LimitRange default memory request (e.g., "128Mi"). */
+  defaultMemoryRequest?: string;
+  /** LimitRange default CPU limit (e.g., "500m"). */
+  defaultCpuLimit?: string;
+  /** LimitRange default memory limit (e.g., "512Mi"). */
+  defaultMemoryLimit?: string;
+  /** Create default-deny ingress NetworkPolicy (default: true). */
+  defaultDenyIngress?: boolean;
+  /** Create default-deny egress NetworkPolicy (default: false). */
+  defaultDenyEgress?: boolean;
+  /** Additional labels to apply to all resources. */
+  labels?: Record<string, string>;
+}
+
+export interface NamespaceEnvResult {
+  namespace: Record<string, unknown>;
+  resourceQuota?: Record<string, unknown>;
+  limitRange?: Record<string, unknown>;
+  networkPolicy?: Record<string, unknown>;
+}
+
+/**
+ * Create a NamespaceEnv composite — returns prop objects for
+ * a Namespace, optional ResourceQuota, LimitRange, and NetworkPolicy.
+ *
+ * @example
+ * ```ts
+ * import { NamespaceEnv } from "@intentius/chant-lexicon-k8s";
+ *
+ * const { namespace, resourceQuota, limitRange, networkPolicy } = NamespaceEnv({
+ *   name: "team-alpha",
+ *   cpuQuota: "8",
+ *   memoryQuota: "16Gi",
+ *   defaultCpuRequest: "100m",
+ *   defaultMemoryRequest: "128Mi",
+ *   defaultDenyIngress: true,
+ * });
+ * ```
+ */
+export function NamespaceEnv(props: NamespaceEnvProps): NamespaceEnvResult {
+  const {
+    name,
+    cpuQuota,
+    memoryQuota,
+    maxPods,
+    defaultCpuRequest,
+    defaultMemoryRequest,
+    defaultCpuLimit,
+    defaultMemoryLimit,
+    defaultDenyIngress = true,
+    defaultDenyEgress = false,
+    labels: extraLabels = {},
+  } = props;
+
+  const commonLabels: Record<string, string> = {
+    "app.kubernetes.io/name": name,
+    "app.kubernetes.io/managed-by": "chant",
+    ...extraLabels,
+  };
+
+  const namespaceProps: Record<string, unknown> = {
+    metadata: {
+      name,
+      labels: commonLabels,
+    },
+  };
+
+  const result: NamespaceEnvResult = {
+    namespace: namespaceProps,
+  };
+
+  // ResourceQuota — only if at least one quota prop is set
+  const hasQuota = cpuQuota || memoryQuota || maxPods !== undefined;
+  if (hasQuota) {
+    const hard: Record<string, unknown> = {};
+    if (cpuQuota) hard["limits.cpu"] = cpuQuota;
+    if (memoryQuota) hard["limits.memory"] = memoryQuota;
+    if (maxPods !== undefined) hard.pods = String(maxPods);
+
+    result.resourceQuota = {
+      metadata: {
+        name: `${name}-quota`,
+        namespace: name,
+        labels: commonLabels,
+      },
+      spec: { hard },
+    };
+  }
+
+  // LimitRange — only if at least one default limit prop is set
+  const hasLimits = defaultCpuRequest || defaultMemoryRequest || defaultCpuLimit || defaultMemoryLimit;
+  if (hasLimits) {
+    const defaultLimits: Record<string, string> = {};
+    const defaultRequests: Record<string, string> = {};
+
+    if (defaultCpuLimit) defaultLimits.cpu = defaultCpuLimit;
+    if (defaultMemoryLimit) defaultLimits.memory = defaultMemoryLimit;
+    if (defaultCpuRequest) defaultRequests.cpu = defaultCpuRequest;
+    if (defaultMemoryRequest) defaultRequests.memory = defaultMemoryRequest;
+
+    const limit: Record<string, unknown> = { type: "Container" };
+    if (Object.keys(defaultLimits).length > 0) limit.default = defaultLimits;
+    if (Object.keys(defaultRequests).length > 0) limit.defaultRequest = defaultRequests;
+
+    result.limitRange = {
+      metadata: {
+        name: `${name}-limits`,
+        namespace: name,
+        labels: commonLabels,
+      },
+      spec: {
+        limits: [limit],
+      },
+    };
+  }
+
+  // NetworkPolicy — default-deny ingress and/or egress
+  const hasNetworkPolicy = defaultDenyIngress || defaultDenyEgress;
+  if (hasNetworkPolicy) {
+    const policyTypes: string[] = [];
+    if (defaultDenyIngress) policyTypes.push("Ingress");
+    if (defaultDenyEgress) policyTypes.push("Egress");
+
+    result.networkPolicy = {
+      metadata: {
+        name: `${name}-default-deny`,
+        namespace: name,
+        labels: commonLabels,
+      },
+      spec: {
+        podSelector: {},
+        policyTypes,
+      },
+    };
+  }
+
+  return result;
+}

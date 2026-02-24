@@ -62,7 +62,7 @@ export const service = new Service({
 });
 \`\`\`
 
-The lexicon provides **50+ resource types** (Deployment, Service, ConfigMap, StatefulSet, and more), **35+ property types** (Container, Probe, Volume, SecurityContext, etc.), and composites (WebApp, StatefulApp, CronWorkload) for common patterns.
+The lexicon provides **50+ resource types** (Deployment, Service, ConfigMap, StatefulSet, and more), **35+ property types** (Container, Probe, Volume, SecurityContext, etc.), and composites (WebApp, StatefulApp, CronWorkload, AutoscaledService, WorkerPool, NamespaceEnv, NodeAgent) for common patterns.
 `;
 
 const outputFormat = `The Kubernetes lexicon serializes resources into **multi-document YAML** with
@@ -479,6 +479,89 @@ const { cronJob, serviceAccount, role, roleBinding } = CronWorkload({
   rbacRules: [
     { apiGroups: [""], resources: ["secrets"], verbs: ["get"] },
   ],
+});
+\`\`\`
+
+## AutoscaledService Composite
+
+Production HTTP service with HPA and PodDisruptionBudget:
+
+\`\`\`typescript
+import { AutoscaledService } from "@intentius/chant-lexicon-k8s";
+
+const { deployment, service, hpa, pdb } = AutoscaledService({
+  name: "api",
+  image: "api:2.0",
+  port: 8080,
+  maxReplicas: 10,
+  minReplicas: 3,
+  targetCPUPercent: 60,
+  targetMemoryPercent: 80,
+  cpuRequest: "200m",
+  memoryRequest: "256Mi",
+  cpuLimit: "1",
+  memoryLimit: "1Gi",
+  namespace: "production",
+});
+\`\`\`
+
+## WorkerPool Composite
+
+Background queue worker with RBAC and optional autoscaling:
+
+\`\`\`typescript
+import { WorkerPool } from "@intentius/chant-lexicon-k8s";
+
+const { deployment, serviceAccount, role, roleBinding, configMap, hpa } = WorkerPool({
+  name: "email-worker",
+  image: "worker:1.0",
+  command: ["bundle", "exec", "sidekiq"],
+  config: { REDIS_URL: "redis://redis:6379", QUEUE: "emails" },
+  autoscaling: { minReplicas: 2, maxReplicas: 20, targetCPUPercent: 60 },
+});
+\`\`\`
+
+## NamespaceEnv Composite
+
+Multi-tenant namespace with resource guardrails and network isolation:
+
+\`\`\`typescript
+import { NamespaceEnv } from "@intentius/chant-lexicon-k8s";
+
+const { namespace, resourceQuota, limitRange, networkPolicy } = NamespaceEnv({
+  name: "team-alpha",
+  cpuQuota: "8",
+  memoryQuota: "16Gi",
+  maxPods: 50,
+  defaultCpuRequest: "100m",
+  defaultMemoryRequest: "128Mi",
+  defaultCpuLimit: "500m",
+  defaultMemoryLimit: "512Mi",
+  defaultDenyIngress: true,
+  defaultDenyEgress: true,
+});
+\`\`\`
+
+## NodeAgent Composite
+
+Per-node DaemonSet agent with cluster-wide RBAC and host path mounts:
+
+\`\`\`typescript
+import { NodeAgent } from "@intentius/chant-lexicon-k8s";
+
+const { daemonSet, serviceAccount, clusterRole, clusterRoleBinding, configMap } = NodeAgent({
+  name: "log-collector",
+  image: "fluentd:v1.16",
+  port: 24224,
+  hostPaths: [
+    { name: "varlog", hostPath: "/var/log", mountPath: "/var/log" },
+    { name: "containers", hostPath: "/var/lib/docker/containers", mountPath: "/var/lib/docker/containers" },
+  ],
+  config: { "fluent.conf": "<source>\\n  @type tail\\n  path /var/log/*.log\\n</source>" },
+  rbacRules: [
+    { apiGroups: [""], resources: ["pods", "namespaces"], verbs: ["get", "list", "watch"] },
+  ],
+  namespace: "monitoring",
 });
 \`\`\`
 `,
