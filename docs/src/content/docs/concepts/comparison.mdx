@@ -19,7 +19,7 @@ These tools make different design decisions. Each decision has consequences — 
 
 | Decision | Terraform | CDK | Pulumi | chant |
 |---|---|---|---|---|
-| **Language** | Custom DSL (HCL) | General-purpose (executed) | General-purpose (executed) | General-purpose (as data) |
+| **Language** | HCL (custom DSL) | TypeScript, Python, Java, Go, C# (executed) | TypeScript, Python, Go, C#, Java, YAML (executed) | TypeScript (as data) |
 | **Spec fidelity** | Provider-mapped | Abstracted (L2/L3) | Provider-mapped | Spec-true |
 | **Output** | State + API calls | CloudFormation | State + API calls | Native spec output |
 | **Lifecycle scope** | Full | Full (via CloudFormation) | Full | Synthesis only |
