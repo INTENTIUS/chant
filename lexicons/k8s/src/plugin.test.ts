@@ -41,24 +41,86 @@ describe("k8sPlugin", () => {
     expect(intrinsics).toEqual([]);
   });
 
-  test("initTemplates() returns default template with infra.ts", () => {
-    const templates = k8sPlugin.initTemplates!();
-    expect(templates.src).toBeDefined();
-    expect(templates.src["infra.ts"]).toBeDefined();
-    expect(templates.src["infra.ts"]).toContain("Deployment");
-    expect(templates.src["infra.ts"]).toContain("Service");
-  });
+  describe("initTemplates", () => {
+    const templateCases = [
+      {
+        id: undefined,
+        label: "default",
+        expectedConstructors: ["new Deployment", "new Service"],
+        unexpectedConstructors: ["new StatefulSet", "new HorizontalPodAutoscaler"],
+      },
+      {
+        id: "microservice",
+        label: "microservice",
+        expectedConstructors: [
+          "new Deployment",
+          "new Service",
+          "new HorizontalPodAutoscaler",
+          "new PodDisruptionBudget",
+        ],
+        unexpectedConstructors: ["new StatefulSet"],
+      },
+      {
+        id: "stateful",
+        label: "stateful",
+        expectedConstructors: ["new StatefulSet", "new Service"],
+        unexpectedConstructors: ["new Deployment", "new HorizontalPodAutoscaler"],
+      },
+    ] as const;
 
-  test("initTemplates('microservice') includes HPA and PDB", () => {
-    const templates = k8sPlugin.initTemplates!("microservice");
-    expect(templates.src["infra.ts"]).toContain("HorizontalPodAutoscaler");
-    expect(templates.src["infra.ts"]).toContain("PodDisruptionBudget");
-  });
+    for (const tc of templateCases) {
+      describe(`${tc.label} template`, () => {
+        test("returns src with non-empty infra.ts", () => {
+          const result = k8sPlugin.initTemplates!(tc.id);
+          expect(result.src).toBeDefined();
+          expect(typeof result.src["infra.ts"]).toBe("string");
+          expect(result.src["infra.ts"].length).toBeGreaterThan(0);
+        });
 
-  test("initTemplates('stateful') includes StatefulSet", () => {
-    const templates = k8sPlugin.initTemplates!("stateful");
-    expect(templates.src["infra.ts"]).toContain("StatefulSet");
-    expect(templates.src["infra.ts"]).toContain('clusterIP: "None"');
+        test("contains expected resource constructors", () => {
+          const src = k8sPlugin.initTemplates!(tc.id).src["infra.ts"];
+          for (const ctor of tc.expectedConstructors) {
+            expect(src).toContain(ctor);
+          }
+        });
+
+        test("does not contain unrelated constructors", () => {
+          const src = k8sPlugin.initTemplates!(tc.id).src["infra.ts"];
+          for (const ctor of tc.unexpectedConstructors) {
+            expect(src).not.toContain(ctor);
+          }
+        });
+
+        test("has balanced braces and parentheses", () => {
+          const src = k8sPlugin.initTemplates!(tc.id).src["infra.ts"];
+          let braces = 0;
+          let parens = 0;
+          for (const ch of src) {
+            if (ch === "{") braces++;
+            else if (ch === "}") braces--;
+            else if (ch === "(") parens++;
+            else if (ch === ")") parens--;
+          }
+          expect(braces).toBe(0);
+          expect(parens).toBe(0);
+        });
+
+        test("has valid import statement", () => {
+          const src = k8sPlugin.initTemplates!(tc.id).src["infra.ts"];
+          expect(src).toMatch(/^import \{[^}]+\} from "@intentius\/chant-lexicon-k8s"/);
+        });
+
+        test("has at least one export", () => {
+          const src = k8sPlugin.initTemplates!(tc.id).src["infra.ts"];
+          expect(src).toContain("export const ");
+        });
+      });
+    }
+
+    test("stateful template uses headless service", () => {
+      const src = k8sPlugin.initTemplates!("stateful").src["infra.ts"];
+      expect(src).toContain('clusterIP: "None"');
+    });
   });
 
   test("detectTemplate() recognizes K8s YAML by apiVersion/kind", () => {
