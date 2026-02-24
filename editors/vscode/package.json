@@ -5,6 +5,11 @@
   "version": "0.0.4",
   "publisher": "intentius",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/INTENTIUS/chant",
+    "directory": "editors/vscode"
+  },
   "engines": {
     "vscode": "^1.85.0"
   },
