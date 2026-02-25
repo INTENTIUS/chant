@@ -6,6 +6,39 @@ import { join } from "path";
 import { tmpdir } from "os";
 import { getRuntime } from "../runtime-adapter";
 
+/**
+ * Minimal TypeScript lib stub — declares just enough built-in types for
+ * validating generated .d.ts files without needing the full standard library.
+ * This avoids transient failures from corrupted bunx TypeScript caches.
+ */
+const MINIMAL_LIB = `
+interface Array<T> { length: number; [n: number]: T; }
+interface ReadonlyArray<T> { length: number; readonly [n: number]: T; }
+interface String { length: number; }
+interface Boolean {}
+interface Number {}
+interface Function {}
+interface CallableFunction extends Function {}
+interface NewableFunction extends Function {}
+interface Object {}
+interface RegExp {}
+interface IArguments {}
+interface Symbol {}
+type Record<K extends string | number | symbol, V> = { [P in K]: V; };
+type Partial<T> = { [P in keyof T]?: T[P]; };
+type Required<T> = { [P in keyof T]-?: T[P]; };
+type Readonly<T> = { readonly [P in keyof T]: T[P]; };
+type Pick<T, K extends keyof T> = { [P in K]: T[P]; };
+type Omit<T, K extends string | number | symbol> = Pick<T, Exclude<keyof T, K>>;
+type Exclude<T, U> = T extends U ? never : T;
+type Extract<T, U> = T extends U ? T : never;
+type NonNullable<T> = T extends null | undefined ? never : T;
+type ReturnType<T extends (...args: any) => any> = T extends (...args: any) => infer R ? R : any;
+type InstanceType<T extends abstract new (...args: any) => any> = T extends abstract new (...args: any) => infer R ? R : any;
+type Promise<T> = { then<TResult>(onfulfilled?: (value: T) => TResult): Promise<TResult>; };
+interface TemplateStringsArray extends ReadonlyArray<string> { readonly raw: readonly string[]; }
+`;
+
 export interface TypeCheckResult {
   ok: boolean;
   diagnostics: string[];
@@ -25,17 +58,26 @@ export async function typecheckDTS(content: string): Promise<TypeCheckResult> {
     const dtsPath = join(dir, "index.d.ts");
     writeFileSync(dtsPath, content);
 
-    // Write a minimal tsconfig
+    // Write a minimal lib stub so tsc doesn't depend on a full TypeScript
+    // standard library installation (avoids bunx cache corruption issues).
+    writeFileSync(
+      join(dir, "lib.d.ts"),
+      MINIMAL_LIB,
+    );
+
+    // Write a minimal tsconfig — noLib: true prevents tsc from looking for
+    // standard lib files; our lib.d.ts is included via the include array.
     const tsconfig = {
       compilerOptions: {
         strict: true,
         noEmit: true,
         skipLibCheck: false,
+        noLib: true,
         target: "ES2022",
         module: "ES2022",
         moduleResolution: "bundler",
       },
-      include: ["index.d.ts"],
+      include: ["lib.d.ts", "index.d.ts"],
     };
     writeFileSync(join(dir, "tsconfig.json"), JSON.stringify(tsconfig, null, 2));
 

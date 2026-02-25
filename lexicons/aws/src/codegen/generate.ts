@@ -173,7 +173,7 @@ function generateRuntimeIndex(
     // Build attrs map: TS key (underscores) → CF attr name (dots)
     const attrs: Record<string, string> = {};
     for (const a of r.resource.attributes) {
-      const tsKey = a.name.replace(/\./g, "_");  // Endpoint.Address → Endpoint_Address
+      const tsKey = a.name.replace(/\./g, "_").replace(/\*/g, "Item");  // Subscribers.*.Status → Subscribers_Item_Status
       attrs[tsKey] = a.name;                      // maps to "Endpoint.Address" for GetAtt
     }
 
