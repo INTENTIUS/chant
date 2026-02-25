@@ -9,9 +9,18 @@
 
 // ── K8s: PostgreSQL on Kubernetes ────────────────────────────────────
 
-// eslint-disable-next-line -- single-line imports required for chant CLI lexicon detection
-import { Namespace, StatefulSet, Service, StatefulApp } from "@intentius/chant-lexicon-k8s";
-import { FlywayProject, FlywayConfig, Environment } from "@intentius/chant-lexicon-flyway";
+import {
+  Namespace,
+  StatefulSet,
+  Service,
+  StatefulApp,
+} from "@intentius/chant-lexicon-k8s";
+
+import {
+  FlywayProject,
+  FlywayConfig,
+  Environment,
+} from "@intentius/chant-lexicon-flyway";
 
 // Namespace for all PostgreSQL resources
 export const namespace = new Namespace({

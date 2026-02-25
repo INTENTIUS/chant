@@ -223,6 +223,30 @@ describe("detectLexicons", () => {
     expect(result).toEqual(["testdom"]);
   });
 
+  test("detects lexicon from multiline import", async () => {
+    const file = join(testDir, "infra.ts");
+    await writeFile(
+      file,
+      `import {\n  Namespace,\n  StatefulSet,\n  Service,\n} from "@intentius/chant-lexicon-k8s";\n\nexport const ns = new Namespace({});`
+    );
+
+    const result = await detectLexicons([file]);
+    expect(result).toEqual(["k8s"]);
+  });
+
+  test("detects multiple lexicons from multiline imports", async () => {
+    const file = join(testDir, "infra.ts");
+    await writeFile(
+      file,
+      `import {\n  Namespace,\n  Service,\n} from "@intentius/chant-lexicon-k8s";\nimport {\n  FlywayProject,\n  Environment,\n} from "@intentius/chant-lexicon-flyway";\n\nexport const ns = new Namespace({});`
+    );
+
+    const result = await detectLexicons([file]);
+    expect(result).toContain("k8s");
+    expect(result).toContain("flyway");
+    expect(result).toHaveLength(2);
+  });
+
   test("detects lexicon from export with curly braces", async () => {
     const file = join(testDir, "reexport.ts");
     await writeFile(
