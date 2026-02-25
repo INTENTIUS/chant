@@ -119,12 +119,14 @@ export default defineConfig({
 						{ label: 'LSP & MCP Providers', slug: 'lexicon-authoring/lsp-mcp' },
 						{ label: 'Skills', slug: 'lexicon-authoring/skills' },
 						{ label: 'Package & Publish', slug: 'lexicon-authoring/package' },
+						{ label: 'CI & Distribution', slug: 'lexicon-authoring/ci-integration' },
 						{
 							label: 'CLI Reference',
 							items: [
 								{ label: 'init lexicon', slug: 'cli/init-lexicon' },
 								{ label: 'dev generate', slug: 'cli/generate' },
 								{ label: 'dev publish', slug: 'cli/package' },
+								{ label: 'dev onboard', slug: 'cli/onboard' },
 							],
 						},
 					],

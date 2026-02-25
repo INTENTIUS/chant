@@ -1,0 +1,150 @@
+---
+title: CI & Distribution
+description: Integrate your lexicon into the monorepo CI pipeline, Docker smoke tests, and npm publishing
+---
+
+import { Aside, Steps } from '@astrojs/starlight/components';
+
+After building your lexicon (see [Package & Publish](/chant/lexicon-authoring/package/)), you need to wire it into the monorepo's CI pipeline, smoke tests, and publish workflow. The `chant dev onboard` command automates most of this.
+
+## Quick start
+
+```bash
+chant dev onboard <name>
+```
+
+This patches 5 files:
+
+| File | What it adds |
+|------|-------------|
+| `package.json` (root) | `@intentius/chant-lexicon-<name>: "workspace:*"` dependency |
+| `.github/workflows/chant.yml` | Prepack lines in check/test jobs + validate step |
+| `.github/workflows/publish.yml` | Prepack line in test job + publish step |
+| `test/Dockerfile.smoke` | `RUN bun run --cwd lexicons/<name> prepack` |
+| `test/Dockerfile.smoke-node` | Same prepack line for Node.js smoke test |
+
+The command is idempotent — running it twice skips already-configured files.
+
+## Manual steps after onboard
+
+<Steps>
+
+1. **Create an example workspace**
+
+   Bun only creates virtual module links for workspace packages that have at least one dependent. Without an example, `import("@intentius/chant-lexicon-<name>")` will fail from `packages/core`.
+
+   ```
+   lexicons/<name>/examples/basic-deployment/
+   ├── package.json
+   └── src/
+       └── infra.ts
+   ```
+
+   The `package.json` must depend on your lexicon:
+
+   ```json
+   {
+     "name": "<name>-basic-deployment",
+     "version": "0.0.1",
+     "type": "module",
+     "private": true,
+     "scripts": {
+       "build": "chant build src --lexicon <name>",
+       "lint": "chant lint src"
+     },
+     "dependencies": {
+       "@intentius/chant": "workspace:*",
+       "@intentius/chant-lexicon-<name>": "workspace:*"
+     }
+   }
+   ```
+
+   Add the example directory to the root `package.json` workspaces array:
+
+   ```json
+   "workspaces": [
+     "packages/*",
+     "lexicons/*",
+     "lexicons/<name>/examples/*"
+   ]
+   ```
+
+2. **Add smoke tests to `test/integration.sh`**
+
+   Follow the pattern of the existing AWS/GitLab/K8s sections. Each lexicon's smoke tests should cover:
+
+   - Build a fixture project
+   - Build with `--output` and `--format yaml`
+   - Lint (with diagnostics check)
+   - Lint with `--format json`
+   - List entities
+   - Doctor check
+   - MCP server initialize + tools/list
+   - LSP server initialize
+   - `chant init --lexicon <name>` (skill install, build, lint)
+
+3. **Run `bun install`** to update workspace links
+
+4. **Verify locally** before pushing:
+
+   ```bash
+   # Unit tests
+   bun test --cwd lexicons/<name>
+
+   # Full test suite
+   bun test
+
+   # Docker smoke tests (optional but recommended)
+   docker build -f test/Dockerfile.smoke -t chant-smoke .
+   docker build -f test/Dockerfile.smoke-node -t chant-smoke-node .
+   ```
+
+</Steps>
+
+## First npm publish
+
+All packages are published together via the publish workflow, triggered by pushing a `v*` tag:
+
+```bash
+git tag v<version>
+git push origin v<version>
+```
+
+The workflow runs `bun publish --access public --tolerate-republish` for each package. The `--tolerate-republish` flag means existing packages are a no-op.
+
+<Aside type="caution" title="First-time scoped packages">
+`bun publish --access public` may land as **private** on the first publish of a scoped package. After the workflow completes, check [npmjs.com/org/intentius](https://www.npmjs.com/org/intentius) and toggle the package to public if needed. Subsequent publishes will stay public.
+</Aside>
+
+## Version coupling
+
+`chant init --lexicon <name>` generates a `package.json` with:
+
+```json
+"@intentius/chant-lexicon-<name>": "^<core-version>"
+```
+
+With 0.x semver, `^0.0.12` pins to **exactly** `0.0.12` (not `>=0.0.12 <0.1.0`). This means your lexicon version must match the core version at publish time. All packages in the monorepo are versioned together — bump them in lockstep before tagging.
+
+## Why the root dependency matters
+
+Bun's workspace resolution only creates virtual module links for packages that have at least one dependent in the workspace graph. The root `package.json` dependency ensures that `packages/core` can dynamically import your lexicon via:
+
+```typescript
+import(`@intentius/chant-lexicon-${name}`)
+```
+
+Without this, the lexicon resolves fine during its own tests but fails when loaded by the CLI.
+
+## Why prepack steps are needed in Docker
+
+Generated files (`lexicons/<name>/src/generated/`) are gitignored. When Docker builds from a clean checkout, these files don't exist. The `prepack` script runs the generation pipeline to produce them before any tests or builds.
+
+## CLI reference
+
+```
+chant dev onboard <name>    Patch CI, Dockerfiles, and workflows for a new lexicon
+```
+
+Flags:
+- `--verbose` — Show detailed output
