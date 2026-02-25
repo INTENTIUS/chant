@@ -16,6 +16,7 @@ Reference projects demonstrating common Flyway configuration patterns with chant
 | `environment-overrides` | Shared config with per-environment overrides via `environmentGroup` |
 | `multi-schema` | Multiple schemas with cross-schema placeholder references |
 | `callbacks` | Lifecycle callbacks with `BlueprintMigrationSet` |
+| `migration-lifecycle` | Full runnable lifecycle: Docker, SQL migrations (V1→V3), environmentGroup inheritance |
 
 ## Using the skill
 
