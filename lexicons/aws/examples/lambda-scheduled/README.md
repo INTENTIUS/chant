@@ -30,5 +30,5 @@ src/
 
 1. **Composites** — `LambdaScheduled` creates the role, function, EventBridge rule, and permission as a single unit
 2. **Schedule expressions** — supports both `rate(...)` expressions (e.g., `rate(1 hour)`) and `cron(...)` expressions (e.g., `cron(0 12 * * ? *)`)
-3. **Preset relationship** — `LambdaScheduled` is a convenience preset of the more general `LambdaEventBridge` composite, which also supports event pattern matching
+3. **Shared building blocks** — `LambdaScheduled` and `LambdaEventBridge` are peer composites that both build on the shared `LambdaFunction` base; `LambdaEventBridge` also supports event pattern matching
 4. **Resource-based permissions** — `Permission` grants the EventBridge service principal the right to invoke the function, scoped to the rule's ARN

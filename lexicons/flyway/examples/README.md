@@ -9,6 +9,7 @@ Reference projects demonstrating common Flyway configuration patterns with chant
 | `basic-project` | Single PostgreSQL database, dev-only environment |
 | `multi-environment` | Dev/shadow/staging/prod with `MultiEnvironmentProject` composite |
 | `vault-secured` | HashiCorp Vault credentials with `VaultSecuredProject` composite |
+| `azure-secured` | Azure AD authentication with `AzureAdResolver` for managed identity / service principal credentials |
 | `gcp-secured` | GCP Secret Manager credentials with `GcpSecuredProject` composite |
 | `ci-pipeline` | CI/CD environment variables with `CiPipelineProject` composite |
 | `docker-dev` | Docker provisioner with `DockerDevEnvironment` composite |

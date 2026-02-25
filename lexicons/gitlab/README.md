@@ -2,7 +2,7 @@
 
 GitLab CI lexicon for [chant](https://intentius.io/chant/) — declare CI/CD pipelines as typed TypeScript that serializes to `.gitlab-ci.yml`.
 
-This package provides typed constructors for all GitLab CI keywords (Jobs, Workflows, Defaults, and property types like Artifacts, Cache, Image, Rule, Environment, and Trigger), the `CI` pseudo-parameter object for predefined variables, the `reference()` intrinsic for YAML `!reference` tags, and GitLab-specific lint rules. It also includes LSP and MCP server support for editor completions and hover.
+This package provides typed constructors for all GitLab CI keywords (Jobs, Workflows, Default, and property types like Artifacts, Cache, Image, Rule, Environment, and Trigger), the `CI` pseudo-parameter object for predefined variables, the `reference()` intrinsic for YAML `!reference` tags, and GitLab-specific lint rules. It also includes LSP and MCP server support for editor completions and hover.
 
 ```bash
 npm install --save-dev @intentius/chant @intentius/chant-lexicon-gitlab

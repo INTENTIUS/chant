@@ -18,10 +18,11 @@ aws cloudformation describe-stacks --stack-name shared-alb --query 'Stacks[0].Ou
 
 ## What It Does
 
-Deploys 22 CloudFormation resources:
+Deploys 24 CloudFormation resources:
 
 - **17 VPC resources** via `VpcDefault` — VPC, subnets, NAT, routing
 - **5 ALB resources** via `AlbShared` — ECS Cluster, Execution Role, ALB Security Group, ALB, Listener (404 default)
+- **2 ECR repositories** — `alb-api` and `alb-ui` container registries with scan-on-push
 
 ## Stack Outputs
 

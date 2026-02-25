@@ -18,7 +18,7 @@ The stack creates 20 CloudFormation resources:
 **Database layer (3 resources via RdsInstance):**
 - **DB Subnet Group** — places the PostgreSQL instance in private subnets
 - **Security Group** — allows inbound on port 5432 from the VPC CIDR
-- **DB Instance** — PostgreSQL 16.4 on db.t4g.micro, encrypted at rest, 7-day backup retention
+- **DB Instance** — PostgreSQL 16.6 on db.t4g.micro, encrypted at rest, 7-day backup retention
 
 ## Project Structure
 
