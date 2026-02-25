@@ -1,0 +1,107 @@
+{
+  "FlywayProject": {
+    "resourceType": "Flyway::Project",
+    "kind": "resource",
+    "attrs": { "name": "name" }
+  },
+  "FlywayConfig": {
+    "resourceType": "Flyway::Config",
+    "kind": "resource",
+    "attrs": {}
+  },
+  "Environment": {
+    "resourceType": "Flyway::Environment",
+    "kind": "resource",
+    "attrs": { "name": "name" }
+  },
+  "EnvironmentFlyway": {
+    "resourceType": "Flyway::Environment.Flyway",
+    "kind": "property"
+  },
+  "VaultResolver": {
+    "resourceType": "Flyway::Resolver.Vault",
+    "kind": "property"
+  },
+  "GcpResolver": {
+    "resourceType": "Flyway::Resolver.Gcp",
+    "kind": "property"
+  },
+  "DaprResolver": {
+    "resourceType": "Flyway::Resolver.Dapr",
+    "kind": "property"
+  },
+  "CloneResolver": {
+    "resourceType": "Flyway::Resolver.Clone",
+    "kind": "property"
+  },
+  "AzureAdResolver": {
+    "resourceType": "Flyway::Resolver.AzureAd",
+    "kind": "property"
+  },
+  "EnvResolver": {
+    "resourceType": "Flyway::Resolver.Env",
+    "kind": "property"
+  },
+  "GitResolver": {
+    "resourceType": "Flyway::Resolver.Git",
+    "kind": "property"
+  },
+  "LocalSecretResolver": {
+    "resourceType": "Flyway::Resolver.LocalSecret",
+    "kind": "property"
+  },
+  "BackupProvisioner": {
+    "resourceType": "Flyway::Provisioner.Backup",
+    "kind": "property"
+  },
+  "SnapshotProvisioner": {
+    "resourceType": "Flyway::Provisioner.Snapshot",
+    "kind": "property"
+  },
+  "CleanProvisioner": {
+    "resourceType": "Flyway::Provisioner.Clean",
+    "kind": "property"
+  },
+  "CreateDbProvisioner": {
+    "resourceType": "Flyway::Provisioner.CreateDb",
+    "kind": "property"
+  },
+  "DockerProvisioner": {
+    "resourceType": "Flyway::Provisioner.Docker",
+    "kind": "property"
+  },
+  "FlywayDesktopConfig": {
+    "resourceType": "Flyway::FlywayDesktop",
+    "kind": "resource",
+    "attrs": {}
+  },
+  "RedgateCompareConfig": {
+    "resourceType": "Flyway::RedgateCompare",
+    "kind": "resource",
+    "attrs": {}
+  },
+  "Placeholder": {
+    "resourceType": "Flyway::Placeholder",
+    "kind": "property"
+  },
+  "PostgresConfig": {
+    "resourceType": "Flyway::Database.Postgres",
+    "kind": "property"
+  },
+  "MySQLConfig": {
+    "resourceType": "Flyway::Database.MySQL",
+    "kind": "property"
+  },
+  "SQLServerConfig": {
+    "resourceType": "Flyway::Database.SQLServer",
+    "kind": "property"
+  },
+  "OracleConfig": {
+    "resourceType": "Flyway::Database.Oracle",
+    "kind": "property"
+  },
+  "SQLiteConfig": {
+    "resourceType": "Flyway::Database.SQLite",
+    "kind": "property"
+  }
+}
