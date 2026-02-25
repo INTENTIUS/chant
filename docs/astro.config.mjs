@@ -119,6 +119,7 @@ export default defineConfig({
 						{ label: 'Write Lint Rules', slug: 'lexicon-authoring/lint-rules' },
 						{ label: 'LSP & MCP Providers', slug: 'lexicon-authoring/lsp-mcp' },
 						{ label: 'Skills', slug: 'lexicon-authoring/skills' },
+						{ label: 'Completeness Checklist', slug: 'lexicon-authoring/completeness-checklist' },
 						{ label: 'Package & Publish', slug: 'lexicon-authoring/package' },
 						{ label: 'CI & Distribution', slug: 'lexicon-authoring/ci-integration' },
 						{
@@ -128,6 +129,7 @@ export default defineConfig({
 								{ label: 'dev generate', slug: 'cli/generate' },
 								{ label: 'dev publish', slug: 'cli/package' },
 								{ label: 'dev onboard', slug: 'cli/onboard' },
+								{ label: 'dev check-lexicon', slug: 'cli/check-lexicon' },
 							],
 						},
 					],

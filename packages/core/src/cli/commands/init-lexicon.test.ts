@@ -34,8 +34,10 @@ describe("initLexiconCommand", () => {
 
     const expectedFiles = [
       "src/plugin.ts",
+      "src/plugin.test.ts",
       "src/index.ts",
       "src/serializer.ts",
+      "src/serializer.test.ts",
       "src/codegen/generate.ts",
       "src/codegen/generate-cli.ts",
       "src/codegen/naming.ts",
@@ -47,6 +49,8 @@ describe("initLexiconCommand", () => {
       "src/lint/rules/index.ts",
       "src/lsp/completions.ts",
       "src/lsp/hover.ts",
+      "src/lsp/completions.test.ts",
+      "src/lsp/hover.test.ts",
       "src/import/parser.ts",
       "src/import/generator.ts",
       "src/coverage.ts",
@@ -62,8 +66,15 @@ describe("initLexiconCommand", () => {
       "docs/astro.config.mjs",
       "docs/src/content.config.ts",
       "docs/src/content/docs/index.mdx",
+      "docs/src/content/docs/getting-started.mdx",
+      "docs/src/content/docs/serialization.mdx",
+      "docs/src/content/docs/lint-rules.mdx",
+      "examples/getting-started/package.json",
+      "examples/getting-started/src/infra.ts",
       "src/generated/.gitkeep",
-      "examples/getting-started/.gitkeep",
+      "src/composites/.gitkeep",
+      "src/actions/.gitkeep",
+      "src/lint/post-synth/.gitkeep",
     ];
 
     for (const file of expectedFiles) {
@@ -247,6 +258,16 @@ describe("init-lexicon fixture snapshot", () => {
       name: FIXTURE_LEXICON_NAME,
       path: FIXTURE_DIR,
     });
+
+    // Remove generated .test.ts files so bun test won't try to run them as tests
+    for (const f of [
+      "src/plugin.test.ts",
+      "src/serializer.test.ts",
+      "src/lsp/completions.test.ts",
+      "src/lsp/hover.test.ts",
+    ]) {
+      rmSync(join(FIXTURE_DIR, f), { force: true });
+    }
 
     expect(result.success).toBe(true);
 

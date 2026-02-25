@@ -1,4 +1,8 @@
-import type { LexiconPlugin } from "@intentius/chant/lexicon";
+import type { LexiconPlugin, SkillDefinition, IntrinsicDef } from "@intentius/chant/lexicon";
+import type { LintRule } from "@intentius/chant/lint/rule";
+import type { PostSynthCheck } from "@intentius/chant/lint/post-synth";
+import type { CompletionContext, CompletionItem, HoverContext, HoverInfo } from "@intentius/chant/lsp/types";
+import type { McpToolContribution, McpResourceContribution } from "@intentius/chant/mcp/types";
 import { fixtureSerializer } from "./serializer";
 
 /**
@@ -42,54 +46,45 @@ export const fixturePlugin: LexiconPlugin = {
     console.error(`Packaged ${stats.resources} resources, ${stats.ruleCount} rules, ${stats.skillCount} skills`);
   },
 
-  // ── Optional extensions (uncomment and implement as needed) ───
+  // ── Optional extensions ────────────────────────────────────
 
-  // lintRules(): LintRule[] {
-  //   return [];
-  // },
+  lintRules() {
+    const { rules } = require("./lint/rules");
+    return rules;
+  },
 
-  // declarativeRules(): RuleSpec[] {
-  //   return [];
-  // },
+  postSynthChecks() {
+    return []; // TODO: Add post-synth checks
+  },
 
-  // postSynthChecks(): PostSynthCheck[] {
-  //   return [];
-  // },
+  skills() {
+    return []; // TODO: Add skills
+  },
 
-  // intrinsics(): IntrinsicDef[] {
-  //   return [];
-  // },
+  mcpTools() {
+    return []; // TODO: Implement MCP tools
+  },
 
-  // pseudoParameters(): string[] {
-  //   return [];
-  // },
+  mcpResources() {
+    return []; // TODO: Implement MCP resources
+  },
 
-  // detectTemplate(data: unknown): boolean {
-  //   return false;
-  // },
+  detectTemplate(data: unknown) {
+    return false; // TODO: Detect if a template belongs to this lexicon
+  },
 
-  // templateParser(): TemplateParser {
-  //   // return new MyParser();
-  // },
+  completionProvider(ctx: CompletionContext) {
+    const { completions } = require("./lsp/completions");
+    return completions(ctx);
+  },
 
-  // templateGenerator(): TypeScriptGenerator {
-  //   // return new MyGenerator();
-  // },
+  hoverProvider(ctx: HoverContext) {
+    const { hover } = require("./lsp/hover");
+    return hover(ctx);
+  },
 
-  // skills(): SkillDefinition[] {
-  //   return [];
-  // },
-
-  // completionProvider(ctx: CompletionContext): CompletionItem[] {
-  //   return [];
-  // },
-
-  // hoverProvider(ctx: HoverContext): HoverInfo | undefined {
-  //   return undefined;
-  // },
-
-  // docs(options?: { verbose?: boolean }): Promise<void> {
-  //   const { generateDocs } = await import("./codegen/docs");
-  //   return generateDocs(options);
-  // },
+  async docs(options?) {
+    const { generateDocs } = await import("./codegen/docs");
+    return generateDocs(options);
+  },
 };

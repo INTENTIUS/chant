@@ -62,7 +62,11 @@ function writeIfNotExists(
 // ── Template generators ──────────────────────────────────────────────
 
 function generatePluginTs(name: string, names: ReturnType<typeof deriveNames>): string {
-  return `import type { LexiconPlugin } from "@intentius/chant/lexicon";
+  return `import type { LexiconPlugin, SkillDefinition, IntrinsicDef } from "@intentius/chant/lexicon";
+import type { LintRule } from "@intentius/chant/lint/rule";
+import type { PostSynthCheck } from "@intentius/chant/lint/post-synth";
+import type { CompletionContext, CompletionItem, HoverContext, HoverInfo } from "@intentius/chant/lsp/types";
+import type { McpToolContribution, McpResourceContribution } from "@intentius/chant/mcp/types";
 import { ${names.serializerVarName} } from "./serializer";
 
 /**
@@ -106,56 +110,47 @@ export const ${names.pluginVarName}: LexiconPlugin = {
     console.error(\`Packaged \${stats.resources} resources, \${stats.ruleCount} rules, \${stats.skillCount} skills\`);
   },
 
-  // ── Optional extensions (uncomment and implement as needed) ───
+  // ── Optional extensions ────────────────────────────────────
 
-  // lintRules(): LintRule[] {
-  //   return [];
-  // },
+  lintRules() {
+    const { rules } = require("./lint/rules");
+    return rules;
+  },
 
-  // declarativeRules(): RuleSpec[] {
-  //   return [];
-  // },
+  postSynthChecks() {
+    return []; // TODO: Add post-synth checks
+  },
 
-  // postSynthChecks(): PostSynthCheck[] {
-  //   return [];
-  // },
+  skills() {
+    return []; // TODO: Add skills
+  },
 
-  // intrinsics(): IntrinsicDef[] {
-  //   return [];
-  // },
+  mcpTools() {
+    return []; // TODO: Implement MCP tools
+  },
 
-  // pseudoParameters(): string[] {
-  //   return [];
-  // },
+  mcpResources() {
+    return []; // TODO: Implement MCP resources
+  },
 
-  // detectTemplate(data: unknown): boolean {
-  //   return false;
-  // },
+  detectTemplate(data: unknown) {
+    return false; // TODO: Detect if a template belongs to this lexicon
+  },
 
-  // templateParser(): TemplateParser {
-  //   // return new MyParser();
-  // },
+  completionProvider(ctx: CompletionContext) {
+    const { completions } = require("./lsp/completions");
+    return completions(ctx);
+  },
 
-  // templateGenerator(): TypeScriptGenerator {
-  //   // return new MyGenerator();
-  // },
+  hoverProvider(ctx: HoverContext) {
+    const { hover } = require("./lsp/hover");
+    return hover(ctx);
+  },
 
-  // skills(): SkillDefinition[] {
-  //   return [];
-  // },
-
-  // completionProvider(ctx: CompletionContext): CompletionItem[] {
-  //   return [];
-  // },
-
-  // hoverProvider(ctx: HoverContext): HoverInfo | undefined {
-  //   return undefined;
-  // },
-
-  // docs(options?: { verbose?: boolean }): Promise<void> {
-  //   const { generateDocs } = await import("./codegen/docs");
-  //   return generateDocs(options);
-  // },
+  async docs(options?) {
+    const { generateDocs } = await import("./codegen/docs");
+    return generateDocs(options);
+  },
 };
 `;
 }
@@ -697,6 +692,144 @@ just docs
 `;
 }
 
+// ── Test file generators ─────────────────────────────────────────────
+
+function generatePluginTestTs(name: string, names: ReturnType<typeof deriveNames>): string {
+  return `import { describe, expect, it } from "bun:test";
+import { ${names.pluginVarName} } from "./plugin";
+import { isLexiconPlugin } from "@intentius/chant/lexicon";
+
+describe("${name} plugin", () => {
+  it("is a valid LexiconPlugin", () => {
+    expect(isLexiconPlugin(${names.pluginVarName})).toBe(true);
+  });
+
+  it("has the correct name", () => {
+    expect(${names.pluginVarName}.name).toBe("${name}");
+  });
+
+  it("has a serializer", () => {
+    expect(${names.pluginVarName}.serializer).toBeDefined();
+  });
+});
+`;
+}
+
+function generateSerializerTestTs(name: string, names: ReturnType<typeof deriveNames>): string {
+  return `import { describe, expect, it } from "bun:test";
+import { ${names.serializerVarName} } from "./serializer";
+
+describe("${name} serializer", () => {
+  it("serializes an empty map to valid JSON", () => {
+    const result = ${names.serializerVarName}.serialize(new Map());
+    expect(typeof result).toBe("string");
+    expect(() => JSON.parse(result)).not.toThrow();
+  });
+
+  it("has the correct name", () => {
+    expect(${names.serializerVarName}.name).toBe("${name}");
+  });
+});
+`;
+}
+
+function generateCompletionsTestTs(): string {
+  return `import { describe, expect, it } from "bun:test";
+import { completions } from "./completions";
+
+describe("LSP completions", () => {
+  it("returns an array", () => {
+    // TODO: Replace with a real CompletionContext
+    const result = completions({} as any);
+    expect(Array.isArray(result)).toBe(true);
+  });
+});
+`;
+}
+
+function generateHoverTestTs(): string {
+  return `import { describe, expect, it } from "bun:test";
+import { hover } from "./hover";
+
+describe("LSP hover", () => {
+  it("returns undefined for unknown context", () => {
+    // TODO: Replace with a real HoverContext
+    const result = hover({} as any);
+    expect(result).toBeUndefined();
+  });
+});
+`;
+}
+
+// ── Example generators ───────────────────────────────────────────────
+
+function generateExamplePackageJson(name: string): string {
+  return JSON.stringify(
+    {
+      name: `@intentius/chant-lexicon-${name}-example-getting-started`,
+      version: "0.0.1",
+      private: true,
+      dependencies: {
+        [`@intentius/chant-lexicon-${name}`]: "workspace:*",
+        "@intentius/chant": "workspace:*",
+      },
+    },
+    null,
+    2,
+  ) + "\n";
+}
+
+function generateExampleInfraTs(name: string, names: ReturnType<typeof deriveNames>): string {
+  return `/**
+ * Getting-started example for the ${name} lexicon.
+ *
+ * TODO: Replace with a real infrastructure definition
+ * that uses resources from the ${name} lexicon.
+ */
+
+// import { SomeResource } from "${names.packageName}";
+//
+// export const myResource = SomeResource("example", {
+//   // properties...
+// });
+`;
+}
+
+// ── Additional doc page generators ───────────────────────────────────
+
+function generateDocsGettingStartedMdx(name: string): string {
+  const displayName = name.charAt(0).toUpperCase() + name.slice(1);
+  return `---
+title: Getting Started
+description: Get started with the ${displayName} lexicon
+---
+
+TODO: Document how to set up a project using the ${displayName} lexicon.
+`;
+}
+
+function generateDocsSerializationMdx(name: string): string {
+  const displayName = name.charAt(0).toUpperCase() + name.slice(1);
+  return `---
+title: Serialization
+description: ${displayName} output format
+---
+
+TODO: Document the ${displayName} serialization format and output structure.
+`;
+}
+
+function generateDocsLintRulesMdx(name: string): string {
+  const displayName = name.charAt(0).toUpperCase() + name.slice(1);
+  return `---
+title: Lint Rules
+description: ${displayName} lint rules reference
+---
+
+TODO: Document the lint rules provided by the ${displayName} lexicon.
+`;
+}
+
 // ── Docs site skeleton generators ────────────────────────────────────
 
 function generateDocsPackageJson(name: string): string {
@@ -746,6 +879,9 @@ export default defineConfig({
       title: '${displayName}',
       sidebar: [
         { label: 'Overview', slug: '' },
+        { label: 'Getting Started', slug: 'getting-started' },
+        { label: 'Serialization', slug: 'serialization' },
+        { label: 'Lint Rules', slug: 'lint-rules' },
       ],
     }),
   ],
@@ -818,12 +954,16 @@ export async function initLexiconCommand(options: InitLexiconOptions): Promise<I
     "src/lint/rules",
     "src/lsp",
     "src/import",
+    "src/composites",
+    "src/actions",
+    "src/lint/post-synth",
     "src/generated",
     "docs",
     "docs/src",
     "docs/src/content",
     "docs/src/content/docs",
     "examples/getting-started",
+    "examples/getting-started/src",
   ];
 
   for (const dir of dirs) {
@@ -849,9 +989,13 @@ export async function initLexiconCommand(options: InitLexiconOptions): Promise<I
     "src/lint/rules/index.ts": generateLintRulesIndexTs(),
     "src/lsp/completions.ts": generateLspCompletionsTs(name),
     "src/lsp/hover.ts": generateLspHoverTs(name),
+    "src/lsp/completions.test.ts": generateCompletionsTestTs(),
+    "src/lsp/hover.test.ts": generateHoverTestTs(),
     "src/import/parser.ts": generateImportParserTs(name),
     "src/import/generator.ts": generateImportGeneratorTs(name),
     "src/coverage.ts": generateCoverageTs(name),
+    "src/plugin.test.ts": generatePluginTestTs(name, names),
+    "src/serializer.test.ts": generateSerializerTestTs(name, names),
     "src/validate.ts": generateValidateTs(name),
     "src/validate-cli.ts": generateValidateCliTs(),
     "package.json": generatePackageJson(name, names),
@@ -864,12 +1008,19 @@ export async function initLexiconCommand(options: InitLexiconOptions): Promise<I
     "docs/astro.config.mjs": generateDocsAstroConfig(name),
     "docs/src/content.config.ts": generateDocsContentConfig(),
     "docs/src/content/docs/index.mdx": generateDocsIndexMdx(name),
+    "docs/src/content/docs/getting-started.mdx": generateDocsGettingStartedMdx(name),
+    "docs/src/content/docs/serialization.mdx": generateDocsSerializationMdx(name),
+    "docs/src/content/docs/lint-rules.mdx": generateDocsLintRulesMdx(name),
+    "examples/getting-started/package.json": generateExamplePackageJson(name),
+    "examples/getting-started/src/infra.ts": generateExampleInfraTs(name, names),
   };
 
   // Write .gitkeep files
   const gitkeeps = [
     "src/generated/.gitkeep",
-    "examples/getting-started/.gitkeep",
+    "src/composites/.gitkeep",
+    "src/actions/.gitkeep",
+    "src/lint/post-synth/.gitkeep",
   ];
 
   for (const gk of gitkeeps) {

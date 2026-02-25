@@ -1,0 +1,125 @@
+---
+title: Completeness Checklist
+description: What makes a production-quality lexicon — tier 1/2/3 checks
+---
+
+The `chant dev check-lexicon` command evaluates a lexicon directory against three tiers of completeness. Run it from anywhere:
+
+```bash
+chant dev check-lexicon lexicons/my-lexicon
+```
+
+Pass `--format json` for machine-readable output.
+
+## Tier 1 — Required
+
+These must all pass for the command to exit 0. CI should gate on this.
+
+| Check | What it verifies |
+|---|---|
+| `src/plugin.ts` exists | Plugin entry point |
+| `src/serializer.ts` exists | Build output serializer |
+| At least 1 lint rule | `src/lint/rules/*.ts` (not `index.ts`) |
+| At least 1 post-synth check | `src/lint/post-synth/*.ts` (not `index.ts`/`helpers.ts`) |
+| `src/lsp/completions.ts` exists | LSP completion provider |
+| `src/lsp/hover.ts` exists | LSP hover provider |
+| `dist/manifest.json` exists | Lexicon bundle was built |
+| At least 1 example | Non-empty subdirectory in `examples/` |
+| `plugin.test.ts` exists | Plugin unit test |
+| `serializer.test.ts` exists | Serializer unit test |
+| At least 1 `.mdx` doc page | Documentation exists |
+
+## Tier 2 — Recommended
+
+Warnings — these make the lexicon useful in practice.
+
+| Check | What it verifies |
+|---|---|
+| Uncommented `mcpTools` | MCP tool contributions active |
+| Uncommented `mcpResources` | MCP resource contributions active |
+| Uncommented `skills` | AI skills active |
+| Uncommented `detectTemplate` | Template detection active |
+| Uncommented `initTemplates` | Init templates active |
+| At least 1 composite | `src/composites/*.ts` (not `index.ts`) |
+| At least 3 examples | Broader usage coverage |
+| `completions.test.ts` exists | LSP completions tested |
+| `hover.test.ts` exists | LSP hover tested |
+| `coverage.ts` implemented | No "not yet implemented" placeholder |
+| At least 8 doc pages | Comprehensive documentation |
+
+## Tier 3 — Thoroughness
+
+Informational — tracks depth of testing and feature coverage.
+
+| Check | What it verifies |
+|---|---|
+| Each lint rule has a `.test.ts` | Per-rule test coverage |
+| Each post-synth has a `.test.ts` | Per-check test coverage |
+| `typecheck.test.ts` exists | Type-level verification |
+| `roundtrip.test.ts` exists | Serialize/deserialize round-trip |
+| At least 5 composites | Rich composition library |
+| `src/actions/` with actions | Automation actions |
+| At least 5 examples with tests | Tested usage patterns |
+
+## Complete lexicon file tree
+
+Use the AWS lexicon as reference for full coverage:
+
+```
+lexicons/my-lexicon/
+├── src/
+│   ├── plugin.ts              # LexiconPlugin entry point
+│   ├── plugin.test.ts
+│   ├── serializer.ts          # Build output serializer
+│   ├── serializer.test.ts
+│   ├── index.ts               # Re-exports
+│   ├── coverage.ts            # Coverage analysis
+│   ├── validate.ts            # Artifact validation
+│   ├── validate-cli.ts
+│   ├── codegen/
+│   │   ├── generate.ts        # Code generation pipeline
+│   │   ├── generate-cli.ts
+│   │   ├── naming.ts          # Naming strategy
+│   │   ├── package.ts         # Bundle packaging
+│   │   └── docs.ts            # Docs generation
+│   ├── spec/
+│   │   ├── fetch.ts           # Upstream schema fetching
+│   │   └── parse.ts           # Schema parsing
+│   ├── lint/
+│   │   ├── rules/             # Lint rules + tests
+│   │   └── post-synth/        # Post-synthesis checks + tests
+│   ├── lsp/
+│   │   ├── completions.ts     # LSP completions
+│   │   ├── completions.test.ts
+│   │   ├── hover.ts           # LSP hover
+│   │   └── hover.test.ts
+│   ├── composites/            # Composite resources
+│   ├── actions/               # Automation actions
+│   ├── import/                # Template parser + generator
+│   └── generated/             # Generated artifacts (do not edit)
+├── dist/                      # Built bundle
+├── examples/                  # Usage examples with tests
+├── docs/                      # Starlight docs site
+├── package.json
+├── tsconfig.json
+└── justfile
+```
+
+## Suggested implementation order
+
+After scaffolding with `chant init lexicon`:
+
+1. Implement `src/spec/fetch.ts` and `src/spec/parse.ts`
+2. Implement `src/codegen/generate.ts` and `src/codegen/naming.ts`
+3. Run `just generate` to produce types
+4. Implement `src/serializer.ts`
+5. Write lint rules in `src/lint/rules/`
+6. Add post-synth checks in `src/lint/post-synth/`
+7. Implement LSP completions and hover
+8. Build examples
+9. Generate docs
+
+## Reference implementations
+
+- **AWS** — full coverage across all tiers, including per-rule tests and composites
+- **Flyway** — good example of per-rule testing patterns with test helpers

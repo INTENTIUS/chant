@@ -267,7 +267,7 @@ export function onboardCommand(options: OnboardOptions): OnboardResult {
 /**
  * Print onboard results and remaining manual steps.
  */
-export function printOnboardResult(result: OnboardResult, name: string): void {
+export async function printOnboardResult(result: OnboardResult, name: string): Promise<void> {
   if (!result.success) {
     console.error(formatError({ message: result.error ?? "onboard failed" }));
     return;
@@ -295,8 +295,19 @@ export function printOnboardResult(result: OnboardResult, name: string): void {
   console.log(`  2. Add smoke tests to test/integration.sh`);
   console.log(`  3. Run: bun install (to update workspace links)`);
   console.log(`  4. First npm publish: tag with v<version> and push`);
+  console.log(`  5. Run: chant dev check-lexicon lexicons/${name} (to see completeness status)`);
   console.log(formatWarning({
     message: "First-time scoped packages may publish as private despite --access public",
   }));
   console.log(`     Check https://www.npmjs.com/org/intentius and toggle visibility if needed`);
+
+  // Run check-lexicon if the lexicon directory exists
+  const lexiconDir = join(findRepoRoot(), "lexicons", name);
+  if (existsSync(lexiconDir)) {
+    console.log("");
+    console.log("Lexicon completeness:");
+    const { checkLexicon, printCheckResult } = await import("./check-lexicon");
+    const checkResult = checkLexicon(lexiconDir);
+    printCheckResult(checkResult, false);
+  }
 }

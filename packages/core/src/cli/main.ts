@@ -8,7 +8,7 @@ import { loadChantConfig } from "../config";
 import { initRuntime } from "../runtime-adapter";
 import { runBuild } from "./handlers/build";
 import { runLint } from "./handlers/lint";
-import { runDevGenerate, runDevPublish, runDevOnboard, runDevUnknown } from "./handlers/dev";
+import { runDevGenerate, runDevPublish, runDevOnboard, runDevCheckLexicon, runDevUnknown } from "./handlers/dev";
 import { runServeLsp, runServeMcp, runServeUnknown } from "./handlers/serve";
 import { runInit, runInitLexicon } from "./handlers/init";
 import { runList, runImport, runUpdate, runDoctor } from "./handlers/misc";
@@ -95,6 +95,7 @@ Lexicon development:
   dev generate          Generate lexicon artifacts (+ validate + coverage)
   dev publish           Package lexicon for distribution
   dev onboard <name>    Patch CI, Dockerfiles, and workflows for a new lexicon
+  dev check-lexicon <dir>  Check lexicon completeness (tier 1/2/3)
 
 Servers:
   serve lsp             Start the LSP server (stdio)
@@ -174,6 +175,7 @@ const registry: CommandDef[] = [
   { name: "dev generate", requiresPlugins: true, handler: runDevGenerate },
   { name: "dev publish", requiresPlugins: true, handler: runDevPublish },
   { name: "dev onboard", handler: runDevOnboard },
+  { name: "dev check-lexicon", handler: runDevCheckLexicon },
 
   // Serve subcommands
   { name: "serve lsp", requiresPlugins: true, handler: runServeLsp },
