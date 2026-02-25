@@ -10,11 +10,11 @@ import { loadPlugin } from "../plugins";
 /** Read the current chant package version from our own package.json. */
 function getChantVersion(): string {
   try {
-    const pkgDir = dirname(dirname(dirname(dirname(dirname(fileURLToPath(import.meta.url))))));
+    const pkgDir = dirname(dirname(dirname(dirname(fileURLToPath(import.meta.url)))));
     const pkg = JSON.parse(readFileSync(join(pkgDir, "package.json"), "utf-8"));
-    return pkg.version ?? "0.0.8";
+    return pkg.version ?? "0.0.12";
   } catch {
-    return "0.0.8";
+    return "0.0.12";
   }
 }
 
