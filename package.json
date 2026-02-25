@@ -12,7 +12,11 @@
     "tsc": "tsc",
     "docs": "bun --cwd docs dev"
   },
-  "dependencies": {},
+  "dependencies": {
+    "@intentius/chant-lexicon-aws": "workspace:*",
+    "@intentius/chant-lexicon-gitlab": "workspace:*",
+    "@intentius/chant-lexicon-k8s": "workspace:*"
+  },
   "devDependencies": {
     "@typescript-eslint/eslint-plugin": "^8.54.0",
     "@typescript-eslint/parser": "^8.54.0",

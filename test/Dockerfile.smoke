@@ -15,6 +15,11 @@ COPY . .
 # Install dependencies
 RUN bun install
 
+# Generate lexicon artifacts (generated files are gitignored, must be built)
+RUN bun run --cwd lexicons/aws prepack
+RUN bun run --cwd lexicons/gitlab prepack
+RUN bun run --cwd lexicons/k8s prepack
+
 # Run integration tests during build — build fails if tests fail
 COPY test/integration.sh /app/test/integration.sh
 RUN chmod +x /app/test/integration.sh && /app/test/integration.sh

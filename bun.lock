@@ -3,6 +3,11 @@
   "configVersion": 1,
   "workspaces": {
     "": {
+      "dependencies": {
+        "@intentius/chant-lexicon-aws": "workspace:*",
+        "@intentius/chant-lexicon-gitlab": "workspace:*",
+        "@intentius/chant-lexicon-k8s": "workspace:*",
+      },
       "devDependencies": {
         "@typescript-eslint/eslint-plugin": "^8.54.0",
         "@typescript-eslint/parser": "^8.54.0",
@@ -37,7 +42,7 @@
     },
     "lexicons/aws": {
       "name": "@intentius/chant-lexicon-aws",
-      "version": "0.0.11",
+      "version": "0.0.12",
       "dependencies": {
         "@intentius/chant": "workspace:*",
         "fflate": "^0.8.2",
@@ -219,7 +224,7 @@
     },
     "lexicons/gitlab": {
       "name": "@intentius/chant-lexicon-gitlab",
-      "version": "0.0.11",
+      "version": "0.0.12",
       "dependencies": {
         "@intentius/chant": "workspace:*",
       },
@@ -277,7 +282,7 @@
     },
     "lexicons/k8s": {
       "name": "@intentius/chant-lexicon-k8s",
-      "version": "0.0.1",
+      "version": "0.0.12",
       "dependencies": {
         "@intentius/chant": "workspace:*",
       },
@@ -285,9 +290,17 @@
         "typescript": "^5.9.3",
       },
     },
+    "lexicons/k8s/examples/basic-deployment": {
+      "name": "k8s-basic-deployment",
+      "version": "0.0.1",
+      "dependencies": {
+        "@intentius/chant": "workspace:*",
+        "@intentius/chant-lexicon-k8s": "workspace:*",
+      },
+    },
     "packages/core": {
       "name": "@intentius/chant",
-      "version": "0.0.11",
+      "version": "0.0.12",
       "bin": {
         "chant": "./bin/chant",
       },
@@ -477,6 +490,8 @@
     "json-schema-traverse": ["json-schema-traverse@0.4.1", "", {}, "sha512-xbbCH5dCYU5T8LcEhhuh7HJ88HXuW3qsI3Y0zOZFKfZEHcpWiHU/Jxzk629Brsab/mMiHQti9wMP+845RPe3Vg=="],
 
     "json-stable-stringify-without-jsonify": ["json-stable-stringify-without-jsonify@1.0.1", "", {}, "sha512-Bdboy+l7tA3OGW6FjyFHWkP5LuByj1Tk33Ljyq0axyzdk9//JSi2u3fP1QSmd1KNwq6VOKYGlAu87CisVir6Pw=="],
+
+    "k8s-basic-deployment": ["k8s-basic-deployment@workspace:lexicons/k8s/examples/basic-deployment"],
 
     "keyv": ["keyv@4.5.4", "", { "dependencies": { "json-buffer": "3.0.1" } }, "sha512-oxVHkHR/EJf2CNXnWxRLW6mg7JyCCUcG0DtEGmL2ctUo1PNTin1PUil+r/+4r5MpVgC/fn1kjsx7mjSujKqIpw=="],
 

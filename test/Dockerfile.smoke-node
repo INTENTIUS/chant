@@ -12,6 +12,11 @@ ENV PATH="/root/.bun/bin:${PATH}"
 COPY . .
 RUN bun install
 
+# Generate lexicon artifacts (generated files are gitignored, must be built)
+RUN bun run --cwd lexicons/aws prepack
+RUN bun run --cwd lexicons/gitlab prepack
+RUN bun run --cwd lexicons/k8s prepack
+
 COPY test/integration.sh /app/test/integration.sh
 RUN chmod +x /app/test/integration.sh && CHANT_RUNTIME=node /app/test/integration.sh 2>&1 || (echo "--- FULL OUTPUT ABOVE ---" && false)
 
