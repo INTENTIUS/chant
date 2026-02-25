@@ -46,14 +46,16 @@ The lexicon provides **5 resource types** (FlywayProject, FlywayConfig, Environm
 (StandardProject, MultiEnvironmentProject, VaultSecuredProject, DesktopProject,
 environmentGroup) for common patterns.
 
-## Why use chant for Flyway?
+## Lint Rules
 
-No existing tool validates Flyway TOML config semantics. chant catches:
+chant includes lint rules for Flyway config. For example:
 - Hardcoded credentials in environment configs
 - Production environments with clean enabled
 - Missing schema definitions
 - Unresolved resolver references
 - Invalid callback event names
+
+See [Lint Rules](./lint-rules) for the full list.
 
 
 ## At a Glance
