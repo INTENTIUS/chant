@@ -7,7 +7,16 @@ import {
   SecurityGroup_Ingress,
 } from "../generated";
 
-export interface RdsPostgresProps {
+const ENGINE_DEFAULTS: Record<string, { port: number; username: string; version: string; logExport: string }> = {
+  postgres: { port: 5432, username: "postgres", version: "16.6",  logExport: "postgresql" },
+  mysql:    { port: 3306, username: "admin",    version: "8.0.40", logExport: "general" },
+  mariadb:  { port: 3306, username: "admin",    version: "11.4.3", logExport: "general" },
+};
+
+export interface RdsInstanceProps {
+  // ── Engine ──────────────────────────────────────────────────────
+  engine?: "postgres" | "mysql" | "mariadb";
+
   // ── Networking (required) ─────────────────────────────────────
   vpcId: string;
   subnetIds: string[];
@@ -20,7 +29,7 @@ export interface RdsPostgresProps {
   masterUsername?: string;
   masterPassword: string;
 
-  // ── Engine ────────────────────────────────────────────────────
+  // ── Engine version ──────────────────────────────────────────────
   engineVersion?: string;
   databaseName?: string;
 
@@ -59,10 +68,12 @@ export interface RdsPostgresProps {
   deletionProtection?: boolean;
 }
 
-export const RdsPostgres = Composite<RdsPostgresProps>((props) => {
-  const port = props.port ?? 5432;
-  const masterUsername = props.masterUsername ?? "postgres";
-  const engineVersion = props.engineVersion ?? "16.4";
+export const RdsInstance = Composite<RdsInstanceProps>((props) => {
+  const engine = props.engine ?? "postgres";
+  const defaults = ENGINE_DEFAULTS[engine];
+  const port = props.port ?? defaults.port;
+  const masterUsername = props.masterUsername ?? defaults.username;
+  const engineVersion = props.engineVersion ?? defaults.version;
   const instanceClass = props.instanceClass ?? "db.t4g.micro";
   const allocatedStorage = props.allocatedStorage ?? 20;
   const storageType = props.storageType ?? "gp3";
@@ -76,7 +87,7 @@ export const RdsPostgres = Composite<RdsPostgresProps>((props) => {
 
   // DB Subnet Group
   const subnetGroup = new RDSDBSubnetGroup({
-    DBSubnetGroupDescription: "Subnet group for PostgreSQL instance",
+    DBSubnetGroupDescription: "Subnet group for RDS instance",
     SubnetIds: props.subnetIds,
   });
 
@@ -103,7 +114,7 @@ export const RdsPostgres = Composite<RdsPostgresProps>((props) => {
   }
 
   const sg = new SecurityGroup({
-    GroupDescription: "Security group for PostgreSQL instance",
+    GroupDescription: "Security group for RDS instance",
     VpcId: props.vpcId,
     SecurityGroupIngress: ingressRules.length > 0 ? ingressRules : undefined,
   });
@@ -113,14 +124,14 @@ export const RdsPostgres = Composite<RdsPostgresProps>((props) => {
   if (props.parameterGroupFamily) {
     parameterGroup = new RDSDBParameterGroup({
       Family: props.parameterGroupFamily,
-      Description: "Custom PostgreSQL parameter group",
+      Description: "Custom parameter group",
       Parameters: props.parameters,
     });
   }
 
   // DB Instance
   const dbProps: Record<string, any> = {
-    Engine: "postgres",
+    Engine: engine,
     EngineVersion: engineVersion,
     DBInstanceClass: instanceClass,
     MasterUsername: masterUsername,
@@ -144,7 +155,7 @@ export const RdsPostgres = Composite<RdsPostgresProps>((props) => {
   if (props.maxAllocatedStorage) dbProps.MaxAllocatedStorage = props.maxAllocatedStorage;
   if (props.preferredBackupWindow) dbProps.PreferredBackupWindow = props.preferredBackupWindow;
   if (props.preferredMaintenanceWindow) dbProps.PreferredMaintenanceWindow = props.preferredMaintenanceWindow;
-  if (props.enableCloudwatchLogs) dbProps.EnableCloudwatchLogsExports = ["postgresql"];
+  if (props.enableCloudwatchLogs) dbProps.EnableCloudwatchLogsExports = [defaults.logExport];
   if (props.enablePerformanceInsights) {
     dbProps.EnablePerformanceInsights = true;
     if (props.performanceInsightsRetentionPeriod) {
@@ -159,4 +170,4 @@ export const RdsPostgres = Composite<RdsPostgresProps>((props) => {
   if (parameterGroup) result.parameterGroup = parameterGroup;
 
   return result;
-}, "RdsPostgres");
+}, "RdsInstance");

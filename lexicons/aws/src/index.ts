@@ -77,12 +77,12 @@ export {
   LambdaApi,
   LambdaScheduled, ScheduledLambda,
   LambdaSqs, LambdaEventBridge, LambdaDynamoDB, LambdaS3, LambdaSns,
-  VpcDefault, FargateAlb, AlbShared, FargateService, RdsPostgres,
+  VpcDefault, FargateAlb, AlbShared, FargateService, RdsInstance, RdsPostgres,
 } from "./composites/index";
 export type {
   LambdaFunctionProps, LambdaApiProps, ScheduledLambdaProps,
   LambdaSqsProps, LambdaEventBridgeProps, LambdaDynamoDBProps, LambdaS3Props, LambdaSnsProps,
-  VpcDefaultProps, FargateAlbProps, AlbSharedProps, FargateServiceProps, RdsPostgresProps,
+  VpcDefaultProps, FargateAlbProps, AlbSharedProps, FargateServiceProps, RdsInstanceProps, RdsPostgresProps,
 } from "./composites/index";
 
 // Code generation pipeline

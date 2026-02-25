@@ -13,7 +13,7 @@ import { VpcDefault } from "./vpc-default";
 import { FargateAlb } from "./fargate-alb";
 import { AlbShared } from "./alb-shared";
 import { FargateService } from "./fargate-service";
-import { RdsPostgres } from "./rds-postgres";
+import { RdsInstance } from "./rds-instance";
 
 const baseProps = {
   name: "TestFunc",
@@ -635,7 +635,7 @@ describe("FargateService", () => {
   });
 });
 
-describe("RdsPostgres", () => {
+describe("RdsInstance", () => {
   const rdsProps = {
     vpcId: "vpc-123",
     subnetIds: ["subnet-1", "subnet-2"],
@@ -643,7 +643,7 @@ describe("RdsPostgres", () => {
   };
 
   test("returns subnetGroup, sg, db members", () => {
-    const instance = RdsPostgres(rdsProps);
+    const instance = RdsInstance(rdsProps);
     const names = Object.keys(instance.members);
     expect(names).toContain("subnetGroup");
     expect(names).toContain("sg");
@@ -652,7 +652,7 @@ describe("RdsPostgres", () => {
   });
 
   test("expandComposite produces correct logical names", () => {
-    const expanded = expandComposite("myDb", RdsPostgres(rdsProps));
+    const expanded = expandComposite("myDb", RdsInstance(rdsProps));
     expect(expanded.has("myDbSubnetGroup")).toBe(true);
     expect(expanded.has("myDbSg")).toBe(true);
     expect(expanded.has("myDbDb")).toBe(true);
@@ -660,7 +660,7 @@ describe("RdsPostgres", () => {
   });
 
   test("with parameterGroupFamily, also returns parameterGroup", () => {
-    const instance = RdsPostgres({
+    const instance = RdsInstance({
       ...rdsProps,
       parameterGroupFamily: "postgres16",
       parameters: { shared_preload_libraries: "pg_stat_statements" },
@@ -671,7 +671,7 @@ describe("RdsPostgres", () => {
   });
 
   test("expandComposite with parameterGroup produces 4 entries", () => {
-    const expanded = expandComposite("pg", RdsPostgres({
+    const expanded = expandComposite("pg", RdsInstance({
       ...rdsProps,
       parameterGroupFamily: "postgres16",
     }));
@@ -683,7 +683,7 @@ describe("RdsPostgres", () => {
   });
 
   test("ingress from SG produces SourceSecurityGroupId rule", () => {
-    const instance = RdsPostgres({
+    const instance = RdsInstance({
       ...rdsProps,
       ingressSourceSG: "sg-app123",
     });
@@ -696,7 +696,7 @@ describe("RdsPostgres", () => {
   });
 
   test("ingress from CIDR produces CidrIp rule", () => {
-    const instance = RdsPostgres({
+    const instance = RdsInstance({
       ...rdsProps,
       ingressCidr: "10.0.0.0/16",
     });
@@ -708,16 +708,16 @@ describe("RdsPostgres", () => {
   });
 
   test("no ingress when neither SG nor CIDR provided", () => {
-    const instance = RdsPostgres(rdsProps);
+    const instance = RdsInstance(rdsProps);
     const sgProps = (instance.sg as any).props;
     expect(sgProps.SecurityGroupIngress).toBeUndefined();
   });
 
   test("default engine is postgres with correct defaults", () => {
-    const instance = RdsPostgres(rdsProps);
+    const instance = RdsInstance(rdsProps);
     const dbProps = (instance.db as any).props;
     expect(dbProps.Engine).toBe("postgres");
-    expect(dbProps.EngineVersion).toBe("16.4");
+    expect(dbProps.EngineVersion).toBe("16.6");
     expect(dbProps.DBInstanceClass).toBe("db.t4g.micro");
     expect(dbProps.AllocatedStorage).toBe("20");
     expect(dbProps.StorageType).toBe("gp3");
@@ -731,8 +731,36 @@ describe("RdsPostgres", () => {
     expect(dbProps.MasterUsername).toBe("postgres");
   });
 
+  test("engine: mysql uses mysql-specific defaults", () => {
+    const instance = RdsInstance({
+      ...rdsProps,
+      engine: "mysql",
+      ingressCidr: "10.0.0.0/16",
+    });
+    const dbProps = (instance.db as any).props;
+    expect(dbProps.Engine).toBe("mysql");
+    expect(dbProps.EngineVersion).toBe("8.0.40");
+    expect(dbProps.MasterUsername).toBe("admin");
+    expect(dbProps.Port).toBe("3306");
+    const ingress = ((instance.sg as any).props.SecurityGroupIngress[0] as any).props;
+    expect(ingress.FromPort).toBe(3306);
+    expect(ingress.ToPort).toBe(3306);
+  });
+
+  test("engine: mariadb uses mariadb-specific defaults", () => {
+    const instance = RdsInstance({
+      ...rdsProps,
+      engine: "mariadb",
+    });
+    const dbProps = (instance.db as any).props;
+    expect(dbProps.Engine).toBe("mariadb");
+    expect(dbProps.EngineVersion).toBe("11.4.3");
+    expect(dbProps.MasterUsername).toBe("admin");
+    expect(dbProps.Port).toBe("3306");
+  });
+
   test("custom port is applied to SG and DB", () => {
-    const instance = RdsPostgres({
+    const instance = RdsInstance({
       ...rdsProps,
       port: 3306,
       ingressCidr: "10.0.0.0/8",
@@ -745,7 +773,7 @@ describe("RdsPostgres", () => {
   });
 
   test("db references subnet group and security group", () => {
-    const instance = RdsPostgres(rdsProps);
+    const instance = RdsInstance(rdsProps);
     const dbProps = (instance.db as any).props;
     // Subnet group is passed as a resource instance (serializer resolves to { Ref: ... })
     expect(dbProps.DBSubnetGroupName).toBe(instance.subnetGroup);

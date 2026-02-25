@@ -407,7 +407,7 @@ The AWS lexicon ships ready-to-use composites for common patterns. Import them f
 | \`FargateAlb\` | \`cluster\`, \`executionRole\`, \`taskRole\`, \`logGroup\`, \`taskDef\`, \`albSg\`, \`taskSg\`, \`alb\`, \`targetGroup\`, \`listener\`, \`service\` | Fargate service behind an ALB. Accepts VPC outputs as props. |
 | \`AlbShared\` | \`cluster\`, \`executionRole\`, \`albSg\`, \`alb\`, \`listener\` | Shared ALB infrastructure (ECS cluster, execution role, ALB, listener with 404 default). Created once, consumed by multiple \`FargateService\` instances. |
 | \`FargateService\` | \`taskRole\`, \`logGroup\`, \`taskDef\`, \`taskSg\`, \`targetGroup\`, \`rule\`, \`service\` | Per-service Fargate resources with listener rule routing. Wire to an \`AlbShared\` instance for multi-service ALB patterns. |
-| \`RdsPostgres\` | \`subnetGroup\`, \`sg\`, \`db\` (+ \`parameterGroup\` if configured) | PostgreSQL RDS instance in private subnets. Creates DB subnet group, security group, and optionally a parameter group. Encrypted by default. |
+| \`RdsInstance\` | \`subnetGroup\`, \`sg\`, \`db\` (+ \`parameterGroup\` if configured) | RDS instance (postgres, mysql, mariadb) in private subnets. Creates DB subnet group, security group, and optionally a parameter group. Engine-specific defaults for port, username, and version. Encrypted by default. |
 
 All built-in composites accept \`ManagedPolicyArns\` and \`Policies\` for adding IAM permissions to the auto-created role.
 

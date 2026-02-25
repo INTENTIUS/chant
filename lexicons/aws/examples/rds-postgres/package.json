@@ -6,7 +6,9 @@
   "scripts": {
     "test": "bun test",
     "build": "chant build src --lexicon aws",
-    "dev": "chant build src --lexicon aws --watch"
+    "dev": "chant build src --lexicon aws --watch",
+    "setup": "bash setup.sh",
+    "deploy": "bash setup.sh && chant build src --lexicon aws --output stack.json && aws cloudformation deploy --template-file stack.json --stack-name rds-postgres-example --no-fail-on-empty-changeset"
   },
   "dependencies": {
     "@intentius/chant-lexicon-aws": "workspace:*",

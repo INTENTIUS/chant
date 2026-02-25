@@ -1,5 +1,5 @@
 import { Sub, AWS, Ref } from "@intentius/chant-lexicon-aws";
-import { LambdaNode, LambdaApi, LambdaScheduled, S3Actions, VpcDefault, FargateAlb, RdsPostgres } from "@intentius/chant-lexicon-aws";
+import { LambdaNode, LambdaApi, LambdaScheduled, S3Actions, VpcDefault, FargateAlb, RdsInstance } from "@intentius/chant-lexicon-aws";
 import { Role_Policy, Parameter } from "@intentius/chant-lexicon-aws";
 
 // LambdaNode: Role + Function with nodejs20.x defaults
@@ -38,12 +38,13 @@ export const web = FargateAlb({
   privateSubnetIds: [network.privateSubnet1.SubnetId, network.privateSubnet2.SubnetId],
 });
 
-// RdsPostgres: DBSubnetGroup + SecurityGroup + DBInstance (3-4 resources)
+// RdsInstance: DBSubnetGroup + SecurityGroup + DBInstance (3-4 resources)
 const dbPassword = new Parameter("AWS::SSM::Parameter::Value<String>", {
   description: "SSM path to the database password",
   defaultValue: "/myapp/dev/db-password",
 });
-export const database = RdsPostgres({
+export const database = RdsInstance({
+  engine: "postgres",
   vpcId: network.vpc.VpcId,
   subnetIds: [network.privateSubnet1.SubnetId, network.privateSubnet2.SubnetId],
   masterPassword: Ref(dbPassword) as unknown as string,
