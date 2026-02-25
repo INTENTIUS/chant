@@ -12,9 +12,9 @@ function getChantVersion(): string {
   try {
     const pkgDir = dirname(dirname(dirname(dirname(fileURLToPath(import.meta.url)))));
     const pkg = JSON.parse(readFileSync(join(pkgDir, "package.json"), "utf-8"));
-    return pkg.version ?? "0.0.12";
+    return pkg.version ?? "0.0.13";
   } catch {
-    return "0.0.12";
+    return "0.0.13";
   }
 }
 
