@@ -1,5 +1,5 @@
 import { existsSync, mkdirSync, writeFileSync, readFileSync, readdirSync } from "fs";
-import { join, resolve, basename } from "path";
+import { join, resolve, basename, dirname } from "path";
 import { formatSuccess, formatWarning, formatError } from "../format";
 import type { TemplateIR, ResourceIR, TemplateParser } from "../../import/parser";
 import type { GeneratedFile, TypeScriptGenerator } from "../../import/generator";
@@ -208,10 +208,13 @@ export async function importCommand(options: ImportOptions): Promise<ImportResul
     };
   }
 
-  // Load plugins from project config, falling back to all installed lexicons
+  // Load plugins — resolve from the output directory (or CWD) so that
+  // project config is found relative to where the user is working, not
+  // an arbitrary monorepo root.
+  const projectDir = resolve(options.output ? dirname(options.output) : ".");
   let plugins: LexiconPlugin[];
   try {
-    const lexiconNames = await resolveProjectLexicons(resolve("."));
+    const lexiconNames = await resolveProjectLexicons(projectDir);
     plugins = await loadPlugins(lexiconNames);
   } catch {
     plugins = [];
