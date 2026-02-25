@@ -1,13 +1,34 @@
-# AWS Shared ALB — API Service Pipeline
+# AWS Shared ALB — Cross-Lexicon API Service Example
 
-Builds a Docker image, pushes to ECR, and deploys the API Fargate service stack from GitLab CI.
+A cross-lexicon example that defines both the **AWS Fargate service infrastructure** (7 CF resources) and the **GitLab CI pipeline** (Docker build + CF deploy) — all in TypeScript.
 
-## What this generates
+This demonstrates chant's multi-lexicon capability: a single `src/` directory imports from both `@intentius/chant-lexicon-aws` and `@intentius/chant-lexicon-gitlab`, and builds to two separate outputs.
+
+## Source files
+
+| File | Lexicon | Description |
+|------|---------|-------------|
+| `src/params.ts` | aws | CF parameters for shared ALB stack outputs |
+| `src/service.ts` | aws | `FargateService` composite — task def, service, ALB rule, security group, log group |
+| `src/tags.ts` | aws | Default resource tags |
+| `src/pipeline.ts` | gitlab | 2-stage pipeline: build Docker image + deploy CF stack |
+
+## What this produces
+
+### `chant build src --lexicon aws` → CloudFormation template (7 resources, 9 parameters)
+
+- Fargate task definition, ECS service, and task role
+- Target group + ALB listener rule for `/api` and `/api/*` (priority 100)
+- Security group for the ECS tasks
+- CloudWatch log group
+- Parameters: `clusterArn`, `listenerArn`, `albSgId`, `executionRoleArn`, `vpcId`, `privateSubnet1`, `privateSubnet2`, `image`, `environment`
+
+### `chant build src --lexicon gitlab` → `.gitlab-ci.yml`
 
 A 2-stage pipeline:
 
-1. **build** — `build-image`: builds Docker image, pushes to ECR (`alb-api`)
-2. **deploy** — `deploy-service`: fetches shared ALB stack outputs, deploys the API CloudFormation stack with parameter overrides
+1. **build** — `build-image`: builds Docker image with Docker-in-Docker, pushes to ECR (`alb-api`), tags `:latest` on default branch
+2. **deploy** — `deploy-service`: fetches shared ALB stack outputs via `aws cloudformation describe-stacks`, maps them to CF parameter overrides, deploys `templates/template.json`
 
 ## Required CI/CD variables
 
@@ -18,31 +39,26 @@ Set these in **GitLab > Settings > CI/CD > Variables**:
 | `AWS_ACCESS_KEY_ID` | IAM access key | No |
 | `AWS_SECRET_ACCESS_KEY` | IAM secret key | Yes |
 | `AWS_DEFAULT_REGION` | AWS region (e.g. `us-east-1`) | No |
-| `AWS_ACCOUNT_ID` | AWS account ID (used in ECR URL) | No |
-
-The ECR URL is constructed as `$AWS_ACCOUNT_ID.dkr.ecr.$AWS_DEFAULT_REGION.amazonaws.com/alb-api`.
+| `AWS_ACCOUNT_ID` | AWS account ID (used to construct ECR URL) | No |
 
 ## Prerequisites
 
-The **shared-alb infra stack** must be deployed first. It creates the VPC, ALB, ECS cluster, and ECR repos that this pipeline depends on. See [gitlab-aws-alb-infra](https://gitlab.com/lex002/gitlab-aws-alb-infra).
+The **shared-alb infra stack** must be deployed first — it creates the VPC, ALB, ECS cluster, and ECR repos. See [gitlab-aws-alb-infra](../gitlab-aws-alb-infra).
 
 ## Deploy
 
-### 1. Build the pipeline
+### 1. Build both outputs
 
 ```bash
-chant build src/ --output .gitlab-ci.yml
+chant build src --lexicon aws --output templates/template.json
+chant build src --lexicon gitlab --output .gitlab-ci.yml
 ```
 
 ### 2. Add your app
 
-Add a `Dockerfile` and application code to this repo. The `build-image` job runs `docker build .` from the repo root.
+Add a `Dockerfile` and application code. The `build-image` job runs `docker build .` from the repo root.
 
-### 3. Add the CloudFormation template
-
-Place the built `template.json` at `templates/template.json`. This is the output of the `shared-alb-api` chant AWS example.
-
-### 4. Push to GitLab
+### 3. Push to GitLab
 
 ```bash
 git add .
@@ -50,36 +66,9 @@ git commit -m "Initial pipeline"
 git push
 ```
 
-## How it works
+The deploy job fetches outputs from the `shared-alb` stack and passes them as `--parameter-overrides` to `aws cloudformation deploy`.
 
-### Build stage
+## Related examples
 
-- Uses `docker:27-cli` with Docker-in-Docker (`docker:27-dind`)
-- Installs `aws-cli` via `apk` (Alpine package)
-- Authenticates to ECR: `aws ecr get-login-password | docker login`
-- Tags with `$CI_COMMIT_REF_SLUG`; also tags `:latest` on the default branch
-
-### Deploy stage
-
-- Fetches shared ALB outputs: `aws cloudformation describe-stacks --stack-name shared-alb`
-- Maps PascalCase outputs to camelCase CF parameters via `jq`
-- Appends `:<tag>` to the ECR repo URI for the `image` parameter
-- Runs `aws cloudformation deploy` with `--parameter-overrides`
-
-### Cross-stack parameter mapping
-
-| Infra stack output | Service parameter |
-|---|---|
-| `ClusterArn` | `clusterArn` |
-| `ListenerArn` | `listenerArn` |
-| `AlbSgId` | `albSgId` |
-| `ExecutionRoleArn` | `executionRoleArn` |
-| `VpcId` | `vpcId` |
-| `PrivateSubnet1` | `privateSubnet1` |
-| `PrivateSubnet2` | `privateSubnet2` |
-| `ApiRepoUri` + `:$CI_COMMIT_REF_SLUG` | `image` |
-
-## Related projects
-
-- [gitlab-aws-alb-infra](https://gitlab.com/lex002/gitlab-aws-alb-infra) — Shared infra pipeline (deploy first)
-- [gitlab-aws-alb-ui](https://gitlab.com/lex002/gitlab-aws-alb-ui) — UI service pipeline
+- [gitlab-aws-alb-infra](../gitlab-aws-alb-infra) — Shared infra (deploy first)
+- [gitlab-aws-alb-ui](../gitlab-aws-alb-ui) — UI Fargate service (cross-lexicon)

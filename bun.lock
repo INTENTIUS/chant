@@ -31,6 +31,7 @@
       "version": "0.0.1",
       "dependencies": {
         "@intentius/chant": "workspace:*",
+        "@intentius/chant-lexicon-aws": "workspace:*",
         "@intentius/chant-lexicon-gitlab": "workspace:*",
       },
     },
@@ -39,6 +40,7 @@
       "version": "0.0.1",
       "dependencies": {
         "@intentius/chant": "workspace:*",
+        "@intentius/chant-lexicon-aws": "workspace:*",
         "@intentius/chant-lexicon-gitlab": "workspace:*",
       },
     },
@@ -47,6 +49,7 @@
       "version": "0.0.1",
       "dependencies": {
         "@intentius/chant": "workspace:*",
+        "@intentius/chant-lexicon-aws": "workspace:*",
         "@intentius/chant-lexicon-gitlab": "workspace:*",
       },
     },
