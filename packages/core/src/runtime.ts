@@ -31,6 +31,10 @@ export function createResource(
     Object.defineProperty(this, "props", { value: props ?? {}, enumerable: false, configurable: true });
     Object.defineProperty(this, "attributes", { value: attributes ?? {}, enumerable: false, configurable: true });
 
+    // Ref returns the resource instance itself — the serializer walker
+    // detects Declarable objects and emits { Ref: logicalName }
+    Object.defineProperty(this, "Ref", { value: this, enumerable: false });
+
     // Create AttrRef instances for each attribute
     // Must be enumerable so getAttributes() can discover them for resolveAttrRefs()
     for (const [camelName, attrName] of Object.entries(attrMap)) {

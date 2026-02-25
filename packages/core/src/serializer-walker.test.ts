@@ -3,6 +3,7 @@ import { walkValue, type SerializerVisitor } from "./serializer-walker";
 import { DECLARABLE_MARKER, type Declarable } from "./declarable";
 import { INTRINSIC_MARKER } from "./intrinsic";
 import { AttrRef } from "./attrref";
+import { createResource } from "./runtime";
 
 function makeDeclarable(type: string, kind: "resource" | "property" = "resource", props?: Record<string, unknown>): Declarable & { props?: Record<string, unknown> } {
   const d: Declarable & { props?: Record<string, unknown> } = {
@@ -91,6 +92,13 @@ describe("walkValue", () => {
   test("recurses into objects", () => {
     const names = new Map<Declarable, string>();
     expect(walkValue({ a: 1, b: { c: 2 } }, names, mockVisitor)).toEqual({ a: 1, b: { c: 2 } });
+  });
+
+  test("resource.Ref resolves via resourceRef", () => {
+    const TestTable = createResource("Test::Table", "test", {});
+    const resource = new TestTable({}) as unknown as Declarable;
+    const names = new Map<Declarable, string>([[resource, "MyTable"]]);
+    expect(walkValue((resource as any).Ref, names, mockVisitor)).toEqual({ __ref: "MyTable" });
   });
 
   test("complex nested structure", () => {
