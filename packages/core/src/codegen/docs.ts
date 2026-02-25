@@ -10,6 +10,11 @@
 import { readFileSync, readdirSync, writeFileSync, mkdirSync, rmSync } from "fs";
 import { join } from "path";
 
+/** Escape curly braces so MDX doesn't treat them as JSX expressions. */
+function escapeMdx(text: string): string {
+  return text.replace(/\{/g, "\\{").replace(/\}/g, "\\}");
+}
+
 // ── Types ──────────────────────────────────────────────────────────
 
 export interface DocsConfig {
@@ -505,7 +510,7 @@ function generateIntrinsics(
   for (const fn of intrinsics) {
     const tag = fn.isTag ? "Yes" : "No";
     lines.push(
-      `| \`${fn.name}\` | ${fn.description ?? "—"} | \`${fn.outputKey ?? fn.name}\` | ${tag} |`,
+      `| \`${fn.name}\` | ${escapeMdx(fn.description ?? "—")} | \`${fn.outputKey ?? fn.name}\` | ${tag} |`,
     );
   }
 
@@ -562,7 +567,7 @@ function generateRules(config: DocsConfig, rules: RuleMeta[]): string {
     );
     for (const rule of lintRules.sort((a, b) => a.id.localeCompare(b.id))) {
       lines.push(
-        `| \`${rule.id}\` | ${rule.severity} | ${rule.category} | ${rule.description} |`,
+        `| \`${rule.id}\` | ${rule.severity} | ${rule.category} | ${escapeMdx(rule.description)} |`,
       );
     }
     lines.push("");
@@ -580,7 +585,7 @@ function generateRules(config: DocsConfig, rules: RuleMeta[]): string {
     for (const rule of postSynthRules.sort((a, b) =>
       a.id.localeCompare(b.id),
     )) {
-      lines.push(`| \`${rule.id}\` | ${rule.description} |`);
+      lines.push(`| \`${rule.id}\` | ${escapeMdx(rule.description)} |`);
     }
     lines.push("");
   }

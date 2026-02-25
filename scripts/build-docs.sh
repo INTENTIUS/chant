@@ -34,4 +34,22 @@ cd docs && bun install && bun run build && cd ../../..
 mkdir -p "$SITE/lexicons/gitlab"
 cp -r lexicons/gitlab/docs/dist/* "$SITE/lexicons/gitlab/"
 
+# 4. Generate + build K8s lexicon docs
+echo "Building K8s lexicon docs..."
+cd lexicons/k8s
+bun run prepack
+bun run src/codegen/docs-cli.ts
+cd docs && bun install && bun run build && cd ../../..
+mkdir -p "$SITE/lexicons/k8s"
+cp -r lexicons/k8s/docs/dist/* "$SITE/lexicons/k8s/"
+
+# 5. Generate + build Flyway lexicon docs
+echo "Building Flyway lexicon docs..."
+cd lexicons/flyway
+bun run prepack
+bun run src/codegen/docs-cli.ts
+cd docs && bun install && bun run build && cd ../../..
+mkdir -p "$SITE/lexicons/flyway"
+cp -r lexicons/flyway/docs/dist/* "$SITE/lexicons/flyway/"
+
 echo "Unified docs built to $OUT/"

@@ -22,3 +22,5 @@ export { AlbShared } from "./alb-shared";
 export type { AlbSharedProps } from "./alb-shared";
 export { FargateService } from "./fargate-service";
 export type { FargateServiceProps } from "./fargate-service";
+export { RdsPostgres } from "./rds-postgres";
+export type { RdsPostgresProps } from "./rds-postgres";

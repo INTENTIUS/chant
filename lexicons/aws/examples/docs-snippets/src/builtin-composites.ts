@@ -1,6 +1,6 @@
-import { Sub, AWS } from "@intentius/chant-lexicon-aws";
-import { LambdaNode, LambdaApi, LambdaScheduled, S3Actions, VpcDefault, FargateAlb } from "@intentius/chant-lexicon-aws";
-import { Role_Policy } from "@intentius/chant-lexicon-aws";
+import { Sub, AWS, Ref } from "@intentius/chant-lexicon-aws";
+import { LambdaNode, LambdaApi, LambdaScheduled, S3Actions, VpcDefault, FargateAlb, RdsPostgres } from "@intentius/chant-lexicon-aws";
+import { Role_Policy, Parameter } from "@intentius/chant-lexicon-aws";
 
 // LambdaNode: Role + Function with nodejs20.x defaults
 export const worker = LambdaNode({
@@ -36,6 +36,18 @@ export const web = FargateAlb({
   vpcId: network.vpc.VpcId,
   publicSubnetIds: [network.publicSubnet1.SubnetId, network.publicSubnet2.SubnetId],
   privateSubnetIds: [network.privateSubnet1.SubnetId, network.privateSubnet2.SubnetId],
+});
+
+// RdsPostgres: DBSubnetGroup + SecurityGroup + DBInstance (3-4 resources)
+const dbPassword = new Parameter("AWS::SSM::Parameter::Value<String>", {
+  description: "SSM path to the database password",
+  defaultValue: "/myapp/dev/db-password",
+});
+export const database = RdsPostgres({
+  vpcId: network.vpc.VpcId,
+  subnetIds: [network.privateSubnet1.SubnetId, network.privateSubnet2.SubnetId],
+  masterPassword: Ref(dbPassword) as unknown as string,
+  databaseName: "myapp",
 });
 
 // Composites accept extra IAM policies

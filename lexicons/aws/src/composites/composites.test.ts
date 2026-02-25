@@ -13,6 +13,7 @@ import { VpcDefault } from "./vpc-default";
 import { FargateAlb } from "./fargate-alb";
 import { AlbShared } from "./alb-shared";
 import { FargateService } from "./fargate-service";
+import { RdsPostgres } from "./rds-postgres";
 
 const baseProps = {
   name: "TestFunc",
@@ -631,5 +632,124 @@ describe("FargateService", () => {
 
     const svcProps = (instance.service as any).props;
     expect(svcProps.DesiredCount).toBe(2);
+  });
+});
+
+describe("RdsPostgres", () => {
+  const rdsProps = {
+    vpcId: "vpc-123",
+    subnetIds: ["subnet-1", "subnet-2"],
+    masterPassword: "secret",
+  };
+
+  test("returns subnetGroup, sg, db members", () => {
+    const instance = RdsPostgres(rdsProps);
+    const names = Object.keys(instance.members);
+    expect(names).toContain("subnetGroup");
+    expect(names).toContain("sg");
+    expect(names).toContain("db");
+    expect(names).toHaveLength(3);
+  });
+
+  test("expandComposite produces correct logical names", () => {
+    const expanded = expandComposite("myDb", RdsPostgres(rdsProps));
+    expect(expanded.has("myDbSubnetGroup")).toBe(true);
+    expect(expanded.has("myDbSg")).toBe(true);
+    expect(expanded.has("myDbDb")).toBe(true);
+    expect(expanded.size).toBe(3);
+  });
+
+  test("with parameterGroupFamily, also returns parameterGroup", () => {
+    const instance = RdsPostgres({
+      ...rdsProps,
+      parameterGroupFamily: "postgres16",
+      parameters: { shared_preload_libraries: "pg_stat_statements" },
+    });
+    const names = Object.keys(instance.members);
+    expect(names).toContain("parameterGroup");
+    expect(names).toHaveLength(4);
+  });
+
+  test("expandComposite with parameterGroup produces 4 entries", () => {
+    const expanded = expandComposite("pg", RdsPostgres({
+      ...rdsProps,
+      parameterGroupFamily: "postgres16",
+    }));
+    expect(expanded.has("pgSubnetGroup")).toBe(true);
+    expect(expanded.has("pgSg")).toBe(true);
+    expect(expanded.has("pgDb")).toBe(true);
+    expect(expanded.has("pgParameterGroup")).toBe(true);
+    expect(expanded.size).toBe(4);
+  });
+
+  test("ingress from SG produces SourceSecurityGroupId rule", () => {
+    const instance = RdsPostgres({
+      ...rdsProps,
+      ingressSourceSG: "sg-app123",
+    });
+    const sgProps = (instance.sg as any).props;
+    expect(sgProps.SecurityGroupIngress).toHaveLength(1);
+    const ingress = (sgProps.SecurityGroupIngress[0] as any).props;
+    expect(ingress.SourceSecurityGroupId).toBe("sg-app123");
+    expect(ingress.FromPort).toBe(5432);
+    expect(ingress.ToPort).toBe(5432);
+  });
+
+  test("ingress from CIDR produces CidrIp rule", () => {
+    const instance = RdsPostgres({
+      ...rdsProps,
+      ingressCidr: "10.0.0.0/16",
+    });
+    const sgProps = (instance.sg as any).props;
+    expect(sgProps.SecurityGroupIngress).toHaveLength(1);
+    const ingress = (sgProps.SecurityGroupIngress[0] as any).props;
+    expect(ingress.CidrIp).toBe("10.0.0.0/16");
+    expect(ingress.FromPort).toBe(5432);
+  });
+
+  test("no ingress when neither SG nor CIDR provided", () => {
+    const instance = RdsPostgres(rdsProps);
+    const sgProps = (instance.sg as any).props;
+    expect(sgProps.SecurityGroupIngress).toBeUndefined();
+  });
+
+  test("default engine is postgres with correct defaults", () => {
+    const instance = RdsPostgres(rdsProps);
+    const dbProps = (instance.db as any).props;
+    expect(dbProps.Engine).toBe("postgres");
+    expect(dbProps.EngineVersion).toBe("16.4");
+    expect(dbProps.DBInstanceClass).toBe("db.t4g.micro");
+    expect(dbProps.AllocatedStorage).toBe("20");
+    expect(dbProps.StorageType).toBe("gp3");
+    expect(dbProps.StorageEncrypted).toBe(true);
+    expect(dbProps.MultiAZ).toBe(false);
+    expect(dbProps.BackupRetentionPeriod).toBe(7);
+    expect(dbProps.CopyTagsToSnapshot).toBe(true);
+    expect(dbProps.AutoMinorVersionUpgrade).toBe(true);
+    expect(dbProps.PubliclyAccessible).toBe(false);
+    expect(dbProps.DeletionProtection).toBe(false);
+    expect(dbProps.MasterUsername).toBe("postgres");
+  });
+
+  test("custom port is applied to SG and DB", () => {
+    const instance = RdsPostgres({
+      ...rdsProps,
+      port: 3306,
+      ingressCidr: "10.0.0.0/8",
+    });
+    const dbProps = (instance.db as any).props;
+    expect(dbProps.Port).toBe("3306");
+    const ingress = ((instance.sg as any).props.SecurityGroupIngress[0] as any).props;
+    expect(ingress.FromPort).toBe(3306);
+    expect(ingress.ToPort).toBe(3306);
+  });
+
+  test("db references subnet group and security group", () => {
+    const instance = RdsPostgres(rdsProps);
+    const dbProps = (instance.db as any).props;
+    // Subnet group is passed as a resource instance (serializer resolves to { Ref: ... })
+    expect(dbProps.DBSubnetGroupName).toBe(instance.subnetGroup);
+    expect(dbProps.VPCSecurityGroups).toHaveLength(1);
+    expect(dbProps.VPCSecurityGroups[0]).toBeInstanceOf(AttrRef);
   });
 });
