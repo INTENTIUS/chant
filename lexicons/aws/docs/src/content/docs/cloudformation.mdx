@@ -83,11 +83,12 @@ When you reference a resource or attribute from another file (e.g. `dataBucket.A
 
 CloudFormation parameters let you customize a stack at deploy time. Export a `Parameter` to add it to the template's `Parameters` section:
 
-```typescript title="parameter-ref.ts"
-import { Bucket, Sub, Ref } from "@intentius/chant-lexicon-aws";
+```typescript title="parameter-declaration.ts"
+import { Parameter } from "@intentius/chant-lexicon-aws";
 
-export const bucket = new Bucket({
-  BucketName: Sub`${Ref("Environment")}-data`,
+export const environment = new Parameter("String", {
+  description: "Deployment environment",
+  defaultValue: "dev",
 });
 ```
 
@@ -95,20 +96,22 @@ Produces:
 
 ```json
 "Parameters": {
-  "Name": {
+  "Environment": {
     "Type": "String",
-    "Description": "Project name used in resource naming"
+    "Default": "dev",
+    "Description": "Deployment environment"
   }
 }
 ```
 
 Reference parameters with `Ref`:
 
-```typescript title="parameter-ref.ts"
+```typescript title="parameter-cross-file-ref.ts"
 import { Bucket, Sub, Ref } from "@intentius/chant-lexicon-aws";
+import { environment } from "./parameter-declaration";
 
 export const bucket = new Bucket({
-  BucketName: Sub`${Ref("Environment")}-data`,
+  BucketName: Sub`${Ref(environment)}-data`,
 });
 ```
 
@@ -159,7 +162,7 @@ export const endpoint = Sub`https://s3.${AWS.Region}.${AWS.URLSuffix}`;
 
 ## Intrinsic functions
 
-The lexicon provides 8 intrinsic functions (`Sub`, `Ref`, `GetAtt`, `If`, `Join`, `Select`, `Split`, `Base64`) that map directly to CloudFormation `Fn::` calls. See [Intrinsic Functions](../intrinsics/) for full usage examples.
+The lexicon provides 9 intrinsic functions (`Sub`, `Ref`, `GetAtt`, `If`, `Join`, `Select`, `Split`, `Base64`, `GetAZs`) that map directly to CloudFormation `Fn::` calls. See [Intrinsic Functions](../intrinsics/) for full usage examples.
 
 ## Dependencies
 

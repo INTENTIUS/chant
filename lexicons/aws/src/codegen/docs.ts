@@ -149,22 +149,23 @@ When you reference a resource or attribute from another file (e.g. \`dataBucket.
 
 CloudFormation parameters let you customize a stack at deploy time. Export a \`Parameter\` to add it to the template's \`Parameters\` section:
 
-{{file:docs-snippets/src/parameter-ref.ts}}
+{{file:docs-snippets/src/parameter-declaration.ts}}
 
 Produces:
 
 \`\`\`json
 "Parameters": {
-  "Name": {
+  "Environment": {
     "Type": "String",
-    "Description": "Project name used in resource naming"
+    "Default": "dev",
+    "Description": "Deployment environment"
   }
 }
 \`\`\`
 
 Reference parameters with \`Ref\`:
 
-{{file:docs-snippets/src/parameter-ref.ts}}
+{{file:docs-snippets/src/parameter-cross-file-ref.ts}}
 
 ## Outputs
 
@@ -201,7 +202,7 @@ Runtime context values available in every template, accessed via the \`AWS\` nam
 
 ## Intrinsic functions
 
-The lexicon provides 8 intrinsic functions (\`Sub\`, \`Ref\`, \`GetAtt\`, \`If\`, \`Join\`, \`Select\`, \`Split\`, \`Base64\`) that map directly to CloudFormation \`Fn::\` calls. See [Intrinsic Functions](../intrinsics/) for full usage examples.
+The lexicon provides 9 intrinsic functions (\`Sub\`, \`Ref\`, \`GetAtt\`, \`If\`, \`Join\`, \`Select\`, \`Split\`, \`Base64\`, \`GetAZs\`) that map directly to CloudFormation \`Fn::\` calls. See [Intrinsic Functions](../intrinsics/) for full usage examples.
 
 ## Dependencies
 
@@ -369,7 +370,13 @@ Splits a string by a delimiter:
 
 Encodes a string to Base64, commonly used for EC2 user data:
 
-{{file:docs-snippets/src/intrinsics-detail.ts:23-27}}`,
+{{file:docs-snippets/src/intrinsics-detail.ts:23-27}}
+
+## \`GetAZs\` — availability zones
+
+Returns the list of Availability Zones for a region:
+
+{{file:docs-snippets/src/intrinsics-detail.ts:29-31}}`,
       },
       {
         slug: "composites",
@@ -750,6 +757,72 @@ WAW030: API Gateway Deployment "MyDeployment" has no DependsOn on any Method
 WAW030: ScalableTarget "MyTarget" targets DynamoDB but has no DependsOn on any Table
 \`\`\`
 
+### WAW018 — S3 Bucket Missing Public Access Block
+
+**Severity:** error | **Category:** security
+
+Flags S3 buckets without a \`PublicAccessBlockConfiguration\`. Without an explicit public access block, the bucket may be publicly accessible. Always set \`BlockPublicAcls\`, \`BlockPublicPolicy\`, \`IgnorePublicAcls\`, and \`RestrictPublicBuckets\` to \`true\`.
+
+### WAW019 — Security Group Unrestricted Ingress on Sensitive Ports
+
+**Severity:** error | **Category:** security
+
+Flags security group ingress rules that allow unrestricted access (\`0.0.0.0/0\` or \`::/0\`) on sensitive ports (22, 3389, 3306, 5432, 1433, 6379, 27017). Restrict ingress to known CIDR ranges or security groups.
+
+### WAW020 — IAM Policy Uses Wildcard Action
+
+**Severity:** warning | **Category:** security
+
+Flags IAM policy statements that use wildcard actions (\`"Action": "*"\` or \`"Action": "s3:*"\`). Use specific action names following the principle of least privilege.
+
+### WAW021 — RDS Storage Not Encrypted
+
+**Severity:** error | **Category:** security
+
+Flags RDS instances without \`StorageEncrypted: true\`. All RDS instances should encrypt data at rest to meet compliance and security requirements.
+
+### WAW022 — Lambda Not in VPC
+
+**Severity:** warning | **Category:** security
+
+Flags Lambda functions without a \`VpcConfig\`. Functions that access internal resources (databases, caches, internal APIs) should run inside a VPC. Functions that only call public APIs can safely skip VPC configuration.
+
+### WAW023 — CloudFront Without WAF
+
+**Severity:** warning | **Category:** security
+
+Flags CloudFront distributions without a \`WebACLId\`. Attaching a WAF web ACL protects your distribution from common web exploits and bots.
+
+### WAW024 — ALB Without Access Logging
+
+**Severity:** warning | **Category:** best practice
+
+Flags Application Load Balancers without access logging enabled. Enable \`access_logs.s3.enabled\` to capture request logs for debugging and compliance.
+
+### WAW025 — SNS Topic Not Encrypted
+
+**Severity:** warning | **Category:** security
+
+Flags SNS topics without \`KmsMasterKeyId\`. Encrypting topics at rest protects sensitive notification payloads.
+
+### WAW026 — SQS Queue Not Encrypted
+
+**Severity:** warning | **Category:** security
+
+Flags SQS queues without \`KmsMasterKeyId\` or \`SqsManagedSseEnabled\`. Encrypting queues at rest protects sensitive message payloads.
+
+### WAW027 — DynamoDB Missing Point-in-Time Recovery
+
+**Severity:** info | **Category:** best practice
+
+Flags DynamoDB tables without \`PointInTimeRecoverySpecification.PointInTimeRecoveryEnabled\` set to \`true\`. Point-in-time recovery provides continuous backups and protects against accidental writes or deletes.
+
+### WAW028 — EBS Volume Not Encrypted
+
+**Severity:** warning | **Category:** security
+
+Flags EBS volumes without \`Encrypted: true\`. All EBS volumes should encrypt data at rest for compliance and security.
+
 ## Running lint
 
 \`\`\`bash
@@ -954,7 +1027,19 @@ src/
 - **Composite presets** — \`SecureApi\` (low memory, short timeout) and \`HighMemoryApi\` (high memory, longer timeout)
 - **Custom lint rule** — \`api-timeout.ts\` enforces API Gateway's 29-second timeout limit (see [Custom Lint Rules](../custom-rules/))
 
-The example produces 10 CloudFormation resources: 1 S3 bucket + 3 composites × 3 members each.`,
+The example produces 10 CloudFormation resources: 1 S3 bucket + 3 composites × 3 members each.
+
+## RDS Instance
+
+\`examples/rds-postgres/\` — production RDS PostgreSQL instance using the \`RdsInstance\` composite with VPC networking and SSM parameter references.
+
+{{file:rds-postgres/src/params.ts}}
+
+{{file:rds-postgres/src/network.ts}}
+
+{{file:rds-postgres/src/database.ts}}
+
+Produces a complete RDS stack: VPC infrastructure (from \`VpcDefault\`), DB subnet group, security group, and RDS instance with encrypted storage.`,
       },
       {
         slug: "skills",

@@ -118,3 +118,13 @@ echo "Stack: ${AWS.StackName}"
 yum update -y
 `);
 ```
+
+## `GetAZs` — availability zones
+
+Returns the list of Availability Zones for a region:
+
+```typescript title="intrinsics-detail.ts"
+// --- GetAZs: availability zones ---
+export const firstAz = Select(0, GetAZs(AWS.Region));
+export const secondAz = Select(1, GetAZs(AWS.Region));
+```

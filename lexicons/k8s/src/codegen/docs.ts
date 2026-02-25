@@ -18,7 +18,7 @@ function serviceFromType(resourceType: string): string {
 
 const overview = `The **Kubernetes** lexicon provides typed constructors for Kubernetes resource
 manifests. It covers Deployments, Services, ConfigMaps, StatefulSets, Jobs,
-Ingress, RBAC, and 50+ additional resource and property types.
+Ingress, RBAC, and 147 resources and 50 property types.
 
 New? Start with the [Getting Started](/chant/lexicons/k8s/getting-started/) guide.
 
@@ -64,7 +64,7 @@ export const service = new Service({
 });
 \`\`\`
 
-The lexicon provides **50+ resource types** (Deployment, Service, ConfigMap, StatefulSet, and more), **35+ property types** (Container, Probe, Volume, SecurityContext, etc.), and composites (WebApp, StatefulApp, CronWorkload, AutoscaledService, WorkerPool, NamespaceEnv, NodeAgent) for common patterns.
+The lexicon provides **147 resource types** (Deployment, Service, ConfigMap, StatefulSet, and more), **50 property types** (Container, Probe, Volume, SecurityContext, etc.), and composites (WebApp, StatefulApp, CronWorkload, AutoscaledService, WorkerPool, NamespaceEnv, NodeAgent) for common patterns.
 `;
 
 const outputFormat = `The Kubernetes lexicon serializes resources into **multi-document YAML** with
@@ -76,7 +76,7 @@ structure: \`apiVersion\`, \`kind\`, \`metadata\`, and \`spec\`.
 Run \`chant build\` to produce Kubernetes manifests from your declarations:
 
 \`\`\`bash
-chant build
+chant build src/ --output dist/manifests.yaml
 # Writes dist/manifests.yaml
 \`\`\`
 
@@ -134,7 +134,7 @@ export async function generateDocs(opts?: { verbose?: boolean }): Promise<void> 
     overview,
     outputFormat,
     serviceFromType,
-    suppressPages: ["pseudo-parameters"],
+    suppressPages: ["pseudo-parameters", "rules"],
     extraPages: [
       {
         slug: "getting-started",

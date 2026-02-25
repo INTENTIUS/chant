@@ -12,7 +12,7 @@ structure: `apiVersion`, `kind`, `metadata`, and `spec`.
 Run `chant build` to produce Kubernetes manifests from your declarations:
 
 ```bash
-chant build
+chant build src/ --output dist/manifests.yaml
 # Writes dist/manifests.yaml
 ```
 

@@ -452,3 +452,45 @@ src/
 - **Custom lint rule** — `api-timeout.ts` enforces API Gateway's 29-second timeout limit (see [Custom Lint Rules](../custom-rules/))
 
 The example produces 10 CloudFormation resources: 1 S3 bucket + 3 composites × 3 members each.
+
+## RDS Instance
+
+`examples/rds-postgres/` — production RDS PostgreSQL instance using the `RdsInstance` composite with VPC networking and SSM parameter references.
+
+```typescript title="params.ts"
+import { Parameter } from "@intentius/chant-lexicon-aws";
+
+export const environment = new Parameter("String", {
+  description: "Runtime environment",
+  defaultValue: "dev",
+});
+
+export const dbPasswordSsmPath = new Parameter("AWS::SSM::Parameter::Value<String>", {
+  description: "SSM Parameter Store path containing the database password",
+  defaultValue: "/myapp/dev/db-password",
+});
+```
+
+```typescript title="network.ts"
+import { VpcDefault } from "@intentius/chant-lexicon-aws";
+
+export const network = VpcDefault({});
+```
+
+```typescript title="database.ts"
+import { RdsInstance } from "@intentius/chant-lexicon-aws";
+import { Ref } from "@intentius/chant-lexicon-aws";
+import { network } from "./network";
+import { dbPasswordSsmPath } from "./params";
+
+export const database = RdsInstance({
+  engine: "postgres",
+  vpcId: network.vpc.VpcId,
+  subnetIds: [network.privateSubnet1.SubnetId, network.privateSubnet2.SubnetId],
+  ingressCidr: "10.0.0.0/16",
+  masterPassword: Ref(dbPasswordSsmPath) as unknown as string,
+  databaseName: "myapp",
+});
+```
+
+Produces a complete RDS stack: VPC infrastructure (from `VpcDefault`), DB subnet group, security group, and RDS instance with encrypted storage.

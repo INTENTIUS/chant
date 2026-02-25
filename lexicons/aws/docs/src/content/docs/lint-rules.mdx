@@ -231,6 +231,72 @@ WAW030: API Gateway Deployment "MyDeployment" has no DependsOn on any Method
 WAW030: ScalableTarget "MyTarget" targets DynamoDB but has no DependsOn on any Table
 ```
 
+### WAW018 — S3 Bucket Missing Public Access Block
+
+**Severity:** error | **Category:** security
+
+Flags S3 buckets without a `PublicAccessBlockConfiguration`. Without an explicit public access block, the bucket may be publicly accessible. Always set `BlockPublicAcls`, `BlockPublicPolicy`, `IgnorePublicAcls`, and `RestrictPublicBuckets` to `true`.
+
+### WAW019 — Security Group Unrestricted Ingress on Sensitive Ports
+
+**Severity:** error | **Category:** security
+
+Flags security group ingress rules that allow unrestricted access (`0.0.0.0/0` or `::/0`) on sensitive ports (22, 3389, 3306, 5432, 1433, 6379, 27017). Restrict ingress to known CIDR ranges or security groups.
+
+### WAW020 — IAM Policy Uses Wildcard Action
+
+**Severity:** warning | **Category:** security
+
+Flags IAM policy statements that use wildcard actions (`"Action": "*"` or `"Action": "s3:*"`). Use specific action names following the principle of least privilege.
+
+### WAW021 — RDS Storage Not Encrypted
+
+**Severity:** error | **Category:** security
+
+Flags RDS instances without `StorageEncrypted: true`. All RDS instances should encrypt data at rest to meet compliance and security requirements.
+
+### WAW022 — Lambda Not in VPC
+
+**Severity:** warning | **Category:** security
+
+Flags Lambda functions without a `VpcConfig`. Functions that access internal resources (databases, caches, internal APIs) should run inside a VPC. Functions that only call public APIs can safely skip VPC configuration.
+
+### WAW023 — CloudFront Without WAF
+
+**Severity:** warning | **Category:** security
+
+Flags CloudFront distributions without a `WebACLId`. Attaching a WAF web ACL protects your distribution from common web exploits and bots.
+
+### WAW024 — ALB Without Access Logging
+
+**Severity:** warning | **Category:** best practice
+
+Flags Application Load Balancers without access logging enabled. Enable `access_logs.s3.enabled` to capture request logs for debugging and compliance.
+
+### WAW025 — SNS Topic Not Encrypted
+
+**Severity:** warning | **Category:** security
+
+Flags SNS topics without `KmsMasterKeyId`. Encrypting topics at rest protects sensitive notification payloads.
+
+### WAW026 — SQS Queue Not Encrypted
+
+**Severity:** warning | **Category:** security
+
+Flags SQS queues without `KmsMasterKeyId` or `SqsManagedSseEnabled`. Encrypting queues at rest protects sensitive message payloads.
+
+### WAW027 — DynamoDB Missing Point-in-Time Recovery
+
+**Severity:** info | **Category:** best practice
+
+Flags DynamoDB tables without `PointInTimeRecoverySpecification.PointInTimeRecoveryEnabled` set to `true`. Point-in-time recovery provides continuous backups and protects against accidental writes or deletes.
+
+### WAW028 — EBS Volume Not Encrypted
+
+**Severity:** warning | **Category:** security
+
+Flags EBS volumes without `Encrypted: true`. All EBS volumes should encrypt data at rest for compliance and security.
+
 ## Running lint
 
 ```bash

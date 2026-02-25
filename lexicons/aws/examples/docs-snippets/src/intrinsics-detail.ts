@@ -1,4 +1,4 @@
-import { Sub, AWS, Ref, If, Join, Select, Split, Base64 } from "@intentius/chant-lexicon-aws";
+import { Sub, AWS, Ref, If, Join, Select, Split, Base64, GetAZs } from "@intentius/chant-lexicon-aws";
 
 // --- Sub: string substitution ---
 export const bucketName = Sub`${AWS.StackName}-data`;
@@ -25,3 +25,7 @@ export const userData = Base64(Sub`#!/bin/bash
 echo "Stack: ${AWS.StackName}"
 yum update -y
 `);
+
+// --- GetAZs: availability zones ---
+export const firstAz = Select(0, GetAZs(AWS.Region));
+export const secondAz = Select(1, GetAZs(AWS.Region));
