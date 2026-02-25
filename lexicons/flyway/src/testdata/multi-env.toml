@@ -1,0 +1,31 @@
+id = "payments"
+name = "payments"
+databaseType = "postgresql"
+
+[flyway]
+locations = ["filesystem:sql/migrations"]
+defaultSchema = "public"
+cleanDisabled = true
+
+[environments.dev]
+url = "jdbc:postgresql://localhost:5432/payments_dev"
+user = "dev_user"
+schemas = ["public", "payments"]
+
+[environments.shadow]
+url = "jdbc:postgresql://localhost:5432/payments_shadow"
+schemas = ["public", "payments"]
+
+[environments.shadow.provisioner]
+type = "clean"
+
+[environments.staging]
+url = "jdbc:postgresql://staging:5432/payments"
+schemas = ["public", "payments"]
+cleanDisabled = true
+
+[environments.prod]
+url = "jdbc:postgresql://prod:5432/payments"
+schemas = ["public", "payments"]
+cleanDisabled = true
+validateOnMigrate = true

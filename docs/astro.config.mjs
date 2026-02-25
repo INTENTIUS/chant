@@ -59,6 +59,7 @@ export default defineConfig({
 						{ label: 'AWS CloudFormation', link: '/lexicons/aws/' },
 						{ label: 'Kubernetes', link: '/lexicons/k8s/' },
 						{ label: 'GitLab CI/CD', link: '/lexicons/gitlab/' },
+					{ label: 'Flyway', link: '/lexicons/flyway/' },
 					],
 				},
 				{

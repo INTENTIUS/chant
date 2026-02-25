@@ -1,0 +1,35 @@
+id = "payments-db"
+name = "payments-db"
+databaseType = "postgresql"
+
+[flyway]
+locations = ["filesystem:sql"]
+defaultSchema = "public"
+cleanDisabled = true
+
+[environments.staging]
+url = "jdbc:postgresql://staging:5432/payments"
+user = "${vault.staging_user}"
+password = "${vault.staging_password}"
+schemas = ["public", "payments"]
+cleanDisabled = true
+
+[environments.staging.resolvers.vault]
+url = "https://vault.internal:8200"
+token = "${env.VAULT_TOKEN}"
+engineName = "secret"
+engineVersion = "v2"
+
+[environments.prod]
+url = "jdbc:postgresql://prod:5432/payments"
+user = "${vault.prod_user}"
+password = "${vault.prod_password}"
+schemas = ["public", "payments"]
+cleanDisabled = true
+validateOnMigrate = true
+
+[environments.prod.resolvers.vault]
+url = "https://vault.internal:8200"
+token = "${env.VAULT_TOKEN}"
+engineName = "secret"
+engineVersion = "v2"

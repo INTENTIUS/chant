@@ -1,0 +1,34 @@
+# Default recipe - list all available commands
+default:
+    @just --list
+
+# Generate types and metadata from Flyway config schema
+generate:
+    bun run src/codegen/generate-cli.ts
+
+# Generate docs site, install deps, and start dev server
+docs:
+    bun run src/codegen/docs-cli.ts
+    bun install --cwd docs
+    bun --cwd docs dev
+
+# Build docs site for production
+docs-build:
+    bun run src/codegen/docs-cli.ts
+    bun install --cwd docs
+    bun --cwd docs build
+
+# Package the lexicon (generate)
+package: generate
+
+# Run tests
+test:
+    bun test src/
+
+# Validate generated artifacts
+validate:
+    bun run src/validate-cli.ts
+
+# Run coverage analysis
+coverage:
+    bun run src/coverage-cli.ts

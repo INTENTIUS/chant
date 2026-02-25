@@ -1,0 +1,14 @@
+{
+  "name": "flyway-azure-secured-example",
+  "version": "0.0.1",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "build": "chant build src --lexicon flyway",
+    "dev": "chant build src --lexicon flyway --watch"
+  },
+  "dependencies": {
+    "@intentius/chant-lexicon-flyway": "workspace:*",
+    "@intentius/chant": "workspace:*"
+  }
+}
