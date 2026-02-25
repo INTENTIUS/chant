@@ -14,13 +14,14 @@ aws cloudformation deploy \
   --stack-name api-service \
   --capabilities CAPABILITY_IAM \
   --parameter-overrides \
-    ClusterArn=arn:aws:ecs:... \
-    ListenerArn=arn:aws:elasticloadbalancing:... \
-    AlbSgId=sg-... \
-    ExecutionRoleArn=arn:aws:iam:... \
-    VpcId=vpc-... \
-    PrivateSubnet1=subnet-... \
-    PrivateSubnet2=subnet-...
+    clusterArn=arn:aws:ecs:... \
+    listenerArn=arn:aws:elasticloadbalancing:... \
+    albSgId=sg-... \
+    executionRoleArn=arn:aws:iam:... \
+    vpcId=vpc-... \
+    privateSubnet1=subnet-... \
+    privateSubnet2=subnet-... \
+    image=123456789012.dkr.ecr.us-east-1.amazonaws.com/alb-api:latest
 ```
 
 ## What It Does
@@ -29,9 +30,9 @@ Deploys 7 CloudFormation resources via `FargateService`:
 
 - **Task Role** — application-level IAM permissions
 - **Log Group** — CloudWatch Logs with 30-day retention
-- **Task Definition** — Fargate task running the API container on port 3000
+- **Task Definition** — Fargate task running the API container on port 8080
 - **Task Security Group** — allows inbound from ALB SG only
-- **Target Group** — health check on `/api/health`
+- **Target Group** — health check on `/api/get`
 - **Listener Rule** — routes `/api` and `/api/*` at priority 100
 - **ECS Service** — 2 Fargate tasks in private subnets
 

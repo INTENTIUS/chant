@@ -35,6 +35,8 @@ The stack exports everything service stacks need as parameters:
 | `AlbSgId` | ALB Security Group ID |
 | `ExecutionRoleArn` | Shared Execution Role ARN |
 | `AlbDnsName` | ALB DNS name (for DNS/CNAME) |
+| `ApiRepoUri` | ECR repository URI for API service |
+| `UiRepoUri` | ECR repository URI for UI service |
 | `VpcId` | VPC ID |
 | `PrivateSubnet1` | Private Subnet 1 ID |
 | `PrivateSubnet2` | Private Subnet 2 ID |

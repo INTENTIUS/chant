@@ -18,7 +18,7 @@ The stack creates 10 CloudFormation resources (1 S3 bucket + 3 composites × 3 m
 - **Data bucket** — encrypted S3 storage
 - **Health API** — minimal health-check endpoint (256 MB, 10s timeout)
 - **Upload API** — file upload endpoint with `s3:PutObject` on the data bucket (256 MB, 10s timeout)
-- **Process API** — data processing endpoint with `s3:GetObject` + `s3:PutObject` (1024 MB, 30s timeout)
+- **Process API** — data processing endpoint with `s3:GetObject` + `s3:PutObject` (1024 MB, 25s timeout)
 
 Each API composite expands to an IAM Role + Lambda Function + API Gateway Lambda Permission.
 
@@ -40,7 +40,7 @@ src/
 ## Patterns Demonstrated
 
 1. **Composites** — multi-resource factories (Role + Function + Permission)
-2. **Preset factories** — SecureApi and HighMemoryApi with sensible defaults via `withDefaults`
+2. **Preset factories** — SecureApi and HighMemoryApi wrap LambdaApi with sensible defaults
 3. **Action constants** — `S3Actions.PutObject`, `S3Actions.ReadWrite` for typed IAM policies
 4. **Inline IAM policies** — `Role_Policy` scopes S3 access per endpoint
 5. **Custom lint rules** — domain-specific validation (API Gateway timeout limit)

@@ -13,12 +13,12 @@ bun run build
 The stack creates 17 CloudFormation resources:
 
 - **VPC** — `10.0.0.0/16` CIDR with DNS support and hostnames enabled
-- **Internet Gateway** — attached to the VPC for public internet access
+- **Internet Gateway** + **IGW Attachment** — attached to the VPC for public internet access
 - **2 Public Subnets** — `/20` blocks in separate AZs with `MapPublicIpOnLaunch`
 - **2 Private Subnets** — `/20` blocks in separate AZs
-- **Public Route Table** — default route `0.0.0.0/0` → Internet Gateway
-- **Private Route Table** — default route `0.0.0.0/0` → NAT Gateway
-- **NAT Gateway** — single NAT (cost-conscious) in the first public subnet with an Elastic IP
+- **Public Route Table** + **Public Route** — default route `0.0.0.0/0` → Internet Gateway
+- **Private Route Table** + **Private Route** — default route `0.0.0.0/0` → NAT Gateway
+- **Elastic IP** + **NAT Gateway** — single NAT (cost-conscious) in the first public subnet
 - **4 Route Table Associations** — wiring subnets to their route tables
 
 ## Project Structure

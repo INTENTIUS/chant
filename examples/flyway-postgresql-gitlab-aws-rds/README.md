@@ -20,7 +20,7 @@ A cross-lexicon example combining **three** lexicons: AWS (RDS infrastructure), 
 ### `chant build src --lexicon aws` → CloudFormation template (20 resources)
 
 - VPC with 2 public + 2 private subnets, IGW, NAT gateway, route tables (17 resources)
-- RDS PostgreSQL instance in private subnets with security group (3 resources)
+- RDS PostgreSQL instance in public subnets, publicly accessible, with security group (3 resources)
 - Parameters: `environment`, `dbPasswordSsmPath` (SSM SecureString)
 - Output: `DbEndpoint`
 

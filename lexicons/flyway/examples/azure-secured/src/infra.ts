@@ -23,12 +23,11 @@ export const config = new FlywayConfig({
   validateMigrationNaming: true,
 });
 
-// Azure AD resolver — uses managed identity in production,
-// service principal credentials in staging
+// Azure AD resolver — uses managed identity or service principal
+// authentication to Azure SQL / PostgreSQL
 export const azureAdResolver = new AzureAdResolver({
   tenantId: "${env.AZURE_TENANT_ID}",
-  servicePrincipalId: "${env.AZURE_CLIENT_ID}",
-  servicePrincipalSecret: "${env.AZURE_CLIENT_SECRET}",
+  clientId: "${env.AZURE_CLIENT_ID}",
 });
 
 export const dev = new Environment({
