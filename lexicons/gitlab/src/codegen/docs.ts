@@ -30,7 +30,7 @@ npm install --save-dev @intentius/chant-lexicon-gitlab
 
 {{file:docs-snippets/src/quickstart.ts}}
 
-The lexicon provides **3 resources** (Job, Workflow, Default), **13 property types** (Image, Cache, Artifacts, Rule, Environment, Trigger, and more), the \`CI\` pseudo-parameter object for predefined variables, and the \`reference()\` intrinsic for YAML \`!reference\` tags.
+The lexicon provides **3 resources** (Job, Workflow, Default), **16 property types** (Image, Cache, Artifacts, Rule, Environment, Trigger, Need, Service, and more), the \`CI\` pseudo-parameter object for predefined variables, and the \`reference()\` intrinsic for YAML \`!reference\` tags.
 `;
 
 const outputFormat = `The GitLab lexicon serializes resources into **\`.gitlab-ci.yml\` YAML**. Keys are
@@ -130,7 +130,7 @@ build-app:
 
 ## Resource types
 
-The lexicon provides 3 resource types and 13 property types:
+The lexicon provides 3 resource types and 16 property types:
 
 ### Resources
 
@@ -156,6 +156,10 @@ The lexicon provides 3 resource types and 13 property types:
 | \`Parallel\` | Job | Job parallelization (matrix builds) |
 | \`Release\` | Job | GitLab Release creation |
 | \`AutoCancel\` | Workflow | Pipeline auto-cancellation settings |
+| \`Need\` | Job | Job dependency for DAG-mode execution |
+| \`Inherit\` | Job | Controls which global defaults a job inherits |
+| \`Service\` | Job, Default | Sidecar service container (e.g. Docker-in-Docker, databases) |
+| \`WorkflowRule\` | Workflow | Conditional rules for pipeline-level execution |
 
 ## Shared config
 
@@ -218,7 +222,7 @@ deploy:
       when: manual
 \`\`\`
 
-The \`ifCondition\` property maps to \`if:\` in the YAML (since \`if\` is a reserved word in TypeScript).
+The \`if\` property maps directly to \`if:\` in the YAML. Use the \`CI\` pseudo-parameter object for type-safe variable references.
 
 ## Environments
 
@@ -473,23 +477,23 @@ bun test       # runs the example's tests
 
 ## Getting Started
 
-\`examples/getting-started/\` — a 3-stage Node.js pipeline with build, test, and deploy jobs.
+\`examples/getting-started/\` — a 2-stage Node.js pipeline with build and test jobs.
 
 \`\`\`
 src/
-├── config.ts      # Shared config: images, caches, artifacts, rules, environments
-└── pipeline.ts    # Job definitions: build, test, deploy
+├── config.ts      # Shared config: image, cache
+└── pipeline.ts    # Job definitions: build, test
 \`\`\`
 
 ### Shared configuration
 
-\`config.ts\` extracts reusable objects — images, caches, artifacts, rules, and environments — so jobs stay concise:
+\`config.ts\` extracts reusable objects — image and cache — so jobs stay concise:
 
 {{file:getting-started/src/config.ts}}
 
 ### Pipeline jobs
 
-\`pipeline.ts\` defines three jobs that import shared config directly:
+\`pipeline.ts\` defines two jobs that import shared config:
 
 {{file:getting-started/src/pipeline.ts}}
 
@@ -501,64 +505,45 @@ src/
 stages:
   - build
   - test
-  - deploy
 
 build:
   stage: build
-  image: node:20-alpine
+  image:
+    name: node:20-alpine
   cache:
-    key: $CI_COMMIT_REF_SLUG
+    key: '$CI_COMMIT_REF_SLUG'
     paths:
       - node_modules/
     policy: pull-push
   script:
-    - npm ci
+    - npm install
     - npm run build
-  artifacts:
-    paths:
-      - dist/
-    expire_in: 1 hour
 
 test:
   stage: test
-  image: node:20-alpine
+  image:
+    name: node:20-alpine
   cache:
-    key: $CI_COMMIT_REF_SLUG
+    key: '$CI_COMMIT_REF_SLUG'
     paths:
       - node_modules/
     policy: pull-push
   script:
-    - npm ci
+    - npm install
     - npm test
   artifacts:
-    paths:
-      - coverage/
-    expire_in: 1 week
     reports:
       junit: coverage/junit.xml
-  rules:
-    - if: $CI_MERGE_REQUEST_IID
-    - if: $CI_COMMIT_BRANCH
-
-deploy:
-  stage: deploy
-  image: node:20-alpine
-  script:
-    - npm run deploy
-  environment:
-    name: production
-    url: https://example.com
-  rules:
-    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
-      when: manual
+    paths:
+      - coverage/
+    expire_in: '1 week'
 \`\`\`
 
 **Patterns demonstrated:**
 
-1. **Shared config** — reusable images, caches, artifacts, and rules extracted into \`config.ts\`
-2. **Conditional execution** — merge request and branch rules control when jobs run
-3. **Manual deployment** — deploy requires manual trigger on the default branch
-4. **JUnit reports** — test artifacts include JUnit XML for GitLab MR display
+1. **Shared config** — reusable image and cache extracted into \`config.ts\`
+2. **JUnit reports** — test artifacts include JUnit XML for GitLab MR display
+3. **Stage ordering** — stages collected automatically from job declarations
 
 ## Docker Build
 
@@ -613,48 +598,9 @@ export const deployInfra = new Job({
 
 ### Service pipeline (API)
 
-Builds a Docker image, pushes to ECR, and deploys the API service stack with cross-stack parameter passing:
+Builds a Docker image, pushes to ECR, and deploys the API service stack with cross-stack parameter passing. The full source lives in the cross-lexicon example \`examples/gitlab-aws-alb-api/\`:
 
-\`\`\`typescript
-import { Job, Image, Service, Need, Rule } from "@intentius/chant-lexicon-gitlab";
-import { CI } from "@intentius/chant-lexicon-gitlab";
-
-const ECR_URL = "$AWS_ACCOUNT_ID.dkr.ecr.$AWS_DEFAULT_REGION.amazonaws.com";
-const ECR_REPO = "alb-api";
-const fullImage = \\\`\\\${ECR_URL}/\\\${ECR_REPO}\\\`;
-
-const dockerImage = new Image({ name: "docker:27-cli" });
-const dind = new Service({ name: "docker:27-dind", alias: "docker" });
-
-export const buildImage = new Job({
-  stage: "build",
-  image: dockerImage,
-  services: [dind],
-  variables: { DOCKER_TLS_CERTDIR: "/certs" },
-  before_script: [
-    "apk add --no-cache aws-cli",
-    \\\`aws ecr get-login-password | docker login --username AWS --password-stdin \\\${ECR_URL}\\\`,
-  ],
-  script: [
-    \\\`docker build -t \\\${fullImage}:\\\${CI.CommitRefSlug} .\\\`,
-    \\\`docker push \\\${fullImage}:\\\${CI.CommitRefSlug}\\\`,
-  ],
-  rules: [new Rule({ if: "$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH" })],
-});
-
-export const deployService = new Job({
-  stage: "deploy",
-  image: new Image({ name: "amazon/aws-cli:latest" }),
-  needs: [new Need({ job: "build-image" })],
-  script: [
-    // Fetch shared ALB outputs and map to CF parameter overrides
-    "OUTPUTS=$(aws cloudformation describe-stacks --stack-name shared-alb --query 'Stacks[0].Outputs' --output json)",
-    'PARAMS=$(echo "$OUTPUTS" | jq -r \\'[...output-to-param mapping...] | join(" ")\\')',
-    "aws cloudformation deploy --template-file templates/template.json --stack-name shared-alb-api --capabilities CAPABILITY_IAM --no-fail-on-empty-changeset --parameter-overrides $PARAMS",
-  ],
-  rules: [new Rule({ if: "$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH" })],
-});
-\`\`\`
+{{file:../../../examples/gitlab-aws-alb-api/src/pipeline.ts}}
 
 **Key patterns:**
 

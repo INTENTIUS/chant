@@ -62,9 +62,9 @@ The lexicon provides 3 resource types and 16 property types:
 | `Release` | Job | GitLab Release creation |
 | `AutoCancel` | Workflow | Pipeline auto-cancellation settings |
 | `Need` | Job | Job dependency for DAG-mode execution |
-| `Inherit` | Job | Controls which defaults a job inherits |
-| `Service` | Job | Sidecar service container |
-| `WorkflowRule` | Workflow | Workflow-level conditional execution rule |
+| `Inherit` | Job | Controls which global defaults a job inherits |
+| `Service` | Job, Default | Sidecar service container (e.g. Docker-in-Docker, databases) |
+| `WorkflowRule` | Workflow | Conditional rules for pipeline-level execution |
 
 ## Shared config
 
@@ -195,7 +195,7 @@ deploy:
       when: manual
 ```
 
-The `ifCondition` property maps to `if:` in the YAML (since `if` is a reserved word in TypeScript).
+The `if` property maps directly to `if:` in the YAML. Use the `CI` pseudo-parameter object for type-safe variable references.
 
 ## Environments
 

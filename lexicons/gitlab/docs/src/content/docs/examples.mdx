@@ -18,13 +18,13 @@ bun test       # runs the example's tests
 
 ```
 src/
-├── config.ts      # Shared config: images, caches, artifacts
+├── config.ts      # Shared config: image, cache
 └── pipeline.ts    # Job definitions: build, test
 ```
 
 ### Shared configuration
 
-`config.ts` extracts reusable objects — images, caches, artifacts, rules, and environments — so jobs stay concise:
+`config.ts` extracts reusable objects — image and cache — so jobs stay concise:
 
 ```typescript title="config.ts"
 /**
@@ -48,7 +48,7 @@ export const npmCache = new Cache({
 
 ### Pipeline jobs
 
-`pipeline.ts` defines two jobs that import shared config directly:
+`pipeline.ts` defines two jobs that import shared config:
 
 ```typescript title="pipeline.ts"
 import { Job, Artifacts } from "@intentius/chant-lexicon-gitlab";
@@ -89,9 +89,10 @@ stages:
 
 build:
   stage: build
-  image: node:20-alpine
+  image:
+    name: node:20-alpine
   cache:
-    key: $CI_COMMIT_REF_SLUG
+    key: '$CI_COMMIT_REF_SLUG'
     paths:
       - node_modules/
     policy: pull-push
@@ -101,9 +102,10 @@ build:
 
 test:
   stage: test
-  image: node:20-alpine
+  image:
+    name: node:20-alpine
   cache:
-    key: $CI_COMMIT_REF_SLUG
+    key: '$CI_COMMIT_REF_SLUG'
     paths:
       - node_modules/
     policy: pull-push
@@ -111,17 +113,18 @@ test:
     - npm install
     - npm test
   artifacts:
-    paths:
-      - coverage/
-    expire_in: 1 week
     reports:
       junit: coverage/junit.xml
+    paths:
+      - coverage/
+    expire_in: '1 week'
 ```
 
 **Patterns demonstrated:**
 
-1. **Shared config** — reusable images, caches, and artifacts extracted into `config.ts`
+1. **Shared config** — reusable image and cache extracted into `config.ts`
 2. **JUnit reports** — test artifacts include JUnit XML for GitLab MR display
+3. **Stage ordering** — stages collected automatically from job declarations
 
 ## Docker Build
 
@@ -218,46 +221,56 @@ export const deployInfra = new Job({
 
 ### Service pipeline (API)
 
-Builds a Docker image, pushes to ECR, and deploys the API service stack with cross-stack parameter passing:
+Builds a Docker image, pushes to ECR, and deploys the API service stack with cross-stack parameter passing. The full source lives in the cross-lexicon example `examples/gitlab-aws-alb-api/`:
 
-```typescript
+```typescript title="pipeline.ts"
 import { Job, Image, Service, Need, Rule } from "@intentius/chant-lexicon-gitlab";
 import { CI } from "@intentius/chant-lexicon-gitlab";
 
 const ECR_URL = "$AWS_ACCOUNT_ID.dkr.ecr.$AWS_DEFAULT_REGION.amazonaws.com";
 const ECR_REPO = "alb-api";
-const fullImage = \`\${ECR_URL}/\${ECR_REPO}\`;
+const STACK_NAME = "shared-alb-api";
+const INFRA_STACK = "shared-alb";
+const fullImage = `${ECR_URL}/${ECR_REPO}`;
 
+const awsImage = new Image({ name: "amazon/aws-cli:latest", entrypoint: [""] });
 const dockerImage = new Image({ name: "docker:27-cli" });
 const dind = new Service({ name: "docker:27-dind", alias: "docker" });
+
+const defaultBranchOnly = [
+  new Rule({ if: "$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH" }),
+];
+
+const dockerVariables = { DOCKER_TLS_CERTDIR: "/certs" };
 
 export const buildImage = new Job({
   stage: "build",
   image: dockerImage,
   services: [dind],
-  variables: { DOCKER_TLS_CERTDIR: "/certs" },
+  variables: dockerVariables,
   before_script: [
     "apk add --no-cache aws-cli",
-    \`aws ecr get-login-password | docker login --username AWS --password-stdin \${ECR_URL}\`,
+    `aws ecr get-login-password | docker login --username AWS --password-stdin ${ECR_URL}`,
   ],
   script: [
-    \`docker build -t \${fullImage}:\${CI.CommitRefSlug} .\`,
-    \`docker push \${fullImage}:\${CI.CommitRefSlug}\`,
+    `docker build -t ${fullImage}:${CI.CommitRefSlug} .`,
+    `docker push ${fullImage}:${CI.CommitRefSlug}`,
+    `if [ "${CI.CommitBranch}" = "${CI.DefaultBranch}" ]; then docker tag ${fullImage}:${CI.CommitRefSlug} ${fullImage}:latest && docker push ${fullImage}:latest; fi`,
   ],
-  rules: [new Rule({ if: "$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH" })],
+  rules: defaultBranchOnly,
 });
 
 export const deployService = new Job({
   stage: "deploy",
-  image: new Image({ name: "amazon/aws-cli:latest" }),
+  image: awsImage,
   needs: [new Need({ job: "build-image" })],
   script: [
-    // Fetch shared ALB outputs and map to CF parameter overrides
-    "OUTPUTS=$(aws cloudformation describe-stacks --stack-name shared-alb --query 'Stacks[0].Outputs' --output json)",
-    'PARAMS=$(echo "$OUTPUTS" | jq -r \'[...output-to-param mapping...] | join(" ")\')',
-    "aws cloudformation deploy --template-file templates/template.json --stack-name shared-alb-api --capabilities CAPABILITY_IAM --no-fail-on-empty-changeset --parameter-overrides $PARAMS",
+    `OUTPUTS=$(aws cloudformation describe-stacks --stack-name ${INFRA_STACK} --query 'Stacks[0].Outputs' --output json)`,
+    `PARAMS=$(echo "$OUTPUTS" | jq -r '[(.[] | select(.OutputKey == "ClusterArn") | "clusterArn=" + .OutputValue), (.[] | select(.OutputKey == "ListenerArn") | "listenerArn=" + .OutputValue), (.[] | select(.OutputKey == "AlbSgId") | "albSgId=" + .OutputValue), (.[] | select(.OutputKey == "ExecutionRoleArn") | "executionRoleArn=" + .OutputValue), (.[] | select(.OutputKey == "VpcId") | "vpcId=" + .OutputValue), (.[] | select(.OutputKey == "PrivateSubnet1") | "privateSubnet1=" + .OutputValue), (.[] | select(.OutputKey == "PrivateSubnet2") | "privateSubnet2=" + .OutputValue)] | join(" ")')`,
+    `IMAGE_URI=$(echo "$OUTPUTS" | jq -r '.[] | select(.OutputKey == "ApiRepoUri") | .OutputValue'):\${CI_COMMIT_REF_SLUG}`,
+    `aws cloudformation deploy --template-file templates/template.json --stack-name ${STACK_NAME} --capabilities CAPABILITY_IAM --no-fail-on-empty-changeset --parameter-overrides $PARAMS image=$IMAGE_URI`,
   ],
-  rules: [new Rule({ if: "$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH" })],
+  rules: defaultBranchOnly,
 });
 ```
 
@@ -268,4 +281,4 @@ export const deployService = new Job({
 3. **Job naming** — `buildImage` serializes to `build-image` in YAML; `Need` references must use kebab-case
 4. **Docker-in-Docker** — `docker:27-cli` image with `docker:27-dind` service for container builds
 
-The full cross-lexicon examples live in the top-level `examples/` directory: `examples/gitlab-aws-alb-infra/`, `examples/gitlab-aws-alb-api/`, and `examples/gitlab-aws-alb-ui/`.
+The full examples live in `examples/gitlab-aws-alb-infra/`, `examples/gitlab-aws-alb-api/`, and `examples/gitlab-aws-alb-ui/`.
