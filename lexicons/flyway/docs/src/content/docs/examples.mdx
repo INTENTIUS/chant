@@ -77,7 +77,7 @@ export const shadow = new Environment(result.shadow);
 
 ## Environment Overrides
 
-`examples/environment-overrides/` — shared config deep-merged into per-environment overrides using `environmentGroup()`.
+`examples/environment-overrides/` — shared config deep-merged into per-environment overrides using `environmentGroup()`. Addresses the #1 Flyway feature request: per-environment placeholders without config repetition.
 
 ```typescript
 import { environmentGroup, Environment } from "@intentius/chant-lexicon-flyway";
@@ -138,6 +138,22 @@ export const prodEnv = new Environment(envs.prod);
 
 `examples/ci-pipeline/` — CI/CD-optimized project with environment variable credentials (`${env.*}` patterns).
 
+## Azure Secured
+
+`examples/azure-secured/` — Azure AD authentication with `AzureAdResolver` for managed identity or service principal credentials to Azure SQL / PostgreSQL.
+
 ## GCP Secured
 
 `examples/gcp-secured/` — environments with Google Cloud Secret Manager credentials.
+
+## Multi-Schema
+
+`examples/multi-schema/` — multiple schemas with cross-schema placeholder references.
+
+## Callbacks
+
+`examples/callbacks/` — lifecycle callbacks with `BlueprintMigrationSet`.
+
+## Migration Lifecycle
+
+`examples/migration-lifecycle/` — full runnable lifecycle: Docker, SQL migrations (V1→V3), and `environmentGroup` inheritance.

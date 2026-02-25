@@ -60,19 +60,21 @@ export const dev = new Environment({
 });
 \`\`\`
 
-The lexicon provides **3 resource types** (FlywayProject, FlywayConfig, Environment),
-**20+ property types** (resolvers, provisioners, database configs), and composites
+The lexicon provides **5 resource types** (FlywayProject, FlywayConfig, Environment, FlywayDesktopConfig, RedgateCompareConfig),
+**20 property types** (resolvers, provisioners, database configs), and composites
 (StandardProject, MultiEnvironmentProject, VaultSecuredProject, DesktopProject,
 environmentGroup) for common patterns.
 
-## Why use chant for Flyway?
+## Lint Rules
 
-No existing tool validates Flyway TOML config semantics. chant catches:
+chant includes lint rules for Flyway config. For example:
 - Hardcoded credentials in environment configs
 - Production environments with clean enabled
 - Missing schema definitions
 - Unresolved resolver references
 - Invalid callback event names
+
+See [Lint Rules](./lint-rules) for the full list.
 `;
 
 const outputFormat = `The Flyway lexicon serializes resources into **TOML** format compatible with
@@ -130,7 +132,7 @@ export async function generateDocs(opts?: { verbose?: boolean }): Promise<void> 
     overview,
     outputFormat,
     serviceFromType,
-    suppressPages: [],
+    suppressPages: ["rules"],
     extraPages: [
       {
         slug: "flyway-concepts",
@@ -284,7 +286,8 @@ Flags duplicate version numbers in migration arrays.
 | WFW107 | Enterprise-only callback (undo) |
 | WFW108 | Environment without URL |
 | WFW109 | Provisioner config mismatch |
-| WFW110 | Schema mismatch between env and env.flyway |
+| WFW110 | Environment schemas differ from parent environment schemas |
+| WFW111 | Unknown key in TOML output — key is not a recognized Flyway property |
 `,
       },
       {
@@ -303,22 +306,29 @@ bun test       # runs the example's tests
 
 ## Basic Project
 
-\`examples/basic-project/\` — a standard two-environment setup (dev + prod) with sensible defaults using the \`StandardProject\` composite.
+\`examples/basic-project/\` — a single-environment setup (dev only) using raw primitives (\`FlywayProject\`, \`FlywayConfig\`, \`Environment\`).
 
 \`\`\`typescript
-import { StandardProject, FlywayProject, FlywayConfig, Environment } from "@intentius/chant-lexicon-flyway";
+import { FlywayProject, FlywayConfig, Environment } from "@intentius/chant-lexicon-flyway";
 
-const result = StandardProject({
-  name: "my-app",
-  databaseType: "postgresql",
-  devUrl: "jdbc:postgresql://localhost:5432/dev",
-  prodUrl: "jdbc:postgresql://prod:5432/app",
+export const project = new FlywayProject({
+  name: "basic-app",
 });
 
-export const project = FlywayProject(result.project);
-export const config = FlywayConfig(result.config);
-export const dev = Environment(result.dev);
-export const prod = Environment(result.prod);
+export const config = new FlywayConfig({
+  defaultSchema: "public",
+  locations: ["filesystem:sql"],
+  databaseType: "postgresql",
+  validateMigrationNaming: true,
+  baselineOnMigrate: false,
+});
+
+export const dev = new Environment({
+  name: "dev",
+  url: "jdbc:postgresql://localhost:5432/basic_app_dev",
+  schemas: ["public"],
+  provisioner: "clean",
+});
 \`\`\`
 
 ## Desktop Project
@@ -344,12 +354,12 @@ const result = DesktopProject({
   filterFile: "./Filter.scpf",
 });
 
-export const project = FlywayProject(result.project);
-export const config = FlywayConfig(result.config);
-export const desktop = FlywayDesktopConfig(result.desktop);
-export const compare = RedgateCompareConfig(result.compare!);
-export const development = Environment(result.development);
-export const shadow = Environment(result.shadow);
+export const project = new FlywayProject(result.project);
+export const config = new FlywayConfig(result.config);
+export const desktop = new FlywayDesktopConfig(result.desktop);
+export const compare = new RedgateCompareConfig(result.compare!);
+export const development = new Environment(result.development);
+export const shadow = new Environment(result.shadow);
 \`\`\`
 
 **Key patterns:**
@@ -392,9 +402,9 @@ const envs = environmentGroup({
   },
 });
 
-export const devEnv = Environment(envs.dev);
-export const stagingEnv = Environment(envs.staging);
-export const prodEnv = Environment(envs.prod);
+export const devEnv = new Environment(envs.dev);
+export const stagingEnv = new Environment(envs.staging);
+export const prodEnv = new Environment(envs.prod);
 \`\`\`
 
 **Deep merge semantics:**
@@ -420,9 +430,25 @@ export const prodEnv = Environment(envs.prod);
 
 \`examples/ci-pipeline/\` — CI/CD-optimized project with environment variable credentials (\`\${env.*}\` patterns).
 
+## Azure Secured
+
+\`examples/azure-secured/\` — Azure AD authentication with \`AzureAdResolver\` for managed identity or service principal credentials to Azure SQL / PostgreSQL.
+
 ## GCP Secured
 
 \`examples/gcp-secured/\` — environments with Google Cloud Secret Manager credentials.
+
+## Multi-Schema
+
+\`examples/multi-schema/\` — multiple schemas with cross-schema placeholder references.
+
+## Callbacks
+
+\`examples/callbacks/\` — lifecycle callbacks with \`BlueprintMigrationSet\`.
+
+## Migration Lifecycle
+
+\`examples/migration-lifecycle/\` — full runnable lifecycle: Docker, SQL migrations (V1→V3), and \`environmentGroup\` inheritance.
 `,
       },
       {
@@ -453,7 +479,7 @@ export const prod = new Environment(result.prod);
 
 ## MultiEnvironmentProject
 
-Four environments (dev, shadow, staging, prod) with shared config and increasing safety settings.
+N environments with shared config and increasing safety settings, plus an optional shadow database.
 
 \`\`\`typescript
 import { MultiEnvironmentProject } from "@intentius/chant-lexicon-flyway";
@@ -461,10 +487,12 @@ import { MultiEnvironmentProject } from "@intentius/chant-lexicon-flyway";
 const result = MultiEnvironmentProject({
   name: "payments",
   databaseType: "postgresql",
-  devUrl: "jdbc:postgresql://localhost:5432/pay_dev",
+  environments: [
+    { name: "dev", url: "jdbc:postgresql://localhost:5432/pay_dev" },
+    { name: "staging", url: "jdbc:postgresql://staging:5432/payments" },
+    { name: "prod", url: "jdbc:postgresql://prod:5432/payments" },
+  ],
   shadowUrl: "jdbc:postgresql://localhost:5432/pay_shadow",
-  stagingUrl: "jdbc:postgresql://staging:5432/payments",
-  prodUrl: "jdbc:postgresql://prod:5432/payments",
   schemas: ["public", "payments"],
 });
 \`\`\`
@@ -523,7 +551,7 @@ Re-usable migration set pattern for shared schema definitions across multiple se
 
 ## environmentGroup
 
-Not a composite in the strict sense, but the most powerful helper — deep-merges shared config into per-environment overrides. See the [Examples](/chant/lexicons/flyway/examples/) page for usage.
+Not a composite — a helper that deep-merges shared config into per-environment overrides. See the [Examples](/chant/lexicons/flyway/examples/) page for usage.
 `,
       },
       {
