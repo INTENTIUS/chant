@@ -93,15 +93,18 @@ export function parseCFNSchema(data: string | Buffer): SchemaParseResult {
   const attrs: ParsedAttribute[] = [];
   for (const path of schema.readOnlyProperties ?? []) {
     const attrName = stripPointerPath(path);
-    // Skip nested paths (contain "/" after stripping prefix, or ".")
-    if (attrName.includes("/") || attrName.includes(".")) continue;
 
-    // Try to find type from properties, default to string
+    // Flatten nested paths: "Endpoint/Address" → attr name "Endpoint.Address"
+    const cfnAttr = attrName.replace(/\//g, ".");
+
     let tsType = "string";
-    if (schema.properties?.[attrName]) {
-      tsType = resolvePropertyType(schema.properties[attrName], schema);
+    // For top-level attrs, look up type from properties
+    if (!cfnAttr.includes(".") && schema.properties?.[cfnAttr]) {
+      tsType = resolvePropertyType(schema.properties[cfnAttr], schema);
     }
-    attrs.push({ name: attrName, tsType });
+    // For nested attrs, type is always string (CF GetAtt returns strings for leaf values)
+
+    attrs.push({ name: cfnAttr, tsType });
   }
 
   // Parse definitions into property types and enums

@@ -46,12 +46,13 @@ export function buildRegistry<E>(
     const tsName = naming.resolve(typeName);
     if (!tsName) continue;
 
-    // Build attrs map: name → raw name (identity mapping)
+    // Build attrs map: TS key (underscores) → CF attr name (dots)
     let attrs: Record<string, string> | undefined;
     if (r.attributes.length > 0) {
       attrs = {};
       for (const a of r.attributes) {
-        attrs[a.name] = a.name;
+        const tsKey = a.name.replace(/\./g, "_");
+        attrs[tsKey] = a.name;
       }
     }
 

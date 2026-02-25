@@ -170,10 +170,11 @@ function generateRuntimeIndex(
     const tsName = naming.resolve(cfnType);
     if (!tsName) continue;
 
-    // Build attrs map
+    // Build attrs map: TS key (underscores) → CF attr name (dots)
     const attrs: Record<string, string> = {};
     for (const a of r.resource.attributes) {
-      attrs[a.name] = a.name;
+      const tsKey = a.name.replace(/\./g, "_");  // Endpoint.Address → Endpoint_Address
+      attrs[tsKey] = a.name;                      // maps to "Endpoint.Address" for GetAtt
     }
 
     resourceEntries.push({ tsName, resourceType: cfnType, attrs });

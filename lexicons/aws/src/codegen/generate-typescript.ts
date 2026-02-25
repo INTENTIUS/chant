@@ -78,7 +78,7 @@ export function generateTypeScriptDeclarations(
       description: p.description,
     }));
     const dtsAttrs: DtsAttribute[] = r.resource.attributes.map((a) => ({
-      name: a.name,
+      name: a.name.replace(/\./g, "_"),  // Endpoint.Address → Endpoint_Address
       type: a.tsType,
     }));
 

@@ -275,6 +275,56 @@ describe("parseCFNSchema", () => {
     const result = parseCFNSchema(schema);
     expect(result.resource.conditionalCreateOnly).toEqual([]);
   });
+
+  // --- Nested readOnlyProperties ---
+
+  test("parses nested readOnlyProperties as flattened dot-separated attrs", () => {
+    const schema = JSON.stringify({
+      typeName: "AWS::RDS::DBInstance",
+      properties: {
+        DBInstanceIdentifier: { type: "string" },
+        Endpoint: { $ref: "#/definitions/Endpoint" },
+      },
+      definitions: {
+        Endpoint: {
+          type: "object",
+          properties: {
+            Address: { type: "string" },
+            Port: { type: "string" },
+            HostedZoneId: { type: "string" },
+          },
+          additionalProperties: false,
+        },
+      },
+      readOnlyProperties: [
+        "/properties/Endpoint",
+        "/properties/Endpoint/Address",
+        "/properties/Endpoint/Port",
+        "/properties/Endpoint/HostedZoneId",
+        "/properties/DBInstanceIdentifier",
+      ],
+      additionalProperties: false,
+    });
+    const result = parseCFNSchema(schema);
+
+    // Should have both top-level and nested attrs
+    const attrNames = result.resource.attributes.map((a) => a.name);
+    expect(attrNames).toContain("Endpoint");
+    expect(attrNames).toContain("Endpoint.Address");
+    expect(attrNames).toContain("Endpoint.Port");
+    expect(attrNames).toContain("Endpoint.HostedZoneId");
+    expect(attrNames).toContain("DBInstanceIdentifier");
+
+    // Top-level Endpoint gets its resolved type from properties
+    const endpoint = result.resource.attributes.find((a) => a.name === "Endpoint");
+    expect(endpoint!.tsType).not.toBe("string"); // Should be a $ref type
+
+    // Nested attrs are always string
+    const address = result.resource.attributes.find((a) => a.name === "Endpoint.Address");
+    expect(address!.tsType).toBe("string");
+    const port = result.resource.attributes.find((a) => a.name === "Endpoint.Port");
+    expect(port!.tsType).toBe("string");
+  });
 });
 
 describe("cfnShortName", () => {
