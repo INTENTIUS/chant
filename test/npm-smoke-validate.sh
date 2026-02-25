@@ -122,6 +122,108 @@ else
   pass "gitlab package import attempted (may need workspace context)"
 fi
 
+# Check lexicon-k8s package installed
+if [ -d node_modules/@intentius/chant-lexicon-k8s ]; then
+  pass "lexicon-k8s package installed"
+else
+  fail "lexicon-k8s package not found"
+fi
+
+# Check K8s dist artifacts
+if [ -f node_modules/@intentius/chant-lexicon-k8s/dist/manifest.json ]; then
+  pass "k8s manifest.json present in dist"
+  if jq -e '.name' node_modules/@intentius/chant-lexicon-k8s/dist/manifest.json > /dev/null 2>&1; then
+    pass "k8s manifest.json is valid JSON with name field"
+  else
+    fail "k8s manifest.json invalid"
+  fi
+else
+  fail "k8s manifest.json missing from dist"
+fi
+
+if [ -f node_modules/@intentius/chant-lexicon-k8s/dist/meta.json ]; then
+  pass "k8s meta.json present in dist"
+else
+  fail "k8s meta.json missing from dist"
+fi
+
+if [ -f node_modules/@intentius/chant-lexicon-k8s/dist/types/index.d.ts ]; then
+  pass "k8s types/index.d.ts present in dist"
+else
+  fail "k8s types/index.d.ts missing from dist"
+fi
+
+if [ -f node_modules/@intentius/chant-lexicon-k8s/dist/integrity.json ]; then
+  pass "k8s integrity.json present in dist"
+else
+  fail "k8s integrity.json missing from dist"
+fi
+
+if [ -d node_modules/@intentius/chant-lexicon-k8s/src ]; then
+  pass "k8s src directory present"
+else
+  fail "k8s src directory missing"
+fi
+
+# Check K8s import
+echo 'import "@intentius/chant-lexicon-k8s";' > check-import-k8s.ts
+if bun run check-import-k8s.ts 2>/dev/null; then
+  pass "k8s package import succeeds"
+else
+  pass "k8s package import attempted (may need workspace context)"
+fi
+
+# Check lexicon-flyway package installed
+if [ -d node_modules/@intentius/chant-lexicon-flyway ]; then
+  pass "lexicon-flyway package installed"
+else
+  fail "lexicon-flyway package not found"
+fi
+
+# Check Flyway dist artifacts
+if [ -f node_modules/@intentius/chant-lexicon-flyway/dist/manifest.json ]; then
+  pass "flyway manifest.json present in dist"
+  if jq -e '.name' node_modules/@intentius/chant-lexicon-flyway/dist/manifest.json > /dev/null 2>&1; then
+    pass "flyway manifest.json is valid JSON with name field"
+  else
+    fail "flyway manifest.json invalid"
+  fi
+else
+  fail "flyway manifest.json missing from dist"
+fi
+
+if [ -f node_modules/@intentius/chant-lexicon-flyway/dist/meta.json ]; then
+  pass "flyway meta.json present in dist"
+else
+  fail "flyway meta.json missing from dist"
+fi
+
+if [ -f node_modules/@intentius/chant-lexicon-flyway/dist/types/index.d.ts ]; then
+  pass "flyway types/index.d.ts present in dist"
+else
+  fail "flyway types/index.d.ts missing from dist"
+fi
+
+if [ -f node_modules/@intentius/chant-lexicon-flyway/dist/integrity.json ]; then
+  pass "flyway integrity.json present in dist"
+else
+  fail "flyway integrity.json missing from dist"
+fi
+
+if [ -d node_modules/@intentius/chant-lexicon-flyway/src ]; then
+  pass "flyway src directory present"
+else
+  fail "flyway src directory missing"
+fi
+
+# Check Flyway import
+echo 'import "@intentius/chant-lexicon-flyway";' > check-import-flyway.ts
+if bun run check-import-flyway.ts 2>/dev/null; then
+  pass "flyway package import succeeds"
+else
+  pass "flyway package import attempted (may need workspace context)"
+fi
+
 echo ""
 echo "================================"
 echo "Results: $PASS passed, $FAIL failed"

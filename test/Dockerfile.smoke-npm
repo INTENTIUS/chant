@@ -54,6 +54,35 @@ RUN cd lexicons/gitlab && bun pm pack && mv *.tgz /app/lexicon-gitlab.tgz
 # Verify GitLab dist is in tarball
 RUN tar tzf /app/lexicon-gitlab.tgz | grep dist/ | head -5
 
+# Generate K8s lexicon artifacts (K8s prepack runs generate before bundle)
+RUN bun run lexicons/k8s/src/codegen/generate-cli.ts
+
+# Build K8s dist/ artifacts
+RUN bun run test/build-dist-k8s.ts
+RUN ls -la lexicons/k8s/dist/
+
+# Strip scripts and fix workspace dep for K8s
+RUN cd lexicons/k8s && \
+    jq 'del(.scripts) | .dependencies["@intentius/chant"] = "0.0.1"' package.json > tmp.json && \
+    mv tmp.json package.json
+
+# Pack K8s tarball
+RUN cd lexicons/k8s && bun pm pack && mv *.tgz /app/lexicon-k8s.tgz
+RUN tar tzf /app/lexicon-k8s.tgz | grep dist/ | head -5
+
+# Build Flyway dist/ artifacts
+RUN bun run test/build-dist-flyway.ts
+RUN ls -la lexicons/flyway/dist/
+
+# Strip scripts and fix workspace dep for Flyway
+RUN cd lexicons/flyway && \
+    jq 'del(.scripts) | .dependencies["@intentius/chant"] = "0.0.1"' package.json > tmp.json && \
+    mv tmp.json package.json
+
+# Pack Flyway tarball
+RUN cd lexicons/flyway && bun pm pack && mv *.tgz /app/lexicon-flyway.tgz
+RUN tar tzf /app/lexicon-flyway.tgz | grep dist/ | head -5
+
 # Create an isolated test project outside the workspace
 RUN mkdir -p /test-project/src
 
@@ -62,10 +91,16 @@ WORKDIR /test-project
 RUN bun init -y
 
 # Extract tarballs into node_modules (they pack with a "package/" prefix)
-RUN mkdir -p node_modules/@intentius/chant node_modules/@intentius/chant-lexicon-aws node_modules/@intentius/chant-lexicon-gitlab && \
+RUN mkdir -p node_modules/@intentius/chant \
+             node_modules/@intentius/chant-lexicon-aws \
+             node_modules/@intentius/chant-lexicon-gitlab \
+             node_modules/@intentius/chant-lexicon-k8s \
+             node_modules/@intentius/chant-lexicon-flyway && \
     tar xzf /app/chant-core.tgz -C node_modules/@intentius/chant --strip-components=1 && \
     tar xzf /app/lexicon-aws.tgz -C node_modules/@intentius/chant-lexicon-aws --strip-components=1 && \
-    tar xzf /app/lexicon-gitlab.tgz -C node_modules/@intentius/chant-lexicon-gitlab --strip-components=1
+    tar xzf /app/lexicon-gitlab.tgz -C node_modules/@intentius/chant-lexicon-gitlab --strip-components=1 && \
+    tar xzf /app/lexicon-k8s.tgz -C node_modules/@intentius/chant-lexicon-k8s --strip-components=1 && \
+    tar xzf /app/lexicon-flyway.tgz -C node_modules/@intentius/chant-lexicon-flyway --strip-components=1
 
 # Validate the installed packages
 COPY test/npm-smoke-validate.sh /test-project/validate.sh
