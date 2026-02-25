@@ -1,2 +1,4 @@
 src/generated/
+dist/
+*.tgz
 .roundtrip-tmp-*
