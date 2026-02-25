@@ -5,6 +5,7 @@
     "": {
       "dependencies": {
         "@intentius/chant-lexicon-aws": "workspace:*",
+        "@intentius/chant-lexicon-flyway": "workspace:*",
         "@intentius/chant-lexicon-gitlab": "workspace:*",
         "@intentius/chant-lexicon-k8s": "workspace:*",
       },
@@ -222,6 +223,96 @@
         "typescript": "*",
       },
     },
+    "lexicons/flyway": {
+      "name": "@intentius/chant-lexicon-flyway",
+      "version": "0.0.12",
+      "dependencies": {
+        "@intentius/chant": "workspace:*",
+      },
+      "devDependencies": {
+        "typescript": "^5.9.3",
+      },
+    },
+    "lexicons/flyway/examples/basic-project": {
+      "name": "flyway-basic-project-example",
+      "version": "0.0.1",
+      "dependencies": {
+        "@intentius/chant": "workspace:*",
+        "@intentius/chant-lexicon-flyway": "workspace:*",
+      },
+    },
+    "lexicons/flyway/examples/callbacks": {
+      "name": "flyway-callbacks-example",
+      "version": "0.0.1",
+      "dependencies": {
+        "@intentius/chant": "workspace:*",
+        "@intentius/chant-lexicon-flyway": "workspace:*",
+      },
+    },
+    "lexicons/flyway/examples/ci-pipeline": {
+      "name": "flyway-ci-pipeline-example",
+      "version": "0.0.1",
+      "dependencies": {
+        "@intentius/chant": "workspace:*",
+        "@intentius/chant-lexicon-flyway": "workspace:*",
+      },
+    },
+    "lexicons/flyway/examples/desktop-project": {
+      "name": "flyway-desktop-project-example",
+      "version": "0.0.1",
+      "dependencies": {
+        "@intentius/chant": "workspace:*",
+        "@intentius/chant-lexicon-flyway": "workspace:*",
+      },
+    },
+    "lexicons/flyway/examples/docker-dev": {
+      "name": "flyway-docker-dev-example",
+      "version": "0.0.1",
+      "dependencies": {
+        "@intentius/chant": "workspace:*",
+        "@intentius/chant-lexicon-flyway": "workspace:*",
+      },
+    },
+    "lexicons/flyway/examples/environment-overrides": {
+      "name": "flyway-environment-overrides-example",
+      "version": "0.0.1",
+      "dependencies": {
+        "@intentius/chant": "workspace:*",
+        "@intentius/chant-lexicon-flyway": "workspace:*",
+      },
+    },
+    "lexicons/flyway/examples/gcp-secured": {
+      "name": "flyway-gcp-secured-example",
+      "version": "0.0.1",
+      "dependencies": {
+        "@intentius/chant": "workspace:*",
+        "@intentius/chant-lexicon-flyway": "workspace:*",
+      },
+    },
+    "lexicons/flyway/examples/multi-environment": {
+      "name": "flyway-multi-environment-example",
+      "version": "0.0.1",
+      "dependencies": {
+        "@intentius/chant": "workspace:*",
+        "@intentius/chant-lexicon-flyway": "workspace:*",
+      },
+    },
+    "lexicons/flyway/examples/multi-schema": {
+      "name": "flyway-multi-schema-example",
+      "version": "0.0.1",
+      "dependencies": {
+        "@intentius/chant": "workspace:*",
+        "@intentius/chant-lexicon-flyway": "workspace:*",
+      },
+    },
+    "lexicons/flyway/examples/vault-secured": {
+      "name": "flyway-vault-secured-example",
+      "version": "0.0.1",
+      "dependencies": {
+        "@intentius/chant": "workspace:*",
+        "@intentius/chant-lexicon-flyway": "workspace:*",
+      },
+    },
     "lexicons/gitlab": {
       "name": "@intentius/chant-lexicon-gitlab",
       "version": "0.0.12",
@@ -343,6 +434,8 @@
 
     "@intentius/chant-lexicon-aws": ["@intentius/chant-lexicon-aws@workspace:lexicons/aws"],
 
+    "@intentius/chant-lexicon-flyway": ["@intentius/chant-lexicon-flyway@workspace:lexicons/flyway"],
+
     "@intentius/chant-lexicon-gitlab": ["@intentius/chant-lexicon-gitlab@workspace:lexicons/gitlab"],
 
     "@intentius/chant-lexicon-k8s": ["@intentius/chant-lexicon-k8s@workspace:lexicons/k8s"],
@@ -446,6 +539,26 @@
     "flat-cache": ["flat-cache@4.0.1", "", { "dependencies": { "flatted": "^3.2.9", "keyv": "^4.5.4" } }, "sha512-f7ccFPK3SXFHpx15UIGyRJ/FJQctuKZ0zVuN3frBo4HnK3cay9VEW0R6yPYFHC0AgqhukPzKjq22t5DmAyqGyw=="],
 
     "flatted": ["flatted@3.3.3", "", {}, "sha512-GX+ysw4PBCz0PzosHDepZGANEuFCMLrnRTiEy9McGjmkCQYwRq4A/X786G/fjM/+OjsWSU1ZrY5qyARZmO/uwg=="],
+
+    "flyway-basic-project-example": ["flyway-basic-project-example@workspace:lexicons/flyway/examples/basic-project"],
+
+    "flyway-callbacks-example": ["flyway-callbacks-example@workspace:lexicons/flyway/examples/callbacks"],
+
+    "flyway-ci-pipeline-example": ["flyway-ci-pipeline-example@workspace:lexicons/flyway/examples/ci-pipeline"],
+
+    "flyway-desktop-project-example": ["flyway-desktop-project-example@workspace:lexicons/flyway/examples/desktop-project"],
+
+    "flyway-docker-dev-example": ["flyway-docker-dev-example@workspace:lexicons/flyway/examples/docker-dev"],
+
+    "flyway-environment-overrides-example": ["flyway-environment-overrides-example@workspace:lexicons/flyway/examples/environment-overrides"],
+
+    "flyway-gcp-secured-example": ["flyway-gcp-secured-example@workspace:lexicons/flyway/examples/gcp-secured"],
+
+    "flyway-multi-environment-example": ["flyway-multi-environment-example@workspace:lexicons/flyway/examples/multi-environment"],
+
+    "flyway-multi-schema-example": ["flyway-multi-schema-example@workspace:lexicons/flyway/examples/multi-schema"],
+
+    "flyway-vault-secured-example": ["flyway-vault-secured-example@workspace:lexicons/flyway/examples/vault-secured"],
 
     "gitlab-aws-alb-api-example": ["gitlab-aws-alb-api-example@workspace:examples/gitlab-aws-alb-api"],
 

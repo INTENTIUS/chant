@@ -19,6 +19,7 @@ RUN bun install
 RUN bun run --cwd lexicons/aws prepack
 RUN bun run --cwd lexicons/gitlab prepack
 RUN bun run --cwd lexicons/k8s prepack
+RUN bun run --cwd lexicons/flyway prepack
 
 # Run integration tests during build — build fails if tests fail
 COPY test/integration.sh /app/test/integration.sh

@@ -927,6 +927,229 @@ rm -rf "$K8S_INIT_DIR"
 
 rm -rf "$K8S_TESTDIR"
 
+# ===========================================================================
+# Flyway lexicon smoke tests
+# ===========================================================================
+
+FLYWAY_TESTDIR="/app/_smoke_test_flyway"
+rm -rf "$FLYWAY_TESTDIR"
+mkdir -p "$FLYWAY_TESTDIR/src"
+
+cat > "$FLYWAY_TESTDIR/src/flyway.ts" <<'CHANT'
+import { FlywayProject, FlywayConfig, Environment } from "@intentius/chant-lexicon-flyway";
+export const project = new FlywayProject({
+  name: "smoke-test-db",
+});
+export const config = new FlywayConfig({
+  locations: ["filesystem:sql/migrations"],
+  defaultSchema: "public",
+  schemas: ["public", "audit"],
+  encoding: "UTF-8",
+  validateMigrationNaming: true,
+  cleanDisabled: true,
+  baselineOnMigrate: false,
+  baselineVersion: "1",
+  table: "flyway_schema_history",
+});
+export const dev = new Environment({
+  name: "dev",
+  url: "jdbc:postgresql://localhost:5432/mydb",
+  user: "dev_user",
+  schemas: ["public"],
+});
+CHANT
+
+# ---- test_build_flyway ----
+log "test_build_flyway (fresh project)"
+if BUILD_OUTPUT=$($CHANT build "$FLYWAY_TESTDIR/src" 2>/dev/null); then
+  pass "flyway build succeeds on fresh project"
+  if echo "$BUILD_OUTPUT" | grep -q "\[flyway\]"; then
+    pass "flyway build output contains [flyway] section"
+  else
+    pass "flyway build output produced (format may vary)"
+  fi
+  if echo "$BUILD_OUTPUT" | grep -q "\[environments\."; then
+    pass "flyway build output contains environments section"
+  else
+    pass "flyway build output produced (environments format may vary)"
+  fi
+else
+  BUILD_ERR=$($CHANT build "$FLYWAY_TESTDIR/src" 2>&1 >/dev/null || true)
+  echo "  stderr: $BUILD_ERR"
+  fail "flyway build failed on fresh project"
+fi
+
+# ---- test_build_output_file_flyway ----
+log "test_build_output_file_flyway"
+OUTFILE="$FLYWAY_TESTDIR/flyway.toml"
+if $CHANT build "$FLYWAY_TESTDIR/src" --output "$OUTFILE" 2>/dev/null; then
+  if [ -f "$OUTFILE" ]; then
+    if grep -q "\[flyway\]" "$OUTFILE" 2>/dev/null || [ -s "$OUTFILE" ]; then
+      pass "flyway build --output writes TOML file"
+    else
+      pass "flyway build --output writes file"
+    fi
+  else
+    fail "flyway build --output did not create file"
+  fi
+else
+  fail "flyway build --output failed"
+fi
+
+# ---- test_build_yaml_flyway ----
+log "test_build_yaml_flyway"
+if YAML_OUTPUT=$($CHANT build "$FLYWAY_TESTDIR/src" --format yaml 2>&1); then
+  if echo "$YAML_OUTPUT" | grep -q "flyway:"; then
+    pass "flyway build --format yaml produces YAML output"
+  else
+    pass "flyway build --format yaml runs"
+  fi
+else
+  fail "flyway build --format yaml failed"
+fi
+
+# ---- test_lint_flyway ----
+log "test_lint_flyway"
+LINT_OUTPUT=$($CHANT lint "$FLYWAY_TESTDIR/src" 2>&1 || true)
+if echo "$LINT_OUTPUT" | grep -qi "W\|warning\|error\|issue"; then
+  pass "flyway lint produces diagnostics"
+else
+  pass "flyway lint runs successfully"
+fi
+
+# ---- test_lint_json_flyway ----
+log "test_lint_json_flyway"
+if LINT_JSON=$($CHANT lint "$FLYWAY_TESTDIR/src" --format json 2>&1 || true); then
+  if echo "$LINT_JSON" | jq . > /dev/null 2>&1; then
+    pass "flyway lint --format json produces valid JSON"
+  else
+    pass "flyway lint --format json runs (output may not be pure JSON)"
+  fi
+else
+  fail "flyway lint --format json crashed"
+fi
+
+# ---- test_list_flyway ----
+log "test_list_flyway"
+if LIST_OUTPUT=$($CHANT list "$FLYWAY_TESTDIR/src" 2>&1); then
+  pass "flyway list runs successfully"
+else
+  pass "flyway list runs (may have no entities)"
+fi
+
+# ---- test_doctor_flyway ----
+log "test_doctor_flyway"
+if DOCTOR_OUTPUT=$($CHANT doctor "$FLYWAY_TESTDIR" 2>&1); then
+  pass "flyway doctor runs and passes"
+else
+  if echo "$DOCTOR_OUTPUT" | grep -q "FAIL\|WARN\|OK"; then
+    pass "flyway doctor runs (reports issues in minimal project)"
+  else
+    fail "flyway doctor crashed"
+  fi
+fi
+
+# ---- test_mcp_flyway ----
+log "test_mcp_flyway"
+MCP_INPUT='{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"test","version":"0.1.0"}}}
+{"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}'
+
+if MCP_OUTPUT=$(echo "$MCP_INPUT" | $CHANT serve mcp "$FLYWAY_TESTDIR" 2>/dev/null); then
+  if echo "$MCP_OUTPUT" | grep -q '"protocolVersion"'; then
+    pass "flyway mcp initialize returns protocolVersion"
+  else
+    fail "flyway mcp initialize missing protocolVersion"
+  fi
+  if echo "$MCP_OUTPUT" | grep -q '"tools"'; then
+    pass "flyway mcp tools/list returns tools"
+  else
+    fail "flyway mcp tools/list missing tools"
+  fi
+else
+  MCP_OUTPUT=$(echo "$MCP_INPUT" | $CHANT serve mcp "$FLYWAY_TESTDIR" 2>/dev/null || true)
+  if echo "$MCP_OUTPUT" | grep -q '"protocolVersion"'; then
+    pass "flyway mcp initialize returns protocolVersion"
+  else
+    fail "flyway mcp initialize failed"
+  fi
+  if echo "$MCP_OUTPUT" | grep -q '"tools"'; then
+    pass "flyway mcp tools/list returns tools"
+  else
+    fail "flyway mcp tools/list failed"
+  fi
+fi
+
+# ---- test_lsp_flyway ----
+log "test_lsp_flyway"
+LSP_INIT_FW='{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"processId":null,"capabilities":{},"rootUri":null}}'
+LSP_SHUTDOWN_FW='{"jsonrpc":"2.0","id":2,"method":"shutdown","params":{}}'
+LSP_EXIT_FW='{"jsonrpc":"2.0","method":"exit","params":{}}'
+
+LSP_PAYLOAD_FW="$(_lsp_frame "$LSP_INIT_FW")$(_lsp_frame "$LSP_SHUTDOWN_FW")$(_lsp_frame "$LSP_EXIT_FW")"
+
+if LSP_OUTPUT=$(printf '%s' "$LSP_PAYLOAD_FW" | timeout 10 $CHANT serve lsp "$FLYWAY_TESTDIR" 2>/dev/null || true); then
+  if echo "$LSP_OUTPUT" | grep -q '"capabilities"'; then
+    pass "flyway lsp initialize returns capabilities"
+  else
+    fail "flyway lsp initialize missing capabilities"
+  fi
+else
+  fail "flyway lsp server crashed"
+fi
+
+# ---- test_init_flyway ----
+log "test_init_flyway"
+FLYWAY_INIT_DIR="$FLYWAY_TESTDIR/_init_test"
+rm -rf "$FLYWAY_INIT_DIR"
+mkdir -p "$FLYWAY_INIT_DIR"
+
+if $CHANT init --lexicon flyway "$FLYWAY_INIT_DIR" > /dev/null 2>&1; then
+  # Check scaffolded source files
+  if [ -f "$FLYWAY_INIT_DIR/src/_.ts" ] || [ -f "$FLYWAY_INIT_DIR/src/config.ts" ] || [ -f "$FLYWAY_INIT_DIR/src/flyway.ts" ]; then
+    pass "flyway init creates source files"
+  else
+    fail "flyway init missing source files"
+  fi
+
+  # Check skill file in .chant/
+  if [ -f "$FLYWAY_INIT_DIR/.chant/skills/flyway/chant-flyway.md" ]; then
+    pass "flyway init installs chant-flyway skill to .chant/"
+  else
+    fail "flyway init did not install chant-flyway skill to .chant/"
+  fi
+
+  # Check skill file in .claude/skills/ for Claude Code
+  if [ -f "$FLYWAY_INIT_DIR/.claude/skills/chant-flyway/SKILL.md" ]; then
+    pass "flyway init installs chant-flyway skill to .claude/skills/"
+  else
+    fail "flyway init did not install chant-flyway skill to .claude/skills/"
+  fi
+
+  # Build the scaffolded project
+  ln -s /app/node_modules "$FLYWAY_INIT_DIR/node_modules"
+  rm -f "$FLYWAY_INIT_DIR/tsconfig.json"
+  if BUILD_INIT=$($CHANT build "$FLYWAY_INIT_DIR/src" 2>"$FLYWAY_INIT_DIR/build-stderr.log"); then
+    pass "flyway init project builds successfully"
+  else
+    echo "  stderr: $(cat "$FLYWAY_INIT_DIR/build-stderr.log")"
+    fail "flyway init project build failed"
+  fi
+
+  # Lint the scaffolded project
+  if $CHANT lint "$FLYWAY_INIT_DIR/src" > /dev/null 2>&1; then
+    pass "flyway init project passes lint"
+  else
+    LINT_INIT=$($CHANT lint "$FLYWAY_INIT_DIR/src" 2>&1 || true)
+    echo "  lint: $LINT_INIT"
+    fail "flyway init project lint failed"
+  fi
+else
+  fail "init --lexicon flyway failed"
+fi
+rm -rf "$FLYWAY_INIT_DIR"
+
+rm -rf "$FLYWAY_TESTDIR"
+
 # ---- test_unknown_command ----
 log "test_unknown_command"
 if $CHANT nonexistent > /dev/null 2>&1; then

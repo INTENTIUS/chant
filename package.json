@@ -6,6 +6,7 @@
     "lexicons/aws/examples/*",
     "lexicons/gitlab/examples/*",
     "lexicons/k8s/examples/*",
+    "lexicons/flyway/examples/*",
     "examples/*"
   ],
   "scripts": {
@@ -14,6 +15,7 @@
   },
   "dependencies": {
     "@intentius/chant-lexicon-aws": "workspace:*",
+    "@intentius/chant-lexicon-flyway": "workspace:*",
     "@intentius/chant-lexicon-gitlab": "workspace:*",
     "@intentius/chant-lexicon-k8s": "workspace:*"
   },
