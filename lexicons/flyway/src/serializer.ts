@@ -12,6 +12,7 @@ import type { Serializer, SerializerResult } from "@intentius/chant/serializer";
 import type { LexiconOutput } from "@intentius/chant/lexicon-output";
 import { walkValue, type SerializerVisitor } from "@intentius/chant/serializer-walker";
 import { emitTOML } from "@intentius/chant/toml";
+import { FLYWAY_KEY_ORDER, ENV_KEY_ORDER } from "./properties";
 
 /**
  * Flyway visitor for the generic serializer walker.
@@ -49,49 +50,6 @@ const FLYWAY_CONFIG = "Flyway::Config";
 const FLYWAY_ENV = "Flyway::Environment";
 const FLYWAY_DESKTOP = "Flyway::FlywayDesktop";
 const FLYWAY_REDGATE = "Flyway::RedgateCompare";
-
-/**
- * Key ordering for the [flyway] namespace — most important keys first.
- */
-const FLYWAY_KEY_ORDER = [
-  "locations",
-  "defaultSchema",
-  "schemas",
-  "encoding",
-  "validateMigrationNaming",
-  "validateOnMigrate",
-  "outOfOrder",
-  "cleanDisabled",
-  "baselineOnMigrate",
-  "baselineVersion",
-  "baselineDescription",
-  "sqlMigrationPrefix",
-  "sqlMigrationSeparator",
-  "sqlMigrationSuffixes",
-  "repeatableMigrationPrefix",
-  "table",
-  "tablespace",
-  "group",
-  "mixed",
-  "cherryPick",
-  "callbackLocations",
-  "skipExecutingMigrations",
-  "placeholders",
-];
-
-/**
- * Key ordering for environment sections.
- */
-const ENV_KEY_ORDER = [
-  "url",
-  "user",
-  "password",
-  "displayName",
-  "schemas",
-  "provisioner",
-  "resolvers",
-  "flyway",
-];
 
 /**
  * Flyway TOML serializer implementation.

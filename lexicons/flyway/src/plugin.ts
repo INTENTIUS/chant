@@ -37,7 +37,8 @@ export const flywayPlugin: LexiconPlugin = {
     const { wfw108 } = require("./lint/post-synth/wfw108");
     const { wfw109 } = require("./lint/post-synth/wfw109");
     const { wfw110 } = require("./lint/post-synth/wfw110");
-    return [wfw101, wfw102, wfw103, wfw104, wfw105, wfw106, wfw107, wfw108, wfw109, wfw110];
+    const { wfw111 } = require("./lint/post-synth/wfw111");
+    return [wfw101, wfw102, wfw103, wfw104, wfw105, wfw106, wfw107, wfw108, wfw109, wfw110, wfw111];
   },
 
   intrinsics(): IntrinsicDef[] {

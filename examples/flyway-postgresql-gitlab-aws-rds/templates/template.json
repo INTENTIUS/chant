@@ -1,0 +1,441 @@
+{
+  "AWSTemplateFormatVersion": "2010-09-09",
+  "Resources": {
+    "networkVpc": {
+      "Type": "AWS::EC2::VPC",
+      "Properties": {
+        "CidrBlock": "10.0.0.0/16",
+        "EnableDnsSupport": true,
+        "EnableDnsHostnames": true,
+        "Tags": [
+          {
+            "Key": "Project",
+            "Value": "chant-example"
+          }
+        ]
+      }
+    },
+    "networkIgw": {
+      "Type": "AWS::EC2::InternetGateway",
+      "Properties": {
+        "Tags": [
+          {
+            "Key": "Project",
+            "Value": "chant-example"
+          }
+        ]
+      }
+    },
+    "networkIgwAttachment": {
+      "Type": "AWS::EC2::VPCGatewayAttachment",
+      "Properties": {
+        "VpcId": {
+          "Fn::GetAtt": [
+            "networkVpc",
+            "VpcId"
+          ]
+        },
+        "InternetGatewayId": {
+          "Fn::GetAtt": [
+            "networkIgw",
+            "InternetGatewayId"
+          ]
+        }
+      }
+    },
+    "networkPublicSubnet1": {
+      "Type": "AWS::EC2::Subnet",
+      "Properties": {
+        "VpcId": {
+          "Fn::GetAtt": [
+            "networkVpc",
+            "VpcId"
+          ]
+        },
+        "CidrBlock": "10.0.0.0/20",
+        "AvailabilityZone": {
+          "Fn::Select": [
+            "0",
+            {
+              "Fn::GetAZs": ""
+            }
+          ]
+        },
+        "MapPublicIpOnLaunch": true,
+        "Tags": [
+          {
+            "Key": "Project",
+            "Value": "chant-example"
+          }
+        ]
+      }
+    },
+    "networkPublicSubnet2": {
+      "Type": "AWS::EC2::Subnet",
+      "Properties": {
+        "VpcId": {
+          "Fn::GetAtt": [
+            "networkVpc",
+            "VpcId"
+          ]
+        },
+        "CidrBlock": "10.0.16.0/20",
+        "AvailabilityZone": {
+          "Fn::Select": [
+            "1",
+            {
+              "Fn::GetAZs": ""
+            }
+          ]
+        },
+        "MapPublicIpOnLaunch": true,
+        "Tags": [
+          {
+            "Key": "Project",
+            "Value": "chant-example"
+          }
+        ]
+      }
+    },
+    "networkPrivateSubnet1": {
+      "Type": "AWS::EC2::Subnet",
+      "Properties": {
+        "VpcId": {
+          "Fn::GetAtt": [
+            "networkVpc",
+            "VpcId"
+          ]
+        },
+        "CidrBlock": "10.0.128.0/20",
+        "AvailabilityZone": {
+          "Fn::Select": [
+            "0",
+            {
+              "Fn::GetAZs": ""
+            }
+          ]
+        },
+        "Tags": [
+          {
+            "Key": "Project",
+            "Value": "chant-example"
+          }
+        ]
+      }
+    },
+    "networkPrivateSubnet2": {
+      "Type": "AWS::EC2::Subnet",
+      "Properties": {
+        "VpcId": {
+          "Fn::GetAtt": [
+            "networkVpc",
+            "VpcId"
+          ]
+        },
+        "CidrBlock": "10.0.144.0/20",
+        "AvailabilityZone": {
+          "Fn::Select": [
+            "1",
+            {
+              "Fn::GetAZs": ""
+            }
+          ]
+        },
+        "Tags": [
+          {
+            "Key": "Project",
+            "Value": "chant-example"
+          }
+        ]
+      }
+    },
+    "networkPublicRouteTable": {
+      "Type": "AWS::EC2::RouteTable",
+      "Properties": {
+        "VpcId": {
+          "Fn::GetAtt": [
+            "networkVpc",
+            "VpcId"
+          ]
+        },
+        "Tags": [
+          {
+            "Key": "Project",
+            "Value": "chant-example"
+          }
+        ]
+      }
+    },
+    "networkPublicRoute": {
+      "Type": "AWS::EC2::Route",
+      "DependsOn": "networkIgwAttachment",
+      "Properties": {
+        "RouteTableId": {
+          "Fn::GetAtt": [
+            "networkPublicRouteTable",
+            "RouteTableId"
+          ]
+        },
+        "DestinationCidrBlock": "0.0.0.0/0",
+        "GatewayId": {
+          "Fn::GetAtt": [
+            "networkIgw",
+            "InternetGatewayId"
+          ]
+        }
+      }
+    },
+    "networkPublicRta1": {
+      "Type": "AWS::EC2::SubnetRouteTableAssociation",
+      "Properties": {
+        "SubnetId": {
+          "Fn::GetAtt": [
+            "networkPublicSubnet1",
+            "SubnetId"
+          ]
+        },
+        "RouteTableId": {
+          "Fn::GetAtt": [
+            "networkPublicRouteTable",
+            "RouteTableId"
+          ]
+        }
+      }
+    },
+    "networkPublicRta2": {
+      "Type": "AWS::EC2::SubnetRouteTableAssociation",
+      "Properties": {
+        "SubnetId": {
+          "Fn::GetAtt": [
+            "networkPublicSubnet2",
+            "SubnetId"
+          ]
+        },
+        "RouteTableId": {
+          "Fn::GetAtt": [
+            "networkPublicRouteTable",
+            "RouteTableId"
+          ]
+        }
+      }
+    },
+    "networkPrivateRouteTable": {
+      "Type": "AWS::EC2::RouteTable",
+      "Properties": {
+        "VpcId": {
+          "Fn::GetAtt": [
+            "networkVpc",
+            "VpcId"
+          ]
+        },
+        "Tags": [
+          {
+            "Key": "Project",
+            "Value": "chant-example"
+          }
+        ]
+      }
+    },
+    "networkPrivateRta1": {
+      "Type": "AWS::EC2::SubnetRouteTableAssociation",
+      "Properties": {
+        "SubnetId": {
+          "Fn::GetAtt": [
+            "networkPrivateSubnet1",
+            "SubnetId"
+          ]
+        },
+        "RouteTableId": {
+          "Fn::GetAtt": [
+            "networkPrivateRouteTable",
+            "RouteTableId"
+          ]
+        }
+      }
+    },
+    "networkPrivateRta2": {
+      "Type": "AWS::EC2::SubnetRouteTableAssociation",
+      "Properties": {
+        "SubnetId": {
+          "Fn::GetAtt": [
+            "networkPrivateSubnet2",
+            "SubnetId"
+          ]
+        },
+        "RouteTableId": {
+          "Fn::GetAtt": [
+            "networkPrivateRouteTable",
+            "RouteTableId"
+          ]
+        }
+      }
+    },
+    "networkNatEip": {
+      "Type": "AWS::EC2::EIP",
+      "Properties": {
+        "Domain": "vpc",
+        "Tags": [
+          {
+            "Key": "Project",
+            "Value": "chant-example"
+          }
+        ]
+      }
+    },
+    "networkNatGateway": {
+      "Type": "AWS::EC2::NatGateway",
+      "Properties": {
+        "AllocationId": {
+          "Fn::GetAtt": [
+            "networkNatEip",
+            "AllocationId"
+          ]
+        },
+        "SubnetId": {
+          "Fn::GetAtt": [
+            "networkPublicSubnet1",
+            "SubnetId"
+          ]
+        },
+        "Tags": [
+          {
+            "Key": "Project",
+            "Value": "chant-example"
+          }
+        ]
+      }
+    },
+    "networkPrivateRoute": {
+      "Type": "AWS::EC2::Route",
+      "Properties": {
+        "RouteTableId": {
+          "Fn::GetAtt": [
+            "networkPrivateRouteTable",
+            "RouteTableId"
+          ]
+        },
+        "DestinationCidrBlock": "0.0.0.0/0",
+        "NatGatewayId": {
+          "Fn::GetAtt": [
+            "networkNatGateway",
+            "NatGatewayId"
+          ]
+        }
+      }
+    },
+    "databaseSubnetGroup": {
+      "Type": "AWS::RDS::DBSubnetGroup",
+      "Properties": {
+        "DBSubnetGroupDescription": "Subnet group for RDS instance",
+        "SubnetIds": [
+          {
+            "Fn::GetAtt": [
+              "networkPublicSubnet1",
+              "SubnetId"
+            ]
+          },
+          {
+            "Fn::GetAtt": [
+              "networkPublicSubnet2",
+              "SubnetId"
+            ]
+          }
+        ],
+        "Tags": [
+          {
+            "Key": "Project",
+            "Value": "chant-example"
+          }
+        ]
+      }
+    },
+    "databaseSg": {
+      "Type": "AWS::EC2::SecurityGroup",
+      "Properties": {
+        "GroupDescription": "Security group for RDS instance",
+        "VpcId": {
+          "Fn::GetAtt": [
+            "networkVpc",
+            "VpcId"
+          ]
+        },
+        "SecurityGroupIngress": [
+          {
+            "IpProtocol": "tcp",
+            "FromPort": 5432,
+            "ToPort": 5432,
+            "CidrIp": "0.0.0.0/0"
+          }
+        ],
+        "Tags": [
+          {
+            "Key": "Project",
+            "Value": "chant-example"
+          }
+        ]
+      }
+    },
+    "databaseDb": {
+      "Type": "AWS::RDS::DBInstance",
+      "Properties": {
+        "Engine": "postgres",
+        "EngineVersion": "16.6",
+        "DBInstanceClass": "db.t4g.micro",
+        "MasterUsername": "postgres",
+        "MasterUserPassword": {
+          "Fn::Sub": "{{resolve:ssm-secure:${dbPasswordSsmPath}}}"
+        },
+        "AllocatedStorage": "20",
+        "StorageType": "gp3",
+        "DBSubnetGroupName": {
+          "Ref": "databaseSubnetGroup"
+        },
+        "VPCSecurityGroups": [
+          {
+            "Fn::GetAtt": [
+              "databaseSg",
+              "GroupId"
+            ]
+          }
+        ],
+        "Port": "5432",
+        "PubliclyAccessible": true,
+        "MultiAZ": false,
+        "StorageEncrypted": true,
+        "BackupRetentionPeriod": 7,
+        "CopyTagsToSnapshot": true,
+        "AutoMinorVersionUpgrade": true,
+        "DeletionProtection": false,
+        "DBName": "myapp",
+        "Tags": [
+          {
+            "Key": "Project",
+            "Value": "chant-example"
+          }
+        ]
+      }
+    }
+  },
+  "Parameters": {
+    "dbPasswordSsmPath": {
+      "Type": "String",
+      "Description": "SSM parameter path containing the database password",
+      "Default": "/myapp/dev/db-password"
+    },
+    "environment": {
+      "Type": "String",
+      "Description": "Runtime environment",
+      "Default": "dev"
+    }
+  },
+  "Outputs": {
+    "DbEndpoint": {
+      "Value": {
+        "Fn::GetAtt": [
+          "databaseDb",
+          "Endpoint.Address"
+        ]
+      }
+    }
+  }
+}

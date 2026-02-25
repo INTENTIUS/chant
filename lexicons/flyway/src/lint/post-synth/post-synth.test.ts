@@ -16,8 +16,9 @@ import { wfw107 } from "./wfw107";
 import { wfw108 } from "./wfw108";
 import { wfw109 } from "./wfw109";
 import { wfw110 } from "./wfw110";
+import { wfw111 } from "./wfw111";
 
-const allChecks = [wfw101, wfw102, wfw103, wfw104, wfw105, wfw106, wfw107, wfw108, wfw109, wfw110];
+const allChecks = [wfw101, wfw102, wfw103, wfw104, wfw105, wfw106, wfw107, wfw108, wfw109, wfw110, wfw111];
 
 function makeCtx(toml: string): PostSynthContext {
   return {

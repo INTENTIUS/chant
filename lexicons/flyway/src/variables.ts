@@ -83,6 +83,11 @@ export const DatabaseType = {
 } as const;
 
 /**
+ * Union type of all valid database type string values.
+ */
+export type DatabaseTypeValue = (typeof DatabaseType)[keyof typeof DatabaseType];
+
+/**
  * All known database types as a set (for validation).
  */
 export const DATABASE_TYPES = new Set(Object.values(DatabaseType));

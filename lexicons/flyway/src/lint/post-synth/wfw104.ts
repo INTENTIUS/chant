@@ -75,7 +75,7 @@ export const wfw104: PostSynthCheck = {
       collectStringValues(config, allStrings);
 
       // Built-in prefixes that are not resolvers
-      const builtinPrefixes = new Set(["flyway"]);
+      const builtinPrefixes = new Set(["flyway", "env"]);
 
       for (const str of allStrings) {
         let match: RegExpExecArray | null;

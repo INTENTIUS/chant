@@ -1,0 +1,19 @@
+{
+  "name": "flyway-postgresql-gitlab-aws-rds-example",
+  "version": "0.0.1",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "build": "chant build src",
+    "build:aws": "chant build src --lexicon aws",
+    "build:flyway": "chant build src --lexicon flyway",
+    "build:gitlab": "chant build src --lexicon gitlab",
+    "lint": "chant lint src"
+  },
+  "dependencies": {
+    "@intentius/chant": "workspace:*",
+    "@intentius/chant-lexicon-aws": "workspace:*",
+    "@intentius/chant-lexicon-flyway": "workspace:*",
+    "@intentius/chant-lexicon-gitlab": "workspace:*"
+  }
+}

@@ -17,6 +17,16 @@
         "typescript": "^5.9.3",
       },
     },
+    "examples/flyway-postgresql-gitlab-aws-rds": {
+      "name": "flyway-postgresql-gitlab-aws-rds-example",
+      "version": "0.0.1",
+      "dependencies": {
+        "@intentius/chant": "workspace:*",
+        "@intentius/chant-lexicon-aws": "workspace:*",
+        "@intentius/chant-lexicon-flyway": "workspace:*",
+        "@intentius/chant-lexicon-gitlab": "workspace:*",
+      },
+    },
     "examples/flyway-postgresql-k8s": {
       "name": "flyway-postgresql-k8s-example",
       "version": "0.0.1",
@@ -616,6 +626,8 @@
     "flyway-multi-environment-example": ["flyway-multi-environment-example@workspace:lexicons/flyway/examples/multi-environment"],
 
     "flyway-multi-schema-example": ["flyway-multi-schema-example@workspace:lexicons/flyway/examples/multi-schema"],
+
+    "flyway-postgresql-gitlab-aws-rds-example": ["flyway-postgresql-gitlab-aws-rds-example@workspace:examples/flyway-postgresql-gitlab-aws-rds"],
 
     "flyway-postgresql-k8s-example": ["flyway-postgresql-k8s-example@workspace:examples/flyway-postgresql-k8s"],
 

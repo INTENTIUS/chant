@@ -30,10 +30,10 @@ describe("flywayPlugin", () => {
     expect(rules.some((r) => r.id === "WFW001")).toBe(true);
   });
 
-  test("postSynthChecks() returns array of 10 checks", () => {
+  test("postSynthChecks() returns array of 11 checks", () => {
     const checks = flywayPlugin.postSynthChecks!();
     expect(Array.isArray(checks)).toBe(true);
-    expect(checks.length).toBe(10);
+    expect(checks.length).toBe(11);
   });
 
   test("intrinsics() returns array with resolve, placeholder, env", () => {
