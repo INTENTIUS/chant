@@ -20,6 +20,15 @@ jobs:
       - uses: actions/checkout@v4
       - uses: oven-sh/setup-bun@v2
       - run: bun install
+
+      - name: Cache lexicon schemas
+        uses: actions/cache@v4
+        with:
+          path: ~/.chant
+          key: lexicon-schemas-${{ hashFiles('lexicons/*/src/**/fetch.ts', 'lexicons/*/src/**/versions.ts') }}
+          restore-keys: |
+            lexicon-schemas-
+
       - run: chmod +x scripts/build-docs.sh && ./scripts/build-docs.sh
       - uses: actions/upload-pages-artifact@v3
         with:

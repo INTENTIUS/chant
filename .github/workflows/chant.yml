@@ -17,6 +17,14 @@ jobs:
       - name: Install dependencies
         run: bun install
 
+      - name: Cache lexicon schemas
+        uses: actions/cache@v4
+        with:
+          path: ~/.chant
+          key: lexicon-schemas-${{ hashFiles('lexicons/*/src/**/fetch.ts', 'lexicons/*/src/**/versions.ts') }}
+          restore-keys: |
+            lexicon-schemas-
+
       - name: Generate lexicon artifacts
         run: |
           bun run --cwd lexicons/aws prepack
@@ -46,6 +54,14 @@ jobs:
       - name: Install dependencies
         run: bun install
 
+      - name: Cache lexicon schemas
+        uses: actions/cache@v4
+        with:
+          path: ~/.chant
+          key: lexicon-schemas-${{ hashFiles('lexicons/*/src/**/fetch.ts', 'lexicons/*/src/**/versions.ts') }}
+          restore-keys: |
+            lexicon-schemas-
+
       - name: Generate lexicon artifacts
         run: |
           bun run --cwd lexicons/aws prepack
@@ -65,6 +81,14 @@ jobs:
 
       - name: Install dependencies
         run: bun install
+
+      - name: Cache lexicon schemas
+        uses: actions/cache@v4
+        with:
+          path: ~/.chant
+          key: lexicon-schemas-${{ hashFiles('lexicons/*/src/**/fetch.ts', 'lexicons/*/src/**/versions.ts') }}
+          restore-keys: |
+            lexicon-schemas-
 
       - name: Generate and validate AWS lexicon
         run: bun run --cwd lexicons/aws prepack
