@@ -17,6 +17,15 @@
         "typescript": "^5.9.3",
       },
     },
+    "examples/flyway-postgresql-k8s": {
+      "name": "flyway-postgresql-k8s-example",
+      "version": "0.0.1",
+      "dependencies": {
+        "@intentius/chant": "workspace:*",
+        "@intentius/chant-lexicon-flyway": "workspace:*",
+        "@intentius/chant-lexicon-k8s": "workspace:*",
+      },
+    },
     "examples/gitlab-aws-alb-api": {
       "name": "gitlab-aws-alb-api-example",
       "version": "0.0.1",
@@ -179,6 +188,17 @@
         "typescript": "*",
       },
     },
+    "lexicons/aws/examples/rds-postgres": {
+      "name": "rds-postgres-example",
+      "version": "0.0.1",
+      "dependencies": {
+        "@intentius/chant": "workspace:*",
+        "@intentius/chant-lexicon-aws": "workspace:*",
+      },
+      "devDependencies": {
+        "typescript": "*",
+      },
+    },
     "lexicons/aws/examples/shared-alb": {
       "name": "shared-alb-example",
       "version": "0.0.1",
@@ -233,6 +253,14 @@
         "typescript": "^5.9.3",
       },
     },
+    "lexicons/flyway/examples/azure-secured": {
+      "name": "flyway-azure-secured-example",
+      "version": "0.0.1",
+      "dependencies": {
+        "@intentius/chant": "workspace:*",
+        "@intentius/chant-lexicon-flyway": "workspace:*",
+      },
+    },
     "lexicons/flyway/examples/basic-project": {
       "name": "flyway-basic-project-example",
       "version": "0.0.1",
@@ -283,6 +311,14 @@
     },
     "lexicons/flyway/examples/gcp-secured": {
       "name": "flyway-gcp-secured-example",
+      "version": "0.0.1",
+      "dependencies": {
+        "@intentius/chant": "workspace:*",
+        "@intentius/chant-lexicon-flyway": "workspace:*",
+      },
+    },
+    "lexicons/flyway/examples/migration-lifecycle": {
+      "name": "flyway-migration-lifecycle-example",
       "version": "0.0.1",
       "dependencies": {
         "@intentius/chant": "workspace:*",
@@ -383,6 +419,22 @@
     },
     "lexicons/k8s/examples/basic-deployment": {
       "name": "k8s-basic-deployment",
+      "version": "0.0.1",
+      "dependencies": {
+        "@intentius/chant": "workspace:*",
+        "@intentius/chant-lexicon-k8s": "workspace:*",
+      },
+    },
+    "lexicons/k8s/examples/configmap-secret": {
+      "name": "k8s-configmap-secret",
+      "version": "0.0.1",
+      "dependencies": {
+        "@intentius/chant": "workspace:*",
+        "@intentius/chant-lexicon-k8s": "workspace:*",
+      },
+    },
+    "lexicons/k8s/examples/statefulset": {
+      "name": "k8s-statefulset",
       "version": "0.0.1",
       "dependencies": {
         "@intentius/chant": "workspace:*",
@@ -540,6 +592,8 @@
 
     "flatted": ["flatted@3.3.3", "", {}, "sha512-GX+ysw4PBCz0PzosHDepZGANEuFCMLrnRTiEy9McGjmkCQYwRq4A/X786G/fjM/+OjsWSU1ZrY5qyARZmO/uwg=="],
 
+    "flyway-azure-secured-example": ["flyway-azure-secured-example@workspace:lexicons/flyway/examples/azure-secured"],
+
     "flyway-basic-project-example": ["flyway-basic-project-example@workspace:lexicons/flyway/examples/basic-project"],
 
     "flyway-callbacks-example": ["flyway-callbacks-example@workspace:lexicons/flyway/examples/callbacks"],
@@ -554,9 +608,13 @@
 
     "flyway-gcp-secured-example": ["flyway-gcp-secured-example@workspace:lexicons/flyway/examples/gcp-secured"],
 
+    "flyway-migration-lifecycle-example": ["flyway-migration-lifecycle-example@workspace:lexicons/flyway/examples/migration-lifecycle"],
+
     "flyway-multi-environment-example": ["flyway-multi-environment-example@workspace:lexicons/flyway/examples/multi-environment"],
 
     "flyway-multi-schema-example": ["flyway-multi-schema-example@workspace:lexicons/flyway/examples/multi-schema"],
+
+    "flyway-postgresql-k8s-example": ["flyway-postgresql-k8s-example@workspace:examples/flyway-postgresql-k8s"],
 
     "flyway-vault-secured-example": ["flyway-vault-secured-example@workspace:lexicons/flyway/examples/vault-secured"],
 
@@ -605,6 +663,10 @@
     "json-stable-stringify-without-jsonify": ["json-stable-stringify-without-jsonify@1.0.1", "", {}, "sha512-Bdboy+l7tA3OGW6FjyFHWkP5LuByj1Tk33Ljyq0axyzdk9//JSi2u3fP1QSmd1KNwq6VOKYGlAu87CisVir6Pw=="],
 
     "k8s-basic-deployment": ["k8s-basic-deployment@workspace:lexicons/k8s/examples/basic-deployment"],
+
+    "k8s-configmap-secret": ["k8s-configmap-secret@workspace:lexicons/k8s/examples/configmap-secret"],
+
+    "k8s-statefulset": ["k8s-statefulset@workspace:lexicons/k8s/examples/statefulset"],
 
     "keyv": ["keyv@4.5.4", "", { "dependencies": { "json-buffer": "3.0.1" } }, "sha512-oxVHkHR/EJf2CNXnWxRLW6mg7JyCCUcG0DtEGmL2ctUo1PNTin1PUil+r/+4r5MpVgC/fn1kjsx7mjSujKqIpw=="],
 
@@ -655,6 +717,8 @@
     "prelude-ls": ["prelude-ls@1.2.1", "", {}, "sha512-vkcDPrRZo1QZLbn5RLGPpg/WmIQ65qoWWhcGKf/b5eplkkarX0m9z8ppCat4mlOqUsWpyNuYgO3VRyrYHSzX5g=="],
 
     "punycode": ["punycode@2.3.1", "", {}, "sha512-vYt7UD1U9Wg6138shLtLOvdAu+8DsC/ilFtEVHcH+wydcSpNE20AfSOduf6MkRFahL5FY7X1oU7nKVZFtfq8Fg=="],
+
+    "rds-postgres-example": ["rds-postgres-example@workspace:lexicons/aws/examples/rds-postgres"],
 
     "resolve-from": ["resolve-from@4.0.0", "", {}, "sha512-pb/MYmXstAkysRFx8piNI1tGFNQIFA3vkE3Gq4EuA1dF6gHp/+vgZqsCGJapvy8N3Q+4o7FwvquPJcnZ7RYy4g=="],
 

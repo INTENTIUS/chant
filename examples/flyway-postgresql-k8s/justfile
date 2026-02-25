@@ -1,0 +1,37 @@
+chant := "bun run ../../packages/core/src/cli/main.ts"
+
+# Create a k3d cluster with NodePort 30432 mapped to the host
+cluster-create:
+    k3d cluster create flyway-pg -p "30432:30432@server:0" --wait
+
+# Delete the k3d cluster
+cluster-delete:
+    k3d cluster delete flyway-pg
+
+# Build K8s manifests and Flyway config separately
+build:
+    {{chant}} build src --lexicon k8s -o k8s.yaml
+    {{chant}} build src --lexicon flyway -o flyway.toml
+
+# Apply K8s manifests to the cluster
+apply:
+    kubectl apply -f k8s.yaml
+
+# Wait for PostgreSQL to be ready
+wait:
+    kubectl -n flyway-pg rollout status statefulset/postgres --timeout=120s
+    kubectl -n flyway-pg wait --for=condition=ready pod -l app.kubernetes.io/name=postgres --timeout=60s
+
+# Run Flyway migrations against the local environment
+migrate:
+    flyway -environment=local migrate
+
+# Show Flyway migration info
+info:
+    flyway -environment=local info
+
+# Full workflow: create cluster → build → deploy → wait → migrate
+run: cluster-create build apply wait migrate
+
+# Tear down everything
+teardown: cluster-delete

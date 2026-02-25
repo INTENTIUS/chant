@@ -72,17 +72,22 @@ export async function buildCommand(options: BuildOptions): Promise<BuildResult> 
     warnings.push(formatWarning({ message: warning }));
   }
 
-  // Run post-synth checks from plugins
+  // Run post-synth checks from plugins — each plugin only sees its own lexicon's output
   if (result.errors.length === 0 && options.plugins) {
-    const postSynthChecks: PostSynthCheck[] = [];
     for (const plugin of options.plugins) {
-      if (plugin.postSynthChecks) {
-        postSynthChecks.push(...plugin.postSynthChecks());
-      }
-    }
+      if (!plugin.postSynthChecks) continue;
+      const checks = plugin.postSynthChecks();
+      if (checks.length === 0) continue;
 
-    if (postSynthChecks.length > 0) {
-      const postDiags = runPostSynthChecks(postSynthChecks, result);
+      // Scope outputs to this plugin's lexicon so cross-lexicon outputs don't interfere
+      const scopedOutputs = new Map<string, string | SerializerResult>();
+      const pluginOutput = result.outputs.get(plugin.name);
+      if (pluginOutput !== undefined) {
+        scopedOutputs.set(plugin.name, pluginOutput);
+      }
+
+      const scopedResult = { ...result, outputs: scopedOutputs };
+      const postDiags = runPostSynthChecks(checks, scopedResult);
       for (const diag of postDiags) {
         const prefix = diag.entity ? `[${diag.entity}] ` : "";
         const lexiconSuffix = diag.lexicon ? ` (${diag.lexicon})` : "";

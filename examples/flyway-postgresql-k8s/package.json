@@ -1,0 +1,15 @@
+{
+  "name": "flyway-postgresql-k8s-example",
+  "version": "0.0.1",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "build": "chant build src",
+    "lint": "chant lint src"
+  },
+  "dependencies": {
+    "@intentius/chant": "workspace:*",
+    "@intentius/chant-lexicon-k8s": "workspace:*",
+    "@intentius/chant-lexicon-flyway": "workspace:*"
+  }
+}
