@@ -1,0 +1,34 @@
+---
+title: "Lint Rules"
+description: "Lint rules and post-synth checks provided by the Flyway lexicon"
+---
+
+The Flyway lexicon provides **16** rules: 5 lint rules and 11 post-synth checks.
+
+## Lint Rules
+
+| ID | Severity | Category | Description |
+|----|----------|----------|-------------|
+| `WFW001` | error | security | Hardcoded Credentials |
+| `WFW002` | warning | security | Hardcoded JDBC URL |
+| `WFW003` | warning | correctness | Missing Schemas Property |
+| `WFW004` | warning | correctness | Invalid Migration Filename |
+| `WFW005` | error | correctness | Duplicate Migration Version |
+
+## Post-Synth Checks
+
+Post-synth checks validate the serialized output after the build pipeline completes.
+
+| ID | Description |
+|----|-------------|
+| `WFW101` | Production environment has cleanDisabled=false or missing — clean must be disabled in production |
+| `WFW102` | Production environment missing validateOnMigrate=true — validation should be enabled in production |
+| `WFW103` | Production environment has baselineOnMigrate=true — baseline on migrate is risky in production |
+| `WFW104` | Unresolved resolver reference — $\{resolver.key\} used without corresponding resolver configuration |
+| `WFW105` | flyway.locations is empty or missing — Flyway needs at least one migration location |
+| `WFW106` | Invalid callback event name — callback not in known Flyway events set |
+| `WFW107` | Enterprise-only callback event used — undo callbacks require Flyway Teams/Enterprise |
+| `WFW108` | Environment section without url property — every environment needs a JDBC connection URL |
+| `WFW109` | Backup/snapshot provisioner without filePath property — filePath is required for these provisioner types |
+| `WFW110` | Environment schemas differ from parent environment schemas — potential schema mismatch |
+| `WFW111` | Unknown key in TOML output — key is not a recognized Flyway property |

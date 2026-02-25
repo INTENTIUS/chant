@@ -1,0 +1,180 @@
+---
+title: "Nested Stacks"
+description: "Splitting resources into child CloudFormation templates with automatic cross-stack reference wiring"
+---
+CloudFormation nested stacks (`AWS::CloudFormation::Stack`) let you decompose large templates into smaller, reusable child templates. The AWS lexicon's `nestedStack()` function references a **child project directory** — a subdirectory that builds independently to a valid CloudFormation template.
+
+:::caution[Consider alternatives first]
+Nested stacks add deployment complexity: child templates must be uploaded to S3, rollbacks are all-or-nothing at the parent level, drift detection doesn't recurse into children, and debugging failures requires drilling into child stack events. For most projects, [flat composites](../composites/) are simpler. Nested stacks are supported for specific cases — exceeding CloudFormation's 500-resource limit or packaging reusable infrastructure as a black box — but are not the recommended default.
+:::
+
+## Project structure
+
+A nested stack is a child project — a subdirectory with its own resource files and explicit `stackOutput()` declarations:
+
+```
+src/
+  app.ts                  # parent resources
+  network/                # ← child project (nested stack)
+    vpc.ts                # VPC, subnet, internet gateway, routing
+    security.ts           # security group for Lambda
+    outputs.ts            # declares cross-stack outputs
+```
+
+## Declaring outputs in the child
+
+Use `stackOutput()` to mark values that the parent can reference. Each `stackOutput()` becomes an entry in the child template's `Outputs` section:
+
+```typescript title="outputs.ts"
+/**
+ * Cross-stack outputs — values the parent can reference
+ */
+
+import { stackOutput } from "@intentius/chant";
+import { vpc, subnet } from "./vpc";
+import { lambdaSg } from "./security";
+
+export const vpcId = stackOutput(vpc.VpcId, {
+  description: "VPC ID",
+});
+export const subnetId = stackOutput(subnet.SubnetId, {
+  description: "Public subnet ID",
+});
+export const lambdaSgId = stackOutput(lambdaSg.GroupId, {
+  description: "Lambda security group ID",
+});
+```
+
+The child can be built independently:
+
+```bash
+chant build src/network/ -o network.json
+# Produces a standalone, valid CloudFormation template with Outputs
+```
+
+## Referencing from the parent
+
+Use `nestedStack()` in the parent to reference a child project directory. It returns an object with an `outputs` proxy for cross-stack references:
+
+```typescript title="app.ts"
+/**
+ * App layer — Lambda function in the parent template that references
+ * the network nested stack's outputs via cross-stack references
+ */
+
+import { Function, Sub, AWS, Ref, nestedStack } from "@intentius/chant-lexicon-aws";
+
+// nestedStack() references a child project directory
+const network = nestedStack("network", import.meta.dirname + "/network", {
+  parameters: { Environment: "prod" },
+});
+
+export const handler = new Function({
+  FunctionName: Sub`${AWS.StackName}-handler`,
+  Runtime: "nodejs20.x",
+  Handler: "index.handler",
+  Role: Ref("LambdaExecutionRole"),
+  Code: { ZipFile: "exports.handler = async () => ({ statusCode: 200 });" },
+  VpcConfig: {
+    SubnetIds: [network.outputs.subnetId],
+    SecurityGroupIds: [network.outputs.lambdaSgId],
+  },
+});
+
+// Re-export so discovery picks it up as an entity
+export { network };
+```
+
+`network.outputs.subnetId` produces a `NestedStackOutputRef` that serializes to `{ "Fn::GetAtt": ["Network", "Outputs.SubnetId"] }`.
+
+## Build output
+
+`chant build` produces multiple template files:
+
+```bash
+chant build -o template.json
+# Produces:
+#   template.json              — parent template
+#   network.template.json      — child template
+```
+
+The parent template includes an `AWS::CloudFormation::Stack` resource pointing to the child:
+
+```json
+"Network": {
+  "Type": "AWS::CloudFormation::Stack",
+  "Properties": {
+    "TemplateURL": { "Fn::Sub": "${TemplateBasePath}/network.template.json" }
+  }
+}
+```
+
+## `TemplateBasePath` parameter
+
+Every parent template gets a `TemplateBasePath` parameter (default `"."`) that controls where CloudFormation looks for child templates:
+
+```bash
+# Local dev — default "." works with rain and similar tools
+chant build -o template.json
+
+# Production — override with S3 URL
+aws cloudformation deploy \
+  --template-file template.json \
+  --stack-name my-stack \
+  --parameter-overrides TemplateBasePath=https://my-bucket.s3.amazonaws.com/templates
+```
+
+Child templates also receive the `TemplateBasePath` parameter so it propagates through all nesting levels.
+
+All child template files must be uploaded alongside the parent template (or to the S3 path specified by `TemplateBasePath`).
+
+## Explicit parameters
+
+Pass CloudFormation Parameters to child stacks with the `parameters` option:
+
+```typescript
+import { nestedStack } from "@intentius/chant-lexicon-aws";
+
+const network = nestedStack("network", import.meta.dirname + "/network", {
+  parameters: { Environment: "prod", CidrBlock: "10.0.0.0/16" },
+});
+```
+
+## Recursive nesting
+
+Child projects can themselves reference grandchild projects. Each level produces its own template file:
+
+```
+src/
+  app.ts
+  infra/
+    network/
+      vpc.ts
+      outputs.ts
+    database/
+      cluster.ts
+      outputs.ts
+```
+
+The build pipeline detects circular references and reports an error if child A references child B which references child A.
+
+## Lint rules
+
+Three lint rules help catch common nested stack issues:
+
+| Rule | Severity | Description |
+|------|----------|-------------|
+| **WAW013** | error | Child project has no `stackOutput()` exports — parent can't reference anything |
+| **WAW014** | warning | `nestedStack()` outputs never referenced from parent — could be a separate build |
+| **WAW015** | error | Circular project references |
+
+## When to use nested stacks
+
+**Prefer flat composites** for most projects. Composites expand into a single template, deploy atomically, and are simpler to debug.
+
+**Use nested stacks only when:**
+- Your template exceeds CloudFormation's 500-resource limit
+- You're packaging reusable infrastructure for other teams to deploy as a black box
+- You need independent update/rollback boundaries (rare — this usually means the resources should be separate stacks entirely)
+
+See [Composites](../composites/) for the flat composite approach.

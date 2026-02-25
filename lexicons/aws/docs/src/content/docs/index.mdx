@@ -1,0 +1,37 @@
+---
+title: "AWS CloudFormation"
+description: "AWS CloudFormation lexicon for chant — resource types, intrinsics, and lint rules"
+---
+
+The **AWS CloudFormation** lexicon provides full support for defining AWS infrastructure using chant's declarative TypeScript syntax. Resources are serialized to CloudFormation JSON templates.
+
+This lexicon is generated from the official [CloudFormation Resource Provider Schemas](https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/cfn-resource-specification.html) and includes coverage for all publicly available resource types.
+
+Install it with:
+
+```bash
+npm install --save-dev @intentius/chant-lexicon-aws
+```
+
+## At a Glance
+
+| Metric | Count |
+|--------|-------|
+| Resources | 1530 |
+| Property types | 12878 |
+| Services | 265 |
+| Intrinsic functions | 9 |
+| Pseudo-parameters | 8 |
+| Lint rules | 25 |
+
+**Lexicon version:** 0.0.12  
+**Namespace:** `AWS`
+
+- [CloudFormation Concepts](./cloudformation)
+- [Intrinsic Functions](./intrinsics)
+- [Composites](./composites)
+- [Lint Rules](./lint-rules)
+- [Custom Lint Rules](./custom-rules)
+- [Examples](./examples)
+- [AI Skills](./skills)
+- [Serialization](./serialization) — output format details

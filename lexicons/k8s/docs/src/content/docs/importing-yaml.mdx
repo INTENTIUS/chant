@@ -1,0 +1,74 @@
+---
+title: "Importing Existing YAML"
+description: "Convert existing Kubernetes YAML manifests into typed TypeScript source files"
+---
+Chant can parse existing Kubernetes YAML manifests and generate typed TypeScript source files. This is useful for migrating existing infrastructure to chant.
+
+## How it works
+
+```
+Input YAML → parse → generate TypeScript → export typed resources
+```
+
+The importer reads multi-document YAML, identifies each resource’s `apiVersion` and `kind`, and generates the corresponding typed constructor call. The output is a valid `.k8s.ts` file you can immediately build with `chant build`.
+
+## Running the import roundtrip
+
+From the `lexicons/k8s` directory:
+
+```bash
+# Full roundtrip — clones kubernetes/examples, imports, serializes, compares
+just full-roundtrip
+
+# Skip clone if repo is already cached
+just full-roundtrip --skip-clone
+
+# Verbose output + filter to a specific manifest
+just full-roundtrip --skip-clone --verbose --manifest guestbook
+
+# Skip the serialize phase (parse + generate only)
+just full-roundtrip --skip-clone --skip-serialize
+```
+
+## Parse-only mode
+
+For quick validation without the full serialize cycle:
+
+```bash
+just import-samples --skip-clone --verbose
+
+# Filter to a specific manifest
+just import-samples --skip-clone --verbose --manifest guestbook
+```
+
+This runs the YAML → TypeScript generation but skips the round-trip comparison.
+
+## What "pass" means
+
+A passing roundtrip means the serialized YAML, when re-parsed, produces the **same number of resources with matching `kind` values**. Exact YAML comparison is intentionally skipped — key ordering, quoting, and comments differ between input and output.
+
+## Validating against a cluster
+
+To verify the serialized output is valid Kubernetes YAML, apply it to a local k3d cluster:
+
+```bash
+# Create a k3d cluster, apply serialized manifests, verify, tear down
+just k3d-validate
+
+# Keep the cluster for manual inspection
+just k3d-validate --keep-cluster
+
+# Reuse an existing cluster
+just k3d-validate --reuse-cluster --verbose
+```
+
+See [Testing & Validation](/chant/lexicons/k8s/testing/) for full details on the k3d validation workflow.
+
+## Limitations
+
+The import pipeline does not support:
+
+- **Helm charts** — template syntax (`{{ .Values.x }}`) is not valid YAML
+- **Kustomize overlays** — overlays are processed by kustomize before producing YAML
+- **Custom Resource Definitions (CRDs)** — only built-in K8s resource types are recognized
+- **Cloud-specific volumes** — provider-specific volume types (awsElasticBlockStore, gcePersistentDisk) are parsed but excluded from k3d cluster validation (k3d doesn’t provide cloud volume drivers)

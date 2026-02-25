@@ -1,0 +1,101 @@
+---
+title: "Composites"
+description: "Pre-built composite patterns for common Flyway project layouts"
+---
+Composites are factory functions that produce coordinated sets of resources for common Flyway project patterns. Instead of wiring up project, config, environments, and resolvers individually, call one function and export the results.
+
+## StandardProject
+
+The simplest starting point — a two-environment setup (dev + prod) with sensible defaults.
+
+```typescript
+import { StandardProject, FlywayProject, FlywayConfig, Environment } from "@intentius/chant-lexicon-flyway";
+
+const result = StandardProject({
+  name: "my-app",
+  databaseType: "postgresql",
+  devUrl: "jdbc:postgresql://localhost:5432/dev",
+  prodUrl: "jdbc:postgresql://prod:5432/app",
+});
+
+export const project = new FlywayProject(result.project);
+export const config = new FlywayConfig(result.config);
+export const dev = new Environment(result.dev);
+export const prod = new Environment(result.prod);
+```
+
+## MultiEnvironmentProject
+
+N environments with shared config and increasing safety settings, plus an optional shadow database.
+
+```typescript
+import { MultiEnvironmentProject } from "@intentius/chant-lexicon-flyway";
+
+const result = MultiEnvironmentProject({
+  name: "payments",
+  databaseType: "postgresql",
+  environments: [
+    { name: "dev", url: "jdbc:postgresql://localhost:5432/pay_dev" },
+    { name: "staging", url: "jdbc:postgresql://staging:5432/payments" },
+    { name: "prod", url: "jdbc:postgresql://prod:5432/payments" },
+  ],
+  shadowUrl: "jdbc:postgresql://localhost:5432/pay_shadow",
+  schemas: ["public", "payments"],
+});
+```
+
+## DesktopProject
+
+Redgate Flyway Desktop workflow with development + shadow environments, `[flywayDesktop]` and `[redgateCompare]` sections. Shadow always gets `provisioner: "clean"` so Desktop schema comparisons work correctly.
+
+```typescript
+import { DesktopProject } from "@intentius/chant-lexicon-flyway";
+
+const result = DesktopProject({
+  name: "inventory-service",
+  databaseType: "postgresql",
+  devUrl: "jdbc:postgresql://localhost:5432/inventory_dev",
+  shadowUrl: "jdbc:postgresql://localhost:5432/inventory_shadow",
+  schemas: ["public", "inventory"],
+  filterFile: "./Filter.scpf",
+});
+```
+
+## VaultSecuredProject
+
+HashiCorp Vault-backed credentials for all environments. Generates `${vault.*}` resolver references and Vault resolver configuration automatically.
+
+```typescript
+import { VaultSecuredProject } from "@intentius/chant-lexicon-flyway";
+
+const result = VaultSecuredProject({
+  name: "payments-db",
+  databaseType: "postgresql",
+  vaultUrl: "https://vault.internal:8200",
+  vaultSecretPath: "secret/data/payments/db",
+  environments: [
+    { name: "staging", url: "jdbc:...", userKey: "staging_user", passwordKey: "staging_pass" },
+    { name: "prod", url: "jdbc:...", userKey: "prod_user", passwordKey: "prod_pass" },
+  ],
+});
+```
+
+## GcpSecuredProject
+
+Google Cloud Secret Manager-backed credentials using the `googlesecrets` resolver type.
+
+## CiPipelineProject
+
+CI/CD-optimized project with `${env.*}` patterns for environment variable injection. Designed for environments where credentials come from CI secret stores.
+
+## DockerDevEnvironment
+
+Local development with Docker-provisioned databases. Produces an environment with a Docker provisioner that spins up a database container automatically.
+
+## BlueprintMigrationSet
+
+Re-usable migration set pattern for shared schema definitions across multiple services.
+
+## environmentGroup
+
+Not a composite in the strict sense, but the most powerful helper — deep-merges shared config into per-environment overrides. See the [Examples](/chant/lexicons/flyway/examples/) page for usage.

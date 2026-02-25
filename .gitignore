@@ -8,6 +8,9 @@ dist/
 # All generated lexicon source (covers both AWS and GitLab)
 lexicons/*/src/generated/
 
-# Generated lexicon docs sites
-lexicons/*/docs/
+# Generated lexicon docs sites — ignore build output but track source
+lexicons/*/docs/node_modules/
+lexicons/*/docs/dist/
+lexicons/*/docs/.astro/
+lexicons/*/docs/bun.lock
 .docs-dist

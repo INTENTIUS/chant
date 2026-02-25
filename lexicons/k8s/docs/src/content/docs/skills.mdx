@@ -1,0 +1,41 @@
+---
+title: "AI Skills"
+description: "AI agent skills bundled with the Kubernetes lexicon"
+---
+The Kubernetes lexicon ships an AI skill called **chant-k8s** that teaches AI coding agents how to build, validate, and deploy Kubernetes manifests from a chant project.
+
+## What are skills?
+
+Skills are structured markdown documents bundled with a lexicon. When an AI agent works in a chant project, it discovers and loads relevant skills automatically — giving it operational knowledge about the deployment workflow without requiring the user to explain each step.
+
+## Installation
+
+When you scaffold a new project with `chant init --lexicon k8s`, the skill is installed to `.claude/skills/chant-k8s/SKILL.md` for automatic discovery by Claude Code.
+
+## Skill: chant-k8s
+
+The `chant-k8s` skill covers the full deployment lifecycle:
+
+- **Build** — `chant build src/ --output manifests.yaml`
+- **Lint** — `chant lint src/` + post-synth checks (20 rules)
+- **Apply** — `kubectl apply -f manifests.yaml`
+- **Status** — `kubectl get pods,svc,deploy`
+- **Rollback** — `kubectl rollout undo deployment/my-app`
+- **Troubleshooting** — pod status, logs, events, common error patterns
+
+The skill is invocable as a slash command: `/chant-k8s`
+
+The full playbook is also available as a [documentation page](/chant/lexicons/k8s/operational-playbook/).
+
+## MCP integration
+
+The lexicon also provides MCP (Model Context Protocol) tools and resources:
+
+| MCP tool | Description |
+|----------|-------------|
+| `diff` | Compare current build output against previous |
+
+| MCP resource | Description |
+|--------------|-------------|
+| `resource-catalog` | JSON list of all supported K8s resource types |
+| `examples/basic-deployment` | Example Deployment + Service code |

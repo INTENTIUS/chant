@@ -1,0 +1,99 @@
+---
+title: "Getting Started"
+description: "Install the Flyway lexicon and build your first typed Flyway config"
+---
+## Installation
+
+```bash
+# Initialize a new chant project with the Flyway lexicon
+chant init --lexicon flyway my-flyway-project
+cd my-flyway-project
+
+# Or add to an existing project
+npm install --save-dev @intentius/chant-lexicon-flyway
+```
+
+## Your first Flyway config
+
+Create `src/infra.ts`:
+
+```typescript
+import {
+  FlywayProject,
+  FlywayConfig,
+  Environment,
+} from "@intentius/chant-lexicon-flyway";
+
+export const project = new FlywayProject({
+  id: "my-app",
+  name: "my-app",
+  databaseType: "postgresql",
+});
+
+export const config = new FlywayConfig({
+  locations: ["filesystem:sql/migrations"],
+  defaultSchema: "public",
+  cleanDisabled: true,
+  validateMigrationNaming: true,
+});
+
+export const dev = new Environment({
+  url: "jdbc:postgresql://localhost:5432/myapp_dev",
+  user: "dev_user",
+  password: "dev_pass",
+  schemas: ["public"],
+  displayName: "dev",
+});
+
+export const prod = new Environment({
+  url: "jdbc:postgresql://prod:5432/myapp",
+  user: "${vault.db-user}",
+  password: "${vault.db-password}",
+  schemas: ["public"],
+  displayName: "prod",
+  cleanDisabled: true,
+  validateOnMigrate: true,
+});
+```
+
+## Build and lint
+
+```bash
+# Generate flyway.toml from your TypeScript declarations
+chant build
+
+# Run lint rules to catch configuration issues
+chant lint
+```
+
+The `chant build` command writes `dist/flyway.toml`. The `chant lint` command checks for:
+- Hardcoded credentials
+- Production environments without safety settings
+- Missing migration locations
+- Invalid callback events
+
+## Using the StandardProject composite
+
+For the common two-environment pattern, use the `StandardProject` composite:
+
+```typescript
+import { StandardProject, FlywayProject, FlywayConfig, Environment } from "@intentius/chant-lexicon-flyway";
+
+const result = StandardProject({
+  name: "my-app",
+  databaseType: "postgresql",
+  devUrl: "jdbc:postgresql://localhost:5432/dev",
+  prodUrl: "jdbc:postgresql://prod:5432/app",
+});
+
+export const project = new FlywayProject(result.project);
+export const config = new FlywayConfig(result.config);
+export const dev = new Environment(result.dev);
+export const prod = new Environment(result.prod);
+```
+
+## Next steps
+
+- Browse [Examples](/chant/lexicons/flyway/examples/) for more patterns
+- See [Composites](/chant/lexicons/flyway/composites/) for factory helpers
+- Review [Lint Rules](/chant/lexicons/flyway/lint-rules/) for available checks

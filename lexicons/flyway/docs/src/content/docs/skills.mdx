@@ -1,0 +1,42 @@
+---
+title: "Skills"
+description: "AI skill and MCP tools for Flyway configuration assistance"
+---
+The Flyway lexicon includes the **chant-flyway** AI skill that provides context-aware assistance when working with Flyway configurations.
+
+## MCP integration
+
+When running `chant serve mcp`, the Flyway skill is automatically available to MCP-compatible AI tools (Claude, Cursor, etc.).
+
+## What the skill provides
+
+### Context
+
+The skill gives the AI assistant knowledge of:
+- All Flyway resource types (FlywayProject, FlywayConfig, Environment, resolvers, provisioners)
+- Property constraints and valid values
+- TOML serialization rules
+- Composite patterns and when to use each
+- Lint rule explanations
+
+### Capabilities
+
+With the Flyway skill active, an AI assistant can:
+- **Generate** typed Flyway configs from natural language descriptions
+- **Explain** existing configurations and their TOML output
+- **Debug** lint rule violations with fix suggestions
+- **Migrate** from plain TOML to typed TypeScript declarations
+- **Recommend** composites based on project requirements
+
+## Example prompts
+
+- "Create a Flyway config for a PostgreSQL project with dev, staging, and prod environments"
+- "Add Vault-secured credentials to my production environment"
+- "Why is WFW101 flagging my config?"
+- "Convert this flyway.toml to chant TypeScript"
+
+## LSP integration
+
+The Flyway lexicon also provides LSP support via `chant serve lsp`:
+- **Completions** — type `new ` to get Flyway resource completions
+- **Hover** — hover over type names to see TOML serialization hints

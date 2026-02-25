@@ -1,0 +1,56 @@
+---
+title: "Serialization"
+description: "Output format for the Kubernetes lexicon"
+---
+
+The Kubernetes lexicon serializes resources into **multi-document YAML** with
+`---` separators between resources. Each resource gets the standard K8s
+structure: `apiVersion`, `kind`, `metadata`, and `spec`.
+
+## Building
+
+Run `chant build` to produce Kubernetes manifests from your declarations:
+
+```bash
+chant build
+# Writes dist/manifests.yaml
+```
+
+The generated file includes:
+
+- Multi-document YAML with `---` separators
+- Correct `apiVersion` and `kind` for each resource
+- `metadata.name` auto-generated from export names (camelCase → kebab-case)
+- Default labels and annotations injected from `defaultLabels()`/`defaultAnnotations()`
+
+## Key conversions
+
+| Chant (TypeScript) | YAML output | Rule |
+|--------------------|-------------|------|
+| `export const myApp = new Deployment({...})` | `metadata.name: my-app` | Export name → kebab-case |
+| `new Container({...})` | Inline container spec | Property types expanded inline |
+| `defaultLabels({...})` | Merged into all resources | Project-wide label injection |
+
+## Applying
+
+The output is standard Kubernetes YAML. Apply with kubectl:
+
+```bash
+# Dry run first
+kubectl apply -f dist/manifests.yaml --dry-run=server
+
+# Apply
+kubectl apply -f dist/manifests.yaml
+
+# Diff before applying
+kubectl diff -f dist/manifests.yaml
+```
+
+## Compatibility
+
+The output is compatible with:
+- kubectl apply/diff
+- Helm (as raw manifests)
+- ArgoCD / Flux GitOps controllers
+- Kustomize (as a base)
+- Any tool that processes Kubernetes YAML

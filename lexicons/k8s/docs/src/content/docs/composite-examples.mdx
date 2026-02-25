@@ -1,0 +1,228 @@
+---
+title: "Examples: Composites"
+description: "Composite examples — WebApp, CronWorkload, AutoscaledService, WorkerPool, NamespaceEnv, NodeAgent"
+---
+Composites are higher-level constructs that produce multiple coordinated K8s resources from a single function call.
+
+## WebApp
+
+Quick deployment with Deployment + Service + optional Ingress:
+
+```typescript
+import { WebApp } from "@intentius/chant-lexicon-k8s";
+
+const { deployment, service, ingress } = WebApp({
+  name: "frontend",
+  image: "frontend:1.0",
+  port: 3000,
+  replicas: 3,
+  ingressHost: "frontend.example.com",
+  ingressTlsSecret: "frontend-tls",
+});
+```
+
+## CronWorkload
+
+Scheduled workload with RBAC:
+
+```typescript
+import { CronWorkload } from "@intentius/chant-lexicon-k8s";
+
+const { cronJob, serviceAccount, role, roleBinding } = CronWorkload({
+  name: "db-backup",
+  image: "postgres:16",
+  schedule: "0 2 * * *",
+  command: ["pg_dump", "-h", "postgres", "mydb"],
+  rbacRules: [
+    { apiGroups: [""], resources: ["secrets"], verbs: ["get"] },
+  ],
+});
+```
+
+## AutoscaledService
+
+Production HTTP service with HPA, PDB, and configurable probes:
+
+```typescript
+import { AutoscaledService } from "@intentius/chant-lexicon-k8s";
+
+const { deployment, service, hpa, pdb } = AutoscaledService({
+  name: "api",
+  image: "api:2.0",
+  port: 8080,
+  maxReplicas: 10,
+  minReplicas: 3,
+  targetCPUPercent: 60,
+  targetMemoryPercent: 80,
+  cpuRequest: "200m",
+  memoryRequest: "256Mi",
+  cpuLimit: "1",
+  memoryLimit: "1Gi",
+  livenessPath: "/healthz",
+  readinessPath: "/readyz",
+  topologySpread: true,
+  namespace: "production",
+});
+```
+
+## WorkerPool
+
+Background queue worker with RBAC and optional autoscaling:
+
+```typescript
+import { WorkerPool } from "@intentius/chant-lexicon-k8s";
+
+const { deployment, serviceAccount, role, roleBinding, configMap, hpa } = WorkerPool({
+  name: "email-worker",
+  image: "worker:1.0",
+  command: ["bundle", "exec", "sidekiq"],
+  config: { REDIS_URL: "redis://redis:6379", QUEUE: "emails" },
+  autoscaling: { minReplicas: 2, maxReplicas: 20, targetCPUPercent: 60 },
+});
+```
+
+Pass `rbacRules: []` to opt out of RBAC resource creation entirely.
+
+## NamespaceEnv
+
+Multi-tenant namespace with resource guardrails and network isolation:
+
+```typescript
+import { NamespaceEnv } from "@intentius/chant-lexicon-k8s";
+
+const { namespace, resourceQuota, limitRange, networkPolicy } = NamespaceEnv({
+  name: "team-alpha",
+  cpuQuota: "8",
+  memoryQuota: "16Gi",
+  maxPods: 50,
+  defaultCpuRequest: "100m",
+  defaultMemoryRequest: "128Mi",
+  defaultCpuLimit: "500m",
+  defaultMemoryLimit: "512Mi",
+  defaultDenyIngress: true,
+  defaultDenyEgress: true,
+});
+```
+
+Setting a ResourceQuota without LimitRange defaults will emit a warning — pods without explicit resource requests will fail to schedule.
+
+## NodeAgent
+
+Per-node DaemonSet agent with cluster-wide RBAC and host path mounts:
+
+```typescript
+import { NodeAgent } from "@intentius/chant-lexicon-k8s";
+
+const { daemonSet, serviceAccount, clusterRole, clusterRoleBinding, configMap } = NodeAgent({
+  name: "log-collector",
+  image: "fluentd:v1.16",
+  port: 24224,
+  hostPaths: [
+    { name: "varlog", hostPath: "/var/log", mountPath: "/var/log" },
+    { name: "containers", hostPath: "/var/lib/docker/containers", mountPath: "/var/lib/docker/containers" },
+  ],
+  config: { "fluent.conf": "<source>\n  @type tail\n  path /var/log/*.log\n</source>" },
+  rbacRules: [
+    { apiGroups: [""], resources: ["pods", "namespaces"], verbs: ["get", "list", "watch"] },
+  ],
+  namespace: "monitoring",
+});
+```
+
+## Deploying composites
+
+Composites produce plain prop objects. To deploy them, write each resource to a `.k8s.ts` file then use the standard chant build → kubectl apply workflow.
+
+### Step 1 — Write a chant source file
+
+```typescript
+// src/infra.k8s.ts
+import { AutoscaledService, NamespaceEnv, WorkerPool, NodeAgent } from "@intentius/chant-lexicon-k8s";
+
+// Namespace with guardrails
+const nsEnv = NamespaceEnv({
+  name: "production",
+  cpuQuota: "16",
+  memoryQuota: "32Gi",
+  defaultCpuRequest: "100m",
+  defaultMemoryRequest: "128Mi",
+  defaultCpuLimit: "1",
+  defaultMemoryLimit: "512Mi",
+});
+export const { namespace, resourceQuota, limitRange, networkPolicy } = nsEnv;
+
+// API with autoscaling
+const api = AutoscaledService({
+  name: "api",
+  image: "api:1.0",
+  port: 8080,
+  maxReplicas: 10,
+  cpuRequest: "200m",
+  memoryRequest: "256Mi",
+  topologySpread: true,
+  namespace: "production",
+});
+export const { deployment, service, hpa, pdb } = api;
+
+// Background workers
+const workers = WorkerPool({
+  name: "email-worker",
+  image: "worker:1.0",
+  command: ["bundle", "exec", "sidekiq"],
+  config: { REDIS_URL: "redis://redis:6379" },
+  autoscaling: { minReplicas: 2, maxReplicas: 20 },
+  namespace: "production",
+});
+export const workerDeployment = workers.deployment;
+export const workerSA = workers.serviceAccount;
+export const workerRole = workers.role;
+export const workerRoleBinding = workers.roleBinding;
+export const workerConfig = workers.configMap;
+export const workerHPA = workers.hpa;
+```
+
+### Step 2 — Build and validate
+
+```bash
+# Build YAML manifests
+chant build src/ --output manifests.yaml
+
+# Lint for common issues
+chant lint src/
+
+# Server-side dry run (validates with admission webhooks)
+kubectl apply -f manifests.yaml --dry-run=server
+```
+
+### Step 3 — Deploy
+
+```bash
+# Diff before applying
+kubectl diff -f manifests.yaml
+
+# Apply
+kubectl apply -f manifests.yaml
+
+# Verify rollout
+kubectl rollout status deployment/api -n production
+kubectl get pods,svc,hpa -n production
+```
+
+### k3d local validation
+
+For local testing before pushing to a real cluster:
+
+```bash
+cd lexicons/k8s
+
+# Create a k3d cluster, apply composites, verify, and delete
+just k3d-validate-composites
+
+# Keep the cluster for manual inspection
+just k3d-validate-composites --keep-cluster
+
+# Reuse an existing cluster
+just k3d-validate-composites --reuse-cluster --verbose
+```
+
+The `/chant-k8s` AI skill covers the full lifecycle — scaffold, build, lint, apply, rollback, and troubleshooting.

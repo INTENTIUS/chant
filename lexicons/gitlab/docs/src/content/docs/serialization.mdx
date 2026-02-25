@@ -1,0 +1,54 @@
+---
+title: "Serialization"
+description: "Output format for the GitLab CI/CD lexicon"
+---
+
+The GitLab lexicon serializes resources into **`.gitlab-ci.yml` YAML**. Keys are
+converted to `snake_case` and jobs use kebab-case names. Stages are automatically
+collected from all job definitions.
+
+## Building
+
+Run `chant build` to produce a `.gitlab-ci.yml` from your declarations:
+
+```bash
+chant build
+# Writes dist/.gitlab-ci.yml
+```
+
+The generated file includes:
+
+- `stages:` list — automatically collected from all job `stage` properties
+- `default:` section — if a `Default` resource is exported
+- `workflow:` section — if a `Workflow` resource is exported
+- Job definitions with `snake_case` keys and `kebab-case` job names
+
+## Key conversions
+
+| Chant (TypeScript) | YAML output | Rule |
+|--------------------|-------------|------|
+| `export const buildApp = new Job({...})` | `build-app:` | Export name → kebab-case job key |
+| `expire_in: "1 week"` | `expire_in: 1 week` | Property names use spec-native snake_case |
+| `new Image({ name: "node:20" })` | `image: node:20` | Single-property objects are collapsed |
+
+## Validating locally
+
+The output is standard GitLab CI YAML. Validate with the GitLab CI Lint API or locally:
+
+```bash
+# Using the GitLab API
+curl --header "PRIVATE-TOKEN: $GITLAB_TOKEN" \
+  --data-urlencode "content=$(cat dist/.gitlab-ci.yml)" \
+  "https://gitlab.com/api/v4/ci/lint"
+
+# Using the glab CLI
+glab ci lint dist/.gitlab-ci.yml
+```
+
+## Compatibility
+
+The output is compatible with:
+- GitLab CI/CD (any recent GitLab version)
+- GitLab CI Lint API
+- `glab` CLI tool
+- Any tool that processes `.gitlab-ci.yml` files

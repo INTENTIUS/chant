@@ -1,0 +1,104 @@
+---
+title: "Flyway Concepts"
+description: "How Flyway TOML config maps to chant constructs — namespaces, environments, resolvers"
+---
+Every exported resource declaration becomes a section in the generated `flyway.toml`. The serializer handles the translation automatically:
+
+## TOML Namespaces
+
+Flyway TOML has four top-level namespaces:
+
+| Namespace | Chant Type | Description |
+|-----------|-----------|-------------|
+| Root level | `FlywayProject` | Project metadata (id, name, databaseType) |
+| `[flyway]` | `FlywayConfig` | Global migration settings |
+| `[environments.<name>]` | `Environment` | Per-environment connection config |
+| `[flywayDesktop]` | `FlywayDesktopConfig` | Flyway Desktop IDE settings |
+| `[redgateCompare]` | `RedgateCompareConfig` | Redgate Compare options |
+
+## Resolver References
+
+Flyway supports secret resolvers that inject credentials at runtime:
+
+```typescript
+import { Environment, VaultResolver, resolve } from "@intentius/chant-lexicon-flyway";
+
+export const vault = new VaultResolver({
+  url: "https://vault.example.com",
+  token: "${env.VAULT_TOKEN}",
+  engineName: "secret",
+  engineVersion: "v2",
+});
+
+export const prod = new Environment({
+  url: resolve("vault", "db-url"),
+  user: resolve("vault", "db-user"),
+  password: resolve("vault", "db-password"),
+  schemas: ["public"],
+  displayName: "prod",
+});
+```
+
+This generates:
+
+```toml
+[environments.prod]
+url = "${vault.db-url}"
+user = "${vault.db-user}"
+password = "${vault.db-password}"
+schemas = ["public"]
+
+[environments.prod.resolvers.vault]
+url = "https://vault.example.com"
+token = "${env.VAULT_TOKEN}"
+engineName = "secret"
+engineVersion = "v2"
+```
+
+## Per-Environment Flyway Overrides
+
+Flyway v10+ supports per-environment flyway settings via `[environments.<name>.flyway]` sections. These override the global `[flyway]` settings for a specific environment:
+
+```typescript
+import { Environment } from "@intentius/chant-lexicon-flyway";
+
+export const prod = new Environment({
+  url: "jdbc:postgresql://prod:5432/db",
+  schemas: ["public"],
+  displayName: "prod",
+  flyway: {
+    validateOnMigrate: true,
+    cleanDisabled: true,
+    placeholders: { logLevel: "warn" },
+  },
+});
+```
+
+This generates:
+
+```toml
+[environments.prod]
+url = "jdbc:postgresql://prod:5432/db"
+schemas = ["public"]
+
+[environments.prod.flyway]
+validateOnMigrate = true
+cleanDisabled = true
+
+[environments.prod.flyway.placeholders]
+logLevel = "warn"
+```
+
+The `environmentGroup()` composite makes this pattern even easier by deep-merging shared config into per-environment overrides — see the [Examples](/chant/lexicons/flyway/examples/) page.
+
+## Provisioners
+
+Provisioners automate environment setup:
+
+| Provisioner | Use Case |
+|-------------|----------|
+| `clean` | Clean shadow databases before migration |
+| `docker` | Spin up database containers for dev |
+| `backup` | Restore from backup before applying |
+| `snapshot` | Restore from snapshot |
+| `createdb` | Create database if it doesn't exist |

@@ -1,0 +1,50 @@
+---
+title: "Serialization"
+description: "Output format for the AWS CloudFormation lexicon"
+---
+
+The AWS lexicon serializes resources into **CloudFormation JSON templates**.
+
+## Building
+
+Run `chant build` to produce a CloudFormation template from your declarations:
+
+```bash
+chant build
+# Writes dist/template.json
+```
+
+The generated template includes:
+
+- `AWSTemplateFormatVersion` header
+- `Parameters` section (if any parameters are declared)
+- `Resources` section with typed resource definitions
+- `Outputs` section for exported values
+- Full support for intrinsic functions (`Fn::Sub`, `Ref`, `Fn::GetAtt`, etc.)
+
+## Deploying
+
+The output is standard CloudFormation JSON. Deploy with any CF-compatible tool:
+
+```bash
+# AWS CLI
+aws cloudformation deploy \
+  --template-file dist/template.json \
+  --stack-name my-stack \
+  --capabilities CAPABILITY_IAM
+
+# Rain (faster, with diff preview)
+rain deploy dist/template.json my-stack
+
+# SAM CLI (if using serverless transforms)
+sam deploy --template-file dist/template.json --stack-name my-stack
+```
+
+## Compatibility
+
+The output is compatible with:
+- AWS CloudFormation service (direct deployment)
+- AWS SAM CLI
+- AWS CDK (as an escape hatch via `CfnInclude`)
+- Rain and other CloudFormation tooling
+- Any tool that accepts CloudFormation JSON templates

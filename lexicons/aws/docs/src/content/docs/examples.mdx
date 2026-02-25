@@ -1,0 +1,454 @@
+---
+title: "Examples"
+description: "Walkthrough of the AWS CloudFormation lexicon examples"
+---
+Runnable examples live in the lexicon's `examples/` directory — one per built-in composite. Clone the repo and try them:
+
+```bash
+cd examples/lambda-function
+bun install
+chant build    # produces CloudFormation JSON
+chant lint     # runs lint rules
+bun test       # runs the example's tests
+```
+
+## Lambda Function
+
+`examples/lambda-function/` — the simplest possible example. Uses `LambdaNode` to create a basic Lambda.
+
+```typescript title="main.ts"
+import { LambdaNode, Sub, AWS, Ref } from "@intentius/chant-lexicon-aws";
+import { environment } from "./params";
+
+export const app = LambdaNode({
+  name: Sub`${AWS.StackName}-${Ref(environment)}-fn`,
+  Code: {
+    ZipFile: `exports.handler = async (event) => {
+  console.log("Event:", JSON.stringify(event));
+  return {
+    statusCode: 200,
+    body: JSON.stringify({ message: "Hello from Lambda!" }),
+  };
+};`,
+  },
+});
+```
+
+Produces 2 CloudFormation resources: IAM Role + Lambda Function.
+
+## Lambda S3
+
+`examples/lambda-s3/` — Lambda that lists S3 objects using the `LambdaS3` composite.
+
+```typescript title="main.ts"
+import { LambdaS3, Sub, AWS, Ref } from "@intentius/chant-lexicon-aws";
+import { environment } from "./params";
+
+export const app = LambdaS3({
+  name: Sub`${AWS.StackName}-${Ref(environment)}-fn`,
+  bucketName: Sub`${AWS.StackName}-${Ref(environment)}-bucket`,
+  Runtime: "nodejs20.x",
+  Handler: "index.handler",
+  Code: {
+    ZipFile: `const { S3Client, ListObjectsV2Command } = require("@aws-sdk/client-s3");
+const s3 = new S3Client();
+
+exports.handler = async () => {
+  const result = await s3.send(
+    new ListObjectsV2Command({ Bucket: process.env.BUCKET_NAME })
+  );
+  return {
+    statusCode: 200,
+    body: JSON.stringify(result.Contents ?? []),
+  };
+};`,
+  },
+  access: "ReadOnly",
+});
+```
+
+Produces 3 resources: S3 Bucket (encrypted, public access blocked) + IAM Role (with S3 read policy) + Lambda Function. The `BUCKET_NAME` environment variable is auto-injected.
+
+## Lambda DynamoDB
+
+`examples/lambda-dynamodb/` — Lambda that reads/writes DynamoDB items using the `LambdaDynamoDB` composite.
+
+```typescript title="main.ts"
+import { LambdaDynamoDB, Sub, AWS, Ref } from "@intentius/chant-lexicon-aws";
+import { environment } from "./params";
+
+export const app = LambdaDynamoDB({
+  name: Sub`${AWS.StackName}-${Ref(environment)}-fn`,
+  tableName: Sub`${AWS.StackName}-${Ref(environment)}-table`,
+  Runtime: "nodejs20.x",
+  Handler: "index.handler",
+  Code: {
+    ZipFile: `const { DynamoDBClient, PutItemCommand, GetItemCommand } = require("@aws-sdk/client-dynamodb");
+const db = new DynamoDBClient();
+
+exports.handler = async (event) => {
+  const { httpMethod, body, queryStringParameters } = event;
+
+  if (httpMethod === "POST") {
+    const item = JSON.parse(body);
+    await db.send(new PutItemCommand({
+      TableName: process.env.TABLE_NAME,
+      Item: { pk: { S: item.id }, data: { S: JSON.stringify(item) } },
+    }));
+    return { statusCode: 201, body: JSON.stringify({ id: item.id }) };
+  }
+
+  const id = queryStringParameters?.id;
+  const result = await db.send(new GetItemCommand({
+    TableName: process.env.TABLE_NAME,
+    Key: { pk: { S: id } },
+  }));
+  return {
+    statusCode: result.Item ? 200 : 404,
+    body: JSON.stringify(result.Item ? JSON.parse(result.Item.data.S) : { error: "Not found" }),
+  };
+};`,
+  },
+  partitionKey: "pk",
+  access: "ReadWrite",
+});
+```
+
+Produces 3 resources: DynamoDB Table + IAM Role (with DynamoDB read/write policy) + Lambda Function. The `TABLE_NAME` environment variable is auto-injected.
+
+## Lambda SQS
+
+`examples/lambda-sqs/` — Lambda processing messages from an SQS queue using the `LambdaSqs` composite.
+
+```typescript title="main.ts"
+import { LambdaSqs, Sub, AWS, Ref } from "@intentius/chant-lexicon-aws";
+import { environment } from "./params";
+
+export const app = LambdaSqs({
+  name: Sub`${AWS.StackName}-${Ref(environment)}-fn`,
+  queueName: Sub`${AWS.StackName}-${Ref(environment)}-queue`,
+  Runtime: "nodejs20.x",
+  Handler: "index.handler",
+  Code: {
+    ZipFile: `exports.handler = async (event) => {
+  for (const record of event.Records) {
+    const body = JSON.parse(record.body);
+    console.log("Processing message:", body);
+  }
+  return { batchItemFailures: [] };
+};`,
+  },
+  batchSize: 10,
+});
+```
+
+Produces 4 resources: SQS Queue + IAM Role (with SQS receive policy) + Lambda Function + EventSourceMapping.
+
+## Lambda SNS
+
+`examples/lambda-sns/` — Lambda triggered by SNS notifications using the `LambdaSns` composite.
+
+```typescript title="main.ts"
+import { LambdaSns, Sub, AWS, Ref } from "@intentius/chant-lexicon-aws";
+import { environment } from "./params";
+
+export const app = LambdaSns({
+  name: Sub`${AWS.StackName}-${Ref(environment)}-fn`,
+  topicName: Sub`${AWS.StackName}-${Ref(environment)}-topic`,
+  Runtime: "nodejs20.x",
+  Handler: "index.handler",
+  Code: {
+    ZipFile: `exports.handler = async (event) => {
+  for (const record of event.Records) {
+    const message = JSON.parse(record.Sns.Message);
+    console.log("Received notification:", message);
+  }
+  return { statusCode: 200 };
+};`,
+  },
+});
+```
+
+Produces 5 resources: SNS Topic + IAM Role + Lambda Function + SNS Subscription + Lambda Permission.
+
+## Lambda Scheduled
+
+`examples/lambda-scheduled/` — Lambda on a cron schedule using the `LambdaScheduled` composite.
+
+```typescript title="main.ts"
+import { LambdaScheduled, Sub, AWS, Ref } from "@intentius/chant-lexicon-aws";
+import { environment } from "./params";
+
+export const app = LambdaScheduled({
+  name: Sub`${AWS.StackName}-${Ref(environment)}-fn`,
+  ruleName: Sub`${AWS.StackName}-${Ref(environment)}-rule`,
+  Runtime: "nodejs20.x",
+  Handler: "index.handler",
+  Code: {
+    ZipFile: `exports.handler = async () => {
+  console.log("Running scheduled cleanup at", new Date().toISOString());
+  // Add cleanup logic here
+  return { statusCode: 200 };
+};`,
+  },
+  schedule: "rate(1 hour)",
+});
+```
+
+Produces 4 resources: IAM Role + Lambda Function + EventBridge Rule + Lambda Permission.
+
+## Lambda EventBridge
+
+`examples/lambda-eventbridge/` — Lambda triggered by EventBridge events using the `LambdaEventBridge` composite.
+
+```typescript title="main.ts"
+import { LambdaEventBridge, Sub, AWS, Ref } from "@intentius/chant-lexicon-aws";
+import { environment } from "./params";
+
+export const app = LambdaEventBridge({
+  name: Sub`${AWS.StackName}-${Ref(environment)}-fn`,
+  ruleName: Sub`${AWS.StackName}-${Ref(environment)}-rule`,
+  Runtime: "nodejs20.x",
+  Handler: "index.handler",
+  Code: {
+    ZipFile: `exports.handler = async (event) => {
+  console.log("EventBridge event:", JSON.stringify(event));
+  const { source, "detail-type": detailType, detail } = event;
+  console.log(\`Source: \${source}, Type: \${detailType}\`);
+  return { statusCode: 200 };
+};`,
+  },
+  eventPattern: {
+    source: ["aws.s3"],
+    "detail-type": ["Object Created"],
+  },
+});
+```
+
+Produces 4 resources: EventBridge Rule + IAM Role + Lambda Function + Lambda Permission.
+
+## VPC
+
+`examples/vpc/` — production-ready VPC using the `VpcDefault` composite.
+
+```typescript title="main.ts"
+import { VpcDefault } from "@intentius/chant-lexicon-aws";
+
+export const network = VpcDefault({});
+```
+
+Produces 17 CloudFormation resources: VPC, Internet Gateway, 2 public + 2 private subnets, NAT Gateway with EIP, route tables, routes, and associations.
+
+## Fargate ALB
+
+`examples/fargate-alb/` — Fargate service behind an ALB, consuming a VPC. Demonstrates composite composability.
+
+```typescript title="network.ts"
+import { VpcDefault } from "@intentius/chant-lexicon-aws";
+
+export const network = VpcDefault({});
+```
+
+```typescript title="service.ts"
+import { FargateAlb } from "@intentius/chant-lexicon-aws";
+import { network } from "./network";
+
+export const web = FargateAlb({
+  image: "nginx:latest",
+  vpcId: network.vpc.VpcId,
+  publicSubnetIds: [network.publicSubnet1.SubnetId, network.publicSubnet2.SubnetId],
+  privateSubnetIds: [network.privateSubnet1.SubnetId, network.privateSubnet2.SubnetId],
+});
+```
+
+Produces 28 CloudFormation resources: 17 from VpcDefault + 11 from FargateAlb (ECS Cluster, execution/task roles, log group, task definition, security groups, ALB, target group, listener, and ECS service).
+
+## Multi-Service ALB
+
+`examples/multi-service-alb/` — multiple Fargate services behind a single shared ALB using `AlbShared` + `FargateService`.
+
+```typescript title="shared.ts"
+import { AlbShared } from "@intentius/chant-lexicon-aws";
+import { network } from "./network";
+
+export const shared = AlbShared({
+  vpcId: network.vpc.VpcId,
+  publicSubnetIds: [network.publicSubnet1.SubnetId, network.publicSubnet2.SubnetId],
+});
+```
+
+```typescript title="services.ts"
+import { FargateService } from "@intentius/chant-lexicon-aws";
+import { network } from "./network";
+import { shared } from "./shared";
+
+export const api = FargateService({
+  clusterArn: shared.cluster.Arn,
+  listenerArn: shared.listener.ListenerArn,
+  albSecurityGroupId: shared.albSg.GroupId,
+  executionRoleArn: shared.executionRole.Arn,
+  vpcId: network.vpc.VpcId,
+  privateSubnetIds: [network.privateSubnet1.SubnetId, network.privateSubnet2.SubnetId],
+  image: "mccutchen/go-httpbin",
+  containerPort: 8080,
+  priority: 100,
+  pathPatterns: ["/api", "/api/*"],
+  healthCheckPath: "/api/get",
+  environment: { PREFIX: "/api" },
+});
+
+export const ui = FargateService({
+  clusterArn: shared.cluster.Arn,
+  listenerArn: shared.listener.ListenerArn,
+  albSecurityGroupId: shared.albSg.GroupId,
+  executionRoleArn: shared.executionRole.Arn,
+  vpcId: network.vpc.VpcId,
+  privateSubnetIds: [network.privateSubnet1.SubnetId, network.privateSubnet2.SubnetId],
+  image: "nginx:latest",
+  priority: 200,
+  pathPatterns: ["/", "/*"],
+});
+```
+
+Produces 36 CloudFormation resources: 17 from VpcDefault + 5 from AlbShared + 7×2 from FargateService (task role, log group, task definition, task security group, target group, listener rule, and ECS service per service).
+
+## Shared ALB (Separate Projects)
+
+`examples/shared-alb/`, `examples/shared-alb-api/`, `examples/shared-alb-ui/` — the same multi-service ALB pattern as above, but split across separate CloudFormation stacks for independent deployment.
+
+### Infra stack
+
+The shared-alb stack contains VPC, ALB, ECS cluster, and ECR repositories. It exports outputs that service stacks consume as parameters:
+
+```typescript title="alb.ts"
+import { AlbShared } from "@intentius/chant-lexicon-aws";
+import { network } from "./network";
+
+export const shared = AlbShared({
+  vpcId: network.vpc.VpcId,
+  publicSubnetIds: [network.publicSubnet1.SubnetId, network.publicSubnet2.SubnetId],
+});
+```
+
+```typescript title="ecr.ts"
+import { ECRRepository, ECRRepository_ImageScanningConfiguration } from "@intentius/chant-lexicon-aws";
+
+// chant-disable-next-line COR004
+export const apiRepo = new ECRRepository({
+  RepositoryName: "alb-api",
+  ImageScanningConfiguration: new ECRRepository_ImageScanningConfiguration({
+    ScanOnPush: true,
+  }),
+});
+
+// chant-disable-next-line COR004
+export const uiRepo = new ECRRepository({
+  RepositoryName: "alb-ui",
+  ImageScanningConfiguration: new ECRRepository_ImageScanningConfiguration({
+    ScanOnPush: true,
+  }),
+});
+```
+
+```typescript title="outputs.ts"
+import { output } from "@intentius/chant-lexicon-aws";
+import { network } from "./network";
+import { shared } from "./alb";
+import * as ecr from "./ecr";
+
+// ALB outputs — service stacks reference these
+export const clusterArn = output(shared.cluster.Arn, "ClusterArn");
+export const listenerArn = output(shared.listener.ListenerArn, "ListenerArn");
+export const albSgId = output(shared.albSg.GroupId, "AlbSgId");
+export const executionRoleArn = output(shared.executionRole.Arn, "ExecutionRoleArn");
+export const albDnsName = output(shared.alb.DNSName, "AlbDnsName");
+
+// VPC outputs — service stacks need these for task networking
+export const vpcId = output(network.vpc.VpcId, "VpcId");
+export const privateSubnet1 = output(network.privateSubnet1.SubnetId, "PrivateSubnet1");
+export const privateSubnet2 = output(network.privateSubnet2.SubnetId, "PrivateSubnet2");
+
+// ECR repository outputs — service pipelines use these for docker push targets
+export const apiRepoUri = output(ecr.apiRepo.RepositoryUri, "ApiRepoUri");
+export const uiRepoUri = output(ecr.uiRepo.RepositoryUri, "UiRepoUri");
+```
+
+### Service stacks
+
+Each service stack receives shared infrastructure as parameters and deploys a single Fargate service:
+
+```typescript title="params.ts"
+import { Parameter } from "@intentius/chant-lexicon-aws";
+
+export const environment = new Parameter("String", {
+  description: "Runtime environment",
+  defaultValue: "dev",
+});
+
+// Shared ALB stack outputs — pass via --parameter-overrides at deploy time
+export const clusterArn = new Parameter("String", { description: "ECS Cluster ARN" });
+export const listenerArn = new Parameter("String", { description: "ALB Listener ARN" });
+export const albSgId = new Parameter("String", { description: "ALB Security Group ID" });
+export const executionRoleArn = new Parameter("String", { description: "Execution Role ARN" });
+export const vpcId = new Parameter("String", { description: "VPC ID" });
+export const privateSubnet1 = new Parameter("String", { description: "Private Subnet 1 ID" });
+export const privateSubnet2 = new Parameter("String", { description: "Private Subnet 2 ID" });
+```
+
+```typescript title="service.ts"
+import { FargateService, Ref, Parameter } from "@intentius/chant-lexicon-aws";
+import { clusterArn, listenerArn, albSgId, executionRoleArn, vpcId, privateSubnet1, privateSubnet2 } from "./params";
+
+export const image = new Parameter("String", {
+  description: "Container image URI",
+  defaultValue: "mccutchen/go-httpbin",
+});
+
+export const api = FargateService({
+  clusterArn: Ref(clusterArn),
+  listenerArn: Ref(listenerArn),
+  albSecurityGroupId: Ref(albSgId),
+  executionRoleArn: Ref(executionRoleArn),
+  vpcId: Ref(vpcId),
+  privateSubnetIds: [Ref(privateSubnet1), Ref(privateSubnet2)],
+  image: Ref(image),
+  containerPort: 8080,
+  priority: 100,
+  pathPatterns: ["/api", "/api/*"],
+  healthCheckPath: "/api/get",
+  environment: { PREFIX: "/api" },
+});
+```
+
+**Deployment pattern:**
+
+1. Deploy the infra stack first — creates VPC, ALB, ECS cluster, and ECR repos
+2. Deploy each service stack independently with `--parameter-overrides` mapping infra outputs to service parameters
+3. Each service gets its own `image` parameter for CI/CD pipelines to inject the container image URI
+
+The separate-project pattern enables independent team ownership and deployment cadences. See the [GitLab CI/CD lexicon examples](/chant/lexicons/gitlab/examples/) for pipeline definitions that automate this workflow.
+
+## Lambda API (Custom Composite)
+
+`examples/lambda-api/` — demonstrates building your own composite factory with presets and a custom lint rule. This is the only example that teaches custom composite authoring.
+
+```
+src/
+├── chant.config.ts   # Lint config: strict preset + custom plugin
+├── defaults.ts       # Encryption, versioning, access block, Lambda trust policy
+├── data-bucket.ts    # S3 bucket
+├── lambda-api.ts     # Composite factory + SecureApi/HighMemoryApi presets
+├── health-api.ts     # SecureApi — minimal health check
+├── upload-api.ts     # SecureApi + S3 PutObject policy
+├── process-api.ts    # HighMemoryApi + S3 read/write policy
+└── lint/
+    └── api-timeout.ts  # Custom WAW012 rule
+```
+
+**Patterns demonstrated:**
+
+- **Custom composites** — `LambdaApi` groups Role + Function + Permission into a reusable unit (see [Composites](../composites/))
+- **Composite presets** — `SecureApi` (low memory, short timeout) and `HighMemoryApi` (high memory, longer timeout)
+- **Custom lint rule** — `api-timeout.ts` enforces API Gateway's 29-second timeout limit (see [Custom Lint Rules](../custom-rules/))
+
+The example produces 10 CloudFormation resources: 1 S3 bucket + 3 composites × 3 members each.

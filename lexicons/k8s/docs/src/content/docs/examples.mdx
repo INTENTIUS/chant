@@ -1,0 +1,115 @@
+---
+title: "Examples: Resources"
+description: "Walkthrough of Kubernetes resource examples — deployments, services, autoscaling"
+---
+## Basic Deployment
+
+A Deployment with Service — the most common pattern for stateless web apps:
+
+```typescript
+import { Deployment, Service, Container, Probe } from "@intentius/chant-lexicon-k8s";
+
+export const deployment = new Deployment({
+  metadata: { name: "web", labels: { "app.kubernetes.io/name": "web" } },
+  spec: {
+    replicas: 3,
+    selector: { matchLabels: { "app.kubernetes.io/name": "web" } },
+    template: {
+      metadata: { labels: { "app.kubernetes.io/name": "web" } },
+      spec: {
+        containers: [
+          new Container({
+            name: "web",
+            image: "nginx:1.25",
+            ports: [{ containerPort: 80, name: "http" }],
+            livenessProbe: new Probe({ httpGet: { path: "/", port: 80 } }),
+            readinessProbe: new Probe({ httpGet: { path: "/", port: 80 } }),
+          }),
+        ],
+      },
+    },
+  },
+});
+
+export const service = new Service({
+  metadata: { name: "web" },
+  spec: {
+    selector: { "app.kubernetes.io/name": "web" },
+    ports: [{ port: 80, targetPort: 80 }],
+  },
+});
+```
+
+## Microservice with HPA
+
+Production-ready microservice with autoscaling and disruption budget:
+
+```typescript
+import {
+  Deployment, Service, HorizontalPodAutoscaler, PodDisruptionBudget,
+  Container, Probe, ResourceRequirements,
+} from "@intentius/chant-lexicon-k8s";
+
+export const deployment = new Deployment({
+  metadata: { name: "api", labels: { "app.kubernetes.io/name": "api" } },
+  spec: {
+    replicas: 2,
+    selector: { matchLabels: { "app.kubernetes.io/name": "api" } },
+    template: {
+      metadata: { labels: { "app.kubernetes.io/name": "api" } },
+      spec: {
+        containers: [
+          new Container({
+            name: "api",
+            image: "api:1.0",
+            ports: [{ containerPort: 8080, name: "http" }],
+            resources: new ResourceRequirements({
+              limits: { cpu: "500m", memory: "256Mi" },
+              requests: { cpu: "100m", memory: "128Mi" },
+            }),
+            livenessProbe: new Probe({ httpGet: { path: "/healthz", port: 8080 } }),
+            readinessProbe: new Probe({ httpGet: { path: "/readyz", port: 8080 } }),
+          }),
+        ],
+      },
+    },
+  },
+});
+
+export const hpa = new HorizontalPodAutoscaler({
+  metadata: { name: "api" },
+  spec: {
+    scaleTargetRef: { apiVersion: "apps/v1", kind: "Deployment", name: "api" },
+    minReplicas: 2,
+    maxReplicas: 10,
+    metrics: [
+      { type: "Resource", resource: { name: "cpu", target: { type: "Utilization", averageUtilization: 70 } } },
+    ],
+  },
+});
+
+export const pdb = new PodDisruptionBudget({
+  metadata: { name: "api" },
+  spec: {
+    minAvailable: 1,
+    selector: { matchLabels: { "app.kubernetes.io/name": "api" } },
+  },
+});
+```
+
+## Stateful Application
+
+Database deployment with persistent storage using the StatefulApp composite:
+
+```typescript
+import { StatefulApp } from "@intentius/chant-lexicon-k8s";
+
+const { statefulSet, service } = StatefulApp({
+  name: "postgres",
+  image: "postgres:16",
+  port: 5432,
+  storageSize: "20Gi",
+  replicas: 3,
+  env: [{ name: "POSTGRES_DB", value: "mydb" }],
+});
+```
