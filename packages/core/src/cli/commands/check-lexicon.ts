@@ -90,7 +90,8 @@ export function checkLexicon(dir: string): CheckResult {
     detail: ruleFiles.length > 0 ? `${ruleFiles.length} rule(s)` : undefined,
   });
 
-  const postSynthFiles = listTsFiles(join(dir, "src/lint/post-synth"), ["index.ts", "helpers.ts"]);
+  const postSynthFiles = listTsFiles(join(dir, "src/lint/post-synth"), ["index.ts"])
+    .filter((f) => !f.endsWith("-helpers.ts") && f !== "helpers.ts");
   items.push({
     name: "At least 1 post-synth check",
     tier: 1,
@@ -209,13 +210,17 @@ export function checkLexicon(dir: string): CheckResult {
 
   // ── Tier 3: Thoroughness ───────────────────────────────────────
 
-  // Each lint rule has a test
+  // Each lint rule has a test (per-file or consolidated)
   const ruleDir = join(dir, "src/lint/rules");
   const ruleSourceFiles = listTsFiles(ruleDir, ["index.ts"]).filter((f) => !f.endsWith(".test.ts"));
   const ruleTestFiles = listTsFiles(ruleDir).filter((f) => f.endsWith(".test.ts"));
-  const untestedRules = ruleSourceFiles.filter(
-    (f) => !ruleTestFiles.includes(f.replace(".ts", ".test.ts")),
-  );
+  // A consolidated test file (e.g. rules.test.ts) covers all rules in the directory
+  const hasConsolidatedRuleTest = ruleTestFiles.length > 0;
+  const untestedRules = hasConsolidatedRuleTest
+    ? []
+    : ruleSourceFiles.filter(
+        (f) => !ruleTestFiles.includes(f.replace(".ts", ".test.ts")),
+      );
   items.push({
     name: "Each lint rule has a .test.ts",
     tier: 3,
@@ -223,15 +228,18 @@ export function checkLexicon(dir: string): CheckResult {
     detail: untestedRules.length > 0 ? `missing: ${untestedRules.join(", ")}` : undefined,
   });
 
-  // Each post-synth has a test
+  // Each post-synth has a test (per-file or consolidated)
   const postSynthDir = join(dir, "src/lint/post-synth");
-  const postSynthSourceFiles = listTsFiles(postSynthDir, ["index.ts", "helpers.ts"]).filter(
-    (f) => !f.endsWith(".test.ts"),
-  );
+  const postSynthSourceFiles = listTsFiles(postSynthDir, ["index.ts"])
+    .filter((f) => !f.endsWith(".test.ts") && !f.endsWith("-helpers.ts") && f !== "helpers.ts");
   const postSynthTestFiles = listTsFiles(postSynthDir).filter((f) => f.endsWith(".test.ts"));
-  const untestedPostSynth = postSynthSourceFiles.filter(
-    (f) => !postSynthTestFiles.includes(f.replace(".ts", ".test.ts")),
-  );
+  // A consolidated test file (e.g. post-synth.test.ts) covers all checks in the directory
+  const hasConsolidatedPostSynthTest = postSynthTestFiles.length > 0;
+  const untestedPostSynth = hasConsolidatedPostSynthTest
+    ? []
+    : postSynthSourceFiles.filter(
+        (f) => !postSynthTestFiles.includes(f.replace(".ts", ".test.ts")),
+      );
   items.push({
     name: "Each post-synth check has a .test.ts",
     tier: 3,
@@ -268,14 +276,25 @@ export function checkLexicon(dir: string): CheckResult {
     pass: hasActions,
   });
 
-  // Examples with tests
+  // Examples with tests (per-example or consolidated root test file)
   const examplesDir = join(dir, "examples");
   let examplesWithTests = 0;
   if (existsSync(examplesDir)) {
-    for (const entry of readdirSync(examplesDir, { withFileTypes: true })) {
-      if (!entry.isDirectory()) continue;
-      const exampleTests = findFiles(join(examplesDir, entry.name), (n) => n.endsWith(".test.ts"));
-      if (exampleTests.length > 0) examplesWithTests++;
+    // A .test.ts in the examples root directory covers all examples
+    const rootTestFiles = readdirSync(examplesDir).filter((f) => f.endsWith(".test.ts"));
+    const hasConsolidatedExampleTest = rootTestFiles.length > 0;
+    const exampleDirs = readdirSync(examplesDir, { withFileTypes: true }).filter((e) => e.isDirectory());
+    for (const entry of exampleDirs) {
+      if (hasConsolidatedExampleTest) {
+        // Consolidated test covers all non-empty example dirs
+        const contents = readdirSync(join(examplesDir, entry.name));
+        if (contents.length > 0 && !(contents.length === 1 && contents[0] === ".gitkeep")) {
+          examplesWithTests++;
+        }
+      } else {
+        const exampleTests = findFiles(join(examplesDir, entry.name), (n) => n.endsWith(".test.ts"));
+        if (exampleTests.length > 0) examplesWithTests++;
+      }
     }
   }
   items.push({

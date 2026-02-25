@@ -53,13 +53,13 @@ Informational — tracks depth of testing and feature coverage.
 
 | Check | What it verifies |
 |---|---|
-| Each lint rule has a `.test.ts` | Per-rule test coverage |
-| Each post-synth has a `.test.ts` | Per-check test coverage |
+| Each lint rule has a `.test.ts` | Per-rule or consolidated test coverage (e.g. `rules.test.ts`) |
+| Each post-synth has a `.test.ts` | Per-check or consolidated test coverage (e.g. `post-synth.test.ts`) |
 | `typecheck.test.ts` exists | Type-level verification |
 | `roundtrip.test.ts` exists | Serialize/deserialize round-trip |
 | At least 5 composites | Rich composition library |
 | `src/actions/` with actions | Automation actions |
-| At least 5 examples with tests | Tested usage patterns |
+| At least 5 examples with tests | Tested usage patterns (per-example or consolidated root test) |
 
 ## Complete lexicon file tree
 
