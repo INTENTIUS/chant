@@ -398,7 +398,7 @@ function buildSidebar(
     items.push({ label: "Pseudo-Parameters", slug: "pseudo-parameters" });
   }
 
-  if (!suppress.has("rules") && !extraSlugs.has("rules") && result.pages.has("rules.mdx")) {
+  if (!suppress.has("rules") && !extraSlugs.has("rules") && !extraSlugs.has("lint-rules") && result.pages.has("rules.mdx")) {
     items.push({ label: "Lint Rules", slug: "rules" });
   }
 
@@ -467,7 +467,8 @@ function generateOverview(
       `- [Pseudo-Parameters](./pseudo-parameters) — ${Object.keys(manifest.pseudoParameters).length} pseudo-parameters`,
     );
   }
-  if (!suppress.has("rules") && rules.length > 0) {
+  const overviewExtraSlugs = new Set((config.extraPages ?? []).map((p) => p.slug));
+  if (!suppress.has("rules") && !overviewExtraSlugs.has("lint-rules") && rules.length > 0) {
     lines.push(`- [Lint Rules](./rules) — ${rules.length} rules`);
   }
   if (!suppress.has("serialization")) {
