@@ -4,7 +4,7 @@
  * Full microservice pattern with all common production resources.
  */
 
-import { values, include, printf, toYaml, If } from "../intrinsics";
+import { values, include, printf, toYaml, If, With } from "../intrinsics";
 
 export interface HelmMicroserviceProps {
   /** Chart and release name. */
@@ -29,6 +29,20 @@ export interface HelmMicroserviceProps {
   configMap?: boolean;
   /** Chart appVersion. */
   appVersion?: string;
+  /** Pod-level security context defaults. */
+  podSecurityContext?: Record<string, unknown>;
+  /** Container-level security context defaults. */
+  securityContext?: Record<string, unknown>;
+  /** Node selector defaults. */
+  nodeSelector?: Record<string, string>;
+  /** Tolerations defaults. */
+  tolerations?: Array<Record<string, unknown>>;
+  /** Affinity defaults. */
+  affinity?: Record<string, unknown>;
+  /** Pod annotations defaults. */
+  podAnnotations?: Record<string, string>;
+  /** Deployment strategy defaults. */
+  strategy?: Record<string, unknown>;
 }
 
 export interface HelmMicroserviceResult {
@@ -99,6 +113,14 @@ export function HelmMicroservice(props: HelmMicroserviceProps): HelmMicroservice
     },
   };
 
+  if (props.podSecurityContext) valuesObj.podSecurityContext = props.podSecurityContext;
+  if (props.securityContext) valuesObj.securityContext = props.securityContext;
+  if (props.nodeSelector) valuesObj.nodeSelector = props.nodeSelector;
+  if (props.tolerations) valuesObj.tolerations = props.tolerations;
+  if (props.affinity) valuesObj.affinity = props.affinity;
+  if (props.podAnnotations) valuesObj.podAnnotations = props.podAnnotations;
+  if (props.strategy) valuesObj.strategy = props.strategy;
+
   if (configMap) {
     valuesObj.config = {};
   }
@@ -130,6 +152,46 @@ export function HelmMicroservice(props: HelmMicroserviceProps): HelmMicroservice
     };
   }
 
+  const containerSpec: Record<string, unknown> = {
+    name,
+    image: printf("%s:%s", values.image.repository, values.image.tag),
+    imagePullPolicy: values.image.pullPolicy,
+    ports: [{ containerPort: values.service.port, name: "http" }],
+    resources: toYaml(values.resources),
+    livenessProbe: toYaml(values.livenessProbe),
+    readinessProbe: toYaml(values.readinessProbe),
+  };
+
+  if (props.securityContext) containerSpec.securityContext = toYaml(values.securityContext);
+
+  const podSpec: Record<string, unknown> = {
+    serviceAccountName: include(`${name}.serviceAccountName`),
+    containers: [containerSpec],
+  };
+
+  if (props.podSecurityContext) podSpec.securityContext = toYaml(values.podSecurityContext);
+  if (props.nodeSelector) podSpec.nodeSelector = With(values.nodeSelector, toYaml(values.nodeSelector));
+  if (props.tolerations) podSpec.tolerations = With(values.tolerations, toYaml(values.tolerations));
+  if (props.affinity) podSpec.affinity = With(values.affinity, toYaml(values.affinity));
+
+  const templateMetadata: Record<string, unknown> = {
+    labels: include(`${name}.selectorLabels`),
+  };
+  if (props.podAnnotations) templateMetadata.annotations = toYaml(values.podAnnotations);
+
+  const deploymentSpec: Record<string, unknown> = {
+    replicas: values.replicaCount,
+    selector: {
+      matchLabels: include(`${name}.selectorLabels`),
+    },
+    template: {
+      metadata: templateMetadata,
+      spec: podSpec,
+    },
+  };
+
+  if (props.strategy) deploymentSpec.strategy = toYaml(values.strategy);
+
   const deployment = {
     apiVersion: "apps/v1",
     kind: "Deployment",
@@ -137,29 +199,7 @@ export function HelmMicroservice(props: HelmMicroserviceProps): HelmMicroservice
       name: include(`${name}.fullname`),
       labels: include(`${name}.labels`),
     },
-    spec: {
-      replicas: values.replicaCount,
-      selector: {
-        matchLabels: include(`${name}.selectorLabels`),
-      },
-      template: {
-        metadata: {
-          labels: include(`${name}.selectorLabels`),
-        },
-        spec: {
-          serviceAccountName: include(`${name}.serviceAccountName`),
-          containers: [{
-            name,
-            image: printf("%s:%s", values.image.repository, values.image.tag),
-            imagePullPolicy: values.image.pullPolicy,
-            ports: [{ containerPort: values.service.port, name: "http" }],
-            resources: toYaml(values.resources),
-            livenessProbe: toYaml(values.livenessProbe),
-            readinessProbe: toYaml(values.readinessProbe),
-          }],
-        },
-      },
-    },
+    spec: deploymentSpec,
   };
 
   const service = {

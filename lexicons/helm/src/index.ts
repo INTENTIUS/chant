@@ -60,6 +60,10 @@ export {
   HelmDaemonSet,
   HelmWorker,
   HelmExternalSecret,
+  HelmBatchJob,
+  HelmMonitoredService,
+  HelmSecureIngress,
+  HelmNamespaceEnv,
 } from "./composites";
 export type {
   HelmWebAppProps,
@@ -80,6 +84,14 @@ export type {
   HelmWorkerResult,
   HelmExternalSecretProps,
   HelmExternalSecretResult,
+  HelmBatchJobProps,
+  HelmBatchJobResult,
+  HelmMonitoredServiceProps,
+  HelmMonitoredServiceResult,
+  HelmSecureIngressProps,
+  HelmSecureIngressResult,
+  HelmNamespaceEnvProps,
+  HelmNamespaceEnvResult,
 } from "./composites";
 
 // Import pipeline

@@ -4,7 +4,7 @@
  * Produces a full set of Helm chart entities with parameterized values references.
  */
 
-import { values, include, printf, toYaml, If } from "../intrinsics";
+import { values, include, printf, toYaml, If, With } from "../intrinsics";
 
 export interface HelmWebAppProps {
   /** Chart and release name. */
@@ -27,6 +27,24 @@ export interface HelmWebAppProps {
   serviceAccount?: boolean;
   /** Chart appVersion. */
   appVersion?: string;
+  /** Pod-level security context defaults. */
+  podSecurityContext?: Record<string, unknown>;
+  /** Container-level security context defaults. */
+  securityContext?: Record<string, unknown>;
+  /** Node selector defaults. */
+  nodeSelector?: Record<string, string>;
+  /** Tolerations defaults. */
+  tolerations?: Array<Record<string, unknown>>;
+  /** Affinity defaults. */
+  affinity?: Record<string, unknown>;
+  /** Pod annotations defaults. */
+  podAnnotations?: Record<string, string>;
+  /** Liveness probe defaults. */
+  livenessProbe?: Record<string, unknown>;
+  /** Readiness probe defaults. */
+  readinessProbe?: Record<string, unknown>;
+  /** Deployment strategy defaults. */
+  strategy?: Record<string, unknown>;
 }
 
 export interface HelmWebAppResult {
@@ -76,6 +94,16 @@ export function HelmWebApp(props: HelmWebAppProps): HelmWebAppResult {
     resources: {},
   };
 
+  if (props.podSecurityContext) valuesObj.podSecurityContext = props.podSecurityContext;
+  if (props.securityContext) valuesObj.securityContext = props.securityContext;
+  if (props.nodeSelector) valuesObj.nodeSelector = props.nodeSelector;
+  if (props.tolerations) valuesObj.tolerations = props.tolerations;
+  if (props.affinity) valuesObj.affinity = props.affinity;
+  if (props.podAnnotations) valuesObj.podAnnotations = props.podAnnotations;
+  if (props.livenessProbe) valuesObj.livenessProbe = props.livenessProbe;
+  if (props.readinessProbe) valuesObj.readinessProbe = props.readinessProbe;
+  if (props.strategy) valuesObj.strategy = props.strategy;
+
   if (serviceAccount) {
     valuesObj.serviceAccount = {
       create: true,
@@ -103,6 +131,45 @@ export function HelmWebApp(props: HelmWebAppProps): HelmWebAppResult {
     };
   }
 
+  const containerSpec: Record<string, unknown> = {
+    name,
+    image: printf("%s:%s", values.image.repository, values.image.tag),
+    imagePullPolicy: values.image.pullPolicy,
+    ports: [{ containerPort: values.service.port, name: "http" }],
+    resources: toYaml(values.resources),
+  };
+
+  if (props.securityContext) containerSpec.securityContext = toYaml(values.securityContext);
+  if (props.livenessProbe) containerSpec.livenessProbe = toYaml(values.livenessProbe);
+  if (props.readinessProbe) containerSpec.readinessProbe = toYaml(values.readinessProbe);
+
+  const podSpec: Record<string, unknown> = {
+    containers: [containerSpec],
+  };
+
+  if (props.podSecurityContext) podSpec.securityContext = toYaml(values.podSecurityContext);
+  if (props.nodeSelector) podSpec.nodeSelector = With(values.nodeSelector, toYaml(values.nodeSelector));
+  if (props.tolerations) podSpec.tolerations = With(values.tolerations, toYaml(values.tolerations));
+  if (props.affinity) podSpec.affinity = With(values.affinity, toYaml(values.affinity));
+
+  const templateMetadata: Record<string, unknown> = {
+    labels: include(`${name}.selectorLabels`),
+  };
+  if (props.podAnnotations) templateMetadata.annotations = toYaml(values.podAnnotations);
+
+  const deploymentSpec: Record<string, unknown> = {
+    replicas: values.replicaCount,
+    selector: {
+      matchLabels: include(`${name}.selectorLabels`),
+    },
+    template: {
+      metadata: templateMetadata,
+      spec: podSpec,
+    },
+  };
+
+  if (props.strategy) deploymentSpec.strategy = toYaml(values.strategy);
+
   const deployment = {
     apiVersion: "apps/v1",
     kind: "Deployment",
@@ -110,26 +177,7 @@ export function HelmWebApp(props: HelmWebAppProps): HelmWebAppResult {
       name: include(`${name}.fullname`),
       labels: include(`${name}.labels`),
     },
-    spec: {
-      replicas: values.replicaCount,
-      selector: {
-        matchLabels: include(`${name}.selectorLabels`),
-      },
-      template: {
-        metadata: {
-          labels: include(`${name}.selectorLabels`),
-        },
-        spec: {
-          containers: [{
-            name,
-            image: printf("%s:%s", values.image.repository, values.image.tag),
-            imagePullPolicy: values.image.pullPolicy,
-            ports: [{ containerPort: values.service.port, name: "http" }],
-            resources: toYaml(values.resources),
-          }],
-        },
-      },
-    },
+    spec: deploymentSpec,
   };
 
   const service = {

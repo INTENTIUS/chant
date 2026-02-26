@@ -24,3 +24,15 @@ export type { HelmWorkerProps, HelmWorkerResult } from "./helm-worker";
 
 export { HelmExternalSecret } from "./helm-external-secret";
 export type { HelmExternalSecretProps, HelmExternalSecretResult } from "./helm-external-secret";
+
+export { HelmBatchJob } from "./helm-batch-job";
+export type { HelmBatchJobProps, HelmBatchJobResult } from "./helm-batch-job";
+
+export { HelmMonitoredService } from "./helm-monitored-service";
+export type { HelmMonitoredServiceProps, HelmMonitoredServiceResult } from "./helm-monitored-service";
+
+export { HelmSecureIngress } from "./helm-secure-ingress";
+export type { HelmSecureIngressProps, HelmSecureIngressResult } from "./helm-secure-ingress";
+
+export { HelmNamespaceEnv } from "./helm-namespace-env";
+export type { HelmNamespaceEnvProps, HelmNamespaceEnvResult } from "./helm-namespace-env";

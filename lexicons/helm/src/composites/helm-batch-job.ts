@@ -1,24 +1,33 @@
 /**
- * HelmCronJob composite — CronJob chart.
+ * HelmBatchJob composite — Job + optional ServiceAccount + RBAC.
  *
- * Produces a Helm chart for scheduled batch workloads.
+ * One-shot batch job pattern with optional RBAC for jobs that need
+ * Kubernetes API access (e.g., data migrations, cluster operations).
  */
 
-import { values, include, printf, toYaml, With } from "../intrinsics";
+import { values, include, printf, toYaml, If, With } from "../intrinsics";
 
-export interface HelmCronJobProps {
+export interface HelmBatchJobProps {
   /** Chart and release name. */
   name: string;
   /** Default container image repository. */
   imageRepository?: string;
   /** Default container image tag. */
   imageTag?: string;
-  /** Default cron schedule. */
-  schedule?: string;
+  /** Backoff limit for retries. */
+  backoffLimit?: number;
+  /** Number of completions required. */
+  completions?: number;
+  /** Parallelism level. */
+  parallelism?: number;
   /** Default restart policy. */
   restartPolicy?: string;
-  /** Chart appVersion. */
-  appVersion?: string;
+  /** TTL seconds after job finishes. */
+  ttlSecondsAfterFinished?: number;
+  /** Include ServiceAccount. Default: true. */
+  serviceAccount?: boolean;
+  /** Include RBAC (Role + RoleBinding). Default: false. */
+  rbac?: boolean;
   /** Pod-level security context defaults. */
   podSecurityContext?: Record<string, unknown>;
   /** Container-level security context defaults. */
@@ -27,38 +36,31 @@ export interface HelmCronJobProps {
   nodeSelector?: Record<string, string>;
   /** Tolerations defaults. */
   tolerations?: Array<Record<string, unknown>>;
-  /** Affinity defaults. */
-  affinity?: Record<string, unknown>;
-  /** Pod annotations defaults. */
-  podAnnotations?: Record<string, string>;
-  /** Concurrency policy. */
-  concurrencyPolicy?: string;
-  /** Number of successful job completions to retain. */
-  successfulJobsHistoryLimit?: number;
-  /** Number of failed job completions to retain. */
-  failedJobsHistoryLimit?: number;
-  /** Backoff limit for job retries. */
-  backoffLimit?: number;
-  /** Include ServiceAccount. Default: false. */
-  serviceAccount?: boolean;
+  /** Chart appVersion. */
+  appVersion?: string;
 }
 
-export interface HelmCronJobResult {
+export interface HelmBatchJobResult {
   chart: Record<string, unknown>;
   values: Record<string, unknown>;
-  cronJob: Record<string, unknown>;
+  job: Record<string, unknown>;
   serviceAccount?: Record<string, unknown>;
+  role?: Record<string, unknown>;
+  roleBinding?: Record<string, unknown>;
 }
 
-export function HelmCronJob(props: HelmCronJobProps): HelmCronJobResult {
+export function HelmBatchJob(props: HelmBatchJobProps): HelmBatchJobResult {
   const {
     name,
     imageRepository = "busybox",
     imageTag = "latest",
-    schedule = "0 * * * *",
+    backoffLimit = 6,
+    completions = 1,
+    parallelism = 1,
     restartPolicy = "OnFailure",
+    serviceAccount = true,
+    rbac = false,
     appVersion = "1.0.0",
-    serviceAccount = false,
   } = props;
 
   const chart = {
@@ -67,7 +69,7 @@ export function HelmCronJob(props: HelmCronJobProps): HelmCronJobResult {
     version: "0.1.0",
     appVersion,
     type: "application",
-    description: `A Helm chart for ${name} (cron job)`,
+    description: `A Helm chart for ${name} batch job`,
   };
 
   const valuesObj: Record<string, unknown> = {
@@ -76,29 +78,38 @@ export function HelmCronJob(props: HelmCronJobProps): HelmCronJobResult {
       tag: imageTag,
       pullPolicy: "IfNotPresent",
     },
-    schedule,
+    job: {
+      backoffLimit,
+      completions,
+      parallelism,
+    },
     restartPolicy,
     command: [],
     args: [],
     resources: {},
   };
 
+  if (props.ttlSecondsAfterFinished !== undefined) {
+    (valuesObj.job as Record<string, unknown>).ttlSecondsAfterFinished = props.ttlSecondsAfterFinished;
+  }
+
   if (props.podSecurityContext) valuesObj.podSecurityContext = props.podSecurityContext;
   if (props.securityContext) valuesObj.securityContext = props.securityContext;
   if (props.nodeSelector) valuesObj.nodeSelector = props.nodeSelector;
   if (props.tolerations) valuesObj.tolerations = props.tolerations;
-  if (props.affinity) valuesObj.affinity = props.affinity;
-  if (props.podAnnotations) valuesObj.podAnnotations = props.podAnnotations;
-  if (props.concurrencyPolicy) valuesObj.concurrencyPolicy = props.concurrencyPolicy;
-  if (props.successfulJobsHistoryLimit !== undefined) valuesObj.successfulJobsHistoryLimit = props.successfulJobsHistoryLimit;
-  if (props.failedJobsHistoryLimit !== undefined) valuesObj.failedJobsHistoryLimit = props.failedJobsHistoryLimit;
-  if (props.backoffLimit !== undefined) valuesObj.backoffLimit = props.backoffLimit;
 
   if (serviceAccount) {
     valuesObj.serviceAccount = {
       create: true,
       name: "",
       annotations: {},
+    };
+  }
+
+  if (rbac) {
+    valuesObj.rbac = {
+      create: true,
+      rules: [],
     };
   }
 
@@ -121,45 +132,35 @@ export function HelmCronJob(props: HelmCronJobProps): HelmCronJobResult {
   if (props.podSecurityContext) podSpec.securityContext = toYaml(values.podSecurityContext);
   if (props.nodeSelector) podSpec.nodeSelector = With(values.nodeSelector, toYaml(values.nodeSelector));
   if (props.tolerations) podSpec.tolerations = With(values.tolerations, toYaml(values.tolerations));
-  if (props.affinity) podSpec.affinity = With(values.affinity, toYaml(values.affinity));
   if (serviceAccount) podSpec.serviceAccountName = include(`${name}.serviceAccountName`);
 
-  const templateMetadata: Record<string, unknown> = {
-    labels: include(`${name}.selectorLabels`),
-  };
-  if (props.podAnnotations) templateMetadata.annotations = toYaml(values.podAnnotations);
-
   const jobSpec: Record<string, unknown> = {
+    backoffLimit: values.job.backoffLimit,
+    completions: values.job.completions,
+    parallelism: values.job.parallelism,
     template: {
-      metadata: templateMetadata,
+      metadata: {
+        labels: include(`${name}.selectorLabels`),
+      },
       spec: podSpec,
     },
   };
 
-  if (props.backoffLimit !== undefined) jobSpec.backoffLimit = values.backoffLimit;
+  if (props.ttlSecondsAfterFinished !== undefined) {
+    jobSpec.ttlSecondsAfterFinished = values.job.ttlSecondsAfterFinished;
+  }
 
-  const cronJobSpec: Record<string, unknown> = {
-    schedule: values.schedule,
-    jobTemplate: {
-      spec: jobSpec,
-    },
-  };
-
-  if (props.concurrencyPolicy) cronJobSpec.concurrencyPolicy = values.concurrencyPolicy;
-  if (props.successfulJobsHistoryLimit !== undefined) cronJobSpec.successfulJobsHistoryLimit = values.successfulJobsHistoryLimit;
-  if (props.failedJobsHistoryLimit !== undefined) cronJobSpec.failedJobsHistoryLimit = values.failedJobsHistoryLimit;
-
-  const cronJob = {
+  const job = {
     apiVersion: "batch/v1",
-    kind: "CronJob",
+    kind: "Job",
     metadata: {
       name: include(`${name}.fullname`),
       labels: include(`${name}.labels`),
     },
-    spec: cronJobSpec,
+    spec: jobSpec,
   };
 
-  const result: HelmCronJobResult = { chart, values: valuesObj, cronJob };
+  const result: HelmBatchJobResult = { chart, values: valuesObj, job };
 
   if (serviceAccount) {
     result.serviceAccount = {
@@ -170,6 +171,37 @@ export function HelmCronJob(props: HelmCronJobProps): HelmCronJobResult {
         labels: include(`${name}.labels`),
         annotations: toYaml(values.serviceAccount.annotations),
       },
+    };
+  }
+
+  if (rbac) {
+    result.role = {
+      apiVersion: "rbac.authorization.k8s.io/v1",
+      kind: "Role",
+      metadata: {
+        name: include(`${name}.fullname`),
+        labels: include(`${name}.labels`),
+      },
+      rules: toYaml(values.rbac.rules),
+    };
+
+    result.roleBinding = {
+      apiVersion: "rbac.authorization.k8s.io/v1",
+      kind: "RoleBinding",
+      metadata: {
+        name: include(`${name}.fullname`),
+        labels: include(`${name}.labels`),
+      },
+      roleRef: {
+        apiGroup: "rbac.authorization.k8s.io",
+        kind: "Role",
+        name: include(`${name}.fullname`),
+      },
+      subjects: [{
+        kind: "ServiceAccount",
+        name: include(`${name}.serviceAccountName`),
+        namespace: values.namespace ?? undefined,
+      }],
     };
   }
 

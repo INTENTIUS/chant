@@ -5,7 +5,7 @@
  * infrastructure that needs to run on every node.
  */
 
-import { values, include, printf, toYaml, If } from "../intrinsics";
+import { values, include, printf, toYaml, If, With } from "../intrinsics";
 
 export interface HelmDaemonSetProps {
   /** Chart and release name. */
@@ -108,8 +108,8 @@ export function HelmDaemonSet(props: HelmDaemonSetProps): HelmDaemonSetResult {
     securityContext: {
       runAsNonRoot: true,
     },
-    nodeSelector: toYaml(values.nodeSelector),
-    tolerations: toYaml(values.tolerations),
+    nodeSelector: With(values.nodeSelector, toYaml(values.nodeSelector)),
+    tolerations: With(values.tolerations, toYaml(values.tolerations)),
   };
 
   if (serviceAccount) {

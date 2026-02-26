@@ -236,6 +236,10 @@ const job = new Job({
 | \`HelmDaemonSet\` | Node-level workload | DaemonSet, ServiceAccount? |
 | \`HelmWorker\` | Background processor | Deployment (no Service), ServiceAccount, HPA?, PDB? |
 | \`HelmExternalSecret\` | Secret management | ExternalSecret CR (external-secrets.io) |
+| \`HelmBatchJob\` | One-shot batch job | Job, ServiceAccount?, Role?, RoleBinding? |
+| \`HelmMonitoredService\` | Service with monitoring | Deployment, Service, ServiceAccount?, ServiceMonitor, PrometheusRule? |
+| \`HelmSecureIngress\` | TLS ingress + cert-manager | Ingress, Certificate? |
+| \`HelmNamespaceEnv\` | Namespace environment | Namespace, ResourceQuota?, LimitRange?, NetworkPolicy? |
 
 ## Example
 
