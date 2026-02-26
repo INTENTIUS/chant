@@ -43,10 +43,10 @@ export function walkValue(
     return visitor.attrRef(name, value.attribute);
   }
 
-  // Handle Intrinsics
+  // Handle Intrinsics — walk the toJSON() result to resolve any embedded AttrRef markers
   if (typeof value === "object" && value !== null && INTRINSIC_MARKER in value) {
     if ("toJSON" in value && typeof value.toJSON === "function") {
-      return value.toJSON();
+      return walkValue(value.toJSON(), entityNames, visitor);
     }
   }
 
@@ -65,6 +65,12 @@ export function walkValue(
   // Handle arrays
   if (Array.isArray(value)) {
     return value.map((item) => walkValue(item, entityNames, visitor));
+  }
+
+  // Handle serialized AttrRef envelopes (produced by AttrRef.toJSON() inside intrinsics)
+  if (typeof value === "object" && "__attrRef" in value) {
+    const ref = (value as { __attrRef: { entity: string; attribute: string } }).__attrRef;
+    return visitor.attrRef(ref.entity, ref.attribute);
   }
 
   // Handle objects

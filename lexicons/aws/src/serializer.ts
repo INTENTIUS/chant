@@ -282,8 +282,13 @@ function serializeToTemplate(
       const ref = stackOutput.sourceRef;
       const logicalName = ref.getLogicalName();
       if (logicalName) {
+        // Use Ref for primary identifier ("Id") since not all resources
+        // support Fn::GetAtt for their primary identifier (e.g. ACM Certificate).
+        // Ref always returns the primary identifier for any CF resource.
         const output: CFOutput = {
-          Value: { "Fn::GetAtt": [logicalName, ref.attribute] },
+          Value: ref.attribute === "Id"
+            ? { Ref: logicalName }
+            : { "Fn::GetAtt": [logicalName, ref.attribute] },
         };
         if (stackOutput.description) {
           output.Description = stackOutput.description;
