@@ -64,15 +64,40 @@ const app = AutoscaledService({
   },
 });
 
+// Patch the deployment to add serviceAccountName and writable /tmp for nginx
+// (readOnlyRootFilesystem requires emptyDir mounts for nginx temp dirs)
+const deploySpec = app.deployment.spec as Record<string, unknown>;
+const podTemplate = deploySpec.template as Record<string, unknown>;
+const podSpec = podTemplate.spec as Record<string, unknown>;
+const containers = podSpec.containers as Record<string, unknown>[];
+const existingVolumes = (podSpec.volumes as unknown[]) ?? [];
+const tmpVolumes = [
+  { name: "tmp", emptyDir: {} },
+  { name: "nginx-cache", emptyDir: {} },
+];
+const tmpMounts = [
+  { name: "tmp", mountPath: "/tmp" },
+  { name: "nginx-cache", mountPath: "/var/cache/nginx" },
+];
+const container = containers[0];
+const existingMounts = (container.volumeMounts as unknown[]) ?? [];
+const patchedContainer = {
+  ...container,
+  volumeMounts: [...existingMounts, ...tmpMounts],
+};
+const patchedContainers = [patchedContainer];
+
 export const appDeployment = new Deployment({
   ...app.deployment,
   spec: {
-    ...(app.deployment.spec as Record<string, unknown>),
+    ...deploySpec,
     template: {
-      ...((app.deployment.spec as Record<string, unknown>).template as Record<string, unknown>),
+      ...podTemplate,
       spec: {
-        ...(((app.deployment.spec as Record<string, unknown>).template as Record<string, unknown>).spec as Record<string, unknown>),
+        ...podSpec,
         serviceAccountName: "microservice-app-sa",
+        volumes: [...existingVolumes, ...tmpVolumes],
+        containers: patchedContainers,
       },
     },
   },
