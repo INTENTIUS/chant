@@ -17,6 +17,7 @@
     "@intentius/chant-lexicon-aws": "workspace:*",
     "@intentius/chant-lexicon-flyway": "workspace:*",
     "@intentius/chant-lexicon-gitlab": "workspace:*",
+    "@intentius/chant-lexicon-helm": "workspace:*",
     "@intentius/chant-lexicon-k8s": "workspace:*"
   },
   "devDependencies": {

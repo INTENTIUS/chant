@@ -7,6 +7,7 @@
         "@intentius/chant-lexicon-aws": "workspace:*",
         "@intentius/chant-lexicon-flyway": "workspace:*",
         "@intentius/chant-lexicon-gitlab": "workspace:*",
+        "@intentius/chant-lexicon-helm": "workspace:*",
         "@intentius/chant-lexicon-k8s": "workspace:*",
       },
       "devDependencies": {
@@ -63,9 +64,18 @@
         "@intentius/chant-lexicon-gitlab": "workspace:*",
       },
     },
+    "examples/k8s-eks-microservice": {
+      "name": "k8s-eks-microservice-example",
+      "version": "0.0.1",
+      "dependencies": {
+        "@intentius/chant": "workspace:*",
+        "@intentius/chant-lexicon-aws": "workspace:*",
+        "@intentius/chant-lexicon-k8s": "workspace:*",
+      },
+    },
     "lexicons/aws": {
       "name": "@intentius/chant-lexicon-aws",
-      "version": "0.0.12",
+      "version": "0.0.13",
       "dependencies": {
         "@intentius/chant": "workspace:*",
         "fflate": "^0.8.2",
@@ -258,7 +268,7 @@
     },
     "lexicons/flyway": {
       "name": "@intentius/chant-lexicon-flyway",
-      "version": "0.0.12",
+      "version": "0.0.13",
       "dependencies": {
         "@intentius/chant": "workspace:*",
       },
@@ -364,7 +374,7 @@
     },
     "lexicons/gitlab": {
       "name": "@intentius/chant-lexicon-gitlab",
-      "version": "0.0.12",
+      "version": "0.0.13",
       "dependencies": {
         "@intentius/chant": "workspace:*",
       },
@@ -420,9 +430,20 @@
         "@intentius/chant-lexicon-gitlab": "workspace:*",
       },
     },
+    "lexicons/helm": {
+      "name": "@intentius/chant-lexicon-helm",
+      "version": "0.0.1",
+      "dependencies": {
+        "@intentius/chant": "workspace:*",
+        "@intentius/chant-lexicon-k8s": "workspace:*",
+      },
+      "devDependencies": {
+        "typescript": "^5.9.3",
+      },
+    },
     "lexicons/k8s": {
       "name": "@intentius/chant-lexicon-k8s",
-      "version": "0.0.12",
+      "version": "0.0.13",
       "dependencies": {
         "@intentius/chant": "workspace:*",
       },
@@ -456,7 +477,7 @@
     },
     "packages/core": {
       "name": "@intentius/chant",
-      "version": "0.0.12",
+      "version": "0.0.13",
       "bin": {
         "chant": "./bin/chant",
       },
@@ -502,6 +523,8 @@
     "@intentius/chant-lexicon-flyway": ["@intentius/chant-lexicon-flyway@workspace:lexicons/flyway"],
 
     "@intentius/chant-lexicon-gitlab": ["@intentius/chant-lexicon-gitlab@workspace:lexicons/gitlab"],
+
+    "@intentius/chant-lexicon-helm": ["@intentius/chant-lexicon-helm@workspace:lexicons/helm"],
 
     "@intentius/chant-lexicon-k8s": ["@intentius/chant-lexicon-k8s@workspace:lexicons/k8s"],
 
@@ -680,6 +703,8 @@
     "k8s-basic-deployment": ["k8s-basic-deployment@workspace:lexicons/k8s/examples/basic-deployment"],
 
     "k8s-configmap-secret": ["k8s-configmap-secret@workspace:lexicons/k8s/examples/configmap-secret"],
+
+    "k8s-eks-microservice-example": ["k8s-eks-microservice-example@workspace:examples/k8s-eks-microservice"],
 
     "k8s-statefulset": ["k8s-statefulset@workspace:lexicons/k8s/examples/statefulset"],
 

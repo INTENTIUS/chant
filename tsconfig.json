@@ -22,6 +22,10 @@
       "@intentius/chant-lexicon-aws/*": ["lexicons/aws/src/*"],
       "@intentius/chant-lexicon-gitlab": ["lexicons/gitlab/src/index.ts"],
       "@intentius/chant-lexicon-gitlab/*": ["lexicons/gitlab/src/*"],
+      "@intentius/chant-lexicon-helm": ["lexicons/helm/src/index.ts"],
+      "@intentius/chant-lexicon-helm/*": ["lexicons/helm/src/*"],
+      "@intentius/chant-lexicon-k8s": ["lexicons/k8s/src/index.ts"],
+      "@intentius/chant-lexicon-k8s/*": ["lexicons/k8s/src/*"],
       "@intentius/chant-test-utils": ["packages/test-utils/src/index.ts"],
       "@intentius/chant-test-utils/*": ["packages/test-utils/src/*"]
     }
