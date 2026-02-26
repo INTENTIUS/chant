@@ -10,11 +10,13 @@ This example is designed to be deployed with an AI agent (e.g. Claude Code) usin
 
 ### Prerequisites
 
-- **Bun** runtime
+**Local verification** (build, lint, test) requires only **Bun** — no AWS account needed.
+
+**AWS deployment** additionally requires:
 - **AWS CLI** >= 2.x configured with EKS permissions
 - **kubectl** installed
 - **jq** installed (for `just load-outputs`)
-- **Registered domain** (any registrar) — after the first deploy, you'll update NS records at your registrar
+- **Registered domain** (any registrar) — after the first deploy, you'll update NS records at your registrar. The default `api.example.com` works for building and testing but won't resolve in a real deployment.
 
 ### Local verification (no AWS required)
 
@@ -28,11 +30,10 @@ This runs `just build` (generates `templates/infra.json` + `k8s.yaml`), `just li
 
 ### Deploy to AWS
 
-Ask your agent to deploy using the `chant-eks` skill:
+Ask your agent to deploy, passing your domain:
 
 ```
-Deploy the k8s-eks-microservice example to AWS using the chant-eks skill.
-My domain is myapp.example.com.
+Deploy the k8s-eks-microservice example to AWS. My domain is myapp.example.com.
 ```
 
 Your agent will use the `chant-eks` skill to walk through:
