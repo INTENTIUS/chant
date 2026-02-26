@@ -48,9 +48,13 @@ load-outputs:
     AWS_REGION=us-east-1
     EOF
     echo "Wrote .env with stack output ARNs and parameters"
+    hosted_zone_id=$(get_output hostedZoneIdOutput)
     echo ""
-    echo "Route53 nameservers: $(get_output nameServersOutput)"
-    echo "Update your domain registrar NS records to the nameservers above."
+    if [ -n "$hosted_zone_id" ]; then
+      ns=$(aws route53 get-hosted-zone --id "$hosted_zone_id" --query 'DelegationSet.NameServers' --output text 2>/dev/null | tr '\t' ', ')
+      echo "Route53 nameservers: $ns"
+      echo "Update your domain registrar NS records to the nameservers above."
+    fi
     if [ -z "$cert_arn" ]; then
       echo ""
       echo "No ACM certificate yet. After NS delegation, run: just deploy-cert"

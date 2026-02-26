@@ -7,6 +7,7 @@
 import {
   HostedZone,
   HostedZone_HostedZoneConfig,
+  Join,
   Ref,
   stackOutput,
 } from "@intentius/chant-lexicon-aws";
@@ -21,9 +22,4 @@ export const hostedZone = new HostedZone({
 
 export const hostedZoneIdOutput = stackOutput(hostedZone.Id, {
   description: "Route53 hosted zone ID",
-});
-
-export const nameServersOutput = stackOutput(hostedZone.NameServers as any, {
-  description:
-    "Route53 nameservers — point your domain registrar NS records here",
 });

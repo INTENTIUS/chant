@@ -187,9 +187,8 @@ describe("k8s-eks-microservice example", () => {
     expect(outputNames).toContain("adotRoleArn");
     // DNS
     expect(outputNames).toContain("hostedZoneIdOutput");
-    expect(outputNames).toContain("nameServersOutput");
 
-    expect(outputNames).toHaveLength(14);
+    expect(outputNames).toHaveLength(13);
   });
 
   // ── CloudFormation: EKS add-ons ────────────────────────────────
