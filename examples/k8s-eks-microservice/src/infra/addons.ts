@@ -1,7 +1,7 @@
 // AWS infrastructure: EKS add-ons for VPC CNI and EBS CSI driver.
 
 import { Addon } from "@intentius/chant-lexicon-aws";
-import { cluster, albControllerRole, nodegroup } from "./cluster";
+import { cluster, nodegroup } from "./cluster";
 
 // VPC CNI — pod networking
 export const vpcCni = new Addon(
@@ -43,13 +43,9 @@ export const kubeProxy = new Addon(
   { DependsOn: [cluster, nodegroup] },
 );
 
-// ALB controller — manages ALB Ingress resources
-export const albController = new Addon(
-  {
-    AddonName: "aws-load-balancer-controller",
-    ClusterName: "eks-microservice",
-    ServiceAccountRoleArn: albControllerRole.Arn,
-    ResolveConflicts: "OVERWRITE",
-  },
-  { DependsOn: [cluster, nodegroup] },
-);
+// Note: ALB controller is not available as an EKS managed addon.
+// Install it via Helm or include it in K8s manifests:
+//   helm install aws-load-balancer-controller eks/aws-load-balancer-controller \
+//     --set clusterName=eks-microservice \
+//     --set serviceAccount.annotations."eks\.amazonaws\.com/role-arn"=$ALB_CONTROLLER_ROLE_ARN \
+//     -n kube-system

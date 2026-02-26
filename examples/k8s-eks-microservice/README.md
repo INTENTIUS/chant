@@ -185,7 +185,7 @@ Patterns to add next:
 
 ## Resource counts
 
-- **35 CloudFormation resources**: 17 VPC + 1 cluster + 1 nodegroup + 1 OIDC + 7 IAM roles + 5 addons + 1 KMS key + 1 Route53 hosted zone + 1 ACM certificate
+- **34 CloudFormation resources**: 17 VPC + 1 cluster + 1 nodegroup + 1 OIDC + 7 IAM roles + 4 addons + 1 KMS key + 1 Route53 hosted zone + 1 ACM certificate
 - **36 Kubernetes resources**: across 5 source files (namespace, app, ingress, storage, observability)
 
 ## Cross-lexicon value flow

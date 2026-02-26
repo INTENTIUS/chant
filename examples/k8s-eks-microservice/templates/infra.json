@@ -188,24 +188,6 @@
       },
       "Type": "AWS::IAM::Role"
     },
-    "albController": {
-      "DependsOn": [
-        "cluster",
-        "nodegroup"
-      ],
-      "Properties": {
-        "AddonName": "aws-load-balancer-controller",
-        "ClusterName": "eks-microservice",
-        "ResolveConflicts": "OVERWRITE",
-        "ServiceAccountRoleArn": {
-          "Fn::GetAtt": [
-            "albControllerRole",
-            "Arn"
-          ]
-        }
-      },
-      "Type": "AWS::EKS::Addon"
-    },
     "albControllerRole": {
       "Properties": {
         "AssumeRolePolicyDocument": {
