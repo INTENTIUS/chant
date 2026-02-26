@@ -75,6 +75,25 @@ function helmVisitor(): SerializerVisitor {
 // ── YAML emission with Helm template support ──────────────
 
 /**
+ * Emit an else chain, detecting nested `__helm_if` markers to produce
+ * `{{- else if <cond> }}` instead of `{{- else }}\n{{- if <cond> }}`.
+ */
+function emitElseChain(elseBody: unknown, indent: number): string {
+  if (typeof elseBody === "object" && elseBody !== null && HELM_IF_KEY in (elseBody as Record<string, unknown>)) {
+    const nested = elseBody as Record<string, unknown>;
+    const nestedCond = nested[HELM_IF_KEY] as string;
+    const nestedBody = nested.body;
+    const nestedElse = nested.else;
+    let result = `\n{{- else if ${nestedCond} }}\n${emitHelmYAML(nestedBody, indent)}`;
+    if (nestedElse !== undefined) {
+      result += emitElseChain(nestedElse, indent);
+    }
+    return result;
+  }
+  return `\n{{- else }}\n${emitHelmYAML(elseBody, indent)}`;
+}
+
+/**
  * Emit a YAML value, detecting __helm_tpl markers and emitting them
  * as raw Go template expressions.
  */
@@ -150,7 +169,7 @@ function emitHelmYAML(value: unknown, indent: number): string {
       const elseBody = obj.else;
       let result = `{{- if ${condition} }}\n${emitHelmYAML(body, indent)}`;
       if (elseBody !== undefined) {
-        result += `\n{{- else }}\n${emitHelmYAML(elseBody, indent)}`;
+        result += emitElseChain(elseBody, indent);
       }
       result += "\n{{- end }}";
       return result;
@@ -553,6 +572,12 @@ export const helmSerializer: Serializer = {
       } else if (entityType === "Helm::Maintainer") {
         const props = (entity as Record<string, unknown>).props as Record<string, unknown>;
         if (props) maintainers.push(props);
+      } else if (entityType === "Helm::CRD") {
+        const props = (entity as Record<string, unknown>).props as Record<string, unknown>;
+        if (props?.content) {
+          const filename = (props.filename as string) ?? `${toFileName(_name)}.yaml`;
+          files[`crds/${filename}`] = props.content as string;
+        }
       }
     }
 

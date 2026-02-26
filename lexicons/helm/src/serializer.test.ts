@@ -3,8 +3,8 @@ import { createResource, createProperty } from "@intentius/chant/runtime";
 import type { Declarable } from "@intentius/chant/declarable";
 import type { SerializerResult } from "@intentius/chant/serializer";
 import { helmSerializer } from "./serializer";
-import { Chart, Values, HelmNotes, HelmTest, HelmHook, HelmDependency, HelmMaintainer } from "./resources";
-import { values, include, printf, toYaml, quote, helmDefault, required, If, Range, With, Release, ChartRef } from "./intrinsics";
+import { Chart, Values, HelmNotes, HelmTest, HelmHook, HelmDependency, HelmMaintainer, HelmCRD } from "./resources";
+import { values, include, printf, toYaml, quote, helmDefault, required, If, ElseIf, Range, With, Release, ChartRef, Capabilities } from "./intrinsics";
 
 function makeEntities(...pairs: [string, Record<string, unknown>][]): Map<string, Declarable> {
   const entities = new Map<string, Declarable>();
@@ -699,6 +699,96 @@ describe("HelmDependency extended fields", () => {
     expect(chartYaml).toContain("- data");
     // Verify the key is "import-values" not "importValues"
     expect(chartYaml).not.toContain("importValues:");
+  });
+});
+
+describe("ElseIf serialization", () => {
+  test("emits else-if chain correctly", () => {
+    const chart = new Chart({ name: "test", version: "0.1.0" });
+    const cm = new ConfigMap({
+      metadata: { name: "config" },
+      data: {
+        tier: If(values.tier, "gold", ElseIf(values.backup, "silver", "bronze")),
+      },
+    });
+
+    const entities = makeEntities(["chart", chart], ["config", cm]);
+    const result = helmSerializer.serialize(entities) as SerializerResult;
+    const template = result.files!["templates/config.yaml"];
+
+    expect(template).toContain("{{- if .Values.tier }}");
+    expect(template).toContain("{{- else if .Values.backup }}");
+    expect(template).toContain("{{- else }}");
+    expect(template).toContain("{{- end }}");
+    expect(template).toContain("gold");
+    expect(template).toContain("silver");
+    expect(template).toContain("bronze");
+  });
+
+  test("emits simple else-if without final else", () => {
+    const chart = new Chart({ name: "test", version: "0.1.0" });
+    const cm = new ConfigMap({
+      metadata: { name: "config" },
+      data: {
+        tier: If(values.a, "one", ElseIf(values.b, "two")),
+      },
+    });
+
+    const entities = makeEntities(["chart", chart], ["config", cm]);
+    const result = helmSerializer.serialize(entities) as SerializerResult;
+    const template = result.files!["templates/config.yaml"];
+
+    expect(template).toContain("{{- if .Values.a }}");
+    expect(template).toContain("{{- else if .Values.b }}");
+    expect(template).not.toContain("{{- else }}\n");
+    expect(template).toContain("{{- end }}");
+  });
+});
+
+describe("HelmCRD serialization", () => {
+  test("emits CRD content to crds/ directory", () => {
+    const chart = new Chart({ name: "test", version: "0.1.0" });
+    const crd = new HelmCRD({
+      content: "apiVersion: apiextensions.k8s.io/v1\nkind: CustomResourceDefinition\nmetadata:\n  name: foos.example.com\n",
+      filename: "foos.yaml",
+    });
+
+    const entities = makeEntities(["chart", chart], ["fooCrd", crd]);
+    const result = helmSerializer.serialize(entities) as SerializerResult;
+
+    expect(result.files!["crds/foos.yaml"]).toBe(
+      "apiVersion: apiextensions.k8s.io/v1\nkind: CustomResourceDefinition\nmetadata:\n  name: foos.example.com\n",
+    );
+  });
+
+  test("defaults filename from entity name", () => {
+    const chart = new Chart({ name: "test", version: "0.1.0" });
+    const crd = new HelmCRD({
+      content: "apiVersion: apiextensions.k8s.io/v1\nkind: CustomResourceDefinition\n",
+    });
+
+    const entities = makeEntities(["chart", chart], ["myCustomResource", crd]);
+    const result = helmSerializer.serialize(entities) as SerializerResult;
+
+    expect(result.files!["crds/my-custom-resource.yaml"]).toBeDefined();
+  });
+});
+
+describe("Capabilities in template", () => {
+  test("emits Capabilities.KubeVersion.Version in K8s resource", () => {
+    const chart = new Chart({ name: "test", version: "0.1.0" });
+    const cm = new ConfigMap({
+      metadata: { name: "meta" },
+      data: {
+        kubeVersion: Capabilities.KubeVersion.Version,
+      },
+    });
+
+    const entities = makeEntities(["chart", chart], ["meta", cm]);
+    const result = helmSerializer.serialize(entities) as SerializerResult;
+    const template = result.files!["templates/meta.yaml"];
+
+    expect(template).toContain("{{ .Capabilities.KubeVersion.Version }}");
   });
 });
 

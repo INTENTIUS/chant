@@ -154,8 +154,98 @@ export const Release = createBuiltinObject(".Release", [
  * `ChartRef.Name` → `{{ .Chart.Name }}`
  */
 export const ChartRef = createBuiltinObject(".Chart", [
-  "Name", "Version", "AppVersion",
+  "Name", "Home", "Sources", "Version", "Description", "Keywords",
+  "Maintainers", "Icon", "APIVersion", "Condition", "Tags",
+  "AppVersion", "Deprecated", "Annotations", "KubeVersion", "Type",
 ]);
+
+// ── Nested builtin proxy ─────────────────────────────────
+
+/**
+ * Create a Proxy-based accessor for built-in objects with arbitrarily nested
+ * property access. Each level returns a new proxy that extends the path.
+ *
+ * `createNestedBuiltinProxy(".Capabilities").KubeVersion.Version`
+ * → HelmTpl("{{ .Capabilities.KubeVersion.Version }}")
+ */
+function createNestedBuiltinProxy(prefix: string): HelmTpl & Record<string, any> {
+  const tpl = new HelmTpl(`{{ ${prefix} }}`);
+  return new Proxy(tpl, {
+    get(target, prop, receiver) {
+      if (prop === INTRINSIC_MARKER) return true;
+      if (prop === "toJSON") return () => target.toJSON();
+      if (prop === "expr") return target.expr;
+      if (prop === "toString") return () => target.toString();
+      if (prop === Symbol.toPrimitive) return () => target.expr;
+      if (prop === "pipe") {
+        return (fn: string) => {
+          const inner = prefix;
+          const piped = new HelmTpl(`{{ ${inner} | ${fn} }}`);
+          return createPipedProxy(piped, `${inner} | ${fn}`);
+        };
+      }
+      if (typeof prop === "string") {
+        return createNestedBuiltinProxy(`${prefix}.${prop}`);
+      }
+      return Reflect.get(target, prop, receiver);
+    },
+  }) as HelmTpl & Record<string, any>;
+}
+
+/**
+ * Capabilities built-in object — supports arbitrarily nested property access.
+ *
+ * `Capabilities.KubeVersion.Version` → `{{ .Capabilities.KubeVersion.Version }}`
+ * `Capabilities.APIVersions` → `{{ .Capabilities.APIVersions }}`
+ * `Capabilities.HelmVersion.Version` → `{{ .Capabilities.HelmVersion.Version }}`
+ */
+export const Capabilities: Record<string, any> = createNestedBuiltinProxy(".Capabilities");
+
+/**
+ * Template built-in object.
+ *
+ * `Template.Name` → `{{ .Template.Name }}`
+ * `Template.BasePath` → `{{ .Template.BasePath }}`
+ */
+export const Template = createBuiltinObject(".Template", ["Name", "BasePath"]);
+
+// ── Files helpers ────────────────────────────────────────
+
+/**
+ * `.Files.Get` — Read a file from the chart directory.
+ *
+ * `filesGet("config.ini")` → `{{ .Files.Get "config.ini" }}`
+ */
+export function filesGet(path: string): HelmTpl {
+  return new HelmTpl(`{{ .Files.Get "${path}" }}`);
+}
+
+/**
+ * `.Files.Glob` — Match files by glob pattern.
+ *
+ * `filesGlob("conf/*")` → `{{ .Files.Glob "conf/*" }}`
+ */
+export function filesGlob(pattern: string): HelmTpl {
+  return new HelmTpl(`{{ .Files.Glob "${pattern}" }}`);
+}
+
+/**
+ * `.Files.Glob.AsConfig` — Render matched files as ConfigMap data.
+ *
+ * `filesAsConfig("conf/*")` → `{{ (.Files.Glob "conf/*").AsConfig }}`
+ */
+export function filesAsConfig(pattern: string): HelmTpl {
+  return new HelmTpl(`{{ (.Files.Glob "${pattern}").AsConfig }}`);
+}
+
+/**
+ * `.Files.Glob.AsSecrets` — Render matched files as Secret data.
+ *
+ * `filesAsSecrets("conf/*")` → `{{ (.Files.Glob "conf/*").AsSecrets }}`
+ */
+export function filesAsSecrets(pattern: string): HelmTpl {
+  return new HelmTpl(`{{ (.Files.Glob "${pattern}").AsSecrets }}`);
+}
 
 // ── Template functions ────────────────────────────────────
 
@@ -272,6 +362,39 @@ export function If(condition: HelmTpl | string, then: unknown, elseBody?: unknow
     condition: condExpr,
     body: then,
     elseBody,
+    toJSON() {
+      // Resolve nested ElseIf objects by calling their toJSON()
+      const resolvedElse = elseBody !== undefined && typeof elseBody === "object" && elseBody !== null && "toJSON" in elseBody
+        ? (elseBody as { toJSON(): unknown }).toJSON()
+        : elseBody;
+      return {
+        [HELM_IF_KEY]: condExpr,
+        body: then,
+        ...(resolvedElse !== undefined ? { else: resolvedElse } : {}),
+      };
+    },
+  };
+}
+
+/**
+ * `ElseIf` — Chained else-if condition for use inside an `If` else body.
+ *
+ * The serializer detects when an else body contains a `__helm_if` marker
+ * and emits `{{- else if <cond> }}` instead of a nested `{{- else }}\n{{- if }}`.
+ *
+ * ```ts
+ * If(values.tier, "gold",
+ *   ElseIf(values.backup, "silver", "bronze"))
+ * ```
+ * → `{{- if .Values.tier }}gold{{- else if .Values.backup }}silver{{- else }}bronze{{- end }}`
+ */
+export function ElseIf(
+  condition: HelmTpl | string,
+  then: unknown,
+  elseBody?: unknown,
+): { toJSON(): unknown } {
+  const condExpr = typeof condition === "string" ? condition : extractExpr(condition);
+  return {
     toJSON() {
       return {
         [HELM_IF_KEY]: condExpr,

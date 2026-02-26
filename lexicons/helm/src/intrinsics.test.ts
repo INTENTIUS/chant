@@ -9,6 +9,13 @@ import {
   values,
   Release,
   ChartRef,
+  Capabilities,
+  Template,
+  filesGet,
+  filesGlob,
+  filesAsConfig,
+  filesAsSecrets,
+  ElseIf,
   include,
   required,
   helmDefault,
@@ -90,6 +97,18 @@ describe("ChartRef built-in", () => {
 
   test("ChartRef.Version", () => {
     expect(ChartRef.Version.toJSON()).toEqual({ [HELM_TPL_KEY]: "{{ .Chart.Version }}" });
+  });
+
+  test("ChartRef.Description", () => {
+    expect(ChartRef.Description.toJSON()).toEqual({ [HELM_TPL_KEY]: "{{ .Chart.Description }}" });
+  });
+
+  test("ChartRef.Home", () => {
+    expect(ChartRef.Home.toJSON()).toEqual({ [HELM_TPL_KEY]: "{{ .Chart.Home }}" });
+  });
+
+  test("ChartRef.KubeVersion", () => {
+    expect(ChartRef.KubeVersion.toJSON()).toEqual({ [HELM_TPL_KEY]: "{{ .Chart.KubeVersion }}" });
   });
 });
 
@@ -218,6 +237,89 @@ describe("control flow", () => {
   test("With has INTRINSIC_MARKER", () => {
     const w = With(values.nodeSelector, {});
     expect(w[INTRINSIC_MARKER]).toBe(true);
+  });
+});
+
+describe("Capabilities built-in", () => {
+  test("Capabilities.KubeVersion.Version", () => {
+    expect(Capabilities.KubeVersion.Version.toJSON()).toEqual({
+      [HELM_TPL_KEY]: "{{ .Capabilities.KubeVersion.Version }}",
+    });
+  });
+
+  test("Capabilities.APIVersions", () => {
+    expect(Capabilities.APIVersions.toJSON()).toEqual({
+      [HELM_TPL_KEY]: "{{ .Capabilities.APIVersions }}",
+    });
+  });
+
+  test("Capabilities.HelmVersion.Version", () => {
+    expect(Capabilities.HelmVersion.Version.toJSON()).toEqual({
+      [HELM_TPL_KEY]: "{{ .Capabilities.HelmVersion.Version }}",
+    });
+  });
+
+  test("has INTRINSIC_MARKER", () => {
+    expect(Capabilities[INTRINSIC_MARKER]).toBe(true);
+  });
+});
+
+describe("Template built-in", () => {
+  test("Template.Name", () => {
+    expect(Template.Name.toJSON()).toEqual({ [HELM_TPL_KEY]: "{{ .Template.Name }}" });
+  });
+
+  test("Template.BasePath", () => {
+    expect(Template.BasePath.toJSON()).toEqual({ [HELM_TPL_KEY]: "{{ .Template.BasePath }}" });
+  });
+});
+
+describe("Files helpers", () => {
+  test("filesGet", () => {
+    expect(filesGet("config.ini").toJSON()).toEqual({
+      [HELM_TPL_KEY]: '{{ .Files.Get "config.ini" }}',
+    });
+  });
+
+  test("filesGlob", () => {
+    expect(filesGlob("conf/*").toJSON()).toEqual({
+      [HELM_TPL_KEY]: '{{ .Files.Glob "conf/*" }}',
+    });
+  });
+
+  test("filesAsConfig", () => {
+    expect(filesAsConfig("conf/*").toJSON()).toEqual({
+      [HELM_TPL_KEY]: '{{ (.Files.Glob "conf/*").AsConfig }}',
+    });
+  });
+
+  test("filesAsSecrets", () => {
+    expect(filesAsSecrets("secrets/*").toJSON()).toEqual({
+      [HELM_TPL_KEY]: '{{ (.Files.Glob "secrets/*").AsSecrets }}',
+    });
+  });
+});
+
+describe("ElseIf", () => {
+  test("produces __helm_if marker", () => {
+    const ei = ElseIf(values.backup, "silver");
+    const json = ei.toJSON() as Record<string, unknown>;
+    expect(json[HELM_IF_KEY]).toBe(".Values.backup");
+    expect(json.body).toBe("silver");
+  });
+
+  test("with else body", () => {
+    const ei = ElseIf(values.backup, "silver", "bronze");
+    const json = ei.toJSON() as Record<string, unknown>;
+    expect(json[HELM_IF_KEY]).toBe(".Values.backup");
+    expect(json.body).toBe("silver");
+    expect(json.else).toBe("bronze");
+  });
+
+  test("with string condition", () => {
+    const ei = ElseIf(".Values.x", "yes");
+    const json = ei.toJSON() as Record<string, unknown>;
+    expect(json[HELM_IF_KEY]).toBe(".Values.x");
   });
 });
 

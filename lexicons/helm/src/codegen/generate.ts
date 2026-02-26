@@ -102,6 +102,15 @@ const HELM_TYPES: HelmTypeEntry[] = [
       url: { type: "string", description: "Maintainer URL" },
     },
   },
+  {
+    resourceType: "Helm::CRD",
+    kind: "resource",
+    description: "Custom Resource Definition — placed in the crds/ directory.",
+    props: {
+      content: { type: "string", description: "CRD YAML content", required: true },
+      filename: { type: "string", description: "CRD filename (e.g. mycrd.yaml)" },
+    },
+  },
 ];
 
 // ── Generate artifacts ──────────────────────────────────

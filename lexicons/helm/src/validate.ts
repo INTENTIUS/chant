@@ -19,6 +19,7 @@ const REQUIRED_NAMES = [
   "HelmHook",
   "HelmDependency",
   "HelmMaintainer",
+  "HelmCRD",
 ];
 
 /**

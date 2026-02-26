@@ -5,7 +5,7 @@ export { helmSerializer } from "./serializer";
 export { helmPlugin } from "./plugin";
 
 // Resources
-export { Chart, Values, HelmTest, HelmNotes, HelmHook, HelmDependency, HelmMaintainer } from "./resources";
+export { Chart, Values, HelmTest, HelmNotes, HelmHook, HelmDependency, HelmMaintainer, HelmCRD } from "./resources";
 
 // Intrinsics
 export {
@@ -25,6 +25,13 @@ export {
   printf,
   tpl,
   lookup,
+  Capabilities,
+  Template,
+  filesGet,
+  filesGlob,
+  filesAsConfig,
+  filesAsSecrets,
+  ElseIf,
   If,
   Range,
   With,

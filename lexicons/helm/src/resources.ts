@@ -66,3 +66,12 @@ export const HelmDependency = createProperty("Helm::Dependency", LEXICON);
  * Props: { name, email?, url? }
  */
 export const HelmMaintainer = createProperty("Helm::Maintainer", LEXICON);
+
+// ── CRD ──────────────────────────────────────────────────
+
+/**
+ * Helm::CRD — Custom Resource Definition placed in the crds/ directory.
+ *
+ * Props: { content: string, filename?: string }
+ */
+export const HelmCRD = createResource("Helm::CRD", LEXICON, {});
