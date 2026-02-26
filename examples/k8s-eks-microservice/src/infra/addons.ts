@@ -1,6 +1,7 @@
 // AWS infrastructure: EKS add-ons for VPC CNI and EBS CSI driver.
 
 import { Addon, stackOutput } from "@intentius/chant-lexicon-aws";
+import { albControllerRole } from "./cluster";
 
 // VPC CNI — pod networking
 export const vpcCni = new Addon({
@@ -27,5 +28,13 @@ export const coreDns = new Addon({
 export const kubeProxy = new Addon({
   AddonName: "kube-proxy",
   ClusterName: "eks-microservice",
+  ResolveConflicts: "OVERWRITE",
+});
+
+// ALB controller — manages ALB Ingress resources
+export const albController = new Addon({
+  AddonName: "aws-load-balancer-controller",
+  ClusterName: "eks-microservice",
+  ServiceAccountRoleArn: albControllerRole.Arn,
   ResolveConflicts: "OVERWRITE",
 });

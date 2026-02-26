@@ -5,6 +5,10 @@ build:
     {{chant}} build src --lexicon aws -o templates/infra.json
     {{chant}} build src --lexicon k8s -o k8s.yaml
 
+# Build K8s manifests only (after .env is populated with real ARNs)
+build-k8s:
+    {{chant}} build src --lexicon k8s -o k8s.yaml
+
 # Lint all source files
 lint:
     {{chant}} lint src
@@ -41,17 +45,28 @@ validate:
 apply:
     kubectl apply -f k8s.yaml
 
+# Wait for app rollout
+wait:
+    kubectl -n microservice rollout status deployment/microservice-api --timeout=120s
+
 # Check deployment status
 status:
     kubectl get pods -n microservice
     kubectl get ingress -n microservice
     kubectl get daemonsets -n amazon-cloudwatch
+    kubectl get daemonsets -n amazon-metrics
+
+# View app pod logs
+logs:
+    kubectl logs -n microservice -l app.kubernetes.io/name=microservice-api --tail=50
 
 # Full workflow
-deploy: build deploy-infra configure-kubectl apply status
+deploy: build deploy-infra configure-kubectl load-outputs build-k8s apply wait status
 
 # Cleanup
 teardown:
     kubectl delete -f k8s.yaml || true
+    @echo "Waiting for ALB to drain..."
+    sleep 30
     aws cloudformation delete-stack --stack-name eks-microservice
     aws cloudformation wait stack-delete-complete --stack-name eks-microservice

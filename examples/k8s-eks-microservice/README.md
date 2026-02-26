@@ -11,8 +11,9 @@ This demonstrates chant's multi-lexicon capability: a single `src/` directory im
 | File | Description |
 |------|-------------|
 | `networking.ts` | VPC with public/private subnets, IGW, NAT gateway |
-| `cluster.ts` | EKS cluster, managed node group, OIDC provider, IAM roles (cluster, node, app IRSA, ALB controller, ExternalDNS, FluentBit) |
-| `addons.ts` | EKS add-ons: vpc-cni, aws-ebs-csi-driver, coredns, kube-proxy |
+| `cluster.ts` | EKS cluster, managed node group, OIDC provider, IAM roles (cluster, node, app IRSA, ALB controller, ExternalDNS, FluentBit, ADOT) |
+| `addons.ts` | EKS add-ons: vpc-cni, aws-ebs-csi-driver, coredns, kube-proxy, aws-load-balancer-controller |
+| `params.ts` | CloudFormation parameters: environment, domainName, certificateArn |
 
 ### K8s workloads (`src/k8s/`)
 
@@ -22,7 +23,13 @@ This demonstrates chant's multi-lexicon capability: a single `src/` directory im
 | `app.ts` | `AutoscaledService`, `IrsaServiceAccount` | App Deployment + Service + HPA + PDB + IRSA ServiceAccount + ConfigMap |
 | `ingress.ts` | `AlbIngress`, `ExternalDnsAgent` | ALB Ingress with TLS + ExternalDNS for Route53 |
 | `storage.ts` | `EbsStorageClass` | gp3 encrypted StorageClass |
-| `observability.ts` | `FluentBitAgent` | Fluent Bit DaemonSet for CloudWatch logging |
+| `observability.ts` | `FluentBitAgent`, `AdotCollector` | Fluent Bit DaemonSet for CloudWatch logging + ADOT DaemonSet for CloudWatch metrics |
+
+### Cross-lexicon config
+
+| File | Description |
+|------|-------------|
+| `config.ts` | Shared config — reads env vars from `.env` (populated by `just load-outputs`), falls back to placeholder defaults |
 
 ## Architecture
 
@@ -35,8 +42,13 @@ This demonstrates chant's multi-lexicon capability: a single `src/` directory im
 │  ┌──────────┐         │            │
 │  │ IAM Roles│ ←── OIDC Provider    │
 │  └────┬─────┘                      │
+│  ┌────┴─────────────────────┐      │
+│  │ Add-ons: vpc-cni, ebs,  │      │
+│  │ coredns, kube-proxy,    │      │
+│  │ ALB controller           │      │
+│  └──────────────────────────┘      │
 └───────┼─────────────────────────────┘
-        │ ARNs flow down
+        │ ARNs flow down via .env
 ┌───────▼─────────────────────────────┐
 │  K8s Lexicon (kubectl apply)        │
 │  ┌────────────┐  ┌──────────────┐  │
@@ -51,8 +63,17 @@ This demonstrates chant's multi-lexicon capability: a single `src/` directory im
 │  │ EBS Storage│  │ FluentBit    │  │
 │  │ Class      │  │ Agent        │  │
 │  └────────────┘  └──────────────┘  │
+│  ┌────────────┐                    │
+│  │ ADOT       │                    │
+│  │ Collector  │                    │
+│  └────────────┘                    │
 └─────────────────────────────────────┘
 ```
+
+## Resource counts
+
+- **32 CloudFormation resources**: 17 VPC + 1 cluster + 1 nodegroup + 1 OIDC + 7 IAM roles + 5 addons
+- **28 Kubernetes resources**: across 5 source files (namespace, app, ingress, storage, observability)
 
 ## Skills guide
 
@@ -78,14 +99,8 @@ The **`chant-k8s-eks`** skill (K8s lexicon) covers the EKS composites used in `s
 | `AlbIngress` in `ingress.ts` | ALB Controller annotations, SSL redirect, shared ALB groups |
 | `EbsStorageClass` in `storage.ts` | EBS CSI provisioner, gp3 vs gp2, encryption |
 | `FluentBitAgent` in `observability.ts` | DaemonSet config, CloudWatch output plugin |
+| `AdotCollector` in `observability.ts` | DaemonSet config, CloudWatch metrics pipeline |
 | `ExternalDnsAgent` in `ingress.ts` | Route53 integration, domain filters, IRSA |
-
-It also covers decision points not in this example:
-- **Pod Identity vs IRSA** — when to use each (this example uses IRSA)
-- **EFS vs EBS** — `EfsStorageClass` for ReadWriteMany workloads
-- **AdotCollector** — alternative to FluentBit for OpenTelemetry-based observability
-- **Fargate considerations** — what cannot run on Fargate (DaemonSets, hostPath)
-- **Karpenter** — node autoscaling via CRD import
 
 ### Core K8s composites: `chant-k8s`
 
@@ -94,9 +109,6 @@ The **`chant-k8s`** skill (K8s lexicon) is the comprehensive reference for all 2
 - **"Choosing the Right Composite" decision tree** — which composite to use for each workload type
 - Hardening options: `minAvailable` (PDB), `initContainers`, `securityContext`, `priorityClassName`
 - Build/lint/apply workflow and troubleshooting reference
-- Common error patterns and how to diagnose them
-
-Use this skill when choosing composites for new workloads or troubleshooting deployment issues.
 
 ### Advanced patterns: `chant-k8s-patterns`
 
@@ -106,8 +118,6 @@ The **`chant-k8s-patterns`** skill (K8s lexicon) covers patterns you might add t
 - **Config/Secret mounting** — use `ConfiguredApp` to wire ConfigMap volumes and Secret env vars
 - **TLS with cert-manager** — use `SecureIngress` instead of `AlbIngress` for non-AWS ingress controllers
 - **Prometheus monitoring** — add `MonitoredService` with ServiceMonitor and alert rules
-- **Network isolation** — per-app NetworkPolicy with `NetworkIsolatedApp`
-- **Blue/Green and Canary** — deployment strategies using standard composites
 
 ### Skill workflow for this example
 
@@ -116,7 +126,7 @@ The **`chant-k8s-patterns`** skill (K8s lexicon) covers patterns you might add t
    │                  → Scaffold project, provision infra, deploy workloads
    │
 2. chant-k8s-eks      "Which EKS composites do I need?"
-   │                  → IRSA, ALB, EBS, FluentBit, ExternalDNS
+   │                  → IRSA, ALB, EBS, FluentBit, ADOT, ExternalDNS
    │
 3. chant-k8s          "How do I choose between composites?"
    │                  → Decision tree, hardening options, troubleshooting
@@ -127,57 +137,66 @@ The **`chant-k8s-patterns`** skill (K8s lexicon) covers patterns you might add t
 
 ## Prerequisites
 
-- AWS CLI configured with EKS permissions
-- `kubectl` installed
-- Bun runtime
+- **AWS CLI** >= 2.x configured with EKS permissions
+- **kubectl** installed
+- **jq** installed (for `just load-outputs`)
+- **Bun** runtime
+- **ACM certificate** pre-created in the target region (for ALB TLS)
+- **Route53 hosted zone** for the domain (for ExternalDNS)
 
 ## Step 1: Deploy infrastructure
 
 ```bash
 # Build CloudFormation template
-chant build src --lexicon aws -o templates/infra.json
+just build
+# or: chant build src --lexicon aws -o templates/infra.json
 
-# Validate (optional)
-chant lint src
+# Lint (optional)
+just lint
 
-# Deploy
-aws cloudformation deploy \
-  --template-file templates/infra.json \
-  --stack-name eks-microservice \
-  --capabilities CAPABILITY_NAMED_IAM
-
-# Capture outputs for Step 3
-aws cloudformation describe-stacks \
-  --stack-name eks-microservice \
-  --query 'Stacks[0].Outputs' \
-  --output table
+# Deploy (creates 32 resources including ALB controller addon)
+just deploy-infra
 ```
 
-The stack exports 11 outputs: VPC ID, 4 subnet IDs, cluster endpoint/ARN, and 4 IAM role ARNs. The role ARNs are referenced in the K8s workload files (`app.ts`, `ingress.ts`, `observability.ts`).
+The stack exports 12 outputs: VPC ID, 4 subnet IDs, cluster endpoint/ARN, and 5 IAM role ARNs (app, ALB controller, ExternalDNS, FluentBit, ADOT). The ALB controller addon installs automatically — no Helm or CRDs to manage.
 
-## Step 2: Configure kubectl
+## Step 2: Configure kubectl and load outputs
 
 ```bash
-aws eks update-kubeconfig --name eks-microservice --region us-east-1
+# Update kubeconfig
+just configure-kubectl
 kubectl get nodes  # verify connectivity
+
+# Populate .env with real ARNs from stack outputs
+just load-outputs
 ```
+
+The `load-outputs` target queries CloudFormation stack outputs and writes them to `.env`. Bun auto-loads `.env` at runtime, so the next K8s build picks up real ARNs instead of placeholders.
 
 ## Step 3: Deploy workloads
 
 ```bash
-# Build K8s manifests (21 resources across 5 files)
-chant build src --lexicon k8s -o k8s.yaml
+# Rebuild K8s manifests with real ARNs (28 resources across 5 files)
+just build-k8s
 
-# Validate before applying
-kubectl apply -f k8s.yaml --dry-run=server
+# Validate before applying (optional)
+just validate
 
 # Apply
-kubectl apply -f k8s.yaml
+just apply
+
+# Wait for rollout
+just wait
 ```
+
+For K8s-only changes, use `just build-k8s` — no need to rebuild the CF template.
 
 ## Step 4: Verify
 
 ```bash
+# All-in-one status check
+just status
+
 # Application pods
 kubectl get pods -n microservice
 kubectl rollout status deployment/microservice-api -n microservice
@@ -186,46 +205,49 @@ kubectl rollout status deployment/microservice-api -n microservice
 kubectl get ingress -n microservice
 kubectl describe ingress microservice-alb -n microservice
 
-# Observability
+# Observability — logging
 kubectl get daemonsets -n amazon-cloudwatch
 kubectl logs -n amazon-cloudwatch -l app.kubernetes.io/name=fluent-bit --tail=20
 
+# Observability — metrics
+kubectl get daemonsets -n amazon-metrics
+
+# ALB controller
+kubectl get pods -n kube-system -l app.kubernetes.io/name=aws-load-balancer-controller
+
 # DNS
 kubectl get pods -n kube-system -l app.kubernetes.io/name=external-dns
-kubectl logs -n kube-system -l app.kubernetes.io/name=external-dns --tail=20
 
 # Storage
 kubectl get storageclass gp3-encrypted
+
+# App logs
+just logs
 ```
 
 ## Cross-lexicon value flow
 
-CloudFormation stack outputs map to K8s composite props:
+CloudFormation stack outputs map to K8s composite props via `.env`:
 
 | CF Output | K8s File | Composite Prop |
 |-----------|----------|----------------|
 | `appRoleArn` | `app.ts` | `IrsaServiceAccount({ iamRoleArn })` |
-| `albControllerRoleArn` | *(ALB controller install)* | `IrsaServiceAccount({ iamRoleArn })` |
+| `albControllerRoleArn` | *(EKS addon)* | Addon `ServiceAccountRoleArn` — managed by EKS, not K8s manifests |
 | `externalDnsRoleArn` | `ingress.ts` | `ExternalDnsAgent({ iamRoleArn })` |
 | `fluentBitRoleArn` | `observability.ts` | `FluentBitAgent({ iamRoleArn })` |
+| `adotRoleArn` | `observability.ts` | `AdotCollector({ iamRoleArn })` |
 | ACM cert ARN | `ingress.ts` | `AlbIngress({ certificateArn })` |
-| Cluster name | `observability.ts` | `FluentBitAgent({ clusterName })` |
+| Cluster name | `observability.ts` | `FluentBitAgent({ clusterName })`, `AdotCollector({ clusterName })` |
 
-In this example, the ARNs are hardcoded placeholders. In production, pass them via environment variables or a shared config file populated from `aws cloudformation describe-stacks`.
+ARNs flow through `.env` → `config.ts` → K8s source files. Run `just load-outputs` after any infra deploy to refresh.
 
 ## Cleanup
 
 ```bash
-# Delete K8s workloads first (releases ALB, DNS records)
-kubectl delete -f k8s.yaml
-
-# Wait for ALB to drain
-sleep 30
-
-# Delete AWS infrastructure
-aws cloudformation delete-stack --stack-name eks-microservice
-aws cloudformation wait stack-delete-complete --stack-name eks-microservice
+just teardown
 ```
+
+This deletes K8s resources first, waits 30s for the ALB to drain, then deletes the CloudFormation stack. **Delete order matters** — if you delete the CF stack first, the ALB controller addon is removed and can't clean up the ALB.
 
 ## Related examples
 

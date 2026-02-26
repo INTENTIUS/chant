@@ -57,8 +57,8 @@ describe("k8s-eks-microservice example", () => {
     const parsed = JSON.parse(result.outputs.get("aws")!);
     expect(parsed.AWSTemplateFormatVersion).toBe("2010-09-09");
 
-    // 17 VPC + 1 cluster + 1 nodegroup + 1 OIDC + 7 IAM roles + 4 addons = 31
-    expect(Object.keys(parsed.Resources)).toHaveLength(31);
+    // 17 VPC + 1 cluster + 1 nodegroup + 1 OIDC + 7 IAM roles + 5 addons = 32
+    expect(Object.keys(parsed.Resources)).toHaveLength(32);
 
     const types = Object.values(parsed.Resources).map((r: any) => r.Type);
     expect(types).toContain("AWS::EKS::Cluster");
@@ -68,7 +68,7 @@ describe("k8s-eks-microservice example", () => {
     expect(types).toContain("AWS::EC2::Subnet");
     expect(types).toContain("AWS::EC2::NatGateway");
     expect(types.filter((t: string) => t === "AWS::IAM::Role")).toHaveLength(7);
-    expect(types.filter((t: string) => t === "AWS::EKS::Addon")).toHaveLength(4);
+    expect(types.filter((t: string) => t === "AWS::EKS::Addon")).toHaveLength(5);
   });
 
   // ── CloudFormation: EKS cluster properties ─────────────────────
@@ -172,17 +172,22 @@ describe("k8s-eks-microservice example", () => {
 
   // ── CloudFormation: EKS add-ons ────────────────────────────────
 
-  test("all four EKS add-ons reference the cluster", async () => {
+  test("all five EKS add-ons reference the cluster", async () => {
     const result = await build(srcDir, [awsSerializer]);
     const parsed = JSON.parse(result.outputs.get("aws")!);
 
-    const addonNames = ["vpcCni", "ebsCsi", "coreDns", "kubeProxy"];
+    const addonNames = ["vpcCni", "ebsCsi", "coreDns", "kubeProxy", "albController"];
     for (const name of addonNames) {
       const addon = parsed.Resources[name];
       expect(addon.Type).toBe("AWS::EKS::Addon");
       expect(addon.Properties.ClusterName).toBe("eks-microservice");
       expect(addon.Properties.ResolveConflicts).toBe("OVERWRITE");
     }
+
+    // ALB controller addon has ServiceAccountRoleArn
+    const albAddon = parsed.Resources.albController;
+    expect(albAddon.Properties.AddonName).toBe("aws-load-balancer-controller");
+    expect(albAddon.Properties.ServiceAccountRoleArn).toBeDefined();
   });
 
   // ── K8s: resource inventory ────────────────────────────────────
@@ -241,7 +246,7 @@ describe("k8s-eks-microservice example", () => {
     expect(ingress!.doc).toContain("alb.ingress.kubernetes.io/target-type: ip");
     expect(ingress!.doc).toContain("alb.ingress.kubernetes.io/certificate-arn:");
     expect(ingress!.doc).toContain("alb.ingress.kubernetes.io/ssl-redirect: '443'");
-    expect(ingress!.doc).toContain("alb.ingress.kubernetes.io/healthcheck-path: /healthz");
+    expect(ingress!.doc).toContain("alb.ingress.kubernetes.io/healthcheck-path: /");
 
     // Ingress class
     expect(ingress!.doc).toContain("ingressClassName: alb");

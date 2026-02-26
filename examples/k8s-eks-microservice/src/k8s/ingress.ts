@@ -29,7 +29,7 @@ const alb = AlbIngress({
   targetType: "ip",
   certificateArn: config.albCertificateArn,
   sslRedirect: true,
-  healthCheckPath: "/healthz",
+  healthCheckPath: "/",
   namespace: NAMESPACE,
 });
 
