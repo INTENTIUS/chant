@@ -287,19 +287,6 @@
         "DomainName": {
           "Ref": "domainName"
         },
-        "DomainValidationOptions": [
-          {
-            "DomainName": {
-              "Ref": "domainName"
-            },
-            "HostedZoneId": {
-              "Fn::GetAtt": [
-                "hostedZone",
-                "Id"
-              ]
-            }
-          }
-        ],
         "ValidationMethod": "DNS"
       },
       "Type": "AWS::CertificateManager::Certificate"

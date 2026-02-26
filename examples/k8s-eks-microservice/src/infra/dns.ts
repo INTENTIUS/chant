@@ -7,7 +7,6 @@ import {
   HostedZone,
   HostedZone_HostedZoneConfig,
   AcmCertificate,
-  AcmCertificate_DomainValidationOption,
   Ref,
   stackOutput,
 } from "@intentius/chant-lexicon-aws";
@@ -20,15 +19,13 @@ export const hostedZone = new HostedZone({
   }),
 });
 
+// DNS validation — cert goes to PENDING_VALIDATION immediately.
+// Once NS records are delegated to Route53 (see nameServersOutput),
+// create the CNAME validation record in the hosted zone to complete
+// validation. The ALB can use the cert ARN before validation completes.
 export const certificate = new AcmCertificate({
   DomainName: Ref(domainName),
   ValidationMethod: "DNS",
-  DomainValidationOptions: [
-    new AcmCertificate_DomainValidationOption({
-      DomainName: Ref(domainName),
-      HostedZoneId: hostedZone.Id,
-    }),
-  ],
 });
 
 export const certificateArnOutput = stackOutput(certificate.Id, {
