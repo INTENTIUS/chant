@@ -28,6 +28,8 @@ export interface AdotCollectorProps {
   cpuLimit?: string;
   /** Memory limit (default: "512Mi"). */
   memoryLimit?: string;
+  /** IAM Role ARN for IRSA (adds eks.amazonaws.com/role-arn annotation to ServiceAccount). */
+  iamRoleArn?: string;
 }
 
 export interface AdotCollectorResult {
@@ -67,6 +69,7 @@ export function AdotCollector(props: AdotCollectorProps): AdotCollectorResult {
     memoryRequest = "256Mi",
     cpuLimit = "500m",
     memoryLimit = "512Mi",
+    iamRoleArn,
   } = props;
 
   const saName = `${name}-sa`;
@@ -177,6 +180,7 @@ service:
       name: saName,
       namespace,
       labels: { ...commonLabels, "app.kubernetes.io/component": "agent" },
+      ...(iamRoleArn ? { annotations: { "eks.amazonaws.com/role-arn": iamRoleArn } } : {}),
     },
   };
 

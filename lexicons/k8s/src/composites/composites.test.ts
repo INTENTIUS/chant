@@ -1798,6 +1798,18 @@ describe("FluentBitAgent", () => {
     const result = FluentBitAgent(minProps);
     expect((result.clusterRole.metadata as any).namespace).toBeUndefined();
   });
+
+  test("IRSA annotation when iamRoleArn set", () => {
+    const result = FluentBitAgent({ ...minProps, iamRoleArn: "arn:aws:iam::123456789012:role/fb-role" });
+    const meta = result.serviceAccount.metadata as any;
+    expect(meta.annotations["eks.amazonaws.com/role-arn"]).toBe("arn:aws:iam::123456789012:role/fb-role");
+  });
+
+  test("no annotation when iamRoleArn omitted", () => {
+    const result = FluentBitAgent(minProps);
+    const meta = result.serviceAccount.metadata as any;
+    expect(meta.annotations).toBeUndefined();
+  });
 });
 
 // ── ExternalDnsAgent ────────────────────────────────────────────────
@@ -1893,5 +1905,17 @@ describe("AdotCollector", () => {
     const result = AdotCollector({ ...minProps, exporters: ["prometheus"] });
     const data = (result.configMap as any).data;
     expect(data["config.yaml"]).toContain("prometheusremotewrite");
+  });
+
+  test("IRSA annotation when iamRoleArn set", () => {
+    const result = AdotCollector({ ...minProps, iamRoleArn: "arn:aws:iam::123456789012:role/adot-role" });
+    const meta = result.serviceAccount.metadata as any;
+    expect(meta.annotations["eks.amazonaws.com/role-arn"]).toBe("arn:aws:iam::123456789012:role/adot-role");
+  });
+
+  test("no annotation when iamRoleArn omitted", () => {
+    const result = AdotCollector(minProps);
+    const meta = result.serviceAccount.metadata as any;
+    expect(meta.annotations).toBeUndefined();
   });
 });

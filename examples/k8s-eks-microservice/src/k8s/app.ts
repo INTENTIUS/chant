@@ -1,8 +1,4 @@
 // K8s workloads: AutoscaledService + IrsaServiceAccount + ConfigMap.
-//
-// The app IRSA role ARN comes from the AWS infra stack output. In a real
-// deployment you'd pass it via environment variable or parameter; here
-// we use a placeholder that maps to the CloudFormation output.
 
 import {
   Deployment,
@@ -15,6 +11,7 @@ import {
   IrsaServiceAccount,
   ConfiguredApp,
 } from "@intentius/chant-lexicon-k8s";
+import { config } from "../config";
 
 const NAMESPACE = "microservice";
 
@@ -22,10 +19,7 @@ const NAMESPACE = "microservice";
 
 const irsa = IrsaServiceAccount({
   name: "microservice-app",
-  // In production, this ARN comes from the AWS stack output:
-  //   aws cloudformation describe-stacks --stack-name eks-microservice \
-  //     --query 'Stacks[0].Outputs[?OutputKey==`appRoleArn`].OutputValue'
-  iamRoleArn: "arn:aws:iam::123456789012:role/eks-microservice-app-role",
+  iamRoleArn: config.appRoleArn,
   namespace: NAMESPACE,
 });
 

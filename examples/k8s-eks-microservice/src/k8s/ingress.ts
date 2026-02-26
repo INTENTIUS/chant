@@ -1,7 +1,4 @@
 // K8s workloads: ALB Ingress + ExternalDNS agent.
-//
-// ALB Ingress uses AWS Load Balancer Controller annotations.
-// ExternalDNS manages Route53 records from Ingress hostnames.
 
 import {
   Ingress,
@@ -12,6 +9,7 @@ import {
   AlbIngress,
   ExternalDnsAgent,
 } from "@intentius/chant-lexicon-k8s";
+import { config } from "../config";
 
 const NAMESPACE = "microservice";
 
@@ -21,7 +19,7 @@ const alb = AlbIngress({
   name: "microservice-alb",
   hosts: [
     {
-      hostname: "api.example.com",
+      hostname: config.domain,
       paths: [
         { path: "/", pathType: "Prefix", serviceName: "microservice-api", servicePort: 8080 },
       ],
@@ -29,7 +27,7 @@ const alb = AlbIngress({
   ],
   scheme: "internet-facing",
   targetType: "ip",
-  certificateArn: "arn:aws:acm:us-east-1:123456789012:certificate/abc-123-def",
+  certificateArn: config.albCertificateArn,
   sslRedirect: true,
   healthCheckPath: "/healthz",
   namespace: NAMESPACE,
@@ -40,9 +38,9 @@ export const albIngress = new Ingress(alb.ingress);
 // ── ExternalDNS ────────────────────────────────────────────────────
 
 const dns = ExternalDnsAgent({
-  iamRoleArn: "arn:aws:iam::123456789012:role/eks-microservice-external-dns-role",
-  domainFilters: ["example.com"],
-  txtOwnerId: "eks-microservice",
+  iamRoleArn: config.externalDnsRoleArn,
+  domainFilters: [config.domain.split(".").slice(-2).join(".")],
+  txtOwnerId: config.clusterName,
 });
 
 export const dnsDeployment = new Deployment(dns.deployment);

@@ -28,6 +28,8 @@ export interface FluentBitAgentProps {
   cpuLimit?: string;
   /** Memory limit (default: "128Mi"). */
   memoryLimit?: string;
+  /** IAM Role ARN for IRSA (adds eks.amazonaws.com/role-arn annotation to ServiceAccount). */
+  iamRoleArn?: string;
 }
 
 export interface FluentBitAgentResult {
@@ -67,6 +69,7 @@ export function FluentBitAgent(props: FluentBitAgentProps): FluentBitAgentResult
     memoryRequest = "64Mi",
     cpuLimit = "200m",
     memoryLimit = "128Mi",
+    iamRoleArn,
   } = props;
 
   const saName = `${name}-sa`;
@@ -158,6 +161,7 @@ export function FluentBitAgent(props: FluentBitAgentProps): FluentBitAgentResult
       name: saName,
       namespace,
       labels: { ...commonLabels, "app.kubernetes.io/component": "agent" },
+      ...(iamRoleArn ? { annotations: { "eks.amazonaws.com/role-arn": iamRoleArn } } : {}),
     },
   };
 
