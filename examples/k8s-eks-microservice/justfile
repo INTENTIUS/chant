@@ -42,6 +42,8 @@ load-outputs:
     ADOT_ROLE_ARN=$(get_output adotRoleArn)
     ALB_CERT_ARN=$(get_param certificateArn)
     DOMAIN=$(get_param domainName)
+    EKS_CLUSTER_NAME=eks-microservice
+    AWS_REGION=us-east-1
     EOF
     echo "Wrote .env with stack output ARNs and parameters"
 

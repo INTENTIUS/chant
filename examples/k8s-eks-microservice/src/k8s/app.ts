@@ -21,7 +21,7 @@ const NAMESPACE = "microservice";
 // ── IRSA ServiceAccount ────────────────────────────────────────────
 
 const irsa = IrsaServiceAccount({
-  name: "microservice-app",
+  name: "microservice-app-sa",
   iamRoleArn: config.appRoleArn,
   namespace: NAMESPACE,
 });

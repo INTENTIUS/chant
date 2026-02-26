@@ -244,7 +244,7 @@ describe("k8s-eks-microservice example", () => {
     const docs = parseK8sDocs(result.outputs.get("k8s")!);
 
     const appSa = docs.find(
-      (d) => d.kind === "ServiceAccount" && d.name === "microservice-app",
+      (d) => d.kind === "ServiceAccount" && d.name === "microservice-app-sa",
     );
     expect(appSa).toBeDefined();
     expect(appSa!.doc).toContain("eks.amazonaws.com/role-arn");
@@ -299,7 +299,7 @@ describe("k8s-eks-microservice example", () => {
     // These should all be in the microservice namespace
     const namespacedNames = [
       "microservice-api",
-      "microservice-app",
+      "microservice-app-sa",
       "microservice-alb",
       "microservice-config",
       "microservice-quota",
