@@ -133,7 +133,7 @@
   },
   "Parameters": {
     "domainName": {
-      "Default": "api.eks-microservice.internal",
+      "Default": "api.eks-microservice-demo.dev",
       "Description": "Application domain name for ALB Ingress and ExternalDNS",
       "Type": "String"
     },

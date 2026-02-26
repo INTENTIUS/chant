@@ -7,7 +7,7 @@ export const environment = new Parameter("String", {
 
 export const domainName = new Parameter("String", {
   description: "Application domain name for ALB Ingress and ExternalDNS",
-  defaultValue: "api.eks-microservice.internal",
+  defaultValue: "api.eks-microservice-demo.dev",
 });
 
 export const publicAccessCidr = new Parameter("String", {

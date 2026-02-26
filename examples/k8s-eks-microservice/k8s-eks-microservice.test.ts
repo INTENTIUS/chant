@@ -277,7 +277,7 @@ describe("k8s-eks-microservice example", () => {
     expect(ingress!.doc).toContain("ingressClassName: alb");
 
     // Host rule
-    expect(ingress!.doc).toContain("host: api.eks-microservice.internal");
+    expect(ingress!.doc).toContain("host: api.eks-microservice-demo.dev");
     expect(ingress!.doc).toContain("name: microservice-api");
   });
 
@@ -397,7 +397,7 @@ describe("k8s-eks-microservice example", () => {
       (d) => d.kind === "Deployment" && d.name === "external-dns",
     );
     expect(deploy).toBeDefined();
-    expect(deploy!.doc).toContain("--domain-filter=eks-microservice.internal");
+    expect(deploy!.doc).toContain("--domain-filter=eks-microservice-demo.dev");
     expect(deploy!.doc).toContain("--provider=aws");
     expect(deploy!.doc).toContain("--txt-owner-id=eks-microservice");
 
@@ -571,7 +571,7 @@ describe("k8s-eks-microservice example", () => {
     expect(paramNames).not.toContain("certificateArn");
 
     expect(parsed.Parameters.environment.Default).toBe("dev");
-    expect(parsed.Parameters.domainName.Default).toBe("api.eks-microservice.internal");
+    expect(parsed.Parameters.domainName.Default).toBe("api.eks-microservice-demo.dev");
     expect(parsed.Parameters.publicAccessCidr.Default).toBe("0.0.0.0/0");
   });
 });

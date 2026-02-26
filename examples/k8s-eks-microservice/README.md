@@ -16,7 +16,7 @@ This example is designed to be deployed with an AI agent (e.g. Claude Code) usin
 - **AWS CLI** >= 2.x configured with EKS permissions
 - **kubectl** installed
 - **jq** installed (for `just load-outputs`)
-- **Registered domain** (any registrar) — after the first deploy, you'll update NS records at your registrar. The default `api.eks-microservice.internal` works for building, testing, and deploying infrastructure (ACM cert stays in PENDING_VALIDATION, DNS won't resolve).
+- **Registered domain** (any registrar) — after the first deploy, you'll update NS records at your registrar. The default `api.eks-microservice-demo.dev` works for building, testing, and deploying infrastructure (ACM cert stays in PENDING_VALIDATION, DNS won't resolve).
 
 ### Local verification (no AWS required)
 

@@ -861,7 +861,7 @@ metadata:
 spec:
   ingressClassName: alb
   rules:
-    - host: api.eks-microservice.internal
+    - host: api.eks-microservice-demo.dev
       http:
         paths:
           - path: /
@@ -958,7 +958,7 @@ spec:
             - --provider=aws
             - --policy=upsert-only
             - --registry=txt
-            - --domain-filter=eks-microservice.internal
+            - --domain-filter=eks-microservice-demo.dev
             - --txt-owner-id=eks-microservice
           resources:
             requests:
