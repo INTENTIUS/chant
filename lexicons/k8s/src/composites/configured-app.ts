@@ -6,6 +6,8 @@
  * Volume.fromSecret(), and container.mount() patterns.
  */
 
+import type { ContainerSecurityContext } from "./security-context";
+
 export interface ConfiguredAppProps {
   /** Application name — used in metadata and labels. */
   name: string;
@@ -49,6 +51,8 @@ export interface ConfiguredAppProps {
   namespace?: string;
   /** Environment variables for the container. */
   env?: Array<{ name: string; value: string }>;
+  /** Container security context (supports PSS restricted fields). */
+  securityContext?: ContainerSecurityContext;
 }
 
 export interface ConfiguredAppResult {
@@ -96,6 +100,7 @@ export function ConfiguredApp(props: ConfiguredAppProps): ConfiguredAppResult {
     memoryRequest = "128Mi",
     namespace,
     env,
+    securityContext,
   } = props;
 
   const configMapName = `${name}-config`;
@@ -154,6 +159,7 @@ export function ConfiguredApp(props: ConfiguredAppProps): ConfiguredAppResult {
     ...(env && { env }),
     ...(envFromList.length > 0 && { envFrom: envFromList }),
     ...(volumeMounts.length > 0 && { volumeMounts }),
+    ...(securityContext && { securityContext }),
   };
 
   const podSpec: Record<string, unknown> = {

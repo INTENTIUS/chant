@@ -6,6 +6,8 @@
  * PDB selectors match pod labels, and resource requests are set.
  */
 
+import type { ContainerSecurityContext } from "./security-context";
+
 export interface AutoscaledServiceProps {
   /** Application name — used in metadata and labels. */
   name: string;
@@ -47,13 +49,8 @@ export interface AutoscaledServiceProps {
     command?: string[];
     args?: string[];
   }>;
-  /** Pod security context. */
-  securityContext?: {
-    runAsNonRoot?: boolean;
-    readOnlyRootFilesystem?: boolean;
-    runAsUser?: number;
-    runAsGroup?: number;
-  };
+  /** Container security context (supports PSS restricted fields). */
+  securityContext?: ContainerSecurityContext;
   /** Termination grace period in seconds. */
   terminationGracePeriodSeconds?: number;
   /** Priority class name for pod scheduling. */

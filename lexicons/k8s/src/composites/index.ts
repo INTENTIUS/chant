@@ -1,3 +1,4 @@
+export type { ContainerSecurityContext } from "./security-context";
 export { WebApp } from "./web-app";
 export type { WebAppProps, WebAppResult } from "./web-app";
 export { StatefulApp } from "./stateful-app";

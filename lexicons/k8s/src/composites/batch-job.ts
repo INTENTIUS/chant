@@ -5,6 +5,8 @@
  * seed tasks, backups). For scheduled workloads, use CronWorkload instead.
  */
 
+import type { ContainerSecurityContext } from "./security-context";
+
 export interface BatchJobProps {
   /** Job name — used in metadata and labels. */
   name: string;
@@ -44,6 +46,8 @@ export interface BatchJobProps {
   memoryLimit?: string;
   /** Environment variables for the container. */
   env?: Array<{ name: string; value: string }>;
+  /** Container security context (supports PSS restricted fields). */
+  securityContext?: ContainerSecurityContext;
 }
 
 export interface BatchJobResult {
@@ -89,6 +93,7 @@ export function BatchJob(props: BatchJobProps): BatchJobResult {
     cpuLimit = "500m",
     memoryLimit = "256Mi",
     env,
+    securityContext,
   } = props;
 
   const saName = `${name}-sa`;
@@ -117,6 +122,7 @@ export function BatchJob(props: BatchJobProps): BatchJobResult {
       requests: { cpu: cpuRequest, memory: memoryRequest },
     },
     ...(env && { env }),
+    ...(securityContext && { securityContext }),
   };
 
   const jobProps: Record<string, unknown> = {

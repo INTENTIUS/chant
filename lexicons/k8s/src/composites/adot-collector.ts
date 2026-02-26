@@ -151,6 +151,11 @@ service:
     volumeMounts: [
       { name: "config", mountPath: "/etc/adot", readOnly: true },
     ],
+    securityContext: {
+      runAsNonRoot: true,
+      readOnlyRootFilesystem: true,
+      allowPrivilegeEscalation: false,
+    },
   };
 
   const daemonSetProps: Record<string, unknown> = {

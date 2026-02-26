@@ -5,6 +5,8 @@
  * with common defaults (health probes, resource limits, labels).
  */
 
+import type { ContainerSecurityContext } from "./security-context";
+
 export interface WebAppProps {
   /** Application name — used in metadata and labels. */
   name: string;
@@ -34,13 +36,8 @@ export interface WebAppProps {
     command?: string[];
     args?: string[];
   }>;
-  /** Pod security context — safe defaults when enabled. */
-  securityContext?: {
-    runAsNonRoot?: boolean;
-    readOnlyRootFilesystem?: boolean;
-    runAsUser?: number;
-    runAsGroup?: number;
-  };
+  /** Container security context (supports PSS restricted fields). */
+  securityContext?: ContainerSecurityContext;
   /** Termination grace period in seconds. */
   terminationGracePeriodSeconds?: number;
   /** Priority class name for pod scheduling. */

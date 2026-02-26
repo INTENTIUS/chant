@@ -6,6 +6,8 @@
  * as raw objects that can be serialized alongside native K8s resources.
  */
 
+import type { ContainerSecurityContext } from "./security-context";
+
 export interface AlertRule {
   /** Alert name. */
   name: string;
@@ -50,6 +52,8 @@ export interface MonitoredServiceProps {
   namespace?: string;
   /** Environment variables for the container. */
   env?: Array<{ name: string; value: string }>;
+  /** Container security context (supports PSS restricted fields). */
+  securityContext?: ContainerSecurityContext;
 }
 
 export interface MonitoredServiceResult {
@@ -95,6 +99,7 @@ export function MonitoredService(props: MonitoredServiceProps): MonitoredService
     memoryRequest = "128Mi",
     namespace,
     env,
+    securityContext,
   } = props;
 
   const commonLabels: Record<string, string> = {
@@ -132,6 +137,7 @@ export function MonitoredService(props: MonitoredServiceProps): MonitoredService
                 requests: { cpu: cpuRequest, memory: memoryRequest },
               },
               ...(env && { env }),
+              ...(securityContext && { securityContext }),
             },
           ],
         },

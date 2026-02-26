@@ -5,6 +5,8 @@
  * security scanners) that need cluster-wide RBAC and tolerations.
  */
 
+import type { ContainerSecurityContext } from "./security-context";
+
 export interface NodeAgentProps {
   /** Agent name — used in metadata and labels. */
   name: string;
@@ -43,6 +45,8 @@ export interface NodeAgentProps {
   memoryLimit?: string;
   /** Environment variables for the container. */
   env?: Array<{ name: string; value: string }>;
+  /** Container security context (supports PSS restricted fields). */
+  securityContext?: ContainerSecurityContext;
 }
 
 export interface NodeAgentResult {
@@ -87,6 +91,7 @@ export function NodeAgent(props: NodeAgentProps): NodeAgentResult {
     memoryLimit = "128Mi",
     labels: extraLabels = {},
     env,
+    securityContext,
   } = props;
 
   const saName = `${name}-sa`;
@@ -139,6 +144,7 @@ export function NodeAgent(props: NodeAgentProps): NodeAgentResult {
     },
     ...(env && { env }),
     ...(volumeMounts.length > 0 && { volumeMounts }),
+    ...(securityContext && { securityContext }),
   };
 
   const podSpec: Record<string, unknown> = {

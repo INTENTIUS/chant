@@ -5,6 +5,8 @@
  * Creates fine-grained ingress/egress policies for a single application.
  */
 
+import type { ContainerSecurityContext } from "./security-context";
+
 export interface NetworkPolicyPeer {
   /** Pod selector for the peer. */
   podSelector?: Record<string, string>;
@@ -44,6 +46,8 @@ export interface NetworkIsolatedAppProps {
   namespace?: string;
   /** Environment variables for the container. */
   env?: Array<{ name: string; value: string }>;
+  /** Container security context (supports PSS restricted fields). */
+  securityContext?: ContainerSecurityContext;
 }
 
 export interface NetworkIsolatedAppResult {
@@ -88,6 +92,7 @@ export function NetworkIsolatedApp(props: NetworkIsolatedAppProps): NetworkIsola
     memoryRequest = "128Mi",
     namespace,
     env,
+    securityContext,
   } = props;
 
   const commonLabels: Record<string, string> = {
@@ -118,6 +123,7 @@ export function NetworkIsolatedApp(props: NetworkIsolatedAppProps): NetworkIsola
                 requests: { cpu: cpuRequest, memory: memoryRequest },
               },
               ...(env && { env }),
+              ...(securityContext && { securityContext }),
             },
           ],
         },

@@ -110,6 +110,11 @@ export function ExternalDnsAgent(props: ExternalDnsAgentProps): ExternalDnsAgent
                 requests: { cpu: "50m", memory: "64Mi" },
                 limits: { cpu: "100m", memory: "128Mi" },
               },
+              securityContext: {
+                runAsNonRoot: true,
+                readOnlyRootFilesystem: true,
+                allowPrivilegeEscalation: false,
+              },
             },
           ],
         },

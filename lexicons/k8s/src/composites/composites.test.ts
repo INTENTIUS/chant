@@ -1160,6 +1160,25 @@ describe("WebApp hardening", () => {
     expect(container.securityContext.runAsNonRoot).toBe(true);
   });
 
+  test("securityContext supports PSS restricted fields", () => {
+    const result = WebApp({
+      name: "app",
+      image: "app:1.0",
+      securityContext: {
+        runAsNonRoot: true,
+        readOnlyRootFilesystem: true,
+        allowPrivilegeEscalation: false,
+        capabilities: { drop: ["ALL"] },
+        seccompProfile: { type: "RuntimeDefault" },
+      },
+    });
+    const spec = result.deployment.spec as any;
+    const sc = spec.template.spec.containers[0].securityContext;
+    expect(sc.allowPrivilegeEscalation).toBe(false);
+    expect(sc.capabilities).toEqual({ drop: ["ALL"] });
+    expect(sc.seccompProfile).toEqual({ type: "RuntimeDefault" });
+  });
+
   test("terminationGracePeriodSeconds set", () => {
     const result = WebApp({ name: "app", image: "app:1.0", terminationGracePeriodSeconds: 60 });
     const spec = result.deployment.spec as any;
@@ -1216,6 +1235,24 @@ describe("StatefulApp hardening", () => {
     const spec = result.statefulSet.spec as any;
     expect(spec.template.spec.containers[0].securityContext.runAsNonRoot).toBe(true);
   });
+
+  test("securityContext supports PSS restricted fields", () => {
+    const result = StatefulApp({
+      name: "db",
+      image: "postgres:16",
+      securityContext: {
+        runAsNonRoot: true,
+        allowPrivilegeEscalation: false,
+        capabilities: { drop: ["ALL"] },
+        seccompProfile: { type: "RuntimeDefault" },
+      },
+    });
+    const spec = result.statefulSet.spec as any;
+    const sc = spec.template.spec.containers[0].securityContext;
+    expect(sc.allowPrivilegeEscalation).toBe(false);
+    expect(sc.capabilities).toEqual({ drop: ["ALL"] });
+    expect(sc.seccompProfile).toEqual({ type: "RuntimeDefault" });
+  });
 });
 
 describe("WorkerPool hardening", () => {
@@ -1234,6 +1271,24 @@ describe("WorkerPool hardening", () => {
     });
     const spec = result.deployment.spec as any;
     expect(spec.template.spec.containers[0].securityContext.runAsNonRoot).toBe(true);
+  });
+
+  test("securityContext supports PSS restricted fields", () => {
+    const result = WorkerPool({
+      name: "w",
+      image: "w:1.0",
+      securityContext: {
+        runAsNonRoot: true,
+        allowPrivilegeEscalation: false,
+        capabilities: { drop: ["ALL"] },
+        seccompProfile: { type: "RuntimeDefault" },
+      },
+    });
+    const spec = result.deployment.spec as any;
+    const sc = spec.template.spec.containers[0].securityContext;
+    expect(sc.allowPrivilegeEscalation).toBe(false);
+    expect(sc.capabilities).toEqual({ drop: ["ALL"] });
+    expect(sc.seccompProfile).toEqual({ type: "RuntimeDefault" });
   });
 });
 
@@ -1256,6 +1311,23 @@ describe("AutoscaledService hardening", () => {
     });
     const spec = result.deployment.spec as any;
     expect(spec.template.spec.containers[0].securityContext.runAsNonRoot).toBe(true);
+  });
+
+  test("securityContext supports PSS restricted fields", () => {
+    const result = AutoscaledService({
+      ...minProps,
+      securityContext: {
+        runAsNonRoot: true,
+        allowPrivilegeEscalation: false,
+        capabilities: { drop: ["ALL"] },
+        seccompProfile: { type: "RuntimeDefault" },
+      },
+    });
+    const spec = result.deployment.spec as any;
+    const sc = spec.template.spec.containers[0].securityContext;
+    expect(sc.allowPrivilegeEscalation).toBe(false);
+    expect(sc.capabilities).toEqual({ drop: ["ALL"] });
+    expect(sc.seccompProfile).toEqual({ type: "RuntimeDefault" });
   });
 
   test("terminationGracePeriodSeconds set", () => {
@@ -1988,5 +2060,174 @@ describe("MetricsServer", () => {
     const spec = result.deployment.spec as any;
     expect(spec.replicas).toBe(2);
     expect(spec.template.spec.containers[0].image).toBe("custom:v1");
+  });
+});
+
+// ── PSS restricted securityContext passthrough tests ─────────────
+
+const pssSecurityContext = {
+  runAsNonRoot: true,
+  readOnlyRootFilesystem: true,
+  allowPrivilegeEscalation: false,
+  capabilities: { drop: ["ALL"] },
+  seccompProfile: { type: "RuntimeDefault" },
+};
+
+describe("BatchJob securityContext", () => {
+  test("securityContext passed through to container", () => {
+    const result = BatchJob({
+      name: "migrate",
+      image: "migrate:1.0",
+      securityContext: pssSecurityContext,
+    });
+    const spec = result.job.spec as any;
+    const sc = spec.template.spec.containers[0].securityContext;
+    expect(sc.runAsNonRoot).toBe(true);
+    expect(sc.allowPrivilegeEscalation).toBe(false);
+    expect(sc.capabilities).toEqual({ drop: ["ALL"] });
+    expect(sc.seccompProfile).toEqual({ type: "RuntimeDefault" });
+  });
+});
+
+describe("CronWorkload securityContext", () => {
+  test("securityContext passed through to container", () => {
+    const result = CronWorkload({
+      name: "backup",
+      image: "backup:1.0",
+      schedule: "0 2 * * *",
+      securityContext: pssSecurityContext,
+    });
+    const spec = result.cronJob.spec as any;
+    const sc = spec.jobTemplate.spec.template.spec.containers[0].securityContext;
+    expect(sc.runAsNonRoot).toBe(true);
+    expect(sc.allowPrivilegeEscalation).toBe(false);
+    expect(sc.capabilities).toEqual({ drop: ["ALL"] });
+    expect(sc.seccompProfile).toEqual({ type: "RuntimeDefault" });
+  });
+});
+
+describe("NodeAgent securityContext", () => {
+  test("securityContext passed through to container", () => {
+    const result = NodeAgent({
+      name: "agent",
+      image: "agent:1.0",
+      rbacRules: [{ apiGroups: [""], resources: ["pods"], verbs: ["get"] }],
+      securityContext: pssSecurityContext,
+    });
+    const spec = result.daemonSet.spec as any;
+    const sc = spec.template.spec.containers[0].securityContext;
+    expect(sc.runAsNonRoot).toBe(true);
+    expect(sc.allowPrivilegeEscalation).toBe(false);
+    expect(sc.capabilities).toEqual({ drop: ["ALL"] });
+  });
+});
+
+describe("ConfiguredApp securityContext", () => {
+  test("securityContext passed through to container", () => {
+    const result = ConfiguredApp({
+      name: "api",
+      image: "api:1.0",
+      securityContext: pssSecurityContext,
+    });
+    const spec = result.deployment.spec as any;
+    const sc = spec.template.spec.containers[0].securityContext;
+    expect(sc.runAsNonRoot).toBe(true);
+    expect(sc.allowPrivilegeEscalation).toBe(false);
+    expect(sc.capabilities).toEqual({ drop: ["ALL"] });
+    expect(sc.seccompProfile).toEqual({ type: "RuntimeDefault" });
+  });
+});
+
+describe("SidecarApp securityContext", () => {
+  test("securityContext passed through to primary container", () => {
+    const result = SidecarApp({
+      name: "api",
+      image: "api:1.0",
+      sidecars: [{ name: "envoy", image: "envoy:1.0" }],
+      securityContext: pssSecurityContext,
+    });
+    const spec = result.deployment.spec as any;
+    const sc = spec.template.spec.containers[0].securityContext;
+    expect(sc.runAsNonRoot).toBe(true);
+    expect(sc.allowPrivilegeEscalation).toBe(false);
+    expect(sc.capabilities).toEqual({ drop: ["ALL"] });
+    expect(sc.seccompProfile).toEqual({ type: "RuntimeDefault" });
+  });
+});
+
+describe("NetworkIsolatedApp securityContext", () => {
+  test("securityContext passed through to container", () => {
+    const result = NetworkIsolatedApp({
+      name: "api",
+      image: "api:1.0",
+      securityContext: pssSecurityContext,
+    });
+    const spec = result.deployment.spec as any;
+    const sc = spec.template.spec.containers[0].securityContext;
+    expect(sc.runAsNonRoot).toBe(true);
+    expect(sc.allowPrivilegeEscalation).toBe(false);
+    expect(sc.capabilities).toEqual({ drop: ["ALL"] });
+    expect(sc.seccompProfile).toEqual({ type: "RuntimeDefault" });
+  });
+});
+
+describe("MonitoredService securityContext", () => {
+  test("securityContext passed through to container", () => {
+    const result = MonitoredService({
+      name: "api",
+      image: "api:1.0",
+      securityContext: pssSecurityContext,
+    });
+    const spec = result.deployment.spec as any;
+    const sc = spec.template.spec.containers[0].securityContext;
+    expect(sc.runAsNonRoot).toBe(true);
+    expect(sc.allowPrivilegeEscalation).toBe(false);
+    expect(sc.capabilities).toEqual({ drop: ["ALL"] });
+    expect(sc.seccompProfile).toEqual({ type: "RuntimeDefault" });
+  });
+});
+
+// ── Infrastructure composites: hardcoded security defaults ──────
+
+describe("ExternalDnsAgent security defaults", () => {
+  test("container has hardcoded PSS-safe securityContext", () => {
+    const result = ExternalDnsAgent({
+      iamRoleArn: "arn:aws:iam::123456789012:role/test",
+      domainFilters: ["example.com"],
+    });
+    const spec = result.deployment.spec as any;
+    const sc = spec.template.spec.containers[0].securityContext;
+    expect(sc.runAsNonRoot).toBe(true);
+    expect(sc.readOnlyRootFilesystem).toBe(true);
+    expect(sc.allowPrivilegeEscalation).toBe(false);
+  });
+});
+
+describe("FluentBitAgent security defaults", () => {
+  test("container has hardcoded PSS-safe securityContext", () => {
+    const result = FluentBitAgent({
+      logGroup: "/aws/eks/test/containers",
+      region: "us-east-1",
+      clusterName: "test",
+    });
+    const spec = result.daemonSet.spec as any;
+    const sc = spec.template.spec.containers[0].securityContext;
+    expect(sc.runAsNonRoot).toBe(true);
+    expect(sc.readOnlyRootFilesystem).toBe(true);
+    expect(sc.allowPrivilegeEscalation).toBe(false);
+  });
+});
+
+describe("AdotCollector security defaults", () => {
+  test("container has hardcoded PSS-safe securityContext", () => {
+    const result = AdotCollector({
+      region: "us-east-1",
+      clusterName: "test",
+    });
+    const spec = result.daemonSet.spec as any;
+    const sc = spec.template.spec.containers[0].securityContext;
+    expect(sc.runAsNonRoot).toBe(true);
+    expect(sc.readOnlyRootFilesystem).toBe(true);
+    expect(sc.allowPrivilegeEscalation).toBe(false);
   });
 });

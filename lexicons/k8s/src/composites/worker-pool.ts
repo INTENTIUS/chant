@@ -5,6 +5,8 @@
  * that need RBAC for secrets/configmaps and optional autoscaling, but no Service.
  */
 
+import type { ContainerSecurityContext } from "./security-context";
+
 export interface WorkerPoolProps {
   /** Worker name — used in metadata and labels. */
   name: string;
@@ -32,13 +34,8 @@ export interface WorkerPoolProps {
   };
   /** PodDisruptionBudget minAvailable — if set, creates a PDB. */
   minAvailable?: number | string;
-  /** Pod security context. */
-  securityContext?: {
-    runAsNonRoot?: boolean;
-    readOnlyRootFilesystem?: boolean;
-    runAsUser?: number;
-    runAsGroup?: number;
-  };
+  /** Container security context (supports PSS restricted fields). */
+  securityContext?: ContainerSecurityContext;
   /** Termination grace period in seconds. */
   terminationGracePeriodSeconds?: number;
   /** Priority class name for pod scheduling. */

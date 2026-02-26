@@ -5,6 +5,8 @@
  * proper RBAC permissions.
  */
 
+import type { ContainerSecurityContext } from "./security-context";
+
 export interface CronWorkloadProps {
   /** Workload name — used in metadata and labels. */
   name: string;
@@ -33,6 +35,8 @@ export interface CronWorkloadProps {
   namespace?: string;
   /** Environment variables. */
   env?: Array<{ name: string; value: string }>;
+  /** Container security context (supports PSS restricted fields). */
+  securityContext?: ContainerSecurityContext;
 }
 
 export interface CronWorkloadResult {
@@ -75,6 +79,7 @@ export function CronWorkload(props: CronWorkloadProps): CronWorkloadResult {
     labels: extraLabels = {},
     namespace,
     env,
+    securityContext,
   } = props;
 
   const saName = `${name}-sa`;
@@ -110,6 +115,7 @@ export function CronWorkload(props: CronWorkloadProps): CronWorkloadResult {
                   ...(command && { command }),
                   ...(args && { args }),
                   ...(env && { env }),
+                  ...(securityContext && { securityContext }),
                 },
               ],
             },

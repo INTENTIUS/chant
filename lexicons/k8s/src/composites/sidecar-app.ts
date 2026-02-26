@@ -5,6 +5,8 @@
  * DB migration init). Supports shared volumes between containers.
  */
 
+import type { ContainerSecurityContext } from "./security-context";
+
 export interface SidecarContainer {
   /** Sidecar container name. */
   name: string;
@@ -70,6 +72,8 @@ export interface SidecarAppProps {
   namespace?: string;
   /** Environment variables for the primary container. */
   env?: Array<{ name: string; value: string }>;
+  /** Container security context for the primary container (supports PSS restricted fields). */
+  securityContext?: ContainerSecurityContext;
 }
 
 export interface SidecarAppResult {
@@ -115,6 +119,7 @@ export function SidecarApp(props: SidecarAppProps): SidecarAppResult {
     memoryRequest = "128Mi",
     namespace,
     env,
+    securityContext,
   } = props;
 
   const commonLabels: Record<string, string> = {
@@ -133,6 +138,7 @@ export function SidecarApp(props: SidecarAppProps): SidecarAppResult {
       requests: { cpu: cpuRequest, memory: memoryRequest },
     },
     ...(env && { env }),
+    ...(securityContext && { securityContext }),
   };
 
   // Sidecar containers

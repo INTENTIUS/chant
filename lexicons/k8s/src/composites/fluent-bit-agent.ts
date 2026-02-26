@@ -130,6 +130,11 @@ export function FluentBitAgent(props: FluentBitAgentProps): FluentBitAgentResult
       { name: "config", mountPath: `/etc/${name}`, readOnly: true },
       { name: "state", mountPath: "/var/fluent-bit/state" },
     ],
+    securityContext: {
+      runAsNonRoot: true,
+      readOnlyRootFilesystem: true,
+      allowPrivilegeEscalation: false,
+    },
   };
 
   const daemonSetProps: Record<string, unknown> = {
