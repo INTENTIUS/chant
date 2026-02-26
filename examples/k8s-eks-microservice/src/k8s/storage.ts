@@ -6,8 +6,8 @@ const ebs = EbsStorageClass({
   name: "gp3-encrypted",
   volumeType: "gp3",
   encrypted: true,
-  iops: 3000,
-  throughput: 125,
+  iops: "3000",
+  throughput: "125",
 });
 
 export const storageClass = new StorageClass(ebs.storageClass);

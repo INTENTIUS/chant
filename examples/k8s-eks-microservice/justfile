@@ -26,7 +26,7 @@ deploy-infra:
 
 # Configure kubectl after infra deploy
 configure-kubectl:
-    aws eks update-kubeconfig --name eks-microservice --region us-east-1
+    aws eks update-kubeconfig --name eks-microservice --region $(aws configure get region)
 
 # Load stack outputs + parameters into .env for K8s build (bun auto-loads .env)
 load-outputs:
@@ -45,7 +45,7 @@ load-outputs:
     HOSTED_ZONE_ID=$(get_output hostedZoneIdOutput)
     DOMAIN=$(get_param domainName)
     EKS_CLUSTER_NAME=eks-microservice
-    AWS_REGION=us-east-1
+    AWS_REGION=$(aws configure get region)
     EOF
     echo "Wrote .env with stack output ARNs and parameters"
     hosted_zone_id=$(get_output hostedZoneIdOutput)

@@ -26,6 +26,13 @@ const SPECLESS_TYPES = new Set([
   "Secret",
   "Namespace",
   "ServiceAccount",
+  "ClusterRole",
+  "ClusterRoleBinding",
+  "Role",
+  "RoleBinding",
+  "StorageClass",
+  "PersistentVolume",
+  "APIService",
 ]);
 
 /**
