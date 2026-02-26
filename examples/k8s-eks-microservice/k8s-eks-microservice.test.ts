@@ -87,6 +87,13 @@ describe("k8s-eks-microservice example", () => {
     expect(vpcConfig.SubnetIds).toHaveLength(4);
     expect(vpcConfig.EndpointPublicAccess).toBe(true);
     expect(vpcConfig.EndpointPrivateAccess).toBe(true);
+    expect(vpcConfig.PublicAccessCidrs).toBeDefined();
+
+    // Control plane logging — all 5 types enabled
+    const logging = cluster.Properties.Logging;
+    expect(logging).toBeDefined();
+    const logTypes = logging.ClusterLogging.EnabledTypes.map((e: any) => e.Type);
+    expect(logTypes).toEqual(["api", "audit", "authenticator", "controllerManager", "scheduler"]);
   });
 
   // ── CloudFormation: Node group properties ──────────────────────
@@ -99,7 +106,7 @@ describe("k8s-eks-microservice example", () => {
     expect(ng.Type).toBe("AWS::EKS::Nodegroup");
     expect(ng.Properties.ClusterName).toBe("eks-microservice");
     expect(ng.Properties.InstanceTypes).toEqual(["t3.medium"]);
-    expect(ng.Properties.AmiType).toBe("AL2_x86_64");
+    expect(ng.Properties.AmiType).toBe("AL2023_x86_64_STANDARD");
 
     // Scaling
     const scaling = ng.Properties.ScalingConfig;
@@ -125,10 +132,13 @@ describe("k8s-eks-microservice example", () => {
     const nodeRolePolicy = parsed.Resources.nodeRole.Properties.AssumeRolePolicyDocument;
     expect(nodeRolePolicy.Statement.Principal.Service).toBe("ec2.amazonaws.com");
 
-    // IRSA roles trust the OIDC provider (Federated principal)
+    // IRSA roles use Fn::Sub trust policy with OIDC condition blocks
     const appRolePolicy = parsed.Resources.appRole.Properties.AssumeRolePolicyDocument;
-    expect(appRolePolicy.Statement.Principal.Federated).toBeDefined();
-    expect(appRolePolicy.Statement.Action).toBe("sts:AssumeRoleWithWebIdentity");
+    expect(appRolePolicy["Fn::Sub"]).toBeDefined();
+    const [template] = appRolePolicy["Fn::Sub"];
+    expect(template).toContain("sts:AssumeRoleWithWebIdentity");
+    expect(template).toContain("system:serviceaccount:microservice:microservice-app-sa");
+    expect(template).toContain("sts.amazonaws.com");
   });
 
   // ── CloudFormation: OIDC provider links to cluster ─────────────
@@ -461,8 +471,10 @@ describe("k8s-eks-microservice example", () => {
     expect(paramNames).toContain("environment");
     expect(paramNames).toContain("domainName");
     expect(paramNames).toContain("certificateArn");
+    expect(paramNames).toContain("publicAccessCidr");
 
     expect(parsed.Parameters.environment.Default).toBe("dev");
     expect(parsed.Parameters.domainName.Default).toBe("api.example.com");
+    expect(parsed.Parameters.publicAccessCidr.Default).toBe("0.0.0.0/0");
   });
 });

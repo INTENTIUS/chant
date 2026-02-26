@@ -47,7 +47,7 @@ This tutorial walks you through deploying a production-grade EKS cluster with Ku
 | `src/infra/networking.ts` | VPC, subnets, IGW, NAT gateway |
 | `src/infra/cluster.ts` | EKS cluster, node group, OIDC, 7 IAM roles |
 | `src/infra/addons.ts` | 5 EKS add-ons (including ALB controller) |
-| `src/infra/params.ts` | CF parameters: environment, domain, cert ARN |
+| `src/infra/params.ts` | CF parameters: environment, domain, cert ARN, public access CIDR |
 | `src/k8s/namespace.ts` | Namespace with quotas, limits, default-deny policy |
 | `src/k8s/app.ts` | Deployment + Service + HPA + PDB + IRSA SA + ConfigMap |
 | `src/k8s/ingress.ts` | ALB Ingress + ExternalDNS agent |
@@ -80,11 +80,13 @@ cd examples/k8s-eks-microservice
 just build
 
 # Deploy the CloudFormation stack (32 resources)
-# Pass your domain and ACM cert ARN:
-just deploy-infra domain=myapp.example.com cert=arn:aws:acm:us-east-1:123456789012:certificate/your-cert-id
+# Pass your domain, ACM cert ARN, and optionally restrict API endpoint access:
+just deploy-infra domain=myapp.example.com cert=arn:aws:acm:us-east-1:123456789012:certificate/your-cert-id cidr=203.0.113.1/32
 ```
 
 The stack creates the VPC, EKS cluster, managed node group, OIDC provider, 7 IAM roles, and 5 EKS add-ons. The ALB controller add-on installs automatically — no Helm charts or CRDs to manage separately.
+
+The `cidr=` parameter restricts EKS API server public access to your IP. Omit it to allow access from any IP (0.0.0.0/0). In production, always restrict to your corporate CIDR or use private-only endpoint access.
 
 CloudFormation deployment takes ~15 minutes (EKS cluster creation is the bottleneck).
 

@@ -32,7 +32,7 @@ just deploy             # full: build → deploy-infra → configure-kubectl →
 Or step by step:
 
 ```bash
-just deploy-infra domain=myapp.example.com cert=arn:aws:acm:...  # CF stack
+just deploy-infra domain=myapp.example.com cert=arn:aws:acm:... cidr=203.0.113.1/32  # CF stack
 just configure-kubectl  # update kubeconfig
 just load-outputs       # write .env from CF outputs
 just build-k8s          # rebuild K8s with real ARNs

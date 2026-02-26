@@ -13,7 +13,7 @@ This demonstrates chant's multi-lexicon capability: a single `src/` directory im
 | `networking.ts` | VPC with public/private subnets, IGW, NAT gateway |
 | `cluster.ts` | EKS cluster, managed node group, OIDC provider, IAM roles (cluster, node, app IRSA, ALB controller, ExternalDNS, FluentBit, ADOT) |
 | `addons.ts` | EKS add-ons: vpc-cni, aws-ebs-csi-driver, coredns, kube-proxy, aws-load-balancer-controller |
-| `params.ts` | CloudFormation parameters: environment, domainName, certificateArn |
+| `params.ts` | CloudFormation parameters: environment, domainName, certificateArn, publicAccessCidr |
 
 ### K8s workloads (`src/k8s/`)
 
@@ -155,11 +155,21 @@ just build
 just lint
 
 # Deploy (creates 32 resources including ALB controller addon)
-# Pass your domain and ACM cert ARN:
-just deploy-infra domain=myapp.example.com cert=arn:aws:acm:us-east-1:123456789012:certificate/your-cert-id
+# Pass your domain and ACM cert ARN (optionally restrict API endpoint access):
+just deploy-infra domain=myapp.example.com cert=arn:aws:acm:us-east-1:123456789012:certificate/your-cert-id cidr=203.0.113.1/32
 ```
 
 The stack exports 12 outputs: VPC ID, 4 subnet IDs, cluster endpoint/ARN, and 5 IAM role ARNs (app, ALB controller, ExternalDNS, FluentBit, ADOT). The ALB controller addon installs automatically — no Helm or CRDs to manage.
+
+## Security hardening
+
+This example includes EKS best-practice hardening:
+
+- **IRSA condition blocks** — trust policies restrict `AssumeRoleWithWebIdentity` to a specific `system:serviceaccount:namespace:name` and audience `sts.amazonaws.com`, preventing cross-SA role assumption
+- **Control plane logging** — all 5 log types (api, audit, authenticator, controllerManager, scheduler) enabled for CloudWatch
+- **API endpoint restriction** — `PublicAccessCidrs` parameter lets you restrict API server access to your IP (defaults to 0.0.0.0/0; use `cidr=` to narrow)
+- **AL2023 AMI** — node group uses `AL2023_x86_64_STANDARD` (current-gen, hardened by default)
+- **Non-root container** — app runs `nginxinc/nginx-unprivileged` with `runAsNonRoot: true` on port 8080
 
 ## Step 2: Configure kubectl and load outputs
 

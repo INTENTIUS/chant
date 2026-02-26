@@ -13,16 +13,17 @@ build-k8s:
 lint:
     {{chant}} lint src
 
-# Deploy AWS infrastructure (override defaults: just deploy-infra domain=myapp.example.com cert=arn:aws:acm:...)
+# Deploy AWS infrastructure (override defaults: just deploy-infra domain=myapp.example.com cert=arn:aws:acm:... cidr=203.0.113.1/32)
 domain := "api.example.com"
 cert := "arn:aws:acm:us-east-1:123456789012:certificate/abc-123-def"
+cidr := "0.0.0.0/0"
 
 deploy-infra:
     aws cloudformation deploy \
         --template-file templates/infra.json \
         --stack-name eks-microservice \
         --capabilities CAPABILITY_NAMED_IAM \
-        --parameter-overrides domainName={{domain}} certificateArn={{cert}}
+        --parameter-overrides domainName={{domain}} certificateArn={{cert}} publicAccessCidr={{cidr}}
 
 # Configure kubectl after infra deploy
 configure-kubectl:

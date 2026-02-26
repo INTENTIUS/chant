@@ -8,9 +8,13 @@ import {
   Nodegroup,
   Role,
   OIDCProvider,
+  Ref,
+  Select,
+  Split,
   stackOutput,
 } from "@intentius/chant-lexicon-aws";
 import { network } from "./networking";
+import { publicAccessCidr } from "./params";
 
 // ── IAM: Cluster role ──────────────────────────────────────────────
 
@@ -64,6 +68,21 @@ export const cluster = new EKSCluster({
     ],
     EndpointPublicAccess: true,
     EndpointPrivateAccess: true,
+    // Best practice: disable public access entirely and use VPN/bastion.
+    // This example keeps public enabled for laptop-based development.
+    // Restrict to your IP in production: just deploy-infra cidr=203.0.113.1/32
+    PublicAccessCidrs: [Ref(publicAccessCidr)],
+  },
+  Logging: {
+    ClusterLogging: {
+      EnabledTypes: [
+        { Type: "api" },
+        { Type: "audit" },
+        { Type: "authenticator" },
+        { Type: "controllerManager" },
+        { Type: "scheduler" },
+      ],
+    },
   },
 });
 
@@ -75,19 +94,43 @@ export const oidcProvider = new OIDCProvider({
   ThumbprintList: ["9e99a48a9960b14926bb7f3b02e22da2b0ab7280"],
 });
 
+// ── IRSA trust policy helper ─────────────────────────────────────
+
+/** OIDC issuer ID extracted from provider ARN (for condition keys) */
+const oidcIssuer = Select(1, Split("oidc-provider/", oidcProvider.Arn));
+
+/** Build a trust policy that restricts AssumeRoleWithWebIdentity to a specific SA. */
+function irsaTrustPolicy(namespace: string, saName: string) {
+  return {
+    "Fn::Sub": [
+      JSON.stringify({
+        Version: "2012-10-17",
+        Statement: [{
+          Effect: "Allow",
+          Principal: { Federated: "${OidcArn}" },
+          Action: "sts:AssumeRoleWithWebIdentity",
+          Condition: {
+            StringEquals: {
+              "${OidcIssuer}:sub": `system:serviceaccount:${namespace}:${saName}`,
+              "${OidcIssuer}:aud": "sts.amazonaws.com",
+            },
+          },
+        }],
+      }),
+      {
+        OidcArn: oidcProvider.Arn,
+        OidcIssuer: oidcIssuer,
+      },
+    ],
+  };
+}
+
 // ── IRSA roles (depend on OIDC provider) ───────────────────────────
 
 // App role — grants S3 read access to the microservice
 export const appRole = new Role({
   RoleName: "eks-microservice-app-role",
-  AssumeRolePolicyDocument: {
-    Version: "2012-10-17",
-    Statement: {
-      Effect: "Allow",
-      Principal: { Federated: oidcProvider.Arn },
-      Action: "sts:AssumeRoleWithWebIdentity",
-    },
-  },
+  AssumeRolePolicyDocument: irsaTrustPolicy("microservice", "microservice-app-sa"),
   ManagedPolicyArns: [
     "arn:aws:iam::aws:policy/AmazonS3ReadOnlyAccess",
   ],
@@ -96,14 +139,7 @@ export const appRole = new Role({
 // ALB controller role
 export const albControllerRole = new Role({
   RoleName: "eks-microservice-alb-controller-role",
-  AssumeRolePolicyDocument: {
-    Version: "2012-10-17",
-    Statement: {
-      Effect: "Allow",
-      Principal: { Federated: oidcProvider.Arn },
-      Action: "sts:AssumeRoleWithWebIdentity",
-    },
-  },
+  AssumeRolePolicyDocument: irsaTrustPolicy("kube-system", "aws-load-balancer-controller"),
   ManagedPolicyArns: [
     "arn:aws:iam::aws:policy/ElasticLoadBalancingFullAccess",
   ],
@@ -112,14 +148,7 @@ export const albControllerRole = new Role({
 // ExternalDNS role
 export const externalDnsRole = new Role({
   RoleName: "eks-microservice-external-dns-role",
-  AssumeRolePolicyDocument: {
-    Version: "2012-10-17",
-    Statement: {
-      Effect: "Allow",
-      Principal: { Federated: oidcProvider.Arn },
-      Action: "sts:AssumeRoleWithWebIdentity",
-    },
-  },
+  AssumeRolePolicyDocument: irsaTrustPolicy("kube-system", "external-dns-sa"),
   ManagedPolicyArns: [
     "arn:aws:iam::aws:policy/AmazonRoute53FullAccess",
   ],
@@ -128,14 +157,7 @@ export const externalDnsRole = new Role({
 // FluentBit role
 export const fluentBitRole = new Role({
   RoleName: "eks-microservice-fluent-bit-role",
-  AssumeRolePolicyDocument: {
-    Version: "2012-10-17",
-    Statement: {
-      Effect: "Allow",
-      Principal: { Federated: oidcProvider.Arn },
-      Action: "sts:AssumeRoleWithWebIdentity",
-    },
-  },
+  AssumeRolePolicyDocument: irsaTrustPolicy("amazon-cloudwatch", "fluent-bit-sa"),
   ManagedPolicyArns: [
     "arn:aws:iam::aws:policy/CloudWatchAgentServerPolicy",
   ],
@@ -144,14 +166,7 @@ export const fluentBitRole = new Role({
 // ADOT Collector role
 export const adotRole = new Role({
   RoleName: "eks-microservice-adot-role",
-  AssumeRolePolicyDocument: {
-    Version: "2012-10-17",
-    Statement: {
-      Effect: "Allow",
-      Principal: { Federated: oidcProvider.Arn },
-      Action: "sts:AssumeRoleWithWebIdentity",
-    },
-  },
+  AssumeRolePolicyDocument: irsaTrustPolicy("amazon-metrics", "adot-collector-sa"),
   ManagedPolicyArns: [
     "arn:aws:iam::aws:policy/CloudWatchAgentServerPolicy",
     "arn:aws:iam::aws:policy/AWSXRayDaemonWriteAccess",
@@ -167,7 +182,7 @@ export const nodegroup = new Nodegroup({
     network.privateSubnet1.SubnetId,
     network.privateSubnet2.SubnetId,
   ],
-  AmiType: "AL2_x86_64",
+  AmiType: "AL2023_x86_64_STANDARD",
   InstanceTypes: ["t3.medium"],
   ScalingConfig: {
     MinSize: 2,

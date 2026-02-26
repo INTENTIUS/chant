@@ -12,5 +12,5 @@ export const config = {
   fluentBitRoleArn: process.env.FLUENT_BIT_ROLE_ARN ?? "arn:aws:iam::123456789012:role/eks-microservice-fluent-bit-role",
   adotRoleArn: process.env.ADOT_ROLE_ARN ?? "arn:aws:iam::123456789012:role/eks-microservice-adot-role",
   domain: process.env.DOMAIN ?? "api.example.com",
-  appImage: process.env.APP_IMAGE ?? "public.ecr.aws/nginx/nginx:stable",
+  appImage: process.env.APP_IMAGE ?? "nginxinc/nginx-unprivileged:stable",
 };
