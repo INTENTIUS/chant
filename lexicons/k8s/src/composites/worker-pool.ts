@@ -30,6 +30,19 @@ export interface WorkerPoolProps {
     maxReplicas: number;
     targetCPUPercent?: number;
   };
+  /** PodDisruptionBudget minAvailable — if set, creates a PDB. */
+  minAvailable?: number | string;
+  /** Pod security context. */
+  securityContext?: {
+    runAsNonRoot?: boolean;
+    readOnlyRootFilesystem?: boolean;
+    runAsUser?: number;
+    runAsGroup?: number;
+  };
+  /** Termination grace period in seconds. */
+  terminationGracePeriodSeconds?: number;
+  /** Priority class name for pod scheduling. */
+  priorityClassName?: string;
   /** CPU request (default: "100m"). */
   cpuRequest?: string;
   /** Memory request (default: "128Mi"). */
@@ -53,6 +66,7 @@ export interface WorkerPoolResult {
   roleBinding?: Record<string, unknown>;
   configMap?: Record<string, unknown>;
   hpa?: Record<string, unknown>;
+  pdb?: Record<string, unknown>;
 }
 
 /**
@@ -81,6 +95,10 @@ export function WorkerPool(props: WorkerPoolProps): WorkerPoolResult {
     config,
     rbacRules,
     autoscaling,
+    minAvailable,
+    securityContext,
+    terminationGracePeriodSeconds,
+    priorityClassName,
     cpuRequest = "100m",
     memoryRequest = "128Mi",
     cpuLimit = "500m",
@@ -122,6 +140,14 @@ export function WorkerPool(props: WorkerPoolProps): WorkerPoolResult {
     ...(config && {
       envFrom: [{ configMapRef: { name: configMapName } }],
     }),
+    ...(securityContext && { securityContext }),
+  };
+
+  const podSpec: Record<string, unknown> = {
+    ...(createRbac && { serviceAccountName: saName }),
+    containers: [container],
+    ...(terminationGracePeriodSeconds !== undefined && { terminationGracePeriodSeconds }),
+    ...(priorityClassName && { priorityClassName }),
   };
 
   const deploymentProps: Record<string, unknown> = {
@@ -135,10 +161,7 @@ export function WorkerPool(props: WorkerPoolProps): WorkerPoolResult {
       selector: { matchLabels: { "app.kubernetes.io/name": name } },
       template: {
         metadata: { labels: { "app.kubernetes.io/name": name, ...extraLabels } },
-        spec: {
-          ...(createRbac && { serviceAccountName: saName }),
-          containers: [container],
-        },
+        spec: podSpec,
       },
     },
   };
@@ -194,6 +217,20 @@ export function WorkerPool(props: WorkerPoolProps): WorkerPoolResult {
         labels: { ...commonLabels, "app.kubernetes.io/component": "config" },
       },
       data: config,
+    };
+  }
+
+  if (minAvailable !== undefined) {
+    result.pdb = {
+      metadata: {
+        name,
+        ...(namespace && { namespace }),
+        labels: { ...commonLabels, "app.kubernetes.io/component": "disruption-budget" },
+      },
+      spec: {
+        minAvailable,
+        selector: { matchLabels: { "app.kubernetes.io/name": name } },
+      },
     };
   }
 

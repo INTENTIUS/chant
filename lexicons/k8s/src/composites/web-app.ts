@@ -18,6 +18,33 @@ export interface WebAppProps {
   ingressHost?: string;
   /** Ingress TLS secret name — if set, enables TLS on the Ingress. */
   ingressTlsSecret?: string;
+  /** Multi-path ingress rules — overrides the default single "/" path. */
+  ingressPaths?: Array<{
+    path: string;
+    pathType?: string;
+    serviceName?: string;
+    servicePort?: number;
+  }>;
+  /** PodDisruptionBudget minAvailable — if set, creates a PDB. */
+  minAvailable?: number | string;
+  /** Init containers (e.g., migrations, cert setup). */
+  initContainers?: Array<{
+    name: string;
+    image: string;
+    command?: string[];
+    args?: string[];
+  }>;
+  /** Pod security context — safe defaults when enabled. */
+  securityContext?: {
+    runAsNonRoot?: boolean;
+    readOnlyRootFilesystem?: boolean;
+    runAsUser?: number;
+    runAsGroup?: number;
+  };
+  /** Termination grace period in seconds. */
+  terminationGracePeriodSeconds?: number;
+  /** Priority class name for pod scheduling. */
+  priorityClassName?: string;
   /** Additional labels to apply to all resources. */
   labels?: Record<string, string>;
   /** CPU limit (e.g., "500m"). */
@@ -38,6 +65,7 @@ export interface WebAppResult {
   deployment: Record<string, unknown>;
   service: Record<string, unknown>;
   ingress?: Record<string, unknown>;
+  pdb?: Record<string, unknown>;
 }
 
 /**
@@ -72,12 +100,53 @@ export function WebApp(props: WebAppProps): WebAppResult {
     memoryRequest = "128Mi",
     namespace,
     env,
+    initContainers,
+    securityContext,
+    terminationGracePeriodSeconds,
+    priorityClassName,
+    minAvailable,
   } = props;
 
   const commonLabels: Record<string, string> = {
     "app.kubernetes.io/name": name,
     "app.kubernetes.io/managed-by": "chant",
     ...extraLabels,
+  };
+
+  const container: Record<string, unknown> = {
+    name,
+    image,
+    ports: [{ containerPort: port, name: "http" }],
+    resources: {
+      limits: { cpu: cpuLimit, memory: memoryLimit },
+      requests: { cpu: cpuRequest, memory: memoryRequest },
+    },
+    livenessProbe: {
+      httpGet: { path: "/", port },
+      initialDelaySeconds: 10,
+      periodSeconds: 10,
+    },
+    readinessProbe: {
+      httpGet: { path: "/", port },
+      initialDelaySeconds: 5,
+      periodSeconds: 5,
+    },
+    ...(env && { env }),
+    ...(securityContext && { securityContext }),
+  };
+
+  const podSpec: Record<string, unknown> = {
+    containers: [container],
+    ...(initContainers && {
+      initContainers: initContainers.map((ic) => ({
+        name: ic.name,
+        image: ic.image,
+        ...(ic.command && { command: ic.command }),
+        ...(ic.args && { args: ic.args }),
+      })),
+    }),
+    ...(terminationGracePeriodSeconds !== undefined && { terminationGracePeriodSeconds }),
+    ...(priorityClassName && { priorityClassName }),
   };
 
   // We return plain objects that users pass to constructors.
@@ -93,30 +162,7 @@ export function WebApp(props: WebAppProps): WebAppResult {
       selector: { matchLabels: { "app.kubernetes.io/name": name } },
       template: {
         metadata: { labels: { "app.kubernetes.io/name": name, ...extraLabels } },
-        spec: {
-          containers: [
-            {
-              name,
-              image,
-              ports: [{ containerPort: port, name: "http" }],
-              resources: {
-                limits: { cpu: cpuLimit, memory: memoryLimit },
-                requests: { cpu: cpuRequest, memory: memoryRequest },
-              },
-              livenessProbe: {
-                httpGet: { path: "/", port },
-                initialDelaySeconds: 10,
-                periodSeconds: 10,
-              },
-              readinessProbe: {
-                httpGet: { path: "/", port },
-                initialDelaySeconds: 5,
-                periodSeconds: 5,
-              },
-              ...(env && { env }),
-            },
-          ],
-        },
+        spec: podSpec,
       },
     },
   };
@@ -140,6 +186,28 @@ export function WebApp(props: WebAppProps): WebAppResult {
   };
 
   if (props.ingressHost) {
+    // Build paths — use ingressPaths if provided, otherwise default single "/"
+    const paths = props.ingressPaths
+      ? props.ingressPaths.map((p) => ({
+          path: p.path,
+          pathType: p.pathType ?? "Prefix",
+          backend: {
+            service: {
+              name: p.serviceName ?? name,
+              port: { number: p.servicePort ?? 80 },
+            },
+          },
+        }))
+      : [
+          {
+            path: "/",
+            pathType: "Prefix",
+            backend: {
+              service: { name, port: { number: 80 } },
+            },
+          },
+        ];
+
     const ingressProps: Record<string, unknown> = {
       metadata: {
         name,
@@ -150,17 +218,7 @@ export function WebApp(props: WebAppProps): WebAppResult {
         rules: [
           {
             host: props.ingressHost,
-            http: {
-              paths: [
-                {
-                  path: "/",
-                  pathType: "Prefix",
-                  backend: {
-                    service: { name, port: { number: 80 } },
-                  },
-                },
-              ],
-            },
+            http: { paths },
           },
         ],
         ...(props.ingressTlsSecret && {
@@ -174,6 +232,20 @@ export function WebApp(props: WebAppProps): WebAppResult {
       },
     };
     result.ingress = ingressProps;
+  }
+
+  if (minAvailable !== undefined) {
+    result.pdb = {
+      metadata: {
+        name,
+        ...(namespace && { namespace }),
+        labels: { ...commonLabels, "app.kubernetes.io/component": "disruption-budget" },
+      },
+      spec: {
+        minAvailable,
+        selector: { matchLabels: { "app.kubernetes.io/name": name } },
+      },
+    };
   }
 
   return result;

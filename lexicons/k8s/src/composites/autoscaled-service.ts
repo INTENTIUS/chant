@@ -40,6 +40,24 @@ export interface AutoscaledServiceProps {
   livenessPath?: string;
   /** Readiness probe path (default: "/readyz"). */
   readinessPath?: string;
+  /** Init containers (e.g., migrations, cert setup). */
+  initContainers?: Array<{
+    name: string;
+    image: string;
+    command?: string[];
+    args?: string[];
+  }>;
+  /** Pod security context. */
+  securityContext?: {
+    runAsNonRoot?: boolean;
+    readOnlyRootFilesystem?: boolean;
+    runAsUser?: number;
+    runAsGroup?: number;
+  };
+  /** Termination grace period in seconds. */
+  terminationGracePeriodSeconds?: number;
+  /** Priority class name for pod scheduling. */
+  priorityClassName?: string;
   /** Additional labels to apply to all resources. */
   labels?: Record<string, string>;
   /** Namespace for all resources. */
@@ -89,6 +107,10 @@ export function AutoscaledService(props: AutoscaledServiceProps): AutoscaledServ
     topologySpread = false,
     livenessPath = "/healthz",
     readinessPath = "/readyz",
+    initContainers,
+    securityContext,
+    terminationGracePeriodSeconds,
+    priorityClassName,
     labels: extraLabels = {},
     namespace,
     env,
@@ -156,9 +178,20 @@ export function AutoscaledService(props: AutoscaledServiceProps): AutoscaledServ
                 periodSeconds: 5,
               },
               ...(env && { env }),
+              ...(securityContext && { securityContext }),
             },
           ],
+          ...(initContainers && {
+            initContainers: initContainers.map((ic) => ({
+              name: ic.name,
+              image: ic.image,
+              ...(ic.command && { command: ic.command }),
+              ...(ic.args && { args: ic.args }),
+            })),
+          }),
           ...(topologyConstraints && { topologySpreadConstraints: topologyConstraints }),
+          ...(terminationGracePeriodSeconds !== undefined && { terminationGracePeriodSeconds }),
+          ...(priorityClassName && { priorityClassName }),
         },
       },
     },

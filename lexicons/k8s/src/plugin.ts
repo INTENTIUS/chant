@@ -513,20 +513,6 @@ kubectl port-forward pod/<pod-name> 8080:8080
 | CreateContainerError | Container config issue | \`kubectl describe pod\` → Events | Check volume mounts, configmap/secret refs, security context |
 | Init:CrashLoopBackOff | Init container failing | \`kubectl logs -c <init-container>\` | Fix init container command, check dependencies |
 
-### Resource inspection
-
-\`\`\`bash
-# Get all resources in namespace
-kubectl get all -n <namespace>
-
-# YAML output for debugging
-kubectl get deployment/my-app -o yaml
-
-# Check resource usage
-kubectl top pods -l app.kubernetes.io/name=my-app
-kubectl top nodes
-\`\`\`
-
 ## Production safety
 
 ### Pre-apply validation
@@ -542,22 +528,6 @@ kubectl apply -f manifests.yaml --dry-run=server
 kubectl apply -f manifests.yaml --dry-run=client
 \`\`\`
 
-### Rollback
-
-\`\`\`bash
-# Check rollout history
-kubectl rollout history deployment/my-app
-
-# Undo last rollout
-kubectl rollout undo deployment/my-app
-
-# Roll back to a specific revision
-kubectl rollout undo deployment/my-app --to-revision=2
-
-# Watch rollout progress
-kubectl rollout status deployment/my-app --timeout=300s
-\`\`\`
-
 ### Deployment strategies
 
 - **RollingUpdate** (default): Gradually replaces pods. Set \`maxSurge\` and \`maxUnavailable\`.
@@ -565,157 +535,42 @@ kubectl rollout status deployment/my-app --timeout=300s
 - **Canary**: Deploy a second Deployment with 1 replica + same selector labels. Route percentage via Ingress annotations or service mesh.
 - **Blue/Green**: Two full Deployments (blue/green), switch Service selector between them.
 
-## Composites
+## Choosing the Right Composite
 
-Composites are higher-level functions that produce multiple coordinated K8s resources from a single call. They return plain prop objects — not class instances — that you pass to generated constructors or serialize directly.
+Composites are higher-level functions that produce multiple coordinated K8s resources from a single call. They return plain prop objects — not class instances.
 
-### WebApp — Deployment + Service + optional Ingress
+### Decision Tree
 
-\`\`\`typescript
-import { WebApp } from "@intentius/chant-lexicon-k8s";
+| Need | Composite | Resources |
+|------|-----------|-----------|
+| Stateless web app | **WebApp** | Deployment + Service + optional Ingress + optional PDB |
+| Stateful database/cache | **StatefulApp** | StatefulSet + headless Service + PVC + optional PDB |
+| Production HTTP service with autoscaling | **AutoscaledService** | Deployment + Service + HPA + PDB |
+| Background queue workers | **WorkerPool** | Deployment + RBAC + optional ConfigMap + optional HPA + optional PDB |
+| Scheduled jobs | **CronWorkload** | CronJob + RBAC |
+| One-shot batch jobs | **BatchJob** | Job + optional RBAC |
+| App with ConfigMap/Secret mounts | **ConfiguredApp** | Deployment + Service + optional ConfigMap |
+| Multi-container sidecar patterns | **SidecarApp** | Deployment + Service |
+| App with Prometheus monitoring | **MonitoredService** | Deployment + Service + ServiceMonitor + optional PrometheusRule |
+| App with fine-grained network policies | **NetworkIsolatedApp** | Deployment + Service + NetworkPolicy |
+| Namespace with quotas and isolation | **NamespaceEnv** | Namespace + ResourceQuota + LimitRange + NetworkPolicy |
+| Per-node agent (custom) | **NodeAgent** | DaemonSet + RBAC + optional ConfigMap |
+| Multi-host TLS Ingress (cert-manager) | **SecureIngress** | Ingress + optional Certificate |
+| EKS IRSA ServiceAccount | **IrsaServiceAccount** | ServiceAccount + optional RBAC |
+| AWS ALB Ingress | **AlbIngress** | Ingress with ALB annotations |
+| EBS StorageClass | **EbsStorageClass** | StorageClass (ebs.csi.aws.com) |
+| EFS StorageClass | **EfsStorageClass** | StorageClass (efs.csi.aws.com) |
+| Fluent Bit for CloudWatch | **FluentBitAgent** | DaemonSet + RBAC + ConfigMap |
+| ExternalDNS for Route53 | **ExternalDnsAgent** | Deployment + IRSA SA + ClusterRole |
+| ADOT for CloudWatch/X-Ray | **AdotCollector** | DaemonSet + RBAC + ConfigMap |
 
-const { deployment, service, ingress } = WebApp({
-  name: "frontend",
-  image: "frontend:1.0",
-  port: 3000,
-  replicas: 3,
-  ingressHost: "frontend.example.com",
-  ingressTlsSecret: "frontend-tls",
-});
-\`\`\`
+### Hardening options (available on Deployment-based composites)
 
-### StatefulApp — StatefulSet + headless Service + PVC
-
-\`\`\`typescript
-import { StatefulApp } from "@intentius/chant-lexicon-k8s";
-
-const { statefulSet, service } = StatefulApp({
-  name: "postgres",
-  image: "postgres:16",
-  storageSize: "20Gi",
-  env: [{ name: "POSTGRES_DB", value: "mydb" }],
-});
-\`\`\`
-
-### CronWorkload — CronJob + ServiceAccount + Role + RoleBinding
-
-\`\`\`typescript
-import { CronWorkload } from "@intentius/chant-lexicon-k8s";
-
-const { cronJob, serviceAccount, role, roleBinding } = CronWorkload({
-  name: "db-backup",
-  image: "postgres:16",
-  schedule: "0 2 * * *",
-  command: ["pg_dump", "-h", "postgres", "mydb"],
-  rbacRules: [{ apiGroups: [""], resources: ["secrets"], verbs: ["get"] }],
-});
-\`\`\`
-
-### AutoscaledService — Deployment + Service + HPA + PDB
-
-Production HTTP service with autoscaling, health probes, and optional topology spreading.
-
-\`\`\`typescript
-import { AutoscaledService } from "@intentius/chant-lexicon-k8s";
-
-const { deployment, service, hpa, pdb } = AutoscaledService({
-  name: "api",
-  image: "api:2.0",
-  port: 8080,
-  maxReplicas: 10,
-  minReplicas: 3,
-  cpuRequest: "200m",
-  memoryRequest: "256Mi",
-  cpuLimit: "1",
-  memoryLimit: "1Gi",
-  // Probe paths — defaults: /healthz and /readyz
-  livenessPath: "/healthz",
-  readinessPath: "/readyz",
-  // Zone-aware topology spreading (default: false)
-  topologySpread: true,
-  // Custom: topologySpread: { maxSkew: 2, topologyKey: "kubernetes.io/hostname" }
-});
-\`\`\`
-
-Key features:
-- **Probe paths**: \`livenessPath\` (default \`/healthz\`) and \`readinessPath\` (default \`/readyz\`) — override for apps that don't serve those routes
-- **Topology spread**: \`topologySpread: true\` adds zone-aware spreading (maxSkew=1, DoNotSchedule); pass an object for custom key/skew
-- **PDB minAvailable**: accepts number or string percentage (e.g., \`"50%"\`)
-
-### WorkerPool — Deployment + RBAC + optional ConfigMap + optional HPA
-
-Background queue workers with optional RBAC and autoscaling.
-
-\`\`\`typescript
-import { WorkerPool } from "@intentius/chant-lexicon-k8s";
-
-const { deployment, serviceAccount, role, roleBinding, configMap, hpa } = WorkerPool({
-  name: "email-worker",
-  image: "worker:1.0",
-  command: ["bundle", "exec", "sidekiq"],
-  config: { REDIS_URL: "redis://redis:6379", QUEUE: "emails" },
-  autoscaling: { minReplicas: 2, maxReplicas: 20, targetCPUPercent: 60 },
-});
-\`\`\`
-
-Key features:
-- **RBAC opt-out**: Pass \`rbacRules: []\` to skip ServiceAccount/Role/RoleBinding creation entirely. Omitting \`rbacRules\` (undefined) creates default rules for secrets/configmaps.
-- \`serviceAccount\`, \`role\`, \`roleBinding\` are optional in the result — check before use
-
-### NamespaceEnv — Namespace + ResourceQuota + LimitRange + NetworkPolicy
-
-Multi-tenant namespace provisioning with resource guardrails and network isolation.
-
-\`\`\`typescript
-import { NamespaceEnv } from "@intentius/chant-lexicon-k8s";
-
-const { namespace, resourceQuota, limitRange, networkPolicy } = NamespaceEnv({
-  name: "team-alpha",
-  cpuQuota: "8",
-  memoryQuota: "16Gi",
-  maxPods: 50,
-  defaultCpuRequest: "100m",
-  defaultMemoryRequest: "128Mi",
-  defaultCpuLimit: "500m",
-  defaultMemoryLimit: "512Mi",
-  defaultDenyIngress: true,
-  defaultDenyEgress: true,
-});
-\`\`\`
-
-Key features:
-- **Quota-without-limits warning**: Setting ResourceQuota without LimitRange defaults emits a warning — pods without explicit resource requests will fail to schedule
-- **Network policies**: \`defaultDenyIngress\` (default true), \`defaultDenyEgress\` (default false) — can be combined or used individually
-
-### NodeAgent — DaemonSet + ServiceAccount + ClusterRole + ClusterRoleBinding + optional ConfigMap
-
-Per-node agents (log collectors, security scanners, monitoring exporters).
-
-\`\`\`typescript
-import { NodeAgent } from "@intentius/chant-lexicon-k8s";
-
-const { daemonSet, serviceAccount, clusterRole, clusterRoleBinding, configMap } = NodeAgent({
-  name: "log-collector",
-  image: "fluentd:v1.16",
-  port: 24224,
-  hostPaths: [
-    { name: "varlog", hostPath: "/var/log", mountPath: "/var/log" },
-  ],
-  config: { "fluent.conf": "..." },
-  rbacRules: [{ apiGroups: [""], resources: ["pods", "namespaces"], verbs: ["get", "list", "watch"] }],
-  cpuRequest: "50m",       // default: 50m
-  memoryRequest: "64Mi",   // default: 64Mi
-  cpuLimit: "200m",        // default: 200m
-  memoryLimit: "128Mi",    // default: 128Mi
-  namespace: "monitoring",
-});
-\`\`\`
-
-Key features:
-- **Container resources**: Always set with sensible defaults (50m/64Mi requests, 200m/128Mi limits) — override per-agent
-- **Host paths**: Mounted read-only by default; set \`readOnly: false\` to enable writes
-- **Tolerations**: \`tolerateAllTaints: true\` (default) ensures agent runs on every node
-- Uses **ClusterRole/ClusterRoleBinding** (cluster-scoped) for node-level access
+- \`minAvailable\` — creates a PodDisruptionBudget (WebApp, StatefulApp, WorkerPool; AutoscaledService always has one)
+- \`initContainers\` — run before main containers (WebApp, StatefulApp, AutoscaledService, ConfiguredApp, SidecarApp)
+- \`securityContext\` — container security settings (WebApp, StatefulApp, AutoscaledService, WorkerPool)
+- \`terminationGracePeriodSeconds\` — graceful shutdown (WebApp, StatefulApp, AutoscaledService, WorkerPool)
+- \`priorityClassName\` — pod scheduling priority (WebApp, StatefulApp, AutoscaledService, WorkerPool)
 
 ### Common patterns across all composites
 
@@ -723,49 +578,6 @@ Key features:
 - Pass \`labels: { team: "platform" }\` to add extra labels to all resources
 - Pass \`namespace: "prod"\` to set namespace on all namespaced resources
 - Pass \`env: [{ name: "KEY", value: "val" }]\` for container environment variables
-
-## Namespace management
-
-Use the **NamespaceEnv** composite (above) to manage namespaces declaratively. For manual kubectl management:
-
-\`\`\`bash
-# Create namespace
-kubectl create namespace my-project
-
-# Set default resource quotas
-kubectl apply -f - <<EOF
-apiVersion: v1
-kind: ResourceQuota
-metadata:
-  name: default-quota
-  namespace: my-project
-spec:
-  hard:
-    requests.cpu: "4"
-    requests.memory: 8Gi
-    limits.cpu: "8"
-    limits.memory: 16Gi
-    pods: "20"
-EOF
-
-# Set default container limits via LimitRange
-kubectl apply -f - <<EOF
-apiVersion: v1
-kind: LimitRange
-metadata:
-  name: default-limits
-  namespace: my-project
-spec:
-  limits:
-  - default:
-      cpu: 500m
-      memory: 256Mi
-    defaultRequest:
-      cpu: 100m
-      memory: 128Mi
-    type: Container
-EOF
-\`\`\`
 
 ## Troubleshooting reference table
 
@@ -775,11 +587,8 @@ EOF
 | Pod stuck in Pending | PVC not bound | Check StorageClass exists, PV available |
 | Pod stuck in Pending | Node selector/affinity mismatch | Verify node labels match selectors |
 | Pod stuck in ContainerCreating | ConfigMap/Secret not found | Ensure referenced ConfigMaps/Secrets exist |
-| Pod stuck in ContainerCreating | Volume mount failure | Check PVC status, CSI driver health |
 | Service returns 503 | No ready endpoints | Check pod readiness probes, selector match |
-| Service returns 503 | Wrong port configuration | Verify targetPort matches containerPort |
 | Ingress returns 404 | Backend service not found | Check Ingress rules, service name/port |
-| Ingress returns 404 | Wrong path matching | Check pathType (Prefix vs Exact) |
 | HPA not scaling | Metrics server not installed | Install metrics-server |
 | HPA not scaling | Resource requests not set | Add CPU/memory requests to containers |
 | CronJob not running | Invalid cron expression | Validate cron syntax (5-field format) |
@@ -892,20 +701,522 @@ const { deployment, service, hpa, pdb } = AutoscaledService({
 });`,
           },
           {
-            title: "NamespaceEnv composite",
-            description: "Multi-tenant namespace with guardrails",
-            input: "Set up a team namespace with quotas and network isolation",
-            output: `import { NamespaceEnv } from "@intentius/chant-lexicon-k8s";
+            title: "BatchJob composite",
+            description: "One-shot batch job with RBAC",
+            input: "Run a database migration job",
+            output: `import { BatchJob } from "@intentius/chant-lexicon-k8s";
 
-const { namespace, resourceQuota, limitRange, networkPolicy } = NamespaceEnv({
-  name: "team-alpha",
-  cpuQuota: "8",
-  memoryQuota: "16Gi",
-  defaultCpuRequest: "100m",
-  defaultMemoryRequest: "128Mi",
-  defaultCpuLimit: "500m",
-  defaultMemoryLimit: "512Mi",
-  defaultDenyIngress: true,
+const { job, serviceAccount, role, roleBinding } = BatchJob({
+  name: "db-migrate",
+  image: "api:1.0",
+  command: ["python", "manage.py", "migrate"],
+  backoffLimit: 3,
+  ttlSecondsAfterFinished: 3600,
+});`,
+          },
+        ],
+      },
+      {
+        name: "chant-k8s-eks",
+        description: "EKS-specific Kubernetes composites — IRSA, ALB, EBS/EFS, Fluent Bit, ExternalDNS, ADOT",
+        content: `---
+skill: chant-k8s-eks
+description: EKS-specific Kubernetes patterns and composites
+user-invocable: true
+---
+
+# EKS Kubernetes Patterns
+
+## EKS Composites Overview
+
+These composites produce K8s YAML with EKS-specific annotations and configurations.
+
+### IrsaServiceAccount — ServiceAccount with IAM Role annotation
+
+\`\`\`typescript
+import { IrsaServiceAccount } from "@intentius/chant-lexicon-k8s";
+
+const { serviceAccount, role, roleBinding } = IrsaServiceAccount({
+  name: "app-sa",
+  iamRoleArn: "arn:aws:iam::123456789012:role/my-app-role",
+  rbacRules: [
+    { apiGroups: [""], resources: ["secrets"], verbs: ["get"] },
+  ],
+  namespace: "prod",
+});
+\`\`\`
+
+### AlbIngress — Ingress with AWS ALB Controller annotations
+
+\`\`\`typescript
+import { AlbIngress } from "@intentius/chant-lexicon-k8s";
+
+const { ingress } = AlbIngress({
+  name: "api-ingress",
+  hosts: [
+    {
+      hostname: "api.example.com",
+      paths: [{ path: "/", serviceName: "api", servicePort: 80 }],
+    },
+  ],
+  scheme: "internet-facing",
+  certificateArn: "arn:aws:acm:us-east-1:123456789012:certificate/abc-123",
+  groupName: "shared-alb",
+  healthCheckPath: "/healthz",
+});
+\`\`\`
+
+Features:
+- Auto-sets \`alb.ingress.kubernetes.io/*\` annotations
+- SSL redirect enabled by default when \`certificateArn\` set
+- \`groupName\` for shared ALB across multiple Ingresses
+- \`wafAclArn\` for WAFv2 integration
+
+### EbsStorageClass — StorageClass for EBS CSI
+
+\`\`\`typescript
+import { EbsStorageClass } from "@intentius/chant-lexicon-k8s";
+
+const { storageClass } = EbsStorageClass({
+  name: "gp3-encrypted",
+  type: "gp3",
+  encrypted: true,
+  iops: "3000",
+  throughput: "125",
+});
+\`\`\`
+
+### EfsStorageClass — StorageClass for EFS CSI (ReadWriteMany)
+
+\`\`\`typescript
+import { EfsStorageClass } from "@intentius/chant-lexicon-k8s";
+
+const { storageClass } = EfsStorageClass({
+  name: "efs-shared",
+  fileSystemId: "fs-12345678",
+});
+\`\`\`
+
+Use EFS when you need ReadWriteMany (shared across pods/nodes). Use EBS for ReadWriteOnce (single pod).
+
+### FluentBitAgent — DaemonSet for CloudWatch logging
+
+\`\`\`typescript
+import { FluentBitAgent } from "@intentius/chant-lexicon-k8s";
+
+const result = FluentBitAgent({
+  logGroup: "/aws/eks/my-cluster/containers",
+  region: "us-east-1",
+  clusterName: "my-cluster",
+});
+\`\`\`
+
+### ExternalDnsAgent — ExternalDNS for Route53
+
+\`\`\`typescript
+import { ExternalDnsAgent } from "@intentius/chant-lexicon-k8s";
+
+const result = ExternalDnsAgent({
+  iamRoleArn: "arn:aws:iam::123456789012:role/external-dns-role",
+  domainFilters: ["example.com"],
+  txtOwnerId: "my-cluster",
+});
+\`\`\`
+
+### AdotCollector — ADOT for CloudWatch/X-Ray
+
+\`\`\`typescript
+import { AdotCollector } from "@intentius/chant-lexicon-k8s";
+
+const result = AdotCollector({
+  region: "us-east-1",
+  clusterName: "my-cluster",
+  exporters: ["cloudwatch", "xray"],
+});
+\`\`\`
+
+## Pod Identity vs IRSA
+
+| Feature | IRSA | Pod Identity |
+|---------|------|-------------|
+| K8s annotation needed | Yes (\`eks.amazonaws.com/role-arn\`) | No |
+| Composite available | **IrsaServiceAccount** | None needed |
+| Setup | OIDC provider + IAM role trust policy | EKS Pod Identity Agent add-on + association |
+| When to use | Existing clusters, broad compatibility | New clusters (EKS 1.28+), simpler management |
+
+For Pod Identity, no K8s-side composite is needed — configure the association via AWS API/CloudFormation and use a plain ServiceAccount.
+
+## Karpenter
+
+Karpenter replaces Cluster Autoscaler for node provisioning. Karpenter NodePool and EC2NodeClass are simple CRDs — use CRD import rather than composites:
+
+\`\`\`bash
+# Import Karpenter CRDs into your chant project
+chant import --url https://raw.githubusercontent.com/aws/karpenter/main/pkg/apis/crds/karpenter.sh_nodepools.yaml
+\`\`\`
+
+## Fargate Considerations
+
+When running on EKS Fargate:
+- **No DaemonSets** — FluentBitAgent and AdotCollector cannot run on Fargate nodes
+- **No hostPath volumes** — use EFS for shared storage
+- **No privileged containers** — security context restrictions apply
+- For Fargate logging, use the built-in Fluent Bit log router (Fargate logging configuration)
+
+## EKS Add-ons
+
+Common add-ons managed via AWS (not K8s manifests):
+- **vpc-cni** — Amazon VPC CNI plugin
+- **coredns** — Cluster DNS
+- **kube-proxy** — Network proxy
+- **aws-ebs-csi-driver** — EBS CSI driver (required for EbsStorageClass)
+- **aws-efs-csi-driver** — EFS CSI driver (required for EfsStorageClass)
+- **adot** — AWS Distro for OpenTelemetry (alternative to AdotCollector composite)
+- **aws-guardduty-agent** — Runtime threat detection
+
+Configure add-ons via the AWS lexicon (\`@intentius/chant-lexicon-aws\`) CloudFormation resources.
+`,
+        triggers: [
+          { type: "context", value: "eks" },
+          { type: "context", value: "irsa" },
+          { type: "context", value: "alb" },
+          { type: "context", value: "ebs" },
+          { type: "context", value: "efs" },
+          { type: "context", value: "fluent-bit" },
+          { type: "context", value: "cloudwatch" },
+          { type: "context", value: "karpenter" },
+          { type: "context", value: "fargate" },
+        ],
+        preConditions: [
+          "chant CLI is installed (chant --version succeeds)",
+          "EKS cluster is provisioned",
+          "kubectl is configured for the EKS cluster",
+        ],
+        postConditions: [
+          "EKS-specific resources are deployed and functional",
+        ],
+        parameters: [],
+        examples: [
+          {
+            title: "IRSA ServiceAccount",
+            description: "Create a ServiceAccount with IAM role for S3 access",
+            input: "Create an IRSA ServiceAccount for my app that needs S3 access",
+            output: `import { IrsaServiceAccount } from "@intentius/chant-lexicon-k8s";
+
+const { serviceAccount } = IrsaServiceAccount({
+  name: "app-sa",
+  iamRoleArn: "arn:aws:iam::123456789012:role/app-s3-role",
+  namespace: "prod",
+});`,
+          },
+          {
+            title: "ALB Ingress with TLS",
+            description: "Create an ALB Ingress with ACM certificate",
+            input: "Set up an internet-facing ALB with TLS for my API",
+            output: `import { AlbIngress } from "@intentius/chant-lexicon-k8s";
+
+const { ingress } = AlbIngress({
+  name: "api-ingress",
+  hosts: [{ hostname: "api.example.com", paths: [{ path: "/", serviceName: "api", servicePort: 80 }] }],
+  certificateArn: "arn:aws:acm:us-east-1:123456789012:certificate/abc-123",
+});`,
+          },
+        ],
+      },
+      {
+        name: "chant-k8s-patterns",
+        description: "Advanced K8s patterns — sidecars, observability, TLS, network isolation, config/secret mounting",
+        content: `---
+skill: chant-k8s-patterns
+description: Advanced Kubernetes deployment patterns and composites
+user-invocable: true
+---
+
+# Advanced Kubernetes Patterns
+
+## Sidecar Patterns
+
+### SidecarApp — multi-container Deployment
+
+\`\`\`typescript
+import { SidecarApp } from "@intentius/chant-lexicon-k8s";
+
+// Envoy sidecar proxy
+const { deployment, service } = SidecarApp({
+  name: "api",
+  image: "api:1.0",
+  port: 8080,
+  sidecars: [
+    {
+      name: "envoy",
+      image: "envoyproxy/envoy:v1.28",
+      ports: [{ containerPort: 9901, name: "admin" }],
+      resources: { requests: { cpu: "100m", memory: "128Mi" }, limits: { cpu: "200m", memory: "256Mi" } },
+    },
+  ],
+  initContainers: [
+    { name: "migrate", image: "api:1.0", command: ["python", "manage.py", "migrate"] },
+  ],
+  sharedVolumes: [{ name: "tmp", emptyDir: {} }],
+});
+\`\`\`
+
+Common sidecar use cases:
+- **Envoy proxy** — service mesh, mTLS, traffic management
+- **Log forwarder** — Fluent Bit sidecar for app-specific log routing
+- **Auth proxy** — OAuth2 Proxy for authentication
+- **Config watcher** — reload config on ConfigMap changes
+
+## Config and Secret Mounting
+
+### ConfiguredApp — automatic volume wiring
+
+\`\`\`typescript
+import { ConfiguredApp } from "@intentius/chant-lexicon-k8s";
+
+const { deployment, service, configMap } = ConfiguredApp({
+  name: "api",
+  image: "api:1.0",
+  port: 8080,
+  // Mount ConfigMap as volume
+  configData: { "app.conf": "key=value\\nother=setting" },
+  configMountPath: "/etc/api",
+  // Mount existing Secret as volume
+  secretName: "api-creds",
+  secretMountPath: "/secrets",
+  // Inject as environment variables
+  envFrom: { secretRef: "api-env-secret", configMapRef: "api-env-config" },
+  // Run migrations before the app starts
+  initContainers: [
+    { name: "migrate", image: "api:1.0", command: ["./migrate.sh"] },
+  ],
+});
+\`\`\`
+
+### Volume patterns
+
+| Pattern | Use Case | ConfiguredApp Props |
+|---------|----------|---------------------|
+| ConfigMap as file | Config files, templates | \`configData\` + \`configMountPath\` |
+| Secret as file | TLS certs, credentials | \`secretName\` + \`secretMountPath\` |
+| ConfigMap as env | Simple key-value config | \`envFrom.configMapRef\` |
+| Secret as env | Database URLs, API keys | \`envFrom.secretRef\` |
+
+## TLS / cert-manager
+
+### SecureIngress — multi-host TLS with cert-manager
+
+\`\`\`typescript
+import { SecureIngress } from "@intentius/chant-lexicon-k8s";
+
+const { ingress, certificate } = SecureIngress({
+  name: "app-ingress",
+  hosts: [
+    {
+      hostname: "api.example.com",
+      paths: [
+        { path: "/v1", serviceName: "api-v1", servicePort: 80 },
+        { path: "/v2", serviceName: "api-v2", servicePort: 80 },
+      ],
+    },
+    {
+      hostname: "admin.example.com",
+      paths: [{ path: "/", serviceName: "admin", servicePort: 80 }],
+    },
+  ],
+  clusterIssuer: "letsencrypt-prod",
+  ingressClassName: "nginx",
+});
+\`\`\`
+
+Features:
+- Multiple hosts and paths per Ingress
+- Automatic cert-manager Certificate when \`clusterIssuer\` set
+- TLS secret auto-provisioned by cert-manager
+
+### cert-manager setup (prerequisite)
+
+\`\`\`bash
+# Install cert-manager
+kubectl apply -f https://github.com/cert-manager/cert-manager/releases/latest/download/cert-manager.yaml
+
+# Create ClusterIssuer for Let's Encrypt
+kubectl apply -f - <<EOF
+apiVersion: cert-manager.io/v1
+kind: ClusterIssuer
+metadata:
+  name: letsencrypt-prod
+spec:
+  acme:
+    server: https://acme-v02.api.letsencrypt.org/directory
+    email: admin@example.com
+    privateKeySecretRef:
+      name: letsencrypt-prod-key
+    solvers:
+    - http01:
+        ingress:
+          class: nginx
+EOF
+\`\`\`
+
+## Observability
+
+### MonitoredService — Prometheus monitoring
+
+\`\`\`typescript
+import { MonitoredService } from "@intentius/chant-lexicon-k8s";
+
+const { deployment, service, serviceMonitor, prometheusRule } = MonitoredService({
+  name: "api",
+  image: "api:1.0",
+  port: 8080,
+  metricsPort: 9090,
+  metricsPath: "/metrics",
+  scrapeInterval: "15s",
+  alertRules: [
+    {
+      name: "HighErrorRate",
+      expr: 'rate(http_requests_total{status=~"5.."}[5m]) / rate(http_requests_total[5m]) > 0.05',
+      for: "5m",
+      severity: "critical",
+      annotations: { summary: "High error rate on {{ $labels.instance }}" },
+    },
+    {
+      name: "HighLatency",
+      expr: 'histogram_quantile(0.99, rate(http_request_duration_seconds_bucket[5m])) > 1',
+      for: "10m",
+      severity: "warning",
+    },
+  ],
+});
+\`\`\`
+
+### Prerequisites
+
+- Prometheus Operator installed (for ServiceMonitor/PrometheusRule CRDs)
+- Prometheus configured to discover ServiceMonitors
+
+## Network Isolation
+
+### NetworkIsolatedApp — per-app firewall rules
+
+\`\`\`typescript
+import { NetworkIsolatedApp } from "@intentius/chant-lexicon-k8s";
+
+const { deployment, service, networkPolicy } = NetworkIsolatedApp({
+  name: "api",
+  image: "api:1.0",
+  port: 8080,
+  allowIngressFrom: [
+    { podSelector: { "app.kubernetes.io/name": "frontend" } },
+    { namespaceSelector: { "kubernetes.io/metadata.name": "monitoring" } },
+  ],
+  allowEgressTo: [
+    { podSelector: { "app.kubernetes.io/name": "postgres" }, ports: [{ port: 5432 }] },
+    { podSelector: { "app.kubernetes.io/name": "redis" }, ports: [{ port: 6379 }] },
+  ],
+});
+\`\`\`
+
+### Combining with NamespaceEnv
+
+Use NamespaceEnv for namespace-level default-deny, then NetworkIsolatedApp for per-app allow rules:
+
+\`\`\`typescript
+// Namespace: deny all by default
+const ns = NamespaceEnv({ name: "prod", defaultDenyIngress: true, defaultDenyEgress: true });
+
+// App: allow specific traffic
+const app = NetworkIsolatedApp({
+  name: "api",
+  image: "api:1.0",
+  namespace: "prod",
+  allowIngressFrom: [{ podSelector: { "app.kubernetes.io/name": "gateway" } }],
+  allowEgressTo: [{ podSelector: { "app.kubernetes.io/name": "db" }, ports: [{ port: 5432 }] }],
+});
+\`\`\`
+
+## Blue/Green and Canary
+
+These patterns use standard K8s resources — no special composite needed.
+
+### Blue/Green
+
+\`\`\`typescript
+// Two Deployments with different versions
+const blue = WebApp({ name: "app-blue", image: "app:1.0", labels: { version: "blue" } });
+const green = WebApp({ name: "app-green", image: "app:2.0", labels: { version: "green" } });
+
+// Service points to active version — switch by changing selector
+// Active: blue → green (update the Service selector)
+\`\`\`
+
+### Canary
+
+\`\`\`typescript
+// Main deployment (90% traffic)
+const main = AutoscaledService({ name: "app", image: "app:1.0", minReplicas: 9, maxReplicas: 20, ... });
+
+// Canary deployment (10% traffic) — same app label, fewer replicas
+const canary = WebApp({ name: "app-canary", image: "app:2.0", replicas: 1, labels: { track: "canary" } });
+// Both share the same Service selector ("app.kubernetes.io/name": "app") for traffic splitting
+\`\`\`
+
+## Gateway API (future direction)
+
+Gateway API is the successor to Ingress. Key differences:
+- **HTTPRoute** replaces Ingress rules
+- **Gateway** replaces IngressClass
+- Built-in traffic splitting, header matching, URL rewriting
+- Currently in beta — use Ingress/SecureIngress/AlbIngress for production today
+
+When Gateway API reaches GA, new composites will be added. For now, use CRD import if you need Gateway API resources.
+`,
+        triggers: [
+          { type: "context", value: "sidecar" },
+          { type: "context", value: "init-container" },
+          { type: "context", value: "prometheus" },
+          { type: "context", value: "cert-manager" },
+          { type: "context", value: "tls" },
+          { type: "context", value: "network-policy" },
+          { type: "context", value: "canary" },
+          { type: "context", value: "blue-green" },
+          { type: "context", value: "configmap-mount" },
+          { type: "context", value: "secret-mount" },
+        ],
+        preConditions: [
+          "chant CLI is installed (chant --version succeeds)",
+          "kubectl is configured and can access the cluster",
+        ],
+        postConditions: [
+          "Pattern resources are deployed and functional",
+        ],
+        parameters: [],
+        examples: [
+          {
+            title: "Sidecar with envoy proxy",
+            description: "Deploy an app with an Envoy sidecar",
+            input: "Add an envoy sidecar proxy to my API",
+            output: `import { SidecarApp } from "@intentius/chant-lexicon-k8s";
+
+const { deployment, service } = SidecarApp({
+  name: "api",
+  image: "api:1.0",
+  port: 8080,
+  sidecars: [{ name: "envoy", image: "envoyproxy/envoy:v1.28", ports: [{ containerPort: 9901 }] }],
+});`,
+          },
+          {
+            title: "Monitored service with alerts",
+            description: "Deploy a service with Prometheus monitoring and alerting",
+            input: "Set up monitoring for my API with error rate alerts",
+            output: `import { MonitoredService } from "@intentius/chant-lexicon-k8s";
+
+const { deployment, service, serviceMonitor, prometheusRule } = MonitoredService({
+  name: "api",
+  image: "api:1.0",
+  metricsPort: 9090,
+  alertRules: [{ name: "HighErrorRate", expr: 'rate(http_errors[5m]) > 0.1', severity: "critical" }],
 });`,
           },
         ],

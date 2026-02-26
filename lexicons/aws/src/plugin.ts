@@ -54,7 +54,112 @@ export const awsPlugin: LexiconPlugin = {
     ];
   },
 
-  initTemplates() {
+  initTemplates(template?: string) {
+    if (template === "eks") {
+      return { src: {
+        "infra/cluster.ts": `/**
+ * EKS Cluster + Managed Node Group + OIDC Provider
+ */
+
+import { Cluster, Nodegroup, OIDCProvider, Role, InstanceProfile, Sub, AWS } from "@intentius/chant-lexicon-aws";
+
+// EKS Cluster Role
+export const clusterRole = new Role({
+  RoleName: Sub\`\${AWS.StackName}-eks-cluster-role\`,
+  AssumeRolePolicyDocument: {
+    Version: "2012-10-17",
+    Statement: [{
+      Effect: "Allow",
+      Principal: { Service: "eks.amazonaws.com" },
+      Action: "sts:AssumeRole",
+    }],
+  },
+  ManagedPolicyArns: [
+    "arn:aws:iam::aws:policy/AmazonEKSClusterPolicy",
+  ],
+});
+
+// EKS Cluster
+export const cluster = new Cluster({
+  Name: Sub\`\${AWS.StackName}-cluster\`,
+  RoleArn: clusterRole,
+  Version: "1.29",
+});
+
+// Node Role
+export const nodeRole = new Role({
+  RoleName: Sub\`\${AWS.StackName}-eks-node-role\`,
+  AssumeRolePolicyDocument: {
+    Version: "2012-10-17",
+    Statement: [{
+      Effect: "Allow",
+      Principal: { Service: "ec2.amazonaws.com" },
+      Action: "sts:AssumeRole",
+    }],
+  },
+  ManagedPolicyArns: [
+    "arn:aws:iam::aws:policy/AmazonEKSWorkerNodePolicy",
+    "arn:aws:iam::aws:policy/AmazonEKS_CNI_Policy",
+    "arn:aws:iam::aws:policy/AmazonEC2ContainerRegistryReadOnly",
+  ],
+});
+
+// Managed Node Group
+export const nodeGroup = new Nodegroup({
+  ClusterName: cluster,
+  NodegroupName: Sub\`\${AWS.StackName}-nodes\`,
+  NodeRole: nodeRole,
+  ScalingConfig: {
+    MinSize: 2,
+    MaxSize: 10,
+    DesiredSize: 3,
+  },
+  InstanceTypes: ["t3.medium"],
+});
+`,
+        "k8s/namespace.ts": `/**
+ * K8s namespace with quotas and network isolation
+ */
+
+import { NamespaceEnv } from "@intentius/chant-lexicon-k8s";
+
+export const { namespace, resourceQuota, limitRange, networkPolicy } = NamespaceEnv({
+  name: "prod",
+  cpuQuota: "16",
+  memoryQuota: "32Gi",
+  defaultCpuRequest: "100m",
+  defaultMemoryRequest: "128Mi",
+  defaultCpuLimit: "500m",
+  defaultMemoryLimit: "512Mi",
+  defaultDenyIngress: true,
+});
+`,
+        "k8s/app.ts": `/**
+ * Application deployment with IRSA and autoscaling
+ */
+
+import { AutoscaledService, IrsaServiceAccount } from "@intentius/chant-lexicon-k8s";
+
+// IRSA ServiceAccount — replace with your IAM Role ARN from CloudFormation outputs
+export const { serviceAccount } = IrsaServiceAccount({
+  name: "app-sa",
+  iamRoleArn: "arn:aws:iam::123456789012:role/app-role",  // TODO: update from CF output
+  namespace: "prod",
+});
+
+export const { deployment, service, hpa, pdb } = AutoscaledService({
+  name: "my-app",
+  image: "my-app:1.0",
+  port: 8080,
+  maxReplicas: 10,
+  cpuRequest: "200m",
+  memoryRequest: "256Mi",
+  namespace: "prod",
+});
+`,
+      } };
+    }
+
     return { src: {
       "config.ts": `/**
  * Shared bucket configuration — encryption, versioning, public access
@@ -790,6 +895,218 @@ aws cloudformation describe-stack-events \\
 # Attempt to continue the rollback
 aws cloudformation continue-update-rollback --stack-name my-app-prod
 aws cloudformation wait stack-update-complete --stack-name my-app-prod`,
+          },
+        ],
+      },
+      {
+        name: "chant-eks",
+        description: "EKS end-to-end workflow — provision cluster, configure kubectl, deploy K8s workloads",
+        content: `---
+skill: chant-eks
+description: End-to-end EKS workflow bridging AWS infrastructure and Kubernetes workloads
+user-invocable: true
+---
+
+# EKS End-to-End Workflow
+
+## Overview
+
+This skill bridges two lexicons:
+- **\`@intentius/chant-lexicon-aws\`** — EKS cluster, node groups, IAM roles, OIDC provider (CloudFormation)
+- **\`@intentius/chant-lexicon-k8s\`** — Kubernetes workloads, IRSA, ALB Ingress, storage, observability (K8s YAML)
+
+## Architecture
+
+\`\`\`
+AWS Lexicon (CloudFormation)          K8s Lexicon (kubectl apply)
+┌────────────────────────┐           ┌────────────────────────────┐
+│ VPC + Subnets          │           │ NamespaceEnv (quotas)      │
+│ EKS Cluster            │           │ AutoscaledService (app)    │
+│ Managed Node Group     │──ARNs──→  │ IrsaServiceAccount (IRSA)  │
+│ OIDC Provider          │           │ AlbIngress (ALB)           │
+│ IAM Roles (IRSA)       │           │ EbsStorageClass (gp3)      │
+│ EKS Add-ons            │           │ FluentBitAgent (logs)      │
+└────────────────────────┘           │ ExternalDnsAgent (DNS)     │
+                                     └────────────────────────────┘
+\`\`\`
+
+## Step 1: Provision AWS Infrastructure
+
+\`\`\`bash
+# Build CloudFormation template
+chant build src/infra/ --output infra.json
+
+# Deploy
+aws cloudformation deploy \\
+  --template-file infra.json \\
+  --stack-name my-eks-cluster \\
+  --capabilities CAPABILITY_NAMED_IAM
+\`\`\`
+
+Key AWS resources:
+- **EKS Cluster** — control plane
+- **Managed Node Group** — EC2 worker nodes
+- **OIDC Provider** — enables IRSA (IAM Roles for Service Accounts)
+- **IAM Roles** — node role, app IRSA roles, ALB controller role
+
+## Step 2: Configure kubectl
+
+\`\`\`bash
+aws eks update-kubeconfig --name my-cluster --region us-east-1
+kubectl get nodes  # verify connectivity
+\`\`\`
+
+## Step 3: Deploy K8s Workloads
+
+\`\`\`bash
+# Build K8s manifests
+chant build src/k8s/ --output manifests.yaml
+
+# Apply
+kubectl apply -f manifests.yaml
+\`\`\`
+
+### Key K8s composites for EKS
+
+\`\`\`typescript
+import {
+  NamespaceEnv,
+  AutoscaledService,
+  IrsaServiceAccount,
+  AlbIngress,
+  EbsStorageClass,
+  FluentBitAgent,
+  ExternalDnsAgent,
+} from "@intentius/chant-lexicon-k8s";
+
+// 1. Namespace with quotas and network isolation
+const ns = NamespaceEnv({
+  name: "prod",
+  cpuQuota: "16",
+  memoryQuota: "32Gi",
+  defaultCpuRequest: "100m",
+  defaultMemoryRequest: "128Mi",
+  defaultDenyIngress: true,
+});
+
+// 2. IRSA ServiceAccount (use IAM Role ARN from CloudFormation outputs)
+const irsa = IrsaServiceAccount({
+  name: "app-sa",
+  iamRoleArn: "arn:aws:iam::123456789012:role/app-role",  // from CF output
+  namespace: "prod",
+});
+
+// 3. Application with autoscaling
+const app = AutoscaledService({
+  name: "api",
+  image: "api:1.0",
+  port: 8080,
+  maxReplicas: 10,
+  cpuRequest: "200m",
+  memoryRequest: "256Mi",
+  namespace: "prod",
+});
+
+// 4. ALB Ingress (use ACM cert ARN from CloudFormation outputs)
+const ingress = AlbIngress({
+  name: "api-ingress",
+  hosts: [{ hostname: "api.example.com", paths: [{ path: "/", serviceName: "api", servicePort: 80 }] }],
+  certificateArn: "arn:aws:acm:us-east-1:123456789012:certificate/abc",  // from CF output
+  namespace: "prod",
+});
+
+// 5. Storage
+const storage = EbsStorageClass({ name: "gp3-encrypted", type: "gp3", encrypted: true });
+
+// 6. Observability
+const logging = FluentBitAgent({
+  logGroup: "/aws/eks/my-cluster/containers",
+  region: "us-east-1",
+  clusterName: "my-cluster",
+});
+
+// 7. DNS
+const dns = ExternalDnsAgent({
+  iamRoleArn: "arn:aws:iam::123456789012:role/external-dns-role",
+  domainFilters: ["example.com"],
+});
+\`\`\`
+
+## Step 4: Verify
+
+\`\`\`bash
+kubectl get pods -n prod
+kubectl get ingress -n prod
+kubectl logs -n amazon-cloudwatch -l app.kubernetes.io/name=fluent-bit
+\`\`\`
+
+## Cleanup
+
+\`\`\`bash
+# Delete K8s workloads first
+kubectl delete -f manifests.yaml
+
+# Then delete AWS infrastructure
+aws cloudformation delete-stack --stack-name my-eks-cluster
+aws cloudformation wait stack-delete-complete --stack-name my-eks-cluster
+\`\`\`
+
+## Cross-Lexicon Value Flow
+
+CloudFormation outputs flow into K8s composite props:
+
+| CloudFormation Output | K8s Composite Prop |
+|----------------------|-------------------|
+| App IAM Role ARN | \`IrsaServiceAccount.iamRoleArn\` |
+| ALB Controller Role ARN | \`IrsaServiceAccount.iamRoleArn\` (for ALB controller SA) |
+| ACM Certificate ARN | \`AlbIngress.certificateArn\` |
+| ExternalDNS Role ARN | \`ExternalDnsAgent.iamRoleArn\` |
+| EKS Cluster Name | \`FluentBitAgent.clusterName\`, \`AdotCollector.clusterName\` |
+| EFS Filesystem ID | \`EfsStorageClass.fileSystemId\` |
+
+## EKS Init Template
+
+Scaffold a dual-lexicon EKS project:
+
+\`\`\`bash
+chant init --lexicon aws --template eks
+\`\`\`
+
+This creates:
+- \`src/infra/\` — EKS cluster, node group, IAM (AWS lexicon)
+- \`src/k8s/\` — namespace, app, ingress, storage (K8s lexicon)
+- \`package.json\` with both \`@intentius/chant-lexicon-aws\` and \`@intentius/chant-lexicon-k8s\`
+`,
+        triggers: [
+          { type: "context", value: "eks" },
+          { type: "context", value: "kubernetes" },
+          { type: "context", value: "k8s-workloads" },
+        ],
+        preConditions: [
+          "AWS CLI is installed and configured",
+          "chant CLI is installed",
+          "kubectl is installed",
+        ],
+        postConditions: [
+          "EKS cluster is running",
+          "K8s workloads are deployed",
+        ],
+        parameters: [],
+        examples: [
+          {
+            title: "Full EKS deployment",
+            description: "Deploy infrastructure and workloads end-to-end",
+            input: "Set up a complete EKS environment with my API",
+            output: `# 1. Build and deploy infrastructure
+chant build src/infra/ --output infra.json
+aws cloudformation deploy --template-file infra.json --stack-name my-eks --capabilities CAPABILITY_NAMED_IAM
+
+# 2. Configure kubectl
+aws eks update-kubeconfig --name my-cluster
+
+# 3. Build and deploy workloads
+chant build src/k8s/ --output manifests.yaml
+kubectl apply -f manifests.yaml`,
           },
         ],
       },

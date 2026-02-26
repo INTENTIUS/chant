@@ -6,6 +6,19 @@ import { AutoscaledService } from "./autoscaled-service";
 import { WorkerPool } from "./worker-pool";
 import { NamespaceEnv } from "./namespace-env";
 import { NodeAgent } from "./node-agent";
+import { BatchJob } from "./batch-job";
+import { SecureIngress } from "./secure-ingress";
+import { ConfiguredApp } from "./configured-app";
+import { SidecarApp } from "./sidecar-app";
+import { MonitoredService } from "./monitored-service";
+import { NetworkIsolatedApp } from "./network-isolated-app";
+import { IrsaServiceAccount } from "./irsa-service-account";
+import { AlbIngress } from "./alb-ingress";
+import { EbsStorageClass } from "./ebs-storage-class";
+import { EfsStorageClass } from "./efs-storage-class";
+import { FluentBitAgent } from "./fluent-bit-agent";
+import { ExternalDnsAgent } from "./external-dns-agent";
+import { AdotCollector } from "./adot-collector";
 
 // ── WebApp ──────────────────────────────────────────────────────────
 
@@ -1105,5 +1118,780 @@ describe("NodeAgent", () => {
     expect((result.clusterRole.metadata as any).labels["app.kubernetes.io/component"]).toBe("rbac");
     expect((result.clusterRoleBinding.metadata as any).labels["app.kubernetes.io/component"]).toBe("rbac");
     expect((result.configMap!.metadata as any).labels["app.kubernetes.io/component"]).toBe("config");
+  });
+});
+
+// ── Hardening Additions ─────────────────────────────────────────────
+
+describe("WebApp hardening", () => {
+  test("PDB created when minAvailable set", () => {
+    const result = WebApp({ name: "app", image: "app:1.0", minAvailable: 1 });
+    expect(result.pdb).toBeDefined();
+    const spec = result.pdb!.spec as any;
+    expect(spec.minAvailable).toBe(1);
+    expect(spec.selector.matchLabels["app.kubernetes.io/name"]).toBe("app");
+  });
+
+  test("no PDB by default", () => {
+    const result = WebApp({ name: "app", image: "app:1.0" });
+    expect(result.pdb).toBeUndefined();
+  });
+
+  test("initContainers passed through", () => {
+    const result = WebApp({
+      name: "app",
+      image: "app:1.0",
+      initContainers: [{ name: "migrate", image: "migrate:1.0", command: ["./migrate.sh"] }],
+    });
+    const spec = result.deployment.spec as any;
+    expect(spec.template.spec.initContainers).toHaveLength(1);
+    expect(spec.template.spec.initContainers[0].name).toBe("migrate");
+  });
+
+  test("securityContext passed through", () => {
+    const result = WebApp({
+      name: "app",
+      image: "app:1.0",
+      securityContext: { runAsNonRoot: true, readOnlyRootFilesystem: true },
+    });
+    const spec = result.deployment.spec as any;
+    const container = spec.template.spec.containers[0];
+    expect(container.securityContext.runAsNonRoot).toBe(true);
+  });
+
+  test("terminationGracePeriodSeconds set", () => {
+    const result = WebApp({ name: "app", image: "app:1.0", terminationGracePeriodSeconds: 60 });
+    const spec = result.deployment.spec as any;
+    expect(spec.template.spec.terminationGracePeriodSeconds).toBe(60);
+  });
+
+  test("priorityClassName set", () => {
+    const result = WebApp({ name: "app", image: "app:1.0", priorityClassName: "high-priority" });
+    const spec = result.deployment.spec as any;
+    expect(spec.template.spec.priorityClassName).toBe("high-priority");
+  });
+
+  test("multi-path ingress", () => {
+    const result = WebApp({
+      name: "app",
+      image: "app:1.0",
+      ingressHost: "app.example.com",
+      ingressPaths: [
+        { path: "/api", serviceName: "api", servicePort: 8080 },
+        { path: "/web", serviceName: "web", servicePort: 3000 },
+      ],
+    });
+    const spec = result.ingress!.spec as any;
+    expect(spec.rules[0].http.paths).toHaveLength(2);
+    expect(spec.rules[0].http.paths[0].path).toBe("/api");
+    expect(spec.rules[0].http.paths[1].backend.service.name).toBe("web");
+  });
+});
+
+describe("StatefulApp hardening", () => {
+  test("PDB created when minAvailable set", () => {
+    const result = StatefulApp({ name: "db", image: "postgres:16", minAvailable: 1 });
+    expect(result.pdb).toBeDefined();
+    const spec = result.pdb!.spec as any;
+    expect(spec.minAvailable).toBe(1);
+  });
+
+  test("initContainers passed through", () => {
+    const result = StatefulApp({
+      name: "db",
+      image: "postgres:16",
+      initContainers: [{ name: "init", image: "init:1.0" }],
+    });
+    const spec = result.statefulSet.spec as any;
+    expect(spec.template.spec.initContainers).toHaveLength(1);
+  });
+
+  test("securityContext passed through", () => {
+    const result = StatefulApp({
+      name: "db",
+      image: "postgres:16",
+      securityContext: { runAsNonRoot: true },
+    });
+    const spec = result.statefulSet.spec as any;
+    expect(spec.template.spec.containers[0].securityContext.runAsNonRoot).toBe(true);
+  });
+});
+
+describe("WorkerPool hardening", () => {
+  test("PDB created when minAvailable set", () => {
+    const result = WorkerPool({ name: "w", image: "w:1.0", minAvailable: 1 });
+    expect(result.pdb).toBeDefined();
+    const spec = result.pdb!.spec as any;
+    expect(spec.minAvailable).toBe(1);
+  });
+
+  test("securityContext on container", () => {
+    const result = WorkerPool({
+      name: "w",
+      image: "w:1.0",
+      securityContext: { runAsNonRoot: true },
+    });
+    const spec = result.deployment.spec as any;
+    expect(spec.template.spec.containers[0].securityContext.runAsNonRoot).toBe(true);
+  });
+});
+
+describe("AutoscaledService hardening", () => {
+  const minProps = { name: "api", image: "api:1.0", maxReplicas: 10, cpuRequest: "100m", memoryRequest: "128Mi" };
+
+  test("initContainers passed through", () => {
+    const result = AutoscaledService({
+      ...minProps,
+      initContainers: [{ name: "migrate", image: "m:1.0" }],
+    });
+    const spec = result.deployment.spec as any;
+    expect(spec.template.spec.initContainers).toHaveLength(1);
+  });
+
+  test("securityContext on container", () => {
+    const result = AutoscaledService({
+      ...minProps,
+      securityContext: { runAsNonRoot: true },
+    });
+    const spec = result.deployment.spec as any;
+    expect(spec.template.spec.containers[0].securityContext.runAsNonRoot).toBe(true);
+  });
+
+  test("terminationGracePeriodSeconds set", () => {
+    const result = AutoscaledService({ ...minProps, terminationGracePeriodSeconds: 30 });
+    const spec = result.deployment.spec as any;
+    expect(spec.template.spec.terminationGracePeriodSeconds).toBe(30);
+  });
+});
+
+// ── BatchJob ────────────────────────────────────────────────────────
+
+describe("BatchJob", () => {
+  const minProps = { name: "migrate", image: "migrate:1.0" };
+
+  test("returns job with default RBAC", () => {
+    const result = BatchJob(minProps);
+    expect(result.job).toBeDefined();
+    expect(result.serviceAccount).toBeDefined();
+    expect(result.role).toBeDefined();
+    expect(result.roleBinding).toBeDefined();
+  });
+
+  test("default backoffLimit is 6", () => {
+    const result = BatchJob(minProps);
+    const spec = result.job.spec as any;
+    expect(spec.backoffLimit).toBe(6);
+  });
+
+  test("custom backoffLimit and ttl", () => {
+    const result = BatchJob({ ...minProps, backoffLimit: 3, ttlSecondsAfterFinished: 3600 });
+    const spec = result.job.spec as any;
+    expect(spec.backoffLimit).toBe(3);
+    expect(spec.ttlSecondsAfterFinished).toBe(3600);
+  });
+
+  test("parallelism and completions", () => {
+    const result = BatchJob({ ...minProps, parallelism: 3, completions: 10 });
+    const spec = result.job.spec as any;
+    expect(spec.parallelism).toBe(3);
+    expect(spec.completions).toBe(10);
+  });
+
+  test("rbacRules: [] skips RBAC", () => {
+    const result = BatchJob({ ...minProps, rbacRules: [] });
+    expect(result.serviceAccount).toBeUndefined();
+    expect(result.role).toBeUndefined();
+    expect(result.roleBinding).toBeUndefined();
+  });
+
+  test("command and args passed through", () => {
+    const result = BatchJob({ ...minProps, command: ["python"], args: ["migrate.py"] });
+    const spec = result.job.spec as any;
+    const container = spec.template.spec.containers[0];
+    expect(container.command).toEqual(["python"]);
+    expect(container.args).toEqual(["migrate.py"]);
+  });
+
+  test("namespace propagated", () => {
+    const result = BatchJob({ ...minProps, namespace: "jobs" });
+    expect((result.job.metadata as any).namespace).toBe("jobs");
+    expect((result.serviceAccount!.metadata as any).namespace).toBe("jobs");
+  });
+
+  test("component labels", () => {
+    const result = BatchJob(minProps);
+    expect((result.job.metadata as any).labels["app.kubernetes.io/component"]).toBe("batch");
+    expect((result.role!.metadata as any).labels["app.kubernetes.io/component"]).toBe("rbac");
+  });
+});
+
+// ── SecureIngress ───────────────────────────────────────────────────
+
+describe("SecureIngress", () => {
+  const minProps = {
+    name: "app-ingress",
+    hosts: [{ hostname: "app.example.com", paths: [{ path: "/", serviceName: "app", servicePort: 80 }] }],
+  };
+
+  test("returns ingress without certificate by default", () => {
+    const result = SecureIngress(minProps);
+    expect(result.ingress).toBeDefined();
+    expect(result.certificate).toBeUndefined();
+  });
+
+  test("creates certificate when clusterIssuer set", () => {
+    const result = SecureIngress({ ...minProps, clusterIssuer: "letsencrypt-prod" });
+    expect(result.certificate).toBeDefined();
+    const certSpec = result.certificate!.spec as any;
+    expect(certSpec.issuerRef.name).toBe("letsencrypt-prod");
+    expect(certSpec.dnsNames).toEqual(["app.example.com"]);
+  });
+
+  test("TLS on ingress when clusterIssuer set", () => {
+    const result = SecureIngress({ ...minProps, clusterIssuer: "letsencrypt-prod" });
+    const spec = result.ingress.spec as any;
+    expect(spec.tls).toBeDefined();
+    expect(spec.tls[0].hosts).toEqual(["app.example.com"]);
+  });
+
+  test("multi-host support", () => {
+    const result = SecureIngress({
+      name: "multi",
+      hosts: [
+        { hostname: "api.example.com", paths: [{ path: "/", serviceName: "api", servicePort: 80 }] },
+        { hostname: "admin.example.com", paths: [{ path: "/", serviceName: "admin", servicePort: 80 }] },
+      ],
+      clusterIssuer: "letsencrypt-prod",
+    });
+    const spec = result.ingress.spec as any;
+    expect(spec.rules).toHaveLength(2);
+    const certSpec = result.certificate!.spec as any;
+    expect(certSpec.dnsNames).toHaveLength(2);
+  });
+
+  test("multi-path support", () => {
+    const result = SecureIngress({
+      name: "multi-path",
+      hosts: [{
+        hostname: "app.example.com",
+        paths: [
+          { path: "/api", serviceName: "api", servicePort: 8080 },
+          { path: "/web", serviceName: "web", servicePort: 3000 },
+        ],
+      }],
+    });
+    const spec = result.ingress.spec as any;
+    expect(spec.rules[0].http.paths).toHaveLength(2);
+  });
+
+  test("ingressClassName set", () => {
+    const result = SecureIngress({ ...minProps, ingressClassName: "nginx" });
+    const spec = result.ingress.spec as any;
+    expect(spec.ingressClassName).toBe("nginx");
+  });
+
+  test("cert-manager annotation added", () => {
+    const result = SecureIngress({ ...minProps, clusterIssuer: "letsencrypt-prod" });
+    const meta = result.ingress.metadata as any;
+    expect(meta.annotations["cert-manager.io/cluster-issuer"]).toBe("letsencrypt-prod");
+  });
+});
+
+// ── ConfiguredApp ───────────────────────────────────────────────────
+
+describe("ConfiguredApp", () => {
+  const minProps = { name: "api", image: "api:1.0" };
+
+  test("returns deployment and service", () => {
+    const result = ConfiguredApp(minProps);
+    expect(result.deployment).toBeDefined();
+    expect(result.service).toBeDefined();
+    expect(result.configMap).toBeUndefined();
+  });
+
+  test("creates ConfigMap when configData provided", () => {
+    const result = ConfiguredApp({ ...minProps, configData: { "app.conf": "key=val" }, configMountPath: "/etc/app" });
+    expect(result.configMap).toBeDefined();
+    expect((result.configMap as any).data["app.conf"]).toBe("key=val");
+  });
+
+  test("configMap volume mounted", () => {
+    const result = ConfiguredApp({ ...minProps, configData: { "k": "v" }, configMountPath: "/etc/app" });
+    const spec = result.deployment.spec as any;
+    const container = spec.template.spec.containers[0];
+    expect(container.volumeMounts).toHaveLength(1);
+    expect(container.volumeMounts[0].mountPath).toBe("/etc/app");
+    expect(spec.template.spec.volumes[0].configMap.name).toBe("api-config");
+  });
+
+  test("secret volume mounted", () => {
+    const result = ConfiguredApp({ ...minProps, secretName: "creds", secretMountPath: "/secrets" });
+    const spec = result.deployment.spec as any;
+    const container = spec.template.spec.containers[0];
+    expect(container.volumeMounts[0].mountPath).toBe("/secrets");
+    expect(spec.template.spec.volumes[0].secret.secretName).toBe("creds");
+  });
+
+  test("envFrom with configMapRef and secretRef", () => {
+    const result = ConfiguredApp({
+      ...minProps,
+      envFrom: { configMapRef: "my-config", secretRef: "my-secret" },
+    });
+    const spec = result.deployment.spec as any;
+    const container = spec.template.spec.containers[0];
+    expect(container.envFrom).toHaveLength(2);
+    expect(container.envFrom[0].configMapRef.name).toBe("my-config");
+    expect(container.envFrom[1].secretRef.name).toBe("my-secret");
+  });
+
+  test("initContainers supported", () => {
+    const result = ConfiguredApp({
+      ...minProps,
+      initContainers: [{ name: "init", image: "init:1.0", command: ["sh"] }],
+    });
+    const spec = result.deployment.spec as any;
+    expect(spec.template.spec.initContainers).toHaveLength(1);
+  });
+
+  test("namespace propagated", () => {
+    const result = ConfiguredApp({ ...minProps, namespace: "prod" });
+    expect((result.deployment.metadata as any).namespace).toBe("prod");
+    expect((result.service.metadata as any).namespace).toBe("prod");
+  });
+});
+
+// ── SidecarApp ──────────────────────────────────────────────────────
+
+describe("SidecarApp", () => {
+  const minProps = {
+    name: "api",
+    image: "api:1.0",
+    sidecars: [{ name: "envoy", image: "envoy:v1.28" }],
+  };
+
+  test("returns deployment and service", () => {
+    const result = SidecarApp(minProps);
+    expect(result.deployment).toBeDefined();
+    expect(result.service).toBeDefined();
+  });
+
+  test("has multiple containers", () => {
+    const result = SidecarApp(minProps);
+    const spec = result.deployment.spec as any;
+    expect(spec.template.spec.containers).toHaveLength(2);
+    expect(spec.template.spec.containers[0].name).toBe("api");
+    expect(spec.template.spec.containers[1].name).toBe("envoy");
+  });
+
+  test("sidecar ports passed through", () => {
+    const result = SidecarApp({
+      ...minProps,
+      sidecars: [{ name: "envoy", image: "envoy:v1.28", ports: [{ containerPort: 9901, name: "admin" }] }],
+    });
+    const spec = result.deployment.spec as any;
+    expect(spec.template.spec.containers[1].ports[0].containerPort).toBe(9901);
+  });
+
+  test("initContainers supported", () => {
+    const result = SidecarApp({
+      ...minProps,
+      initContainers: [{ name: "migrate", image: "m:1.0", command: ["./migrate.sh"] }],
+    });
+    const spec = result.deployment.spec as any;
+    expect(spec.template.spec.initContainers).toHaveLength(1);
+  });
+
+  test("sharedVolumes creates volumes", () => {
+    const result = SidecarApp({
+      ...minProps,
+      sharedVolumes: [{ name: "tmp" }, { name: "config", configMapName: "my-config" }],
+    });
+    const spec = result.deployment.spec as any;
+    expect(spec.template.spec.volumes).toHaveLength(2);
+    expect(spec.template.spec.volumes[0].emptyDir).toBeDefined();
+    expect(spec.template.spec.volumes[1].configMap.name).toBe("my-config");
+  });
+
+  test("common labels on all resources", () => {
+    const result = SidecarApp(minProps);
+    expect((result.deployment.metadata as any).labels["app.kubernetes.io/managed-by"]).toBe("chant");
+    expect((result.service.metadata as any).labels["app.kubernetes.io/managed-by"]).toBe("chant");
+  });
+});
+
+// ── MonitoredService ────────────────────────────────────────────────
+
+describe("MonitoredService", () => {
+  const minProps = { name: "api", image: "api:1.0" };
+
+  test("returns deployment, service, serviceMonitor", () => {
+    const result = MonitoredService(minProps);
+    expect(result.deployment).toBeDefined();
+    expect(result.service).toBeDefined();
+    expect(result.serviceMonitor).toBeDefined();
+    expect(result.prometheusRule).toBeUndefined();
+  });
+
+  test("prometheusRule created when alertRules provided", () => {
+    const result = MonitoredService({
+      ...minProps,
+      alertRules: [{ name: "HighError", expr: "rate(errors[5m]) > 0.1", severity: "critical" }],
+    });
+    expect(result.prometheusRule).toBeDefined();
+    const spec = result.prometheusRule!.spec as any;
+    expect(spec.groups[0].rules[0].alert).toBe("HighError");
+    expect(spec.groups[0].rules[0].labels.severity).toBe("critical");
+  });
+
+  test("serviceMonitor has correct selector and endpoint", () => {
+    const result = MonitoredService({ ...minProps, metricsPort: 9090, metricsPath: "/metrics", scrapeInterval: "15s" });
+    const spec = result.serviceMonitor.spec as any;
+    expect(spec.selector.matchLabels["app.kubernetes.io/name"]).toBe("api");
+    expect(spec.endpoints[0].port).toBe("metrics");
+    expect(spec.endpoints[0].path).toBe("/metrics");
+    expect(spec.endpoints[0].interval).toBe("15s");
+  });
+
+  test("separate metrics port on container and service", () => {
+    const result = MonitoredService({ ...minProps, port: 8080, metricsPort: 9090 });
+    const spec = result.deployment.spec as any;
+    const ports = spec.template.spec.containers[0].ports;
+    expect(ports).toHaveLength(2);
+    expect(ports[0].containerPort).toBe(8080);
+    expect(ports[1].containerPort).toBe(9090);
+  });
+
+  test("component labels", () => {
+    const result = MonitoredService({ ...minProps, alertRules: [{ name: "A", expr: "1" }] });
+    expect((result.serviceMonitor.metadata as any).labels["app.kubernetes.io/component"]).toBe("monitoring");
+    expect((result.prometheusRule!.metadata as any).labels["app.kubernetes.io/component"]).toBe("monitoring");
+  });
+});
+
+// ── NetworkIsolatedApp ──────────────────────────────────────────────
+
+describe("NetworkIsolatedApp", () => {
+  const minProps = { name: "api", image: "api:1.0" };
+
+  test("returns deployment, service, networkPolicy", () => {
+    const result = NetworkIsolatedApp(minProps);
+    expect(result.deployment).toBeDefined();
+    expect(result.service).toBeDefined();
+    expect(result.networkPolicy).toBeDefined();
+  });
+
+  test("networkPolicy podSelector matches app", () => {
+    const result = NetworkIsolatedApp(minProps);
+    const spec = result.networkPolicy.spec as any;
+    expect(spec.podSelector.matchLabels["app.kubernetes.io/name"]).toBe("api");
+  });
+
+  test("ingress rules created", () => {
+    const result = NetworkIsolatedApp({
+      ...minProps,
+      allowIngressFrom: [{ podSelector: { "app.kubernetes.io/name": "frontend" } }],
+    });
+    const spec = result.networkPolicy.spec as any;
+    expect(spec.policyTypes).toContain("Ingress");
+    expect(spec.ingress[0].from[0].podSelector.matchLabels["app.kubernetes.io/name"]).toBe("frontend");
+  });
+
+  test("egress rules with ports", () => {
+    const result = NetworkIsolatedApp({
+      ...minProps,
+      allowEgressTo: [{ podSelector: { "app.kubernetes.io/name": "db" }, ports: [{ port: 5432 }] }],
+    });
+    const spec = result.networkPolicy.spec as any;
+    expect(spec.policyTypes).toContain("Egress");
+    expect(spec.egress[0].ports[0].port).toBe(5432);
+  });
+
+  test("namespace propagated", () => {
+    const result = NetworkIsolatedApp({ ...minProps, namespace: "prod" });
+    expect((result.networkPolicy.metadata as any).namespace).toBe("prod");
+  });
+
+  test("component label on networkPolicy", () => {
+    const result = NetworkIsolatedApp(minProps);
+    expect((result.networkPolicy.metadata as any).labels["app.kubernetes.io/component"]).toBe("network-policy");
+  });
+});
+
+// ── IrsaServiceAccount ──────────────────────────────────────────────
+
+describe("IrsaServiceAccount", () => {
+  const minProps = { name: "app-sa", iamRoleArn: "arn:aws:iam::123456789012:role/app-role" };
+
+  test("returns serviceAccount with IRSA annotation", () => {
+    const result = IrsaServiceAccount(minProps);
+    expect(result.serviceAccount).toBeDefined();
+    const meta = result.serviceAccount.metadata as any;
+    expect(meta.annotations["eks.amazonaws.com/role-arn"]).toBe("arn:aws:iam::123456789012:role/app-role");
+  });
+
+  test("no RBAC by default", () => {
+    const result = IrsaServiceAccount(minProps);
+    expect(result.role).toBeUndefined();
+    expect(result.roleBinding).toBeUndefined();
+  });
+
+  test("RBAC created when rules provided", () => {
+    const result = IrsaServiceAccount({
+      ...minProps,
+      rbacRules: [{ apiGroups: [""], resources: ["secrets"], verbs: ["get"] }],
+    });
+    expect(result.role).toBeDefined();
+    expect(result.roleBinding).toBeDefined();
+    const role = result.role as any;
+    expect(role.rules[0].resources).toEqual(["secrets"]);
+  });
+
+  test("namespace propagated", () => {
+    const result = IrsaServiceAccount({ ...minProps, namespace: "prod" });
+    expect((result.serviceAccount.metadata as any).namespace).toBe("prod");
+  });
+
+  test("component labels", () => {
+    const result = IrsaServiceAccount(minProps);
+    expect((result.serviceAccount.metadata as any).labels["app.kubernetes.io/component"]).toBe("service-account");
+  });
+});
+
+// ── AlbIngress ──────────────────────────────────────────────────────
+
+describe("AlbIngress", () => {
+  const minProps = {
+    name: "api-ingress",
+    hosts: [{ hostname: "api.example.com", paths: [{ path: "/", serviceName: "api", servicePort: 80 }] }],
+  };
+
+  test("returns ingress with ALB annotations", () => {
+    const result = AlbIngress(minProps);
+    expect(result.ingress).toBeDefined();
+    const meta = result.ingress.metadata as any;
+    expect(meta.annotations["alb.ingress.kubernetes.io/scheme"]).toBe("internet-facing");
+    expect(meta.annotations["alb.ingress.kubernetes.io/target-type"]).toBe("ip");
+  });
+
+  test("ingressClassName is alb", () => {
+    const result = AlbIngress(minProps);
+    const spec = result.ingress.spec as any;
+    expect(spec.ingressClassName).toBe("alb");
+  });
+
+  test("certificate ARN sets TLS annotations", () => {
+    const result = AlbIngress({ ...minProps, certificateArn: "arn:aws:acm:us-east-1:123:cert/abc" });
+    const meta = result.ingress.metadata as any;
+    expect(meta.annotations["alb.ingress.kubernetes.io/certificate-arn"]).toBe("arn:aws:acm:us-east-1:123:cert/abc");
+    expect(meta.annotations["alb.ingress.kubernetes.io/ssl-redirect"]).toBe("443");
+  });
+
+  test("groupName annotation set", () => {
+    const result = AlbIngress({ ...minProps, groupName: "shared-alb" });
+    const meta = result.ingress.metadata as any;
+    expect(meta.annotations["alb.ingress.kubernetes.io/group.name"]).toBe("shared-alb");
+  });
+
+  test("WAF ACL annotation set", () => {
+    const result = AlbIngress({ ...minProps, wafAclArn: "arn:aws:wafv2:us-east-1:123:regional/webacl/abc" });
+    const meta = result.ingress.metadata as any;
+    expect(meta.annotations["alb.ingress.kubernetes.io/wafv2-acl-arn"]).toBe("arn:aws:wafv2:us-east-1:123:regional/webacl/abc");
+  });
+
+  test("internal scheme", () => {
+    const result = AlbIngress({ ...minProps, scheme: "internal" });
+    const meta = result.ingress.metadata as any;
+    expect(meta.annotations["alb.ingress.kubernetes.io/scheme"]).toBe("internal");
+  });
+});
+
+// ── EbsStorageClass ─────────────────────────────────────────────────
+
+describe("EbsStorageClass", () => {
+  test("returns storageClass with EBS provisioner", () => {
+    const result = EbsStorageClass({ name: "gp3" });
+    expect(result.storageClass).toBeDefined();
+    expect((result.storageClass as any).provisioner).toBe("ebs.csi.aws.com");
+  });
+
+  test("default type is gp3", () => {
+    const result = EbsStorageClass({ name: "default" });
+    expect((result.storageClass as any).parameters.type).toBe("gp3");
+  });
+
+  test("encryption enabled by default", () => {
+    const result = EbsStorageClass({ name: "enc" });
+    expect((result.storageClass as any).parameters.encrypted).toBe("true");
+  });
+
+  test("custom parameters", () => {
+    const result = EbsStorageClass({ name: "custom", type: "io2", iops: "5000", throughput: "250" });
+    const params = (result.storageClass as any).parameters;
+    expect(params.type).toBe("io2");
+    expect(params.iops).toBe("5000");
+    expect(params.throughput).toBe("250");
+  });
+
+  test("allowVolumeExpansion default true", () => {
+    const result = EbsStorageClass({ name: "exp" });
+    expect((result.storageClass as any).allowVolumeExpansion).toBe(true);
+  });
+
+  test("storageClass is cluster-scoped (no namespace)", () => {
+    const result = EbsStorageClass({ name: "sc" });
+    expect((result.storageClass.metadata as any).namespace).toBeUndefined();
+  });
+});
+
+// ── EfsStorageClass ─────────────────────────────────────────────────
+
+describe("EfsStorageClass", () => {
+  test("returns storageClass with EFS provisioner", () => {
+    const result = EfsStorageClass({ name: "efs", fileSystemId: "fs-123" });
+    expect((result.storageClass as any).provisioner).toBe("efs.csi.aws.com");
+  });
+
+  test("fileSystemId in parameters", () => {
+    const result = EfsStorageClass({ name: "efs", fileSystemId: "fs-abc" });
+    expect((result.storageClass as any).parameters.fileSystemId).toBe("fs-abc");
+  });
+
+  test("default provisioningMode is efs-ap", () => {
+    const result = EfsStorageClass({ name: "efs", fileSystemId: "fs-123" });
+    expect((result.storageClass as any).parameters.provisioningMode).toBe("efs-ap");
+  });
+});
+
+// ── FluentBitAgent ──────────────────────────────────────────────────
+
+describe("FluentBitAgent", () => {
+  const minProps = { logGroup: "/aws/eks/cluster/containers", region: "us-east-1", clusterName: "cluster" };
+
+  test("returns all 5 resources", () => {
+    const result = FluentBitAgent(minProps);
+    expect(result.daemonSet).toBeDefined();
+    expect(result.serviceAccount).toBeDefined();
+    expect(result.clusterRole).toBeDefined();
+    expect(result.clusterRoleBinding).toBeDefined();
+    expect(result.configMap).toBeDefined();
+  });
+
+  test("default namespace is amazon-cloudwatch", () => {
+    const result = FluentBitAgent(minProps);
+    expect((result.daemonSet.metadata as any).namespace).toBe("amazon-cloudwatch");
+  });
+
+  test("configMap contains fluent-bit config with region", () => {
+    const result = FluentBitAgent(minProps);
+    const data = (result.configMap as any).data;
+    expect(data["fluent-bit.conf"]).toContain("us-east-1");
+    expect(data["fluent-bit.conf"]).toContain("/aws/eks/cluster/containers");
+  });
+
+  test("tolerations for all nodes", () => {
+    const result = FluentBitAgent(minProps);
+    const spec = result.daemonSet.spec as any;
+    expect(spec.template.spec.tolerations).toEqual([{ operator: "Exists" }]);
+  });
+
+  test("clusterRole is cluster-scoped", () => {
+    const result = FluentBitAgent(minProps);
+    expect((result.clusterRole.metadata as any).namespace).toBeUndefined();
+  });
+});
+
+// ── ExternalDnsAgent ────────────────────────────────────────────────
+
+describe("ExternalDnsAgent", () => {
+  const minProps = {
+    iamRoleArn: "arn:aws:iam::123456789012:role/external-dns",
+    domainFilters: ["example.com"],
+  };
+
+  test("returns deployment, serviceAccount, clusterRole, clusterRoleBinding", () => {
+    const result = ExternalDnsAgent(minProps);
+    expect(result.deployment).toBeDefined();
+    expect(result.serviceAccount).toBeDefined();
+    expect(result.clusterRole).toBeDefined();
+    expect(result.clusterRoleBinding).toBeDefined();
+  });
+
+  test("IRSA annotation on serviceAccount", () => {
+    const result = ExternalDnsAgent(minProps);
+    const meta = result.serviceAccount.metadata as any;
+    expect(meta.annotations["eks.amazonaws.com/role-arn"]).toBe("arn:aws:iam::123456789012:role/external-dns");
+  });
+
+  test("domain filter in args", () => {
+    const result = ExternalDnsAgent(minProps);
+    const spec = result.deployment.spec as any;
+    const args = spec.template.spec.containers[0].args;
+    expect(args).toContain("--domain-filter=example.com");
+  });
+
+  test("txtOwnerId in args when set", () => {
+    const result = ExternalDnsAgent({ ...minProps, txtOwnerId: "my-cluster" });
+    const spec = result.deployment.spec as any;
+    const args = spec.template.spec.containers[0].args;
+    expect(args).toContain("--txt-owner-id=my-cluster");
+  });
+
+  test("default namespace is kube-system", () => {
+    const result = ExternalDnsAgent(minProps);
+    expect((result.deployment.metadata as any).namespace).toBe("kube-system");
+  });
+
+  test("replicas is 1", () => {
+    const result = ExternalDnsAgent(minProps);
+    const spec = result.deployment.spec as any;
+    expect(spec.replicas).toBe(1);
+  });
+});
+
+// ── AdotCollector ───────────────────────────────────────────────────
+
+describe("AdotCollector", () => {
+  const minProps = { region: "us-east-1", clusterName: "cluster" };
+
+  test("returns all 5 resources", () => {
+    const result = AdotCollector(minProps);
+    expect(result.daemonSet).toBeDefined();
+    expect(result.serviceAccount).toBeDefined();
+    expect(result.clusterRole).toBeDefined();
+    expect(result.clusterRoleBinding).toBeDefined();
+    expect(result.configMap).toBeDefined();
+  });
+
+  test("default namespace is amazon-metrics", () => {
+    const result = AdotCollector(minProps);
+    expect((result.daemonSet.metadata as any).namespace).toBe("amazon-metrics");
+  });
+
+  test("configMap contains ADOT config with region", () => {
+    const result = AdotCollector(minProps);
+    const data = (result.configMap as any).data;
+    expect(data["config.yaml"]).toContain("us-east-1");
+    expect(data["config.yaml"]).toContain("cluster");
+  });
+
+  test("OTLP ports on container", () => {
+    const result = AdotCollector(minProps);
+    const spec = result.daemonSet.spec as any;
+    const ports = spec.template.spec.containers[0].ports;
+    expect(ports).toHaveLength(2);
+    expect(ports[0].containerPort).toBe(4317);
+    expect(ports[1].containerPort).toBe(4318);
+  });
+
+  test("tolerations for all nodes", () => {
+    const result = AdotCollector(minProps);
+    const spec = result.daemonSet.spec as any;
+    expect(spec.template.spec.tolerations).toEqual([{ operator: "Exists" }]);
+  });
+
+  test("custom exporters", () => {
+    const result = AdotCollector({ ...minProps, exporters: ["prometheus"] });
+    const data = (result.configMap as any).data;
+    expect(data["config.yaml"]).toContain("prometheusremotewrite");
   });
 });

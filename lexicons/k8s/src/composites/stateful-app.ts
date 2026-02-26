@@ -20,6 +20,26 @@ export interface StatefulAppProps {
   storageClassName?: string;
   /** Volume mount path inside the container (default: "/data"). */
   mountPath?: string;
+  /** PodDisruptionBudget minAvailable — if set, creates a PDB. */
+  minAvailable?: number | string;
+  /** Init containers (e.g., schema migrations, permission setup). */
+  initContainers?: Array<{
+    name: string;
+    image: string;
+    command?: string[];
+    args?: string[];
+  }>;
+  /** Pod security context. */
+  securityContext?: {
+    runAsNonRoot?: boolean;
+    readOnlyRootFilesystem?: boolean;
+    runAsUser?: number;
+    runAsGroup?: number;
+  };
+  /** Termination grace period in seconds. */
+  terminationGracePeriodSeconds?: number;
+  /** Priority class name for pod scheduling. */
+  priorityClassName?: string;
   /** Additional labels to apply to all resources. */
   labels?: Record<string, string>;
   /** CPU limit (e.g., "1"). */
@@ -35,6 +55,7 @@ export interface StatefulAppProps {
 export interface StatefulAppResult {
   statefulSet: Record<string, unknown>;
   service: Record<string, unknown>;
+  pdb?: Record<string, unknown>;
 }
 
 /**
@@ -63,6 +84,11 @@ export function StatefulApp(props: StatefulAppProps): StatefulAppResult {
     storageSize = "10Gi",
     storageClassName,
     mountPath = "/data",
+    minAvailable,
+    initContainers,
+    securityContext,
+    terminationGracePeriodSeconds,
+    priorityClassName,
     labels: extraLabels = {},
     cpuLimit = "1",
     memoryLimit = "1Gi",
@@ -74,6 +100,32 @@ export function StatefulApp(props: StatefulAppProps): StatefulAppResult {
     "app.kubernetes.io/name": name,
     "app.kubernetes.io/managed-by": "chant",
     ...extraLabels,
+  };
+
+  const container: Record<string, unknown> = {
+    name,
+    image,
+    ports: [{ containerPort: port, name: "app" }],
+    resources: {
+      limits: { cpu: cpuLimit, memory: memoryLimit },
+    },
+    volumeMounts: [{ name: "data", mountPath }],
+    ...(env && { env }),
+    ...(securityContext && { securityContext }),
+  };
+
+  const podSpec: Record<string, unknown> = {
+    containers: [container],
+    ...(initContainers && {
+      initContainers: initContainers.map((ic) => ({
+        name: ic.name,
+        image: ic.image,
+        ...(ic.command && { command: ic.command }),
+        ...(ic.args && { args: ic.args }),
+      })),
+    }),
+    ...(terminationGracePeriodSeconds !== undefined && { terminationGracePeriodSeconds }),
+    ...(priorityClassName && { priorityClassName }),
   };
 
   const statefulSetProps: Record<string, unknown> = {
@@ -88,20 +140,7 @@ export function StatefulApp(props: StatefulAppProps): StatefulAppResult {
       selector: { matchLabels: { "app.kubernetes.io/name": name } },
       template: {
         metadata: { labels: { "app.kubernetes.io/name": name, ...extraLabels } },
-        spec: {
-          containers: [
-            {
-              name,
-              image,
-              ports: [{ containerPort: port, name: "app" }],
-              resources: {
-                limits: { cpu: cpuLimit, memory: memoryLimit },
-              },
-              volumeMounts: [{ name: "data", mountPath }],
-              ...(env && { env }),
-            },
-          ],
-        },
+        spec: podSpec,
       },
       volumeClaimTemplates: [
         {
@@ -130,5 +169,21 @@ export function StatefulApp(props: StatefulAppProps): StatefulAppResult {
     },
   };
 
-  return { statefulSet: statefulSetProps, service: serviceProps };
+  const result: StatefulAppResult = { statefulSet: statefulSetProps, service: serviceProps };
+
+  if (minAvailable !== undefined) {
+    result.pdb = {
+      metadata: {
+        name,
+        ...(namespace && { namespace }),
+        labels: { ...commonLabels, "app.kubernetes.io/component": "disruption-budget" },
+      },
+      spec: {
+        minAvailable,
+        selector: { matchLabels: { "app.kubernetes.io/name": name } },
+      },
+    };
+  }
+
+  return result;
 }
