@@ -813,3 +813,118 @@ describe("helpers", () => {
     expect(content).not.toContain("serviceAccountName");
   });
 });
+
+describe("fallback GVK resolution", () => {
+  test("emits template for unknown K8s group when apiVersion/kind in props", () => {
+    const chart = new Chart({ name: "test", version: "0.1.0" });
+    const ExternalSecret = createResource("K8s::ExternalSecrets::ExternalSecret", "k8s", {});
+    const es = new ExternalSecret({
+      apiVersion: "external-secrets.io/v1beta1",
+      kind: "ExternalSecret",
+      metadata: { name: "my-secret" },
+      spec: {
+        refreshInterval: "1h",
+        secretStoreRef: { name: "vault", kind: "ClusterSecretStore" },
+      },
+    });
+
+    const entities = makeEntities(["chart", chart], ["externalSecret", es]);
+    const result = helmSerializer.serialize(entities) as SerializerResult;
+    const template = result.files!["templates/external-secret.yaml"];
+
+    expect(template).toBeDefined();
+    expect(template).toContain("apiVersion: external-secrets.io/v1beta1");
+    expect(template).toContain("kind: ExternalSecret");
+    expect(template).toContain("refreshInterval: '1h'");
+  });
+
+  test("returns empty for unknown group without apiVersion/kind in props", () => {
+    const chart = new Chart({ name: "test", version: "0.1.0" });
+    const Unknown = createResource("K8s::Unknown::Widget", "k8s", {});
+    const w = new Unknown({
+      metadata: { name: "w" },
+      spec: { foo: "bar" },
+    });
+
+    const entities = makeEntities(["chart", chart], ["widget", w]);
+    const result = helmSerializer.serialize(entities) as SerializerResult;
+
+    expect(result.files!["templates/widget.yaml"]).toBeUndefined();
+  });
+});
+
+describe("enhanced values.schema.json", () => {
+  test("adds descriptions to known keys", () => {
+    const chart = new Chart({ name: "test", version: "0.1.0" });
+    const vals = new Values({
+      replicaCount: 3,
+      image: { repository: "nginx", tag: "" },
+    });
+    const entities = makeEntities(["chart", chart], ["values", vals]);
+    const result = helmSerializer.serialize(entities) as SerializerResult;
+    const schema = JSON.parse(result.files!["values.schema.json"]);
+
+    expect(schema.properties.replicaCount.description).toBe("Number of pod replicas");
+    expect(schema.properties.image.description).toBe("Container image configuration");
+    expect(schema.properties.image.properties.repository.description).toBe("Image repository");
+    expect(schema.properties.image.properties.tag.description).toBe("Image tag (empty defaults to Chart.appVersion)");
+  });
+
+  test("adds enum values to known string fields", () => {
+    const chart = new Chart({ name: "test", version: "0.1.0" });
+    const vals = new Values({
+      image: { pullPolicy: "IfNotPresent" },
+      service: { type: "ClusterIP" },
+    });
+    const entities = makeEntities(["chart", chart], ["values", vals]);
+    const result = helmSerializer.serialize(entities) as SerializerResult;
+    const schema = JSON.parse(result.files!["values.schema.json"]);
+
+    expect(schema.properties.image.properties.pullPolicy.enum).toEqual(["Always", "IfNotPresent", "Never"]);
+    expect(schema.properties.service.properties.type.enum).toEqual(["ClusterIP", "NodePort", "LoadBalancer", "ExternalName"]);
+  });
+
+  test("adds numeric constraints to known keys", () => {
+    const chart = new Chart({ name: "test", version: "0.1.0" });
+    const vals = new Values({
+      replicaCount: 1,
+      service: { port: 80 },
+      autoscaling: {
+        minReplicas: 1,
+        maxReplicas: 10,
+        targetCPUUtilizationPercentage: 80,
+      },
+    });
+    const entities = makeEntities(["chart", chart], ["values", vals]);
+    const result = helmSerializer.serialize(entities) as SerializerResult;
+    const schema = JSON.parse(result.files!["values.schema.json"]);
+
+    expect(schema.properties.replicaCount.minimum).toBe(0);
+    expect(schema.properties.service.properties.port.minimum).toBe(1);
+    expect(schema.properties.service.properties.port.maximum).toBe(65535);
+    expect(schema.properties.autoscaling.properties.minReplicas.minimum).toBe(1);
+    expect(schema.properties.autoscaling.properties.targetCPUUtilizationPercentage.minimum).toBe(1);
+    expect(schema.properties.autoscaling.properties.targetCPUUtilizationPercentage.maximum).toBe(100);
+  });
+
+  test("preserves existing schema behavior", () => {
+    const chart = new Chart({ name: "test", version: "0.1.0" });
+    const vals = new Values({
+      customField: "hello",
+      customNumber: 42,
+    });
+    const entities = makeEntities(["chart", chart], ["values", vals]);
+    const result = helmSerializer.serialize(entities) as SerializerResult;
+    const schema = JSON.parse(result.files!["values.schema.json"]);
+
+    // Unknown keys should not get descriptions or enums
+    expect(schema.properties.customField.description).toBeUndefined();
+    expect(schema.properties.customField.enum).toBeUndefined();
+    expect(schema.properties.customNumber.minimum).toBeUndefined();
+    // But type and default should still be there
+    expect(schema.properties.customField.type).toBe("string");
+    expect(schema.properties.customField.default).toBe("hello");
+    expect(schema.properties.customNumber.type).toBe("integer");
+    expect(schema.properties.customNumber.default).toBe(42);
+  });
+});

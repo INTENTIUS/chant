@@ -275,15 +275,88 @@ function emitValuesYaml(props: Record<string, unknown>): string {
 }
 
 /**
+ * Description inference — static map from common Helm value key names.
+ */
+const KEY_DESCRIPTIONS: Record<string, string> = {
+  replicaCount: "Number of pod replicas",
+  image: "Container image configuration",
+  repository: "Image repository",
+  tag: "Image tag (empty defaults to Chart.appVersion)",
+  pullPolicy: "Image pull policy",
+  port: "Service port number",
+  enabled: "Whether this feature is enabled",
+  resources: "Container resource requests and limits",
+  service: "Kubernetes Service configuration",
+  type: "Service type",
+  ingress: "Ingress configuration",
+  className: "Ingress class name",
+  hosts: "Ingress host rules",
+  tls: "Ingress TLS configuration",
+  autoscaling: "Horizontal pod autoscaling configuration",
+  minReplicas: "Minimum number of replicas",
+  maxReplicas: "Maximum number of replicas",
+  targetCPUUtilizationPercentage: "Target CPU utilization for autoscaling",
+  targetMemoryUtilizationPercentage: "Target memory utilization for autoscaling",
+  serviceAccount: "Service account configuration",
+  create: "Whether to create the resource",
+  name: "Resource name override",
+  annotations: "Additional annotations",
+  nodeSelector: "Node selector constraints",
+  tolerations: "Pod tolerations",
+  affinity: "Pod affinity rules",
+  podSecurityContext: "Pod-level security context",
+  securityContext: "Container-level security context",
+  livenessProbe: "Liveness probe configuration",
+  readinessProbe: "Readiness probe configuration",
+  persistence: "Persistent storage configuration",
+  size: "Storage size",
+  storageClass: "Storage class name",
+  config: "Application configuration",
+  schedule: "Cron schedule expression",
+  fullnameOverride: "Override the full release name",
+  nameOverride: "Override the chart name",
+};
+
+/**
+ * Enum detection — known string enums keyed by `parentKey.key` or just `key`.
+ */
+const KEY_ENUMS: Record<string, string[]> = {
+  pullPolicy: ["Always", "IfNotPresent", "Never"],
+  "service.type": ["ClusterIP", "NodePort", "LoadBalancer", "ExternalName"],
+  "ingress.pathType": ["Prefix", "Exact", "ImplementationSpecific"],
+  restartPolicy: ["Always", "OnFailure", "Never"],
+  "updateStrategy.type": ["RollingUpdate", "Recreate"],
+};
+
+/**
+ * Numeric constraints keyed by key name.
+ */
+const KEY_NUMERIC_CONSTRAINTS: Record<string, { minimum?: number; maximum?: number }> = {
+  replicaCount: { minimum: 0 },
+  port: { minimum: 1, maximum: 65535 },
+  containerPort: { minimum: 1, maximum: 65535 },
+  minReplicas: { minimum: 1 },
+  maxReplicas: { minimum: 1 },
+  targetCPUUtilizationPercentage: { minimum: 1, maximum: 100 },
+  targetMemoryUtilizationPercentage: { minimum: 1, maximum: 100 },
+};
+
+/**
  * Generate values.schema.json from values defaults.
  */
 function generateValuesSchema(props: Record<string, unknown>): string {
-  function inferType(value: unknown, includeDefault: boolean = true): Record<string, unknown> {
+  function inferType(
+    value: unknown,
+    includeDefault: boolean = true,
+    keyName?: string,
+    parentKeyName?: string,
+  ): Record<string, unknown> {
     if (value === null || value === undefined) return { type: "null" };
 
     if (typeof value === "boolean") {
       const schema: Record<string, unknown> = { type: "boolean" };
       if (includeDefault) schema.default = value;
+      if (keyName && KEY_DESCRIPTIONS[keyName]) schema.description = KEY_DESCRIPTIONS[keyName];
       return schema;
     }
 
@@ -292,12 +365,25 @@ function generateValuesSchema(props: Record<string, unknown>): string {
         type: Number.isInteger(value) ? "integer" : "number",
       };
       if (includeDefault) schema.default = value;
+      if (keyName && KEY_DESCRIPTIONS[keyName]) schema.description = KEY_DESCRIPTIONS[keyName];
+      if (keyName && KEY_NUMERIC_CONSTRAINTS[keyName]) {
+        const constraints = KEY_NUMERIC_CONSTRAINTS[keyName];
+        if (constraints.minimum !== undefined) schema.minimum = constraints.minimum;
+        if (constraints.maximum !== undefined) schema.maximum = constraints.maximum;
+      }
       return schema;
     }
 
     if (typeof value === "string") {
       const schema: Record<string, unknown> = { type: "string" };
       if (includeDefault && value !== "") schema.default = value;
+      if (keyName && KEY_DESCRIPTIONS[keyName]) schema.description = KEY_DESCRIPTIONS[keyName];
+
+      // Check enum — qualified key first, then bare key
+      const qualifiedKey = parentKeyName ? `${parentKeyName}.${keyName}` : undefined;
+      const enumValues = (qualifiedKey && KEY_ENUMS[qualifiedKey]) || (keyName && KEY_ENUMS[keyName]);
+      if (enumValues) schema.enum = enumValues;
+
       return schema;
     }
 
@@ -307,6 +393,7 @@ function generateValuesSchema(props: Record<string, unknown>): string {
         items: value.length > 0 ? inferType(value[0], false) : {},
       };
       if (includeDefault && value.length > 0) schema.default = value;
+      if (keyName && KEY_DESCRIPTIONS[keyName]) schema.description = KEY_DESCRIPTIONS[keyName];
       return schema;
     }
 
@@ -316,7 +403,7 @@ function generateValuesSchema(props: Record<string, unknown>): string {
       const requiredFields: string[] = [];
 
       for (const [k, v] of Object.entries(obj)) {
-        properties[k] = inferType(v);
+        properties[k] = inferType(v, true, k, keyName);
         // Non-null, non-empty-string defaults suggest the field is expected
         if (v !== null && v !== undefined && v !== "" && v !== false) {
           requiredFields.push(k);
@@ -327,6 +414,7 @@ function generateValuesSchema(props: Record<string, unknown>): string {
         type: "object",
         properties,
       };
+      if (keyName && KEY_DESCRIPTIONS[keyName]) schema.description = KEY_DESCRIPTIONS[keyName];
       if (requiredFields.length > 0) {
         schema.required = requiredFields;
       }
@@ -336,7 +424,7 @@ function generateValuesSchema(props: Record<string, unknown>): string {
     return {};
   }
 
-  const topLevel = inferType(props, false) as Record<string, unknown>;
+  const topLevel = inferType(props, false, undefined, undefined) as Record<string, unknown>;
   return JSON.stringify(
     { $schema: "http://json-schema.org/draft-07/schema#", ...topLevel },
     null,
@@ -354,7 +442,15 @@ function emitK8sTemplate(
   entityNames: Map<Declarable, string>,
   hookAnnotations?: Record<string, string>,
 ): string {
-  const gvk = resolveK8sGVK(entityType);
+  let gvk = resolveK8sGVK(entityType);
+
+  // Fallback: extract apiVersion/kind from props for CRD-based resources
+  if (!gvk && props.apiVersion && props.kind) {
+    gvk = {
+      apiVersion: props.apiVersion as string,
+      kind: props.kind as string,
+    };
+  }
   if (!gvk) return "";
 
   const walked = walkValue(props, entityNames, helmVisitor()) as Record<string, unknown>;

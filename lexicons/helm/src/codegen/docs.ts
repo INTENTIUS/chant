@@ -201,6 +201,22 @@ export const ingress = If(values.ingress.enabled, new Ingress({ ... }));
 // Conditional value
 const image = If(values.image.tag, printf("%s:%s", values.image.repo, values.image.tag));
 \`\`\`
+
+## Resource ordering
+
+| Function | Output |
+|----------|--------|
+| \`withOrder(5)\` | \`helm.sh/hook: pre-install,pre-upgrade\` + \`helm.sh/hook-weight: "5"\` |
+| \`argoWave(2)\` | \`argocd.argoproj.io/sync-wave: "2"\` |
+
+\`\`\`typescript
+import { withOrder, argoWave } from "@intentius/chant-lexicon-helm";
+
+const job = new Job({
+  metadata: { annotations: { ...withOrder(-5) } },
+  // ...
+});
+\`\`\`
 `,
       },
       {
@@ -216,6 +232,10 @@ const image = If(values.image.tag, printf("%s:%s", values.image.repo, values.ima
 | \`HelmCronJob\` | Scheduled job | CronJob |
 | \`HelmMicroservice\` | Full microservice | Deployment, Service, Ingress?, HPA?, PDB?, ServiceAccount, ConfigMap? |
 | \`HelmLibrary\` | Library chart | Chart.yaml (type: library), _helpers.tpl |
+| \`HelmCRDLifecycle\` | Managed CRD lifecycle | Job (hook), ConfigMap, ServiceAccount, ClusterRole, ClusterRoleBinding |
+| \`HelmDaemonSet\` | Node-level workload | DaemonSet, ServiceAccount? |
+| \`HelmWorker\` | Background processor | Deployment (no Service), ServiceAccount, HPA?, PDB? |
+| \`HelmExternalSecret\` | Secret management | ExternalSecret CR (external-secrets.io) |
 
 ## Example
 
@@ -262,6 +282,168 @@ const result = HelmWebApp({
 | WHM204 | warning | Dependencies use semver ranges |
 | WHM301 | info | At least one test for application charts |
 | WHM302 | info | Resource limits set (via values or defaults) |
+| WHM401 | warning | Image uses :latest tag or no tag |
+| WHM402 | warning | runAsNonRoot not set in security context |
+| WHM403 | info | readOnlyRootFilesystem not set |
+| WHM404 | error | privileged: true detected |
+| WHM405 | warning | Resource spec missing cpu/memory detail |
+| WHM406 | info | CRDs in crds/ — Helm never upgrades/deletes them |
+| WHM407 | warning | Secret with inline data, no ExternalSecret/SealedSecret |
+| WHM501 | info | Values keys defined but never referenced in templates |
+| WHM502 | warning | Deprecated or invalid K8s API versions |
+`,
+      },
+      {
+        slug: "security",
+        title: "Security",
+        description: "Security best practices and checks for Helm charts",
+        content: `## Secret management
+
+Avoid inline secrets in Kubernetes Secret manifests. Use ExternalSecret or SealedSecret instead:
+
+\`\`\`typescript
+import { HelmExternalSecret } from "@intentius/chant-lexicon-helm";
+
+const { externalSecret, values } = HelmExternalSecret({
+  name: "app-secrets",
+  secretStoreName: "vault",
+  data: {
+    DB_PASSWORD: "secret/data/db-password",
+    API_KEY: "secret/data/api-key",
+  },
+});
+\`\`\`
+
+WHM407 warns when a \`kind: Secret\` template contains inline data values without an ExternalSecret or SealedSecret in the chart.
+
+## Security context best practices
+
+Always set security context on pods and containers:
+
+\`\`\`typescript
+spec: {
+  securityContext: {
+    runAsNonRoot: true,
+    runAsUser: 1000,
+  },
+  containers: [{
+    securityContext: {
+      readOnlyRootFilesystem: true,
+      allowPrivilegeEscalation: false,
+    },
+  }],
+}
+\`\`\`
+
+### Related checks
+
+| Check | Severity | Description |
+|-------|----------|-------------|
+| WHM401 | warning | Image uses :latest tag or no tag |
+| WHM402 | warning | runAsNonRoot not set |
+| WHM403 | info | readOnlyRootFilesystem not set |
+| WHM404 | error | privileged: true detected |
+| WHM405 | warning | Resource spec missing cpu/memory |
+| WHM406 | info | CRD lifecycle limitation |
+| WHM407 | warning | Secret with inline data |
+
+## Image pinning
+
+Always pin container images to specific tags or digests:
+
+\`\`\`typescript
+// Bad — triggers WHM401
+image: "nginx:latest"
+image: "nginx"
+
+// Good
+image: printf("%s:%s", values.image.repository, values.image.tag)
+\`\`\`
+
+Set a specific default tag in your values:
+
+\`\`\`typescript
+const valuesSchema = new Values({
+  image: {
+    repository: "nginx",
+    tag: "1.25.0",       // Pinned version
+    pullPolicy: "IfNotPresent",
+  },
+});
+\`\`\`
+`,
+      },
+      {
+        slug: "best-practices",
+        title: "Best Practices",
+        description: "Common patterns and recommendations for Helm charts with chant",
+        content: `## CRD lifecycle
+
+Helm installs CRDs from the \`crds/\` directory but **never upgrades or deletes them**. For managed CRD lifecycle, use the \`HelmCRDLifecycle\` composite:
+
+\`\`\`typescript
+import { HelmCRDLifecycle } from "@intentius/chant-lexicon-helm";
+
+const lifecycle = HelmCRDLifecycle({
+  name: "my-operator",
+  crdContent: crdYaml,
+  kubectlImage: "bitnami/kubectl",
+  kubectlTag: "1.28",
+});
+\`\`\`
+
+This creates a Job-based hook that runs \`kubectl apply\` for CRDs during pre-install/pre-upgrade, with proper RBAC.
+
+## Resource ordering
+
+Use \`withOrder()\` for Helm hook ordering and \`argoWave()\` for Argo CD sync waves:
+
+\`\`\`typescript
+import { withOrder, argoWave } from "@intentius/chant-lexicon-helm";
+
+// Helm hook ordering (lower weight = runs first)
+metadata: { annotations: { ...withOrder(-5) } }
+
+// Argo CD sync waves
+metadata: { annotations: { ...argoWave(1) } }
+\`\`\`
+
+## Multi-environment values
+
+Structure your chant project with base values and environment overlays:
+
+\`\`\`
+src/
+  chart.ts          ← Base chart with shared values
+values-dev.yaml     ← Override for dev
+values-staging.yaml ← Override for staging
+values-prod.yaml    ← Override for production
+\`\`\`
+
+Use \`helm install -f values-prod.yaml\` to merge environment-specific values.
+
+## List merge workaround
+
+Helm's strategic merge patch does not merge lists — it replaces them. Use map-of-maps instead:
+
+\`\`\`typescript
+// Instead of a list (hard to override per-environment)
+hosts: [{ host: "app.example.com" }]
+
+// Use a map-of-maps pattern
+hosts:
+  primary:
+    host: "app.example.com"
+    paths: [{ path: "/", pathType: "Prefix" }]
+\`\`\`
+
+## Unused values
+
+WHM501 detects values keys that are defined but never referenced in templates. This helps keep \`values.yaml\` clean and avoids confusion.
+
+## Deprecated API versions
+
+WHM502 detects deprecated Kubernetes API versions (like \`extensions/v1beta1\` for Ingress) and suggests current replacements.
 `,
       },
       {

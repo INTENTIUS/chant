@@ -5,6 +5,10 @@ import { HelmStatefulService } from "./helm-stateful-service";
 import { HelmCronJob } from "./helm-cron-job";
 import { HelmMicroservice } from "./helm-microservice";
 import { HelmLibrary } from "./helm-library";
+import { HelmCRDLifecycle } from "./helm-crd-lifecycle";
+import { HelmDaemonSet } from "./helm-daemon-set";
+import { HelmWorker } from "./helm-worker";
+import { HelmExternalSecret } from "./helm-external-secret";
 
 function hasIntrinsic(obj: unknown): boolean {
   if (obj && typeof obj === "object" && INTRINSIC_MARKER in (obj as any)) return true;
@@ -246,5 +250,246 @@ describe("HelmLibrary", () => {
   test("no dependencies by default", () => {
     const result = HelmLibrary({ name: "common" });
     expect(result.chart.dependencies).toBeUndefined();
+  });
+});
+
+describe("HelmCRDLifecycle", () => {
+  test("returns all expected resources", () => {
+    const result = HelmCRDLifecycle({
+      name: "my-operator",
+      crdContent: "apiVersion: apiextensions.k8s.io/v1\nkind: CustomResourceDefinition\n",
+    });
+    expect(result.chart).toBeDefined();
+    expect(result.values).toBeDefined();
+    expect(result.crdInstallJob).toBeDefined();
+    expect(result.crdConfigMap).toBeDefined();
+    expect(result.serviceAccount).toBeDefined();
+    expect(result.clusterRole).toBeDefined();
+    expect(result.clusterRoleBinding).toBeDefined();
+  });
+
+  test("Job has hook annotations", () => {
+    const result = HelmCRDLifecycle({
+      name: "my-operator",
+      crdContent: "apiVersion: apiextensions.k8s.io/v1\nkind: CustomResourceDefinition\n",
+    });
+    const jobMeta = (result.crdInstallJob as any).metadata;
+    expect(jobMeta.annotations["helm.sh/hook"]).toBe("pre-install,pre-upgrade");
+    expect(jobMeta.annotations["helm.sh/hook-weight"]).toBe("-5");
+    expect(jobMeta.annotations["helm.sh/hook-delete-policy"]).toBe("before-hook-creation");
+  });
+
+  test("ClusterRole has correct rules", () => {
+    const result = HelmCRDLifecycle({
+      name: "my-operator",
+      crdContent: "crd content",
+    });
+    const rules = (result.clusterRole as any).rules;
+    expect(rules).toHaveLength(1);
+    expect(rules[0].apiGroups).toContain("apiextensions.k8s.io");
+    expect(rules[0].resources).toContain("customresourcedefinitions");
+  });
+
+  test("ConfigMap contains CRD content", () => {
+    const crdContent = "apiVersion: apiextensions.k8s.io/v1\nkind: CRD\n";
+    const result = HelmCRDLifecycle({
+      name: "my-operator",
+      crdContent,
+    });
+    expect((result.crdConfigMap as any).data["crds.yaml"]).toBe(crdContent);
+  });
+
+  test("uses Helm intrinsics", () => {
+    const result = HelmCRDLifecycle({
+      name: "my-operator",
+      crdContent: "crd",
+    });
+    expect(hasIntrinsic(result.crdInstallJob)).toBe(true);
+    expect(hasIntrinsic(result.clusterRoleBinding)).toBe(true);
+  });
+
+  test("custom kubectl image flows through to values", () => {
+    const result = HelmCRDLifecycle({
+      name: "my-operator",
+      crdContent: "crd",
+      kubectlImage: "custom/kubectl",
+      kubectlTag: "1.28",
+    });
+    const vals = result.values as any;
+    expect(vals.crdLifecycle.kubectl.image).toBe("custom/kubectl");
+    expect(vals.crdLifecycle.kubectl.tag).toBe("1.28");
+  });
+});
+
+describe("HelmDaemonSet", () => {
+  test("returns chart, values, and daemonSet", () => {
+    const result = HelmDaemonSet({ name: "log-agent" });
+    expect(result.chart).toBeDefined();
+    expect(result.values).toBeDefined();
+    expect(result.daemonSet).toBeDefined();
+  });
+
+  test("includes serviceAccount by default", () => {
+    const result = HelmDaemonSet({ name: "log-agent" });
+    expect(result.serviceAccount).toBeDefined();
+  });
+
+  test("can exclude serviceAccount", () => {
+    const result = HelmDaemonSet({ name: "log-agent", serviceAccount: false });
+    expect(result.serviceAccount).toBeUndefined();
+  });
+
+  test("DaemonSet has RollingUpdate strategy in values", () => {
+    const result = HelmDaemonSet({ name: "log-agent" });
+    const vals = result.values as any;
+    expect(vals.updateStrategy.type).toBe("RollingUpdate");
+  });
+
+  test("default image is fluent-bit", () => {
+    const result = HelmDaemonSet({ name: "log-agent" });
+    const vals = result.values as any;
+    expect(vals.image.repository).toBe("fluent/fluent-bit");
+  });
+
+  test("custom props flow through", () => {
+    const result = HelmDaemonSet({
+      name: "metrics",
+      imageRepository: "prom/node-exporter",
+      imageTag: "v1.6.0",
+      port: 9100,
+    });
+    const vals = result.values as any;
+    expect(vals.image.repository).toBe("prom/node-exporter");
+    expect(vals.image.tag).toBe("v1.6.0");
+  });
+
+  test("uses Helm intrinsics", () => {
+    const result = HelmDaemonSet({ name: "agent" });
+    expect(hasIntrinsic(result.daemonSet)).toBe(true);
+  });
+});
+
+describe("HelmWorker", () => {
+  test("returns chart, values, deployment, and serviceAccount", () => {
+    const result = HelmWorker({ name: "job-processor" });
+    expect(result.chart).toBeDefined();
+    expect(result.values).toBeDefined();
+    expect(result.deployment).toBeDefined();
+    expect(result.serviceAccount).toBeDefined();
+  });
+
+  test("no service by default (workers don't serve HTTP)", () => {
+    const result = HelmWorker({ name: "job-processor" });
+    expect((result as any).service).toBeUndefined();
+  });
+
+  test("default replicas is 2", () => {
+    const result = HelmWorker({ name: "job-processor" });
+    const vals = result.values as any;
+    expect(vals.replicaCount).toBe(2);
+  });
+
+  test("includes PDB by default", () => {
+    const result = HelmWorker({ name: "job-processor" });
+    expect(result.pdb).toBeDefined();
+  });
+
+  test("no HPA by default", () => {
+    const result = HelmWorker({ name: "job-processor" });
+    expect(result.hpa).toBeUndefined();
+  });
+
+  test("can enable autoscaling", () => {
+    const result = HelmWorker({ name: "job-processor", autoscaling: true });
+    expect(result.hpa).toBeDefined();
+    const vals = result.values as any;
+    expect(vals.autoscaling).toBeDefined();
+  });
+
+  test("values include queue config", () => {
+    const result = HelmWorker({ name: "job-processor" });
+    const vals = result.values as any;
+    expect(vals.queue).toBeDefined();
+    expect(vals.queue.concurrency).toBe(5);
+  });
+
+  test("uses exec-based probes", () => {
+    const result = HelmWorker({ name: "job-processor" });
+    const vals = result.values as any;
+    expect(vals.livenessProbe.exec).toBeDefined();
+    expect(vals.readinessProbe.exec).toBeDefined();
+  });
+
+  test("uses Helm intrinsics", () => {
+    const result = HelmWorker({ name: "job-processor" });
+    expect(hasIntrinsic(result.deployment)).toBe(true);
+  });
+});
+
+describe("HelmExternalSecret", () => {
+  test("returns chart, values, and externalSecret", () => {
+    const result = HelmExternalSecret({
+      name: "app-secrets",
+      secretStoreName: "vault",
+      data: { API_KEY: "secret/data/api-key" },
+    });
+    expect(result.chart).toBeDefined();
+    expect(result.values).toBeDefined();
+    expect(result.externalSecret).toBeDefined();
+  });
+
+  test("externalSecret has correct apiVersion and kind", () => {
+    const result = HelmExternalSecret({
+      name: "app-secrets",
+      secretStoreName: "vault",
+      data: { API_KEY: "secret/data/api-key" },
+    });
+    expect((result.externalSecret as any).apiVersion).toBe("external-secrets.io/v1beta1");
+    expect((result.externalSecret as any).kind).toBe("ExternalSecret");
+  });
+
+  test("data maps to secretKey/remoteRef format", () => {
+    const result = HelmExternalSecret({
+      name: "app-secrets",
+      secretStoreName: "vault",
+      data: {
+        DB_PASSWORD: "secret/data/db-password",
+        API_KEY: "secret/data/api-key",
+      },
+    });
+    const spec = (result.externalSecret as any).spec;
+    expect(spec.data).toHaveLength(2);
+    expect(spec.data[0].secretKey).toBe("DB_PASSWORD");
+    expect(spec.data[0].remoteRef.key).toBe("secret/data/db-password");
+  });
+
+  test("default secretStoreKind is ClusterSecretStore", () => {
+    const result = HelmExternalSecret({
+      name: "app-secrets",
+      secretStoreName: "vault",
+      data: { KEY: "path" },
+    });
+    const vals = result.values as any;
+    expect(vals.externalSecret.secretStore.kind).toBe("ClusterSecretStore");
+  });
+
+  test("custom refreshInterval flows through", () => {
+    const result = HelmExternalSecret({
+      name: "app-secrets",
+      secretStoreName: "vault",
+      data: { KEY: "path" },
+      refreshInterval: "30m",
+    });
+    const vals = result.values as any;
+    expect(vals.externalSecret.refreshInterval).toBe("30m");
+  });
+
+  test("uses Helm intrinsics", () => {
+    const result = HelmExternalSecret({
+      name: "app-secrets",
+      secretStoreName: "vault",
+      data: { KEY: "path" },
+    });
+    expect(hasIntrinsic(result.externalSecret)).toBe(true);
   });
 });

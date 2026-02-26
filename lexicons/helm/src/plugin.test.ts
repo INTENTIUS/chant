@@ -37,7 +37,7 @@ describe("helmPlugin", () => {
 
   test("provides post-synth checks", () => {
     const checks = helmPlugin.postSynthChecks!();
-    expect(checks.length).toBe(11);
+    expect(checks.length).toBe(20);
     const ids = checks.map((c) => c.id);
     expect(ids).toContain("WHM101");
     expect(ids).toContain("WHM105");

@@ -12,3 +12,15 @@ export type { HelmMicroserviceProps, HelmMicroserviceResult } from "./helm-micro
 
 export { HelmLibrary } from "./helm-library";
 export type { HelmLibraryProps, HelmLibraryResult } from "./helm-library";
+
+export { HelmCRDLifecycle } from "./helm-crd-lifecycle";
+export type { HelmCRDLifecycleProps, HelmCRDLifecycleResult } from "./helm-crd-lifecycle";
+
+export { HelmDaemonSet } from "./helm-daemon-set";
+export type { HelmDaemonSetProps, HelmDaemonSetResult } from "./helm-daemon-set";
+
+export { HelmWorker } from "./helm-worker";
+export type { HelmWorkerProps, HelmWorkerResult } from "./helm-worker";
+
+export { HelmExternalSecret } from "./helm-external-secret";
+export type { HelmExternalSecretProps, HelmExternalSecretResult } from "./helm-external-secret";

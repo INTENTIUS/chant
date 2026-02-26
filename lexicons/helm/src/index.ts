@@ -35,6 +35,8 @@ export {
   If,
   Range,
   With,
+  withOrder,
+  argoWave,
 } from "./intrinsics";
 export type { HelmConditional } from "./intrinsics";
 
@@ -54,6 +56,10 @@ export {
   HelmCronJob,
   HelmMicroservice,
   HelmLibrary,
+  HelmCRDLifecycle,
+  HelmDaemonSet,
+  HelmWorker,
+  HelmExternalSecret,
 } from "./composites";
 export type {
   HelmWebAppProps,
@@ -66,6 +72,14 @@ export type {
   HelmMicroserviceResult,
   HelmLibraryProps,
   HelmLibraryResult,
+  HelmCRDLifecycleProps,
+  HelmCRDLifecycleResult,
+  HelmDaemonSetProps,
+  HelmDaemonSetResult,
+  HelmWorkerProps,
+  HelmWorkerResult,
+  HelmExternalSecretProps,
+  HelmExternalSecretResult,
 } from "./composites";
 
 // Import pipeline

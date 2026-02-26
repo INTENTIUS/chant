@@ -27,6 +27,8 @@ import {
   If,
   Range,
   With,
+  withOrder,
+  argoWave,
 } from "./intrinsics";
 
 describe("HelmTpl", () => {
@@ -344,5 +346,35 @@ describe("values proxy pipe chaining", () => {
   test("pipe on nested values proxy", () => {
     const v = (values.image.tag as any).pipe("quote");
     expect(v.toJSON()).toEqual({ [HELM_TPL_KEY]: "{{ .Values.image.tag | quote }}" });
+  });
+});
+
+describe("withOrder", () => {
+  test("returns hook annotations with weight", () => {
+    const annotations = withOrder(5);
+    expect(annotations["helm.sh/hook"]).toBe("pre-install,pre-upgrade");
+    expect(annotations["helm.sh/hook-weight"]).toBe("5");
+  });
+
+  test("handles negative weights", () => {
+    const annotations = withOrder(-10);
+    expect(annotations["helm.sh/hook-weight"]).toBe("-10");
+  });
+
+  test("handles zero weight", () => {
+    const annotations = withOrder(0);
+    expect(annotations["helm.sh/hook-weight"]).toBe("0");
+  });
+});
+
+describe("argoWave", () => {
+  test("returns sync wave annotation", () => {
+    const annotations = argoWave(2);
+    expect(annotations["argocd.argoproj.io/sync-wave"]).toBe("2");
+  });
+
+  test("handles negative waves", () => {
+    const annotations = argoWave(-1);
+    expect(annotations["argocd.argoproj.io/sync-wave"]).toBe("-1");
   });
 });

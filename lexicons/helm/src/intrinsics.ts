@@ -445,6 +445,34 @@ export function With(scope: HelmTpl, body: unknown): Intrinsic {
   };
 }
 
+// ── Resource ordering helpers ─────────────────────────────
+
+/**
+ * Helm hook annotations for resource ordering.
+ *
+ * Returns an annotation map for pre-install/pre-upgrade hooks
+ * with a numeric weight for ordering.
+ *
+ * Usage: `metadata: { annotations: { ...withOrder(1) } }`
+ */
+export function withOrder(weight: number): Record<string, string> {
+  return {
+    "helm.sh/hook": "pre-install,pre-upgrade",
+    "helm.sh/hook-weight": String(weight),
+  };
+}
+
+/**
+ * Argo CD sync wave annotation.
+ *
+ * Returns an annotation map with the Argo CD sync wave number.
+ *
+ * Usage: `metadata: { annotations: { ...argoWave(2) } }`
+ */
+export function argoWave(wave: number): Record<string, string> {
+  return { "argocd.argoproj.io/sync-wave": String(wave) };
+}
+
 // ── Helpers ───────────────────────────────────────────────
 
 /**

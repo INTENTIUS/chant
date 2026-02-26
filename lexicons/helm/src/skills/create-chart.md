@@ -120,14 +120,58 @@ export const deployment = new Deployment({
 ### Composites for common patterns
 
 ```typescript
-import { HelmWebApp } from "@intentius/chant-lexicon-helm";
-import { HelmMicroservice } from "@intentius/chant-lexicon-helm";
+import { HelmWebApp, HelmMicroservice, HelmDaemonSet, HelmWorker } from "@intentius/chant-lexicon-helm";
 
 // Quick scaffold: Deployment + Service + Ingress + HPA + ServiceAccount
 const result = HelmWebApp({ name: "my-app", port: 3000, replicas: 3 });
 
 // Full microservice: + PDB + ConfigMap + health probes + resource limits
 const msvc = HelmMicroservice({ name: "api", port: 8080 });
+
+// DaemonSet for node-level agents (logging, monitoring)
+const agent = HelmDaemonSet({ name: "log-agent", imageRepository: "fluent/fluent-bit" });
+
+// Worker for background processors (no Service, exec probes, queue config)
+const worker = HelmWorker({ name: "job-processor", replicas: 4 });
+```
+
+### Secret management with ExternalSecret
+
+```typescript
+import { HelmExternalSecret } from "@intentius/chant-lexicon-helm";
+
+const secrets = HelmExternalSecret({
+  name: "app-secrets",
+  secretStoreName: "vault",
+  data: {
+    DB_PASSWORD: "secret/data/db-password",
+    API_KEY: "secret/data/api-key",
+  },
+});
+```
+
+### Resource ordering
+
+```typescript
+import { withOrder, argoWave } from "@intentius/chant-lexicon-helm";
+
+// Helm hook ordering (lower weight = runs first)
+metadata: { annotations: { ...withOrder(-5) } }
+
+// Argo CD sync waves
+metadata: { annotations: { ...argoWave(2) } }
+```
+
+### CRD lifecycle management
+
+```typescript
+import { HelmCRDLifecycle } from "@intentius/chant-lexicon-helm";
+
+// Managed CRD lifecycle via Helm hooks (solves Helm's CRD limitation)
+const lifecycle = HelmCRDLifecycle({
+  name: "my-operator",
+  crdContent: crdYaml,
+});
 ```
 
 ## Lint rules
@@ -145,6 +189,15 @@ const msvc = HelmMicroservice({ name: "api", port: 8080 });
 | WHM201 | Resources have standard Helm labels |
 | WHM301 | At least one test for application charts |
 | WHM302 | Resource limits set |
+| WHM401 | Image uses :latest tag or no tag |
+| WHM402 | runAsNonRoot not set |
+| WHM403 | readOnlyRootFilesystem not set |
+| WHM404 | privileged: true detected |
+| WHM405 | Resource spec missing cpu/memory |
+| WHM406 | CRD lifecycle limitation |
+| WHM407 | Secret with inline data |
+| WHM501 | Unused values keys |
+| WHM502 | Deprecated K8s API versions |
 
 ## Troubleshooting
 

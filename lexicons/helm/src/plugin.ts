@@ -39,7 +39,16 @@ export const helmPlugin: LexiconPlugin = {
     const { whm204 } = require("./lint/post-synth/whm204");
     const { whm301 } = require("./lint/post-synth/whm301");
     const { whm302 } = require("./lint/post-synth/whm302");
-    return [whm101, whm102, whm103, whm104, whm105, whm201, whm202, whm203, whm204, whm301, whm302];
+    const { whm401 } = require("./lint/post-synth/whm401");
+    const { whm402 } = require("./lint/post-synth/whm402");
+    const { whm403 } = require("./lint/post-synth/whm403");
+    const { whm404 } = require("./lint/post-synth/whm404");
+    const { whm405 } = require("./lint/post-synth/whm405");
+    const { whm406 } = require("./lint/post-synth/whm406");
+    const { whm407 } = require("./lint/post-synth/whm407");
+    const { whm501 } = require("./lint/post-synth/whm501");
+    const { whm502 } = require("./lint/post-synth/whm502");
+    return [whm101, whm102, whm103, whm104, whm105, whm201, whm202, whm203, whm204, whm301, whm302, whm401, whm402, whm403, whm404, whm405, whm406, whm407, whm501, whm502];
   },
 
   intrinsics(): IntrinsicDef[] {
@@ -65,6 +74,8 @@ export const helmPlugin: LexiconPlugin = {
       { name: "If", description: "Conditional: {{- if .Values.x }}...{{- end }}" },
       { name: "Range", description: "Range loop: {{- range .Values.x }}...{{- end }}" },
       { name: "With", description: "With scope: {{- with .Values.x }}...{{- end }}" },
+      { name: "withOrder", description: "Helm hook annotations for resource ordering (pre-install/pre-upgrade)" },
+      { name: "argoWave", description: "Argo CD sync wave annotation" },
     ];
   },
 
