@@ -36,6 +36,12 @@ const HELM_TYPES: HelmTypeEntry[] = [
       home: { type: "string", description: "URL of the project home page" },
       icon: { type: "string", description: "URL to an SVG or PNG image for the chart" },
       deprecated: { type: "boolean", description: "Whether this chart is deprecated" },
+      sources: { type: "string[]", description: "URLs to source code for this chart" },
+      maintainers: { type: "Maintainer[]", description: "List of chart maintainers" },
+      annotations: { type: "Record<string, string>", description: "Arbitrary key-value annotations" },
+      kubeVersion: { type: "string", description: "SemVer range of compatible Kubernetes versions" },
+      condition: { type: "string", description: "YAML path for chart enablement (subcharts)" },
+      tags: { type: "string", description: "Tags for grouping charts for enabling/disabling" },
     },
   },
   {
@@ -81,7 +87,19 @@ const HELM_TYPES: HelmTypeEntry[] = [
       repository: { type: "string", description: "Repository URL", required: true },
       condition: { type: "string", description: "YAML path that enables/disables this dependency" },
       tags: { type: "string[]", description: "Tags for grouping dependencies" },
+      enabled: { type: "boolean", description: "Whether this dependency is enabled" },
+      importValues: { type: "unknown[]", description: "Values to import from dependency (import-values in Chart.yaml)" },
       alias: { type: "string", description: "Alias for the dependency" },
+    },
+  },
+  {
+    resourceType: "Helm::Maintainer",
+    kind: "property",
+    description: "Chart maintainer entry for Chart.yaml maintainers.",
+    props: {
+      name: { type: "string", description: "Maintainer name", required: true },
+      email: { type: "string", description: "Maintainer email" },
+      url: { type: "string", description: "Maintainer URL" },
     },
   },
 ];

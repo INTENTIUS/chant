@@ -56,6 +56,13 @@ export const HelmHook = createProperty("Helm::Hook", LEXICON);
 /**
  * Helm::Dependency — Chart dependency entry.
  *
- * Props: { name, version, repository, condition?, tags?, alias? }
+ * Props: { name, version, repository, condition?, tags?, enabled?, importValues?, alias? }
  */
 export const HelmDependency = createProperty("Helm::Dependency", LEXICON);
+
+/**
+ * Helm::Maintainer — Chart maintainer entry.
+ *
+ * Props: { name, email?, url? }
+ */
+export const HelmMaintainer = createProperty("Helm::Maintainer", LEXICON);

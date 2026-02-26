@@ -221,7 +221,11 @@ function toFileName(name: string): string {
  * Generate Chart.yaml content from Helm::Chart entity props.
  */
 function emitChartYaml(props: Record<string, unknown>): string {
-  const orderedKeys = ["apiVersion", "name", "version", "appVersion", "description", "type"];
+  const orderedKeys = [
+    "apiVersion", "name", "version", "kubeVersion", "description", "type",
+    "keywords", "home", "sources", "icon", "maintainers", "deprecated",
+    "annotations", "condition", "tags", "appVersion",
+  ];
   const lines: string[] = [];
 
   for (const key of orderedKeys) {
@@ -315,7 +319,7 @@ function generateValuesSchema(props: Record<string, unknown>): string {
 
   const topLevel = inferType(props, false) as Record<string, unknown>;
   return JSON.stringify(
-    { $schema: "https://json-schema.org/draft/2020-12/schema", ...topLevel },
+    { $schema: "http://json-schema.org/draft-07/schema#", ...topLevel },
     null,
     2,
   ) + "\n";
@@ -438,15 +442,53 @@ function hasEntityType(value: unknown): value is Record<string, unknown> & { ent
 /**
  * Emit a Chart.yaml dependencies block from HelmDependency property entities.
  */
+/**
+ * Key mapping for dependency props that differ between JS and YAML.
+ */
+const DEP_KEY_MAP: Record<string, string> = {
+  importValues: "import-values",
+};
+
 function emitDependencies(deps: Record<string, unknown>[]): string {
   const lines: string[] = ["dependencies:"];
   for (const dep of deps) {
-    const orderedKeys = ["name", "version", "repository", "condition", "alias"];
+    const orderedKeys = ["name", "version", "repository", "condition", "tags", "enabled", "importValues", "alias"];
     const entries: [string, unknown][] = [];
     for (const key of orderedKeys) {
-      if (dep[key] !== undefined) entries.push([key, dep[key]]);
+      if (dep[key] !== undefined) entries.push([DEP_KEY_MAP[key] ?? key, dep[key]]);
     }
     for (const [key, val] of Object.entries(dep)) {
+      if (!orderedKeys.includes(key) && val !== undefined) entries.push([key, val]);
+    }
+    if (entries.length > 0) {
+      const [firstKey, firstVal] = entries[0];
+      lines.push(`  - ${firstKey}: ${emitHelmYAML(firstVal, 2).trimStart()}`);
+      for (let i = 1; i < entries.length; i++) {
+        const [key, val] = entries[i];
+        const emitted = emitHelmYAML(val, 2);
+        if (emitted.startsWith("\n")) {
+          lines.push(`    ${key}:${emitted}`);
+        } else {
+          lines.push(`    ${key}: ${emitted}`);
+        }
+      }
+    }
+  }
+  return lines.join("\n") + "\n";
+}
+
+/**
+ * Emit a Chart.yaml maintainers block from HelmMaintainer property entities.
+ */
+function emitMaintainers(maintainers: Record<string, unknown>[]): string {
+  const lines: string[] = ["maintainers:"];
+  for (const m of maintainers) {
+    const orderedKeys = ["name", "email", "url"];
+    const entries: [string, unknown][] = [];
+    for (const key of orderedKeys) {
+      if (m[key] !== undefined) entries.push([key, m[key]]);
+    }
+    for (const [key, val] of Object.entries(m)) {
       if (!orderedKeys.includes(key) && val !== undefined) entries.push([key, val]);
     }
     if (entries.length > 0) {
@@ -487,6 +529,7 @@ export const helmSerializer: Serializer = {
     let hasValues = false;
     let notesContent: string | undefined;
     const dependencies: Record<string, unknown>[] = [];
+    const maintainers: Record<string, unknown>[] = [];
 
     // First pass: extract Helm-specific resources and collect metadata
     for (const [_name, entity] of entities) {
@@ -507,6 +550,9 @@ export const helmSerializer: Serializer = {
       } else if (entityType === "Helm::Dependency") {
         const props = (entity as Record<string, unknown>).props as Record<string, unknown>;
         if (props) dependencies.push(props);
+      } else if (entityType === "Helm::Maintainer") {
+        const props = (entity as Record<string, unknown>).props as Record<string, unknown>;
+        if (props) maintainers.push(props);
       }
     }
 
@@ -516,6 +562,10 @@ export const helmSerializer: Serializer = {
     if (!chartProps.version) chartProps.version = "0.1.0";
     if (!chartProps.type) chartProps.type = "application";
 
+    // Inject collected maintainers into chart props for ordered emission
+    if (maintainers.length > 0) {
+      chartProps.maintainers = maintainers;
+    }
     let chartYaml = emitChartYaml(chartProps);
     if (dependencies.length > 0) {
       chartYaml += emitDependencies(dependencies);

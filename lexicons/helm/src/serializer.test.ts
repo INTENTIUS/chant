@@ -3,7 +3,7 @@ import { createResource, createProperty } from "@intentius/chant/runtime";
 import type { Declarable } from "@intentius/chant/declarable";
 import type { SerializerResult } from "@intentius/chant/serializer";
 import { helmSerializer } from "./serializer";
-import { Chart, Values, HelmNotes, HelmTest, HelmHook, HelmDependency } from "./resources";
+import { Chart, Values, HelmNotes, HelmTest, HelmHook, HelmDependency, HelmMaintainer } from "./resources";
 import { values, include, printf, toYaml, quote, helmDefault, required, If, Range, With, Release, ChartRef } from "./intrinsics";
 
 function makeEntities(...pairs: [string, Record<string, unknown>][]): Map<string, Declarable> {
@@ -87,7 +87,7 @@ describe("helmSerializer", () => {
     const result = helmSerializer.serialize(entities) as SerializerResult;
     const schema = JSON.parse(result.files!["values.schema.json"]);
 
-    expect(schema.$schema).toBe("https://json-schema.org/draft/2020-12/schema");
+    expect(schema.$schema).toBe("http://json-schema.org/draft-07/schema#");
     expect(schema.type).toBe("object");
     expect(schema.properties.replicaCount.type).toBe("integer");
     expect(schema.properties.replicaCount.default).toBe(2);
@@ -590,6 +590,115 @@ describe("pipe chaining in values proxy", () => {
     const template = result.files!["templates/config.yaml"];
 
     expect(template).toContain("{{ .Values.environment | upper | quote }}");
+  });
+});
+
+describe("Chart.yaml field ordering", () => {
+  test("emits fields in canonical Helm order", () => {
+    const chart = new Chart({
+      apiVersion: "v2",
+      name: "my-app",
+      version: "1.0.0",
+      kubeVersion: ">=1.20.0",
+      description: "My app",
+      type: "application",
+      keywords: ["web", "app"],
+      home: "https://example.com",
+      sources: ["https://github.com/example/my-app"],
+      icon: "https://example.com/icon.png",
+      deprecated: false,
+      annotations: { category: "web" },
+      condition: "myApp.enabled",
+      tags: "frontend",
+      appVersion: "2.0.0",
+    });
+    const entities = makeEntities(["chart", chart]);
+    const result = helmSerializer.serialize(entities) as SerializerResult;
+    const chartYaml = result.files!["Chart.yaml"];
+
+    // Verify fields appear and ordering: apiVersion before name before version, etc.
+    const lines = chartYaml.split("\n");
+    const keyLines = lines.filter((l) => /^\w/.test(l)).map((l) => l.split(":")[0]);
+    const idx = (k: string) => keyLines.indexOf(k);
+
+    expect(idx("apiVersion")).toBeLessThan(idx("name"));
+    expect(idx("name")).toBeLessThan(idx("version"));
+    expect(idx("version")).toBeLessThan(idx("kubeVersion"));
+    expect(idx("kubeVersion")).toBeLessThan(idx("description"));
+    expect(idx("description")).toBeLessThan(idx("type"));
+    expect(idx("appVersion")).toBeGreaterThan(idx("tags"));
+  });
+
+  test("emits Chart.yaml with kubeVersion, sources, annotations", () => {
+    const chart = new Chart({
+      name: "my-app",
+      version: "1.0.0",
+      kubeVersion: ">=1.22.0",
+      sources: ["https://github.com/example/my-app"],
+      annotations: { "artifacthub.io/license": "Apache-2.0" },
+    });
+    const entities = makeEntities(["chart", chart]);
+    const result = helmSerializer.serialize(entities) as SerializerResult;
+    const chartYaml = result.files!["Chart.yaml"];
+
+    expect(chartYaml).toContain("kubeVersion: >=1.22.0");
+    expect(chartYaml).toContain("sources:");
+    expect(chartYaml).toContain("- https://github.com/example/my-app");
+    expect(chartYaml).toContain("annotations:");
+    expect(chartYaml).toContain("artifacthub.io/license: Apache-2.0");
+  });
+});
+
+describe("HelmMaintainer serialization", () => {
+  test("emits maintainers in Chart.yaml", () => {
+    const chart = new Chart({ name: "my-app", version: "1.0.0" });
+    const m1 = new HelmMaintainer({
+      name: "John Doe",
+      email: "john@example.com",
+      url: "https://example.com/john",
+    });
+    const m2 = new HelmMaintainer({
+      name: "Jane Smith",
+      email: "jane@example.com",
+    });
+
+    const entities = makeEntities(
+      ["chart", chart],
+      ["maintainer1", m1],
+      ["maintainer2", m2],
+    );
+    const result = helmSerializer.serialize(entities) as SerializerResult;
+    const chartYaml = result.files!["Chart.yaml"];
+
+    expect(chartYaml).toContain("maintainers:");
+    expect(chartYaml).toContain("name: John Doe");
+    expect(chartYaml).toContain("email: john@example.com");
+    expect(chartYaml).toContain("url: https://example.com/john");
+    expect(chartYaml).toContain("name: Jane Smith");
+    expect(chartYaml).toContain("email: jane@example.com");
+  });
+});
+
+describe("HelmDependency extended fields", () => {
+  test("emits enabled and import-values in dependencies", () => {
+    const chart = new Chart({ name: "my-app", version: "1.0.0" });
+    const dep = new HelmDependency({
+      name: "redis",
+      version: "17.x.x",
+      repository: "https://charts.bitnami.com/bitnami",
+      enabled: false,
+      importValues: ["data"],
+    });
+
+    const entities = makeEntities(["chart", chart], ["redisDep", dep]);
+    const result = helmSerializer.serialize(entities) as SerializerResult;
+    const chartYaml = result.files!["Chart.yaml"];
+
+    expect(chartYaml).toContain("enabled: false");
+    expect(chartYaml).toContain("import-values:");
+    expect(chartYaml).toContain("- data");
+    // Verify the key is "import-values" not "importValues"
+    expect(chartYaml).not.toContain("importValues:");
   });
 });
 

@@ -5,7 +5,7 @@ export { helmSerializer } from "./serializer";
 export { helmPlugin } from "./plugin";
 
 // Resources
-export { Chart, Values, HelmTest, HelmNotes, HelmHook, HelmDependency } from "./resources";
+export { Chart, Values, HelmTest, HelmNotes, HelmHook, HelmDependency, HelmMaintainer } from "./resources";
 
 // Intrinsics
 export {
