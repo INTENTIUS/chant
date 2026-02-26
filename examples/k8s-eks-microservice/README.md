@@ -13,7 +13,8 @@ This demonstrates chant's multi-lexicon capability: a single `src/` directory im
 | `networking.ts` | VPC with public/private subnets, IGW, NAT gateway |
 | `cluster.ts` | EKS cluster, managed node group, OIDC provider, IAM roles (cluster, node, app IRSA, ALB controller, ExternalDNS, FluentBit, ADOT) |
 | `addons.ts` | EKS add-ons: vpc-cni, aws-ebs-csi-driver, coredns, kube-proxy, aws-load-balancer-controller |
-| `params.ts` | CloudFormation parameters: environment, domainName, certificateArn, publicAccessCidr |
+| `dns.ts` | Route53 hosted zone + ACM certificate with DNS validation |
+| `params.ts` | CloudFormation parameters: environment, domainName, publicAccessCidr |
 
 ### K8s workloads (`src/k8s/`)
 
@@ -72,7 +73,7 @@ This demonstrates chant's multi-lexicon capability: a single `src/` directory im
 
 ## Resource counts
 
-- **33 CloudFormation resources**: 17 VPC + 1 cluster + 1 nodegroup + 1 OIDC + 7 IAM roles + 5 addons + 1 KMS key
+- **35 CloudFormation resources**: 17 VPC + 1 cluster + 1 nodegroup + 1 OIDC + 7 IAM roles + 5 addons + 1 KMS key + 1 Route53 hosted zone + 1 ACM certificate
 - **36 Kubernetes resources**: across 5 source files (namespace, app, ingress, storage, observability)
 
 ## Skills guide
@@ -141,8 +142,7 @@ The **`chant-k8s-patterns`** skill (K8s lexicon) covers patterns you might add t
 - **kubectl** installed
 - **jq** installed (for `just load-outputs`)
 - **Bun** runtime
-- **ACM certificate** pre-created in the target region (for ALB TLS)
-- **Route53 hosted zone** for the domain (for ExternalDNS)
+- **Registered domain** (any registrar). After the first deploy, update NS records to the Route53 nameservers shown in stack outputs.
 
 ## Step 1: Deploy infrastructure
 
@@ -154,12 +154,14 @@ just build
 # Lint (optional)
 just lint
 
-# Deploy (creates 33 resources including ALB controller addon + KMS key)
-# Pass your domain and ACM cert ARN (optionally restrict API endpoint access):
-just deploy-infra domain=myapp.example.com cert=arn:aws:acm:us-east-1:123456789012:certificate/your-cert-id cidr=203.0.113.1/32
+# Deploy (creates 35 resources including ALB controller addon + KMS key + Route53 + ACM cert)
+# Pass your domain (optionally restrict API endpoint access):
+just deploy-infra domain=myapp.example.com cidr=203.0.113.1/32
 ```
 
-The stack exports 12 outputs: VPC ID, 4 subnet IDs, cluster endpoint/ARN, and 5 IAM role ARNs (app, ALB controller, ExternalDNS, FluentBit, ADOT). The ALB controller addon installs automatically — no Helm or CRDs to manage.
+The stack exports 15 outputs: VPC ID, 4 subnet IDs, cluster endpoint/ARN, 5 IAM role ARNs (app, ALB controller, ExternalDNS, FluentBit, ADOT), ACM certificate ARN, hosted zone ID, and Route53 nameservers. The ALB controller addon installs automatically — no Helm or CRDs to manage.
+
+The ACM certificate uses DNS validation against the in-stack hosted zone, so it auto-validates without manual intervention. After deploy, update your domain registrar's NS records to the nameservers shown in the output.
 
 ## Security hardening
 
@@ -187,7 +189,7 @@ kubectl get nodes  # verify connectivity
 just load-outputs
 ```
 
-The `load-outputs` target queries CloudFormation stack outputs (IAM role ARNs) and parameters (domain, cert ARN) and writes them to `.env`. Bun auto-loads `.env` at runtime, so the next K8s build picks up real values instead of placeholders.
+The `load-outputs` target queries CloudFormation stack outputs (IAM role ARNs, ACM cert ARN, hosted zone ID) and parameters (domain) and writes them to `.env`. Bun auto-loads `.env` at runtime, so the next K8s build picks up real values instead of placeholders. It also prints the Route53 nameservers so you can update your domain registrar.
 
 ## Step 3: Deploy workloads
 
@@ -252,7 +254,7 @@ CloudFormation stack outputs map to K8s composite props via `.env`:
 | `externalDnsRoleArn` | `ingress.ts` | `ExternalDnsAgent({ iamRoleArn })` |
 | `fluentBitRoleArn` | `observability.ts` | `FluentBitAgent({ iamRoleArn })` |
 | `adotRoleArn` | `observability.ts` | `AdotCollector({ iamRoleArn })` |
-| ACM cert ARN | `ingress.ts` | `AlbIngress({ certificateArn })` |
+| `certificateArnOutput` | `ingress.ts` | `AlbIngress({ certificateArn })` |
 | Cluster name | `observability.ts` | `FluentBitAgent({ clusterName })`, `AdotCollector({ clusterName })` |
 
 Values flow through `.env` → `config.ts` → K8s source files. Run `just load-outputs` after any infra deploy to refresh. The `.env` includes both stack outputs (IAM role ARNs) and stack parameters (domain name, ACM cert ARN).

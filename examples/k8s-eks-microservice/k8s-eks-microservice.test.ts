@@ -57,8 +57,8 @@ describe("k8s-eks-microservice example", () => {
     const parsed = JSON.parse(result.outputs.get("aws")!);
     expect(parsed.AWSTemplateFormatVersion).toBe("2010-09-09");
 
-    // 17 VPC + 1 cluster + 1 nodegroup + 1 OIDC + 7 IAM roles + 5 addons + 1 KMS key = 33
-    expect(Object.keys(parsed.Resources)).toHaveLength(33);
+    // 17 VPC + 1 cluster + 1 nodegroup + 1 OIDC + 7 IAM roles + 5 addons + 1 KMS key + 1 HostedZone + 1 ACM cert = 35
+    expect(Object.keys(parsed.Resources)).toHaveLength(35);
 
     const types = Object.values(parsed.Resources).map((r: any) => r.Type);
     expect(types).toContain("AWS::EKS::Cluster");
@@ -70,6 +70,8 @@ describe("k8s-eks-microservice example", () => {
     expect(types.filter((t: string) => t === "AWS::IAM::Role")).toHaveLength(7);
     expect(types.filter((t: string) => t === "AWS::EKS::Addon")).toHaveLength(5);
     expect(types).toContain("AWS::KMS::Key");
+    expect(types).toContain("AWS::Route53::HostedZone");
+    expect(types).toContain("AWS::CertificateManager::Certificate");
   });
 
   // ── CloudFormation: EKS cluster properties ─────────────────────
@@ -184,8 +186,12 @@ describe("k8s-eks-microservice example", () => {
     expect(outputNames).toContain("externalDnsRoleArn");
     expect(outputNames).toContain("fluentBitRoleArn");
     expect(outputNames).toContain("adotRoleArn");
+    // DNS/TLS
+    expect(outputNames).toContain("certificateArnOutput");
+    expect(outputNames).toContain("hostedZoneIdOutput");
+    expect(outputNames).toContain("nameServersOutput");
 
-    expect(outputNames).toHaveLength(12);
+    expect(outputNames).toHaveLength(15);
   });
 
   // ── CloudFormation: EKS add-ons ────────────────────────────────
@@ -482,6 +488,22 @@ describe("k8s-eks-microservice example", () => {
     expect(ns!.doc).toContain("pod-security.kubernetes.io/audit: restricted");
   });
 
+  // ── K8s: PSS restricted container securityContext ─────────────
+
+  test("app container has PSS restricted-compliant securityContext", async () => {
+    const result = await build(srcDir, [k8sSerializer]);
+    const docs = parseK8sDocs(result.outputs.get("k8s")!);
+
+    const deploy = docs.find(
+      (d) => d.kind === "Deployment" && d.name === "microservice-api",
+    );
+    expect(deploy).toBeDefined();
+    expect(deploy!.doc).toContain("allowPrivilegeEscalation: false");
+    expect(deploy!.doc).toContain("readOnlyRootFilesystem: true");
+    expect(deploy!.doc).toMatch(/drop:\s*\n\s*- ALL/);
+    expect(deploy!.doc).toContain("type: RuntimeDefault");
+  });
+
   // ── K8s: health probes ────────────────────────────────────────
 
   test("app deployment has liveness and readiness probes", async () => {
@@ -545,8 +567,8 @@ describe("k8s-eks-microservice example", () => {
     const paramNames = Object.keys(parsed.Parameters);
     expect(paramNames).toContain("environment");
     expect(paramNames).toContain("domainName");
-    expect(paramNames).toContain("certificateArn");
     expect(paramNames).toContain("publicAccessCidr");
+    expect(paramNames).not.toContain("certificateArn");
 
     expect(parsed.Parameters.environment.Default).toBe("dev");
     expect(parsed.Parameters.domainName.Default).toBe("api.example.com");
