@@ -10,6 +10,8 @@
  * - API Gateway V2 Deployment with no DependsOn on any Route
  * - DynamoDB ScalableTarget with no DependsOn on the Table
  * - ECS ScalableTarget with no DependsOn on the ECS Service
+ * - EKS Addon with hardcoded ClusterName but no DependsOn on the Cluster or Nodegroup
+ * - EKS Nodegroup with hardcoded ClusterName but no DependsOn on the Cluster
  */
 
 import type { PostSynthCheck, PostSynthContext, PostSynthDiagnostic } from "@intentius/chant/lint/post-synth";
@@ -34,6 +36,9 @@ export function checkMissingDependsOn(ctx: PostSynthContext): PostSynthDiagnosti
     const dynamoTableIds: string[] = [];
     const ecsServiceIds: string[] = [];
     const scalableTargetEntries: { logicalId: string; namespace: string }[] = [];
+    const eksClusterIds: string[] = [];
+    const eksNodegroupIds: string[] = [];
+    const eksAddonIds: string[] = [];
 
     for (const [logicalId, resource] of Object.entries(resources)) {
       if (resource.Type === "AWS::ElasticLoadBalancingV2::Listener") {
@@ -59,6 +64,15 @@ export function checkMissingDependsOn(ctx: PostSynthContext): PostSynthDiagnosti
       }
       if (resource.Type === "AWS::ECS::Service") {
         ecsServiceIds.push(logicalId);
+      }
+      if (resource.Type === "AWS::EKS::Cluster") {
+        eksClusterIds.push(logicalId);
+      }
+      if (resource.Type === "AWS::EKS::Nodegroup") {
+        eksNodegroupIds.push(logicalId);
+      }
+      if (resource.Type === "AWS::EKS::Addon") {
+        eksAddonIds.push(logicalId);
       }
       if (resource.Type === "AWS::ApplicationAutoScaling::ScalableTarget") {
         const props = resource.Properties ?? {};
@@ -141,6 +155,47 @@ export function checkMissingDependsOn(ctx: PostSynthContext): PostSynthDiagnosti
             lexicon: "aws",
           });
         }
+      }
+    }
+
+    // Pattern 7: EKS Addon with hardcoded ClusterName but no dependency on Cluster or Nodegroup
+    for (const addonId of eksAddonIds) {
+      const resource = resources[addonId];
+      const deps = getDependsOnSet(resource);
+      const propRefs = collectPropertyRefs(resource);
+      const allClusterAndNodeDeps = [...eksClusterIds, ...eksNodegroupIds];
+
+      const hasClusterDep = allClusterAndNodeDeps.some((id) => deps.has(id));
+      const hasClusterRef = allClusterAndNodeDeps.some((id) => propRefs.has(id));
+
+      if (!hasClusterDep && !hasClusterRef && eksClusterIds.length > 0) {
+        diagnostics.push({
+          checkId: "WAW030",
+          severity: "warning",
+          message: `EKS Addon "${addonId}" has no dependency on the Cluster or Nodegroup — the addon may fail if the cluster or nodes aren't ready yet. Add DependsOn.`,
+          entity: addonId,
+          lexicon: "aws",
+        });
+      }
+    }
+
+    // Pattern 8: EKS Nodegroup with hardcoded ClusterName but no dependency on Cluster
+    for (const ngId of eksNodegroupIds) {
+      const resource = resources[ngId];
+      const deps = getDependsOnSet(resource);
+      const propRefs = collectPropertyRefs(resource);
+
+      const hasClusterDep = eksClusterIds.some((id) => deps.has(id));
+      const hasClusterRef = eksClusterIds.some((id) => propRefs.has(id));
+
+      if (!hasClusterDep && !hasClusterRef && eksClusterIds.length > 0) {
+        diagnostics.push({
+          checkId: "WAW030",
+          severity: "warning",
+          message: `EKS Nodegroup "${ngId}" has no dependency on the Cluster — the node group may fail if the cluster isn't ready yet. Add DependsOn.`,
+          entity: ngId,
+          lexicon: "aws",
+        });
       }
     }
 

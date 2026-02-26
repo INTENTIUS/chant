@@ -1,7 +1,7 @@
 // AWS infrastructure: EKS add-ons for VPC CNI and EBS CSI driver.
 
 import { Addon } from "@intentius/chant-lexicon-aws";
-import { cluster, nodegroup } from "./cluster";
+import { cluster, nodegroup, ebsCsiRole } from "./cluster";
 
 // VPC CNI — pod networking
 export const vpcCni = new Addon(
@@ -13,12 +13,13 @@ export const vpcCni = new Addon(
   { DependsOn: [cluster, nodegroup] },
 );
 
-// EBS CSI driver — persistent volume support
+// EBS CSI driver — persistent volume support (requires IRSA role)
 export const ebsCsi = new Addon(
   {
     AddonName: "aws-ebs-csi-driver",
     ClusterName: "eks-microservice",
     ResolveConflicts: "OVERWRITE",
+    ServiceAccountRoleArn: ebsCsiRole.Arn,
   },
   { DependsOn: [cluster, nodegroup] },
 );

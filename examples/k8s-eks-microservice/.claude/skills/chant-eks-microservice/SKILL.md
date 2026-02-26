@@ -23,7 +23,7 @@ composite reference and advanced patterns.
 Run from the example directory (`examples/k8s-eks-microservice/`):
 
 ```bash
-just build              # generates templates/infra.json (35 CF resources) + k8s.yaml (36 K8s resources)
+just build              # generates templates/infra.json (34 CF resources) + k8s.yaml (36 K8s resources)
 just lint               # zero errors expected
 ```
 
@@ -40,16 +40,19 @@ deployment, pass your domain — Route53 creates the hosted zone and ACM cert
 in-stack, so the only prerequisite is a registered domain.
 
 ```bash
-just deploy domain=myapp.example.com       # full: build → deploy-infra → configure-kubectl → load-outputs → build-k8s → apply → wait → status
+just deploy domain=myapp.example.com       # phase 1: build → deploy-infra → configure-kubectl → load-outputs → build-k8s → apply → wait → status
 ```
 
 Or step by step:
 
 ```bash
 just build                                  # CF template + K8s manifests
-just deploy-infra domain=myapp.example.com  # CF stack (35 resources)
+just deploy-infra domain=myapp.example.com  # CF stack (34 resources)
 just configure-kubectl                      # update kubeconfig
 just load-outputs                           # write .env from CF outputs, prints Route53 nameservers
+# --- NS delegation at your registrar ---
+just deploy-cert                            # ACM cert + DNS validation (after NS delegation)
+just load-outputs                           # re-run to pick up cert ARN
 just build-k8s                              # rebuild K8s with real ARNs
 just apply                                  # kubectl apply
 just wait                                   # rollout status
@@ -57,8 +60,8 @@ just status                                 # check pods, ingress, daemonsets
 ```
 
 After deploy, `just load-outputs` prints Route53 nameservers — update your
-domain registrar's NS records to these. The ACM certificate auto-validates
-because the hosted zone is in the same stack.
+domain registrar's NS records to these. Then run `just deploy-cert` to create
+and validate the ACM certificate (requires NS delegation first).
 
 Optionally restrict the EKS API endpoint: `just deploy-infra domain=myapp.example.com cidr=203.0.113.1/32`
 

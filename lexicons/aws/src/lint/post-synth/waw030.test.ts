@@ -761,16 +761,30 @@ describe("WAW030: Missing DependsOn for Known Patterns", () => {
             ResourceId: "service/c/s",
           },
         },
+        EksCluster: {
+          Type: "AWS::EKS::Cluster",
+          Properties: { Name: "my-cluster" },
+        },
+        EksNodegroup: {
+          Type: "AWS::EKS::Nodegroup",
+          Properties: { ClusterName: "my-cluster" },
+        },
+        EksAddon: {
+          Type: "AWS::EKS::Addon",
+          Properties: { AddonName: "vpc-cni", ClusterName: "my-cluster" },
+        },
       },
     });
     const diags = checkMissingDependsOn(ctx);
-    expect(diags).toHaveLength(6);
+    expect(diags).toHaveLength(8);
     const entities = diags.map((d) => d.entity).sort();
     expect(entities).toEqual([
       "ApiDeployment",
       "DynamoTarget",
       "EcsService",
       "EcsTarget",
+      "EksAddon",
+      "EksNodegroup",
       "Route",
       "V2Deployment",
     ]);
@@ -796,5 +810,199 @@ describe("WAW030: Missing DependsOn for Known Patterns", () => {
     expect(diags).toHaveLength(1);
     expect(diags[0].entity).toBe("MyTarget");
     expect(diags[0].message).toContain("DynamoDB");
+  });
+
+  // --- EKS Addon + Cluster/Nodegroup pattern ---
+
+  test("EKS Addon with hardcoded ClusterName, no DependsOn on Cluster → warning", () => {
+    const ctx = makeCtx({
+      Resources: {
+        MyCluster: {
+          Type: "AWS::EKS::Cluster",
+          Properties: { Name: "my-cluster" },
+        },
+        MyNodegroup: {
+          Type: "AWS::EKS::Nodegroup",
+          DependsOn: "MyCluster",
+          Properties: { ClusterName: "my-cluster" },
+        },
+        VpcCni: {
+          Type: "AWS::EKS::Addon",
+          Properties: { AddonName: "vpc-cni", ClusterName: "my-cluster" },
+        },
+      },
+    });
+    const diags = checkMissingDependsOn(ctx);
+    expect(diags).toHaveLength(1);
+    expect(diags[0].checkId).toBe("WAW030");
+    expect(diags[0].severity).toBe("warning");
+    expect(diags[0].message).toContain("VpcCni");
+    expect(diags[0].message).toContain("Addon");
+    expect(diags[0].entity).toBe("VpcCni");
+  });
+
+  test("EKS Addon with DependsOn on Cluster → no diagnostic", () => {
+    const ctx = makeCtx({
+      Resources: {
+        MyCluster: {
+          Type: "AWS::EKS::Cluster",
+          Properties: { Name: "my-cluster" },
+        },
+        VpcCni: {
+          Type: "AWS::EKS::Addon",
+          DependsOn: "MyCluster",
+          Properties: { AddonName: "vpc-cni", ClusterName: "my-cluster" },
+        },
+      },
+    });
+    const diags = checkMissingDependsOn(ctx);
+    expect(diags).toHaveLength(0);
+  });
+
+  test("EKS Addon with DependsOn on Nodegroup → no diagnostic", () => {
+    const ctx = makeCtx({
+      Resources: {
+        MyCluster: {
+          Type: "AWS::EKS::Cluster",
+          Properties: { Name: "my-cluster" },
+        },
+        MyNodegroup: {
+          Type: "AWS::EKS::Nodegroup",
+          DependsOn: "MyCluster",
+          Properties: { ClusterName: "my-cluster" },
+        },
+        VpcCni: {
+          Type: "AWS::EKS::Addon",
+          DependsOn: ["MyCluster", "MyNodegroup"],
+          Properties: { AddonName: "vpc-cni", ClusterName: "my-cluster" },
+        },
+      },
+    });
+    const diags = checkMissingDependsOn(ctx);
+    expect(diags).toHaveLength(0);
+  });
+
+  test("EKS Addon with Ref to Cluster in ClusterName → no diagnostic", () => {
+    const ctx = makeCtx({
+      Resources: {
+        MyCluster: {
+          Type: "AWS::EKS::Cluster",
+          Properties: { Name: "my-cluster" },
+        },
+        VpcCni: {
+          Type: "AWS::EKS::Addon",
+          Properties: { AddonName: "vpc-cni", ClusterName: { Ref: "MyCluster" } },
+        },
+      },
+    });
+    const diags = checkMissingDependsOn(ctx);
+    expect(diags).toHaveLength(0);
+  });
+
+  test("EKS Addon without Cluster in template → no diagnostic", () => {
+    const ctx = makeCtx({
+      Resources: {
+        VpcCni: {
+          Type: "AWS::EKS::Addon",
+          Properties: { AddonName: "vpc-cni", ClusterName: "external-cluster" },
+        },
+      },
+    });
+    const diags = checkMissingDependsOn(ctx);
+    expect(diags).toHaveLength(0);
+  });
+
+  // --- EKS Nodegroup + Cluster pattern ---
+
+  test("EKS Nodegroup with hardcoded ClusterName, no DependsOn on Cluster → warning", () => {
+    const ctx = makeCtx({
+      Resources: {
+        MyCluster: {
+          Type: "AWS::EKS::Cluster",
+          Properties: { Name: "my-cluster" },
+        },
+        MyNodegroup: {
+          Type: "AWS::EKS::Nodegroup",
+          Properties: { ClusterName: "my-cluster" },
+        },
+      },
+    });
+    const diags = checkMissingDependsOn(ctx);
+    expect(diags).toHaveLength(1);
+    expect(diags[0].checkId).toBe("WAW030");
+    expect(diags[0].message).toContain("MyNodegroup");
+    expect(diags[0].message).toContain("Nodegroup");
+    expect(diags[0].entity).toBe("MyNodegroup");
+  });
+
+  test("EKS Nodegroup with DependsOn on Cluster → no diagnostic", () => {
+    const ctx = makeCtx({
+      Resources: {
+        MyCluster: {
+          Type: "AWS::EKS::Cluster",
+          Properties: { Name: "my-cluster" },
+        },
+        MyNodegroup: {
+          Type: "AWS::EKS::Nodegroup",
+          DependsOn: "MyCluster",
+          Properties: { ClusterName: "my-cluster" },
+        },
+      },
+    });
+    const diags = checkMissingDependsOn(ctx);
+    expect(diags).toHaveLength(0);
+  });
+
+  test("EKS Nodegroup with Ref to Cluster → no diagnostic", () => {
+    const ctx = makeCtx({
+      Resources: {
+        MyCluster: {
+          Type: "AWS::EKS::Cluster",
+          Properties: { Name: "my-cluster" },
+        },
+        MyNodegroup: {
+          Type: "AWS::EKS::Nodegroup",
+          Properties: { ClusterName: { Ref: "MyCluster" } },
+        },
+      },
+    });
+    const diags = checkMissingDependsOn(ctx);
+    expect(diags).toHaveLength(0);
+  });
+
+  test("EKS Nodegroup without Cluster in template → no diagnostic", () => {
+    const ctx = makeCtx({
+      Resources: {
+        MyNodegroup: {
+          Type: "AWS::EKS::Nodegroup",
+          Properties: { ClusterName: "external-cluster" },
+        },
+      },
+    });
+    const diags = checkMissingDependsOn(ctx);
+    expect(diags).toHaveLength(0);
+  });
+
+  test("multiple EKS Addons — only flags those missing DependsOn", () => {
+    const ctx = makeCtx({
+      Resources: {
+        MyCluster: {
+          Type: "AWS::EKS::Cluster",
+          Properties: { Name: "my-cluster" },
+        },
+        GoodAddon: {
+          Type: "AWS::EKS::Addon",
+          DependsOn: "MyCluster",
+          Properties: { AddonName: "vpc-cni", ClusterName: "my-cluster" },
+        },
+        BadAddon: {
+          Type: "AWS::EKS::Addon",
+          Properties: { AddonName: "coredns", ClusterName: "my-cluster" },
+        },
+      },
+    });
+    const diags = checkMissingDependsOn(ctx);
+    expect(diags).toHaveLength(1);
+    expect(diags[0].entity).toBe("BadAddon");
   });
 });

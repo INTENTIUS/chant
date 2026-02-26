@@ -16,7 +16,7 @@ This example is designed to be deployed with an AI agent (e.g. Claude Code) usin
 - **AWS CLI** >= 2.x configured with EKS permissions
 - **kubectl** installed
 - **jq** installed (for `just load-outputs`)
-- **Registered domain** (any registrar) — after the first deploy, you'll update NS records at your registrar. The default `api.eks-microservice-demo.dev` works for building, testing, and deploying infrastructure (ACM cert stays in PENDING_VALIDATION, DNS won't resolve).
+- **Registered domain** (any registrar) — after the first deploy, you'll update NS records at your registrar, then create the ACM certificate. The default `api.eks-microservice-demo.dev` works for building, testing, and deploying infrastructure (K8s workloads deploy without TLS; add the cert later via `just deploy-cert`).
 
 ### Local verification (no AWS required)
 
@@ -39,15 +39,17 @@ Deploy the k8s-eks-microservice example to AWS. My domain is myapp.example.com.
 Your agent will use the `chant-eks` skill to walk through:
 
 1. **Build** — `just build` generates both CloudFormation and K8s outputs
-2. **Deploy infrastructure** — `just deploy-infra domain=myapp.example.com` creates 35 CF resources (VPC, EKS cluster, node group, IAM roles, add-ons, Route53 hosted zone, ACM certificate)
+2. **Deploy infrastructure** — `just deploy-infra domain=myapp.example.com` creates 34 CF resources (VPC, EKS cluster, node group, IAM roles, add-ons, Route53 hosted zone)
 3. **Configure kubectl** — `just configure-kubectl` sets up kubeconfig
 4. **Load outputs** — `just load-outputs` populates `.env` with real ARNs from stack outputs, and prints Route53 nameservers for NS delegation
-5. **Deploy workloads** — `just build-k8s && just apply` deploys 36 K8s resources
-6. **Verify** — `just status` checks pods, ingress, daemonsets
+5. **NS delegation** — update your domain registrar's NS records to the Route53 nameservers shown in the output
+6. **Deploy certificate** — `just deploy-cert` requests an ACM certificate, creates the DNS validation CNAME in Route53, and waits for validation
+7. **Deploy workloads** — `just load-outputs && just build-k8s && just apply` deploys 36 K8s resources (re-run `load-outputs` to pick up the cert ARN)
+8. **Verify** — `just status` checks pods, ingress, daemonsets
 
-Or run it all at once: `just deploy domain=myapp.example.com`
+Or run phases 1-4 at once: `just deploy domain=myapp.example.com` (then do steps 5-8 manually after NS delegation).
 
-After the first deploy, update your domain registrar's NS records to the Route53 nameservers shown in the output. The ACM certificate auto-validates via DNS because the hosted zone is in the same stack.
+The deploy is two-phase because ACM certificate DNS validation requires the Route53 hosted zone's NS records to be delegated at your registrar first. Without delegation, the validation CNAME can't be resolved and the certificate stays in PENDING_VALIDATION indefinitely.
 
 ### Cleanup
 
@@ -124,8 +126,8 @@ Patterns to add next:
 |------|-------------|
 | `networking.ts` | VPC with public/private subnets, IGW, NAT gateway |
 | `cluster.ts` | EKS cluster, managed node group, OIDC provider, IAM roles (cluster, node, app IRSA, ALB controller, ExternalDNS, FluentBit, ADOT) |
-| `addons.ts` | EKS add-ons: vpc-cni, aws-ebs-csi-driver, coredns, kube-proxy, aws-load-balancer-controller |
-| `dns.ts` | Route53 hosted zone + ACM certificate with DNS validation |
+| `addons.ts` | EKS add-ons: vpc-cni, aws-ebs-csi-driver, coredns, kube-proxy |
+| `dns.ts` | Route53 hosted zone (ACM certificate created separately via `just deploy-cert`) |
 | `params.ts` | CloudFormation parameters: environment, domainName, publicAccessCidr |
 
 ### K8s workloads (`src/k8s/`)
@@ -157,8 +159,7 @@ Patterns to add next:
 │  └────┬─────┘                      │
 │  ┌────┴─────────────────────┐      │
 │  │ Add-ons: vpc-cni, ebs,  │      │
-│  │ coredns, kube-proxy,    │      │
-│  │ ALB controller           │      │
+│  │ coredns, kube-proxy     │      │
 │  └──────────────────────────┘      │
 └───────┼─────────────────────────────┘
         │ ARNs flow down via .env
@@ -185,7 +186,7 @@ Patterns to add next:
 
 ## Resource counts
 
-- **34 CloudFormation resources**: 17 VPC + 1 cluster + 1 nodegroup + 1 OIDC + 7 IAM roles + 4 addons + 1 KMS key + 1 Route53 hosted zone + 1 ACM certificate
+- **34 CloudFormation resources**: 17 VPC + 1 cluster + 1 nodegroup + 1 OIDC + 8 IAM roles + 4 addons + 1 KMS key + 1 Route53 hosted zone
 - **36 Kubernetes resources**: across 5 source files (namespace, app, ingress, storage, observability)
 
 ## Cross-lexicon value flow
@@ -199,7 +200,7 @@ CloudFormation stack outputs map to K8s composite props via `.env`:
 | `externalDnsRoleArn` | `ingress.ts` | `ExternalDnsAgent({ iamRoleArn })` |
 | `fluentBitRoleArn` | `observability.ts` | `FluentBitAgent({ iamRoleArn })` |
 | `adotRoleArn` | `observability.ts` | `AdotCollector({ iamRoleArn })` |
-| `certificateArnOutput` | `ingress.ts` | `AlbIngress({ certificateArn })` |
+| ACM cert ARN (via `just deploy-cert`) | `ingress.ts` | `AlbIngress({ certificateArn })` |
 | Cluster name | `observability.ts` | `FluentBitAgent({ clusterName })`, `AdotCollector({ clusterName })` |
 
 Values flow through `.env` → `config.ts` → K8s source files. `just load-outputs` refreshes `.env` after any infra deploy.

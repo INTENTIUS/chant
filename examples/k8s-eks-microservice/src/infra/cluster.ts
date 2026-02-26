@@ -185,6 +185,15 @@ export const adotRole = new Role({
   ],
 });
 
+// EBS CSI driver role — required for the EBS CSI addon to manage volumes
+export const ebsCsiRole = new Role({
+  RoleName: "eks-microservice-ebs-csi-role",
+  AssumeRolePolicyDocument: irsaTrustPolicy("kube-system", "ebs-csi-controller-sa"),
+  ManagedPolicyArns: [
+    "arn:aws:iam::aws:policy/service-role/AmazonEBSCSIDriverPolicy",
+  ],
+});
+
 // ── Managed Node Group ─────────────────────────────────────────────
 
 export const nodegroup = new Nodegroup(

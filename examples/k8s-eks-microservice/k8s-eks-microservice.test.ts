@@ -57,7 +57,7 @@ describe("k8s-eks-microservice example", () => {
     const parsed = JSON.parse(result.outputs.get("aws")!);
     expect(parsed.AWSTemplateFormatVersion).toBe("2010-09-09");
 
-    // 17 VPC + 1 cluster + 1 nodegroup + 1 OIDC + 7 IAM roles + 4 addons + 1 KMS key + 1 HostedZone + 1 ACM cert = 34
+    // 17 VPC + 1 cluster + 1 nodegroup + 1 OIDC + 8 IAM roles + 4 addons + 1 KMS key + 1 HostedZone = 34
     expect(Object.keys(parsed.Resources)).toHaveLength(34);
 
     const types = Object.values(parsed.Resources).map((r: any) => r.Type);
@@ -67,11 +67,10 @@ describe("k8s-eks-microservice example", () => {
     expect(types).toContain("AWS::EC2::VPC");
     expect(types).toContain("AWS::EC2::Subnet");
     expect(types).toContain("AWS::EC2::NatGateway");
-    expect(types.filter((t: string) => t === "AWS::IAM::Role")).toHaveLength(7);
+    expect(types.filter((t: string) => t === "AWS::IAM::Role")).toHaveLength(8);
     expect(types.filter((t: string) => t === "AWS::EKS::Addon")).toHaveLength(4);
     expect(types).toContain("AWS::KMS::Key");
     expect(types).toContain("AWS::Route53::HostedZone");
-    expect(types).toContain("AWS::CertificateManager::Certificate");
   });
 
   // ── CloudFormation: EKS cluster properties ─────────────────────
@@ -186,12 +185,11 @@ describe("k8s-eks-microservice example", () => {
     expect(outputNames).toContain("externalDnsRoleArn");
     expect(outputNames).toContain("fluentBitRoleArn");
     expect(outputNames).toContain("adotRoleArn");
-    // DNS/TLS
-    expect(outputNames).toContain("certificateArnOutput");
+    // DNS
     expect(outputNames).toContain("hostedZoneIdOutput");
     expect(outputNames).toContain("nameServersOutput");
 
-    expect(outputNames).toHaveLength(15);
+    expect(outputNames).toHaveLength(14);
   });
 
   // ── CloudFormation: EKS add-ons ────────────────────────────────

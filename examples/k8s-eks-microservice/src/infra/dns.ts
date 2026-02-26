@@ -1,12 +1,12 @@
-// DNS and TLS: Route53 hosted zone + ACM certificate with DNS validation.
+// DNS: Route53 hosted zone for the application domain.
 //
-// After the first deploy, update your domain registrar's NS records to the
-// nameservers shown in the stack outputs (`nameServersOutput`).
+// The hosted zone is created in-stack. After deploy, delegate NS records
+// at your registrar (see nameServersOutput). The ACM certificate is
+// created separately via `just deploy-cert` after NS delegation.
 
 import {
   HostedZone,
   HostedZone_HostedZoneConfig,
-  AcmCertificate,
   Ref,
   stackOutput,
 } from "@intentius/chant-lexicon-aws";
@@ -17,19 +17,6 @@ export const hostedZone = new HostedZone({
   HostedZoneConfig: new HostedZone_HostedZoneConfig({
     Comment: "EKS microservice — managed by chant",
   }),
-});
-
-// DNS validation — cert goes to PENDING_VALIDATION immediately.
-// Once NS records are delegated to Route53 (see nameServersOutput),
-// create the CNAME validation record in the hosted zone to complete
-// validation. The ALB can use the cert ARN before validation completes.
-export const certificate = new AcmCertificate({
-  DomainName: Ref(domainName),
-  ValidationMethod: "DNS",
-});
-
-export const certificateArnOutput = stackOutput(certificate.Id, {
-  description: "ACM certificate ARN",
 });
 
 export const hostedZoneIdOutput = stackOutput(hostedZone.Id, {
