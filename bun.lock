@@ -441,6 +441,42 @@
         "typescript": "^5.9.3",
       },
     },
+    "lexicons/helm/examples/composites-basic": {
+      "name": "helm-composites-basic",
+      "version": "0.0.1",
+      "dependencies": {
+        "@intentius/chant": "workspace:*",
+        "@intentius/chant-lexicon-helm": "workspace:*",
+        "@intentius/chant-lexicon-k8s": "workspace:*",
+      },
+      "devDependencies": {
+        "typescript": "*",
+      },
+    },
+    "lexicons/helm/examples/composites-infrastructure": {
+      "name": "helm-composites-infrastructure",
+      "version": "0.0.1",
+      "dependencies": {
+        "@intentius/chant": "workspace:*",
+        "@intentius/chant-lexicon-helm": "workspace:*",
+        "@intentius/chant-lexicon-k8s": "workspace:*",
+      },
+      "devDependencies": {
+        "typescript": "*",
+      },
+    },
+    "lexicons/helm/examples/composites-production": {
+      "name": "helm-composites-production",
+      "version": "0.0.1",
+      "dependencies": {
+        "@intentius/chant": "workspace:*",
+        "@intentius/chant-lexicon-helm": "workspace:*",
+        "@intentius/chant-lexicon-k8s": "workspace:*",
+      },
+      "devDependencies": {
+        "typescript": "*",
+      },
+    },
     "lexicons/k8s": {
       "name": "@intentius/chant-lexicon-k8s",
       "version": "0.0.13",
@@ -679,6 +715,12 @@
     "globals": ["globals@14.0.0", "", {}, "sha512-oahGvuMGQlPw/ivIYBjVSrWAfWLBeku5tpPE2fOPLi+WHffIWbuh2tCjhyQhTBPMf5E9jDEH4FOmTYgYwbKwtQ=="],
 
     "has-flag": ["has-flag@4.0.0", "", {}, "sha512-EykJT/Q1KjTWctppgIAgfSO0tKVuZUjhgMr17kqTumMl6Afv3EISleU7qZUzoXDFTAHTDC4NOoG/ZxU3EvlMPQ=="],
+
+    "helm-composites-basic": ["helm-composites-basic@workspace:lexicons/helm/examples/composites-basic"],
+
+    "helm-composites-infrastructure": ["helm-composites-infrastructure@workspace:lexicons/helm/examples/composites-infrastructure"],
+
+    "helm-composites-production": ["helm-composites-production@workspace:lexicons/helm/examples/composites-production"],
 
     "ignore": ["ignore@7.0.5", "", {}, "sha512-Hs59xBNfUIunMFgWAbGX5cq6893IbWg4KnrjbYwX3tx0ztorVgTDA6B2sxf8ejHJ4wz8BqGUMYlnzNBer5NvGg=="],
 

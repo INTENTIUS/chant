@@ -7,6 +7,7 @@
     "lexicons/gitlab/examples/*",
     "lexicons/k8s/examples/*",
     "lexicons/flyway/examples/*",
+    "lexicons/helm/examples/*",
     "examples/*"
   ],
   "scripts": {
