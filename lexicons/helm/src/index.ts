@@ -34,3 +34,8 @@ export type { HelmConditional } from "./intrinsics";
 // Helpers
 export { generateHelpers } from "./helpers";
 export type { HelpersConfig } from "./helpers";
+
+// Code generation pipeline
+export { generate, writeGeneratedFiles } from "./codegen/generate";
+export { packageLexicon } from "./codegen/package";
+export type { PackageOptions, PackageResult } from "./codegen/package";
