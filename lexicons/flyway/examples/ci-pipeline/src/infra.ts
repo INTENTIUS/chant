@@ -35,7 +35,7 @@ export const config = new FlywayConfig({
 
 // Additional staging environment also using env vars with a different prefix
 export const stagingEnv = new Environment({
-  name: "staging",
+  displayName: "staging",
   url: env("STAGING_DB_URL"),
   user: env("STAGING_DB_USER"),
   password: env("STAGING_DB_PASSWORD"),
@@ -44,7 +44,7 @@ export const stagingEnv = new Environment({
 
 // Production environment with stricter settings
 export const prodEnv = new Environment({
-  name: "prod",
+  displayName: "prod",
   url: env("PROD_DB_URL"),
   user: env("PROD_DB_USER"),
   password: env("PROD_DB_PASSWORD"),

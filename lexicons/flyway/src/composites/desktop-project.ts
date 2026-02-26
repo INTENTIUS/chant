@@ -113,13 +113,13 @@ export function DesktopProject(props: DesktopProjectProps): DesktopProjectResult
   };
 
   const development: Record<string, unknown> = {
-    name: "development",
+    displayName: "development",
     url: devUrl,
     schemas,
   };
 
   const shadow: Record<string, unknown> = {
-    name: "shadow",
+    displayName: "shadow",
     url: shadowUrl,
     schemas,
     provisioner: "clean",
@@ -128,7 +128,7 @@ export function DesktopProject(props: DesktopProjectProps): DesktopProjectResult
   const environments: Record<string, Record<string, unknown>> = {};
   for (const entry of envEntries) {
     environments[entry.name] = {
-      name: entry.name,
+      displayName: entry.name,
       url: entry.url,
       schemas: entry.schemas ?? schemas,
     };

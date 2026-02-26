@@ -91,7 +91,7 @@ export function GcpSecuredProject(props: GcpSecuredProjectProps): GcpSecuredProj
     const passwordSecret = entry.passwordSecret ?? `${name}-${entry.name}-db-password`;
 
     environments[entry.name] = {
-      name: entry.name,
+      displayName: entry.name,
       url: entry.url,
       user: `\${googlesecrets.${userSecret}}`,
       password: `\${googlesecrets.${passwordSecret}}`,

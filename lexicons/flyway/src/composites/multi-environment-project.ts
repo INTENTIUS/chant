@@ -87,7 +87,7 @@ export function MultiEnvironmentProject(
   const environments: Record<string, Record<string, unknown>> = {};
   for (const entry of envEntries) {
     environments[entry.name] = {
-      name: entry.name,
+      displayName: entry.name,
       url: entry.url,
       schemas: entry.schemas ?? schemas,
       ...(entry.provisioner && { provisioner: entry.provisioner }),
@@ -109,7 +109,7 @@ export function MultiEnvironmentProject(
 
   if (includeShadow && shadowUrl) {
     result.shadow = {
-      name: "shadow",
+      displayName: "shadow",
       url: shadowUrl,
       schemas,
       provisioner: "clean",

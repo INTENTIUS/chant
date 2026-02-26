@@ -51,7 +51,7 @@ export const prodEnv = new Environment(result.environments.prod);
 
 // Local dev environment does not use GCP secrets
 export const devEnv = new Environment({
-  name: "dev",
+  displayName: "dev",
   url: "jdbc:postgresql://localhost:5432/catalog_dev",
   user: "catalog_dev",
   password: "dev_password",

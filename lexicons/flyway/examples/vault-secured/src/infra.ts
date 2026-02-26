@@ -53,7 +53,7 @@ export const prodEnv = new Environment(result.environments.prod);
 export const localSecrets = new LocalSecretResolver({});
 
 export const devEnv = new Environment({
-  name: "dev",
+  displayName: "dev",
   url: "jdbc:postgresql://localhost:5432/payments_dev",
   user: resolve("localSecret", "db_user"),
   password: resolve("localSecret", "db_password"),

@@ -24,14 +24,14 @@ export const config = new FlywayConfig({
 });
 
 export const devEnv = new Environment({
-  name: "dev",
+  displayName: "dev",
   url: "jdbc:postgresql://localhost:5432/notifications_dev",
   schemas: ["public"],
   provisioner: "clean",
 });
 
 export const prodEnv = new Environment({
-  name: "prod",
+  displayName: "prod",
   url: "jdbc:postgresql://prod-notifications.internal:5432/notifications",
   schemas: ["public"],
 });

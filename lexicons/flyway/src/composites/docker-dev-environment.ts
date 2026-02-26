@@ -87,7 +87,7 @@ export function DockerDevEnvironment(
   }
 
   const environment: Record<string, unknown> = {
-    name,
+    displayName: name,
     url,
     schemas,
     provisioner: "docker",

@@ -71,14 +71,14 @@ export function StandardProject(props: StandardProjectProps): StandardProjectRes
   };
 
   const dev: Record<string, unknown> = {
-    name: "dev",
+    displayName: "dev",
     url: devUrl,
     schemas,
     provisioner: "clean",
   };
 
   const prod: Record<string, unknown> = {
-    name: "prod",
+    displayName: "prod",
     url: prodUrl,
     schemas,
   };

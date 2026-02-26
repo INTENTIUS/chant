@@ -383,7 +383,7 @@ describe("DesktopProject", () => {
     const result = DesktopProject(base);
     expect(result.development.url).toBe("jdbc:postgresql://localhost:5432/devdb");
     expect(result.development.schemas).toEqual(["public"]);
-    expect(result.development.name).toBe("development");
+    expect(result.development.displayName).toBe("development");
   });
 
   test("shadow env has provisioner=clean", () => {
@@ -479,7 +479,7 @@ describe("environmentGroup", () => {
         dev: { url: "jdbc:postgresql://localhost:5432/dev" },
       },
     });
-    expect(result.dev.name).toBe("dev");
+    expect(result.dev.displayName).toBe("dev");
   });
 
   test("inherits shared schemas", () => {

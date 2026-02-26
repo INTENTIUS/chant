@@ -102,7 +102,7 @@ export function VaultSecuredProject(
     const passwordKey = entry.passwordKey ?? `${entry.name}_password`;
 
     environments[entry.name] = {
-      name: entry.name,
+      displayName: entry.name,
       url: entry.url,
       user: `\${vault.${userKey}}`,
       password: `\${vault.${passwordKey}}`,

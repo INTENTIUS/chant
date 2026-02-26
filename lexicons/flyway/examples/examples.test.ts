@@ -30,10 +30,10 @@ describeExample("basic-project", (output) => {
 });
 
 describeExample("multi-environment", (output) => {
-  expect(output).toContain("[environments.devEnv]");
-  expect(output).toContain("[environments.stagingEnv]");
-  expect(output).toContain("[environments.prodEnv]");
-  expect(output).toContain("[environments.shadowEnv]");
+  expect(output).toContain("[environments.dev]");
+  expect(output).toContain("[environments.staging]");
+  expect(output).toContain("[environments.prod]");
+  expect(output).toContain("[environments.shadow]");
 });
 
 describeExample("vault-secured", (output) => {
@@ -70,17 +70,17 @@ describeExample("desktop-project", (output) => {
 });
 
 describeExample("environment-overrides", (output) => {
-  expect(output).toContain("[environments.devEnv.flyway]");
-  expect(output).toContain("[environments.prodEnv.flyway]");
+  expect(output).toContain("[environments.dev.flyway]");
+  expect(output).toContain("[environments.prod.flyway]");
   expect(output).toContain("placeholders");
 });
 
 describeExample("migration-lifecycle", (output) => {
-  expect(output).toContain("[environments.devEnv]");
-  expect(output).toContain("[environments.shadowEnv]");
-  expect(output).toContain("[environments.prodEnv]");
-  expect(output).toContain("[environments.devEnv.flyway]");
-  expect(output).toContain("[environments.prodEnv.flyway]");
+  expect(output).toContain("[environments.dev]");
+  expect(output).toContain("[environments.shadow]");
+  expect(output).toContain("[environments.prod]");
+  expect(output).toContain("[environments.dev.flyway]");
+  expect(output).toContain("[environments.prod.flyway]");
   expect(output).toContain("cleanDisabled = false");
   expect(output).toContain("validateOnMigrate = true");
 });

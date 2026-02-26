@@ -27,7 +27,7 @@ export const config = new FlywayConfig({
 
 // Dev environment manages all three schemas
 export const devEnv = new Environment({
-  name: "dev",
+  displayName: "dev",
   url: "jdbc:postgresql://localhost:5432/analytics_dev",
   schemas: ["public", "audit", "reporting"],
   provisioner: "clean",
@@ -35,14 +35,14 @@ export const devEnv = new Environment({
 
 // Staging environment
 export const stagingEnv = new Environment({
-  name: "staging",
+  displayName: "staging",
   url: "jdbc:postgresql://staging-analytics.internal:5432/analytics",
   schemas: ["public", "audit", "reporting"],
 });
 
 // Production environment
 export const prodEnv = new Environment({
-  name: "prod",
+  displayName: "prod",
   url: "jdbc:postgresql://prod-analytics.internal:5432/analytics",
   schemas: ["public", "audit", "reporting"],
 });

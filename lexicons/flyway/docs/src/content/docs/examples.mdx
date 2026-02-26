@@ -32,7 +32,7 @@ export const config = new FlywayConfig({
 });
 
 export const dev = new Environment({
-  name: "dev",
+  displayName: "dev",
   url: "jdbc:postgresql://localhost:5432/basic_app_dev",
   schemas: ["public"],
   provisioner: "clean",

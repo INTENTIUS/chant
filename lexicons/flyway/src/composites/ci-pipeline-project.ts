@@ -69,7 +69,7 @@ export function CiPipelineProject(props: CiPipelineProjectProps): CiPipelineProj
   };
 
   const environment: Record<string, unknown> = {
-    name: environmentName,
+    displayName: environmentName,
     url: `\${env.${envVarPrefix}_URL}`,
     user: `\${env.${envVarPrefix}_USER}`,
     password: `\${env.${envVarPrefix}_PASSWORD}`,

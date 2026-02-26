@@ -117,7 +117,7 @@ export function environmentGroup(
 
     const env: Record<string, unknown> = {
       ...rest,
-      name: envName,
+      displayName: envName,
       schemas: envSchemas ?? schemas,
     };
 
