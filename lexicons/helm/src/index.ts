@@ -39,3 +39,30 @@ export type { HelpersConfig } from "./helpers";
 export { generate, writeGeneratedFiles } from "./codegen/generate";
 export { packageLexicon } from "./codegen/package";
 export type { PackageOptions, PackageResult } from "./codegen/package";
+
+// Composites
+export {
+  HelmWebApp,
+  HelmStatefulService,
+  HelmCronJob,
+  HelmMicroservice,
+  HelmLibrary,
+} from "./composites";
+export type {
+  HelmWebAppProps,
+  HelmWebAppResult,
+  HelmStatefulServiceProps,
+  HelmStatefulServiceResult,
+  HelmCronJobProps,
+  HelmCronJobResult,
+  HelmMicroserviceProps,
+  HelmMicroserviceResult,
+  HelmLibraryProps,
+  HelmLibraryResult,
+} from "./composites";
+
+// Import pipeline
+export { HelmParser } from "./import/parser";
+export { HelmGenerator } from "./import/generator";
+export { stripTemplateExpressions, classifyExpression } from "./import/template-stripper";
+export type { StrippedExpression, StripResult, ExpressionKind } from "./import/template-stripper";
