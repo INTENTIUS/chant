@@ -187,24 +187,27 @@ export const adotRole = new Role({
 
 // ── Managed Node Group ─────────────────────────────────────────────
 
-export const nodegroup = new Nodegroup({
-  ClusterName: "eks-microservice",
-  NodeRole: nodeRole.Arn,
-  Subnets: [
-    network.privateSubnet1.SubnetId,
-    network.privateSubnet2.SubnetId,
-  ],
-  AmiType: "AL2023_x86_64_STANDARD",
-  InstanceTypes: ["t3.medium"],
-  ScalingConfig: {
-    MinSize: 2,
-    MaxSize: 6,
-    DesiredSize: 3,
+export const nodegroup = new Nodegroup(
+  {
+    ClusterName: "eks-microservice",
+    NodeRole: nodeRole.Arn,
+    Subnets: [
+      network.privateSubnet1.SubnetId,
+      network.privateSubnet2.SubnetId,
+    ],
+    AmiType: "AL2023_x86_64_STANDARD",
+    InstanceTypes: ["t3.medium"],
+    ScalingConfig: {
+      MinSize: 2,
+      MaxSize: 6,
+      DesiredSize: 3,
+    },
+    Labels: {
+      workload: "microservice",
+    },
   },
-  Labels: {
-    workload: "microservice",
-  },
-});
+  { DependsOn: [cluster] },
+);
 
 // ── Stack Outputs ──────────────────────────────────────────────────
 
