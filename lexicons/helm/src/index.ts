@@ -66,3 +66,10 @@ export { HelmParser } from "./import/parser";
 export { HelmGenerator } from "./import/generator";
 export { stripTemplateExpressions, classifyExpression } from "./import/template-stripper";
 export type { StrippedExpression, StripResult, ExpressionKind } from "./import/template-stripper";
+
+// LSP providers
+export { helmCompletions } from "./lsp/completions";
+export { helmHover } from "./lsp/hover";
+
+// Docs generation
+export { generateDocs } from "./codegen/docs";

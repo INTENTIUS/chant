@@ -6,9 +6,12 @@
  */
 
 import { createRequire } from "module";
-import type { LexiconPlugin, IntrinsicDef, InitTemplateSet } from "@intentius/chant/lexicon";
+import type { LexiconPlugin, IntrinsicDef, InitTemplateSet, SkillDefinition } from "@intentius/chant/lexicon";
 import type { LintRule } from "@intentius/chant/lint/rule";
 import type { PostSynthCheck } from "@intentius/chant/lint/post-synth";
+import { readFileSync } from "fs";
+import { join, dirname } from "path";
+import { fileURLToPath } from "url";
 import { helmSerializer } from "./serializer";
 
 const require = createRequire(import.meta.url);
@@ -141,6 +144,23 @@ export const service = new Service({
 `,
       },
     };
+  },
+
+  skills(): SkillDefinition[] {
+    const skillPath = join(dirname(fileURLToPath(import.meta.url)), "skills", "create-chart.md");
+    const content = readFileSync(skillPath, "utf-8");
+    return [
+      {
+        name: "chant-helm",
+        description: "Helm chart lifecycle — scaffold, generate, lint, build, validate",
+        content,
+      },
+    ];
+  },
+
+  async docs(options?: { verbose?: boolean }): Promise<void> {
+    const { generateDocs } = await import("./codegen/docs");
+    await generateDocs({ verbose: options?.verbose });
   },
 
   async generate(options?: { verbose?: boolean }): Promise<void> {

@@ -58,4 +58,12 @@ describe("helmPlugin", () => {
     expect(templates.src["chart.ts"]).toContain("new Values");
     expect(templates.src["chart.ts"]).toContain("new Deployment");
   });
+
+  test("skills() returns array with chant-helm skill", () => {
+    const skills = helmPlugin.skills!();
+    expect(Array.isArray(skills)).toBe(true);
+    expect(skills.length).toBeGreaterThanOrEqual(1);
+    expect(skills[0].name).toBe("chant-helm");
+    expect(skills[0].content).toContain("Helm Chart Operational Playbook");
+  });
 });
