@@ -16,8 +16,23 @@ export { K8sLabels, K8sAnnotations } from "./variables";
 export * from "./generated/index";
 
 // Composites
-export { WebApp, StatefulApp, CronWorkload, AutoscaledService, WorkerPool, NamespaceEnv, NodeAgent } from "./composites/index";
-export type { WebAppProps, WebAppResult, StatefulAppProps, StatefulAppResult, CronWorkloadProps, CronWorkloadResult, AutoscaledServiceProps, AutoscaledServiceResult, WorkerPoolProps, WorkerPoolResult, NamespaceEnvProps, NamespaceEnvResult, NodeAgentProps, NodeAgentResult } from "./composites/index";
+export {
+  WebApp, StatefulApp, CronWorkload, AutoscaledService, WorkerPool, NamespaceEnv, NodeAgent,
+  BatchJob, SecureIngress, ConfiguredApp, SidecarApp, MonitoredService, NetworkIsolatedApp,
+  IrsaServiceAccount, AlbIngress, EbsStorageClass, EfsStorageClass, FluentBitAgent, ExternalDnsAgent, AdotCollector,
+} from "./composites/index";
+export type {
+  WebAppProps, WebAppResult, StatefulAppProps, StatefulAppResult, CronWorkloadProps, CronWorkloadResult,
+  AutoscaledServiceProps, AutoscaledServiceResult, WorkerPoolProps, WorkerPoolResult,
+  NamespaceEnvProps, NamespaceEnvResult, NodeAgentProps, NodeAgentResult,
+  BatchJobProps, BatchJobResult, SecureIngressProps, SecureIngressResult,
+  ConfiguredAppProps, ConfiguredAppResult, SidecarAppProps, SidecarAppResult,
+  MonitoredServiceProps, MonitoredServiceResult, NetworkIsolatedAppProps, NetworkIsolatedAppResult,
+  IrsaServiceAccountProps, IrsaServiceAccountResult, AlbIngressProps, AlbIngressResult,
+  EbsStorageClassProps, EbsStorageClassResult, EfsStorageClassProps, EfsStorageClassResult,
+  FluentBitAgentProps, FluentBitAgentResult, ExternalDnsAgentProps, ExternalDnsAgentResult,
+  AdotCollectorProps, AdotCollectorResult,
+} from "./composites/index";
 
 // RBAC verb constants
 export * from "./actions/index";
