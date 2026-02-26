@@ -80,7 +80,8 @@ cd examples/k8s-eks-microservice
 just build
 
 # Deploy the CloudFormation stack (32 resources)
-just deploy-infra
+# Pass your domain and ACM cert ARN:
+just deploy-infra domain=myapp.example.com cert=arn:aws:acm:us-east-1:123456789012:certificate/your-cert-id
 ```
 
 The stack creates the VPC, EKS cluster, managed node group, OIDC provider, 7 IAM roles, and 5 EKS add-ons. The ALB controller add-on installs automatically — no Helm charts or CRDs to manage separately.
@@ -100,7 +101,7 @@ kubectl get nodes  # verify — should show 3 nodes
 just load-outputs
 ```
 
-The `load-outputs` target queries `aws cloudformation describe-stacks`, extracts the IAM role ARNs, and writes them to `.env`. Bun auto-loads `.env` at runtime, so the next K8s build uses real ARNs instead of placeholders.
+The `load-outputs` target queries `aws cloudformation describe-stacks`, extracts the IAM role ARNs (from stack outputs) and the domain name and ACM certificate ARN (from stack parameters), and writes them all to `.env`. Bun auto-loads `.env` at runtime, so the next K8s build uses real values instead of placeholders.
 
 ## Step 3: Deploy Kubernetes workloads
 

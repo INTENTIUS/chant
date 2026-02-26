@@ -155,7 +155,8 @@ just build
 just lint
 
 # Deploy (creates 32 resources including ALB controller addon)
-just deploy-infra
+# Pass your domain and ACM cert ARN:
+just deploy-infra domain=myapp.example.com cert=arn:aws:acm:us-east-1:123456789012:certificate/your-cert-id
 ```
 
 The stack exports 12 outputs: VPC ID, 4 subnet IDs, cluster endpoint/ARN, and 5 IAM role ARNs (app, ALB controller, ExternalDNS, FluentBit, ADOT). The ALB controller addon installs automatically — no Helm or CRDs to manage.
@@ -171,7 +172,7 @@ kubectl get nodes  # verify connectivity
 just load-outputs
 ```
 
-The `load-outputs` target queries CloudFormation stack outputs and writes them to `.env`. Bun auto-loads `.env` at runtime, so the next K8s build picks up real ARNs instead of placeholders.
+The `load-outputs` target queries CloudFormation stack outputs (IAM role ARNs) and parameters (domain, cert ARN) and writes them to `.env`. Bun auto-loads `.env` at runtime, so the next K8s build picks up real values instead of placeholders.
 
 ## Step 3: Deploy workloads
 
@@ -239,7 +240,7 @@ CloudFormation stack outputs map to K8s composite props via `.env`:
 | ACM cert ARN | `ingress.ts` | `AlbIngress({ certificateArn })` |
 | Cluster name | `observability.ts` | `FluentBitAgent({ clusterName })`, `AdotCollector({ clusterName })` |
 
-ARNs flow through `.env` → `config.ts` → K8s source files. Run `just load-outputs` after any infra deploy to refresh.
+Values flow through `.env` → `config.ts` → K8s source files. Run `just load-outputs` after any infra deploy to refresh. The `.env` includes both stack outputs (IAM role ARNs) and stack parameters (domain name, ACM cert ARN).
 
 ## Cleanup
 

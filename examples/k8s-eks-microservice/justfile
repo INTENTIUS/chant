@@ -13,29 +13,36 @@ build-k8s:
 lint:
     {{chant}} lint src
 
-# Deploy AWS infrastructure
+# Deploy AWS infrastructure (override defaults: just deploy-infra domain=myapp.example.com cert=arn:aws:acm:...)
+domain := "api.example.com"
+cert := "arn:aws:acm:us-east-1:123456789012:certificate/abc-123-def"
+
 deploy-infra:
     aws cloudformation deploy \
         --template-file templates/infra.json \
         --stack-name eks-microservice \
-        --capabilities CAPABILITY_NAMED_IAM
+        --capabilities CAPABILITY_NAMED_IAM \
+        --parameter-overrides domainName={{domain}} certificateArn={{cert}}
 
 # Configure kubectl after infra deploy
 configure-kubectl:
     aws eks update-kubeconfig --name eks-microservice --region us-east-1
 
-# Load stack outputs into .env for K8s build (bun auto-loads .env)
+# Load stack outputs + parameters into .env for K8s build (bun auto-loads .env)
 load-outputs:
     #!/usr/bin/env bash
-    outputs=$(aws cloudformation describe-stacks --stack-name eks-microservice --query 'Stacks[0].Outputs' --output json)
-    get() { echo "$outputs" | jq -r ".[] | select(.OutputKey==\"$1\") | .OutputValue"; }
+    stack=$(aws cloudformation describe-stacks --stack-name eks-microservice --output json)
+    get_output() { echo "$stack" | jq -r ".Stacks[0].Outputs[] | select(.OutputKey==\"$1\") | .OutputValue"; }
+    get_param() { echo "$stack" | jq -r ".Stacks[0].Parameters[] | select(.ParameterKey==\"$1\") | .ParameterValue"; }
     cat > .env <<EOF
-    APP_ROLE_ARN=$(get appRoleArn)
-    EXTERNAL_DNS_ROLE_ARN=$(get externalDnsRoleArn)
-    FLUENT_BIT_ROLE_ARN=$(get fluentBitRoleArn)
-    ADOT_ROLE_ARN=$(get adotRoleArn)
+    APP_ROLE_ARN=$(get_output appRoleArn)
+    EXTERNAL_DNS_ROLE_ARN=$(get_output externalDnsRoleArn)
+    FLUENT_BIT_ROLE_ARN=$(get_output fluentBitRoleArn)
+    ADOT_ROLE_ARN=$(get_output adotRoleArn)
+    ALB_CERT_ARN=$(get_param certificateArn)
+    DOMAIN=$(get_param domainName)
     EOF
-    echo "Wrote .env with stack output ARNs"
+    echo "Wrote .env with stack output ARNs and parameters"
 
 # Validate K8s manifests against live cluster
 validate:
