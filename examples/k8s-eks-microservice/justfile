@@ -20,14 +20,18 @@ deploy-infra:
 configure-kubectl:
     aws eks update-kubeconfig --name eks-microservice --region us-east-1
 
-# Load stack outputs into env vars for K8s build
+# Load stack outputs into .env for K8s build (bun auto-loads .env)
 load-outputs:
     #!/usr/bin/env bash
     outputs=$(aws cloudformation describe-stacks --stack-name eks-microservice --query 'Stacks[0].Outputs' --output json)
-    export APP_ROLE_ARN=$(echo "$outputs" | jq -r '.[] | select(.OutputKey=="appRoleArn") | .OutputValue')
-    export EXTERNAL_DNS_ROLE_ARN=$(echo "$outputs" | jq -r '.[] | select(.OutputKey=="externalDnsRoleArn") | .OutputValue')
-    export FLUENT_BIT_ROLE_ARN=$(echo "$outputs" | jq -r '.[] | select(.OutputKey=="fluentBitRoleArn") | .OutputValue')
-    echo "Loaded ARNs from stack outputs"
+    get() { echo "$outputs" | jq -r ".[] | select(.OutputKey==\"$1\") | .OutputValue"; }
+    cat > .env <<EOF
+    APP_ROLE_ARN=$(get appRoleArn)
+    EXTERNAL_DNS_ROLE_ARN=$(get externalDnsRoleArn)
+    FLUENT_BIT_ROLE_ARN=$(get fluentBitRoleArn)
+    ADOT_ROLE_ARN=$(get adotRoleArn)
+    EOF
+    echo "Wrote .env with stack output ARNs"
 
 # Validate K8s manifests against live cluster
 validate:

@@ -21,7 +21,7 @@ const alb = AlbIngress({
     {
       hostname: config.domain,
       paths: [
-        { path: "/", pathType: "Prefix", serviceName: "microservice-api", servicePort: 8080 },
+        { path: "/", pathType: "Prefix", serviceName: "microservice-api", servicePort: 80 },
       ],
     },
   ],

@@ -10,5 +10,7 @@ export const config = {
   albCertificateArn: process.env.ALB_CERT_ARN ?? "arn:aws:acm:us-east-1:123456789012:certificate/abc-123-def",
   externalDnsRoleArn: process.env.EXTERNAL_DNS_ROLE_ARN ?? "arn:aws:iam::123456789012:role/eks-microservice-external-dns-role",
   fluentBitRoleArn: process.env.FLUENT_BIT_ROLE_ARN ?? "arn:aws:iam::123456789012:role/eks-microservice-fluent-bit-role",
+  adotRoleArn: process.env.ADOT_ROLE_ARN ?? "arn:aws:iam::123456789012:role/eks-microservice-adot-role",
   domain: process.env.DOMAIN ?? "api.example.com",
+  appImage: process.env.APP_IMAGE ?? "public.ecr.aws/nginx/nginx:stable",
 };

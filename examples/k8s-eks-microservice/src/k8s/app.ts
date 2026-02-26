@@ -29,8 +29,8 @@ export const appServiceAccount = new ServiceAccount(irsa.serviceAccount);
 
 const app = AutoscaledService({
   name: "microservice-api",
-  image: "123456789012.dkr.ecr.us-east-1.amazonaws.com/microservice:v1.0.0",
-  port: 8080,
+  image: config.appImage,
+  port: 80,
   replicas: 3,
   minReplicas: 2,
   maxReplicas: 10,

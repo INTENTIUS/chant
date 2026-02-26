@@ -141,6 +141,23 @@ export const fluentBitRole = new Role({
   ],
 });
 
+// ADOT Collector role
+export const adotRole = new Role({
+  RoleName: "eks-microservice-adot-role",
+  AssumeRolePolicyDocument: {
+    Version: "2012-10-17",
+    Statement: {
+      Effect: "Allow",
+      Principal: { Federated: oidcProvider.Arn },
+      Action: "sts:AssumeRoleWithWebIdentity",
+    },
+  },
+  ManagedPolicyArns: [
+    "arn:aws:iam::aws:policy/CloudWatchAgentServerPolicy",
+    "arn:aws:iam::aws:policy/AWSXRayDaemonWriteAccess",
+  ],
+});
+
 // ── Managed Node Group ─────────────────────────────────────────────
 
 export const nodegroup = new Nodegroup({
@@ -186,4 +203,8 @@ export const externalDnsRoleArn = stackOutput(externalDnsRole.Arn, {
 
 export const fluentBitRoleArn = stackOutput(fluentBitRole.Arn, {
   description: "IAM role ARN for Fluent Bit (IRSA)",
+});
+
+export const adotRoleArn = stackOutput(adotRole.Arn, {
+  description: "IAM role ARN for ADOT Collector (IRSA)",
 });

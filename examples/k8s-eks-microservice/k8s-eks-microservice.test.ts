@@ -57,8 +57,8 @@ describe("k8s-eks-microservice example", () => {
     const parsed = JSON.parse(result.outputs.get("aws")!);
     expect(parsed.AWSTemplateFormatVersion).toBe("2010-09-09");
 
-    // 17 VPC + 1 cluster + 1 nodegroup + 1 OIDC + 6 IAM roles + 4 addons = 30
-    expect(Object.keys(parsed.Resources)).toHaveLength(30);
+    // 17 VPC + 1 cluster + 1 nodegroup + 1 OIDC + 7 IAM roles + 4 addons = 31
+    expect(Object.keys(parsed.Resources)).toHaveLength(31);
 
     const types = Object.values(parsed.Resources).map((r: any) => r.Type);
     expect(types).toContain("AWS::EKS::Cluster");
@@ -67,7 +67,7 @@ describe("k8s-eks-microservice example", () => {
     expect(types).toContain("AWS::EC2::VPC");
     expect(types).toContain("AWS::EC2::Subnet");
     expect(types).toContain("AWS::EC2::NatGateway");
-    expect(types.filter((t: string) => t === "AWS::IAM::Role")).toHaveLength(6);
+    expect(types.filter((t: string) => t === "AWS::IAM::Role")).toHaveLength(7);
     expect(types.filter((t: string) => t === "AWS::EKS::Addon")).toHaveLength(4);
   });
 
@@ -165,8 +165,9 @@ describe("k8s-eks-microservice example", () => {
     expect(outputNames).toContain("albControllerRoleArn");
     expect(outputNames).toContain("externalDnsRoleArn");
     expect(outputNames).toContain("fluentBitRoleArn");
+    expect(outputNames).toContain("adotRoleArn");
 
-    expect(outputNames).toHaveLength(11);
+    expect(outputNames).toHaveLength(12);
   });
 
   // ── CloudFormation: EKS add-ons ────────────────────────────────
@@ -186,27 +187,27 @@ describe("k8s-eks-microservice example", () => {
 
   // ── K8s: resource inventory ────────────────────────────────────
 
-  test("K8s output contains all 21 expected resources", async () => {
+  test("K8s output contains all 28 expected resources", async () => {
     const result = await build(srcDir, [k8sSerializer]);
     expect(result.errors).toHaveLength(0);
 
     const docs = parseK8sDocs(result.outputs.get("k8s")!);
-    expect(docs).toHaveLength(21);
+    expect(docs).toHaveLength(28);
 
     // Count by kind
     const kinds = docs.map((d) => d.kind);
     expect(kinds.filter((k) => k === "Deployment")).toHaveLength(2); // app + external-dns
     expect(kinds.filter((k) => k === "Service")).toHaveLength(1);
-    expect(kinds.filter((k) => k === "ServiceAccount")).toHaveLength(3); // app, fluent-bit, external-dns
-    expect(kinds.filter((k) => k === "ClusterRole")).toHaveLength(2); // fluent-bit, external-dns
-    expect(kinds.filter((k) => k === "ClusterRoleBinding")).toHaveLength(2);
-    expect(kinds.filter((k) => k === "ConfigMap")).toHaveLength(2); // app-config, fluent-bit-config
-    expect(kinds.filter((k) => k === "DaemonSet")).toHaveLength(1); // fluent-bit
+    expect(kinds.filter((k) => k === "ServiceAccount")).toHaveLength(4); // app, fluent-bit, external-dns, adot
+    expect(kinds.filter((k) => k === "ClusterRole")).toHaveLength(3); // fluent-bit, external-dns, adot
+    expect(kinds.filter((k) => k === "ClusterRoleBinding")).toHaveLength(3); // fluent-bit, external-dns, adot
+    expect(kinds.filter((k) => k === "ConfigMap")).toHaveLength(3); // app-config, fluent-bit-config, adot-config
+    expect(kinds.filter((k) => k === "DaemonSet")).toHaveLength(2); // fluent-bit, adot
     expect(kinds.filter((k) => k === "Ingress")).toHaveLength(1); // ALB
     expect(kinds.filter((k) => k === "HorizontalPodAutoscaler")).toHaveLength(1);
     expect(kinds.filter((k) => k === "PodDisruptionBudget")).toHaveLength(1);
     expect(kinds.filter((k) => k === "StorageClass")).toHaveLength(1);
-    expect(kinds.filter((k) => k === "Namespace")).toHaveLength(1);
+    expect(kinds.filter((k) => k === "Namespace")).toHaveLength(3); // microservice, amazon-cloudwatch, amazon-metrics
     expect(kinds.filter((k) => k === "ResourceQuota")).toHaveLength(1);
     expect(kinds.filter((k) => k === "LimitRange")).toHaveLength(1);
     expect(kinds.filter((k) => k === "NetworkPolicy")).toHaveLength(1);
@@ -335,7 +336,7 @@ describe("k8s-eks-microservice example", () => {
     const result = await build(srcDir, [k8sSerializer]);
     const docs = parseK8sDocs(result.outputs.get("k8s")!);
 
-    const ds = docs.find((d) => d.kind === "DaemonSet");
+    const ds = docs.find((d) => d.kind === "DaemonSet" && d.name.includes("fluent-bit"));
     expect(ds).toBeDefined();
     expect(ds!.doc).toContain("fluent-bit");
 
@@ -378,6 +379,46 @@ describe("k8s-eks-microservice example", () => {
     expect(sa!.doc).toContain("external-dns-role");
   });
 
+  // ── K8s: ADOT Collector ──────────────────────────────────────────
+
+  test("ADOT Collector DaemonSet has metrics config and IRSA annotation", async () => {
+    const result = await build(srcDir, [k8sSerializer]);
+    const docs = parseK8sDocs(result.outputs.get("k8s")!);
+
+    const ds = docs.find((d) => d.kind === "DaemonSet" && d.name.includes("adot"));
+    expect(ds).toBeDefined();
+    expect(ds!.doc).toContain("adot");
+
+    // ADOT ConfigMap references the cluster
+    const adotConfig = docs.find(
+      (d) => d.kind === "ConfigMap" && d.name.includes("adot"),
+    );
+    expect(adotConfig).toBeDefined();
+
+    // ADOT ServiceAccount has IRSA annotation
+    const adotSa = docs.find(
+      (d) => d.kind === "ServiceAccount" && d.name.includes("adot"),
+    );
+    expect(adotSa).toBeDefined();
+    expect(adotSa!.doc).toContain("eks.amazonaws.com/role-arn");
+    expect(adotSa!.doc).toContain("adot-role");
+  });
+
+  // ── K8s: agent namespaces ───────────────────────────────────────
+
+  test("agent namespaces for CloudWatch and metrics exist", async () => {
+    const result = await build(srcDir, [k8sSerializer]);
+    const docs = parseK8sDocs(result.outputs.get("k8s")!);
+
+    const cwNs = docs.find((d) => d.kind === "Namespace" && d.name === "amazon-cloudwatch");
+    expect(cwNs).toBeDefined();
+    expect(cwNs!.doc).toContain("app.kubernetes.io/managed-by: chant");
+
+    const metricsNs = docs.find((d) => d.kind === "Namespace" && d.name === "amazon-metrics");
+    expect(metricsNs).toBeDefined();
+    expect(metricsNs!.doc).toContain("app.kubernetes.io/managed-by: chant");
+  });
+
   // ── K8s: NamespaceEnv resources ────────────────────────────────
 
   test("NamespaceEnv creates quota, limits, and default-deny policy", async () => {
@@ -402,5 +443,21 @@ describe("k8s-eks-microservice example", () => {
     expect(netpol).toBeDefined();
     expect(netpol!.doc).toContain("podSelector: {}");
     expect(netpol!.doc).toContain("Ingress");
+  });
+
+  // ── CloudFormation: parameters ──────────────────────────────────
+
+  test("CloudFormation template has parameters section", async () => {
+    const result = await build(srcDir, [awsSerializer]);
+    const parsed = JSON.parse(result.outputs.get("aws")!);
+
+    expect(parsed.Parameters).toBeDefined();
+    const paramNames = Object.keys(parsed.Parameters);
+    expect(paramNames).toContain("environment");
+    expect(paramNames).toContain("domainName");
+    expect(paramNames).toContain("certificateArn");
+
+    expect(parsed.Parameters.environment.Default).toBe("dev");
+    expect(parsed.Parameters.domainName.Default).toBe("api.example.com");
   });
 });
