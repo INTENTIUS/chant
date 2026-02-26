@@ -64,12 +64,28 @@
         "@intentius/chant-lexicon-gitlab": "workspace:*",
       },
     },
+    "examples/k8s-batch-workers": {
+      "name": "k8s-batch-workers-example",
+      "version": "0.0.1",
+      "dependencies": {
+        "@intentius/chant": "workspace:*",
+        "@intentius/chant-lexicon-k8s": "workspace:*",
+      },
+    },
     "examples/k8s-eks-microservice": {
       "name": "k8s-eks-microservice-example",
       "version": "0.0.1",
       "dependencies": {
         "@intentius/chant": "workspace:*",
         "@intentius/chant-lexicon-aws": "workspace:*",
+        "@intentius/chant-lexicon-k8s": "workspace:*",
+      },
+    },
+    "examples/k8s-web-platform": {
+      "name": "k8s-web-platform-example",
+      "version": "0.0.1",
+      "dependencies": {
+        "@intentius/chant": "workspace:*",
         "@intentius/chant-lexicon-k8s": "workspace:*",
       },
     },
@@ -744,11 +760,15 @@
 
     "k8s-basic-deployment": ["k8s-basic-deployment@workspace:lexicons/k8s/examples/basic-deployment"],
 
+    "k8s-batch-workers-example": ["k8s-batch-workers-example@workspace:examples/k8s-batch-workers"],
+
     "k8s-configmap-secret": ["k8s-configmap-secret@workspace:lexicons/k8s/examples/configmap-secret"],
 
     "k8s-eks-microservice-example": ["k8s-eks-microservice-example@workspace:examples/k8s-eks-microservice"],
 
     "k8s-statefulset": ["k8s-statefulset@workspace:lexicons/k8s/examples/statefulset"],
+
+    "k8s-web-platform-example": ["k8s-web-platform-example@workspace:examples/k8s-web-platform"],
 
     "keyv": ["keyv@4.5.4", "", { "dependencies": { "json-buffer": "3.0.1" } }, "sha512-oxVHkHR/EJf2CNXnWxRLW6mg7JyCCUcG0DtEGmL2ctUo1PNTin1PUil+r/+4r5MpVgC/fn1kjsx7mjSujKqIpw=="],
 

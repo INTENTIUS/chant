@@ -1,0 +1,15 @@
+{
+  "name": "k8s-web-platform-example",
+  "version": "0.0.1",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "build": "chant build src",
+    "build:k8s": "chant build src --lexicon k8s",
+    "lint": "chant lint src"
+  },
+  "dependencies": {
+    "@intentius/chant": "workspace:*",
+    "@intentius/chant-lexicon-k8s": "workspace:*"
+  }
+}

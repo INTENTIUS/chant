@@ -1,0 +1,35 @@
+chant := "bun run ../../packages/core/src/cli/main.ts"
+
+# Build K8s manifests
+build:
+    {{chant}} build src --lexicon k8s -o k8s.yaml
+
+# Lint all source files
+lint:
+    {{chant}} lint src
+
+# Apply K8s manifests
+apply:
+    kubectl apply -f k8s.yaml
+
+# Wait for frontend rollout
+wait:
+    kubectl -n web-platform rollout status deployment/frontend --timeout=120s
+
+# Check deployment status
+status:
+    kubectl get pods -n web-platform
+    kubectl get ingress -n web-platform
+    kubectl get networkpolicies -n web-platform
+    kubectl get storageclass efs-shared
+
+# View frontend logs
+logs:
+    kubectl logs -n web-platform -l app.kubernetes.io/name=frontend --tail=50
+
+# Full workflow
+deploy: build apply wait status
+
+# Cleanup
+teardown:
+    kubectl delete -f k8s.yaml || true
