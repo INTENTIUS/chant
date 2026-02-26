@@ -11,6 +11,6 @@ export const config = {
   externalDnsRoleArn: process.env.EXTERNAL_DNS_ROLE_ARN ?? "arn:aws:iam::123456789012:role/eks-microservice-external-dns-role",
   fluentBitRoleArn: process.env.FLUENT_BIT_ROLE_ARN ?? "arn:aws:iam::123456789012:role/eks-microservice-fluent-bit-role",
   adotRoleArn: process.env.ADOT_ROLE_ARN ?? "arn:aws:iam::123456789012:role/eks-microservice-adot-role",
-  domain: process.env.DOMAIN ?? "api.example.com",
+  domain: process.env.DOMAIN ?? "api.eks-microservice.internal",
   appImage: process.env.APP_IMAGE ?? "nginxinc/nginx-unprivileged:stable",
 };

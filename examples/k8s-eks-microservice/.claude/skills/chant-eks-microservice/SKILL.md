@@ -35,7 +35,7 @@ bun test examples/k8s-eks-microservice/   # 27 tests
 
 ## Deploy workflow
 
-The default domain `api.example.com` works for building and testing. For a real
+The default domain `api.eks-microservice.internal` works for building and testing. For a real
 deployment, pass your domain — Route53 creates the hosted zone and ACM cert
 in-stack, so the only prerequisite is a registered domain.
 

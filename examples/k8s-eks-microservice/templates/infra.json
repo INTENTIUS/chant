@@ -1,0 +1,890 @@
+{
+  "AWSTemplateFormatVersion": "2010-09-09",
+  "Outputs": {
+    "adotRoleArn": {
+      "Description": "IAM role ARN for ADOT Collector (IRSA)",
+      "Value": {
+        "Fn::GetAtt": [
+          "adotRole",
+          "Arn"
+        ]
+      }
+    },
+    "albControllerRoleArn": {
+      "Description": "IAM role ARN for ALB controller (IRSA)",
+      "Value": {
+        "Fn::GetAtt": [
+          "albControllerRole",
+          "Arn"
+        ]
+      }
+    },
+    "appRoleArn": {
+      "Description": "IAM role ARN for app (IRSA)",
+      "Value": {
+        "Fn::GetAtt": [
+          "appRole",
+          "Arn"
+        ]
+      }
+    },
+    "certificateArnOutput": {
+      "Description": "ACM certificate ARN",
+      "Value": {
+        "Ref": "certificate"
+      }
+    },
+    "clusterArnOutput": {
+      "Description": "EKS cluster ARN",
+      "Value": {
+        "Fn::GetAtt": [
+          "cluster",
+          "Arn"
+        ]
+      }
+    },
+    "clusterEndpoint": {
+      "Description": "EKS cluster API endpoint",
+      "Value": {
+        "Fn::GetAtt": [
+          "cluster",
+          "Endpoint"
+        ]
+      }
+    },
+    "externalDnsRoleArn": {
+      "Description": "IAM role ARN for ExternalDNS (IRSA)",
+      "Value": {
+        "Fn::GetAtt": [
+          "externalDnsRole",
+          "Arn"
+        ]
+      }
+    },
+    "fluentBitRoleArn": {
+      "Description": "IAM role ARN for Fluent Bit (IRSA)",
+      "Value": {
+        "Fn::GetAtt": [
+          "fluentBitRole",
+          "Arn"
+        ]
+      }
+    },
+    "hostedZoneIdOutput": {
+      "Description": "Route53 hosted zone ID",
+      "Value": {
+        "Ref": "hostedZone"
+      }
+    },
+    "nameServersOutput": {
+      "Description": "Route53 nameservers — point your domain registrar NS records here",
+      "Value": {
+        "Fn::GetAtt": [
+          "hostedZone",
+          "NameServers"
+        ]
+      }
+    },
+    "privateSubnet1Id": {
+      "Description": "Private subnet 1 for EKS nodes",
+      "Value": {
+        "Fn::GetAtt": [
+          "networkPrivateSubnet1",
+          "SubnetId"
+        ]
+      }
+    },
+    "privateSubnet2Id": {
+      "Description": "Private subnet 2 for EKS nodes",
+      "Value": {
+        "Fn::GetAtt": [
+          "networkPrivateSubnet2",
+          "SubnetId"
+        ]
+      }
+    },
+    "publicSubnet1Id": {
+      "Description": "Public subnet 1 for ALB",
+      "Value": {
+        "Fn::GetAtt": [
+          "networkPublicSubnet1",
+          "SubnetId"
+        ]
+      }
+    },
+    "publicSubnet2Id": {
+      "Description": "Public subnet 2 for ALB",
+      "Value": {
+        "Fn::GetAtt": [
+          "networkPublicSubnet2",
+          "SubnetId"
+        ]
+      }
+    },
+    "vpcId": {
+      "Description": "VPC ID for EKS cluster",
+      "Value": {
+        "Fn::GetAtt": [
+          "networkVpc",
+          "VpcId"
+        ]
+      }
+    }
+  },
+  "Parameters": {
+    "domainName": {
+      "Default": "api.eks-microservice.internal",
+      "Description": "Application domain name for ALB Ingress and ExternalDNS",
+      "Type": "String"
+    },
+    "environment": {
+      "Default": "dev",
+      "Description": "Deployment environment (dev, staging, prod)",
+      "Type": "String"
+    },
+    "publicAccessCidr": {
+      "Default": "0.0.0.0/0",
+      "Description": "CIDR block for EKS API public access (use your IP/32 in production)",
+      "Type": "String"
+    }
+  },
+  "Resources": {
+    "adotRole": {
+      "Properties": {
+        "AssumeRolePolicyDocument": {
+          "Fn::Sub": [
+            "{\"Version\":\"2012-10-17\",\"Statement\":[{\"Effect\":\"Allow\",\"Principal\":{\"Federated\":\"${OidcArn}\"},\"Action\":\"sts:AssumeRoleWithWebIdentity\",\"Condition\":{\"StringEquals\":{\"${OidcIssuer}:sub\":\"system:serviceaccount:amazon-metrics:adot-collector-sa\",\"${OidcIssuer}:aud\":\"sts.amazonaws.com\"}}}]}",
+            {
+              "OidcArn": {
+                "Fn::GetAtt": [
+                  "oidcProvider",
+                  "Arn"
+                ]
+              },
+              "OidcIssuer": {
+                "Fn::Select": [
+                  "1",
+                  {
+                    "Fn::Split": [
+                      "oidc-provider/",
+                      {
+                        "Fn::GetAtt": [
+                          "oidcProvider",
+                          "Arn"
+                        ]
+                      }
+                    ]
+                  }
+                ]
+              }
+            }
+          ]
+        },
+        "ManagedPolicyArns": [
+          "arn:aws:iam::aws:policy/CloudWatchAgentServerPolicy",
+          "arn:aws:iam::aws:policy/AWSXRayDaemonWriteAccess"
+        ],
+        "RoleName": "eks-microservice-adot-role"
+      },
+      "Type": "AWS::IAM::Role"
+    },
+    "albController": {
+      "DependsOn": [
+        "cluster",
+        "nodegroup"
+      ],
+      "Properties": {
+        "AddonName": "aws-load-balancer-controller",
+        "ClusterName": "eks-microservice",
+        "ResolveConflicts": "OVERWRITE",
+        "ServiceAccountRoleArn": {
+          "Fn::GetAtt": [
+            "albControllerRole",
+            "Arn"
+          ]
+        }
+      },
+      "Type": "AWS::EKS::Addon"
+    },
+    "albControllerRole": {
+      "Properties": {
+        "AssumeRolePolicyDocument": {
+          "Fn::Sub": [
+            "{\"Version\":\"2012-10-17\",\"Statement\":[{\"Effect\":\"Allow\",\"Principal\":{\"Federated\":\"${OidcArn}\"},\"Action\":\"sts:AssumeRoleWithWebIdentity\",\"Condition\":{\"StringEquals\":{\"${OidcIssuer}:sub\":\"system:serviceaccount:kube-system:aws-load-balancer-controller\",\"${OidcIssuer}:aud\":\"sts.amazonaws.com\"}}}]}",
+            {
+              "OidcArn": {
+                "Fn::GetAtt": [
+                  "oidcProvider",
+                  "Arn"
+                ]
+              },
+              "OidcIssuer": {
+                "Fn::Select": [
+                  "1",
+                  {
+                    "Fn::Split": [
+                      "oidc-provider/",
+                      {
+                        "Fn::GetAtt": [
+                          "oidcProvider",
+                          "Arn"
+                        ]
+                      }
+                    ]
+                  }
+                ]
+              }
+            }
+          ]
+        },
+        "ManagedPolicyArns": [
+          "arn:aws:iam::aws:policy/ElasticLoadBalancingFullAccess"
+        ],
+        "RoleName": "eks-microservice-alb-controller-role"
+      },
+      "Type": "AWS::IAM::Role"
+    },
+    "appRole": {
+      "Properties": {
+        "AssumeRolePolicyDocument": {
+          "Fn::Sub": [
+            "{\"Version\":\"2012-10-17\",\"Statement\":[{\"Effect\":\"Allow\",\"Principal\":{\"Federated\":\"${OidcArn}\"},\"Action\":\"sts:AssumeRoleWithWebIdentity\",\"Condition\":{\"StringEquals\":{\"${OidcIssuer}:sub\":\"system:serviceaccount:microservice:microservice-app-sa\",\"${OidcIssuer}:aud\":\"sts.amazonaws.com\"}}}]}",
+            {
+              "OidcArn": {
+                "Fn::GetAtt": [
+                  "oidcProvider",
+                  "Arn"
+                ]
+              },
+              "OidcIssuer": {
+                "Fn::Select": [
+                  "1",
+                  {
+                    "Fn::Split": [
+                      "oidc-provider/",
+                      {
+                        "Fn::GetAtt": [
+                          "oidcProvider",
+                          "Arn"
+                        ]
+                      }
+                    ]
+                  }
+                ]
+              }
+            }
+          ]
+        },
+        "ManagedPolicyArns": [
+          "arn:aws:iam::aws:policy/AmazonS3ReadOnlyAccess"
+        ],
+        "RoleName": "eks-microservice-app-role"
+      },
+      "Type": "AWS::IAM::Role"
+    },
+    "certificate": {
+      "Properties": {
+        "DomainName": {
+          "Ref": "domainName"
+        },
+        "DomainValidationOptions": [
+          {
+            "DomainName": {
+              "Ref": "domainName"
+            },
+            "HostedZoneId": {
+              "Fn::GetAtt": [
+                "hostedZone",
+                "Id"
+              ]
+            }
+          }
+        ],
+        "ValidationMethod": "DNS"
+      },
+      "Type": "AWS::CertificateManager::Certificate"
+    },
+    "cluster": {
+      "Properties": {
+        "EncryptionConfig": [
+          {
+            "Provider": {
+              "KeyArn": {
+                "Fn::GetAtt": [
+                  "eksSecretsKey",
+                  "Arn"
+                ]
+              }
+            },
+            "Resources": [
+              "secrets"
+            ]
+          }
+        ],
+        "Logging": {
+          "ClusterLogging": {
+            "EnabledTypes": [
+              {
+                "Type": "api"
+              },
+              {
+                "Type": "audit"
+              },
+              {
+                "Type": "authenticator"
+              },
+              {
+                "Type": "controllerManager"
+              },
+              {
+                "Type": "scheduler"
+              }
+            ]
+          }
+        },
+        "Name": "eks-microservice",
+        "ResourcesVpcConfig": {
+          "EndpointPrivateAccess": true,
+          "EndpointPublicAccess": true,
+          "PublicAccessCidrs": [
+            {
+              "Ref": "publicAccessCidr"
+            }
+          ],
+          "SubnetIds": [
+            {
+              "Fn::GetAtt": [
+                "networkPublicSubnet1",
+                "SubnetId"
+              ]
+            },
+            {
+              "Fn::GetAtt": [
+                "networkPublicSubnet2",
+                "SubnetId"
+              ]
+            },
+            {
+              "Fn::GetAtt": [
+                "networkPrivateSubnet1",
+                "SubnetId"
+              ]
+            },
+            {
+              "Fn::GetAtt": [
+                "networkPrivateSubnet2",
+                "SubnetId"
+              ]
+            }
+          ]
+        },
+        "RoleArn": {
+          "Fn::GetAtt": [
+            "clusterRole",
+            "Arn"
+          ]
+        },
+        "Version": "1.31"
+      },
+      "Type": "AWS::EKS::Cluster"
+    },
+    "clusterRole": {
+      "Properties": {
+        "AssumeRolePolicyDocument": {
+          "Statement": {
+            "Action": "sts:AssumeRole",
+            "Effect": "Allow",
+            "Principal": {
+              "Service": "eks.amazonaws.com"
+            }
+          },
+          "Version": "2012-10-17"
+        },
+        "ManagedPolicyArns": [
+          "arn:aws:iam::aws:policy/AmazonEKSClusterPolicy",
+          "arn:aws:iam::aws:policy/AmazonEKSVPCResourceController"
+        ],
+        "RoleName": "eks-microservice-cluster-role"
+      },
+      "Type": "AWS::IAM::Role"
+    },
+    "coreDns": {
+      "DependsOn": [
+        "cluster",
+        "nodegroup"
+      ],
+      "Properties": {
+        "AddonName": "coredns",
+        "ClusterName": "eks-microservice",
+        "ResolveConflicts": "OVERWRITE"
+      },
+      "Type": "AWS::EKS::Addon"
+    },
+    "ebsCsi": {
+      "DependsOn": [
+        "cluster",
+        "nodegroup"
+      ],
+      "Properties": {
+        "AddonName": "aws-ebs-csi-driver",
+        "ClusterName": "eks-microservice",
+        "ResolveConflicts": "OVERWRITE"
+      },
+      "Type": "AWS::EKS::Addon"
+    },
+    "eksSecretsKey": {
+      "Properties": {
+        "Description": "EKS envelope encryption for Kubernetes secrets",
+        "EnableKeyRotation": true
+      },
+      "Type": "AWS::KMS::Key"
+    },
+    "externalDnsRole": {
+      "Properties": {
+        "AssumeRolePolicyDocument": {
+          "Fn::Sub": [
+            "{\"Version\":\"2012-10-17\",\"Statement\":[{\"Effect\":\"Allow\",\"Principal\":{\"Federated\":\"${OidcArn}\"},\"Action\":\"sts:AssumeRoleWithWebIdentity\",\"Condition\":{\"StringEquals\":{\"${OidcIssuer}:sub\":\"system:serviceaccount:kube-system:external-dns-sa\",\"${OidcIssuer}:aud\":\"sts.amazonaws.com\"}}}]}",
+            {
+              "OidcArn": {
+                "Fn::GetAtt": [
+                  "oidcProvider",
+                  "Arn"
+                ]
+              },
+              "OidcIssuer": {
+                "Fn::Select": [
+                  "1",
+                  {
+                    "Fn::Split": [
+                      "oidc-provider/",
+                      {
+                        "Fn::GetAtt": [
+                          "oidcProvider",
+                          "Arn"
+                        ]
+                      }
+                    ]
+                  }
+                ]
+              }
+            }
+          ]
+        },
+        "ManagedPolicyArns": [
+          "arn:aws:iam::aws:policy/AmazonRoute53FullAccess"
+        ],
+        "RoleName": "eks-microservice-external-dns-role"
+      },
+      "Type": "AWS::IAM::Role"
+    },
+    "fluentBitRole": {
+      "Properties": {
+        "AssumeRolePolicyDocument": {
+          "Fn::Sub": [
+            "{\"Version\":\"2012-10-17\",\"Statement\":[{\"Effect\":\"Allow\",\"Principal\":{\"Federated\":\"${OidcArn}\"},\"Action\":\"sts:AssumeRoleWithWebIdentity\",\"Condition\":{\"StringEquals\":{\"${OidcIssuer}:sub\":\"system:serviceaccount:amazon-cloudwatch:fluent-bit-sa\",\"${OidcIssuer}:aud\":\"sts.amazonaws.com\"}}}]}",
+            {
+              "OidcArn": {
+                "Fn::GetAtt": [
+                  "oidcProvider",
+                  "Arn"
+                ]
+              },
+              "OidcIssuer": {
+                "Fn::Select": [
+                  "1",
+                  {
+                    "Fn::Split": [
+                      "oidc-provider/",
+                      {
+                        "Fn::GetAtt": [
+                          "oidcProvider",
+                          "Arn"
+                        ]
+                      }
+                    ]
+                  }
+                ]
+              }
+            }
+          ]
+        },
+        "ManagedPolicyArns": [
+          "arn:aws:iam::aws:policy/CloudWatchAgentServerPolicy"
+        ],
+        "RoleName": "eks-microservice-fluent-bit-role"
+      },
+      "Type": "AWS::IAM::Role"
+    },
+    "hostedZone": {
+      "Properties": {
+        "HostedZoneConfig": {
+          "Comment": "EKS microservice — managed by chant"
+        },
+        "Name": {
+          "Ref": "domainName"
+        }
+      },
+      "Type": "AWS::Route53::HostedZone"
+    },
+    "kubeProxy": {
+      "DependsOn": [
+        "cluster",
+        "nodegroup"
+      ],
+      "Properties": {
+        "AddonName": "kube-proxy",
+        "ClusterName": "eks-microservice",
+        "ResolveConflicts": "OVERWRITE"
+      },
+      "Type": "AWS::EKS::Addon"
+    },
+    "networkIgw": {
+      "Type": "AWS::EC2::InternetGateway"
+    },
+    "networkIgwAttachment": {
+      "Properties": {
+        "InternetGatewayId": {
+          "Fn::GetAtt": [
+            "networkIgw",
+            "InternetGatewayId"
+          ]
+        },
+        "VpcId": {
+          "Fn::GetAtt": [
+            "networkVpc",
+            "VpcId"
+          ]
+        }
+      },
+      "Type": "AWS::EC2::VPCGatewayAttachment"
+    },
+    "networkNatEip": {
+      "Properties": {
+        "Domain": "vpc"
+      },
+      "Type": "AWS::EC2::EIP"
+    },
+    "networkNatGateway": {
+      "Properties": {
+        "AllocationId": {
+          "Fn::GetAtt": [
+            "networkNatEip",
+            "AllocationId"
+          ]
+        },
+        "SubnetId": {
+          "Fn::GetAtt": [
+            "networkPublicSubnet1",
+            "SubnetId"
+          ]
+        }
+      },
+      "Type": "AWS::EC2::NatGateway"
+    },
+    "networkPrivateRoute": {
+      "Properties": {
+        "DestinationCidrBlock": "0.0.0.0/0",
+        "NatGatewayId": {
+          "Fn::GetAtt": [
+            "networkNatGateway",
+            "NatGatewayId"
+          ]
+        },
+        "RouteTableId": {
+          "Fn::GetAtt": [
+            "networkPrivateRouteTable",
+            "RouteTableId"
+          ]
+        }
+      },
+      "Type": "AWS::EC2::Route"
+    },
+    "networkPrivateRouteTable": {
+      "Properties": {
+        "VpcId": {
+          "Fn::GetAtt": [
+            "networkVpc",
+            "VpcId"
+          ]
+        }
+      },
+      "Type": "AWS::EC2::RouteTable"
+    },
+    "networkPrivateRta1": {
+      "Properties": {
+        "RouteTableId": {
+          "Fn::GetAtt": [
+            "networkPrivateRouteTable",
+            "RouteTableId"
+          ]
+        },
+        "SubnetId": {
+          "Fn::GetAtt": [
+            "networkPrivateSubnet1",
+            "SubnetId"
+          ]
+        }
+      },
+      "Type": "AWS::EC2::SubnetRouteTableAssociation"
+    },
+    "networkPrivateRta2": {
+      "Properties": {
+        "RouteTableId": {
+          "Fn::GetAtt": [
+            "networkPrivateRouteTable",
+            "RouteTableId"
+          ]
+        },
+        "SubnetId": {
+          "Fn::GetAtt": [
+            "networkPrivateSubnet2",
+            "SubnetId"
+          ]
+        }
+      },
+      "Type": "AWS::EC2::SubnetRouteTableAssociation"
+    },
+    "networkPrivateSubnet1": {
+      "Properties": {
+        "AvailabilityZone": {
+          "Fn::Select": [
+            "0",
+            {
+              "Fn::GetAZs": ""
+            }
+          ]
+        },
+        "CidrBlock": "10.0.128.0/20",
+        "VpcId": {
+          "Fn::GetAtt": [
+            "networkVpc",
+            "VpcId"
+          ]
+        }
+      },
+      "Type": "AWS::EC2::Subnet"
+    },
+    "networkPrivateSubnet2": {
+      "Properties": {
+        "AvailabilityZone": {
+          "Fn::Select": [
+            "1",
+            {
+              "Fn::GetAZs": ""
+            }
+          ]
+        },
+        "CidrBlock": "10.0.144.0/20",
+        "VpcId": {
+          "Fn::GetAtt": [
+            "networkVpc",
+            "VpcId"
+          ]
+        }
+      },
+      "Type": "AWS::EC2::Subnet"
+    },
+    "networkPublicRoute": {
+      "DependsOn": "networkIgwAttachment",
+      "Properties": {
+        "DestinationCidrBlock": "0.0.0.0/0",
+        "GatewayId": {
+          "Fn::GetAtt": [
+            "networkIgw",
+            "InternetGatewayId"
+          ]
+        },
+        "RouteTableId": {
+          "Fn::GetAtt": [
+            "networkPublicRouteTable",
+            "RouteTableId"
+          ]
+        }
+      },
+      "Type": "AWS::EC2::Route"
+    },
+    "networkPublicRouteTable": {
+      "Properties": {
+        "VpcId": {
+          "Fn::GetAtt": [
+            "networkVpc",
+            "VpcId"
+          ]
+        }
+      },
+      "Type": "AWS::EC2::RouteTable"
+    },
+    "networkPublicRta1": {
+      "Properties": {
+        "RouteTableId": {
+          "Fn::GetAtt": [
+            "networkPublicRouteTable",
+            "RouteTableId"
+          ]
+        },
+        "SubnetId": {
+          "Fn::GetAtt": [
+            "networkPublicSubnet1",
+            "SubnetId"
+          ]
+        }
+      },
+      "Type": "AWS::EC2::SubnetRouteTableAssociation"
+    },
+    "networkPublicRta2": {
+      "Properties": {
+        "RouteTableId": {
+          "Fn::GetAtt": [
+            "networkPublicRouteTable",
+            "RouteTableId"
+          ]
+        },
+        "SubnetId": {
+          "Fn::GetAtt": [
+            "networkPublicSubnet2",
+            "SubnetId"
+          ]
+        }
+      },
+      "Type": "AWS::EC2::SubnetRouteTableAssociation"
+    },
+    "networkPublicSubnet1": {
+      "Properties": {
+        "AvailabilityZone": {
+          "Fn::Select": [
+            "0",
+            {
+              "Fn::GetAZs": ""
+            }
+          ]
+        },
+        "CidrBlock": "10.0.0.0/20",
+        "MapPublicIpOnLaunch": true,
+        "VpcId": {
+          "Fn::GetAtt": [
+            "networkVpc",
+            "VpcId"
+          ]
+        }
+      },
+      "Type": "AWS::EC2::Subnet"
+    },
+    "networkPublicSubnet2": {
+      "Properties": {
+        "AvailabilityZone": {
+          "Fn::Select": [
+            "1",
+            {
+              "Fn::GetAZs": ""
+            }
+          ]
+        },
+        "CidrBlock": "10.0.16.0/20",
+        "MapPublicIpOnLaunch": true,
+        "VpcId": {
+          "Fn::GetAtt": [
+            "networkVpc",
+            "VpcId"
+          ]
+        }
+      },
+      "Type": "AWS::EC2::Subnet"
+    },
+    "networkVpc": {
+      "Properties": {
+        "CidrBlock": "10.0.0.0/16",
+        "EnableDnsHostnames": true,
+        "EnableDnsSupport": true
+      },
+      "Type": "AWS::EC2::VPC"
+    },
+    "nodegroup": {
+      "Properties": {
+        "AmiType": "AL2023_x86_64_STANDARD",
+        "ClusterName": "eks-microservice",
+        "InstanceTypes": [
+          "t3.medium"
+        ],
+        "Labels": {
+          "workload": "microservice"
+        },
+        "NodeRole": {
+          "Fn::GetAtt": [
+            "nodeRole",
+            "Arn"
+          ]
+        },
+        "ScalingConfig": {
+          "DesiredSize": 3,
+          "MaxSize": 6,
+          "MinSize": 2
+        },
+        "Subnets": [
+          {
+            "Fn::GetAtt": [
+              "networkPrivateSubnet1",
+              "SubnetId"
+            ]
+          },
+          {
+            "Fn::GetAtt": [
+              "networkPrivateSubnet2",
+              "SubnetId"
+            ]
+          }
+        ]
+      },
+      "Type": "AWS::EKS::Nodegroup"
+    },
+    "nodeRole": {
+      "Properties": {
+        "AssumeRolePolicyDocument": {
+          "Statement": {
+            "Action": "sts:AssumeRole",
+            "Effect": "Allow",
+            "Principal": {
+              "Service": "ec2.amazonaws.com"
+            }
+          },
+          "Version": "2012-10-17"
+        },
+        "ManagedPolicyArns": [
+          "arn:aws:iam::aws:policy/AmazonEKSWorkerNodePolicy",
+          "arn:aws:iam::aws:policy/AmazonEKS_CNI_Policy",
+          "arn:aws:iam::aws:policy/AmazonEC2ContainerRegistryReadOnly"
+        ],
+        "RoleName": "eks-microservice-node-role"
+      },
+      "Type": "AWS::IAM::Role"
+    },
+    "oidcProvider": {
+      "Properties": {
+        "ClientIdList": [
+          "sts.amazonaws.com"
+        ],
+        "ThumbprintList": [
+          "9e99a48a9960b14926bb7f3b02e22da2b0ab7280"
+        ],
+        "Url": {
+          "Fn::GetAtt": [
+            "cluster",
+            "OpenIdConnectIssuerUrl"
+          ]
+        }
+      },
+      "Type": "AWS::IAM::OIDCProvider"
+    },
+    "vpcCni": {
+      "DependsOn": [
+        "cluster",
+        "nodegroup"
+      ],
+      "Properties": {
+        "AddonName": "vpc-cni",
+        "ClusterName": "eks-microservice",
+        "ResolveConflicts": "OVERWRITE"
+      },
+      "Type": "AWS::EKS::Addon"
+    }
+  }
+}

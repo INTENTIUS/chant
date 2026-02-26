@@ -14,7 +14,7 @@ lint:
     {{chant}} lint src
 
 # Deploy AWS infrastructure (override defaults: just deploy-infra domain=myapp.example.com cidr=203.0.113.1/32)
-domain := "api.example.com"
+domain := "api.eks-microservice.internal"
 cidr := "0.0.0.0/0"
 
 deploy-infra:
