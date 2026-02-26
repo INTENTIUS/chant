@@ -63,17 +63,17 @@ This demonstrates chant's multi-lexicon capability: a single `src/` directory im
 │  │ EBS Storage│  │ FluentBit    │  │
 │  │ Class      │  │ Agent        │  │
 │  └────────────┘  └──────────────┘  │
-│  ┌────────────┐                    │
-│  │ ADOT       │                    │
-│  │ Collector  │                    │
-│  └────────────┘                    │
+│  ┌────────────┐  ┌──────────────┐  │
+│  │ ADOT       │  │ Metrics      │  │
+│  │ Collector  │  │ Server       │  │
+│  └────────────┘  └──────────────┘  │
 └─────────────────────────────────────┘
 ```
 
 ## Resource counts
 
-- **32 CloudFormation resources**: 17 VPC + 1 cluster + 1 nodegroup + 1 OIDC + 7 IAM roles + 5 addons
-- **28 Kubernetes resources**: across 5 source files (namespace, app, ingress, storage, observability)
+- **33 CloudFormation resources**: 17 VPC + 1 cluster + 1 nodegroup + 1 OIDC + 7 IAM roles + 5 addons + 1 KMS key
+- **36 Kubernetes resources**: across 5 source files (namespace, app, ingress, storage, observability)
 
 ## Skills guide
 
@@ -154,7 +154,7 @@ just build
 # Lint (optional)
 just lint
 
-# Deploy (creates 32 resources including ALB controller addon)
+# Deploy (creates 33 resources including ALB controller addon + KMS key)
 # Pass your domain and ACM cert ARN (optionally restrict API endpoint access):
 just deploy-infra domain=myapp.example.com cert=arn:aws:acm:us-east-1:123456789012:certificate/your-cert-id cidr=203.0.113.1/32
 ```
@@ -170,6 +170,11 @@ This example includes EKS best-practice hardening:
 - **API endpoint restriction** — `PublicAccessCidrs` parameter lets you restrict API server access to your IP (defaults to 0.0.0.0/0; use `cidr=` to narrow)
 - **AL2023 AMI** — node group uses `AL2023_x86_64_STANDARD` (current-gen, hardened by default)
 - **Non-root container** — app runs `nginxinc/nginx-unprivileged` with `runAsNonRoot: true` on port 8080
+- **KMS secrets encryption** — envelope encryption for Kubernetes secrets via a dedicated KMS key with automatic rotation
+- **Pod Security Standards** — namespace enforces `restricted` PSS profile (enforce, warn, audit)
+- **Health probes** — liveness and readiness probes on the app container for proper rollout gating
+- **Topology spread** — zone-based `topologySpreadConstraints` with `maxSkew: 1` prevents single-AZ concentration
+- **Metrics Server** — in-cluster metrics-server deployment enables HPA pod CPU/memory scaling
 
 ## Step 2: Configure kubectl and load outputs
 
@@ -187,7 +192,7 @@ The `load-outputs` target queries CloudFormation stack outputs (IAM role ARNs) a
 ## Step 3: Deploy workloads
 
 ```bash
-# Rebuild K8s manifests with real ARNs (28 resources across 5 files)
+# Rebuild K8s manifests with real ARNs (36 resources across 5 files)
 just build-k8s
 
 # Validate before applying (optional)

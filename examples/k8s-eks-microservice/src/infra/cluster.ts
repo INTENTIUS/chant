@@ -8,6 +8,7 @@ import {
   Nodegroup,
   Role,
   OIDCProvider,
+  KmsKey,
   Ref,
   Select,
   Split,
@@ -53,6 +54,13 @@ export const nodeRole = new Role({
   ],
 });
 
+// ── KMS: Envelope encryption for K8s secrets ─────────────────────
+
+export const eksSecretsKey = new KmsKey({
+  Description: "EKS envelope encryption for Kubernetes secrets",
+  EnableKeyRotation: true,
+});
+
 // ── EKS Cluster ────────────────────────────────────────────────────
 
 export const cluster = new EKSCluster({
@@ -73,6 +81,10 @@ export const cluster = new EKSCluster({
     // Restrict to your IP in production: just deploy-infra cidr=203.0.113.1/32
     PublicAccessCidrs: [Ref(publicAccessCidr)],
   },
+  EncryptionConfig: [{
+    Provider: { KeyArn: eksSecretsKey.Arn },
+    Resources: ["secrets"],
+  }],
   Logging: {
     ClusterLogging: {
       EnabledTypes: [

@@ -7,9 +7,12 @@ import {
   PodDisruptionBudget,
   ServiceAccount,
   ConfigMap,
+  ClusterRole,
+  ClusterRoleBinding,
+  APIService,
   AutoscaledService,
   IrsaServiceAccount,
-  ConfiguredApp,
+  MetricsServer,
 } from "@intentius/chant-lexicon-k8s";
 import { config } from "../config";
 
@@ -36,6 +39,9 @@ const app = AutoscaledService({
   maxReplicas: 10,
   targetCPU: 70,
   minAvailable: 1,
+  livenessPath: "/",
+  readinessPath: "/",
+  topologySpread: true,
   securityContext: { runAsNonRoot: true },
   namespace: NAMESPACE,
   cpuRequest: "200m",
@@ -94,3 +100,16 @@ export const appConfig = new ConfigMap({
     ].join("\n"),
   },
 });
+
+// ── MetricsServer (required for HPA) ────────────────────────────
+
+const ms = MetricsServer({});
+
+export const metricsServerDeployment = new Deployment(ms.deployment);
+export const metricsServerService = new Service(ms.service);
+export const metricsServerSa = new ServiceAccount(ms.serviceAccount);
+export const metricsServerRole = new ClusterRole(ms.clusterRole);
+export const metricsServerBinding = new ClusterRoleBinding(ms.clusterRoleBinding);
+export const metricsServerAggRole = new ClusterRole(ms.aggregatedClusterRole);
+export const metricsServerAuthBinding = new ClusterRoleBinding(ms.authDelegatorBinding);
+export const metricsServerApiService = new APIService(ms.apiService);

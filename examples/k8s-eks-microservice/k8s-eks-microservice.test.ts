@@ -57,8 +57,8 @@ describe("k8s-eks-microservice example", () => {
     const parsed = JSON.parse(result.outputs.get("aws")!);
     expect(parsed.AWSTemplateFormatVersion).toBe("2010-09-09");
 
-    // 17 VPC + 1 cluster + 1 nodegroup + 1 OIDC + 7 IAM roles + 5 addons = 32
-    expect(Object.keys(parsed.Resources)).toHaveLength(32);
+    // 17 VPC + 1 cluster + 1 nodegroup + 1 OIDC + 7 IAM roles + 5 addons + 1 KMS key = 33
+    expect(Object.keys(parsed.Resources)).toHaveLength(33);
 
     const types = Object.values(parsed.Resources).map((r: any) => r.Type);
     expect(types).toContain("AWS::EKS::Cluster");
@@ -69,6 +69,7 @@ describe("k8s-eks-microservice example", () => {
     expect(types).toContain("AWS::EC2::NatGateway");
     expect(types.filter((t: string) => t === "AWS::IAM::Role")).toHaveLength(7);
     expect(types.filter((t: string) => t === "AWS::EKS::Addon")).toHaveLength(5);
+    expect(types).toContain("AWS::KMS::Key");
   });
 
   // ── CloudFormation: EKS cluster properties ─────────────────────
@@ -88,6 +89,13 @@ describe("k8s-eks-microservice example", () => {
     expect(vpcConfig.EndpointPublicAccess).toBe(true);
     expect(vpcConfig.EndpointPrivateAccess).toBe(true);
     expect(vpcConfig.PublicAccessCidrs).toBeDefined();
+
+    // KMS envelope encryption for secrets
+    const encryption = cluster.Properties.EncryptionConfig;
+    expect(encryption).toBeDefined();
+    expect(encryption).toHaveLength(1);
+    expect(encryption[0].Resources).toEqual(["secrets"]);
+    expect(encryption[0].Provider.KeyArn).toBeDefined();
 
     // Control plane logging — all 5 types enabled
     const logging = cluster.Properties.Logging;
@@ -202,20 +210,20 @@ describe("k8s-eks-microservice example", () => {
 
   // ── K8s: resource inventory ────────────────────────────────────
 
-  test("K8s output contains all 28 expected resources", async () => {
+  test("K8s output contains all 36 expected resources", async () => {
     const result = await build(srcDir, [k8sSerializer]);
     expect(result.errors).toHaveLength(0);
 
     const docs = parseK8sDocs(result.outputs.get("k8s")!);
-    expect(docs).toHaveLength(28);
+    expect(docs).toHaveLength(36);
 
     // Count by kind
     const kinds = docs.map((d) => d.kind);
-    expect(kinds.filter((k) => k === "Deployment")).toHaveLength(2); // app + external-dns
-    expect(kinds.filter((k) => k === "Service")).toHaveLength(1);
-    expect(kinds.filter((k) => k === "ServiceAccount")).toHaveLength(4); // app, fluent-bit, external-dns, adot
-    expect(kinds.filter((k) => k === "ClusterRole")).toHaveLength(3); // fluent-bit, external-dns, adot
-    expect(kinds.filter((k) => k === "ClusterRoleBinding")).toHaveLength(3); // fluent-bit, external-dns, adot
+    expect(kinds.filter((k) => k === "Deployment")).toHaveLength(3); // app + external-dns + metrics-server
+    expect(kinds.filter((k) => k === "Service")).toHaveLength(2); // app + metrics-server
+    expect(kinds.filter((k) => k === "ServiceAccount")).toHaveLength(5); // app, fluent-bit, external-dns, adot, metrics-server
+    expect(kinds.filter((k) => k === "ClusterRole")).toHaveLength(5); // fluent-bit, external-dns, adot, metrics-server, metrics-server-aggregated
+    expect(kinds.filter((k) => k === "ClusterRoleBinding")).toHaveLength(5); // fluent-bit, external-dns, adot, metrics-server, metrics-server-auth-delegator
     expect(kinds.filter((k) => k === "ConfigMap")).toHaveLength(3); // app-config, fluent-bit-config, adot-config
     expect(kinds.filter((k) => k === "DaemonSet")).toHaveLength(2); // fluent-bit, adot
     expect(kinds.filter((k) => k === "Ingress")).toHaveLength(1); // ALB
@@ -226,6 +234,7 @@ describe("k8s-eks-microservice example", () => {
     expect(kinds.filter((k) => k === "ResourceQuota")).toHaveLength(1);
     expect(kinds.filter((k) => k === "LimitRange")).toHaveLength(1);
     expect(kinds.filter((k) => k === "NetworkPolicy")).toHaveLength(1);
+    expect(kinds.filter((k) => k === "APIService")).toHaveLength(1); // metrics-server
   });
 
   // ── K8s: IRSA annotation on ServiceAccounts ────────────────────
@@ -458,6 +467,72 @@ describe("k8s-eks-microservice example", () => {
     expect(netpol).toBeDefined();
     expect(netpol!.doc).toContain("podSelector: {}");
     expect(netpol!.doc).toContain("Ingress");
+  });
+
+  // ── K8s: Pod Security Standards labels ────────────────────────
+
+  test("namespace has PSS enforce=restricted labels", async () => {
+    const result = await build(srcDir, [k8sSerializer]);
+    const docs = parseK8sDocs(result.outputs.get("k8s")!);
+
+    const ns = docs.find((d) => d.kind === "Namespace" && d.name === "microservice");
+    expect(ns).toBeDefined();
+    expect(ns!.doc).toContain("pod-security.kubernetes.io/enforce: restricted");
+    expect(ns!.doc).toContain("pod-security.kubernetes.io/warn: restricted");
+    expect(ns!.doc).toContain("pod-security.kubernetes.io/audit: restricted");
+  });
+
+  // ── K8s: health probes ────────────────────────────────────────
+
+  test("app deployment has liveness and readiness probes", async () => {
+    const result = await build(srcDir, [k8sSerializer]);
+    const docs = parseK8sDocs(result.outputs.get("k8s")!);
+
+    const deploy = docs.find(
+      (d) => d.kind === "Deployment" && d.name === "microservice-api",
+    );
+    expect(deploy).toBeDefined();
+    expect(deploy!.doc).toContain("livenessProbe:");
+    expect(deploy!.doc).toContain("readinessProbe:");
+    expect(deploy!.doc).toContain("path: /");
+  });
+
+  // ── K8s: topology spread constraints ──────────────────────────
+
+  test("app deployment has topology spread constraints", async () => {
+    const result = await build(srcDir, [k8sSerializer]);
+    const docs = parseK8sDocs(result.outputs.get("k8s")!);
+
+    const deploy = docs.find(
+      (d) => d.kind === "Deployment" && d.name === "microservice-api",
+    );
+    expect(deploy).toBeDefined();
+    expect(deploy!.doc).toContain("topologySpreadConstraints:");
+    expect(deploy!.doc).toContain("topology.kubernetes.io/zone");
+  });
+
+  // ── K8s: MetricsServer ────────────────────────────────────────
+
+  test("MetricsServer deployment and service in kube-system", async () => {
+    const result = await build(srcDir, [k8sSerializer]);
+    const docs = parseK8sDocs(result.outputs.get("k8s")!);
+
+    const deploy = docs.find(
+      (d) => d.kind === "Deployment" && d.name === "metrics-server",
+    );
+    expect(deploy).toBeDefined();
+    expect(deploy!.doc).toContain("namespace: kube-system");
+    expect(deploy!.doc).toContain("--secure-port=10250");
+
+    const svc = docs.find(
+      (d) => d.kind === "Service" && d.name === "metrics-server",
+    );
+    expect(svc).toBeDefined();
+    expect(svc!.doc).toContain("targetPort: 10250");
+
+    const apiSvc = docs.find((d) => d.kind === "APIService");
+    expect(apiSvc).toBeDefined();
+    expect(apiSvc!.doc).toContain("metrics.k8s.io");
   });
 
   // ── CloudFormation: parameters ──────────────────────────────────

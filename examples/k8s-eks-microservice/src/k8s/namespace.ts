@@ -17,7 +17,13 @@ const ns = NamespaceEnv({
   defaultMemoryRequest: "128Mi",
   defaultCpuLimit: "500m",
   defaultMemoryLimit: "512Mi",
-  denyAllIngress: true,
+  defaultDenyIngress: true,
+  labels: {
+    "pod-security.kubernetes.io/enforce": "restricted",
+    "pod-security.kubernetes.io/enforce-version": "latest",
+    "pod-security.kubernetes.io/warn": "restricted",
+    "pod-security.kubernetes.io/audit": "restricted",
+  },
 });
 
 export const namespace = new Namespace(ns.namespace);

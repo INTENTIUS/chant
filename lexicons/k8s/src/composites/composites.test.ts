@@ -19,6 +19,7 @@ import { EfsStorageClass } from "./efs-storage-class";
 import { FluentBitAgent } from "./fluent-bit-agent";
 import { ExternalDnsAgent } from "./external-dns-agent";
 import { AdotCollector } from "./adot-collector";
+import { MetricsServer } from "./metrics-server";
 
 // ── WebApp ──────────────────────────────────────────────────────────
 
@@ -1917,5 +1918,75 @@ describe("AdotCollector", () => {
     const result = AdotCollector(minProps);
     const meta = result.serviceAccount.metadata as any;
     expect(meta.annotations).toBeUndefined();
+  });
+});
+
+// ── MetricsServer ──────────────────────────────────────────────────
+
+describe("MetricsServer", () => {
+  test("returns all 8 resources", () => {
+    const result = MetricsServer({});
+    expect(result.deployment).toBeDefined();
+    expect(result.service).toBeDefined();
+    expect(result.serviceAccount).toBeDefined();
+    expect(result.clusterRole).toBeDefined();
+    expect(result.clusterRoleBinding).toBeDefined();
+    expect(result.aggregatedClusterRole).toBeDefined();
+    expect(result.authDelegatorBinding).toBeDefined();
+    expect(result.apiService).toBeDefined();
+  });
+
+  test("default namespace is kube-system", () => {
+    const result = MetricsServer({});
+    expect((result.deployment.metadata as any).namespace).toBe("kube-system");
+    expect((result.service.metadata as any).namespace).toBe("kube-system");
+    expect((result.serviceAccount.metadata as any).namespace).toBe("kube-system");
+  });
+
+  test("service targets port 10250", () => {
+    const result = MetricsServer({});
+    const spec = result.service.spec as any;
+    expect(spec.ports[0].port).toBe(443);
+    expect(spec.ports[0].targetPort).toBe(10250);
+  });
+
+  test("deployment container has correct image and args", () => {
+    const result = MetricsServer({});
+    const spec = result.deployment.spec as any;
+    const container = spec.template.spec.containers[0];
+    expect(container.image).toBe("registry.k8s.io/metrics-server/metrics-server:v0.7.2");
+    expect(container.args).toContain("--secure-port=10250");
+    expect(container.args).toContain("--kubelet-use-node-status-port");
+    expect(container.args).toContain("--metric-resolution=15s");
+  });
+
+  test("clusterRole has nodes/metrics access", () => {
+    const result = MetricsServer({});
+    const rules = result.clusterRole.rules as any[];
+    const nodeMetricsRule = rules.find((r: any) => r.resources?.includes("nodes/metrics"));
+    expect(nodeMetricsRule).toBeDefined();
+  });
+
+  test("apiService references correct service", () => {
+    const result = MetricsServer({});
+    const spec = (result.apiService as any).spec;
+    expect(spec.service.name).toBe("metrics-server");
+    expect(spec.service.namespace).toBe("kube-system");
+    expect(spec.group).toBe("metrics.k8s.io");
+    expect(spec.version).toBe("v1beta1");
+  });
+
+  test("aggregated clusterRole has aggregate labels", () => {
+    const result = MetricsServer({});
+    const labels = (result.aggregatedClusterRole.metadata as any).labels;
+    expect(labels["rbac.authorization.k8s.io/aggregate-to-admin"]).toBe("true");
+    expect(labels["rbac.authorization.k8s.io/aggregate-to-view"]).toBe("true");
+  });
+
+  test("custom image and replicas", () => {
+    const result = MetricsServer({ image: "custom:v1", replicas: 2 });
+    const spec = result.deployment.spec as any;
+    expect(spec.replicas).toBe(2);
+    expect(spec.template.spec.containers[0].image).toBe("custom:v1");
   });
 });

@@ -38,3 +38,5 @@ export { ExternalDnsAgent } from "./external-dns-agent";
 export type { ExternalDnsAgentProps, ExternalDnsAgentResult } from "./external-dns-agent";
 export { AdotCollector } from "./adot-collector";
 export type { AdotCollectorProps, AdotCollectorResult } from "./adot-collector";
+export { MetricsServer } from "./metrics-server";
+export type { MetricsServerProps, MetricsServerResult } from "./metrics-server";
