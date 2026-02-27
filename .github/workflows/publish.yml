@@ -25,6 +25,7 @@ jobs:
       - run: bun run --cwd lexicons/gitlab prepack
       - run: bun run --cwd lexicons/k8s prepack
       - run: bun run --cwd lexicons/flyway prepack
+      - run: bun run --cwd lexicons/gcp prepack
       - run: bun test
 
   publish:
@@ -57,4 +58,8 @@ jobs:
 
       - name: Publish @intentius/chant-lexicon-flyway
         working-directory: lexicons/flyway
+        run: bun publish --access public --tolerate-republish
+
+      - name: Publish @intentius/chant-lexicon-gcp
+        working-directory: lexicons/gcp
         run: bun publish --access public --tolerate-republish

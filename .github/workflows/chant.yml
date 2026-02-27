@@ -31,6 +31,7 @@ jobs:
           bun run --cwd lexicons/gitlab prepack
           bun run --cwd lexicons/k8s prepack
           bun run --cwd lexicons/flyway prepack
+          bun run --cwd lexicons/gcp prepack
 
       - name: Lint example project
         run: bun run packages/core/src/cli/main.ts lint lexicons/aws/examples/lambda-function/src --format sarif > results.sarif
@@ -68,6 +69,7 @@ jobs:
           bun run --cwd lexicons/gitlab prepack
           bun run --cwd lexicons/k8s prepack
           bun run --cwd lexicons/flyway prepack
+          bun run --cwd lexicons/gcp prepack
 
       - name: Run tests
         run: bun test
@@ -101,3 +103,6 @@ jobs:
 
       - name: Generate and validate Flyway lexicon
         run: bun run --cwd lexicons/flyway prepack
+
+      - name: Generate and validate Gcp lexicon
+        run: bun run --cwd lexicons/gcp prepack

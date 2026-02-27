@@ -271,7 +271,7 @@ metadata:
     app.kubernetes.io/managed-by: chant
     app.kubernetes.io/component: service-account
   annotations:
-    eks.amazonaws.com/role-arn: arn:aws:iam::354867293429:role/eks-microservice-app-role
+    eks.amazonaws.com/role-arn: ''
 
 ---
 apiVersion: rbac.authorization.k8s.io/v1
@@ -608,12 +608,12 @@ data:
     
     exporters:
       awsemf:
-        region: us-east-2
+        region: us-east-1
         namespace: ContainerInsights
         log_group_name: '/aws/containerinsights/eks-microservice/performance'
         dimension_rollup_option: NoDimensionRollup
       awsxray:
-        region: us-east-2
+        region: us-east-1
     
     service:
       pipelines:
@@ -689,8 +689,6 @@ metadata:
     app.kubernetes.io/name: adot-collector
     app.kubernetes.io/managed-by: chant
     app.kubernetes.io/component: agent
-  annotations:
-    eks.amazonaws.com/role-arn: arn:aws:iam::354867293429:role/eks-microservice-adot-role
 
 ---
 apiVersion: rbac.authorization.k8s.io/v1
@@ -771,7 +769,7 @@ data:
     [OUTPUT]
         Name                cloudwatch_logs
         Match               *
-        region              us-east-2
+        region              us-east-1
         log_group_name      /aws/eks/eks-microservice/containers
         log_stream_prefix   eks-microservice/
         auto_create_group   true
@@ -842,8 +840,6 @@ metadata:
     app.kubernetes.io/name: fluent-bit
     app.kubernetes.io/managed-by: chant
     app.kubernetes.io/component: agent
-  annotations:
-    eks.amazonaws.com/role-arn: arn:aws:iam::354867293429:role/eks-microservice-fluent-bit-role
 
 ---
 apiVersion: networking.k8s.io/v1
@@ -983,4 +979,4 @@ metadata:
     app.kubernetes.io/managed-by: chant
     app.kubernetes.io/component: dns
   annotations:
-    eks.amazonaws.com/role-arn: arn:aws:iam::354867293429:role/eks-microservice-external-dns-role
+    eks.amazonaws.com/role-arn: ''
