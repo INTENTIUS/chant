@@ -10,23 +10,33 @@ This example is designed to be deployed with an AI agent (e.g. Claude Code) usin
 
 ### Prerequisites
 
-**Local verification** (build, lint, test) requires only **Bun** — no AWS account needed.
+**Local verification** (build, lint, test) requires only **Bun** and **just** — no AWS account needed.
+
+- [Bun](https://bun.sh)
+- [just](https://github.com/casey/just) — command runner
 
 **AWS deployment** additionally requires:
-- **AWS CLI** >= 2.x configured with EKS permissions
-- **kubectl** installed
-- **jq** installed (for `just load-outputs`)
+- [AWS CLI](https://docs.aws.amazon.com/cli/latest/userguide/getting-started-install.html) >= 2.x configured with EKS permissions
+- [kubectl](https://kubernetes.io/docs/tasks/tools/)
+- [jq](https://jqlang.github.io/jq/download/) (for `just load-outputs`)
 - **Registered domain** (any registrar) — after the first deploy, you'll update NS records at your registrar, then create the ACM certificate. The default `api.eks-microservice-demo.dev` works for building, testing, and deploying infrastructure (K8s workloads deploy without TLS; add the cert later via `just deploy-cert`).
 
 ### Local verification (no AWS required)
 
-Ask your agent to build, lint, and test the example:
+```bash
+cp .env.example .env
+just build
+just lint
+bun test
+```
+
+Copy `.env.example` to `.env` first — Bun auto-loads `.env` and the example falls back to placeholder ARNs, so build, lint, and tests all work without an AWS account.
+
+Or ask your agent:
 
 ```
 Build and lint the k8s-eks-microservice example, then run its tests.
 ```
-
-This runs `just build` (generates `templates/infra.json` + `k8s.yaml`), `just lint`, and `bun test examples/k8s-eks-microservice/` — all locally, no AWS account needed.
 
 ### Deploy to AWS
 

@@ -7,6 +7,7 @@ Demonstrates how `build()` handles multiple lexicons from a single `src/infra.ts
 ## Prerequisites
 
 - [Bun](https://bun.sh)
+- [just](https://github.com/casey/just) — command runner
 - [Docker](https://docs.docker.com/get-docker/)
 - [k3d](https://k3d.io/) (lightweight k3s in Docker)
 - [kubectl](https://kubernetes.io/docs/tasks/tools/)

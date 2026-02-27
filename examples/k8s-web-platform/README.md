@@ -27,6 +27,12 @@ CRD composites (`MonitoredService`, `SecureIngress` Certificate) are tested stru
 - 1 StorageClass (efs-shared)
 - 1 Namespace
 
+## Prerequisites
+
+- [Bun](https://bun.sh)
+- [just](https://github.com/casey/just) — command runner
+- [kubectl](https://kubernetes.io/docs/tasks/tools/) (for deploy/teardown)
+
 ## Usage
 
 ```bash

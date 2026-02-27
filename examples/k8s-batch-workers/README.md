@@ -25,6 +25,12 @@ Background processing platform demonstrating batch and worker composites: queue 
 - 3 ConfigMaps
 - 1 CronJob, 1 Job, 1 DaemonSet, 1 HPA, 1 Namespace
 
+## Prerequisites
+
+- [Bun](https://bun.sh)
+- [just](https://github.com/casey/just) — command runner
+- [kubectl](https://kubernetes.io/docs/tasks/tools/) (for deploy/teardown)
+
 ## Usage
 
 ```bash
