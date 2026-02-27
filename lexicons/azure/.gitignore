@@ -1,0 +1,8 @@
+# Generated code
+src/generated/
+
+# Fetched test data (from fetch-quickstart-templates.ts)
+testdata/azure-quickstarts/
+
+# Build output
+dist/

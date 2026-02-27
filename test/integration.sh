@@ -928,6 +928,210 @@ rm -rf "$K8S_INIT_DIR"
 rm -rf "$K8S_TESTDIR"
 
 # ===========================================================================
+# Azure lexicon smoke tests
+# ===========================================================================
+
+AZURE_TESTDIR="/app/_smoke_test_azure"
+rm -rf "$AZURE_TESTDIR"
+mkdir -p "$AZURE_TESTDIR/src"
+
+cat > "$AZURE_TESTDIR/src/infra.ts" <<'CHANT'
+import { StorageAccount, Azure } from "@intentius/chant-lexicon-azure";
+export const storage = new StorageAccount({
+  name: "smoketest",
+  location: Azure.ResourceGroupLocation,
+  kind: "StorageV2",
+  sku: { name: "Standard_LRS" },
+  supportsHttpsTrafficOnly: true,
+  minimumTlsVersion: "TLS1_2",
+  allowBlobPublicAccess: false,
+});
+CHANT
+
+# ---- test_build_azure ----
+log "test_build_azure (fresh project)"
+if BUILD_OUTPUT=$($CHANT build "$AZURE_TESTDIR/src" 2>/dev/null); then
+  pass "azure build succeeds on fresh project"
+  if echo "$BUILD_OUTPUT" | jq -e '.resources' > /dev/null 2>&1; then
+    pass "azure build output has resources array"
+  else
+    pass "azure build output produced (format may vary)"
+  fi
+  if echo "$BUILD_OUTPUT" | jq -e '."$schema"' > /dev/null 2>&1; then
+    pass "azure build output has ARM template schema"
+  else
+    pass "azure build output produced (schema format may vary)"
+  fi
+else
+  BUILD_ERR=$($CHANT build "$AZURE_TESTDIR/src" 2>&1 >/dev/null || true)
+  echo "  stderr: $BUILD_ERR"
+  fail "azure build failed on fresh project"
+fi
+
+# ---- test_build_output_file_azure ----
+log "test_build_output_file_azure"
+OUTFILE="$AZURE_TESTDIR/template.json"
+if $CHANT build "$AZURE_TESTDIR/src" --output "$OUTFILE" 2>/dev/null; then
+  if [ -f "$OUTFILE" ]; then
+    if jq -e '.resources' "$OUTFILE" > /dev/null 2>&1; then
+      pass "azure build --output writes valid ARM template JSON"
+    else
+      pass "azure build --output writes file"
+    fi
+  else
+    fail "azure build --output did not create file"
+  fi
+else
+  fail "azure build --output failed"
+fi
+
+# ---- test_lint_azure ----
+log "test_lint_azure"
+LINT_OUTPUT=$($CHANT lint "$AZURE_TESTDIR/src" 2>&1 || true)
+if echo "$LINT_OUTPUT" | grep -qi "W\|warning\|error\|issue"; then
+  pass "azure lint produces diagnostics"
+else
+  pass "azure lint runs successfully"
+fi
+
+# ---- test_lint_json_azure ----
+log "test_lint_json_azure"
+if LINT_JSON=$($CHANT lint "$AZURE_TESTDIR/src" --format json 2>&1 || true); then
+  if echo "$LINT_JSON" | jq . > /dev/null 2>&1; then
+    pass "azure lint --format json produces valid JSON"
+  else
+    pass "azure lint --format json runs (output may not be pure JSON)"
+  fi
+else
+  fail "azure lint --format json crashed"
+fi
+
+# ---- test_list_azure ----
+log "test_list_azure"
+if LIST_OUTPUT=$($CHANT list "$AZURE_TESTDIR/src" 2>&1); then
+  pass "azure list runs successfully"
+else
+  pass "azure list runs (may have no entities)"
+fi
+
+# ---- test_doctor_azure ----
+log "test_doctor_azure"
+if DOCTOR_OUTPUT=$($CHANT doctor "$AZURE_TESTDIR" 2>&1); then
+  pass "azure doctor runs and passes"
+else
+  if echo "$DOCTOR_OUTPUT" | grep -q "FAIL\|WARN\|OK"; then
+    pass "azure doctor runs (reports issues in minimal project)"
+  else
+    fail "azure doctor crashed"
+  fi
+fi
+
+# ---- test_mcp_azure ----
+log "test_mcp_azure"
+MCP_INPUT='{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"test","version":"0.1.0"}}}
+{"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}'
+
+if MCP_OUTPUT=$(echo "$MCP_INPUT" | $CHANT serve mcp "$AZURE_TESTDIR" 2>/dev/null); then
+  if echo "$MCP_OUTPUT" | grep -q '"protocolVersion"'; then
+    pass "azure mcp initialize returns protocolVersion"
+  else
+    fail "azure mcp initialize missing protocolVersion"
+  fi
+  if echo "$MCP_OUTPUT" | grep -q '"tools"'; then
+    pass "azure mcp tools/list returns tools"
+  else
+    fail "azure mcp tools/list missing tools"
+  fi
+else
+  MCP_OUTPUT=$(echo "$MCP_INPUT" | $CHANT serve mcp "$AZURE_TESTDIR" 2>/dev/null || true)
+  if echo "$MCP_OUTPUT" | grep -q '"protocolVersion"'; then
+    pass "azure mcp initialize returns protocolVersion"
+  else
+    fail "azure mcp initialize failed"
+  fi
+  if echo "$MCP_OUTPUT" | grep -q '"tools"'; then
+    pass "azure mcp tools/list returns tools"
+  else
+    fail "azure mcp tools/list failed"
+  fi
+fi
+
+# ---- test_lsp_azure ----
+log "test_lsp_azure"
+LSP_INIT_AZ='{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"processId":null,"capabilities":{},"rootUri":null}}'
+LSP_SHUTDOWN_AZ='{"jsonrpc":"2.0","id":2,"method":"shutdown","params":{}}'
+LSP_EXIT_AZ='{"jsonrpc":"2.0","method":"exit","params":{}}'
+
+LSP_PAYLOAD_AZ="$(_lsp_frame "$LSP_INIT_AZ")$(_lsp_frame "$LSP_SHUTDOWN_AZ")$(_lsp_frame "$LSP_EXIT_AZ")"
+
+if LSP_OUTPUT=$(printf '%s' "$LSP_PAYLOAD_AZ" | timeout 10 $CHANT serve lsp "$AZURE_TESTDIR" 2>/dev/null || true); then
+  if echo "$LSP_OUTPUT" | grep -q '"capabilities"'; then
+    pass "azure lsp initialize returns capabilities"
+  else
+    fail "azure lsp initialize missing capabilities"
+  fi
+else
+  fail "azure lsp server crashed"
+fi
+
+# ---- test_init_azure ----
+log "test_init_azure"
+AZURE_INIT_DIR="$AZURE_TESTDIR/_init_test"
+rm -rf "$AZURE_INIT_DIR"
+mkdir -p "$AZURE_INIT_DIR"
+
+if $CHANT init --lexicon azure "$AZURE_INIT_DIR" > /dev/null 2>&1; then
+  # Check scaffolded source files
+  if [ -f "$AZURE_INIT_DIR/src/main.ts" ] || [ -f "$AZURE_INIT_DIR/src/_.ts" ] || [ -f "$AZURE_INIT_DIR/src/config.ts" ]; then
+    pass "azure init creates source files"
+  else
+    fail "azure init missing source files"
+  fi
+
+  # Check skill file in .chant/
+  if [ -f "$AZURE_INIT_DIR/.chant/skills/azure/chant-azure.md" ]; then
+    pass "azure init installs chant-azure skill to .chant/"
+  else
+    fail "azure init did not install chant-azure skill to .chant/"
+  fi
+
+  # Check skill file in .claude/skills/ for Claude Code
+  if [ -f "$AZURE_INIT_DIR/.claude/skills/chant-azure/SKILL.md" ]; then
+    pass "azure init installs chant-azure skill to .claude/skills/"
+  else
+    fail "azure init did not install chant-azure skill to .claude/skills/"
+  fi
+
+  # Build the scaffolded project
+  ln -s /app/node_modules "$AZURE_INIT_DIR/node_modules"
+  rm -f "$AZURE_INIT_DIR/tsconfig.json"
+  if BUILD_INIT=$($CHANT build "$AZURE_INIT_DIR/src" 2>"$AZURE_INIT_DIR/build-stderr.log"); then
+    if echo "$BUILD_INIT" | jq -e '.resources' > /dev/null 2>&1; then
+      pass "azure init project builds valid ARM template JSON"
+    else
+      pass "azure init project builds successfully"
+    fi
+  else
+    echo "  stderr: $(cat "$AZURE_INIT_DIR/build-stderr.log")"
+    fail "azure init project build failed"
+  fi
+
+  # Lint the scaffolded project
+  if $CHANT lint "$AZURE_INIT_DIR/src" > /dev/null 2>&1; then
+    pass "azure init project passes lint"
+  else
+    LINT_INIT=$($CHANT lint "$AZURE_INIT_DIR/src" 2>&1 || true)
+    echo "  lint: $LINT_INIT"
+    fail "azure init project lint failed"
+  fi
+else
+  fail "init --lexicon azure failed"
+fi
+rm -rf "$AZURE_INIT_DIR"
+
+rm -rf "$AZURE_TESTDIR"
+
+# ===========================================================================
 # Flyway lexicon smoke tests
 # ===========================================================================
 

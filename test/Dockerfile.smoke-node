@@ -14,6 +14,7 @@ RUN bun install
 
 # Generate lexicon artifacts (generated files are gitignored, must be built)
 RUN bun run --cwd lexicons/aws prepack
+RUN bun run --cwd lexicons/azure prepack
 RUN bun run --cwd lexicons/gitlab prepack
 RUN bun run --cwd lexicons/k8s prepack
 RUN bun run --cwd lexicons/flyway prepack
