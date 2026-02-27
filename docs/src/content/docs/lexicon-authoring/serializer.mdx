@@ -220,6 +220,25 @@ for (const [name, entity] of entities) {
 
 > See `lexicons/aws/src/nested-stack.ts` and `lexicons/aws/src/serializer.ts` for a complete working example.
 
+## Testing
+
+Your serializer test file (`serializer.test.ts`) should cover at minimum:
+
+1. **Identity** — `serializer.name` and `serializer.rulePrefix` are correct
+2. **Empty** — `serialize(new Map())` returns empty string
+3. **Single resource** — produces valid output format
+4. **Name generation** — camelCase export → kebab-case metadata name
+5. **Explicit name** — user-set name is preserved
+6. **Multi-doc** — multiple entities joined correctly
+7. **Default labels** — merged into all resources
+8. **Default annotations** — merged into all resources
+9. **Explicit overrides** — resource-level labels take precedence
+10. **Property entities** — `kind: "property"` skipped in output
+11. **DefaultLabels/Annotations entities** — skipped in output
+12. **Key ordering** — canonical order (e.g., apiVersion, kind, metadata, spec)
+
+Use `mockResource()` and `mockProperty()` helpers with `DECLARABLE_MARKER` to create test entities without constructing real resource classes. See [Testing Your Lexicon](/chant/lexicon-authoring/testing/) for the full pattern.
+
 ## Next Steps
 
 With serialization in place, the next step is to [write lint rules](/chant/lexicon-authoring/lint-rules/) for your provider.

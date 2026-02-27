@@ -32,7 +32,24 @@ export const gcpPlugin: LexiconPlugin = {
     const { wgc102 } = require("./lint/post-synth/wgc102");
     const { wgc103 } = require("./lint/post-synth/wgc103");
     const { wgc104 } = require("./lint/post-synth/wgc104");
-    return [wgc101, wgc102, wgc103, wgc104];
+    const { wgc105 } = require("./lint/post-synth/wgc105");
+    const { wgc106 } = require("./lint/post-synth/wgc106");
+    const { wgc107 } = require("./lint/post-synth/wgc107");
+    const { wgc108 } = require("./lint/post-synth/wgc108");
+    const { wgc109 } = require("./lint/post-synth/wgc109");
+    const { wgc110 } = require("./lint/post-synth/wgc110");
+    const { wgc201 } = require("./lint/post-synth/wgc201");
+    const { wgc202 } = require("./lint/post-synth/wgc202");
+    const { wgc203 } = require("./lint/post-synth/wgc203");
+    const { wgc204 } = require("./lint/post-synth/wgc204");
+    const { wgc301 } = require("./lint/post-synth/wgc301");
+    const { wgc302 } = require("./lint/post-synth/wgc302");
+    const { wgc303 } = require("./lint/post-synth/wgc303");
+    return [
+      wgc101, wgc102, wgc103, wgc104, wgc105, wgc106, wgc107, wgc108, wgc109, wgc110,
+      wgc201, wgc202, wgc203, wgc204,
+      wgc301, wgc302, wgc303,
+    ];
   },
 
   intrinsics() {

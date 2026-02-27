@@ -1,0 +1,34 @@
+apiVersion: storage.cnrm.cloud.google.com/v1beta1
+kind: StorageBucket
+metadata:
+  name: app-assets
+  annotations:
+    cnrm.cloud.google.com/project-id: my-project
+spec:
+  location: US
+  storageClass: STANDARD
+  uniformBucketLevelAccess: true
+---
+apiVersion: iam.cnrm.cloud.google.com/v1beta1
+kind: IAMPolicyMember
+metadata:
+  name: app-sa-bucket-reader
+  annotations:
+    cnrm.cloud.google.com/project-id: my-project
+spec:
+  member: serviceAccount:app@my-project.iam.gserviceaccount.com
+  role: roles/storage.objectViewer
+  resourceRef:
+    apiVersion: storage.cnrm.cloud.google.com/v1beta1
+    kind: StorageBucket
+    name: app-assets
+---
+apiVersion: compute.cnrm.cloud.google.com/v1beta1
+kind: ComputeNetwork
+metadata:
+  name: app-network
+  annotations:
+    cnrm.cloud.google.com/project-id: my-project
+spec:
+  autoCreateSubnetworks: false
+  routingMode: REGIONAL

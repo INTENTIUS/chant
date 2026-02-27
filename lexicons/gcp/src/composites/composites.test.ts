@@ -4,6 +4,11 @@ import { CloudRunService } from "./cloud-run-service";
 import { CloudSqlInstance } from "./cloud-sql-instance";
 import { GcsBucket } from "./gcs-bucket";
 import { VpcNetwork } from "./vpc-network";
+import { PubSubPipeline } from "./pubsub-pipeline";
+import { CloudFunctionWithTrigger } from "./cloud-function";
+import { PrivateService } from "./private-service";
+import { ManagedCertificate } from "./managed-certificate";
+import { SecureProject } from "./secure-project";
 
 // ── GkeCluster ──────────────────────────────────────────────────────
 
@@ -204,5 +209,224 @@ describe("VpcNetwork", () => {
     const iapFw = result.firewalls.find((f: any) => (f.metadata as any).name.includes("iap-ssh"));
     expect(iapFw).toBeDefined();
     expect((iapFw as any).sourceRanges).toContain("35.235.240.0/20");
+  });
+});
+
+// ── PubSubPipeline ─────────────────────────────────────────────────
+
+describe("PubSubPipeline", () => {
+  test("returns topic and subscription", () => {
+    const result = PubSubPipeline({ name: "events" });
+    expect(result.topic).toBeDefined();
+    expect(result.subscription).toBeDefined();
+  });
+
+  test("subscription references topic", () => {
+    const result = PubSubPipeline({ name: "events" });
+    expect((result.subscription as any).topicRef.name).toBe("events-topic");
+  });
+
+  test("no DLQ by default", () => {
+    const result = PubSubPipeline({ name: "events" });
+    expect(result.deadLetterTopic).toBeUndefined();
+  });
+
+  test("creates DLQ when enabled", () => {
+    const result = PubSubPipeline({ name: "events", enableDeadLetterQueue: true });
+    expect(result.deadLetterTopic).toBeDefined();
+    expect((result.deadLetterTopic as any).metadata.name).toBe("events-dlq");
+    expect((result.subscription as any).deadLetterPolicy.deadLetterTopicRef.name).toBe("events-dlq");
+  });
+
+  test("creates subscriber IAM when service account provided", () => {
+    const result = PubSubPipeline({
+      name: "events",
+      subscriberServiceAccount: "worker@project.iam.gserviceaccount.com",
+    });
+    expect(result.subscriberIam).toBeDefined();
+    expect((result.subscriberIam as any).role).toBe("roles/pubsub.subscriber");
+  });
+
+  test("sets namespace when provided", () => {
+    const result = PubSubPipeline({ name: "events", namespace: "infra" });
+    expect((result.topic as any).metadata.namespace).toBe("infra");
+    expect((result.subscription as any).metadata.namespace).toBe("infra");
+  });
+
+  test("includes managed-by label", () => {
+    const result = PubSubPipeline({ name: "events" });
+    expect((result.topic as any).metadata.labels["app.kubernetes.io/managed-by"]).toBe("chant");
+  });
+});
+
+// ── CloudFunctionWithTrigger ───────────────────────────────────────
+
+describe("CloudFunctionWithTrigger", () => {
+  test("returns function and source bucket", () => {
+    const result = CloudFunctionWithTrigger({
+      name: "my-fn",
+      runtime: "nodejs20",
+      entryPoint: "handler",
+    });
+    expect(result.function).toBeDefined();
+    expect(result.sourceBucket).toBeDefined();
+  });
+
+  test("no invoker IAM by default", () => {
+    const result = CloudFunctionWithTrigger({
+      name: "my-fn",
+      runtime: "nodejs20",
+      entryPoint: "handler",
+    });
+    expect(result.invokerIam).toBeUndefined();
+  });
+
+  test("creates invoker IAM when public access enabled", () => {
+    const result = CloudFunctionWithTrigger({
+      name: "my-fn",
+      runtime: "nodejs20",
+      entryPoint: "handler",
+      publicAccess: true,
+    });
+    expect(result.invokerIam).toBeDefined();
+    expect((result.invokerIam as any).member).toBe("allUsers");
+    expect((result.invokerIam as any).role).toBe("roles/cloudfunctions.invoker");
+  });
+
+  test("sets runtime and entry point", () => {
+    const result = CloudFunctionWithTrigger({
+      name: "my-fn",
+      runtime: "python312",
+      entryPoint: "main",
+    });
+    expect((result.function as any).runtime).toBe("python312");
+    expect((result.function as any).entryPoint).toBe("main");
+  });
+
+  test("configures pubsub trigger", () => {
+    const result = CloudFunctionWithTrigger({
+      name: "my-fn",
+      runtime: "nodejs20",
+      entryPoint: "handler",
+      triggerType: "pubsub",
+      triggerTopic: "my-topic",
+    });
+    expect((result.function as any).eventTrigger).toBeDefined();
+    expect((result.function as any).eventTrigger.pubsubTopic).toBe("my-topic");
+  });
+});
+
+// ── PrivateService ─────────────────────────────────────────────────
+
+describe("PrivateService", () => {
+  test("returns global address and service connection", () => {
+    const result = PrivateService({ name: "db", networkName: "my-vpc" });
+    expect(result.globalAddress).toBeDefined();
+    expect(result.serviceConnection).toBeDefined();
+  });
+
+  test("address references network", () => {
+    const result = PrivateService({ name: "db", networkName: "my-vpc" });
+    expect((result.globalAddress as any).networkRef.name).toBe("my-vpc");
+  });
+
+  test("connection references network", () => {
+    const result = PrivateService({ name: "db", networkName: "my-vpc" });
+    expect((result.serviceConnection as any).networkRef.name).toBe("my-vpc");
+  });
+
+  test("no DNS by default", () => {
+    const result = PrivateService({ name: "db", networkName: "my-vpc" });
+    expect(result.dnsZone).toBeUndefined();
+  });
+
+  test("creates DNS zone when enabled", () => {
+    const result = PrivateService({ name: "db", networkName: "my-vpc", enableDns: true });
+    expect(result.dnsZone).toBeDefined();
+    expect((result.dnsZone as any).visibility).toBe("private");
+  });
+});
+
+// ── ManagedCertificate ─────────────────────────────────────────────
+
+describe("ManagedCertificate", () => {
+  test("returns certificate", () => {
+    const result = ManagedCertificate({ name: "my-cert", domains: ["example.com"] });
+    expect(result.certificate).toBeDefined();
+  });
+
+  test("certificate includes domains", () => {
+    const result = ManagedCertificate({ name: "my-cert", domains: ["example.com", "www.example.com"] });
+    expect((result.certificate as any).managed.domains).toEqual(["example.com", "www.example.com"]);
+  });
+
+  test("no proxy by default", () => {
+    const result = ManagedCertificate({ name: "my-cert", domains: ["example.com"] });
+    expect(result.targetHttpsProxy).toBeUndefined();
+    expect(result.urlMap).toBeUndefined();
+  });
+
+  test("creates proxy and url map when requested", () => {
+    const result = ManagedCertificate({
+      name: "my-cert",
+      domains: ["example.com"],
+      createProxy: true,
+      backendServiceName: "my-backend",
+    });
+    expect(result.targetHttpsProxy).toBeDefined();
+    expect(result.urlMap).toBeDefined();
+    expect((result.urlMap as any).defaultService.backendServiceRef.name).toBe("my-backend");
+  });
+});
+
+// ── SecureProject ──────────────────────────────────────────────────
+
+describe("SecureProject", () => {
+  test("returns project, audit config, and services", () => {
+    const result = SecureProject({ name: "my-project" });
+    expect(result.project).toBeDefined();
+    expect(result.auditConfig).toBeDefined();
+    expect(result.services.length).toBeGreaterThan(0);
+  });
+
+  test("audit config covers all services", () => {
+    const result = SecureProject({ name: "my-project" });
+    expect((result.auditConfig as any).service).toBe("allServices");
+    expect((result.auditConfig as any).auditLogConfigs.length).toBe(3);
+  });
+
+  test("enables default APIs", () => {
+    const result = SecureProject({ name: "my-project" });
+    expect(result.services.length).toBe(5);
+    expect(result.services.some((s: any) => s.resourceID === "compute.googleapis.com")).toBe(true);
+  });
+
+  test("no owner IAM by default", () => {
+    const result = SecureProject({ name: "my-project" });
+    expect(result.ownerIam).toBeUndefined();
+  });
+
+  test("creates owner IAM when provided", () => {
+    const result = SecureProject({
+      name: "my-project",
+      owner: "user:admin@example.com",
+    });
+    expect(result.ownerIam).toBeDefined();
+    expect((result.ownerIam as any).member).toBe("user:admin@example.com");
+    expect((result.ownerIam as any).role).toBe("roles/owner");
+  });
+
+  test("creates logging sink when destination provided", () => {
+    const result = SecureProject({
+      name: "my-project",
+      loggingSinkDestination: "bigquery.googleapis.com/projects/my-project/datasets/audit_logs",
+    });
+    expect(result.loggingSink).toBeDefined();
+    expect((result.loggingSink as any).destination).toContain("bigquery");
+  });
+
+  test("no logging sink by default", () => {
+    const result = SecureProject({ name: "my-project" });
+    expect(result.loggingSink).toBeUndefined();
   });
 });

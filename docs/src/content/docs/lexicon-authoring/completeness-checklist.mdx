@@ -44,6 +44,8 @@ Warnings — these make the lexicon useful in practice.
 | At least 3 examples | Broader usage coverage |
 | `completions.test.ts` exists | LSP completions tested |
 | `hover.test.ts` exists | LSP hover tested |
+| `default-labels.test.ts` exists | Default labels/annotations tested |
+| `coverage.test.ts` exists | Coverage analysis tested |
 | `coverage.ts` implemented | No "not yet implemented" placeholder |
 | At least 8 doc pages | Comprehensive documentation |
 
@@ -55,11 +57,16 @@ Informational — tracks depth of testing and feature coverage.
 |---|---|
 | Each lint rule has a `.test.ts` | Per-rule or consolidated test coverage (e.g. `rules.test.ts`) |
 | Each post-synth has a `.test.ts` | Per-check or consolidated test coverage (e.g. `post-synth.test.ts`) |
+| `import/parser.test.ts` exists | Import parser tested |
+| `import/generator.test.ts` exists | Import generator tested |
+| `import/roundtrip.test.ts` exists | Import round-trip tested |
 | `typecheck.test.ts` exists | Type-level verification |
 | `roundtrip.test.ts` exists | Serialize/deserialize round-trip |
 | At least 5 composites | Rich composition library |
 | `src/actions/` with actions | Automation actions |
 | At least 5 examples with tests | Tested usage patterns (per-example or consolidated root test) |
+
+> See [Testing Your Lexicon](/chant/lexicon-authoring/testing/) for patterns, mock helpers, and checklists for each test file.
 
 ## Complete lexicon file tree
 
