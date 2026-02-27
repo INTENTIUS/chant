@@ -20,7 +20,7 @@ export {
   WebApp, StatefulApp, CronWorkload, AutoscaledService, WorkerPool, NamespaceEnv, NodeAgent,
   BatchJob, SecureIngress, ConfiguredApp, SidecarApp, MonitoredService, NetworkIsolatedApp,
   IrsaServiceAccount, AlbIngress, EbsStorageClass, EfsStorageClass, FluentBitAgent, ExternalDnsAgent, AdotCollector,
-  MetricsServer,
+  MetricsServer, WorkloadIdentityServiceAccount, GcePdStorageClass, FilestoreStorageClass, GkeGateway, ConfigConnectorContext,
 } from "./composites/index";
 export type {
   WebAppProps, WebAppResult, StatefulAppProps, StatefulAppResult, CronWorkloadProps, CronWorkloadResult,
@@ -34,6 +34,11 @@ export type {
   FluentBitAgentProps, FluentBitAgentResult, ExternalDnsAgentProps, ExternalDnsAgentResult,
   AdotCollectorProps, AdotCollectorResult,
   MetricsServerProps, MetricsServerResult,
+  WorkloadIdentityServiceAccountProps, WorkloadIdentityServiceAccountResult,
+  GcePdStorageClassProps, GcePdStorageClassResult,
+  FilestoreStorageClassProps, FilestoreStorageClassResult,
+  GkeGatewayProps, GkeGatewayResult,
+  ConfigConnectorContextProps, ConfigConnectorContextResult,
 } from "./composites/index";
 
 // RBAC verb constants

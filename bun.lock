@@ -6,6 +6,7 @@
       "dependencies": {
         "@intentius/chant-lexicon-aws": "workspace:*",
         "@intentius/chant-lexicon-flyway": "workspace:*",
+        "@intentius/chant-lexicon-gcp": "workspace:*",
         "@intentius/chant-lexicon-gitlab": "workspace:*",
         "@intentius/chant-lexicon-helm": "workspace:*",
         "@intentius/chant-lexicon-k8s": "workspace:*",
@@ -91,7 +92,7 @@
     },
     "lexicons/aws": {
       "name": "@intentius/chant-lexicon-aws",
-      "version": "0.0.13",
+      "version": "0.0.14",
       "dependencies": {
         "@intentius/chant": "workspace:*",
         "fflate": "^0.8.2",
@@ -284,7 +285,7 @@
     },
     "lexicons/flyway": {
       "name": "@intentius/chant-lexicon-flyway",
-      "version": "0.0.13",
+      "version": "0.0.14",
       "dependencies": {
         "@intentius/chant": "workspace:*",
       },
@@ -388,9 +389,41 @@
         "@intentius/chant-lexicon-flyway": "workspace:*",
       },
     },
+    "lexicons/gcp": {
+      "name": "@intentius/chant-lexicon-gcp",
+      "version": "0.0.14",
+      "dependencies": {
+        "@intentius/chant": "workspace:*",
+        "js-yaml": "^4.1.0",
+      },
+      "devDependencies": {
+        "typescript": "^5.9.3",
+      },
+    },
+    "lexicons/gcp/examples/basic-bucket": {
+      "name": "@intentius/chant-example-gcp-basic-bucket",
+      "version": "0.0.14",
+      "dependencies": {
+        "@intentius/chant-lexicon-gcp": "workspace:*",
+      },
+    },
+    "lexicons/gcp/examples/gke-cluster": {
+      "name": "@intentius/chant-example-gcp-gke-cluster",
+      "version": "0.0.14",
+      "dependencies": {
+        "@intentius/chant-lexicon-gcp": "workspace:*",
+      },
+    },
+    "lexicons/gcp/examples/vpc-network": {
+      "name": "@intentius/chant-example-gcp-vpc-network",
+      "version": "0.0.14",
+      "dependencies": {
+        "@intentius/chant-lexicon-gcp": "workspace:*",
+      },
+    },
     "lexicons/gitlab": {
       "name": "@intentius/chant-lexicon-gitlab",
-      "version": "0.0.13",
+      "version": "0.0.14",
       "dependencies": {
         "@intentius/chant": "workspace:*",
       },
@@ -448,7 +481,7 @@
     },
     "lexicons/helm": {
       "name": "@intentius/chant-lexicon-helm",
-      "version": "0.0.1",
+      "version": "0.0.14",
       "dependencies": {
         "@intentius/chant": "workspace:*",
         "@intentius/chant-lexicon-k8s": "workspace:*",
@@ -495,7 +528,7 @@
     },
     "lexicons/k8s": {
       "name": "@intentius/chant-lexicon-k8s",
-      "version": "0.0.13",
+      "version": "0.0.14",
       "dependencies": {
         "@intentius/chant": "workspace:*",
       },
@@ -529,7 +562,7 @@
     },
     "packages/core": {
       "name": "@intentius/chant",
-      "version": "0.0.13",
+      "version": "0.0.14",
       "bin": {
         "chant": "./bin/chant",
       },
@@ -570,9 +603,17 @@
 
     "@intentius/chant": ["@intentius/chant@workspace:packages/core"],
 
+    "@intentius/chant-example-gcp-basic-bucket": ["@intentius/chant-example-gcp-basic-bucket@workspace:lexicons/gcp/examples/basic-bucket"],
+
+    "@intentius/chant-example-gcp-gke-cluster": ["@intentius/chant-example-gcp-gke-cluster@workspace:lexicons/gcp/examples/gke-cluster"],
+
+    "@intentius/chant-example-gcp-vpc-network": ["@intentius/chant-example-gcp-vpc-network@workspace:lexicons/gcp/examples/vpc-network"],
+
     "@intentius/chant-lexicon-aws": ["@intentius/chant-lexicon-aws@workspace:lexicons/aws"],
 
     "@intentius/chant-lexicon-flyway": ["@intentius/chant-lexicon-flyway@workspace:lexicons/flyway"],
+
+    "@intentius/chant-lexicon-gcp": ["@intentius/chant-lexicon-gcp@workspace:lexicons/gcp"],
 
     "@intentius/chant-lexicon-gitlab": ["@intentius/chant-lexicon-gitlab@workspace:lexicons/gitlab"],
 

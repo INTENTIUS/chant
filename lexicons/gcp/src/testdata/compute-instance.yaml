@@ -1,0 +1,93 @@
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: computeinstances.compute.cnrm.cloud.google.com
+spec:
+  group: compute.cnrm.cloud.google.com
+  names:
+    kind: ComputeInstance
+    plural: computeinstances
+    singular: computeinstance
+  versions:
+    - name: v1beta1
+      served: true
+      storage: true
+      schema:
+        openAPIV3Schema:
+          type: object
+          properties:
+            apiVersion:
+              type: string
+            kind:
+              type: string
+            metadata:
+              type: object
+            spec:
+              type: object
+              required:
+                - machineType
+                - zone
+              properties:
+                machineType:
+                  type: string
+                  description: The machine type to create.
+                zone:
+                  type: string
+                  description: The zone that the machine should be created in.
+                canIpForward:
+                  type: boolean
+                  description: Whether to allow sending and receiving of packets with non-matching source or destination IPs.
+                deletionProtection:
+                  type: boolean
+                  description: Enable deletion protection on this instance.
+                description:
+                  type: string
+                  description: A brief description of this resource.
+                networkInterfaceRef:
+                  type: object
+                  properties:
+                    name:
+                      type: string
+                    external:
+                      type: string
+                    namespace:
+                      type: string
+                bootDisk:
+                  type: object
+                  properties:
+                    autoDelete:
+                      type: boolean
+                    deviceName:
+                      type: string
+                    initializeParams:
+                      type: object
+                      properties:
+                        size:
+                          type: integer
+                        type:
+                          type: string
+                        imageRef:
+                          type: object
+                          properties:
+                            name:
+                              type: string
+                            external:
+                              type: string
+                tags:
+                  type: array
+                  items:
+                    type: string
+                labels:
+                  type: object
+                  additionalProperties:
+                    type: string
+                resourceID:
+                  type: string
+                  description: Immutable. Optional. The name of the resource.
+            status:
+              type: object
+              properties:
+                instanceId:
+                  type: string
+                selfLink:
+                  type: string

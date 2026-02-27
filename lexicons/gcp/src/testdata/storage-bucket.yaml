@@ -1,0 +1,100 @@
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: storagebuckets.storage.cnrm.cloud.google.com
+spec:
+  group: storage.cnrm.cloud.google.com
+  names:
+    kind: StorageBucket
+    plural: storagebuckets
+    singular: storagebucket
+  versions:
+    - name: v1beta1
+      served: true
+      storage: true
+      schema:
+        openAPIV3Schema:
+          type: object
+          properties:
+            apiVersion:
+              type: string
+            kind:
+              type: string
+            metadata:
+              type: object
+            spec:
+              type: object
+              required:
+                - location
+              properties:
+                location:
+                  type: string
+                  description: The GCS location.
+                storageClass:
+                  type: string
+                  description: The Storage Class of the new bucket.
+                  enum:
+                    - STANDARD
+                    - NEARLINE
+                    - COLDLINE
+                    - ARCHIVE
+                uniformBucketLevelAccess:
+                  type: boolean
+                  description: Enables uniform bucket-level access on a bucket.
+                versioning:
+                  type: object
+                  properties:
+                    enabled:
+                      type: boolean
+                encryption:
+                  type: object
+                  properties:
+                    defaultKmsKeyName:
+                      type: string
+                lifecycleRule:
+                  type: array
+                  items:
+                    type: object
+                    properties:
+                      action:
+                        type: object
+                        properties:
+                          type:
+                            type: string
+                          storageClass:
+                            type: string
+                      condition:
+                        type: object
+                        properties:
+                          age:
+                            type: integer
+                          isLive:
+                            type: boolean
+                cors:
+                  type: array
+                  items:
+                    type: object
+                    properties:
+                      origin:
+                        type: array
+                        items:
+                          type: string
+                      method:
+                        type: array
+                        items:
+                          type: string
+                      responseHeader:
+                        type: array
+                        items:
+                          type: string
+                      maxAgeSeconds:
+                        type: integer
+                resourceID:
+                  type: string
+            status:
+              type: object
+              properties:
+                selfLink:
+                  type: string
+                url:
+                  type: string

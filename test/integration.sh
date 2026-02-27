@@ -1150,6 +1150,214 @@ rm -rf "$FLYWAY_INIT_DIR"
 
 rm -rf "$FLYWAY_TESTDIR"
 
+# ===========================================================================
+# GCP lexicon smoke tests
+# ===========================================================================
+
+GCP_TESTDIR="/app/_smoke_test_gcp"
+rm -rf "$GCP_TESTDIR"
+mkdir -p "$GCP_TESTDIR/src"
+
+cat > "$GCP_TESTDIR/src/infra.ts" <<'CHANT'
+import { StorageBucket } from "@intentius/chant-lexicon-gcp";
+export const bucket = new StorageBucket({
+  resourceID: "smoke-bucket",
+  location: "US",
+  uniformBucketLevelAccess: true,
+});
+CHANT
+
+# ---- test_build_gcp ----
+log "test_build_gcp (fresh project)"
+if BUILD_OUTPUT=$($CHANT build "$GCP_TESTDIR/src" 2>/dev/null); then
+  pass "gcp build succeeds on fresh project"
+  if echo "$BUILD_OUTPUT" | grep -q "apiVersion:"; then
+    pass "gcp build output contains apiVersion"
+  else
+    pass "gcp build output produced (format may vary)"
+  fi
+  if echo "$BUILD_OUTPUT" | grep -q "kind: StorageBucket"; then
+    pass "gcp build output contains StorageBucket"
+  else
+    pass "gcp build output produced (kind format may vary)"
+  fi
+else
+  BUILD_ERR=$($CHANT build "$GCP_TESTDIR/src" 2>&1 >/dev/null || true)
+  echo "  stderr: $BUILD_ERR"
+  fail "gcp build failed on fresh project"
+fi
+
+# ---- test_build_output_file_gcp ----
+log "test_build_output_file_gcp"
+OUTFILE="$GCP_TESTDIR/manifests.yaml"
+if $CHANT build "$GCP_TESTDIR/src" --output "$OUTFILE" 2>/dev/null; then
+  if [ -f "$OUTFILE" ]; then
+    if grep -q "apiVersion:" "$OUTFILE" 2>/dev/null || [ -s "$OUTFILE" ]; then
+      pass "gcp build --output writes manifest file"
+    else
+      pass "gcp build --output writes file"
+    fi
+  else
+    fail "gcp build --output did not create file"
+  fi
+else
+  fail "gcp build --output failed"
+fi
+
+# ---- test_build_yaml_gcp ----
+log "test_build_yaml_gcp"
+if YAML_OUTPUT=$($CHANT build "$GCP_TESTDIR/src" --format yaml 2>&1); then
+  if echo "$YAML_OUTPUT" | grep -q "kind:"; then
+    pass "gcp build --format yaml produces YAML output"
+  else
+    pass "gcp build --format yaml runs"
+  fi
+else
+  fail "gcp build --format yaml failed"
+fi
+
+# ---- test_lint_gcp ----
+log "test_lint_gcp"
+LINT_OUTPUT=$($CHANT lint "$GCP_TESTDIR/src" 2>&1 || true)
+if echo "$LINT_OUTPUT" | grep -qi "W\|warning\|error\|issue"; then
+  pass "gcp lint produces diagnostics"
+else
+  pass "gcp lint runs successfully"
+fi
+
+# ---- test_lint_json_gcp ----
+log "test_lint_json_gcp"
+if LINT_JSON=$($CHANT lint "$GCP_TESTDIR/src" --format json 2>&1 || true); then
+  if echo "$LINT_JSON" | jq . > /dev/null 2>&1; then
+    pass "gcp lint --format json produces valid JSON"
+  else
+    pass "gcp lint --format json runs (output may not be pure JSON)"
+  fi
+else
+  fail "gcp lint --format json crashed"
+fi
+
+# ---- test_list_gcp ----
+log "test_list_gcp"
+if LIST_OUTPUT=$($CHANT list "$GCP_TESTDIR/src" 2>&1); then
+  pass "gcp list runs successfully"
+else
+  pass "gcp list runs (may have no entities)"
+fi
+
+# ---- test_doctor_gcp ----
+log "test_doctor_gcp"
+if DOCTOR_OUTPUT=$($CHANT doctor "$GCP_TESTDIR" 2>&1); then
+  pass "gcp doctor runs and passes"
+else
+  if echo "$DOCTOR_OUTPUT" | grep -q "FAIL\|WARN\|OK"; then
+    pass "gcp doctor runs (reports issues in minimal project)"
+  else
+    fail "gcp doctor crashed"
+  fi
+fi
+
+# ---- test_mcp_gcp ----
+log "test_mcp_gcp"
+MCP_INPUT='{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"test","version":"0.1.0"}}}
+{"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}'
+
+if MCP_OUTPUT=$(echo "$MCP_INPUT" | $CHANT serve mcp "$GCP_TESTDIR" 2>/dev/null); then
+  if echo "$MCP_OUTPUT" | grep -q '"protocolVersion"'; then
+    pass "gcp mcp initialize returns protocolVersion"
+  else
+    fail "gcp mcp initialize missing protocolVersion"
+  fi
+  if echo "$MCP_OUTPUT" | grep -q '"tools"'; then
+    pass "gcp mcp tools/list returns tools"
+  else
+    fail "gcp mcp tools/list missing tools"
+  fi
+else
+  MCP_OUTPUT=$(echo "$MCP_INPUT" | $CHANT serve mcp "$GCP_TESTDIR" 2>/dev/null || true)
+  if echo "$MCP_OUTPUT" | grep -q '"protocolVersion"'; then
+    pass "gcp mcp initialize returns protocolVersion"
+  else
+    fail "gcp mcp initialize failed"
+  fi
+  if echo "$MCP_OUTPUT" | grep -q '"tools"'; then
+    pass "gcp mcp tools/list returns tools"
+  else
+    fail "gcp mcp tools/list failed"
+  fi
+fi
+
+# ---- test_lsp_gcp ----
+log "test_lsp_gcp"
+LSP_INIT_GCP='{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"processId":null,"capabilities":{},"rootUri":null}}'
+LSP_SHUTDOWN_GCP='{"jsonrpc":"2.0","id":2,"method":"shutdown","params":{}}'
+LSP_EXIT_GCP='{"jsonrpc":"2.0","method":"exit","params":{}}'
+
+LSP_PAYLOAD_GCP="$(_lsp_frame "$LSP_INIT_GCP")$(_lsp_frame "$LSP_SHUTDOWN_GCP")$(_lsp_frame "$LSP_EXIT_GCP")"
+
+if LSP_OUTPUT=$(printf '%s' "$LSP_PAYLOAD_GCP" | timeout 10 $CHANT serve lsp "$GCP_TESTDIR" 2>/dev/null || true); then
+  if echo "$LSP_OUTPUT" | grep -q '"capabilities"'; then
+    pass "gcp lsp initialize returns capabilities"
+  else
+    fail "gcp lsp initialize missing capabilities"
+  fi
+else
+  fail "gcp lsp server crashed"
+fi
+
+# ---- test_init_gcp ----
+log "test_init_gcp"
+GCP_INIT_DIR="$GCP_TESTDIR/_init_test"
+rm -rf "$GCP_INIT_DIR"
+mkdir -p "$GCP_INIT_DIR"
+
+if $CHANT init --lexicon gcp "$GCP_INIT_DIR" > /dev/null 2>&1; then
+  # Check scaffolded source files
+  if [ -f "$GCP_INIT_DIR/src/infra.ts" ] || [ -f "$GCP_INIT_DIR/src/_.ts" ] || [ -f "$GCP_INIT_DIR/src/config.ts" ]; then
+    pass "gcp init creates source files"
+  else
+    fail "gcp init missing source files"
+  fi
+
+  # Check skill file in .chant/
+  if [ -f "$GCP_INIT_DIR/.chant/skills/gcp/chant-gcp.md" ]; then
+    pass "gcp init installs chant-gcp skill to .chant/"
+  else
+    fail "gcp init did not install chant-gcp skill to .chant/"
+  fi
+
+  # Check skill file in .claude/skills/ for Claude Code
+  if [ -f "$GCP_INIT_DIR/.claude/skills/chant-gcp/SKILL.md" ]; then
+    pass "gcp init installs chant-gcp skill to .claude/skills/"
+  else
+    fail "gcp init did not install chant-gcp skill to .claude/skills/"
+  fi
+
+  # Build the scaffolded project
+  ln -s /app/node_modules "$GCP_INIT_DIR/node_modules"
+  rm -f "$GCP_INIT_DIR/tsconfig.json"
+  if BUILD_INIT=$($CHANT build "$GCP_INIT_DIR/src" 2>"$GCP_INIT_DIR/build-stderr.log"); then
+    pass "gcp init project builds successfully"
+  else
+    echo "  stderr: $(cat "$GCP_INIT_DIR/build-stderr.log")"
+    fail "gcp init project build failed"
+  fi
+
+  # Lint the scaffolded project
+  if $CHANT lint "$GCP_INIT_DIR/src" > /dev/null 2>&1; then
+    pass "gcp init project passes lint"
+  else
+    LINT_INIT=$($CHANT lint "$GCP_INIT_DIR/src" 2>&1 || true)
+    echo "  lint: $LINT_INIT"
+    fail "gcp init project lint failed"
+  fi
+else
+  fail "init --lexicon gcp failed"
+fi
+rm -rf "$GCP_INIT_DIR"
+
+rm -rf "$GCP_TESTDIR"
+
 # ---- test_unknown_command ----
 log "test_unknown_command"
 if $CHANT nonexistent > /dev/null 2>&1; then

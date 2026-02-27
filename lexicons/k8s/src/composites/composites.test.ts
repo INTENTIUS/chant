@@ -21,6 +21,11 @@ import { FluentBitAgent } from "./fluent-bit-agent";
 import { ExternalDnsAgent } from "./external-dns-agent";
 import { AdotCollector } from "./adot-collector";
 import { MetricsServer } from "./metrics-server";
+import { WorkloadIdentityServiceAccount } from "./workload-identity-service-account";
+import { GcePdStorageClass } from "./gce-pd-storage-class";
+import { FilestoreStorageClass } from "./filestore-storage-class";
+import { GkeGateway } from "./gke-gateway";
+import { ConfigConnectorContext } from "./config-connector-context";
 
 // ── WebApp ──────────────────────────────────────────────────────────
 
@@ -2469,5 +2474,220 @@ describe("AdotCollector config structure", () => {
     expect(config).toContain("pipelines:");
     expect(config).toContain("metrics:");
     expect(config).toContain("traces:");
+  });
+});
+
+// ── WorkloadIdentityServiceAccount ──────────────────────────────────
+
+describe("WorkloadIdentityServiceAccount", () => {
+  const minProps = { name: "app-sa", gcpServiceAccountEmail: "sa@my-project.iam.gserviceaccount.com" };
+
+  test("returns serviceAccount with Workload Identity annotation", () => {
+    const result = WorkloadIdentityServiceAccount(minProps);
+    expect(result.serviceAccount).toBeDefined();
+    const meta = result.serviceAccount.metadata as any;
+    expect(meta.annotations["iam.gke.io/gcp-service-account"]).toBe("sa@my-project.iam.gserviceaccount.com");
+  });
+
+  test("no RBAC by default", () => {
+    const result = WorkloadIdentityServiceAccount(minProps);
+    expect(result.role).toBeUndefined();
+    expect(result.roleBinding).toBeUndefined();
+  });
+
+  test("RBAC created when rules provided", () => {
+    const result = WorkloadIdentityServiceAccount({
+      ...minProps,
+      rbacRules: [{ apiGroups: [""], resources: ["secrets"], verbs: ["get"] }],
+    });
+    expect(result.role).toBeDefined();
+    expect(result.roleBinding).toBeDefined();
+    const role = result.role as any;
+    expect(role.rules[0].resources).toEqual(["secrets"]);
+  });
+
+  test("namespace propagated", () => {
+    const result = WorkloadIdentityServiceAccount({ ...minProps, namespace: "prod" });
+    expect((result.serviceAccount.metadata as any).namespace).toBe("prod");
+  });
+
+  test("component labels", () => {
+    const result = WorkloadIdentityServiceAccount(minProps);
+    expect((result.serviceAccount.metadata as any).labels["app.kubernetes.io/component"]).toBe("service-account");
+  });
+});
+
+// ── GcePdStorageClass ───────────────────────────────────────────────
+
+describe("GcePdStorageClass", () => {
+  test("returns storageClass with GCE PD provisioner", () => {
+    const result = GcePdStorageClass({ name: "pd-balanced" });
+    expect(result.storageClass).toBeDefined();
+    expect((result.storageClass as any).provisioner).toBe("pd.csi.storage.gke.io");
+  });
+
+  test("default type is pd-balanced", () => {
+    const result = GcePdStorageClass({ name: "default" });
+    expect((result.storageClass as any).parameters.type).toBe("pd-balanced");
+  });
+
+  test("custom type", () => {
+    const result = GcePdStorageClass({ name: "ssd", type: "pd-ssd" });
+    expect((result.storageClass as any).parameters.type).toBe("pd-ssd");
+  });
+
+  test("regional-pd replication type", () => {
+    const result = GcePdStorageClass({ name: "regional", replicationType: "regional-pd" });
+    expect((result.storageClass as any).parameters["replication-type"]).toBe("regional-pd");
+  });
+
+  test("no replication-type param when none", () => {
+    const result = GcePdStorageClass({ name: "default" });
+    expect((result.storageClass as any).parameters["replication-type"]).toBeUndefined();
+  });
+
+  test("allowVolumeExpansion default true", () => {
+    const result = GcePdStorageClass({ name: "exp" });
+    expect((result.storageClass as any).allowVolumeExpansion).toBe(true);
+  });
+
+  test("storageClass is cluster-scoped (no namespace)", () => {
+    const result = GcePdStorageClass({ name: "sc" });
+    expect((result.storageClass.metadata as any).namespace).toBeUndefined();
+  });
+});
+
+// ── FilestoreStorageClass ───────────────────────────────────────────
+
+describe("FilestoreStorageClass", () => {
+  test("returns storageClass with Filestore provisioner", () => {
+    const result = FilestoreStorageClass({ name: "filestore" });
+    expect((result.storageClass as any).provisioner).toBe("filestore.csi.storage.gke.io");
+  });
+
+  test("default tier is standard", () => {
+    const result = FilestoreStorageClass({ name: "fs" });
+    expect((result.storageClass as any).parameters.tier).toBe("standard");
+  });
+
+  test("custom tier", () => {
+    const result = FilestoreStorageClass({ name: "premium-fs", tier: "premium" });
+    expect((result.storageClass as any).parameters.tier).toBe("premium");
+  });
+
+  test("network parameter set when provided", () => {
+    const result = FilestoreStorageClass({ name: "fs", network: "my-vpc" });
+    expect((result.storageClass as any).parameters.network).toBe("my-vpc");
+  });
+
+  test("no network parameter by default", () => {
+    const result = FilestoreStorageClass({ name: "fs" });
+    expect((result.storageClass as any).parameters.network).toBeUndefined();
+  });
+});
+
+// ── GkeGateway ──────────────────────────────────────────────────────
+
+describe("GkeGateway", () => {
+  const minProps = {
+    name: "api-gateway",
+    hosts: [{ hostname: "api.example.com", paths: [{ path: "/", serviceName: "api", servicePort: 80 }] }],
+  };
+
+  test("returns gateway and httpRoute", () => {
+    const result = GkeGateway(minProps);
+    expect(result.gateway).toBeDefined();
+    expect(result.httpRoute).toBeDefined();
+  });
+
+  test("default gatewayClassName", () => {
+    const result = GkeGateway(minProps);
+    const spec = result.gateway.spec as any;
+    expect(spec.gatewayClassName).toBe("gke-l7-global-external-managed");
+  });
+
+  test("custom gatewayClassName", () => {
+    const result = GkeGateway({ ...minProps, gatewayClassName: "gke-l7-rilb" });
+    const spec = result.gateway.spec as any;
+    expect(spec.gatewayClassName).toBe("gke-l7-rilb");
+  });
+
+  test("HTTP listener when no certificate", () => {
+    const result = GkeGateway(minProps);
+    const spec = result.gateway.spec as any;
+    expect(spec.listeners[0].protocol).toBe("HTTP");
+    expect(spec.listeners[0].port).toBe(80);
+  });
+
+  test("HTTPS listener with certificate", () => {
+    const result = GkeGateway({ ...minProps, certificateName: "api-cert" });
+    const spec = result.gateway.spec as any;
+    expect(spec.listeners[0].protocol).toBe("HTTPS");
+    expect(spec.listeners[0].port).toBe(443);
+    expect(spec.listeners[0].tls.certificateRefs[0].name).toBe("api-cert");
+  });
+
+  test("httpRoute references parent gateway", () => {
+    const result = GkeGateway(minProps);
+    const spec = result.httpRoute.spec as any;
+    expect(spec.parentRefs[0].name).toBe("api-gateway");
+  });
+
+  test("httpRoute has hostnames", () => {
+    const result = GkeGateway(minProps);
+    const spec = result.httpRoute.spec as any;
+    expect(spec.hostnames).toEqual(["api.example.com"]);
+  });
+
+  test("httpRoute rules map to backend services", () => {
+    const result = GkeGateway(minProps);
+    const spec = result.httpRoute.spec as any;
+    expect(spec.rules[0].backendRefs[0].name).toBe("api");
+    expect(spec.rules[0].backendRefs[0].port).toBe(80);
+  });
+
+  test("namespace propagated to both resources", () => {
+    const result = GkeGateway({ ...minProps, namespace: "prod" });
+    expect((result.gateway.metadata as any).namespace).toBe("prod");
+    expect((result.httpRoute.metadata as any).namespace).toBe("prod");
+  });
+});
+
+// ── ConfigConnectorContext ───────────────────────────────────────────
+
+describe("ConfigConnectorContext", () => {
+  const minProps = { googleServiceAccountEmail: "cnrm@my-project.iam.gserviceaccount.com" };
+
+  test("returns context with apiVersion and kind", () => {
+    const result = ConfigConnectorContext(minProps);
+    expect(result.context).toBeDefined();
+    expect((result.context as any).apiVersion).toBe("core.cnrm.cloud.google.com/v1beta1");
+    expect((result.context as any).kind).toBe("ConfigConnectorContext");
+  });
+
+  test("googleServiceAccount in spec", () => {
+    const result = ConfigConnectorContext(minProps);
+    const spec = (result.context as any).spec;
+    expect(spec.googleServiceAccount).toBe("cnrm@my-project.iam.gserviceaccount.com");
+  });
+
+  test("default stateIntoSpec is absent", () => {
+    const result = ConfigConnectorContext(minProps);
+    expect((result.context as any).spec.stateIntoSpec).toBe("absent");
+  });
+
+  test("custom stateIntoSpec", () => {
+    const result = ConfigConnectorContext({ ...minProps, stateIntoSpec: "merge" });
+    expect((result.context as any).spec.stateIntoSpec).toBe("merge");
+  });
+
+  test("default namespace is default", () => {
+    const result = ConfigConnectorContext(minProps);
+    expect((result.context as any).metadata.namespace).toBe("default");
+  });
+
+  test("custom namespace", () => {
+    const result = ConfigConnectorContext({ ...minProps, namespace: "config-connector" });
+    expect((result.context as any).metadata.namespace).toBe("config-connector");
   });
 });

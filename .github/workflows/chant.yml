@@ -104,5 +104,5 @@ jobs:
       - name: Generate and validate Flyway lexicon
         run: bun run --cwd lexicons/flyway prepack
 
-      - name: Generate and validate Gcp lexicon
+      - name: Generate and validate GCP lexicon
         run: bun run --cwd lexicons/gcp prepack
