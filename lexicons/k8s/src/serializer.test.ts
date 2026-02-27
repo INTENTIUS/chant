@@ -344,6 +344,30 @@ describe("k8sSerializer", () => {
     expect(docs[1]).toContain("kind: Deployment");
   });
 
+  test("ConfigMap multiline data emits as | block scalar", () => {
+    const entities = new Map<string, any>();
+    const multilineConfig = "[SERVICE]\n    Flush 5\n    Log_Level info\n\n[INPUT]\n    Name tail\n";
+    entities.set(
+      "config",
+      mockResource("K8s::Core::ConfigMap", {
+        metadata: { name: "app-config" },
+        data: { "fluent-bit.conf": multilineConfig },
+      }),
+    );
+
+    const result = k8sSerializer.serialize(entities);
+    expect(result).toContain("kind: ConfigMap");
+    // Must use | block scalar, not flatten to single line
+    expect(result).toContain("fluent-bit.conf: |");
+    // Content lines should be preserved (indented under the key)
+    expect(result).toContain("[SERVICE]");
+    expect(result).toContain("Flush 5");
+    expect(result).toContain("[INPUT]");
+    expect(result).toContain("Name tail");
+    // Should NOT contain literal \n in the output
+    expect(result).not.toContain("\\n");
+  });
+
   test("key ordering: apiVersion, kind, metadata, spec, then rest", () => {
     const entities = new Map<string, any>();
     entities.set(

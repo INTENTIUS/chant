@@ -33,7 +33,7 @@ describe("k8sPlugin", () => {
   test("postSynthChecks() returns array of 22 checks", () => {
     const checks = k8sPlugin.postSynthChecks!();
     expect(Array.isArray(checks)).toBe(true);
-    expect(checks.length).toBe(22);
+    expect(checks.length).toBe(23);
   });
 
   test("intrinsics() returns empty array", () => {

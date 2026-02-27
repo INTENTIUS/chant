@@ -88,6 +88,27 @@ describe("emitYAML", () => {
     const result = emitYAML({ key: "val" }, 1);
     expect(result).toBe("\n  key: val");
   });
+
+  test("multiline string emits as | block scalar", () => {
+    const result = emitYAML("line1\nline2\nline3", 0);
+    expect(result).toBe("|\nline1\nline2\nline3");
+  });
+
+  test("multiline string trims trailing empty line", () => {
+    // Template literals often end with \n producing a trailing empty line
+    const result = emitYAML("line1\nline2\n", 0);
+    expect(result).toBe("|\nline1\nline2");
+  });
+
+  test("multiline string inside object value is properly indented", () => {
+    const result = emitYAML({ config: "line1\nline2\nline3" }, 0);
+    expect(result).toContain("config: |\n  line1\n  line2\n  line3");
+  });
+
+  test("multiline string inside array item is properly indented", () => {
+    const result = emitYAML([{ data: "a\nb" }], 0);
+    expect(result).toContain("data: |\n    a\n    b");
+  });
 });
 
 // ---------------------------------------------------------------------------

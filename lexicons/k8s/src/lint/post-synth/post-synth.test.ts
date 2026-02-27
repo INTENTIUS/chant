@@ -24,6 +24,7 @@ import { wk8302 } from "./wk8302";
 import { wk8303 } from "./wk8303";
 import { wk8304 } from "./wk8304";
 import { wk8305 } from "./wk8305";
+import { wk8306 } from "./wk8306";
 
 function makeCtx(yaml: string): PostSynthContext {
   return {
@@ -594,7 +595,7 @@ describe("WK8204: runAsNonRoot", () => {
     expect(diags[0].checkId).toBe("WK8204");
   });
 
-  test("passes with runAsNonRoot: true", () => {
+  test("warns when runAsNonRoot: true but no runAsUser", () => {
     const ctx = makeCtx(JSON.stringify({
       apiVersion: "apps/v1",
       kind: "Deployment",
@@ -602,6 +603,68 @@ describe("WK8204: runAsNonRoot", () => {
       spec: {
         template: {
           spec: {
+            containers: [
+              { name: "app", image: "app:1.0", securityContext: { runAsNonRoot: true } },
+            ],
+          },
+        },
+      },
+    }));
+    const diags = wk8204.check(ctx);
+    expect(diags.length).toBe(1);
+    expect(diags[0].checkId).toBe("WK8204");
+    expect(diags[0].message).toContain("no explicit runAsUser");
+  });
+
+  test("warns when runAsNonRoot: true with runAsUser: 0 (contradictory)", () => {
+    const ctx = makeCtx(JSON.stringify({
+      apiVersion: "apps/v1",
+      kind: "Deployment",
+      metadata: { name: "app" },
+      spec: {
+        template: {
+          spec: {
+            containers: [
+              { name: "app", image: "app:1.0", securityContext: { runAsNonRoot: true, runAsUser: 0 } },
+            ],
+          },
+        },
+      },
+    }));
+    const diags = wk8204.check(ctx);
+    expect(diags.length).toBe(1);
+    expect(diags[0].checkId).toBe("WK8204");
+    expect(diags[0].message).toContain("contradictory");
+  });
+
+  test("passes with runAsNonRoot: true and runAsUser: 65534", () => {
+    const ctx = makeCtx(JSON.stringify({
+      apiVersion: "apps/v1",
+      kind: "Deployment",
+      metadata: { name: "app" },
+      spec: {
+        template: {
+          spec: {
+            containers: [
+              { name: "app", image: "app:1.0", securityContext: { runAsNonRoot: true, runAsUser: 65534 } },
+            ],
+          },
+        },
+      },
+    }));
+    const diags = wk8204.check(ctx);
+    expect(diags.length).toBe(0);
+  });
+
+  test("pod-level runAsUser satisfies container-level runAsNonRoot", () => {
+    const ctx = makeCtx(JSON.stringify({
+      apiVersion: "apps/v1",
+      kind: "Deployment",
+      metadata: { name: "app" },
+      spec: {
+        template: {
+          spec: {
+            securityContext: { runAsUser: 1000 },
             containers: [
               { name: "app", image: "app:1.0", securityContext: { runAsNonRoot: true } },
             ],
@@ -1159,6 +1222,109 @@ describe("WK8305: Ingress port not matching Service", () => {
     });
     const ctx = makeCtx(`${svc1}\n---\n${svc2}\n---\n${ingress}`);
     const diags = wk8305.check(ctx);
+    expect(diags.length).toBe(0);
+  });
+});
+
+// ── WK8306: Container command starts with flag ───────────────────
+
+describe("WK8306: Container command starts with flag", () => {
+  test("flags command[0] starting with --", () => {
+    const ctx = makeCtx(JSON.stringify({
+      apiVersion: "apps/v1",
+      kind: "Deployment",
+      metadata: { name: "adot" },
+      spec: {
+        template: {
+          spec: {
+            containers: [
+              { name: "collector", image: "otel:1.0", command: ["--config=/etc/adot/config.yaml"] },
+            ],
+          },
+        },
+      },
+    }));
+    const diags = wk8306.check(ctx);
+    expect(diags.length).toBe(1);
+    expect(diags[0].checkId).toBe("WK8306");
+    expect(diags[0].severity).toBe("error");
+    expect(diags[0].message).toContain("--config");
+  });
+
+  test("flags command[0] starting with -", () => {
+    const ctx = makeCtx(JSON.stringify({
+      apiVersion: "apps/v1",
+      kind: "Deployment",
+      metadata: { name: "app" },
+      spec: {
+        template: {
+          spec: {
+            containers: [
+              { name: "app", image: "app:1.0", command: ["-c", "echo hello"] },
+            ],
+          },
+        },
+      },
+    }));
+    const diags = wk8306.check(ctx);
+    expect(diags.length).toBe(1);
+    expect(diags[0].severity).toBe("error");
+  });
+
+  test("passes when command[0] is a binary path", () => {
+    const ctx = makeCtx(JSON.stringify({
+      apiVersion: "apps/v1",
+      kind: "Deployment",
+      metadata: { name: "app" },
+      spec: {
+        template: {
+          spec: {
+            containers: [
+              { name: "app", image: "app:1.0", command: ["/usr/bin/app", "--flag"] },
+            ],
+          },
+        },
+      },
+    }));
+    const diags = wk8306.check(ctx);
+    expect(diags.length).toBe(0);
+  });
+
+  test("passes when flags are in args (correct usage)", () => {
+    const ctx = makeCtx(JSON.stringify({
+      apiVersion: "apps/v1",
+      kind: "Deployment",
+      metadata: { name: "app" },
+      spec: {
+        template: {
+          spec: {
+            containers: [
+              { name: "app", image: "app:1.0", args: ["--config=foo"] },
+            ],
+          },
+        },
+      },
+    }));
+    const diags = wk8306.check(ctx);
+    expect(diags.length).toBe(0);
+  });
+
+  test("passes when no command field", () => {
+    const ctx = makeCtx(JSON.stringify({
+      apiVersion: "apps/v1",
+      kind: "Deployment",
+      metadata: { name: "app" },
+      spec: {
+        template: {
+          spec: {
+            containers: [
+              { name: "app", image: "app:1.0" },
+            ],
+          },
+        },
+      },
+    }));
+    const diags = wk8306.check(ctx);
     expect(diags.length).toBe(0);
   });
 });

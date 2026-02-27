@@ -4,6 +4,10 @@
  * Containers should set securityContext.runAsNonRoot to true at either
  * the container level or pod level. Running as root inside a container
  * increases the blast radius of a container breakout.
+ *
+ * Additionally warns when runAsNonRoot: true is set but no explicit
+ * runAsUser is provided — without a numeric UID, K8s relies on the
+ * image's USER directive, which may be root (UID 0).
  */
 
 import type { PostSynthCheck, PostSynthContext, PostSynthDiagnostic } from "@intentius/chant/lint/post-synth";
@@ -30,17 +34,45 @@ export const wk8204: PostSynthCheck = {
         // Check pod-level securityContext
         const podSecCtx = podSpec.securityContext as Record<string, unknown> | undefined;
         const podRunAsNonRoot = podSecCtx?.runAsNonRoot === true;
+        const podRunAsUser = podSecCtx?.runAsUser;
 
         const containers = extractContainers(manifest);
         for (const container of containers) {
           const secCtx = container.securityContext;
           const containerRunAsNonRoot = secCtx?.runAsNonRoot === true;
+          const containerRunAsUser = secCtx?.runAsUser;
 
-          if (!podRunAsNonRoot && !containerRunAsNonRoot) {
+          const hasRunAsNonRoot = podRunAsNonRoot || containerRunAsNonRoot;
+
+          if (!hasRunAsNonRoot) {
             diagnostics.push({
               checkId: "WK8204",
               severity: "warning",
               message: `Container "${container.name ?? "(unnamed)"}" in ${manifest.kind} "${resourceName}" does not set runAsNonRoot: true — set it at container or pod level`,
+              entity: resourceName,
+              lexicon: "k8s",
+            });
+            continue;
+          }
+
+          // runAsNonRoot is true — check for explicit runAsUser
+          const effectiveRunAsUser = containerRunAsUser ?? podRunAsUser;
+
+          if (effectiveRunAsUser === 0) {
+            // Contradictory: runAsNonRoot: true + runAsUser: 0
+            diagnostics.push({
+              checkId: "WK8204",
+              severity: "warning",
+              message: `Container "${container.name ?? "(unnamed)"}" in ${manifest.kind} "${resourceName}" has runAsNonRoot: true but runAsUser: 0 — these settings are contradictory and the container will fail to start`,
+              entity: resourceName,
+              lexicon: "k8s",
+            });
+          } else if (effectiveRunAsUser === undefined || effectiveRunAsUser === null) {
+            // runAsNonRoot: true but no explicit UID
+            diagnostics.push({
+              checkId: "WK8204",
+              severity: "warning",
+              message: `Container "${container.name ?? "(unnamed)"}" in ${manifest.kind} "${resourceName}" has runAsNonRoot: true but no explicit runAsUser — set a numeric UID to ensure the container doesn't run as root`,
               entity: resourceName,
               lexicon: "k8s",
             });

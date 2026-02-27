@@ -4,6 +4,8 @@ import { build } from "../../packages/core/src/build";
 import { resolve } from "path";
 import { awsSerializer } from "../../lexicons/aws/src/serializer";
 import { k8sSerializer } from "../../lexicons/k8s/src/serializer";
+import { k8sPlugin } from "../../lexicons/k8s/src/plugin";
+import type { PostSynthContext } from "../../packages/core/src/lint/post-synth";
 
 const srcDir = resolve(import.meta.dir, "src");
 
@@ -573,5 +575,33 @@ describe("k8s-eks-microservice example", () => {
     expect(parsed.Parameters.environment.Default).toBe("dev");
     expect(parsed.Parameters.domainName.Default).toBe("api.eks-microservice-demo.dev");
     expect(parsed.Parameters.publicAccessCidr.Default).toBe("0.0.0.0/0");
+  });
+
+  // ── Post-synth lint safety net ──────────────────────────────────
+
+  test("generated K8s YAML passes all post-synth error-level checks", async () => {
+    const result = await build(srcDir, [k8sSerializer]);
+    expect(result.errors).toHaveLength(0);
+
+    const ctx: PostSynthContext = {
+      outputs: result.outputs,
+      entities: result.entities,
+      buildResult: {
+        outputs: result.outputs,
+        entities: result.entities,
+        warnings: result.warnings ?? [],
+        errors: result.errors,
+        sourceFileCount: 1,
+      },
+    };
+
+    const allChecks = k8sPlugin.postSynthChecks!();
+    const allDiags = allChecks.flatMap((c) => c.check(ctx));
+    const errors = allDiags.filter((d) => d.severity === "error");
+
+    if (errors.length > 0) {
+      console.log("Post-synth errors:", errors.map((e) => `${e.checkId}: ${e.message}`));
+    }
+    expect(errors).toEqual([]);
   });
 });

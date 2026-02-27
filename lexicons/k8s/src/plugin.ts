@@ -44,11 +44,12 @@ export const k8sPlugin: LexiconPlugin = {
     const { wk8303 } = require("./lint/post-synth/wk8303");
     const { wk8304 } = require("./lint/post-synth/wk8304");
     const { wk8305 } = require("./lint/post-synth/wk8305");
+    const { wk8306 } = require("./lint/post-synth/wk8306");
     return [
       wk8005, wk8006, wk8041, wk8042,
       wk8101, wk8102, wk8103, wk8104, wk8105,
       wk8201, wk8202, wk8203, wk8204, wk8205, wk8207, wk8208, wk8209,
-      wk8301, wk8302, wk8303, wk8304, wk8305,
+      wk8301, wk8302, wk8303, wk8304, wk8305, wk8306,
     ];
   },
 

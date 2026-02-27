@@ -1,4 +1,5 @@
 import { describe, test, expect, jest } from "bun:test";
+import { emitYAML } from "@intentius/chant/yaml";
 import { WebApp } from "./web-app";
 import { StatefulApp } from "./stateful-app";
 import { CronWorkload } from "./cron-workload";
@@ -2321,5 +2322,152 @@ describe("AdotCollector security defaults", () => {
     expect(sc.runAsUser).toBe(10001);
     expect(sc.readOnlyRootFilesystem).toBe(true);
     expect(sc.allowPrivilegeEscalation).toBe(false);
+  });
+});
+
+// ── Phase 3B: Composite serialization smoke tests ───────────────
+
+describe("Composite YAML serialization smoke tests", () => {
+  function serializeCompositeProps(props: Record<string, Record<string, unknown>>): string {
+    return Object.values(props)
+      .map((p) => emitYAML(p, 0))
+      .join("\n---\n");
+  }
+
+  test("ExternalDnsAgent serializes to valid YAML", () => {
+    const result = ExternalDnsAgent({
+      iamRoleArn: "arn:aws:iam::123456789012:role/test",
+      domainFilters: ["example.com"],
+    });
+    const yaml = serializeCompositeProps(result as any);
+    expect(yaml).toContain("external-dns");
+    expect(yaml).not.toContain("[object Object]");
+  });
+
+  test("FluentBitAgent serializes multiline config correctly", () => {
+    const result = FluentBitAgent({
+      logGroup: "/aws/eks/test/containers",
+      region: "us-east-1",
+      clusterName: "test",
+    });
+    const yaml = serializeCompositeProps(result as any);
+    // Multiline config should use | block scalar, not flatten
+    expect(yaml).toContain("|");
+    expect(yaml).toContain("[SERVICE]");
+    expect(yaml).toContain("[INPUT]");
+    expect(yaml).not.toContain("\\n");
+  });
+
+  test("AdotCollector serializes multiline config correctly", () => {
+    const result = AdotCollector({
+      region: "us-east-1",
+      clusterName: "test",
+    });
+    const yaml = serializeCompositeProps(result as any);
+    expect(yaml).toContain("|");
+    expect(yaml).toContain("receivers:");
+    expect(yaml).toContain("exporters:");
+    expect(yaml).not.toContain("\\n");
+  });
+
+  test("MetricsServer serializes to valid YAML", () => {
+    const result = MetricsServer({});
+    const yaml = serializeCompositeProps(result as any);
+    expect(yaml).toContain("metrics-server");
+    expect(yaml).not.toContain("[object Object]");
+  });
+});
+
+// ── Phase 4A: MetricsServer RBAC completeness ──────────────────
+
+describe("MetricsServer RBAC completeness", () => {
+  test("clusterRole includes configmaps resource", () => {
+    const result = MetricsServer({});
+    const rules = result.clusterRole.rules as any[];
+    const hasConfigmaps = rules.some((r: any) => r.resources?.includes("configmaps"));
+    expect(hasConfigmaps).toBe(true);
+  });
+});
+
+// ── Phase 4B: AdotCollector command vs args ─────────────────────
+
+describe("AdotCollector command vs args", () => {
+  test("container uses args (not command) for config flag", () => {
+    const result = AdotCollector({
+      region: "us-east-1",
+      clusterName: "test",
+    });
+    const spec = result.daemonSet.spec as any;
+    const container = spec.template.spec.containers[0];
+    // Config flag should be in args, not command
+    expect(container.args).toContain("--config=/etc/adot/config.yaml");
+    expect(container.command).toBeUndefined();
+  });
+});
+
+// ── Phase 4C: AdotCollector pipeline exporter separation ────────
+
+describe("AdotCollector pipeline exporter separation", () => {
+  test("metrics pipeline does NOT include awsxray", () => {
+    const result = AdotCollector({
+      region: "us-east-1",
+      clusterName: "test",
+      exporters: ["cloudwatch", "xray"],
+    });
+    const config = (result.configMap as any).data["config.yaml"] as string;
+    // Extract metrics pipeline exporters line
+    const metricsMatch = config.match(/metrics:\s*\n\s*receivers:.*\n\s*processors:.*\n\s*exporters:\s*\[([^\]]+)\]/);
+    expect(metricsMatch).toBeDefined();
+    const metricsExporters = metricsMatch![1];
+    expect(metricsExporters).not.toContain("awsxray");
+    expect(metricsExporters).toContain("awsemf");
+  });
+
+  test("traces pipeline does NOT include awsemf", () => {
+    const result = AdotCollector({
+      region: "us-east-1",
+      clusterName: "test",
+      exporters: ["cloudwatch", "xray"],
+    });
+    const config = (result.configMap as any).data["config.yaml"] as string;
+    // Extract traces pipeline exporters line
+    const tracesMatch = config.match(/traces:\s*\n\s*receivers:.*\n\s*processors:.*\n\s*exporters:\s*\[([^\]]+)\]/);
+    expect(tracesMatch).toBeDefined();
+    const tracesExporters = tracesMatch![1];
+    expect(tracesExporters).not.toContain("awsemf");
+    expect(tracesExporters).toContain("awsxray");
+  });
+
+  test("cloudwatch-only: traces pipeline falls back to valid default", () => {
+    const result = AdotCollector({
+      region: "us-east-1",
+      clusterName: "test",
+      exporters: ["cloudwatch"],
+    });
+    const config = (result.configMap as any).data["config.yaml"] as string;
+    // Traces pipeline should still have an exporter (fallback to awsxray)
+    const tracesMatch = config.match(/traces:\s*\n\s*receivers:.*\n\s*processors:.*\n\s*exporters:\s*\[([^\]]+)\]/);
+    expect(tracesMatch).toBeDefined();
+    const tracesExporters = tracesMatch![1].trim();
+    expect(tracesExporters.length).toBeGreaterThan(0);
+  });
+});
+
+// ── Phase 4D: AdotCollector config parseable as YAML ────────────
+
+describe("AdotCollector config structure", () => {
+  test("generated config has required top-level sections", () => {
+    const result = AdotCollector({
+      region: "us-east-1",
+      clusterName: "test",
+    });
+    const config = (result.configMap as any).data["config.yaml"] as string;
+    expect(config).toContain("receivers:");
+    expect(config).toContain("exporters:");
+    expect(config).toContain("processors:");
+    expect(config).toContain("service:");
+    expect(config).toContain("pipelines:");
+    expect(config).toContain("metrics:");
+    expect(config).toContain("traces:");
   });
 });
