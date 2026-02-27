@@ -164,7 +164,8 @@ export const k8sSerializer: Serializer = {
       }
     }
 
-    const documents: string[] = [];
+    const namespaceDocs: string[] = [];
+    const otherDocs: string[] = [];
 
     for (const [name, entity] of entities) {
       if (isPropertyDeclarable(entity)) continue;
@@ -237,12 +238,16 @@ export const k8sSerializer: Serializer = {
         }
       }
 
-      // Emit as YAML
+      // Emit as YAML — sort Namespaces first so kubectl apply succeeds
       const yamlDoc = emitK8sManifest(manifest);
-      documents.push(yamlDoc);
+      if (gvk.kind === "Namespace") {
+        namespaceDocs.push(yamlDoc);
+      } else {
+        otherDocs.push(yamlDoc);
+      }
     }
 
-    return documents.join("\n---\n");
+    return [...namespaceDocs, ...otherDocs].join("\n---\n");
   },
 };
 

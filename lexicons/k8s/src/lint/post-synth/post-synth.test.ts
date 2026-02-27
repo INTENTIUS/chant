@@ -22,6 +22,8 @@ import { wk8209 } from "./wk8209";
 import { wk8301 } from "./wk8301";
 import { wk8302 } from "./wk8302";
 import { wk8303 } from "./wk8303";
+import { wk8304 } from "./wk8304";
+import { wk8305 } from "./wk8305";
 
 function makeCtx(yaml: string): PostSynthContext {
   return {
@@ -964,6 +966,199 @@ spec:
       app: my-app
 `);
     const diags = wk8303.check(ctx);
+    expect(diags.length).toBe(0);
+  });
+});
+
+// ── WK8304: SSL redirect without certificate ────────────────────────
+
+describe("WK8304: SSL redirect without certificate", () => {
+  test("flags ssl-redirect without certificate-arn", () => {
+    const ctx = makeCtx(JSON.stringify({
+      apiVersion: "networking.k8s.io/v1",
+      kind: "Ingress",
+      metadata: {
+        name: "app-ingress",
+        annotations: {
+          "alb.ingress.kubernetes.io/ssl-redirect": "443",
+          "alb.ingress.kubernetes.io/scheme": "internet-facing",
+        },
+      },
+      spec: { rules: [] },
+    }));
+    const diags = wk8304.check(ctx);
+    expect(diags.length).toBe(1);
+    expect(diags[0].checkId).toBe("WK8304");
+    expect(diags[0].severity).toBe("warning");
+  });
+
+  test("flags ssl-redirect with valid cert but no HTTPS in listen-ports", () => {
+    const ctx = makeCtx(JSON.stringify({
+      apiVersion: "networking.k8s.io/v1",
+      kind: "Ingress",
+      metadata: {
+        name: "app-ingress",
+        annotations: {
+          "alb.ingress.kubernetes.io/ssl-redirect": "443",
+          "alb.ingress.kubernetes.io/certificate-arn": "arn:aws:acm:us-east-1:123:certificate/abc",
+          "alb.ingress.kubernetes.io/listen-ports": '[{"HTTP":80}]',
+        },
+      },
+      spec: { rules: [] },
+    }));
+    const diags = wk8304.check(ctx);
+    expect(diags.length).toBe(1);
+    expect(diags[0].checkId).toBe("WK8304");
+  });
+
+  test("passes with valid cert and HTTPS listen-ports", () => {
+    const ctx = makeCtx(JSON.stringify({
+      apiVersion: "networking.k8s.io/v1",
+      kind: "Ingress",
+      metadata: {
+        name: "app-ingress",
+        annotations: {
+          "alb.ingress.kubernetes.io/ssl-redirect": "443",
+          "alb.ingress.kubernetes.io/certificate-arn": "arn:aws:acm:us-east-1:123:certificate/abc",
+          "alb.ingress.kubernetes.io/listen-ports": '[{"HTTPS":443}]',
+        },
+      },
+      spec: { rules: [] },
+    }));
+    const diags = wk8304.check(ctx);
+    expect(diags.length).toBe(0);
+  });
+
+  test("passes with no ssl-redirect annotation", () => {
+    const ctx = makeCtx(JSON.stringify({
+      apiVersion: "networking.k8s.io/v1",
+      kind: "Ingress",
+      metadata: {
+        name: "app-ingress",
+        annotations: {
+          "alb.ingress.kubernetes.io/scheme": "internet-facing",
+        },
+      },
+      spec: { rules: [] },
+    }));
+    const diags = wk8304.check(ctx);
+    expect(diags.length).toBe(0);
+  });
+});
+
+// ── WK8305: Ingress port not matching Service ───────────────────────
+
+describe("WK8305: Ingress port not matching Service", () => {
+  test("flags Ingress backend port not on Service", () => {
+    const svc = JSON.stringify({
+      apiVersion: "v1",
+      kind: "Service",
+      metadata: { name: "api", namespace: "default" },
+      spec: { ports: [{ port: 80, targetPort: 8080 }] },
+    });
+    const ingress = JSON.stringify({
+      apiVersion: "networking.k8s.io/v1",
+      kind: "Ingress",
+      metadata: { name: "api-ingress", namespace: "default" },
+      spec: {
+        rules: [{
+          host: "api.example.com",
+          http: {
+            paths: [{
+              path: "/",
+              backend: { service: { name: "api", port: { number: 8080 } } },
+            }],
+          },
+        }],
+      },
+    });
+    const ctx = makeCtx(`${svc}\n---\n${ingress}`);
+    const diags = wk8305.check(ctx);
+    expect(diags.length).toBe(1);
+    expect(diags[0].checkId).toBe("WK8305");
+    expect(diags[0].severity).toBe("warning");
+  });
+
+  test("passes when port matches Service", () => {
+    const svc = JSON.stringify({
+      apiVersion: "v1",
+      kind: "Service",
+      metadata: { name: "api", namespace: "default" },
+      spec: { ports: [{ port: 80, targetPort: 8080 }] },
+    });
+    const ingress = JSON.stringify({
+      apiVersion: "networking.k8s.io/v1",
+      kind: "Ingress",
+      metadata: { name: "api-ingress", namespace: "default" },
+      spec: {
+        rules: [{
+          host: "api.example.com",
+          http: {
+            paths: [{
+              path: "/",
+              backend: { service: { name: "api", port: { number: 80 } } },
+            }],
+          },
+        }],
+      },
+    });
+    const ctx = makeCtx(`${svc}\n---\n${ingress}`);
+    const diags = wk8305.check(ctx);
+    expect(diags.length).toBe(0);
+  });
+
+  test("skips when Service not in manifest set", () => {
+    const ctx = makeCtx(JSON.stringify({
+      apiVersion: "networking.k8s.io/v1",
+      kind: "Ingress",
+      metadata: { name: "api-ingress", namespace: "default" },
+      spec: {
+        rules: [{
+          host: "api.example.com",
+          http: {
+            paths: [{
+              path: "/",
+              backend: { service: { name: "external-svc", port: { number: 443 } } },
+            }],
+          },
+        }],
+      },
+    }));
+    const diags = wk8305.check(ctx);
+    expect(diags.length).toBe(0);
+  });
+
+  test("passes with multiple Services, correct match", () => {
+    const svc1 = JSON.stringify({
+      apiVersion: "v1",
+      kind: "Service",
+      metadata: { name: "api", namespace: "prod" },
+      spec: { ports: [{ port: 80 }, { port: 443 }] },
+    });
+    const svc2 = JSON.stringify({
+      apiVersion: "v1",
+      kind: "Service",
+      metadata: { name: "web", namespace: "prod" },
+      spec: { ports: [{ port: 3000 }] },
+    });
+    const ingress = JSON.stringify({
+      apiVersion: "networking.k8s.io/v1",
+      kind: "Ingress",
+      metadata: { name: "main-ingress", namespace: "prod" },
+      spec: {
+        rules: [{
+          host: "app.example.com",
+          http: {
+            paths: [
+              { path: "/api", backend: { service: { name: "api", port: { number: 443 } } } },
+              { path: "/", backend: { service: { name: "web", port: { number: 3000 } } } },
+            ],
+          },
+        }],
+      },
+    });
+    const ctx = makeCtx(`${svc1}\n---\n${svc2}\n---\n${ingress}`);
+    const diags = wk8305.check(ctx);
     expect(diags.length).toBe(0);
   });
 });

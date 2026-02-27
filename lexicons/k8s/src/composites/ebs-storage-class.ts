@@ -10,9 +10,9 @@ export interface EbsStorageClassProps {
   /** EBS volume type (default: "gp3"). */
   type?: string;
   /** IOPS for io1/io2/gp3 volumes. */
-  iops?: string;
+  iops?: string | number;
   /** Throughput for gp3 volumes (MiB/s). */
-  throughput?: string;
+  throughput?: string | number;
   /** Enable encryption (default: true). */
   encrypted?: boolean;
   /** KMS key ID for encryption. */
@@ -76,8 +76,8 @@ export function EbsStorageClass(props: EbsStorageClassProps): EbsStorageClassRes
     encrypted: String(encrypted),
   };
 
-  if (iops) parameters.iops = iops;
-  if (throughput) parameters.throughput = throughput;
+  if (iops !== undefined) parameters.iops = String(iops);
+  if (throughput !== undefined) parameters.throughput = String(throughput);
   if (kmsKeyId) parameters.kmsKeyId = kmsKeyId;
 
   const storageClassProps: Record<string, unknown> = {

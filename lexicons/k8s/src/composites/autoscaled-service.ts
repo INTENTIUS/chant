@@ -61,6 +61,14 @@ export interface AutoscaledServiceProps {
   namespace?: string;
   /** Environment variables for the container. */
   env?: Array<{ name: string; value: string }>;
+  /** Service account name for the pod. */
+  serviceAccountName?: string;
+  /** Volumes to attach to the pod. */
+  volumes?: Array<Record<string, unknown>>;
+  /** Volume mounts for the primary container. */
+  volumeMounts?: Array<Record<string, unknown>>;
+  /** Convenience: auto-generate emptyDir volumes + mounts for writable temp dirs (e.g. ["/tmp", "/var/cache/nginx"]). */
+  tmpDirs?: string[];
 }
 
 export interface AutoscaledServiceResult {
@@ -111,6 +119,10 @@ export function AutoscaledService(props: AutoscaledServiceProps): AutoscaledServ
     labels: extraLabels = {},
     namespace,
     env,
+    serviceAccountName,
+    volumes: explicitVolumes = [],
+    volumeMounts: explicitMounts = [],
+    tmpDirs = [],
   } = props;
 
   const commonLabels: Record<string, string> = {
@@ -133,6 +145,12 @@ export function AutoscaledService(props: AutoscaledServiceProps): AutoscaledServ
       labelSelector: { matchLabels: { "app.kubernetes.io/name": name } },
     }];
   })();
+
+  // Generate emptyDir volumes/mounts from tmpDirs, then merge with explicit
+  const tmpVolumes = tmpDirs.map((_, i) => ({ name: `tmp-${i}`, emptyDir: {} }));
+  const tmpMounts = tmpDirs.map((dir, i) => ({ name: `tmp-${i}`, mountPath: dir }));
+  const allVolumes = [...explicitVolumes, ...tmpVolumes];
+  const allMounts = [...explicitMounts, ...tmpMounts];
 
   const resources: Record<string, unknown> = {
     requests: { cpu: cpuRequest, memory: memoryRequest },
@@ -176,6 +194,7 @@ export function AutoscaledService(props: AutoscaledServiceProps): AutoscaledServ
               },
               ...(env && { env }),
               ...(securityContext && { securityContext }),
+              ...(allMounts.length > 0 && { volumeMounts: allMounts }),
             },
           ],
           ...(initContainers && {
@@ -189,6 +208,8 @@ export function AutoscaledService(props: AutoscaledServiceProps): AutoscaledServ
           ...(topologyConstraints && { topologySpreadConstraints: topologyConstraints }),
           ...(terminationGracePeriodSeconds !== undefined && { terminationGracePeriodSeconds }),
           ...(priorityClassName && { priorityClassName }),
+          ...(serviceAccountName && { serviceAccountName }),
+          ...(allVolumes.length > 0 && { volumes: allVolumes }),
         },
       },
     },

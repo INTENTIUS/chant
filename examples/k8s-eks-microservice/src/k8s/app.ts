@@ -62,46 +62,11 @@ const app = AutoscaledService({
     "app.kubernetes.io/part-of": "eks-microservice",
     "app.kubernetes.io/version": "v1.0.0",
   },
+  serviceAccountName: "microservice-app-sa",
+  tmpDirs: ["/tmp", "/var/cache/nginx"],
 });
 
-// Patch the deployment to add serviceAccountName and writable /tmp for nginx
-// (readOnlyRootFilesystem requires emptyDir mounts for nginx temp dirs)
-const deploySpec = app.deployment.spec as Record<string, unknown>;
-const podTemplate = deploySpec.template as Record<string, unknown>;
-const podSpec = podTemplate.spec as Record<string, unknown>;
-const containers = podSpec.containers as Record<string, unknown>[];
-const existingVolumes = (podSpec.volumes as unknown[]) ?? [];
-const tmpVolumes = [
-  { name: "tmp", emptyDir: {} },
-  { name: "nginx-cache", emptyDir: {} },
-];
-const tmpMounts = [
-  { name: "tmp", mountPath: "/tmp" },
-  { name: "nginx-cache", mountPath: "/var/cache/nginx" },
-];
-const container = containers[0];
-const existingMounts = (container.volumeMounts as unknown[]) ?? [];
-const patchedContainer = {
-  ...container,
-  volumeMounts: [...existingMounts, ...tmpMounts],
-};
-const patchedContainers = [patchedContainer];
-
-export const appDeployment = new Deployment({
-  ...app.deployment,
-  spec: {
-    ...deploySpec,
-    template: {
-      ...podTemplate,
-      spec: {
-        ...podSpec,
-        serviceAccountName: "microservice-app-sa",
-        volumes: [...existingVolumes, ...tmpVolumes],
-        containers: patchedContainers,
-      },
-    },
-  },
-});
+export const appDeployment = new Deployment(app.deployment);
 export const appService = new Service(app.service);
 export const appHpa = new HorizontalPodAutoscaler(app.hpa);
 export const appPdb = new PodDisruptionBudget(app.pdb!);

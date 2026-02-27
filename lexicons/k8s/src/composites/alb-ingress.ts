@@ -13,6 +13,7 @@ export interface AlbIngressHost {
     path: string;
     pathType?: string;
     serviceName: string;
+    /** Port on the Kubernetes Service (not the container port). */
     servicePort: number;
   }>;
 }
@@ -105,7 +106,7 @@ export function AlbIngress(props: AlbIngressProps): AlbIngressResult {
     annotations["alb.ingress.kubernetes.io/listen-ports"] = '[{"HTTPS":443}]';
   }
 
-  if (sslRedirect ?? (certificateArn !== undefined)) {
+  if (sslRedirect ?? !!certificateArn) {
     annotations["alb.ingress.kubernetes.io/ssl-redirect"] = "443";
   }
 

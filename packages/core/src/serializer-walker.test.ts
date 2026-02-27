@@ -101,6 +101,29 @@ describe("walkValue", () => {
     expect(walkValue((resource as any).Ref, names, mockVisitor)).toEqual({ __ref: "MyTable" });
   });
 
+  test("resolves __attrRef envelope inside intrinsic toJSON output", () => {
+    // Simulate an intrinsic whose toJSON() produces an __attrRef envelope
+    // (e.g., AttrRef inside a Sub template literal)
+    const intrinsic = {
+      [INTRINSIC_MARKER]: true as const,
+      toJSON: () => ({
+        MyIntrinsic: { __attrRef: { entity: "MyResource", attribute: "Arn" } },
+      }),
+    };
+    const names = new Map<Declarable, string>();
+    expect(walkValue(intrinsic, names, mockVisitor)).toEqual({
+      MyIntrinsic: { __getAtt: ["MyResource", "Arn"] },
+    });
+  });
+
+  test("resolves standalone __attrRef envelope in plain object", () => {
+    const names = new Map<Declarable, string>();
+    const value = { __attrRef: { entity: "MyBucket", attribute: "DomainName" } };
+    expect(walkValue(value, names, mockVisitor)).toEqual({
+      __getAtt: ["MyBucket", "DomainName"],
+    });
+  });
+
   test("complex nested structure", () => {
     const resource = makeDeclarable("Test::Role");
     const ref = new AttrRef(resource, "arn");

@@ -91,6 +91,80 @@ describe("WAW031: EKS Addon Missing ServiceAccountRoleArn", () => {
     expect(diags[0].entity).toBe("EfsCsi");
   });
 
+  // --- adot ---
+
+  test("ADOT addon without ServiceAccountRoleArn → warning", () => {
+    const ctx = makeCtx({
+      Resources: {
+        Adot: {
+          Type: "AWS::EKS::Addon",
+          Properties: {
+            AddonName: "adot",
+            ClusterName: "my-cluster",
+          },
+        },
+      },
+    });
+    const diags = checkAddonMissingRole(ctx);
+    expect(diags).toHaveLength(1);
+    expect(diags[0].message).toContain("adot");
+    expect(diags[0].entity).toBe("Adot");
+  });
+
+  test("ADOT addon with ServiceAccountRoleArn → no diagnostic", () => {
+    const ctx = makeCtx({
+      Resources: {
+        Adot: {
+          Type: "AWS::EKS::Addon",
+          Properties: {
+            AddonName: "adot",
+            ClusterName: "my-cluster",
+            ServiceAccountRoleArn: "arn:aws:iam::123456789012:role/adot-role",
+          },
+        },
+      },
+    });
+    const diags = checkAddonMissingRole(ctx);
+    expect(diags).toHaveLength(0);
+  });
+
+  // --- amazon-cloudwatch-observability ---
+
+  test("CloudWatch observability addon without ServiceAccountRoleArn → warning", () => {
+    const ctx = makeCtx({
+      Resources: {
+        CwObs: {
+          Type: "AWS::EKS::Addon",
+          Properties: {
+            AddonName: "amazon-cloudwatch-observability",
+            ClusterName: "my-cluster",
+          },
+        },
+      },
+    });
+    const diags = checkAddonMissingRole(ctx);
+    expect(diags).toHaveLength(1);
+    expect(diags[0].message).toContain("amazon-cloudwatch-observability");
+    expect(diags[0].entity).toBe("CwObs");
+  });
+
+  test("CloudWatch observability addon with ServiceAccountRoleArn → no diagnostic", () => {
+    const ctx = makeCtx({
+      Resources: {
+        CwObs: {
+          Type: "AWS::EKS::Addon",
+          Properties: {
+            AddonName: "amazon-cloudwatch-observability",
+            ClusterName: "my-cluster",
+            ServiceAccountRoleArn: { "Fn::GetAtt": ["CwObsRole", "Arn"] },
+          },
+        },
+      },
+    });
+    const diags = checkAddonMissingRole(ctx);
+    expect(diags).toHaveLength(0);
+  });
+
   // --- Addons that don't require IRSA ---
 
   test("vpc-cni addon without ServiceAccountRoleArn → no diagnostic", () => {

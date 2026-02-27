@@ -143,6 +143,76 @@ describe("k8sSerializer", () => {
     expect(result).not.toContain("spec:");
   });
 
+  test("ClusterRole is specless type", () => {
+    const entities = new Map<string, any>();
+    entities.set(
+      "viewRole",
+      mockResource("K8s::Rbac::ClusterRole", {
+        metadata: { name: "view-role" },
+        rules: [{ apiGroups: [""], resources: ["pods"], verbs: ["get", "list"] }],
+      }),
+    );
+
+    const result = k8sSerializer.serialize(entities);
+    expect(result).toContain("kind: ClusterRole");
+    expect(result).toContain("name: view-role");
+    expect(result).not.toContain("spec:");
+  });
+
+  test("ClusterRoleBinding is specless type", () => {
+    const entities = new Map<string, any>();
+    entities.set(
+      "viewBinding",
+      mockResource("K8s::Rbac::ClusterRoleBinding", {
+        metadata: { name: "view-binding" },
+        roleRef: { apiGroup: "rbac.authorization.k8s.io", kind: "ClusterRole", name: "view-role" },
+        subjects: [{ kind: "ServiceAccount", name: "default", namespace: "default" }],
+      }),
+    );
+
+    const result = k8sSerializer.serialize(entities);
+    expect(result).toContain("kind: ClusterRoleBinding");
+    expect(result).not.toContain("spec:");
+  });
+
+  test("StorageClass is specless type", () => {
+    const entities = new Map<string, any>();
+    entities.set(
+      "gp3",
+      mockResource("K8s::Storage::StorageClass", {
+        metadata: { name: "gp3-encrypted" },
+        provisioner: "ebs.csi.aws.com",
+        parameters: { type: "gp3", encrypted: "true" },
+        reclaimPolicy: "Delete",
+        volumeBindingMode: "WaitForFirstConsumer",
+      }),
+    );
+
+    const result = k8sSerializer.serialize(entities);
+    expect(result).toContain("kind: StorageClass");
+    expect(result).toContain("provisioner: ebs.csi.aws.com");
+    expect(result).not.toContain("spec:");
+  });
+
+  test("APIService is specless type", () => {
+    const entities = new Map<string, any>();
+    entities.set(
+      "metricsApi",
+      mockResource("K8s::Admissionregistration::APIService", {
+        metadata: { name: "v1beta1.metrics.k8s.io" },
+        group: "metrics.k8s.io",
+        version: "v1beta1",
+        service: { name: "metrics-server", namespace: "kube-system" },
+        groupPriorityMinimum: 100,
+        versionPriority: 100,
+      }),
+    );
+
+    const result = k8sSerializer.serialize(entities);
+    expect(result).toContain("kind: APIService");
+    expect(result).not.toContain("spec:");
+  });
+
   test("multi-resource entities joined by ---", () => {
     const entities = new Map<string, any>();
     entities.set(
@@ -246,6 +316,32 @@ describe("k8sSerializer", () => {
 
     const result = k8sSerializer.serialize(entities);
     expect(result).toBe("");
+  });
+
+  test("Namespaces appear before other resources regardless of insertion order", () => {
+    const entities = new Map<string, any>();
+    // Insert Deployment first, then Namespace — Namespace should still come first in output
+    entities.set(
+      "deploy",
+      mockResource("K8s::Apps::Deployment", {
+        metadata: { name: "app", namespace: "my-ns" },
+        spec: { replicas: 1 },
+      }),
+    );
+    entities.set(
+      "ns",
+      mockResource("K8s::Core::Namespace", {
+        metadata: { name: "my-ns" },
+      }),
+    );
+
+    const result = k8sSerializer.serialize(entities);
+    const docs = result.split("---");
+    // First document should be the Namespace
+    expect(docs[0]).toContain("kind: Namespace");
+    expect(docs[0]).toContain("name: my-ns");
+    // Second document should be the Deployment
+    expect(docs[1]).toContain("kind: Deployment");
   });
 
   test("key ordering: apiVersion, kind, metadata, spec, then rest", () => {

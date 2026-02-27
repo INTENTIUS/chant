@@ -326,6 +326,46 @@ describe("LexiconOutput serialization", () => {
   });
 });
 
+// ── StackOutput Serialization ──────────────────────────
+
+describe("stackOutput serialization", () => {
+  test("Id attribute uses Ref (not Fn::GetAtt)", () => {
+    const bucket = new MockBucket({ BucketName: "my-bucket" });
+    const idRef = new AttrRef(bucket, "Id");
+    idRef._setLogicalName("MyBucket");
+
+    const output = stackOutput(idRef);
+
+    const entities = new Map<string, Declarable>();
+    entities.set("MyBucket", bucket);
+    entities.set("MyBucketId", output as unknown as Declarable);
+
+    const result = awsSerializer.serialize(entities);
+    const template = JSON.parse(result as string);
+
+    expect(template.Outputs.MyBucketId.Value).toEqual({ Ref: "MyBucket" });
+  });
+
+  test("non-Id attribute uses Fn::GetAtt", () => {
+    const bucket = new MockBucket({ BucketName: "my-bucket" });
+    const arnRef = new AttrRef(bucket, "Arn");
+    arnRef._setLogicalName("MyBucket");
+
+    const output = stackOutput(arnRef);
+
+    const entities = new Map<string, Declarable>();
+    entities.set("MyBucket", bucket);
+    entities.set("MyBucketArn", output as unknown as Declarable);
+
+    const result = awsSerializer.serialize(entities);
+    const template = JSON.parse(result as string);
+
+    expect(template.Outputs.MyBucketArn.Value).toEqual({
+      "Fn::GetAtt": ["MyBucket", "Arn"],
+    });
+  });
+});
+
 // ── Nested Stack Serialization ──────────────────────────
 
 function mockChildBuildResult(childTemplate: object): BuildResult {

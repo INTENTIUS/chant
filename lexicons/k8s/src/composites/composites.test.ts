@@ -537,6 +537,63 @@ describe("AutoscaledService", () => {
     expect(podLabels.team).toBe("platform");
     expect(podLabels["app.kubernetes.io/name"]).toBe("api");
   });
+
+  test("serviceAccountName wired into pod spec", () => {
+    const result = AutoscaledService({ ...minProps, serviceAccountName: "my-sa" });
+    const spec = result.deployment.spec as any;
+    expect(spec.template.spec.serviceAccountName).toBe("my-sa");
+  });
+
+  test("no serviceAccountName by default", () => {
+    const result = AutoscaledService(minProps);
+    const spec = result.deployment.spec as any;
+    expect(spec.template.spec.serviceAccountName).toBeUndefined();
+  });
+
+  test("volumes and volumeMounts wired into pod spec", () => {
+    const result = AutoscaledService({
+      ...minProps,
+      volumes: [{ name: "data", emptyDir: {} }],
+      volumeMounts: [{ name: "data", mountPath: "/data" }],
+    });
+    const spec = result.deployment.spec as any;
+    expect(spec.template.spec.volumes).toEqual([{ name: "data", emptyDir: {} }]);
+    expect(spec.template.spec.containers[0].volumeMounts).toEqual([{ name: "data", mountPath: "/data" }]);
+  });
+
+  test("tmpDirs generates emptyDir volumes and mounts", () => {
+    const result = AutoscaledService({
+      ...minProps,
+      tmpDirs: ["/tmp", "/var/cache/nginx"],
+    });
+    const spec = result.deployment.spec as any;
+    expect(spec.template.spec.volumes).toEqual([
+      { name: "tmp-0", emptyDir: {} },
+      { name: "tmp-1", emptyDir: {} },
+    ]);
+    expect(spec.template.spec.containers[0].volumeMounts).toEqual([
+      { name: "tmp-0", mountPath: "/tmp" },
+      { name: "tmp-1", mountPath: "/var/cache/nginx" },
+    ]);
+  });
+
+  test("tmpDirs merges with explicit volumes/volumeMounts", () => {
+    const result = AutoscaledService({
+      ...minProps,
+      volumes: [{ name: "config", configMap: { name: "app-config" } }],
+      volumeMounts: [{ name: "config", mountPath: "/etc/config" }],
+      tmpDirs: ["/tmp"],
+    });
+    const spec = result.deployment.spec as any;
+    expect(spec.template.spec.volumes).toEqual([
+      { name: "config", configMap: { name: "app-config" } },
+      { name: "tmp-0", emptyDir: {} },
+    ]);
+    expect(spec.template.spec.containers[0].volumeMounts).toEqual([
+      { name: "config", mountPath: "/etc/config" },
+      { name: "tmp-0", mountPath: "/tmp" },
+    ]);
+  });
 });
 
 // ── WorkerPool ─────────────────────────────────────────────────────
@@ -1776,6 +1833,25 @@ describe("AlbIngress", () => {
     const meta = result.ingress.metadata as any;
     expect(meta.annotations["alb.ingress.kubernetes.io/scheme"]).toBe("internal");
   });
+
+  test("empty-string certificateArn does NOT set ssl-redirect", () => {
+    const result = AlbIngress({ ...minProps, certificateArn: "" });
+    const meta = result.ingress.metadata as any;
+    expect(meta.annotations["alb.ingress.kubernetes.io/ssl-redirect"]).toBeUndefined();
+    expect(meta.annotations["alb.ingress.kubernetes.io/certificate-arn"]).toBeUndefined();
+  });
+
+  test("explicit sslRedirect: true overrides empty certificateArn", () => {
+    const result = AlbIngress({ ...minProps, certificateArn: "", sslRedirect: true });
+    const meta = result.ingress.metadata as any;
+    expect(meta.annotations["alb.ingress.kubernetes.io/ssl-redirect"]).toBe("443");
+  });
+
+  test("explicit sslRedirect: false suppresses redirect even with cert", () => {
+    const result = AlbIngress({ ...minProps, certificateArn: "arn:aws:acm:us-east-1:123:cert/abc", sslRedirect: false });
+    const meta = result.ingress.metadata as any;
+    expect(meta.annotations["alb.ingress.kubernetes.io/ssl-redirect"]).toBeUndefined();
+  });
 });
 
 // ── EbsStorageClass ─────────────────────────────────────────────────
@@ -1813,6 +1889,20 @@ describe("EbsStorageClass", () => {
   test("storageClass is cluster-scoped (no namespace)", () => {
     const result = EbsStorageClass({ name: "sc" });
     expect((result.storageClass.metadata as any).namespace).toBeUndefined();
+  });
+
+  test("numeric iops and throughput coerced to strings", () => {
+    const result = EbsStorageClass({ name: "perf", iops: 5000, throughput: 250 });
+    const params = (result.storageClass as any).parameters;
+    expect(params.iops).toBe("5000");
+    expect(params.throughput).toBe("250");
+  });
+
+  test("string iops and throughput passed through", () => {
+    const result = EbsStorageClass({ name: "perf", iops: "3000", throughput: "125" });
+    const params = (result.storageClass as any).parameters;
+    expect(params.iops).toBe("3000");
+    expect(params.throughput).toBe("125");
   });
 });
 
