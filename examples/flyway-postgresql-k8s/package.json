@@ -4,8 +4,16 @@
   "type": "module",
   "private": true,
   "scripts": {
-    "build": "chant build src",
-    "lint": "chant lint src"
+    "cluster-create": "k3d cluster create flyway-pg -p '30432:30432@server:0' --wait",
+    "cluster-delete": "k3d cluster delete flyway-pg",
+    "build": "chant build src --lexicon k8s -o k8s.yaml && chant build src --lexicon flyway -o flyway.toml",
+    "lint": "chant lint src",
+    "apply": "kubectl apply -f k8s.yaml",
+    "wait": "kubectl -n flyway-pg rollout status statefulset/postgres --timeout=120s",
+    "migrate": "flyway migrate -environment=local",
+    "info": "flyway info -environment=local",
+    "run": "bun run cluster-create && bun run build && bun run apply && bun run wait && bun run migrate",
+    "teardown": "k3d cluster delete flyway-pg"
   },
   "dependencies": {
     "@intentius/chant": "workspace:*",

@@ -10,23 +10,22 @@ This example is designed to be deployed with an AI agent (e.g. Claude Code) usin
 
 ### Prerequisites
 
-**Local verification** (build, lint, test) requires only **Bun** and **just** — no AWS account needed.
+**Local verification** (build, lint, test) requires only **Bun** — no AWS account needed.
 
 - [Bun](https://bun.sh)
-- [just](https://github.com/casey/just) — command runner
 
 **AWS deployment** additionally requires:
 - [AWS CLI](https://docs.aws.amazon.com/cli/latest/userguide/getting-started-install.html) >= 2.x configured with EKS permissions
 - [kubectl](https://kubernetes.io/docs/tasks/tools/)
-- [jq](https://jqlang.github.io/jq/download/) (for `just load-outputs`)
-- **Registered domain** (any registrar) — after the first deploy, you'll update NS records at your registrar, then create the ACM certificate. The default `api.eks-microservice-demo.dev` works for building, testing, and deploying infrastructure (K8s workloads deploy without TLS; add the cert later via `just deploy-cert`).
+- [jq](https://jqlang.github.io/jq/download/) (for `bun run load-outputs`)
+- **Registered domain** (any registrar) — after the first deploy, you'll update NS records at your registrar, then create the ACM certificate. The default `api.eks-microservice-demo.dev` works for building, testing, and deploying infrastructure (K8s workloads deploy without TLS; add the cert later via `bun run deploy-cert`).
 
 ### Local verification (no AWS required)
 
 ```bash
 cp .env.example .env
-just build
-just lint
+bun run build
+bun run lint
 bun test
 ```
 
@@ -48,16 +47,16 @@ Deploy the k8s-eks-microservice example to AWS. My domain is myapp.example.com.
 
 Your agent will use the `chant-eks` skill to walk through:
 
-1. **Build** — `just build` generates both CloudFormation and K8s outputs
-2. **Deploy infrastructure** — `just deploy-infra domain=myapp.example.com` creates 34 CF resources (VPC, EKS cluster, node group, IAM roles, add-ons, Route53 hosted zone)
-3. **Configure kubectl** — `just configure-kubectl` sets up kubeconfig
-4. **Load outputs** — `just load-outputs` populates `.env` with real ARNs from stack outputs, and prints Route53 nameservers for NS delegation
+1. **Build** — `bun run build` generates both CloudFormation and K8s outputs
+2. **Deploy infrastructure** — `DOMAIN=myapp.example.com bun run deploy-infra` creates 34 CF resources (VPC, EKS cluster, node group, IAM roles, add-ons, Route53 hosted zone)
+3. **Configure kubectl** — `bun run configure-kubectl` sets up kubeconfig
+4. **Load outputs** — `bun run load-outputs` populates `.env` with real ARNs from stack outputs, and prints Route53 nameservers for NS delegation
 5. **NS delegation** — update your domain registrar's NS records to the Route53 nameservers shown in the output
-6. **Deploy certificate** — `just deploy-cert` requests an ACM certificate, creates the DNS validation CNAME in Route53, and waits for validation
-7. **Deploy workloads** — `just load-outputs && just build-k8s && just apply` deploys 36 K8s resources (re-run `load-outputs` to pick up the cert ARN)
-8. **Verify** — `just status` checks pods, ingress, daemonsets
+6. **Deploy certificate** — `bun run deploy-cert` requests an ACM certificate, creates the DNS validation CNAME in Route53, and waits for validation
+7. **Deploy workloads** — `bun run load-outputs && bun run build:k8s && bun run apply` deploys 36 K8s resources (re-run `load-outputs` to pick up the cert ARN)
+8. **Verify** — `bun run status` checks pods, ingress, daemonsets
 
-Or run phases 1-4 at once: `just deploy domain=myapp.example.com` (then do steps 5-8 manually after NS delegation).
+Or run phases 1-4 at once: `DOMAIN=myapp.example.com bun run deploy` (then do steps 5-8 manually after NS delegation).
 
 The deploy is two-phase because ACM certificate DNS validation requires the Route53 hosted zone's NS records to be delegated at your registrar first. Without delegation, the validation CNAME can't be resolved and the certificate stays in PENDING_VALIDATION indefinitely.
 
@@ -67,7 +66,7 @@ The deploy is two-phase because ACM certificate DNS validation requires the Rout
 Tear down the k8s-eks-microservice stack.
 ```
 
-Your agent runs `just teardown` — deletes K8s resources first, waits for ALB drain, then deletes the CloudFormation stack. **Delete order matters** — if the CF stack is deleted first, the ALB controller addon can't clean up the ALB.
+Your agent runs `bun run teardown` — deletes K8s resources first, waits for ALB drain, then deletes the CloudFormation stack. **Delete order matters** — if the CF stack is deleted first, the ALB controller addon can't clean up the ALB.
 
 ## Skills guide
 
@@ -137,7 +136,7 @@ Patterns to add next:
 | `networking.ts` | VPC with public/private subnets, IGW, NAT gateway |
 | `cluster.ts` | EKS cluster, managed node group, OIDC provider, IAM roles (cluster, node, app IRSA, ALB controller, ExternalDNS, FluentBit, ADOT) |
 | `addons.ts` | EKS add-ons: vpc-cni, aws-ebs-csi-driver, coredns, kube-proxy |
-| `dns.ts` | Route53 hosted zone (ACM certificate created separately via `just deploy-cert`) |
+| `dns.ts` | Route53 hosted zone (ACM certificate created separately via `bun run deploy-cert`) |
 | `params.ts` | CloudFormation parameters: environment, domainName, publicAccessCidr |
 
 ### K8s workloads (`src/k8s/`)
@@ -154,7 +153,7 @@ Patterns to add next:
 
 | File | Description |
 |------|-------------|
-| `config.ts` | Shared config — reads env vars from `.env` (populated by `just load-outputs`), falls back to placeholder defaults |
+| `config.ts` | Shared config — reads env vars from `.env` (populated by `bun run load-outputs`), falls back to placeholder defaults |
 
 ## Architecture
 
@@ -210,10 +209,10 @@ CloudFormation stack outputs map to K8s composite props via `.env`:
 | `externalDnsRoleArn` | `ingress.ts` | `ExternalDnsAgent({ iamRoleArn })` |
 | `fluentBitRoleArn` | `observability.ts` | `FluentBitAgent({ iamRoleArn })` |
 | `adotRoleArn` | `observability.ts` | `AdotCollector({ iamRoleArn })` |
-| ACM cert ARN (via `just deploy-cert`) | `ingress.ts` | `AlbIngress({ certificateArn })` |
+| ACM cert ARN (via `bun run deploy-cert`) | `ingress.ts` | `AlbIngress({ certificateArn })` |
 | Cluster name | `observability.ts` | `FluentBitAgent({ clusterName })`, `AdotCollector({ clusterName })` |
 
-Values flow through `.env` → `config.ts` → K8s source files. `just load-outputs` refreshes `.env` after any infra deploy.
+Values flow through `.env` → `config.ts` → K8s source files. `bun run load-outputs` refreshes `.env` after any infra deploy.
 
 ## Security hardening
 
@@ -221,7 +220,7 @@ This example includes EKS best-practice hardening:
 
 - **IRSA condition blocks** — trust policies restrict `AssumeRoleWithWebIdentity` to a specific `system:serviceaccount:namespace:name` and audience `sts.amazonaws.com`, preventing cross-SA role assumption
 - **Control plane logging** — all 5 log types (api, audit, authenticator, controllerManager, scheduler) enabled for CloudWatch
-- **API endpoint restriction** — `PublicAccessCidrs` parameter lets you restrict API server access to your IP (defaults to 0.0.0.0/0; use `cidr=` to narrow)
+- **API endpoint restriction** — `PublicAccessCidrs` parameter lets you restrict API server access to your IP (defaults to 0.0.0.0/0; use `CIDR=` env var to narrow)
 - **AL2023 AMI** — node group uses `AL2023_x86_64_STANDARD` (current-gen, hardened by default)
 - **Non-root container** — app runs `nginxinc/nginx-unprivileged` with `runAsNonRoot: true` on port 8080
 - **KMS secrets encryption** — envelope encryption for Kubernetes secrets via a dedicated KMS key with automatic rotation

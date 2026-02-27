@@ -4,10 +4,21 @@
   "type": "module",
   "private": true,
   "scripts": {
-    "build": "chant build src",
-    "build:aws": "chant build src --lexicon aws",
-    "build:k8s": "chant build src --lexicon k8s",
-    "lint": "chant lint src"
+    "build": "chant build src --lexicon aws -o templates/infra.json && chant build src --lexicon k8s -o k8s.yaml",
+    "build:aws": "chant build src --lexicon aws -o templates/infra.json",
+    "build:k8s": "chant build src --lexicon k8s -o k8s.yaml",
+    "lint": "chant lint src",
+    "deploy-infra": "aws cloudformation deploy --template-file templates/infra.json --stack-name eks-microservice --capabilities CAPABILITY_NAMED_IAM --parameter-overrides domainName=${DOMAIN:-api.eks-microservice-demo.dev} publicAccessCidr=${CIDR:-0.0.0.0/0}",
+    "configure-kubectl": "aws eks update-kubeconfig --name eks-microservice --region $(aws configure get region)",
+    "load-outputs": "bash scripts/load-outputs.sh",
+    "validate": "kubectl apply -f k8s.yaml --dry-run=server",
+    "apply": "kubectl apply -f k8s.yaml",
+    "wait": "kubectl -n microservice rollout status deployment/microservice-api --timeout=120s",
+    "status": "kubectl get pods -n microservice && kubectl get ingress -n microservice && kubectl get daemonsets -n amazon-cloudwatch && kubectl get daemonsets -n amazon-metrics",
+    "logs": "kubectl logs -n microservice -l app.kubernetes.io/name=microservice-api --tail=50",
+    "deploy-cert": "bash scripts/deploy-cert.sh",
+    "deploy": "bun run build && bun run deploy-infra && bun run configure-kubectl && bun run load-outputs && bun run build:k8s && bun run apply && bun run wait && bun run status",
+    "teardown": "bash scripts/teardown.sh"
   },
   "dependencies": {
     "@intentius/chant": "workspace:*",

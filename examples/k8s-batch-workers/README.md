@@ -28,23 +28,22 @@ Background processing platform demonstrating batch and worker composites: queue 
 ## Prerequisites
 
 - [Bun](https://bun.sh)
-- [just](https://github.com/casey/just) — command runner
 - [kubectl](https://kubernetes.io/docs/tasks/tools/) (for deploy/teardown)
 
 ## Usage
 
 ```bash
 # Build K8s manifests
-just build
+bun run build
 
 # Lint
-just lint
+bun run lint
 
 # Deploy
-just deploy
+bun run deploy
 
 # Cleanup
-just teardown
+bun run teardown
 ```
 
 ## Related examples

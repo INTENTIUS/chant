@@ -7,7 +7,6 @@ Demonstrates how `build()` handles multiple lexicons from a single `src/infra.ts
 ## Prerequisites
 
 - [Bun](https://bun.sh)
-- [just](https://github.com/casey/just) — command runner
 - [Docker](https://docs.docker.com/get-docker/)
 - [k3d](https://k3d.io/) (lightweight k3s in Docker)
 - [kubectl](https://kubernetes.io/docs/tasks/tools/)
@@ -16,7 +15,7 @@ Demonstrates how `build()` handles multiple lexicons from a single `src/infra.ts
 ## Quick Start
 
 ```bash
-just run
+bun run run
 ```
 
 This runs the full workflow: create cluster, build configs, deploy PostgreSQL, wait for readiness, and run migrations.
@@ -26,7 +25,7 @@ This runs the full workflow: create cluster, build configs, deploy PostgreSQL, w
 ### 1. Create a k3d cluster
 
 ```bash
-just cluster-create
+bun run cluster-create
 ```
 
 Creates a k3d cluster named `flyway-pg` with port 30432 mapped from the host to the cluster, so Flyway can reach PostgreSQL without `kubectl port-forward`.
@@ -34,7 +33,7 @@ Creates a k3d cluster named `flyway-pg` with port 30432 mapped from the host to 
 ### 2. Build
 
 ```bash
-just build
+bun run build
 ```
 
 Runs two `chant build` invocations:
@@ -45,8 +44,8 @@ Runs two `chant build` invocations:
 ### 3. Deploy PostgreSQL
 
 ```bash
-just apply
-just wait
+bun run apply
+bun run wait
 ```
 
 Applies the K8s manifests and waits for the StatefulSet to be ready.
@@ -54,7 +53,7 @@ Applies the K8s manifests and waits for the StatefulSet to be ready.
 ### 4. Run Migrations
 
 ```bash
-just migrate
+bun run migrate
 ```
 
 Runs Flyway migrations (V1–V3) against the database via the NodePort.
@@ -62,7 +61,7 @@ Runs Flyway migrations (V1–V3) against the database via the NodePort.
 ### 5. Tear Down
 
 ```bash
-just teardown
+bun run teardown
 ```
 
 Deletes the k3d cluster and all resources.

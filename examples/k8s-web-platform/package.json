@@ -4,9 +4,14 @@
   "type": "module",
   "private": true,
   "scripts": {
-    "build": "chant build src",
-    "build:k8s": "chant build src --lexicon k8s",
-    "lint": "chant lint src"
+    "build": "chant build src --lexicon k8s -o k8s.yaml",
+    "lint": "chant lint src",
+    "apply": "kubectl apply -f k8s.yaml",
+    "wait": "kubectl -n web-platform rollout status deployment/frontend --timeout=120s",
+    "status": "kubectl get pods -n web-platform",
+    "logs": "kubectl logs -n web-platform -l app.kubernetes.io/name=frontend --tail=50",
+    "deploy": "bun run build && bun run apply && bun run wait && bun run status",
+    "teardown": "kubectl delete -f k8s.yaml"
   },
   "dependencies": {
     "@intentius/chant": "workspace:*",
