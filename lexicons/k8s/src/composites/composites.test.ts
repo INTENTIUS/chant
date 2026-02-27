@@ -2294,7 +2294,7 @@ describe("ExternalDnsAgent security defaults", () => {
 });
 
 describe("FluentBitAgent security defaults", () => {
-  test("container has hardcoded PSS-safe securityContext", () => {
+  test("container runs as root (needs host log access) with other PSS hardening", () => {
     const result = FluentBitAgent({
       logGroup: "/aws/eks/test/containers",
       region: "us-east-1",
@@ -2302,14 +2302,15 @@ describe("FluentBitAgent security defaults", () => {
     });
     const spec = result.daemonSet.spec as any;
     const sc = spec.template.spec.containers[0].securityContext;
-    expect(sc.runAsNonRoot).toBe(true);
+    expect(sc.runAsUser).toBe(0);
+    expect(sc.runAsNonRoot).toBeUndefined();
     expect(sc.readOnlyRootFilesystem).toBe(true);
     expect(sc.allowPrivilegeEscalation).toBe(false);
   });
 });
 
 describe("AdotCollector security defaults", () => {
-  test("container has hardcoded PSS-safe securityContext", () => {
+  test("container runs as non-root with explicit UID (ADOT 'aoc' user)", () => {
     const result = AdotCollector({
       region: "us-east-1",
       clusterName: "test",
@@ -2317,6 +2318,7 @@ describe("AdotCollector security defaults", () => {
     const spec = result.daemonSet.spec as any;
     const sc = spec.template.spec.containers[0].securityContext;
     expect(sc.runAsNonRoot).toBe(true);
+    expect(sc.runAsUser).toBe(10001);
     expect(sc.readOnlyRootFilesystem).toBe(true);
     expect(sc.allowPrivilegeEscalation).toBe(false);
   });

@@ -131,7 +131,7 @@ export function FluentBitAgent(props: FluentBitAgentProps): FluentBitAgentResult
       { name: "state", mountPath: "/var/fluent-bit/state" },
     ],
     securityContext: {
-      runAsNonRoot: true,
+      runAsUser: 0,
       readOnlyRootFilesystem: true,
       allowPrivilegeEscalation: false,
     },

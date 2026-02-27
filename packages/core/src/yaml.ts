@@ -35,6 +35,13 @@ export function emitYAML(value: unknown, indent: number): string {
   }
 
   if (typeof value === "string") {
+    // Multiline strings use YAML literal block scalar (|)
+    if (value.includes("\n")) {
+      const lines = value.split("\n");
+      // Trim trailing empty line if present (common for template strings)
+      const trimmed = lines[lines.length - 1] === "" ? lines.slice(0, -1) : lines;
+      return "|\n" + trimmed.map((l) => `${prefix}${l}`).join("\n");
+    }
     // Quote strings that could be misinterpreted
     if (
       value === "" ||

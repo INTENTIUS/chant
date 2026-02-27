@@ -129,7 +129,7 @@ service:
     metrics:
       receivers: [otlp]
       processors: [batch]
-      exporters: [${exporterNames.join(", ")}]
+      exporters: [${exporterNames.filter((e) => e !== "awsxray").join(", ") || "awsemf"}]
     traces:
       receivers: [otlp]
       processors: [batch]
@@ -139,7 +139,7 @@ service:
   const container: Record<string, unknown> = {
     name,
     image,
-    command: ["--config=/etc/adot/config.yaml"],
+    args: ["--config=/etc/adot/config.yaml"],
     ports: [
       { containerPort: 4317, name: "otlp-grpc" },
       { containerPort: 4318, name: "otlp-http" },
@@ -153,6 +153,7 @@ service:
     ],
     securityContext: {
       runAsNonRoot: true,
+      runAsUser: 10001,
       readOnlyRootFilesystem: true,
       allowPrivilegeEscalation: false,
     },

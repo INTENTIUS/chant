@@ -1,4 +1,34 @@
 apiVersion: v1
+kind: Namespace
+metadata:
+  name: microservice
+  labels:
+    app.kubernetes.io/name: microservice
+    app.kubernetes.io/managed-by: chant
+    pod-security.kubernetes.io/enforce: restricted
+    pod-security.kubernetes.io/enforce-version: latest
+    pod-security.kubernetes.io/warn: restricted
+    pod-security.kubernetes.io/audit: restricted
+    app.kubernetes.io/component: namespace
+
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: amazon-cloudwatch
+  labels:
+    app.kubernetes.io/managed-by: chant
+
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: amazon-metrics
+  labels:
+    app.kubernetes.io/managed-by: chant
+
+---
+apiVersion: v1
 kind: LimitRange
 metadata:
   name: microservice-limits
@@ -20,20 +50,6 @@ spec:
       defaultRequest:
         cpu: '100m'
         memory: '128Mi'
-
----
-apiVersion: v1
-kind: Namespace
-metadata:
-  name: microservice
-  labels:
-    app.kubernetes.io/name: microservice
-    app.kubernetes.io/managed-by: chant
-    pod-security.kubernetes.io/enforce: restricted
-    pod-security.kubernetes.io/enforce-version: latest
-    pod-security.kubernetes.io/warn: restricted
-    pod-security.kubernetes.io/audit: restricted
-    app.kubernetes.io/component: namespace
 
 ---
 apiVersion: networking.k8s.io/v1
@@ -85,14 +101,15 @@ metadata:
     app.kubernetes.io/managed-by: chant
     app.kubernetes.io/component: config
 data:
-  config.yaml: 'server:
-  port: 8080
-  gracefulShutdown: 30s
-database:
-  maxConnections: 20
-  idleTimeout: 5m
-cache:
-  ttl: 60s'
+  config.yaml: |
+    server:
+      port: 8080
+      gracefulShutdown: 30s
+    database:
+      maxConnections: 20
+      idleTimeout: 5m
+    cache:
+      ttl: 60s
 
 ---
 apiVersion: apps/v1
@@ -158,9 +175,9 @@ spec:
             seccompProfile:
               type: RuntimeDefault
           volumeMounts:
-            - name: tmp
+            - name: tmp-0
               mountPath: /tmp
-            - name: nginx-cache
+            - name: tmp-1
               mountPath: /var/cache/nginx
       topologySpreadConstraints:
         - maxSkew: 1
@@ -171,9 +188,9 @@ spec:
               app.kubernetes.io/name: microservice-api
       serviceAccountName: microservice-app-sa
       volumes:
-        - name: tmp
+        - name: tmp-0
           emptyDir: {}
-        - name: nginx-cache
+        - name: tmp-1
           emptyDir: {}
 
 ---
@@ -419,6 +436,7 @@ rules:
       - pods
       - nodes
       - namespaces
+      - configmaps
     verbs:
       - get
       - list
@@ -574,39 +592,39 @@ metadata:
     app.kubernetes.io/managed-by: chant
     app.kubernetes.io/component: config
 data:
-  config.yaml: 'receivers:
-  otlp:
-    protocols:
-      grpc:
-        endpoint: 0.0.0.0:4317
-      http:
-        endpoint: 0.0.0.0:4318
-
-processors:
-  batch:
-    timeout: 30s
-    send_batch_size: 8192
-
-exporters:
-  awsemf:
-    region: us-east-2
-    namespace: ContainerInsights
-    log_group_name: ''/aws/containerinsights/eks-microservice/performance''
-    dimension_rollup_option: NoDimensionRollup
-  awsxray:
-    region: us-east-2
-
-service:
-  pipelines:
-    metrics:
-      receivers: [otlp]
-      processors: [batch]
-      exporters: [awsemf, awsxray]
-    traces:
-      receivers: [otlp]
-      processors: [batch]
-      exporters: [awsxray]
-'
+  config.yaml: |
+    receivers:
+      otlp:
+        protocols:
+          grpc:
+            endpoint: 0.0.0.0:4317
+          http:
+            endpoint: 0.0.0.0:4318
+    
+    processors:
+      batch:
+        timeout: 30s
+        send_batch_size: 8192
+    
+    exporters:
+      awsemf:
+        region: us-east-2
+        namespace: ContainerInsights
+        log_group_name: '/aws/containerinsights/eks-microservice/performance'
+        dimension_rollup_option: NoDimensionRollup
+      awsxray:
+        region: us-east-2
+    
+    service:
+      pipelines:
+        metrics:
+          receivers: [otlp]
+          processors: [batch]
+          exporters: [awsemf]
+        traces:
+          receivers: [otlp]
+          processors: [batch]
+          exporters: [awsxray]
 
 ---
 apiVersion: apps/v1
@@ -631,7 +649,7 @@ spec:
       containers:
         - name: adot-collector
           image: public.ecr.aws/aws-observability/aws-otel-collector:latest
-          command:
+          args:
             - --config=/etc/adot/config.yaml
           ports:
             - containerPort: 4317
@@ -651,6 +669,7 @@ spec:
               readOnly: true
           securityContext:
             runAsNonRoot: true
+            runAsUser: 10001
             readOnlyRootFilesystem: true
             allowPrivilegeEscalation: false
       volumes:
@@ -672,14 +691,6 @@ metadata:
     app.kubernetes.io/component: agent
   annotations:
     eks.amazonaws.com/role-arn: arn:aws:iam::354867293429:role/eks-microservice-adot-role
-
----
-apiVersion: v1
-kind: Namespace
-metadata:
-  name: amazon-cloudwatch
-  labels:
-    app.kubernetes.io/managed-by: chant
 
 ---
 apiVersion: rbac.authorization.k8s.io/v1
@@ -730,40 +741,40 @@ metadata:
     app.kubernetes.io/managed-by: chant
     app.kubernetes.io/component: config
 data:
-  fluent-bit.conf: '[SERVICE]
-    Flush         5
-    Log_Level     info
-    Daemon        off
-    Parsers_File  parsers.conf
-
-[INPUT]
-    Name              tail
-    Tag               kube.*
-    Path              /var/log/containers/*.log
-    Parser            docker
-    DB                /var/fluent-bit/state/flb_container.db
-    Mem_Buf_Limit     5MB
-    Skip_Long_Lines   On
-    Refresh_Interval  10
-
-[FILTER]
-    Name                kubernetes
-    Match               kube.*
-    Kube_URL            https://kubernetes.default.svc:443
-    Kube_CA_File        /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
-    Kube_Token_File     /var/run/secrets/kubernetes.io/serviceaccount/token
-    Merge_Log           On
-    K8S-Logging.Parser  On
-    K8S-Logging.Exclude Off
-
-[OUTPUT]
-    Name                cloudwatch_logs
-    Match               *
-    region              us-east-2
-    log_group_name      /aws/eks/eks-microservice/containers
-    log_stream_prefix   eks-microservice/
-    auto_create_group   true
-'
+  fluent-bit.conf: |
+    [SERVICE]
+        Flush         5
+        Log_Level     info
+        Daemon        off
+        Parsers_File  parsers.conf
+    
+    [INPUT]
+        Name              tail
+        Tag               kube.*
+        Path              /var/log/containers/*.log
+        Parser            docker
+        DB                /var/fluent-bit/state/flb_container.db
+        Mem_Buf_Limit     5MB
+        Skip_Long_Lines   On
+        Refresh_Interval  10
+    
+    [FILTER]
+        Name                kubernetes
+        Match               kube.*
+        Kube_URL            https://kubernetes.default.svc:443
+        Kube_CA_File        /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
+        Kube_Token_File     /var/run/secrets/kubernetes.io/serviceaccount/token
+        Merge_Log           On
+        K8S-Logging.Parser  On
+        K8S-Logging.Exclude Off
+    
+    [OUTPUT]
+        Name                cloudwatch_logs
+        Match               *
+        region              us-east-2
+        log_group_name      /aws/eks/eks-microservice/containers
+        log_stream_prefix   eks-microservice/
+        auto_create_group   true
 
 ---
 apiVersion: apps/v1
@@ -805,7 +816,7 @@ spec:
             - name: state
               mountPath: /var/fluent-bit/state
           securityContext:
-            runAsNonRoot: true
+            runAsUser: 0
             readOnlyRootFilesystem: true
             allowPrivilegeEscalation: false
       volumes:
@@ -833,14 +844,6 @@ metadata:
     app.kubernetes.io/component: agent
   annotations:
     eks.amazonaws.com/role-arn: arn:aws:iam::354867293429:role/eks-microservice-fluent-bit-role
-
----
-apiVersion: v1
-kind: Namespace
-metadata:
-  name: amazon-metrics
-  labels:
-    app.kubernetes.io/managed-by: chant
 
 ---
 apiVersion: networking.k8s.io/v1
@@ -965,6 +968,7 @@ spec:
               memory: '128Mi'
           securityContext:
             runAsNonRoot: true
+            runAsUser: 65534
             readOnlyRootFilesystem: true
             allowPrivilegeEscalation: false
 
@@ -980,4 +984,3 @@ metadata:
     app.kubernetes.io/component: dns
   annotations:
     eks.amazonaws.com/role-arn: arn:aws:iam::354867293429:role/eks-microservice-external-dns-role
-

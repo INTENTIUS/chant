@@ -147,7 +147,7 @@ export function MetricsServer(props: MetricsServerProps): MetricsServerResult {
       labels: { ...commonLabels, "app.kubernetes.io/component": "rbac" },
     },
     rules: [
-      { apiGroups: [""], resources: ["pods", "nodes", "namespaces"], verbs: ["get", "list", "watch"] },
+      { apiGroups: [""], resources: ["pods", "nodes", "namespaces", "configmaps"], verbs: ["get", "list", "watch"] },
       { apiGroups: [""], resources: ["nodes/metrics", "nodes/stats"], verbs: ["get"] },
     ],
   };

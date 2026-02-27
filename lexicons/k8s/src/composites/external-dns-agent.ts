@@ -112,6 +112,7 @@ export function ExternalDnsAgent(props: ExternalDnsAgentProps): ExternalDnsAgent
               },
               securityContext: {
                 runAsNonRoot: true,
+                runAsUser: 65534,
                 readOnlyRootFilesystem: true,
                 allowPrivilegeEscalation: false,
               },
