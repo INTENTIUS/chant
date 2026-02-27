@@ -23,6 +23,8 @@ Lint runs two layers in one pass:
 1. **Evaluability rules (EVL)** — ensures all resource property expressions can be statically evaluated. See [Evaluability Rules](/chant/lint-rules/evaluability/).
 2. **Correctness & style rules (COR)** — structural constraints like missing exports, circular dependencies, naming conventions. See [Correctness Rules](/chant/lint-rules/correctness/).
 
+Additionally, `chant build` runs **post-synth checks** against the serialized output (YAML, JSON, etc.). These lexicon-specific rules catch issues that only manifest in the generated output — for example, security misconfigurations, missing health probes, or invalid container commands. See your lexicon's lint rules documentation for the full list.
+
 ## Output Formats
 
 | Flag | Format |

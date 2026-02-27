@@ -35,7 +35,7 @@ Post-synth checks run against the serialized YAML after build.
 | WK8042 | Private keys in ConfigMaps or Secrets |
 | WK8202 | Privileged container (`privileged: true`) |
 | WK8203 | Writable root filesystem (`readOnlyRootFilesystem` not set) |
-| WK8204 | Container running as root (`runAsNonRoot` not set) |
+| WK8204 | Container running as root (`runAsNonRoot` not set, or `runAsNonRoot: true` without explicit `runAsUser`) |
 | WK8205 | Capabilities not dropped (`drop: ["ALL"]` missing) |
 | WK8207 | Host network access (`hostNetwork: true`) |
 | WK8208 | Host PID namespace (`hostPID: true`) |
@@ -60,6 +60,9 @@ Post-synth checks run against the serialized YAML after build.
 | WK8301 | Container missing health probes (skips Jobs/CronJobs) |
 | WK8302 | Single replica Deployment |
 | WK8303 | HA Deployment without PodDisruptionBudget |
+| WK8304 | SSL redirect without certificate (`ssl-redirect` annotation without `certificate-arn` or HTTPS listen-ports) |
+| WK8305 | Ingress port not matching Service (backend port doesn't match any declared Service port) |
+| WK8306 | Container `command[0]` starts with a flag (`--` or `-`) — should be a binary, flags belong in `args` |
 
 ## Running lint
 
