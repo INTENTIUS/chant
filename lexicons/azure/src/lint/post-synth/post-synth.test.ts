@@ -6,6 +6,20 @@ import { azr012 } from "./azr012";
 import { azr013 } from "./azr013";
 import { azr014 } from "./azr014";
 import { azr015 } from "./azr015";
+import { azr016 } from "./azr016";
+import { azr017 } from "./azr017";
+import { azr018 } from "./azr018";
+import { azr019 } from "./azr019";
+import { azr020 } from "./azr020";
+import { azr021 } from "./azr021";
+import { azr022 } from "./azr022";
+import { azr023 } from "./azr023";
+import { azr024 } from "./azr024";
+import { azr025 } from "./azr025";
+import { azr026 } from "./azr026";
+import { azr027 } from "./azr027";
+import { azr028 } from "./azr028";
+import { azr029 } from "./azr029";
 import { findArmResourceRefs, parseArmTemplate, extractRefsFromExpression, isBracketExpression } from "./arm-refs";
 
 function makeCtx(template: object) {
@@ -463,6 +477,666 @@ describe("AZR015: Missing Encryption", () => {
     });
 
     const diags = azr015.check(ctx);
+    expect(diags).toHaveLength(0);
+  });
+});
+
+// --- AZR016: Key Vault Soft Delete ---
+
+describe("AZR016: Key Vault Soft Delete", () => {
+  test("warns when soft delete is not enabled", () => {
+    const ctx = makeCtx({
+      $schema: "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+      contentVersion: "1.0.0.0",
+      resources: [
+        {
+          type: "Microsoft.KeyVault/vaults",
+          apiVersion: "2023-02-01",
+          name: "myVault",
+          location: "[resourceGroup().location]",
+          properties: {},
+        },
+      ],
+    });
+
+    const diags = azr016.check(ctx);
+    expect(diags).toHaveLength(1);
+    expect(diags[0].checkId).toBe("AZR016");
+    expect(diags[0].message).toContain("soft-delete");
+  });
+
+  test("no diagnostic when soft delete is enabled", () => {
+    const ctx = makeCtx({
+      $schema: "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+      contentVersion: "1.0.0.0",
+      resources: [
+        {
+          type: "Microsoft.KeyVault/vaults",
+          apiVersion: "2023-02-01",
+          name: "myVault",
+          location: "[resourceGroup().location]",
+          properties: { enableSoftDelete: true },
+        },
+      ],
+    });
+
+    const diags = azr016.check(ctx);
+    expect(diags).toHaveLength(0);
+  });
+});
+
+// --- AZR017: Key Vault Purge Protection ---
+
+describe("AZR017: Key Vault Purge Protection", () => {
+  test("warns when purge protection is not enabled", () => {
+    const ctx = makeCtx({
+      $schema: "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+      contentVersion: "1.0.0.0",
+      resources: [
+        {
+          type: "Microsoft.KeyVault/vaults",
+          apiVersion: "2023-02-01",
+          name: "myVault",
+          location: "[resourceGroup().location]",
+          properties: { enableSoftDelete: true },
+        },
+      ],
+    });
+
+    const diags = azr017.check(ctx);
+    expect(diags).toHaveLength(1);
+    expect(diags[0].checkId).toBe("AZR017");
+    expect(diags[0].message).toContain("purge protection");
+  });
+
+  test("no diagnostic when purge protection is enabled", () => {
+    const ctx = makeCtx({
+      $schema: "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+      contentVersion: "1.0.0.0",
+      resources: [
+        {
+          type: "Microsoft.KeyVault/vaults",
+          apiVersion: "2023-02-01",
+          name: "myVault",
+          location: "[resourceGroup().location]",
+          properties: { enableSoftDelete: true, enablePurgeProtection: true },
+        },
+      ],
+    });
+
+    const diags = azr017.check(ctx);
+    expect(diags).toHaveLength(0);
+  });
+});
+
+// --- AZR018: SQL Server Missing Auditing ---
+
+describe("AZR018: SQL Server Missing Auditing", () => {
+  test("warns when no auditing settings exist", () => {
+    const ctx = makeCtx({
+      $schema: "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+      contentVersion: "1.0.0.0",
+      resources: [
+        {
+          type: "Microsoft.Sql/servers",
+          apiVersion: "2022-05-01-preview",
+          name: "mySqlServer",
+          location: "[resourceGroup().location]",
+          properties: {},
+        },
+      ],
+    });
+
+    const diags = azr018.check(ctx);
+    expect(diags).toHaveLength(1);
+    expect(diags[0].checkId).toBe("AZR018");
+    expect(diags[0].message).toContain("auditing");
+  });
+
+  test("no diagnostic when auditing settings exist", () => {
+    const ctx = makeCtx({
+      $schema: "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+      contentVersion: "1.0.0.0",
+      resources: [
+        {
+          type: "Microsoft.Sql/servers",
+          apiVersion: "2022-05-01-preview",
+          name: "mySqlServer",
+          location: "[resourceGroup().location]",
+          properties: {},
+        },
+        {
+          type: "Microsoft.Sql/servers/auditingSettings",
+          apiVersion: "2022-05-01-preview",
+          name: "mySqlServer/default",
+          properties: { state: "Enabled" },
+        },
+      ],
+    });
+
+    const diags = azr018.check(ctx);
+    expect(diags).toHaveLength(0);
+  });
+});
+
+// --- AZR019: SQL Server Missing TDE ---
+
+describe("AZR019: SQL Server Missing TDE", () => {
+  test("warns when no TDE settings exist for database", () => {
+    const ctx = makeCtx({
+      $schema: "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+      contentVersion: "1.0.0.0",
+      resources: [
+        {
+          type: "Microsoft.Sql/servers/databases",
+          apiVersion: "2022-05-01-preview",
+          name: "mySqlServer/myDb",
+          location: "[resourceGroup().location]",
+          properties: {},
+        },
+      ],
+    });
+
+    const diags = azr019.check(ctx);
+    expect(diags).toHaveLength(1);
+    expect(diags[0].checkId).toBe("AZR019");
+    expect(diags[0].message).toContain("TDE");
+  });
+
+  test("no diagnostic when TDE exists", () => {
+    const ctx = makeCtx({
+      $schema: "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+      contentVersion: "1.0.0.0",
+      resources: [
+        {
+          type: "Microsoft.Sql/servers/databases",
+          apiVersion: "2022-05-01-preview",
+          name: "mySqlServer/myDb",
+          location: "[resourceGroup().location]",
+          properties: {},
+        },
+        {
+          type: "Microsoft.Sql/servers/databases/transparentDataEncryption",
+          apiVersion: "2022-05-01-preview",
+          name: "mySqlServer/myDb/current",
+          properties: { status: "Enabled" },
+        },
+      ],
+    });
+
+    const diags = azr019.check(ctx);
+    expect(diags).toHaveLength(0);
+  });
+});
+
+// --- AZR020: App Service Missing Managed Identity ---
+
+describe("AZR020: App Service Missing Managed Identity", () => {
+  test("warns when no identity configured", () => {
+    const ctx = makeCtx({
+      $schema: "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+      contentVersion: "1.0.0.0",
+      resources: [
+        {
+          type: "Microsoft.Web/sites",
+          apiVersion: "2022-09-01",
+          name: "myApp",
+          location: "[resourceGroup().location]",
+          properties: {},
+        },
+      ],
+    });
+
+    const diags = azr020.check(ctx);
+    expect(diags).toHaveLength(1);
+    expect(diags[0].checkId).toBe("AZR020");
+    expect(diags[0].message).toContain("managed identity");
+  });
+
+  test("no diagnostic when SystemAssigned identity exists", () => {
+    const ctx = makeCtx({
+      $schema: "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+      contentVersion: "1.0.0.0",
+      resources: [
+        {
+          type: "Microsoft.Web/sites",
+          apiVersion: "2022-09-01",
+          name: "myApp",
+          location: "[resourceGroup().location]",
+          identity: { type: "SystemAssigned" },
+          properties: {},
+        },
+      ],
+    });
+
+    const diags = azr020.check(ctx);
+    expect(diags).toHaveLength(0);
+  });
+});
+
+// --- AZR021: App Service Missing HTTPS-Only ---
+
+describe("AZR021: App Service Missing HTTPS-Only", () => {
+  test("warns when httpsOnly is not true", () => {
+    const ctx = makeCtx({
+      $schema: "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+      contentVersion: "1.0.0.0",
+      resources: [
+        {
+          type: "Microsoft.Web/sites",
+          apiVersion: "2022-09-01",
+          name: "myApp",
+          location: "[resourceGroup().location]",
+          properties: {},
+        },
+      ],
+    });
+
+    const diags = azr021.check(ctx);
+    expect(diags).toHaveLength(1);
+    expect(diags[0].checkId).toBe("AZR021");
+    expect(diags[0].message).toContain("HTTPS-only");
+  });
+
+  test("no diagnostic when httpsOnly is true", () => {
+    const ctx = makeCtx({
+      $schema: "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+      contentVersion: "1.0.0.0",
+      resources: [
+        {
+          type: "Microsoft.Web/sites",
+          apiVersion: "2022-09-01",
+          name: "myApp",
+          location: "[resourceGroup().location]",
+          properties: { httpsOnly: true },
+        },
+      ],
+    });
+
+    const diags = azr021.check(ctx);
+    expect(diags).toHaveLength(0);
+  });
+});
+
+// --- AZR022: App Service Missing Minimum TLS 1.2 ---
+
+describe("AZR022: App Service Missing Minimum TLS 1.2", () => {
+  test("warns when minTlsVersion is not set", () => {
+    const ctx = makeCtx({
+      $schema: "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+      contentVersion: "1.0.0.0",
+      resources: [
+        {
+          type: "Microsoft.Web/sites",
+          apiVersion: "2022-09-01",
+          name: "myApp",
+          location: "[resourceGroup().location]",
+          properties: { siteConfig: {} },
+        },
+      ],
+    });
+
+    const diags = azr022.check(ctx);
+    expect(diags).toHaveLength(1);
+    expect(diags[0].checkId).toBe("AZR022");
+    expect(diags[0].message).toContain("TLS 1.2");
+  });
+
+  test("no diagnostic when minTlsVersion is 1.2", () => {
+    const ctx = makeCtx({
+      $schema: "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+      contentVersion: "1.0.0.0",
+      resources: [
+        {
+          type: "Microsoft.Web/sites",
+          apiVersion: "2022-09-01",
+          name: "myApp",
+          location: "[resourceGroup().location]",
+          properties: { siteConfig: { minTlsVersion: "1.2" } },
+        },
+      ],
+    });
+
+    const diags = azr022.check(ctx);
+    expect(diags).toHaveLength(0);
+  });
+});
+
+// --- AZR023: VM Missing Managed Disk ---
+
+describe("AZR023: VM Missing Managed Disk", () => {
+  test("warns when OS disk has no managedDisk", () => {
+    const ctx = makeCtx({
+      $schema: "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+      contentVersion: "1.0.0.0",
+      resources: [
+        {
+          type: "Microsoft.Compute/virtualMachines",
+          apiVersion: "2023-07-01",
+          name: "myVm",
+          location: "[resourceGroup().location]",
+          properties: {
+            storageProfile: {
+              osDisk: { createOption: "FromImage" },
+            },
+          },
+        },
+      ],
+    });
+
+    const diags = azr023.check(ctx);
+    expect(diags).toHaveLength(1);
+    expect(diags[0].checkId).toBe("AZR023");
+    expect(diags[0].message).toContain("managed disks");
+  });
+
+  test("no diagnostic when managedDisk is configured", () => {
+    const ctx = makeCtx({
+      $schema: "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+      contentVersion: "1.0.0.0",
+      resources: [
+        {
+          type: "Microsoft.Compute/virtualMachines",
+          apiVersion: "2023-07-01",
+          name: "myVm",
+          location: "[resourceGroup().location]",
+          properties: {
+            storageProfile: {
+              osDisk: {
+                createOption: "FromImage",
+                managedDisk: { storageAccountType: "Premium_LRS" },
+              },
+            },
+          },
+        },
+      ],
+    });
+
+    const diags = azr023.check(ctx);
+    expect(diags).toHaveLength(0);
+  });
+});
+
+// --- AZR024: VM Missing Boot Diagnostics ---
+
+describe("AZR024: VM Missing Boot Diagnostics", () => {
+  test("warns when boot diagnostics not enabled", () => {
+    const ctx = makeCtx({
+      $schema: "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+      contentVersion: "1.0.0.0",
+      resources: [
+        {
+          type: "Microsoft.Compute/virtualMachines",
+          apiVersion: "2023-07-01",
+          name: "myVm",
+          location: "[resourceGroup().location]",
+          properties: {},
+        },
+      ],
+    });
+
+    const diags = azr024.check(ctx);
+    expect(diags).toHaveLength(1);
+    expect(diags[0].checkId).toBe("AZR024");
+    expect(diags[0].message).toContain("boot diagnostics");
+  });
+
+  test("no diagnostic when boot diagnostics enabled", () => {
+    const ctx = makeCtx({
+      $schema: "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+      contentVersion: "1.0.0.0",
+      resources: [
+        {
+          type: "Microsoft.Compute/virtualMachines",
+          apiVersion: "2023-07-01",
+          name: "myVm",
+          location: "[resourceGroup().location]",
+          properties: {
+            diagnosticsProfile: {
+              bootDiagnostics: { enabled: true },
+            },
+          },
+        },
+      ],
+    });
+
+    const diags = azr024.check(ctx);
+    expect(diags).toHaveLength(0);
+  });
+});
+
+// --- AZR025: AKS Missing RBAC ---
+
+describe("AZR025: AKS Missing RBAC", () => {
+  test("warns when RBAC not enabled", () => {
+    const ctx = makeCtx({
+      $schema: "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+      contentVersion: "1.0.0.0",
+      resources: [
+        {
+          type: "Microsoft.ContainerService/managedClusters",
+          apiVersion: "2023-08-01",
+          name: "myAks",
+          location: "[resourceGroup().location]",
+          properties: {},
+        },
+      ],
+    });
+
+    const diags = azr025.check(ctx);
+    expect(diags).toHaveLength(1);
+    expect(diags[0].checkId).toBe("AZR025");
+    expect(diags[0].message).toContain("RBAC");
+  });
+
+  test("no diagnostic when RBAC enabled", () => {
+    const ctx = makeCtx({
+      $schema: "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+      contentVersion: "1.0.0.0",
+      resources: [
+        {
+          type: "Microsoft.ContainerService/managedClusters",
+          apiVersion: "2023-08-01",
+          name: "myAks",
+          location: "[resourceGroup().location]",
+          properties: { enableRBAC: true },
+        },
+      ],
+    });
+
+    const diags = azr025.check(ctx);
+    expect(diags).toHaveLength(0);
+  });
+});
+
+// --- AZR026: AKS Missing Network Policy ---
+
+describe("AZR026: AKS Missing Network Policy", () => {
+  test("warns when no network policy configured", () => {
+    const ctx = makeCtx({
+      $schema: "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+      contentVersion: "1.0.0.0",
+      resources: [
+        {
+          type: "Microsoft.ContainerService/managedClusters",
+          apiVersion: "2023-08-01",
+          name: "myAks",
+          location: "[resourceGroup().location]",
+          properties: {
+            networkProfile: { networkPlugin: "azure" },
+          },
+        },
+      ],
+    });
+
+    const diags = azr026.check(ctx);
+    expect(diags).toHaveLength(1);
+    expect(diags[0].checkId).toBe("AZR026");
+    expect(diags[0].message).toContain("network policy");
+  });
+
+  test("no diagnostic when network policy set", () => {
+    const ctx = makeCtx({
+      $schema: "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+      contentVersion: "1.0.0.0",
+      resources: [
+        {
+          type: "Microsoft.ContainerService/managedClusters",
+          apiVersion: "2023-08-01",
+          name: "myAks",
+          location: "[resourceGroup().location]",
+          properties: {
+            networkProfile: { networkPlugin: "azure", networkPolicy: "azure" },
+          },
+        },
+      ],
+    });
+
+    const diags = azr026.check(ctx);
+    expect(diags).toHaveLength(0);
+  });
+});
+
+// --- AZR027: Container Registry Admin Enabled ---
+
+describe("AZR027: Container Registry Admin Enabled", () => {
+  test("warns when admin user is enabled", () => {
+    const ctx = makeCtx({
+      $schema: "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+      contentVersion: "1.0.0.0",
+      resources: [
+        {
+          type: "Microsoft.ContainerRegistry/registries",
+          apiVersion: "2023-07-01",
+          name: "myAcr",
+          location: "[resourceGroup().location]",
+          properties: { adminUserEnabled: true },
+        },
+      ],
+    });
+
+    const diags = azr027.check(ctx);
+    expect(diags).toHaveLength(1);
+    expect(diags[0].checkId).toBe("AZR027");
+    expect(diags[0].message).toContain("admin user");
+  });
+
+  test("no diagnostic when admin user is disabled", () => {
+    const ctx = makeCtx({
+      $schema: "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+      contentVersion: "1.0.0.0",
+      resources: [
+        {
+          type: "Microsoft.ContainerRegistry/registries",
+          apiVersion: "2023-07-01",
+          name: "myAcr",
+          location: "[resourceGroup().location]",
+          properties: { adminUserEnabled: false },
+        },
+      ],
+    });
+
+    const diags = azr027.check(ctx);
+    expect(diags).toHaveLength(0);
+  });
+});
+
+// --- AZR028: Network Interface Missing NSG ---
+
+describe("AZR028: Network Interface Missing NSG", () => {
+  test("warns when NIC has no NSG", () => {
+    const ctx = makeCtx({
+      $schema: "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+      contentVersion: "1.0.0.0",
+      resources: [
+        {
+          type: "Microsoft.Network/networkInterfaces",
+          apiVersion: "2023-05-01",
+          name: "myNic",
+          location: "[resourceGroup().location]",
+          properties: {
+            ipConfigurations: [{ name: "ipconfig1", properties: {} }],
+          },
+        },
+      ],
+    });
+
+    const diags = azr028.check(ctx);
+    expect(diags).toHaveLength(1);
+    expect(diags[0].checkId).toBe("AZR028");
+    expect(diags[0].message).toContain("NSG");
+  });
+
+  test("no diagnostic when NSG is associated", () => {
+    const ctx = makeCtx({
+      $schema: "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+      contentVersion: "1.0.0.0",
+      resources: [
+        {
+          type: "Microsoft.Network/networkInterfaces",
+          apiVersion: "2023-05-01",
+          name: "myNic",
+          location: "[resourceGroup().location]",
+          properties: {
+            ipConfigurations: [{ name: "ipconfig1", properties: {} }],
+            networkSecurityGroup: { id: "[resourceId('Microsoft.Network/networkSecurityGroups', 'myNsg')]" },
+          },
+        },
+      ],
+    });
+
+    const diags = azr028.check(ctx);
+    expect(diags).toHaveLength(0);
+  });
+});
+
+// --- AZR029: Disk Missing Encryption ---
+
+describe("AZR029: Disk Missing Encryption", () => {
+  test("warns when disk has no encryption", () => {
+    const ctx = makeCtx({
+      $schema: "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+      contentVersion: "1.0.0.0",
+      resources: [
+        {
+          type: "Microsoft.Compute/disks",
+          apiVersion: "2023-04-02",
+          name: "myDisk",
+          location: "[resourceGroup().location]",
+          properties: {
+            creationData: { createOption: "Empty" },
+            diskSizeGB: 128,
+          },
+        },
+      ],
+    });
+
+    const diags = azr029.check(ctx);
+    expect(diags).toHaveLength(1);
+    expect(diags[0].checkId).toBe("AZR029");
+    expect(diags[0].message).toContain("encryption");
+  });
+
+  test("no diagnostic when encryption configured", () => {
+    const ctx = makeCtx({
+      $schema: "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+      contentVersion: "1.0.0.0",
+      resources: [
+        {
+          type: "Microsoft.Compute/disks",
+          apiVersion: "2023-04-02",
+          name: "myDisk",
+          location: "[resourceGroup().location]",
+          properties: {
+            creationData: { createOption: "Empty" },
+            diskSizeGB: 128,
+            encryption: { type: "EncryptionAtRestWithPlatformKey" },
+          },
+        },
+      ],
+    });
+
+    const diags = azr029.check(ctx);
     expect(diags).toHaveLength(0);
   });
 });

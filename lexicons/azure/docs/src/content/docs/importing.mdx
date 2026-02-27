@@ -1,0 +1,103 @@
+---
+title: "Importing ARM Templates"
+description: "Import existing ARM templates and convert to chant TypeScript"
+---
+
+The Azure lexicon can parse existing ARM template JSON and generate equivalent chant TypeScript code.
+
+## Import workflow
+
+```bash
+# Import an existing ARM template
+chant import template.json
+
+# This creates src/main.ts with typed resource declarations
+```
+
+## How it works
+
+The import pipeline has two stages:
+
+1. **Parser** (`ArmParser`) — Parses ARM JSON into an intermediate representation (IR)
+2. **Generator** (`ArmGenerator`) — Converts IR to idiomatic TypeScript
+
+### What gets parsed
+
+- **Resources** — All resources with their types, names, and properties
+- **Parameters** — Converted to `CoreParameter` declarations
+- **Resource-level fields** — `sku`, `kind`, `identity`, `tags`, `zones`, `plan`, `location`
+- **Bracket expressions** — Converted to intrinsic function calls:
+  - `[resourceId(...)]` → `ResourceId(...)`
+  - `[reference(...)]` → `Reference(...)`
+  - `[parameters('name')]` → parameter reference
+  - `[resourceGroup().location]` → `Azure.ResourceGroupLocation`
+  - `[subscription().subscriptionId]` → `Azure.SubscriptionId`
+  - `[concat(...)]` → `Concat(...)`
+  - `[uniqueString(...)]` → `UniqueString(...)`
+- **dependsOn** — Preserved as dependency declarations
+
+### Example
+
+Input ARM template:
+```json
+{
+  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+  "contentVersion": "1.0.0.0",
+  "parameters": {
+    "storageName": {
+      "type": "string",
+      "metadata": { "description": "Storage account name" }
+    }
+  },
+  "resources": [
+    {
+      "type": "Microsoft.Storage/storageAccounts",
+      "apiVersion": "2023-05-01",
+      "name": "[parameters('storageName')]",
+      "location": "[resourceGroup().location]",
+      "kind": "StorageV2",
+      "sku": { "name": "Standard_LRS" },
+      "properties": {
+        "supportsHttpsTrafficOnly": true
+      }
+    }
+  ]
+}
+```
+
+Generated TypeScript:
+```typescript
+import { StorageAccount, Azure } from "@intentius/chant-lexicon-azure";
+
+export const storage = new StorageAccount({
+  location: Azure.ResourceGroupLocation,
+  kind: "StorageV2",
+  sku: { name: "Standard_LRS" },
+  supportsHttpsTrafficOnly: true,
+});
+```
+
+## Template detection
+
+The lexicon automatically detects ARM templates by checking for:
+- A `$schema` property containing `deploymentTemplate`
+- A `resources` array
+
+```bash
+# Auto-detect and import
+chant import template.json  # detects ARM format automatically
+```
+
+## Round-trip workflow
+
+1. Import an existing ARM template → TypeScript
+2. Modify the TypeScript (add resources, apply composites, etc.)
+3. Build back to ARM JSON
+4. Deploy with Azure CLI
+
+```bash
+chant import legacy-template.json
+# Edit src/main.ts as needed
+chant build --output dist/template.json
+az deployment group create --template-file dist/template.json
+```

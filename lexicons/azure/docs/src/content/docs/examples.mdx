@@ -1,0 +1,147 @@
+---
+title: "Examples"
+description: "Walkthrough of each example project"
+---
+
+The Azure lexicon ships with several example projects demonstrating common patterns.
+
+## basic-storage
+
+A minimal storage account with secure defaults.
+
+```typescript
+import { StorageAccount, Azure } from "@intentius/chant-lexicon-azure";
+
+export const storage = new StorageAccount({
+  name: "mystorageaccount",
+  location: Azure.ResourceGroupLocation,
+  kind: "StorageV2",
+  sku: { name: "Standard_LRS" },
+  supportsHttpsTrafficOnly: true,
+  minimumTlsVersion: "TLS1_2",
+  allowBlobPublicAccess: false,
+});
+```
+
+**Demonstrates:** Basic resource declaration, Azure pseudo-parameters, security properties.
+
+## web-app
+
+An App Service web application with plan, managed identity, and HTTPS.
+
+```typescript
+import { AppService } from "@intentius/chant-lexicon-azure";
+import { defaultTags } from "@intentius/chant-lexicon-azure";
+
+const { plan, webApp } = AppService({
+  name: "my-web-app",
+  sku: "B1",
+  runtime: "NODE|18-lts",
+  tags: { environment: "dev" },
+});
+
+export { plan, webApp };
+
+export const tags = defaultTags([
+  { key: "Project", value: "web-app-example" },
+]);
+```
+
+**Demonstrates:** Composites, default tags, managed identity, HTTPS-only.
+
+## aks-cluster
+
+An AKS Kubernetes cluster with virtual network and container registry.
+
+```typescript
+import { AksCluster, VnetDefault, ContainerRegistrySecure } from "@intentius/chant-lexicon-azure";
+
+const { virtualNetwork, subnet1, subnet2, nsg, routeTable } = VnetDefault({
+  name: "aks-vnet",
+});
+
+const { cluster } = AksCluster({
+  name: "my-aks",
+  nodeCount: 3,
+  vmSize: "Standard_D2s_v5",
+});
+
+const { registry } = ContainerRegistrySecure({
+  name: "myaksacr",
+});
+
+export { virtualNetwork, subnet1, subnet2, nsg, routeTable, cluster, registry };
+```
+
+**Demonstrates:** Multiple composites, networking, AKS + ACR pattern.
+
+## vnet-vms
+
+A virtual network with Linux VMs in two subnets.
+
+```typescript
+import { VnetDefault, VmLinux } from "@intentius/chant-lexicon-azure";
+
+const { virtualNetwork, subnet1, subnet2, nsg, routeTable } = VnetDefault({
+  name: "my-vnet",
+});
+
+const vm1 = VmLinux({
+  name: "web-server",
+  vmSize: "Standard_B2s",
+  adminUsername: "azureuser",
+  sshPublicKey: "ssh-rsa AAAA...",
+  subnetId: "[resourceId('Microsoft.Network/virtualNetworks/subnets', 'my-vnet', 'subnet-1')]",
+  publicIp: true,
+});
+
+export { virtualNetwork, subnet1, subnet2, nsg, routeTable };
+export const { virtualMachine, nic, nsg: vmNsg, publicIpAddress } = vm1;
+```
+
+**Demonstrates:** VNet + VM composite composition, public IP, SSH access.
+
+## multi-resource
+
+A multi-tier application with storage, SQL database, Key Vault, and web app.
+
+```typescript
+import {
+  StorageAccountSecure,
+  SqlDatabase,
+  KeyVaultSecure,
+  AppService,
+} from "@intentius/chant-lexicon-azure";
+
+const { storageAccount } = StorageAccountSecure({ name: "appstorage01" });
+const { server, database, firewallRule } = SqlDatabase({
+  name: "app-sql",
+  adminLogin: "sqladmin",
+  adminPassword: "[parameters('sqlPassword')]",
+});
+const { vault } = KeyVaultSecure({
+  name: "app-vault",
+  tenantId: "[subscription().tenantId]",
+});
+const { plan, webApp } = AppService({
+  name: "my-app",
+  sku: "P1v3",
+});
+
+export { storageAccount, server, database, firewallRule, vault, plan, webApp };
+```
+
+**Demonstrates:** Full-stack application, multiple composites, cross-resource patterns.
+
+## Running examples
+
+```bash
+# Build any example
+cd lexicons/azure/examples/basic-storage
+chant build --output dist/template.json
+
+# Validate without deploying
+az deployment group validate \
+  --resource-group my-rg \
+  --template-file dist/template.json
+```

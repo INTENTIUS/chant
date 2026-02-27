@@ -1,0 +1,114 @@
+---
+title: "Parameters & Outputs"
+description: "ARM template parameters and outputs with CoreParameter and StackOutput"
+---
+
+## Parameters
+
+Use `CoreParameter` from the core package to define ARM template parameters. These become `parameters` in the output JSON.
+
+```typescript
+import { CoreParameter } from "@intentius/chant";
+
+export const environment = new CoreParameter({
+  name: "environment",
+  type: "string",
+  default: "dev",
+  allowedValues: ["dev", "staging", "production"],
+});
+
+export const location = new CoreParameter({
+  name: "location",
+  type: "string",
+  default: "[resourceGroup().location]",
+});
+
+export const nodeCount = new CoreParameter({
+  name: "nodeCount",
+  type: "int",
+  default: 3,
+});
+```
+
+### Generated ARM output
+
+```json
+{
+  "parameters": {
+    "environment": {
+      "type": "string",
+      "defaultValue": "dev",
+      "allowedValues": ["dev", "staging", "production"]
+    },
+    "location": {
+      "type": "string",
+      "defaultValue": "[resourceGroup().location]"
+    },
+    "nodeCount": {
+      "type": "int",
+      "defaultValue": 3
+    }
+  }
+}
+```
+
+### Referencing parameters
+
+Parameters are referenced via ARM bracket expressions:
+
+```typescript
+export const storage = new StorageAccount({
+  name: "[parameters('storageName')]",
+  location: "[parameters('location')]",
+});
+```
+
+## Outputs
+
+Use `StackOutput` from the core package to define ARM template outputs.
+
+```typescript
+import { StackOutput } from "@intentius/chant";
+import { Reference } from "@intentius/chant-lexicon-azure";
+
+export const storageEndpoint = new StackOutput({
+  name: "storageEndpoint",
+  value: Reference("myStorage").primaryEndpoints.blob,
+});
+
+export const storageId = new StackOutput({
+  name: "storageAccountId",
+  value: "[resourceId('Microsoft.Storage/storageAccounts', 'myStorage')]",
+});
+```
+
+### Generated ARM output
+
+```json
+{
+  "outputs": {
+    "storageEndpoint": {
+      "type": "string",
+      "value": "[reference('myStorage').primaryEndpoints.blob]"
+    },
+    "storageAccountId": {
+      "type": "string",
+      "value": "[resourceId('Microsoft.Storage/storageAccounts', 'myStorage')]"
+    }
+  }
+}
+```
+
+## Parameter types
+
+ARM supports these parameter types, mapped from `CoreParameter`:
+
+| CoreParameter type | ARM type | Notes |
+|-------------------|----------|-------|
+| `"string"` | `string` | Most common |
+| `"int"` | `int` | Integer values |
+| `"bool"` | `bool` | Boolean values |
+| `"array"` | `array` | JSON arrays |
+| `"object"` | `object` | JSON objects |
+| `"secureString"` | `secureString` | Passwords, keys (not logged) |
+| `"secureObject"` | `secureObject` | Sensitive objects |

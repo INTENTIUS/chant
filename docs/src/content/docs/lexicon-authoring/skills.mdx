@@ -5,14 +5,24 @@ description: AI agent skill files contributed by lexicons
 
 Lexicon authors can include skill files — markdown documents that teach AI agents how to work with the lexicon's resource types and patterns.
 
+## The 3-Skill Pattern
+
+A mature lexicon should include 3 skills covering different scopes:
+
+| Skill | Purpose | Example |
+|-------|---------|---------|
+| **Core** | Syntax, resource types, basic usage | `chant-azure.md` — ARM resource declarations, intrinsics, pseudo-parameters |
+| **Platform-specific** | Cloud/platform security and integration patterns | `chant-azure-security.md` — Managed identity, encryption, TLS, NSG |
+| **Advanced patterns** | Complex usage, composites, multi-resource patterns | `chant-azure-patterns.md` — Linked templates, conditional resources, tagging strategies |
+
 ## Skill File Format
 
 Each skill file is a markdown document with YAML frontmatter:
 
 ```markdown
 ---
-metadata:
-  source: chant-lexicon
+source: chant-lexicon
+lexicon: my-lexicon
 ---
 # Resource Authoring
 
@@ -23,7 +33,51 @@ When writing resources with chant and this lexicon:
 3. Reference other resources via direct imports
 ```
 
-The `source: chant-lexicon` metadata marker identifies the skill as lexicon-contributed.
+### Frontmatter Fields
+
+| Field | Description |
+|-------|-------------|
+| `source` | Always `chant-lexicon` — identifies as lexicon-contributed |
+| `lexicon` | The lexicon name (e.g., `azure`, `k8s`) |
+
+## Skill Content Guidelines
+
+Good skill content:
+
+- **Starts with overview** — What the skill covers and when to use it
+- **Uses code examples** — Real, runnable TypeScript snippets
+- **Maps to checks** — Security skills reference the post-synth checks they relate to
+- **Covers composites** — Shows how to use composites for common patterns
+- **Includes reference tables** — Quick-reference tables for functions, parameters, etc.
+
+## Registering Skills in Plugin
+
+Return skill definitions from your plugin's `skills()` method:
+
+```typescript
+skills(): SkillDefinition[] {
+  const { readFileSync } = require("fs");
+  const { join, dirname } = require("path");
+  const dir = dirname(fileURLToPath(import.meta.url));
+
+  const skills: SkillDefinition[] = [];
+
+  const skillFiles = [
+    { file: "chant-my-lexicon.md", name: "chant-my-lexicon", ... },
+    { file: "chant-my-lexicon-security.md", name: "chant-my-lexicon-security", ... },
+    { file: "chant-my-lexicon-patterns.md", name: "chant-my-lexicon-patterns", ... },
+  ];
+
+  for (const skill of skillFiles) {
+    try {
+      const content = readFileSync(join(dir, "skills", skill.file), "utf-8");
+      skills.push({ name: skill.name, content, ... });
+    } catch { /* skip missing */ }
+  }
+
+  return skills;
+}
+```
 
 ## Installation
 
@@ -49,6 +103,11 @@ const skills = collectSkills(myPlugin.skills());
 ```
 
 This is passed to `packagePipeline` as part of the bundle configuration.
+
+## Reference
+
+- K8s skills: `lexicons/k8s/src/skills/` — 3 files (core, EKS, patterns)
+- Azure skills: `lexicons/azure/src/skills/` — 3 files (core, security, patterns)
 
 ## Next Steps
 

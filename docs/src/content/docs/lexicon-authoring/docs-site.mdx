@@ -1,0 +1,130 @@
+---
+title: Docs Site Setup
+description: Setting up a Starlight documentation site for your lexicon
+---
+
+Each lexicon can include a documentation site built with [Astro Starlight](https://starlight.astro.build/). The docs site lives in `lexicons/<name>/docs/`.
+
+## Quick Setup
+
+Create the docs directory structure:
+
+```bash
+mkdir -p lexicons/my-lexicon/docs/src/content/docs
+```
+
+### astro.config.mjs
+
+```javascript
+// @ts-check
+import { defineConfig } from 'astro/config';
+import starlight from '@astrojs/starlight';
+
+export default defineConfig({
+  base: '/chant/lexicons/my-lexicon/',
+  integrations: [
+    starlight({
+      title: 'My Lexicon',
+      sidebar: [
+        { label: '← chant docs', link: '../../' },
+        { label: 'Overview', slug: 'index' },
+        { label: 'Getting Started', slug: 'getting-started' },
+        // ... add more pages
+      ],
+    }),
+  ],
+});
+```
+
+### package.json
+
+```json
+{
+  "name": "@intentius/chant-lexicon-my-lexicon-docs",
+  "type": "module",
+  "version": "0.0.1",
+  "private": true,
+  "scripts": {
+    "dev": "astro dev",
+    "build": "astro build",
+    "preview": "astro preview"
+  },
+  "dependencies": {
+    "@astrojs/starlight": "^0.37.6",
+    "astro": "^5.6.1",
+    "sharp": "^0.34.2"
+  }
+}
+```
+
+### tsconfig.json
+
+```json
+{
+  "extends": "astro/tsconfigs/strict",
+  "include": [".astro/types.d.ts", "**/*"],
+  "exclude": ["dist"]
+}
+```
+
+## Recommended Page Structure
+
+A comprehensive docs site should have these pages (as MDX files in `docs/src/content/docs/`):
+
+| Page | File | Description |
+|------|------|-------------|
+| Overview | `index.mdx` | Installation, quick start, feature list |
+| Getting Started | `getting-started.mdx` | First project walkthrough |
+| Resources | `resources.mdx` | Resource types, resource-level fields |
+| Intrinsics | `intrinsics.mdx` | Template functions (if applicable) |
+| Pseudo-Parameters | `pseudo-parameters.mdx` | Deployment-time parameters |
+| Composites | `composites.mdx` | All composites with examples |
+| Parameters & Outputs | `parameters-outputs.mdx` | Template parameters and outputs |
+| Lint Rules | `lint-rules.mdx` | All pre-synth and post-synth checks |
+| Importing | `importing.mdx` | Import existing templates |
+| Advanced Patterns | `linked-templates.mdx` | Advanced usage patterns |
+| Examples | `examples.mdx` | Walkthrough of example projects |
+
+## Building the Docs
+
+```bash
+# Development server
+cd lexicons/my-lexicon/docs
+bun install
+bun run dev
+
+# Production build
+bun run build
+```
+
+## Wiring into Package Scripts
+
+Add a `docs` script to your lexicon's `package.json`:
+
+```json
+{
+  "scripts": {
+    "docs": "bun src/codegen/docs-cli.ts",
+    "docs:dev": "cd docs && bun run dev",
+    "docs:build": "cd docs && bun run build"
+  }
+}
+```
+
+## Page Frontmatter
+
+Each MDX page requires YAML frontmatter:
+
+```mdx
+---
+title: "Page Title"
+description: "Brief description for SEO and sidebar"
+---
+
+Content goes here...
+```
+
+## Reference
+
+- K8s docs: `lexicons/k8s/docs/` — 11 pages with full sidebar navigation
+- Azure docs: `lexicons/azure/docs/` — 11 pages covering ARM templates

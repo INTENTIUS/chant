@@ -47,7 +47,10 @@ Warnings — these make the lexicon useful in practice.
 | `default-labels.test.ts` exists | Default labels/annotations tested |
 | `coverage.test.ts` exists | Coverage analysis tested |
 | `coverage.ts` implemented | No "not yet implemented" placeholder |
-| At least 8 doc pages | Comprehensive documentation |
+| At least 8 doc pages | Comprehensive documentation — recommended topics: overview, getting-started, resources, intrinsics, pseudo-parameters, composites, lint-rules, importing |
+| At least 15 post-synth checks | Covering security, correctness, and best practices (see [Post-Synth Check Guide](/chant/lexicon-authoring/post-synth-checks/)) |
+| At least 3 skills | Core patterns, cloud/platform-specific, advanced patterns (see [Skills Authoring Guide](/chant/lexicon-authoring/skills/)) |
+| At least 3 initTemplates | Default, domain-specific variant 1, domain-specific variant 2 |
 
 ## Tier 3 — Thoroughness
 
@@ -65,6 +68,19 @@ Informational — tracks depth of testing and feature coverage.
 | At least 5 composites | Rich composition library |
 | `src/actions/` with actions | Automation actions |
 | At least 5 examples with tests | Tested usage patterns (per-example or consolidated root test) |
+| `validate.ts` checks at least 30 required names | Deep artifact validation covering resources, property types, and bundle files |
+| Composite tests exist | `composites.test.ts` covering all composites (props, types, defaults, dependencies) |
+
+## Recommended Post-Synth Check Categories
+
+When designing post-synth checks, aim for coverage across these categories:
+
+| Category | Examples |
+|----------|---------|
+| **Security** | Encryption enabled, TLS version, HTTPS-only, access control, identity configuration |
+| **Correctness** | Required fields present, valid values, correct dependencies |
+| **Best Practices** | Naming conventions, tagging/labeling, resource configuration defaults |
+| **Deprecation** | Outdated API versions, legacy features, deprecated properties |
 
 > See [Testing Your Lexicon](/chant/lexicon-authoring/testing/) for patterns, mock helpers, and checklists for each test file.
 
@@ -128,5 +144,7 @@ After scaffolding with `chant init lexicon`:
 
 ## Reference implementations
 
+- **K8s** — the most mature lexicon: 20 post-synth checks, 3 skills, 3 initTemplates, 33 required names, full docs site
+- **Azure** — comprehensive ARM template lexicon with 20 post-synth checks, 3 skills, and 11 doc pages
 - **AWS** — full coverage across all tiers, including per-rule tests and composites
 - **Flyway** — good example of per-rule testing patterns with test helpers

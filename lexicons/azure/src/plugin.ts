@@ -52,6 +52,109 @@ export const azurePlugin: LexiconPlugin = {
   },
 
   initTemplates(template?: string) {
+    if (template === "web-app") {
+      return {
+        src: {
+          "main.ts": `/**
+ * Azure infrastructure — App Service web application
+ *
+ * Deploys an App Service Plan + Web App with:
+ * - Managed identity (SystemAssigned)
+ * - HTTPS-only traffic
+ * - Minimum TLS 1.2
+ * - FTPS disabled
+ */
+
+import { AppService } from "@intentius/chant-lexicon-azure";
+import { CoreParameter, StackOutput } from "@intentius/chant";
+
+export const environment = new CoreParameter({
+  name: "environment",
+  type: "string",
+  default: "dev",
+});
+
+const { plan, webApp } = AppService({
+  name: "my-web-app",
+  sku: "B1",
+  runtime: "NODE|18-lts",
+  tags: { environment: "dev" },
+});
+
+export { plan, webApp };
+
+export const appUrl = new StackOutput({
+  name: "appUrl",
+  value: \`https://my-web-app.azurewebsites.net\`,
+});
+`,
+          "tags.ts": `import { defaultTags } from "@intentius/chant-lexicon-azure";
+
+export const tags = defaultTags([
+  { key: "Project", value: "my-web-app" },
+  { key: "Environment", value: "dev" },
+]);
+`,
+        },
+      };
+    }
+
+    if (template === "aks-cluster") {
+      return {
+        src: {
+          "main.ts": `/**
+ * Azure infrastructure — AKS Kubernetes cluster
+ *
+ * Deploys an AKS cluster with:
+ * - Managed identity
+ * - RBAC enabled
+ * - Standard load balancer
+ * - Azure CNI networking
+ */
+
+import { AksCluster, VnetDefault, ContainerRegistrySecure } from "@intentius/chant-lexicon-azure";
+import { CoreParameter, StackOutput } from "@intentius/chant";
+
+export const kubernetesVersion = new CoreParameter({
+  name: "kubernetesVersion",
+  type: "string",
+  default: "1.28",
+});
+
+const { virtualNetwork, subnet1, subnet2, nsg, routeTable } = VnetDefault({
+  name: "aks-vnet",
+});
+
+const { cluster } = AksCluster({
+  name: "my-aks",
+  nodeCount: 3,
+  vmSize: "Standard_D2s_v5",
+  tags: { workload: "kubernetes" },
+});
+
+const { registry } = ContainerRegistrySecure({
+  name: "myaksacr",
+});
+
+export { virtualNetwork, subnet1, subnet2, nsg, routeTable, cluster, registry };
+
+export const clusterName = new StackOutput({
+  name: "clusterName",
+  value: "my-aks",
+});
+`,
+          "tags.ts": `import { defaultTags } from "@intentius/chant-lexicon-azure";
+
+export const tags = defaultTags([
+  { key: "Project", value: "my-aks-cluster" },
+  { key: "Environment", value: "dev" },
+]);
+`,
+        },
+      };
+    }
+
+    // Default template — basic storage account
     return {
       src: {
         "main.ts": `/**
@@ -121,6 +224,20 @@ export const tags = defaultTags([
     loadCheck("./lint/post-synth/azr013", "azr013");
     loadCheck("./lint/post-synth/azr014", "azr014");
     loadCheck("./lint/post-synth/azr015", "azr015");
+    loadCheck("./lint/post-synth/azr016", "azr016");
+    loadCheck("./lint/post-synth/azr017", "azr017");
+    loadCheck("./lint/post-synth/azr018", "azr018");
+    loadCheck("./lint/post-synth/azr019", "azr019");
+    loadCheck("./lint/post-synth/azr020", "azr020");
+    loadCheck("./lint/post-synth/azr021", "azr021");
+    loadCheck("./lint/post-synth/azr022", "azr022");
+    loadCheck("./lint/post-synth/azr023", "azr023");
+    loadCheck("./lint/post-synth/azr024", "azr024");
+    loadCheck("./lint/post-synth/azr025", "azr025");
+    loadCheck("./lint/post-synth/azr026", "azr026");
+    loadCheck("./lint/post-synth/azr027", "azr027");
+    loadCheck("./lint/post-synth/azr028", "azr028");
+    loadCheck("./lint/post-synth/azr029", "azr029");
     return checks;
   },
 
@@ -130,12 +247,13 @@ export const tags = defaultTags([
     const { fileURLToPath } = require("url");
     const dir = dirname(fileURLToPath(import.meta.url));
 
-    try {
-      const content = readFileSync(join(dir, "skills", "chant-azure.md"), "utf-8");
-      return [{
+    const skills: SkillDefinition[] = [];
+
+    const skillFiles = [
+      {
+        file: "chant-azure.md",
         name: "chant-azure",
         description: "Azure Resource Manager infrastructure generation",
-        content,
         triggers: [
           { type: "file_pattern", pattern: "*.azure.ts" },
           { type: "context", value: "azure" },
@@ -150,10 +268,58 @@ export const tags = defaultTags([
             output: 'import { StorageAccount } from "@intentius/chant-lexicon-azure";\n\nexport const storage = new StorageAccount({ ... });',
           },
         ],
-      }];
-    } catch {
-      return [];
+      },
+      {
+        file: "chant-azure-security.md",
+        name: "chant-azure-security",
+        description: "Azure security best practices for infrastructure",
+        triggers: [
+          { type: "context", value: "azure security" },
+          { type: "context", value: "azure identity" },
+        ],
+        parameters: [],
+        examples: [
+          {
+            title: "Secure Storage Account",
+            input: "Create a storage account with encryption and no public access",
+            output: 'import { StorageAccountSecure } from "@intentius/chant-lexicon-azure";\n\nconst { storageAccount } = StorageAccountSecure({ name: "mystorage" });',
+          },
+        ],
+      },
+      {
+        file: "chant-azure-patterns.md",
+        name: "chant-azure-patterns",
+        description: "Advanced Azure ARM template patterns",
+        triggers: [
+          { type: "context", value: "azure patterns" },
+          { type: "context", value: "azure composites" },
+        ],
+        parameters: [],
+        examples: [
+          {
+            title: "Linked Deployment",
+            input: "Deploy a child project as a linked template",
+            output: 'import { ChildProjectInstance } from "@intentius/chant";\n\nexport const deploy = new ChildProjectInstance({ project: "../network" });',
+          },
+        ],
+      },
+    ];
+
+    for (const skill of skillFiles) {
+      try {
+        const content = readFileSync(join(dir, "skills", skill.file), "utf-8");
+        skills.push({
+          name: skill.name,
+          description: skill.description,
+          content,
+          triggers: skill.triggers,
+          parameters: skill.parameters,
+          examples: skill.examples,
+        });
+      } catch { /* skip missing skills */ }
     }
+
+    return skills;
   },
 
   completionProvider() {
@@ -203,23 +369,60 @@ export const tags = defaultTags([
   },
 
   mcpResources(): McpResourceContribution[] {
-    return [{
-      uri: "chant://lexicon/azure/catalog",
-      name: "Azure Resource Catalog",
-      description: "All available Azure resource types",
-      mimeType: "application/json",
-      handler: async () => {
-        const { readFileSync } = require("fs");
-        const { join, dirname } = require("path");
-        const { fileURLToPath } = require("url");
-        const dir = dirname(fileURLToPath(import.meta.url));
-        try {
-          return readFileSync(join(dir, "generated", "lexicon-azure.json"), "utf-8");
-        } catch {
-          return "{}";
-        }
+    return [
+      {
+        uri: "chant://lexicon/azure/catalog",
+        name: "Azure Resource Catalog",
+        description: "All available Azure resource types",
+        mimeType: "application/json",
+        handler: async () => {
+          const { readFileSync } = require("fs");
+          const { join, dirname } = require("path");
+          const { fileURLToPath } = require("url");
+          const dir = dirname(fileURLToPath(import.meta.url));
+          try {
+            return readFileSync(join(dir, "generated", "lexicon-azure.json"), "utf-8");
+          } catch {
+            return "{}";
+          }
+        },
       },
-    }];
+      {
+        uri: "chant://lexicon/azure/examples",
+        name: "Azure Example Projects",
+        description: "Example project summaries with code snippets for Azure ARM templates",
+        mimeType: "application/json",
+        handler: async () => {
+          const { readFileSync, readdirSync, existsSync } = require("fs");
+          const { join, dirname } = require("path");
+          const { fileURLToPath } = require("url");
+          const pkgDir = dirname(dirname(fileURLToPath(import.meta.url)));
+          const examplesDir = join(pkgDir, "examples");
+          const examples: Array<{ name: string; files: Record<string, string> }> = [];
+          try {
+            if (!existsSync(examplesDir)) return "[]";
+            const dirs = readdirSync(examplesDir, { withFileTypes: true })
+              .filter((e: { isDirectory(): boolean }) => e.isDirectory());
+            for (const dir of dirs) {
+              const exDir = join(examplesDir, dir.name);
+              const files: Record<string, string> = {};
+              const entries = readdirSync(exDir).filter((f: string) => f.endsWith(".ts"));
+              for (const f of entries) {
+                try {
+                  files[f] = readFileSync(join(exDir, f), "utf-8");
+                } catch { /* skip unreadable */ }
+              }
+              if (Object.keys(files).length > 0) {
+                examples.push({ name: dir.name, files });
+              }
+            }
+            return JSON.stringify(examples, null, 2);
+          } catch {
+            return "[]";
+          }
+        },
+      },
+    ];
   },
 
   async generate(opts) {

@@ -1,0 +1,107 @@
+---
+title: "Linked Templates"
+description: "Deploy linked ARM template deployments with ChildProjectInstance"
+---
+
+Linked template deployments allow you to decompose complex infrastructure into smaller, reusable projects.
+
+## ChildProjectInstance
+
+Use `ChildProjectInstance` from the core package to deploy a child project as a linked ARM template deployment:
+
+```typescript
+import { ChildProjectInstance } from "@intentius/chant";
+
+export const networkDeploy = new ChildProjectInstance({
+  project: "../network",
+  parameters: {
+    vnetName: "my-vnet",
+    addressPrefix: "10.0.0.0/16",
+  },
+});
+```
+
+This generates a `Microsoft.Resources/deployments` resource in the parent template that references the child template.
+
+## Multi-project architecture
+
+A typical multi-project setup:
+
+```
+infrastructure/
+├── network/           # VNet, subnets, NSGs
+│   └── src/main.ts
+├── data/              # Storage, SQL, Key Vault
+│   └── src/main.ts
+├── compute/           # VMs, AKS, App Service
+│   └── src/main.ts
+└── main/              # Orchestrator — deploys all sub-projects
+    └── src/main.ts
+```
+
+The orchestrator project:
+
+```typescript
+// main/src/main.ts
+import { ChildProjectInstance } from "@intentius/chant";
+
+export const networkDeploy = new ChildProjectInstance({
+  project: "../network",
+  parameters: {
+    vnetName: "prod-vnet",
+    addressPrefix: "10.0.0.0/16",
+  },
+});
+
+export const dataDeploy = new ChildProjectInstance({
+  project: "../data",
+  parameters: {
+    storageName: "prodstorage01",
+    sqlServerName: "prod-sql",
+  },
+});
+
+export const computeDeploy = new ChildProjectInstance({
+  project: "../compute",
+  parameters: {
+    aksClusterName: "prod-aks",
+  },
+});
+```
+
+## Cross-project references
+
+Reference outputs from a child deployment in the parent:
+
+```typescript
+import { ChildProjectInstance, StackOutput } from "@intentius/chant";
+import { Reference } from "@intentius/chant-lexicon-azure";
+
+export const networkDeploy = new ChildProjectInstance({
+  project: "../network",
+  parameters: { vnetName: "my-vnet" },
+});
+
+// Reference the child deployment's outputs
+export const vnetId = new StackOutput({
+  name: "vnetId",
+  value: Reference("networkDeploy").outputs.vnetId.value,
+});
+```
+
+## Deployment modes
+
+ARM linked deployments support two modes:
+
+- **Incremental** (default) — Adds or updates resources, leaves others unchanged
+- **Complete** — Adds or updates resources and removes any not in the template
+
+The deployment mode is configured at the Azure CLI level:
+
+```bash
+# Incremental (default, safe)
+az deployment group create --mode Incremental --template-file dist/template.json
+
+# Complete (careful — removes unlisted resources)
+az deployment group create --mode Complete --template-file dist/template.json
+```

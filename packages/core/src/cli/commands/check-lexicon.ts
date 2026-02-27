@@ -208,6 +208,35 @@ export function checkLexicon(dir: string): CheckResult {
     detail: `${mdxFiles.length} page(s)`,
   });
 
+  // Post-synth check count (excluding helpers, tests, and support files)
+  const postSynthCheckFiles = listTsFiles(join(dir, "src/lint/post-synth"), ["index.ts"])
+    .filter((f) => !f.endsWith(".test.ts") && !f.endsWith("-helpers.ts") && f !== "helpers.ts" && !f.startsWith("arm-") && !f.startsWith("k8s-"));
+  items.push({
+    name: "At least 15 post-synth checks",
+    tier: 2,
+    pass: postSynthCheckFiles.length >= 15,
+    detail: `${postSynthCheckFiles.length} check(s)`,
+  });
+
+  // Skills count
+  const skillsDir = join(dir, "src/skills");
+  const skillFiles = existsSync(skillsDir) ? readdirSync(skillsDir).filter((f) => f.endsWith(".md")) : [];
+  items.push({
+    name: "At least 3 skills",
+    tier: 2,
+    pass: skillFiles.length >= 3,
+    detail: `${skillFiles.length} skill(s)`,
+  });
+
+  // initTemplates count — check for template branches in plugin.ts
+  const initTemplateBranches = (pluginContent.match(/template\s*===\s*["']/g) || []).length + 1; // +1 for default
+  items.push({
+    name: "At least 3 initTemplates",
+    tier: 2,
+    pass: initTemplateBranches >= 3,
+    detail: `${initTemplateBranches} template(s)`,
+  });
+
   // ── Tier 3: Thoroughness ───────────────────────────────────────
 
   // Each lint rule has a test (per-file or consolidated)
@@ -274,6 +303,24 @@ export function checkLexicon(dir: string): CheckResult {
     name: "src/actions/ with at least 1 action",
     tier: 3,
     pass: hasActions,
+  });
+
+  // Validate required names count
+  const validateContent = readOr(join(dir, "src/validate.ts"));
+  const requiredNamesMatches = validateContent.match(/["'][A-Z][a-zA-Z]+["']/g) || [];
+  items.push({
+    name: "validate.ts checks at least 30 required names",
+    tier: 3,
+    pass: requiredNamesMatches.length >= 30,
+    detail: `${requiredNamesMatches.length} required name(s)`,
+  });
+
+  // Composite test file exists
+  const hasCompositeTest = existsSync(join(dir, "src/composites/composites.test.ts"));
+  items.push({
+    name: "Composite test file exists",
+    tier: 3,
+    pass: hasCompositeTest,
   });
 
   // Examples with tests (per-example or consolidated root test file)
