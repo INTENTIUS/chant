@@ -57,8 +57,8 @@ describe("k8s-eks-microservice example", () => {
     const parsed = JSON.parse(result.outputs.get("aws")!);
     expect(parsed.AWSTemplateFormatVersion).toBe("2010-09-09");
 
-    // 17 VPC + 1 cluster + 1 nodegroup + 1 OIDC + 8 IAM roles + 4 addons + 1 KMS key + 1 HostedZone = 34
-    expect(Object.keys(parsed.Resources)).toHaveLength(34);
+    // 17 VPC + 1 cluster + 1 nodegroup + 1 OIDC + 8 IAM roles + 1 IAM policy + 4 addons + 1 KMS key + 1 HostedZone = 35
+    expect(Object.keys(parsed.Resources)).toHaveLength(35);
 
     const types = Object.values(parsed.Resources).map((r: any) => r.Type);
     expect(types).toContain("AWS::EKS::Cluster");
@@ -68,6 +68,7 @@ describe("k8s-eks-microservice example", () => {
     expect(types).toContain("AWS::EC2::Subnet");
     expect(types).toContain("AWS::EC2::NatGateway");
     expect(types.filter((t: string) => t === "AWS::IAM::Role")).toHaveLength(8);
+    expect(types.filter((t: string) => t === "AWS::IAM::ManagedPolicy")).toHaveLength(1);
     expect(types.filter((t: string) => t === "AWS::EKS::Addon")).toHaveLength(4);
     expect(types).toContain("AWS::KMS::Key");
     expect(types).toContain("AWS::Route53::HostedZone");
@@ -261,9 +262,16 @@ describe("k8s-eks-microservice example", () => {
     // ALB annotations
     expect(ingress!.doc).toContain("alb.ingress.kubernetes.io/scheme: internet-facing");
     expect(ingress!.doc).toContain("alb.ingress.kubernetes.io/target-type: ip");
-    expect(ingress!.doc).toContain("alb.ingress.kubernetes.io/certificate-arn:");
-    expect(ingress!.doc).toContain("alb.ingress.kubernetes.io/ssl-redirect: '443'");
     expect(ingress!.doc).toContain("alb.ingress.kubernetes.io/healthcheck-path: /");
+
+    // certificate-arn and ssl-redirect only appear when ALB_CERT_ARN is set
+    if (process.env.ALB_CERT_ARN) {
+      expect(ingress!.doc).toContain("alb.ingress.kubernetes.io/certificate-arn:");
+      expect(ingress!.doc).toContain("alb.ingress.kubernetes.io/ssl-redirect: '443'");
+    } else {
+      expect(ingress!.doc).not.toContain("alb.ingress.kubernetes.io/certificate-arn:");
+      expect(ingress!.doc).not.toContain("alb.ingress.kubernetes.io/ssl-redirect");
+    }
 
     // Ingress class
     expect(ingress!.doc).toContain("ingressClassName: alb");

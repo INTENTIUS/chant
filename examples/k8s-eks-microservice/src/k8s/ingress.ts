@@ -21,14 +21,14 @@ const alb = AlbIngress({
     {
       hostname: config.domain,
       paths: [
-        { path: "/", pathType: "Prefix", serviceName: "microservice-api", servicePort: 8080 },
+        { path: "/", pathType: "Prefix", serviceName: "microservice-api", servicePort: 80 },
       ],
     },
   ],
   scheme: "internet-facing",
   targetType: "ip",
-  certificateArn: config.albCertificateArn,
-  sslRedirect: true,
+  certificateArn: config.albCertificateArn || undefined,
+  sslRedirect: config.albCertificateArn ? true : undefined,
   healthCheckPath: "/",
   namespace: NAMESPACE,
 });

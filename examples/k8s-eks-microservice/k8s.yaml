@@ -157,6 +157,11 @@ spec:
                 - ALL
             seccompProfile:
               type: RuntimeDefault
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+            - name: nginx-cache
+              mountPath: /var/cache/nginx
       topologySpreadConstraints:
         - maxSkew: 1
           topologyKey: topology.kubernetes.io/zone
@@ -165,6 +170,11 @@ spec:
             matchLabels:
               app.kubernetes.io/name: microservice-api
       serviceAccountName: microservice-app-sa
+      volumes:
+        - name: tmp
+          emptyDir: {}
+        - name: nginx-cache
+          emptyDir: {}
 
 ---
 apiVersion: autoscaling/v2
@@ -244,7 +254,7 @@ metadata:
     app.kubernetes.io/managed-by: chant
     app.kubernetes.io/component: service-account
   annotations:
-    eks.amazonaws.com/role-arn: arn:aws:iam::123456789012:role/eks-microservice-app-role
+    eks.amazonaws.com/role-arn: arn:aws:iam::354867293429:role/eks-microservice-app-role
 
 ---
 apiVersion: rbac.authorization.k8s.io/v1
@@ -258,17 +268,16 @@ metadata:
     rbac.authorization.k8s.io/aggregate-to-admin: 'true'
     rbac.authorization.k8s.io/aggregate-to-edit: 'true'
     rbac.authorization.k8s.io/aggregate-to-view: 'true'
-spec:
-  rules:
-    - apiGroups:
-        - metrics.k8s.io
-      resources:
-        - pods
-        - nodes
-      verbs:
-        - get
-        - list
-        - watch
+rules:
+  - apiGroups:
+      - metrics.k8s.io
+    resources:
+      - pods
+      - nodes
+    verbs:
+      - get
+      - list
+      - watch
 
 ---
 apiVersion: apiregistration.k8s.io/v1
@@ -298,15 +307,14 @@ metadata:
     app.kubernetes.io/name: metrics-server
     app.kubernetes.io/managed-by: chant
     app.kubernetes.io/component: rbac
-spec:
-  roleRef:
-    apiGroup: rbac.authorization.k8s.io
-    kind: ClusterRole
-    name: system:auth-delegator
-  subjects:
-    - kind: ServiceAccount
-      name: metrics-server-sa
-      namespace: kube-system
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: system:auth-delegator
+subjects:
+  - kind: ServiceAccount
+    name: metrics-server-sa
+    namespace: kube-system
 
 ---
 apiVersion: rbac.authorization.k8s.io/v1
@@ -317,15 +325,14 @@ metadata:
     app.kubernetes.io/name: metrics-server
     app.kubernetes.io/managed-by: chant
     app.kubernetes.io/component: rbac
-spec:
-  roleRef:
-    apiGroup: rbac.authorization.k8s.io
-    kind: ClusterRole
-    name: system:metrics-server
-  subjects:
-    - kind: ServiceAccount
-      name: metrics-server-sa
-      namespace: kube-system
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: system:metrics-server
+subjects:
+  - kind: ServiceAccount
+    name: metrics-server-sa
+    namespace: kube-system
 
 ---
 apiVersion: apps/v1
@@ -405,25 +412,24 @@ metadata:
     app.kubernetes.io/name: metrics-server
     app.kubernetes.io/managed-by: chant
     app.kubernetes.io/component: rbac
-spec:
-  rules:
-    - apiGroups:
-        - ''
-      resources:
-        - pods
-        - nodes
-        - namespaces
-      verbs:
-        - get
-        - list
-        - watch
-    - apiGroups:
-        - ''
-      resources:
-        - nodes/metrics
-        - nodes/stats
-      verbs:
-        - get
+rules:
+  - apiGroups:
+      - ''
+    resources:
+      - pods
+      - nodes
+      - namespaces
+    verbs:
+      - get
+      - list
+      - watch
+  - apiGroups:
+      - ''
+    resources:
+      - nodes/metrics
+      - nodes/stats
+    verbs:
+      - get
 
 ---
 apiVersion: v1
@@ -466,17 +472,16 @@ metadata:
     app.kubernetes.io/name: gp3-encrypted
     app.kubernetes.io/managed-by: chant
     app.kubernetes.io/component: storage
-spec:
-  provisioner: ebs.csi.aws.com
-  parameters:
-    type: gp3
-    fsType: ext4
-    encrypted: 'true'
-    iops: 3000
-    throughput: 125
-  reclaimPolicy: Delete
-  volumeBindingMode: WaitForFirstConsumer
-  allowVolumeExpansion: true
+provisioner: ebs.csi.aws.com
+parameters:
+  type: gp3
+  fsType: ext4
+  encrypted: 'true'
+  iops: '3000'
+  throughput: '125'
+reclaimPolicy: Delete
+volumeBindingMode: WaitForFirstConsumer
+allowVolumeExpansion: true
 
 ---
 apiVersion: rbac.authorization.k8s.io/v1
@@ -487,59 +492,58 @@ metadata:
     app.kubernetes.io/name: adot-collector
     app.kubernetes.io/managed-by: chant
     app.kubernetes.io/component: rbac
-spec:
-  rules:
-    - apiGroups:
-        - ''
-      resources:
-        - pods
-        - nodes
-        - endpoints
-      verbs:
-        - get
-        - list
-        - watch
-    - apiGroups:
-        - apps
-      resources:
-        - replicasets
-      verbs:
-        - get
-        - list
-        - watch
-    - apiGroups:
-        - batch
-      resources:
-        - jobs
-      verbs:
-        - get
-        - list
-        - watch
-    - apiGroups:
-        - ''
-      resources:
-        - nodes/proxy
-      verbs:
-        - get
-    - apiGroups:
-        - ''
-      resources:
-        - nodes/stats
-        - configmaps
-        - events
-      verbs:
-        - create
-        - get
-    - apiGroups:
-        - ''
-      resources:
-        - configmaps
-      verbs:
-        - get
-        - update
-        - create
-      resourceNames:
-        - otel-container-insight-clusterleader
+rules:
+  - apiGroups:
+      - ''
+    resources:
+      - pods
+      - nodes
+      - endpoints
+    verbs:
+      - get
+      - list
+      - watch
+  - apiGroups:
+      - apps
+    resources:
+      - replicasets
+    verbs:
+      - get
+      - list
+      - watch
+  - apiGroups:
+      - batch
+    resources:
+      - jobs
+    verbs:
+      - get
+      - list
+      - watch
+  - apiGroups:
+      - ''
+    resources:
+      - nodes/proxy
+    verbs:
+      - get
+  - apiGroups:
+      - ''
+    resources:
+      - nodes/stats
+      - configmaps
+      - events
+    verbs:
+      - create
+      - get
+  - apiGroups:
+      - ''
+    resources:
+      - configmaps
+    verbs:
+      - get
+      - update
+      - create
+    resourceNames:
+      - otel-container-insight-clusterleader
 
 ---
 apiVersion: rbac.authorization.k8s.io/v1
@@ -550,15 +554,14 @@ metadata:
     app.kubernetes.io/name: adot-collector
     app.kubernetes.io/managed-by: chant
     app.kubernetes.io/component: rbac
-spec:
-  roleRef:
-    apiGroup: rbac.authorization.k8s.io
-    kind: ClusterRole
-    name: adot-collector-role
-  subjects:
-    - kind: ServiceAccount
-      name: adot-collector-sa
-      namespace: amazon-metrics
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: adot-collector-role
+subjects:
+  - kind: ServiceAccount
+    name: adot-collector-sa
+    namespace: amazon-metrics
 
 ---
 apiVersion: v1
@@ -586,12 +589,12 @@ processors:
 
 exporters:
   awsemf:
-    region: us-east-1
+    region: us-east-2
     namespace: ContainerInsights
     log_group_name: ''/aws/containerinsights/eks-microservice/performance''
     dimension_rollup_option: NoDimensionRollup
   awsxray:
-    region: us-east-1
+    region: us-east-2
 
 service:
   pipelines:
@@ -668,7 +671,7 @@ metadata:
     app.kubernetes.io/managed-by: chant
     app.kubernetes.io/component: agent
   annotations:
-    eks.amazonaws.com/role-arn: arn:aws:iam::123456789012:role/eks-microservice-adot-role
+    eks.amazonaws.com/role-arn: arn:aws:iam::354867293429:role/eks-microservice-adot-role
 
 ---
 apiVersion: v1
@@ -687,17 +690,16 @@ metadata:
     app.kubernetes.io/name: fluent-bit
     app.kubernetes.io/managed-by: chant
     app.kubernetes.io/component: rbac
-spec:
-  rules:
-    - apiGroups:
-        - ''
-      resources:
-        - namespaces
-        - pods
-      verbs:
-        - get
-        - list
-        - watch
+rules:
+  - apiGroups:
+      - ''
+    resources:
+      - namespaces
+      - pods
+    verbs:
+      - get
+      - list
+      - watch
 
 ---
 apiVersion: rbac.authorization.k8s.io/v1
@@ -708,15 +710,14 @@ metadata:
     app.kubernetes.io/name: fluent-bit
     app.kubernetes.io/managed-by: chant
     app.kubernetes.io/component: rbac
-spec:
-  roleRef:
-    apiGroup: rbac.authorization.k8s.io
-    kind: ClusterRole
-    name: fluent-bit-role
-  subjects:
-    - kind: ServiceAccount
-      name: fluent-bit-sa
-      namespace: amazon-cloudwatch
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: fluent-bit-role
+subjects:
+  - kind: ServiceAccount
+    name: fluent-bit-sa
+    namespace: amazon-cloudwatch
 
 ---
 apiVersion: v1
@@ -758,7 +759,7 @@ data:
 [OUTPUT]
     Name                cloudwatch_logs
     Match               *
-    region              us-east-1
+    region              us-east-2
     log_group_name      /aws/eks/eks-microservice/containers
     log_stream_prefix   eks-microservice/
     auto_create_group   true
@@ -831,7 +832,7 @@ metadata:
     app.kubernetes.io/managed-by: chant
     app.kubernetes.io/component: agent
   annotations:
-    eks.amazonaws.com/role-arn: arn:aws:iam::123456789012:role/eks-microservice-fluent-bit-role
+    eks.amazonaws.com/role-arn: arn:aws:iam::354867293429:role/eks-microservice-fluent-bit-role
 
 ---
 apiVersion: v1
@@ -854,9 +855,6 @@ metadata:
   annotations:
     alb.ingress.kubernetes.io/scheme: internet-facing
     alb.ingress.kubernetes.io/target-type: ip
-    alb.ingress.kubernetes.io/certificate-arn: arn:aws:acm:us-east-1:123456789012:certificate/abc-123-def
-    alb.ingress.kubernetes.io/listen-ports: '[{"HTTPS":443}]'
-    alb.ingress.kubernetes.io/ssl-redirect: '443'
     alb.ingress.kubernetes.io/healthcheck-path: /
 spec:
   ingressClassName: alb
@@ -870,7 +868,7 @@ spec:
               service:
                 name: microservice-api
                 port:
-                  number: 8080
+                  number: 80
 
 ---
 apiVersion: rbac.authorization.k8s.io/v1
@@ -881,34 +879,33 @@ metadata:
     app.kubernetes.io/name: external-dns
     app.kubernetes.io/managed-by: chant
     app.kubernetes.io/component: rbac
-spec:
-  rules:
-    - apiGroups:
-        - ''
-      resources:
-        - services
-        - endpoints
-        - pods
-      verbs:
-        - get
-        - watch
-        - list
-    - apiGroups:
-        - extensions
-        - networking.k8s.io
-      resources:
-        - ingresses
-      verbs:
-        - get
-        - watch
-        - list
-    - apiGroups:
-        - ''
-      resources:
-        - nodes
-      verbs:
-        - list
-        - watch
+rules:
+  - apiGroups:
+      - ''
+    resources:
+      - services
+      - endpoints
+      - pods
+    verbs:
+      - get
+      - watch
+      - list
+  - apiGroups:
+      - extensions
+      - networking.k8s.io
+    resources:
+      - ingresses
+    verbs:
+      - get
+      - watch
+      - list
+  - apiGroups:
+      - ''
+    resources:
+      - nodes
+    verbs:
+      - list
+      - watch
 
 ---
 apiVersion: rbac.authorization.k8s.io/v1
@@ -919,15 +916,14 @@ metadata:
     app.kubernetes.io/name: external-dns
     app.kubernetes.io/managed-by: chant
     app.kubernetes.io/component: rbac
-spec:
-  roleRef:
-    apiGroup: rbac.authorization.k8s.io
-    kind: ClusterRole
-    name: external-dns-role
-  subjects:
-    - kind: ServiceAccount
-      name: external-dns-sa
-      namespace: kube-system
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: external-dns-role
+subjects:
+  - kind: ServiceAccount
+    name: external-dns-sa
+    namespace: kube-system
 
 ---
 apiVersion: apps/v1
@@ -983,4 +979,5 @@ metadata:
     app.kubernetes.io/managed-by: chant
     app.kubernetes.io/component: dns
   annotations:
-    eks.amazonaws.com/role-arn: arn:aws:iam::123456789012:role/eks-microservice-external-dns-role
+    eks.amazonaws.com/role-arn: arn:aws:iam::354867293429:role/eks-microservice-external-dns-role
+

@@ -28,12 +28,6 @@
         ]
       }
     },
-    "certificateArnOutput": {
-      "Description": "ACM certificate ARN",
-      "Value": {
-        "Ref": "certificate"
-      }
-    },
     "clusterArnOutput": {
       "Description": "EKS cluster ARN",
       "Value": {
@@ -74,15 +68,6 @@
       "Description": "Route53 hosted zone ID",
       "Value": {
         "Ref": "hostedZone"
-      }
-    },
-    "nameServersOutput": {
-      "Description": "Route53 nameservers — point your domain registrar NS records here",
-      "Value": {
-        "Fn::GetAtt": [
-          "hostedZone",
-          "NameServers"
-        ]
       }
     },
     "privateSubnet1Id": {
@@ -264,15 +249,6 @@
       },
       "Type": "AWS::IAM::Role"
     },
-    "certificate": {
-      "Properties": {
-        "DomainName": {
-          "Ref": "domainName"
-        },
-        "ValidationMethod": "DNS"
-      },
-      "Type": "AWS::CertificateManager::Certificate"
-    },
     "cluster": {
       "Properties": {
         "EncryptionConfig": [
@@ -397,9 +373,53 @@
       "Properties": {
         "AddonName": "aws-ebs-csi-driver",
         "ClusterName": "eks-microservice",
-        "ResolveConflicts": "OVERWRITE"
+        "ResolveConflicts": "OVERWRITE",
+        "ServiceAccountRoleArn": {
+          "Fn::GetAtt": [
+            "ebsCsiRole",
+            "Arn"
+          ]
+        }
       },
       "Type": "AWS::EKS::Addon"
+    },
+    "ebsCsiRole": {
+      "Properties": {
+        "AssumeRolePolicyDocument": {
+          "Fn::Sub": [
+            "{\"Version\":\"2012-10-17\",\"Statement\":[{\"Effect\":\"Allow\",\"Principal\":{\"Federated\":\"${OidcArn}\"},\"Action\":\"sts:AssumeRoleWithWebIdentity\",\"Condition\":{\"StringEquals\":{\"${OidcIssuer}:sub\":\"system:serviceaccount:kube-system:ebs-csi-controller-sa\",\"${OidcIssuer}:aud\":\"sts.amazonaws.com\"}}}]}",
+            {
+              "OidcArn": {
+                "Fn::GetAtt": [
+                  "oidcProvider",
+                  "Arn"
+                ]
+              },
+              "OidcIssuer": {
+                "Fn::Select": [
+                  "1",
+                  {
+                    "Fn::Split": [
+                      "oidc-provider/",
+                      {
+                        "Fn::GetAtt": [
+                          "oidcProvider",
+                          "Arn"
+                        ]
+                      }
+                    ]
+                  }
+                ]
+              }
+            }
+          ]
+        },
+        "ManagedPolicyArns": [
+          "arn:aws:iam::aws:policy/service-role/AmazonEBSCSIDriverPolicy"
+        ],
+        "RoleName": "eks-microservice-ebs-csi-role"
+      },
+      "Type": "AWS::IAM::Role"
     },
     "eksSecretsKey": {
       "Properties": {
