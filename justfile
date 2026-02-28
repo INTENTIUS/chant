@@ -42,6 +42,10 @@ smoke-bun:
 smoke-node:
     docker build -f test/Dockerfile.smoke-node -t chant-smoke-node . && docker run -it --rm -v "$HOME/.aws:/root/.aws:ro" chant-smoke-node
 
+# Build all root examples in Docker and extract artifacts to test/example-builds/
+smoke-build-examples:
+    ./test/smoke.sh build-examples
+
 # Run all smoke tests
 smoke: smoke-bun smoke-node
 

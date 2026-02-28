@@ -371,6 +371,52 @@ Example CI configuration:
   run: bun test --coverage --coverage-reporter=lcov
 ```
 
+## Smoke Tests (Docker)
+
+Smoke tests run inside Docker containers to verify chant works in a clean environment with no host state leaking in. There are three modes, available via `test/smoke.sh` or the justfile.
+
+### Targets
+
+| justfile | smoke.sh | What it does |
+|----------|----------|--------------|
+| `just smoke-bun` | `./test/smoke.sh workspace` | Builds `test/Dockerfile.smoke` (Bun workspace), runs `integration.sh` during build, drops into bash |
+| `just smoke-node` | `./test/smoke.sh npm` | Builds `test/Dockerfile.smoke-node` (Node.js + tsx), runs `integration.sh` with `CHANT_RUNTIME=node` |
+| `just smoke-build-examples` | `./test/smoke.sh build-examples` | Builds all 8 root examples inside the Bun smoke container, copies artifacts to `test/example-builds/` |
+| `just smoke` | `./test/smoke.sh all` | Runs `smoke-bun` + `smoke-node` |
+
+### How `build-examples` works
+
+1. Builds the `chant-smoke-workspace` Docker image (same as `smoke-bun`)
+2. Runs `test/build-examples.sh` inside the container — loops over `/app/examples/*/`, symlinks `node_modules`, runs each example's `bun run build`
+3. Mounts `test/example-builds/` as `/output` and copies built artifacts out
+
+The container's `/app/examples/` is baked into the image during `docker build`. Only `/output` is mounted from the host, and the script only writes *to* it. No host files contaminate the build.
+
+### Expected artifacts
+
+| Example | Artifacts |
+|---------|-----------|
+| `flyway-postgresql-gitlab-aws-rds` | `templates/template.json`, `flyway.toml`, `.gitlab-ci.yml` |
+| `flyway-postgresql-k8s` | `k8s.yaml`, `flyway.toml` |
+| `gitlab-aws-alb-infra` | `templates/template.json`, `.gitlab-ci.yml` |
+| `gitlab-aws-alb-api` | `templates/template.json`, `.gitlab-ci.yml` |
+| `gitlab-aws-alb-ui` | `templates/template.json`, `.gitlab-ci.yml` |
+| `k8s-batch-workers` | `k8s.yaml` |
+| `k8s-eks-microservice` | `templates/infra.json`, `k8s.yaml` |
+| `k8s-web-platform` | `k8s.yaml` |
+
+Each example directory also gets `.claude/` skills, `README.md`, `package.json`, and any deploy scripts (`scripts/`, `setup.sh`, `sql/`, `.env.example`) copied to `/output` for agent-driven deployment from outside the container.
+
+### Files
+
+| File | Purpose |
+|------|---------|
+| `test/Dockerfile.smoke` | Bun workspace image, runs `integration.sh` during build |
+| `test/Dockerfile.smoke-node` | Node.js image, runs `integration.sh` with `CHANT_RUNTIME=node` |
+| `test/integration.sh` | 500+ line test harness: CLI, build, lint, MCP, LSP, init, root examples |
+| `test/build-examples.sh` | Builds all root examples, copies artifacts to `/output` |
+| `test/smoke.sh` | Entrypoint — `workspace`, `npm`, `build-examples`, or `all` |
+
 ## Troubleshooting
 
 ### Tests fail with "ENOENT" errors
