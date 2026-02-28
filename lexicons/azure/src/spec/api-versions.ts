@@ -8,17 +8,23 @@
  */
 
 /**
- * Parse an API date string (e.g. "2023-01-01") into a comparable value.
+ * Parse an API date string (e.g. "2023-01-01" or "2023-01-01-preview").
+ * Returns a numeric value for comparison: date timestamp with preview
+ * versions ranked below their GA counterpart.
  */
-export function parseApiDate(dateStr: string): Date {
-  return new Date(dateStr);
+export function parseApiDate(dateStr: string): number {
+  const isPreview = dateStr.endsWith("-preview");
+  const cleaned = isPreview ? dateStr.replace(/-preview$/, "") : dateStr;
+  const ts = new Date(cleaned).getTime();
+  // Preview versions sort just below their GA date
+  return isPreview ? ts - 1 : ts;
 }
 
 /**
  * Compare two API date strings. Returns positive if a > b.
  */
 export function compareApiDates(a: string, b: string): number {
-  return parseApiDate(a).getTime() - parseApiDate(b).getTime();
+  return parseApiDate(a) - parseApiDate(b);
 }
 
 /**

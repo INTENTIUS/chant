@@ -62,6 +62,16 @@ export interface InitResult {
 }
 
 /**
+ * Detect whether the user's project uses bun or npm.
+ * Checks for lock files first, then falls back to runtime detection.
+ */
+function detectPackageManager(dir?: string): "bun" | "npm" {
+  if (dir && (existsSync(join(dir, "bun.lockb")) || existsSync(join(dir, "bun.lock")))) return "bun";
+  if (typeof globalThis.Bun !== "undefined") return "bun";
+  return "npm";
+}
+
+/**
  * Detect the IDE environment for MCP config
  */
 function detectIdeEnvironment(): "claude-code" | "cursor" | "generic" {
@@ -142,12 +152,6 @@ function generateTsConfig(lexicon: string): string {
       declaration: true,
       outDir: "./dist",
       rootDir: "./src",
-      paths: {
-        "@intentius/chant": ["./.chant/types/core"],
-        "@intentius/chant/*": ["./.chant/types/core/*"],
-        [`@intentius/chant-lexicon-${lexicon}`]: [`./.chant/types/lexicon-${lexicon}`],
-        [`@intentius/chant-lexicon-${lexicon}/*`]: [`./.chant/types/lexicon-${lexicon}/*`],
-      },
     },
     include: ["src"],
     exclude: ["node_modules", "dist"],
@@ -236,11 +240,11 @@ export interface ChantConfig {
 /**
  * Generate MCP config
  */
-function generateMcpConfig(_ide: "claude-code" | "cursor" | "generic"): string {
+function generateMcpConfig(_ide: "claude-code" | "cursor" | "generic", pm: "bun" | "npm"): string {
   const config = {
     mcpServers: {
       chant: {
-        command: "npx",
+        command: pm === "bun" ? "bunx" : "npx",
         args: ["chant", "serve", "mcp"],
       },
     },
@@ -450,7 +454,7 @@ export async function initCommand(options: InitOptions): Promise<InitResult> {
 
     writeIfNotExists(
       join(mcpDir, "mcp.json"),
-      generateMcpConfig(ide),
+      generateMcpConfig(ide, detectPackageManager(targetDir)),
       `~/.${ide === "generic" ? "config/mcp" : ide}/mcp.json`,
       createdFiles,
       warnings,
@@ -519,6 +523,8 @@ export async function printInitResult(
 
   console.log("");
 
+  const pm = detectPackageManager(options?.cwd);
+
   // Interactive install prompt
   if (!options?.skipInstall) {
     const shouldInstall = await promptInstall();
@@ -527,9 +533,9 @@ export async function printInitResult(
       const cwd = options?.cwd ?? ".";
       console.log("Installing dependencies...");
       try {
-        execSync("npm install", { cwd, stdio: "inherit" });
+        execSync(`${pm} install`, { cwd, stdio: "inherit" });
       } catch {
-        console.error(formatWarning({ message: "Install failed. Run 'npm install' manually." }));
+        console.error(formatWarning({ message: `Install failed. Run '${pm} install' manually.` }));
       }
     }
   }
@@ -538,6 +544,6 @@ export async function printInitResult(
   console.log("Next steps:");
   console.log("  1. Edit src/config.ts");
   console.log("  2. Add resources in src/");
-  console.log("  3. npm run build");
+  console.log(`  3. ${pm} run build`);
 }
 

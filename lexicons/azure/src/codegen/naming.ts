@@ -24,15 +24,15 @@ const priorityNames: Record<string, string> = {
   "Microsoft.Compute/virtualMachines": "VirtualMachine",
   "Microsoft.Network/virtualNetworks": "VirtualNetwork",
   "Microsoft.Network/networkSecurityGroups": "NetworkSecurityGroup",
-  "Microsoft.Network/publicIPAddresses": "PublicIpAddress",
+  "Microsoft.Network/publicIPAddresses": "PublicIPAddress",
   "Microsoft.Network/networkInterfaces": "NetworkInterface",
   "Microsoft.Network/loadBalancers": "LoadBalancer",
   "Microsoft.Network/routeTables": "RouteTable",
   "Microsoft.Web/serverfarms": "AppServicePlan",
   "Microsoft.Web/sites": "WebApp",
   "Microsoft.Sql/servers": "SqlServer",
-  "Microsoft.Sql/servers/databases": "SqlDatabase",
-  "Microsoft.Sql/servers/firewallRules": "SqlFirewallRule",
+  "Microsoft.Sql/servers_databases": "SqlDatabase",
+  "Microsoft.Sql/servers_firewallRules": "SqlFirewallRule",
   "Microsoft.KeyVault/vaults": "KeyVault",
   "Microsoft.ContainerService/managedClusters": "ManagedCluster",
   "Microsoft.ContainerRegistry/registries": "ContainerRegistry",
@@ -42,7 +42,7 @@ const priorityNames: Record<string, string> = {
   "Microsoft.Network/applicationGateways": "ApplicationGateway",
   "Microsoft.Network/privateDnsZones": "PrivateDnsZone",
   "Microsoft.Network/dnsZones": "DnsZone",
-  "Microsoft.ManagedIdentity/userAssignedIdentities": "UserAssignedIdentity",
+  "Microsoft.ManagedIdentity/userAssignedIdentities": "ManagedIdentity",
   "Microsoft.Authorization/roleAssignments": "RoleAssignment",
   "Microsoft.Authorization/roleDefinitions": "RoleDefinition",
   "Microsoft.Insights/diagnosticSettings": "DiagnosticSetting",
@@ -53,8 +53,10 @@ const priorityNames: Record<string, string> = {
   "Microsoft.Cache/redis": "RedisCache",
   "Microsoft.Cdn/profiles": "CdnProfile",
   "Microsoft.SignalRService/signalR": "SignalR",
-  "Microsoft.Storage/storageAccounts/blobServices/containers": "BlobContainer",
-  "Microsoft.Network/virtualNetworks/subnets": "Subnet",
+  "Microsoft.Storage/storageAccounts_blobServices_containers": "BlobContainer",
+  "Microsoft.Network/virtualNetworks_subnets": "Subnet",
+  "Microsoft.Network/trafficmanagerprofiles": "TrafficManagerProfile",
+  "Microsoft.Compute/virtualMachineScaleSets": "VirtualMachineScaleSet",
   "Microsoft.Resources/deployments": "Deployment",
 };
 
@@ -65,6 +67,7 @@ const priorityAliases: Record<string, string[]> = {
   "Microsoft.Web/sites": ["AppService"],
   "Microsoft.ContainerService/managedClusters": ["AksCluster"],
   "Microsoft.DocumentDB/databaseAccounts": ["CosmosDb"],
+  "Microsoft.ManagedIdentity/userAssignedIdentities": ["UserAssignedIdentity"],
 };
 
 /**
@@ -74,12 +77,33 @@ const priorityPropertyAliases: Record<string, Record<string, string>> = {
   "Microsoft.Storage/storageAccounts": {
     Encryption: "StorageEncryption",
     NetworkRuleSet: "StorageNetworkRules",
+    Sku: "Sku",
   },
   "Microsoft.Compute/virtualMachines": {
     HardwareProfile: "HardwareProfile",
     StorageProfile: "StorageProfile",
     OsProfile: "OsProfile",
     NetworkProfile: "NetworkProfile",
+    OSDisk: "OsDisk",
+    ImageReference: "ImageReference",
+  },
+  "Microsoft.Compute/virtualMachineScaleSets": {
+    VirtualMachineScaleSetIdentity: "Identity",
+  },
+  "Microsoft.Network/networkSecurityGroups": {
+    SecurityRule: "SecurityRule",
+  },
+  "Microsoft.Network/virtualNetworks_subnets": {
+    SubnetPropertiesFormat: "SubnetProperties",
+  },
+  "Microsoft.Network/networkInterfaces": {
+    NetworkInterfaceIPConfiguration: "IpConfiguration",
+  },
+  "Microsoft.Sql/servers_databases": {
+    Sku: "SqlSku",
+  },
+  "Microsoft.Web/sites": {
+    SiteConfig: "SiteConfig",
   },
 };
 

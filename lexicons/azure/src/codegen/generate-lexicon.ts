@@ -23,7 +23,40 @@ export interface LexiconEntry {
   propertyConstraints?: Record<string, PropertyConstraints>;
   resourceLevelFields?: string[];
   tagging?: { taggable: boolean; tagOnCreate: boolean; tagUpdatable: boolean };
+  createOnly?: string[];
+  writeOnly?: string[];
 }
+
+/**
+ * Curated create-only properties for common ARM resources.
+ * ARM public schemas lack x-ms-mutability; this map captures
+ * well-known immutable properties that cannot be changed after creation.
+ */
+const CURATED_CREATE_ONLY: Record<string, string[]> = {
+  "Microsoft.Storage/storageAccounts": ["kind", "location"],
+  "Microsoft.Compute/virtualMachines": ["location", "zones"],
+  "Microsoft.Compute/virtualMachineScaleSets": ["location", "zones"],
+  "Microsoft.Network/virtualNetworks": ["location"],
+  "Microsoft.Network/networkSecurityGroups": ["location"],
+  "Microsoft.Network/publicIPAddresses": ["location", "zones", "sku"],
+  "Microsoft.Network/loadBalancers": ["location", "sku"],
+  "Microsoft.Web/serverfarms": ["location"],
+  "Microsoft.Web/sites": ["location"],
+  "Microsoft.ContainerService/managedClusters": ["location", "dnsPrefix"],
+  "Microsoft.ContainerRegistry/registries": ["location"],
+  "Microsoft.Sql/servers": ["location"],
+  "Microsoft.Sql/servers_databases": ["location"],
+  "Microsoft.KeyVault/vaults": ["location"],
+  "Microsoft.DocumentDB/databaseAccounts": ["location", "kind"],
+  "Microsoft.ManagedIdentity/userAssignedIdentities": ["location"],
+  "Microsoft.Network/dnsZones": ["location"],
+  "Microsoft.Insights/components": ["location", "kind"],
+  "Microsoft.OperationalInsights/workspaces": ["location"],
+  "Microsoft.EventHub/namespaces": ["location", "sku"],
+  "Microsoft.ServiceBus/namespaces": ["location", "sku"],
+  "Microsoft.Cache/redis": ["location"],
+  "Microsoft.Resources/deployments": ["location"],
+};
 
 /**
  * Generate the lexicon-azure.json content.
@@ -46,6 +79,8 @@ export function generateLexiconJSON(
       const armType = resource.typeName;
       const r = results.find((res) => res.resource.typeName === armType)!;
 
+      const createOnly = CURATED_CREATE_ONLY[armType];
+
       return {
         resourceType: armType,
         kind: "resource" as const,
@@ -57,6 +92,7 @@ export function generateLexiconJSON(
           resourceLevelFields: r.resource.resourceLevelFields,
         }),
         ...(r.resource.tagging && { tagging: r.resource.tagging }),
+        ...(createOnly && { createOnly }),
       };
     },
     buildPropertyEntry: (resourceType, propertyType) => ({

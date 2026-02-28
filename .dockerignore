@@ -5,6 +5,4 @@
 .DS_Store
 docs
 lexicons/aws/docs
-lexicons/aws/dist
 lexicons/gitlab/docs
-lexicons/gitlab/dist

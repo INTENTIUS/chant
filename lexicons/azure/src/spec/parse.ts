@@ -137,7 +137,7 @@ const CURATED_ATTRIBUTES: Record<string, Array<{ name: string; tsType: string }>
     { name: "fullyQualifiedDomainName", tsType: "string" },
     { name: "provisioningState", tsType: "string" },
   ],
-  "Microsoft.Sql/servers/databases": [
+  "Microsoft.Sql/servers_databases": [
     { name: "id", tsType: "string" },
     { name: "provisioningState", tsType: "string" },
   ],
@@ -351,5 +351,6 @@ export function armShortName(typeName: string): string {
  */
 export function armServiceName(typeName: string): string {
   const match = typeName.match(/^Microsoft\.([^/]+)/);
-  return match ? match[1] : typeName;
+  // Strip dots from hierarchical providers (e.g. "App.ContainerApps" → "AppContainerApps")
+  return match ? match[1].replace(/\./g, "") : typeName;
 }

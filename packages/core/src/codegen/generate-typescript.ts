@@ -102,9 +102,12 @@ export function writeConstructor(
     const optional = p.required ? "" : "?";
     const tsType = resolveConstructorType(p.type, remap);
     if (p.description) {
-      lines.push(`    /** ${p.description} */`);
+      // Sanitize: escape */ to prevent breaking JSDoc comments
+      const safeDesc = p.description.replace(/\*\//g, "*\\/");
+      lines.push(`    /** ${safeDesc} */`);
     }
-    lines.push(`    ${p.name}${optional}: ${tsType};`);
+    const safeName = /^[a-zA-Z_$][a-zA-Z0-9_$]*$/.test(p.name) ? p.name : JSON.stringify(p.name);
+    lines.push(`    ${safeName}${optional}: ${tsType};`);
   }
   if (resourceAttributesType) {
     lines.push(`  }, attributes?: ${resourceAttributesType});`);

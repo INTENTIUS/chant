@@ -18,6 +18,7 @@ import { generate } from "./generate";
 
 export type { PackageOptions, PackageResult };
 
+// src/codegen/package.ts → dirname x2 → src/ (srcDir for rule collection)
 const pkgDir = dirname(dirname(fileURLToPath(import.meta.url)));
 
 /**

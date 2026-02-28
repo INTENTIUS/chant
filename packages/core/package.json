@@ -13,13 +13,16 @@
   "exports": {
     ".": "./src/index.ts",
     "./cli": "./src/cli/index.ts",
-    "./cli/*": "./src/cli/*",
-    "./*": "./src/*"
+    "./cli/*": "./src/cli/*.ts",
+    "./*": "./src/*.ts"
   },
   "dependencies": {
     "fflate": "^0.8.2",
     "picomatch": "^4.0.3",
     "typescript": "^5.5.0",
     "zod": "^4.3.6"
+  },
+  "optionalDependencies": {
+    "tsx": "^4.0.0"
   }
 }

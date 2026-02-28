@@ -111,3 +111,12 @@ jobs:
 
       - name: Generate and validate Azure lexicon
         run: bun run --cwd lexicons/azure prepack
+
+  smoke-npm:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: npm smoke tests (docker build)
+        run: docker build -f test/Dockerfile.smoke-npm -t chant-smoke-npm .

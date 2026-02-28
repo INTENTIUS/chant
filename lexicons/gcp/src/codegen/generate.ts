@@ -11,8 +11,8 @@ import {
   type GeneratePipelineConfig,
 } from "@intentius/chant/codegen/generate";
 import { fetchCRDBundle } from "../spec/fetch";
-import { parseGcpCRD, gcpShortName, type GcpParseResult } from "../spec/parse";
-import { NamingStrategy, propertyTypeName, extractDefName } from "./naming";
+import { parseGcpCRD, type GcpParseResult } from "../spec/parse";
+import { NamingStrategy, propertyTypeName } from "./naming";
 import {
   generateRuntimeIndex as coreGenerateRuntimeIndex,
   type RuntimeIndexEntry,
@@ -83,6 +83,17 @@ export function writeGeneratedFiles(result: GenerateResult, baseDir: string): vo
   });
 }
 
+/**
+ * Extract the property-type suffix from a GCP `::` name and flatten to valid TS identifier.
+ * "GCP::Alloydb::Backup::EncryptionConfig", "GCP::Alloydb::Backup" → "EncryptionConfig"
+ * "GCP::Acm::AccessLevel::Custom::Expr", "GCP::Acm::AccessLevel" → "Custom_Expr"
+ */
+function gcpDefName(ptName: string, resourceType: string): string {
+  const prefix = `${resourceType}::`;
+  const raw = ptName.startsWith(prefix) ? ptName.slice(prefix.length) : ptName.split("::").pop()!;
+  return raw.replace(/::/g, "_");
+}
+
 // ── Lexicon JSON generation ─────────────────────────────────────────
 
 function generateLexiconJSON(results: GcpParseResult[], naming: NamingStrategy): string {
@@ -108,9 +119,8 @@ function generateLexiconJSON(results: GcpParseResult[], naming: NamingStrategy):
     };
 
     // Add property types
-    const shortName = gcpShortName(cfnType);
     for (const pt of r.propertyTypes) {
-      const defName = extractDefName(pt.name, shortName);
+      const defName = gcpDefName(pt.name, cfnType);
       const ptName = propertyTypeName(tsName, defName);
       entries[ptName] = {
         resourceType: `${cfnType}.${pt.specType}`,
@@ -132,9 +142,9 @@ function generateTypeScriptDeclarations(results: GcpParseResult[], naming: Namin
     " * Auto-generated — do not edit.",
     " */",
     "",
-    'import { createResource, createProperty } from "./runtime";',
-    "",
   ];
+
+  const emittedTypes = new Set<string>();
 
   for (const r of results) {
     const cfnType = r.resource.typeName;
@@ -142,7 +152,8 @@ function generateTypeScriptDeclarations(results: GcpParseResult[], naming: Namin
     if (!tsName) continue;
 
     // Resource class interface
-    lines.push(`/** ${r.resource.description ?? cfnType} */`);
+    const desc = (r.resource.description ?? cfnType).replace(/\*\//g, "*\\/");
+    lines.push(`/** ${desc} */`);
     lines.push(`export declare class ${tsName} {`);
     lines.push(`  constructor(props: ${tsName}Props);`);
 
@@ -158,8 +169,9 @@ function generateTypeScriptDeclarations(results: GcpParseResult[], naming: Namin
     lines.push(`export interface ${tsName}Props {`);
     for (const prop of r.resource.properties) {
       const optional = prop.required ? "" : "?";
-      const desc = prop.description ? `  /** ${prop.description} */\n` : "";
-      lines.push(`${desc}  ${prop.name}${optional}: ${prop.tsType};`);
+      const safeName = /^[a-zA-Z_$][a-zA-Z0-9_$]*$/.test(prop.name) ? prop.name : JSON.stringify(prop.name);
+      const propDesc = prop.description ? `  /** ${prop.description.replace(/\*\//g, "*\\/")} */\n` : "";
+      lines.push(`${propDesc}  ${safeName}${optional}: ${prop.tsType};`);
     }
     lines.push(`}`);
     lines.push("");
@@ -171,11 +183,12 @@ function generateTypeScriptDeclarations(results: GcpParseResult[], naming: Namin
       lines.push("");
     }
 
-    // Property types
-    const shortName = gcpShortName(cfnType);
+    // Property types (skip duplicates from singularization collisions)
     for (const pt of r.propertyTypes) {
-      const defName = extractDefName(pt.name, shortName);
+      const defName = gcpDefName(pt.name, cfnType);
       const ptName = propertyTypeName(tsName, defName);
+      if (emittedTypes.has(ptName)) continue;
+      emittedTypes.add(ptName);
 
       lines.push(`export declare class ${ptName} {`);
       lines.push(`  constructor(props: ${ptName}Props);`);
@@ -185,7 +198,8 @@ function generateTypeScriptDeclarations(results: GcpParseResult[], naming: Namin
       lines.push(`export interface ${ptName}Props {`);
       for (const prop of pt.properties) {
         const optional = prop.required ? "" : "?";
-        lines.push(`  ${prop.name}${optional}: ${prop.tsType};`);
+        const safeName = /^[a-zA-Z_$][a-zA-Z0-9_$]*$/.test(prop.name) ? prop.name : JSON.stringify(prop.name);
+        lines.push(`  ${safeName}${optional}: ${prop.tsType};`);
       }
       lines.push(`}`);
       lines.push("");
@@ -200,6 +214,7 @@ function generateTypeScriptDeclarations(results: GcpParseResult[], naming: Namin
 function generateRuntimeIndex(results: GcpParseResult[], naming: NamingStrategy): string {
   const resourceEntries: RuntimeIndexEntry[] = [];
   const propertyEntries: RuntimeIndexPropertyEntry[] = [];
+  const emittedProperties = new Set<string>();
 
   for (const r of results) {
     const cfnType = r.resource.typeName;
@@ -217,10 +232,11 @@ function generateRuntimeIndex(results: GcpParseResult[], naming: NamingStrategy)
       resourceEntries.push({ tsName: alias, resourceType: cfnType, attrs });
     }
 
-    const shortName = gcpShortName(cfnType);
     for (const pt of r.propertyTypes) {
-      const defName = extractDefName(pt.name, shortName);
+      const defName = gcpDefName(pt.name, cfnType);
       const ptName = propertyTypeName(tsName, defName);
+      if (emittedProperties.has(ptName)) continue;
+      emittedProperties.add(ptName);
       const ptCfnType = `${cfnType}.${pt.specType}`;
       propertyEntries.push({ tsName: ptName, resourceType: ptCfnType });
     }

@@ -1,108 +1,93 @@
-# npm install smoke test — validates chant packages work via tarball install
-FROM oven/bun:latest
+# npm smoke test — three-stage build
+# Stage 1: bun builds tarballs from the monorepo
+# Stage 2: node:22-slim installs from tarballs and runs chant build/lint (no bun)
+# Stage 3: oven/bun (fresh) installs from tarballs and runs chant build/lint (bun user path)
+
+# ── Stage 1: builder ─────────────────────────────────────────────────────────
+FROM oven/bun:latest AS builder
 
 WORKDIR /app
 
-# Install system deps
-RUN apt-get update && apt-get install -y jq curl && rm -rf /var/lib/apt/lists/*
+RUN apt-get update && apt-get install -y jq && rm -rf /var/lib/apt/lists/*
 
-# Copy workspace
 COPY . .
 
-# Install workspace dependencies
 RUN bun install
 
-# Generate lexicon artifacts (lexicon-aws.json, index.d.ts, index.ts)
-RUN bun run lexicons/aws/src/codegen/generate-cli.ts
+# Validate that dist/ artifacts exist — codegen runs on the host before docker build.
+# Run: just prepack  (or bun run prepack per lexicon) before building this Dockerfile.
+# Helm skipped — has pre-existing validation failures.
+RUN for lex in aws azure gcp gitlab k8s flyway; do \
+      if [ ! -f "lexicons/$lex/dist/manifest.json" ]; then \
+        echo "ERROR: lexicons/$lex/dist/ not found. Run codegen first: bun run --cwd lexicons/$lex prepack" >&2; \
+        exit 1; \
+      fi; \
+    done
 
-# Build dist/ artifacts (manifest, meta, types, rules, skills, integrity)
-RUN bun run test/build-dist.ts
+# Fix workspace:* deps → real version, strip scripts so npm doesn't run them
+RUN CORE_VERSION=$(jq -r '.version' packages/core/package.json) && \
+    echo "Core version: $CORE_VERSION" && \
+    # Core: just strip scripts
+    cd /app/packages/core && \
+    jq 'del(.scripts)' package.json > tmp.json && mv tmp.json package.json && \
+    # Each lexicon: replace workspace:* with version, strip scripts
+    for lex in aws azure gcp gitlab k8s flyway; do \
+      cd /app/lexicons/$lex && \
+      jq --arg v "$CORE_VERSION" \
+        '(.dependencies // {}) |= with_entries(if .value == "workspace:*" then .value = $v else . end) | del(.scripts)' \
+        package.json > tmp.json && mv tmp.json package.json; \
+    done
 
-# Verify dist was created
-RUN ls -la lexicons/aws/dist/
+# Pack tarballs
+RUN mkdir -p /tarballs && \
+    cd /app/packages/core && bun pm pack && mv *.tgz /tarballs/core.tgz && \
+    cd /app/lexicons/aws && bun pm pack && mv *.tgz /tarballs/lexicon-aws.tgz && \
+    cd /app/lexicons/azure && bun pm pack && mv *.tgz /tarballs/lexicon-azure.tgz && \
+    cd /app/lexicons/gcp && bun pm pack && mv *.tgz /tarballs/lexicon-gcp.tgz && \
+    cd /app/lexicons/gitlab && bun pm pack && mv *.tgz /tarballs/lexicon-gitlab.tgz && \
+    cd /app/lexicons/k8s && bun pm pack && mv *.tgz /tarballs/lexicon-k8s.tgz && \
+    cd /app/lexicons/flyway && bun pm pack && mv *.tgz /tarballs/lexicon-flyway.tgz
 
-# Strip prepack scripts and fix workspace: protocol for standalone install
-RUN cd packages/core && jq 'del(.scripts)' package.json > tmp.json && mv tmp.json package.json
-RUN cd lexicons/aws && \
-    jq 'del(.scripts) | .dependencies["@intentius/chant"] = "0.0.1"' package.json > tmp.json && \
-    mv tmp.json package.json
+# Verify tarballs contain dist/
+RUN for tb in /tarballs/lexicon-*.tgz; do \
+      echo "=== $(basename $tb) ===" && \
+      tar tzf "$tb" | grep dist/ | head -3; \
+    done
 
-# Pack into tarballs
-RUN cd packages/core && bun pm pack && mv *.tgz /app/chant-core.tgz
-RUN cd lexicons/aws && bun pm pack && mv *.tgz /app/lexicon-aws.tgz
+# ── Stage 2: test (node only, no bun) ────────────────────────────────────────
+FROM node:22-slim AS test-node
 
-# Verify dist is in tarball
-RUN tar tzf /app/lexicon-aws.tgz | grep dist/ | head -5
+RUN apt-get update && apt-get install -y jq && rm -rf /var/lib/apt/lists/*
 
-# Generate GitLab lexicon artifacts
-RUN bun run lexicons/gitlab/src/codegen/generate-cli.ts
+# Install tsx globally — this is the fallback runtime the bin/chant wrapper uses
+RUN npm install -g tsx
 
-# Build GitLab dist/ artifacts
-RUN bun run test/build-dist-gitlab.ts
+# Copy tarballs from builder
+COPY --from=builder /tarballs /tarballs
 
-# Verify GitLab dist was created
-RUN ls -la lexicons/gitlab/dist/
+# Copy and run the test script — RUN so build fails if tests fail
+COPY test/npm-smoke.sh /npm-smoke.sh
+RUN chmod +x /npm-smoke.sh
+RUN RUNTIME=npm /npm-smoke.sh
 
-# Strip scripts and fix workspace dep for GitLab
-RUN cd lexicons/gitlab && \
-    jq 'del(.scripts) | .dependencies["@intentius/chant"] = "0.0.1"' package.json > tmp.json && \
-    mv tmp.json package.json
+# Leave a marker so stage 3 can force this stage to run
+RUN echo "node-tests-passed" > /test-node-ok
 
-# Pack GitLab tarball
-RUN cd lexicons/gitlab && bun pm pack && mv *.tgz /app/lexicon-gitlab.tgz
+# ── Stage 3: test (bun user installing from npm) ─────────────────────────────
+# Use node base (provides npm) + install bun on top. bun's own image lacks npm,
+# and bun add from tarballs doesn't deduplicate transitive deps properly.
+FROM node:22-slim AS test-bun
 
-# Verify GitLab dist is in tarball
-RUN tar tzf /app/lexicon-gitlab.tgz | grep dist/ | head -5
+RUN apt-get update && apt-get install -y jq curl unzip && rm -rf /var/lib/apt/lists/*
+RUN curl -fsSL https://bun.sh/install | bash
+ENV PATH="/root/.bun/bin:$PATH"
 
-# Generate K8s lexicon artifacts (K8s prepack runs generate before bundle)
-RUN bun run lexicons/k8s/src/codegen/generate-cli.ts
+# Copy tarballs from builder
+COPY --from=builder /tarballs /tarballs
 
-# Build K8s dist/ artifacts
-RUN bun run test/build-dist-k8s.ts
-RUN ls -la lexicons/k8s/dist/
+# Force stage 2 to run by depending on its output
+COPY --from=test-node /test-node-ok /test-node-ok
 
-# Strip scripts and fix workspace dep for K8s
-RUN cd lexicons/k8s && \
-    jq 'del(.scripts) | .dependencies["@intentius/chant"] = "0.0.1"' package.json > tmp.json && \
-    mv tmp.json package.json
-
-# Pack K8s tarball
-RUN cd lexicons/k8s && bun pm pack && mv *.tgz /app/lexicon-k8s.tgz
-RUN tar tzf /app/lexicon-k8s.tgz | grep dist/ | head -5
-
-# Build Flyway dist/ artifacts
-RUN bun run test/build-dist-flyway.ts
-RUN ls -la lexicons/flyway/dist/
-
-# Strip scripts and fix workspace dep for Flyway
-RUN cd lexicons/flyway && \
-    jq 'del(.scripts) | .dependencies["@intentius/chant"] = "0.0.1"' package.json > tmp.json && \
-    mv tmp.json package.json
-
-# Pack Flyway tarball
-RUN cd lexicons/flyway && bun pm pack && mv *.tgz /app/lexicon-flyway.tgz
-RUN tar tzf /app/lexicon-flyway.tgz | grep dist/ | head -5
-
-# Create an isolated test project outside the workspace
-RUN mkdir -p /test-project/src
-
-# Install from tarballs manually (bun can't resolve workspace deps from registry)
-WORKDIR /test-project
-RUN bun init -y
-
-# Extract tarballs into node_modules (they pack with a "package/" prefix)
-RUN mkdir -p node_modules/@intentius/chant \
-             node_modules/@intentius/chant-lexicon-aws \
-             node_modules/@intentius/chant-lexicon-gitlab \
-             node_modules/@intentius/chant-lexicon-k8s \
-             node_modules/@intentius/chant-lexicon-flyway && \
-    tar xzf /app/chant-core.tgz -C node_modules/@intentius/chant --strip-components=1 && \
-    tar xzf /app/lexicon-aws.tgz -C node_modules/@intentius/chant-lexicon-aws --strip-components=1 && \
-    tar xzf /app/lexicon-gitlab.tgz -C node_modules/@intentius/chant-lexicon-gitlab --strip-components=1 && \
-    tar xzf /app/lexicon-k8s.tgz -C node_modules/@intentius/chant-lexicon-k8s --strip-components=1 && \
-    tar xzf /app/lexicon-flyway.tgz -C node_modules/@intentius/chant-lexicon-flyway --strip-components=1
-
-# Validate the installed packages
-COPY test/npm-smoke-validate.sh /test-project/validate.sh
-RUN chmod +x /test-project/validate.sh
-CMD ["/test-project/validate.sh"]
+COPY test/npm-smoke.sh /npm-smoke.sh
+RUN chmod +x /npm-smoke.sh
+RUN RUNTIME=bun /npm-smoke.sh

@@ -25,16 +25,15 @@ run_workspace() {
 }
 
 run_npm() {
-  if [ ! -f "$SCRIPT_DIR/Dockerfile.smoke-npm" ]; then
-    echo "ERROR: Dockerfile.smoke-npm not found (Item 9b not yet implemented)"
-    exit 1
-  fi
+  echo "Running codegen (prepack) for all lexicons..."
+  for lex in aws azure gcp gitlab k8s flyway; do
+    echo "  prepack lexicons/$lex"
+    bun run --cwd "$PROJECT_DIR/lexicons/$lex" prepack
+  done
 
-  echo "Building npm smoke test image..."
+  echo "Building npm smoke test image (tests run during build)..."
   docker build -f "$SCRIPT_DIR/Dockerfile.smoke-npm" -t chant-smoke-npm "$PROJECT_DIR"
-
-  echo "Running npm smoke tests..."
-  docker run --rm chant-smoke-npm
+  echo "npm smoke tests passed (ran during docker build)."
 }
 
 case "${1:-workspace}" in

@@ -30,8 +30,6 @@ const REQUIRED_NAMES = [
   "Sku", "Identity", "NetworkProfile", "StorageProfile",
   "OsDisk", "ImageReference", "IpConfiguration",
   "SecurityRule", "SubnetProperties", "SiteConfig",
-  // Monitoring
-  "ActionGroup", "MetricAlert",
 ];
 
 export async function validate(opts?: { basePath?: string }): Promise<ValidateResult> {

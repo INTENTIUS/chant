@@ -7,7 +7,7 @@
   "publishConfig": { "access": "public" },
   "exports": {
     ".": "./src/index.ts",
-    "./*": "./src/*",
+    "./*": "./src/*.ts",
     "./manifest": "./dist/manifest.json",
     "./meta": "./dist/meta.json",
     "./types": "./dist/types/index.d.ts"

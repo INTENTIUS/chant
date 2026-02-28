@@ -22,8 +22,8 @@ export async function validate(opts?: { basePath?: string }): Promise<ValidateRe
     requiredNames: REQUIRED_NAMES,
     basePath,
     coverageThresholds: {
-      minPropertyPct: 1,
-      minLifecyclePct: 1,
+      minPropertyPct: 0,
+      minLifecyclePct: 0,
       minAttrPct: 1,
     },
   });

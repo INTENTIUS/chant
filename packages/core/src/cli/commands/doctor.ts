@@ -147,7 +147,7 @@ export async function doctorCommand(path: string): Promise<DoctorReport> {
     }
   }
 
-  // Check 8: tsconfig.json has paths
+  // Check 8: tsconfig.json does NOT have paths (they break runtime resolution)
   const tsconfigPath = join(projectPath, "tsconfig.json");
   if (existsSync(tsconfigPath)) {
     try {
@@ -156,8 +156,8 @@ export async function doctorCommand(path: string): Promise<DoctorReport> {
       // Strip single-line comments for basic parsing
       const cleaned = raw.replace(/\/\/.*$/gm, "");
       const tsconfig = JSON.parse(cleaned);
-      if (!tsconfig.compilerOptions?.paths) {
-        checks.push({ name: "tsconfig-paths", status: "warn", message: "tsconfig.json missing compilerOptions.paths" });
+      if (tsconfig.compilerOptions?.paths) {
+        checks.push({ name: "tsconfig-paths", status: "warn", message: "tsconfig.json has compilerOptions.paths — these break runtime module resolution (bun and tsx follow them). Remove the paths block." });
       } else {
         checks.push({ name: "tsconfig-paths", status: "pass" });
       }

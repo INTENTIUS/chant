@@ -94,7 +94,7 @@ describe("initCommand", () => {
     });
   });
 
-  test("generates valid tsconfig.json with path mappings", async () => {
+  test("generates valid tsconfig.json without path mappings", async () => {
     await withTestDir(async (testDir) => {
       const options: InitOptions = {
         path: testDir,
@@ -114,8 +114,7 @@ describe("initCommand", () => {
       expect(tsconfig.compilerOptions.strict).toBe(true);
       expect(tsconfig.compilerOptions.rootDir).toBe("./src");
       expect(tsconfig.include).toContain("src");
-      expect(tsconfig.compilerOptions.paths["@intentius/chant"]).toEqual(["./.chant/types/core"]);
-      expect(tsconfig.compilerOptions.paths["@intentius/chant-lexicon-aws"]).toEqual(["./.chant/types/lexicon-aws"]);
+      expect(tsconfig.compilerOptions.paths).toBeUndefined();
     });
   });
 

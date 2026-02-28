@@ -84,6 +84,18 @@ function isProviderSchema(path: string): boolean {
 }
 
 /**
+ * Normalize schema-file provider name to canonical ARM provider.
+ * "Microsoft.Network.NRP" → "Microsoft.Network"
+ * "Microsoft.Sql.Legacy"  → "Microsoft.Sql"
+ * "Microsoft.Compute"     → "Microsoft.Compute" (unchanged)
+ */
+function normalizeProvider(fileProvider: string): string {
+  const parts = fileProvider.split(".");
+  // Microsoft.X.Y... → Microsoft.X
+  return parts.length > 2 ? `${parts[0]}.${parts[1]}` : fileProvider;
+}
+
+/**
  * Fetch ARM schemas and return a Map keyed by resource type
  * (e.g. "Microsoft.Storage/storageAccounts") to raw JSON bytes.
  *
@@ -120,7 +132,7 @@ export async function fetchArmSchemas(force = false): Promise<Map<string, Buffer
       const resourceDefs = providerSchema.resourceDefinitions ?? {};
 
       for (const [resourceName, resourceDef] of Object.entries(resourceDefs)) {
-        const resourceType = `${provider}/${resourceName}`;
+        const resourceType = `${normalizeProvider(provider)}/${resourceName}`;
 
         // Build a per-resource schema that includes the resource def + shared definitions + apiVersion
         const perResourceSchema = {

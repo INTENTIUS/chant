@@ -34,13 +34,12 @@ export {
 } from "./pseudo";
 
 // --- Re-exports from core ---
-export { ChildProject } from "@intentius/chant/child-project";
-export { StackOutput } from "@intentius/chant/stack-output";
-export { LexiconOutput } from "@intentius/chant/lexicon-output";
+export { isChildProject, type ChildProjectInstance } from "@intentius/chant/child-project";
+export { stackOutput, isStackOutput, type StackOutput } from "@intentius/chant/stack-output";
+export { LexiconOutput, output, isLexiconOutput } from "@intentius/chant/lexicon-output";
 
 // --- Generated resource classes ---
-// These are available after `bun run generate`
-// export * from "./generated/index";
+export * from "./generated/index";
 
 // --- Composites ---
 export {
