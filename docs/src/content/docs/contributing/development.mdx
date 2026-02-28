@@ -63,9 +63,37 @@ just k3d-validate --verbose
 ### Test Patterns
 
 - Unit tests live next to source files or in `__tests__/` directories
-- Example tests use the centralized `examples.test.ts` pattern: each lexicon has a single `lexicons/<name>/examples/examples.test.ts` file that auto-discovers all example subdirectories and runs lint + build tests via the `describeAllExamples` harness from `@intentius/chant-test-utils/example-harness`
-- Cross-lexicon examples live in `examples/` at the repo root with a centralized `examples/examples.test.ts`
 - The `packages/test-utils/` directory (`@intentius/chant-test-utils`) provides shared test fixtures, assertions, and the example test harness
+
+### Example Tests
+
+Example tests are centralized — each lexicon has a single `examples.test.ts` that auto-discovers all its examples. Example directories contain only source code (no `.test.ts` files), so users who copy examples get clean projects.
+
+**Per-lexicon examples** live at `lexicons/<name>/examples/<example>/src/` and are tested by `lexicons/<name>/examples/examples.test.ts`.
+
+**Cross-lexicon examples** (e.g. AWS + K8s, GitLab + AWS) live at `examples/<name>/src/` and are tested by `examples/examples.test.ts`.
+
+Both use the shared harness from `@intentius/chant-test-utils/example-harness`:
+
+```typescript
+import { describeAllExamples } from "@intentius/chant-test-utils/example-harness";
+import { mySerializer } from "@intentius/chant-lexicon-my-lexicon";
+
+describeAllExamples({
+  lexicon: "my-lexicon",
+  serializer: mySerializer,
+  outputKey: "my-lexicon",
+  examplesDir: import.meta.dir,
+}, {
+  // Per-example overrides (optional)
+  "docs-snippets": { skipLint: true },
+  "my-example": {
+    checks: (output) => { expect(output).toContain("expected"); },
+  },
+});
+```
+
+**Adding a new example:** create a subdirectory with `src/` and a `package.json` — the centralized `examples.test.ts` auto-discovers it with no test file changes needed. Add an override entry only if you need custom assertions or to skip lint/build.
 
 ## Type Checking
 
