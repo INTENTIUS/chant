@@ -243,9 +243,9 @@ export const project = new FlywayProject({
 });
 
 export const dev = new Environment({
-  url: "jdbc:postgresql://localhost:5432/devdb",
-  user: "dev_user",
-  password: "dev_pass",
+  url: process.env.FLYWAY_URL ?? "jdbc:postgresql://localhost:5432/devdb",
+  user: process.env.FLYWAY_USER ?? "dev_user",
+  password: process.env.FLYWAY_PASSWORD ?? "dev_pass",
   schemas: ["public"],
   displayName: "dev",
 });

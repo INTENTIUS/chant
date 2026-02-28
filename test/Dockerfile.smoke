@@ -15,13 +15,14 @@ COPY . .
 # Install dependencies
 RUN bun install
 
-# Generate lexicon artifacts (generated files are gitignored, must be built)
-RUN bun run --cwd lexicons/aws prepack
-RUN bun run --cwd lexicons/azure prepack
-RUN bun run --cwd lexicons/gitlab prepack
-RUN bun run --cwd lexicons/k8s prepack
-RUN bun run --cwd lexicons/flyway prepack
-RUN bun run --cwd lexicons/gcp prepack
+# Validate that dist/ artifacts exist — codegen runs on the host before docker build.
+# Run: just prepack  (or bun run prepack per lexicon) before building this Dockerfile.
+RUN for lex in aws azure gcp gitlab k8s flyway; do \
+      if [ ! -f "lexicons/$lex/dist/manifest.json" ]; then \
+        echo "ERROR: lexicons/$lex/dist/ not found. Run codegen first: bun run --cwd lexicons/$lex prepack" >&2; \
+        exit 1; \
+      fi; \
+    done
 
 # Run integration tests during build — build fails if tests fail
 COPY test/integration.sh /app/test/integration.sh
@@ -29,7 +30,5 @@ RUN chmod +x /app/test/integration.sh && /app/test/integration.sh
 
 # Put chant on the PATH
 ENV PATH="/app/lexicons/gitlab/node_modules/.bin:/app/lexicons/aws/node_modules/.bin:${PATH}"
-
-WORKDIR /app/lexicons/aws/examples/lambda-function
 
 CMD ["bash"]
