@@ -519,7 +519,8 @@ for example_dir in /app/examples/*/; do
   src_dir="$example_dir/src"
   [ -d "$src_dir" ] || continue
 
-  ln -sf /app/node_modules "$example_dir/node_modules"
+  rm -rf "$example_dir/node_modules"
+  ln -sfn /app/node_modules "$example_dir/node_modules"
   if $CHANT build "$src_dir" > /dev/null 2>&1; then
     pass "root example $name builds"
   else

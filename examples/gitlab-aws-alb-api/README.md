@@ -1,74 +1,110 @@
-# AWS Shared ALB — Cross-Lexicon API Service Example
+# AWS ALB API Service
 
-A cross-lexicon example that defines both the **AWS Fargate service infrastructure** (7 CF resources) and the **GitLab CI pipeline** (Docker build + CF deploy) — all in TypeScript.
+API Fargate service behind a shared Application Load Balancer, with a GitLab CI pipeline for Docker build and CloudFormation deployment.
 
-This demonstrates chant's multi-lexicon capability: a single `src/` directory imports from both `@intentius/chant-lexicon-aws` and `@intentius/chant-lexicon-gitlab`, and builds to two separate outputs.
+**Depends on:** [gitlab-aws-alb-infra](../gitlab-aws-alb-infra/) — deploy the shared infrastructure first.
 
-## Source files
+## Skills
 
-| File | Lexicon | Description |
-|------|---------|-------------|
-| `src/params.ts` | aws | CF parameters for shared ALB stack outputs |
-| `src/service.ts` | aws | `FargateService` composite — task def, service, ALB rule, security group, log group |
-| `src/tags.ts` | aws | Default resource tags |
-| `src/pipeline.ts` | gitlab | 2-stage pipeline: build Docker image + deploy CF stack |
+This example includes skills for agent-guided deployment:
+
+| Skill | Purpose |
+|-------|---------|
+| `chant-gitlab-aws-alb-api` | Guides the full deploy → verify → teardown workflow for this example |
+| `chant-aws` | CloudFormation lifecycle: build, validate, deploy, change sets, rollback |
+| `chant-gitlab` | GitLab CI/CD lifecycle: build, validate, push, monitor pipelines |
+
+> **Using Claude Code?** The skills in `.claude/skills/` guide your agent
+> through the full deploy → verify → teardown workflow. Just ask:
+>
+> ```
+> Deploy the gitlab-aws-alb-api example to my AWS account.
+> ```
 
 ## What this produces
 
-### `chant build src --lexicon aws` → CloudFormation template (7 resources, 9 parameters)
+- **AWS** (`templates/template.json`): CloudFormation template with 7 resources and 9 parameters
+- **GitLab** (`.gitlab-ci.yml`): 2-stage pipeline (build Docker image + deploy CF stack)
 
-- Fargate task definition, ECS service, and task role
-- Target group + ALB listener rule for `/api` and `/api/*` (priority 100)
-- Security group for the ECS tasks
-- CloudWatch log group
-- Parameters: `clusterArn`, `listenerArn`, `albSgId`, `executionRoleArn`, `vpcId`, `privateSubnet1`, `privateSubnet2`, `image`, `environment`
+## Source files
 
-### `chant build src --lexicon gitlab` → `.gitlab-ci.yml`
+| File | Lexicon | Purpose |
+|------|---------|---------|
+| `src/params.ts` | AWS | CloudFormation parameters for shared ALB stack outputs |
+| `src/service.ts` | AWS | `FargateService` composite — task def, ECS service, ALB rule, SG, log group |
+| `src/tags.ts` | AWS | Default resource tags |
+| `src/pipeline.ts` | GitLab | 2-stage pipeline: build Docker image, deploy CloudFormation |
 
-A 2-stage pipeline:
+## Service routing
 
-1. **build** — `build-image`: builds Docker image with Docker-in-Docker, pushes to ECR (`alb-api`), tags `:latest` on default branch
-2. **deploy** — `deploy-service`: fetches shared ALB stack outputs via `aws cloudformation describe-stacks`, maps them to CF parameter overrides, deploys `templates/template.json`
-
-## Required CI/CD variables
-
-Set these in **GitLab > Settings > CI/CD > Variables**:
-
-| Variable | Description | Masked |
-|---|---|---|
-| `AWS_ACCESS_KEY_ID` | IAM access key | No |
-| `AWS_SECRET_ACCESS_KEY` | IAM secret key | Yes |
-| `AWS_DEFAULT_REGION` | AWS region (e.g. `us-east-1`) | No |
-| `AWS_ACCOUNT_ID` | AWS account ID (used to construct ECR URL) | No |
+- **Path pattern:** `/api` and `/api/*`
+- **Listener rule priority:** 100
+- Traffic reaches the Fargate service via the shared ALB from the infra stack.
 
 ## Prerequisites
 
-The **shared-alb infra stack** must be deployed first — it creates the VPC, ALB, ECS cluster, and ECR repos. See [gitlab-aws-alb-infra](../gitlab-aws-alb-infra).
+- [ ] [Bun](https://bun.sh)
+- [ ] `shared-alb` infra stack deployed (see [gitlab-aws-alb-infra](../gitlab-aws-alb-infra/))
+- [ ] AWS account with ECS, ECR, CloudFormation permissions
+- [ ] GitLab project with Docker-in-Docker runner
+
+**Required CI/CD variables** (GitLab > Settings > CI/CD > Variables):
+
+| Variable | Description | Masked |
+|----------|-------------|--------|
+| `AWS_ACCESS_KEY_ID` | IAM access key | No |
+| `AWS_SECRET_ACCESS_KEY` | IAM secret key | Yes |
+| `AWS_DEFAULT_REGION` | AWS region (e.g. `us-east-1`) | No |
+| `AWS_ACCOUNT_ID` | AWS account ID (for ECR URL) | No |
+
+**Local verification** (build, lint, test) requires only Bun — no AWS account needed.
+
+## Local verification
+
+```bash
+bun run build
+```
 
 ## Deploy
 
-### 1. Build both outputs
+1. **Build both outputs**:
+
+   ```bash
+   bun run build:aws
+   bun run build:gitlab
+   ```
+
+2. **Add your app** — add a `Dockerfile` and application code. The `build-image` job runs `docker build .` from the repo root.
+
+3. **Push to GitLab**:
+
+   ```bash
+   git add .gitlab-ci.yml templates/ Dockerfile
+   git commit -m "Initial pipeline"
+   git push
+   ```
+
+4. **Pipeline runs automatically** — builds the Docker image, pushes to ECR, fetches `shared-alb` stack outputs, and deploys the service CF stack.
+
+## Verify
 
 ```bash
-chant build src --lexicon aws --output templates/template.json
-chant build src --lexicon gitlab --output .gitlab-ci.yml
+aws cloudformation describe-stacks --stack-name alb-api --query 'Stacks[0].StackStatus'
+aws ecs describe-services --cluster <ClusterArn> --services alb-api
+# Visit http://<AlbDnsName>/api
 ```
 
-### 2. Add your app
-
-Add a `Dockerfile` and application code. The `build-image` job runs `docker build .` from the repo root.
-
-### 3. Push to GitLab
+## Teardown
 
 ```bash
-git add .
-git commit -m "Initial pipeline"
-git push
+aws cloudformation delete-stack --stack-name alb-api
+aws cloudformation wait stack-delete-complete --stack-name alb-api
 ```
 
-The deploy job fetches outputs from the `shared-alb` stack and passes them as `--parameter-overrides` to `aws cloudformation deploy`.
+Delete this stack before deleting the infra stack.
 
 ## Related examples
 
-- [gitlab-aws-alb-infra](../gitlab-aws-alb-infra) — Shared infra (deploy first)
-- [gitlab-aws-alb-ui](../gitlab-aws-alb-ui) — UI Fargate service (cross-lexicon)
+- [gitlab-aws-alb-infra](../gitlab-aws-alb-infra/) — Shared infrastructure (deploy first)
+- [gitlab-aws-alb-ui](../gitlab-aws-alb-ui/) — UI Fargate service (sibling)
+- [flyway-postgresql-gitlab-aws-rds](../flyway-postgresql-gitlab-aws-rds/) — AWS RDS + Flyway + GitLab

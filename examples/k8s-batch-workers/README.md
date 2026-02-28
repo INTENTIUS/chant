@@ -2,51 +2,114 @@
 
 Background processing platform demonstrating batch and worker composites: queue workers with autoscaling, scheduled jobs, one-shot migrations, config-driven API, and per-node log collection.
 
+## Skills
+
+This example includes skills for agent-guided deployment:
+
+| Skill | Purpose |
+|-------|---------|
+| `chant-k8s-batch-workers` | Guides the full deploy → verify → teardown workflow for this example |
+| `chant-k8s` | Kubernetes manifest lifecycle: build, lint, apply, rollback, troubleshooting |
+| `chant-k8s-patterns` | Advanced patterns: sidecars, config mounting, TLS, monitoring, network isolation |
+
+> **Using Claude Code?** The skills in `.claude/skills/` guide your agent
+> through the full deploy → verify → teardown workflow. Just ask:
+>
+> ```
+> Deploy the k8s-batch-workers example to my cluster.
+> ```
+
+## What this produces
+
+- **K8s** (`k8s.yaml`): 23 Kubernetes resources across 6 source files
+
+## Source files
+
+| File | Composite | Resources |
+|------|-----------|-----------|
+| `src/namespace.ts` | *(raw Namespace)* | Namespace |
+| `src/workers.ts` | `WorkerPool` | Deployment + ServiceAccount + Role + RoleBinding + ConfigMap + HPA |
+| `src/cron.ts` | `CronWorkload` | CronJob + ServiceAccount + Role + RoleBinding |
+| `src/migration.ts` | `BatchJob` | Job + ServiceAccount + Role + RoleBinding |
+| `src/task-api.ts` | `ConfiguredApp` | Deployment + Service + ConfigMap |
+| `src/log-collector.ts` | `NodeAgent` | DaemonSet + ServiceAccount + ClusterRole + ClusterRoleBinding + ConfigMap |
+
 ## Composites covered
 
-| File | Composite | Description |
-|------|-----------|-------------|
-| `namespace.ts` | *(raw Namespace)* | Namespace for batch workloads |
-| `workers.ts` | `WorkerPool` | Queue consumer with HPA, ConfigMap, RBAC |
-| `cron.ts` | `CronWorkload` | Nightly cleanup with schedule and RBAC |
-| `migration.ts` | `BatchJob` | Data migration with retry and TTL |
-| `task-api.ts` | `ConfiguredApp` | API with mounted config, secret volume, envFrom |
-| `log-collector.ts` | `NodeAgent` | DaemonSet with hostPaths, config, ClusterRole |
+This example showcases 5 composites for different workload patterns:
 
-## Resource count
-
-**23 Kubernetes resources** across 6 source files:
-
-- 2 Deployments (queue-worker, task-api)
-- 1 Service (task-api)
-- 4 ServiceAccounts
-- 3 Roles + 3 RoleBindings
-- 1 ClusterRole + 1 ClusterRoleBinding (log-collector)
-- 3 ConfigMaps
-- 1 CronJob, 1 Job, 1 DaemonSet, 1 HPA, 1 Namespace
+| Composite | Pattern | Key features |
+|-----------|---------|-------------|
+| `WorkerPool` | Queue consumer | HPA autoscaling (2-10 replicas, 75% CPU), RBAC, ConfigMap |
+| `CronWorkload` | Scheduled task | Cron schedule (`0 2 * * *`), job history limits, RBAC |
+| `BatchJob` | One-shot migration | Retry (backoffLimit: 3), TTL cleanup (1h), RBAC |
+| `ConfiguredApp` | Config-driven API | ConfigMap volume mount, secret volume, envFrom |
+| `NodeAgent` | Per-node DaemonSet | hostPath volumes, ClusterRole, tolerate-all taints |
 
 ## Prerequisites
 
-- [Bun](https://bun.sh)
-- [kubectl](https://kubernetes.io/docs/tasks/tools/) (for deploy/teardown)
+- [ ] [Bun](https://bun.sh)
+- [ ] [kubectl](https://kubernetes.io/docs/tasks/tools/)
+- [ ] A Kubernetes cluster (k3d, kind, minikube, or any existing cluster)
 
-## Usage
+**Local verification** (build, lint, test) requires only Bun — no cluster needed.
+
+## Local verification
 
 ```bash
-# Build K8s manifests
 bun run build
-
-# Lint
 bun run lint
+```
 
-# Deploy
+## Deploy
+
+```bash
 bun run deploy
+```
 
-# Cleanup
+This runs: build → apply → wait → status.
+
+### Step by step
+
+1. **Build** — generates `k8s.yaml` with all 23 resources:
+
+   ```bash
+   bun run build
+   ```
+
+2. **Apply** — deploys to the current kubectl context:
+
+   ```bash
+   bun run apply
+   ```
+
+3. **Wait** — waits for the queue-worker deployment to roll out:
+
+   ```bash
+   bun run wait
+   ```
+
+## Verify
+
+```bash
+bun run status                                  # Pod listing
+bun run logs                                    # Queue worker logs
+kubectl get cronjob -n batch-workers            # Scheduled jobs
+kubectl get job -n batch-workers                # One-shot jobs
+kubectl get daemonset -n batch-workers          # Log collector
+kubectl get hpa -n batch-workers                # Autoscaler status
+```
+
+## Teardown
+
+```bash
 bun run teardown
 ```
 
+Deletes all resources created by `kubectl apply`.
+
 ## Related examples
 
-- [k8s-eks-microservice](../k8s-eks-microservice/) — Full EKS cross-lexicon example
 - [k8s-web-platform](../k8s-web-platform/) — Web platform with ingress, sidecars, monitoring
+- [k8s-eks-microservice](../k8s-eks-microservice/) — Production-grade AWS EKS + K8s cross-lexicon
+- [flyway-postgresql-k8s](../flyway-postgresql-k8s/) — K8s + Flyway cross-lexicon

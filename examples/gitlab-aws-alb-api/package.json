@@ -4,7 +4,7 @@
   "type": "module",
   "private": true,
   "scripts": {
-    "build": "chant build src",
+    "build": "chant build src --lexicon aws -o templates/template.json && chant build src --lexicon gitlab -o .gitlab-ci.yml",
     "build:aws": "chant build src --lexicon aws",
     "build:gitlab": "chant build src --lexicon gitlab",
     "dev": "chant build src --watch"

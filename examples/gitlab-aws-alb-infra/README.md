@@ -1,80 +1,124 @@
-# AWS Shared ALB — Cross-Lexicon Infra Example
+# AWS Shared ALB Infrastructure
 
-A cross-lexicon example that defines both **AWS infrastructure** (VPC, ALB, ECS cluster, ECR repos) and the **GitLab CI pipeline** that deploys it — all in TypeScript.
+Shared AWS infrastructure for the ALB service trilogy: VPC, Application Load Balancer, ECS cluster, and ECR repositories — deployed via a GitLab CI pipeline.
 
-This demonstrates chant's multi-lexicon capability: a single `src/` directory imports from both `@intentius/chant-lexicon-aws` and `@intentius/chant-lexicon-gitlab`, and builds to two separate outputs.
+## Skills
 
-## Source files
+This example includes skills for agent-guided deployment:
 
-| File | Lexicon | Description |
-|------|---------|-------------|
-| `src/network.ts` | aws | VPC with 2 public + 2 private subnets, NAT gateway |
-| `src/alb.ts` | aws | Application Load Balancer, ECS cluster, execution role |
-| `src/ecr.ts` | aws | ECR repositories (`alb-api`, `alb-ui`) |
-| `src/outputs.ts` | aws | CloudFormation stack outputs for service stacks |
-| `src/tags.ts` | aws | Default resource tags |
-| `src/pipeline.ts` | gitlab | Deploy job using `aws cloudformation deploy` |
+| Skill | Purpose |
+|-------|---------|
+| `chant-gitlab-aws-alb-infra` | Guides the full deploy → verify → teardown workflow for this example |
+| `chant-aws` | CloudFormation lifecycle: build, validate, deploy, change sets, rollback |
+| `chant-gitlab` | GitLab CI/CD lifecycle: build, validate, push, monitor pipelines |
+
+> **Using Claude Code?** The skills in `.claude/skills/` guide your agent
+> through the full deploy → verify → teardown workflow. Just ask:
+>
+> ```
+> Deploy the gitlab-aws-alb-infra example to my AWS account.
+> ```
 
 ## What this produces
 
-### `chant build src --lexicon aws` → CloudFormation template (24 resources, 10 outputs)
+- **AWS** (`templates/template.json`): CloudFormation template with 24 resources and 10 stack outputs
+- **GitLab** (`.gitlab-ci.yml`): Single-stage deploy pipeline using `aws cloudformation deploy`
 
-- VPC with 2 public + 2 private subnets, IGW, NAT gateway, route tables
-- Application Load Balancer with security group and default 404 listener
-- ECS cluster + shared execution role
-- ECR repositories: `alb-api` and `alb-ui`
-- Stack outputs: `ClusterArn`, `ListenerArn`, `AlbSgId`, `ExecutionRoleArn`, `AlbDnsName`, `VpcId`, `PrivateSubnet1`, `PrivateSubnet2`, `ApiRepoUri`, `UiRepoUri`
+## Source files
 
-### `chant build src --lexicon gitlab` → `.gitlab-ci.yml`
+| File | Lexicon | Purpose |
+|------|---------|---------|
+| `src/network.ts` | AWS | VPC with 2 public + 2 private subnets, IGW, NAT gateway |
+| `src/alb.ts` | AWS | Application Load Balancer, ECS cluster, execution role |
+| `src/ecr.ts` | AWS | ECR repositories (`alb-api`, `alb-ui`) |
+| `src/outputs.ts` | AWS | CloudFormation stack outputs for service stacks |
+| `src/tags.ts` | AWS | Default resource tags |
+| `src/pipeline.ts` | GitLab | Deploy job using `aws cloudformation deploy` |
 
-```yaml
-stages:
-  - deploy
+## Stack outputs
 
-deploy-infra:
-  stage: deploy
-  image:
-    name: amazon/aws-cli:latest
-    entrypoint:
-      - ''
-  script:
-    - aws cloudformation deploy --template-file templates/template.json --stack-name shared-alb --capabilities CAPABILITY_IAM --no-fail-on-empty-changeset
-  rules:
-    - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
-```
+The infra stack exports these values for the api and ui service stacks:
 
-## Required CI/CD variables
+| Output | Description |
+|--------|-------------|
+| `ClusterArn` | ECS cluster ARN |
+| `ListenerArn` | ALB listener ARN |
+| `AlbSgId` | ALB security group ID |
+| `ExecutionRoleArn` | Shared ECS execution role ARN |
+| `AlbDnsName` | ALB DNS name (your app's URL) |
+| `VpcId` | VPC ID |
+| `PrivateSubnet1` | First private subnet |
+| `PrivateSubnet2` | Second private subnet |
+| `ApiRepoUri` | ECR repo URI for API service |
+| `UiRepoUri` | ECR repo URI for UI service |
 
-Set these in **GitLab > Settings > CI/CD > Variables**:
+## Prerequisites
+
+- [ ] [Bun](https://bun.sh)
+- [ ] [AWS CLI](https://docs.aws.amazon.com/cli/latest/userguide/getting-started-install.html) >= 2.x
+- [ ] AWS account with CloudFormation, ECS, ECR, VPC, ELB permissions
+- [ ] GitLab project with CI/CD enabled
+
+**Required CI/CD variables** (GitLab > Settings > CI/CD > Variables):
 
 | Variable | Description | Masked |
-|---|---|---|
+|----------|-------------|--------|
 | `AWS_ACCESS_KEY_ID` | IAM access key | No |
 | `AWS_SECRET_ACCESS_KEY` | IAM secret key | Yes |
 | `AWS_DEFAULT_REGION` | AWS region (e.g. `us-east-1`) | No |
 
-No `AWS_ACCOUNT_ID` is needed — the infra stack doesn't reference it.
+**Local verification** (build, lint, test) requires only Bun — no AWS account needed.
+
+## Local verification
+
+```bash
+bun run build
+```
 
 ## Deploy
 
-### 1. Build both outputs
+1. **Build both outputs**:
+
+   ```bash
+   bun run build:aws
+   bun run build:gitlab
+   ```
+
+2. **Push to GitLab** — commit `templates/template.json` and `.gitlab-ci.yml`:
+
+   ```bash
+   git add .gitlab-ci.yml templates/
+   git commit -m "Initial pipeline"
+   git push
+   ```
+
+3. **Pipeline runs automatically** on pushes to the default branch, deploying the `shared-alb` CloudFormation stack.
+
+## Verify
 
 ```bash
-chant build src --lexicon aws --output templates/template.json
-chant build src --lexicon gitlab --output .gitlab-ci.yml
+aws cloudformation describe-stacks --stack-name shared-alb --query 'Stacks[0].StackStatus'
+aws cloudformation describe-stacks --stack-name shared-alb --query 'Stacks[0].Outputs'
 ```
 
-### 2. Push to GitLab
+## Teardown
+
+Delete service stacks first, then infra — order matters:
 
 ```bash
-git add .gitlab-ci.yml templates/
-git commit -m "Initial pipeline"
-git push
-```
+# Delete api and ui stacks first (if deployed)
+aws cloudformation delete-stack --stack-name alb-api
+aws cloudformation delete-stack --stack-name alb-ui
+aws cloudformation wait stack-delete-complete --stack-name alb-api
+aws cloudformation wait stack-delete-complete --stack-name alb-ui
 
-The pipeline runs automatically on pushes to the default branch. It deploys the CloudFormation stack using the co-located `templates/template.json`.
+# Then delete the infra stack
+aws cloudformation delete-stack --stack-name shared-alb
+aws cloudformation wait stack-delete-complete --stack-name shared-alb
+```
 
 ## Related examples
 
-- [gitlab-aws-alb-api](../gitlab-aws-alb-api) — API Fargate service (cross-lexicon, depends on this stack)
-- [gitlab-aws-alb-ui](../gitlab-aws-alb-ui) — UI Fargate service (cross-lexicon, depends on this stack)
+- [gitlab-aws-alb-api](../gitlab-aws-alb-api/) — API Fargate service (depends on this stack)
+- [gitlab-aws-alb-ui](../gitlab-aws-alb-ui/) — UI Fargate service (depends on this stack)
+- [k8s-eks-microservice](../k8s-eks-microservice/) — Production-grade AWS EKS + K8s

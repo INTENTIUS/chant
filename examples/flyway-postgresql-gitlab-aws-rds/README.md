@@ -2,133 +2,116 @@
 
 A cross-lexicon example combining **three** lexicons: AWS (RDS infrastructure), Flyway (migration config), and GitLab (CI pipeline). The GitLab pipeline deploys the CloudFormation stack then runs Flyway migrations against the new RDS endpoint.
 
-## Source Files
+## Skills
 
-| File | Lexicon | Description |
-|------|---------|-------------|
-| `src/network.ts` | aws | VpcDefault composite — foundational networking |
-| `src/database.ts` | aws | RdsInstance composite — consumes VPC outputs |
-| `src/params.ts` | aws | CloudFormation Parameters (environment, dbPasswordSsmPath) |
-| `src/outputs.ts` | aws | Stack Outputs (DbEndpoint) |
-| `src/tags.ts` | aws | Default resource tags |
-| `src/migrations.ts` | flyway | FlywayProject, FlywayConfig, Environment |
-| `src/pipeline.ts` | gitlab | 2-stage CI pipeline (deploy → migrate) |
-| `sql/migrations/` | — | SQL migration files (V1–V3) |
+This example includes skills for agent-guided deployment:
+
+| Skill | Purpose |
+|-------|---------|
+| `chant-flyway-gitlab-aws-rds` | Guides the full deploy → verify → teardown workflow for this example |
+| `chant-aws` | CloudFormation lifecycle: build, validate, deploy, change sets, rollback |
+| `chant-flyway` | Flyway migration lifecycle: build, validate, migrate, repair |
+| `chant-gitlab` | GitLab CI/CD lifecycle: build, validate, push, monitor pipelines |
+
+> **Using Claude Code?** The skills in `.claude/skills/` guide your agent
+> through the full deploy → verify → teardown workflow. Just ask:
+>
+> ```
+> Deploy the flyway-postgresql-gitlab-aws-rds example to my AWS account.
+> ```
 
 ## What this produces
 
-### `chant build src --lexicon aws` → CloudFormation template (20 resources)
+- **AWS** (`templates/template.json`): CloudFormation template with 20 resources (17 VPC + 3 RDS)
+- **Flyway** (`flyway.toml`): Project config with deploy environment using `${env.*}` variable resolution
+- **GitLab** (`.gitlab-ci.yml`): 2-stage pipeline (deploy infrastructure → run migrations)
 
-- VPC with 2 public + 2 private subnets, IGW, NAT gateway, route tables (17 resources)
-- RDS PostgreSQL instance in public subnets, publicly accessible, with security group (3 resources)
-- Parameters: `environment`, `dbPasswordSsmPath` (SSM SecureString)
-- Output: `DbEndpoint`
+## Source files
 
-### `chant build src --lexicon flyway` → `flyway.toml`
+| File | Lexicon | Purpose |
+|------|---------|---------|
+| `src/network.ts` | AWS | VpcDefault composite — VPC, subnets, IGW, NAT gateway |
+| `src/database.ts` | AWS | RdsInstance composite — PostgreSQL in public subnets |
+| `src/params.ts` | AWS | CloudFormation parameters (environment, dbPasswordSsmPath) |
+| `src/outputs.ts` | AWS | Stack outputs (DbEndpoint) |
+| `src/tags.ts` | AWS | Default resource tags |
+| `src/migrations.ts` | Flyway | FlywayProject, FlywayConfig, deploy Environment |
+| `src/pipeline.ts` | GitLab | 2-stage pipeline: deploy-infra → run-migrations |
+| `sql/migrations/` | — | SQL migration files (V1–V3) |
 
-```toml
-[flyway]
-databaseType = "postgresql"
-locations = ["filesystem:sql/migrations"]
+## How cross-lexicon build works
 
-[environments.deploy]
-url = "jdbc:postgresql://${env.DB_HOST}:5432/myapp"
-password = "${env.DB_PASSWORD}"
-```
+Each `chant build --lexicon <name>` invocation selects only the resources belonging to that lexicon. The Flyway config uses `${env.DB_HOST}` and `${env.DB_PASSWORD}` — resolved at runtime by the GitLab pipeline, which extracts the RDS endpoint from CF stack outputs and the password from SSM.
 
-The `${env.*}` references use Flyway's built-in environment variable resolution. The GitLab pipeline sets `DB_HOST` and `DB_PASSWORD` from CF stack outputs and SSM.
+## Prerequisites
 
-### `chant build src --lexicon gitlab` → `.gitlab-ci.yml`
+- [ ] [Bun](https://bun.sh)
+- [ ] [AWS CLI](https://docs.aws.amazon.com/cli/latest/userguide/getting-started-install.html) >= 2.x
+- [ ] AWS account with CloudFormation, EC2 (VPC), RDS, SSM permissions
+- [ ] GitLab project with CI/CD enabled
 
-A 2-stage pipeline:
-
-1. **deploy** — `deploy-infra`: deploys the CloudFormation stack using `aws cloudformation deploy`
-2. **migrate** — `run-migrations`: extracts DB endpoint from stack outputs, fetches password from SSM, runs `flyway migrate`
-
-## Required CI/CD variables
-
-Set these in **GitLab > Settings > CI/CD > Variables**:
+**Required CI/CD variables** (GitLab > Settings > CI/CD > Variables):
 
 | Variable | Description | Masked |
-|---|---|---|
+|----------|-------------|--------|
 | `AWS_ACCESS_KEY_ID` | IAM access key | No |
 | `AWS_SECRET_ACCESS_KEY` | IAM secret key | Yes |
 | `AWS_DEFAULT_REGION` | AWS region (e.g. `us-east-1`) | No |
 
-The IAM user/role needs permissions for CloudFormation, EC2 (VPC), RDS, and SSM Parameter Store.
+**Local verification** (build, lint, test) requires only Bun — no AWS account needed.
+
+## Local verification
+
+```bash
+bun run build
+bun run lint
+```
 
 ## Deploy
 
-### 1. Create the SSM parameter
+1. **Create SSM parameter** — stores the RDS master password as a SecureString:
 
-The RDS instance reads its master password from SSM at deploy time. Create it once:
+   ```bash
+   ./setup.sh                           # default: /myapp/dev/db-password
+   ./setup.sh /myapp/prod/db-password   # custom path
+   ```
 
-```bash
-./setup.sh
-```
+2. **Build all outputs**:
 
-This generates a random password and stores it as a SecureString at `/myapp/dev/db-password`. To use a custom path:
+   ```bash
+   bun run build
+   ```
 
-```bash
-./setup.sh /myapp/prod/db-password
-```
+3. **Push to GitLab**:
 
-### 2. Build all artifacts
+   ```bash
+   git add .gitlab-ci.yml templates/template.json flyway.toml sql/
+   git commit -m "Initial pipeline"
+   git push
+   ```
 
-```bash
-chant build src --lexicon aws --output templates/template.json
-chant build src --lexicon flyway --output flyway.toml
-chant build src --lexicon gitlab --output .gitlab-ci.yml
-```
+4. **Pipeline runs automatically** — `deploy-infra` deploys the CF stack, then `run-migrations` extracts the DB endpoint, fetches the password from SSM, and runs `flyway migrate`.
 
-### 3. Validate
-
-Lint the source:
-
-```bash
-chant lint src
-```
-
-Optionally validate `.gitlab-ci.yml` against your GitLab instance:
+## Verify
 
 ```bash
-curl --header "PRIVATE-TOKEN: $GITLAB_TOKEN" \
-  "https://gitlab.com/api/v4/ci/lint" \
-  --data "{\"content\": \"$(cat .gitlab-ci.yml)\"}"
+aws cloudformation describe-stacks --stack-name flyway-rds --query 'Stacks[0].StackStatus'
+aws cloudformation describe-stacks --stack-name flyway-rds --query 'Stacks[0].Outputs'
+# Check pipeline in GitLab UI: CI/CD → Pipelines
 ```
 
-### 4. Push to GitLab
+## Teardown
 
 ```bash
-git add .gitlab-ci.yml templates/template.json flyway.toml sql/
-git commit -m "Initial pipeline"
-git push
+aws cloudformation delete-stack --stack-name flyway-rds
+aws cloudformation wait stack-delete-complete --stack-name flyway-rds
+
+# Optionally delete the SSM parameter
+aws ssm delete-parameter --name /myapp/dev/db-password
 ```
 
-The pipeline runs automatically on pushes to the default branch. The `deploy-infra` job deploys the CF stack, then `run-migrations` connects to the new RDS endpoint and runs Flyway migrations.
+## Related examples
 
-### 5. Monitor the pipeline
-
-- **GitLab UI**: project → CI/CD → Pipelines
-- **API**: `curl --header "PRIVATE-TOKEN: $GITLAB_TOKEN" "https://gitlab.com/api/v4/projects/$PROJECT_ID/pipelines?per_page=5"`
-
-### Retry / Cancel
-
-- Retry a failed job: GitLab UI → click Retry, or `curl --request POST --header "PRIVATE-TOKEN: $GITLAB_TOKEN" "https://gitlab.com/api/v4/projects/$PROJECT_ID/jobs/$JOB_ID/retry"`
-- Cancel a running pipeline: `curl --request POST --header "PRIVATE-TOKEN: $GITLAB_TOKEN" "https://gitlab.com/api/v4/projects/$PROJECT_ID/pipelines/$PIPELINE_ID/cancel"`
-- Check job logs: GitLab UI → CI/CD → Jobs → click the job
-
-## Build commands (quick reference)
-
-```bash
-# Build all lexicons
-bun run build
-
-# Build individual lexicons
-bun run build:aws      # CloudFormation JSON
-bun run build:flyway   # flyway.toml
-bun run build:gitlab   # .gitlab-ci.yml
-
-# Lint
-bun run lint
-```
+- [flyway-postgresql-k8s](../flyway-postgresql-k8s/) — K8s + Flyway cross-lexicon (local k3d)
+- [gitlab-aws-alb-infra](../gitlab-aws-alb-infra/) — AWS + GitLab shared ALB infrastructure
+- [k8s-eks-microservice](../k8s-eks-microservice/) — Production-grade AWS EKS + K8s

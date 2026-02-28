@@ -5,11 +5,12 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
 
 usage() {
-  echo "Usage: $0 [workspace|npm|all]"
+  echo "Usage: $0 [workspace|npm|build-examples|all]"
   echo ""
-  echo "  workspace  — Run workspace smoke tests (bun link), keep container up"
-  echo "  npm        — Run npm install smoke tests (bun pm pack)"
-  echo "  all        — Run all smoke tests"
+  echo "  workspace       — Run workspace smoke tests (bun link), keep container up"
+  echo "  npm             — Run npm install smoke tests (bun pm pack)"
+  echo "  build-examples  — Build all root examples in Docker, copy artifacts out"
+  echo "  all             — Run all smoke tests"
   exit 1
 }
 
@@ -36,12 +37,34 @@ run_npm() {
   echo "npm smoke tests passed (ran during docker build)."
 }
 
+run_build_examples() {
+  echo "Building smoke image..."
+  docker build -f "$SCRIPT_DIR/Dockerfile.smoke" -t chant-smoke-workspace "$PROJECT_DIR"
+
+  local output_dir="$PROJECT_DIR/test/example-builds"
+  rm -rf "$output_dir"
+  mkdir -p "$output_dir"
+
+  echo "Building examples inside container (isolated)..."
+  docker run --rm \
+    -v "$output_dir:/output" \
+    chant-smoke-workspace \
+    bash /app/test/build-examples.sh
+
+  echo ""
+  echo "Artifacts written to test/example-builds/"
+  ls -la "$output_dir"/*/
+}
+
 case "${1:-workspace}" in
   workspace)
     run_workspace
     ;;
   npm)
     run_npm
+    ;;
+  build-examples)
+    run_build_examples
     ;;
   all)
     run_workspace

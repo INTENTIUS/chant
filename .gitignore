@@ -23,3 +23,6 @@ examples/*/.cert-arn
 examples/*/k8s.yaml
 examples/*/flyway.toml
 examples/*/templates/*.json
+
+# Docker smoke build artifacts
+test/example-builds/
