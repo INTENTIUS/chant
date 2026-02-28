@@ -1,13 +1,24 @@
 #!/usr/bin/env bun
-import { gcpPlugin } from "./plugin";
+/**
+ * Thin entry point for `bun run bundle` in lexicon-gcp.
+ * Generates src/generated/ files and writes dist/ bundle.
+ *
+ * NOTE: Uses top-level await (matching AWS/Azure pattern) to avoid
+ * event loop references from async wrappers keeping the process alive.
+ */
+import { packageLexicon } from "./codegen/package";
+import { writeBundleSpec } from "@intentius/chant/codegen/package";
+import { dirname, join } from "path";
+import { fileURLToPath } from "url";
 
-async function main() {
-  const verbose = process.argv.includes("--verbose") || !process.argv.includes("--quiet");
-  const force = process.argv.includes("--force");
-  await gcpPlugin.package!({ verbose, force });
-}
+const pkgDir = dirname(fileURLToPath(import.meta.url));
+const distDir = join(pkgDir, "..", "dist");
 
-main().catch((err) => {
-  console.error(err);
-  process.exit(1);
-});
+const verbose = process.argv.includes("--verbose") || !process.argv.includes("--quiet");
+const force = process.argv.includes("--force");
+
+const { spec, stats } = await packageLexicon({ verbose, force });
+writeBundleSpec(spec, distDir);
+
+console.error(`Packaged ${stats.resources} resources, ${stats.ruleCount} rules, ${stats.skillCount} skills`);
+console.error(`dist/ written to ${distDir}`);

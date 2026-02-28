@@ -11,12 +11,14 @@ import { fetchWithCache, clearCacheFile } from "@intentius/chant/codegen/fetch";
 /**
  * Pinned Config Connector version for reproducible codegen.
  */
-export const KCC_VERSION = "v1.125.0";
+export const KCC_VERSION = "v1.145.0";
 
 const CACHE_DIR = join(homedir(), ".chant");
 
 function bundleUrl(version: string): string {
-  return `https://github.com/GoogleCloudPlatform/k8s-config-connector/releases/download/${version}/release-bundle.tar.gz`;
+  // The release-bundle.tar.gz asset is no longer published.
+  // Use GitHub's auto-generated source tarball instead — CRDs are at config/crds/resources/.
+  return `https://github.com/GoogleCloudPlatform/k8s-config-connector/archive/refs/tags/${version}.tar.gz`;
 }
 
 function cacheFile(version: string): string {
@@ -46,100 +48,64 @@ export async function fetchCRDBundle(
  * Filters for entries under a crds/ directory or standalone CRD YAML files.
  */
 async function extractCRDs(tarData: Buffer): Promise<Map<string, Buffer>> {
-  const { Decompress } = await import("fflate");
+  const { gunzipSync } = await import("fflate");
   const crds = new Map<string, Buffer>();
 
-  // Decompress gzip
-  const gunzipped = await new Promise<Uint8Array>((resolve, reject) => {
-    const chunks: Uint8Array[] = [];
-    const decompress = new Decompress((chunk, final) => {
-      if (chunk) chunks.push(chunk);
-      if (final) {
-        const total = chunks.reduce((s, c) => s + c.length, 0);
-        const result = new Uint8Array(total);
-        let offset = 0;
-        for (const c of chunks) {
-          result.set(c, offset);
-          offset += c.length;
-        }
-        resolve(result);
-      }
-    });
-    decompress.push(tarData, true);
-  });
+  // Decompress gzip synchronously (avoids lingering event loop references)
+  const gunzipped = gunzipSync(new Uint8Array(tarData));
 
-  // Parse tar (512-byte header blocks)
+  // Parse tar (512-byte header blocks) with PAX extended header support.
+  // GitHub source tarballs use PAX headers (type 'x') for long filenames.
   let offset = 0;
   const data = gunzipped;
+  let paxPath: string | null = null;
 
   while (offset < data.length - 512) {
-    // Read header
     const header = data.slice(offset, offset + 512);
     offset += 512;
 
-    // Empty header = end of archive
     if (header.every((b) => b === 0)) break;
 
-    // Extract filename (bytes 0-99)
+    // Extract filename: ustar prefix (bytes 345-499) + name (bytes 0-99)
     const nameBytes = header.slice(0, 100);
     const nameEnd = nameBytes.indexOf(0);
-    const name = new TextDecoder().decode(nameBytes.slice(0, nameEnd > 0 ? nameEnd : 100)).trim();
+    let name = new TextDecoder().decode(nameBytes.slice(0, nameEnd > 0 ? nameEnd : 100)).trim();
+    const prefixBytes = header.slice(345, 500);
+    const prefixEnd = prefixBytes.indexOf(0);
+    const ustarPrefix = new TextDecoder().decode(prefixBytes.slice(0, prefixEnd > 0 ? prefixEnd : 155)).trim();
+    if (ustarPrefix) name = `${ustarPrefix}/${name}`;
 
-    // Extract size (bytes 124-135, octal)
     const sizeStr = new TextDecoder().decode(header.slice(124, 136)).trim().replace(/\0/g, "");
     const size = parseInt(sizeStr, 8) || 0;
-
-    // Extract type flag (byte 156)
     const typeFlag = header[156];
+    const typeFlagChar = String.fromCharCode(typeFlag);
 
-    // Read file data (rounded up to 512-byte blocks)
     const blocks = Math.ceil(size / 512);
     const fileData = data.slice(offset, offset + size);
     offset += blocks * 512;
 
-    // Only process regular files that look like CRD YAMLs
-    if (typeFlag !== 48 && typeFlag !== 0) continue; // '0' or null = regular file
+    // PAX extended header — extract path= for the next entry
+    if (typeFlagChar === "x") {
+      const paxStr = new TextDecoder().decode(fileData);
+      const match = paxStr.match(/\bpath=([^\n]+)/);
+      if (match) paxPath = match[1];
+      continue;
+    }
+
+    // Use PAX path if available, then reset
+    if (paxPath) {
+      name = paxPath;
+      paxPath = null;
+    }
+
+    // Only process regular files
+    if (typeFlag !== 48 && typeFlag !== 0) continue;
     if (size === 0) continue;
 
-    // Match CRD YAML files
-    const isCRDPath = name.includes("crds/") && name.endsWith(".yaml");
-    const isCRDFile = name.endsWith("_crd.yaml") || name.endsWith(".crd.yaml");
-
-    if (isCRDPath || isCRDFile) {
+    // Match CRD YAML files — source tarball has them at config/crds/resources/
+    if (name.includes("config/crds/resources/") && name.endsWith(".yaml")) {
       const basename = name.split("/").pop() || name;
       crds.set(basename, Buffer.from(fileData));
-    }
-  }
-
-  // If tar extraction yielded nothing, the bundle might be structured differently.
-  // Try treating all YAML files as potential CRDs.
-  if (crds.size === 0) {
-    offset = 0;
-    while (offset < data.length - 512) {
-      const header = data.slice(offset, offset + 512);
-      offset += 512;
-      if (header.every((b) => b === 0)) break;
-
-      const nameBytes = header.slice(0, 100);
-      const nameEnd = nameBytes.indexOf(0);
-      const name = new TextDecoder().decode(nameBytes.slice(0, nameEnd > 0 ? nameEnd : 100)).trim();
-      const sizeStr = new TextDecoder().decode(header.slice(124, 136)).trim().replace(/\0/g, "");
-      const size = parseInt(sizeStr, 8) || 0;
-      const typeFlag = header[156];
-      const blocks = Math.ceil(size / 512);
-      const fileData = data.slice(offset, offset + size);
-      offset += blocks * 512;
-
-      if (typeFlag !== 48 && typeFlag !== 0) continue;
-      if (size === 0) continue;
-      if (!name.endsWith(".yaml") && !name.endsWith(".yml")) continue;
-
-      // Quick check: does it look like a CRD?
-      const content = new TextDecoder().decode(fileData);
-      if (content.includes("kind: CustomResourceDefinition") && content.includes("cnrm.cloud.google.com")) {
-        const basename = name.split("/").pop() || name;
-        crds.set(basename, Buffer.from(fileData));
-      }
     }
   }
 
