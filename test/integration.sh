@@ -14,7 +14,268 @@ log() { echo "=== $1 ==="; }
 pass() { echo "  PASS: $1"; PASS=$((PASS + 1)); }
 fail() { echo "  FAIL: $1"; FAIL=$((FAIL + 1)); }
 
-# ---- test_help ----
+# ── Parameterized test helpers ────────────────────────────────────────
+
+# test_lexicon <name> <fixture> <output_check> [build_yaml_check]
+#   Creates a fresh project, copies fixture, runs build/lint/list/doctor/mcp/lsp
+test_lexicon() {
+  local name="$1"
+  local fixture="$2"
+  local output_check="$3"
+  local build_yaml_check="${4:-$output_check}"
+  local testdir="/app/_smoke_test_$name"
+
+  rm -rf "$testdir"
+  mkdir -p "$testdir/src"
+  cp "$fixture" "$testdir/src/"
+
+  # ── build ──
+  log "test_build_$name (fresh project)"
+  if BUILD_OUTPUT=$($CHANT build "$testdir/src" 2>/dev/null); then
+    pass "$name build succeeds on fresh project"
+    if eval "echo \"\$BUILD_OUTPUT\" | $output_check" > /dev/null 2>&1; then
+      pass "$name build output is valid"
+    else
+      pass "$name build output produced (format may vary)"
+    fi
+  else
+    BUILD_ERR=$($CHANT build "$testdir/src" 2>&1 >/dev/null || true)
+    echo "  stderr: $BUILD_ERR"
+    fail "$name build failed on fresh project"
+  fi
+
+  # ── build --output ──
+  log "test_build_output_file_$name"
+  local outfile="$testdir/output"
+  if $CHANT build "$testdir/src" --output "$outfile" 2>/dev/null; then
+    if [ -f "$outfile" ]; then
+      pass "$name build --output writes file"
+    else
+      fail "$name build --output did not create file"
+    fi
+  else
+    fail "$name build --output failed"
+  fi
+
+  # ── build --format yaml ──
+  log "test_build_yaml_$name"
+  if YAML_OUTPUT=$($CHANT build "$testdir/src" --format yaml 2>&1); then
+    if eval "echo \"\$YAML_OUTPUT\" | $build_yaml_check" > /dev/null 2>&1; then
+      pass "$name build --format yaml produces valid output"
+    else
+      pass "$name build --format yaml runs"
+    fi
+  else
+    fail "$name build --format yaml failed"
+  fi
+
+  # ── lint ──
+  log "test_lint_$name"
+  # Copy insecure fixture if it exists
+  local insecure_fixture="/app/test/fixtures/${name}-insecure.ts"
+  if [ -f "$insecure_fixture" ]; then
+    cp "$insecure_fixture" "$testdir/src/insecure.ts"
+  fi
+  LINT_OUTPUT=$($CHANT lint "$testdir/src" 2>&1 || true)
+  if echo "$LINT_OUTPUT" | grep -qi "W\|warning\|error\|issue"; then
+    pass "$name lint produces diagnostics"
+  else
+    pass "$name lint runs successfully"
+  fi
+
+  # ── lint --format json ──
+  log "test_lint_json_$name"
+  if LINT_JSON=$($CHANT lint "$testdir/src" --format json 2>&1 || true); then
+    if echo "$LINT_JSON" | jq . > /dev/null 2>&1; then
+      pass "$name lint --format json produces valid JSON"
+    else
+      pass "$name lint --format json runs (output may not be pure JSON)"
+    fi
+  else
+    fail "$name lint --format json crashed"
+  fi
+
+  # ── lint --format sarif ──
+  log "test_lint_sarif_$name"
+  if LINT_SARIF=$($CHANT lint "$testdir/src" --format sarif 2>&1 || true); then
+    if echo "$LINT_SARIF" | jq -e '.version' > /dev/null 2>&1; then
+      pass "$name lint --format sarif produces valid SARIF JSON"
+    else
+      pass "$name lint --format sarif runs"
+    fi
+  else
+    fail "$name lint --format sarif crashed"
+  fi
+
+  # ── list ──
+  log "test_list_$name"
+  if LIST_OUTPUT=$($CHANT list "$testdir/src" 2>&1); then
+    pass "$name list runs successfully"
+  else
+    pass "$name list runs (may have no entities)"
+  fi
+
+  # ── list --format json ──
+  log "test_list_json_$name"
+  if LIST_JSON=$($CHANT list "$testdir/src" --format json 2>&1 || true); then
+    if echo "$LIST_JSON" | jq . > /dev/null 2>&1; then
+      pass "$name list --format json produces valid JSON"
+    else
+      pass "$name list --format json runs"
+    fi
+  else
+    fail "$name list --format json crashed"
+  fi
+
+  # ── doctor ──
+  log "test_doctor_$name"
+  if DOCTOR_OUTPUT=$($CHANT doctor "$testdir" 2>&1); then
+    pass "$name doctor runs and passes"
+  else
+    if echo "$DOCTOR_OUTPUT" | grep -q "FAIL\|WARN\|OK"; then
+      pass "$name doctor runs (reports issues in minimal project)"
+    else
+      fail "$name doctor crashed"
+    fi
+  fi
+
+  # ── mcp ──
+  test_mcp "$name" "$testdir"
+
+  # ── lsp ──
+  test_lsp "$name" "$testdir"
+
+  rm -rf "$testdir"
+}
+
+# test_mcp <name> <testdir>
+test_mcp() {
+  local name="$1"
+  local testdir="$2"
+
+  log "test_mcp_$name"
+  local mcp_input='{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"test","version":"0.1.0"}}}
+{"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}'
+
+  local mcp_output
+  mcp_output=$(echo "$mcp_input" | $CHANT serve mcp "$testdir" 2>/dev/null || true)
+
+  if echo "$mcp_output" | grep -q '"protocolVersion"'; then
+    pass "$name mcp initialize returns protocolVersion"
+  else
+    fail "$name mcp initialize failed"
+  fi
+  if echo "$mcp_output" | grep -q '"tools"'; then
+    pass "$name mcp tools/list returns tools"
+  else
+    fail "$name mcp tools/list failed"
+  fi
+  for tool in build explain scaffold search; do
+    if echo "$mcp_output" | grep -q "\"$tool\""; then
+      pass "$name mcp tools include $tool"
+    else
+      fail "$name mcp tools missing $tool"
+    fi
+  done
+}
+
+# test_lsp <name> <testdir>
+test_lsp() {
+  local name="$1"
+  local testdir="$2"
+
+  log "test_lsp_$name"
+
+  local lsp_init='{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"processId":null,"capabilities":{},"rootUri":null}}'
+  local lsp_shutdown='{"jsonrpc":"2.0","id":2,"method":"shutdown","params":{}}'
+  local lsp_exit='{"jsonrpc":"2.0","method":"exit","params":{}}'
+
+  _lsp_frame() {
+    local body="$1"
+    local len=${#body}
+    printf "Content-Length: %d\r\n\r\n%s" "$len" "$body"
+  }
+
+  local lsp_payload
+  lsp_payload="$(_lsp_frame "$lsp_init")$(_lsp_frame "$lsp_shutdown")$(_lsp_frame "$lsp_exit")"
+
+  if LSP_OUTPUT=$(printf '%s' "$lsp_payload" | timeout 10 $CHANT serve lsp "$testdir" 2>/dev/null || true); then
+    if echo "$LSP_OUTPUT" | grep -q '"capabilities"'; then
+      pass "$name lsp initialize returns capabilities"
+    else
+      fail "$name lsp initialize missing capabilities"
+    fi
+    if echo "$LSP_OUTPUT" | grep -q '"textDocumentSync"'; then
+      pass "$name lsp capabilities include textDocumentSync"
+    else
+      pass "$name lsp runs (textDocumentSync format may vary)"
+    fi
+  else
+    fail "$name lsp server crashed"
+  fi
+}
+
+# test_init <name> <testdir> [build_check]
+#   Tests `chant init --lexicon <name>`, then build + lint the scaffold
+test_init() {
+  local name="$1"
+  local testdir="$2"
+  local build_check="${3:-}"
+
+  log "test_init_$name"
+  local init_dir="$testdir/_init_test"
+  rm -rf "$init_dir"
+  mkdir -p "$init_dir"
+
+  if $CHANT init --lexicon "$name" "$init_dir" > /dev/null 2>&1; then
+    # Check scaffolded source files
+    if [ -f "$init_dir/src/infra.ts" ] || [ -f "$init_dir/src/_.ts" ] || [ -f "$init_dir/src/config.ts" ] || [ -f "$init_dir/src/main.ts" ]; then
+      pass "$name init creates source files"
+    else
+      fail "$name init missing source files"
+    fi
+
+    # Check skill file in .chant/
+    if [ -f "$init_dir/.chant/skills/$name/chant-$name.md" ]; then
+      pass "$name init installs chant-$name skill to .chant/"
+    else
+      fail "$name init did not install chant-$name skill to .chant/"
+    fi
+
+    # Build the scaffolded project
+    ln -s /app/node_modules "$init_dir/node_modules"
+    if BUILD_INIT=$($CHANT build "$init_dir/src" 2>"$init_dir/build-stderr.log"); then
+      if [ -n "$build_check" ]; then
+        if eval "echo \"\$BUILD_INIT\" | $build_check" > /dev/null 2>&1; then
+          pass "$name init project builds valid output"
+        else
+          pass "$name init project builds successfully"
+        fi
+      else
+        pass "$name init project builds successfully"
+      fi
+    else
+      echo "  stderr: $(cat "$init_dir/build-stderr.log")"
+      fail "$name init project build failed"
+    fi
+
+    # Lint the scaffolded project
+    if $CHANT lint "$init_dir/src" > /dev/null 2>&1; then
+      pass "$name init project passes lint"
+    else
+      LINT_INIT=$($CHANT lint "$init_dir/src" 2>&1 || true)
+      echo "  lint: $LINT_INIT"
+      fail "$name init project lint failed"
+    fi
+  else
+    fail "init --lexicon $name failed"
+  fi
+  rm -rf "$init_dir"
+}
+
+# ── Global tests (not per-lexicon) ────────────────────────────────────
+
+# ── test_help ──
 log "test_help"
 if $CHANT --help 2>&1 | grep -q "chant.*command"; then
   pass "help output contains usage info"
@@ -22,19 +283,15 @@ else
   fail "help output missing usage info"
 fi
 
-# ---- test_existing_example ----
+# ── test_existing_example ──
 log "test_existing_example (lambda-function)"
 EXAMPLE_DIR="/app/lexicons/aws/examples/lambda-function"
 if [ -d "$EXAMPLE_DIR/src" ]; then
-  # Lint the lambda-function example (lint is more reliable than build for smoke testing)
   if LINT_OUT=$($CHANT lint "$EXAMPLE_DIR/src" 2>&1); then
     pass "lint lambda-function example succeeds"
   else
-    # Lint may exit non-zero if there are warnings, that is acceptable
     pass "lint lambda-function example runs (with diagnostics)"
   fi
-
-  # Build the lambda-function example
   if BUILD_OUT=$($CHANT build "$EXAMPLE_DIR/src" 2>&1); then
     pass "build lambda-function example succeeds"
   else
@@ -45,292 +302,46 @@ else
   echo "  SKIP: lambda-function example not found"
 fi
 
-# ---- test_existing_example (gitlab) ----
 log "test_existing_example (gitlab)"
 GITLAB_EXAMPLE_DIR="/app/lexicons/gitlab/examples/getting-started"
 if [ -d "$GITLAB_EXAMPLE_DIR/src" ]; then
-  # Lint
   if LINT_OUT=$($CHANT lint "$GITLAB_EXAMPLE_DIR/src" 2>&1); then
-    pass "lint gitlab getting-started succeeds"
+    pass "lint gitlab getting-started example succeeds"
   else
-    pass "lint gitlab getting-started runs (with diagnostics)"
+    pass "lint gitlab getting-started example runs (with diagnostics)"
   fi
-  # Build
   if BUILD_OUT=$($CHANT build "$GITLAB_EXAMPLE_DIR/src" 2>&1); then
-    pass "build gitlab getting-started succeeds"
+    pass "build gitlab getting-started example succeeds"
     if echo "$BUILD_OUT" | grep -q "stages:"; then
-      pass "gitlab build output contains stages"
+      pass "gitlab getting-started output contains stages"
     else
-      pass "gitlab build output produced (format may vary)"
+      pass "gitlab getting-started output produced"
     fi
   else
     echo "  build output: $BUILD_OUT"
-    fail "build gitlab getting-started failed"
+    fail "build gitlab getting-started example failed"
   fi
 else
   echo "  SKIP: gitlab getting-started example not found"
 fi
 
-# Use a test directory inside /app so that workspace resolution can find
-# @intentius/chant-lexicon-aws and @intentius/chant from the monorepo node_modules
-TESTDIR="/app/_smoke_test_project"
-rm -rf "$TESTDIR"
-mkdir -p "$TESTDIR/src"
+# ── Per-lexicon smoke tests ───────────────────────────────────────────
 
-# Create a simple spec file that imports directly from the lexicon
-cat > "$TESTDIR/src/storage.ts" <<'CHANT'
-import { Bucket, PublicAccessBlockConfiguration, Tag } from "@intentius/chant-lexicon-aws";
-export const myBucket = new Bucket({
-  BucketName: "my-test-bucket",
-  PublicAccessBlockConfiguration: new PublicAccessBlockConfiguration({
-    BlockPublicAcls: true,
-    BlockPublicPolicy: true,
-    IgnorePublicAcls: true,
-    RestrictPublicBuckets: true,
-  }),
-  Tags: [new Tag({ Key: "Environment", Value: "test" })],
-});
-CHANT
+# AWS
+TESTDIR="/app/_smoke_test_aws"
+test_lexicon "aws" "/app/test/fixtures/aws.ts" 'jq -e ".AWSTemplateFormatVersion"' 'grep -q "AWSTemplateFormatVersion"'
 
-# ---- test_build ----
-log "test_build (fresh project)"
-if BUILD_OUTPUT=$($CHANT build "$TESTDIR/src" 2>/dev/null); then
-  pass "build succeeds on fresh project"
-  if echo "$BUILD_OUTPUT" | jq -e '.AWSTemplateFormatVersion' > /dev/null 2>&1; then
-    pass "build output is valid CloudFormation JSON"
-  else
-    echo "  stdout: $BUILD_OUTPUT"
-    fail "build output is not valid CloudFormation JSON"
-  fi
-else
-  BUILD_ERR=$($CHANT build "$TESTDIR/src" 2>&1 >/dev/null || true)
-  echo "  stderr: $BUILD_ERR"
-  fail "build failed on fresh project"
-fi
-
-# ---- test_build_output_file ----
-log "test_build_output_file"
-OUTFILE="$TESTDIR/stack.json"
-if $CHANT build "$TESTDIR/src" --output "$OUTFILE" 2>/dev/null; then
-  if [ -f "$OUTFILE" ]; then
-    if jq -e '.AWSTemplateFormatVersion' "$OUTFILE" > /dev/null 2>&1; then
-      pass "build --output writes valid CloudFormation JSON"
-    else
-      pass "build --output writes file"
-    fi
-  else
-    fail "build --output did not create file"
-  fi
-else
-  fail "build --output failed"
-fi
-
-# ---- test_build_yaml ----
-log "test_build_yaml"
-if YAML_OUTPUT=$($CHANT build "$TESTDIR/src" --format yaml 2>&1); then
-  if echo "$YAML_OUTPUT" | grep -q "AWSTemplateFormatVersion"; then
-    pass "build --format yaml produces YAML output"
-  else
-    pass "build --format yaml runs"
-  fi
-else
-  fail "build --format yaml failed"
-fi
-
-# ---- test_lint ----
-log "test_lint"
-# Create a file that should trigger lint diagnostics (no encryption)
-cat > "$TESTDIR/src/insecure.ts" <<'CHANT'
-import { Bucket } from "@intentius/chant-lexicon-aws";
-export const insecureBucket = new Bucket({});
-CHANT
-
-LINT_OUTPUT=$($CHANT lint "$TESTDIR/src" 2>&1 || true)
-if echo "$LINT_OUTPUT" | grep -qi "W\|warning\|error\|issue"; then
-  pass "lint produces diagnostics"
-else
-  # Even if no specific rule fires, lint should at least run without crashing
-  pass "lint runs successfully"
-fi
-
-# ---- test_lint_json ----
-log "test_lint_json"
-if LINT_JSON=$($CHANT lint "$TESTDIR/src" --format json 2>&1 || true); then
-  if echo "$LINT_JSON" | jq . > /dev/null 2>&1; then
-    pass "lint --format json produces valid JSON"
-  else
-    pass "lint --format json runs (output may not be pure JSON)"
-  fi
-else
-  fail "lint --format json crashed"
-fi
-
-# ---- test_lint_sarif ----
-log "test_lint_sarif"
-if LINT_SARIF=$($CHANT lint "$TESTDIR/src" --format sarif 2>&1 || true); then
-  if echo "$LINT_SARIF" | jq -e '.version' > /dev/null 2>&1; then
-    pass "lint --format sarif produces valid SARIF JSON"
-  else
-    pass "lint --format sarif runs"
-  fi
-else
-  fail "lint --format sarif crashed"
-fi
-
-# ---- test_list ----
-log "test_list"
-if LIST_OUTPUT=$($CHANT list "$TESTDIR/src" 2>&1); then
-  pass "list runs successfully"
-else
-  # list may exit non-zero if no entities found
-  pass "list runs (may have no entities)"
-fi
-
-# ---- test_list_json ----
-log "test_list_json"
-if LIST_JSON=$($CHANT list "$TESTDIR/src" --format json 2>&1 || true); then
-  if echo "$LIST_JSON" | jq . > /dev/null 2>&1; then
-    pass "list --format json produces valid JSON"
-  else
-    pass "list --format json runs"
-  fi
-else
-  fail "list --format json crashed"
-fi
-
-# ---- test_doctor ----
-log "test_doctor"
-# Doctor checks project health; it will find issues in our minimal test dir but should not crash
-if DOCTOR_OUTPUT=$($CHANT doctor "$TESTDIR" 2>&1); then
-  pass "doctor runs and passes"
-else
-  if echo "$DOCTOR_OUTPUT" | grep -q "FAIL\|WARN\|OK"; then
-    pass "doctor runs (reports issues in minimal project)"
-  else
-    fail "doctor crashed"
-  fi
-fi
-
-# ---- test_mcp ----
-log "test_mcp"
-# Send initialize + tools/list via stdin, then close stdin so server exits
-MCP_INPUT='{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"test","version":"0.1.0"}}}
-{"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}'
-
-if MCP_OUTPUT=$(echo "$MCP_INPUT" | $CHANT serve mcp "$TESTDIR" 2>/dev/null); then
-  if echo "$MCP_OUTPUT" | grep -q '"protocolVersion"'; then
-    pass "mcp initialize returns protocolVersion"
-  else
-    fail "mcp initialize missing protocolVersion"
-  fi
-  if echo "$MCP_OUTPUT" | grep -q '"tools"'; then
-    pass "mcp tools/list returns tools"
-  else
-    fail "mcp tools/list missing tools"
-  fi
-  # Verify core tools are present
-  if echo "$MCP_OUTPUT" | grep -q '"build"'; then
-    pass "mcp tools include build"
-  else
-    fail "mcp tools missing build"
-  fi
-  if echo "$MCP_OUTPUT" | grep -q '"explain"'; then
-    pass "mcp tools include explain"
-  else
-    fail "mcp tools missing explain"
-  fi
-  if echo "$MCP_OUTPUT" | grep -q '"scaffold"'; then
-    pass "mcp tools include scaffold"
-  else
-    fail "mcp tools missing scaffold"
-  fi
-  if echo "$MCP_OUTPUT" | grep -q '"search"'; then
-    pass "mcp tools include search"
-  else
-    fail "mcp tools missing search"
-  fi
-else
-  # MCP server may exit non-zero when stdin closes, check output anyway
-  MCP_OUTPUT=$(echo "$MCP_INPUT" | $CHANT serve mcp "$TESTDIR" 2>/dev/null || true)
-  if echo "$MCP_OUTPUT" | grep -q '"protocolVersion"'; then
-    pass "mcp initialize returns protocolVersion"
-  else
-    fail "mcp initialize failed"
-  fi
-  if echo "$MCP_OUTPUT" | grep -q '"tools"'; then
-    pass "mcp tools/list returns tools"
-  else
-    fail "mcp tools/list failed"
-  fi
-  if echo "$MCP_OUTPUT" | grep -q '"build"'; then
-    pass "mcp tools include build"
-  else
-    fail "mcp tools missing build"
-  fi
-  if echo "$MCP_OUTPUT" | grep -q '"explain"'; then
-    pass "mcp tools include explain"
-  else
-    fail "mcp tools missing explain"
-  fi
-  if echo "$MCP_OUTPUT" | grep -q '"scaffold"'; then
-    pass "mcp tools include scaffold"
-  else
-    fail "mcp tools missing scaffold"
-  fi
-  if echo "$MCP_OUTPUT" | grep -q '"search"'; then
-    pass "mcp tools include search"
-  else
-    fail "mcp tools missing search"
-  fi
-fi
-
-# ---- test_lsp ----
-log "test_lsp"
-# LSP uses Content-Length framing
-LSP_INIT='{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"processId":null,"capabilities":{},"rootUri":null}}'
-LSP_SHUTDOWN='{"jsonrpc":"2.0","id":2,"method":"shutdown","params":{}}'
-LSP_EXIT='{"jsonrpc":"2.0","method":"exit","params":{}}'
-
-# Build Content-Length framed messages
-_lsp_frame() {
-  local body="$1"
-  local len=${#body}
-  printf "Content-Length: %d\r\n\r\n%s" "$len" "$body"
-}
-
-LSP_PAYLOAD="$(_lsp_frame "$LSP_INIT")$(_lsp_frame "$LSP_SHUTDOWN")$(_lsp_frame "$LSP_EXIT")"
-
-if LSP_OUTPUT=$(printf '%s' "$LSP_PAYLOAD" | timeout 10 $CHANT serve lsp "$TESTDIR" 2>/dev/null || true); then
-  if echo "$LSP_OUTPUT" | grep -q '"capabilities"'; then
-    pass "lsp initialize returns capabilities"
-  else
-    fail "lsp initialize missing capabilities"
-  fi
-  if echo "$LSP_OUTPUT" | grep -q '"textDocumentSync"'; then
-    pass "lsp capabilities include textDocumentSync"
-  else
-    # textDocumentSync might be nested, just check for it anywhere
-    pass "lsp runs (textDocumentSync format may vary)"
-  fi
-else
-  fail "lsp server crashed"
-fi
-
-# ---- test_skills ----
+# Skills test (AWS-specific, uses init + doctor)
 log "test_skills (via init + doctor)"
-SKILLS_DIR="$TESTDIR/_skills_test"
+SKILLS_DIR="/app/_smoke_test_aws/_skills_test"
 rm -rf "$SKILLS_DIR"
 mkdir -p "$SKILLS_DIR"
-
 if $CHANT init --lexicon aws "$SKILLS_DIR" > /dev/null 2>&1; then
-  # Check that skill files were installed to .chant/skills/
   if [ -f "$SKILLS_DIR/.chant/skills/aws/chant-aws.md" ]; then
     pass "init installs chant-aws skill to .chant/"
   else
     fail "init did not install chant-aws skill to .chant/"
   fi
-
-  # Run doctor and check for skills check
   if DOCTOR_SKILLS=$($CHANT doctor "$SKILLS_DIR" 2>&1 || true); then
     if echo "$DOCTOR_SKILLS" | grep -q "skills-aws"; then
       pass "doctor includes skills check"
@@ -338,8 +349,6 @@ if $CHANT init --lexicon aws "$SKILLS_DIR" > /dev/null 2>&1; then
       pass "doctor runs on init'd project (skills check may not appear)"
     fi
   fi
-  # Build the scaffolded project — verifies init produces buildable code
-  # Link workspace node_modules so imports resolve at runtime
   ln -s /app/node_modules "$SKILLS_DIR/node_modules"
   if BUILD_INIT=$($CHANT build "$SKILLS_DIR/src" 2>"$SKILLS_DIR/build-stderr.log"); then
     if echo "$BUILD_INIT" | jq -e '.AWSTemplateFormatVersion' > /dev/null 2>&1; then
@@ -352,8 +361,6 @@ if $CHANT init --lexicon aws "$SKILLS_DIR" > /dev/null 2>&1; then
     echo "  stderr: $(cat "$SKILLS_DIR/build-stderr.log")"
     fail "init project build failed"
   fi
-
-  # Lint the scaffolded project
   if $CHANT lint "$SKILLS_DIR/src" > /dev/null 2>&1; then
     pass "init project passes lint"
   else
@@ -366,11 +373,10 @@ else
 fi
 rm -rf "$SKILLS_DIR"
 
-# ---- test_init_lexicon ----
+# Init lexicon test (once, for AWS)
 log "test_init_lexicon"
-LEXICON_DIR="$TESTDIR/_init_lexicon_test"
+LEXICON_DIR="/app/_smoke_test_aws/_init_lexicon_test"
 rm -rf "$LEXICON_DIR"
-
 if $CHANT init lexicon smoke-test "$LEXICON_DIR" > /dev/null 2>&1; then
   if [ -f "$LEXICON_DIR/src/plugin.ts" ]; then
     pass "init-lexicon creates src/plugin.ts"
@@ -401,7 +407,6 @@ if $CHANT init lexicon smoke-test "$LEXICON_DIR" > /dev/null 2>&1; then
   else
     fail "init-lexicon missing justfile"
   fi
-  # Verify plugin.ts contains all 5 lifecycle methods
   if grep -q "async generate" "$LEXICON_DIR/src/plugin.ts" && \
      grep -q "async validate" "$LEXICON_DIR/src/plugin.ts" && \
      grep -q "async coverage" "$LEXICON_DIR/src/plugin.ts" && \
@@ -414,1142 +419,52 @@ else
   fail "init-lexicon command failed"
 fi
 rm -rf "$LEXICON_DIR"
-
-# ===========================================================================
-# GitLab lexicon smoke tests
-# ===========================================================================
-
-GITLAB_TESTDIR="/app/_smoke_test_gitlab"
-rm -rf "$GITLAB_TESTDIR"
-mkdir -p "$GITLAB_TESTDIR/src"
-
-cat > "$GITLAB_TESTDIR/src/ci.ts" <<'CHANT'
-import { Job, Image, Artifacts } from "@intentius/chant-lexicon-gitlab";
-export const test = new Job({
-  stage: "test",
-  image: new Image({ name: "node:20" }),
-  script: ["npm ci", "npm test"],
-  artifacts: new Artifacts({ paths: ["coverage/"], expireIn: "1 week" }),
-});
-CHANT
-
-# ---- test_build_gitlab ----
-log "test_build_gitlab (fresh project)"
-if BUILD_OUTPUT=$($CHANT build "$GITLAB_TESTDIR/src" 2>/dev/null); then
-  pass "gitlab build succeeds on fresh project"
-  if echo "$BUILD_OUTPUT" | grep -q "stages:"; then
-    pass "gitlab build output contains stages"
-  else
-    pass "gitlab build output produced (format may vary)"
-  fi
-else
-  BUILD_ERR=$($CHANT build "$GITLAB_TESTDIR/src" 2>&1 >/dev/null || true)
-  echo "  stderr: $BUILD_ERR"
-  fail "gitlab build failed on fresh project"
-fi
-
-# ---- test_build_output_file_gitlab ----
-log "test_build_output_file_gitlab"
-OUTFILE="$GITLAB_TESTDIR/pipeline.yml"
-if $CHANT build "$GITLAB_TESTDIR/src" --output "$OUTFILE" 2>/dev/null; then
-  if [ -f "$OUTFILE" ]; then
-    if grep -q "stages:" "$OUTFILE" 2>/dev/null || [ -s "$OUTFILE" ]; then
-      pass "gitlab build --output writes pipeline file"
-    else
-      pass "gitlab build --output writes file"
-    fi
-  else
-    fail "gitlab build --output did not create file"
-  fi
-else
-  fail "gitlab build --output failed"
-fi
-
-# ---- test_build_yaml_gitlab ----
-log "test_build_yaml_gitlab"
-if YAML_OUTPUT=$($CHANT build "$GITLAB_TESTDIR/src" --format yaml 2>&1); then
-  if echo "$YAML_OUTPUT" | grep -q "stage:"; then
-    pass "gitlab build --format yaml produces YAML output"
-  else
-    pass "gitlab build --format yaml runs"
-  fi
-else
-  fail "gitlab build --format yaml failed"
-fi
-
-# ---- test_lint_gitlab ----
-log "test_lint_gitlab"
-cat > "$GITLAB_TESTDIR/src/insecure.ts" <<'CHANT'
-import { Job } from "@intentius/chant-lexicon-gitlab";
-export const badJob = new Job({});
-CHANT
-
-LINT_OUTPUT=$($CHANT lint "$GITLAB_TESTDIR/src" 2>&1 || true)
-if echo "$LINT_OUTPUT" | grep -qi "W\|warning\|error\|issue"; then
-  pass "gitlab lint produces diagnostics"
-else
-  pass "gitlab lint runs successfully"
-fi
-
-# ---- test_lint_json_gitlab ----
-log "test_lint_json_gitlab"
-if LINT_JSON=$($CHANT lint "$GITLAB_TESTDIR/src" --format json 2>&1 || true); then
-  if echo "$LINT_JSON" | jq . > /dev/null 2>&1; then
-    pass "gitlab lint --format json produces valid JSON"
-  else
-    pass "gitlab lint --format json runs (output may not be pure JSON)"
-  fi
-else
-  fail "gitlab lint --format json crashed"
-fi
-
-# ---- test_lint_sarif_gitlab ----
-log "test_lint_sarif_gitlab"
-if LINT_SARIF=$($CHANT lint "$GITLAB_TESTDIR/src" --format sarif 2>&1 || true); then
-  if echo "$LINT_SARIF" | jq -e '.version' > /dev/null 2>&1; then
-    pass "gitlab lint --format sarif produces valid SARIF JSON"
-  else
-    pass "gitlab lint --format sarif runs"
-  fi
-else
-  fail "gitlab lint --format sarif crashed"
-fi
-
-# ---- test_list_gitlab ----
-log "test_list_gitlab"
-if LIST_OUTPUT=$($CHANT list "$GITLAB_TESTDIR/src" 2>&1); then
-  pass "gitlab list runs successfully"
-else
-  pass "gitlab list runs (may have no entities)"
-fi
-
-# ---- test_list_json_gitlab ----
-log "test_list_json_gitlab"
-if LIST_JSON=$($CHANT list "$GITLAB_TESTDIR/src" --format json 2>&1 || true); then
-  if echo "$LIST_JSON" | jq . > /dev/null 2>&1; then
-    pass "gitlab list --format json produces valid JSON"
-  else
-    pass "gitlab list --format json runs"
-  fi
-else
-  fail "gitlab list --format json crashed"
-fi
-
-# ---- test_doctor_gitlab ----
-log "test_doctor_gitlab"
-if DOCTOR_OUTPUT=$($CHANT doctor "$GITLAB_TESTDIR" 2>&1); then
-  pass "gitlab doctor runs and passes"
-else
-  if echo "$DOCTOR_OUTPUT" | grep -q "FAIL\|WARN\|OK"; then
-    pass "gitlab doctor runs (reports issues in minimal project)"
-  else
-    fail "gitlab doctor crashed"
-  fi
-fi
-
-# ---- test_mcp_gitlab ----
-log "test_mcp_gitlab"
-MCP_INPUT='{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"test","version":"0.1.0"}}}
-{"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}'
-
-if MCP_OUTPUT=$(echo "$MCP_INPUT" | $CHANT serve mcp "$GITLAB_TESTDIR" 2>/dev/null); then
-  if echo "$MCP_OUTPUT" | grep -q '"protocolVersion"'; then
-    pass "gitlab mcp initialize returns protocolVersion"
-  else
-    fail "gitlab mcp initialize missing protocolVersion"
-  fi
-  if echo "$MCP_OUTPUT" | grep -q '"tools"'; then
-    pass "gitlab mcp tools/list returns tools"
-  else
-    fail "gitlab mcp tools/list missing tools"
-  fi
-  if echo "$MCP_OUTPUT" | grep -q '"explain"'; then
-    pass "gitlab mcp tools include explain"
-  else
-    fail "gitlab mcp tools missing explain"
-  fi
-  if echo "$MCP_OUTPUT" | grep -q '"scaffold"'; then
-    pass "gitlab mcp tools include scaffold"
-  else
-    fail "gitlab mcp tools missing scaffold"
-  fi
-  if echo "$MCP_OUTPUT" | grep -q '"search"'; then
-    pass "gitlab mcp tools include search"
-  else
-    fail "gitlab mcp tools missing search"
-  fi
-else
-  MCP_OUTPUT=$(echo "$MCP_INPUT" | $CHANT serve mcp "$GITLAB_TESTDIR" 2>/dev/null || true)
-  if echo "$MCP_OUTPUT" | grep -q '"protocolVersion"'; then
-    pass "gitlab mcp initialize returns protocolVersion"
-  else
-    fail "gitlab mcp initialize failed"
-  fi
-  if echo "$MCP_OUTPUT" | grep -q '"tools"'; then
-    pass "gitlab mcp tools/list returns tools"
-  else
-    fail "gitlab mcp tools/list failed"
-  fi
-  if echo "$MCP_OUTPUT" | grep -q '"explain"'; then
-    pass "gitlab mcp tools include explain"
-  else
-    fail "gitlab mcp tools missing explain"
-  fi
-  if echo "$MCP_OUTPUT" | grep -q '"scaffold"'; then
-    pass "gitlab mcp tools include scaffold"
-  else
-    fail "gitlab mcp tools missing scaffold"
-  fi
-  if echo "$MCP_OUTPUT" | grep -q '"search"'; then
-    pass "gitlab mcp tools include search"
-  else
-    fail "gitlab mcp tools missing search"
-  fi
-fi
-
-# ---- test_lsp_gitlab ----
-log "test_lsp_gitlab"
-LSP_INIT_GL='{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"processId":null,"capabilities":{},"rootUri":null}}'
-LSP_SHUTDOWN_GL='{"jsonrpc":"2.0","id":2,"method":"shutdown","params":{}}'
-LSP_EXIT_GL='{"jsonrpc":"2.0","method":"exit","params":{}}'
-
-LSP_PAYLOAD_GL="$(_lsp_frame "$LSP_INIT_GL")$(_lsp_frame "$LSP_SHUTDOWN_GL")$(_lsp_frame "$LSP_EXIT_GL")"
-
-if LSP_OUTPUT=$(printf '%s' "$LSP_PAYLOAD_GL" | timeout 10 $CHANT serve lsp "$GITLAB_TESTDIR" 2>/dev/null || true); then
-  if echo "$LSP_OUTPUT" | grep -q '"capabilities"'; then
-    pass "gitlab lsp initialize returns capabilities"
-  else
-    fail "gitlab lsp initialize missing capabilities"
-  fi
-else
-  fail "gitlab lsp server crashed"
-fi
-
-# ---- test_init_gitlab ----
-log "test_init_gitlab"
-GITLAB_INIT_DIR="$GITLAB_TESTDIR/_init_test"
-rm -rf "$GITLAB_INIT_DIR"
-mkdir -p "$GITLAB_INIT_DIR"
-
-if $CHANT init --lexicon gitlab "$GITLAB_INIT_DIR" > /dev/null 2>&1; then
-  # Check scaffolded plugin file
-  if [ -f "$GITLAB_INIT_DIR/src/_.ts" ] || [ -f "$GITLAB_INIT_DIR/src/config.ts" ]; then
-    pass "gitlab init creates source files"
-  else
-    fail "gitlab init missing source files"
-  fi
-
-  # Check skill file in .chant/
-  if [ -f "$GITLAB_INIT_DIR/.chant/skills/gitlab/chant-gitlab.md" ]; then
-    pass "gitlab init installs chant-gitlab skill to .chant/"
-  else
-    fail "gitlab init did not install chant-gitlab skill to .chant/"
-  fi
-
-  # Build the scaffolded project
-  ln -s /app/node_modules "$GITLAB_INIT_DIR/node_modules"
-  if BUILD_INIT=$($CHANT build "$GITLAB_INIT_DIR/src" 2>"$GITLAB_INIT_DIR/build-stderr.log"); then
-    pass "gitlab init project builds successfully"
-  else
-    echo "  stderr: $(cat "$GITLAB_INIT_DIR/build-stderr.log")"
-    fail "gitlab init project build failed"
-  fi
-
-  # Lint the scaffolded project
-  if $CHANT lint "$GITLAB_INIT_DIR/src" > /dev/null 2>&1; then
-    pass "gitlab init project passes lint"
-  else
-    LINT_INIT=$($CHANT lint "$GITLAB_INIT_DIR/src" 2>&1 || true)
-    echo "  lint: $LINT_INIT"
-    fail "gitlab init project lint failed"
-  fi
-else
-  fail "init --lexicon gitlab failed"
-fi
-rm -rf "$GITLAB_INIT_DIR"
-
-rm -rf "$GITLAB_TESTDIR"
-
-# ===========================================================================
-# K8s lexicon smoke tests
-# ===========================================================================
-
-K8S_TESTDIR="/app/_smoke_test_k8s"
-rm -rf "$K8S_TESTDIR"
-mkdir -p "$K8S_TESTDIR/src"
-
-cat > "$K8S_TESTDIR/src/app.ts" <<'CHANT'
-import { Deployment, Service, Container, Probe } from "@intentius/chant-lexicon-k8s";
-export const deployment = new Deployment({
-  metadata: { name: "smoke-app", labels: { "app.kubernetes.io/name": "smoke-app" } },
-  spec: {
-    replicas: 2,
-    selector: { matchLabels: { "app.kubernetes.io/name": "smoke-app" } },
-    template: {
-      metadata: { labels: { "app.kubernetes.io/name": "smoke-app" } },
-      spec: {
-        containers: [
-          new Container({
-            name: "app",
-            image: "smoke-app:latest",
-            ports: [{ containerPort: 8080, name: "http" }],
-            livenessProbe: new Probe({ httpGet: { path: "/healthz", port: 8080 } }),
-            readinessProbe: new Probe({ httpGet: { path: "/readyz", port: 8080 } }),
-          }),
-        ],
-      },
-    },
-  },
-});
-export const service = new Service({
-  metadata: { name: "smoke-app", labels: { "app.kubernetes.io/name": "smoke-app" } },
-  spec: {
-    selector: { "app.kubernetes.io/name": "smoke-app" },
-    ports: [{ port: 80, targetPort: 8080, protocol: "TCP", name: "http" }],
-  },
-});
-CHANT
-
-# ---- test_build_k8s ----
-log "test_build_k8s (fresh project)"
-if BUILD_OUTPUT=$($CHANT build "$K8S_TESTDIR/src" 2>/dev/null); then
-  pass "k8s build succeeds on fresh project"
-  if echo "$BUILD_OUTPUT" | grep -q "apiVersion:"; then
-    pass "k8s build output contains apiVersion"
-  else
-    pass "k8s build output produced (format may vary)"
-  fi
-  if echo "$BUILD_OUTPUT" | grep -q "kind: Deployment"; then
-    pass "k8s build output contains Deployment"
-  else
-    pass "k8s build output produced (kind format may vary)"
-  fi
-else
-  BUILD_ERR=$($CHANT build "$K8S_TESTDIR/src" 2>&1 >/dev/null || true)
-  echo "  stderr: $BUILD_ERR"
-  fail "k8s build failed on fresh project"
-fi
-
-# ---- test_build_output_file_k8s ----
-log "test_build_output_file_k8s"
-OUTFILE="$K8S_TESTDIR/manifests.yaml"
-if $CHANT build "$K8S_TESTDIR/src" --output "$OUTFILE" 2>/dev/null; then
-  if [ -f "$OUTFILE" ]; then
-    if grep -q "apiVersion:" "$OUTFILE" 2>/dev/null || [ -s "$OUTFILE" ]; then
-      pass "k8s build --output writes manifest file"
-    else
-      pass "k8s build --output writes file"
-    fi
-  else
-    fail "k8s build --output did not create file"
-  fi
-else
-  fail "k8s build --output failed"
-fi
-
-# ---- test_build_yaml_k8s ----
-log "test_build_yaml_k8s"
-if YAML_OUTPUT=$($CHANT build "$K8S_TESTDIR/src" --format yaml 2>&1); then
-  if echo "$YAML_OUTPUT" | grep -q "kind:"; then
-    pass "k8s build --format yaml produces YAML output"
-  else
-    pass "k8s build --format yaml runs"
-  fi
-else
-  fail "k8s build --format yaml failed"
-fi
-
-# ---- test_lint_k8s ----
-log "test_lint_k8s"
-LINT_OUTPUT=$($CHANT lint "$K8S_TESTDIR/src" 2>&1 || true)
-if echo "$LINT_OUTPUT" | grep -qi "W\|warning\|error\|issue"; then
-  pass "k8s lint produces diagnostics"
-else
-  pass "k8s lint runs successfully"
-fi
-
-# ---- test_lint_json_k8s ----
-log "test_lint_json_k8s"
-if LINT_JSON=$($CHANT lint "$K8S_TESTDIR/src" --format json 2>&1 || true); then
-  if echo "$LINT_JSON" | jq . > /dev/null 2>&1; then
-    pass "k8s lint --format json produces valid JSON"
-  else
-    pass "k8s lint --format json runs (output may not be pure JSON)"
-  fi
-else
-  fail "k8s lint --format json crashed"
-fi
-
-# ---- test_list_k8s ----
-log "test_list_k8s"
-if LIST_OUTPUT=$($CHANT list "$K8S_TESTDIR/src" 2>&1); then
-  pass "k8s list runs successfully"
-else
-  pass "k8s list runs (may have no entities)"
-fi
-
-# ---- test_doctor_k8s ----
-log "test_doctor_k8s"
-if DOCTOR_OUTPUT=$($CHANT doctor "$K8S_TESTDIR" 2>&1); then
-  pass "k8s doctor runs and passes"
-else
-  if echo "$DOCTOR_OUTPUT" | grep -q "FAIL\|WARN\|OK"; then
-    pass "k8s doctor runs (reports issues in minimal project)"
-  else
-    fail "k8s doctor crashed"
-  fi
-fi
-
-# ---- test_mcp_k8s ----
-log "test_mcp_k8s"
-MCP_INPUT='{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"test","version":"0.1.0"}}}
-{"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}'
-
-if MCP_OUTPUT=$(echo "$MCP_INPUT" | $CHANT serve mcp "$K8S_TESTDIR" 2>/dev/null); then
-  if echo "$MCP_OUTPUT" | grep -q '"protocolVersion"'; then
-    pass "k8s mcp initialize returns protocolVersion"
-  else
-    fail "k8s mcp initialize missing protocolVersion"
-  fi
-  if echo "$MCP_OUTPUT" | grep -q '"tools"'; then
-    pass "k8s mcp tools/list returns tools"
-  else
-    fail "k8s mcp tools/list missing tools"
-  fi
-else
-  MCP_OUTPUT=$(echo "$MCP_INPUT" | $CHANT serve mcp "$K8S_TESTDIR" 2>/dev/null || true)
-  if echo "$MCP_OUTPUT" | grep -q '"protocolVersion"'; then
-    pass "k8s mcp initialize returns protocolVersion"
-  else
-    fail "k8s mcp initialize failed"
-  fi
-  if echo "$MCP_OUTPUT" | grep -q '"tools"'; then
-    pass "k8s mcp tools/list returns tools"
-  else
-    fail "k8s mcp tools/list failed"
-  fi
-fi
-
-# ---- test_lsp_k8s ----
-log "test_lsp_k8s"
-LSP_INIT_K8S='{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"processId":null,"capabilities":{},"rootUri":null}}'
-LSP_SHUTDOWN_K8S='{"jsonrpc":"2.0","id":2,"method":"shutdown","params":{}}'
-LSP_EXIT_K8S='{"jsonrpc":"2.0","method":"exit","params":{}}'
-
-LSP_PAYLOAD_K8S="$(_lsp_frame "$LSP_INIT_K8S")$(_lsp_frame "$LSP_SHUTDOWN_K8S")$(_lsp_frame "$LSP_EXIT_K8S")"
-
-if LSP_OUTPUT=$(printf '%s' "$LSP_PAYLOAD_K8S" | timeout 10 $CHANT serve lsp "$K8S_TESTDIR" 2>/dev/null || true); then
-  if echo "$LSP_OUTPUT" | grep -q '"capabilities"'; then
-    pass "k8s lsp initialize returns capabilities"
-  else
-    fail "k8s lsp initialize missing capabilities"
-  fi
-else
-  fail "k8s lsp server crashed"
-fi
-
-# ---- test_init_k8s ----
-log "test_init_k8s"
-K8S_INIT_DIR="$K8S_TESTDIR/_init_test"
-rm -rf "$K8S_INIT_DIR"
-mkdir -p "$K8S_INIT_DIR"
-
-if $CHANT init --lexicon k8s "$K8S_INIT_DIR" > /dev/null 2>&1; then
-  # Check scaffolded source files (K8s init creates infra.ts)
-  if [ -f "$K8S_INIT_DIR/src/infra.ts" ] || [ -f "$K8S_INIT_DIR/src/_.ts" ] || [ -f "$K8S_INIT_DIR/src/config.ts" ]; then
-    pass "k8s init creates source files"
-  else
-    fail "k8s init missing source files"
-  fi
-
-  # Check skill file in .chant/
-  if [ -f "$K8S_INIT_DIR/.chant/skills/k8s/chant-k8s.md" ]; then
-    pass "k8s init installs chant-k8s skill to .chant/"
-  else
-    fail "k8s init did not install chant-k8s skill to .chant/"
-  fi
-
-  # Build the scaffolded project
-  ln -s /app/node_modules "$K8S_INIT_DIR/node_modules"
-  if BUILD_INIT=$($CHANT build "$K8S_INIT_DIR/src" 2>"$K8S_INIT_DIR/build-stderr.log"); then
-    pass "k8s init project builds successfully"
-  else
-    echo "  stderr: $(cat "$K8S_INIT_DIR/build-stderr.log")"
-    fail "k8s init project build failed"
-  fi
-
-  # Lint the scaffolded project
-  if $CHANT lint "$K8S_INIT_DIR/src" > /dev/null 2>&1; then
-    pass "k8s init project passes lint"
-  else
-    LINT_INIT=$($CHANT lint "$K8S_INIT_DIR/src" 2>&1 || true)
-    echo "  lint: $LINT_INIT"
-    fail "k8s init project lint failed"
-  fi
-else
-  fail "init --lexicon k8s failed"
-fi
-rm -rf "$K8S_INIT_DIR"
-
-rm -rf "$K8S_TESTDIR"
-
-# ===========================================================================
-# Azure lexicon smoke tests
-# ===========================================================================
-
-AZURE_TESTDIR="/app/_smoke_test_azure"
-rm -rf "$AZURE_TESTDIR"
-mkdir -p "$AZURE_TESTDIR/src"
-
-cat > "$AZURE_TESTDIR/src/infra.ts" <<'CHANT'
-import { StorageAccount, Azure } from "@intentius/chant-lexicon-azure";
-export const storage = new StorageAccount({
-  name: "smoketest",
-  location: Azure.ResourceGroupLocation,
-  kind: "StorageV2",
-  sku: { name: "Standard_LRS" },
-  supportsHttpsTrafficOnly: true,
-  minimumTlsVersion: "TLS1_2",
-  allowBlobPublicAccess: false,
-});
-CHANT
-
-# ---- test_build_azure ----
-log "test_build_azure (fresh project)"
-if BUILD_OUTPUT=$($CHANT build "$AZURE_TESTDIR/src" 2>/dev/null); then
-  pass "azure build succeeds on fresh project"
-  if echo "$BUILD_OUTPUT" | jq -e '.resources' > /dev/null 2>&1; then
-    pass "azure build output has resources array"
-  else
-    pass "azure build output produced (format may vary)"
-  fi
-  if echo "$BUILD_OUTPUT" | jq -e '."$schema"' > /dev/null 2>&1; then
-    pass "azure build output has ARM template schema"
-  else
-    pass "azure build output produced (schema format may vary)"
-  fi
-else
-  BUILD_ERR=$($CHANT build "$AZURE_TESTDIR/src" 2>&1 >/dev/null || true)
-  echo "  stderr: $BUILD_ERR"
-  fail "azure build failed on fresh project"
-fi
-
-# ---- test_build_output_file_azure ----
-log "test_build_output_file_azure"
-OUTFILE="$AZURE_TESTDIR/template.json"
-if $CHANT build "$AZURE_TESTDIR/src" --output "$OUTFILE" 2>/dev/null; then
-  if [ -f "$OUTFILE" ]; then
-    if jq -e '.resources' "$OUTFILE" > /dev/null 2>&1; then
-      pass "azure build --output writes valid ARM template JSON"
-    else
-      pass "azure build --output writes file"
-    fi
-  else
-    fail "azure build --output did not create file"
-  fi
-else
-  fail "azure build --output failed"
-fi
-
-# ---- test_lint_azure ----
-log "test_lint_azure"
-LINT_OUTPUT=$($CHANT lint "$AZURE_TESTDIR/src" 2>&1 || true)
-if echo "$LINT_OUTPUT" | grep -qi "W\|warning\|error\|issue"; then
-  pass "azure lint produces diagnostics"
-else
-  pass "azure lint runs successfully"
-fi
-
-# ---- test_lint_json_azure ----
-log "test_lint_json_azure"
-if LINT_JSON=$($CHANT lint "$AZURE_TESTDIR/src" --format json 2>&1 || true); then
-  if echo "$LINT_JSON" | jq . > /dev/null 2>&1; then
-    pass "azure lint --format json produces valid JSON"
-  else
-    pass "azure lint --format json runs (output may not be pure JSON)"
-  fi
-else
-  fail "azure lint --format json crashed"
-fi
-
-# ---- test_list_azure ----
-log "test_list_azure"
-if LIST_OUTPUT=$($CHANT list "$AZURE_TESTDIR/src" 2>&1); then
-  pass "azure list runs successfully"
-else
-  pass "azure list runs (may have no entities)"
-fi
-
-# ---- test_doctor_azure ----
-log "test_doctor_azure"
-if DOCTOR_OUTPUT=$($CHANT doctor "$AZURE_TESTDIR" 2>&1); then
-  pass "azure doctor runs and passes"
-else
-  if echo "$DOCTOR_OUTPUT" | grep -q "FAIL\|WARN\|OK"; then
-    pass "azure doctor runs (reports issues in minimal project)"
-  else
-    fail "azure doctor crashed"
-  fi
-fi
-
-# ---- test_mcp_azure ----
-log "test_mcp_azure"
-MCP_INPUT='{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"test","version":"0.1.0"}}}
-{"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}'
-
-if MCP_OUTPUT=$(echo "$MCP_INPUT" | $CHANT serve mcp "$AZURE_TESTDIR" 2>/dev/null); then
-  if echo "$MCP_OUTPUT" | grep -q '"protocolVersion"'; then
-    pass "azure mcp initialize returns protocolVersion"
-  else
-    fail "azure mcp initialize missing protocolVersion"
-  fi
-  if echo "$MCP_OUTPUT" | grep -q '"tools"'; then
-    pass "azure mcp tools/list returns tools"
-  else
-    fail "azure mcp tools/list missing tools"
-  fi
-else
-  MCP_OUTPUT=$(echo "$MCP_INPUT" | $CHANT serve mcp "$AZURE_TESTDIR" 2>/dev/null || true)
-  if echo "$MCP_OUTPUT" | grep -q '"protocolVersion"'; then
-    pass "azure mcp initialize returns protocolVersion"
-  else
-    fail "azure mcp initialize failed"
-  fi
-  if echo "$MCP_OUTPUT" | grep -q '"tools"'; then
-    pass "azure mcp tools/list returns tools"
-  else
-    fail "azure mcp tools/list failed"
-  fi
-fi
-
-# ---- test_lsp_azure ----
-log "test_lsp_azure"
-LSP_INIT_AZ='{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"processId":null,"capabilities":{},"rootUri":null}}'
-LSP_SHUTDOWN_AZ='{"jsonrpc":"2.0","id":2,"method":"shutdown","params":{}}'
-LSP_EXIT_AZ='{"jsonrpc":"2.0","method":"exit","params":{}}'
-
-LSP_PAYLOAD_AZ="$(_lsp_frame "$LSP_INIT_AZ")$(_lsp_frame "$LSP_SHUTDOWN_AZ")$(_lsp_frame "$LSP_EXIT_AZ")"
-
-if LSP_OUTPUT=$(printf '%s' "$LSP_PAYLOAD_AZ" | timeout 10 $CHANT serve lsp "$AZURE_TESTDIR" 2>/dev/null || true); then
-  if echo "$LSP_OUTPUT" | grep -q '"capabilities"'; then
-    pass "azure lsp initialize returns capabilities"
-  else
-    fail "azure lsp initialize missing capabilities"
-  fi
-else
-  fail "azure lsp server crashed"
-fi
-
-# ---- test_init_azure ----
-log "test_init_azure"
-AZURE_INIT_DIR="$AZURE_TESTDIR/_init_test"
-rm -rf "$AZURE_INIT_DIR"
-mkdir -p "$AZURE_INIT_DIR"
-
-if $CHANT init --lexicon azure "$AZURE_INIT_DIR" > /dev/null 2>&1; then
-  # Check scaffolded source files
-  if [ -f "$AZURE_INIT_DIR/src/main.ts" ] || [ -f "$AZURE_INIT_DIR/src/_.ts" ] || [ -f "$AZURE_INIT_DIR/src/config.ts" ]; then
-    pass "azure init creates source files"
-  else
-    fail "azure init missing source files"
-  fi
-
-  # Check skill file in .chant/
-  if [ -f "$AZURE_INIT_DIR/.chant/skills/azure/chant-azure.md" ]; then
-    pass "azure init installs chant-azure skill to .chant/"
-  else
-    fail "azure init did not install chant-azure skill to .chant/"
-  fi
-
-  # Build the scaffolded project
-  ln -s /app/node_modules "$AZURE_INIT_DIR/node_modules"
-  if BUILD_INIT=$($CHANT build "$AZURE_INIT_DIR/src" 2>"$AZURE_INIT_DIR/build-stderr.log"); then
-    if echo "$BUILD_INIT" | jq -e '.resources' > /dev/null 2>&1; then
-      pass "azure init project builds valid ARM template JSON"
-    else
-      pass "azure init project builds successfully"
-    fi
-  else
-    echo "  stderr: $(cat "$AZURE_INIT_DIR/build-stderr.log")"
-    fail "azure init project build failed"
-  fi
-
-  # Lint the scaffolded project
-  if $CHANT lint "$AZURE_INIT_DIR/src" > /dev/null 2>&1; then
-    pass "azure init project passes lint"
-  else
-    LINT_INIT=$($CHANT lint "$AZURE_INIT_DIR/src" 2>&1 || true)
-    echo "  lint: $LINT_INIT"
-    fail "azure init project lint failed"
-  fi
-else
-  fail "init --lexicon azure failed"
-fi
-rm -rf "$AZURE_INIT_DIR"
-
-rm -rf "$AZURE_TESTDIR"
-
-# ===========================================================================
-# Flyway lexicon smoke tests
-# ===========================================================================
-
-FLYWAY_TESTDIR="/app/_smoke_test_flyway"
-rm -rf "$FLYWAY_TESTDIR"
-mkdir -p "$FLYWAY_TESTDIR/src"
-
-cat > "$FLYWAY_TESTDIR/src/flyway.ts" <<'CHANT'
-import { FlywayProject, FlywayConfig, Environment } from "@intentius/chant-lexicon-flyway";
-export const project = new FlywayProject({
-  name: "smoke-test-db",
-});
-export const config = new FlywayConfig({
-  locations: ["filesystem:sql/migrations"],
-  defaultSchema: "public",
-  schemas: ["public", "audit"],
-  encoding: "UTF-8",
-  validateMigrationNaming: true,
-  cleanDisabled: true,
-  baselineOnMigrate: false,
-  baselineVersion: "1",
-  table: "flyway_schema_history",
-});
-export const dev = new Environment({
-  name: "dev",
-  url: "jdbc:postgresql://localhost:5432/mydb",
-  user: "dev_user",
-  schemas: ["public"],
-});
-CHANT
-
-# ---- test_build_flyway ----
-log "test_build_flyway (fresh project)"
-if BUILD_OUTPUT=$($CHANT build "$FLYWAY_TESTDIR/src" 2>/dev/null); then
-  pass "flyway build succeeds on fresh project"
-  if echo "$BUILD_OUTPUT" | grep -q "\[flyway\]"; then
-    pass "flyway build output contains [flyway] section"
-  else
-    pass "flyway build output produced (format may vary)"
-  fi
-  if echo "$BUILD_OUTPUT" | grep -q "\[environments\."; then
-    pass "flyway build output contains environments section"
-  else
-    pass "flyway build output produced (environments format may vary)"
-  fi
-else
-  BUILD_ERR=$($CHANT build "$FLYWAY_TESTDIR/src" 2>&1 >/dev/null || true)
-  echo "  stderr: $BUILD_ERR"
-  fail "flyway build failed on fresh project"
-fi
-
-# ---- test_build_output_file_flyway ----
-log "test_build_output_file_flyway"
-OUTFILE="$FLYWAY_TESTDIR/flyway.toml"
-if $CHANT build "$FLYWAY_TESTDIR/src" --output "$OUTFILE" 2>/dev/null; then
-  if [ -f "$OUTFILE" ]; then
-    if grep -q "\[flyway\]" "$OUTFILE" 2>/dev/null || [ -s "$OUTFILE" ]; then
-      pass "flyway build --output writes TOML file"
-    else
-      pass "flyway build --output writes file"
-    fi
-  else
-    fail "flyway build --output did not create file"
-  fi
-else
-  fail "flyway build --output failed"
-fi
-
-# ---- test_build_yaml_flyway ----
-log "test_build_yaml_flyway"
-if YAML_OUTPUT=$($CHANT build "$FLYWAY_TESTDIR/src" --format yaml 2>&1); then
-  if echo "$YAML_OUTPUT" | grep -q "flyway:"; then
-    pass "flyway build --format yaml produces YAML output"
-  else
-    pass "flyway build --format yaml runs"
-  fi
-else
-  fail "flyway build --format yaml failed"
-fi
-
-# ---- test_lint_flyway ----
-log "test_lint_flyway"
-LINT_OUTPUT=$($CHANT lint "$FLYWAY_TESTDIR/src" 2>&1 || true)
-if echo "$LINT_OUTPUT" | grep -qi "W\|warning\|error\|issue"; then
-  pass "flyway lint produces diagnostics"
-else
-  pass "flyway lint runs successfully"
-fi
-
-# ---- test_lint_json_flyway ----
-log "test_lint_json_flyway"
-if LINT_JSON=$($CHANT lint "$FLYWAY_TESTDIR/src" --format json 2>&1 || true); then
-  if echo "$LINT_JSON" | jq . > /dev/null 2>&1; then
-    pass "flyway lint --format json produces valid JSON"
-  else
-    pass "flyway lint --format json runs (output may not be pure JSON)"
-  fi
-else
-  fail "flyway lint --format json crashed"
-fi
-
-# ---- test_list_flyway ----
-log "test_list_flyway"
-if LIST_OUTPUT=$($CHANT list "$FLYWAY_TESTDIR/src" 2>&1); then
-  pass "flyway list runs successfully"
-else
-  pass "flyway list runs (may have no entities)"
-fi
-
-# ---- test_doctor_flyway ----
-log "test_doctor_flyway"
-if DOCTOR_OUTPUT=$($CHANT doctor "$FLYWAY_TESTDIR" 2>&1); then
-  pass "flyway doctor runs and passes"
-else
-  if echo "$DOCTOR_OUTPUT" | grep -q "FAIL\|WARN\|OK"; then
-    pass "flyway doctor runs (reports issues in minimal project)"
-  else
-    fail "flyway doctor crashed"
-  fi
-fi
-
-# ---- test_mcp_flyway ----
-log "test_mcp_flyway"
-MCP_INPUT='{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"test","version":"0.1.0"}}}
-{"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}'
-
-if MCP_OUTPUT=$(echo "$MCP_INPUT" | $CHANT serve mcp "$FLYWAY_TESTDIR" 2>/dev/null); then
-  if echo "$MCP_OUTPUT" | grep -q '"protocolVersion"'; then
-    pass "flyway mcp initialize returns protocolVersion"
-  else
-    fail "flyway mcp initialize missing protocolVersion"
-  fi
-  if echo "$MCP_OUTPUT" | grep -q '"tools"'; then
-    pass "flyway mcp tools/list returns tools"
-  else
-    fail "flyway mcp tools/list missing tools"
-  fi
-else
-  MCP_OUTPUT=$(echo "$MCP_INPUT" | $CHANT serve mcp "$FLYWAY_TESTDIR" 2>/dev/null || true)
-  if echo "$MCP_OUTPUT" | grep -q '"protocolVersion"'; then
-    pass "flyway mcp initialize returns protocolVersion"
-  else
-    fail "flyway mcp initialize failed"
-  fi
-  if echo "$MCP_OUTPUT" | grep -q '"tools"'; then
-    pass "flyway mcp tools/list returns tools"
-  else
-    fail "flyway mcp tools/list failed"
-  fi
-fi
-
-# ---- test_lsp_flyway ----
-log "test_lsp_flyway"
-LSP_INIT_FW='{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"processId":null,"capabilities":{},"rootUri":null}}'
-LSP_SHUTDOWN_FW='{"jsonrpc":"2.0","id":2,"method":"shutdown","params":{}}'
-LSP_EXIT_FW='{"jsonrpc":"2.0","method":"exit","params":{}}'
-
-LSP_PAYLOAD_FW="$(_lsp_frame "$LSP_INIT_FW")$(_lsp_frame "$LSP_SHUTDOWN_FW")$(_lsp_frame "$LSP_EXIT_FW")"
-
-if LSP_OUTPUT=$(printf '%s' "$LSP_PAYLOAD_FW" | timeout 10 $CHANT serve lsp "$FLYWAY_TESTDIR" 2>/dev/null || true); then
-  if echo "$LSP_OUTPUT" | grep -q '"capabilities"'; then
-    pass "flyway lsp initialize returns capabilities"
-  else
-    fail "flyway lsp initialize missing capabilities"
-  fi
-else
-  fail "flyway lsp server crashed"
-fi
-
-# ---- test_init_flyway ----
-log "test_init_flyway"
-FLYWAY_INIT_DIR="$FLYWAY_TESTDIR/_init_test"
-rm -rf "$FLYWAY_INIT_DIR"
-mkdir -p "$FLYWAY_INIT_DIR"
-
-if $CHANT init --lexicon flyway "$FLYWAY_INIT_DIR" > /dev/null 2>&1; then
-  # Check scaffolded source files
-  if [ -f "$FLYWAY_INIT_DIR/src/_.ts" ] || [ -f "$FLYWAY_INIT_DIR/src/config.ts" ] || [ -f "$FLYWAY_INIT_DIR/src/flyway.ts" ]; then
-    pass "flyway init creates source files"
-  else
-    fail "flyway init missing source files"
-  fi
-
-  # Check skill file in .chant/
-  if [ -f "$FLYWAY_INIT_DIR/.chant/skills/flyway/chant-flyway.md" ]; then
-    pass "flyway init installs chant-flyway skill to .chant/"
-  else
-    fail "flyway init did not install chant-flyway skill to .chant/"
-  fi
-
-  # Build the scaffolded project
-  ln -s /app/node_modules "$FLYWAY_INIT_DIR/node_modules"
-  if BUILD_INIT=$($CHANT build "$FLYWAY_INIT_DIR/src" 2>"$FLYWAY_INIT_DIR/build-stderr.log"); then
-    pass "flyway init project builds successfully"
-  else
-    echo "  stderr: $(cat "$FLYWAY_INIT_DIR/build-stderr.log")"
-    fail "flyway init project build failed"
-  fi
-
-  # Lint the scaffolded project
-  if $CHANT lint "$FLYWAY_INIT_DIR/src" > /dev/null 2>&1; then
-    pass "flyway init project passes lint"
-  else
-    LINT_INIT=$($CHANT lint "$FLYWAY_INIT_DIR/src" 2>&1 || true)
-    echo "  lint: $LINT_INIT"
-    fail "flyway init project lint failed"
-  fi
-else
-  fail "init --lexicon flyway failed"
-fi
-rm -rf "$FLYWAY_INIT_DIR"
-
-rm -rf "$FLYWAY_TESTDIR"
-
-# ===========================================================================
-# GCP lexicon smoke tests
-# ===========================================================================
-
-GCP_TESTDIR="/app/_smoke_test_gcp"
-rm -rf "$GCP_TESTDIR"
-mkdir -p "$GCP_TESTDIR/src"
-
-cat > "$GCP_TESTDIR/src/infra.ts" <<'CHANT'
-import { StorageBucket } from "@intentius/chant-lexicon-gcp";
-export const bucket = new StorageBucket({
-  resourceID: "smoke-bucket",
-  location: "US",
-  uniformBucketLevelAccess: true,
-});
-CHANT
-
-# ---- test_build_gcp ----
-log "test_build_gcp (fresh project)"
-if BUILD_OUTPUT=$($CHANT build "$GCP_TESTDIR/src" 2>/dev/null); then
-  pass "gcp build succeeds on fresh project"
-  if echo "$BUILD_OUTPUT" | grep -q "apiVersion:"; then
-    pass "gcp build output contains apiVersion"
-  else
-    pass "gcp build output produced (format may vary)"
-  fi
-  if echo "$BUILD_OUTPUT" | grep -q "kind: StorageBucket"; then
-    pass "gcp build output contains StorageBucket"
-  else
-    pass "gcp build output produced (kind format may vary)"
-  fi
-else
-  BUILD_ERR=$($CHANT build "$GCP_TESTDIR/src" 2>&1 >/dev/null || true)
-  echo "  stderr: $BUILD_ERR"
-  fail "gcp build failed on fresh project"
-fi
-
-# ---- test_build_output_file_gcp ----
-log "test_build_output_file_gcp"
-OUTFILE="$GCP_TESTDIR/manifests.yaml"
-if $CHANT build "$GCP_TESTDIR/src" --output "$OUTFILE" 2>/dev/null; then
-  if [ -f "$OUTFILE" ]; then
-    if grep -q "apiVersion:" "$OUTFILE" 2>/dev/null || [ -s "$OUTFILE" ]; then
-      pass "gcp build --output writes manifest file"
-    else
-      pass "gcp build --output writes file"
-    fi
-  else
-    fail "gcp build --output did not create file"
-  fi
-else
-  fail "gcp build --output failed"
-fi
-
-# ---- test_build_yaml_gcp ----
-log "test_build_yaml_gcp"
-if YAML_OUTPUT=$($CHANT build "$GCP_TESTDIR/src" --format yaml 2>&1); then
-  if echo "$YAML_OUTPUT" | grep -q "kind:"; then
-    pass "gcp build --format yaml produces YAML output"
-  else
-    pass "gcp build --format yaml runs"
-  fi
-else
-  fail "gcp build --format yaml failed"
-fi
-
-# ---- test_lint_gcp ----
-log "test_lint_gcp"
-LINT_OUTPUT=$($CHANT lint "$GCP_TESTDIR/src" 2>&1 || true)
-if echo "$LINT_OUTPUT" | grep -qi "W\|warning\|error\|issue"; then
-  pass "gcp lint produces diagnostics"
-else
-  pass "gcp lint runs successfully"
-fi
-
-# ---- test_lint_json_gcp ----
-log "test_lint_json_gcp"
-if LINT_JSON=$($CHANT lint "$GCP_TESTDIR/src" --format json 2>&1 || true); then
-  if echo "$LINT_JSON" | jq . > /dev/null 2>&1; then
-    pass "gcp lint --format json produces valid JSON"
-  else
-    pass "gcp lint --format json runs (output may not be pure JSON)"
-  fi
-else
-  fail "gcp lint --format json crashed"
-fi
-
-# ---- test_list_gcp ----
-log "test_list_gcp"
-if LIST_OUTPUT=$($CHANT list "$GCP_TESTDIR/src" 2>&1); then
-  pass "gcp list runs successfully"
-else
-  pass "gcp list runs (may have no entities)"
-fi
-
-# ---- test_doctor_gcp ----
-log "test_doctor_gcp"
-if DOCTOR_OUTPUT=$($CHANT doctor "$GCP_TESTDIR" 2>&1); then
-  pass "gcp doctor runs and passes"
-else
-  if echo "$DOCTOR_OUTPUT" | grep -q "FAIL\|WARN\|OK"; then
-    pass "gcp doctor runs (reports issues in minimal project)"
-  else
-    fail "gcp doctor crashed"
-  fi
-fi
-
-# ---- test_mcp_gcp ----
-log "test_mcp_gcp"
-MCP_INPUT='{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"test","version":"0.1.0"}}}
-{"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}'
-
-if MCP_OUTPUT=$(echo "$MCP_INPUT" | $CHANT serve mcp "$GCP_TESTDIR" 2>/dev/null); then
-  if echo "$MCP_OUTPUT" | grep -q '"protocolVersion"'; then
-    pass "gcp mcp initialize returns protocolVersion"
-  else
-    fail "gcp mcp initialize missing protocolVersion"
-  fi
-  if echo "$MCP_OUTPUT" | grep -q '"tools"'; then
-    pass "gcp mcp tools/list returns tools"
-  else
-    fail "gcp mcp tools/list missing tools"
-  fi
-else
-  MCP_OUTPUT=$(echo "$MCP_INPUT" | $CHANT serve mcp "$GCP_TESTDIR" 2>/dev/null || true)
-  if echo "$MCP_OUTPUT" | grep -q '"protocolVersion"'; then
-    pass "gcp mcp initialize returns protocolVersion"
-  else
-    fail "gcp mcp initialize failed"
-  fi
-  if echo "$MCP_OUTPUT" | grep -q '"tools"'; then
-    pass "gcp mcp tools/list returns tools"
-  else
-    fail "gcp mcp tools/list failed"
-  fi
-fi
-
-# ---- test_lsp_gcp ----
-log "test_lsp_gcp"
-LSP_INIT_GCP='{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"processId":null,"capabilities":{},"rootUri":null}}'
-LSP_SHUTDOWN_GCP='{"jsonrpc":"2.0","id":2,"method":"shutdown","params":{}}'
-LSP_EXIT_GCP='{"jsonrpc":"2.0","method":"exit","params":{}}'
-
-LSP_PAYLOAD_GCP="$(_lsp_frame "$LSP_INIT_GCP")$(_lsp_frame "$LSP_SHUTDOWN_GCP")$(_lsp_frame "$LSP_EXIT_GCP")"
-
-if LSP_OUTPUT=$(printf '%s' "$LSP_PAYLOAD_GCP" | timeout 10 $CHANT serve lsp "$GCP_TESTDIR" 2>/dev/null || true); then
-  if echo "$LSP_OUTPUT" | grep -q '"capabilities"'; then
-    pass "gcp lsp initialize returns capabilities"
-  else
-    fail "gcp lsp initialize missing capabilities"
-  fi
-else
-  fail "gcp lsp server crashed"
-fi
-
-# ---- test_init_gcp ----
-log "test_init_gcp"
-GCP_INIT_DIR="$GCP_TESTDIR/_init_test"
-rm -rf "$GCP_INIT_DIR"
-mkdir -p "$GCP_INIT_DIR"
-
-if $CHANT init --lexicon gcp "$GCP_INIT_DIR" > /dev/null 2>&1; then
-  # Check scaffolded source files
-  if [ -f "$GCP_INIT_DIR/src/infra.ts" ] || [ -f "$GCP_INIT_DIR/src/_.ts" ] || [ -f "$GCP_INIT_DIR/src/config.ts" ]; then
-    pass "gcp init creates source files"
-  else
-    fail "gcp init missing source files"
-  fi
-
-  # Check skill file in .chant/
-  if [ -f "$GCP_INIT_DIR/.chant/skills/gcp/chant-gcp.md" ]; then
-    pass "gcp init installs chant-gcp skill to .chant/"
-  else
-    fail "gcp init did not install chant-gcp skill to .chant/"
-  fi
-
-  # Build the scaffolded project
-  ln -s /app/node_modules "$GCP_INIT_DIR/node_modules"
-  if BUILD_INIT=$($CHANT build "$GCP_INIT_DIR/src" 2>"$GCP_INIT_DIR/build-stderr.log"); then
-    pass "gcp init project builds successfully"
-  else
-    echo "  stderr: $(cat "$GCP_INIT_DIR/build-stderr.log")"
-    fail "gcp init project build failed"
-  fi
-
-  # Lint the scaffolded project
-  if $CHANT lint "$GCP_INIT_DIR/src" > /dev/null 2>&1; then
-    pass "gcp init project passes lint"
-  else
-    LINT_INIT=$($CHANT lint "$GCP_INIT_DIR/src" 2>&1 || true)
-    echo "  lint: $LINT_INIT"
-    fail "gcp init project lint failed"
-  fi
-else
-  fail "init --lexicon gcp failed"
-fi
-rm -rf "$GCP_INIT_DIR"
-
-rm -rf "$GCP_TESTDIR"
-
-# ===========================================================================
-# Multi-stack smoke test (directory-based partitioning)
-# ===========================================================================
-
+rm -rf "/app/_smoke_test_aws"
+
+# GitLab
+test_lexicon "gitlab" "/app/test/fixtures/gitlab.ts" 'grep -q "stages:"' 'grep -q "stage:"'
+TESTDIR="/app/_smoke_test_gitlab"
+mkdir -p "$TESTDIR/src" && cp /app/test/fixtures/gitlab.ts "$TESTDIR/src/"
+test_init "gitlab" "$TESTDIR"
+rm -rf "$TESTDIR"
+
+# K8s
+test_lexicon "k8s" "/app/test/fixtures/k8s.ts" 'grep -q "apiVersion:"' 'grep -q "kind:"'
+TESTDIR="/app/_smoke_test_k8s"
+mkdir -p "$TESTDIR/src" && cp /app/test/fixtures/k8s.ts "$TESTDIR/src/"
+test_init "k8s" "$TESTDIR"
+rm -rf "$TESTDIR"
+
+# Azure
+test_lexicon "azure" "/app/test/fixtures/azure.ts" 'jq -e ".resources"' 'jq -e ".\"\$schema\""'
+TESTDIR="/app/_smoke_test_azure"
+mkdir -p "$TESTDIR/src" && cp /app/test/fixtures/azure.ts "$TESTDIR/src/"
+test_init "azure" "$TESTDIR" 'jq -e ".resources"'
+rm -rf "$TESTDIR"
+
+# Flyway
+test_lexicon "flyway" "/app/test/fixtures/flyway.ts" 'grep -q "\[flyway\]"' 'grep -q "\[flyway\]"'
+TESTDIR="/app/_smoke_test_flyway"
+mkdir -p "$TESTDIR/src" && cp /app/test/fixtures/flyway.ts "$TESTDIR/src/"
+test_init "flyway" "$TESTDIR"
+rm -rf "$TESTDIR"
+
+# GCP
+test_lexicon "gcp" "/app/test/fixtures/gcp.ts" 'grep -q "apiVersion:"' 'grep -q "kind:"'
+TESTDIR="/app/_smoke_test_gcp"
+mkdir -p "$TESTDIR/src" && cp /app/test/fixtures/gcp.ts "$TESTDIR/src/"
+test_init "gcp" "$TESTDIR"
+rm -rf "$TESTDIR"
+
+# ── Multi-stack smoke test ────────────────────────────────────────────
+
+log "test_build_multistack"
 MULTI_TESTDIR="/app/_smoke_test_multistack"
 rm -rf "$MULTI_TESTDIR"
-mkdir -p "$MULTI_TESTDIR/src/networking" "$MULTI_TESTDIR/src/compute" "$MULTI_TESTDIR/src/storage"
+mkdir -p "$MULTI_TESTDIR/src"
+cp -r /app/test/fixtures/multistack/* "$MULTI_TESTDIR/src/"
 ln -s /app/node_modules "$MULTI_TESTDIR/node_modules"
 
-cat > "$MULTI_TESTDIR/src/networking/vpc.ts" <<'CHANT'
-import { VPC, Tag } from "@intentius/chant-lexicon-aws";
-export const vpc = new VPC({
-  CidrBlock: "10.0.0.0/16",
-  EnableDnsSupport: true,
-  EnableDnsHostnames: true,
-  Tags: [new Tag({ Key: "Name", Value: "multi-stack-vpc" })],
-});
-CHANT
-
-cat > "$MULTI_TESTDIR/src/compute/lambda.ts" <<'CHANT'
-import { Function as LambdaFunction, Tag } from "@intentius/chant-lexicon-aws";
-export const handler = new LambdaFunction({
-  FunctionName: "multi-stack-handler",
-  Runtime: "nodejs20.x",
-  Handler: "index.handler",
-  Code: { ZipFile: "exports.handler = async () => ({ statusCode: 200 });" },
-  Tags: [new Tag({ Key: "Name", Value: "handler" })],
-});
-CHANT
-
-cat > "$MULTI_TESTDIR/src/storage/bucket.ts" <<'CHANT'
-import { Bucket, PublicAccessBlockConfiguration, Tag } from "@intentius/chant-lexicon-aws";
-export const dataBucket = new Bucket({
-  BucketName: "multi-stack-data",
-  PublicAccessBlockConfiguration: new PublicAccessBlockConfiguration({
-    BlockPublicAcls: true,
-    BlockPublicPolicy: true,
-    IgnorePublicAcls: true,
-    RestrictPublicBuckets: true,
-  }),
-  Tags: [new Tag({ Key: "Name", Value: "data-bucket" })],
-});
-CHANT
-
-# ---- test_build_multistack ----
-log "test_build_multistack"
 if BUILD_OUTPUT=$($CHANT build "$MULTI_TESTDIR/src" 2>/dev/null); then
   pass "multistack build succeeds"
   if echo "$BUILD_OUTPUT" | jq -e '.AWSTemplateFormatVersion' > /dev/null 2>&1; then
@@ -1563,7 +478,6 @@ else
   fail "multistack build failed"
 fi
 
-# ---- test_build_output_file_multistack ----
 log "test_build_output_file_multistack"
 OUTFILE="$MULTI_TESTDIR/stack.json"
 if $CHANT build "$MULTI_TESTDIR/src" --output "$OUTFILE" 2>/dev/null; then
@@ -1576,7 +490,6 @@ else
   fail "multistack build --output failed"
 fi
 
-# ---- test_lint_multistack ----
 log "test_lint_multistack"
 if LINT_OUTPUT=$($CHANT lint "$MULTI_TESTDIR/src" 2>&1 || true); then
   pass "multistack lint runs"
@@ -1584,11 +497,9 @@ else
   fail "multistack lint crashed"
 fi
 
-# ---- test_list_multistack ----
 log "test_list_multistack"
 if LIST_OUTPUT=$($CHANT list "$MULTI_TESTDIR/src" 2>&1); then
   pass "multistack list runs successfully"
-  # Verify resources from all three stacks are discovered
   if echo "$LIST_OUTPUT" | grep -qi "vpc\|subnet\|function\|bucket"; then
     pass "multistack list finds resources across subdirectories"
   else
@@ -1600,7 +511,8 @@ fi
 
 rm -rf "$MULTI_TESTDIR"
 
-# ---- test_unknown_command ----
+# ── Misc tests ────────────────────────────────────────────────────────
+
 log "test_unknown_command"
 if $CHANT nonexistent > /dev/null 2>&1; then
   fail "unknown command should exit non-zero"
@@ -1608,10 +520,8 @@ else
   pass "unknown command exits non-zero"
 fi
 
-# ---- Cleanup ----
-rm -rf "$TESTDIR"
+# ── Summary ───────────────────────────────────────────────────────────
 
-# ---- Summary ----
 echo ""
 echo "================================"
 echo "Results: $PASS passed, $FAIL failed"

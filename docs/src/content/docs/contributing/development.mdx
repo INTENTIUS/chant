@@ -63,8 +63,9 @@ just k3d-validate --verbose
 ### Test Patterns
 
 - Unit tests live next to source files or in `__tests__/` directories
-- Integration tests (like example projects) are in `examples/` directories with `*.test.ts` files
-- The `packages/test-utils/` directory provides shared test fixtures and assertions
+- Example tests use the centralized `examples.test.ts` pattern: each lexicon has a single `lexicons/<name>/examples/examples.test.ts` file that auto-discovers all example subdirectories and runs lint + build tests via the `describeAllExamples` harness from `@intentius/chant-test-utils/example-harness`
+- Cross-lexicon examples live in `examples/` at the repo root with a centralized `examples/examples.test.ts`
+- The `packages/test-utils/` directory (`@intentius/chant-test-utils`) provides shared test fixtures, assertions, and the example test harness
 
 ## Type Checking
 

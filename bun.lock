@@ -644,6 +644,10 @@
         "tsx": "^4.0.0",
       },
     },
+    "packages/test-utils": {
+      "name": "@intentius/chant-test-utils",
+      "version": "0.0.1",
+    },
   },
   "packages": {
     "@esbuild/aix-ppc64": ["@esbuild/aix-ppc64@0.27.3", "", { "os": "aix", "cpu": "ppc64" }, "sha512-9fJMTNFTWZMh5qwrBItuziu834eOCUcEqymSH7pY+zoMVEZg3gcPuBNxH1EvfVYe9h0x/Ptw8KBzv7qxb7l8dg=="],
@@ -745,6 +749,8 @@
     "@intentius/chant-lexicon-helm": ["@intentius/chant-lexicon-helm@workspace:lexicons/helm"],
 
     "@intentius/chant-lexicon-k8s": ["@intentius/chant-lexicon-k8s@workspace:lexicons/k8s"],
+
+    "@intentius/chant-test-utils": ["@intentius/chant-test-utils@workspace:packages/test-utils"],
 
     "@types/estree": ["@types/estree@1.0.8", "", {}, "sha512-dWHzHa2WqEXI/O1E9OjrocMTKJl2mSrEolh1Iomrv6U+JuNwaHXsXx9bLu5gG7BUWFIN0skIQJQ/L1rIex4X6w=="],
 

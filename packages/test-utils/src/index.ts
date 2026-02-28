@@ -8,3 +8,5 @@ export {
 } from "./fixtures";
 export { expectToThrow } from "./assertions";
 export { FIXTURE } from "./fixture-constants";
+export { describeExample, describeAllExamples } from "./example-harness";
+export type { ExampleHarnessConfig, ExampleOpts } from "./example-harness";
