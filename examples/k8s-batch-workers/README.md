@@ -4,16 +4,14 @@ Background processing platform demonstrating batch and worker composites: queue 
 
 ## Skills
 
-This example includes skills for agent-guided deployment:
+The lexicon packages ship skills for agent-guided deployment. After `chant init --lexicon k8s`, your agent has access to:
 
-| Skill | Purpose |
-|-------|---------|
-| `chant-k8s-batch-workers` | Guides the full deploy → verify → teardown workflow for this example |
-| `chant-k8s` | Kubernetes manifest lifecycle: build, lint, apply, rollback, troubleshooting |
-| `chant-k8s-patterns` | Advanced patterns: sidecars, config mounting, TLS, monitoring, network isolation |
+| Skill | Package | Purpose |
+|-------|---------|---------|
+| `chant-k8s` | `@intentius/chant-lexicon-k8s` | Kubernetes manifest lifecycle: build, lint, apply, rollback, troubleshooting |
+| `chant-k8s-patterns` | `@intentius/chant-lexicon-k8s` | Advanced patterns: sidecars, config mounting, TLS, monitoring, network isolation |
 
-> **Using Claude Code?** The skills in `.claude/skills/` guide your agent
-> through the full deploy → verify → teardown workflow. Just ask:
+> **Using Claude Code?** Just ask:
 >
 > ```
 > Deploy the k8s-batch-workers example to my cluster.

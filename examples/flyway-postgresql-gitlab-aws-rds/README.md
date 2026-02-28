@@ -4,20 +4,18 @@ A cross-lexicon example combining **three** lexicons: AWS (RDS infrastructure), 
 
 ## Skills
 
-This example includes skills for agent-guided deployment:
+The lexicon packages ship skills for agent-guided deployment. After `chant init --lexicon aws`, `chant init --lexicon flyway`, and `chant init --lexicon gitlab`, your agent has access to:
 
-| Skill | Purpose |
-|-------|---------|
-| `chant-flyway-gitlab-aws-rds` | Guides the full deploy → verify → teardown workflow for this example |
-| `chant-aws` | CloudFormation lifecycle: build, validate, deploy, change sets, rollback |
-| `chant-flyway` | Flyway migration lifecycle: build, validate, migrate, repair |
-| `chant-gitlab` | GitLab CI/CD lifecycle: build, validate, push, monitor pipelines |
+| Skill | Package | Purpose |
+|-------|---------|---------|
+| `chant-gitlab` | `@intentius/chant-lexicon-gitlab` | GitLab CI/CD lifecycle: build, validate, push, monitor pipelines |
+| `chant-aws` | `@intentius/chant-lexicon-aws` | CloudFormation lifecycle: build, validate, change sets, rollback |
+| `chant-flyway` | `@intentius/chant-lexicon-flyway` | Flyway migration lifecycle: build, validate, migrate, repair |
 
-> **Using Claude Code?** The skills in `.claude/skills/` guide your agent
-> through the full deploy → verify → teardown workflow. Just ask:
+> **Using Claude Code?** This example deploys through GitLab CI, not directly. Ask:
 >
 > ```
-> Deploy the flyway-postgresql-gitlab-aws-rds example to my AWS account.
+> Set up the flyway-postgresql-gitlab-aws-rds example for GitLab CI deployment.
 > ```
 
 ## What this produces

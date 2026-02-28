@@ -43,8 +43,7 @@ if [ -d /output ]; then
     [ -f "$example_dir/flyway.toml" ]  && cp "$example_dir/flyway.toml" "$out/"
     [ -f "$example_dir/.gitlab-ci.yml" ] && cp "$example_dir/.gitlab-ci.yml" "$out/"
     [ -d "$example_dir/templates" ]    && cp -r "$example_dir/templates" "$out/" 2>/dev/null || true
-    # Copy skills and README for agent context
-    [ -d "$example_dir/.claude" ]      && cp -r "$example_dir/.claude" "$out/"
+    # Copy README for context
     [ -f "$example_dir/README.md" ]    && cp "$example_dir/README.md" "$out/"
     # Copy deploy scripts if they exist
     [ -d "$example_dir/scripts" ]      && cp -r "$example_dir/scripts" "$out/"

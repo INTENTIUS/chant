@@ -70,7 +70,7 @@ Your agent runs `bun run teardown` — deletes K8s resources first, waits for AL
 
 ## Skills guide
 
-Chant provides four skills that guide your agent through every aspect of this example.
+The lexicon packages (`@intentius/chant-lexicon-aws` and `@intentius/chant-lexicon-k8s`) ship four skills that guide your agent through every aspect of this example. After `chant init --lexicon aws` and `chant init --lexicon k8s`, your agent has access to:
 
 ### `chant-eks` — primary entry point
 

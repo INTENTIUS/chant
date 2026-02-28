@@ -6,19 +6,17 @@ API Fargate service behind a shared Application Load Balancer, with a GitLab CI 
 
 ## Skills
 
-This example includes skills for agent-guided deployment:
+The lexicon packages ship skills for agent-guided deployment. After `chant init --lexicon aws` and `chant init --lexicon gitlab`, your agent has access to:
 
-| Skill | Purpose |
-|-------|---------|
-| `chant-gitlab-aws-alb-api` | Guides the full deploy → verify → teardown workflow for this example |
-| `chant-aws` | CloudFormation lifecycle: build, validate, deploy, change sets, rollback |
-| `chant-gitlab` | GitLab CI/CD lifecycle: build, validate, push, monitor pipelines |
+| Skill | Package | Purpose |
+|-------|---------|---------|
+| `chant-gitlab` | `@intentius/chant-lexicon-gitlab` | GitLab CI/CD lifecycle: build, validate, push, monitor pipelines |
+| `chant-aws` | `@intentius/chant-lexicon-aws` | CloudFormation lifecycle: build, validate, change sets, rollback |
 
-> **Using Claude Code?** The skills in `.claude/skills/` guide your agent
-> through the full deploy → verify → teardown workflow. Just ask:
+> **Using Claude Code?** This example deploys through GitLab CI, not directly. Ask:
 >
 > ```
-> Deploy the gitlab-aws-alb-api example to my AWS account.
+> Set up the gitlab-aws-alb-api example for GitLab CI deployment.
 > ```
 
 ## What this produces

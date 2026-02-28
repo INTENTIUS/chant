@@ -4,16 +4,14 @@ Deploy PostgreSQL as a Kubernetes StatefulSet on a local k3d cluster, then run F
 
 ## Skills
 
-This example includes skills for agent-guided deployment:
+The lexicon packages ship skills for agent-guided deployment. After `chant init --lexicon k8s` and `chant init --lexicon flyway`, your agent has access to:
 
-| Skill | Purpose |
-|-------|---------|
-| `chant-flyway-k8s` | Guides the full deploy → migrate → verify → teardown workflow for this example |
-| `chant-k8s` | Kubernetes manifest lifecycle: build, lint, apply, rollback, troubleshooting |
-| `chant-flyway` | Flyway migration lifecycle: build, validate, migrate, repair |
+| Skill | Package | Purpose |
+|-------|---------|---------|
+| `chant-k8s` | `@intentius/chant-lexicon-k8s` | Kubernetes manifest lifecycle: build, lint, apply, rollback, troubleshooting |
+| `chant-flyway` | `@intentius/chant-lexicon-flyway` | Flyway migration lifecycle: build, validate, migrate, repair |
 
-> **Using Claude Code?** The skills in `.claude/skills/` guide your agent
-> through the full deploy → verify → teardown workflow. Just ask:
+> **Using Claude Code?** Just ask:
 >
 > ```
 > Deploy the flyway-postgresql-k8s example locally.

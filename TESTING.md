@@ -405,7 +405,7 @@ The container's `/app/examples/` is baked into the image during `docker build`. 
 | `k8s-eks-microservice` | `templates/infra.json`, `k8s.yaml` |
 | `k8s-web-platform` | `k8s.yaml` |
 
-Each example directory also gets `.claude/` skills, `README.md`, `package.json`, and any deploy scripts (`scripts/`, `setup.sh`, `sql/`, `.env.example`) copied to `/output` for agent-driven deployment from outside the container.
+Each example directory also gets `README.md`, `package.json`, and any deploy scripts (`scripts/`, `setup.sh`, `sql/`, `.env.example`) copied to `/output` for agent-driven deployment from outside the container. Skills come from the installed lexicon packages, not from the examples themselves.
 
 ### Files
 
