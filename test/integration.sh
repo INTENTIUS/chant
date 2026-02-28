@@ -511,6 +511,25 @@ fi
 
 rm -rf "$MULTI_TESTDIR"
 
+# ── Root cross-lexicon examples ────────────────────────────────────────
+
+log "test_root_examples"
+for example_dir in /app/examples/*/; do
+  name=$(basename "$example_dir")
+  src_dir="$example_dir/src"
+  [ -d "$src_dir" ] || continue
+
+  ln -sf /app/node_modules "$example_dir/node_modules"
+  if $CHANT build "$src_dir" > /dev/null 2>&1; then
+    pass "root example $name builds"
+  else
+    BUILD_ERR=$($CHANT build "$src_dir" 2>&1 || true)
+    echo "  stderr: $BUILD_ERR"
+    fail "root example $name build failed"
+  fi
+  rm -f "$example_dir/node_modules"
+done
+
 # ── Misc tests ────────────────────────────────────────────────────────
 
 log "test_unknown_command"
