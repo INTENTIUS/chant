@@ -27,7 +27,7 @@ The lexicon packages ship skills for agent-guided deployment. After `chant init 
 |------|-----------|-----------|
 | `src/namespace.ts` | *(raw Namespace)* | Namespace |
 | `src/frontend.ts` | `WebApp` | Deployment + Service + PodDisruptionBudget |
-| `src/api.ts` | `SidecarApp` | Deployment + Service (with Envoy sidecar) |
+| `src/api.ts` | `SidecarApp` | Deployment + Service (with nginx reverse-proxy sidecar) |
 | `src/ingress.ts` | `SecureIngress` | Ingress (TLS via cert-manager) |
 | `src/network.ts` | `NetworkIsolatedApp` | Deployment + Service + NetworkPolicy |
 | `src/storage.ts` | `EfsStorageClass` | StorageClass (AWS EFS) |
@@ -39,7 +39,7 @@ This example showcases 5 composites for web-facing workload patterns:
 | Composite | Pattern | Key features |
 |-----------|---------|-------------|
 | `WebApp` | Frontend service | 2 replicas, PDB (minAvailable: 1), nginx |
-| `SidecarApp` | API with proxy | Envoy sidecar, shared volumes, 3 replicas |
+| `SidecarApp` | API with proxy | nginx reverse-proxy sidecar, 3 replicas |
 | `SecureIngress` | TLS ingress | cert-manager, letsencrypt-prod, multi-path routing |
 | `NetworkIsolatedApp` | Zero-trust API | Ingress from frontend only, egress to postgres + DNS |
 | `EfsStorageClass` | Shared storage | AWS EFS CSI, ReadWriteMany, directory permissions |
@@ -63,6 +63,12 @@ bun run lint
 ```
 
 ## Deploy
+
+> **Important:** If using an nginx ingress controller, wait for the admission webhook to be ready before applying. The Ingress resource triggers a validation webhook — if endpoints aren't available yet, `kubectl apply` will fail.
+>
+> ```bash
+> kubectl -n ingress-nginx rollout status deployment/ingress-nginx-controller --timeout=120s
+> ```
 
 ```bash
 bun run deploy

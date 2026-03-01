@@ -87,8 +87,8 @@ bun run build
 ## Verify
 
 ```bash
-aws cloudformation describe-stacks --stack-name alb-ui --query 'Stacks[0].StackStatus'
-aws ecs describe-services --cluster <ClusterArn> --services alb-ui
+aws cloudformation describe-stacks --stack-name shared-alb-ui --query 'Stacks[0].StackStatus'
+aws ecs describe-services --cluster <ClusterArn> --services shared-alb-ui
 # Visit http://<AlbDnsName>/
 ```
 
@@ -97,10 +97,10 @@ aws ecs describe-services --cluster <ClusterArn> --services alb-ui
 Delete api and ui stacks before the infra stack — order matters:
 
 ```bash
-aws cloudformation delete-stack --stack-name alb-api
-aws cloudformation delete-stack --stack-name alb-ui
-aws cloudformation wait stack-delete-complete --stack-name alb-api
-aws cloudformation wait stack-delete-complete --stack-name alb-ui
+aws cloudformation delete-stack --stack-name shared-alb-api
+aws cloudformation delete-stack --stack-name shared-alb-ui
+aws cloudformation wait stack-delete-complete --stack-name shared-alb-api
+aws cloudformation wait stack-delete-complete --stack-name shared-alb-ui
 
 # Then delete infra
 aws cloudformation delete-stack --stack-name shared-alb

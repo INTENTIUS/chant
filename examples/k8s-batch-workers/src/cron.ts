@@ -23,6 +23,12 @@ const cron = CronWorkload({
   successfulJobsHistoryLimit: 3,
   failedJobsHistoryLimit: 2,
   env: [{ name: "RETENTION_DAYS", value: "90" }],
+  securityContext: {
+    runAsNonRoot: true,
+    runAsUser: 1000,
+    readOnlyRootFilesystem: true,
+    capabilities: { drop: ["ALL"] },
+  },
 });
 
 export const cronJob = new CronJob(cron.cronJob);

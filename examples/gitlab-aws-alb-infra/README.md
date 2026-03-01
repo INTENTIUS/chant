@@ -105,15 +105,21 @@ Delete service stacks first, then infra — order matters:
 
 ```bash
 # Delete api and ui stacks first (if deployed)
-aws cloudformation delete-stack --stack-name alb-api
-aws cloudformation delete-stack --stack-name alb-ui
-aws cloudformation wait stack-delete-complete --stack-name alb-api
-aws cloudformation wait stack-delete-complete --stack-name alb-ui
+aws cloudformation delete-stack --stack-name shared-alb-api
+aws cloudformation delete-stack --stack-name shared-alb-ui
+aws cloudformation wait stack-delete-complete --stack-name shared-alb-api
+aws cloudformation wait stack-delete-complete --stack-name shared-alb-ui
+
+# Empty ECR repos (CloudFormation cannot delete repos containing images)
+aws ecr delete-repository --repository-name alb-api --force
+aws ecr delete-repository --repository-name alb-ui --force
 
 # Then delete the infra stack
 aws cloudformation delete-stack --stack-name shared-alb
 aws cloudformation wait stack-delete-complete --stack-name shared-alb
 ```
+
+> **Re-deploying after a partial teardown:** If ECR repos `alb-api`/`alb-ui` already exist from a previous run, the stack will fail with a `ResourceExistenceCheck` error. Delete the orphaned repos with `aws ecr delete-repository --repository-name <name> --force` before re-deploying.
 
 ## Related examples
 

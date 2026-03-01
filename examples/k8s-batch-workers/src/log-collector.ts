@@ -23,6 +23,12 @@ const agent = NodeAgent({
   config: { "fluent.conf": "[INPUT]\n    Name tail\n    Path /var/log/containers/*.log" },
   rbacRules: [{ apiGroups: [""], resources: ["pods", "namespaces", "nodes"], verbs: ["get", "list", "watch"] }],
   tolerateAllTaints: true,
+  securityContext: {
+    runAsNonRoot: true,
+    runAsUser: 1000,
+    readOnlyRootFilesystem: true,
+    capabilities: { drop: ["ALL"] },
+  },
 });
 
 export const logDaemonSet = new DaemonSet(agent.daemonSet);

@@ -233,6 +233,58 @@ export function parseYAMLLines(
 }
 
 /**
+ * Parse the value of a key inside an array item.
+ * If the inline value is empty, look ahead for a nested object or array.
+ */
+function parseArrayItemValue(
+  inlineValue: string,
+  lines: string[],
+  currentIndex: number,
+  childIndent: number,
+): unknown {
+  if (inlineValue !== "" && !inlineValue.startsWith("#")) {
+    if (inlineValue.startsWith("[")) {
+      try { return JSON.parse(inlineValue); } catch { return inlineValue; }
+    }
+    if (inlineValue.startsWith("{")) {
+      try { return JSON.parse(inlineValue); } catch { return inlineValue; }
+    }
+    return parseScalar(inlineValue);
+  }
+  // Empty inline value — check for nested block
+  const nextIdx = currentIndex + 1;
+  if (nextIdx < lines.length) {
+    const nextLine = lines[nextIdx];
+    if (nextLine.trim() !== "" && !nextLine.trim().startsWith("#")) {
+      const ni = nextLine.search(/\S/);
+      if (ni >= childIndent) {
+        if (nextLine.trimStart().startsWith("- ")) {
+          return parseYAMLArray(lines, nextIdx, ni).value;
+        }
+        return parseYAMLLines(lines, nextIdx, ni).value;
+      }
+    }
+  }
+  return null;
+}
+
+/**
+ * Skip past a nested block (object or array) starting at startIndex with the given indent.
+ * Returns the index of the first line that is NOT part of the nested block.
+ */
+function skipNestedBlock(lines: string[], startIndex: number, childIndent: number): number {
+  let j = startIndex;
+  while (j < lines.length) {
+    const l = lines[j];
+    if (l.trim() === "" || l.trim().startsWith("#")) { j++; continue; }
+    const ni = l.search(/\S/);
+    if (ni < childIndent) break;
+    j++;
+  }
+  return j;
+}
+
+/**
  * Parse a block array (lines starting with `- `).
  */
 export function parseYAMLArray(
@@ -260,10 +312,12 @@ export function parseYAMLArray(
       const kvMatch = itemValue.match(/^([^\s:][^:]*?):\s*(.*)$/);
       if (kvMatch) {
         const obj: Record<string, unknown> = {};
-        obj[kvMatch[1].trim()] = parseScalar(kvMatch[2].trim());
+        obj[kvMatch[1].trim()] = parseArrayItemValue(kvMatch[2].trim(), lines, i, indent + 2);
         // Check for more keys at indent+2
         const nextIndent = indent + 2;
-        let j = i + 1;
+        let j = kvMatch[2].trim() === "" || kvMatch[2].trim().startsWith("#")
+          ? skipNestedBlock(lines, i + 1, nextIndent)
+          : i + 1;
         while (j < lines.length) {
           const nextLine = lines[j];
           if (nextLine.trim() === "" || nextLine.trim().startsWith("#")) {
@@ -271,11 +325,17 @@ export function parseYAMLArray(
             continue;
           }
           const ni = nextLine.search(/\S/);
-          if (ni !== nextIndent) break;
+          if (ni < nextIndent) break;
+          if (ni > nextIndent) break; // belongs to a nested block already consumed
           const nextKV = nextLine.match(/^(\s*)([^\s:][^:]*?):\s*(.*)$/);
           if (nextKV) {
-            obj[nextKV[2].trim()] = parseScalar(nextKV[3].trim());
-            j++;
+            const nextVal = nextKV[3].trim();
+            obj[nextKV[2].trim()] = parseArrayItemValue(nextVal, lines, j, ni + 2);
+            if (nextVal === "" || nextVal.startsWith("#")) {
+              j = skipNestedBlock(lines, j + 1, ni + 2);
+            } else {
+              j++;
+            }
           } else {
             break;
           }

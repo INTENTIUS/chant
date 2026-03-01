@@ -7,6 +7,26 @@
 
 import type { ContainerSecurityContext } from "./security-context";
 
+/** Parse a K8s memory string (e.g. "256Mi", "1Gi") to bytes for comparison. */
+function parseMemoryBytes(mem: string): number {
+  const match = mem.match(/^(\d+(?:\.\d+)?)\s*(Ki|Mi|Gi|Ti|k|M|G|T|[eE]\d+)?$/);
+  if (!match) return 0;
+  const value = parseFloat(match[1]);
+  const unit = match[2] ?? "";
+  const multipliers: Record<string, number> = {
+    "": 1, Ki: 1024, Mi: 1024 ** 2, Gi: 1024 ** 3, Ti: 1024 ** 4,
+    k: 1e3, M: 1e6, G: 1e9, T: 1e12,
+  };
+  if (unit.startsWith("e") || unit.startsWith("E")) return value * 10 ** parseInt(unit.slice(1));
+  return value * (multipliers[unit] ?? 1);
+}
+
+/** Parse a K8s CPU string (e.g. "500m", "1") to millicores for comparison. */
+function parseCpuMillis(cpu: string): number {
+  if (cpu.endsWith("m")) return parseFloat(cpu.slice(0, -1));
+  return parseFloat(cpu) * 1000;
+}
+
 export interface BatchJobProps {
   /** Job name — used in metadata and labels. */
   name: string;
@@ -89,12 +109,19 @@ export function BatchJob(props: BatchJobProps): BatchJobResult {
     labels: extraLabels = {},
     namespace,
     cpuRequest = "100m",
-    memoryRequest = "128Mi",
-    cpuLimit = "500m",
-    memoryLimit = "256Mi",
+    memoryRequest: rawMemoryRequest = "128Mi",
+    cpuLimit: rawCpuLimit = "500m",
+    memoryLimit: rawMemoryLimit = "256Mi",
     env,
     securityContext,
   } = props;
+
+  // Ensure limits >= requests (K8s rejects pods where request > limit).
+  const memoryRequest = rawMemoryRequest;
+  const memoryLimit = parseMemoryBytes(rawMemoryRequest) > parseMemoryBytes(rawMemoryLimit)
+    ? rawMemoryRequest : rawMemoryLimit;
+  const cpuLimit = parseCpuMillis(cpuRequest) > parseCpuMillis(rawCpuLimit)
+    ? cpuRequest : rawCpuLimit;
 
   const saName = `${name}-sa`;
   const roleName = `${name}-role`;

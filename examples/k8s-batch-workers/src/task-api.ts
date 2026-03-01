@@ -20,6 +20,12 @@ const api = ConfiguredApp({
   secretName: "task-api-creds",
   secretMountPath: "/secrets",
   envFrom: { secretRef: "task-api-env" },
+  securityContext: {
+    runAsNonRoot: true,
+    runAsUser: 1000,
+    readOnlyRootFilesystem: true,
+    capabilities: { drop: ["ALL"] },
+  },
 });
 
 export const apiDeployment = new Deployment(api.deployment);

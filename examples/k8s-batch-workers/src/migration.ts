@@ -21,6 +21,12 @@ const migration = BatchJob({
   env: [{ name: "MIGRATION_VERSION", value: "42" }],
   cpuRequest: "250m",
   memoryRequest: "512Mi",
+  securityContext: {
+    runAsNonRoot: true,
+    runAsUser: 1000,
+    readOnlyRootFilesystem: true,
+    capabilities: { drop: ["ALL"] },
+  },
 });
 
 export const migrationJob = new Job(migration.job);

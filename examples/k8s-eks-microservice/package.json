@@ -8,7 +8,7 @@
     "build:aws": "chant build src --lexicon aws -o templates/infra.json",
     "build:k8s": "chant build src --lexicon k8s -o k8s.yaml",
     "lint": "chant lint src",
-    "deploy-infra": "aws cloudformation deploy --template-file templates/infra.json --stack-name eks-microservice --capabilities CAPABILITY_NAMED_IAM --parameter-overrides domainName=${DOMAIN:-api.eks-microservice-demo.dev} publicAccessCidr=${CIDR:-0.0.0.0/0}",
+    "deploy-infra": "aws cloudformation deploy --template-file templates/infra.json --stack-name eks-microservice --capabilities CAPABILITY_NAMED_IAM --region ${AWS_REGION:-us-east-1} --parameter-overrides domainName=${DOMAIN:-api.eks-microservice-demo.dev} publicAccessCidr=${CIDR:-0.0.0.0/0}",
     "configure-kubectl": "aws eks update-kubeconfig --name eks-microservice --region $(aws configure get region)",
     "load-outputs": "bash scripts/load-outputs.sh",
     "validate": "kubectl apply -f k8s.yaml --dry-run=server",

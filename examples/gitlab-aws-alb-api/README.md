@@ -72,7 +72,7 @@ bun run build
    bun run build:gitlab
    ```
 
-2. **Add your app** — add a `Dockerfile` and application code. The `build-image` job runs `docker build .` from the repo root.
+2. **Add your app** — add a `Dockerfile` and application code. The `build-image` job runs `docker build .` from the repo root. Your app must listen on **port 8080** and serve a health check endpoint at **`/api/get`** (the ALB target group uses this path).
 
 3. **Push to GitLab**:
 
@@ -87,16 +87,16 @@ bun run build
 ## Verify
 
 ```bash
-aws cloudformation describe-stacks --stack-name alb-api --query 'Stacks[0].StackStatus'
-aws ecs describe-services --cluster <ClusterArn> --services alb-api
+aws cloudformation describe-stacks --stack-name shared-alb-api --query 'Stacks[0].StackStatus'
+aws ecs describe-services --cluster <ClusterArn> --services shared-alb-api
 # Visit http://<AlbDnsName>/api
 ```
 
 ## Teardown
 
 ```bash
-aws cloudformation delete-stack --stack-name alb-api
-aws cloudformation wait stack-delete-complete --stack-name alb-api
+aws cloudformation delete-stack --stack-name shared-alb-api
+aws cloudformation wait stack-delete-complete --stack-name shared-alb-api
 ```
 
 Delete this stack before deleting the infra stack.
