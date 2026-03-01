@@ -783,7 +783,7 @@ Skills are structured markdown documents bundled with a lexicon. When an AI agen
 
 ## Installation
 
-When you scaffold a new project with \`chant init --lexicon gcp\`, the skill is installed to \`.claude/skills/chant-gcp/SKILL.md\`.
+When you scaffold a new project with \`chant init --lexicon gcp\`, the skill is installed to \`skills/chant-gcp/SKILL.md\`.
 
 ## Skill: chant-gcp
 

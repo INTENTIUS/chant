@@ -1,0 +1,49 @@
+---
+title: "Serialization"
+description: "Output format for the GCP Config Connector lexicon"
+---
+
+The GCP lexicon serializes resources into **Config Connector YAML manifests** (Kubernetes CRDs).
+
+## Building
+
+Run `chant build` to produce Config Connector YAML from your declarations:
+
+```bash
+chant build
+# Writes dist/manifests.yaml
+```
+
+The generated manifests include:
+
+- `apiVersion` and `kind` (Config Connector CRD)
+- `metadata` with name, labels, and annotations
+- `spec` with the resource configuration
+
+## Key conversions
+
+| Chant (TypeScript) | YAML output | Rule |
+|--------------------|-------------|------|
+| `export const myBucket = new StorageBucket({...})` | `metadata.name: my-bucket` | Export name → kebab-case |
+| `defaultLabels({...})` | Merged into all resources | Project-wide label injection |
+| `defaultAnnotations({...})` | Merged into all resources | Project-wide annotation injection |
+
+## Applying
+
+Apply to a Kubernetes cluster with Config Connector installed:
+
+```bash
+# Dry run
+kubectl apply -f dist/manifests.yaml --dry-run=server
+
+# Apply
+kubectl apply -f dist/manifests.yaml
+```
+
+## Compatibility
+
+The output is compatible with:
+- kubectl apply/diff
+- Config Connector controller on GKE
+- ArgoCD / Flux GitOps controllers
+- Kustomize (as a base)

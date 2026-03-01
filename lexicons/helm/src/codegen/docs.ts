@@ -468,7 +468,7 @@ The \`chant-helm\` skill teaches AI agents how to:
 - Debug common issues (unbalanced braces, hardcoded images, missing metadata)
 - Use composites for common patterns (WebApp, Microservice, StatefulService)
 
-When you scaffold a new project with \`chant init --lexicon helm\`, the skill is installed to \`.claude/skills/chant-helm/SKILL.md\` for automatic discovery by Claude Code.
+When you scaffold a new project with \`chant init --lexicon helm\`, the skill is installed to \`skills/chant-helm/SKILL.md\` for automatic discovery by Claude Code.
 `,
       },
     ],

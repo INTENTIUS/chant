@@ -1,0 +1,68 @@
+---
+title: "Lint Rules"
+description: "Built-in lint rules and post-synth checks for GCP Config Connector manifests"
+---
+The GCP lexicon ships lint rules that run during `chant lint` and post-synth checks that validate the serialized YAML after `chant build`.
+
+## Lint rules
+
+Lint rules analyze your TypeScript source code before build.
+
+| Rule | Description |
+|------|-------------|
+| WGC001 | Hardcoded project ID in resource constructors |
+| WGC002 | Hardcoded region in resource constructors |
+| WGC003 | Public IAM member (allUsers/allAuthenticatedUsers) |
+
+## Post-synth checks
+
+Post-synth checks run against the serialized YAML after build.
+
+### Security
+
+| Rule | Description |
+|------|-------------|
+| WGC101 | Missing encryption on StorageBucket or SQLInstance |
+| WGC102 | Public IAM member detected in output |
+| WGC104 | Missing uniform bucket-level access |
+| WGC105 | Cloud SQL with public 0.0.0.0/0 in authorizedNetworks |
+| WGC109 | ComputeFirewall allowing all sources (0.0.0.0/0) |
+| WGC110 | KMS CryptoKey without rotation period |
+
+### Best practices
+
+| Rule | Description |
+|------|-------------|
+| WGC103 | Missing project annotation (uses namespace default) |
+| WGC106 | Missing deletion policy annotation |
+| WGC107 | StorageBucket without versioning |
+| WGC108 | SQLInstance without backup configuration |
+| WGC201 | Missing managed-by label |
+| WGC202 | GKE cluster without workload identity |
+| WGC203 | GKE node pool with overly broad cloud-platform OAuth scope |
+| WGC204 | ComputeInstance without shielded VM config |
+
+### Compliance
+
+| Rule | Description |
+|------|-------------|
+| WGC301 | No IAMAuditConfig resource in output |
+| WGC302 | No Service (API enablement) resource in output |
+| WGC303 | No VPC Service Controls perimeter |
+
+## Running lint
+
+```bash
+# Lint your chant project
+chant lint
+
+# Build (also runs post-synth checks)
+chant build
+```
+
+To suppress a rule on a specific line:
+
+```typescript
+// chant-disable-next-line WGC001
+const bucket = new StorageBucket({ metadata: { annotations: { "cnrm.cloud.google.com/project-id": "my-project" } } });
+```

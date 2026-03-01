@@ -164,10 +164,10 @@ export async function updateCommand(options: UpdateOptions): Promise<UpdateResul
       if (plugin.skills) {
         const skills = plugin.skills();
         if (skills.length > 0) {
-          const skillsDir = join(projectDir, ".chant", "skills", plugin.name);
-          mkdirSync(skillsDir, { recursive: true });
           for (const skill of skills) {
-            writeFileSync(join(skillsDir, `${skill.name}.md`), skill.content);
+            const skillDir = join(projectDir, "skills", skill.name);
+            mkdirSync(skillDir, { recursive: true });
+            writeFileSync(join(skillDir, "SKILL.md"), skill.content);
           }
           synced.push(`${plugin.name} skills (${skills.length})`);
         }

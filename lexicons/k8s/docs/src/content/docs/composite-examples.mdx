@@ -129,32 +129,6 @@ const { daemonSet, serviceAccount, clusterRole, clusterRoleBinding, configMap } 
 });
 ```
 
-## PSS restricted compliance
-
-Namespaces with `pod-security.kubernetes.io/enforce: restricted` require every container to declare four security fields. All user-facing composites accept a `securityContext` prop that passes through to the container:
-
-```typescript
-import { AutoscaledService } from "@intentius/chant-lexicon-k8s";
-
-const { deployment, service, hpa, pdb } = AutoscaledService({
-  name: "api",
-  image: "api:2.0",
-  port: 8080,
-  maxReplicas: 10,
-  cpuRequest: "200m",
-  memoryRequest: "256Mi",
-  securityContext: {
-    runAsNonRoot: true,
-    readOnlyRootFilesystem: true,
-    allowPrivilegeEscalation: false,
-    capabilities: { drop: ["ALL"] },
-    seccompProfile: { type: "RuntimeDefault" },
-  },
-});
-```
-
-Infrastructure composites — `ExternalDnsAgent`, `FluentBitAgent`, `AdotCollector`, and `MetricsServer` — apply PSS-safe defaults (`runAsNonRoot`, `readOnlyRootFilesystem`, `allowPrivilegeEscalation: false`) automatically.
-
 ## Deploying composites
 
 Composites produce plain prop objects. To deploy them, write each resource to a `.k8s.ts` file then use the standard chant build → kubectl apply workflow.

@@ -1,0 +1,62 @@
+---
+title: "GCP Config Connector"
+description: "Typed constructors for GCP Config Connector resource manifests"
+---
+
+The **GCP Config Connector** lexicon provides full support for defining Google Cloud infrastructure using chant's declarative TypeScript syntax. Resources are serialized to Config Connector YAML manifests.
+
+This lexicon is generated from the official [Config Connector CRDs](https://github.com/GoogleCloudPlatform/k8s-config-connector) and includes coverage for 300+ resource types across 80+ GCP services.
+
+New? Start with the [Getting Started](/chant/lexicons/gcp/getting-started/) guide.
+
+Install it with:
+
+```bash
+npm install --save-dev @intentius/chant-lexicon-gcp
+```
+
+## Quick Start
+
+```typescript
+import { StorageBucket, IAMPolicyMember, GCP } from "@intentius/chant-lexicon-gcp";
+import { defaultAnnotations } from "@intentius/chant-lexicon-gcp";
+
+export const annotations = defaultAnnotations({
+  "cnrm.cloud.google.com/project-id": GCP.ProjectId,
+});
+
+export const bucket = new StorageBucket({
+  location: "US",
+  storageClass: "STANDARD",
+  uniformBucketLevelAccess: true,
+  versioning: { enabled: true },
+});
+```
+
+The lexicon provides **300+ resource types** across Compute, Storage, IAM, Networking, Container, SQL, PubSub, and more, plus composites (GkeCluster, CloudRunService, CloudSqlInstance, GcsBucket, VpcNetwork, PubSubPipeline, CloudFunctionWithTrigger, PrivateService, ManagedCertificate, SecureProject) for common patterns.
+
+
+## At a Glance
+
+| Metric | Count |
+|--------|-------|
+| Resources | 453 |
+| Property types | 1257 |
+| Services | 124 |
+| Intrinsic functions | 0 |
+| Pseudo-parameters | 3 |
+| Lint rules | 20 |
+
+**Lexicon version:** 0.0.14  
+**Namespace:** `GCP`
+
+- [Getting Started](./getting-started)
+- [Config Connector Concepts](./config-connector-concepts)
+- [Lint Rules](./lint-rules)
+- [Examples: Resources](./examples)
+- [Examples: Composites](./composite-examples)
+- [Operational Playbook](./operational-playbook)
+- [Importing Existing YAML](./importing-yaml)
+- [AI Skills](./skills)
+- [Pseudo-Parameters](./pseudo-parameters) — 3 pseudo-parameters
+- [Serialization](./serialization) — output format details

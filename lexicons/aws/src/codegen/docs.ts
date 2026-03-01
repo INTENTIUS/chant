@@ -1053,7 +1053,7 @@ Skills are structured markdown documents bundled with a lexicon. When an AI agen
 
 ## Installation
 
-When you scaffold a new project with \`chant init --lexicon aws\`, the skill is installed to \`.claude/skills/chant-aws/SKILL.md\` for automatic discovery by Claude Code.
+When you scaffold a new project with \`chant init --lexicon aws\`, the skill is installed to \`skills/chant-aws/SKILL.md\` for automatic discovery by Claude Code.
 
 For existing projects, create the file manually:
 

@@ -235,11 +235,11 @@ test_init() {
       fail "$name init missing source files"
     fi
 
-    # Check skill file in .chant/
-    if [ -f "$init_dir/.chant/skills/$name/chant-$name.md" ]; then
-      pass "$name init installs chant-$name skill to .chant/"
+    # Check skill file in skills/
+    if [ -f "$init_dir/skills/chant-$name/SKILL.md" ]; then
+      pass "$name init installs chant-$name skill to skills/"
     else
-      fail "$name init did not install chant-$name skill to .chant/"
+      fail "$name init did not install chant-$name skill to skills/"
     fi
 
     # Build the scaffolded project
@@ -337,10 +337,10 @@ SKILLS_DIR="/app/_smoke_test_aws/_skills_test"
 rm -rf "$SKILLS_DIR"
 mkdir -p "$SKILLS_DIR"
 if $CHANT init --lexicon aws "$SKILLS_DIR" > /dev/null 2>&1; then
-  if [ -f "$SKILLS_DIR/.chant/skills/aws/chant-aws.md" ]; then
-    pass "init installs chant-aws skill to .chant/"
+  if [ -f "$SKILLS_DIR/skills/chant-aws/SKILL.md" ]; then
+    pass "init installs chant-aws skill to skills/"
   else
-    fail "init did not install chant-aws skill to .chant/"
+    fail "init did not install chant-aws skill to skills/"
   fi
   if DOCTOR_SKILLS=$($CHANT doctor "$SKILLS_DIR" 2>&1 || true); then
     if echo "$DOCTOR_SKILLS" | grep -q "skills-aws"; then

@@ -203,10 +203,9 @@ export async function doctorCommand(path: string): Promise<DoctorReport> {
       if (!plugin.skills) continue;
       const skills = plugin.skills();
       if (skills.length === 0) continue;
-      const skillsDir = join(projectPath, ".chant", "skills", plugin.name);
       let missing = 0;
       for (const skill of skills) {
-        if (!existsSync(join(skillsDir, `${skill.name}.md`))) {
+        if (!existsSync(join(projectPath, "skills", skill.name, "SKILL.md"))) {
           missing++;
         }
       }
