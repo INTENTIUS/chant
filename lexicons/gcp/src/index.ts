@@ -21,6 +21,7 @@ export * from "./generated/index";
 // Composites
 export {
   GkeCluster, CloudRunService, CloudSqlInstance, GcsBucket, VpcNetwork,
+  PubSubPipeline, CloudFunctionWithTrigger, PrivateService, ManagedCertificate, SecureProject,
 } from "./composites/index";
 export type {
   GkeClusterProps, GkeClusterResult,
@@ -28,6 +29,11 @@ export type {
   CloudSqlInstanceProps, CloudSqlInstanceResult,
   GcsBucketProps, GcsBucketResult,
   VpcNetworkProps, VpcNetworkResult, VpcSubnet,
+  PubSubPipelineProps, PubSubPipelineResult,
+  CloudFunctionWithTriggerProps, CloudFunctionWithTriggerResult,
+  PrivateServiceProps, PrivateServiceResult,
+  ManagedCertificateProps, ManagedCertificateResult,
+  SecureProjectProps, SecureProjectResult,
 } from "./composites/index";
 
 // IAM role constants

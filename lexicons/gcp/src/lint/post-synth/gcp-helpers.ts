@@ -78,3 +78,40 @@ export function getAnnotations(manifest: GcpManifest): Record<string, string> | 
 export function getResourceName(manifest: GcpManifest): string {
   return manifest.metadata?.name ?? "unknown";
 }
+
+/**
+ * Recursively walk a spec object looking for keys ending in `Ref`
+ * (e.g. `networkRef`, `topicRef`, `clusterRef`) that have a `name`
+ * sub-field. Returns the set of referenced names.
+ *
+ * Skips `external` refs (cross-project references outside the template).
+ */
+export function findResourceRefs(obj: unknown): Set<string> {
+  const refs = new Set<string>();
+  walkForRefs(obj, refs);
+  return refs;
+}
+
+function walkForRefs(value: unknown, refs: Set<string>): void {
+  if (value === null || value === undefined) return;
+
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      walkForRefs(item, refs);
+    }
+    return;
+  }
+
+  if (typeof value === "object") {
+    const obj = value as Record<string, unknown>;
+    for (const [key, val] of Object.entries(obj)) {
+      if (key.endsWith("Ref") && typeof val === "object" && val !== null) {
+        const refObj = val as Record<string, unknown>;
+        if (typeof refObj.name === "string" && !refObj.external) {
+          refs.add(refObj.name);
+        }
+      }
+      walkForRefs(val, refs);
+    }
+  }
+}

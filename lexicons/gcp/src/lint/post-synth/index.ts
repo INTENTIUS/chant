@@ -15,3 +15,6 @@ export { wgc204 } from "./wgc204";
 export { wgc301 } from "./wgc301";
 export { wgc302 } from "./wgc302";
 export { wgc303 } from "./wgc303";
+export { wgc111 } from "./wgc111";
+export { wgc112 } from "./wgc112";
+export { wgc113 } from "./wgc113";

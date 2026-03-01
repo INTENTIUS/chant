@@ -30,7 +30,7 @@ describe("gcpPlugin", () => {
 
   test("returns post-synth checks", () => {
     const checks = gcpPlugin.postSynthChecks!();
-    expect(checks).toHaveLength(17);
+    expect(checks).toHaveLength(20);
     const ids = checks.map((c) => c.id);
     expect(ids).toContain("WGC101");
     expect(ids).toContain("WGC102");
@@ -42,6 +42,9 @@ describe("gcpPlugin", () => {
     expect(ids).toContain("WGC108");
     expect(ids).toContain("WGC109");
     expect(ids).toContain("WGC110");
+    expect(ids).toContain("WGC111");
+    expect(ids).toContain("WGC112");
+    expect(ids).toContain("WGC113");
     expect(ids).toContain("WGC201");
     expect(ids).toContain("WGC202");
     expect(ids).toContain("WGC203");
@@ -110,9 +113,9 @@ describe("gcpPlugin", () => {
   // ── Skills ─────────────────────────────────────────────────────────
 
   describe("skills", () => {
-    test("returns at least one skill", () => {
+    test("returns at least three skills", () => {
       const skills = gcpPlugin.skills!();
-      expect(skills.length).toBeGreaterThanOrEqual(1);
+      expect(skills.length).toBeGreaterThanOrEqual(3);
     });
 
     test("chant-gcp skill has required fields", () => {
@@ -159,6 +162,22 @@ describe("gcpPlugin", () => {
       expect(gcpSkill.content).toContain("skill: chant-gcp");
       expect(gcpSkill.content).toContain("user-invocable: true");
       expect(gcpSkill.content).toContain("chant build");
+    });
+
+    test("chant-gcp-security skill is present with content", () => {
+      const skills = gcpPlugin.skills!();
+      const securitySkill = skills.find((s) => s.name === "chant-gcp-security");
+      expect(securitySkill).toBeDefined();
+      expect(securitySkill!.content.length).toBeGreaterThan(0);
+      expect(securitySkill!.content).toContain("Security");
+    });
+
+    test("chant-gcp-patterns skill is present with content", () => {
+      const skills = gcpPlugin.skills!();
+      const patternsSkill = skills.find((s) => s.name === "chant-gcp-patterns");
+      expect(patternsSkill).toBeDefined();
+      expect(patternsSkill!.content.length).toBeGreaterThan(0);
+      expect(patternsSkill!.content).toContain("Composite");
     });
   });
 

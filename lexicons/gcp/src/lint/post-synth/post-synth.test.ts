@@ -16,6 +16,9 @@ import { wgc204 } from "./wgc204";
 import { wgc301 } from "./wgc301";
 import { wgc302 } from "./wgc302";
 import { wgc303 } from "./wgc303";
+import { wgc111 } from "./wgc111";
+import { wgc112 } from "./wgc112";
+import { wgc113 } from "./wgc113";
 
 function makeCtx(yaml: string) {
   return {
@@ -574,6 +577,117 @@ spec:
   perimeterType: PERIMETER_TYPE_REGULAR
 `;
     const diags = wgc303.check(makeCtx(yaml));
+    expect(diags).toHaveLength(0);
+  });
+});
+
+// ── WGC111: Dangling resource reference ────────────────────────────
+
+describe("WGC111: dangling resource reference", () => {
+  test("flags resourceRef pointing to nonexistent name", () => {
+    const yaml = `apiVersion: container.cnrm.cloud.google.com/v1beta1
+kind: ContainerNodePool
+metadata:
+  name: my-pool
+spec:
+  clusterRef:
+    name: nonexistent-cluster
+`;
+    const diags = wgc111.check(makeCtx(yaml));
+    expect(diags.length).toBeGreaterThanOrEqual(1);
+    expect(diags[0].checkId).toBe("WGC111");
+  });
+
+  test("no diagnostic when referenced resource exists", () => {
+    const yaml = `apiVersion: container.cnrm.cloud.google.com/v1beta1
+kind: ContainerCluster
+metadata:
+  name: my-cluster
+spec:
+  location: us-central1
+---
+apiVersion: container.cnrm.cloud.google.com/v1beta1
+kind: ContainerNodePool
+metadata:
+  name: my-pool
+spec:
+  clusterRef:
+    name: my-cluster
+`;
+    const diags = wgc111.check(makeCtx(yaml));
+    const poolDiags = diags.filter(d => d.entity === "my-pool");
+    expect(poolDiags).toHaveLength(0);
+  });
+});
+
+// ── WGC112: Missing or invalid apiVersion ──────────────────────────
+
+describe("WGC112: missing or invalid apiVersion", () => {
+  test("flags resource with missing apiVersion", () => {
+    const yaml = `kind: StorageBucket
+metadata:
+  name: my-bucket
+spec:
+  location: US
+`;
+    const diags = wgc112.check(makeCtx(yaml));
+    expect(diags.length).toBeGreaterThanOrEqual(1);
+    expect(diags[0].checkId).toBe("WGC112");
+    expect(diags[0].severity).toBe("error");
+  });
+
+  test("flags resource with malformed apiVersion", () => {
+    const yaml = `apiVersion: not-a-valid-version
+kind: StorageBucket
+metadata:
+  name: my-bucket
+spec:
+  location: US
+`;
+    const diags = wgc112.check(makeCtx(yaml));
+    expect(diags.length).toBeGreaterThanOrEqual(1);
+    expect(diags[0].checkId).toBe("WGC112");
+  });
+
+  test("no diagnostic with valid apiVersion", () => {
+    const yaml = `apiVersion: storage.cnrm.cloud.google.com/v1beta1
+kind: StorageBucket
+metadata:
+  name: my-bucket
+spec:
+  location: US
+`;
+    const diags = wgc112.check(makeCtx(yaml));
+    expect(diags).toHaveLength(0);
+  });
+});
+
+// ── WGC113: Alpha API version warning ──────────────────────────────
+
+describe("WGC113: alpha API version", () => {
+  test("flags resource with v1alpha1 apiVersion", () => {
+    const yaml = `apiVersion: compute.cnrm.cloud.google.com/v1alpha1
+kind: ComputeInstance
+metadata:
+  name: my-vm
+spec:
+  machineType: e2-medium
+`;
+    const diags = wgc113.check(makeCtx(yaml));
+    expect(diags.length).toBeGreaterThanOrEqual(1);
+    expect(diags[0].checkId).toBe("WGC113");
+    expect(diags[0].severity).toBe("warning");
+  });
+
+  test("no diagnostic with v1beta1 apiVersion", () => {
+    const yaml = `apiVersion: compute.cnrm.cloud.google.com/v1beta1
+kind: ComputeInstance
+metadata:
+  name: my-vm
+spec:
+  machineType: e2-medium
+`;
+    const diags = wgc113.check(makeCtx(yaml));
     expect(diags).toHaveLength(0);
   });
 });
