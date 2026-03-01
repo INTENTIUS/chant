@@ -111,4 +111,93 @@ describe("azureSerializer", () => {
     expect(template.parameters).toBeUndefined();
     expect(template.outputs).toBeUndefined();
   });
+
+  it("serializes CosmosDB nested resources", () => {
+    const entities = new Map<string, any>();
+    entities.set("cosmosAccount", makeEntity("Microsoft.DocumentDB/databaseAccounts", {
+      name: "mycosmosdb",
+      location: "eastus",
+      kind: "GlobalDocumentDB",
+      databaseAccountOfferType: "Standard",
+    }));
+    entities.set("cosmosDb", makeEntity("Microsoft.DocumentDB/databaseAccounts/sqlDatabases", {
+      name: "mycosmosdb/mydb",
+    }));
+    entities.set("cosmosContainer", makeEntity("Microsoft.DocumentDB/databaseAccounts/sqlDatabases/containers", {
+      name: "mycosmosdb/mydb/mycontainer",
+    }));
+
+    const result = azureSerializer.serialize(entities);
+    const template = JSON.parse(result as string);
+
+    expect(template.resources).toHaveLength(3);
+    const types = template.resources.map((r: any) => r.type);
+    expect(types).toContain("Microsoft.DocumentDB/databaseAccounts");
+    expect(types).toContain("Microsoft.DocumentDB/databaseAccounts/sqlDatabases");
+    expect(types).toContain("Microsoft.DocumentDB/databaseAccounts/sqlDatabases/containers");
+  });
+
+  it("serializes ServiceBus child resources", () => {
+    const entities = new Map<string, any>();
+    entities.set("sbNamespace", makeEntity("Microsoft.ServiceBus/namespaces", {
+      name: "my-sb",
+      location: "eastus",
+    }));
+    entities.set("sbQueue", makeEntity("Microsoft.ServiceBus/namespaces/queues", {
+      name: "my-sb/my-queue",
+    }));
+
+    const result = azureSerializer.serialize(entities);
+    const template = JSON.parse(result as string);
+
+    expect(template.resources).toHaveLength(2);
+    const queueResource = template.resources.find((r: any) => r.type === "Microsoft.ServiceBus/namespaces/queues");
+    expect(queueResource).toBeDefined();
+    expect(queueResource.name).toBe("my-sb/my-queue");
+  });
+
+  it("serializes Container Instance with arrays", () => {
+    const entities = new Map<string, any>();
+    entities.set("ciGroup", makeEntity("Microsoft.ContainerInstance/containerGroups", {
+      name: "my-ci",
+      location: "eastus",
+      osType: "Linux",
+      containers: [
+        {
+          name: "app",
+          image: "nginx:latest",
+          ports: [{ port: 80 }],
+          resources: { requests: { cpu: 1, memoryInGB: 1.5 } },
+        },
+      ],
+    }));
+
+    const result = azureSerializer.serialize(entities);
+    const template = JSON.parse(result as string);
+
+    expect(template.resources).toHaveLength(1);
+    const resource = template.resources[0];
+    expect(resource.type).toBe("Microsoft.ContainerInstance/containerGroups");
+    expect(resource.properties?.containers).toBeDefined();
+    expect(Array.isArray(resource.properties.containers)).toBe(true);
+  });
+
+  it("serializes Application Gateway nested properties", () => {
+    const entities = new Map<string, any>();
+    entities.set("appGw", makeEntity("Microsoft.Network/applicationGateways", {
+      name: "my-appgw",
+      location: "eastus",
+      sku: { name: "WAF_v2", tier: "WAF_v2", capacity: 2 },
+      gatewayIPConfigurations: [{ name: "config", subnet: { id: "subnet-id" } }],
+      frontendIPConfigurations: [{ name: "frontend", publicIPAddress: { id: "pip-id" } }],
+    }));
+
+    const result = azureSerializer.serialize(entities);
+    const template = JSON.parse(result as string);
+
+    expect(template.resources).toHaveLength(1);
+    const resource = template.resources[0];
+    expect(resource.type).toBe("Microsoft.Network/applicationGateways");
+    expect(resource.sku).toEqual({ name: "WAF_v2", tier: "WAF_v2", capacity: 2 });
+  });
 });

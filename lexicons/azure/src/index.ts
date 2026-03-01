@@ -51,7 +51,26 @@ export {
   SqlDatabase, type SqlDatabaseProps, type SqlDatabaseResult,
   KeyVaultSecure, type KeyVaultSecureProps, type KeyVaultSecureResult,
   ContainerRegistrySecure, type ContainerRegistrySecureProps, type ContainerRegistrySecureResult,
+  FunctionApp, type FunctionAppProps, type FunctionAppResult,
+  ServiceBusPipeline, type ServiceBusPipelineProps, type ServiceBusPipelineResult,
+  CosmosDatabase, type CosmosDatabaseProps, type CosmosDatabaseResult,
+  ApplicationGateway, type ApplicationGatewayProps, type ApplicationGatewayResult,
+  ContainerInstance, type ContainerInstanceProps, type ContainerInstanceResult,
+  RedisCache, type RedisCacheProps, type RedisCacheResult,
+  PrivateEndpoint, type PrivateEndpointProps, type PrivateEndpointResult,
 } from "./composites/index";
+
+// --- RBAC role constants ---
+export {
+  StorageRoles,
+  ComputeRoles,
+  NetworkRoles,
+  KeyVaultRoles,
+  SqlRoles,
+  ContainerRoles,
+  AppServiceRoles,
+  IdentityRoles,
+} from "./actions/index";
 
 // --- Codegen pipeline ---
 export { generate, writeGeneratedFiles } from "./codegen/generate";

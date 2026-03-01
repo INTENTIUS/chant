@@ -234,6 +234,23 @@ const vm = new VirtualMachine({
 });
 ```
 
+## RBAC Role Constants
+
+Use built-in role name constants for type-safe role assignments:
+
+```ts
+import {
+  StorageRoles, ComputeRoles, NetworkRoles, KeyVaultRoles,
+  SqlRoles, ContainerRoles, AppServiceRoles, IdentityRoles,
+} from "@intentius/chant-lexicon-azure";
+
+// Examples:
+StorageRoles.BlobDataContributor   // "Storage Blob Data Contributor"
+KeyVaultRoles.SecretsOfficer       // "Key Vault Secrets Officer"
+ContainerRoles.AcrPull             // "AcrPull"
+IdentityRoles.ManagedIdentityOperator // "Managed Identity Operator"
+```
+
 ## Composites with Security Defaults
 
 Use the secure composite variants which apply these patterns automatically:
@@ -242,6 +259,13 @@ Use the secure composite variants which apply these patterns automatically:
 - `KeyVaultSecure` — Soft delete, purge protection enabled
 - `ContainerRegistrySecure` — Admin disabled, content trust enabled
 - `AppService` — Managed identity, HTTPS-only, TLS 1.2, FTPS disabled
+- `FunctionApp` — SystemAssigned identity, HTTPS-only, TLS 1.2, FTPS disabled
+- `ServiceBusPipeline` — TLS 1.2, Standard SKU
+- `CosmosDatabase` — Automatic failover, network ACL deny, TLS 1.2
+- `ApplicationGateway` — WAF_v2 SKU, TLS 1.2 policy
+- `ContainerInstance` — Managed identity, no public IP by default
+- `RedisCache` — Non-SSL port disabled, TLS 1.2
+- `PrivateEndpoint` — Private connectivity pattern with DNS zone
 
 ## Post-Synth Check Reference
 

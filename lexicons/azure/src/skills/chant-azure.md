@@ -70,7 +70,11 @@ Azure.DeploymentName        // [deployment().name]
 Composites group related Azure resources with secure defaults:
 
 ```typescript
-import { StorageAccountSecure, VnetDefault, AppService } from "@intentius/chant-lexicon-azure";
+import {
+  StorageAccountSecure, VnetDefault, AppService,
+  FunctionApp, ServiceBusPipeline, CosmosDatabase,
+  ApplicationGateway, ContainerInstance, RedisCache, PrivateEndpoint,
+} from "@intentius/chant-lexicon-azure";
 
 // Secure storage with encryption, HTTPS, and TLS 1.2
 const { storageAccount } = StorageAccountSecure({ name: "mystorage" });
@@ -85,6 +89,43 @@ const { virtualNetwork, subnet1, subnet2, nsg } = VnetDefault({
 const { plan, webApp } = AppService({
   name: "myapp",
   runtime: "NODE|18-lts",
+});
+
+// Consumption Function App with storage
+const { plan: funcPlan, functionApp, storageAccount: funcStorage } = FunctionApp({
+  name: "myfunc",
+  runtime: "node",
+});
+
+// ServiceBus Namespace + Queue
+const { namespace, queue } = ServiceBusPipeline({ name: "my-sb" });
+
+// Cosmos DB Account + Database + Container
+const { account, database, container } = CosmosDatabase({
+  name: "my-cosmos",
+  partitionKeyPath: "/tenantId",
+});
+
+// Application Gateway with WAF
+const { publicIp, gateway } = ApplicationGateway({ name: "my-appgw" });
+
+// Container Instance (no public IP by default)
+const { containerGroup } = ContainerInstance({
+  name: "my-ci",
+  image: "nginx:latest",
+});
+
+// Redis Cache with TLS 1.2
+const { redisCache } = RedisCache({ name: "my-redis" });
+
+// Private Endpoint for storage blob
+const { privateEndpoint, privateDnsZone } = PrivateEndpoint({
+  name: "my-pe",
+  targetResourceId: "[resourceId('Microsoft.Storage/storageAccounts', 'mystorage')]",
+  groupId: "blob",
+  subnetId: "[resourceId('Microsoft.Network/virtualNetworks/subnets', 'vnet', 'pe-subnet')]",
+  privateDnsZoneName: "privatelink.blob.core.windows.net",
+  vnetId: "[resourceId('Microsoft.Network/virtualNetworks', 'vnet')]",
 });
 ```
 

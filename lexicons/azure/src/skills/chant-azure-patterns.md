@@ -289,6 +289,124 @@ const { virtualMachine, nic, nsg } = VmLinux({
 export { virtualMachine, nic, nsg };
 ```
 
+### FunctionApp
+Consumption Function App with storage, managed identity, and HTTPS:
+
+```ts
+import { FunctionApp } from "@intentius/chant-lexicon-azure";
+
+const { plan, functionApp, storageAccount } = FunctionApp({
+  name: "my-func",
+  runtime: "node",
+  runtimeVersion: "~4",
+  tags: { environment: "production" },
+});
+
+export { plan, functionApp, storageAccount };
+```
+
+### ServiceBusPipeline
+ServiceBus Namespace with Queue or Topic:
+
+```ts
+import { ServiceBusPipeline } from "@intentius/chant-lexicon-azure";
+
+// Queue mode (default)
+const { namespace, queue } = ServiceBusPipeline({ name: "my-sb" });
+
+// Topic mode
+const { namespace: ns, topic, subscription } = ServiceBusPipeline({
+  name: "my-sb",
+  useTopic: true,
+});
+
+export { namespace, queue };
+```
+
+### CosmosDatabase
+Cosmos DB Account + SQL Database + Container with failover and TLS:
+
+```ts
+import { CosmosDatabase } from "@intentius/chant-lexicon-azure";
+
+const { account, database, container } = CosmosDatabase({
+  name: "my-cosmos",
+  databaseName: "app-db",
+  containerName: "items",
+  partitionKeyPath: "/tenantId",
+});
+
+export { account, database, container };
+```
+
+### ApplicationGateway
+Application Gateway + Public IP with WAF and TLS 1.2:
+
+```ts
+import { ApplicationGateway } from "@intentius/chant-lexicon-azure";
+
+const { publicIp, gateway } = ApplicationGateway({
+  name: "my-appgw",
+  sku: "WAF_v2",
+  subnetId: "[resourceId('Microsoft.Network/virtualNetworks/subnets', 'vnet', 'appgw-subnet')]",
+});
+
+export { publicIp, gateway };
+```
+
+### ContainerInstance
+Container Group with managed identity:
+
+```ts
+import { ContainerInstance } from "@intentius/chant-lexicon-azure";
+
+const { containerGroup } = ContainerInstance({
+  name: "my-ci",
+  image: "mcr.microsoft.com/azuredocs/aci-helloworld",
+  cpu: 2,
+  memoryInGb: 4,
+  publicIp: true,
+});
+
+export { containerGroup };
+```
+
+### RedisCache
+Azure Cache for Redis with TLS 1.2 and SSL-only:
+
+```ts
+import { RedisCache } from "@intentius/chant-lexicon-azure";
+
+const { redisCache } = RedisCache({
+  name: "my-redis",
+  sku: "Premium",
+  family: "P",
+  capacity: 1,
+});
+
+export { redisCache };
+```
+
+### PrivateEndpoint
+Private Endpoint + DNS Zone for private connectivity:
+
+```ts
+import { PrivateEndpoint, StorageAccountSecure } from "@intentius/chant-lexicon-azure";
+
+const { storageAccount } = StorageAccountSecure({ name: "mystorage" });
+
+const { privateEndpoint, privateDnsZone, dnsZoneGroup, vnetLink } = PrivateEndpoint({
+  name: "storage-pe",
+  targetResourceId: "[resourceId('Microsoft.Storage/storageAccounts', 'mystorage')]",
+  groupId: "blob",
+  subnetId: "[resourceId('Microsoft.Network/virtualNetworks/subnets', 'vnet', 'pe-subnet')]",
+  privateDnsZoneName: "privatelink.blob.core.windows.net",
+  vnetId: "[resourceId('Microsoft.Network/virtualNetworks', 'vnet')]",
+});
+
+export { storageAccount, privateEndpoint, privateDnsZone, dnsZoneGroup, vnetLink };
+```
+
 ## ARM Template Intrinsic Reference
 
 | Function | Description | Example |

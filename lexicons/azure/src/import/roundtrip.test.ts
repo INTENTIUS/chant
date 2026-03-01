@@ -8,6 +8,12 @@ import { describe, it, expect } from "bun:test";
 import { ArmParser } from "./parser";
 import { ArmGenerator } from "./generator";
 
+import { readFileSync } from "fs";
+import { join, dirname } from "path";
+import { fileURLToPath } from "url";
+
+const testdataDir = join(dirname(dirname(dirname(fileURLToPath(import.meta.url)))), "testdata", "quickstarts");
+
 describe("ARM Import Round-trip", () => {
   const parser = new ArmParser();
   const generator = new ArmGenerator();
@@ -120,4 +126,38 @@ describe("ARM Import Round-trip", () => {
     expect(mainFile!.content).toContain("fixedName");
     expect(mainFile!.content).toContain("StorageV2");
   });
+});
+
+// --- File-based round-trip tests for testdata fixtures ---
+
+describe("ARM Import Round-trip — testdata fixtures", () => {
+  const parser = new ArmParser();
+  const generator = new ArmGenerator();
+
+  const fixtures = [
+    { file: "vnet-nsg.json", expectedResources: 3, contains: "Microsoft.Network/virtualNetworks" },
+    { file: "aks-basic.json", expectedResources: 1, contains: "managedClusters" },
+    { file: "function-app.json", expectedResources: 3, contains: "Microsoft.Web/sites" },
+    { file: "keyvault-secrets.json", expectedResources: 2, contains: "Microsoft.KeyVault/vaults" },
+    { file: "sql-server-db.json", expectedResources: 5, contains: "Microsoft.Sql/servers" },
+    { file: "cosmos-account.json", expectedResources: 3, contains: "Microsoft.DocumentDB/databaseAccounts" },
+    { file: "container-instance.json", expectedResources: 1, contains: "containerGroups" },
+    { file: "app-gateway.json", expectedResources: 3, contains: "applicationGateways" },
+  ];
+
+  for (const { file, expectedResources, contains } of fixtures) {
+    it(`round-trips ${file}`, () => {
+      const content = readFileSync(join(testdataDir, file), "utf-8");
+      const ir = parser.parse(content);
+
+      expect(ir.resources).toHaveLength(expectedResources);
+
+      const files = generator.generate(ir);
+      expect(files.length).toBeGreaterThanOrEqual(1);
+
+      const mainFile = files.find((f) => f.path === "main.ts");
+      expect(mainFile).toBeDefined();
+      expect(mainFile!.content).toContain(contains);
+    });
+  }
 });

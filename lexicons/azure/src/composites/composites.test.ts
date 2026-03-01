@@ -7,6 +7,13 @@ import { AksCluster } from "./aks-cluster";
 import { SqlDatabase } from "./sql-database";
 import { KeyVaultSecure } from "./keyvault";
 import { ContainerRegistrySecure } from "./container-registry";
+import { FunctionApp } from "./function-app";
+import { ServiceBusPipeline } from "./service-bus-pipeline";
+import { CosmosDatabase } from "./cosmos-database";
+import { ApplicationGateway } from "./application-gateway";
+import { ContainerInstance } from "./container-instance";
+import { RedisCache } from "./redis-cache";
+import { PrivateEndpoint } from "./private-endpoint";
 
 // --- StorageAccountSecure ---
 
@@ -412,5 +419,318 @@ describe("VmLinux", () => {
     expect(vmTags.env).toBe("prod");
     expect(nicTags.env).toBe("prod");
     expect(nsgTags.env).toBe("prod");
+  });
+});
+
+// --- FunctionApp ---
+
+describe("FunctionApp", () => {
+  test("returns 3 resources", () => {
+    const result = FunctionApp({ name: "my-func" });
+    expect(Object.keys(result)).toEqual(["plan", "functionApp", "storageAccount"]);
+  });
+
+  test("correct resource types", () => {
+    const result = FunctionApp({ name: "my-func" });
+    expect(result.plan.type).toBe("Microsoft.Web/serverfarms");
+    expect(result.functionApp.type).toBe("Microsoft.Web/sites");
+    expect(result.storageAccount.type).toBe("Microsoft.Storage/storageAccounts");
+  });
+
+  test("function app has SystemAssigned identity", () => {
+    const result = FunctionApp({ name: "my-func" });
+    const identity = result.functionApp.identity as Record<string, unknown>;
+    expect(identity.type).toBe("SystemAssigned");
+  });
+
+  test("security defaults: HTTPS-only, TLS 1.2, FTPS disabled", () => {
+    const result = FunctionApp({ name: "my-func" });
+    const props = result.functionApp.properties as Record<string, unknown>;
+    expect(props.httpsOnly).toBe(true);
+    const siteConfig = props.siteConfig as Record<string, unknown>;
+    expect(siteConfig.minTlsVersion).toBe("1.2");
+    expect(siteConfig.ftpsState).toBe("Disabled");
+  });
+
+  test("plan uses Y1 consumption SKU", () => {
+    const result = FunctionApp({ name: "my-func" });
+    const sku = result.plan.sku as Record<string, unknown>;
+    expect(sku.name).toBe("Y1");
+    expect(sku.tier).toBe("Dynamic");
+  });
+
+  test("propagates tags", () => {
+    const result = FunctionApp({ name: "my-func", tags: { env: "prod" } });
+    const planTags = result.plan.tags as Record<string, string>;
+    const appTags = result.functionApp.tags as Record<string, string>;
+    const storageTags = result.storageAccount.tags as Record<string, string>;
+    expect(planTags.env).toBe("prod");
+    expect(appTags.env).toBe("prod");
+    expect(storageTags.env).toBe("prod");
+    expect(planTags["managed-by"]).toBe("chant");
+  });
+
+  test("accepts custom runtime", () => {
+    const result = FunctionApp({ name: "my-func", runtime: "python" });
+    const props = result.functionApp.properties as Record<string, unknown>;
+    const siteConfig = props.siteConfig as Record<string, unknown>;
+    const appSettings = siteConfig.appSettings as Array<Record<string, unknown>>;
+    const workerRuntime = appSettings.find((s) => s.name === "FUNCTIONS_WORKER_RUNTIME");
+    expect(workerRuntime?.value).toBe("python");
+  });
+});
+
+// --- ServiceBusPipeline ---
+
+describe("ServiceBusPipeline", () => {
+  test("returns namespace and queue by default", () => {
+    const result = ServiceBusPipeline({ name: "my-sb" });
+    expect(result.namespace).toBeDefined();
+    expect(result.queue).toBeDefined();
+    expect(result.topic).toBeUndefined();
+    expect(result.subscription).toBeUndefined();
+  });
+
+  test("returns namespace, topic, and subscription when useTopic", () => {
+    const result = ServiceBusPipeline({ name: "my-sb", useTopic: true });
+    expect(result.namespace).toBeDefined();
+    expect(result.topic).toBeDefined();
+    expect(result.subscription).toBeDefined();
+    expect(result.queue).toBeUndefined();
+  });
+
+  test("correct resource types", () => {
+    const result = ServiceBusPipeline({ name: "my-sb" });
+    expect(result.namespace.type).toBe("Microsoft.ServiceBus/namespaces");
+    expect(result.queue!.type).toBe("Microsoft.ServiceBus/namespaces/queues");
+  });
+
+  test("security defaults: TLS 1.2, Standard SKU", () => {
+    const result = ServiceBusPipeline({ name: "my-sb" });
+    const props = result.namespace.properties as Record<string, unknown>;
+    expect(props.minimumTlsVersion).toBe("1.2");
+    const sku = result.namespace.sku as Record<string, unknown>;
+    expect(sku.name).toBe("Standard");
+  });
+
+  test("propagates tags to namespace", () => {
+    const result = ServiceBusPipeline({ name: "my-sb", tags: { env: "prod" } });
+    const tags = result.namespace.tags as Record<string, string>;
+    expect(tags.env).toBe("prod");
+    expect(tags["managed-by"]).toBe("chant");
+  });
+});
+
+// --- CosmosDatabase ---
+
+describe("CosmosDatabase", () => {
+  test("returns 3 resources", () => {
+    const result = CosmosDatabase({ name: "my-cosmos" });
+    expect(Object.keys(result)).toEqual(["account", "database", "container"]);
+  });
+
+  test("correct resource types", () => {
+    const result = CosmosDatabase({ name: "my-cosmos" });
+    expect(result.account.type).toBe("Microsoft.DocumentDB/databaseAccounts");
+    expect(result.database.type).toBe("Microsoft.DocumentDB/databaseAccounts/sqlDatabases");
+    expect(result.container.type).toBe("Microsoft.DocumentDB/databaseAccounts/sqlDatabases/containers");
+  });
+
+  test("security defaults: automatic failover, network ACL deny, TLS 1.2", () => {
+    const result = CosmosDatabase({ name: "my-cosmos" });
+    const props = result.account.properties as Record<string, unknown>;
+    expect(props.enableAutomaticFailover).toBe(true);
+    expect(props.publicNetworkAccess).toBe("Disabled");
+    expect(props.minimalTlsVersion).toBe("Tls12");
+  });
+
+  test("container has partition key", () => {
+    const result = CosmosDatabase({ name: "my-cosmos", partitionKeyPath: "/tenantId" });
+    const props = result.container.properties as Record<string, unknown>;
+    const resource = props.resource as Record<string, unknown>;
+    const partitionKey = resource.partitionKey as Record<string, unknown>;
+    expect((partitionKey.paths as string[])[0]).toBe("/tenantId");
+  });
+
+  test("propagates tags", () => {
+    const result = CosmosDatabase({ name: "my-cosmos", tags: { env: "prod" } });
+    const tags = result.account.tags as Record<string, string>;
+    expect(tags.env).toBe("prod");
+    expect(tags["managed-by"]).toBe("chant");
+  });
+});
+
+// --- ApplicationGateway ---
+
+describe("ApplicationGateway", () => {
+  test("returns 2 resources", () => {
+    const result = ApplicationGateway({ name: "my-appgw" });
+    expect(Object.keys(result)).toEqual(["publicIp", "gateway"]);
+  });
+
+  test("correct resource types", () => {
+    const result = ApplicationGateway({ name: "my-appgw" });
+    expect(result.publicIp.type).toBe("Microsoft.Network/publicIPAddresses");
+    expect(result.gateway.type).toBe("Microsoft.Network/applicationGateways");
+  });
+
+  test("security defaults: WAF_v2, TLS 1.2 policy", () => {
+    const result = ApplicationGateway({ name: "my-appgw" });
+    const props = result.gateway.properties as Record<string, unknown>;
+    const sku = props.sku as Record<string, unknown>;
+    expect(sku.name).toBe("WAF_v2");
+    const sslPolicy = props.sslPolicy as Record<string, unknown>;
+    expect(sslPolicy.minProtocolVersion).toBe("TLSv1_2");
+  });
+
+  test("propagates tags", () => {
+    const result = ApplicationGateway({ name: "my-appgw", tags: { env: "prod" } });
+    const pipTags = result.publicIp.tags as Record<string, string>;
+    const gwTags = result.gateway.tags as Record<string, string>;
+    expect(pipTags.env).toBe("prod");
+    expect(gwTags.env).toBe("prod");
+    expect(pipTags["managed-by"]).toBe("chant");
+  });
+
+  test("accepts custom SKU", () => {
+    const result = ApplicationGateway({ name: "my-appgw", sku: "Standard_v2" });
+    const props = result.gateway.properties as Record<string, unknown>;
+    const sku = props.sku as Record<string, unknown>;
+    expect(sku.name).toBe("Standard_v2");
+  });
+});
+
+// --- ContainerInstance ---
+
+describe("ContainerInstance", () => {
+  test("returns 1 resource", () => {
+    const result = ContainerInstance({ name: "my-ci" });
+    expect(Object.keys(result)).toEqual(["containerGroup"]);
+  });
+
+  test("correct resource type", () => {
+    const { containerGroup } = ContainerInstance({ name: "my-ci" });
+    expect(containerGroup.type).toBe("Microsoft.ContainerInstance/containerGroups");
+  });
+
+  test("has managed identity", () => {
+    const { containerGroup } = ContainerInstance({ name: "my-ci" });
+    const identity = containerGroup.identity as Record<string, unknown>;
+    expect(identity.type).toBe("SystemAssigned");
+  });
+
+  test("no public IP by default", () => {
+    const { containerGroup } = ContainerInstance({ name: "my-ci" });
+    const props = containerGroup.properties as Record<string, unknown>;
+    const ipAddress = props.ipAddress as Record<string, unknown>;
+    expect(ipAddress.type).toBe("Private");
+  });
+
+  test("public IP when requested", () => {
+    const { containerGroup } = ContainerInstance({ name: "my-ci", publicIp: true });
+    const props = containerGroup.properties as Record<string, unknown>;
+    const ipAddress = props.ipAddress as Record<string, unknown>;
+    expect(ipAddress.type).toBe("Public");
+  });
+
+  test("propagates tags", () => {
+    const { containerGroup } = ContainerInstance({ name: "my-ci", tags: { env: "prod" } });
+    const tags = containerGroup.tags as Record<string, string>;
+    expect(tags.env).toBe("prod");
+    expect(tags["managed-by"]).toBe("chant");
+  });
+});
+
+// --- RedisCache ---
+
+describe("RedisCache", () => {
+  test("returns 1 resource", () => {
+    const result = RedisCache({ name: "my-redis" });
+    expect(Object.keys(result)).toEqual(["redisCache"]);
+  });
+
+  test("correct resource type", () => {
+    const { redisCache } = RedisCache({ name: "my-redis" });
+    expect(redisCache.type).toBe("Microsoft.Cache/redis");
+  });
+
+  test("security defaults: non-SSL port disabled, TLS 1.2", () => {
+    const { redisCache } = RedisCache({ name: "my-redis" });
+    const props = redisCache.properties as Record<string, unknown>;
+    expect(props.enableNonSslPort).toBe(false);
+    expect(props.minimumTlsVersion).toBe("1.2");
+  });
+
+  test("default SKU is Standard", () => {
+    const { redisCache } = RedisCache({ name: "my-redis" });
+    const props = redisCache.properties as Record<string, unknown>;
+    const sku = props.sku as Record<string, unknown>;
+    expect(sku.name).toBe("Standard");
+  });
+
+  test("accepts custom SKU", () => {
+    const { redisCache } = RedisCache({ name: "my-redis", sku: "Premium", family: "P", capacity: 2 });
+    const props = redisCache.properties as Record<string, unknown>;
+    const sku = props.sku as Record<string, unknown>;
+    expect(sku.name).toBe("Premium");
+    expect(sku.family).toBe("P");
+    expect(sku.capacity).toBe(2);
+  });
+
+  test("propagates tags", () => {
+    const { redisCache } = RedisCache({ name: "my-redis", tags: { env: "prod" } });
+    const tags = redisCache.tags as Record<string, string>;
+    expect(tags.env).toBe("prod");
+    expect(tags["managed-by"]).toBe("chant");
+  });
+});
+
+// --- PrivateEndpoint ---
+
+describe("PrivateEndpoint", () => {
+  const minimalProps = {
+    name: "my-pe",
+    targetResourceId: "[resourceId('Microsoft.Storage/storageAccounts', 'mystorage')]",
+    groupId: "blob",
+    subnetId: "[resourceId('Microsoft.Network/virtualNetworks/subnets', 'vnet', 'pe-subnet')]",
+    privateDnsZoneName: "privatelink.blob.core.windows.net",
+    vnetId: "[resourceId('Microsoft.Network/virtualNetworks', 'vnet')]",
+  };
+
+  test("returns 4 resources", () => {
+    const result = PrivateEndpoint(minimalProps);
+    expect(Object.keys(result)).toEqual(["privateEndpoint", "privateDnsZone", "dnsZoneGroup", "vnetLink"]);
+  });
+
+  test("correct resource types", () => {
+    const result = PrivateEndpoint(minimalProps);
+    expect(result.privateEndpoint.type).toBe("Microsoft.Network/privateEndpoints");
+    expect(result.privateDnsZone.type).toBe("Microsoft.Network/privateDnsZones");
+    expect(result.dnsZoneGroup.type).toBe("Microsoft.Network/privateEndpoints/privateDnsZoneGroups");
+    expect(result.vnetLink.type).toBe("Microsoft.Network/privateDnsZones/virtualNetworkLinks");
+  });
+
+  test("private endpoint references target and subnet", () => {
+    const result = PrivateEndpoint(minimalProps);
+    const props = result.privateEndpoint.properties as Record<string, unknown>;
+    const subnet = props.subnet as Record<string, unknown>;
+    expect(subnet.id).toContain("pe-subnet");
+    const connections = props.privateLinkServiceConnections as Array<Record<string, unknown>>;
+    const connProps = connections[0].properties as Record<string, unknown>;
+    expect(connProps.groupIds).toEqual(["blob"]);
+  });
+
+  test("DNS zone is global", () => {
+    const result = PrivateEndpoint(minimalProps);
+    expect(result.privateDnsZone.location).toBe("global");
+  });
+
+  test("propagates tags", () => {
+    const result = PrivateEndpoint({ ...minimalProps, tags: { env: "prod" } });
+    const peTags = result.privateEndpoint.tags as Record<string, string>;
+    const dnsTags = result.privateDnsZone.tags as Record<string, string>;
+    expect(peTags.env).toBe("prod");
+    expect(dnsTags.env).toBe("prod");
+    expect(peTags["managed-by"]).toBe("chant");
   });
 });

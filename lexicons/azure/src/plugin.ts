@@ -154,6 +154,54 @@ export const tags = defaultTags([
       };
     }
 
+    if (template === "function-app") {
+      return {
+        src: {
+          "main.ts": `/**
+ * Azure infrastructure — Consumption Function App
+ *
+ * Deploys a Function App with:
+ * - Consumption (Y1) App Service Plan
+ * - Storage Account for function runtime
+ * - Managed identity (SystemAssigned)
+ * - HTTPS-only traffic
+ * - Minimum TLS 1.2
+ * - FTPS disabled
+ */
+
+import { FunctionApp } from "@intentius/chant-lexicon-azure";
+import { CoreParameter, StackOutput } from "@intentius/chant";
+
+export const environment = new CoreParameter({
+  name: "environment",
+  type: "string",
+  default: "dev",
+});
+
+const { plan, functionApp, storageAccount } = FunctionApp({
+  name: "my-function-app",
+  runtime: "node",
+  tags: { environment: "dev" },
+});
+
+export { plan, functionApp, storageAccount };
+
+export const functionAppUrl = new StackOutput({
+  name: "functionAppUrl",
+  value: \`https://my-function-app.azurewebsites.net\`,
+});
+`,
+          "tags.ts": `import { defaultTags } from "@intentius/chant-lexicon-azure";
+
+export const tags = defaultTags([
+  { key: "Project", value: "my-function-app" },
+  { key: "Environment", value: "dev" },
+]);
+`,
+        },
+      };
+    }
+
     // Default template — basic storage account
     return {
       src: {
@@ -405,11 +453,13 @@ export const tags = defaultTags([
               .filter((e: { isDirectory(): boolean }) => e.isDirectory());
             for (const dir of dirs) {
               const exDir = join(examplesDir, dir.name);
+              const srcDir = join(exDir, "src");
               const files: Record<string, string> = {};
-              const entries = readdirSync(exDir).filter((f: string) => f.endsWith(".ts"));
+              const scanDir = existsSync(srcDir) ? srcDir : exDir;
+              const entries = readdirSync(scanDir).filter((f: string) => f.endsWith(".ts"));
               for (const f of entries) {
                 try {
-                  files[f] = readFileSync(join(exDir, f), "utf-8");
+                  files[f] = readFileSync(join(scanDir, f), "utf-8");
                 } catch { /* skip unreadable */ }
               }
               if (Object.keys(files).length > 0) {
