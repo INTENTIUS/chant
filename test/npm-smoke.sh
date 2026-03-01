@@ -249,16 +249,6 @@ if [ -d /examples ]; then
     /tarballs/lexicon-flyway.tgz flyway \
     /tarballs/lexicon-gitlab.tgz gitlab
 
-  test_example "flyway-postgresql-k8s" \
-    /tarballs/lexicon-k8s.tgz k8s \
-    /tarballs/lexicon-flyway.tgz flyway
-
-  test_example "k8s-batch-workers" \
-    /tarballs/lexicon-k8s.tgz k8s
-
-  test_example "k8s-web-platform" \
-    /tarballs/lexicon-k8s.tgz k8s
-
   test_example "k8s-eks-microservice" \
     /tarballs/lexicon-aws.tgz aws \
     /tarballs/lexicon-k8s.tgz k8s

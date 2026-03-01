@@ -28,18 +28,6 @@ Issues found while running all 8 examples end-to-end.
 
 ## flyway-postgresql-gitlab-aws-rds
 
-## k8s-batch-workers
-
-7. **BatchJob composite: memory request > limit** (BUG): The `BatchJob` composite sets default memory limit of 256Mi, but the example sets `memoryRequest: "512Mi"`. Kubernetes rejects this (`must be less than or equal to memory limit`). The composite should either set limits >= requests automatically, or validate at build time. The linter doesn't catch this either — it warns about missing limits but not about request > limit. **Fix**: Ensure composite defaults don't conflict with user-specified requests. Had to change `memoryRequest` to `"256Mi"` to proceed.
-
-8. **29 lint/build warnings** (non-blocking): The example produces 29 warnings about missing imagePullPolicy, resource limits, readOnlyRootFilesystem, runAsNonRoot, capabilities, probes, and PDBs. While these are best-practice warnings, having this many on a built-in example sends the wrong signal to new users. **Fix**: Address at least the critical warnings (limits, probes) in the example code.
-
-## k8s-web-platform
-
-9. **SidecarApp (api) pods crash**: The `api` Deployment with Envoy sidecar has pods in CrashLoopBackOff. The sidecar container likely needs a valid Envoy config that isn't provided. The `api-isolated` pods also crash. Only `frontend` pods are healthy. The deploy script only waits for `frontend`, so it "passes" despite 6 of 8 pods crashing. **Fix**: Either provide a minimal Envoy config or use a mock sidecar image that doesn't crash, so all pods are healthy out of the box.
-
-10. **README doesn't mention nginx ingress must be ready before apply**: The Ingress resource triggers nginx's admission webhook. If the webhook isn't ready yet, `kubectl apply` fails with "no endpoints available for service". README should mention waiting for the ingress controller before deploying. **Fix**: Add a wait step or note about timing.
-
 ## k8s-eks-microservice
 
 11. **Stack deploys to default AWS region, not `us-east-1`**: The `deploy-infra` script uses `aws cloudformation deploy` without `--region`, so it uses the CLI's default region. The `.env` has `AWS_REGION=us-east-1` but the deploy command doesn't use it. If user's default region differs, the stack deploys to the wrong region. **Fix**: Pass `--region $AWS_REGION` in the deploy-infra script.

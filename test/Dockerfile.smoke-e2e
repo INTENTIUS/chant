@@ -1,9 +1,13 @@
 # E2E smoke test — deploys all 8 examples end-to-end
 # Stage 1: bun builds tarballs (same as Dockerfile.smoke-npm)
 # Stage 2: node:22-slim with deploy tools, runs tests at `docker run` time
+#
+# NOTE: This image is always built as linux/amd64 because Flyway CLI does not
+# provide a linux-aarch64 build.  On Apple Silicon the runner stage uses
+# Rosetta emulation transparently.
 
 # ── Stage 1: builder ─────────────────────────────────────────────────────────
-FROM oven/bun:latest AS builder
+FROM --platform=linux/amd64 oven/bun:latest AS builder
 
 WORKDIR /app
 
@@ -39,7 +43,7 @@ RUN mkdir -p /tarballs && \
     cd /app/lexicons/flyway && bun pm pack && mv *.tgz /tarballs/lexicon-flyway.tgz
 
 # ── Stage 2: E2E runner ──────────────────────────────────────────────────────
-FROM node:22-slim
+FROM --platform=linux/amd64 node:22-slim
 
 # Install base tools
 RUN apt-get update && apt-get install -y \
@@ -48,6 +52,10 @@ RUN apt-get update && apt-get install -y \
 
 # tsx — the chant bin wrapper uses it as fallback runtime
 RUN npm install -g tsx
+
+# Git identity for E2E commits (push_to_gitlab needs this)
+RUN git config --global user.email "e2e@chant.dev" && \
+    git config --global user.name "Chant E2E"
 
 # kubectl
 RUN curl -fsSL "https://dl.k8s.io/release/$(curl -fsSL https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl" \
@@ -60,8 +68,8 @@ RUN curl -fsSL https://raw.githubusercontent.com/k3d-io/k3d/main/install.sh | ba
 RUN curl -fsSL "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o /tmp/awscliv2.zip && \
     unzip -q /tmp/awscliv2.zip -d /tmp && /tmp/aws/install && rm -rf /tmp/aws /tmp/awscliv2.zip
 
-# Flyway CLI (standalone with embedded JRE)
-RUN FLYWAY_VERSION=10.20.1 && \
+# Flyway CLI (standalone with embedded JRE — x64 only, no arm64 build available)
+RUN FLYWAY_VERSION=11.3.3 && \
     curl -fsSL "https://download.red-gate.com/maven/release/com/redgate/flyway/flyway-commandline/${FLYWAY_VERSION}/flyway-commandline-${FLYWAY_VERSION}-linux-x64.tar.gz" \
       -o /tmp/flyway.tar.gz && \
     tar xzf /tmp/flyway.tar.gz -C /opt && \

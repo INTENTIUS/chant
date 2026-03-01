@@ -15,7 +15,7 @@ describeAllExamples(
       checks: (output) => {
         expect(output).toContain("[flyway]");
         expect(output).toContain("[environments.");
-        expect(output).toContain('databaseType = "postgresql"');
+        expect(output).not.toContain("databaseType");
         expect(output).toContain("[environments.dev]");
       },
     },

@@ -231,5 +231,4 @@ This example includes EKS best-practice hardening:
 
 ## Related examples
 
-- [flyway-postgresql-k8s](../flyway-postgresql-k8s/) — K8s + Flyway cross-lexicon
 - [gitlab-aws-alb-api](../gitlab-aws-alb-api/) — AWS + GitLab cross-lexicon

@@ -114,6 +114,5 @@ aws ssm delete-parameter --name /myapp/dev/db-password
 
 ## Related examples
 
-- [flyway-postgresql-k8s](../flyway-postgresql-k8s/) — K8s + Flyway cross-lexicon (local k3d)
 - [gitlab-aws-alb-infra](../gitlab-aws-alb-infra/) — AWS + GitLab shared ALB infrastructure
 - [k8s-eks-microservice](../k8s-eks-microservice/) — Production-grade AWS EKS + K8s

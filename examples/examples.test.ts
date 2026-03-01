@@ -47,23 +47,6 @@ describeExample("gitlab-aws-alb-ui", {
   examplesDir: import.meta.dir,
 });
 
-// ── Flyway + K8s ─────────────────────────────────────────────────────
-
-describeExample("flyway-postgresql-k8s", {
-  lexicon: "flyway-k8s",
-  serializer: [k8sSerializer, flywaySerializer],
-  outputKey: ["k8s", "flyway"],
-  examplesDir: import.meta.dir,
-}, {
-  checks: (output) => {
-    // output is K8s YAML (first output key)
-    expect(output).toContain("kind: Namespace");
-    expect(output).toContain("kind: StatefulSet");
-    expect(output).toContain("kind: Service");
-    expect(output).toContain("nodePort: 30432");
-  },
-});
-
 // ── Flyway + GitLab + AWS RDS ────────────────────────────────────────
 
 describeExample("flyway-postgresql-gitlab-aws-rds", {
@@ -71,41 +54,6 @@ describeExample("flyway-postgresql-gitlab-aws-rds", {
   serializer: [awsSerializer, flywaySerializer, gitlabSerializer],
   outputKey: ["aws", "flyway", "gitlab"],
   examplesDir: import.meta.dir,
-});
-
-// ── K8s-only cross-lexicon examples ──────────────────────────────────
-
-describeExample("k8s-batch-workers", {
-  lexicon: "k8s",
-  serializer: k8sSerializer,
-  outputKey: "k8s",
-  examplesDir: import.meta.dir,
-}, {
-  checks: (output) => {
-    const docs = parseK8sDocs(output);
-    expect(docs).toHaveLength(26);
-    expect(docs.filter((d) => d.kind === "Deployment")).toHaveLength(2);
-    expect(docs.filter((d) => d.kind === "CronJob")).toHaveLength(1);
-    expect(docs.filter((d) => d.kind === "Job")).toHaveLength(1);
-    expect(docs.filter((d) => d.kind === "DaemonSet")).toHaveLength(1);
-    expect(docs.filter((d) => d.kind === "Secret")).toHaveLength(2);
-    expect(docs.filter((d) => d.kind === "PodDisruptionBudget")).toHaveLength(1);
-  },
-});
-
-describeExample("k8s-web-platform", {
-  lexicon: "k8s",
-  serializer: k8sSerializer,
-  outputKey: "k8s",
-  examplesDir: import.meta.dir,
-}, {
-  checks: (output) => {
-    const docs = parseK8sDocs(output);
-    expect(docs).toHaveLength(11);
-    expect(docs.filter((d) => d.kind === "Deployment")).toHaveLength(3);
-    expect(docs.filter((d) => d.kind === "Service")).toHaveLength(3);
-    expect(docs.filter((d) => d.kind === "Ingress")).toHaveLength(1);
-  },
 });
 
 // ── K8s + AWS EKS microservice (comprehensive) ──────────────────────

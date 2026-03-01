@@ -381,7 +381,7 @@ Smoke tests run inside Docker containers to verify chant works in a clean enviro
 |----------|----------|--------------|
 | `just smoke-bun` | `./test/smoke.sh workspace` | Builds `test/Dockerfile.smoke` (Bun workspace), runs `integration.sh` during build, drops into bash |
 | `just smoke-node` | `./test/smoke.sh npm` | Builds `test/Dockerfile.smoke-node` (Node.js + tsx), runs `integration.sh` with `CHANT_RUNTIME=node` |
-| `just smoke-build-examples` | `./test/smoke.sh build-examples` | Builds all 8 root examples inside the Bun smoke container, copies artifacts to `test/example-builds/` |
+| `just smoke-build-examples` | `./test/smoke.sh build-examples` | Builds all root examples inside the Bun smoke container, copies artifacts to `test/example-builds/` |
 | `just smoke` | `./test/smoke.sh all` | Runs `smoke-bun` + `smoke-node` |
 
 ### How `build-examples` works
@@ -397,13 +397,10 @@ The container's `/app/examples/` is baked into the image during `docker build`. 
 | Example | Artifacts |
 |---------|-----------|
 | `flyway-postgresql-gitlab-aws-rds` | `templates/template.json`, `flyway.toml`, `.gitlab-ci.yml` |
-| `flyway-postgresql-k8s` | `k8s.yaml`, `flyway.toml` |
 | `gitlab-aws-alb-infra` | `templates/template.json`, `.gitlab-ci.yml` |
 | `gitlab-aws-alb-api` | `templates/template.json`, `.gitlab-ci.yml` |
 | `gitlab-aws-alb-ui` | `templates/template.json`, `.gitlab-ci.yml` |
-| `k8s-batch-workers` | `k8s.yaml` |
 | `k8s-eks-microservice` | `templates/infra.json`, `k8s.yaml` |
-| `k8s-web-platform` | `k8s.yaml` |
 
 Each example directory also gets `README.md`, `package.json`, and any deploy scripts (`scripts/`, `setup.sh`, `sql/`, `.env.example`) copied to `/output` for agent-driven deployment from outside the container. Skills come from the installed lexicon packages, not from the examples themselves.
 

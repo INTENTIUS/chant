@@ -26,7 +26,8 @@ describe("flywaySerializer", () => {
 
     expect(result).toContain('id = "test-project"');
     expect(result).toContain('name = "test-project"');
-    expect(result).toContain('databaseType = "postgresql"');
+    // databaseType is chant-internal metadata, not emitted to TOML
+    expect(result).not.toContain("databaseType");
   });
 
   test("serializes FlywayConfig under [flyway]", () => {

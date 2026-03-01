@@ -1,0 +1,301 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: web-platform
+  labels:
+    app.kubernetes.io/managed-by: chant
+    app.kubernetes.io/part-of: web-platform
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: api-isolated
+  namespace: web-platform
+  labels:
+    app.kubernetes.io/name: api-isolated
+    app.kubernetes.io/managed-by: chant
+    app.kubernetes.io/component: server
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: api-isolated
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: api-isolated
+    spec:
+      containers:
+        - name: api-isolated
+          image: hashicorp/http-echo:0.2.3
+          ports:
+            - containerPort: 8080
+              name: http
+          resources:
+            limits:
+              cpu: '500m'
+              memory: '256Mi'
+            requests:
+              cpu: '100m'
+              memory: '128Mi'
+
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: api-isolated-policy
+  namespace: web-platform
+  labels:
+    app.kubernetes.io/name: api-isolated
+    app.kubernetes.io/managed-by: chant
+    app.kubernetes.io/component: network-policy
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: api-isolated
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: frontend
+      ports:
+        - port: 8080
+          protocol: TCP
+  egress:
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: postgres
+      ports:
+        - port: 5432
+          protocol: TCP
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+      ports:
+        - port: 53
+          protocol: UDP
+  policyTypes:
+    - Ingress
+    - Egress
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: api-isolated
+  namespace: web-platform
+  labels:
+    app.kubernetes.io/name: api-isolated
+    app.kubernetes.io/managed-by: chant
+    app.kubernetes.io/component: server
+spec:
+  selector:
+    app.kubernetes.io/name: api-isolated
+  ports:
+    - port: 80
+      targetPort: 8080
+      protocol: TCP
+      name: http
+  type: ClusterIP
+
+---
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: efs-shared
+  labels:
+    app.kubernetes.io/name: efs-shared
+    app.kubernetes.io/managed-by: chant
+    app.kubernetes.io/component: storage
+provisioner: efs.csi.aws.com
+parameters:
+  provisioningMode: efs-ap
+  fileSystemId: fs-0123456789abcdef0
+  directoryPerms: '755'
+  basePath: /web-platform
+reclaimPolicy: Delete
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: api
+  namespace: web-platform
+  labels:
+    app.kubernetes.io/name: api
+    app.kubernetes.io/managed-by: chant
+    app.kubernetes.io/component: server
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: api
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: api
+    spec:
+      containers:
+        - name: api
+          image: hashicorp/http-echo:0.2.3
+          ports:
+            - containerPort: 8080
+              name: http
+          resources:
+            limits:
+              cpu: '500m'
+              memory: '256Mi'
+            requests:
+              cpu: '100m'
+              memory: '128Mi'
+        - name: envoy
+          image: envoyproxy/envoy:v1.28-latest
+          ports:
+            - containerPort: 9901
+              name: envoy-admin
+      volumes:
+        - name: envoy-config
+          emptyDir: {}
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: api
+  namespace: web-platform
+  labels:
+    app.kubernetes.io/name: api
+    app.kubernetes.io/managed-by: chant
+    app.kubernetes.io/component: server
+spec:
+  selector:
+    app.kubernetes.io/name: api
+  ports:
+    - port: 80
+      targetPort: 8080
+      protocol: TCP
+      name: http
+  type: ClusterIP
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: frontend
+  namespace: web-platform
+  labels:
+    app.kubernetes.io/name: frontend
+    app.kubernetes.io/managed-by: chant
+    app.kubernetes.io/component: server
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: frontend
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: frontend
+    spec:
+      containers:
+        - name: frontend
+          image: nginx:1.25-alpine
+          ports:
+            - containerPort: 80
+              name: http
+          resources:
+            limits:
+              cpu: '500m'
+              memory: '256Mi'
+            requests:
+              cpu: '50m'
+              memory: '64Mi'
+          livenessProbe:
+            httpGet:
+              path: /
+              port: 80
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          readinessProbe:
+            httpGet:
+              path: /
+              port: 80
+            initialDelaySeconds: 5
+            periodSeconds: 5
+
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: frontend
+  namespace: web-platform
+  labels:
+    app.kubernetes.io/name: frontend
+    app.kubernetes.io/managed-by: chant
+    app.kubernetes.io/component: disruption-budget
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: frontend
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: frontend
+  namespace: web-platform
+  labels:
+    app.kubernetes.io/name: frontend
+    app.kubernetes.io/managed-by: chant
+    app.kubernetes.io/component: server
+spec:
+  selector:
+    app.kubernetes.io/name: frontend
+  ports:
+    - port: 80
+      targetPort: 80
+      protocol: TCP
+      name: http
+  type: ClusterIP
+
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: web-platform
+  namespace: web-platform
+  labels:
+    app.kubernetes.io/name: web-platform
+    app.kubernetes.io/managed-by: chant
+    app.kubernetes.io/component: ingress
+  annotations:
+    nginx.ingress.kubernetes.io/ssl-redirect: 'true'
+    cert-manager.io/cluster-issuer: letsencrypt-prod
+spec:
+  ingressClassName: nginx
+  rules:
+    - host: app.example.com
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: frontend
+                port:
+                  number: 80
+          - path: /api
+            pathType: Prefix
+            backend:
+              service:
+                name: api
+                port:
+                  number: 80
+  tls:
+    - hosts:
+        - app.example.com
+      secretName: web-platform-tls

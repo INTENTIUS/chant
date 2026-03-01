@@ -1,11 +1,10 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# End-to-end smoke tests — deploy, verify, and tear down all 8 examples.
+# End-to-end smoke tests — deploy, verify, and tear down examples.
 # Delegates to each example's own npm scripts (run/deploy/teardown/build).
 #
-# Usage: e2e-smoke.sh [k8s|aws|eks|all]
-#   k8s — flyway-postgresql-k8s, k8s-batch-workers, k8s-web-platform (needs Docker socket)
+# Usage: e2e-smoke.sh [aws|eks|all]
 #   aws — gitlab-aws-alb-{infra,api,ui}, flyway-postgresql-gitlab-aws-rds (needs AWS + GitLab)
 #   eks — k8s-eks-microservice (needs AWS + domain)
 #   all — everything
@@ -123,161 +122,6 @@ require_env() {
   done
 }
 
-# ── K8s local group ──────────────────────────────────────────────────────────
-
-test_flyway_postgresql_k8s() {
-  local name="flyway-postgresql-k8s"
-  echo ""
-  echo "=== E2E: $name ==="
-
-  setup_example "$name" /tarballs/lexicon-k8s.tgz /tarballs/lexicon-flyway.tgz
-
-  # Register the example's own k3d cluster for cleanup
-  K3D_CLUSTERS+=("flyway-pg")
-
-  # npm run run = cluster-create -> build -> apply -> wait -> migrate
-  if npm run run 2>&1; then
-    pass "$name: npm run run"
-  else
-    fail "$name: npm run run"; return
-  fi
-
-  # Verify migrations applied
-  local info_output
-  info_output=$(npm run info 2>&1) || true
-  if echo "$info_output" | grep -q "Success"; then
-    pass "$name: flyway info shows success"
-  else
-    fail "$name: flyway info shows success"
-    echo "$info_output"
-  fi
-
-  # Verify tables exist in postgres
-  local tables
-  tables=$(kubectl -n flyway-pg exec postgres-0 -- psql -U postgres -d app -t -c '\dt' 2>&1) || true
-  if echo "$tables" | grep -q "users"; then
-    pass "$name: users table exists"
-  else
-    fail "$name: users table exists"
-  fi
-  if echo "$tables" | grep -q "orders"; then
-    pass "$name: orders table exists"
-  else
-    fail "$name: orders table exists"
-  fi
-
-  # Teardown — example deletes its own k3d cluster
-  if npm run teardown 2>&1; then
-    pass "$name: teardown"
-  else
-    fail "$name: teardown"
-  fi
-}
-
-test_k8s_batch_workers() {
-  local name="k8s-batch-workers"
-  echo ""
-  echo "=== E2E: $name ==="
-
-  setup_example "$name" /tarballs/lexicon-k8s.tgz
-
-  # npm run deploy = build -> apply -> wait -> status
-  if npm run deploy 2>&1; then
-    pass "$name: npm run deploy"
-  else
-    fail "$name: npm run deploy"; return
-  fi
-
-  # Verify pods running
-  local pods
-  pods=$(kubectl get pods -n batch-workers --no-headers 2>&1) || true
-  if echo "$pods" | grep -q "Running"; then
-    pass "$name: pods running"
-  else
-    fail "$name: pods running"
-    echo "$pods"
-  fi
-
-  # Teardown
-  if npm run teardown 2>&1; then
-    pass "$name: teardown"
-  else
-    fail "$name: teardown"
-  fi
-}
-
-test_k8s_web_platform() {
-  local name="k8s-web-platform"
-  echo ""
-  echo "=== E2E: $name ==="
-
-  setup_example "$name" /tarballs/lexicon-k8s.tgz
-
-  # npm run deploy = build -> apply -> wait -> status
-  if npm run deploy 2>&1; then
-    pass "$name: npm run deploy"
-  else
-    fail "$name: npm run deploy"; return
-  fi
-
-  # Verify pods running
-  local pods
-  pods=$(kubectl get pods -n web-platform --no-headers 2>&1) || true
-  if echo "$pods" | grep -q "Running"; then
-    pass "$name: pods running"
-  else
-    fail "$name: pods running"
-    echo "$pods"
-  fi
-
-  # Verify ingress created
-  local ingress
-  ingress=$(kubectl get ingress -n web-platform --no-headers 2>&1) || true
-  if [ -n "$ingress" ] && ! echo "$ingress" | grep -q "No resources"; then
-    pass "$name: ingress created"
-  else
-    fail "$name: ingress created"
-  fi
-
-  # Teardown
-  if npm run teardown 2>&1; then
-    pass "$name: teardown"
-  else
-    fail "$name: teardown"
-  fi
-}
-
-run_k8s_group() {
-  echo ""
-  echo "========================================"
-  echo "  K8s local E2E tests"
-  echo "========================================"
-
-  # flyway-postgresql-k8s manages its own k3d cluster (flyway-pg)
-  test_flyway_postgresql_k8s
-
-  # batch-workers and web-platform share a cluster
-  local cluster="chant-e2e"
-  K3D_CLUSTERS+=("$cluster")
-
-  echo ""
-  echo "=== Creating shared k3d cluster: $cluster ==="
-  if k3d cluster list 2>/dev/null | grep -q "$cluster"; then
-    echo "Cluster $cluster already exists, reusing"
-  else
-    k3d cluster create "$cluster" --wait --timeout 120s
-  fi
-  echo "Cluster ready"
-
-  test_k8s_batch_workers
-  test_k8s_web_platform
-
-  # Eagerly clean up (EXIT trap is the safety net)
-  echo ""
-  echo "=== Deleting shared k3d cluster: $cluster ==="
-  k3d cluster delete "$cluster" 2>/dev/null || true
-}
-
 # ── AWS/GitLab group ─────────────────────────────────────────────────────────
 
 GITLAB_URL="${GITLAB_URL:-https://gitlab.com}"
@@ -319,7 +163,9 @@ push_to_gitlab() {
   local auth_url
   auth_url=$(echo "$url" | sed "s|https://|https://oauth2:${GITLAB_TOKEN}@|")
 
-  git init
+  git init -b main
+  git config user.email "e2e@chant.dev"
+  git config user.name "Chant E2E"
   git remote add origin "$auth_url"
   git add -A
   git commit -m "E2E smoke test"
@@ -456,7 +302,13 @@ run_aws_group() {
   echo "========================================"
 
   if [ -n "${GITLAB_TOKEN:-}" ]; then
-    require_env AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY AWS_DEFAULT_REGION GITLAB_GROUP
+    # AWS creds can come from env vars or ~/.aws/credentials
+    if [ -z "${AWS_ACCESS_KEY_ID:-}" ] && [ ! -f /root/.aws/credentials ]; then
+      echo "ERROR: AWS credentials required (set AWS_ACCESS_KEY_ID/AWS_SECRET_ACCESS_KEY or mount ~/.aws)" >&2
+      exit 1
+    fi
+    require_env GITLAB_GROUP
+    : "${AWS_DEFAULT_REGION:=us-east-2}"
   fi
 
   # Build always runs; pipeline deploy only when GITLAB_TOKEN is set
@@ -523,7 +375,13 @@ run_eks_group() {
   echo "  EKS E2E tests"
   echo "========================================"
 
-  require_env AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY AWS_DEFAULT_REGION EKS_DOMAIN
+  EKS_DOMAIN="${EKS_DOMAIN:-api.eks-microservice-demo.dev}"
+  # AWS creds can come from env vars or ~/.aws/credentials
+  if [ -z "${AWS_ACCESS_KEY_ID:-}" ] && [ ! -f /root/.aws/credentials ]; then
+    echo "ERROR: AWS credentials required (set AWS_ACCESS_KEY_ID/AWS_SECRET_ACCESS_KEY or mount ~/.aws)" >&2
+    exit 1
+  fi
+  : "${AWS_DEFAULT_REGION:=us-east-2}"
 
   test_k8s_eks_microservice
 }
@@ -536,17 +394,15 @@ echo "  Group: $GROUP"
 echo "========================================"
 
 case "$GROUP" in
-  k8s) run_k8s_group ;;
   aws) run_aws_group ;;
   eks) run_eks_group ;;
   all)
-    run_k8s_group
     run_aws_group
     run_eks_group
     ;;
   *)
     echo "Unknown group: $GROUP"
-    echo "Usage: $0 [k8s|aws|eks|all]"
+    echo "Usage: $0 [aws|eks|all]"
     exit 1
     ;;
 esac
