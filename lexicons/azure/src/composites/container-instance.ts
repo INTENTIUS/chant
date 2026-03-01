@@ -4,6 +4,8 @@
  * Creates a Container Group with managed identity and no public IP by default.
  */
 
+import { markAsAzureResource } from "./from-arm";
+
 export interface ContainerInstanceProps {
   /** Container group name. */
   name: string;
@@ -69,6 +71,8 @@ export function ContainerInstance(props: ContainerInstanceProps): ContainerInsta
       ],
     },
   };
+
+  markAsAzureResource(containerGroup);
 
   return { containerGroup };
 }

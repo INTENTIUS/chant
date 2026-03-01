@@ -5,6 +5,8 @@
  * managed identity, RBAC, and a default node pool.
  */
 
+import { markAsAzureResource } from "./from-arm";
+
 export interface AksClusterProps {
   /** Cluster name. */
   name: string;
@@ -96,6 +98,8 @@ export function AksCluster(props: AksClusterProps): AksClusterResult {
       },
     },
   };
+
+  markAsAzureResource(cluster);
 
   return { cluster };
 }

@@ -4,6 +4,8 @@
  * Creates a Redis Cache with non-SSL port disabled and TLS 1.2.
  */
 
+import { markAsAzureResource } from "./from-arm";
+
 export interface RedisCacheProps {
   /** Redis cache name. */
   name: string;
@@ -48,6 +50,8 @@ export function RedisCache(props: RedisCacheProps): RedisCacheResult {
       redisConfiguration: {},
     },
   };
+
+  markAsAzureResource(redisCache);
 
   return { redisCache };
 }

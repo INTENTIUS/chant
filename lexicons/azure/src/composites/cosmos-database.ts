@@ -5,6 +5,8 @@
  * and TLS 1.2, plus a SQL Database and Container.
  */
 
+import { markAsAzureResource } from "./from-arm";
+
 export interface CosmosDatabaseProps {
   /** Cosmos DB account name. */
   name: string;
@@ -89,6 +91,10 @@ export function CosmosDatabase(props: CosmosDatabaseProps): CosmosDatabaseResult
       `[resourceId('Microsoft.DocumentDB/databaseAccounts/sqlDatabases', '${name}', '${databaseName}')]`,
     ],
   };
+
+  markAsAzureResource(account);
+  markAsAzureResource(database);
+  markAsAzureResource(container);
 
   return { account, database, container };
 }

@@ -8,6 +8,7 @@
 export { defaultTags, type TagEntry, type DefaultTags } from "./default-tags";
 export { azureSerializer } from "./serializer";
 export { azurePlugin } from "./plugin";
+export { Parameter } from "./parameter";
 
 // --- Intrinsics ---
 export {

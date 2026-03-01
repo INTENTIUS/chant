@@ -5,6 +5,8 @@
  * managed disk, and a Network Security Group.
  */
 
+import { markAsAzureResource } from "./from-arm";
+
 export interface VmLinuxProps {
   /** Virtual machine name. */
   name: string;
@@ -175,6 +177,10 @@ export function VmLinux(props: VmLinuxProps): VmLinuxResult {
     },
   };
 
+  markAsAzureResource(nsg);
+  markAsAzureResource(nic);
+  markAsAzureResource(virtualMachine);
+
   const result: VmLinuxResult = { virtualMachine, nic, nsg };
 
   if (publicIp) {
@@ -192,6 +198,7 @@ export function VmLinux(props: VmLinuxProps): VmLinuxResult {
         publicIPAddressVersion: "IPv4",
       },
     };
+    markAsAzureResource(result.publicIpAddress);
   }
 
   return result;

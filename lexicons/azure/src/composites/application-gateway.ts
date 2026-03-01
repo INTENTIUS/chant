@@ -5,6 +5,8 @@
  * and TLS 1.2 policy.
  */
 
+import { markAsAzureResource } from "./from-arm";
+
 export interface ApplicationGatewayProps {
   /** Application Gateway name. */
   name: string;
@@ -135,6 +137,9 @@ export function ApplicationGateway(props: ApplicationGatewayProps): ApplicationG
       `[resourceId('Microsoft.Network/publicIPAddresses', '${name}-pip')]`,
     ],
   };
+
+  markAsAzureResource(publicIp);
+  markAsAzureResource(gateway);
 
   return { publicIp, gateway };
 }

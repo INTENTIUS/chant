@@ -1,15 +1,12 @@
-import { SqlDatabase, Azure } from "@intentius/chant-lexicon-azure";
-import { CoreParameter } from "@intentius/chant";
+import { SqlDatabase, Azure, Parameter } from "@intentius/chant-lexicon-azure";
 
-export const adminLogin = new CoreParameter({
-  name: "sqlAdminLogin",
-  type: "string",
-  default: "sqladmin",
+export const adminLogin = new Parameter("String", {
+  description: "SQL admin login",
+  defaultValue: "sqladmin",
 });
 
-export const adminPassword = new CoreParameter({
-  name: "sqlAdminPassword",
-  type: "string",
+export const adminPassword = new Parameter("String", {
+  description: "SQL admin password",
 });
 
 export const { server, database, firewallRule } = SqlDatabase({

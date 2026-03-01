@@ -5,6 +5,8 @@
  * Topic + Subscription. Enforces TLS 1.2 and Standard SKU.
  */
 
+import { markAsAzureResource } from "./from-arm";
+
 export interface ServiceBusPipelineProps {
   /** Namespace name. */
   name: string;
@@ -76,6 +78,10 @@ export function ServiceBusPipeline(props: ServiceBusPipelineProps): ServiceBusPi
       ],
     };
 
+    markAsAzureResource(namespace);
+    markAsAzureResource(topic);
+    markAsAzureResource(subscription);
+
     return { namespace, topic, subscription };
   }
 
@@ -92,6 +98,9 @@ export function ServiceBusPipeline(props: ServiceBusPipelineProps): ServiceBusPi
       `[resourceId('Microsoft.ServiceBus/namespaces', '${name}')]`,
     ],
   };
+
+  markAsAzureResource(namespace);
+  markAsAzureResource(queue);
 
   return { namespace, queue };
 }

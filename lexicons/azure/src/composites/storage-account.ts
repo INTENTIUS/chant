@@ -5,6 +5,8 @@
  * HTTPS-only, encryption at rest, default-deny network rules, and TLS 1.2.
  */
 
+import { markAsAzureResource } from "./from-arm";
+
 export interface StorageAccountSecureProps {
   /** Storage account name (3-24 chars, lowercase + digits only). */
   name: string;
@@ -79,6 +81,8 @@ export function StorageAccountSecure(props: StorageAccountSecureProps): StorageA
       },
     },
   };
+
+  markAsAzureResource(storageAccount);
 
   return { storageAccount };
 }

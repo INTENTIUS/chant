@@ -6,6 +6,8 @@
  * and FTPS disabled.
  */
 
+import { markAsAzureResource } from "./from-arm";
+
 export interface FunctionAppProps {
   /** Function app name. */
   name: string;
@@ -91,6 +93,10 @@ export function FunctionApp(props: FunctionAppProps): FunctionAppResult {
       `[resourceId('Microsoft.Storage/storageAccounts', '${storageName}')]`,
     ],
   };
+
+  markAsAzureResource(storageAccount);
+  markAsAzureResource(plan);
+  markAsAzureResource(functionApp);
 
   return { plan, functionApp, storageAccount };
 }

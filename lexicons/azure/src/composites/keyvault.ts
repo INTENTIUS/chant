@@ -5,6 +5,8 @@
  * soft delete, purge protection, and RBAC-ready access policies.
  */
 
+import { markAsAzureResource } from "./from-arm";
+
 export interface KeyVaultSecureProps {
   /** Key vault name (3-24 chars, globally unique). */
   name: string;
@@ -101,6 +103,8 @@ export function KeyVaultSecure(props: KeyVaultSecureProps): KeyVaultSecureResult
       },
     },
   };
+
+  markAsAzureResource(vault);
 
   return { vault };
 }

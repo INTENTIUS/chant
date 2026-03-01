@@ -5,6 +5,8 @@
  * with a plan and common defaults (HTTPS-only, TLS 1.2, managed identity).
  */
 
+import { markAsAzureResource } from "./from-arm";
+
 export interface AppServiceProps {
   /** Web app name (globally unique). */
   name: string;
@@ -94,6 +96,9 @@ export function AppService(props: AppServiceProps): AppServiceResult {
       },
     },
   };
+
+  markAsAzureResource(plan);
+  markAsAzureResource(webApp);
 
   return { plan, webApp };
 }

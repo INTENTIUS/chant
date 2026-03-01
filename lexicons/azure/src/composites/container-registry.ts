@@ -5,6 +5,8 @@
  * admin user disabled, content trust, and quarantine policy.
  */
 
+import { markAsAzureResource } from "./from-arm";
+
 export interface ContainerRegistrySecureProps {
   /** Registry name (5-50 chars, alphanumeric, globally unique). */
   name: string;
@@ -83,6 +85,8 @@ export function ContainerRegistrySecure(props: ContainerRegistrySecureProps): Co
       dataEndpointEnabled: false,
     },
   };
+
+  markAsAzureResource(registry);
 
   return { registry };
 }

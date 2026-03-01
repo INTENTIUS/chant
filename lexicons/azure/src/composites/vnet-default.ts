@@ -5,6 +5,8 @@
  * two subnets, a Network Security Group, and a Route Table.
  */
 
+import { markAsAzureResource } from "./from-arm";
+
 export interface VnetDefaultProps {
   /** Virtual network name. */
   name: string;
@@ -151,6 +153,12 @@ export function VnetDefault(props: VnetDefaultProps): VnetDefaultResult {
       ],
     },
   };
+
+  markAsAzureResource(nsg);
+  markAsAzureResource(routeTable);
+  markAsAzureResource(subnet1);
+  markAsAzureResource(subnet2);
+  markAsAzureResource(virtualNetwork);
 
   return { virtualNetwork, subnet1, subnet2, nsg, routeTable };
 }

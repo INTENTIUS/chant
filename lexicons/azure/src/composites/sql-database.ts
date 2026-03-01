@@ -5,6 +5,8 @@
  * a logical server, a database, and a firewall rule allowing Azure services.
  */
 
+import { markAsAzureResource } from "./from-arm";
+
 export interface SqlDatabaseProps {
   /** SQL server name (globally unique). */
   name: string;
@@ -102,6 +104,10 @@ export function SqlDatabase(props: SqlDatabaseProps): SqlDatabaseResult {
       endIpAddress: "0.0.0.0",
     },
   };
+
+  markAsAzureResource(server);
+  markAsAzureResource(database);
+  markAsAzureResource(firewallRule);
 
   return { server, database, firewallRule };
 }

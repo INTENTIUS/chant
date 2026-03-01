@@ -5,6 +5,8 @@
  * and DNS Zone Group for private connectivity.
  */
 
+import { markAsAzureResource } from "./from-arm";
+
 export interface PrivateEndpointProps {
   /** Private endpoint name. */
   name: string;
@@ -107,6 +109,11 @@ export function PrivateEndpoint(props: PrivateEndpointProps): PrivateEndpointRes
       `[resourceId('Microsoft.Network/privateDnsZones', '${privateDnsZoneName}')]`,
     ],
   };
+
+  markAsAzureResource(privateEndpoint);
+  markAsAzureResource(privateDnsZone);
+  markAsAzureResource(vnetLink);
+  markAsAzureResource(dnsZoneGroup);
 
   return { privateEndpoint, privateDnsZone, dnsZoneGroup, vnetLink };
 }
