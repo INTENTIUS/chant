@@ -83,11 +83,13 @@ describeExample("k8s-batch-workers", {
 }, {
   checks: (output) => {
     const docs = parseK8sDocs(output);
-    expect(docs).toHaveLength(23);
+    expect(docs).toHaveLength(26);
     expect(docs.filter((d) => d.kind === "Deployment")).toHaveLength(2);
     expect(docs.filter((d) => d.kind === "CronJob")).toHaveLength(1);
     expect(docs.filter((d) => d.kind === "Job")).toHaveLength(1);
     expect(docs.filter((d) => d.kind === "DaemonSet")).toHaveLength(1);
+    expect(docs.filter((d) => d.kind === "Secret")).toHaveLength(2);
+    expect(docs.filter((d) => d.kind === "PodDisruptionBudget")).toHaveLength(1);
   },
 });
 

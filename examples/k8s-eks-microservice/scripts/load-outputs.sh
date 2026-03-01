@@ -17,7 +17,7 @@ ALB_CERT_ARN=${cert_arn}
 HOSTED_ZONE_ID=$(get_output hostedZoneIdOutput)
 DOMAIN=$(get_param domainName)
 EKS_CLUSTER_NAME=eks-microservice
-AWS_REGION=$(aws configure get region)
+AWS_REGION=${AWS_REGION:-${AWS_DEFAULT_REGION:-us-east-1}}
 EOF
 
 echo "Wrote .env with stack output ARNs and parameters"

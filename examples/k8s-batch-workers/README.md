@@ -19,17 +19,17 @@ The lexicon packages ship skills for agent-guided deployment. After `chant init 
 
 ## What this produces
 
-- **K8s** (`k8s.yaml`): 23 Kubernetes resources across 6 source files
+- **K8s** (`k8s.yaml`): 26 Kubernetes resources across 6 source files
 
 ## Source files
 
 | File | Composite | Resources |
 |------|-----------|-----------|
 | `src/namespace.ts` | *(raw Namespace)* | Namespace |
-| `src/workers.ts` | `WorkerPool` | Deployment + ServiceAccount + Role + RoleBinding + ConfigMap + HPA |
+| `src/workers.ts` | `WorkerPool` | Deployment + ServiceAccount + Role + RoleBinding + ConfigMap + HPA + PDB |
 | `src/cron.ts` | `CronWorkload` | CronJob + ServiceAccount + Role + RoleBinding |
 | `src/migration.ts` | `BatchJob` | Job + ServiceAccount + Role + RoleBinding |
-| `src/task-api.ts` | `ConfiguredApp` | Deployment + Service + ConfigMap |
+| `src/task-api.ts` | `ConfiguredApp` | Deployment + Service + ConfigMap + 2 Secrets |
 | `src/log-collector.ts` | `NodeAgent` | DaemonSet + ServiceAccount + ClusterRole + ClusterRoleBinding + ConfigMap |
 
 ## Composites covered
@@ -63,7 +63,7 @@ npx chant lint src
 
 ### Step by step
 
-1. **Build** — generates `k8s.yaml` with all 23 resources:
+1. **Build** — generates `k8s.yaml` with all 26 resources:
 
    ```bash
    npx chant build src --lexicon k8s -o k8s.yaml

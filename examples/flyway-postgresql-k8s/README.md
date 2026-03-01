@@ -19,7 +19,7 @@ The lexicon packages ship skills for agent-guided deployment. After `chant init 
 
 ## What this produces
 
-- **K8s** (`k8s.yaml`): Namespace, StatefulSet, headless Service, NodePort Service (4 resources)
+- **K8s** (`k8s.yaml`): Namespace, Secret, StatefulSet, headless Service, NodePort Service (5 resources)
 - **Flyway** (`flyway.toml`): Project config with local environment pointing to PostgreSQL via NodePort
 
 ## Source files

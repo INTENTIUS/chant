@@ -13,6 +13,6 @@ aws ssm put-parameter \
   --type SecureString \
   --value "$PASSWORD" \
   --overwrite \
-  --region us-east-1
+  --region "${AWS_DEFAULT_REGION:-us-east-1}"
 
 echo "Done. Password stored in SSM (not echoed)."

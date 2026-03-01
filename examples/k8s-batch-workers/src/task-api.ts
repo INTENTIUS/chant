@@ -4,6 +4,7 @@ import {
   Deployment,
   Service,
   ConfigMap,
+  Secret,
   ConfiguredApp,
 } from "@intentius/chant-lexicon-k8s";
 
@@ -31,3 +32,13 @@ const api = ConfiguredApp({
 export const apiDeployment = new Deployment(api.deployment);
 export const apiService = new Service(api.service);
 export const apiConfigMap = new ConfigMap(api.configMap!);
+
+export const apiCreds = new Secret({
+  metadata: { name: "task-api-creds", namespace: NAMESPACE },
+  stringData: { "api-key": "placeholder", "db-password": "placeholder" },
+});
+
+export const apiEnv = new Secret({
+  metadata: { name: "task-api-env", namespace: NAMESPACE },
+  stringData: { DATABASE_URL: "postgres://localhost:5432/tasks", API_SECRET: "placeholder" },
+});
