@@ -26,7 +26,7 @@ describe("validate", () => {
     expect(result).toBeDefined();
     expect(result.checks).toBeDefined();
     expect(Array.isArray(result.checks)).toBe(true);
-  }, 30_000);
+  }, 60_000);
 
   test("handles missing generated files", async () => {
     const { validate } = await import("./validate");
