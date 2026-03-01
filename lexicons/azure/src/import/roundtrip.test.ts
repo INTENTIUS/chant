@@ -135,9 +135,9 @@ describe("ARM Import Round-trip — testdata fixtures", () => {
   const generator = new ArmGenerator();
 
   const fixtures = [
-    { file: "vnet-nsg.json", expectedResources: 3, contains: "Microsoft.Network/virtualNetworks" },
-    { file: "aks-basic.json", expectedResources: 1, contains: "managedClusters" },
-    { file: "function-app.json", expectedResources: 3, contains: "Microsoft.Web/sites" },
+    { file: "vnet-nsg.json", expectedResources: 3, contains: "VirtualNetwork" },
+    { file: "aks-basic.json", expectedResources: 1, contains: "ManagedCluster" },
+    { file: "function-app.json", expectedResources: 3, contains: "WebApp" },
     { file: "keyvault-secrets.json", expectedResources: 2, contains: "Microsoft.KeyVault/vaults" },
     { file: "sql-server-db.json", expectedResources: 5, contains: "Microsoft.Sql/servers" },
     { file: "cosmos-account.json", expectedResources: 3, contains: "Microsoft.DocumentDB/databaseAccounts" },
