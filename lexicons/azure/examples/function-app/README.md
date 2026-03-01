@@ -1,6 +1,6 @@
-# Basic Storage
+# Function App
 
-Minimal example — a single Storage Account with security hardening, built using the `StorageAccountSecure` composite.
+A serverless Function App with App Service Plan and backing Storage Account — built using the `FunctionApp` composite.
 
 ## Skills
 
@@ -15,19 +15,19 @@ The lexicon packages ship skills for agent-guided deployment. After `chant init 
 > **Using Claude Code?** Just ask:
 >
 > ```
-> Deploy the basic-storage example to my Azure resource group.
+> Deploy the function-app example to my Azure resource group.
 > ```
 
 ## What this produces
 
-- **Azure** (`template.json`): 1 ARM resource across 2 source files
+- **Azure** (`template.json`): 3 ARM resources across 2 source files
 
 ## Source files
 
 | File | Composite | Resources |
 |------|-----------|-----------|
-| `src/main.ts` | `StorageAccountSecure` | Storage Account (`storageAccounts`) |
-| `src/tags.ts` | — | Default tags |
+| `src/main.ts` | `FunctionApp` | Web/serverfarms + Web/sites + Storage/storageAccounts |
+| `src/tags.ts` | *(default tags)* | — |
 
 ## Prerequisites
 
@@ -54,7 +54,8 @@ az deployment group create --resource-group "$RESOURCE_GROUP" --template-file te
 ## Verify
 
 ```bash
-az storage account list --resource-group "$RESOURCE_GROUP" --query "[].name" -o tsv
+az functionapp show --name chant-func --resource-group "$RESOURCE_GROUP" --query state
+az functionapp list --resource-group "$RESOURCE_GROUP" -o table
 ```
 
 ## Teardown
@@ -67,6 +68,6 @@ Deletes the resource group and all resources within it.
 
 ## Related examples
 
-- [multi-resource](../multi-resource/) — Cross-resource references with ARM intrinsics
-- [private-endpoint](../private-endpoint/) — Private networking for Azure services
 - [web-app](../web-app/) — App Service with managed identity
+- [container-instance](../container-instance/) — Single container instance
+- [multi-resource](../multi-resource/) — Cross-resource references with ARM intrinsics

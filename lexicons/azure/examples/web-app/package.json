@@ -5,12 +5,15 @@
   "private": true,
   "scripts": {
     "test": "bun test",
-    "build": "chant build src --lexicon azure",
-    "dev": "chant build src --lexicon azure --watch"
+    "build": "chant build src --lexicon azure -o template.json",
+    "dev": "chant build src --lexicon azure --watch",
+    "lint": "chant lint src",
+    "deploy": "az deployment group create --resource-group \"$RESOURCE_GROUP\" --template-file template.json",
+    "teardown": "az group delete --name \"$RESOURCE_GROUP\" --yes"
   },
   "dependencies": {
-    "@intentius/chant-lexicon-azure": "workspace:*",
-    "@intentius/chant": "workspace:*"
+    "@intentius/chant-lexicon-azure": "latest",
+    "@intentius/chant": "latest"
   },
   "devDependencies": {
     "typescript": "*"

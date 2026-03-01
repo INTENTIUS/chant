@@ -1,6 +1,6 @@
-# Basic Storage
+# Private Endpoint
 
-Minimal example — a single Storage Account with security hardening, built using the `StorageAccountSecure` composite.
+Private connectivity to a Storage Account via a Private Endpoint with DNS integration — built using `VnetDefault`, `StorageAccountSecure`, and `PrivateEndpoint` composites.
 
 ## Skills
 
@@ -15,19 +15,21 @@ The lexicon packages ship skills for agent-guided deployment. After `chant init 
 > **Using Claude Code?** Just ask:
 >
 > ```
-> Deploy the basic-storage example to my Azure resource group.
+> Deploy the private-endpoint example to my Azure resource group.
 > ```
 
 ## What this produces
 
-- **Azure** (`template.json`): 1 ARM resource across 2 source files
+- **Azure** (`template.json`): 10 ARM resources across 2 source files
 
 ## Source files
 
 | File | Composite | Resources |
 |------|-----------|-----------|
-| `src/main.ts` | `StorageAccountSecure` | Storage Account (`storageAccounts`) |
-| `src/tags.ts` | — | Default tags |
+| `src/main.ts` | `VnetDefault` | Network/virtualNetworks + 2 subnets + NSG + Route Table |
+| `src/main.ts` | `StorageAccountSecure` | Storage/storageAccounts |
+| `src/main.ts` | `PrivateEndpoint` | Network/privateEndpoints + privateDnsZones + dnsZoneGroup + vnetLink |
+| `src/tags.ts` | *(default tags)* | — |
 
 ## Prerequisites
 
@@ -54,7 +56,9 @@ az deployment group create --resource-group "$RESOURCE_GROUP" --template-file te
 ## Verify
 
 ```bash
-az storage account list --resource-group "$RESOURCE_GROUP" --query "[].name" -o tsv
+az network private-endpoint show --name storage-pe --resource-group "$RESOURCE_GROUP" --query provisioningState
+az network private-dns zone list --resource-group "$RESOURCE_GROUP" -o table
+az network vnet show --name pe-vnet --resource-group "$RESOURCE_GROUP" --query provisioningState
 ```
 
 ## Teardown
@@ -67,6 +71,6 @@ Deletes the resource group and all resources within it.
 
 ## Related examples
 
-- [multi-resource](../multi-resource/) — Cross-resource references with ARM intrinsics
-- [private-endpoint](../private-endpoint/) — Private networking for Azure services
-- [web-app](../web-app/) — App Service with managed identity
+- [vnet-vms](../vnet-vms/) — VNet with Linux VM
+- [basic-storage](../basic-storage/) — Secure-by-default Storage Account
+- [key-vault](../key-vault/) — Secure Key Vault

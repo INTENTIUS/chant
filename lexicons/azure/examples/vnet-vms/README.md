@@ -1,36 +1,73 @@
 # VNet + VMs
 
-A Chant Azure example that provisions a full network layer and a Linux VM, using `VnetDefault` and `VmLinux` composites together.
+Full network layer with a Linux VM — built using `VnetDefault` and `VmLinux` composites together.
 
-## Quick Start
+## Skills
+
+The lexicon packages ship skills for agent-guided deployment. After `chant init --lexicon azure`, your agent has access to:
+
+| Skill | Package | Purpose |
+|-------|---------|---------|
+| `chant-azure` | `@intentius/chant-lexicon-azure` | Azure ARM lifecycle: build, lint, deploy, rollback, troubleshooting |
+| `chant-azure-security` | `@intentius/chant-lexicon-azure` | Security best practices: managed identity, encryption, network hardening |
+| `chant-azure-patterns` | `@intentius/chant-lexicon-azure` | Advanced patterns: cross-resource references, linked deployments, multi-region |
+
+> **Using Claude Code?** Just ask:
+>
+> ```
+> Deploy the vnet-vms example to my Azure resource group.
+> ```
+
+## What this produces
+
+- **Azure** (`template.json`): 8 ARM resources across 2 source files
+
+## Source files
+
+| File | Composite | Resources |
+|------|-----------|-----------|
+| `src/main.ts` | `VnetDefault` | Virtual Network (`virtualNetworks`), 2 Subnets (`subnets`), NSG (`networkSecurityGroups`), Route Table (`routeTables`) |
+| `src/main.ts` | `VmLinux` | Virtual Machine (`virtualMachines`), NIC (`networkInterfaces`), NSG (`networkSecurityGroups`) |
+| `src/tags.ts` | — | Default tags |
+
+## Prerequisites
+
+- [ ] [Node.js](https://nodejs.org/) >= 22 (Bun also works)
+- [ ] [Azure CLI](https://learn.microsoft.com/en-us/cli/azure/install-azure-cli) (`az`)
+- [ ] An Azure subscription
+- [ ] A resource group (`az group create --name $RESOURCE_GROUP --location eastus`)
+
+**Local verification** (build, lint) requires only Node.js — no Azure account needed.
+
+## Local verification
 
 ```bash
-bun run build
+npx chant build src --lexicon azure -o template.json
+npx chant lint src
 ```
 
-## What It Does
+## Deploy
 
-The stack creates 7 ARM resources:
-
-- **Virtual Network** — `10.0.0.0/16` address space with two subnets
-- **Subnet 1** — `10.0.1.0/24`, associated with NSG and Route Table
-- **Subnet 2** — `10.0.2.0/24`, associated with NSG and Route Table
-- **VNet NSG** — Network Security Group for subnet-level traffic control
-- **Route Table** — UDR table attached to both subnets
-- **VM NSG** — Network Security Group with SSH (port 22) inbound rule
-- **NIC** — Network Interface placed in subnet-1
-- **Virtual Machine** — Ubuntu 22.04 LTS Linux VM with SSH key auth
-
-## Project Structure
-
-```
-src/
-├── main.ts       # VnetDefault + VmLinux composite instantiation
-└── tags.ts       # Project-wide default tags
+```bash
+az deployment group create --resource-group "$RESOURCE_GROUP" --template-file template.json
 ```
 
-## Patterns Demonstrated
+## Verify
 
-1. **Composite composition** — `VnetDefault` creates the network layer, `VmLinux` adds a VM that references a subnet
-2. **Cross-resource references** — `ResourceId` intrinsic links the VM's NIC to the VNet subnet
-3. **Pseudo-parameters** — `Azure.ResourceGroupLocation` ensures all resources deploy to the same region
+```bash
+az vm show --name example-vm --resource-group "$RESOURCE_GROUP" --query provisioningState
+```
+
+## Teardown
+
+```bash
+az group delete --name "$RESOURCE_GROUP" --yes
+```
+
+Deletes the resource group and all resources within it.
+
+## Related examples
+
+- [aks-cluster](../aks-cluster/) — AKS with container registry and virtual network
+- [private-endpoint](../private-endpoint/) — Private networking for Azure services
+- [basic-storage](../basic-storage/) — Minimal single-resource example

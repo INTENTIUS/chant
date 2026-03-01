@@ -1,6 +1,6 @@
-# Basic Storage
+# Redis Cache
 
-Minimal example — a single Storage Account with security hardening, built using the `StorageAccountSecure` composite.
+An Azure Cache for Redis instance — built using the `RedisCache` composite.
 
 ## Skills
 
@@ -15,7 +15,7 @@ The lexicon packages ship skills for agent-guided deployment. After `chant init 
 > **Using Claude Code?** Just ask:
 >
 > ```
-> Deploy the basic-storage example to my Azure resource group.
+> Deploy the redis-cache example to my Azure resource group.
 > ```
 
 ## What this produces
@@ -26,8 +26,8 @@ The lexicon packages ship skills for agent-guided deployment. After `chant init 
 
 | File | Composite | Resources |
 |------|-----------|-----------|
-| `src/main.ts` | `StorageAccountSecure` | Storage Account (`storageAccounts`) |
-| `src/tags.ts` | — | Default tags |
+| `src/main.ts` | `RedisCache` | Cache/redis |
+| `src/tags.ts` | *(default tags)* | — |
 
 ## Prerequisites
 
@@ -54,7 +54,7 @@ az deployment group create --resource-group "$RESOURCE_GROUP" --template-file te
 ## Verify
 
 ```bash
-az storage account list --resource-group "$RESOURCE_GROUP" --query "[].name" -o tsv
+az redis show --name chant-redis --resource-group "$RESOURCE_GROUP" --query provisioningState
 ```
 
 ## Teardown
@@ -67,6 +67,6 @@ Deletes the resource group and all resources within it.
 
 ## Related examples
 
-- [multi-resource](../multi-resource/) — Cross-resource references with ARM intrinsics
-- [private-endpoint](../private-endpoint/) — Private networking for Azure services
-- [web-app](../web-app/) — App Service with managed identity
+- [cosmos-db](../cosmos-db/) — Cosmos DB with SQL database and container
+- [service-bus](../service-bus/) — Service Bus namespace with queue
+- [key-vault](../key-vault/) — Secure Key Vault

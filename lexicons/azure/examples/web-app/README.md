@@ -1,32 +1,72 @@
 # Web App
 
-A Chant Azure example that deploys an App Service with a managed identity, built using the `AppService` composite.
+App Service with managed identity, HTTPS-only, and TLS 1.2 — built using the `AppService` composite.
 
-## Quick Start
+## Skills
+
+The lexicon packages ship skills for agent-guided deployment. After `chant init --lexicon azure`, your agent has access to:
+
+| Skill | Package | Purpose |
+|-------|---------|---------|
+| `chant-azure` | `@intentius/chant-lexicon-azure` | Azure ARM lifecycle: build, lint, deploy, rollback, troubleshooting |
+| `chant-azure-security` | `@intentius/chant-lexicon-azure` | Security best practices: managed identity, encryption, network hardening |
+| `chant-azure-patterns` | `@intentius/chant-lexicon-azure` | Advanced patterns: cross-resource references, linked deployments, multi-region |
+
+> **Using Claude Code?** Just ask:
+>
+> ```
+> Deploy the web-app example to my Azure resource group.
+> ```
+
+## What this produces
+
+- **Azure** (`template.json`): 2 ARM resources across 2 source files
+
+## Source files
+
+| File | Composite | Resources |
+|------|-----------|-----------|
+| `src/main.ts` | `AppService` | App Service Plan (`serverfarms`), Web App (`sites`) |
+| `src/tags.ts` | — | Default tags |
+
+## Prerequisites
+
+- [ ] [Node.js](https://nodejs.org/) >= 22 (Bun also works)
+- [ ] [Azure CLI](https://learn.microsoft.com/en-us/cli/azure/install-azure-cli) (`az`)
+- [ ] An Azure subscription
+- [ ] A resource group (`az group create --name $RESOURCE_GROUP --location eastus`)
+
+**Local verification** (build, lint) requires only Node.js — no Azure account needed.
+
+## Local verification
 
 ```bash
-bun run build
+npx chant build src --lexicon azure -o template.json
+npx chant lint src
 ```
 
-## What It Does
+## Deploy
 
-The stack creates 2 ARM resources:
-
-- **App Service Plan** — Linux plan with B1 SKU (reserved for Linux workloads)
-- **Web App** — Node.js 18 LTS site with SystemAssigned managed identity, HTTPS-only, TLS 1.2, FTPS disabled, Always On, and HTTP/2 enabled
-
-`AppService` combines the plan and web app into a single composite with production-ready defaults including managed identity for secure access to other Azure services.
-
-## Project Structure
-
-```
-src/
-├── main.ts       # AppService composite instantiation
-└── tags.ts       # Project-wide default tags
+```bash
+az deployment group create --resource-group "$RESOURCE_GROUP" --template-file template.json
 ```
 
-## Patterns Demonstrated
+## Verify
 
-1. **Managed identity** — `SystemAssigned` identity is enabled by default, allowing the app to authenticate to Azure services without credentials
-2. **Secure defaults** — HTTPS-only, TLS 1.2 minimum, FTPS disabled out of the box
-3. **Pseudo-parameters** — `Azure.ResourceGroupLocation` deploys the app to the resource group's region
+```bash
+az webapp show --name chant-web-app --resource-group "$RESOURCE_GROUP"
+```
+
+## Teardown
+
+```bash
+az group delete --name "$RESOURCE_GROUP" --yes
+```
+
+Deletes the resource group and all resources within it.
+
+## Related examples
+
+- [basic-storage](../basic-storage/) — Minimal single-resource example
+- [multi-resource](../multi-resource/) — Cross-resource references with ARM intrinsics
+- [function-app](../function-app/) — Serverless Functions on Azure

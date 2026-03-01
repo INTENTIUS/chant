@@ -1,39 +1,73 @@
 # Multi-Resource
 
-A Chant Azure example demonstrating cross-resource references using ARM intrinsic functions — `ResourceId`, `Reference`, `ListKeys`, `Concat`, and `UniqueString`.
+Cross-resource references using ARM intrinsics — `ResourceId`, `Reference`, `ListKeys`, `Concat`, and `UniqueString` — with `StorageAccountSecure` and `AppService` composites.
 
-## Quick Start
+## Skills
+
+The lexicon packages ship skills for agent-guided deployment. After `chant init --lexicon azure`, your agent has access to:
+
+| Skill | Package | Purpose |
+|-------|---------|---------|
+| `chant-azure` | `@intentius/chant-lexicon-azure` | Azure ARM lifecycle: build, lint, deploy, rollback, troubleshooting |
+| `chant-azure-security` | `@intentius/chant-lexicon-azure` | Security best practices: managed identity, encryption, network hardening |
+| `chant-azure-patterns` | `@intentius/chant-lexicon-azure` | Advanced patterns: cross-resource references, linked deployments, multi-region |
+
+> **Using Claude Code?** Just ask:
+>
+> ```
+> Deploy the multi-resource example to my Azure resource group.
+> ```
+
+## What this produces
+
+- **Azure** (`template.json`): 3 ARM resources across 2 source files
+
+## Source files
+
+| File | Composite | Resources |
+|------|-----------|-----------|
+| `src/main.ts` | `StorageAccountSecure` | Storage Account (`storageAccounts`) |
+| `src/main.ts` | `AppService` | App Service Plan (`serverfarms`), Web App (`sites`) |
+| `src/tags.ts` | — | Default tags |
+
+## Prerequisites
+
+- [ ] [Node.js](https://nodejs.org/) >= 22 (Bun also works)
+- [ ] [Azure CLI](https://learn.microsoft.com/en-us/cli/azure/install-azure-cli) (`az`)
+- [ ] An Azure subscription
+- [ ] A resource group (`az group create --name $RESOURCE_GROUP --location eastus`)
+
+**Local verification** (build, lint) requires only Node.js — no Azure account needed.
+
+## Local verification
 
 ```bash
-bun run build
+npx chant build src --lexicon azure -o template.json
+npx chant lint src
 ```
 
-## What It Does
+## Deploy
 
-The stack creates 3 ARM resources:
-
-- **Storage Account** — Secure storage with a dynamically generated unique name
-- **App Service Plan** — Linux plan with B1 SKU
-- **Web App** — Node.js 18 LTS site with managed identity
-
-It also demonstrates how to wire resources together using ARM intrinsic functions:
-
-- `ResourceId` generates the full resource ID for the storage account
-- `Reference` retrieves the runtime state of the storage account
-- `ListKeys` fetches the storage account's access keys
-- `Concat` + `UniqueString` creates a globally unique storage name
-
-## Project Structure
-
-```
-src/
-├── main.ts       # Multiple composites with cross-resource intrinsic references
-└── tags.ts       # Project-wide default tags
+```bash
+az deployment group create --resource-group "$RESOURCE_GROUP" --template-file template.json
 ```
 
-## Patterns Demonstrated
+## Verify
 
-1. **Cross-resource references** — `ResourceId` and `Reference` link the web app to the storage account at deployment time
-2. **Access key retrieval** — `ListKeys` fetches storage keys for connection string construction
-3. **Unique naming** — `Concat` + `UniqueString` ensures globally unique resource names derived from the resource group ID
-4. **Multi-composite stacks** — Combining `StorageAccountSecure` and `AppService` in a single deployment
+```bash
+az resource list --resource-group "$RESOURCE_GROUP" --query "[].{name:name, type:type}" -o table
+```
+
+## Teardown
+
+```bash
+az group delete --name "$RESOURCE_GROUP" --yes
+```
+
+Deletes the resource group and all resources within it.
+
+## Related examples
+
+- [web-app](../web-app/) — App Service with managed identity
+- [basic-storage](../basic-storage/) — Minimal single-resource example
+- [private-endpoint](../private-endpoint/) — Private networking for Azure services
