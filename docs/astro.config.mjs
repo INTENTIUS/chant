@@ -141,6 +141,7 @@ export default defineConfig({
 					badge: { text: 'Core Dev', variant: 'note' },
 					items: [
 						{ label: 'Development Setup', slug: 'contributing/development' },
+					{ label: 'E2E Testing', slug: 'contributing/e2e-testing' },
 						{ label: 'Architecture Overview', slug: 'architecture/overview' },
 						{ label: 'Core Type System', slug: 'architecture/core-type-system' },
 						{ label: 'File Discovery', slug: 'architecture/discovery' },

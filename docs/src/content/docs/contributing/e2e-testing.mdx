@@ -1,0 +1,108 @@
+---
+title: E2E Testing
+description: End-to-end smoke tests that deploy, verify, and tear down real infrastructure
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+The E2E smoke tests deploy every root example to real cloud infrastructure, verify it works, and tear everything down. They run inside Docker so the host machine only needs Docker itself.
+
+## Architecture
+
+```
+smoke.sh  ─────►  docker build (Dockerfile.smoke-e2e)  ─────►  docker run
+                       │                                           │
+                       ├─ Stage 1: bun builds tarballs             └─ e2e-smoke.sh [aws|eks|all]
+                       └─ Stage 2: node:22-slim + deploy tools
+```
+
+**Stage 1** packs `@intentius/chant` and each lexicon into `.tgz` tarballs (same as the npm smoke test).
+
+**Stage 2** installs deploy tools (AWS CLI, kubectl, Flyway CLI, tsx) and copies tarballs + example source. The actual tests run at `docker run` time via `e2e-smoke.sh`.
+
+## Test groups
+
+### `aws` — AWS/GitLab CI examples
+
+Builds all four AWS/GitLab examples and optionally pushes them through a full GitLab CI pipeline:
+
+| Example | What it tests |
+|---------|---------------|
+| `gitlab-aws-alb-infra` | Shared ALB + VPC + ECS cluster via CloudFormation |
+| `gitlab-aws-alb-api` | Fargate API service behind ALB |
+| `gitlab-aws-alb-ui` | Fargate UI service behind ALB |
+| `flyway-postgresql-gitlab-aws-rds` | RDS instance + Flyway migration via GitLab CI |
+
+**Build-only** always runs (verifies `chant build` + `npm install` from tarball). **Pipeline deploy** runs only when `GITLAB_TOKEN` is set — it creates a temporary GitLab project, pushes, waits for the pipeline, and verifies the CF stack.
+
+### `eks` — EKS Kubernetes example
+
+| Example | What it tests |
+|---------|---------------|
+| `k8s-eks-microservice` | Full EKS cluster: CF stack → kubectl apply → pod rollout → teardown |
+
+This is the slowest test (~20 minutes for CF stack creation). It runs `npm run deploy` (which chains build → deploy-infra → configure-kubectl → apply → wait) then verifies pods are running before tearing down.
+
+## Required environment variables
+
+| Variable | Group | Required | Description |
+|----------|-------|----------|-------------|
+| `AWS_ACCESS_KEY_ID` | both | Yes* | AWS credentials |
+| `AWS_SECRET_ACCESS_KEY` | both | Yes* | AWS credentials |
+| `AWS_DEFAULT_REGION` | both | No | Defaults to `us-east-2` |
+| `GITLAB_TOKEN` | aws | No | Enables pipeline deploy (build-only without it) |
+| `GITLAB_GROUP` | aws | If token set | GitLab group for temporary projects |
+| `GITLAB_URL` | aws | No | Defaults to `https://gitlab.com` |
+| `EKS_DOMAIN` | eks | No | Defaults to `api.eks-microservice-demo.dev` |
+
+\* Or mount `~/.aws` — the Docker container checks both.
+
+## Running
+
+```bash
+# Individual groups
+./test/smoke.sh e2e-aws
+./test/smoke.sh e2e-eks
+
+# All E2E tests
+./test/smoke.sh e2e-all
+```
+
+Or via justfile:
+
+```bash
+just smoke-e2e-aws
+just smoke-e2e-eks
+just smoke-e2e
+```
+
+<Aside type="note">
+The image is always built as `linux/amd64` because Flyway CLI has no ARM build. On Apple Silicon this runs under Rosetta transparently.
+</Aside>
+
+## Cleanup
+
+Every test registers its resources (CF stacks, GitLab projects, SSM parameters) in global arrays **before** creation. A `trap EXIT` handler runs `cleanup_all()` which tears down everything in reverse order, even if the test crashes mid-create.
+
+| Resource type | Cleanup method |
+|---------------|----------------|
+| EKS example | Runs the example's own `scripts/teardown.sh` |
+| CloudFormation stacks | `aws cloudformation delete-stack` (reverse order, then waits) |
+| SSM parameters | `aws ssm delete-parameter` |
+| GitLab projects | `DELETE /api/v4/projects/:id` |
+
+## Files
+
+| File | Purpose |
+|------|---------|
+| `test/smoke.sh` | Host-side entrypoint, builds Docker image and runs container |
+| `test/Dockerfile.smoke-e2e` | Two-stage Dockerfile: bun builder → node runner with deploy tools |
+| `test/e2e-smoke.sh` | Test harness that runs inside the container |
+
+## Adding a new E2E test
+
+1. Create a root example in `examples/<name>/` with working `npm run build` and `npm run deploy` scripts
+2. Add a test function in `test/e2e-smoke.sh` (follow `test_gitlab_example` or `test_k8s_eks_microservice` patterns)
+3. Register any cloud resources for cleanup **before** creating them
+4. Wire the function into the appropriate `run_*_group()` function
+5. If the example needs new tarballs, add the `bun pm pack` line in `Dockerfile.smoke-e2e`
