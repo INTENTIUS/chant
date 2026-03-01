@@ -48,7 +48,7 @@ Deploy the k8s-eks-microservice example to AWS. My domain is myapp.example.com.
 Your agent will use the `chant-eks` skill to walk through:
 
 1. **Build** — `npm run build` generates both CloudFormation and K8s outputs
-2. **Deploy infrastructure** — `DOMAIN=myapp.example.com npm run deploy-infra` creates 34 CF resources (VPC, EKS cluster, node group, IAM roles, add-ons, Route53 hosted zone)
+2. **Deploy infrastructure** — `DOMAIN=myapp.example.com npm run deploy-infra` creates 35 CF resources (VPC, EKS cluster, node group, IAM roles, add-ons, Route53 hosted zone)
 3. **Configure kubectl** — `npm run configure-kubectl` sets up kubeconfig
 4. **Load outputs** — `npm run load-outputs` populates `.env` with real ARNs from stack outputs, and prints Route53 nameservers for NS delegation
 5. **NS delegation** — update your domain registrar's NS records to the Route53 nameservers shown in the output
@@ -195,7 +195,7 @@ Patterns to add next:
 
 ## Resource counts
 
-- **34 CloudFormation resources**: 17 VPC + 1 cluster + 1 nodegroup + 1 OIDC + 8 IAM roles + 4 addons + 1 KMS key + 1 Route53 hosted zone
+- **35 CloudFormation resources**: 17 VPC + 1 cluster + 1 nodegroup + 1 OIDC + 8 IAM roles + 1 IAM policy + 4 addons + 1 KMS key + 1 Route53 hosted zone
 - **36 Kubernetes resources**: across 5 source files (namespace, app, ingress, storage, observability)
 
 ## Cross-lexicon value flow
