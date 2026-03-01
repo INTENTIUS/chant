@@ -43,7 +43,7 @@ Each `chant build --lexicon <name>` invocation selects only the resources belong
 
 ## Prerequisites
 
-- [ ] [Bun](https://bun.sh)
+- [ ] [Node.js](https://nodejs.org/) >= 22 (Bun also works)
 - [ ] [AWS CLI](https://docs.aws.amazon.com/cli/latest/userguide/getting-started-install.html) >= 2.x
 - [ ] AWS account with CloudFormation, EC2 (VPC), RDS, SSM permissions
 - [ ] GitLab project with CI/CD enabled
@@ -56,13 +56,15 @@ Each `chant build --lexicon <name>` invocation selects only the resources belong
 | `AWS_SECRET_ACCESS_KEY` | IAM secret key | Yes |
 | `AWS_DEFAULT_REGION` | AWS region (e.g. `us-east-1`) | No |
 
-**Local verification** (build, lint, test) requires only Bun — no AWS account needed.
+**Local verification** (build, lint, test) requires only Node.js — no AWS account needed.
 
 ## Local verification
 
 ```bash
-bun run build
-bun run lint
+npx chant build src --lexicon aws -o templates/template.json
+npx chant build src --lexicon flyway -o flyway.toml
+npx chant build src --lexicon gitlab -o .gitlab-ci.yml
+npx chant lint src
 ```
 
 ## Deploy
@@ -77,7 +79,9 @@ bun run lint
 2. **Build all outputs**:
 
    ```bash
-   bun run build
+   npx chant build src --lexicon aws -o templates/template.json
+   npx chant build src --lexicon flyway -o flyway.toml
+   npx chant build src --lexicon gitlab -o .gitlab-ci.yml
    ```
 
 3. **Push to GitLab**:

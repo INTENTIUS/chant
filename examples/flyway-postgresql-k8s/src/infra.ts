@@ -14,6 +14,7 @@ import {
   StatefulSet,
   Service,
   StatefulApp,
+  Secret,
 } from "@intentius/chant-lexicon-k8s";
 
 import {
@@ -25,6 +26,17 @@ import {
 // Namespace for all PostgreSQL resources
 export const namespace = new Namespace({
   metadata: { name: "flyway-pg" },
+});
+
+// Secret for PostgreSQL credentials
+export const pgSecret = new Secret({
+  metadata: {
+    name: "postgres-credentials",
+    namespace: "flyway-pg",
+  },
+  stringData: {
+    "POSTGRES_PASSWORD": "postgres",
+  },
 });
 
 // StatefulApp composite → StatefulSet + headless Service
@@ -39,7 +51,12 @@ const pg = StatefulApp({
   env: [
     { name: "POSTGRES_DB", value: "app" },
     { name: "POSTGRES_USER", value: "postgres" },
-    { name: "POSTGRES_PASSWORD", value: "postgres" },
+    {
+      name: "POSTGRES_PASSWORD",
+      valueFrom: {
+        secretKeyRef: { name: "postgres-credentials", key: "POSTGRES_PASSWORD" },
+      },
+    },
   ],
 });
 

@@ -52,7 +52,7 @@ The infra stack exports these values for the api and ui service stacks:
 
 ## Prerequisites
 
-- [ ] [Bun](https://bun.sh)
+- [ ] [Node.js](https://nodejs.org/) >= 22 (Bun also works)
 - [ ] [AWS CLI](https://docs.aws.amazon.com/cli/latest/userguide/getting-started-install.html) >= 2.x
 - [ ] AWS account with CloudFormation, ECS, ECR, VPC, ELB permissions
 - [ ] GitLab project with CI/CD enabled
@@ -65,12 +65,13 @@ The infra stack exports these values for the api and ui service stacks:
 | `AWS_SECRET_ACCESS_KEY` | IAM secret key | Yes |
 | `AWS_DEFAULT_REGION` | AWS region (e.g. `us-east-1`) | No |
 
-**Local verification** (build, lint, test) requires only Bun — no AWS account needed.
+**Local verification** (build, lint, test) requires only Node.js — no AWS account needed.
 
 ## Local verification
 
 ```bash
-bun run build
+npx chant build src --lexicon aws -o templates/template.json
+npx chant build src --lexicon gitlab -o .gitlab-ci.yml
 ```
 
 ## Deploy
@@ -78,8 +79,8 @@ bun run build
 1. **Build both outputs**:
 
    ```bash
-   bun run build:aws
-   bun run build:gitlab
+   npx chant build src --lexicon aws -o templates/template.json
+   npx chant build src --lexicon gitlab -o .gitlab-ci.yml
    ```
 
 2. **Push to GitLab** — commit `templates/template.json` and `.gitlab-ci.yml`:

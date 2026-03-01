@@ -178,6 +178,96 @@ export const svc = new Service({
 });'
 
 
+# ── Test group 3: Real examples (build from example src directories) ──────────
+
+test_example() {
+  local name="$1"       # e.g. "flyway-postgresql-k8s"
+  local label="$RUNTIME-example-$name"
+  shift                 # remaining args: pairs of "tarball lexicon" ...
+
+  echo ""
+  echo "=== Test: $label ==="
+
+  local dir="/tmp/test-$label"
+  rm -rf "$dir"
+  mkdir -p "$dir"
+  cd "$dir"
+
+  pkg_init
+
+  # Install core + all required lexicon tarballs
+  local install_args=(/tarballs/core.tgz)
+  local lexicons=()
+  while [ $# -ge 2 ]; do
+    install_args+=("$1")
+    lexicons+=("$2")
+    shift 2
+  done
+  pkg_install "${install_args[@]}"
+
+  # Copy example source files
+  cp -r "/examples/$name/src" src/
+
+  # Copy .env.example if it exists (needed by k8s-eks-microservice)
+  if [ -f "/examples/$name/.env.example" ]; then
+    cp "/examples/$name/.env.example" .env
+  fi
+
+  # Build for each lexicon
+  for lex in "${lexicons[@]}"; do
+    if pkg_run chant build src --lexicon "$lex" 2>&1; then
+      pass "$label: chant build --lexicon $lex"
+    else
+      fail "$label: chant build --lexicon $lex"
+    fi
+  done
+
+  # Lint
+  if pkg_run chant lint src 2>&1; then
+    pass "$label: chant lint"
+  else
+    fail "$label: chant lint"
+  fi
+}
+
+# Only run example tests if /examples directory exists (copied into Docker)
+if [ -d /examples ]; then
+  test_example "gitlab-aws-alb-infra" \
+    /tarballs/lexicon-aws.tgz aws \
+    /tarballs/lexicon-gitlab.tgz gitlab
+
+  test_example "gitlab-aws-alb-api" \
+    /tarballs/lexicon-aws.tgz aws \
+    /tarballs/lexicon-gitlab.tgz gitlab
+
+  test_example "gitlab-aws-alb-ui" \
+    /tarballs/lexicon-aws.tgz aws \
+    /tarballs/lexicon-gitlab.tgz gitlab
+
+  test_example "flyway-postgresql-gitlab-aws-rds" \
+    /tarballs/lexicon-aws.tgz aws \
+    /tarballs/lexicon-flyway.tgz flyway \
+    /tarballs/lexicon-gitlab.tgz gitlab
+
+  test_example "flyway-postgresql-k8s" \
+    /tarballs/lexicon-k8s.tgz k8s \
+    /tarballs/lexicon-flyway.tgz flyway
+
+  test_example "k8s-batch-workers" \
+    /tarballs/lexicon-k8s.tgz k8s
+
+  test_example "k8s-web-platform" \
+    /tarballs/lexicon-k8s.tgz k8s
+
+  test_example "k8s-eks-microservice" \
+    /tarballs/lexicon-aws.tgz aws \
+    /tarballs/lexicon-k8s.tgz k8s
+else
+  echo ""
+  echo "=== Skipping example tests (/examples not found) ==="
+fi
+
+
 # ── Results ───────────────────────────────────────────────────────────────────
 
 echo ""

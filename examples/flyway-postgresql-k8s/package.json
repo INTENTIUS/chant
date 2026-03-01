@@ -12,7 +12,7 @@
     "wait": "kubectl -n flyway-pg rollout status statefulset/postgres --timeout=120s",
     "migrate": "flyway migrate -environment=local",
     "info": "flyway info -environment=local",
-    "run": "bun run cluster-create && bun run build && bun run apply && bun run wait && bun run migrate",
+    "run": "npm run cluster-create && npm run build && npm run apply && npm run wait && npm run migrate",
     "teardown": "k3d cluster delete flyway-pg"
   },
   "dependencies": {

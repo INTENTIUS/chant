@@ -37,62 +37,56 @@ The `src/infra.ts` file imports resources from both `@intentius/chant-lexicon-k8
 
 ## Prerequisites
 
-- [ ] [Bun](https://bun.sh)
+- [ ] [Node.js](https://nodejs.org/) >= 22 (Bun also works)
 - [ ] [Docker](https://docs.docker.com/get-docker/)
 - [ ] [k3d](https://k3d.io/) (lightweight k3s in Docker)
 - [ ] [kubectl](https://kubernetes.io/docs/tasks/tools/)
 - [ ] [Flyway CLI](https://documentation.red-gate.com/flyway/flyway-cli-and-api/download-and-installation)
 
-**Local verification** (build, lint, test) requires only Bun — no cluster or Docker needed.
+**Local verification** (build, lint, test) requires only Node.js — no cluster or Docker needed.
 
 ## Local verification
 
 ```bash
-bun run build
-bun run lint
+npx chant build src --lexicon k8s -o k8s.yaml
+npx chant build src --lexicon flyway -o flyway.toml
+npx chant lint src
 ```
 
 ## Deploy
-
-### Automated (one command)
-
-```bash
-bun run run
-```
-
-This runs the full workflow: create cluster → build → deploy PostgreSQL → wait for readiness → run migrations.
 
 ### Step by step
 
 1. **Create a k3d cluster** — port 30432 is mapped from the host so Flyway can reach PostgreSQL without `kubectl port-forward`:
 
    ```bash
-   bun run cluster-create
+   k3d cluster create flyway-pg -p '30432:30432@server:0' --wait
    ```
 
 2. **Build** — generates `k8s.yaml` (K8s manifests) and `flyway.toml` (Flyway config):
 
    ```bash
-   bun run build
+   npx chant build src --lexicon k8s -o k8s.yaml
+   npx chant build src --lexicon flyway -o flyway.toml
    ```
 
 3. **Deploy PostgreSQL** — applies K8s manifests and waits for the StatefulSet:
 
    ```bash
-   bun run apply
-   bun run wait
+   kubectl apply -f k8s.yaml
+   kubectl -n flyway-pg rollout status statefulset/postgres --timeout=120s
    ```
 
 4. **Run migrations** — executes V1–V3 against the database via the NodePort:
 
    ```bash
-   bun run migrate
+   flyway migrate -environment=local
    ```
 
 ## Verify
 
 ```bash
-bun run info                                    # Flyway migration history
+flyway info -environment=local                  # Flyway migration history
 kubectl get pods -n flyway-pg                   # Pod status
 kubectl get svc -n flyway-pg                    # Services (headless + NodePort)
 kubectl -n flyway-pg exec -it postgres-0 -- psql -U postgres -d app -c '\dt'  # Tables
@@ -101,7 +95,7 @@ kubectl -n flyway-pg exec -it postgres-0 -- psql -U postgres -d app -c '\dt'  # 
 ## Teardown
 
 ```bash
-bun run teardown
+k3d cluster delete flyway-pg
 ```
 
 Deletes the k3d cluster and all resources.

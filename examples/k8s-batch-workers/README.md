@@ -46,52 +46,46 @@ This example showcases 5 composites for different workload patterns:
 
 ## Prerequisites
 
-- [ ] [Bun](https://bun.sh)
+- [ ] [Node.js](https://nodejs.org/) >= 22 (Bun also works)
 - [ ] [kubectl](https://kubernetes.io/docs/tasks/tools/)
 - [ ] A Kubernetes cluster (k3d, kind, minikube, or any existing cluster)
 
-**Local verification** (build, lint, test) requires only Bun — no cluster needed.
+**Local verification** (build, lint, test) requires only Node.js — no cluster needed.
 
 ## Local verification
 
 ```bash
-bun run build
-bun run lint
+npx chant build src --lexicon k8s -o k8s.yaml
+npx chant lint src
 ```
 
 ## Deploy
-
-```bash
-bun run deploy
-```
-
-This runs: build → apply → wait → status.
 
 ### Step by step
 
 1. **Build** — generates `k8s.yaml` with all 23 resources:
 
    ```bash
-   bun run build
+   npx chant build src --lexicon k8s -o k8s.yaml
    ```
 
 2. **Apply** — deploys to the current kubectl context:
 
    ```bash
-   bun run apply
+   kubectl apply -f k8s.yaml
    ```
 
 3. **Wait** — waits for the queue-worker deployment to roll out:
 
    ```bash
-   bun run wait
+   kubectl -n batch-workers rollout status deployment/queue-worker --timeout=120s
    ```
 
 ## Verify
 
 ```bash
-bun run status                                  # Pod listing
-bun run logs                                    # Queue worker logs
+kubectl get pods -n batch-workers               # Pod listing
+kubectl logs -n batch-workers -l app.kubernetes.io/name=queue-worker --tail=50  # Queue worker logs
 kubectl get cronjob -n batch-workers            # Scheduled jobs
 kubectl get job -n batch-workers                # One-shot jobs
 kubectl get daemonset -n batch-workers          # Log collector
@@ -101,7 +95,7 @@ kubectl get hpa -n batch-workers                # Autoscaler status
 ## Teardown
 
 ```bash
-bun run teardown
+kubectl delete -f k8s.yaml
 ```
 
 Deletes all resources created by `kubectl apply`.

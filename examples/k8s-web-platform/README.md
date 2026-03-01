@@ -46,20 +46,20 @@ This example showcases 5 composites for web-facing workload patterns:
 
 ## Prerequisites
 
-- [ ] [Bun](https://bun.sh)
+- [ ] [Node.js](https://nodejs.org/) >= 22 (Bun also works)
 - [ ] [kubectl](https://kubernetes.io/docs/tasks/tools/)
 - [ ] A Kubernetes cluster with:
   - [cert-manager](https://cert-manager.io/) installed (for TLS)
   - [nginx ingress controller](https://kubernetes.github.io/ingress-nginx/) (for Ingress class)
   - [AWS EFS CSI driver](https://github.com/kubernetes-sigs/aws-efs-csi-driver) (for EfsStorageClass)
 
-**Local verification** (build, lint, test) requires only Bun — no cluster or add-ons needed.
+**Local verification** (build, lint, test) requires only Node.js — no cluster or add-ons needed.
 
 ## Local verification
 
 ```bash
-bun run build
-bun run lint
+npx chant build src --lexicon k8s -o k8s.yaml
+npx chant lint src
 ```
 
 ## Deploy
@@ -70,37 +70,31 @@ bun run lint
 > kubectl -n ingress-nginx rollout status deployment/ingress-nginx-controller --timeout=120s
 > ```
 
-```bash
-bun run deploy
-```
-
-This runs: build → apply → wait → status.
-
 ### Step by step
 
 1. **Build** — generates `k8s.yaml` with all 11 resources:
 
    ```bash
-   bun run build
+   npx chant build src --lexicon k8s -o k8s.yaml
    ```
 
 2. **Apply** — deploys to the current kubectl context:
 
    ```bash
-   bun run apply
+   kubectl apply -f k8s.yaml
    ```
 
 3. **Wait** — waits for the frontend deployment to roll out:
 
    ```bash
-   bun run wait
+   kubectl -n web-platform rollout status deployment/frontend --timeout=120s
    ```
 
 ## Verify
 
 ```bash
-bun run status                                  # Pod listing
-bun run logs                                    # Frontend logs
+kubectl get pods -n web-platform                # Pod listing
+kubectl logs -n web-platform -l app.kubernetes.io/name=frontend --tail=50  # Frontend logs
 kubectl get ingress -n web-platform             # Ingress status and address
 kubectl get certificate -n web-platform         # TLS certificate status
 kubectl get networkpolicy -n web-platform       # Network policies
@@ -110,7 +104,7 @@ kubectl get storageclass efs-shared             # StorageClass
 ## Teardown
 
 ```bash
-bun run teardown
+kubectl delete -f k8s.yaml
 ```
 
 Deletes all resources created by `kubectl apply`.

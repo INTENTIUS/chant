@@ -12,6 +12,7 @@ aws ssm put-parameter \
   --name "$SSM_PATH" \
   --type SecureString \
   --value "$PASSWORD" \
-  --overwrite
+  --overwrite \
+  --region us-east-1
 
 echo "Done. Password stored in SSM (not echoed)."

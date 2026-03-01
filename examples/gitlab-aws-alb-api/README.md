@@ -41,7 +41,7 @@ The lexicon packages ship skills for agent-guided deployment. After `chant init 
 
 ## Prerequisites
 
-- [ ] [Bun](https://bun.sh)
+- [ ] [Node.js](https://nodejs.org/) >= 22 (Bun also works)
 - [ ] `shared-alb` infra stack deployed (see [gitlab-aws-alb-infra](../gitlab-aws-alb-infra/))
 - [ ] AWS account with ECS, ECR, CloudFormation permissions
 - [ ] GitLab project with Docker-in-Docker runner
@@ -55,12 +55,13 @@ The lexicon packages ship skills for agent-guided deployment. After `chant init 
 | `AWS_DEFAULT_REGION` | AWS region (e.g. `us-east-1`) | No |
 | `AWS_ACCOUNT_ID` | AWS account ID (for ECR URL) | No |
 
-**Local verification** (build, lint, test) requires only Bun — no AWS account needed.
+**Local verification** (build, lint, test) requires only Node.js — no AWS account needed.
 
 ## Local verification
 
 ```bash
-bun run build
+npx chant build src --lexicon aws -o templates/template.json
+npx chant build src --lexicon gitlab -o .gitlab-ci.yml
 ```
 
 ## Deploy
@@ -68,8 +69,8 @@ bun run build
 1. **Build both outputs**:
 
    ```bash
-   bun run build:aws
-   bun run build:gitlab
+   npx chant build src --lexicon aws -o templates/template.json
+   npx chant build src --lexicon gitlab -o .gitlab-ci.yml
    ```
 
 2. **Add your app** — add a `Dockerfile` and application code. The `build-image` job runs `docker build .` from the repo root. Your app must listen on **port 8080** and serve a health check endpoint at **`/api/get`** (the ALB target group uses this path).

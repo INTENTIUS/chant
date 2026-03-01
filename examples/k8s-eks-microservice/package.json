@@ -17,7 +17,7 @@
     "status": "kubectl get pods -n microservice && kubectl get ingress -n microservice && kubectl get daemonsets -n amazon-cloudwatch && kubectl get daemonsets -n amazon-metrics",
     "logs": "kubectl logs -n microservice -l app.kubernetes.io/name=microservice-api --tail=50",
     "deploy-cert": "bash scripts/deploy-cert.sh",
-    "deploy": "bun run build && bun run deploy-infra && bun run configure-kubectl && bun run load-outputs && bun run build:k8s && bun run apply && bun run wait && bun run status",
+    "deploy": "npm run build && npm run deploy-infra && npm run configure-kubectl && npm run load-outputs && npm run build:k8s && npm run apply && npm run wait && npm run status",
     "teardown": "bash scripts/teardown.sh"
   },
   "dependencies": {

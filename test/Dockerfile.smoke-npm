@@ -70,6 +70,9 @@ RUN npm install -g tsx
 # Copy tarballs from builder
 COPY --from=builder /tarballs /tarballs
 
+# Copy example source directories for validation
+COPY --from=builder /app/examples /examples
+
 # Copy and run the test script — RUN so build fails if tests fail
 COPY test/npm-smoke.sh /npm-smoke.sh
 RUN chmod +x /npm-smoke.sh
@@ -89,6 +92,9 @@ ENV PATH="/root/.bun/bin:$PATH"
 
 # Copy tarballs from builder
 COPY --from=builder /tarballs /tarballs
+
+# Copy example source directories for validation
+COPY --from=builder /app/examples /examples
 
 # Force stage 2 to run by depending on its output
 COPY --from=test-node /test-node-ok /test-node-ok
