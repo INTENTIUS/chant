@@ -11,8 +11,8 @@
     "lint": "chant lint src"
   },
   "dependencies": {
-    "@intentius/chant": "latest",
-    "@intentius/chant-lexicon-aws": "latest",
-    "@intentius/chant-lexicon-gitlab": "latest"
+    "@intentius/chant": "workspace:*",
+    "@intentius/chant-lexicon-aws": "workspace:*",
+    "@intentius/chant-lexicon-gitlab": "workspace:*"
   }
 }

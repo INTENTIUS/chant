@@ -16,8 +16,8 @@
     "teardown": "k3d cluster delete flyway-pg"
   },
   "dependencies": {
-    "@intentius/chant": "latest",
-    "@intentius/chant-lexicon-k8s": "latest",
-    "@intentius/chant-lexicon-flyway": "latest"
+    "@intentius/chant": "workspace:*",
+    "@intentius/chant-lexicon-k8s": "workspace:*",
+    "@intentius/chant-lexicon-flyway": "workspace:*"
   }
 }
