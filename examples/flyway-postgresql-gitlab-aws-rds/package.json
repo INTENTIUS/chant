@@ -8,6 +8,7 @@
     "build:aws": "chant build src --lexicon aws",
     "build:flyway": "chant build src --lexicon flyway",
     "build:gitlab": "chant build src --lexicon gitlab",
+    "dev": "chant build src --watch",
     "lint": "chant lint src"
   },
   "dependencies": {
