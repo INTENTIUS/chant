@@ -40,4 +40,4 @@ aws route53 change-resource-record-sets --hosted-zone-id "$hosted_zone_id" --cha
 echo "Waiting for certificate validation (this may take a few minutes)..."
 aws acm wait certificate-validated --certificate-arn "$cert_arn"
 echo "Certificate validated! ARN saved to .cert-arn"
-echo "Run 'bun run load-outputs' to update .env, then 'bun run build:k8s && bun run apply'"
+echo "Run 'npm run load-outputs' to update .env, then 'npm run build:k8s && npm run apply'"

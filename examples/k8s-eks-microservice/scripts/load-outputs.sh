@@ -31,5 +31,5 @@ if [ -n "$hosted_zone_id" ]; then
 fi
 if [ -z "$cert_arn" ]; then
   echo ""
-  echo "No ACM certificate yet. After NS delegation, run: bun run deploy-cert"
+  echo "No ACM certificate yet. After NS delegation, run: npm run deploy-cert"
 fi
