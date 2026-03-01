@@ -382,6 +382,9 @@ Smoke tests run inside Docker containers to verify chant works in a clean enviro
 | `just smoke-bun` | `./test/smoke.sh workspace` | Builds `test/Dockerfile.smoke` (Bun workspace), runs `integration.sh` during build, drops into bash |
 | `just smoke-node` | `./test/smoke.sh npm` | Builds `test/Dockerfile.smoke-node` (Node.js + tsx), runs `integration.sh` with `CHANT_RUNTIME=node` |
 | `just smoke-build-examples` | `./test/smoke.sh build-examples` | Builds all root examples inside the Bun smoke container, copies artifacts to `test/example-builds/` |
+| `just smoke-e2e-aws` | `./test/smoke.sh e2e-aws` | Deploys AWS/GitLab examples end-to-end (needs `AWS_*` + `GITLAB_*` env vars) |
+| `just smoke-e2e-eks` | `./test/smoke.sh e2e-eks` | Deploys EKS example end-to-end (needs `AWS_*` + `EKS_DOMAIN`) |
+| `just smoke-e2e` | `./test/smoke.sh e2e-all` | Runs all E2E tests (aws + eks) |
 | `just smoke` | `./test/smoke.sh all` | Runs `smoke-bun` + `smoke-node` |
 
 ### How `build-examples` works
@@ -412,7 +415,9 @@ Each example directory also gets `README.md`, `package.json`, and any deploy scr
 | `test/Dockerfile.smoke-node` | Node.js image, runs `integration.sh` with `CHANT_RUNTIME=node` |
 | `test/integration.sh` | 500+ line test harness: CLI, build, lint, MCP, LSP, init, root examples |
 | `test/build-examples.sh` | Builds all root examples, copies artifacts to `/output` |
-| `test/smoke.sh` | Entrypoint — `workspace`, `npm`, `build-examples`, or `all` |
+| `test/Dockerfile.smoke-e2e` | E2E image with deploy tools (AWS CLI, kubectl, Flyway), runs `e2e-smoke.sh` at container start |
+| `test/e2e-smoke.sh` | E2E test harness: deploys examples, verifies, tears down (runs inside Docker) |
+| `test/smoke.sh` | Entrypoint — `workspace`, `npm`, `build-examples`, `e2e-*`, or `all` |
 
 ## Troubleshooting
 

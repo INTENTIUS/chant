@@ -21,7 +21,6 @@ fail() { echo "  FAIL: $1"; FAIL=$((FAIL + 1)); ERRORS="${ERRORS}\n  - $1"; }
 # ── Global cleanup registry ──────────────────────────────────────────────────
 # Resources registered BEFORE creation so crash mid-create still cleans up.
 
-K3D_CLUSTERS=()                   # k3d cluster names to delete
 GITLAB_PROJECTS_CREATED=()        # GitLab project IDs to delete
 CF_STACKS_CREATED=()              # CF stack names to delete (reverse order)
 SSM_PARAMS_CREATED=()             # SSM parameter paths to delete
@@ -62,12 +61,6 @@ cleanup_all() {
   for project_id in "${GITLAB_PROJECTS_CREATED[@]}"; do
     echo "  Deleting GitLab project: $project_id"
     gitlab_api DELETE "/projects/$project_id" 2>/dev/null || true
-  done
-
-  # k3d clusters
-  for cluster in "${K3D_CLUSTERS[@]}"; do
-    echo "  Deleting k3d cluster: $cluster"
-    k3d cluster delete "$cluster" 2>/dev/null || true
   done
 
   echo "  Cleanup complete"

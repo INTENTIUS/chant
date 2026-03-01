@@ -5,7 +5,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
 
 usage() {
-  echo "Usage: $0 [workspace|npm|build-examples|e2e-k8s|e2e-aws|e2e-eks|e2e-all|all]"
+  echo "Usage: $0 [workspace|npm|build-examples|e2e-aws|e2e-eks|e2e-all|all]"
   echo ""
   echo "  workspace       — Run workspace smoke tests (bun link), keep container up"
   echo "  npm             — Run npm install smoke tests (bun pm pack)"
@@ -13,8 +13,6 @@ usage() {
   echo "  e2e-aws         — Deploy AWS/GitLab examples (needs AWS + GitLab creds)"
   echo "  e2e-eks         — Deploy EKS example (needs AWS creds + domain)"
   echo "  e2e-all         — Run all E2E tests (Docker)"
-  echo "  e2e-local-aws   — Run AWS E2E tests directly on host (no Docker)"
-  echo "  e2e-local-eks   — Run EKS E2E tests directly on host (no Docker)"
   echo "  all             — Run workspace + npm smoke tests"
   exit 1
 }
@@ -84,12 +82,6 @@ run_e2e_all() {
     chant-smoke-e2e all
 }
 
-run_e2e_local() {
-  local group="${1:-all}"
-  echo "Running E2E tests locally (no Docker)..."
-  bash "$SCRIPT_DIR/e2e-smoke.sh" "$group"
-}
-
 run_build_examples() {
   echo "Building smoke image..."
   docker build -f "$SCRIPT_DIR/Dockerfile.smoke" -t chant-smoke-workspace "$PROJECT_DIR"
@@ -127,12 +119,6 @@ case "${1:-workspace}" in
     ;;
   e2e-all)
     run_e2e_all
-    ;;
-  e2e-local-aws)
-    run_e2e_local aws
-    ;;
-  e2e-local-eks)
-    run_e2e_local eks
     ;;
   all)
     run_workspace

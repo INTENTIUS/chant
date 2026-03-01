@@ -1,4 +1,4 @@
-# E2E smoke test — deploys all 8 examples end-to-end
+# E2E smoke test — deploys all 5 examples end-to-end
 # Stage 1: bun builds tarballs (same as Dockerfile.smoke-npm)
 # Stage 2: node:22-slim with deploy tools, runs tests at `docker run` time
 #
@@ -47,7 +47,7 @@ FROM --platform=linux/amd64 node:22-slim
 
 # Install base tools
 RUN apt-get update && apt-get install -y \
-      curl unzip jq git ca-certificates gnupg docker.io \
+      curl unzip jq git ca-certificates gnupg \
     && rm -rf /var/lib/apt/lists/*
 
 # tsx — the chant bin wrapper uses it as fallback runtime
@@ -60,9 +60,6 @@ RUN git config --global user.email "e2e@chant.dev" && \
 # kubectl
 RUN curl -fsSL "https://dl.k8s.io/release/$(curl -fsSL https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl" \
       -o /usr/local/bin/kubectl && chmod +x /usr/local/bin/kubectl
-
-# k3d
-RUN curl -fsSL https://raw.githubusercontent.com/k3d-io/k3d/main/install.sh | bash
 
 # AWS CLI v2
 RUN curl -fsSL "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o /tmp/awscliv2.zip && \
