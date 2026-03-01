@@ -5,6 +5,7 @@
   "private": true,
   "scripts": {
     "build": "chant build src --lexicon gitlab",
+    "lint": "chant lint src",
     "dev": "chant build src --lexicon gitlab --watch",
     "test": "node test.js"
   },

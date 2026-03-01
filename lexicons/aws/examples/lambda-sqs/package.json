@@ -6,7 +6,10 @@
   "scripts": {
     "test": "bun test",
     "build": "chant build src --lexicon aws",
-    "dev": "chant build src --lexicon aws --watch"
+    "lint": "chant lint src",
+    "dev": "chant build src --lexicon aws --watch",
+    "deploy": "aws cloudformation deploy --template-file template.json --stack-name lambda-sqs --capabilities CAPABILITY_NAMED_IAM",
+    "teardown": "aws cloudformation delete-stack --stack-name lambda-sqs"
   },
   "dependencies": {
     "@intentius/chant-lexicon-aws": "workspace:*",

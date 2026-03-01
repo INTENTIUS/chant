@@ -535,6 +535,7 @@
       "name": "@intentius/chant-example-gcp-basic-bucket",
       "version": "0.0.14",
       "dependencies": {
+        "@intentius/chant": "workspace:*",
         "@intentius/chant-lexicon-gcp": "workspace:*",
       },
     },
@@ -542,6 +543,7 @@
       "name": "@intentius/chant-example-gcp-gke-cluster",
       "version": "0.0.14",
       "dependencies": {
+        "@intentius/chant": "workspace:*",
         "@intentius/chant-lexicon-gcp": "workspace:*",
       },
     },
@@ -549,6 +551,7 @@
       "name": "@intentius/chant-example-gcp-vpc-network",
       "version": "0.0.14",
       "dependencies": {
+        "@intentius/chant": "workspace:*",
         "@intentius/chant-lexicon-gcp": "workspace:*",
       },
     },

@@ -4,8 +4,11 @@
   "type": "module",
   "private": true,
   "scripts": {
-    "build": "chant build src --lexicon k8s",
-    "lint": "chant lint src"
+    "build": "chant build src --lexicon k8s -o k8s.yaml",
+    "lint": "chant lint src",
+    "dev": "chant build src --lexicon k8s --watch",
+    "deploy": "kubectl apply -f k8s.yaml",
+    "teardown": "kubectl delete -f k8s.yaml"
   },
   "dependencies": {
     "@intentius/chant": "workspace:*",

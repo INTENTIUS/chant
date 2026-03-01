@@ -5,6 +5,7 @@
   "private": true,
   "scripts": {
     "build": "chant build src --lexicon flyway",
+    "lint": "chant lint src",
     "dev": "chant build src --lexicon flyway --watch"
   },
   "dependencies": {

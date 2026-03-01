@@ -3,6 +3,11 @@
   "version": "0.0.1",
   "type": "module",
   "private": true,
+  "scripts": {
+    "build": "chant build src --lexicon gitlab",
+    "lint": "chant lint src",
+    "dev": "chant build src --lexicon gitlab --watch"
+  },
   "dependencies": {
     "@intentius/chant-lexicon-gitlab": "workspace:*",
     "@intentius/chant": "workspace:*"
