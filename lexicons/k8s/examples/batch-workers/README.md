@@ -105,3 +105,12 @@ Deletes all resources created by `kubectl apply`.
 - [k8s-web-platform](../k8s-web-platform/) — Web platform with ingress, sidecars, monitoring
 - [k8s-eks-microservice](../k8s-eks-microservice/) — Production-grade AWS EKS + K8s cross-lexicon
 - [flyway-postgresql-k8s](../flyway-postgresql-k8s/) — K8s + Flyway cross-lexicon
+
+## Standalone Usage
+
+To run this example outside the monorepo:
+
+1. Copy this directory
+2. `mv package.standalone.json package.json`
+3. `npm install`
+4. `npm run build`

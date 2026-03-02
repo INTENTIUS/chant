@@ -72,3 +72,12 @@ Deletes the resource group and all resources within it.
 - [vnet-vms](../vnet-vms/) — Full network layer with a Linux VM
 - [web-app](../web-app/) — App Service with managed identity
 - [container-instance](../container-instance/) — Container Instance on Azure
+
+## Standalone Usage
+
+To run this example outside the monorepo:
+
+1. Copy this directory
+2. `mv package.standalone.json package.json`
+3. `npm install`
+4. `npm run build`

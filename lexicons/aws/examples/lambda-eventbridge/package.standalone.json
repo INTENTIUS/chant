@@ -1,0 +1,21 @@
+{
+  "name": "lambda-eventbridge-example",
+  "version": "0.0.1",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "test": "bun test",
+    "build": "chant build src --lexicon aws -o template.json",
+    "lint": "chant lint src",
+    "dev": "chant build src --lexicon aws --watch",
+    "deploy": "aws cloudformation deploy --template-file template.json --stack-name lambda-eventbridge --capabilities CAPABILITY_NAMED_IAM",
+    "teardown": "aws cloudformation delete-stack --stack-name lambda-eventbridge"
+  },
+  "dependencies": {
+    "@intentius/chant": "^0.0.14",
+    "@intentius/chant-lexicon-aws": "^0.0.14"
+  },
+  "devDependencies": {
+    "typescript": "^5.0.0"
+  }
+}

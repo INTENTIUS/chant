@@ -74,3 +74,12 @@ Deletes the resource group and all resources within it.
 - [vnet-vms](../vnet-vms/) — VNet with Linux VM
 - [basic-storage](../basic-storage/) — Secure-by-default Storage Account
 - [key-vault](../key-vault/) — Secure Key Vault
+
+## Standalone Usage
+
+To run this example outside the monorepo:
+
+1. Copy this directory
+2. `mv package.standalone.json package.json`
+3. `npm install`
+4. `npm run build`

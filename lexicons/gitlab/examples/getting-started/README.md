@@ -103,3 +103,12 @@ The skill knows how to run `chant build`, `chant lint`, validate via the GitLab 
 - Add a deploy stage with environment and rules
 - Switch to a composite like `NodePipeline` for convention-over-configuration
 - Run `chant lint src/` to catch issues before pushing
+
+## Standalone Usage
+
+To run this example outside the monorepo:
+
+1. Copy this directory
+2. `mv package.standalone.json package.json`
+3. `npm install`
+4. `npm run build`

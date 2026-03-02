@@ -96,3 +96,12 @@ If you use Claude Code, the `chant-gitlab` skill can scaffold, build, validate, 
 - "Build my pipeline and validate it"
 
 The skill handles `chant init --template docker-build`, `chant build`, lint validation, and the full push-to-GitLab workflow.
+
+## Standalone Usage
+
+To run this example outside the monorepo:
+
+1. Copy this directory
+2. `mv package.standalone.json package.json`
+3. `npm install`
+4. `npm run build`

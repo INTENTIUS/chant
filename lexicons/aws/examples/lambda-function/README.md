@@ -29,3 +29,12 @@ src/
 1. **Preset composites** — `LambdaNode` wraps `LambdaFunction` with `withDefaults`, eliminating boilerplate for the most common runtime
 2. **Inline handler code** — `Code.ZipFile` embeds the handler source directly in the CloudFormation template (no separate artifact)
 3. **Dynamic naming** — `Sub` + `AWS.StackName` generates a unique function name per stack deployment
+
+## Standalone Usage
+
+To run this example outside the monorepo:
+
+1. Copy this directory
+2. `mv package.standalone.json package.json`
+3. `npm install`
+4. `npm run build`

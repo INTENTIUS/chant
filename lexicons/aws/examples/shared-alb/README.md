@@ -45,3 +45,12 @@ The stack exports everything service stacks need as parameters:
 
 - [shared-alb-api](../shared-alb-api/) — API service deployed to this ALB
 - [shared-alb-ui](../shared-alb-ui/) — UI service deployed to this ALB
+
+## Standalone Usage
+
+To run this example outside the monorepo:
+
+1. Copy this directory
+2. `mv package.standalone.json package.json`
+3. `npm install`
+4. `npm run build`

@@ -57,3 +57,12 @@ kubectl delete -f k8s.yaml
 
 - [basic-deployment](../basic-deployment/) — Simple Deployment with Service
 - [configmap-secret](../configmap-secret/) — ConfigMaps, Secrets, and environment injection
+
+## Standalone Usage
+
+To run this example outside the monorepo:
+
+1. Copy this directory
+2. `mv package.standalone.json package.json`
+3. `npm install`
+4. `npm run build`

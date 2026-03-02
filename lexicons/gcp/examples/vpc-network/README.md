@@ -57,3 +57,12 @@ kubectl delete -f config.yaml
 
 - [basic-bucket](../basic-bucket/) — GCS bucket with versioning and lifecycle rules
 - [gke-cluster](../gke-cluster/) — GKE cluster with node pool and workload identity
+
+## Standalone Usage
+
+To run this example outside the monorepo:
+
+1. Copy this directory
+2. `mv package.standalone.json package.json`
+3. `npm install`
+4. `npm run build`

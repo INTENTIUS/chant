@@ -40,3 +40,12 @@ Deploys 7 CloudFormation resources via `FargateService`:
 
 - [shared-alb](../shared-alb/) — the shared ALB infrastructure this service deploys to
 - [shared-alb-ui](../shared-alb-ui/) — the UI service on the same ALB
+
+## Standalone Usage
+
+To run this example outside the monorepo:
+
+1. Copy this directory
+2. `mv package.standalone.json package.json`
+3. `npm install`
+4. `npm run build`

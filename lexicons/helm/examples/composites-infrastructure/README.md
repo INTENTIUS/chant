@@ -62,3 +62,12 @@ helm uninstall composites-infrastructure
 
 - [composites-basic](../composites-basic/) — Basic Helm chart composites
 - [composites-production](../composites-production/) — Production-hardened composites with security contexts and RBAC
+
+## Standalone Usage
+
+To run this example outside the monorepo:
+
+1. Copy this directory
+2. `mv package.standalone.json package.json`
+3. `npm install`
+4. `npm run build`

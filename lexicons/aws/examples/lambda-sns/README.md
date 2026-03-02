@@ -33,3 +33,12 @@ src/
 2. **Push-based invocation** — unlike SQS (poll-based), SNS pushes notifications directly to the Lambda function
 3. **Resource-based permissions** — `Permission` grants the SNS service principal the right to invoke the function, scoped to the topic's ARN
 4. **SNS event structure** — the handler accesses `record.Sns.Message` to read the published payload
+
+## Standalone Usage
+
+To run this example outside the monorepo:
+
+1. Copy this directory
+2. `mv package.standalone.json package.json`
+3. `npm install`
+4. `npm run build`

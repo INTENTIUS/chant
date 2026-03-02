@@ -56,3 +56,12 @@ bash setup.sh /myapp/prod/db-password
 aws cloudformation deploy --template-file stack.json --stack-name my-rds \
   --parameter-overrides dbPasswordSsmPath=/myapp/prod/db-password
 ```
+
+## Standalone Usage
+
+To run this example outside the monorepo:
+
+1. Copy this directory
+2. `mv package.standalone.json package.json`
+3. `npm install`
+4. `npm run build`

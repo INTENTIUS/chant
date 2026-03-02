@@ -116,3 +116,12 @@ aws ssm delete-parameter --name /myapp/dev/db-password
 
 - [gitlab-aws-alb-infra](../gitlab-aws-alb-infra/) — AWS + GitLab shared ALB infrastructure
 - [k8s-eks-microservice](../k8s-eks-microservice/) — Production-grade AWS EKS + K8s
+
+## Standalone Usage
+
+To run this example outside the monorepo:
+
+1. Copy this directory
+2. `mv package.standalone.json package.json`
+3. `npm install`
+4. `npm run build`

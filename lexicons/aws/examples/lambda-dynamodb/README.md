@@ -32,3 +32,12 @@ src/
 3. **Access levels** — `access: "ReadWrite"` scopes the IAM policy to read/write DynamoDB actions; other options are `"ReadOnly"` and `"Full"`
 4. **Action constants** — the composite uses `DynamoDBActions.ReadWrite` internally for typed IAM action arrays
 5. **Automatic environment injection** — `TABLE_NAME` is added to the function environment without explicit configuration
+
+## Standalone Usage
+
+To run this example outside the monorepo:
+
+1. Copy this directory
+2. `mv package.standalone.json package.json`
+3. `npm install`
+4. `npm run build`

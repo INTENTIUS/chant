@@ -71,3 +71,12 @@ Deletes the resource group and all resources within it.
 - [sql-database](../sql-database/) — Azure SQL Server with database and firewall rules
 - [redis-cache](../redis-cache/) — Azure Cache for Redis
 - [multi-resource](../multi-resource/) — Cross-resource references with ARM intrinsics
+
+## Standalone Usage
+
+To run this example outside the monorepo:
+
+1. Copy this directory
+2. `mv package.standalone.json package.json`
+3. `npm install`
+4. `npm run build`

@@ -127,3 +127,12 @@ aws cloudformation wait stack-delete-complete --stack-name shared-alb
 - [gitlab-aws-alb-api](../gitlab-aws-alb-api/) — API Fargate service (depends on this stack)
 - [gitlab-aws-alb-ui](../gitlab-aws-alb-ui/) — UI Fargate service (depends on this stack)
 - [k8s-eks-microservice](../k8s-eks-microservice/) — Production-grade AWS EKS + K8s
+
+## Standalone Usage
+
+To run this example outside the monorepo:
+
+1. Copy this directory
+2. `mv package.standalone.json package.json`
+3. `npm install`
+4. `npm run build`

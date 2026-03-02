@@ -70,3 +70,12 @@ Deletes the resource group and all resources within it.
 - [multi-resource](../multi-resource/) — Cross-resource references with ARM intrinsics
 - [private-endpoint](../private-endpoint/) — Private networking for Azure services
 - [web-app](../web-app/) — App Service with managed identity
+
+## Standalone Usage
+
+To run this example outside the monorepo:
+
+1. Copy this directory
+2. `mv package.standalone.json package.json`
+3. `npm install`
+4. `npm run build`

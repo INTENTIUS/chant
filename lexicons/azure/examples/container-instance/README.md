@@ -71,3 +71,12 @@ Deletes the resource group and all resources within it.
 - [function-app](../function-app/) — Serverless Function App with storage backend
 - [web-app](../web-app/) — App Service with managed identity
 - [aks-cluster](../aks-cluster/) — Full Kubernetes cluster with ACR and VNet
+
+## Standalone Usage
+
+To run this example outside the monorepo:
+
+1. Copy this directory
+2. `mv package.standalone.json package.json`
+3. `npm install`
+4. `npm run build`

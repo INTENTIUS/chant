@@ -1,6 +1,6 @@
 {
-  "name": "@intentius/chant-example-gcp-vpc-network",
-  "version": "0.0.14",
+  "name": "gcp-vpc-network-example",
+  "version": "0.0.1",
   "private": true,
   "type": "module",
   "scripts": {

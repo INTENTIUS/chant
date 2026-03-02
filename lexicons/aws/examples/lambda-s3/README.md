@@ -32,3 +32,12 @@ src/
 3. **Action constants** — the composite uses `S3Actions.ReadOnly` internally for typed IAM action arrays
 4. **Automatic environment injection** — `BUCKET_NAME` is added to the function environment without explicit configuration
 5. **Secure defaults** — encryption and public access blocking are applied automatically by the composite
+
+## Standalone Usage
+
+To run this example outside the monorepo:
+
+1. Copy this directory
+2. `mv package.standalone.json package.json`
+3. `npm install`
+4. `npm run build`

@@ -33,3 +33,12 @@ src/
 1. **Infrastructure composites** — `VpcDefault` encapsulates 17 resources into a single declaration
 2. **Deploy-time AZ resolution** — uses `Select(N, GetAZs(""))` to pick AZs at deploy time
 3. **Composability** — the VPC outputs (`vpc.VpcId`, subnet IDs) are designed to feed into service composites like `FargateAlb`
+
+## Standalone Usage
+
+To run this example outside the monorepo:
+
+1. Copy this directory
+2. `mv package.standalone.json package.json`
+3. `npm install`
+4. `npm run build`

@@ -71,3 +71,12 @@ Deletes the resource group and all resources within it.
 - [cosmos-db](../cosmos-db/) — Cosmos DB with SQL database and container
 - [key-vault](../key-vault/) — Secure Key Vault
 - [private-endpoint](../private-endpoint/) — Private connectivity with DNS integration
+
+## Standalone Usage
+
+To run this example outside the monorepo:
+
+1. Copy this directory
+2. `mv package.standalone.json package.json`
+3. `npm install`
+4. `npm run build`

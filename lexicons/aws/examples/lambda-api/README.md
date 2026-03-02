@@ -45,3 +45,12 @@ src/
 4. **Inline IAM policies** — `Role_Policy` scopes S3 access per endpoint
 5. **Custom lint rules** — domain-specific validation (API Gateway timeout limit)
 6. **Lint configuration** — `chant.config.ts` with strict preset and plugins
+
+## Standalone Usage
+
+To run this example outside the monorepo:
+
+1. Copy this directory
+2. `mv package.standalone.json package.json`
+3. `npm install`
+4. `npm run build`

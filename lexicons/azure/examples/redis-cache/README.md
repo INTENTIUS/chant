@@ -70,3 +70,12 @@ Deletes the resource group and all resources within it.
 - [cosmos-db](../cosmos-db/) — Cosmos DB with SQL database and container
 - [service-bus](../service-bus/) — Service Bus namespace with queue
 - [key-vault](../key-vault/) — Secure Key Vault
+
+## Standalone Usage
+
+To run this example outside the monorepo:
+
+1. Copy this directory
+2. `mv package.standalone.json package.json`
+3. `npm install`
+4. `npm run build`

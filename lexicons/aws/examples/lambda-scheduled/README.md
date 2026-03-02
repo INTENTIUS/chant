@@ -32,3 +32,12 @@ src/
 2. **Schedule expressions** — supports both `rate(...)` expressions (e.g., `rate(1 hour)`) and `cron(...)` expressions (e.g., `cron(0 12 * * ? *)`)
 3. **Shared building blocks** — `LambdaScheduled` and `LambdaEventBridge` are peer composites that both build on the shared `LambdaFunction` base; `LambdaEventBridge` also supports event pattern matching
 4. **Resource-based permissions** — `Permission` grants the EventBridge service principal the right to invoke the function, scoped to the rule's ARN
+
+## Standalone Usage
+
+To run this example outside the monorepo:
+
+1. Copy this directory
+2. `mv package.standalone.json package.json`
+3. `npm install`
+4. `npm run build`

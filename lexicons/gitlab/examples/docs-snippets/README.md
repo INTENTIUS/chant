@@ -38,3 +38,12 @@ npx chant lint src
 
 - [getting-started](../getting-started/) — Minimal GitLab CI pipeline
 - [node-pipeline](../node-pipeline/) — Node.js CI/CD pipeline
+
+## Standalone Usage
+
+To run this example outside the monorepo:
+
+1. Copy this directory
+2. `mv package.standalone.json package.json`
+3. `npm install`
+4. `npm run build`

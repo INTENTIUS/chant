@@ -43,3 +43,12 @@ src/
 2. **Rule-based routing** — API gets `/api/*`, frontend gets `/*` (catch-all)
 3. **Priority ordering** — API at priority 100, frontend at 200 (specific before catch-all)
 4. **Composite composability** — `FargateService` consumes `AlbShared` and `VpcDefault` outputs
+
+## Standalone Usage
+
+To run this example outside the monorepo:
+
+1. Copy this directory
+2. `mv package.standalone.json package.json`
+3. `npm install`
+4. `npm run build`

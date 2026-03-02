@@ -33,3 +33,12 @@ src/
 3. **Batch configuration** — `batchSize` controls how many messages are delivered per invocation (default: 10); `maxBatchingWindow` adds a wait window in seconds
 4. **Partial batch response** — the handler returns `batchItemFailures` for fine-grained retry control
 5. **Action constants** — the composite uses `SQSActions.ReceiveMessage` internally for typed IAM action arrays
+
+## Standalone Usage
+
+To run this example outside the monorepo:
+
+1. Copy this directory
+2. `mv package.standalone.json package.json`
+3. `npm install`
+4. `npm run build`

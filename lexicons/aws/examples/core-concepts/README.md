@@ -30,3 +30,12 @@ src/
 3. **Cross-file references** — `resource.Arn` serializes to `Fn::GetAtt`
 4. **Shared config** — extract reusable property objects into a defaults file
 5. **Composites** — multi-resource abstractions returning structured objects
+
+## Standalone Usage
+
+To run this example outside the monorepo:
+
+1. Copy this directory
+2. `mv package.standalone.json package.json`
+3. `npm install`
+4. `npm run build`

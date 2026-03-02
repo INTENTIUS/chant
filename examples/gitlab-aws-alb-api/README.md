@@ -107,3 +107,12 @@ Delete this stack before deleting the infra stack.
 - [gitlab-aws-alb-infra](../gitlab-aws-alb-infra/) — Shared infrastructure (deploy first)
 - [gitlab-aws-alb-ui](../gitlab-aws-alb-ui/) — UI Fargate service (sibling)
 - [flyway-postgresql-gitlab-aws-rds](../flyway-postgresql-gitlab-aws-rds/) — AWS RDS + Flyway + GitLab
+
+## Standalone Usage
+
+To run this example outside the monorepo:
+
+1. Copy this directory
+2. `mv package.standalone.json package.json`
+3. `npm install`
+4. `npm run build`

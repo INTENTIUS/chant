@@ -1,6 +1,6 @@
 {
-  "name": "@intentius/chant-example-gcp-gke-cluster",
-  "version": "0.0.14",
+  "name": "gcp-gke-cluster-example",
+  "version": "0.0.1",
   "private": true,
   "type": "module",
   "scripts": {

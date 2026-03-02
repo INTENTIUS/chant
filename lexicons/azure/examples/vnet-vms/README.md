@@ -71,3 +71,12 @@ Deletes the resource group and all resources within it.
 - [aks-cluster](../aks-cluster/) — AKS with container registry and virtual network
 - [private-endpoint](../private-endpoint/) — Private networking for Azure services
 - [basic-storage](../basic-storage/) — Minimal single-resource example
+
+## Standalone Usage
+
+To run this example outside the monorepo:
+
+1. Copy this directory
+2. `mv package.standalone.json package.json`
+3. `npm install`
+4. `npm run build`

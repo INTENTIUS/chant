@@ -42,3 +42,12 @@ src/
 2. **Separation of concerns** — network and service layers are defined in separate files
 3. **Cross-reference wiring** — subnet and VPC IDs flow from one composite to another via attribute references
 4. **Secure defaults** — tasks run in private subnets, ALB in public subnets, security groups restrict traffic flow
+
+## Standalone Usage
+
+To run this example outside the monorepo:
+
+1. Copy this directory
+2. `mv package.standalone.json package.json`
+3. `npm install`
+4. `npm run build`

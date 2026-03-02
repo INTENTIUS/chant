@@ -42,3 +42,12 @@ npx chant lint src
 
 - [core-concepts](../core-concepts/) — Core AWS CloudFormation concepts
 - [lambda-function](../lambda-function/) — Simple Lambda function
+
+## Standalone Usage
+
+To run this example outside the monorepo:
+
+1. Copy this directory
+2. `mv package.standalone.json package.json`
+3. `npm install`
+4. `npm run build`

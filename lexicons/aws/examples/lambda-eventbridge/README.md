@@ -33,3 +33,12 @@ src/
 3. **Schedule vs. pattern** — this composite supports both `schedule` (time-based) and `eventPattern` (content-based) triggers; for schedule-only use cases, prefer the `LambdaScheduled` preset
 4. **EventBridge event structure** — the handler accesses `event.source`, `event["detail-type"]`, and `event.detail` from the standard EventBridge envelope
 5. **Resource-based permissions** — `Permission` grants the EventBridge service principal the right to invoke the function, scoped to the rule's ARN
+
+## Standalone Usage
+
+To run this example outside the monorepo:
+
+1. Copy this directory
+2. `mv package.standalone.json package.json`
+3. `npm install`
+4. `npm run build`

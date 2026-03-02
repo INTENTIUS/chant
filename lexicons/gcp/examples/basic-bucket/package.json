@@ -1,6 +1,6 @@
 {
-  "name": "@intentius/chant-example-gcp-basic-bucket",
-  "version": "0.0.14",
+  "name": "gcp-basic-bucket-example",
+  "version": "0.0.1",
   "private": true,
   "type": "module",
   "scripts": {
