@@ -1,6 +1,6 @@
 import { Role, ManagedPolicy, Sub, AWS } from "@intentius/chant-lexicon-aws";
 
-export const functionRole = new Role({
+export const roleBad = new Role({
   RoleName: Sub`${AWS.StackName}-role`,
   AssumeRolePolicyDocument: {
     Version: "2012-10-17",
@@ -14,7 +14,7 @@ export const functionRole = new Role({
   },
 });
 
-export const readPolicy = new ManagedPolicy({
+export const policyBad = new ManagedPolicy({
   PolicyDocument: {
     Statement: [
       {
@@ -25,5 +25,5 @@ export const readPolicy = new ManagedPolicy({
       },
     ],
   },
-  Roles: [functionRole],
+  Roles: [roleBad],
 });

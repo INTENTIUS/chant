@@ -32,7 +32,7 @@ export const devEnv = new Environment(result.environments.dev);
 
 export const stagingEnv = new Environment(result.environments.staging);
 
-export const prodEnv = new Environment(result.environments.prod);
+export const prodEnv = new Environment({ ...result.environments.prod, cleanDisabled: true });
 
 export const shadowEnv = new Environment(result.shadow!);
 

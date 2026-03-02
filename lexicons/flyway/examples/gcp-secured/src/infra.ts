@@ -45,9 +45,18 @@ export const config = new FlywayConfig({
 
 export const gcpResolver = new GcpResolver(result.gcpResolver);
 
-export const stagingEnv = new Environment(result.environments.staging);
+const gcpResolverConfig = { projectId: result.gcpResolver.projectId as string };
 
-export const prodEnv = new Environment(result.environments.prod);
+export const stagingEnv = new Environment({
+  ...result.environments.staging,
+  resolvers: { googlesecrets: gcpResolverConfig },
+});
+
+export const prodEnv = new Environment({
+  ...result.environments.prod,
+  cleanDisabled: true,
+  resolvers: { googlesecrets: gcpResolverConfig },
+});
 
 // Local dev environment does not use GCP secrets
 export const devEnv = new Environment({

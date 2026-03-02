@@ -6,9 +6,9 @@ Shared VPC + ALB infrastructure for multiple independently-deployed Fargate serv
 
 ```bash
 # 1. Build and deploy the shared infrastructure
-chant build src
+bun run build
 aws cloudformation deploy \
-  --template-file dist/template.json \
+  --template-file template.json \
   --stack-name shared-alb \
   --capabilities CAPABILITY_IAM
 

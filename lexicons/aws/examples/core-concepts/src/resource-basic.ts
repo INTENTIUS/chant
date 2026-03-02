@@ -6,4 +6,10 @@ export const appBucket = new Bucket({
   VersioningConfiguration: new VersioningConfiguration({
     Status: "Enabled",
   }),
+  PublicAccessBlockConfiguration: {
+    BlockPublicAcls: true,
+    BlockPublicPolicy: true,
+    IgnorePublicAcls: true,
+    RestrictPublicBuckets: true,
+  },
 });

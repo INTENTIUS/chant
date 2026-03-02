@@ -9,4 +9,10 @@ export const bucket = new Bucket({
       },
     ],
   },
+  PublicAccessBlockConfiguration: {
+    BlockPublicAcls: true,
+    BlockPublicPolicy: true,
+    IgnorePublicAcls: true,
+    RestrictPublicBuckets: true,
+  },
 });

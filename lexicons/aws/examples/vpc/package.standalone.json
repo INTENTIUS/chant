@@ -7,7 +7,7 @@
     "test": "bun test",
     "build": "chant build src --lexicon aws -o template.json",
     "lint": "chant lint src",
-    "dev": "chant build src --lexicon aws --watch",
+    "dev": "chant build src --lexicon aws --watch -o template.json",
     "deploy": "aws cloudformation deploy --template-file template.json --stack-name vpc --capabilities CAPABILITY_NAMED_IAM",
     "teardown": "aws cloudformation delete-stack --stack-name vpc"
   },

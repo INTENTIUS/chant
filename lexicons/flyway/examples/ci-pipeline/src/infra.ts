@@ -49,4 +49,5 @@ export const prodEnv = new Environment({
   user: env("PROD_DB_USER"),
   password: env("PROD_DB_PASSWORD"),
   schemas: ["public", "users"],
+  cleanDisabled: true,
 });

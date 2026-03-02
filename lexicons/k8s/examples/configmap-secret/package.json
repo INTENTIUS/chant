@@ -1,17 +1,20 @@
 {
-  "name": "k8s-configmap-secret",
+  "name": "k8s-configmap-secret-example",
   "version": "0.0.1",
   "type": "module",
   "private": true,
   "scripts": {
     "build": "chant build src --lexicon k8s -o k8s.yaml",
     "lint": "chant lint src",
-    "dev": "chant build src --lexicon k8s --watch",
+    "dev": "chant build src --lexicon k8s --watch -o k8s.yaml",
     "deploy": "kubectl apply -f k8s.yaml",
     "teardown": "kubectl delete -f k8s.yaml"
   },
   "dependencies": {
     "@intentius/chant": "workspace:*",
     "@intentius/chant-lexicon-k8s": "workspace:*"
+  },
+  "devDependencies": {
+    "typescript": "*"
   }
 }

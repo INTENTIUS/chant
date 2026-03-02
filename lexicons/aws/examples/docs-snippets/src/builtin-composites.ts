@@ -39,11 +39,11 @@ export const web = FargateAlb({
 });
 
 // RdsInstance: DBSubnetGroup + SecurityGroup + DBInstance (3-4 resources)
-const dbPassword = new Parameter("AWS::SSM::Parameter::Value<String>", {
+export const dbPassword = new Parameter("AWS::SSM::Parameter::Value<String>", {
   description: "SSM path to the database password",
   defaultValue: "/myapp/dev/db-password",
 });
-export const database = RdsInstance({
+export const rdsDatabase = RdsInstance({
   engine: "postgres",
   vpcId: network.vpc.VpcId,
   subnetIds: [network.privateSubnet1.SubnetId, network.privateSubnet2.SubnetId],

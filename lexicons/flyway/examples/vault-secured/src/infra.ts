@@ -45,9 +45,16 @@ export const config = new FlywayConfig({
 
 export const vaultResolver = new VaultResolver(result.vaultResolver);
 
-export const stagingEnv = new Environment(result.environments.staging);
+export const stagingEnv = new Environment({
+  ...result.environments.staging,
+  resolvers: { vault: result.vaultResolver },
+});
 
-export const prodEnv = new Environment(result.environments.prod);
+export const prodEnv = new Environment({
+  ...result.environments.prod,
+  cleanDisabled: true,
+  resolvers: { vault: result.vaultResolver },
+});
 
 // Dev environment uses local secrets instead of Vault for offline development
 export const localSecrets = new LocalSecretResolver({});
@@ -59,4 +66,5 @@ export const devEnv = new Environment({
   password: resolve("localSecret", "db_password"),
   schemas: ["public", "payments"],
   provisioner: "clean",
+  resolvers: { localSecret: {} },
 });

@@ -54,7 +54,7 @@ cd my-project
 ### 2. Build the pipeline
 
 ```bash
-chant build src/ --output .gitlab-ci.yml
+chant build src --lexicon gitlab -o .gitlab-ci.yml
 ```
 
 ### 3. Push to GitLab
@@ -75,7 +75,7 @@ The pipeline runs automatically on push.
 Edit files in `src/`, rebuild, and push:
 
 ```bash
-chant build src/ --output .gitlab-ci.yml
+chant build src --lexicon gitlab -o .gitlab-ci.yml
 git add .gitlab-ci.yml && git commit -m "Update pipeline" && git push
 ```
 

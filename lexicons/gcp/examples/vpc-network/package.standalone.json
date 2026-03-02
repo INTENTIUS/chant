@@ -6,7 +6,7 @@
   "scripts": {
     "build": "chant build src --lexicon gcp -o config.yaml",
     "lint": "chant lint src",
-    "dev": "chant build src --lexicon gcp --watch",
+    "dev": "chant build src --lexicon gcp --watch -o config.yaml",
     "deploy": "kubectl apply -f config.yaml",
     "teardown": "kubectl delete -f config.yaml"
   },

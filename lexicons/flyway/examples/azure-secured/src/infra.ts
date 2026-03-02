@@ -30,6 +30,11 @@ export const azureAdResolver = new AzureAdResolver({
   clientId: "${env.AZURE_CLIENT_ID}",
 });
 
+const azureAdResolverConfig = {
+  tenantId: "${env.AZURE_TENANT_ID}",
+  clientId: "${env.AZURE_CLIENT_ID}",
+};
+
 export const dev = new Environment({
   url: "jdbc:sqlserver://localhost:1433;databaseName=inventory_dev;encrypt=true;trustServerCertificate=true",
   user: "sa",
@@ -45,6 +50,7 @@ export const staging = new Environment({
   schemas: ["dbo"],
   displayName: "staging",
   cleanDisabled: true,
+  resolvers: { azuread: azureAdResolverConfig },
 });
 
 export const prod = new Environment({
@@ -55,4 +61,5 @@ export const prod = new Environment({
   displayName: "prod",
   cleanDisabled: true,
   validateOnMigrate: true,
+  resolvers: { azuread: azureAdResolverConfig },
 });

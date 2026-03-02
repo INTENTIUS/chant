@@ -34,7 +34,7 @@ This example is a collection of standalone snippet files used in the documentati
 ## Local verification
 
 ```bash
-npx chant build src --lexicon aws
+npx chant build src --lexicon aws -o template.json
 npx chant lint src
 ```
 

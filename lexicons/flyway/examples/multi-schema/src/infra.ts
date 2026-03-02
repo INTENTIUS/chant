@@ -45,6 +45,7 @@ export const prodEnv = new Environment({
   displayName: "prod",
   url: "jdbc:postgresql://prod-analytics.internal:5432/analytics",
   schemas: ["public", "audit", "reporting"],
+  cleanDisabled: true,
 });
 
 // Schema-specific placeholders for cross-schema references in SQL migrations.

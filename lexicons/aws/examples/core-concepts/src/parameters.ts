@@ -9,4 +9,10 @@ export const environment = new Parameter("String", {
 // Use the parameter in a resource name via Ref
 export const envBucket = new Bucket({
   BucketName: Sub`${Ref(environment)}-app-data`,
+  PublicAccessBlockConfiguration: {
+    BlockPublicAcls: true,
+    BlockPublicPolicy: true,
+    IgnorePublicAcls: true,
+    RestrictPublicBuckets: true,
+  },
 });

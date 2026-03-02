@@ -1,6 +1,6 @@
 import { Job, Image, Cache, Artifacts, CI } from "@intentius/chant-lexicon-gitlab";
 
-export const test = new Job({
+export const testJob = new Job({
   stage: "test",
   image: new Image({ name: "node:20" }),
   cache: new Cache({ key: CI.CommitRef, paths: ["node_modules/"] }),

@@ -6,7 +6,7 @@
   "scripts": {
     "build": "chant build src --lexicon gitlab -o .gitlab-ci.yml",
     "lint": "chant lint src",
-    "dev": "chant build src --lexicon gitlab --watch",
+    "dev": "chant build src --lexicon gitlab --watch -o .gitlab-ci.yml",
     "test": "node test.js"
   },
   "dependencies": {

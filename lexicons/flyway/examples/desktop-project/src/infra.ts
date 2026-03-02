@@ -40,4 +40,4 @@ export const shadow = new Environment(result.shadow);
 
 export const testEnv = new Environment(result.environments.test);
 
-export const prodEnv = new Environment(result.environments.prod);
+export const prodEnv = new Environment({ ...result.environments.prod, cleanDisabled: true });

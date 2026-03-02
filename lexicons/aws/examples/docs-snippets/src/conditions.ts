@@ -1,6 +1,6 @@
 import { Bucket, If, AWS } from "@intentius/chant-lexicon-aws";
 
-export const bucket = new Bucket({
+export const conditionalBucket = new Bucket({
   BucketName: "my-bucket",
   AccelerateConfiguration: If(
     "EnableAcceleration",
@@ -13,5 +13,11 @@ export const bucket = new Bucket({
         ServerSideEncryptionByDefault: { SSEAlgorithm: "AES256" },
       },
     ],
+  },
+  PublicAccessBlockConfiguration: {
+    BlockPublicAcls: true,
+    BlockPublicPolicy: true,
+    IgnorePublicAcls: true,
+    RestrictPublicBuckets: true,
   },
 });

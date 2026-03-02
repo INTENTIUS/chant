@@ -34,6 +34,7 @@ export const prodEnv = new Environment({
   displayName: "prod",
   url: "jdbc:postgresql://prod-notifications.internal:5432/notifications",
   schemas: ["public"],
+  cleanDisabled: true,
 });
 
 // Blueprint for versioned migrations and SQL callback scripts.

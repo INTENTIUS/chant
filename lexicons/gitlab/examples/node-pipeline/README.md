@@ -57,7 +57,7 @@ cd my-node-app
 ### 2. Build the pipeline
 
 ```bash
-chant build src/ --output .gitlab-ci.yml
+chant build src --lexicon gitlab -o .gitlab-ci.yml
 ```
 
 ### 3. Push to GitLab

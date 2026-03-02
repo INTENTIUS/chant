@@ -41,7 +41,7 @@ The lexicon packages ship skills for agent-guided deployment. After `chant init 
 ## Local verification
 
 ```bash
-npx chant build src --lexicon helm
+npx chant build src --lexicon helm -o Chart.yaml
 npx chant lint src
 ```
 

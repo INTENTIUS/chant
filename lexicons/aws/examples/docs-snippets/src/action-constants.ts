@@ -1,11 +1,17 @@
 import { Role, Role_Policy, Bucket, Sub, AWS } from "@intentius/chant-lexicon-aws";
 import { S3Actions } from "@intentius/chant-lexicon-aws";
 
-const dataBucket = new Bucket({
+export const s3DataBucket = new Bucket({
   BucketName: Sub`${AWS.StackName}-data`,
+  PublicAccessBlockConfiguration: {
+    BlockPublicAcls: true,
+    BlockPublicPolicy: true,
+    IgnorePublicAcls: true,
+    RestrictPublicBuckets: true,
+  },
 });
 
-export const readerRole = new Role({
+export const s3ReaderRole = new Role({
   AssumeRolePolicyDocument: {
     Version: "2012-10-17",
     Statement: [
@@ -25,7 +31,7 @@ export const readerRole = new Role({
           {
             Effect: "Allow",
             Action: S3Actions.ReadOnly,
-            Resource: dataBucket.Arn,
+            Resource: s3DataBucket.Arn,
           },
         ],
       },

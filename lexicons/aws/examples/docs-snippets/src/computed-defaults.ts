@@ -3,6 +3,7 @@ import { Function as LambdaFunction } from "@intentius/chant-lexicon-aws";
 
 interface ApiProps {
   name: string;
+  runtime: string;
   handler: string;
   timeout: number;
   memorySize: number;
@@ -12,6 +13,7 @@ interface ApiProps {
 const Api = Composite<ApiProps>((props) => ({
   fn: new LambdaFunction({
     FunctionName: props.name,
+    Runtime: props.runtime as any,
     Handler: props.handler,
     Timeout: props.timeout,
     MemorySize: props.memorySize,
@@ -21,6 +23,7 @@ const Api = Composite<ApiProps>((props) => ({
 
 // Function-based defaults can compute values from caller props
 const SmartApi = withDefaults(Api, (props) => ({
+  runtime: "nodejs20.x",
   handler: "index.handler",
   // Scale timeout with memory — higher memory → longer timeout
   timeout: (props.memorySize ?? 128) >= 1024 ? 60 : 10,

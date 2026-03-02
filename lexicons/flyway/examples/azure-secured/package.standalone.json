@@ -4,9 +4,9 @@
   "type": "module",
   "private": true,
   "scripts": {
-    "build": "chant build src --lexicon flyway",
+    "build": "chant build src --lexicon flyway -o flyway.toml",
     "lint": "chant lint src",
-    "dev": "chant build src --lexicon flyway --watch"
+    "dev": "chant build src --lexicon flyway -o flyway.toml --watch"
   },
   "dependencies": {
     "@intentius/chant": "^0.0.14",

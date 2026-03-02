@@ -47,7 +47,7 @@ bun run deploy
 
 **Step by step:**
 1. `bun run setup` — creates SSM SecureString at `/myapp/dev/db-password` with a random password
-2. `bun run build -- --output stack.json` — generates CloudFormation template
+2. `bun run build` — generates CloudFormation template
 3. `aws cloudformation deploy --template-file stack.json --stack-name rds-postgres-example`
 
 To use a custom SSM path:

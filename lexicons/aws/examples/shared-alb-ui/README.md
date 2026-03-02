@@ -6,11 +6,11 @@ Fargate service for `/` routes, deployed to a shared ALB.
 
 ```bash
 # Build the service template
-chant build src
+chant build src --lexicon aws -o template.json
 
 # Deploy with shared ALB outputs
 aws cloudformation deploy \
-  --template-file dist/template.json \
+  --template-file template.json \
   --stack-name ui-service \
   --capabilities CAPABILITY_IAM \
   --parameter-overrides \

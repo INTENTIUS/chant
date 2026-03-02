@@ -10,4 +10,10 @@ export const tags = defaultTags([
 // This bucket will receive the default tags at synthesis time
 export const taggedBucket = new Bucket({
   BucketName: Sub`${AWS.StackName}-${Ref(environment)}-tagged`,
+  PublicAccessBlockConfiguration: {
+    BlockPublicAcls: true,
+    BlockPublicPolicy: true,
+    IgnorePublicAcls: true,
+    RestrictPublicBuckets: true,
+  },
 });
