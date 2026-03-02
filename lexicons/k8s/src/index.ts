@@ -21,6 +21,9 @@ export {
   BatchJob, SecureIngress, ConfiguredApp, SidecarApp, MonitoredService, NetworkIsolatedApp,
   IrsaServiceAccount, AlbIngress, EbsStorageClass, EfsStorageClass, FluentBitAgent, ExternalDnsAgent, AdotCollector,
   MetricsServer, WorkloadIdentityServiceAccount, GcePdStorageClass, FilestoreStorageClass, GkeGateway, ConfigConnectorContext,
+  AgicIngress, AzureDiskStorageClass, AzureFileStorageClass, AzureMonitorCollector,
+  AksWorkloadIdentityServiceAccount,
+  GkeFluentBitAgent, GkeOtelCollector, GkeExternalDnsAgent, AksExternalDnsAgent,
 } from "./composites/index";
 export type {
   WebAppProps, WebAppResult, StatefulAppProps, StatefulAppResult, CronWorkloadProps, CronWorkloadResult,
@@ -39,6 +42,15 @@ export type {
   FilestoreStorageClassProps, FilestoreStorageClassResult,
   GkeGatewayProps, GkeGatewayResult,
   ConfigConnectorContextProps, ConfigConnectorContextResult,
+  AgicIngressProps, AgicIngressResult,
+  AzureDiskStorageClassProps, AzureDiskStorageClassResult,
+  AzureFileStorageClassProps, AzureFileStorageClassResult,
+  AzureMonitorCollectorProps, AzureMonitorCollectorResult,
+  AksWorkloadIdentityServiceAccountProps, AksWorkloadIdentityServiceAccountResult,
+  GkeFluentBitAgentProps, GkeFluentBitAgentResult,
+  GkeOtelCollectorProps, GkeOtelCollectorResult,
+  GkeExternalDnsAgentProps, GkeExternalDnsAgentResult,
+  AksExternalDnsAgentProps, AksExternalDnsAgentResult,
 } from "./composites/index";
 
 // RBAC verb constants

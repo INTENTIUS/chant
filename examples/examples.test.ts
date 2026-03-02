@@ -3,6 +3,8 @@ import { describeExample } from "@intentius/chant-test-utils/example-harness";
 import { build } from "@intentius/chant/build";
 import { lintCommand } from "@intentius/chant/cli/commands/lint";
 import { awsSerializer } from "@intentius/chant-lexicon-aws";
+import { gcpSerializer } from "@intentius/chant-lexicon-gcp";
+import { azureSerializer } from "@intentius/chant-lexicon-azure";
 import { k8sSerializer } from "@intentius/chant-lexicon-k8s";
 import { gitlabSerializer } from "@intentius/chant-lexicon-gitlab";
 import { flywaySerializer } from "@intentius/chant-lexicon-flyway";
@@ -228,6 +230,275 @@ describe("k8s-eks-microservice example", () => {
       "microservice-api",
       "microservice-app-sa",
       "microservice-alb",
+    ]) {
+      const doc = docs.find((d) => d.name === name);
+      expect(doc).toBeDefined();
+      expect(doc!.doc).toContain("namespace: microservice");
+    }
+  });
+
+  test("all resources have managed-by: chant label", async () => {
+    const result = await build(srcDir, [k8sSerializer]);
+    const docs = parseK8sDocs(result.outputs.get("k8s")!);
+    for (const doc of docs) {
+      expect(doc.doc).toContain("app.kubernetes.io/managed-by: chant");
+    }
+  });
+
+  test("generated K8s YAML passes all post-synth error-level checks", async () => {
+    const result = await build(srcDir, [k8sSerializer]);
+    expect(result.errors).toHaveLength(0);
+    const ctx: PostSynthContext = {
+      outputs: result.outputs,
+      entities: result.entities,
+      buildResult: {
+        outputs: result.outputs,
+        entities: result.entities,
+        warnings: result.warnings ?? [],
+        errors: result.errors,
+        sourceFileCount: 1,
+      },
+    };
+    const allChecks = k8sPlugin.postSynthChecks!();
+    const allDiags = allChecks.flatMap((c) => c.check(ctx));
+    const errors = allDiags.filter((d) => d.severity === "error");
+    if (errors.length > 0) {
+      console.log(
+        "Post-synth errors:",
+        errors.map((e) => `${e.checkId}: ${e.message}`),
+      );
+    }
+    expect(errors).toEqual([]);
+  });
+});
+
+// ── K8s + GCP GKE microservice (comprehensive) ──────────────────────
+
+describe("k8s-gke-microservice example", () => {
+  const srcDir = resolve(import.meta.dir, "k8s-gke-microservice", "src");
+
+  test("passes lint", async () => {
+    const result = await lintCommand({
+      path: srcDir,
+      format: "stylish",
+      fix: true,
+    });
+    if (!result.success || result.errorCount > 0 || result.warningCount > 0) {
+      console.log(result.output);
+    }
+    expect(result.success).toBe(true);
+    expect(result.errorCount).toBe(0);
+    expect(result.warningCount).toBe(0);
+  });
+
+  test("combined build succeeds with both serializers", async () => {
+    const result = await build(srcDir, [gcpSerializer, k8sSerializer]);
+    expect(result.errors).toHaveLength(0);
+    expect(result.outputs.has("gcp")).toBe(true);
+    expect(result.outputs.has("k8s")).toBe(true);
+  });
+
+  test("GCP Config Connector output contains all expected resources", async () => {
+    const result = await build(srcDir, [gcpSerializer]);
+    expect(result.errors).toHaveLength(0);
+    const docs = result.outputs.get("gcp")!.split("---").filter((d) => d.trim());
+    // 4 SAs + 8 IAM bindings + DNS zone = 13
+    // (VPC/cluster composites return plain objects — not yet generated as Declarables)
+    expect(docs.length).toBeGreaterThanOrEqual(13);
+    const kinds = docs.map((d) => d.match(/kind:\s+(\S+)/)?.[1] ?? "");
+    expect(kinds.filter((k) => k === "IAMServiceAccount").length).toBeGreaterThanOrEqual(4);
+    expect(kinds.filter((k) => k === "IAMPolicyMember").length).toBeGreaterThanOrEqual(8);
+    expect(kinds).toContain("DNSManagedZone");
+  });
+
+  test("IAM bindings reference correct SA emails", async () => {
+    const result = await build(srcDir, [gcpSerializer]);
+    const output = result.outputs.get("gcp")!;
+    expect(output).toContain("gke-microservice-app");
+    expect(output).toContain("gke-microservice-dns");
+    expect(output).toContain("gke-microservice-logging");
+    expect(output).toContain("gke-microservice-monitoring");
+    expect(output).toContain("roles/iam.workloadIdentityUser");
+    expect(output).toContain("roles/dns.admin");
+    expect(output).toContain("roles/logging.logWriter");
+    expect(output).toContain("roles/monitoring.metricWriter");
+    expect(output).toContain("roles/cloudtrace.agent");
+  });
+
+  test("K8s output contains all expected resources", async () => {
+    const result = await build(srcDir, [k8sSerializer]);
+    expect(result.errors).toHaveLength(0);
+    const docs = parseK8sDocs(result.outputs.get("k8s")!);
+    expect(docs.length).toBeGreaterThanOrEqual(30);
+    const kinds = docs.map((d) => d.kind);
+    expect(kinds.filter((k) => k === "Deployment")).toHaveLength(3);
+    expect(kinds.filter((k) => k === "Service")).toHaveLength(2);
+    expect(kinds.filter((k) => k === "ServiceAccount")).toHaveLength(5);
+    expect(kinds.filter((k) => k === "DaemonSet")).toHaveLength(2);
+    expect(kinds.filter((k) => k === "Namespace")).toHaveLength(3);
+    expect(kinds.filter((k) => k === "Ingress")).toHaveLength(1);
+  });
+
+  test("Workload Identity SA has iam.gke.io/gcp-service-account annotation", async () => {
+    const result = await build(srcDir, [k8sSerializer]);
+    const docs = parseK8sDocs(result.outputs.get("k8s")!);
+    const appSa = docs.find(
+      (d) => d.kind === "ServiceAccount" && d.name === "microservice-app-sa",
+    );
+    expect(appSa).toBeDefined();
+    expect(appSa!.doc).toContain("iam.gke.io/gcp-service-account");
+  });
+
+  test("GCE Ingress has correct annotations", async () => {
+    const result = await build(srcDir, [k8sSerializer]);
+    const docs = parseK8sDocs(result.outputs.get("k8s")!);
+    const ingress = docs.find((d) => d.kind === "Ingress");
+    expect(ingress).toBeDefined();
+    expect(ingress!.doc).toContain("kubernetes.io/ingress.class: gce");
+  });
+
+  test("app resources are in the microservice namespace", async () => {
+    const result = await build(srcDir, [k8sSerializer]);
+    const docs = parseK8sDocs(result.outputs.get("k8s")!);
+    for (const name of [
+      "microservice-api",
+      "microservice-app-sa",
+      "microservice-ingress",
+    ]) {
+      const doc = docs.find((d) => d.name === name);
+      expect(doc).toBeDefined();
+      expect(doc!.doc).toContain("namespace: microservice");
+    }
+  });
+
+  test("all resources have managed-by: chant label", async () => {
+    const result = await build(srcDir, [k8sSerializer]);
+    const docs = parseK8sDocs(result.outputs.get("k8s")!);
+    for (const doc of docs) {
+      expect(doc.doc).toContain("app.kubernetes.io/managed-by: chant");
+    }
+  });
+
+  test("generated K8s YAML passes all post-synth error-level checks", async () => {
+    const result = await build(srcDir, [k8sSerializer]);
+    expect(result.errors).toHaveLength(0);
+    const ctx: PostSynthContext = {
+      outputs: result.outputs,
+      entities: result.entities,
+      buildResult: {
+        outputs: result.outputs,
+        entities: result.entities,
+        warnings: result.warnings ?? [],
+        errors: result.errors,
+        sourceFileCount: 1,
+      },
+    };
+    const allChecks = k8sPlugin.postSynthChecks!();
+    const allDiags = allChecks.flatMap((c) => c.check(ctx));
+    const errors = allDiags.filter((d) => d.severity === "error");
+    if (errors.length > 0) {
+      console.log(
+        "Post-synth errors:",
+        errors.map((e) => `${e.checkId}: ${e.message}`),
+      );
+    }
+    expect(errors).toEqual([]);
+  });
+});
+
+// ── K8s + Azure AKS microservice (comprehensive) ────────────────────
+
+describe("k8s-aks-microservice example", () => {
+  const srcDir = resolve(import.meta.dir, "k8s-aks-microservice", "src");
+
+  test("passes lint", async () => {
+    const result = await lintCommand({
+      path: srcDir,
+      format: "stylish",
+      fix: true,
+    });
+    if (!result.success || result.errorCount > 0 || result.warningCount > 0) {
+      console.log(result.output);
+    }
+    expect(result.success).toBe(true);
+    expect(result.errorCount).toBe(0);
+    expect(result.warningCount).toBe(0);
+  });
+
+  test("combined build succeeds with both serializers", async () => {
+    const result = await build(srcDir, [azureSerializer, k8sSerializer]);
+    expect(result.errors).toHaveLength(0);
+    expect(result.outputs.has("azure")).toBe(true);
+    expect(result.outputs.has("k8s")).toBe(true);
+  });
+
+  test("ARM template contains all expected resources", async () => {
+    const result = await build(srcDir, [azureSerializer]);
+    expect(result.errors).toHaveLength(0);
+    const parsed = JSON.parse(result.outputs.get("azure")!);
+    expect(parsed.$schema).toContain("deploymentTemplate.json");
+    const types = parsed.resources.map((r: any) => r.type);
+    expect(types).toContain("Microsoft.ContainerService/managedClusters");
+    expect(types).toContain("Microsoft.ContainerRegistry/registries");
+    expect(types).toContain("Microsoft.Network/virtualNetworks");
+    expect(types.filter((t: string) => t === "Microsoft.ManagedIdentity/userAssignedIdentities")).toHaveLength(3);
+    expect(types.filter((t: string) => t === "Microsoft.Authorization/roleAssignments")).toHaveLength(3);
+    expect(types).toContain("Microsoft.Network/dnsZones");
+  });
+
+  test("AKS cluster has correct properties", async () => {
+    const result = await build(srcDir, [azureSerializer]);
+    const parsed = JSON.parse(result.outputs.get("azure")!);
+    const cluster = parsed.resources.find(
+      (r: any) => r.type === "Microsoft.ContainerService/managedClusters",
+    );
+    expect(cluster).toBeDefined();
+    expect(cluster.name).toBe("aks-microservice");
+    expect(cluster.properties.kubernetesVersion).toBe("1.28");
+    expect(cluster.properties.agentPoolProfiles[0].count).toBe(3);
+    expect(cluster.properties.agentPoolProfiles[0].vmSize).toBe("Standard_D4s_v5");
+    expect(cluster.properties.enableRBAC).toBe(true);
+  });
+
+  test("K8s output contains all expected resources", async () => {
+    const result = await build(srcDir, [k8sSerializer]);
+    expect(result.errors).toHaveLength(0);
+    const docs = parseK8sDocs(result.outputs.get("k8s")!);
+    expect(docs.length).toBeGreaterThanOrEqual(27);
+    const kinds = docs.map((d) => d.kind);
+    expect(kinds.filter((k) => k === "Deployment")).toHaveLength(3);
+    expect(kinds.filter((k) => k === "Service")).toHaveLength(2);
+    expect(kinds.filter((k) => k === "ServiceAccount")).toHaveLength(4);
+    expect(kinds.filter((k) => k === "DaemonSet")).toHaveLength(1);
+    expect(kinds.filter((k) => k === "Namespace")).toHaveLength(2);
+  });
+
+  test("Workload Identity SA has azure.workload.identity/client-id annotation", async () => {
+    const result = await build(srcDir, [k8sSerializer]);
+    const docs = parseK8sDocs(result.outputs.get("k8s")!);
+    const appSa = docs.find(
+      (d) => d.kind === "ServiceAccount" && d.name === "microservice-app-sa",
+    );
+    expect(appSa).toBeDefined();
+    expect(appSa!.doc).toContain("azure.workload.identity/client-id");
+  });
+
+  test("AGIC Ingress has correct annotations", async () => {
+    const result = await build(srcDir, [k8sSerializer]);
+    const docs = parseK8sDocs(result.outputs.get("k8s")!);
+    const ingress = docs.find((d) => d.kind === "Ingress");
+    expect(ingress).toBeDefined();
+    expect(ingress!.doc).toContain("kubernetes.io/ingress.class: azure/application-gateway");
+    expect(ingress!.doc).toContain("ingressClassName: azure/application-gateway");
+  });
+
+  test("app resources are in the microservice namespace", async () => {
+    const result = await build(srcDir, [k8sSerializer]);
+    const docs = parseK8sDocs(result.outputs.get("k8s")!);
+    for (const name of [
+      "microservice-api",
+      "microservice-app-sa",
+      "microservice-agic",
     ]) {
       const doc = docs.find((d) => d.name === name);
       expect(doc).toBeDefined();

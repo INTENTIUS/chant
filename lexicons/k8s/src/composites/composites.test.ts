@@ -2691,3 +2691,288 @@ describe("ConfigConnectorContext", () => {
     expect((result.context as any).metadata.namespace).toBe("config-connector");
   });
 });
+
+// ── GkeFluentBitAgent ────────────────────────────────────────────────
+
+describe("GkeFluentBitAgent", () => {
+  const { GkeFluentBitAgent } = require("./gke-fluent-bit-agent");
+
+  const minProps = {
+    clusterName: "test-cluster",
+    projectId: "test-project",
+    gcpServiceAccountEmail: "fluent-bit@test-project.iam.gserviceaccount.com",
+  };
+
+  test("returns all expected resources", () => {
+    const result = GkeFluentBitAgent(minProps);
+    expect(result.daemonSet).toBeDefined();
+    expect(result.serviceAccount).toBeDefined();
+    expect(result.clusterRole).toBeDefined();
+    expect(result.clusterRoleBinding).toBeDefined();
+    expect(result.configMap).toBeDefined();
+  });
+
+  test("SA has GKE Workload Identity annotation", () => {
+    const result = GkeFluentBitAgent(minProps);
+    const meta = result.serviceAccount.metadata as any;
+    expect(meta.annotations["iam.gke.io/gcp-service-account"]).toBe(
+      "fluent-bit@test-project.iam.gserviceaccount.com",
+    );
+  });
+
+  test("SA has no annotation when gcpServiceAccountEmail omitted", () => {
+    const result = GkeFluentBitAgent({
+      clusterName: "test-cluster",
+      projectId: "test-project",
+    });
+    const meta = result.serviceAccount.metadata as any;
+    expect(meta.annotations).toBeUndefined();
+  });
+
+  test("configMap uses stackdriver output", () => {
+    const result = GkeFluentBitAgent(minProps);
+    const data = result.configMap.data as any;
+    expect(data["fluent-bit.conf"]).toContain("stackdriver");
+    expect(data["fluent-bit.conf"]).toContain("test-cluster");
+  });
+
+  test("default namespace is gke-logging", () => {
+    const result = GkeFluentBitAgent(minProps);
+    expect((result.daemonSet.metadata as any).namespace).toBe("gke-logging");
+    expect((result.serviceAccount.metadata as any).namespace).toBe("gke-logging");
+  });
+
+  test("common labels on all resources", () => {
+    const result = GkeFluentBitAgent(minProps);
+    for (const resource of [result.daemonSet, result.serviceAccount, result.clusterRole, result.clusterRoleBinding, result.configMap]) {
+      expect((resource.metadata as any).labels["app.kubernetes.io/managed-by"]).toBe("chant");
+    }
+  });
+
+  test("DaemonSet mounts host log directory", () => {
+    const result = GkeFluentBitAgent(minProps);
+    const spec = (result.daemonSet as any).spec.template.spec;
+    const varlog = spec.volumes.find((v: any) => v.name === "varlog");
+    expect(varlog.hostPath.path).toBe("/var/log");
+  });
+
+  test("container runs as root for log access", () => {
+    const result = GkeFluentBitAgent(minProps);
+    const container = (result.daemonSet as any).spec.template.spec.containers[0];
+    expect(container.securityContext.runAsUser).toBe(0);
+    expect(container.securityContext.readOnlyRootFilesystem).toBe(true);
+  });
+});
+
+// ── GkeOtelCollector ─────────────────────────────────────────────────
+
+describe("GkeOtelCollector", () => {
+  const { GkeOtelCollector } = require("./gke-otel-collector");
+
+  const minProps = {
+    clusterName: "test-cluster",
+    projectId: "test-project",
+    gcpServiceAccountEmail: "otel@test-project.iam.gserviceaccount.com",
+  };
+
+  test("returns all expected resources", () => {
+    const result = GkeOtelCollector(minProps);
+    expect(result.daemonSet).toBeDefined();
+    expect(result.serviceAccount).toBeDefined();
+    expect(result.clusterRole).toBeDefined();
+    expect(result.clusterRoleBinding).toBeDefined();
+    expect(result.configMap).toBeDefined();
+  });
+
+  test("SA has GKE Workload Identity annotation", () => {
+    const result = GkeOtelCollector(minProps);
+    const meta = result.serviceAccount.metadata as any;
+    expect(meta.annotations["iam.gke.io/gcp-service-account"]).toBe(
+      "otel@test-project.iam.gserviceaccount.com",
+    );
+  });
+
+  test("SA has no annotation when gcpServiceAccountEmail omitted", () => {
+    const result = GkeOtelCollector({
+      clusterName: "test-cluster",
+      projectId: "test-project",
+    });
+    const meta = result.serviceAccount.metadata as any;
+    expect(meta.annotations).toBeUndefined();
+  });
+
+  test("configMap uses googlecloud exporter", () => {
+    const result = GkeOtelCollector(minProps);
+    const data = result.configMap.data as any;
+    expect(data["config.yaml"]).toContain("googlecloud");
+    expect(data["config.yaml"]).toContain("test-project");
+  });
+
+  test("default namespace is gke-monitoring", () => {
+    const result = GkeOtelCollector(minProps);
+    expect((result.daemonSet.metadata as any).namespace).toBe("gke-monitoring");
+  });
+
+  test("container exposes OTLP ports", () => {
+    const result = GkeOtelCollector(minProps);
+    const container = (result.daemonSet as any).spec.template.spec.containers[0];
+    const ports = container.ports.map((p: any) => p.containerPort);
+    expect(ports).toContain(4317);
+    expect(ports).toContain(4318);
+  });
+
+  test("container runs as non-root", () => {
+    const result = GkeOtelCollector(minProps);
+    const container = (result.daemonSet as any).spec.template.spec.containers[0];
+    expect(container.securityContext.runAsNonRoot).toBe(true);
+    expect(container.securityContext.runAsUser).toBe(10001);
+  });
+
+  test("common labels on all resources", () => {
+    const result = GkeOtelCollector(minProps);
+    for (const resource of [result.daemonSet, result.serviceAccount, result.clusterRole, result.clusterRoleBinding, result.configMap]) {
+      expect((resource.metadata as any).labels["app.kubernetes.io/managed-by"]).toBe("chant");
+    }
+  });
+});
+
+// ── GkeExternalDnsAgent ──────────────────────────────────────────────
+
+describe("GkeExternalDnsAgent", () => {
+  const { GkeExternalDnsAgent } = require("./gke-external-dns-agent");
+
+  const minProps = {
+    gcpServiceAccountEmail: "external-dns@test-project.iam.gserviceaccount.com",
+    gcpProjectId: "test-project",
+    domainFilters: ["example.com"],
+  };
+
+  test("returns all expected resources", () => {
+    const result = GkeExternalDnsAgent(minProps);
+    expect(result.deployment).toBeDefined();
+    expect(result.serviceAccount).toBeDefined();
+    expect(result.clusterRole).toBeDefined();
+    expect(result.clusterRoleBinding).toBeDefined();
+  });
+
+  test("SA has GKE Workload Identity annotation", () => {
+    const result = GkeExternalDnsAgent(minProps);
+    const meta = result.serviceAccount.metadata as any;
+    expect(meta.annotations["iam.gke.io/gcp-service-account"]).toBe(
+      "external-dns@test-project.iam.gserviceaccount.com",
+    );
+  });
+
+  test("uses google provider", () => {
+    const result = GkeExternalDnsAgent(minProps);
+    const container = (result.deployment as any).spec.template.spec.containers[0];
+    expect(container.args).toContain("--provider=google");
+  });
+
+  test("passes google-project arg", () => {
+    const result = GkeExternalDnsAgent(minProps);
+    const container = (result.deployment as any).spec.template.spec.containers[0];
+    expect(container.args).toContain("--google-project=test-project");
+  });
+
+  test("domain filters are applied", () => {
+    const result = GkeExternalDnsAgent(minProps);
+    const container = (result.deployment as any).spec.template.spec.containers[0];
+    expect(container.args).toContain("--domain-filter=example.com");
+  });
+
+  test("txtOwnerId is applied when set", () => {
+    const result = GkeExternalDnsAgent({ ...minProps, txtOwnerId: "my-cluster" });
+    const container = (result.deployment as any).spec.template.spec.containers[0];
+    expect(container.args).toContain("--txt-owner-id=my-cluster");
+  });
+
+  test("default namespace is kube-system", () => {
+    const result = GkeExternalDnsAgent(minProps);
+    expect((result.deployment.metadata as any).namespace).toBe("kube-system");
+  });
+
+  test("container runs as non-root", () => {
+    const result = GkeExternalDnsAgent(minProps);
+    const container = (result.deployment as any).spec.template.spec.containers[0];
+    expect(container.securityContext.runAsNonRoot).toBe(true);
+    expect(container.securityContext.runAsUser).toBe(65534);
+  });
+});
+
+// ── AksExternalDnsAgent ──────────────────────────────────────────────
+
+describe("AksExternalDnsAgent", () => {
+  const { AksExternalDnsAgent } = require("./aks-external-dns-agent");
+
+  const minProps = {
+    clientId: "00000000-0000-0000-0000-000000000000",
+    resourceGroup: "test-rg",
+    subscriptionId: "11111111-1111-1111-1111-111111111111",
+    tenantId: "22222222-2222-2222-2222-222222222222",
+    domainFilters: ["example.com"],
+  };
+
+  test("returns all expected resources", () => {
+    const result = AksExternalDnsAgent(minProps);
+    expect(result.deployment).toBeDefined();
+    expect(result.serviceAccount).toBeDefined();
+    expect(result.clusterRole).toBeDefined();
+    expect(result.clusterRoleBinding).toBeDefined();
+  });
+
+  test("SA has AKS Workload Identity annotation and label", () => {
+    const result = AksExternalDnsAgent(minProps);
+    const meta = result.serviceAccount.metadata as any;
+    expect(meta.annotations["azure.workload.identity/client-id"]).toBe(
+      "00000000-0000-0000-0000-000000000000",
+    );
+    expect(meta.labels["azure.workload.identity/use"]).toBe("true");
+  });
+
+  test("uses azure provider", () => {
+    const result = AksExternalDnsAgent(minProps);
+    const container = (result.deployment as any).spec.template.spec.containers[0];
+    expect(container.args).toContain("--provider=azure");
+  });
+
+  test("passes azure resource group and subscription", () => {
+    const result = AksExternalDnsAgent(minProps);
+    const container = (result.deployment as any).spec.template.spec.containers[0];
+    expect(container.args).toContain("--azure-resource-group=test-rg");
+    expect(container.args).toContain("--azure-subscription-id=11111111-1111-1111-1111-111111111111");
+  });
+
+  test("container has Azure env vars", () => {
+    const result = AksExternalDnsAgent(minProps);
+    const container = (result.deployment as any).spec.template.spec.containers[0];
+    const envMap = Object.fromEntries(container.env.map((e: any) => [e.name, e.value]));
+    expect(envMap.AZURE_TENANT_ID).toBe("22222222-2222-2222-2222-222222222222");
+    expect(envMap.AZURE_SUBSCRIPTION_ID).toBe("11111111-1111-1111-1111-111111111111");
+    expect(envMap.AZURE_RESOURCE_GROUP).toBe("test-rg");
+  });
+
+  test("pod labels include workload identity use label", () => {
+    const result = AksExternalDnsAgent(minProps);
+    const podLabels = (result.deployment as any).spec.template.metadata.labels;
+    expect(podLabels["azure.workload.identity/use"]).toBe("true");
+  });
+
+  test("domain filters are applied", () => {
+    const result = AksExternalDnsAgent(minProps);
+    const container = (result.deployment as any).spec.template.spec.containers[0];
+    expect(container.args).toContain("--domain-filter=example.com");
+  });
+
+  test("default namespace is kube-system", () => {
+    const result = AksExternalDnsAgent(minProps);
+    expect((result.deployment.metadata as any).namespace).toBe("kube-system");
+  });
+
+  test("container runs as non-root", () => {
+    const result = AksExternalDnsAgent(minProps);
+    const container = (result.deployment as any).spec.template.spec.containers[0];
+    expect(container.securityContext.runAsNonRoot).toBe(true);
+    expect(container.securityContext.runAsUser).toBe(65534);
+  });
+});
