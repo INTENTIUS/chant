@@ -18,8 +18,8 @@ import {
 export const { cluster } = AksCluster({
   name: "aks-microservice",
   nodeCount: 3,
-  vmSize: "Standard_D4s_v5",
-  kubernetesVersion: "1.28",
+  vmSize: "Standard_B2s",
+  kubernetesVersion: "1.32",
   location: Azure.ResourceGroupLocation as unknown as string,
   tags: { environment: "production" },
 });
@@ -59,30 +59,24 @@ export const monitorIdentity = new ManagedIdentity({
 
 // App identity → ACR Pull
 export const appAcrPull = new RoleAssignment({
-  name: "aks-microservice-app-acr-pull",
-  properties: {
-    principalId: "[reference(resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', 'aks-microservice-app-id')).principalId]",
-    roleDefinitionId: "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', '7f951dda-4ed3-4680-a7ca-43fe172d538d')]",
-    principalType: "ServicePrincipal",
-  },
+  name: "[guid(resourceGroup().id, 'aks-microservice-app-acr-pull')]",
+  principalId: "[reference(resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', 'aks-microservice-app-id')).principalId]",
+  roleDefinitionId: "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', '7f951dda-4ed3-4680-a7ca-43fe172d538d')]",
+  principalType: "ServicePrincipal",
 });
 
 // External DNS identity → DNS Zone Contributor
 export const dnsContributor = new RoleAssignment({
-  name: "aks-microservice-dns-contributor",
-  properties: {
-    principalId: "[reference(resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', 'aks-microservice-dns-id')).principalId]",
-    roleDefinitionId: "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', 'befefa01-2a29-4197-83a8-272ff33ce314')]",
-    principalType: "ServicePrincipal",
-  },
+  name: "[guid(resourceGroup().id, 'aks-microservice-dns-contributor')]",
+  principalId: "[reference(resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', 'aks-microservice-dns-id')).principalId]",
+  roleDefinitionId: "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', 'befefa01-2a29-4197-83a8-272ff33ce314')]",
+  principalType: "ServicePrincipal",
 });
 
 // Monitor identity → Monitoring Metrics Publisher
 export const monitorMetrics = new RoleAssignment({
-  name: "aks-microservice-monitor-metrics",
-  properties: {
-    principalId: "[reference(resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', 'aks-microservice-monitor-id')).principalId]",
-    roleDefinitionId: "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', '3913510d-42f4-4e42-8a64-420c390055eb')]",
-    principalType: "ServicePrincipal",
-  },
+  name: "[guid(resourceGroup().id, 'aks-microservice-monitor-metrics')]",
+  principalId: "[reference(resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', 'aks-microservice-monitor-id')).principalId]",
+  roleDefinitionId: "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', '3913510d-42f4-4e42-8a64-420c390055eb')]",
+  principalType: "ServicePrincipal",
 });

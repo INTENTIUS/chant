@@ -34,9 +34,14 @@ export function markAsAzureResource(obj: Record<string, unknown>): Record<string
     }
   }
 
+  const apiVersion = obj.apiVersion as string | undefined;
+
   const attributes: Record<string, unknown> = {};
   if (dependsOn) {
     attributes.DependsOn = dependsOn;
+  }
+  if (apiVersion) {
+    attributes.apiVersion = apiVersion;
   }
 
   Object.defineProperty(obj, DECLARABLE_MARKER, { value: true, enumerable: false });

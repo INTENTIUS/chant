@@ -12,7 +12,7 @@ export interface AzureMonitorCollectorProps {
   clusterName: string;
   /** Agent name (default: "azure-monitor-collector"). */
   name?: string;
-  /** Collector image (default: "mcr.microsoft.com/azuremonitor/containerinsights/ciprod:latest"). */
+  /** Collector image (default: "mcr.microsoft.com/azuremonitor/containerinsights/ciprod:3.1.35"). */
   image?: string;
   /** Namespace (default: "azure-monitor"). */
   namespace?: string;
@@ -58,7 +58,7 @@ export function AzureMonitorCollector(props: AzureMonitorCollectorProps): AzureM
     workspaceId,
     clusterName,
     name = "azure-monitor-collector",
-    image = "mcr.microsoft.com/azuremonitor/containerinsights/ciprod:latest",
+    image = "mcr.microsoft.com/azuremonitor/containerinsights/ciprod:3.1.35",
     namespace = "azure-monitor",
     labels: extraLabels = {},
     cpuRequest = "100m",

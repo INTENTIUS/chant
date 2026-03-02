@@ -140,7 +140,6 @@ export function AgicIngress(props: AgicIngressProps): AgicIngressResult {
       annotations,
     },
     spec: {
-      ingressClassName: "azure/application-gateway",
       rules: ingressRules,
     },
   };

@@ -29,8 +29,7 @@ chant build src --lexicon k8s   → k8s.yaml       (K8s workload YAML)
 │  ├── WorkloadIdentityServiceAccount (AKS)               │
 │  ├── AGIC Ingress + AksExternalDnsAgent                 │
 │  ├── AzureDiskStorageClass                              │
-│  ├── AzureMonitorCollector                              │
-│  └── MetricsServer                                      │
+│  └── AzureMonitorCollector                              │
 └─────────────────────────────────────────────────────────┘
 ```
 
@@ -49,7 +48,7 @@ chant build src --lexicon k8s   → k8s.yaml       (K8s workload YAML)
 | File | Resources |
 |------|-----------|
 | `namespace.ts` | Namespace, ResourceQuota, LimitRange, NetworkPolicy |
-| `app.ts` | AutoscaledService, WorkloadIdentityServiceAccount, ConfigMap, MetricsServer |
+| `app.ts` | AutoscaledService, WorkloadIdentityServiceAccount, ConfigMap |
 | `ingress.ts` | AGIC Ingress, AksExternalDnsAgent |
 | `storage.ts` | AzureDiskStorageClass |
 | `observability.ts` | AzureMonitorCollector |
@@ -115,7 +114,7 @@ Patterns to add next:
 ## Resource counts
 
 - **Azure lexicon**: ~14 ARM resources (VNet, subnets, NSG, route table, AKS cluster, ACR, managed identities, role assignments, DNS zone)
-- **K8s lexicon**: ~11 Kubernetes resources (namespace, quotas, deployment, HPA, PDB, ingress, storage class, DaemonSets, collectors)
+- **K8s lexicon**: ~20 Kubernetes resources (namespaces, quotas, limits, network policy, deployment, HPA, PDB, service, service accounts, ingress, storage class, DaemonSet, cluster roles, cluster role bindings, config maps)
 
 ## Cross-lexicon value flow
 
@@ -140,10 +139,17 @@ This example includes AKS best-practice hardening:
 - **Pod Security Standards** — namespace enforces `restricted` PSS profile (enforce, warn, audit)
 - **Health probes** — liveness and readiness probes on the app container for proper rollout gating
 - **Topology spread** — zone-based `topologySpreadConstraints` with `maxSkew: 1` prevents single-zone concentration
-- **Metrics Server** — in-cluster metrics-server deployment enables HPA pod CPU/memory scaling
+- **AKS built-in Metrics Server** — AKS ships its own metrics-server; HPA works out of the box without a custom deployment
 - **Default-deny NetworkPolicy** — namespace-level network policy denies all ingress/egress by default
 - **Resource quotas + LimitRange** — namespace-level resource quotas and per-container default limits prevent noisy neighbors
 - **Managed identities with minimal roles** — each workload gets its own managed identity with least-privilege role assignments (ACR Pull, DNS Contributor, Monitoring Metrics Publisher)
+
+## Prerequisites
+
+- Azure CLI (`az`) logged in with an active subscription
+- `kubectl` installed
+- Subscription must have `Microsoft.ContainerService`, `Microsoft.Network`, `Microsoft.ManagedIdentity`, `Microsoft.ContainerRegistry`, and `Microsoft.Authorization` resource providers registered
+- Minimum 6 vCPUs quota in your target region (3 × Standard_B2s nodes)
 
 ## Quick start (local verification)
 
@@ -155,13 +161,28 @@ npm run lint
 
 ## Deploy workflow
 
+```bash
+export AZURE_RESOURCE_GROUP=aks-microservice-rg
+```
+
+0. **Create resource group**: `az group create --name $AZURE_RESOURCE_GROUP --location eastus`
 1. **Build**: `npm run build`
-2. **Deploy infra**: `npm run deploy-infra` (requires Azure resource group)
+2. **Deploy infra**: `npm run deploy-infra`
 3. **Configure kubectl**: `npm run configure-kubectl`
 4. **Load outputs**: `npm run load-outputs`
 5. **Rebuild K8s**: `npm run build:k8s`
 6. **Apply workloads**: `npm run apply`
 7. **Verify**: `npm run status`
+
+Or run steps 1–7 in one shot: `npm run deploy`
+
+## Teardown
+
+```bash
+npm run teardown
+```
+
+Deletes K8s workloads, then deletes the resource group (runs `az group delete --no-wait` in the background).
 
 ## Standalone usage
 

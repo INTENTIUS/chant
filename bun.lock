@@ -57,6 +57,15 @@
         "@intentius/chant-lexicon-gitlab": "workspace:*",
       },
     },
+    "examples/k8s-aks-microservice": {
+      "name": "k8s-aks-microservice-example",
+      "version": "0.0.1",
+      "dependencies": {
+        "@intentius/chant": "workspace:*",
+        "@intentius/chant-lexicon-azure": "workspace:*",
+        "@intentius/chant-lexicon-k8s": "workspace:*",
+      },
+    },
     "examples/k8s-eks-microservice": {
       "name": "k8s-eks-microservice-example",
       "version": "0.0.1",
@@ -66,9 +75,18 @@
         "@intentius/chant-lexicon-k8s": "workspace:*",
       },
     },
+    "examples/k8s-gke-microservice": {
+      "name": "k8s-gke-microservice-example",
+      "version": "0.0.1",
+      "dependencies": {
+        "@intentius/chant": "workspace:*",
+        "@intentius/chant-lexicon-gcp": "workspace:*",
+        "@intentius/chant-lexicon-k8s": "workspace:*",
+      },
+    },
     "lexicons/aws": {
       "name": "@intentius/chant-lexicon-aws",
-      "version": "0.0.14",
+      "version": "0.0.15",
       "dependencies": {
         "@intentius/chant": "workspace:*",
         "fflate": "^0.8.2",
@@ -85,6 +103,9 @@
         "@intentius/chant": "workspace:*",
         "@intentius/chant-lexicon-aws": "workspace:*",
       },
+      "devDependencies": {
+        "typescript": "*",
+      },
     },
     "lexicons/aws/examples/docs-snippets": {
       "name": "docs-snippets-example",
@@ -92,6 +113,9 @@
       "dependencies": {
         "@intentius/chant": "workspace:*",
         "@intentius/chant-lexicon-aws": "workspace:*",
+      },
+      "devDependencies": {
+        "typescript": "*",
       },
     },
     "lexicons/aws/examples/fargate-alb": {
@@ -261,7 +285,7 @@
     },
     "lexicons/azure": {
       "name": "@intentius/chant-lexicon-azure",
-      "version": "0.0.14",
+      "version": "0.0.15",
       "dependencies": {
         "@intentius/chant": "workspace:*",
         "fflate": "^0.8.2",
@@ -415,7 +439,7 @@
     },
     "lexicons/flyway": {
       "name": "@intentius/chant-lexicon-flyway",
-      "version": "0.0.14",
+      "version": "0.0.15",
       "dependencies": {
         "@intentius/chant": "workspace:*",
       },
@@ -430,6 +454,9 @@
         "@intentius/chant": "workspace:*",
         "@intentius/chant-lexicon-flyway": "workspace:*",
       },
+      "devDependencies": {
+        "typescript": "*",
+      },
     },
     "lexicons/flyway/examples/basic-project": {
       "name": "flyway-basic-project-example",
@@ -437,6 +464,9 @@
       "dependencies": {
         "@intentius/chant": "workspace:*",
         "@intentius/chant-lexicon-flyway": "workspace:*",
+      },
+      "devDependencies": {
+        "typescript": "*",
       },
     },
     "lexicons/flyway/examples/callbacks": {
@@ -446,6 +476,9 @@
         "@intentius/chant": "workspace:*",
         "@intentius/chant-lexicon-flyway": "workspace:*",
       },
+      "devDependencies": {
+        "typescript": "*",
+      },
     },
     "lexicons/flyway/examples/ci-pipeline": {
       "name": "flyway-ci-pipeline-example",
@@ -453,6 +486,9 @@
       "dependencies": {
         "@intentius/chant": "workspace:*",
         "@intentius/chant-lexicon-flyway": "workspace:*",
+      },
+      "devDependencies": {
+        "typescript": "*",
       },
     },
     "lexicons/flyway/examples/desktop-project": {
@@ -462,6 +498,9 @@
         "@intentius/chant": "workspace:*",
         "@intentius/chant-lexicon-flyway": "workspace:*",
       },
+      "devDependencies": {
+        "typescript": "*",
+      },
     },
     "lexicons/flyway/examples/docker-dev": {
       "name": "flyway-docker-dev-example",
@@ -469,6 +508,9 @@
       "dependencies": {
         "@intentius/chant": "workspace:*",
         "@intentius/chant-lexicon-flyway": "workspace:*",
+      },
+      "devDependencies": {
+        "typescript": "*",
       },
     },
     "lexicons/flyway/examples/environment-overrides": {
@@ -478,6 +520,9 @@
         "@intentius/chant": "workspace:*",
         "@intentius/chant-lexicon-flyway": "workspace:*",
       },
+      "devDependencies": {
+        "typescript": "*",
+      },
     },
     "lexicons/flyway/examples/gcp-secured": {
       "name": "flyway-gcp-secured-example",
@@ -485,6 +530,9 @@
       "dependencies": {
         "@intentius/chant": "workspace:*",
         "@intentius/chant-lexicon-flyway": "workspace:*",
+      },
+      "devDependencies": {
+        "typescript": "*",
       },
     },
     "lexicons/flyway/examples/migration-lifecycle": {
@@ -494,6 +542,9 @@
         "@intentius/chant": "workspace:*",
         "@intentius/chant-lexicon-flyway": "workspace:*",
       },
+      "devDependencies": {
+        "typescript": "*",
+      },
     },
     "lexicons/flyway/examples/multi-environment": {
       "name": "flyway-multi-environment-example",
@@ -501,6 +552,9 @@
       "dependencies": {
         "@intentius/chant": "workspace:*",
         "@intentius/chant-lexicon-flyway": "workspace:*",
+      },
+      "devDependencies": {
+        "typescript": "*",
       },
     },
     "lexicons/flyway/examples/multi-schema": {
@@ -510,6 +564,9 @@
         "@intentius/chant": "workspace:*",
         "@intentius/chant-lexicon-flyway": "workspace:*",
       },
+      "devDependencies": {
+        "typescript": "*",
+      },
     },
     "lexicons/flyway/examples/vault-secured": {
       "name": "flyway-vault-secured-example",
@@ -518,10 +575,13 @@
         "@intentius/chant": "workspace:*",
         "@intentius/chant-lexicon-flyway": "workspace:*",
       },
+      "devDependencies": {
+        "typescript": "*",
+      },
     },
     "lexicons/gcp": {
       "name": "@intentius/chant-lexicon-gcp",
-      "version": "0.0.14",
+      "version": "0.0.15",
       "dependencies": {
         "@intentius/chant": "workspace:*",
         "fflate": "^0.8.2",
@@ -532,32 +592,63 @@
       },
     },
     "lexicons/gcp/examples/basic-bucket": {
-      "name": "@intentius/chant-example-gcp-basic-bucket",
-      "version": "0.0.14",
+      "name": "gcp-basic-bucket-example",
+      "version": "0.0.1",
       "dependencies": {
         "@intentius/chant": "workspace:*",
         "@intentius/chant-lexicon-gcp": "workspace:*",
+      },
+      "devDependencies": {
+        "typescript": "*",
+      },
+    },
+    "lexicons/gcp/examples/cloud-function": {
+      "name": "gcp-cloud-function-example",
+      "version": "0.0.1",
+      "dependencies": {
+        "@intentius/chant": "workspace:*",
+        "@intentius/chant-lexicon-gcp": "workspace:*",
+      },
+      "devDependencies": {
+        "typescript": "*",
+      },
+    },
+    "lexicons/gcp/examples/cloud-sql": {
+      "name": "gcp-cloud-sql-example",
+      "version": "0.0.1",
+      "dependencies": {
+        "@intentius/chant": "workspace:*",
+        "@intentius/chant-lexicon-gcp": "workspace:*",
+      },
+      "devDependencies": {
+        "typescript": "*",
       },
     },
     "lexicons/gcp/examples/gke-cluster": {
-      "name": "@intentius/chant-example-gcp-gke-cluster",
-      "version": "0.0.14",
+      "name": "gcp-gke-cluster-example",
+      "version": "0.0.1",
       "dependencies": {
         "@intentius/chant": "workspace:*",
         "@intentius/chant-lexicon-gcp": "workspace:*",
       },
+      "devDependencies": {
+        "typescript": "*",
+      },
     },
     "lexicons/gcp/examples/vpc-network": {
-      "name": "@intentius/chant-example-gcp-vpc-network",
-      "version": "0.0.14",
+      "name": "gcp-vpc-network-example",
+      "version": "0.0.1",
       "dependencies": {
         "@intentius/chant": "workspace:*",
         "@intentius/chant-lexicon-gcp": "workspace:*",
+      },
+      "devDependencies": {
+        "typescript": "*",
       },
     },
     "lexicons/gitlab": {
       "name": "@intentius/chant-lexicon-gitlab",
-      "version": "0.0.14",
+      "version": "0.0.15",
       "dependencies": {
         "@intentius/chant": "workspace:*",
       },
@@ -572,6 +663,9 @@
         "@intentius/chant": "workspace:*",
         "@intentius/chant-lexicon-gitlab": "workspace:*",
       },
+      "devDependencies": {
+        "typescript": "*",
+      },
     },
     "lexicons/gitlab/examples/docs-snippets": {
       "name": "gitlab-docs-snippets-example",
@@ -579,6 +673,9 @@
       "dependencies": {
         "@intentius/chant": "workspace:*",
         "@intentius/chant-lexicon-gitlab": "workspace:*",
+      },
+      "devDependencies": {
+        "typescript": "*",
       },
     },
     "lexicons/gitlab/examples/getting-started": {
@@ -588,6 +685,9 @@
         "@intentius/chant": "workspace:*",
         "@intentius/chant-lexicon-gitlab": "workspace:*",
       },
+      "devDependencies": {
+        "typescript": "*",
+      },
     },
     "lexicons/gitlab/examples/node-pipeline": {
       "name": "gitlab-node-pipeline-example",
@@ -595,6 +695,9 @@
       "dependencies": {
         "@intentius/chant": "workspace:*",
         "@intentius/chant-lexicon-gitlab": "workspace:*",
+      },
+      "devDependencies": {
+        "typescript": "*",
       },
     },
     "lexicons/gitlab/examples/python-pipeline": {
@@ -604,6 +707,9 @@
         "@intentius/chant": "workspace:*",
         "@intentius/chant-lexicon-gitlab": "workspace:*",
       },
+      "devDependencies": {
+        "typescript": "*",
+      },
     },
     "lexicons/gitlab/examples/review-app": {
       "name": "gitlab-review-app-example",
@@ -612,10 +718,13 @@
         "@intentius/chant": "workspace:*",
         "@intentius/chant-lexicon-gitlab": "workspace:*",
       },
+      "devDependencies": {
+        "typescript": "*",
+      },
     },
     "lexicons/helm": {
       "name": "@intentius/chant-lexicon-helm",
-      "version": "0.0.14",
+      "version": "0.0.15",
       "dependencies": {
         "@intentius/chant": "workspace:*",
         "@intentius/chant-lexicon-k8s": "workspace:*",
@@ -625,7 +734,7 @@
       },
     },
     "lexicons/helm/examples/composites-basic": {
-      "name": "helm-composites-basic",
+      "name": "helm-composites-basic-example",
       "version": "0.0.1",
       "dependencies": {
         "@intentius/chant": "workspace:*",
@@ -637,7 +746,7 @@
       },
     },
     "lexicons/helm/examples/composites-infrastructure": {
-      "name": "helm-composites-infrastructure",
+      "name": "helm-composites-infrastructure-example",
       "version": "0.0.1",
       "dependencies": {
         "@intentius/chant": "workspace:*",
@@ -649,7 +758,31 @@
       },
     },
     "lexicons/helm/examples/composites-production": {
-      "name": "helm-composites-production",
+      "name": "helm-composites-production-example",
+      "version": "0.0.1",
+      "dependencies": {
+        "@intentius/chant": "workspace:*",
+        "@intentius/chant-lexicon-helm": "workspace:*",
+        "@intentius/chant-lexicon-k8s": "workspace:*",
+      },
+      "devDependencies": {
+        "typescript": "*",
+      },
+    },
+    "lexicons/helm/examples/microservice-chart": {
+      "name": "helm-microservice-chart-example",
+      "version": "0.0.1",
+      "dependencies": {
+        "@intentius/chant": "workspace:*",
+        "@intentius/chant-lexicon-helm": "workspace:*",
+        "@intentius/chant-lexicon-k8s": "workspace:*",
+      },
+      "devDependencies": {
+        "typescript": "*",
+      },
+    },
+    "lexicons/helm/examples/web-app-with-ingress": {
+      "name": "helm-web-app-with-ingress-example",
       "version": "0.0.1",
       "dependencies": {
         "@intentius/chant": "workspace:*",
@@ -662,7 +795,7 @@
     },
     "lexicons/k8s": {
       "name": "@intentius/chant-lexicon-k8s",
-      "version": "0.0.14",
+      "version": "0.0.15",
       "dependencies": {
         "@intentius/chant": "workspace:*",
       },
@@ -671,11 +804,14 @@
       },
     },
     "lexicons/k8s/examples/basic-deployment": {
-      "name": "k8s-basic-deployment",
+      "name": "k8s-basic-deployment-example",
       "version": "0.0.1",
       "dependencies": {
         "@intentius/chant": "workspace:*",
         "@intentius/chant-lexicon-k8s": "workspace:*",
+      },
+      "devDependencies": {
+        "typescript": "*",
       },
     },
     "lexicons/k8s/examples/batch-workers": {
@@ -685,21 +821,30 @@
         "@intentius/chant": "workspace:*",
         "@intentius/chant-lexicon-k8s": "workspace:*",
       },
+      "devDependencies": {
+        "typescript": "*",
+      },
     },
     "lexicons/k8s/examples/configmap-secret": {
-      "name": "k8s-configmap-secret",
+      "name": "k8s-configmap-secret-example",
       "version": "0.0.1",
       "dependencies": {
         "@intentius/chant": "workspace:*",
         "@intentius/chant-lexicon-k8s": "workspace:*",
       },
+      "devDependencies": {
+        "typescript": "*",
+      },
     },
     "lexicons/k8s/examples/statefulset": {
-      "name": "k8s-statefulset",
+      "name": "k8s-statefulset-example",
       "version": "0.0.1",
       "dependencies": {
         "@intentius/chant": "workspace:*",
         "@intentius/chant-lexicon-k8s": "workspace:*",
+      },
+      "devDependencies": {
+        "typescript": "*",
       },
     },
     "lexicons/k8s/examples/web-platform": {
@@ -709,10 +854,13 @@
         "@intentius/chant": "workspace:*",
         "@intentius/chant-lexicon-k8s": "workspace:*",
       },
+      "devDependencies": {
+        "typescript": "*",
+      },
     },
     "packages/core": {
       "name": "@intentius/chant",
-      "version": "0.0.14",
+      "version": "0.0.15",
       "bin": {
         "chant": "./bin/chant",
       },
@@ -811,12 +959,6 @@
     "@humanwhocodes/retry": ["@humanwhocodes/retry@0.4.3", "", {}, "sha512-bV0Tgo9K4hfPCek+aMAn81RppFKv2ySDQeMoSZuvTASywNTnVJCArCZE2FWqpvIatKu7VMRLWlR1EazvVhDyhQ=="],
 
     "@intentius/chant": ["@intentius/chant@workspace:packages/core"],
-
-    "@intentius/chant-example-gcp-basic-bucket": ["@intentius/chant-example-gcp-basic-bucket@workspace:lexicons/gcp/examples/basic-bucket"],
-
-    "@intentius/chant-example-gcp-gke-cluster": ["@intentius/chant-example-gcp-gke-cluster@workspace:lexicons/gcp/examples/gke-cluster"],
-
-    "@intentius/chant-example-gcp-vpc-network": ["@intentius/chant-example-gcp-vpc-network@workspace:lexicons/gcp/examples/vpc-network"],
 
     "@intentius/chant-lexicon-aws": ["@intentius/chant-lexicon-aws@workspace:lexicons/aws"],
 
@@ -974,6 +1116,16 @@
 
     "function-app-example": ["function-app-example@workspace:lexicons/azure/examples/function-app"],
 
+    "gcp-basic-bucket-example": ["gcp-basic-bucket-example@workspace:lexicons/gcp/examples/basic-bucket"],
+
+    "gcp-cloud-function-example": ["gcp-cloud-function-example@workspace:lexicons/gcp/examples/cloud-function"],
+
+    "gcp-cloud-sql-example": ["gcp-cloud-sql-example@workspace:lexicons/gcp/examples/cloud-sql"],
+
+    "gcp-gke-cluster-example": ["gcp-gke-cluster-example@workspace:lexicons/gcp/examples/gke-cluster"],
+
+    "gcp-vpc-network-example": ["gcp-vpc-network-example@workspace:lexicons/gcp/examples/vpc-network"],
+
     "get-tsconfig": ["get-tsconfig@4.13.6", "", { "dependencies": { "resolve-pkg-maps": "^1.0.0" } }, "sha512-shZT/QMiSHc/YBLxxOkMtgSid5HFoauqCE3/exfsEcwg1WkeqjG+V40yBbBrsD+jW2HDXcs28xOfcbm2jI8Ddw=="],
 
     "gitlab-aws-alb-api-example": ["gitlab-aws-alb-api-example@workspace:examples/gitlab-aws-alb-api"],
@@ -1000,11 +1152,15 @@
 
     "has-flag": ["has-flag@4.0.0", "", {}, "sha512-EykJT/Q1KjTWctppgIAgfSO0tKVuZUjhgMr17kqTumMl6Afv3EISleU7qZUzoXDFTAHTDC4NOoG/ZxU3EvlMPQ=="],
 
-    "helm-composites-basic": ["helm-composites-basic@workspace:lexicons/helm/examples/composites-basic"],
+    "helm-composites-basic-example": ["helm-composites-basic-example@workspace:lexicons/helm/examples/composites-basic"],
 
-    "helm-composites-infrastructure": ["helm-composites-infrastructure@workspace:lexicons/helm/examples/composites-infrastructure"],
+    "helm-composites-infrastructure-example": ["helm-composites-infrastructure-example@workspace:lexicons/helm/examples/composites-infrastructure"],
 
-    "helm-composites-production": ["helm-composites-production@workspace:lexicons/helm/examples/composites-production"],
+    "helm-composites-production-example": ["helm-composites-production-example@workspace:lexicons/helm/examples/composites-production"],
+
+    "helm-microservice-chart-example": ["helm-microservice-chart-example@workspace:lexicons/helm/examples/microservice-chart"],
+
+    "helm-web-app-with-ingress-example": ["helm-web-app-with-ingress-example@workspace:lexicons/helm/examples/web-app-with-ingress"],
 
     "ignore": ["ignore@7.0.5", "", {}, "sha512-Hs59xBNfUIunMFgWAbGX5cq6893IbWg4KnrjbYwX3tx0ztorVgTDA6B2sxf8ejHJ4wz8BqGUMYlnzNBer5NvGg=="],
 
@@ -1026,15 +1182,19 @@
 
     "json-stable-stringify-without-jsonify": ["json-stable-stringify-without-jsonify@1.0.1", "", {}, "sha512-Bdboy+l7tA3OGW6FjyFHWkP5LuByj1Tk33Ljyq0axyzdk9//JSi2u3fP1QSmd1KNwq6VOKYGlAu87CisVir6Pw=="],
 
-    "k8s-basic-deployment": ["k8s-basic-deployment@workspace:lexicons/k8s/examples/basic-deployment"],
+    "k8s-aks-microservice-example": ["k8s-aks-microservice-example@workspace:examples/k8s-aks-microservice"],
+
+    "k8s-basic-deployment-example": ["k8s-basic-deployment-example@workspace:lexicons/k8s/examples/basic-deployment"],
 
     "k8s-batch-workers-example": ["k8s-batch-workers-example@workspace:lexicons/k8s/examples/batch-workers"],
 
-    "k8s-configmap-secret": ["k8s-configmap-secret@workspace:lexicons/k8s/examples/configmap-secret"],
+    "k8s-configmap-secret-example": ["k8s-configmap-secret-example@workspace:lexicons/k8s/examples/configmap-secret"],
 
     "k8s-eks-microservice-example": ["k8s-eks-microservice-example@workspace:examples/k8s-eks-microservice"],
 
-    "k8s-statefulset": ["k8s-statefulset@workspace:lexicons/k8s/examples/statefulset"],
+    "k8s-gke-microservice-example": ["k8s-gke-microservice-example@workspace:examples/k8s-gke-microservice"],
+
+    "k8s-statefulset-example": ["k8s-statefulset-example@workspace:lexicons/k8s/examples/statefulset"],
 
     "k8s-web-platform-example": ["k8s-web-platform-example@workspace:lexicons/k8s/examples/web-platform"],
 

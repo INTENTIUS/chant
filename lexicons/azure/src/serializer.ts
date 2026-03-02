@@ -20,6 +20,7 @@ import { isStackOutput, type StackOutput } from "@intentius/chant/stack-output";
 import { resolveDependsOn } from "@intentius/chant/resource-attributes";
 import { isDefaultTags, type TagEntry } from "./default-tags";
 import { loadTaggableResources } from "./taggable";
+import { findArmResourceRefs } from "./lint/post-synth/arm-refs";
 
 /** Check if a declarable is a CoreParameter */
 function isCoreParameter(entity: Declarable): entity is CoreParameter {
@@ -91,9 +92,21 @@ function loadApiVersions(): Map<string, string> {
   return map;
 }
 
+/**
+ * Override stale apiVersions from the generated registry.
+ * These are resource types where the registry apiVersion is known to be
+ * too old for modern ARM features (e.g. DataActions on role assignments).
+ */
+const API_VERSION_OVERRIDES = new Map<string, string>([
+  ["Microsoft.Authorization/roleAssignments", "2022-04-01"],
+  ["Microsoft.Authorization/roleDefinitions", "2022-04-01"],
+]);
+
 let _apiVersions: Map<string, string> | undefined;
 
 function getApiVersion(resourceType: string): string {
+  const override = API_VERSION_OVERRIDES.get(resourceType);
+  if (override) return override;
   if (!_apiVersions) _apiVersions = loadApiVersions();
   return _apiVersions.get(resourceType) ?? "2023-01-01";
 }
@@ -202,7 +215,11 @@ function serializeToTemplate(
       template.resources.push(resource);
     } else if (!isPropertyDeclarable(entity)) {
       const resourceType = entity.entityType;
-      const apiVersion = getApiVersion(resourceType);
+      // Prefer apiVersion from entity attributes (set by composites) over registry lookup
+      const attrs0 = ("attributes" in entity && typeof entity.attributes === "object" && entity.attributes !== null)
+        ? entity.attributes as Record<string, unknown>
+        : undefined;
+      const apiVersion = (typeof attrs0?.apiVersion === "string") ? attrs0.apiVersion : getApiVersion(resourceType);
 
       const resource: ArmResource = {
         type: resourceType,
@@ -273,6 +290,56 @@ function serializeToTemplate(
       const existing = resource.tags ?? {};
       // Explicit tags take precedence
       resource.tags = { ...resolved, ...(existing as Record<string, unknown>) };
+    }
+  }
+
+  // Auto-infer dependsOn from resourceId()/reference() expressions in properties.
+  // ARM only auto-infers dependencies from reference(), not resourceId().
+  const resourceNameSet = new Set(template.resources.map((r) => r.name));
+  for (const resource of template.resources) {
+    const refs = findArmResourceRefs(resource.properties);
+    // Also scan resource-level fields (location, tags, identity, etc.)
+    for (const field of RESOURCE_LEVEL_FIELDS) {
+      const val = (resource as Record<string, unknown>)[field];
+      if (val !== undefined) {
+        for (const ref of findArmResourceRefs(val)) {
+          refs.add(ref);
+        }
+      }
+    }
+    // Also scan the name field for parent references (e.g. "vnet/subnet")
+    if (typeof resource.name === "string") {
+      for (const ref of findArmResourceRefs(resource.name)) {
+        refs.add(ref);
+      }
+    }
+
+    // Infer parent dependency for child resources (e.g. "vnet/subnet" depends on "vnet")
+    if (typeof resource.name === "string" && resource.name.includes("/")) {
+      const parentName = resource.name.split("/")[0];
+      if (resourceNameSet.has(parentName)) {
+        refs.add(parentName);
+      }
+    }
+
+    if (refs.size > 0) {
+      const existing = new Set(resource.dependsOn ?? []);
+      for (const refName of refs) {
+        // Only add if the referenced resource exists in this template and isn't self
+        if (refName === resource.name) continue;
+        if (!resourceNameSet.has(refName)) continue;
+        // Find the resource to build the resourceId expression
+        const depResource = template.resources.find((r) => r.name === refName);
+        if (depResource) {
+          const depExpr = `[resourceId('${depResource.type}', '${refName}')]`;
+          if (!existing.has(depExpr)) {
+            existing.add(depExpr);
+          }
+        }
+      }
+      if (existing.size > 0) {
+        resource.dependsOn = [...existing];
+      }
     }
   }
 

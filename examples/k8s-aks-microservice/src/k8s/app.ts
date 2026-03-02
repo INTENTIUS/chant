@@ -7,12 +7,8 @@ import {
   PodDisruptionBudget,
   ServiceAccount,
   ConfigMap,
-  ClusterRole,
-  ClusterRoleBinding,
-  APIService,
   AutoscaledService,
   AksWorkloadIdentityServiceAccount,
-  MetricsServer,
 } from "@intentius/chant-lexicon-k8s";
 import { config } from "../config";
 
@@ -97,15 +93,4 @@ export const appConfig = new ConfigMap({
   },
 });
 
-// ── MetricsServer (required for HPA) ────────────────────────────
-
-const ms = MetricsServer({});
-
-export const metricsServerDeployment = new Deployment(ms.deployment);
-export const metricsServerService = new Service(ms.service);
-export const metricsServerSa = new ServiceAccount(ms.serviceAccount);
-export const metricsServerRole = new ClusterRole(ms.clusterRole);
-export const metricsServerBinding = new ClusterRoleBinding(ms.clusterRoleBinding);
-export const metricsServerAggRole = new ClusterRole(ms.aggregatedClusterRole);
-export const metricsServerAuthBinding = new ClusterRoleBinding(ms.authDelegatorBinding);
-export const metricsServerApiService = new APIService(ms.apiService);
+// NOTE: AKS ships its own metrics-server — no MetricsServer composite needed.
