@@ -4,9 +4,11 @@ set -euo pipefail
 # End-to-end smoke tests — deploy, verify, and tear down examples.
 # Delegates to each example's own npm scripts (run/deploy/teardown/build).
 #
-# Usage: e2e-smoke.sh [aws|eks|all]
+# Usage: e2e-smoke.sh [aws|eks|gke|aks|all]
 #   aws — gitlab-aws-alb-{infra,api,ui}, flyway-postgresql-gitlab-aws-rds (needs AWS + GitLab)
 #   eks — k8s-eks-microservice (needs AWS + domain)
+#   gke — k8s-gke-microservice (needs GCP project)
+#   aks — k8s-aks-microservice (needs Azure subscription)
 #   all — everything
 
 GROUP="${1:-all}"
@@ -25,6 +27,8 @@ GITLAB_PROJECTS_CREATED=()        # GitLab project IDs to delete
 CF_STACKS_CREATED=()              # CF stack names to delete (reverse order)
 SSM_PARAMS_CREATED=()             # SSM parameter paths to delete
 EKS_TEARDOWN_DIR=""               # dir with k8s.yaml + scripts/teardown.sh
+GKE_TEARDOWN_DIR=""               # dir with scripts/teardown.sh (GKE)
+AKS_TEARDOWN_DIR=""               # dir with scripts/teardown.sh (AKS)
 
 cleanup_all() {
   echo ""
@@ -34,6 +38,18 @@ cleanup_all() {
   if [ -n "$EKS_TEARDOWN_DIR" ] && [ -f "$EKS_TEARDOWN_DIR/scripts/teardown.sh" ]; then
     echo "  Running EKS example teardown..."
     (cd "$EKS_TEARDOWN_DIR" && bash scripts/teardown.sh) 2>/dev/null || true
+  fi
+
+  # GKE: run the example's own teardown if available
+  if [ -n "$GKE_TEARDOWN_DIR" ] && [ -f "$GKE_TEARDOWN_DIR/scripts/teardown.sh" ]; then
+    echo "  Running GKE example teardown..."
+    (cd "$GKE_TEARDOWN_DIR" && bash scripts/teardown.sh) 2>/dev/null || true
+  fi
+
+  # AKS: run the example's own teardown if available
+  if [ -n "$AKS_TEARDOWN_DIR" ] && [ -f "$AKS_TEARDOWN_DIR/scripts/teardown.sh" ]; then
+    echo "  Running AKS example teardown..."
+    (cd "$AKS_TEARDOWN_DIR" && bash scripts/teardown.sh) 2>/dev/null || true
   fi
 
   # CF stacks in reverse order (safety net)
@@ -379,6 +395,115 @@ run_eks_group() {
   test_k8s_eks_microservice
 }
 
+# ── GKE group ───────────────────────────────────────────────────────────────
+
+test_k8s_gke_microservice() {
+  local name="k8s-gke-microservice"
+  echo ""
+  echo "=== E2E: $name ==="
+
+  setup_example "$name" /tarballs/lexicon-gcp.tgz /tarballs/lexicon-k8s.tgz
+
+  # Export env vars the example's scripts expect
+  export GCP_PROJECT_ID="${GCP_PROJECT_ID}"
+
+  # Register for cleanup safety net
+  GKE_TEARDOWN_DIR="$(pwd)"
+
+  # npm run deploy = bootstrap -> build -> deploy-infra -> configure-kubectl
+  #                  -> load-outputs -> build:k8s -> apply -> wait -> status
+  echo "  Running npm run deploy (GKE cluster creation may take 10-15 minutes)..."
+  if npm run deploy 2>&1; then
+    pass "$name: npm run deploy"
+  else
+    fail "$name: npm run deploy"; return
+  fi
+
+  # Verify pods running
+  local pods
+  pods=$(kubectl get pods -n microservice --no-headers 2>&1) || true
+  if echo "$pods" | grep -q "Running"; then
+    pass "$name: pods running"
+  else
+    fail "$name: pods running"
+    echo "$pods"
+  fi
+
+  # Teardown via example's own script
+  if npm run teardown 2>&1; then
+    pass "$name: teardown"
+    GKE_TEARDOWN_DIR=""
+  else
+    fail "$name: teardown"
+  fi
+}
+
+run_gke_group() {
+  echo ""
+  echo "========================================"
+  echo "  GKE E2E tests"
+  echo "========================================"
+
+  require_env GCP_PROJECT_ID
+
+  test_k8s_gke_microservice
+}
+
+# ── AKS group ───────────────────────────────────────────────────────────────
+
+test_k8s_aks_microservice() {
+  local name="k8s-aks-microservice"
+  echo ""
+  echo "=== E2E: $name ==="
+
+  setup_example "$name" /tarballs/lexicon-azure.tgz /tarballs/lexicon-k8s.tgz
+
+  # Export env vars the example's scripts expect
+  export AZURE_RESOURCE_GROUP="${AZURE_RESOURCE_GROUP}"
+  export AZURE_SUBSCRIPTION_ID="${AZURE_SUBSCRIPTION_ID}"
+
+  # Register for cleanup safety net
+  AKS_TEARDOWN_DIR="$(pwd)"
+
+  # npm run deploy = build -> deploy-infra -> configure-kubectl
+  #                  -> load-outputs -> build:k8s -> apply -> wait -> status
+  echo "  Running npm run deploy (AKS cluster creation may take 10-15 minutes)..."
+  if npm run deploy 2>&1; then
+    pass "$name: npm run deploy"
+  else
+    fail "$name: npm run deploy"; return
+  fi
+
+  # Verify pods running
+  local pods
+  pods=$(kubectl get pods -n microservice --no-headers 2>&1) || true
+  if echo "$pods" | grep -q "Running"; then
+    pass "$name: pods running"
+  else
+    fail "$name: pods running"
+    echo "$pods"
+  fi
+
+  # Teardown via example's own script
+  if npm run teardown 2>&1; then
+    pass "$name: teardown"
+    AKS_TEARDOWN_DIR=""
+  else
+    fail "$name: teardown"
+  fi
+}
+
+run_aks_group() {
+  echo ""
+  echo "========================================"
+  echo "  AKS E2E tests"
+  echo "========================================"
+
+  require_env AZURE_RESOURCE_GROUP AZURE_SUBSCRIPTION_ID
+
+  test_k8s_aks_microservice
+}
+
 # ── Main ─────────────────────────────────────────────────────────────────────
 
 echo "========================================"
@@ -389,13 +514,17 @@ echo "========================================"
 case "$GROUP" in
   aws) run_aws_group ;;
   eks) run_eks_group ;;
+  gke) run_gke_group ;;
+  aks) run_aks_group ;;
   all)
     run_aws_group
     run_eks_group
+    run_gke_group
+    run_aks_group
     ;;
   *)
     echo "Unknown group: $GROUP"
-    echo "Usage: $0 [aws|eks|all]"
+    echo "Usage: $0 [aws|eks|gke|aks|all]"
     exit 1
     ;;
 esac

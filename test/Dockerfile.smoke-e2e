@@ -40,7 +40,9 @@ RUN mkdir -p /tarballs && \
     cd /app/lexicons/aws && bun pm pack && mv *.tgz /tarballs/lexicon-aws.tgz && \
     cd /app/lexicons/gitlab && bun pm pack && mv *.tgz /tarballs/lexicon-gitlab.tgz && \
     cd /app/lexicons/k8s && bun pm pack && mv *.tgz /tarballs/lexicon-k8s.tgz && \
-    cd /app/lexicons/flyway && bun pm pack && mv *.tgz /tarballs/lexicon-flyway.tgz
+    cd /app/lexicons/flyway && bun pm pack && mv *.tgz /tarballs/lexicon-flyway.tgz && \
+    cd /app/lexicons/gcp && bun pm pack && mv *.tgz /tarballs/lexicon-gcp.tgz && \
+    cd /app/lexicons/azure && bun pm pack && mv *.tgz /tarballs/lexicon-azure.tgz
 
 # ── Stage 2: E2E runner ──────────────────────────────────────────────────────
 FROM --platform=linux/amd64 node:22-slim
@@ -64,6 +66,17 @@ RUN curl -fsSL "https://dl.k8s.io/release/$(curl -fsSL https://dl.k8s.io/release
 # AWS CLI v2
 RUN curl -fsSL "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o /tmp/awscliv2.zip && \
     unzip -q /tmp/awscliv2.zip -d /tmp && /tmp/aws/install && rm -rf /tmp/aws /tmp/awscliv2.zip
+
+# gcloud CLI
+RUN curl -fsSL https://dl.google.com/dl/cloudsdk/channels/rapid/downloads/google-cloud-cli-linux-x86_64.tar.gz \
+      -o /tmp/gcloud.tar.gz && \
+    tar xzf /tmp/gcloud.tar.gz -C /opt && \
+    /opt/google-cloud-sdk/install.sh --quiet --path-update=true && \
+    rm /tmp/gcloud.tar.gz
+ENV PATH="/opt/google-cloud-sdk/bin:$PATH"
+
+# Azure CLI
+RUN curl -fsSL https://aka.ms/InstallAzureCLIDeb | bash
 
 # Flyway CLI (standalone with embedded JRE — x64 only, no arm64 build available)
 RUN FLYWAY_VERSION=11.3.3 && \

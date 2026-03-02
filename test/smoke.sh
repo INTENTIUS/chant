@@ -5,13 +5,15 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
 
 usage() {
-  echo "Usage: $0 [workspace|npm|build-examples|e2e-aws|e2e-eks|e2e-all|all]"
+  echo "Usage: $0 [workspace|npm|build-examples|e2e-aws|e2e-eks|e2e-gke|e2e-aks|e2e-all|all]"
   echo ""
   echo "  workspace       — Run workspace smoke tests (bun link), keep container up"
   echo "  npm             — Run npm install smoke tests (bun pm pack)"
   echo "  build-examples  — Build all root examples in Docker, copy artifacts out"
   echo "  e2e-aws         — Deploy AWS/GitLab examples (needs AWS + GitLab creds)"
   echo "  e2e-eks         — Deploy EKS example (needs AWS creds + domain)"
+  echo "  e2e-gke         — Deploy GKE example (needs GCP project)"
+  echo "  e2e-aks         — Deploy AKS example (needs Azure subscription)"
   echo "  e2e-all         — Run all E2E tests (Docker)"
   echo "  all             — Run workspace + npm smoke tests"
   exit 1
@@ -71,14 +73,36 @@ run_e2e_eks() {
     chant-smoke-e2e eks
 }
 
+run_e2e_gke() {
+  build_e2e_image
+  echo "Running GKE E2E tests..."
+  docker run --rm --platform linux/amd64 \
+    -v "$HOME/.config/gcloud:/root/.config/gcloud:ro" \
+    -e GCP_PROJECT_ID \
+    chant-smoke-e2e gke
+}
+
+run_e2e_aks() {
+  build_e2e_image
+  echo "Running AKS E2E tests..."
+  docker run --rm --platform linux/amd64 \
+    -e AZURE_RESOURCE_GROUP -e AZURE_SUBSCRIPTION_ID \
+    -e AZURE_CLIENT_ID -e AZURE_CLIENT_SECRET -e AZURE_TENANT_ID \
+    chant-smoke-e2e aks
+}
+
 run_e2e_all() {
   build_e2e_image
   echo "Running all E2E tests..."
   docker run --rm --platform linux/amd64 \
     -v "$HOME/.aws:/root/.aws:ro" \
+    -v "$HOME/.config/gcloud:/root/.config/gcloud:ro" \
     -e AWS_ACCESS_KEY_ID -e AWS_SECRET_ACCESS_KEY -e AWS_DEFAULT_REGION \
     -e GITLAB_TOKEN -e GITLAB_URL -e GITLAB_GROUP \
     -e EKS_DOMAIN \
+    -e GCP_PROJECT_ID \
+    -e AZURE_RESOURCE_GROUP -e AZURE_SUBSCRIPTION_ID \
+    -e AZURE_CLIENT_ID -e AZURE_CLIENT_SECRET -e AZURE_TENANT_ID \
     chant-smoke-e2e all
 }
 
@@ -116,6 +140,12 @@ case "${1:-workspace}" in
     ;;
   e2e-eks)
     run_e2e_eks
+    ;;
+  e2e-gke)
+    run_e2e_gke
+    ;;
+  e2e-aks)
+    run_e2e_aks
     ;;
   e2e-all)
     run_e2e_all

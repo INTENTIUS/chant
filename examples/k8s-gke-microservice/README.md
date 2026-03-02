@@ -170,6 +170,35 @@ Patterns to add next:
 - **GCP lexicon**: ~15 Config Connector resources (VPC, subnets, NAT, GKE cluster, node pool, service accounts, IAM bindings, DNS zone)
 - **K8s lexicon**: ~12 Kubernetes resources (namespace, quotas, deployment, HPA, PDB, ingress, storage class, DaemonSets, collectors)
 
+## Cross-lexicon value flow
+
+Config Connector resource outputs map to K8s composite props via `.env`:
+
+| CC Output | K8s File | Composite Prop |
+|-----------|----------|----------------|
+| `APP_GSA_EMAIL` | `app.ts` | `WorkloadIdentityServiceAccount({ gcpServiceAccountEmail })` |
+| `EXTERNAL_DNS_GSA_EMAIL` | `ingress.ts` | `GkeExternalDnsAgent({ gcpServiceAccountEmail })` |
+| `FLUENT_BIT_GSA_EMAIL` | `observability.ts` | `GkeFluentBitAgent({ gcpServiceAccountEmail })` |
+| `OTEL_GSA_EMAIL` | `observability.ts` | `GkeOtelCollector({ gcpServiceAccountEmail })` |
+| `GCP_PROJECT_ID` | multiple | `gcpProjectId` / `projectId` props |
+| `GKE_CLUSTER_NAME` | `observability.ts` | `clusterName` props |
+
+Values flow through `.env` → `config.ts` → K8s source files. `npm run load-outputs` refreshes `.env` after any infra deploy.
+
+## Security hardening
+
+This example includes GKE best-practice hardening:
+
+- **Workload Identity** — pods authenticate to GCP APIs via Kubernetes service account annotations, no long-lived JSON key credentials
+- **Non-root container** — app runs `nginxinc/nginx-unprivileged` with `runAsNonRoot: true` on port 8080
+- **Pod Security Standards** — namespace enforces `restricted` PSS profile (enforce, warn, audit)
+- **Health probes** — liveness and readiness probes on the app container for proper rollout gating
+- **Topology spread** — zone-based `topologySpreadConstraints` with `maxSkew: 1` prevents single-zone concentration
+- **Metrics Server** — in-cluster metrics-server deployment enables HPA pod CPU/memory scaling
+- **Default-deny NetworkPolicy** — namespace-level network policy denies all ingress/egress by default
+- **Resource quotas + LimitRange** — namespace-level resource quotas and per-container default limits prevent noisy neighbors
+- **Config Connector SA scoping** — Config Connector service account uses minimal IAM roles (editor, IAM admin, DNS admin)
+
 ## Standalone usage
 
 Copy `package.standalone.json` to `package.json` and run `npm install`.

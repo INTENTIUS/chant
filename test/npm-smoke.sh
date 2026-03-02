@@ -252,6 +252,14 @@ if [ -d /examples ]; then
   test_example "k8s-eks-microservice" \
     /tarballs/lexicon-aws.tgz aws \
     /tarballs/lexicon-k8s.tgz k8s
+
+  test_example "k8s-gke-microservice" \
+    /tarballs/lexicon-gcp.tgz gcp \
+    /tarballs/lexicon-k8s.tgz k8s
+
+  test_example "k8s-aks-microservice" \
+    /tarballs/lexicon-azure.tgz azure \
+    /tarballs/lexicon-k8s.tgz k8s
 else
   echo ""
   echo "=== Skipping example tests (/examples not found) ==="

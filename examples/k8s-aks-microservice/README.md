@@ -112,6 +112,39 @@ Patterns to add next:
                        → Sidecars, monitoring, TLS, network isolation
 ```
 
+## Resource counts
+
+- **Azure lexicon**: ~14 ARM resources (VNet, subnets, NSG, route table, AKS cluster, ACR, managed identities, role assignments, DNS zone)
+- **K8s lexicon**: ~11 Kubernetes resources (namespace, quotas, deployment, HPA, PDB, ingress, storage class, DaemonSets, collectors)
+
+## Cross-lexicon value flow
+
+ARM template outputs map to K8s composite props via `.env`:
+
+| ARM Output | K8s File | Composite Prop |
+|------------|----------|----------------|
+| `APP_CLIENT_ID` | `app.ts` | `WorkloadIdentityServiceAccount({ azureClientId })` |
+| `EXTERNAL_DNS_CLIENT_ID` | `ingress.ts` | `AksExternalDnsAgent({ azureClientId })` |
+| `MONITOR_CLIENT_ID` | `observability.ts` | `AzureMonitorCollector({ azureClientId })` |
+| `AZURE_TENANT_ID` | multiple | `azureTenantId` props |
+| `AKS_CLUSTER_NAME` | `observability.ts` | `clusterName` props |
+
+Values flow through `.env` → `config.ts` → K8s source files. `npm run load-outputs` refreshes `.env` after any infra deploy.
+
+## Security hardening
+
+This example includes AKS best-practice hardening:
+
+- **AKS Workload Identity** — pods authenticate to Azure APIs via OIDC federation, no static client secrets
+- **Non-root container** — app runs `nginxinc/nginx-unprivileged` with `runAsNonRoot: true` on port 8080
+- **Pod Security Standards** — namespace enforces `restricted` PSS profile (enforce, warn, audit)
+- **Health probes** — liveness and readiness probes on the app container for proper rollout gating
+- **Topology spread** — zone-based `topologySpreadConstraints` with `maxSkew: 1` prevents single-zone concentration
+- **Metrics Server** — in-cluster metrics-server deployment enables HPA pod CPU/memory scaling
+- **Default-deny NetworkPolicy** — namespace-level network policy denies all ingress/egress by default
+- **Resource quotas + LimitRange** — namespace-level resource quotas and per-container default limits prevent noisy neighbors
+- **Managed identities with minimal roles** — each workload gets its own managed identity with least-privilege role assignments (ACR Pull, DNS Contributor, Monitoring Metrics Publisher)
+
 ## Quick start (local verification)
 
 ```bash
