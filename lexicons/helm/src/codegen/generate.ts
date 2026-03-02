@@ -15,6 +15,8 @@ import {
 
 interface HelmTypeEntry {
   resourceType: string;
+  /** Export name matching resources.ts (e.g. "HelmTest" not "Test") */
+  exportName: string;
   kind: "resource" | "property";
   description: string;
   props: Record<string, { type: string; description: string; required?: boolean }>;
@@ -23,6 +25,7 @@ interface HelmTypeEntry {
 const HELM_TYPES: HelmTypeEntry[] = [
   {
     resourceType: "Helm::Chart",
+    exportName: "Chart",
     kind: "resource",
     description: "Chart.yaml metadata — defines the chart identity, version, and type.",
     props: {
@@ -37,7 +40,7 @@ const HELM_TYPES: HelmTypeEntry[] = [
       icon: { type: "string", description: "URL to an SVG or PNG image for the chart" },
       deprecated: { type: "boolean", description: "Whether this chart is deprecated" },
       sources: { type: "string[]", description: "URLs to source code for this chart" },
-      maintainers: { type: "Maintainer[]", description: "List of chart maintainers" },
+      maintainers: { type: "HelmMaintainerProps[]", description: "List of chart maintainers" },
       annotations: { type: "Record<string, string>", description: "Arbitrary key-value annotations" },
       kubeVersion: { type: "string", description: "SemVer range of compatible Kubernetes versions" },
       condition: { type: "string", description: "YAML path for chart enablement (subcharts)" },
@@ -46,12 +49,14 @@ const HELM_TYPES: HelmTypeEntry[] = [
   },
   {
     resourceType: "Helm::Values",
+    exportName: "Values",
     kind: "resource",
     description: "Typed values definition — emits values.yaml and values.schema.json.",
     props: {},
   },
   {
     resourceType: "Helm::Test",
+    exportName: "HelmTest",
     kind: "resource",
     description: "Helm test pod — annotated with helm.sh/hook: test.",
     props: {
@@ -60,6 +65,7 @@ const HELM_TYPES: HelmTypeEntry[] = [
   },
   {
     resourceType: "Helm::Notes",
+    exportName: "HelmNotes",
     kind: "resource",
     description: "NOTES.txt template content — displayed after helm install.",
     props: {
@@ -68,6 +74,7 @@ const HELM_TYPES: HelmTypeEntry[] = [
   },
   {
     resourceType: "Helm::Hook",
+    exportName: "HelmHook",
     kind: "property",
     description: "Lifecycle hook annotation — wraps a K8s resource with helm.sh/hook annotations.",
     props: {
@@ -79,6 +86,7 @@ const HELM_TYPES: HelmTypeEntry[] = [
   },
   {
     resourceType: "Helm::Dependency",
+    exportName: "HelmDependency",
     kind: "property",
     description: "Chart dependency entry for Chart.yaml dependencies.",
     props: {
@@ -94,6 +102,7 @@ const HELM_TYPES: HelmTypeEntry[] = [
   },
   {
     resourceType: "Helm::Maintainer",
+    exportName: "HelmMaintainer",
     kind: "property",
     description: "Chart maintainer entry for Chart.yaml maintainers.",
     props: {
@@ -104,6 +113,7 @@ const HELM_TYPES: HelmTypeEntry[] = [
   },
   {
     resourceType: "Helm::CRD",
+    exportName: "HelmCRD",
     kind: "resource",
     description: "Custom Resource Definition — placed in the crds/ directory.",
     props: {
@@ -118,8 +128,7 @@ const HELM_TYPES: HelmTypeEntry[] = [
 function generateLexiconJSON(): string {
   const registry: Record<string, Record<string, unknown>> = {};
   for (const t of HELM_TYPES) {
-    const shortName = t.resourceType.split("::").pop()!;
-    registry[shortName] = {
+    registry[t.exportName] = {
       resourceType: t.resourceType,
       kind: t.kind,
       description: t.description,
@@ -134,12 +143,13 @@ function generateTypesDTS(): string {
     '// Auto-generated Helm lexicon type declarations',
     '// Do not edit manually',
     '',
-    'import type { Declarable } from "@intentius/chant/declarable";',
+    '/** Minimal Declarable interface for generated types. */',
+    'interface Declarable { [key: string]: unknown; }',
     '',
   ];
 
   for (const t of HELM_TYPES) {
-    const className = t.resourceType.split("::").pop()!;
+    const className = t.exportName;
     const propsInterface = `${className}Props`;
 
     // Generate props interface
@@ -175,11 +185,10 @@ function generateRuntimeIndex(): string {
   ];
 
   for (const t of HELM_TYPES) {
-    const className = t.resourceType.split("::").pop()!;
     if (t.kind === "resource") {
-      lines.push(`export const ${className} = createResource("${t.resourceType}", "helm", {});`);
+      lines.push(`export const ${t.exportName} = createResource("${t.resourceType}", "helm", {});`);
     } else {
-      lines.push(`export const ${className} = createProperty("${t.resourceType}", "helm");`);
+      lines.push(`export const ${t.exportName} = createProperty("${t.resourceType}", "helm");`);
     }
   }
 
