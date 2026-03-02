@@ -1,0 +1,46 @@
+---
+title: "Skills"
+description: "AI skill and MCP tools for Helm chart assistance"
+---
+The Helm lexicon includes the **chant-helm** AI skill that provides context-aware assistance when working with Helm charts.
+
+## MCP integration
+
+When running `chant serve mcp`, the Helm skill is automatically available to MCP-compatible AI tools (Claude, Cursor, etc.).
+
+## What the skill provides
+
+### Context
+
+The skill gives the AI assistant knowledge of:
+- All Helm resource types (Chart, Values, HelmTest, HelmNotes, HelmHook, HelmDependency, HelmMaintainer, HelmCRD)
+- The values proxy and `.Values.*` reference generation
+- Template function wrappers (include, required, helmDefault, toYaml, etc.)
+- Chart serialization rules and directory layout
+- Composite patterns and when to use each
+- Lint rule explanations and fix suggestions
+
+### Capabilities
+
+With the Helm skill active, an AI assistant can:
+- **Generate** typed Helm charts from natural language descriptions
+- **Explain** existing charts and their template output
+- **Debug** lint rule violations with fix suggestions
+- **Migrate** from plain YAML Helm charts to typed TypeScript declarations
+- **Recommend** composites based on deployment requirements
+- **Convert** between raw Kubernetes manifests and parameterized Helm templates
+
+## Example prompts
+
+- "Create a Helm chart for a Node.js API with PostgreSQL dependency"
+- "Add a pre-upgrade database migration hook to my chart"
+- "Why is WHM104 flagging my deployment?"
+- "Convert this existing Helm chart to chant TypeScript"
+- "Set up HPA with custom metrics for my microservice"
+
+## LSP integration
+
+The Helm lexicon also provides LSP support via `chant serve lsp`:
+- **Completions** — type `new ` to get Helm resource completions
+- **Hover** — hover over type names to see template output hints
+- **Diagnostics** — real-time lint warnings as you type

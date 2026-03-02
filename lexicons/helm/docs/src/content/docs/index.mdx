@@ -1,0 +1,96 @@
+---
+title: "Helm Charts"
+description: "Typed constructors for Helm chart generation — Chart.yaml, values.yaml, and templates"
+---
+
+The **Helm** lexicon provides typed constructors for generating complete Helm charts
+from TypeScript. It covers Chart.yaml metadata, values.yaml generation via the values
+proxy, template functions, hooks, dependencies, tests, and CRD lifecycle management.
+
+Install it with:
+
+```bash
+npm install --save-dev @intentius/chant-lexicon-helm
+```
+
+## Quick Start
+
+```typescript
+import {
+  Chart, Values, Deployment, Service, values,
+} from "@intentius/chant-lexicon-helm";
+
+export const chart = new Chart({
+  name: "my-app",
+  version: "1.0.0",
+  appVersion: "2.4.1",
+  description: "My application Helm chart",
+  type: "application",
+});
+
+export const vals = new Values({
+  replicaCount: 3,
+  image: {
+    repository: "my-app",
+    tag: "2.4.1",
+    pullPolicy: "IfNotPresent",
+  },
+  service: {
+    type: "ClusterIP",
+    port: 8080,
+  },
+});
+
+export const deployment = new Deployment({
+  name: "my-app",
+  replicas: values.replicaCount,
+  image: values.image.repository,
+  tag: values.image.tag,
+  port: values.service.port,
+});
+
+export const svc = new Service({
+  name: "my-app",
+  type: values.service.type,
+  port: values.service.port,
+  targetPort: values.service.port,
+});
+```
+
+The lexicon provides **5 resource types** (Chart, Values, HelmTest, HelmNotes, HelmHook),
+**3 property types** (HelmDependency, HelmMaintainer, HelmCRD), **24 intrinsic functions**
+for template logic, and **13 composites** for common chart patterns.
+
+## Lint Rules
+
+chant includes lint rules for Helm charts. For example:
+- Missing or incomplete Chart.yaml metadata
+- Secrets or credentials in values.yaml
+- Hardcoded container images without tag references
+- Missing resource limits and health checks
+- Hook weight ordering issues
+
+See [Lint Rules](./lint-rules) for the full list.
+
+## At a Glance
+
+| Metric | Count |
+|--------|-------|
+| Resources | 5 |
+| Property types | 3 |
+| Intrinsic functions | 24 |
+| Lint rules | 23 |
+| Composites | 13 |
+
+**Lexicon version:** 0.0.1
+**Namespace:** `Helm`
+
+- [Getting Started](./getting-started)
+- [Helm Concepts](./helm-concepts)
+- [Composites](./composites) — 13 composite patterns
+- [Lint Rules](./lint-rules)
+- [Examples](./examples)
+- [Importing YAML](./importing-yaml)
+- [Skills](./skills)
+- [Intrinsic Functions](./intrinsics) — 24 built-in functions
+- [Serialization](./serialization) — output format details

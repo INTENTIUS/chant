@@ -1,0 +1,22 @@
+{
+  "name": "helm-microservice-chart-example",
+  "version": "0.0.1",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "test": "bun test",
+    "build": "chant build src --lexicon helm -o Chart.yaml",
+    "lint": "chant lint src",
+    "dev": "chant build src --lexicon helm -o Chart.yaml --watch",
+    "deploy": "helm install microservice-chart .",
+    "teardown": "helm uninstall microservice-chart"
+  },
+  "dependencies": {
+    "@intentius/chant": "workspace:*",
+    "@intentius/chant-lexicon-helm": "workspace:*",
+    "@intentius/chant-lexicon-k8s": "workspace:*"
+  },
+  "devDependencies": {
+    "typescript": "*"
+  }
+}

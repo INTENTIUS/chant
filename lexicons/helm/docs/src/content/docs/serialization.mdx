@@ -1,0 +1,128 @@
+---
+title: "Serialization"
+description: "Output format for the Helm lexicon — Chart.yaml, values.yaml, and templates"
+---
+
+The Helm lexicon serializes resources into a complete **Helm chart directory** compatible with Helm v3 CLI.
+
+## Building
+
+Run `chant build` to produce a Helm chart from your declarations:
+
+```bash
+chant build
+# Writes dist/
+```
+
+The generated directory includes:
+
+```
+dist/
+  Chart.yaml              # Chart metadata from Chart constructor
+  values.yaml             # Default values from Values constructor
+  templates/
+    deployment.yaml       # Deployment manifests
+    service.yaml          # Service manifests
+    ingress.yaml          # Ingress manifests (if present)
+    hpa.yaml              # HPA manifests (if present)
+    serviceaccount.yaml   # ServiceAccount (if present)
+    _helpers.tpl          # Named template definitions
+    NOTES.txt             # Post-install notes from HelmNotes
+    tests/
+      test-connection.yaml  # Test pods from HelmTest
+  crds/
+    *.yaml                # CRD manifests from HelmCRD
+```
+
+## Chart.yaml generation
+
+The `Chart` constructor maps directly to `Chart.yaml` fields:
+
+| Chant (TypeScript) | Chart.yaml | Rule |
+|--------------------|-----------|------|
+| `new Chart({ name, version, ... })` | Root-level fields | `apiVersion: v2` always added |
+| `chart.dependencies` array | `dependencies:` list | Each `HelmDependency` becomes an entry |
+| `chart.maintainers` array | `maintainers:` list | Each `HelmMaintainer` becomes an entry |
+| `chart.type` | `type:` | Defaults to `application` |
+
+Example output:
+
+```yaml
+apiVersion: v2
+name: my-app
+version: 1.0.0
+appVersion: "2.4.1"
+description: My application Helm chart
+type: application
+dependencies:
+  - name: postgresql
+    version: "12.x"
+    repository: https://charts.bitnami.com/bitnami
+    condition: postgresql.enabled
+```
+
+## values.yaml generation
+
+The `Values` constructor's properties are serialized as-is to `values.yaml`:
+
+```typescript
+export const vals = new Values({
+  replicaCount: 3,
+  image: {
+    repository: "my-app",
+    tag: "2.4.1",
+    pullPolicy: "IfNotPresent",
+  },
+});
+```
+
+Produces:
+
+```yaml
+replicaCount: 3
+image:
+  repository: my-app
+  tag: "2.4.1"
+  pullPolicy: IfNotPresent
+```
+
+## Template generation
+
+Resource constructors that use the `values` proxy generate template expressions in their output manifests.
+
+| Chant (TypeScript) | Template output | Rule |
+|--------------------|-----------------|------|
+| `values.replicaCount` | `{{ .Values.replicaCount }}` | Proxy path becomes template expression |
+| `Release.Name` | `{{ .Release.Name }}` | Built-in object reference |
+| `include("chart.labels", {})` | `{{ include "chart.labels" . }}` | Named template call |
+| `toYaml(values.resources)` | `{{ toYaml .Values.resources \| nindent N }}` | YAML serialization with indent |
+| `helmDefault(values.x, "y")` | `{{ default "y" .Values.x }}` | Default value fallback |
+| `If(values.ingress.enabled, ...)` | `{{- if .Values.ingress.enabled }}` | Conditional block |
+| `Range(values.hosts, ...)` | `{{- range .Values.hosts }}` | Iteration block |
+
+## Applying
+
+The output is a standard Helm chart. Use with the Helm CLI:
+
+```bash
+# Lint the generated chart
+helm lint dist/
+
+# Template locally (dry run)
+helm template my-release dist/
+
+# Install to a cluster
+helm install my-release dist/ -f custom-values.yaml
+
+# Upgrade an existing release
+helm upgrade my-release dist/ -f custom-values.yaml
+```
+
+## Packaging
+
+To create a distributable chart archive:
+
+```bash
+helm package dist/
+# Produces my-app-1.0.0.tgz
+```

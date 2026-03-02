@@ -1,0 +1,120 @@
+---
+title: "Getting Started"
+description: "Install the Helm lexicon and build your first typed Helm chart"
+---
+## Installation
+
+```bash
+# Initialize a new chant project with the Helm lexicon
+chant init --lexicon helm my-helm-chart
+cd my-helm-chart
+
+# Or add to an existing project
+npm install --save-dev @intentius/chant-lexicon-helm
+```
+
+## Your first Helm chart
+
+Create `src/infra.ts`:
+
+```typescript
+import {
+  Chart, Values, Deployment, Service, values,
+} from "@intentius/chant-lexicon-helm";
+
+export const chart = new Chart({
+  name: "web-app",
+  version: "0.1.0",
+  appVersion: "1.0.0",
+  description: "A web application chart",
+  type: "application",
+});
+
+export const vals = new Values({
+  replicaCount: 2,
+  image: {
+    repository: "nginx",
+    tag: "1.25",
+    pullPolicy: "IfNotPresent",
+  },
+  service: {
+    type: "ClusterIP",
+    port: 80,
+  },
+  resources: {
+    limits: { cpu: "500m", memory: "256Mi" },
+    requests: { cpu: "100m", memory: "128Mi" },
+  },
+});
+
+export const deployment = new Deployment({
+  name: "web-app",
+  replicas: values.replicaCount,
+  image: values.image.repository,
+  tag: values.image.tag,
+  pullPolicy: values.image.pullPolicy,
+  port: values.service.port,
+  resources: values.resources,
+});
+
+export const svc = new Service({
+  name: "web-app",
+  type: values.service.type,
+  port: values.service.port,
+  targetPort: values.service.port,
+});
+```
+
+The `values` proxy generates `.Values.*` references in templates automatically. When you
+write `values.image.repository`, the template output becomes `{{ .Values.image.repository }}`.
+
+## Build and lint
+
+```bash
+# Generate a complete Helm chart from your TypeScript declarations
+chant build
+
+# Run lint rules to catch chart issues
+chant lint
+```
+
+The `chant build` command writes:
+- `dist/Chart.yaml` — chart metadata
+- `dist/values.yaml` — default values
+- `dist/templates/deployment.yaml` — Deployment manifest
+- `dist/templates/service.yaml` — Service manifest
+
+The `chant lint` command checks for:
+- Missing chart metadata fields
+- Secrets in values.yaml
+- Hardcoded container images
+- Missing resource limits
+
+## Using the HelmWebApp composite
+
+For the common web application pattern, use the `HelmWebApp` composite:
+
+```typescript
+import { HelmWebApp, Chart, Values, Deployment, Service } from "@intentius/chant-lexicon-helm";
+
+const result = HelmWebApp({
+  name: "my-app",
+  image: "my-app",
+  tag: "1.0.0",
+  port: 8080,
+  replicas: 3,
+  ingressHost: "my-app.example.com",
+});
+
+export const chart = new Chart(result.chart);
+export const vals = new Values(result.values);
+export const deployment = new Deployment(result.deployment);
+export const svc = new Service(result.service);
+```
+
+## Next steps
+
+- Browse [Examples](/chant/lexicons/helm/examples/) for more patterns
+- See [Composites](/chant/lexicons/helm/composites/) for factory helpers
+- Review [Lint Rules](/chant/lexicons/helm/lint-rules/) for available checks
+- Read [Helm Concepts](/chant/lexicons/helm/helm-concepts/) for the values proxy and template model

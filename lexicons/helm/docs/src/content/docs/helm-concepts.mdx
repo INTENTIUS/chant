@@ -1,0 +1,192 @@
+---
+title: "Helm Concepts"
+description: "How chant generates Helm charts — Chart.yaml, values.yaml, templates, the values proxy, and built-in objects"
+---
+Every exported resource declaration becomes part of the generated Helm chart. The serializer handles the translation from typed TypeScript to Helm chart files automatically.
+
+## Chart Structure
+
+chant generates a standard Helm chart directory:
+
+| Output File | Chant Type | Description |
+|-------------|-----------|-------------|
+| `Chart.yaml` | `Chart` | Chart metadata (name, version, appVersion, dependencies) |
+| `values.yaml` | `Values` | Default configuration values |
+| `templates/*.yaml` | Resource constructors | Kubernetes manifests with template expressions |
+| `templates/NOTES.txt` | `HelmNotes` | Post-install usage instructions |
+| `templates/tests/*.yaml` | `HelmTest` | Helm test pods |
+| `crds/*.yaml` | `HelmCRD` | Custom Resource Definitions |
+
+## The Values Proxy
+
+The `values` proxy is the core abstraction for referencing `.Values.*` paths in templates. Instead of writing raw template strings, use typed property access:
+
+```typescript
+import { values, Deployment } from "@intentius/chant-lexicon-helm";
+
+export const deployment = new Deployment({
+  name: "my-app",
+  replicas: values.replicaCount,
+  image: values.image.repository,
+  tag: values.image.tag,
+});
+```
+
+This generates template expressions:
+
+```yaml
+replicas: {{ .Values.replicaCount }}
+image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+```
+
+The proxy supports arbitrarily deep nesting. Every property access appends to the `.Values` path, so `values.global.ingress.tls.enabled` becomes `{{ .Values.global.ingress.tls.enabled }}`.
+
+## Built-in Objects
+
+Helm provides several built-in objects accessible at render time. The lexicon exposes these as typed references:
+
+### Release
+
+```typescript
+import { Release } from "@intentius/chant-lexicon-helm";
+
+const labels = {
+  "app.kubernetes.io/instance": Release.Name,
+  "app.kubernetes.io/managed-by": Release.Service,
+};
+// Generates: {{ .Release.Name }}, {{ .Release.Service }}
+```
+
+Available properties: `Release.Name`, `Release.Namespace`, `Release.Service`, `Release.Revision`, `Release.IsUpgrade`, `Release.IsInstall`.
+
+### ChartRef
+
+```typescript
+import { ChartRef } from "@intentius/chant-lexicon-helm";
+
+const labels = {
+  "helm.sh/chart": ChartRef.Name,
+  "app.kubernetes.io/version": ChartRef.AppVersion,
+};
+// Generates: {{ .Chart.Name }}, {{ .Chart.AppVersion }}
+```
+
+### Capabilities
+
+```typescript
+import { Capabilities } from "@intentius/chant-lexicon-helm";
+
+// Check Kubernetes API version support
+const usePDB = Capabilities.apiVersions("policy/v1");
+// Generates: {{ .Capabilities.APIVersions.Has "policy/v1" }}
+```
+
+### Template
+
+```typescript
+import { Template } from "@intentius/chant-lexicon-helm";
+
+const source = Template.BasePath;
+// Generates: {{ .Template.BasePath }}
+```
+
+## Template Functions
+
+The lexicon provides typed wrappers for Helm/Sprig template functions:
+
+```typescript
+import { include, required, helmDefault, toYaml, quote } from "@intentius/chant-lexicon-helm";
+
+// Named template inclusion
+const labels = include("my-app.labels", {});
+// Generates: {{ include "my-app.labels" . }}
+
+// Required values with error messages
+const image = required("image.repository is required", values.image.repository);
+// Generates: {{ required "image.repository is required" .Values.image.repository }}
+
+// Default values
+const pullPolicy = helmDefault(values.image.pullPolicy, "IfNotPresent");
+// Generates: {{ default "IfNotPresent" .Values.image.pullPolicy }}
+
+// YAML serialization for nested objects
+const resources = toYaml(values.resources);
+// Generates: {{ toYaml .Values.resources | nindent 12 }}
+
+// Quoting string values
+const name = quote(values.nameOverride);
+// Generates: {{ quote .Values.nameOverride }}
+```
+
+## Conditional Resources
+
+Use `If`, `ElseIf`, `Range`, and `With` to control template rendering:
+
+```typescript
+import { If, Range, With, values } from "@intentius/chant-lexicon-helm";
+
+// Conditional block
+const ingressBlock = If(values.ingress.enabled, {
+  apiVersion: "networking.k8s.io/v1",
+  kind: "Ingress",
+  metadata: { name: values.ingress.hostname },
+});
+
+// Iteration
+const envVars = Range(values.env, (item) => ({
+  name: item.name,
+  value: item.value,
+}));
+
+// Scoped context
+const tlsBlock = With(values.ingress.tls, (tls) => ({
+  secretName: tls.secretName,
+  hosts: tls.hosts,
+}));
+```
+
+## Hook Lifecycle
+
+Helm hooks run at specific points in the release lifecycle:
+
+```typescript
+import { HelmHook } from "@intentius/chant-lexicon-helm";
+
+export const migration = new HelmHook({
+  name: "db-migrate",
+  type: "pre-install,pre-upgrade",
+  weight: -5,
+  deletePolicy: "before-hook-creation",
+  image: values.image.repository,
+  command: ["migrate", "--target", "latest"],
+});
+```
+
+This generates a Job manifest with `helm.sh/hook` annotations. The `weight` property controls execution order (lower runs first).
+
+## Dependencies
+
+Chart dependencies are declared as properties of `Chart`:
+
+```typescript
+import { Chart, HelmDependency } from "@intentius/chant-lexicon-helm";
+
+export const chart = new Chart({
+  name: "my-app",
+  version: "1.0.0",
+  dependencies: [
+    new HelmDependency({
+      name: "postgresql",
+      version: "12.x",
+      repository: "https://charts.bitnami.com/bitnami",
+      condition: "postgresql.enabled",
+    }),
+    new HelmDependency({
+      name: "redis",
+      version: "17.x",
+      repository: "https://charts.bitnami.com/bitnami",
+      condition: "redis.enabled",
+    }),
+  ],
+});
+```

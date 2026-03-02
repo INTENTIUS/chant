@@ -5,50 +5,25 @@
  * Helm-specific intrinsics, lint rules, and post-synth checks.
  */
 
-import { createRequire } from "module";
 import type { LexiconPlugin, IntrinsicDef, InitTemplateSet, SkillDefinition } from "@intentius/chant/lexicon";
-import type { LintRule } from "@intentius/chant/lint/rule";
-import type { PostSynthCheck } from "@intentius/chant/lint/post-synth";
-import { readFileSync } from "fs";
+import { discoverLintRules, discoverPostSynthChecks } from "@intentius/chant/lint/discover";
+import { readFileSync, readdirSync } from "fs";
 import { join, dirname } from "path";
 import { fileURLToPath } from "url";
 import { helmSerializer } from "./serializer";
-
-const require = createRequire(import.meta.url);
 
 export const helmPlugin: LexiconPlugin = {
   name: "helm",
   serializer: helmSerializer,
 
-  lintRules(): LintRule[] {
-    const { chartMetadataRule } = require("./lint/rules/chart-metadata");
-    const { valuesNoSecretsRule } = require("./lint/rules/values-no-secrets");
-    const { noHardcodedImageRule } = require("./lint/rules/no-hardcoded-image");
-    return [chartMetadataRule, valuesNoSecretsRule, noHardcodedImageRule];
+  lintRules() {
+    const rulesDir = join(dirname(fileURLToPath(import.meta.url)), "lint", "rules");
+    return discoverLintRules(rulesDir, import.meta.url);
   },
 
-  postSynthChecks(): PostSynthCheck[] {
-    const { whm101 } = require("./lint/post-synth/whm101");
-    const { whm102 } = require("./lint/post-synth/whm102");
-    const { whm103 } = require("./lint/post-synth/whm103");
-    const { whm104 } = require("./lint/post-synth/whm104");
-    const { whm105 } = require("./lint/post-synth/whm105");
-    const { whm201 } = require("./lint/post-synth/whm201");
-    const { whm202 } = require("./lint/post-synth/whm202");
-    const { whm203 } = require("./lint/post-synth/whm203");
-    const { whm204 } = require("./lint/post-synth/whm204");
-    const { whm301 } = require("./lint/post-synth/whm301");
-    const { whm302 } = require("./lint/post-synth/whm302");
-    const { whm401 } = require("./lint/post-synth/whm401");
-    const { whm402 } = require("./lint/post-synth/whm402");
-    const { whm403 } = require("./lint/post-synth/whm403");
-    const { whm404 } = require("./lint/post-synth/whm404");
-    const { whm405 } = require("./lint/post-synth/whm405");
-    const { whm406 } = require("./lint/post-synth/whm406");
-    const { whm407 } = require("./lint/post-synth/whm407");
-    const { whm501 } = require("./lint/post-synth/whm501");
-    const { whm502 } = require("./lint/post-synth/whm502");
-    return [whm101, whm102, whm103, whm104, whm105, whm201, whm202, whm203, whm204, whm301, whm302, whm401, whm402, whm403, whm404, whm405, whm406, whm407, whm501, whm502];
+  postSynthChecks() {
+    const postSynthDir = join(dirname(fileURLToPath(import.meta.url)), "lint", "post-synth");
+    return discoverPostSynthChecks(postSynthDir, import.meta.url);
   },
 
   intrinsics(): IntrinsicDef[] {
@@ -165,15 +140,21 @@ export const service = new Service({
   },
 
   skills(): SkillDefinition[] {
-    const skillPath = join(dirname(fileURLToPath(import.meta.url)), "skills", "create-chart.md");
-    const content = readFileSync(skillPath, "utf-8");
-    return [
-      {
-        name: "chant-helm",
-        description: "Helm chart lifecycle — scaffold, generate, lint, build, validate",
-        content,
-      },
-    ];
+    const skillsDir = join(dirname(fileURLToPath(import.meta.url)), "skills");
+    const skills: SkillDefinition[] = [];
+    try {
+      for (const file of readdirSync(skillsDir)) {
+        if (!file.endsWith(".md")) continue;
+        const content = readFileSync(join(skillsDir, file), "utf-8");
+        const name = file.replace(/\.md$/, "");
+        // Derive a readable description from the filename
+        const desc = name.replace(/-/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
+        skills.push({ name: `chant-helm-${name}`, description: desc, content });
+      }
+    } catch {
+      // No skills directory
+    }
+    return skills;
   },
 
   async docs(options?: { verbose?: boolean }): Promise<void> {
