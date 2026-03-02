@@ -18,7 +18,9 @@ export const k8sPlugin: LexiconPlugin = {
 
   lintRules(): LintRule[] {
     const { hardcodedNamespaceRule } = require("./lint/rules/hardcoded-namespace");
-    return [hardcodedNamespaceRule];
+    const { latestImageTagRule } = require("./lint/rules/latest-image-tag");
+    const { missingResourceLimitsRule } = require("./lint/rules/missing-resource-limits");
+    return [hardcodedNamespaceRule, latestImageTagRule, missingResourceLimitsRule];
   },
 
   postSynthChecks(): PostSynthCheck[] {
@@ -1225,5 +1227,71 @@ const { deployment, service, serviceMonitor, prometheusRule } = MonitoredService
         ],
       },
     ];
+
+    // Load file-based skills from src/skills/
+    const { readFileSync } = require("fs");
+    const { join, dirname } = require("path");
+    const { fileURLToPath } = require("url");
+    const dir = dirname(fileURLToPath(import.meta.url));
+
+    const skillFiles = [
+      {
+        file: "kubernetes-patterns.md",
+        name: "kubernetes-patterns",
+        description: "Kubernetes deployment strategies, stateful workloads, RBAC, and networking patterns",
+        triggers: [
+          { type: "context" as const, value: "deployment strategy" },
+          { type: "context" as const, value: "statefulset" },
+          { type: "context" as const, value: "rbac" },
+          { type: "context" as const, value: "network policy" },
+          { type: "context" as const, value: "rolling update" },
+          { type: "context" as const, value: "blue green" },
+        ],
+        parameters: [],
+        examples: [
+          {
+            title: "Blue/Green Deployment",
+            input: "Set up a blue/green deployment for my app",
+            output: "import { WebApp } from \"@intentius/chant-lexicon-k8s\";\n\nconst blue = WebApp({ name: \"app-blue\", image: \"app:1.0\" });\nconst green = WebApp({ name: \"app-green\", image: \"app:2.0\" });",
+          },
+        ],
+      },
+      {
+        file: "kubernetes-security.md",
+        name: "kubernetes-security",
+        description: "Kubernetes pod security, image scanning, network policies, and secrets management",
+        triggers: [
+          { type: "context" as const, value: "k8s security" },
+          { type: "context" as const, value: "pod security" },
+          { type: "context" as const, value: "image security" },
+          { type: "context" as const, value: "k8s secrets" },
+          { type: "context" as const, value: "security context" },
+        ],
+        parameters: [],
+        examples: [
+          {
+            title: "Hardened Container",
+            input: "Create a hardened container with security context",
+            output: "WebApp({ name: \"api\", image: \"api:1.0\", securityContext: { runAsNonRoot: true, readOnlyRootFilesystem: true, capabilities: { drop: [\"ALL\"] } } })",
+          },
+        ],
+      },
+    ];
+
+    for (const skill of skillFiles) {
+      try {
+        const content = readFileSync(join(dir, "skills", skill.file), "utf-8");
+        skills.push({
+          name: skill.name,
+          description: skill.description,
+          content,
+          triggers: skill.triggers,
+          parameters: skill.parameters,
+          examples: skill.examples,
+        });
+      } catch { /* skip missing skills */ }
+    }
+
+    return skills;
   },
 };
