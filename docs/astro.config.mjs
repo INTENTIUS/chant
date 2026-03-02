@@ -58,9 +58,12 @@ export default defineConfig({
 					items: [
 						{ label: 'Overview', slug: 'lexicons/overview' },
 						{ label: 'AWS CloudFormation', link: '/lexicons/aws/' },
+						{ label: 'Azure ARM', link: '/lexicons/azure/' },
+						{ label: 'GCP Config Connector', link: '/lexicons/gcp/' },
 						{ label: 'Kubernetes', link: '/lexicons/k8s/' },
+						{ label: 'Helm Charts', link: '/lexicons/helm/' },
 						{ label: 'GitLab CI/CD', link: '/lexicons/gitlab/' },
-					{ label: 'Flyway', link: '/lexicons/flyway/' },
+						{ label: 'Flyway', link: '/lexicons/flyway/' },
 					],
 				},
 				{
@@ -123,6 +126,9 @@ export default defineConfig({
 						{ label: 'Completeness Checklist', slug: 'lexicon-authoring/completeness-checklist' },
 						{ label: 'Package & Publish', slug: 'lexicon-authoring/package' },
 						{ label: 'CI & Distribution', slug: 'lexicon-authoring/ci-integration' },
+						{ label: 'Docs Site', slug: 'lexicon-authoring/docs-site' },
+						{ label: 'Post-Synth Checks', slug: 'lexicon-authoring/post-synth-checks' },
+						{ label: 'Testing', slug: 'lexicon-authoring/testing' },
 						{
 							label: 'CLI Reference',
 							items: [

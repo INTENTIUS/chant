@@ -3,13 +3,13 @@ import { defineConfig } from 'astro/config';
 import starlight from '@astrojs/starlight';
 
 export default defineConfig({
-  base: '/chant/lexicons/flyway/',
+  base: '/chant/lexicons/helm/',
   integrations: [
     starlight({
-      title: 'Flyway',
+      title: 'Helm Charts',
       sidebar: [
             {
-                  "label": "← chant docs",
+                  "label": "\u2190 chant docs",
                   "link": "../../"
             },
             {
@@ -21,8 +21,12 @@ export default defineConfig({
                   "slug": "getting-started"
             },
             {
-                  "label": "Flyway Concepts",
-                  "slug": "flyway-concepts"
+                  "label": "Helm Concepts",
+                  "slug": "helm-concepts"
+            },
+            {
+                  "label": "Composites",
+                  "slug": "composites"
             },
             {
                   "label": "Lint Rules",
@@ -33,24 +37,12 @@ export default defineConfig({
                   "slug": "examples"
             },
             {
-                  "label": "Composites",
-                  "slug": "composites"
-            },
-            {
-                  "label": "Importing TOML",
-                  "slug": "importing-toml"
-            },
-            {
                   "label": "Skills",
                   "slug": "skills"
             },
             {
                   "label": "Intrinsics",
                   "slug": "intrinsics"
-            },
-            {
-                  "label": "Pseudo-Parameters",
-                  "slug": "pseudo-parameters"
             },
             {
                   "label": "Serialization",
