@@ -109,7 +109,52 @@ const serviceAbbreviations: Record<string, string> = {
 const gcpNamingConfig: NamingConfig = {
   priorityNames,
   priorityAliases,
-  priorityPropertyAliases: {},
+  priorityPropertyAliases: {
+    "GCP::Compute::Instance": {
+      NetworkInterface: "InstanceNetworkInterface",
+      AccessConfig: "InstanceAccessConfig",
+      AttachedDisk: "InstanceAttachedDisk",
+      Metadata: "InstanceMetadata",
+      Scheduling: "InstanceScheduling",
+      ServiceAccount: "InstanceServiceAccount",
+      ShieldedInstanceConfig: "InstanceShieldedConfig",
+    },
+    "GCP::Container::Cluster": {
+      NetworkConfig: "ClusterNetworkConfig",
+      NodeConfig: "ClusterNodeConfig",
+      IpAllocationPolicy: "ClusterIpAllocationPolicy",
+      MasterAuth: "ClusterMasterAuth",
+      PrivateClusterConfig: "ClusterPrivateConfig",
+      AddonsConfig: "ClusterAddonsConfig",
+    },
+    "GCP::Container::NodePool": {
+      NodeConfig: "NodePoolNodeConfig",
+      AutoScaling: "NodePoolAutoScaling",
+      Management: "NodePoolManagement",
+      UpgradeSettings: "NodePoolUpgradeSettings",
+    },
+    "GCP::Sql::Instance": {
+      IpConfiguration: "SqlIpConfiguration",
+      BackupConfiguration: "SqlBackupConfiguration",
+      DatabaseFlags: "SqlDatabaseFlags",
+      Settings: "SqlSettings",
+    },
+    "GCP::Storage::Bucket": {
+      Encryption: "BucketEncryption",
+      Versioning: "BucketVersioning",
+      Lifecycle: "BucketLifecycle",
+      LifecycleRule: "BucketLifecycleRule",
+      Logging: "BucketLogging",
+      RetentionPolicy: "BucketRetentionPolicy",
+    },
+    "GCP::Compute::Network": {
+      RoutingConfig: "NetworkRoutingConfig",
+    },
+    "GCP::Compute::Subnetwork": {
+      LogConfig: "SubnetworkLogConfig",
+      SecondaryIpRange: "SubnetworkSecondaryIpRange",
+    },
+  },
   serviceAbbreviations,
   shortName: gcpShortName,
   serviceName: (typeName: string) => {

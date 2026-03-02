@@ -40,6 +40,7 @@ spec:
     const diags = wgc101.check(makeCtx(yaml));
     expect(diags.length).toBeGreaterThanOrEqual(1);
     expect(diags[0].checkId).toBe("WGC101");
+    expect(diags[0].severity).toBe("warning");
   });
 
   test("no diagnostic when encryption present", () => {
@@ -73,6 +74,7 @@ spec:
     const diags = wgc102.check(makeCtx(yaml));
     expect(diags.length).toBeGreaterThanOrEqual(1);
     expect(diags[0].checkId).toBe("WGC102");
+    expect(diags[0].severity).toBe("warning");
   });
 
   test("no diagnostic when no public members", () => {
@@ -103,6 +105,7 @@ spec:
     const diags = wgc103.check(makeCtx(yaml));
     expect(diags.length).toBeGreaterThanOrEqual(1);
     expect(diags[0].checkId).toBe("WGC103");
+    expect(diags[0].severity).toBe("info");
   });
 
   test("no diagnostic when project annotation present", () => {
@@ -134,6 +137,7 @@ spec:
     const diags = wgc104.check(makeCtx(yaml));
     expect(diags.length).toBeGreaterThanOrEqual(1);
     expect(diags[0].checkId).toBe("WGC104");
+    expect(diags[0].severity).toBe("warning");
   });
 
   test("no diagnostic when uniformBucketLevelAccess is true", () => {
@@ -169,6 +173,7 @@ spec:
     const diags = wgc105.check(makeCtx(yaml));
     expect(diags.length).toBeGreaterThanOrEqual(1);
     expect(diags[0].checkId).toBe("WGC105");
+    expect(diags[0].severity).toBe("warning");
   });
 
   test("no diagnostic with private networks only", () => {
@@ -203,6 +208,7 @@ spec:
     const diags = wgc106.check(makeCtx(yaml));
     expect(diags.length).toBeGreaterThanOrEqual(1);
     expect(diags[0].checkId).toBe("WGC106");
+    expect(diags[0].severity).toBe("info");
   });
 
   test("no diagnostic when deletion policy present", () => {
@@ -234,6 +240,7 @@ spec:
     const diags = wgc107.check(makeCtx(yaml));
     expect(diags.length).toBeGreaterThanOrEqual(1);
     expect(diags[0].checkId).toBe("WGC107");
+    expect(diags[0].severity).toBe("info");
   });
 
   test("no diagnostic when versioning enabled", () => {
@@ -267,6 +274,7 @@ spec:
     const diags = wgc108.check(makeCtx(yaml));
     expect(diags.length).toBeGreaterThanOrEqual(1);
     expect(diags[0].checkId).toBe("WGC108");
+    expect(diags[0].severity).toBe("warning");
   });
 
   test("no diagnostic when backup enabled", () => {
@@ -305,6 +313,7 @@ spec:
     const diags = wgc109.check(makeCtx(yaml));
     expect(diags.length).toBeGreaterThanOrEqual(1);
     expect(diags[0].checkId).toBe("WGC109");
+    expect(diags[0].severity).toBe("warning");
   });
 
   test("no diagnostic with specific source range", () => {
@@ -339,6 +348,7 @@ spec:
     const diags = wgc110.check(makeCtx(yaml));
     expect(diags.length).toBeGreaterThanOrEqual(1);
     expect(diags[0].checkId).toBe("WGC110");
+    expect(diags[0].severity).toBe("warning");
   });
 
   test("no diagnostic when rotation period set", () => {
@@ -369,6 +379,7 @@ spec:
     const diags = wgc201.check(makeCtx(yaml));
     expect(diags.length).toBeGreaterThanOrEqual(1);
     expect(diags[0].checkId).toBe("WGC201");
+    expect(diags[0].severity).toBe("info");
   });
 
   test("no diagnostic when managed-by label present", () => {
@@ -400,6 +411,7 @@ spec:
     const diags = wgc202.check(makeCtx(yaml));
     expect(diags.length).toBeGreaterThanOrEqual(1);
     expect(diags[0].checkId).toBe("WGC202");
+    expect(diags[0].severity).toBe("warning");
   });
 
   test("no diagnostic when workload identity configured", () => {
@@ -435,6 +447,7 @@ spec:
     const diags = wgc203.check(makeCtx(yaml));
     expect(diags.length).toBeGreaterThanOrEqual(1);
     expect(diags[0].checkId).toBe("WGC203");
+    expect(diags[0].severity).toBe("warning");
   });
 
   test("no diagnostic with specific scopes", () => {
@@ -470,6 +483,7 @@ spec:
     const diags = wgc204.check(makeCtx(yaml));
     expect(diags.length).toBeGreaterThanOrEqual(1);
     expect(diags[0].checkId).toBe("WGC204");
+    expect(diags[0].severity).toBe("info");
   });
 
   test("no diagnostic when shielded VM configured", () => {
@@ -504,6 +518,7 @@ spec:
     const diags = wgc301.check(makeCtx(yaml));
     expect(diags.length).toBeGreaterThanOrEqual(1);
     expect(diags[0].checkId).toBe("WGC301");
+    expect(diags[0].severity).toBe("info");
   });
 
   test("no diagnostic when IAMAuditConfig present", () => {
@@ -536,6 +551,7 @@ spec:
     const diags = wgc302.check(makeCtx(yaml));
     expect(diags.length).toBeGreaterThanOrEqual(1);
     expect(diags[0].checkId).toBe("WGC302");
+    expect(diags[0].severity).toBe("info");
   });
 
   test("no diagnostic when Service resource present", () => {
@@ -565,6 +581,7 @@ spec:
     const diags = wgc303.check(makeCtx(yaml));
     expect(diags.length).toBeGreaterThanOrEqual(1);
     expect(diags[0].checkId).toBe("WGC303");
+    expect(diags[0].severity).toBe("info");
   });
 
   test("no diagnostic when service perimeter present", () => {
@@ -596,6 +613,7 @@ spec:
     const diags = wgc111.check(makeCtx(yaml));
     expect(diags.length).toBeGreaterThanOrEqual(1);
     expect(diags[0].checkId).toBe("WGC111");
+    expect(diags[0].severity).toBe("warning");
   });
 
   test("no diagnostic when referenced resource exists", () => {
