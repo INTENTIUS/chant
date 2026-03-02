@@ -445,7 +445,7 @@ engineVersion = "v2"
   },
 
   skills(): SkillDefinition[] {
-    return [
+    const skills: SkillDefinition[] = [
       {
         name: "chant-flyway",
         description: "Flyway migration lifecycle — scaffold, build, validate, deploy, rollback, Desktop workflow, troubleshoot",
@@ -1013,5 +1013,69 @@ const result = VaultSecuredProject({
         ],
       },
     ];
+
+    // Load file-based skills from src/skills/
+    const { readFileSync } = require("fs");
+    const { join, dirname } = require("path");
+    const { fileURLToPath } = require("url");
+    const dir = dirname(fileURLToPath(import.meta.url));
+
+    const skillFiles = [
+      {
+        file: "flyway-migrations.md",
+        name: "flyway-migrations",
+        description: "Flyway migration naming, versioned vs repeatable, callbacks, and multi-environment patterns",
+        triggers: [
+          { type: "context" as const, value: "flyway migration" },
+          { type: "context" as const, value: "versioned migration" },
+          { type: "context" as const, value: "repeatable migration" },
+          { type: "context" as const, value: "flyway callback" },
+          { type: "context" as const, value: "migration naming" },
+        ],
+        parameters: [],
+        examples: [
+          {
+            title: "Multi-environment config",
+            input: "Set up Flyway for dev, staging, and production",
+            output: "import { environmentGroup } from \"@intentius/chant-lexicon-flyway\";\n\nconst envs = environmentGroup({ schemas: [\"public\"], environments: { dev: { url: \"...\" }, prod: { url: \"...\" } } });",
+          },
+        ],
+      },
+      {
+        file: "flyway-security.md",
+        name: "flyway-security",
+        description: "Flyway credential management, vault integration, clean protection, and security best practices",
+        triggers: [
+          { type: "context" as const, value: "flyway security" },
+          { type: "context" as const, value: "flyway vault" },
+          { type: "context" as const, value: "flyway credentials" },
+          { type: "context" as const, value: "clean protection" },
+        ],
+        parameters: [],
+        examples: [
+          {
+            title: "Vault-secured production",
+            input: "Secure Flyway credentials with HashiCorp Vault",
+            output: "import { VaultSecuredProject } from \"@intentius/chant-lexicon-flyway\";\n\nconst result = VaultSecuredProject({ name: \"my-app\", vaultUrl: \"https://vault.example.com\", ... });",
+          },
+        ],
+      },
+    ];
+
+    for (const skill of skillFiles) {
+      try {
+        const content = readFileSync(join(dir, "skills", skill.file), "utf-8");
+        skills.push({
+          name: skill.name,
+          description: skill.description,
+          content,
+          triggers: skill.triggers,
+          parameters: skill.parameters,
+          examples: skill.examples,
+        });
+      } catch { /* skip missing skills */ }
+    }
+
+    return skills;
   },
 };
