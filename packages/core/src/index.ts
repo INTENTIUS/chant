@@ -33,6 +33,7 @@ export * from "./lint/selectors";
 export * from "./lint/named-checks";
 export * from "./lint/post-synth";
 export * from "./lint/rule-loader";
+export * from "./lint/discover";
 export * from "./import/parser";
 export * from "./import/generator";
 export * from "./lexicon";
