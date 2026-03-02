@@ -722,213 +722,6 @@ const { job, serviceAccount, role, roleBinding } = BatchJob({
         ],
       },
       {
-        name: "chant-k8s-eks",
-        description: "EKS-specific Kubernetes composites — IRSA, ALB, EBS/EFS, Fluent Bit, ExternalDNS, ADOT",
-        content: `---
-skill: chant-k8s-eks
-description: EKS-specific Kubernetes patterns and composites
-user-invocable: true
----
-
-# EKS Kubernetes Patterns
-
-## EKS Composites Overview
-
-These composites produce K8s YAML with EKS-specific annotations and configurations.
-
-### IrsaServiceAccount — ServiceAccount with IAM Role annotation
-
-\`\`\`typescript
-import { IrsaServiceAccount } from "@intentius/chant-lexicon-k8s";
-
-const { serviceAccount, role, roleBinding } = IrsaServiceAccount({
-  name: "app-sa",
-  iamRoleArn: "arn:aws:iam::123456789012:role/my-app-role",
-  rbacRules: [
-    { apiGroups: [""], resources: ["secrets"], verbs: ["get"] },
-  ],
-  namespace: "prod",
-});
-\`\`\`
-
-### AlbIngress — Ingress with AWS ALB Controller annotations
-
-\`\`\`typescript
-import { AlbIngress } from "@intentius/chant-lexicon-k8s";
-
-const { ingress } = AlbIngress({
-  name: "api-ingress",
-  hosts: [
-    {
-      hostname: "api.example.com",
-      paths: [{ path: "/", serviceName: "api", servicePort: 80 }],
-    },
-  ],
-  scheme: "internet-facing",
-  certificateArn: "arn:aws:acm:us-east-1:123456789012:certificate/abc-123",
-  groupName: "shared-alb",
-  healthCheckPath: "/healthz",
-});
-\`\`\`
-
-Features:
-- Auto-sets \`alb.ingress.kubernetes.io/*\` annotations
-- SSL redirect enabled by default when \`certificateArn\` set
-- \`groupName\` for shared ALB across multiple Ingresses
-- \`wafAclArn\` for WAFv2 integration
-
-### EbsStorageClass — StorageClass for EBS CSI
-
-\`\`\`typescript
-import { EbsStorageClass } from "@intentius/chant-lexicon-k8s";
-
-const { storageClass } = EbsStorageClass({
-  name: "gp3-encrypted",
-  type: "gp3",
-  encrypted: true,
-  iops: "3000",
-  throughput: "125",
-});
-\`\`\`
-
-### EfsStorageClass — StorageClass for EFS CSI (ReadWriteMany)
-
-\`\`\`typescript
-import { EfsStorageClass } from "@intentius/chant-lexicon-k8s";
-
-const { storageClass } = EfsStorageClass({
-  name: "efs-shared",
-  fileSystemId: "fs-12345678",
-});
-\`\`\`
-
-Use EFS when you need ReadWriteMany (shared across pods/nodes). Use EBS for ReadWriteOnce (single pod).
-
-### FluentBitAgent — DaemonSet for CloudWatch logging
-
-\`\`\`typescript
-import { FluentBitAgent } from "@intentius/chant-lexicon-k8s";
-
-const result = FluentBitAgent({
-  logGroup: "/aws/eks/my-cluster/containers",
-  region: "us-east-1",
-  clusterName: "my-cluster",
-});
-\`\`\`
-
-### ExternalDnsAgent — ExternalDNS for Route53
-
-\`\`\`typescript
-import { ExternalDnsAgent } from "@intentius/chant-lexicon-k8s";
-
-const result = ExternalDnsAgent({
-  iamRoleArn: "arn:aws:iam::123456789012:role/external-dns-role",
-  domainFilters: ["example.com"],
-  txtOwnerId: "my-cluster",
-});
-\`\`\`
-
-### AdotCollector — ADOT for CloudWatch/X-Ray
-
-\`\`\`typescript
-import { AdotCollector } from "@intentius/chant-lexicon-k8s";
-
-const result = AdotCollector({
-  region: "us-east-1",
-  clusterName: "my-cluster",
-  exporters: ["cloudwatch", "xray"],
-});
-\`\`\`
-
-## Pod Identity vs IRSA
-
-| Feature | IRSA | Pod Identity |
-|---------|------|-------------|
-| K8s annotation needed | Yes (\`eks.amazonaws.com/role-arn\`) | No |
-| Composite available | **IrsaServiceAccount** | None needed |
-| Setup | OIDC provider + IAM role trust policy | EKS Pod Identity Agent add-on + association |
-| When to use | Existing clusters, broad compatibility | New clusters (EKS 1.28+), simpler management |
-
-For Pod Identity, no K8s-side composite is needed — configure the association via AWS API/CloudFormation and use a plain ServiceAccount.
-
-## Karpenter
-
-Karpenter replaces Cluster Autoscaler for node provisioning. Karpenter NodePool and EC2NodeClass are simple CRDs — use CRD import rather than composites:
-
-\`\`\`bash
-# Import Karpenter CRDs into your chant project
-chant import --url https://raw.githubusercontent.com/aws/karpenter/main/pkg/apis/crds/karpenter.sh_nodepools.yaml
-\`\`\`
-
-## Fargate Considerations
-
-When running on EKS Fargate:
-- **No DaemonSets** — FluentBitAgent and AdotCollector cannot run on Fargate nodes
-- **No hostPath volumes** — use EFS for shared storage
-- **No privileged containers** — security context restrictions apply
-- For Fargate logging, use the built-in Fluent Bit log router (Fargate logging configuration)
-
-## EKS Add-ons
-
-Common add-ons managed via AWS (not K8s manifests):
-- **vpc-cni** — Amazon VPC CNI plugin
-- **coredns** — Cluster DNS
-- **kube-proxy** — Network proxy
-- **aws-ebs-csi-driver** — EBS CSI driver (required for EbsStorageClass)
-- **aws-efs-csi-driver** — EFS CSI driver (required for EfsStorageClass)
-- **adot** — AWS Distro for OpenTelemetry (alternative to AdotCollector composite)
-- **aws-guardduty-agent** — Runtime threat detection
-
-Configure add-ons via the AWS lexicon (\`@intentius/chant-lexicon-aws\`) CloudFormation resources.
-`,
-        triggers: [
-          { type: "context", value: "eks" },
-          { type: "context", value: "irsa" },
-          { type: "context", value: "alb" },
-          { type: "context", value: "ebs" },
-          { type: "context", value: "efs" },
-          { type: "context", value: "fluent-bit" },
-          { type: "context", value: "cloudwatch" },
-          { type: "context", value: "karpenter" },
-          { type: "context", value: "fargate" },
-        ],
-        preConditions: [
-          "chant CLI is installed (chant --version succeeds)",
-          "EKS cluster is provisioned",
-          "kubectl is configured for the EKS cluster",
-        ],
-        postConditions: [
-          "EKS-specific resources are deployed and functional",
-        ],
-        parameters: [],
-        examples: [
-          {
-            title: "IRSA ServiceAccount",
-            description: "Create a ServiceAccount with IAM role for S3 access",
-            input: "Create an IRSA ServiceAccount for my app that needs S3 access",
-            output: `import { IrsaServiceAccount } from "@intentius/chant-lexicon-k8s";
-
-const { serviceAccount } = IrsaServiceAccount({
-  name: "app-sa",
-  iamRoleArn: "arn:aws:iam::123456789012:role/app-s3-role",
-  namespace: "prod",
-});`,
-          },
-          {
-            title: "ALB Ingress with TLS",
-            description: "Create an ALB Ingress with ACM certificate",
-            input: "Set up an internet-facing ALB with TLS for my API",
-            output: `import { AlbIngress } from "@intentius/chant-lexicon-k8s";
-
-const { ingress } = AlbIngress({
-  name: "api-ingress",
-  hosts: [{ hostname: "api.example.com", paths: [{ path: "/", serviceName: "api", servicePort: 80 }] }],
-  certificateArn: "arn:aws:acm:us-east-1:123456789012:certificate/abc-123",
-});`,
-          },
-        ],
-      },
-      {
         name: "chant-k8s-patterns",
         description: "Advanced K8s patterns — sidecars, observability, TLS, network isolation, config/secret mounting",
         content: `---
@@ -1273,6 +1066,62 @@ const { deployment, service, serviceMonitor, prometheusRule } = MonitoredService
             title: "Hardened Container",
             input: "Create a hardened container with security context",
             output: "WebApp({ name: \"api\", image: \"api:1.0\", securityContext: { runAsNonRoot: true, readOnlyRootFilesystem: true, capabilities: { drop: [\"ALL\"] } } })",
+          },
+        ],
+      },
+      {
+        file: "chant-k8s-eks.md",
+        name: "chant-k8s-eks",
+        description: "EKS-specific Kubernetes composites — IRSA, ALB, EBS/EFS, Fluent Bit, ExternalDNS, ADOT",
+        triggers: [
+          { type: "context" as const, value: "eks composites" },
+          { type: "context" as const, value: "irsa" },
+          { type: "context" as const, value: "alb ingress" },
+          { type: "context" as const, value: "ebs storage" },
+          { type: "context" as const, value: "karpenter" },
+        ],
+        parameters: [],
+        examples: [
+          {
+            title: "IRSA ServiceAccount",
+            input: "Create an IRSA ServiceAccount for my app",
+            output: "import { IrsaServiceAccount } from \"@intentius/chant-lexicon-k8s\";\n\nconst { serviceAccount } = IrsaServiceAccount({ name: \"app-sa\", iamRoleArn: \"arn:aws:iam::123456789012:role/app-role\" });",
+          },
+        ],
+      },
+      {
+        file: "chant-k8s-gke.md",
+        name: "chant-k8s-gke",
+        description: "GKE-specific Kubernetes composites — Workload Identity, GCE PD, Filestore, FluentBit, OTel, ExternalDNS, Gateway",
+        triggers: [
+          { type: "context" as const, value: "gke composites" },
+          { type: "context" as const, value: "workload identity gke" },
+          { type: "context" as const, value: "config connector k8s" },
+        ],
+        parameters: [],
+        examples: [
+          {
+            title: "GKE Workload Identity",
+            input: "Create a ServiceAccount with GKE Workload Identity",
+            output: "import { WorkloadIdentityServiceAccount } from \"@intentius/chant-lexicon-k8s\";\n\nconst { serviceAccount } = WorkloadIdentityServiceAccount({ name: \"app-sa\", gcpServiceAccountEmail: \"app@project.iam.gserviceaccount.com\" });",
+          },
+        ],
+      },
+      {
+        file: "chant-k8s-aks.md",
+        name: "chant-k8s-aks",
+        description: "AKS-specific Kubernetes composites — Workload Identity, AGIC, Azure Disk/File, ExternalDNS, Azure Monitor",
+        triggers: [
+          { type: "context" as const, value: "aks composites" },
+          { type: "context" as const, value: "workload identity aks" },
+          { type: "context" as const, value: "agic ingress" },
+        ],
+        parameters: [],
+        examples: [
+          {
+            title: "AKS Workload Identity",
+            input: "Create a ServiceAccount with AKS Workload Identity",
+            output: "import { AksWorkloadIdentityServiceAccount } from \"@intentius/chant-lexicon-k8s\";\n\nconst { serviceAccount } = AksWorkloadIdentityServiceAccount({ name: \"app-sa\", clientId: \"12345678-abcd-1234-abcd-123456789012\" });",
           },
         ],
       },

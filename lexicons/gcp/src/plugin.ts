@@ -322,6 +322,24 @@ export const bucket = new StorageBucket({
           },
         ],
       },
+      {
+        file: "chant-gke.md",
+        name: "chant-gke",
+        description: "GKE end-to-end workflow — bootstrap cluster, deploy Config Connector resources, deploy K8s workloads",
+        triggers: [
+          { type: "context" as const, value: "gke" },
+          { type: "context" as const, value: "gcp kubernetes" },
+          { type: "context" as const, value: "config connector" },
+        ],
+        parameters: [],
+        examples: [
+          {
+            title: "Deploy GKE microservice",
+            input: "Deploy a GKE project end-to-end",
+            output: "npm run bootstrap && npm run deploy",
+          },
+        ],
+      },
     ];
 
     for (const skill of skillFiles) {

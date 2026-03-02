@@ -351,6 +351,24 @@ export const tags = defaultTags([
           },
         ],
       },
+      {
+        file: "chant-aks.md",
+        name: "chant-aks",
+        description: "AKS end-to-end workflow — deploy ARM template, configure kubectl, deploy K8s workloads",
+        triggers: [
+          { type: "context", value: "aks" },
+          { type: "context", value: "azure kubernetes" },
+          { type: "context", value: "agic" },
+        ],
+        parameters: [],
+        examples: [
+          {
+            title: "Deploy AKS microservice",
+            input: "Deploy an AKS project end-to-end",
+            output: "npm run deploy",
+          },
+        ],
+      },
     ];
 
     for (const skill of skillFiles) {
