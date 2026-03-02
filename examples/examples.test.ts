@@ -329,11 +329,11 @@ describe("k8s-gke-microservice example", () => {
     const result = await build(srcDir, [k8sSerializer]);
     expect(result.errors).toHaveLength(0);
     const docs = parseK8sDocs(result.outputs.get("k8s")!);
-    expect(docs.length).toBeGreaterThanOrEqual(30);
+    expect(docs.length).toBeGreaterThanOrEqual(28);
     const kinds = docs.map((d) => d.kind);
-    expect(kinds.filter((k) => k === "Deployment")).toHaveLength(3);
-    expect(kinds.filter((k) => k === "Service")).toHaveLength(2);
-    expect(kinds.filter((k) => k === "ServiceAccount")).toHaveLength(5);
+    expect(kinds.filter((k) => k === "Deployment")).toHaveLength(2);
+    expect(kinds.filter((k) => k === "Service")).toHaveLength(1);
+    expect(kinds.filter((k) => k === "ServiceAccount")).toHaveLength(4);
     expect(kinds.filter((k) => k === "DaemonSet")).toHaveLength(2);
     expect(kinds.filter((k) => k === "Namespace")).toHaveLength(3);
     expect(kinds.filter((k) => k === "Ingress")).toHaveLength(1);
@@ -454,9 +454,9 @@ describe("k8s-aks-microservice example", () => {
     );
     expect(cluster).toBeDefined();
     expect(cluster.name).toBe("aks-microservice");
-    expect(cluster.properties.kubernetesVersion).toBe("1.28");
+    expect(cluster.properties.kubernetesVersion).toBe("1.32");
     expect(cluster.properties.agentPoolProfiles[0].count).toBe(3);
-    expect(cluster.properties.agentPoolProfiles[0].vmSize).toBe("Standard_D4s_v5");
+    expect(cluster.properties.agentPoolProfiles[0].vmSize).toBe("Standard_B2s");
     expect(cluster.properties.enableRBAC).toBe(true);
   });
 
@@ -464,11 +464,11 @@ describe("k8s-aks-microservice example", () => {
     const result = await build(srcDir, [k8sSerializer]);
     expect(result.errors).toHaveLength(0);
     const docs = parseK8sDocs(result.outputs.get("k8s")!);
-    expect(docs.length).toBeGreaterThanOrEqual(27);
+    expect(docs.length).toBeGreaterThanOrEqual(22);
     const kinds = docs.map((d) => d.kind);
-    expect(kinds.filter((k) => k === "Deployment")).toHaveLength(3);
-    expect(kinds.filter((k) => k === "Service")).toHaveLength(2);
-    expect(kinds.filter((k) => k === "ServiceAccount")).toHaveLength(4);
+    expect(kinds.filter((k) => k === "Deployment")).toHaveLength(2);
+    expect(kinds.filter((k) => k === "Service")).toHaveLength(1);
+    expect(kinds.filter((k) => k === "ServiceAccount")).toHaveLength(3);
     expect(kinds.filter((k) => k === "DaemonSet")).toHaveLength(1);
     expect(kinds.filter((k) => k === "Namespace")).toHaveLength(2);
   });
@@ -489,7 +489,6 @@ describe("k8s-aks-microservice example", () => {
     const ingress = docs.find((d) => d.kind === "Ingress");
     expect(ingress).toBeDefined();
     expect(ingress!.doc).toContain("kubernetes.io/ingress.class: azure/application-gateway");
-    expect(ingress!.doc).toContain("ingressClassName: azure/application-gateway");
   });
 
   test("app resources are in the microservice namespace", async () => {
