@@ -15,6 +15,7 @@ import { MonitoredService } from "./monitored-service";
 import { NetworkIsolatedApp } from "./network-isolated-app";
 import { IrsaServiceAccount } from "./irsa-service-account";
 import { AlbIngress } from "./alb-ingress";
+import { GceIngress } from "./gce-ingress";
 import { EbsStorageClass } from "./ebs-storage-class";
 import { EfsStorageClass } from "./efs-storage-class";
 import { FluentBitAgent } from "./fluent-bit-agent";
@@ -1857,6 +1858,79 @@ describe("AlbIngress", () => {
     const result = AlbIngress({ ...minProps, certificateArn: "arn:aws:acm:us-east-1:123:cert/abc", sslRedirect: false });
     const meta = result.ingress.metadata as any;
     expect(meta.annotations["alb.ingress.kubernetes.io/ssl-redirect"]).toBeUndefined();
+  });
+});
+
+// ── GceIngress ──────────────────────────────────────────────────────
+
+describe("GceIngress", () => {
+  const minProps = {
+    name: "api-ingress",
+    hosts: [{ hostname: "api.example.com", paths: [{ path: "/", serviceName: "api", servicePort: 80 }] }],
+  };
+
+  test("returns ingress with GCE annotations", () => {
+    const result = GceIngress(minProps);
+    expect(result.ingress).toBeDefined();
+    const meta = result.ingress.metadata as any;
+    expect(meta.annotations["kubernetes.io/ingress.class"]).toBe("gce");
+  });
+
+  test("static IP annotation set", () => {
+    const result = GceIngress({ ...minProps, staticIpName: "microservice-ip" });
+    const meta = result.ingress.metadata as any;
+    expect(meta.annotations["kubernetes.io/ingress.global-static-ip-name"]).toBe("microservice-ip");
+  });
+
+  test("managed certificate annotation set", () => {
+    const result = GceIngress({ ...minProps, managedCertificate: "api-cert" });
+    const meta = result.ingress.metadata as any;
+    expect(meta.annotations["networking.gke.io/managed-certificates"]).toBe("api-cert");
+  });
+
+  test("frontendConfig annotation set", () => {
+    const result = GceIngress({ ...minProps, frontendConfig: "my-frontend" });
+    const meta = result.ingress.metadata as any;
+    expect(meta.annotations["networking.gke.io/v1beta1.FrontendConfig"]).toBe("my-frontend");
+  });
+
+  test("managedCertificate sets default FrontendConfig for ssl redirect", () => {
+    const result = GceIngress({ ...minProps, managedCertificate: "api-cert" });
+    const meta = result.ingress.metadata as any;
+    expect(meta.annotations["networking.gke.io/v1beta1.FrontendConfig"]).toBe("api-ingress-frontend-config");
+  });
+
+  test("explicit sslRedirect: false suppresses FrontendConfig even with cert", () => {
+    const result = GceIngress({ ...minProps, managedCertificate: "api-cert", sslRedirect: false });
+    const meta = result.ingress.metadata as any;
+    expect(meta.annotations["networking.gke.io/v1beta1.FrontendConfig"]).toBeUndefined();
+  });
+
+  test("explicit sslRedirect: true sets default FrontendConfig without cert", () => {
+    const result = GceIngress({ ...minProps, sslRedirect: true });
+    const meta = result.ingress.metadata as any;
+    expect(meta.annotations["networking.gke.io/v1beta1.FrontendConfig"]).toBe("api-ingress-frontend-config");
+  });
+
+  test("namespace is set when provided", () => {
+    const result = GceIngress({ ...minProps, namespace: "production" });
+    const meta = result.ingress.metadata as any;
+    expect(meta.namespace).toBe("production");
+  });
+
+  test("host rules are mapped correctly", () => {
+    const result = GceIngress(minProps);
+    const spec = result.ingress.spec as any;
+    expect(spec.rules).toHaveLength(1);
+    expect(spec.rules[0].host).toBe("api.example.com");
+    expect(spec.rules[0].http.paths[0].backend.service.name).toBe("api");
+  });
+
+  test("labels include component: ingress", () => {
+    const result = GceIngress(minProps);
+    const meta = result.ingress.metadata as any;
+    expect(meta.labels["app.kubernetes.io/component"]).toBe("ingress");
+    expect(meta.labels["app.kubernetes.io/managed-by"]).toBe("chant");
   });
 });
 

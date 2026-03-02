@@ -6,6 +6,7 @@ import {
   ServiceAccount,
   ClusterRole,
   ClusterRoleBinding,
+  GceIngress,
   GkeExternalDnsAgent,
 } from "@intentius/chant-lexicon-k8s";
 import { config } from "../config";
@@ -14,39 +15,19 @@ const NAMESPACE = "microservice";
 
 // ── GCE Ingress ────────────────────────────────────────────────────
 
-export const gceIngress = new Ingress({
-  metadata: {
-    name: "microservice-ingress",
-    namespace: NAMESPACE,
-    labels: {
-      "app.kubernetes.io/name": "microservice-ingress",
-      "app.kubernetes.io/managed-by": "chant",
-      "app.kubernetes.io/component": "ingress",
+const ing = GceIngress({
+  name: "microservice-ingress",
+  hosts: [
+    {
+      hostname: config.domain,
+      paths: [{ path: "/", serviceName: "microservice-api", servicePort: 80 }],
     },
-    annotations: {
-      "kubernetes.io/ingress.class": "gce",
-      "kubernetes.io/ingress.global-static-ip-name": "microservice-ip",
-    },
-  },
-  spec: {
-    rules: [
-      {
-        host: config.domain,
-        http: {
-          paths: [
-            {
-              path: "/",
-              pathType: "Prefix",
-              backend: {
-                service: { name: "microservice-api", port: { number: 80 } },
-              },
-            },
-          ],
-        },
-      },
-    ],
-  },
+  ],
+  staticIpName: "microservice-ip",
+  namespace: NAMESPACE,
 });
+
+export const gceIngress = new Ingress(ing.ingress);
 
 // ── ExternalDNS ────────────────────────────────────────────────────
 

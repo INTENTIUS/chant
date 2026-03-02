@@ -51,6 +51,8 @@ export { GkeGateway } from "./gke-gateway";
 export type { GkeGatewayProps, GkeGatewayResult } from "./gke-gateway";
 export { ConfigConnectorContext } from "./config-connector-context";
 export type { ConfigConnectorContextProps, ConfigConnectorContextResult } from "./config-connector-context";
+export { GceIngress } from "./gce-ingress";
+export type { GceIngressProps, GceIngressResult } from "./gce-ingress";
 export { AgicIngress } from "./agic-ingress";
 export type { AgicIngressProps, AgicIngressResult } from "./agic-ingress";
 export { AzureDiskStorageClass } from "./azure-disk-storage-class";

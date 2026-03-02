@@ -26,11 +26,10 @@ chant build src --lexicon k8s  → k8s.yaml      (K8s workload YAML)
 │  ├── Namespace (quotas, limits, network policy)         │
 │  ├── AutoscaledService (Deployment + HPA + PDB)         │
 │  ├── WorkloadIdentityServiceAccount (GKE)               │
-│  ├── GCE Ingress + GkeExternalDnsAgent                  │
+│  ├── GceIngress + GkeExternalDnsAgent                   │
 │  ├── GcePdStorageClass                                  │
 │  ├── GkeFluentBitAgent (Cloud Logging)                  │
-│  ├── GkeOtelCollector (Cloud Trace + Monitoring)        │
-│  └── MetricsServer                                      │
+│  └── GkeOtelCollector (Cloud Trace + Monitoring)        │
 └─────────────────────────────────────────────────────────┘
 ```
 
@@ -49,8 +48,8 @@ chant build src --lexicon k8s  → k8s.yaml      (K8s workload YAML)
 | File | Resources |
 |------|-----------|
 | `namespace.ts` | Namespace, ResourceQuota, LimitRange, NetworkPolicy |
-| `app.ts` | AutoscaledService, WorkloadIdentityServiceAccount, ConfigMap, MetricsServer |
-| `ingress.ts` | GCE Ingress, GkeExternalDnsAgent |
+| `app.ts` | AutoscaledService, WorkloadIdentityServiceAccount, ConfigMap |
+| `ingress.ts` | GceIngress, GkeExternalDnsAgent |
 | `storage.ts` | GcePdStorageClass |
 | `observability.ts` | GkeFluentBitAgent, GkeOtelCollector |
 
@@ -168,7 +167,7 @@ Patterns to add next:
 ## Resource counts
 
 - **GCP lexicon**: ~15 Config Connector resources (VPC, subnets, NAT, GKE cluster, node pool, service accounts, IAM bindings, DNS zone)
-- **K8s lexicon**: ~12 Kubernetes resources (namespace, quotas, deployment, HPA, PDB, ingress, storage class, DaemonSets, collectors)
+- **K8s lexicon**: ~20 Kubernetes resources (namespaces, quotas, limits, network policy, deployment, HPA, PDB, service, service accounts, ingress, storage class, DaemonSets, cluster roles, cluster role bindings, config maps)
 
 ## Cross-lexicon value flow
 
@@ -194,7 +193,7 @@ This example includes GKE best-practice hardening:
 - **Pod Security Standards** — namespace enforces `restricted` PSS profile (enforce, warn, audit)
 - **Health probes** — liveness and readiness probes on the app container for proper rollout gating
 - **Topology spread** — zone-based `topologySpreadConstraints` with `maxSkew: 1` prevents single-zone concentration
-- **Metrics Server** — in-cluster metrics-server deployment enables HPA pod CPU/memory scaling
+- **GKE built-in Metrics Server** — GKE ships its own metrics-server; HPA works out of the box without a custom deployment
 - **Default-deny NetworkPolicy** — namespace-level network policy denies all ingress/egress by default
 - **Resource quotas + LimitRange** — namespace-level resource quotas and per-container default limits prevent noisy neighbors
 - **Config Connector SA scoping** — Config Connector service account uses minimal IAM roles (editor, IAM admin, DNS admin)
