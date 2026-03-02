@@ -55,6 +55,10 @@ export default defineConfig({
         {
           "label": "Examples",
           "slug": "examples"
+        },
+        {
+          "label": "Deploying to AKS",
+          "slug": "aks-kubernetes"
         }
       ],
     }),

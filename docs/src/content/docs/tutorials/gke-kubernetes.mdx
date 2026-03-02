@@ -1,0 +1,174 @@
+---
+title: "GCP GKE + Kubernetes"
+description: "Deploy a GKE cluster with Kubernetes workloads using two chant lexicons — GCP Config Connector for infrastructure, K8s for workloads."
+---
+
+import { Aside, Steps } from '@astrojs/starlight/components';
+
+This tutorial walks you through deploying a production-grade GKE cluster with Kubernetes workloads, all defined in TypeScript using two chant lexicons. The GCP lexicon produces Config Connector YAML for infrastructure; the K8s lexicon produces kubectl-ready YAML for workloads.
+
+## What you'll deploy
+
+```
+┌─────────────────────────────────────────────────────────┐
+│  GCP Lexicon (Config Connector) (~15 resources)         │
+│  ├── VPC + Subnets + Cloud NAT                          │
+│  ├── GKE Cluster + Node Pool (Workload Identity)        │
+│  ├── 4× GCP Service Accounts                           │
+│  ├── IAM Policy Members (WI bindings + role grants)     │
+│  └── Cloud DNS Managed Zone                             │
+└────────────────────┬────────────────────────────────────┘
+                     │ SA emails via .env → config.ts
+┌────────────────────▼────────────────────────────────────┐
+│  K8s Lexicon (~20 resources)                            │
+│  ├── Namespace (quotas, limits, network policy)         │
+│  ├── AutoscaledService (Deployment + HPA + PDB)         │
+│  ├── WorkloadIdentityServiceAccount (GKE)               │
+│  ├── GceIngress + GkeExternalDnsAgent                   │
+│  ├── GcePdStorageClass                                  │
+│  ├── GkeFluentBitAgent (Cloud Logging)                  │
+│  └── GkeOtelCollector (Cloud Trace + Monitoring)        │
+└─────────────────────────────────────────────────────────┘
+```
+
+| Source file | What it produces |
+|---|---|
+| `src/infra/networking.ts` | VPC, 2 subnets, firewall rules, Cloud Router, Cloud NAT |
+| `src/infra/cluster.ts` | GKE cluster, node pool, 4 GCP SAs, IAM bindings |
+| `src/infra/dns.ts` | Cloud DNS ManagedZone |
+| `src/k8s/namespace.ts` | Namespace with quotas, limits, default-deny policy |
+| `src/k8s/app.ts` | AutoscaledService + WorkloadIdentityServiceAccount + ConfigMap |
+| `src/k8s/ingress.ts` | GceIngress + GkeExternalDnsAgent |
+| `src/k8s/storage.ts` | GcePdStorageClass |
+| `src/k8s/observability.ts` | GkeFluentBitAgent + GkeOtelCollector |
+| `src/config.ts` | Cross-lexicon config — reads `.env` for real SA emails |
+
+<Aside type="caution">
+This deployment creates resources that cost money: GKE control plane (free for one zonal cluster), Cloud NAT (~$32/mo), and GCE nodes (~$75/mo for 3x e2-medium). Follow the [clean up section](#clean-up) when you're done.
+</Aside>
+
+## Prerequisites
+
+- **GCP account** with a project that has billing enabled
+- **gcloud CLI** authenticated (`gcloud auth list` should show your account)
+- **kubectl** installed
+- **Bun** runtime and **chant** installed ([Installation guide](/chant/getting-started/installation/))
+
+## Step 0: Bootstrap (one-time)
+
+> "Bootstrap a GKE cluster with Config Connector enabled."
+
+```bash
+cd examples/k8s-gke-microservice
+
+export GCP_PROJECT_ID=<your-project>
+
+# Creates GKE cluster, enables Config Connector, sets up Workload Identity
+npm run bootstrap
+```
+
+This enables required APIs, creates the GKE cluster with Config Connector as an add-on, sets up a Config Connector service account with editor/IAM/DNS roles, and waits for the controller to be ready. This is a one-time step — subsequent deploys reuse the cluster.
+
+## Step 1: Build and deploy infrastructure
+
+> "Build the Config Connector resources and deploy them."
+
+```bash
+# Build both CC YAML and K8s manifests
+npm run build
+
+# Deploy Config Connector resources (~15 GCP resources)
+npm run deploy-infra
+```
+
+Config Connector reconciles the GCP resources declaratively. The VPC, subnets, GKE node pool, service accounts, IAM bindings, and DNS zone are created and managed as K8s CRDs.
+
+## Step 2: Configure kubectl and load outputs
+
+> "Configure kubectl for the GKE cluster and load the deployment outputs into .env."
+
+```bash
+# Update kubeconfig
+npm run configure-kubectl
+kubectl get nodes  # verify — should show 3 nodes
+
+# Write real SA emails from CC resources into .env
+npm run load-outputs
+```
+
+The `load-outputs` target queries Config Connector resource statuses, extracts service account emails and the project ID, and writes them to `.env`. Bun auto-loads `.env` at runtime, so the next K8s build uses real values instead of placeholders.
+
+## Step 3: Deploy Kubernetes workloads
+
+> "Rebuild the K8s manifests with real SA emails and deploy them."
+
+```bash
+# Rebuild K8s manifests with real SA emails from .env
+npm run build:k8s
+
+# Validate against the live cluster (optional)
+npm run validate
+
+# Apply all K8s resources
+npm run apply
+
+# Wait for the app deployment to roll out
+npm run wait
+```
+
+The K8s output includes ~20 resources across 5 files: namespace with quotas, autoscaled app deployment, GCE ingress with ExternalDNS, PD storage class, and Fluent Bit + OTel observability agents.
+
+## Step 4: Verify
+
+> "Check that everything is running."
+
+```bash
+# Quick status check
+npm run status
+
+# Application pods (should show 2+ Running)
+kubectl get pods -n microservice
+
+# Ingress (GCE load balancer IP appears after 2-3 min)
+kubectl get ingress -n microservice
+
+# Observability agents
+kubectl get daemonsets -A
+
+# Test the endpoint (once the load balancer is ready)
+LB_IP=$(kubectl get ingress -n microservice microservice-ingress -o jsonpath='{.status.loadBalancer.ingress[0].ip}')
+curl -s -o /dev/null -w "%{http_code}" http://$LB_IP/
+```
+
+## Gotchas
+
+- **GCE load balancer takes 2-3 minutes** to provision after `kubectl apply`. Check `kubectl describe ingress` for events if it's slow.
+- **Delete order matters** — always delete K8s resources before Config Connector resources. If CC resources are deleted first, the ingress controller can't clean up the load balancer, leaving orphaned GCP resources.
+- **GKE ships metrics-server** — HPA works out of the box. Do not deploy a separate MetricsServer composite.
+- **Config Connector reconciliation** — CC continuously reconciles resources. Deleting a CC CRD deletes the underlying GCP resource. Do not `kubectl delete` CC resources unless you intend to destroy the GCP infrastructure.
+- **Workload Identity requires IAM binding** — the GCP service account must have an IAM policy binding for `roles/iam.workloadIdentityUser` targeting the K8s service account.
+
+## Subsequent deployments
+
+- **K8s-only changes** (app config, scaling, new workloads): edit source, run `npm run build:k8s && npm run apply`. No infra redeploy needed.
+- **Infrastructure changes** (node count, new SAs, new IAM bindings): edit source, run `npm run build && npm run deploy-infra`. Then run `npm run load-outputs` if outputs changed, followed by `npm run build:k8s && npm run apply`.
+
+## Clean up
+
+<Aside type="danger">
+Always delete Kubernetes resources before Config Connector resources. The ingress controller must be running to clean up GCE load balancers.
+</Aside>
+
+```bash
+npm run teardown
+```
+
+This runs: `kubectl delete` K8s workloads → 30s drain wait → `kubectl delete` CC resources → delete CC service account → delete the GKE cluster.
+
+## Further reading
+
+- [Kubernetes lexicon](/chant/lexicons/k8s/) — resource reference, composites, examples
+- [GKE Composites](/chant/lexicons/k8s/gke-composites/) — WorkloadIdentityServiceAccount, GceIngress, GkeGateway, and more
+- [GCP Config Connector lexicon](/chant/lexicons/gcp/) — resource reference, composites, examples
+- [Deploying to GKE](/chant/lexicons/gcp/gke-kubernetes/) — GCP lexicon bridge page
+- [Agent Integration guide](/chant/guide/agent-integration/) — using chant skills with Claude Code

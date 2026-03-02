@@ -1,16 +1,15 @@
 ---
-skill: chant-k8s-gke
-description: GKE-specific Kubernetes patterns and composites
-user-invocable: true
+title: "GKE Composites"
+description: "Vendor-specific composites for Google GKE — Workload Identity, GCE Ingress, Gateway API, PD/Filestore storage, Cloud Logging, Cloud Trace, and Config Connector."
 ---
 
-# GKE Kubernetes Patterns
+import { Aside } from '@astrojs/starlight/components';
 
-## GKE Composites Overview
+These composites produce K8s YAML with GKE-specific annotations and configurations. They complement the [generic composites](./composite-examples) by adding GCP service integrations.
 
-These composites produce K8s YAML with GKE-specific annotations and configurations.
+## WorkloadIdentityServiceAccount
 
-### WorkloadIdentityServiceAccount — ServiceAccount with GCP SA annotation
+ServiceAccount annotated for GKE Workload Identity:
 
 ```typescript
 import { WorkloadIdentityServiceAccount } from "@intentius/chant-lexicon-k8s";
@@ -25,9 +24,13 @@ const { serviceAccount, role, roleBinding } = WorkloadIdentityServiceAccount({
 });
 ```
 
-Annotates the ServiceAccount with `iam.gke.io/gcp-service-account` for GKE Workload Identity.
+- Sets `iam.gke.io/gcp-service-account` annotation on the ServiceAccount
+- Optional RBAC rules create a Role + RoleBinding scoped to the namespace
+- Requires Workload Identity enabled on the GKE cluster + an IAM policy binding on the GCP SA
 
-### GceIngress — Ingress with GCE ingress class annotations
+## GceIngress
+
+Ingress with GCE ingress class annotations:
 
 ```typescript
 import { GceIngress } from "@intentius/chant-lexicon-k8s";
@@ -46,14 +49,16 @@ const { ingress } = GceIngress({
 });
 ```
 
-Features:
 - Sets `kubernetes.io/ingress.class: "gce"` annotation
 - `staticIpName` binds a reserved global static IP via `kubernetes.io/ingress.global-static-ip-name`
 - `managedCertificate` attaches a GKE-managed SSL certificate via `networking.gke.io/managed-certificates`
 - Auto-generates FrontendConfig for SSL redirect when `managedCertificate` is set (override with `sslRedirect: false`)
-- Pairs naturally with Config Connector `ComputeAddress` resources for static IPs
+- `frontendConfig` for explicit FrontendConfig reference
+- Pairs naturally with Config Connector static IP resources
 
-### GkeGateway — Gateway API with GKE gateway classes
+## GkeGateway
+
+Gateway API with GKE gateway classes:
 
 ```typescript
 import { GkeGateway } from "@intentius/chant-lexicon-k8s";
@@ -77,7 +82,17 @@ Gateway class options:
 - `gke-l7-regional-external-managed` — Regional external
 - `gke-l7-rilb` — Regional internal
 
-### GcePdStorageClass — StorageClass for GCE Persistent Disk CSI
+<Aside type="tip" title="GCE Ingress vs Gateway API">
+**GceIngress** uses the traditional Ingress API with GCE-specific annotations. It's simpler, matches the EKS/AKS ingress pattern, and pairs naturally with Config Connector static IPs and managed certificates.
+
+**GkeGateway** uses the newer Gateway API with richer routing capabilities (header matching, traffic splitting, URL rewrites). It's Google's recommended path for new projects.
+
+Choose GceIngress for consistency with existing EKS/AKS patterns. Choose GkeGateway for advanced routing or greenfield GKE projects.
+</Aside>
+
+## GcePdStorageClass
+
+StorageClass for the GCE Persistent Disk CSI driver:
 
 ```typescript
 import { GcePdStorageClass } from "@intentius/chant-lexicon-k8s";
@@ -90,9 +105,13 @@ const { storageClass } = GcePdStorageClass({
 });
 ```
 
-Disk types: `pd-standard`, `pd-ssd`, `pd-balanced` (default), `pd-extreme`.
+- Provisions `pd.csi.storage.gke.io` volumes
+- Disk types: `pd-standard`, `pd-ssd`, `pd-balanced` (default), `pd-extreme`
+- `replicationType` controls regional replication (`none` or `regional-pd`)
 
-### FilestoreStorageClass — StorageClass for Filestore CSI (ReadWriteMany)
+## FilestoreStorageClass
+
+StorageClass for the Filestore CSI driver (ReadWriteMany):
 
 ```typescript
 import { FilestoreStorageClass } from "@intentius/chant-lexicon-k8s";
@@ -104,9 +123,13 @@ const { storageClass } = FilestoreStorageClass({
 });
 ```
 
-Use Filestore when you need ReadWriteMany (shared across pods/nodes). Use GCE PD for ReadWriteOnce (single pod).
+- ReadWriteMany access — shared across pods and nodes
+- Requires the Filestore CSI driver GKE add-on
+- Use GCE PD for ReadWriteOnce (single pod), Filestore for ReadWriteMany (shared)
 
-### GkeExternalDnsAgent — ExternalDNS for Cloud DNS
+## GkeExternalDnsAgent
+
+ExternalDNS for Cloud DNS integration:
 
 ```typescript
 import { GkeExternalDnsAgent } from "@intentius/chant-lexicon-k8s";
@@ -119,7 +142,13 @@ const result = GkeExternalDnsAgent({
 });
 ```
 
-### GkeFluentBitAgent — DaemonSet for Cloud Logging
+- Watches Ingress/Service resources and creates Cloud DNS records
+- Uses Workload Identity for authentication
+- `domainFilters` restricts which domains ExternalDNS can manage
+
+## GkeFluentBitAgent
+
+DaemonSet for Cloud Logging:
 
 ```typescript
 import { GkeFluentBitAgent } from "@intentius/chant-lexicon-k8s";
@@ -131,7 +160,13 @@ const result = GkeFluentBitAgent({
 });
 ```
 
-### GkeOtelCollector — OTel for Cloud Trace + Cloud Monitoring
+- Deploys Fluent Bit as a DaemonSet with host path mounts for `/var/log`
+- Forwards container logs to Cloud Logging
+- Uses Workload Identity for authentication
+
+## GkeOtelCollector
+
+OTel collector for Cloud Trace and Cloud Monitoring:
 
 ```typescript
 import { GkeOtelCollector } from "@intentius/chant-lexicon-k8s";
@@ -143,7 +178,13 @@ const result = GkeOtelCollector({
 });
 ```
 
-### ConfigConnectorContext — Config Connector namespace bootstrap
+- Deploys OTel collector as a DaemonSet collecting metrics and traces
+- Exports to Cloud Monitoring and Cloud Trace
+- Uses Workload Identity for authentication
+
+## ConfigConnectorContext
+
+Config Connector namespace bootstrap:
 
 ```typescript
 import { ConfigConnectorContext } from "@intentius/chant-lexicon-k8s";
@@ -155,9 +196,11 @@ const { context } = ConfigConnectorContext({
 });
 ```
 
-Required when using Config Connector to manage GCP resources from within the cluster.
+- Required when using Config Connector to manage GCP resources from within the cluster
+- Configures the GCP service account per namespace
+- `stateIntoSpec` controls whether CC writes observed state back into the spec (`absent` recommended)
 
-## Workload Identity vs Key-Based Auth
+## Workload Identity vs key-based auth
 
 | Feature | Workload Identity | Key-based (JSON key file) |
 |---------|------------------|--------------------------|
@@ -169,7 +212,11 @@ Required when using Config Connector to manage GCP resources from within the clu
 
 Workload Identity is the recommended approach for all GKE workloads. Key-based auth requires no K8s-side composite — create a Secret from the JSON key and mount it.
 
-## Config Connector Considerations
+<Aside type="note">
+GKE ships its own metrics-server. HPA works out of the box without deploying a custom MetricsServer composite.
+</Aside>
+
+## Config Connector considerations
 
 Config Connector (CC) runs as a GKE add-on and manages GCP resources declaratively via K8s CRDs:
 - **Bootstrap cluster required** — CC needs an existing GKE cluster to run in; use `npm run bootstrap` to create one
@@ -177,15 +224,24 @@ Config Connector (CC) runs as a GKE add-on and manages GCP resources declarative
 - **Reconciliation** — CC continuously reconciles; deleting a CC resource deletes the underlying GCP resource
 - **ConfigConnectorContext** — use the composite to configure CC per-namespace (SA email, stateIntoSpec policy)
 
-## GKE Add-ons
+## GKE add-ons
 
 Common add-ons managed via GKE (not K8s manifests):
-- **Config Connector** — manage GCP resources as K8s CRDs
-- **Workload Identity** — pod-to-GCP-SA identity federation (required for WorkloadIdentityServiceAccount)
-- **GKE Gateway Controller** — Gateway API implementation (required for GkeGateway)
-- **GKE managed Prometheus** — alternative to GkeOtelCollector for metrics
-- **GKE Dataplane V2** — eBPF-based networking with built-in NetworkPolicy enforcement
-- **Filestore CSI driver** — required for FilestoreStorageClass
-- **Compute Engine persistent disk CSI driver** — enabled by default, required for GcePdStorageClass
 
-Configure add-ons via the GCP lexicon (`@intentius/chant-lexicon-gcp`) Config Connector resources.
+| Add-on | Required for |
+|--------|-------------|
+| Config Connector | Managing GCP resources as K8s CRDs |
+| Workload Identity | `WorkloadIdentityServiceAccount` |
+| GKE Gateway Controller | `GkeGateway` |
+| GKE managed Prometheus | Alternative to `GkeOtelCollector` for metrics |
+| GKE Dataplane V2 | eBPF-based networking with built-in NetworkPolicy enforcement |
+| Filestore CSI driver | `FilestoreStorageClass` |
+| Compute Engine PD CSI driver | `GcePdStorageClass` (enabled by default) |
+
+Configure add-ons via the [GCP Config Connector lexicon](/chant/lexicons/gcp/).
+
+## Further reading
+
+- [GCP GKE + Kubernetes tutorial](/chant/tutorials/gke-kubernetes/) — full deployment walkthrough
+- [Deploying to GKE](/chant/lexicons/gcp/gke-kubernetes/) — GCP lexicon bridge page
+- [Generic composites](./composite-examples) — WebApp, AutoscaledService, NamespaceEnv, and more

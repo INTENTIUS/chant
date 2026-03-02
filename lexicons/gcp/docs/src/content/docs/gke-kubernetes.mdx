@@ -1,0 +1,85 @@
+---
+title: "Deploying to GKE"
+description: "How GCP Config Connector infrastructure connects to Kubernetes workloads on GKE via chant's cross-lexicon build."
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+Chant supports cross-lexicon projects where GCP infrastructure and Kubernetes workloads live in the same `src/` directory. The GCP lexicon produces Config Connector YAML; the K8s lexicon produces kubectl-ready YAML.
+
+## Architecture
+
+```
+┌─────────────────────────────────────────────────────────┐
+│  GCP Lexicon (Config Connector)                         │
+│  ├── VPC + Subnets + Cloud NAT                          │
+│  ├── GKE Cluster + Node Pool (Workload Identity)        │
+│  ├── 4× GCP Service Accounts                           │
+│  ├── IAM Policy Members (WI bindings + role grants)     │
+│  └── Cloud DNS Managed Zone                             │
+└────────────────────┬────────────────────────────────────┘
+                     │ SA emails via .env → config.ts
+┌────────────────────▼────────────────────────────────────┐
+│  K8s Lexicon                                            │
+│  ├── Namespace (quotas, limits, network policy)         │
+│  ├── AutoscaledService (Deployment + HPA + PDB)         │
+│  ├── WorkloadIdentityServiceAccount (GKE)               │
+│  ├── GceIngress + GkeExternalDnsAgent                   │
+│  ├── GcePdStorageClass                                  │
+│  ├── GkeFluentBitAgent (Cloud Logging)                  │
+│  └── GkeOtelCollector (Cloud Trace + Monitoring)        │
+└─────────────────────────────────────────────────────────┘
+```
+
+## Cross-lexicon value flow
+
+Config Connector resource outputs map to K8s composite props via `.env`:
+
+| CC Output | K8s Composite Prop |
+|-----------|-------------------|
+| `APP_GSA_EMAIL` | `WorkloadIdentityServiceAccount({ gcpServiceAccountEmail })` |
+| `EXTERNAL_DNS_GSA_EMAIL` | `GkeExternalDnsAgent({ gcpServiceAccountEmail })` |
+| `FLUENT_BIT_GSA_EMAIL` | `GkeFluentBitAgent({ gcpServiceAccountEmail })` |
+| `OTEL_GSA_EMAIL` | `GkeOtelCollector({ gcpServiceAccountEmail })` |
+| `GCP_PROJECT_ID` | `gcpProjectId` / `projectId` props |
+| `GKE_CLUSTER_NAME` | `clusterName` props |
+
+Values flow through `.env` → `config.ts` → K8s source files. `npm run load-outputs` refreshes `.env` after any infra deploy.
+
+## K8s composites used
+
+The K8s lexicon provides GKE-specific composites for the workload side:
+
+- **WorkloadIdentityServiceAccount** — ServiceAccount with GCP SA email annotation
+- **GceIngress** — Ingress with GCE annotations, static IP, managed certificates
+- **GkeGateway** — Gateway API with GKE gateway classes (alternative to GceIngress)
+- **GcePdStorageClass** — GCE Persistent Disk CSI StorageClass
+- **FilestoreStorageClass** — ReadWriteMany StorageClass via Filestore
+- **GkeExternalDnsAgent** — Cloud DNS record management
+- **GkeFluentBitAgent** — Cloud Logging via DaemonSet
+- **GkeOtelCollector** — Cloud Trace + Cloud Monitoring
+- **ConfigConnectorContext** — Config Connector namespace bootstrap
+
+See the [GKE Composites reference](/chant/lexicons/k8s/gke-composites/) for full API details.
+
+## Deploy workflow
+
+```bash
+npm run bootstrap      # One-time: create GKE cluster with Config Connector
+npm run build          # Build CC YAML + K8s manifests
+npm run deploy-infra   # Apply Config Connector resources
+npm run configure-kubectl  # Set up kubeconfig
+npm run load-outputs   # Write SA emails to .env
+npm run build:k8s      # Rebuild K8s with real values
+npm run apply          # kubectl apply
+```
+
+<Aside type="note">
+GKE ships its own metrics-server. HPA works out of the box without deploying a custom MetricsServer composite.
+</Aside>
+
+## Further reading
+
+- [GCP GKE + Kubernetes tutorial](/chant/tutorials/gke-kubernetes/) — step-by-step deployment walkthrough
+- [GKE Composites](/chant/lexicons/k8s/gke-composites/) — K8s lexicon GKE composite reference
+- [k8s-gke-microservice example](https://github.com/intentius/chant/tree/main/examples/k8s-gke-microservice) — full source code

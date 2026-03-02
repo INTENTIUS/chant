@@ -55,6 +55,10 @@ export default defineConfig({
             {
                   "label": "Serialization",
                   "slug": "serialization"
+            },
+            {
+                  "label": "Deploying to GKE",
+                  "slug": "gke-kubernetes"
             }
       ],
     }),

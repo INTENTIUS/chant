@@ -1,0 +1,81 @@
+---
+title: "Deploying to AKS"
+description: "How Azure ARM infrastructure connects to Kubernetes workloads on AKS via chant's cross-lexicon build."
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+Chant supports cross-lexicon projects where Azure infrastructure and Kubernetes workloads live in the same `src/` directory. The Azure lexicon produces an ARM template; the K8s lexicon produces kubectl-ready YAML.
+
+## Architecture
+
+```
+┌─────────────────────────────────────────────────────────┐
+│  Azure Lexicon (ARM)                                    │
+│  ├── VNet + Subnets + NSG + Route Table                 │
+│  ├── AKS Cluster (SystemAssigned identity)              │
+│  ├── Container Registry (Premium, admin disabled)       │
+│  ├── 3× Managed Identities (app, dns, monitor)         │
+│  ├── Role Assignments (ACR Pull, DNS Contributor, etc.) │
+│  └── Azure DNS Zone                                     │
+└────────────────────┬────────────────────────────────────┘
+                     │ client IDs via .env → config.ts
+┌────────────────────▼────────────────────────────────────┐
+│  K8s Lexicon                                            │
+│  ├── Namespace (quotas, limits, network policy)         │
+│  ├── AutoscaledService (Deployment + HPA + PDB)         │
+│  ├── WorkloadIdentityServiceAccount (AKS)               │
+│  ├── AGIC Ingress + AksExternalDnsAgent                 │
+│  ├── AzureDiskStorageClass                              │
+│  └── AzureMonitorCollector                              │
+└─────────────────────────────────────────────────────────┘
+```
+
+## Cross-lexicon value flow
+
+ARM template outputs map to K8s composite props via `.env`:
+
+| ARM Output | K8s Composite Prop |
+|------------|-------------------|
+| `APP_CLIENT_ID` | `AksWorkloadIdentityServiceAccount({ clientId })` |
+| `EXTERNAL_DNS_CLIENT_ID` | `AksExternalDnsAgent({ clientId })` |
+| `MONITOR_CLIENT_ID` | `AzureMonitorCollector({ clientId })` |
+| `AZURE_TENANT_ID` | `tenantId` props on multiple composites |
+| `AKS_CLUSTER_NAME` | `clusterName` props |
+
+Values flow through `.env` → `config.ts` → K8s source files. `npm run load-outputs` refreshes `.env` after any infra deploy.
+
+## K8s composites used
+
+The K8s lexicon provides AKS-specific composites for the workload side:
+
+- **AksWorkloadIdentityServiceAccount** — ServiceAccount with Azure client ID annotation
+- **AgicIngress** — Ingress with Application Gateway annotations, WAF, health probes
+- **AzureDiskStorageClass** — Azure Disk CSI StorageClass (Premium/Standard/Ultra)
+- **AzureFileStorageClass** — ReadWriteMany StorageClass via Azure Files (SMB/NFS)
+- **AksExternalDnsAgent** — Azure DNS record management
+- **AzureMonitorCollector** — Log Analytics + OTel metrics
+
+See the [AKS Composites reference](/chant/lexicons/k8s/aks-composites/) for full API details.
+
+## Deploy workflow
+
+```bash
+az group create --name $AZURE_RESOURCE_GROUP --location eastus
+npm run build          # Build ARM template + K8s manifests
+npm run deploy-infra   # Deploy ARM template
+npm run configure-kubectl  # Set up kubeconfig
+npm run load-outputs   # Write client IDs to .env
+npm run build:k8s      # Rebuild K8s with real values
+npm run apply          # kubectl apply
+```
+
+<Aside type="note">
+AKS ships its own metrics-server. HPA works out of the box without deploying a custom MetricsServer composite.
+</Aside>
+
+## Further reading
+
+- [Azure AKS + Kubernetes tutorial](/chant/tutorials/aks-kubernetes/) — step-by-step deployment walkthrough
+- [AKS Composites](/chant/lexicons/k8s/aks-composites/) — K8s lexicon AKS composite reference
+- [k8s-aks-microservice example](https://github.com/intentius/chant/tree/main/examples/k8s-aks-microservice) — full source code

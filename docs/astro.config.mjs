@@ -51,6 +51,8 @@ export default defineConfig({
 					items: [
 						{ label: 'GitLab CI + AWS ALB', slug: 'tutorials/gitlab-aws-alb' },
 						{ label: 'AWS EKS + Kubernetes', slug: 'tutorials/eks-kubernetes' },
+					{ label: 'Azure AKS + Kubernetes', slug: 'tutorials/aks-kubernetes' },
+					{ label: 'GCP GKE + Kubernetes', slug: 'tutorials/gke-kubernetes' },
 					],
 				},
 				{
