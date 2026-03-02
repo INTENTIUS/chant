@@ -25,6 +25,7 @@ export { evl009CompositeNoConstantRule } from "./evl009-composite-no-constant";
 export { evl010CompositeNoTransformRule } from "./evl010-composite-no-transform";
 export { cor017CompositeNameMatchRule } from "./cor017-composite-name-match";
 export { cor018CompositePreferLexiconTypeRule } from "./cor018-composite-prefer-lexicon-type";
+export { isInsideCompositeFactory } from "./composite-scope";
 
 import { flatDeclarationsRule } from "./flat-declarations";
 import { exportRequiredRule } from "./export-required";

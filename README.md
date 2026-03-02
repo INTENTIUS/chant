@@ -16,6 +16,9 @@ Declare infrastructure as typed TypeScript — see the [Quick Start](https://int
 |---------|-------------|
 | [@intentius/chant](packages/core) | Type system, discovery, build pipeline, semantic lint engine, CLI |
 | [@intentius/chant-lexicon-aws](lexicons/aws) | AWS lexicon — S3, Lambda, IAM types + semantic lint rules |
+| [@intentius/chant-lexicon-azure](lexicons/azure) | Azure lexicon — ARM resource types, template functions |
 | [@intentius/chant-lexicon-flyway](lexicons/flyway) | Flyway lexicon — migration config, environments, TOML import |
+| [@intentius/chant-lexicon-gcp](lexicons/gcp) | GCP lexicon — Deployment Manager resource types |
 | [@intentius/chant-lexicon-gitlab](lexicons/gitlab) | GitLab CI lexicon — pipelines, jobs, variables |
+| [@intentius/chant-lexicon-helm](lexicons/helm) | Helm lexicon — charts, releases, values |
 | [@intentius/chant-lexicon-k8s](lexicons/k8s) | Kubernetes lexicon — Deployments, Services, ConfigMaps + YAML import |
