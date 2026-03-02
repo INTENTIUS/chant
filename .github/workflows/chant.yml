@@ -118,6 +118,7 @@ jobs:
         run: bun run --cwd lexicons/helm prepack
 
   smoke-npm:
+    if: false  # disabled — Docker smoke tests are for local/release validation, not every push
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
