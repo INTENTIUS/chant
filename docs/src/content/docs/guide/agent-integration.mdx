@@ -9,7 +9,7 @@ chant integrates with AI coding agents like Claude and Cursor through the MCP (M
 
 `chant init` handles agent integration automatically:
 
-1. **Writes MCP config** — adds a `chant` entry to `.mcp.json` so agents can run builds, invoke lint checks, and import templates.
+1. **Writes MCP config** — detects your IDE and adds a `chant` entry to the appropriate global config file (`~/.claude/mcp.json` for Claude Code, `~/.cursor/mcp.json` for Cursor, or `~/.config/mcp/mcp.json` otherwise) so agents can run builds, invoke lint checks, and import templates.
 2. **Installs skills** — copies lexicon-contributed skill files (markdown guides) into `skills/`.
 
 ```bash
@@ -24,7 +24,7 @@ chant update
 
 ### Manual MCP Configuration
 
-If your editor doesn't auto-detect `.mcp.json`, add the chant MCP server manually. The server runs over stdio:
+If your editor doesn't auto-detect the MCP config, add the chant MCP server manually. The server runs over stdio — add the following to your IDE's MCP config file:
 
 ```json
 {

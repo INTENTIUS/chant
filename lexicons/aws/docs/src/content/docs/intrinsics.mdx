@@ -47,8 +47,8 @@ Tagged template literal that produces `Fn::Sub`. The most common intrinsic — u
 
 ```typescript title="intrinsics-detail.ts"
 // --- Sub: string substitution ---
-export const bucketName = Sub`${AWS.StackName}-data`;
-export const arn = Sub`arn:aws:s3:::${AWS.AccountId}:${AWS.Region}:*`;
+export const detailBucketName = Sub`${AWS.StackName}-data`;
+export const detailArn = Sub`arn:aws:s3:::${AWS.AccountId}:${AWS.Region}:*`;
 ```
 
 `Sub` is a tagged template — use it with backticks, not as a function call.
@@ -60,7 +60,7 @@ References a resource's physical ID or a parameter's value:
 ```typescript title="intrinsics-detail.ts"
 // --- Ref: resource and parameter references ---
 // chant-disable-next-line COR003
-export const envRef = Ref("Environment");
+export const detailEnvRef = Ref("Environment");
 ```
 
 In most cases you don't need `Ref` directly — the serializer automatically generates `Ref` when you reference an imported resource (e.g. `dataBucket` imported from another file).
@@ -86,7 +86,7 @@ Joins values with a delimiter:
 
 ```typescript title="intrinsics-detail.ts"
 // --- Join: join values ---
-export const joined = Join("-", ["prefix", AWS.StackName, "suffix"]);
+export const detailJoined = Join("-", ["prefix", AWS.StackName, "suffix"]);
 ```
 
 ## `Select` — select by index
@@ -95,7 +95,7 @@ Selects a value from a list by index:
 
 ```typescript title="intrinsics-detail.ts"
 // --- Select + Split ---
-export const first = Select(0, Split(",", "a,b,c"));
+export const detailFirst = Select(0, Split(",", "a,b,c"));
 ```
 
 ## `Split` — split string
@@ -104,7 +104,7 @@ Splits a string by a delimiter:
 
 ```typescript title="intrinsics-detail.ts"
 // --- Split: split string ---
-export const parts = Split(",", "a,b,c");
+export const detailParts = Split(",", "a,b,c");
 ```
 
 ## `Base64` — encode to Base64
@@ -113,7 +113,7 @@ Encodes a string to Base64, commonly used for EC2 user data:
 
 ```typescript title="intrinsics-detail.ts"
 // --- Base64: encode to Base64 ---
-export const userData = Base64(Sub`#!/bin/bash
+export const detailUserData = Base64(Sub`#!/bin/bash
 echo "Stack: ${AWS.StackName}"
 yum update -y
 `);

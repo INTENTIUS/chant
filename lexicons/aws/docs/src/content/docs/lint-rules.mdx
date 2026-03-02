@@ -20,7 +20,7 @@ Flags hardcoded AWS region strings like `us-east-1`. Use `AWS.Region` instead so
 import { Sub, AWS } from "@intentius/chant-lexicon-aws";
 
 // chant-disable-next-line WAW001
-export const endpoint = Sub`s3.us-east-1.amazonaws.com/${AWS.StackName}`;
+export const hardcodedEndpoint = Sub`s3.us-east-1.amazonaws.com/${AWS.StackName}`;
 ```
 
 **Good** — uses `AWS.Region`:
@@ -28,7 +28,7 @@ export const endpoint = Sub`s3.us-east-1.amazonaws.com/${AWS.StackName}`;
 ```typescript title="lint-waw001-good.ts"
 import { Sub, AWS } from "@intentius/chant-lexicon-aws";
 
-export const endpoint = Sub`s3.${AWS.Region}.amazonaws.com/${AWS.StackName}`;
+export const regionEndpoint = Sub`s3.${AWS.Region}.amazonaws.com/${AWS.StackName}`;
 ```
 
 ### WAW006 — S3 Bucket Encryption
@@ -43,8 +43,14 @@ Flags S3 buckets that don't configure server-side encryption. AWS recommends ena
 import { Bucket } from "@intentius/chant-lexicon-aws";
 
 // chant-disable-next-line WAW006
-export const bucket = new Bucket({
+export const hardcodedBucket = new Bucket({
   BucketName: "my-bucket",
+  PublicAccessBlockConfiguration: {
+    BlockPublicAcls: true,
+    BlockPublicPolicy: true,
+    IgnorePublicAcls: true,
+    RestrictPublicBuckets: true,
+  },
 });
 ```
 
@@ -62,6 +68,12 @@ export const bucket = new Bucket({
       },
     ],
   },
+  PublicAccessBlockConfiguration: {
+    BlockPublicAcls: true,
+    BlockPublicPolicy: true,
+    IgnorePublicAcls: true,
+    RestrictPublicBuckets: true,
+  },
 });
 ```
 
@@ -76,7 +88,7 @@ Flags IAM policy statements that use `"Resource": "*"`. Prefer scoped resource A
 ```typescript title="lint-waw009-bad.ts"
 import { Role, ManagedPolicy, Sub, AWS } from "@intentius/chant-lexicon-aws";
 
-export const functionRole = new Role({
+export const roleBad = new Role({
   RoleName: Sub`${AWS.StackName}-role`,
   AssumeRolePolicyDocument: {
     Version: "2012-10-17",
@@ -90,7 +102,7 @@ export const functionRole = new Role({
   },
 });
 
-export const readPolicy = new ManagedPolicy({
+export const policyBad = new ManagedPolicy({
   PolicyDocument: {
     Statement: [
       {
@@ -101,7 +113,7 @@ export const readPolicy = new ManagedPolicy({
       },
     ],
   },
-  Roles: [functionRole],
+  Roles: [roleBad],
 });
 ```
 
@@ -110,7 +122,7 @@ export const readPolicy = new ManagedPolicy({
 ```typescript title="lint-waw009-good.ts"
 import { Role, ManagedPolicy, Sub, AWS } from "@intentius/chant-lexicon-aws";
 
-export const functionRole = new Role({
+export const roleGood = new Role({
   RoleName: Sub`${AWS.StackName}-role`,
   AssumeRolePolicyDocument: {
     Version: "2012-10-17",
@@ -124,7 +136,7 @@ export const functionRole = new Role({
   },
 });
 
-export const readPolicy = new ManagedPolicy({
+export const policyGood = new ManagedPolicy({
   PolicyDocument: {
     Statement: [
       {
@@ -134,7 +146,7 @@ export const readPolicy = new ManagedPolicy({
       },
     ],
   },
-  Roles: [functionRole],
+  Roles: [roleGood],
 });
 ```
 
@@ -296,6 +308,16 @@ Flags DynamoDB tables without `PointInTimeRecoverySpecification.PointInTimeRecov
 **Severity:** warning | **Category:** security
 
 Flags EBS volumes without `Encrypted: true`. All EBS volumes should encrypt data at rest for compliance and security.
+
+### WAW031 — EKS Addon Missing ServiceAccountRoleArn
+
+**Severity:** warning | **Category:** correctness
+
+Flags EKS addons that require an IRSA role but don't have `ServiceAccountRoleArn` set. Without an IRSA role, the addon pods can't authenticate to AWS APIs and the addon hangs in CREATING status. Known addons that require IRSA: `aws-ebs-csi-driver`, `aws-efs-csi-driver`, `adot`, `amazon-cloudwatch-observability`.
+
+```
+WAW031: EKS Addon "EbsCsiAddon" (aws-ebs-csi-driver) has no ServiceAccountRoleArn — it needs an IRSA role for EBS API access
+```
 
 ## Running lint
 

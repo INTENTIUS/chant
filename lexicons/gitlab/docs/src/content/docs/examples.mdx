@@ -205,7 +205,7 @@ Deploys the shared ALB stack (VPC, ALB, ECS cluster, ECR repos):
 ```typescript
 import { Job, Image, Rule } from "@intentius/chant-lexicon-gitlab";
 
-const awsImage = new Image({ name: "amazon/aws-cli:latest" });
+const awsImage = new Image({ name: "amazon/aws-cli:latest", entrypoint: [""] });
 
 export const deployInfra = new Job({
   stage: "deploy",

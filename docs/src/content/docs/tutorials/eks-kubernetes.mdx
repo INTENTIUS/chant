@@ -47,7 +47,8 @@ This tutorial walks you through deploying a production-grade EKS cluster with Ku
 | `src/infra/networking.ts` | VPC, subnets, IGW, NAT gateway |
 | `src/infra/cluster.ts` | EKS cluster, node group, OIDC, 7 IAM roles |
 | `src/infra/addons.ts` | 5 EKS add-ons (including ALB controller) |
-| `src/infra/params.ts` | CF parameters: environment, domain, cert ARN, public access CIDR |
+| `src/infra/dns.ts` | Route53 hosted zone |
+| `src/infra/params.ts` | CF parameters: environment, domain, public access CIDR |
 | `src/k8s/namespace.ts` | Namespace with quotas, limits, default-deny policy |
 | `src/k8s/app.ts` | Deployment + Service + HPA + PDB + IRSA SA + ConfigMap |
 | `src/k8s/ingress.ts` | ALB Ingress + ExternalDNS agent |
@@ -77,16 +78,16 @@ This deployment creates resources that cost money: EKS control plane (~$73/mo), 
 cd examples/k8s-eks-microservice
 
 # Build both CF template and K8s manifests
-just build
+npm run build
 
-# Deploy the CloudFormation stack (32 resources)
-# Pass your domain, ACM cert ARN, and optionally restrict API endpoint access:
-just deploy-infra domain=myapp.example.com cert=arn:aws:acm:us-east-1:123456789012:certificate/your-cert-id cidr=203.0.113.1/32
+# Deploy the CloudFormation stack (35 resources)
+# Pass your domain and optionally restrict API endpoint access:
+DOMAIN=myapp.example.com CIDR=203.0.113.1/32 npm run deploy-infra
 ```
 
-The stack creates the VPC, EKS cluster, managed node group, OIDC provider, 7 IAM roles, and 5 EKS add-ons. The ALB controller add-on installs automatically — no Helm charts or CRDs to manage separately.
+The stack creates the VPC, EKS cluster, managed node group, OIDC provider, 8 IAM roles, and 4 EKS add-ons. The ALB controller add-on must be installed separately via Helm — see the `chant-eks` skill for guidance.
 
-The `cidr=` parameter restricts EKS API server public access to your IP. Omit it to allow access from any IP (0.0.0.0/0). In production, always restrict to your corporate CIDR or use private-only endpoint access.
+The `CIDR=` env var restricts EKS API server public access to your IP. Omit it to allow access from any IP (0.0.0.0/0). In production, always restrict to your corporate CIDR or use private-only endpoint access.
 
 CloudFormation deployment takes ~15 minutes (EKS cluster creation is the bottleneck).
 
@@ -96,11 +97,11 @@ CloudFormation deployment takes ~15 minutes (EKS cluster creation is the bottlen
 
 ```bash
 # Update kubeconfig
-just configure-kubectl
+npm run configure-kubectl
 kubectl get nodes  # verify — should show 3 nodes
 
 # Write real ARNs from CF outputs into .env
-just load-outputs
+npm run load-outputs
 ```
 
 The `load-outputs` target queries `aws cloudformation describe-stacks`, extracts the IAM role ARNs (from stack outputs) and the domain name and ACM certificate ARN (from stack parameters), and writes them all to `.env`. Bun auto-loads `.env` at runtime, so the next K8s build uses real values instead of placeholders.
@@ -111,16 +112,16 @@ The `load-outputs` target queries `aws cloudformation describe-stacks`, extracts
 
 ```bash
 # Rebuild K8s manifests with real ARNs from .env
-just build-k8s
+npm run build:k8s
 
 # Validate against the live cluster (optional)
-just validate
+npm run validate
 
-# Apply all 28 K8s resources
-just apply
+# Apply all K8s resources
+npm run apply
 
 # Wait for the app deployment to roll out
-just wait
+npm run wait
 ```
 
 The K8s output includes 28 resources across 5 files: namespace with quotas, autoscaled app deployment, ALB ingress with ExternalDNS, encrypted storage class, and Fluent Bit + ADOT observability agents.
@@ -131,7 +132,7 @@ The K8s output includes 28 resources across 5 files: namespace with quotas, auto
 
 ```bash
 # Quick status check
-just status
+npm run status
 
 # Application pods (should show 2+ Running)
 kubectl get pods -n microservice
@@ -160,8 +161,8 @@ curl -s -o /dev/null -w "%{http_code}" https://$ALB_DNS/
 
 ## Subsequent deployments
 
-- **K8s-only changes** (app config, scaling, new workloads): edit source, run `just build-k8s && just apply`. No infra redeploy needed.
-- **Infrastructure changes** (node count, new IAM roles, new addons): edit source, run `just build && just deploy-infra`. Then run `just load-outputs` if outputs changed, followed by `just build-k8s && just apply`.
+- **K8s-only changes** (app config, scaling, new workloads): edit source, run `npm run build:k8s && npm run apply`. No infra redeploy needed.
+- **Infrastructure changes** (node count, new IAM roles, new addons): edit source, run `npm run build && npm run deploy-infra`. Then run `npm run load-outputs` if outputs changed, followed by `npm run build:k8s && npm run apply`.
 
 ## Clean up
 
@@ -170,7 +171,7 @@ Always delete Kubernetes resources before the CloudFormation stack. The ALB cont
 </Aside>
 
 ```bash
-just teardown
+npm run teardown
 ```
 
 This runs: `kubectl delete` → 30s drain wait → `aws cloudformation delete-stack` → wait for completion.

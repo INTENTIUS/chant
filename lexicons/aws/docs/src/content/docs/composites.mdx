@@ -142,11 +142,11 @@ export const web = FargateAlb({
 });
 
 // RdsInstance: DBSubnetGroup + SecurityGroup + DBInstance (3-4 resources)
-const dbPassword = new Parameter("AWS::SSM::Parameter::Value<String>", {
+export const dbPassword = new Parameter("AWS::SSM::Parameter::Value<String>", {
   description: "SSM path to the database password",
   defaultValue: "/myapp/dev/db-password",
 });
-export const database = RdsInstance({
+export const rdsDatabase = RdsInstance({
   engine: "postgres",
   vpcId: network.vpc.VpcId,
   subnetIds: [network.privateSubnet1.SubnetId, network.privateSubnet2.SubnetId],
@@ -202,11 +202,17 @@ Typed IAM action constants for common AWS services. Use them in policy documents
 import { Role, Role_Policy, Bucket, Sub, AWS } from "@intentius/chant-lexicon-aws";
 import { S3Actions } from "@intentius/chant-lexicon-aws";
 
-const dataBucket = new Bucket({
+export const s3DataBucket = new Bucket({
   BucketName: Sub`${AWS.StackName}-data`,
+  PublicAccessBlockConfiguration: {
+    BlockPublicAcls: true,
+    BlockPublicPolicy: true,
+    IgnorePublicAcls: true,
+    RestrictPublicBuckets: true,
+  },
 });
 
-export const readerRole = new Role({
+export const s3ReaderRole = new Role({
   AssumeRolePolicyDocument: {
     Version: "2012-10-17",
     Statement: [
@@ -226,7 +232,7 @@ export const readerRole = new Role({
           {
             Effect: "Allow",
             Action: S3Actions.ReadOnly,
-            Resource: dataBucket.Arn,
+            Resource: s3DataBucket.Arn,
           },
         ],
       },
@@ -307,6 +313,7 @@ import { Function as LambdaFunction } from "@intentius/chant-lexicon-aws";
 
 interface ApiProps {
   name: string;
+  runtime: string;
   handler: string;
   timeout: number;
   memorySize: number;
@@ -316,6 +323,7 @@ interface ApiProps {
 const Api = Composite<ApiProps>((props) => ({
   fn: new LambdaFunction({
     FunctionName: props.name,
+    Runtime: props.runtime as any,
     Handler: props.handler,
     Timeout: props.timeout,
     MemorySize: props.memorySize,
@@ -325,6 +333,7 @@ const Api = Composite<ApiProps>((props) => ({
 
 // Function-based defaults can compute values from caller props
 const SmartApi = withDefaults(Api, (props) => ({
+  runtime: "nodejs20.x",
   handler: "index.handler",
   // Scale timeout with memory — higher memory → longer timeout
   timeout: (props.memorySize ?? 128) >= 1024 ? 60 : 10,
@@ -354,7 +363,7 @@ Attach properties that merge into every member during expansion:
 import { propagate } from "@intentius/chant";
 import { healthApi } from "./with-defaults";
 
-export const api = propagate(
+export const propagatedApi = propagate(
   healthApi,
   { Tags: [{ Key: "env", Value: "prod" }] },
 );

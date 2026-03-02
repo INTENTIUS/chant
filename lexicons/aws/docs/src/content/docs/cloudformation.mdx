@@ -110,8 +110,14 @@ Reference parameters with `Ref`:
 import { Bucket, Sub, Ref } from "@intentius/chant-lexicon-aws";
 import { environment } from "./parameter-declaration";
 
-export const bucket = new Bucket({
+export const crossRefBucket = new Bucket({
   BucketName: Sub`${Ref(environment)}-data`,
+  PublicAccessBlockConfiguration: {
+    BlockPublicAcls: true,
+    BlockPublicPolicy: true,
+    IgnorePublicAcls: true,
+    RestrictPublicBuckets: true,
+  },
 });
 ```
 
@@ -122,8 +128,14 @@ Use `output()` to create explicit stack outputs. Cross-resource `AttrRef` usage 
 ```typescript title="output-explicit.ts"
 import { Bucket, Sub, AWS, output } from "@intentius/chant-lexicon-aws";
 
-const dataBucket = new Bucket({
+export const dataBucket = new Bucket({
   BucketName: Sub`${AWS.StackName}-data`,
+  PublicAccessBlockConfiguration: {
+    BlockPublicAcls: true,
+    BlockPublicPolicy: true,
+    IgnorePublicAcls: true,
+    RestrictPublicBuckets: true,
+  },
 });
 
 export const dataBucketArn = output(dataBucket.Arn, "DataBucketArn");
@@ -146,7 +158,7 @@ Runtime context values available in every template, accessed via the `AWS` names
 ```typescript title="pseudo-params.ts"
 import { Sub, AWS } from "@intentius/chant-lexicon-aws";
 
-export const endpoint = Sub`https://s3.${AWS.Region}.${AWS.URLSuffix}`;
+export const s3Endpoint = Sub`https://s3.${AWS.Region}.${AWS.URLSuffix}`;
 ```
 
 | Pseudo-parameter | Description |
@@ -179,22 +191,23 @@ export const appServer = new Instance(
     ImageId: "ami-12345678",
     InstanceType: "t3.micro",
   },
-  { DependsOn: ["DatabaseCluster"] },
+  { DependsOn: ["dbCluster"] },
 );
 
 // DependsOn with a Declarable reference (resolved automatically)
-export const database = new DbCluster({
+export const dbCluster = new DbCluster({
   Engine: "aurora-postgresql",
   MasterUsername: "admin",
   MasterUserPassword: "changeme",
+  StorageEncrypted: true,
 });
 
-export const worker = new Instance(
+export const dependentWorker = new Instance(
   {
     ImageId: "ami-12345678",
     InstanceType: "t3.micro",
   },
-  { DependsOn: [database] },
+  { DependsOn: [dbCluster] },
 );
 ```
 
@@ -210,19 +223,29 @@ Every resource constructor accepts an optional second argument for CloudFormatio
 import { Bucket, DbInstance, Instance } from "@intentius/chant-lexicon-aws";
 
 // DeletionPolicy — protect data from accidental stack deletion
-export const database = new DbInstance(
+export const dbInstance = new DbInstance(
   {
     DBInstanceClass: "db.t3.micro",
     Engine: "postgres",
     MasterUsername: "admin",
     MasterUserPassword: "changeme",
+    BackupRetentionPeriod: 7,
+    StorageEncrypted: true,
   },
   { DeletionPolicy: "Snapshot", UpdateReplacePolicy: "Snapshot" },
 );
 
 // Condition — only create this resource when a condition is true
 export const prodBucket = new Bucket(
-  { BucketName: "prod-data" },
+  {
+    BucketName: "prod-data",
+    PublicAccessBlockConfiguration: {
+      BlockPublicAcls: true,
+      BlockPublicPolicy: true,
+      IgnorePublicAcls: true,
+      RestrictPublicBuckets: true,
+    },
+  },
   { Condition: "IsProduction" },
 );
 
@@ -352,7 +375,7 @@ Use the `If` intrinsic for conditional values within resource properties:
 ```typescript title="conditions.ts"
 import { Bucket, If, AWS } from "@intentius/chant-lexicon-aws";
 
-export const bucket = new Bucket({
+export const conditionalBucket = new Bucket({
   BucketName: "my-bucket",
   AccelerateConfiguration: If(
     "EnableAcceleration",
@@ -365,6 +388,12 @@ export const bucket = new Bucket({
         ServerSideEncryptionByDefault: { SSEAlgorithm: "AES256" },
       },
     ],
+  },
+  PublicAccessBlockConfiguration: {
+    BlockPublicAcls: true,
+    BlockPublicPolicy: true,
+    IgnorePublicAcls: true,
+    RestrictPublicBuckets: true,
   },
 });
 ```

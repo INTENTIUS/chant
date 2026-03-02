@@ -42,6 +42,14 @@ Post-synth checks run against the serialized YAML after build.
 | WGC203 | GKE node pool with overly broad cloud-platform OAuth scope |
 | WGC204 | ComputeInstance without shielded VM config |
 
+### Correctness
+
+| Rule | Description |
+|------|-------------|
+| WGC111 | Dangling resource reference — `resourceRef.name` points to a name not defined in the output |
+| WGC112 | Missing or invalid `apiVersion` — must match `<service>.cnrm.cloud.google.com/v<version>` |
+| WGC113 | Alpha API version warning — prefer `v1beta1` or `v1` over unstable `alpha` versions |
+
 ### Compliance
 
 | Rule | Description |

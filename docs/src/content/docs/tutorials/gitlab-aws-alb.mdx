@@ -84,15 +84,15 @@ The AWS and GitLab examples are already in the repo. You just need to build them
 The agent runs `chant build` in each example directory:
 
 ```bash
-# AWS stacks → templates/template.json
-cd lexicons/aws/examples/shared-alb && chant build src
-cd lexicons/aws/examples/shared-alb-api && chant build src
-cd lexicons/aws/examples/shared-alb-ui && chant build src
+# AWS stacks → template.json
+cd lexicons/aws/examples/shared-alb && chant build src --lexicon aws -o template.json
+cd lexicons/aws/examples/shared-alb-api && chant build src --lexicon aws -o template.json
+cd lexicons/aws/examples/shared-alb-ui && chant build src --lexicon aws -o template.json
 
 # GitLab pipelines → .gitlab-ci.yml
-cd examples/gitlab-aws-alb-infra && chant build src --lexicon gitlab
-cd examples/gitlab-aws-alb-api && chant build src --lexicon gitlab
-cd examples/gitlab-aws-alb-ui && chant build src --lexicon gitlab
+cd examples/gitlab-aws-alb-infra && chant build src --lexicon gitlab -o .gitlab-ci.yml
+cd examples/gitlab-aws-alb-api && chant build src --lexicon gitlab -o .gitlab-ci.yml
+cd examples/gitlab-aws-alb-ui && chant build src --lexicon gitlab -o .gitlab-ci.yml
 ```
 
 This gives you three CF templates and three `.gitlab-ci.yml` files, all generated from the TypeScript source.

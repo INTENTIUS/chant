@@ -823,6 +823,16 @@ Flags DynamoDB tables without \`PointInTimeRecoverySpecification.PointInTimeReco
 
 Flags EBS volumes without \`Encrypted: true\`. All EBS volumes should encrypt data at rest for compliance and security.
 
+### WAW031 — EKS Addon Missing ServiceAccountRoleArn
+
+**Severity:** warning | **Category:** correctness
+
+Flags EKS addons that require an IRSA role but don't have \`ServiceAccountRoleArn\` set. Without an IRSA role, the addon pods can't authenticate to AWS APIs and the addon hangs in CREATING status. Known addons that require IRSA: \`aws-ebs-csi-driver\`, \`aws-efs-csi-driver\`, \`adot\`, \`amazon-cloudwatch-observability\`.
+
+\`\`\`
+WAW031: EKS Addon "EbsCsiAddon" (aws-ebs-csi-driver) has no ServiceAccountRoleArn — it needs an IRSA role for EBS API access
+\`\`\`
+
 ## Running lint
 
 \`\`\`bash

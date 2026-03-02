@@ -56,7 +56,7 @@ Your agent will use the `chant-eks` skill to walk through:
 7. **Deploy workloads** — `npm run load-outputs && npm run build:k8s && npm run apply` deploys 36 K8s resources (re-run `load-outputs` to pick up the cert ARN)
 8. **Verify** — `npm run status` checks pods, ingress, daemonsets
 
-Or run phases 1-4 at once: `DOMAIN=myapp.example.com npm run deploy` (then do steps 5-8 manually after NS delegation).
+Or run phases 1-4 and 7-8 at once: `DOMAIN=myapp.example.com npm run deploy` (skips NS delegation and certificate — do steps 5-6 manually after, then re-run `npm run load-outputs && npm run build:k8s && npm run apply` to pick up the cert ARN).
 
 The deploy is two-phase because ACM certificate DNS validation requires the Route53 hosted zone's NS records to be delegated at your registrar first. Without delegation, the validation CNAME can't be resolved and the certificate stays in PENDING_VALIDATION indefinitely.
 
@@ -134,7 +134,7 @@ Patterns to add next:
 | File | Description |
 |------|-------------|
 | `networking.ts` | VPC with public/private subnets, IGW, NAT gateway |
-| `cluster.ts` | EKS cluster, managed node group, OIDC provider, IAM roles (cluster, node, app IRSA, ALB controller, ExternalDNS, FluentBit, ADOT) |
+| `cluster.ts` | EKS cluster, managed node group, OIDC provider, IAM roles (cluster, node, app IRSA, ALB controller, ExternalDNS, FluentBit, ADOT, EBS CSI) |
 | `addons.ts` | EKS add-ons: vpc-cni, aws-ebs-csi-driver, coredns, kube-proxy |
 | `dns.ts` | Route53 hosted zone (ACM certificate created separately via `npm run deploy-cert`) |
 | `params.ts` | CloudFormation parameters: environment, domainName, publicAccessCidr |
@@ -144,7 +144,7 @@ Patterns to add next:
 | File | Composites Used | Description |
 |------|-----------------|-------------|
 | `namespace.ts` | `NamespaceEnv` | Namespace with resource quotas, limit ranges, default-deny NetworkPolicy |
-| `app.ts` | `AutoscaledService`, `IrsaServiceAccount` | App Deployment + Service + HPA + PDB + IRSA ServiceAccount + ConfigMap |
+| `app.ts` | `AutoscaledService`, `IrsaServiceAccount`, `MetricsServer` | App Deployment + Service + HPA + PDB + IRSA ServiceAccount + ConfigMap + Metrics Server |
 | `ingress.ts` | `AlbIngress`, `ExternalDnsAgent` | ALB Ingress with TLS + ExternalDNS for Route53 |
 | `storage.ts` | `EbsStorageClass` | gp3 encrypted StorageClass |
 | `observability.ts` | `FluentBitAgent`, `AdotCollector` | Fluent Bit DaemonSet for CloudWatch logging + ADOT DaemonSet for CloudWatch metrics |
@@ -210,7 +210,7 @@ CloudFormation stack outputs map to K8s composite props via `.env`:
 | `fluentBitRoleArn` | `observability.ts` | `FluentBitAgent({ iamRoleArn })` |
 | `adotRoleArn` | `observability.ts` | `AdotCollector({ iamRoleArn })` |
 | ACM cert ARN (via `npm run deploy-cert`) | `ingress.ts` | `AlbIngress({ certificateArn })` |
-| Cluster name | `observability.ts` | `FluentBitAgent({ clusterName })`, `AdotCollector({ clusterName })` |
+| Cluster name | `observability.ts`, `ingress.ts` | `FluentBitAgent({ clusterName })`, `AdotCollector({ clusterName })`, `ExternalDnsAgent({ txtOwnerId })` |
 
 Values flow through `.env` → `config.ts` → K8s source files. `npm run load-outputs` refreshes `.env` after any infra deploy.
 

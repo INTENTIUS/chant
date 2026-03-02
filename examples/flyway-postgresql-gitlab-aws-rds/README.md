@@ -30,7 +30,7 @@ The lexicon packages ship skills for agent-guided deployment. After `chant init 
 |------|---------|---------|
 | `src/network.ts` | AWS | VpcDefault composite — VPC, subnets, IGW, NAT gateway |
 | `src/database.ts` | AWS | RdsInstance composite — PostgreSQL in public subnets |
-| `src/params.ts` | AWS | CloudFormation parameters (environment, dbPasswordSsmPath) |
+| `src/params.ts` | AWS | CloudFormation parameters (environment, dbPasswordSsmPath, dbIngressCidr) |
 | `src/outputs.ts` | AWS | Stack outputs (DbEndpoint) |
 | `src/tags.ts` | AWS | Default resource tags |
 | `src/migrations.ts` | Flyway | FlywayProject, FlywayConfig, deploy Environment |

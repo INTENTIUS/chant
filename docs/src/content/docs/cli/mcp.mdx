@@ -13,7 +13,7 @@ chant serve mcp [path]
 
 `chant serve mcp` starts an MCP (Model Context Protocol) server over stdio. This allows AI agents that support MCP — such as Claude Code, Cursor, and Windsurf — to interact with your chant project programmatically.
 
-Typically you don't run this directly. `chant init` writes the MCP config to `.mcp.json`, and your agent picks it up automatically. See [Agent Integration](/chant/guide/agent-integration/).
+Typically you don't run this directly. `chant init` detects your IDE and writes the MCP config to the appropriate global config file — `~/.claude/mcp.json` for Claude Code, `~/.cursor/mcp.json` for Cursor, or `~/.config/mcp/mcp.json` otherwise. Your agent picks it up automatically. See [Agent Integration](/chant/guide/agent-integration/).
 
 ## Tools
 
@@ -109,7 +109,15 @@ Lexicon plugins can contribute additional resources, namespaced as `chant://{plu
 
 ### Automatic Setup
 
-`chant init` adds the MCP server to `.mcp.json`:
+`chant init` detects your IDE and adds the MCP server to the appropriate global config file:
+
+| IDE | Config path |
+|-----|------------|
+| Claude Code | `~/.claude/mcp.json` |
+| Cursor | `~/.cursor/mcp.json` |
+| Other | `~/.config/mcp/mcp.json` |
+
+The config looks like:
 
 ```json
 {
@@ -122,9 +130,11 @@ Lexicon plugins can contribute additional resources, namespaced as `chant://{plu
 }
 ```
 
+(`bunx` is used instead of `npx` when bun is detected as the package manager.)
+
 ### Manual Setup
 
-If your agent doesn't auto-detect `.mcp.json`, configure the server manually. The command is:
+If your agent doesn't auto-detect the MCP config, configure the server manually. The command is:
 
 ```bash
 chant serve mcp
