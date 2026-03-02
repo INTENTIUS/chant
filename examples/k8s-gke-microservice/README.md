@@ -107,6 +107,64 @@ npm run teardown
 
 Deletes resources in the correct order: K8s workloads first (drains load balancers), then Config Connector resources (deletes GCP infra), then the Config Connector service account, and finally the GKE cluster itself.
 
+## Skills guide
+
+The lexicon packages (`@intentius/chant-lexicon-gcp` and `@intentius/chant-lexicon-k8s`) ship four skills that guide your agent through every aspect of this example. After `chant init --lexicon gcp` and `chant init --lexicon k8s`, your agent has access to:
+
+### `chant-gke` — primary entry point
+
+The **`chant-gke`** skill (GCP lexicon) covers the full end-to-end workflow:
+
+- Bootstrapping a GKE cluster with Config Connector
+- Deploying Config Connector resources and K8s workloads
+- Cross-lexicon value mapping: which CC output feeds which K8s composite prop
+- Scaffolding new projects with `chant init --lexicon gcp --template gke`
+
+### `chant-k8s-gke` — GKE-specific composites
+
+Covers the composites used in `src/k8s/`:
+
+| Composite | File | What it does |
+|-----------|------|--------------|
+| `WorkloadIdentityServiceAccount` | `app.ts` | GKE WI setup, `iam.gke.io/gcp-service-account` annotation |
+| `GkeExternalDnsAgent` | `ingress.ts` | Cloud DNS integration, Workload Identity |
+| `GcePdStorageClass` | `storage.ts` | GCE PD CSI provisioner, pd-balanced |
+| `GkeFluentBitAgent` | `observability.ts` | DaemonSet config, Cloud Logging output |
+| `GkeOtelCollector` | `observability.ts` | DaemonSet config, Cloud Trace + Monitoring pipeline |
+
+### `chant-k8s` — core composites reference
+
+Comprehensive reference for all 20 composites:
+
+- **"Choosing the Right Composite" decision tree** — which composite for each workload type
+- Hardening options: `minAvailable` (PDB), `initContainers`, `securityContext`, `priorityClassName`
+- Build/lint/apply workflow and troubleshooting
+
+### `chant-k8s-patterns` — advanced patterns
+
+Patterns to add next:
+
+- **Sidecars** — Envoy proxy or log forwarder with `SidecarApp`
+- **Config/Secret mounting** — `ConfiguredApp` for ConfigMap volumes and Secret env vars
+- **TLS with cert-manager** — `SecureIngress` for non-GCP ingress controllers
+- **Prometheus monitoring** — `MonitoredService` with ServiceMonitor and alert rules
+
+### Skill workflow
+
+```
+1. chant-gke           "Deploy a GKE project end-to-end"
+   │                   → Scaffold, bootstrap, deploy CC resources + workloads
+   │
+2. chant-k8s-gke       "Which GKE composites do I need?"
+   │                   → WI, Gateway, PD, Filestore, FluentBit, OTel, ExternalDNS
+   │
+3. chant-k8s           "How do I choose between composites?"
+   │                   → Decision tree, hardening options, troubleshooting
+   │
+4. chant-k8s-patterns  "What patterns can I add next?"
+                       → Sidecars, monitoring, TLS, network isolation
+```
+
 ## Resource counts
 
 - **GCP lexicon**: ~15 Config Connector resources (VPC, subnets, NAT, GKE cluster, node pool, service accounts, IAM bindings, DNS zone)

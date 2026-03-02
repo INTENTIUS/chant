@@ -54,6 +54,64 @@ chant build src --lexicon k8s   → k8s.yaml       (K8s workload YAML)
 | `storage.ts` | AzureDiskStorageClass |
 | `observability.ts` | AzureMonitorCollector |
 
+## Skills guide
+
+The lexicon packages (`@intentius/chant-lexicon-azure` and `@intentius/chant-lexicon-k8s`) ship four skills that guide your agent through every aspect of this example. After `chant init --lexicon azure` and `chant init --lexicon k8s`, your agent has access to:
+
+### `chant-aks` — primary entry point
+
+The **`chant-aks`** skill (Azure lexicon) covers the full end-to-end workflow:
+
+- Deploying ARM templates (AKS cluster, ACR, managed identities, DNS)
+- Deploying K8s workloads with real client IDs from ARM outputs
+- Cross-lexicon value mapping: which ARM output feeds which K8s composite prop
+- Scaffolding new projects with `chant init --lexicon azure --template aks`
+
+### `chant-k8s-aks` — AKS-specific composites
+
+Covers the composites used in `src/k8s/`:
+
+| Composite | File | What it does |
+|-----------|------|--------------|
+| `AksWorkloadIdentityServiceAccount` | `app.ts` | AKS WI setup, `azure.workload.identity/client-id` annotation |
+| `AgicIngress` | `ingress.ts` | Application Gateway annotations, health probes, WAF |
+| `AksExternalDnsAgent` | `ingress.ts` | Azure DNS integration, Workload Identity |
+| `AzureDiskStorageClass` | `storage.ts` | Azure Disk CSI provisioner, Premium_LRS |
+| `AzureMonitorCollector` | `observability.ts` | DaemonSet config, Log Analytics pipeline |
+
+### `chant-k8s` — core composites reference
+
+Comprehensive reference for all 20 composites:
+
+- **"Choosing the Right Composite" decision tree** — which composite for each workload type
+- Hardening options: `minAvailable` (PDB), `initContainers`, `securityContext`, `priorityClassName`
+- Build/lint/apply workflow and troubleshooting
+
+### `chant-k8s-patterns` — advanced patterns
+
+Patterns to add next:
+
+- **Sidecars** — Envoy proxy or log forwarder with `SidecarApp`
+- **Config/Secret mounting** — `ConfiguredApp` for ConfigMap volumes and Secret env vars
+- **TLS with cert-manager** — `SecureIngress` for non-Azure ingress controllers
+- **Prometheus monitoring** — `MonitoredService` with ServiceMonitor and alert rules
+
+### Skill workflow
+
+```
+1. chant-aks           "Deploy an AKS project end-to-end"
+   │                   → Scaffold, deploy ARM template, deploy workloads
+   │
+2. chant-k8s-aks       "Which AKS composites do I need?"
+   │                   → WI, AGIC, Azure Disk/File, ExternalDNS, Monitor
+   │
+3. chant-k8s           "How do I choose between composites?"
+   │                   → Decision tree, hardening options, troubleshooting
+   │
+4. chant-k8s-patterns  "What patterns can I add next?"
+                       → Sidecars, monitoring, TLS, network isolation
+```
+
 ## Quick start (local verification)
 
 ```bash
