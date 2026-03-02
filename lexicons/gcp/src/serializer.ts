@@ -12,6 +12,7 @@ import type { Serializer, SerializerResult } from "@intentius/chant/serializer";
 import type { LexiconOutput } from "@intentius/chant/lexicon-output";
 import { walkValue, type SerializerVisitor } from "@intentius/chant/serializer-walker";
 import { emitYAML } from "@intentius/chant/yaml";
+import { INTRINSIC_MARKER } from "@intentius/chant/intrinsic";
 import { isDefaultLabels, isDefaultAnnotations, type DefaultLabels, type DefaultAnnotations } from "./default-labels";
 
 const require = createRequire(import.meta.url);
@@ -170,10 +171,14 @@ export const gcpSerializer: Serializer = {
         metadata.labels = { ...defaultLabelEntries, ...existingLabels };
       }
 
-      // Merge default annotations
+      // Merge default annotations (resolve PseudoParameters to env-var strings)
       if (Object.keys(defaultAnnotationEntries).length > 0) {
+        const resolvedAnnotations: Record<string, unknown> = {};
+        for (const [k, v] of Object.entries(defaultAnnotationEntries)) {
+          resolvedAnnotations[k] = resolveAnnotationValue(v);
+        }
         const existingAnnotations = (metadata.annotations ?? {}) as Record<string, unknown>;
-        metadata.annotations = { ...defaultAnnotationEntries, ...existingAnnotations };
+        metadata.annotations = { ...resolvedAnnotations, ...existingAnnotations };
       }
 
       manifest.metadata = metadata;
@@ -196,6 +201,38 @@ export const gcpSerializer: Serializer = {
     return documents.join("\n---\n");
   },
 };
+
+/**
+ * Pseudo-parameter → environment variable mapping.
+ * Config Connector annotations must be plain strings, so PseudoParameters
+ * are resolved from environment variables at build time.
+ */
+const PSEUDO_ENV_MAP: Record<string, { envVar: string; fallback: string }> = {
+  "GCP::ProjectId": { envVar: "GCP_PROJECT_ID", fallback: "PROJECT_ID" },
+  "GCP::Region": { envVar: "GCP_REGION", fallback: "us-central1" },
+  "GCP::Zone": { envVar: "GCP_ZONE", fallback: "us-central1-a" },
+};
+
+/**
+ * Resolve an annotation value to a plain string.
+ * PseudoParameter intrinsics are resolved from environment variables;
+ * other values pass through unchanged.
+ */
+function resolveAnnotationValue(value: unknown): unknown {
+  if (typeof value === "object" && value !== null && INTRINSIC_MARKER in value) {
+    if ("toJSON" in value && typeof value.toJSON === "function") {
+      const json = value.toJSON() as Record<string, unknown>;
+      if (json && typeof json === "object" && "Ref" in json && typeof json.Ref === "string") {
+        const mapping = PSEUDO_ENV_MAP[json.Ref];
+        if (mapping) {
+          return process.env[mapping.envVar] ?? mapping.fallback;
+        }
+      }
+    }
+    return String(value);
+  }
+  return value;
+}
 
 /**
  * Emit a key-value pair as YAML.

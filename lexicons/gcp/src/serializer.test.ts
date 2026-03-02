@@ -7,6 +7,7 @@ import {
   DEFAULT_LABELS_MARKER,
   DEFAULT_ANNOTATIONS_MARKER,
 } from "./default-labels";
+import { GCP } from "./pseudo";
 
 // ── Mock helpers ────────────────────────────────────────────────────
 
@@ -158,6 +159,50 @@ describe("gcpSerializer", () => {
 
     const result = gcpSerializer.serialize(entities);
     expect(result).toContain("cnrm.cloud.google.com/project-id: my-project");
+  });
+
+  test("PseudoParameter in default annotations resolves to env var string", () => {
+    const prev = process.env.GCP_PROJECT_ID;
+    process.env.GCP_PROJECT_ID = "test-project-123";
+    try {
+      const entities = new Map<string, any>();
+      entities.set("annot", defaultAnnotations({ "cnrm.cloud.google.com/project-id": GCP.ProjectId }));
+      entities.set(
+        "bucket",
+        mockResource("GCP::Storage::Bucket", {
+          location: "US",
+        }),
+      );
+
+      const result = gcpSerializer.serialize(entities);
+      expect(result).toContain("cnrm.cloud.google.com/project-id: test-project-123");
+      expect(result).not.toContain("refName");
+      expect(result).not.toContain("Ref");
+    } finally {
+      if (prev === undefined) delete process.env.GCP_PROJECT_ID;
+      else process.env.GCP_PROJECT_ID = prev;
+    }
+  });
+
+  test("PseudoParameter in default annotations falls back when env var unset", () => {
+    const prev = process.env.GCP_PROJECT_ID;
+    delete process.env.GCP_PROJECT_ID;
+    try {
+      const entities = new Map<string, any>();
+      entities.set("annot", defaultAnnotations({ "cnrm.cloud.google.com/project-id": GCP.ProjectId }));
+      entities.set(
+        "bucket",
+        mockResource("GCP::Storage::Bucket", {
+          location: "US",
+        }),
+      );
+
+      const result = gcpSerializer.serialize(entities);
+      expect(result).toContain("cnrm.cloud.google.com/project-id: PROJECT_ID");
+    } finally {
+      if (prev === undefined) delete process.env.GCP_PROJECT_ID;
+      else process.env.GCP_PROJECT_ID = prev;
+    }
   });
 
   test("explicit labels override default labels", () => {
