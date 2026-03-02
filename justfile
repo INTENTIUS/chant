@@ -65,6 +65,29 @@ ext-vscode-build:
 ext-vscode-package:
     cd editors/vscode && npm install && npm run build && npm run package
 
+# Bump version, tag, and push to trigger npm publish (e.g. just release patch)
+release bump="patch":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    current=$(jq -r .version packages/core/package.json)
+    IFS='.' read -r major minor patch <<< "$current"
+    case "{{bump}}" in
+      major) major=$((major + 1)); minor=0; patch=0 ;;
+      minor) minor=$((minor + 1)); patch=0 ;;
+      patch) patch=$((patch + 1)) ;;
+      *) echo "Usage: just release [major|minor|patch]"; exit 1 ;;
+    esac
+    next="$major.$minor.$patch"
+    echo "Bumping $current → $next"
+    for f in packages/core/package.json lexicons/*/package.json; do
+      jq --arg v "$next" '.version = $v' "$f" > "$f.tmp" && mv "$f.tmp" "$f"
+    done
+    git add packages/core/package.json lexicons/*/package.json
+    git commit -m "v$next"
+    git tag "v$next"
+    git push origin main "v$next"
+    echo "Released v$next — publish workflow triggered"
+
 # Build Zed extension (WASM)
 ext-zed-build:
     cd editors/zed && cargo build --release --target wasm32-wasip1
