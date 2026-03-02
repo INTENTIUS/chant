@@ -22,7 +22,7 @@
     "bundle": "bun run src/package-cli.ts",
     "validate": "bun run src/validate-cli.ts",
     "docs": "bun run src/codegen/docs-cli.ts",
-    "prepack": "bun run bundle && bun run validate"
+    "prepack": "bun run generate && bun run bundle && bun run validate"
   },
   "dependencies": {
     "@intentius/chant": "workspace:*"

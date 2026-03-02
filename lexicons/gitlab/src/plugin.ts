@@ -342,7 +342,7 @@ export const deploy = new Job({
   },
 
   skills(): SkillDefinition[] {
-    return [
+    const skills: SkillDefinition[] = [
       {
         name: "chant-gitlab",
         description: "GitLab CI/CD pipeline lifecycle — build, validate, deploy, monitor, rollback, and troubleshoot",
@@ -944,5 +944,51 @@ curl --header "PRIVATE-TOKEN: $GITLAB_TOKEN" \\
         ],
       },
     ];
+
+    // Load file-based skills from src/skills/
+    const { readFileSync } = require("fs");
+    const { join, dirname } = require("path");
+    const { fileURLToPath } = require("url");
+    const dir = dirname(fileURLToPath(import.meta.url));
+
+    const skillFiles = [
+      {
+        file: "gitlab-ci-patterns.md",
+        name: "gitlab-ci-patterns",
+        description: "GitLab CI/CD pipeline stages, caching, artifacts, includes, and advanced patterns",
+        triggers: [
+          { type: "context" as const, value: "gitlab pipeline" },
+          { type: "context" as const, value: "gitlab cache" },
+          { type: "context" as const, value: "gitlab artifacts" },
+          { type: "context" as const, value: "gitlab include" },
+          { type: "context" as const, value: "gitlab stages" },
+          { type: "context" as const, value: "review app" },
+        ],
+        parameters: [],
+        examples: [
+          {
+            title: "Pipeline with caching",
+            input: "Set up a Node.js pipeline with proper caching",
+            output: "import { Job, Cache } from \"@intentius/chant-lexicon-gitlab\";\n\nconst cache = new Cache({ key: { files: [\"package-lock.json\"] }, paths: [\"node_modules/\"] });",
+          },
+        ],
+      },
+    ];
+
+    for (const skill of skillFiles) {
+      try {
+        const content = readFileSync(join(dir, "skills", skill.file), "utf-8");
+        skills.push({
+          name: skill.name,
+          description: skill.description,
+          content,
+          triggers: skill.triggers,
+          parameters: skill.parameters,
+          examples: skill.examples,
+        });
+      } catch { /* skip missing skills */ }
+    }
+
+    return skills;
   },
 };

@@ -182,7 +182,7 @@ describe("gitlabPlugin", () => {
 
   test("returns skills", () => {
     const skills = gitlabPlugin.skills!();
-    expect(skills).toHaveLength(1);
+    expect(skills.length).toBeGreaterThanOrEqual(2);
     expect(skills[0].name).toBe("chant-gitlab");
     expect(skills[0].description).toBeDefined();
     expect(skills[0].content).toContain("skill: chant-gitlab");
