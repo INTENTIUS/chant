@@ -13,14 +13,16 @@ gcloud services enable container.googleapis.com dns.googleapis.com \
   --project "$project_id"
 
 echo "==> Creating GKE cluster with Config Connector + Workload Identity..."
-gcloud container clusters create "$cluster_name" \
+if ! gcloud container clusters create "$cluster_name" \
   --region "$region" \
   --project "$project_id" \
   --machine-type e2-standard-4 \
   --num-nodes 1 \
   --workload-pool "${project_id}.svc.id.goog" \
   --addons ConfigConnector \
-  --release-channel regular
+  --release-channel regular 2>&1; then
+  echo "  Cluster may already exist, continuing..."
+fi
 
 echo "==> Getting credentials..."
 gcloud container clusters get-credentials "$cluster_name" \
@@ -56,6 +58,15 @@ metadata:
 spec:
   googleServiceAccount: "${cc_sa_email}"
 EOF
+
+echo "==> Waiting for Config Connector controller pod to appear..."
+for i in $(seq 1 60); do
+  if kubectl get pods -n cnrm-system -l cnrm.cloud.google.com/component=cnrm-controller-manager --no-headers 2>/dev/null | grep -q .; then
+    break
+  fi
+  echo "  Waiting for controller pod... ($i/60)"
+  sleep 5
+done
 
 echo "==> Waiting for Config Connector controller to be ready..."
 kubectl wait pod -n cnrm-system -l cnrm.cloud.google.com/component=cnrm-controller-manager \

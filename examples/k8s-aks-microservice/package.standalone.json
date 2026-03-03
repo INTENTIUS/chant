@@ -9,7 +9,7 @@
     "build:k8s": "chant build src --lexicon k8s -o k8s.yaml",
     "lint": "chant lint src",
     "deploy-infra": "az deployment group create --resource-group ${AZURE_RESOURCE_GROUP} --template-file template.json",
-    "configure-kubectl": "az aks get-credentials --resource-group ${AZURE_RESOURCE_GROUP} --name aks-microservice",
+    "configure-kubectl": "az aks get-credentials --resource-group ${AZURE_RESOURCE_GROUP} --name aks-microservice --overwrite-existing",
     "load-outputs": "bash scripts/load-outputs.sh",
     "validate": "kubectl apply -f k8s.yaml --dry-run=server",
     "apply": "kubectl apply -f k8s.yaml",
