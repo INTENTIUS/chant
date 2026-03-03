@@ -2,6 +2,7 @@
 **/.cache
 .git
 *.tsbuildinfo
+*.tgz
 .DS_Store
 docs
 lexicons/aws/docs

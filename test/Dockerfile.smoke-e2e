@@ -34,15 +34,15 @@ RUN CORE_VERSION=$(jq -r '.version' packages/core/package.json) && \
         package.json > tmp.json && mv tmp.json package.json; \
     done
 
-# Pack tarballs
+# Pack tarballs (rm stale .tgz first — glob with multiple matches breaks mv)
 RUN mkdir -p /tarballs && \
-    cd /app/packages/core && bun pm pack && mv *.tgz /tarballs/core.tgz && \
-    cd /app/lexicons/aws && bun pm pack && mv *.tgz /tarballs/lexicon-aws.tgz && \
-    cd /app/lexicons/gitlab && bun pm pack && mv *.tgz /tarballs/lexicon-gitlab.tgz && \
-    cd /app/lexicons/k8s && bun pm pack && mv *.tgz /tarballs/lexicon-k8s.tgz && \
-    cd /app/lexicons/flyway && bun pm pack && mv *.tgz /tarballs/lexicon-flyway.tgz && \
-    cd /app/lexicons/gcp && bun pm pack && mv *.tgz /tarballs/lexicon-gcp.tgz && \
-    cd /app/lexicons/azure && bun pm pack && mv *.tgz /tarballs/lexicon-azure.tgz
+    cd /app/packages/core && rm -f *.tgz && bun pm pack && mv *.tgz /tarballs/core.tgz && \
+    cd /app/lexicons/aws && rm -f *.tgz && bun pm pack && mv *.tgz /tarballs/lexicon-aws.tgz && \
+    cd /app/lexicons/gitlab && rm -f *.tgz && bun pm pack && mv *.tgz /tarballs/lexicon-gitlab.tgz && \
+    cd /app/lexicons/k8s && rm -f *.tgz && bun pm pack && mv *.tgz /tarballs/lexicon-k8s.tgz && \
+    cd /app/lexicons/flyway && rm -f *.tgz && bun pm pack && mv *.tgz /tarballs/lexicon-flyway.tgz && \
+    cd /app/lexicons/gcp && rm -f *.tgz && bun pm pack && mv *.tgz /tarballs/lexicon-gcp.tgz && \
+    cd /app/lexicons/azure && rm -f *.tgz && bun pm pack && mv *.tgz /tarballs/lexicon-azure.tgz
 
 # ── Stage 2: E2E runner ──────────────────────────────────────────────────────
 FROM --platform=linux/amd64 node:22-slim
