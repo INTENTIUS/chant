@@ -1,108 +1,88 @@
 ---
 title: E2E Testing
-description: End-to-end smoke tests that deploy, verify, and tear down real infrastructure
+description: End-to-end tests that build examples in Docker and deploy to real infrastructure from the host
 ---
 
 import { Aside } from '@astrojs/starlight/components';
 
-The E2E smoke tests deploy every root example to real cloud infrastructure, verify it works, and tear everything down. They run inside Docker so the host machine only needs Docker itself.
+E2E tests verify that every root example can be built from published tarballs and deployed to real cloud infrastructure. The **build** phase runs in Docker (same image as the smoke tests) to guarantee a clean environment, but **deployment** runs directly on the host using chant skills.
 
 ## Architecture
 
 ```
-smoke.sh  ─────►  docker build (Dockerfile.smoke-e2e)  ─────►  docker run
-                       │                                           │
-                       ├─ Stage 1: bun builds tarballs             └─ e2e-smoke.sh [aws|eks|all]
-                       └─ Stage 2: node:22-slim + deploy tools
+Docker (build only)                          Host (deploy)
+───────────────────                          ─────────────
+Dockerfile.smoke-e2e                         Agent + skill
+  ├─ Stage 1: bun builds tarballs            cd examples/<name>
+  └─ Stage 2: npm install from .tgz          npm run deploy
+              npm run build                  npm run teardown
 ```
 
-**Stage 1** packs `@intentius/chant` and each lexicon into `.tgz` tarballs (same as the npm smoke test).
+**Docker** packs `@intentius/chant` and each lexicon into `.tgz` tarballs, then installs and builds each example from those tarballs — proving the published packages work in a clean environment.
 
-**Stage 2** installs deploy tools (AWS CLI, kubectl, Flyway CLI, tsx) and copies tarballs + example source. The actual tests run at `docker run` time via `e2e-smoke.sh`.
+**Host deployment** is driven by an AI agent using chant's built-in skills (e.g. `chant-eks`, `chant-k8s`). Each example README describes the deploy flow. The agent runs `npm run deploy` (and teardown) directly on the host with real cloud credentials.
 
-## Test groups
+## Examples
 
-### `aws` — AWS/GitLab CI examples
+| Example | Lexicons | Skill | What it deploys |
+|---------|----------|-------|-----------------|
+| `k8s-eks-microservice` | AWS + K8s | `chant-eks` | EKS cluster, K8s workloads, ALB, Route53 |
+| `k8s-aks-microservice` | Azure + K8s | `chant-k8s` | AKS cluster, K8s workloads, AGIC, Azure DNS |
+| `k8s-gke-microservice` | GCP + K8s | `chant-k8s` | GKE cluster, K8s workloads, GCE Ingress, Cloud DNS |
+| `gitlab-aws-alb-infra` | AWS + GitLab | `chant-gitlab-aws-alb-infra` | Shared ALB + VPC + ECS cluster via CloudFormation |
+| `gitlab-aws-alb-api` | AWS + GitLab | `chant-gitlab-aws-alb-api` | Fargate API service behind ALB |
+| `gitlab-aws-alb-ui` | AWS + GitLab | `chant-gitlab-aws-alb-ui` | Fargate UI service behind ALB |
+| `flyway-postgresql-gitlab-aws-rds` | AWS + Flyway + GitLab | `chant-flyway-gitlab-aws-rds` | RDS instance + Flyway migration via GitLab CI |
 
-Builds all four AWS/GitLab examples and optionally pushes them through a full GitLab CI pipeline:
+## Running an E2E test
 
-| Example | What it tests |
-|---------|---------------|
-| `gitlab-aws-alb-infra` | Shared ALB + VPC + ECS cluster via CloudFormation |
-| `gitlab-aws-alb-api` | Fargate API service behind ALB |
-| `gitlab-aws-alb-ui` | Fargate UI service behind ALB |
-| `flyway-postgresql-gitlab-aws-rds` | RDS instance + Flyway migration via GitLab CI |
+1. **Build in Docker** — the smoke test builds tarballs and verifies each example installs and compiles:
 
-**Build-only** always runs (verifies `chant build` + `npm install` from tarball). **Pipeline deploy** runs only when `GITLAB_TOKEN` is set — it creates a temporary GitLab project, pushes, waits for the pipeline, and verifies the CF stack.
+   ```bash
+   ./test/smoke.sh        # builds all examples from tarballs in Docker
+   ```
 
-### `eks` — EKS Kubernetes example
+2. **Deploy on host** — ask your agent to deploy, following the example README:
 
-| Example | What it tests |
-|---------|---------------|
-| `k8s-eks-microservice` | Full EKS cluster: CF stack → kubectl apply → pod rollout → teardown |
+   ```
+   Deploy the k8s-eks-microservice example to AWS. My domain is myapp.example.com.
+   ```
 
-This is the slowest test (~20 minutes for CF stack creation). It runs `npm run deploy` (which chains build → deploy-infra → configure-kubectl → apply → wait) then verifies pods are running before tearing down.
+   The agent invokes the appropriate skill and runs the example's npm scripts directly on the host.
 
-## Required environment variables
+3. **Teardown** — ask your agent to tear down, or run the example's teardown script:
 
-| Variable | Group | Required | Description |
-|----------|-------|----------|-------------|
-| `AWS_ACCESS_KEY_ID` | both | Yes* | AWS credentials |
-| `AWS_SECRET_ACCESS_KEY` | both | Yes* | AWS credentials |
-| `AWS_DEFAULT_REGION` | both | No | Defaults to `us-east-2` |
-| `GITLAB_TOKEN` | aws | No | Enables pipeline deploy (build-only without it) |
-| `GITLAB_GROUP` | aws | If token set | GitLab group for temporary projects |
-| `GITLAB_URL` | aws | No | Defaults to `https://gitlab.com` |
-| `EKS_DOMAIN` | eks | No | Defaults to `api.eks-microservice-demo.dev` |
+   ```
+   Tear down the k8s-eks-microservice stack.
+   ```
 
-\* Or mount `~/.aws` — the Docker container checks both.
+## Required tools
 
-## Running
+The host needs cloud CLIs and credentials for the examples you're deploying:
 
-```bash
-# Individual groups
-./test/smoke.sh e2e-aws
-./test/smoke.sh e2e-eks
-
-# All E2E tests
-./test/smoke.sh e2e-all
-```
-
-Or via justfile:
-
-```bash
-just smoke-e2e-aws
-just smoke-e2e-eks
-just smoke-e2e
-```
-
-<Aside type="note">
-The image is always built as `linux/amd64` because Flyway CLI has no ARM build. On Apple Silicon this runs under Rosetta transparently.
-</Aside>
+| Example group | Host requirements |
+|---------------|-------------------|
+| EKS | AWS CLI, kubectl, jq, AWS credentials with EKS permissions |
+| AKS | Azure CLI, kubectl, Azure credentials with AKS permissions |
+| GKE | gcloud CLI, kubectl, GCP credentials with GKE permissions |
+| GitLab + AWS | AWS CLI, AWS credentials, `GITLAB_TOKEN` + `GITLAB_GROUP` |
 
 ## Cleanup
 
-Every test registers its resources (CF stacks, GitLab projects, SSM parameters) in global arrays **before** creation. A `trap EXIT` handler runs `cleanup_all()` which tears down everything in reverse order, even if the test crashes mid-create.
-
-| Resource type | Cleanup method |
-|---------------|----------------|
-| EKS example | Runs the example's own `scripts/teardown.sh` |
-| CloudFormation stacks | `aws cloudformation delete-stack` (reverse order, then waits) |
-| SSM parameters | `aws ssm delete-parameter` |
-| GitLab projects | `DELETE /api/v4/projects/:id` |
+Each example provides its own teardown script (`npm run teardown` or equivalent). The skill guides the agent through cleanup in the correct order — e.g. for EKS, K8s resources are deleted before the CloudFormation stack to allow the ALB controller to clean up load balancers.
 
 ## Files
 
 | File | Purpose |
 |------|---------|
-| `test/smoke.sh` | Host-side entrypoint, builds Docker image and runs container |
-| `test/Dockerfile.smoke-e2e` | Two-stage Dockerfile: bun builder → node runner with deploy tools |
-| `test/e2e-smoke.sh` | Test harness that runs inside the container |
+| `test/smoke.sh` | Builds Docker image, installs and compiles examples from tarballs |
+| `test/Dockerfile.smoke-e2e` | Two-stage Dockerfile: bun builder → node runner |
+| `examples/<name>/README.md` | Deploy instructions for each example |
+| `examples/<name>/package.json` | npm scripts for build, deploy, teardown |
 
-## Adding a new E2E test
+## Adding a new E2E example
 
 1. Create a root example in `examples/<name>/` with working `npm run build` and `npm run deploy` scripts
-2. Add a test function in `test/e2e-smoke.sh` (follow `test_gitlab_example` or `test_k8s_eks_microservice` patterns)
-3. Register any cloud resources for cleanup **before** creating them
-4. Wire the function into the appropriate `run_*_group()` function
-5. If the example needs new tarballs, add the `bun pm pack` line in `Dockerfile.smoke-e2e`
+2. Add a corresponding skill in the relevant lexicon (see [Skills](/chant/lexicon-authoring/skills/))
+3. Write a README that describes the full deploy flow for the agent
+4. Ensure the Dockerfile builds and installs the example from tarballs
