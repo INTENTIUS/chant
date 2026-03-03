@@ -30,12 +30,14 @@ echo "==> Creating Config Connector GCP service account..."
 gcloud iam service-accounts create "$cc_sa_name" \
   --display-name "Config Connector SA" \
   --project "$project_id" 2>/dev/null || true
+# Wait for SA to propagate (eventual consistency)
+sleep 10
 
 echo "==> Granting Config Connector SA project editor + IAM admin roles..."
 for role in roles/editor roles/iam.securityAdmin roles/dns.admin; do
   gcloud projects add-iam-policy-binding "$project_id" \
     --member "serviceAccount:${cc_sa_email}" \
-    --role "$role" --condition=None --quiet
+    --role "$role" --quiet
 done
 
 echo "==> Binding Config Connector SA to K8s SA via Workload Identity..."

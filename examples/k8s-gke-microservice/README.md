@@ -198,6 +198,21 @@ This example includes GKE best-practice hardening:
 - **Resource quotas + LimitRange** — namespace-level resource quotas and per-container default limits prevent noisy neighbors
 - **Config Connector SA scoping** — Config Connector service account uses minimal IAM roles (editor, IAM admin, DNS admin)
 
+## Testing
+
+### Local build verification (no cloud account needed)
+```bash
+cp .env.example .env
+npm run build
+npm run lint
+```
+
+### Full E2E deployment
+Follow the **Deploy workflow** section above. This deploys real cloud infrastructure.
+
+### Docker smoke tests
+`./test/smoke.sh smoke-gke` runs the same build inside a clean Docker container to verify the package installs correctly. This is a tooling test, not a substitute for E2E deployment.
+
 ## Standalone usage
 
 Copy `package.standalone.json` to `package.json` and run `npm install`.

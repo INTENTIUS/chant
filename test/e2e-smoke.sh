@@ -410,9 +410,15 @@ test_k8s_gke_microservice() {
   # Register for cleanup safety net
   GKE_TEARDOWN_DIR="$(pwd)"
 
-  # npm run deploy = bootstrap -> build -> deploy-infra -> configure-kubectl
-  #                  -> load-outputs -> build:k8s -> apply -> wait -> status
-  echo "  Running npm run deploy (GKE cluster creation may take 10-15 minutes)..."
+  # Bootstrap creates GKE cluster + Config Connector (one-time)
+  echo "  Running npm run bootstrap (GKE cluster creation may take 10-15 minutes)..."
+  if ! npm run bootstrap 2>&1; then
+    fail "$name: npm run bootstrap"; return
+  fi
+
+  # deploy = build -> configure-kubectl -> deploy-infra -> load-outputs
+  #          -> build:k8s -> apply -> wait -> status
+  echo "  Running npm run deploy..."
   if npm run deploy 2>&1; then
     pass "$name: npm run deploy"
   else
@@ -444,6 +450,10 @@ run_gke_group() {
   echo "  GKE E2E tests"
   echo "========================================"
 
+  # Derive from gcloud CLI if not explicitly set
+  : "${GCP_PROJECT_ID:=$(gcloud config get-value project 2>/dev/null)}"
+  export GCP_PROJECT_ID
+
   require_env GCP_PROJECT_ID
 
   test_k8s_gke_microservice
@@ -465,8 +475,19 @@ test_k8s_aks_microservice() {
   # Register for cleanup safety net
   AKS_TEARDOWN_DIR="$(pwd)"
 
-  # npm run deploy = build -> deploy-infra -> configure-kubectl
-  #                  -> load-outputs -> build:k8s -> apply -> wait -> status
+  # Register required resource providers (idempotent, async)
+  echo "  Registering Azure resource providers..."
+  for provider in Microsoft.ContainerService Microsoft.Network Microsoft.ManagedIdentity \
+                  Microsoft.ContainerRegistry Microsoft.Authorization; do
+    az provider register --namespace "$provider" --wait 2>&1 || true
+  done
+
+  # Create resource group (idempotent)
+  echo "  Creating resource group $AZURE_RESOURCE_GROUP..."
+  az group create --name "$AZURE_RESOURCE_GROUP" --location eastus 2>&1
+
+  # deploy = build -> deploy-infra -> configure-kubectl
+  #          -> load-outputs -> build:k8s -> apply -> wait -> status
   echo "  Running npm run deploy (AKS cluster creation may take 10-15 minutes)..."
   if npm run deploy 2>&1; then
     pass "$name: npm run deploy"
@@ -498,6 +519,11 @@ run_aks_group() {
   echo "========================================"
   echo "  AKS E2E tests"
   echo "========================================"
+
+  # Derive from az CLI if not explicitly set
+  : "${AZURE_RESOURCE_GROUP:=aks-microservice-rg}"
+  : "${AZURE_SUBSCRIPTION_ID:=$(az account show --query id -o tsv 2>/dev/null)}"
+  export AZURE_RESOURCE_GROUP AZURE_SUBSCRIPTION_ID
 
   require_env AZURE_RESOURCE_GROUP AZURE_SUBSCRIPTION_ID
 

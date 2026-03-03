@@ -229,6 +229,21 @@ This example includes EKS best-practice hardening:
 - **Topology spread** — zone-based `topologySpreadConstraints` with `maxSkew: 1` prevents single-AZ concentration
 - **Metrics Server** — in-cluster metrics-server deployment enables HPA pod CPU/memory scaling
 
+## Testing
+
+### Local build verification (no cloud account needed)
+```bash
+cp .env.example .env
+npm run build
+npm run lint
+```
+
+### Full E2E deployment
+Follow the **Deploy to AWS** section above. This deploys real cloud infrastructure.
+
+### Docker smoke tests
+`./test/smoke.sh smoke-eks` runs the same build inside a clean Docker container to verify the package installs correctly. This is a tooling test, not a substitute for E2E deployment.
+
 ## Related examples
 
 - [gitlab-aws-alb-api](../gitlab-aws-alb-api/) — AWS + GitLab cross-lexicon

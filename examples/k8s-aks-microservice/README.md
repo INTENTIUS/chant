@@ -184,6 +184,21 @@ npm run teardown
 
 Deletes K8s workloads, then deletes the resource group (runs `az group delete --no-wait` in the background).
 
+## Testing
+
+### Local build verification (no cloud account needed)
+```bash
+cp .env.example .env
+npm run build
+npm run lint
+```
+
+### Full E2E deployment
+Follow the **Deploy workflow** section above. This deploys real cloud infrastructure.
+
+### Docker smoke tests
+`./test/smoke.sh smoke-aks` runs the same build inside a clean Docker container to verify the package installs correctly. This is a tooling test, not a substitute for E2E deployment.
+
 ## Standalone usage
 
 Copy `package.standalone.json` to `package.json` and run `npm install`.

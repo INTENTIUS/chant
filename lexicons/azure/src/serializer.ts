@@ -71,15 +71,33 @@ const RESOURCE_LEVEL_FIELDS = new Set([
 /**
  * Load apiVersion for a resource type from the lexicon registry.
  */
+function resolveDir(): string {
+  const { dirname } = require("path");
+  // Bun / ESM
+  try {
+    const { fileURLToPath } = require("url");
+    return dirname(fileURLToPath(import.meta.url));
+  } catch {}
+  // CJS / tsx fallback
+  if (typeof __dirname !== "undefined") return __dirname;
+  return dirname(require.resolve("./serializer"));
+}
+
 function loadApiVersions(): Map<string, string> {
   const map = new Map<string, string>();
   try {
     const { readFileSync } = require("fs");
-    const { join, dirname } = require("path");
-    const { fileURLToPath } = require("url");
-    const dir = dirname(fileURLToPath(import.meta.url));
-    const lexiconPath = join(dir, "generated", "lexicon-azure.json");
-    const content = readFileSync(lexiconPath, "utf-8");
+    const { join } = require("path");
+    const dir = resolveDir();
+    // Try generated/ (dev) first, then dist/meta.json (installed package)
+    let content: string | undefined;
+    for (const candidate of [
+      join(dir, "generated", "lexicon-azure.json"),
+      join(dir, "..", "dist", "meta.json"),
+    ]) {
+      try { content = readFileSync(candidate, "utf-8"); break; } catch {}
+    }
+    if (!content) return map;
     const data = JSON.parse(content) as Record<string, { resourceType: string; apiVersion?: string }>;
     for (const entry of Object.values(data)) {
       if (entry.apiVersion && entry.resourceType) {

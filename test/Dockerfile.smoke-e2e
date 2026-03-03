@@ -67,13 +67,15 @@ RUN curl -fsSL "https://dl.k8s.io/release/$(curl -fsSL https://dl.k8s.io/release
 RUN curl -fsSL "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o /tmp/awscliv2.zip && \
     unzip -q /tmp/awscliv2.zip -d /tmp && /tmp/aws/install && rm -rf /tmp/aws /tmp/awscliv2.zip
 
-# gcloud CLI
+# gcloud CLI + GKE auth plugin
 RUN curl -fsSL https://dl.google.com/dl/cloudsdk/channels/rapid/downloads/google-cloud-cli-linux-x86_64.tar.gz \
       -o /tmp/gcloud.tar.gz && \
     tar xzf /tmp/gcloud.tar.gz -C /opt && \
     /opt/google-cloud-sdk/install.sh --quiet --path-update=true && \
+    /opt/google-cloud-sdk/bin/gcloud components install gke-gcloud-auth-plugin --quiet && \
     rm /tmp/gcloud.tar.gz
 ENV PATH="/opt/google-cloud-sdk/bin:$PATH"
+ENV USE_GKE_GCLOUD_AUTH_PLUGIN=True
 
 # Azure CLI
 RUN curl -fsSL https://aka.ms/InstallAzureCLIDeb | bash
