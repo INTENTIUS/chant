@@ -51,8 +51,11 @@ export default defineConfig({
 					items: [
 						{ label: 'GitLab CI + AWS ALB', slug: 'tutorials/gitlab-aws-alb' },
 						{ label: 'AWS EKS + Kubernetes', slug: 'tutorials/eks-kubernetes' },
-					{ label: 'Azure AKS + Kubernetes', slug: 'tutorials/aks-kubernetes' },
-					{ label: 'GCP GKE + Kubernetes', slug: 'tutorials/gke-kubernetes' },
+						{ label: 'EKS Composites', link: '/lexicons/k8s/eks-composites/' },
+						{ label: 'Azure AKS + Kubernetes', slug: 'tutorials/aks-kubernetes' },
+						{ label: 'AKS Composites', link: '/lexicons/k8s/aks-composites/' },
+						{ label: 'GCP GKE + Kubernetes', slug: 'tutorials/gke-kubernetes' },
+						{ label: 'GKE Composites', link: '/lexicons/k8s/gke-composites/' },
 					],
 				},
 				{
@@ -62,7 +65,16 @@ export default defineConfig({
 						{ label: 'AWS CloudFormation', link: '/lexicons/aws/' },
 						{ label: 'Azure ARM', link: '/lexicons/azure/' },
 						{ label: 'GCP Config Connector', link: '/lexicons/gcp/' },
-						{ label: 'Kubernetes', link: '/lexicons/k8s/' },
+						{
+						label: 'Kubernetes',
+						items: [
+							{ label: 'Overview', link: '/lexicons/k8s/' },
+							{ label: 'Generic Composites', link: '/lexicons/k8s/composite-examples/' },
+							{ label: 'EKS Composites', link: '/lexicons/k8s/eks-composites/' },
+							{ label: 'AKS Composites', link: '/lexicons/k8s/aks-composites/' },
+							{ label: 'GKE Composites', link: '/lexicons/k8s/gke-composites/' },
+						],
+					},
 						{ label: 'Helm Charts', link: '/lexicons/helm/' },
 						{ label: 'GitLab CI/CD', link: '/lexicons/gitlab/' },
 						{ label: 'Flyway', link: '/lexicons/flyway/' },
