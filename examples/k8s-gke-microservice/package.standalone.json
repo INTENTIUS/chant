@@ -21,9 +21,9 @@
     "teardown": "bash scripts/teardown.sh"
   },
   "dependencies": {
-    "@intentius/chant": "^0.0.14",
-    "@intentius/chant-lexicon-gcp": "^0.0.14",
-    "@intentius/chant-lexicon-k8s": "^0.0.14"
+    "@intentius/chant": "^0.0.16",
+    "@intentius/chant-lexicon-gcp": "^0.0.16",
+    "@intentius/chant-lexicon-k8s": "^0.0.16"
   },
   "devDependencies": {
     "typescript": "^5.0.0"
