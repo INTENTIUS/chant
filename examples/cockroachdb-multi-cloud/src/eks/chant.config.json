@@ -1,0 +1,13 @@
+{
+  "extends": ["@intentius/chant/lint/presets/strict"],
+  "rules": {
+    "COR001": "off",
+    "COR004": "off",
+    "COR009": "off",
+    "COR013": "off",
+    "EVL001": "off",
+    "EVL004": "off",
+    "WAW001": "off",
+    "WK8001": "off"
+  }
+}

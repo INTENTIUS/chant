@@ -71,3 +71,5 @@ export { GkeExternalDnsAgent } from "./gke-external-dns-agent";
 export type { GkeExternalDnsAgentProps, GkeExternalDnsAgentResult } from "./gke-external-dns-agent";
 export { AksExternalDnsAgent } from "./aks-external-dns-agent";
 export type { AksExternalDnsAgentProps, AksExternalDnsAgentResult } from "./aks-external-dns-agent";
+export { CockroachDbCluster } from "./cockroachdb-cluster";
+export type { CockroachDbClusterProps, CockroachDbClusterResult } from "./cockroachdb-cluster";

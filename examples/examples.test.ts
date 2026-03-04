@@ -539,3 +539,242 @@ describe("k8s-aks-microservice example", () => {
     expect(errors).toEqual([]);
   });
 });
+
+// ── CockroachDB Multi-Cloud (EKS + AKS + GKE) ──────────────────────
+
+describe("cockroachdb-multi-cloud EKS stack", () => {
+  const srcDir = resolve(import.meta.dir, "cockroachdb-multi-cloud", "src", "eks");
+
+  test("EKS passes lint", async () => {
+    const result = await lintCommand({ path: srcDir, format: "stylish", fix: true });
+    if (!result.success || result.errorCount > 0 || result.warningCount > 0) {
+      console.log(result.output);
+    }
+    expect(result.success).toBe(true);
+    expect(result.errorCount).toBe(0);
+    expect(result.warningCount).toBe(0);
+  });
+
+  test("EKS combined build succeeds with both serializers", async () => {
+    const result = await build(srcDir, [awsSerializer, k8sSerializer]);
+    expect(result.errors).toHaveLength(0);
+    expect(result.outputs.has("aws")).toBe(true);
+    expect(result.outputs.has("k8s")).toBe(true);
+  });
+
+  test("EKS CloudFormation template has expected resource types", async () => {
+    const result = await build(srcDir, [awsSerializer]);
+    expect(result.errors).toHaveLength(0);
+    const parsed = JSON.parse(result.outputs.get("aws")!);
+    const types = Object.values(parsed.Resources).map((r: any) => r.Type);
+    expect(types).toContain("AWS::EKS::Cluster");
+    expect(types).toContain("AWS::EKS::Nodegroup");
+    expect(types).toContain("AWS::EC2::VPNGateway");
+    expect(types).toContain("AWS::EC2::VPNConnection");
+    expect(types).toContain("AWS::Route53::HostedZone");
+  });
+
+  test("EKS K8s output has CockroachDB resources", async () => {
+    const result = await build(srcDir, [k8sSerializer]);
+    expect(result.errors).toHaveLength(0);
+    const docs = parseK8sDocs(result.outputs.get("k8s")!);
+    const kinds = docs.map((d) => d.kind);
+    expect(kinds).toContain("StatefulSet");
+    expect(kinds.filter((k) => k === "Service")).toHaveLength(2);
+    expect(kinds).toContain("ServiceAccount");
+    expect(kinds).toContain("PodDisruptionBudget");
+    expect(kinds).toContain("Role");
+    expect(kinds).toContain("ClusterRole");
+    expect(kinds.filter((k) => k === "Job")).toHaveLength(2);
+    expect(kinds).toContain("Namespace");
+    expect(kinds).toContain("StorageClass");
+    expect(kinds).toContain("Ingress");
+    expect(kinds).toContain("NetworkPolicy");
+    expect(kinds).toContain("ConfigMap");
+  });
+
+  test("EKS StatefulSet has correct config", async () => {
+    const result = await build(srcDir, [k8sSerializer]);
+    const docs = parseK8sDocs(result.outputs.get("k8s")!);
+    const sts = docs.find((d) => d.kind === "StatefulSet");
+    expect(sts).toBeDefined();
+    expect(sts!.doc).toContain("replicas: 3");
+    expect(sts!.doc).toContain("containerPort: 26257");
+    expect(sts!.doc).toContain("containerPort: 8080");
+    expect(sts!.doc).toContain("storage:");
+    expect(sts!.doc).toContain("100Gi");
+  });
+
+  test("EKS join addresses reference all 3 clouds", async () => {
+    const result = await build(srcDir, [k8sSerializer]);
+    const docs = parseK8sDocs(result.outputs.get("k8s")!);
+    const sts = docs.find((d) => d.kind === "StatefulSet");
+    expect(sts).toBeDefined();
+    expect(sts!.doc).toContain("crdb-eks.svc.cluster.local");
+    expect(sts!.doc).toContain("crdb-aks.svc.cluster.local");
+    expect(sts!.doc).toContain("crdb-gke.svc.cluster.local");
+  });
+
+  test("EKS resources are in crdb-eks namespace", async () => {
+    const result = await build(srcDir, [k8sSerializer]);
+    const docs = parseK8sDocs(result.outputs.get("k8s")!);
+    const sts = docs.find((d) => d.kind === "StatefulSet");
+    expect(sts).toBeDefined();
+    expect(sts!.doc).toContain("namespace: crdb-eks");
+  });
+
+  test("EKS all resources have managed-by: chant label", async () => {
+    const result = await build(srcDir, [k8sSerializer]);
+    const docs = parseK8sDocs(result.outputs.get("k8s")!);
+    for (const doc of docs) {
+      expect(doc.doc).toContain("app.kubernetes.io/managed-by: chant");
+    }
+  });
+});
+
+describe("cockroachdb-multi-cloud AKS stack", () => {
+  const srcDir = resolve(import.meta.dir, "cockroachdb-multi-cloud", "src", "aks");
+
+  test("AKS passes lint", async () => {
+    const result = await lintCommand({ path: srcDir, format: "stylish", fix: true });
+    if (!result.success || result.errorCount > 0 || result.warningCount > 0) {
+      console.log(result.output);
+    }
+    expect(result.success).toBe(true);
+    expect(result.errorCount).toBe(0);
+    expect(result.warningCount).toBe(0);
+  });
+
+  test("AKS combined build succeeds with both serializers", async () => {
+    const result = await build(srcDir, [azureSerializer, k8sSerializer]);
+    expect(result.errors).toHaveLength(0);
+    expect(result.outputs.has("azure")).toBe(true);
+    expect(result.outputs.has("k8s")).toBe(true);
+  });
+
+  test("AKS ARM template has expected resource types", async () => {
+    const result = await build(srcDir, [azureSerializer]);
+    expect(result.errors).toHaveLength(0);
+    const parsed = JSON.parse(result.outputs.get("azure")!);
+    const types = parsed.resources.map((r: any) => r.type);
+    expect(types).toContain("Microsoft.ContainerService/managedClusters");
+    expect(types).toContain("Microsoft.Network/virtualNetworks");
+    expect(types).toContain("Microsoft.Network/virtualNetworkGateways");
+    expect(types).toContain("Microsoft.Network/connections");
+    expect(types).toContain("Microsoft.Network/dnsZones");
+  });
+
+  test("AKS K8s output has CockroachDB resources", async () => {
+    const result = await build(srcDir, [k8sSerializer]);
+    expect(result.errors).toHaveLength(0);
+    const docs = parseK8sDocs(result.outputs.get("k8s")!);
+    const kinds = docs.map((d) => d.kind);
+    expect(kinds).toContain("StatefulSet");
+    expect(kinds.filter((k) => k === "Service").length).toBeGreaterThanOrEqual(2);
+    expect(kinds).toContain("PodDisruptionBudget");
+    expect(kinds.filter((k) => k === "Job").length).toBeGreaterThanOrEqual(2);
+    expect(kinds).toContain("Namespace");
+    expect(kinds).toContain("StorageClass");
+    expect(kinds).toContain("Ingress");
+    expect(kinds).toContain("NetworkPolicy");
+    expect(kinds).toContain("ConfigMap");
+  });
+
+  test("AKS all resources have managed-by: chant label", async () => {
+    const result = await build(srcDir, [k8sSerializer]);
+    const docs = parseK8sDocs(result.outputs.get("k8s")!);
+    for (const doc of docs) {
+      expect(doc.doc).toContain("app.kubernetes.io/managed-by: chant");
+    }
+  });
+
+  test("AKS join addresses reference all 3 clouds", async () => {
+    const result = await build(srcDir, [k8sSerializer]);
+    const docs = parseK8sDocs(result.outputs.get("k8s")!);
+    const sts = docs.find((d) => d.kind === "StatefulSet");
+    expect(sts).toBeDefined();
+    expect(sts!.doc).toContain("crdb-eks.svc.cluster.local");
+    expect(sts!.doc).toContain("crdb-aks.svc.cluster.local");
+    expect(sts!.doc).toContain("crdb-gke.svc.cluster.local");
+  });
+
+  test("AKS resources are in crdb-aks namespace", async () => {
+    const result = await build(srcDir, [k8sSerializer]);
+    const docs = parseK8sDocs(result.outputs.get("k8s")!);
+    const sts = docs.find((d) => d.kind === "StatefulSet");
+    expect(sts).toBeDefined();
+    expect(sts!.doc).toContain("namespace: crdb-aks");
+  });
+});
+
+describe("cockroachdb-multi-cloud GKE stack", () => {
+  const srcDir = resolve(import.meta.dir, "cockroachdb-multi-cloud", "src", "gke");
+
+  test("GKE passes lint", async () => {
+    const result = await lintCommand({ path: srcDir, format: "stylish", fix: true });
+    if (!result.success || result.errorCount > 0 || result.warningCount > 0) {
+      console.log(result.output);
+    }
+    expect(result.success).toBe(true);
+    expect(result.errorCount).toBe(0);
+    expect(result.warningCount).toBe(0);
+  });
+
+  test("GKE combined build succeeds with both serializers", async () => {
+    const result = await build(srcDir, [gcpSerializer, k8sSerializer]);
+    expect(result.errors).toHaveLength(0);
+    expect(result.outputs.has("gcp")).toBe(true);
+    expect(result.outputs.has("k8s")).toBe(true);
+  });
+
+  test("GKE Config Connector output has expected resources", async () => {
+    const result = await build(srcDir, [gcpSerializer]);
+    expect(result.errors).toHaveLength(0);
+    const output = result.outputs.get("gcp")!;
+    expect(output).toContain("DNSManagedZone");
+    expect(output).toContain("gke-cockroachdb-dns");
+    expect(output).toContain("roles/dns.admin");
+  });
+
+  test("GKE K8s output has CockroachDB resources", async () => {
+    const result = await build(srcDir, [k8sSerializer]);
+    expect(result.errors).toHaveLength(0);
+    const docs = parseK8sDocs(result.outputs.get("k8s")!);
+    const kinds = docs.map((d) => d.kind);
+    expect(kinds).toContain("StatefulSet");
+    expect(kinds.filter((k) => k === "Service").length).toBeGreaterThanOrEqual(2);
+    expect(kinds).toContain("PodDisruptionBudget");
+    expect(kinds.filter((k) => k === "Job").length).toBeGreaterThanOrEqual(2);
+    expect(kinds).toContain("Namespace");
+    expect(kinds).toContain("StorageClass");
+    expect(kinds).toContain("Ingress");
+    expect(kinds).toContain("NetworkPolicy");
+    expect(kinds).toContain("ConfigMap");
+  });
+
+  test("GKE all resources have managed-by: chant label", async () => {
+    const result = await build(srcDir, [k8sSerializer]);
+    const docs = parseK8sDocs(result.outputs.get("k8s")!);
+    for (const doc of docs) {
+      expect(doc.doc).toContain("app.kubernetes.io/managed-by: chant");
+    }
+  });
+
+  test("GKE join addresses reference all 3 clouds", async () => {
+    const result = await build(srcDir, [k8sSerializer]);
+    const docs = parseK8sDocs(result.outputs.get("k8s")!);
+    const sts = docs.find((d) => d.kind === "StatefulSet");
+    expect(sts).toBeDefined();
+    expect(sts!.doc).toContain("crdb-eks.svc.cluster.local");
+    expect(sts!.doc).toContain("crdb-aks.svc.cluster.local");
+    expect(sts!.doc).toContain("crdb-gke.svc.cluster.local");
+  });
+
+  test("GKE resources are in crdb-gke namespace", async () => {
+    const result = await build(srcDir, [k8sSerializer]);
+    const docs = parseK8sDocs(result.outputs.get("k8s")!);
+    const sts = docs.find((d) => d.kind === "StatefulSet");
+    expect(sts).toBeDefined();
+    expect(sts!.doc).toContain("namespace: crdb-gke");
+  });
+});

@@ -3050,3 +3050,170 @@ describe("AksExternalDnsAgent", () => {
     expect(container.securityContext.runAsUser).toBe(65534);
   });
 });
+
+// ── CockroachDbCluster ──────────────────────────────────────────────
+
+describe("CockroachDbCluster", () => {
+  const { CockroachDbCluster } = require("./cockroachdb-cluster");
+
+  const minProps = { name: "cockroachdb" };
+
+  test("returns all expected resources", () => {
+    const result = CockroachDbCluster(minProps);
+    expect(result.serviceAccount).toBeDefined();
+    expect(result.role).toBeDefined();
+    expect(result.roleBinding).toBeDefined();
+    expect(result.clusterRole).toBeDefined();
+    expect(result.clusterRoleBinding).toBeDefined();
+    expect(result.publicService).toBeDefined();
+    expect(result.headlessService).toBeDefined();
+    expect(result.pdb).toBeDefined();
+    expect(result.statefulSet).toBeDefined();
+    expect(result.initJob).toBeDefined();
+    expect(result.certGenJob).toBeDefined();
+  });
+
+  test("default replicas is 3", () => {
+    const result = CockroachDbCluster(minProps);
+    const spec = result.statefulSet.spec as any;
+    expect(spec.replicas).toBe(3);
+  });
+
+  test("default image is cockroachdb/cockroach:v24.3.0", () => {
+    const result = CockroachDbCluster(minProps);
+    const container = (result.statefulSet.spec as any).template.spec.containers[0];
+    expect(container.image).toBe("cockroachdb/cockroach:v24.3.0");
+  });
+
+  test("StatefulSet has correct ports (26257+8080)", () => {
+    const result = CockroachDbCluster(minProps);
+    const container = (result.statefulSet.spec as any).template.spec.containers[0];
+    const ports = container.ports.map((p: any) => p.containerPort);
+    expect(ports).toContain(26257);
+    expect(ports).toContain(8080);
+  });
+
+  test("StatefulSet has PVC with default 100Gi storage", () => {
+    const result = CockroachDbCluster(minProps);
+    const vct = (result.statefulSet.spec as any).volumeClaimTemplates[0];
+    expect(vct.spec.resources.requests.storage).toBe("100Gi");
+    expect(vct.spec.accessModes).toEqual(["ReadWriteOnce"]);
+  });
+
+  test("headless service has clusterIP None and publishNotReadyAddresses", () => {
+    const result = CockroachDbCluster(minProps);
+    const spec = result.headlessService.spec as any;
+    expect(spec.clusterIP).toBe("None");
+    expect(spec.publishNotReadyAddresses).toBe(true);
+  });
+
+  test("public service has ClusterIP type with both ports", () => {
+    const result = CockroachDbCluster(minProps);
+    const spec = result.publicService.spec as any;
+    expect(spec.type).toBe("ClusterIP");
+    const ports = spec.ports.map((p: any) => p.port);
+    expect(ports).toContain(26257);
+    expect(ports).toContain(8080);
+  });
+
+  test("PDB has maxUnavailable 1", () => {
+    const result = CockroachDbCluster(minProps);
+    const spec = result.pdb.spec as any;
+    expect(spec.maxUnavailable).toBe(1);
+  });
+
+  test("StatefulSet has pod anti-affinity", () => {
+    const result = CockroachDbCluster(minProps);
+    const affinity = (result.statefulSet.spec as any).template.spec.affinity;
+    expect(affinity.podAntiAffinity).toBeDefined();
+  });
+
+  test("props flow through (replicas, image, storage)", () => {
+    const result = CockroachDbCluster({
+      name: "crdb",
+      replicas: 5,
+      image: "cockroachdb/cockroach:v23.2.0",
+      storageSize: "200Gi",
+    });
+    const spec = result.statefulSet.spec as any;
+    expect(spec.replicas).toBe(5);
+    expect(spec.template.spec.containers[0].image).toBe("cockroachdb/cockroach:v23.2.0");
+    expect(spec.volumeClaimTemplates[0].spec.resources.requests.storage).toBe("200Gi");
+  });
+
+  test("joinAddresses appear in container args", () => {
+    const joins = ["crdb-0.crdb.ns.svc.cluster.local", "crdb-1.crdb.ns.svc.cluster.local"];
+    const result = CockroachDbCluster({ name: "crdb", joinAddresses: joins });
+    const args = (result.statefulSet.spec as any).template.spec.containers[0].args as string[];
+    const joinArg = args.find((a: string) => a.startsWith("--join="));
+    expect(joinArg).toBeDefined();
+    expect(joinArg).toContain("crdb-0.crdb.ns.svc.cluster.local");
+    expect(joinArg).toContain("crdb-1.crdb.ns.svc.cluster.local");
+  });
+
+  test("locality appears in container args when set", () => {
+    const result = CockroachDbCluster({ name: "crdb", locality: "cloud=aws,region=us-east-1" });
+    const args = (result.statefulSet.spec as any).template.spec.containers[0].args as string[];
+    expect(args).toContain("--locality=cloud=aws,region=us-east-1");
+  });
+
+  test("namespace is set on all namespaced resources", () => {
+    const result = CockroachDbCluster({ name: "crdb", namespace: "crdb-eks" });
+    for (const key of ["serviceAccount", "role", "roleBinding", "publicService", "headlessService", "pdb", "statefulSet", "initJob", "certGenJob"] as const) {
+      expect((result[key].metadata as any).namespace).toBe("crdb-eks");
+    }
+  });
+
+  test("cluster-scoped resources do not have namespace", () => {
+    const result = CockroachDbCluster({ name: "crdb", namespace: "crdb-eks" });
+    expect((result.clusterRole.metadata as any).namespace).toBeUndefined();
+    expect((result.clusterRoleBinding.metadata as any).namespace).toBeUndefined();
+  });
+
+  test("includes common labels", () => {
+    const result = CockroachDbCluster(minProps);
+    const meta = result.statefulSet.metadata as any;
+    expect(meta.labels["app.kubernetes.io/name"]).toBe("cockroachdb");
+    expect(meta.labels["app.kubernetes.io/managed-by"]).toBe("chant");
+  });
+
+  test("secure mode mounts certs volume", () => {
+    const result = CockroachDbCluster({ name: "crdb", secure: true });
+    const spec = (result.statefulSet.spec as any).template.spec;
+    expect(spec.volumes).toBeDefined();
+    const certsVol = spec.volumes.find((v: any) => v.name === "certs");
+    expect(certsVol).toBeDefined();
+    expect(certsVol.secret.secretName).toBe("crdb-node-certs");
+  });
+
+  test("insecure mode omits certs volume", () => {
+    const result = CockroachDbCluster({ name: "crdb", secure: false });
+    const spec = (result.statefulSet.spec as any).template.spec;
+    expect(spec.volumes).toBeUndefined();
+    const args = spec.containers[0].args as string[];
+    expect(args).toContain("--insecure");
+  });
+
+  test("storageClassName is set when provided", () => {
+    const result = CockroachDbCluster({ name: "crdb", storageClassName: "gp3-encrypted" });
+    const vct = (result.statefulSet.spec as any).volumeClaimTemplates[0];
+    expect(vct.spec.storageClassName).toBe("gp3-encrypted");
+  });
+
+  test("init job references correct host", () => {
+    const result = CockroachDbCluster({ name: "crdb" });
+    const container = (result.initJob.spec as any).template.spec.containers[0];
+    expect(container.args).toContain("--host=crdb-0.crdb");
+  });
+
+  test("StatefulSet uses Parallel podManagementPolicy", () => {
+    const result = CockroachDbCluster(minProps);
+    expect((result.statefulSet.spec as any).podManagementPolicy).toBe("Parallel");
+  });
+
+  test("cert-gen job uses same image as StatefulSet", () => {
+    const result = CockroachDbCluster({ name: "crdb", image: "cockroachdb/cockroach:v23.2.0" });
+    const container = (result.certGenJob.spec as any).template.spec.containers[0];
+    expect(container.image).toBe("cockroachdb/cockroach:v23.2.0");
+  });
+});
