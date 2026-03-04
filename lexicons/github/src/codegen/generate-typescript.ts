@@ -107,6 +107,21 @@ export function generateTypeScriptDeclarations(
 function staticTypeScript(): string {
   const lines: string[] = [];
 
+  // Inline Expression interface so dist/types/index.d.ts is self-contained
+  lines.push("// --- Expression type (inlined for portability) ---");
+  lines.push("");
+  lines.push("export declare class Expression {");
+  lines.push("  constructor(raw: string);");
+  lines.push("  toString(): string;");
+  lines.push("  valueOf(): string;");
+  lines.push("  eq(value: string | Expression): Expression;");
+  lines.push("  ne(value: string | Expression): Expression;");
+  lines.push("  and(other: Expression): Expression;");
+  lines.push("  or(other: Expression): Expression;");
+  lines.push("  not(): Expression;");
+  lines.push("}");
+
+  lines.push("");
   lines.push("// --- GitHub Context Variables ---");
   lines.push("");
   lines.push("export declare const GitHub: {");
@@ -118,7 +133,7 @@ function staticTypeScript(): string {
     "ServerUrl", "ApiUrl", "GraphqlUrl", "Action", "ActionPath",
   ];
   for (const v of ghVars) {
-    lines.push(`  readonly ${v}: import("./expression").Expression;`);
+    lines.push(`  readonly ${v}: Expression;`);
   }
   lines.push("};");
 
@@ -126,7 +141,7 @@ function staticTypeScript(): string {
   lines.push("export declare const Runner: {");
   const runnerVars = ["Os", "Arch", "Name", "Temp", "ToolCache"];
   for (const v of runnerVars) {
-    lines.push(`  readonly ${v}: import("./expression").Expression;`);
+    lines.push(`  readonly ${v}: Expression;`);
   }
   lines.push("};");
 
