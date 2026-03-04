@@ -18,7 +18,7 @@ npm install --save-dev @intentius/chant-lexicon-gitlab
 ```typescript title="quickstart.ts"
 import { Job, Image, Cache, Artifacts, CI } from "@intentius/chant-lexicon-gitlab";
 
-export const test = new Job({
+export const testJob = new Job({
   stage: "test",
   image: new Image({ name: "node:20" }),
   cache: new Cache({ key: CI.CommitRef, paths: ["node_modules/"] }),
@@ -44,7 +44,7 @@ The lexicon provides **3 resources** (Job, Workflow, Default), **16 property typ
 | Pseudo-parameters | 0 |
 | Lint rules | 10 |
 
-**Lexicon version:** 0.0.14  
+**Lexicon version:** 0.0.16  
 **Namespace:** `GitLab`
 
 - [Pipeline Concepts](./pipeline-concepts)

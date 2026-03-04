@@ -1134,6 +1134,16 @@ The lexicon also provides MCP (Model Context Protocol) tools and resources:
       },
     ],
     basePath: "/chant/lexicons/k8s/",
+    sidebarExtra: [
+      {
+        label: "Vendor Composites",
+        items: [
+          { label: "EKS Composites", slug: "eks-composites" },
+          { label: "AKS Composites", slug: "aks-composites" },
+          { label: "GKE Composites", slug: "gke-composites" },
+        ],
+      },
+    ],
   };
 
   const result = await docsPipeline(config);

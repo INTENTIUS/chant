@@ -129,14 +129,6 @@ const { daemonSet, serviceAccount, clusterRole, clusterRoleBinding, configMap } 
 });
 ```
 
-## Vendor-specific composites
-
-The composites above are cloud-agnostic. For vendor-specific integrations, see:
-
-- **[EKS Composites](./eks-composites)** — IRSA, ALB Ingress, EBS/EFS storage, CloudWatch, ADOT
-- **[AKS Composites](./aks-composites)** — Workload Identity, AGIC Ingress, Azure Disk/Files, Azure Monitor
-- **[GKE Composites](./gke-composites)** — Workload Identity, GCE Ingress, Gateway API, PD/Filestore, Cloud Logging, Cloud Trace
-
 ## Deploying composites
 
 Composites produce plain prop objects. To deploy them, write each resource to a `.k8s.ts` file then use the standard chant build → kubectl apply workflow.

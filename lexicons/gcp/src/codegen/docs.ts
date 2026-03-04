@@ -807,6 +807,9 @@ The \`chant-gcp\` skill covers:
 | \`examples/basic-bucket\` | Example StorageBucket code |`,
       },
     ],
+    sidebarExtra: [
+      { label: "Deploying to GKE", slug: "gke-kubernetes" },
+    ],
   };
 
   const result = docsPipeline(config);

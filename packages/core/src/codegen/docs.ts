@@ -46,6 +46,8 @@ export interface DocsConfig {
   basePath?: string;
   /** Root directory for resolving {{file:...}} markers in extra page content */
   examplesDir?: string;
+  /** Extra sidebar entries appended after extraPages (supports Starlight groups) */
+  sidebarExtra?: Array<Record<string, unknown>>;
 }
 
 export interface DocsResult {
@@ -285,8 +287,12 @@ export function writeDocsSite(config: DocsConfig, result: DocsResult): void {
   const outDir = config.outDir;
   const contentDir = join(outDir, "src", "content", "docs");
 
-  // Clear stale content and Astro caches so changes are picked up on next build
-  rmSync(contentDir, { recursive: true, force: true });
+  // Clear stale generated content and Astro caches so changes are picked up on next build.
+  // Only remove files that will be regenerated — preserve hand-written pages.
+  for (const filename of result.pages.keys()) {
+    const filePath = join(contentDir, filename);
+    rmSync(filePath, { force: true });
+  }
   rmSync(join(outDir, ".astro"), { recursive: true, force: true });
   rmSync(join(outDir, "node_modules", ".astro"), { recursive: true, force: true });
 
@@ -409,6 +415,11 @@ function buildSidebar(
 
   if (!suppress.has("serialization") && !extraSlugs.has("serialization") && result.pages.has("serialization.mdx")) {
     items.push({ label: "Serialization", slug: "serialization" });
+  }
+
+  // Append raw sidebar entries (supports groups and nested items)
+  if (config.sidebarExtra) {
+    items.push(...config.sidebarExtra);
   }
 
   return items;

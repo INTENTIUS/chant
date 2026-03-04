@@ -37,14 +37,6 @@ export default defineConfig({
                   "slug": "composite-examples"
             },
             {
-                  label: 'Vendor Composites',
-                  items: [
-                        { label: 'EKS Composites', slug: 'eks-composites' },
-                        { label: 'AKS Composites', slug: 'aks-composites' },
-                        { label: 'GKE Composites', slug: 'gke-composites' },
-                  ],
-            },
-            {
                   "label": "Operational Playbook",
                   "slug": "operational-playbook"
             },
@@ -63,6 +55,23 @@ export default defineConfig({
             {
                   "label": "Serialization",
                   "slug": "serialization"
+            },
+            {
+                  "label": "Vendor Composites",
+                  "items": [
+                        {
+                              "label": "EKS Composites",
+                              "slug": "eks-composites"
+                        },
+                        {
+                              "label": "AKS Composites",
+                              "slug": "aks-composites"
+                        },
+                        {
+                              "label": "GKE Composites",
+                              "slug": "gke-composites"
+                        }
+                  ]
             }
       ],
     }),

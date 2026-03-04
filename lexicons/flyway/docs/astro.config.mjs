@@ -17,10 +17,6 @@ export default defineConfig({
                   "slug": "index"
             },
             {
-                  "label": "Getting Started",
-                  "slug": "getting-started"
-            },
-            {
                   "label": "Flyway Concepts",
                   "slug": "flyway-concepts"
             },
@@ -35,6 +31,10 @@ export default defineConfig({
             {
                   "label": "Composites",
                   "slug": "composites"
+            },
+            {
+                  "label": "Getting Started",
+                  "slug": "getting-started"
             },
             {
                   "label": "Importing TOML",

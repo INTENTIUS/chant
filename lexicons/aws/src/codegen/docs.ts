@@ -1107,6 +1107,9 @@ The lexicon also provides MCP (Model Context Protocol) tools and resources that 
 | \`examples/basic-stack\` | Example stack with S3 bucket and IAM role |`,
       },
     ],
+    sidebarExtra: [
+      { label: "Deploying to EKS", slug: "eks-kubernetes" },
+    ],
   };
 
   log("Generating AWS documentation...");

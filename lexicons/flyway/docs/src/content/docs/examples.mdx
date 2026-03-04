@@ -32,7 +32,7 @@ export const config = new FlywayConfig({
 });
 
 export const dev = new Environment({
-  displayName: "dev",
+  name: "dev",
   url: "jdbc:postgresql://localhost:5432/basic_app_dev",
   schemas: ["public"],
   provisioner: "clean",
@@ -56,12 +56,10 @@ const result = DesktopProject({
   shadowUrl: "jdbc:postgresql://localhost:5432/inventory_shadow",
   schemas: ["public", "inventory"],
   environments: [
-    { name: "test", url: "jdbc:postgresql://test-db.internal:5432/inventory" },
-    { name: "prod", url: "jdbc:postgresql://prod-db.internal:5432/inventory" },
+    { name: "test", url: "jdbc:postgresql://test:5432/db" },
+    { name: "prod", url: "jdbc:postgresql://prod:5432/db" },
   ],
   filterFile: "./Filter.scpf",
-  schemaModelLocation: "./schema-model",
-  undoScripts: true,
 });
 
 export const project = new FlywayProject(result.project);
@@ -70,16 +68,12 @@ export const desktop = new FlywayDesktopConfig(result.desktop);
 export const compare = new RedgateCompareConfig(result.compare!);
 export const development = new Environment(result.development);
 export const shadow = new Environment(result.shadow);
-export const testEnv = new Environment(result.environments.test);
-export const prodEnv = new Environment({ ...result.environments.prod, cleanDisabled: true });
 ```
 
 **Key patterns:**
 - Shadow always gets `provisioner: "clean"` (forgetting this breaks Desktop workflows)
 - Uses `schemaModelLocation` in `[flyway]` (not the deprecated `schemaModel` in `[flywayDesktop]`)
-- `undoScripts: true` generates undo migration support
 - `[redgateCompare]` section only emitted when `filterFile` is provided
-- Additional environments (`test`, `prod`) exported from `result.environments`
 
 ## Environment Overrides
 

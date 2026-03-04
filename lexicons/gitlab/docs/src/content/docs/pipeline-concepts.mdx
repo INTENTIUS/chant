@@ -117,7 +117,7 @@ import { Job } from "@intentius/chant-lexicon-gitlab";
 
 export const lint = new Job({ stage: "test", script: ["npm run lint"] });
 export const unitTest = new Job({ stage: "test", script: ["npm test"] });
-export const build = new Job({ stage: "build", script: ["npm run build"] });
+export const stageBuild = new Job({ stage: "build", script: ["npm run build"] });
 export const deploy = new Job({ stage: "deploy", script: ["npm run deploy"] });
 ```
 
@@ -167,11 +167,11 @@ The key difference: artifacts are for passing files between **stages in the same
 ```typescript title="rules-conditions.ts"
 import { Rule, Job, CI } from "@intentius/chant-lexicon-gitlab";
 
-export const onMergeRequest = new Rule({
+export const mrRule = new Rule({
   if: CI.MergeRequestIid,
 });
 
-export const onDefaultBranch = new Rule({
+export const defaultBranchRule = new Rule({
   if: `${CI.CommitBranch} == ${CI.DefaultBranch}`,
   when: "manual",
 });
@@ -179,7 +179,7 @@ export const onDefaultBranch = new Rule({
 export const deployJob = new Job({
   stage: "deploy",
   script: ["npm run deploy"],
-  rules: [onDefaultBranch],
+  rules: [defaultBranchRule],
 });
 ```
 
@@ -205,7 +205,7 @@ The `if` property maps directly to `if:` in the YAML. Use the `CI` pseudo-parame
 import { Environment, Job } from "@intentius/chant-lexicon-gitlab";
 import { onDefaultBranch } from "./config";
 
-export const productionEnv = new Environment({
+export const prodEnv = new Environment({
   name: "production",
   url: "https://example.com",
 });
@@ -213,7 +213,7 @@ export const productionEnv = new Environment({
 export const deployProd = new Job({
   stage: "deploy",
   script: ["npm run deploy"],
-  environment: productionEnv,
+  environment: prodEnv,
   rules: [onDefaultBranch],
 });
 ```
@@ -227,7 +227,7 @@ GitLab tracks deployments to environments and provides rollback capabilities in 
 ```typescript title="images.ts"
 import { Image } from "@intentius/chant-lexicon-gitlab";
 
-export const nodeImage = new Image({ name: "node:20-alpine" });
+export const alpineNodeImage = new Image({ name: "node:20-alpine" });
 
 export const customImage = new Image({
   name: "registry.example.com/my-image:latest",
