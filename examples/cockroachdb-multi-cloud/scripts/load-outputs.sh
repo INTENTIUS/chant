@@ -70,5 +70,18 @@ if [[ -n "${GCP_VPN_IP}" ]]; then
   echo "GCP_VPN_PUBLIC_IP=${GCP_VPN_IP}" >> "${ENV_FILE}"
 fi
 
+echo "==> Validating required outputs..."
+missing=0
+for var in AWS_VPN_PUBLIC_IP AZURE_VPN_PUBLIC_IP GCP_VPN_PUBLIC_IP; do
+  if ! grep -q "^${var}=" "${ENV_FILE}"; then
+    echo "  [ERROR] Missing ${var} — VPN connectivity will fail"
+    missing=1
+  fi
+done
+if [[ ${missing} -eq 1 ]]; then
+  echo "  Some VPN IPs could not be resolved. Check that infra deployed successfully."
+  exit 1
+fi
+
 echo "==> Outputs written to ${ENV_FILE}"
 cat "${ENV_FILE}"

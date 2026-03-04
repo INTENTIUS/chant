@@ -40,4 +40,8 @@ aws cloudformation wait stack-delete-complete --stack-name eks-cockroachdb --reg
 # Step 5: Clean up local certs
 rm -rf certs/ .env
 
+echo ""
+echo "  NOTE: If you set up DNS delegation at your registrar, the NS records"
+echo "  now point to deleted zones. Remove them to avoid stale DNS."
+
 echo "==> Teardown complete"

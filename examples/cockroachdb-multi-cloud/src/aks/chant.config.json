@@ -1,5 +1,16 @@
 {
   "extends": ["@intentius/chant/lint/presets/strict"],
+  "_ruleNotes": {
+    "COR001": "Inline objects OK — K8s composite props are simple and readable inline",
+    "COR004": "Unused exports expected — resources are consumed by serializers, not same-file refs",
+    "COR009": "File count limit too strict for multi-resource VPN/cluster configs",
+    "COR013": "Mixed resource/config acceptable — VPN configs are tightly coupled to their resources",
+    "EVL001": "Dynamic env var lookups required for VPN IP two-pass build pattern",
+    "EVL004": "Spread from shared config (CRDB_CLUSTER) is safe and traceable",
+    "WAW001": "Hardcoded regions intentional — this is a fixed 3-region deployment",
+    "WK8001": "Hardcoded namespaces intentional — each cloud has a dedicated namespace",
+    "AZR001": "Hardcoded Azure location intentional — fixed deployment region"
+  },
   "rules": {
     "COR001": "off",
     "COR004": "off",
