@@ -141,3 +141,85 @@ export function extractJobs(yaml: string): Map<string, ParsedJob> {
 export function hasInclude(yaml: string): boolean {
   return /^include:/m.test(yaml);
 }
+
+/**
+ * Extract global variables from serialized YAML.
+ */
+export function extractGlobalVariables(yaml: string): Map<string, string> {
+  const vars = new Map<string, string>();
+  const match = yaml.match(/^variables:\n((?:\s+.+\n?)+)/m);
+  if (!match) return vars;
+
+  for (const line of match[1].split("\n")) {
+    const kv = line.match(/^\s+(\w+):\s+(.+)$/);
+    if (kv) {
+      vars.set(kv[1], kv[2].trim().replace(/^['"]|['"]$/g, ""));
+    }
+  }
+  return vars;
+}
+
+/**
+ * Extract the full section text for a given job name.
+ */
+export function extractJobSection(yaml: string, jobName: string): string | null {
+  const sections = yaml.split("\n\n");
+  for (const section of sections) {
+    const lines = section.split("\n");
+    if (lines.length > 0 && lines[0].startsWith(`${jobName}:`)) {
+      return section;
+    }
+  }
+  return null;
+}
+
+/**
+ * Extract rules from a job section.
+ */
+export function extractJobRules(section: string): ParsedRule[] {
+  const rules: ParsedRule[] = [];
+  const lines = section.split("\n");
+
+  let inRules = false;
+  let currentRule: ParsedRule = {};
+
+  for (const line of lines) {
+    if (line.match(/^\s+rules:$/)) {
+      inRules = true;
+      continue;
+    }
+
+    if (inRules) {
+      const ruleStart = line.match(/^\s+- (if|when|changes):\s*(.*)$/);
+      if (ruleStart) {
+        if (Object.keys(currentRule).length > 0) {
+          rules.push(currentRule);
+        }
+        currentRule = {};
+        if (ruleStart[1] === "if") currentRule.if = ruleStart[2].trim();
+        if (ruleStart[1] === "when") currentRule.when = ruleStart[2].trim();
+        continue;
+      }
+
+      const whenMatch = line.match(/^\s+when:\s+(.+)$/);
+      if (whenMatch) {
+        currentRule.when = whenMatch[1].trim();
+        continue;
+      }
+
+      // End of rules block
+      if (!line.match(/^\s+\s/) || line.match(/^\s+[a-z_]+:/) && !line.match(/^\s+when:/)) {
+        if (Object.keys(currentRule).length > 0) {
+          rules.push(currentRule);
+        }
+        inRules = false;
+      }
+    }
+  }
+
+  if (inRules && Object.keys(currentRule).length > 0) {
+    rules.push(currentRule);
+  }
+
+  return rules;
+}

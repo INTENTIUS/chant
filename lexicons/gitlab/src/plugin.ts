@@ -31,7 +31,24 @@ export const gitlabPlugin: LexiconPlugin = {
     const { wgl013 } = require("./lint/post-synth/wgl013");
     const { wgl014 } = require("./lint/post-synth/wgl014");
     const { wgl015 } = require("./lint/post-synth/wgl015");
-    return [wgl010, wgl011, wgl012, wgl013, wgl014, wgl015];
+    const { wgl016 } = require("./lint/post-synth/wgl016");
+    const { wgl017 } = require("./lint/post-synth/wgl017");
+    const { wgl018 } = require("./lint/post-synth/wgl018");
+    const { wgl019 } = require("./lint/post-synth/wgl019");
+    const { wgl020 } = require("./lint/post-synth/wgl020");
+    const { wgl021 } = require("./lint/post-synth/wgl021");
+    const { wgl022 } = require("./lint/post-synth/wgl022");
+    const { wgl023 } = require("./lint/post-synth/wgl023");
+    const { wgl024 } = require("./lint/post-synth/wgl024");
+    const { wgl025 } = require("./lint/post-synth/wgl025");
+    const { wgl026 } = require("./lint/post-synth/wgl026");
+    const { wgl027 } = require("./lint/post-synth/wgl027");
+    const { wgl028 } = require("./lint/post-synth/wgl028");
+    return [
+      wgl010, wgl011, wgl012, wgl013, wgl014, wgl015,
+      wgl016, wgl017, wgl018, wgl019, wgl020, wgl021,
+      wgl022, wgl023, wgl024, wgl025, wgl026, wgl027, wgl028,
+    ];
   },
 
   intrinsics(): IntrinsicDef[] {
@@ -495,7 +512,7 @@ Add \`"dry_run": true, "include_merged_yaml": true\` for full expansion with inc
 | Step | Catches | When to run |
 |------|---------|-------------|
 | \`chant lint\` | Deprecated only/except (WGL001), missing script (WGL002), missing stage (WGL003), artifacts without expiry (WGL004) | Every edit |
-| \`chant build\` | Post-synth checks: undefined stages (WGL010), unreachable jobs (WGL011), deprecated properties (WGL012), invalid needs targets (WGL013), invalid extends targets (WGL014), circular needs chains (WGL015) | Before push |
+| \`chant build\` | Post-synth checks: undefined stages (WGL010), unreachable jobs (WGL011), deprecated properties (WGL012), invalid needs/extends targets (WGL013-014), circular needs (WGL015), secrets in variables (WGL016), insecure registry (WGL017), missing timeout/retry (WGL018-019), duplicate jobs (WGL020), unused variables (WGL021), missing artifacts expiry (WGL022), overly broad rules (WGL023), manual without allow_failure (WGL024), missing cache key (WGL025), DinD without TLS (WGL026), empty script (WGL027), redundant needs (WGL028) | Before push |
 | CI Lint API | GitLab-specific validation: include resolution, variable expansion, YAML schema errors | Before merge to default branch |
 
 Always run all three before deploying. Lint catches things the API cannot (and vice versa).

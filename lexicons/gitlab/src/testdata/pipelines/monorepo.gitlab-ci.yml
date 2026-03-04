@@ -1,0 +1,51 @@
+stages:
+  - build
+  - test
+  - deploy
+
+variables:
+  GIT_DEPTH: 20
+
+frontend:
+  stage: build
+  trigger:
+    include: frontend/.gitlab-ci.yml
+    strategy: depend
+  rules:
+    - changes:
+        - frontend/**/*
+
+backend:
+  stage: build
+  trigger:
+    include: backend/.gitlab-ci.yml
+    strategy: depend
+  rules:
+    - changes:
+        - backend/**/*
+
+e2e-matrix:
+  stage: test
+  image: cypress/included:13
+  needs:
+    - frontend
+    - backend
+  parallel:
+    matrix:
+      - BROWSER: [chrome, firefox]
+        VIEWPORT: [desktop, mobile]
+  script:
+    - cypress run --browser $BROWSER --config viewportPreset=$VIEWPORT
+  artifacts:
+    when: always
+    paths:
+      - cypress/screenshots/
+      - cypress/videos/
+    expire_in: 3 days
+
+deploy-all:
+  stage: deploy
+  script:
+    - deploy.sh
+  rules:
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH

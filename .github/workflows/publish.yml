@@ -24,6 +24,7 @@ jobs:
       - run: bun run --cwd lexicons/aws prepack
       - run: bun run --cwd lexicons/azure prepack
       - run: bun run --cwd lexicons/gitlab prepack
+      - run: bun run --cwd lexicons/github prepack
       - run: bun run --cwd lexicons/k8s prepack
       - run: bun run --cwd lexicons/flyway prepack
       - run: bun run --cwd lexicons/gcp prepack
@@ -52,6 +53,10 @@ jobs:
 
       - name: Publish @intentius/chant-lexicon-gitlab
         working-directory: lexicons/gitlab
+        run: bun publish --access public --tolerate-republish
+
+      - name: Publish @intentius/chant-lexicon-github
+        working-directory: lexicons/github
         run: bun publish --access public --tolerate-republish
 
       - name: Publish @intentius/chant-lexicon-k8s

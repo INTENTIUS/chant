@@ -1,0 +1,56 @@
+stages:
+  - build
+  - test
+  - deploy
+
+build-app:
+  stage: build
+  image: node:22-alpine
+  script:
+    - npm ci
+    - npm run build
+  artifacts:
+    paths:
+      - dist/
+    expire_in: 1 hour
+  cache:
+    key:
+      files:
+        - package-lock.json
+    paths:
+      - .npm/
+
+lint:
+  stage: test
+  image: node:22-alpine
+  needs:
+    - build-app
+  script:
+    - npm ci
+    - npm run lint
+
+unit-tests:
+  stage: test
+  image: node:22-alpine
+  needs:
+    - build-app
+  script:
+    - npm ci
+    - npm test -- --coverage
+  artifacts:
+    reports:
+      junit: junit.xml
+      coverage_report:
+        coverage_format: cobertura
+        path: coverage/cobertura-coverage.xml
+
+deploy-staging:
+  stage: deploy
+  needs:
+    - lint
+    - unit-tests
+  script:
+    - deploy.sh staging
+  environment:
+    name: staging
+    url: https://staging.example.com

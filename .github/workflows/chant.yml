@@ -30,6 +30,7 @@ jobs:
           bun run --cwd lexicons/aws prepack
           bun run --cwd lexicons/azure prepack
           bun run --cwd lexicons/gitlab prepack
+          bun run --cwd lexicons/github prepack
           bun run --cwd lexicons/k8s prepack
           bun run --cwd lexicons/flyway prepack
           bun run --cwd lexicons/gcp prepack
@@ -70,6 +71,7 @@ jobs:
           bun run --cwd lexicons/aws prepack
           bun run --cwd lexicons/azure prepack
           bun run --cwd lexicons/gitlab prepack
+          bun run --cwd lexicons/github prepack
           bun run --cwd lexicons/k8s prepack
           bun run --cwd lexicons/flyway prepack
           bun run --cwd lexicons/gcp prepack
@@ -101,6 +103,9 @@ jobs:
 
       - name: Generate and validate GitLab lexicon
         run: bun run --cwd lexicons/gitlab prepack
+
+      - name: Generate and validate GitHub lexicon
+        run: bun run --cwd lexicons/github prepack
 
       - name: Generate and validate K8s lexicon
         run: bun run --cwd lexicons/k8s prepack

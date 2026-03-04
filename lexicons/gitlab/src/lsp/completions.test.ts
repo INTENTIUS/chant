@@ -1,6 +1,11 @@
 import { describe, test, expect } from "bun:test";
-import { gitlabCompletions } from "./completions";
+import { existsSync } from "fs";
+import { join, dirname } from "path";
+import { fileURLToPath } from "url";
 import type { CompletionContext } from "@intentius/chant/lsp/types";
+
+const generatedDir = join(dirname(dirname(fileURLToPath(import.meta.url))), "generated");
+const hasGenerated = existsSync(join(generatedDir, "lexicon-gitlab.json"));
 
 function makeCtx(overrides: Partial<CompletionContext>): CompletionContext {
   return {
@@ -14,7 +19,8 @@ function makeCtx(overrides: Partial<CompletionContext>): CompletionContext {
 }
 
 describe("gitlabCompletions", () => {
-  test("returns resource completions for 'new ' prefix", () => {
+  test.skipIf(!hasGenerated)("returns resource completions for 'new ' prefix", async () => {
+    const { gitlabCompletions } = await import("./completions");
     const ctx = makeCtx({
       linePrefix: "const j = new Job",
       wordAtCursor: "Job",
@@ -29,7 +35,8 @@ describe("gitlabCompletions", () => {
     expect(job!.kind).toBe("resource");
   });
 
-  test("returns all resource completions when no filter", () => {
+  test.skipIf(!hasGenerated)("returns all resource completions when no filter", async () => {
+    const { gitlabCompletions } = await import("./completions");
     const ctx = makeCtx({
       linePrefix: "const x = new ",
       wordAtCursor: "",
@@ -44,7 +51,8 @@ describe("gitlabCompletions", () => {
     expect(labels).toContain("Workflow");
   });
 
-  test("filters completions by prefix", () => {
+  test.skipIf(!hasGenerated)("filters completions by prefix", async () => {
+    const { gitlabCompletions } = await import("./completions");
     const ctx = makeCtx({
       linePrefix: "const x = new D",
       wordAtCursor: "D",
@@ -58,7 +66,8 @@ describe("gitlabCompletions", () => {
     expect(labels).not.toContain("Job");
   });
 
-  test("returns empty for non-constructor context", () => {
+  test.skipIf(!hasGenerated)("returns empty for non-constructor context", async () => {
+    const { gitlabCompletions } = await import("./completions");
     const ctx = makeCtx({
       linePrefix: "const x = foo(",
       wordAtCursor: "",
@@ -70,7 +79,8 @@ describe("gitlabCompletions", () => {
     expect(items).toHaveLength(0);
   });
 
-  test("completion items have detail with resource type", () => {
+  test.skipIf(!hasGenerated)("completion items have detail with resource type", async () => {
+    const { gitlabCompletions } = await import("./completions");
     const ctx = makeCtx({
       linePrefix: "const j = new Job",
       wordAtCursor: "Job",

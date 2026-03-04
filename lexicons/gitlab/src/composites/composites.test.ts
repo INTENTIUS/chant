@@ -98,6 +98,46 @@ describe("DockerBuild", () => {
     expect(expanded.has("dockerBuild")).toBe(true);
     expect(expanded.size).toBe(1);
   });
+
+  test("default dockerfile and context", () => {
+    const instance = DockerBuild({});
+    const props = (instance.build as any).props;
+    expect(props.script[0]).toContain("-f Dockerfile");
+    expect(props.script[0]).toMatch(/\.\s*$/);
+  });
+
+  test("custom dockerfile path", () => {
+    const instance = DockerBuild({ dockerfile: "docker/app.Dockerfile" });
+    const props = (instance.build as any).props;
+    expect(props.script[0]).toContain("-f docker/app.Dockerfile");
+  });
+
+  test("custom context directory", () => {
+    const instance = DockerBuild({ context: "./app" });
+    const props = (instance.build as any).props;
+    expect(props.script[0]).toContain("./app");
+  });
+
+  test("empty buildArgs produces no --build-arg flags", () => {
+    const instance = DockerBuild({ buildArgs: {} });
+    const props = (instance.build as any).props;
+    expect(props.script[0]).not.toContain("--build-arg");
+  });
+
+  test("multiple buildArgs are all present", () => {
+    const instance = DockerBuild({
+      buildArgs: { NODE_ENV: "production", VERSION: "1.0" },
+    });
+    const props = (instance.build as any).props;
+    expect(props.script[0]).toContain("--build-arg NODE_ENV=production");
+    expect(props.script[0]).toContain("--build-arg VERSION=1.0");
+  });
+
+  test("no rules by default", () => {
+    const instance = DockerBuild({});
+    const props = (instance.build as any).props;
+    expect(props.rules).toBeUndefined();
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -200,6 +240,52 @@ describe("NodePipeline", () => {
     expect(expanded.has("appDefaults")).toBe(true);
     expect(expanded.has("appBuild")).toBe(true);
     expect(expanded.has("appTest")).toBe(true);
+  });
+
+  test("custom artifact paths", () => {
+    const instance = NodePipeline({ buildArtifactPaths: ["build/", "out/"] });
+    const props = (instance.build as any).props;
+    const artProps = (props.artifacts as any).props;
+    expect(artProps.paths).toEqual(["build/", "out/"]);
+  });
+
+  test("custom artifact expiry", () => {
+    const instance = NodePipeline({ artifactExpiry: "30 minutes" });
+    const props = (instance.build as any).props;
+    const artProps = (props.artifacts as any).props;
+    expect(artProps.expire_in).toBe("30 minutes");
+  });
+
+  test("cache has pull-push policy", () => {
+    const instance = NodePipeline({});
+    const defaultProps = (instance.defaults as any).props;
+    const cacheProps = (defaultProps.cache[0] as any).props;
+    expect(cacheProps.policy).toBe("pull-push");
+  });
+
+  test("pnpm install command", () => {
+    const instance = NodePipeline({ packageManager: "pnpm" });
+    const buildProps = (instance.build as any).props;
+    expect(buildProps.script[0]).toBe("pnpm install --frozen-lockfile");
+  });
+
+  test("bun install command", () => {
+    const instance = NodePipeline({ packageManager: "bun" });
+    const buildProps = (instance.build as any).props;
+    expect(buildProps.script[0]).toBe("bun install --frozen-lockfile");
+  });
+
+  test("test job stage is test", () => {
+    const instance = NodePipeline({});
+    const props = (instance.test as any).props;
+    expect(props.stage).toBe("test");
+  });
+
+  test("test artifacts always reported", () => {
+    const instance = NodePipeline({});
+    const props = (instance.test as any).props;
+    const artProps = (props.artifacts as any).props;
+    expect(artProps.when).toBe("always");
   });
 });
 
@@ -329,6 +415,42 @@ describe("PythonPipeline", () => {
     expect(expanded.has("pyTest")).toBe(true);
     expect(expanded.has("pyLint")).toBe(false);
   });
+
+  test("custom requirements file", () => {
+    const instance = PythonPipeline({ requirementsFile: "requirements-dev.txt" });
+    const defaultProps = (instance.defaults as any).props;
+    const cacheProps = (defaultProps.cache[0] as any).props;
+    expect(cacheProps.key).toEqual({ files: ["requirements-dev.txt"] });
+    expect(defaultProps.before_script).toContain("pip install -r requirements-dev.txt");
+  });
+
+  test("poetry mode sets virtualenvs.in-project config", () => {
+    const instance = PythonPipeline({ usePoetry: true });
+    const defaultProps = (instance.defaults as any).props;
+    expect(defaultProps.before_script).toContain("poetry config virtualenvs.in-project true");
+  });
+
+  test("custom lint command", () => {
+    const instance = PythonPipeline({ lintCommand: "flake8 src/" });
+    const members = instance.members as any;
+    const props = (members.lint as any).props;
+    expect(props.script).toContain("flake8 src/");
+  });
+
+  test("test and lint jobs share the test stage", () => {
+    const instance = PythonPipeline({});
+    const testProps = (instance.test as any).props;
+    const lintProps = ((instance.members as any).lint as any).props;
+    expect(testProps.stage).toBe("test");
+    expect(lintProps.stage).toBe("test");
+  });
+
+  test("cache has pull-push policy", () => {
+    const instance = PythonPipeline({});
+    const defaultProps = (instance.defaults as any).props;
+    const cacheProps = (defaultProps.cache[0] as any).props;
+    expect(cacheProps.policy).toBe("pull-push");
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -448,5 +570,43 @@ describe("ReviewApp", () => {
     // When expanded with prefix "staging", the stop job becomes "stagingStop"
     // which the serializer converts to "staging-stop" in YAML
     expect(envProps.on_stop).toBe("staging-stop");
+  });
+
+  test("default auto_stop_in is 1 week", () => {
+    const instance = ReviewApp(baseProps);
+    const props = (instance.deploy as any).props;
+    const envProps = (props.environment as any).props;
+    expect(envProps.auto_stop_in).toBe("1 week");
+  });
+
+  test("custom auto_stop_in", () => {
+    const instance = ReviewApp({ ...baseProps, autoStopIn: "2 days" });
+    const props = (instance.deploy as any).props;
+    const envProps = (props.environment as any).props;
+    expect(envProps.auto_stop_in).toBe("2 days");
+  });
+
+  test("default stage is deploy for both jobs", () => {
+    const instance = ReviewApp(baseProps);
+    const deployProps = (instance.deploy as any).props;
+    const stopProps = (instance.stop as any).props;
+    expect(deployProps.stage).toBe("deploy");
+    expect(stopProps.stage).toBe("deploy");
+  });
+
+  test("stop script as array", () => {
+    const instance = ReviewApp({
+      ...baseProps,
+      stopScript: ["helm uninstall app", "kubectl delete ns review"],
+    });
+    const props = (instance.stop as any).props;
+    expect(props.script).toEqual(["helm uninstall app", "kubectl delete ns review"]);
+  });
+
+  test("deploy environment url defaults to CI_ENVIRONMENT_SLUG pattern", () => {
+    const instance = ReviewApp(baseProps);
+    const props = (instance.deploy as any).props;
+    const envProps = (props.environment as any).props;
+    expect(envProps.url).toContain("$CI_ENVIRONMENT_SLUG");
   });
 });

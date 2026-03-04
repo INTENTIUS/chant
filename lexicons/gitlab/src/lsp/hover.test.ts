@@ -1,6 +1,11 @@
 import { describe, test, expect } from "bun:test";
-import { gitlabHover } from "./hover";
+import { existsSync } from "fs";
+import { join, dirname } from "path";
+import { fileURLToPath } from "url";
 import type { HoverContext } from "@intentius/chant/lsp/types";
+
+const generatedDir = join(dirname(dirname(fileURLToPath(import.meta.url))), "generated");
+const hasGenerated = existsSync(join(generatedDir, "lexicon-gitlab.json"));
 
 function makeCtx(overrides: Partial<HoverContext>): HoverContext {
   return {
@@ -14,7 +19,8 @@ function makeCtx(overrides: Partial<HoverContext>): HoverContext {
 }
 
 describe("gitlabHover", () => {
-  test("returns hover for Job class", () => {
+  test.skipIf(!hasGenerated)("returns hover for Job class", async () => {
+    const { gitlabHover } = await import("./hover");
     const ctx = makeCtx({ word: "Job" });
     const hover = gitlabHover(ctx);
     expect(hover).toBeDefined();
@@ -23,7 +29,8 @@ describe("gitlabHover", () => {
     expect(hover!.contents).toContain("Resource entity");
   });
 
-  test("returns hover for property entity", () => {
+  test.skipIf(!hasGenerated)("returns hover for property entity", async () => {
+    const { gitlabHover } = await import("./hover");
     const ctx = makeCtx({ word: "Cache" });
     const hover = gitlabHover(ctx);
     expect(hover).toBeDefined();
@@ -32,27 +39,31 @@ describe("gitlabHover", () => {
     expect(hover!.contents).toContain("Property entity");
   });
 
-  test("returns hover for Default", () => {
+  test.skipIf(!hasGenerated)("returns hover for Default", async () => {
+    const { gitlabHover } = await import("./hover");
     const ctx = makeCtx({ word: "Default" });
     const hover = gitlabHover(ctx);
     expect(hover).toBeDefined();
     expect(hover!.contents).toContain("GitLab::CI::Default");
   });
 
-  test("returns hover for Artifacts", () => {
+  test.skipIf(!hasGenerated)("returns hover for Artifacts", async () => {
+    const { gitlabHover } = await import("./hover");
     const ctx = makeCtx({ word: "Artifacts" });
     const hover = gitlabHover(ctx);
     expect(hover).toBeDefined();
     expect(hover!.contents).toContain("GitLab::CI::Artifacts");
   });
 
-  test("returns undefined for unknown word", () => {
+  test.skipIf(!hasGenerated)("returns undefined for unknown word", async () => {
+    const { gitlabHover } = await import("./hover");
     const ctx = makeCtx({ word: "UnknownEntity" });
     const hover = gitlabHover(ctx);
     expect(hover).toBeUndefined();
   });
 
-  test("returns undefined for empty word", () => {
+  test.skipIf(!hasGenerated)("returns undefined for empty word", async () => {
+    const { gitlabHover } = await import("./hover");
     const ctx = makeCtx({ word: "" });
     const hover = gitlabHover(ctx);
     expect(hover).toBeUndefined();

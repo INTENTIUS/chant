@@ -30,6 +30,8 @@
       "@intentius/chant-lexicon-k8s/*": ["lexicons/k8s/src/*"],
       "@intentius/chant-lexicon-azure": ["lexicons/azure/src/index.ts"],
       "@intentius/chant-lexicon-azure/*": ["lexicons/azure/src/*"],
+      "@intentius/chant-lexicon-github": ["lexicons/github/src/index.ts"],
+      "@intentius/chant-lexicon-github/*": ["lexicons/github/src/*"],
       "@intentius/chant-test-utils": ["packages/test-utils/src/index.ts"],
       "@intentius/chant-test-utils/*": ["packages/test-utils/src/*"]
     }
