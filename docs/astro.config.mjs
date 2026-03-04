@@ -35,6 +35,7 @@ export default defineConfig({
 					label: 'User Guide',
 					items: [
 						{ label: 'Writing Resources', slug: 'guide/writing-resources' },
+						{ label: 'Resource Naming', slug: 'guide/resource-naming' },
 						{ label: 'Cross-File References', slug: 'guide/cross-file-references' },
 						{ label: 'Composite Resources', slug: 'guide/composite-resources' },
 						{ label: 'Presets', slug: 'guide/presets' },

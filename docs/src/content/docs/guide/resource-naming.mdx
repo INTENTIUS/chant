@@ -1,0 +1,74 @@
+---
+title: Resource Naming
+description: Patterns for naming resources and creating multiple similar resources
+---
+
+import { Code } from '@astrojs/starlight/components';
+import sharedConfigSrc from '../../../../../lexicons/aws/examples/core-concepts/src/naming-shared-config.ts?raw';
+import sequentialSrc from '../../../../../lexicons/aws/examples/core-concepts/src/naming-sequential.ts?raw';
+
+chant discovers resources by scanning **exports** from your `src/` files. The export name becomes the logical resource name — it's what you see in lint output, build logs, and cross-file imports. Choosing clear, consistent names makes your project easier to navigate and maintain.
+
+## Export naming
+
+Exports must use **camelCase** — the lint rule **COR005** enforces this automatically.
+
+```typescript
+// ✅ correct
+export const appBucket = new Bucket({ ... });
+export const taskQueue = new Queue({ ... });
+
+// ❌ rejected by COR005
+export const AppBucket = new Bucket({ ... });
+export const app_bucket = new Bucket({ ... });
+```
+
+## Descriptive names
+
+Name exports after what the resource **does**, not what it **is**. Suffix with the resource's role to distinguish resources of the same type.
+
+```typescript
+// ✅ clear purpose
+export const uploadBucket = new Bucket({ ... });
+export const taskQueue = new Queue({ ... });
+export const apiRole = new Role({ ... });
+
+// ❌ ambiguous
+export const bucket1 = new Bucket({ ... });
+export const myQueue = new Queue({ ... });
+```
+
+## Shared configuration
+
+When multiple resources share naming prefixes or tags, extract them into a `const` object. Template literals keep physical names consistent across the stack.
+
+<Code code={sharedConfigSrc} lang="typescript" title="src/naming-shared-config.ts" />
+
+Because the config object is `as const`, chant's evaluator can resolve every value at build time.
+
+## Multiple similar resources
+
+TypeScript's native constructs replace the need for framework-level `count` or `for_each`. Use `Array.map` to create a set of resources, then destructure the result into named exports:
+
+<Code code={sequentialSrc} lang="typescript" title="src/naming-sequential.ts" />
+
+Each destructured export (`devData`, `stagingData`, `prodData`) is a distinct named resource that can be referenced from other files via import.
+
+## File organization
+
+Group related resources in the same file and keep unrelated ones separate. The lint rule **COR009** warns when a single file exports eight or more resources — a signal that it may be doing too much.
+
+A typical layout:
+
+```
+src/
+  storage.ts      # buckets, tables
+  compute.ts      # functions, containers
+  networking.ts   # VPCs, subnets, security groups
+  iam.ts          # roles, policies
+```
+
+## Next steps
+
+- [Cross-File References](/chant/guide/cross-file-references/) — import resources from other files
+- [Composite Resources](/chant/guide/composite-resources/) — group related resources into reusable units
