@@ -76,6 +76,7 @@ export default defineConfig({
 						],
 					},
 						{ label: 'Helm Charts', link: '/lexicons/helm/' },
+						{ label: 'GitHub Actions', link: '/lexicons/github/' },
 						{ label: 'GitLab CI/CD', link: '/lexicons/gitlab/' },
 						{ label: 'Flyway', link: '/lexicons/flyway/' },
 					],
