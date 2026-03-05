@@ -59,7 +59,7 @@ export const privateIpRange = new ComputeAddress({
     name: "sql-private-ip-range",
     labels: { "app.kubernetes.io/managed-by": "chant" },
   },
-  location: "us-central1",
+  location: GCP.Region,
   addressType: "INTERNAL",
   purpose: "VPC_PEERING",
   prefixLength: 16,

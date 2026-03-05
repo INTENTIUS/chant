@@ -42,7 +42,7 @@ export const eventProcessor = new CloudFunction({
     name: "event-processor",
     labels: { "app.kubernetes.io/managed-by": "chant" },
   },
-  region: "us-central1",
+  region: GCP.Region,
   runtime: "nodejs20",
   entryPoint: "handleEvent",
   availableMemoryMb: 512,
