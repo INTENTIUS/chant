@@ -113,6 +113,17 @@ function generateLexiconJSON(results: GcpParseResult[], naming: NamingStrategy):
       gvkKind: r.gvk.kind,
       group: r.gvk.group,
       properties: r.resource.properties.length,
+      schema: {
+        fields: Object.fromEntries(
+          r.resource.properties.map((p) => [p.name, {
+            type: p.tsType,
+            required: p.required,
+            ...(p.enum && { enum: p.enum }),
+            ...(p.isResourceRef && { ref: true }),
+          }]),
+        ),
+        required: r.resource.properties.filter((p) => p.required).map((p) => p.name),
+      },
       attrs: Object.fromEntries(
         r.resource.attributes.map((a) => [a.name, a.tsType]),
       ),
