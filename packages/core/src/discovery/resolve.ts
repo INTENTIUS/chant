@@ -1,6 +1,6 @@
 import type { Declarable } from "../declarable";
 import { AttrRef } from "../attrref";
-import { LOGICAL_NAME_SYMBOL, getAttributes } from "../utils";
+import { LOGICAL_NAME_SYMBOL, getAttributes, isAttrRefLike } from "../utils";
 
 /**
  * Resolves all AttrRef instances in a collection of entities
@@ -22,7 +22,7 @@ export function resolveAttrRefs(entities: Map<string, Declarable>): void {
     for (const attrName of attributes) {
       const attrRef = (entity as unknown as Record<string, unknown>)[attrName];
 
-      if (attrRef instanceof AttrRef) {
+      if (isAttrRefLike(attrRef)) {
         const parent = attrRef.parent.deref();
 
         if (!parent) {

@@ -7,6 +7,24 @@ import { AttrRef } from "./attrref";
 export const LOGICAL_NAME_SYMBOL = Symbol.for("chant.logicalName");
 
 /**
+ * Duck-type check for AttrRef that survives the dual-package hazard.
+ * When npm installs separate copies of @intentius/chant (one for the CLI,
+ * one for the lexicon), `instanceof AttrRef` fails across package boundaries.
+ */
+export function isAttrRefLike(value: unknown): value is AttrRef {
+  if (value instanceof AttrRef) return true;
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    "parent" in value &&
+    "attribute" in value &&
+    "_setLogicalName" in value &&
+    typeof (value as any).parent === "object" &&
+    typeof (value as any).attribute === "string"
+  );
+}
+
+/**
  * JSON.stringify replacer that sorts object keys for deterministic output.
  */
 export function sortedJsonReplacer(_key: string, value: unknown): unknown {
@@ -30,7 +48,7 @@ export function getAttributes(entity: Declarable): string[] {
   for (const key in obj) {
     if (Object.prototype.hasOwnProperty.call(obj, key)) {
       const value = obj[key];
-      if (value instanceof AttrRef) {
+      if (isAttrRefLike(value)) {
         attributes.push(key);
       }
     }

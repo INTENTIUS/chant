@@ -15,7 +15,8 @@
   ],
   "scripts": {
     "tsc": "tsc",
-    "docs": "bun --cwd docs dev"
+    "docs": "bun --cwd docs dev",
+    "generate": "for d in lexicons/*/; do (cd \"$d\" && bun run generate); done"
   },
   "dependencies": {
     "@intentius/chant-lexicon-aws": "workspace:*",

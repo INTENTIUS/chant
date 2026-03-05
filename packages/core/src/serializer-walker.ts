@@ -9,6 +9,7 @@ import type { Declarable } from "./declarable";
 import { isPropertyDeclarable } from "./declarable";
 import { INTRINSIC_MARKER } from "./intrinsic";
 import { AttrRef } from "./attrref";
+import { isAttrRefLike } from "./utils";
 
 export interface SerializerVisitor {
   /** Format an attribute reference (e.g. CFN Fn::GetAttr). */
@@ -33,7 +34,7 @@ export function walkValue(
   }
 
   // Handle AttrRef
-  if (value instanceof AttrRef) {
+  if (isAttrRefLike(value)) {
     const name = value.getLogicalName();
     if (!name) {
       throw new Error(
