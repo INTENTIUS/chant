@@ -459,7 +459,7 @@ user-invocable: true
 
 ## How chant and Flyway relate
 
-chant is a **synthesis-only** tool — it compiles TypeScript source files into \`flyway.toml\` (TOML config). chant does NOT call Flyway or interact with databases. Your job as an agent is to bridge the two:
+chant is a **synthesis compiler** — it compiles TypeScript source files into \`flyway.toml\` (TOML config). \`chant build\` does not call Flyway or interact with databases; synthesis is pure and deterministic. Your job as an agent is to bridge synthesis and deployment:
 
 - Use **chant** for: build, lint, diff (local TOML comparison)
 - Use **flyway CLI** for: migrate, validate, info, clean, baseline, repair, diff, generate, undo

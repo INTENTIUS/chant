@@ -59,3 +59,5 @@ export * from "./child-project";
 export * from "./lsp/types";
 export * from "./lsp/lexicon-providers";
 export * from "./mcp/types";
+export * from "./state/index";
+export * from "./spell/index";

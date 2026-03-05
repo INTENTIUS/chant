@@ -1,5 +1,5 @@
 import { createRequire } from "module";
-import type { LexiconPlugin, IntrinsicDef, SkillDefinition } from "@intentius/chant/lexicon";
+import type { LexiconPlugin, IntrinsicDef, SkillDefinition, ResourceMetadata } from "@intentius/chant/lexicon";
 const require = createRequire(import.meta.url);
 import type { LintRule } from "@intentius/chant/lint/rule";
 import type { PostSynthCheck } from "@intentius/chant/lint/post-synth";
@@ -392,7 +392,7 @@ user-invocable: true
 
 ## How chant and CloudFormation relate
 
-chant is a **synthesis-only** tool — it compiles TypeScript source files into CloudFormation JSON (or YAML). chant does NOT call AWS APIs. Your job as an agent is to bridge the two:
+chant is a **synthesis compiler** — it compiles TypeScript source files into CloudFormation JSON (or YAML). \`chant build\` does not call AWS APIs; synthesis is pure and deterministic. The optional \`chant state snapshot\` command queries AWS APIs to capture deployment metadata (physical IDs, status, outputs) for observability. Your job as an agent is to bridge synthesis and deployment:
 
 - Use **chant** for: build, lint, diff (local template comparison)
 - Use **AWS CLI** for: validate-template, deploy, change sets, rollback, drift detection, and all stack operations
@@ -953,6 +953,91 @@ aws cloudformation wait stack-update-complete --stack-name my-app-prod`,
   hoverProvider(ctx: HoverContext): HoverInfo | undefined {
     const { awsHover } = require("./lsp/hover");
     return awsHover(ctx);
+  },
+
+  async describeResources(options: {
+    environment: string;
+    buildOutput: string;
+    entityNames: string[];
+  }): Promise<Record<string, ResourceMetadata>> {
+    const { getRuntime } = await import("@intentius/chant/runtime-adapter");
+    const rt = getRuntime();
+    const resources: Record<string, ResourceMetadata> = {};
+
+    // Derive stack name: environment-based convention
+    // Try to parse the build output to detect stack name from Metadata or use convention
+    const stackName = `${options.environment}`;
+
+    // Describe stack resources
+    const listResult = await rt.spawn([
+      "aws", "cloudformation", "describe-stack-resources",
+      "--stack-name", stackName,
+      "--output", "json",
+    ]);
+
+    if (listResult.exitCode !== 0) {
+      throw new Error(`Failed to describe stack "${stackName}": ${listResult.stderr}`);
+    }
+
+    const data = JSON.parse(listResult.stdout) as {
+      StackResources: Array<{
+        LogicalResourceId: string;
+        ResourceType: string;
+        PhysicalResourceId: string;
+        ResourceStatus: string;
+        Timestamp: string;
+      }>;
+    };
+
+    // Map logical names from build to stack resources
+    const stackResourceMap = new Map<string, typeof data.StackResources[0]>();
+    for (const r of data.StackResources) {
+      stackResourceMap.set(r.LogicalResourceId, r);
+    }
+
+    // Get stack outputs
+    const describeResult = await rt.spawn([
+      "aws", "cloudformation", "describe-stacks",
+      "--stack-name", stackName,
+      "--output", "json",
+    ]);
+
+    let stackOutputs: Record<string, string> = {};
+    if (describeResult.exitCode === 0) {
+      const stacks = JSON.parse(describeResult.stdout) as {
+        Stacks: Array<{ Outputs?: Array<{ OutputKey: string; OutputValue: string }> }>;
+      };
+      if (stacks.Stacks[0]?.Outputs) {
+        for (const o of stacks.Stacks[0].Outputs) {
+          stackOutputs[o.OutputKey] = o.OutputValue;
+        }
+      }
+    }
+
+    for (const entityName of options.entityNames) {
+      const stackResource = stackResourceMap.get(entityName);
+      if (!stackResource) continue;
+
+      const attributes: Record<string, unknown> = {};
+      // Include stack outputs as attributes (scrub sensitive ones)
+      for (const [key, value] of Object.entries(stackOutputs)) {
+        if (/password|secret|token|key/i.test(key)) {
+          attributes[key] = "[REDACTED]";
+        } else {
+          attributes[key] = value;
+        }
+      }
+
+      resources[entityName] = {
+        type: stackResource.ResourceType,
+        physicalId: stackResource.PhysicalResourceId,
+        status: stackResource.ResourceStatus,
+        lastUpdated: stackResource.Timestamp,
+        attributes: Object.keys(attributes).length > 0 ? attributes : undefined,
+      };
+    }
+
+    return resources;
   },
 
   mcpTools(): McpToolContribution[] {

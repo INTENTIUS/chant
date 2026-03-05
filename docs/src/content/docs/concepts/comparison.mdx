@@ -7,7 +7,7 @@ description: Where chant fits in the infrastructure tooling landscape.
 
 chant is a **synthesis compiler**: TypeScript in, spec-native output out. You declare infrastructure as typed TypeScript objects, chant validates them against a lexicon's semantic rules, and emits the target format — CloudFormation, GitLab CI, or whatever the lexicon targets.
 
-chant **doesn't manage deployment, state, or drift**. Those are operational concerns. chant's scope is deliberately limited to synthesis: parsing, type-checking, linting, and emitting artifacts.
+chant **doesn't manage deployment or drift**. chant's core scope is synthesis: parsing, type-checking, linting, and emitting artifacts. The architecture is designed for opt-in operational extensions — observational state, structured agent workflows — that add context without touching the build pipeline.
 
 This isn't a reaction to other tools' failures — it's an approach that was always available. Nobody built it because the industry was racing to own the full lifecycle. chant does one thing and stops.
 
@@ -22,7 +22,8 @@ These tools make different design decisions. Each decision has consequences — 
 | **Language** | HCL (custom DSL) | TypeScript, Python, Java, Go, C# (executed) | TypeScript, Python, Go, C#, Java, YAML (executed) | TypeScript (as data) |
 | **Spec fidelity** | Provider-mapped | Abstracted (L2/L3) | Provider-mapped | Spec-true |
 | **Output** | State + API calls | CloudFormation | State + API calls | Native spec output |
-| **Lifecycle scope** | Full | Full (via CloudFormation) | Full | Synthesis only |
+| **Lifecycle scope** | Full | Full (via CloudFormation) | Full | Synthesis + opt-in observability |
+| **State model** | Authoritative | Authoritative (via CloudFormation) | Authoritative | Non-authoritative (observational) |
 | **Determinism** | Mostly | No (code executes) | No (code executes) | Yes (by design) |
 | **Walk-away cost** | High (state, HCL) | Medium (CloudFormation remains) | High (state, SDK) | Zero (output is native) |
 | **Semantic validation** | None built-in | None built-in | None built-in | Built-in (lexicon rules) |
@@ -49,6 +50,25 @@ This matters for:
 - **Speed** — no interpreter, no runtime, no provider calls. Synthesis is fast.
 - **IDE support** — because the API surface is defined by types (not runtime behavior), autocompletion, inline errors, and go-to-definition work without executing anything.
 - **Agent-friendliness** — agents can generate chant source files and know exactly what output they'll produce. No surprises from execution-time behavior.
+
+## State: authoritative vs. observational
+
+The most consequential design difference after execution model is the state model.
+
+**Terraform and Pulumi** treat state as authoritative — the state file IS the source of truth for what's deployed. This enables precise plan/apply workflows: the tool knows exactly what exists, what changed, and what to do. The cost is operational burden: state must be locked during operations, stored in a backend with access controls, and protected from corruption. Sensitive data (database passwords, API keys) ends up in state because the tool needs it for diffing.
+
+**CDK** inherits CloudFormation's authoritative state model, which AWS manages as a service. Less operational burden, but the same architectural commitment: state is truth.
+
+**chant** is designed with an observational state model — snapshots record what was observed at a point in time, not what must be true now. This architectural choice gives up precision (no automatic plan/apply) but gains safety and simplicity:
+
+- **No locking** — a stale snapshot is inconvenient, not dangerous
+- **No sensitive data** — scrubbing is a design requirement, not a best-effort guideline
+- **No corruption risk** — a bad snapshot doesn't break deployments. Agents verify against live APIs regardless
+- **Minimal overhead** — state is designed to live in git alongside source code
+
+**Trade-offs to be honest about:**
+- Non-authoritative state means agents must verify against live APIs before acting, and gaps escalate to human review rather than being resolved automatically
+- Git-based state gives versioning, portability, and offline access, but no locking, no encryption at rest, and no access control separation from source code
 
 ## What each tool optimizes for
 

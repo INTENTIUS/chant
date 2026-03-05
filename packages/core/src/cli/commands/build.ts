@@ -3,6 +3,7 @@ import type { Serializer, SerializerResult } from "../../serializer";
 import type { LexiconPlugin } from "../../lexicon";
 import { runPostSynthChecks } from "../../lint/post-synth";
 import type { PostSynthCheck } from "../../lint/post-synth";
+import { sortedJsonReplacer } from "../../utils";
 import { formatError, formatWarning, formatSuccess, formatBold, formatInfo } from "../format";
 import { writeFileSync } from "fs";
 import { resolve, dirname, join } from "path";
@@ -229,18 +230,6 @@ export async function buildCommand(options: BuildOptions): Promise<BuildResult> 
     errors,
     warnings,
   };
-}
-
-/**
- * JSON.stringify replacer that sorts object keys for deterministic output
- */
-function sortedJsonReplacer(_key: string, value: unknown): unknown {
-  if (value && typeof value === "object" && !Array.isArray(value)) {
-    return Object.fromEntries(
-      Object.entries(value as Record<string, unknown>).sort(([a], [b]) => a.localeCompare(b))
-    );
-  }
-  return value;
 }
 
 /**

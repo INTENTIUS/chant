@@ -9,6 +9,7 @@ import type { LintConfig } from "./lint/config";
 export const ChantConfigSchema = z.object({
   runtime: z.enum(["bun", "node"]).optional(),
   lexicons: z.array(z.string().min(1)).optional(),
+  environments: z.array(z.string().min(1)).optional(),
   lint: z.record(z.string(), z.unknown()).optional(),
 }).passthrough();
 
@@ -23,6 +24,9 @@ export interface ChantConfig {
 
   /** Lexicon package names to load (e.g. ["aws"]) */
   lexicons?: string[];
+
+  /** Environment names (e.g. ["staging", "prod"]) */
+  environments?: string[];
 
   /** Lint configuration (rules, extends, overrides, plugins) */
   lint?: LintConfig;

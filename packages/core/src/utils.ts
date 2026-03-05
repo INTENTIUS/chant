@@ -7,6 +7,18 @@ import { AttrRef } from "./attrref";
 export const LOGICAL_NAME_SYMBOL = Symbol.for("chant.logicalName");
 
 /**
+ * JSON.stringify replacer that sorts object keys for deterministic output.
+ */
+export function sortedJsonReplacer(_key: string, value: unknown): unknown {
+  if (value && typeof value === "object" && !Array.isArray(value)) {
+    return Object.fromEntries(
+      Object.entries(value as Record<string, unknown>).sort(([a], [b]) => a.localeCompare(b))
+    );
+  }
+  return value;
+}
+
+/**
  * Get all property names that have AttrRef values
  * @param entity - The declarable entity to inspect
  * @returns Array of property names with AttrRef values

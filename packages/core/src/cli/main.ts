@@ -12,6 +12,8 @@ import { runDevGenerate, runDevPublish, runDevOnboard, runDevCheckLexicon, runDe
 import { runServeLsp, runServeMcp, runServeUnknown } from "./handlers/serve";
 import { runInit, runInitLexicon } from "./handlers/init";
 import { runList, runImport, runUpdate, runDoctor } from "./handlers/misc";
+import { runStateSnapshot, runStateShow, runStateDiff, runStateLog, runStateUnknown } from "./handlers/state";
+import { runSpellAdd, runSpellRm, runSpellList, runSpellShow, runSpellCast, runSpellDone, runGraph, runSpellUnknown } from "./handlers/spell";
 
 /**
  * Parse command line arguments
@@ -90,6 +92,21 @@ Commands:
   lint                  Check specifications for issues
   list                  List discovered entities
   import                Import external template into TypeScript
+
+Spells:
+  spell add <name>      Create a new spell
+  spell rm <name>       Remove a spell
+  spell list            List all spells with status
+  spell show <name>     Show spell details
+  spell cast <name>     Generate bootstrap prompt for agent
+  spell done <name> <N> Mark task N as done
+  graph                 Show spell dependency graph
+
+State:
+  state snapshot <env>  Query API, save metadata to orphan branch
+  state show <env>      Show latest state snapshot
+  state diff <env>      Compare current build against last snapshot
+  state log [env]       History of state snapshots
 
 Lexicon development:
   dev generate          Generate lexicon artifacts (+ validate + coverage)
@@ -177,11 +194,28 @@ const registry: CommandDef[] = [
   { name: "dev onboard", handler: runDevOnboard },
   { name: "dev check-lexicon", handler: runDevCheckLexicon },
 
+  // Spell subcommands
+  { name: "spell add", handler: runSpellAdd },
+  { name: "spell rm", handler: runSpellRm },
+  { name: "spell list", handler: runSpellList },
+  { name: "spell show", handler: runSpellShow },
+  { name: "spell cast", handler: runSpellCast },
+  { name: "spell done", handler: runSpellDone },
+  { name: "graph", handler: runGraph },
+
+  // State subcommands
+  { name: "state snapshot", requiresPlugins: true, handler: runStateSnapshot },
+  { name: "state show", handler: runStateShow },
+  { name: "state diff", requiresPlugins: true, handler: runStateDiff },
+  { name: "state log", handler: runStateLog },
+
   // Serve subcommands
   { name: "serve lsp", requiresPlugins: true, handler: runServeLsp },
   { name: "serve mcp", requiresPlugins: true, handler: runServeMcp },
 
   // Fallback for unknown subcommands (must come after compound entries)
+  { name: "spell", handler: runSpellUnknown },
+  { name: "state", handler: runStateUnknown },
   { name: "dev", handler: runDevUnknown },
   { name: "serve", handler: runServeUnknown },
 ];
@@ -216,9 +250,9 @@ async function main(): Promise<void> {
     process.exit(1);
   }
 
-  // For compound commands (e.g. "dev generate"), args.path is the subcommand,
-  // so the project path shifts to extraPositional. For simple commands, use args.path.
-  const projectPath = match.compound ? (args.extraPositional ?? ".") : args.path;
+  // For compound commands (e.g. "spell cast"), args.path is the subcommand,
+  // so always use "." as the project path. For simple commands, use args.path.
+  const projectPath = match.compound ? "." : args.path;
   const plugins = match.def.requiresPlugins
     ? await loadPluginsOrExit(projectPath)
     : [];

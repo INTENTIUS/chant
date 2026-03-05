@@ -6,7 +6,7 @@
  */
 
 import { createRequire } from "module";
-import type { LexiconPlugin, SkillDefinition, InitTemplateSet } from "@intentius/chant/lexicon";
+import type { LexiconPlugin, SkillDefinition, InitTemplateSet, ResourceMetadata } from "@intentius/chant/lexicon";
 const require = createRequire(import.meta.url);
 import type { LintRule } from "@intentius/chant/lint/rule";
 import type { PostSynthCheck } from "@intentius/chant/lint/post-synth";
@@ -299,6 +299,96 @@ export const service = new Service({
     console.error(`Packaged ${stats.resources} resources, ${stats.ruleCount} rules, ${stats.skillCount} skills`);
   },
 
+  async describeResources(options: {
+    environment: string;
+    buildOutput: string;
+    entityNames: string[];
+  }): Promise<Record<string, ResourceMetadata>> {
+    const { getRuntime } = await import("@intentius/chant/runtime-adapter");
+    const rt = getRuntime();
+    const resources: Record<string, ResourceMetadata> = {};
+
+    // Resolve namespace from environment (convention: env name = namespace)
+    const namespace = options.environment;
+
+    // Parse build output to extract kind/name pairs for each entity
+    let manifests: Array<{ kind: string; metadata: { name: string; namespace?: string }; apiVersion: string }> = [];
+    try {
+      // K8s build output is YAML with --- separators
+      const docs = options.buildOutput.split(/^---$/m).filter((d) => d.trim());
+      for (const doc of docs) {
+        // Simple YAML parsing — look for kind: and metadata.name:
+        const kindMatch = doc.match(/^kind:\s*(.+)$/m);
+        const nameMatch = doc.match(/^\s+name:\s*(.+)$/m);
+        const apiVersionMatch = doc.match(/^apiVersion:\s*(.+)$/m);
+        if (kindMatch && nameMatch && apiVersionMatch) {
+          manifests.push({
+            kind: kindMatch[1].trim(),
+            metadata: { name: nameMatch[1].trim() },
+            apiVersion: apiVersionMatch[1].trim(),
+          });
+        }
+      }
+    } catch {
+      // If build output parsing fails, skip
+    }
+
+    // Query each resource
+    for (const entityName of options.entityNames) {
+      // Find the corresponding manifest
+      const manifest = manifests.find((m) => {
+        // Try matching by entity name convention
+        return m.metadata.name === entityName ||
+          entityName.toLowerCase().includes(m.metadata.name.toLowerCase());
+      });
+
+      if (!manifest) continue;
+
+      // Build kubectl resource type from apiVersion + kind
+      const resourceType = manifest.kind.toLowerCase();
+      const getResult = await rt.spawn([
+        "kubectl", "get", resourceType, manifest.metadata.name,
+        "-n", namespace,
+        "-o", "json",
+      ]);
+
+      if (getResult.exitCode !== 0) continue;
+
+      try {
+        const obj = JSON.parse(getResult.stdout) as {
+          metadata: { name: string; uid: string; creationTimestamp: string };
+          status?: { phase?: string; conditions?: Array<{ type: string; status: string }> };
+        };
+
+        // Derive status from conditions or phase
+        let status = "Unknown";
+        if (obj.status?.phase) {
+          status = obj.status.phase;
+        } else if (obj.status?.conditions) {
+          const ready = obj.status.conditions.find((c) => c.type === "Ready" || c.type === "Available");
+          status = ready?.status === "True" ? "Ready" : "NotReady";
+        }
+
+        // Build attributes, scrubbing sensitive data
+        const attributes: Record<string, unknown> = {
+          uid: obj.metadata.uid,
+        };
+
+        resources[entityName] = {
+          type: `${manifest.apiVersion}/${manifest.kind}`,
+          physicalId: obj.metadata.name,
+          status,
+          lastUpdated: obj.metadata.creationTimestamp,
+          attributes,
+        };
+      } catch {
+        // Skip parse failures
+      }
+    }
+
+    return resources;
+  },
+
   mcpTools() {
     return [
       {
@@ -400,7 +490,7 @@ user-invocable: true
 
 ## How chant and Kubernetes relate
 
-chant is a **synthesis-only** tool — it compiles TypeScript source files into Kubernetes YAML manifests. chant does NOT call the Kubernetes API. Your job as an agent is to bridge the two:
+chant is a **synthesis compiler** — it compiles TypeScript source files into Kubernetes YAML manifests. \`chant build\` does not call the Kubernetes API; synthesis is pure and deterministic. The optional \`chant state snapshot\` command queries the Kubernetes API to capture deployment metadata (pod names, status, UIDs) for observability. Your job as an agent is to bridge synthesis and deployment:
 
 - Use **chant** for: build, lint, diff (local YAML comparison)
 - Use **kubectl / k8s API** for: apply, rollback, monitoring, troubleshooting

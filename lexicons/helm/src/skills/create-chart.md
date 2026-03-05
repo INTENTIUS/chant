@@ -8,7 +8,7 @@ user-invocable: true
 
 ## How chant and Helm relate
 
-chant is a **synthesis-only** tool — it compiles TypeScript source files into a complete Helm chart directory (Chart.yaml, values.yaml, templates/, etc.). chant does NOT call Helm CLI. Your job as an agent is to bridge the two:
+chant is a **synthesis compiler** — it compiles TypeScript source files into a complete Helm chart directory (Chart.yaml, values.yaml, templates/, etc.). `chant build` does not call the Helm CLI; synthesis is pure and deterministic. Your job as an agent is to bridge synthesis and deployment:
 
 - Use **chant** for: build, lint, diff (local chart comparison)
 - Use **helm** for: install, upgrade, rollback, test, dependency update

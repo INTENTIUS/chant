@@ -29,6 +29,8 @@ export interface BuildResult {
   outputs: Map<string, string | SerializerResult>;
   /** Map of entity name to Declarable entity */
   entities: Map<string, Declarable>;
+  /** Resource-level dependency graph from discovery */
+  dependencies: Map<string, Set<string>>;
   /** Array of warnings encountered during the build */
   warnings: string[];
   /** Array of errors encountered during discovery and build */
@@ -430,6 +432,7 @@ export async function build(
   return {
     outputs,
     entities: discoveryResult.entities,
+    dependencies: discoveryResult.dependencies,
     warnings,
     errors,
     manifest,

@@ -9,7 +9,7 @@ user-invocable: true
 
 ## How chant and Config Connector relate
 
-chant is a **synthesis-only** tool — it compiles TypeScript source files into Config Connector YAML manifests. chant does NOT call GCP APIs. Your job as an agent is to bridge the two:
+chant is a **synthesis compiler** — it compiles TypeScript source files into Config Connector YAML manifests. `chant build` does not call GCP APIs; synthesis is pure and deterministic. Config Connector resources are Kubernetes objects, so the optional `chant state snapshot` command queries the Kubernetes API to capture deployment metadata (resource status, conditions, observed state) for observability. Your job as an agent is to bridge synthesis and deployment:
 
 - Use **chant** for: build, lint, diff (local YAML comparison)
 - Use **kubectl** for: apply, rollback, monitoring, troubleshooting
@@ -48,6 +48,9 @@ chant lint src/
 ```bash
 # Build
 chant build src/ --output manifests.yaml
+
+# See what changed since last deploy (compares current build against last snapshot's digest)
+chant state diff staging gcp
 
 # Dry run
 kubectl apply -f manifests.yaml --dry-run=server

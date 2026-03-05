@@ -323,7 +323,7 @@ user-invocable: true
 
 ## How chant and GitHub Actions relate
 
-chant is a **synthesis-only** tool — it compiles TypeScript source files into \`.github/workflows/*.yml\` (YAML). chant does NOT call GitHub APIs.
+chant is a **synthesis compiler** — it compiles TypeScript source files into \`.github/workflows/*.yml\` (YAML). \`chant build\` does not call GitHub APIs; synthesis is pure and deterministic.
 
 - Use **chant** for: build, lint, diff (local YAML comparison)
 - Use **git + GitHub** for: push, pull requests, workflow monitoring

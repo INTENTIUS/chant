@@ -8,6 +8,7 @@
         "@intentius/chant-lexicon-azure": "workspace:*",
         "@intentius/chant-lexicon-flyway": "workspace:*",
         "@intentius/chant-lexicon-gcp": "workspace:*",
+        "@intentius/chant-lexicon-github": "workspace:*",
         "@intentius/chant-lexicon-gitlab": "workspace:*",
         "@intentius/chant-lexicon-helm": "workspace:*",
         "@intentius/chant-lexicon-k8s": "workspace:*",
@@ -18,6 +19,17 @@
         "bun-types": "^1.3.8",
         "eslint": "^9.39.2",
         "typescript": "^5.9.3",
+      },
+    },
+    "examples/cockroachdb-multi-cloud": {
+      "name": "cockroachdb-multi-cloud-example",
+      "version": "0.0.1",
+      "dependencies": {
+        "@intentius/chant": "workspace:*",
+        "@intentius/chant-lexicon-aws": "workspace:*",
+        "@intentius/chant-lexicon-azure": "workspace:*",
+        "@intentius/chant-lexicon-gcp": "workspace:*",
+        "@intentius/chant-lexicon-k8s": "workspace:*",
       },
     },
     "examples/flyway-postgresql-gitlab-aws-rds": {
@@ -86,7 +98,7 @@
     },
     "lexicons/aws": {
       "name": "@intentius/chant-lexicon-aws",
-      "version": "0.0.15",
+      "version": "0.0.18",
       "dependencies": {
         "@intentius/chant": "workspace:*",
         "fflate": "^0.8.2",
@@ -285,7 +297,7 @@
     },
     "lexicons/azure": {
       "name": "@intentius/chant-lexicon-azure",
-      "version": "0.0.15",
+      "version": "0.0.18",
       "dependencies": {
         "@intentius/chant": "workspace:*",
         "fflate": "^0.8.2",
@@ -439,7 +451,7 @@
     },
     "lexicons/flyway": {
       "name": "@intentius/chant-lexicon-flyway",
-      "version": "0.0.15",
+      "version": "0.0.18",
       "dependencies": {
         "@intentius/chant": "workspace:*",
       },
@@ -581,7 +593,7 @@
     },
     "lexicons/gcp": {
       "name": "@intentius/chant-lexicon-gcp",
-      "version": "0.0.15",
+      "version": "0.0.18",
       "dependencies": {
         "@intentius/chant": "workspace:*",
         "fflate": "^0.8.2",
@@ -646,9 +658,41 @@
         "typescript": "*",
       },
     },
+    "lexicons/github": {
+      "name": "@intentius/chant-lexicon-github",
+      "version": "0.0.18",
+      "dependencies": {
+        "@intentius/chant": "workspace:*",
+      },
+      "devDependencies": {
+        "typescript": "^5.9.3",
+      },
+    },
+    "lexicons/github/examples/docs-snippets": {
+      "name": "github-docs-snippets-example",
+      "version": "0.0.1",
+      "dependencies": {
+        "@intentius/chant": "workspace:*",
+        "@intentius/chant-lexicon-github": "workspace:*",
+      },
+      "devDependencies": {
+        "typescript": "*",
+      },
+    },
+    "lexicons/github/examples/getting-started": {
+      "name": "github-getting-started-example",
+      "version": "0.0.1",
+      "dependencies": {
+        "@intentius/chant": "workspace:*",
+        "@intentius/chant-lexicon-github": "workspace:*",
+      },
+      "devDependencies": {
+        "typescript": "*",
+      },
+    },
     "lexicons/gitlab": {
       "name": "@intentius/chant-lexicon-gitlab",
-      "version": "0.0.15",
+      "version": "0.0.18",
       "dependencies": {
         "@intentius/chant": "workspace:*",
       },
@@ -724,7 +768,7 @@
     },
     "lexicons/helm": {
       "name": "@intentius/chant-lexicon-helm",
-      "version": "0.0.15",
+      "version": "0.0.18",
       "dependencies": {
         "@intentius/chant": "workspace:*",
         "@intentius/chant-lexicon-k8s": "workspace:*",
@@ -795,7 +839,7 @@
     },
     "lexicons/k8s": {
       "name": "@intentius/chant-lexicon-k8s",
-      "version": "0.0.15",
+      "version": "0.0.18",
       "dependencies": {
         "@intentius/chant": "workspace:*",
       },
@@ -860,7 +904,7 @@
     },
     "packages/core": {
       "name": "@intentius/chant",
-      "version": "0.0.15",
+      "version": "0.0.18",
       "bin": {
         "chant": "./bin/chant",
       },
@@ -968,6 +1012,8 @@
 
     "@intentius/chant-lexicon-gcp": ["@intentius/chant-lexicon-gcp@workspace:lexicons/gcp"],
 
+    "@intentius/chant-lexicon-github": ["@intentius/chant-lexicon-github@workspace:lexicons/github"],
+
     "@intentius/chant-lexicon-gitlab": ["@intentius/chant-lexicon-gitlab@workspace:lexicons/gitlab"],
 
     "@intentius/chant-lexicon-helm": ["@intentius/chant-lexicon-helm@workspace:lexicons/helm"],
@@ -1025,6 +1071,8 @@
     "callsites": ["callsites@3.1.0", "", {}, "sha512-P8BjAsXvZS+VIDUI11hHCQEv74YT67YUi5JJFNWIqL235sBmjX4+qx9Muvls5ivyNENctx46xQLQ3aTuE7ssaQ=="],
 
     "chalk": ["chalk@4.1.2", "", { "dependencies": { "ansi-styles": "^4.1.0", "supports-color": "^7.1.0" } }, "sha512-oKnbhFyRIXpUuez8iBMmyEa4nbj4IOQyuhc/wy9kY7/WVPcwIO9VA668Pu8RkO7+0G76SLROeyw9CpQ061i4mA=="],
+
+    "cockroachdb-multi-cloud-example": ["cockroachdb-multi-cloud-example@workspace:examples/cockroachdb-multi-cloud"],
 
     "color-convert": ["color-convert@2.0.1", "", { "dependencies": { "color-name": "~1.1.4" } }, "sha512-RRECPsj7iu/xb5oKYcsFHSppFNnsj/52OVTRKb4zP5onXwVF3zVmmToNcOfGC+CRDpfK/U584fMg38ZHCaElKQ=="],
 
@@ -1127,6 +1175,10 @@
     "gcp-vpc-network-example": ["gcp-vpc-network-example@workspace:lexicons/gcp/examples/vpc-network"],
 
     "get-tsconfig": ["get-tsconfig@4.13.6", "", { "dependencies": { "resolve-pkg-maps": "^1.0.0" } }, "sha512-shZT/QMiSHc/YBLxxOkMtgSid5HFoauqCE3/exfsEcwg1WkeqjG+V40yBbBrsD+jW2HDXcs28xOfcbm2jI8Ddw=="],
+
+    "github-docs-snippets-example": ["github-docs-snippets-example@workspace:lexicons/github/examples/docs-snippets"],
+
+    "github-getting-started-example": ["github-getting-started-example@workspace:lexicons/github/examples/getting-started"],
 
     "gitlab-aws-alb-api-example": ["gitlab-aws-alb-api-example@workspace:examples/gitlab-aws-alb-api"],
 

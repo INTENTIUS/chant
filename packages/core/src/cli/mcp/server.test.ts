@@ -958,19 +958,19 @@ describe("McpServer", () => {
 
       const toolsRes = await s.handleRequest({ jsonrpc: "2.0", id: 2, method: "tools/list" });
       const tools = (toolsRes.result as { tools: Array<{ name: string }> }).tools;
-      expect(tools).toHaveLength(6);
-      expect(tools.map((t) => t.name).sort()).toEqual(["build", "explain", "import", "lint", "scaffold", "search"]);
+      expect(tools).toHaveLength(9);
+      expect(tools.map((t) => t.name).sort()).toEqual(["build", "explain", "import", "lint", "scaffold", "search", "spell-done", "state-diff", "state-snapshot"]);
 
       const resourcesRes = await s.handleRequest({ jsonrpc: "2.0", id: 3, method: "resources/list" });
       const resources = (resourcesRes.result as { resources: Array<{ uri: string }> }).resources;
-      expect(resources).toHaveLength(2);
+      expect(resources).toHaveLength(7);
     });
 
     test("server with empty plugins array works", async () => {
       const s = new McpServer([]);
       const toolsRes = await s.handleRequest({ jsonrpc: "2.0", id: 1, method: "tools/list" });
       const tools = (toolsRes.result as { tools: Array<{ name: string }> }).tools;
-      expect(tools).toHaveLength(6);
+      expect(tools).toHaveLength(9);
     });
   });
 });

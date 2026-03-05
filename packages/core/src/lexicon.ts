@@ -193,6 +193,30 @@ export interface LexiconPlugin {
 
   /** Return MCP resource contributions */
   mcpResources?(): McpResourceContribution[];
+
+  // State
+  /** Query deployed resources and return API metadata. Opt-in. */
+  describeResources?(options: {
+    environment: string;
+    buildOutput: string;
+    entityNames: string[];
+  }): Promise<Record<string, ResourceMetadata>>;
+}
+
+/**
+ * Metadata about a deployed resource, returned by describeResources.
+ */
+export interface ResourceMetadata {
+  /** Entity type (e.g. AWS::S3::Bucket, K8s::Apps::Deployment) */
+  type: string;
+  /** Provider-assigned physical ID (ARN, resource ID, pod name) */
+  physicalId?: string;
+  /** Provider-specific status string */
+  status: string;
+  /** ISO timestamp of last update */
+  lastUpdated?: string;
+  /** Cloud-assigned output properties */
+  attributes?: Record<string, unknown>;
 }
 
 /**

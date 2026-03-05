@@ -33,6 +33,9 @@ AWS Lexicon (CloudFormation)          K8s Lexicon (kubectl apply)
 # Build CloudFormation template
 chant build src/infra/ --output infra.json
 
+# See what changed since last deploy (compares current build against last snapshot's digest)
+chant state diff staging aws
+
 # Deploy
 aws cloudformation deploy \
   --template-file infra.json \

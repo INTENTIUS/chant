@@ -373,7 +373,7 @@ user-invocable: true
 
 ## How chant and GitLab CI relate
 
-chant is a **synthesis-only** tool — it compiles TypeScript source files into \`.gitlab-ci.yml\` (YAML). chant does NOT call GitLab APIs. Your job as an agent is to bridge the two:
+chant is a **synthesis compiler** — it compiles TypeScript source files into \`.gitlab-ci.yml\` (YAML). \`chant build\` does not call GitLab APIs; synthesis is pure and deterministic. Your job as an agent is to bridge synthesis and deployment:
 
 - Use **chant** for: build, lint, diff (local YAML comparison)
 - Use **git + GitLab API** for: push, merge requests, pipeline monitoring, job logs, rollback, and all deployment operations

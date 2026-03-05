@@ -1,18 +1,25 @@
 /**
- * GCS Bucket with uniform access, versioning, and IAM binding.
+ * GCS Bucket with uniform access, versioning, and lifecycle rule.
  */
 
-import { GcsBucket, IAMPolicyMember, GCP } from "@intentius/chant-lexicon-gcp";
-import { defaultAnnotations } from "@intentius/chant-lexicon-gcp";
+import { StorageBucket, GCP, defaultAnnotations } from "@intentius/chant-lexicon-gcp";
 
 export const annotations = defaultAnnotations({
   "cnrm.cloud.google.com/project-id": GCP.ProjectId,
 });
 
-export const { bucket } = GcsBucket({
-  name: "my-data-bucket",
+export const bucket = new StorageBucket({
+  metadata: {
+    name: "my-data-bucket",
+    labels: {
+      "app.kubernetes.io/managed-by": "chant",
+    },
+  },
   location: "US",
-  versioning: true,
+  storageClass: "STANDARD",
   uniformBucketLevelAccess: true,
-  lifecycleDeleteAfterDays: 365,
+  versioning: { enabled: true },
+  lifecycleRule: [
+    { action: { type: "Delete" }, condition: { age: 365 } },
+  ],
 });
