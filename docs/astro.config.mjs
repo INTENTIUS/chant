@@ -45,6 +45,7 @@ export default defineConfig({
 						{ label: 'Multi-Stack Projects', slug: 'guide/multi-stack' },
 						{ label: 'Managing Lexicons', slug: 'guide/managing-lexicons' },
 						{ label: 'Agent Integration', slug: 'guide/agent-integration' },
+					{ label: 'Spells', slug: 'guide/spells' },
 					],
 				},
 				{

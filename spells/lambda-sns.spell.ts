@@ -3,14 +3,12 @@ import { spell, task, file } from "@intentius/chant";
 export default spell({
   name: "lambda-sns",
   lexicon: "aws",
-  overview: "Build and verify the Lambda + SNS example using the LambdaSns composite.",
+  overview: "Deploy the lambda-sns example — Lambda triggered by SNS using LambdaSns.",
   context: [
     file("lexicons/aws/examples/lambda-sns/README.md"),
-    file("lexicons/aws/examples/lambda-sns/src/main.ts"),
   ],
   tasks: [
-    task("Build: cd lexicons/aws/examples/lambda-sns && bun run build", { done: true }),
-    task("Lint: cd lexicons/aws/examples/lambda-sns && bun run lint", { done: true }),
-    task("Verify template.json contains 5 resources", { done: true }),
+    task("Deploy the lambda-sns example at lexicons/aws/examples/lambda-sns", { done: true }),
+    task("Take a state snapshot: chant state snapshot dev", { done: true }),
   ],
 });

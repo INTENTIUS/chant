@@ -3,14 +3,12 @@ import { spell, task, file } from "@intentius/chant";
 export default spell({
   name: "lambda-sqs",
   lexicon: "aws",
-  overview: "Build and verify the Lambda + SQS example using the LambdaSqs composite.",
+  overview: "Deploy the lambda-sqs example — Lambda triggered by SQS using LambdaSqs.",
   context: [
     file("lexicons/aws/examples/lambda-sqs/README.md"),
-    file("lexicons/aws/examples/lambda-sqs/src/main.ts"),
   ],
   tasks: [
-    task("Build: cd lexicons/aws/examples/lambda-sqs && bun run build", { done: true }),
-    task("Lint: cd lexicons/aws/examples/lambda-sqs && bun run lint", { done: true }),
-    task("Verify template.json contains 4 resources", { done: true }),
+    task("Deploy the lambda-sqs example at lexicons/aws/examples/lambda-sqs", { done: true }),
+    task("Take a state snapshot: chant state snapshot dev", { done: true }),
   ],
 });

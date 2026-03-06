@@ -3,14 +3,12 @@ import { spell, task, file } from "@intentius/chant";
 export default spell({
   name: "lambda-s3",
   lexicon: "aws",
-  overview: "Build and verify the Lambda + S3 example using the LambdaS3 composite.",
+  overview: "Deploy the lambda-s3 example — Lambda with S3 bucket using LambdaS3.",
   context: [
     file("lexicons/aws/examples/lambda-s3/README.md"),
-    file("lexicons/aws/examples/lambda-s3/src/main.ts"),
   ],
   tasks: [
-    task("Build: cd lexicons/aws/examples/lambda-s3 && bun run build", { done: true }),
-    task("Lint: cd lexicons/aws/examples/lambda-s3 && bun run lint", { done: true }),
-    task("Verify template.json contains 3 resources", { done: true }),
+    task("Deploy the lambda-s3 example at lexicons/aws/examples/lambda-s3", { done: true }),
+    task("Take a state snapshot: chant state snapshot dev", { done: true }),
   ],
 });
