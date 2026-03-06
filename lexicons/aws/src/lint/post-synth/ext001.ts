@@ -73,6 +73,10 @@ function matchesCondition(condition: unknown, properties: Record<string, unknown
       if ("enum" in s && Array.isArray(s.enum)) {
         if (!s.enum.includes(properties[propName])) return false;
       }
+      if ("pattern" in s && typeof s.pattern === "string") {
+        const val = properties[propName];
+        if (typeof val !== "string" || !new RegExp(s.pattern).test(val)) return false;
+      }
     }
   }
 

@@ -5,6 +5,7 @@ import { getRuntime } from "../../runtime-adapter";
 import { discoverSpells } from "../../spell/discovery";
 import { generatePrompt } from "../../spell/prompt";
 import { formatError, formatWarning, formatSuccess, formatBold } from "../format";
+import { loadPlugin } from "../plugins";
 import type { CommandContext } from "../registry";
 
 /**
@@ -250,9 +251,25 @@ export async function runSpellCast(ctx: CommandContext): Promise<number> {
   }
 
   const gitRoot = await findGitRoot();
+
+  // Load the spell's lexicon plugin directly (not all project lexicons)
+  const plugins: import("../../lexicon").LexiconPlugin[] = [];
+  if (spell.definition.lexicon) {
+    try {
+      const plugin = await loadPlugin(spell.definition.lexicon);
+      if (plugin.init) await plugin.init();
+      plugins.push(plugin);
+    } catch {
+      console.error(formatWarning({
+        message: `Lexicon "${spell.definition.lexicon}" could not be loaded — skills will not be inlined`,
+        hint: `Install @intentius/chant-lexicon-${spell.definition.lexicon}`,
+      }));
+    }
+  }
+
   const prompt = await generatePrompt(spell.definition, {
     gitRoot,
-    plugins: ctx.plugins.length > 0 ? ctx.plugins : undefined,
+    plugins: plugins.length > 0 ? plugins : undefined,
   });
 
   console.log(prompt);

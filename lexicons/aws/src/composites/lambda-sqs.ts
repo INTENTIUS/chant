@@ -33,12 +33,12 @@ export const LambdaSqs = Composite<LambdaSqsProps>((props) => {
   const policies = props.Policies ? [sqsPolicy, ...props.Policies] : [sqsPolicy];
   const { role, func } = LambdaFunction({ ...props, Policies: policies });
 
-  new EventSourceMapping({
+  const eventSourceMapping = new EventSourceMapping({
     EventSourceArn: queue.Arn,
     FunctionName: func.Arn,
     BatchSize: props.batchSize ?? 10,
     MaximumBatchingWindowInSeconds: props.maxBatchingWindow,
   });
 
-  return { queue, role, func };
+  return { queue, role, func, eventSourceMapping };
 }, "LambdaSqs");

@@ -194,9 +194,9 @@ describe("LambdaScheduled", () => {
 });
 
 describe("LambdaSqs", () => {
-  test("returns queue, role, func members", () => {
+  test("returns queue, role, func, eventSourceMapping members", () => {
     const instance = LambdaSqs(baseProps);
-    expect(Object.keys(instance.members)).toEqual(["queue", "role", "func"]);
+    expect(Object.keys(instance.members)).toEqual(["queue", "role", "func", "eventSourceMapping"]);
   });
 
   test("expandComposite produces 4 entries (queue + role + func + eventSourceMapping)", () => {
@@ -204,6 +204,8 @@ describe("LambdaSqs", () => {
     expect(expanded.has("workerQueue")).toBe(true);
     expect(expanded.has("workerRole")).toBe(true);
     expect(expanded.has("workerFunc")).toBe(true);
+    expect(expanded.has("workerEventSourceMapping")).toBe(true);
+    expect(expanded.size).toBe(4);
   });
 });
 
