@@ -116,7 +116,7 @@ describe("Composite", () => {
     });
 
     const instance = MyComp({});
-    const roleProps = instance.members.role.props as Record<string, unknown>;
+    const roleProps = (instance.members.role as MockResource).props;
     expect(roleProps.bucketArn).toBeInstanceOf(AttrRef);
     // The AttrRef's parent should be the bucket instance
     expect((roleProps.bucketArn as AttrRef).attribute).toBe("Arn");

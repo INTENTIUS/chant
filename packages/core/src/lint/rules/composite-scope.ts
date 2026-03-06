@@ -14,7 +14,7 @@ export function isInsideCompositeFactory(node: ts.Node): boolean {
 
   while (current) {
     if (ts.isArrowFunction(current) || ts.isFunctionExpression(current)) {
-      const parent = current.parent;
+      const parent: ts.Node | undefined = current.parent;
       if (parent && ts.isCallExpression(parent) && parent.arguments[0] === current) {
         const callee = parent.expression;
         if (isCompositeCallee(callee)) {

@@ -36,6 +36,9 @@ jobs:
           bun run --cwd lexicons/gcp prepack
           bun run --cwd lexicons/helm prepack
 
+      - name: Typecheck
+        run: bunx tsc --noEmit -p packages/core/tsconfig.json
+
       - name: Lint example project
         run: bun run packages/core/src/cli/main.ts lint lexicons/aws/examples/lambda-function/src --format sarif > results.sarif
 

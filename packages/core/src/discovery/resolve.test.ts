@@ -8,11 +8,13 @@ import { LOGICAL_NAME_SYMBOL, getLogicalName } from "../utils";
 describe("resolveAttrRefs", () => {
   test("sets logical names on all entities", () => {
     const entity1: Declarable = {
+      lexicon: "test",
       entityType: "Test1",
       [DECLARABLE_MARKER]: true,
     };
 
     const entity2: Declarable = {
+      lexicon: "test",
       entityType: "Test2",
       [DECLARABLE_MARKER]: true,
     };
@@ -30,11 +32,13 @@ describe("resolveAttrRefs", () => {
 
   test("resolves AttrRef with parent in entities collection", () => {
     const parent: Declarable = {
+      lexicon: "test",
       entityType: "Parent",
       [DECLARABLE_MARKER]: true,
     };
 
     const child: Declarable & { ref: AttrRef } = {
+      lexicon: "test",
       entityType: "Child",
       [DECLARABLE_MARKER]: true,
       ref: new AttrRef(parent, "Arn"),
@@ -55,11 +59,13 @@ describe("resolveAttrRefs", () => {
 
   test("resolves multiple AttrRefs on same entity", () => {
     const parent: Declarable = {
+      lexicon: "test",
       entityType: "Parent",
       [DECLARABLE_MARKER]: true,
     };
 
     const child: Declarable & { arn: AttrRef; name: AttrRef } = {
+      lexicon: "test",
       entityType: "Child",
       [DECLARABLE_MARKER]: true,
       arn: new AttrRef(parent, "Arn"),
@@ -83,16 +89,19 @@ describe("resolveAttrRefs", () => {
 
   test("resolves AttrRefs with different parents", () => {
     const parent1: Declarable = {
+      lexicon: "test",
       entityType: "Parent1",
       [DECLARABLE_MARKER]: true,
     };
 
     const parent2: Declarable = {
+      lexicon: "test",
       entityType: "Parent2",
       [DECLARABLE_MARKER]: true,
     };
 
     const child: Declarable & { ref1: AttrRef; ref2: AttrRef } = {
+      lexicon: "test",
       entityType: "Child",
       [DECLARABLE_MARKER]: true,
       ref1: new AttrRef(parent1, "Arn"),
@@ -119,6 +128,7 @@ describe("resolveAttrRefs", () => {
     const parent = {}; // Not a Declarable, not in entities
 
     const child: Declarable & { ref: AttrRef } = {
+      lexicon: "test",
       entityType: "Child",
       [DECLARABLE_MARKER]: true,
       ref: new AttrRef(parent, "Arn"),
@@ -133,11 +143,13 @@ describe("resolveAttrRefs", () => {
 
   test("handles entities with no AttrRefs", () => {
     const entity1: Declarable = {
+      lexicon: "test",
       entityType: "Test1",
       [DECLARABLE_MARKER]: true,
     };
 
     const entity2: Declarable & { prop: string } = {
+      lexicon: "test",
       entityType: "Test2",
       [DECLARABLE_MARKER]: true,
       prop: "value",
@@ -162,17 +174,20 @@ describe("resolveAttrRefs", () => {
 
   test("resolves chain of entities with AttrRefs", () => {
     const root: Declarable = {
+      lexicon: "test",
       entityType: "Root",
       [DECLARABLE_MARKER]: true,
     };
 
     const middle: Declarable & { rootRef: AttrRef } = {
+      lexicon: "test",
       entityType: "Middle",
       [DECLARABLE_MARKER]: true,
       rootRef: new AttrRef(root, "Id"),
     };
 
     const leaf: Declarable & { middleRef: AttrRef } = {
+      lexicon: "test",
       entityType: "Leaf",
       [DECLARABLE_MARKER]: true,
       middleRef: new AttrRef(middle, "Name"),
@@ -196,6 +211,7 @@ describe("resolveAttrRefs", () => {
 
   test("handles entity referencing itself", () => {
     const entity: Declarable & { selfRef: AttrRef } = {
+      lexicon: "test",
       entityType: "SelfReferencing",
       [DECLARABLE_MARKER]: true,
       selfRef: null as unknown as AttrRef, // Will be set below
@@ -214,6 +230,7 @@ describe("resolveAttrRefs", () => {
 
   test("preserves logical name symbol on entities", () => {
     const entity: Declarable = {
+      lexicon: "test",
       entityType: "Test",
       [DECLARABLE_MARKER]: true,
     };
@@ -228,6 +245,7 @@ describe("resolveAttrRefs", () => {
 
   test("uses export name as logical name", () => {
     const entity: Declarable = {
+      lexicon: "test",
       entityType: "Test",
       [DECLARABLE_MARKER]: true,
     };
@@ -243,11 +261,13 @@ describe("resolveAttrRefs", () => {
 
   test("handles complex attribute names in AttrRef", () => {
     const parent: Declarable = {
+      lexicon: "test",
       entityType: "Parent",
       [DECLARABLE_MARKER]: true,
     };
 
     const child: Declarable & { ref: AttrRef } = {
+      lexicon: "test",
       entityType: "Child",
       [DECLARABLE_MARKER]: true,
       ref: new AttrRef(parent, "Outputs.WebsiteURL"),

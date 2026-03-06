@@ -12,7 +12,8 @@ describe("DECLARABLE_MARKER", () => {
   });
 
   test("uses Symbol.for for global registry", () => {
-    expect(DECLARABLE_MARKER).toBe(Symbol.for("chant.declarable"));
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    expect(DECLARABLE_MARKER).toBe(Symbol.for("chant.declarable") as any);
   });
 });
 

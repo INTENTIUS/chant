@@ -14,15 +14,17 @@ describe("LOGICAL_NAME_SYMBOL", () => {
   });
 
   test("uses Symbol.for for global registry", () => {
-    expect(LOGICAL_NAME_SYMBOL).toBe(Symbol.for("chant.logicalName"));
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    expect(LOGICAL_NAME_SYMBOL).toBe(Symbol.for("chant.logicalName") as any);
   });
 });
 
 describe("getAttributes", () => {
   test("returns empty array for entity with no AttrRef properties", () => {
-    const entity: Declarable = {
+    const entity = {
+      lexicon: "test",
       entityType: "Test",
-      [DECLARABLE_MARKER]: true,
+      [DECLARABLE_MARKER]: true as const,
       prop1: "value",
       prop2: 123,
     };
@@ -34,6 +36,7 @@ describe("getAttributes", () => {
   test("returns property names with AttrRef values", () => {
     const parent = {};
     const entity: Declarable & { arn: AttrRef; name: AttrRef } = {
+      lexicon: "test",
       entityType: "Test",
       [DECLARABLE_MARKER]: true,
       arn: new AttrRef(parent, "Arn"),
@@ -53,6 +56,7 @@ describe("getAttributes", () => {
       regularProp: string;
       numberProp: number;
     } = {
+      lexicon: "test",
       entityType: "Test",
       [DECLARABLE_MARKER]: true,
       arn: new AttrRef(parent, "Arn"),
@@ -71,6 +75,7 @@ describe("getAttributes", () => {
       second: AttrRef;
       third: AttrRef;
     } = {
+      lexicon: "test",
       entityType: "Test",
       [DECLARABLE_MARKER]: true,
       first: new AttrRef(parent, "First"),
@@ -92,6 +97,7 @@ describe("getAttributes", () => {
       object: object;
       anotherAttrRef: AttrRef;
     } = {
+      lexicon: "test",
       entityType: "Test",
       [DECLARABLE_MARKER]: true,
       attrRef: new AttrRef(parent, "Attr1"),
@@ -112,6 +118,7 @@ describe("getAttributes", () => {
 describe("getLogicalName", () => {
   test("returns logical name when set", () => {
     const entity: Declarable & Record<symbol, unknown> = {
+      lexicon: "test",
       entityType: "Test",
       [DECLARABLE_MARKER]: true,
       [LOGICAL_NAME_SYMBOL]: "MyResource",
@@ -123,6 +130,7 @@ describe("getLogicalName", () => {
 
   test("throws when logical name is not set", () => {
     const entity: Declarable = {
+      lexicon: "test",
       entityType: "TestEntity",
       [DECLARABLE_MARKER]: true,
     };
@@ -134,6 +142,7 @@ describe("getLogicalName", () => {
 
   test("throws when logical name is not a string", () => {
     const entity: Declarable & Record<symbol, unknown> = {
+      lexicon: "test",
       entityType: "TestEntity",
       [DECLARABLE_MARKER]: true,
       [LOGICAL_NAME_SYMBOL]: 123,
@@ -149,6 +158,7 @@ describe("getLogicalName", () => {
 
     for (const name of names) {
       const entity: Declarable & Record<symbol, unknown> = {
+        lexicon: "test",
         entityType: "Test",
         [DECLARABLE_MARKER]: true,
         [LOGICAL_NAME_SYMBOL]: name,
@@ -160,6 +170,7 @@ describe("getLogicalName", () => {
 
   test("includes entity type in error message", () => {
     const entity: Declarable = {
+      lexicon: "test",
       entityType: "MyCustomType",
       [DECLARABLE_MARKER]: true,
     };
@@ -171,6 +182,7 @@ describe("getLogicalName", () => {
 
   test("throws when logical name is undefined", () => {
     const entity: Declarable & Record<symbol, unknown> = {
+      lexicon: "test",
       entityType: "TestEntity",
       [DECLARABLE_MARKER]: true,
       [LOGICAL_NAME_SYMBOL]: undefined,
@@ -183,6 +195,7 @@ describe("getLogicalName", () => {
 
   test("throws when logical name is null", () => {
     const entity: Declarable & Record<symbol, unknown> = {
+      lexicon: "test",
       entityType: "TestEntity",
       [DECLARABLE_MARKER]: true,
       [LOGICAL_NAME_SYMBOL]: null,

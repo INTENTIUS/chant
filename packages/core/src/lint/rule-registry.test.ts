@@ -88,7 +88,7 @@ describe("buildRuleRegistry", () => {
 
   test("falls back to rule ID when description is missing", () => {
     const rule = mockRule("COR001");
-    delete (rule as Record<string, unknown>).description;
+    delete (rule as unknown as Record<string, unknown>).description;
 
     const entries = buildRuleRegistry([rule]);
     expect(entries[0].description).toBe("COR001");

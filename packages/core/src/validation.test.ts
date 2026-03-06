@@ -50,6 +50,7 @@ describe("ValidationRule", () => {
 
   test("validate function receives entity and returns result", () => {
     const entity: Declarable = {
+      lexicon: "test",
       entityType: "Test",
       [DECLARABLE_MARKER]: true,
     };
@@ -71,6 +72,7 @@ describe("ValidationRule", () => {
 describe("validate", () => {
   test("returns empty array when no rules provided", () => {
     const entity: Declarable = {
+      lexicon: "test",
       entityType: "Test",
       [DECLARABLE_MARKER]: true,
     };
@@ -81,6 +83,7 @@ describe("validate", () => {
 
   test("applies single rule and returns result", () => {
     const entity: Declarable = {
+      lexicon: "test",
       entityType: "Test",
       [DECLARABLE_MARKER]: true,
     };
@@ -98,6 +101,7 @@ describe("validate", () => {
 
   test("applies multiple rules and returns all results", () => {
     const entity: Declarable = {
+      lexicon: "test",
       entityType: "Test",
       [DECLARABLE_MARKER]: true,
     };
@@ -130,6 +134,7 @@ describe("validate", () => {
 
   test("is non-blocking - does not throw on validation failure", () => {
     const entity: Declarable = {
+      lexicon: "test",
       entityType: "Test",
       [DECLARABLE_MARKER]: true,
     };
@@ -149,6 +154,7 @@ describe("validate", () => {
 
   test("passes entity to each rule", () => {
     const entity: Declarable & { name: string } = {
+      lexicon: "test",
       entityType: "Test",
       [DECLARABLE_MARKER]: true,
       name: "MyEntity",
@@ -172,6 +178,7 @@ describe("validate", () => {
 
   test("preserves rule execution order", () => {
     const entity: Declarable = {
+      lexicon: "test",
       entityType: "Test",
       [DECLARABLE_MARKER]: true,
     };
@@ -211,6 +218,7 @@ describe("validate", () => {
 
   test("handles rules with context in results", () => {
     const entity: Declarable & { count: number } = {
+      lexicon: "test",
       entityType: "Test",
       [DECLARABLE_MARKER]: true,
       count: 5,
@@ -240,6 +248,7 @@ describe("validate", () => {
 
   test("handles entity type validation", () => {
     const entity: Declarable = {
+      lexicon: "test",
       entityType: "Bucket",
       [DECLARABLE_MARKER]: true,
     };
@@ -263,6 +272,7 @@ describe("validate", () => {
 
   test("validation is opt-in - only runs rules provided", () => {
     const entity: Declarable = {
+      lexicon: "test",
       entityType: "Test",
       [DECLARABLE_MARKER]: true,
     };
@@ -274,6 +284,7 @@ describe("validate", () => {
 
   test("returns results in same order as rules", () => {
     const entity: Declarable = {
+      lexicon: "test",
       entityType: "Test",
       [DECLARABLE_MARKER]: true,
     };
