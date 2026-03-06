@@ -46,7 +46,8 @@ export async function diffCommand(options: DiffOptions): Promise<DiffResult> {
   const combined: Record<string, unknown> = {};
   const sortedLexiconNames = [...result.outputs.keys()].sort();
   for (const lexiconName of sortedLexiconNames) {
-    combined[lexiconName] = JSON.parse(result.outputs.get(lexiconName)!);
+    const raw = result.outputs.get(lexiconName)!;
+    combined[lexiconName] = JSON.parse(typeof raw === "string" ? raw : raw.primary);
   }
   const currentOutput = JSON.stringify(combined, sortedJsonReplacer, 2);
 

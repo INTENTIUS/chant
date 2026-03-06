@@ -86,7 +86,8 @@ export const myBucket = {
     const combined: Record<string, unknown> = {};
     const sortedSerializerNames = [...buildResult.outputs.keys()].sort();
     for (const serializerName of sortedSerializerNames) {
-      combined[serializerName] = JSON.parse(buildResult.outputs.get(serializerName)!);
+      const raw = buildResult.outputs.get(serializerName)!;
+      combined[serializerName] = JSON.parse(typeof raw === "string" ? raw : raw.primary);
     }
 
     // Sort keys to match diffCommand behavior

@@ -10,6 +10,10 @@ function createMockPlugin(overrides?: Partial<LexiconPlugin>): LexiconPlugin {
   return {
     name: "mock",
     serializer: { name: "mock", serialize: () => "" } as unknown as Serializer,
+    generate: async () => {},
+    validate: async () => {},
+    coverage: async () => {},
+    package: async () => {},
     ...overrides,
   };
 }
@@ -401,11 +405,11 @@ describe("McpServer", () => {
     test("passes template name to initTemplates", async () => {
       const plugin = createMockPlugin({
         name: "test-lex",
-        initTemplates: (template?: string) => {
-          if (template === "special") {
-            return { src: { "special.ts": "export const special = {};" } };
-          }
-          return { src: { "default.ts": "export const def = {};" } };
+        initTemplates: (template?: string | undefined) => {
+          const src: Record<string, string> = template === "special"
+            ? { "special.ts": "export const special = {};" }
+            : { "default.ts": "export const def = {};" };
+          return { src };
         },
       });
 

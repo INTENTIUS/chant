@@ -189,10 +189,12 @@ export const betaEntity = {
     expect(result.outputs.has("alpha")).toBe(true);
     expect(result.outputs.has("beta")).toBe(true);
 
-    const alphaOutput = JSON.parse(result.outputs.get("alpha")!);
+    const alphaRaw = result.outputs.get("alpha")!;
+    const alphaOutput = JSON.parse(typeof alphaRaw === "string" ? alphaRaw : alphaRaw.primary);
     expect(alphaOutput.alpha).toContain("alphaEntity");
 
-    const betaOutput = JSON.parse(result.outputs.get("beta")!);
+    const betaRaw = result.outputs.get("beta")!;
+    const betaOutput = JSON.parse(typeof betaRaw === "string" ? betaRaw : betaRaw.primary);
     expect(betaOutput.beta).toContain("betaEntity");
   });
 

@@ -10,6 +10,10 @@ function createMockPlugin(overrides?: Partial<LexiconPlugin>): LexiconPlugin {
   return {
     name: "mock",
     serializer: { name: "mock", serialize: () => "" } as unknown as Serializer,
+    generate: async () => {},
+    validate: async () => {},
+    coverage: async () => {},
+    package: async () => {},
     ...overrides,
   };
 }
