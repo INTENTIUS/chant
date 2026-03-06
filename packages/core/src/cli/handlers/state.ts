@@ -12,7 +12,7 @@ import type { StateSnapshot } from "../../state/types";
  * chant state snapshot <environment> [lexicon]
  */
 export async function runStateSnapshot(ctx: CommandContext): Promise<number> {
-  const { args, plugins, serializers } = ctx;
+  const { args, plugins } = ctx;
   const environment = args.extraPositional;
   const lexiconFilter = args.extraPositional2;
 
@@ -32,17 +32,18 @@ export async function runStateSnapshot(ctx: CommandContext): Promise<number> {
     return 1;
   }
 
-  // Build first to get entity names and build output
-  const buildResult = await build(projectPath, serializers);
-  if (buildResult.errors.length > 0) {
-    console.error(formatError({ message: "Build failed — fix errors before taking a snapshot" }));
-    return 1;
-  }
-
   // Filter plugins if lexicon specified
   const targetPlugins = lexiconFilter
     ? plugins.filter((p) => p.name === lexiconFilter)
     : plugins;
+  const targetSerializers = targetPlugins.map((p) => p.serializer);
+
+  // Build first to get entity names and build output
+  const buildResult = await build(projectPath, targetSerializers);
+  if (buildResult.errors.length > 0) {
+    console.error(formatError({ message: "Build failed — fix errors before taking a snapshot" }));
+    return 1;
+  }
 
   const pluginsWithDescribe = targetPlugins.filter((p) => p.describeResources);
   if (pluginsWithDescribe.length === 0) {
@@ -117,7 +118,7 @@ export async function runStateShow(ctx: CommandContext): Promise<number> {
  * chant state diff <environment> [lexicon]
  */
 export async function runStateDiff(ctx: CommandContext): Promise<number> {
-  const { args, serializers } = ctx;
+  const { args, plugins, serializers } = ctx;
   const environment = args.extraPositional;
   const lexiconFilter = args.extraPositional2;
 
@@ -126,9 +127,14 @@ export async function runStateDiff(ctx: CommandContext): Promise<number> {
     return 1;
   }
 
+  // Filter serializers to target lexicon before building
+  const targetSerializers = lexiconFilter
+    ? plugins.filter((p) => p.name === lexiconFilter).map((p) => p.serializer)
+    : serializers;
+
   // Build to get current digest
   const projectPath = resolve(".");
-  const buildResult = await build(projectPath, serializers);
+  const buildResult = await build(projectPath, targetSerializers);
   if (buildResult.errors.length > 0) {
     console.error(formatError({ message: "Build failed — fix errors before diffing" }));
     return 1;
