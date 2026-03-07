@@ -1,6 +1,9 @@
-# E2E smoke test — deploys all 5 examples end-to-end
-# Stage 1: bun builds tarballs (same as Dockerfile.smoke-npm)
-# Stage 2: node:22-slim with deploy tools, runs tests at `docker run` time
+# Persona: Release validation (actual cloud deploys)
+# Questions answered:
+#   - Do examples deploy end-to-end to real cloud providers?
+#   - Does the full lifecycle (build → deploy → verify → teardown) work?
+# Flow: Stage 1 (bun) packs tarballs → Stage 2 (node + deploy tools) runs e2e-smoke.sh at container start
+# Requires: cloud credentials mounted via Docker -v / -e flags
 #
 # NOTE: This image is always built as linux/amd64 because Flyway CLI does not
 # provide a linux-aarch64 build.  On Apple Silicon the runner stage uses

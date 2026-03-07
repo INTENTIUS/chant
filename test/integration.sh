@@ -273,7 +273,11 @@ test_init() {
   rm -rf "$init_dir"
 }
 
-# ── Global tests (not per-lexicon) ────────────────────────────────────
+# ══════════════════════════════════════════════════════════════════════
+# Tier 1 — Persona-critical
+#   Same tests new users run (install, init, build, lint), but from workspace.
+#   Covers: --help, per-lexicon build/lint/init (all 6), root examples build.
+# ══════════════════════════════════════════════════════════════════════
 
 # ── test_help ──
 log "test_help"
@@ -324,6 +328,14 @@ if [ -d "$GITLAB_EXAMPLE_DIR/src" ]; then
 else
   echo "  SKIP: gitlab getting-started example not found"
 fi
+
+# ══════════════════════════════════════════════════════════════════════
+# Tier 2 — Developer-deep
+#   Full CLI coverage beyond what new users need: build --output, build --format
+#   yaml, lint --format json/sarif, list, list --format json, doctor, MCP, LSP,
+#   init lexicon scaffold, multi-stack build, skills tests, unknown command test.
+#   (These are exercised inside test_lexicon and the sections that follow.)
+# ══════════════════════════════════════════════════════════════════════
 
 # ── Per-lexicon smoke tests ───────────────────────────────────────────
 

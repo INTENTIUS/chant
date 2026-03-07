@@ -1,4 +1,15 @@
 # Workspace smoke test — validates chant CLI in a Bun workspace
+#
+# Persona: Developer / Contributor (Bun workspace)
+# Questions answered:
+#   - Does fresh checkout + bun install work?
+#   - Does every CLI command work for every lexicon? (build, lint, list, doctor, init)
+#   - Do MCP and LSP servers start?
+#   - Do output formats work? (json, yaml, sarif)
+#   - Does `chant init lexicon` scaffold correctly?
+#   - Do multi-stack builds work?
+#   - Do all root examples build?
+# Flow: COPY workspace → bun install → validate dist/ → RUN integration.sh
 FROM oven/bun:latest
 
 WORKDIR /app

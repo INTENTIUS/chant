@@ -1,7 +1,11 @@
-# npm smoke test — three-stage build
-# Stage 1: bun builds tarballs from the monorepo
-# Stage 2: node:22-slim installs from tarballs and runs chant build/lint (no bun)
-# Stage 3: oven/bun (fresh) installs from tarballs and runs chant build/lint (bun user path)
+# Persona: New User (npm and bun install paths)
+# Questions answered:
+#   - Can I install chant + a lexicon from npm packages?
+#   - Can I `chant init --lexicon <X>` for every lexicon?
+#   - Does the scaffolded project build and lint?
+#   - Does a hand-crafted project build and lint?
+#   - Do the real cross-lexicon examples build from packages?
+# Flow: Stage 1 (bun) packs tarballs → Stage 2 (node) npm install + test → Stage 3 (bun) bun install + test
 
 # ── Stage 1: builder ─────────────────────────────────────────────────────────
 FROM oven/bun:latest AS builder

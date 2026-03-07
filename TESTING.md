@@ -373,29 +373,68 @@ Example CI configuration:
 
 ## Smoke Tests (Docker)
 
-Smoke tests run inside Docker containers to verify chant works in a clean environment with no host state leaking in. There are three modes, available via `test/smoke.sh` or the justfile.
+Smoke tests run inside Docker containers to verify chant works in a clean environment with no host state leaking in. Each Docker image / test path maps to a specific **persona** with clear questions it answers.
 
-### Targets
+### Persona: New User (`just smoke-npm` / `smoke.sh npm`)
 
-| justfile | smoke.sh | What it does |
-|----------|----------|--------------|
-| `just smoke-bun` | `./test/smoke.sh workspace` | Builds `test/Dockerfile.smoke` (Bun workspace), runs `integration.sh` during build, drops into bash |
-| `just smoke-node` | `./test/smoke.sh npm` | Builds `test/Dockerfile.smoke-node` (Node.js + tsx), runs `integration.sh` with `CHANT_RUNTIME=node` |
-| `just smoke-build-examples` | `./test/smoke.sh build-examples` | Builds all root examples inside the Bun smoke container, copies artifacts to `test/example-builds/` |
-| `just smoke-e2e-aws` | `./test/smoke.sh e2e-aws` | Deploys AWS/GitLab examples end-to-end (needs `AWS_*` + `GITLAB_*` env vars) |
-| `just smoke-e2e-eks` | `./test/smoke.sh e2e-eks` | Deploys EKS example end-to-end (needs `AWS_*` + `EKS_DOMAIN`) |
-| `just smoke-e2e` | `./test/smoke.sh e2e-all` | Runs all E2E tests (aws + eks) |
-| `just smoke` | `./test/smoke.sh all` | Runs `smoke-bun` + `smoke-node` |
+**"I npm/bun installed chant. Does it work?"**
 
-### How `build-examples` works
+- Installs chant + each lexicon from tarballs (simulates `npm install`)
+- Runs `chant init --lexicon <X>` for all 6 lexicons
+- Builds and lints scaffolded projects
+- Builds and lints hand-crafted projects
+- Builds real cross-lexicon examples from packages
+- Tests both npm and bun runtimes (stages 2 and 3 of `Dockerfile.smoke-npm`)
 
-1. Builds the `chant-smoke-workspace` Docker image (same as `smoke-bun`)
-2. Runs `test/build-examples.sh` inside the container — loops over `/app/examples/*/`, symlinks `node_modules`, runs each example's `bun run build`
-3. Mounts `test/example-builds/` as `/output` and copies built artifacts out
+### Persona: Developer / Contributor (`just smoke-bun` / `smoke.sh workspace`)
 
-The container's `/app/examples/` is baked into the image during `docker build`. Only `/output` is mounted from the host, and the script only writes *to* it. No host files contaminate the build.
+**"I cloned the repo. Does everything work?"**
 
-### Expected artifacts
+- Fresh checkout + `bun install` + build from workspace
+- Full CLI coverage for all 6 lexicons: build, lint, list, doctor, init
+- MCP and LSP server startup
+- Output formats: `--output` file, `--format yaml`, `--format json`, `--format sarif`
+- `chant init lexicon` scaffold
+- Multi-stack builds
+- All root cross-lexicon examples build
+- Tested by `Dockerfile.smoke` → `integration.sh` (Bun only)
+
+### Persona: Release Validation (`smoke.sh smoke-{aws,eks,gke,aks,all}`)
+
+**"Do examples deploy end-to-end to real cloud providers?"**
+
+- Actual cloud deploys: build → deploy → verify → teardown
+- Requires cloud credentials mounted via Docker `-v` / `-e` flags
+- Tested by `Dockerfile.smoke-e2e` → `e2e-smoke.sh`
+
+### Build Examples (`just smoke-build-examples` / `smoke.sh build-examples`)
+
+Builds all root examples in Docker and extracts artifacts to `test/example-builds/` for agent-driven deployment.
+
+### justfile recipes
+
+| Recipe | What it does |
+|--------|--------------|
+| `just smoke-bun` | Developer tests — builds `Dockerfile.smoke`, runs `integration.sh`, drops into bash |
+| `just smoke-npm` | New User tests — delegates to `./test/smoke.sh npm` |
+| `just smoke-build-examples` | Delegates to `./test/smoke.sh build-examples` |
+| `just smoke` | Runs `smoke-bun` then `smoke-npm` |
+
+### smoke.sh modes
+
+| Mode | What it does |
+|------|--------------|
+| `workspace` | Builds `Dockerfile.smoke`, runs `integration.sh` during build (non-interactive) |
+| `npm` | Runs prepack on host, then builds `Dockerfile.smoke-npm` — 3-stage tarball test |
+| `build-examples` | Builds workspace image, runs `build-examples.sh`, copies artifacts to `test/example-builds/` |
+| `smoke-aws` | E2E: deploys AWS/GitLab examples (needs `AWS_*` + `GITLAB_*` env vars) |
+| `smoke-eks` | E2E: deploys EKS example (needs `AWS_*` + `EKS_DOMAIN`) |
+| `smoke-gke` | E2E: deploys GKE example (needs GCP credentials) |
+| `smoke-aks` | E2E: deploys AKS example (needs Azure credentials) |
+| `smoke-all` | E2E: all 4 deployment groups |
+| `all` | Runs `workspace` + `npm` (no E2E) |
+
+### Expected artifacts (build-examples)
 
 | Example | Artifacts |
 |---------|-----------|
@@ -411,13 +450,36 @@ Each example directory also gets `README.md`, `package.json`, and any deploy scr
 
 | File | Purpose |
 |------|---------|
-| `test/Dockerfile.smoke` | Bun workspace image, runs `integration.sh` during build |
-| `test/Dockerfile.smoke-node` | Node.js image, runs `integration.sh` with `CHANT_RUNTIME=node` |
-| `test/integration.sh` | 500+ line test harness: CLI, build, lint, MCP, LSP, init, root examples |
+| `test/smoke.sh` | Orchestrator — `workspace`, `npm`, `build-examples`, `smoke-{aws,eks,gke,aks,all}`, `all` |
+| `test/Dockerfile.smoke` | Developer persona — Bun workspace image, runs `integration.sh` during build |
+| `test/Dockerfile.smoke-npm` | New User persona — 3-stage tarball image: pack, test npm, test bun |
+| `test/Dockerfile.smoke-e2e` | Release persona — E2E image with deploy tools, runs `e2e-smoke.sh` at container start |
+| `test/integration.sh` | Developer test harness: CLI, build, lint, MCP, LSP, init for all 6 lexicons + examples |
+| `test/npm-smoke.sh` | New User test harness: tarball install, init flow, examples — all 6 lexicons, both runtimes |
+| `test/e2e-smoke.sh` | E2E deployment harness: deploy, verify, teardown for AWS/GitLab, EKS, GKE, AKS |
 | `test/build-examples.sh` | Builds all root examples, copies artifacts to `/output` |
-| `test/Dockerfile.smoke-e2e` | E2E image with deploy tools (AWS CLI, kubectl, Flyway), runs `e2e-smoke.sh` at container start |
-| `test/e2e-smoke.sh` | E2E test harness: deploys examples, verifies, tears down (runs inside Docker) |
-| `test/smoke.sh` | Entrypoint — `workspace`, `npm`, `build-examples`, `e2e-*`, or `all` |
+
+## Distribution Safety
+
+How confident can we be that published npm packages actually work for end users? This section documents what the smoke tests cover and known gaps.
+
+### What's well covered
+
+- **Tarball install + CLI execution**: `npm install` from tarballs for all 6 lexicons, then `chant build` and `chant lint` with both npm and bun runtimes
+- **Tarball content verification**: Explicit assertions that core tarball contains `bin/chant`, `src/cli/main.ts`, `src/index.ts`, and each lexicon tarball contains `dist/manifest.json`, `dist/meta.json`, `dist/types/index.d.ts`, `src/index.ts`
+- **`chant init` flow**: Scaffolding tested for all 6 lexicons — init, install, build, lint
+- **`workspace:*` resolution**: `bun publish` auto-resolves; smoke Dockerfile resolves manually with jq (because `bun pm pack` does not)
+- **Prepack pipeline**: All lexicons run `generate → bundle → validate` with schema and artifact checks
+- **Type resolution**: `tsc --noEmit` check after tarball install (soft pass — chant targets bun/tsx, not vanilla tsc)
+
+### Known gaps
+
+| Gap | Severity | Notes |
+|-----|----------|-------|
+| Smoke tests disabled in CI | Accepted | Docker builds are slow (~10min). Publish workflow runs `prepack` + `bun test` as a gate. Run `just smoke` locally before releases. |
+| `integrity.json` never verified at runtime | Low | `verifyIntegrity()` exists in `lexicon-integrity.ts` but `loadPlugin()` in `cli/plugins.ts` doesn't call it. Defense-in-depth, not a correctness issue. |
+| Lexicon tarballs include entire `src/` | Low | Ships codegen scripts, fetch utilities, and test files. Bloats tarballs but doesn't break anything. Could narrow `"files"` in package.json. |
+| Sequential publish — partial failure risk | Low | If npm goes down mid-publish, some packages may be at different versions. `--tolerate-republish` on retry fixes this. Acceptable at current scale. |
 
 ## Troubleshooting
 

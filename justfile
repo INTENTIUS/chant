@@ -38,16 +38,16 @@ bench:
 smoke-bun:
     docker build -f test/Dockerfile.smoke -t chant-smoke-bun . && docker run -it --rm -v "$HOME/.claude:/root/.claude" -v "$HOME/.claude.json:/root/.claude.json" -v "$HOME/.aws:/root/.aws:ro" chant-smoke-bun
 
-# Build and run Node.js smoke test
-smoke-node:
-    docker build -f test/Dockerfile.smoke-node -t chant-smoke-node . && docker run -it --rm -v "$HOME/.aws:/root/.aws:ro" chant-smoke-node
+# Build and run npm tarball smoke test (all 6 lexicons, both npm and bun runtimes)
+smoke-npm:
+    ./test/smoke.sh npm
 
 # Build all root examples in Docker and extract artifacts to test/example-builds/
 smoke-build-examples:
     ./test/smoke.sh build-examples
 
 # Run all smoke tests
-smoke: smoke-bun smoke-node
+smoke: smoke-bun smoke-npm
 
 # Build unified documentation site (main + lexicon docs)
 docs-build:
