@@ -1,5 +1,5 @@
 import { lintCommand, lintCommandWatch, printLintResult } from "../commands/lint";
-import { formatInfo } from "../format";
+import { formatError, formatInfo } from "../format";
 import type { CommandContext } from "../registry";
 
 export async function runLint(ctx: CommandContext): Promise<number> {
@@ -7,7 +7,7 @@ export async function runLint(ctx: CommandContext): Promise<number> {
 
   const lintFormat = (args.format || "stylish") as "stylish" | "json" | "sarif";
   if (lintFormat !== "stylish" && lintFormat !== "json" && lintFormat !== "sarif") {
-    console.error(`Invalid format for lint: ${lintFormat}. Expected 'stylish', 'json', or 'sarif'.`);
+    console.error(formatError({ message: `Invalid format for lint: ${lintFormat}. Expected 'stylish', 'json', or 'sarif'.` }));
     return 1;
   }
 

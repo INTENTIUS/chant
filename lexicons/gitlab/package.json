@@ -1,7 +1,12 @@
 {
   "name": "@intentius/chant-lexicon-gitlab",
   "version": "0.0.18",
+  "description": "GitLab CI lexicon for chant — declarative IaC in TypeScript",
   "license": "Apache-2.0",
+  "homepage": "https://intentius.io/chant",
+  "repository": { "type": "git", "url": "https://github.com/intentius/chant.git", "directory": "lexicons/gitlab" },
+  "bugs": { "url": "https://github.com/intentius/chant/issues" },
+  "keywords": ["infrastructure-as-code", "iac", "typescript", "gitlab", "gitlab-ci", "chant"],
   "type": "module",
   "files": [
     "src/",

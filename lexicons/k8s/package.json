@@ -1,7 +1,12 @@
 {
   "name": "@intentius/chant-lexicon-k8s",
   "version": "0.0.18",
+  "description": "Kubernetes lexicon for chant — declarative IaC in TypeScript",
   "license": "Apache-2.0",
+  "homepage": "https://intentius.io/chant",
+  "repository": { "type": "git", "url": "https://github.com/intentius/chant.git", "directory": "lexicons/k8s" },
+  "bugs": { "url": "https://github.com/intentius/chant/issues" },
+  "keywords": ["infrastructure-as-code", "iac", "typescript", "kubernetes", "k8s", "chant"],
   "type": "module",
   "files": [
     "src/",

@@ -36,7 +36,7 @@ function color(text: string, colorCode: string): string {
  */
 export function formatStylish(diagnostics: LintDiagnostic[]): string {
   if (diagnostics.length === 0) {
-    return "";
+    return formatSummary(0, 0);
   }
 
   // Group by file

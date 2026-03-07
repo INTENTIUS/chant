@@ -17,9 +17,9 @@ describe("formatStylish", () => {
     }
   });
 
-  test("returns empty string for no diagnostics", () => {
+  test("returns summary line for no diagnostics", () => {
     const result = formatStylish([]);
-    expect(result).toBe("");
+    expect(result).toBe("\u2713 No problems found");
   });
 
   test("formats single diagnostic", () => {

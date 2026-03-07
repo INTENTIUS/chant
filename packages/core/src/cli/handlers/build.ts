@@ -1,5 +1,5 @@
 import { buildCommand, buildCommandWatch, printErrors, printWarnings } from "../commands/build";
-import { formatInfo } from "../format";
+import { formatError, formatInfo } from "../format";
 import type { CommandContext } from "../registry";
 
 export async function runBuild(ctx: CommandContext): Promise<number> {
@@ -10,14 +10,14 @@ export async function runBuild(ctx: CommandContext): Promise<number> {
   if (args.lexicon) {
     serializers = serializers.filter((s) => s.name === args.lexicon);
     if (serializers.length === 0) {
-      console.error(`No serializer found for lexicon "${args.lexicon}". Available: ${ctx.serializers.map((s) => s.name).join(", ")}`);
+      console.error(formatError({ message: `No serializer found for lexicon "${args.lexicon}". Available: ${ctx.serializers.map((s) => s.name).join(", ")}` }));
       return 1;
     }
   }
 
   const buildFormat = (args.format || "json") as "json" | "yaml";
   if (buildFormat !== "json" && buildFormat !== "yaml") {
-    console.error(`Invalid format for build: ${buildFormat}. Expected 'json' or 'yaml'.`);
+    console.error(formatError({ message: `Invalid format for build: ${buildFormat}. Expected 'json' or 'yaml'.` }));
     return 1;
   }
 

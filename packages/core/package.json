@@ -1,7 +1,12 @@
 {
   "name": "@intentius/chant",
   "version": "0.0.18",
+  "description": "Declarative infrastructure-as-code toolkit — TypeScript on Bun",
   "license": "Apache-2.0",
+  "homepage": "https://intentius.io/chant",
+  "repository": { "type": "git", "url": "https://github.com/intentius/chant.git", "directory": "packages/core" },
+  "bugs": { "url": "https://github.com/intentius/chant/issues" },
+  "keywords": ["infrastructure-as-code", "iac", "typescript", "declarative", "cloudformation", "aws", "devops"],
   "type": "module",
   "files": [
     "src/",
