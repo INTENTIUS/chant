@@ -1,12 +1,25 @@
 {
   "name": "@intentius/chant-lexicon-github",
-  "version": "0.0.18",
+  "version": "0.0.19",
   "description": "GitHub Actions lexicon for chant — declarative IaC in TypeScript",
   "license": "Apache-2.0",
   "homepage": "https://intentius.io/chant",
-  "repository": { "type": "git", "url": "https://github.com/intentius/chant.git", "directory": "lexicons/github" },
-  "bugs": { "url": "https://github.com/intentius/chant/issues" },
-  "keywords": ["infrastructure-as-code", "iac", "typescript", "github", "github-actions", "chant"],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/intentius/chant.git",
+    "directory": "lexicons/github"
+  },
+  "bugs": {
+    "url": "https://github.com/intentius/chant/issues"
+  },
+  "keywords": [
+    "infrastructure-as-code",
+    "iac",
+    "typescript",
+    "github",
+    "github-actions",
+    "chant"
+  ],
   "type": "module",
   "files": [
     "src/",
