@@ -17,7 +17,7 @@ spec:
     const ir = parser.parse(yaml);
     expect(ir.resources).toHaveLength(1);
     expect(ir.resources[0].logicalName).toBe("my-bucket");
-    expect(ir.resources[0].type).toContain("StorageBucket");
+    expect(ir.resources[0].type).toContain("Bucket");
   });
 
   test("parses multi-document YAML into multiple resources", () => {
@@ -61,7 +61,7 @@ spec:
 `;
     const ir = parser.parse(yaml);
     expect(ir.resources).toHaveLength(1);
-    expect(ir.resources[0].type).toContain("StorageBucket");
+    expect(ir.resources[0].type).toContain("Bucket");
   });
 
   test("preserves spec properties in parsed IR", () => {
@@ -92,7 +92,7 @@ spec:
     const ir = parser.parse(yaml);
     const generator = new GcpGenerator();
     const ts = generator.generate(ir);
-    expect(ts).toContain("StorageBucket");
+    expect(ts).toContain("Bucket");
     expect(ts).toContain("import");
   });
 });

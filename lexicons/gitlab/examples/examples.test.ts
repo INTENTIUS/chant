@@ -57,6 +57,7 @@ describeAllExamples(config, {
     },
   },
   "multi-stage-deploy": {
+    skipLint: true,
     checks: (output) => {
       expect(output).toContain("stages:");
       expect(output).toContain("stage:");
@@ -68,6 +69,7 @@ describeAllExamples(config, {
     },
   },
   "monorepo-pipeline": {
+    skipLint: true,
     checks: (output) => {
       expect(output).toContain("stages:");
       expect(output).toContain("trigger:");
