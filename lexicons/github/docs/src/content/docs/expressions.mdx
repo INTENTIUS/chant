@@ -1,0 +1,216 @@
+---
+title: "Expressions"
+description: "Typed expression system, context accessors, condition helpers, and utility functions for GitHub Actions"
+---
+
+The Expression system provides type-safe access to GitHub Actions `${{ }}` expressions. Instead of writing raw strings, use the typed helpers for better IDE support and lint coverage.
+
+```typescript
+import {
+  Expression,
+  github, runner, secrets, steps,
+  always, failure,
+  contains, startsWith,
+  branch, tag,
+} from "@intentius/chant-lexicon-github";
+
+// Combine expressions with logical operators
+const isMainBranch = github.ref.eq("refs/heads/main");
+const isPR = github.eventName.eq("pull_request");
+const mainOrPR = isMainBranch.or(isPR);
+
+// Condition helpers for job/step `if:` fields
+const alwaysRun = always(); // ${{ always() }}
+const onFailure = failure(); // ${{ failure() }}
+
+// Function helpers
+const hasLabel = contains(github.event, "bug");
+const isRelease = startsWith(github.ref, "refs/tags/v");
+
+// Convenience helpers
+const onMain = branch("main"); // github.ref == 'refs/heads/main'
+const onV1Tag = tag("v1");     // startsWith(github.ref, 'refs/tags/v1')
+
+// Access secrets, step outputs, and runner context
+const token = secrets("NPM_TOKEN");
+const buildOutput = steps("build").outputs("artifact-path");
+const osType = runner.os; // ${{ runner.os }}
+```
+
+## Expression class
+
+The `Expression` class wraps a raw expression string and provides operator methods:
+
+| Method | Example | Result |
+|--------|---------|--------|
+| `.and(other)` | `github.ref.eq("refs/heads/main").and(isPR)` | `${{ github.ref == 'refs/heads/main' && ... }}` |
+| `.or(other)` | `isMain.or(isDev)` | `${{ ... \|\| ... }}` |
+| `.not()` | `isPR.not()` | `${{ !(...) }}` |
+| `.eq(value)` | `github.ref.eq("refs/heads/main")` | `${{ github.ref == 'refs/heads/main' }}` |
+| `.ne(value)` | `github.eventName.ne("schedule")` | `${{ github.event_name != 'schedule' }}` |
+
+## Context accessors
+
+The `github` and `runner` objects provide typed access to context properties:
+
+```typescript
+import { github, runner } from "@intentius/chant-lexicon-github";
+
+github.ref          // ${{ github.ref }}
+github.sha          // ${{ github.sha }}
+github.actor        // ${{ github.actor }}
+github.repository   // ${{ github.repository }}
+github.eventName    // ${{ github.event_name }}
+github.runId        // ${{ github.run_id }}
+github.refName      // ${{ github.ref_name }}
+github.token        // ${{ github.token }}
+runner.os           // ${{ runner.os }}
+runner.arch         // ${{ runner.arch }}
+```
+
+### GitHub context (24 properties)
+
+| Property | Expression |
+|----------|-----------|
+| `github.ref` | `${{ github.ref }}` |
+| `github.refName` | `${{ github.ref_name }}` |
+| `github.refType` | `${{ github.ref_type }}` |
+| `github.sha` | `${{ github.sha }}` |
+| `github.actor` | `${{ github.actor }}` |
+| `github.triggeringActor` | `${{ github.triggering_actor }}` |
+| `github.repository` | `${{ github.repository }}` |
+| `github.repositoryOwner` | `${{ github.repository_owner }}` |
+| `github.eventName` | `${{ github.event_name }}` |
+| `github.event` | `${{ github.event }}` |
+| `github.runId` | `${{ github.run_id }}` |
+| `github.runNumber` | `${{ github.run_number }}` |
+| `github.workflow` | `${{ github.workflow }}` |
+| `github.workspace` | `${{ github.workspace }}` |
+| `github.token` | `${{ github.token }}` |
+| `github.job` | `${{ github.job }}` |
+| `github.headRef` | `${{ github.head_ref }}` |
+| `github.baseRef` | `${{ github.base_ref }}` |
+| `github.serverUrl` | `${{ github.server_url }}` |
+| `github.apiUrl` | `${{ github.api_url }}` |
+| `github.graphqlUrl` | `${{ github.graphql_url }}` |
+| `github.action` | `${{ github.action }}` |
+| `github.actionPath` | `${{ github.action_path }}` |
+
+### Runner context (5 properties)
+
+| Property | Expression |
+|----------|-----------|
+| `runner.os` | `${{ runner.os }}` |
+| `runner.arch` | `${{ runner.arch }}` |
+| `runner.temp` | `${{ runner.temp }}` |
+| `runner.toolCache` | `${{ runner.tool_cache }}` |
+| `runner.name` | `${{ runner.name }}` |
+
+## PascalCase variable references
+
+The `GitHub` and `Runner` objects provide an alternative PascalCase API for template string interpolation:
+
+```typescript
+import { Job, Step, GitHub, Runner } from "@intentius/chant-lexicon-github";
+
+export const deploy = new Job({
+  "runs-on": "ubuntu-latest",
+  steps: [
+    new Step({
+      name: "Print context",
+      run: `echo "Branch: ${GitHub.RefName}"
+echo "SHA: ${GitHub.Sha}"
+echo "Actor: ${GitHub.Actor}"
+echo "Repo: ${GitHub.Repository}"
+echo "Runner OS: ${Runner.Os}"`,
+    }),
+  ],
+});
+```
+
+## Dynamic context accessors
+
+Access dynamic context values -- secrets, matrix, step outputs, job outputs, inputs, vars, env:
+
+```typescript
+import { secrets, matrix, steps, needs, inputs, vars, env } from "@intentius/chant-lexicon-github";
+
+secrets("NPM_TOKEN")              // ${{ secrets.NPM_TOKEN }}
+matrix("node-version")            // ${{ matrix.node-version }}
+steps("build").outputs("path")    // ${{ steps.build.outputs.path }}
+needs("build").outputs("version") // ${{ needs.build.outputs.version }}
+inputs("environment")             // ${{ inputs.environment }}
+vars("API_URL")                   // ${{ vars.API_URL }}
+env("NODE_ENV")                   // ${{ env.NODE_ENV }}
+```
+
+## Condition helpers
+
+Status check functions for job and step `if:` fields:
+
+| Function | Expression | Description |
+|----------|-----------|-------------|
+| `always()` | `${{ always() }}` | Always run, regardless of status |
+| `failure()` | `${{ failure() }}` | Run only if a previous step failed |
+| `success()` | `${{ success() }}` | Run only if all previous steps succeeded (default) |
+| `cancelled()` | `${{ cancelled() }}` | Run only if the workflow was cancelled |
+
+Use them in `if:` conditions:
+
+```typescript
+import { Job, Step, failure, always } from "@intentius/chant-lexicon-github";
+
+export const test = new Job({
+  "runs-on": "ubuntu-latest",
+  steps: [
+    new Step({ name: "Test", run: "npm test" }),
+    new Step({
+      name: "Upload coverage",
+      if: always(),
+      run: "npx codecov",
+    }),
+    new Step({
+      name: "Notify failure",
+      if: failure(),
+      run: "curl -X POST $SLACK_WEBHOOK",
+    }),
+  ],
+});
+```
+
+## Function helpers
+
+Utility functions that produce expression strings:
+
+| Function | Example | Expression |
+|----------|---------|-----------|
+| `contains(haystack, needle)` | `contains(github.event, "bug")` | `${{ contains(github.event, 'bug') }}` |
+| `startsWith(value, prefix)` | `startsWith(github.ref, "refs/tags/")` | `${{ startsWith(github.ref, 'refs/tags/') }}` |
+| `toJSON(value)` | `toJSON(github.event)` | `${{ toJSON(github.event) }}` |
+| `fromJSON(json)` | `fromJSON(steps("meta").outputs("matrix"))` | `${{ fromJSON(steps.meta.outputs.matrix) }}` |
+| `format(template, ...args)` | `format("v{0}.{1}", major, minor)` | `${{ format('v{0}.{1}', ...) }}` |
+
+## Convenience helpers
+
+Shorthand functions for common checks:
+
+```typescript
+import { branch, tag } from "@intentius/chant-lexicon-github";
+
+branch("main")   // github.ref == 'refs/heads/main'
+tag("v1")        // startsWith(github.ref, 'refs/tags/v1')
+```
+
+Use them in job `if:` conditions:
+
+```typescript
+import { Job, Step, branch } from "@intentius/chant-lexicon-github";
+
+export const deploy = new Job({
+  "runs-on": "ubuntu-latest",
+  if: branch("main"),
+  steps: [
+    new Step({ name: "Deploy", run: "npm run deploy" }),
+  ],
+});
+```

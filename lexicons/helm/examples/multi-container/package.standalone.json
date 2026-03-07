@@ -1,0 +1,22 @@
+{
+  "name": "helm-multi-container-example",
+  "version": "0.0.1",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "test": "bun test",
+    "build": "chant build src --lexicon helm -o Chart.yaml",
+    "lint": "chant lint src",
+    "dev": "chant build src --lexicon helm -o Chart.yaml --watch",
+    "deploy": "helm install multi-container .",
+    "teardown": "helm uninstall multi-container"
+  },
+  "dependencies": {
+    "@intentius/chant": "^0.0.14",
+    "@intentius/chant-lexicon-helm": "^0.0.14",
+    "@intentius/chant-lexicon-k8s": "^0.0.14"
+  },
+  "devDependencies": {
+    "typescript": "^5.0.0"
+  }
+}

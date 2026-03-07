@@ -30,5 +30,33 @@ describeAllExamples(
         expect(output).toContain("LOG_LEVEL: info");
       },
     },
+    "namespace-rbac": {
+      skipLint: true,
+      checks: (output) => {
+        expect(output).toContain("kind: Namespace");
+        expect(output).toContain("kind: ServiceAccount");
+        expect(output).toContain("kind: Role");
+        expect(output).toContain("kind: RoleBinding");
+        expect(output).toContain("name: app-team");
+      },
+    },
+    "ingress-tls": {
+      skipLint: true,
+      checks: (output) => {
+        expect(output).toContain("kind: Deployment");
+        expect(output).toContain("kind: Service");
+        expect(output).toContain("kind: Ingress");
+        expect(output).toContain("tls:");
+        expect(output).toContain("app.example.com");
+      },
+    },
+    "cronjob-cleanup": {
+      skipLint: true,
+      checks: (output) => {
+        expect(output).toContain("kind: CronJob");
+        expect(output).toContain("schedule:");
+        expect(output).toContain("0 * * * *");
+      },
+    },
   },
 );

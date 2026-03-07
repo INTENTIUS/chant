@@ -1,0 +1,18 @@
+{
+  "name": "github-matrix-test-example",
+  "version": "0.0.1",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "build": "chant build src --lexicon github -o .github/workflows/matrix-test.yml",
+    "lint": "chant lint src",
+    "dev": "chant build src --lexicon github --watch -o .github/workflows/matrix-test.yml"
+  },
+  "dependencies": {
+    "@intentius/chant-lexicon-github": "workspace:*",
+    "@intentius/chant": "workspace:*"
+  },
+  "devDependencies": {
+    "typescript": "*"
+  }
+}

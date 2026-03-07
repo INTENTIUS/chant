@@ -114,6 +114,54 @@ export const nodePool = new NodePool({
       };
     }
 
+    if (template === "cloud-function") {
+      return {
+        src: {
+          "infra.ts": `/**
+ * Cloud Function with Pub/Sub trigger
+ */
+
+import { CloudFunction, StorageBucket, GCPServiceAccount, IAMPolicyMember, GCP } from "@intentius/chant-lexicon-gcp";
+import { defaultAnnotations } from "@intentius/chant-lexicon-gcp";
+
+export const annotations = defaultAnnotations({
+  "cnrm.cloud.google.com/project-id": GCP.ProjectId,
+});
+
+export const sourceBucket = new StorageBucket({
+  location: GCP.Region,
+  storageClass: "STANDARD",
+  uniformBucketLevelAccess: true,
+});
+
+export const functionSa = new GCPServiceAccount({
+  displayName: "Cloud Function Service Account",
+});
+
+export const fn = new CloudFunction({
+  location: GCP.Region,
+  runtime: "nodejs22",
+  entryPoint: "handler",
+  sourceArchiveBucket: sourceBucket,
+  sourceArchiveObject: "function-source.zip",
+  triggerHttp: true,
+  serviceAccountEmail: functionSa,
+});
+
+export const invoker = new IAMPolicyMember({
+  member: "allUsers",
+  role: "roles/cloudfunctions.invoker",
+  resourceRef: {
+    apiVersion: "cloudfunctions.cnrm.cloud.google.com/v1beta1",
+    kind: "CloudFunction",
+    name: fn,
+  },
+});
+`,
+        },
+      };
+    }
+
     // Default: StorageBucket + IAMPolicyMember
     return {
       src: {

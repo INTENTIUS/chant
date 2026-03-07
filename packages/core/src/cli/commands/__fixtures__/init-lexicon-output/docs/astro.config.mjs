@@ -8,9 +8,6 @@ export default defineConfig({
       title: 'Fixture',
       sidebar: [
         { label: 'Overview', slug: '' },
-        { label: 'Getting Started', slug: 'getting-started' },
-        { label: 'Serialization', slug: 'serialization' },
-        { label: 'Lint Rules', slug: 'lint-rules' },
       ],
     }),
   ],

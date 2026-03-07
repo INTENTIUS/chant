@@ -56,6 +56,26 @@ describeAllExamples(config, {
       expect(output).toContain("environment:");
     },
   },
+  "multi-stage-deploy": {
+    checks: (output) => {
+      expect(output).toContain("stages:");
+      expect(output).toContain("stage:");
+      expect(output).toContain("script:");
+      expect(output).toContain("deploy");
+      expect(output).toContain("environment:");
+      expect(output).toContain("staging");
+      expect(output).toContain("when: manual");
+    },
+  },
+  "monorepo-pipeline": {
+    checks: (output) => {
+      expect(output).toContain("stages:");
+      expect(output).toContain("trigger:");
+      expect(output).toContain("include:");
+      expect(output).toContain("packages/api");
+      expect(output).toContain("changes:");
+    },
+  },
   "docs-snippets": { skipLint: true, skipBuild: true },
 });
 

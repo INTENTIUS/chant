@@ -39,12 +39,6 @@ interface McpResponse {
   };
 }
 
-interface McpNotification {
-  jsonrpc: "2.0";
-  method: string;
-  params?: Record<string, unknown>;
-}
-
 /**
  * Tool definition for MCP
  */

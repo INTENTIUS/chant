@@ -498,49 +498,6 @@ export function hover(ctx: HoverContext): HoverInfo | undefined {
 `;
 }
 
-function generateImportParserTs(name: string): string {
-  return `import type { TemplateParser } from "@intentius/chant/import/parser";
-
-/**
- * Template parser for importing external ${name} templates.
- *
- * TODO: Implement the TemplateParser interface for your format.
- */
-// export class ${name.charAt(0).toUpperCase() + name.slice(1)}Parser implements TemplateParser {
-//   parse(data: unknown): IR { ... }
-// }
-`;
-}
-
-function generateImportGeneratorTs(name: string): string {
-  return `import type { TypeScriptGenerator } from "@intentius/chant/import/generator";
-
-/**
- * TypeScript generator for converting imported ${name} templates.
- *
- * TODO: Implement the TypeScriptGenerator interface for your format.
- */
-// export class ${name.charAt(0).toUpperCase() + name.slice(1)}Generator implements TypeScriptGenerator {
-//   generate(ir: IR): string { ... }
-// }
-`;
-}
-
-function generateCoverageTs(name: string): string {
-  return `/**
- * Coverage analysis for the ${name} lexicon.
- *
- * TODO: Implement coverage analysis that checks how much of the
- * upstream spec is covered by the generated types.
- */
-export async function analyzeCoverage(options?: { verbose?: boolean }): Promise<void> {
-  console.error("Coverage analysis not yet implemented");
-  // TODO: Read generated lexicon JSON, compare against upstream spec,
-  // and report coverage metrics.
-}
-`;
-}
-
 function generateValidateTs(name: string): string {
   return `/**
  * Validate generated lexicon-${name} artifacts.
@@ -795,41 +752,6 @@ function generateExampleInfraTs(name: string, names: ReturnType<typeof deriveNam
 `;
 }
 
-// ── Additional doc page generators ───────────────────────────────────
-
-function generateDocsGettingStartedMdx(name: string): string {
-  const displayName = name.charAt(0).toUpperCase() + name.slice(1);
-  return `---
-title: Getting Started
-description: Get started with the ${displayName} lexicon
----
-
-TODO: Document how to set up a project using the ${displayName} lexicon.
-`;
-}
-
-function generateDocsSerializationMdx(name: string): string {
-  const displayName = name.charAt(0).toUpperCase() + name.slice(1);
-  return `---
-title: Serialization
-description: ${displayName} output format
----
-
-TODO: Document the ${displayName} serialization format and output structure.
-`;
-}
-
-function generateDocsLintRulesMdx(name: string): string {
-  const displayName = name.charAt(0).toUpperCase() + name.slice(1);
-  return `---
-title: Lint Rules
-description: ${displayName} lint rules reference
----
-
-TODO: Document the lint rules provided by the ${displayName} lexicon.
-`;
-}
-
 // ── Docs site skeleton generators ────────────────────────────────────
 
 function generateDocsPackageJson(name: string): string {
@@ -879,9 +801,6 @@ export default defineConfig({
       title: '${displayName}',
       sidebar: [
         { label: 'Overview', slug: '' },
-        { label: 'Getting Started', slug: 'getting-started' },
-        { label: 'Serialization', slug: 'serialization' },
-        { label: 'Lint Rules', slug: 'lint-rules' },
       ],
     }),
   ],
@@ -953,10 +872,6 @@ export async function initLexiconCommand(options: InitLexiconOptions): Promise<I
     "src/lint",
     "src/lint/rules",
     "src/lsp",
-    "src/import",
-    "src/composites",
-    "src/actions",
-    "src/lint/post-synth",
     "src/generated",
     "docs",
     "docs/src",
@@ -991,9 +906,6 @@ export async function initLexiconCommand(options: InitLexiconOptions): Promise<I
     "src/lsp/hover.ts": generateLspHoverTs(name),
     "src/lsp/completions.test.ts": generateCompletionsTestTs(),
     "src/lsp/hover.test.ts": generateHoverTestTs(),
-    "src/import/parser.ts": generateImportParserTs(name),
-    "src/import/generator.ts": generateImportGeneratorTs(name),
-    "src/coverage.ts": generateCoverageTs(name),
     "src/plugin.test.ts": generatePluginTestTs(name, names),
     "src/serializer.test.ts": generateSerializerTestTs(name, names),
     "src/validate.ts": generateValidateTs(name),
@@ -1008,9 +920,6 @@ export async function initLexiconCommand(options: InitLexiconOptions): Promise<I
     "docs/astro.config.mjs": generateDocsAstroConfig(name),
     "docs/src/content.config.ts": generateDocsContentConfig(),
     "docs/src/content/docs/index.mdx": generateDocsIndexMdx(name),
-    "docs/src/content/docs/getting-started.mdx": generateDocsGettingStartedMdx(name),
-    "docs/src/content/docs/serialization.mdx": generateDocsSerializationMdx(name),
-    "docs/src/content/docs/lint-rules.mdx": generateDocsLintRulesMdx(name),
     "examples/getting-started/package.json": generateExamplePackageJson(name),
     "examples/getting-started/src/infra.ts": generateExampleInfraTs(name, names),
   };
@@ -1018,9 +927,6 @@ export async function initLexiconCommand(options: InitLexiconOptions): Promise<I
   // Write .gitkeep files
   const gitkeeps = [
     "src/generated/.gitkeep",
-    "src/composites/.gitkeep",
-    "src/actions/.gitkeep",
-    "src/lint/post-synth/.gitkeep",
   ];
 
   for (const gk of gitkeeps) {

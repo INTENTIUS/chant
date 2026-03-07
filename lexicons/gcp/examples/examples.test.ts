@@ -12,5 +12,8 @@ describeAllExamples(
     // These examples use hardcoded regions for simplicity (WGC002 warnings)
     "vpc-network": { skipLint: true },
     "gke-cluster": { skipLint: true },
+    "cloud-run": {},
+    "pubsub": {},
+    "cloud-storage-lifecycle": {},
   },
 );

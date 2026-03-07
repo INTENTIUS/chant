@@ -1,0 +1,22 @@
+{
+  "name": "helm-stateful-service-example",
+  "version": "0.0.1",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "test": "bun test",
+    "build": "chant build src --lexicon helm -o Chart.yaml",
+    "lint": "chant lint src",
+    "dev": "chant build src --lexicon helm -o Chart.yaml --watch",
+    "deploy": "helm install stateful-service .",
+    "teardown": "helm uninstall stateful-service"
+  },
+  "dependencies": {
+    "@intentius/chant": "workspace:*",
+    "@intentius/chant-lexicon-helm": "workspace:*",
+    "@intentius/chant-lexicon-k8s": "workspace:*"
+  },
+  "devDependencies": {
+    "typescript": "*"
+  }
+}

@@ -51,9 +51,6 @@ describe("initLexiconCommand", () => {
       "src/lsp/hover.ts",
       "src/lsp/completions.test.ts",
       "src/lsp/hover.test.ts",
-      "src/import/parser.ts",
-      "src/import/generator.ts",
-      "src/coverage.ts",
       "src/validate.ts",
       "src/validate-cli.ts",
       "package.json",
@@ -66,15 +63,9 @@ describe("initLexiconCommand", () => {
       "docs/astro.config.mjs",
       "docs/src/content.config.ts",
       "docs/src/content/docs/index.mdx",
-      "docs/src/content/docs/getting-started.mdx",
-      "docs/src/content/docs/serialization.mdx",
-      "docs/src/content/docs/lint-rules.mdx",
       "examples/getting-started/package.json",
       "examples/getting-started/src/infra.ts",
       "src/generated/.gitkeep",
-      "src/composites/.gitkeep",
-      "src/actions/.gitkeep",
-      "src/lint/post-synth/.gitkeep",
     ];
 
     for (const file of expectedFiles) {

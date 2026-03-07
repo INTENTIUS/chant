@@ -54,7 +54,16 @@ export const githubPlugin: LexiconPlugin = {
     const { gha017 } = require("./lint/post-synth/gha017");
     const { gha018 } = require("./lint/post-synth/gha018");
     const { gha019 } = require("./lint/post-synth/gha019");
-    return [gha006, gha009, gha011, gha017, gha018, gha019];
+    const { gha020 } = require("./lint/post-synth/gha020");
+    const { gha021 } = require("./lint/post-synth/gha021");
+    const { gha022 } = require("./lint/post-synth/gha022");
+    const { gha023 } = require("./lint/post-synth/gha023");
+    const { gha024 } = require("./lint/post-synth/gha024");
+    const { gha025 } = require("./lint/post-synth/gha025");
+    const { gha026 } = require("./lint/post-synth/gha026");
+    const { gha027 } = require("./lint/post-synth/gha027");
+    const { gha028 } = require("./lint/post-synth/gha028");
+    return [gha006, gha009, gha011, gha017, gha018, gha019, gha020, gha021, gha022, gha023, gha024, gha025, gha026, gha027, gha028];
   },
 
   intrinsics(): IntrinsicDef[] {
@@ -384,6 +393,25 @@ git push
             title: "Matrix strategy",
             input: "Set up a Node.js matrix build",
             output: `new Strategy({ matrix: { "node-version": ["18", "20", "22"] } })`,
+          },
+        ],
+      },
+      {
+        file: "github-actions-security.md",
+        name: "github-actions-security",
+        description: "GitHub Actions security — secret scanning, OIDC, permissions hardening, supply chain",
+        triggers: [
+          { type: "context" as const, value: "github security" },
+          { type: "context" as const, value: "workflow security" },
+          { type: "context" as const, value: "oidc" },
+          { type: "context" as const, value: "permissions" },
+        ],
+        parameters: [],
+        examples: [
+          {
+            title: "Permissions hardening",
+            input: "Lock down workflow permissions",
+            output: `new Workflow({ permissions: { contents: "read" } })`,
           },
         ],
       },

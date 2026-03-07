@@ -1,0 +1,283 @@
+---
+title: "Actions & Composites"
+description: "Pre-built composites -- action wrappers, CI pipelines, Docker builds, and deploy environments"
+---
+
+Composites are pre-built abstractions that produce typed GitHub Actions resources. They range from single-action wrappers to full multi-job workflow pipelines.
+
+## Action wrappers
+
+### Checkout
+
+Wraps `actions/checkout@v4`. Clones the repository.
+
+```typescript
+import { Checkout } from "@intentius/chant-lexicon-github";
+
+Checkout({}).step                              // Default checkout
+Checkout({ fetchDepth: 0 }).step               // Full history
+Checkout({ ref: "develop" }).step              // Specific branch
+Checkout({ submodules: "recursive" }).step     // With submodules
+```
+
+**Props:** `ref?`, `repository?`, `fetchDepth?`, `token?`, `submodules?`, `sshKey?`
+
+### SetupNode
+
+Wraps `actions/setup-node@v4`. Installs Node.js with optional dependency caching.
+
+```typescript
+import { SetupNode } from "@intentius/chant-lexicon-github";
+
+SetupNode({ nodeVersion: "22" }).step              // Node 22
+SetupNode({ nodeVersion: "22", cache: "npm" }).step // With npm cache
+SetupNode({ nodeVersion: "20", cache: "pnpm" }).step // pnpm cache
+```
+
+**Props:** `nodeVersion?`, `cache?` (`"npm"` | `"pnpm"` | `"yarn"`), `registryUrl?`
+
+### SetupGo
+
+Wraps `actions/setup-go@v5`. Installs Go.
+
+```typescript
+import { SetupGo } from "@intentius/chant-lexicon-github";
+
+SetupGo({ goVersion: "1.22" }).step
+SetupGo({ goVersion: "stable" }).step
+```
+
+**Props:** `goVersion?`, `cache?`
+
+### SetupPython
+
+Wraps `actions/setup-python@v5`. Installs Python.
+
+```typescript
+import { SetupPython } from "@intentius/chant-lexicon-github";
+
+SetupPython({ pythonVersion: "3.12" }).step
+SetupPython({ pythonVersion: "3.12", cache: "pip" }).step
+```
+
+**Props:** `pythonVersion?`, `cache?` (`"pip"` | `"pipenv"` | `"poetry"`), `architecture?`
+
+### CacheAction
+
+Wraps `actions/cache@v4`. Caches files between workflow runs.
+
+```typescript
+import { CacheAction } from "@intentius/chant-lexicon-github";
+
+CacheAction({
+  path: "~/.npm",
+  key: "npm-${{ runner.os }}-${{ hashFiles('**/package-lock.json') }}",
+  restoreKeys: ["npm-${{ runner.os }}-"],
+}).step
+```
+
+**Props:** `path`, `key`, `restoreKeys?`
+
+### UploadArtifact
+
+Wraps `actions/upload-artifact@v4`. Uploads files as workflow artifacts.
+
+```typescript
+import { UploadArtifact } from "@intentius/chant-lexicon-github";
+
+UploadArtifact({
+  name: "build-output",
+  path: "dist/",
+  retentionDays: 7,
+}).step
+```
+
+**Props:** `name`, `path`, `retentionDays?`, `ifNoFilesFound?`
+
+### DownloadArtifact
+
+Wraps `actions/download-artifact@v4`. Downloads previously uploaded artifacts.
+
+```typescript
+import { DownloadArtifact } from "@intentius/chant-lexicon-github";
+
+DownloadArtifact({
+  name: "build-output",
+  path: "dist/",
+}).step
+```
+
+**Props:** `name`, `path?`
+
+## CI pipeline composites
+
+### NodeCI
+
+A batteries-included composite that produces a full CI workflow and job. Generates a `Workflow` (push + PR on main) and a `Job` with checkout, setup-node, install, build, and test steps.
+
+```typescript
+import { NodeCI } from "@intentius/chant-lexicon-github";
+
+// Default: Node 22, npm, "build" + "test" scripts
+const { workflow, job } = NodeCI({});
+
+// Customized
+const { workflow: w, job: j } = NodeCI({
+  nodeVersion: "20",
+  packageManager: "pnpm",
+  buildScript: "compile",
+  testScript: "test:ci",
+});
+```
+
+**Props:** `nodeVersion?`, `packageManager?` (`"npm"` | `"pnpm"` | `"yarn"` | `"bun"`), `buildScript?`, `testScript?`, `installCommand?`
+
+Export the returned `workflow` and `job` directly:
+
+```typescript
+const ci = NodeCI({ nodeVersion: "22", packageManager: "npm" });
+export const workflow = ci.workflow;
+export const build = ci.job;
+```
+
+### NodePipeline
+
+A production-grade Node pipeline with separate build and test jobs connected by artifact passing. The build job uploads artifacts; the test job downloads them and runs tests with `needs: ["build"]`.
+
+```typescript
+import { NodePipeline } from "@intentius/chant-lexicon-github";
+
+const { workflow, buildJob, testJob } = NodePipeline({
+  nodeVersion: "22",
+  packageManager: "pnpm",
+  buildScript: "build",
+  testScript: "test:ci",
+  buildArtifactPaths: ["dist/", "lib/"],
+});
+```
+
+**Props:** `nodeVersion?`, `packageManager?`, `buildScript?`, `testScript?`, `installCommand?`, `buildArtifactPaths?`, `artifactName?`, `artifactRetentionDays?`, `runsOn?`
+
+#### Pipeline presets
+
+```typescript
+import { BunPipeline, PnpmPipeline, YarnPipeline } from "@intentius/chant-lexicon-github";
+
+const bun = BunPipeline({});         // packageManager: "bun", uses oven-sh/setup-bun@v2
+const pnpm = PnpmPipeline({});       // packageManager: "pnpm"
+const yarn = YarnPipeline({});       // packageManager: "yarn"
+```
+
+### PythonCI
+
+Python CI with test and optional lint jobs. Supports pip and Poetry workflows.
+
+```typescript
+import { PythonCI } from "@intentius/chant-lexicon-github";
+
+const { workflow, testJob, lintJob } = PythonCI({
+  pythonVersion: "3.12",
+  testCommand: "pytest --junitxml=report.xml --cov",
+  lintCommand: "ruff check .",
+});
+
+// Omit lint job
+const { workflow: w, testJob: t } = PythonCI({ lintCommand: null });
+
+// Poetry mode
+const poetry = PythonCI({ usePoetry: true });
+```
+
+**Props:** `pythonVersion?`, `testCommand?`, `lintCommand?` (null to omit), `requirementsFile?`, `usePoetry?`, `runsOn?`
+
+### DockerBuild
+
+Docker build and push using official Docker actions (login, setup-buildx, metadata, build-push). Configured for GitHub Container Registry by default.
+
+```typescript
+import { DockerBuild } from "@intentius/chant-lexicon-github";
+
+const { workflow, job } = DockerBuild({
+  registry: "ghcr.io",
+  imageName: "ghcr.io/my-org/my-app",
+  dockerfile: "Dockerfile",
+  platforms: ["linux/amd64", "linux/arm64"],
+});
+```
+
+**Props:** `tag?`, `dockerfile?`, `context?`, `registry?`, `imageName?`, `tagLatest?`, `buildArgs?`, `push?`, `platforms?`, `runsOn?`
+
+### DeployEnvironment
+
+Deploy and cleanup job pair using GitHub Environments with concurrency control.
+
+```typescript
+import { DeployEnvironment } from "@intentius/chant-lexicon-github";
+
+const { deployJob, cleanupJob } = DeployEnvironment({
+  name: "staging",
+  deployScript: ["npm run build", "npm run deploy"],
+  cleanupScript: "npm run teardown",
+  url: "https://staging.example.com",
+});
+```
+
+**Props:** `name` (required), `deployScript` (required), `cleanupScript?`, `url?`, `concurrencyGroup?`, `cancelInProgress?`, `runsOn?`
+
+### GoCI
+
+Go CI with build, test, and optional lint jobs. Uses `golangci-lint-action` for linting.
+
+```typescript
+import { GoCI } from "@intentius/chant-lexicon-github";
+
+const { workflow, buildJob, testJob, lintJob } = GoCI({
+  goVersion: "1.22",
+  buildCommand: "go build ./...",
+  testCommand: "go test ./... -v -race",
+});
+
+// Without lint
+const noLint = GoCI({ lintCommand: null });
+```
+
+**Props:** `goVersion?`, `testCommand?`, `buildCommand?`, `lintCommand?` (null to omit), `runsOn?`
+
+## Combining composites in a job
+
+Composites return objects with a `.step` property. Combine them freely in any job:
+
+```typescript
+import {
+  Job, Step,
+  Checkout, SetupNode, CacheAction, UploadArtifact,
+} from "@intentius/chant-lexicon-github";
+
+export const build = new Job({
+  "runs-on": "ubuntu-latest",
+  timeoutMinutes: 15,
+  steps: [
+    Checkout({}).step,
+    SetupNode({ nodeVersion: "22", cache: "npm" }).step,
+    new Step({ name: "Install", run: "npm ci" }),
+    new Step({ name: "Build", run: "npm run build" }),
+    UploadArtifact({ name: "dist", path: "dist/" }).step,
+  ],
+});
+```
+
+## Using raw action references
+
+You can always use raw `uses:` strings for actions that do not have a typed composite wrapper:
+
+```typescript
+import { Step } from "@intentius/chant-lexicon-github";
+
+new Step({
+  name: "Deploy to Pages",
+  uses: "actions/deploy-pages@v4",
+  with: { artifact_name: "github-pages" },
+});
+```
+
+The GHA001 lint rule will suggest a typed composite if one is available.

@@ -3,7 +3,6 @@ import { join, resolve, dirname } from "path";
 import { fileURLToPath } from "url";
 import { homedir } from "os";
 import { createInterface } from "readline";
-import { z } from "zod";
 import { formatSuccess, formatWarning } from "../format";
 import { loadPlugin } from "../plugins";
 
@@ -17,17 +16,6 @@ function getChantVersion(): string {
     return "0.0.13";
   }
 }
-
-/**
- * Schema for validating generated package.json — catches template bugs early.
- */
-const GeneratedPackageJsonSchema = z.object({
-  name: z.string().min(1),
-  version: z.string(),
-  type: z.literal("module"),
-  scripts: z.record(z.string(), z.string()),
-  dependencies: z.record(z.string(), z.string()),
-});
 
 /**
  * Init command options
@@ -127,12 +115,6 @@ function generatePackageJson(lexicon: string, extraScripts?: Record<string, stri
       typescript: "^5.0.0",
     },
   };
-
-  // Validate generated output to catch template bugs
-  const result = GeneratedPackageJsonSchema.safeParse(pkg);
-  if (!result.success) {
-    throw new Error(`Bug: generated package.json is invalid: ${result.error.issues[0].message}`);
-  }
 
   return JSON.stringify(pkg, null, 2);
 }
@@ -240,7 +222,7 @@ export interface ChantConfig {
 /**
  * Generate MCP config
  */
-function generateMcpConfig(_ide: "claude-code" | "cursor" | "generic", pm: "bun" | "npm"): string {
+function generateMcpConfig(pm: "bun" | "npm"): string {
   const config = {
     mcpServers: {
       chant: {
@@ -454,7 +436,7 @@ export async function initCommand(options: InitOptions): Promise<InitResult> {
 
     writeIfNotExists(
       join(mcpDir, "mcp.json"),
-      generateMcpConfig(ide, detectPackageManager(targetDir)),
+      generateMcpConfig(detectPackageManager(targetDir)),
       `~/.${ide === "generic" ? "config/mcp" : ide}/mcp.json`,
       createdFiles,
       warnings,

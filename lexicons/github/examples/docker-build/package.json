@@ -1,0 +1,18 @@
+{
+  "name": "github-docker-build-example",
+  "version": "0.0.1",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "build": "chant build src --lexicon github -o .github/workflows/docker-build.yml",
+    "lint": "chant lint src",
+    "dev": "chant build src --lexicon github --watch -o .github/workflows/docker-build.yml"
+  },
+  "dependencies": {
+    "@intentius/chant-lexicon-github": "workspace:*",
+    "@intentius/chant": "workspace:*"
+  },
+  "devDependencies": {
+    "typescript": "*"
+  }
+}

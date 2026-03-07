@@ -64,7 +64,212 @@ export const helmPlugin: LexiconPlugin = {
     return false;
   },
 
+  mcpTools() {
+    return [
+      {
+        name: "diff",
+        description: "Compare current Helm chart build output against previous output",
+        inputSchema: {
+          type: "object" as const,
+          properties: {
+            path: {
+              type: "string",
+              description: "Path to the infrastructure project directory",
+            },
+          },
+        },
+        async handler(params: Record<string, unknown>): Promise<unknown> {
+          const { diffCommand } = await import("@intentius/chant/cli/commands/diff");
+          const result = await diffCommand({
+            path: (params.path as string) ?? ".",
+            serializers: [helmSerializer],
+          });
+          return result;
+        },
+      },
+    ];
+  },
+
+  mcpResources() {
+    return [
+      {
+        uri: "resource-catalog",
+        name: "Helm Chart Resource Catalog",
+        description: "JSON list of all supported Helm chart resource types",
+        mimeType: "application/json",
+        async handler(): Promise<string> {
+          const { readFileSync } = await import("fs");
+          const { join, dirname } = await import("path");
+          const { fileURLToPath } = await import("url");
+          const pkgDir = dirname(dirname(fileURLToPath(import.meta.url)));
+          try {
+            const lexicon = JSON.parse(readFileSync(join(pkgDir, "dist", "meta.json"), "utf-8")) as Record<string, { resourceType: string; kind: string }>;
+            const entries = Object.entries(lexicon).map(([className, entry]) => ({
+              className,
+              resourceType: entry.resourceType,
+              kind: entry.kind,
+            }));
+            return JSON.stringify(entries);
+          } catch {
+            return JSON.stringify([{ className: "Chart", kind: "resource" }, { className: "Values", kind: "resource" }, { className: "HelmNotes", kind: "resource" }]);
+          }
+        },
+      },
+      {
+        uri: "examples/web-app",
+        name: "Web App Helm Chart Example",
+        description: "A basic web application Helm chart with Deployment, Service, and Ingress",
+        mimeType: "text/typescript",
+        async handler(): Promise<string> {
+          return `import { Chart, Values, HelmNotes } from "@intentius/chant-lexicon-helm";
+import { values, Release, include, toYaml, printf } from "@intentius/chant-lexicon-helm/intrinsics";
+import { Deployment, Service, Ingress } from "@intentius/chant-lexicon-k8s";
+
+export const chart = new Chart({
+  apiVersion: "v2",
+  name: "web-app",
+  version: "0.1.0",
+  appVersion: "1.0.0",
+  type: "application",
+  description: "A web application chart",
+});
+
+export const valuesSchema = new Values({
+  replicaCount: 2,
+  image: { repository: "nginx", tag: "latest", pullPolicy: "IfNotPresent" },
+  service: { type: "ClusterIP", port: 80 },
+  ingress: { enabled: false, host: "example.com" },
+});
+
+export const deployment = new Deployment({
+  metadata: { name: include("web-app.fullname"), labels: include("web-app.labels") },
+  spec: {
+    replicas: values.replicaCount,
+    selector: { matchLabels: include("web-app.selectorLabels") },
+    template: {
+      metadata: { labels: include("web-app.selectorLabels") },
+      spec: {
+        containers: [{
+          name: "web-app",
+          image: printf("%s:%s", values.image.repository, values.image.tag),
+          ports: [{ containerPort: values.service.port, name: "http" }],
+        }],
+      },
+    },
+  },
+});
+
+export const service = new Service({
+  metadata: { name: include("web-app.fullname"), labels: include("web-app.labels") },
+  spec: {
+    type: values.service.type,
+    ports: [{ port: values.service.port, targetPort: "http", protocol: "TCP", name: "http" }],
+    selector: include("web-app.selectorLabels"),
+  },
+});
+`;
+        },
+      },
+    ];
+  },
+
   initTemplates(_template?: string): InitTemplateSet {
+    if (_template === "stateful-service") {
+      return {
+        src: {
+          "chart.ts": `import { Chart, Values, HelmNotes } from "@intentius/chant-lexicon-helm";
+import { values, Release, include, toYaml, printf } from "@intentius/chant-lexicon-helm/intrinsics";
+import { StatefulSet, Service, PersistentVolumeClaim, ConfigMap } from "@intentius/chant-lexicon-k8s";
+
+export const chart = new Chart({
+  apiVersion: "v2",
+  name: "my-stateful-app",
+  version: "0.1.0",
+  appVersion: "1.0.0",
+  type: "application",
+  description: "A Helm chart for a stateful application",
+});
+
+export const valuesSchema = new Values({
+  replicaCount: 3,
+  image: {
+    repository: "postgres",
+    tag: "16",
+    pullPolicy: "IfNotPresent",
+  },
+  service: {
+    port: 5432,
+  },
+  storage: {
+    size: "10Gi",
+    storageClass: "",
+  },
+  config: {
+    maxConnections: "100",
+    sharedBuffers: "256MB",
+  },
+});
+
+export const configMap = new ConfigMap({
+  metadata: {
+    name: include("my-stateful-app.fullname"),
+    labels: include("my-stateful-app.labels"),
+  },
+  data: {
+    "max_connections": values.config.maxConnections,
+    "shared_buffers": values.config.sharedBuffers,
+  },
+});
+
+export const headlessService = new Service({
+  metadata: {
+    name: printf("%s-headless", include("my-stateful-app.fullname")),
+    labels: include("my-stateful-app.labels"),
+  },
+  spec: {
+    type: "ClusterIP",
+    clusterIP: "None",
+    ports: [{ port: values.service.port, targetPort: "db", protocol: "TCP", name: "db" }],
+    selector: include("my-stateful-app.selectorLabels"),
+  },
+});
+
+export const statefulSet = new StatefulSet({
+  metadata: {
+    name: include("my-stateful-app.fullname"),
+    labels: include("my-stateful-app.labels"),
+  },
+  spec: {
+    serviceName: printf("%s-headless", include("my-stateful-app.fullname")),
+    replicas: values.replicaCount,
+    selector: { matchLabels: include("my-stateful-app.selectorLabels") },
+    template: {
+      metadata: { labels: include("my-stateful-app.selectorLabels") },
+      spec: {
+        containers: [{
+          name: "db",
+          image: printf("%s:%s", values.image.repository, values.image.tag),
+          ports: [{ containerPort: values.service.port, name: "db" }],
+          volumeMounts: [{ name: "data", mountPath: "/var/lib/postgresql/data" }],
+        }],
+      },
+    },
+    volumeClaimTemplates: [
+      new PersistentVolumeClaim({
+        metadata: { name: "data" },
+        spec: {
+          accessModes: ["ReadWriteOnce"],
+          resources: { requests: { storage: values.storage.size } },
+        },
+      }),
+    ],
+  },
+});
+`,
+        },
+      };
+    }
+
     return {
       src: {
         "chart.ts": `import { Chart, Values, HelmNotes } from "@intentius/chant-lexicon-helm";

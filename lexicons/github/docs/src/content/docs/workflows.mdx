@@ -1,0 +1,194 @@
+---
+title: "Workflows"
+description: "Workflow structure, triggers, jobs, steps, permissions, and concurrency in the GitHub Actions lexicon"
+---
+
+## Resource types
+
+The lexicon provides 2 resource types and several property types:
+
+### Resources
+
+| Type | Description |
+|------|-------------|
+| `Workflow` | Top-level workflow configuration -- name, triggers, permissions, concurrency |
+| `Job` | A job within a workflow -- runs-on, steps, strategy, needs, outputs |
+
+### Property types
+
+| Type | Used in | Description |
+|------|---------|-------------|
+| `Step` | Job | A single step -- run command or action usage |
+| `Strategy` | Job | Matrix strategy for parallel job execution |
+| `Permissions` | Workflow, Job | GITHUB_TOKEN permission scopes |
+| `Concurrency` | Workflow, Job | Concurrency group and cancel-in-progress settings |
+| `PushTrigger` | Workflow (on) | Push event trigger with branch/tag/path filters |
+| `PullRequestTrigger` | Workflow (on) | Pull request event trigger with filters |
+| `ScheduleTrigger` | Workflow (on) | Cron-based schedule trigger |
+| `WorkflowDispatchTrigger` | Workflow (on) | Manual dispatch with typed inputs |
+| `Environment` | Job | Deployment environment with protection rules |
+| `Output` | Job | Job output values for downstream jobs |
+
+## Triggers
+
+Triggers define when a workflow runs. Pass them in the `on:` field:
+
+```typescript
+import { Workflow } from "@intentius/chant-lexicon-github";
+
+export const workflow = new Workflow({
+  name: "CI",
+  on: {
+    push: { branches: ["main", "release/*"] },
+    pull_request: {
+      branches: ["main"],
+      types: ["opened", "synchronize"],
+    },
+    schedule: [{ cron: "0 0 * * 1" }],         // Weekly on Monday
+    workflow_dispatch: {                          // Manual trigger
+      inputs: {
+        environment: {
+          description: "Deploy target",
+          required: true,
+          type: "choice",
+          options: ["staging", "production"],
+        },
+      },
+    },
+  },
+});
+```
+
+### Trigger types
+
+| Trigger | Description | Common options |
+|---------|-------------|----------------|
+| `push` | Runs on push events | `branches`, `tags`, `paths`, `paths-ignore` |
+| `pull_request` | Runs on PR events | `branches`, `types`, `paths` |
+| `schedule` | Runs on a cron schedule | `cron` |
+| `workflow_dispatch` | Manual trigger from GitHub UI | `inputs` |
+| `workflow_call` | Called by another workflow | `inputs`, `outputs`, `secrets` |
+| `release` | Runs on release events | `types` |
+| `repository_dispatch` | Runs on repository dispatch | `types` |
+
+## Jobs and steps
+
+Each exported `Job` becomes a job entry under `jobs:`. Steps run sequentially within a job:
+
+```typescript
+import { Job, Step, Checkout, SetupNode } from "@intentius/chant-lexicon-github";
+
+export const test = new Job({
+  "runs-on": "ubuntu-latest",
+  timeoutMinutes: 10,
+  steps: [
+    Checkout({}).step,
+    SetupNode({ nodeVersion: "22", cache: "npm" }).step,
+    new Step({ name: "Install", run: "npm ci" }),
+    new Step({ name: "Test", run: "npm test" }),
+  ],
+});
+```
+
+Key job properties:
+- `runs-on` -- **required**. Runner label (`ubuntu-latest`, `macos-latest`, `windows-latest`).
+- `steps` -- **required**. Array of `Step` objects.
+- `timeoutMinutes` -- maximum job duration (recommended; flagged by GHA014 if missing).
+- `needs` -- job dependencies for execution ordering.
+- `if` -- conditional execution using Expressions.
+- `strategy` -- matrix builds for parallel execution.
+
+## Permissions
+
+Control GITHUB_TOKEN permissions at the workflow or job level:
+
+```typescript
+import { Workflow, Job, Step } from "@intentius/chant-lexicon-github";
+
+// Workflow-level (applies to all jobs)
+export const workflow = new Workflow({
+  name: "Release",
+  on: { push: { tags: ["v*"] } },
+  permissions: {
+    contents: "write",
+    packages: "write",
+    "id-token": "write",
+  },
+});
+
+// Job-level (overrides workflow permissions for this job)
+export const publish = new Job({
+  "runs-on": "ubuntu-latest",
+  permissions: { contents: "read", packages: "write" },
+  steps: [
+    new Step({ name: "Publish", run: "npm publish" }),
+  ],
+});
+```
+
+Available permission scopes: `actions`, `checks`, `contents`, `deployments`, `id-token`, `issues`, `packages`, `pages`, `pull-requests`, `repository-projects`, `security-events`, `statuses`. Values: `"read"`, `"write"`, `"none"`.
+
+## Concurrency
+
+Prevent concurrent runs of the same workflow or job:
+
+```typescript
+import { Workflow } from "@intentius/chant-lexicon-github";
+
+export const workflow = new Workflow({
+  name: "Deploy",
+  on: { push: { branches: ["main"] } },
+  concurrency: {
+    group: "deploy-${{ github.ref }}",
+    "cancel-in-progress": true,
+  },
+});
+```
+
+## Job dependencies
+
+Use `needs` to order jobs and pass outputs between them:
+
+```typescript
+import { Job, Step } from "@intentius/chant-lexicon-github";
+
+export const build = new Job({
+  "runs-on": "ubuntu-latest",
+  outputs: { version: "${{ steps.version.outputs.value }}" },
+  steps: [
+    new Step({
+      id: "version",
+      name: "Get version",
+      run: 'echo "value=$(node -p \\"require(\'./package.json\').version\\")" >> $GITHUB_OUTPUT',
+    }),
+  ],
+});
+
+export const deploy = new Job({
+  "runs-on": "ubuntu-latest",
+  needs: ["build"],
+  steps: [
+    new Step({
+      name: "Deploy",
+      run: "echo Deploying version ${{ needs.build.outputs.version }}",
+    }),
+  ],
+});
+```
+
+## Serialization
+
+The lexicon serializes resources into **`.github/workflows/*.yml`** YAML files. Keys use kebab-case for job properties and snake_case for trigger event names.
+
+| Chant (TypeScript) | YAML output | Rule |
+|--------------------|-------------|------|
+| `export const buildApp = new Job({...})` | `jobs: build-app:` | Export name to kebab-case job key |
+| `"runs-on": "ubuntu-latest"` | `runs-on: ubuntu-latest` | Property names match GitHub spec |
+| `timeoutMinutes: 15` | `timeout-minutes: 15` | camelCase to kebab-case for job properties |
+| `new Step({ uses: "actions/checkout@v4" })` | `- uses: actions/checkout@v4` | Steps serialize as sequence entries |
+
+Build with:
+
+```bash
+chant build src/ --output .github/workflows/ci.yml
+```

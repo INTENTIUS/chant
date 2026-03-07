@@ -1,0 +1,66 @@
+---
+title: "GitHub Actions"
+description: "Typed constructors for GitHub Actions workflow configuration"
+---
+
+The **GitHub Actions** lexicon provides typed constructors for GitHub Actions
+workflow configuration. It covers workflows, jobs, steps, triggers, strategy,
+permissions, concurrency, and more.
+
+New? Start with the [Getting Started](/chant/lexicons/github/getting-started/) guide.
+
+Install it with:
+
+```bash
+npm install --save-dev @intentius/chant-lexicon-github
+```
+
+## Quick Start
+
+```typescript
+import { Workflow, Job, Step, Checkout, SetupNode } from "@intentius/chant-lexicon-github";
+
+export const workflow = new Workflow({
+  name: "CI",
+  on: {
+    push: { branches: ["main"] },
+    pull_request: { branches: ["main"] },
+  },
+  permissions: { contents: "read" },
+});
+
+export const build = new Job({
+  "runs-on": "ubuntu-latest",
+  timeoutMinutes: 15,
+  steps: [
+    Checkout({}).step,
+    SetupNode({ nodeVersion: "22", cache: "npm" }).step,
+    new Step({ name: "Install", run: "npm ci" }),
+    new Step({ name: "Build", run: "npm run build" }),
+    new Step({ name: "Test", run: "npm test" }),
+  ],
+});
+```
+
+The lexicon provides **2 resource types** (Workflow, Job), **13 composites** (Checkout, SetupNode, SetupGo, SetupPython, CacheAction, UploadArtifact, DownloadArtifact, NodeCI, NodePipeline, PythonCI, DockerBuild, DeployEnvironment, GoCI) + **3 presets** (BunPipeline, PnpmPipeline, YarnPipeline), a typed **Expression** system with 24 GitHub and 5 Runner context variables, and **13 lint rules** + **15 post-synth checks**.
+
+## At a Glance
+
+| Metric | Count |
+|--------|-------|
+| Resources | 2 |
+| Composites | 13 |
+| Pipeline presets | 3 |
+| Context variables | 29 |
+| Lint rules (pre-synth) | 13 |
+| Post-synth checks | 15 |
+
+**Namespace:** `GitHub`
+
+- [Getting Started](./getting-started)
+- [Workflows](./workflows)
+- [Actions & Composites](./actions)
+- [Expressions](./expressions)
+- [Matrix Strategies](./matrix)
+- [Lint Rules](./lint-rules)
+- [Examples](./examples)
