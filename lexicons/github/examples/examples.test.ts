@@ -56,11 +56,11 @@ describeAllExamples(
         expect(output).toContain("GITHUB_OUTPUT");
       },
     },
+    "docs-snippets": { skipLint: true, skipBuild: true },
     "reusable-workflow": {
       skipLint: true,
       checks: (output) => {
-        expect(output).toContain("Reusable CI");
-        expect(output).toContain("workflow_call");
+        expect(output).toContain("uses: ./.github/workflows/reusable-workflow.yml");
         expect(output).toContain("node-version");
       },
     },

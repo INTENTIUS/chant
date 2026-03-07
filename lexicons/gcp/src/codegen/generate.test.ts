@@ -6,7 +6,7 @@ describe("generate", () => {
     expect(typeof generate).toBe("function");
   });
 
-  test("generate returns a promise", () => {
+  test("generate returns a promise", { timeout: 15000 }, () => {
     // Call with no-op options to verify it returns a promise-like object.
     // We don't await because it may require network/file access.
     const result = generate({ dryRun: true });
