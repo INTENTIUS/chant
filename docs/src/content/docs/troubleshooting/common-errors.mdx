@@ -31,6 +31,56 @@ See [Evaluability Rules](/chant/lint-rules/evaluability/) for details on dynamic
 
 **Fix:** Restructure imports to break the cycle by extracting shared types into a separate file.
 
+## COR003: String Literal Where Resource Reference Expected
+
+A property expects a reference to another resource but received a plain string.
+
+```
+src/api.ts:8:5 error [COR003] property "role" expects a resource reference, got string literal
+```
+
+**Fix:** Import the referenced resource and use its output attribute (e.g., `myRole.arn`) instead of a hard-coded string.
+
+## COR004: Unused Declarable Export
+
+An exported resource is not referenced by any other resource or output.
+
+```
+src/logging.ts:3:14 warning [COR004] exported declarable "logBucket" is unused
+```
+
+**Fix:** If intentional, suppress with `// chant-disable-next-line COR004`. Otherwise, remove the unused export or wire it into your stack.
+
+## COR007: Missing Required Property
+
+A resource is missing a property that the lexicon marks as required.
+
+```
+src/queue.ts:4:14 error [COR007] resource "myQueue" is missing required property "queueName"
+```
+
+**Fix:** Add the missing property to your resource definition.
+
+## COR008: Unknown Property Name
+
+A resource contains a property name not recognized by the lexicon.
+
+```
+src/bucket.ts:6:5 error [COR008] unknown property "bucketNmae" on resource type Bucket
+```
+
+**Fix:** Check for typos. Use editor autocompletion from the lexicon types to find the correct property name.
+
+## COR010: Unused Export (No Consumers)
+
+An exported `const` value is never imported by any other file in the project.
+
+```
+src/defaults.ts:2:14 warning [COR010] export "legacyTags" has no consumers
+```
+
+**Fix:** Remove the unused export, or suppress with `// chant-disable-next-line COR010` if it's intentionally kept for future use.
+
 ## Unknown Resource Type
 
 The resource class isn't recognized by the installed lexicon.

@@ -59,6 +59,10 @@ See the [AWS CloudFormation lexicon reference](/chant/lexicons/aws/) for intrins
 For a complete walkthrough with S3 buckets, IAM roles, Lambda functions, and cross-resource references, see the [AWS Examples](/chant/lexicons/aws/examples/).
 :::
 
+:::caution[Property constraints]
+Resource properties must be statically evaluable — chant reads your TypeScript as data, it never executes it. See [TypeScript as Data](/chant/concepts/typescript-as-data/) for supported patterns.
+:::
+
 ## Step 4: Build
 
 ```bash

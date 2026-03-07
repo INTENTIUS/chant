@@ -146,3 +146,11 @@ export const k8sPlugin: LexiconPlugin = {
 ```
 
 Publish this as `@intentius/chant-lexicon-k8s` (or `@yourorg/lexicon-k8s`) and users can add it to their project.
+
+## Background Reading
+
+These architecture pages cover the internals a lexicon author needs to understand:
+
+- [Core Type System](/chant/architecture/core-type-system/) — `Declarable`, `ResourceType`, and the evaluator's type model
+- [Lexicon Registry](/chant/architecture/lexicon-registry/) — how chant discovers, loads, and validates lexicon plugins
+- [Serializer Architecture](/chant/architecture/serializer/) — the serialization contract your plugin must implement
