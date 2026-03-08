@@ -6,10 +6,13 @@
  */
 
 import { createRequire } from "module";
-import type { LexiconPlugin, IntrinsicDef, SkillDefinition, InitTemplateSet } from "@intentius/chant/lexicon";
+import type { LexiconPlugin, IntrinsicDef, InitTemplateSet } from "@intentius/chant/lexicon";
 const require = createRequire(import.meta.url);
 import type { LintRule } from "@intentius/chant/lint/rule";
-import type { PostSynthCheck } from "@intentius/chant/lint/post-synth";
+import { discoverPostSynthChecks } from "@intentius/chant/lint/discover";
+import { createSkillsLoader, createDiffTool, createCatalogResource } from "@intentius/chant/lexicon-plugin-helpers";
+import { join, dirname } from "path";
+import { fileURLToPath } from "url";
 import { githubSerializer } from "./serializer";
 
 export const githubPlugin: LexiconPlugin = {
@@ -47,23 +50,9 @@ export const githubPlugin: LexiconPlugin = {
     ];
   },
 
-  postSynthChecks(): PostSynthCheck[] {
-    const { gha006 } = require("./lint/post-synth/gha006");
-    const { gha009 } = require("./lint/post-synth/gha009");
-    const { gha011 } = require("./lint/post-synth/gha011");
-    const { gha017 } = require("./lint/post-synth/gha017");
-    const { gha018 } = require("./lint/post-synth/gha018");
-    const { gha019 } = require("./lint/post-synth/gha019");
-    const { gha020 } = require("./lint/post-synth/gha020");
-    const { gha021 } = require("./lint/post-synth/gha021");
-    const { gha022 } = require("./lint/post-synth/gha022");
-    const { gha023 } = require("./lint/post-synth/gha023");
-    const { gha024 } = require("./lint/post-synth/gha024");
-    const { gha025 } = require("./lint/post-synth/gha025");
-    const { gha026 } = require("./lint/post-synth/gha026");
-    const { gha027 } = require("./lint/post-synth/gha027");
-    const { gha028 } = require("./lint/post-synth/gha028");
-    return [gha006, gha009, gha011, gha017, gha018, gha019, gha020, gha021, gha022, gha023, gha024, gha025, gha026, gha027, gha028];
+  postSynthChecks() {
+    const postSynthDir = join(dirname(fileURLToPath(import.meta.url)), "lint", "post-synth");
+    return discoverPostSynthChecks(postSynthDir, import.meta.url);
   },
 
   intrinsics(): IntrinsicDef[] {
@@ -237,48 +226,12 @@ export const build = new Job({
   },
 
   mcpTools() {
-    return [
-      {
-        name: "diff",
-        description: "Compare current build output against previous output for GitHub Actions",
-        inputSchema: {
-          type: "object" as const,
-          properties: {
-            path: {
-              type: "string",
-              description: "Path to the infrastructure project directory",
-            },
-          },
-        },
-        async handler(params: Record<string, unknown>): Promise<unknown> {
-          const { diffCommand } = await import("@intentius/chant/cli/commands/diff");
-          const result = await diffCommand({
-            path: (params.path as string) ?? ".",
-            serializers: [githubSerializer],
-          });
-          return result;
-        },
-      },
-    ];
+    return [createDiffTool(githubSerializer, "Compare current build output against previous output for GitHub Actions")];
   },
 
   mcpResources() {
     return [
-      {
-        uri: "resource-catalog",
-        name: "GitHub Actions Entity Catalog",
-        description: "JSON list of all supported GitHub Actions entity types",
-        mimeType: "application/json",
-        async handler(): Promise<string> {
-          const lexicon = require("./generated/lexicon-github.json") as Record<string, { resourceType: string; kind: string }>;
-          const entries = Object.entries(lexicon).map(([className, entry]) => ({
-            className,
-            resourceType: entry.resourceType,
-            kind: entry.kind,
-          }));
-          return JSON.stringify(entries);
-        },
-      },
+      createCatalogResource(import.meta.url, "GitHub Actions Entity Catalog", "JSON list of all supported GitHub Actions entity types", "lexicon-github.json"),
       {
         uri: "examples/basic-ci",
         name: "Basic CI Example",
@@ -317,120 +270,64 @@ export const build = new Job({
     await generateDocs(options);
   },
 
-  skills(): SkillDefinition[] {
-    const skills: SkillDefinition[] = [
-      {
-        name: "chant-github",
-        description: "GitHub Actions workflow lifecycle — build, validate, deploy",
-        content: `---
-skill: chant-github
-description: Build, validate, and deploy GitHub Actions workflows from a chant project
-user-invocable: true
----
-
-# GitHub Actions Operational Playbook
-
-## How chant and GitHub Actions relate
-
-chant is a **synthesis compiler** — it compiles TypeScript source files into \`.github/workflows/*.yml\` (YAML). \`chant build\` does not call GitHub APIs; synthesis is pure and deterministic.
-
-- Use **chant** for: build, lint, diff (local YAML comparison)
-- Use **git + GitHub** for: push, pull requests, workflow monitoring
-
-## Build and validate
-
-\`\`\`bash
-chant build src/ --output .github/workflows/ci.yml
-chant lint src/
-\`\`\`
-
-## Deploy
-
-\`\`\`bash
-git add .github/workflows/ci.yml
-git commit -m "Update workflow"
-git push
-\`\`\`
-`,
-        triggers: [
-          { type: "file-pattern", value: "**/*.github.ts" },
-          { type: "file-pattern", value: "**/.github/workflows/*.yml" },
-          { type: "context", value: "github actions" },
-          { type: "context", value: "workflow" },
-        ],
-        parameters: [],
-        examples: [
-          {
-            title: "Basic CI workflow",
-            description: "Create a CI workflow with build and test",
-            input: "Create a CI workflow",
-            output: `new Workflow({ name: "CI", on: { push: { branches: ["main"] }, pull_request: { branches: ["main"] } } })`,
-          },
-        ],
-      },
-    ];
-
-    // Load file-based skills
-    const { readFileSync } = require("fs");
-    const { join, dirname } = require("path");
-    const { fileURLToPath } = require("url");
-    const dir = dirname(fileURLToPath(import.meta.url));
-
-    const skillFiles = [
-      {
-        file: "github-actions-patterns.md",
-        name: "github-actions-patterns",
-        description: "GitHub Actions workflow patterns — triggers, jobs, matrix, caching, artifacts",
-        triggers: [
-          { type: "context" as const, value: "github actions" },
-          { type: "context" as const, value: "workflow" },
-          { type: "context" as const, value: "matrix" },
-          { type: "context" as const, value: "cache" },
-        ],
-        parameters: [],
-        examples: [
-          {
-            title: "Matrix strategy",
-            input: "Set up a Node.js matrix build",
-            output: `new Strategy({ matrix: { "node-version": ["18", "20", "22"] } })`,
-          },
-        ],
-      },
-      {
-        file: "github-actions-security.md",
-        name: "github-actions-security",
-        description: "GitHub Actions security — secret scanning, OIDC, permissions hardening, supply chain",
-        triggers: [
-          { type: "context" as const, value: "github security" },
-          { type: "context" as const, value: "workflow security" },
-          { type: "context" as const, value: "oidc" },
-          { type: "context" as const, value: "permissions" },
-        ],
-        parameters: [],
-        examples: [
-          {
-            title: "Permissions hardening",
-            input: "Lock down workflow permissions",
-            output: `new Workflow({ permissions: { contents: "read" } })`,
-          },
-        ],
-      },
-    ];
-
-    for (const skill of skillFiles) {
-      try {
-        const content = readFileSync(join(dir, "skills", skill.file), "utf-8");
-        skills.push({
-          name: skill.name,
-          description: skill.description,
-          content,
-          triggers: skill.triggers,
-          parameters: skill.parameters,
-          examples: skill.examples,
-        });
-      } catch { /* skip missing skills */ }
-    }
-
-    return skills;
-  },
+  skills: createSkillsLoader(import.meta.url, [
+    {
+      file: "chant-github.md",
+      name: "chant-github",
+      description: "GitHub Actions workflow lifecycle — build, validate, deploy",
+      triggers: [
+        { type: "file-pattern", value: "**/*.github.ts" },
+        { type: "file-pattern", value: "**/.github/workflows/*.yml" },
+        { type: "context", value: "github actions" },
+        { type: "context", value: "workflow" },
+      ],
+      parameters: [],
+      examples: [
+        {
+          title: "Basic CI workflow",
+          description: "Create a CI workflow with build and test",
+          input: "Create a CI workflow",
+          output: `new Workflow({ name: "CI", on: { push: { branches: ["main"] }, pull_request: { branches: ["main"] } } })`,
+        },
+      ],
+    },
+    {
+      file: "chant-github-patterns.md",
+      name: "chant-github-patterns",
+      description: "GitHub Actions workflow patterns — triggers, jobs, matrix, caching, artifacts",
+      triggers: [
+        { type: "context", value: "github actions" },
+        { type: "context", value: "workflow" },
+        { type: "context", value: "matrix" },
+        { type: "context", value: "cache" },
+      ],
+      parameters: [],
+      examples: [
+        {
+          title: "Matrix strategy",
+          input: "Set up a Node.js matrix build",
+          output: `new Strategy({ matrix: { "node-version": ["18", "20", "22"] } })`,
+        },
+      ],
+    },
+    {
+      file: "chant-github-security.md",
+      name: "chant-github-security",
+      description: "GitHub Actions security — secret scanning, OIDC, permissions hardening, supply chain",
+      triggers: [
+        { type: "context", value: "github security" },
+        { type: "context", value: "workflow security" },
+        { type: "context", value: "oidc" },
+        { type: "context", value: "permissions" },
+      ],
+      parameters: [],
+      examples: [
+        {
+          title: "Permissions hardening",
+          input: "Lock down workflow permissions",
+          output: `new Workflow({ permissions: { contents: "read" } })`,
+        },
+      ],
+    },
+  ]),
 };

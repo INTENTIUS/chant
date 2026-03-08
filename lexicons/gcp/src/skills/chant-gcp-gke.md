@@ -1,5 +1,5 @@
 ---
-skill: chant-gke
+skill: chant-gcp-gke
 description: End-to-end GKE workflow bridging GCP infrastructure and Kubernetes workloads
 user-invocable: true
 ---

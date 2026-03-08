@@ -1,6 +1,7 @@
 ---
-skill: github-actions-patterns
+skill: chant-github-patterns
 description: GitHub Actions workflow patterns — triggers, jobs, matrix, caching, artifacts, permissions, reusable workflows
+user-invocable: true
 ---
 
 # GitHub Actions Patterns

@@ -1,5 +1,5 @@
 ---
-skill: flyway-security
+skill: chant-flyway-security
 description: Flyway credential management, vault integration, clean protection, and security best practices
 user-invocable: true
 ---

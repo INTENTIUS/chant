@@ -4,10 +4,10 @@
   "type": "module",
   "private": true,
   "scripts": {
-    "test": "bun test",
     "build": "chant build src --lexicon aws -o template.json",
     "lint": "chant lint src",
     "dev": "chant build src --lexicon aws --watch -o template.json",
+    "test": "bun test",
     "deploy": "aws cloudformation deploy --template-file template.json --stack-name shared-alb-ui --capabilities CAPABILITY_NAMED_IAM",
     "teardown": "aws cloudformation delete-stack --stack-name shared-alb-ui"
   },

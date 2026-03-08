@@ -1,6 +1,6 @@
 # Composites Production
 
-Production-hardened Helm chart composites — security contexts, RBAC, monitoring, and secure cron jobs.
+Production-hardened Helm chart composites -- security contexts, RBAC, monitoring, and secure cron jobs.
 
 ## Skills
 
@@ -8,40 +8,36 @@ The lexicon packages ship skills for agent-guided deployment. After `chant init 
 
 | Skill | Package | Purpose |
 |-------|---------|---------|
-| `chant-helm` | `@intentius/chant-lexicon-helm` | Helm chart lifecycle: build, lint, deploy, rollback, troubleshooting |
+| `chant-helm` | `@intentius/chant-lexicon-helm` | Helm chart lifecycle: build, lint, package, deploy, troubleshooting |
 
 > **Using Claude Code?** Just ask:
 >
 > ```
-> Deploy the composites-production example to my Kubernetes cluster.
+> Build the composites-production Helm chart.
 > ```
 
 ## What this produces
 
-- **Helm** (chart directory): Helm chart files (Chart.yaml, values.yaml, templates/) across 4 source files
+Generates Chart.yaml, values.yaml, and templates/ for four production-grade composites: hardened web app, batch migration with RBAC, monitored API with Prometheus, and secured cron job.
 
 ## Source files
 
-| File | Composite | Resources |
-|------|-----------|-----------|
-| `src/hardened-web-app.ts` | `HardenedWebApp` | Deployment, Service, Ingress, HPA, ServiceAccount (with security context) |
-| `src/batch-migration.ts` | `BatchMigration` | Job, ServiceAccount, Role, RoleBinding |
-| `src/monitored-api.ts` | `MonitoredApi` | Deployment, Service, ServiceAccount, ServiceMonitor, PrometheusRule |
-| `src/cron-secured.ts` | `CronSecured` | CronJob, ServiceAccount (with security context) |
+| File | Description |
+|------|-------------|
+| `src/hardened-web-app.ts` | HardenedWebApp composite -- Deployment, Service, Ingress, HPA, ServiceAccount with security context |
+| `src/batch-migration.ts` | BatchMigration composite -- Job, ServiceAccount, Role, RoleBinding |
+| `src/monitored-api.ts` | MonitoredApi composite -- Deployment, Service, ServiceAccount, ServiceMonitor, PrometheusRule |
+| `src/cron-secured.ts` | CronSecured composite -- CronJob, ServiceAccount with security context |
 
 ## Prerequisites
 
-- [ ] [Node.js](https://nodejs.org/) >= 22 (Bun also works)
-- [ ] [Helm](https://helm.sh/docs/intro/install/) v3
-- [ ] A Kubernetes cluster
+- [Bun](https://bun.sh) or [Node.js](https://nodejs.org/) >= 22
+- [Helm](https://helm.sh/docs/intro/install/)
 
-**Local verification** (build, lint) requires only Node.js — no cluster needed.
-
-## Local verification
+## Build
 
 ```bash
-npx chant build src --lexicon helm -o Chart.yaml
-npx chant lint src
+bun install && bun run build && bun run lint
 ```
 
 ## Deploy
@@ -58,8 +54,9 @@ helm uninstall composites-production
 
 ## Related examples
 
-- [composites-basic](../composites-basic/) — Basic Helm chart composites
-- [composites-infrastructure](../composites-infrastructure/) — Infrastructure composites: ingress, namespaces, CRDs
+- [composites-basic](../composites-basic/) -- Basic composites: web app, microservice, stateful service, cron job, worker
+- [composites-infrastructure](../composites-infrastructure/) -- Infrastructure composites: ingress, namespaces, CRDs
+- [web-app-with-ingress](../web-app-with-ingress/) -- Web app with TLS ingress and autoscaling
 
 ## Standalone Usage
 

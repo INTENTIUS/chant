@@ -533,10 +533,11 @@ for example_dir in /app/examples/*/; do
 
   rm -rf "$example_dir/node_modules"
   ln -sfn /app/node_modules "$example_dir/node_modules"
-  if $CHANT build "$src_dir" > /dev/null 2>&1; then
+  # Use the example's own build script (handles multi-cloud, per-lexicon builds).
+  if (cd "$example_dir" && bun run build > /dev/null 2>&1); then
     pass "root example $name builds"
   else
-    BUILD_ERR=$($CHANT build "$src_dir" 2>&1 || true)
+    BUILD_ERR=$(cd "$example_dir" && bun run build 2>&1 || true)
     echo "  stderr: $BUILD_ERR"
     fail "root example $name build failed"
   fi

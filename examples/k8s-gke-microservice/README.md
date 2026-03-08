@@ -164,6 +164,14 @@ Patterns to add next:
                        → Sidecars, monitoring, TLS, network isolation
 ```
 
+## Spell
+
+This example has a corresponding spell for AI-driven deployment:
+
+```bash
+chant spell cast gke-bootstrap
+```
+
 ## Resource counts
 
 - **GCP lexicon**: ~15 Config Connector resources (VPC, subnets, NAT, GKE cluster, node pool, service accounts, IAM bindings, DNS zone)

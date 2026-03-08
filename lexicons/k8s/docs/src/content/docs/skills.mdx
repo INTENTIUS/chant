@@ -2,7 +2,7 @@
 title: "AI Skills"
 description: "AI agent skills bundled with the Kubernetes lexicon"
 ---
-The Kubernetes lexicon ships an AI skill called **chant-k8s** that teaches AI coding agents how to build, validate, and deploy Kubernetes manifests from a chant project.
+The Kubernetes lexicon ships AI skills that teach AI coding agents how to build, validate, and deploy Kubernetes manifests from a chant project.
 
 ## What are skills?
 
@@ -10,11 +10,17 @@ Skills are structured markdown documents bundled with a lexicon. When an AI agen
 
 ## Installation
 
-When you scaffold a new project with `chant init --lexicon k8s`, the skill is installed to `skills/chant-k8s/SKILL.md` for automatic discovery by Claude Code.
+When you scaffold a new project with `chant init --lexicon k8s`, the skills are installed to `skills/` for automatic agent discovery.
+
+To refresh skills after a lexicon update:
+
+```bash
+chant update
+```
 
 ## Skill: chant-k8s
 
-The `chant-k8s` skill covers the full deployment lifecycle:
+The `chant-k8s` skill covers the full Kubernetes deployment lifecycle:
 
 - **Build** — `chant build src/ --output manifests.yaml`
 - **Lint** — `chant lint src/` + post-synth checks (20 rules)
@@ -23,9 +29,59 @@ The `chant-k8s` skill covers the full deployment lifecycle:
 - **Rollback** — `kubectl rollout undo deployment/my-app`
 - **Troubleshooting** — pod status, logs, events, common error patterns
 
-The skill is invocable as a slash command: `/chant-k8s`
-
 The full playbook is also available as a [documentation page](/chant/lexicons/k8s/operational-playbook/).
+
+## Skill: chant-k8s-patterns
+
+The `chant-k8s-patterns` skill covers advanced Kubernetes patterns:
+
+- **Multi-resource** — coordinating deployments, services, and config maps
+- **Composites** — high-level reusable resource groupings
+- **Kustomize integration** — overlays and patches
+- **Namespace management** — multi-namespace deployments
+
+## Skill: chant-k8s-deployment-strategies
+
+The `chant-k8s-deployment-strategies` skill covers deployment strategy patterns:
+
+- **Rolling updates** — maxSurge, maxUnavailable configuration
+- **Blue-green** — traffic switching patterns
+- **Canary** — progressive rollout with monitoring
+- **Recreate** — when to use full replacement
+
+## Skill: chant-k8s-security
+
+The `chant-k8s-security` skill covers Kubernetes security best practices:
+
+- **Pod security** — security contexts, non-root containers
+- **RBAC** — roles, bindings, service accounts
+- **Network policies** — ingress/egress restrictions
+- **Secrets management** — sealed secrets, external secrets
+- **Post-synth checks** — maps to relevant K8s lint rules
+
+## Skill: chant-k8s-eks
+
+The `chant-k8s-eks` skill covers EKS-specific Kubernetes patterns:
+
+- **EKS integration** — AWS Load Balancer Controller, IRSA
+- **Storage** — EBS CSI driver, EFS integration
+- **Networking** — VPC CNI, security groups for pods
+
+## Skill: chant-k8s-gke
+
+The `chant-k8s-gke` skill covers GKE-specific Kubernetes patterns:
+
+- **GKE integration** — Workload Identity, GKE Ingress
+- **Storage** — Persistent Disk CSI driver
+- **Networking** — VPC-native pods, Cloud NAT
+
+## Skill: chant-k8s-aks
+
+The `chant-k8s-aks` skill covers AKS-specific Kubernetes patterns:
+
+- **AKS integration** — Azure AD pod identity, AGIC
+- **Storage** — Azure Disk CSI driver, Azure Files
+- **Networking** — Azure CNI, Application Gateway
 
 ## MCP integration
 

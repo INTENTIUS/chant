@@ -8,7 +8,7 @@ A spell defines **what** to do. Lexicon skills (inlined automatically) tell the 
 
 ## Spells vs Skills
 
-- **Skills** are operational playbooks contributed by lexicons (e.g., the CloudFormation deployment guide). They teach agents how to build, deploy, validate, rollback, and troubleshoot.
+- **Skills** are operational playbooks contributed by lexicons (e.g., the CloudFormation deployment guide). They teach agents how to build, deploy, validate, rollback, and troubleshoot. Skills are always available to the agent via `skills/` — you don't need a spell to use them. Spells are for orchestrating specific multi-step tasks; they inline skills automatically when a lexicon is declared.
 - **Spells** are task orchestration. They say "deploy this thing" and "take a state snapshot." The skills handle the rest.
 
 A spell with `lexicon: "aws"` automatically inlines the AWS skills into the agent prompt. The agent gets the full CloudFormation playbook without the spell needing to spell out every step.
@@ -102,7 +102,7 @@ tasks: [
 3. Lexicon guidance (inlined skills)
 4. A numbered task checklist
 
-Paste this prompt into your AI agent to start the work.
+Paste this prompt into your AI agent to start the work. The agent reads the inlined skills and autonomously handles the build → validate → deploy workflow. You don't need to specify which commands to run.
 
 ## Dependencies
 

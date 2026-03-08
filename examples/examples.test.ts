@@ -778,3 +778,93 @@ describe("cockroachdb-multi-cloud GKE stack", () => {
     expect(sts!.doc).toContain("namespace: crdb-gke");
   });
 });
+
+// ── AWS + K8s + GitLab Cells (cell-based architecture) ──────────────
+
+describe("aws-gitlab-cells example", () => {
+  const srcDir = resolve(import.meta.dir, "aws-gitlab-cells", "src");
+
+  test("combined build succeeds with all three serializers", async () => {
+    const result = await build(srcDir, [awsSerializer, k8sSerializer, gitlabSerializer]);
+    expect(result.errors).toHaveLength(0);
+    expect(result.outputs.has("aws")).toBe(true);
+    expect(result.outputs.has("k8s")).toBe(true);
+    expect(result.outputs.has("gitlab")).toBe(true);
+  });
+
+  test("CloudFormation template contains 35 resources", async () => {
+    const result = await build(srcDir, [awsSerializer]);
+    expect(result.errors).toHaveLength(0);
+    const parsed = JSON.parse(result.outputs.get("aws")!);
+    expect(Object.keys(parsed.Resources)).toHaveLength(35);
+    const types = Object.values(parsed.Resources).map((r: any) => r.Type);
+    expect(types).toContain("AWS::EKS::Cluster");
+    expect(types).toContain("AWS::EKS::Nodegroup");
+    expect(types).toContain("AWS::IAM::OIDCProvider");
+    expect(types).toContain("AWS::KMS::Key");
+    expect(types).toContain("AWS::ECR::Repository");
+    expect(types.filter((t: string) => t === "AWS::EC2::Subnet")).toHaveLength(6);
+  });
+
+  test("EKS cluster has 3-AZ subnet config", async () => {
+    const result = await build(srcDir, [awsSerializer]);
+    const parsed = JSON.parse(result.outputs.get("aws")!);
+    const cluster = parsed.Resources.cluster;
+    expect(cluster.Properties.ResourcesVpcConfig.SubnetIds).toHaveLength(6);
+    expect(cluster.Properties.EncryptionConfig[0].Resources).toEqual(["secrets"]);
+  });
+
+  test("per-cell IRSA roles are present", async () => {
+    const result = await build(srcDir, [awsSerializer]);
+    const parsed = JSON.parse(result.outputs.get("aws")!);
+    expect(parsed.Resources.cellAlphaRole).toBeDefined();
+    expect(parsed.Resources.cellBetaRole).toBeDefined();
+    expect(parsed.Resources.cellAlphaRole.Type).toBe("AWS::IAM::Role");
+  });
+
+  test("K8s output contains system and cell namespaces", async () => {
+    const result = await build(srcDir, [k8sSerializer]);
+    expect(result.errors).toHaveLength(0);
+    const docs = parseK8sDocs(result.outputs.get("k8s")!);
+    const namespaces = docs.filter((d) => d.kind === "Namespace").map((d) => d.name);
+    expect(namespaces).toContain("system");
+    expect(namespaces).toContain("cell-alpha");
+    expect(namespaces).toContain("cell-beta");
+  });
+
+  test("each cell has NetworkPolicy, HPA, PDB, and Ingress", async () => {
+    const result = await build(srcDir, [k8sSerializer]);
+    const docs = parseK8sDocs(result.outputs.get("k8s")!);
+    for (const cellName of ["alpha", "beta"]) {
+      const cellDocs = docs.filter((d) => d.doc.includes(`cell-${cellName}`));
+      const kinds = cellDocs.map((d) => d.kind);
+      expect(kinds).toContain("NetworkPolicy");
+      expect(kinds).toContain("HorizontalPodAutoscaler");
+      expect(kinds).toContain("PodDisruptionBudget");
+      expect(kinds).toContain("Ingress");
+      expect(kinds).toContain("Deployment");
+      expect(kinds).toContain("ServiceAccount");
+    }
+  });
+
+  test("cell network policies enforce isolation", async () => {
+    const result = await build(srcDir, [k8sSerializer]);
+    const docs = parseK8sDocs(result.outputs.get("k8s")!);
+    const defaultDeny = docs.filter((d) => d.name.includes("default-deny"));
+    expect(defaultDeny).toHaveLength(2);
+    const allowSystem = docs.filter((d) => d.name.includes("allow-system-ingress"));
+    expect(allowSystem).toHaveLength(2);
+  });
+
+  test("GitLab pipeline has 4 stages with matrix fan-out", async () => {
+    const result = await build(srcDir, [gitlabSerializer]);
+    expect(result.errors).toHaveLength(0);
+    const yaml = result.outputs.get("gitlab")!;
+    expect(yaml).toContain("stage: infra");
+    expect(yaml).toContain("stage: system");
+    expect(yaml).toContain("stage: validate");
+    expect(yaml).toContain("stage: cells");
+    expect(yaml).toContain("CELL_NAME: alpha");
+    expect(yaml).toContain("CELL_NAME: beta");
+  });
+});

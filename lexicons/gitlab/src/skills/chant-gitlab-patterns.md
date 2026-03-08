@@ -1,5 +1,5 @@
 ---
-skill: gitlab-ci-patterns
+skill: chant-gitlab-patterns
 description: GitLab CI/CD pipeline stages, caching, artifacts, includes, and advanced patterns
 user-invocable: true
 ---

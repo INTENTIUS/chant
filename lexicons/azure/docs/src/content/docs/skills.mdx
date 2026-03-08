@@ -1,0 +1,74 @@
+---
+title: "AI Skills"
+description: "AI agent skills bundled with the Azure ARM lexicon"
+---
+The Azure lexicon ships several AI skills that teach AI coding agents how to build, validate, and deploy Azure Resource Manager templates from a chant project.
+
+## What are skills?
+
+Skills are structured markdown documents bundled with a lexicon. When an AI agent works in a chant project, it discovers and loads relevant skills automatically — giving it operational knowledge about the deployment workflow without requiring the user to explain each step.
+
+## Installation
+
+When you scaffold a new project with `chant init --lexicon azure`, the skills are installed to `skills/` for automatic agent discovery.
+
+To refresh skills after a lexicon update:
+
+```bash
+chant update
+```
+
+## Skill: chant-azure
+
+The `chant-azure` skill covers the full Azure ARM deployment lifecycle:
+
+- **Build** — `chant build src/ --output template.json`
+- **Validate** — `chant lint src/` + `az deployment group validate`
+- **Deploy** — `az deployment group create` with parameters
+- **Update** — incremental or complete deployment modes
+- **Delete** — `az deployment group delete` / `az group delete`
+- **Status** — `az deployment group show` and operation details
+- **Troubleshooting** — deployment operation inspection, error resolution
+
+## Skill: chant-azure-security
+
+The `chant-azure-security` skill covers security best practices for Azure ARM templates:
+
+- **Identity & Access** — managed identities, RBAC role assignments, least-privilege
+- **Network Security** — NSG rules, private endpoints, service endpoints
+- **Encryption** — storage encryption, disk encryption, TLS enforcement
+- **Monitoring** — diagnostic settings, log analytics, alerts
+- **Post-synth checks** — maps to lint rules AZR016–AZR029
+
+## Skill: chant-azure-patterns
+
+The `chant-azure-patterns` skill covers advanced ARM template patterns:
+
+- **Linked Templates** — nested and linked template deployments
+- **Conditional Resources** — conditional provisioning patterns
+- **Cross-resource References** — `reference()` and `resourceId()` usage
+- **Tagging Strategies** — consistent tagging across resources
+- **Multi-region** — deploying across Azure regions
+- **Composites** — high-level reusable resource groupings
+
+## Skill: chant-azure-aks
+
+The `chant-azure-aks` skill bridges the Azure and Kubernetes lexicons for end-to-end AKS workflows:
+
+- **AKS Cluster** — provisioning clusters with managed identities and RBAC
+- **ACR Integration** — Azure Container Registry attached to AKS
+- **Workload Identity** — federated identity credentials for pods
+- **AGIC Ingress** — Application Gateway Ingress Controller setup
+- **Observability** — monitoring, logging, and alerting for AKS workloads
+
+## MCP integration
+
+The lexicon also provides MCP (Model Context Protocol) tools and resources that AI agents can use programmatically:
+
+| MCP tool | Description |
+|----------|-------------|
+| `build` | Build the chant project |
+| `lint` | Run lint rules |
+| `explain` | Summarize project resources |
+| `scaffold` | Generate starter files |
+| `search` | Search available resource types |

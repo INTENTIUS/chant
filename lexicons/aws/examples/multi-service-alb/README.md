@@ -2,6 +2,20 @@
 
 Multiple Fargate services behind a single shared Application Load Balancer — demonstrates the `AlbShared` + `FargateService` composites.
 
+## Skills
+
+The lexicon packages ship skills for agent-guided deployment. After `chant init --lexicon aws`, your agent has access to:
+
+| Skill | Package | Purpose |
+|-------|---------|---------|
+| `chant-aws` | `@intentius/chant-lexicon-aws` | AWS CloudFormation lifecycle: build, lint, deploy, rollback, troubleshooting |
+
+> **Using Claude Code?** Just ask:
+>
+> ```
+> Deploy the multi-service-alb example to my AWS account.
+> ```
+
 ## Quick Start
 
 ```bash

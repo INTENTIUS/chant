@@ -2,6 +2,28 @@
 
 The simplest possible Chant example — a single Node.js Lambda function that returns a greeting, built using the `LambdaNode` preset composite.
 
+## Skills
+
+The lexicon packages ship skills for agent-guided deployment. After `chant init --lexicon aws`, your agent has access to:
+
+| Skill | Package | Purpose |
+|-------|---------|---------|
+| `chant-aws` | `@intentius/chant-lexicon-aws` | AWS CloudFormation lifecycle: build, lint, deploy, rollback, troubleshooting |
+
+> **Using Claude Code?** Just ask:
+>
+> ```
+> Deploy the lambda-function example to my AWS account.
+> ```
+
+## Spell
+
+This example has a corresponding spell for AI-driven deployment:
+
+```bash
+chant spell cast lambda-function
+```
+
 ## Quick Start
 
 ```bash

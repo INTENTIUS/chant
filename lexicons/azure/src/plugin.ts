@@ -1,12 +1,13 @@
 import { createRequire } from "module";
-import type { LexiconPlugin, IntrinsicDef, SkillDefinition } from "@intentius/chant/lexicon";
+import type { LexiconPlugin, IntrinsicDef } from "@intentius/chant/lexicon";
 const require = createRequire(import.meta.url);
 import type { LintRule } from "@intentius/chant/lint/rule";
-import type { PostSynthCheck } from "@intentius/chant/lint/post-synth";
 import type { TemplateParser } from "@intentius/chant/import/parser";
 import type { TypeScriptGenerator } from "@intentius/chant/import/generator";
 import type { CompletionContext, CompletionItem, HoverContext, HoverInfo } from "@intentius/chant/lsp/types";
 import type { McpToolContribution, McpResourceContribution } from "@intentius/chant/mcp/types";
+import { discoverPostSynthChecks } from "@intentius/chant/lint/discover";
+import { createSkillsLoader } from "@intentius/chant/lexicon-plugin-helpers";
 import { azureSerializer } from "./serializer";
 
 /**
@@ -258,135 +259,86 @@ export const tags = defaultTags([
     return new ArmGenerator();
   },
 
-  postSynthChecks(): PostSynthCheck[] {
-    const checks: PostSynthCheck[] = [];
-    const loadCheck = (path: string, name: string) => {
-      try {
-        const mod = require(path);
-        if (mod[name]) checks.push(mod[name]);
-      } catch { /* skip */ }
-    };
-    loadCheck("./lint/post-synth/azr010", "azr010");
-    loadCheck("./lint/post-synth/azr011", "azr011");
-    loadCheck("./lint/post-synth/azr012", "azr012");
-    loadCheck("./lint/post-synth/azr013", "azr013");
-    loadCheck("./lint/post-synth/azr014", "azr014");
-    loadCheck("./lint/post-synth/azr015", "azr015");
-    loadCheck("./lint/post-synth/azr016", "azr016");
-    loadCheck("./lint/post-synth/azr017", "azr017");
-    loadCheck("./lint/post-synth/azr018", "azr018");
-    loadCheck("./lint/post-synth/azr019", "azr019");
-    loadCheck("./lint/post-synth/azr020", "azr020");
-    loadCheck("./lint/post-synth/azr021", "azr021");
-    loadCheck("./lint/post-synth/azr022", "azr022");
-    loadCheck("./lint/post-synth/azr023", "azr023");
-    loadCheck("./lint/post-synth/azr024", "azr024");
-    loadCheck("./lint/post-synth/azr025", "azr025");
-    loadCheck("./lint/post-synth/azr026", "azr026");
-    loadCheck("./lint/post-synth/azr027", "azr027");
-    loadCheck("./lint/post-synth/azr028", "azr028");
-    loadCheck("./lint/post-synth/azr029", "azr029");
-    return checks;
-  },
-
-  skills(): SkillDefinition[] {
-    const { readFileSync } = require("fs");
+  postSynthChecks() {
     const { join, dirname } = require("path");
     const { fileURLToPath } = require("url");
-    const dir = dirname(fileURLToPath(import.meta.url));
-
-    const skills: SkillDefinition[] = [];
-
-    const skillFiles = [
-      {
-        file: "chant-azure.md",
-        name: "chant-azure",
-        description: "Azure Resource Manager infrastructure generation",
-        triggers: [
-          { type: "file_pattern", pattern: "*.azure.ts" },
-          { type: "context", value: "azure" },
-        ],
-        parameters: [
-          { name: "resourceType", type: "string", description: "Azure resource type to generate" },
-        ],
-        examples: [
-          {
-            title: "Storage Account",
-            input: "Create an Azure storage account with secure defaults",
-            output: 'import { StorageAccount } from "@intentius/chant-lexicon-azure";\n\nexport const storage = new StorageAccount({ ... });',
-          },
-        ],
-      },
-      {
-        file: "chant-azure-security.md",
-        name: "chant-azure-security",
-        description: "Azure security best practices for infrastructure",
-        triggers: [
-          { type: "context", value: "azure security" },
-          { type: "context", value: "azure identity" },
-        ],
-        parameters: [],
-        examples: [
-          {
-            title: "Secure Storage Account",
-            input: "Create a storage account with encryption and no public access",
-            output: 'import { StorageAccountSecure } from "@intentius/chant-lexicon-azure";\n\nconst { storageAccount } = StorageAccountSecure({ name: "mystorage" });',
-          },
-        ],
-      },
-      {
-        file: "chant-azure-patterns.md",
-        name: "chant-azure-patterns",
-        description: "Advanced Azure ARM template patterns",
-        triggers: [
-          { type: "context", value: "azure patterns" },
-          { type: "context", value: "azure composites" },
-        ],
-        parameters: [],
-        examples: [
-          {
-            title: "Linked Deployment",
-            input: "Deploy a child project as a linked template",
-            output: 'import { ChildProjectInstance } from "@intentius/chant";\n\nexport const deploy = new ChildProjectInstance({ project: "../network" });',
-          },
-        ],
-      },
-      {
-        file: "chant-aks.md",
-        name: "chant-aks",
-        description: "AKS end-to-end workflow — deploy ARM template, configure kubectl, deploy K8s workloads",
-        triggers: [
-          { type: "context", value: "aks" },
-          { type: "context", value: "azure kubernetes" },
-          { type: "context", value: "agic" },
-        ],
-        parameters: [],
-        examples: [
-          {
-            title: "Deploy AKS microservice",
-            input: "Deploy an AKS project end-to-end",
-            output: "npm run deploy",
-          },
-        ],
-      },
-    ];
-
-    for (const skill of skillFiles) {
-      try {
-        const content = readFileSync(join(dir, "skills", skill.file), "utf-8");
-        skills.push({
-          name: skill.name,
-          description: skill.description,
-          content,
-          triggers: skill.triggers,
-          parameters: skill.parameters,
-          examples: skill.examples,
-        });
-      } catch { /* skip missing skills */ }
-    }
-
-    return skills;
+    const postSynthDir = join(dirname(fileURLToPath(import.meta.url)), "lint", "post-synth");
+    return discoverPostSynthChecks(postSynthDir, import.meta.url);
   },
+
+  skills: createSkillsLoader(import.meta.url, [
+    {
+      file: "chant-azure.md",
+      name: "chant-azure",
+      description: "Azure Resource Manager infrastructure generation with chant",
+      triggers: [
+        { type: "file_pattern", pattern: "*.azure.ts" },
+        { type: "context", value: "azure" },
+      ],
+      parameters: [
+        { name: "resourceType", type: "string", description: "Azure resource type to generate" },
+      ],
+      examples: [
+        {
+          title: "Storage Account",
+          input: "Create an Azure storage account with secure defaults",
+          output: 'import { StorageAccount } from "@intentius/chant-lexicon-azure";\n\nexport const storage = new StorageAccount({ ... });',
+        },
+      ],
+    },
+    {
+      file: "chant-azure-security.md",
+      name: "chant-azure-security",
+      description: "Azure security best practices for infrastructure",
+      triggers: [
+        { type: "context", value: "azure security" },
+        { type: "context", value: "azure identity" },
+      ],
+      parameters: [],
+      examples: [
+        {
+          title: "Secure Storage Account",
+          input: "Create a storage account with encryption and no public access",
+          output: 'import { StorageAccountSecure } from "@intentius/chant-lexicon-azure";\n\nconst { storageAccount } = StorageAccountSecure({ name: "mystorage" });',
+        },
+      ],
+    },
+    {
+      file: "chant-azure-patterns.md",
+      name: "chant-azure-patterns",
+      description: "Advanced Azure ARM template patterns",
+      triggers: [
+        { type: "context", value: "azure patterns" },
+        { type: "context", value: "azure composites" },
+      ],
+      parameters: [],
+      examples: [
+        {
+          title: "Linked Deployment",
+          input: "Deploy a child project as a linked template",
+          output: 'import { ChildProjectInstance } from "@intentius/chant";\n\nexport const deploy = new ChildProjectInstance({ project: "../network" });',
+        },
+      ],
+    },
+    {
+      file: "chant-azure-aks.md",
+      name: "chant-azure-aks",
+      description: "AKS end-to-end workflow — deploy ARM template, configure kubectl, deploy K8s workloads",
+      triggers: [
+        { type: "context", value: "aks" },
+        { type: "context", value: "azure kubernetes" },
+        { type: "context", value: "agic" },
+      ],
+      parameters: [],
+      examples: [
+        {
+          title: "Deploy AKS microservice",
+          input: "Deploy an AKS project end-to-end",
+          output: "npm run deploy",
+        },
+      ],
+    },
+  ]),
 
   completionProvider() {
     return (ctx: CompletionContext): CompletionItem[] => {

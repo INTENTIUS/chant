@@ -1,42 +1,65 @@
 ---
-title: "Skills"
-description: "AI skill and MCP tools for Helm chart assistance"
+title: "AI Skills"
+description: "AI agent skills bundled with the Helm lexicon"
 ---
-The Helm lexicon includes the **chant-helm** AI skill that provides context-aware assistance when working with Helm charts.
+The Helm lexicon ships AI skills that teach AI coding agents how to build, validate, and deploy Helm charts from a chant project.
+
+## What are skills?
+
+Skills are structured markdown documents bundled with a lexicon. When an AI agent works in a chant project, it discovers and loads relevant skills automatically — giving it operational knowledge about the deployment workflow without requiring the user to explain each step.
+
+## Installation
+
+When you scaffold a new project with `chant init --lexicon helm`, the skills are installed to `skills/` for automatic agent discovery.
+
+To refresh skills after a lexicon update:
+
+```bash
+chant update
+```
+
+## Skill: chant-helm
+
+The `chant-helm` skill covers the core Helm chart workflow:
+
+- **Resource types** — Chart, Values, HelmTest, HelmNotes, HelmHook, HelmDependency, HelmMaintainer, HelmCRD
+- **Build** — `chant build src/` to synthesize chart directory
+- **Validate** — `chant lint src/` + `helm lint`
+- **Template functions** — include, required, helmDefault, toYaml, etc.
+- **Values proxy** — `.Values.*` reference generation
+- **Troubleshooting** — lint rule violations, template errors
+
+## Skill: chant-helm-patterns
+
+The `chant-helm-patterns` skill covers advanced Helm chart patterns:
+
+- **Dependencies** — chart dependencies and subcharts
+- **Hooks** — pre/post install, upgrade, delete hooks
+- **Tests** — Helm test definitions and execution
+- **Library charts** — shared template libraries
+- **Composites** — high-level reusable chart groupings
+
+## Skill: chant-helm-security
+
+The `chant-helm-security` skill covers security best practices for Helm charts:
+
+- **Pod security** — security contexts, non-root containers in templates
+- **RBAC** — service account and role template patterns
+- **Secrets** — secret management in values and templates
+- **Image policies** — digest pinning, registry restrictions
+- **Post-synth checks** — maps to relevant Helm lint rules
 
 ## MCP integration
 
-When running `chant serve mcp`, the Helm skill is automatically available to MCP-compatible AI tools (Claude, Cursor, etc.).
+The lexicon also provides MCP (Model Context Protocol) tools and resources that AI agents can use programmatically:
 
-## What the skill provides
-
-### Context
-
-The skill gives the AI assistant knowledge of:
-- All Helm resource types (Chart, Values, HelmTest, HelmNotes, HelmHook, HelmDependency, HelmMaintainer, HelmCRD)
-- The values proxy and `.Values.*` reference generation
-- Template function wrappers (include, required, helmDefault, toYaml, etc.)
-- Chart serialization rules and directory layout
-- Composite patterns and when to use each
-- Lint rule explanations and fix suggestions
-
-### Capabilities
-
-With the Helm skill active, an AI assistant can:
-- **Generate** typed Helm charts from natural language descriptions
-- **Explain** existing charts and their template output
-- **Debug** lint rule violations with fix suggestions
-- **Migrate** from plain YAML Helm charts to typed TypeScript declarations
-- **Recommend** composites based on deployment requirements
-- **Convert** between raw Kubernetes manifests and parameterized Helm templates
-
-## Example prompts
-
-- "Create a Helm chart for a Node.js API with PostgreSQL dependency"
-- "Add a pre-upgrade database migration hook to my chart"
-- "Why is WHM104 flagging my deployment?"
-- "Convert this existing Helm chart to chant TypeScript"
-- "Set up HPA with custom metrics for my microservice"
+| MCP tool | Description |
+|----------|-------------|
+| `build` | Build the chant project |
+| `lint` | Run lint rules |
+| `explain` | Summarize project resources |
+| `scaffold` | Generate starter files |
+| `search` | Search available resource types |
 
 ## LSP integration
 

@@ -5,9 +5,9 @@
  * Helm-specific intrinsics, lint rules, and post-synth checks.
  */
 
-import type { LexiconPlugin, IntrinsicDef, InitTemplateSet, SkillDefinition } from "@intentius/chant/lexicon";
+import type { LexiconPlugin, IntrinsicDef, InitTemplateSet } from "@intentius/chant/lexicon";
 import { discoverLintRules, discoverPostSynthChecks } from "@intentius/chant/lint/discover";
-import { readFileSync, readdirSync } from "fs";
+import { createSkillsLoader, createDiffTool } from "@intentius/chant/lexicon-plugin-helpers";
 import { join, dirname } from "path";
 import { fileURLToPath } from "url";
 import { helmSerializer } from "./serializer";
@@ -65,29 +65,7 @@ export const helmPlugin: LexiconPlugin = {
   },
 
   mcpTools() {
-    return [
-      {
-        name: "diff",
-        description: "Compare current Helm chart build output against previous output",
-        inputSchema: {
-          type: "object" as const,
-          properties: {
-            path: {
-              type: "string",
-              description: "Path to the infrastructure project directory",
-            },
-          },
-        },
-        async handler(params: Record<string, unknown>): Promise<unknown> {
-          const { diffCommand } = await import("@intentius/chant/cli/commands/diff");
-          const result = await diffCommand({
-            path: (params.path as string) ?? ".",
-            serializers: [helmSerializer],
-          });
-          return result;
-        },
-      },
-    ];
+    return [createDiffTool(helmSerializer, "Compare current Helm chart build output against previous output")];
   },
 
   mcpResources() {
@@ -344,23 +322,11 @@ export const service = new Service({
     };
   },
 
-  skills(): SkillDefinition[] {
-    const skillsDir = join(dirname(fileURLToPath(import.meta.url)), "skills");
-    const skills: SkillDefinition[] = [];
-    try {
-      for (const file of readdirSync(skillsDir)) {
-        if (!file.endsWith(".md")) continue;
-        const content = readFileSync(join(skillsDir, file), "utf-8");
-        const name = file.replace(/\.md$/, "");
-        // Derive a readable description from the filename
-        const desc = name.replace(/-/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
-        skills.push({ name: `chant-helm-${name}`, description: desc, content });
-      }
-    } catch {
-      // No skills directory
-    }
-    return skills;
-  },
+  skills: createSkillsLoader(import.meta.url, [
+    { file: "chant-helm.md", name: "chant-helm", description: "Build, validate, and package Helm charts from a chant project" },
+    { file: "chant-helm-patterns.md", name: "chant-helm-patterns", description: "Common Helm chart patterns and best practices using chant" },
+    { file: "chant-helm-security.md", name: "chant-helm-security", description: "Security best practices for Helm charts built with chant" },
+  ]),
 
   async docs(options?: { verbose?: boolean }): Promise<void> {
     const { generateDocs } = await import("./codegen/docs");

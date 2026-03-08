@@ -1,6 +1,7 @@
 ---
-source: chant-lexicon
-lexicon: gcp
+skill: chant-gcp-security
+description: GCP security best practices for infrastructure
+user-invocable: true
 ---
 
 # GCP Security Best Practices for Chant

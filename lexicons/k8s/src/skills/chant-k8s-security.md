@@ -1,5 +1,5 @@
 ---
-skill: kubernetes-security
+skill: chant-k8s-security
 description: Kubernetes pod security, image scanning, network policies, and secrets management
 user-invocable: true
 ---

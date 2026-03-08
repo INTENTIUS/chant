@@ -4,6 +4,23 @@ One CockroachDB cluster spanning **EKS, AKS, and GKE** — 3 nodes per cloud, 9 
 
 All clouds deploy to the US East / Virginia metro for low cross-cloud latency (~2-5ms). Uses Chant's multi-stack layout: one project, subdirectories per cloud, each producing a separate output stack.
 
+## Skills
+
+The lexicon packages ship skills for agent-guided deployment:
+
+| Skill | Package | Purpose |
+|-------|---------|---------|
+| `chant-aws` | `@intentius/chant-lexicon-aws` | AWS CloudFormation lifecycle: build, validate, change sets, rollback |
+| `chant-azure` | `@intentius/chant-lexicon-azure` | Azure ARM template lifecycle: build, validate, deploy, rollback |
+| `chant-gcp` | `@intentius/chant-lexicon-gcp` | GCP Config Connector lifecycle: build, lint, deploy, rollback |
+| `chant-k8s` | `@intentius/chant-lexicon-k8s` | Kubernetes workload lifecycle: build, lint, apply, troubleshoot |
+
+> **Using Claude Code?** Just ask:
+>
+> ```
+> Deploy the cockroachdb-multi-cloud example.
+> ```
+
 ## Architecture
 
 ```

@@ -2,6 +2,20 @@
 
 A production-ready VPC with 2 public and 2 private subnets across 2 availability zones, an internet gateway, and a NAT gateway — built using the `VpcDefault` composite.
 
+## Skills
+
+The lexicon packages ship skills for agent-guided deployment. After `chant init --lexicon aws`, your agent has access to:
+
+| Skill | Package | Purpose |
+|-------|---------|---------|
+| `chant-aws` | `@intentius/chant-lexicon-aws` | AWS CloudFormation lifecycle: build, lint, deploy, rollback, troubleshooting |
+
+> **Using Claude Code?** Just ask:
+>
+> ```
+> Deploy the vpc example to my AWS account.
+> ```
+
 ## Quick Start
 
 ```bash

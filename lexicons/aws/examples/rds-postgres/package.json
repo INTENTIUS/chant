@@ -4,10 +4,10 @@
   "type": "module",
   "private": true,
   "scripts": {
-    "test": "bun test",
     "build": "chant build src --lexicon aws -o stack.json",
     "lint": "chant lint src",
     "dev": "chant build src --lexicon aws --watch -o stack.json",
+    "test": "bun test",
     "setup": "bash setup.sh",
     "deploy": "bash setup.sh && chant build src --lexicon aws -o stack.json && aws cloudformation deploy --template-file stack.json --stack-name rds-postgres-example --no-fail-on-empty-changeset",
     "teardown": "aws cloudformation delete-stack --stack-name rds-postgres-example"

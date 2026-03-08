@@ -43,6 +43,10 @@ export default defineConfig({
             {
                   "label": "Examples",
                   "slug": "examples"
+            },
+            {
+                  "label": "AI Skills",
+                  "slug": "skills"
             }
       ],
     }),

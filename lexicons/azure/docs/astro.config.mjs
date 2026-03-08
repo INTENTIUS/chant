@@ -59,6 +59,10 @@ export default defineConfig({
         {
           "label": "Deploying to AKS",
           "slug": "aks-kubernetes"
+        },
+        {
+          "label": "AI Skills",
+          "slug": "skills"
         }
       ],
     }),

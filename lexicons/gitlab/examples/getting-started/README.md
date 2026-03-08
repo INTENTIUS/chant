@@ -1,108 +1,50 @@
-# Getting Started — GitLab CI with chant
+# Getting Started
 
-A basic GitLab CI pipeline with **build** and **test** stages using shared configuration.
+A basic GitLab CI pipeline with build and test stages, shared image/cache configuration, and JUnit test reporting.
 
-## What this generates
+## Skills
 
-```yaml
-stages:
-  - build
-  - test
+The lexicon packages ship skills for agent-guided deployment. After `chant init --lexicon gitlab`, your agent has access to:
 
-build:
-  stage: build
-  image:
-    name: node:20-alpine
-  cache:
-    key: '$CI_COMMIT_REF_SLUG'
-    paths:
-      - node_modules/
-    policy: pull-push
-  script:
-    - npm install
-    - npm run build
+| Skill | Package | Purpose |
+|-------|---------|---------|
+| `chant-gitlab` | `@intentius/chant-lexicon-gitlab` | GitLab CI pipeline lifecycle: build, lint, validate, deploy |
 
-test:
-  stage: test
-  image:
-    name: node:20-alpine
-  cache:
-    key: '$CI_COMMIT_REF_SLUG'
-    paths:
-      - node_modules/
-    policy: pull-push
-  script:
-    - npm install
-    - npm test
-  artifacts:
-    reports:
-      junit: coverage/junit.xml
-    paths:
-      - coverage/
-    expire_in: '1 week'
-```
+> **Using Claude Code?** Just ask:
+>
+> ```
+> Build the getting-started pipeline.
+> ```
 
-## Try it on GitLab
+## What this produces
 
-### 1. Create your project
+- **GitLab CI** (`.gitlab-ci.yml`): 2-stage pipeline (build + test) with npm caching and JUnit artifact reporting
+
+## Source files
+
+| File | Description |
+|------|-------------|
+| `src/config.ts` | Shared image (`node:20-alpine`), cache configuration (`$CI_COMMIT_REF_SLUG` key, `node_modules/`) |
+| `src/pipeline.ts` | Build and test Job definitions with JUnit artifacts and 1-week expiry |
+
+## Prerequisites
+
+- [ ] [Node.js](https://nodejs.org/) >= 22 (Bun also works)
+
+**Local verification** (build, lint) requires only Node.js -- no GitLab repository needed.
+
+## Local verification
 
 ```bash
-chant init --lexicon gitlab my-project
-cd my-project
+npx chant build src --lexicon gitlab -o .gitlab-ci.yml
+npx chant lint src
 ```
 
-### 2. Build the pipeline
+## Related examples
 
-```bash
-chant build src --lexicon gitlab -o .gitlab-ci.yml
-```
-
-### 3. Push to GitLab
-
-```bash
-cd my-project
-git init -b main
-git add -A
-git commit -m "Initial pipeline"
-git remote add origin git@gitlab.com:YOUR_GROUP/YOUR_PROJECT.git
-git push -u origin main
-```
-
-The pipeline runs automatically on push.
-
-### 4. Iterate
-
-Edit files in `src/`, rebuild, and push:
-
-```bash
-chant build src --lexicon gitlab -o .gitlab-ci.yml
-git add .gitlab-ci.yml && git commit -m "Update pipeline" && git push
-```
-
-## Project structure
-
-| File | Purpose |
-|------|---------|
-| `src/config.ts` | Shared image, cache, and artifact configuration |
-| `src/pipeline.ts` | Build and test job definitions |
-| `index.js` | Scaffold application entry point |
-| `test.js` | Scaffold test that verifies the app works |
-
-## Using the chant-gitlab skill
-
-If you use Claude Code, the `chant-gitlab` skill automates building, linting, validating, and deploying pipelines. Ask it to:
-
-- "Build my pipeline and validate it"
-- "Deploy my pipeline changes to GitLab"
-- "Create a test job with caching"
-
-The skill knows how to run `chant build`, `chant lint`, validate via the GitLab CI Lint API, and push changes through the MR workflow.
-
-## Next steps
-
-- Add a deploy stage with environment and rules
-- Switch to a composite like `NodePipeline` for convention-over-configuration
-- Run `chant lint src/` to catch issues before pushing
+- [node-pipeline](../node-pipeline/) -- Node.js pipeline with NodePipeline composite
+- [docker-build](../docker-build/) -- Docker build and push pipeline
+- [multi-stage-deploy](../multi-stage-deploy/) -- Multi-environment deployment pipeline
 
 ## Standalone Usage
 

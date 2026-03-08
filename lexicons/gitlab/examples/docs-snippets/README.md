@@ -2,6 +2,20 @@
 
 Code snippets used in the GitLab lexicon documentation — covers jobs, pipelines, variables, rules, stages, environments, and lint examples.
 
+## Skills
+
+The lexicon packages ship skills for agent-guided deployment. After `chant init --lexicon gitlab`, your agent has access to:
+
+| Skill | Package | Purpose |
+|-------|---------|---------|
+| `chant-gitlab` | `@intentius/chant-lexicon-gitlab` | GitLab CI pipeline lifecycle: build, lint, validate, deploy |
+
+> **Using Claude Code?** Just ask:
+>
+> ```
+> Build the docs-snippets pipeline.
+> ```
+
 ## What this contains
 
 This example is a collection of standalone snippet files used in the documentation site. Each file demonstrates a specific GitLab CI/CD concept:

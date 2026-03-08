@@ -1,6 +1,6 @@
 # Composites Basic
 
-Basic Helm chart composites — web application, microservice, stateful service, cron job, and worker patterns.
+Basic Helm chart composites -- web application, microservice, stateful service, cron job, and worker patterns.
 
 ## Skills
 
@@ -8,41 +8,37 @@ The lexicon packages ship skills for agent-guided deployment. After `chant init 
 
 | Skill | Package | Purpose |
 |-------|---------|---------|
-| `chant-helm` | `@intentius/chant-lexicon-helm` | Helm chart lifecycle: build, lint, deploy, rollback, troubleshooting |
+| `chant-helm` | `@intentius/chant-lexicon-helm` | Helm chart lifecycle: build, lint, package, deploy, troubleshooting |
 
 > **Using Claude Code?** Just ask:
 >
 > ```
-> Deploy the composites-basic example to my Kubernetes cluster.
+> Build the composites-basic Helm chart.
 > ```
 
 ## What this produces
 
-- **Helm** (chart directory): Helm chart files (Chart.yaml, values.yaml, templates/) across 5 source files
+Generates Chart.yaml, values.yaml, and templates/ for five composite patterns: web app, microservice, stateful service, cron job, and worker.
 
 ## Source files
 
-| File | Composite | Resources |
-|------|-----------|-----------|
-| `src/web-app.ts` | `WebApp` | Deployment, Service, Ingress, HPA, ServiceAccount |
-| `src/microservice.ts` | `Microservice` | Deployment, Service, ConfigMap, Ingress, HPA, PDB, ServiceAccount |
-| `src/stateful-service.ts` | `StatefulService` | StatefulSet, Service |
-| `src/cron-job.ts` | `CronJob` | CronJob |
-| `src/worker.ts` | `Worker` | Deployment, HPA, PDB, ServiceAccount |
+| File | Description |
+|------|-------------|
+| `src/web-app.ts` | WebApp composite -- Deployment, Service, Ingress, HPA, ServiceAccount |
+| `src/microservice.ts` | Microservice composite -- Deployment, Service, ConfigMap, Ingress, HPA, PDB, ServiceAccount |
+| `src/stateful-service.ts` | StatefulService composite -- StatefulSet, Service |
+| `src/cron-job.ts` | CronJob composite -- CronJob |
+| `src/worker.ts` | Worker composite -- Deployment, HPA, PDB, ServiceAccount |
 
 ## Prerequisites
 
-- [ ] [Node.js](https://nodejs.org/) >= 22 (Bun also works)
-- [ ] [Helm](https://helm.sh/docs/intro/install/) v3
-- [ ] A Kubernetes cluster
+- [Bun](https://bun.sh) or [Node.js](https://nodejs.org/) >= 22
+- [Helm](https://helm.sh/docs/intro/install/)
 
-**Local verification** (build, lint) requires only Node.js — no cluster needed.
-
-## Local verification
+## Build
 
 ```bash
-npx chant build src --lexicon helm -o Chart.yaml
-npx chant lint src
+bun install && bun run build && bun run lint
 ```
 
 ## Deploy
@@ -59,8 +55,9 @@ helm uninstall composites-basic
 
 ## Related examples
 
-- [composites-production](../composites-production/) — Production-hardened composites with security contexts and RBAC
-- [composites-infrastructure](../composites-infrastructure/) — Infrastructure composites: ingress, namespaces, CRDs
+- [composites-production](../composites-production/) -- Production-hardened composites with security contexts and RBAC
+- [composites-infrastructure](../composites-infrastructure/) -- Infrastructure composites: ingress, namespaces, CRDs
+- [microservice-chart](../microservice-chart/) -- Single microservice chart using the HelmMicroservice composite
 
 ## Standalone Usage
 

@@ -21,8 +21,9 @@ Each skill file is a markdown document with YAML frontmatter:
 
 ```markdown
 ---
-source: chant-lexicon
-lexicon: my-lexicon
+skill: chant-my-lexicon
+description: Core deployment workflow for My Lexicon resources
+user-invocable: true
 ---
 # Resource Authoring
 
@@ -37,8 +38,9 @@ When writing resources with chant and this lexicon:
 
 | Field | Description |
 |-------|-------------|
-| `source` | Always `chant-lexicon` — identifies as lexicon-contributed |
-| `lexicon` | The lexicon name (e.g., `azure`, `k8s`) |
+| `skill` | The skill name — must match the name registered in `plugin.ts` |
+| `description` | One-line summary of what the skill covers |
+| `user-invocable` | `true` if the skill can be invoked directly by the user |
 
 ## Skill Content Guidelines
 
@@ -84,8 +86,10 @@ skills(): SkillDefinition[] {
 Skills are installed automatically when you initialize a project:
 
 ```bash
-chant init my-infra
+chant init --lexicon my-lexicon my-infra
 ```
+
+This copies skills to `skills/{name}/SKILL.md` in the project root.
 
 ## Lifecycle
 
@@ -106,8 +110,18 @@ This is passed to `packagePipeline` as part of the bundle configuration.
 
 ## Reference
 
-- K8s skills: `lexicons/k8s/src/skills/` — 3 files (core, EKS, patterns)
-- Azure skills: `lexicons/azure/src/skills/` — 3 files (core, security, patterns)
+All 8 lexicons ship skills:
+
+| Lexicon | Skills | Count |
+|---------|--------|-------|
+| AWS | `chant-aws`, `chant-aws-eks` | 2 |
+| Azure | `chant-azure`, `chant-azure-security`, `chant-azure-patterns`, `chant-azure-aks` | 4 |
+| GCP | `chant-gcp`, `chant-gcp-security`, `chant-gcp-patterns`, `chant-gcp-gke` | 4 |
+| K8s | `chant-k8s`, `chant-k8s-patterns`, `chant-k8s-deployment-strategies`, `chant-k8s-security`, `chant-k8s-eks`, `chant-k8s-gke`, `chant-k8s-aks` | 7 |
+| GitHub | `chant-github`, `chant-github-patterns`, `chant-github-security` | 3 |
+| GitLab | `chant-gitlab`, `chant-gitlab-patterns` | 2 |
+| Flyway | `chant-flyway`, `chant-flyway-migrations`, `chant-flyway-security` | 3 |
+| Helm | `chant-helm`, `chant-helm-patterns`, `chant-helm-security` | 3 |
 
 ## Next Steps
 

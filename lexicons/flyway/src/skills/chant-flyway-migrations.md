@@ -1,5 +1,5 @@
 ---
-skill: flyway-migrations
+skill: chant-flyway-migrations
 description: Flyway migration naming, versioned vs repeatable, callbacks, and multi-environment patterns
 user-invocable: true
 ---

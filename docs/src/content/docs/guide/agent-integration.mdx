@@ -1,30 +1,40 @@
 ---
 title: Agent Integration
-description: Integrating chant with AI coding agents via MCP
+description: How AI agents work with chant — skills, MCP tools, and spells
 ---
 
-chant integrates with AI coding agents like Claude and Cursor through the MCP (Model Context Protocol) server and a skills system.
+chant integrates with AI coding agents through three surfaces: **skills** (operational knowledge), **MCP tools** (programmatic actions), and **spells** (task orchestration). You write TypeScript; the agent uses these surfaces to understand and execute the build → validate → deploy → troubleshoot workflow.
 
-## Setup
+## Skills
 
-`chant init` handles agent integration automatically:
+Skills are operational playbooks — structured markdown documents contributed by lexicons. They teach agents how to work with a specific infrastructure platform: which commands to run, what to validate, how to deploy, and how to troubleshoot failures.
 
-1. **Writes MCP config** — detects your IDE and adds a `chant` entry to the appropriate global config file (`~/.claude/mcp.json` for Claude Code, `~/.cursor/mcp.json` for Cursor, or `~/.config/mcp/mcp.json` otherwise) so agents can run builds, invoke lint checks, and import templates.
-2. **Installs skills** — copies lexicon-contributed skill files (markdown guides) into `skills/`.
+Skills are installed by `chant init` and refreshed by `chant update`. They live in the project root at `skills/`:
 
-```bash
-chant init --lexicon aws my-infra
+```
+my-project/
+  skills/
+    chant-aws/
+      SKILL.md
+    chant-aws-eks/
+      SKILL.md
+  src/
+    index.ts
 ```
 
-To refresh skills after a lexicon update:
+Agents that support file-based skill discovery load these automatically. Skills are also inlined into spell prompts when a spell declares a lexicon (see [Spells](#spells) below).
 
-```bash
-chant update
-```
+You don't need to read or manage skill files yourself — they're installed once and the agent reads them as needed.
 
-### Manual MCP Configuration
+## MCP Tools
 
-If your editor doesn't auto-detect the MCP config, add the chant MCP server manually. The server runs over stdio — add the following to your IDE's MCP config file:
+The MCP (Model Context Protocol) server gives agents programmatic access to chant operations. When an agent connects via MCP, it can build projects, run lint checks, scaffold files, and more — without the user typing commands.
+
+### Setup
+
+`chant init` configures MCP automatically by writing to your IDE's global MCP config file.
+
+To configure manually, add the chant MCP server to your IDE's MCP config:
 
 ```json
 {
@@ -37,26 +47,44 @@ If your editor doesn't auto-detect the MCP config, add the chant MCP server manu
 }
 ```
 
-## MCP Server Capabilities
+### Available Tools
 
-When an agent connects via MCP, the chant server exposes:
+| MCP tool | Description |
+|----------|-------------|
+| `build` | Synthesize and write infrastructure output |
+| `lint` | Run lint checks on TypeScript intent definitions |
+| `import` | Import infrastructure templates and generate TypeScript files |
+| `explain` | Summarize project resources by lexicon and kind |
+| `scaffold` | Generate starter files from lexicon templates |
+| `search` | Search available resource types across lexicons |
 
-**Tools:**
-- `build` — Synthesize and write infrastructure output
-- `lint` — Run lint checks on TypeScript intent definitions
-- `import` — Import infrastructure templates and generate TypeScript files
-- `explain` — Summarize project resources by lexicon and kind
-- `scaffold` — Generate starter files from lexicon templates
-- `search` — Search available resource types across lexicons
+### Resources
 
-**Resources:**
-- `chant://context` — Lexicon-specific instructions and patterns for chant development
-- `chant://examples/list` — List of available chant examples
+| MCP resource | Description |
+|--------------|-------------|
+| `chant://context` | Lexicon-specific instructions and patterns for chant development |
+| `chant://examples/list` | List of available chant examples |
 
 Lexicon plugins can contribute additional tools and resources.
 
 ## Spells
 
-Spells orchestrate multi-step agent tasks like deployments. They automatically inline lexicon skills into the agent prompt.
+Spells orchestrate multi-step agent tasks like deployments. A spell defines **what** to do (deploy this stack, take a state snapshot). When a spell declares a lexicon, the relevant skills are automatically inlined into the generated prompt — the agent gets the full operational playbook without the spell needing to spell out every step.
+
+```bash
+chant spell cast lambda-function
+```
+
+This produces a markdown prompt containing the spell overview, resolved context, inlined skills, and a task checklist. Paste it into your agent to start the work.
 
 See the [Spells guide](/chant/guide/spells/) for details.
+
+## When to Use What
+
+| Surface | When | Example |
+|---------|------|---------|
+| **Skills** | Always-on guidance — installed once, agent reads as needed | Agent checks the AWS skill before deploying a CloudFormation stack |
+| **MCP tools** | Programmatic actions during execution | Agent calls `build` to synthesize templates, `lint` to validate |
+| **Spells** | Structured multi-step tasks | Orchestrating a full deploy + state snapshot across dependencies |
+
+Skills and MCP tools are complementary: skills tell the agent *what to do*, MCP tools let it *do it*. Spells tie both together into repeatable workflows.

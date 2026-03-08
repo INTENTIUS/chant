@@ -2,7 +2,7 @@
 title: "AI Skills"
 description: "AI agent skills bundled with the AWS CloudFormation lexicon"
 ---
-The AWS lexicon ships an AI skill called **chant-aws** that teaches AI coding agents (like Claude Code) how to build, validate, and deploy CloudFormation templates from a chant project.
+The AWS lexicon ships AI skills that teach AI coding agents how to build, validate, and deploy CloudFormation templates from a chant project.
 
 ## What are skills?
 
@@ -10,20 +10,17 @@ Skills are structured markdown documents bundled with a lexicon. When an AI agen
 
 ## Installation
 
-When you scaffold a new project with `chant init --lexicon aws`, the skill is installed to `skills/chant-aws/SKILL.md` for automatic discovery by Claude Code.
+When you scaffold a new project with `chant init --lexicon aws`, the skills are installed to `skills/` for automatic agent discovery.
 
-For existing projects, create the file manually:
+To refresh skills after a lexicon update:
 
-```
-.claude/
-  skills/
-    chant-aws/
-      SKILL.md    # skill content (see below)
+```bash
+chant update
 ```
 
 ## Skill: chant-aws
 
-The `chant-aws` skill covers the full deployment lifecycle:
+The `chant-aws` skill covers the full CloudFormation deployment lifecycle:
 
 - **Build** — `chant build src/ --output stack.json`
 - **Validate** — `chant lint src/` + `aws cloudformation validate-template`
@@ -33,7 +30,15 @@ The `chant-aws` skill covers the full deployment lifecycle:
 - **Status** — `describe-stacks` and `describe-stack-events`
 - **Troubleshooting** — event inspection, rollback recovery, drift detection
 
-The skill is invocable as a slash command: `/chant-aws`
+## Skill: chant-aws-eks
+
+The `chant-aws-eks` skill bridges the AWS and Kubernetes lexicons for end-to-end EKS workflows:
+
+- **EKS Cluster** — provisioning clusters with managed node groups
+- **IAM for Service Accounts** — IRSA and pod identity configuration
+- **Networking** — VPC, subnets, and security group setup for EKS
+- **Add-ons** — CoreDNS, kube-proxy, VPC CNI management
+- **Observability** — CloudWatch Container Insights, logging
 
 ## MCP integration
 

@@ -1,6 +1,6 @@
 # Composites Infrastructure
 
-Infrastructure Helm chart composites — TLS ingress, namespace governance, DaemonSets, ExternalSecrets, and CRD lifecycle.
+Infrastructure Helm chart composites -- TLS ingress, namespace governance, DaemonSets, ExternalSecrets, and CRD lifecycle.
 
 ## Skills
 
@@ -8,42 +8,38 @@ The lexicon packages ship skills for agent-guided deployment. After `chant init 
 
 | Skill | Package | Purpose |
 |-------|---------|---------|
-| `chant-helm` | `@intentius/chant-lexicon-helm` | Helm chart lifecycle: build, lint, deploy, rollback, troubleshooting |
+| `chant-helm` | `@intentius/chant-lexicon-helm` | Helm chart lifecycle: build, lint, package, deploy, troubleshooting |
 
 > **Using Claude Code?** Just ask:
 >
 > ```
-> Deploy the composites-infrastructure example to my Kubernetes cluster.
+> Build the composites-infrastructure Helm chart.
 > ```
 
 ## What this produces
 
-- **Helm** (chart directory): Helm chart files (Chart.yaml, values.yaml, templates/) across 6 source files
+Generates Chart.yaml, values.yaml, and templates/ for six infrastructure-level composites: secure ingress, namespace environments, daemon sets, external secrets, CRD lifecycle management, and a library chart.
 
 ## Source files
 
-| File | Composite | Resources |
-|------|-----------|-----------|
-| `src/secure-ingress.ts` | `SecureIngress` | Ingress, Certificate |
-| `src/namespace-env.ts` | `NamespaceEnv` | Namespace, ResourceQuota, LimitRange, NetworkPolicy |
-| `src/daemon-set.ts` | `DaemonSet` | DaemonSet, ServiceAccount |
-| `src/external-secret.ts` | `ExternalSecret` | ExternalSecret |
-| `src/crd-lifecycle.ts` | `CrdLifecycle` | Job, ConfigMap, ServiceAccount, ClusterRole, ClusterRoleBinding |
-| `src/library-chart.ts` | `LibraryChart` | *(library chart — no resources)* |
+| File | Description |
+|------|-------------|
+| `src/secure-ingress.ts` | SecureIngress composite -- Ingress, Certificate |
+| `src/namespace-env.ts` | NamespaceEnv composite -- Namespace, ResourceQuota, LimitRange, NetworkPolicy |
+| `src/daemon-set.ts` | DaemonSet composite -- DaemonSet, ServiceAccount |
+| `src/external-secret.ts` | ExternalSecret composite -- ExternalSecret |
+| `src/crd-lifecycle.ts` | CrdLifecycle composite -- Job, ConfigMap, ServiceAccount, ClusterRole, ClusterRoleBinding |
+| `src/library-chart.ts` | LibraryChart composite -- library chart (no resources) |
 
 ## Prerequisites
 
-- [ ] [Node.js](https://nodejs.org/) >= 22 (Bun also works)
-- [ ] [Helm](https://helm.sh/docs/intro/install/) v3
-- [ ] A Kubernetes cluster
+- [Bun](https://bun.sh) or [Node.js](https://nodejs.org/) >= 22
+- [Helm](https://helm.sh/docs/intro/install/)
 
-**Local verification** (build, lint) requires only Node.js — no cluster needed.
-
-## Local verification
+## Build
 
 ```bash
-npx chant build src --lexicon helm -o Chart.yaml
-npx chant lint src
+bun install && bun run build && bun run lint
 ```
 
 ## Deploy
@@ -60,8 +56,9 @@ helm uninstall composites-infrastructure
 
 ## Related examples
 
-- [composites-basic](../composites-basic/) — Basic Helm chart composites
-- [composites-production](../composites-production/) — Production-hardened composites with security contexts and RBAC
+- [composites-basic](../composites-basic/) -- Basic composites: web app, microservice, stateful service, cron job, worker
+- [composites-production](../composites-production/) -- Production-hardened composites with security contexts and RBAC
+- [stateful-service](../stateful-service/) -- Redis StatefulSet with persistent storage
 
 ## Standalone Usage
 

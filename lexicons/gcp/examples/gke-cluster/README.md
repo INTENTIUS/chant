@@ -16,6 +16,14 @@ The lexicon packages ship skills for agent-guided deployment. After `chant init 
 > Deploy the gke-cluster example to my GCP project.
 > ```
 
+## Spell
+
+This example has a corresponding spell for AI-driven deployment:
+
+```bash
+chant spell cast gcp-gke-cluster
+```
+
 ## What this produces
 
 - **GCP** (`config.yaml`): Config Connector resources across 1 source file

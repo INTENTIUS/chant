@@ -1,6 +1,7 @@
 ---
-source: chant-lexicon
-lexicon: azure
+skill: chant-azure-security
+description: Azure security best practices for infrastructure
+user-invocable: true
 ---
 
 # Azure Security Best Practices for Chant

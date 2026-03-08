@@ -64,8 +64,8 @@ describe("helmPlugin", () => {
     expect(Array.isArray(skills)).toBe(true);
     expect(skills.length).toBeGreaterThanOrEqual(3);
     const names = skills.map((s) => s.name);
-    expect(names).toContain("chant-helm-create-chart");
-    expect(names).toContain("chant-helm-chart-patterns");
-    expect(names).toContain("chant-helm-chart-security-patterns");
+    expect(names).toContain("chant-helm");
+    expect(names).toContain("chant-helm-patterns");
+    expect(names).toContain("chant-helm-security");
   });
 });

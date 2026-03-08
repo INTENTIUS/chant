@@ -2,6 +2,20 @@
 
 A PostgreSQL RDS instance in private subnets, consuming a VPC — demonstrates composability between `VpcDefault` and `RdsInstance` composites with SSM Parameter Store for secrets.
 
+## Skills
+
+The lexicon packages ship skills for agent-guided deployment. After `chant init --lexicon aws`, your agent has access to:
+
+| Skill | Package | Purpose |
+|-------|---------|---------|
+| `chant-aws` | `@intentius/chant-lexicon-aws` | AWS CloudFormation lifecycle: build, lint, deploy, rollback, troubleshooting |
+
+> **Using Claude Code?** Just ask:
+>
+> ```
+> Deploy the rds-postgres example to my AWS account.
+> ```
+
 ## Quick Start
 
 ```bash

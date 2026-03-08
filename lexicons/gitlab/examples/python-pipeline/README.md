@@ -2,6 +2,20 @@
 
 A Python CI pipeline using the `PythonPipeline` composite. Generates test (and optional lint) jobs with virtualenv caching and pytest integration.
 
+## Skills
+
+The lexicon packages ship skills for agent-guided deployment. After `chant init --lexicon gitlab`, your agent has access to:
+
+| Skill | Package | Purpose |
+|-------|---------|---------|
+| `chant-gitlab` | `@intentius/chant-lexicon-gitlab` | GitLab CI pipeline lifecycle: build, lint, validate, deploy |
+
+> **Using Claude Code?** Just ask:
+>
+> ```
+> Build the python-pipeline pipeline.
+> ```
+
 ## What this generates
 
 ```yaml

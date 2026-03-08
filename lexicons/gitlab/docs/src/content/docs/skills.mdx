@@ -2,7 +2,7 @@
 title: "AI Skills"
 description: "AI agent skills bundled with the GitLab CI/CD lexicon"
 ---
-The GitLab lexicon ships an AI skill called **chant-gitlab** that teaches AI coding agents (like Claude Code) how to build, validate, and deploy GitLab CI pipelines from a chant project.
+The GitLab lexicon ships AI skills that teach AI coding agents how to build, validate, and deploy GitLab CI pipelines from a chant project.
 
 ## What are skills?
 
@@ -10,20 +10,17 @@ Skills are structured markdown documents bundled with a lexicon. When an AI agen
 
 ## Installation
 
-When you scaffold a new project with `chant init --lexicon gitlab`, the skill is installed to `skills/chant-gitlab/SKILL.md` for automatic discovery by Claude Code.
+When you scaffold a new project with `chant init --lexicon gitlab`, the skills are installed to `skills/` for automatic agent discovery.
 
-For existing projects, create the file manually:
+To refresh skills after a lexicon update:
 
-```
-.claude/
-  skills/
-    chant-gitlab/
-      SKILL.md    # skill content (see below)
+```bash
+chant update
 ```
 
 ## Skill: chant-gitlab
 
-The `chant-gitlab` skill covers the full deployment lifecycle:
+The `chant-gitlab` skill covers the full GitLab CI deployment lifecycle:
 
 - **Build** — `chant build src/ --output .gitlab-ci.yml`
 - **Validate** — `chant lint src/` + GitLab CI Lint API
@@ -33,7 +30,15 @@ The `chant-gitlab` skill covers the full deployment lifecycle:
 - **Cancel** — cancel running pipelines via API
 - **Troubleshooting** — job logs, lint rule codes (WGL001–WGL004), post-synth checks (WGL010–WGL015)
 
-The skill is invocable as a slash command: `/chant-gitlab`
+## Skill: chant-gitlab-patterns
+
+The `chant-gitlab-patterns` skill covers CI/CD pipeline patterns and best practices:
+
+- **Pipeline structure** — stages, jobs, dependencies
+- **Caching** — dependency caching, build artifact caching
+- **Templates** — reusable job templates and includes
+- **Environments** — environment-based deployment gates
+- **Composites** — high-level reusable pipeline groupings
 
 ## MCP integration
 

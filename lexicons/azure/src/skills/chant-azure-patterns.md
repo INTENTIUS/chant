@@ -1,6 +1,7 @@
 ---
-source: chant-lexicon
-lexicon: azure
+skill: chant-azure-patterns
+description: Advanced Azure ARM template patterns
+user-invocable: true
 ---
 
 # Advanced Azure ARM Patterns with Chant

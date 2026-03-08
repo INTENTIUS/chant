@@ -1,6 +1,7 @@
 ---
-skill: github-actions-security
+skill: chant-github-security
 description: GitHub Actions security best practices — secret scanning, OIDC, permissions hardening, supply chain security
+user-invocable: true
 ---
 
 # GitHub Actions Security Playbook

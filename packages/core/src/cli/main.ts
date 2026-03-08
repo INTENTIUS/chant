@@ -252,7 +252,7 @@ async function main(): Promise<void> {
 
   // For compound commands (e.g. "spell cast"), args.path is the subcommand,
   // so always use "." as the project path. For simple commands, use args.path.
-  const projectPath = match.compound ? "." : args.path;
+  const projectPath = match.compound ? (args.extraPositional || ".") : args.path;
   const plugins = match.def.requiresPlugins
     ? await loadPluginsOrExit(projectPath)
     : [];

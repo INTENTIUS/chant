@@ -2,6 +2,20 @@
 
 Code snippets used in the AWS lexicon documentation — covers resources, intrinsics, parameters, conditions, composites, tagging, policies, and lint examples.
 
+## Skills
+
+The lexicon packages ship skills for agent-guided deployment. After `chant init --lexicon aws`, your agent has access to:
+
+| Skill | Package | Purpose |
+|-------|---------|---------|
+| `chant-aws` | `@intentius/chant-lexicon-aws` | AWS CloudFormation lifecycle: build, lint, deploy, rollback, troubleshooting |
+
+> **Using Claude Code?** Just ask:
+>
+> ```
+> Deploy the docs-snippets example to my AWS account.
+> ```
+
 ## What this contains
 
 This example is a collection of standalone snippet files used in the documentation site. Each file demonstrates a specific AWS CloudFormation concept:

@@ -1,0 +1,378 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "properties": {
+    "autoscaling": {
+      "description": "Horizontal pod autoscaling configuration",
+      "properties": {
+        "enabled": {
+          "default": false,
+          "description": "Whether this feature is enabled",
+          "type": "boolean"
+        },
+        "maxReplicas": {
+          "default": 100,
+          "description": "Maximum number of replicas",
+          "minimum": 1,
+          "type": "integer"
+        },
+        "minReplicas": {
+          "default": 1,
+          "description": "Minimum number of replicas",
+          "minimum": 1,
+          "type": "integer"
+        },
+        "targetCPUUtilizationPercentage": {
+          "default": 80,
+          "description": "Target CPU utilization for autoscaling",
+          "maximum": 100,
+          "minimum": 1,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "minReplicas",
+        "maxReplicas",
+        "targetCPUUtilizationPercentage"
+      ],
+      "type": "object"
+    },
+    "image": {
+      "description": "Container image configuration",
+      "properties": {
+        "pullPolicy": {
+          "default": "IfNotPresent",
+          "description": "Image pull policy",
+          "enum": [
+            "Always",
+            "IfNotPresent",
+            "Never"
+          ],
+          "type": "string"
+        },
+        "repository": {
+          "default": "my-registry.io/frontend",
+          "description": "Image repository",
+          "type": "string"
+        },
+        "tag": {
+          "default": "latest",
+          "description": "Image tag (empty defaults to Chart.appVersion)",
+          "type": "string"
+        }
+      },
+      "required": [
+        "repository",
+        "tag",
+        "pullPolicy"
+      ],
+      "type": "object"
+    },
+    "ingress": {
+      "description": "Ingress configuration",
+      "properties": {
+        "annotations": {
+          "description": "Additional annotations",
+          "properties": {},
+          "type": "object"
+        },
+        "className": {
+          "description": "Ingress class name",
+          "type": "string"
+        },
+        "enabled": {
+          "default": false,
+          "description": "Whether this feature is enabled",
+          "type": "boolean"
+        },
+        "hosts": {
+          "default": [
+            {
+              "host": "frontend.local",
+              "paths": [
+                {
+                  "path": "/",
+                  "pathType": "ImplementationSpecific"
+                }
+              ]
+            }
+          ],
+          "description": "Ingress host rules",
+          "items": {
+            "properties": {
+              "host": {
+                "default": "frontend.local",
+                "type": "string"
+              },
+              "paths": {
+                "default": [
+                  {
+                    "path": "/",
+                    "pathType": "ImplementationSpecific"
+                  }
+                ],
+                "items": {
+                  "properties": {
+                    "path": {
+                      "default": "/",
+                      "type": "string"
+                    },
+                    "pathType": {
+                      "default": "ImplementationSpecific",
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "path",
+                    "pathType"
+                  ],
+                  "type": "object"
+                },
+                "type": "array"
+              }
+            },
+            "required": [
+              "host",
+              "paths"
+            ],
+            "type": "object"
+          },
+          "type": "array"
+        },
+        "tls": {
+          "description": "Ingress TLS configuration",
+          "items": {},
+          "type": "array"
+        }
+      },
+      "required": [
+        "annotations",
+        "hosts",
+        "tls"
+      ],
+      "type": "object"
+    },
+    "livenessProbe": {
+      "description": "Liveness probe configuration",
+      "properties": {
+        "httpGet": {
+          "properties": {
+            "path": {
+              "default": "/healthz",
+              "type": "string"
+            },
+            "port": {
+              "default": "http",
+              "description": "Service port number",
+              "type": "string"
+            }
+          },
+          "required": [
+            "path",
+            "port"
+          ],
+          "type": "object"
+        },
+        "initialDelaySeconds": {
+          "default": 10,
+          "type": "integer"
+        },
+        "periodSeconds": {
+          "default": 15,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "httpGet",
+        "initialDelaySeconds",
+        "periodSeconds"
+      ],
+      "type": "object"
+    },
+    "podSecurityContext": {
+      "description": "Pod-level security context",
+      "properties": {
+        "fsGroup": {
+          "default": 1000,
+          "type": "integer"
+        },
+        "runAsNonRoot": {
+          "default": true,
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "runAsNonRoot",
+        "fsGroup"
+      ],
+      "type": "object"
+    },
+    "readinessProbe": {
+      "description": "Readiness probe configuration",
+      "properties": {
+        "httpGet": {
+          "properties": {
+            "path": {
+              "default": "/ready",
+              "type": "string"
+            },
+            "port": {
+              "default": "http",
+              "description": "Service port number",
+              "type": "string"
+            }
+          },
+          "required": [
+            "path",
+            "port"
+          ],
+          "type": "object"
+        },
+        "initialDelaySeconds": {
+          "default": 5,
+          "type": "integer"
+        },
+        "periodSeconds": {
+          "default": 10,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "httpGet",
+        "initialDelaySeconds",
+        "periodSeconds"
+      ],
+      "type": "object"
+    },
+    "replicaCount": {
+      "default": 2,
+      "description": "Number of pod replicas",
+      "minimum": 0,
+      "type": "integer"
+    },
+    "resources": {
+      "description": "Container resource requests and limits",
+      "properties": {},
+      "type": "object"
+    },
+    "securityContext": {
+      "description": "Container-level security context",
+      "properties": {
+        "allowPrivilegeEscalation": {
+          "default": false,
+          "type": "boolean"
+        },
+        "readOnlyRootFilesystem": {
+          "default": true,
+          "type": "boolean"
+        },
+        "runAsUser": {
+          "default": 1000,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "runAsUser",
+        "readOnlyRootFilesystem"
+      ],
+      "type": "object"
+    },
+    "service": {
+      "description": "Kubernetes Service configuration",
+      "properties": {
+        "port": {
+          "default": 3000,
+          "description": "Service port number",
+          "maximum": 65535,
+          "minimum": 1,
+          "type": "integer"
+        },
+        "type": {
+          "default": "ClusterIP",
+          "description": "Service type",
+          "enum": [
+            "ClusterIP",
+            "NodePort",
+            "LoadBalancer",
+            "ExternalName"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "port"
+      ],
+      "type": "object"
+    },
+    "serviceAccount": {
+      "description": "Service account configuration",
+      "properties": {
+        "annotations": {
+          "description": "Additional annotations",
+          "properties": {},
+          "type": "object"
+        },
+        "create": {
+          "default": true,
+          "description": "Whether to create the resource",
+          "type": "boolean"
+        },
+        "name": {
+          "description": "Resource name override",
+          "type": "string"
+        }
+      },
+      "required": [
+        "create",
+        "annotations"
+      ],
+      "type": "object"
+    },
+    "strategy": {
+      "properties": {
+        "rollingUpdate": {
+          "properties": {
+            "maxSurge": {
+              "default": 1,
+              "type": "integer"
+            },
+            "maxUnavailable": {
+              "default": 0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "maxSurge",
+            "maxUnavailable"
+          ],
+          "type": "object"
+        },
+        "type": {
+          "default": "RollingUpdate",
+          "description": "Service type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "rollingUpdate"
+      ],
+      "type": "object"
+    }
+  },
+  "required": [
+    "replicaCount",
+    "image",
+    "service",
+    "resources",
+    "podSecurityContext",
+    "securityContext",
+    "livenessProbe",
+    "readinessProbe",
+    "strategy",
+    "serviceAccount",
+    "ingress",
+    "autoscaling"
+  ],
+  "type": "object"
+}

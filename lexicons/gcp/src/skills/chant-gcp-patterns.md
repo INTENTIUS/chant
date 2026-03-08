@@ -1,6 +1,7 @@
 ---
-source: chant-lexicon
-lexicon: gcp
+skill: chant-gcp-patterns
+description: Advanced GCP Config Connector patterns
+user-invocable: true
 ---
 
 # Advanced GCP Config Connector Patterns with Chant

@@ -2,6 +2,28 @@
 
 A Lambda function that runs on a recurring schedule, built using the `LambdaScheduled` composite — the standard pattern for cron jobs and periodic tasks.
 
+## Skills
+
+The lexicon packages ship skills for agent-guided deployment. After `chant init --lexicon aws`, your agent has access to:
+
+| Skill | Package | Purpose |
+|-------|---------|---------|
+| `chant-aws` | `@intentius/chant-lexicon-aws` | AWS CloudFormation lifecycle: build, lint, deploy, rollback, troubleshooting |
+
+> **Using Claude Code?** Just ask:
+>
+> ```
+> Deploy the lambda-scheduled example to my AWS account.
+> ```
+
+## Spell
+
+This example has a corresponding spell for AI-driven deployment:
+
+```bash
+chant spell cast lambda-scheduled
+```
+
 ## Quick Start
 
 ```bash

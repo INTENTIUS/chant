@@ -2,6 +2,20 @@
 
 A complete Node.js CI pipeline using the `NodePipeline` composite. One function call generates build and test jobs with caching, artifacts, and Node best practices.
 
+## Skills
+
+The lexicon packages ship skills for agent-guided deployment. After `chant init --lexicon gitlab`, your agent has access to:
+
+| Skill | Package | Purpose |
+|-------|---------|---------|
+| `chant-gitlab` | `@intentius/chant-lexicon-gitlab` | GitLab CI pipeline lifecycle: build, lint, validate, deploy |
+
+> **Using Claude Code?** Just ask:
+>
+> ```
+> Build the node-pipeline pipeline.
+> ```
+
 ## What this generates
 
 ```yaml

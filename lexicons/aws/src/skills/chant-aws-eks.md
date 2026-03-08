@@ -1,6 +1,6 @@
 ---
-skill: chant-eks
-description: End-to-end EKS workflow bridging AWS infrastructure and Kubernetes workloads
+skill: chant-aws-eks
+description: EKS end-to-end workflow — provision cluster, configure kubectl, deploy K8s workloads
 user-invocable: true
 ---
 

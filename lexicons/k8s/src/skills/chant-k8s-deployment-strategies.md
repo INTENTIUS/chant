@@ -1,5 +1,5 @@
 ---
-skill: kubernetes-patterns
+skill: chant-k8s-deployment-strategies
 description: Kubernetes deployment strategies, stateful workloads, RBAC, and networking patterns
 user-invocable: true
 ---

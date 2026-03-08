@@ -6,10 +6,13 @@
  */
 
 import { createRequire } from "module";
-import type { LexiconPlugin, SkillDefinition, InitTemplateSet, ResourceMetadata } from "@intentius/chant/lexicon";
+import type { LexiconPlugin, InitTemplateSet, ResourceMetadata } from "@intentius/chant/lexicon";
 const require = createRequire(import.meta.url);
 import type { LintRule } from "@intentius/chant/lint/rule";
-import type { PostSynthCheck } from "@intentius/chant/lint/post-synth";
+import { discoverPostSynthChecks } from "@intentius/chant/lint/discover";
+import { createSkillsLoader, createDiffTool, createCatalogResource } from "@intentius/chant/lexicon-plugin-helpers";
+import { join, dirname } from "path";
+import { fileURLToPath } from "url";
 import { k8sSerializer } from "./serializer";
 
 export const k8sPlugin: LexiconPlugin = {
@@ -23,36 +26,9 @@ export const k8sPlugin: LexiconPlugin = {
     return [hardcodedNamespaceRule, latestImageTagRule, missingResourceLimitsRule];
   },
 
-  postSynthChecks(): PostSynthCheck[] {
-    const { wk8005 } = require("./lint/post-synth/wk8005");
-    const { wk8006 } = require("./lint/post-synth/wk8006");
-    const { wk8041 } = require("./lint/post-synth/wk8041");
-    const { wk8042 } = require("./lint/post-synth/wk8042");
-    const { wk8101 } = require("./lint/post-synth/wk8101");
-    const { wk8102 } = require("./lint/post-synth/wk8102");
-    const { wk8103 } = require("./lint/post-synth/wk8103");
-    const { wk8104 } = require("./lint/post-synth/wk8104");
-    const { wk8105 } = require("./lint/post-synth/wk8105");
-    const { wk8201 } = require("./lint/post-synth/wk8201");
-    const { wk8202 } = require("./lint/post-synth/wk8202");
-    const { wk8203 } = require("./lint/post-synth/wk8203");
-    const { wk8204 } = require("./lint/post-synth/wk8204");
-    const { wk8205 } = require("./lint/post-synth/wk8205");
-    const { wk8207 } = require("./lint/post-synth/wk8207");
-    const { wk8208 } = require("./lint/post-synth/wk8208");
-    const { wk8209 } = require("./lint/post-synth/wk8209");
-    const { wk8301 } = require("./lint/post-synth/wk8301");
-    const { wk8302 } = require("./lint/post-synth/wk8302");
-    const { wk8303 } = require("./lint/post-synth/wk8303");
-    const { wk8304 } = require("./lint/post-synth/wk8304");
-    const { wk8305 } = require("./lint/post-synth/wk8305");
-    const { wk8306 } = require("./lint/post-synth/wk8306");
-    return [
-      wk8005, wk8006, wk8041, wk8042,
-      wk8101, wk8102, wk8103, wk8104, wk8105,
-      wk8201, wk8202, wk8203, wk8204, wk8205, wk8207, wk8208, wk8209,
-      wk8301, wk8302, wk8303, wk8304, wk8305, wk8306,
-    ];
+  postSynthChecks() {
+    const postSynthDir = join(dirname(fileURLToPath(import.meta.url)), "lint", "post-synth");
+    return discoverPostSynthChecks(postSynthDir, import.meta.url);
   },
 
   // K8s YAML has no template interpolation functions like CloudFormation's
@@ -390,48 +366,12 @@ export const service = new Service({
   },
 
   mcpTools() {
-    return [
-      {
-        name: "diff",
-        description: "Compare current build output against previous output for Kubernetes manifests",
-        inputSchema: {
-          type: "object" as const,
-          properties: {
-            path: {
-              type: "string",
-              description: "Path to the infrastructure project directory",
-            },
-          },
-        },
-        async handler(params: Record<string, unknown>): Promise<unknown> {
-          const { diffCommand } = await import("@intentius/chant/cli/commands/diff");
-          const result = await diffCommand({
-            path: (params.path as string) ?? ".",
-            serializers: [k8sSerializer],
-          });
-          return result;
-        },
-      },
-    ];
+    return [createDiffTool(k8sSerializer, "Compare current build output against previous output for Kubernetes manifests")];
   },
 
   mcpResources() {
     return [
-      {
-        uri: "resource-catalog",
-        name: "Kubernetes Resource Catalog",
-        description: "JSON list of all supported Kubernetes resource types",
-        mimeType: "application/json",
-        async handler(): Promise<string> {
-          const lexicon = require("./generated/lexicon-k8s.json") as Record<string, { resourceType: string; kind: string }>;
-          const entries = Object.entries(lexicon).map(([className, entry]) => ({
-            className,
-            resourceType: entry.resourceType,
-            kind: entry.kind,
-          }));
-          return JSON.stringify(entries);
-        },
-      },
+      createCatalogResource(import.meta.url, "Kubernetes Resource Catalog", "JSON list of all supported Kubernetes resource types", "lexicon-k8s.json"),
       {
         uri: "examples/basic-deployment",
         name: "Basic Deployment Example",
@@ -475,254 +415,11 @@ export const service = new Service({
     ];
   },
 
-  skills(): SkillDefinition[] {
-    return [
+  skills: createSkillsLoader(import.meta.url, [
       {
+        file: "chant-k8s.md",
         name: "chant-k8s",
         description: "Kubernetes manifest lifecycle — scaffold, generate, lint, build, apply, troubleshoot, rollback",
-        content: `---
-skill: chant-k8s
-description: Build, validate, and deploy Kubernetes manifests from a chant project
-user-invocable: true
----
-
-# Kubernetes Operational Playbook
-
-## How chant and Kubernetes relate
-
-chant is a **synthesis compiler** — it compiles TypeScript source files into Kubernetes YAML manifests. \`chant build\` does not call the Kubernetes API; synthesis is pure and deterministic. The optional \`chant state snapshot\` command queries the Kubernetes API to capture deployment metadata (pod names, status, UIDs) for observability. Your job as an agent is to bridge synthesis and deployment:
-
-- Use **chant** for: build, lint, diff (local YAML comparison)
-- Use **kubectl / k8s API** for: apply, rollback, monitoring, troubleshooting
-
-The source of truth for infrastructure is the TypeScript in \`src/\`. The generated YAML manifests are intermediate artifacts — never edit them by hand.
-
-## Scaffolding a new project
-
-### Initialize with a template
-
-\`\`\`bash
-chant init --lexicon k8s                          # default: Deployment + Service
-chant init --lexicon k8s --template microservice   # Deployment + Service + HPA + PDB
-chant init --lexicon k8s --template stateful       # StatefulSet + PVC + Service
-\`\`\`
-
-### Available templates
-
-| Template | What it generates | Best for |
-|----------|-------------------|----------|
-| *(default)* | Deployment + Service | Simple stateless apps |
-| \`microservice\` | Deployment + Service + HPA + PDB | Production microservices |
-| \`stateful\` | StatefulSet + PVC + headless Service | Databases, caches |
-
-## Build and validate
-
-### Build manifests
-
-\`\`\`bash
-chant build src/ --output manifests.yaml
-\`\`\`
-
-Options:
-- \`--format yaml\` — emit YAML (default for K8s)
-- \`--watch\` — rebuild on source changes
-- \`--output <path>\` — write to a specific file
-
-### Lint the source
-
-\`\`\`bash
-chant lint src/
-\`\`\`
-
-### What each step catches
-
-| Step | Catches | When to run |
-|------|---------|-------------|
-| \`chant lint\` | Hardcoded namespaces (WK8001) | Every edit |
-| \`chant build\` | Post-synth: secrets in env (WK8005), latest tags (WK8006), API keys (WK8041), missing probes (WK8301), no resource limits (WK8201), privileged containers (WK8202), and more | Before apply |
-| \`kubectl --dry-run=server\` | K8s API validation: schema errors, admission webhooks | Before production apply |
-
-## Deploying to Kubernetes
-
-### Apply manifests
-
-\`\`\`bash
-# Build
-chant build src/ --output manifests.yaml
-
-# Dry run first
-kubectl apply -f manifests.yaml --dry-run=server
-
-# Apply
-kubectl apply -f manifests.yaml
-\`\`\`
-
-### Check rollout status
-
-\`\`\`bash
-kubectl rollout status deployment/my-app
-\`\`\`
-
-### Rollback
-
-\`\`\`bash
-kubectl rollout undo deployment/my-app
-kubectl rollout undo deployment/my-app --to-revision=2
-\`\`\`
-
-## Debugging strategies
-
-### Check pod status and events
-
-\`\`\`bash
-# Overview
-kubectl get pods -l app.kubernetes.io/name=my-app
-kubectl get events --sort-by=.lastTimestamp -n <namespace>
-
-# Deep dive into a specific pod
-kubectl describe pod <pod-name>
-
-# Logs (current and previous crash)
-kubectl logs <pod-name>
-kubectl logs <pod-name> --previous
-kubectl logs <pod-name> -c <container-name>  # specific container
-kubectl logs deployment/my-app --all-containers
-
-# Debug containers (K8s 1.25+)
-kubectl debug <pod-name> -it --image=busybox --target=<container>
-
-# Port-forwarding for local testing
-kubectl port-forward svc/my-app 8080:80
-kubectl port-forward pod/<pod-name> 8080:8080
-\`\`\`
-
-### Common error patterns
-
-| Status | Meaning | Diagnostic command | Typical fix |
-|--------|---------|-------------------|-------------|
-| Pending | Not scheduled | \`kubectl describe pod\` → Events | Check resource requests, node selectors, taints, PVC binding |
-| CrashLoopBackOff | App crashing on start | \`kubectl logs --previous\` | Fix app startup, check probe config, increase initialDelaySeconds |
-| ImagePullBackOff | Image not found | \`kubectl describe pod\` → Events | Verify image name/tag, check imagePullSecrets, registry auth |
-| OOMKilled | Out of memory | \`kubectl describe pod\` → Last State | Increase memory limit, profile app memory usage |
-| Evicted | Node disk/memory pressure | \`kubectl describe node\` | Increase limits, add node capacity, check for log/tmp bloat |
-| CreateContainerError | Container config issue | \`kubectl describe pod\` → Events | Check volume mounts, configmap/secret refs, security context |
-| Init:CrashLoopBackOff | Init container failing | \`kubectl logs -c <init-container>\` | Fix init container command, check dependencies |
-
-## Production safety
-
-### Pre-apply validation
-
-\`\`\`bash
-# Always diff before applying
-kubectl diff -f manifests.yaml
-
-# Server-side dry run (validates with admission webhooks)
-kubectl apply -f manifests.yaml --dry-run=server
-
-# Client-side dry run (fast, but no webhook validation)
-kubectl apply -f manifests.yaml --dry-run=client
-\`\`\`
-
-### Deployment strategies
-
-- **RollingUpdate** (default): Gradually replaces pods. Set \`maxSurge\` and \`maxUnavailable\`.
-- **Recreate**: All pods terminated before new ones created. Use for stateful apps that cannot run multiple versions.
-- **Canary**: Deploy a second Deployment with 1 replica + same selector labels. Route percentage via Ingress annotations or service mesh.
-- **Blue/Green**: Two full Deployments (blue/green), switch Service selector between them.
-
-## Choosing the Right Composite
-
-Composites are higher-level functions that produce multiple coordinated K8s resources from a single call. They return plain prop objects — not class instances.
-
-### Decision Tree
-
-| Need | Composite | Resources |
-|------|-----------|-----------|
-| Stateless web app | **WebApp** | Deployment + Service + optional Ingress + optional PDB |
-| Stateful database/cache | **StatefulApp** | StatefulSet + headless Service + PVC + optional PDB |
-| Production HTTP service with autoscaling | **AutoscaledService** | Deployment + Service + HPA + PDB |
-| Background queue workers | **WorkerPool** | Deployment + RBAC + optional ConfigMap + optional HPA + optional PDB |
-| Scheduled jobs | **CronWorkload** | CronJob + RBAC |
-| One-shot batch jobs | **BatchJob** | Job + optional RBAC |
-| App with ConfigMap/Secret mounts | **ConfiguredApp** | Deployment + Service + optional ConfigMap |
-| Multi-container sidecar patterns | **SidecarApp** | Deployment + Service |
-| App with Prometheus monitoring | **MonitoredService** | Deployment + Service + ServiceMonitor + optional PrometheusRule |
-| App with fine-grained network policies | **NetworkIsolatedApp** | Deployment + Service + NetworkPolicy |
-| Namespace with quotas and isolation | **NamespaceEnv** | Namespace + ResourceQuota + LimitRange + NetworkPolicy |
-| Per-node agent (custom) | **NodeAgent** | DaemonSet + RBAC + optional ConfigMap |
-| Multi-host TLS Ingress (cert-manager) | **SecureIngress** | Ingress + optional Certificate |
-| EKS IRSA ServiceAccount | **IrsaServiceAccount** | ServiceAccount + optional RBAC |
-| AWS ALB Ingress | **AlbIngress** | Ingress with ALB annotations |
-| EBS StorageClass | **EbsStorageClass** | StorageClass (ebs.csi.aws.com) |
-| EFS StorageClass | **EfsStorageClass** | StorageClass (efs.csi.aws.com) |
-| Fluent Bit for CloudWatch | **FluentBitAgent** | DaemonSet + RBAC + ConfigMap |
-| ExternalDNS for Route53 | **ExternalDnsAgent** | Deployment + IRSA SA + ClusterRole |
-| ADOT for CloudWatch/X-Ray | **AdotCollector** | DaemonSet + RBAC + ConfigMap |
-
-### Hardening options (available on Deployment-based composites)
-
-- \`minAvailable\` — creates a PodDisruptionBudget (WebApp, StatefulApp, WorkerPool; AutoscaledService always has one)
-- \`initContainers\` — run before main containers (WebApp, StatefulApp, AutoscaledService, ConfiguredApp, SidecarApp)
-- \`securityContext\` — container security settings (WebApp, StatefulApp, AutoscaledService, WorkerPool)
-- \`terminationGracePeriodSeconds\` — graceful shutdown (WebApp, StatefulApp, AutoscaledService, WorkerPool)
-- \`priorityClassName\` — pod scheduling priority (WebApp, StatefulApp, AutoscaledService, WorkerPool)
-
-### Common patterns across all composites
-
-- All resources carry \`app.kubernetes.io/name\`, \`app.kubernetes.io/managed-by: chant\`, and \`app.kubernetes.io/component\` labels
-- Pass \`labels: { team: "platform" }\` to add extra labels to all resources
-- Pass \`namespace: "prod"\` to set namespace on all namespaced resources
-- Pass \`env: [{ name: "KEY", value: "val" }]\` for container environment variables
-
-## Troubleshooting reference table
-
-| Symptom | Likely cause | Resolution |
-|---------|-------------|------------|
-| Pod stuck in Pending | Insufficient CPU/memory on nodes | Scale up cluster or reduce resource requests |
-| Pod stuck in Pending | PVC not bound | Check StorageClass exists, PV available |
-| Pod stuck in Pending | Node selector/affinity mismatch | Verify node labels match selectors |
-| Pod stuck in ContainerCreating | ConfigMap/Secret not found | Ensure referenced ConfigMaps/Secrets exist |
-| Service returns 503 | No ready endpoints | Check pod readiness probes, selector match |
-| Ingress returns 404 | Backend service not found | Check Ingress rules, service name/port |
-| HPA not scaling | Metrics server not installed | Install metrics-server |
-| HPA not scaling | Resource requests not set | Add CPU/memory requests to containers |
-| CronJob not running | Invalid cron expression | Validate cron syntax (5-field format) |
-| NetworkPolicy blocking | Default deny applied | Add explicit allow rules for required traffic |
-| RBAC permission denied | Missing Role/RoleBinding | Check ServiceAccount bindings and verb permissions |
-
-## Quick reference
-
-\`\`\`bash
-# Build
-chant build src/ --output manifests.yaml
-
-# Lint
-chant lint src/
-
-# Validate
-kubectl apply -f manifests.yaml --dry-run=server
-
-# Diff
-kubectl diff -f manifests.yaml
-
-# Apply
-kubectl apply -f manifests.yaml
-
-# Status
-kubectl get pods,svc,deploy
-
-# Logs
-kubectl logs deployment/my-app
-
-# Rollback
-kubectl rollout undo deployment/my-app
-
-# Debug
-kubectl describe pod <name>
-kubectl logs <name> --previous
-kubectl get events --sort-by=.lastTimestamp
-\`\`\`
-`,
         triggers: [
           { type: "file-pattern", value: "**/*.k8s.ts" },
           { type: "file-pattern", value: "**/k8s/**/*.ts" },
@@ -812,254 +509,9 @@ const { job, serviceAccount, role, roleBinding } = BatchJob({
         ],
       },
       {
+        file: "chant-k8s-patterns.md",
         name: "chant-k8s-patterns",
         description: "Advanced K8s patterns — sidecars, observability, TLS, network isolation, config/secret mounting",
-        content: `---
-skill: chant-k8s-patterns
-description: Advanced Kubernetes deployment patterns and composites
-user-invocable: true
----
-
-# Advanced Kubernetes Patterns
-
-## Sidecar Patterns
-
-### SidecarApp — multi-container Deployment
-
-\`\`\`typescript
-import { SidecarApp } from "@intentius/chant-lexicon-k8s";
-
-// Envoy sidecar proxy
-const { deployment, service } = SidecarApp({
-  name: "api",
-  image: "api:1.0",
-  port: 8080,
-  sidecars: [
-    {
-      name: "envoy",
-      image: "envoyproxy/envoy:v1.28",
-      ports: [{ containerPort: 9901, name: "admin" }],
-      resources: { requests: { cpu: "100m", memory: "128Mi" }, limits: { cpu: "200m", memory: "256Mi" } },
-    },
-  ],
-  initContainers: [
-    { name: "migrate", image: "api:1.0", command: ["python", "manage.py", "migrate"] },
-  ],
-  sharedVolumes: [{ name: "tmp", emptyDir: {} }],
-});
-\`\`\`
-
-Common sidecar use cases:
-- **Envoy proxy** — service mesh, mTLS, traffic management
-- **Log forwarder** — Fluent Bit sidecar for app-specific log routing
-- **Auth proxy** — OAuth2 Proxy for authentication
-- **Config watcher** — reload config on ConfigMap changes
-
-## Config and Secret Mounting
-
-### ConfiguredApp — automatic volume wiring
-
-\`\`\`typescript
-import { ConfiguredApp } from "@intentius/chant-lexicon-k8s";
-
-const { deployment, service, configMap } = ConfiguredApp({
-  name: "api",
-  image: "api:1.0",
-  port: 8080,
-  // Mount ConfigMap as volume
-  configData: { "app.conf": "key=value\\nother=setting" },
-  configMountPath: "/etc/api",
-  // Mount existing Secret as volume
-  secretName: "api-creds",
-  secretMountPath: "/secrets",
-  // Inject as environment variables
-  envFrom: { secretRef: "api-env-secret", configMapRef: "api-env-config" },
-  // Run migrations before the app starts
-  initContainers: [
-    { name: "migrate", image: "api:1.0", command: ["./migrate.sh"] },
-  ],
-});
-\`\`\`
-
-### Volume patterns
-
-| Pattern | Use Case | ConfiguredApp Props |
-|---------|----------|---------------------|
-| ConfigMap as file | Config files, templates | \`configData\` + \`configMountPath\` |
-| Secret as file | TLS certs, credentials | \`secretName\` + \`secretMountPath\` |
-| ConfigMap as env | Simple key-value config | \`envFrom.configMapRef\` |
-| Secret as env | Database URLs, API keys | \`envFrom.secretRef\` |
-
-## TLS / cert-manager
-
-### SecureIngress — multi-host TLS with cert-manager
-
-\`\`\`typescript
-import { SecureIngress } from "@intentius/chant-lexicon-k8s";
-
-const { ingress, certificate } = SecureIngress({
-  name: "app-ingress",
-  hosts: [
-    {
-      hostname: "api.example.com",
-      paths: [
-        { path: "/v1", serviceName: "api-v1", servicePort: 80 },
-        { path: "/v2", serviceName: "api-v2", servicePort: 80 },
-      ],
-    },
-    {
-      hostname: "admin.example.com",
-      paths: [{ path: "/", serviceName: "admin", servicePort: 80 }],
-    },
-  ],
-  clusterIssuer: "letsencrypt-prod",
-  ingressClassName: "nginx",
-});
-\`\`\`
-
-Features:
-- Multiple hosts and paths per Ingress
-- Automatic cert-manager Certificate when \`clusterIssuer\` set
-- TLS secret auto-provisioned by cert-manager
-
-### cert-manager setup (prerequisite)
-
-\`\`\`bash
-# Install cert-manager
-kubectl apply -f https://github.com/cert-manager/cert-manager/releases/latest/download/cert-manager.yaml
-
-# Create ClusterIssuer for Let's Encrypt
-kubectl apply -f - <<EOF
-apiVersion: cert-manager.io/v1
-kind: ClusterIssuer
-metadata:
-  name: letsencrypt-prod
-spec:
-  acme:
-    server: https://acme-v02.api.letsencrypt.org/directory
-    email: admin@example.com
-    privateKeySecretRef:
-      name: letsencrypt-prod-key
-    solvers:
-    - http01:
-        ingress:
-          class: nginx
-EOF
-\`\`\`
-
-## Observability
-
-### MonitoredService — Prometheus monitoring
-
-\`\`\`typescript
-import { MonitoredService } from "@intentius/chant-lexicon-k8s";
-
-const { deployment, service, serviceMonitor, prometheusRule } = MonitoredService({
-  name: "api",
-  image: "api:1.0",
-  port: 8080,
-  metricsPort: 9090,
-  metricsPath: "/metrics",
-  scrapeInterval: "15s",
-  alertRules: [
-    {
-      name: "HighErrorRate",
-      expr: 'rate(http_requests_total{status=~"5.."}[5m]) / rate(http_requests_total[5m]) > 0.05',
-      for: "5m",
-      severity: "critical",
-      annotations: { summary: "High error rate on {{ $labels.instance }}" },
-    },
-    {
-      name: "HighLatency",
-      expr: 'histogram_quantile(0.99, rate(http_request_duration_seconds_bucket[5m])) > 1',
-      for: "10m",
-      severity: "warning",
-    },
-  ],
-});
-\`\`\`
-
-### Prerequisites
-
-- Prometheus Operator installed (for ServiceMonitor/PrometheusRule CRDs)
-- Prometheus configured to discover ServiceMonitors
-
-## Network Isolation
-
-### NetworkIsolatedApp — per-app firewall rules
-
-\`\`\`typescript
-import { NetworkIsolatedApp } from "@intentius/chant-lexicon-k8s";
-
-const { deployment, service, networkPolicy } = NetworkIsolatedApp({
-  name: "api",
-  image: "api:1.0",
-  port: 8080,
-  allowIngressFrom: [
-    { podSelector: { "app.kubernetes.io/name": "frontend" } },
-    { namespaceSelector: { "kubernetes.io/metadata.name": "monitoring" } },
-  ],
-  allowEgressTo: [
-    { podSelector: { "app.kubernetes.io/name": "postgres" }, ports: [{ port: 5432 }] },
-    { podSelector: { "app.kubernetes.io/name": "redis" }, ports: [{ port: 6379 }] },
-  ],
-});
-\`\`\`
-
-### Combining with NamespaceEnv
-
-Use NamespaceEnv for namespace-level default-deny, then NetworkIsolatedApp for per-app allow rules:
-
-\`\`\`typescript
-// Namespace: deny all by default
-const ns = NamespaceEnv({ name: "prod", defaultDenyIngress: true, defaultDenyEgress: true });
-
-// App: allow specific traffic
-const app = NetworkIsolatedApp({
-  name: "api",
-  image: "api:1.0",
-  namespace: "prod",
-  allowIngressFrom: [{ podSelector: { "app.kubernetes.io/name": "gateway" } }],
-  allowEgressTo: [{ podSelector: { "app.kubernetes.io/name": "db" }, ports: [{ port: 5432 }] }],
-});
-\`\`\`
-
-## Blue/Green and Canary
-
-These patterns use standard K8s resources — no special composite needed.
-
-### Blue/Green
-
-\`\`\`typescript
-// Two Deployments with different versions
-const blue = WebApp({ name: "app-blue", image: "app:1.0", labels: { version: "blue" } });
-const green = WebApp({ name: "app-green", image: "app:2.0", labels: { version: "green" } });
-
-// Service points to active version — switch by changing selector
-// Active: blue → green (update the Service selector)
-\`\`\`
-
-### Canary
-
-\`\`\`typescript
-// Main deployment (90% traffic)
-const main = AutoscaledService({ name: "app", image: "app:1.0", minReplicas: 9, maxReplicas: 20, ... });
-
-// Canary deployment (10% traffic) — same app label, fewer replicas
-const canary = WebApp({ name: "app-canary", image: "app:2.0", replicas: 1, labels: { track: "canary" } });
-// Both share the same Service selector ("app.kubernetes.io/name": "app") for traffic splitting
-\`\`\`
-
-## Gateway API (future direction)
-
-Gateway API is the successor to Ingress. Key differences:
-- **HTTPRoute** replaces Ingress rules
-- **Gateway** replaces IngressClass
-- Built-in traffic splitting, header matching, URL rewriting
-- Currently in beta — use Ingress/SecureIngress/AlbIngress for production today
-
-When Gateway API reaches GA, new composites will be added. For now, use CRD import if you need Gateway API resources.
-`,
         triggers: [
           { type: "context", value: "sidecar" },
           { type: "context", value: "init-container" },
@@ -1109,26 +561,17 @@ const { deployment, service, serviceMonitor, prometheusRule } = MonitoredService
           },
         ],
       },
-    ];
-
-    // Load file-based skills from src/skills/
-    const { readFileSync } = require("fs");
-    const { join, dirname } = require("path");
-    const { fileURLToPath } = require("url");
-    const dir = dirname(fileURLToPath(import.meta.url));
-
-    const skillFiles = [
       {
-        file: "kubernetes-patterns.md",
-        name: "kubernetes-patterns",
+        file: "chant-k8s-deployment-strategies.md",
+        name: "chant-k8s-deployment-strategies",
         description: "Kubernetes deployment strategies, stateful workloads, RBAC, and networking patterns",
         triggers: [
-          { type: "context" as const, value: "deployment strategy" },
-          { type: "context" as const, value: "statefulset" },
-          { type: "context" as const, value: "rbac" },
-          { type: "context" as const, value: "network policy" },
-          { type: "context" as const, value: "rolling update" },
-          { type: "context" as const, value: "blue green" },
+          { type: "context", value: "deployment strategy" },
+          { type: "context", value: "statefulset" },
+          { type: "context", value: "rbac" },
+          { type: "context", value: "network policy" },
+          { type: "context", value: "rolling update" },
+          { type: "context", value: "blue green" },
         ],
         parameters: [],
         examples: [
@@ -1140,15 +583,15 @@ const { deployment, service, serviceMonitor, prometheusRule } = MonitoredService
         ],
       },
       {
-        file: "kubernetes-security.md",
-        name: "kubernetes-security",
+        file: "chant-k8s-security.md",
+        name: "chant-k8s-security",
         description: "Kubernetes pod security, image scanning, network policies, and secrets management",
         triggers: [
-          { type: "context" as const, value: "k8s security" },
-          { type: "context" as const, value: "pod security" },
-          { type: "context" as const, value: "image security" },
-          { type: "context" as const, value: "k8s secrets" },
-          { type: "context" as const, value: "security context" },
+          { type: "context", value: "k8s security" },
+          { type: "context", value: "pod security" },
+          { type: "context", value: "image security" },
+          { type: "context", value: "k8s secrets" },
+          { type: "context", value: "security context" },
         ],
         parameters: [],
         examples: [
@@ -1164,11 +607,11 @@ const { deployment, service, serviceMonitor, prometheusRule } = MonitoredService
         name: "chant-k8s-eks",
         description: "EKS-specific Kubernetes composites — IRSA, ALB, EBS/EFS, Fluent Bit, ExternalDNS, ADOT",
         triggers: [
-          { type: "context" as const, value: "eks composites" },
-          { type: "context" as const, value: "irsa" },
-          { type: "context" as const, value: "alb ingress" },
-          { type: "context" as const, value: "ebs storage" },
-          { type: "context" as const, value: "karpenter" },
+          { type: "context", value: "eks composites" },
+          { type: "context", value: "irsa" },
+          { type: "context", value: "alb ingress" },
+          { type: "context", value: "ebs storage" },
+          { type: "context", value: "karpenter" },
         ],
         parameters: [],
         examples: [
@@ -1184,9 +627,9 @@ const { deployment, service, serviceMonitor, prometheusRule } = MonitoredService
         name: "chant-k8s-gke",
         description: "GKE-specific Kubernetes composites — Workload Identity, GCE PD, Filestore, FluentBit, OTel, ExternalDNS, Gateway",
         triggers: [
-          { type: "context" as const, value: "gke composites" },
-          { type: "context" as const, value: "workload identity gke" },
-          { type: "context" as const, value: "config connector k8s" },
+          { type: "context", value: "gke composites" },
+          { type: "context", value: "workload identity gke" },
+          { type: "context", value: "config connector k8s" },
         ],
         parameters: [],
         examples: [
@@ -1202,9 +645,9 @@ const { deployment, service, serviceMonitor, prometheusRule } = MonitoredService
         name: "chant-k8s-aks",
         description: "AKS-specific Kubernetes composites — Workload Identity, AGIC, Azure Disk/File, ExternalDNS, Azure Monitor",
         triggers: [
-          { type: "context" as const, value: "aks composites" },
-          { type: "context" as const, value: "workload identity aks" },
-          { type: "context" as const, value: "agic ingress" },
+          { type: "context", value: "aks composites" },
+          { type: "context", value: "workload identity aks" },
+          { type: "context", value: "agic ingress" },
         ],
         parameters: [],
         examples: [
@@ -1215,22 +658,5 @@ const { deployment, service, serviceMonitor, prometheusRule } = MonitoredService
           },
         ],
       },
-    ];
-
-    for (const skill of skillFiles) {
-      try {
-        const content = readFileSync(join(dir, "skills", skill.file), "utf-8");
-        skills.push({
-          name: skill.name,
-          description: skill.description,
-          content,
-          triggers: skill.triggers,
-          parameters: skill.parameters,
-          examples: skill.examples,
-        });
-      } catch { /* skip missing skills */ }
-    }
-
-    return skills;
-  },
+    ]),
 };

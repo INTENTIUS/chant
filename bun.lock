@@ -21,6 +21,16 @@
         "typescript": "^5.9.3",
       },
     },
+    "examples/aws-gitlab-cells": {
+      "name": "aws-gitlab-cells-example",
+      "version": "0.0.1",
+      "dependencies": {
+        "@intentius/chant": "workspace:*",
+        "@intentius/chant-lexicon-aws": "workspace:*",
+        "@intentius/chant-lexicon-gitlab": "workspace:*",
+        "@intentius/chant-lexicon-k8s": "workspace:*",
+      },
+    },
     "examples/cockroachdb-multi-cloud": {
       "name": "cockroachdb-multi-cloud-example",
       "version": "0.0.1",
@@ -98,7 +108,7 @@
     },
     "lexicons/aws": {
       "name": "@intentius/chant-lexicon-aws",
-      "version": "0.0.18",
+      "version": "0.0.22",
       "dependencies": {
         "@intentius/chant": "workspace:*",
         "fflate": "^0.8.2",
@@ -297,7 +307,7 @@
     },
     "lexicons/azure": {
       "name": "@intentius/chant-lexicon-azure",
-      "version": "0.0.18",
+      "version": "0.0.22",
       "dependencies": {
         "@intentius/chant": "workspace:*",
         "fflate": "^0.8.2",
@@ -451,7 +461,7 @@
     },
     "lexicons/flyway": {
       "name": "@intentius/chant-lexicon-flyway",
-      "version": "0.0.18",
+      "version": "0.0.22",
       "dependencies": {
         "@intentius/chant": "workspace:*",
       },
@@ -593,7 +603,7 @@
     },
     "lexicons/gcp": {
       "name": "@intentius/chant-lexicon-gcp",
-      "version": "0.0.18",
+      "version": "0.0.22",
       "dependencies": {
         "@intentius/chant": "workspace:*",
         "fflate": "^0.8.2",
@@ -625,6 +635,17 @@
         "typescript": "*",
       },
     },
+    "lexicons/gcp/examples/cloud-run": {
+      "name": "gcp-cloud-run-example",
+      "version": "0.0.1",
+      "dependencies": {
+        "@intentius/chant": "workspace:*",
+        "@intentius/chant-lexicon-gcp": "workspace:*",
+      },
+      "devDependencies": {
+        "typescript": "*",
+      },
+    },
     "lexicons/gcp/examples/cloud-sql": {
       "name": "gcp-cloud-sql-example",
       "version": "0.0.1",
@@ -636,8 +657,30 @@
         "typescript": "*",
       },
     },
+    "lexicons/gcp/examples/cloud-storage-lifecycle": {
+      "name": "gcp-cloud-storage-lifecycle-example",
+      "version": "0.0.1",
+      "dependencies": {
+        "@intentius/chant": "workspace:*",
+        "@intentius/chant-lexicon-gcp": "workspace:*",
+      },
+      "devDependencies": {
+        "typescript": "*",
+      },
+    },
     "lexicons/gcp/examples/gke-cluster": {
       "name": "gcp-gke-cluster-example",
+      "version": "0.0.1",
+      "dependencies": {
+        "@intentius/chant": "workspace:*",
+        "@intentius/chant-lexicon-gcp": "workspace:*",
+      },
+      "devDependencies": {
+        "typescript": "*",
+      },
+    },
+    "lexicons/gcp/examples/pubsub": {
+      "name": "gcp-pubsub-example",
       "version": "0.0.1",
       "dependencies": {
         "@intentius/chant": "workspace:*",
@@ -660,12 +703,34 @@
     },
     "lexicons/github": {
       "name": "@intentius/chant-lexicon-github",
-      "version": "0.0.18",
+      "version": "0.0.22",
       "dependencies": {
         "@intentius/chant": "workspace:*",
       },
       "devDependencies": {
         "typescript": "^5.9.3",
+      },
+    },
+    "lexicons/github/examples/deploy-pages": {
+      "name": "github-deploy-pages-example",
+      "version": "0.0.1",
+      "dependencies": {
+        "@intentius/chant": "workspace:*",
+        "@intentius/chant-lexicon-github": "workspace:*",
+      },
+      "devDependencies": {
+        "typescript": "*",
+      },
+    },
+    "lexicons/github/examples/docker-build": {
+      "name": "github-docker-build-example",
+      "version": "0.0.1",
+      "dependencies": {
+        "@intentius/chant": "workspace:*",
+        "@intentius/chant-lexicon-github": "workspace:*",
+      },
+      "devDependencies": {
+        "typescript": "*",
       },
     },
     "lexicons/github/examples/docs-snippets": {
@@ -690,9 +755,53 @@
         "typescript": "*",
       },
     },
+    "lexicons/github/examples/matrix-test": {
+      "name": "github-matrix-test-example",
+      "version": "0.0.1",
+      "dependencies": {
+        "@intentius/chant": "workspace:*",
+        "@intentius/chant-lexicon-github": "workspace:*",
+      },
+      "devDependencies": {
+        "typescript": "*",
+      },
+    },
+    "lexicons/github/examples/node-ci": {
+      "name": "github-node-ci-example",
+      "version": "0.0.1",
+      "dependencies": {
+        "@intentius/chant": "workspace:*",
+        "@intentius/chant-lexicon-github": "workspace:*",
+      },
+      "devDependencies": {
+        "typescript": "*",
+      },
+    },
+    "lexicons/github/examples/release-please": {
+      "name": "github-release-please-example",
+      "version": "0.0.1",
+      "dependencies": {
+        "@intentius/chant": "workspace:*",
+        "@intentius/chant-lexicon-github": "workspace:*",
+      },
+      "devDependencies": {
+        "typescript": "*",
+      },
+    },
+    "lexicons/github/examples/reusable-workflow": {
+      "name": "github-reusable-workflow-example",
+      "version": "0.0.1",
+      "dependencies": {
+        "@intentius/chant": "workspace:*",
+        "@intentius/chant-lexicon-github": "workspace:*",
+      },
+      "devDependencies": {
+        "typescript": "*",
+      },
+    },
     "lexicons/gitlab": {
       "name": "@intentius/chant-lexicon-gitlab",
-      "version": "0.0.18",
+      "version": "0.0.22",
       "dependencies": {
         "@intentius/chant": "workspace:*",
       },
@@ -724,6 +833,28 @@
     },
     "lexicons/gitlab/examples/getting-started": {
       "name": "gitlab-getting-started-example",
+      "version": "0.0.1",
+      "dependencies": {
+        "@intentius/chant": "workspace:*",
+        "@intentius/chant-lexicon-gitlab": "workspace:*",
+      },
+      "devDependencies": {
+        "typescript": "*",
+      },
+    },
+    "lexicons/gitlab/examples/monorepo-pipeline": {
+      "name": "gitlab-monorepo-pipeline-example",
+      "version": "0.0.1",
+      "dependencies": {
+        "@intentius/chant": "workspace:*",
+        "@intentius/chant-lexicon-gitlab": "workspace:*",
+      },
+      "devDependencies": {
+        "typescript": "*",
+      },
+    },
+    "lexicons/gitlab/examples/multi-stage-deploy": {
+      "name": "gitlab-multi-stage-deploy-example",
       "version": "0.0.1",
       "dependencies": {
         "@intentius/chant": "workspace:*",
@@ -768,7 +899,7 @@
     },
     "lexicons/helm": {
       "name": "@intentius/chant-lexicon-helm",
-      "version": "0.0.18",
+      "version": "0.0.22",
       "dependencies": {
         "@intentius/chant": "workspace:*",
         "@intentius/chant-lexicon-k8s": "workspace:*",
@@ -813,8 +944,44 @@
         "typescript": "*",
       },
     },
+    "lexicons/helm/examples/cron-job": {
+      "name": "helm-cron-job-example",
+      "version": "0.0.1",
+      "dependencies": {
+        "@intentius/chant": "workspace:*",
+        "@intentius/chant-lexicon-helm": "workspace:*",
+        "@intentius/chant-lexicon-k8s": "workspace:*",
+      },
+      "devDependencies": {
+        "typescript": "*",
+      },
+    },
     "lexicons/helm/examples/microservice-chart": {
       "name": "helm-microservice-chart-example",
+      "version": "0.0.1",
+      "dependencies": {
+        "@intentius/chant": "workspace:*",
+        "@intentius/chant-lexicon-helm": "workspace:*",
+        "@intentius/chant-lexicon-k8s": "workspace:*",
+      },
+      "devDependencies": {
+        "typescript": "*",
+      },
+    },
+    "lexicons/helm/examples/multi-container": {
+      "name": "helm-multi-container-example",
+      "version": "0.0.1",
+      "dependencies": {
+        "@intentius/chant": "workspace:*",
+        "@intentius/chant-lexicon-helm": "workspace:*",
+        "@intentius/chant-lexicon-k8s": "workspace:*",
+      },
+      "devDependencies": {
+        "typescript": "*",
+      },
+    },
+    "lexicons/helm/examples/stateful-service": {
+      "name": "helm-stateful-service-example",
       "version": "0.0.1",
       "dependencies": {
         "@intentius/chant": "workspace:*",
@@ -839,7 +1006,7 @@
     },
     "lexicons/k8s": {
       "name": "@intentius/chant-lexicon-k8s",
-      "version": "0.0.18",
+      "version": "0.0.22",
       "dependencies": {
         "@intentius/chant": "workspace:*",
       },
@@ -880,6 +1047,39 @@
         "typescript": "*",
       },
     },
+    "lexicons/k8s/examples/cronjob-cleanup": {
+      "name": "k8s-cronjob-cleanup-example",
+      "version": "0.0.1",
+      "dependencies": {
+        "@intentius/chant": "workspace:*",
+        "@intentius/chant-lexicon-k8s": "workspace:*",
+      },
+      "devDependencies": {
+        "typescript": "*",
+      },
+    },
+    "lexicons/k8s/examples/ingress-tls": {
+      "name": "k8s-ingress-tls-example",
+      "version": "0.0.1",
+      "dependencies": {
+        "@intentius/chant": "workspace:*",
+        "@intentius/chant-lexicon-k8s": "workspace:*",
+      },
+      "devDependencies": {
+        "typescript": "*",
+      },
+    },
+    "lexicons/k8s/examples/namespace-rbac": {
+      "name": "k8s-namespace-rbac-example",
+      "version": "0.0.1",
+      "dependencies": {
+        "@intentius/chant": "workspace:*",
+        "@intentius/chant-lexicon-k8s": "workspace:*",
+      },
+      "devDependencies": {
+        "typescript": "*",
+      },
+    },
     "lexicons/k8s/examples/statefulset": {
       "name": "k8s-statefulset-example",
       "version": "0.0.1",
@@ -904,7 +1104,7 @@
     },
     "packages/core": {
       "name": "@intentius/chant",
-      "version": "0.0.18",
+      "version": "0.0.22",
       "bin": {
         "chant": "./bin/chant",
       },
@@ -1060,6 +1260,8 @@
 
     "argparse": ["argparse@2.0.1", "", {}, "sha512-8+9WqebbFzpX9OR+Wa6O29asIogeRMzcGtAINdpMHHyAg10f05aSFVBbcEqGf/PXw1EjAZ+q2/bEBg3DvurK3Q=="],
 
+    "aws-gitlab-cells-example": ["aws-gitlab-cells-example@workspace:examples/aws-gitlab-cells"],
+
     "balanced-match": ["balanced-match@1.0.2", "", {}, "sha512-3oSeUO0TMV67hN1AmbXsK4yaqU7tjiHlbxRDZOpH0KW9+CeX4bRAaX0Anxt0tx2MrpRpWwQaPwIlISEJhYU5Pw=="],
 
     "basic-storage-example": ["basic-storage-example@workspace:lexicons/azure/examples/basic-storage"],
@@ -1168,17 +1370,35 @@
 
     "gcp-cloud-function-example": ["gcp-cloud-function-example@workspace:lexicons/gcp/examples/cloud-function"],
 
+    "gcp-cloud-run-example": ["gcp-cloud-run-example@workspace:lexicons/gcp/examples/cloud-run"],
+
     "gcp-cloud-sql-example": ["gcp-cloud-sql-example@workspace:lexicons/gcp/examples/cloud-sql"],
 
+    "gcp-cloud-storage-lifecycle-example": ["gcp-cloud-storage-lifecycle-example@workspace:lexicons/gcp/examples/cloud-storage-lifecycle"],
+
     "gcp-gke-cluster-example": ["gcp-gke-cluster-example@workspace:lexicons/gcp/examples/gke-cluster"],
+
+    "gcp-pubsub-example": ["gcp-pubsub-example@workspace:lexicons/gcp/examples/pubsub"],
 
     "gcp-vpc-network-example": ["gcp-vpc-network-example@workspace:lexicons/gcp/examples/vpc-network"],
 
     "get-tsconfig": ["get-tsconfig@4.13.6", "", { "dependencies": { "resolve-pkg-maps": "^1.0.0" } }, "sha512-shZT/QMiSHc/YBLxxOkMtgSid5HFoauqCE3/exfsEcwg1WkeqjG+V40yBbBrsD+jW2HDXcs28xOfcbm2jI8Ddw=="],
 
+    "github-deploy-pages-example": ["github-deploy-pages-example@workspace:lexicons/github/examples/deploy-pages"],
+
+    "github-docker-build-example": ["github-docker-build-example@workspace:lexicons/github/examples/docker-build"],
+
     "github-docs-snippets-example": ["github-docs-snippets-example@workspace:lexicons/github/examples/docs-snippets"],
 
     "github-getting-started-example": ["github-getting-started-example@workspace:lexicons/github/examples/getting-started"],
+
+    "github-matrix-test-example": ["github-matrix-test-example@workspace:lexicons/github/examples/matrix-test"],
+
+    "github-node-ci-example": ["github-node-ci-example@workspace:lexicons/github/examples/node-ci"],
+
+    "github-release-please-example": ["github-release-please-example@workspace:lexicons/github/examples/release-please"],
+
+    "github-reusable-workflow-example": ["github-reusable-workflow-example@workspace:lexicons/github/examples/reusable-workflow"],
 
     "gitlab-aws-alb-api-example": ["gitlab-aws-alb-api-example@workspace:examples/gitlab-aws-alb-api"],
 
@@ -1191,6 +1411,10 @@
     "gitlab-docs-snippets-example": ["gitlab-docs-snippets-example@workspace:lexicons/gitlab/examples/docs-snippets"],
 
     "gitlab-getting-started-example": ["gitlab-getting-started-example@workspace:lexicons/gitlab/examples/getting-started"],
+
+    "gitlab-monorepo-pipeline-example": ["gitlab-monorepo-pipeline-example@workspace:lexicons/gitlab/examples/monorepo-pipeline"],
+
+    "gitlab-multi-stage-deploy-example": ["gitlab-multi-stage-deploy-example@workspace:lexicons/gitlab/examples/multi-stage-deploy"],
 
     "gitlab-node-pipeline-example": ["gitlab-node-pipeline-example@workspace:lexicons/gitlab/examples/node-pipeline"],
 
@@ -1210,7 +1434,13 @@
 
     "helm-composites-production-example": ["helm-composites-production-example@workspace:lexicons/helm/examples/composites-production"],
 
+    "helm-cron-job-example": ["helm-cron-job-example@workspace:lexicons/helm/examples/cron-job"],
+
     "helm-microservice-chart-example": ["helm-microservice-chart-example@workspace:lexicons/helm/examples/microservice-chart"],
+
+    "helm-multi-container-example": ["helm-multi-container-example@workspace:lexicons/helm/examples/multi-container"],
+
+    "helm-stateful-service-example": ["helm-stateful-service-example@workspace:lexicons/helm/examples/stateful-service"],
 
     "helm-web-app-with-ingress-example": ["helm-web-app-with-ingress-example@workspace:lexicons/helm/examples/web-app-with-ingress"],
 
@@ -1242,9 +1472,15 @@
 
     "k8s-configmap-secret-example": ["k8s-configmap-secret-example@workspace:lexicons/k8s/examples/configmap-secret"],
 
+    "k8s-cronjob-cleanup-example": ["k8s-cronjob-cleanup-example@workspace:lexicons/k8s/examples/cronjob-cleanup"],
+
     "k8s-eks-microservice-example": ["k8s-eks-microservice-example@workspace:examples/k8s-eks-microservice"],
 
     "k8s-gke-microservice-example": ["k8s-gke-microservice-example@workspace:examples/k8s-gke-microservice"],
+
+    "k8s-ingress-tls-example": ["k8s-ingress-tls-example@workspace:lexicons/k8s/examples/ingress-tls"],
+
+    "k8s-namespace-rbac-example": ["k8s-namespace-rbac-example@workspace:lexicons/k8s/examples/namespace-rbac"],
 
     "k8s-statefulset-example": ["k8s-statefulset-example@workspace:lexicons/k8s/examples/statefulset"],
 

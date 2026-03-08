@@ -2,6 +2,20 @@
 
 A GitLab CI pipeline for a monorepo that triggers child pipelines per workspace using rules-based inclusion -- only changed packages are built.
 
+## Skills
+
+The lexicon packages ship skills for agent-guided deployment. After `chant init --lexicon gitlab`, your agent has access to:
+
+| Skill | Package | Purpose |
+|-------|---------|---------|
+| `chant-gitlab` | `@intentius/chant-lexicon-gitlab` | GitLab CI pipeline lifecycle: build, lint, validate, deploy |
+
+> **Using Claude Code?** Just ask:
+>
+> ```
+> Build the monorepo-pipeline pipeline.
+> ```
+
 ## What this generates
 
 A `.gitlab-ci.yml` with:

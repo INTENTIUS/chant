@@ -1,6 +1,6 @@
 ---
-skill: chant-aks
-description: End-to-end AKS workflow bridging Azure infrastructure and Kubernetes workloads
+skill: chant-azure-aks
+description: AKS end-to-end workflow — deploy ARM template, configure kubectl, deploy K8s workloads
 user-invocable: true
 ---
 

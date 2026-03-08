@@ -1,39 +1,63 @@
 ---
-title: "Skills"
-description: "AI skill and MCP tools for Flyway configuration assistance"
+title: "AI Skills"
+description: "AI agent skills bundled with the Flyway lexicon"
 ---
-The Flyway lexicon includes the **chant-flyway** AI skill that provides context-aware assistance when working with Flyway configurations.
+The Flyway lexicon ships AI skills that teach AI coding agents how to build, validate, and deploy Flyway configurations from a chant project.
+
+## What are skills?
+
+Skills are structured markdown documents bundled with a lexicon. When an AI agent works in a chant project, it discovers and loads relevant skills automatically — giving it operational knowledge about the deployment workflow without requiring the user to explain each step.
+
+## Installation
+
+When you scaffold a new project with `chant init --lexicon flyway`, the skills are installed to `skills/` for automatic agent discovery.
+
+To refresh skills after a lexicon update:
+
+```bash
+chant update
+```
+
+## Skill: chant-flyway
+
+The `chant-flyway` skill covers the core Flyway configuration workflow:
+
+- **Resource types** — FlywayProject, FlywayConfig, Environment, resolvers, provisioners
+- **Build** — `chant build src/` to synthesize TOML configuration
+- **Validate** — `chant lint src/` + post-synth checks
+- **Composites** — when to use each composite pattern
+- **Troubleshooting** — lint rule violations, configuration errors
+
+## Skill: chant-flyway-migrations
+
+The `chant-flyway-migrations` skill covers migration management patterns:
+
+- **Migration lifecycle** — versioned, repeatable, and undo migrations
+- **Naming conventions** — versioning schemes and descriptions
+- **Baseline** — establishing baselines for existing databases
+- **Callbacks** — pre/post migration hooks
+- **Multi-schema** — managing migrations across schemas
+
+## Skill: chant-flyway-security
+
+The `chant-flyway-security` skill covers security best practices:
+
+- **Credentials** — Vault integration, environment-based secrets
+- **Access control** — least-privilege database users for migrations
+- **Audit** — migration history and change tracking
+- **Post-synth checks** — maps to relevant Flyway lint rules
 
 ## MCP integration
 
-When running `chant serve mcp`, the Flyway skill is automatically available to MCP-compatible AI tools (Claude, Cursor, etc.).
+The lexicon also provides MCP (Model Context Protocol) tools and resources that AI agents can use programmatically:
 
-## What the skill provides
-
-### Context
-
-The skill gives the AI assistant knowledge of:
-- All Flyway resource types (FlywayProject, FlywayConfig, Environment, resolvers, provisioners)
-- Property constraints and valid values
-- TOML serialization rules
-- Composite patterns and when to use each
-- Lint rule explanations
-
-### Capabilities
-
-With the Flyway skill active, an AI assistant can:
-- **Generate** typed Flyway configs from natural language descriptions
-- **Explain** existing configurations and their TOML output
-- **Debug** lint rule violations with fix suggestions
-- **Migrate** from plain TOML to typed TypeScript declarations
-- **Recommend** composites based on project requirements
-
-## Example prompts
-
-- "Create a Flyway config for a PostgreSQL project with dev, staging, and prod environments"
-- "Add Vault-secured credentials to my production environment"
-- "Why is WFW101 flagging my config?"
-- "Convert this flyway.toml to chant TypeScript"
+| MCP tool | Description |
+|----------|-------------|
+| `build` | Build the chant project |
+| `lint` | Run lint rules |
+| `explain` | Summarize project resources |
+| `scaffold` | Generate starter files |
+| `search` | Search available resource types |
 
 ## LSP integration
 
