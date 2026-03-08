@@ -5,6 +5,9 @@
  * EKS managed addon — it needs K8s workloads. Uses in-cluster RBAC only (no IRSA).
  */
 
+import { Composite, mergeDefaults } from "@intentius/chant";
+import { Deployment, Service, ServiceAccount, ClusterRole, ClusterRoleBinding, APIService } from "../generated";
+
 export interface MetricsServerProps {
   /** Agent name (default: "metrics-server"). */
   name?: string;
@@ -16,20 +19,31 @@ export interface MetricsServerProps {
   namespace?: string;
   /** Additional labels. */
   labels?: Record<string, string>;
+  /** Per-member defaults for fine-grained overrides. */
+  defaults?: {
+    deployment?: Partial<Record<string, unknown>>;
+    service?: Partial<Record<string, unknown>>;
+    serviceAccount?: Partial<Record<string, unknown>>;
+    clusterRole?: Partial<Record<string, unknown>>;
+    clusterRoleBinding?: Partial<Record<string, unknown>>;
+    aggregatedClusterRole?: Partial<Record<string, unknown>>;
+    authDelegatorBinding?: Partial<Record<string, unknown>>;
+    apiService?: Partial<Record<string, unknown>>;
+  };
 }
 
 export interface MetricsServerResult {
-  deployment: Record<string, unknown>;
-  service: Record<string, unknown>;
-  serviceAccount: Record<string, unknown>;
-  clusterRole: Record<string, unknown>;
-  clusterRoleBinding: Record<string, unknown>;
+  deployment: InstanceType<typeof Deployment>;
+  service: InstanceType<typeof Service>;
+  serviceAccount: InstanceType<typeof ServiceAccount>;
+  clusterRole: InstanceType<typeof ClusterRole>;
+  clusterRoleBinding: InstanceType<typeof ClusterRoleBinding>;
   /** ClusterRole for aggregated API access. */
-  aggregatedClusterRole: Record<string, unknown>;
+  aggregatedClusterRole: InstanceType<typeof ClusterRole>;
   /** Binding for aggregated API auth-delegator. */
-  authDelegatorBinding: Record<string, unknown>;
+  authDelegatorBinding: InstanceType<typeof ClusterRoleBinding>;
   /** APIService registration for v1beta1.metrics.k8s.io. */
-  apiService: Record<string, unknown>;
+  apiService: InstanceType<typeof APIService>;
 }
 
 /**
@@ -43,13 +57,14 @@ export interface MetricsServerResult {
  * const ms = MetricsServer({});
  * ```
  */
-export function MetricsServer(props: MetricsServerProps): MetricsServerResult {
+export const MetricsServer = Composite<MetricsServerProps>((props) => {
   const {
     name = "metrics-server",
     image = "registry.k8s.io/metrics-server/metrics-server:v0.7.2",
     replicas = 1,
     namespace = "kube-system",
     labels: extraLabels = {},
+    defaults: defs,
   } = props;
 
   const saName = `${name}-sa`;
@@ -60,7 +75,7 @@ export function MetricsServer(props: MetricsServerProps): MetricsServerResult {
     ...extraLabels,
   };
 
-  const deployment: Record<string, unknown> = {
+  const deployment = new Deployment(mergeDefaults({
     metadata: {
       name,
       namespace,
@@ -114,9 +129,9 @@ export function MetricsServer(props: MetricsServerProps): MetricsServerResult {
         },
       },
     },
-  };
+  }, defs?.deployment));
 
-  const service: Record<string, unknown> = {
+  const service = new Service(mergeDefaults({
     metadata: {
       name,
       namespace,
@@ -131,17 +146,17 @@ export function MetricsServer(props: MetricsServerProps): MetricsServerResult {
       selector: { "app.kubernetes.io/name": name },
       ports: [{ port: 443, targetPort: 10250, protocol: "TCP", name: "https" }],
     },
-  };
+  }, defs?.service));
 
-  const serviceAccount: Record<string, unknown> = {
+  const serviceAccount = new ServiceAccount(mergeDefaults({
     metadata: {
       name: saName,
       namespace,
       labels: { ...commonLabels, "app.kubernetes.io/component": "metrics" },
     },
-  };
+  }, defs?.serviceAccount));
 
-  const clusterRole: Record<string, unknown> = {
+  const clusterRole = new ClusterRole(mergeDefaults({
     metadata: {
       name: `system:${name}`,
       labels: { ...commonLabels, "app.kubernetes.io/component": "rbac" },
@@ -150,9 +165,9 @@ export function MetricsServer(props: MetricsServerProps): MetricsServerResult {
       { apiGroups: [""], resources: ["pods", "nodes", "namespaces", "configmaps"], verbs: ["get", "list", "watch"] },
       { apiGroups: [""], resources: ["nodes/metrics", "nodes/stats"], verbs: ["get"] },
     ],
-  };
+  }, defs?.clusterRole));
 
-  const clusterRoleBinding: Record<string, unknown> = {
+  const clusterRoleBinding = new ClusterRoleBinding(mergeDefaults({
     metadata: {
       name: `system:${name}`,
       labels: { ...commonLabels, "app.kubernetes.io/component": "rbac" },
@@ -163,9 +178,9 @@ export function MetricsServer(props: MetricsServerProps): MetricsServerResult {
       name: `system:${name}`,
     },
     subjects: [{ kind: "ServiceAccount", name: saName, namespace }],
-  };
+  }, defs?.clusterRoleBinding));
 
-  const aggregatedClusterRole: Record<string, unknown> = {
+  const aggregatedClusterRole = new ClusterRole(mergeDefaults({
     metadata: {
       name: `system:${name}-aggregated-reader`,
       labels: {
@@ -179,9 +194,9 @@ export function MetricsServer(props: MetricsServerProps): MetricsServerResult {
     rules: [
       { apiGroups: ["metrics.k8s.io"], resources: ["pods", "nodes"], verbs: ["get", "list", "watch"] },
     ],
-  };
+  }, defs?.aggregatedClusterRole));
 
-  const authDelegatorBinding: Record<string, unknown> = {
+  const authDelegatorBinding = new ClusterRoleBinding(mergeDefaults({
     metadata: {
       name: `${name}:system:auth-delegator`,
       labels: { ...commonLabels, "app.kubernetes.io/component": "rbac" },
@@ -192,9 +207,9 @@ export function MetricsServer(props: MetricsServerProps): MetricsServerResult {
       name: "system:auth-delegator",
     },
     subjects: [{ kind: "ServiceAccount", name: saName, namespace }],
-  };
+  }, defs?.authDelegatorBinding));
 
-  const apiService: Record<string, unknown> = {
+  const apiService = new APIService(mergeDefaults({
     apiVersion: "apiregistration.k8s.io/v1",
     kind: "APIService",
     metadata: {
@@ -209,7 +224,7 @@ export function MetricsServer(props: MetricsServerProps): MetricsServerResult {
       groupPriorityMinimum: 100,
       versionPriority: 100,
     },
-  };
+  }, defs?.apiService));
 
   return {
     deployment,
@@ -221,4 +236,4 @@ export function MetricsServer(props: MetricsServerProps): MetricsServerResult {
     authDelegatorBinding,
     apiService,
   };
-}
+}, "MetricsServer");

@@ -5,6 +5,11 @@
  * that need RBAC for secrets/configmaps and optional autoscaling, but no Service.
  */
 
+import { Composite, mergeDefaults } from "@intentius/chant";
+import {
+  Deployment, ServiceAccount, Role, RoleBinding,
+  ConfigMap, HorizontalPodAutoscaler, PodDisruptionBudget,
+} from "../generated";
 import type { ContainerSecurityContext } from "./security-context";
 
 export interface WorkerPoolProps {
@@ -54,16 +59,26 @@ export interface WorkerPoolProps {
   namespace?: string;
   /** Environment variables for the container. */
   env?: Array<{ name: string; value: string }>;
+  /** Per-member defaults for fine-grained overrides. */
+  defaults?: {
+    deployment?: Partial<Record<string, unknown>>;
+    serviceAccount?: Partial<Record<string, unknown>>;
+    role?: Partial<Record<string, unknown>>;
+    roleBinding?: Partial<Record<string, unknown>>;
+    configMap?: Partial<Record<string, unknown>>;
+    hpa?: Partial<Record<string, unknown>>;
+    pdb?: Partial<Record<string, unknown>>;
+  };
 }
 
 export interface WorkerPoolResult {
-  deployment: Record<string, unknown>;
-  serviceAccount?: Record<string, unknown>;
-  role?: Record<string, unknown>;
-  roleBinding?: Record<string, unknown>;
-  configMap?: Record<string, unknown>;
-  hpa?: Record<string, unknown>;
-  pdb?: Record<string, unknown>;
+  deployment: InstanceType<typeof Deployment>;
+  serviceAccount?: InstanceType<typeof ServiceAccount>;
+  role?: InstanceType<typeof Role>;
+  roleBinding?: InstanceType<typeof RoleBinding>;
+  configMap?: InstanceType<typeof ConfigMap>;
+  hpa?: InstanceType<typeof HorizontalPodAutoscaler>;
+  pdb?: InstanceType<typeof PodDisruptionBudget>;
 }
 
 /**
@@ -82,7 +97,7 @@ export interface WorkerPoolResult {
  * });
  * ```
  */
-export function WorkerPool(props: WorkerPoolProps): WorkerPoolResult {
+export const WorkerPool = Composite<WorkerPoolProps>((props) => {
   const {
     name,
     image,
@@ -103,6 +118,7 @@ export function WorkerPool(props: WorkerPoolProps): WorkerPoolResult {
     labels: extraLabels = {},
     namespace,
     env,
+    defaults: defs,
   } = props;
 
   const saName = `${name}-sa`;
@@ -147,7 +163,7 @@ export function WorkerPool(props: WorkerPoolProps): WorkerPoolResult {
     ...(priorityClassName && { priorityClassName }),
   };
 
-  const deploymentProps: Record<string, unknown> = {
+  const deployment = new Deployment(mergeDefaults({
     metadata: {
       name,
       ...(namespace && { namespace }),
@@ -161,31 +177,29 @@ export function WorkerPool(props: WorkerPoolProps): WorkerPoolResult {
         spec: podSpec,
       },
     },
-  };
+  }, defs?.deployment));
 
-  const result: WorkerPoolResult = {
-    deployment: deploymentProps,
-  };
+  const result: Record<string, any> = { deployment };
 
   if (createRbac) {
-    result.serviceAccount = {
+    result.serviceAccount = new ServiceAccount(mergeDefaults({
       metadata: {
         name: saName,
         ...(namespace && { namespace }),
         labels: { ...commonLabels, "app.kubernetes.io/component": "worker" },
       },
-    };
+    }, defs?.serviceAccount));
 
-    result.role = {
+    result.role = new Role(mergeDefaults({
       metadata: {
         name: roleName,
         ...(namespace && { namespace }),
         labels: { ...commonLabels, "app.kubernetes.io/component": "rbac" },
       },
       rules: effectiveRbacRules,
-    };
+    }, defs?.role));
 
-    result.roleBinding = {
+    result.roleBinding = new RoleBinding(mergeDefaults({
       metadata: {
         name: bindingName,
         ...(namespace && { namespace }),
@@ -203,22 +217,22 @@ export function WorkerPool(props: WorkerPoolProps): WorkerPoolResult {
           ...(namespace && { namespace }),
         },
       ],
-    };
+    }, defs?.roleBinding));
   }
 
   if (config) {
-    result.configMap = {
+    result.configMap = new ConfigMap(mergeDefaults({
       metadata: {
         name: configMapName,
         ...(namespace && { namespace }),
         labels: { ...commonLabels, "app.kubernetes.io/component": "config" },
       },
       data: config,
-    };
+    }, defs?.configMap));
   }
 
   if (minAvailable !== undefined) {
-    result.pdb = {
+    result.pdb = new PodDisruptionBudget(mergeDefaults({
       metadata: {
         name,
         ...(namespace && { namespace }),
@@ -228,12 +242,12 @@ export function WorkerPool(props: WorkerPoolProps): WorkerPoolResult {
         minAvailable,
         selector: { matchLabels: { "app.kubernetes.io/name": name } },
       },
-    };
+    }, defs?.pdb));
   }
 
   if (autoscaling) {
     const targetCPUPercent = autoscaling.targetCPUPercent ?? 70;
-    result.hpa = {
+    result.hpa = new HorizontalPodAutoscaler(mergeDefaults({
       metadata: {
         name,
         ...(namespace && { namespace }),
@@ -257,8 +271,8 @@ export function WorkerPool(props: WorkerPoolProps): WorkerPoolResult {
           },
         ],
       },
-    };
+    }, defs?.hpa));
   }
 
   return result;
-}
+}, "WorkerPool");

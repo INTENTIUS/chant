@@ -1,4 +1,5 @@
-import { Composite } from "@intentius/chant";
+import { Composite, mergeDefaults } from "@intentius/chant";
+import type { Job, Workflow } from "../generated/index";
 
 export interface DockerBuildProps {
   /** Image tag. Default: "${{ github.sha }}" */
@@ -21,6 +22,10 @@ export interface DockerBuildProps {
   platforms?: string[];
   /** Runner label. Default: "ubuntu-latest" */
   runsOn?: string;
+  defaults?: {
+    job?: Partial<ConstructorParameters<typeof Job>[0]>;
+    workflow?: Partial<ConstructorParameters<typeof Workflow>[0]>;
+  };
 }
 
 export const DockerBuild = Composite<DockerBuildProps>((props) => {
@@ -35,6 +40,7 @@ export const DockerBuild = Composite<DockerBuildProps>((props) => {
     push = true,
     platforms,
     runsOn = "ubuntu-latest",
+    defaults,
   } = props;
 
   const { createProperty, createResource } = require("@intentius/chant/runtime");
@@ -100,12 +106,12 @@ export const DockerBuild = Composite<DockerBuildProps>((props) => {
     with: buildPushWith,
   });
 
-  const job = new JobClass({
+  const job = new JobClass(mergeDefaults({
     "runs-on": runsOn,
     steps: [checkout, login, setupBuildx, metadata, buildPush],
-  });
+  }, defaults?.job));
 
-  const workflow = new WorkflowClass({
+  const workflow = new WorkflowClass(mergeDefaults({
     name: "Docker Build",
     on: {
       push: { branches: ["main"] },
@@ -114,7 +120,7 @@ export const DockerBuild = Composite<DockerBuildProps>((props) => {
       contents: "read",
       packages: "write",
     },
-  });
+  }, defaults?.workflow));
 
   return { workflow, job };
 }, "DockerBuild");

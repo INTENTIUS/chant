@@ -5,7 +5,13 @@
  * Topic + Subscription. Enforces TLS 1.2 and Standard SKU.
  */
 
-import { markAsAzureResource } from "./from-arm";
+import { Composite, mergeDefaults } from "@intentius/chant";
+import {
+  ServiceBusNamespace,
+  namespaces_queues,
+  Sbnamespaces_topics,
+  namespaces_topics_subscriptions,
+} from "../generated";
 
 export interface ServiceBusPipelineProps {
   /** Namespace name. */
@@ -20,87 +26,78 @@ export interface ServiceBusPipelineProps {
   subscriptionName?: string;
   /** Resource tags. */
   tags?: Record<string, string>;
+  /** Per-member defaults. */
+  defaults?: {
+    namespace?: Partial<ConstructorParameters<typeof ServiceBusNamespace>[0]>;
+    queue?: Partial<ConstructorParameters<typeof namespaces_queues>[0]>;
+    topic?: Partial<ConstructorParameters<typeof Sbnamespaces_topics>[0]>;
+    subscription?: Partial<ConstructorParameters<typeof namespaces_topics_subscriptions>[0]>;
+  };
 }
 
 export interface ServiceBusPipelineResult {
-  namespace: Record<string, unknown>;
-  queue?: Record<string, unknown>;
-  topic?: Record<string, unknown>;
-  subscription?: Record<string, unknown>;
+  namespace: InstanceType<typeof ServiceBusNamespace>;
+  queue?: InstanceType<typeof namespaces_queues>;
+  topic?: InstanceType<typeof Sbnamespaces_topics>;
+  subscription?: InstanceType<typeof namespaces_topics_subscriptions>;
 }
 
-export function ServiceBusPipeline(props: ServiceBusPipelineProps): ServiceBusPipelineResult {
+export const ServiceBusPipeline = Composite<ServiceBusPipelineProps>((props) => {
   const {
     name,
     location = "[resourceGroup().location]",
     useTopic = false,
     tags = {},
+    defaults,
   } = props;
 
   const entityName = props.entityName ?? (useTopic ? `${name}-topic` : `${name}-queue`);
   const subscriptionName = props.subscriptionName ?? `${entityName}-sub`;
   const mergedTags = { "managed-by": "chant", ...tags };
 
-  const namespace: Record<string, unknown> = {
-    type: "Microsoft.ServiceBus/namespaces",
-    apiVersion: "2022-10-01-preview",
+  const namespace = new ServiceBusNamespace(mergeDefaults({
     name,
     location,
     tags: mergedTags,
     sku: { name: "Standard", tier: "Standard" },
-    properties: {
-      minimumTlsVersion: "1.2",
-    },
-  };
+    minimumTlsVersion: "1.2",
+  }, defaults?.namespace), { apiVersion: "2022-10-01-preview" });
 
   if (useTopic) {
-    const topic: Record<string, unknown> = {
-      type: "Microsoft.ServiceBus/namespaces/topics",
-      apiVersion: "2022-10-01-preview",
+    const topic = new Sbnamespaces_topics(mergeDefaults({
       name: `${name}/${entityName}`,
-      properties: {
-        maxSizeInMegabytes: 1024,
-      },
-      dependsOn: [
+      maxSizeInMegabytes: 1024,
+    }, defaults?.topic), {
+      apiVersion: "2022-10-01-preview",
+      DependsOn: [
         `[resourceId('Microsoft.ServiceBus/namespaces', '${name}')]`,
       ],
-    };
+    });
 
-    const subscription: Record<string, unknown> = {
-      type: "Microsoft.ServiceBus/namespaces/topics/subscriptions",
-      apiVersion: "2022-10-01-preview",
+    const subscription = new namespaces_topics_subscriptions(mergeDefaults({
       name: `${name}/${entityName}/${subscriptionName}`,
-      properties: {
-        maxDeliveryCount: 10,
-      },
-      dependsOn: [
+      maxDeliveryCount: 10,
+    }, defaults?.subscription), {
+      apiVersion: "2022-10-01-preview",
+      DependsOn: [
         `[resourceId('Microsoft.ServiceBus/namespaces/topics', '${name}', '${entityName}')]`,
       ],
-    };
+    });
 
-    markAsAzureResource(namespace);
-    markAsAzureResource(topic);
-    markAsAzureResource(subscription);
-
-    return { namespace, topic, subscription };
+    return { namespace, topic, subscription } as any;
   }
 
-  const queue: Record<string, unknown> = {
-    type: "Microsoft.ServiceBus/namespaces/queues",
-    apiVersion: "2022-10-01-preview",
+  const queue = new namespaces_queues(mergeDefaults({
     name: `${name}/${entityName}`,
-    properties: {
-      maxSizeInMegabytes: 1024,
-      lockDuration: "PT1M",
-      maxDeliveryCount: 10,
-    },
-    dependsOn: [
+    maxSizeInMegabytes: 1024,
+    lockDuration: "PT1M",
+    maxDeliveryCount: 10,
+  }, defaults?.queue), {
+    apiVersion: "2022-10-01-preview",
+    DependsOn: [
       `[resourceId('Microsoft.ServiceBus/namespaces', '${name}')]`,
     ],
-  };
+  });
 
-  markAsAzureResource(namespace);
-  markAsAzureResource(queue);
-
-  return { namespace, queue };
-}
+  return { namespace, queue } as any;
+}, "ServiceBusPipeline");

@@ -5,6 +5,9 @@
  * HTTPRoute resources for traffic routing.
  */
 
+import { Composite, mergeDefaults } from "@intentius/chant";
+import { Deployment } from "../generated";
+
 export interface GkeGatewayHost {
   /** Hostname (e.g., "api.example.com"). */
   hostname: string;
@@ -32,11 +35,16 @@ export interface GkeGatewayProps {
   labels?: Record<string, string>;
   /** Namespace for all resources. */
   namespace?: string;
+  /** Per-member defaults for fine-grained overrides. */
+  defaults?: {
+    gateway?: Partial<Record<string, unknown>>;
+    httpRoute?: Partial<Record<string, unknown>>;
+  };
 }
 
 export interface GkeGatewayResult {
-  gateway: Record<string, unknown>;
-  httpRoute: Record<string, unknown>;
+  gateway: InstanceType<typeof Deployment>; // CRD — use Deployment as proxy Declarable
+  httpRoute: InstanceType<typeof Deployment>; // CRD — use Deployment as proxy Declarable
 }
 
 /**
@@ -60,7 +68,7 @@ export interface GkeGatewayResult {
  * });
  * ```
  */
-export function GkeGateway(props: GkeGatewayProps): GkeGatewayResult {
+export const GkeGateway = Composite<GkeGatewayProps>((props) => {
   const {
     name,
     gatewayClassName = "gke-l7-global-external-managed",
@@ -68,6 +76,7 @@ export function GkeGateway(props: GkeGatewayProps): GkeGatewayResult {
     certificateName,
     labels: extraLabels = {},
     namespace,
+    defaults: defs,
   } = props;
 
   const routeName = `${name}-route`;
@@ -99,7 +108,8 @@ export function GkeGateway(props: GkeGatewayProps): GkeGatewayResult {
     });
   }
 
-  const gatewayProps: Record<string, unknown> = {
+  // Gateway and HTTPRoute are CRDs — use Deployment constructor as a generic Declarable wrapper
+  const gateway = new Deployment(mergeDefaults({
     metadata: {
       name,
       ...(namespace && { namespace }),
@@ -109,7 +119,7 @@ export function GkeGateway(props: GkeGatewayProps): GkeGatewayResult {
       gatewayClassName,
       listeners,
     },
-  };
+  }, defs?.gateway));
 
   // Build HTTPRoute rules
   const hostnames = hosts.map((h) => h.hostname);
@@ -123,7 +133,7 @@ export function GkeGateway(props: GkeGatewayProps): GkeGatewayResult {
     })),
   );
 
-  const httpRouteProps: Record<string, unknown> = {
+  const httpRoute = new Deployment(mergeDefaults({
     metadata: {
       name: routeName,
       ...(namespace && { namespace }),
@@ -134,10 +144,7 @@ export function GkeGateway(props: GkeGatewayProps): GkeGatewayResult {
       hostnames,
       rules,
     },
-  };
+  }, defs?.httpRoute));
 
-  return {
-    gateway: gatewayProps,
-    httpRoute: httpRouteProps,
-  };
-}
+  return { gateway, httpRoute };
+}, "GkeGateway");

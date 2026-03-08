@@ -5,6 +5,9 @@
  * resource guardrails and network isolation.
  */
 
+import { Composite, mergeDefaults } from "@intentius/chant";
+import { Namespace, ResourceQuota, LimitRange, NetworkPolicy } from "../generated";
+
 export interface NamespaceEnvProps {
   /** Namespace name. */
   name: string;
@@ -28,13 +31,20 @@ export interface NamespaceEnvProps {
   defaultDenyEgress?: boolean;
   /** Additional labels to apply to all resources. */
   labels?: Record<string, string>;
+  /** Per-member defaults for fine-grained overrides. */
+  defaults?: {
+    namespace?: Partial<Record<string, unknown>>;
+    resourceQuota?: Partial<Record<string, unknown>>;
+    limitRange?: Partial<Record<string, unknown>>;
+    networkPolicy?: Partial<Record<string, unknown>>;
+  };
 }
 
 export interface NamespaceEnvResult {
-  namespace: Record<string, unknown>;
-  resourceQuota?: Record<string, unknown>;
-  limitRange?: Record<string, unknown>;
-  networkPolicy?: Record<string, unknown>;
+  namespace: InstanceType<typeof Namespace>;
+  resourceQuota?: InstanceType<typeof ResourceQuota>;
+  limitRange?: InstanceType<typeof LimitRange>;
+  networkPolicy?: InstanceType<typeof NetworkPolicy>;
 }
 
 /**
@@ -55,7 +65,7 @@ export interface NamespaceEnvResult {
  * });
  * ```
  */
-export function NamespaceEnv(props: NamespaceEnvProps): NamespaceEnvResult {
+export const NamespaceEnv = Composite<NamespaceEnvProps>((props) => {
   const {
     name,
     cpuQuota,
@@ -68,6 +78,7 @@ export function NamespaceEnv(props: NamespaceEnvProps): NamespaceEnvResult {
     defaultDenyIngress = true,
     defaultDenyEgress = false,
     labels: extraLabels = {},
+    defaults: defs,
   } = props;
 
   const commonLabels: Record<string, string> = {
@@ -76,16 +87,14 @@ export function NamespaceEnv(props: NamespaceEnvProps): NamespaceEnvResult {
     ...extraLabels,
   };
 
-  const namespaceProps: Record<string, unknown> = {
+  const namespace = new Namespace(mergeDefaults({
     metadata: {
       name,
       labels: { ...commonLabels, "app.kubernetes.io/component": "namespace" },
     },
-  };
+  }, defs?.namespace));
 
-  const result: NamespaceEnvResult = {
-    namespace: namespaceProps,
-  };
+  const result: Record<string, any> = { namespace };
 
   // ResourceQuota — only if at least one quota prop is set
   const hasQuota = cpuQuota || memoryQuota || maxPods !== undefined;
@@ -95,14 +104,14 @@ export function NamespaceEnv(props: NamespaceEnvProps): NamespaceEnvResult {
     if (memoryQuota) hard["limits.memory"] = memoryQuota;
     if (maxPods !== undefined) hard.pods = String(maxPods);
 
-    result.resourceQuota = {
+    result.resourceQuota = new ResourceQuota(mergeDefaults({
       metadata: {
         name: `${name}-quota`,
         namespace: name,
         labels: { ...commonLabels, "app.kubernetes.io/component": "quota" },
       },
       spec: { hard },
-    };
+    }, defs?.resourceQuota));
   }
 
   // LimitRange — only if at least one default limit prop is set
@@ -127,7 +136,7 @@ export function NamespaceEnv(props: NamespaceEnvProps): NamespaceEnvResult {
     if (Object.keys(defaultLimits).length > 0) limit.default = defaultLimits;
     if (Object.keys(defaultRequests).length > 0) limit.defaultRequest = defaultRequests;
 
-    result.limitRange = {
+    result.limitRange = new LimitRange(mergeDefaults({
       metadata: {
         name: `${name}-limits`,
         namespace: name,
@@ -136,7 +145,7 @@ export function NamespaceEnv(props: NamespaceEnvProps): NamespaceEnvResult {
       spec: {
         limits: [limit],
       },
-    };
+    }, defs?.limitRange));
   }
 
   // NetworkPolicy — default-deny ingress and/or egress
@@ -146,7 +155,7 @@ export function NamespaceEnv(props: NamespaceEnvProps): NamespaceEnvResult {
     if (defaultDenyIngress) policyTypes.push("Ingress");
     if (defaultDenyEgress) policyTypes.push("Egress");
 
-    result.networkPolicy = {
+    result.networkPolicy = new NetworkPolicy(mergeDefaults({
       metadata: {
         name: `${name}-default-deny`,
         namespace: name,
@@ -156,8 +165,8 @@ export function NamespaceEnv(props: NamespaceEnvProps): NamespaceEnvResult {
         podSelector: {},
         policyTypes,
       },
-    };
+    }, defs?.networkPolicy));
   }
 
   return result;
-}
+}, "NamespaceEnv");

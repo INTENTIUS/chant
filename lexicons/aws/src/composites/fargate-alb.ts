@@ -1,4 +1,4 @@
-import { Composite } from "@intentius/chant";
+import { Composite, mergeDefaults } from "@intentius/chant";
 import {
   EcsCluster,
   EcsService,
@@ -41,6 +41,15 @@ export interface FargateAlbProps {
   ManagedPolicyArns?: string[];
   Policies?: InstanceType<typeof Role_Policy>[];
   logRetentionDays?: number;
+  defaults?: {
+    cluster?: Partial<ConstructorParameters<typeof EcsCluster>[0]>;
+    executionRole?: Partial<ConstructorParameters<typeof Role>[0]>;
+    taskRole?: Partial<ConstructorParameters<typeof Role>[0]>;
+    taskDef?: Partial<ConstructorParameters<typeof TaskDefinition>[0]>;
+    alb?: Partial<ConstructorParameters<typeof LoadBalancer>[0]>;
+    targetGroup?: Partial<ConstructorParameters<typeof TargetGroup>[0]>;
+    service?: Partial<ConstructorParameters<typeof EcsService>[0]>;
+  };
 }
 
 export const FargateAlb = Composite<FargateAlbProps>((props) => {
@@ -51,9 +60,10 @@ export const FargateAlb = Composite<FargateAlbProps>((props) => {
   const healthCheckPath = props.healthCheckPath ?? "/";
   const listenerPort = props.listenerPort ?? 80;
   const logRetentionDays = props.logRetentionDays ?? 30;
+  const { defaults: defs } = props;
 
   // ECS Cluster
-  const cluster = new EcsCluster({});
+  const cluster = new EcsCluster(mergeDefaults({}, defs?.cluster));
 
   // Execution role — ECR pull + CloudWatch Logs write
   const executionPolicyDocument = {
@@ -77,17 +87,17 @@ export const FargateAlb = Composite<FargateAlbProps>((props) => {
     PolicyDocument: executionPolicyDocument,
   });
 
-  const executionRole = new Role({
+  const executionRole = new Role(mergeDefaults({
     AssumeRolePolicyDocument: ecsTrustPolicy,
     Policies: [executionPolicy],
-  });
+  }, defs?.executionRole));
 
   // Task role — app permissions
-  const taskRole = new Role({
+  const taskRole = new Role(mergeDefaults({
     AssumeRolePolicyDocument: ecsTrustPolicy,
     ManagedPolicyArns: props.ManagedPolicyArns,
     Policies: props.Policies,
-  });
+  }, defs?.taskRole));
 
   // Log group
   const logGroup = new LogGroup({
@@ -129,7 +139,7 @@ export const FargateAlb = Composite<FargateAlbProps>((props) => {
   });
 
   // Task definition
-  const taskDef = new TaskDefinition({
+  const taskDef = new TaskDefinition(mergeDefaults({
     NetworkMode: "awsvpc",
     RequiresCompatibilities: ["FARGATE"],
     Cpu: cpu,
@@ -137,7 +147,7 @@ export const FargateAlb = Composite<FargateAlbProps>((props) => {
     ExecutionRoleArn: executionRole.Arn,
     TaskRoleArn: taskRole.Arn,
     ContainerDefinitions: [container],
-  });
+  }, defs?.taskDef));
 
   // ALB security group — ingress on listener port from anywhere
   const albIngress = new SecurityGroup_Ingress({
@@ -168,21 +178,21 @@ export const FargateAlb = Composite<FargateAlbProps>((props) => {
   });
 
   // Application Load Balancer
-  const alb = new LoadBalancer({
+  const alb = new LoadBalancer(mergeDefaults({
     Type: "application",
     Scheme: "internet-facing",
     Subnets: props.publicSubnetIds,
     SecurityGroups: [albSg.GroupId],
-  });
+  }, defs?.alb));
 
   // Target group
-  const targetGroup = new TargetGroup({
+  const targetGroup = new TargetGroup(mergeDefaults({
     TargetType: "ip",
     Protocol: "HTTP",
     Port: containerPort,
     VpcId: props.vpcId,
     HealthCheckPath: healthCheckPath,
-  });
+  }, defs?.targetGroup));
 
   // Listener
   const defaultAction = new Listener_Action({
@@ -215,7 +225,7 @@ export const FargateAlb = Composite<FargateAlbProps>((props) => {
   });
 
   const service = new EcsService(
-    {
+    mergeDefaults({
       Cluster: cluster.Arn,
       TaskDefinition: taskDef.TaskDefinitionArn,
       LaunchType: "FARGATE",
@@ -223,7 +233,7 @@ export const FargateAlb = Composite<FargateAlbProps>((props) => {
       HealthCheckGracePeriodSeconds: 60,
       LoadBalancers: [serviceLoadBalancer],
       NetworkConfiguration: networkConfig,
-    },
+    }, defs?.service),
     { DependsOn: [listener] },
   );
 

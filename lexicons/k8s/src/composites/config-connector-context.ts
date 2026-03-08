@@ -5,6 +5,9 @@
  * Config Connector to manage GCP resources in a specific namespace.
  */
 
+import { Composite, mergeDefaults } from "@intentius/chant";
+import { Deployment } from "../generated";
+
 export interface ConfigConnectorContextProps {
   /** Context name (default: "configconnectorcontext.core.cnrm.cloud.google.com"). */
   name?: string;
@@ -14,10 +17,14 @@ export interface ConfigConnectorContextProps {
   namespace?: string;
   /** Whether to sync status into spec (default: "absent"). */
   stateIntoSpec?: "absent" | "merge";
+  /** Per-member defaults for fine-grained overrides. */
+  defaults?: {
+    context?: Partial<Record<string, unknown>>;
+  };
 }
 
 export interface ConfigConnectorContextResult {
-  context: Record<string, unknown>;
+  context: InstanceType<typeof Deployment>; // CRD — use Deployment as proxy Declarable
 }
 
 /**
@@ -35,17 +42,17 @@ export interface ConfigConnectorContextResult {
  * });
  * ```
  */
-export function ConfigConnectorContext(
-  props: ConfigConnectorContextProps,
-): ConfigConnectorContextResult {
+export const ConfigConnectorContext = Composite<ConfigConnectorContextProps>((props) => {
   const {
     name = "configconnectorcontext.core.cnrm.cloud.google.com",
     googleServiceAccountEmail,
     namespace = "default",
     stateIntoSpec = "absent",
+    defaults: defs,
   } = props;
 
-  const contextProps: Record<string, unknown> = {
+  // ConfigConnectorContext is a CRD — use Deployment constructor as a generic Declarable wrapper
+  const context = new Deployment(mergeDefaults({
     apiVersion: "core.cnrm.cloud.google.com/v1beta1",
     kind: "ConfigConnectorContext",
     metadata: {
@@ -56,7 +63,7 @@ export function ConfigConnectorContext(
       googleServiceAccount: googleServiceAccountEmail,
       stateIntoSpec,
     },
-  };
+  }, defs?.context));
 
-  return { context: contextProps };
-}
+  return { context };
+}, "ConfigConnectorContext");

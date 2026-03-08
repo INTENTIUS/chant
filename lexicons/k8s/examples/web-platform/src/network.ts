@@ -1,11 +1,6 @@
 // NetworkIsolatedApp: API with ingress/egress network policies.
 
-import {
-  Deployment,
-  Service,
-  NetworkPolicy,
-  NetworkIsolatedApp,
-} from "@intentius/chant-lexicon-k8s";
+import { NetworkIsolatedApp } from "@intentius/chant-lexicon-k8s";
 
 const NAMESPACE = "web-platform";
 
@@ -24,6 +19,6 @@ const isolated = NetworkIsolatedApp({
   ],
 });
 
-export const isolatedDeployment = new Deployment(isolated.deployment);
-export const isolatedService = new Service(isolated.service);
-export const isolatedNetworkPolicy = new NetworkPolicy(isolated.networkPolicy);
+export const isolatedDeployment = isolated.deployment;
+export const isolatedService = isolated.service;
+export const isolatedNetworkPolicy = isolated.networkPolicy;

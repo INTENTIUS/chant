@@ -1,6 +1,6 @@
 // K8s workloads: EBS StorageClass for gp3 encrypted volumes.
 
-import { StorageClass, EbsStorageClass } from "@intentius/chant-lexicon-k8s";
+import { EbsStorageClass } from "@intentius/chant-lexicon-k8s";
 
 const ebs = EbsStorageClass({
   name: "gp3-encrypted",
@@ -10,4 +10,4 @@ const ebs = EbsStorageClass({
   throughput: "125",
 });
 
-export const storageClass = new StorageClass(ebs.storageClass);
+export const storageClass = ebs.storageClass;

@@ -1,23 +1,11 @@
 import { describe, test, expect } from "bun:test";
-import { createResource } from "@intentius/chant/runtime";
 import type { Declarable } from "@intentius/chant/declarable";
 import type { SerializerResult } from "@intentius/chant/serializer";
 import { helmSerializer } from "../../src/serializer";
-import { Chart, Values } from "../../src/resources";
 
-const Deployment = createResource("K8s::Apps::Deployment", "k8s", {});
-const Service = createResource("K8s::Core::Service", "k8s", {});
-const ServiceAccount = createResource("K8s::Core::ServiceAccount", "k8s", {});
-const Job = createResource("K8s::Batch::Job", "k8s", {});
-const CronJob = createResource("K8s::Batch::CronJob", "k8s", {});
-const Role = createResource("K8s::Rbac::Role", "k8s", {});
-const RoleBinding = createResource("K8s::Rbac::RoleBinding", "k8s", {});
-const HPA = createResource("K8s::Autoscaling::HorizontalPodAutoscaler", "k8s", {});
-const Ingress = createResource("K8s::Networking::Ingress", "k8s", {});
-
-function makeEntities(...pairs: [string, Record<string, unknown>][]): Map<string, Declarable> {
+function makeEntities(...pairs: [string, Declarable][]): Map<string, Declarable> {
   const m = new Map<string, Declarable>();
-  for (const [name, entity] of pairs) m.set(name, entity as unknown as Declarable);
+  for (const [name, entity] of pairs) m.set(name, entity);
   return m;
 }
 
@@ -29,14 +17,14 @@ import { chart as csChart, values as csValues, cronJob as csCronJob, serviceAcco
 describe("helm composites-production: hardened-web-app", () => {
   test("serializes with security context", () => {
     const entities = makeEntities(
-      ["chart", new Chart(hwChart)],
-      ["values", new Values(hwValues)],
-      ["deployment", new Deployment(hwDeployment)],
-      ["service", new Service(hwService)],
+      ["chart", hwChart],
+      ["values", hwValues],
+      ["deployment", hwDeployment],
+      ["service", hwService],
     );
-    if (hwSa) entities.set("serviceAccount", new ServiceAccount(hwSa) as unknown as Declarable);
-    if (hwIngress) entities.set("ingress", new Ingress(hwIngress) as unknown as Declarable);
-    if (hwHpa) entities.set("hpa", new HPA(hwHpa) as unknown as Declarable);
+    if (hwSa) entities.set("serviceAccount", hwSa as unknown as Declarable);
+    if (hwIngress) entities.set("ingress", hwIngress as unknown as Declarable);
+    if (hwHpa) entities.set("hpa", hwHpa as unknown as Declarable);
 
     const result = helmSerializer.serialize(entities) as SerializerResult;
     expect(result.files!["Chart.yaml"]).toContain("name: secure-frontend");
@@ -49,13 +37,13 @@ describe("helm composites-production: hardened-web-app", () => {
 describe("helm composites-production: batch-migration", () => {
   test("serializes with RBAC", () => {
     const entities = makeEntities(
-      ["chart", new Chart(bmChart)],
-      ["values", new Values(bmValues)],
-      ["job", new Job(bmJob)],
+      ["chart", bmChart],
+      ["values", bmValues],
+      ["job", bmJob],
     );
-    if (bmSa) entities.set("serviceAccount", new ServiceAccount(bmSa) as unknown as Declarable);
-    if (bmRole) entities.set("role", new Role(bmRole) as unknown as Declarable);
-    if (bmRoleBinding) entities.set("roleBinding", new RoleBinding(bmRoleBinding) as unknown as Declarable);
+    if (bmSa) entities.set("serviceAccount", bmSa as unknown as Declarable);
+    if (bmRole) entities.set("role", bmRole as unknown as Declarable);
+    if (bmRoleBinding) entities.set("roleBinding", bmRoleBinding as unknown as Declarable);
 
     const result = helmSerializer.serialize(entities) as SerializerResult;
     expect(result.files!["Chart.yaml"]).toContain("name: db-migration");
@@ -68,12 +56,12 @@ describe("helm composites-production: batch-migration", () => {
 describe("helm composites-production: monitored-api", () => {
   test("serializes with ServiceMonitor and PrometheusRule", () => {
     const entities = makeEntities(
-      ["chart", new Chart(maChart)],
-      ["values", new Values(maValues)],
-      ["deployment", new Deployment(maDeployment)],
-      ["service", new Service(maService)],
+      ["chart", maChart],
+      ["values", maValues],
+      ["deployment", maDeployment],
+      ["service", maService],
     );
-    if (maSa) entities.set("serviceAccount", new ServiceAccount(maSa) as unknown as Declarable);
+    if (maSa) entities.set("serviceAccount", maSa as unknown as Declarable);
     // ServiceMonitor and PrometheusRule are wrapped in If() conditionals by the composite.
     // Pass them directly as entities — the serializer handles HelmConditional at the entity level.
     if (maServiceMonitor) entities.set("serviceMonitor", maServiceMonitor as unknown as Declarable);
@@ -89,11 +77,11 @@ describe("helm composites-production: monitored-api", () => {
 describe("helm composites-production: cron-secured", () => {
   test("serializes with security and concurrency", () => {
     const entities = makeEntities(
-      ["chart", new Chart(csChart)],
-      ["values", new Values(csValues)],
-      ["cronJob", new CronJob(csCronJob)],
+      ["chart", csChart],
+      ["values", csValues],
+      ["cronJob", csCronJob],
     );
-    if (csSa) entities.set("serviceAccount", new ServiceAccount(csSa) as unknown as Declarable);
+    if (csSa) entities.set("serviceAccount", csSa as unknown as Declarable);
 
     const result = helmSerializer.serialize(entities) as SerializerResult;
     expect(result.files!["Chart.yaml"]).toContain("name: report-generator");

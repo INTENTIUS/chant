@@ -1,4 +1,4 @@
-import { Composite } from "@intentius/chant";
+import { Composite, mergeDefaults } from "@intentius/chant";
 import {
   Vpc,
   Subnet,
@@ -18,9 +18,18 @@ export interface VpcDefaultProps {
   publicSubnet2Cidr?: string;
   privateSubnet1Cidr?: string;
   privateSubnet2Cidr?: string;
+  defaults?: {
+    vpc?: Partial<ConstructorParameters<typeof Vpc>[0]>;
+    publicSubnet1?: Partial<ConstructorParameters<typeof Subnet>[0]>;
+    publicSubnet2?: Partial<ConstructorParameters<typeof Subnet>[0]>;
+    privateSubnet1?: Partial<ConstructorParameters<typeof Subnet>[0]>;
+    privateSubnet2?: Partial<ConstructorParameters<typeof Subnet>[0]>;
+    natGateway?: Partial<ConstructorParameters<typeof NatGateway>[0]>;
+  };
 }
 
 export const VpcDefault = Composite<VpcDefaultProps>((props) => {
+  const { defaults: defs } = props;
   const cidr = props.cidr ?? "10.0.0.0/16";
   const publicSubnet1Cidr = props.publicSubnet1Cidr ?? "10.0.0.0/20";
   const publicSubnet2Cidr = props.publicSubnet2Cidr ?? "10.0.16.0/20";
@@ -30,11 +39,11 @@ export const VpcDefault = Composite<VpcDefaultProps>((props) => {
   const az1 = Select(0, GetAZs(""));
   const az2 = Select(1, GetAZs(""));
 
-  const vpc = new Vpc({
+  const vpc = new Vpc(mergeDefaults({
     CidrBlock: cidr,
     EnableDnsSupport: true,
     EnableDnsHostnames: true,
-  });
+  }, defs?.vpc));
 
   const igw = new InternetGateway({});
 
@@ -44,32 +53,32 @@ export const VpcDefault = Composite<VpcDefaultProps>((props) => {
   });
 
   // Public subnets
-  const publicSubnet1 = new Subnet({
+  const publicSubnet1 = new Subnet(mergeDefaults({
     VpcId: vpc.VpcId,
     CidrBlock: publicSubnet1Cidr,
     AvailabilityZone: az1,
     MapPublicIpOnLaunch: true,
-  });
+  }, defs?.publicSubnet1));
 
-  const publicSubnet2 = new Subnet({
+  const publicSubnet2 = new Subnet(mergeDefaults({
     VpcId: vpc.VpcId,
     CidrBlock: publicSubnet2Cidr,
     AvailabilityZone: az2,
     MapPublicIpOnLaunch: true,
-  });
+  }, defs?.publicSubnet2));
 
   // Private subnets
-  const privateSubnet1 = new Subnet({
+  const privateSubnet1 = new Subnet(mergeDefaults({
     VpcId: vpc.VpcId,
     CidrBlock: privateSubnet1Cidr,
     AvailabilityZone: az1,
-  });
+  }, defs?.privateSubnet1));
 
-  const privateSubnet2 = new Subnet({
+  const privateSubnet2 = new Subnet(mergeDefaults({
     VpcId: vpc.VpcId,
     CidrBlock: privateSubnet2Cidr,
     AvailabilityZone: az2,
-  });
+  }, defs?.privateSubnet2));
 
   // Public route table
   const publicRouteTable = new RouteTable({
@@ -100,10 +109,10 @@ export const VpcDefault = Composite<VpcDefaultProps>((props) => {
     Domain: "vpc",
   });
 
-  const natGateway = new NatGateway({
+  const natGateway = new NatGateway(mergeDefaults({
     AllocationId: natEip.AllocationId,
     SubnetId: publicSubnet1.SubnetId,
-  });
+  }, defs?.natGateway));
 
   // Private route table
   const privateRouteTable = new RouteTable({

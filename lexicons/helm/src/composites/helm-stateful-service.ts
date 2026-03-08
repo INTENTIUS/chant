@@ -4,6 +4,8 @@
  * Produces a Helm chart for stateful workloads with persistent storage.
  */
 
+import { Composite, mergeDefaults } from "@intentius/chant";
+import { Chart, Values, StatefulSet, Service, ServiceAccount } from "../resources";
 import { values, include, printf, toYaml, With } from "../intrinsics";
 
 export interface HelmStatefulServiceProps {
@@ -43,17 +45,25 @@ export interface HelmStatefulServiceProps {
   serviceAccount?: boolean;
   /** StatefulSet update strategy defaults. */
   updateStrategy?: Record<string, unknown>;
+  /** Per-member defaults. */
+  defaults?: {
+    chart?: Partial<Record<string, unknown>>;
+    values?: Partial<Record<string, unknown>>;
+    statefulSet?: Partial<Record<string, unknown>>;
+    service?: Partial<Record<string, unknown>>;
+    serviceAccount?: Partial<Record<string, unknown>>;
+  };
 }
 
 export interface HelmStatefulServiceResult {
-  chart: Record<string, unknown>;
-  values: Record<string, unknown>;
-  statefulSet: Record<string, unknown>;
-  service: Record<string, unknown>;
-  serviceAccount?: Record<string, unknown>;
+  chart: InstanceType<typeof Chart>;
+  values: InstanceType<typeof Values>;
+  statefulSet: InstanceType<typeof StatefulSet>;
+  service: InstanceType<typeof Service>;
+  serviceAccount?: InstanceType<typeof ServiceAccount>;
 }
 
-export function HelmStatefulService(props: HelmStatefulServiceProps): HelmStatefulServiceResult {
+export const HelmStatefulService = Composite<HelmStatefulServiceProps>((props) => {
   const {
     name,
     imageRepository = "postgres",
@@ -64,16 +74,17 @@ export function HelmStatefulService(props: HelmStatefulServiceProps): HelmStatef
     storageClass = "",
     appVersion = "1.0.0",
     serviceAccount = false,
+    defaults: defs,
   } = props;
 
-  const chart = {
+  const chart = new Chart(mergeDefaults({
     apiVersion: "v2",
     name,
     version: "0.1.0",
     appVersion,
     type: "application",
     description: `A Helm chart for ${name} (stateful)`,
-  };
+  }, defs?.chart));
 
   const valuesObj: Record<string, unknown> = {
     replicaCount: replicas,
@@ -110,6 +121,8 @@ export function HelmStatefulService(props: HelmStatefulServiceProps): HelmStatef
       annotations: {},
     };
   }
+
+  const valuesRes = new Values(mergeDefaults(valuesObj, defs?.values));
 
   const containerSpec: Record<string, unknown> = {
     name,
@@ -166,7 +179,7 @@ export function HelmStatefulService(props: HelmStatefulServiceProps): HelmStatef
 
   if (props.updateStrategy) statefulSetSpec.updateStrategy = toYaml(values.updateStrategy);
 
-  const statefulSet = {
+  const statefulSet = new StatefulSet(mergeDefaults({
     apiVersion: "apps/v1",
     kind: "StatefulSet",
     metadata: {
@@ -174,9 +187,9 @@ export function HelmStatefulService(props: HelmStatefulServiceProps): HelmStatef
       labels: include(`${name}.labels`),
     },
     spec: statefulSetSpec,
-  };
+  }, defs?.statefulSet));
 
-  const service = {
+  const service = new Service(mergeDefaults({
     apiVersion: "v1",
     kind: "Service",
     metadata: {
@@ -193,12 +206,12 @@ export function HelmStatefulService(props: HelmStatefulServiceProps): HelmStatef
       }],
       selector: include(`${name}.selectorLabels`),
     },
-  };
+  }, defs?.service));
 
-  const result: HelmStatefulServiceResult = { chart, values: valuesObj, statefulSet, service };
+  const result: Record<string, any> = { chart, values: valuesRes, statefulSet, service };
 
   if (serviceAccount) {
-    result.serviceAccount = {
+    result.serviceAccount = new ServiceAccount(mergeDefaults({
       apiVersion: "v1",
       kind: "ServiceAccount",
       metadata: {
@@ -206,8 +219,8 @@ export function HelmStatefulService(props: HelmStatefulServiceProps): HelmStatef
         labels: include(`${name}.labels`),
         annotations: toYaml(values.serviceAccount.annotations),
       },
-    };
+    }, defs?.serviceAccount));
   }
 
   return result;
-}
+}, "HelmStatefulService");

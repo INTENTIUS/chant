@@ -1,11 +1,6 @@
 // K8s workloads: GCE Ingress + ExternalDNS agent.
 
 import {
-  Ingress,
-  Deployment,
-  ServiceAccount,
-  ClusterRole,
-  ClusterRoleBinding,
   GceIngress,
   GkeExternalDnsAgent,
 } from "@intentius/chant-lexicon-k8s";
@@ -27,7 +22,7 @@ const ing = GceIngress({
   namespace: NAMESPACE,
 });
 
-export const gceIngress = new Ingress(ing.ingress);
+export const gceIngress = ing.ingress;
 
 // ── ExternalDNS ────────────────────────────────────────────────────
 
@@ -38,7 +33,7 @@ const dns = GkeExternalDnsAgent({
   txtOwnerId: config.clusterName,
 });
 
-export const dnsDeployment = new Deployment(dns.deployment);
-export const dnsServiceAccount = new ServiceAccount(dns.serviceAccount);
-export const dnsClusterRole = new ClusterRole(dns.clusterRole);
-export const dnsClusterRoleBinding = new ClusterRoleBinding(dns.clusterRoleBinding);
+export const dnsDeployment = dns.deployment;
+export const dnsServiceAccount = dns.serviceAccount;
+export const dnsClusterRole = dns.clusterRole;
+export const dnsClusterRoleBinding = dns.clusterRoleBinding;

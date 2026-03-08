@@ -1,4 +1,4 @@
-import { Composite } from "@intentius/chant";
+import { Composite, mergeDefaults } from "@intentius/chant";
 import {
   DbInstance,
   RDSDBSubnetGroup,
@@ -66,6 +66,12 @@ export interface RdsInstanceProps {
 
   // ── Protection ────────────────────────────────────────────────
   deletionProtection?: boolean;
+  defaults?: {
+    subnetGroup?: Partial<ConstructorParameters<typeof RDSDBSubnetGroup>[0]>;
+    sg?: Partial<ConstructorParameters<typeof SecurityGroup>[0]>;
+    db?: Partial<ConstructorParameters<typeof DbInstance>[0]>;
+    parameterGroup?: Partial<ConstructorParameters<typeof RDSDBParameterGroup>[0]>;
+  };
 }
 
 export const RdsInstance = Composite<RdsInstanceProps>((props) => {
@@ -84,12 +90,13 @@ export const RdsInstance = Composite<RdsInstanceProps>((props) => {
   const autoMinorVersionUpgrade = props.autoMinorVersionUpgrade ?? true;
   const publiclyAccessible = props.publiclyAccessible ?? false;
   const deletionProtection = props.deletionProtection ?? false;
+  const { defaults: defs } = props;
 
   // DB Subnet Group
-  const subnetGroup = new RDSDBSubnetGroup({
+  const subnetGroup = new RDSDBSubnetGroup(mergeDefaults({
     DBSubnetGroupDescription: "Subnet group for RDS instance",
     SubnetIds: props.subnetIds,
-  });
+  }, defs?.subnetGroup));
 
   // Security Group
   const ingressRules: InstanceType<typeof SecurityGroup_Ingress>[] = [];
@@ -113,20 +120,20 @@ export const RdsInstance = Composite<RdsInstanceProps>((props) => {
     );
   }
 
-  const sg = new SecurityGroup({
+  const sg = new SecurityGroup(mergeDefaults({
     GroupDescription: "Security group for RDS instance",
     VpcId: props.vpcId,
     SecurityGroupIngress: ingressRules.length > 0 ? ingressRules : undefined,
-  });
+  }, defs?.sg));
 
   // Optional Parameter Group
   let parameterGroup: InstanceType<typeof RDSDBParameterGroup> | undefined;
   if (props.parameterGroupFamily) {
-    parameterGroup = new RDSDBParameterGroup({
+    parameterGroup = new RDSDBParameterGroup(mergeDefaults({
       Family: props.parameterGroupFamily,
       Description: "Custom parameter group",
       Parameters: props.parameters,
-    });
+    }, defs?.parameterGroup));
   }
 
   // DB Instance
@@ -164,7 +171,7 @@ export const RdsInstance = Composite<RdsInstanceProps>((props) => {
   }
   if (parameterGroup) dbProps.DBParameterGroupName = parameterGroup.Ref;
 
-  const db = new DbInstance(dbProps);
+  const db = new DbInstance(mergeDefaults(dbProps, defs?.db));
 
   const result: Record<string, any> = { subnetGroup, sg, db };
   if (parameterGroup) result.parameterGroup = parameterGroup;

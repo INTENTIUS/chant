@@ -1,11 +1,6 @@
 // K8s workloads: Azure Monitor Collector for metrics, traces, and logs.
 
 import {
-  DaemonSet,
-  ServiceAccount,
-  ClusterRole,
-  ClusterRoleBinding,
-  ConfigMap,
   Namespace,
   AzureMonitorCollector,
 } from "@intentius/chant-lexicon-k8s";
@@ -25,8 +20,8 @@ const monitor = AzureMonitorCollector({
   clientId: config.monitorClientId,
 });
 
-export const monitorDaemonSet = new DaemonSet(monitor.daemonSet);
-export const monitorClusterRole = new ClusterRole(monitor.clusterRole);
-export const monitorClusterRoleBinding = new ClusterRoleBinding(monitor.clusterRoleBinding);
-export const monitorConfig = new ConfigMap(monitor.configMap);
-export const monitorServiceAccount = new ServiceAccount(monitor.serviceAccount);
+export const monitorDaemonSet = monitor.daemonSet;
+export const monitorClusterRole = monitor.clusterRole;
+export const monitorClusterRoleBinding = monitor.clusterRoleBinding;
+export const monitorConfig = monitor.configMap;
+export const monitorServiceAccount = monitor.serviceAccount;

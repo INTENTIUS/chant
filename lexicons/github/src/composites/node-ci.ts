@@ -1,4 +1,5 @@
-import { Composite } from "@intentius/chant";
+import { Composite, mergeDefaults } from "@intentius/chant";
+import type { Job, Workflow } from "../generated/index";
 
 export interface NodeCIProps {
   nodeVersion?: string;
@@ -6,6 +7,10 @@ export interface NodeCIProps {
   buildScript?: string;
   testScript?: string;
   installCommand?: string;
+  defaults?: {
+    job?: Partial<ConstructorParameters<typeof Job>[0]>;
+    workflow?: Partial<ConstructorParameters<typeof Workflow>[0]>;
+  };
 }
 
 export const NodeCI = Composite<NodeCIProps>((props) => {
@@ -15,6 +20,7 @@ export const NodeCI = Composite<NodeCIProps>((props) => {
     buildScript = "build",
     testScript = "test",
     installCommand,
+    defaults,
   } = props;
 
   const install = installCommand ?? (packageManager === "npm" ? "npm ci" : `${packageManager} install`);
@@ -54,18 +60,18 @@ export const NodeCI = Composite<NodeCIProps>((props) => {
     run: `${run} ${testScript}`,
   });
 
-  const job = new JobClass({
+  const job = new JobClass(mergeDefaults({
     "runs-on": "ubuntu-latest",
     steps: [checkoutStep, setupNodeStep, installStep, buildStep, testStep],
-  });
+  }, defaults?.job));
 
-  const workflow = new WorkflowClass({
+  const workflow = new WorkflowClass(mergeDefaults({
     name: "CI",
     on: {
       push: { branches: ["main"] },
       pull_request: { branches: ["main"] },
     },
-  });
+  }, defaults?.workflow));
 
   return { workflow, job };
 }, "NodeCI");

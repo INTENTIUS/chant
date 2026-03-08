@@ -5,6 +5,9 @@
  * multiple hosts and paths (unlike the single-path Ingress in WebApp).
  */
 
+import { Composite, mergeDefaults } from "@intentius/chant";
+import { Ingress } from "../generated";
+
 export interface SecureIngressHost {
   /** Hostname (e.g., "api.example.com"). */
   hostname: string;
@@ -32,11 +35,16 @@ export interface SecureIngressProps {
   labels?: Record<string, string>;
   /** Namespace for all resources. */
   namespace?: string;
+  /** Per-member defaults for fine-grained overrides. */
+  defaults?: {
+    ingress?: Partial<Record<string, unknown>>;
+    certificate?: Partial<Record<string, unknown>>;
+  };
 }
 
 export interface SecureIngressResult {
-  ingress: Record<string, unknown>;
-  certificate?: Record<string, unknown>;
+  ingress: InstanceType<typeof Ingress>;
+  certificate?: InstanceType<typeof Ingress>; // CRD — use Ingress as proxy Declarable
 }
 
 /**
@@ -60,7 +68,7 @@ export interface SecureIngressResult {
  * });
  * ```
  */
-export function SecureIngress(props: SecureIngressProps): SecureIngressResult {
+export const SecureIngress = Composite<SecureIngressProps>((props) => {
   const {
     name,
     hosts,
@@ -69,6 +77,7 @@ export function SecureIngress(props: SecureIngressProps): SecureIngressResult {
     annotations: extraAnnotations = {},
     labels: extraLabels = {},
     namespace,
+    defaults: defs,
   } = props;
 
   const commonLabels: Record<string, string> = {
@@ -102,7 +111,7 @@ export function SecureIngress(props: SecureIngressProps): SecureIngressResult {
 
   const hasAnnotations = Object.keys(ingressAnnotations).length > 0;
 
-  const ingressProps: Record<string, unknown> = {
+  const ingress = new Ingress(mergeDefaults({
     metadata: {
       name,
       ...(namespace && { namespace }),
@@ -121,14 +130,13 @@ export function SecureIngress(props: SecureIngressProps): SecureIngressResult {
         ],
       }),
     },
-  };
+  }, defs?.ingress));
 
-  const result: SecureIngressResult = {
-    ingress: ingressProps,
-  };
+  const result: Record<string, any> = { ingress };
 
   if (clusterIssuer) {
-    result.certificate = {
+    // Certificate is a CRD — use Ingress constructor as a generic Declarable wrapper
+    result.certificate = new Ingress(mergeDefaults({
       metadata: {
         name: secretName,
         ...(namespace && { namespace }),
@@ -142,8 +150,8 @@ export function SecureIngress(props: SecureIngressProps): SecureIngressResult {
         },
         dnsNames: allHostnames,
       },
-    };
+    }, defs?.certificate));
   }
 
   return result;
-}
+}, "SecureIngress");

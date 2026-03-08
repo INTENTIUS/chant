@@ -1,6 +1,6 @@
 import { describe, test, expect } from "bun:test";
 import { GkeCluster } from "./gke-cluster";
-import { CloudRunService } from "./cloud-run-service";
+import { CloudRunServiceComposite } from "./cloud-run-service";
 import { CloudSqlInstance } from "./cloud-sql-instance";
 import { GcsBucket } from "./gcs-bucket";
 import { VpcNetwork } from "./vpc-network";
@@ -9,6 +9,11 @@ import { CloudFunctionWithTrigger } from "./cloud-function";
 import { PrivateService } from "./private-service";
 import { ManagedCertificate } from "./managed-certificate";
 import { SecureProject } from "./secure-project";
+
+/** Helper to extract props from a Declarable member. */
+function p(member: unknown): Record<string, any> {
+  return (member as any).props;
+}
 
 // ── GkeCluster ──────────────────────────────────────────────────────
 
@@ -21,60 +26,60 @@ describe("GkeCluster", () => {
 
   test("includes common labels", () => {
     const result = GkeCluster({ name: "my-cluster" });
-    const labels = result.cluster.metadata as any;
-    expect(labels.labels["app.kubernetes.io/managed-by"]).toBe("chant");
+    const meta = p(result.cluster).metadata;
+    expect(meta.labels["app.kubernetes.io/managed-by"]).toBe("chant");
   });
 
   test("node pool references cluster", () => {
     const result = GkeCluster({ name: "my-cluster" });
-    expect((result.nodePool as any).clusterRef.name).toBe("my-cluster");
+    expect(p(result.nodePool).clusterRef.name).toBe("my-cluster");
   });
 
   test("respects maxNodeCount", () => {
     const result = GkeCluster({ name: "c", maxNodeCount: 20 });
-    expect((result.nodePool as any).autoscaling.maxNodeCount).toBe(20);
+    expect(p(result.nodePool).autoscaling.maxNodeCount).toBe(20);
   });
 
   test("sets namespace when provided", () => {
     const result = GkeCluster({ name: "c", namespace: "infra" });
-    expect((result.cluster.metadata as any).namespace).toBe("infra");
-    expect((result.nodePool.metadata as any).namespace).toBe("infra");
+    expect(p(result.cluster).metadata.namespace).toBe("infra");
+    expect(p(result.nodePool).metadata.namespace).toBe("infra");
   });
 
   test("enables workload identity by default", () => {
     const result = GkeCluster({ name: "c" });
-    expect((result.cluster as any).workloadIdentityConfig).toBeDefined();
-    expect((result.nodePool as any).nodeConfig.workloadMetadataConfig).toBeDefined();
+    expect(p(result.cluster).workloadIdentityConfig).toBeDefined();
+    expect(p(result.nodePool).nodeConfig.workloadMetadataConfig).toBeDefined();
   });
 });
 
 // ── CloudRunService ─────────────────────────────────────────────────
 
-describe("CloudRunService", () => {
+describe("CloudRunServiceComposite", () => {
   test("returns service", () => {
-    const result = CloudRunService({ name: "api", image: "gcr.io/p/api:1" });
+    const result = CloudRunServiceComposite({ name: "api", image: "gcr.io/p/api:1" });
     expect(result.service).toBeDefined();
   });
 
   test("no public IAM by default", () => {
-    const result = CloudRunService({ name: "api", image: "gcr.io/p/api:1" });
+    const result = CloudRunServiceComposite({ name: "api", image: "gcr.io/p/api:1" });
     expect(result.publicIam).toBeUndefined();
   });
 
   test("creates public IAM when requested", () => {
-    const result = CloudRunService({
+    const result = CloudRunServiceComposite({
       name: "api",
       image: "gcr.io/p/api:1",
       publicAccess: true,
     });
     expect(result.publicIam).toBeDefined();
-    expect((result.publicIam as any).member).toBe("allUsers");
-    expect((result.publicIam as any).role).toBe("roles/run.invoker");
+    expect(p(result.publicIam).member).toBe("allUsers");
+    expect(p(result.publicIam).role).toBe("roles/run.invoker");
   });
 
   test("sets custom port", () => {
-    const result = CloudRunService({ name: "api", image: "img", port: 3000 });
-    const containers = (result.service as any).template.containers;
+    const result = CloudRunServiceComposite({ name: "api", image: "img", port: 3000 });
+    const containers = p(result.service).template.containers;
     expect(containers[0].ports[0].containerPort).toBe(3000);
   });
 });
@@ -91,22 +96,22 @@ describe("CloudSqlInstance", () => {
 
   test("database references instance", () => {
     const result = CloudSqlInstance({ name: "db" });
-    expect((result.database as any).instanceRef.name).toBe("db");
+    expect(p(result.database).instanceRef.name).toBe("db");
   });
 
   test("default database version is POSTGRES_15", () => {
     const result = CloudSqlInstance({ name: "db" });
-    expect((result.instance as any).databaseVersion).toBe("POSTGRES_15");
+    expect(p(result.instance).databaseVersion).toBe("POSTGRES_15");
   });
 
   test("enables backups by default", () => {
     const result = CloudSqlInstance({ name: "db" });
-    expect((result.instance as any).settings.backupConfiguration.enabled).toBe(true);
+    expect(p(result.instance).settings.backupConfiguration.enabled).toBe(true);
   });
 
   test("high availability when requested", () => {
     const result = CloudSqlInstance({ name: "db", highAvailability: true });
-    expect((result.instance as any).settings.availabilityType).toBe("REGIONAL");
+    expect(p(result.instance).settings.availabilityType).toBe("REGIONAL");
   });
 });
 
@@ -120,7 +125,7 @@ describe("GcsBucket", () => {
 
   test("uniform access enabled by default", () => {
     const result = GcsBucket({ name: "my-bucket" });
-    expect((result.bucket as any).uniformBucketLevelAccess).toBe(true);
+    expect(p(result.bucket).uniformBucketLevelAccess).toBe(true);
   });
 
   test("adds lifecycle rules", () => {
@@ -128,8 +133,8 @@ describe("GcsBucket", () => {
       name: "my-bucket",
       lifecycleDeleteAfterDays: 30,
     });
-    expect((result.bucket as any).lifecycleRule).toHaveLength(1);
-    expect((result.bucket as any).lifecycleRule[0].condition.age).toBe(30);
+    expect(p(result.bucket).lifecycleRule).toHaveLength(1);
+    expect(p(result.bucket).lifecycleRule[0].condition.age).toBe(30);
   });
 
   test("adds encryption when kmsKeyName provided", () => {
@@ -137,17 +142,17 @@ describe("GcsBucket", () => {
       name: "my-bucket",
       kmsKeyName: "projects/p/locations/l/keyRings/kr/cryptoKeys/k",
     });
-    expect((result.bucket as any).encryption).toBeDefined();
+    expect(p(result.bucket).encryption).toBeDefined();
   });
 
   test("versioning disabled by default", () => {
     const result = GcsBucket({ name: "my-bucket" });
-    expect((result.bucket as any).versioning).toBeUndefined();
+    expect(p(result.bucket).versioning).toBeUndefined();
   });
 
   test("versioning enabled when requested", () => {
     const result = GcsBucket({ name: "my-bucket", versioning: true });
-    expect((result.bucket as any).versioning.enabled).toBe(true);
+    expect(p(result.bucket).versioning.enabled).toBe(true);
   });
 });
 
@@ -166,8 +171,8 @@ describe("VpcNetwork", () => {
         { name: "app", ipCidrRange: "10.0.0.0/24", region: "us-central1" },
       ],
     });
-    expect(result.subnets).toHaveLength(1);
-    expect((result.subnets[0] as any).ipCidrRange).toBe("10.0.0.0/24");
+    expect(result.subnet_app).toBeDefined();
+    expect(p(result.subnet_app).ipCidrRange).toBe("10.0.0.0/24");
   });
 
   test("subnet references network", () => {
@@ -175,7 +180,7 @@ describe("VpcNetwork", () => {
       name: "my-vpc",
       subnets: [{ name: "app", ipCidrRange: "10.0.0.0/24", region: "us-central1" }],
     });
-    expect((result.subnets[0] as any).networkRef.name).toBe("my-vpc");
+    expect(p(result.subnet_app).networkRef.name).toBe("my-vpc");
   });
 
   test("creates internal firewall by default", () => {
@@ -183,8 +188,8 @@ describe("VpcNetwork", () => {
       name: "my-vpc",
       subnets: [{ name: "app", ipCidrRange: "10.0.0.0/24", region: "us-central1" }],
     });
-    expect(result.firewalls.length).toBeGreaterThanOrEqual(1);
-    expect((result.firewalls[0] as any).metadata.name).toBe("my-vpc-allow-internal");
+    expect(result.firewallAllowInternal).toBeDefined();
+    expect(p(result.firewallAllowInternal).metadata.name).toBe("my-vpc-allow-internal");
   });
 
   test("creates NAT when enabled", () => {
@@ -195,7 +200,7 @@ describe("VpcNetwork", () => {
     });
     expect(result.router).toBeDefined();
     expect(result.routerNat).toBeDefined();
-    expect((result.routerNat as any).routerRef.name).toBe("my-vpc-router");
+    expect(p(result.routerNat).routerRef.name).toBe("my-vpc-router");
   });
 
   test("no NAT by default", () => {
@@ -206,9 +211,8 @@ describe("VpcNetwork", () => {
 
   test("IAP SSH firewall when requested", () => {
     const result = VpcNetwork({ name: "my-vpc", allowIapSsh: true });
-    const iapFw = result.firewalls.find((f: any) => (f.metadata as any).name.includes("iap-ssh"));
-    expect(iapFw).toBeDefined();
-    expect((iapFw as any).sourceRanges).toContain("35.235.240.0/20");
+    expect(result.firewallAllowIapSsh).toBeDefined();
+    expect(p(result.firewallAllowIapSsh).sourceRanges).toContain("35.235.240.0/20");
   });
 });
 
@@ -223,7 +227,7 @@ describe("PubSubPipeline", () => {
 
   test("subscription references topic", () => {
     const result = PubSubPipeline({ name: "events" });
-    expect((result.subscription as any).topicRef.name).toBe("events-topic");
+    expect(p(result.subscription).topicRef.name).toBe("events-topic");
   });
 
   test("no DLQ by default", () => {
@@ -234,8 +238,8 @@ describe("PubSubPipeline", () => {
   test("creates DLQ when enabled", () => {
     const result = PubSubPipeline({ name: "events", enableDeadLetterQueue: true });
     expect(result.deadLetterTopic).toBeDefined();
-    expect((result.deadLetterTopic as any).metadata.name).toBe("events-dlq");
-    expect((result.subscription as any).deadLetterPolicy.deadLetterTopicRef.name).toBe("events-dlq");
+    expect(p(result.deadLetterTopic).metadata.name).toBe("events-dlq");
+    expect(p(result.subscription).deadLetterPolicy.deadLetterTopicRef.name).toBe("events-dlq");
   });
 
   test("creates subscriber IAM when service account provided", () => {
@@ -244,18 +248,18 @@ describe("PubSubPipeline", () => {
       subscriberServiceAccount: "worker@project.iam.gserviceaccount.com",
     });
     expect(result.subscriberIam).toBeDefined();
-    expect((result.subscriberIam as any).role).toBe("roles/pubsub.subscriber");
+    expect(p(result.subscriberIam).role).toBe("roles/pubsub.subscriber");
   });
 
   test("sets namespace when provided", () => {
     const result = PubSubPipeline({ name: "events", namespace: "infra" });
-    expect((result.topic as any).metadata.namespace).toBe("infra");
-    expect((result.subscription as any).metadata.namespace).toBe("infra");
+    expect(p(result.topic).metadata.namespace).toBe("infra");
+    expect(p(result.subscription).metadata.namespace).toBe("infra");
   });
 
   test("includes managed-by label", () => {
     const result = PubSubPipeline({ name: "events" });
-    expect((result.topic as any).metadata.labels["app.kubernetes.io/managed-by"]).toBe("chant");
+    expect(p(result.topic).metadata.labels["app.kubernetes.io/managed-by"]).toBe("chant");
   });
 });
 
@@ -289,8 +293,8 @@ describe("CloudFunctionWithTrigger", () => {
       publicAccess: true,
     });
     expect(result.invokerIam).toBeDefined();
-    expect((result.invokerIam as any).member).toBe("allUsers");
-    expect((result.invokerIam as any).role).toBe("roles/cloudfunctions.invoker");
+    expect(p(result.invokerIam).member).toBe("allUsers");
+    expect(p(result.invokerIam).role).toBe("roles/cloudfunctions.invoker");
   });
 
   test("sets runtime and entry point", () => {
@@ -299,8 +303,8 @@ describe("CloudFunctionWithTrigger", () => {
       runtime: "python312",
       entryPoint: "main",
     });
-    expect((result.function as any).runtime).toBe("python312");
-    expect((result.function as any).entryPoint).toBe("main");
+    expect(p(result.function).runtime).toBe("python312");
+    expect(p(result.function).entryPoint).toBe("main");
   });
 
   test("configures pubsub trigger", () => {
@@ -311,8 +315,8 @@ describe("CloudFunctionWithTrigger", () => {
       triggerType: "pubsub",
       triggerTopic: "my-topic",
     });
-    expect((result.function as any).eventTrigger).toBeDefined();
-    expect((result.function as any).eventTrigger.pubsubTopic).toBe("my-topic");
+    expect(p(result.function).eventTrigger).toBeDefined();
+    expect(p(result.function).eventTrigger.pubsubTopic).toBe("my-topic");
   });
 });
 
@@ -327,12 +331,12 @@ describe("PrivateService", () => {
 
   test("address references network", () => {
     const result = PrivateService({ name: "db", networkName: "my-vpc" });
-    expect((result.globalAddress as any).networkRef.name).toBe("my-vpc");
+    expect(p(result.globalAddress).networkRef.name).toBe("my-vpc");
   });
 
   test("connection references network", () => {
     const result = PrivateService({ name: "db", networkName: "my-vpc" });
-    expect((result.serviceConnection as any).networkRef.name).toBe("my-vpc");
+    expect(p(result.serviceConnection).networkRef.name).toBe("my-vpc");
   });
 
   test("no DNS by default", () => {
@@ -343,7 +347,7 @@ describe("PrivateService", () => {
   test("creates DNS zone when enabled", () => {
     const result = PrivateService({ name: "db", networkName: "my-vpc", enableDns: true });
     expect(result.dnsZone).toBeDefined();
-    expect((result.dnsZone as any).visibility).toBe("private");
+    expect(p(result.dnsZone).visibility).toBe("private");
   });
 });
 
@@ -357,7 +361,7 @@ describe("ManagedCertificate", () => {
 
   test("certificate includes domains", () => {
     const result = ManagedCertificate({ name: "my-cert", domains: ["example.com", "www.example.com"] });
-    expect((result.certificate as any).managed.domains).toEqual(["example.com", "www.example.com"]);
+    expect(p(result.certificate).managed.domains).toEqual(["example.com", "www.example.com"]);
   });
 
   test("no proxy by default", () => {
@@ -375,7 +379,7 @@ describe("ManagedCertificate", () => {
     });
     expect(result.targetHttpsProxy).toBeDefined();
     expect(result.urlMap).toBeDefined();
-    expect((result.urlMap as any).defaultService.backendServiceRef.name).toBe("my-backend");
+    expect(p(result.urlMap).defaultService.backendServiceRef.name).toBe("my-backend");
   });
 });
 
@@ -386,19 +390,26 @@ describe("SecureProject", () => {
     const result = SecureProject({ name: "my-project" });
     expect(result.project).toBeDefined();
     expect(result.auditConfig).toBeDefined();
-    expect(result.services.length).toBeGreaterThan(0);
+    // Default 5 APIs become service_compute, service_container, etc.
+    expect(result.service_compute).toBeDefined();
+    expect(result.service_container).toBeDefined();
+    expect(result.service_iam).toBeDefined();
+    expect(result.service_logging).toBeDefined();
+    expect(result.service_monitoring).toBeDefined();
   });
 
   test("audit config covers all services", () => {
     const result = SecureProject({ name: "my-project" });
-    expect((result.auditConfig as any).service).toBe("allServices");
-    expect((result.auditConfig as any).auditLogConfigs.length).toBe(3);
+    expect(p(result.auditConfig).service).toBe("allServices");
+    expect(p(result.auditConfig).auditLogConfigs.length).toBe(3);
   });
 
   test("enables default APIs", () => {
     const result = SecureProject({ name: "my-project" });
-    expect(result.services.length).toBe(5);
-    expect(result.services.some((s: any) => s.resourceID === "compute.googleapis.com")).toBe(true);
+    // 5 services as individual members
+    const serviceKeys = Object.keys(result.members).filter((k) => k.startsWith("service_"));
+    expect(serviceKeys.length).toBe(5);
+    expect(p(result.service_compute).resourceID).toBe("compute.googleapis.com");
   });
 
   test("no owner IAM by default", () => {
@@ -412,8 +423,8 @@ describe("SecureProject", () => {
       owner: "user:admin@example.com",
     });
     expect(result.ownerIam).toBeDefined();
-    expect((result.ownerIam as any).member).toBe("user:admin@example.com");
-    expect((result.ownerIam as any).role).toBe("roles/owner");
+    expect(p(result.ownerIam).member).toBe("user:admin@example.com");
+    expect(p(result.ownerIam).role).toBe("roles/owner");
   });
 
   test("creates logging sink when destination provided", () => {
@@ -422,7 +433,7 @@ describe("SecureProject", () => {
       loggingSinkDestination: "bigquery.googleapis.com/projects/my-project/datasets/audit_logs",
     });
     expect(result.loggingSink).toBeDefined();
-    expect((result.loggingSink as any).destination).toContain("bigquery");
+    expect(p(result.loggingSink).destination).toContain("bigquery");
   });
 
   test("no logging sink by default", () => {

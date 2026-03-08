@@ -5,7 +5,13 @@
  * managed disk, and a Network Security Group.
  */
 
-import { markAsAzureResource } from "./from-arm";
+import { Composite, mergeDefaults } from "@intentius/chant";
+import {
+  VirtualMachine,
+  NetworkInterface,
+  NetworkSecurityGroup,
+  PublicIPAddress,
+} from "../generated";
 
 export interface VmLinuxProps {
   /** Virtual machine name. */
@@ -24,18 +30,25 @@ export interface VmLinuxProps {
   publicIp?: boolean;
   /** Resource tags. */
   tags?: Record<string, string>;
+  /** Per-member defaults. */
+  defaults?: {
+    virtualMachine?: Partial<ConstructorParameters<typeof VirtualMachine>[0]>;
+    nic?: Partial<ConstructorParameters<typeof NetworkInterface>[0]>;
+    nsg?: Partial<ConstructorParameters<typeof NetworkSecurityGroup>[0]>;
+    publicIpAddress?: Partial<ConstructorParameters<typeof PublicIPAddress>[0]>;
+  };
 }
 
 export interface VmLinuxResult {
-  virtualMachine: Record<string, unknown>;
-  nic: Record<string, unknown>;
-  nsg: Record<string, unknown>;
-  publicIpAddress?: Record<string, unknown>;
+  virtualMachine: InstanceType<typeof VirtualMachine>;
+  nic: InstanceType<typeof NetworkInterface>;
+  nsg: InstanceType<typeof NetworkSecurityGroup>;
+  publicIpAddress?: InstanceType<typeof PublicIPAddress>;
 }
 
 /**
- * Create a VmLinux composite — returns property objects for
- * a Linux VM, NIC, NSG, and optional Public IP.
+ * Create a VmLinux composite — returns a Linux VM, NIC, NSG,
+ * and optional Public IP.
  *
  * @example
  * ```ts
@@ -53,7 +66,7 @@ export interface VmLinuxResult {
  * export { virtualMachine, nic, nsg, publicIpAddress };
  * ```
  */
-export function VmLinux(props: VmLinuxProps): VmLinuxResult {
+export const VmLinux = Composite<VmLinuxProps>((props) => {
   const {
     name,
     vmSize,
@@ -63,6 +76,7 @@ export function VmLinux(props: VmLinuxProps): VmLinuxResult {
     location = "[resourceGroup().location]",
     publicIp = false,
     tags = {},
+    defaults,
   } = props;
 
   const commonTags: Record<string, string> = {
@@ -74,30 +88,26 @@ export function VmLinux(props: VmLinuxProps): VmLinuxResult {
   const nicName = `${name}-nic`;
   const pipName = `${name}-pip`;
 
-  const nsg: Record<string, unknown> = {
-    type: "Microsoft.Network/networkSecurityGroups",
-    apiVersion: "2023-05-01",
+  const nsg = new NetworkSecurityGroup(mergeDefaults({
     name: nsgName,
     location,
     tags: commonTags,
-    properties: {
-      securityRules: [
-        {
-          name: "AllowSSH",
-          properties: {
-            priority: 1000,
-            direction: "Inbound",
-            access: "Allow",
-            protocol: "Tcp",
-            sourcePortRange: "*",
-            destinationPortRange: "22",
-            sourceAddressPrefix: "*",
-            destinationAddressPrefix: "*",
-          },
+    securityRules: [
+      {
+        name: "AllowSSH",
+        properties: {
+          priority: 1000,
+          direction: "Inbound",
+          access: "Allow",
+          protocol: "Tcp",
+          sourcePortRange: "*",
+          destinationPortRange: "22",
+          sourceAddressPrefix: "*",
+          destinationAddressPrefix: "*",
         },
-      ],
-    },
-  };
+      },
+    ],
+  }, defaults?.nsg), { apiVersion: "2023-05-01" });
 
   const ipConfiguration: Record<string, unknown> = {
     name: "ipconfig1",
@@ -114,92 +124,75 @@ export function VmLinux(props: VmLinuxProps): VmLinuxResult {
     },
   };
 
-  const nic: Record<string, unknown> = {
-    type: "Microsoft.Network/networkInterfaces",
-    apiVersion: "2023-05-01",
+  const nic = new NetworkInterface(mergeDefaults({
     name: nicName,
     location,
     tags: commonTags,
-    properties: {
-      ipConfigurations: [ipConfiguration],
-      networkSecurityGroup: {
-        id: `[resourceId('Microsoft.Network/networkSecurityGroups', '${nsgName}')]`,
-      },
+    ipConfigurations: [ipConfiguration],
+    networkSecurityGroup: {
+      id: `[resourceId('Microsoft.Network/networkSecurityGroups', '${nsgName}')]`,
     },
-  };
+  }, defaults?.nic), { apiVersion: "2023-05-01" });
 
-  const virtualMachine: Record<string, unknown> = {
-    type: "Microsoft.Compute/virtualMachines",
-    apiVersion: "2023-07-01",
+  const virtualMachine = new VirtualMachine(mergeDefaults({
     name,
     location,
     tags: commonTags,
-    properties: {
-      hardwareProfile: {
-        vmSize,
-      },
-      osProfile: {
-        computerName: name,
-        adminUsername,
-        linuxConfiguration: {
-          disablePasswordAuthentication: true,
-          ssh: {
-            publicKeys: [
-              {
-                path: `/home/${adminUsername}/.ssh/authorized_keys`,
-                keyData: sshPublicKey,
-              },
-            ],
-          },
+    hardwareProfile: {
+      vmSize,
+    },
+    osProfile: {
+      computerName: name,
+      adminUsername,
+      linuxConfiguration: {
+        disablePasswordAuthentication: true,
+        ssh: {
+          publicKeys: [
+            {
+              path: `/home/${adminUsername}/.ssh/authorized_keys`,
+              keyData: sshPublicKey,
+            },
+          ],
         },
-      },
-      storageProfile: {
-        imageReference: {
-          publisher: "Canonical",
-          offer: "0001-com-ubuntu-server-jammy",
-          sku: "22_04-lts-gen2",
-          version: "latest",
-        },
-        osDisk: {
-          createOption: "FromImage",
-          managedDisk: {
-            storageAccountType: "Premium_LRS",
-          },
-        },
-      },
-      networkProfile: {
-        networkInterfaces: [
-          {
-            id: `[resourceId('Microsoft.Network/networkInterfaces', '${nicName}')]`,
-          },
-        ],
       },
     },
-  };
+    storageProfile: {
+      imageReference: {
+        publisher: "Canonical",
+        offer: "0001-com-ubuntu-server-jammy",
+        sku: "22_04-lts-gen2",
+        version: "latest",
+      },
+      osDisk: {
+        createOption: "FromImage",
+        managedDisk: {
+          storageAccountType: "Premium_LRS",
+        },
+      },
+    },
+    networkProfile: {
+      networkInterfaces: [
+        {
+          id: `[resourceId('Microsoft.Network/networkInterfaces', '${nicName}')]`,
+        },
+      ],
+    },
+  }, defaults?.virtualMachine), { apiVersion: "2023-07-01" });
 
-  markAsAzureResource(nsg);
-  markAsAzureResource(nic);
-  markAsAzureResource(virtualMachine);
-
-  const result: VmLinuxResult = { virtualMachine, nic, nsg };
+  const result: Record<string, any> = { virtualMachine, nic, nsg };
 
   if (publicIp) {
-    result.publicIpAddress = {
-      type: "Microsoft.Network/publicIPAddresses",
-      apiVersion: "2023-05-01",
+    result.publicIpAddress = new PublicIPAddress(mergeDefaults({
       name: pipName,
       location,
       tags: commonTags,
       sku: {
         name: "Standard",
       },
-      properties: {
-        publicIPAllocationMethod: "Static",
-        publicIPAddressVersion: "IPv4",
-      },
-    };
-    markAsAzureResource(result.publicIpAddress);
+      publicIPAllocationMethod: "Static",
+      publicIPAddressVersion: "IPv4",
+    }, defaults?.publicIpAddress), { apiVersion: "2023-05-01" });
   }
 
-  return result;
-}
+  return result as any;
+}, "VmLinux");

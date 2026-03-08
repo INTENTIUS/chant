@@ -6,6 +6,9 @@
  * where database credentials and URLs are supplied via environment variables.
  */
 
+import { Composite, mergeDefaults } from "@intentius/chant";
+import { FlywayProject, FlywayConfig, Environment } from "../generated";
+
 export interface CiPipelineProjectProps {
   /** Project name — used as the Flyway project identifier. */
   name: string;
@@ -23,21 +26,18 @@ export interface CiPipelineProjectProps {
   schemas?: string[];
   /** Migration locations (default: ["filesystem:sql"]). */
   locations?: string[];
-}
-
-export interface CiPipelineProjectResult {
-  /** Props for a FlywayProject resource. */
-  project: Record<string, unknown>;
-  /** Props for the CI Environment resource with `${env.*}` references. */
-  environment: Record<string, unknown>;
-  /** Props for a FlywayConfig resource with strict validation settings. */
-  config: Record<string, unknown>;
+  /** Per-member defaults for customizing individual resources. */
+  defaults?: {
+    project?: Partial<ConstructorParameters<typeof FlywayProject>[0]>;
+    environment?: Partial<ConstructorParameters<typeof Environment>[0]>;
+    config?: Partial<ConstructorParameters<typeof FlywayConfig>[0]>;
+  };
 }
 
 /**
- * Create a CiPipelineProject composite — returns props for a FlywayProject,
- * an Environment resource with `${env.*}` credential references, and a
- * FlywayConfig with strict validation suitable for CI pipelines.
+ * Create a CiPipelineProject composite — returns declarable instances for
+ * a FlywayProject, an Environment resource with `${env.*}` credential
+ * references, and a FlywayConfig with strict validation suitable for CI pipelines.
  *
  * @example
  * ```ts
@@ -54,7 +54,7 @@ export interface CiPipelineProjectResult {
  * export { project, environment, config };
  * ```
  */
-export function CiPipelineProject(props: CiPipelineProjectProps): CiPipelineProjectResult {
+export const CiPipelineProject = Composite<CiPipelineProjectProps>((props) => {
   const {
     name,
     databaseType,
@@ -62,21 +62,22 @@ export function CiPipelineProject(props: CiPipelineProjectProps): CiPipelineProj
     environmentName = "ci",
     schemas = ["public"],
     locations = ["filesystem:sql"],
+    defaults: defs,
   } = props;
 
-  const project: Record<string, unknown> = {
+  const project = new FlywayProject(mergeDefaults({
     name,
-  };
+  }, defs?.project));
 
-  const environment: Record<string, unknown> = {
+  const environment = new Environment(mergeDefaults({
     displayName: environmentName,
     url: `\${env.${envVarPrefix}_URL}`,
     user: `\${env.${envVarPrefix}_USER}`,
     password: `\${env.${envVarPrefix}_PASSWORD}`,
     schemas,
-  };
+  }, defs?.environment));
 
-  const config: Record<string, unknown> = {
+  const config = new FlywayConfig(mergeDefaults({
     defaultSchema: schemas[0],
     locations,
     databaseType,
@@ -85,7 +86,7 @@ export function CiPipelineProject(props: CiPipelineProjectProps): CiPipelineProj
     cleanDisabled: true,
     baselineOnMigrate: false,
     outOfOrder: false,
-  };
+  }, defs?.config));
 
   return { project, environment, config };
-}
+}, "CiPipelineProject");

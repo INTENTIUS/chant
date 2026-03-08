@@ -783,3 +783,85 @@ describe("RdsInstance", () => {
     expect(dbProps.VPCSecurityGroups[0]).toBeInstanceOf(AttrRef);
   });
 });
+
+describe("per-member defaults", () => {
+  test("LambdaFunction: role defaults add extra ManagedPolicyArns", () => {
+    const instance = LambdaFunction({
+      ...baseProps,
+      defaults: {
+        role: { ManagedPolicyArns: ["arn:aws:iam::aws:policy/Extra"] },
+      },
+    });
+    const roleProps = (instance.role as any).props;
+    // Arrays concatenate: base [BasicExecution] + override [Extra]
+    expect(roleProps.ManagedPolicyArns).toContain(
+      "arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole",
+    );
+    expect(roleProps.ManagedPolicyArns).toContain("arn:aws:iam::aws:policy/Extra");
+  });
+
+  test("LambdaFunction: func defaults override Timeout", () => {
+    const instance = LambdaFunction({
+      ...baseProps,
+      defaults: { func: { Timeout: 120 } },
+    });
+    const funcProps = (instance.func as any).props;
+    expect(funcProps.Timeout).toBe(120);
+  });
+
+  test("LambdaApi: permission defaults are applied", () => {
+    const instance = LambdaApi({
+      ...baseProps,
+      defaults: {
+        permission: { Action: "lambda:InvokeFunction" },
+      },
+    });
+    const permProps = (instance.permission as any).props;
+    expect(permProps.Action).toBe("lambda:InvokeFunction");
+  });
+
+  test("LambdaSqs: queue defaults are applied", () => {
+    const instance = LambdaSqs({
+      ...baseProps,
+      defaults: {
+        queue: { VisibilityTimeout: 60 },
+      },
+    });
+    const queueProps = (instance.queue as any).props;
+    expect(queueProps.VisibilityTimeout).toBe(60);
+  });
+
+  test("VpcDefault: vpc defaults are applied", () => {
+    const instance = VpcDefault({
+      defaults: {
+        vpc: { EnableDnsHostnames: false },
+      },
+    });
+    const vpcProps = (instance.vpc as any).props;
+    // Scalar override wins
+    expect(vpcProps.EnableDnsHostnames).toBe(false);
+    expect(vpcProps.EnableDnsSupport).toBe(true);
+  });
+
+  test("RdsInstance: db defaults are applied", () => {
+    const instance = RdsInstance({
+      vpcId: "vpc-123",
+      subnetIds: ["subnet-1", "subnet-2"],
+      masterPassword: "secret",
+      defaults: {
+        db: { DeletionProtection: true },
+      },
+    });
+    const dbProps = (instance.db as any).props;
+    expect(dbProps.DeletionProtection).toBe(true);
+  });
+
+  test("defaults with no overrides leaves behavior unchanged", () => {
+    const withoutDefaults = LambdaFunction(baseProps);
+    const withDefaults = LambdaFunction({ ...baseProps, defaults: {} });
+    const funcPropsA = (withoutDefaults.func as any).props;
+    const funcPropsB = (withDefaults.func as any).props;
+    expect(funcPropsA.FunctionName).toBe(funcPropsB.FunctionName);
+    expect(funcPropsA.Timeout).toBe(funcPropsB.Timeout);
+  });
+});

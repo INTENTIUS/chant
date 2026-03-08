@@ -2,6 +2,13 @@
  * PrivateService composite — GlobalAddress + ServiceNetworkingConnection + optional DNS.
  */
 
+import { Composite, mergeDefaults } from "@intentius/chant";
+import {
+  ComputeAddress,
+  ServicenetworkingConnection,
+  DNSManagedZone,
+} from "../generated";
+
 export interface PrivateServiceProps {
   /** Service name. */
   name: string;
@@ -23,15 +30,15 @@ export interface PrivateServiceProps {
   labels?: Record<string, string>;
   /** Namespace for all resources. */
   namespace?: string;
+  /** Per-member defaults for customizing individual resources. */
+  defaults?: {
+    globalAddress?: Partial<ConstructorParameters<typeof ComputeAddress>[0]>;
+    serviceConnection?: Partial<ConstructorParameters<typeof ServicenetworkingConnection>[0]>;
+    dnsZone?: Partial<ConstructorParameters<typeof DNSManagedZone>[0]>;
+  };
 }
 
-export interface PrivateServiceResult {
-  globalAddress: Record<string, unknown>;
-  serviceConnection: Record<string, unknown>;
-  dnsZone?: Record<string, unknown>;
-}
-
-export function PrivateService(props: PrivateServiceProps): PrivateServiceResult {
+export const PrivateService = Composite<PrivateServiceProps>((props) => {
   const {
     name,
     networkName,
@@ -43,6 +50,7 @@ export function PrivateService(props: PrivateServiceProps): PrivateServiceResult
     dnsSuffix = "internal.",
     labels: extraLabels = {},
     namespace,
+    defaults: defs,
   } = props;
 
   const commonLabels: Record<string, string> = {
@@ -51,7 +59,7 @@ export function PrivateService(props: PrivateServiceProps): PrivateServiceResult
     ...extraLabels,
   };
 
-  const globalAddress: Record<string, unknown> = {
+  const globalAddress = new ComputeAddress(mergeDefaults({
     metadata: {
       name: `${name}-address`,
       ...(namespace && { namespace }),
@@ -61,9 +69,9 @@ export function PrivateService(props: PrivateServiceProps): PrivateServiceResult
     purpose,
     prefixLength,
     networkRef: { name: networkName },
-  };
+  } as Record<string, unknown>, defs?.globalAddress));
 
-  const serviceConnection: Record<string, unknown> = {
+  const serviceConnection = new ServicenetworkingConnection(mergeDefaults({
     metadata: {
       name: `${name}-connection`,
       ...(namespace && { namespace }),
@@ -72,12 +80,12 @@ export function PrivateService(props: PrivateServiceProps): PrivateServiceResult
     networkRef: { name: networkName },
     service: "servicenetworking.googleapis.com",
     reservedPeeringRanges: [{ name: `${name}-address` }],
-  };
+  } as Record<string, unknown>, defs?.serviceConnection));
 
-  const result: PrivateServiceResult = { globalAddress, serviceConnection };
+  const result: Record<string, any> = { globalAddress, serviceConnection };
 
   if (enableDns) {
-    result.dnsZone = {
+    result.dnsZone = new DNSManagedZone(mergeDefaults({
       metadata: {
         name: dnsZoneName ?? `${name}-dns`,
         ...(namespace && { namespace }),
@@ -88,8 +96,8 @@ export function PrivateService(props: PrivateServiceProps): PrivateServiceResult
       privateVisibilityConfig: {
         networks: [{ networkRef: { name: networkName } }],
       },
-    };
+    } as Record<string, unknown>, defs?.dnsZone));
   }
 
   return result;
-}
+}, "PrivateService");

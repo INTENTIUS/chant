@@ -243,3 +243,32 @@ export function resource<T extends Declarable, P>(
 ): T {
   return new Type(props, attributes);
 }
+
+/**
+ * Shallow-merges override values into a base props object.
+ *
+ * Merge semantics:
+ * - `undefined` values in overrides are skipped
+ * - Arrays: concatenated (base + overrides), matching `propagate()` semantics
+ * - Scalars / objects: override wins
+ *
+ * No deep merge — too dangerous with IaC props where nested objects
+ * (e.g. policy documents) should be replaced wholesale.
+ */
+export function mergeDefaults<T extends Record<string, unknown>>(
+  base: T,
+  overrides?: Partial<T>,
+): T {
+  if (!overrides) return base;
+  const result = { ...base };
+  for (const [key, value] of Object.entries(overrides)) {
+    if (value === undefined) continue;
+    const existing = result[key as keyof T];
+    if (Array.isArray(existing) && Array.isArray(value)) {
+      (result as any)[key] = [...existing, ...value];
+    } else {
+      (result as any)[key] = value;
+    }
+  }
+  return result;
+}

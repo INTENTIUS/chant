@@ -2,6 +2,9 @@
  * CloudSqlInstance composite — SQLInstance + SQLDatabase + SQLUser.
  */
 
+import { Composite, mergeDefaults } from "@intentius/chant";
+import { SQLInstance, SQLDatabase, SQLUser } from "../generated";
+
 export interface CloudSqlInstanceProps {
   /** Instance name. */
   name: string;
@@ -27,12 +30,12 @@ export interface CloudSqlInstanceProps {
   labels?: Record<string, string>;
   /** Namespace for all resources. */
   namespace?: string;
-}
-
-export interface CloudSqlInstanceResult {
-  instance: Record<string, unknown>;
-  database: Record<string, unknown>;
-  user: Record<string, unknown>;
+  /** Per-member defaults for customizing individual resources. */
+  defaults?: {
+    instance?: Partial<ConstructorParameters<typeof SQLInstance>[0]>;
+    database?: Partial<ConstructorParameters<typeof SQLDatabase>[0]>;
+    user?: Partial<ConstructorParameters<typeof SQLUser>[0]>;
+  };
 }
 
 /**
@@ -49,7 +52,7 @@ export interface CloudSqlInstanceResult {
  * });
  * ```
  */
-export function CloudSqlInstance(props: CloudSqlInstanceProps): CloudSqlInstanceResult {
+export const CloudSqlInstance = Composite<CloudSqlInstanceProps>((props) => {
   const {
     name,
     databaseVersion = "POSTGRES_15",
@@ -63,6 +66,7 @@ export function CloudSqlInstance(props: CloudSqlInstanceProps): CloudSqlInstance
     highAvailability = false,
     labels: extraLabels = {},
     namespace,
+    defaults: defs,
   } = props;
 
   const commonLabels: Record<string, string> = {
@@ -85,7 +89,7 @@ export function CloudSqlInstance(props: CloudSqlInstanceProps): CloudSqlInstance
     };
   }
 
-  const instance: Record<string, unknown> = {
+  const instance = new SQLInstance(mergeDefaults({
     metadata: {
       name,
       ...(namespace && { namespace }),
@@ -94,18 +98,18 @@ export function CloudSqlInstance(props: CloudSqlInstanceProps): CloudSqlInstance
     databaseVersion,
     ...(region && { region }),
     settings,
-  };
+  } as Record<string, unknown>, defs?.instance));
 
-  const database: Record<string, unknown> = {
+  const database = new SQLDatabase(mergeDefaults({
     metadata: {
       name: databaseName,
       ...(namespace && { namespace }),
       labels: { ...commonLabels, "app.kubernetes.io/component": "database" },
     },
     instanceRef: { name },
-  };
+  } as Record<string, unknown>, defs?.database));
 
-  const user: Record<string, unknown> = {
+  const user = new SQLUser(mergeDefaults({
     metadata: {
       name: `${name}-${userName}`,
       ...(namespace && { namespace }),
@@ -120,7 +124,7 @@ export function CloudSqlInstance(props: CloudSqlInstanceProps): CloudSqlInstance
         },
       },
     },
-  };
+  } as Record<string, unknown>, defs?.user));
 
   return { instance, database, user };
-}
+}, "CloudSqlInstance");

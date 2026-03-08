@@ -5,6 +5,8 @@
  * for automatic certificate provisioning.
  */
 
+import { Composite, mergeDefaults } from "@intentius/chant";
+import { Chart, Values, Ingress, Certificate } from "../resources";
 import { values, include, toYaml, If, Range } from "../intrinsics";
 
 export interface HelmSecureIngressProps {
@@ -16,33 +18,41 @@ export interface HelmSecureIngressProps {
   clusterIssuer?: string;
   /** Chart appVersion. */
   appVersion?: string;
+  /** Per-member defaults. */
+  defaults?: {
+    chart?: Partial<Record<string, unknown>>;
+    values?: Partial<Record<string, unknown>>;
+    ingress?: Partial<Record<string, unknown>>;
+    certificate?: Partial<Record<string, unknown>>;
+  };
 }
 
 export interface HelmSecureIngressResult {
-  chart: Record<string, unknown>;
-  values: Record<string, unknown>;
-  ingress: Record<string, unknown>;
-  certificate?: Record<string, unknown>;
+  chart: InstanceType<typeof Chart>;
+  values: InstanceType<typeof Values>;
+  ingress: InstanceType<typeof Ingress>;
+  certificate?: InstanceType<typeof Certificate>;
 }
 
-export function HelmSecureIngress(props: HelmSecureIngressProps): HelmSecureIngressResult {
+export const HelmSecureIngress = Composite<HelmSecureIngressProps>((props) => {
   const {
     name,
     ingressClassName = "",
     clusterIssuer = "letsencrypt-prod",
     appVersion = "1.0.0",
+    defaults: defs,
   } = props;
 
-  const chart = {
+  const chart = new Chart(mergeDefaults({
     apiVersion: "v2",
     name,
     version: "0.1.0",
     appVersion,
     type: "application",
     description: `A Helm chart for ${name} secure ingress`,
-  };
+  }, defs?.chart));
 
-  const valuesObj: Record<string, unknown> = {
+  const valuesRes = new Values(mergeDefaults({
     ingress: {
       enabled: true,
       className: ingressClassName,
@@ -62,53 +72,59 @@ export function HelmSecureIngress(props: HelmSecureIngressProps): HelmSecureIngr
       enabled: true,
       clusterIssuer,
     },
-  };
+  } as Record<string, unknown>, defs?.values));
 
-  const ingress = If(values.ingress.enabled, {
-    apiVersion: "networking.k8s.io/v1",
-    kind: "Ingress",
-    metadata: {
-      name: include(`${name}.fullname`),
-      labels: include(`${name}.labels`),
-      annotations: toYaml(values.ingress.annotations),
-    },
-    spec: {
-      ingressClassName: values.ingress.className,
-      tls: [{
-        secretName: values.ingress.tls.secretName,
-        hosts: Range(values.ingress.hosts, values.ingress.hosts),
-      }],
-      rules: Range(values.ingress.hosts, {
-        host: values.ingress.hosts,
-        http: {
-          paths: values.ingress.hosts,
-        },
-      }),
-    },
-  });
+  const ingress = new Ingress(mergeDefaults(
+    If(values.ingress.enabled, {
+      apiVersion: "networking.k8s.io/v1",
+      kind: "Ingress",
+      metadata: {
+        name: include(`${name}.fullname`),
+        labels: include(`${name}.labels`),
+        annotations: toYaml(values.ingress.annotations),
+      },
+      spec: {
+        ingressClassName: values.ingress.className,
+        tls: [{
+          secretName: values.ingress.tls.secretName,
+          hosts: Range(values.ingress.hosts, values.ingress.hosts),
+        }],
+        rules: Range(values.ingress.hosts, {
+          host: values.ingress.hosts,
+          http: {
+            paths: values.ingress.hosts,
+          },
+        }),
+      },
+    }) as Record<string, unknown>,
+    defs?.ingress,
+  ));
 
   // cert-manager Certificate CRD (cert-manager.io/v1)
-  const certificate = If(values.certManager.enabled, {
-    apiVersion: "cert-manager.io/v1",
-    kind: "Certificate",
-    metadata: {
-      name: include(`${name}.fullname`),
-      labels: include(`${name}.labels`),
-    },
-    spec: {
-      secretName: values.ingress.tls.secretName,
-      issuerRef: {
-        name: values.certManager.clusterIssuer,
-        kind: "ClusterIssuer",
+  const certificate = new Certificate(mergeDefaults(
+    If(values.certManager.enabled, {
+      apiVersion: "cert-manager.io/v1",
+      kind: "Certificate",
+      metadata: {
+        name: include(`${name}.fullname`),
+        labels: include(`${name}.labels`),
       },
-      dnsNames: values.ingress.hosts,
-    },
-  });
+      spec: {
+        secretName: values.ingress.tls.secretName,
+        issuerRef: {
+          name: values.certManager.clusterIssuer,
+          kind: "ClusterIssuer",
+        },
+        dnsNames: values.ingress.hosts,
+      },
+    }) as Record<string, unknown>,
+    defs?.certificate,
+  ));
 
   return {
     chart,
-    values: valuesObj,
-    ingress: ingress as unknown as Record<string, unknown>,
-    certificate: certificate as unknown as Record<string, unknown>,
+    values: valuesRes,
+    ingress,
+    certificate,
   };
-}
+}, "HelmSecureIngress");

@@ -5,6 +5,9 @@
  * workload identity and autoscaling.
  */
 
+import { Composite, mergeDefaults } from "@intentius/chant";
+import { GKECluster, NodePool } from "../generated";
+
 export interface GkeClusterProps {
   /** Cluster name. */
   name: string;
@@ -28,15 +31,15 @@ export interface GkeClusterProps {
   labels?: Record<string, string>;
   /** Namespace for all resources. */
   namespace?: string;
-}
-
-export interface GkeClusterResult {
-  cluster: Record<string, unknown>;
-  nodePool: Record<string, unknown>;
+  /** Per-member defaults for customizing individual resources. */
+  defaults?: {
+    cluster?: Partial<ConstructorParameters<typeof GKECluster>[0]>;
+    nodePool?: Partial<ConstructorParameters<typeof NodePool>[0]>;
+  };
 }
 
 /**
- * Create a GkeCluster composite — returns prop objects for
+ * Create a GkeCluster composite — returns declarable instances for
  * a ContainerCluster and ContainerNodePool.
  *
  * @example
@@ -50,7 +53,7 @@ export interface GkeClusterResult {
  * });
  * ```
  */
-export function GkeCluster(props: GkeClusterProps): GkeClusterResult {
+export const GkeCluster = Composite<GkeClusterProps>((props) => {
   const {
     name,
     location,
@@ -63,6 +66,7 @@ export function GkeCluster(props: GkeClusterProps): GkeClusterResult {
     releaseChannel = "REGULAR",
     labels: extraLabels = {},
     namespace,
+    defaults: defs,
   } = props;
 
   const commonLabels: Record<string, string> = {
@@ -73,7 +77,6 @@ export function GkeCluster(props: GkeClusterProps): GkeClusterResult {
 
   const clusterSpec: Record<string, unknown> = {
     initialNodeCount: 1, // Minimal default pool, real nodes in separate pool
-    removeDefaultNodePool: true,
     releaseChannel: { channel: releaseChannel },
     ...(location && { location }),
   };
@@ -84,17 +87,17 @@ export function GkeCluster(props: GkeClusterProps): GkeClusterResult {
     };
   }
 
-  const cluster: Record<string, unknown> = {
+  const cluster = new GKECluster(mergeDefaults({
     metadata: {
       name,
       ...(namespace && { namespace }),
       labels: { ...commonLabels, "app.kubernetes.io/component": "cluster" },
     },
     ...clusterSpec,
-  };
+  } as Record<string, unknown>, defs?.cluster));
 
   const nodePoolName = `${name}-nodes`;
-  const nodePool: Record<string, unknown> = {
+  const nodePool = new NodePool(mergeDefaults({
     metadata: {
       name: nodePoolName,
       ...(namespace && { namespace }),
@@ -119,7 +122,7 @@ export function GkeCluster(props: GkeClusterProps): GkeClusterResult {
       autoUpgrade: true,
     },
     ...(location && { location }),
-  };
+  } as Record<string, unknown>, defs?.nodePool));
 
   return { cluster, nodePool };
-}
+}, "GkeCluster");

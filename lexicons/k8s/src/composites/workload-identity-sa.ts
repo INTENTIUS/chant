@@ -5,6 +5,9 @@
  * annotation and `azure.workload.identity/use: "true"` label for AKS Workload Identity.
  */
 
+import { Composite, mergeDefaults } from "@intentius/chant";
+import { ServiceAccount, Role, RoleBinding } from "../generated";
+
 export interface WorkloadIdentityServiceAccountProps {
   /** ServiceAccount name — used in metadata and labels. */
   name: string;
@@ -20,12 +23,18 @@ export interface WorkloadIdentityServiceAccountProps {
   labels?: Record<string, string>;
   /** Namespace for all resources. */
   namespace?: string;
+  /** Per-member defaults for fine-grained overrides. */
+  defaults?: {
+    serviceAccount?: Partial<Record<string, unknown>>;
+    role?: Partial<Record<string, unknown>>;
+    roleBinding?: Partial<Record<string, unknown>>;
+  };
 }
 
 export interface WorkloadIdentityServiceAccountResult {
-  serviceAccount: Record<string, unknown>;
-  role?: Record<string, unknown>;
-  roleBinding?: Record<string, unknown>;
+  serviceAccount: InstanceType<typeof ServiceAccount>;
+  role?: InstanceType<typeof Role>;
+  roleBinding?: InstanceType<typeof RoleBinding>;
 }
 
 /**
@@ -46,13 +55,14 @@ export interface WorkloadIdentityServiceAccountResult {
  * });
  * ```
  */
-export function WorkloadIdentityServiceAccount(props: WorkloadIdentityServiceAccountProps): WorkloadIdentityServiceAccountResult {
+export const WorkloadIdentityServiceAccount = Composite<WorkloadIdentityServiceAccountProps>((props) => {
   const {
     name,
     clientId,
     rbacRules,
     labels: extraLabels = {},
     namespace,
+    defaults: defs,
   } = props;
 
   const roleName = `${name}-role`;
@@ -64,7 +74,7 @@ export function WorkloadIdentityServiceAccount(props: WorkloadIdentityServiceAcc
     ...extraLabels,
   };
 
-  const serviceAccountProps: Record<string, unknown> = {
+  const serviceAccount = new ServiceAccount(mergeDefaults({
     metadata: {
       name,
       ...(namespace && { namespace }),
@@ -77,23 +87,21 @@ export function WorkloadIdentityServiceAccount(props: WorkloadIdentityServiceAcc
         "azure.workload.identity/client-id": clientId,
       },
     },
-  };
+  }, defs?.serviceAccount));
 
-  const result: WorkloadIdentityServiceAccountResult = {
-    serviceAccount: serviceAccountProps,
-  };
+  const result: Record<string, any> = { serviceAccount };
 
   if (rbacRules && rbacRules.length > 0) {
-    result.role = {
+    result.role = new Role(mergeDefaults({
       metadata: {
         name: roleName,
         ...(namespace && { namespace }),
         labels: { ...commonLabels, "app.kubernetes.io/component": "rbac" },
       },
       rules: rbacRules,
-    };
+    }, defs?.role));
 
-    result.roleBinding = {
+    result.roleBinding = new RoleBinding(mergeDefaults({
       metadata: {
         name: bindingName,
         ...(namespace && { namespace }),
@@ -111,8 +119,8 @@ export function WorkloadIdentityServiceAccount(props: WorkloadIdentityServiceAcc
           ...(namespace && { namespace }),
         },
       ],
-    };
+    }, defs?.roleBinding));
   }
 
   return result;
-}
+}, "WorkloadIdentityServiceAccount");

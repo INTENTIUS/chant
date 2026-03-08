@@ -4,7 +4,8 @@
  * Creates a Redis Cache with non-SSL port disabled and TLS 1.2.
  */
 
-import { markAsAzureResource } from "./from-arm";
+import { Composite, mergeDefaults } from "@intentius/chant";
+import { RedisCache as RedisCacheResource } from "../generated";
 
 export interface RedisCacheProps {
   /** Redis cache name. */
@@ -19,13 +20,17 @@ export interface RedisCacheProps {
   capacity?: number;
   /** Resource tags. */
   tags?: Record<string, string>;
+  /** Per-member defaults. */
+  defaults?: {
+    redisCache?: Partial<ConstructorParameters<typeof RedisCacheResource>[0]>;
+  };
 }
 
 export interface RedisCacheResult {
-  redisCache: Record<string, unknown>;
+  redisCache: InstanceType<typeof RedisCacheResource>;
 }
 
-export function RedisCache(props: RedisCacheProps): RedisCacheResult {
+export const RedisCache = Composite<RedisCacheProps>((props) => {
   const {
     name,
     location = "[resourceGroup().location]",
@@ -33,25 +38,20 @@ export function RedisCache(props: RedisCacheProps): RedisCacheResult {
     family = "C",
     capacity = 1,
     tags = {},
+    defaults,
   } = props;
 
   const mergedTags = { "managed-by": "chant", ...tags };
 
-  const redisCache: Record<string, unknown> = {
-    type: "Microsoft.Cache/redis",
-    apiVersion: "2023-08-01",
+  const redisCache = new RedisCacheResource(mergeDefaults({
     name,
     location,
     tags: mergedTags,
-    properties: {
-      sku: { name: sku, family, capacity },
-      enableNonSslPort: false,
-      minimumTlsVersion: "1.2",
-      redisConfiguration: {},
-    },
-  };
-
-  markAsAzureResource(redisCache);
+    sku: { name: sku, family, capacity },
+    enableNonSslPort: false,
+    minimumTlsVersion: "1.2",
+    redisConfiguration: {},
+  }, defaults?.redisCache), { apiVersion: "2023-08-01" });
 
   return { redisCache };
-}
+}, "RedisCache");

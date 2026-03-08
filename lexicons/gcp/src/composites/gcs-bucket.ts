@@ -2,6 +2,9 @@
  * GcsBucket composite — StorageBucket with encryption, uniform access, and lifecycle.
  */
 
+import { Composite, mergeDefaults } from "@intentius/chant";
+import { StorageBucket } from "../generated";
+
 export interface GcsBucketProps {
   /** Bucket name. */
   name: string;
@@ -23,10 +26,10 @@ export interface GcsBucketProps {
   labels?: Record<string, string>;
   /** Namespace for all resources. */
   namespace?: string;
-}
-
-export interface GcsBucketResult {
-  bucket: Record<string, unknown>;
+  /** Per-member defaults for customizing individual resources. */
+  defaults?: {
+    bucket?: Partial<ConstructorParameters<typeof StorageBucket>[0]>;
+  };
 }
 
 /**
@@ -44,7 +47,7 @@ export interface GcsBucketResult {
  * });
  * ```
  */
-export function GcsBucket(props: GcsBucketProps): GcsBucketResult {
+export const GcsBucket = Composite<GcsBucketProps>((props) => {
   const {
     name,
     location = "US",
@@ -56,6 +59,7 @@ export function GcsBucket(props: GcsBucketProps): GcsBucketResult {
     lifecycleNearlineAfterDays,
     labels: extraLabels = {},
     namespace,
+    defaults: defs,
   } = props;
 
   const commonLabels: Record<string, string> = {
@@ -98,14 +102,14 @@ export function GcsBucket(props: GcsBucketProps): GcsBucketResult {
     spec.lifecycleRule = lifecycleRules;
   }
 
-  const bucket: Record<string, unknown> = {
+  const bucket = new StorageBucket(mergeDefaults({
     metadata: {
       name,
       ...(namespace && { namespace }),
       labels: { ...commonLabels, "app.kubernetes.io/component": "storage" },
     },
     ...spec,
-  };
+  } as Record<string, unknown>, defs?.bucket));
 
   return { bucket };
-}
+}, "GcsBucket");

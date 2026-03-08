@@ -4,6 +4,9 @@
  * @eks Creates a StorageClass with the `ebs.csi.aws.com` provisioner.
  */
 
+import { Composite, mergeDefaults } from "@intentius/chant";
+import { StorageClass } from "../generated";
+
 export interface EbsStorageClassProps {
   /** StorageClass name. */
   name: string;
@@ -27,10 +30,14 @@ export interface EbsStorageClassProps {
   allowVolumeExpansion?: boolean;
   /** Additional labels. */
   labels?: Record<string, string>;
+  /** Per-member defaults for fine-grained overrides. */
+  defaults?: {
+    storageClass?: Partial<Record<string, unknown>>;
+  };
 }
 
 export interface EbsStorageClassResult {
-  storageClass: Record<string, unknown>;
+  storageClass: InstanceType<typeof StorageClass>;
 }
 
 /**
@@ -49,7 +56,7 @@ export interface EbsStorageClassResult {
  * });
  * ```
  */
-export function EbsStorageClass(props: EbsStorageClassProps): EbsStorageClassResult {
+export const EbsStorageClass = Composite<EbsStorageClassProps>((props) => {
   const {
     name,
     type = "gp3",
@@ -62,6 +69,7 @@ export function EbsStorageClass(props: EbsStorageClassProps): EbsStorageClassRes
     volumeBindingMode = "WaitForFirstConsumer",
     allowVolumeExpansion = true,
     labels: extraLabels = {},
+    defaults: defs,
   } = props;
 
   const commonLabels: Record<string, string> = {
@@ -80,7 +88,7 @@ export function EbsStorageClass(props: EbsStorageClassProps): EbsStorageClassRes
   if (throughput !== undefined) parameters.throughput = String(throughput);
   if (kmsKeyId) parameters.kmsKeyId = kmsKeyId;
 
-  const storageClassProps: Record<string, unknown> = {
+  const storageClass = new StorageClass(mergeDefaults({
     metadata: {
       name,
       labels: { ...commonLabels, "app.kubernetes.io/component": "storage" },
@@ -90,7 +98,7 @@ export function EbsStorageClass(props: EbsStorageClassProps): EbsStorageClassRes
     reclaimPolicy,
     volumeBindingMode,
     allowVolumeExpansion,
-  };
+  }, defs?.storageClass));
 
-  return { storageClass: storageClassProps };
-}
+  return { storageClass };
+}, "EbsStorageClass");

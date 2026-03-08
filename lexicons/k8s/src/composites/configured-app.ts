@@ -6,6 +6,8 @@
  * Volume.fromSecret(), and container.mount() patterns.
  */
 
+import { Composite, mergeDefaults } from "@intentius/chant";
+import { Deployment, Service, ConfigMap } from "../generated";
 import type { ContainerSecurityContext } from "./security-context";
 
 export interface ConfiguredAppProps {
@@ -53,12 +55,18 @@ export interface ConfiguredAppProps {
   env?: Array<{ name: string; value: string }>;
   /** Container security context (supports PSS restricted fields). */
   securityContext?: ContainerSecurityContext;
+  /** Per-member defaults for fine-grained overrides. */
+  defaults?: {
+    deployment?: Partial<Record<string, unknown>>;
+    service?: Partial<Record<string, unknown>>;
+    configMap?: Partial<Record<string, unknown>>;
+  };
 }
 
 export interface ConfiguredAppResult {
-  deployment: Record<string, unknown>;
-  service: Record<string, unknown>;
-  configMap?: Record<string, unknown>;
+  deployment: InstanceType<typeof Deployment>;
+  service: InstanceType<typeof Service>;
+  configMap?: InstanceType<typeof ConfigMap>;
 }
 
 /**
@@ -81,7 +89,7 @@ export interface ConfiguredAppResult {
  * });
  * ```
  */
-export function ConfiguredApp(props: ConfiguredAppProps): ConfiguredAppResult {
+export const ConfiguredApp = Composite<ConfiguredAppProps>((props) => {
   const {
     name,
     image,
@@ -101,6 +109,7 @@ export function ConfiguredApp(props: ConfiguredAppProps): ConfiguredAppResult {
     namespace,
     env,
     securityContext,
+    defaults: defs,
   } = props;
 
   const configMapName = `${name}-config`;
@@ -175,7 +184,7 @@ export function ConfiguredApp(props: ConfiguredAppProps): ConfiguredAppResult {
     }),
   };
 
-  const deploymentProps: Record<string, unknown> = {
+  const deployment = new Deployment(mergeDefaults({
     metadata: {
       name,
       ...(namespace && { namespace }),
@@ -189,9 +198,9 @@ export function ConfiguredApp(props: ConfiguredAppProps): ConfiguredAppResult {
         spec: podSpec,
       },
     },
-  };
+  }, defs?.deployment));
 
-  const serviceProps: Record<string, unknown> = {
+  const service = new Service(mergeDefaults({
     metadata: {
       name,
       ...(namespace && { namespace }),
@@ -202,23 +211,20 @@ export function ConfiguredApp(props: ConfiguredAppProps): ConfiguredAppResult {
       ports: [{ port: 80, targetPort: port, protocol: "TCP", name: "http" }],
       type: "ClusterIP",
     },
-  };
+  }, defs?.service));
 
-  const result: ConfiguredAppResult = {
-    deployment: deploymentProps,
-    service: serviceProps,
-  };
+  const result: Record<string, any> = { deployment, service };
 
   if (configData) {
-    result.configMap = {
+    result.configMap = new ConfigMap(mergeDefaults({
       metadata: {
         name: configMapName,
         ...(namespace && { namespace }),
         labels: { ...commonLabels, "app.kubernetes.io/component": "config" },
       },
       data: configData,
-    };
+    }, defs?.configMap));
   }
 
   return result;
-}
+}, "ConfiguredApp");

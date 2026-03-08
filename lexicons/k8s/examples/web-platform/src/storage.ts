@@ -1,9 +1,6 @@
 // EfsStorageClass: shared EFS storage for the platform.
 
-import {
-  StorageClass,
-  EfsStorageClass,
-} from "@intentius/chant-lexicon-k8s";
+import { EfsStorageClass } from "@intentius/chant-lexicon-k8s";
 
 const efs = EfsStorageClass({
   name: "efs-shared",
@@ -12,4 +9,4 @@ const efs = EfsStorageClass({
   basePath: "/web-platform",
 });
 
-export const efsStorageClass = new StorageClass(efs.storageClass);
+export const efsStorageClass = efs.storageClass;

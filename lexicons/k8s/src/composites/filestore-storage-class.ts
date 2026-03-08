@@ -5,6 +5,9 @@
  * Filestore provides ReadWriteMany access mode (shared across pods/nodes).
  */
 
+import { Composite, mergeDefaults } from "@intentius/chant";
+import { StorageClass } from "../generated";
+
 export interface FilestoreStorageClassProps {
   /** StorageClass name. */
   name: string;
@@ -18,10 +21,14 @@ export interface FilestoreStorageClassProps {
   volumeBindingMode?: string;
   /** Additional labels. */
   labels?: Record<string, string>;
+  /** Per-member defaults for fine-grained overrides. */
+  defaults?: {
+    storageClass?: Partial<Record<string, unknown>>;
+  };
 }
 
 export interface FilestoreStorageClassResult {
-  storageClass: Record<string, unknown>;
+  storageClass: InstanceType<typeof StorageClass>;
 }
 
 /**
@@ -40,7 +47,7 @@ export interface FilestoreStorageClassResult {
  * });
  * ```
  */
-export function FilestoreStorageClass(props: FilestoreStorageClassProps): FilestoreStorageClassResult {
+export const FilestoreStorageClass = Composite<FilestoreStorageClassProps>((props) => {
   const {
     name,
     tier = "standard",
@@ -48,6 +55,7 @@ export function FilestoreStorageClass(props: FilestoreStorageClassProps): Filest
     reclaimPolicy = "Delete",
     volumeBindingMode = "WaitForFirstConsumer",
     labels: extraLabels = {},
+    defaults: defs,
   } = props;
 
   const commonLabels: Record<string, string> = {
@@ -64,7 +72,7 @@ export function FilestoreStorageClass(props: FilestoreStorageClassProps): Filest
     parameters.network = network;
   }
 
-  const storageClassProps: Record<string, unknown> = {
+  const storageClass = new StorageClass(mergeDefaults({
     metadata: {
       name,
       labels: { ...commonLabels, "app.kubernetes.io/component": "storage" },
@@ -73,7 +81,7 @@ export function FilestoreStorageClass(props: FilestoreStorageClassProps): Filest
     parameters,
     reclaimPolicy,
     volumeBindingMode,
-  };
+  }, defs?.storageClass));
 
-  return { storageClass: storageClassProps };
-}
+  return { storageClass };
+}, "FilestoreStorageClass");

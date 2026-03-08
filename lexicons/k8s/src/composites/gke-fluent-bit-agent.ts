@@ -5,6 +5,9 @@
  * output plugin and uses GKE Workload Identity instead of IRSA.
  */
 
+import { Composite, mergeDefaults } from "@intentius/chant";
+import { DaemonSet, ServiceAccount, ClusterRole, ClusterRoleBinding, ConfigMap } from "../generated";
+
 export interface GkeFluentBitAgentProps {
   /** GKE cluster name — used as log stream prefix. */
   clusterName: string;
@@ -28,14 +31,22 @@ export interface GkeFluentBitAgentProps {
   cpuLimit?: string;
   /** Memory limit (default: "128Mi"). */
   memoryLimit?: string;
+  /** Per-member defaults for fine-grained overrides. */
+  defaults?: {
+    daemonSet?: Partial<Record<string, unknown>>;
+    serviceAccount?: Partial<Record<string, unknown>>;
+    clusterRole?: Partial<Record<string, unknown>>;
+    clusterRoleBinding?: Partial<Record<string, unknown>>;
+    configMap?: Partial<Record<string, unknown>>;
+  };
 }
 
 export interface GkeFluentBitAgentResult {
-  daemonSet: Record<string, unknown>;
-  serviceAccount: Record<string, unknown>;
-  clusterRole: Record<string, unknown>;
-  clusterRoleBinding: Record<string, unknown>;
-  configMap: Record<string, unknown>;
+  daemonSet: InstanceType<typeof DaemonSet>;
+  serviceAccount: InstanceType<typeof ServiceAccount>;
+  clusterRole: InstanceType<typeof ClusterRole>;
+  clusterRoleBinding: InstanceType<typeof ClusterRoleBinding>;
+  configMap: InstanceType<typeof ConfigMap>;
 }
 
 /**
@@ -54,7 +65,7 @@ export interface GkeFluentBitAgentResult {
  * });
  * ```
  */
-export function GkeFluentBitAgent(props: GkeFluentBitAgentProps): GkeFluentBitAgentResult {
+export const GkeFluentBitAgent = Composite<GkeFluentBitAgentProps>((props) => {
   const {
     clusterName,
     projectId,
@@ -67,6 +78,7 @@ export function GkeFluentBitAgent(props: GkeFluentBitAgentProps): GkeFluentBitAg
     memoryRequest = "64Mi",
     cpuLimit = "200m",
     memoryLimit = "128Mi",
+    defaults: defs,
   } = props;
 
   const saName = `${name}-sa`;
@@ -134,7 +146,7 @@ export function GkeFluentBitAgent(props: GkeFluentBitAgentProps): GkeFluentBitAg
     },
   };
 
-  const daemonSetProps: Record<string, unknown> = {
+  const daemonSet = new DaemonSet(mergeDefaults({
     metadata: {
       name,
       namespace,
@@ -156,9 +168,9 @@ export function GkeFluentBitAgent(props: GkeFluentBitAgentProps): GkeFluentBitAg
         },
       },
     },
-  };
+  }, defs?.daemonSet));
 
-  const serviceAccountProps: Record<string, unknown> = {
+  const serviceAccount = new ServiceAccount(mergeDefaults({
     metadata: {
       name: saName,
       namespace,
@@ -167,9 +179,9 @@ export function GkeFluentBitAgent(props: GkeFluentBitAgentProps): GkeFluentBitAg
         ? { annotations: { "iam.gke.io/gcp-service-account": gcpServiceAccountEmail } }
         : {}),
     },
-  };
+  }, defs?.serviceAccount));
 
-  const clusterRoleProps: Record<string, unknown> = {
+  const clusterRole = new ClusterRole(mergeDefaults({
     metadata: {
       name: clusterRoleName,
       labels: { ...commonLabels, "app.kubernetes.io/component": "rbac" },
@@ -177,9 +189,9 @@ export function GkeFluentBitAgent(props: GkeFluentBitAgentProps): GkeFluentBitAg
     rules: [
       { apiGroups: [""], resources: ["namespaces", "pods"], verbs: ["get", "list", "watch"] },
     ],
-  };
+  }, defs?.clusterRole));
 
-  const clusterRoleBindingProps: Record<string, unknown> = {
+  const clusterRoleBinding = new ClusterRoleBinding(mergeDefaults({
     metadata: {
       name: bindingName,
       labels: { ...commonLabels, "app.kubernetes.io/component": "rbac" },
@@ -196,9 +208,9 @@ export function GkeFluentBitAgent(props: GkeFluentBitAgentProps): GkeFluentBitAg
         namespace,
       },
     ],
-  };
+  }, defs?.clusterRoleBinding));
 
-  const configMapProps: Record<string, unknown> = {
+  const configMap = new ConfigMap(mergeDefaults({
     metadata: {
       name: configMapName,
       namespace,
@@ -207,13 +219,13 @@ export function GkeFluentBitAgent(props: GkeFluentBitAgentProps): GkeFluentBitAg
     data: {
       "fluent-bit.conf": fluentBitConfig,
     },
-  };
+  }, defs?.configMap));
 
   return {
-    daemonSet: daemonSetProps,
-    serviceAccount: serviceAccountProps,
-    clusterRole: clusterRoleProps,
-    clusterRoleBinding: clusterRoleBindingProps,
-    configMap: configMapProps,
+    daemonSet,
+    serviceAccount,
+    clusterRole,
+    clusterRoleBinding,
+    configMap,
   };
-}
+}, "GkeFluentBitAgent");

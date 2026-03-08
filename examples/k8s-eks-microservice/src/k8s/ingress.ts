@@ -1,11 +1,6 @@
 // K8s workloads: ALB Ingress + ExternalDNS agent.
 
 import {
-  Ingress,
-  Deployment,
-  ServiceAccount,
-  ClusterRole,
-  ClusterRoleBinding,
   AlbIngress,
   ExternalDnsAgent,
 } from "@intentius/chant-lexicon-k8s";
@@ -33,7 +28,7 @@ const alb = AlbIngress({
   namespace: NAMESPACE,
 });
 
-export const albIngress = new Ingress(alb.ingress);
+export const albIngress = alb.ingress;
 
 // ── ExternalDNS ────────────────────────────────────────────────────
 
@@ -43,7 +38,7 @@ const dns = ExternalDnsAgent({
   txtOwnerId: config.clusterName,
 });
 
-export const dnsDeployment = new Deployment(dns.deployment);
-export const dnsServiceAccount = new ServiceAccount(dns.serviceAccount);
-export const dnsClusterRole = new ClusterRole(dns.clusterRole);
-export const dnsClusterRoleBinding = new ClusterRoleBinding(dns.clusterRoleBinding);
+export const dnsDeployment = dns.deployment;
+export const dnsServiceAccount = dns.serviceAccount;
+export const dnsClusterRole = dns.clusterRole;
+export const dnsClusterRoleBinding = dns.clusterRoleBinding;

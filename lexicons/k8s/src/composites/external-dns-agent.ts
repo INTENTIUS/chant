@@ -5,6 +5,9 @@
  * where Ingress/Service hostnames should automatically create DNS records.
  */
 
+import { Composite, mergeDefaults } from "@intentius/chant";
+import { Deployment, ServiceAccount, ClusterRole, ClusterRoleBinding } from "../generated";
+
 export interface ExternalDnsAgentProps {
   /** IAM Role ARN for IRSA (needs Route53 permissions). */
   iamRoleArn: string;
@@ -24,13 +27,20 @@ export interface ExternalDnsAgentProps {
   namespace?: string;
   /** Additional labels. */
   labels?: Record<string, string>;
+  /** Per-member defaults for fine-grained overrides. */
+  defaults?: {
+    deployment?: Partial<Record<string, unknown>>;
+    serviceAccount?: Partial<Record<string, unknown>>;
+    clusterRole?: Partial<Record<string, unknown>>;
+    clusterRoleBinding?: Partial<Record<string, unknown>>;
+  };
 }
 
 export interface ExternalDnsAgentResult {
-  deployment: Record<string, unknown>;
-  serviceAccount: Record<string, unknown>;
-  clusterRole: Record<string, unknown>;
-  clusterRoleBinding: Record<string, unknown>;
+  deployment: InstanceType<typeof Deployment>;
+  serviceAccount: InstanceType<typeof ServiceAccount>;
+  clusterRole: InstanceType<typeof ClusterRole>;
+  clusterRoleBinding: InstanceType<typeof ClusterRoleBinding>;
 }
 
 /**
@@ -49,7 +59,7 @@ export interface ExternalDnsAgentResult {
  * });
  * ```
  */
-export function ExternalDnsAgent(props: ExternalDnsAgentProps): ExternalDnsAgentResult {
+export const ExternalDnsAgent = Composite<ExternalDnsAgentProps>((props) => {
   const {
     iamRoleArn,
     domainFilters,
@@ -60,6 +70,7 @@ export function ExternalDnsAgent(props: ExternalDnsAgentProps): ExternalDnsAgent
     image = "registry.k8s.io/external-dns/external-dns:v0.14.0",
     namespace = "kube-system",
     labels: extraLabels = {},
+    defaults: defs,
   } = props;
 
   const saName = `${name}-sa`;
@@ -88,7 +99,7 @@ export function ExternalDnsAgent(props: ExternalDnsAgentProps): ExternalDnsAgent
     args.push(`--txt-owner-id=${txtOwnerId}`);
   }
 
-  const deploymentProps: Record<string, unknown> = {
+  const deployment = new Deployment(mergeDefaults({
     metadata: {
       name,
       namespace,
@@ -121,9 +132,9 @@ export function ExternalDnsAgent(props: ExternalDnsAgentProps): ExternalDnsAgent
         },
       },
     },
-  };
+  }, defs?.deployment));
 
-  const serviceAccountProps: Record<string, unknown> = {
+  const serviceAccount = new ServiceAccount(mergeDefaults({
     metadata: {
       name: saName,
       namespace,
@@ -132,9 +143,9 @@ export function ExternalDnsAgent(props: ExternalDnsAgentProps): ExternalDnsAgent
         "eks.amazonaws.com/role-arn": iamRoleArn,
       },
     },
-  };
+  }, defs?.serviceAccount));
 
-  const clusterRoleProps: Record<string, unknown> = {
+  const clusterRole = new ClusterRole(mergeDefaults({
     metadata: {
       name: clusterRoleName,
       labels: { ...commonLabels, "app.kubernetes.io/component": "rbac" },
@@ -144,9 +155,9 @@ export function ExternalDnsAgent(props: ExternalDnsAgentProps): ExternalDnsAgent
       { apiGroups: ["extensions", "networking.k8s.io"], resources: ["ingresses"], verbs: ["get", "watch", "list"] },
       { apiGroups: [""], resources: ["nodes"], verbs: ["list", "watch"] },
     ],
-  };
+  }, defs?.clusterRole));
 
-  const clusterRoleBindingProps: Record<string, unknown> = {
+  const clusterRoleBinding = new ClusterRoleBinding(mergeDefaults({
     metadata: {
       name: bindingName,
       labels: { ...commonLabels, "app.kubernetes.io/component": "rbac" },
@@ -163,12 +174,7 @@ export function ExternalDnsAgent(props: ExternalDnsAgentProps): ExternalDnsAgent
         namespace,
       },
     ],
-  };
+  }, defs?.clusterRoleBinding));
 
-  return {
-    deployment: deploymentProps,
-    serviceAccount: serviceAccountProps,
-    clusterRole: clusterRoleProps,
-    clusterRoleBinding: clusterRoleBindingProps,
-  };
-}
+  return { deployment, serviceAccount, clusterRole, clusterRoleBinding };
+}, "ExternalDnsAgent");

@@ -4,6 +4,8 @@
  * Full microservice pattern with all common production resources.
  */
 
+import { Composite, mergeDefaults } from "@intentius/chant";
+import { Chart, Values, Deployment, Service, ServiceAccount, ConfigMap, Ingress, HPA, PDB } from "../resources";
 import { values, include, printf, toYaml, If, With } from "../intrinsics";
 
 export interface HelmMicroserviceProps {
@@ -43,21 +45,33 @@ export interface HelmMicroserviceProps {
   podAnnotations?: Record<string, string>;
   /** Deployment strategy defaults. */
   strategy?: Record<string, unknown>;
+  /** Per-member defaults. */
+  defaults?: {
+    chart?: Partial<Record<string, unknown>>;
+    values?: Partial<Record<string, unknown>>;
+    deployment?: Partial<Record<string, unknown>>;
+    service?: Partial<Record<string, unknown>>;
+    serviceAccount?: Partial<Record<string, unknown>>;
+    configMap?: Partial<Record<string, unknown>>;
+    ingress?: Partial<Record<string, unknown>>;
+    hpa?: Partial<Record<string, unknown>>;
+    pdb?: Partial<Record<string, unknown>>;
+  };
 }
 
 export interface HelmMicroserviceResult {
-  chart: Record<string, unknown>;
-  values: Record<string, unknown>;
-  deployment: Record<string, unknown>;
-  service: Record<string, unknown>;
-  serviceAccount: Record<string, unknown>;
-  configMap?: Record<string, unknown>;
-  ingress?: Record<string, unknown>;
-  hpa?: Record<string, unknown>;
-  pdb?: Record<string, unknown>;
+  chart: InstanceType<typeof Chart>;
+  values: InstanceType<typeof Values>;
+  deployment: InstanceType<typeof Deployment>;
+  service: InstanceType<typeof Service>;
+  serviceAccount: InstanceType<typeof ServiceAccount>;
+  configMap?: InstanceType<typeof ConfigMap>;
+  ingress?: InstanceType<typeof Ingress>;
+  hpa?: InstanceType<typeof HPA>;
+  pdb?: InstanceType<typeof PDB>;
 }
 
-export function HelmMicroservice(props: HelmMicroserviceProps): HelmMicroserviceResult {
+export const HelmMicroservice = Composite<HelmMicroserviceProps>((props) => {
   const {
     name,
     imageRepository = "nginx",
@@ -70,16 +84,17 @@ export function HelmMicroservice(props: HelmMicroserviceProps): HelmMicroservice
     pdb = true,
     configMap = true,
     appVersion = "1.0.0",
+    defaults: defs,
   } = props;
 
-  const chart = {
+  const chart = new Chart(mergeDefaults({
     apiVersion: "v2",
     name,
     version: "0.1.0",
     appVersion,
     type: "application",
     description: `A Helm chart for ${name} microservice`,
-  };
+  }, defs?.chart));
 
   const valuesObj: Record<string, unknown> = {
     replicaCount: replicas,
@@ -152,6 +167,8 @@ export function HelmMicroservice(props: HelmMicroserviceProps): HelmMicroservice
     };
   }
 
+  const valuesRes = new Values(mergeDefaults(valuesObj, defs?.values));
+
   const containerSpec: Record<string, unknown> = {
     name,
     image: printf("%s:%s", values.image.repository, values.image.tag),
@@ -192,7 +209,7 @@ export function HelmMicroservice(props: HelmMicroserviceProps): HelmMicroservice
 
   if (props.strategy) deploymentSpec.strategy = toYaml(values.strategy);
 
-  const deployment = {
+  const deployment = new Deployment(mergeDefaults({
     apiVersion: "apps/v1",
     kind: "Deployment",
     metadata: {
@@ -200,9 +217,9 @@ export function HelmMicroservice(props: HelmMicroserviceProps): HelmMicroservice
       labels: include(`${name}.labels`),
     },
     spec: deploymentSpec,
-  };
+  }, defs?.deployment));
 
-  const service = {
+  const service = new Service(mergeDefaults({
     apiVersion: "v1",
     kind: "Service",
     metadata: {
@@ -219,9 +236,9 @@ export function HelmMicroservice(props: HelmMicroserviceProps): HelmMicroservice
       }],
       selector: include(`${name}.selectorLabels`),
     },
-  };
+  }, defs?.service));
 
-  const serviceAccount = {
+  const serviceAccount = new ServiceAccount(mergeDefaults({
     apiVersion: "v1",
     kind: "ServiceAccount",
     metadata: {
@@ -229,18 +246,18 @@ export function HelmMicroservice(props: HelmMicroserviceProps): HelmMicroservice
       labels: include(`${name}.labels`),
       annotations: toYaml(values.serviceAccount.annotations),
     },
-  };
+  }, defs?.serviceAccount));
 
-  const result: HelmMicroserviceResult = {
+  const result: Record<string, any> = {
     chart,
-    values: valuesObj,
+    values: valuesRes,
     deployment,
     service,
     serviceAccount,
   };
 
   if (configMap) {
-    result.configMap = {
+    result.configMap = new ConfigMap(mergeDefaults({
       apiVersion: "v1",
       kind: "ConfigMap",
       metadata: {
@@ -248,11 +265,11 @@ export function HelmMicroservice(props: HelmMicroserviceProps): HelmMicroservice
         labels: include(`${name}.labels`),
       },
       data: values.config,
-    };
+    }, defs?.configMap));
   }
 
   if (ingress) {
-    result.ingress = {
+    result.ingress = new Ingress(mergeDefaults({
       apiVersion: "networking.k8s.io/v1",
       kind: "Ingress",
       metadata: {
@@ -265,11 +282,11 @@ export function HelmMicroservice(props: HelmMicroserviceProps): HelmMicroservice
         rules: values.ingress.hosts,
         tls: values.ingress.tls,
       },
-    };
+    }, defs?.ingress));
   }
 
   if (autoscaling) {
-    result.hpa = {
+    result.hpa = new HPA(mergeDefaults({
       apiVersion: "autoscaling/v2",
       kind: "HorizontalPodAutoscaler",
       metadata: {
@@ -307,11 +324,11 @@ export function HelmMicroservice(props: HelmMicroserviceProps): HelmMicroservice
           },
         ],
       },
-    };
+    }, defs?.hpa));
   }
 
   if (pdb) {
-    result.pdb = {
+    result.pdb = new PDB(mergeDefaults({
       apiVersion: "policy/v1",
       kind: "PodDisruptionBudget",
       metadata: {
@@ -324,8 +341,8 @@ export function HelmMicroservice(props: HelmMicroserviceProps): HelmMicroservice
           matchLabels: include(`${name}.selectorLabels`),
         },
       },
-    };
+    }, defs?.pdb));
   }
 
   return result;
-}
+}, "HelmMicroservice");

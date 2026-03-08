@@ -5,7 +5,8 @@
  * admin user disabled, content trust, and quarantine policy.
  */
 
-import { markAsAzureResource } from "./from-arm";
+import { Composite, mergeDefaults } from "@intentius/chant";
+import { ContainerRegistry } from "../generated";
 
 export interface ContainerRegistrySecureProps {
   /** Registry name (5-50 chars, alphanumeric, globally unique). */
@@ -16,15 +17,19 @@ export interface ContainerRegistrySecureProps {
   location?: string;
   /** Resource tags. */
   tags?: Record<string, string>;
+  /** Per-member defaults. */
+  defaults?: {
+    registry?: Partial<ConstructorParameters<typeof ContainerRegistry>[0]>;
+  };
 }
 
 export interface ContainerRegistrySecureResult {
-  registry: Record<string, unknown>;
+  registry: InstanceType<typeof ContainerRegistry>;
 }
 
 /**
- * Create a ContainerRegistrySecure composite — returns a property object for
- * an Azure Container Registry with security best practices.
+ * Create a ContainerRegistrySecure composite — returns an
+ * Azure Container Registry with security best practices.
  *
  * @example
  * ```ts
@@ -39,12 +44,13 @@ export interface ContainerRegistrySecureResult {
  * export { registry };
  * ```
  */
-export function ContainerRegistrySecure(props: ContainerRegistrySecureProps): ContainerRegistrySecureResult {
+export const ContainerRegistrySecure = Composite<ContainerRegistrySecureProps>((props) => {
   const {
     name,
     sku = "Premium",
     location = "[resourceGroup().location]",
     tags = {},
+    defaults,
   } = props;
 
   const commonTags: Record<string, string> = {
@@ -52,41 +58,35 @@ export function ContainerRegistrySecure(props: ContainerRegistrySecureProps): Co
     ...tags,
   };
 
-  const registry: Record<string, unknown> = {
-    type: "Microsoft.ContainerRegistry/registries",
-    apiVersion: "2023-07-01",
+  const registry = new ContainerRegistry(mergeDefaults({
     name,
     location,
     tags: commonTags,
     sku: {
       name: sku,
     },
-    properties: {
-      adminUserEnabled: false,
-      publicNetworkAccess: "Enabled",
-      networkRuleBypassOptions: "AzureServices",
-      zoneRedundancy: "Disabled",
-      policies: {
-        quarantinePolicy: {
-          status: "enabled",
-        },
-        trustPolicy: {
-          type: "Notary",
-          status: "enabled",
-        },
-        retentionPolicy: {
-          days: 30,
-          status: "enabled",
-        },
+    adminUserEnabled: false,
+    publicNetworkAccess: "Enabled",
+    networkRuleBypassOptions: "AzureServices",
+    zoneRedundancy: "Disabled",
+    policies: {
+      quarantinePolicy: {
+        status: "enabled",
       },
-      encryption: {
-        status: "disabled",
+      trustPolicy: {
+        type: "Notary",
+        status: "enabled",
       },
-      dataEndpointEnabled: false,
+      retentionPolicy: {
+        days: 30,
+        status: "enabled",
+      },
     },
-  };
-
-  markAsAzureResource(registry);
+    encryption: {
+      status: "disabled",
+    },
+    dataEndpointEnabled: false,
+  }, defaults?.registry), { apiVersion: "2023-07-01" });
 
   return { registry };
-}
+}, "ContainerRegistrySecure");

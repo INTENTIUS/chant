@@ -5,6 +5,9 @@
  * (shared ALB), SSL redirect, subnets, security groups.
  */
 
+import { Composite, mergeDefaults } from "@intentius/chant";
+import { Ingress } from "../generated";
+
 export interface AlbIngressHost {
   /** Hostname (e.g., "api.example.com"). */
   hostname: string;
@@ -43,10 +46,14 @@ export interface AlbIngressProps {
   labels?: Record<string, string>;
   /** Namespace for all resources. */
   namespace?: string;
+  /** Per-member defaults for fine-grained overrides. */
+  defaults?: {
+    ingress?: Partial<Record<string, unknown>>;
+  };
 }
 
 export interface AlbIngressResult {
-  ingress: Record<string, unknown>;
+  ingress: InstanceType<typeof Ingress>;
 }
 
 /**
@@ -72,7 +79,7 @@ export interface AlbIngressResult {
  * });
  * ```
  */
-export function AlbIngress(props: AlbIngressProps): AlbIngressResult {
+export const AlbIngress = Composite<AlbIngressProps>((props) => {
   const {
     name,
     hosts,
@@ -86,6 +93,7 @@ export function AlbIngress(props: AlbIngressProps): AlbIngressResult {
     annotations: extraAnnotations = {},
     labels: extraLabels = {},
     namespace,
+    defaults: defs,
   } = props;
 
   const commonLabels: Record<string, string> = {
@@ -135,7 +143,7 @@ export function AlbIngress(props: AlbIngressProps): AlbIngressResult {
     },
   }));
 
-  const ingressProps: Record<string, unknown> = {
+  const ingress = new Ingress(mergeDefaults({
     metadata: {
       name,
       ...(namespace && { namespace }),
@@ -146,7 +154,7 @@ export function AlbIngress(props: AlbIngressProps): AlbIngressResult {
       ingressClassName: "alb",
       rules: ingressRules,
     },
-  };
+  }, defs?.ingress));
 
-  return { ingress: ingressProps };
-}
+  return { ingress };
+}, "AlbIngress");

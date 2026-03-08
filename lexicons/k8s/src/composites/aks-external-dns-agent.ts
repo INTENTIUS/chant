@@ -5,6 +5,9 @@
  * instead of IRSA for Azure DNS management.
  */
 
+import { Composite, mergeDefaults } from "@intentius/chant";
+import { Deployment, ServiceAccount, ClusterRole, ClusterRoleBinding } from "../generated";
+
 export interface AksExternalDnsAgentProps {
   /** Azure managed identity client ID for Workload Identity. */
   clientId: string;
@@ -28,13 +31,20 @@ export interface AksExternalDnsAgentProps {
   namespace?: string;
   /** Additional labels. */
   labels?: Record<string, string>;
+  /** Per-member defaults for fine-grained overrides. */
+  defaults?: {
+    deployment?: Partial<Record<string, unknown>>;
+    serviceAccount?: Partial<Record<string, unknown>>;
+    clusterRole?: Partial<Record<string, unknown>>;
+    clusterRoleBinding?: Partial<Record<string, unknown>>;
+  };
 }
 
 export interface AksExternalDnsAgentResult {
-  deployment: Record<string, unknown>;
-  serviceAccount: Record<string, unknown>;
-  clusterRole: Record<string, unknown>;
-  clusterRoleBinding: Record<string, unknown>;
+  deployment: InstanceType<typeof Deployment>;
+  serviceAccount: InstanceType<typeof ServiceAccount>;
+  clusterRole: InstanceType<typeof ClusterRole>;
+  clusterRoleBinding: InstanceType<typeof ClusterRoleBinding>;
 }
 
 /**
@@ -56,7 +66,7 @@ export interface AksExternalDnsAgentResult {
  * });
  * ```
  */
-export function AksExternalDnsAgent(props: AksExternalDnsAgentProps): AksExternalDnsAgentResult {
+export const AksExternalDnsAgent = Composite<AksExternalDnsAgentProps>((props) => {
   const {
     clientId,
     resourceGroup,
@@ -69,6 +79,7 @@ export function AksExternalDnsAgent(props: AksExternalDnsAgentProps): AksExterna
     image = "registry.k8s.io/external-dns/external-dns:v0.14.0",
     namespace = "kube-system",
     labels: extraLabels = {},
+    defaults: defs,
   } = props;
 
   const saName = `${name}-sa`;
@@ -98,7 +109,7 @@ export function AksExternalDnsAgent(props: AksExternalDnsAgentProps): AksExterna
     args.push(`--txt-owner-id=${txtOwnerId}`);
   }
 
-  const deploymentProps: Record<string, unknown> = {
+  const deployment = new Deployment(mergeDefaults({
     metadata: {
       name,
       namespace,
@@ -142,9 +153,9 @@ export function AksExternalDnsAgent(props: AksExternalDnsAgentProps): AksExterna
         },
       },
     },
-  };
+  }, defs?.deployment));
 
-  const serviceAccountProps: Record<string, unknown> = {
+  const serviceAccount = new ServiceAccount(mergeDefaults({
     metadata: {
       name: saName,
       namespace,
@@ -157,9 +168,9 @@ export function AksExternalDnsAgent(props: AksExternalDnsAgentProps): AksExterna
         "azure.workload.identity/client-id": clientId,
       },
     },
-  };
+  }, defs?.serviceAccount));
 
-  const clusterRoleProps: Record<string, unknown> = {
+  const clusterRole = new ClusterRole(mergeDefaults({
     metadata: {
       name: clusterRoleName,
       labels: { ...commonLabels, "app.kubernetes.io/component": "rbac" },
@@ -169,9 +180,9 @@ export function AksExternalDnsAgent(props: AksExternalDnsAgentProps): AksExterna
       { apiGroups: ["extensions", "networking.k8s.io"], resources: ["ingresses"], verbs: ["get", "watch", "list"] },
       { apiGroups: [""], resources: ["nodes"], verbs: ["list", "watch"] },
     ],
-  };
+  }, defs?.clusterRole));
 
-  const clusterRoleBindingProps: Record<string, unknown> = {
+  const clusterRoleBinding = new ClusterRoleBinding(mergeDefaults({
     metadata: {
       name: bindingName,
       labels: { ...commonLabels, "app.kubernetes.io/component": "rbac" },
@@ -188,12 +199,12 @@ export function AksExternalDnsAgent(props: AksExternalDnsAgentProps): AksExterna
         namespace,
       },
     ],
-  };
+  }, defs?.clusterRoleBinding));
 
   return {
-    deployment: deploymentProps,
-    serviceAccount: serviceAccountProps,
-    clusterRole: clusterRoleProps,
-    clusterRoleBinding: clusterRoleBindingProps,
+    deployment,
+    serviceAccount,
+    clusterRole,
+    clusterRoleBinding,
   };
-}
+}, "AksExternalDnsAgent");

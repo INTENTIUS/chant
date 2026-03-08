@@ -5,6 +5,9 @@
  * instead of IRSA for Cloud DNS management.
  */
 
+import { Composite, mergeDefaults } from "@intentius/chant";
+import { Deployment, ServiceAccount, ClusterRole, ClusterRoleBinding } from "../generated";
+
 export interface GkeExternalDnsAgentProps {
   /** GCP service account email for Workload Identity (needs Cloud DNS permissions). */
   gcpServiceAccountEmail: string;
@@ -24,13 +27,20 @@ export interface GkeExternalDnsAgentProps {
   namespace?: string;
   /** Additional labels. */
   labels?: Record<string, string>;
+  /** Per-member defaults for fine-grained overrides. */
+  defaults?: {
+    deployment?: Partial<Record<string, unknown>>;
+    serviceAccount?: Partial<Record<string, unknown>>;
+    clusterRole?: Partial<Record<string, unknown>>;
+    clusterRoleBinding?: Partial<Record<string, unknown>>;
+  };
 }
 
 export interface GkeExternalDnsAgentResult {
-  deployment: Record<string, unknown>;
-  serviceAccount: Record<string, unknown>;
-  clusterRole: Record<string, unknown>;
-  clusterRoleBinding: Record<string, unknown>;
+  deployment: InstanceType<typeof Deployment>;
+  serviceAccount: InstanceType<typeof ServiceAccount>;
+  clusterRole: InstanceType<typeof ClusterRole>;
+  clusterRoleBinding: InstanceType<typeof ClusterRoleBinding>;
 }
 
 /**
@@ -50,7 +60,7 @@ export interface GkeExternalDnsAgentResult {
  * });
  * ```
  */
-export function GkeExternalDnsAgent(props: GkeExternalDnsAgentProps): GkeExternalDnsAgentResult {
+export const GkeExternalDnsAgent = Composite<GkeExternalDnsAgentProps>((props) => {
   const {
     gcpServiceAccountEmail,
     gcpProjectId,
@@ -61,6 +71,7 @@ export function GkeExternalDnsAgent(props: GkeExternalDnsAgentProps): GkeExterna
     image = "registry.k8s.io/external-dns/external-dns:v0.14.0",
     namespace = "kube-system",
     labels: extraLabels = {},
+    defaults: defs,
   } = props;
 
   const saName = `${name}-sa`;
@@ -89,7 +100,7 @@ export function GkeExternalDnsAgent(props: GkeExternalDnsAgentProps): GkeExterna
     args.push(`--txt-owner-id=${txtOwnerId}`);
   }
 
-  const deploymentProps: Record<string, unknown> = {
+  const deployment = new Deployment(mergeDefaults({
     metadata: {
       name,
       namespace,
@@ -122,9 +133,9 @@ export function GkeExternalDnsAgent(props: GkeExternalDnsAgentProps): GkeExterna
         },
       },
     },
-  };
+  }, defs?.deployment));
 
-  const serviceAccountProps: Record<string, unknown> = {
+  const serviceAccount = new ServiceAccount(mergeDefaults({
     metadata: {
       name: saName,
       namespace,
@@ -133,9 +144,9 @@ export function GkeExternalDnsAgent(props: GkeExternalDnsAgentProps): GkeExterna
         "iam.gke.io/gcp-service-account": gcpServiceAccountEmail,
       },
     },
-  };
+  }, defs?.serviceAccount));
 
-  const clusterRoleProps: Record<string, unknown> = {
+  const clusterRole = new ClusterRole(mergeDefaults({
     metadata: {
       name: clusterRoleName,
       labels: { ...commonLabels, "app.kubernetes.io/component": "rbac" },
@@ -145,9 +156,9 @@ export function GkeExternalDnsAgent(props: GkeExternalDnsAgentProps): GkeExterna
       { apiGroups: ["extensions", "networking.k8s.io"], resources: ["ingresses"], verbs: ["get", "watch", "list"] },
       { apiGroups: [""], resources: ["nodes"], verbs: ["list", "watch"] },
     ],
-  };
+  }, defs?.clusterRole));
 
-  const clusterRoleBindingProps: Record<string, unknown> = {
+  const clusterRoleBinding = new ClusterRoleBinding(mergeDefaults({
     metadata: {
       name: bindingName,
       labels: { ...commonLabels, "app.kubernetes.io/component": "rbac" },
@@ -164,12 +175,12 @@ export function GkeExternalDnsAgent(props: GkeExternalDnsAgentProps): GkeExterna
         namespace,
       },
     ],
-  };
+  }, defs?.clusterRoleBinding));
 
   return {
-    deployment: deploymentProps,
-    serviceAccount: serviceAccountProps,
-    clusterRole: clusterRoleProps,
-    clusterRoleBinding: clusterRoleBindingProps,
+    deployment,
+    serviceAccount,
+    clusterRole,
+    clusterRoleBinding,
   };
-}
+}, "GkeExternalDnsAgent");

@@ -1,4 +1,5 @@
-import { Composite } from "@intentius/chant";
+import { Composite, mergeDefaults } from "@intentius/chant";
+import type { Job } from "../generated/index";
 
 export interface DeployEnvironmentProps {
   /** Environment name. Required. */
@@ -15,6 +16,10 @@ export interface DeployEnvironmentProps {
   cancelInProgress?: boolean;
   /** Runner label. Default: "ubuntu-latest" */
   runsOn?: string;
+  defaults?: {
+    deployJob?: Partial<ConstructorParameters<typeof Job>[0]>;
+    cleanupJob?: Partial<ConstructorParameters<typeof Job>[0]>;
+  };
 }
 
 export const DeployEnvironment = Composite<DeployEnvironmentProps>((props) => {
@@ -26,6 +31,7 @@ export const DeployEnvironment = Composite<DeployEnvironmentProps>((props) => {
     concurrencyGroup,
     cancelInProgress = true,
     runsOn = "ubuntu-latest",
+    defaults,
   } = props;
 
   const group = concurrencyGroup ?? `deploy-${name}`;
@@ -49,7 +55,7 @@ export const DeployEnvironment = Composite<DeployEnvironmentProps>((props) => {
     environment.url = url;
   }
 
-  const deployJob = new JobClass({
+  const deployJob = new JobClass(mergeDefaults({
     "runs-on": runsOn,
     environment,
     concurrency: {
@@ -57,7 +63,7 @@ export const DeployEnvironment = Composite<DeployEnvironmentProps>((props) => {
       "cancel-in-progress": cancelInProgress,
     },
     steps: deploySteps,
-  });
+  }, defaults?.deployJob));
 
   // ── Cleanup job ────────────────────────────────────────────────────
   const cleanupSteps = [
@@ -67,11 +73,11 @@ export const DeployEnvironment = Composite<DeployEnvironmentProps>((props) => {
     ),
   ];
 
-  const cleanupJob = new JobClass({
+  const cleanupJob = new JobClass(mergeDefaults({
     "runs-on": runsOn,
     environment: { name },
     steps: cleanupSteps,
-  });
+  }, defaults?.cleanupJob));
 
   return { deployJob, cleanupJob };
 }, "DeployEnvironment");

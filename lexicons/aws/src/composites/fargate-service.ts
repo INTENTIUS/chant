@@ -1,4 +1,4 @@
-import { Composite } from "@intentius/chant";
+import { Composite, mergeDefaults } from "@intentius/chant";
 import {
   EcsService,
   EcsService_LoadBalancer,
@@ -54,6 +54,12 @@ export interface FargateServiceProps {
   ManagedPolicyArns?: string[];
   Policies?: InstanceType<typeof Role_Policy>[];
   logRetentionDays?: number;
+  defaults?: {
+    taskRole?: Partial<ConstructorParameters<typeof Role>[0]>;
+    taskDef?: Partial<ConstructorParameters<typeof TaskDefinition>[0]>;
+    targetGroup?: Partial<ConstructorParameters<typeof TargetGroup>[0]>;
+    service?: Partial<ConstructorParameters<typeof EcsService>[0]>;
+  };
 }
 
 export const FargateService = Composite<FargateServiceProps>((props) => {
@@ -70,13 +76,14 @@ export const FargateService = Composite<FargateServiceProps>((props) => {
   const desiredCount = props.desiredCount ?? 2;
   const healthCheckPath = props.healthCheckPath ?? "/";
   const logRetentionDays = props.logRetentionDays ?? 30;
+  const { defaults: defs } = props;
 
   // Task role — app permissions
-  const taskRole = new Role({
+  const taskRole = new Role(mergeDefaults({
     AssumeRolePolicyDocument: ecsTrustPolicy,
     ManagedPolicyArns: props.ManagedPolicyArns,
     Policies: props.Policies,
-  });
+  }, defs?.taskRole));
 
   // Log group
   const logGroup = new LogGroup({
@@ -118,7 +125,7 @@ export const FargateService = Composite<FargateServiceProps>((props) => {
   });
 
   // Task definition
-  const taskDef = new TaskDefinition({
+  const taskDef = new TaskDefinition(mergeDefaults({
     NetworkMode: "awsvpc",
     RequiresCompatibilities: ["FARGATE"],
     Cpu: cpu,
@@ -126,7 +133,7 @@ export const FargateService = Composite<FargateServiceProps>((props) => {
     ExecutionRoleArn: props.executionRoleArn,
     TaskRoleArn: taskRole.Arn,
     ContainerDefinitions: [container],
-  });
+  }, defs?.taskDef));
 
   // Task security group — ingress on container port from ALB SG
   const taskIngress = new SecurityGroup_Ingress({
@@ -143,13 +150,13 @@ export const FargateService = Composite<FargateServiceProps>((props) => {
   });
 
   // Target group
-  const targetGroup = new TargetGroup({
+  const targetGroup = new TargetGroup(mergeDefaults({
     TargetType: "ip",
     Protocol: "HTTP",
     Port: containerPort,
     VpcId: props.vpcId,
     HealthCheckPath: healthCheckPath,
-  });
+  }, defs?.targetGroup));
 
   // Listener rule conditions
   const conditions: InstanceType<typeof ListenerRule_RuleCondition>[] = [];
@@ -209,7 +216,7 @@ export const FargateService = Composite<FargateServiceProps>((props) => {
   });
 
   const service = new EcsService(
-    {
+    mergeDefaults({
       Cluster: props.clusterArn,
       TaskDefinition: taskDef.TaskDefinitionArn,
       LaunchType: "FARGATE",
@@ -217,7 +224,7 @@ export const FargateService = Composite<FargateServiceProps>((props) => {
       HealthCheckGracePeriodSeconds: 60,
       LoadBalancers: [serviceLoadBalancer],
       NetworkConfiguration: networkConfig,
-    },
+    }, defs?.service),
     { DependsOn: [rule] },
   );
 

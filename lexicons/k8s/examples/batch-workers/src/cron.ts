@@ -1,12 +1,6 @@
 // CronWorkload: nightly database cleanup with RBAC.
 
-import {
-  CronJob,
-  ServiceAccount,
-  Role,
-  RoleBinding,
-  CronWorkload,
-} from "@intentius/chant-lexicon-k8s";
+import { CronWorkload } from "@intentius/chant-lexicon-k8s";
 
 const NAMESPACE = "batch-workers";
 
@@ -31,7 +25,7 @@ const cron = CronWorkload({
   },
 });
 
-export const cronJob = new CronJob(cron.cronJob);
-export const cronSa = new ServiceAccount(cron.serviceAccount);
-export const cronRole = new Role(cron.role);
-export const cronRoleBinding = new RoleBinding(cron.roleBinding);
+export const cronJob = cron.cronJob;
+export const cronSa = cron.serviceAccount;
+export const cronRole = cron.role;
+export const cronRoleBinding = cron.roleBinding;

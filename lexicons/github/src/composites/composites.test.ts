@@ -673,3 +673,109 @@ describe("GoCI", () => {
     expect(result.testJob.props["runs-on"]).toBe("macos-latest");
   });
 });
+
+// ── Defaults overrides ─────────────────────────────────────────────
+
+describe("defaults overrides", () => {
+  test("Checkout defaults override step props", () => {
+    const result = Checkout({
+      ref: "main",
+      defaults: { step: { id: "my-checkout" } },
+    });
+    expect(result.step.props.id).toBe("my-checkout");
+    expect(result.step.props.uses).toBe("actions/checkout@v4");
+  });
+
+  test("SetupNode defaults override step props", () => {
+    const result = SetupNode({
+      nodeVersion: "20",
+      defaults: { step: { id: "setup" } },
+    });
+    expect(result.step.props.id).toBe("setup");
+    expect(result.step.props.name).toBe("Setup Node.js");
+  });
+
+  test("NodeCI defaults override job and workflow props", () => {
+    const result = NodeCI({
+      defaults: {
+        job: { "timeout-minutes": 30 } as any,
+        workflow: { concurrency: "ci-${{ github.ref }}" } as any,
+      },
+    });
+    expect(result.job.props["timeout-minutes"]).toBe(30);
+    expect(result.workflow.props.concurrency).toBe("ci-${{ github.ref }}");
+  });
+
+  test("NodePipeline defaults override individual jobs", () => {
+    const result = NodePipeline({
+      defaults: {
+        buildJob: { "timeout-minutes": 15 } as any,
+        testJob: { "timeout-minutes": 20 } as any,
+      },
+    });
+    expect(result.buildJob.props["timeout-minutes"]).toBe(15);
+    expect(result.testJob.props["timeout-minutes"]).toBe(20);
+  });
+
+  test("DockerBuild defaults override job and workflow", () => {
+    const result = DockerBuild({
+      defaults: {
+        job: { "timeout-minutes": 60 } as any,
+        workflow: { concurrency: "docker" } as any,
+      },
+    });
+    expect(result.job.props["timeout-minutes"]).toBe(60);
+    expect(result.workflow.props.concurrency).toBe("docker");
+  });
+
+  test("DeployEnvironment defaults override deploy and cleanup jobs", () => {
+    const result = DeployEnvironment({
+      name: "staging",
+      deployScript: "npm run deploy",
+      defaults: {
+        deployJob: { "timeout-minutes": 30 } as any,
+        cleanupJob: { "timeout-minutes": 10 } as any,
+      },
+    });
+    expect(result.deployJob.props["timeout-minutes"]).toBe(30);
+    expect(result.cleanupJob.props["timeout-minutes"]).toBe(10);
+  });
+
+  test("GoCI defaults override workflow name", () => {
+    const result = GoCI({
+      defaults: {
+        workflow: { name: "Custom Go CI" } as any,
+      },
+    });
+    expect(result.workflow.props.name).toBe("Custom Go CI");
+  });
+
+  test("PythonCI defaults override testJob", () => {
+    const result = PythonCI({
+      defaults: {
+        testJob: { "timeout-minutes": 45 } as any,
+      },
+    });
+    expect(result.testJob.props["timeout-minutes"]).toBe(45);
+  });
+
+  test("UploadArtifact defaults override step props", () => {
+    const result = UploadArtifact({
+      name: "build",
+      path: "dist/",
+      defaults: { step: { id: "upload" } },
+    });
+    expect(result.step.props.id).toBe("upload");
+    expect(result.step.props.uses).toBe("actions/upload-artifact@v4");
+  });
+
+  test("CacheAction defaults override step props", () => {
+    const result = CacheAction({
+      path: "node_modules",
+      key: "cache-key",
+      defaults: { step: { id: "cache-step" } },
+    });
+    expect(result.step.props.id).toBe("cache-step");
+    expect(result.step.props.uses).toBe("actions/cache@v4");
+  });
+});

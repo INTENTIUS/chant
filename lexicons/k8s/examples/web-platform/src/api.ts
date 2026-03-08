@@ -1,10 +1,6 @@
 // SidecarApp: API with nginx reverse-proxy sidecar.
 
-import {
-  Deployment,
-  Service,
-  SidecarApp,
-} from "@intentius/chant-lexicon-k8s";
+import { SidecarApp } from "@intentius/chant-lexicon-k8s";
 
 const NAMESPACE = "web-platform";
 
@@ -26,5 +22,5 @@ const api = SidecarApp({
   }],
 });
 
-export const apiDeployment = new Deployment(api.deployment);
-export const apiService = new Service(api.service);
+export const apiDeployment = api.deployment;
+export const apiService = api.service;

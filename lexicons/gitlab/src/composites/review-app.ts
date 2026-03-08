@@ -1,4 +1,4 @@
-import { Composite } from "@intentius/chant";
+import { Composite, mergeDefaults } from "@intentius/chant";
 import { Job, Image, Environment, Rule } from "../generated";
 import { CI } from "../variables";
 
@@ -17,6 +17,11 @@ export interface ReviewAppProps {
   image?: InstanceType<typeof Image>;
   /** Job stage. Default: "deploy" */
   stage?: string;
+  /** Per-member defaults for customizing the deploy and stop jobs. */
+  defaults?: {
+    deploy?: Partial<ConstructorParameters<typeof Job>[0]>;
+    stop?: Partial<ConstructorParameters<typeof Job>[0]>;
+  };
 }
 
 export const ReviewApp = Composite<ReviewAppProps>((props) => {
@@ -28,6 +33,7 @@ export const ReviewApp = Composite<ReviewAppProps>((props) => {
     autoStopIn = "1 week",
     image,
     stage = "deploy",
+    defaults: defs,
   } = props;
 
   const stopJobName = `${name}-stop`;
@@ -35,7 +41,7 @@ export const ReviewApp = Composite<ReviewAppProps>((props) => {
   const deployScriptArr = Array.isArray(deployScript) ? deployScript : [deployScript];
   const stopScriptArr = Array.isArray(stopScript) ? stopScript : [stopScript];
 
-  const deploy = new Job({
+  const deploy = new Job(mergeDefaults({
     stage,
     ...(image ? { image } : {}),
     environment: new Environment({
@@ -46,9 +52,9 @@ export const ReviewApp = Composite<ReviewAppProps>((props) => {
     }),
     rules: [new Rule({ if: CI.MergeRequestIid })],
     script: deployScriptArr,
-  });
+  }, defs?.deploy));
 
-  const stop = new Job({
+  const stop = new Job(mergeDefaults({
     stage,
     ...(image ? { image } : {}),
     environment: new Environment({
@@ -57,7 +63,7 @@ export const ReviewApp = Composite<ReviewAppProps>((props) => {
     }),
     rules: [new Rule({ if: CI.MergeRequestIid, when: "manual" })],
     script: stopScriptArr,
-  });
+  }, defs?.stop));
 
   return { deploy, stop };
 }, "ReviewApp");

@@ -1,15 +1,7 @@
 // K8s workloads: AutoscaledService + IrsaServiceAccount + ConfigMap.
 
 import {
-  Deployment,
-  Service,
-  HorizontalPodAutoscaler,
-  PodDisruptionBudget,
-  ServiceAccount,
   ConfigMap,
-  ClusterRole,
-  ClusterRoleBinding,
-  APIService,
   AutoscaledService,
   IrsaServiceAccount,
   MetricsServer,
@@ -26,7 +18,7 @@ const irsa = IrsaServiceAccount({
   namespace: NAMESPACE,
 });
 
-export const appServiceAccount = new ServiceAccount(irsa.serviceAccount);
+export const appServiceAccount = irsa.serviceAccount;
 
 // ── AutoscaledService (Deployment + Service + HPA + PDB) ───────────
 
@@ -66,10 +58,10 @@ const app = AutoscaledService({
   tmpDirs: ["/tmp", "/var/cache/nginx"],
 });
 
-export const appDeployment = new Deployment(app.deployment);
-export const appService = new Service(app.service);
-export const appHpa = new HorizontalPodAutoscaler(app.hpa);
-export const appPdb = new PodDisruptionBudget(app.pdb!);
+export const appDeployment = app.deployment;
+export const appService = app.service;
+export const appHpa = app.hpa;
+export const appPdb = app.pdb!;
 
 // ── App ConfigMap ──────────────────────────────────────────────────
 
@@ -101,11 +93,11 @@ export const appConfig = new ConfigMap({
 
 const ms = MetricsServer({});
 
-export const metricsServerDeployment = new Deployment(ms.deployment);
-export const metricsServerService = new Service(ms.service);
-export const metricsServerSa = new ServiceAccount(ms.serviceAccount);
-export const metricsServerRole = new ClusterRole(ms.clusterRole);
-export const metricsServerBinding = new ClusterRoleBinding(ms.clusterRoleBinding);
-export const metricsServerAggRole = new ClusterRole(ms.aggregatedClusterRole);
-export const metricsServerAuthBinding = new ClusterRoleBinding(ms.authDelegatorBinding);
-export const metricsServerApiService = new APIService(ms.apiService);
+export const metricsServerDeployment = ms.deployment;
+export const metricsServerService = ms.service;
+export const metricsServerSa = ms.serviceAccount;
+export const metricsServerRole = ms.clusterRole;
+export const metricsServerBinding = ms.clusterRoleBinding;
+export const metricsServerAggRole = ms.aggregatedClusterRole;
+export const metricsServerAuthBinding = ms.authDelegatorBinding;
+export const metricsServerApiService = ms.apiService;

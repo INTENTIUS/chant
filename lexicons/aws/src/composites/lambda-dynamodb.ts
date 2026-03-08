@@ -1,4 +1,4 @@
-import { Composite } from "@intentius/chant";
+import { Composite, mergeDefaults } from "@intentius/chant";
 import { Table, Table_AttributeDefinition, Table_KeySchema, Role_Policy } from "../generated";
 import { DynamoDBActions } from "../actions/dynamodb";
 import { LambdaFunction, type LambdaFunctionProps } from "./lambda-function";
@@ -8,6 +8,9 @@ export interface LambdaDynamoDBProps extends LambdaFunctionProps {
   partitionKey: string;
   sortKey?: string;
   access?: "ReadOnly" | "ReadWrite" | "Full";
+  defaults?: LambdaFunctionProps["defaults"] & {
+    table?: Partial<ConstructorParameters<typeof Table>[0]>;
+  };
 }
 
 export const LambdaDynamoDB = Composite<LambdaDynamoDBProps>((props) => {
@@ -27,12 +30,14 @@ export const LambdaDynamoDB = Composite<LambdaDynamoDBProps>((props) => {
     );
   }
 
-  const table = new Table({
+  const { defaults } = props;
+
+  const table = new Table(mergeDefaults({
     TableName: props.tableName,
     BillingMode: "PAY_PER_REQUEST",
     AttributeDefinitions: attributeDefinitions,
     KeySchema: keySchema,
-  });
+  }, defaults?.table));
 
   const access = props.access ?? "ReadWrite";
   const dynamoPolicyDocument = {

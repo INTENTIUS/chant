@@ -2,6 +2,15 @@
  * SecureProject composite — Project + IAMAuditConfig + Service enablement + owner IAM + LoggingSink.
  */
 
+import { Composite, mergeDefaults } from "@intentius/chant";
+import {
+  ResourcemanagerProject,
+  IAMAuditConfig,
+  ServiceusageService,
+  IAMPolicyMember,
+  LogSink,
+} from "../generated";
+
 export interface SecureProjectProps {
   /** Project name (also used as project ID). */
   name: string;
@@ -23,17 +32,16 @@ export interface SecureProjectProps {
   labels?: Record<string, string>;
   /** Namespace for all resources. */
   namespace?: string;
+  /** Per-member defaults for customizing individual resources. */
+  defaults?: {
+    project?: Partial<ConstructorParameters<typeof ResourcemanagerProject>[0]>;
+    auditConfig?: Partial<ConstructorParameters<typeof IAMAuditConfig>[0]>;
+    ownerIam?: Partial<ConstructorParameters<typeof IAMPolicyMember>[0]>;
+    loggingSink?: Partial<ConstructorParameters<typeof LogSink>[0]>;
+  };
 }
 
-export interface SecureProjectResult {
-  project: Record<string, unknown>;
-  auditConfig: Record<string, unknown>;
-  services: Record<string, unknown>[];
-  ownerIam?: Record<string, unknown>;
-  loggingSink?: Record<string, unknown>;
-}
-
-export function SecureProject(props: SecureProjectProps): SecureProjectResult {
+export const SecureProject = Composite<SecureProjectProps>((props) => {
   const {
     name,
     orgId,
@@ -51,6 +59,7 @@ export function SecureProject(props: SecureProjectProps): SecureProjectResult {
     loggingSinkFilter = 'logName:"cloudaudit.googleapis.com"',
     labels: extraLabels = {},
     namespace,
+    defaults: defs,
   } = props;
 
   const commonLabels: Record<string, string> = {
@@ -59,7 +68,7 @@ export function SecureProject(props: SecureProjectProps): SecureProjectResult {
     ...extraLabels,
   };
 
-  const project: Record<string, unknown> = {
+  const project = new ResourcemanagerProject(mergeDefaults({
     metadata: {
       name,
       ...(namespace && { namespace }),
@@ -68,9 +77,9 @@ export function SecureProject(props: SecureProjectProps): SecureProjectResult {
     ...(orgId && { organizationRef: { external: orgId } }),
     ...(folderId && { folderRef: { external: folderId } }),
     ...(billingAccountRef && { billingAccountRef: { external: billingAccountRef } }),
-  };
+  } as Record<string, unknown>, defs?.project));
 
-  const auditConfig: Record<string, unknown> = {
+  const auditConfig = new IAMAuditConfig(mergeDefaults({
     metadata: {
       name: `${name}-audit`,
       ...(namespace && { namespace }),
@@ -82,21 +91,27 @@ export function SecureProject(props: SecureProjectProps): SecureProjectResult {
       { logType: "DATA_READ" },
       { logType: "DATA_WRITE" },
     ],
-  };
+  } as Record<string, unknown>, defs?.auditConfig));
 
-  const services = enabledApis.map((api) => ({
-    metadata: {
-      name: `${name}-${api.split(".")[0]}`,
-      ...(namespace && { namespace }),
-      labels: { ...commonLabels, "app.kubernetes.io/component": "service" },
-    },
-    resourceID: api,
-  }));
+  // Spread services into named members (service_compute, service_container, etc.)
+  // so the Composite validator accepts them as individual Declarables.
+  const serviceEntries: Record<string, any> = {};
+  for (const api of enabledApis) {
+    const key = `service_${api.split(".")[0]}`;
+    serviceEntries[key] = new ServiceusageService({
+      metadata: {
+        name: `${name}-${api.split(".")[0]}`,
+        ...(namespace && { namespace }),
+        labels: { ...commonLabels, "app.kubernetes.io/component": "service" },
+      },
+      resourceID: api,
+    } as Record<string, unknown>);
+  }
 
-  const result: SecureProjectResult = { project, auditConfig, services };
+  const result: Record<string, any> = { project, auditConfig, ...serviceEntries };
 
   if (owner) {
-    result.ownerIam = {
+    result.ownerIam = new IAMPolicyMember(mergeDefaults({
       metadata: {
         name: `${name}-owner`,
         ...(namespace && { namespace }),
@@ -109,11 +124,11 @@ export function SecureProject(props: SecureProjectProps): SecureProjectResult {
         kind: "Project",
         name,
       },
-    };
+    } as Record<string, unknown>, defs?.ownerIam));
   }
 
   if (loggingSinkDestination) {
-    result.loggingSink = {
+    result.loggingSink = new LogSink(mergeDefaults({
       metadata: {
         name: `${name}-audit-sink`,
         ...(namespace && { namespace }),
@@ -121,8 +136,8 @@ export function SecureProject(props: SecureProjectProps): SecureProjectResult {
       },
       destination: loggingSinkDestination,
       filter: loggingSinkFilter,
-    };
+    } as Record<string, unknown>, defs?.loggingSink));
   }
 
   return result;
-}
+}, "SecureProject");

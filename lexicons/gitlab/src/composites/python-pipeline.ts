@@ -1,4 +1,4 @@
-import { Composite } from "@intentius/chant";
+import { Composite, mergeDefaults } from "@intentius/chant";
 import { Job, Default, Image, Cache, Artifacts } from "../generated";
 import { CI } from "../variables";
 
@@ -13,6 +13,12 @@ export interface PythonPipelineProps {
   requirementsFile?: string;
   /** Use poetry instead of pip. Default: false */
   usePoetry?: boolean;
+  /** Per-member defaults for customizing the generated resources. */
+  defaults?: {
+    defaults?: Partial<ConstructorParameters<typeof Default>[0]>;
+    test?: Partial<ConstructorParameters<typeof Job>[0]>;
+    lint?: Partial<ConstructorParameters<typeof Job>[0]>;
+  };
 }
 
 export const PythonPipeline = Composite<PythonPipelineProps>((props) => {
@@ -22,6 +28,7 @@ export const PythonPipeline = Composite<PythonPipelineProps>((props) => {
     lintCommand = "ruff check .",
     requirementsFile = "requirements.txt",
     usePoetry = false,
+    defaults: defs,
   } = props;
 
   const pythonImage = new Image({ name: `python:${pythonVersion}-slim` });
@@ -42,13 +49,13 @@ export const PythonPipeline = Composite<PythonPipelineProps>((props) => {
 
   const activateStep = usePoetry ? "source .venv/bin/activate" : "source .venv/bin/activate";
 
-  const defaults = new Default({
+  const defaults = new Default(mergeDefaults({
     image: pythonImage,
     cache: [cache],
     before_script: [...installSteps],
-  });
+  }, defs?.defaults));
 
-  const test = new Job({
+  const test = new Job(mergeDefaults({
     stage: "test",
     variables: { PIP_CACHE_DIR: `${CI.ProjectDir}/.pip-cache` },
     script: [activateStep, testCommand],
@@ -56,15 +63,15 @@ export const PythonPipeline = Composite<PythonPipelineProps>((props) => {
       reports: { junit: "report.xml" },
       when: "always",
     }),
-  });
+  }, defs?.test));
 
   const lint =
     lintCommand !== null
-      ? new Job({
+      ? new Job(mergeDefaults({
           stage: "test",
           variables: { PIP_CACHE_DIR: `${CI.ProjectDir}/.pip-cache` },
           script: [activateStep, lintCommand],
-        })
+        }, defs?.lint))
       : undefined;
 
   if (lint) {

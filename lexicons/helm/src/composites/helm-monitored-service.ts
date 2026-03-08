@@ -5,6 +5,11 @@
  * Uses fallback GVK for CRD resources (ServiceMonitor, PrometheusRule).
  */
 
+import { Composite, mergeDefaults } from "@intentius/chant";
+import {
+  Chart, Values, Deployment, Service, ServiceAccount,
+  ServiceMonitor as ServiceMonitorRes, PrometheusRule as PrometheusRuleRes,
+} from "../resources";
 import { values, include, printf, toYaml, If, With, Capabilities } from "../intrinsics";
 
 export interface HelmMonitoredServiceProps {
@@ -42,19 +47,29 @@ export interface HelmMonitoredServiceProps {
   affinity?: Record<string, unknown>;
   /** Chart appVersion. */
   appVersion?: string;
+  /** Per-member defaults. */
+  defaults?: {
+    chart?: Partial<Record<string, unknown>>;
+    values?: Partial<Record<string, unknown>>;
+    deployment?: Partial<Record<string, unknown>>;
+    service?: Partial<Record<string, unknown>>;
+    serviceAccount?: Partial<Record<string, unknown>>;
+    serviceMonitor?: Partial<Record<string, unknown>>;
+    prometheusRule?: Partial<Record<string, unknown>>;
+  };
 }
 
 export interface HelmMonitoredServiceResult {
-  chart: Record<string, unknown>;
-  values: Record<string, unknown>;
-  deployment: Record<string, unknown>;
-  service: Record<string, unknown>;
-  serviceAccount?: Record<string, unknown>;
-  serviceMonitor: Record<string, unknown>;
-  prometheusRule?: Record<string, unknown>;
+  chart: InstanceType<typeof Chart>;
+  values: InstanceType<typeof Values>;
+  deployment: InstanceType<typeof Deployment>;
+  service: InstanceType<typeof Service>;
+  serviceAccount?: InstanceType<typeof ServiceAccount>;
+  serviceMonitor: InstanceType<typeof ServiceMonitorRes>;
+  prometheusRule?: InstanceType<typeof PrometheusRuleRes>;
 }
 
-export function HelmMonitoredService(props: HelmMonitoredServiceProps): HelmMonitoredServiceResult {
+export const HelmMonitoredService = Composite<HelmMonitoredServiceProps>((props) => {
   const {
     name,
     imageRepository = "nginx",
@@ -68,16 +83,17 @@ export function HelmMonitoredService(props: HelmMonitoredServiceProps): HelmMoni
     serviceAccount = true,
     alertRules = false,
     appVersion = "1.0.0",
+    defaults: defs,
   } = props;
 
-  const chart = {
+  const chart = new Chart(mergeDefaults({
     apiVersion: "v2",
     name,
     version: "0.1.0",
     appVersion,
     type: "application",
     description: `A Helm chart for ${name} with monitoring`,
-  };
+  }, defs?.chart));
 
   const valuesObj: Record<string, unknown> = {
     replicaCount: replicas,
@@ -120,6 +136,8 @@ export function HelmMonitoredService(props: HelmMonitoredServiceProps): HelmMoni
     };
   }
 
+  const valuesRes = new Values(mergeDefaults(valuesObj, defs?.values));
+
   const containerSpec: Record<string, unknown> = {
     name,
     image: printf("%s:%s", values.image.repository, values.image.tag),
@@ -143,7 +161,7 @@ export function HelmMonitoredService(props: HelmMonitoredServiceProps): HelmMoni
   if (props.affinity) podSpec.affinity = With(values.affinity, toYaml(values.affinity));
   if (serviceAccount) podSpec.serviceAccountName = include(`${name}.serviceAccountName`);
 
-  const deployment = {
+  const deployment = new Deployment(mergeDefaults({
     apiVersion: "apps/v1",
     kind: "Deployment",
     metadata: {
@@ -162,9 +180,9 @@ export function HelmMonitoredService(props: HelmMonitoredServiceProps): HelmMoni
         spec: podSpec,
       },
     },
-  };
+  }, defs?.deployment));
 
-  const service = {
+  const service = new Service(mergeDefaults({
     apiVersion: "v1",
     kind: "Service",
     metadata: {
@@ -189,38 +207,41 @@ export function HelmMonitoredService(props: HelmMonitoredServiceProps): HelmMoni
       ],
       selector: include(`${name}.selectorLabels`),
     },
-  };
+  }, defs?.service));
 
   // ServiceMonitor CRD (monitoring.coreos.com/v1) — gated on Capabilities check
-  const serviceMonitor = If(`and .Values.monitoring.enabled (.Capabilities.APIVersions.Has "monitoring.coreos.com/v1")`, {
-    apiVersion: "monitoring.coreos.com/v1",
-    kind: "ServiceMonitor",
-    metadata: {
-      name: include(`${name}.fullname`),
-      labels: include(`${name}.labels`),
-    },
-    spec: {
-      selector: {
-        matchLabels: include(`${name}.selectorLabels`),
+  const serviceMonitor = new ServiceMonitorRes(mergeDefaults(
+    If(`and .Values.monitoring.enabled (.Capabilities.APIVersions.Has "monitoring.coreos.com/v1")`, {
+      apiVersion: "monitoring.coreos.com/v1",
+      kind: "ServiceMonitor",
+      metadata: {
+        name: include(`${name}.fullname`),
+        labels: include(`${name}.labels`),
       },
-      endpoints: [{
-        port: "metrics",
-        path: values.monitoring.metricsPath,
-        interval: values.monitoring.scrapeInterval,
-      }],
-    },
-  });
+      spec: {
+        selector: {
+          matchLabels: include(`${name}.selectorLabels`),
+        },
+        endpoints: [{
+          port: "metrics",
+          path: values.monitoring.metricsPath,
+          interval: values.monitoring.scrapeInterval,
+        }],
+      },
+    }) as Record<string, unknown>,
+    defs?.serviceMonitor,
+  ));
 
-  const result: HelmMonitoredServiceResult = {
+  const result: Record<string, any> = {
     chart,
-    values: valuesObj,
+    values: valuesRes,
     deployment,
     service,
-    serviceMonitor: serviceMonitor as unknown as Record<string, unknown>,
+    serviceMonitor,
   };
 
   if (serviceAccount) {
-    result.serviceAccount = {
+    result.serviceAccount = new ServiceAccount(mergeDefaults({
       apiVersion: "v1",
       kind: "ServiceAccount",
       metadata: {
@@ -228,25 +249,28 @@ export function HelmMonitoredService(props: HelmMonitoredServiceProps): HelmMoni
         labels: include(`${name}.labels`),
         annotations: toYaml(values.serviceAccount.annotations),
       },
-    };
+    }, defs?.serviceAccount));
   }
 
   if (alertRules) {
-    result.prometheusRule = If(`and .Values.alerting.enabled (.Capabilities.APIVersions.Has "monitoring.coreos.com/v1")`, {
-      apiVersion: "monitoring.coreos.com/v1",
-      kind: "PrometheusRule",
-      metadata: {
-        name: include(`${name}.fullname`),
-        labels: include(`${name}.labels`),
-      },
-      spec: {
-        groups: [{
-          name: printf("%s.rules", name),
-          rules: toYaml(values.alerting.rules),
-        }],
-      },
-    }) as unknown as Record<string, unknown>;
+    result.prometheusRule = new PrometheusRuleRes(mergeDefaults(
+      If(`and .Values.alerting.enabled (.Capabilities.APIVersions.Has "monitoring.coreos.com/v1")`, {
+        apiVersion: "monitoring.coreos.com/v1",
+        kind: "PrometheusRule",
+        metadata: {
+          name: include(`${name}.fullname`),
+          labels: include(`${name}.labels`),
+        },
+        spec: {
+          groups: [{
+            name: printf("%s.rules", name),
+            rules: toYaml(values.alerting.rules),
+          }],
+        },
+      }) as Record<string, unknown>,
+      defs?.prometheusRule,
+    ));
   }
 
   return result;
-}
+}, "HelmMonitoredService");

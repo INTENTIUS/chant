@@ -5,6 +5,9 @@
  * EFS provides ReadWriteMany access mode (shared across pods/nodes).
  */
 
+import { Composite, mergeDefaults } from "@intentius/chant";
+import { StorageClass } from "../generated";
+
 export interface EfsStorageClassProps {
   /** StorageClass name. */
   name: string;
@@ -20,10 +23,14 @@ export interface EfsStorageClassProps {
   provisioningMode?: string;
   /** Additional labels. */
   labels?: Record<string, string>;
+  /** Per-member defaults for fine-grained overrides. */
+  defaults?: {
+    storageClass?: Partial<Record<string, unknown>>;
+  };
 }
 
 export interface EfsStorageClassResult {
-  storageClass: Record<string, unknown>;
+  storageClass: InstanceType<typeof StorageClass>;
 }
 
 /**
@@ -41,7 +48,7 @@ export interface EfsStorageClassResult {
  * });
  * ```
  */
-export function EfsStorageClass(props: EfsStorageClassProps): EfsStorageClassResult {
+export const EfsStorageClass = Composite<EfsStorageClassProps>((props) => {
   const {
     name,
     fileSystemId,
@@ -50,6 +57,7 @@ export function EfsStorageClass(props: EfsStorageClassProps): EfsStorageClassRes
     reclaimPolicy = "Delete",
     provisioningMode = "efs-ap",
     labels: extraLabels = {},
+    defaults: defs,
   } = props;
 
   const commonLabels: Record<string, string> = {
@@ -58,7 +66,7 @@ export function EfsStorageClass(props: EfsStorageClassProps): EfsStorageClassRes
     ...extraLabels,
   };
 
-  const storageClassProps: Record<string, unknown> = {
+  const storageClass = new StorageClass(mergeDefaults({
     metadata: {
       name,
       labels: { ...commonLabels, "app.kubernetes.io/component": "storage" },
@@ -71,7 +79,7 @@ export function EfsStorageClass(props: EfsStorageClassProps): EfsStorageClassRes
       basePath,
     },
     reclaimPolicy,
-  };
+  }, defs?.storageClass));
 
-  return { storageClass: storageClassProps };
-}
+  return { storageClass };
+}, "EfsStorageClass");

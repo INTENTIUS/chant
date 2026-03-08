@@ -5,6 +5,8 @@
  * that don't serve HTTP traffic.
  */
 
+import { Composite, mergeDefaults } from "@intentius/chant";
+import { Chart, Values, Deployment, ServiceAccount, HPA, PDB } from "../resources";
 import { values, include, printf, toYaml, If } from "../intrinsics";
 
 export interface HelmWorkerProps {
@@ -22,18 +24,27 @@ export interface HelmWorkerProps {
   pdb?: boolean;
   /** Chart appVersion. */
   appVersion?: string;
+  /** Per-member defaults. */
+  defaults?: {
+    chart?: Partial<Record<string, unknown>>;
+    values?: Partial<Record<string, unknown>>;
+    deployment?: Partial<Record<string, unknown>>;
+    serviceAccount?: Partial<Record<string, unknown>>;
+    hpa?: Partial<Record<string, unknown>>;
+    pdb?: Partial<Record<string, unknown>>;
+  };
 }
 
 export interface HelmWorkerResult {
-  chart: Record<string, unknown>;
-  values: Record<string, unknown>;
-  deployment: Record<string, unknown>;
-  serviceAccount: Record<string, unknown>;
-  hpa?: Record<string, unknown>;
-  pdb?: Record<string, unknown>;
+  chart: InstanceType<typeof Chart>;
+  values: InstanceType<typeof Values>;
+  deployment: InstanceType<typeof Deployment>;
+  serviceAccount: InstanceType<typeof ServiceAccount>;
+  hpa?: InstanceType<typeof HPA>;
+  pdb?: InstanceType<typeof PDB>;
 }
 
-export function HelmWorker(props: HelmWorkerProps): HelmWorkerResult {
+export const HelmWorker = Composite<HelmWorkerProps>((props) => {
   const {
     name,
     imageRepository = "worker",
@@ -42,16 +53,17 @@ export function HelmWorker(props: HelmWorkerProps): HelmWorkerResult {
     autoscaling = false,
     pdb = true,
     appVersion = "1.0.0",
+    defaults: defs,
   } = props;
 
-  const chart = {
+  const chart = new Chart(mergeDefaults({
     apiVersion: "v2",
     name,
     version: "0.1.0",
     appVersion,
     type: "application",
     description: `A Helm chart for ${name} worker`,
-  };
+  }, defs?.chart));
 
   const valuesObj: Record<string, unknown> = {
     replicaCount: replicas,
@@ -101,7 +113,9 @@ export function HelmWorker(props: HelmWorkerProps): HelmWorkerResult {
     };
   }
 
-  const deployment = {
+  const valuesRes = new Values(mergeDefaults(valuesObj, defs?.values));
+
+  const deployment = new Deployment(mergeDefaults({
     apiVersion: "apps/v1",
     kind: "Deployment",
     metadata: {
@@ -137,9 +151,9 @@ export function HelmWorker(props: HelmWorkerProps): HelmWorkerResult {
         },
       },
     },
-  };
+  }, defs?.deployment));
 
-  const serviceAccount = {
+  const serviceAccount = new ServiceAccount(mergeDefaults({
     apiVersion: "v1",
     kind: "ServiceAccount",
     metadata: {
@@ -147,17 +161,17 @@ export function HelmWorker(props: HelmWorkerProps): HelmWorkerResult {
       labels: include(`${name}.labels`),
       annotations: toYaml(values.serviceAccount.annotations),
     },
-  };
+  }, defs?.serviceAccount));
 
-  const result: HelmWorkerResult = {
+  const result: Record<string, any> = {
     chart,
-    values: valuesObj,
+    values: valuesRes,
     deployment,
     serviceAccount,
   };
 
   if (autoscaling) {
-    result.hpa = {
+    result.hpa = new HPA(mergeDefaults({
       apiVersion: "autoscaling/v2",
       kind: "HorizontalPodAutoscaler",
       metadata: {
@@ -183,11 +197,11 @@ export function HelmWorker(props: HelmWorkerProps): HelmWorkerResult {
           },
         }],
       },
-    };
+    }, defs?.hpa));
   }
 
   if (pdb) {
-    result.pdb = {
+    result.pdb = new PDB(mergeDefaults({
       apiVersion: "policy/v1",
       kind: "PodDisruptionBudget",
       metadata: {
@@ -200,8 +214,8 @@ export function HelmWorker(props: HelmWorkerProps): HelmWorkerResult {
           matchLabels: include(`${name}.selectorLabels`),
         },
       },
-    };
+    }, defs?.pdb));
   }
 
   return result;
-}
+}, "HelmWorker");

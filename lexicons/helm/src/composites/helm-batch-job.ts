@@ -5,6 +5,8 @@
  * Kubernetes API access (e.g., data migrations, cluster operations).
  */
 
+import { Composite, mergeDefaults } from "@intentius/chant";
+import { Chart, Values, Job, ServiceAccount, Role, RoleBinding } from "../resources";
 import { values, include, printf, toYaml, If, With } from "../intrinsics";
 
 export interface HelmBatchJobProps {
@@ -38,18 +40,27 @@ export interface HelmBatchJobProps {
   tolerations?: Array<Record<string, unknown>>;
   /** Chart appVersion. */
   appVersion?: string;
+  /** Per-member defaults. */
+  defaults?: {
+    chart?: Partial<Record<string, unknown>>;
+    values?: Partial<Record<string, unknown>>;
+    job?: Partial<Record<string, unknown>>;
+    serviceAccount?: Partial<Record<string, unknown>>;
+    role?: Partial<Record<string, unknown>>;
+    roleBinding?: Partial<Record<string, unknown>>;
+  };
 }
 
 export interface HelmBatchJobResult {
-  chart: Record<string, unknown>;
-  values: Record<string, unknown>;
-  job: Record<string, unknown>;
-  serviceAccount?: Record<string, unknown>;
-  role?: Record<string, unknown>;
-  roleBinding?: Record<string, unknown>;
+  chart: InstanceType<typeof Chart>;
+  values: InstanceType<typeof Values>;
+  job: InstanceType<typeof Job>;
+  serviceAccount?: InstanceType<typeof ServiceAccount>;
+  role?: InstanceType<typeof Role>;
+  roleBinding?: InstanceType<typeof RoleBinding>;
 }
 
-export function HelmBatchJob(props: HelmBatchJobProps): HelmBatchJobResult {
+export const HelmBatchJob = Composite<HelmBatchJobProps>((props) => {
   const {
     name,
     imageRepository = "busybox",
@@ -61,16 +72,17 @@ export function HelmBatchJob(props: HelmBatchJobProps): HelmBatchJobResult {
     serviceAccount = true,
     rbac = false,
     appVersion = "1.0.0",
+    defaults: defs,
   } = props;
 
-  const chart = {
+  const chart = new Chart(mergeDefaults({
     apiVersion: "v2",
     name,
     version: "0.1.0",
     appVersion,
     type: "application",
     description: `A Helm chart for ${name} batch job`,
-  };
+  }, defs?.chart));
 
   const valuesObj: Record<string, unknown> = {
     image: {
@@ -113,6 +125,8 @@ export function HelmBatchJob(props: HelmBatchJobProps): HelmBatchJobResult {
     };
   }
 
+  const valuesRes = new Values(mergeDefaults(valuesObj, defs?.values));
+
   const containerSpec: Record<string, unknown> = {
     name,
     image: printf("%s:%s", values.image.repository, values.image.tag),
@@ -150,7 +164,7 @@ export function HelmBatchJob(props: HelmBatchJobProps): HelmBatchJobResult {
     jobSpec.ttlSecondsAfterFinished = values.job.ttlSecondsAfterFinished;
   }
 
-  const job = {
+  const job = new Job(mergeDefaults({
     apiVersion: "batch/v1",
     kind: "Job",
     metadata: {
@@ -158,12 +172,12 @@ export function HelmBatchJob(props: HelmBatchJobProps): HelmBatchJobResult {
       labels: include(`${name}.labels`),
     },
     spec: jobSpec,
-  };
+  }, defs?.job));
 
-  const result: HelmBatchJobResult = { chart, values: valuesObj, job };
+  const result: Record<string, any> = { chart, values: valuesRes, job };
 
   if (serviceAccount) {
-    result.serviceAccount = {
+    result.serviceAccount = new ServiceAccount(mergeDefaults({
       apiVersion: "v1",
       kind: "ServiceAccount",
       metadata: {
@@ -171,11 +185,11 @@ export function HelmBatchJob(props: HelmBatchJobProps): HelmBatchJobResult {
         labels: include(`${name}.labels`),
         annotations: toYaml(values.serviceAccount.annotations),
       },
-    };
+    }, defs?.serviceAccount));
   }
 
   if (rbac) {
-    result.role = {
+    result.role = new Role(mergeDefaults({
       apiVersion: "rbac.authorization.k8s.io/v1",
       kind: "Role",
       metadata: {
@@ -183,9 +197,9 @@ export function HelmBatchJob(props: HelmBatchJobProps): HelmBatchJobResult {
         labels: include(`${name}.labels`),
       },
       rules: toYaml(values.rbac.rules),
-    };
+    }, defs?.role));
 
-    result.roleBinding = {
+    result.roleBinding = new RoleBinding(mergeDefaults({
       apiVersion: "rbac.authorization.k8s.io/v1",
       kind: "RoleBinding",
       metadata: {
@@ -202,8 +216,8 @@ export function HelmBatchJob(props: HelmBatchJobProps): HelmBatchJobResult {
         name: include(`${name}.serviceAccountName`),
         namespace: values.namespace ?? undefined,
       }],
-    };
+    }, defs?.roleBinding));
   }
 
   return result;
-}
+}, "HelmBatchJob");

@@ -7,6 +7,9 @@
  * CockroachDbCluster per cloud, sharing joinAddresses across clouds.
  */
 
+import { Composite, mergeDefaults } from "@intentius/chant";
+import { StatefulSet, Service, ServiceAccount, Role, RoleBinding, ClusterRole, ClusterRoleBinding, PodDisruptionBudget, Job } from "../generated";
+
 export interface CockroachDbClusterProps {
   /** Cluster name — used in metadata, labels, and service names. */
   name: string;
@@ -36,24 +39,38 @@ export interface CockroachDbClusterProps {
   secure?: boolean;
   /** Additional labels to apply to all resources. */
   labels?: Record<string, string>;
+  /** Per-member defaults for fine-grained overrides. */
+  defaults?: {
+    serviceAccount?: Partial<Record<string, unknown>>;
+    role?: Partial<Record<string, unknown>>;
+    roleBinding?: Partial<Record<string, unknown>>;
+    clusterRole?: Partial<Record<string, unknown>>;
+    clusterRoleBinding?: Partial<Record<string, unknown>>;
+    publicService?: Partial<Record<string, unknown>>;
+    headlessService?: Partial<Record<string, unknown>>;
+    pdb?: Partial<Record<string, unknown>>;
+    statefulSet?: Partial<Record<string, unknown>>;
+    initJob?: Partial<Record<string, unknown>>;
+    certGenJob?: Partial<Record<string, unknown>>;
+  };
 }
 
 export interface CockroachDbClusterResult {
-  serviceAccount: Record<string, unknown>;
-  role: Record<string, unknown>;
-  roleBinding: Record<string, unknown>;
-  clusterRole: Record<string, unknown>;
-  clusterRoleBinding: Record<string, unknown>;
+  serviceAccount: InstanceType<typeof ServiceAccount>;
+  role: InstanceType<typeof Role>;
+  roleBinding: InstanceType<typeof RoleBinding>;
+  clusterRole: InstanceType<typeof ClusterRole>;
+  clusterRoleBinding: InstanceType<typeof ClusterRoleBinding>;
   /** Client-facing service (ClusterIP, ports 26257+8080). */
-  publicService: Record<string, unknown>;
+  publicService: InstanceType<typeof Service>;
   /** Pod discovery service (headless, publishNotReadyAddresses). */
-  headlessService: Record<string, unknown>;
-  pdb: Record<string, unknown>;
-  statefulSet: Record<string, unknown>;
+  headlessService: InstanceType<typeof Service>;
+  pdb: InstanceType<typeof PodDisruptionBudget>;
+  statefulSet: InstanceType<typeof StatefulSet>;
   /** One-shot cockroach init job. */
-  initJob: Record<string, unknown>;
+  initJob: InstanceType<typeof Job>;
   /** Generates self-signed CA + node certs, stores in Secrets. */
-  certGenJob: Record<string, unknown>;
+  certGenJob: InstanceType<typeof Job>;
 }
 
 /**
@@ -77,7 +94,7 @@ export interface CockroachDbClusterResult {
  * });
  * ```
  */
-export function CockroachDbCluster(props: CockroachDbClusterProps): CockroachDbClusterResult {
+export const CockroachDbCluster = Composite<CockroachDbClusterProps>((props) => {
   const {
     name,
     namespace,
@@ -93,6 +110,7 @@ export function CockroachDbCluster(props: CockroachDbClusterProps): CockroachDbC
     joinAddresses = [],
     secure = true,
     labels: extraLabels = {},
+    defaults: defs,
   } = props;
 
   const saName = name;
@@ -105,17 +123,17 @@ export function CockroachDbCluster(props: CockroachDbClusterProps): CockroachDbC
     ...extraLabels,
   };
 
-  // ── RBAC ─────────────────────────────────────────────────────────
+  // -- RBAC --
 
-  const serviceAccount: Record<string, unknown> = {
+  const serviceAccount = new ServiceAccount(mergeDefaults({
     metadata: {
       name: saName,
       ...(namespace && { namespace }),
       labels: { ...commonLabels, "app.kubernetes.io/component": "database" },
     },
-  };
+  }, defs?.serviceAccount));
 
-  const role: Record<string, unknown> = {
+  const role = new Role(mergeDefaults({
     metadata: {
       name,
       ...(namespace && { namespace }),
@@ -124,9 +142,9 @@ export function CockroachDbCluster(props: CockroachDbClusterProps): CockroachDbC
     rules: [
       { apiGroups: [""], resources: ["secrets"], verbs: ["get", "create", "patch"] },
     ],
-  };
+  }, defs?.role));
 
-  const roleBinding: Record<string, unknown> = {
+  const roleBinding = new RoleBinding(mergeDefaults({
     metadata: {
       name,
       ...(namespace && { namespace }),
@@ -140,9 +158,9 @@ export function CockroachDbCluster(props: CockroachDbClusterProps): CockroachDbC
     subjects: [
       { kind: "ServiceAccount", name: saName, ...(namespace && { namespace }) },
     ],
-  };
+  }, defs?.roleBinding));
 
-  const clusterRole: Record<string, unknown> = {
+  const clusterRole = new ClusterRole(mergeDefaults({
     metadata: {
       name,
       labels: { ...commonLabels, "app.kubernetes.io/component": "rbac" },
@@ -150,9 +168,9 @@ export function CockroachDbCluster(props: CockroachDbClusterProps): CockroachDbC
     rules: [
       { apiGroups: ["certificates.k8s.io"], resources: ["certificatesigningrequests"], verbs: ["get", "create", "watch"] },
     ],
-  };
+  }, defs?.clusterRole));
 
-  const clusterRoleBinding: Record<string, unknown> = {
+  const clusterRoleBinding = new ClusterRoleBinding(mergeDefaults({
     metadata: {
       name,
       labels: { ...commonLabels, "app.kubernetes.io/component": "rbac" },
@@ -165,11 +183,11 @@ export function CockroachDbCluster(props: CockroachDbClusterProps): CockroachDbC
     subjects: [
       { kind: "ServiceAccount", name: saName, ...(namespace && { namespace }) },
     ],
-  };
+  }, defs?.clusterRoleBinding));
 
-  // ── Services ────────────────────────────────────────────────────
+  // -- Services --
 
-  const publicService: Record<string, unknown> = {
+  const publicService = new Service(mergeDefaults({
     metadata: {
       name: `${name}-public`,
       ...(namespace && { namespace }),
@@ -183,9 +201,9 @@ export function CockroachDbCluster(props: CockroachDbClusterProps): CockroachDbC
       ],
       type: "ClusterIP",
     },
-  };
+  }, defs?.publicService));
 
-  const headlessService: Record<string, unknown> = {
+  const headlessService = new Service(mergeDefaults({
     metadata: {
       name,
       ...(namespace && { namespace }),
@@ -203,11 +221,11 @@ export function CockroachDbCluster(props: CockroachDbClusterProps): CockroachDbC
       clusterIP: "None",
       publishNotReadyAddresses: true,
     },
-  };
+  }, defs?.headlessService));
 
-  // ── PodDisruptionBudget ─────────────────────────────────────────
+  // -- PodDisruptionBudget --
 
-  const pdb: Record<string, unknown> = {
+  const pdb = new PodDisruptionBudget(mergeDefaults({
     metadata: {
       name,
       ...(namespace && { namespace }),
@@ -217,9 +235,9 @@ export function CockroachDbCluster(props: CockroachDbClusterProps): CockroachDbC
       maxUnavailable: 1,
       selector: { matchLabels: { "app.kubernetes.io/name": name } },
     },
-  };
+  }, defs?.pdb));
 
-  // ── StatefulSet ─────────────────────────────────────────────────
+  // -- StatefulSet --
 
   const cockroachArgs = [
     "start",
@@ -274,7 +292,7 @@ export function CockroachDbCluster(props: CockroachDbClusterProps): CockroachDbC
     },
   };
 
-  const statefulSet: Record<string, unknown> = {
+  const statefulSet = new StatefulSet(mergeDefaults({
     metadata: {
       name,
       ...(namespace && { namespace }),
@@ -318,9 +336,9 @@ export function CockroachDbCluster(props: CockroachDbClusterProps): CockroachDbC
         },
       ],
     },
-  };
+  }, defs?.statefulSet));
 
-  // ── cert-gen Job ─────────────────────────────────────────────────
+  // -- cert-gen Job --
 
   // Generates self-signed CA and node certs, stores them in K8s Secrets.
   // Each node's cert includes the pod DNS names (pod-N.svc.namespace.svc.cluster.local).
@@ -337,7 +355,7 @@ export function CockroachDbCluster(props: CockroachDbClusterProps): CockroachDbC
     "cockroach cert create-client root --certs-dir=certs --ca-key=certs/ca.key",
   ].join(" && ");
 
-  const certGenJob: Record<string, unknown> = {
+  const certGenJob = new Job(mergeDefaults({
     metadata: {
       name: `${name}-cert-gen`,
       ...(namespace && { namespace }),
@@ -361,9 +379,9 @@ export function CockroachDbCluster(props: CockroachDbClusterProps): CockroachDbC
         },
       },
     },
-  };
+  }, defs?.certGenJob));
 
-  // ── init Job ────────────────────────────────────────────────────
+  // -- init Job --
 
   const initArgs = secure
     ? [`--certs-dir=${certsDir}`, `--host=${name}-0.${name}`]
@@ -376,7 +394,7 @@ export function CockroachDbCluster(props: CockroachDbClusterProps): CockroachDbC
     initVolumeMounts.push({ name: "client-certs", mountPath: certsDir });
   }
 
-  const initJob: Record<string, unknown> = {
+  const initJob = new Job(mergeDefaults({
     metadata: {
       name: `${name}-init`,
       ...(namespace && { namespace }),
@@ -403,7 +421,7 @@ export function CockroachDbCluster(props: CockroachDbClusterProps): CockroachDbC
         },
       },
     },
-  };
+  }, defs?.initJob));
 
   return {
     serviceAccount,
@@ -418,4 +436,4 @@ export function CockroachDbCluster(props: CockroachDbClusterProps): CockroachDbC
     initJob,
     certGenJob,
   };
-}
+}, "CockroachDbCluster");

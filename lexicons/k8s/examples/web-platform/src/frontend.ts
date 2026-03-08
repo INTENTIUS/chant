@@ -1,11 +1,6 @@
 // WebApp: frontend with PDB.
 
-import {
-  Deployment,
-  Service,
-  PodDisruptionBudget,
-  WebApp,
-} from "@intentius/chant-lexicon-k8s";
+import { WebApp } from "@intentius/chant-lexicon-k8s";
 
 const NAMESPACE = "web-platform";
 
@@ -20,6 +15,6 @@ const frontend = WebApp({
   memoryRequest: "64Mi",
 });
 
-export const frontendDeployment = new Deployment(frontend.deployment);
-export const frontendService = new Service(frontend.service);
-export const frontendPdb = new PodDisruptionBudget(frontend.pdb!);
+export const frontendDeployment = frontend.deployment;
+export const frontendService = frontend.service;
+export const frontendPdb = frontend.pdb!;

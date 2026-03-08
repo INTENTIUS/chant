@@ -5,6 +5,8 @@
  * with common defaults (health probes, resource limits, labels).
  */
 
+import { Composite, mergeDefaults } from "@intentius/chant";
+import { Deployment, Service, Ingress, PodDisruptionBudget } from "../generated";
 import type { ContainerSecurityContext } from "./security-context";
 
 export interface WebAppProps {
@@ -56,13 +58,20 @@ export interface WebAppProps {
   namespace?: string;
   /** Environment variables for the container. */
   env?: Array<{ name: string; value: string }>;
+  /** Per-member defaults for fine-grained overrides. */
+  defaults?: {
+    deployment?: Partial<Record<string, unknown>>;
+    service?: Partial<Record<string, unknown>>;
+    ingress?: Partial<Record<string, unknown>>;
+    pdb?: Partial<Record<string, unknown>>;
+  };
 }
 
 export interface WebAppResult {
-  deployment: Record<string, unknown>;
-  service: Record<string, unknown>;
-  ingress?: Record<string, unknown>;
-  pdb?: Record<string, unknown>;
+  deployment: InstanceType<typeof Deployment>;
+  service: InstanceType<typeof Service>;
+  ingress?: InstanceType<typeof Ingress>;
+  pdb?: InstanceType<typeof PodDisruptionBudget>;
 }
 
 /**
@@ -84,7 +93,7 @@ export interface WebAppResult {
  * export { deployment, service, ingress };
  * ```
  */
-export function WebApp(props: WebAppProps): WebAppResult {
+export const WebApp = Composite<WebAppProps>((props) => {
   const {
     name,
     image,
@@ -102,6 +111,7 @@ export function WebApp(props: WebAppProps): WebAppResult {
     terminationGracePeriodSeconds,
     priorityClassName,
     minAvailable,
+    defaults: defs,
   } = props;
 
   const commonLabels: Record<string, string> = {
@@ -146,9 +156,7 @@ export function WebApp(props: WebAppProps): WebAppResult {
     ...(priorityClassName && { priorityClassName }),
   };
 
-  // We return plain objects that users pass to constructors.
-  // The actual resource instantiation happens in user code with the generated classes.
-  const deploymentProps: Record<string, unknown> = {
+  const deployment = new Deployment(mergeDefaults({
     metadata: {
       name,
       ...(namespace && { namespace }),
@@ -162,9 +170,9 @@ export function WebApp(props: WebAppProps): WebAppResult {
         spec: podSpec,
       },
     },
-  };
+  }, defs?.deployment));
 
-  const serviceProps: Record<string, unknown> = {
+  const service = new Service(mergeDefaults({
     metadata: {
       name,
       ...(namespace && { namespace }),
@@ -175,12 +183,9 @@ export function WebApp(props: WebAppProps): WebAppResult {
       ports: [{ port: 80, targetPort: port, protocol: "TCP", name: "http" }],
       type: "ClusterIP",
     },
-  };
+  }, defs?.service));
 
-  const result: WebAppResult = {
-    deployment: deploymentProps,
-    service: serviceProps,
-  };
+  const result: Record<string, any> = { deployment, service };
 
   if (props.ingressHost) {
     // Build paths — use ingressPaths if provided, otherwise default single "/"
@@ -205,7 +210,7 @@ export function WebApp(props: WebAppProps): WebAppResult {
           },
         ];
 
-    const ingressProps: Record<string, unknown> = {
+    result.ingress = new Ingress(mergeDefaults({
       metadata: {
         name,
         ...(namespace && { namespace }),
@@ -227,12 +232,11 @@ export function WebApp(props: WebAppProps): WebAppResult {
           ],
         }),
       },
-    };
-    result.ingress = ingressProps;
+    }, defs?.ingress));
   }
 
   if (minAvailable !== undefined) {
-    result.pdb = {
+    result.pdb = new PodDisruptionBudget(mergeDefaults({
       metadata: {
         name,
         ...(namespace && { namespace }),
@@ -242,8 +246,8 @@ export function WebApp(props: WebAppProps): WebAppResult {
         minAvailable,
         selector: { matchLabels: { "app.kubernetes.io/name": name } },
       },
-    };
+    }, defs?.pdb));
   }
 
   return result;
-}
+}, "WebApp");

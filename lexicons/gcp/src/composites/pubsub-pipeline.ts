@@ -2,6 +2,9 @@
  * PubSubPipeline composite — Topic + Subscription + optional DLQ topic + subscriber IAM binding.
  */
 
+import { Composite, mergeDefaults } from "@intentius/chant";
+import { PubSubTopic, PubSubSubscription, IAMPolicyMember } from "../generated";
+
 export interface PubSubPipelineProps {
   /** Pipeline name. */
   name: string;
@@ -19,16 +22,16 @@ export interface PubSubPipelineProps {
   labels?: Record<string, string>;
   /** Namespace for all resources. */
   namespace?: string;
+  /** Per-member defaults for customizing individual resources. */
+  defaults?: {
+    topic?: Partial<ConstructorParameters<typeof PubSubTopic>[0]>;
+    subscription?: Partial<ConstructorParameters<typeof PubSubSubscription>[0]>;
+    deadLetterTopic?: Partial<ConstructorParameters<typeof PubSubTopic>[0]>;
+    subscriberIam?: Partial<ConstructorParameters<typeof IAMPolicyMember>[0]>;
+  };
 }
 
-export interface PubSubPipelineResult {
-  topic: Record<string, unknown>;
-  subscription: Record<string, unknown>;
-  deadLetterTopic?: Record<string, unknown>;
-  subscriberIam?: Record<string, unknown>;
-}
-
-export function PubSubPipeline(props: PubSubPipelineProps): PubSubPipelineResult {
+export const PubSubPipeline = Composite<PubSubPipelineProps>((props) => {
   const {
     name,
     ackDeadlineSeconds = 10,
@@ -38,6 +41,7 @@ export function PubSubPipeline(props: PubSubPipelineProps): PubSubPipelineResult
     subscriberServiceAccount,
     labels: extraLabels = {},
     namespace,
+    defaults: defs,
   } = props;
 
   const commonLabels: Record<string, string> = {
@@ -46,15 +50,15 @@ export function PubSubPipeline(props: PubSubPipelineProps): PubSubPipelineResult
     ...extraLabels,
   };
 
-  const topic: Record<string, unknown> = {
+  const topic = new PubSubTopic(mergeDefaults({
     metadata: {
       name: `${name}-topic`,
       ...(namespace && { namespace }),
       labels: { ...commonLabels, "app.kubernetes.io/component": "topic" },
     },
-  };
+  } as Record<string, unknown>, defs?.topic));
 
-  const subscription: Record<string, unknown> = {
+  const subscriptionProps: Record<string, unknown> = {
     metadata: {
       name: `${name}-subscription`,
       ...(namespace && { namespace }),
@@ -65,24 +69,32 @@ export function PubSubPipeline(props: PubSubPipelineProps): PubSubPipelineResult
     messageRetentionDuration,
   };
 
-  const result: PubSubPipelineResult = { topic, subscription };
+  const result: Record<string, any> = { topic };
 
   if (enableDeadLetterQueue) {
-    result.deadLetterTopic = {
+    result.deadLetterTopic = new PubSubTopic(mergeDefaults({
       metadata: {
         name: `${name}-dlq`,
         ...(namespace && { namespace }),
         labels: { ...commonLabels, "app.kubernetes.io/component": "dead-letter" },
       },
-    };
-    subscription.deadLetterPolicy = {
+    } as Record<string, unknown>, defs?.deadLetterTopic));
+
+    subscriptionProps.deadLetterPolicy = {
       deadLetterTopicRef: { name: `${name}-dlq` },
       maxDeliveryAttempts,
     };
   }
 
+  const subscription = new PubSubSubscription(mergeDefaults(
+    subscriptionProps,
+    defs?.subscription,
+  ));
+
+  result.subscription = subscription;
+
   if (subscriberServiceAccount) {
-    result.subscriberIam = {
+    result.subscriberIam = new IAMPolicyMember(mergeDefaults({
       metadata: {
         name: `${name}-subscriber`,
         ...(namespace && { namespace }),
@@ -95,8 +107,8 @@ export function PubSubPipeline(props: PubSubPipelineProps): PubSubPipelineResult
         kind: "PubSubSubscription",
         name: `${name}-subscription`,
       },
-    };
+    } as Record<string, unknown>, defs?.subscriberIam));
   }
 
   return result;
-}
+}, "PubSubPipeline");

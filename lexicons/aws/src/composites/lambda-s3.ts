@@ -1,4 +1,4 @@
-import { Composite } from "@intentius/chant";
+import { Composite, mergeDefaults } from "@intentius/chant";
 import {
   Bucket,
   Bucket_BucketEncryption,
@@ -14,6 +14,9 @@ import { LambdaFunction, type LambdaFunctionProps } from "./lambda-function";
 export interface LambdaS3Props extends LambdaFunctionProps {
   bucketName?: string;
   access?: "ReadOnly" | "ReadWrite" | "Full";
+  defaults?: LambdaFunctionProps["defaults"] & {
+    bucket?: Partial<ConstructorParameters<typeof Bucket>[0]>;
+  };
 }
 
 export const LambdaS3 = Composite<LambdaS3Props>((props) => {
@@ -36,11 +39,13 @@ export const LambdaS3 = Composite<LambdaS3Props>((props) => {
     RestrictPublicBuckets: true,
   });
 
-  const bucket = new Bucket({
+  const { defaults } = props;
+
+  const bucket = new Bucket(mergeDefaults({
     BucketName: props.bucketName,
     BucketEncryption: bucketEncryption,
     PublicAccessBlockConfiguration: publicAccessBlock,
-  });
+  }, defaults?.bucket));
 
   const access = props.access ?? "ReadWrite";
   const s3PolicyDocument = {

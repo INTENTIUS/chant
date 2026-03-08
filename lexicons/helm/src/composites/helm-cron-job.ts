@@ -4,6 +4,8 @@
  * Produces a Helm chart for scheduled batch workloads.
  */
 
+import { Composite, mergeDefaults } from "@intentius/chant";
+import { Chart, Values, CronJob, ServiceAccount } from "../resources";
 import { values, include, printf, toYaml, With } from "../intrinsics";
 
 export interface HelmCronJobProps {
@@ -41,16 +43,23 @@ export interface HelmCronJobProps {
   backoffLimit?: number;
   /** Include ServiceAccount. Default: false. */
   serviceAccount?: boolean;
+  /** Per-member defaults. */
+  defaults?: {
+    chart?: Partial<Record<string, unknown>>;
+    values?: Partial<Record<string, unknown>>;
+    cronJob?: Partial<Record<string, unknown>>;
+    serviceAccount?: Partial<Record<string, unknown>>;
+  };
 }
 
 export interface HelmCronJobResult {
-  chart: Record<string, unknown>;
-  values: Record<string, unknown>;
-  cronJob: Record<string, unknown>;
-  serviceAccount?: Record<string, unknown>;
+  chart: InstanceType<typeof Chart>;
+  values: InstanceType<typeof Values>;
+  cronJob: InstanceType<typeof CronJob>;
+  serviceAccount?: InstanceType<typeof ServiceAccount>;
 }
 
-export function HelmCronJob(props: HelmCronJobProps): HelmCronJobResult {
+export const HelmCronJob = Composite<HelmCronJobProps>((props) => {
   const {
     name,
     imageRepository = "busybox",
@@ -59,16 +68,17 @@ export function HelmCronJob(props: HelmCronJobProps): HelmCronJobResult {
     restartPolicy = "OnFailure",
     appVersion = "1.0.0",
     serviceAccount = false,
+    defaults: defs,
   } = props;
 
-  const chart = {
+  const chart = new Chart(mergeDefaults({
     apiVersion: "v2",
     name,
     version: "0.1.0",
     appVersion,
     type: "application",
     description: `A Helm chart for ${name} (cron job)`,
-  };
+  }, defs?.chart));
 
   const valuesObj: Record<string, unknown> = {
     image: {
@@ -101,6 +111,8 @@ export function HelmCronJob(props: HelmCronJobProps): HelmCronJobResult {
       annotations: {},
     };
   }
+
+  const valuesRes = new Values(mergeDefaults(valuesObj, defs?.values));
 
   const containerSpec: Record<string, unknown> = {
     name,
@@ -149,7 +161,7 @@ export function HelmCronJob(props: HelmCronJobProps): HelmCronJobResult {
   if (props.successfulJobsHistoryLimit !== undefined) cronJobSpec.successfulJobsHistoryLimit = values.successfulJobsHistoryLimit;
   if (props.failedJobsHistoryLimit !== undefined) cronJobSpec.failedJobsHistoryLimit = values.failedJobsHistoryLimit;
 
-  const cronJob = {
+  const cronJob = new CronJob(mergeDefaults({
     apiVersion: "batch/v1",
     kind: "CronJob",
     metadata: {
@@ -157,12 +169,12 @@ export function HelmCronJob(props: HelmCronJobProps): HelmCronJobResult {
       labels: include(`${name}.labels`),
     },
     spec: cronJobSpec,
-  };
+  }, defs?.cronJob));
 
-  const result: HelmCronJobResult = { chart, values: valuesObj, cronJob };
+  const result: Record<string, any> = { chart, values: valuesRes, cronJob };
 
   if (serviceAccount) {
-    result.serviceAccount = {
+    result.serviceAccount = new ServiceAccount(mergeDefaults({
       apiVersion: "v1",
       kind: "ServiceAccount",
       metadata: {
@@ -170,8 +182,8 @@ export function HelmCronJob(props: HelmCronJobProps): HelmCronJobResult {
         labels: include(`${name}.labels`),
         annotations: toYaml(values.serviceAccount.annotations),
       },
-    };
+    }, defs?.serviceAccount));
   }
 
   return result;
-}
+}, "HelmCronJob");

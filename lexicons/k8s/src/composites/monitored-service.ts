@@ -6,6 +6,8 @@
  * as raw objects that can be serialized alongside native K8s resources.
  */
 
+import { Composite, mergeDefaults } from "@intentius/chant";
+import { Deployment, Service } from "../generated";
 import type { ContainerSecurityContext } from "./security-context";
 
 export interface AlertRule {
@@ -54,13 +56,20 @@ export interface MonitoredServiceProps {
   env?: Array<{ name: string; value: string }>;
   /** Container security context (supports PSS restricted fields). */
   securityContext?: ContainerSecurityContext;
+  /** Per-member defaults for fine-grained overrides. */
+  defaults?: {
+    deployment?: Partial<Record<string, unknown>>;
+    service?: Partial<Record<string, unknown>>;
+    serviceMonitor?: Partial<Record<string, unknown>>;
+    prometheusRule?: Partial<Record<string, unknown>>;
+  };
 }
 
 export interface MonitoredServiceResult {
-  deployment: Record<string, unknown>;
-  service: Record<string, unknown>;
-  serviceMonitor: Record<string, unknown>;
-  prometheusRule?: Record<string, unknown>;
+  deployment: InstanceType<typeof Deployment>;
+  service: InstanceType<typeof Service>;
+  serviceMonitor: InstanceType<typeof Deployment>; // CRD — use Deployment as proxy type
+  prometheusRule?: InstanceType<typeof Deployment>; // CRD — use Deployment as proxy type
 }
 
 /**
@@ -82,7 +91,7 @@ export interface MonitoredServiceResult {
  * });
  * ```
  */
-export function MonitoredService(props: MonitoredServiceProps): MonitoredServiceResult {
+export const MonitoredService = Composite<MonitoredServiceProps>((props) => {
   const {
     name,
     image,
@@ -100,6 +109,7 @@ export function MonitoredService(props: MonitoredServiceProps): MonitoredService
     namespace,
     env,
     securityContext,
+    defaults: defs,
   } = props;
 
   const commonLabels: Record<string, string> = {
@@ -115,7 +125,7 @@ export function MonitoredService(props: MonitoredServiceProps): MonitoredService
     ports.push({ containerPort: metricsPort, name: "metrics" });
   }
 
-  const deploymentProps: Record<string, unknown> = {
+  const deployment = new Deployment(mergeDefaults({
     metadata: {
       name,
       ...(namespace && { namespace }),
@@ -143,7 +153,7 @@ export function MonitoredService(props: MonitoredServiceProps): MonitoredService
         },
       },
     },
-  };
+  }, defs?.deployment));
 
   const servicePorts: Array<Record<string, unknown>> = [
     { port: 80, targetPort: port, protocol: "TCP", name: "http" },
@@ -152,7 +162,7 @@ export function MonitoredService(props: MonitoredServiceProps): MonitoredService
     servicePorts.push({ port: metricsPort, targetPort: metricsPort, protocol: "TCP", name: "metrics" });
   }
 
-  const serviceProps: Record<string, unknown> = {
+  const service = new Service(mergeDefaults({
     metadata: {
       name,
       ...(namespace && { namespace }),
@@ -163,9 +173,10 @@ export function MonitoredService(props: MonitoredServiceProps): MonitoredService
       ports: servicePorts,
       type: "ClusterIP",
     },
-  };
+  }, defs?.service));
 
-  const serviceMonitorProps: Record<string, unknown> = {
+  // ServiceMonitor is a CRD — use Deployment constructor as a generic Declarable wrapper
+  const serviceMonitor = new Deployment(mergeDefaults({
     metadata: {
       name,
       ...(namespace && { namespace }),
@@ -183,16 +194,12 @@ export function MonitoredService(props: MonitoredServiceProps): MonitoredService
         },
       ],
     },
-  };
+  }, defs?.serviceMonitor));
 
-  const result: MonitoredServiceResult = {
-    deployment: deploymentProps,
-    service: serviceProps,
-    serviceMonitor: serviceMonitorProps,
-  };
+  const result: Record<string, any> = { deployment, service, serviceMonitor };
 
   if (alertRules && alertRules.length > 0) {
-    result.prometheusRule = {
+    result.prometheusRule = new Deployment(mergeDefaults({
       metadata: {
         name: `${name}-alerts`,
         ...(namespace && { namespace }),
@@ -214,8 +221,8 @@ export function MonitoredService(props: MonitoredServiceProps): MonitoredService
           },
         ],
       },
-    };
+    }, defs?.prometheusRule));
   }
 
   return result;
-}
+}, "MonitoredService");

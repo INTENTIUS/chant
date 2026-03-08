@@ -4,7 +4,8 @@
  * Creates a Container Group with managed identity and no public IP by default.
  */
 
-import { markAsAzureResource } from "./from-arm";
+import { Composite, mergeDefaults } from "@intentius/chant";
+import { containerGroups } from "../generated";
 
 export interface ContainerInstanceProps {
   /** Container group name. */
@@ -23,13 +24,17 @@ export interface ContainerInstanceProps {
   publicIp?: boolean;
   /** Resource tags. */
   tags?: Record<string, string>;
+  /** Per-member defaults. */
+  defaults?: {
+    containerGroup?: Partial<ConstructorParameters<typeof containerGroups>[0]>;
+  };
 }
 
 export interface ContainerInstanceResult {
-  containerGroup: Record<string, unknown>;
+  containerGroup: InstanceType<typeof containerGroups>;
 }
 
-export function ContainerInstance(props: ContainerInstanceProps): ContainerInstanceResult {
+export const ContainerInstance = Composite<ContainerInstanceProps>((props) => {
   const {
     name,
     location = "[resourceGroup().location]",
@@ -39,40 +44,35 @@ export function ContainerInstance(props: ContainerInstanceProps): ContainerInsta
     port = 80,
     publicIp = false,
     tags = {},
+    defaults,
   } = props;
 
   const mergedTags = { "managed-by": "chant", ...tags };
 
-  const containerGroup: Record<string, unknown> = {
-    type: "Microsoft.ContainerInstance/containerGroups",
-    apiVersion: "2023-05-01",
+  const containerGroup = new containerGroups(mergeDefaults({
     name,
     location,
     tags: mergedTags,
     identity: { type: "SystemAssigned" },
-    properties: {
-      osType: "Linux",
-      restartPolicy: "OnFailure",
-      ipAddress: {
-        type: publicIp ? "Public" : "Private",
-        ports: [{ protocol: "TCP", port }],
-      },
-      containers: [
-        {
-          name: `${name}-container`,
-          properties: {
-            image,
-            ports: [{ port }],
-            resources: {
-              requests: { cpu, memoryInGB: memoryInGb },
-            },
+    osType: "Linux",
+    restartPolicy: "OnFailure",
+    ipAddress: {
+      type: publicIp ? "Public" : "Private",
+      ports: [{ protocol: "TCP", port }],
+    },
+    containers: [
+      {
+        name: `${name}-container`,
+        properties: {
+          image,
+          ports: [{ port }],
+          resources: {
+            requests: { cpu, memoryInGB: memoryInGb },
           },
         },
-      ],
-    },
-  };
-
-  markAsAzureResource(containerGroup);
+      },
+    ],
+  }, defaults?.containerGroup), { apiVersion: "2023-05-01" });
 
   return { containerGroup };
-}
+}, "ContainerInstance");

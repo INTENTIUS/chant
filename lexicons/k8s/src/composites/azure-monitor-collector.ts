@@ -5,6 +5,9 @@
  * Log Analytics workspace integration on AKS clusters.
  */
 
+import { Composite, mergeDefaults } from "@intentius/chant";
+import { DaemonSet, ServiceAccount, ClusterRole, ClusterRoleBinding, ConfigMap } from "../generated";
+
 export interface AzureMonitorCollectorProps {
   /** Azure Log Analytics workspace ID. */
   workspaceId: string;
@@ -28,14 +31,22 @@ export interface AzureMonitorCollectorProps {
   memoryLimit?: string;
   /** Azure AD client ID for Workload Identity (adds azure.workload.identity annotations to ServiceAccount). */
   clientId?: string;
+  /** Per-member defaults for fine-grained overrides. */
+  defaults?: {
+    daemonSet?: Partial<Record<string, unknown>>;
+    serviceAccount?: Partial<Record<string, unknown>>;
+    clusterRole?: Partial<Record<string, unknown>>;
+    clusterRoleBinding?: Partial<Record<string, unknown>>;
+    configMap?: Partial<Record<string, unknown>>;
+  };
 }
 
 export interface AzureMonitorCollectorResult {
-  daemonSet: Record<string, unknown>;
-  serviceAccount: Record<string, unknown>;
-  clusterRole: Record<string, unknown>;
-  clusterRoleBinding: Record<string, unknown>;
-  configMap: Record<string, unknown>;
+  daemonSet: InstanceType<typeof DaemonSet>;
+  serviceAccount: InstanceType<typeof ServiceAccount>;
+  clusterRole: InstanceType<typeof ClusterRole>;
+  clusterRoleBinding: InstanceType<typeof ClusterRoleBinding>;
+  configMap: InstanceType<typeof ConfigMap>;
 }
 
 /**
@@ -53,7 +64,7 @@ export interface AzureMonitorCollectorResult {
  * });
  * ```
  */
-export function AzureMonitorCollector(props: AzureMonitorCollectorProps): AzureMonitorCollectorResult {
+export const AzureMonitorCollector = Composite<AzureMonitorCollectorProps>((props) => {
   const {
     workspaceId,
     clusterName,
@@ -66,6 +77,7 @@ export function AzureMonitorCollector(props: AzureMonitorCollectorProps): AzureM
     cpuLimit = "500m",
     memoryLimit = "512Mi",
     clientId,
+    defaults: defs,
   } = props;
 
   const saName = `${name}-sa`;
@@ -137,7 +149,7 @@ service:
     ],
   };
 
-  const daemonSetProps: Record<string, unknown> = {
+  const daemonSet = new DaemonSet(mergeDefaults({
     metadata: {
       name,
       namespace,
@@ -157,7 +169,7 @@ service:
         },
       },
     },
-  };
+  }, defs?.daemonSet));
 
   const saLabels: Record<string, string> = {
     ...commonLabels,
@@ -168,16 +180,16 @@ service:
     saLabels["azure.workload.identity/use"] = "true";
   }
 
-  const serviceAccountProps: Record<string, unknown> = {
+  const serviceAccount = new ServiceAccount(mergeDefaults({
     metadata: {
       name: saName,
       namespace,
       labels: saLabels,
       ...(clientId ? { annotations: { "azure.workload.identity/client-id": clientId } } : {}),
     },
-  };
+  }, defs?.serviceAccount));
 
-  const clusterRoleProps: Record<string, unknown> = {
+  const clusterRole = new ClusterRole(mergeDefaults({
     metadata: {
       name: clusterRoleName,
       labels: { ...commonLabels, "app.kubernetes.io/component": "rbac" },
@@ -190,9 +202,9 @@ service:
       { apiGroups: [""], resources: ["nodes/stats", "configmaps", "events"], verbs: ["create", "get"] },
       { apiGroups: [""], resources: ["configmaps"], verbs: ["get", "update", "create"], resourceNames: ["otel-container-insight-clusterleader"] },
     ],
-  };
+  }, defs?.clusterRole));
 
-  const clusterRoleBindingProps: Record<string, unknown> = {
+  const clusterRoleBinding = new ClusterRoleBinding(mergeDefaults({
     metadata: {
       name: bindingName,
       labels: { ...commonLabels, "app.kubernetes.io/component": "rbac" },
@@ -209,9 +221,9 @@ service:
         namespace,
       },
     ],
-  };
+  }, defs?.clusterRoleBinding));
 
-  const configMapProps: Record<string, unknown> = {
+  const configMap = new ConfigMap(mergeDefaults({
     metadata: {
       name: configMapName,
       namespace,
@@ -220,13 +232,13 @@ service:
     data: {
       "config.yaml": collectorConfig,
     },
-  };
+  }, defs?.configMap));
 
   return {
-    daemonSet: daemonSetProps,
-    serviceAccount: serviceAccountProps,
-    clusterRole: clusterRoleProps,
-    clusterRoleBinding: clusterRoleBindingProps,
-    configMap: configMapProps,
+    daemonSet,
+    serviceAccount,
+    clusterRole,
+    clusterRoleBinding,
+    configMap,
   };
-}
+}, "AzureMonitorCollector");

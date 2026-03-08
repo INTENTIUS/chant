@@ -5,6 +5,13 @@
  * network isolation.
  */
 
+import { Composite, mergeDefaults } from "@intentius/chant";
+import {
+  Chart, Values, Namespace,
+  ResourceQuota as ResourceQuotaRes,
+  LimitRange as LimitRangeRes,
+  NetworkPolicy as NetworkPolicyRes,
+} from "../resources";
 import { values, include, toYaml, If } from "../intrinsics";
 
 export interface HelmNamespaceEnvProps {
@@ -18,34 +25,44 @@ export interface HelmNamespaceEnvProps {
   networkPolicy?: boolean;
   /** Chart appVersion. */
   appVersion?: string;
+  /** Per-member defaults. */
+  defaults?: {
+    chart?: Partial<Record<string, unknown>>;
+    values?: Partial<Record<string, unknown>>;
+    namespace?: Partial<Record<string, unknown>>;
+    resourceQuota?: Partial<Record<string, unknown>>;
+    limitRange?: Partial<Record<string, unknown>>;
+    networkPolicy?: Partial<Record<string, unknown>>;
+  };
 }
 
 export interface HelmNamespaceEnvResult {
-  chart: Record<string, unknown>;
-  values: Record<string, unknown>;
-  namespace: Record<string, unknown>;
-  resourceQuota?: Record<string, unknown>;
-  limitRange?: Record<string, unknown>;
-  networkPolicy?: Record<string, unknown>;
+  chart: InstanceType<typeof Chart>;
+  values: InstanceType<typeof Values>;
+  namespace: InstanceType<typeof Namespace>;
+  resourceQuota?: InstanceType<typeof ResourceQuotaRes>;
+  limitRange?: InstanceType<typeof LimitRangeRes>;
+  networkPolicy?: InstanceType<typeof NetworkPolicyRes>;
 }
 
-export function HelmNamespaceEnv(props: HelmNamespaceEnvProps): HelmNamespaceEnvResult {
+export const HelmNamespaceEnv = Composite<HelmNamespaceEnvProps>((props) => {
   const {
     name,
     resourceQuota = true,
     limitRange = true,
     networkPolicy = true,
     appVersion = "1.0.0",
+    defaults: defs,
   } = props;
 
-  const chart = {
+  const chart = new Chart(mergeDefaults({
     apiVersion: "v2",
     name,
     version: "0.1.0",
     appVersion,
     type: "application",
     description: `A Helm chart for ${name} namespace environment`,
-  };
+  }, defs?.chart));
 
   const valuesObj: Record<string, unknown> = {
     namespace: {
@@ -87,7 +104,9 @@ export function HelmNamespaceEnv(props: HelmNamespaceEnvProps): HelmNamespaceEnv
     };
   }
 
-  const ns = {
+  const valuesRes = new Values(mergeDefaults(valuesObj, defs?.values));
+
+  const ns = new Namespace(mergeDefaults({
     apiVersion: "v1",
     kind: "Namespace",
     metadata: {
@@ -95,60 +114,69 @@ export function HelmNamespaceEnv(props: HelmNamespaceEnvProps): HelmNamespaceEnv
       labels: toYaml(values.namespace.labels),
       annotations: toYaml(values.namespace.annotations),
     },
-  };
+  }, defs?.namespace));
 
-  const result: HelmNamespaceEnvResult = {
+  const result: Record<string, any> = {
     chart,
-    values: valuesObj,
+    values: valuesRes,
     namespace: ns,
   };
 
   if (resourceQuota) {
-    result.resourceQuota = If(values.resourceQuota.enabled, {
-      apiVersion: "v1",
-      kind: "ResourceQuota",
-      metadata: {
-        name: include(`${name}.fullname`),
-        labels: include(`${name}.labels`),
-      },
-      spec: {
-        hard: toYaml(values.resourceQuota.hard),
-      },
-    }) as unknown as Record<string, unknown>;
+    result.resourceQuota = new ResourceQuotaRes(mergeDefaults(
+      If(values.resourceQuota.enabled, {
+        apiVersion: "v1",
+        kind: "ResourceQuota",
+        metadata: {
+          name: include(`${name}.fullname`),
+          labels: include(`${name}.labels`),
+        },
+        spec: {
+          hard: toYaml(values.resourceQuota.hard),
+        },
+      }) as Record<string, unknown>,
+      defs?.resourceQuota,
+    ));
   }
 
   if (limitRange) {
-    result.limitRange = If(values.limitRange.enabled, {
-      apiVersion: "v1",
-      kind: "LimitRange",
-      metadata: {
-        name: include(`${name}.fullname`),
-        labels: include(`${name}.labels`),
-      },
-      spec: {
-        limits: [{
-          type: "Container",
-          default: toYaml(values.limitRange.default),
-          defaultRequest: toYaml(values.limitRange.defaultRequest),
-        }],
-      },
-    }) as unknown as Record<string, unknown>;
+    result.limitRange = new LimitRangeRes(mergeDefaults(
+      If(values.limitRange.enabled, {
+        apiVersion: "v1",
+        kind: "LimitRange",
+        metadata: {
+          name: include(`${name}.fullname`),
+          labels: include(`${name}.labels`),
+        },
+        spec: {
+          limits: [{
+            type: "Container",
+            default: toYaml(values.limitRange.default),
+            defaultRequest: toYaml(values.limitRange.defaultRequest),
+          }],
+        },
+      }) as Record<string, unknown>,
+      defs?.limitRange,
+    ));
   }
 
   if (networkPolicy) {
-    result.networkPolicy = If(values.networkPolicy.enabled, {
-      apiVersion: "networking.k8s.io/v1",
-      kind: "NetworkPolicy",
-      metadata: {
-        name: include(`${name}.fullname`),
-        labels: include(`${name}.labels`),
-      },
-      spec: {
-        podSelector: {},
-        policyTypes: ["Ingress", "Egress"],
-      },
-    }) as unknown as Record<string, unknown>;
+    result.networkPolicy = new NetworkPolicyRes(mergeDefaults(
+      If(values.networkPolicy.enabled, {
+        apiVersion: "networking.k8s.io/v1",
+        kind: "NetworkPolicy",
+        metadata: {
+          name: include(`${name}.fullname`),
+          labels: include(`${name}.labels`),
+        },
+        spec: {
+          podSelector: {},
+          policyTypes: ["Ingress", "Egress"],
+        },
+      }) as Record<string, unknown>,
+      defs?.networkPolicy,
+    ));
   }
 
   return result;
-}
+}, "HelmNamespaceEnv");

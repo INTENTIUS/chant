@@ -1,4 +1,5 @@
-import { Composite } from "@intentius/chant";
+import { Composite, mergeDefaults } from "@intentius/chant";
+import type { Job, Workflow } from "../generated/index";
 
 export interface PythonCIProps {
   /** Python version. Default: "3.12" */
@@ -13,6 +14,11 @@ export interface PythonCIProps {
   usePoetry?: boolean;
   /** Runner label. Default: "ubuntu-latest" */
   runsOn?: string;
+  defaults?: {
+    testJob?: Partial<ConstructorParameters<typeof Job>[0]>;
+    lintJob?: Partial<ConstructorParameters<typeof Job>[0]>;
+    workflow?: Partial<ConstructorParameters<typeof Workflow>[0]>;
+  };
 }
 
 export const PythonCI = Composite<PythonCIProps>((props) => {
@@ -23,6 +29,7 @@ export const PythonCI = Composite<PythonCIProps>((props) => {
     requirementsFile = "requirements.txt",
     usePoetry = false,
     runsOn = "ubuntu-latest",
+    defaults,
   } = props;
 
   const { createProperty, createResource } = require("@intentius/chant/runtime");
@@ -41,7 +48,7 @@ export const PythonCI = Composite<PythonCIProps>((props) => {
       ];
 
   // ── Test job ───────────────────────────────────────────────────────
-  const testJob = new JobClass({
+  const testJob = new JobClass(mergeDefaults({
     "runs-on": runsOn,
     steps: [
       new StepClass({ name: "Checkout", uses: "actions/checkout@v4" }),
@@ -53,12 +60,12 @@ export const PythonCI = Composite<PythonCIProps>((props) => {
       ...installSteps,
       new StepClass({ name: "Test", run: testCommand }),
     ],
-  });
+  }, defaults?.testJob));
 
   // ── Lint job (optional) ────────────────────────────────────────────
   const lintJob =
     lintCommand !== null
-      ? new JobClass({
+      ? new JobClass(mergeDefaults({
           "runs-on": runsOn,
           steps: [
             new StepClass({ name: "Checkout", uses: "actions/checkout@v4" }),
@@ -73,17 +80,17 @@ export const PythonCI = Composite<PythonCIProps>((props) => {
             }),
             new StepClass({ name: "Lint", run: lintCommand }),
           ],
-        })
+        }, defaults?.lintJob))
       : undefined;
 
   // ── Workflow ───────────────────────────────────────────────────────
-  const workflow = new WorkflowClass({
+  const workflow = new WorkflowClass(mergeDefaults({
     name: "Python CI",
     on: {
       push: { branches: ["main"] },
       pull_request: { branches: ["main"] },
     },
-  });
+  }, defaults?.workflow));
 
   if (lintJob) {
     return { workflow, testJob, lintJob };

@@ -5,7 +5,8 @@
  * with a plan and common defaults (HTTPS-only, TLS 1.2, managed identity).
  */
 
-import { markAsAzureResource } from "./from-arm";
+import { Composite, mergeDefaults } from "@intentius/chant";
+import { AppServicePlan, AppService as AppServiceResource } from "../generated";
 
 export interface AppServiceProps {
   /** Web app name (globally unique). */
@@ -18,16 +19,20 @@ export interface AppServiceProps {
   location?: string;
   /** Resource tags. */
   tags?: Record<string, string>;
+  /** Per-member defaults. */
+  defaults?: {
+    plan?: Partial<ConstructorParameters<typeof AppServicePlan>[0]>;
+    webApp?: Partial<ConstructorParameters<typeof AppServiceResource>[0]>;
+  };
 }
 
 export interface AppServiceResult {
-  plan: Record<string, unknown>;
-  webApp: Record<string, unknown>;
+  plan: InstanceType<typeof AppServicePlan>;
+  webApp: InstanceType<typeof AppServiceResource>;
 }
 
 /**
- * Create an AppService composite — returns property objects for
- * an App Service Plan and a Web App.
+ * Create an AppService composite — returns an App Service Plan and a Web App.
  *
  * @example
  * ```ts
@@ -43,13 +48,14 @@ export interface AppServiceResult {
  * export { plan, webApp };
  * ```
  */
-export function AppService(props: AppServiceProps): AppServiceResult {
+export const AppService = Composite<AppServiceProps>((props) => {
   const {
     name,
     sku = "B1",
     runtime = "NODE|18-lts",
     location = "[resourceGroup().location]",
     tags = {},
+    defaults,
   } = props;
 
   const commonTags: Record<string, string> = {
@@ -59,9 +65,7 @@ export function AppService(props: AppServiceProps): AppServiceResult {
 
   const planName = `${name}-plan`;
 
-  const plan: Record<string, unknown> = {
-    type: "Microsoft.Web/serverfarms",
-    apiVersion: "2022-09-01",
+  const plan = new AppServicePlan(mergeDefaults({
     name: planName,
     location,
     tags: commonTags,
@@ -69,14 +73,10 @@ export function AppService(props: AppServiceProps): AppServiceResult {
       name: sku,
     },
     kind: "linux",
-    properties: {
-      reserved: true,
-    },
-  };
+    reserved: true,
+  }, defaults?.plan), { apiVersion: "2022-09-01" });
 
-  const webApp: Record<string, unknown> = {
-    type: "Microsoft.Web/sites",
-    apiVersion: "2022-09-01",
+  const webApp = new AppServiceResource(mergeDefaults({
     name,
     location,
     tags: commonTags,
@@ -84,21 +84,16 @@ export function AppService(props: AppServiceProps): AppServiceResult {
     identity: {
       type: "SystemAssigned",
     },
-    properties: {
-      serverFarmId: `[resourceId('Microsoft.Web/serverfarms', '${planName}')]`,
-      httpsOnly: true,
-      siteConfig: {
-        linuxFxVersion: runtime,
-        minTlsVersion: "1.2",
-        ftpsState: "Disabled",
-        alwaysOn: true,
-        http20Enabled: true,
-      },
+    serverFarmId: `[resourceId('Microsoft.Web/serverfarms', '${planName}')]`,
+    httpsOnly: true,
+    siteConfig: {
+      linuxFxVersion: runtime,
+      minTlsVersion: "1.2",
+      ftpsState: "Disabled",
+      alwaysOn: true,
+      http20Enabled: true,
     },
-  };
-
-  markAsAzureResource(plan);
-  markAsAzureResource(webApp);
+  }, defaults?.webApp), { apiVersion: "2022-09-01" });
 
   return { plan, webApp };
-}
+}, "AppService");

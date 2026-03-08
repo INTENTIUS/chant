@@ -91,7 +91,7 @@ describeAllExamples(
       checks: armChecks({
         resourceTypes: [
           "Microsoft.ServiceBus/namespaces",
-          "Microsoft.ServiceBus/namespaces/queues",
+          "Microsoft.ServiceBus/namespaces_queues",
         ],
         resourceCount: 2,
       }),
@@ -100,8 +100,8 @@ describeAllExamples(
       checks: armChecks({
         resourceTypes: [
           "Microsoft.DocumentDB/databaseAccounts",
-          "Microsoft.DocumentDB/databaseAccounts/sqlDatabases",
-          "Microsoft.DocumentDB/databaseAccounts/sqlDatabases/containers",
+          "Microsoft.DocumentDB/databaseAccounts_sqlDatabases",
+          "Microsoft.DocumentDB/databaseAccounts_sqlDatabases_containers",
         ],
         resourceCount: 3,
       }),
@@ -118,8 +118,8 @@ describeAllExamples(
       checks: armChecks({
         resourceTypes: [
           "Microsoft.Sql/servers",
-          "Microsoft.Sql/servers/databases",
-          "Microsoft.Sql/servers/firewallRules",
+          "Microsoft.Sql/servers_databases",
+          "Microsoft.Sql/servers_firewallRules",
         ],
         resourceCount: 3,
       }),

@@ -1,11 +1,6 @@
 // K8s workloads: AutoscaledService + WorkloadIdentityServiceAccount (GKE) + ConfigMap.
 
 import {
-  Deployment,
-  Service,
-  HorizontalPodAutoscaler,
-  PodDisruptionBudget,
-  ServiceAccount,
   ConfigMap,
   AutoscaledService,
   WorkloadIdentityServiceAccount,
@@ -22,7 +17,7 @@ const wi = WorkloadIdentityServiceAccount({
   namespace: NAMESPACE,
 });
 
-export const appServiceAccount = new ServiceAccount(wi.serviceAccount);
+export const appServiceAccount = wi.serviceAccount;
 
 // ── AutoscaledService (Deployment + Service + HPA + PDB) ───────────
 
@@ -62,10 +57,10 @@ const app = AutoscaledService({
   tmpDirs: ["/tmp", "/var/cache/nginx"],
 });
 
-export const appDeployment = new Deployment(app.deployment);
-export const appService = new Service(app.service);
-export const appHpa = new HorizontalPodAutoscaler(app.hpa);
-export const appPdb = new PodDisruptionBudget(app.pdb!);
+export const appDeployment = app.deployment;
+export const appService = app.service;
+export const appHpa = app.hpa;
+export const appPdb = app.pdb!;
 
 // ── App ConfigMap ──────────────────────────────────────────────────
 

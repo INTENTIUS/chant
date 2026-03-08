@@ -2,6 +2,9 @@
  * ManagedCertificate composite — ManagedSslCertificate + optional TargetHttpsProxy + UrlMap.
  */
 
+import { Composite, mergeDefaults } from "@intentius/chant";
+import { ManagedSSLCertificate, TargetHTTPSProxy, URLMap } from "../generated";
+
 export interface ManagedCertificateProps {
   /** Certificate name. */
   name: string;
@@ -15,15 +18,15 @@ export interface ManagedCertificateProps {
   labels?: Record<string, string>;
   /** Namespace for all resources. */
   namespace?: string;
+  /** Per-member defaults for customizing individual resources. */
+  defaults?: {
+    certificate?: Partial<ConstructorParameters<typeof ManagedSSLCertificate>[0]>;
+    targetHttpsProxy?: Partial<ConstructorParameters<typeof TargetHTTPSProxy>[0]>;
+    urlMap?: Partial<ConstructorParameters<typeof URLMap>[0]>;
+  };
 }
 
-export interface ManagedCertificateResult {
-  certificate: Record<string, unknown>;
-  targetHttpsProxy?: Record<string, unknown>;
-  urlMap?: Record<string, unknown>;
-}
-
-export function ManagedCertificate(props: ManagedCertificateProps): ManagedCertificateResult {
+export const ManagedCertificate = Composite<ManagedCertificateProps>((props) => {
   const {
     name,
     domains,
@@ -31,6 +34,7 @@ export function ManagedCertificate(props: ManagedCertificateProps): ManagedCerti
     backendServiceName,
     labels: extraLabels = {},
     namespace,
+    defaults: defs,
   } = props;
 
   const commonLabels: Record<string, string> = {
@@ -39,7 +43,7 @@ export function ManagedCertificate(props: ManagedCertificateProps): ManagedCerti
     ...extraLabels,
   };
 
-  const certificate: Record<string, unknown> = {
+  const certificate = new ManagedSSLCertificate(mergeDefaults({
     metadata: {
       name,
       ...(namespace && { namespace }),
@@ -48,12 +52,12 @@ export function ManagedCertificate(props: ManagedCertificateProps): ManagedCerti
     managed: {
       domains,
     },
-  };
+  } as Record<string, unknown>, defs?.certificate));
 
-  const result: ManagedCertificateResult = { certificate };
+  const result: Record<string, any> = { certificate };
 
   if (createProxy && backendServiceName) {
-    result.urlMap = {
+    result.urlMap = new URLMap(mergeDefaults({
       metadata: {
         name: `${name}-url-map`,
         ...(namespace && { namespace }),
@@ -62,9 +66,9 @@ export function ManagedCertificate(props: ManagedCertificateProps): ManagedCerti
       defaultService: {
         backendServiceRef: { name: backendServiceName },
       },
-    };
+    } as Record<string, unknown>, defs?.urlMap));
 
-    result.targetHttpsProxy = {
+    result.targetHttpsProxy = new TargetHTTPSProxy(mergeDefaults({
       metadata: {
         name: `${name}-proxy`,
         ...(namespace && { namespace }),
@@ -72,8 +76,8 @@ export function ManagedCertificate(props: ManagedCertificateProps): ManagedCerti
       },
       urlMapRef: { name: `${name}-url-map` },
       sslCertificates: [{ name }],
-    };
+    } as Record<string, unknown>, defs?.targetHttpsProxy));
   }
 
   return result;
-}
+}, "ManagedCertificate");

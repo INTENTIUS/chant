@@ -5,6 +5,8 @@
  * like databases, caches, and message queues.
  */
 
+import { Composite, mergeDefaults } from "@intentius/chant";
+import { StatefulSet, Service, PodDisruptionBudget } from "../generated";
 import type { ContainerSecurityContext } from "./security-context";
 
 export interface StatefulAppProps {
@@ -47,12 +49,18 @@ export interface StatefulAppProps {
   namespace?: string;
   /** Environment variables for the container. */
   env?: Array<{ name: string; value: string }>;
+  /** Per-member defaults for fine-grained overrides. */
+  defaults?: {
+    statefulSet?: Partial<Record<string, unknown>>;
+    service?: Partial<Record<string, unknown>>;
+    pdb?: Partial<Record<string, unknown>>;
+  };
 }
 
 export interface StatefulAppResult {
-  statefulSet: Record<string, unknown>;
-  service: Record<string, unknown>;
-  pdb?: Record<string, unknown>;
+  statefulSet: InstanceType<typeof StatefulSet>;
+  service: InstanceType<typeof Service>;
+  pdb?: InstanceType<typeof PodDisruptionBudget>;
 }
 
 /**
@@ -72,7 +80,7 @@ export interface StatefulAppResult {
  * });
  * ```
  */
-export function StatefulApp(props: StatefulAppProps): StatefulAppResult {
+export const StatefulApp = Composite<StatefulAppProps>((props) => {
   const {
     name,
     image,
@@ -91,6 +99,7 @@ export function StatefulApp(props: StatefulAppProps): StatefulAppResult {
     memoryLimit = "1Gi",
     namespace,
     env,
+    defaults: defs,
   } = props;
 
   const commonLabels: Record<string, string> = {
@@ -125,7 +134,7 @@ export function StatefulApp(props: StatefulAppProps): StatefulAppResult {
     ...(priorityClassName && { priorityClassName }),
   };
 
-  const statefulSetProps: Record<string, unknown> = {
+  const statefulSet = new StatefulSet(mergeDefaults({
     metadata: {
       name,
       ...(namespace && { namespace }),
@@ -150,10 +159,10 @@ export function StatefulApp(props: StatefulAppProps): StatefulAppResult {
         },
       ],
     },
-  };
+  }, defs?.statefulSet));
 
   // Headless service (clusterIP: None) for StatefulSet DNS
-  const serviceProps: Record<string, unknown> = {
+  const service = new Service(mergeDefaults({
     metadata: {
       name,
       ...(namespace && { namespace }),
@@ -164,12 +173,12 @@ export function StatefulApp(props: StatefulAppProps): StatefulAppResult {
       ports: [{ port, targetPort: port, protocol: "TCP", name: "app" }],
       clusterIP: "None",
     },
-  };
+  }, defs?.service));
 
-  const result: StatefulAppResult = { statefulSet: statefulSetProps, service: serviceProps };
+  const result: Record<string, any> = { statefulSet, service };
 
   if (minAvailable !== undefined) {
-    result.pdb = {
+    result.pdb = new PodDisruptionBudget(mergeDefaults({
       metadata: {
         name,
         ...(namespace && { namespace }),
@@ -179,8 +188,8 @@ export function StatefulApp(props: StatefulAppProps): StatefulAppResult {
         minAvailable,
         selector: { matchLabels: { "app.kubernetes.io/name": name } },
       },
-    };
+    }, defs?.pdb));
   }
 
   return result;
-}
+}, "StatefulApp");

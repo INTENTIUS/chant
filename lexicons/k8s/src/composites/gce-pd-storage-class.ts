@@ -4,6 +4,9 @@
  * @gke Creates a StorageClass with the `pd.csi.storage.gke.io` provisioner.
  */
 
+import { Composite, mergeDefaults } from "@intentius/chant";
+import { StorageClass } from "../generated";
+
 export interface GcePdStorageClassProps {
   /** StorageClass name. */
   name: string;
@@ -21,10 +24,14 @@ export interface GcePdStorageClassProps {
   allowVolumeExpansion?: boolean;
   /** Additional labels. */
   labels?: Record<string, string>;
+  /** Per-member defaults for fine-grained overrides. */
+  defaults?: {
+    storageClass?: Partial<Record<string, unknown>>;
+  };
 }
 
 export interface GcePdStorageClassResult {
-  storageClass: Record<string, unknown>;
+  storageClass: InstanceType<typeof StorageClass>;
 }
 
 /**
@@ -42,7 +49,7 @@ export interface GcePdStorageClassResult {
  * });
  * ```
  */
-export function GcePdStorageClass(props: GcePdStorageClassProps): GcePdStorageClassResult {
+export const GcePdStorageClass = Composite<GcePdStorageClassProps>((props) => {
   const {
     name,
     type = "pd-balanced",
@@ -52,6 +59,7 @@ export function GcePdStorageClass(props: GcePdStorageClassProps): GcePdStorageCl
     volumeBindingMode = "WaitForFirstConsumer",
     allowVolumeExpansion = true,
     labels: extraLabels = {},
+    defaults: defs,
   } = props;
 
   const commonLabels: Record<string, string> = {
@@ -69,7 +77,7 @@ export function GcePdStorageClass(props: GcePdStorageClassProps): GcePdStorageCl
     parameters["replication-type"] = replicationType;
   }
 
-  const storageClassProps: Record<string, unknown> = {
+  const storageClass = new StorageClass(mergeDefaults({
     metadata: {
       name,
       labels: { ...commonLabels, "app.kubernetes.io/component": "storage" },
@@ -79,7 +87,7 @@ export function GcePdStorageClass(props: GcePdStorageClassProps): GcePdStorageCl
     reclaimPolicy,
     volumeBindingMode,
     allowVolumeExpansion,
-  };
+  }, defs?.storageClass));
 
-  return { storageClass: storageClassProps };
-}
+  return { storageClass };
+}, "GcePdStorageClass");

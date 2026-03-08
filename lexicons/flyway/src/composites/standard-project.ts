@@ -6,6 +6,9 @@
  * config defaults.
  */
 
+import { Composite, mergeDefaults } from "@intentius/chant";
+import { FlywayProject, FlywayConfig, Environment } from "../generated";
+
 export interface StandardProjectProps {
   /** Project name — used as the Flyway project identifier. */
   name: string;
@@ -21,22 +24,18 @@ export interface StandardProjectProps {
   locations?: string[];
   /** Default schema (default: first entry from `schemas`). */
   defaultSchema?: string;
-}
-
-export interface StandardProjectResult {
-  /** Props for a FlywayProject resource. */
-  project: Record<string, unknown>;
-  /** Props for the "dev" Environment resource. */
-  dev: Record<string, unknown>;
-  /** Props for the "prod" Environment resource. */
-  prod: Record<string, unknown>;
-  /** Props for a FlywayConfig resource. */
-  config: Record<string, unknown>;
+  /** Per-member defaults for customizing individual resources. */
+  defaults?: {
+    project?: Partial<ConstructorParameters<typeof FlywayProject>[0]>;
+    dev?: Partial<ConstructorParameters<typeof Environment>[0]>;
+    prod?: Partial<ConstructorParameters<typeof Environment>[0]>;
+    config?: Partial<ConstructorParameters<typeof FlywayConfig>[0]>;
+  };
 }
 
 /**
- * Create a StandardProject composite — returns props for a FlywayProject,
- * two Environment resources (dev and prod), and a FlywayConfig.
+ * Create a StandardProject composite — returns declarable instances for
+ * a FlywayProject, two Environment resources (dev and prod), and a FlywayConfig.
  *
  * @example
  * ```ts
@@ -53,7 +52,7 @@ export interface StandardProjectResult {
  * export { project, dev, prod, config };
  * ```
  */
-export function StandardProject(props: StandardProjectProps): StandardProjectResult {
+export const StandardProject = Composite<StandardProjectProps>((props) => {
   const {
     name,
     databaseType,
@@ -62,34 +61,35 @@ export function StandardProject(props: StandardProjectProps): StandardProjectRes
     schemas = ["public"],
     locations = ["filesystem:sql"],
     defaultSchema,
+    defaults: defs,
   } = props;
 
   const resolvedDefaultSchema = defaultSchema ?? schemas[0];
 
-  const project: Record<string, unknown> = {
+  const project = new FlywayProject(mergeDefaults({
     name,
-  };
+  }, defs?.project));
 
-  const dev: Record<string, unknown> = {
+  const dev = new Environment(mergeDefaults({
     displayName: "dev",
     url: devUrl,
     schemas,
     provisioner: "clean",
-  };
+  }, defs?.dev));
 
-  const prod: Record<string, unknown> = {
+  const prod = new Environment(mergeDefaults({
     displayName: "prod",
     url: prodUrl,
     schemas,
-  };
+  }, defs?.prod));
 
-  const config: Record<string, unknown> = {
+  const config = new FlywayConfig(mergeDefaults({
     defaultSchema: resolvedDefaultSchema,
     locations,
     databaseType,
     validateMigrationNaming: true,
     baselineOnMigrate: false,
-  };
+  }, defs?.config));
 
   return { project, dev, prod, config };
-}
+}, "StandardProject");

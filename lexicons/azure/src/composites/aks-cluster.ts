@@ -5,7 +5,8 @@
  * managed identity, RBAC, and a default node pool.
  */
 
-import { markAsAzureResource } from "./from-arm";
+import { Composite, mergeDefaults } from "@intentius/chant";
+import { AksCluster as AksClusterResource } from "../generated";
 
 export interface AksClusterProps {
   /** Cluster name. */
@@ -20,15 +21,19 @@ export interface AksClusterProps {
   location?: string;
   /** Resource tags. */
   tags?: Record<string, string>;
+  /** Per-member defaults. */
+  defaults?: {
+    cluster?: Partial<ConstructorParameters<typeof AksClusterResource>[0]>;
+  };
 }
 
 export interface AksClusterResult {
-  cluster: Record<string, unknown>;
+  cluster: InstanceType<typeof AksClusterResource>;
 }
 
 /**
- * Create an AksCluster composite — returns a property object for
- * an AKS managed cluster with production defaults.
+ * Create an AksCluster composite — returns an AKS managed cluster
+ * with production defaults.
  *
  * @example
  * ```ts
@@ -44,7 +49,7 @@ export interface AksClusterResult {
  * export { cluster };
  * ```
  */
-export function AksCluster(props: AksClusterProps): AksClusterResult {
+export const AksCluster = Composite<AksClusterProps>((props) => {
   const {
     name,
     nodeCount = 3,
@@ -52,6 +57,7 @@ export function AksCluster(props: AksClusterProps): AksClusterResult {
     kubernetesVersion = "1.28",
     location = "[resourceGroup().location]",
     tags = {},
+    defaults,
   } = props;
 
   const commonTags: Record<string, string> = {
@@ -61,45 +67,39 @@ export function AksCluster(props: AksClusterProps): AksClusterResult {
 
   const dnsPrefix = name;
 
-  const cluster: Record<string, unknown> = {
-    type: "Microsoft.ContainerService/managedClusters",
-    apiVersion: "2023-08-01",
+  const cluster = new AksClusterResource(mergeDefaults({
     name,
     location,
     tags: commonTags,
     identity: {
       type: "SystemAssigned",
     },
-    properties: {
-      kubernetesVersion,
-      dnsPrefix,
-      enableRBAC: true,
-      agentPoolProfiles: [
-        {
-          name: "default",
-          count: nodeCount,
-          vmSize,
-          osType: "Linux",
-          mode: "System",
-          enableAutoScaling: false,
-          type: "VirtualMachineScaleSets",
-        },
-      ],
-      networkProfile: {
-        networkPlugin: "azure",
-        loadBalancerSku: "standard",
-        serviceCidr: "10.0.0.0/16",
-        dnsServiceIP: "10.0.0.10",
+    kubernetesVersion,
+    dnsPrefix,
+    enableRBAC: true,
+    agentPoolProfiles: [
+      {
+        name: "default",
+        count: nodeCount,
+        vmSize,
+        osType: "Linux",
+        mode: "System",
+        enableAutoScaling: false,
+        type: "VirtualMachineScaleSets",
       },
-      addonProfiles: {
-        omsagent: {
-          enabled: false,
-        },
+    ],
+    networkProfile: {
+      networkPlugin: "azure",
+      loadBalancerSku: "standard",
+      serviceCidr: "10.0.0.0/16",
+      dnsServiceIP: "10.0.0.10",
+    },
+    addonProfiles: {
+      omsagent: {
+        enabled: false,
       },
     },
-  };
-
-  markAsAzureResource(cluster);
+  }, defaults?.cluster), { apiVersion: "2023-08-01" });
 
   return { cluster };
-}
+}, "AksCluster");

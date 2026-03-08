@@ -5,6 +5,9 @@
  * annotation for IAM Roles for Service Accounts (IRSA).
  */
 
+import { Composite, mergeDefaults } from "@intentius/chant";
+import { ServiceAccount, Role, RoleBinding } from "../generated";
+
 export interface IrsaServiceAccountProps {
   /** ServiceAccount name — used in metadata and labels. */
   name: string;
@@ -20,12 +23,18 @@ export interface IrsaServiceAccountProps {
   labels?: Record<string, string>;
   /** Namespace for all resources. */
   namespace?: string;
+  /** Per-member defaults for fine-grained overrides. */
+  defaults?: {
+    serviceAccount?: Partial<Record<string, unknown>>;
+    role?: Partial<Record<string, unknown>>;
+    roleBinding?: Partial<Record<string, unknown>>;
+  };
 }
 
 export interface IrsaServiceAccountResult {
-  serviceAccount: Record<string, unknown>;
-  role?: Record<string, unknown>;
-  roleBinding?: Record<string, unknown>;
+  serviceAccount: InstanceType<typeof ServiceAccount>;
+  role?: InstanceType<typeof Role>;
+  roleBinding?: InstanceType<typeof RoleBinding>;
 }
 
 /**
@@ -46,13 +55,14 @@ export interface IrsaServiceAccountResult {
  * });
  * ```
  */
-export function IrsaServiceAccount(props: IrsaServiceAccountProps): IrsaServiceAccountResult {
+export const IrsaServiceAccount = Composite<IrsaServiceAccountProps>((props) => {
   const {
     name,
     iamRoleArn,
     rbacRules,
     labels: extraLabels = {},
     namespace,
+    defaults: defs,
   } = props;
 
   const roleName = `${name}-role`;
@@ -64,7 +74,7 @@ export function IrsaServiceAccount(props: IrsaServiceAccountProps): IrsaServiceA
     ...extraLabels,
   };
 
-  const serviceAccountProps: Record<string, unknown> = {
+  const serviceAccount = new ServiceAccount(mergeDefaults({
     metadata: {
       name,
       ...(namespace && { namespace }),
@@ -73,23 +83,21 @@ export function IrsaServiceAccount(props: IrsaServiceAccountProps): IrsaServiceA
         "eks.amazonaws.com/role-arn": iamRoleArn,
       },
     },
-  };
+  }, defs?.serviceAccount));
 
-  const result: IrsaServiceAccountResult = {
-    serviceAccount: serviceAccountProps,
-  };
+  const result: Record<string, any> = { serviceAccount };
 
   if (rbacRules && rbacRules.length > 0) {
-    result.role = {
+    result.role = new Role(mergeDefaults({
       metadata: {
         name: roleName,
         ...(namespace && { namespace }),
         labels: { ...commonLabels, "app.kubernetes.io/component": "rbac" },
       },
       rules: rbacRules,
-    };
+    }, defs?.role));
 
-    result.roleBinding = {
+    result.roleBinding = new RoleBinding(mergeDefaults({
       metadata: {
         name: bindingName,
         ...(namespace && { namespace }),
@@ -107,8 +115,8 @@ export function IrsaServiceAccount(props: IrsaServiceAccountProps): IrsaServiceA
           ...(namespace && { namespace }),
         },
       ],
-    };
+    }, defs?.roleBinding));
   }
 
   return result;
-}
+}, "IrsaServiceAccount");

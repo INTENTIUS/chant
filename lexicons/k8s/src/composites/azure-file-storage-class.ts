@@ -5,6 +5,9 @@
  * Azure Files provides ReadWriteMany access mode (shared across pods/nodes).
  */
 
+import { Composite, mergeDefaults } from "@intentius/chant";
+import { StorageClass } from "../generated";
+
 export interface AzureFileStorageClassProps {
   /** StorageClass name. */
   name: string;
@@ -18,10 +21,14 @@ export interface AzureFileStorageClassProps {
   reclaimPolicy?: string;
   /** Additional labels. */
   labels?: Record<string, string>;
+  /** Per-member defaults for fine-grained overrides. */
+  defaults?: {
+    storageClass?: Partial<Record<string, unknown>>;
+  };
 }
 
 export interface AzureFileStorageClassResult {
-  storageClass: Record<string, unknown>;
+  storageClass: InstanceType<typeof StorageClass>;
 }
 
 /**
@@ -40,7 +47,7 @@ export interface AzureFileStorageClassResult {
  * });
  * ```
  */
-export function AzureFileStorageClass(props: AzureFileStorageClassProps): AzureFileStorageClassResult {
+export const AzureFileStorageClass = Composite<AzureFileStorageClassProps>((props) => {
   const {
     name,
     skuName = "Premium_LRS",
@@ -48,6 +55,7 @@ export function AzureFileStorageClass(props: AzureFileStorageClassProps): AzureF
     shareName,
     reclaimPolicy = "Delete",
     labels: extraLabels = {},
+    defaults: defs,
   } = props;
 
   const commonLabels: Record<string, string> = {
@@ -63,7 +71,7 @@ export function AzureFileStorageClass(props: AzureFileStorageClassProps): AzureF
 
   if (shareName) parameters.shareName = shareName;
 
-  const storageClassProps: Record<string, unknown> = {
+  const storageClass = new StorageClass(mergeDefaults({
     metadata: {
       name,
       labels: { ...commonLabels, "app.kubernetes.io/component": "storage" },
@@ -71,7 +79,7 @@ export function AzureFileStorageClass(props: AzureFileStorageClassProps): AzureF
     provisioner: "file.csi.azure.com",
     parameters,
     reclaimPolicy,
-  };
+  }, defs?.storageClass));
 
-  return { storageClass: storageClassProps };
-}
+  return { storageClass };
+}, "AzureFileStorageClass");

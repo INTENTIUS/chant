@@ -1,11 +1,6 @@
 // K8s workloads: GKE Fluent Bit + OTel Collector for Cloud Logging and Monitoring.
 
 import {
-  DaemonSet,
-  ServiceAccount,
-  ClusterRole,
-  ClusterRoleBinding,
-  ConfigMap,
   Namespace,
   GkeFluentBitAgent,
   GkeOtelCollector,
@@ -30,11 +25,11 @@ const fb = GkeFluentBitAgent({
   gcpServiceAccountEmail: config.fluentBitGsaEmail,
 });
 
-export const fbDaemonSet = new DaemonSet(fb.daemonSet);
-export const fbClusterRole = new ClusterRole(fb.clusterRole);
-export const fbClusterRoleBinding = new ClusterRoleBinding(fb.clusterRoleBinding);
-export const fbConfig = new ConfigMap(fb.configMap);
-export const fbServiceAccount = new ServiceAccount(fb.serviceAccount);
+export const fbDaemonSet = fb.daemonSet;
+export const fbClusterRole = fb.clusterRole;
+export const fbClusterRoleBinding = fb.clusterRoleBinding;
+export const fbConfig = fb.configMap;
+export const fbServiceAccount = fb.serviceAccount;
 
 // ── OTel Collector (Cloud Trace + Cloud Monitoring) ──────────────
 
@@ -44,8 +39,8 @@ const otel = GkeOtelCollector({
   gcpServiceAccountEmail: config.otelGsaEmail,
 });
 
-export const otelDaemonSet = new DaemonSet(otel.daemonSet);
-export const otelClusterRole = new ClusterRole(otel.clusterRole);
-export const otelClusterRoleBinding = new ClusterRoleBinding(otel.clusterRoleBinding);
-export const otelConfig = new ConfigMap(otel.configMap);
-export const otelServiceAccount = new ServiceAccount(otel.serviceAccount);
+export const otelDaemonSet = otel.daemonSet;
+export const otelClusterRole = otel.clusterRole;
+export const otelClusterRoleBinding = otel.clusterRoleBinding;
+export const otelConfig = otel.configMap;
+export const otelServiceAccount = otel.serviceAccount;

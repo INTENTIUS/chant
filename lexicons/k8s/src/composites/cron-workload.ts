@@ -5,6 +5,8 @@
  * proper RBAC permissions.
  */
 
+import { Composite, mergeDefaults } from "@intentius/chant";
+import { CronJob, ServiceAccount, Role, RoleBinding } from "../generated";
 import type { ContainerSecurityContext } from "./security-context";
 
 export interface CronWorkloadProps {
@@ -37,13 +39,20 @@ export interface CronWorkloadProps {
   env?: Array<{ name: string; value: string }>;
   /** Container security context (supports PSS restricted fields). */
   securityContext?: ContainerSecurityContext;
+  /** Per-member defaults for fine-grained overrides. */
+  defaults?: {
+    cronJob?: Partial<Record<string, unknown>>;
+    serviceAccount?: Partial<Record<string, unknown>>;
+    role?: Partial<Record<string, unknown>>;
+    roleBinding?: Partial<Record<string, unknown>>;
+  };
 }
 
 export interface CronWorkloadResult {
-  cronJob: Record<string, unknown>;
-  serviceAccount: Record<string, unknown>;
-  role: Record<string, unknown>;
-  roleBinding: Record<string, unknown>;
+  cronJob: InstanceType<typeof CronJob>;
+  serviceAccount: InstanceType<typeof ServiceAccount>;
+  role: InstanceType<typeof Role>;
+  roleBinding: InstanceType<typeof RoleBinding>;
 }
 
 /**
@@ -65,7 +74,7 @@ export interface CronWorkloadResult {
  * });
  * ```
  */
-export function CronWorkload(props: CronWorkloadProps): CronWorkloadResult {
+export const CronWorkload = Composite<CronWorkloadProps>((props) => {
   const {
     name,
     image,
@@ -80,6 +89,7 @@ export function CronWorkload(props: CronWorkloadProps): CronWorkloadResult {
     namespace,
     env,
     securityContext,
+    defaults: defs,
   } = props;
 
   const saName = `${name}-sa`;
@@ -92,7 +102,7 @@ export function CronWorkload(props: CronWorkloadProps): CronWorkloadResult {
     ...extraLabels,
   };
 
-  const cronJobProps: Record<string, unknown> = {
+  const cronJob = new CronJob(mergeDefaults({
     metadata: {
       name,
       ...(namespace && { namespace }),
@@ -123,17 +133,17 @@ export function CronWorkload(props: CronWorkloadProps): CronWorkloadResult {
         },
       },
     },
-  };
+  }, defs?.cronJob));
 
-  const serviceAccountProps: Record<string, unknown> = {
+  const serviceAccount = new ServiceAccount(mergeDefaults({
     metadata: {
       name: saName,
       ...(namespace && { namespace }),
       labels: { ...commonLabels, "app.kubernetes.io/component": "worker" },
     },
-  };
+  }, defs?.serviceAccount));
 
-  const roleProps: Record<string, unknown> = {
+  const role = new Role(mergeDefaults({
     metadata: {
       name: roleName,
       ...(namespace && { namespace }),
@@ -142,9 +152,9 @@ export function CronWorkload(props: CronWorkloadProps): CronWorkloadResult {
     rules: rbacRules.length > 0 ? rbacRules : [
       { apiGroups: [""], resources: ["pods"], verbs: ["get", "list"] },
     ],
-  };
+  }, defs?.role));
 
-  const roleBindingProps: Record<string, unknown> = {
+  const roleBinding = new RoleBinding(mergeDefaults({
     metadata: {
       name: bindingName,
       ...(namespace && { namespace }),
@@ -162,12 +172,7 @@ export function CronWorkload(props: CronWorkloadProps): CronWorkloadResult {
         ...(namespace && { namespace }),
       },
     ],
-  };
+  }, defs?.roleBinding));
 
-  return {
-    cronJob: cronJobProps,
-    serviceAccount: serviceAccountProps,
-    role: roleProps,
-    roleBinding: roleBindingProps,
-  };
-}
+  return { cronJob, serviceAccount, role, roleBinding };
+}, "CronWorkload");

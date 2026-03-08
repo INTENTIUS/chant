@@ -5,6 +5,9 @@
  * WAF policy, backend path prefix, and cookie-based affinity.
  */
 
+import { Composite, mergeDefaults } from "@intentius/chant";
+import { Ingress } from "../generated";
+
 export interface AgicIngressHost {
   /** Hostname (e.g., "api.example.com"). */
   hostname: string;
@@ -40,10 +43,14 @@ export interface AgicIngressProps {
   labels?: Record<string, string>;
   /** Namespace for all resources. */
   namespace?: string;
+  /** Per-member defaults for fine-grained overrides. */
+  defaults?: {
+    ingress?: Partial<Record<string, unknown>>;
+  };
 }
 
 export interface AgicIngressResult {
-  ingress: Record<string, unknown>;
+  ingress: InstanceType<typeof Ingress>;
 }
 
 /**
@@ -68,7 +75,7 @@ export interface AgicIngressResult {
  * });
  * ```
  */
-export function AgicIngress(props: AgicIngressProps): AgicIngressResult {
+export const AgicIngress = Composite<AgicIngressProps>((props) => {
   const {
     name,
     hosts,
@@ -81,6 +88,7 @@ export function AgicIngress(props: AgicIngressProps): AgicIngressResult {
     annotations: extraAnnotations = {},
     labels: extraLabels = {},
     namespace,
+    defaults: defs,
   } = props;
 
   const commonLabels: Record<string, string> = {
@@ -132,7 +140,7 @@ export function AgicIngress(props: AgicIngressProps): AgicIngressResult {
     },
   }));
 
-  const ingressProps: Record<string, unknown> = {
+  const ingress = new Ingress(mergeDefaults({
     metadata: {
       name,
       ...(namespace && { namespace }),
@@ -142,7 +150,7 @@ export function AgicIngress(props: AgicIngressProps): AgicIngressResult {
     spec: {
       rules: ingressRules,
     },
-  };
+  }, defs?.ingress));
 
-  return { ingress: ingressProps };
-}
+  return { ingress };
+}, "AgicIngress");

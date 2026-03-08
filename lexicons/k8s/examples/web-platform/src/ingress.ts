@@ -1,9 +1,6 @@
 // SecureIngress: TLS ingress with cert-manager (Ingress only — Certificate is a CRD).
 
-import {
-  Ingress,
-  SecureIngress,
-} from "@intentius/chant-lexicon-k8s";
+import { SecureIngress } from "@intentius/chant-lexicon-k8s";
 
 const NAMESPACE = "web-platform";
 
@@ -23,4 +20,4 @@ const ingress = SecureIngress({
 });
 
 // Only export the Ingress — Certificate is a CRD not in the k8s lexicon index
-export const webIngress = new Ingress(ingress.ingress);
+export const webIngress = ingress.ingress;

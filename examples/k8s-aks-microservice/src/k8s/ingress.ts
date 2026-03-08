@@ -1,11 +1,6 @@
 // K8s workloads: AGIC Ingress + ExternalDNS agent (AKS).
 
 import {
-  Ingress,
-  Deployment,
-  ServiceAccount,
-  ClusterRole,
-  ClusterRoleBinding,
   AgicIngress,
   AksExternalDnsAgent,
 } from "@intentius/chant-lexicon-k8s";
@@ -29,7 +24,7 @@ const agic = AgicIngress({
   namespace: NAMESPACE,
 });
 
-export const agicIngress = new Ingress(agic.ingress);
+export const agicIngress = agic.ingress;
 
 // ── ExternalDNS ────────────────────────────────────────────────────
 
@@ -42,7 +37,7 @@ const dns = AksExternalDnsAgent({
   txtOwnerId: config.clusterName,
 });
 
-export const dnsDeployment = new Deployment(dns.deployment);
-export const dnsServiceAccount = new ServiceAccount(dns.serviceAccount);
-export const dnsClusterRole = new ClusterRole(dns.clusterRole);
-export const dnsClusterRoleBinding = new ClusterRoleBinding(dns.clusterRoleBinding);
+export const dnsDeployment = dns.deployment;
+export const dnsServiceAccount = dns.serviceAccount;
+export const dnsClusterRole = dns.clusterRole;
+export const dnsClusterRoleBinding = dns.clusterRoleBinding;

@@ -5,7 +5,8 @@
  * HTTPS-only, encryption at rest, default-deny network rules, and TLS 1.2.
  */
 
-import { markAsAzureResource } from "./from-arm";
+import { Composite, mergeDefaults } from "@intentius/chant";
+import { StorageAccount } from "../generated";
 
 export interface StorageAccountSecureProps {
   /** Storage account name (3-24 chars, lowercase + digits only). */
@@ -16,15 +17,19 @@ export interface StorageAccountSecureProps {
   sku?: string;
   /** Resource tags. */
   tags?: Record<string, string>;
+  /** Per-member defaults. */
+  defaults?: {
+    storageAccount?: Partial<ConstructorParameters<typeof StorageAccount>[0]>;
+  };
 }
 
 export interface StorageAccountSecureResult {
-  storageAccount: Record<string, unknown>;
+  storageAccount: InstanceType<typeof StorageAccount>;
 }
 
 /**
- * Create a StorageAccountSecure composite — returns a property object for
- * an ARM Storage Account resource with security best practices.
+ * Create a StorageAccountSecure composite — returns a Storage Account
+ * resource with security best practices.
  *
  * @example
  * ```ts
@@ -39,17 +44,16 @@ export interface StorageAccountSecureResult {
  * export { storageAccount };
  * ```
  */
-export function StorageAccountSecure(props: StorageAccountSecureProps): StorageAccountSecureResult {
+export const StorageAccountSecure = Composite<StorageAccountSecureProps>((props) => {
   const {
     name,
     location = "[resourceGroup().location]",
     sku = "Standard_LRS",
     tags = {},
+    defaults,
   } = props;
 
-  const storageAccount: Record<string, unknown> = {
-    type: "Microsoft.Storage/storageAccounts",
-    apiVersion: "2023-01-01",
+  const storageAccount = new StorageAccount(mergeDefaults({
     name,
     location,
     tags: {
@@ -60,29 +64,25 @@ export function StorageAccountSecure(props: StorageAccountSecureProps): StorageA
       name: sku,
     },
     kind: "StorageV2",
-    properties: {
-      supportsHttpsTrafficOnly: true,
-      minimumTlsVersion: "TLS1_2",
-      allowBlobPublicAccess: false,
-      encryption: {
-        services: {
-          blob: { enabled: true, keyType: "Account" },
-          file: { enabled: true, keyType: "Account" },
-          table: { enabled: true, keyType: "Account" },
-          queue: { enabled: true, keyType: "Account" },
-        },
-        keySource: "Microsoft.Storage",
+    supportsHttpsTrafficOnly: true,
+    minimumTlsVersion: "TLS1_2",
+    allowBlobPublicAccess: false,
+    encryption: {
+      services: {
+        blob: { enabled: true, keyType: "Account" },
+        file: { enabled: true, keyType: "Account" },
+        table: { enabled: true, keyType: "Account" },
+        queue: { enabled: true, keyType: "Account" },
       },
-      networkAcls: {
-        bypass: "AzureServices",
-        defaultAction: "Deny",
-        ipRules: [],
-        virtualNetworkRules: [],
-      },
+      keySource: "Microsoft.Storage",
     },
-  };
-
-  markAsAzureResource(storageAccount);
+    networkAcls: {
+      bypass: "AzureServices",
+      defaultAction: "Deny",
+      ipRules: [],
+      virtualNetworkRules: [],
+    },
+  }, defaults?.storageAccount), { apiVersion: "2023-01-01" });
 
   return { storageAccount };
-}
+}, "StorageAccountSecure");

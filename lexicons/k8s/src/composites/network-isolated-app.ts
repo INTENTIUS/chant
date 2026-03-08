@@ -5,6 +5,8 @@
  * Creates fine-grained ingress/egress policies for a single application.
  */
 
+import { Composite, mergeDefaults } from "@intentius/chant";
+import { Deployment, Service, NetworkPolicy } from "../generated";
 import type { ContainerSecurityContext } from "./security-context";
 
 export interface NetworkPolicyPeer {
@@ -48,12 +50,18 @@ export interface NetworkIsolatedAppProps {
   env?: Array<{ name: string; value: string }>;
   /** Container security context (supports PSS restricted fields). */
   securityContext?: ContainerSecurityContext;
+  /** Per-member defaults for fine-grained overrides. */
+  defaults?: {
+    deployment?: Partial<Record<string, unknown>>;
+    service?: Partial<Record<string, unknown>>;
+    networkPolicy?: Partial<Record<string, unknown>>;
+  };
 }
 
 export interface NetworkIsolatedAppResult {
-  deployment: Record<string, unknown>;
-  service: Record<string, unknown>;
-  networkPolicy: Record<string, unknown>;
+  deployment: InstanceType<typeof Deployment>;
+  service: InstanceType<typeof Service>;
+  networkPolicy: InstanceType<typeof NetworkPolicy>;
 }
 
 /**
@@ -77,7 +85,7 @@ export interface NetworkIsolatedAppResult {
  * });
  * ```
  */
-export function NetworkIsolatedApp(props: NetworkIsolatedAppProps): NetworkIsolatedAppResult {
+export const NetworkIsolatedApp = Composite<NetworkIsolatedAppProps>((props) => {
   const {
     name,
     image,
@@ -93,6 +101,7 @@ export function NetworkIsolatedApp(props: NetworkIsolatedAppProps): NetworkIsola
     namespace,
     env,
     securityContext,
+    defaults: defs,
   } = props;
 
   const commonLabels: Record<string, string> = {
@@ -101,7 +110,7 @@ export function NetworkIsolatedApp(props: NetworkIsolatedAppProps): NetworkIsola
     ...extraLabels,
   };
 
-  const deploymentProps: Record<string, unknown> = {
+  const deployment = new Deployment(mergeDefaults({
     metadata: {
       name,
       ...(namespace && { namespace }),
@@ -129,9 +138,9 @@ export function NetworkIsolatedApp(props: NetworkIsolatedAppProps): NetworkIsola
         },
       },
     },
-  };
+  }, defs?.deployment));
 
-  const serviceProps: Record<string, unknown> = {
+  const service = new Service(mergeDefaults({
     metadata: {
       name,
       ...(namespace && { namespace }),
@@ -142,7 +151,7 @@ export function NetworkIsolatedApp(props: NetworkIsolatedAppProps): NetworkIsola
       ports: [{ port: 80, targetPort: port, protocol: "TCP", name: "http" }],
       type: "ClusterIP",
     },
-  };
+  }, defs?.service));
 
   // Build network policy
   const policyTypes: string[] = [];
@@ -185,18 +194,14 @@ export function NetworkIsolatedApp(props: NetworkIsolatedAppProps): NetworkIsola
     policySpec.policyTypes = policyTypes;
   }
 
-  const networkPolicyProps: Record<string, unknown> = {
+  const networkPolicy = new NetworkPolicy(mergeDefaults({
     metadata: {
       name: `${name}-policy`,
       ...(namespace && { namespace }),
       labels: { ...commonLabels, "app.kubernetes.io/component": "network-policy" },
     },
     spec: policySpec,
-  };
+  }, defs?.networkPolicy));
 
-  return {
-    deployment: deploymentProps,
-    service: serviceProps,
-    networkPolicy: networkPolicyProps,
-  };
-}
+  return { deployment, service, networkPolicy };
+}, "NetworkIsolatedApp");

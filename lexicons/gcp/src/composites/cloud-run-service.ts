@@ -1,6 +1,12 @@
 /**
- * CloudRunService composite — RunService + optional IAMPolicyMember for public access.
+ * CloudRunServiceComposite composite — RunService + optional IAMPolicyMember for public access.
  */
+
+import { Composite, mergeDefaults } from "@intentius/chant";
+import {
+  CloudRunService as CloudRunServiceResource,
+  IAMPolicyMember,
+} from "../generated";
 
 export interface CloudRunServiceProps {
   /** Service name. */
@@ -29,11 +35,11 @@ export interface CloudRunServiceProps {
   labels?: Record<string, string>;
   /** Namespace for all resources. */
   namespace?: string;
-}
-
-export interface CloudRunServiceResult {
-  service: Record<string, unknown>;
-  publicIam?: Record<string, unknown>;
+  /** Per-member defaults for customizing individual resources. */
+  defaults?: {
+    service?: Partial<ConstructorParameters<typeof CloudRunServiceResource>[0]>;
+    publicIam?: Partial<ConstructorParameters<typeof IAMPolicyMember>[0]>;
+  };
 }
 
 /**
@@ -50,7 +56,7 @@ export interface CloudRunServiceResult {
  * });
  * ```
  */
-export function CloudRunService(props: CloudRunServiceProps): CloudRunServiceResult {
+export const CloudRunServiceComposite = Composite<CloudRunServiceProps>((props) => {
   const {
     name,
     image,
@@ -65,6 +71,7 @@ export function CloudRunService(props: CloudRunServiceProps): CloudRunServiceRes
     env,
     labels: extraLabels = {},
     namespace,
+    defaults: defs,
   } = props;
 
   const commonLabels: Record<string, string> = {
@@ -84,7 +91,7 @@ export function CloudRunService(props: CloudRunServiceProps): CloudRunServiceRes
     },
   ];
 
-  const service: Record<string, unknown> = {
+  const service = new CloudRunServiceResource(mergeDefaults({
     metadata: {
       name,
       ...(namespace && { namespace }),
@@ -99,12 +106,12 @@ export function CloudRunService(props: CloudRunServiceProps): CloudRunServiceRes
       },
       containers,
     },
-  };
+  } as Record<string, unknown>, defs?.service));
 
-  const result: CloudRunServiceResult = { service };
+  const result: Record<string, any> = { service };
 
   if (publicAccess) {
-    result.publicIam = {
+    result.publicIam = new IAMPolicyMember(mergeDefaults({
       metadata: {
         name: `${name}-public`,
         ...(namespace && { namespace }),
@@ -117,8 +124,8 @@ export function CloudRunService(props: CloudRunServiceProps): CloudRunServiceRes
         kind: "RunService",
         name,
       },
-    };
+    } as Record<string, unknown>, defs?.publicIam));
   }
 
   return result;
-}
+}, "CloudRunServiceComposite");

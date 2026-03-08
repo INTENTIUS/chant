@@ -6,6 +6,8 @@
  * PDB selectors match pod labels, and resource requests are set.
  */
 
+import { Composite, mergeDefaults } from "@intentius/chant";
+import { Deployment, Service, HorizontalPodAutoscaler, PodDisruptionBudget } from "../generated";
 import type { ContainerSecurityContext } from "./security-context";
 
 export interface AutoscaledServiceProps {
@@ -69,13 +71,20 @@ export interface AutoscaledServiceProps {
   volumeMounts?: Array<Record<string, unknown>>;
   /** Convenience: auto-generate emptyDir volumes + mounts for writable temp dirs (e.g. ["/tmp", "/var/cache/nginx"]). */
   tmpDirs?: string[];
+  /** Per-member defaults for fine-grained overrides. */
+  defaults?: {
+    deployment?: Partial<Record<string, unknown>>;
+    service?: Partial<Record<string, unknown>>;
+    hpa?: Partial<Record<string, unknown>>;
+    pdb?: Partial<Record<string, unknown>>;
+  };
 }
 
 export interface AutoscaledServiceResult {
-  deployment: Record<string, unknown>;
-  service: Record<string, unknown>;
-  hpa: Record<string, unknown>;
-  pdb: Record<string, unknown>;
+  deployment: InstanceType<typeof Deployment>;
+  service: InstanceType<typeof Service>;
+  hpa: InstanceType<typeof HorizontalPodAutoscaler>;
+  pdb: InstanceType<typeof PodDisruptionBudget>;
 }
 
 /**
@@ -95,7 +104,7 @@ export interface AutoscaledServiceResult {
  * });
  * ```
  */
-export function AutoscaledService(props: AutoscaledServiceProps): AutoscaledServiceResult {
+export const AutoscaledService = Composite<AutoscaledServiceProps>((props) => {
   const {
     name,
     image,
@@ -123,6 +132,7 @@ export function AutoscaledService(props: AutoscaledServiceProps): AutoscaledServ
     volumes: explicitVolumes = [],
     volumeMounts: explicitMounts = [],
     tmpDirs = [],
+    defaults: defs,
   } = props;
 
   const commonLabels: Record<string, string> = {
@@ -164,7 +174,7 @@ export function AutoscaledService(props: AutoscaledServiceProps): AutoscaledServ
       : {}),
   };
 
-  const deploymentProps: Record<string, unknown> = {
+  const deployment = new Deployment(mergeDefaults({
     metadata: {
       name,
       ...(namespace && { namespace }),
@@ -213,9 +223,9 @@ export function AutoscaledService(props: AutoscaledServiceProps): AutoscaledServ
         },
       },
     },
-  };
+  }, defs?.deployment));
 
-  const serviceProps: Record<string, unknown> = {
+  const service = new Service(mergeDefaults({
     metadata: {
       name,
       ...(namespace && { namespace }),
@@ -226,7 +236,7 @@ export function AutoscaledService(props: AutoscaledServiceProps): AutoscaledServ
       ports: [{ port: 80, targetPort: port, protocol: "TCP", name: "http" }],
       type: "ClusterIP",
     },
-  };
+  }, defs?.service));
 
   const metrics: Array<Record<string, unknown>> = [
     {
@@ -248,7 +258,7 @@ export function AutoscaledService(props: AutoscaledServiceProps): AutoscaledServ
     });
   }
 
-  const hpaProps: Record<string, unknown> = {
+  const hpa = new HorizontalPodAutoscaler(mergeDefaults({
     metadata: {
       name,
       ...(namespace && { namespace }),
@@ -264,9 +274,9 @@ export function AutoscaledService(props: AutoscaledServiceProps): AutoscaledServ
       maxReplicas,
       metrics,
     },
-  };
+  }, defs?.hpa));
 
-  const pdbProps: Record<string, unknown> = {
+  const pdb = new PodDisruptionBudget(mergeDefaults({
     metadata: {
       name,
       ...(namespace && { namespace }),
@@ -276,12 +286,7 @@ export function AutoscaledService(props: AutoscaledServiceProps): AutoscaledServ
       minAvailable,
       selector: { matchLabels: { "app.kubernetes.io/name": name } },
     },
-  };
+  }, defs?.pdb));
 
-  return {
-    deployment: deploymentProps,
-    service: serviceProps,
-    hpa: hpaProps,
-    pdb: pdbProps,
-  };
-}
+  return { deployment, service, hpa, pdb };
+}, "AutoscaledService");

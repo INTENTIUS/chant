@@ -5,7 +5,13 @@
  * and DNS Zone Group for private connectivity.
  */
 
-import { markAsAzureResource } from "./from-arm";
+import { Composite, mergeDefaults } from "@intentius/chant";
+import {
+  privateEndpoints,
+  PrivateDnsZone,
+  privateEndpoints_privateDnsZoneGroups,
+  privateDnsZones_virtualNetworkLinks,
+} from "../generated";
 
 export interface PrivateEndpointProps {
   /** Private endpoint name. */
@@ -24,16 +30,23 @@ export interface PrivateEndpointProps {
   vnetId: string;
   /** Resource tags. */
   tags?: Record<string, string>;
+  /** Per-member defaults. */
+  defaults?: {
+    privateEndpoint?: Partial<ConstructorParameters<typeof privateEndpoints>[0]>;
+    privateDnsZone?: Partial<ConstructorParameters<typeof PrivateDnsZone>[0]>;
+    dnsZoneGroup?: Partial<ConstructorParameters<typeof privateEndpoints_privateDnsZoneGroups>[0]>;
+    vnetLink?: Partial<ConstructorParameters<typeof privateDnsZones_virtualNetworkLinks>[0]>;
+  };
 }
 
 export interface PrivateEndpointResult {
-  privateEndpoint: Record<string, unknown>;
-  privateDnsZone: Record<string, unknown>;
-  dnsZoneGroup: Record<string, unknown>;
-  vnetLink: Record<string, unknown>;
+  privateEndpoint: InstanceType<typeof privateEndpoints>;
+  privateDnsZone: InstanceType<typeof PrivateDnsZone>;
+  dnsZoneGroup: InstanceType<typeof privateEndpoints_privateDnsZoneGroups>;
+  vnetLink: InstanceType<typeof privateDnsZones_virtualNetworkLinks>;
 }
 
-export function PrivateEndpoint(props: PrivateEndpointProps): PrivateEndpointResult {
+export const PrivateEndpoint = Composite<PrivateEndpointProps>((props) => {
   const {
     name,
     location = "[resourceGroup().location]",
@@ -43,77 +56,62 @@ export function PrivateEndpoint(props: PrivateEndpointProps): PrivateEndpointRes
     privateDnsZoneName,
     vnetId,
     tags = {},
+    defaults,
   } = props;
 
   const mergedTags = { "managed-by": "chant", ...tags };
 
-  const privateEndpoint: Record<string, unknown> = {
-    type: "Microsoft.Network/privateEndpoints",
-    apiVersion: "2023-05-01",
+  const privateEndpoint = new privateEndpoints(mergeDefaults({
     name,
     location,
     tags: mergedTags,
-    properties: {
-      subnet: { id: subnetId },
-      privateLinkServiceConnections: [
-        {
-          name: `${name}-connection`,
-          properties: {
-            privateLinkServiceId: targetResourceId,
-            groupIds: [groupId],
-          },
+    subnet: { id: subnetId },
+    privateLinkServiceConnections: [
+      {
+        name: `${name}-connection`,
+        properties: {
+          privateLinkServiceId: targetResourceId,
+          groupIds: [groupId],
         },
-      ],
-    },
-  };
+      },
+    ],
+  }, defaults?.privateEndpoint), { apiVersion: "2023-05-01" });
 
-  const privateDnsZone: Record<string, unknown> = {
-    type: "Microsoft.Network/privateDnsZones",
-    apiVersion: "2020-06-01",
+  const privateDnsZone = new PrivateDnsZone(mergeDefaults({
     name: privateDnsZoneName,
     location: "global",
     tags: mergedTags,
-    properties: {},
-  };
+  }, defaults?.privateDnsZone), { apiVersion: "2020-06-01" });
 
-  const vnetLink: Record<string, unknown> = {
-    type: "Microsoft.Network/privateDnsZones/virtualNetworkLinks",
-    apiVersion: "2020-06-01",
+  const vnetLink = new privateDnsZones_virtualNetworkLinks(mergeDefaults({
     name: `${privateDnsZoneName}/${name}-vnet-link`,
     location: "global",
-    properties: {
-      virtualNetwork: { id: vnetId },
-      registrationEnabled: false,
-    },
-    dependsOn: [
+    virtualNetwork: { id: vnetId },
+    registrationEnabled: false,
+  }, defaults?.vnetLink), {
+    apiVersion: "2020-06-01",
+    DependsOn: [
       `[resourceId('Microsoft.Network/privateDnsZones', '${privateDnsZoneName}')]`,
     ],
-  };
+  });
 
-  const dnsZoneGroup: Record<string, unknown> = {
-    type: "Microsoft.Network/privateEndpoints/privateDnsZoneGroups",
-    apiVersion: "2023-05-01",
+  const dnsZoneGroup = new privateEndpoints_privateDnsZoneGroups(mergeDefaults({
     name: `${name}/${name}-dns-group`,
-    properties: {
-      privateDnsZoneConfigs: [
-        {
-          name: "config1",
-          properties: {
-            privateDnsZoneId: `[resourceId('Microsoft.Network/privateDnsZones', '${privateDnsZoneName}')]`,
-          },
+    privateDnsZoneConfigs: [
+      {
+        name: "config1",
+        properties: {
+          privateDnsZoneId: `[resourceId('Microsoft.Network/privateDnsZones', '${privateDnsZoneName}')]`,
         },
-      ],
-    },
-    dependsOn: [
+      },
+    ],
+  }, defaults?.dnsZoneGroup), {
+    apiVersion: "2023-05-01",
+    DependsOn: [
       `[resourceId('Microsoft.Network/privateEndpoints', '${name}')]`,
       `[resourceId('Microsoft.Network/privateDnsZones', '${privateDnsZoneName}')]`,
     ],
-  };
-
-  markAsAzureResource(privateEndpoint);
-  markAsAzureResource(privateDnsZone);
-  markAsAzureResource(vnetLink);
-  markAsAzureResource(dnsZoneGroup);
+  });
 
   return { privateEndpoint, privateDnsZone, dnsZoneGroup, vnetLink };
-}
+}, "PrivateEndpoint");

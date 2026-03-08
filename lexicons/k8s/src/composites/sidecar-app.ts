@@ -5,6 +5,8 @@
  * DB migration init). Supports shared volumes between containers.
  */
 
+import { Composite, mergeDefaults } from "@intentius/chant";
+import { Deployment, Service } from "../generated";
 import type { ContainerSecurityContext } from "./security-context";
 
 export interface SidecarContainer {
@@ -74,11 +76,16 @@ export interface SidecarAppProps {
   env?: Array<{ name: string; value: string }>;
   /** Container security context for the primary container (supports PSS restricted fields). */
   securityContext?: ContainerSecurityContext;
+  /** Per-member defaults for fine-grained overrides. */
+  defaults?: {
+    deployment?: Partial<Record<string, unknown>>;
+    service?: Partial<Record<string, unknown>>;
+  };
 }
 
 export interface SidecarAppResult {
-  deployment: Record<string, unknown>;
-  service: Record<string, unknown>;
+  deployment: InstanceType<typeof Deployment>;
+  service: InstanceType<typeof Service>;
 }
 
 /**
@@ -103,7 +110,7 @@ export interface SidecarAppResult {
  * });
  * ```
  */
-export function SidecarApp(props: SidecarAppProps): SidecarAppResult {
+export const SidecarApp = Composite<SidecarAppProps>((props) => {
   const {
     name,
     image,
@@ -120,6 +127,7 @@ export function SidecarApp(props: SidecarAppProps): SidecarAppResult {
     namespace,
     env,
     securityContext,
+    defaults: defs,
   } = props;
 
   const commonLabels: Record<string, string> = {
@@ -171,7 +179,7 @@ export function SidecarApp(props: SidecarAppProps): SidecarAppResult {
     ...(volumes && volumes.length > 0 && { volumes }),
   };
 
-  const deploymentProps: Record<string, unknown> = {
+  const deployment = new Deployment(mergeDefaults({
     metadata: {
       name,
       ...(namespace && { namespace }),
@@ -185,9 +193,9 @@ export function SidecarApp(props: SidecarAppProps): SidecarAppResult {
         spec: podSpec,
       },
     },
-  };
+  }, defs?.deployment));
 
-  const serviceProps: Record<string, unknown> = {
+  const service = new Service(mergeDefaults({
     metadata: {
       name,
       ...(namespace && { namespace }),
@@ -198,10 +206,7 @@ export function SidecarApp(props: SidecarAppProps): SidecarAppResult {
       ports: [{ port: 80, targetPort: port, protocol: "TCP", name: "http" }],
       type: "ClusterIP",
     },
-  };
+  }, defs?.service));
 
-  return {
-    deployment: deploymentProps,
-    service: serviceProps,
-  };
-}
+  return { deployment, service };
+}, "SidecarApp");

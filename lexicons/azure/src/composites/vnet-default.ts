@@ -5,7 +5,13 @@
  * two subnets, a Network Security Group, and a Route Table.
  */
 
-import { markAsAzureResource } from "./from-arm";
+import { Composite, mergeDefaults } from "@intentius/chant";
+import {
+  VirtualNetwork,
+  Subnet,
+  NetworkSecurityGroup,
+  RouteTable,
+} from "../generated";
 
 export interface VnetDefaultProps {
   /** Virtual network name. */
@@ -18,19 +24,27 @@ export interface VnetDefaultProps {
   location?: string;
   /** Resource tags. */
   tags?: Record<string, string>;
+  /** Per-member defaults. */
+  defaults?: {
+    virtualNetwork?: Partial<ConstructorParameters<typeof VirtualNetwork>[0]>;
+    subnet1?: Partial<ConstructorParameters<typeof Subnet>[0]>;
+    subnet2?: Partial<ConstructorParameters<typeof Subnet>[0]>;
+    nsg?: Partial<ConstructorParameters<typeof NetworkSecurityGroup>[0]>;
+    routeTable?: Partial<ConstructorParameters<typeof RouteTable>[0]>;
+  };
 }
 
 export interface VnetDefaultResult {
-  virtualNetwork: Record<string, unknown>;
-  subnet1: Record<string, unknown>;
-  subnet2: Record<string, unknown>;
-  nsg: Record<string, unknown>;
-  routeTable: Record<string, unknown>;
+  virtualNetwork: InstanceType<typeof VirtualNetwork>;
+  subnet1: InstanceType<typeof Subnet>;
+  subnet2: InstanceType<typeof Subnet>;
+  nsg: InstanceType<typeof NetworkSecurityGroup>;
+  routeTable: InstanceType<typeof RouteTable>;
 }
 
 /**
- * Create a VnetDefault composite — returns property objects for
- * a Virtual Network, two Subnets, an NSG, and a Route Table.
+ * Create a VnetDefault composite — returns a Virtual Network,
+ * two Subnets, an NSG, and a Route Table.
  *
  * @example
  * ```ts
@@ -45,13 +59,14 @@ export interface VnetDefaultResult {
  * export { virtualNetwork, subnet1, subnet2, nsg, routeTable };
  * ```
  */
-export function VnetDefault(props: VnetDefaultProps): VnetDefaultResult {
+export const VnetDefault = Composite<VnetDefaultProps>((props) => {
   const {
     name,
     addressPrefix = "10.0.0.0/16",
     subnetPrefixes = ["10.0.1.0/24", "10.0.2.0/24"],
     location = "[resourceGroup().location]",
     tags = {},
+    defaults,
   } = props;
 
   const commonTags: Record<string, string> = {
@@ -62,103 +77,77 @@ export function VnetDefault(props: VnetDefaultProps): VnetDefaultResult {
   const nsgName = `${name}-nsg`;
   const routeTableName = `${name}-rt`;
 
-  const nsg: Record<string, unknown> = {
-    type: "Microsoft.Network/networkSecurityGroups",
-    apiVersion: "2023-05-01",
+  const nsg = new NetworkSecurityGroup(mergeDefaults({
     name: nsgName,
     location,
     tags: commonTags,
-    properties: {
-      securityRules: [],
-    },
-  };
+    securityRules: [],
+  }, defaults?.nsg), { apiVersion: "2023-05-01" });
 
-  const routeTable: Record<string, unknown> = {
-    type: "Microsoft.Network/routeTables",
-    apiVersion: "2023-05-01",
+  const routeTable = new RouteTable(mergeDefaults({
     name: routeTableName,
     location,
     tags: commonTags,
-    properties: {
-      disableBgpRoutePropagation: false,
-      routes: [],
-    },
-  };
+    disableBgpRoutePropagation: false,
+    routes: [],
+  }, defaults?.routeTable), { apiVersion: "2023-05-01" });
 
-  const subnet1: Record<string, unknown> = {
-    type: "Microsoft.Network/virtualNetworks/subnets",
-    apiVersion: "2023-05-01",
+  const subnet1 = new Subnet(mergeDefaults({
     name: `${name}/subnet-1`,
-    properties: {
-      addressPrefix: subnetPrefixes[0],
-      networkSecurityGroup: {
-        id: `[resourceId('Microsoft.Network/networkSecurityGroups', '${nsgName}')]`,
-      },
-      routeTable: {
-        id: `[resourceId('Microsoft.Network/routeTables', '${routeTableName}')]`,
-      },
+    addressPrefix: subnetPrefixes[0],
+    networkSecurityGroup: {
+      id: `[resourceId('Microsoft.Network/networkSecurityGroups', '${nsgName}')]`,
     },
-  };
+    routeTable: {
+      id: `[resourceId('Microsoft.Network/routeTables', '${routeTableName}')]`,
+    },
+  }, defaults?.subnet1), { apiVersion: "2023-05-01" });
 
-  const subnet2: Record<string, unknown> = {
-    type: "Microsoft.Network/virtualNetworks/subnets",
-    apiVersion: "2023-05-01",
+  const subnet2 = new Subnet(mergeDefaults({
     name: `${name}/subnet-2`,
-    properties: {
-      addressPrefix: subnetPrefixes[1],
-      networkSecurityGroup: {
-        id: `[resourceId('Microsoft.Network/networkSecurityGroups', '${nsgName}')]`,
-      },
-      routeTable: {
-        id: `[resourceId('Microsoft.Network/routeTables', '${routeTableName}')]`,
-      },
+    addressPrefix: subnetPrefixes[1],
+    networkSecurityGroup: {
+      id: `[resourceId('Microsoft.Network/networkSecurityGroups', '${nsgName}')]`,
     },
-  };
+    routeTable: {
+      id: `[resourceId('Microsoft.Network/routeTables', '${routeTableName}')]`,
+    },
+  }, defaults?.subnet2), { apiVersion: "2023-05-01" });
 
-  const virtualNetwork: Record<string, unknown> = {
-    type: "Microsoft.Network/virtualNetworks",
-    apiVersion: "2023-05-01",
+  const virtualNetwork = new VirtualNetwork(mergeDefaults({
     name,
     location,
     tags: commonTags,
-    properties: {
-      addressSpace: {
-        addressPrefixes: [addressPrefix],
-      },
-      subnets: [
-        {
-          name: "subnet-1",
-          properties: {
-            addressPrefix: subnetPrefixes[0],
-            networkSecurityGroup: {
-              id: `[resourceId('Microsoft.Network/networkSecurityGroups', '${nsgName}')]`,
-            },
-            routeTable: {
-              id: `[resourceId('Microsoft.Network/routeTables', '${routeTableName}')]`,
-            },
-          },
-        },
-        {
-          name: "subnet-2",
-          properties: {
-            addressPrefix: subnetPrefixes[1],
-            networkSecurityGroup: {
-              id: `[resourceId('Microsoft.Network/networkSecurityGroups', '${nsgName}')]`,
-            },
-            routeTable: {
-              id: `[resourceId('Microsoft.Network/routeTables', '${routeTableName}')]`,
-            },
-          },
-        },
-      ],
+    addressSpace: {
+      addressPrefixes: [addressPrefix],
     },
-  };
-
-  markAsAzureResource(nsg);
-  markAsAzureResource(routeTable);
-  markAsAzureResource(subnet1);
-  markAsAzureResource(subnet2);
-  markAsAzureResource(virtualNetwork);
+    subnets: [
+      {
+        name: "subnet-1",
+        properties: {
+          addressPrefix: subnetPrefixes[0],
+          networkSecurityGroup: {
+            id: `[resourceId('Microsoft.Network/networkSecurityGroups', '${nsgName}')]`,
+          },
+          routeTable: {
+            id: `[resourceId('Microsoft.Network/routeTables', '${routeTableName}')]`,
+          },
+        },
+      },
+      {
+        name: "subnet-2",
+        properties: {
+          addressPrefix: subnetPrefixes[1],
+          networkSecurityGroup: {
+            id: `[resourceId('Microsoft.Network/networkSecurityGroups', '${nsgName}')]`,
+          },
+          routeTable: {
+            id: `[resourceId('Microsoft.Network/routeTables', '${routeTableName}')]`,
+          },
+        },
+      },
+    ],
+  }, defaults?.virtualNetwork), { apiVersion: "2023-05-01" });
 
   return { virtualNetwork, subnet1, subnet2, nsg, routeTable };
-}
+}, "VnetDefault");

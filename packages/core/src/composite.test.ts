@@ -9,6 +9,7 @@ import {
   withDefaults,
   propagate,
   SHARED_PROPS,
+  mergeDefaults,
 } from "./composite";
 import { DECLARABLE_MARKER, type Declarable } from "./declarable";
 import { AttrRef } from "./attrref";
@@ -489,5 +490,79 @@ describe("propagate", () => {
 
     const expanded = expandComposite("s", MyComp({}));
     expect((expanded.get("sBucket") as any).props.name).toBe("data");
+  });
+});
+
+describe("mergeDefaults", () => {
+  test("returns base unchanged when no overrides", () => {
+    const base = { a: 1, b: "hello" };
+    expect(mergeDefaults(base)).toBe(base);
+    expect(mergeDefaults(base, undefined)).toBe(base);
+  });
+
+  test("scalar override wins", () => {
+    const result = mergeDefaults({ a: 1, b: 2 }, { a: 10 });
+    expect(result).toEqual({ a: 10, b: 2 });
+  });
+
+  test("undefined values in overrides are skipped", () => {
+    const result = mergeDefaults({ a: 1, b: 2 }, { a: undefined });
+    expect(result).toEqual({ a: 1, b: 2 });
+  });
+
+  test("arrays are concatenated (base + overrides)", () => {
+    const result = mergeDefaults(
+      { tags: [{ key: "env", value: "prod" }] },
+      { tags: [{ key: "team", value: "alpha" }] },
+    );
+    expect(result.tags).toEqual([
+      { key: "env", value: "prod" },
+      { key: "team", value: "alpha" },
+    ]);
+  });
+
+  test("object override replaces (no deep merge)", () => {
+    const result = mergeDefaults(
+      { config: { a: 1, b: 2 } },
+      { config: { a: 10 } as any },
+    );
+    expect(result.config).toEqual({ a: 10 });
+  });
+
+  test("new keys from overrides are added", () => {
+    const result = mergeDefaults(
+      { a: 1 } as Record<string, unknown>,
+      { b: 2 },
+    );
+    expect(result).toEqual({ a: 1, b: 2 });
+  });
+
+  test("does not mutate the base object", () => {
+    const base = { a: 1, b: [1, 2] };
+    const result = mergeDefaults(base, { a: 10, b: [3] });
+    expect(base.a).toBe(1);
+    expect(base.b).toEqual([1, 2]);
+    expect(result.a).toBe(10);
+    expect(result.b).toEqual([1, 2, 3]);
+  });
+
+  test("empty overrides returns a shallow copy", () => {
+    const base = { a: 1 };
+    const result = mergeDefaults(base, {});
+    expect(result).toEqual({ a: 1 });
+    expect(result).not.toBe(base);
+  });
+
+  test("mixed: some scalars overridden, some arrays concatenated, some unchanged", () => {
+    const result = mergeDefaults(
+      { name: "orig", count: 5, tags: ["a"], config: { x: 1 } },
+      { name: "new", tags: ["b"], config: undefined },
+    );
+    expect(result).toEqual({
+      name: "new",
+      count: 5,
+      tags: ["a", "b"],
+      config: { x: 1 },
+    });
   });
 });

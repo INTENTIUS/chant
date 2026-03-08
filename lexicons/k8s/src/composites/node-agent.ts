@@ -5,6 +5,8 @@
  * security scanners) that need cluster-wide RBAC and tolerations.
  */
 
+import { Composite, mergeDefaults } from "@intentius/chant";
+import { DaemonSet, ServiceAccount, ClusterRole, ClusterRoleBinding, ConfigMap } from "../generated";
 import type { ContainerSecurityContext } from "./security-context";
 
 export interface NodeAgentProps {
@@ -47,14 +49,22 @@ export interface NodeAgentProps {
   env?: Array<{ name: string; value: string }>;
   /** Container security context (supports PSS restricted fields). */
   securityContext?: ContainerSecurityContext;
+  /** Per-member defaults for fine-grained overrides. */
+  defaults?: {
+    daemonSet?: Partial<Record<string, unknown>>;
+    serviceAccount?: Partial<Record<string, unknown>>;
+    clusterRole?: Partial<Record<string, unknown>>;
+    clusterRoleBinding?: Partial<Record<string, unknown>>;
+    configMap?: Partial<Record<string, unknown>>;
+  };
 }
 
 export interface NodeAgentResult {
-  daemonSet: Record<string, unknown>;
-  serviceAccount: Record<string, unknown>;
-  clusterRole: Record<string, unknown>;
-  clusterRoleBinding: Record<string, unknown>;
-  configMap?: Record<string, unknown>;
+  daemonSet: InstanceType<typeof DaemonSet>;
+  serviceAccount: InstanceType<typeof ServiceAccount>;
+  clusterRole: InstanceType<typeof ClusterRole>;
+  clusterRoleBinding: InstanceType<typeof ClusterRoleBinding>;
+  configMap?: InstanceType<typeof ConfigMap>;
 }
 
 /**
@@ -75,7 +85,7 @@ export interface NodeAgentResult {
  * });
  * ```
  */
-export function NodeAgent(props: NodeAgentProps): NodeAgentResult {
+export const NodeAgent = Composite<NodeAgentProps>((props) => {
   const {
     name,
     image,
@@ -92,6 +102,7 @@ export function NodeAgent(props: NodeAgentProps): NodeAgentResult {
     labels: extraLabels = {},
     env,
     securityContext,
+    defaults: defs,
   } = props;
 
   const saName = `${name}-sa`;
@@ -156,7 +167,7 @@ export function NodeAgent(props: NodeAgentProps): NodeAgentResult {
     }),
   };
 
-  const daemonSetProps: Record<string, unknown> = {
+  const daemonSet = new DaemonSet(mergeDefaults({
     metadata: {
       name,
       ...(namespace && { namespace }),
@@ -169,27 +180,27 @@ export function NodeAgent(props: NodeAgentProps): NodeAgentResult {
         spec: podSpec,
       },
     },
-  };
+  }, defs?.daemonSet));
 
-  const serviceAccountProps: Record<string, unknown> = {
+  const serviceAccount = new ServiceAccount(mergeDefaults({
     metadata: {
       name: saName,
       ...(namespace && { namespace }),
       labels: { ...commonLabels, "app.kubernetes.io/component": "agent" },
     },
-  };
+  }, defs?.serviceAccount));
 
   // ClusterRole — cluster-scoped, no namespace
-  const clusterRoleProps: Record<string, unknown> = {
+  const clusterRole = new ClusterRole(mergeDefaults({
     metadata: {
       name: clusterRoleName,
       labels: { ...commonLabels, "app.kubernetes.io/component": "rbac" },
     },
     rules: rbacRules,
-  };
+  }, defs?.clusterRole));
 
   // ClusterRoleBinding — cluster-scoped, no namespace
-  const clusterRoleBindingProps: Record<string, unknown> = {
+  const clusterRoleBinding = new ClusterRoleBinding(mergeDefaults({
     metadata: {
       name: bindingName,
       labels: { ...commonLabels, "app.kubernetes.io/component": "rbac" },
@@ -206,25 +217,25 @@ export function NodeAgent(props: NodeAgentProps): NodeAgentResult {
         ...(namespace && { namespace }),
       },
     ],
-  };
+  }, defs?.clusterRoleBinding));
 
-  const result: NodeAgentResult = {
-    daemonSet: daemonSetProps,
-    serviceAccount: serviceAccountProps,
-    clusterRole: clusterRoleProps,
-    clusterRoleBinding: clusterRoleBindingProps,
+  const result: Record<string, any> = {
+    daemonSet,
+    serviceAccount,
+    clusterRole,
+    clusterRoleBinding,
   };
 
   if (config) {
-    result.configMap = {
+    result.configMap = new ConfigMap(mergeDefaults({
       metadata: {
         name: configMapName,
         ...(namespace && { namespace }),
         labels: { ...commonLabels, "app.kubernetes.io/component": "config" },
       },
       data: config,
-    };
+    }, defs?.configMap));
   }
 
   return result;
-}
+}, "NodeAgent");

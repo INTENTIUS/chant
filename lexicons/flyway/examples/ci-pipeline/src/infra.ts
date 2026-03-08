@@ -17,21 +17,20 @@ const result = CiPipelineProject({
   environmentName: "ci",
   schemas: ["public", "users"],
   locations: ["filesystem:sql"],
+  defaults: {
+    config: {
+      baselineOnMigrate: true,
+      baselineVersion: "0",
+      baselineDescription: "Initial baseline from existing schema",
+    },
+  },
 });
 
-export const project = new FlywayProject(result.project);
+export const project = result.project;
 
-export const ciEnv = new Environment(result.environment);
+export const ciEnv = result.environment;
 
-export const config = new FlywayConfig({
-  ...result.config,
-  baselineOnMigrate: true,
-  baselineVersion: "0",
-  baselineDescription: "Initial baseline from existing schema",
-  validateOnMigrate: true,
-  cleanDisabled: true,
-  outOfOrder: false,
-});
+export const config = result.config;
 
 // Additional staging environment also using env vars with a different prefix
 export const stagingEnv = new Environment({

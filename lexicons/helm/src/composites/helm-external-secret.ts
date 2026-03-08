@@ -9,6 +9,8 @@
  * it like any other K8s resource.
  */
 
+import { Composite, mergeDefaults } from "@intentius/chant";
+import { Chart, Values, ExternalSecret } from "../resources";
 import { values, include } from "../intrinsics";
 
 export interface HelmExternalSecretProps {
@@ -22,30 +24,37 @@ export interface HelmExternalSecretProps {
   data: Record<string, string>;
   /** Refresh interval. Default: "1h". */
   refreshInterval?: string;
+  /** Per-member defaults. */
+  defaults?: {
+    chart?: Partial<Record<string, unknown>>;
+    values?: Partial<Record<string, unknown>>;
+    externalSecret?: Partial<Record<string, unknown>>;
+  };
 }
 
 export interface HelmExternalSecretResult {
-  chart: Record<string, unknown>;
-  values: Record<string, unknown>;
-  externalSecret: Record<string, unknown>;
+  chart: InstanceType<typeof Chart>;
+  values: InstanceType<typeof Values>;
+  externalSecret: InstanceType<typeof ExternalSecret>;
 }
 
-export function HelmExternalSecret(props: HelmExternalSecretProps): HelmExternalSecretResult {
+export const HelmExternalSecret = Composite<HelmExternalSecretProps>((props) => {
   const {
     name,
     secretStoreName,
     secretStoreKind = "ClusterSecretStore",
     data,
     refreshInterval = "1h",
+    defaults: defs,
   } = props;
 
-  const chart = {
+  const chart = new Chart(mergeDefaults({
     apiVersion: "v2",
     name,
     version: "0.1.0",
     type: "application",
     description: `External secret management for ${name}`,
-  };
+  }, defs?.chart));
 
   const secretDataEntries = Object.entries(data).map(([key, remotePath]) => ({
     secretKey: key,
@@ -54,7 +63,7 @@ export function HelmExternalSecret(props: HelmExternalSecretProps): HelmExternal
     },
   }));
 
-  const valuesObj = {
+  const valuesRes = new Values(mergeDefaults({
     externalSecret: {
       refreshInterval,
       secretStore: {
@@ -62,9 +71,9 @@ export function HelmExternalSecret(props: HelmExternalSecretProps): HelmExternal
         kind: secretStoreKind,
       },
     },
-  };
+  } as Record<string, unknown>, defs?.values));
 
-  const externalSecret = {
+  const externalSecret = new ExternalSecret(mergeDefaults({
     apiVersion: "external-secrets.io/v1beta1",
     kind: "ExternalSecret",
     metadata: {
@@ -83,11 +92,11 @@ export function HelmExternalSecret(props: HelmExternalSecretProps): HelmExternal
       },
       data: secretDataEntries,
     },
-  };
+  }, defs?.externalSecret));
 
   return {
     chart,
-    values: valuesObj,
+    values: valuesRes,
     externalSecret,
   };
-}
+}, "HelmExternalSecret");

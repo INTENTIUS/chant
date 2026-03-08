@@ -1,4 +1,4 @@
-import { Composite, withDefaults } from "@intentius/chant";
+import { Composite, withDefaults, mergeDefaults } from "@intentius/chant";
 import { Role, Function, Function_VpcConfig, Role_Policy } from "../generated";
 
 const lambdaTrustPolicy = {
@@ -28,9 +28,14 @@ export interface LambdaFunctionProps {
   ManagedPolicyArns?: string[];
   Policies?: InstanceType<typeof Role_Policy>[];
   VpcConfig?: ConstructorParameters<typeof Function_VpcConfig>[0];
+  defaults?: {
+    role?: Partial<ConstructorParameters<typeof Role>[0]>;
+    func?: Partial<ConstructorParameters<typeof Function>[0]>;
+  };
 }
 
 export const LambdaFunction = Composite<LambdaFunctionProps>((props) => {
+  const { defaults } = props;
   const managedPolicies = [BASIC_EXECUTION_ARN];
   if (props.VpcConfig) {
     managedPolicies.push(VPC_ACCESS_ARN);
@@ -39,13 +44,13 @@ export const LambdaFunction = Composite<LambdaFunctionProps>((props) => {
     managedPolicies.push(...props.ManagedPolicyArns);
   }
 
-  const role = new Role({
+  const role = new Role(mergeDefaults({
     AssumeRolePolicyDocument: lambdaTrustPolicy,
     ManagedPolicyArns: managedPolicies,
     Policies: props.Policies,
-  });
+  }, defaults?.role));
 
-  const func = new Function({
+  const func = new Function(mergeDefaults({
     FunctionName: props.name,
     Runtime: props.Runtime as any,
     Handler: props.Handler,
@@ -55,7 +60,7 @@ export const LambdaFunction = Composite<LambdaFunctionProps>((props) => {
     MemorySize: props.MemorySize,
     Environment: props.Environment,
     VpcConfig: props.VpcConfig ? new Function_VpcConfig(props.VpcConfig) : undefined,
-  });
+  }, defaults?.func));
 
   return { role, func };
 }, "LambdaFunction");

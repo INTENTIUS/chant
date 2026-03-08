@@ -5,6 +5,8 @@
  * infrastructure that needs to run on every node.
  */
 
+import { Composite, mergeDefaults } from "@intentius/chant";
+import { Chart, Values, DaemonSet, ServiceAccount } from "../resources";
 import { values, include, printf, toYaml, If, With } from "../intrinsics";
 
 export interface HelmDaemonSetProps {
@@ -22,16 +24,23 @@ export interface HelmDaemonSetProps {
   serviceAccount?: boolean;
   /** Chart appVersion. */
   appVersion?: string;
+  /** Per-member defaults. */
+  defaults?: {
+    chart?: Partial<Record<string, unknown>>;
+    values?: Partial<Record<string, unknown>>;
+    daemonSet?: Partial<Record<string, unknown>>;
+    serviceAccount?: Partial<Record<string, unknown>>;
+  };
 }
 
 export interface HelmDaemonSetResult {
-  chart: Record<string, unknown>;
-  values: Record<string, unknown>;
-  daemonSet: Record<string, unknown>;
-  serviceAccount?: Record<string, unknown>;
+  chart: InstanceType<typeof Chart>;
+  values: InstanceType<typeof Values>;
+  daemonSet: InstanceType<typeof DaemonSet>;
+  serviceAccount?: InstanceType<typeof ServiceAccount>;
 }
 
-export function HelmDaemonSet(props: HelmDaemonSetProps): HelmDaemonSetResult {
+export const HelmDaemonSet = Composite<HelmDaemonSetProps>((props) => {
   const {
     name,
     imageRepository = "fluent/fluent-bit",
@@ -40,16 +49,17 @@ export function HelmDaemonSet(props: HelmDaemonSetProps): HelmDaemonSetResult {
     hostPaths = [],
     serviceAccount = true,
     appVersion = "1.0.0",
+    defaults: defs,
   } = props;
 
-  const chart = {
+  const chart = new Chart(mergeDefaults({
     apiVersion: "v2",
     name,
     version: "0.1.0",
     appVersion,
     type: "application",
     description: `A Helm chart for ${name} DaemonSet`,
-  };
+  }, defs?.chart));
 
   const valuesObj: Record<string, unknown> = {
     image: {
@@ -78,6 +88,8 @@ export function HelmDaemonSet(props: HelmDaemonSetProps): HelmDaemonSetResult {
       annotations: {},
     };
   }
+
+  const valuesRes = new Values(mergeDefaults(valuesObj, defs?.values));
 
   const containerSpec: Record<string, unknown> = {
     name,
@@ -126,7 +138,7 @@ export function HelmDaemonSet(props: HelmDaemonSetProps): HelmDaemonSetResult {
     }));
   }
 
-  const daemonSet = {
+  const daemonSet = new DaemonSet(mergeDefaults({
     apiVersion: "apps/v1",
     kind: "DaemonSet",
     metadata: {
@@ -145,16 +157,16 @@ export function HelmDaemonSet(props: HelmDaemonSetProps): HelmDaemonSetResult {
         spec: podSpec,
       },
     },
-  };
+  }, defs?.daemonSet));
 
-  const result: HelmDaemonSetResult = {
+  const result: Record<string, any> = {
     chart,
-    values: valuesObj,
+    values: valuesRes,
     daemonSet,
   };
 
   if (serviceAccount) {
-    result.serviceAccount = {
+    result.serviceAccount = new ServiceAccount(mergeDefaults({
       apiVersion: "v1",
       kind: "ServiceAccount",
       metadata: {
@@ -162,8 +174,8 @@ export function HelmDaemonSet(props: HelmDaemonSetProps): HelmDaemonSetResult {
         labels: include(`${name}.labels`),
         annotations: toYaml(values.serviceAccount.annotations),
       },
-    };
+    }, defs?.serviceAccount));
   }
 
   return result;
-}
+}, "HelmDaemonSet");

@@ -1,9 +1,6 @@
 // K8s workloads: Namespace with resource quotas and network policy.
 
 import {
-  Namespace,
-  ResourceQuota,
-  LimitRange,
   NetworkPolicy,
   NamespaceEnv,
 } from "@intentius/chant-lexicon-k8s";
@@ -27,10 +24,10 @@ const ns = NamespaceEnv({
   },
 });
 
-export const namespace = new Namespace(ns.namespace);
-export const resourceQuota = new ResourceQuota(ns.resourceQuota);
-export const limitRange = new LimitRange(ns.limitRange);
-export const networkPolicy = new NetworkPolicy(ns.networkPolicy);
+export const namespace = ns.namespace;
+export const resourceQuota = ns.resourceQuota;
+export const limitRange = ns.limitRange;
+export const networkPolicy = ns.networkPolicy;
 
 // Allow CockroachDB inter-node (26257) and HTTP UI (8080) traffic from all 3 VPC CIDRs.
 export const crdbIngressPolicy = new NetworkPolicy({

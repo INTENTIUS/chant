@@ -1,13 +1,6 @@
 // NodeAgent: per-node log collector with hostPaths, config, and cluster-wide RBAC.
 
-import {
-  DaemonSet,
-  ServiceAccount,
-  ClusterRole,
-  ClusterRoleBinding,
-  ConfigMap,
-  NodeAgent,
-} from "@intentius/chant-lexicon-k8s";
+import { NodeAgent } from "@intentius/chant-lexicon-k8s";
 
 const NAMESPACE = "batch-workers";
 
@@ -31,8 +24,8 @@ const agent = NodeAgent({
   },
 });
 
-export const logDaemonSet = new DaemonSet(agent.daemonSet);
-export const logSa = new ServiceAccount(agent.serviceAccount);
-export const logClusterRole = new ClusterRole(agent.clusterRole);
-export const logClusterRoleBinding = new ClusterRoleBinding(agent.clusterRoleBinding);
-export const logConfigMap = new ConfigMap(agent.configMap!);
+export const logDaemonSet = agent.daemonSet;
+export const logSa = agent.serviceAccount;
+export const logClusterRole = agent.clusterRole;
+export const logClusterRoleBinding = agent.clusterRoleBinding;
+export const logConfigMap = agent.configMap!;

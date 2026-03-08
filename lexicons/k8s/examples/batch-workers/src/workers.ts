@@ -1,15 +1,6 @@
 // WorkerPool: queue consumer with autoscaling, config, and RBAC.
 
-import {
-  Deployment,
-  ServiceAccount,
-  Role,
-  RoleBinding,
-  ConfigMap,
-  HorizontalPodAutoscaler,
-  PodDisruptionBudget,
-  WorkerPool,
-} from "@intentius/chant-lexicon-k8s";
+import { WorkerPool } from "@intentius/chant-lexicon-k8s";
 
 const NAMESPACE = "batch-workers";
 
@@ -34,10 +25,10 @@ const worker = WorkerPool({
   },
 });
 
-export const workerDeployment = new Deployment(worker.deployment);
-export const workerSa = new ServiceAccount(worker.serviceAccount!);
-export const workerRole = new Role(worker.role!);
-export const workerRoleBinding = new RoleBinding(worker.roleBinding!);
-export const workerConfigMap = new ConfigMap(worker.configMap!);
-export const workerHpa = new HorizontalPodAutoscaler(worker.hpa!);
-export const workerPdb = new PodDisruptionBudget(worker.pdb!);
+export const workerDeployment = worker.deployment;
+export const workerSa = worker.serviceAccount!;
+export const workerRole = worker.role!;
+export const workerRoleBinding = worker.roleBinding!;
+export const workerConfigMap = worker.configMap!;
+export const workerHpa = worker.hpa!;
+export const workerPdb = worker.pdb!;

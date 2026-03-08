@@ -1,11 +1,6 @@
 // K8s workloads: FluentBit + ADOT agents for CloudWatch logging and metrics.
 
 import {
-  DaemonSet,
-  ServiceAccount,
-  ClusterRole,
-  ClusterRoleBinding,
-  ConfigMap,
   Namespace,
   FluentBitAgent,
   AdotCollector,
@@ -31,11 +26,11 @@ const fb = FluentBitAgent({
   iamRoleArn: config.fluentBitRoleArn,
 });
 
-export const fbDaemonSet = new DaemonSet(fb.daemonSet);
-export const fbClusterRole = new ClusterRole(fb.clusterRole);
-export const fbClusterRoleBinding = new ClusterRoleBinding(fb.clusterRoleBinding);
-export const fbConfig = new ConfigMap(fb.configMap);
-export const fbServiceAccount = new ServiceAccount(fb.serviceAccount);
+export const fbDaemonSet = fb.daemonSet;
+export const fbClusterRole = fb.clusterRole;
+export const fbClusterRoleBinding = fb.clusterRoleBinding;
+export const fbConfig = fb.configMap;
+export const fbServiceAccount = fb.serviceAccount;
 
 // ── ADOT Collector ───────────────────────────────────────────────
 
@@ -45,8 +40,8 @@ const adot = AdotCollector({
   iamRoleArn: config.adotRoleArn,
 });
 
-export const adotDaemonSet = new DaemonSet(adot.daemonSet);
-export const adotClusterRole = new ClusterRole(adot.clusterRole);
-export const adotClusterRoleBinding = new ClusterRoleBinding(adot.clusterRoleBinding);
-export const adotConfig = new ConfigMap(adot.configMap);
-export const adotServiceAccount = new ServiceAccount(adot.serviceAccount);
+export const adotDaemonSet = adot.daemonSet;
+export const adotClusterRole = adot.clusterRole;
+export const adotClusterRoleBinding = adot.clusterRoleBinding;
+export const adotConfig = adot.configMap;
+export const adotServiceAccount = adot.serviceAccount;

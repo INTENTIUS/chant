@@ -1,17 +1,6 @@
 // K8s workloads: CockroachDB cluster (EKS slice — 3 of 9 nodes).
 
-import {
-  StatefulSet,
-  Service,
-  ServiceAccount,
-  Role,
-  RoleBinding,
-  ClusterRole,
-  ClusterRoleBinding,
-  PodDisruptionBudget,
-  Job,
-  CockroachDbCluster,
-} from "@intentius/chant-lexicon-k8s";
+import { CockroachDbCluster } from "@intentius/chant-lexicon-k8s";
 import { config } from "../config";
 
 const NAMESPACE = "crdb-eks";
@@ -34,14 +23,14 @@ const crdb = CockroachDbCluster({
   },
 });
 
-export const crdbServiceAccount = new ServiceAccount(crdb.serviceAccount);
-export const crdbRole = new Role(crdb.role);
-export const crdbRoleBinding = new RoleBinding(crdb.roleBinding);
-export const crdbClusterRole = new ClusterRole(crdb.clusterRole);
-export const crdbClusterRoleBinding = new ClusterRoleBinding(crdb.clusterRoleBinding);
-export const crdbPublicService = new Service(crdb.publicService);
-export const crdbHeadlessService = new Service(crdb.headlessService);
-export const crdbPdb = new PodDisruptionBudget(crdb.pdb);
-export const crdbStatefulSet = new StatefulSet(crdb.statefulSet);
-export const crdbInitJob = new Job(crdb.initJob);
-export const crdbCertGenJob = new Job(crdb.certGenJob);
+export const crdbServiceAccount = crdb.serviceAccount;
+export const crdbRole = crdb.role;
+export const crdbRoleBinding = crdb.roleBinding;
+export const crdbClusterRole = crdb.clusterRole;
+export const crdbClusterRoleBinding = crdb.clusterRoleBinding;
+export const crdbPublicService = crdb.publicService;
+export const crdbHeadlessService = crdb.headlessService;
+export const crdbPdb = crdb.pdb;
+export const crdbStatefulSet = crdb.statefulSet;
+export const crdbInitJob = crdb.initJob;
+export const crdbCertGenJob = crdb.certGenJob;

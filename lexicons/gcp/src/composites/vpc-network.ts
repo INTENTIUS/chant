@@ -2,6 +2,9 @@
  * VpcNetwork composite — ComputeNetwork + ComputeSubnetwork + ComputeFirewall + ComputeRouterNAT.
  */
 
+import { Composite, mergeDefaults } from "@intentius/chant";
+import { VPCNetwork, Subnetwork, Firewall, Router, RouterNAT } from "../generated";
+
 export interface VpcSubnet {
   /** Subnet name suffix. */
   name: string;
@@ -32,14 +35,12 @@ export interface VpcNetworkProps {
   labels?: Record<string, string>;
   /** Namespace for all resources. */
   namespace?: string;
-}
-
-export interface VpcNetworkResult {
-  network: Record<string, unknown>;
-  subnets: Record<string, unknown>[];
-  firewalls: Record<string, unknown>[];
-  router?: Record<string, unknown>;
-  routerNat?: Record<string, unknown>;
+  /** Per-member defaults for customizing individual resources. */
+  defaults?: {
+    network?: Partial<ConstructorParameters<typeof VPCNetwork>[0]>;
+    router?: Partial<ConstructorParameters<typeof Router>[0]>;
+    routerNat?: Partial<ConstructorParameters<typeof RouterNAT>[0]>;
+  };
 }
 
 /**
@@ -60,7 +61,7 @@ export interface VpcNetworkResult {
  * });
  * ```
  */
-export function VpcNetwork(props: VpcNetworkProps): VpcNetworkResult {
+export const VpcNetwork = Composite<VpcNetworkProps>((props) => {
   const {
     name,
     autoCreateSubnetworks = false,
@@ -71,6 +72,7 @@ export function VpcNetwork(props: VpcNetworkProps): VpcNetworkResult {
     allowIapSsh = false,
     labels: extraLabels = {},
     namespace,
+    defaults: defs,
   } = props;
 
   const commonLabels: Record<string, string> = {
@@ -79,7 +81,7 @@ export function VpcNetwork(props: VpcNetworkProps): VpcNetworkResult {
     ...extraLabels,
   };
 
-  const network: Record<string, unknown> = {
+  const network = new VPCNetwork(mergeDefaults({
     metadata: {
       name,
       ...(namespace && { namespace }),
@@ -87,58 +89,63 @@ export function VpcNetwork(props: VpcNetworkProps): VpcNetworkResult {
     },
     autoCreateSubnetworks,
     routingMode: "REGIONAL",
-  };
+  } as Record<string, unknown>, defs?.network));
 
-  const subnets: Record<string, unknown>[] = subnetDefs.map((sub) => ({
-    metadata: {
-      name: `${name}-${sub.name}`,
-      ...(namespace && { namespace }),
-      labels: { ...commonLabels, "app.kubernetes.io/component": "subnet" },
-    },
-    networkRef: { name },
-    ipCidrRange: sub.ipCidrRange,
-    region: sub.region,
-    privateIpGoogleAccess: sub.privateIpGoogleAccess ?? true,
-  }));
+  // Spread subnets into named members (subnet_<name>) for Composite validation.
+  const subnetEntries: Record<string, any> = {};
+  for (const sub of subnetDefs) {
+    subnetEntries[`subnet_${sub.name}`] = new Subnetwork({
+      metadata: {
+        name: `${name}-${sub.name}`,
+        ...(namespace && { namespace }),
+        labels: { ...commonLabels, "app.kubernetes.io/component": "subnet" },
+      },
+      networkRef: { name },
+      ipCidrRange: sub.ipCidrRange,
+      region: sub.region,
+      privateIpGoogleAccess: sub.privateIpGoogleAccess ?? true,
+    } as Record<string, unknown>);
+  }
 
-  const firewalls: Record<string, unknown>[] = [];
+  // Spread firewalls into named members for Composite validation.
+  const firewallEntries: Record<string, any> = {};
 
   if (allowInternalTraffic) {
-    firewalls.push({
+    firewallEntries.firewallAllowInternal = new Firewall({
       metadata: {
         name: `${name}-allow-internal`,
         ...(namespace && { namespace }),
         labels: { ...commonLabels, "app.kubernetes.io/component": "firewall" },
       },
       networkRef: { name },
-      allowed: [
+      allow: [
         { protocol: "tcp", ports: ["0-65535"] },
         { protocol: "udp", ports: ["0-65535"] },
         { protocol: "icmp" },
       ],
       sourceRanges: subnetDefs.map((s) => s.ipCidrRange),
-    });
+    } as Record<string, unknown>);
   }
 
   if (allowIapSsh) {
-    firewalls.push({
+    firewallEntries.firewallAllowIapSsh = new Firewall({
       metadata: {
         name: `${name}-allow-iap-ssh`,
         ...(namespace && { namespace }),
         labels: { ...commonLabels, "app.kubernetes.io/component": "firewall" },
       },
       networkRef: { name },
-      allowed: [{ protocol: "tcp", ports: ["22"] }],
+      allow: [{ protocol: "tcp", ports: ["22"] }],
       sourceRanges: ["35.235.240.0/20"], // IAP IP range
-    });
+    } as Record<string, unknown>);
   }
 
-  const result: VpcNetworkResult = { network, subnets, firewalls };
+  const result: Record<string, any> = { network, ...subnetEntries, ...firewallEntries };
 
   if (enableNat && natRegion) {
     const routerName = `${name}-router`;
 
-    result.router = {
+    result.router = new Router(mergeDefaults({
       metadata: {
         name: routerName,
         ...(namespace && { namespace }),
@@ -146,9 +153,9 @@ export function VpcNetwork(props: VpcNetworkProps): VpcNetworkResult {
       },
       networkRef: { name },
       region: natRegion,
-    };
+    } as Record<string, unknown>, defs?.router));
 
-    result.routerNat = {
+    result.routerNat = new RouterNAT(mergeDefaults({
       metadata: {
         name: `${name}-nat`,
         ...(namespace && { namespace }),
@@ -158,8 +165,8 @@ export function VpcNetwork(props: VpcNetworkProps): VpcNetworkResult {
       region: natRegion,
       natIpAllocateOption: "AUTO_ONLY",
       sourceSubnetworkIpRangesToNat: "ALL_SUBNETWORKS_ALL_IP_RANGES",
-    };
+    } as Record<string, unknown>, defs?.routerNat));
   }
 
   return result;
-}
+}, "VpcNetwork");

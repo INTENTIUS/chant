@@ -5,6 +5,9 @@
  * with pre-configured pipelines for AWS observability.
  */
 
+import { Composite, mergeDefaults } from "@intentius/chant";
+import { DaemonSet, ServiceAccount, ClusterRole, ClusterRoleBinding, ConfigMap } from "../generated";
+
 export interface AdotCollectorProps {
   /** AWS region. */
   region: string;
@@ -30,14 +33,22 @@ export interface AdotCollectorProps {
   memoryLimit?: string;
   /** IAM Role ARN for IRSA (adds eks.amazonaws.com/role-arn annotation to ServiceAccount). */
   iamRoleArn?: string;
+  /** Per-member defaults for fine-grained overrides. */
+  defaults?: {
+    daemonSet?: Partial<Record<string, unknown>>;
+    serviceAccount?: Partial<Record<string, unknown>>;
+    clusterRole?: Partial<Record<string, unknown>>;
+    clusterRoleBinding?: Partial<Record<string, unknown>>;
+    configMap?: Partial<Record<string, unknown>>;
+  };
 }
 
 export interface AdotCollectorResult {
-  daemonSet: Record<string, unknown>;
-  serviceAccount: Record<string, unknown>;
-  clusterRole: Record<string, unknown>;
-  clusterRoleBinding: Record<string, unknown>;
-  configMap: Record<string, unknown>;
+  daemonSet: InstanceType<typeof DaemonSet>;
+  serviceAccount: InstanceType<typeof ServiceAccount>;
+  clusterRole: InstanceType<typeof ClusterRole>;
+  clusterRoleBinding: InstanceType<typeof ClusterRoleBinding>;
+  configMap: InstanceType<typeof ConfigMap>;
 }
 
 /**
@@ -56,7 +67,7 @@ export interface AdotCollectorResult {
  * });
  * ```
  */
-export function AdotCollector(props: AdotCollectorProps): AdotCollectorResult {
+export const AdotCollector = Composite<AdotCollectorProps>((props) => {
   const {
     region,
     clusterName,
@@ -70,6 +81,7 @@ export function AdotCollector(props: AdotCollectorProps): AdotCollectorResult {
     cpuLimit = "500m",
     memoryLimit = "512Mi",
     iamRoleArn,
+    defaults: defs,
   } = props;
 
   const saName = `${name}-sa`;
@@ -159,7 +171,7 @@ service:
     },
   };
 
-  const daemonSetProps: Record<string, unknown> = {
+  const daemonSet = new DaemonSet(mergeDefaults({
     metadata: {
       name,
       namespace,
@@ -179,18 +191,18 @@ service:
         },
       },
     },
-  };
+  }, defs?.daemonSet));
 
-  const serviceAccountProps: Record<string, unknown> = {
+  const serviceAccount = new ServiceAccount(mergeDefaults({
     metadata: {
       name: saName,
       namespace,
       labels: { ...commonLabels, "app.kubernetes.io/component": "agent" },
       ...(iamRoleArn ? { annotations: { "eks.amazonaws.com/role-arn": iamRoleArn } } : {}),
     },
-  };
+  }, defs?.serviceAccount));
 
-  const clusterRoleProps: Record<string, unknown> = {
+  const clusterRole = new ClusterRole(mergeDefaults({
     metadata: {
       name: clusterRoleName,
       labels: { ...commonLabels, "app.kubernetes.io/component": "rbac" },
@@ -203,9 +215,9 @@ service:
       { apiGroups: [""], resources: ["nodes/stats", "configmaps", "events"], verbs: ["create", "get"] },
       { apiGroups: [""], resources: ["configmaps"], verbs: ["get", "update", "create"], resourceNames: ["otel-container-insight-clusterleader"] },
     ],
-  };
+  }, defs?.clusterRole));
 
-  const clusterRoleBindingProps: Record<string, unknown> = {
+  const clusterRoleBinding = new ClusterRoleBinding(mergeDefaults({
     metadata: {
       name: bindingName,
       labels: { ...commonLabels, "app.kubernetes.io/component": "rbac" },
@@ -222,9 +234,9 @@ service:
         namespace,
       },
     ],
-  };
+  }, defs?.clusterRoleBinding));
 
-  const configMapProps: Record<string, unknown> = {
+  const configMap = new ConfigMap(mergeDefaults({
     metadata: {
       name: configMapName,
       namespace,
@@ -233,13 +245,13 @@ service:
     data: {
       "config.yaml": adotConfig,
     },
-  };
+  }, defs?.configMap));
 
   return {
-    daemonSet: daemonSetProps,
-    serviceAccount: serviceAccountProps,
-    clusterRole: clusterRoleProps,
-    clusterRoleBinding: clusterRoleBindingProps,
-    configMap: configMapProps,
+    daemonSet,
+    serviceAccount,
+    clusterRole,
+    clusterRoleBinding,
+    configMap,
   };
-}
+}, "AdotCollector");

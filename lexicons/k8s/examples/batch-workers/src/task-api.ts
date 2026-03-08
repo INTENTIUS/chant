@@ -1,9 +1,6 @@
 // ConfiguredApp: API with mounted config, secret volume, and envFrom.
 
 import {
-  Deployment,
-  Service,
-  ConfigMap,
   Secret,
   ConfiguredApp,
 } from "@intentius/chant-lexicon-k8s";
@@ -29,9 +26,9 @@ const api = ConfiguredApp({
   },
 });
 
-export const apiDeployment = new Deployment(api.deployment);
-export const apiService = new Service(api.service);
-export const apiConfigMap = new ConfigMap(api.configMap!);
+export const apiDeployment = api.deployment;
+export const apiService = api.service;
+export const apiConfigMap = api.configMap!;
 
 export const apiCreds = new Secret({
   metadata: { name: "task-api-creds", namespace: NAMESPACE },

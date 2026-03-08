@@ -5,6 +5,9 @@
  * including static IP, managed certificates, and FrontendConfig.
  */
 
+import { Composite, mergeDefaults } from "@intentius/chant";
+import { Ingress } from "../generated";
+
 export interface GceIngressHost {
   /** Hostname (e.g., "api.example.com"). */
   hostname: string;
@@ -39,10 +42,14 @@ export interface GceIngressProps {
   labels?: Record<string, string>;
   /** Namespace for all resources. */
   namespace?: string;
+  /** Per-member defaults for fine-grained overrides. */
+  defaults?: {
+    ingress?: Partial<Record<string, unknown>>;
+  };
 }
 
 export interface GceIngressResult {
-  ingress: Record<string, unknown>;
+  ingress: InstanceType<typeof Ingress>;
 }
 
 /**
@@ -67,7 +74,7 @@ export interface GceIngressResult {
  * });
  * ```
  */
-export function GceIngress(props: GceIngressProps): GceIngressResult {
+export const GceIngress = Composite<GceIngressProps>((props) => {
   const {
     name,
     hosts,
@@ -79,6 +86,7 @@ export function GceIngress(props: GceIngressProps): GceIngressResult {
     annotations: extraAnnotations = {},
     labels: extraLabels = {},
     namespace,
+    defaults: defs,
   } = props;
 
   const commonLabels: Record<string, string> = {
@@ -127,7 +135,7 @@ export function GceIngress(props: GceIngressProps): GceIngressResult {
     },
   }));
 
-  const ingressProps: Record<string, unknown> = {
+  const ingress = new Ingress(mergeDefaults({
     metadata: {
       name,
       ...(namespace && { namespace }),
@@ -137,7 +145,7 @@ export function GceIngress(props: GceIngressProps): GceIngressResult {
     spec: {
       rules: ingressRules,
     },
-  };
+  }, defs?.ingress));
 
-  return { ingress: ingressProps };
-}
+  return { ingress };
+}, "GceIngress");

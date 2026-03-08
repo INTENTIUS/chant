@@ -4,6 +4,9 @@
  * @aks Creates a StorageClass with the `disk.csi.azure.com` provisioner.
  */
 
+import { Composite, mergeDefaults } from "@intentius/chant";
+import { StorageClass } from "../generated";
+
 export interface AzureDiskStorageClassProps {
   /** StorageClass name. */
   name: string;
@@ -21,10 +24,14 @@ export interface AzureDiskStorageClassProps {
   allowVolumeExpansion?: boolean;
   /** Additional labels. */
   labels?: Record<string, string>;
+  /** Per-member defaults for fine-grained overrides. */
+  defaults?: {
+    storageClass?: Partial<Record<string, unknown>>;
+  };
 }
 
 export interface AzureDiskStorageClassResult {
-  storageClass: Record<string, unknown>;
+  storageClass: InstanceType<typeof StorageClass>;
 }
 
 /**
@@ -42,7 +49,7 @@ export interface AzureDiskStorageClassResult {
  * });
  * ```
  */
-export function AzureDiskStorageClass(props: AzureDiskStorageClassProps): AzureDiskStorageClassResult {
+export const AzureDiskStorageClass = Composite<AzureDiskStorageClassProps>((props) => {
   const {
     name,
     skuName = "Premium_LRS",
@@ -52,6 +59,7 @@ export function AzureDiskStorageClass(props: AzureDiskStorageClassProps): AzureD
     volumeBindingMode = "WaitForFirstConsumer",
     allowVolumeExpansion = true,
     labels: extraLabels = {},
+    defaults: defs,
   } = props;
 
   const commonLabels: Record<string, string> = {
@@ -66,7 +74,7 @@ export function AzureDiskStorageClass(props: AzureDiskStorageClassProps): AzureD
     networkAccessPolicy,
   };
 
-  const storageClassProps: Record<string, unknown> = {
+  const storageClass = new StorageClass(mergeDefaults({
     metadata: {
       name,
       labels: { ...commonLabels, "app.kubernetes.io/component": "storage" },
@@ -76,7 +84,7 @@ export function AzureDiskStorageClass(props: AzureDiskStorageClassProps): AzureD
     reclaimPolicy,
     volumeBindingMode,
     allowVolumeExpansion,
-  };
+  }, defs?.storageClass));
 
-  return { storageClass: storageClassProps };
-}
+  return { storageClass };
+}, "AzureDiskStorageClass");

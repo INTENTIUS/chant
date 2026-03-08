@@ -29,6 +29,11 @@ function hasIntrinsic(obj: unknown): boolean {
   return false;
 }
 
+/** Access a member's props (Declarable stores data in .props). */
+function p(member: unknown): any {
+  return (member as any).props;
+}
+
 describe("HelmWebApp", () => {
   test("returns chart, values, deployment, and service", () => {
     const result = HelmWebApp({ name: "my-app" });
@@ -40,14 +45,14 @@ describe("HelmWebApp", () => {
 
   test("chart has correct metadata", () => {
     const result = HelmWebApp({ name: "web-ui" });
-    expect(result.chart.name).toBe("web-ui");
-    expect(result.chart.apiVersion).toBe("v2");
-    expect(result.chart.type).toBe("application");
+    expect(p(result.chart).name).toBe("web-ui");
+    expect(p(result.chart).apiVersion).toBe("v2");
+    expect(p(result.chart).type).toBe("application");
   });
 
   test("values include default image and service config", () => {
     const result = HelmWebApp({ name: "app" });
-    const vals = result.values as any;
+    const vals = p(result.values);
     expect(vals.image.repository).toBe("nginx");
     expect(vals.service.port).toBe(80);
     expect(vals.replicaCount).toBe(1);
@@ -60,7 +65,7 @@ describe("HelmWebApp", () => {
       port: 3000,
       replicas: 3,
     });
-    const vals = result.values as any;
+    const vals = p(result.values);
     expect(vals.image.repository).toBe("myregistry/api");
     expect(vals.service.port).toBe(3000);
     expect(vals.replicaCount).toBe(3);
@@ -82,12 +87,12 @@ describe("HelmWebApp", () => {
 
   test("deployment uses Helm intrinsics", () => {
     const result = HelmWebApp({ name: "app" });
-    expect(hasIntrinsic(result.deployment)).toBe(true);
+    expect(hasIntrinsic(p(result.deployment))).toBe(true);
   });
 
   test("omitted security/scheduling props produce no values change", () => {
     const result = HelmWebApp({ name: "app" });
-    const vals = result.values as any;
+    const vals = p(result.values);
     expect(vals.podSecurityContext).toBeUndefined();
     expect(vals.securityContext).toBeUndefined();
     expect(vals.nodeSelector).toBeUndefined();
@@ -105,7 +110,7 @@ describe("HelmWebApp", () => {
       podSecurityContext: { runAsNonRoot: true },
       securityContext: { readOnlyRootFilesystem: true },
     });
-    const vals = result.values as any;
+    const vals = p(result.values);
     expect(vals.podSecurityContext).toEqual({ runAsNonRoot: true });
     expect(vals.securityContext).toEqual({ readOnlyRootFilesystem: true });
   });
@@ -117,7 +122,7 @@ describe("HelmWebApp", () => {
       tolerations: [{ key: "special", operator: "Exists" }],
       affinity: { nodeAffinity: {} },
     });
-    const vals = result.values as any;
+    const vals = p(result.values);
     expect(vals.nodeSelector).toEqual({ "kubernetes.io/os": "linux" });
     expect(vals.tolerations).toHaveLength(1);
     expect(vals.affinity).toBeDefined();
@@ -130,7 +135,7 @@ describe("HelmWebApp", () => {
       readinessProbe: { httpGet: { path: "/readyz", port: "http" } },
       strategy: { type: "RollingUpdate" },
     });
-    const vals = result.values as any;
+    const vals = p(result.values);
     expect(vals.livenessProbe).toBeDefined();
     expect(vals.readinessProbe).toBeDefined();
     expect(vals.strategy).toBeDefined();
@@ -141,7 +146,7 @@ describe("HelmWebApp", () => {
       name: "app",
       podAnnotations: { "prometheus.io/scrape": "true" },
     });
-    const vals = result.values as any;
+    const vals = p(result.values);
     expect(vals.podAnnotations).toEqual({ "prometheus.io/scrape": "true" });
   });
 
@@ -150,7 +155,7 @@ describe("HelmWebApp", () => {
       name: "app",
       nodeSelector: { "kubernetes.io/os": "linux" },
     });
-    const podSpec = (result.deployment as any).spec.template.spec;
+    const podSpec = p(result.deployment).spec.template.spec;
     expect(hasIntrinsic(podSpec.nodeSelector)).toBe(true);
   });
 });
@@ -166,30 +171,30 @@ describe("HelmStatefulService", () => {
 
   test("chart is marked as application", () => {
     const result = HelmStatefulService({ name: "db" });
-    expect(result.chart.type).toBe("application");
+    expect(p(result.chart).type).toBe("application");
   });
 
   test("service is headless (clusterIP: None)", () => {
     const result = HelmStatefulService({ name: "db" });
-    expect((result.service as any).spec.clusterIP).toBe("None");
+    expect(p(result.service).spec.clusterIP).toBe("None");
   });
 
   test("statefulSet has volumeClaimTemplates", () => {
     const result = HelmStatefulService({ name: "db" });
-    const spec = (result.statefulSet as any).spec;
+    const spec = p(result.statefulSet).spec;
     expect(spec.volumeClaimTemplates).toBeDefined();
     expect(spec.volumeClaimTemplates).toHaveLength(1);
   });
 
   test("values include persistence config", () => {
     const result = HelmStatefulService({ name: "db", storageSize: "50Gi" });
-    const vals = result.values as any;
+    const vals = p(result.values);
     expect(vals.persistence.size).toBe("50Gi");
   });
 
   test("uses Helm intrinsics", () => {
     const result = HelmStatefulService({ name: "db" });
-    expect(hasIntrinsic(result.statefulSet)).toBe(true);
+    expect(hasIntrinsic(p(result.statefulSet))).toBe(true);
   });
 
   test("no serviceAccount by default", () => {
@@ -200,13 +205,13 @@ describe("HelmStatefulService", () => {
   test("serviceAccount can be enabled", () => {
     const result = HelmStatefulService({ name: "db", serviceAccount: true });
     expect(result.serviceAccount).toBeDefined();
-    const vals = result.values as any;
+    const vals = p(result.values);
     expect(vals.serviceAccount).toBeDefined();
   });
 
   test("omitted security/scheduling props produce no change", () => {
     const result = HelmStatefulService({ name: "db" });
-    const vals = result.values as any;
+    const vals = p(result.values);
     expect(vals.podSecurityContext).toBeUndefined();
     expect(vals.nodeSelector).toBeUndefined();
     expect(vals.livenessProbe).toBeUndefined();
@@ -222,7 +227,7 @@ describe("HelmStatefulService", () => {
       readinessProbe: { tcpSocket: { port: 5432 } },
       updateStrategy: { type: "RollingUpdate" },
     });
-    const vals = result.values as any;
+    const vals = p(result.values);
     expect(vals.podSecurityContext).toBeDefined();
     expect(vals.nodeSelector).toBeDefined();
     expect(vals.livenessProbe).toBeDefined();
@@ -241,29 +246,29 @@ describe("HelmCronJob", () => {
 
   test("chart has correct name", () => {
     const result = HelmCronJob({ name: "backup" });
-    expect(result.chart.name).toBe("backup");
+    expect(p(result.chart).name).toBe("backup");
   });
 
   test("default schedule is hourly", () => {
     const result = HelmCronJob({ name: "job" });
-    const vals = result.values as any;
+    const vals = p(result.values);
     expect(vals.schedule).toBe("0 * * * *");
   });
 
   test("custom schedule flows through", () => {
     const result = HelmCronJob({ name: "nightly", schedule: "0 0 * * *" });
-    const vals = result.values as any;
+    const vals = p(result.values);
     expect(vals.schedule).toBe("0 0 * * *");
   });
 
   test("uses Helm intrinsics", () => {
     const result = HelmCronJob({ name: "job" });
-    expect(hasIntrinsic(result.cronJob)).toBe(true);
+    expect(hasIntrinsic(p(result.cronJob))).toBe(true);
   });
 
   test("omitted props produce no change", () => {
     const result = HelmCronJob({ name: "job" });
-    const vals = result.values as any;
+    const vals = p(result.values);
     expect(vals.podSecurityContext).toBeUndefined();
     expect(vals.concurrencyPolicy).toBeUndefined();
     expect(vals.backoffLimit).toBeUndefined();
@@ -278,7 +283,7 @@ describe("HelmCronJob", () => {
       failedJobsHistoryLimit: 1,
       backoffLimit: 2,
     });
-    const vals = result.values as any;
+    const vals = p(result.values);
     expect(vals.concurrencyPolicy).toBe("Forbid");
     expect(vals.successfulJobsHistoryLimit).toBe(3);
     expect(vals.failedJobsHistoryLimit).toBe(1);
@@ -288,7 +293,7 @@ describe("HelmCronJob", () => {
   test("serviceAccount can be enabled", () => {
     const result = HelmCronJob({ name: "job", serviceAccount: true });
     expect(result.serviceAccount).toBeDefined();
-    const vals = result.values as any;
+    const vals = p(result.values);
     expect(vals.serviceAccount).toBeDefined();
   });
 
@@ -299,7 +304,7 @@ describe("HelmCronJob", () => {
       securityContext: { readOnlyRootFilesystem: true },
       nodeSelector: { "kubernetes.io/os": "linux" },
     });
-    const vals = result.values as any;
+    const vals = p(result.values);
     expect(vals.podSecurityContext).toBeDefined();
     expect(vals.securityContext).toBeDefined();
     expect(vals.nodeSelector).toBeDefined();
@@ -340,38 +345,38 @@ describe("HelmMicroservice", () => {
 
   test("default port is 8080", () => {
     const result = HelmMicroservice({ name: "api" });
-    const vals = result.values as any;
+    const vals = p(result.values);
     expect(vals.service.port).toBe(8080);
   });
 
   test("default replicas is 2", () => {
     const result = HelmMicroservice({ name: "api" });
-    const vals = result.values as any;
+    const vals = p(result.values);
     expect(vals.replicaCount).toBe(2);
   });
 
   test("values include health probes", () => {
     const result = HelmMicroservice({ name: "api" });
-    const vals = result.values as any;
+    const vals = p(result.values);
     expect(vals.livenessProbe).toBeDefined();
     expect(vals.readinessProbe).toBeDefined();
   });
 
   test("values include resource limits and requests", () => {
     const result = HelmMicroservice({ name: "api" });
-    const vals = result.values as any;
+    const vals = p(result.values);
     expect(vals.resources.limits).toBeDefined();
     expect(vals.resources.requests).toBeDefined();
   });
 
   test("uses Helm intrinsics", () => {
     const result = HelmMicroservice({ name: "api" });
-    expect(hasIntrinsic(result.deployment)).toBe(true);
+    expect(hasIntrinsic(p(result.deployment))).toBe(true);
   });
 
   test("omitted security/scheduling props produce no change", () => {
     const result = HelmMicroservice({ name: "api" });
-    const vals = result.values as any;
+    const vals = p(result.values);
     expect(vals.podSecurityContext).toBeUndefined();
     expect(vals.securityContext).toBeUndefined();
     expect(vals.nodeSelector).toBeUndefined();
@@ -389,7 +394,7 @@ describe("HelmMicroservice", () => {
       podAnnotations: { "prometheus.io/scrape": "true" },
       strategy: { type: "RollingUpdate" },
     });
-    const vals = result.values as any;
+    const vals = p(result.values);
     expect(vals.podSecurityContext).toBeDefined();
     expect(vals.securityContext).toBeDefined();
     expect(vals.nodeSelector).toBeDefined();
@@ -409,19 +414,20 @@ describe("HelmLibrary", () => {
 
   test("chart type is library", () => {
     const result = HelmLibrary({ name: "common" });
-    expect(result.chart.type).toBe("library");
+    expect(p(result.chart).type).toBe("library");
   });
 
   test("default helpers include standard names", () => {
     const result = HelmLibrary({ name: "common" });
-    expect(result.helpers).toContain("name");
-    expect(result.helpers).toContain("fullname");
-    expect(result.helpers).toContain("labels");
+    const helpers = p(result.helpers).helpers;
+    expect(helpers).toContain("name");
+    expect(helpers).toContain("fullname");
+    expect(helpers).toContain("labels");
   });
 
   test("custom helpers override defaults", () => {
     const result = HelmLibrary({ name: "lib", helpers: ["custom-a", "custom-b"] });
-    expect(result.helpers).toEqual(["custom-a", "custom-b"]);
+    expect(p(result.helpers).helpers).toEqual(["custom-a", "custom-b"]);
   });
 
   test("dependencies are included when provided", () => {
@@ -429,12 +435,12 @@ describe("HelmLibrary", () => {
       name: "common",
       dependencies: [{ name: "base", version: "1.x.x", repository: "https://charts.example.com" }],
     });
-    expect(result.chart.dependencies).toHaveLength(1);
+    expect(p(result.chart).dependencies).toHaveLength(1);
   });
 
   test("no dependencies by default", () => {
     const result = HelmLibrary({ name: "common" });
-    expect(result.chart.dependencies).toBeUndefined();
+    expect(p(result.chart).dependencies).toBeUndefined();
   });
 });
 
@@ -458,7 +464,7 @@ describe("HelmCRDLifecycle", () => {
       name: "my-operator",
       crdContent: "apiVersion: apiextensions.k8s.io/v1\nkind: CustomResourceDefinition\n",
     });
-    const jobMeta = (result.crdInstallJob as any).metadata;
+    const jobMeta = p(result.crdInstallJob).metadata;
     expect(jobMeta.annotations["helm.sh/hook"]).toBe("pre-install,pre-upgrade");
     expect(jobMeta.annotations["helm.sh/hook-weight"]).toBe("-5");
     expect(jobMeta.annotations["helm.sh/hook-delete-policy"]).toBe("before-hook-creation");
@@ -469,7 +475,7 @@ describe("HelmCRDLifecycle", () => {
       name: "my-operator",
       crdContent: "crd content",
     });
-    const rules = (result.clusterRole as any).rules;
+    const rules = p(result.clusterRole).rules;
     expect(rules).toHaveLength(1);
     expect(rules[0].apiGroups).toContain("apiextensions.k8s.io");
     expect(rules[0].resources).toContain("customresourcedefinitions");
@@ -481,7 +487,7 @@ describe("HelmCRDLifecycle", () => {
       name: "my-operator",
       crdContent,
     });
-    expect((result.crdConfigMap as any).data["crds.yaml"]).toBe(crdContent);
+    expect(p(result.crdConfigMap).data["crds.yaml"]).toBe(crdContent);
   });
 
   test("uses Helm intrinsics", () => {
@@ -489,8 +495,8 @@ describe("HelmCRDLifecycle", () => {
       name: "my-operator",
       crdContent: "crd",
     });
-    expect(hasIntrinsic(result.crdInstallJob)).toBe(true);
-    expect(hasIntrinsic(result.clusterRoleBinding)).toBe(true);
+    expect(hasIntrinsic(p(result.crdInstallJob))).toBe(true);
+    expect(hasIntrinsic(p(result.clusterRoleBinding))).toBe(true);
   });
 
   test("custom kubectl image flows through to values", () => {
@@ -500,7 +506,7 @@ describe("HelmCRDLifecycle", () => {
       kubectlImage: "custom/kubectl",
       kubectlTag: "1.28",
     });
-    const vals = result.values as any;
+    const vals = p(result.values);
     expect(vals.crdLifecycle.kubectl.image).toBe("custom/kubectl");
     expect(vals.crdLifecycle.kubectl.tag).toBe("1.28");
   });
@@ -526,13 +532,13 @@ describe("HelmDaemonSet", () => {
 
   test("DaemonSet has RollingUpdate strategy in values", () => {
     const result = HelmDaemonSet({ name: "log-agent" });
-    const vals = result.values as any;
+    const vals = p(result.values);
     expect(vals.updateStrategy.type).toBe("RollingUpdate");
   });
 
   test("default image is fluent-bit", () => {
     const result = HelmDaemonSet({ name: "log-agent" });
-    const vals = result.values as any;
+    const vals = p(result.values);
     expect(vals.image.repository).toBe("fluent/fluent-bit");
   });
 
@@ -543,19 +549,19 @@ describe("HelmDaemonSet", () => {
       imageTag: "v1.6.0",
       port: 9100,
     });
-    const vals = result.values as any;
+    const vals = p(result.values);
     expect(vals.image.repository).toBe("prom/node-exporter");
     expect(vals.image.tag).toBe("v1.6.0");
   });
 
   test("uses Helm intrinsics", () => {
     const result = HelmDaemonSet({ name: "agent" });
-    expect(hasIntrinsic(result.daemonSet)).toBe(true);
+    expect(hasIntrinsic(p(result.daemonSet))).toBe(true);
   });
 
   test("nodeSelector uses With() intrinsic", () => {
     const result = HelmDaemonSet({ name: "agent" });
-    const podSpec = (result.daemonSet as any).spec.template.spec;
+    const podSpec = p(result.daemonSet).spec.template.spec;
     expect(hasIntrinsic(podSpec.nodeSelector)).toBe(true);
   });
 });
@@ -576,7 +582,7 @@ describe("HelmWorker", () => {
 
   test("default replicas is 2", () => {
     const result = HelmWorker({ name: "job-processor" });
-    const vals = result.values as any;
+    const vals = p(result.values);
     expect(vals.replicaCount).toBe(2);
   });
 
@@ -593,27 +599,27 @@ describe("HelmWorker", () => {
   test("can enable autoscaling", () => {
     const result = HelmWorker({ name: "job-processor", autoscaling: true });
     expect(result.hpa).toBeDefined();
-    const vals = result.values as any;
+    const vals = p(result.values);
     expect(vals.autoscaling).toBeDefined();
   });
 
   test("values include queue config", () => {
     const result = HelmWorker({ name: "job-processor" });
-    const vals = result.values as any;
+    const vals = p(result.values);
     expect(vals.queue).toBeDefined();
     expect(vals.queue.concurrency).toBe(5);
   });
 
   test("uses exec-based probes", () => {
     const result = HelmWorker({ name: "job-processor" });
-    const vals = result.values as any;
+    const vals = p(result.values);
     expect(vals.livenessProbe.exec).toBeDefined();
     expect(vals.readinessProbe.exec).toBeDefined();
   });
 
   test("uses Helm intrinsics", () => {
     const result = HelmWorker({ name: "job-processor" });
-    expect(hasIntrinsic(result.deployment)).toBe(true);
+    expect(hasIntrinsic(p(result.deployment))).toBe(true);
   });
 });
 
@@ -635,8 +641,8 @@ describe("HelmExternalSecret", () => {
       secretStoreName: "vault",
       data: { API_KEY: "secret/data/api-key" },
     });
-    expect((result.externalSecret as any).apiVersion).toBe("external-secrets.io/v1beta1");
-    expect((result.externalSecret as any).kind).toBe("ExternalSecret");
+    expect(p(result.externalSecret).apiVersion).toBe("external-secrets.io/v1beta1");
+    expect(p(result.externalSecret).kind).toBe("ExternalSecret");
   });
 
   test("data maps to secretKey/remoteRef format", () => {
@@ -648,7 +654,7 @@ describe("HelmExternalSecret", () => {
         API_KEY: "secret/data/api-key",
       },
     });
-    const spec = (result.externalSecret as any).spec;
+    const spec = p(result.externalSecret).spec;
     expect(spec.data).toHaveLength(2);
     expect(spec.data[0].secretKey).toBe("DB_PASSWORD");
     expect(spec.data[0].remoteRef.key).toBe("secret/data/db-password");
@@ -660,7 +666,7 @@ describe("HelmExternalSecret", () => {
       secretStoreName: "vault",
       data: { KEY: "path" },
     });
-    const vals = result.values as any;
+    const vals = p(result.values);
     expect(vals.externalSecret.secretStore.kind).toBe("ClusterSecretStore");
   });
 
@@ -671,7 +677,7 @@ describe("HelmExternalSecret", () => {
       data: { KEY: "path" },
       refreshInterval: "30m",
     });
-    const vals = result.values as any;
+    const vals = p(result.values);
     expect(vals.externalSecret.refreshInterval).toBe("30m");
   });
 
@@ -681,7 +687,7 @@ describe("HelmExternalSecret", () => {
       secretStoreName: "vault",
       data: { KEY: "path" },
     });
-    expect(hasIntrinsic(result.externalSecret)).toBe(true);
+    expect(hasIntrinsic(p(result.externalSecret))).toBe(true);
   });
 });
 
@@ -697,15 +703,15 @@ describe("HelmBatchJob", () => {
 
   test("chart has correct metadata", () => {
     const result = HelmBatchJob({ name: "migrate" });
-    expect(result.chart.name).toBe("migrate");
-    expect(result.chart.apiVersion).toBe("v2");
-    expect(result.chart.type).toBe("application");
+    expect(p(result.chart).name).toBe("migrate");
+    expect(p(result.chart).apiVersion).toBe("v2");
+    expect(p(result.chart).type).toBe("application");
   });
 
   test("includes serviceAccount by default", () => {
     const result = HelmBatchJob({ name: "migrate" });
     expect(result.serviceAccount).toBeDefined();
-    const vals = result.values as any;
+    const vals = p(result.values);
     expect(vals.serviceAccount).toBeDefined();
   });
 
@@ -724,16 +730,16 @@ describe("HelmBatchJob", () => {
     const result = HelmBatchJob({ name: "migrate", rbac: true });
     expect(result.role).toBeDefined();
     expect(result.roleBinding).toBeDefined();
-    expect((result.role as any).kind).toBe("Role");
-    expect((result.roleBinding as any).kind).toBe("RoleBinding");
-    const vals = result.values as any;
+    expect(p(result.role).kind).toBe("Role");
+    expect(p(result.roleBinding).kind).toBe("RoleBinding");
+    const vals = p(result.values);
     expect(vals.rbac).toBeDefined();
     expect(vals.rbac.rules).toEqual([]);
   });
 
   test("default job settings", () => {
     const result = HelmBatchJob({ name: "migrate" });
-    const vals = result.values as any;
+    const vals = p(result.values);
     expect(vals.job.backoffLimit).toBe(6);
     expect(vals.job.completions).toBe(1);
     expect(vals.job.parallelism).toBe(1);
@@ -749,7 +755,7 @@ describe("HelmBatchJob", () => {
       restartPolicy: "Never",
       ttlSecondsAfterFinished: 300,
     });
-    const vals = result.values as any;
+    const vals = p(result.values);
     expect(vals.job.backoffLimit).toBe(3);
     expect(vals.job.completions).toBe(5);
     expect(vals.job.parallelism).toBe(2);
@@ -759,14 +765,14 @@ describe("HelmBatchJob", () => {
 
   test("default image is busybox", () => {
     const result = HelmBatchJob({ name: "migrate" });
-    const vals = result.values as any;
+    const vals = p(result.values);
     expect(vals.image.repository).toBe("busybox");
     expect(vals.image.tag).toBe("latest");
   });
 
   test("uses Helm intrinsics", () => {
     const result = HelmBatchJob({ name: "migrate" });
-    expect(hasIntrinsic(result.job)).toBe(true);
+    expect(hasIntrinsic(p(result.job))).toBe(true);
   });
 
   test("security props flow through", () => {
@@ -775,7 +781,7 @@ describe("HelmBatchJob", () => {
       podSecurityContext: { runAsNonRoot: true },
       securityContext: { readOnlyRootFilesystem: true },
     });
-    const vals = result.values as any;
+    const vals = p(result.values);
     expect(vals.podSecurityContext).toBeDefined();
     expect(vals.securityContext).toBeDefined();
   });
@@ -786,10 +792,10 @@ describe("HelmBatchJob", () => {
       nodeSelector: { "kubernetes.io/os": "linux" },
       tolerations: [{ key: "special", operator: "Exists" }],
     });
-    const vals = result.values as any;
+    const vals = p(result.values);
     expect(vals.nodeSelector).toBeDefined();
     expect(vals.tolerations).toHaveLength(1);
-    const podSpec = (result.job as any).spec.template.spec;
+    const podSpec = p(result.job).spec.template.spec;
     expect(hasIntrinsic(podSpec.nodeSelector)).toBe(true);
   });
 });
@@ -806,8 +812,8 @@ describe("HelmMonitoredService", () => {
 
   test("chart has correct metadata", () => {
     const result = HelmMonitoredService({ name: "api" });
-    expect(result.chart.name).toBe("api");
-    expect(result.chart.type).toBe("application");
+    expect(p(result.chart).name).toBe("api");
+    expect(p(result.chart).type).toBe("application");
   });
 
   test("includes serviceAccount by default", () => {
@@ -828,14 +834,14 @@ describe("HelmMonitoredService", () => {
   test("PrometheusRule created when alertRules enabled", () => {
     const result = HelmMonitoredService({ name: "api", alertRules: true });
     expect(result.prometheusRule).toBeDefined();
-    const vals = result.values as any;
+    const vals = p(result.values);
     expect(vals.alerting).toBeDefined();
     expect(vals.alerting.rules).toEqual([]);
   });
 
   test("default monitoring config", () => {
     const result = HelmMonitoredService({ name: "api" });
-    const vals = result.values as any;
+    const vals = p(result.values);
     expect(vals.monitoring.enabled).toBe(true);
     expect(vals.monitoring.metricsPort).toBe(9090);
     expect(vals.monitoring.metricsPath).toBe("/metrics");
@@ -849,7 +855,7 @@ describe("HelmMonitoredService", () => {
       metricsPath: "/actuator/prometheus",
       scrapeInterval: "15s",
     });
-    const vals = result.values as any;
+    const vals = p(result.values);
     expect(vals.monitoring.metricsPort).toBe(8081);
     expect(vals.monitoring.metricsPath).toBe("/actuator/prometheus");
     expect(vals.monitoring.scrapeInterval).toBe("15s");
@@ -857,7 +863,7 @@ describe("HelmMonitoredService", () => {
 
   test("service exposes both http and metrics ports", () => {
     const result = HelmMonitoredService({ name: "api" });
-    const ports = (result.service as any).spec.ports;
+    const ports = p(result.service).spec.ports;
     expect(ports).toHaveLength(2);
     expect(ports[0].name).toBe("http");
     expect(ports[1].name).toBe("metrics");
@@ -865,18 +871,18 @@ describe("HelmMonitoredService", () => {
 
   test("container has both http and metrics ports", () => {
     const result = HelmMonitoredService({ name: "api" });
-    const container = (result.deployment as any).spec.template.spec.containers[0];
+    const container = p(result.deployment).spec.template.spec.containers[0];
     expect(container.ports).toHaveLength(2);
   });
 
   test("serviceMonitor uses Helm intrinsics", () => {
     const result = HelmMonitoredService({ name: "api" });
-    expect(hasIntrinsic(result.serviceMonitor)).toBe(true);
+    expect(hasIntrinsic(p(result.serviceMonitor))).toBe(true);
   });
 
   test("uses Helm intrinsics in deployment", () => {
     const result = HelmMonitoredService({ name: "api" });
-    expect(hasIntrinsic(result.deployment)).toBe(true);
+    expect(hasIntrinsic(p(result.deployment))).toBe(true);
   });
 
   test("security and scheduling props flow through", () => {
@@ -886,7 +892,7 @@ describe("HelmMonitoredService", () => {
       nodeSelector: { "kubernetes.io/os": "linux" },
       affinity: { nodeAffinity: {} },
     });
-    const vals = result.values as any;
+    const vals = p(result.values);
     expect(vals.podSecurityContext).toBeDefined();
     expect(vals.nodeSelector).toBeDefined();
     expect(vals.affinity).toBeDefined();
@@ -894,7 +900,7 @@ describe("HelmMonitoredService", () => {
 
   test("default replicas is 2", () => {
     const result = HelmMonitoredService({ name: "api" });
-    const vals = result.values as any;
+    const vals = p(result.values);
     expect(vals.replicaCount).toBe(2);
   });
 });
@@ -910,13 +916,13 @@ describe("HelmSecureIngress", () => {
 
   test("chart has correct metadata", () => {
     const result = HelmSecureIngress({ name: "web" });
-    expect(result.chart.name).toBe("web");
-    expect(result.chart.type).toBe("application");
+    expect(p(result.chart).name).toBe("web");
+    expect(p(result.chart).type).toBe("application");
   });
 
   test("default values include ingress and certManager config", () => {
     const result = HelmSecureIngress({ name: "web" });
-    const vals = result.values as any;
+    const vals = p(result.values);
     expect(vals.ingress.enabled).toBe(true);
     expect(vals.ingress.tls.enabled).toBe(true);
     expect(vals.certManager.enabled).toBe(true);
@@ -925,34 +931,34 @@ describe("HelmSecureIngress", () => {
 
   test("custom clusterIssuer flows through", () => {
     const result = HelmSecureIngress({ name: "web", clusterIssuer: "letsencrypt-staging" });
-    const vals = result.values as any;
+    const vals = p(result.values);
     expect(vals.certManager.clusterIssuer).toBe("letsencrypt-staging");
   });
 
   test("custom ingressClassName flows through", () => {
     const result = HelmSecureIngress({ name: "web", ingressClassName: "nginx" });
-    const vals = result.values as any;
+    const vals = p(result.values);
     expect(vals.ingress.className).toBe("nginx");
   });
 
   test("ingress uses Helm intrinsics", () => {
     const result = HelmSecureIngress({ name: "web" });
-    expect(hasIntrinsic(result.ingress)).toBe(true);
+    expect(hasIntrinsic(p(result.ingress))).toBe(true);
   });
 
   test("certificate uses Helm intrinsics", () => {
     const result = HelmSecureIngress({ name: "web" });
-    expect(hasIntrinsic(result.certificate!)).toBe(true);
+    expect(hasIntrinsic(p(result.certificate!))).toBe(true);
   });
 
   test("ingress uses Range for hosts", () => {
     const result = HelmSecureIngress({ name: "web" });
-    expect(hasIntrinsic(result.ingress)).toBe(true);
+    expect(hasIntrinsic(p(result.ingress))).toBe(true);
   });
 
   test("default host includes chart name", () => {
     const result = HelmSecureIngress({ name: "web" });
-    const vals = result.values as any;
+    const vals = p(result.values);
     expect(vals.ingress.hosts[0].host).toBe("web.example.com");
   });
 });
@@ -967,8 +973,8 @@ describe("HelmNamespaceEnv", () => {
 
   test("chart has correct metadata", () => {
     const result = HelmNamespaceEnv({ name: "dev" });
-    expect(result.chart.name).toBe("dev");
-    expect(result.chart.type).toBe("application");
+    expect(p(result.chart).name).toBe("dev");
+    expect(p(result.chart).type).toBe("application");
   });
 
   test("includes all governance resources by default", () => {
@@ -981,21 +987,21 @@ describe("HelmNamespaceEnv", () => {
   test("can exclude resourceQuota", () => {
     const result = HelmNamespaceEnv({ name: "dev", resourceQuota: false });
     expect(result.resourceQuota).toBeUndefined();
-    const vals = result.values as any;
+    const vals = p(result.values);
     expect(vals.resourceQuota).toBeUndefined();
   });
 
   test("can exclude limitRange", () => {
     const result = HelmNamespaceEnv({ name: "dev", limitRange: false });
     expect(result.limitRange).toBeUndefined();
-    const vals = result.values as any;
+    const vals = p(result.values);
     expect(vals.limitRange).toBeUndefined();
   });
 
   test("can exclude networkPolicy", () => {
     const result = HelmNamespaceEnv({ name: "dev", networkPolicy: false });
     expect(result.networkPolicy).toBeUndefined();
-    const vals = result.values as any;
+    const vals = p(result.values);
     expect(vals.networkPolicy).toBeUndefined();
   });
 
@@ -1013,7 +1019,7 @@ describe("HelmNamespaceEnv", () => {
 
   test("default resourceQuota values", () => {
     const result = HelmNamespaceEnv({ name: "dev" });
-    const vals = result.values as any;
+    const vals = p(result.values);
     expect(vals.resourceQuota.enabled).toBe(true);
     expect(vals.resourceQuota.hard.cpu).toBe("10");
     expect(vals.resourceQuota.hard.memory).toBe("20Gi");
@@ -1022,7 +1028,7 @@ describe("HelmNamespaceEnv", () => {
 
   test("default limitRange values", () => {
     const result = HelmNamespaceEnv({ name: "dev" });
-    const vals = result.values as any;
+    const vals = p(result.values);
     expect(vals.limitRange.enabled).toBe(true);
     expect(vals.limitRange.default.cpu).toBe("500m");
     expect(vals.limitRange.defaultRequest.cpu).toBe("100m");
@@ -1030,7 +1036,7 @@ describe("HelmNamespaceEnv", () => {
 
   test("default networkPolicy values", () => {
     const result = HelmNamespaceEnv({ name: "dev" });
-    const vals = result.values as any;
+    const vals = p(result.values);
     expect(vals.networkPolicy.enabled).toBe(true);
     expect(vals.networkPolicy.denyIngress).toBe(true);
     expect(vals.networkPolicy.denyEgress).toBe(false);
@@ -1038,13 +1044,13 @@ describe("HelmNamespaceEnv", () => {
 
   test("namespace uses Helm intrinsics", () => {
     const result = HelmNamespaceEnv({ name: "dev" });
-    expect(hasIntrinsic(result.namespace)).toBe(true);
+    expect(hasIntrinsic(p(result.namespace))).toBe(true);
   });
 
   test("governance resources use If() conditional", () => {
     const result = HelmNamespaceEnv({ name: "dev" });
-    expect(hasIntrinsic(result.resourceQuota!)).toBe(true);
-    expect(hasIntrinsic(result.limitRange!)).toBe(true);
-    expect(hasIntrinsic(result.networkPolicy!)).toBe(true);
+    expect(hasIntrinsic(p(result.resourceQuota!))).toBe(true);
+    expect(hasIntrinsic(p(result.limitRange!))).toBe(true);
+    expect(hasIntrinsic(p(result.networkPolicy!))).toBe(true);
   });
 });

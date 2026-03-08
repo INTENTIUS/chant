@@ -4,6 +4,8 @@
  * Produces a full set of Helm chart entities with parameterized values references.
  */
 
+import { Composite, mergeDefaults } from "@intentius/chant";
+import { Chart, Values, Deployment, Service, ServiceAccount, Ingress, HPA } from "../resources";
 import { values, include, printf, toYaml, If, With } from "../intrinsics";
 
 export interface HelmWebAppProps {
@@ -45,19 +47,29 @@ export interface HelmWebAppProps {
   readinessProbe?: Record<string, unknown>;
   /** Deployment strategy defaults. */
   strategy?: Record<string, unknown>;
+  /** Per-member defaults. */
+  defaults?: {
+    chart?: Partial<Record<string, unknown>>;
+    values?: Partial<Record<string, unknown>>;
+    deployment?: Partial<Record<string, unknown>>;
+    service?: Partial<Record<string, unknown>>;
+    serviceAccount?: Partial<Record<string, unknown>>;
+    ingress?: Partial<Record<string, unknown>>;
+    hpa?: Partial<Record<string, unknown>>;
+  };
 }
 
 export interface HelmWebAppResult {
-  chart: Record<string, unknown>;
-  values: Record<string, unknown>;
-  deployment: Record<string, unknown>;
-  service: Record<string, unknown>;
-  serviceAccount?: Record<string, unknown>;
-  ingress?: Record<string, unknown>;
-  hpa?: Record<string, unknown>;
+  chart: InstanceType<typeof Chart>;
+  values: InstanceType<typeof Values>;
+  deployment: InstanceType<typeof Deployment>;
+  service: InstanceType<typeof Service>;
+  serviceAccount?: InstanceType<typeof ServiceAccount>;
+  ingress?: InstanceType<typeof Ingress>;
+  hpa?: InstanceType<typeof HPA>;
 }
 
-export function HelmWebApp(props: HelmWebAppProps): HelmWebAppResult {
+export const HelmWebApp = Composite<HelmWebAppProps>((props) => {
   const {
     name,
     imageRepository = "nginx",
@@ -69,16 +81,17 @@ export function HelmWebApp(props: HelmWebAppProps): HelmWebAppResult {
     autoscaling = true,
     serviceAccount = true,
     appVersion = "1.0.0",
+    defaults: defs,
   } = props;
 
-  const chart = {
+  const chart = new Chart(mergeDefaults({
     apiVersion: "v2",
     name,
     version: "0.1.0",
     appVersion,
     type: "application",
     description: `A Helm chart for ${name}`,
-  };
+  }, defs?.chart));
 
   const valuesObj: Record<string, unknown> = {
     replicaCount: replicas,
@@ -131,6 +144,8 @@ export function HelmWebApp(props: HelmWebAppProps): HelmWebAppResult {
     };
   }
 
+  const valuesRes = new Values(mergeDefaults(valuesObj, defs?.values));
+
   const containerSpec: Record<string, unknown> = {
     name,
     image: printf("%s:%s", values.image.repository, values.image.tag),
@@ -170,7 +185,7 @@ export function HelmWebApp(props: HelmWebAppProps): HelmWebAppResult {
 
   if (props.strategy) deploymentSpec.strategy = toYaml(values.strategy);
 
-  const deployment = {
+  const deployment = new Deployment(mergeDefaults({
     apiVersion: "apps/v1",
     kind: "Deployment",
     metadata: {
@@ -178,9 +193,9 @@ export function HelmWebApp(props: HelmWebAppProps): HelmWebAppResult {
       labels: include(`${name}.labels`),
     },
     spec: deploymentSpec,
-  };
+  }, defs?.deployment));
 
-  const service = {
+  const service = new Service(mergeDefaults({
     apiVersion: "v1",
     kind: "Service",
     metadata: {
@@ -197,12 +212,12 @@ export function HelmWebApp(props: HelmWebAppProps): HelmWebAppResult {
       }],
       selector: include(`${name}.selectorLabels`),
     },
-  };
+  }, defs?.service));
 
-  const result: HelmWebAppResult = { chart, values: valuesObj, deployment, service };
+  const result: Record<string, any> = { chart, values: valuesRes, deployment, service };
 
   if (serviceAccount) {
-    result.serviceAccount = {
+    result.serviceAccount = new ServiceAccount(mergeDefaults({
       apiVersion: "v1",
       kind: "ServiceAccount",
       metadata: {
@@ -210,11 +225,11 @@ export function HelmWebApp(props: HelmWebAppProps): HelmWebAppResult {
         labels: include(`${name}.labels`),
         annotations: toYaml(values.serviceAccount.annotations),
       },
-    };
+    }, defs?.serviceAccount));
   }
 
   if (ingress) {
-    result.ingress = {
+    result.ingress = new Ingress(mergeDefaults({
       apiVersion: "networking.k8s.io/v1",
       kind: "Ingress",
       metadata: {
@@ -227,11 +242,11 @@ export function HelmWebApp(props: HelmWebAppProps): HelmWebAppResult {
         rules: values.ingress.hosts,
         tls: values.ingress.tls,
       },
-    };
+    }, defs?.ingress));
   }
 
   if (autoscaling) {
-    result.hpa = {
+    result.hpa = new HPA(mergeDefaults({
       apiVersion: "autoscaling/v2",
       kind: "HorizontalPodAutoscaler",
       metadata: {
@@ -257,8 +272,8 @@ export function HelmWebApp(props: HelmWebAppProps): HelmWebAppResult {
           },
         }],
       },
-    };
+    }, defs?.hpa));
   }
 
   return result;
-}
+}, "HelmWebApp");

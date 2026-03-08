@@ -1,4 +1,5 @@
 import { describe, test, expect } from "bun:test";
+import { isCompositeInstance } from "@intentius/chant";
 import { StandardProject } from "./standard-project";
 import { MultiEnvironmentProject } from "./multi-environment-project";
 import { VaultSecuredProject } from "./vault-secured-project";
@@ -9,6 +10,11 @@ import { BlueprintMigrationSet } from "./blueprint-migration-set";
 import { DesktopProject } from "./desktop-project";
 import { environmentGroup } from "./environment-group";
 
+/** Helper to access props on a Declarable member. */
+function p(member: unknown): Record<string, unknown> {
+  return (member as any).props;
+}
+
 describe("StandardProject", () => {
   const result = StandardProject({
     name: "my-app",
@@ -17,36 +23,40 @@ describe("StandardProject", () => {
     prodUrl: "jdbc:postgresql://prod:5432/app",
   });
 
+  test("is a CompositeInstance", () => {
+    expect(isCompositeInstance(result)).toBe(true);
+  });
+
   test("returns project, dev, prod, config keys", () => {
-    expect(result).toHaveProperty("project");
-    expect(result).toHaveProperty("dev");
-    expect(result).toHaveProperty("prod");
-    expect(result).toHaveProperty("config");
+    expect(result.project).toBeDefined();
+    expect(result.dev).toBeDefined();
+    expect(result.prod).toBeDefined();
+    expect(result.config).toBeDefined();
   });
 
   test("project.name matches input", () => {
-    expect(result.project.name).toBe("my-app");
+    expect(p(result.project).name).toBe("my-app");
   });
 
   test("dev has url=devUrl, provisioner=clean, schemas defaults to [public]", () => {
-    expect(result.dev.url).toBe("jdbc:postgresql://localhost:5432/dev");
-    expect(result.dev.provisioner).toBe("clean");
-    expect(result.dev.schemas).toEqual(["public"]);
+    expect(p(result.dev).url).toBe("jdbc:postgresql://localhost:5432/dev");
+    expect(p(result.dev).provisioner).toBe("clean");
+    expect(p(result.dev).schemas).toEqual(["public"]);
   });
 
   test("prod has url=prodUrl, schemas defaults to [public]", () => {
-    expect(result.prod.url).toBe("jdbc:postgresql://prod:5432/app");
-    expect(result.prod.schemas).toEqual(["public"]);
+    expect(p(result.prod).url).toBe("jdbc:postgresql://prod:5432/app");
+    expect(p(result.prod).schemas).toEqual(["public"]);
   });
 
   test("config has databaseType, validateMigrationNaming=true, locations default", () => {
-    expect(result.config.databaseType).toBe("postgresql");
-    expect(result.config.validateMigrationNaming).toBe(true);
-    expect(result.config.locations).toEqual(["filesystem:sql"]);
+    expect(p(result.config).databaseType).toBe("postgresql");
+    expect(p(result.config).validateMigrationNaming).toBe(true);
+    expect(p(result.config).locations).toEqual(["filesystem:sql"]);
   });
 
   test("defaultSchema defaults to first schema", () => {
-    expect(result.config.defaultSchema).toBe("public");
+    expect(p(result.config).defaultSchema).toBe("public");
 
     const custom = StandardProject({
       name: "x",
@@ -55,7 +65,20 @@ describe("StandardProject", () => {
       prodUrl: "b",
       schemas: ["app", "public"],
     });
-    expect(custom.config.defaultSchema).toBe("app");
+    expect(p(custom.config).defaultSchema).toBe("app");
+  });
+
+  test("per-member defaults override config", () => {
+    const r = StandardProject({
+      name: "x",
+      databaseType: "postgresql",
+      devUrl: "a",
+      prodUrl: "b",
+      defaults: {
+        config: { baselineOnMigrate: true },
+      },
+    });
+    expect(p(r.config).baselineOnMigrate).toBe(true);
   });
 });
 
@@ -192,19 +215,24 @@ describe("VaultSecuredProject", () => {
 });
 
 describe("DockerDevEnvironment", () => {
+  test("is a CompositeInstance", () => {
+    const result = DockerDevEnvironment({ databaseType: "postgresql" });
+    expect(isCompositeInstance(result)).toBe(true);
+  });
+
   test("returns environment with provisioner=docker", () => {
     const { environment } = DockerDevEnvironment({ databaseType: "postgresql" });
-    expect(environment.provisioner).toBe("docker");
+    expect(p(environment).provisioner).toBe("docker");
   });
 
   test("postgresql gets jdbc:postgresql URL with default port 5432", () => {
     const { environment } = DockerDevEnvironment({ databaseType: "postgresql" });
-    expect(environment.url).toBe("jdbc:postgresql://localhost:5432/flyway_dev");
+    expect(p(environment).url).toBe("jdbc:postgresql://localhost:5432/flyway_dev");
   });
 
   test("mysql gets jdbc:mysql with port 3306", () => {
     const { environment } = DockerDevEnvironment({ databaseType: "mysql" });
-    expect(environment.url).toBe("jdbc:mysql://localhost:3306/flyway_dev");
+    expect(p(environment).url).toBe("jdbc:mysql://localhost:3306/flyway_dev");
   });
 
   test("custom port overrides default", () => {
@@ -212,7 +240,7 @@ describe("DockerDevEnvironment", () => {
       databaseType: "postgresql",
       port: 5433,
     });
-    expect(environment.url).toBe("jdbc:postgresql://localhost:5433/flyway_dev");
+    expect(p(environment).url).toBe("jdbc:postgresql://localhost:5433/flyway_dev");
   });
 
   test("custom dbName applied", () => {
@@ -220,38 +248,53 @@ describe("DockerDevEnvironment", () => {
       databaseType: "postgresql",
       dbName: "mydb",
     });
-    expect(environment.url).toBe("jdbc:postgresql://localhost:5432/mydb");
+    expect(p(environment).url).toBe("jdbc:postgresql://localhost:5432/mydb");
   });
 });
 
 describe("CiPipelineProject", () => {
   const base = { name: "svc", databaseType: "postgresql" };
 
+  test("is a CompositeInstance", () => {
+    const result = CiPipelineProject(base);
+    expect(isCompositeInstance(result)).toBe(true);
+  });
+
   test("returns project, environment, config", () => {
     const result = CiPipelineProject(base);
-    expect(result).toHaveProperty("project");
-    expect(result).toHaveProperty("environment");
-    expect(result).toHaveProperty("config");
+    expect(result.project).toBeDefined();
+    expect(result.environment).toBeDefined();
+    expect(result.config).toBeDefined();
   });
 
   test("environment has ${env.<PREFIX>_URL/USER/PASSWORD}", () => {
     const result = CiPipelineProject({ ...base, envVarPrefix: "DB" });
-    expect(result.environment.url).toBe("${env.DB_URL}");
-    expect(result.environment.user).toBe("${env.DB_USER}");
-    expect(result.environment.password).toBe("${env.DB_PASSWORD}");
+    expect(p(result.environment).url).toBe("${env.DB_URL}");
+    expect(p(result.environment).user).toBe("${env.DB_USER}");
+    expect(p(result.environment).password).toBe("${env.DB_PASSWORD}");
   });
 
   test("default prefix is FLYWAY", () => {
     const result = CiPipelineProject(base);
-    expect(result.environment.url).toBe("${env.FLYWAY_URL}");
-    expect(result.environment.user).toBe("${env.FLYWAY_USER}");
-    expect(result.environment.password).toBe("${env.FLYWAY_PASSWORD}");
+    expect(p(result.environment).url).toBe("${env.FLYWAY_URL}");
+    expect(p(result.environment).user).toBe("${env.FLYWAY_USER}");
+    expect(p(result.environment).password).toBe("${env.FLYWAY_PASSWORD}");
   });
 
   test("config has strict settings: validateOnMigrate=true, cleanDisabled=true", () => {
     const result = CiPipelineProject(base);
-    expect(result.config.validateOnMigrate).toBe(true);
-    expect(result.config.cleanDisabled).toBe(true);
+    expect(p(result.config).validateOnMigrate).toBe(true);
+    expect(p(result.config).cleanDisabled).toBe(true);
+  });
+
+  test("per-member defaults override config", () => {
+    const result = CiPipelineProject({
+      ...base,
+      defaults: {
+        config: { outOfOrder: true },
+      },
+    });
+    expect(p(result.config).outOfOrder).toBe(true);
   });
 });
 

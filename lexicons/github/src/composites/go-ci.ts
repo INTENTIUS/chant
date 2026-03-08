@@ -1,4 +1,5 @@
-import { Composite } from "@intentius/chant";
+import { Composite, mergeDefaults } from "@intentius/chant";
+import type { Job, Workflow } from "../generated/index";
 
 export interface GoCIProps {
   /** Go version. Default: "1.22" */
@@ -11,6 +12,12 @@ export interface GoCIProps {
   lintCommand?: string | null;
   /** Runner label. Default: "ubuntu-latest" */
   runsOn?: string;
+  defaults?: {
+    buildJob?: Partial<ConstructorParameters<typeof Job>[0]>;
+    testJob?: Partial<ConstructorParameters<typeof Job>[0]>;
+    lintJob?: Partial<ConstructorParameters<typeof Job>[0]>;
+    workflow?: Partial<ConstructorParameters<typeof Workflow>[0]>;
+  };
 }
 
 export const GoCI = Composite<GoCIProps>((props) => {
@@ -20,6 +27,7 @@ export const GoCI = Composite<GoCIProps>((props) => {
     buildCommand = "go build ./...",
     lintCommand = "golangci-lint run",
     runsOn = "ubuntu-latest",
+    defaults,
   } = props;
 
   const { createProperty, createResource } = require("@intentius/chant/runtime");
@@ -28,7 +36,7 @@ export const GoCI = Composite<GoCIProps>((props) => {
   const WorkflowClass = createResource("GitHub::Actions::Workflow", "github", {});
 
   // ── Build job ──────────────────────────────────────────────────────
-  const buildJob = new JobClass({
+  const buildJob = new JobClass(mergeDefaults({
     "runs-on": runsOn,
     steps: [
       new StepClass({ name: "Checkout", uses: "actions/checkout@v4" }),
@@ -39,10 +47,10 @@ export const GoCI = Composite<GoCIProps>((props) => {
       }),
       new StepClass({ name: "Build", run: buildCommand }),
     ],
-  });
+  }, defaults?.buildJob));
 
   // ── Test job ───────────────────────────────────────────────────────
-  const testJob = new JobClass({
+  const testJob = new JobClass(mergeDefaults({
     "runs-on": runsOn,
     steps: [
       new StepClass({ name: "Checkout", uses: "actions/checkout@v4" }),
@@ -53,12 +61,12 @@ export const GoCI = Composite<GoCIProps>((props) => {
       }),
       new StepClass({ name: "Test", run: testCommand }),
     ],
-  });
+  }, defaults?.testJob));
 
   // ── Lint job (optional) ────────────────────────────────────────────
   const lintJob =
     lintCommand !== null
-      ? new JobClass({
+      ? new JobClass(mergeDefaults({
           "runs-on": runsOn,
           steps: [
             new StepClass({ name: "Checkout", uses: "actions/checkout@v4" }),
@@ -73,16 +81,16 @@ export const GoCI = Composite<GoCIProps>((props) => {
               with: { args: lintCommand },
             }),
           ],
-        })
+        }, defaults?.lintJob))
       : undefined;
 
-  const workflow = new WorkflowClass({
+  const workflow = new WorkflowClass(mergeDefaults({
     name: "Go CI",
     on: {
       push: { branches: ["main"] },
       pull_request: { branches: ["main"] },
     },
-  });
+  }, defaults?.workflow));
 
   if (lintJob) {
     return { workflow, buildJob, testJob, lintJob };

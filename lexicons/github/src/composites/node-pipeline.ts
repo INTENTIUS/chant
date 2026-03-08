@@ -1,4 +1,5 @@
-import { Composite, withDefaults } from "@intentius/chant";
+import { Composite, withDefaults, mergeDefaults } from "@intentius/chant";
+import type { Job, Workflow } from "../generated/index";
 
 export interface NodePipelineProps {
   /** Node.js version. Default: "22" */
@@ -19,6 +20,11 @@ export interface NodePipelineProps {
   artifactRetentionDays?: number;
   /** Runner label. Default: "ubuntu-latest" */
   runsOn?: string;
+  defaults?: {
+    buildJob?: Partial<ConstructorParameters<typeof Job>[0]>;
+    testJob?: Partial<ConstructorParameters<typeof Job>[0]>;
+    workflow?: Partial<ConstructorParameters<typeof Workflow>[0]>;
+  };
 }
 
 const cacheConfig = {
@@ -59,6 +65,7 @@ export const NodePipeline = Composite<NodePipelineProps>((props) => {
     artifactName = "build-output",
     artifactRetentionDays = 1,
     runsOn = "ubuntu-latest",
+    defaults,
   } = props;
 
   const pm = cacheConfig[packageManager];
@@ -97,10 +104,10 @@ export const NodePipeline = Composite<NodePipelineProps>((props) => {
     },
   });
 
-  const buildJob = new JobClass({
+  const buildJob = new JobClass(mergeDefaults({
     "runs-on": runsOn,
     steps: [buildCheckout, buildSetup, buildInstall, buildRun, buildUpload],
-  });
+  }, defaults?.buildJob));
 
   // ── Test job steps ─────────────────────────────────────────────────
   const testCheckout = new StepClass({ name: "Checkout", uses: "actions/checkout@v4" });
@@ -123,20 +130,20 @@ export const NodePipeline = Composite<NodePipelineProps>((props) => {
 
   const testRun = new StepClass({ name: "Test", run: `${run} ${testScript}` });
 
-  const testJob = new JobClass({
+  const testJob = new JobClass(mergeDefaults({
     "runs-on": runsOn,
     needs: ["build"],
     steps: [testCheckout, testSetup, testInstall, testDownload, testRun],
-  });
+  }, defaults?.testJob));
 
   // ── Workflow ───────────────────────────────────────────────────────
-  const workflow = new WorkflowClass({
+  const workflow = new WorkflowClass(mergeDefaults({
     name: "Node Pipeline",
     on: {
       push: { branches: ["main"] },
       pull_request: { branches: ["main"] },
     },
-  });
+  }, defaults?.workflow));
 
   return { workflow, buildJob, testJob };
 }, "NodePipeline");

@@ -6,6 +6,9 @@
  * Flyway provisions a database container via Docker.
  */
 
+import { Composite, mergeDefaults } from "@intentius/chant";
+import { Environment } from "../generated";
+
 /** Map of database types to their default ports. */
 const DEFAULT_PORTS: Record<string, number> = {
   postgresql: 5432,
@@ -39,16 +42,16 @@ export interface DockerDevEnvironmentProps {
   dockerImage?: string;
   /** Schemas managed by Flyway (default: ["public"]). */
   schemas?: string[];
-}
-
-export interface DockerDevEnvironmentResult {
-  /** Props for an Environment resource with Docker provisioner. */
-  environment: Record<string, unknown>;
+  /** Per-member defaults for customizing the environment resource. */
+  defaults?: {
+    environment?: Partial<ConstructorParameters<typeof Environment>[0]>;
+  };
 }
 
 /**
- * Create a DockerDevEnvironment composite — returns props for an Environment
- * resource configured with a Docker provisioner and a localhost JDBC URL.
+ * Create a DockerDevEnvironment composite — returns a declarable instance
+ * for an Environment resource configured with a Docker provisioner and
+ * a localhost JDBC URL.
  *
  * @example
  * ```ts
@@ -63,15 +66,14 @@ export interface DockerDevEnvironmentResult {
  * export { environment };
  * ```
  */
-export function DockerDevEnvironment(
-  props: DockerDevEnvironmentProps,
-): DockerDevEnvironmentResult {
+export const DockerDevEnvironment = Composite<DockerDevEnvironmentProps>((props) => {
   const {
     databaseType,
     dbName = "flyway_dev",
     name = "dev",
     dockerImage,
     schemas = ["public"],
+    defaults: defs,
   } = props;
 
   const port = props.port ?? DEFAULT_PORTS[databaseType] ?? 5432;
@@ -86,13 +88,13 @@ export function DockerDevEnvironment(
     url = `${scheme}://localhost:${port}/${dbName}`;
   }
 
-  const environment: Record<string, unknown> = {
+  const environment = new Environment(mergeDefaults({
     displayName: name,
     url,
     schemas,
     provisioner: "docker",
     ...(dockerImage && { dockerImage }),
-  };
+  }, defs?.environment));
 
   return { environment };
-}
+}, "DockerDevEnvironment");

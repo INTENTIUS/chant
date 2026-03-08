@@ -6,6 +6,8 @@
  * or deleted.
  */
 
+import { Composite, mergeDefaults } from "@intentius/chant";
+import { Chart, Values, Job, ConfigMap, ServiceAccount, ClusterRole, ClusterRoleBinding } from "../resources";
 import { values, include, printf } from "../intrinsics";
 
 export interface HelmCRDLifecycleProps {
@@ -19,38 +21,49 @@ export interface HelmCRDLifecycleProps {
   kubectlTag?: string;
   /** ServiceAccount name for RBAC. */
   serviceAccountName?: string;
+  /** Per-member defaults. */
+  defaults?: {
+    chart?: Partial<Record<string, unknown>>;
+    values?: Partial<Record<string, unknown>>;
+    crdInstallJob?: Partial<Record<string, unknown>>;
+    crdConfigMap?: Partial<Record<string, unknown>>;
+    serviceAccount?: Partial<Record<string, unknown>>;
+    clusterRole?: Partial<Record<string, unknown>>;
+    clusterRoleBinding?: Partial<Record<string, unknown>>;
+  };
 }
 
 export interface HelmCRDLifecycleResult {
-  chart: Record<string, unknown>;
-  values: Record<string, unknown>;
-  crdInstallJob: Record<string, unknown>;
-  crdConfigMap: Record<string, unknown>;
-  serviceAccount: Record<string, unknown>;
-  clusterRole: Record<string, unknown>;
-  clusterRoleBinding: Record<string, unknown>;
+  chart: InstanceType<typeof Chart>;
+  values: InstanceType<typeof Values>;
+  crdInstallJob: InstanceType<typeof Job>;
+  crdConfigMap: InstanceType<typeof ConfigMap>;
+  serviceAccount: InstanceType<typeof ServiceAccount>;
+  clusterRole: InstanceType<typeof ClusterRole>;
+  clusterRoleBinding: InstanceType<typeof ClusterRoleBinding>;
 }
 
-export function HelmCRDLifecycle(props: HelmCRDLifecycleProps): HelmCRDLifecycleResult {
+export const HelmCRDLifecycle = Composite<HelmCRDLifecycleProps>((props) => {
   const {
     name,
     crdContent,
     kubectlImage = "bitnami/kubectl",
     kubectlTag = "latest",
     serviceAccountName,
+    defaults: defs,
   } = props;
 
   const saName = serviceAccountName ?? `${name}-crd-installer`;
 
-  const chart = {
+  const chart = new Chart(mergeDefaults({
     apiVersion: "v2",
     name,
     version: "0.1.0",
     type: "application",
     description: `CRD lifecycle management for ${name}`,
-  };
+  }, defs?.chart));
 
-  const valuesObj = {
+  const valuesRes = new Values(mergeDefaults({
     crdLifecycle: {
       enabled: true,
       kubectl: {
@@ -61,7 +74,7 @@ export function HelmCRDLifecycle(props: HelmCRDLifecycleProps): HelmCRDLifecycle
         name: saName,
       },
     },
-  };
+  } as Record<string, unknown>, defs?.values));
 
   const hookAnnotations = {
     "helm.sh/hook": "pre-install,pre-upgrade",
@@ -69,7 +82,7 @@ export function HelmCRDLifecycle(props: HelmCRDLifecycleProps): HelmCRDLifecycle
     "helm.sh/hook-delete-policy": "before-hook-creation",
   };
 
-  const crdConfigMap = {
+  const crdConfigMap = new ConfigMap(mergeDefaults({
     apiVersion: "v1",
     kind: "ConfigMap",
     metadata: {
@@ -80,9 +93,9 @@ export function HelmCRDLifecycle(props: HelmCRDLifecycleProps): HelmCRDLifecycle
     data: {
       "crds.yaml": crdContent,
     },
-  };
+  }, defs?.crdConfigMap));
 
-  const serviceAccount = {
+  const serviceAccount = new ServiceAccount(mergeDefaults({
     apiVersion: "v1",
     kind: "ServiceAccount",
     metadata: {
@@ -90,9 +103,9 @@ export function HelmCRDLifecycle(props: HelmCRDLifecycleProps): HelmCRDLifecycle
       labels: include(`${name}.labels`),
       annotations: hookAnnotations,
     },
-  };
+  }, defs?.serviceAccount));
 
-  const clusterRole = {
+  const clusterRole = new ClusterRole(mergeDefaults({
     apiVersion: "rbac.authorization.k8s.io/v1",
     kind: "ClusterRole",
     metadata: {
@@ -105,9 +118,9 @@ export function HelmCRDLifecycle(props: HelmCRDLifecycleProps): HelmCRDLifecycle
       resources: ["customresourcedefinitions"],
       verbs: ["get", "list", "create", "update", "patch"],
     }],
-  };
+  }, defs?.clusterRole));
 
-  const clusterRoleBinding = {
+  const clusterRoleBinding = new ClusterRoleBinding(mergeDefaults({
     apiVersion: "rbac.authorization.k8s.io/v1",
     kind: "ClusterRoleBinding",
     metadata: {
@@ -125,9 +138,9 @@ export function HelmCRDLifecycle(props: HelmCRDLifecycleProps): HelmCRDLifecycle
       name: values.crdLifecycle.serviceAccount.name,
       namespace: "{{ .Release.Namespace }}",
     }],
-  };
+  }, defs?.clusterRoleBinding));
 
-  const crdInstallJob = {
+  const crdInstallJob = new Job(mergeDefaults({
     apiVersion: "batch/v1",
     kind: "Job",
     metadata: {
@@ -170,15 +183,15 @@ export function HelmCRDLifecycle(props: HelmCRDLifecycleProps): HelmCRDLifecycle
         },
       },
     },
-  };
+  }, defs?.crdInstallJob));
 
   return {
     chart,
-    values: valuesObj,
+    values: valuesRes,
     crdInstallJob,
     crdConfigMap,
     serviceAccount,
     clusterRole,
     clusterRoleBinding,
   };
-}
+}, "HelmCRDLifecycle");

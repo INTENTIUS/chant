@@ -32,7 +32,7 @@ const dockerDev = DockerDevEnvironment({
   schemas: ["public", "inventory"],
 });
 
-export const devEnv = new Environment(dockerDev.environment);
+export const devEnv = dockerDev.environment;
 
 // Shadow database for Flyway Desktop diff workflows, also Docker-provisioned
 const dockerShadow = DockerDevEnvironment({
@@ -42,12 +42,12 @@ const dockerShadow = DockerDevEnvironment({
   name: "shadow",
   dockerImage: "postgres:16-alpine",
   schemas: ["public", "inventory"],
+  defaults: {
+    environment: { provisioner: "clean" },
+  },
 });
 
-export const shadowEnv = new Environment({
-  ...dockerShadow.environment,
-  provisioner: "clean",
-});
+export const shadowEnv = dockerShadow.environment;
 
 // Blueprint for the migration file layout including repeatable migrations
 export const { migrations, callbacks } = BlueprintMigrationSet({

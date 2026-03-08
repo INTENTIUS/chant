@@ -1,25 +1,11 @@
 import { describe, test, expect } from "bun:test";
-import { createResource } from "@intentius/chant/runtime";
 import type { Declarable } from "@intentius/chant/declarable";
 import type { SerializerResult } from "@intentius/chant/serializer";
 import { helmSerializer } from "../../src/serializer";
-import { Chart, Values, HelmCRD } from "../../src/resources";
 
-const Ingress = createResource("K8s::Networking::Ingress", "k8s", {});
-const Namespace = createResource("K8s::Core::Namespace", "k8s", {});
-const ResourceQuota = createResource("K8s::Core::ResourceQuota", "k8s", {});
-const LimitRange = createResource("K8s::Core::LimitRange", "k8s", {});
-const NetworkPolicy = createResource("K8s::Networking::NetworkPolicy", "k8s", {});
-const DaemonSet = createResource("K8s::Apps::DaemonSet", "k8s", {});
-const ServiceAccount = createResource("K8s::Core::ServiceAccount", "k8s", {});
-const ConfigMap = createResource("K8s::Core::ConfigMap", "k8s", {});
-const ClusterRole = createResource("K8s::Rbac::ClusterRole", "k8s", {});
-const ClusterRoleBinding = createResource("K8s::Rbac::ClusterRoleBinding", "k8s", {});
-const Job = createResource("K8s::Batch::Job", "k8s", {});
-
-function makeEntities(...pairs: [string, Record<string, unknown>][]): Map<string, Declarable> {
+function makeEntities(...pairs: [string, Declarable][]): Map<string, Declarable> {
   const m = new Map<string, Declarable>();
-  for (const [name, entity] of pairs) m.set(name, entity as unknown as Declarable);
+  for (const [name, entity] of pairs) m.set(name, entity);
   return m;
 }
 
@@ -33,15 +19,11 @@ import { chart as libChart, helpers as libHelpers } from "./src/library-chart";
 describe("helm composites-infrastructure: secure-ingress", () => {
   test("serializes with TLS ingress", () => {
     const entities = makeEntities(
-      ["chart", new Chart(siChart)],
-      ["values", new Values(siValues)],
-      ["ingress", new Ingress(siIngress)],
+      ["chart", siChart],
+      ["values", siValues],
+      ["ingress", siIngress],
     );
-    // Certificate is a CRD — use fallback apiVersion/kind from props
-    if (siCert) {
-      const Cert = createResource("K8s::CertManager::Certificate", "k8s", {});
-      entities.set("certificate", new Cert(siCert) as unknown as Declarable);
-    }
+    if (siCert) entities.set("certificate", siCert as unknown as Declarable);
 
     const result = helmSerializer.serialize(entities) as SerializerResult;
     expect(result.files!["Chart.yaml"]).toContain("name: api-gateway");
@@ -52,13 +34,13 @@ describe("helm composites-infrastructure: secure-ingress", () => {
 describe("helm composites-infrastructure: namespace-env", () => {
   test("serializes with governance resources", () => {
     const entities = makeEntities(
-      ["chart", new Chart(nsChart)],
-      ["values", new Values(nsValues)],
-      ["namespace", new Namespace(nsNamespace)],
+      ["chart", nsChart],
+      ["values", nsValues],
+      ["namespace", nsNamespace],
     );
-    if (nsRQ) entities.set("resourceQuota", new ResourceQuota(nsRQ) as unknown as Declarable);
-    if (nsLR) entities.set("limitRange", new LimitRange(nsLR) as unknown as Declarable);
-    if (nsNP) entities.set("networkPolicy", new NetworkPolicy(nsNP) as unknown as Declarable);
+    if (nsRQ) entities.set("resourceQuota", nsRQ as unknown as Declarable);
+    if (nsLR) entities.set("limitRange", nsLR as unknown as Declarable);
+    if (nsNP) entities.set("networkPolicy", nsNP as unknown as Declarable);
 
     const result = helmSerializer.serialize(entities) as SerializerResult;
     expect(result.files!["Chart.yaml"]).toContain("name: staging");
@@ -72,11 +54,11 @@ describe("helm composites-infrastructure: namespace-env", () => {
 describe("helm composites-infrastructure: daemon-set", () => {
   test("serializes with host paths", () => {
     const entities = makeEntities(
-      ["chart", new Chart(dsChart)],
-      ["values", new Values(dsValues)],
-      ["daemonSet", new DaemonSet(dsDaemonSet)],
+      ["chart", dsChart],
+      ["values", dsValues],
+      ["daemonSet", dsDaemonSet],
     );
-    if (dsSa) entities.set("serviceAccount", new ServiceAccount(dsSa) as unknown as Declarable);
+    if (dsSa) entities.set("serviceAccount", dsSa as unknown as Declarable);
 
     const result = helmSerializer.serialize(entities) as SerializerResult;
     expect(result.files!["Chart.yaml"]).toContain("name: log-collector");
@@ -87,12 +69,10 @@ describe("helm composites-infrastructure: daemon-set", () => {
 describe("helm composites-infrastructure: external-secret", () => {
   test("serializes with ExternalSecret CRD", () => {
     const entities = makeEntities(
-      ["chart", new Chart(esChart)],
-      ["values", new Values(esValues)],
+      ["chart", esChart],
+      ["values", esValues],
     );
-    // ExternalSecret is a CRD
-    const ES = createResource("K8s::ExternalSecrets::ExternalSecret", "k8s", {});
-    entities.set("externalSecret", new ES(esExternalSecret) as unknown as Declarable);
+    entities.set("externalSecret", esExternalSecret as unknown as Declarable);
 
     const result = helmSerializer.serialize(entities) as SerializerResult;
     expect(result.files!["Chart.yaml"]).toContain("name: app-secrets");
@@ -103,13 +83,13 @@ describe("helm composites-infrastructure: external-secret", () => {
 describe("helm composites-infrastructure: crd-lifecycle", () => {
   test("serializes with CRD install job and RBAC", () => {
     const entities = makeEntities(
-      ["chart", new Chart(crdChart)],
-      ["values", new Values(crdValues)],
-      ["crdInstallJob", new Job(crdInstallJob)],
-      ["crdConfigMap", new ConfigMap(crdConfigMap)],
-      ["serviceAccount", new ServiceAccount(crdSa)],
-      ["clusterRole", new ClusterRole(clusterRole)],
-      ["clusterRoleBinding", new ClusterRoleBinding(clusterRoleBinding)],
+      ["chart", crdChart],
+      ["values", crdValues],
+      ["crdInstallJob", crdInstallJob],
+      ["crdConfigMap", crdConfigMap],
+      ["serviceAccount", crdSa],
+      ["clusterRole", clusterRole],
+      ["clusterRoleBinding", clusterRoleBinding],
     );
 
     const result = helmSerializer.serialize(entities) as SerializerResult;
@@ -123,7 +103,7 @@ describe("helm composites-infrastructure: crd-lifecycle", () => {
 describe("helm composites-infrastructure: library-chart", () => {
   test("serializes as library chart", () => {
     const entities = makeEntities(
-      ["chart", new Chart({ ...libChart, type: "library" })],
+      ["chart", libChart],
     );
 
     const result = helmSerializer.serialize(entities) as SerializerResult;

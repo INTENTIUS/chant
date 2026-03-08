@@ -5,6 +5,8 @@
  * seed tasks, backups). For scheduled workloads, use CronWorkload instead.
  */
 
+import { Composite, mergeDefaults } from "@intentius/chant";
+import { Job, ServiceAccount, Role, RoleBinding } from "../generated";
 import type { ContainerSecurityContext } from "./security-context";
 
 /** Parse a K8s memory string (e.g. "256Mi", "1Gi") to bytes for comparison. */
@@ -68,13 +70,20 @@ export interface BatchJobProps {
   env?: Array<{ name: string; value: string }>;
   /** Container security context (supports PSS restricted fields). */
   securityContext?: ContainerSecurityContext;
+  /** Per-member defaults for fine-grained overrides. */
+  defaults?: {
+    job?: Partial<Record<string, unknown>>;
+    serviceAccount?: Partial<Record<string, unknown>>;
+    role?: Partial<Record<string, unknown>>;
+    roleBinding?: Partial<Record<string, unknown>>;
+  };
 }
 
 export interface BatchJobResult {
-  job: Record<string, unknown>;
-  serviceAccount?: Record<string, unknown>;
-  role?: Record<string, unknown>;
-  roleBinding?: Record<string, unknown>;
+  job: InstanceType<typeof Job>;
+  serviceAccount?: InstanceType<typeof ServiceAccount>;
+  role?: InstanceType<typeof Role>;
+  roleBinding?: InstanceType<typeof RoleBinding>;
 }
 
 /**
@@ -94,7 +103,7 @@ export interface BatchJobResult {
  * });
  * ```
  */
-export function BatchJob(props: BatchJobProps): BatchJobResult {
+export const BatchJob = Composite<BatchJobProps>((props) => {
   const {
     name,
     image,
@@ -114,6 +123,7 @@ export function BatchJob(props: BatchJobProps): BatchJobResult {
     memoryLimit: rawMemoryLimit = "256Mi",
     env,
     securityContext,
+    defaults: defs,
   } = props;
 
   // Ensure limits >= requests (K8s rejects pods where request > limit).
@@ -152,7 +162,7 @@ export function BatchJob(props: BatchJobProps): BatchJobResult {
     ...(securityContext && { securityContext }),
   };
 
-  const jobProps: Record<string, unknown> = {
+  const job = new Job(mergeDefaults({
     metadata: {
       name,
       ...(namespace && { namespace }),
@@ -172,31 +182,29 @@ export function BatchJob(props: BatchJobProps): BatchJobResult {
         },
       },
     },
-  };
+  }, defs?.job));
 
-  const result: BatchJobResult = {
-    job: jobProps,
-  };
+  const result: Record<string, any> = { job };
 
   if (createRbac) {
-    result.serviceAccount = {
+    result.serviceAccount = new ServiceAccount(mergeDefaults({
       metadata: {
         name: saName,
         ...(namespace && { namespace }),
         labels: { ...commonLabels, "app.kubernetes.io/component": "batch" },
       },
-    };
+    }, defs?.serviceAccount));
 
-    result.role = {
+    result.role = new Role(mergeDefaults({
       metadata: {
         name: roleName,
         ...(namespace && { namespace }),
         labels: { ...commonLabels, "app.kubernetes.io/component": "rbac" },
       },
       rules: effectiveRbacRules,
-    };
+    }, defs?.role));
 
-    result.roleBinding = {
+    result.roleBinding = new RoleBinding(mergeDefaults({
       metadata: {
         name: bindingName,
         ...(namespace && { namespace }),
@@ -214,8 +222,8 @@ export function BatchJob(props: BatchJobProps): BatchJobResult {
           ...(namespace && { namespace }),
         },
       ],
-    };
+    }, defs?.roleBinding));
   }
 
   return result;
-}
+}, "BatchJob");

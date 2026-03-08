@@ -5,7 +5,8 @@
  * a logical server, a database, and a firewall rule allowing Azure services.
  */
 
-import { markAsAzureResource } from "./from-arm";
+import { Composite, mergeDefaults } from "@intentius/chant";
+import { SqlServer, SqlDatabase as SqlDatabaseResource, SqlFirewallRule } from "../generated";
 
 export interface SqlDatabaseProps {
   /** SQL server name (globally unique). */
@@ -20,17 +21,23 @@ export interface SqlDatabaseProps {
   location?: string;
   /** Resource tags. */
   tags?: Record<string, string>;
+  /** Per-member defaults. */
+  defaults?: {
+    server?: Partial<ConstructorParameters<typeof SqlServer>[0]>;
+    database?: Partial<ConstructorParameters<typeof SqlDatabaseResource>[0]>;
+    firewallRule?: Partial<ConstructorParameters<typeof SqlFirewallRule>[0]>;
+  };
 }
 
 export interface SqlDatabaseResult {
-  server: Record<string, unknown>;
-  database: Record<string, unknown>;
-  firewallRule: Record<string, unknown>;
+  server: InstanceType<typeof SqlServer>;
+  database: InstanceType<typeof SqlDatabaseResource>;
+  firewallRule: InstanceType<typeof SqlFirewallRule>;
 }
 
 /**
- * Create a SqlDatabase composite — returns property objects for
- * a SQL Server, Database, and Firewall Rule.
+ * Create a SqlDatabase composite — returns a SQL Server, Database,
+ * and Firewall Rule.
  *
  * @example
  * ```ts
@@ -46,7 +53,7 @@ export interface SqlDatabaseResult {
  * export { server, database, firewallRule };
  * ```
  */
-export function SqlDatabase(props: SqlDatabaseProps): SqlDatabaseResult {
+export const SqlDatabase = Composite<SqlDatabaseProps>((props) => {
   const {
     name,
     adminLogin,
@@ -54,6 +61,7 @@ export function SqlDatabase(props: SqlDatabaseProps): SqlDatabaseResult {
     sku = "S0",
     location = "[resourceGroup().location]",
     tags = {},
+    defaults,
   } = props;
 
   const commonTags: Record<string, string> = {
@@ -63,51 +71,35 @@ export function SqlDatabase(props: SqlDatabaseProps): SqlDatabaseResult {
 
   const dbName = `${name}-db`;
 
-  const server: Record<string, unknown> = {
-    type: "Microsoft.Sql/servers",
-    apiVersion: "2022-05-01-preview",
+  const server = new SqlServer(mergeDefaults({
     name,
     location,
     tags: commonTags,
-    properties: {
-      administratorLogin: adminLogin,
-      administratorLoginPassword: adminPassword,
-      version: "12.0",
-      minimalTlsVersion: "1.2",
-      publicNetworkAccess: "Enabled",
-    },
-  };
+    administratorLogin: adminLogin,
+    administratorLoginPassword: adminPassword,
+    version: "12.0",
+    minimalTlsVersion: "1.2",
+    publicNetworkAccess: "Enabled",
+  }, defaults?.server), { apiVersion: "2022-05-01-preview" });
 
-  const database: Record<string, unknown> = {
-    type: "Microsoft.Sql/servers/databases",
-    apiVersion: "2022-05-01-preview",
+  const database = new SqlDatabaseResource(mergeDefaults({
     name: `${name}/${dbName}`,
     location,
     tags: commonTags,
     sku: {
       name: sku,
     },
-    properties: {
-      collation: "SQL_Latin1_General_CP1_CI_AS",
-      maxSizeBytes: 2147483648,
-      catalogCollation: "SQL_Latin1_General_CP1_CI_AS",
-      zoneRedundant: false,
-    },
-  };
+    collation: "SQL_Latin1_General_CP1_CI_AS",
+    maxSizeBytes: 2147483648,
+    catalogCollation: "SQL_Latin1_General_CP1_CI_AS",
+    zoneRedundant: false,
+  }, defaults?.database), { apiVersion: "2022-05-01-preview" });
 
-  const firewallRule: Record<string, unknown> = {
-    type: "Microsoft.Sql/servers/firewallRules",
-    apiVersion: "2022-05-01-preview",
+  const firewallRule = new SqlFirewallRule(mergeDefaults({
     name: `${name}/AllowAllAzureIps`,
-    properties: {
-      startIpAddress: "0.0.0.0",
-      endIpAddress: "0.0.0.0",
-    },
-  };
-
-  markAsAzureResource(server);
-  markAsAzureResource(database);
-  markAsAzureResource(firewallRule);
+    startIpAddress: "0.0.0.0",
+    endIpAddress: "0.0.0.0",
+  }, defaults?.firewallRule), { apiVersion: "2022-05-01-preview" });
 
   return { server, database, firewallRule };
-}
+}, "SqlDatabase");

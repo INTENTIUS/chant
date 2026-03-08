@@ -5,7 +5,8 @@
  * soft delete, purge protection, and RBAC-ready access policies.
  */
 
-import { markAsAzureResource } from "./from-arm";
+import { Composite, mergeDefaults } from "@intentius/chant";
+import { KeyVault } from "../generated";
 
 export interface KeyVaultSecureProps {
   /** Key vault name (3-24 chars, globally unique). */
@@ -26,15 +27,19 @@ export interface KeyVaultSecureProps {
   location?: string;
   /** Resource tags. */
   tags?: Record<string, string>;
+  /** Per-member defaults. */
+  defaults?: {
+    vault?: Partial<ConstructorParameters<typeof KeyVault>[0]>;
+  };
 }
 
 export interface KeyVaultSecureResult {
-  vault: Record<string, unknown>;
+  vault: InstanceType<typeof KeyVault>;
 }
 
 /**
- * Create a KeyVaultSecure composite — returns a property object for
- * a Key Vault with security best practices.
+ * Create a KeyVaultSecure composite — returns a Key Vault
+ * with security best practices.
  *
  * @example
  * ```ts
@@ -55,13 +60,14 @@ export interface KeyVaultSecureResult {
  * export { vault };
  * ```
  */
-export function KeyVaultSecure(props: KeyVaultSecureProps): KeyVaultSecureResult {
+export const KeyVaultSecure = Composite<KeyVaultSecureProps>((props) => {
   const {
     name,
     tenantId,
     accessPolicies = [],
     location = "[resourceGroup().location]",
     tags = {},
+    defaults,
   } = props;
 
   const commonTags: Record<string, string> = {
@@ -69,42 +75,36 @@ export function KeyVaultSecure(props: KeyVaultSecureProps): KeyVaultSecureResult
     ...tags,
   };
 
-  const vault: Record<string, unknown> = {
-    type: "Microsoft.KeyVault/vaults",
-    apiVersion: "2023-02-01",
+  const vault = new KeyVault(mergeDefaults({
     name,
     location,
     tags: commonTags,
-    properties: {
-      tenantId,
-      sku: {
-        family: "A",
-        name: "standard",
-      },
-      accessPolicies: accessPolicies.map((policy) => ({
-        tenantId: policy.tenantId,
-        objectId: policy.objectId,
-        permissions: {
-          ...(policy.permissions.keys && { keys: policy.permissions.keys }),
-          ...(policy.permissions.secrets && { secrets: policy.permissions.secrets }),
-          ...(policy.permissions.certificates && { certificates: policy.permissions.certificates }),
-        },
-      })),
-      enabledForDeployment: false,
-      enabledForDiskEncryption: false,
-      enabledForTemplateDeployment: false,
-      enableSoftDelete: true,
-      softDeleteRetentionInDays: 90,
-      enablePurgeProtection: true,
-      enableRbacAuthorization: false,
-      networkAcls: {
-        bypass: "AzureServices",
-        defaultAction: "Allow",
-      },
+    tenantId,
+    sku: {
+      family: "A",
+      name: "standard",
     },
-  };
-
-  markAsAzureResource(vault);
+    accessPolicies: accessPolicies.map((policy) => ({
+      tenantId: policy.tenantId,
+      objectId: policy.objectId,
+      permissions: {
+        ...(policy.permissions.keys && { keys: policy.permissions.keys }),
+        ...(policy.permissions.secrets && { secrets: policy.permissions.secrets }),
+        ...(policy.permissions.certificates && { certificates: policy.permissions.certificates }),
+      },
+    })),
+    enabledForDeployment: false,
+    enabledForDiskEncryption: false,
+    enabledForTemplateDeployment: false,
+    enableSoftDelete: true,
+    softDeleteRetentionInDays: 90,
+    enablePurgeProtection: true,
+    enableRbacAuthorization: false,
+    networkAcls: {
+      bypass: "AzureServices",
+      defaultAction: "Allow",
+    },
+  }, defaults?.vault), { apiVersion: "2023-02-01" });
 
   return { vault };
-}
+}, "KeyVaultSecure");

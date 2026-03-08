@@ -1,4 +1,4 @@
-import { Composite } from "@intentius/chant";
+import { Composite, mergeDefaults } from "@intentius/chant";
 import { Job, Image, Service, Rule } from "../generated";
 import { CI } from "../variables";
 
@@ -23,6 +23,10 @@ export interface DockerBuildProps {
   rules?: InstanceType<typeof Rule>[];
   /** Docker version. Default: "27" */
   dockerVersion?: string;
+  /** Per-member defaults for customizing the build job. */
+  defaults?: {
+    build?: Partial<ConstructorParameters<typeof Job>[0]>;
+  };
 }
 
 export const DockerBuild = Composite<DockerBuildProps>((props) => {
@@ -37,6 +41,7 @@ export const DockerBuild = Composite<DockerBuildProps>((props) => {
     buildArgs,
     rules,
     dockerVersion = "27",
+    defaults: defs,
   } = props;
 
   const buildArgFlags = buildArgs
@@ -63,7 +68,7 @@ export const DockerBuild = Composite<DockerBuildProps>((props) => {
     );
   }
 
-  const build = new Job({
+  const build = new Job(mergeDefaults({
     stage,
     image: new Image({ name: `docker:${dockerVersion}-cli` }),
     services: [new Service({ name: `docker:${dockerVersion}-dind`, alias: "docker" })],
@@ -75,7 +80,7 @@ export const DockerBuild = Composite<DockerBuildProps>((props) => {
     ],
     script,
     ...(rules ? { rules } : {}),
-  });
+  }, defs?.build));
 
   return { build };
 }, "DockerBuild");

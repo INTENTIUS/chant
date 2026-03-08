@@ -1,4 +1,4 @@
-import { Composite, withDefaults } from "@intentius/chant";
+import { Composite, mergeDefaults, withDefaults } from "@intentius/chant";
 import { Job, Default, Image, Cache, Artifacts } from "../generated";
 import { CI } from "../variables";
 
@@ -17,6 +17,12 @@ export interface NodePipelineProps {
   artifactExpiry?: string;
   /** Override auto-detected install command */
   installCommand?: string;
+  /** Per-member defaults for customizing the generated resources. */
+  defaults?: {
+    defaults?: Partial<ConstructorParameters<typeof Default>[0]>;
+    build?: Partial<ConstructorParameters<typeof Job>[0]>;
+    test?: Partial<ConstructorParameters<typeof Job>[0]>;
+  };
 }
 
 const cacheConfig = {
@@ -52,6 +58,7 @@ export const NodePipeline = Composite<NodePipelineProps>((props) => {
     buildArtifactPaths = ["dist/"],
     artifactExpiry = "1 hour",
     installCommand,
+    defaults: defs,
   } = props;
 
   const pm = cacheConfig[packageManager];
@@ -68,13 +75,13 @@ export const NodePipeline = Composite<NodePipelineProps>((props) => {
 
   const variables = Object.keys(pm.envVars).length > 0 ? pm.envVars : undefined;
 
-  const defaults = new Default({
+  const defaults = new Default(mergeDefaults({
     image: nodeImage,
     cache: [cache],
     ...(variables ? {} : {}),
-  });
+  }, defs?.defaults));
 
-  const build = new Job({
+  const build = new Job(mergeDefaults({
     stage: "build",
     script: [install, `${run} ${buildScript}`],
     artifacts: new Artifacts({
@@ -82,9 +89,9 @@ export const NodePipeline = Composite<NodePipelineProps>((props) => {
       expire_in: artifactExpiry,
     }),
     ...(variables ? { variables } : {}),
-  });
+  }, defs?.build));
 
-  const test = new Job({
+  const test = new Job(mergeDefaults({
     stage: "test",
     script: [install, `${run} ${testScript}`],
     artifacts: new Artifacts({
@@ -92,7 +99,7 @@ export const NodePipeline = Composite<NodePipelineProps>((props) => {
       when: "always",
     }),
     ...(variables ? { variables } : {}),
-  });
+  }, defs?.test));
 
   return { defaults, build, test };
 }, "NodePipeline");

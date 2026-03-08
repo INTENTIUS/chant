@@ -138,6 +138,16 @@ describe("DockerBuild", () => {
     const props = (instance.build as any).props;
     expect(props.rules).toBeUndefined();
   });
+
+  test("per-member defaults override build job", () => {
+    const instance = DockerBuild({
+      defaults: {
+        build: { tags: ["docker-runner"] },
+      },
+    });
+    const props = (instance.build as any).props;
+    expect(props.tags).toEqual(["docker-runner"]);
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -286,6 +296,36 @@ describe("NodePipeline", () => {
     const props = (instance.test as any).props;
     const artProps = (props.artifacts as any).props;
     expect(artProps.when).toBe("always");
+  });
+
+  test("per-member defaults override build job", () => {
+    const instance = NodePipeline({
+      defaults: {
+        build: { tags: ["node-runner"] },
+      },
+    });
+    const props = (instance.build as any).props;
+    expect(props.tags).toEqual(["node-runner"]);
+  });
+
+  test("per-member defaults override test job", () => {
+    const instance = NodePipeline({
+      defaults: {
+        test: { allow_failure: true },
+      },
+    });
+    const props = (instance.test as any).props;
+    expect(props.allow_failure).toBe(true);
+  });
+
+  test("per-member defaults override defaults member", () => {
+    const instance = NodePipeline({
+      defaults: {
+        defaults: { interruptible: true },
+      },
+    });
+    const props = (instance.defaults as any).props;
+    expect(props.interruptible).toBe(true);
   });
 });
 
@@ -451,6 +491,37 @@ describe("PythonPipeline", () => {
     const cacheProps = (defaultProps.cache[0] as any).props;
     expect(cacheProps.policy).toBe("pull-push");
   });
+
+  test("per-member defaults override test job", () => {
+    const instance = PythonPipeline({
+      defaults: {
+        test: { tags: ["python-runner"] },
+      },
+    });
+    const props = (instance.test as any).props;
+    expect(props.tags).toEqual(["python-runner"]);
+  });
+
+  test("per-member defaults override lint job", () => {
+    const instance = PythonPipeline({
+      defaults: {
+        lint: { allow_failure: true },
+      },
+    });
+    const members = instance.members as any;
+    const props = (members.lint as any).props;
+    expect(props.allow_failure).toBe(true);
+  });
+
+  test("per-member defaults override defaults member", () => {
+    const instance = PythonPipeline({
+      defaults: {
+        defaults: { interruptible: true },
+      },
+    });
+    const props = (instance.defaults as any).props;
+    expect(props.interruptible).toBe(true);
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -608,5 +679,27 @@ describe("ReviewApp", () => {
     const props = (instance.deploy as any).props;
     const envProps = (props.environment as any).props;
     expect(envProps.url).toContain("$CI_ENVIRONMENT_SLUG");
+  });
+
+  test("per-member defaults override deploy job", () => {
+    const instance = ReviewApp({
+      ...baseProps,
+      defaults: {
+        deploy: { tags: ["deploy-runner"] },
+      },
+    });
+    const props = (instance.deploy as any).props;
+    expect(props.tags).toEqual(["deploy-runner"]);
+  });
+
+  test("per-member defaults override stop job", () => {
+    const instance = ReviewApp({
+      ...baseProps,
+      defaults: {
+        stop: { allow_failure: true },
+      },
+    });
+    const props = (instance.stop as any).props;
+    expect(props.allow_failure).toBe(true);
   });
 });

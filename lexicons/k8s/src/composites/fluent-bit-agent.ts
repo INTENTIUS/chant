@@ -5,6 +5,9 @@
  * (image, RBAC, CloudWatch output config).
  */
 
+import { Composite, mergeDefaults } from "@intentius/chant";
+import { DaemonSet, ServiceAccount, ClusterRole, ClusterRoleBinding, ConfigMap } from "../generated";
+
 export interface FluentBitAgentProps {
   /** Agent name (default: "fluent-bit"). */
   name?: string;
@@ -30,14 +33,22 @@ export interface FluentBitAgentProps {
   memoryLimit?: string;
   /** IAM Role ARN for IRSA (adds eks.amazonaws.com/role-arn annotation to ServiceAccount). */
   iamRoleArn?: string;
+  /** Per-member defaults for fine-grained overrides. */
+  defaults?: {
+    daemonSet?: Partial<Record<string, unknown>>;
+    serviceAccount?: Partial<Record<string, unknown>>;
+    clusterRole?: Partial<Record<string, unknown>>;
+    clusterRoleBinding?: Partial<Record<string, unknown>>;
+    configMap?: Partial<Record<string, unknown>>;
+  };
 }
 
 export interface FluentBitAgentResult {
-  daemonSet: Record<string, unknown>;
-  serviceAccount: Record<string, unknown>;
-  clusterRole: Record<string, unknown>;
-  clusterRoleBinding: Record<string, unknown>;
-  configMap: Record<string, unknown>;
+  daemonSet: InstanceType<typeof DaemonSet>;
+  serviceAccount: InstanceType<typeof ServiceAccount>;
+  clusterRole: InstanceType<typeof ClusterRole>;
+  clusterRoleBinding: InstanceType<typeof ClusterRoleBinding>;
+  configMap: InstanceType<typeof ConfigMap>;
 }
 
 /**
@@ -56,7 +67,7 @@ export interface FluentBitAgentResult {
  * });
  * ```
  */
-export function FluentBitAgent(props: FluentBitAgentProps): FluentBitAgentResult {
+export const FluentBitAgent = Composite<FluentBitAgentProps>((props) => {
   const {
     name = "fluent-bit",
     image = "public.ecr.aws/aws-observability/aws-for-fluent-bit:stable",
@@ -70,6 +81,7 @@ export function FluentBitAgent(props: FluentBitAgentProps): FluentBitAgentResult
     cpuLimit = "200m",
     memoryLimit = "128Mi",
     iamRoleArn,
+    defaults: defs,
   } = props;
 
   const saName = `${name}-sa`;
@@ -137,7 +149,7 @@ export function FluentBitAgent(props: FluentBitAgentProps): FluentBitAgentResult
     },
   };
 
-  const daemonSetProps: Record<string, unknown> = {
+  const daemonSet = new DaemonSet(mergeDefaults({
     metadata: {
       name,
       namespace,
@@ -159,18 +171,18 @@ export function FluentBitAgent(props: FluentBitAgentProps): FluentBitAgentResult
         },
       },
     },
-  };
+  }, defs?.daemonSet));
 
-  const serviceAccountProps: Record<string, unknown> = {
+  const serviceAccount = new ServiceAccount(mergeDefaults({
     metadata: {
       name: saName,
       namespace,
       labels: { ...commonLabels, "app.kubernetes.io/component": "agent" },
       ...(iamRoleArn ? { annotations: { "eks.amazonaws.com/role-arn": iamRoleArn } } : {}),
     },
-  };
+  }, defs?.serviceAccount));
 
-  const clusterRoleProps: Record<string, unknown> = {
+  const clusterRole = new ClusterRole(mergeDefaults({
     metadata: {
       name: clusterRoleName,
       labels: { ...commonLabels, "app.kubernetes.io/component": "rbac" },
@@ -178,9 +190,9 @@ export function FluentBitAgent(props: FluentBitAgentProps): FluentBitAgentResult
     rules: [
       { apiGroups: [""], resources: ["namespaces", "pods"], verbs: ["get", "list", "watch"] },
     ],
-  };
+  }, defs?.clusterRole));
 
-  const clusterRoleBindingProps: Record<string, unknown> = {
+  const clusterRoleBinding = new ClusterRoleBinding(mergeDefaults({
     metadata: {
       name: bindingName,
       labels: { ...commonLabels, "app.kubernetes.io/component": "rbac" },
@@ -197,9 +209,9 @@ export function FluentBitAgent(props: FluentBitAgentProps): FluentBitAgentResult
         namespace,
       },
     ],
-  };
+  }, defs?.clusterRoleBinding));
 
-  const configMapProps: Record<string, unknown> = {
+  const configMap = new ConfigMap(mergeDefaults({
     metadata: {
       name: configMapName,
       namespace,
@@ -208,13 +220,7 @@ export function FluentBitAgent(props: FluentBitAgentProps): FluentBitAgentResult
     data: {
       "fluent-bit.conf": fluentBitConfig,
     },
-  };
+  }, defs?.configMap));
 
-  return {
-    daemonSet: daemonSetProps,
-    serviceAccount: serviceAccountProps,
-    clusterRole: clusterRoleProps,
-    clusterRoleBinding: clusterRoleBindingProps,
-    configMap: configMapProps,
-  };
-}
+  return { daemonSet, serviceAccount, clusterRole, clusterRoleBinding, configMap };
+}, "FluentBitAgent");
