@@ -526,7 +526,7 @@ describe("mergeDefaults", () => {
       { config: { a: 1, b: 2 } },
       { config: { a: 10 } as any },
     );
-    expect(result.config).toEqual({ a: 10 });
+    expect(result.config).toEqual({ a: 10 } as any);
   });
 
   test("new keys from overrides are added", () => {
