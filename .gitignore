@@ -25,5 +25,8 @@ examples/*/flyway.toml
 examples/*/templates/*.json
 examples/*/.gitlab-ci.yml
 
+# Spell orchestration files (ephemeral, per-project)
+spells/
+
 # Docker smoke build artifacts
 test/example-builds/
