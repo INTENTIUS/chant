@@ -6,20 +6,59 @@ All clouds deploy to the US East / Virginia metro for low cross-cloud latency (~
 
 ## Skills
 
-The lexicon packages ship skills for agent-guided deployment:
+The lexicon packages ship skills for agent-guided deployment. After `npm install`, your agent has access to:
 
 | Skill | Package | Purpose |
 |-------|---------|---------|
-| `chant-aws` | `@intentius/chant-lexicon-aws` | AWS CloudFormation lifecycle: build, validate, change sets, rollback |
-| `chant-azure` | `@intentius/chant-lexicon-azure` | Azure ARM template lifecycle: build, validate, deploy, rollback |
-| `chant-gcp` | `@intentius/chant-lexicon-gcp` | GCP Config Connector lifecycle: build, lint, deploy, rollback |
-| `chant-k8s` | `@intentius/chant-lexicon-k8s` | Kubernetes workload lifecycle: build, lint, apply, troubleshoot |
+| `chant-aws` | `@intentius/chant-lexicon-aws` | CloudFormation lifecycle: build, validate, change sets, rollback |
+| `chant-eks` | `@intentius/chant-lexicon-aws` | End-to-end EKS workflow bridging AWS infra and K8s workloads |
+| `chant-azure` | `@intentius/chant-lexicon-azure` | ARM template lifecycle: build, validate, deploy, rollback |
+| `chant-aks` | `@intentius/chant-lexicon-azure` | End-to-end AKS workflow bridging Azure infra and K8s workloads |
+| `chant-gcp` | `@intentius/chant-lexicon-gcp` | Config Connector lifecycle: build, lint, deploy, rollback |
+| `chant-gke` | `@intentius/chant-lexicon-gcp` | End-to-end GKE workflow bridging GCP infra and K8s workloads |
+| `chant-k8s` | `@intentius/chant-lexicon-k8s` | Kubernetes operational playbook: build, lint, apply, troubleshoot |
+| `chant-k8s-patterns` | `@intentius/chant-lexicon-k8s` | Advanced K8s patterns: sidecars, TLS, monitoring, network isolation |
 
 > **Using Claude Code?** Just ask:
 >
 > ```
 > Deploy the cockroachdb-multi-cloud example.
 > ```
+
+### Skills guide
+
+This is a 4-lexicon, 3-cloud example. Each deployment phase maps to specific skills:
+
+#### Phase 1 — Infrastructure (parallel, per cloud)
+
+Each cloud has its own infra stack under `src/{eks,aks,gke}/infra/`. The cloud-specific lifecycle skills handle build → validate → deploy:
+
+- **EKS**: `chant-aws` for CloudFormation lifecycle, `chant-eks` for the EKS-specific workflow (VPC, cluster, node groups, OIDC, IAM)
+- **AKS**: `chant-azure` for ARM template lifecycle, `chant-aks` for the AKS-specific workflow (VNet, cluster, managed identities, role assignments)
+- **GKE**: `chant-gcp` for Config Connector lifecycle, `chant-gke` for the GKE-specific workflow (VPC, cluster, node pool, service accounts)
+
+#### Phase 2 — Kubernetes workloads (parallel, per cloud)
+
+Each cloud has a K8s stack under `src/{eks,aks,gke}/k8s/`. Two skills cover this:
+
+- **`chant-k8s`** — the operational playbook for build, lint, apply, rollback, and troubleshooting. Its composite decision tree identifies **CockroachDbCluster** as the right composite for this workload (StatefulSet + Services + PVCs + RBAC + optional cert generation).
+- **`chant-k8s-patterns`** — advanced patterns if you need to extend the workloads (sidecars, monitoring, TLS, network isolation).
+
+#### Skill workflow
+
+```
+1. chant-eks / chant-aks / chant-gke     "Deploy cloud infrastructure"
+   │  (parallel — one per cloud)          → VPC, cluster, VPN, DNS
+   │
+2. chant-aws / chant-azure / chant-gcp   "CloudFormation / ARM / CC lifecycle"
+   │  (referenced by the above)           → validate, change sets, rollback
+   │
+3. chant-k8s                              "Deploy K8s workloads"
+   │  (parallel — one per cluster)        → CockroachDbCluster composite, apply, verify
+   │
+4. chant-k8s-patterns                     "Extend with advanced patterns"
+                                          → sidecars, monitoring, TLS, network isolation
+```
 
 ## Architecture
 
