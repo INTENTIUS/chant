@@ -1,0 +1,7 @@
+config.yaml
+k8s.yaml
+.gitlab-ci.yml
+gitlab-cell/
+values-*.yaml
+.env
+node_modules/

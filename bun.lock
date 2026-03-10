@@ -52,6 +52,17 @@
         "@intentius/chant-lexicon-gitlab": "workspace:*",
       },
     },
+    "examples/gcp-gitlab-cells": {
+      "name": "gcp-gitlab-cells-example",
+      "version": "0.0.1",
+      "dependencies": {
+        "@intentius/chant": "workspace:*",
+        "@intentius/chant-lexicon-gcp": "workspace:*",
+        "@intentius/chant-lexicon-gitlab": "workspace:*",
+        "@intentius/chant-lexicon-helm": "workspace:*",
+        "@intentius/chant-lexicon-k8s": "workspace:*",
+      },
+    },
     "examples/gitlab-aws-alb-api": {
       "name": "gitlab-aws-alb-api-example",
       "version": "0.0.1",
@@ -1375,6 +1386,8 @@
     "gcp-cloud-sql-example": ["gcp-cloud-sql-example@workspace:lexicons/gcp/examples/cloud-sql"],
 
     "gcp-cloud-storage-lifecycle-example": ["gcp-cloud-storage-lifecycle-example@workspace:lexicons/gcp/examples/cloud-storage-lifecycle"],
+
+    "gcp-gitlab-cells-example": ["gcp-gitlab-cells-example@workspace:examples/gcp-gitlab-cells"],
 
     "gcp-gke-cluster-example": ["gcp-gke-cluster-example@workspace:lexicons/gcp/examples/gke-cluster"],
 
