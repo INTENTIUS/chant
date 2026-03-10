@@ -22,7 +22,8 @@ cd "${ROOT_DIR}"
 
 echo "==> Pre-flight: checking required environment variables"
 _missing=0
-for var in ALB_CERT_ARN EXTERNAL_DNS_ROLE_ARN \
+for var in CRDB_DOMAIN \
+           ALB_CERT_ARN EXTERNAL_DNS_ROLE_ARN \
            AZURE_SUBSCRIPTION_ID AZURE_TENANT_ID EXTERNAL_DNS_CLIENT_ID \
            GCP_PROJECT_ID EXTERNAL_DNS_GSA_EMAIL \
            VPN_SHARED_SECRET; do
@@ -163,10 +164,11 @@ echo "==> Step 10: Initialize CockroachDB cluster"
 kubectl --context eks exec cockroachdb-0 -n crdb-eks -- \
   /cockroach/cockroach init --certs-dir=/cockroach/cockroach-certs
 
+_domain="${CRDB_DOMAIN:-crdb.example.com}"
 echo "==> CockroachDB multi-cloud cluster is ready!"
-echo "    EKS UI: https://eks.crdb.intentius.io"
-echo "    AKS UI: https://aks.crdb.intentius.io"
-echo "    GKE UI: https://gke.crdb.intentius.io"
+echo "    EKS UI: https://eks.${_domain}"
+echo "    AKS UI: https://aks.${_domain}"
+echo "    GKE UI: https://gke.${_domain}"
 echo ""
 echo "    SQL:  kubectl --context eks exec -it cockroachdb-0 -n crdb-eks -- \\"
 echo "          /cockroach/cockroach sql --certs-dir=/cockroach/cockroach-certs"

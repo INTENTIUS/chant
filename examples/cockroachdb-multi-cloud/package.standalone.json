@@ -1,0 +1,25 @@
+{
+  "name": "cockroachdb-multi-cloud-example",
+  "version": "0.0.1",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "build": "npm run build:eks && npm run build:aks && npm run build:gke",
+    "build:aks": "chant build src/aks --lexicon azure -o dist/aks-infra.json && chant build src/aks --lexicon k8s -o dist/aks-k8s.yaml",
+    "build:eks": "chant build src/eks --lexicon aws -o dist/eks-infra.json && chant build src/eks --lexicon k8s -o dist/eks-k8s.yaml",
+    "build:gke": "chant build src/gke --lexicon gcp -o dist/gke-infra.json && chant build src/gke --lexicon k8s -o dist/gke-k8s.yaml",
+    "lint": "chant lint src/eks && chant lint src/aks && chant lint src/gke",
+    "deploy": "bash scripts/deploy.sh",
+    "teardown": "bash scripts/teardown.sh"
+  },
+  "dependencies": {
+    "@intentius/chant": "^0.0.22",
+    "@intentius/chant-lexicon-aws": "^0.0.22",
+    "@intentius/chant-lexicon-azure": "^0.0.22",
+    "@intentius/chant-lexicon-gcp": "^0.0.22",
+    "@intentius/chant-lexicon-k8s": "^0.0.22"
+  },
+  "devDependencies": {
+    "typescript": "^5.0.0"
+  }
+}

@@ -5,6 +5,7 @@ import {
   AksExternalDnsAgent,
 } from "@intentius/chant-lexicon-k8s";
 import { config } from "../config";
+import { CRDB_DOMAIN } from "../../shared/config";
 
 const NAMESPACE = "crdb-aks";
 
@@ -33,7 +34,7 @@ const dns = AksExternalDnsAgent({
   resourceGroup: config.resourceGroup,
   subscriptionId: config.subscriptionId,
   tenantId: config.tenantId,
-  domainFilters: ["crdb.intentius.io"],
+  domainFilters: [CRDB_DOMAIN],
   txtOwnerId: config.clusterName,
 });
 

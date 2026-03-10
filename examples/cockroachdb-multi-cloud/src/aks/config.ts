@@ -1,6 +1,6 @@
 // AKS-specific configuration. Extends shared cluster config.
 
-import { CRDB_CLUSTER } from "../shared/config";
+import { CRDB_CLUSTER, CRDB_DOMAIN } from "../shared/config";
 
 export const config = {
   ...CRDB_CLUSTER,
@@ -11,6 +11,6 @@ export const config = {
   region: "eastus",
   namespace: "crdb-aks",
   locality: "cloud=azure,region=eastus",
-  domain: "aks.crdb.intentius.io",
+  domain: `aks.${CRDB_DOMAIN}`,
   externalDnsClientId: process.env.EXTERNAL_DNS_CLIENT_ID ?? "00000000-0000-0000-0000-000000000000",
 };

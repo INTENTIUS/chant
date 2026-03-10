@@ -27,6 +27,9 @@ export const CRDB_CLUSTER = {
   ],
 };
 
+// Base domain for UI ingress. Override with CRDB_DOMAIN env var.
+export const CRDB_DOMAIN = process.env.CRDB_DOMAIN ?? "crdb.example.com";
+
 // Non-overlapping CIDRs for VPN routing.
 export const CIDRS = {
   eks: { vpc: "10.1.0.0/16", service: "172.20.0.0/16", dnsIp: "172.20.0.10" },

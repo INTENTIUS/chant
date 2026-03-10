@@ -5,6 +5,7 @@ import {
   ExternalDnsAgent,
 } from "@intentius/chant-lexicon-k8s";
 import { config } from "../config";
+import { CRDB_DOMAIN } from "../../shared/config";
 
 const NAMESPACE = "crdb-eks";
 
@@ -34,7 +35,7 @@ export const albIngress = alb.ingress;
 
 const dns = ExternalDnsAgent({
   iamRoleArn: config.externalDnsRoleArn,
-  domainFilters: ["crdb.intentius.io"],
+  domainFilters: [CRDB_DOMAIN],
   txtOwnerId: config.clusterName,
 });
 

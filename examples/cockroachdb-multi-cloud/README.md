@@ -85,11 +85,20 @@ Each cloud has a K8s stack under `src/{eks,aks,gke}/k8s/`. Two skills cover this
 - Google Cloud CLI configured (`gcloud auth login`)
 - `kubectl` installed
 - `docker` installed (for cert generation)
-- Domain `crdb.intentius.io` with registrar access
+- A domain you control (set via `CRDB_DOMAIN` env var, e.g., `crdb.mycompany.com`)
 
 ### Required Environment Variables
 
-Set these before deploying. Placeholder defaults exist but will produce broken configs.
+Copy `.env.example` to `.env` and fill in the required values:
+
+```bash
+cp .env.example .env
+# Edit .env with your values
+set -a && source .env && set +a
+```
+
+**Domain:**
+- `CRDB_DOMAIN` — base domain for UI ingress (subdomains: `eks.*`, `aks.*`, `gke.*`)
 
 **AWS (EKS):**
 - `AWS_REGION` — AWS region (default: `us-east-1`)
@@ -118,15 +127,17 @@ After Step 2 (infrastructure deploy), delegate each subdomain at your registrar.
 
 ### Get nameservers from each cloud
 
+Replace `$CRDB_DOMAIN` with your domain below:
+
 ```bash
 # AWS — Route53 hosted zone
-aws route53 list-hosted-zones-by-name --dns-name eks.crdb.intentius.io \
+aws route53 list-hosted-zones-by-name --dns-name "eks.${CRDB_DOMAIN}" \
   --query 'HostedZones[0].Id' --output text | xargs \
   aws route53 get-hosted-zone --id --query 'DelegationSet.NameServers'
 
 # Azure — DNS zone
 az network dns zone show \
-  --name aks.crdb.intentius.io \
+  --name "aks.${CRDB_DOMAIN}" \
   --resource-group cockroachdb-rg \
   --query nameServers
 
@@ -138,17 +149,17 @@ gcloud dns managed-zones describe gke-cockroachdb-zone \
 ### Create NS records at your registrar
 
 ```
-eks.crdb.intentius.io  →  NS  (Route53 zone nameservers)
-aks.crdb.intentius.io  →  NS  (Azure DNS zone nameservers)
-gke.crdb.intentius.io  →  NS  (Cloud DNS zone nameservers)
+eks.<your-domain>  →  NS  (Route53 zone nameservers)
+aks.<your-domain>  →  NS  (Azure DNS zone nameservers)
+gke.<your-domain>  →  NS  (Cloud DNS zone nameservers)
 ```
 
 ### Verify
 
 ```bash
-dig NS eks.crdb.intentius.io
-dig NS aks.crdb.intentius.io
-dig NS gke.crdb.intentius.io
+dig NS "eks.${CRDB_DOMAIN}"
+dig NS "aks.${CRDB_DOMAIN}"
+dig NS "gke.${CRDB_DOMAIN}"
 ```
 
 **Note:** The CockroachDB cluster works without DNS delegation (uses internal K8s DNS for inter-node communication). Public UI ingress won't resolve until delegation is complete.
@@ -156,21 +167,38 @@ dig NS gke.crdb.intentius.io
 ## Deploy
 
 ```bash
+cp .env.example .env
+# Fill in required values in .env
+set -a && source .env && set +a
 npm install
 npm run deploy
 ```
 
-This runs `scripts/deploy.sh` which:
+### Standalone usage
+
+To run this example outside the monorepo, copy `package.standalone.json` to `package.json`:
+
+```bash
+cp package.standalone.json package.json
+npm install
+```
+
+### What `npm run deploy` does
+
+The deploy is a **two-pass process**. The first pass deploys infrastructure with placeholder VPN IPs (each cloud doesn't know the others' public IPs yet). After infra is up, `load-outputs.sh` extracts real VPN IPs into `.env`. The second pass rebuilds and re-deploys with the real IPs so VPN tunnels can establish.
+
 1. Builds all stacks (infra + K8s for each cloud)
-2. Deploys infrastructure in parallel (EKS, AKS, GKE)
-3. Loads outputs (VPN IPs, endpoints)
-4. Rebuilds with real VPN IPs
-5. Configures kubectl contexts
-6. Generates and distributes TLS certificates
-7. Applies K8s manifests in parallel
-8. Restarts CoreDNS to pick up cross-cluster forwarding
-9. Waits for StatefulSets to be ready
-10. Runs `cockroach init`
+2. Deploys infrastructure in parallel (EKS, AKS, GKE) — **first pass, placeholder VPN IPs**
+3. Loads outputs (VPN IPs, endpoints) into `.env`
+4. Rebuilds with real VPN IPs from `.env`
+5. Re-deploys infrastructure — **second pass, real VPN IPs**
+6. Waits for VPN tunnels to establish
+7. Configures kubectl contexts
+8. Generates and distributes TLS certificates
+9. Applies K8s manifests in parallel
+10. Restarts CoreDNS to pick up cross-cluster forwarding
+11. Waits for StatefulSets to be ready
+12. Runs `cockroach init`
 
 ## Verify
 
@@ -236,5 +264,5 @@ scripts/
 ## TLS Strategy
 
 - **Inter-node + client:** Self-signed CA via `cockroach cert` (generated locally, distributed as K8s Secrets). One node cert with SANs for all 9 nodes across all 3 clusters.
-- **Dashboard UI:** Public Ingress on `{cloud}.crdb.intentius.io` with cloud-native TLS (ALB/AGIC/GCE + cert-manager)
+- **Dashboard UI:** Public Ingress on `{cloud}.<CRDB_DOMAIN>` with cloud-native TLS (ALB/AGIC/GCE + cert-manager)
 - **Multi-cloud cert generation:** Uses `scripts/generate-certs.sh` (external). The K8s composite's built-in cert-gen Job is for single-cluster deployments only.

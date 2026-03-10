@@ -5,6 +5,7 @@ import {
   GkeExternalDnsAgent,
 } from "@intentius/chant-lexicon-k8s";
 import { config } from "../config";
+import { CRDB_DOMAIN } from "../../shared/config";
 
 const NAMESPACE = "crdb-gke";
 
@@ -29,7 +30,7 @@ export const gceIngress = ing.ingress;
 const dns = GkeExternalDnsAgent({
   gcpServiceAccountEmail: config.externalDnsGsaEmail,
   gcpProjectId: config.projectId,
-  domainFilters: ["crdb.intentius.io"],
+  domainFilters: [CRDB_DOMAIN],
   txtOwnerId: config.clusterName,
 });
 

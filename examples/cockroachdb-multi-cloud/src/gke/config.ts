@@ -1,6 +1,6 @@
 // GKE-specific configuration. Extends shared cluster config.
 
-import { CRDB_CLUSTER } from "../shared/config";
+import { CRDB_CLUSTER, CRDB_DOMAIN } from "../shared/config";
 
 export const config = {
   ...CRDB_CLUSTER,
@@ -9,6 +9,6 @@ export const config = {
   region: "us-east4",
   namespace: "crdb-gke",
   locality: "cloud=gcp,region=us-east4",
-  domain: "gke.crdb.intentius.io",
+  domain: `gke.${CRDB_DOMAIN}`,
   externalDnsGsaEmail: process.env.EXTERNAL_DNS_GSA_EMAIL ?? "gke-cockroachdb-dns@my-project.iam.gserviceaccount.com",
 };
