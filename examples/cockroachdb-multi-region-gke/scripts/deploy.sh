@@ -110,8 +110,30 @@ echo "==> Step 6: Apply K8s manifests (parallel)"
 )
 
 echo "==> Step 7: Wait for ExternalDNS to register pod IPs in crdb.internal"
-echo "  Waiting 30s for ExternalDNS to start and register initial records..."
-sleep 30
+echo "  Checking ExternalDNS pods are running..."
+for ctx in east central west; do
+  kubectl --context "${ctx}" -n kube-system rollout status deployment/external-dns --timeout=120s
+done
+
+echo "  Waiting for DNS records in crdb.internal private zone..."
+for i in $(seq 1 30); do
+  _record_count=$(gcloud dns record-sets list --zone=crdb-internal \
+    --project "${GCP_PROJECT_ID}" \
+    --filter="type=A" \
+    --format="value(name)" 2>/dev/null | wc -l | tr -d ' ')
+  if [[ "${_record_count}" -ge 3 ]]; then
+    echo "  DNS records registered (${_record_count} A records found)"
+    break
+  fi
+  echo "  A records found: ${_record_count} — waiting... (${i}/30)"
+  sleep 10
+done
+
+if [[ "${_record_count}" -lt 3 ]]; then
+  echo "  [WARN] Expected at least 3 A record sets in crdb.internal but found ${_record_count}."
+  echo "  Check ExternalDNS logs: kubectl --context east -n kube-system logs -l app.kubernetes.io/name=external-dns"
+  echo "  Continuing — StatefulSets may take longer to become ready."
+fi
 
 echo "==> Step 8: Wait for StatefulSets to be ready"
 kubectl --context east -n crdb-east rollout status statefulset/cockroachdb --timeout=300s
