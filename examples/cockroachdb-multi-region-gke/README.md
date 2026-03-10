@@ -143,6 +143,37 @@ Cloud DNS private zone: crdb.internal
   cockroachdb-{0,1,2}.west.crdb.internal    → pod IPs (ExternalDNS)
 ```
 
+### Cross-cluster discovery with ExternalDNS
+
+Each GKE cluster runs its own kube-dns, which only resolves `*.svc.cluster.local` names within that cluster. CockroachDB needs all 9 nodes to find each other across 3 separate clusters.
+
+**Solution:** A Cloud DNS private zone (`crdb.internal`) shared across all 3 clusters via the global VPC. ExternalDNS in each cluster watches the CockroachDB headless service and registers pod IPs as A records:
+
+```
+ExternalDNS (east cluster)
+  watches: headless Service annotated with external-dns.alpha.kubernetes.io/hostname=east.crdb.internal
+  creates: cockroachdb-0.east.crdb.internal → 10.1.x.x (pod IP)
+           cockroachdb-1.east.crdb.internal → 10.1.x.y
+           cockroachdb-2.east.crdb.internal → 10.1.x.z
+
+ExternalDNS (central cluster)  →  cockroachdb-{0,1,2}.central.crdb.internal
+ExternalDNS (west cluster)     →  cockroachdb-{0,1,2}.west.crdb.internal
+```
+
+CockroachDB's `--join` flag references these Cloud DNS names. When pods restart and get new IPs, ExternalDNS updates the records automatically.
+
+ExternalDNS also manages **public DNS records** for the CockroachDB UI ingress (`east.<domain>`, `central.<domain>`, `west.<domain>`) via per-region public Cloud DNS zones.
+
+**Workload Identity chain:** Each ExternalDNS pod authenticates to Cloud DNS without long-lived keys:
+
+```
+GCP ServiceAccount (gke-crdb-{region}-dns)
+  └── IAMPolicyMember: roles/dns.admin (can manage DNS records)
+  └── IAMPolicyMember: roles/iam.workloadIdentityUser
+        └── binds to K8s SA "external-dns-sa" in kube-system namespace
+              └── ExternalDNS Deployment runs as this K8s SA
+```
+
 ### Multi-region topology
 
 CockroachDB's multi-region SQL features use locality metadata to optimize data placement:
@@ -272,6 +303,8 @@ The deploy is a **true single-pass process** — no rebuild step needed. GCP VPC
 
 ## Verify
 
+### Pods and cluster status
+
 ```bash
 # Check all pods are running
 kubectl --context east get pods -n crdb-east
@@ -281,7 +314,38 @@ kubectl --context west get pods -n crdb-west
 # Check CockroachDB cluster status (should show all 9 nodes)
 kubectl --context east exec cockroachdb-0 -n crdb-east -- \
   /cockroach/cockroach node status --certs-dir=/cockroach/cockroach-certs
+```
 
+### ExternalDNS and Cloud DNS records
+
+```bash
+# Check ExternalDNS is running in each cluster
+for ctx in east central west; do
+  echo "--- ${ctx} ---"
+  kubectl --context "${ctx}" -n kube-system get pods -l app.kubernetes.io/name=external-dns
+done
+
+# Check ExternalDNS logs for record registration
+kubectl --context east -n kube-system logs -l app.kubernetes.io/name=external-dns --tail=20
+
+# Verify private zone records (should show A records for all 9 pods)
+gcloud dns record-sets list --zone=crdb-internal \
+  --project "${GCP_PROJECT_ID}" \
+  --filter="type=A"
+
+# Verify DNS resolution from inside a pod
+kubectl --context east exec cockroachdb-0 -n crdb-east -- \
+  nslookup cockroachdb-0.central.crdb.internal
+
+# Verify public zone records (UI ingress)
+gcloud dns record-sets list --zone=crdb-east-zone \
+  --project "${GCP_PROJECT_ID}" \
+  --filter="type=A"
+```
+
+### Multi-region topology
+
+```bash
 # Check multi-region topology
 kubectl --context east exec cockroachdb-0 -n crdb-east -- \
   /cockroach/cockroach sql --certs-dir=/cockroach/cockroach-certs \
@@ -295,6 +359,29 @@ kubectl --context east exec cockroachdb-0 -n crdb-east -- \
 # Connect via SQL
 kubectl --context east exec -it cockroachdb-0 -n crdb-east -- \
   /cockroach/cockroach sql --certs-dir=/cockroach/cockroach-certs
+```
+
+### Troubleshooting ExternalDNS
+
+If CockroachDB pods fail to join across regions, ExternalDNS may not have registered pod IPs yet.
+
+```bash
+# Check ExternalDNS logs for errors
+kubectl --context east -n kube-system logs -l app.kubernetes.io/name=external-dns
+
+# Common issues:
+# - "googleapi: Error 403: Forbidden" → Workload Identity binding missing or wrong project ID
+# - "no endpoints found" → headless service not annotated or pods not ready
+# - "zone not found" → private DNS zone not created (check shared infra deploy)
+
+# Verify the headless service has the ExternalDNS annotation
+kubectl --context east -n crdb-east get svc cockroachdb -o jsonpath='{.metadata.annotations}'
+
+# Verify Workload Identity is working
+kubectl --context east -n kube-system describe sa external-dns-sa | grep iam.gke.io
+
+# Force ExternalDNS to re-sync by restarting it
+kubectl --context east -n kube-system rollout restart deployment/external-dns
 ```
 
 ## Teardown

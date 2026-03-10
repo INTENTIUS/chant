@@ -97,6 +97,7 @@ All infrastructure is driven by a single `cells[]` array in `src/config.ts`. Add
 - helm 3.14+
 - jq
 - A GCP project with billing enabled
+- A domain you control (set via `DOMAIN` env var, e.g., `gitlab.mycompany.com`)
 
 ## Local Verification
 
@@ -133,6 +134,8 @@ npm run deploy
 This runs: build -> configure-kubectl -> deploy-infra -> load-outputs -> rebuild K8s -> apply system -> apply cells -> deploy cells (canary first).
 
 First deploy takes ~30-45 min (Cloud SQL creation + initial `db:migrate`).
+
+> **DNS delegation:** after deploy-infra creates the Cloud DNS zone, delegate your domain to GCP's nameservers. See [DNS Delegation](#dns-delegation-one-time-setup) below.
 
 ### 4. Verify
 
@@ -212,6 +215,34 @@ Validates 10 areas: infra health, system namespace, per-cell GitLab, git operati
 | File | Output |
 |------|--------|
 | `index.ts` | 9-stage GitLab CI pipeline |
+
+## DNS Delegation (One-Time Setup)
+
+After Step 3 deploys infrastructure, delegate your domain to GCP Cloud DNS nameservers.
+
+### Get nameservers
+
+```bash
+gcloud dns managed-zones describe gitlab-cells \
+  --project "${GCP_PROJECT_ID}" --format='value(nameServers)'
+```
+
+### Create NS records at your registrar
+
+At your domain registrar, create NS records pointing your domain to the Cloud DNS nameservers:
+
+```
+gitlab.mycompany.com  →  NS  (Cloud DNS zone nameservers)
+```
+
+### Verify
+
+```bash
+dig NS "${DOMAIN}"
+dig A "alpha.${DOMAIN}"
+```
+
+**Note:** Cell-to-cell communication and Config Connector resources work without DNS delegation. Public HTTPS access to GitLab (UI, API, git clone) won't resolve until delegation is complete.
 
 ## Teardown
 
