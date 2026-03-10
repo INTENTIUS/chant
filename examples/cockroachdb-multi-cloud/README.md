@@ -10,54 +10,145 @@ The lexicon packages ship skills for agent-guided deployment. After `npm install
 
 | Skill | Package | Purpose |
 |-------|---------|---------|
+| `chant-eks` | `@intentius/chant-lexicon-aws` | End-to-end EKS workflow: VPC, cluster, node groups, OIDC, K8s workloads |
 | `chant-aws` | `@intentius/chant-lexicon-aws` | CloudFormation lifecycle: build, validate, change sets, rollback |
-| `chant-eks` | `@intentius/chant-lexicon-aws` | End-to-end EKS workflow bridging AWS infra and K8s workloads |
+| `chant-aks` | `@intentius/chant-lexicon-azure` | End-to-end AKS workflow: VNet, cluster, managed identities, K8s workloads |
 | `chant-azure` | `@intentius/chant-lexicon-azure` | ARM template lifecycle: build, validate, deploy, rollback |
-| `chant-aks` | `@intentius/chant-lexicon-azure` | End-to-end AKS workflow bridging Azure infra and K8s workloads |
+| `chant-gke` | `@intentius/chant-lexicon-gcp` | End-to-end GKE workflow: VPC, cluster, service accounts, K8s workloads |
 | `chant-gcp` | `@intentius/chant-lexicon-gcp` | Config Connector lifecycle: build, lint, deploy, rollback |
-| `chant-gke` | `@intentius/chant-lexicon-gcp` | End-to-end GKE workflow bridging GCP infra and K8s workloads |
-| `chant-k8s` | `@intentius/chant-lexicon-k8s` | Kubernetes operational playbook: build, lint, apply, troubleshoot |
+| `chant-k8s` | `@intentius/chant-lexicon-k8s` | K8s operational playbook: composites, build, lint, apply, troubleshoot |
+| `chant-k8s-eks` | `@intentius/chant-lexicon-k8s` | EKS-specific composites: IRSA, ALB, EBS, ExternalDNS |
+| `chant-k8s-aks` | `@intentius/chant-lexicon-k8s` | AKS-specific composites: Workload Identity, AGIC, Azure Disk, ExternalDNS |
+| `chant-k8s-gke` | `@intentius/chant-lexicon-k8s` | GKE-specific composites: Workload Identity, GCE ingress, PD, ExternalDNS |
 | `chant-k8s-patterns` | `@intentius/chant-lexicon-k8s` | Advanced K8s patterns: sidecars, TLS, monitoring, network isolation |
 
-> **Using Claude Code?** Just ask:
+> **Using Claude Code?** Ask your agent to deploy, passing your domain:
 >
 > ```
-> Deploy the cockroachdb-multi-cloud example.
+> Deploy the cockroachdb-multi-cloud example. My domain is crdb.mycompany.com.
 > ```
+>
+> Your agent will use `chant-eks`, `chant-aks`, and `chant-gke` to walk through the full standup.
 
 ### Skills guide
 
-This is a 4-lexicon, 3-cloud example. Each deployment phase maps to specific skills:
+This is a 4-lexicon, 3-cloud example. Each deployment phase maps to specific skills.
 
-#### Phase 1 — Infrastructure (parallel, per cloud)
+#### `chant-eks` / `chant-aks` / `chant-gke` — primary entry points
 
-Each cloud has its own infra stack under `src/{eks,aks,gke}/infra/`. The cloud-specific lifecycle skills handle build → validate → deploy:
+Each cloud's end-to-end skill covers infrastructure provisioning and K8s workload deployment. These are the skills your agent invokes first — one per cloud, in parallel:
 
-- **EKS**: `chant-aws` for CloudFormation lifecycle, `chant-eks` for the EKS-specific workflow (VPC, cluster, node groups, OIDC, IAM)
-- **AKS**: `chant-azure` for ARM template lifecycle, `chant-aks` for the AKS-specific workflow (VNet, cluster, managed identities, role assignments)
-- **GKE**: `chant-gcp` for Config Connector lifecycle, `chant-gke` for the GKE-specific workflow (VPC, cluster, node pool, service accounts)
+- **`chant-eks`** — VPC, EKS cluster, VPN, DNS via CloudFormation; then K8s workloads with real ARNs from stack outputs
+- **`chant-aks`** — VNet, AKS cluster, VPN, DNS via ARM templates; then K8s workloads with real client IDs from deployment outputs
+- **`chant-gke`** — VPC, GKE cluster, VPN, DNS via Config Connector; then K8s workloads with real GSA emails from deployment outputs
 
-#### Phase 2 — Kubernetes workloads (parallel, per cloud)
+#### `chant-k8s` — core composites and operations
 
-Each cloud has a K8s stack under `src/{eks,aks,gke}/k8s/`. Two skills cover this:
+Comprehensive reference for composites used across all 3 clouds:
 
-- **`chant-k8s`** — the operational playbook for build, lint, apply, rollback, and troubleshooting. Its composite decision tree identifies **CockroachDbCluster** as the right composite for this workload (StatefulSet + Services + PVCs + RBAC + optional cert generation).
-- **`chant-k8s-patterns`** — advanced patterns if you need to extend the workloads (sidecars, monitoring, TLS, network isolation).
+| Composite | Used in | What it does |
+|-----------|---------|--------------|
+| `CockroachDbCluster` | `*/k8s/cockroachdb.ts` | StatefulSet + headless/public Services + RBAC + PDB + init/cert Jobs |
+| `NamespaceEnv` | `*/k8s/namespace.ts` | Namespace + ResourceQuota + LimitRange + PSS labels |
 
-#### Skill workflow
+Includes the **"Choosing the Right Composite" decision tree**, hardening options, and troubleshooting workflows.
+
+#### `chant-k8s-eks` — EKS-specific composites
+
+Covers the cloud-specific composites used in the EKS K8s stack:
+
+| Composite | File | What it does |
+|-----------|------|--------------|
+| `EbsStorageClass` | `src/eks/k8s/storage.ts` | EBS CSI provisioner, gp3, encryption |
+| `AlbIngress` | `src/eks/k8s/ingress.ts` | ALB Controller annotations, SSL redirect, health checks |
+| `ExternalDnsAgent` | `src/eks/k8s/ingress.ts` | Route53 integration, domain filters, IRSA |
+
+#### `chant-k8s-aks` — AKS-specific composites
+
+Covers the cloud-specific composites used in the AKS K8s stack:
+
+| Composite | File | What it does |
+|-----------|------|--------------|
+| `AzureDiskStorageClass` | `src/aks/k8s/storage.ts` | Azure Disk CSI provisioner, Premium_LRS |
+| `AgicIngress` | `src/aks/k8s/ingress.ts` | Application Gateway annotations, health probes |
+| `AksExternalDnsAgent` | `src/aks/k8s/ingress.ts` | Azure DNS integration, Workload Identity |
+
+#### `chant-k8s-gke` — GKE-specific composites
+
+Covers the cloud-specific composites used in the GKE K8s stack:
+
+| Composite | File | What it does |
+|-----------|------|--------------|
+| `GcePdStorageClass` | `src/gke/k8s/storage.ts` | GCE PD CSI provisioner, pd-ssd |
+| `GceIngress` | `src/gke/k8s/ingress.ts` | GCE ingress class, static IP |
+| `GkeExternalDnsAgent` | `src/gke/k8s/ingress.ts` | Cloud DNS integration, Workload Identity |
+
+#### `chant-aws` / `chant-azure` / `chant-gcp` — infra lifecycle
+
+Referenced by the end-to-end skills above. Handle the build → validate → deploy → rollback lifecycle for each cloud's IaC format.
+
+#### `chant-k8s-patterns` — advanced patterns
+
+Patterns to extend the workloads:
+
+- **Sidecars** — Envoy proxy or log forwarder with `SidecarApp`
+- **Config/Secret mounting** — `ConfiguredApp` for ConfigMap volumes and Secret env vars
+- **TLS with cert-manager** — `SecureIngress` for additional ingress controllers
+- **Prometheus monitoring** — `MonitoredService` with ServiceMonitor and alert rules
+
+### Skill workflow
 
 ```
-1. chant-eks / chant-aks / chant-gke     "Deploy cloud infrastructure"
-   │  (parallel — one per cloud)          → VPC, cluster, VPN, DNS
+1. chant-eks / chant-aks / chant-gke           "Deploy cloud infrastructure"
+   │  (parallel — one per cloud)                → VPC, cluster, VPN, DNS
    │
-2. chant-aws / chant-azure / chant-gcp   "CloudFormation / ARM / CC lifecycle"
-   │  (referenced by the above)           → validate, change sets, rollback
+2. chant-aws / chant-azure / chant-gcp         "CloudFormation / ARM / CC lifecycle"
+   │  (referenced by the above)                 → validate, change sets, rollback
    │
-3. chant-k8s                              "Deploy K8s workloads"
-   │  (parallel — one per cluster)        → CockroachDbCluster composite, apply, verify
+3. chant-k8s                                    "Deploy K8s workloads"
+   │  (parallel — one per cluster)              → CockroachDbCluster, apply, verify
    │
-4. chant-k8s-patterns                     "Extend with advanced patterns"
-                                          → sidecars, monitoring, TLS, network isolation
+4. chant-k8s-eks / chant-k8s-aks / chant-k8s-gke  "Which composites do I need?"
+   │  (cloud-specific composites)               → IRSA/WI, ALB/AGIC/GCE, storage, DNS
+   │
+5. chant-k8s-patterns                           "Extend with advanced patterns"
+                                                → sidecars, monitoring, TLS, network isolation
+```
+
+### Agent-guided standup
+
+Ask your agent to deploy and it will walk through these phases:
+
+```
+Deploy the cockroachdb-multi-cloud example. My domain is crdb.mycompany.com.
+```
+
+Your agent will:
+
+1. **Build** — `npm run build` generates 6 artifacts (CF template, ARM template, CC manifest, 3x K8s manifests)
+2. **Deploy infrastructure (pass 1)** — `npm run deploy` provisions VPC/VNet/VPC, clusters, VPN gateways, and DNS zones in parallel across all 3 clouds (placeholder VPN IPs)
+3. **Load outputs** — `scripts/load-outputs.sh` extracts real VPN public IPs from each cloud into `.env`
+4. **Deploy infrastructure (pass 2)** — rebuilds and re-deploys with real VPN IPs so IPsec tunnels establish
+5. **Configure kubectl** — sets up 3 kubectl contexts (eks, aks, gke)
+6. **Generate TLS certs** — `scripts/generate-certs.sh` creates a self-signed CA and node certs with SANs for all 9 nodes, distributes as K8s Secrets
+7. **Deploy K8s workloads** — applies manifests in parallel across all 3 clusters (CockroachDB StatefulSets, CoreDNS forwarding, ingress, ExternalDNS)
+8. **Initialize cluster** — runs `cockroach init` to bootstrap the 9-node cluster
+9. **Verify** — checks all pods are running and all 9 nodes are visible via `cockroach node status`
+
+> **DNS delegation:** after step 2, your agent will prompt you to delegate `eks.<domain>`, `aks.<domain>`, and `gke.<domain>` at your registrar. See [DNS Delegation](#dns-delegation-one-time-setup) below.
+
+Other useful prompts:
+
+```
+Build and lint the cockroachdb-multi-cloud example locally.
+```
+
+```
+Tear down the cockroachdb-multi-cloud example.
+```
+
+```
+Check the status of all CockroachDB pods across all 3 clusters.
 ```
 
 ## Architecture
