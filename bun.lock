@@ -31,13 +31,11 @@
         "@intentius/chant-lexicon-k8s": "workspace:*",
       },
     },
-    "examples/cockroachdb-multi-cloud": {
-      "name": "cockroachdb-multi-cloud-example",
+    "examples/cockroachdb-multi-region-gke": {
+      "name": "cockroachdb-multi-region-gke-example",
       "version": "0.0.1",
       "dependencies": {
         "@intentius/chant": "workspace:*",
-        "@intentius/chant-lexicon-aws": "workspace:*",
-        "@intentius/chant-lexicon-azure": "workspace:*",
         "@intentius/chant-lexicon-gcp": "workspace:*",
         "@intentius/chant-lexicon-k8s": "workspace:*",
       },
@@ -1285,7 +1283,7 @@
 
     "chalk": ["chalk@4.1.2", "", { "dependencies": { "ansi-styles": "^4.1.0", "supports-color": "^7.1.0" } }, "sha512-oKnbhFyRIXpUuez8iBMmyEa4nbj4IOQyuhc/wy9kY7/WVPcwIO9VA668Pu8RkO7+0G76SLROeyw9CpQ061i4mA=="],
 
-    "cockroachdb-multi-cloud-example": ["cockroachdb-multi-cloud-example@workspace:examples/cockroachdb-multi-cloud"],
+    "cockroachdb-multi-region-gke-example": ["cockroachdb-multi-region-gke-example@workspace:examples/cockroachdb-multi-region-gke"],
 
     "color-convert": ["color-convert@2.0.1", "", { "dependencies": { "color-name": "~1.1.4" } }, "sha512-RRECPsj7iu/xb5oKYcsFHSppFNnsj/52OVTRKb4zP5onXwVF3zVmmToNcOfGC+CRDpfK/U584fMg38ZHCaElKQ=="],
 

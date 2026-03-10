@@ -1,0 +1,24 @@
+{
+  "name": "cockroachdb-multi-region-gke-example",
+  "version": "0.0.1",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "build": "npm run build:shared && npm run build:east && npm run build:central && npm run build:west",
+    "build:shared": "chant build src/shared --lexicon gcp -o dist/shared-infra.yaml",
+    "build:east": "chant build src/east --lexicon gcp -o dist/east-infra.yaml && chant build src/east --lexicon k8s -o dist/east-k8s.yaml",
+    "build:central": "chant build src/central --lexicon gcp -o dist/central-infra.yaml && chant build src/central --lexicon k8s -o dist/central-k8s.yaml",
+    "build:west": "chant build src/west --lexicon gcp -o dist/west-infra.yaml && chant build src/west --lexicon k8s -o dist/west-k8s.yaml",
+    "lint": "chant lint src/shared && chant lint src/east && chant lint src/central && chant lint src/west",
+    "deploy": "bash scripts/deploy.sh",
+    "teardown": "bash scripts/teardown.sh"
+  },
+  "dependencies": {
+    "@intentius/chant": "^0.0.22",
+    "@intentius/chant-lexicon-gcp": "^0.0.22",
+    "@intentius/chant-lexicon-k8s": "^0.0.22"
+  },
+  "devDependencies": {
+    "typescript": "^5.0.0"
+  }
+}
