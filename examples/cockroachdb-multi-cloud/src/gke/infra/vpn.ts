@@ -99,7 +99,7 @@ export const awsRouterPeer0 = new RouterPeer({
   peerAsn: 64512,
   peerIpAddress: "169.254.0.2",
   advertisedRoutePriority: 100,
-  interfaceRef: { name: "gcp-to-aws-iface-0" },
+  routerInterfaceRef: { name: "gcp-to-aws-iface-0" },
 });
 
 export const awsRouterIface1 = new RouterInterface({
@@ -123,7 +123,7 @@ export const awsRouterPeer1 = new RouterPeer({
   peerAsn: 64512,
   peerIpAddress: "169.254.0.6",
   advertisedRoutePriority: 100,
-  interfaceRef: { name: "gcp-to-aws-iface-1" },
+  routerInterfaceRef: { name: "gcp-to-aws-iface-1" },
 });
 
 // ── GCP ↔ Azure VPN ────────────────────────────────────────────────
@@ -186,7 +186,7 @@ export const azureRouterPeer0 = new RouterPeer({
   peerAsn: 65515,
   peerIpAddress: "169.254.1.2",
   advertisedRoutePriority: 100,
-  interfaceRef: { name: "gcp-to-azure-iface-0" },
+  routerInterfaceRef: { name: "gcp-to-azure-iface-0" },
 });
 
 export const azureRouterIface1 = new RouterInterface({
@@ -210,5 +210,5 @@ export const azureRouterPeer1 = new RouterPeer({
   peerAsn: 65515,
   peerIpAddress: "169.254.1.6",
   advertisedRoutePriority: 100,
-  interfaceRef: { name: "gcp-to-azure-iface-1" },
+  routerInterfaceRef: { name: "gcp-to-azure-iface-1" },
 });
