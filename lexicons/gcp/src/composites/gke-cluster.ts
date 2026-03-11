@@ -55,6 +55,7 @@ export interface GkeClusterProps {
   defaults?: {
     cluster?: Partial<ConstructorParameters<typeof GKECluster>[0]>;
     nodePool?: Partial<ConstructorParameters<typeof NodePool>[0]>;
+    defaultPool?: Partial<ConstructorParameters<typeof NodePool>[0]>;
   };
 }
 
@@ -170,5 +171,21 @@ export const GkeCluster = Composite<GkeClusterProps>((props) => {
     ...(location && { location }),
   } as Record<string, unknown>, defs?.nodePool));
 
-  return { cluster, nodePool };
+  // Adopt and scale the GKE-required default pool to 0.
+  // resourceID maps this K8s resource to the GCP pool named "default-pool".
+  // Config Connector retries until the workload pool has nodes, at which
+  // point GKE accepts the resize-to-zero.
+  const defaultPool = new NodePool(mergeDefaults({
+    metadata: {
+      name: `${name}-default-pool`,
+      ...(namespace && { namespace }),
+      labels: { ...commonLabels, "app.kubernetes.io/component": "default-pool" },
+    },
+    resourceID: "default-pool",
+    clusterRef: { name },
+    nodeCount: 0,
+    ...(location && { location }),
+  } as Record<string, unknown>, defs?.defaultPool));
+
+  return { cluster, nodePool, defaultPool };
 }, "GkeCluster");

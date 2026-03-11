@@ -10,7 +10,7 @@ import { config } from "../config";
 
 // ── GKE Cluster ────────────────────────────────────────────────────
 
-export const { cluster, nodePool } = GkeCluster({
+export const { cluster, nodePool, defaultPool } = GkeCluster({
   name: config.clusterName,
   location: config.region,
   machineType: "e2-standard-2",
