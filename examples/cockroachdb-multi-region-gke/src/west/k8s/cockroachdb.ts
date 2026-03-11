@@ -24,6 +24,13 @@ const crdb = CockroachDbCluster({
     "app.kubernetes.io/instance": "west",
   },
   defaults: {
+    serviceAccount: {
+      metadata: {
+        annotations: {
+          "iam.gke.io/gcp-service-account": config.crdbGsaEmail,
+        },
+      },
+    },
     headlessService: {
       metadata: {
         annotations: {
@@ -34,14 +41,14 @@ const crdb = CockroachDbCluster({
   },
 });
 
-export const crdbServiceAccount = crdb.serviceAccount;
-export const crdbRole = crdb.role;
-export const crdbRoleBinding = crdb.roleBinding;
-export const crdbClusterRole = crdb.clusterRole;
-export const crdbClusterRoleBinding = crdb.clusterRoleBinding;
-export const crdbPublicService = crdb.publicService;
-export const crdbHeadlessService = crdb.headlessService;
-export const crdbPdb = crdb.pdb;
-export const crdbStatefulSet = crdb.statefulSet;
-export const crdbInitJob = crdb.initJob;
-export const crdbCertGenJob = crdb.certGenJob;
+export const cockroachdbServiceAccount = crdb.serviceAccount;
+export const cockroachdbRole = crdb.role;
+export const cockroachdbRoleBinding = crdb.roleBinding;
+export const cockroachdbClusterRole = crdb.clusterRole;
+export const cockroachdbClusterRoleBinding = crdb.clusterRoleBinding;
+export const cockroachdbPublicService = crdb.publicService;
+export const cockroachdbHeadlessService = crdb.headlessService;
+export const cockroachdbPdb = crdb.pdb;
+export const cockroachdbStatefulSet = crdb.statefulSet;
+export const cockroachdbInitJob = crdb.initJob;
+export const cockroachdbCertGenJob = crdb.certGenJob;

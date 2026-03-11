@@ -140,7 +140,7 @@ export const CockroachDbCluster = Composite<CockroachDbClusterProps>((props) => 
       labels: { ...commonLabels, "app.kubernetes.io/component": "rbac" },
     },
     rules: [
-      { apiGroups: [""], resources: ["secrets"], verbs: ["get", "create", "patch"] },
+      { apiGroups: [""], resources: ["secrets"], verbs: ["get", "create", "update", "patch"] },
     ],
   }, defs?.role));
 
@@ -242,8 +242,7 @@ export const CockroachDbCluster = Composite<CockroachDbClusterProps>((props) => 
   const cockroachArgs = [
     "start",
     `--logtostderr=WARNING`,
-    `--certs-dir=${secure ? certsDir : ""}`,
-    ...(secure ? [] : ["--insecure"]),
+    ...(secure ? [`--certs-dir=${certsDir}`] : ["--insecure"]),
     `--advertise-host=$(hostname -f)`,
     `--http-addr=0.0.0.0`,
     `--cache=${cachePercent}`,
@@ -342,10 +341,17 @@ export const CockroachDbCluster = Composite<CockroachDbClusterProps>((props) => 
 
   // Generates self-signed CA and node certs, stores them in K8s Secrets.
   // Each node's cert includes the pod DNS names (pod-N.svc.namespace.svc.cluster.local).
+  // NOTE: The cert-gen Job uses `curl` to create K8s Secrets via the API server.
+  // CockroachDB UBI images (v24+) include curl. For multi-region deployments,
+  // use an external cert generation script instead (see generate-certs.sh).
   const nodeNames = Array.from({ length: replicas }, (_, i) => `${name}-${i}.${name}`);
   const nodeAddresses = namespace
     ? nodeNames.map((n) => `${n}.${namespace}.svc.cluster.local`)
     : nodeNames.map((n) => `${n}.default.svc.cluster.local`);
+
+  const ns = namespace ?? "default";
+  const nodeSecretName = `${name}-node-certs`;
+  const clientSecretName = `${name}-client-certs`;
 
   const certGenScript = [
     "set -ex",
@@ -353,7 +359,27 @@ export const CockroachDbCluster = Composite<CockroachDbClusterProps>((props) => 
     "cockroach cert create-ca --certs-dir=certs --ca-key=certs/ca.key",
     `cockroach cert create-node ${nodeAddresses.join(" ")} localhost 127.0.0.1 --certs-dir=certs --ca-key=certs/ca.key`,
     "cockroach cert create-client root --certs-dir=certs --ca-key=certs/ca.key",
-  ].join(" && ");
+    // Store certs in K8s Secrets via the API using the ServiceAccount token.
+    `TOKEN=$(cat /var/run/secrets/kubernetes.io/serviceaccount/token)`,
+    `K8S_CA=/var/run/secrets/kubernetes.io/serviceaccount/ca.crt`,
+    `API=https://kubernetes.default.svc`,
+    `NS=${ns}`,
+    `encode() { base64 | tr -d '\\n'; }`,
+    // Build JSON payloads for the two secrets.
+    `NODE_PAYLOAD=$(printf '{"apiVersion":"v1","kind":"Secret","metadata":{"name":"${nodeSecretName}","namespace":"%s"},"type":"Opaque","data":{"ca.crt":"%s","node.crt":"%s","node.key":"%s"}}' "$NS" "$(cat certs/ca.crt | encode)" "$(cat certs/node.crt | encode)" "$(cat certs/node.key | encode)")`,
+    `CLIENT_PAYLOAD=$(printf '{"apiVersion":"v1","kind":"Secret","metadata":{"name":"${clientSecretName}","namespace":"%s"},"type":"Opaque","data":{"ca.crt":"%s","client.root.crt":"%s","client.root.key":"%s"}}' "$NS" "$(cat certs/ca.crt | encode)" "$(cat certs/client.root.crt | encode)" "$(cat certs/client.root.key | encode)")`,
+    // Create or update each secret.
+    `for SECRET_INFO in "${nodeSecretName}:$NODE_PAYLOAD" "${clientSecretName}:$CLIENT_PAYLOAD"; do`,
+    `  SECRET_NAME=\${SECRET_INFO%%:*}`,
+    `  PAYLOAD=\${SECRET_INFO#*:}`,
+    `  STATUS=$(curl -s --cacert $K8S_CA -H "Authorization: Bearer $TOKEN" -o /dev/null -w '%{http_code}' $API/api/v1/namespaces/$NS/secrets/$SECRET_NAME)`,
+    `  if [ "$STATUS" = "200" ]; then`,
+    `    curl -sf --cacert $K8S_CA -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" -X PUT $API/api/v1/namespaces/$NS/secrets/$SECRET_NAME -d "$PAYLOAD"`,
+    `  else`,
+    `    curl -sf --cacert $K8S_CA -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" -X POST $API/api/v1/namespaces/$NS/secrets -d "$PAYLOAD"`,
+    `  fi`,
+    `done`,
+  ].join("\n");
 
   const certGenJob = new Job(mergeDefaults({
     metadata: {
@@ -390,7 +416,7 @@ export const CockroachDbCluster = Composite<CockroachDbClusterProps>((props) => 
   const initVolumes: Record<string, unknown>[] = [];
   const initVolumeMounts: Record<string, unknown>[] = [];
   if (secure) {
-    initVolumes.push({ name: "client-certs", secret: { secretName: `${name}-node-certs`, defaultMode: 0o400 } });
+    initVolumes.push({ name: "client-certs", secret: { secretName: `${name}-client-certs`, defaultMode: 0o400 } });
     initVolumeMounts.push({ name: "client-certs", mountPath: certsDir });
   }
 

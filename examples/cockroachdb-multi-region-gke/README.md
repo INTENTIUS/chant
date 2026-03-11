@@ -2,11 +2,184 @@
 
 One CockroachDB cluster spanning **3 GCP regions** — 3 nodes per region, 9 nodes total.
 
-Uses a single global VPC with native cross-region routing (~25-45ms). No VPN, no two-pass deploy, single IAM system. Chant's multi-stack layout: one project, subdirectories per region, each producing separate output stacks.
+Uses a single global VPC with native cross-region routing (~25-45ms). No VPN, no two-pass deploy, single IAM system. A **management cluster** with Config Connector creates all GCP infra via `kubectl apply`, then K8s manifests are applied to the 3 workload clusters. Chant's multi-stack layout: one project, subdirectories per region, each producing separate output stacks.
 
-## Skills
+## Agent walkthrough
 
-The lexicon packages ship skills for agent-guided deployment. After `npm install`, your agent has access to:
+The lexicon packages (`@intentius/chant-lexicon-gcp` and `@intentius/chant-lexicon-k8s`) ship operational playbooks called **skills**. After `npm install`, your agent loads them automatically. This example uses 5 skills — `chant-gke` (the primary entry point), `chant-gcp`, `chant-k8s`, `chant-k8s-gke`, and `chant-k8s-patterns` — to deploy a 9-node CockroachDB cluster across 3 GCP regions.
+
+Kick things off with a single prompt:
+
+```
+Deploy the cockroachdb-multi-region-gke example.
+My domain is crdb.mycompany.com. My GCP project is my-project-id.
+```
+
+The agent loads the relevant skills and walks through 11 phases.
+
+### Phase-by-phase walkthrough
+
+#### Phase 0 — Bootstrap management cluster
+
+Creates a GKE management cluster in us-central1 with Config Connector (installed via operator bundle). Config Connector runs on this cluster and manages all GCP infrastructure (VPC, workload GKE clusters, IAM, DNS) declaratively via `kubectl apply`. **Skill:** `chant-gke`.
+
+```bash
+npm run bootstrap
+```
+
+This creates the `gke-crdb-mgmt` cluster, a Config Connector service account with editor/IAM/DNS roles, and waits for the CC controller to be ready.
+
+> **Note:** You only need to run bootstrap once. Subsequent deploys reuse the management cluster.
+
+#### Phase 1 — Build all stacks
+
+The agent builds 7 output artifacts (1 shared infra + 3 regional infra + 3 K8s manifests). **Skills:** `chant-gcp`, `chant-k8s`.
+
+```bash
+npm run build
+```
+
+You see 7 files appear in `dist/`.
+
+#### Phase 2 — Deploy shared infra
+
+Creates the global VPC, 6 subnets, Cloud NAT per region, and the Cloud DNS private zone (`crdb.internal`) via Config Connector on the management cluster. **Skill:** `chant-gcp`.
+
+```bash
+kubectl apply -f dist/shared-infra.yaml
+```
+
+#### Phase 3 — Deploy regional infra
+
+Applies 3 GKE cluster definitions, IAM service accounts, Workload Identity bindings, and public DNS zones via Config Connector, then waits for the clusters to be Ready. **Skill:** `chant-gke`.
+
+```bash
+kubectl apply -f dist/east-infra.yaml
+kubectl apply -f dist/central-infra.yaml
+kubectl apply -f dist/west-infra.yaml
+
+# Wait for Config Connector to reconcile all 3 clusters
+kubectl wait --for=condition=Ready containercluster/gke-crdb-east --timeout=600s
+kubectl wait --for=condition=Ready containercluster/gke-crdb-central --timeout=600s
+kubectl wait --for=condition=Ready containercluster/gke-crdb-west --timeout=600s
+```
+
+#### Phase 4 — DNS delegation
+
+> **This is the one manual step.** The agent can't create records at your registrar, so it pauses and shows you the nameservers for each regional zone.
+
+The agent runs:
+
+```bash
+gcloud dns managed-zones describe crdb-east-zone \
+  --project "${GCP_PROJECT_ID}" --format='value(nameServers)'
+gcloud dns managed-zones describe crdb-central-zone \
+  --project "${GCP_PROJECT_ID}" --format='value(nameServers)'
+gcloud dns managed-zones describe crdb-west-zone \
+  --project "${GCP_PROJECT_ID}" --format='value(nameServers)'
+```
+
+**What you do:** Create NS records at your registrar pointing `east.<domain>`, `central.<domain>`, and `west.<domain>` to the nameservers shown. See [DNS Delegation](#dns-delegation-one-time-setup) for details.
+
+Verify with:
+
+```bash
+dig NS "east.${CRDB_DOMAIN}"
+dig NS "central.${CRDB_DOMAIN}"
+dig NS "west.${CRDB_DOMAIN}"
+```
+
+> **Note:** The CockroachDB cluster works without DNS delegation (inter-node communication uses the private DNS zone). Public UI ingress won't resolve until delegation is complete.
+
+#### Phase 5 — Configure kubectl contexts
+
+Fetches credentials for all 3 clusters and renames contexts to `east`, `central`, `west`. **Skill:** `chant-gke`.
+
+```bash
+gcloud container clusters get-credentials gke-crdb-east --region us-east4 --project "${GCP_PROJECT_ID}"
+kubectl config rename-context "$(kubectl config current-context)" east
+
+gcloud container clusters get-credentials gke-crdb-central --region us-central1 --project "${GCP_PROJECT_ID}"
+kubectl config rename-context "$(kubectl config current-context)" central
+
+gcloud container clusters get-credentials gke-crdb-west --region us-west1 --project "${GCP_PROJECT_ID}"
+kubectl config rename-context "$(kubectl config current-context)" west
+```
+
+#### Phase 6 — Generate TLS certs
+
+Runs `scripts/generate-certs.sh` to create a self-signed CA and node certs with SANs for all 9 nodes (both Cloud DNS and cluster-local names), then distributes them as K8s Secrets. **Skill:** `chant-k8s-patterns`.
+
+```bash
+bash scripts/generate-certs.sh
+```
+
+#### Phase 7 — Deploy K8s manifests (parallel)
+
+Applies CockroachDB StatefulSets, namespaces, storage, ingress, and ExternalDNS across all 3 clusters in parallel. **Skills:** `chant-k8s`, `chant-k8s-gke`.
+
+```bash
+kubectl --context east apply -f dist/east-k8s.yaml &
+kubectl --context central apply -f dist/central-k8s.yaml &
+kubectl --context west apply -f dist/west-k8s.yaml &
+wait
+```
+
+#### Phase 8 — Wait for ExternalDNS + StatefulSets
+
+The agent waits for ExternalDNS to register pod IPs in the `crdb.internal` private zone, then waits for all 3 StatefulSets to become ready. **Skill:** `chant-k8s`.
+
+```bash
+for ctx in east central west; do
+  kubectl --context "${ctx}" -n kube-system rollout status deployment/external-dns --timeout=120s
+done
+
+kubectl --context east -n crdb-east rollout status statefulset/cockroachdb --timeout=300s
+kubectl --context central -n crdb-central rollout status statefulset/cockroachdb --timeout=300s
+kubectl --context west -n crdb-west rollout status statefulset/cockroachdb --timeout=300s
+```
+
+> **Troubleshooting:** If ExternalDNS logs show `googleapi: Error 403: Forbidden`, the Workload Identity binding is missing or the project ID is wrong. Check with: `kubectl --context east -n kube-system describe sa external-dns-sa | grep iam.gke.io`
+
+#### Phase 9 — Initialize CockroachDB
+
+Bootstraps the 9-node cluster with `cockroach init`. **Skill:** `chant-k8s`.
+
+```bash
+kubectl --context east exec cockroachdb-0 -n crdb-east -- \
+  /cockroach/cockroach init --certs-dir=/cockroach/cockroach-certs
+```
+
+#### Phase 10 — Configure multi-region topology
+
+Sets the primary region, adds secondary regions, configures `SURVIVE REGION FAILURE`, and creates a demo `REGIONAL BY ROW` table. **Skill:** `chant-gke`.
+
+```bash
+bash scripts/configure-regions.sh
+```
+
+You see output confirming all 3 regions are configured and the demo `orders` table is created.
+
+### After deployment
+
+Follow-up prompts you can give your agent:
+
+```
+Check the status of all CockroachDB pods across all 3 regions.
+```
+
+```
+Tear down the cockroachdb-multi-region-gke example.
+```
+
+```
+Build and lint the cockroachdb-multi-region-gke example locally.
+```
+
+### Skills reference
+
+<details>
+<summary>5 skills used in this example</summary>
 
 | Skill | Package | Purpose |
 |-------|---------|---------|
@@ -16,110 +189,7 @@ The lexicon packages ship skills for agent-guided deployment. After `npm install
 | `chant-k8s-gke` | `@intentius/chant-lexicon-k8s` | GKE-specific composites: Workload Identity, GCE ingress, PD, ExternalDNS |
 | `chant-k8s-patterns` | `@intentius/chant-lexicon-k8s` | Advanced K8s patterns: sidecars, TLS, monitoring, network isolation |
 
-> **Using Claude Code?** Ask your agent to deploy, passing your domain:
->
-> ```
-> Deploy the cockroachdb-multi-region-gke example. My domain is crdb.mycompany.com.
-> ```
->
-> Your agent will use `chant-gke` to walk through the full standup.
-
-### Skills guide
-
-This is a 2-lexicon, single-cloud multi-region example. Each deployment phase maps to specific skills.
-
-#### `chant-gke` — primary entry point
-
-The end-to-end GKE skill covers infrastructure provisioning and K8s workload deployment. Your agent invokes this skill to deploy all 3 regional clusters from a shared VPC:
-
-- **Shared infra** — Global VPC, 6 subnets, Cloud NAT per region, Cloud DNS private zone
-- **Regional infra** — GKE cluster, Workload Identity, ExternalDNS service accounts, public DNS zones
-- **K8s workloads** — CockroachDB StatefulSets, namespaces, storage, ingress, ExternalDNS
-
-#### `chant-k8s` — core composites and operations
-
-Comprehensive reference for composites used across all 3 regions:
-
-| Composite | Used in | What it does |
-|-----------|---------|--------------|
-| `CockroachDbCluster` | `*/k8s/cockroachdb.ts` | StatefulSet + headless/public Services + RBAC + PDB + init/cert Jobs |
-| `NamespaceEnv` | `*/k8s/namespace.ts` | Namespace + ResourceQuota + LimitRange + PSS labels |
-
-#### `chant-k8s-gke` — GKE-specific composites
-
-| Composite | File | What it does |
-|-----------|------|--------------|
-| `GcePdStorageClass` | `*/k8s/storage.ts` | GCE PD CSI provisioner, pd-ssd |
-| `GceIngress` | `*/k8s/ingress.ts` | GCE ingress class, static IP |
-| `GkeExternalDnsAgent` | `*/k8s/ingress.ts` | Cloud DNS integration, Workload Identity |
-
-#### `chant-gcp` — infra lifecycle
-
-Config Connector lifecycle: build, validate, deploy, rollback.
-
-#### `chant-k8s-patterns` — advanced patterns
-
-Patterns to extend the workloads:
-
-- **Sidecars** — Envoy proxy or log forwarder with `SidecarApp`
-- **Config/Secret mounting** — `ConfiguredApp` for ConfigMap volumes and Secret env vars
-- **TLS with cert-manager** — `SecureIngress` for additional ingress controllers
-- **Prometheus monitoring** — `MonitoredService` with ServiceMonitor and alert rules
-
-### Skill workflow
-
-```
-1. chant-gke                              "Deploy shared + regional infrastructure"
-   │  (shared VPC, then 3 clusters)       → VPC, subnets, NAT, DNS, 3x GKE clusters
-   │
-2. chant-gcp                              "Config Connector lifecycle"
-   │  (referenced by the above)           → validate, deploy, rollback
-   │
-3. chant-k8s                              "Deploy K8s workloads"
-   │  (parallel — one per cluster)        → CockroachDbCluster, apply, verify
-   │
-4. chant-k8s-gke                          "Which composites do I need?"
-   │  (GKE-specific composites)           → Workload Identity, GCE, storage, DNS
-   │
-5. chant-k8s-patterns                     "Extend with advanced patterns"
-                                           → sidecars, monitoring, TLS, network isolation
-```
-
-### Agent-guided standup
-
-Ask your agent to deploy and it will walk through these phases:
-
-```
-Deploy the cockroachdb-multi-region-gke example. My domain is crdb.mycompany.com.
-```
-
-Your agent will:
-
-1. **Build** — `npm run build` generates 7 artifacts (1 shared infra + 3 regional infra + 3 K8s manifests)
-2. **Deploy shared infra** — VPC, subnets, Cloud NAT, Cloud DNS private zone
-3. **Deploy regional infra** — 3 GKE clusters + IAM + public DNS zones in parallel
-4. **Configure kubectl** — sets up 3 kubectl contexts (east, central, west)
-5. **Generate TLS certs** — `scripts/generate-certs.sh` creates a self-signed CA and node certs with SANs for all 9 nodes (both Cloud DNS and cluster-local names), distributes as K8s Secrets
-6. **Deploy K8s workloads** — applies manifests in parallel across all 3 clusters (CockroachDB StatefulSets, ingress, ExternalDNS)
-7. **Initialize cluster** — runs `cockroach init` to bootstrap the 9-node cluster
-8. **Configure multi-region** — sets primary region, adds secondary regions, configures `SURVIVE REGION FAILURE`, creates demo `REGIONAL BY ROW` table
-9. **Verify** — checks all pods are running and all 9 nodes are visible via `cockroach node status`
-
-> **DNS delegation:** after step 3, your agent will prompt you to delegate `east.<domain>`, `central.<domain>`, and `west.<domain>` at your registrar. See [DNS Delegation](#dns-delegation-one-time-setup) below.
-
-Other useful prompts:
-
-```
-Build and lint the cockroachdb-multi-region-gke example locally.
-```
-
-```
-Tear down the cockroachdb-multi-region-gke example.
-```
-
-```
-Check the status of all CockroachDB pods across all 3 regions.
-```
+</details>
 
 ## Architecture
 
@@ -133,8 +203,16 @@ Check the status of all CockroachDB pods across all 3 regions.
 │  │  10.1.0.0/20 │     │  10.2.0.0/20 │     │  10.3.0.0/20 │    │
 │  │  crdb-east   │     │  crdb-central│     │  crdb-west   │    │
 │  │  (3 nodes)   │     │  (3 nodes)   │     │  (3 nodes)   │    │
-│  └──────────────┘     └──────────────┘     └──────────────┘    │
+│  │  Prometheus  │     │  Prometheus  │     │  Prometheus  │    │
+│  └──────┬───────┘     └──────┬───────┘     └──────┬───────┘    │
+│         │                    │                    │              │
+│         └────────────────────┴────────────────────┘              │
 │              Native VPC routing (~25-45ms)                       │
+│                                                                  │
+│  Cloud Armor (crdb-ui-waf) ── WAF + rate limiting + DDoS        │
+│  KMS (crdb-encryption) ────── encryption at rest (90d rotation) │
+│  GCS (crdb-backups) ───────── daily backups with lifecycle      │
+│  Secret Manager ───────────── TLS certs → ESO → K8s Secrets     │
 └──────────────────────────────────────────────────────────────────┘
 
 Cloud DNS private zone: crdb.internal
@@ -183,16 +261,30 @@ CockroachDB's multi-region SQL features use locality metadata to optimize data p
 - **Locality flags** — each CockroachDB node starts with `--locality=cloud=gcp,region=us-east4` (or central/west). These flags must match the region names used in `ALTER DATABASE ... ADD REGION`.
 
 The `scripts/configure-regions.sh` script sets up the topology after `cockroach init`:
-1. Sets `gcp-us-east4` as the primary region
-2. Adds `gcp-us-central1` and `gcp-us-west1`
+1. Sets `us-east4` as the primary region
+2. Adds `us-central1` and `us-west1`
 3. Configures `SURVIVE REGION FAILURE`
 4. Creates a demo `orders` table with `REGIONAL BY ROW` to demonstrate locality-aware reads/writes
 
 ## Prerequisites
 
+### GCP Quota
+
+Config Connector creates GKE clusters with a default node pool (3 nodes × 2 vCPU) that can't be suppressed. The managed node pool (3 × e2-standard-4 = 12 vCPU) is created in parallel. Peak vCPU usage per region is 18 (6 default + 12 managed). With the management cluster (6 vCPU) and 3 regions: **6 + 3×18 = 60 vCPU peak**. After default pools are deleted, steady-state is 6 + 3×12 = 42 vCPU.
+
+Ensure your `CPUS_ALL_REGIONS` quota is at least **64** (with headroom). Check with:
+
+```bash
+gcloud compute regions list --project "${GCP_PROJECT_ID}" \
+  --format="table(name, quotas.filter('metric:CPUS').map().extract('limit','usage').flatten())"
+```
+
+### Tools
+
 - Google Cloud CLI configured (`gcloud auth login`)
 - `kubectl` installed
 - `docker` installed (for cert generation)
+- `helm` installed (for External Secrets Operator)
 - A domain you control (set via `CRDB_DOMAIN` env var, e.g., `crdb.mycompany.com`)
 
 ### Required Environment Variables
@@ -274,6 +366,7 @@ cp .env.example .env
 # Fill in required values in .env
 set -a && source .env && set +a
 npm install
+npm run bootstrap   # one-time: creates management cluster with Config Connector
 npm run deploy
 ```
 
@@ -288,18 +381,21 @@ npm install
 
 ### What `npm run deploy` does
 
-The deploy is a **true single-pass process** — no rebuild step needed. GCP VPC is global, so all regions share one VPC with native routing.
+The deploy is a **true single-pass process** — no rebuild step needed. GCP VPC is global, so all regions share one VPC with native routing. All GCP infra is created via Config Connector on the management cluster (see `npm run bootstrap`).
 
 1. Builds all stacks (shared infra + regional infra + K8s for each region)
-2. Deploys shared infrastructure (VPC, subnets, NAT, private DNS zone)
-3. Deploys regional infrastructure in parallel (3 GKE clusters + IAM + public DNS zones)
-4. Configures kubectl contexts (east, central, west)
+2. `kubectl apply` shared infra to management cluster (Config Connector creates VPC, subnets, NAT, private DNS zone, KMS, GCS bucket, Secret Manager, Cloud Armor, IAM)
+3. `kubectl apply` regional infra (Config Connector creates 3 GKE clusters + zone-scoped IAM + public DNS zones), waits for clusters to be Ready
+4. Configures kubectl contexts for workload clusters (east, central, west)
 5. Generates and distributes TLS certificates
-6. Applies K8s manifests in parallel
+5b. Installs External Secrets Operator on all 3 workload clusters via Helm
+5c. Pushes TLS certificates to Secret Manager
+6. Applies K8s manifests to workload clusters in parallel (includes ESO, BackendConfig, Prometheus)
 7. Waits for ExternalDNS to register pod IPs in `crdb.internal`
 8. Waits for StatefulSets to be ready
 9. Runs `cockroach init`
 10. Configures multi-region topology + creates demo table
+11. Creates daily backup schedule to GCS
 
 ## Verify
 
@@ -392,7 +488,7 @@ npm run teardown
 
 ## Cost Estimate
 
-~$1.80/hr (~$43/day) total. Teardown after testing to avoid charges.
+~$1.90/hr (~$46/day) total. Teardown after testing to avoid charges.
 
 | Component | Per Region | 3 Regions |
 |-----------|-----------|-----------|
@@ -400,6 +496,9 @@ npm run teardown
 | 3x e2-standard-4 nodes | ~$0.40/hr | ~$1.20/hr |
 | Storage (3x 100Gi pd-ssd) | ~$0.05/hr | ~$0.15/hr |
 | Cloud NAT | ~$0.05/hr | ~$0.15/hr |
+| KMS + Secret Manager | — | ~$0.01/hr |
+| GCS backup bucket | — | ~$0.01/hr |
+| Cloud Armor | — | ~$0.08/hr |
 
 No VPN gateway costs — GCP VPC routes natively between regions.
 
@@ -410,6 +509,12 @@ src/
 ├── shared/
 │   ├── chant.config.json
 │   ├── config.ts              # CIDRs, join addresses, CRDB version, regions
+│   ├── encryption.ts          # KMS key ring + crypto key (90d rotation)
+│   ├── storage.ts             # GCS backup bucket with lifecycle + KMS
+│   ├── secrets.ts             # 5 Secret Manager secrets for TLS certs
+│   ├── security.ts            # Cloud Armor WAF policy (rate limit, XSS, SQLi)
+│   ├── iam-crdb.ts            # CockroachDB WI SAs + GCS backup bindings (×3)
+│   ├── iam-eso.ts             # ESO WI SA + Secret Manager binding (×3)
 │   └── infra/
 │       ├── networking.ts      # VPC + 6 subnets + firewall + 3 NATs
 │       └── dns.ts             # Cloud DNS private zone (crdb.internal)
@@ -417,20 +522,25 @@ src/
 │   ├── chant.config.json
 │   ├── config.ts              # us-east4 config
 │   ├── infra/
-│   │   ├── cluster.ts         # GKE cluster + Workload Identity + IAM
+│   │   ├── cluster.ts         # GKE cluster + zone-scoped IAM
 │   │   └── dns.ts             # Cloud DNS public zone (east.<domain>)
 │   └── k8s/
 │       ├── namespace.ts       # NamespaceEnv + NetworkPolicy
 │       ├── storage.ts         # GcePdStorageClass (pd-ssd)
-│       ├── cockroachdb.ts     # CockroachDbCluster composite
-│       └── ingress.ts         # GceIngress + GkeExternalDnsAgent
+│       ├── cockroachdb.ts     # CockroachDbCluster composite (WI annotated)
+│       ├── ingress.ts         # GceIngress (Cloud Armor) + GkeExternalDnsAgent
+│       ├── external-secrets.ts # ClusterSecretStore + ExternalSecrets
+│       ├── backend-config.ts  # BackendConfig for Cloud Armor
+│       └── monitoring.ts      # Prometheus deployment
 ├── central/                   # Same structure as east/
 └── west/                      # Same structure as east/
 scripts/
-├── deploy.sh                  # Single-pass deploy orchestrator
-├── teardown.sh                # Full teardown
+├── bootstrap.sh               # Management cluster + Config Connector setup
+├── deploy.sh                  # Single-pass deploy orchestrator (11 steps)
+├── teardown.sh                # Full teardown (ESO, K8s, infra, bucket, secrets, mgmt)
 ├── generate-certs.sh          # TLS cert generation + distribution
-└── configure-regions.sh       # Multi-region SQL setup + demo table
+├── configure-regions.sh       # Multi-region SQL setup + demo table
+└── e2e-test.sh                # Validate all resources (KMS, GCS, secrets, WAF, etc.)
 ```
 
 ## Source files
@@ -439,7 +549,13 @@ scripts/
 
 | File | What it defines |
 |------|-----------------|
-| `src/shared/config.ts` | Cluster-wide constants: per-region CIDRs (10.1/2/3.0.0/20), Cloud DNS join addresses for all 9 nodes, CockroachDB version (v24.3.0), project ID |
+| `src/shared/config.ts` | Cluster-wide constants: per-region CIDRs (10.1/2/3.0.0/20), Cloud DNS join addresses for all 9 nodes, CockroachDB version (v24.3.0), project ID, KMS/backup names |
+| `src/shared/encryption.ts` | KMS key ring (`crdb-multi-region`, location `us`) + crypto key (`crdb-encryption`, 90-day rotation) |
+| `src/shared/storage.ts` | GCS backup bucket (`${PROJECT}-crdb-backups`, versioning, nearline after 30d, delete after 90d, KMS encrypted) |
+| `src/shared/secrets.ts` | 5 Secret Manager secrets for TLS certs (ca, node cert/key, client root cert/key) |
+| `src/shared/security.ts` | Cloud Armor WAF policy (`crdb-ui-waf`): rate limiting, XSS/SQLi blocking, L7 DDoS defense |
+| `src/shared/iam-crdb.ts` | 3 CockroachDB GCP SAs with WI bindings + bucket-scoped `storage.objectAdmin` for backups |
+| `src/shared/iam-eso.ts` | ESO GCP SA with 3 WI bindings + `secretmanager.secretAccessor` for cert syncing |
 | `src/shared/infra/networking.ts` | VpcNetwork (global VPC, 6 subnets: nodes + pods per region, Cloud NAT for us-east4), Router + RouterNAT for us-central1 and us-west1 |
 | `src/shared/infra/dns.ts` | Cloud DNS private zone (`crdb.internal`) visible to all 3 clusters via shared VPC |
 
@@ -449,18 +565,21 @@ scripts/
 
 | File | Resources |
 |------|-----------|
-| `src/east/config.ts` | East-specific config (cluster name, region, namespace, locality) |
-| `src/east/infra/cluster.ts` | GKE cluster (3x e2-standard-4), GCP ServiceAccount, 2x IAMPolicyMember (workload identity + DNS admin) |
+| `src/east/config.ts` | East-specific config (cluster name, region, namespace, locality, crdbGsaEmail) |
+| `src/east/infra/cluster.ts` | GKE cluster (3x e2-standard-4), GCP ServiceAccount, 3x IAMPolicyMember (WI + public zone DNS + private zone DNS) |
 | `src/east/infra/dns.ts` | Cloud DNS public zone (`east.<domain>`) |
 
 **Kubernetes** (`src/east/k8s/` → `dist/east-k8s.yaml`)
 
 | File | Resources |
 |------|-----------|
-| `src/east/k8s/namespace.ts` | NamespaceEnv (crdb-east), ResourceQuota (8 CPU / 32Gi), LimitRange, 2x NetworkPolicy (default-deny + CRDB cross-region allow) |
+| `src/east/k8s/namespace.ts` | NamespaceEnv (crdb-east), ResourceQuota (10 CPU / 40Gi), LimitRange, 2x NetworkPolicy (default-deny + CRDB cross-region allow) |
 | `src/east/k8s/storage.ts` | GcePdStorageClass (pd-ssd) |
-| `src/east/k8s/cockroachdb.ts` | CockroachDbCluster composite: StatefulSet (3 replicas), Services (headless annotated for ExternalDNS), RBAC, PDB, init + cert jobs |
-| `src/east/k8s/ingress.ts` | GceIngress (CockroachDB UI), GkeExternalDnsAgent (Cloud DNS records for public + private zones) |
+| `src/east/k8s/cockroachdb.ts` | CockroachDbCluster composite: StatefulSet (3 replicas), Services (headless for ExternalDNS), RBAC, PDB, WI annotation on SA |
+| `src/east/k8s/ingress.ts` | GceIngress (Cloud Armor backend-config annotation), GkeExternalDnsAgent |
+| `src/east/k8s/external-secrets.ts` | ClusterSecretStore (GCP SM + WI auth), 2x ExternalSecret (node certs, client certs) |
+| `src/east/k8s/backend-config.ts` | BackendConfig CRD referencing `crdb-ui-waf` Cloud Armor policy |
+| `src/east/k8s/monitoring.ts` | Prometheus ConfigMap + Deployment + Service (scrapes `/_status/vars` on port 8080) |
 
 ### Central (us-central1)
 
@@ -474,14 +593,14 @@ Same structure as East — `src/west/` → `dist/west-infra.yaml` + `dist/west-k
 
 | Stack | Lexicon | Approximate resources |
 |-------|---------|-----------------------|
-| Shared infra | GCP (Config Connector) | ~12 |
-| East infra | GCP (Config Connector) | ~7 |
-| East K8s | K8s | ~18 |
-| Central infra | GCP (Config Connector) | ~7 |
-| Central K8s | K8s | ~18 |
-| West infra | GCP (Config Connector) | ~7 |
-| West K8s | K8s | ~18 |
-| **Total** | | **~87** |
+| Shared infra | GCP (Config Connector) | ~30 |
+| East infra | GCP (Config Connector) | ~8 |
+| East K8s | K8s | ~25 |
+| Central infra | GCP (Config Connector) | ~8 |
+| Central K8s | K8s | ~25 |
+| West infra | GCP (Config Connector) | ~8 |
+| West K8s | K8s | ~25 |
+| **Total** | | **~129** |
 
 ## Cross-region value flow
 
@@ -506,8 +625,9 @@ No two-pass build — all values are known at build time.
 
 ## TLS Strategy
 
-- **Inter-node + client:** Self-signed CA via `cockroach cert` (generated locally, distributed as K8s Secrets). One node cert with SANs for all 9 nodes across all 3 clusters — includes both Cloud DNS names (`*.{region}.crdb.internal`) and cluster-local names.
-- **Dashboard UI:** Public Ingress on `{region}.<CRDB_DOMAIN>` via GCE Ingress.
+- **Inter-node + client:** Self-signed CA via `cockroach cert` (generated locally, pushed to Secret Manager, synced to K8s via External Secrets Operator). One node cert with SANs for all 9 nodes across all 3 clusters — includes both Cloud DNS names (`*.{region}.crdb.internal`) and cluster-local names.
+- **Secret Manager + ESO:** Certificates are stored in GCP Secret Manager (5 secrets: ca.crt, node.crt, node.key, client.root.crt, client.root.key). ESO in each cluster syncs them into K8s Secrets via Workload Identity — no manual `kubectl create secret` needed after initial push.
+- **Dashboard UI:** Public Ingress on `{region}.<CRDB_DOMAIN>` via GCE Ingress, protected by Cloud Armor WAF.
 - **Multi-region cert generation:** Uses `scripts/generate-certs.sh` (external). The K8s composite's built-in cert-gen Job is for single-cluster deployments only.
 
 ## Security hardening
@@ -516,12 +636,17 @@ No two-pass build — all values are known at build time.
 2. **Default-deny NetworkPolicy** — each namespace starts with deny-all ingress; a second policy explicitly allows CockroachDB ports (26257 gRPC, 8080 HTTP) only from the 6 regional CIDRs (3 node + 3 pod subnets)
 3. **Cloud DNS private zone** — inter-node discovery uses a private DNS zone visible only within the VPC; no public DNS exposure of pod IPs
 4. **Encrypted inter-node traffic** — CockroachDB TLS with self-signed CA; all node-to-node and client-to-node traffic is mTLS
-5. **Encrypted storage** — GCP pd-ssd (encrypted at rest by default)
+5. **KMS encryption at rest** — CMEK via Cloud KMS (`crdb-encryption` key, 90-day auto-rotation, GOOGLE_SYMMETRIC_ENCRYPTION); encrypts GCS backup bucket
 6. **Native VPC routing** — cross-region traffic stays on Google's private network backbone; never traverses the public internet
-7. **Workload Identity** — Workload Identity Federation on GKE; no long-lived credentials in K8s
-8. **Resource quotas + LimitRange** — each namespace caps at 8 CPU / 32Gi memory with per-pod defaults and limits
-9. **Non-root containers** — CockroachDB runs as non-root (UID 1000) with read-only root filesystem where supported
-10. **PodDisruptionBudget** — ensures at least 2 of 3 pods per region remain available during node maintenance
+7. **Workload Identity** — Workload Identity Federation on GKE; no long-lived credentials in K8s. CockroachDB pods use per-region GCP SAs for GCS backup access
+8. **Zone-scoped IAM** — ExternalDNS SAs only get `dns.admin` on their own public zone + shared private zone (not project-level)
+9. **Secret Manager + ESO** — TLS certificates stored in Secret Manager and synced to K8s via External Secrets Operator with Workload Identity auth
+10. **Cloud Armor WAF** — rate limiting (100 req/min per IP, 5-min ban), XSS/SQLi blocking (`xss-v33-stable`, `sqli-v33-stable`), Layer 7 DDoS defense
+11. **Resource quotas + LimitRange** — each namespace caps at 10 CPU / 40Gi memory with per-pod defaults and limits
+12. **Non-root containers** — CockroachDB runs as non-root (UID 1000) with read-only root filesystem where supported
+13. **PodDisruptionBudget** — ensures at least 2 of 3 pods per region remain available during node maintenance
+14. **Automated backups** — daily full backups to GCS with lifecycle (nearline after 30d, delete after 90d)
+15. **Prometheus monitoring** — per-region Prometheus scraping CockroachDB `/_status/vars` metrics
 
 ## Testing
 
@@ -538,7 +663,8 @@ npm run lint     # runs chant lint on all 4 stacks
 
 ```bash
 # Fill in .env with real credentials
-npm run deploy   # single-pass deploy across 3 GCP regions
+npm run bootstrap  # one-time: management cluster + Config Connector
+npm run deploy     # single-pass deploy across 3 GCP regions
 # Verify (see Verify section above)
 npm run teardown
 ```

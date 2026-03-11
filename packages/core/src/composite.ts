@@ -266,6 +266,14 @@ export function mergeDefaults<T extends Record<string, unknown>>(
     const existing = result[key as keyof T];
     if (Array.isArray(existing) && Array.isArray(value)) {
       (result as any)[key] = [...existing, ...value];
+    } else if (
+      existing != null && typeof existing === "object" && !Array.isArray(existing) &&
+      value != null && typeof value === "object" && !Array.isArray(value)
+    ) {
+      (result as any)[key] = mergeDefaults(
+        existing as Record<string, unknown>,
+        value as Record<string, unknown>,
+      );
     } else {
       (result as any)[key] = value;
     }

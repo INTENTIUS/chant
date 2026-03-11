@@ -521,12 +521,12 @@ describe("mergeDefaults", () => {
     ]);
   });
 
-  test("object override replaces (no deep merge)", () => {
+  test("object override deep merges nested objects", () => {
     const result = mergeDefaults(
       { config: { a: 1, b: 2 } },
       { config: { a: 10 } as any },
     );
-    expect(result.config).toEqual({ a: 10 } as any);
+    expect(result.config).toEqual({ a: 10, b: 2 } as any);
   });
 
   test("new keys from overrides are added", () => {

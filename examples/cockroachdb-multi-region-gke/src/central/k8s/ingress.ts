@@ -21,19 +21,28 @@ const ing = GceIngress({
     },
   ],
   namespace: NAMESPACE,
+  defaults: {
+    ingress: {
+      metadata: {
+        annotations: {
+          "cloud.google.com/backend-config": '{"default":"crdb-ui-backend"}',
+        },
+      },
+    },
+  },
 });
 
 export const gceIngress = ing.ingress;
 
 // ── ExternalDNS ────────────────────────────────────────────────────
-// Watches Ingress (public zone) and headless Services (private zone).
+// Watches headless Services to register pod IPs in crdb.internal private zone.
 
 const dns = GkeExternalDnsAgent({
   gcpServiceAccountEmail: config.externalDnsGsaEmail,
   gcpProjectId: config.projectId,
   domainFilters: [CRDB_DOMAIN, INTERNAL_DOMAIN],
   txtOwnerId: config.clusterName,
-  source: "ingress",
+  source: ["service", "ingress"],
 });
 
 export const dnsDeployment = dns.deployment;

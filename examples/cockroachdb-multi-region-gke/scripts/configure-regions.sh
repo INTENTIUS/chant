@@ -8,14 +8,14 @@ echo "==> Configuring CockroachDB multi-region topology"
 
 CRDB_SQL="kubectl --context east exec cockroachdb-0 -n crdb-east -- /cockroach/cockroach sql --certs-dir=/cockroach/cockroach-certs -e"
 
-echo "  -> Setting primary region to gcp-us-east4"
-${CRDB_SQL} "ALTER DATABASE defaultdb SET PRIMARY REGION 'gcp-us-east4';"
+echo "  -> Setting primary region to us-east4"
+${CRDB_SQL} "ALTER DATABASE defaultdb SET PRIMARY REGION 'us-east4';"
 
-echo "  -> Adding region gcp-us-central1"
-${CRDB_SQL} "ALTER DATABASE defaultdb ADD REGION 'gcp-us-central1';"
+echo "  -> Adding region us-central1"
+${CRDB_SQL} "ALTER DATABASE defaultdb ADD REGION 'us-central1';"
 
-echo "  -> Adding region gcp-us-west1"
-${CRDB_SQL} "ALTER DATABASE defaultdb ADD REGION 'gcp-us-west1';"
+echo "  -> Adding region us-west1"
+${CRDB_SQL} "ALTER DATABASE defaultdb ADD REGION 'us-west1';"
 
 echo "  -> Setting survival goal to REGION"
 ${CRDB_SQL} "ALTER DATABASE defaultdb SURVIVE REGION FAILURE;"
@@ -46,3 +46,4 @@ kubectl --context west exec cockroachdb-0 -n crdb-west -- \
 echo "==> Multi-region topology configured"
 echo "    Run 'SHOW REGIONS FROM DATABASE defaultdb;' to verify"
 echo "    Run 'SELECT * FROM orders;' to see rows from all regions"
+echo "    Run 'SHOW SCHEDULES;' to verify backup schedule"

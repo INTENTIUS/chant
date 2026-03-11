@@ -1,5 +1,5 @@
 // GCP infrastructure: GKE cluster (us-central1) + Workload Identity IAM bindings.
-// Sized for CockroachDB: 3x e2-standard-4 (4 vCPU / 16 GiB) worker nodes.
+// Sized for CockroachDB: 3x e2-standard-2 (2 vCPU / 8 GiB) worker nodes.
 
 import {
   GkeCluster,
@@ -13,9 +13,11 @@ import { config } from "../config";
 export const { cluster, nodePool } = GkeCluster({
   name: config.clusterName,
   location: config.region,
-  machineType: "e2-standard-4",
-  minNodeCount: 3,
-  maxNodeCount: 3,
+  machineType: "e2-standard-2",
+  network: "crdb-multi-region",
+  subnetwork: "crdb-multi-region-central-nodes",
+  minNodeCount: 1,
+  maxNodeCount: 1,
   diskSizeGb: 100,
   releaseChannel: "REGULAR",
   workloadIdentity: true,
@@ -45,9 +47,9 @@ export const externalDnsWiBinding = new IAMPolicyMember({
   },
 });
 
-export const externalDnsDnsBinding = new IAMPolicyMember({
+export const externalDnsProjectBinding = new IAMPolicyMember({
   metadata: {
-    name: "gke-crdb-central-dns-admin",
+    name: "gke-crdb-central-dns-project",
     labels: { "app.kubernetes.io/managed-by": "chant" },
   },
   member: `serviceAccount:gke-crdb-central-dns@${config.projectId}.iam.gserviceaccount.com`,

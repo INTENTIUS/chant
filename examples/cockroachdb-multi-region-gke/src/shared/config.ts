@@ -7,9 +7,9 @@ export const CRDB_CLUSTER = {
   name: "cockroachdb",
   image: "cockroachdb/cockroach:v24.3.0",
   replicas: 3,
-  storageSize: "100Gi",
-  cpuLimit: "2",
-  memoryLimit: "8Gi",
+  storageSize: "10Gi",
+  cpuLimit: "1",
+  memoryLimit: "4Gi",
   // All 9 nodes join the same cluster.
   // Each region uses a unique namespace (crdb-east, crdb-central, crdb-west).
   // Cloud DNS private zone (crdb.internal) resolves join addresses across regions.
@@ -34,6 +34,11 @@ export const CRDB_DOMAIN = process.env.CRDB_DOMAIN ?? "crdb.example.com";
 
 // GCP project ID.
 export const GCP_PROJECT_ID = process.env.GCP_PROJECT_ID ?? "my-project";
+
+// Resource names for KMS and backups.
+export const KMS_KEY_RING = "crdb-multi-region";
+export const KMS_CRYPTO_KEY = "crdb-encryption";
+export const BACKUP_BUCKET = `${GCP_PROJECT_ID}-crdb-backups`;
 
 // Per-region configuration.
 export const REGIONS = {

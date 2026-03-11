@@ -9,12 +9,12 @@ import { ALL_CIDRS } from "../../shared/config";
 const ns = NamespaceEnv({
   name: "crdb-west",
   cpuQuota: "8",
-  memoryQuota: "32Gi",
-  maxPods: 20,
-  defaultCpuRequest: "500m",
-  defaultMemoryRequest: "1Gi",
-  defaultCpuLimit: "2",
-  defaultMemoryLimit: "8Gi",
+  memoryQuota: "20Gi",
+  maxPods: 25,
+  defaultCpuRequest: "250m",
+  defaultMemoryRequest: "512Mi",
+  defaultCpuLimit: "1",
+  defaultMemoryLimit: "4Gi",
   defaultDenyIngress: true,
   labels: {
     "pod-security.kubernetes.io/enforce": "baseline",

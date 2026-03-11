@@ -51,6 +51,27 @@ describe("GkeCluster", () => {
     expect(p(result.cluster).workloadIdentityConfig).toBeDefined();
     expect(p(result.nodePool).nodeConfig.workloadMetadataConfig).toBeDefined();
   });
+
+  test("workloadPool uses explicit projectId", () => {
+    const result = GkeCluster({ name: "c", projectId: "my-project-123" });
+    expect(p(result.cluster).workloadIdentityConfig.workloadPool).toBe(
+      "my-project-123.svc.id.goog",
+    );
+  });
+
+  test("workloadPool falls back to GCP_PROJECT_ID env var", () => {
+    const prev = process.env.GCP_PROJECT_ID;
+    process.env.GCP_PROJECT_ID = "env-project-456";
+    try {
+      const result = GkeCluster({ name: "c" });
+      expect(p(result.cluster).workloadIdentityConfig.workloadPool).toBe(
+        "env-project-456.svc.id.goog",
+      );
+    } finally {
+      if (prev === undefined) delete process.env.GCP_PROJECT_ID;
+      else process.env.GCP_PROJECT_ID = prev;
+    }
+  });
 });
 
 // ── CloudRunService ─────────────────────────────────────────────────

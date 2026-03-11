@@ -79,7 +79,7 @@ export const GcsBucket = Composite<GcsBucketProps>((props) => {
   }
 
   if (kmsKeyName) {
-    spec.encryption = { defaultKmsKeyName: kmsKeyName };
+    spec.encryption = { kmsKeyRef: { external: kmsKeyName } };
   }
 
   const lifecycleRules: Array<Record<string, unknown>> = [];

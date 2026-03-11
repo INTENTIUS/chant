@@ -54,7 +54,8 @@ metadata:
 spec:
   location: US
   encryption:
-    defaultKmsKeyName: projects/p/locations/l/keyRings/kr/cryptoKeys/k
+    kmsKeyRef:
+      external: projects/p/locations/l/keyRings/kr/cryptoKeys/k
 `;
     const diags = wgc101.check(makeCtx(yaml));
     const bucketDiags = diags.filter(d => d.entity === "my-bucket");

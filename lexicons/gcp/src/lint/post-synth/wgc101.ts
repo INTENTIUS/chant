@@ -30,7 +30,7 @@ export const wgc101: PostSynthCheck = {
           diagnostics.push({
             checkId: "WGC101",
             severity: "warning",
-            message: `StorageBucket "${name}" has no encryption configuration — consider adding spec.encryption.defaultKmsKeyName`,
+            message: `StorageBucket "${name}" has no encryption configuration — consider adding spec.encryption.kmsKeyRef`,
             entity: name,
             lexicon: "gcp",
           });

@@ -12,4 +12,5 @@ export const config = {
   regionShort: "west",
   domain: `west.${CRDB_DOMAIN}`,
   externalDnsGsaEmail: process.env.EXTERNAL_DNS_GSA_EMAIL_WEST ?? `gke-crdb-west-dns@${GCP_PROJECT_ID}.iam.gserviceaccount.com`,
+  crdbGsaEmail: `gke-crdb-west-crdb@${GCP_PROJECT_ID}.iam.gserviceaccount.com`,
 };

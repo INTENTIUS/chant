@@ -11,6 +11,8 @@ import { GKECluster, NodePool } from "../generated";
 export interface GkeClusterProps {
   /** Cluster name. */
   name: string;
+  /** GCP project ID for workload identity pool. Falls back to GCP_PROJECT_ID env var. */
+  projectId?: string;
   /** GCP region for regional cluster (default: uses GCP.Region). */
   location?: string;
   /** Initial node count per zone (default: 1). */
@@ -25,6 +27,12 @@ export interface GkeClusterProps {
   workloadIdentity?: boolean;
   /** Disk size in GB for nodes (default: 100). */
   diskSizeGb?: number;
+  /** Boot disk type for nodes (default: "pd-standard"). */
+  diskType?: string;
+  /** VPC network name (if omitted, uses default network). */
+  network?: string;
+  /** Subnetwork name for the cluster nodes. */
+  subnetwork?: string;
   /** GKE release channel (default: "REGULAR"). */
   releaseChannel?: "RAPID" | "REGULAR" | "STABLE";
   /** Additional labels. */
@@ -56,6 +64,7 @@ export interface GkeClusterProps {
 export const GkeCluster = Composite<GkeClusterProps>((props) => {
   const {
     name,
+    projectId: rawProjectId,
     location,
     initialNodeCount = 1,
     machineType = "e2-medium",
@@ -63,11 +72,16 @@ export const GkeCluster = Composite<GkeClusterProps>((props) => {
     maxNodeCount = 5,
     workloadIdentity = true,
     diskSizeGb = 100,
+    diskType = "pd-standard",
+    network: networkName,
+    subnetwork: subnetworkName,
     releaseChannel = "REGULAR",
     labels: extraLabels = {},
     namespace,
     defaults: defs,
   } = props;
+
+  const projectId = rawProjectId ?? process.env.GCP_PROJECT_ID ?? "PROJECT_ID";
 
   const commonLabels: Record<string, string> = {
     "app.kubernetes.io/name": name,
@@ -79,11 +93,13 @@ export const GkeCluster = Composite<GkeClusterProps>((props) => {
     initialNodeCount: 1, // Minimal default pool, real nodes in separate pool
     releaseChannel: { channel: releaseChannel },
     ...(location && { location }),
+    ...(networkName && { networkRef: { name: networkName } }),
+    ...(subnetworkName && { subnetworkRef: { name: subnetworkName } }),
   };
 
   if (workloadIdentity) {
     clusterSpec.workloadIdentityConfig = {
-      workloadPool: `PROJECT_ID.svc.id.goog`,
+      workloadPool: `${projectId}.svc.id.goog`,
     };
   }
 
@@ -112,6 +128,7 @@ export const GkeCluster = Composite<GkeClusterProps>((props) => {
     nodeConfig: {
       machineType,
       diskSizeGb,
+      diskType,
       oauthScopes: ["https://www.googleapis.com/auth/cloud-platform"],
       ...(workloadIdentity && {
         workloadMetadataConfig: { mode: "GKE_METADATA" },

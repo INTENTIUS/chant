@@ -10,6 +10,7 @@
     "build:central": "chant build src/central --lexicon gcp -o dist/central-infra.yaml && chant build src/central --lexicon k8s -o dist/central-k8s.yaml",
     "build:west": "chant build src/west --lexicon gcp -o dist/west-infra.yaml && chant build src/west --lexicon k8s -o dist/west-k8s.yaml",
     "lint": "chant lint src/shared && chant lint src/east && chant lint src/central && chant lint src/west",
+    "bootstrap": "bash scripts/bootstrap.sh",
     "deploy": "bash scripts/deploy.sh",
     "teardown": "bash scripts/teardown.sh"
   },

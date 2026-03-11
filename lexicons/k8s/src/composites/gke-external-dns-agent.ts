@@ -17,8 +17,8 @@ export interface GkeExternalDnsAgentProps {
   domainFilters: string[];
   /** TXT record owner ID for identifying managed records. */
   txtOwnerId?: string;
-  /** Source of DNS records (default: "ingress"). */
-  source?: string;
+  /** Source(s) of DNS records (default: "ingress"). Pass an array for multiple sources. */
+  source?: string | string[];
   /** Agent name (default: "external-dns"). */
   name?: string;
   /** Container image (default: "registry.k8s.io/external-dns/external-dns:v0.14.0"). */
@@ -84,8 +84,10 @@ export const GkeExternalDnsAgent = Composite<GkeExternalDnsAgentProps>((props) =
     ...extraLabels,
   };
 
+  const sources = Array.isArray(source) ? source : [source];
+
   const args: string[] = [
-    `--source=${source}`,
+    ...sources.map((s) => `--source=${s}`),
     "--provider=google",
     `--google-project=${gcpProjectId}`,
     "--policy=upsert-only",
