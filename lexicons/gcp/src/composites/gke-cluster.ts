@@ -110,6 +110,7 @@ export const GkeCluster = Composite<GkeClusterProps>((props) => {
     // consume SSD_TOTAL_GB quota (pd-balanced counts as SSD).
     initialNodeCount: 1,
     nodeConfig: {
+      machineType,
       diskType: "pd-standard",
       diskSizeGb: 50,
     },
