@@ -21,6 +21,8 @@ export const { cluster, nodePool } = GkeCluster({
   diskSizeGb: 100,
   releaseChannel: "REGULAR",
   workloadIdentity: true,
+  privateNodes: true,
+  masterCidr: "172.16.2.0/28",
 });
 
 // ── Workload Identity — ExternalDNS Service Account ────────────────

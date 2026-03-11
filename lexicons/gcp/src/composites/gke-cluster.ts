@@ -33,6 +33,18 @@ export interface GkeClusterProps {
   network?: string;
   /** Subnetwork name for the cluster nodes. */
   subnetwork?: string;
+  /**
+   * Enable private nodes — nodes have only internal IPs, no external IPs.
+   * Requires Cloud NAT for egress. Keeps master endpoint public so kubectl works from outside.
+   * Requires masterCidr when enabled.
+   */
+  privateNodes?: boolean;
+  /**
+   * CIDR block for the master's private endpoint (e.g. "172.16.0.0/28").
+   * Must be /28, unique per cluster, and not overlap with node/pod CIDRs.
+   * Required when privateNodes is true.
+   */
+  masterCidr?: string;
   /** GKE release channel (default: "REGULAR"). */
   releaseChannel?: "RAPID" | "REGULAR" | "STABLE";
   /** Additional labels. */
@@ -75,6 +87,8 @@ export const GkeCluster = Composite<GkeClusterProps>((props) => {
     diskType = "pd-standard",
     network: networkName,
     subnetwork: subnetworkName,
+    privateNodes = false,
+    masterCidr,
     releaseChannel = "REGULAR",
     labels: extraLabels = {},
     namespace,
@@ -95,6 +109,14 @@ export const GkeCluster = Composite<GkeClusterProps>((props) => {
     ...(location && { location }),
     ...(networkName && { networkRef: { name: networkName } }),
     ...(subnetworkName && { subnetworkRef: { name: subnetworkName } }),
+    ...(privateNodes && {
+      privateClusterConfig: {
+        enablePrivateNodes: true,
+        // Keep master endpoint public so kubectl works from outside the VPC.
+        enablePrivateEndpoint: false,
+        ...(masterCidr && { masterIpv4CidrBlock: masterCidr }),
+      },
+    }),
   };
 
   if (workloadIdentity) {
