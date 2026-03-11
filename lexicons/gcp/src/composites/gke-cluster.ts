@@ -104,9 +104,14 @@ export const GkeCluster = Composite<GkeClusterProps>((props) => {
   };
 
   const clusterSpec: Record<string, unknown> = {
-    // No initialNodeCount — Config Connector allows omitting it when a
-    // separate ContainerNodePool resource is used, avoiding a wasted default
-    // node pool that would double the node count on regional clusters.
+    // GKE API requires initialNodeCount > 0 even when using a separate
+    // ContainerNodePool. Force pd-standard so the default pool doesn't
+    // consume SSD_TOTAL_GB quota (pd-balanced counts as SSD).
+    initialNodeCount: 1,
+    nodeConfig: {
+      diskType: "pd-standard",
+      diskSizeGb: 50,
+    },
     releaseChannel: { channel: releaseChannel },
     ...(location && { location }),
     ...(networkName && { networkRef: { name: networkName } }),
