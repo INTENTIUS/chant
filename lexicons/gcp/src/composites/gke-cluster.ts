@@ -45,6 +45,12 @@ export interface GkeClusterProps {
    * Required when privateNodes is true.
    */
   masterCidr?: string;
+  /**
+   * Restrict node pools to specific zones within the region.
+   * Useful when a region has capacity issues in some zones.
+   * E.g. ["us-east4-b"] to use only zone b of us-east4.
+   */
+  nodeLocations?: string[];
   /** GKE release channel (default: "REGULAR"). */
   releaseChannel?: "RAPID" | "REGULAR" | "STABLE";
   /** Additional labels. */
@@ -90,6 +96,7 @@ export const GkeCluster = Composite<GkeClusterProps>((props) => {
     subnetwork: subnetworkName,
     privateNodes = false,
     masterCidr,
+    nodeLocations,
     releaseChannel = "REGULAR",
     labels: extraLabels = {},
     namespace,
@@ -118,6 +125,7 @@ export const GkeCluster = Composite<GkeClusterProps>((props) => {
     ...(location && { location }),
     ...(networkName && { networkRef: { name: networkName } }),
     ...(subnetworkName && { subnetworkRef: { name: subnetworkName } }),
+    ...(nodeLocations && { nodeLocations }),
     ...(privateNodes && {
       privateClusterConfig: {
         enablePrivateNodes: true,

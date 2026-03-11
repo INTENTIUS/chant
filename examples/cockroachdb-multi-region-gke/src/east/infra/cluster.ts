@@ -1,5 +1,6 @@
 // GCP infrastructure: GKE cluster (us-east4) + Workload Identity IAM bindings.
-// Sized for CockroachDB: 3x e2-standard-2 (2 vCPU / 8 GiB) worker nodes.
+// Sized for CockroachDB: 1x e2-standard-2 node (us-east4-b only; a and c
+// have periodic GCE_STOCKOUT for this machine type).
 
 import {
   GkeCluster,
@@ -19,6 +20,8 @@ export const { cluster, nodePool, defaultPool } = GkeCluster({
   minNodeCount: 1,
   maxNodeCount: 1,
   diskSizeGb: 100,
+  // Restrict to us-east4-b — zones a and c have periodic GCE_STOCKOUT.
+  nodeLocations: ["us-east4-b"],
   releaseChannel: "REGULAR",
   workloadIdentity: true,
   privateNodes: true,
