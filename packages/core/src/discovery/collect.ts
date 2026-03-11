@@ -34,6 +34,18 @@ export function collectEntities(
         } else {
           entities.set(name, value);
         }
+      } else if (Array.isArray(value)) {
+        // Arrays of Declarables — each element gets an indexed name: exportName_0, exportName_1, ...
+        for (let i = 0; i < value.length; i++) {
+          const item = value[i];
+          if (isDeclarable(item)) {
+            const indexedName = `${name}_${i}`;
+            if (entities.has(indexedName) && entities.get(indexedName) !== item) {
+              throw new DiscoveryError(file, `Duplicate entity name "${indexedName}"`, "resolution");
+            }
+            entities.set(indexedName, item);
+          }
+        }
       } else if (isCompositeInstance(value)) {
         const expanded = expandComposite(name, value);
         for (const [expandedName, entity] of expanded) {

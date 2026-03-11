@@ -32,8 +32,11 @@ export const CRDB_CLUSTER = {
 // Base domain for UI ingress. Override with CRDB_DOMAIN env var.
 export const CRDB_DOMAIN = process.env.CRDB_DOMAIN ?? "crdb.example.com";
 
-// GCP project ID.
+// GCP project ID and number.
 export const GCP_PROJECT_ID = process.env.GCP_PROJECT_ID ?? "my-project";
+// Project number is needed for Google-managed service agent emails (e.g. GCS service agent).
+// Find with: gcloud projects describe $GCP_PROJECT_ID --format='value(projectNumber)'
+export const GCP_PROJECT_NUMBER = process.env.GCP_PROJECT_NUMBER ?? "000000000000";
 
 // Resource names for KMS and backups.
 export const KMS_KEY_RING = "crdb-multi-region";

@@ -13,5 +13,5 @@ const CERT_SECRETS = [
 
 export const certSecrets = CERT_SECRETS.map(name => new SecretManagerSecret({
   metadata: { name },
-  replication: { automatic: {} },
+  replication: { automatic: true },
 }));
