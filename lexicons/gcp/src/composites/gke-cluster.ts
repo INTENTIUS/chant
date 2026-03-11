@@ -104,7 +104,9 @@ export const GkeCluster = Composite<GkeClusterProps>((props) => {
   };
 
   const clusterSpec: Record<string, unknown> = {
-    initialNodeCount: 1, // Minimal default pool, real nodes in separate pool
+    // No initialNodeCount — Config Connector allows omitting it when a
+    // separate ContainerNodePool resource is used, avoiding a wasted default
+    // node pool that would double the node count on regional clusters.
     releaseChannel: { channel: releaseChannel },
     ...(location && { location }),
     ...(networkName && { networkRef: { name: networkName } }),
