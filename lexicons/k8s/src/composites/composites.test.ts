@@ -3151,17 +3151,16 @@ describe("CockroachDbCluster", () => {
   test("joinAddresses appear in container args", () => {
     const joins = ["crdb-0.crdb.ns.svc.cluster.local", "crdb-1.crdb.ns.svc.cluster.local"];
     const result = CockroachDbCluster({ name: "crdb", joinAddresses: joins });
-    const args = (p(result.statefulSet).spec as any).template.spec.containers[0].args as string[];
-    const joinArg = args.find((a: string) => a.startsWith("--join="));
-    expect(joinArg).toBeDefined();
-    expect(joinArg).toContain("crdb-0.crdb.ns.svc.cluster.local");
-    expect(joinArg).toContain("crdb-1.crdb.ns.svc.cluster.local");
+    const cmd = (p(result.statefulSet).spec as any).template.spec.containers[0].args[0] as string;
+    expect(cmd).toContain("--join=");
+    expect(cmd).toContain("crdb-0.crdb.ns.svc.cluster.local");
+    expect(cmd).toContain("crdb-1.crdb.ns.svc.cluster.local");
   });
 
   test("locality appears in container args when set", () => {
     const result = CockroachDbCluster({ name: "crdb", locality: "cloud=aws,region=us-east-1" });
-    const args = (p(result.statefulSet).spec as any).template.spec.containers[0].args as string[];
-    expect(args).toContain("--locality=cloud=aws,region=us-east-1");
+    const cmd = (p(result.statefulSet).spec as any).template.spec.containers[0].args[0] as string;
+    expect(cmd).toContain("--locality=cloud=aws,region=us-east-1");
   });
 
   test("namespace is set on all namespaced resources", () => {
@@ -3197,8 +3196,8 @@ describe("CockroachDbCluster", () => {
     const result = CockroachDbCluster({ name: "crdb", secure: false });
     const spec = (p(result.statefulSet).spec as any).template.spec;
     expect(spec.volumes).toBeUndefined();
-    const args = spec.containers[0].args as string[];
-    expect(args).toContain("--insecure");
+    const cmd = spec.containers[0].args[0] as string;
+    expect(cmd).toContain("--insecure");
   });
 
   test("storageClassName is set when provided", () => {
