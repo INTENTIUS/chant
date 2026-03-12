@@ -111,9 +111,20 @@ export function createCell(cell: CellConfig) {
     namespace: ns,
   });
 
+  // Allow all traffic within the same namespace (webservice↔gitaly, workhorse↔webservice, etc.)
+  const allowSameNamespace = new NetworkPolicy({
+    metadata: { name: `${cell.name}-allow-same-namespace`, namespace: ns },
+    spec: {
+      podSelector: {},
+      ingress: [{ from: [{ podSelector: {} }] }],
+      egress: [{ to: [{ podSelector: {} }] }],
+      policyTypes: ["Ingress", "Egress"],
+    },
+  });
+
   return {
     namespace, resourceQuota, limitRange, defaultDeny,
-    allowIngressFromSystem, allowEgress,
+    allowSameNamespace, allowIngressFromSystem, allowEgress,
     externalSecrets, registryStorageSecret,
     serviceAccount,
   };

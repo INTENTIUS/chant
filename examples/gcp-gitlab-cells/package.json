@@ -17,7 +17,7 @@
     "apply:cells": "kubectl apply -f k8s.yaml -l app.kubernetes.io/part-of=cells",
     "deploy-cells": "bash scripts/deploy-cells.sh",
     "bootstrap": "bash scripts/bootstrap.sh",
-    "deploy": "npm run build && npm run configure-kubectl && npm run deploy-infra && npm run load-outputs && npm run build:k8s && npm run apply:system && npm run apply:cells && npm run deploy-cells",
+    "deploy": "bash scripts/deploy.sh",
     "teardown": "bash scripts/teardown.sh"
   },
   "dependencies": {
