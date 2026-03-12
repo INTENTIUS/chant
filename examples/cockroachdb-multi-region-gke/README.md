@@ -15,7 +15,7 @@ Deploy the cockroachdb-multi-region-gke example.
 My domain is crdb.mycompany.com. My GCP project is my-project-id.
 ```
 
-The agent loads the relevant skills and walks through 11 phases.
+The agent loads the relevant skills and walks through 11 phases — you don't run any of these commands manually. The phase-by-phase breakdown below shows what the agent does under the hood, for reference.
 
 ### Phase-by-phase walkthrough
 
@@ -158,6 +158,8 @@ Sets the primary region, adds secondary regions, configures `SURVIVE REGION FAIL
 bash scripts/configure-regions.sh
 ```
 
+> **Note:** `configure-regions.sh` uses `kubectl exec` with the node cert dir, but SQL connections require the root client cert. The script works if you first extract client certs locally (see Verify → Pods and cluster status) and set `COCKROACH_CERTS_DIR`. Alternatively, use port-forward and run SQL directly with `docker run cockroachdb/cockroach sql`.
+
 You see output confirming all 3 regions are configured and the demo `orders` table is created.
 
 ### After deployment
@@ -200,7 +202,10 @@ Build and lint the cockroachdb-multi-region-gke example locally.
 │  ┌──────────────┐     ┌──────────────┐     ┌──────────────┐    │
 │  │  GKE East    │     │  GKE Central │     │  GKE West    │    │
 │  │  us-east4    │◄───►│  us-central1 │◄───►│  us-west1    │    │
+│  │  nodes:      │     │  nodes:      │     │  nodes:      │    │
 │  │  10.1.0.0/20 │     │  10.2.0.0/20 │     │  10.3.0.0/20 │    │
+│  │  pods (GKE): │     │  pods (GKE): │     │  pods (GKE): │    │
+│  │  10.64.0.0/14│     │ 10.128.0.0/14│     │  10.84.0.0/14│    │
 │  │  crdb-east   │     │  crdb-central│     │  crdb-west   │    │
 │  │  (3 nodes)   │     │  (3 nodes)   │     │  (3 nodes)   │    │
 │  │  Prometheus  │     │  Prometheus  │     │  Prometheus  │    │
@@ -239,6 +244,8 @@ ExternalDNS (west cluster)     →  cockroachdb-{0,1,2}.west.crdb.internal
 ```
 
 CockroachDB's `--join` flag references these Cloud DNS names. When pods restart and get new IPs, ExternalDNS updates the records automatically.
+
+**Advertise address:** Each node must advertise its cross-cluster resolvable name, not its cluster-local FQDN. `$(hostname -f)` returns `cockroachdb-0.cockroachdb.crdb-east.svc.cluster.local`, which is only resolvable within the east cluster — central and west pods can't use it for gossip. The `CockroachDbCluster` composite's `advertiseHostDomain` prop sets the per-pod advertise address to `${HOSTNAME}.${advertiseHostDomain}` (e.g. `cockroachdb-0.east.crdb.internal`), making all gossip traffic use the shared private DNS zone.
 
 ExternalDNS also manages **public DNS records** for the CockroachDB UI ingress (`east.<domain>`, `central.<domain>`, `west.<domain>`) via per-region public Cloud DNS zones.
 
@@ -361,14 +368,14 @@ dig NS "west.${CRDB_DOMAIN}"
 
 ## Deploy
 
-```bash
-cp .env.example .env
-# Fill in required values in .env
-set -a && source .env && set +a
-npm install
-npm run bootstrap   # one-time: creates management cluster with Config Connector
-npm run deploy
+Give your agent:
+
 ```
+Deploy the cockroachdb-multi-region-gke example.
+My domain is crdb.mycompany.com. My GCP project is my-project-id.
+```
+
+The agent sets up `.env`, runs `npm install`, bootstraps the management cluster (once), and runs `npm run deploy`. It pauses at Phase 4 for DNS delegation — the one step that requires action at your registrar.
 
 ### Standalone usage
 
@@ -401,84 +408,105 @@ The deploy is a **true single-pass process** — no rebuild step needed. GCP VPC
 
 ### Pods and cluster status
 
-```bash
-# Check all pods are running
-kubectl --context east get pods -n crdb-east
-kubectl --context central get pods -n crdb-central
-kubectl --context west get pods -n crdb-west
-
-# Check CockroachDB cluster status (should show all 9 nodes)
-kubectl --context east exec cockroachdb-0 -n crdb-east -- \
-  /cockroach/cockroach node status --certs-dir=/cockroach/cockroach-certs
 ```
+Check the status of all CockroachDB pods and nodes across all 3 regions.
+```
+
+The agent checks pod health across `east`, `central`, `west` and runs `cockroach node status` via port-forward. It extracts the root client certs from the `cockroachdb-client-certs` Secret — they're not mounted in the pod, so `kubectl exec ... cockroach sql` prompts for a password and won't work directly.
 
 ### ExternalDNS and Cloud DNS records
 
-```bash
-# Check ExternalDNS is running in each cluster
-for ctx in east central west; do
-  echo "--- ${ctx} ---"
-  kubectl --context "${ctx}" -n kube-system get pods -l app.kubernetes.io/name=external-dns
-done
-
-# Check ExternalDNS logs for record registration
-kubectl --context east -n kube-system logs -l app.kubernetes.io/name=external-dns --tail=20
-
-# Verify private zone records (should show A records for all 9 pods)
-gcloud dns record-sets list --zone=crdb-internal \
-  --project "${GCP_PROJECT_ID}" \
-  --filter="type=A"
-
-# Verify DNS resolution from inside a pod
-kubectl --context east exec cockroachdb-0 -n crdb-east -- \
-  nslookup cockroachdb-0.central.crdb.internal
-
-# Verify public zone records (UI ingress)
-gcloud dns record-sets list --zone=crdb-east-zone \
-  --project "${GCP_PROJECT_ID}" \
-  --filter="type=A"
 ```
+Verify ExternalDNS is running and has registered all 9 pod IPs in the crdb.internal private zone.
+Also check the public DNS zones for the UI ingress records.
+```
+
+The agent checks ExternalDNS pods and logs across all 3 clusters, lists A records in both the private (`crdb-internal`) and public (`crdb-east-zone` etc.) Cloud DNS zones, and verifies cross-region DNS resolution from inside a pod.
+
+### First login — create an admin SQL user
+
+The DB Console requires a SQL user with a password — `root` uses cert auth and cannot log in via the browser:
+
+```
+Create a CockroachDB admin SQL user so I can log in to the DB Console.
+Use the username "dbadmin" and a strong password.
+```
+
+The agent will extract the client root certs from the `cockroachdb-client-certs` K8s Secret, open a port-forward to `cockroachdb-public`, and run `CREATE USER ... GRANT admin TO dbadmin` via Docker. It will print the credentials when done.
+
+> **Note for the agent:** Do not name the user `admin` — that is a built-in CockroachDB role and `GRANT admin TO admin` fails. The pod's `/cockroach/cockroach-certs` only has node certs; client root certs are in the `cockroachdb-client-certs` Secret and must be extracted before connecting. Avoid `!` in passwords — bash treats it as a history expansion character inside double-quoted strings, which silently corrupts the password at the time `CREATE USER` runs. Use alphanumeric passwords or pass the SQL via a file or `$'...'` quoting if special characters are required.
 
 ### Multi-region topology
 
-```bash
-# Check multi-region topology
-kubectl --context east exec cockroachdb-0 -n crdb-east -- \
-  /cockroach/cockroach sql --certs-dir=/cockroach/cockroach-certs \
-  -e "SHOW REGIONS FROM DATABASE defaultdb;"
+```
+Show me the CockroachDB multi-region topology — regions configured, survival goal,
+and a sample of rows from the orders demo table.
+```
 
-# Query demo table (rows from all 3 regions)
-kubectl --context east exec cockroachdb-0 -n crdb-east -- \
-  /cockroach/cockroach sql --certs-dir=/cockroach/cockroach-certs \
-  -e "SELECT region, id, total FROM orders;"
+The agent runs `SHOW REGIONS`, `SHOW SURVIVAL GOAL`, and queries the `orders` table via `kubectl exec`. Note that SQL commands that don't require client certs (only node certs are mounted in the pod) will prompt for a password — for read-only verification the agent can use the node cert dir directly since it's connecting as root to localhost.
 
-# Connect via SQL
-kubectl --context east exec -it cockroachdb-0 -n crdb-east -- \
-  /cockroach/cockroach sql --certs-dir=/cockroach/cockroach-certs
+### Troubleshooting cross-region connectivity
+
+If central/west pods stay `0/1 Running` and logs show `dial tcp <pod-ip>:26257: i/o timeout`, ask your agent:
+
+```
+CockroachDB pods in central and west can't reach east. Logs show i/o timeout on port 26257. Diagnose and fix cross-region connectivity.
+```
+
+The agent will check NetworkPolicy CIDRs, GCP firewall rules, and CockroachDB advertise addresses. Three things it will look for:
+
+**1. GKE pod CIDRs missing from NetworkPolicy or VPC firewall.** GKE assigns secondary IP ranges for pods (e.g. `10.64.0.0/14`) that differ from the subnet CIDRs. Both must be in `ALL_CIDRS` in `src/shared/config.ts`. The agent will find the actual ranges with `gcloud compute networks subnets describe` and add them if missing.
+
+**2. CockroachDB join backoff.** After ~60 failed join attempts CockroachDB enters a long retry backoff. Once the network is fixed, the agent will bounce the pods to force immediate retry.
+
+**3. Nodes advertising cluster-local FQDNs.** If `cockroach node status` shows `cockroachdb-0.cockroachdb.crdb-east.svc.cluster.local` instead of `cockroachdb-0.east.crdb.internal` in the address column, the `advertiseHostDomain` prop is not set in each region's `cockroachdb.ts`. The agent will add it.
+
+### Troubleshooting the UI (HTTPS / GCE Ingress)
+
+If the UI isn't working, ask your agent:
+
+```
+The CockroachDB UI at https://east.crdb.intentius.io isn't working.
+Check the GCE backend health, managed certificate status, and ingress configuration.
+```
+
+The agent will diagnose and fix the issue. Common root causes it will look for:
+
+**Backend UNHEALTHY** — Three causes the agent knows to check:
+1. `cloud.google.com/backend-config` annotation on the wrong resource (must be on the **Service**, not the Ingress — set via `defaults.publicService` in `cockroachdb.ts`)
+2. NetworkPolicy blocking GCE health check probers (`35.191.0.0/16`, `130.211.0.0/22` must be in `ALL_CIDRS` in `src/shared/config.ts`)
+3. BackendConfig resource not present in the namespace (tell the agent to check `kubectl get backendconfig -n crdb-east`)
+
+**`curl: (47) Maximum (50) redirects followed`** — The LB is forwarding plain HTTP to CockroachDB (TLS-only), which issues a 301 back to HTTPS — infinite loop. Fix is `cloud.google.com/app-protocols: '{"http":"HTTPS"}'` on the Service. Tell the agent:
+
+```
+I'm getting "Maximum (50) redirects followed" when curling the UI. Fix it.
+```
+
+**`429 Too Many Requests` on first page load or during use** — The CockroachDB DB Console continuously polls metrics and makes many parallel API calls. Anything below ~2000 req/min will trigger bans during normal use; the default is 3000 req/min with a 1-min ban. Tell the agent:
+
+```
+I'm getting 429 errors on the CockroachDB UI. Check and fix the Cloud Armor rate limit.
+```
+
+**ManagedCertificate stuck in `Provisioning`** — Requires DNS delegation to be complete and the backend to be HEALTHY before ACME HTTP-01 can complete. Allow 15–20 minutes. Tell the agent:
+
+```
+Keep checking the managed certificate status every minute until it goes Active.
 ```
 
 ### Troubleshooting ExternalDNS
 
-If CockroachDB pods fail to join across regions, ExternalDNS may not have registered pod IPs yet.
+If CockroachDB pods fail to join across regions, ExternalDNS may not have registered pod IPs yet. Ask your agent:
 
-```bash
-# Check ExternalDNS logs for errors
-kubectl --context east -n kube-system logs -l app.kubernetes.io/name=external-dns
-
-# Common issues:
-# - "googleapi: Error 403: Forbidden" → Workload Identity binding missing or wrong project ID
-# - "no endpoints found" → headless service not annotated or pods not ready
-# - "zone not found" → private DNS zone not created (check shared infra deploy)
-
-# Verify the headless service has the ExternalDNS annotation
-kubectl --context east -n crdb-east get svc cockroachdb -o jsonpath='{.metadata.annotations}'
-
-# Verify Workload Identity is working
-kubectl --context east -n kube-system describe sa external-dns-sa | grep iam.gke.io
-
-# Force ExternalDNS to re-sync by restarting it
-kubectl --context east -n kube-system rollout restart deployment/external-dns
 ```
+ExternalDNS doesn't seem to be registering pod IPs in the crdb.internal private zone. Check all 3 clusters and fix any issues.
+```
+
+The agent will check ExternalDNS logs across all clusters, verify Workload Identity bindings, and restart ExternalDNS if needed. Common errors it will look for:
+- `googleapi: Error 403: Forbidden` → Workload Identity binding missing or wrong project ID
+- `no endpoints found` → headless service missing the ExternalDNS annotation or pods not ready
+- `zone not found` → private DNS zone not created (shared infra not applied)
 
 ## Teardown
 
@@ -528,9 +556,10 @@ src/
 │       ├── namespace.ts       # NamespaceEnv + NetworkPolicy
 │       ├── storage.ts         # GcePdStorageClass (pd-ssd)
 │       ├── cockroachdb.ts     # CockroachDbCluster composite (WI annotated)
-│       ├── ingress.ts         # GceIngress (Cloud Armor) + GkeExternalDnsAgent
+│       ├── ingress.ts         # GceIngress (ManagedCertificate + FrontendConfig) + GkeExternalDnsAgent
+│       ├── tls.ts             # ManagedCertificate + FrontendConfig (HTTPS termination)
 │       ├── external-secrets.ts # ClusterSecretStore + ExternalSecrets
-│       ├── backend-config.ts  # BackendConfig for Cloud Armor
+│       ├── backend-config.ts  # BackendConfig (Cloud Armor WAF + HTTPS health check)
 │       └── monitoring.ts      # Prometheus deployment
 ├── central/                   # Same structure as east/
 └── west/                      # Same structure as east/
@@ -549,11 +578,11 @@ scripts/
 
 | File | What it defines |
 |------|-----------------|
-| `src/shared/config.ts` | Cluster-wide constants: per-region CIDRs (10.1/2/3.0.0/20), Cloud DNS join addresses for all 9 nodes, CockroachDB version (v24.3.0), project ID, KMS/backup names |
+| `src/shared/config.ts` | Cluster-wide constants: configured subnet CIDRs (10.1/2/3.0.0/20) + GKE-allocated pod CIDRs (10.64/84/128.0.0/14) + GCE health check prober CIDRs (`35.191.0.0/16`, `130.211.0.0/22`) in `ALL_CIDRS` for NetworkPolicy; Cloud DNS join addresses for all 9 nodes; CockroachDB version (v24.3.0); project ID; KMS/backup names |
 | `src/shared/encryption.ts` | KMS key ring (`crdb-multi-region`, location `us`) + crypto key (`crdb-encryption`, 90-day rotation) |
 | `src/shared/storage.ts` | GCS backup bucket (`${PROJECT}-crdb-backups`, versioning, nearline after 30d, delete after 90d, KMS encrypted) |
 | `src/shared/secrets.ts` | 5 Secret Manager secrets for TLS certs (ca, node cert/key, client root cert/key) |
-| `src/shared/security.ts` | Cloud Armor WAF policy (`crdb-ui-waf`): rate limiting, XSS/SQLi blocking, L7 DDoS defense |
+| `src/shared/security.ts` | Cloud Armor WAF policy (`crdb-ui-waf`): rate limiting (3000 req/min, 1-min ban — CockroachDB DB Console continuous metric polling requires a high threshold), XSS/SQLi blocking, L7 DDoS defense |
 | `src/shared/iam-crdb.ts` | 3 CockroachDB GCP SAs with WI bindings + bucket-scoped `storage.objectAdmin` for backups |
 | `src/shared/iam-eso.ts` | ESO GCP SA with 3 WI bindings + `secretmanager.secretAccessor` for cert syncing |
 | `src/shared/infra/networking.ts` | VpcNetwork (global VPC, 6 subnets: nodes + pods per region, Cloud NAT for us-east4), Router + RouterNAT for us-central1 and us-west1 |
@@ -575,10 +604,11 @@ scripts/
 |------|-----------|
 | `src/east/k8s/namespace.ts` | NamespaceEnv (crdb-east), ResourceQuota (10 CPU / 40Gi), LimitRange, 2x NetworkPolicy (default-deny + CRDB cross-region allow) |
 | `src/east/k8s/storage.ts` | GcePdStorageClass (pd-ssd) |
-| `src/east/k8s/cockroachdb.ts` | CockroachDbCluster composite: StatefulSet (3 replicas), Services (headless for ExternalDNS), RBAC, PDB, WI annotation on SA |
-| `src/east/k8s/ingress.ts` | GceIngress (Cloud Armor backend-config annotation), GkeExternalDnsAgent |
+| `src/east/k8s/cockroachdb.ts` | CockroachDbCluster composite: StatefulSet (3 replicas), Services (headless for ExternalDNS, public with `backend-config` + `app-protocols: HTTPS` annotations), RBAC, PDB, WI annotation on SA |
+| `src/east/k8s/ingress.ts` | GceIngress with `managedCertificate` + `frontendConfig`, GkeExternalDnsAgent |
+| `src/east/k8s/tls.ts` | ManagedCertificate (Google-managed TLS for `east.<domain>`), FrontendConfig (HTTP→HTTPS redirect) |
 | `src/east/k8s/external-secrets.ts` | ClusterSecretStore (GCP SM + WI auth), 2x ExternalSecret (node certs, client certs) |
-| `src/east/k8s/backend-config.ts` | BackendConfig CRD referencing `crdb-ui-waf` Cloud Armor policy |
+| `src/east/k8s/backend-config.ts` | BackendConfig CRD: `type: HTTPS` health check on `/health:8080`, `crdb-ui-waf` Cloud Armor policy. Annotated on the **Service** (not Ingress) via `cockroachdb.ts` `defaults.publicService`. |
 | `src/east/k8s/monitoring.ts` | Prometheus ConfigMap + Deployment + Service (scrapes `/_status/vars` on port 8080) |
 
 ### Central (us-central1)
@@ -627,13 +657,13 @@ No two-pass build — all values are known at build time.
 
 - **Inter-node + client:** Self-signed CA via `cockroach cert` (generated locally, pushed to Secret Manager, synced to K8s via External Secrets Operator). One node cert with SANs for all 9 nodes across all 3 clusters — includes both Cloud DNS names (`*.{region}.crdb.internal`) and cluster-local names.
 - **Secret Manager + ESO:** Certificates are stored in GCP Secret Manager (5 secrets: ca.crt, node.crt, node.key, client.root.crt, client.root.key). ESO in each cluster syncs them into K8s Secrets via Workload Identity — no manual `kubectl create secret` needed after initial push.
-- **Dashboard UI:** Public Ingress on `{region}.<CRDB_DOMAIN>` via GCE Ingress, protected by Cloud Armor WAF.
-- **Multi-region cert generation:** Uses `scripts/generate-certs.sh` (external). The K8s composite's built-in cert-gen Job is for single-cluster deployments only.
+- **Dashboard UI:** Public Ingress on `{region}.<CRDB_DOMAIN>` via GCE Ingress with GKE ManagedCertificate (Google-managed TLS, auto-renewed via ACME HTTP-01) and FrontendConfig (HTTP→HTTPS redirect). The GCE load balancer terminates TLS and forwards traffic to CockroachDB over HTTPS (not HTTP) because CockroachDB only accepts TLS connections — the `cloud.google.com/app-protocols: '{"http":"HTTPS"}'` annotation on the Service sets the backend protocol. Protected by Cloud Armor WAF.
+- **Multi-region cert generation:** Uses `scripts/generate-certs.sh` (external). The K8s composite's built-in cert-gen Job is for single-cluster deployments only. All regions share one CA cert — if each region generated its own CA, cross-region TLS would fail with "certificate signed by unknown authority".
 
 ## Security hardening
 
 1. **Pod Security Standards** — all namespaces enforce `baseline` with `restricted` warn/audit, blocking privileged containers
-2. **Default-deny NetworkPolicy** — each namespace starts with deny-all ingress; a second policy explicitly allows CockroachDB ports (26257 gRPC, 8080 HTTP) only from the 6 regional CIDRs (3 node + 3 pod subnets)
+2. **Default-deny NetworkPolicy** — each namespace starts with deny-all ingress; a second policy explicitly allows CockroachDB ports (26257 gRPC, 8080 HTTP) from: the configured subnet CIDRs (10.1–3.x/20), the GKE-allocated pod CIDRs (10.64.0.0/14, 10.128.0.0/14, 10.84.0.0/14), and the GCE health check prober ranges (`35.191.0.0/16`, `130.211.0.0/22`). The subnet and pod ranges differ (subnet CIDRs cover node VMs, GKE-allocated ranges cover pods via secondary IP alias ranges) — both must be in `ALL_CIDRS` for cross-cluster gossip. The health check prober ranges must also be included or the GCE load balancer backend stays UNHEALTHY.
 3. **Cloud DNS private zone** — inter-node discovery uses a private DNS zone visible only within the VPC; no public DNS exposure of pod IPs
 4. **Encrypted inter-node traffic** — CockroachDB TLS with self-signed CA; all node-to-node and client-to-node traffic is mTLS
 5. **KMS encryption at rest** — CMEK via Cloud KMS (`crdb-encryption` key, 90-day auto-rotation, GOOGLE_SYMMETRIC_ENCRYPTION); encrypts GCS backup bucket
@@ -641,7 +671,7 @@ No two-pass build — all values are known at build time.
 7. **Workload Identity** — Workload Identity Federation on GKE; no long-lived credentials in K8s. CockroachDB pods use per-region GCP SAs for GCS backup access
 8. **Zone-scoped IAM** — ExternalDNS SAs only get `dns.admin` on their own public zone + shared private zone (not project-level)
 9. **Secret Manager + ESO** — TLS certificates stored in Secret Manager and synced to K8s via External Secrets Operator with Workload Identity auth
-10. **Cloud Armor WAF** — rate limiting (100 req/min per IP, 5-min ban), XSS/SQLi blocking (`xss-v33-stable`, `sqli-v33-stable`), Layer 7 DDoS defense
+10. **Cloud Armor WAF** — rate limiting (3000 req/min per IP, 1-min ban), XSS/SQLi blocking (`xss-v33-stable`, `sqli-v33-stable`), Layer 7 DDoS defense. The threshold is 3000 req/min because the CockroachDB DB Console continuously polls metrics and makes many parallel API calls — anything below ~2000/min triggers bans during normal use.
 11. **Resource quotas + LimitRange** — each namespace caps at 10 CPU / 40Gi memory with per-pod defaults and limits
 12. **Non-root containers** — CockroachDB runs as non-root (UID 1000) with read-only root filesystem where supported
 13. **PodDisruptionBudget** — ensures at least 2 of 3 pods per region remain available during node maintenance

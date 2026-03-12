@@ -12,6 +12,6 @@ export const crdbBackendConfig = new BackendConfig({
   },
   spec: {
     securityPolicy: { name: "crdb-ui-waf" },
-    healthCheck: { requestPath: "/health", port: 8080 },
+    healthCheck: { type: "HTTPS", requestPath: "/health", port: 8080 },
   },
 });

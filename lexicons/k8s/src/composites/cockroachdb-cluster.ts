@@ -37,6 +37,35 @@ export interface CockroachDbClusterProps {
   joinAddresses?: string[];
   /** Enable TLS via self-signed CA certs (default: true). */
   secure?: boolean;
+  /**
+   * Skip the cockroach init Job (default: false).
+   * Set true for secondary regions in a multi-region cluster — only ONE region
+   * should run `cockroach init` to bootstrap the unified cluster. Secondary
+   * nodes start fresh and auto-join the cluster via the joinAddresses.
+   */
+  skipInit?: boolean;
+  /**
+   * Skip the cert-gen Job (default: false).
+   * Set true for multi-region deployments where a shared CA and node certs are
+   * pre-generated externally (e.g. via generate-certs.sh) and distributed via
+   * External Secrets Operator or direct kubectl. Each region's cert-gen creates
+   * a separate CA, breaking cross-region TLS — so all regions must use the same CA.
+   */
+  skipCertGen?: boolean;
+  /**
+   * Extra DNS names / IPs to include in node cert SANs beyond the auto-generated
+   * cluster-local names. Use for cross-region or external hostnames.
+   * E.g. ["cockroachdb-0.east.crdb.internal", "cockroachdb-1.east.crdb.internal"].
+   */
+  extraCertNodeAddresses?: string[];
+  /**
+   * Domain suffix for cross-cluster advertise address (e.g. "east.crdb.internal").
+   * When set, nodes advertise "${HOSTNAME}.${advertiseHostDomain}" instead of the
+   * cluster-local FQDN from $(hostname -f). Required for multi-region clusters so
+   * that gossip addresses are resolvable from other Kubernetes clusters.
+   * E.g. pod "cockroachdb-0" in east advertises "cockroachdb-0.east.crdb.internal".
+   */
+  advertiseHostDomain?: string;
   /** Additional labels to apply to all resources. */
   labels?: Record<string, string>;
   /** Per-member defaults for fine-grained overrides. */
@@ -67,10 +96,10 @@ export interface CockroachDbClusterResult {
   headlessService: InstanceType<typeof Service>;
   pdb: InstanceType<typeof PodDisruptionBudget>;
   statefulSet: InstanceType<typeof StatefulSet>;
-  /** One-shot cockroach init job. */
-  initJob: InstanceType<typeof Job>;
-  /** Generates self-signed CA + node certs, stores in Secrets. */
-  certGenJob: InstanceType<typeof Job>;
+  /** One-shot cockroach init job. Absent when skipInit is true. */
+  initJob?: InstanceType<typeof Job>;
+  /** Generates self-signed CA + node certs, stores in Secrets. Absent when skipCertGen is true. */
+  certGenJob?: InstanceType<typeof Job>;
 }
 
 /**
@@ -109,6 +138,10 @@ export const CockroachDbCluster = Composite<CockroachDbClusterProps>((props) => 
     locality,
     joinAddresses = [],
     secure = true,
+    skipInit = false,
+    skipCertGen = false,
+    extraCertNodeAddresses = [],
+    advertiseHostDomain,
     labels: extraLabels = {},
     defaults: defs,
   } = props;
@@ -239,17 +272,27 @@ export const CockroachDbCluster = Composite<CockroachDbClusterProps>((props) => 
 
   // -- StatefulSet --
 
-  const cockroachArgs = [
-    "start",
+  // Build the cockroach start command as a shell string so that $(hostname -f)
+  // is expanded at runtime. K8s exec-form args do NOT invoke a shell, so
+  // $(...) substitutions are never evaluated unless we wrap with sh -c.
+  // When advertiseHostDomain is set, advertise the cross-cluster ExternalDNS name
+  // (e.g. "cockroachdb-0.east.crdb.internal") so gossip addresses are resolvable
+  // from other Kubernetes clusters. Otherwise fall back to the cluster-local FQDN.
+  const advertiseHostFlag = advertiseHostDomain
+    ? `--advertise-host=\${HOSTNAME}.${advertiseHostDomain}`
+    : `--advertise-host=$(hostname -f)`;
+
+  const cockroachFlags = [
     `--logtostderr=WARNING`,
     ...(secure ? [`--certs-dir=${certsDir}`] : ["--insecure"]),
-    `--advertise-host=$(hostname -f)`,
+    advertiseHostFlag,
     `--http-addr=0.0.0.0`,
     `--cache=${cachePercent}`,
     `--max-sql-memory=${sqlMemoryPercent}`,
     ...(joinAddresses.length > 0 ? [`--join=${joinAddresses.join(",")}`] : []),
     ...(locality ? [`--locality=${locality}`] : []),
   ];
+  const cockroachStartCmd = `/cockroach/cockroach start ${cockroachFlags.join(" ")}`;
 
   const volumes: Record<string, unknown>[] = [];
   const volumeMounts: Record<string, unknown>[] = [
@@ -268,8 +311,8 @@ export const CockroachDbCluster = Composite<CockroachDbClusterProps>((props) => 
       { containerPort: 26257, name: "grpc" },
       { containerPort: 8080, name: "http" },
     ],
-    command: ["/cockroach/cockroach"],
-    args: cockroachArgs,
+    command: ["/bin/sh", "-c"],
+    args: [cockroachStartCmd],
     resources: {
       limits: { cpu: cpuLimit, memory: memoryLimit },
       requests: { cpu: cpuLimit, memory: memoryLimit },
@@ -345,19 +388,22 @@ export const CockroachDbCluster = Composite<CockroachDbClusterProps>((props) => 
   // CockroachDB UBI images (v24+) include curl. For multi-region deployments,
   // use an external cert generation script instead (see generate-certs.sh).
   const nodeNames = Array.from({ length: replicas }, (_, i) => `${name}-${i}.${name}`);
+  // Include both short names (for in-cluster init job) and FQDNs (for cross-namespace/init connections).
   const nodeAddresses = namespace
-    ? nodeNames.map((n) => `${n}.${namespace}.svc.cluster.local`)
-    : nodeNames.map((n) => `${n}.default.svc.cluster.local`);
+    ? [...nodeNames, ...nodeNames.map((n) => `${n}.${namespace}.svc.cluster.local`)]
+    : [...nodeNames, ...nodeNames.map((n) => `${n}.default.svc.cluster.local`)];
 
   const ns = namespace ?? "default";
   const nodeSecretName = `${name}-node-certs`;
   const clientSecretName = `${name}-client-certs`;
 
+  const allCertNodeAddresses = [...nodeAddresses, ...extraCertNodeAddresses];
+
   const certGenScript = [
     "set -ex",
     "cd /cockroach",
     "cockroach cert create-ca --certs-dir=certs --ca-key=certs/ca.key",
-    `cockroach cert create-node ${nodeAddresses.join(" ")} localhost 127.0.0.1 --certs-dir=certs --ca-key=certs/ca.key`,
+    `cockroach cert create-node ${allCertNodeAddresses.join(" ")} localhost 127.0.0.1 --certs-dir=certs --ca-key=certs/ca.key`,
     "cockroach cert create-client root --certs-dir=certs --ca-key=certs/ca.key",
     // Store certs in K8s Secrets via the API using the ServiceAccount token.
     `TOKEN=$(cat /var/run/secrets/kubernetes.io/serviceaccount/token)`,
@@ -381,7 +427,7 @@ export const CockroachDbCluster = Composite<CockroachDbClusterProps>((props) => 
     `done`,
   ].join("\n");
 
-  const certGenJob = new Job(mergeDefaults({
+  const certGenJob = skipCertGen ? undefined : new Job(mergeDefaults({
     metadata: {
       name: `${name}-cert-gen`,
       ...(namespace && { namespace }),
@@ -407,7 +453,7 @@ export const CockroachDbCluster = Composite<CockroachDbClusterProps>((props) => 
     },
   }, defs?.certGenJob));
 
-  // -- init Job --
+  // -- init Job (only when skipCertGen is false) --
 
   const initArgs = secure
     ? [`--certs-dir=${certsDir}`, `--host=${name}-0.${name}`]
@@ -420,7 +466,7 @@ export const CockroachDbCluster = Composite<CockroachDbClusterProps>((props) => 
     initVolumeMounts.push({ name: "client-certs", mountPath: certsDir });
   }
 
-  const initJob = new Job(mergeDefaults({
+  const initJob = skipInit ? undefined : new Job(mergeDefaults({
     metadata: {
       name: `${name}-init`,
       ...(namespace && { namespace }),
@@ -459,7 +505,7 @@ export const CockroachDbCluster = Composite<CockroachDbClusterProps>((props) => 
     headlessService,
     pdb,
     statefulSet,
-    initJob,
-    certGenJob,
+    ...(initJob && { initJob }),
+    ...(certGenJob && { certGenJob }),
   };
 }, "CockroachDbCluster");

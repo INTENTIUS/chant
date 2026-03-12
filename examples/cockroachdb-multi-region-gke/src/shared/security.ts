@@ -21,10 +21,10 @@ export const wafPolicy = new ComputeSecurityPolicy({
       rateLimitOptions: {
         conformAction: "allow",
         exceedAction: "deny(429)",
-        rateLimitThreshold: { count: 100, intervalSec: 60 },
-        banDurationSec: 300,
+        rateLimitThreshold: { count: 3000, intervalSec: 60 },
+        banDurationSec: 60,
       },
-      description: "Rate limit: 100 req/min per IP, 5-min ban",
+      description: "Rate limit: 3000 req/min per IP, 1-min ban",
     },
     {
       action: "deny(403)",

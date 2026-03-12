@@ -19,6 +19,13 @@ const crdb = CockroachDbCluster({
   locality: config.locality,
   joinAddresses: config.joinAddresses,
   secure: true,
+  skipCertGen: true,
+  advertiseHostDomain: `east.${INTERNAL_DOMAIN}`,
+  extraCertNodeAddresses: [
+    `cockroachdb-0.east.${INTERNAL_DOMAIN}`,
+    `cockroachdb-1.east.${INTERNAL_DOMAIN}`,
+    `cockroachdb-2.east.${INTERNAL_DOMAIN}`,
+  ],
   labels: {
     "app.kubernetes.io/part-of": "cockroachdb-multi-region",
     "app.kubernetes.io/instance": "east",
@@ -28,6 +35,15 @@ const crdb = CockroachDbCluster({
       metadata: {
         annotations: {
           "iam.gke.io/gcp-service-account": config.crdbGsaEmail,
+        },
+      },
+    },
+    publicService: {
+      metadata: {
+        annotations: {
+          "cloud.google.com/backend-config": '{"default":"crdb-ui-backend"}',
+          // Tell the GCE LB to use HTTPS when forwarding to CockroachDB (TLS-only on port 8080)
+          "cloud.google.com/app-protocols": '{"http":"HTTPS"}',
         },
       },
     },
@@ -51,4 +67,4 @@ export const cockroachdbHeadlessService = crdb.headlessService;
 export const cockroachdbPdb = crdb.pdb;
 export const cockroachdbStatefulSet = crdb.statefulSet;
 export const cockroachdbInitJob = crdb.initJob;
-export const cockroachdbCertGenJob = crdb.certGenJob;
+// No certGenJob for east — skipCertGen: true, generate-certs.sh handles shared certs

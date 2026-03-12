@@ -19,6 +19,14 @@ const crdb = CockroachDbCluster({
   locality: config.locality,
   joinAddresses: config.joinAddresses,
   secure: true,
+  skipInit: true,
+  skipCertGen: true,
+  advertiseHostDomain: `west.${INTERNAL_DOMAIN}`,
+  extraCertNodeAddresses: [
+    `cockroachdb-0.west.${INTERNAL_DOMAIN}`,
+    `cockroachdb-1.west.${INTERNAL_DOMAIN}`,
+    `cockroachdb-2.west.${INTERNAL_DOMAIN}`,
+  ],
   labels: {
     "app.kubernetes.io/part-of": "cockroachdb-multi-region",
     "app.kubernetes.io/instance": "west",
@@ -28,6 +36,14 @@ const crdb = CockroachDbCluster({
       metadata: {
         annotations: {
           "iam.gke.io/gcp-service-account": config.crdbGsaEmail,
+        },
+      },
+    },
+    publicService: {
+      metadata: {
+        annotations: {
+          "cloud.google.com/backend-config": '{"default":"crdb-ui-backend"}',
+          "cloud.google.com/app-protocols": '{"http":"HTTPS"}',
         },
       },
     },
@@ -50,5 +66,5 @@ export const cockroachdbPublicService = crdb.publicService;
 export const cockroachdbHeadlessService = crdb.headlessService;
 export const cockroachdbPdb = crdb.pdb;
 export const cockroachdbStatefulSet = crdb.statefulSet;
-export const cockroachdbInitJob = crdb.initJob;
+// No initJob for west — skipInit: true, east runs cockroach init for the full cluster
 export const cockroachdbCertGenJob = crdb.certGenJob;

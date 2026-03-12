@@ -7,6 +7,7 @@ import {
   RouterNAT,
   GCP,
   defaultAnnotations,
+  Firewall,
 } from "@intentius/chant-lexicon-gcp";
 import { REGIONS } from "../config";
 
@@ -31,6 +32,29 @@ export const network = VpcNetwork({
   enableNat: true,
   natRegion: "us-east4",
   allowInternalTraffic: true,
+});
+
+// ── Extra firewall rule for GKE-allocated pod CIDRs ────────────────
+// GKE allocates secondary IP ranges for pods that differ from the subnet CIDRs
+// declared above. The VpcNetwork composite's allow-internal rule only covers
+// the configured subnet CIDRs. We add this rule for the actual GKE pod ranges.
+// Find ranges with: gcloud compute networks subnets describe <name> --region=<region>
+export const firewallGkePods = new Firewall({
+  metadata: {
+    name: "crdb-multi-region-allow-gke-pods",
+    labels: { "app.kubernetes.io/managed-by": "chant" },
+  },
+  networkRef: { name: "crdb-multi-region" },
+  allow: [
+    { protocol: "tcp", ports: ["0-65535"] },
+    { protocol: "udp", ports: ["0-65535"] },
+    { protocol: "icmp" },
+  ],
+  sourceRanges: [
+    "10.64.0.0/14",   // east pod CIDR (gke-gke-crdb-east-pods)
+    "10.128.0.0/14",  // central pod CIDR (gke-gke-crdb-central-pods)
+    "10.84.0.0/14",   // west pod CIDR (gke-gke-crdb-west-pods)
+  ],
 });
 
 // ── Cloud NAT for us-central1 ──────────────────────────────────────

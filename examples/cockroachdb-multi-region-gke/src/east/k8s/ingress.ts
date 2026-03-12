@@ -7,6 +7,8 @@ import {
 } from "@intentius/chant-lexicon-k8s";
 import { config } from "../config";
 import { CRDB_DOMAIN, INTERNAL_DOMAIN } from "../../shared/config";
+import { crdbBackendConfig } from "./backend-config";
+import { crdbManagedCert, crdbFrontendConfig } from "./tls";
 
 const NAMESPACE = "crdb-east";
 
@@ -21,18 +23,13 @@ const ing = GceIngress({
     },
   ],
   namespace: NAMESPACE,
-  defaults: {
-    ingress: {
-      metadata: {
-        annotations: {
-          "cloud.google.com/backend-config": '{"default":"crdb-ui-backend"}',
-        },
-      },
-    },
-  },
+  managedCertificate: "crdb-ui-cert",
+  frontendConfig: "crdb-ui-frontend",
 });
 
 export const gceIngress = ing.ingress;
+export { crdbBackendConfig };
+export { crdbManagedCert, crdbFrontendConfig };
 
 // ── ExternalDNS ────────────────────────────────────────────────────
 // Watches headless Services to register pod IPs in crdb.internal private zone.

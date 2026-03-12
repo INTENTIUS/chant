@@ -36,6 +36,9 @@ docker run --rm -v "${PWD}/${CERTS_DIR}:/certs" "${CRDB_IMAGE}" \
     cockroachdb-0.cockroachdb.crdb-west.svc.cluster.local \
     cockroachdb-1.cockroachdb.crdb-west.svc.cluster.local \
     cockroachdb-2.cockroachdb.crdb-west.svc.cluster.local \
+    cockroachdb-0.cockroachdb \
+    cockroachdb-1.cockroachdb \
+    cockroachdb-2.cockroachdb \
     cockroachdb-public \
     cockroachdb-public.crdb-east \
     cockroachdb-public.crdb-central \

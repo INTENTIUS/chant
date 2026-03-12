@@ -88,6 +88,9 @@ const API_GROUP_VERSIONS: Record<string, string> = {
   Storage: "storage.k8s.io/v1",
   Autoscaling: "autoscaling/v2",
   Admissionregistration: "admissionregistration.k8s.io/v1",
+  GKE: "cloud.google.com/v1",
+  NetworkingGKE: "networking.gke.io/v1",
+  NetworkingGKEBeta: "networking.gke.io/v1beta1",
 };
 
 function deriveGVKFromType(entityType: string): { apiVersion: string; kind: string } | null {

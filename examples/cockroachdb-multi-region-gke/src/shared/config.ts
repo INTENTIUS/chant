@@ -8,8 +8,8 @@ export const CRDB_CLUSTER = {
   image: "cockroachdb/cockroach:v24.3.0",
   replicas: 3,
   storageSize: "10Gi",
-  cpuLimit: "1",
-  memoryLimit: "4Gi",
+  cpuLimit: "500m",
+  memoryLimit: "2Gi",
   // All 9 nodes join the same cluster.
   // Each region uses a unique namespace (crdb-east, crdb-central, crdb-west).
   // Cloud DNS private zone (crdb.internal) resolves join addresses across regions.
@@ -51,6 +51,9 @@ export const REGIONS = {
 };
 
 // All CIDRs for NetworkPolicy allow rules.
+// Includes both the configured VPC subnet CIDRs and the GKE-assigned secondary pod CIDRs.
+// GKE allocates secondary IP ranges for pods that differ from the configured subnet CIDRs.
+// Find actual ranges with: gcloud compute networks subnets describe <name> --region=<region>
 export const ALL_CIDRS = [
   REGIONS.east.nodeCidr,
   REGIONS.east.podCidr,
@@ -58,4 +61,11 @@ export const ALL_CIDRS = [
   REGIONS.central.podCidr,
   REGIONS.west.nodeCidr,
   REGIONS.west.podCidr,
+  // GKE-assigned pod CIDRs (secondary ranges, differ from subnet CIDRs above)
+  "10.64.0.0/14",   // east pod CIDR (gke-gke-crdb-east-pods)
+  "10.128.0.0/14",  // central pod CIDR (gke-gke-crdb-central-pods)
+  "10.84.0.0/14",   // west pod CIDR (gke-gke-crdb-west-pods)
+  // GCE health check prober ranges — required for GCE Ingress backend health checks
+  "35.191.0.0/16",
+  "130.211.0.0/22",
 ];
