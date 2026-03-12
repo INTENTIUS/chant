@@ -1,6 +1,6 @@
 {
   "name": "@intentius/chant-lexicon-flyway",
-  "version": "0.0.23",
+  "version": "0.0.24",
   "description": "Flyway database migration lexicon for chant — declarative IaC in TypeScript",
   "license": "Apache-2.0",
   "homepage": "https://intentius.io/chant",
