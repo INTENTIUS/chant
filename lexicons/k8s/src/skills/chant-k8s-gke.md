@@ -119,6 +119,12 @@ const result = GkeExternalDnsAgent({
 });
 ```
 
+**Props:** `gcpServiceAccountEmail` (required), `gcpProjectId` (required), `domainFilters` (required), `txtOwnerId?`, `source?` (string or string[], default: `"service"`), `name?` (default: `"external-dns"`), `namespace?` (default: `"kube-system"`), `image?` (default: `"registry.k8s.io/external-dns/external-dns:v0.14.2"`), `labels?`, `defaults?`
+
+**Returns:** `{ deployment, serviceAccount, clusterRole, clusterRoleBinding }`
+
+To watch both Services and Ingresses, pass `source: ["service", "ingress"]`.
+
 ### GkeFluentBitAgent — DaemonSet for Cloud Logging
 
 ```typescript
@@ -142,6 +148,55 @@ const result = GkeOtelCollector({
   gcpServiceAccountEmail: "monitoring@my-project.iam.gserviceaccount.com",
 });
 ```
+
+### CockroachDbCluster — multi-node CockroachDB StatefulSet
+
+```typescript
+import { CockroachDbCluster } from "@intentius/chant-lexicon-k8s";
+
+const crdb = CockroachDbCluster({
+  name: "cockroachdb",
+  namespace: "crdb-east",
+  replicas: 3,
+  image: "cockroachdb/cockroach:v24.3.4",
+  storageSize: "100Gi",
+  storageClassName: "pd-ssd",
+  cpuLimit: "2",
+  memoryLimit: "8Gi",
+  locality: "region=us-east1,zone=us-east1-b",
+  joinAddresses: ["cockroachdb-0.east.crdb.example.com", "cockroachdb-0.west.crdb.example.com"],
+  secure: true,
+  skipInit: false,       // true on non-bootstrapping regions
+  skipCertGen: true,     // true when certs are provisioned externally
+  advertiseHostDomain: "east.crdb.example.com",
+  extraCertNodeAddresses: [
+    "cockroachdb-0.east.crdb.example.com",
+    "cockroachdb-1.east.crdb.example.com",
+    "cockroachdb-2.east.crdb.example.com",
+  ],
+});
+
+export const {
+  serviceAccount, role, roleBinding, clusterRole, clusterRoleBinding,
+  publicService, headlessService, pdb, statefulSet,
+  initJob,     // only when skipInit: false
+  certGenJob,  // only when skipCertGen: false
+} = crdb;
+```
+
+**Key props:**
+- `secure` — enables TLS node-to-node and client comms (default: `false`)
+- `skipInit` — skip `cockroach init`; set `true` on all regions except the one that bootstraps the cluster
+- `skipCertGen` — skip cert generation Job; use when certs are managed externally (e.g. `generate-certs.sh`)
+- `advertiseHostDomain` — hostname suffix CockroachDB advertises to peers; must resolve via ExternalDNS or similar
+- `extraCertNodeAddresses` — SANs added to node certs for cross-region RPC; list all pod FQDNs that peers will dial
+- `locality` — CockroachDB locality string (`region=...,zone=...`); used for data placement and rebalancing
+- `joinAddresses` — seed peer addresses used at startup; include one node from each region
+
+**`defaults`** allow deep-merging arbitrary fields onto any generated resource:
+- `defaults.serviceAccount` — e.g. add `iam.gke.io/gcp-service-account` annotation for Workload Identity
+- `defaults.publicService` — e.g. add `cloud.google.com/backend-config` + `cloud.google.com/app-protocols` annotations for GCE Ingress
+- `defaults.headlessService` — e.g. add `external-dns.alpha.kubernetes.io/hostname` for ExternalDNS registration
 
 ### ConfigConnectorContext — Config Connector namespace bootstrap
 
