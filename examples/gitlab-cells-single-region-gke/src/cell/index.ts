@@ -14,7 +14,9 @@ export const cellAllowIngressFromSystemPolicies = _cells.map(c => c.allowIngress
 export const cellAllowEgressPolicies = _cells.map(c => c.allowEgress);
 export const cellExternalSecrets = _cells.flatMap(c => c.externalSecrets);
 export const cellRegistryStorageSecrets = _cells.map(c => c.registryStorageSecret);
+export const cellObjectStoreConnectionSecrets = _cells.map(c => c.objectStoreConnectionSecret);
 export const cellK8sServiceAccounts = _cells.map(c => c.serviceAccount);
+export const cellDefaultServiceAccounts = _cells.map(c => c.defaultServiceAccount);
 export const cellRunnerServiceAccounts = _cells.map(c => c.runnerServiceAccount);
 export const cellRunnerConfigs = _cells.map(c => c.runnerConfig);
 export const cellRunnerDeployments = _cells.map(c => c.runnerDeployment);

@@ -1,6 +1,7 @@
 import { Deployment, Service, NetworkPolicy, Ingress } from "@intentius/chant-lexicon-k8s";
 import { createResource } from "@intentius/chant/runtime";
 import { cells, shared } from "../config";
+
 import { routingRulesConfigMap } from "./routing-rules";
 
 const HorizontalPodAutoscaler = createResource("K8s::HorizontalPodAutoscaler", "k8s", {});
@@ -25,10 +26,12 @@ export const cellRouterDeployment = new Deployment({
       spec: {
         containers: [{
           name: "cell-router",
-          // Replace with a real routing proxy image (e.g. Envoy + Lua, or a
-          // purpose-built Go binary) in production. The nginx image here
-          // serves as a typed placeholder that passes build + lint.
-          image: "nginx:1.25-alpine",
+          // OpenResty (nginx + LuaJIT) reads routing-rules.json, cell-registry.json,
+          // and router-config.json from the ConfigMap and routes requests by:
+          //   1. _gitlab_session cookie cell prefix (stateless)
+          //   2. glrt-cell_<id>_ routable token prefix (stateless)
+          //   3. Topology Service org-slug lookup (path fallback)
+          image: shared.cellRouterImage,
           ports: [{ name: "http", containerPort: 8080 }],
           resources: {
             requests: { cpu: "250m", memory: "128Mi" },
@@ -65,9 +68,19 @@ export const cellRouterService = new Service({
   },
 });
 
-// Single wildcard Ingress entry routes all cell hostnames through the cell router
-// rather than directly to individual cell services. The router proxies to the
-// correct cell based on session token, routable token, or org-slug path lookup.
+// Cell router ingress routes all cell hostnames through the cell router.
+// Nginx wildcard host rules only match a single subdomain level, so we need:
+//   *.gitlab.intentius.io  → catches top-level cell aliases (e.g. alpha.gitlab.intentius.io)
+//   *.alpha.gitlab.intentius.io → catches two-level cell hosts (e.g. gitlab.alpha.gitlab.intentius.io)
+//   *.beta.gitlab.intentius.io  → same for beta, etc.
+const cellRouterBackend = {
+  paths: [{
+    path: "/",
+    pathType: "Prefix" as const,
+    backend: { service: { name: "cell-router", port: { number: 8080 } } },
+  }],
+};
+
 export const cellRouterIngress = new Ingress({
   metadata: {
     name: "cell-router",
@@ -80,16 +93,16 @@ export const cellRouterIngress = new Ingress({
   },
   spec: {
     ingressClassName: "nginx",
-    rules: [{
-      host: `*.${shared.domain}`,
-      http: {
-        paths: [{
-          path: "/",
-          pathType: "Prefix",
-          backend: { service: { name: "cell-router", port: { number: 8080 } } },
-        }],
-      },
-    }],
+    rules: [
+      // Top-level wildcard: *.gitlab.intentius.io
+      { host: `*.${shared.domain}`, http: cellRouterBackend },
+      // Per-cell wildcard: *.alpha.gitlab.intentius.io, *.beta.gitlab.intentius.io, etc.
+      // Required because nginx wildcard rules only match a single subdomain level.
+      ...cells.map(cell => ({
+        host: `*.${cell.name}.${shared.domain}`,
+        http: cellRouterBackend,
+      })),
+    ],
   },
 });
 
@@ -99,7 +112,7 @@ export const cellRouterAllowNginxIngress = new NetworkPolicy({
   spec: {
     podSelector: { matchLabels: { "app.kubernetes.io/name": "cell-router" } },
     ingress: [{
-      from: [{ podSelector: { matchLabels: { "app.kubernetes.io/name": "ingress-nginx" } } }],
+      from: [{ podSelector: { matchLabels: { "app.kubernetes.io/name": "ingress-nginx-controller" } } }],
       ports: [{ protocol: "TCP", port: 8080 }],
     }],
     policyTypes: ["Ingress"],
@@ -108,7 +121,9 @@ export const cellRouterAllowNginxIngress = new NetworkPolicy({
 
 const cellEgressRules = cells.map(cell => ({
   to: [{ namespaceSelector: { matchLabels: { "gitlab.example.com/cell": cell.name } } }],
-  ports: [{ protocol: "TCP", port: 8080 }],
+  // Port 8181 is the workhorse TCP listener (required for git HTTP JWT handling).
+  // Port 8080 is the internal rails/puma port (used by /-/health, API, etc.).
+  ports: [{ protocol: "TCP", port: 8181 }, { protocol: "TCP", port: 8080 }],
 }));
 
 // Allow egress from cell-router to topology service + all cell namespaces

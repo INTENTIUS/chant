@@ -107,11 +107,8 @@ export const cellValues = new Values({
       password: { secret: "gitlab-smtp-password", key: "password" },
     },
 
-    // Container registry
-    registry: {
-      enabled: true,
-      storage: { secret: "registry-storage", key: "config" },
-    },
+    // Container registry (enabled globally; storage config is at registry.storage subchart level)
+    registry: { enabled: true },
   },
 
   // GitLab component config
@@ -135,6 +132,9 @@ export const cellValues = new Values({
       },
     },
   },
+
+  // registry.storage is subchart-level config (not global.registry.storage)
+  registry: { storage: { secret: "registry-storage", key: "config" } },
 
   // Disable bundled services
   postgresql: { install: false },
@@ -189,15 +189,14 @@ export const baseOverride = new ValuesOverride({
         },
       },
       smtp: { enabled: false },
-      registry: {
-        enabled: true,
-        storage: { secret: "registry-storage", key: "config" },
-      },
+      registry: { enabled: true },
       cells: {
         enabled: true,
         topology_service: { address: "topology-service.system.svc:8080" },
       },
     },
+    // registry.storage is subchart-level config, not global.registry.storage
+    registry: { storage: { secret: "registry-storage", key: "config" } },
     gitlab: {
       webservice: { replicas: 2 },
       pgbouncer: { default_pool_size: 20, min_pool_size: 5, max_client_conn: 150 },

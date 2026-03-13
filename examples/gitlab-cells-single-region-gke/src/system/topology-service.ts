@@ -2,6 +2,8 @@ import { Deployment, Service, ConfigMap } from "@intentius/chant-lexicon-k8s";
 import { createResource } from "@intentius/chant/runtime";
 import { shared } from "../config";
 
+const ExternalSecret = createResource("K8s::ExternalSecrets::ExternalSecret", "k8s", {});
+
 const ServiceMonitor = createResource("K8s::Monitoring::ServiceMonitor", "k8s", {});
 
 const labels = {
@@ -17,6 +19,7 @@ database:
   host: topology-db-ip
   port: 5432
   name: topology_production
+  user: gitlab-topology-db-admin
   sslmode: require
 server:
   port: 8080
@@ -47,6 +50,10 @@ export const topologyDeployment = new Deployment({
             requests: { cpu: "250m", memory: "256Mi" },
             limits: { cpu: "1", memory: "512Mi" },
           },
+          env: [{
+            name: "DB_PASSWORD",
+            valueFrom: { secretKeyRef: { name: "topology-db-password", key: "password" } },
+          }],
           livenessProbe: { httpGet: { path: "/healthz", port: 8080 }, initialDelaySeconds: 10, periodSeconds: 10 },
           readinessProbe: { httpGet: { path: "/healthz", port: 8080 }, initialDelaySeconds: 5, periodSeconds: 5 },
           volumeMounts: [{ name: "config", mountPath: "/etc/topology-service" }],
@@ -62,6 +69,18 @@ export const topologyService = new Service({
   spec: {
     selector: { "app.kubernetes.io/name": "topology-service" },
     ports: [{ name: "http", port: 8080, targetPort: "http" }],
+  },
+});
+
+// ExternalSecret: syncs gitlab-topology-db-password from GCP Secret Manager
+// into the system namespace so the topology-service Deployment can mount it.
+export const topologyDbPasswordSecret = new ExternalSecret({
+  metadata: { name: "topology-db-password", namespace: "system", labels: { "app.kubernetes.io/part-of": "system" } },
+  spec: {
+    refreshInterval: "1h",
+    secretStoreRef: { name: "gcp-secret-manager", kind: "ClusterSecretStore" },
+    target: { name: "topology-db-password" },
+    data: [{ secretKey: "password", remoteRef: { key: "gitlab-topology-db-password" } }],
   },
 });
 

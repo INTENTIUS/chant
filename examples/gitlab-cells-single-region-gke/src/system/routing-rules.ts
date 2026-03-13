@@ -58,7 +58,7 @@ const pathRule: PathRule = {
 export const routingRules: RoutingRule[] = [sessionTokenRule, routableTokenRule, pathRule];
 
 export const routingRulesConfigMap = new ConfigMap({
-  metadata: { name: "cell-router-rules", namespace: "system" },
+  metadata: { name: "cell-router-rules", namespace: "system", labels: { "app.kubernetes.io/part-of": "system" } },
   data: {
     "routing-rules.json": JSON.stringify(routingRules, null, 2),
     // Cell name → internal K8s service URL for proxy target selection
@@ -66,7 +66,9 @@ export const routingRulesConfigMap = new ConfigMap({
       Object.fromEntries(
         cells.map(cell => [
           cell.name,
-          `http://gitlab-cell-${cell.name}-webservice-default.cell-${cell.name}.svc.cluster.local:8080`,
+          // Port 8181 is the workhorse TCP listener. Port 8080 is the internal puma/rails port
+          // which bypasses workhorse — git HTTP requires workhorse for JWT handling.
+          `http://gitlab-cell-${cell.name}-webservice-default.cell-${cell.name}.svc.cluster.local:8181`,
         ])
       ),
       null,

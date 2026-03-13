@@ -9,7 +9,7 @@ const remoteWriteConfig = shared.prometheusRemoteWriteUrl
   : "";
 
 export const prometheusConfig = new ConfigMap({
-  metadata: { name: "prometheus-config", namespace: "system" },
+  metadata: { name: "prometheus-config", namespace: "system", labels: { "app.kubernetes.io/part-of": "system" } },
   data: {
     "prometheus.yml": `
 global:
@@ -61,7 +61,7 @@ export const prometheusDeployment = new Deployment({
 });
 
 export const prometheusService = new Service({
-  metadata: { name: "prometheus", namespace: "system" },
+  metadata: { name: "prometheus", namespace: "system", labels: { "app.kubernetes.io/part-of": "system" } },
   spec: {
     selector: { "app.kubernetes.io/name": "prometheus" },
     ports: [{ name: "http", port: 9090, targetPort: "http" }],
@@ -95,7 +95,7 @@ export const grafanaDeployment = new Deployment({
 });
 
 export const grafanaService = new Service({
-  metadata: { name: "grafana", namespace: "system" },
+  metadata: { name: "grafana", namespace: "system", labels: { "app.kubernetes.io/part-of": "system" } },
   spec: {
     selector: { "app.kubernetes.io/name": "grafana" },
     ports: [{ name: "http", port: 3000, targetPort: "http" }],

@@ -10,6 +10,12 @@ export const { cluster, nodePool } = GkeCluster({
   diskSizeGb: shared.nodeDiskSizeGb,
   releaseChannel: shared.releaseChannel,
   workloadIdentity: true,
+  defaults: {
+    cluster: {
+      addonsConfig: { networkPolicyConfig: { disabled: false } },
+      networkPolicy: { enabled: true, provider: "CALICO" },
+    },
+  },
 });
 
 // Optional dedicated runner node pool with taints

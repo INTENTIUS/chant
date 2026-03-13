@@ -65,27 +65,23 @@ for CELL in $CELLS; do
   echo "  Cell ${CELL} root password: ${ROOT_PASS}  ← save this"
 
   # ── rails-secret ─────────────────────────────────────────────────────
+  # openid_connect_signing_key must be a real RSA private key — GitLab tries to write a
+  # generated key to secrets.yml if the value is empty, which fails on the read-only mounted volume.
+  OIDC_KEY=$(openssl genrsa 2048 2>/dev/null | python3 -c "import sys; print(repr(sys.stdin.read()))")
   RAILS_SECRET=$(python3 - <<PYEOF
 import secrets
+oidc_key = ${OIDC_KEY}
 lines = [
   "production:",
   "  secret_key_base: " + secrets.token_hex(64),
   "  db_key_base: " + secrets.token_hex(64),
   "  otp_key_base: " + secrets.token_hex(64),
-  "  openid_connect_signing_key: ''",
-]
+  "  openid_connect_signing_key: |",
+] + ["    " + line for line in oidc_key.splitlines()]
 print("\n".join(lines))
 PYEOF
 )
   echo -n "$RAILS_SECRET" | gcloud secrets versions add "gitlab-${CELL}-rails-secret" --data-file=- --project "$GCP_PROJECT_ID"
-
-  # ── Object store connection secret (Workload Identity — no credentials file) ──
-  if ! kubectl get secret gitlab-object-store-connection -n "cell-${CELL}" &>/dev/null; then
-    kubectl create secret generic gitlab-object-store-connection \
-      --from-literal=connection='{"provider":"Google","google_application_default":true}' \
-      -n "cell-${CELL}"
-    echo "  Created gitlab-object-store-connection in cell-${CELL}"
-  fi
 
   # ── Generate per-cell values file (full nested Helm values) ──────────
   cat > "values-${CELL}.yaml" <<VALS
@@ -98,6 +94,8 @@ global:
     sequence_offset: $(cell_offset "$CELL")
   psql:
     host: "${PG_IP}"
+    username: "gitlab-${CELL}-db-admin"
+    port: 5432
   redis:
     host: "${REDIS_PERSISTENT}"
     cache:
@@ -115,14 +113,34 @@ global:
     artifacts:
       bucket: "${GCP_PROJECT_ID}-${CELL}-artifacts"
     uploads:
-      bucket: "${GCP_PROJECT_ID}-${CELL}-artifacts"
+      bucket: "${GCP_PROJECT_ID}-${CELL}-uploads"
     lfs:
-      bucket: "${GCP_PROJECT_ID}-${CELL}-artifacts"
+      bucket: "${GCP_PROJECT_ID}-${CELL}-lfs"
     packages:
-      bucket: "${GCP_PROJECT_ID}-${CELL}-artifacts"
+      bucket: "${GCP_PROJECT_ID}-${CELL}-packages"
 VALS
   echo "  Generated values-${CELL}.yaml"
 done
+
+# ── Topology service DB password ─────────────────────────────────────
+TOPOLOGY_DB_SECRET="gitlab-topology-db-db-password"
+if ! kubectl get secret "$TOPOLOGY_DB_SECRET" -n default &>/dev/null; then
+  TOPOLOGY_DB_PASS=$(openssl rand -base64 18 | tr -d '/+=' | head -c 24)
+  kubectl create secret generic "$TOPOLOGY_DB_SECRET" \
+    --from-literal=password="$TOPOLOGY_DB_PASS" -n default
+  echo "  Created K8s secret $TOPOLOGY_DB_SECRET"
+else
+  TOPOLOGY_DB_PASS=$(kubectl get secret "$TOPOLOGY_DB_SECRET" -o jsonpath='{.data.password}' | base64 -d)
+fi
+echo -n "$TOPOLOGY_DB_PASS" | gcloud secrets versions add "gitlab-topology-db-password" \
+  --data-file=- --project "$GCP_PROJECT_ID"
+
+# ── Grafana admin password ───────────────────────────────────────────
+# Always adds a fresh version; ESO picks up latest → K8s secret "grafana-admin".
+GRAFANA_PASS=$(openssl rand -base64 18 | tr -d '/+=' | head -c 20)
+echo -n "$GRAFANA_PASS" | gcloud secrets versions add "gitlab-grafana-admin-password" \
+  --data-file=- --project "$GCP_PROJECT_ID"
+echo "  Grafana admin password stored  ← retrieve: gcloud secrets versions access latest --secret=gitlab-grafana-admin-password --project \$GCP_PROJECT_ID"
 
 # ── Topology service DB host ──────────────────────────────────────────
 TOPOLOGY_PG_IP=$(kubectl get sqlinstances "gitlab-topology-db" \

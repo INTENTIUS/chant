@@ -119,6 +119,10 @@ export const CloudSqlInstance = Composite<CloudSqlInstanceProps>((props) => {
 
   const user = new SQLUser(mergeDefaults({
     metadata: {
+      // K8s name scoped to the instance for uniqueness (e.g. "mydb-admin").
+      // Without resourceID, Config Connector uses metadata.name as the actual
+      // Cloud SQL username — so the PG username IS the K8s resource name.
+      // Callers can override via defaults.user.resourceID if a shorter name is needed.
       name: `${name}-${userName}`,
       ...(namespace && { namespace }),
       labels: { ...commonLabels, "app.kubernetes.io/component": "database" },

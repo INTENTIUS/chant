@@ -19,6 +19,20 @@ export const cellWiBindings = cells.map(c => new IAMPolicyMember({
   },
 }));
 
+// WI bindings for `default` SA — Helm chart components (registry, webservice, etc.) use `default`
+// and need GCS access. Annotating `default` + adding this binding gives them WI without
+// requiring per-component service account config in Helm values.
+export const cellDefaultSaWiBindings = cells.map(c => new IAMPolicyMember({
+  metadata: { name: `gitlab-${c.name}-default-wi` },
+  member: `serviceAccount:${shared.projectId}.svc.id.goog[cell-${c.name}/default]`,
+  role: "roles/iam.workloadIdentityUser",
+  resourceRef: {
+    apiVersion: "iam.cnrm.cloud.google.com/v1beta1",
+    kind: "IAMServiceAccount",
+    name: `gitlab-${c.name}`,
+  },
+}));
+
 // Per-cell GCS access: bucket-scoped objectAdmin (not project-level)
 export const cellArtifactsBucketBindings = cells.map(c => new IAMPolicyMember({
   metadata: { name: `gitlab-${c.name}-artifacts-access` },
@@ -39,6 +53,39 @@ export const cellRegistryBucketBindings = cells.map(c => new IAMPolicyMember({
     apiVersion: "storage.cnrm.cloud.google.com/v1beta1",
     kind: "StorageBucket",
     name: `${shared.projectId}-${c.name}-registry`,
+  },
+}));
+
+export const cellUploadsBucketBindings = cells.map(c => new IAMPolicyMember({
+  metadata: { name: `gitlab-${c.name}-uploads-access` },
+  member: `serviceAccount:gitlab-${c.name}@${shared.projectId}.iam.gserviceaccount.com`,
+  role: "roles/storage.objectAdmin",
+  resourceRef: {
+    apiVersion: "storage.cnrm.cloud.google.com/v1beta1",
+    kind: "StorageBucket",
+    name: `${shared.projectId}-${c.name}-uploads`,
+  },
+}));
+
+export const cellLfsBucketBindings = cells.map(c => new IAMPolicyMember({
+  metadata: { name: `gitlab-${c.name}-lfs-access` },
+  member: `serviceAccount:gitlab-${c.name}@${shared.projectId}.iam.gserviceaccount.com`,
+  role: "roles/storage.objectAdmin",
+  resourceRef: {
+    apiVersion: "storage.cnrm.cloud.google.com/v1beta1",
+    kind: "StorageBucket",
+    name: `${shared.projectId}-${c.name}-lfs`,
+  },
+}));
+
+export const cellPackagesBucketBindings = cells.map(c => new IAMPolicyMember({
+  metadata: { name: `gitlab-${c.name}-packages-access` },
+  member: `serviceAccount:gitlab-${c.name}@${shared.projectId}.iam.gserviceaccount.com`,
+  role: "roles/storage.objectAdmin",
+  resourceRef: {
+    apiVersion: "storage.cnrm.cloud.google.com/v1beta1",
+    kind: "StorageBucket",
+    name: `${shared.projectId}-${c.name}-packages`,
   },
 }));
 
@@ -78,7 +125,7 @@ export const certManagerServiceAccount = new GCPServiceAccount({
 
 export const certManagerWiBinding = new IAMPolicyMember({
   metadata: { name: "gitlab-cert-manager-wi" },
-  member: `serviceAccount:${shared.projectId}.svc.id.goog[system/cert-manager]`,
+  member: `serviceAccount:${shared.projectId}.svc.id.goog[cert-manager/cert-manager]`,
   role: "roles/iam.workloadIdentityUser",
   resourceRef: {
     apiVersion: "iam.cnrm.cloud.google.com/v1beta1",

@@ -3,12 +3,14 @@ import { cells, shared } from "../config";
 
 const canaryCell = cells.find(c => c.canary)!;
 
+const systemLabels = { "app.kubernetes.io/part-of": "system" };
+
 export const runnerSa = new ServiceAccount({
-  metadata: { name: "gitlab-runner", namespace: "system" },
+  metadata: { name: "gitlab-runner", namespace: "system", labels: systemLabels },
 });
 
 export const runnerConfig = new ConfigMap({
-  metadata: { name: "gitlab-runner-config", namespace: "system" },
+  metadata: { name: "gitlab-runner-config", namespace: "system", labels: systemLabels },
   data: {
     "config.toml": `
 concurrent = ${shared.runnerConcurrency}

@@ -112,4 +112,29 @@ echo "=== Waiting for Config Connector webhook pod ==="
 kubectl -n cnrm-system wait --for=condition=Ready pod \
   -l cnrm.cloud.google.com/component=cnrm-webhook-manager --timeout=180s
 
+echo "=== Installing External Secrets Operator ==="
+helm repo add external-secrets https://charts.external-secrets.io --force-update
+helm upgrade --install external-secrets external-secrets/external-secrets \
+  -n kube-system \
+  --set installCRDs=true \
+  --wait --timeout=5m
+
+echo "=== Installing cert-manager ==="
+helm repo add jetstack https://charts.jetstack.io --force-update
+helm upgrade --install cert-manager jetstack/cert-manager \
+  -n cert-manager --create-namespace \
+  --set crds.enabled=true \
+  --wait --timeout=5m
+
+# Annotate the cert-manager controller SA for Workload Identity (DNS-01 solver).
+# The GCP SA + WI binding are declared in src/gcp/iam.ts; this applies the K8s side.
+kubectl annotate serviceaccount cert-manager -n cert-manager \
+  "iam.gke.io/gcp-service-account=gitlab-cert-manager@${GCP_PROJECT_ID}.iam.gserviceaccount.com" \
+  --overwrite
+
+echo "=== Installing prometheus-operator CRDs (ServiceMonitor, PrometheusRule) ==="
+helm repo add prometheus-community https://prometheus-community.github.io/helm-charts --force-update
+helm upgrade --install prometheus-operator-crds prometheus-community/prometheus-operator-crds \
+  --wait --timeout=2m
+
 echo "Bootstrap complete. Run 'npm run deploy' to deploy infrastructure."
