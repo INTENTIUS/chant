@@ -5,7 +5,7 @@ export { helmSerializer } from "./serializer";
 export { helmPlugin } from "./plugin";
 
 // Resources
-export { Chart, Values, HelmTest, HelmNotes, HelmHook, HelmDependency, HelmMaintainer, HelmCRD } from "./resources";
+export { Chart, Values, ValuesOverride, HelmTest, HelmNotes, HelmHook, HelmDependency, HelmMaintainer, HelmCRD } from "./resources";
 
 // Intrinsics
 export {
@@ -14,6 +14,9 @@ export {
   HELM_IF_KEY,
   HELM_RANGE_KEY,
   HELM_WITH_KEY,
+  RuntimeSlot,
+  RUNTIME_SLOT_KEY,
+  runtimeSlot,
   values,
   Release,
   ChartRef,

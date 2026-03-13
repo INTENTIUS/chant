@@ -28,6 +28,8 @@ export interface CellConfig {
   canary: boolean;
   gitalyDiskSizeGb: number;
   sidekiqQueues: SidekiqQueueConfig[];
+  runnerConcurrency: number;
+  runnerReplicas: number;
 }
 
 export const shared = {
@@ -59,8 +61,10 @@ export const shared = {
   runnerNodePoolMachineType: process.env.RUNNER_NODE_POOL_MACHINE_TYPE ?? "e2-standard-4",
   runnerNodePoolMaxCount: Number(process.env.RUNNER_NODE_POOL_MAX_COUNT ?? "10"),
   topologyDbTier: "db-custom-1-3840",
-  topologyServiceImage: `gcr.io/${process.env.GCP_PROJECT_ID ?? "my-project"}/topology-service:latest`,
+  topologyServiceImage: process.env.TOPOLOGY_SERVICE_IMAGE ?? `gcr.io/${process.env.GCP_PROJECT_ID ?? "my-project"}/topology-service:latest`,
   prometheusRemoteWriteUrl: process.env.PROMETHEUS_REMOTE_WRITE_URL ?? "",
+  // Health score threshold below which the cell router fails over to the next available cell
+  routerHealthThreshold: Number(process.env.ROUTER_HEALTH_THRESHOLD ?? "0.5"),
 };
 
 export const cells: CellConfig[] = [
@@ -81,10 +85,12 @@ export const cells: CellConfig[] = [
     bucketLocation: "US",
     artifactRetentionDays: 90,
     host: `alpha.${shared.domain}`,
-    cpuQuota: "16",
-    memoryQuota: "32Gi",
+    cpuQuota: "64",
+    memoryQuota: "128Gi",
     canary: true,
     gitalyDiskSizeGb: 100,
+    runnerConcurrency: 10,
+    runnerReplicas: 1,
     sidekiqQueues: [
       { name: "urgent", queues: ["post_receive", "pipeline_processing"], replicas: 2, cpuRequest: "500m", memoryRequest: "1Gi" },
       { name: "default", queues: ["default", "mailers"], replicas: 2, cpuRequest: "250m", memoryRequest: "512Mi" },
@@ -108,10 +114,12 @@ export const cells: CellConfig[] = [
     bucketLocation: "US",
     artifactRetentionDays: 30,
     host: `beta.${shared.domain}`,
-    cpuQuota: "8",
-    memoryQuota: "16Gi",
+    cpuQuota: "48",
+    memoryQuota: "96Gi",
     canary: false,
     gitalyDiskSizeGb: 50,
+    runnerConcurrency: 10,
+    runnerReplicas: 1,
     sidekiqQueues: [
       { name: "all-queues", queues: ["*"], replicas: 2, cpuRequest: "500m", memoryRequest: "1Gi" },
     ],

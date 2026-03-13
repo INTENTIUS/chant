@@ -28,17 +28,19 @@ describe("helmPlugin", () => {
 
   test("provides lint rules", () => {
     const rules = helmPlugin.lintRules!();
-    expect(rules.length).toBe(3);
+    expect(rules.length).toBe(4);
     const ids = rules.map((r) => r.id);
     expect(ids).toContain("WHM001");
     expect(ids).toContain("WHM002");
     expect(ids).toContain("WHM003");
+    expect(ids).toContain("WHM004");
   });
 
   test("provides post-synth checks", () => {
     const checks = helmPlugin.postSynthChecks!();
-    expect(checks.length).toBe(20);
+    expect(checks.length).toBe(21);
     const ids = checks.map((c) => c.id);
+    expect(ids).toContain("WHM005");
     expect(ids).toContain("WHM101");
     expect(ids).toContain("WHM105");
     expect(ids).toContain("WHM301");

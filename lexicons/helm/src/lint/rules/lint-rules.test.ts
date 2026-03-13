@@ -4,6 +4,7 @@ import type { LintContext } from "@intentius/chant/lint/rule";
 import { chartMetadataRule } from "./chart-metadata";
 import { valuesNoSecretsRule } from "./values-no-secrets";
 import { noHardcodedImageRule } from "./no-hardcoded-image";
+import { valuesNoHelmTplRule } from "./values-no-helm-tpl";
 
 function makeContext(code: string): LintContext {
   const sourceFile = ts.createSourceFile("test.ts", code, ts.ScriptTarget.Latest, true);
@@ -67,6 +68,40 @@ describe("WHM002: valuesNoSecretsRule", () => {
   test("passes for non-sensitive keys", () => {
     const ctx = makeContext(`new Values({ replicaCount: 3, name: "test" });`);
     expect(valuesNoSecretsRule.check(ctx)).toHaveLength(0);
+  });
+});
+
+describe("WHM004: valuesNoHelmTplRule", () => {
+  test("warns when Values prop uses v.xxx", () => {
+    const ctx = makeContext(`new Values({ host: v.myHost });`);
+    const diags = valuesNoHelmTplRule.check(ctx);
+    expect(diags).toHaveLength(1);
+    expect(diags[0].ruleId).toBe("WHM004");
+  });
+
+  test("warns on nested v.xxx", () => {
+    const ctx = makeContext(`new Values({ global: { hosts: { domain: v.cellDomain } } });`);
+    expect(valuesNoHelmTplRule.check(ctx).length).toBeGreaterThan(0);
+  });
+
+  test("passes when Values props are static", () => {
+    const ctx = makeContext(`new Values({ host: "localhost" });`);
+    expect(valuesNoHelmTplRule.check(ctx)).toHaveLength(0);
+  });
+
+  test("passes for runtimeSlot() calls", () => {
+    const ctx = makeContext(`new Values({ host: runtimeSlot("Cloud SQL IP") });`);
+    expect(valuesNoHelmTplRule.check(ctx)).toHaveLength(0);
+  });
+
+  test("does not fire on non-Values constructors", () => {
+    const ctx = makeContext(`new Deployment({ image: v.image });`);
+    expect(valuesNoHelmTplRule.check(ctx)).toHaveLength(0);
+  });
+
+  test("warns on v.xxx pipe chain", () => {
+    const ctx = makeContext(`new Values({ host: v.myHost.pipe("quote") });`);
+    expect(valuesNoHelmTplRule.check(ctx)).toHaveLength(1);
   });
 });
 

@@ -23,6 +23,7 @@ export const deploySystem = new Job({ stage: "system", image: gcloudImage, scrip
   "helm upgrade --install external-secrets external-secrets/external-secrets -n system --wait || true",
   "kubectl apply -f k8s.yaml -l app.kubernetes.io/part-of=system",
   "kubectl -n system rollout status deployment/ingress-nginx-controller --timeout=120s",
+  "kubectl -n system rollout status deployment/cell-router --timeout=120s",
 ], needs: [{ job: "deploy-infra" }], rules: onlyMain });
 
 // Stage 3: validate (helm diff dry-run)
@@ -47,13 +48,20 @@ export const deployRemaining = new Job({ stage: "deploy-remaining", image: helmI
   ],
   needs: [{ job: "deploy-canary" }], rules: onlyMain });
 
-// Stage 6: register-runners (after GitLab is up)
-export const registerRunners = new Job({ stage: "register-runners", image: gcloudImage, script: [
-  `RUNNER_TOKEN=$(kubectl -n cell-${canaryCells[0].name} exec deploy/gitlab-cell-${canaryCells[0].name}-toolbox -- gitlab-rails runner "puts Ci::Runner.create!(runner_type: :instance_type, registration_type: :authenticated_user).token")`,
-  "kubectl -n system create secret generic gitlab-runner-token --from-literal=token=$RUNNER_TOKEN --dry-run=client -o yaml | kubectl apply -f -",
-  "kubectl -n system rollout restart deploy/gitlab-runner",
-  "kubectl -n system rollout status deploy/gitlab-runner --timeout=120s",
-], needs: [{ job: "deploy-remaining" }], rules: onlyMain });
+// Stage 6: register-runners — per-cell matrix job.
+// Each cell creates a runner token in its own toolbox, stores it as a K8s secret
+// in the cell namespace, then restarts that cell's runner Deployment.
+// Token format glrt-cell_${CELL_ID}_ embeds the routable prefix the HTTP router
+// uses for stateless CI job routing — no Topology Service lookup per dispatch.
+export const registerRunners = new Job({ stage: "register-runners", image: gcloudImage,
+  parallel: new Parallel({ matrix: cells.map(c => ({ CELL_NAME: c.name, CELL_ID: String(c.cellId) })) }),
+  script: [
+    "RUNNER_TOKEN=$(kubectl -n cell-$CELL_NAME exec deploy/gitlab-cell-$CELL_NAME-toolbox -- gitlab-rails runner \"puts Ci::Runner.create!(runner_type: :instance_type, registration_type: :authenticated_user, token_prefix: \\\"glrt-cell_${CELL_ID}_\\\").token\")",
+    "kubectl -n cell-$CELL_NAME create secret generic $CELL_NAME-runner-token --from-literal=token=$RUNNER_TOKEN --dry-run=client -o yaml | kubectl apply -f -",
+    "kubectl -n cell-$CELL_NAME rollout restart deploy/$CELL_NAME-runner",
+    "kubectl -n cell-$CELL_NAME rollout status deploy/$CELL_NAME-runner --timeout=120s",
+  ],
+  needs: [{ job: "deploy-remaining" }], rules: onlyMain });
 
 // Stage 7: smoke-test (E2E validation)
 export const smokeTest = new Job({ stage: "smoke-test", image: gcloudImage, script: [

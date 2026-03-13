@@ -5,6 +5,11 @@
 import { Composite, mergeDefaults } from "@intentius/chant";
 import { VPCNetwork, Subnetwork, Firewall, Router, RouterNAT } from "../generated";
 
+export interface VpcSubnetSecondaryRange {
+  rangeName: string;
+  ipCidrRange: string;
+}
+
 export interface VpcSubnet {
   /** Subnet name suffix. */
   name: string;
@@ -14,6 +19,8 @@ export interface VpcSubnet {
   region: string;
   /** Enable private Google access (default: true). */
   privateIpGoogleAccess?: boolean;
+  /** Secondary IP ranges for VPC-native GKE pods/services. */
+  secondaryIpRanges?: VpcSubnetSecondaryRange[];
 }
 
 export interface VpcNetworkProps {
@@ -104,6 +111,9 @@ export const VpcNetwork = Composite<VpcNetworkProps>((props) => {
       ipCidrRange: sub.ipCidrRange,
       region: sub.region,
       privateIpGoogleAccess: sub.privateIpGoogleAccess ?? true,
+      ...(sub.secondaryIpRanges && sub.secondaryIpRanges.length > 0 && {
+        secondaryIpRange: sub.secondaryIpRanges,
+      }),
     } as Record<string, unknown>);
   }
 

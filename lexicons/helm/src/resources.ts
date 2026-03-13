@@ -67,6 +67,26 @@ export const HelmDependency = createProperty("Helm::Dependency", LEXICON);
  */
 export const HelmMaintainer = createProperty("Helm::Maintainer", LEXICON);
 
+/**
+ * Helm::ValuesOverride — Generate a named YAML override file.
+ *
+ * Emits a standalone YAML file inside the chart directory, intended to be
+ * passed as `helm upgrade -f chart-dir/values-base.yaml`. Use this for
+ * static configuration shared across all deployments (disabled bundled
+ * services, shared secret references, etc.).
+ *
+ * Props: { filename: string, values: Record<string, unknown> }
+ *
+ * ```ts
+ * new ValuesOverride({
+ *   filename: "values-base",
+ *   values: { postgresql: { install: false }, redis: { install: false } },
+ * })
+ * // → generates chart-dir/values-base.yaml
+ * ```
+ */
+export const ValuesOverride = createResource("Helm::ValuesOverride", LEXICON, {});
+
 // ── CRD ──────────────────────────────────────────────────
 
 /**

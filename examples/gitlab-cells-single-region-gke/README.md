@@ -1,4 +1,4 @@
-# gcp-gitlab-cells
+# gitlab-cells-single-region-gke
 
 Real GitLab with **Cells architecture** on GKE. 4 lexicons (GCP, K8s, Helm, GitLab) generate all infrastructure, K8s resources, Helm charts, and CI pipeline for a multi-cell GitLab deployment.
 
@@ -21,11 +21,12 @@ The lexicon packages ship skills for agent-guided deployment. After `npm install
 | `chant-helm-chart-security-patterns` | `@intentius/chant-lexicon-helm` | Helm security: RBAC, PSS, network policies, secret management |
 | `chant-gitlab` | `@intentius/chant-lexicon-gitlab` | GitLab CI lifecycle: build, lint, validate pipeline |
 | `gitlab-ci-patterns` | `@intentius/chant-lexicon-gitlab` | GitLab CI patterns: multi-stage, matrix, artifacts, environments |
+| `gitlab-cells` | `.claude/skills/` | Cells-specific operations: routing, per-cell runners, health monitoring |
 
 > **Using Claude Code?** Ask your agent to deploy, passing your domain:
 >
 > ```
-> Deploy the gcp-gitlab-cells example. My domain is gitlab.mycompany.com.
+> Deploy the gitlab-cells-single-region-gke example. My domain is gitlab.mycompany.com.
 > ```
 >
 > Your agent will use `chant-gke`, `chant-helm`, and `chant-gitlab` to walk through the full standup.
@@ -39,14 +40,17 @@ Cloud DNS: *.gitlab.example.com
 +--- GKE Cluster (shared, single region) -------------------------+
 |                                                                   |
 |  +--- system namespace ----------------------------------------+ |
-|  |  NGINX Ingress Controller (cell router, TLS, PDB)           | |
+|  |  NGINX Ingress Controller (TLS termination, PDB, HPA)       | |
+|  |  Cell Router (session/token/path routing, HPA 1-3)          | |
 |  |  cert-manager (Let's Encrypt ClusterIssuer)                 | |
 |  |  External Secrets Operator (syncs from Secret Manager)      | |
-|  |  GitLab Runner (shared runner fleet)                        | |
-|  |  Prometheus (cell-aware scrape config)                      | |
-|  |  Topology Service (Go, connects to its own Cloud SQL)       | |
+|  |  GitLab Runner (shared runner fleet targeting canary cell)  | |
+|  |  Prometheus (cell-aware scrape + PrometheusRule CRDs)       | |
+|  |  Topology Service (Go, Cloud SQL, ServiceMonitor)           | |
 |  +--------------------------------------------------------------+ |
-|                                                                   |
+|                     |                                             |
+|            routes via session/token/path                         |
+|                     |                                             |
 |  +--- cell-alpha ----------------+  +--- cell-beta --------+    |
 |  |  GitLab (Helm release)       |  |  GitLab (Helm)       |    |
 |  |    Webservice (Puma)          |  |    Webservice         |    |
@@ -55,6 +59,7 @@ Cloud DNS: *.gitlab.example.com
 |  |    Gitaly (PVC-backed)        |  |    Gitaly             |    |
 |  |    GitLab Shell               |  |    GitLab Shell       |    |
 |  |    Registry                   |  |    Registry           |    |
+|  |  Runner (alpha-runner pod)    |  |  Runner (beta-runner) |    |
 |  |  NetworkPolicy: no cross-cell |  |  NetworkPolicy        |    |
 |  |  ExternalSecrets: PG, Redis   |  |  ExternalSecrets      |    |
 |  +-------------------------------+  +----------------------+    |
@@ -76,7 +81,9 @@ Global:
 
 | GitLab Concept | Our Implementation |
 |----------------|-------------------|
-| Cloudflare Worker (HTTP Router) | NGINX Ingress with host routing |
+| Cloudflare Worker (HTTP Router) | Cell Router Deployment (system ns) + routing rules ConfigMap |
+| Cell-local CI runners (per-cell token routing) | Per-cell runner Deployment in cell-{name} namespace + routable token format |
+| Cell health → routing decisions | PrometheusRule CRDs + topology-service ServiceMonitor + health-aware router |
 | Topology Service (Cloud Spanner) | Topology Service on Cloud SQL |
 | Cell = isolated GitLab | Helm release per K8s namespace |
 | Cell-local PostgreSQL | Cloud SQL instance per cell |
@@ -104,7 +111,7 @@ All infrastructure is driven by a single `cells[]` array in `src/config.ts`. Add
 No GCP required:
 
 ```bash
-cd examples/gcp-gitlab-cells
+cd examples/gitlab-cells-single-region-gke
 npm install
 npm run build    # generates config.yaml, k8s.yaml, gitlab-cell/, .gitlab-ci.yml
 npm run lint     # validates all 4 lexicons
@@ -122,7 +129,7 @@ cp .env.example .env
 ### 2. Bootstrap (one-time)
 
 ```bash
-npm run bootstrap   # creates GKE cluster + Config Connector
+npm run bootstrap   # creates VPC + subnet + GKE cluster + Config Connector
 ```
 
 ### 3. Deploy
@@ -131,7 +138,7 @@ npm run bootstrap   # creates GKE cluster + Config Connector
 npm run deploy
 ```
 
-This runs: build -> configure-kubectl -> deploy-infra -> load-outputs -> rebuild K8s -> apply system -> apply cells -> deploy cells (canary first).
+This runs: build → configure-kubectl → deploy-infra → load-outputs → rebuild K8s → apply system → apply cells → deploy cells (canary first).
 
 First deploy takes ~30-45 min (Cloud SQL creation + initial `db:migrate`).
 
@@ -150,11 +157,11 @@ Validates 10 areas: infra health, system namespace, per-cell GitLab, git operati
 | Stage | Job | Details |
 |-------|-----|---------|
 | `infra` | `deploy-gcp` | Config Connector: Cloud SQL, Redis, GCS, DNS, KMS, IAM |
-| `system` | `deploy-system` | cert-manager, ESO, NGINX ingress, system K8s resources |
+| `system` | `deploy-system` | cert-manager, ESO, NGINX ingress, cell router, system K8s resources |
 | `validate` | `validate-cells` | `helm diff` per cell (dry-run preview) |
 | `deploy-canary` | `deploy-cell-<canary>` | Helm install canary cell, wait for rollout |
 | `deploy-remaining` | `deploy-cell-*` (matrix) | Non-canary cells, depends on canary success |
-| `register-runners` | `register-runners` | Create runner token, configure runner secret |
+| `register-runners` | `register-runners` (matrix per cell) | Create routable token per cell, store secret, restart cell runner |
 | `smoke-test` | `e2e-test` | Run `scripts/e2e-test.sh` |
 | `backup` | `backup-gitaly` (scheduled) | `gitaly-backup create` per cell -> GCS |
 | `migrate-org` | `migrate-org` (manual) | Reassign org to target cell via Topology Service |
@@ -164,9 +171,19 @@ Validates 10 areas: infra health, system namespace, per-cell GitLab, git operati
 | File | Lexicon | Contents |
 |------|---------|----------|
 | `config.yaml` | GCP | Config Connector resources (Cloud SQL, Redis, GCS, VPC, DNS, KMS, IAM, secrets) |
-| `k8s.yaml` | K8s | System namespace (ingress, cert-manager, ESO, runner, topology, monitoring) + cell namespaces (NetworkPolicy, ExternalSecrets, WI SAs) |
-| `gitlab-cell/` | Helm | Wrapper chart with `gitlab/gitlab` dependency + values |
-| `.gitlab-ci.yml` | GitLab | 9-stage pipeline with canary deployment |
+| `k8s.yaml` | K8s | System namespace (ingress, cell router, cert-manager, ESO, runner, topology, monitoring) + cell namespaces (NetworkPolicy, ExternalSecrets, WI SAs, per-cell runners) |
+| `gitlab-cell/Chart.yaml` | Helm | Chart metadata with `gitlab/gitlab` dependency |
+| `gitlab-cell/values.yaml` | Helm | Default values (runtime slots are `''`) |
+| `gitlab-cell/values-base.yaml` | Helm | Static shared overrides (generated by `ValuesOverride`) |
+| `gitlab-cell/values-runtime-slots.yaml` | Helm | Runtime values contract (generated by `runtimeSlot()`) |
+| `.gitlab-ci.yml` | GitLab | 9-stage pipeline with canary deployment + per-cell runner matrix |
+
+**Deploy-time artifacts** (generated by `scripts/load-outputs.sh` from live GCP state, not tracked in source):
+
+| File | Contents |
+|------|----------|
+| `values-alpha.yaml` | Per-cell Helm overrides for alpha (Cloud SQL IP, Redis hosts, LB IP, bucket names) |
+| `values-beta.yaml` | Per-cell Helm overrides for beta |
 
 ## Source Files
 
@@ -190,18 +207,21 @@ Validates 10 areas: infra health, system namespace, per-cell GitLab, git operati
 | File | Resources |
 |------|-----------|
 | `namespace.ts` | System namespace + ResourceQuota (32 CPU, 64Gi) |
+| `storage.ts` | GcePdStorageClass (pd-ssd, for Gitaly PVCs) |
 | `ingress-controller.ts` | NGINX Ingress + Service + PDB + HPA |
-| `topology-service.ts` | Topology Service Deployment + ConfigMap |
-| `monitoring.ts` | Prometheus + Grafana |
+| `cell-router.ts` | Cell Router Deployment + Service + ConfigMap + NetworkPolicies + HPA + Ingress |
+| `routing-rules.ts` | SessionTokenRule, RoutableTokenRule, PathRule declarations + routing-rules ConfigMap |
+| `topology-service.ts` | Topology Service Deployment + ConfigMap (with Prometheus address) + ServiceMonitor |
+| `monitoring.ts` | Prometheus + Grafana + per-cell PrometheusRule CRDs (health scores + alerts) |
 | `cert-manager.ts` | ClusterIssuer (Let's Encrypt DNS-01) |
 | `external-secrets.ts` | ClusterSecretStore (GCP Secret Manager) |
-| `gitlab-runner.ts` | Shared runner fleet |
+| `gitlab-runner.ts` | Shared runner fleet (canary cell) |
 
 ### K8s Cell (`src/cell/`)
 
 | File | Resources |
 |------|-----------|
-| `factory.ts` | Cell factory: namespace, NetworkPolicies, ExternalSecrets, WI SA |
+| `factory.ts` | Cell factory: namespace, NetworkPolicies, ExternalSecrets, WI SA, per-cell runner (SA + ConfigMap + Deployment + NetworkPolicy) |
 | `index.ts` | `cells.map(createCell)` — config-driven fan-out |
 
 ### Helm (`src/helm/`)
@@ -254,6 +274,5 @@ Reverse order: helm uninstall all cells -> delete K8s resources -> delete Config
 
 ## Related Examples
 
-- `aws-gitlab-cells` — Same cell pattern on EKS with 3 lexicons (AWS, K8s, GitLab)
 - `k8s-gke-microservice` — GCP + K8s cross-lexicon pattern (Config Connector + workloads)
-- `cockroachdb-multi-cloud` — 3-cloud deployment with 4 lexicons (AWS, Azure, GCP, K8s)
+- `cockroachdb-multi-region-gke` — Multi-region stateful deployment with 2 lexicons (GCP, K8s)

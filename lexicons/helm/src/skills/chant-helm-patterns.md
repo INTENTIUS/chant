@@ -215,6 +215,58 @@ ChartRef.Name         // {{ .Chart.Name }}
 ChartRef.Version      // {{ .Chart.Version }}
 ```
 
+## Deploying Upstream Charts with Value Overrides
+
+When you need to deploy an upstream chart (like `gitlab/gitlab`) with custom values, avoid wrapper charts with no templates. Instead:
+
+1. Use `runtimeSlot()` in `new Values({...})` for deploy-time values (DB IPs, bucket names, replicas)
+2. Use `ValuesOverride` for static values shared across all environments (disabled bundled services, shared secret refs)
+3. Deploy the upstream chart directly with `-f` flags
+
+```typescript
+import { Values, ValuesOverride, runtimeSlot } from "@intentius/chant-lexicon-helm";
+
+// Runtime slots → values-runtime-slots.yaml (deploy-time checklist)
+export const vals = new Values({
+  global: {
+    psql: { host: runtimeSlot("Cloud SQL private IP") },
+    redis: { host: runtimeSlot("Memorystore host") },
+  },
+});
+
+// Static overrides → values-base.yaml (shared across all deployments)
+export const baseOverride = new ValuesOverride({
+  filename: "values-base",
+  values: {
+    postgresql: { install: false },
+    redis: { install: false },
+    certmanager: { install: false },
+    "nginx-ingress": { enabled: false },
+  },
+});
+```
+
+Outputs:
+- `chart-dir/values.yaml` — defaults; runtime slots appear as `''`
+- `chart-dir/values-base.yaml` — generated static overrides
+- `chart-dir/values-runtime-slots.yaml` — deploy-time slots with descriptions as comments
+
+Deploy:
+```bash
+# chant build generates chart-dir/ including values-base.yaml
+chant build
+
+# Fill in runtime-slot values (one per environment)
+# values-prod.yaml contains: global.psql.host, global.redis.host, etc.
+
+helm upgrade --install my-release upstream/chart \
+  -f chart-dir/values-base.yaml \
+  -f values-prod.yaml \
+  --wait
+```
+
+**WHM005** warns when a chart has `HelmDependency` entries but generates no templates — this is the "empty wrapper" anti-pattern that requires `helm dependency build` as a non-obvious prerequisite.
+
 ## Template Functions
 
 ```typescript

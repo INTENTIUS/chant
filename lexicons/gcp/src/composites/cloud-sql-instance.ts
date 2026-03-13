@@ -69,6 +69,12 @@ export const CloudSqlInstance = Composite<CloudSqlInstanceProps>((props) => {
     defaults: defs,
   } = props;
 
+  // K8s metadata name must be a valid DNS subdomain (no underscores).
+  // When databaseName differs from the instance name, prefix with instance name
+  // to guarantee uniqueness across instances sharing the same databaseName.
+  const sanitizedDbName = databaseName.replace(/_/g, "-");
+  const databaseK8sName = databaseName === name ? sanitizedDbName : `${name}-${sanitizedDbName}`;
+
   const commonLabels: Record<string, string> = {
     "app.kubernetes.io/name": name,
     "app.kubernetes.io/managed-by": "chant",
@@ -102,11 +108,13 @@ export const CloudSqlInstance = Composite<CloudSqlInstanceProps>((props) => {
 
   const database = new SQLDatabase(mergeDefaults({
     metadata: {
-      name: databaseName,
+      name: databaseK8sName,
       ...(namespace && { namespace }),
       labels: { ...commonLabels, "app.kubernetes.io/component": "database" },
     },
     instanceRef: { name },
+    // resourceID sets the actual Cloud SQL database name when the K8s-safe name differs
+    ...(databaseName !== sanitizedDbName && { resourceID: databaseName }),
   } as Record<string, unknown>, defs?.database));
 
   const user = new SQLUser(mergeDefaults({

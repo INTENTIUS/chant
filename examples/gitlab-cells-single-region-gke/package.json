@@ -1,5 +1,5 @@
 {
-  "name": "gcp-gitlab-cells-example",
+  "name": "gitlab-cells-single-region-gke-example",
   "version": "0.0.1",
   "type": "module",
   "private": true,

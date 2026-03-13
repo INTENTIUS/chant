@@ -19,7 +19,7 @@ import { INTRINSIC_MARKER } from "@intentius/chant/intrinsic";
 import type { Serializer, SerializerResult } from "@intentius/chant/serializer";
 import type { LexiconOutput } from "@intentius/chant/lexicon-output";
 import { walkValue, type SerializerVisitor } from "@intentius/chant/serializer-walker";
-import { HELM_TPL_KEY, HELM_IF_KEY, HELM_RANGE_KEY, HELM_WITH_KEY, type HelmConditional } from "./intrinsics";
+import { HELM_TPL_KEY, HELM_IF_KEY, HELM_RANGE_KEY, HELM_WITH_KEY, RUNTIME_SLOT_KEY, type HelmConditional } from "./intrinsics";
 import { generateHelpers } from "./helpers";
 
 // ── GVK resolution for K8s resources ──────────────────────
@@ -96,13 +96,32 @@ function emitElseChain(elseBody: unknown, indent: number): string {
 /**
  * Emit a YAML value, detecting __helm_tpl markers and emitting them
  * as raw Go template expressions.
+ *
+ * @param valuesContext - When true, HelmTpl intrinsics are emitted as empty
+ *   string placeholders instead of raw Go template expressions. values.yaml
+ *   is not processed as a Go template by Helm, so {{ .Values.x }} is invalid
+ *   there. Actual values are provided via -f override files at deploy time.
  */
-function emitHelmYAML(value: unknown, indent: number): string {
+function emitHelmYAML(value: unknown, indent: number, valuesContext: boolean = false): string {
   const prefix = "  ".repeat(indent);
 
   if (value === null || value === undefined) return "null";
   if (typeof value === "boolean") return value ? "true" : "false";
   if (typeof value === "number") return String(value);
+
+  // Detect HelmTpl / Intrinsic objects via INTRINSIC_MARKER before string check
+  if (typeof value === "object" && value !== null && INTRINSIC_MARKER in value) {
+    const tplObj = value as { toJSON(): unknown };
+    if (valuesContext) {
+      // In values.yaml context: emit empty placeholder — actual value comes from override files
+      return "''";
+    }
+    const json = tplObj.toJSON() as Record<string, unknown>;
+    if (typeof json === "object" && json !== null && HELM_TPL_KEY in json) {
+      return json[HELM_TPL_KEY] as string;
+    }
+    return "''";
+  }
 
   if (typeof value === "string") {
     // Check if this is a raw template expression that was already inlined
@@ -131,7 +150,7 @@ function emitHelmYAML(value: unknown, indent: number): string {
         const entries = Object.entries(item as Record<string, unknown>);
         if (entries.length > 0) {
           const [firstKey, firstVal] = entries[0];
-          const firstEmitted = emitHelmYAML(firstVal, indent + 2);
+          const firstEmitted = emitHelmYAML(firstVal, indent + 2, valuesContext);
           if (firstEmitted.startsWith("\n")) {
             lines.push(`${prefix}- ${firstKey}:${firstEmitted}`);
           } else {
@@ -139,7 +158,7 @@ function emitHelmYAML(value: unknown, indent: number): string {
           }
           for (let i = 1; i < entries.length; i++) {
             const [key, val] = entries[i];
-            const emitted = emitHelmYAML(val, indent + 2);
+            const emitted = emitHelmYAML(val, indent + 2, valuesContext);
             if (emitted.startsWith("\n")) {
               lines.push(`${prefix}  ${key}:${emitted}`);
             } else {
@@ -148,7 +167,7 @@ function emitHelmYAML(value: unknown, indent: number): string {
           }
         }
       } else {
-        lines.push(`${prefix}- ${emitHelmYAML(item, indent + 1).trimStart()}`);
+        lines.push(`${prefix}- ${emitHelmYAML(item, indent + 1, valuesContext).trimStart()}`);
       }
     }
     return "\n" + lines.join("\n");
@@ -157,8 +176,9 @@ function emitHelmYAML(value: unknown, indent: number): string {
   if (typeof value === "object") {
     const obj = value as Record<string, unknown>;
 
-    // Detect __helm_tpl marker → emit raw template expression
+    // Detect __helm_tpl marker → emit raw template expression (not valid in valuesContext)
     if (HELM_TPL_KEY in obj && typeof obj[HELM_TPL_KEY] === "string") {
+      if (valuesContext) return "''";
       return obj[HELM_TPL_KEY] as string;
     }
 
@@ -167,7 +187,7 @@ function emitHelmYAML(value: unknown, indent: number): string {
       const condition = obj[HELM_IF_KEY] as string;
       const body = obj.body;
       const elseBody = obj.else;
-      let result = `{{- if ${condition} }}\n${emitHelmYAML(body, indent)}`;
+      let result = `{{- if ${condition} }}\n${emitHelmYAML(body, indent, valuesContext)}`;
       if (elseBody !== undefined) {
         result += emitElseChain(elseBody, indent);
       }
@@ -179,21 +199,21 @@ function emitHelmYAML(value: unknown, indent: number): string {
     if (HELM_RANGE_KEY in obj) {
       const list = obj[HELM_RANGE_KEY] as string;
       const body = obj.body;
-      return `{{- range ${list} }}\n${emitHelmYAML(body, indent)}\n{{- end }}`;
+      return `{{- range ${list} }}\n${emitHelmYAML(body, indent, valuesContext)}\n{{- end }}`;
     }
 
     // Detect __helm_with marker → emit with scope
     if (HELM_WITH_KEY in obj) {
       const scope = obj[HELM_WITH_KEY] as string;
       const body = obj.body;
-      return `{{- with ${scope} }}\n${emitHelmYAML(body, indent)}\n{{- end }}`;
+      return `{{- with ${scope} }}\n${emitHelmYAML(body, indent, valuesContext)}\n{{- end }}`;
     }
 
     const entries = Object.entries(obj);
     if (entries.length === 0) return "{}";
     const lines: string[] = [];
     for (const [key, val] of entries) {
-      const emitted = emitHelmYAML(val, indent + 1);
+      const emitted = emitHelmYAML(val, indent + 1, valuesContext);
       if (emitted.startsWith("\n")) {
         lines.push(`${prefix}${key}:${emitted}`);
       } else {
@@ -209,8 +229,8 @@ function emitHelmYAML(value: unknown, indent: number): string {
 /**
  * Emit a top-level key-value pair in Helm YAML.
  */
-function emitKeyValue(key: string, value: unknown): string {
-  const yamlStr = emitHelmYAML(value, 1);
+function emitKeyValue(key: string, value: unknown, valuesContext: boolean = false): string {
+  const yamlStr = emitHelmYAML(value, 1, valuesContext);
   if (yamlStr.startsWith("\n")) {
     return `${key}:${yamlStr}`;
   }
@@ -264,14 +284,103 @@ function emitChartYaml(props: Record<string, unknown>): string {
 
 /**
  * Generate values.yaml content from Helm::Values entity props.
+ * HelmTpl intrinsics are emitted as empty placeholders since values.yaml
+ * is not processed as a Go template by Helm.
  */
 function emitValuesYaml(props: Record<string, unknown>): string {
   if (Object.keys(props).length === 0) return "{}\n";
   const lines: string[] = [];
   for (const [key, val] of Object.entries(props)) {
-    lines.push(emitKeyValue(key, val));
+    lines.push(emitKeyValue(key, val, true));
   }
   return lines.join("\n") + "\n";
+}
+
+// ── RuntimeSlot helpers ───────────────────────────────────
+
+/**
+ * Represents the tree structure built from runtime slot paths.
+ * Leaves are description strings; branches are nested SlotTree objects.
+ */
+type SlotTree = { [key: string]: SlotTree | string };
+
+/**
+ * Collect all RuntimeSlot instances from a props tree.
+ * Returns the path (as array of keys) and description for each slot.
+ */
+function collectRuntimeSlots(
+  props: unknown,
+  path: string[],
+): { path: string[]; description: string }[] {
+  const result: { path: string[]; description: string }[] = [];
+  if (props === null || props === undefined) return result;
+
+  if (typeof props === "object" && INTRINSIC_MARKER in (props as object)) {
+    const json = (props as { toJSON(): unknown }).toJSON() as Record<string, unknown>;
+    if (typeof json === "object" && json !== null && RUNTIME_SLOT_KEY in json) {
+      result.push({ path, description: json[RUNTIME_SLOT_KEY] as string });
+    }
+    return result;
+  }
+
+  if (typeof props === "object" && !Array.isArray(props)) {
+    for (const [key, value] of Object.entries(props as Record<string, unknown>)) {
+      result.push(...collectRuntimeSlots(value, [...path, key]));
+    }
+  }
+
+  return result;
+}
+
+/**
+ * Build a nested tree from flat path+description pairs.
+ */
+function buildSlotTree(slots: { path: string[]; description: string }[]): SlotTree {
+  const tree: SlotTree = {};
+  for (const { path, description } of slots) {
+    let node = tree;
+    for (let i = 0; i < path.length - 1; i++) {
+      const key = path[i];
+      if (typeof node[key] !== "object") {
+        node[key] = {};
+      }
+      node = node[key] as SlotTree;
+    }
+    node[path[path.length - 1]] = description;
+  }
+  return tree;
+}
+
+/**
+ * Emit a slot tree as YAML lines with description comments before leaves.
+ */
+function emitSlotTreeYaml(tree: SlotTree, indent: number): string {
+  const prefix = "  ".repeat(indent);
+  const lines: string[] = [];
+  for (const [key, value] of Object.entries(tree)) {
+    if (typeof value === "string") {
+      if (value) {
+        lines.push(`${prefix}# ${value}`);
+      }
+      lines.push(`${prefix}${key}: ''`);
+    } else {
+      lines.push(`${prefix}${key}:`);
+      const nested = emitSlotTreeYaml(value, indent + 1);
+      if (nested) lines.push(nested);
+    }
+  }
+  return lines.join("\n");
+}
+
+/**
+ * Generate values-runtime-slots.yaml from collected RuntimeSlot instances.
+ * Returns empty string if no slots found.
+ */
+function emitRuntimeSlotsYaml(slots: { path: string[]; description: string }[]): string {
+  if (slots.length === 0) return "";
+  const tree = buildSlotTree(slots);
+  return "# Generated by chant — fill these in before running helm upgrade\n" +
+    emitSlotTreeYaml(tree, 0) + "\n";
 }
 
 /**
@@ -395,6 +504,11 @@ function generateValuesSchema(props: Record<string, unknown>): string {
       if (includeDefault && value.length > 0) schema.default = value;
       if (keyName && KEY_DESCRIPTIONS[keyName]) schema.description = KEY_DESCRIPTIONS[keyName];
       return schema;
+    }
+
+    if (typeof value === "object" && value !== null && INTRINSIC_MARKER in value) {
+      // HelmTpl / Intrinsic — actual value provided via -f override; accept any type
+      return {};
     }
 
     if (typeof value === "object") {
@@ -645,6 +759,7 @@ export const helmSerializer: Serializer = {
     let notesContent: string | undefined;
     const dependencies: Record<string, unknown>[] = [];
     const maintainers: Record<string, unknown>[] = [];
+    const valuesOverrides: { filename: string; values: Record<string, unknown> }[] = [];
 
     // First pass: extract Helm-specific resources and collect metadata
     for (const [_name, entity] of entities) {
@@ -674,6 +789,14 @@ export const helmSerializer: Serializer = {
           const filename = (props.filename as string) ?? `${toFileName(_name)}.yaml`;
           files[`crds/${filename}`] = props.content as string;
         }
+      } else if (entityType === "Helm::ValuesOverride") {
+        const props = (entity as Record<string, unknown>).props as Record<string, unknown>;
+        if (props?.filename && props?.values) {
+          valuesOverrides.push({
+            filename: props.filename as string,
+            values: props.values as Record<string, unknown>,
+          });
+        }
       }
     }
 
@@ -695,6 +818,19 @@ export const helmSerializer: Serializer = {
 
     // Emit values.yaml
     files["values.yaml"] = emitValuesYaml(valuesProps);
+
+    // Emit values-runtime-slots.yaml if any RuntimeSlot instances found
+    if (hasValues) {
+      const slots = collectRuntimeSlots(valuesProps, []);
+      if (slots.length > 0) {
+        files["values-runtime-slots.yaml"] = emitRuntimeSlotsYaml(slots);
+      }
+    }
+
+    // Emit ValuesOverride files
+    for (const override of valuesOverrides) {
+      files[`${override.filename}.yaml`] = emitValuesYaml(override.values);
+    }
 
     // Emit values.schema.json if we have values
     if (hasValues && Object.keys(valuesProps).length > 0) {

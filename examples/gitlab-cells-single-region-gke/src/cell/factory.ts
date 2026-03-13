@@ -1,4 +1,4 @@
-import { NamespaceEnv, NetworkPolicy, WorkloadIdentityServiceAccount } from "@intentius/chant-lexicon-k8s";
+import { NamespaceEnv, NetworkPolicy, WorkloadIdentityServiceAccount, ServiceAccount, ConfigMap, Deployment, Secret } from "@intentius/chant-lexicon-k8s";
 import { createResource } from "@intentius/chant/runtime";
 import type { CellConfig } from "../config";
 import { shared } from "../config";
@@ -12,6 +12,11 @@ export function createCell(cell: CellConfig) {
     name: ns,
     cpuQuota: cell.cpuQuota,
     memoryQuota: cell.memoryQuota,
+    // LimitRange defaults ensure pods without explicit limits satisfy the ResourceQuota
+    defaultCpuRequest: "100m",
+    defaultCpuLimit: "2",
+    defaultMemoryRequest: "128Mi",
+    defaultMemoryLimit: "2Gi",
     defaultDenyIngress: true,
     defaultDenyEgress: true,
     labels: {
@@ -21,7 +26,7 @@ export function createCell(cell: CellConfig) {
     },
   });
 
-  // Allow ingress from system namespace (ingress controller routes to cells)
+  // Allow ingress from system namespace (cell-router proxies to cells)
   const allowIngressFromSystem = new NetworkPolicy({
     metadata: { name: `${cell.name}-allow-ingress-system`, namespace: ns },
     spec: {
@@ -52,10 +57,9 @@ export function createCell(cell: CellConfig) {
         { ports: [{ protocol: "UDP", port: 53 }, { protocol: "TCP", port: 53 }] },
         // GCP metadata server
         { to: [{ ipBlock: { cidr: "169.254.169.254/32" } }] },
-        // Cloud SQL (private IP range)
-        { to: [{ ipBlock: { cidr: "10.100.0.0/16" } }], ports: [{ protocol: "TCP", port: 5432 }] },
-        // Memorystore (private IP range)
-        { to: [{ ipBlock: { cidr: "10.100.0.0/16" } }], ports: [{ protocol: "TCP", port: 6379 }] },
+        // Cloud SQL and Memorystore (GCP private service access range)
+        { to: [{ ipBlock: { cidr: "10.0.0.0/8" } }], ports: [{ protocol: "TCP", port: 5432 }] },
+        { to: [{ ipBlock: { cidr: "10.0.0.0/8" } }], ports: [{ protocol: "TCP", port: 6379 }] },
         // GCP APIs (restricted VIP)
         { to: [{ ipBlock: { cidr: "199.36.153.4/30" } }], ports: [{ protocol: "TCP", port: 443 }] },
         // Topology Service in system namespace
@@ -86,21 +90,11 @@ export function createCell(cell: CellConfig) {
     },
   }));
 
-  // Registry storage config secret (template-only, no remote data)
-  const registryStorageSecret = new ExternalSecret({
+  // Registry storage config secret (static GCS bucket config — not sensitive)
+  const registryStorageSecret = new Secret({
     metadata: { name: "registry-storage", namespace: ns },
-    spec: {
-      refreshInterval: "1h",
-      secretStoreRef: { name: "gcp-secret-manager", kind: "ClusterSecretStore" },
-      target: {
-        name: "registry-storage",
-        template: {
-          data: {
-            config: `{ "gcs": { "bucket": "${shared.projectId}-${cell.name}-registry" } }`,
-          },
-        },
-      },
-      data: [],
+    stringData: {
+      config: `{"gcs":{"bucket":"${shared.projectId}-${cell.name}-registry"}}`,
     },
   });
 
@@ -122,10 +116,86 @@ export function createCell(cell: CellConfig) {
     },
   });
 
+  // --- Per-cell runner ---
+  // Each cell gets its own runner that registers to that cell's GitLab instance.
+  // The runner token embeds cell_${cellId}_ prefix (routable token format) so
+  // the HTTP router can resolve the correct cell from the token alone — no
+  // Topology Service lookup needed for CI job dispatching.
+
+  const runnerServiceAccount = new ServiceAccount({
+    metadata: { name: `${cell.name}-runner`, namespace: ns },
+  });
+
+  const runnerConfig = new ConfigMap({
+    metadata: { name: `${cell.name}-runner-config`, namespace: ns },
+    data: {
+      "config.toml": `
+concurrent = ${cell.runnerConcurrency}
+[[runners]]
+  name = "${cell.name}-cell-runner"
+  url = "https://${cell.host}"
+  # Token format: glrt-cell_${cell.cellId}_${cell.name}
+  # The cell_${cell.cellId}_ prefix is a routable token — the HTTP router
+  # extracts it stateless without consulting the Topology Service.
+  # Actual token is injected by the register-runners pipeline job.
+  token = "$RUNNER_TOKEN"
+  executor = "kubernetes"
+  [runners.kubernetes]
+    namespace = "${ns}"
+    service_account = "${cell.name}-runner"
+    image = "alpine:latest"
+`,
+    },
+  });
+
+  const runnerDeployment = new Deployment({
+    metadata: {
+      name: `${cell.name}-runner`,
+      namespace: ns,
+      labels: {
+        "app.kubernetes.io/name": `${cell.name}-runner`,
+        "app.kubernetes.io/part-of": "cells",
+        "gitlab.example.com/cell": cell.name,
+      },
+    },
+    spec: {
+      replicas: cell.runnerReplicas,
+      selector: { matchLabels: { "app.kubernetes.io/name": `${cell.name}-runner` } },
+      template: {
+        metadata: { labels: { "app.kubernetes.io/name": `${cell.name}-runner` } },
+        spec: {
+          serviceAccountName: `${cell.name}-runner`,
+          containers: [{
+            name: "runner",
+            image: shared.runnerImage,
+            command: ["gitlab-runner", "run"],
+            volumeMounts: [{ name: "config", mountPath: "/etc/gitlab-runner" }],
+          }],
+          volumes: [{ name: "config", configMap: { name: `${cell.name}-runner-config` } }],
+        },
+      },
+    },
+  });
+
+  // Allow runner pods egress to the system namespace (cell-router + ingress)
+  // for runner registration and job polling against this cell's GitLab API.
+  const runnerAllowEgressToSystem = new NetworkPolicy({
+    metadata: { name: `${cell.name}-runner-allow-egress-system`, namespace: ns },
+    spec: {
+      podSelector: { matchLabels: { "app.kubernetes.io/name": `${cell.name}-runner` } },
+      egress: [{
+        to: [{ namespaceSelector: { matchLabels: { "app.kubernetes.io/part-of": "system" } } }],
+        ports: [{ protocol: "TCP", port: 443 }, { protocol: "TCP", port: 8080 }],
+      }],
+      policyTypes: ["Egress"],
+    },
+  });
+
   return {
     namespace, resourceQuota, limitRange, defaultDeny,
     allowSameNamespace, allowIngressFromSystem, allowEgress,
     externalSecrets, registryStorageSecret,
     serviceAccount,
+    runnerServiceAccount, runnerConfig, runnerDeployment, runnerAllowEgressToSystem,
   };
 }

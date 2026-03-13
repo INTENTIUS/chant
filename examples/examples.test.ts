@@ -8,6 +8,7 @@ import { azureSerializer } from "@intentius/chant-lexicon-azure";
 import { k8sSerializer } from "@intentius/chant-lexicon-k8s";
 import { gitlabSerializer } from "@intentius/chant-lexicon-gitlab";
 import { flywaySerializer } from "@intentius/chant-lexicon-flyway";
+import { helmSerializer } from "@intentius/chant-lexicon-helm";
 import type { PostSynthContext } from "@intentius/chant/lint/post-synth";
 import { k8sPlugin } from "@intentius/chant-lexicon-k8s/plugin";
 import { resolve } from "path";
@@ -540,3 +541,53 @@ describe("k8s-aks-microservice example", () => {
   });
 });
 
+// ── GCP GitLab Cells (single-region, multi-cell) ─────────────────────
+
+describe("gitlab-cells-single-region-gke example", () => {
+  const srcDir = resolve(import.meta.dir, "gitlab-cells-single-region-gke", "src");
+
+  test("passes lint", async () => {
+    const result = await lintCommand({ path: srcDir, format: "stylish", fix: true });
+    if (!result.success || result.errorCount > 0) console.log(result.output);
+    expect(result.success).toBe(true);
+    expect(result.errorCount).toBe(0);
+  });
+
+  test("GCP build succeeds with expected resources", async () => {
+    const result = await build(srcDir, [gcpSerializer]);
+    expect(result.errors).toHaveLength(0);
+    const output = result.outputs.get("gcp")!;
+    expect(output).toContain("ContainerCluster");
+    expect(output).toContain("SQLInstance");
+    expect(output).toContain("RedisInstance");
+    expect(output).toContain("SecretManagerSecret");
+    expect(output).toContain("DNSManagedZone");
+  });
+
+  test("K8s build succeeds with expected resources", async () => {
+    const result = await build(srcDir, [k8sSerializer]);
+    expect(result.errors).toHaveLength(0);
+    const docs = parseK8sDocs(result.outputs.get("k8s")!);
+    const kinds = docs.map((d) => d.kind);
+    const namespaces = docs.filter((d) => d.kind === "Namespace").map((d) => d.name);
+    expect(namespaces).toContain("system");
+    expect(kinds).toContain("StorageClass");
+    expect(kinds).toContain("Deployment");
+    expect(kinds).toContain("ConfigMap");
+  });
+
+  test("Helm build succeeds", async () => {
+    const result = await build(srcDir, [helmSerializer]);
+    expect(result.errors).toHaveLength(0);
+    expect(result.outputs.has("helm")).toBe(true);
+  });
+
+  test("GitLab CI build succeeds with expected stages", async () => {
+    const result = await build(srcDir, [gitlabSerializer]);
+    expect(result.errors).toHaveLength(0);
+    const yaml = result.outputs.get("gitlab")!;
+    expect(yaml).toContain("stage: infra");
+    expect(yaml).toContain("stage: system");
+    expect(yaml).toContain("stage: deploy-canary");
+  });
+});

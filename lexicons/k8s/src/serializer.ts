@@ -91,6 +91,10 @@ const API_GROUP_VERSIONS: Record<string, string> = {
   GKE: "cloud.google.com/v1",
   NetworkingGKE: "networking.gke.io/v1",
   NetworkingGKEBeta: "networking.gke.io/v1beta1",
+  // Common Kubernetes operator CRDs
+  CertManager: "cert-manager.io/v1",
+  ExternalSecrets: "external-secrets.io/v1",
+  Monitoring: "monitoring.coreos.com/v1",
 };
 
 function deriveGVKFromType(entityType: string): { apiVersion: string; kind: string } | null {

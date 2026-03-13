@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-source .env
+set -a; source .env; set +a
 
 CELLS="${CELLS:-alpha beta}"
 
@@ -53,6 +53,7 @@ done
 echo ""
 echo "Phase 6: Loading outputs and initializing secrets..."
 bash scripts/load-outputs.sh
+set -a; source .env; set +a  # pick up TOPOLOGY_DB_HOST written by load-outputs.sh
 
 # ── Phase 7: Install External Secrets Operator ───────────────────────
 echo ""
@@ -89,10 +90,15 @@ echo "  Ingress IP: ${INGRESS_IP}"
 
 # Persist ingress IP (replace existing line or append)
 if grep -q '^INGRESS_IP=' .env; then
-  sed -i "s/^INGRESS_IP=.*/INGRESS_IP=${INGRESS_IP}/" .env
+  sed -i '' "s/^INGRESS_IP=.*/INGRESS_IP=${INGRESS_IP}/" .env
 else
   echo "INGRESS_IP=${INGRESS_IP}" >> .env
 fi
+
+echo "  Patching topology-service ConfigMap with real DB host..."
+kubectl -n system patch configmap topology-service --type merge -p \
+  "{\"data\":{\"config.yaml\":\"database:\\n  host: ${TOPOLOGY_DB_HOST}\\n  port: 5432\\n  name: topology_production\\n  sslmode: require\\nserver:\\n  port: 8080\\n\"}}"
+kubectl -n system rollout restart deployment/topology-service
 
 # ── Phase 10: Apply K8s cell resources ───────────────────────────────
 echo ""

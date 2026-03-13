@@ -473,6 +473,59 @@ export function argoWave(wave: number): Record<string, string> {
   return { "argocd.argoproj.io/sync-wave": String(wave) };
 }
 
+// ── RuntimeSlot ───────────────────────────────────────────
+
+/**
+ * JSON marker key used by the serializer to detect runtime slot placeholders.
+ * Distinguished from HelmTpl: RuntimeSlot appears in values.yaml as '' AND
+ * is collected into values-runtime-slots.yaml with its description as a comment.
+ */
+export const RUNTIME_SLOT_KEY = "__runtime_slot" as const;
+
+/**
+ * A deploy-time value placeholder in a Values object.
+ *
+ * Marks fields that cannot be known at build time (DB IP, bucket name, etc.)
+ * and must be supplied via a `-f` override file when running `helm upgrade`.
+ *
+ * Two outputs are generated:
+ * - `values.yaml` — the field emits `''` (empty placeholder)
+ * - `values-runtime-slots.yaml` — lists only the RuntimeSlot fields with
+ *   their descriptions as YAML comments, for use as a deploy-time checklist
+ *
+ * ```ts
+ * new Values({
+ *   global: {
+ *     psql: { host: runtimeSlot("Cloud SQL private IP") },
+ *   }
+ * })
+ * ```
+ */
+export class RuntimeSlot implements Intrinsic {
+  readonly [INTRINSIC_MARKER] = true as const;
+  readonly description: string;
+
+  constructor(description = "") {
+    this.description = description;
+  }
+
+  toJSON(): { [RUNTIME_SLOT_KEY]: string } {
+    return { [RUNTIME_SLOT_KEY]: this.description };
+  }
+}
+
+/**
+ * Mark a Values field as a deploy-time runtime slot.
+ *
+ * Emits `''` in values.yaml and generates an entry in values-runtime-slots.yaml.
+ *
+ * @param description Human-readable description of what to provide.
+ *   Emitted as a YAML comment in values-runtime-slots.yaml.
+ */
+export function runtimeSlot(description = ""): RuntimeSlot {
+  return new RuntimeSlot(description);
+}
+
 // ── Helpers ───────────────────────────────────────────────
 
 /**

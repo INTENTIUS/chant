@@ -18,6 +18,7 @@ import { whm406 } from "./whm406";
 import { whm407 } from "./whm407";
 import { whm501 } from "./whm501";
 import { whm502 } from "./whm502";
+import { whm005 } from "./whm005-no-empty-wrapper";
 
 function makeCtx(files: Record<string, string>): PostSynthContext {
   const result: SerializerResult = { primary: files["Chart.yaml"] ?? "", files };
@@ -35,6 +36,48 @@ function makeCtx(files: Record<string, string>): PostSynthContext {
     },
   };
 }
+
+describe("WHM005: noEmptyWrapperChart", () => {
+  test("warns when chart has HelmDependency but no templates", () => {
+    const ctx = makeCtx({
+      "Chart.yaml": "apiVersion: v2\nname: test\nversion: 0.1.0\n",
+      "Chart.yaml.deps": "",
+      "templates/_helpers.tpl": "{{/* helpers */}}",
+    });
+    // Inject dependencies block
+    const files = {
+      "Chart.yaml": "apiVersion: v2\nname: test\nversion: 0.1.0\ndependencies:\n  - name: gitlab\n    version: 8.7.2\n    repository: https://charts.gitlab.io\n",
+      "templates/_helpers.tpl": "{{/* helpers */}}",
+    };
+    const ctx2 = makeCtx(files);
+    const diags = whm005.check(ctx2);
+    expect(diags).toHaveLength(1);
+    expect(diags[0].checkId).toBe("WHM005");
+    expect(diags[0].severity).toBe("warning");
+  });
+
+  test("passes when chart has dependencies and templates", () => {
+    const ctx = makeCtx({
+      "Chart.yaml": "apiVersion: v2\nname: test\nversion: 0.1.0\ndependencies:\n  - name: gitlab\n    version: 8.7.2\n    repository: https://charts.gitlab.io\n",
+      "templates/_helpers.tpl": "{{/* helpers */}}",
+      "templates/deployment.yaml": "apiVersion: apps/v1\nkind: Deployment\n",
+    });
+    expect(whm005.check(ctx)).toHaveLength(0);
+  });
+
+  test("passes when chart has no dependencies", () => {
+    const ctx = makeCtx({
+      "Chart.yaml": "apiVersion: v2\nname: test\nversion: 0.1.0\n",
+      "templates/deployment.yaml": "apiVersion: apps/v1\nkind: Deployment\n",
+    });
+    expect(whm005.check(ctx)).toHaveLength(0);
+  });
+
+  test("passes when no Chart.yaml present", () => {
+    const ctx = makeCtx({});
+    expect(whm005.check(ctx)).toHaveLength(0);
+  });
+});
 
 describe("WHM101: Chart.yaml validation", () => {
   test("passes with valid Chart.yaml", () => {
