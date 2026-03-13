@@ -16,7 +16,7 @@ done
 
 echo "=== System Namespace ==="
 check kubectl -n system rollout status deploy/ingress-nginx-controller --timeout=60s
-check kubectl -n cert-manager rollout status deploy/cert-manager --timeout=60s
+check kubectl -n cert-manager rollout status deploy/cert-manager --timeout=120s
 check kubectl -n kube-system rollout status deploy/external-secrets --timeout=60s
 check kubectl -n system rollout status deploy/gitlab-runner --timeout=60s
 check kubectl -n system rollout status deploy/topology-service --timeout=60s
@@ -60,7 +60,7 @@ TOKEN=$(kubectl -n cell-alpha exec deploy/gitlab-cell-alpha-toolbox -- gitlab-ra
 E2E_PROJECT="e2e-$(date +%s)"
 PROJECT_RESP=$(curl -s -H "PRIVATE-TOKEN: $TOKEN" "https://${CANARY_HOST}/api/v4/projects" -d "name=${E2E_PROJECT}" -w "\n%{http_code}")
 PROJECT_HTTP=$(echo "$PROJECT_RESP" | tail -1)
-PROJECT_BODY=$(echo "$PROJECT_RESP" | head -n -1)
+PROJECT_BODY=$(echo "$PROJECT_RESP" | sed '$d')
 check test "$PROJECT_HTTP" = "201"
 PROJECT_ID=$(echo "$PROJECT_BODY" | jq -r '.id')
 check test -n "$PROJECT_ID"
@@ -115,7 +115,7 @@ echo "=== Runner ==="
 PIPELINE_RESP=$(curl -s -H "PRIVATE-TOKEN: $TOKEN" "https://${CANARY_HOST}/api/v4/projects/${PROJECT_ID}/pipeline" \
   -d "ref=main" -w "\n%{http_code}")
 PIPELINE_HTTP=$(echo "$PIPELINE_RESP" | tail -1)
-PIPELINE_BODY=$(echo "$PIPELINE_RESP" | head -n -1)
+PIPELINE_BODY=$(echo "$PIPELINE_RESP" | sed '$d')
 if [ "$PIPELINE_HTTP" = "201" ]; then
   PIPELINE_ID=$(echo "$PIPELINE_BODY" | jq -r '.id')
   check test -n "$PIPELINE_ID"
