@@ -396,11 +396,11 @@ The \`github\` and \`runner\` objects provide typed access to context properties
 \`\`\`typescript
 import { github, runner } from "@intentius/chant-lexicon-github";
 
-github.ref      // ${{ github.ref }}
-github.sha      // ${{ github.sha }}
-github.actor    // ${{ github.actor }}
-runner.os       // ${{ runner.os }}
-runner.arch     // ${{ runner.arch }}
+github.ref      // \${{ github.ref }}
+github.sha      // \${{ github.sha }}
+github.actor    // \${{ github.actor }}
+runner.os       // \${{ runner.os }}
+runner.arch     // \${{ runner.arch }}
 \`\`\`
 
 See [Variables](/chant/lexicons/github/variables/) for the full reference table.
@@ -412,13 +412,13 @@ Access dynamic context values — secrets, matrix, step outputs, job outputs, in
 \`\`\`typescript
 import { secrets, matrix, steps, needs, inputs, vars, env } from "@intentius/chant-lexicon-github";
 
-secrets("NPM_TOKEN")              // ${{ secrets.NPM_TOKEN }}
-matrix("node-version")            // ${{ matrix.node-version }}
-steps("build").outputs("path")    // ${{ steps.build.outputs.path }}
-needs("build").outputs("version") // ${{ needs.build.outputs.version }}
-inputs("environment")             // ${{ inputs.environment }}
-vars("API_URL")                   // ${{ vars.API_URL }}
-env("NODE_ENV")                   // ${{ env.NODE_ENV }}
+secrets("NPM_TOKEN")              // \${{ secrets.NPM_TOKEN }}
+matrix("node-version")            // \${{ matrix.node-version }}
+steps("build").outputs("path")    // \${{ steps.build.outputs.path }}
+needs("build").outputs("version") // \${{ needs.build.outputs.version }}
+inputs("environment")             // \${{ inputs.environment }}
+vars("API_URL")                   // \${{ vars.API_URL }}
+env("NODE_ENV")                   // \${{ env.NODE_ENV }}
 \`\`\`
 
 ## Condition helpers
