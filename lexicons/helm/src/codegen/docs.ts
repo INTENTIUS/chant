@@ -102,6 +102,7 @@ export async function generateDocs(opts?: { verbose?: boolean }): Promise<void> 
     description: "Typed constructors for parameterized Helm charts",
     distDir: join(pkgDir, "dist"),
     outDir: join(pkgDir, "docs"),
+    basePath: process.env.DOCS_BASE_PATH ?? "/chant/lexicons/helm/",
     overview,
     outputFormat,
     serviceFromType,
@@ -474,8 +475,8 @@ When you scaffold a new project with \`chant init --lexicon helm\`, the skill is
     ],
   };
 
-  const result = await docsPipeline(config);
-  writeDocsSite(result, config.outDir);
+  const result = docsPipeline(config);
+  writeDocsSite(config, result);
 
   if (opts?.verbose) {
     console.error(`Generated ${result.pages.length} documentation pages`);

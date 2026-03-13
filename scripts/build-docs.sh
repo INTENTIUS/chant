@@ -52,4 +52,40 @@ cd docs && bun install && bun run build && cd ../../..
 mkdir -p "$SITE/lexicons/flyway"
 cp -r lexicons/flyway/docs/dist/* "$SITE/lexicons/flyway/"
 
+# 6. Generate + build Azure lexicon docs
+echo "Building Azure lexicon docs..."
+cd lexicons/azure
+bun run prepack
+bun run src/codegen/docs-cli.ts
+cd docs && bun install && bun run build && cd ../../..
+mkdir -p "$SITE/lexicons/azure"
+cp -r lexicons/azure/docs/dist/* "$SITE/lexicons/azure/"
+
+# 7. Generate + build GCP lexicon docs
+echo "Building GCP lexicon docs..."
+cd lexicons/gcp
+bun run prepack
+bun run src/codegen/docs-cli.ts
+cd docs && bun install && bun run build && cd ../../..
+mkdir -p "$SITE/lexicons/gcp"
+cp -r lexicons/gcp/docs/dist/* "$SITE/lexicons/gcp/"
+
+# 8. Generate + build Helm lexicon docs
+echo "Building Helm lexicon docs..."
+cd lexicons/helm
+bun run prepack
+bun run src/codegen/docs-cli.ts
+cd docs && bun install && bun run build && cd ../../..
+mkdir -p "$SITE/lexicons/helm"
+cp -r lexicons/helm/docs/dist/* "$SITE/lexicons/helm/"
+
+# 9. Generate + build GitHub lexicon docs
+echo "Building GitHub lexicon docs..."
+cd lexicons/github
+bun run prepack
+bun run src/codegen/docs-cli.ts
+cd docs && bun install && bun run build && cd ../../..
+mkdir -p "$SITE/lexicons/github"
+cp -r lexicons/github/docs/dist/* "$SITE/lexicons/github/"
+
 echo "Unified docs built to $OUT/"

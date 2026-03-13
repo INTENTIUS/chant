@@ -63,26 +63,23 @@ az deployment group create \\
 \`\`\``;
 
 const docsConfig: DocsConfig = {
-  lexiconName: "azure",
+  name: "azure",
   displayName: "Azure Resource Manager",
+  description: "Typed constructors for Azure Resource Manager templates",
   distDir: join(pkgDir, "dist"),
-  outputDir: join(pkgDir, "docs"),
+  outDir: join(pkgDir, "docs"),
+  basePath: process.env.DOCS_BASE_PATH ?? "/chant/lexicons/azure/",
   overview,
   outputFormat,
   serviceFromType,
-  resourceDocUrl: (resourceType: string) => {
-    const provider = resourceType.split("/")[0]?.replace("Microsoft.", "").toLowerCase();
-    const resource = resourceType.split("/").pop()?.toLowerCase();
-    return `https://learn.microsoft.com/en-us/azure/templates/${provider}/${resource}`;
-  },
 };
 
 /**
  * Generate the Azure docs site.
  */
 export async function generateDocs(opts?: { verbose?: boolean }): Promise<void> {
-  const result = await docsPipeline(docsConfig);
-  writeDocsSite(result, docsConfig);
+  const result = docsPipeline(docsConfig);
+  writeDocsSite(docsConfig, result);
   if (opts?.verbose) {
     console.error(`Generated ${result.pages.size} doc pages`);
   }
