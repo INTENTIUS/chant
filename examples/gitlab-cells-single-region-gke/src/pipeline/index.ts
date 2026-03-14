@@ -4,6 +4,7 @@ import { cells } from "../config";
 const gcloudImage = new Image({ name: "google/cloud-sdk:slim", entrypoint: [""] });
 const kubectlImage = new Image({ name: "bitnami/kubectl:1.31", entrypoint: [""] });
 const helmImage = new Image({ name: "alpine/helm:3.14", entrypoint: [""] });
+const nodeImage = new Image({ name: "node:20-slim", entrypoint: [""] });
 
 const onlyMain = [new Rule({ if: "$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH" })];
 const canaryCells = cells.filter(c => c.canary);
@@ -20,22 +21,40 @@ export const deployInfra = new Job({ stage: "infra", image: kubectlImage, script
 export const deploySystem = new Job({ stage: "system", image: gcloudImage, script: [
   "kubectl apply -f https://github.com/cert-manager/cert-manager/releases/download/v1.14.4/cert-manager.yaml || true",
   "helm repo add external-secrets https://charts.external-secrets.io",
-  "helm upgrade --install external-secrets external-secrets/external-secrets -n system --wait || true",
+  "helm upgrade --install external-secrets external-secrets/external-secrets -n kube-system --set installCRDs=true --wait || true",
   "kubectl apply -f k8s.yaml -l app.kubernetes.io/part-of=system",
   "kubectl -n system rollout status deployment/ingress-nginx-controller --timeout=120s",
   "kubectl -n system rollout status deployment/cell-router --timeout=120s",
 ], needs: [{ job: "deploy-infra" }], rules: onlyMain });
 
-// Stage 3: validate (helm diff dry-run)
-export const validate = new Job({ stage: "validate", image: helmImage, allow_failure: true,
-  script: cells.map(c =>
-    `helm diff upgrade gitlab-cell-${c.name} ./gitlab-cell/ -n cell-${c.name} -f values-${c.name}.yaml || true`
-  ),
+// Stage 3a: build-helm-values — generate gitlab-cell/values-<cell>.yaml from TypeScript.
+// Per-cell IPs (ALPHA_DB_IP, ALPHA_REDIS_PERSISTENT, etc.) must be set as CI/CD variables
+// in GitLab project settings; they are written to .env by load-outputs.sh on first deploy.
+export const buildHelmValues = new Job({ stage: "build-helm-values", image: nodeImage,
+  script: [
+    "npm ci",
+    "npm run build:helm",
+  ],
+  artifacts: {
+    paths: ["gitlab-cell/values-*.yaml"],
+    expire_in: "1 hour",
+  },
   needs: [{ job: "deploy-system" }], rules: onlyMain });
+
+// Stage 3b: validate (helm diff dry-run)
+export const validate = new Job({ stage: "validate", image: helmImage, allow_failure: true,
+  script: [
+    "helm dependency update ./gitlab-cell/",
+    ...cells.map(c =>
+      `helm diff upgrade gitlab-cell-${c.name} ./gitlab-cell/ -n cell-${c.name} -f gitlab-cell/values-base.yaml -f gitlab-cell/values-${c.name}.yaml || true`
+    ),
+  ],
+  needs: [{ job: "build-helm-values" }], rules: onlyMain });
 
 // Stage 4: deploy-canary (helm install canary cell)
 export const deployCanary = new Job({ stage: "deploy-canary", image: helmImage, script: [
-  `helm upgrade --install gitlab-cell-${canaryCells[0].name} ./gitlab-cell/ -n cell-${canaryCells[0].name} -f values-${canaryCells[0].name}.yaml --wait --timeout=900s`,
+  "helm dependency update ./gitlab-cell/",
+  `helm upgrade --install gitlab-cell-${canaryCells[0].name} ./gitlab-cell/ -n cell-${canaryCells[0].name} -f gitlab-cell/values-base.yaml -f gitlab-cell/values-${canaryCells[0].name}.yaml --wait --timeout=900s`,
   `kubectl -n cell-${canaryCells[0].name} rollout status deployment/gitlab-cell-${canaryCells[0].name}-webservice-default --timeout=300s`,
 ], needs: [{ job: "validate" }], rules: onlyMain });
 
@@ -43,7 +62,8 @@ export const deployCanary = new Job({ stage: "deploy-canary", image: helmImage, 
 export const deployRemaining = new Job({ stage: "deploy-remaining", image: helmImage,
   parallel: new Parallel({ matrix: remainingCells.map(c => ({ CELL_NAME: c.name })) }),
   script: [
-    "helm upgrade --install gitlab-cell-$CELL_NAME ./gitlab-cell/ -n cell-$CELL_NAME -f values-$CELL_NAME.yaml --wait --timeout=900s",
+    "helm dependency update ./gitlab-cell/",
+    "helm upgrade --install gitlab-cell-$CELL_NAME ./gitlab-cell/ -n cell-$CELL_NAME -f gitlab-cell/values-base.yaml -f gitlab-cell/values-$CELL_NAME.yaml --wait --timeout=900s",
     "kubectl -n cell-$CELL_NAME rollout status deployment/gitlab-cell-$CELL_NAME-webservice-default --timeout=300s",
   ],
   needs: [{ job: "deploy-canary" }], rules: onlyMain });
