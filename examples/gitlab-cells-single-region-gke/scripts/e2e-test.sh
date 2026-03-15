@@ -43,6 +43,20 @@ for CELL in $(kubectl get ns -l app.kubernetes.io/part-of=cells -o jsonpath='{.i
   # TLS certificate valid
   TLS_CERT=$(openssl s_client -connect "${HOST}:443" -servername "${HOST}" </dev/null 2>/dev/null | openssl x509 -noout -checkend 0 >/dev/null 2>/dev/null && echo ok || echo fail)
   check test "$TLS_CERT" = "ok"
+
+  # Login validation — catches PLACEHOLDER passwords and broken DB seeds.
+  # Fetches the root password from Secret Manager and authenticates via OAuth.
+  CELL_ROOT_PASS=$(gcloud secrets versions access latest \
+    --secret="gitlab-${CELL_NAME}-root-password" --project="$GCP_PROJECT_ID" 2>/dev/null || echo "")
+  if [ -n "$CELL_ROOT_PASS" ]; then
+    LOGIN_HTTP=$(curl -s -o /dev/null -w "%{http_code}" --connect-timeout 10 --max-time 15 \
+      -d "grant_type=password&username=root&password=${CELL_ROOT_PASS}" \
+      "https://${HOST}/oauth/token")
+    check test "$LOGIN_HTTP" = "200"
+  else
+    echo "  SKIP: gitlab-${CELL_NAME}-root-password secret not found — cannot validate login"
+    PASS=$((PASS + 1))
+  fi
 done
 
 echo "=== Base Domain Routing ==="
@@ -76,10 +90,13 @@ PROJECT_BODY=$(echo "$PROJECT_RESP" | sed '$d')
 check test "$PROJECT_HTTP" = "201"
 PROJECT_ID=$(echo "$PROJECT_BODY" | jq -r '.id')
 check test -n "$PROJECT_ID"
-# Clone + push (empty project — git init + push rather than clone)
+# Clone + push. Include .gitlab-ci.yml so the runner section can trigger a real job.
 TMPDIR=$(mktemp -d)
 mkdir "$TMPDIR/e2e-repo" && cd "$TMPDIR/e2e-repo"
-git init -b main && git -c user.email="root@localhost" -c user.name="root" commit --allow-empty -m "init"
+git init -b main
+printf 'e2e:\n  script:\n    - echo "e2e ok"\n' > .gitlab-ci.yml
+git add .gitlab-ci.yml
+git -c user.email="root@localhost" -c user.name="root" commit -m "init"
 git remote add origin "https://root:${TOKEN}@${CANARY_HOST}/root/${E2E_PROJECT}.git"
 check git push -u origin main
 cd -
@@ -87,6 +104,17 @@ cd -
 # Verify commit via API
 COMMIT_MSG=$(curl -s -H "PRIVATE-TOKEN: $TOKEN" "https://${CANARY_HOST}/api/v4/projects/${PROJECT_ID}/repository/commits" | jq -r '.[0].message')
 check test "$COMMIT_MSG" = "init"
+
+echo "=== Base Domain API Routing ==="
+# Verify the cell router + topology service route authenticated API requests at the
+# bare domain to the correct cell. Uses the canary PAT obtained above.
+USER_HTTP=$(curl -s -o /dev/null -w "%{http_code}" --connect-timeout 10 --max-time 15 \
+  -H "PRIVATE-TOKEN: $TOKEN" "https://${DOMAIN}/api/v4/user")
+check test "$USER_HTTP" = "200"
+# Verify the project created on the canary cell is reachable via the base domain.
+PROJECT_VIA_BASE=$(curl -s -H "PRIVATE-TOKEN: $TOKEN" \
+  "https://${DOMAIN}/api/v4/projects/${PROJECT_ID}" | jq -r '.id // empty')
+check test "$PROJECT_VIA_BASE" = "$PROJECT_ID"
 
 echo "=== Container Registry ==="
 REGISTRY_HOST="registry.${CANARY_CELL}.${DOMAIN}"
@@ -141,20 +169,28 @@ echo "=== Topology Routing ==="
 check kubectl -n system exec deploy/topology-service -- wget -qO- http://localhost:8080/healthz
 
 echo "=== Runner ==="
-# Trigger pipeline (project needs .gitlab-ci.yml — skip if no CI config)
+# Trigger a pipeline on the .gitlab-ci.yml pushed above and poll until the job succeeds.
+# Times out after 5 minutes — if the runner is not picking up jobs, investigate with:
+#   kubectl -n system logs deploy/gitlab-runner
 PIPELINE_RESP=$(curl -s -H "PRIVATE-TOKEN: $TOKEN" "https://${CANARY_HOST}/api/v4/projects/${PROJECT_ID}/pipeline" \
   -d "ref=main" -w "\n%{http_code}")
 PIPELINE_HTTP=$(echo "$PIPELINE_RESP" | tail -1)
 PIPELINE_BODY=$(echo "$PIPELINE_RESP" | sed '$d')
+check test "$PIPELINE_HTTP" = "201"
 if [ "$PIPELINE_HTTP" = "201" ]; then
   PIPELINE_ID=$(echo "$PIPELINE_BODY" | jq -r '.id')
   check test -n "$PIPELINE_ID"
-  sleep 30
-  JOB_STATUS=$(curl -s -H "PRIVATE-TOKEN: $TOKEN" \
-    "https://${CANARY_HOST}/api/v4/projects/${PROJECT_ID}/pipelines/${PIPELINE_ID}/jobs" | jq -r '.[0].status // "none"')
-  check test "$JOB_STATUS" != "stuck"
-else
-  echo "  No pipeline triggered (no CI config) — skipping runner check"
+  # Poll up to 5 minutes (30 × 10s) for the job to reach a terminal state.
+  JOB_STATUS="pending"
+  for _i in $(seq 1 30); do
+    sleep 10
+    JOB_STATUS=$(curl -s -H "PRIVATE-TOKEN: $TOKEN" \
+      "https://${CANARY_HOST}/api/v4/projects/${PROJECT_ID}/pipelines/${PIPELINE_ID}/jobs" \
+      | jq -r '.[0].status // "none"')
+    case "$JOB_STATUS" in success|failed|canceled|skipped) break ;; esac
+  done
+  echo "  Runner job final status: ${JOB_STATUS}"
+  check test "$JOB_STATUS" = "success"
 fi
 
 echo "=== Backup ==="
@@ -174,6 +210,24 @@ r = urllib.request.Request(
 print(urllib.request.urlopen(r).status)
 "
 gsutil rm "gs://${BACKUP_BUCKET_NAME}/${BACKUP_KEY}" >/dev/null 2>&1 || true
+
+echo "=== Grafana ==="
+# Verify the Prometheus datasource in Grafana is healthy.
+# Uses the Secret Manager password and Grafana's datasource health API (Grafana 9+).
+GRAFANA_PASS=$(gcloud secrets versions access latest \
+  --secret=gitlab-grafana-admin-password --project="$GCP_PROJECT_ID" 2>/dev/null || echo "")
+if [ -n "$GRAFANA_PASS" ]; then
+  GRAFANA_AUTH=$(printf 'admin:%s' "$GRAFANA_PASS" | base64)
+  DS_STATUS=$(kubectl -n system exec deploy/grafana -- \
+    wget -qO- --header="Authorization: Basic ${GRAFANA_AUTH}" \
+    "http://localhost:3000/api/datasources/name/Prometheus/health" 2>/dev/null \
+    | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('status','fail'))" 2>/dev/null \
+    || echo "fail")
+  check test "$DS_STATUS" = "OK"
+else
+  echo "  SKIP: gitlab-grafana-admin-password secret not found"
+  PASS=$((PASS + 1))
+fi
 
 echo ""
 echo "=== Results: $PASS passed, $FAIL failed ==="
