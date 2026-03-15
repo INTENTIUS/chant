@@ -109,7 +109,7 @@ for CELL in $CELLS; do
 
   # ── root-password (generated once — only read by GitLab at db:seed time) ──
   # Retrieve after deployment: gcloud secrets versions access latest --secret=gitlab-${CELL}-root-password
-  if secret_has_version "gitlab-${CELL}-root-password"; then
+  if secret_has_version "gitlab-${CELL}-root-password" && ! secret_is_placeholder "gitlab-${CELL}-root-password"; then
     echo "  gitlab-${CELL}-root-password already set — skipping"
     echo "  To retrieve: gcloud secrets versions access latest --secret=gitlab-${CELL}-root-password --project \$GCP_PROJECT_ID"
   else
@@ -187,7 +187,7 @@ if ! kubectl get secret "$TOPOLOGY_DB_SECRET" -n default &>/dev/null; then
 else
   TOPOLOGY_DB_PASS=$(kubectl get secret "$TOPOLOGY_DB_SECRET" -o jsonpath='{.data.password}' | base64 -d)
 fi
-if secret_has_version "gitlab-topology-db-password"; then
+if secret_has_version "gitlab-topology-db-password" && ! secret_is_placeholder "gitlab-topology-db-password"; then
   echo "  gitlab-topology-db-password already set — skipping"
 else
   echo -n "$TOPOLOGY_DB_PASS" | gcloud secrets versions add "gitlab-topology-db-password" \
@@ -197,7 +197,7 @@ fi
 # ── Grafana admin password ────────────────────────────────────────────
 # Generated once. To rotate: gcloud secrets versions add gitlab-grafana-admin-password ...
 # then restart grafana pod: kubectl -n system rollout restart deploy/grafana
-if secret_has_version "gitlab-grafana-admin-password"; then
+if secret_has_version "gitlab-grafana-admin-password" && ! secret_is_placeholder "gitlab-grafana-admin-password"; then
   echo "  gitlab-grafana-admin-password already set — skipping"
   echo "  Retrieve: gcloud secrets versions access latest --secret=gitlab-grafana-admin-password --project \$GCP_PROJECT_ID"
 else
