@@ -206,6 +206,18 @@ This example includes GKE best-practice hardening:
 - **Resource quotas + LimitRange** — namespace-level resource quotas and per-container default limits prevent noisy neighbors
 - **Config Connector SA scoping** — Config Connector service account uses minimal IAM roles (editor, IAM admin, DNS admin)
 
+## Cost estimate
+
+~$107/mo while running. Teardown after testing to avoid charges.
+
+| Component | Cost |
+|-----------|------|
+| GKE control plane | Free (one zonal cluster) |
+| 3× e2-medium nodes | ~$75/mo |
+| Cloud NAT | ~$32/mo |
+| Cloud DNS ManagedZone | ~$0.20/mo |
+| **Total** | **~$107/mo** |
+
 ## Testing
 
 ### Local build verification (no cloud account needed)
@@ -220,6 +232,12 @@ Follow the **Deploy workflow** section above. This deploys real cloud infrastruc
 
 ### Docker smoke tests
 `./test/smoke.sh smoke-gke` runs the same build inside a clean Docker container to verify the package installs correctly. This is a tooling test, not a substitute for E2E deployment.
+
+## Related examples
+
+- [k8s-eks-microservice](../k8s-eks-microservice/) — Same pattern on AWS EKS
+- [k8s-aks-microservice](../k8s-aks-microservice/) — Same pattern on Azure AKS
+- [cockroachdb-multi-region-gke](../cockroachdb-multi-region-gke/) — Multi-region stateful workload on GKE
 
 ## Standalone usage
 

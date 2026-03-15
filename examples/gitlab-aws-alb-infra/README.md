@@ -2,6 +2,38 @@
 
 Shared AWS infrastructure for the ALB service trilogy: VPC, Application Load Balancer, ECS cluster, and ECR repositories — deployed via a GitLab CI pipeline.
 
+## Architecture
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│  CloudFormation stack: shared-alb (24 resources)                 │
+│                                                                  │
+│  ┌──────────────────────────────────────────────────────────┐   │
+│  │  VPC (network.ts)                                         │   │
+│  │  2 public subnets + 2 private subnets + IGW + NAT         │   │
+│  └────────────────────────────┬─────────────────────────────┘   │
+│                               │                                  │
+│  ┌────────────────────────────▼─────────────────────────────┐   │
+│  │  ALB + ECS cluster + execution role (alb.ts)              │   │
+│  │  ALB in public subnets → listener on port 80              │   │
+│  │  ECS cluster (shared by all services)                     │   │
+│  └────────────────────────────┬─────────────────────────────┘   │
+│                               │                                  │
+│  ┌────────────────────────────▼─────────────────────────────┐   │
+│  │  ECR repos: alb-api, alb-ui (ecr.ts)                      │   │
+│  └──────────────────────────────────────────────────────────┘   │
+│                                                                  │
+│  outputs.ts → 10 stack outputs (ClusterArn, ListenerArn, ...)    │
+└─────────────────────────────────────────────────────────────────┘
+         ↓ consumed as parameters by service stacks
+┌──────────────────────────┐   ┌──────────────────────────┐
+│  shared-alb-api stack    │   │  shared-alb-ui stack      │
+│  Fargate at /api/*       │   │  Fargate at /*            │
+└──────────────────────────┘   └──────────────────────────┘
+```
+
+**Source split:** The AWS CF resources live in `lexicons/aws/examples/shared-alb/` (in the monorepo). This directory (`examples/gitlab-aws-alb-infra/`) contains only the GitLab CI pipeline source (`src/pipeline.ts`). The pipeline builds and deploys the CF template from the lexicon example.
+
 ## Skills
 
 The lexicon packages ship skills for agent-guided deployment. After `chant init --lexicon aws` and `chant init --lexicon gitlab`, your agent has access to:
@@ -121,6 +153,34 @@ aws cloudformation wait stack-delete-complete --stack-name shared-alb
 ```
 
 > **Re-deploying after a partial teardown:** If ECR repos `alb-api`/`alb-ui` already exist from a previous run, the stack will fail with a `ResourceExistenceCheck` error. Delete the orphaned repos with `aws ecr delete-repository --repository-name <name> --force` before re-deploying.
+
+## Skills workflow
+
+```
+1. chant-aws     "Build and validate the CloudFormation template"
+   │             → chant build --lexicon aws, cfn-lint, change set preview
+   │
+2. chant-gitlab  "Build and push the GitLab CI pipeline"
+                 → chant build --lexicon gitlab, validate, push to project
+```
+
+## Security hardening
+
+- **SG scoping** — the ALB security group allows inbound 0.0.0.0/0 on port 80 only; ECS task SGs allow inbound from ALB SG only (not from 0.0.0.0/0 directly)
+- **Private subnets for ECS tasks** — Fargate tasks run in private subnets; only the ALB (in public subnets) is internet-facing
+- **IAM execution role least-privilege** — the shared execution role grants `ecr:GetAuthorizationToken`, `ecr:BatchGetImage`, `logs:CreateLogStream`, and `logs:PutLogEvents` only; no admin or resource-scoped wildcards
+- **ECR image scanning** — ECR repositories have `ScanOnPush: true`; vulnerabilities surface in the ECR console before deployment
+
+## Cost estimate
+
+~$48/mo for the shared infrastructure alone. Service stacks add Fargate task costs on top.
+
+| Component | Cost |
+|-----------|------|
+| NAT gateway | ~$32/mo |
+| ALB | ~$16/mo |
+| ECR storage | ~$0.10/mo |
+| **Total (infra only)** | **~$48/mo** |
 
 ## Related examples
 

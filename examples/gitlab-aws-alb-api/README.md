@@ -4,6 +4,17 @@ API Fargate service behind a shared Application Load Balancer, with a GitLab CI 
 
 **Depends on:** [gitlab-aws-alb-infra](../gitlab-aws-alb-infra/) — deploy the shared infrastructure first.
 
+## Architecture
+
+```
+ALB (shared-alb stack)
+  └── Listener rule: /api and /api/* (priority 100)
+        └── Target group → Fargate task (port 8080)
+              └── ECR image: alb-api (built and pushed by this pipeline)
+```
+
+**Source split:** The `FargateService` composite's AWS CF resources are defined in `lexicons/aws/examples/shared-alb-api/`. This directory (`examples/gitlab-aws-alb-api/`) contains only the GitLab CI pipeline source (`src/pipeline.ts`) that builds the Docker image and deploys the CF stack.
+
 ## Skills
 
 The lexicon packages ship skills for agent-guided deployment. After `chant init --lexicon aws` and `chant init --lexicon gitlab`, your agent has access to:
@@ -101,6 +112,13 @@ aws cloudformation wait stack-delete-complete --stack-name shared-alb-api
 ```
 
 Delete this stack before deleting the infra stack.
+
+## Security hardening
+
+- **SG: ALB → Fargate only** — the task security group allows inbound only from the ALB security group on port 8080; no direct inbound from `0.0.0.0/0`
+- **ECR image scanning** — `ScanOnPush: true` on the ECR repo; critical vulnerabilities visible in the ECR console before deployment
+- **No static credentials** — the pipeline uses `AWS_ACCESS_KEY_ID`/`AWS_SECRET_ACCESS_KEY` CI/CD variables (masked); credentials are never embedded in source files or Docker images
+- **Cost:** See [gitlab-aws-alb-infra](../gitlab-aws-alb-infra/#cost-estimate) for shared infra costs (~$48/mo). Fargate task cost depends on task size (default: 0.25 vCPU / 0.5Gi).
 
 ## Related examples
 

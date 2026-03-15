@@ -229,6 +229,18 @@ This example includes EKS best-practice hardening:
 - **Topology spread** — zone-based `topologySpreadConstraints` with `maxSkew: 1` prevents single-AZ concentration
 - **Metrics Server** — in-cluster metrics-server deployment enables HPA pod CPU/memory scaling
 
+## Cost estimate
+
+~$221/mo while running. Teardown after testing to avoid charges.
+
+| Component | Cost |
+|-----------|------|
+| EKS control plane | ~$73/mo |
+| NAT gateway | ~$32/mo |
+| ALB | ~$16/mo |
+| 3× t3.medium nodes | ~$100/mo |
+| **Total** | **~$221/mo** |
+
 ## Testing
 
 ### Local build verification (no cloud account needed)

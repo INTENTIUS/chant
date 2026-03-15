@@ -657,6 +657,32 @@ Teardown order: helm uninstall all cells → delete K8s resources → delete Con
 
 The `--yes` flag (or `TEARDOWN_CLUSTER=yes` env var) skips the interactive cluster deletion prompt and also runs direct `gcloud sql instances delete` / `gcloud redis instances delete` as a fallback in case the Config Connector controller was not running when resources were deleted.
 
+## Cost estimate
+
+~$2–4/hr (~$50–100/day) while running with 2 cells. Teardown after testing to avoid charges.
+
+| Component | Per cell | 2 cells |
+|-----------|----------|---------|
+| GKE cluster (shared) | — | ~$0.10/hr |
+| Cloud SQL HA (Postgres 15) | ~$0.30/hr | ~$0.60/hr |
+| Memorystore Redis persistent | ~$0.10/hr | ~$0.20/hr |
+| Memorystore Redis cache | ~$0.10/hr | ~$0.20/hr |
+| GCS bucket (Object storage) | ~$0.01/hr | ~$0.02/hr |
+| Cloud NAT | — | ~$0.05/hr |
+| **Total** | | **~$1.17/hr** |
+
+Cost scales roughly linearly with cell count. The GKE cluster and NAT are shared across all cells.
+
+## Standalone usage
+
+To run this example outside the monorepo:
+
+1. Copy this directory
+2. `cp package.standalone.json package.json`
+3. `npm install`
+4. `cp .env.example .env` — fill in `GCP_PROJECT_ID` and `DOMAIN`
+5. Follow the **Deploy workflow** section above
+
 ## Related Examples
 
 - `k8s-gke-microservice` — GCP + K8s cross-lexicon pattern (Config Connector + workloads)

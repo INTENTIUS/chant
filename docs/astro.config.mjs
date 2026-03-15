@@ -51,13 +51,16 @@ export default defineConfig({
 				{
 					label: 'Tutorials',
 					items: [
-						{ label: 'GitLab CI + AWS ALB', slug: 'tutorials/gitlab-aws-alb' },
+						{ label: 'GCP GKE + Kubernetes', slug: 'tutorials/gke-kubernetes' },
+						{ label: 'GKE Composites', link: '/lexicons/k8s/gke-composites/' },
 						{ label: 'AWS EKS + Kubernetes', slug: 'tutorials/eks-kubernetes' },
 						{ label: 'EKS Composites', link: '/lexicons/k8s/eks-composites/' },
 						{ label: 'Azure AKS + Kubernetes', slug: 'tutorials/aks-kubernetes' },
 						{ label: 'AKS Composites', link: '/lexicons/k8s/aks-composites/' },
-						{ label: 'GCP GKE + Kubernetes', slug: 'tutorials/gke-kubernetes' },
-						{ label: 'GKE Composites', link: '/lexicons/k8s/gke-composites/' },
+						{ label: 'GitLab CI + AWS ALB', slug: 'tutorials/gitlab-aws-alb' },
+						{ label: 'Flyway + PostgreSQL + GitLab', slug: 'tutorials/flyway-postgresql' },
+						{ label: 'CockroachDB Multi-Region', slug: 'tutorials/cockroachdb-multi-region' },
+						{ label: 'GitLab Cells on GKE', slug: 'tutorials/gitlab-cells' },
 					],
 				},
 				{

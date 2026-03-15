@@ -2,6 +2,33 @@
 
 A cross-lexicon example combining **three** lexicons: AWS (RDS infrastructure), Flyway (migration config), and GitLab (CI pipeline). The GitLab pipeline deploys the CloudFormation stack then runs Flyway migrations against the new RDS endpoint.
 
+## Architecture
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│  GitLab CI Pipeline                                              │
+│                                                                  │
+│  stage: deploy-infra                                             │
+│  ┌─────────────────────────────────────────────────────────┐    │
+│  │  aws cloudformation deploy → shared-alb CF stack        │    │
+│  │  VPC + Subnets + IGW + NAT + RDS (PostgreSQL)           │    │
+│  └────────────────────────────┬────────────────────────────┘    │
+│                               │ stack outputs: DbEndpoint        │
+│  stage: run-migrations        ▼                                  │
+│  ┌─────────────────────────────────────────────────────────┐    │
+│  │  DB_HOST from CF outputs + DB_PASSWORD from SSM          │    │
+│  │  flyway migrate → V1, V2, V3 SQL migrations              │    │
+│  └─────────────────────────────────────────────────────────┘    │
+└─────────────────────────────────────────────────────────────────┘
+                               │
+                               ▼
+┌─────────────────────────────────────────────────────────────────┐
+│  AWS (CloudFormation — 20 resources)                             │
+│  VPC → private subnets → RDS PostgreSQL (public: false)          │
+│  SSM SecureString for DB password                                │
+└─────────────────────────────────────────────────────────────────┘
+```
+
 ## Skills
 
 The lexicon packages ship skills for agent-guided deployment. After `chant init --lexicon aws`, `chant init --lexicon flyway`, and `chant init --lexicon gitlab`, your agent has access to:
@@ -111,6 +138,25 @@ aws cloudformation wait stack-delete-complete --stack-name flyway-rds
 # Optionally delete the SSM parameter
 aws ssm delete-parameter --name /myapp/dev/db-password
 ```
+
+## Security hardening
+
+- **VPC isolation** — RDS is placed in private subnets with no public access (`PubliclyAccessible: false`); only resources within the VPC can connect
+- **SSM SecureString** — the DB master password is stored as an SSM SecureString parameter (KMS-encrypted at rest); the GitLab pipeline fetches it at runtime, it never appears in CF templates or source code
+- **IAM least-privilege** — the pipeline's IAM role is scoped to `cloudformation:*`, `ec2:*` (VPC), `rds:*`, and `ssm:GetParameter` only; no admin or wildcard account-level permissions
+- **Ingress CIDR parameter** — `DbIngressCidr` CloudFormation parameter restricts which CIDR can reach RDS port 5432; defaults to `10.0.0.0/8` (VPC-internal only)
+- **Flyway connect-only** — Flyway connects to RDS using the password fetched from SSM; no credentials are embedded in `flyway.toml` (uses `${env.DB_PASSWORD}` runtime resolution)
+
+## Cost estimate
+
+~$50/mo while running. Teardown after testing to avoid charges.
+
+| Component | Cost |
+|-----------|------|
+| RDS db.t3.micro (PostgreSQL) | ~$15/mo |
+| NAT gateway | ~$32/mo |
+| Data transfer | ~$3/mo |
+| **Total** | **~$50/mo** |
 
 ## Related examples
 

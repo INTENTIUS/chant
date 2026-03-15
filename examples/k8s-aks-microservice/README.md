@@ -184,6 +184,18 @@ npm run teardown
 
 Deletes K8s workloads, then deletes the resource group (runs `az group delete --no-wait` in the background).
 
+## Cost estimate
+
+~$95/mo while running. Teardown after testing to avoid charges.
+
+| Component | Cost |
+|-----------|------|
+| AKS control plane | Free (free tier) |
+| Application Gateway | ~$20/mo |
+| 3× Standard_B2s nodes | ~$75/mo |
+| Azure DNS Zone | ~$0.50/mo |
+| **Total** | **~$95/mo** |
+
 ## Testing
 
 ### Local build verification (no cloud account needed)
@@ -198,6 +210,12 @@ Follow the **Deploy workflow** section above. This deploys real cloud infrastruc
 
 ### Docker smoke tests
 `./test/smoke.sh smoke-aks` runs the same build inside a clean Docker container to verify the package installs correctly. This is a tooling test, not a substitute for E2E deployment.
+
+## Related examples
+
+- [k8s-gke-microservice](../k8s-gke-microservice/) — Same pattern on GCP GKE
+- [k8s-eks-microservice](../k8s-eks-microservice/) — Same pattern on AWS EKS
+- [cockroachdb-multi-region-gke](../cockroachdb-multi-region-gke/) — Multi-region stateful workload on GKE
 
 ## Standalone usage
 

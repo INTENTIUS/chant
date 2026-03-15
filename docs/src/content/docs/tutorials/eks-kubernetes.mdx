@@ -1,184 +1,114 @@
 ---
 title: "AWS EKS + Kubernetes"
-description: "Deploy an EKS cluster with Kubernetes workloads using two chant lexicons — AWS CloudFormation for infrastructure, K8s for workloads."
+description: "Deploy a production-grade EKS cluster with Kubernetes workloads using the AWS CloudFormation lexicon for infrastructure and the K8s lexicon for workloads."
 ---
 
-import { Aside, Steps } from '@astrojs/starlight/components';
+import { Aside } from '@astrojs/starlight/components';
 
-This tutorial walks you through deploying a production-grade EKS cluster with Kubernetes workloads, all defined in TypeScript using two chant lexicons. The AWS lexicon produces a CloudFormation template for infrastructure; the K8s lexicon produces kubectl-ready YAML for workloads.
+Two chant lexicons, one `src/` directory: the AWS lexicon produces a CloudFormation template for the EKS cluster and IAM roles; the K8s lexicon produces kubectl-ready YAML for workloads. IAM role ARNs flow between them via `.env` → `config.ts`.
 
-## What you'll deploy
+The deploy is intentionally two-phase: ACM certificate DNS validation requires your domain's NS records to be delegated before the cert can be issued. The example handles this gracefully — you can deploy and use the cluster without TLS, then add the cert later.
+
+## What you'll build
 
 ```
 ┌─────────────────────────────────────┐
-│  AWS CloudFormation (32 resources)  │
-│  ┌──────────┐  ┌──────────────┐    │
-│  │ VPC/Nets │  │ EKS Cluster  │    │
-│  └──────────┘  └──────┬───────┘    │
-│  ┌──────────┐         │            │
-│  │ IAM Roles│ ←── OIDC Provider    │
-│  └────┬─────┘                      │
-│  ┌────┴─────────────────────┐      │
-│  │ Add-ons: vpc-cni, ebs,  │      │
-│  │ coredns, kube-proxy,    │      │
-│  │ ALB controller           │      │
-│  └──────────────────────────┘      │
-└───────┼─────────────────────────────┘
-        │ ARNs flow down via .env
+│  AWS CloudFormation (35 resources)  │
+│  VPC + EKS Cluster + OIDC Provider  │
+│  8 IAM Roles (IRSA per workload)    │
+│  4 EKS Add-ons + Route53 zone       │
+└───────┬─────────────────────────────┘
+        │ ARNs via .env → config.ts
 ┌───────▼─────────────────────────────┐
-│  Kubernetes (28 resources)          │
-│  ┌────────────┐  ┌──────────────┐  │
-│  │ Namespace  │  │ IRSA SA      │  │
-│  │ + Quotas   │  │ (role-arn)   │  │
-│  └────────────┘  └──────────────┘  │
-│  ┌────────────┐  ┌──────────────┐  │
-│  │ Autoscaled │  │ ALB Ingress  │  │
-│  │ Service    │  │ (cert-arn)   │  │
-│  └────────────┘  └──────────────┘  │
-│  ┌────────────┐  ┌──────────────┐  │
-│  │ EBS Storage│  │ FluentBit    │  │
-│  │ Class      │  │ + ADOT       │  │
-│  └────────────┘  └──────────────┘  │
+│  Kubernetes (36 resources)          │
+│  Namespace + AutoscaledService      │
+│  IrsaServiceAccount (role-arn ann.) │
+│  AlbIngress (cert-arn) + ExternalDNS│
+│  EBS StorageClass + FluentBit + ADOT│
 └─────────────────────────────────────┘
 ```
 
-| Source file | What it produces |
-|---|---|
-| `src/infra/networking.ts` | VPC, subnets, IGW, NAT gateway |
-| `src/infra/cluster.ts` | EKS cluster, node group, OIDC, 7 IAM roles |
-| `src/infra/addons.ts` | 5 EKS add-ons (including ALB controller) |
-| `src/infra/dns.ts` | Route53 hosted zone |
-| `src/infra/params.ts` | CF parameters: environment, domain, public access CIDR |
-| `src/k8s/namespace.ts` | Namespace with quotas, limits, default-deny policy |
-| `src/k8s/app.ts` | Deployment + Service + HPA + PDB + IRSA SA + ConfigMap |
-| `src/k8s/ingress.ts` | ALB Ingress + ExternalDNS agent |
-| `src/k8s/storage.ts` | gp3 encrypted StorageClass |
-| `src/k8s/observability.ts` | Fluent Bit (logging) + ADOT Collector (metrics) |
-| `src/config.ts` | Cross-lexicon config — reads `.env` for real ARNs |
+## What you'll learn
 
-<Aside type="caution">
-This deployment creates resources that cost money: EKS control plane (~$73/mo), NAT gateway (~$32/mo), ALB (~$16/mo), and EC2 nodes (~$100/mo for 3x t3.medium). Follow the [clean up section](#clean-up) when you're done.
-</Aside>
+- How IRSA (IAM Roles for Service Accounts) works: OIDC provider → trust policy → `eks.amazonaws.com/role-arn` annotation
+- Why the two-phase deploy exists: ACM cert validation requires NS delegation, which requires the Route53 zone to exist first
+- The cross-lexicon value flow: CF stack outputs → `.env` → `config.ts` → K8s composite props
+- EKS-specific nuances: ALB controller is installed as an EKS addon (not a K8s manifest), KMS envelope encryption for secrets
 
-## Prerequisites
+## Cost
 
-- **AWS account** with permissions for CloudFormation, EKS, EC2, IAM, ELB, Route53, CloudWatch
-- **AWS CLI** >= 2.x, configured (`aws sts get-caller-identity` should work)
-- **kubectl** installed
-- **jq** installed
-- **Bun** runtime and **chant** installed ([Installation guide](/chant/getting-started/installation/))
-- **ACM certificate** pre-created in the target region for your domain
-- **Route53 hosted zone** for the domain (ExternalDNS writes records here)
+EKS control plane ~$73/mo, NAT gateway ~$32/mo, ALB ~$16/mo, 3× t3.medium nodes ~$100/mo. **Total ~$221/mo.** Teardown after testing.
 
-## Step 1: Build and deploy infrastructure
+## Get started
 
-> "Build the CloudFormation template for the EKS microservice example and deploy it."
-
-```bash
-cd examples/k8s-eks-microservice
-
-# Build both CF template and K8s manifests
-npm run build
-
-# Deploy the CloudFormation stack (35 resources)
-# Pass your domain and optionally restrict API endpoint access:
-DOMAIN=myapp.example.com CIDR=203.0.113.1/32 npm run deploy-infra
+```
+Deploy the k8s-eks-microservice example to AWS. My domain is myapp.example.com.
 ```
 
-The stack creates the VPC, EKS cluster, managed node group, OIDC provider, 8 IAM roles, and 4 EKS add-ons. The ALB controller add-on must be installed separately via Helm — see the `chant-eks` skill for guidance.
+See [`examples/k8s-eks-microservice/`](https://github.com/intentius/chant/tree/main/examples/k8s-eks-microservice) for the full README, deploy workflow, and teardown instructions.
 
-The `CIDR=` env var restricts EKS API server public access to your IP. Omit it to allow access from any IP (0.0.0.0/0). In production, always restrict to your corporate CIDR or use private-only endpoint access.
+## Key patterns
 
-CloudFormation deployment takes ~15 minutes (EKS cluster creation is the bottleneck).
+### IRSA: per-workload IAM roles via OIDC
 
-## Step 2: Configure kubectl and load outputs
+Each workload gets its own IAM role with a trust policy that restricts `AssumeRoleWithWebIdentity` to a specific K8s service account:
 
-> "Configure kubectl for the EKS cluster and load the stack outputs into .env."
-
-```bash
-# Update kubeconfig
-npm run configure-kubectl
-kubectl get nodes  # verify — should show 3 nodes
-
-# Write real ARNs from CF outputs into .env
-npm run load-outputs
+```typescript
+// src/infra/cluster.ts — the IAM role for the app workload
+export const appRole = new IAMRole({
+  AssumeRolePolicyDocument: {
+    Statement: [{
+      Action: "sts:AssumeRoleWithWebIdentity",
+      Principal: { Federated: Ref(oidcProviderArn) },
+      Condition: {
+        StringEquals: {
+          [`${oidcIssuer}:sub`]: "system:serviceaccount:microservice:app-sa",
+          [`${oidcIssuer}:aud`]: "sts.amazonaws.com",
+        },
+      },
+    }],
+  },
+});
 ```
 
-The `load-outputs` target queries `aws cloudformation describe-stacks`, extracts the IAM role ARNs (from stack outputs) and the domain name and ACM certificate ARN (from stack parameters), and writes them all to `.env`. Bun auto-loads `.env` at runtime, so the next K8s build uses real values instead of placeholders.
+The K8s side just needs the annotation:
 
-## Step 3: Deploy Kubernetes workloads
-
-> "Rebuild the K8s manifests with real ARNs and deploy them."
-
-```bash
-# Rebuild K8s manifests with real ARNs from .env
-npm run build:k8s
-
-# Validate against the live cluster (optional)
-npm run validate
-
-# Apply all K8s resources
-npm run apply
-
-# Wait for the app deployment to roll out
-npm run wait
+```typescript
+// src/k8s/app.ts — IrsaServiceAccount sets the annotation
+export const appSa = IrsaServiceAccount({
+  name: "app-sa",
+  namespace: "microservice",
+  iamRoleArn: config.appRoleArn,  // from .env after load-outputs
+});
 ```
 
-The K8s output includes 28 resources across 5 files: namespace with quotas, autoscaled app deployment, ALB ingress with ExternalDNS, encrypted storage class, and Fluent Bit + ADOT observability agents.
+The `StringEquals` condition block is critical — without it, any pod in any namespace with any SA name could assume the role using the cluster's OIDC provider.
 
-## Step 4: Verify
+### Why NS delegation before ACM cert
 
-> "Check that everything is running."
+The deploy sequence has a deliberate pause between infrastructure and workloads:
 
-```bash
-# Quick status check
-npm run status
-
-# Application pods (should show 2+ Running)
-kubectl get pods -n microservice
-
-# Ingress (ALB address appears after 2-3 min)
-kubectl get ingress -n microservice
-
-# Observability agents
-kubectl get daemonsets -n amazon-cloudwatch
-kubectl get daemonsets -n amazon-metrics
-
-# ALB controller (managed by EKS addon, runs in kube-system)
-kubectl get pods -n kube-system -l app.kubernetes.io/name=aws-load-balancer-controller
-
-# Test the endpoint (once ALB DNS propagates)
-ALB_DNS=$(kubectl get ingress -n microservice microservice-alb -o jsonpath='{.status.loadBalancer.ingress[0].hostname}')
-curl -s -o /dev/null -w "%{http_code}" https://$ALB_DNS/
+```
+1. deploy-infra → creates Route53 hosted zone → prints nameservers
+2. [manual] Update NS records at your registrar
+3. deploy-cert → ACM requests cert → creates validation CNAME → waits for ISSUED
+4. load-outputs → writes cert ARN to .env
+5. build:k8s && apply → AlbIngress gets the real cert ARN
 ```
 
-## Gotchas
+Without NS delegation, ACM's HTTP-01 validation CNAME can't be resolved and the cert stays in `PENDING_VALIDATION` indefinitely. The example's `npm run deploy` skips steps 2-4 so you can verify the cluster first; add the cert later with `npm run deploy-cert`.
 
-- **ALB takes 2-3 minutes** to provision after `kubectl apply`. Check `kubectl describe ingress` for events if it's slow.
-- **Delete order matters** — always delete K8s resources before the CF stack. If you delete the CF stack first, the ALB controller addon is removed and can't clean up the ALB, leaving orphaned resources.
-- **ACM certificate must match domain** — the cert ARN in `config.ts` (or `ALB_CERT_ARN` env var) must cover the domain used in the Ingress host rule.
-- **Health check path must match image** — the ALB health check hits `/` because `nginx:stable` serves a 200 there. Custom apps need a matching health endpoint.
+### Delete order matters
 
-## Subsequent deployments
-
-- **K8s-only changes** (app config, scaling, new workloads): edit source, run `npm run build:k8s && npm run apply`. No infra redeploy needed.
-- **Infrastructure changes** (node count, new IAM roles, new addons): edit source, run `npm run build && npm run deploy-infra`. Then run `npm run load-outputs` if outputs changed, followed by `npm run build:k8s && npm run apply`.
-
-## Clean up
-
-<Aside type="danger">
-Always delete Kubernetes resources before the CloudFormation stack. The ALB controller must be running to clean up the load balancer it created.
-</Aside>
+Always delete K8s resources before the CloudFormation stack. The ALB controller (installed as an EKS addon) must be running to clean up the ALB it provisioned. Deleting the CF stack first removes the addon → controller → ALB becomes orphaned.
 
 ```bash
-npm run teardown
+npm run teardown  # handles the ordering: kubectl delete → drain → cfn delete-stack
 ```
-
-This runs: `kubectl delete` → 30s drain wait → `aws cloudformation delete-stack` → wait for completion.
 
 ## Further reading
 
-- [Kubernetes lexicon](/chant/lexicons/k8s/) — resource reference, composites, examples
-- [AWS CloudFormation lexicon](/chant/lexicons/aws/) — resource reference, composites, examples
-- [Composite Resources guide](/chant/guide/composite-resources/) — how `AutoscaledService`, `AlbIngress`, and other composites work
+- [AWS CloudFormation lexicon](/chant/lexicons/aws/) — resource reference and composites
+- [EKS Composites](/chant/lexicons/k8s/eks-composites/) — IrsaServiceAccount, AlbIngress, and more
+- [Kubernetes lexicon](/chant/lexicons/k8s/) — core composites reference
 - [Agent Integration guide](/chant/guide/agent-integration/) — using chant skills with Claude Code

@@ -178,20 +178,62 @@ Tear down the cockroachdb-multi-region-gke example.
 Build and lint the cockroachdb-multi-region-gke example locally.
 ```
 
-### Skills reference
+### Skills guide
 
-<details>
-<summary>5 skills used in this example</summary>
+This example uses 5 skills from the GCP and K8s lexicon packages. After `npm install`, your agent loads them automatically.
 
-| Skill | Package | Purpose |
-|-------|---------|---------|
-| `chant-gke` | `@intentius/chant-lexicon-gcp` | End-to-end GKE workflow: VPC, cluster, service accounts, K8s workloads |
-| `chant-gcp` | `@intentius/chant-lexicon-gcp` | Config Connector lifecycle: build, lint, deploy, rollback |
-| `chant-k8s` | `@intentius/chant-lexicon-k8s` | K8s operational playbook: composites, build, lint, apply, troubleshoot |
-| `chant-k8s-gke` | `@intentius/chant-lexicon-k8s` | GKE-specific composites: Workload Identity, GCE ingress, PD, ExternalDNS |
-| `chant-k8s-patterns` | `@intentius/chant-lexicon-k8s` | Advanced K8s patterns: sidecars, TLS, monitoring, network isolation |
+#### `chant-gke` — primary entry point
 
-</details>
+The **`chant-gke`** skill covers the full end-to-end workflow:
+
+- Bootstrapping a management GKE cluster with Config Connector
+- Multi-cluster credential setup (fetching contexts for east/central/west)
+- Deploying Config Connector resources to the management cluster
+- Cross-lexicon value mapping: CC outputs → K8s composite props
+
+#### `chant-gcp` — Config Connector lifecycle
+
+- Build and lint GCP (Config Connector) resources
+- Deploy, rollback, and watch reconciliation status
+- Troubleshoot CC resource health and IAM binding errors
+
+#### `chant-k8s-gke` — GKE-specific composites
+
+Covers the composites used in `src/{east,central,west}/k8s/`:
+
+| Composite | File | What it does |
+|-----------|------|--------------|
+| `CockroachDbCluster` | `cockroachdb.ts` | StatefulSet + headless svc (ExternalDNS annotation) + WI SA |
+| `GkeExternalDnsAgent` | `ingress.ts` | Cloud DNS integration via Workload Identity |
+| `GcePdStorageClass` | `storage.ts` | GCE PD CSI provisioner, pd-ssd |
+
+#### `chant-k8s` — core composites reference
+
+- **"Choosing the Right Composite" decision tree** — which composite for each workload type
+- Hardening options: `minAvailable` (PDB), `initContainers`, `securityContext`, `priorityClassName`
+- Build/lint/apply workflow and troubleshooting
+
+#### `chant-k8s-patterns` — advanced patterns
+
+- **Multi-region networking** — how `advertiseHostDomain` prevents cluster-local DNS from breaking gossip
+- **External Secrets** — `ClusterSecretStore` + `ExternalSecret` pattern for cert distribution
+- **Prometheus monitoring** — `MonitoredService` with scrape config
+
+#### Skill workflow
+
+```
+1. chant-gke           "Deploy this multi-region CockroachDB project"
+   │                   → Bootstrap mgmt cluster, deploy CC resources, configure kubectl
+   │
+2. chant-k8s-gke       "Which composites handle CockroachDB + ExternalDNS?"
+   │                   → CockroachDbCluster, GkeExternalDnsAgent, GcePdStorageClass
+   │
+3. chant-k8s           "How do I configure the StatefulSet hardening?"
+   │                   → PDB, resource quotas, NetworkPolicy, securityContext
+   │
+4. chant-k8s-patterns  "How does advertiseHostDomain work?"
+                       → Multi-region DNS, exec form vs shell form, gossip diagnostics
+```
 
 ## Architecture
 
@@ -709,3 +751,14 @@ The repo-level smoke tests (`test/smoke.sh`) verify packages install and build i
 - **[k8s-eks-microservice](../k8s-eks-microservice/)** — single-cloud EKS with ALB ingress, IRSA, and observability
 - **[k8s-aks-microservice](../k8s-aks-microservice/)** — single-cloud AKS with AGIC ingress and workload identity
 - **[gcp-gitlab-cells](../gcp-gitlab-cells/)** — multi-cell GitLab on GKE with Cloud SQL, Redis, and GCS
+
+## Standalone usage
+
+To run this example outside the monorepo:
+
+1. Copy this directory
+2. `cp package.standalone.json package.json`
+3. `npm install`
+4. `cp .env.example .env` — fill in `GCP_PROJECT_ID` and `CRDB_DOMAIN`
+5. `npm run bootstrap` — one-time management cluster setup
+6. `npm run deploy`

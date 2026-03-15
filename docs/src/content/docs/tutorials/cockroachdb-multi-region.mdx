@@ -1,0 +1,102 @@
+---
+title: "CockroachDB Multi-Region on GKE"
+description: "A single CockroachDB cluster spanning 3 GCP regions — 9 nodes total — defined in TypeScript with chant's GCP and K8s lexicons."
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+One TypeScript project, seven output files, nine CockroachDB nodes across three GCP regions. The key insight: GCP's global VPC with native cross-region routing eliminates the need for VPN gateways or two-pass deploys. All GCP infrastructure is managed by Config Connector on a central management cluster; workloads are applied to three regional clusters.
+
+## What you'll build
+
+```
+┌──────────────────────────────────────────────────────────────────┐
+│                    GCP VPC: crdb-multi-region                    │
+│                                                                  │
+│  ┌──────────────┐     ┌──────────────┐     ┌──────────────┐    │
+│  │  GKE East    │◄───►│  GKE Central │◄───►│  GKE West    │    │
+│  │  us-east4    │     │  us-central1 │     │  us-west1    │    │
+│  │  3 CRDB nodes│     │  3 CRDB nodes│     │  3 CRDB nodes│    │
+│  └──────────────┘     └──────────────┘     └──────────────┘    │
+│                    crdb.internal private DNS                     │
+│         GCS backups + KMS + Cloud Armor WAF + Secret Manager     │
+└──────────────────────────────────────────────────────────────────┘
+```
+
+## What you'll learn
+
+- Why `advertiseHostDomain` exists: cluster-local FQDNs (`$(hostname -f)`) don't resolve across clusters; nodes must advertise ExternalDNS-registered names instead
+- The multi-stack layout: `src/shared/` + `src/{east,central,west}/` → 7 output files, all values known at build time (no two-pass build)
+- How ExternalDNS + Cloud DNS private zone enables cross-cluster node discovery without public DNS exposure
+- Why the single CA cert matters: if each region generates its own CA, cross-region mTLS fails with "certificate signed by unknown authority"
+
+## Cost
+
+~$1.90/hr (~$46/day) for all three regions. See the [example README](https://github.com/intentius/chant/tree/main/examples/cockroachdb-multi-region-gke#cost-estimate) for the full breakdown. Teardown after testing.
+
+## Get started
+
+```
+Deploy the cockroachdb-multi-region-gke example.
+My domain is crdb.mycompany.com. My GCP project is my-project-id.
+```
+
+See [`examples/cockroachdb-multi-region-gke/`](https://github.com/intentius/chant/tree/main/examples/cockroachdb-multi-region-gke) for the full README, 11-phase deploy walkthrough, and teardown.
+
+## Key patterns
+
+### advertiseHostDomain: fixing cross-cluster gossip
+
+By default, CockroachDB nodes advertise their cluster-local FQDN: `cockroachdb-0.cockroachdb.crdb-east.svc.cluster.local`. This only resolves within the east cluster — central and west nodes can't reach it, so gossip fails.
+
+The `CockroachDbCluster` composite adds an `advertiseHostDomain` prop. When set, nodes use shell form to expand `$HOSTNAME` and append the ExternalDNS-registered domain:
+
+```typescript
+// src/east/k8s/cockroachdb.ts
+export const crdb = CockroachDbCluster({
+  replicas: 3,
+  joinAddresses: config.joinAddresses,  // all 9 nodes' external DNS names
+  advertiseHostDomain: "east.crdb.internal",
+  // → cockroachdb-0.east.crdb.internal (registered by ExternalDNS in private zone)
+});
+```
+
+K8s exec form (`command: ["/cockroach/cockroach"]`) doesn't expand `$HOSTNAME`. The composite uses shell form internally:
+
+```
+command: ["/bin/sh", "-c"]
+args: ["cockroach start ... --advertise-host=${HOSTNAME}.east.crdb.internal"]
+```
+
+### Multi-stack layout: one project, subdirectories per region
+
+```
+src/shared/   → dist/shared-infra.yaml  (VPC, DNS, KMS, GCS, IAM, Cloud Armor)
+src/east/     → dist/east-infra.yaml + dist/east-k8s.yaml
+src/central/  → dist/central-infra.yaml + dist/central-k8s.yaml
+src/west/     → dist/west-infra.yaml + dist/west-k8s.yaml
+```
+
+Each subdirectory has its own `chant.config.json`. `npm run build` runs `chant build` in each directory and produces 7 files. There's no rebuild step — all values (project ID, domain, CIDR ranges) are known at build time via `src/shared/config.ts`.
+
+```typescript
+// src/shared/config.ts — the single source of truth
+export const config = {
+  gcpProjectId: process.env.GCP_PROJECT_ID!,
+  crdbDomain: process.env.CRDB_DOMAIN!,
+  joinAddresses: [
+    "cockroachdb-0.east.crdb.internal:26257",
+    // ... all 9 nodes
+  ],
+};
+```
+
+### No two-pass build
+
+GKE and EKS examples use a two-pass build: deploy infra first, extract outputs (SA emails or ARNs), then build K8s manifests with real values. This example doesn't need it — GCP's global VPC means all three clusters share one VPC and one IAM system, so all values can be derived statically from project ID and domain.
+
+## Further reading
+
+- [GCP Config Connector lexicon](/chant/lexicons/gcp/) — resource reference and composites
+- [GKE Composites](/chant/lexicons/k8s/gke-composites/) — CockroachDbCluster, GkeExternalDnsAgent, and more
+- [Multi-Stack Projects guide](/chant/guide/multi-stack/) — patterns for splitting projects across stacks
