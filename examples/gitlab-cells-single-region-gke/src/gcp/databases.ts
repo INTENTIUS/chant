@@ -16,6 +16,9 @@ const _cellDatabases = cells.map(c => CloudSqlInstance({
   defaults: {
     instance: {
       settings: {
+        // Cap autoresize at 500 GB to prevent runaway growth from a misconfigured
+        // Gitaly or a pipeline producing large artifacts. Adjust per cell as needed.
+        diskAutoresizeLimit: 500,
         ipConfiguration: {
           privateNetworkRef: { name: shared.clusterName },
         },
@@ -48,16 +51,21 @@ export const readReplicas = cells.flatMap(c =>
   )
 );
 
-// Topology service database
+// Topology service database.
+// The topology service is in the critical routing path — enable HA via
+// shared.topologyDbHighAvailability in src/config.ts (in-place upgrade, ~60s window).
 export const topologyDb = CloudSqlInstance({
   name: "gitlab-topology-db",
   databaseVersion: "POSTGRES_16",
   tier: shared.topologyDbTier,
   region: shared.region,
   databaseName: "topology_production",
+  highAvailability: shared.topologyDbHighAvailability,
+  backupEnabled: true,
   defaults: {
     instance: {
       settings: {
+        diskAutoresizeLimit: 100,
         ipConfiguration: {
           privateNetworkRef: { name: shared.clusterName },
         },

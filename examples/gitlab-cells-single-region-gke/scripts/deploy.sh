@@ -3,11 +3,18 @@ set -euo pipefail
 
 set -a; source .env; set +a
 
-CELLS="${CELLS:-alpha beta}"
+CELLS="${CELLS:-$(bun -e "import { cells } from './src/config.ts'; process.stdout.write(cells.map(c => c.name).join(' '))")}"
 
 echo "================================================================"
 echo "  GitLab Cells — Full Deploy"
 echo "================================================================"
+
+# ── Phase 0: Build + push Docker images ──────────────────────────────
+if [ "${SKIP_BUILD_IMAGES:-false}" != "true" ]; then
+  echo ""
+  echo "Phase 0: Building and pushing images..."
+  bash scripts/build-images.sh
+fi
 
 # ── Phase 1: Build all lexicons ──────────────────────────────────────
 echo ""
@@ -60,6 +67,9 @@ set -a; source .env; set +a  # pick up TOPOLOGY_DB_HOST written by load-outputs.
 echo "  Rebuilding k8s.yaml with resolved TOPOLOGY_DB_HOST=${TOPOLOGY_DB_HOST}..."
 npm run build:k8s
 
+echo "  Rebuilding gitlab-cell/ values with resolved IPs..."
+npm run build:helm
+
 # ── Phase 7: Apply K8s system resources + wait for LB ────────────────
 echo ""
 echo "Phase 7: Applying system K8s resources..."
@@ -77,7 +87,7 @@ echo "  Ingress IP: ${INGRESS_IP}"
 
 # Persist ingress IP (replace existing line or append)
 if grep -q '^INGRESS_IP=' .env; then
-  sed -i '' "s/^INGRESS_IP=.*/INGRESS_IP=${INGRESS_IP}/" .env
+  sed -i.bak "s/^INGRESS_IP=.*/INGRESS_IP=${INGRESS_IP}/" .env && rm -f .env.bak
 else
   echo "INGRESS_IP=${INGRESS_IP}" >> .env
 fi
@@ -105,9 +115,12 @@ bash scripts/deploy-cells.sh
 
 echo ""
 echo "================================================================"
-echo "  Deploy complete!  (Grafana admin password: gcloud secrets versions access latest --secret=gitlab-grafana-admin-password)"
-echo "  Ingress IP: ${INGRESS_IP}"
+echo "  Deploy complete!"
+echo "  User-facing URL:  https://${DOMAIN}"
+echo "  Ingress IP:       ${INGRESS_IP}"
+echo "  Grafana:          http://localhost:3000  (kubectl port-forward deploy/grafana 3000:3000 -n system)"
+echo "  Grafana password: gcloud secrets versions access latest --secret=gitlab-grafana-admin-password --project=${GCP_PROJECT_ID}"
 for CELL in $CELLS; do
-  echo "  Cell ${CELL}: https://${CELL}.${DOMAIN}"
+  echo "  Cell ${CELL} admin:  https://${CELL}.${DOMAIN}"
 done
 echo "================================================================"

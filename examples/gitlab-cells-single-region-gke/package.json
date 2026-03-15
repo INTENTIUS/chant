@@ -16,9 +16,13 @@
     "apply:system": "kubectl apply -f k8s.yaml -l app.kubernetes.io/part-of=system",
     "apply:cells": "kubectl apply -f k8s.yaml -l app.kubernetes.io/part-of=cells",
     "deploy-cells": "bash scripts/deploy-cells.sh",
+    "build:images": "bash scripts/build-images.sh",
     "bootstrap": "bash scripts/bootstrap.sh",
     "deploy": "bash scripts/deploy.sh",
-    "teardown": "bash scripts/teardown.sh"
+    "register-runners": "bash scripts/register-runners.sh",
+    "teardown": "bash scripts/teardown.sh",
+    "build:k3d": "chant build k3d --lexicon k8s -o k3d.yaml",
+    "test:local": "bash scripts/k3d-smoke.sh"
   },
   "dependencies": {
     "@intentius/chant": "workspace:*",

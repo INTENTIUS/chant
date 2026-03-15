@@ -16,7 +16,7 @@ export const topologyConfig = new ConfigMap({
   data: {
     "config.yaml": `
 database:
-  host: topology-db-ip
+  host: ${process.env.TOPOLOGY_DB_HOST ?? "topology-db-ip"}
   port: 5432
   name: topology_production
   user: gitlab-topology-db-admin
@@ -37,7 +37,10 @@ prometheus:
 export const topologyDeployment = new Deployment({
   metadata: { name: "topology-service", namespace: "system", labels },
   spec: {
-    replicas: 1,
+    // 2 replicas: topology service is in the critical path for path-based routing;
+    // a single replica is a SPOF. HPA not added here since topology lookups are
+    // DB-bound, not CPU-bound — scale by adding read replicas to the DB instead.
+    replicas: 2,
     selector: { matchLabels: { "app.kubernetes.io/name": "topology-service" } },
     template: {
       metadata: { labels: { "app.kubernetes.io/name": "topology-service" } },
@@ -45,6 +48,9 @@ export const topologyDeployment = new Deployment({
         containers: [{
           name: "topology-service",
           image: shared.topologyServiceImage,
+          // IfNotPresent prevents repeated pulls of `:latest` tag on pod restarts,
+          // which would bypass the image digest pinning in the CI push step.
+          imagePullPolicy: "IfNotPresent",
           ports: [{ name: "http", containerPort: 8080 }],
           resources: {
             requests: { cpu: "250m", memory: "256Mi" },

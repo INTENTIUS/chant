@@ -1,6 +1,6 @@
 ---
 skill: gitlab-cells
-description: Operate and extend a GitLab Cells deployment on GKE — routing, per-cell runners, and health monitoring
+description: Operate and extend a GitLab Cells deployment on GKE — local routing smoke test (k3d), routing, per-cell runners, and health monitoring
 user-invocable: true
 ---
 
@@ -20,6 +20,89 @@ This example demonstrates GitLab Cells architecture on GKE, modelling the same c
 | OrgMover | `migrate-org` pipeline job (manual) |
 
 All resources derive from the `cells[]` array in `src/config.ts`. Adding a cell entry automatically fans out GCP infra, K8s resources, runner registration, and health monitoring.
+
+---
+
+## Local Routing Smoke Test (k3d)
+
+Validates cell-router + topology-service routing logic locally in ~3 minutes. No GCP, no GitLab chart, no Cloud SQL required. Run this before a full GKE deployment to catch routing bugs early.
+
+### Prerequisites
+
+```bash
+# Required tools (in addition to npm):
+k3d    # https://k3d.io
+docker # to build cell-router and topology-service images
+```
+
+### Run
+
+```bash
+npm run test:local
+```
+
+This script:
+1. Builds `cell-router:local` and `topology-service:local` Docker images from source
+2. Creates a k3d cluster (`gitlab-cells-smoke`) with a NodePort mapped to `localhost:8080`
+3. Generates `k3d.yaml` via `npm run build:k3d` (same routing-rules ConfigMap as production)
+4. Deploys the real cell-router + topology-service + nginx mock cells (alpha, beta)
+5. Runs 6 routing assertions (see below)
+6. Deletes the cluster on exit (pass or fail)
+
+The topology-service runs without a database — it returns `alpha` as the default cell for all org-slug lookups, which is the production fallback behaviour.
+
+### What it validates
+
+| Test | Input | Expected cell |
+|------|-------|---------------|
+| Health endpoint | `GET /healthz` | 200 ok |
+| Session cookie | `_gitlab_session=cell1_*` | alpha |
+| Session cookie | `_gitlab_session=cell2_*` | beta |
+| Routable token | `Bearer glrt-cell_1_*` | alpha |
+| Routable token | `Bearer glrt-cell_2_*` | beta |
+| Path fallback | `GET /some-org/project` (no cookie/token) | alpha (topology default) |
+
+### Troubleshooting
+
+**Cluster creation fails (`port already in use`)**
+Port 8080 is taken. Either stop whatever is using it, or temporarily edit `HOST_PORT` in `scripts/k3d-smoke.sh` and `BASE_URL` in `scripts/k3d-validate.sh`.
+
+**`npm run build:k3d` fails**
+Ensure `npm install` has been run in the example root. The k3d sources import from `@intentius/chant-lexicon-k8s` which must be installed.
+
+**Cell-router not reachable after 40s**
+k3d NodePort didn't bind. Check `k3d cluster list` and `docker ps`. Try: `kubectl -n system get pods` and `kubectl -n system logs deploy/cell-router`.
+
+**Routing test returns empty body**
+The cell-router started but can't reach the mock cell. Check: `kubectl -n cell-alpha logs deploy/mock-gitlab-alpha` and `kubectl -n system logs deploy/cell-router`.
+
+**Path fallback test returns wrong cell or empty**
+The cell-router timed out calling topology-service. Check: `kubectl -n system logs deploy/topology-service` (expect "running without DB connection" warning — that's normal). Verify topology-service Service: `kubectl -n system get svc topology-service`.
+
+### Inspecting the running cluster
+
+```bash
+# Check all pods are Running
+kubectl get pods -A
+
+# Inspect generated routing rules (same JSON as production)
+kubectl -n system get configmap cell-router-rules -o jsonpath='{.data.routing-rules\.json}' | jq .
+kubectl -n system get configmap cell-router-rules -o jsonpath='{.data.cell-registry\.json}' | jq .
+
+# Check topology-service is up (will log DB connection failures — expected)
+kubectl -n system logs deploy/topology-service
+
+# Manual routing test against the NodePort
+curl -s -H "Cookie: _gitlab_session=cell1_test" http://localhost:8080/
+curl -s -H "Authorization: Bearer glrt-cell_2_test" http://localhost:8080/
+curl -s http://localhost:8080/healthz
+
+# Re-run only the validation (cluster must still be running)
+bash scripts/k3d-validate.sh
+
+# Delete the cluster manually if trap didn't fire
+k3d cluster delete gitlab-cells-smoke
+```
 
 ---
 

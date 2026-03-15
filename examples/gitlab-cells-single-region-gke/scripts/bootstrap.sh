@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-set -a; source .env; set +a
+# Source .env if present; otherwise rely on exported environment variables.
+[ -f .env ] && { set -a; source .env; set +a; }
 
 echo "=== Enabling required GCP APIs ==="
 gcloud services enable \
@@ -15,6 +16,7 @@ gcloud services enable \
   sqladmin.googleapis.com \
   redis.googleapis.com \
   servicenetworking.googleapis.com \
+  artifactregistry.googleapis.com \
   --project "$GCP_PROJECT_ID"
 
 echo "=== Creating VPC network and subnet (idempotent) ==="
@@ -42,22 +44,39 @@ gcloud services vpc-peerings connect \
   --project "$GCP_PROJECT_ID" || true
 
 echo "=== Creating GKE cluster with Config Connector ==="
-gcloud container clusters create "${CLUSTER_NAME:-gitlab-cells}" \
-  --region "$GCP_REGION" \
-  --project "$GCP_PROJECT_ID" \
-  --network "${CLUSTER_NAME:-gitlab-cells}" \
-  --subnetwork "${CLUSTER_NAME:-gitlab-cells}-nodes" \
-  --cluster-secondary-range-name pods \
-  --services-secondary-range-name services \
-  --machine-type "${MACHINE_TYPE:-e2-standard-8}" \
-  --num-nodes "${MIN_NODE_COUNT:-3}" \
-  --max-nodes "${MAX_NODE_COUNT:-20}" \
-  --enable-autoscaling \
-  --workload-pool="${GCP_PROJECT_ID}.svc.id.goog" \
-  --addons ConfigConnector \
-  --release-channel regular \
-  --disk-size "${NODE_DISK_SIZE_GB:-200}" \
-  --enable-ip-alias
+if gcloud container clusters describe "${CLUSTER_NAME:-gitlab-cells}" \
+     --region "$GCP_REGION" --project "$GCP_PROJECT_ID" &>/dev/null; then
+  echo "  Cluster already exists — skipping creation."
+else
+  gcloud container clusters create "${CLUSTER_NAME:-gitlab-cells}" \
+    --region "$GCP_REGION" \
+    --project "$GCP_PROJECT_ID" \
+    --network "${CLUSTER_NAME:-gitlab-cells}" \
+    --subnetwork "${CLUSTER_NAME:-gitlab-cells}-nodes" \
+    --cluster-secondary-range-name pods \
+    --services-secondary-range-name services \
+    --machine-type "${MACHINE_TYPE:-e2-standard-8}" \
+    --num-nodes "${MIN_NODE_COUNT:-3}" \
+    --max-nodes "${MAX_NODE_COUNT:-20}" \
+    --enable-autoscaling \
+    --workload-pool="${GCP_PROJECT_ID}.svc.id.goog" \
+    --addons ConfigConnector,NetworkPolicy \
+    --enable-network-policy \
+    --release-channel regular \
+    --disk-size "${NODE_DISK_SIZE_GB:-200}" \
+    --enable-ip-alias
+fi
+
+echo "=== Waiting for cluster to be RUNNING ==="
+until [ "$(gcloud container clusters describe "${CLUSTER_NAME:-gitlab-cells}" \
+           --region "$GCP_REGION" --project "$GCP_PROJECT_ID" \
+           --format='value(status)' 2>/dev/null)" = "RUNNING" ]; do
+  echo "  cluster status: $(gcloud container clusters describe "${CLUSTER_NAME:-gitlab-cells}" \
+    --region "$GCP_REGION" --project "$GCP_PROJECT_ID" \
+    --format='value(status)' 2>/dev/null) — waiting 30s..."
+  sleep 30
+done
+echo "  Cluster is RUNNING."
 
 echo "=== Getting cluster credentials ==="
 gcloud container clusters get-credentials "${CLUSTER_NAME:-gitlab-cells}" \
@@ -91,15 +110,17 @@ kubectl annotate namespace default \
   cnrm.cloud.google.com/project-id="$GCP_PROJECT_ID" --overwrite
 
 echo "=== Configuring Config Connector ==="
-kubectl apply -f - <<EOF
-apiVersion: core.cnrm.cloud.google.com/v1beta1
-kind: ConfigConnectorContext
-metadata:
-  name: configconnectorcontext.core.cnrm.cloud.google.com
-  namespace: default
-spec:
-  googleServiceAccount: "$CC_SA"
-EOF
+# ConfigConnectorContext is declared in src/system/config-connector.ts (K8s lexicon).
+# Build k8s.yaml and apply only the bootstrap-labelled resources.
+npm run build:k8s
+# Extract only bootstrap-labelled resources into a temp file so kubectl doesn't try to
+# resolve CRDs for ExternalSecret / Certificate / etc. that aren't installed yet.
+python3 -c "
+import yaml, sys
+docs = [d for d in yaml.safe_load_all(open('k8s.yaml')) if d
+        and d.get('metadata', {}).get('labels', {}).get('app.kubernetes.io/part-of') == 'bootstrap']
+sys.stdout.write(yaml.dump_all(docs, default_flow_style=False))
+" | kubectl apply -f -
 
 echo "=== Waiting for Config Connector CRDs to register (up to 3 min) ==="
 until kubectl get crd sqlinstances.sql.cnrm.cloud.google.com &>/dev/null; do

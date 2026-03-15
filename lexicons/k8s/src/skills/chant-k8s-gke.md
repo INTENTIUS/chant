@@ -206,7 +206,7 @@ import { ConfigConnectorContext } from "@intentius/chant-lexicon-k8s";
 const { context } = ConfigConnectorContext({
   googleServiceAccountEmail: "cc-sa@my-project.iam.gserviceaccount.com",
   namespace: "config-connector",
-  stateIntoSpec: "absent",
+  stateIntoSpec: "Absent",
 });
 ```
 

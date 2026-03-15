@@ -29,6 +29,7 @@ export const letsEncryptIssuer = new ClusterIssuer({
 // Stored as secret "gitlab-tls" in system namespace; ingress-nginx uses it as default.
 // cert-manager issues it via DNS-01 challenge against Cloud DNS.
 // SAN list: base wildcard + per-cell wildcard (for chart-generated names like gitlab.alpha.*)
+const perCellDnsNames = cells.map(c => `*.${c.name}.${shared.domain}`);
 export const gitlabWildcardCert = new Certificate({
   metadata: { name: "gitlab-tls", namespace: "system", labels: systemLabels },
   spec: {
@@ -38,7 +39,7 @@ export const gitlabWildcardCert = new Certificate({
     dnsNames: [
       `*.${shared.domain}`,
       shared.domain,
-      ...cells.map(c => `*.${c.name}.${shared.domain}`),
+      ...perCellDnsNames,
     ],
   },
 });

@@ -148,10 +148,10 @@ npm run test:local
 
 Direct routing (cell-router NodePort, `localhost:8080`):
 1. `_gitlab_session=cell1_*` cookie → routed to cell-alpha
-2. `glrt-cell_2_*` Bearer token → routed to cell-beta
+2. `glrt-t2_*` Bearer token → routed to cell-beta
 3. `/some-org/project` path fallback → topology service → alpha
 4. `_gitlab_session=cell2_*` cookie → routed to cell-beta
-5. `glrt-cell_1_*` Bearer token → routed to cell-alpha
+5. `glrt-t1_*` Bearer token → routed to cell-alpha
 6. `/healthz` health endpoint → 200 ok
 
 Nginx ingress wildcard routing (`localhost:8081`, with `Host:` headers):
@@ -169,7 +169,21 @@ No GCP, no real GitLab chart, no Cloud SQL required. The real topology-service i
 
 ```bash
 cp .env.example .env
-# Edit .env with your GCP project, domain, SMTP settings
+# Edit .env: set GCP_PROJECT_ID, DOMAIN, and optionally SMTP_PASSWORD
+```
+
+**SMTP (optional):** GitLab works without email but won't send confirmations or notifications. Set `SMTP_PASSWORD` in `.env` to enable it:
+
+| Provider | SMTP_ADDRESS | SMTP_USER | SMTP_PASSWORD |
+|----------|-------------|-----------|---------------|
+| SendGrid (free 500/day) | `smtp.sendgrid.net` | `apikey` | your SendGrid API key |
+| Gmail (free 500/day) | `smtp.gmail.com` | `you@gmail.com` | 16-char [App Password](https://myaccount.google.com/apppasswords) (requires 2-Step Verification) |
+
+Leave `SMTP_PASSWORD=` blank to skip — a placeholder is stored in Secret Manager and email is disabled. You can enable it later without redeploying:
+
+```bash
+echo -n "<password>" | gcloud secrets versions add gitlab-smtp-password \
+  --data-file=- --project "${GCP_PROJECT_ID}"
 ```
 
 ### 2. Bootstrap (one-time, ~10 min)
@@ -219,7 +233,7 @@ Validates 10 areas: infra health, system namespace, per-cell GitLab, git operati
 | `deploy-remaining` | `deploy-cell-*` (matrix) | Non-canary cells, depends on canary success |
 | `register-runners` | `register-runners` (matrix per cell) | Create routable token per cell, store secret, restart cell runner |
 | `smoke-test` | `e2e-test` | Run `scripts/e2e-test.sh` |
-| `backup` | `backup-gitaly` (scheduled) | `gitaly-backup create` per cell -> GCS |
+| `backup` | `backup-gitaly` (scheduled) | `backup-utility` per cell (repos + uploads + packages → GCS) |
 | `migrate-org` | `migrate-org` (manual) | Reassign org to target cell via Topology Service |
 
 ## Outputs
@@ -356,7 +370,7 @@ User request → NGINX Ingress → Cell Router
 
 - **First visit** (no session cookie, no routable token): Topology Service resolves the org slug from the URL path to a cell. If the path has no registered org yet, the request is sent to the canary cell.
 - **Return visits**: The `_gitlab_session` cookie carries a cell prefix (`cell1_` → alpha, `cell2_` → beta). Routing is stateless — no topology lookup needed.
-- **CI jobs**: Runners receive routable tokens (`glrt-cell_1_abc`) that encode the cell. The router forwards the job API calls to the correct cell without a database lookup.
+- **CI jobs**: Runners receive routable tokens (`glrt-t1_abc`) that encode the cell. The router forwards the job API calls to the correct cell without a database lookup.
 
 `gitlab.alpha.example.com` and `gitlab.beta.example.com` are **operator/admin URLs** — direct access to a specific cell, bypassing the router. Use them for health checks, per-cell admin, and debugging. Users should bookmark `gitlab.example.com`, not the per-cell subdomains.
 
@@ -399,7 +413,7 @@ kubectl -n system exec deploy/topology-service -- wget -qO- http://localhost:808
 
 **HA mode:** Set `topologyDbHighAvailability: true` in `shared` config → Cloud SQL HA for the topology DB. Recommended for production. In-place upgrade (~60s window):
 ```bash
-npm run build && kubectl apply -f dist/config.yaml
+npm run build && kubectl apply -f config.yaml
 ```
 
 **Logs:**
@@ -413,6 +427,7 @@ kubectl -n system logs deploy/topology-service
 
 | Symptom | Cause | Fix |
 |---------|-------|-----|
+| GitLab doesn't send email (confirmations, notifications) | `SMTP_PASSWORD` was blank at deploy time | Run: `echo -n "<password>" \| gcloud secrets versions add gitlab-smtp-password --data-file=- --project $GCP_PROJECT_ID` (no redeploy needed) |
 | 404 for all cell URLs | nginx wildcard only matches 1 subdomain level | Verify per-cell Ingress rules: `kubectl get ingress -n system cell-router -o yaml` |
 | 504 gateway timeout | NetworkPolicy blocking nginx→cell-router | Check label selector: pod must have `app.kubernetes.io/name: ingress-nginx-controller` |
 | 403 "Nil JSON web token" on git clone | Cell registry using port 8080 (puma) not 8181 (workhorse) | Check `kubectl get configmap cell-router-rules -n system -o jsonpath='{.data.cell-registry\.json}'` |
@@ -423,14 +438,14 @@ kubectl -n system logs deploy/topology-service
 | Teardown leaves Cloud SQL/Redis | CC controller not running during delete | `npm run teardown -- --yes` runs `gcloud sql/redis delete` fallback automatically |
 | `git push` hangs then 0 bytes | Workhorse not receiving request | Verify cell-router egress NetworkPolicy allows port 8181 to cell namespaces |
 | Topology service 502 | Cloud SQL not reachable or credentials wrong | `kubectl logs -n system deploy/topology-service`; service runs without DB (returns alpha default) |
-| Runner 403 on registration | Routable token format wrong | Token must match `glrt-cell_<id>_<random>`; check `scripts/e2e-test.sh` register step |
+| Runner 403 on registration | Routable token format wrong | Token must match `glrt-t<id>_<random>` (GitLab 17.7+); check `scripts/register-runners.sh` |
 | `! ...` bash history expansion | Using `!` in shell | Use `scripts/create-root-pat.py` instead of inline bash for PAT creation |
 | `deploy.sh` hangs at `kubectl wait --for=condition=Ready sqlinstances` | HA Cloud SQL + read replica provision takes 15–20 min | Normal — wait it out, or `Ctrl-C` and re-run `npm run deploy` (idempotent). Check progress: `kubectl get sqlinstances -w` |
 | `npm run build` throws `Duplicate cellId` or `sequenceOffsets are too close` | Two cells in `src/config.ts` share a cellId or have sequenceOffsets within 1M of each other | See [Managing Cells → Adding a cell](#adding-a-cell) for valid cellId and sequenceOffset constraints |
 
 ## Per-Cell Runners
 
-Each cell deploys a GitLab Runner pod, but runners are **non-functional until the `register-runners` pipeline job runs**. This is by design: the runner token is a routable token (`glrt-cell_N_...`) that must be issued by the GitLab Rails API.
+Each cell deploys a GitLab Runner pod, but runners are **non-functional until the `register-runners` pipeline job runs**. This is by design: the runner token is a routable token (`glrt-t{cellId}_...`) that must be issued by the GitLab Rails API.
 
 **Lifecycle:**
 
@@ -449,22 +464,25 @@ If the runner pod is up but no jobs run, check that the `register-runners` job c
 
 ### Backup
 
-The `backup-gitaly` scheduled pipeline job runs `gitaly-backup create` per cell and stores backups in GCS:
+The `backup-gitaly` scheduled pipeline job runs `backup-utility` in the toolbox pod per cell. It backs up repos (via Gitaly), uploads, LFS, and packages to the configured GCS artifact bucket using Workload Identity:
 
 ```
-gs://{GCP_PROJECT_ID}-{cell}-artifacts/gitaly-backups/
+gs://{GCP_PROJECT_ID}-{cell}-artifacts/
 ```
 
 Cloud SQL automated backups are enabled for all instances (daily, 7-day retention) and configurable in `src/gcp/databases.ts`.
 
 ### Restore
 
-**Gitaly (git data):**
+**Git repos + uploads (via toolbox backup-utility):**
 ```bash
-# From a toolbox pod in the target cell
-kubectl -n cell-alpha exec statefulset/gitlab-cell-alpha-gitaly -- \
-  gitaly-backup restore --server-side \
-  --path "gs://${GCP_PROJECT_ID}-alpha-artifacts/gitaly-backups/<backup-id>"
+# List available backups
+gsutil ls "gs://${GCP_PROJECT_ID}-alpha-artifacts/backups/"
+
+# Restore from a specific backup (run inside the toolbox pod)
+kubectl -n cell-alpha exec deploy/gitlab-cell-alpha-toolbox -- \
+  backup-utility --restore --skip-registry \
+  BACKUP=<timestamp>_gitlab_backup
 ```
 
 **Cloud SQL (PostgreSQL):**
@@ -487,16 +505,17 @@ gcloud sql backups restore <backup-id> \
 2. Rebuild: `npm run build`
 3. Preview the diff on the canary cell:
    ```bash
-   helm diff upgrade gitlab-alpha gitlab-cell/ \
-     -f gitlab-cell/values.yaml \
+   helm diff upgrade gitlab-cell-alpha ./gitlab-cell/ \
+     -n cell-alpha \
      -f gitlab-cell/values-base.yaml \
-     -f values-alpha.yaml
+     -f gitlab-cell/values-alpha.yaml
    ```
 4. Upgrade canary first:
    ```bash
-   helm upgrade gitlab-alpha gitlab-cell/ \
-     -f gitlab-cell/values.yaml -f gitlab-cell/values-base.yaml -f values-alpha.yaml \
-     --namespace cell-alpha --timeout 20m --wait
+   helm upgrade gitlab-cell-alpha ./gitlab-cell/ \
+     -n cell-alpha \
+     -f gitlab-cell/values-base.yaml -f gitlab-cell/values-alpha.yaml \
+     --timeout 20m --wait
    ```
 5. Watch for DB migrations completing:
    ```bash
@@ -505,7 +524,7 @@ gcloud sql backups restore <backup-id> \
 6. If migration succeeds, upgrade remaining cells.
 7. **Rollback (Helm only):**
    ```bash
-   helm rollback gitlab-alpha --namespace cell-alpha
+   helm rollback gitlab-cell-alpha --namespace cell-alpha
    ```
    > Note: Helm rollback reverts the chart but does **not** roll back DB migrations. Check the GitLab release notes for the chart version to understand whether migrations are reversible before downgrading.
 
@@ -518,7 +537,7 @@ Add a new `CellConfig` entry to the `cells[]` array in `src/config.ts`. Every fi
 ```typescript
 {
   name: "gamma",
-  cellId: 3,                      // must be unique — embedded in runner tokens (glrt-cell_3_...)
+  cellId: 3,                      // must be unique — embedded in runner tokens (glrt-t3_...) and session prefixes (cell3_)
   sequenceOffset: 2000000,        // must be >= 1M apart from all other cells (ID space partition)
   ...cellTierDefaults("starter"),
   pgTier: "db-custom-2-7680",
@@ -527,7 +546,7 @@ Add a new `CellConfig` entry to the `cells[]` array in `src/config.ts`. Every fi
   redisCacheSizeGb: 1,
   bucketLocation: "US",
   artifactRetentionDays: 30,
-  host: `gitlab.gamma.${shared.domain}`,
+  host: `gamma.${shared.domain}`,         // BASE domain — chart prepends "gitlab." to create gitlab.gamma.example.com
   cpuQuota: "64",
   memoryQuota: "128Gi",
   canary: false,                  // set canary: true on exactly one cell — the default landing cell for new users
@@ -543,17 +562,18 @@ Add a new `CellConfig` entry to the `cells[]` array in `src/config.ts`. Every fi
 After editing `src/config.ts`, run:
 
 ```bash
-npm run build                                        # regenerates config.yaml, k8s.yaml, helm values
-kubectl apply -f dist/config.yaml -f dist/k8s.yaml  # provisions GCP resources + K8s namespace
-helm install gitlab-gamma gitlab-cell/ \
-  -f gitlab-cell/values.yaml -f gitlab-cell/values-base.yaml -f values-gamma.yaml \
-  --namespace cell-gamma --create-namespace --timeout 20m --wait
+npm run build                                       # regenerates config.yaml, k8s.yaml, helm values
+kubectl apply -f config.yaml -f k8s.yaml            # provisions GCP resources + K8s namespace
+helm install gitlab-cell-gamma ./gitlab-cell/ \
+  -n cell-gamma \
+  -f gitlab-cell/values-base.yaml -f gitlab-cell/values-gamma.yaml \
+  --create-namespace --timeout 20m --wait
 bash scripts/register-runners.sh gamma              # registers the per-cell runner token
-bash scripts/e2e-test.sh gamma                      # smoke-test routing to the new cell
+bash scripts/e2e-test.sh                            # smoke-test (includes new cell)
 ```
 
 **Constraints:**
-- `cellId` must be unique across all cells — it is embedded in runner tokens (`glrt-cell_<id>_`) and the session cookie prefix.
+- `cellId` must be unique across all cells — it is embedded in runner tokens (`glrt-t<id>_`) and the session cookie prefix (`cell<id>_`).
 - `sequenceOffset` must be at least 1,000,000 apart from every other cell — GitLab uses this to partition database row IDs; overlapping ranges cause silent ID collisions.
 - `canary: true` should be set on **exactly one cell** — this is the default landing cell for new users who have no org assignment yet. Typically leave it on `alpha`.
 
@@ -570,10 +590,11 @@ bash scripts/e2e-test.sh gamma                      # smoke-test routing to the 
 For **in-place fields** (`pgHighAvailability`, `pgReadReplicas`, `pgBouncerEnabled`, `webserviceReplicas`): edit `src/config.ts`, then:
 
 ```bash
-npm run build && kubectl apply -f dist/config.yaml   # Cloud SQL fields (~60s maintenance window)
-npm run build && helm upgrade gitlab-alpha gitlab-cell/ \
-  -f gitlab-cell/values.yaml -f gitlab-cell/values-base.yaml -f values-alpha.yaml \
-  --namespace cell-alpha --timeout 20m --wait        # Helm fields (zero-downtime rolling)
+npm run build && kubectl apply -f config.yaml                           # Cloud SQL fields (~60s maintenance window)
+npm run build && helm upgrade gitlab-cell-alpha ./gitlab-cell/ \
+  -n cell-alpha \
+  -f gitlab-cell/values-base.yaml -f gitlab-cell/values-alpha.yaml \
+  --timeout 20m --wait                                                    # Helm fields (zero-downtime rolling)
 ```
 
 For **Redis tier upgrade** (`redisPersistentTier` / `redisCacheTier`): Memorystore Redis cannot be upgraded in-place from BASIC to STANDARD_HA — a new instance is required. Edit the field first, then run the cutover script (it handles drain + swap + restore):
@@ -615,7 +636,7 @@ The script drains Sidekiq to 0 replicas, waits 30s for in-flight jobs to finish,
 
 5. **Apply the updated manifests** — cell-router ConfigMap updates; Config Connector begins deleting cell resources:
    ```bash
-   kubectl apply -f dist/config.yaml -f dist/k8s.yaml
+   kubectl apply -f config.yaml -f k8s.yaml
    ```
 
 6. **Delete the cell namespace** once all pods have terminated:

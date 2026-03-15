@@ -38,9 +38,11 @@ const sessionTokenRule: SessionTokenRule = {
   ),
 };
 
+// GitLab Cells 17.x generates tokens with prefix glrt-t{cellId}_ (e.g. glrt-t1_ for cellId=1).
+// This differs from the design-doc format glrt-cell_N_ — use the actual runtime format.
 const routableTokenRule: RoutableTokenRule = {
   type: "routable_token",
-  tokenPattern: "^glrt-cell_(\\d+)_",
+  tokenPattern: "^glrt-t(\\d+)_",
   cellIdMap: Object.fromEntries(
     cells.map(cell => [String(cell.cellId), cell.name])
   ),

@@ -2752,14 +2752,14 @@ describe("ConfigConnectorContext", () => {
     expect(spec.googleServiceAccount).toBe("cnrm@my-project.iam.gserviceaccount.com");
   });
 
-  test("default stateIntoSpec is absent", () => {
+  test("default stateIntoSpec is Absent", () => {
     const result = ConfigConnectorContext(minProps);
-    expect((p(result.context) as any).spec.stateIntoSpec).toBe("absent");
+    expect((p(result.context) as any).spec.stateIntoSpec).toBe("Absent");
   });
 
   test("custom stateIntoSpec", () => {
-    const result = ConfigConnectorContext({ ...minProps, stateIntoSpec: "merge" });
-    expect((p(result.context) as any).spec.stateIntoSpec).toBe("merge");
+    const result = ConfigConnectorContext({ ...minProps, stateIntoSpec: "Merge" });
+    expect((p(result.context) as any).spec.stateIntoSpec).toBe("Merge");
   });
 
   test("default namespace is default", () => {

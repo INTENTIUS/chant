@@ -122,20 +122,22 @@ export const shared = {
 //   - pgHighAvailability, pgReadReplicas, pgBouncerEnabled → edit here + `npm run build && kubectl apply`
 //   - redisPersistentTier / redisCacheTier → run scripts/redis-cutover.sh first (new instance required)
 //   - webserviceReplicas → edit here + helm upgrade (zero-downtime rolling update)
+const starterTierDefaults = cellTierDefaults("starter");
+
 export const cells: CellConfig[] = [
   {
     name: "alpha",
     cellId: 1,
     sequenceOffset: 0,
     // Starter tier: non-HA, single-zone. See cellTierDefaults() for production values.
-    ...cellTierDefaults("starter"),
+    ...starterTierDefaults,
     pgTier: "db-custom-2-7680",  // production: "db-custom-4-15360"
     pgDiskSize: 50,
     redisPersistentSizeGb: 5,
     redisCacheSizeGb: 2,
     bucketLocation: "US",
     artifactRetentionDays: 90,
-    host: `gitlab.alpha.${shared.domain}`,
+    host: `alpha.${shared.domain}`,
     cpuQuota: "64",
     memoryQuota: "128Gi",
     canary: true,
@@ -152,14 +154,14 @@ export const cells: CellConfig[] = [
     cellId: 2,
     sequenceOffset: 1000000,
     // Starter tier: non-HA, single-zone. See cellTierDefaults() for production values.
-    ...cellTierDefaults("starter"),
+    ...starterTierDefaults,
     pgTier: "db-custom-2-7680",
     pgDiskSize: 20,
     redisPersistentSizeGb: 3,
     redisCacheSizeGb: 1,
     bucketLocation: "US",
     artifactRetentionDays: 30,
-    host: `gitlab.beta.${shared.domain}`,
+    host: `beta.${shared.domain}`,
     cpuQuota: "64",
     memoryQuota: "128Gi",
     canary: false,
@@ -177,8 +179,9 @@ export const cells: CellConfig[] = [
 
 // cellId uniqueness — used as routing token prefix (glrt-cell_<id>_)
 const _cellIds = cells.map(c => c.cellId);
-if (new Set(_cellIds).size !== _cellIds.length)
-  throw new Error(
+const _cellIdSet = new Set(_cellIds);
+if (_cellIdSet.size !== _cellIds.length)
+  throw Error(
     `Duplicate cellId detected: [${_cellIds.join(", ")}]. ` +
     `cellId is embedded in runner tokens (glrt-cell_<id>_) and must be unique per cell. ` +
     `See "Managing Cells" in README.md.`
@@ -187,7 +190,7 @@ if (new Set(_cellIds).size !== _cellIds.length)
 // sequenceOffset spacing — each cell needs 1M ID space; overlapping causes DB collisions
 cells.forEach((a, i) => cells.forEach((b, j) => {
   if (i !== j && Math.abs(a.sequenceOffset - b.sequenceOffset) < 1_000_000)
-    throw new Error(
+    throw Error(
       `Cells "${a.name}" and "${b.name}" sequenceOffsets are too close ` +
       `(${a.sequenceOffset} vs ${b.sequenceOffset}, need >= 1M gap). ` +
       `GitLab uses sequenceOffset to partition database row IDs across cells; ` +

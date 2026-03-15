@@ -18,3 +18,5 @@ export { ManagedCertificate } from "./managed-certificate";
 export type { ManagedCertificateProps } from "./managed-certificate";
 export { SecureProject } from "./secure-project";
 export type { SecureProjectProps } from "./secure-project";
+export { MemorystoreRedis } from "./memorystore-redis";
+export type { MemorystoreRedisProps } from "./memorystore-redis";

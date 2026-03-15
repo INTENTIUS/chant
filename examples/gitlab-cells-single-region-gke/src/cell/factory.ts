@@ -41,8 +41,10 @@ export function createCell(cell: CellConfig) {
           },
         }],
         ports: [
-          { protocol: "TCP", port: 8080 },
-          { protocol: "TCP", port: 8181 },
+          { protocol: "TCP", port: 8080 },  // puma/rails (API, /-/health, etc.)
+          // Port 8181 is the workhorse TCP listener. Git HTTP clone/push MUST go
+          // through workhorse for JWT generation; direct port 8080 returns 403.
+          { protocol: "TCP", port: 8181 },  // workhorse (required for git HTTP)
           { protocol: "TCP", port: 8443 },
           { protocol: "TCP", port: 5000 },  // registry
         ],
@@ -164,12 +166,12 @@ export function createCell(cell: CellConfig) {
 concurrent = ${cell.runnerConcurrency}
 [[runners]]
   name = "${cell.name}-cell-runner"
-  url = "https://${cell.host}"
-  # Token format: glrt-cell_${cell.cellId}_<random>
-  # The cell_${cell.cellId}_ prefix is a routable token — the HTTP router
+  url = "https://gitlab.${cell.host}"
+  # Token format: glrt-t${cell.cellId}_<random>
+  # The t${cell.cellId}_ prefix is a routable token — the HTTP router
   # extracts it stateless without consulting the Topology Service.
   # Token file written by the register-runners pipeline job via K8s secret.
-  token_file = "/etc/gitlab-runner/auth_token"
+  token_file = "/secrets/auth_token"
   executor = "kubernetes"
   [runners.kubernetes]
     namespace = "${ns}"
@@ -202,7 +204,7 @@ concurrent = ${cell.runnerConcurrency}
             command: ["gitlab-runner", "run"],
             volumeMounts: [
               { name: "config", mountPath: "/etc/gitlab-runner" },
-              { name: "runner-token", mountPath: "/etc/gitlab-runner/auth_token", subPath: "token" },
+              { name: "runner-token", mountPath: "/secrets/auth_token", subPath: "token" },
             ],
           }],
           volumes: [

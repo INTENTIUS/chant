@@ -15,8 +15,8 @@ export interface ConfigConnectorContextProps {
   googleServiceAccountEmail: string;
   /** Namespace for the context (default: "default"). */
   namespace?: string;
-  /** Whether to sync status into spec (default: "absent"). */
-  stateIntoSpec?: "absent" | "merge";
+  /** Whether to sync status into spec (default: "Absent"). */
+  stateIntoSpec?: "Absent" | "Merge";
   /** Per-member defaults for fine-grained overrides. */
   defaults?: {
     context?: Partial<Record<string, unknown>>;
@@ -47,7 +47,7 @@ export const ConfigConnectorContext = Composite<ConfigConnectorContextProps>((pr
     name = "configconnectorcontext.core.cnrm.cloud.google.com",
     googleServiceAccountEmail,
     namespace = "default",
-    stateIntoSpec = "absent",
+    stateIntoSpec = "Absent",
     defaults: defs,
   } = props;
 

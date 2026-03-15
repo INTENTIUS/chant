@@ -17,7 +17,7 @@ ruby = (
     'pat.update_column(:revoked, true) if pat\n'
     'pat = PersonalAccessToken.create(\n'
     '  user: user, name: "' + name + '",\n'
-    '  scopes: ["api", "read_repository", "write_repository"],\n'
+    '  scopes: ["api", "read_repository", "write_repository", "read_registry", "write_registry"],\n'
     '  expires_at: Date.today + 7\n'
     ')\n'
     'puts pat.token\n'

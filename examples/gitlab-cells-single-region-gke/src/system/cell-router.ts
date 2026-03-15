@@ -32,6 +32,8 @@ export const cellRouterDeployment = new Deployment({
           //   2. glrt-cell_<id>_ routable token prefix (stateless)
           //   3. Topology Service org-slug lookup (path fallback)
           image: shared.cellRouterImage,
+          // IfNotPresent prevents repeated pulls of `:latest` tag on pod restarts.
+          imagePullPolicy: "IfNotPresent",
           ports: [{ name: "http", containerPort: 8080 }],
           resources: {
             requests: { cpu: "250m", memory: "128Mi" },
@@ -81,6 +83,11 @@ const cellRouterBackend = {
   }],
 };
 
+const perCellWildcardRules = cells.map(cell => ({
+  host: `*.${cell.name}.${shared.domain}`,
+  http: cellRouterBackend,
+}));
+
 export const cellRouterIngress = new Ingress({
   metadata: {
     name: "cell-router",
@@ -94,14 +101,19 @@ export const cellRouterIngress = new Ingress({
   spec: {
     ingressClassName: "nginx",
     rules: [
-      // Top-level wildcard: *.gitlab.intentius.io
+      // Bare domain: the user-facing entry point (e.g. gitlab.example.com).
+      // Cell-router receives it with no session cookie on first visit → topology
+      // service path routing determines the cell transparently. On return visits,
+      // the _gitlab_session cookie routes stateless to the same cell.
+      // Users should bookmark this URL, not the per-cell subdomains.
+      { host: shared.domain, http: cellRouterBackend },
+      // Top-level wildcard: *.gitlab.example.com (one subdomain level)
+      // Catches per-cell operator/admin URLs: alpha.gitlab.example.com
       { host: `*.${shared.domain}`, http: cellRouterBackend },
-      // Per-cell wildcard: *.alpha.gitlab.intentius.io, *.beta.gitlab.intentius.io, etc.
-      // Required because nginx wildcard rules only match a single subdomain level.
-      ...cells.map(cell => ({
-        host: `*.${cell.name}.${shared.domain}`,
-        http: cellRouterBackend,
-      })),
+      // Per-cell two-level wildcards: *.alpha.gitlab.example.com, *.beta.*, etc.
+      // Required because nginx wildcard rules only match a single subdomain level;
+      // gitlab.alpha.gitlab.example.com is two levels deep.
+      ...perCellWildcardRules,
     ],
   },
 });

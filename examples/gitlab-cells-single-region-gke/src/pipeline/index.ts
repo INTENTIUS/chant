@@ -42,12 +42,13 @@ export const buildHelmValues = new Job({ stage: "build-helm-values", image: node
   needs: [{ job: "deploy-system" }], rules: onlyMain });
 
 // Stage 3b: validate (helm diff dry-run)
+const helmDiffCmds = cells.map(c =>
+  `helm diff upgrade gitlab-cell-${c.name} ./gitlab-cell/ -n cell-${c.name} -f gitlab-cell/values-base.yaml -f gitlab-cell/values-${c.name}.yaml || true`
+);
 export const validate = new Job({ stage: "validate", image: helmImage, allow_failure: true,
   script: [
     "helm dependency update ./gitlab-cell/",
-    ...cells.map(c =>
-      `helm diff upgrade gitlab-cell-${c.name} ./gitlab-cell/ -n cell-${c.name} -f gitlab-cell/values-base.yaml -f gitlab-cell/values-${c.name}.yaml || true`
-    ),
+    ...helmDiffCmds,
   ],
   needs: [{ job: "build-helm-values" }], rules: onlyMain });
 
@@ -71,12 +72,12 @@ export const deployRemaining = new Job({ stage: "deploy-remaining", image: helmI
 // Stage 6: register-runners — per-cell matrix job.
 // Each cell creates a runner token in its own toolbox, stores it as a K8s secret
 // in the cell namespace, then restarts that cell's runner Deployment.
-// Token format glrt-cell_${CELL_ID}_ embeds the routable prefix the HTTP router
-// uses for stateless CI job routing — no Topology Service lookup per dispatch.
+// GitLab 17.7+ auto-generates the routable token prefix glrt-t${cellId}_ based on
+// global.cells.id — token_prefix is not a model attribute and must not be passed.
 export const registerRunners = new Job({ stage: "register-runners", image: gcloudImage,
-  parallel: new Parallel({ matrix: cells.map(c => ({ CELL_NAME: c.name, CELL_ID: String(c.cellId) })) }),
+  parallel: new Parallel({ matrix: cells.map(c => ({ CELL_NAME: c.name })) }),
   script: [
-    "RUNNER_TOKEN=$(kubectl -n cell-$CELL_NAME exec deploy/gitlab-cell-$CELL_NAME-toolbox -- gitlab-rails runner \"puts Ci::Runner.create!(runner_type: :instance_type, registration_type: :authenticated_user, token_prefix: \\\"glrt-cell_${CELL_ID}_\\\").token\")",
+    "RUNNER_TOKEN=$(kubectl -n cell-$CELL_NAME exec deploy/gitlab-cell-$CELL_NAME-toolbox -- gitlab-rails runner 'puts Ci::Runner.create!(runner_type: :instance_type, registration_type: :authenticated_user).token')",
     "kubectl -n cell-$CELL_NAME create secret generic $CELL_NAME-runner-token --from-literal=token=$RUNNER_TOKEN --dry-run=client -o yaml | kubectl apply -f -",
     "kubectl -n cell-$CELL_NAME rollout restart deploy/$CELL_NAME-runner",
     "kubectl -n cell-$CELL_NAME rollout status deploy/$CELL_NAME-runner --timeout=120s",
@@ -88,11 +89,14 @@ export const smokeTest = new Job({ stage: "smoke-test", image: gcloudImage, scri
   "bash scripts/e2e-test.sh",
 ], needs: [{ job: "register-runners" }], rules: onlyMain });
 
-// Stage 8: backup (scheduled — gitaly-backup per cell to GCS)
+// Stage 8: backup (scheduled — full GitLab backup per cell to GCS via backup-utility)
+// backup-utility runs inside the toolbox and writes to the configured GCS artifact bucket
+// using Workload Identity. It backs up repos (via Gitaly), uploads, LFS, and packages.
+// Cloud SQL is backed up independently by GCP's automated backup schedule.
 export const backupGitaly = new Job({ stage: "backup", image: gcloudImage,
   parallel: new Parallel({ matrix: cells.map(c => ({ CELL_NAME: c.name })) }),
   script: [
-    "kubectl -n cell-$CELL_NAME exec statefulset/gitlab-cell-$CELL_NAME-gitaly -- gitaly-backup create --server-side --path gs://${GCP_PROJECT_ID}-${CELL_NAME}-artifacts/gitaly-backups/$(date +%Y%m%d)",
+    "kubectl -n cell-$CELL_NAME exec deploy/gitlab-cell-$CELL_NAME-toolbox -- backup-utility --skip-registry",
   ],
   rules: [new Rule({ if: "$CI_PIPELINE_SOURCE == 'schedule'" })],
 });
