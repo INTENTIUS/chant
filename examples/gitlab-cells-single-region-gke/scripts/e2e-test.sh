@@ -45,6 +45,15 @@ for CELL in $(kubectl get ns -l app.kubernetes.io/part-of=cells -o jsonpath='{.i
   check test "$TLS_CERT" = "ok"
 done
 
+echo "=== Base Domain Routing ==="
+# Validates that gitlab.example.com (the user-facing bare domain) resolves, has valid TLS,
+# and that the cell router serves a GitLab response (302 redirect to sign-in page).
+# A wildcard *.domain record does not cover the bare domain — this catches missing apex A records.
+BASE_HTTP=$(curl -s -o /dev/null -w "%{http_code}" --connect-timeout 10 --max-time 15 "https://${DOMAIN}")
+check test "$BASE_HTTP" = "302" -o "$BASE_HTTP" = "200"
+BASE_TLS=$(openssl s_client -connect "${DOMAIN}:443" -servername "${DOMAIN}" </dev/null 2>/dev/null | openssl x509 -noout -checkend 0 >/dev/null 2>/dev/null && echo ok || echo fail)
+check test "$BASE_TLS" = "ok"
+
 echo "=== Git Operations (canary cell) ==="
 # Discover the canary cell from the K8s namespace label set by factory.ts
 CANARY_CELL=$(kubectl get ns -l "app.kubernetes.io/part-of=cells,gitlab.example.com/canary=true" \
