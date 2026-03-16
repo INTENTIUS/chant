@@ -33,7 +33,7 @@ export async function loadPlugin(lexiconName: string): Promise<LexiconPlugin> {
       validate: notSupported("validate"),
       coverage: notSupported("coverage"),
       package: notSupported("package"),
-      rollback: notSupported("rollback"),
+
     };
   }
 

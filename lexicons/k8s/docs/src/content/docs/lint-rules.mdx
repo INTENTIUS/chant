@@ -1,0 +1,91 @@
+---
+title: "Lint Rules"
+description: "Built-in lint rules and post-synth checks for Kubernetes manifests"
+---
+The Kubernetes lexicon ships lint rules that run during `chant lint` and post-synth checks that validate the serialized YAML after `chant build`.
+
+## Lint rules
+
+Lint rules analyze your TypeScript source code before build.
+
+### WK8001 — Hardcoded namespace
+
+**Severity:** warning | **Category:** correctness
+
+Flags hardcoded namespace strings in resource constructors. Namespaces should be parameterized or derived from configuration.
+
+```typescript
+// Bad — hardcoded namespace
+new Deployment({ metadata: { namespace: "production" } });
+
+// Good — parameterized
+new Deployment({ metadata: { namespace: config.namespace } });
+```
+
+## Post-synth checks
+
+Post-synth checks run against the serialized YAML after build.
+
+### Security
+
+| Rule | Description |
+|------|-------------|
+| WK8005 | Hardcoded secrets in environment variables |
+| WK8041 | API keys detected in env values |
+| WK8042 | Private keys in ConfigMaps or Secrets |
+| WK8202 | Privileged container (`privileged: true`) |
+| WK8203 | Writable root filesystem (`readOnlyRootFilesystem` not set) |
+| WK8204 | Container running as root (`runAsNonRoot` not set) |
+| WK8205 | Capabilities not dropped (`drop: ["ALL"]` missing) |
+| WK8207 | Host network access (`hostNetwork: true`) |
+| WK8208 | Host PID namespace (`hostPID: true`) |
+| WK8209 | Host IPC namespace (`hostIPC: true`) |
+
+### Best practices
+
+| Rule | Description |
+|------|-------------|
+| WK8006 | Latest image tag or untagged image |
+| WK8101 | Deployment selector doesn't match template labels |
+| WK8102 | Resource missing metadata.labels |
+| WK8103 | Container missing name |
+| WK8104 | Unnamed container ports |
+| WK8105 | Missing imagePullPolicy |
+
+### Reliability
+
+| Rule | Description |
+|------|-------------|
+| WK8201 | Container missing resource limits |
+| WK8301 | Container missing health probes (skips Jobs/CronJobs) |
+| WK8302 | Single replica Deployment |
+| WK8303 | HA Deployment without PodDisruptionBudget |
+
+## Running lint
+
+```bash
+# Lint your chant project
+chant lint
+
+# Build (also runs post-synth checks)
+chant build
+```
+
+To suppress a rule on a specific line:
+
+```typescript
+// chant-disable-next-line WK8001
+export const deploy = new Deployment({ metadata: { namespace: "prod" } });
+```
+
+To suppress globally in `chant.config.ts`:
+
+```typescript
+export default {
+  lint: {
+    rules: {
+      WK8001: "off",
+    },
+  },
+};
+```

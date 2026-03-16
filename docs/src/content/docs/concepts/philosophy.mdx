@@ -11,6 +11,10 @@ Infrastructure tools give you syntax — YAML schemas, HCL blocks, SDK construct
 
 **Synthesis** takes typed TypeScript declarations in and produces validated artifacts out. You write TypeScript objects, chant resolves dependencies, and serializes to the target format.
 
+## A Synthesis Compiler
+
+chant is a compiler. TypeScript in, spec-native output out. This isn't a new idea — it's an approach that was always available. Nobody built it because the industry was racing to own the full lifecycle: state management, deployment, drift detection, rollback. chant does one thing and stops at the boundary where operational tooling begins.
+
 ## TypeScript as Data
 
 Most IaC tools that use general-purpose languages — CDK, Pulumi, Terraform's CDK — work by *executing* your code. Your program runs, makes API calls, and the tool captures the result.
@@ -24,8 +28,26 @@ This constraint is the point. Because nothing executes:
 - **Output is auditable** — every value traces to a literal, a const binding, or a cross-resource reference.
 - **IDEs work fully** — types drive the API surface, so autocompletion, inline errors, and go-to-definition come for free.
 
+The static evaluation constraint also makes chant a natural complement to agentic workflows. Agents handle the dynamic, operational layer — deploying, monitoring, remediating. chant handles the part that should be deterministic and auditable. The two layers don't compete; they compose.
+
+## Spec-True, Not Cloud-Abstract
+
+Each lexicon is faithful to its target spec. The AWS lexicon generates from the CloudFormation resource specification. The GitLab lexicon maps to `.gitlab-ci.yml` schema. Chant doesn't invent an abstraction layer across specs — it gives you the real API surface, typed and linted.
+
+This means walk-away cost is zero. The output is standard CloudFormation, standard GitLab CI, standard whatever-the-lexicon-targets. If you stop using chant, the artifacts keep working. There's nothing chant-specific in the output.
+
 ## What chant Doesn't Do
 
-chant produces artifacts — it doesn't deploy them. Anything with a schema is a potential lexicon target.
+`chant build` produces artifacts — it doesn't deploy them, call cloud APIs, or manage state. Synthesis is pure and deterministic: same source in, same output out, zero side effects. This is a deliberate scope boundary, not a limitation.
 
-chant doesn't replace your cloud tooling. It's a semantic layer on top of it. You can import existing templates, give them types, and lint them alongside everything else.
+The deployment and operational layer is increasingly handled by agents, CI pipelines, and platform tooling. chant's job is to make the synthesis step typed, linted, and deterministic — then hand off a native artifact that any deployment mechanism can consume.
+
+Anything with a schema is a potential lexicon target. chant doesn't replace your cloud tooling. It's a semantic layer on top of it. You can import existing templates, give them types, and lint them alongside everything else.
+
+## Operational Assistance
+
+chant's architecture is concentric: a pure synthesis core surrounded by opt-in operational extensions. The core never changes — `chant build` is deterministic and side-effect-free. Extensions add operational context without touching the build pipeline.
+
+The design supports structured agent workflows (jobs that declare tasks and environment targets), observational state (non-authoritative snapshots of deployment metadata), and agentic skills for import and drift detection. These extensions share a principle: chant provides context and structure, agents do the operational work.
+
+Opt-in is implicit. If you never use operational extensions, chant is a pure synthesis compiler and nothing more.

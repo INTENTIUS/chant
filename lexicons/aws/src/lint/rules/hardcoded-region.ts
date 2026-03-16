@@ -11,6 +11,7 @@ export const hardcodedRegionRule: LintRule = {
   id: "WAW001",
   severity: "warning",
   category: "security",
+  description: "Detects hardcoded AWS region strings — use AWS.Region pseudo-parameter instead",
 
   check(context: LintContext): LintDiagnostic[] {
     const { sourceFile } = context;

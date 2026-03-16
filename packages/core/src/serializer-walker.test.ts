@@ -3,6 +3,7 @@ import { walkValue, type SerializerVisitor } from "./serializer-walker";
 import { DECLARABLE_MARKER, type Declarable } from "./declarable";
 import { INTRINSIC_MARKER } from "./intrinsic";
 import { AttrRef } from "./attrref";
+import { createResource } from "./runtime";
 
 function makeDeclarable(type: string, kind: "resource" | "property" = "resource", props?: Record<string, unknown>): Declarable & { props?: Record<string, unknown> } {
   const d: Declarable & { props?: Record<string, unknown> } = {
@@ -93,13 +94,34 @@ describe("walkValue", () => {
     expect(walkValue({ a: 1, b: { c: 2 } }, names, mockVisitor)).toEqual({ a: 1, b: { c: 2 } });
   });
 
-  test("applies transformKey when provided", () => {
-    const visitor: SerializerVisitor = {
-      ...mockVisitor,
-      transformKey: (k) => k.toUpperCase(),
+  test("resource.Ref resolves via resourceRef", () => {
+    const TestTable = createResource("Test::Table", "test", {});
+    const resource = new TestTable({}) as unknown as Declarable;
+    const names = new Map<Declarable, string>([[resource, "MyTable"]]);
+    expect(walkValue((resource as any).Ref, names, mockVisitor)).toEqual({ __ref: "MyTable" });
+  });
+
+  test("resolves __attrRef envelope inside intrinsic toJSON output", () => {
+    // Simulate an intrinsic whose toJSON() produces an __attrRef envelope
+    // (e.g., AttrRef inside a Sub template literal)
+    const intrinsic = {
+      [INTRINSIC_MARKER]: true as const,
+      toJSON: () => ({
+        MyIntrinsic: { __attrRef: { entity: "MyResource", attribute: "Arn" } },
+      }),
     };
     const names = new Map<Declarable, string>();
-    expect(walkValue({ foo: 1, bar: 2 }, names, visitor)).toEqual({ FOO: 1, BAR: 2 });
+    expect(walkValue(intrinsic, names, mockVisitor)).toEqual({
+      MyIntrinsic: { __getAtt: ["MyResource", "Arn"] },
+    });
+  });
+
+  test("resolves standalone __attrRef envelope in plain object", () => {
+    const names = new Map<Declarable, string>();
+    const value = { __attrRef: { entity: "MyBucket", attribute: "DomainName" } };
+    expect(walkValue(value, names, mockVisitor)).toEqual({
+      __getAtt: ["MyBucket", "DomainName"],
+    });
   });
 
   test("complex nested structure", () => {

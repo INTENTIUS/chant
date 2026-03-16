@@ -1,0 +1,48 @@
+---
+title: "Lint Rules"
+description: "Built-in lint rules and post-synth checks for Flyway config"
+---
+The Flyway lexicon ships lint rules that run during `chant lint` and post-synth checks that validate the serialized TOML after `chant build`.
+
+## Lint rules
+
+### WFW001 — Hardcoded credentials
+**Severity:** error | **Category:** security
+
+Flags hardcoded password/user strings in Environment constructors.
+
+### WFW002 — Hardcoded URL
+**Severity:** warning | **Category:** security
+
+Flags hardcoded JDBC URLs in Environment constructors.
+
+### WFW003 — Missing schemas
+**Severity:** warning | **Category:** correctness
+
+Flags Environment constructors without a schemas property.
+
+### WFW004 — Invalid migration name
+**Severity:** warning | **Category:** correctness
+
+Flags migration filenames that don't follow V/R/U naming convention.
+
+### WFW005 — Duplicate version
+**Severity:** error | **Category:** correctness
+
+Flags duplicate version numbers in migration arrays.
+
+## Post-synth checks
+
+| Rule | Description |
+|------|-------------|
+| WFW101 | Production environment with clean enabled |
+| WFW102 | Production environment missing validateOnMigrate |
+| WFW103 | Production environment with baselineOnMigrate |
+| WFW104 | Unresolved resolver reference |
+| WFW105 | Empty or missing flyway.locations |
+| WFW106 | Invalid callback event name |
+| WFW107 | Enterprise-only callback (undo) |
+| WFW108 | Environment without URL |
+| WFW109 | Provisioner config mismatch |
+| WFW110 | Environment schemas differ from parent environment schemas |
+| WFW111 | Unknown key in TOML output — key is not a recognized Flyway property |

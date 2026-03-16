@@ -1,0 +1,115 @@
+---
+title: "GitLab CI + AWS ALB"
+description: "Three lexicons (AWS, GitLab), three stacks, one ALB — deploy a multi-service Fargate application from TypeScript sources via GitLab CI."
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+Three TypeScript source directories produce three CloudFormation stacks and three GitLab CI pipelines. One shared ALB fans out to two Fargate services based on path rules. The source split is intentional: AWS CF resources live in `lexicons/aws/examples/`; GitLab pipeline sources live in `examples/gitlab-aws-alb-*/`.
+
+## What you'll build
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│  shared-alb stack (gitlab-aws-alb-infra pipeline)               │
+│  VPC + ALB + ECS cluster + ECR repos                            │
+└──────────────────────────────┬──────────────────────────────────┘
+                               │ ClusterArn, ListenerArn, ECR URIs
+              ┌────────────────┴────────────────┐
+              ▼                                  ▼
+┌─────────────────────────┐    ┌─────────────────────────┐
+│  shared-alb-api stack   │    │  shared-alb-ui stack     │
+│  Fargate at /api/*      │    │  Fargate at /* (default) │
+│  (gitlab-aws-alb-api)   │    │  (gitlab-aws-alb-ui)     │
+└─────────────────────────┘    └─────────────────────────┘
+```
+
+**Source split:**
+
+| Example | AWS source | GitLab pipeline source |
+|---|---|---|
+| Infra | `lexicons/aws/examples/shared-alb/` | `examples/gitlab-aws-alb-infra/` |
+| API service | `lexicons/aws/examples/shared-alb-api/` | `examples/gitlab-aws-alb-api/` |
+| UI service | `lexicons/aws/examples/shared-alb-ui/` | `examples/gitlab-aws-alb-ui/` |
+
+<Aside type="caution">
+NAT gateway (~$32/mo) + ALB (~$16/mo) = ~$48/mo for shared infra alone. Teardown after testing.
+</Aside>
+
+## What you'll learn
+
+- How `FargateService` composite wires a Fargate task to an ALB listener rule — path pattern, priority, health check path, and security group all in one call
+- Why infra must deploy before services: the ECR repos live in the infra stack; service pipelines push images to them
+- Two pitfalls already solved in the examples: `amazon/aws-cli` entrypoint override and `$CI_COMMIT_REF_SLUG` in jq expressions
+
+## Get started
+
+```
+Build the CloudFormation templates for the shared-alb, shared-alb-api, and shared-alb-ui
+examples. Then build the GitLab CI pipelines for all three gitlab-aws-alb examples.
+My AWS credentials are in ~/.aws/credentials, region is us-east-1,
+account ID is 123456789012.
+```
+
+See the example READMEs for full instructions:
+- [`examples/gitlab-aws-alb-infra/`](https://github.com/intentius/chant/tree/main/examples/gitlab-aws-alb-infra)
+- [`examples/gitlab-aws-alb-api/`](https://github.com/intentius/chant/tree/main/examples/gitlab-aws-alb-api)
+- [`examples/gitlab-aws-alb-ui/`](https://github.com/intentius/chant/tree/main/examples/gitlab-aws-alb-ui)
+
+## Key patterns
+
+### FargateService: one composite, one CF stack
+
+Each service is a single composite call. It expands to a Fargate task definition, ECS service, ALB listener rule, security group, and CloudWatch log group:
+
+```typescript
+// lexicons/aws/examples/shared-alb-api/src/service.ts
+export const api = FargateService({
+  clusterArn: Ref(clusterArn),        // from infra stack parameter
+  listenerArn: Ref(listenerArn),      // from infra stack parameter
+  image: Ref(image),                  // injected by CI: ECR_URI:$CI_COMMIT_REF_SLUG
+  containerPort: 8080,
+  pathPatterns: ["/api", "/api/*"],
+  healthCheckPath: "/api/get",
+  listenerRulePriority: 100,          // UI is 200 (lower priority, catch-all)
+});
+```
+
+The services receive infra stack outputs as CloudFormation parameters — `clusterArn`, `listenerArn`, `vpcId`, subnet IDs, execution role ARN. The pipeline fetches them with `aws cloudformation describe-stacks` and passes them as `--parameter-overrides`.
+
+### amazon/aws-cli entrypoint override
+
+The `amazon/aws-cli` Docker image sets `aws` as its entrypoint. GitLab CI prepends the image entrypoint to every `script` command, turning `aws cloudformation deploy` into `aws aws cloudformation deploy`. Fix: `entrypoint: [""]`.
+
+```typescript
+// examples/gitlab-aws-alb-infra/src/pipeline.ts
+const awsImage = new Image({
+  name: "amazon/aws-cli:latest",
+  entrypoint: [""],  // ← critical — overrides the image's aws entrypoint
+});
+```
+
+### $CI_COMMIT_REF_SLUG in jq
+
+Shell variables inside single-quoted `jq` expressions are not expanded. The examples build the ECR image URI by appending the tag outside jq:
+
+```bash
+# Right — expand outside jq
+IMAGE_URI=$(echo "$OUTPUTS" | jq -r '.Stacks[0].Outputs[] | select(.OutputKey=="ApiRepoUri") | .OutputValue'):$CI_COMMIT_REF_SLUG
+```
+
+### Deploy order
+
+```
+1. Push infra repo → infra pipeline → shared-alb stack created (ECR repos exist)
+2. Push api + ui repos (can be parallel now)
+   → service pipelines → docker build → ECR push → CF deploy
+```
+
+If service pipelines run before infra, `docker push` fails with "repository does not exist."
+
+## Further reading
+
+- [AWS CloudFormation lexicon](/chant/lexicons/aws/) — FargateService, AlbShared, and other composites
+- [GitLab CI/CD lexicon](/chant/lexicons/gitlab/) — job types, pipeline composites, environments
+- [Multi-Stack Projects guide](/chant/guide/multi-stack/) — patterns for splitting infrastructure across stacks

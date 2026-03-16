@@ -13,6 +13,7 @@ export const noRedundantTypeImportRule: LintRule = {
   id: "COR012",
   severity: "warning",
   category: "style",
+  description: "Flags redundant type imports when a namespace import already provides access",
   check(context: LintContext): LintDiagnostic[] {
     const diagnostics: LintDiagnostic[] = [];
     const sf = context.sourceFile;

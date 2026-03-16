@@ -9,7 +9,7 @@ export const DECLARABLE_MARKER = Symbol.for("chant.declarable");
 export interface Declarable {
   readonly lexicon: string;
   readonly entityType: string;
-  readonly kind?: "resource" | "property";
+  readonly kind?: "resource" | "property" | "output";
   readonly [DECLARABLE_MARKER]: true;
 }
 

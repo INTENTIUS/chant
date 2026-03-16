@@ -22,7 +22,6 @@ function makePlugin(
     validate: noopAsync,
     coverage: noopAsync,
     package: noopAsync,
-    rollback: noopAsync,
   };
 
   if (opts.rules) {
@@ -251,5 +250,48 @@ describe("checkConflicts", () => {
     const report = checkConflicts(plugins);
     expect(report.conflicts).toHaveLength(1);
     expect(report.conflicts[0].plugins).toEqual(["aws", "gcp", "azure"]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Cross-lexicon skill naming consistency
+// ---------------------------------------------------------------------------
+
+describe("skill naming consistency", () => {
+  test("all skill names match chant-{lexicon}(-{topic})* pattern", async () => {
+    const { readdirSync, readFileSync } = await import("fs");
+    const { join } = await import("path");
+    const lexiconsDir = join(import.meta.dir, "../../../../lexicons");
+    const lexiconNames = readdirSync(lexiconsDir, { withFileTypes: true })
+      .filter((d) => d.isDirectory())
+      .map((d) => d.name);
+
+    const violations: string[] = [];
+    const namePattern = /^chant-[a-z0-9]+(-[a-z0-9]+)*$/;
+
+    for (const lex of lexiconNames) {
+      const skillsDir = join(lexiconsDir, lex, "src", "skills");
+      let files: string[];
+      try {
+        files = readdirSync(skillsDir).filter((f: string) => f.endsWith(".md"));
+      } catch {
+        continue; // no skills dir
+      }
+
+      for (const file of files) {
+        const skillName = file.replace(/\.md$/, "");
+        if (!namePattern.test(skillName)) {
+          violations.push(`${lex}: ${file} → name "${skillName}" does not match pattern`);
+        }
+        // Verify file name starts with chant-{lexicon}
+        if (!skillName.startsWith(`chant-${lex}`)) {
+          // Allow k8s cross-provider skills (chant-k8s-eks, chant-k8s-aks, chant-k8s-gke)
+          // which are valid as they belong to the k8s lexicon
+          violations.push(`${lex}: ${file} → name should start with "chant-${lex}"`);
+        }
+      }
+    }
+
+    expect(violations).toEqual([]);
   });
 });

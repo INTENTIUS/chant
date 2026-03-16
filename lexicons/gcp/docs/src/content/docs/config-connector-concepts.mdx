@@ -1,0 +1,85 @@
+---
+title: "Config Connector Concepts"
+description: "Resource structure, resourceRef, project binding, reconciliation lifecycle"
+---
+Every exported resource declaration becomes a Config Connector manifest document in the generated YAML.
+
+## Resource structure
+
+Every Config Connector resource has four standard fields:
+
+| Field | Source | Example |
+|-------|--------|---------|
+| `apiVersion` | Resolved from resource type | `storage.cnrm.cloud.google.com/v1beta1` |
+| `kind` | Resolved from resource type | `StorageBucket` |
+| `metadata` | From `metadata` property | `{ name: "my-bucket", labels: {...} }` |
+| `spec` | From remaining props | Resource-specific configuration |
+
+## Resource references
+
+Config Connector resources reference each other using `resourceRef`:
+
+```yaml
+# By name (same namespace)
+resourceRef:
+  name: my-network
+
+# By external reference (cross-project)
+resourceRef:
+  external: projects/my-project/global/networks/my-network
+```
+
+In chant, resource references resolve automatically:
+
+```typescript
+export const network = new ComputeNetwork({ autoCreateSubnetworks: false });
+
+export const subnet = new ComputeSubnetwork({
+  networkRef: { name: network },  // Resolves to metadata.name of network
+  ipCidrRange: "10.0.0.0/24",
+  region: "us-central1",
+});
+```
+
+## Project binding
+
+Bind resources to a GCP project via annotations:
+
+```typescript
+import { defaultAnnotations, GCP } from "@intentius/chant-lexicon-gcp";
+
+export const annotations = defaultAnnotations({
+  "cnrm.cloud.google.com/project-id": GCP.ProjectId,
+});
+```
+
+This injects the project annotation into every resource. Without it, Config Connector uses the namespace's default project.
+
+## Reconciliation lifecycle
+
+Config Connector resources go through a reconciliation lifecycle:
+
+| Status | Meaning |
+|--------|---------|
+| UpToDate | Resource matches desired state |
+| Updating | Controller is applying changes |
+| UpdateFailed | GCP API returned an error |
+| DependencyNotReady | Waiting for a referenced resource |
+| DeletionFailed | Cannot delete the GCP resource |
+
+Check status with: `kubectl get gcp -A` or `kubectl describe <resource>`
+
+## Default labels and annotations
+
+Use `defaultLabels()` and `defaultAnnotations()` to inject metadata into all resources:
+
+```typescript
+import { defaultLabels, defaultAnnotations } from "@intentius/chant-lexicon-gcp";
+
+export const labels = defaultLabels({
+  "app.kubernetes.io/managed-by": "chant",
+  "env": "production",
+});
+```
+
+Explicit labels on individual resources take precedence over defaults.

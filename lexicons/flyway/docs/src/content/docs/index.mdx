@@ -1,0 +1,84 @@
+---
+title: "Flyway"
+description: "Typed constructors for Flyway database migration configuration"
+---
+
+The **Flyway** lexicon provides typed constructors for Flyway v10+ TOML
+configuration files. It covers projects, environments, resolvers, provisioners,
+placeholders, callbacks, and database-specific settings.
+
+Install it with:
+
+```bash
+npm install --save-dev @intentius/chant-lexicon-flyway
+```
+
+## Quick Start
+
+```typescript
+import { FlywayProject, FlywayConfig, Environment } from "@intentius/chant-lexicon-flyway";
+
+export const project = new FlywayProject({
+  id: "my-project",
+  name: "my-project",
+  databaseType: "postgresql",
+});
+
+export const config = new FlywayConfig({
+  locations: ["filesystem:sql/migrations"],
+  defaultSchema: "public",
+  encoding: "UTF-8",
+  validateMigrationNaming: true,
+  cleanDisabled: true,
+});
+
+export const dev = new Environment({
+  url: "jdbc:postgresql://localhost:5432/devdb",
+  user: "dev_user",
+  password: "dev_pass",
+  schemas: ["public"],
+  displayName: "dev",
+});
+```
+
+The lexicon provides **5 resource types** (FlywayProject, FlywayConfig, Environment, FlywayDesktopConfig, RedgateCompareConfig),
+**20 property types** (resolvers, provisioners, database configs), and composites
+(StandardProject, MultiEnvironmentProject, VaultSecuredProject, DesktopProject,
+environmentGroup) for common patterns.
+
+## Lint Rules
+
+chant includes lint rules for Flyway config. For example:
+- Hardcoded credentials in environment configs
+- Production environments with clean enabled
+- Missing schema definitions
+- Unresolved resolver references
+- Invalid callback event names
+
+See [Lint Rules](./lint-rules) for the full list.
+
+
+## At a Glance
+
+| Metric | Count |
+|--------|-------|
+| Resources | 5 |
+| Property types | 20 |
+| Services | 2 |
+| Intrinsic functions | 3 |
+| Pseudo-parameters | 8 |
+| Lint rules | 16 |
+
+**Lexicon version:** 0.0.16  
+**Namespace:** `Flyway`
+
+- [Flyway Concepts](./flyway-concepts)
+- [Lint Rules](./lint-rules)
+- [Examples](./examples)
+- [Composites](./composites)
+- [Getting Started](./getting-started)
+- [Importing TOML](./importing-toml)
+- [Skills](./skills)
+- [Intrinsic Functions](./intrinsics) — 3 built-in functions
+- [Pseudo-Parameters](./pseudo-parameters) — 8 pseudo-parameters
+- [Serialization](./serialization) — output format details

@@ -1,0 +1,114 @@
+---
+title: "AWS EKS + Kubernetes"
+description: "Deploy a production-grade EKS cluster with Kubernetes workloads using the AWS CloudFormation lexicon for infrastructure and the K8s lexicon for workloads."
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+Two chant lexicons, one `src/` directory: the AWS lexicon produces a CloudFormation template for the EKS cluster and IAM roles; the K8s lexicon produces kubectl-ready YAML for workloads. IAM role ARNs flow between them via `.env` → `config.ts`.
+
+The deploy is intentionally two-phase: ACM certificate DNS validation requires your domain's NS records to be delegated before the cert can be issued. The example handles this gracefully — you can deploy and use the cluster without TLS, then add the cert later.
+
+## What you'll build
+
+```
+┌─────────────────────────────────────┐
+│  AWS CloudFormation (35 resources)  │
+│  VPC + EKS Cluster + OIDC Provider  │
+│  8 IAM Roles (IRSA per workload)    │
+│  4 EKS Add-ons + Route53 zone       │
+└───────┬─────────────────────────────┘
+        │ ARNs via .env → config.ts
+┌───────▼─────────────────────────────┐
+│  Kubernetes (36 resources)          │
+│  Namespace + AutoscaledService      │
+│  IrsaServiceAccount (role-arn ann.) │
+│  AlbIngress (cert-arn) + ExternalDNS│
+│  EBS StorageClass + FluentBit + ADOT│
+└─────────────────────────────────────┘
+```
+
+## What you'll learn
+
+- How IRSA (IAM Roles for Service Accounts) works: OIDC provider → trust policy → `eks.amazonaws.com/role-arn` annotation
+- Why the two-phase deploy exists: ACM cert validation requires NS delegation, which requires the Route53 zone to exist first
+- The cross-lexicon value flow: CF stack outputs → `.env` → `config.ts` → K8s composite props
+- EKS-specific nuances: ALB controller is installed as an EKS addon (not a K8s manifest), KMS envelope encryption for secrets
+
+## Cost
+
+EKS control plane ~$73/mo, NAT gateway ~$32/mo, ALB ~$16/mo, 3× t3.medium nodes ~$100/mo. **Total ~$221/mo.** Teardown after testing.
+
+## Get started
+
+```
+Deploy the k8s-eks-microservice example to AWS. My domain is myapp.example.com.
+```
+
+See [`examples/k8s-eks-microservice/`](https://github.com/intentius/chant/tree/main/examples/k8s-eks-microservice) for the full README, deploy workflow, and teardown instructions.
+
+## Key patterns
+
+### IRSA: per-workload IAM roles via OIDC
+
+Each workload gets its own IAM role with a trust policy that restricts `AssumeRoleWithWebIdentity` to a specific K8s service account:
+
+```typescript
+// src/infra/cluster.ts — the IAM role for the app workload
+export const appRole = new IAMRole({
+  AssumeRolePolicyDocument: {
+    Statement: [{
+      Action: "sts:AssumeRoleWithWebIdentity",
+      Principal: { Federated: Ref(oidcProviderArn) },
+      Condition: {
+        StringEquals: {
+          [`${oidcIssuer}:sub`]: "system:serviceaccount:microservice:app-sa",
+          [`${oidcIssuer}:aud`]: "sts.amazonaws.com",
+        },
+      },
+    }],
+  },
+});
+```
+
+The K8s side just needs the annotation:
+
+```typescript
+// src/k8s/app.ts — IrsaServiceAccount sets the annotation
+export const appSa = IrsaServiceAccount({
+  name: "app-sa",
+  namespace: "microservice",
+  iamRoleArn: config.appRoleArn,  // from .env after load-outputs
+});
+```
+
+The `StringEquals` condition block is critical — without it, any pod in any namespace with any SA name could assume the role using the cluster's OIDC provider.
+
+### Why NS delegation before ACM cert
+
+The deploy sequence has a deliberate pause between infrastructure and workloads:
+
+```
+1. deploy-infra → creates Route53 hosted zone → prints nameservers
+2. [manual] Update NS records at your registrar
+3. deploy-cert → ACM requests cert → creates validation CNAME → waits for ISSUED
+4. load-outputs → writes cert ARN to .env
+5. build:k8s && apply → AlbIngress gets the real cert ARN
+```
+
+Without NS delegation, ACM's HTTP-01 validation CNAME can't be resolved and the cert stays in `PENDING_VALIDATION` indefinitely. The example's `npm run deploy` skips steps 2-4 so you can verify the cluster first; add the cert later with `npm run deploy-cert`.
+
+### Delete order matters
+
+Always delete K8s resources before the CloudFormation stack. The ALB controller (installed as an EKS addon) must be running to clean up the ALB it provisioned. Deleting the CF stack first removes the addon → controller → ALB becomes orphaned.
+
+```bash
+npm run teardown  # handles the ordering: kubectl delete → drain → cfn delete-stack
+```
+
+## Further reading
+
+- [AWS CloudFormation lexicon](/chant/lexicons/aws/) — resource reference and composites
+- [EKS Composites](/chant/lexicons/k8s/eks-composites/) — IrsaServiceAccount, AlbIngress, and more
+- [Kubernetes lexicon](/chant/lexicons/k8s/) — core composites reference
+- [Agent Integration guide](/chant/guide/agent-integration/) — using chant skills with Claude Code

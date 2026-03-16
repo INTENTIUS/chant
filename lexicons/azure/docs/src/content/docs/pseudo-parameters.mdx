@@ -1,0 +1,121 @@
+---
+title: "Pseudo-Parameters"
+description: "Azure pseudo-parameters for resource group, subscription, and deployment context"
+---
+
+Pseudo-parameters are deployment-time values that resolve automatically. Import them from the `Azure` namespace.
+
+```typescript
+import { Azure } from "@intentius/chant-lexicon-azure";
+```
+
+## Azure.ResourceGroupName
+
+The name of the target resource group:
+
+```typescript
+export const storage = new StorageAccount({
+  name: Concat("storage-", Azure.ResourceGroupName),
+});
+// → [concat('storage-', resourceGroup().name)]
+```
+
+## Azure.ResourceGroupLocation
+
+The location (region) of the target resource group. This is the default location for most resources:
+
+```typescript
+export const storage = new StorageAccount({
+  location: Azure.ResourceGroupLocation,
+});
+// → [resourceGroup().location]
+```
+
+## Azure.ResourceGroupId
+
+The fully qualified resource ID of the resource group:
+
+```typescript
+const uniqueName = UniqueString(Azure.ResourceGroupId);
+// → [uniqueString(resourceGroup().id)]
+```
+
+## Azure.SubscriptionId
+
+The current subscription ID:
+
+```typescript
+const subId = Azure.SubscriptionId;
+// → [subscription().subscriptionId]
+```
+
+## Azure.TenantId
+
+The Azure AD tenant ID:
+
+```typescript
+export const vault = new KeyVault({
+  properties: {
+    tenantId: Azure.TenantId,
+  },
+});
+// → [subscription().tenantId]
+```
+
+## Azure.DeploymentName
+
+The name of the current deployment:
+
+```typescript
+const deployName = Azure.DeploymentName;
+// → [deployment().name]
+```
+
+## Usage patterns
+
+### Default location
+
+Most resources should use the resource group location:
+
+```typescript
+export const storage = new StorageAccount({
+  location: Azure.ResourceGroupLocation, // best practice
+});
+```
+
+### Multi-region
+
+Combine pseudo-parameters with regular parameters for multi-region deployments:
+
+```typescript
+import { CoreParameter } from "@intentius/chant";
+
+export const secondaryRegion = new CoreParameter({
+  name: "secondaryRegion",
+  type: "string",
+  default: "westus2",
+});
+
+export const primaryStorage = new StorageAccount({
+  name: "primary-storage",
+  location: Azure.ResourceGroupLocation,
+});
+
+export const secondaryStorage = new StorageAccount({
+  name: "secondary-storage",
+  location: secondaryRegion,
+});
+```
+
+### Key Vault tenant ID
+
+Key Vault requires a tenant ID — use the pseudo-parameter:
+
+```typescript
+export const vault = new KeyVault({
+  properties: {
+    tenantId: Azure.TenantId,
+    sku: { family: "A", name: "standard" },
+  },
+});
+```

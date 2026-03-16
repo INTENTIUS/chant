@@ -1,0 +1,140 @@
+---
+title: "Examples"
+description: "Walkthrough of Helm examples — basic composites, production patterns, and infrastructure charts"
+---
+Runnable examples live in the lexicon's `examples/` directory. Clone the repo and try them:
+
+```bash
+cd examples/composites-basic
+bun install
+chant build    # produces a complete Helm chart in dist/
+chant lint     # runs lint rules
+bun test       # runs the example's tests
+```
+
+## Composites Basic
+
+`examples/composites-basic/` — a simple web application chart using the `HelmWebApp` composite with a Deployment, Service, and Ingress.
+
+```typescript
+import {
+  HelmWebApp, Chart, Values, Deployment, Service, values,
+} from "@intentius/chant-lexicon-helm";
+
+const result = HelmWebApp({
+  name: "hello-world",
+  image: "nginx",
+  tag: "1.25",
+  port: 80,
+  replicas: 2,
+  ingressHost: "hello.example.com",
+});
+
+export const chart = new Chart(result.chart);
+export const vals = new Values(result.values);
+export const deployment = new Deployment(result.deployment);
+export const svc = new Service(result.service);
+```
+
+**Key patterns:**
+- Uses `HelmWebApp` to wire up the standard web app resources
+- The composite generates sensible defaults for resource limits and health probes
+- Ingress is configured with the provided hostname
+- `chant build` produces `dist/Chart.yaml`, `dist/values.yaml`, and `dist/templates/`
+
+## Composites Production
+
+`examples/composites-production/` — a production-grade microservice chart using `HelmMicroservice` with HPA, PDB, ServiceAccount, pre-install database migration hook, and external secrets.
+
+```typescript
+import {
+  HelmMicroservice, HelmHook, HelmExternalSecret,
+  Chart, Values, values,
+} from "@intentius/chant-lexicon-helm";
+
+const result = HelmMicroservice({
+  name: "payments-api",
+  image: "payments-api",
+  tag: "4.2.0",
+  port: 8080,
+  replicas: { min: 3, max: 20 },
+  healthPath: "/healthz",
+  env: [
+    { name: "DATABASE_URL", valueFrom: "secret:payments-db:url" },
+    { name: "REDIS_URL", valueFrom: "secret:payments-redis:url" },
+  ],
+});
+
+export const chart = new Chart(result.chart);
+export const vals = new Values(result.values);
+
+export const migration = new HelmHook({
+  name: "db-migrate",
+  type: "pre-install,pre-upgrade",
+  weight: -5,
+  deletePolicy: "before-hook-creation",
+  image: values.image.repository,
+  command: ["migrate", "--target", "latest"],
+});
+
+const secrets = HelmExternalSecret({
+  name: "payments-secrets",
+  provider: "aws-secrets-manager",
+  secrets: {
+    "payments-db": { remoteRef: "prod/payments/db-url" },
+    "payments-redis": { remoteRef: "prod/payments/redis-url" },
+  },
+});
+```
+
+**Key patterns:**
+- `HelmMicroservice` generates HPA, PDB, and ServiceAccount automatically
+- Database migration runs as a pre-install/pre-upgrade hook with negative weight
+- External secrets pull credentials from AWS Secrets Manager at deploy time
+- Replicas specified as a range for HPA min/max
+
+## Composites Infrastructure
+
+`examples/composites-infrastructure/` — infrastructure-layer charts using `HelmDaemonSet`, `HelmCRDLifecycle`, and `HelmMonitoredService` for cluster agents, CRD operators, and monitored services.
+
+```typescript
+import {
+  HelmDaemonSet, HelmCRDLifecycle, HelmMonitoredService,
+  Chart, Values,
+} from "@intentius/chant-lexicon-helm";
+
+const agent = HelmDaemonSet({
+  name: "log-collector",
+  image: "fluent-bit",
+  tag: "2.2",
+  tolerations: [{ operator: "Exists" }],
+  volumes: [
+    { name: "varlog", hostPath: "/var/log" },
+    { name: "containers", hostPath: "/var/lib/docker/containers" },
+  ],
+});
+
+const operator = HelmCRDLifecycle({
+  name: "my-operator",
+  image: "my-operator",
+  tag: "1.0.0",
+  crds: ["mycrd.example.com_v1_MyResource.yaml"],
+});
+
+const monitored = HelmMonitoredService({
+  name: "api-gateway",
+  image: "api-gateway",
+  tag: "5.0.0",
+  port: 8080,
+  metricsPort: 9090,
+  metricsPath: "/metrics",
+  alerts: [
+    { name: "HighErrorRate", expr: "rate(http_errors_total[5m]) > 0.05", severity: "critical" },
+  ],
+});
+```
+
+**Key patterns:**
+- `HelmDaemonSet` generates tolerations for scheduling on all nodes
+- `HelmCRDLifecycle` manages CRD install/upgrade via hooks
+- `HelmMonitoredService` bundles ServiceMonitor and PrometheusRule alongside the workload

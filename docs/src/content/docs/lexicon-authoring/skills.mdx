@@ -5,38 +5,96 @@ description: AI agent skill files contributed by lexicons
 
 Lexicon authors can include skill files — markdown documents that teach AI agents how to work with the lexicon's resource types and patterns.
 
+## The 3-Skill Pattern
+
+A mature lexicon should include 3 skills covering different scopes:
+
+| Skill | Purpose | Example |
+|-------|---------|---------|
+| **Core** | Syntax, resource types, basic usage | `chant-azure.md` — ARM resource declarations, intrinsics, pseudo-parameters |
+| **Platform-specific** | Cloud/platform security and integration patterns | `chant-azure-security.md` — Managed identity, encryption, TLS, NSG |
+| **Advanced patterns** | Complex usage, composites, multi-resource patterns | `chant-azure-patterns.md` — Linked templates, conditional resources, tagging strategies |
+
 ## Skill File Format
 
 Each skill file is a markdown document with YAML frontmatter:
 
 ```markdown
 ---
-metadata:
-  source: chant-lexicon
+skill: chant-my-lexicon
+description: Core deployment workflow for My Lexicon resources
+user-invocable: true
 ---
 # Resource Authoring
 
 When writing resources with chant and this lexicon:
 
-1. Import types from the lexicon barrel (`_`)
+1. Import types directly from the lexicon package
 2. Use intrinsic functions for dynamic values
-3. Reference other resources via the barrel symbol (`$`)
+3. Reference other resources via direct imports
 ```
 
-The `source: chant-lexicon` metadata marker identifies the skill as lexicon-contributed.
+### Frontmatter Fields
+
+| Field | Description |
+|-------|-------------|
+| `skill` | The skill name — must match the name registered in `plugin.ts` |
+| `description` | One-line summary of what the skill covers |
+| `user-invocable` | `true` if the skill can be invoked directly by the user |
+
+## Skill Content Guidelines
+
+Good skill content:
+
+- **Starts with overview** — What the skill covers and when to use it
+- **Uses code examples** — Real, runnable TypeScript snippets
+- **Maps to checks** — Security skills reference the post-synth checks they relate to
+- **Covers composites** — Shows how to use composites for common patterns
+- **Includes reference tables** — Quick-reference tables for functions, parameters, etc.
+
+## Registering Skills in Plugin
+
+Return skill definitions from your plugin's `skills()` method:
+
+```typescript
+skills(): SkillDefinition[] {
+  const { readFileSync } = require("fs");
+  const { join, dirname } = require("path");
+  const dir = dirname(fileURLToPath(import.meta.url));
+
+  const skills: SkillDefinition[] = [];
+
+  const skillFiles = [
+    { file: "chant-my-lexicon.md", name: "chant-my-lexicon", ... },
+    { file: "chant-my-lexicon-security.md", name: "chant-my-lexicon-security", ... },
+    { file: "chant-my-lexicon-patterns.md", name: "chant-my-lexicon-patterns", ... },
+  ];
+
+  for (const skill of skillFiles) {
+    try {
+      const content = readFileSync(join(dir, "skills", skill.file), "utf-8");
+      skills.push({ name: skill.name, content, ... });
+    } catch { /* skip missing */ }
+  }
+
+  return skills;
+}
+```
 
 ## Installation
 
 Skills are installed automatically when you initialize a project:
 
 ```bash
-npx chant init my-infra
+chant init --lexicon my-lexicon my-infra
 ```
+
+This copies skills to `skills/{name}/SKILL.md` in the project root.
 
 ## Lifecycle
 
-- **Install**: `npx chant init` copies skills to `.chant/skills/`
-- **Update**: `npx chant update` refreshes skills when a lexicon is updated
+- **Install**: `chant init` copies skills to `skills/`
+- **Update**: `chant update` refreshes skills when a lexicon is updated
 
 ## Collecting Skills for Packaging
 
@@ -50,6 +108,21 @@ const skills = collectSkills(myPlugin.skills());
 
 This is passed to `packagePipeline` as part of the bundle configuration.
 
+## Reference
+
+All 8 lexicons ship skills:
+
+| Lexicon | Skills | Count |
+|---------|--------|-------|
+| AWS | `chant-aws`, `chant-aws-eks` | 2 |
+| Azure | `chant-azure`, `chant-azure-security`, `chant-azure-patterns`, `chant-azure-aks` | 4 |
+| GCP | `chant-gcp`, `chant-gcp-security`, `chant-gcp-patterns`, `chant-gcp-gke` | 4 |
+| K8s | `chant-k8s`, `chant-k8s-patterns`, `chant-k8s-deployment-strategies`, `chant-k8s-security`, `chant-k8s-eks`, `chant-k8s-gke`, `chant-k8s-aks` | 7 |
+| GitHub | `chant-github`, `chant-github-patterns`, `chant-github-security` | 3 |
+| GitLab | `chant-gitlab`, `chant-gitlab-patterns` | 2 |
+| Flyway | `chant-flyway`, `chant-flyway-migrations`, `chant-flyway-security` | 3 |
+| Helm | `chant-helm`, `chant-helm-patterns`, `chant-helm-security` | 3 |
+
 ## Next Steps
 
-With skills defined, the final step is to [package and publish](/lexicon-authoring/package/) your lexicon.
+With skills defined, the final step is to [package and publish](/chant/lexicon-authoring/package/) your lexicon.

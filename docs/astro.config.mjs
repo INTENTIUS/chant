@@ -4,6 +4,8 @@ import starlight from '@astrojs/starlight';
 
 // https://astro.build/config
 export default defineConfig({
+	site: 'https://intentius.io',
+	base: '/chant',
 	integrations: [
 		starlight({
 			title: 'chant',
@@ -23,17 +25,18 @@ export default defineConfig({
 					label: 'Core Concepts',
 					items: [
 						{ label: 'Philosophy', slug: 'concepts/philosophy' },
+						{ label: 'How chant compares', slug: 'concepts/comparison' },
 						{ label: 'TypeScript as Data', slug: 'concepts/typescript-as-data' },
 						{ label: 'Evaluation Pipeline', slug: 'concepts/evaluation-pipeline' },
-						{ label: 'Barrel Files & $', slug: 'concepts/barrels' },
 					],
 				},
 				{
 					label: 'User Guide',
 					items: [
 						{ label: 'Writing Resources', slug: 'guide/writing-resources' },
-						{ label: 'Using Barrel Files', slug: 'guide/barrel-files' },
+						{ label: 'Resource Naming', slug: 'guide/resource-naming' },
 						{ label: 'Cross-File References', slug: 'guide/cross-file-references' },
+						{ label: 'Parameters & Outputs', slug: 'getting-started/parameters-and-outputs' },
 						{ label: 'Composite Resources', slug: 'guide/composite-resources' },
 						{ label: 'Presets', slug: 'guide/presets' },
 						{ label: 'Linting & Type-Checking', slug: 'guide/linting' },
@@ -41,8 +44,24 @@ export default defineConfig({
 						{ label: 'Importing Templates', slug: 'guide/importing-templates' },
 						{ label: 'Multi-Stack Projects', slug: 'guide/multi-stack' },
 						{ label: 'Managing Lexicons', slug: 'guide/managing-lexicons' },
-						{ label: 'Cross-Lexicon Projects', slug: 'guide/cross-lexicon' },
-					{ label: 'Agent Integration', slug: 'guide/agent-integration' },
+						{ label: 'Agent Integration', slug: 'guide/agent-integration' },
+					{ label: 'Spells', slug: 'guide/spells' },
+					],
+				},
+				{
+					label: 'Tutorials',
+					items: [
+						{ label: 'GCP GKE + Kubernetes', slug: 'tutorials/gke-kubernetes' },
+						{ label: 'GKE Composites', link: '/lexicons/k8s/gke-composites/' },
+						{ label: 'AWS EKS + Kubernetes', slug: 'tutorials/eks-kubernetes' },
+						{ label: 'EKS Composites', link: '/lexicons/k8s/eks-composites/' },
+						{ label: 'Azure AKS + Kubernetes', slug: 'tutorials/aks-kubernetes' },
+						{ label: 'AKS Composites', link: '/lexicons/k8s/aks-composites/' },
+						{ label: 'GitLab CI + AWS ALB', slug: 'tutorials/gitlab-aws-alb' },
+						{ label: 'Flyway + PostgreSQL + GitLab', slug: 'tutorials/flyway-postgresql' },
+						{ label: 'CockroachDB Multi-Region', slug: 'tutorials/cockroachdb-multi-region' },
+						{ label: 'GitLab Cells on GKE', slug: 'tutorials/gitlab-cells' },
+						{ label: 'Temporal Workflow-Driven Deploy', slug: 'tutorials/temporal-crdb-deploy' },
 					],
 				},
 				{
@@ -50,8 +69,22 @@ export default defineConfig({
 					items: [
 						{ label: 'Overview', slug: 'lexicons/overview' },
 						{ label: 'AWS CloudFormation', link: '/lexicons/aws/' },
+						{ label: 'Azure ARM', link: '/lexicons/azure/' },
+						{ label: 'GCP Config Connector', link: '/lexicons/gcp/' },
+						{
+						label: 'Kubernetes',
+						items: [
+							{ label: 'Overview', link: '/lexicons/k8s/' },
+							{ label: 'Generic Composites', link: '/lexicons/k8s/composite-examples/' },
+							{ label: 'EKS Composites', link: '/lexicons/k8s/eks-composites/' },
+							{ label: 'AKS Composites', link: '/lexicons/k8s/aks-composites/' },
+							{ label: 'GKE Composites', link: '/lexicons/k8s/gke-composites/' },
+						],
+					},
+						{ label: 'Helm Charts', link: '/lexicons/helm/' },
+						{ label: 'GitHub Actions', link: '/lexicons/github/' },
 						{ label: 'GitLab CI/CD', link: '/lexicons/gitlab/' },
-						{ label: 'Sync Mechanism', slug: 'lexicons/sync' },
+						{ label: 'Flyway', link: '/lexicons/flyway/' },
 					],
 				},
 				{
@@ -111,14 +144,20 @@ export default defineConfig({
 						{ label: 'Write Lint Rules', slug: 'lexicon-authoring/lint-rules' },
 						{ label: 'LSP & MCP Providers', slug: 'lexicon-authoring/lsp-mcp' },
 						{ label: 'Skills', slug: 'lexicon-authoring/skills' },
+						{ label: 'Post-Synth Checks', slug: 'lexicon-authoring/post-synth-checks' },
+						{ label: 'Testing', slug: 'lexicon-authoring/testing' },
+						{ label: 'Completeness Checklist', slug: 'lexicon-authoring/completeness-checklist' },
 						{ label: 'Package & Publish', slug: 'lexicon-authoring/package' },
+						{ label: 'CI & Distribution', slug: 'lexicon-authoring/ci-integration' },
+						{ label: 'Docs Site', slug: 'lexicon-authoring/docs-site' },
 						{
 							label: 'CLI Reference',
 							items: [
 								{ label: 'init lexicon', slug: 'cli/init-lexicon' },
 								{ label: 'dev generate', slug: 'cli/generate' },
 								{ label: 'dev publish', slug: 'cli/package' },
-								{ label: 'dev rollback', slug: 'cli/rollback' },
+								{ label: 'dev onboard', slug: 'cli/onboard' },
+								{ label: 'dev check-lexicon', slug: 'cli/check-lexicon' },
 							],
 						},
 					],
@@ -129,6 +168,7 @@ export default defineConfig({
 					badge: { text: 'Core Dev', variant: 'note' },
 					items: [
 						{ label: 'Development Setup', slug: 'contributing/development' },
+					{ label: 'E2E Testing', slug: 'contributing/e2e-testing' },
 						{ label: 'Architecture Overview', slug: 'architecture/overview' },
 						{ label: 'Core Type System', slug: 'architecture/core-type-system' },
 						{ label: 'File Discovery', slug: 'architecture/discovery' },

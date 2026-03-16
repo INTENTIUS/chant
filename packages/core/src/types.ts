@@ -43,4 +43,5 @@ export type PartialValues<T, K extends keyof T> = {
  * // Result: { name: string; count?: number; enabled?: boolean }
  * ```
  */
-export type RequiredProps<T, K extends keyof T> = T & Required<Pick<T, K>>;
+type Prettify<T> = { [P in keyof T]: T[P] } & {};
+export type RequiredProps<T, K extends keyof T> = Prettify<Omit<T, K> & Required<Pick<T, K>>>;

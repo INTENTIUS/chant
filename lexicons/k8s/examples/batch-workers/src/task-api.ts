@@ -1,0 +1,41 @@
+// ConfiguredApp: API with mounted config, secret volume, and envFrom.
+
+import {
+  Secret,
+  ConfiguredApp,
+} from "@intentius/chant-lexicon-k8s";
+
+const NAMESPACE = "batch-workers";
+
+const api = ConfiguredApp({
+  name: "task-api",
+  image: "nginx:1.25-alpine",
+  port: 8080,
+  replicas: 2,
+  namespace: NAMESPACE,
+  configData: { "app.yaml": "server:\n  port: 8080\nredis:\n  url: redis://redis:6379" },
+  configMountPath: "/etc/task-api",
+  secretName: "task-api-creds",
+  secretMountPath: "/secrets",
+  envFrom: { secretRef: "task-api-env" },
+  securityContext: {
+    runAsNonRoot: true,
+    runAsUser: 1000,
+    readOnlyRootFilesystem: true,
+    capabilities: { drop: ["ALL"] },
+  },
+});
+
+export const apiDeployment = api.deployment;
+export const apiService = api.service;
+export const apiConfigMap = api.configMap!;
+
+export const apiCreds = new Secret({
+  metadata: { name: "task-api-creds", namespace: NAMESPACE },
+  stringData: { "api-key": "placeholder", "db-password": "placeholder" },
+});
+
+export const apiEnv = new Secret({
+  metadata: { name: "task-api-env", namespace: NAMESPACE },
+  stringData: { DATABASE_URL: "postgres://localhost:5432/tasks", API_SECRET: "placeholder" },
+});

@@ -13,13 +13,7 @@ import type { Serializer } from "@intentius/chant/serializer";
 import type { LexiconOutput } from "@intentius/chant/lexicon-output";
 import { walkValue, type SerializerVisitor } from "@intentius/chant/serializer-walker";
 import { INTRINSIC_MARKER } from "@intentius/chant/intrinsic";
-
-/**
- * Convert camelCase or PascalCase to snake_case.
- */
-function toSnakeCase(name: string): string {
-  return name.replace(/([a-z0-9])([A-Z])/g, "$1_$2").toLowerCase();
-}
+import { emitYAML } from "@intentius/chant/yaml";
 
 /**
  * GitLab CI visitor for the generic serializer walker.
@@ -27,7 +21,7 @@ function toSnakeCase(name: string): string {
 function gitlabVisitor(entityNames: Map<Declarable, string>): SerializerVisitor {
   return {
     attrRef: (name, _attr) => name,
-    resourceRef: (name) => name,
+    resourceRef: (name) => name.replace(/([a-z0-9])([A-Z])/g, "$1-$2").toLowerCase(),
     propertyDeclarable: (entity, walk) => {
       if (!("props" in entity) || typeof entity.props !== "object" || entity.props === null) {
         return undefined;
@@ -36,105 +30,57 @@ function gitlabVisitor(entityNames: Map<Declarable, string>): SerializerVisitor 
       const result: Record<string, unknown> = {};
       for (const [key, value] of Object.entries(props)) {
         if (value !== undefined) {
-          result[toSnakeCase(key)] = walk(value);
+          result[key] = walk(value);
         }
       }
       return Object.keys(result).length > 0 ? result : undefined;
     },
-    transformKey: toSnakeCase,
   };
+}
+
+/**
+ * Pre-process values to convert intrinsics to their YAML representation
+ * before the walker (which would call toJSON instead of toYAML).
+ *
+ * IMPORTANT: Must not touch Declarable objects — their identity markers
+ * (DECLARABLE_MARKER, entityType, kind, props) are non-enumerable and
+ * would be stripped by Object.entries(), producing empty `{}` output.
+ */
+function preprocessIntrinsics(value: unknown): unknown {
+  if (value === null || value === undefined) return value;
+
+  if (typeof value === "object" && INTRINSIC_MARKER in value) {
+    if ("toYAML" in value && typeof value.toYAML === "function") {
+      return (value as { toYAML(): unknown }).toYAML();
+    }
+  }
+
+  // Leave Declarables untouched — the walker handles them
+  if (typeof value === "object" && value !== null && "entityType" in value) {
+    return value;
+  }
+
+  if (Array.isArray(value)) {
+    return value.map(preprocessIntrinsics);
+  }
+
+  if (typeof value === "object") {
+    const result: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
+      result[k] = preprocessIntrinsics(v);
+    }
+    return result;
+  }
+
+  return value;
 }
 
 /**
  * Convert a value to YAML-compatible form using the walker.
  */
 function toYAMLValue(value: unknown, entityNames: Map<Declarable, string>): unknown {
-  return walkValue(value, entityNames, gitlabVisitor(entityNames));
-}
-
-/**
- * Emit a YAML value with proper indentation.
- */
-function emitYAML(value: unknown, indent: number): string {
-  const prefix = "  ".repeat(indent);
-
-  if (value === null || value === undefined) {
-    return "null";
-  }
-
-  if (typeof value === "boolean") {
-    return value ? "true" : "false";
-  }
-
-  if (typeof value === "number") {
-    return String(value);
-  }
-
-  if (typeof value === "string") {
-    // Quote strings that could be misinterpreted
-    if (
-      value === "" ||
-      value === "true" ||
-      value === "false" ||
-      value === "null" ||
-      value === "yes" ||
-      value === "no" ||
-      value.includes(": ") ||
-      value.includes("#") ||
-      value.startsWith("*") ||
-      value.startsWith("&") ||
-      value.startsWith("!") ||
-      value.startsWith("{") ||
-      value.startsWith("[") ||
-      value.startsWith("'") ||
-      value.startsWith('"') ||
-      value.startsWith("$") ||
-      /^\d/.test(value)
-    ) {
-      // Use single quotes, escaping internal single quotes
-      return `'${value.replace(/'/g, "''")}'`;
-    }
-    return value;
-  }
-
-  if (Array.isArray(value)) {
-    if (value.length === 0) return "[]";
-    const lines: string[] = [];
-    for (const item of value) {
-      if (typeof item === "object" && item !== null && !Array.isArray(item)) {
-        // Object items in arrays
-        const entries = Object.entries(item as Record<string, unknown>);
-        if (entries.length > 0) {
-          const [firstKey, firstVal] = entries[0];
-          lines.push(`${prefix}- ${firstKey}: ${emitYAML(firstVal, indent + 2).trimStart()}`);
-          for (let i = 1; i < entries.length; i++) {
-            const [key, val] = entries[i];
-            lines.push(`${prefix}  ${key}: ${emitYAML(val, indent + 2).trimStart()}`);
-          }
-        }
-      } else {
-        lines.push(`${prefix}- ${emitYAML(item, indent + 1).trimStart()}`);
-      }
-    }
-    return "\n" + lines.join("\n");
-  }
-
-  if (typeof value === "object") {
-    const entries = Object.entries(value as Record<string, unknown>);
-    if (entries.length === 0) return "{}";
-    const lines: string[] = [];
-    for (const [key, val] of entries) {
-      const emitted = emitYAML(val, indent + 1);
-      if (emitted.startsWith("\n")) {
-        lines.push(`${prefix}${key}:${emitted}`);
-      } else {
-        lines.push(`${prefix}${key}: ${emitted}`);
-      }
-    }
-    return "\n" + lines.join("\n");
-  }
-
-  return String(value);
+  const preprocessed = preprocessIntrinsics(value);
+  return walkValue(preprocessed, entityNames, gitlabVisitor(entityNames));
 }
 
 /**

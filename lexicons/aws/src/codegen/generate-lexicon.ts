@@ -25,6 +25,10 @@ export interface LexiconEntry {
   createOnly?: string[];
   writeOnly?: string[];
   primaryIdentifier?: string[];
+  deprecatedProperties?: string[];
+  conditionalCreateOnly?: string[];
+  replacementStrategy?: "delete_then_create" | "create_then_delete";
+  tagging?: { taggable: boolean; tagOnCreate: boolean; tagUpdatable: boolean };
   runtimeDeprecations?: Record<string, string>;
 }
 
@@ -67,6 +71,10 @@ export function generateLexiconJSON(
         ...(r.resource.createOnly.length > 0 && { createOnly: r.resource.createOnly }),
         ...(r.resource.writeOnly.length > 0 && { writeOnly: r.resource.writeOnly }),
         ...(r.resource.primaryIdentifier.length > 0 && { primaryIdentifier: r.resource.primaryIdentifier }),
+        ...(r.resource.deprecatedProperties?.length && { deprecatedProperties: r.resource.deprecatedProperties }),
+        ...(r.resource.conditionalCreateOnly?.length && { conditionalCreateOnly: r.resource.conditionalCreateOnly }),
+        ...(r.resource.replacementStrategy && { replacementStrategy: r.resource.replacementStrategy }),
+        ...(r.resource.tagging && { tagging: r.resource.tagging }),
         ...(runtimeDepr && { runtimeDeprecations: runtimeDepr }),
       };
     },

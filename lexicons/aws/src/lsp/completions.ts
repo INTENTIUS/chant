@@ -1,5 +1,7 @@
+import { createRequire } from "module";
 import type { CompletionContext, CompletionItem } from "@intentius/chant/lsp/types";
 import { LexiconIndex, lexiconCompletions, type LexiconEntry } from "@intentius/chant/lsp/lexicon-providers";
+const require = createRequire(import.meta.url);
 
 let cachedIndex: LexiconIndex | null = null;
 

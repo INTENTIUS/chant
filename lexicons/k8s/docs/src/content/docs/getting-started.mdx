@@ -1,0 +1,91 @@
+---
+title: "Getting Started"
+description: "Install chant and deploy your first Kubernetes manifest in 5 minutes"
+---
+## What is chant?
+
+Chant is a TypeScript-to-YAML compiler for Kubernetes. You write typed TypeScript declarations, and chant outputs kubectl-ready manifests.
+
+## Install
+
+```bash
+npm install --save-dev @intentius/chant @intentius/chant-lexicon-k8s
+```
+
+## Your first deployment
+
+The fastest path is the **WebApp** composite — one function call that produces a Deployment, Service, and optional Ingress:
+
+```typescript
+// src/infra.k8s.ts
+import { WebApp } from "@intentius/chant-lexicon-k8s";
+
+const app = WebApp({
+  name: "hello",
+  image: "nginx:1.25",
+  port: 80,
+  replicas: 2,
+});
+
+export const { deployment, service } = app;
+```
+
+Build and deploy:
+
+```bash
+# Generate YAML manifests
+chant build --output dist/manifests.yaml
+
+# Validate against the cluster API (no changes applied)
+kubectl apply -f dist/manifests.yaml --dry-run=server
+
+# Apply for real
+kubectl apply -f dist/manifests.yaml
+```
+
+## Using resource constructors
+
+Composites are convenient, but you can also use the lower-level resource constructors directly:
+
+```typescript
+// src/infra.k8s.ts
+import { Deployment, Service, Container, Probe } from "@intentius/chant-lexicon-k8s";
+
+export const deployment = new Deployment({
+  metadata: { name: "hello", labels: { "app.kubernetes.io/name": "hello" } },
+  spec: {
+    replicas: 2,
+    selector: { matchLabels: { "app.kubernetes.io/name": "hello" } },
+    template: {
+      metadata: { labels: { "app.kubernetes.io/name": "hello" } },
+      spec: {
+        containers: [
+          new Container({
+            name: "web",
+            image: "nginx:1.25",
+            ports: [{ containerPort: 80, name: "http" }],
+            livenessProbe: new Probe({ httpGet: { path: "/", port: 80 } }),
+            readinessProbe: new Probe({ httpGet: { path: "/", port: 80 } }),
+          }),
+        ],
+      },
+    },
+  },
+});
+
+export const service = new Service({
+  metadata: { name: "hello" },
+  spec: {
+    selector: { "app.kubernetes.io/name": "hello" },
+    ports: [{ port: 80, targetPort: 80, name: "http" }],
+  },
+});
+```
+
+Composites return plain prop objects. Resource constructors (`new Deployment(...)`) accept the same shape. Both produce identical YAML.
+
+## Next steps
+
+- [Kubernetes Concepts](/chant/lexicons/k8s/kubernetes-concepts/) — how K8s resources map to chant constructs
+- [Examples: Composites](/chant/lexicons/k8s/composite-examples/) — WebApp, CronWorkload, AutoscaledService, and more
+- [Lint Rules](/chant/lexicons/k8s/lint-rules/) — built-in checks for security, reliability, and best practices

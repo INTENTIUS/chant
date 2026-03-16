@@ -3,66 +3,20 @@ import { resolve } from "node:path";
 import { buildTool, handleBuild } from "./tools/build";
 import { lintTool, handleLint } from "./tools/lint";
 import { importTool, handleImport } from "./tools/import";
-import { getContext } from "./resources/context";
+import { explainTool, handleExplain } from "./tools/explain";
+import { scaffoldTool, createScaffoldHandler } from "./tools/scaffold";
+import { searchTool, createSearchHandler } from "./tools/search";
 import type { LexiconPlugin } from "../../lexicon";
-import type { McpToolContribution, McpResourceContribution } from "../../mcp/types";
-
-/**
- * MCP message types
- */
-interface McpRequest {
-  jsonrpc: "2.0";
-  id: string | number;
-  method: string;
-  params?: Record<string, unknown>;
-}
-
-interface McpResponse {
-  jsonrpc: "2.0";
-  id: string | number;
-  result?: unknown;
-  error?: {
-    code: number;
-    message: string;
-    data?: unknown;
-  };
-}
-
-interface McpNotification {
-  jsonrpc: "2.0";
-  method: string;
-  params?: Record<string, unknown>;
-}
-
-/**
- * Tool definition for MCP
- */
-interface ToolDefinition {
-  name: string;
-  description: string;
-  inputSchema: {
-    type: "object";
-    properties: Record<string, unknown>;
-    required?: string[];
-  };
-}
-
-/**
- * Resource definition for MCP
- */
-interface ResourceDefinition {
-  uri: string;
-  name: string;
-  description: string;
-  mimeType?: string;
-}
+import type { McpRequest, McpResponse, ToolDefinition, ToolHandler, ResourceDefinition } from "./types";
+import { createSnapshotTool, createDiffTool, createSpellDoneTool } from "./state-tools";
+import { buildResourcesList, handleResourcesRead } from "./resource-handlers";
 
 /**
  * MCP Server implementation
  */
 export class McpServer {
   private tools: Map<string, ToolDefinition> = new Map();
-  private toolHandlers: Map<string, (params: Record<string, unknown>) => Promise<unknown>> = new Map();
+  private toolHandlers: Map<string, ToolHandler> = new Map();
   private pluginResources: Map<string, { definition: ResourceDefinition; handler: () => Promise<string> }> = new Map();
 
   constructor(plugins?: LexiconPlugin[]) {
@@ -70,6 +24,19 @@ export class McpServer {
     this.registerTool(buildTool, handleBuild);
     this.registerTool(lintTool, handleLint);
     this.registerTool(importTool, handleImport);
+    this.registerTool(explainTool, handleExplain);
+    this.registerTool(scaffoldTool, createScaffoldHandler(plugins ?? []));
+    this.registerTool(searchTool, createSearchHandler(plugins ?? []));
+
+    // Register state tools
+    const snapshot = createSnapshotTool(plugins ?? []);
+    this.registerTool(snapshot.definition, snapshot.handler);
+
+    const diff = createDiffTool(plugins ?? []);
+    this.registerTool(diff.definition, diff.handler);
+
+    const spellDone = createSpellDoneTool();
+    this.registerTool(spellDone.definition, spellDone.handler);
 
     // Register plugin contributions
     if (plugins) {
@@ -122,7 +89,7 @@ export class McpServer {
    */
   private registerTool(
     definition: ToolDefinition,
-    handler: (params: Record<string, unknown>) => Promise<unknown>
+    handler: ToolHandler,
   ): void {
     this.tools.set(definition.name, definition);
     this.toolHandlers.set(definition.name, handler);
@@ -157,49 +124,27 @@ export class McpServer {
   private async dispatch(method: string, params: Record<string, unknown>): Promise<unknown> {
     switch (method) {
       case "initialize":
-        return this.handleInitialize(params);
+        return {
+          protocolVersion: "2024-11-05",
+          capabilities: { tools: {}, resources: {} },
+          serverInfo: { name: "chant", version: "0.1.0" },
+        };
 
       case "tools/list":
-        return this.handleToolsList();
+        return { tools: Array.from(this.tools.values()) };
 
       case "tools/call":
         return this.handleToolsCall(params);
 
       case "resources/list":
-        return this.handleResourcesList();
+        return buildResourcesList(this.pluginResources);
 
       case "resources/read":
-        return this.handleResourcesRead(params);
+        return handleResourcesRead(params, this.pluginResources);
 
       default:
         throw new Error(`Unknown method: ${method}`);
     }
-  }
-
-  /**
-   * Handle initialize request
-   */
-  private handleInitialize(params: Record<string, unknown>): unknown {
-    return {
-      protocolVersion: "2024-11-05",
-      capabilities: {
-        tools: {},
-        resources: {},
-      },
-      serverInfo: {
-        name: "chant",
-        version: "0.1.0",
-      },
-    };
-  }
-
-  /**
-   * Handle tools/list request
-   */
-  private handleToolsList(): unknown {
-    return {
-      tools: Array.from(this.tools.values()),
-    };
   }
 
   /**
@@ -212,12 +157,7 @@ export class McpServer {
     const handler = this.toolHandlers.get(name);
     if (!handler) {
       return {
-        content: [
-          {
-            type: "text",
-            text: `Error: Unknown tool: ${name}`,
-          },
-        ],
+        content: [{ type: "text", text: `Error: Unknown tool: ${name}` }],
         isError: true,
       };
     }
@@ -243,115 +183,6 @@ export class McpServer {
         isError: true,
       };
     }
-  }
-
-  /**
-   * Handle resources/list request — merges core + plugin resources
-   */
-  private handleResourcesList(): unknown {
-    const resources: ResourceDefinition[] = [
-      {
-        uri: "chant://context",
-        name: "chant Context",
-        description: "Lexicon-specific instructions and patterns for chant development",
-        mimeType: "text/markdown",
-      },
-      {
-        uri: "chant://examples/list",
-        name: "Examples List",
-        description: "List of available chant examples",
-        mimeType: "application/json",
-      },
-    ];
-
-    // Merge plugin resources
-    for (const { definition } of this.pluginResources.values()) {
-      resources.push(definition);
-    }
-
-    return { resources };
-  }
-
-  /**
-   * Collect example resources from plugins whose URI contains "examples/"
-   */
-  private collectExamples(): Array<{ name: string; description: string }> {
-    const examples: Array<{ name: string; description: string }> = [];
-    for (const [uri, { definition }] of this.pluginResources.entries()) {
-      if (uri.includes("/examples/")) {
-        const name = uri.replace(/^chant:\/\/[^/]+\/examples\//, "");
-        examples.push({ name, description: definition.description });
-      }
-    }
-    return examples;
-  }
-
-  /**
-   * Handle resources/read request — checks plugin resources after core
-   */
-  private async handleResourcesRead(params: Record<string, unknown>): Promise<unknown> {
-    const uri = params.uri as string;
-
-    if (uri === "chant://context") {
-      return {
-        contents: [
-          {
-            uri,
-            mimeType: "text/markdown",
-            text: getContext(),
-          },
-        ],
-      };
-    }
-
-    if (uri === "chant://examples/list") {
-      return {
-        contents: [
-          {
-            uri,
-            mimeType: "application/json",
-            text: JSON.stringify(this.collectExamples()),
-          },
-        ],
-      };
-    }
-
-    if (uri.startsWith("chant://examples/")) {
-      // Look up example in plugin resources
-      const name = uri.replace("chant://examples/", "");
-      for (const [pluginUri, pluginResource] of this.pluginResources.entries()) {
-        if (pluginUri.endsWith(`/examples/${name}`)) {
-          const text = await pluginResource.handler();
-          return {
-            contents: [
-              {
-                uri,
-                mimeType: pluginResource.definition.mimeType ?? "text/typescript",
-                text,
-              },
-            ],
-          };
-        }
-      }
-      throw new Error(`Example not found: ${name}`);
-    }
-
-    // Check plugin resources
-    const pluginResource = this.pluginResources.get(uri);
-    if (pluginResource) {
-      const text = await pluginResource.handler();
-      return {
-        contents: [
-          {
-            uri,
-            mimeType: pluginResource.definition.mimeType ?? "text/plain",
-            text,
-          },
-        ],
-      };
-    }
-
-    throw new Error(`Unknown resource: ${uri}`);
   }
 
   /**

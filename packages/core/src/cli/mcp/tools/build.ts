@@ -58,7 +58,8 @@ export async function handleBuild(params: Record<string, unknown>): Promise<unkn
   // Combine all lexicon outputs
   const combined: Record<string, unknown> = {};
   for (const [lexiconName, lexiconOutput] of result.outputs) {
-    combined[lexiconName] = JSON.parse(lexiconOutput);
+    const raw = lexiconOutput;
+    combined[lexiconName] = JSON.parse(typeof raw === "string" ? raw : raw.primary);
   }
 
   let output = JSON.stringify(combined, null, 2);

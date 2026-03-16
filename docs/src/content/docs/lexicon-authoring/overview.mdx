@@ -13,7 +13,7 @@ You're in the right place if you want to:
 - Create an internal lexicon for your organization's infrastructure patterns
 - Extend chant with custom resource types and lint rules
 
-If you're **using** an existing lexicon (like AWS CloudFormation), see the [User Guide](/guide/writing-resources/) instead.
+If you're **using** an existing lexicon (like AWS CloudFormation), see the [User Guide](/chant/guide/writing-resources/) instead.
 
 ## The LexiconPlugin Interface
 
@@ -38,7 +38,7 @@ export const myPlugin: LexiconPlugin = {
 
 ### Required lifecycle methods
 
-Every lexicon must implement these 5 methods to support the full generation and distribution workflow:
+Every lexicon must implement these 4 methods to support the full generation and distribution workflow:
 
 | Method | Signature | Description |
 |--------|-----------|-------------|
@@ -46,7 +46,6 @@ Every lexicon must implement these 5 methods to support the full generation and 
 | `validate` | `(options?) => Promise<void>` | Validate generated artifacts |
 | `coverage` | `(options?) => Promise<void>` | Analyze spec coverage across resource dimensions |
 | `package` | `(options?) => Promise<void>` | Package lexicon into a distributable bundle |
-| `rollback` | `(options?) => Promise<void>` | List or restore generation snapshots |
 
 ### Optional methods
 
@@ -60,7 +59,7 @@ Every lexicon must implement these 5 methods to support the full generation and 
 | `detectTemplate()` | `boolean` | Detect if a template belongs to this lexicon |
 | `templateParser()` | `TemplateParser` | Parser for importing external templates |
 | `templateGenerator()` | `TypeScriptGenerator` | Generator for converting IR to TypeScript |
-| `initTemplates()` | `Record<string, string>` | Source file templates for `chant init` scaffolding |
+| `initTemplates(template?)` | `InitTemplateSet` | Source file templates for `chant init` scaffolding (accepts optional template name) |
 | `skills()` | `SkillDefinition[]` | AI assistant skills |
 | `completionProvider()` | `CompletionItem[]` | LSP completions for resource/property names |
 | `hoverProvider()` | `HoverInfo` | LSP hover information for resource types |
@@ -90,13 +89,14 @@ The **AWS CloudFormation lexicon** (`lexicons/aws/`) is the canonical reference 
 
 Building a lexicon follows these steps:
 
-1. **[Scaffold](/lexicon-authoring/scaffold/)** — `chant init lexicon` generates the project structure
-2. **[Implement Generate](/lexicon-authoring/generate/)** — wire up `generatePipeline` with your upstream spec
-3. **[Create a Serializer](/lexicon-authoring/serializer/)** — convert evaluated resources to your target format
-4. **[Write Lint Rules](/lexicon-authoring/lint-rules/)** — imperative, declarative, and post-synth checks
-5. **[LSP & MCP Providers](/lexicon-authoring/lsp-mcp/)** — editor completions, hover, and AI tool support
-6. **[Skills](/lexicon-authoring/skills/)** — AI agent skill files
-7. **[Package & Publish](/lexicon-authoring/package/)** — bundle and publish to npm
+1. **[Scaffold](/chant/lexicon-authoring/scaffold/)** — `chant init lexicon` generates the project structure
+2. **[Implement Generate](/chant/lexicon-authoring/generate/)** — wire up `generatePipeline` with your upstream spec
+3. **[Create a Serializer](/chant/lexicon-authoring/serializer/)** — convert evaluated resources to your target format
+4. **[Write Lint Rules](/chant/lexicon-authoring/lint-rules/)** — imperative, declarative, and post-synth checks
+5. **[LSP & MCP Providers](/chant/lexicon-authoring/lsp-mcp/)** — editor completions, hover, and AI tool support
+6. **[Skills](/chant/lexicon-authoring/skills/)** — AI agent skill files
+7. **[Package & Publish](/chant/lexicon-authoring/package/)** — bundle and publish to npm
+8. **[CI & Distribution](/chant/lexicon-authoring/ci-integration/)** — `chant dev onboard` wires CI, Docker smoke tests, and npm publishing
 
 ## Example: Minimal Custom Lexicon
 
@@ -142,12 +142,15 @@ export const k8sPlugin: LexiconPlugin = {
     // TODO: Run packagePipeline to produce a distributable bundle
     throw new Error("Not yet implemented");
   },
-
-  async rollback() {
-    // TODO: List/restore generation snapshots
-    console.error("No snapshots available.");
-  },
 };
 ```
 
 Publish this as `@intentius/chant-lexicon-k8s` (or `@yourorg/lexicon-k8s`) and users can add it to their project.
+
+## Background Reading
+
+These architecture pages cover the internals a lexicon author needs to understand:
+
+- [Core Type System](/chant/architecture/core-type-system/) — `Declarable`, `ResourceType`, and the evaluator's type model
+- [Lexicon Registry](/chant/architecture/lexicon-registry/) — how chant discovers, loads, and validates lexicon plugins
+- [Serializer Architecture](/chant/architecture/serializer/) — the serialization contract your plugin must implement

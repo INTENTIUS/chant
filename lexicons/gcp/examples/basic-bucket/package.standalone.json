@@ -1,0 +1,20 @@
+{
+  "name": "gcp-basic-bucket-example",
+  "version": "0.0.1",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "build": "chant build src --lexicon gcp -o config.yaml",
+    "lint": "chant lint src",
+    "dev": "chant build src --lexicon gcp --watch -o config.yaml",
+    "deploy": "kubectl apply -f config.yaml",
+    "teardown": "kubectl delete -f config.yaml"
+  },
+  "dependencies": {
+    "@intentius/chant": "^0.0.14",
+    "@intentius/chant-lexicon-gcp": "^0.0.14"
+  },
+  "devDependencies": {
+    "typescript": "^5.0.0"
+  }
+}

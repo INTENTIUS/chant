@@ -4,11 +4,15 @@
   "type": "module",
   "private": true,
   "scripts": {
-    "build": "chant build src --lexicon gitlab",
-    "dev": "chant build src --lexicon gitlab --watch"
+    "build": "chant build src --lexicon gitlab -o .gitlab-ci.yml",
+    "lint": "chant lint src",
+    "dev": "chant build src --lexicon gitlab --watch -o .gitlab-ci.yml"
   },
   "dependencies": {
     "@intentius/chant-lexicon-gitlab": "workspace:*",
     "@intentius/chant": "workspace:*"
+  },
+  "devDependencies": {
+    "typescript": "*"
   }
 }

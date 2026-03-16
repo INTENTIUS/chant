@@ -36,7 +36,7 @@ describe("awsPlugin", () => {
 
   test("returns intrinsics", () => {
     const intrinsics = awsPlugin.intrinsics!();
-    expect(intrinsics.length).toBe(8);
+    expect(intrinsics.length).toBe(9);
     const names = intrinsics.map((i) => i.name);
     expect(names).toContain("Sub");
     expect(names).toContain("Ref");
@@ -96,17 +96,17 @@ describe("awsPlugin", () => {
       expect(skills.length).toBeGreaterThanOrEqual(1);
     });
 
-    test("aws-cloudformation skill has required fields", () => {
+    test("chant-aws skill has required fields", () => {
       const skills = awsPlugin.skills!();
-      const cfnSkill = skills.find((s) => s.name === "aws-cloudformation");
+      const cfnSkill = skills.find((s) => s.name === "chant-aws");
       expect(cfnSkill).toBeDefined();
       expect(cfnSkill!.description.length).toBeGreaterThan(0);
       expect(cfnSkill!.content.length).toBeGreaterThan(0);
     });
 
-    test("aws-cloudformation skill has triggers", () => {
+    test("chant-aws skill has triggers", () => {
       const skills = awsPlugin.skills!();
-      const cfnSkill = skills.find((s) => s.name === "aws-cloudformation")!;
+      const cfnSkill = skills.find((s) => s.name === "chant-aws")!;
       expect(cfnSkill.triggers).toBeDefined();
       expect(cfnSkill.triggers!.length).toBeGreaterThanOrEqual(1);
 
@@ -119,9 +119,9 @@ describe("awsPlugin", () => {
       expect(contextTrigger!.value).toBe("aws");
     });
 
-    test("aws-cloudformation skill has parameters", () => {
+    test("chant-aws skill has parameters", () => {
       const skills = awsPlugin.skills!();
-      const cfnSkill = skills.find((s) => s.name === "aws-cloudformation")!;
+      const cfnSkill = skills.find((s) => s.name === "chant-aws")!;
       expect(cfnSkill.parameters).toBeDefined();
       expect(cfnSkill.parameters!.length).toBeGreaterThanOrEqual(1);
 
@@ -131,9 +131,9 @@ describe("awsPlugin", () => {
       expect(resourceTypeParam!.type).toBe("string");
     });
 
-    test("aws-cloudformation skill has examples", () => {
+    test("chant-aws skill has examples", () => {
       const skills = awsPlugin.skills!();
-      const cfnSkill = skills.find((s) => s.name === "aws-cloudformation")!;
+      const cfnSkill = skills.find((s) => s.name === "chant-aws")!;
       expect(cfnSkill.examples).toBeDefined();
       expect(cfnSkill.examples!.length).toBeGreaterThanOrEqual(1);
 
@@ -145,11 +145,12 @@ describe("awsPlugin", () => {
 
     test("skill content is valid markdown with frontmatter", () => {
       const skills = awsPlugin.skills!();
-      const cfnSkill = skills.find((s) => s.name === "aws-cloudformation")!;
+      const cfnSkill = skills.find((s) => s.name === "chant-aws")!;
       expect(cfnSkill.content).toContain("---");
-      expect(cfnSkill.content).toContain("# AWS CloudFormation with Chant");
-      expect(cfnSkill.content).toContain("## Common Resource Types");
-      expect(cfnSkill.content).toContain("## Best Practices");
+      expect(cfnSkill.content).toContain("skill: chant-aws");
+      expect(cfnSkill.content).toContain("user-invocable: true");
+      expect(cfnSkill.content).toContain("chant build");
+      expect(cfnSkill.content).toContain("aws cloudformation deploy");
     });
   });
 
@@ -174,9 +175,6 @@ describe("awsPlugin", () => {
       expect(typeof awsPlugin.package).toBe("function");
     });
 
-    test("rollback is a function", () => {
-      expect(typeof awsPlugin.rollback).toBe("function");
-    });
   });
 
   // -----------------------------------------------------------------------

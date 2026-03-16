@@ -1,0 +1,181 @@
+---
+title: "AKS Composites"
+description: "Vendor-specific composites for Azure AKS — Workload Identity, AGIC Ingress, Azure Disk/Files storage, Azure Monitor, and ExternalDNS."
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+These composites produce K8s YAML with AKS-specific annotations and configurations. They complement the [generic composites](./composite-examples) by adding Azure service integrations.
+
+## AksWorkloadIdentityServiceAccount
+
+ServiceAccount annotated for AKS Workload Identity:
+
+```typescript
+import { AksWorkloadIdentityServiceAccount } from "@intentius/chant-lexicon-k8s";
+
+const { serviceAccount, role, roleBinding } = AksWorkloadIdentityServiceAccount({
+  name: "app-sa",
+  clientId: "12345678-abcd-1234-abcd-123456789012",
+  rbacRules: [
+    { apiGroups: [""], resources: ["secrets"], verbs: ["get"] },
+  ],
+  namespace: "prod",
+});
+```
+
+- Sets `azure.workload.identity/client-id` annotation on the ServiceAccount
+- Optional RBAC rules create a Role + RoleBinding scoped to the namespace
+- Requires AKS Workload Identity enabled on the cluster + a federated credential on the managed identity
+
+## AgicIngress
+
+Ingress with Application Gateway Ingress Controller annotations:
+
+```typescript
+import { AgicIngress } from "@intentius/chant-lexicon-k8s";
+
+const { ingress } = AgicIngress({
+  name: "api-ingress",
+  hosts: [
+    {
+      hostname: "api.example.com",
+      paths: [{ path: "/", serviceName: "api", servicePort: 80 }],
+    },
+  ],
+  certificateArn: "keyvault-cert-name",
+  healthCheckPath: "/healthz",
+  wafPolicyId: "/subscriptions/.../applicationGatewayWebApplicationFirewallPolicies/my-waf",
+  cookieAffinity: false,
+});
+```
+
+- Auto-sets `appgw.ingress.kubernetes.io/*` annotations
+- SSL redirect enabled by default when `certificateArn` is set
+- `wafPolicyId` attaches a WAFv2 policy for L7 protection
+- `healthCheckPath` configures Application Gateway backend health probes
+- `cookieAffinity` enables session persistence via cookie-based affinity
+
+## AzureDiskStorageClass
+
+StorageClass for the Azure Disk CSI driver:
+
+```typescript
+import { AzureDiskStorageClass } from "@intentius/chant-lexicon-k8s";
+
+const { storageClass } = AzureDiskStorageClass({
+  name: "premium-lrs",
+  skuName: "Premium_LRS",
+  cachingMode: "ReadOnly",
+  allowVolumeExpansion: true,
+});
+```
+
+- Provisions `disk.csi.azure.com` volumes
+- SKU options: `Premium_LRS`, `StandardSSD_LRS`, `Standard_LRS`, `UltraSSD_LRS`
+- `cachingMode` controls host caching (`None`, `ReadOnly`, `ReadWrite`)
+
+## AzureFileStorageClass
+
+StorageClass for the Azure Files CSI driver (ReadWriteMany):
+
+```typescript
+import { AzureFileStorageClass } from "@intentius/chant-lexicon-k8s";
+
+const { storageClass } = AzureFileStorageClass({
+  name: "azure-files-premium",
+  skuName: "Premium_LRS",
+  protocol: "smb",
+});
+```
+
+- ReadWriteMany access — shared across pods and nodes
+- Protocol options: `smb` (default), `nfs`
+- Use Azure Disk for ReadWriteOnce (single pod), Azure Files for ReadWriteMany (shared)
+
+## AksExternalDnsAgent
+
+ExternalDNS for Azure DNS integration:
+
+```typescript
+import { AksExternalDnsAgent } from "@intentius/chant-lexicon-k8s";
+
+const result = AksExternalDnsAgent({
+  clientId: "12345678-abcd-1234-abcd-123456789012",
+  resourceGroup: "my-rg",
+  subscriptionId: "sub-id",
+  tenantId: "tenant-id",
+  domainFilters: ["example.com"],
+  txtOwnerId: "my-cluster",
+});
+```
+
+- Watches Ingress/Service resources and creates Azure DNS records
+- Uses AKS Workload Identity for authentication
+- `domainFilters` restricts which domains ExternalDNS can manage
+
+## AzureMonitorCollector
+
+Azure Monitor with OTel for Log Analytics:
+
+```typescript
+import { AzureMonitorCollector } from "@intentius/chant-lexicon-k8s";
+
+const result = AzureMonitorCollector({
+  workspaceId: "/subscriptions/.../workspaces/my-workspace",
+  clusterName: "my-cluster",
+  clientId: "12345678-abcd-1234-abcd-123456789012",
+});
+```
+
+- Deploys OTel collector as a DaemonSet
+- Forwards logs and metrics to Azure Monitor / Log Analytics
+- Uses AKS Workload Identity for authentication
+
+## Workload Identity vs Pod-Managed Identity
+
+| Feature | Workload Identity | Pod-Managed Identity (deprecated) |
+|---------|------------------|----------------------------------|
+| K8s annotation needed | Yes (`azure.workload.identity/client-id`) | Yes (`aadpodidbinding` label) |
+| Composite available | **AksWorkloadIdentityServiceAccount** | None (deprecated) |
+| Setup | OIDC issuer + federated credential | AzureIdentity + AzureIdentityBinding CRDs |
+| Security | OIDC token exchange, no NMI pod | NMI DaemonSet intercepts IMDS calls |
+| When to use | Always (recommended) | Legacy only, migrate to Workload Identity |
+
+Pod-managed identity (AAD Pod Identity v1) is deprecated. Always use AKS Workload Identity for new workloads.
+
+## AGIC considerations
+
+Application Gateway Ingress Controller (AGIC) manages an Azure Application Gateway:
+- **Application Gateway provisioned in ARM** — the gateway itself is an Azure resource created by the ARM template
+- **AGIC addon** — runs as a pod in the cluster, watches Ingress resources and configures the gateway
+- **Backend pools** — AGIC automatically adds pod IPs to the Application Gateway backend pool
+- **Health probes** — set `healthCheckPath` for proper backend health checking
+- **WAF integration** — attach a WAF policy via `wafPolicyId` for L7 protection
+- **TLS termination** — reference Key Vault certificates via `certificateArn` (the certificate URI or secret name)
+
+<Aside type="note">
+AKS ships its own metrics-server. HPA works out of the box without deploying a custom MetricsServer composite.
+</Aside>
+
+## AKS add-ons
+
+Common add-ons managed via AKS (not K8s manifests):
+
+| Add-on | Required for |
+|--------|-------------|
+| AGIC | `AgicIngress` |
+| AKS Workload Identity | `AksWorkloadIdentityServiceAccount` |
+| Azure Monitor (Container Insights) | Alternative to `AzureMonitorCollector` |
+| Azure Disk CSI driver | `AzureDiskStorageClass` (enabled by default) |
+| Azure Files CSI driver | `AzureFileStorageClass` (enabled by default) |
+| Azure Key Vault Secrets Provider | Syncing Key Vault secrets to K8s Secrets |
+| Azure Policy | Governance policies on cluster resources |
+
+Configure add-ons via the [Azure ARM lexicon](/chant/lexicons/azure/).
+
+## Further reading
+
+- [Azure AKS + Kubernetes tutorial](/chant/tutorials/aks-kubernetes/) — full deployment walkthrough
+- [Deploying to AKS](/chant/lexicons/azure/aks-kubernetes/) — Azure lexicon bridge page
+- [Generic composites](./composite-examples) — WebApp, AutoscaledService, NamespaceEnv, and more

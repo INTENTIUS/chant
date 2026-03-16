@@ -1,0 +1,95 @@
+---
+title: "Intrinsic Functions"
+description: "GitLab CI/CD intrinsic functions and their chant syntax"
+---
+The GitLab lexicon provides one intrinsic function: `reference()`, which maps to GitLab's `!reference` YAML tag.
+
+## `reference()` — reuse job properties
+
+The `reference()` intrinsic lets you reuse properties from other jobs or hidden keys. It produces the `!reference` YAML tag:
+
+```typescript title="reference-basic.ts"
+import { Job, reference } from "@intentius/chant-lexicon-gitlab";
+
+export const deployRef = new Job({
+  script: reference(".setup", "script"),
+});
+```
+
+Serializes to:
+
+```yaml
+deploy:
+  script: !reference [.setup, script]
+```
+
+### Syntax
+
+```typescript
+reference(jobName: string, property: string): ReferenceTag
+```
+
+- `jobName` — the job or hidden key to reference (e.g. `".setup"`, `"build"`)
+- `property` — the property to extract (e.g. `"script"`, `"before_script"`, `"rules"`)
+
+### Use cases
+
+```typescript title="reference-shared.ts"
+import { Job, reference } from "@intentius/chant-lexicon-gitlab";
+
+// Shared setup scripts from external YAML
+export const testRef = new Job({
+  stage: "test",
+  before_script: reference(".node-setup", "before_script"),
+  script: ["npm test"],
+});
+
+export const lintRef = new Job({
+  stage: "test",
+  before_script: reference(".node-setup", "before_script"),
+  script: ["npm run lint"],
+});
+
+// Shared rules
+export const buildRef = new Job({
+  stage: "build",
+  rules: reference(".default-rules", "rules"),
+  script: ["npm run build"],
+});
+```
+
+Produces:
+
+```yaml
+test:
+  stage: test
+  before_script: !reference [.node-setup, before_script]
+  script:
+    - npm test
+
+lint:
+  stage: test
+  before_script: !reference [.node-setup, before_script]
+  script:
+    - npm run lint
+```
+
+### When to use `reference()` vs direct imports
+
+```typescript title="reference-vs-import.ts"
+import { Job, reference } from "@intentius/chant-lexicon-gitlab";
+import { npmCache, testArtifacts } from "./config";
+
+// Preferred for chant-managed config — resolved at build time
+export const testImported = new Job({
+  cache: npmCache,
+  artifacts: testArtifacts,
+  script: ["npm test"],
+});
+
+// For external/included YAML definitions — produces !reference tags
+export const testExternal = new Job({
+  before_script: reference(".ci-setup", "before_script"),
+  script: ["npm test"],
+});
+```

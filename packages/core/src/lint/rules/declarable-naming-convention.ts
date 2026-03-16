@@ -62,6 +62,7 @@ export const declarableNamingConventionRule: LintRule = {
   id: "COR005",
   severity: "warning",
   category: "style",
+  description: "Exported declarable instances must use camelCase naming",
   check(context: LintContext): LintDiagnostic[] {
     const diagnostics: LintDiagnostic[] = [];
     checkNode(context.sourceFile, context, diagnostics);

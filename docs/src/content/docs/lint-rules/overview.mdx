@@ -9,10 +9,10 @@ chant includes a semantic lint system that validates the meaning of your declara
 
 | Category | ID Range | Scope | Description |
 |----------|----------|-------|-------------|
-| **Evaluability** | EVL001–EVL010 | Single file | Flag TypeScript patterns that cannot be statically evaluated |
-| **Style** | COR001–COR009, COR012–COR016, COR018 | Single file | Structural and naming conventions |
+| **Evaluability** | EVL001–EVL005, EVL007, EVL009–EVL010 | Single file | Flag TypeScript patterns that cannot be statically evaluated |
+| **Style** | COR001–COR009, COR012–COR015 | Single file | Structural and naming conventions |
 | **Cross-File** | COR010–COR011 | Multi-file | Unused exports and circular dependencies |
-| **Correctness** | COR003, COR004, COR007, COR008, COR016, COR017 | Single file | Structural errors |
+| **Correctness** | COR003, COR004, COR007, COR008, COR017 | Single file | Structural errors |
 | **Composite** | EVL009, EVL010, COR017, COR018 | Single file | Best practices for Composite() factories |
 | **Lexicon** | Varies by lexicon | Varies | Provider-specific rules (see lexicon docs) |
 
@@ -22,16 +22,16 @@ chant includes a semantic lint system that validates the meaning of your declara
 - **warning** — does not block the build. Should be addressed.
 - **info** — informational. Highlights potential improvements.
 
-Severity can be overridden per-rule in your configuration. See [Rule Configuration](/lint-rules/configuration/).
+Severity can be overridden per-rule in your configuration. See [Rule Configuration](/chant/lint-rules/configuration/).
 
 ## Running the Linter
 
 ```bash
-npx chant lint                   # Lint all files
-npx chant lint --format json     # Machine-readable output
-npx chant lint --format sarif    # SARIF 2.1.0 for CI integrations
-npx chant lint --watch           # Watch for changes
-npx chant lint --fix             # Auto-fix fixable issues
+chant lint                   # Lint all files
+chant lint --format json     # Machine-readable output
+chant lint --format sarif    # SARIF 2.1.0 for CI integrations (includes rule descriptions, fingerprints, suppressions)
+chant lint --watch           # Watch for changes
+chant lint --fix             # Auto-fix fixable issues
 ```
 
 ## Configuration
@@ -59,10 +59,7 @@ Rules are configured via `chant.config.ts` in your project root. When no config 
 | COR013 | info |
 | COR014 | warning |
 | COR015 | warning |
-| COR016 | warning |
-| COR017 | error |
-| COR018 | info |
-| EVL001–EVL008 | error |
+| EVL001–EVL005, EVL007 | error |
 | EVL009 | warning |
 | EVL010 | warning |
 
@@ -73,21 +70,22 @@ Rules are configured via `chant.config.ts` in your project root. When no config 
 Suppress rules with comments:
 
 ```typescript
-// chant-disable — disable all rules for entire file
-// chant-disable COR001 COR006 — disable specific rules for file
-// chant-disable-line — disable all rules for this line
-// chant-disable-next-line COR001 — disable COR001 for next line
+// chant-disable                          — disable all rules for entire file
+// chant-disable COR001 COR006            — disable specific rules for file
+// chant-disable-line                     — disable all rules for this line
+// chant-disable-next-line COR001         — disable COR001 for next line
+// chant-disable COR001 -- reason text    — suppress with an audit reason
 ```
 
-See [Disable Directives](/lint-rules/disable-directives/) for details.
+See [Disable Directives](/chant/lint-rules/disable-directives/) for details.
 
 ## See Also
 
-- [Evaluability Rules](/lint-rules/evaluability/) — EVL001–EVL008
-- [Style Rules](/lint-rules/style/) — COR001, COR002, COR005, etc.
-- [Cross-File Rules](/lint-rules/cross-file/) — COR010, COR011
-- [Correctness Rules](/lint-rules/correctness/) — COR003, COR004, COR007, COR008, COR016
-- [Composite Rules](/lint-rules/composite/) — EVL009, EVL010, COR017, COR018
-- [Custom Rules](/lint-rules/custom-rules/) — project-specific rules
-- [Configuration](/lint-rules/configuration/) — severity, presets, overrides
-- [Auto-Fix](/lint-rules/auto-fix/) — automatic fixes
+- [Evaluability Rules](/chant/lint-rules/evaluability/) — EVL001–EVL005, EVL007
+- [Style Rules](/chant/lint-rules/style/) — COR001, COR002, COR005, etc.
+- [Cross-File Rules](/chant/lint-rules/cross-file/) — COR010, COR011
+- [Correctness Rules](/chant/lint-rules/correctness/) — COR003, COR004, COR007, COR008
+- [Composite Rules](/chant/lint-rules/composite/) — EVL009, EVL010, COR017, COR018
+- [Custom Rules](/chant/lint-rules/custom-rules/) — project-specific rules
+- [Configuration](/chant/lint-rules/configuration/) — severity, presets, overrides
+- [Auto-Fix](/chant/lint-rules/auto-fix/) — automatic fixes

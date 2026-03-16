@@ -1,0 +1,102 @@
+---
+title: "Lint Rules"
+description: "Pre-synth lint rules and post-synth security checks"
+---
+
+The Azure lexicon includes 3 pre-synth lint rules (run on TypeScript source) and 20 post-synth checks (run on generated ARM JSON).
+
+## Pre-Synth Rules
+
+These rules analyze your TypeScript source files before template generation.
+
+### AZR001: Hardcoded Location
+
+Warns when a resource uses a hardcoded region string instead of `Azure.ResourceGroupLocation`.
+
+```typescript
+// Bad — hardcoded
+export const storage = new StorageAccount({ location: "eastus" });
+
+// Good — uses pseudo-parameter
+export const storage = new StorageAccount({ location: Azure.ResourceGroupLocation });
+```
+
+### AZR002: Storage HTTPS
+
+Warns when a storage account does not set `supportsHttpsTrafficOnly: true`.
+
+### AZR003: NSG Wildcard
+
+Warns when an NSG security rule uses `*` for source or destination, which is overly permissive.
+
+## Post-Synth Checks
+
+These checks validate the generated ARM template JSON after synthesis.
+
+### Correctness
+
+| ID | Description | Severity |
+|----|-------------|----------|
+| AZR010 | Redundant `dependsOn` — target already referenced via `reference()` or `resourceId()` | warning |
+| AZR011 | Missing or invalid `apiVersion` (must be YYYY-MM-DD format) | error |
+| AZR012 | Deprecated `apiVersion` (older than 2023-01-01) | warning |
+| AZR013 | Resource missing `location` (except exempt types like role assignments) | warning |
+
+### Storage Security
+
+| ID | Description | Severity |
+|----|-------------|----------|
+| AZR014 | Public blob access enabled on storage account | warning |
+| AZR015 | Missing encryption on storage account | warning |
+
+### Key Vault Security
+
+| ID | Description | Severity |
+|----|-------------|----------|
+| AZR016 | Key Vault soft-delete not enabled | warning |
+| AZR017 | Key Vault purge protection not enabled | warning |
+
+### SQL Security
+
+| ID | Description | Severity |
+|----|-------------|----------|
+| AZR018 | SQL Server missing auditing | warning |
+| AZR019 | SQL Server database missing TDE (Transparent Data Encryption) | warning |
+
+### App Service Security
+
+| ID | Description | Severity |
+|----|-------------|----------|
+| AZR020 | App Service missing managed identity | warning |
+| AZR021 | App Service missing HTTPS-only | warning |
+| AZR022 | App Service missing minimum TLS 1.2 | warning |
+
+### Compute Security
+
+| ID | Description | Severity |
+|----|-------------|----------|
+| AZR023 | VM missing managed disk | warning |
+| AZR024 | VM missing boot diagnostics | warning |
+
+### Kubernetes (AKS)
+
+| ID | Description | Severity |
+|----|-------------|----------|
+| AZR025 | AKS cluster missing RBAC | warning |
+| AZR026 | AKS cluster missing network policy | warning |
+
+### Container & Network
+
+| ID | Description | Severity |
+|----|-------------|----------|
+| AZR027 | Container Registry admin user enabled | warning |
+| AZR028 | Network interface missing NSG | warning |
+| AZR029 | Managed disk missing encryption | warning |
+
+## Suppressing checks
+
+Post-synth checks cannot be suppressed individually. If a check is triggering on a resource that intentionally deviates from best practice, fix the resource configuration to match the recommended pattern.
+
+## Adding custom checks
+
+See the [Lexicon Authoring Guide](/chant/lexicon-authoring/lint-rules/) for writing custom post-synth checks.

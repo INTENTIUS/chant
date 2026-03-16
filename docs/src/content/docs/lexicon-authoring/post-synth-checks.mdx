@@ -1,0 +1,175 @@
+---
+title: Post-Synth Check Guide
+description: Writing comprehensive post-synth checks for your lexicon
+---
+
+Post-synth checks validate the serialized output after the build pipeline completes. They catch issues in the generated templates that pre-synth rules (which operate on TypeScript AST) cannot detect.
+
+## Anatomy of a PostSynthCheck
+
+```typescript
+import type {
+  PostSynthCheck,
+  PostSynthContext,
+  PostSynthDiagnostic,
+} from "@intentius/chant/lint/post-synth";
+
+export const myCheck: PostSynthCheck = {
+  id: "MYD010",
+  description: "Human-readable description of what this check validates",
+
+  check(ctx: PostSynthContext): PostSynthDiagnostic[] {
+    const diagnostics: PostSynthDiagnostic[] = [];
+
+    for (const [_lexicon, output] of ctx.outputs) {
+      // Parse the output (JSON, YAML, etc.)
+      // Iterate resources
+      // Push diagnostics for violations
+    }
+
+    return diagnostics;
+  },
+};
+```
+
+## PostSynthContext
+
+The `ctx` parameter provides:
+
+- `ctx.outputs` — `Map<string, string | SerializerResult>` of serialized outputs per lexicon
+- `ctx.entities` — `Map<string, Declarable>` of all declared entities
+- `ctx.buildResult` — Full build result including warnings and errors
+
+## PostSynthDiagnostic
+
+Each diagnostic requires:
+
+```typescript
+{
+  checkId: "MYD010",           // Matches the check ID
+  severity: "warning",        // "warning" | "error"
+  message: "Human-readable message with resource name",
+  entity: "resourceName",     // Optional: the resource that triggered it
+  lexicon: "my-lexicon",      // Optional: lexicon identifier
+}
+```
+
+## Category Taxonomy
+
+Organize checks into categories for clarity:
+
+### Security
+Encryption, TLS, HTTPS, access control, identity configuration.
+
+```typescript
+// Example: Missing encryption
+if (!props.encryption) {
+  diagnostics.push({
+    checkId: "MYD015",
+    severity: "warning",
+    message: `Resource "${name}" has no encryption — enable encryption to protect data at rest`,
+  });
+}
+```
+
+### Correctness
+Required fields, valid values, correct dependencies.
+
+```typescript
+// Example: Missing required field
+if (!resource.apiVersion) {
+  diagnostics.push({
+    checkId: "MYD011",
+    severity: "error",
+    message: `Resource "${name}" is missing apiVersion`,
+  });
+}
+```
+
+### Best Practices
+Naming conventions, tagging/labeling, resource configuration.
+
+```typescript
+// Example: Redundant dependency
+if (propertyRefs.has(depName)) {
+  diagnostics.push({
+    checkId: "MYD010",
+    severity: "warning",
+    message: `Resource "${name}" has redundant dependency on "${depName}"`,
+  });
+}
+```
+
+### Deprecation
+Outdated API versions, legacy features.
+
+```typescript
+// Example: Old API version
+if (apiDate < deprecationThreshold) {
+  diagnostics.push({
+    checkId: "MYD012",
+    severity: "warning",
+    message: `Resource "${name}" uses outdated apiVersion`,
+  });
+}
+```
+
+## Testing Pattern
+
+Every check should have both a positive (flagged) and negative (clean) test:
+
+```typescript
+import { describe, test, expect } from "bun:test";
+import { createPostSynthContext } from "@intentius/chant-test-utils";
+import { myCheck } from "./my-check";
+
+describe("MYD010: My Check", () => {
+  test("flags when condition is violated", () => {
+    const ctx = createPostSynthContext({
+      "my-lexicon": { /* template with violation */ },
+    });
+    const diags = myCheck.check(ctx);
+    expect(diags).toHaveLength(1);
+    expect(diags[0].checkId).toBe("MYD010");
+  });
+
+  test("passes when condition is satisfied", () => {
+    const ctx = createPostSynthContext({
+      "my-lexicon": { /* template without violation */ },
+    });
+    const diags = myCheck.check(ctx);
+    expect(diags).toHaveLength(0);
+  });
+});
+```
+
+## Universal Check Patterns
+
+These patterns apply to most IaC formats:
+
+| Pattern | Description |
+|---------|-------------|
+| Missing encryption | Data at rest should be encrypted |
+| Overly permissive access | Wildcard rules, public access, admin credentials |
+| Deprecated versions | Old API versions, deprecated features |
+| Missing identity/auth | No managed identity, no RBAC, shared credentials |
+| Public access enabled | Resources exposed to the internet unintentionally |
+| Missing diagnostics | No logging, monitoring, or audit trail |
+| Missing TLS/HTTPS | Unencrypted transport |
+| Missing network isolation | No NSG, no network policy, no firewall rules |
+
+## Wiring Checks into Plugin
+
+Return checks from your plugin's `postSynthChecks()` method:
+
+```typescript
+postSynthChecks(): PostSynthCheck[] {
+  const { myCheck010 } = require("./lint/post-synth/check010");
+  const { myCheck011 } = require("./lint/post-synth/check011");
+  return [myCheck010, myCheck011];
+}
+```
+
+## Target Count
+
+A mature lexicon should have at least **15 post-synth checks** covering all four categories (security, correctness, best practices, deprecation). The K8s and Azure lexicons each have 20 checks.

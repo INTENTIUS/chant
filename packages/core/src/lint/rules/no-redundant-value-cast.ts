@@ -38,6 +38,7 @@ export const noRedundantValueCastRule: LintRule = {
   id: "COR015",
   severity: "warning",
   category: "style",
+  description: "Flags redundant 'as Value<...>' casts — Intrinsic types already satisfy Value<T>",
   check(context: LintContext): LintDiagnostic[] {
     const diagnostics: LintDiagnostic[] = [];
     checkNode(context.sourceFile, context, diagnostics);

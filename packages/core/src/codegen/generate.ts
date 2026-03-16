@@ -48,8 +48,13 @@ export interface GeneratePipelineConfig<T extends ParsedResult> {
   /** Fetch or provide raw schema data. */
   fetchSchemas: (opts: { force?: boolean }) => Promise<Map<string, Buffer>>;
 
-  /** Parse a single schema buffer into a result. Returns null to skip. */
-  parseSchema: (typeName: string, data: Buffer) => T | null;
+  /**
+   * Parse a single schema buffer into results. Returns null to skip.
+   *
+   * May return an array when a single schema file produces multiple results
+   * (e.g. K8s OpenAPI spec, GitLab CI schema).
+   */
+  parseSchema: (typeName: string, data: Buffer) => T | T[] | null;
 
   /** Create a naming strategy from the parsed results. */
   createNaming: (results: T[]) => NamingStrategy;
@@ -119,7 +124,13 @@ export async function generatePipeline<T extends ParsedResult>(
   for (const [typeName, data] of schemas) {
     try {
       const result = config.parseSchema(typeName, data);
-      if (result) results.push(result);
+      if (result) {
+        if (Array.isArray(result)) {
+          results.push(...result);
+        } else {
+          results.push(result);
+        }
+      }
     } catch (err) {
       warnings.push({
         file: typeName,
@@ -180,25 +191,14 @@ export interface WriteConfig {
   generatedSubdir?: string;
   /** Map of filename → content to write. */
   files: Record<string, string>;
-  /** Optional snapshot function called before overwriting. */
-  snapshot?: (generatedDir: string) => void;
 }
 
 /**
- * Write generated artifacts to disk with optional auto-snapshot.
+ * Write generated artifacts to disk.
  */
 export function writeGeneratedArtifacts(config: WriteConfig): void {
   const generatedDir = join(config.baseDir, config.generatedSubdir ?? "src/generated");
   mkdirSync(generatedDir, { recursive: true });
-
-  // Auto-snapshot before overwriting
-  if (config.snapshot) {
-    try {
-      config.snapshot(generatedDir);
-    } catch {
-      // Best effort — don't fail generation if snapshot fails
-    }
-  }
 
   for (const [filename, content] of Object.entries(config.files)) {
     writeFileSync(join(generatedDir, filename), content);

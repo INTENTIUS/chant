@@ -5,7 +5,7 @@ import { isCompositeCallee } from "./composite-scope";
 /**
  * COR018: Prefer lexicon property types in Composite props
  *
- * Composite prop interfaces should use lexicon property types (via the barrel)
+ * Composite prop interfaces should use lexicon property types (via the lexicon package)
  * instead of locally-declared interfaces or type aliases. Local types next to
  * a Composite definition often duplicate existing lexicon property types.
  *
@@ -13,7 +13,7 @@ import { isCompositeCallee } from "./composite-scope";
  *              in the same file as the Composite (excluding the props interface itself)
  * OK: InstanceType<typeof _.Role_Policy>
  * OK: primitives (string, number, boolean)
- * OK: barrel-imported types
+ * OK: lexicon-imported types
  */
 
 /**
@@ -60,7 +60,7 @@ function findLocalTypeDeclarations(sourceFile: ts.SourceFile): Map<string, ts.No
 
 /**
  * Collect type references used in a props interface's field types.
- * Returns names of locally-referenced types (not primitives, not from barrel).
+ * Returns names of locally-referenced types (not primitives, not from the lexicon package).
  */
 function collectFieldTypeRefs(
   propsDecl: ts.Node,
@@ -161,6 +161,7 @@ export const cor018CompositePreferLexiconTypeRule: LintRule = {
   id: "COR018",
   severity: "info",
   category: "style",
+  description: "Prefer lexicon property types over local interfaces in Composite props",
   check(context: LintContext): LintDiagnostic[] {
     return checkFile(context);
   },

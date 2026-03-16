@@ -34,6 +34,10 @@ export interface LintDiagnostic {
   line: number;
   /** Column number (1-based) */
   column: number;
+  /** End line number (1-based), when the diagnostic spans a range */
+  endLine?: number;
+  /** End column number (1-based), when the diagnostic spans a range */
+  endColumn?: number;
   /** ID of the rule that produced this diagnostic */
   ruleId: string;
   /** Severity level */
@@ -56,24 +60,6 @@ export interface LintContext {
   filePath: string;
   /** Optional lexicon context (undefined for core rules) */
   lexicon?: string;
-  /** Export names from the barrel file (for EVL008) */
-  barrelExports?: Set<string>;
-  /** All project exports keyed by name (for EVL008) */
-  projectExports?: Map<string, { file: string; className: string }>;
-  /** Project scan result (for COR016) */
-  projectScan?: import("../project/scan").ProjectScan;
-}
-
-/**
- * Options for extending the lint context with project-level information
- */
-export interface LintRunOptions {
-  /** Export names from the barrel file */
-  barrelExports?: Set<string>;
-  /** All project exports keyed by name */
-  projectExports?: Map<string, { file: string; className: string }>;
-  /** Project scan result (for COR016) */
-  projectScan?: import("../project/scan").ProjectScan;
 }
 
 /**
@@ -91,6 +77,10 @@ export interface LintRule {
   severity: Severity;
   /** Category for grouping */
   category: Category;
+  /** Human-readable description of what this rule checks */
+  description?: string;
+  /** Link to rule documentation */
+  helpUri?: string;
   /** Check the code and return diagnostics */
   check(context: LintContext, options?: Record<string, unknown>): LintDiagnostic[];
   /** Optionally provide fixes for issues found */

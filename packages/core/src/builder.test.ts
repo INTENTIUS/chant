@@ -36,6 +36,7 @@ class SimpleResourceBuilder extends Builder<TestResource> {
       throw new Error("Name and type are required");
     }
     return {
+      lexicon: "test",
       entityType: "TestResource",
       [DECLARABLE_MARKER]: true,
       name: this.name,
@@ -72,6 +73,7 @@ class ValidatedResourceBuilder extends Builder<TestResource> {
       throw new Error("Name and type are required");
     }
     return {
+      lexicon: "test",
       entityType: "TestResource",
       [DECLARABLE_MARKER]: true,
       name: this.name,
@@ -103,6 +105,7 @@ class DefaultsResourceBuilder extends Builder<TestResource> {
 
   build(): TestResource {
     return {
+      lexicon: "test",
       entityType: "TestResource",
       [DECLARABLE_MARKER]: true,
       name: this.name,

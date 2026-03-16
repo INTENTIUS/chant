@@ -1,0 +1,157 @@
+---
+title: Spells
+description: Orchestrate infrastructure deployments with AI agents
+---
+
+Spells are structured task definitions that orchestrate AI agent work.
+A spell defines **what** to do. Lexicon skills (inlined automatically) tell the agent **how** to do it.
+
+## Spells vs Skills
+
+- **Skills** are operational playbooks contributed by lexicons (e.g., the CloudFormation deployment guide). They teach agents how to build, deploy, validate, rollback, and troubleshoot. Skills are always available to the agent via `skills/` — you don't need a spell to use them. Spells are for orchestrating specific multi-step tasks; they inline skills automatically when a lexicon is declared.
+- **Spells** are task orchestration. They say "deploy this thing" and "take a state snapshot." The skills handle the rest.
+
+A spell with `lexicon: "aws"` automatically inlines the AWS skills into the agent prompt. The agent gets the full CloudFormation playbook without the spell needing to spell out every step.
+
+## Anatomy of a Spell
+
+A spell file lives in `spells/` and exports a `SpellDefinition`:
+
+```typescript
+import { spell, task, file } from "@intentius/chant";
+
+export default spell({
+  name: "lambda-function",
+  lexicon: "aws",
+  overview: "Deploy the lambda-function example — a single Node.js Lambda using LambdaNode.",
+  context: [
+    file("lexicons/aws/examples/lambda-function/README.md"),
+  ],
+  tasks: [
+    task("Deploy the lambda-function example at lexicons/aws/examples/lambda-function"),
+    task("Take a state snapshot: chant state snapshot dev"),
+  ],
+});
+```
+
+### API
+
+| Function | Purpose |
+|----------|---------|
+| `spell({ ... })` | Define a spell with name, overview, tasks, and optional lexicon/context/depends |
+| `task(description)` | Create a task. Accepts optional `{ done: true }` to mark it complete |
+| `file(path)` | Context item — inlines a file's contents into the agent prompt at cast time |
+| `cmd(command)` | Context item — executes a command and inlines stdout at cast time |
+
+### Spell Properties
+
+| Property | Required | Description |
+|----------|----------|-------------|
+| `name` | yes | Kebab-case identifier (max 64 chars) |
+| `overview` | yes | What this spell deploys |
+| `tasks` | yes | At least one task |
+| `lexicon` | no | Lexicon name (e.g., `"aws"`). Skills from this lexicon are inlined into the prompt |
+| `context` | no | Array of `file()`, `cmd()`, or plain strings to include in the prompt |
+| `depends` | no | Other spell names that must complete first |
+| `afterAll` | no | Commands to run after all tasks are done |
+
+## Writing Good Spells
+
+A typical spell has 2 tasks:
+
+1. **Deploy the thing** — point the agent at the example directory
+2. **Take a state snapshot** — capture the deployed state
+
+**Don't micromanage.** No "run build", "run lint", "verify resource count". The lexicon skills already cover the full build → validate → deploy → monitor workflow.
+
+**Do provide context.** Include README files and key source files so the agent knows what it's deploying.
+
+```typescript
+// ✅ Good — delegates to skills
+tasks: [
+  task("Deploy the lambda-sqs example at lexicons/aws/examples/lambda-sqs"),
+  task("Take a state snapshot: chant state snapshot dev"),
+],
+
+// ❌ Bad — micromanages what skills already handle
+tasks: [
+  task("Build: cd lexicons/aws/examples/lambda-sqs && bun run build"),
+  task("Lint: cd lexicons/aws/examples/lambda-sqs && bun run lint"),
+  task("Verify template.json contains 4 resources"),
+],
+```
+
+## CLI Commands
+
+| Command | Description |
+|---------|-------------|
+| `chant spell list` | List all spells with status and task progress |
+| `chant spell show <name>` | Show full spell details |
+| `chant spell cast <name>` | Generate the agent bootstrap prompt |
+| `chant spell done <name> <n>` | Mark task N as done (1-based) |
+| `chant spell add <name>` | Create a new spell template |
+| `chant spell rm <name>` | Remove a spell |
+| `chant graph` | Print the dependency graph |
+
+### Casting a Spell
+
+`chant spell cast <name>` produces a markdown prompt containing:
+
+1. The spell overview
+2. Resolved context (file contents, command output)
+3. Lexicon guidance (inlined skills)
+4. A numbered task checklist
+
+Paste this prompt into your AI agent to start the work. The agent reads the inlined skills and autonomously handles the build → validate → deploy workflow. You don't need to specify which commands to run.
+
+## Dependencies
+
+Spells can depend on other spells using `depends`:
+
+```typescript
+export default spell({
+  name: "deploy-api",
+  lexicon: "aws",
+  depends: ["deploy-infra"],
+  overview: "Deploy the API service (requires infra first).",
+  tasks: [
+    task("Deploy the API service"),
+  ],
+});
+```
+
+### Status
+
+Each spell has a computed status:
+
+| Status | Meaning |
+|--------|---------|
+| `blocked` | Has incomplete dependencies |
+| `ready` | All dependencies satisfied, tasks remaining |
+| `done` | All tasks marked done |
+
+## Example
+
+Here's an annotated lambda-function spell:
+
+```typescript
+import { spell, task, file } from "@intentius/chant";
+
+export default spell({
+  name: "lambda-function",
+  // Inlines AWS lexicon skills (CloudFormation deployment guide)
+  lexicon: "aws",
+  // One-line summary shown in `chant spell list`
+  overview: "Deploy the lambda-function example — a single Node.js Lambda using LambdaNode.",
+  // These files are inlined into the agent prompt
+  context: [
+    file("lexicons/aws/examples/lambda-function/README.md"),
+  ],
+  tasks: [
+    // The agent uses the inlined skills to figure out build/deploy steps
+    task("Deploy the lambda-function example at lexicons/aws/examples/lambda-function"),
+    // Capture deployed state for drift detection
+    task("Take a state snapshot: chant state snapshot dev"),
+  ],
+});
+```

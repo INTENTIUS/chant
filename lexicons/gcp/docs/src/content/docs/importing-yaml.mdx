@@ -1,0 +1,48 @@
+---
+title: "Importing Existing YAML"
+description: "Convert existing Config Connector YAML into typed TypeScript"
+---
+Chant can parse existing Config Connector YAML manifests and generate typed TypeScript source files.
+
+## How it works
+
+```
+Input YAML → parse → generate TypeScript → export typed resources
+```
+
+The importer reads multi-document YAML, identifies Config Connector resources by their `cnrm.cloud.google.com` apiVersion, and generates corresponding typed constructor calls.
+
+## Example
+
+Input YAML:
+
+```yaml
+apiVersion: storage.cnrm.cloud.google.com/v1beta1
+kind: StorageBucket
+metadata:
+  name: my-bucket
+spec:
+  location: US
+  uniformBucketLevelAccess: true
+```
+
+Generated TypeScript:
+
+```typescript
+import { Bucket } from "@intentius/chant-lexicon-gcp";
+
+export const myBucket = new Bucket({
+  metadata: { name: "my-bucket" },
+  location: "US",
+  uniformBucketLevelAccess: true,
+});
+```
+
+## Limitations
+
+The import pipeline:
+
+- Only handles Config Connector resources (`cnrm.cloud.google.com` apiVersion)
+- Non-CC resources (standard K8s Deployments, Services) are filtered out
+- Resource references are preserved as literal values, not typed refs
+- Multi-document YAML is fully supported

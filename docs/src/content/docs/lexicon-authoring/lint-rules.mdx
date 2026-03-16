@@ -75,6 +75,41 @@ Rule IDs follow the pattern `{PREFIX}{CATEGORY}{NUMBER}`:
 - **Category** — single letter: `D` (declarative), `S` (style), `C` (correctness), `E` (evaluability)
 - **Number** — three-digit sequential number
 
+## Testing
+
+### Post-synth checks
+
+Every post-synth check needs both positive and negative tests. Use a `makeCtx` helper:
+
+```typescript
+function makeCtx(yaml: string) {
+  return {
+    outputs: new Map([["my-lexicon", yaml]]),
+  };
+}
+
+describe("MYD010: description", () => {
+  test("flags bad pattern", () => {
+    const yaml = `...bad yaml...`;
+    const diags = myCheck.check(makeCtx(yaml));
+    expect(diags.length).toBeGreaterThanOrEqual(1);
+    expect(diags[0].checkId).toBe("MYD010");
+  });
+
+  test("no diagnostic when correct", () => {
+    const yaml = `...good yaml...`;
+    const diags = myCheck.check(makeCtx(yaml));
+    expect(diags).toHaveLength(0);
+  });
+});
+```
+
+### Imperative and declarative rules
+
+Test imperative rules by constructing a minimal AST context and verifying the returned diagnostics array. Test declarative rules by running the `rule()` builder output against sample input strings.
+
+See [Testing Your Lexicon](/chant/lexicon-authoring/testing/) for the full testing guide, including patterns for all test file types.
+
 ## Next Steps
 
-With rules in place, add [LSP & MCP providers](/lexicon-authoring/lsp-mcp/) for editor integration.
+With rules in place, add [LSP & MCP providers](/chant/lexicon-authoring/lsp-mcp/) for editor integration.

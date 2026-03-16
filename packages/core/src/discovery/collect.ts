@@ -1,11 +1,14 @@
 import { isDeclarable, type Declarable } from "../declarable";
 import { isCompositeInstance, expandComposite } from "../composite";
+import { isLexiconOutput } from "../lexicon-output";
 import { DiscoveryError } from "../errors";
 
 /**
  * Collects all declarable entities from imported modules.
  * CompositeInstance exports are expanded into individual entities
  * with `{exportName}_{memberName}` naming.
+ * LexiconOutput exports are also collected so that build() can
+ * extract them and pass them to the serializer.
  *
  * @param modules - Array of module records with their exports
  * @returns Map of export name to Declarable entity
@@ -20,7 +23,7 @@ export function collectEntities(
     for (const [name, value] of Object.entries(exports)) {
       if (isDeclarable(value)) {
         if (entities.has(name)) {
-          // Same object re-exported from multiple files (e.g. barrel re-exports) is fine
+          // Same object re-exported from multiple files (e.g. re-exports from multiple files) is fine
           if (entities.get(name) !== value) {
             throw new DiscoveryError(
               file,
@@ -30,6 +33,31 @@ export function collectEntities(
           }
         } else {
           entities.set(name, value);
+        }
+      } else if (Array.isArray(value)) {
+        // Arrays of Declarables or CompositeInstances — each element gets an indexed name: exportName_0, ...
+        for (let i = 0; i < value.length; i++) {
+          const item = value[i];
+          if (isDeclarable(item)) {
+            const indexedName = `${name}_${i}`;
+            if (entities.has(indexedName) && entities.get(indexedName) !== item) {
+              throw new DiscoveryError(file, `Duplicate entity name "${indexedName}"`, "resolution");
+            }
+            entities.set(indexedName, item);
+          } else if (isCompositeInstance(item)) {
+            const indexedName = `${name}_${i}`;
+            const expanded = expandComposite(indexedName, item);
+            for (const [expandedName, entity] of expanded) {
+              if (entities.has(expandedName)) {
+                throw new DiscoveryError(
+                  file,
+                  `Duplicate entity name "${expandedName}" from composite expansion of "${indexedName}"`,
+                  "resolution",
+                );
+              }
+              entities.set(expandedName, entity);
+            }
+          }
         }
       } else if (isCompositeInstance(value)) {
         const expanded = expandComposite(name, value);
@@ -43,6 +71,10 @@ export function collectEntities(
           }
           entities.set(expandedName, entity);
         }
+      } else if (isLexiconOutput(value)) {
+        // LexiconOutput is not a Declarable but build() expects to find them
+        // in the entities map so it can collect and pass them to serializers
+        entities.set(name, value as unknown as Declarable);
       }
     }
   }

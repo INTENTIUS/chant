@@ -1,7 +1,7 @@
 /**
  * Type constraint for Error constructors
  */
-type ErrorConstructor<T extends Error> = new (...args: unknown[]) => T;
+type ErrorConstructor<T extends Error> = abstract new (...args: any[]) => T;
 
 /**
  * Asserts that a function throws an error of a specific type

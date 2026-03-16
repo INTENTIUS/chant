@@ -1,0 +1,130 @@
+---
+title: "Intrinsics"
+description: "ARM template functions available as TypeScript intrinsics"
+---
+
+ARM templates support bracket expression functions like `[resourceId(...)]` and `[reference(...)]`. The Azure lexicon exposes these as TypeScript functions that serialize to the correct ARM expressions.
+
+## ResourceId
+
+Generate a fully qualified resource ID:
+
+```typescript
+import { ResourceId } from "@intentius/chant-lexicon-azure";
+
+const storageId = ResourceId("Microsoft.Storage/storageAccounts", "myStorage");
+// → [resourceId('Microsoft.Storage/storageAccounts', 'myStorage')]
+
+const subnetId = ResourceId(
+  "Microsoft.Network/virtualNetworks/subnets",
+  "myVnet",
+  "mySubnet",
+);
+// → [resourceId('Microsoft.Network/virtualNetworks/subnets', 'myVnet', 'mySubnet')]
+```
+
+## Reference
+
+Get the runtime state of a deployed resource:
+
+```typescript
+import { Reference } from "@intentius/chant-lexicon-azure";
+
+const storageRef = Reference("myStorage", "2023-01-01");
+// → [reference('myStorage', '2023-01-01')]
+```
+
+Access nested properties:
+```typescript
+const blobEndpoint = Reference("myStorage").primaryEndpoints.blob;
+```
+
+## Concat
+
+Concatenate multiple string values:
+
+```typescript
+import { Concat } from "@intentius/chant-lexicon-azure";
+
+const displayName = Concat("app-", "production");
+// → [concat('app-', 'production')]
+```
+
+## ResourceGroup
+
+Access the current resource group:
+
+```typescript
+import { Azure } from "@intentius/chant-lexicon-azure";
+
+const location = Azure.ResourceGroupLocation;
+// → [resourceGroup().location]
+
+const rgName = Azure.ResourceGroupName;
+// → [resourceGroup().name]
+```
+
+## Subscription
+
+Access the current subscription:
+
+```typescript
+import { Azure } from "@intentius/chant-lexicon-azure";
+
+const subId = Azure.SubscriptionId;
+// → [subscription().subscriptionId]
+```
+
+## UniqueString
+
+Generate a deterministic hash string:
+
+```typescript
+import { UniqueString } from "@intentius/chant-lexicon-azure";
+
+const uniqueName = UniqueString("my-seed-value");
+// → [uniqueString('my-seed-value')]
+```
+
+Useful for creating globally unique names:
+```typescript
+import { Concat, UniqueString } from "@intentius/chant-lexicon-azure";
+
+const storageName = Concat("storage", UniqueString(Azure.ResourceGroupId));
+```
+
+## Format
+
+Format a string with positional arguments:
+
+```typescript
+import { Format } from "@intentius/chant-lexicon-azure";
+
+const name = Format("{0}-{1}", "my-app", "production");
+// → [format('{0}-{1}', 'my-app', 'production')]
+```
+
+## If
+
+Conditional expression:
+
+```typescript
+import { If } from "@intentius/chant-lexicon-azure";
+
+const sku = If("isProduction", "Standard_GRS", "Standard_LRS");
+// → [if(isProduction, 'Standard_GRS', 'Standard_LRS')]
+```
+
+## ListKeys
+
+List access keys for a resource:
+
+```typescript
+import { ListKeys, ResourceId } from "@intentius/chant-lexicon-azure";
+
+const keys = ListKeys(
+  ResourceId("Microsoft.Storage/storageAccounts", "myStorage"),
+  "2023-01-01",
+);
+// → [listKeys(resourceId('Microsoft.Storage/storageAccounts', 'myStorage'), '2023-01-01')]
+```

@@ -163,7 +163,7 @@ describe("COR001: flat-declarations", () => {
     expect(diagnostics[0].ruleId).toBe("COR001");
   });
 
-  test("does not trigger inside Composite() factory callback", () => {
+  test("triggers inside Composite() factory callback", () => {
     const code = `
       const MyComposite = Composite((props) => {
         const role = new Role({
@@ -177,10 +177,11 @@ describe("COR001: flat-declarations", () => {
     `;
     const context = createContext(code);
     const diagnostics = flatDeclarationsRule.check(context);
-    expect(diagnostics).toHaveLength(0);
+    expect(diagnostics).toHaveLength(1);
+    expect(diagnostics[0].ruleId).toBe("COR001");
   });
 
-  test("does not trigger inside _.Composite() factory callback", () => {
+  test("triggers inside _.Composite() factory callback", () => {
     const code = `
       const MyComposite = _.Composite((props) => {
         const role = new _.Role({
@@ -191,10 +192,11 @@ describe("COR001: flat-declarations", () => {
     `;
     const context = createContext(code);
     const diagnostics = flatDeclarationsRule.check(context);
-    expect(diagnostics).toHaveLength(0);
+    expect(diagnostics).toHaveLength(1);
+    expect(diagnostics[0].ruleId).toBe("COR001");
   });
 
-  test("still triggers outside Composite() in same file", () => {
+  test("triggers both inside and outside Composite() in same file", () => {
     const code = `
       const MyComposite = Composite((props) => {
         const role = new Role({ config: { value: 1 } });
@@ -204,7 +206,6 @@ describe("COR001: flat-declarations", () => {
     `;
     const context = createContext(code);
     const diagnostics = flatDeclarationsRule.check(context);
-    expect(diagnostics).toHaveLength(1);
-    expect(diagnostics[0].message).toContain("Inline object");
+    expect(diagnostics).toHaveLength(2);
   });
 });

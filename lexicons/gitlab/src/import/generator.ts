@@ -25,11 +25,12 @@ const PROPERTY_CONSTRUCTORS: Record<string, string> = {
   cache: "Cache",
   image: "Image",
   retry: "Retry",
-  allowFailure: "AllowFailure",
+  allow_failure: "AllowFailure",
   parallel: "Parallel",
   environment: "Environment",
   trigger: "Trigger",
-  autoCancel: "AutoCancel",
+  auto_cancel: "AutoCancel",
+  inherit: "Inherit",
 };
 
 /**

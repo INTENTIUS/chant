@@ -1,0 +1,59 @@
+---
+title: "AI Skills"
+description: "AI agent skills bundled with the GitLab CI/CD lexicon"
+---
+The GitLab lexicon ships AI skills that teach AI coding agents how to build, validate, and deploy GitLab CI pipelines from a chant project.
+
+## What are skills?
+
+Skills are structured markdown documents bundled with a lexicon. When an AI agent works in a chant project, it discovers and loads relevant skills automatically — giving it operational knowledge about the deployment workflow without requiring the user to explain each step.
+
+## Installation
+
+When you scaffold a new project with `chant init --lexicon gitlab`, the skills are installed to `skills/` for automatic agent discovery.
+
+To refresh skills after a lexicon update:
+
+```bash
+chant update
+```
+
+## Skill: chant-gitlab
+
+The `chant-gitlab` skill covers the full GitLab CI deployment lifecycle:
+
+- **Build** — `chant build src/ --output .gitlab-ci.yml`
+- **Validate** — `chant lint src/` + GitLab CI Lint API
+- **Deploy** — commit and push the generated YAML
+- **Status** — GitLab UI or pipelines API
+- **Retry** — retry failed jobs via UI or API
+- **Cancel** — cancel running pipelines via API
+- **Troubleshooting** — job logs, lint rule codes (WGL001–WGL004), post-synth checks (WGL010–WGL015)
+
+## Skill: chant-gitlab-patterns
+
+The `chant-gitlab-patterns` skill covers CI/CD pipeline patterns and best practices:
+
+- **Pipeline structure** — stages, jobs, dependencies
+- **Caching** — dependency caching, build artifact caching
+- **Templates** — reusable job templates and includes
+- **Environments** — environment-based deployment gates
+- **Composites** — high-level reusable pipeline groupings
+
+## MCP integration
+
+The lexicon also provides MCP (Model Context Protocol) tools and resources that AI agents can use programmatically:
+
+| MCP tool | Description |
+|----------|-------------|
+| `build` | Build the chant project |
+| `lint` | Run lint rules |
+| `explain` | Summarize project resources |
+| `scaffold` | Generate starter files |
+| `search` | Search available resource types |
+| `gitlab:diff` | Compare current build output against previous |
+
+| MCP resource | Description |
+|--------------|-------------|
+| `resource-catalog` | JSON list of all supported GitLab CI entity types |
+| `examples/basic-pipeline` | Example pipeline with build, test, and deploy jobs |

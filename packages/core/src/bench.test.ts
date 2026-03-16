@@ -6,60 +6,9 @@ import { discover } from "./discovery/index";
 import { runLint } from "./lint/engine";
 import { build } from "./build";
 import type { Serializer } from "./serializer";
-import type { LintRule } from "./lint/rule";
+import { loadCoreRules } from "./lint/rules/index";
 
-// Import all core lint rules
-import {
-  flatDeclarationsRule,
-  exportRequiredRule,
-  fileDeclarableLimitRule,
-  singleConcernFileRule,
-  preferNamespaceImportRule,
-  barrelImportStyleRule,
-  declarableNamingConventionRule,
-  noUnusedDeclarableImportRule,
-  noRedundantValueCastRule,
-  noUnusedDeclarableRule,
-  noCyclicDeclarableRefRule,
-  noRedundantTypeImportRule,
-  noStringRefRule,
-  enforceBarrelImportRule,
-  enforceBarrelRefRule,
-  evl001NonLiteralExpressionRule,
-  evl002ControlFlowResourceRule,
-  evl003DynamicPropertyAccessRule,
-  evl004SpreadNonConstRule,
-  evl005ResourceBlockBodyRule,
-  evl006BarrelUsageRule,
-  evl007InvalidSiblingsRule,
-  evl008UnresolvableBarrelRefRule,
-} from "./lint/rules/index";
-
-const coreRules: LintRule[] = [
-  flatDeclarationsRule,
-  exportRequiredRule,
-  fileDeclarableLimitRule,
-  singleConcernFileRule,
-  preferNamespaceImportRule,
-  barrelImportStyleRule,
-  declarableNamingConventionRule,
-  noUnusedDeclarableImportRule,
-  noRedundantValueCastRule,
-  noUnusedDeclarableRule,
-  noCyclicDeclarableRefRule,
-  noRedundantTypeImportRule,
-  noStringRefRule,
-  enforceBarrelImportRule,
-  enforceBarrelRefRule,
-  evl001NonLiteralExpressionRule,
-  evl002ControlFlowResourceRule,
-  evl003DynamicPropertyAccessRule,
-  evl004SpreadNonConstRule,
-  evl005ResourceBlockBodyRule,
-  evl006BarrelUsageRule,
-  evl007InvalidSiblingsRule,
-  evl008UnresolvableBarrelRefRule,
-];
+const coreRules = loadCoreRules();
 
 interface FixtureSize {
   name: string;
@@ -182,7 +131,7 @@ describe("performance benchmarks", () => {
     for (const size of sizes) {
       await withTestDir(async (dir) => {
         const files = await generateFixture(dir, size);
-        const { avg } = await benchmark(() => runLint(files, coreRules), 3);
+        const { avg } = await benchmark(() => runLint(files, coreRules).then(r => r.diagnostics), 3);
         output.push(`  ${pad(size.name, 10)} ${fmt(avg)} (avg of 3 runs)`);
       });
     }

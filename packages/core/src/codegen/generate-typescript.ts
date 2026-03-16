@@ -42,16 +42,17 @@ export function writeResourceClass(
   properties: DtsProperty[],
   attributes: DtsAttribute[],
   remap?: Map<string, string>,
+  resourceAttributesType?: string,
 ): void {
   lines.push("");
   lines.push(`export declare class ${tsName} {`);
-  writeConstructor(lines, properties, remap);
+  writeConstructor(lines, properties, remap, resourceAttributesType);
 
   // Attributes as readonly properties (sorted)
   const attrs = [...attributes].sort((a, b) => a.name.localeCompare(b.name));
   for (const a of attrs) {
     const attrType = resolveConstructorType(a.type, remap);
-    lines.push(`  readonly ${toCamelCase(a.name)}: ${attrType};`);
+    lines.push(`  readonly ${a.name}: ${attrType};`);
   }
 
   lines.push("}");
@@ -79,9 +80,14 @@ export function writeConstructor(
   lines: string[],
   props: DtsProperty[],
   remap: Map<string, string> | undefined,
+  resourceAttributesType?: string,
 ): void {
   if (props.length === 0) {
-    lines.push("  constructor(props: Record<string, unknown>);");
+    if (resourceAttributesType) {
+      lines.push(`  constructor(props: Record<string, unknown>, attributes?: ${resourceAttributesType});`);
+    } else {
+      lines.push("  constructor(props: Record<string, unknown>);");
+    }
     return;
   }
 
@@ -96,11 +102,18 @@ export function writeConstructor(
     const optional = p.required ? "" : "?";
     const tsType = resolveConstructorType(p.type, remap);
     if (p.description) {
-      lines.push(`    /** ${p.description} */`);
+      // Sanitize: escape */ to prevent breaking JSDoc comments
+      const safeDesc = p.description.replace(/\*\//g, "*\\/");
+      lines.push(`    /** ${safeDesc} */`);
     }
-    lines.push(`    ${toCamelCase(p.name)}${optional}: ${tsType};`);
+    const safeName = /^[a-zA-Z_$][a-zA-Z0-9_$]*$/.test(p.name) ? p.name : JSON.stringify(p.name);
+    lines.push(`    ${safeName}${optional}: ${tsType};`);
   }
-  lines.push("  });");
+  if (resourceAttributesType) {
+    lines.push(`  }, attributes?: ${resourceAttributesType});`);
+  } else {
+    lines.push("  });");
+  }
 }
 
 /**
@@ -154,8 +167,4 @@ export function resolveConstructorType(tsType: string, remap: Map<string, string
   }
 
   return tsType;
-}
-
-function toCamelCase(name: string): string {
-  return name.charAt(0).toLowerCase() + name.slice(1);
 }

@@ -1,0 +1,138 @@
+---
+title: "Composites"
+description: "Pre-built composite patterns for common Helm chart layouts"
+---
+Composites are factory functions that produce coordinated sets of resources for common Helm chart patterns. Instead of wiring up Chart, Values, Deployments, Services, and Ingresses individually, call one function and export the results.
+
+## HelmWebApp
+
+A web application with Deployment, Service, Ingress, and HPA. The most common starting point for user-facing services.
+
+```typescript
+import { HelmWebApp, Chart, Values, Deployment, Service } from "@intentius/chant-lexicon-helm";
+
+const result = HelmWebApp({
+  name: "frontend",
+  image: "frontend",
+  tag: "2.1.0",
+  port: 3000,
+  replicas: 3,
+  ingressHost: "frontend.example.com",
+  resources: {
+    limits: { cpu: "500m", memory: "256Mi" },
+    requests: { cpu: "100m", memory: "128Mi" },
+  },
+});
+
+export const chart = new Chart(result.chart);
+export const vals = new Values(result.values);
+export const deployment = new Deployment(result.deployment);
+export const svc = new Service(result.service);
+```
+
+## HelmStatefulService
+
+StatefulSet with persistent volume claims, headless service, and ordered pod management. Suitable for databases, caches, and message queues.
+
+```typescript
+import { HelmStatefulService } from "@intentius/chant-lexicon-helm";
+
+const result = HelmStatefulService({
+  name: "redis",
+  image: "redis",
+  tag: "7.2",
+  port: 6379,
+  replicas: 3,
+  storageSize: "10Gi",
+  storageClass: "gp3",
+});
+```
+
+## HelmCronJob
+
+CronJob with configurable schedule, concurrency policy, and failure handling.
+
+```typescript
+import { HelmCronJob } from "@intentius/chant-lexicon-helm";
+
+const result = HelmCronJob({
+  name: "cleanup",
+  image: "my-app",
+  tag: "1.0.0",
+  schedule: "0 2 * * *",
+  command: ["./cleanup.sh"],
+  concurrencyPolicy: "Forbid",
+});
+```
+
+## HelmMicroservice
+
+Full microservice stack: Deployment, Service, ServiceAccount, HPA, PDB, and optional Ingress. Includes health check probes and resource limits by default.
+
+```typescript
+import { HelmMicroservice, Chart, Values } from "@intentius/chant-lexicon-helm";
+
+const result = HelmMicroservice({
+  name: "orders-api",
+  image: "orders-api",
+  tag: "3.0.0",
+  port: 8080,
+  replicas: { min: 2, max: 10 },
+  healthPath: "/healthz",
+  env: [
+    { name: "DATABASE_URL", valueFrom: "secret:orders-db:url" },
+  ],
+});
+
+export const chart = new Chart(result.chart);
+export const vals = new Values(result.values);
+```
+
+## HelmLibrary
+
+Library chart that exports named templates for reuse across charts. Sets `type: library` in Chart.yaml and generates only `_helpers.tpl` template files.
+
+```typescript
+import { HelmLibrary } from "@intentius/chant-lexicon-helm";
+
+const result = HelmLibrary({
+  name: "common",
+  version: "1.0.0",
+  templates: {
+    labels: { "app.kubernetes.io/name": "{{ .Chart.Name }}" },
+    selectorLabels: { "app.kubernetes.io/instance": "{{ .Release.Name }}" },
+  },
+});
+```
+
+## HelmCRDLifecycle
+
+CRD installation with lifecycle hooks: pre-install hook to create CRDs, pre-upgrade hook to update them, and a cleanup job on deletion.
+
+## HelmDaemonSet
+
+DaemonSet with tolerations and node selectors for cluster-wide agents (log collectors, monitoring agents, CNI plugins).
+
+## HelmWorker
+
+Background worker Deployment with queue-based scaling. No Service or Ingress — designed for consumers that pull work from a message queue.
+
+## HelmExternalSecret
+
+External Secrets Operator integration. Generates SecretStore and ExternalSecret resources that sync secrets from AWS Secrets Manager, Vault, or GCP Secret Manager.
+
+## HelmBatchJob
+
+One-shot Job with configurable parallelism, completions, and backoff limits. Useful for data migrations, ETL pipelines, and batch processing.
+
+## HelmMonitoredService
+
+Service with Prometheus ServiceMonitor/PodMonitor, Grafana dashboard ConfigMap, and alerting PrometheusRule. Bundles observability alongside the workload.
+
+## HelmSecureIngress
+
+Ingress with cert-manager TLS, CORS headers, rate limiting annotations, and optional OAuth2 proxy sidecar. Covers the common "expose service securely" pattern.
+
+## HelmNamespaceEnv
+
+Multi-namespace deployment pattern where the same chart is deployed to multiple namespaces with per-namespace value overrides. Generates a parent values.yaml with namespace-keyed sections.

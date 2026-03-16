@@ -1,0 +1,19 @@
+{
+  "name": "gitlab-node-pipeline-example",
+  "version": "0.0.1",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "build": "chant build src --lexicon gitlab -o .gitlab-ci.yml",
+    "lint": "chant lint src",
+    "dev": "chant build src --lexicon gitlab --watch -o .gitlab-ci.yml",
+    "test": "node test.js"
+  },
+  "dependencies": {
+    "@intentius/chant-lexicon-gitlab": "workspace:*",
+    "@intentius/chant": "workspace:*"
+  },
+  "devDependencies": {
+    "typescript": "*"
+  }
+}

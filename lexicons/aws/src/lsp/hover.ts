@@ -1,5 +1,7 @@
+import { createRequire } from "module";
 import type { HoverContext, HoverInfo } from "@intentius/chant/lsp/types";
 import { LexiconIndex, lexiconHover, type LexiconEntry } from "@intentius/chant/lsp/lexicon-providers";
+const require = createRequire(import.meta.url);
 
 let cachedIndex: LexiconIndex | null = null;
 
@@ -47,6 +49,21 @@ function resourceHover(className: string, entry: LexiconEntry): HoverInfo | unde
   if (entry.writeOnly && entry.writeOnly.length > 0) {
     lines.push("");
     lines.push(`**Write-only:** ${entry.writeOnly.map((p) => `\`${p}\``).join(", ")}`);
+  }
+
+  if (entry.replacementStrategy === "delete_then_create" && entry.createOnly?.length) {
+    lines.push("");
+    lines.push("**Replacement:** Modifying create-only properties causes delete-then-create replacement");
+  }
+
+  if (entry.conditionalCreateOnly?.length) {
+    lines.push("");
+    lines.push(`**Conditionally immutable:** ${entry.conditionalCreateOnly.map((p) => `\`${p}\``).join(", ")}`);
+  }
+
+  if (entry.deprecatedProperties?.length) {
+    lines.push("");
+    lines.push(`**Deprecated properties:** ${entry.deprecatedProperties.map((p) => `\`${p}\``).join(", ")}`);
   }
 
   return { contents: lines.join("\n") };

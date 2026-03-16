@@ -5,13 +5,29 @@
     "lexicons/*",
     "lexicons/aws/examples/*",
     "lexicons/gitlab/examples/*",
+    "lexicons/k8s/examples/*",
+    "lexicons/flyway/examples/*",
+    "lexicons/helm/examples/*",
+    "lexicons/gcp/examples/*",
+    "lexicons/azure/examples/*",
+    "lexicons/github/examples/*",
     "examples/*"
   ],
   "scripts": {
     "tsc": "tsc",
-    "docs": "bun --cwd docs dev"
+    "docs": "bun --cwd docs dev",
+    "generate": "for d in lexicons/*/; do (cd \"$d\" && bun run generate); done"
   },
-  "dependencies": {},
+  "dependencies": {
+    "@intentius/chant-lexicon-aws": "workspace:*",
+    "@intentius/chant-lexicon-azure": "workspace:*",
+    "@intentius/chant-lexicon-flyway": "workspace:*",
+    "@intentius/chant-lexicon-gcp": "workspace:*",
+    "@intentius/chant-lexicon-gitlab": "workspace:*",
+    "@intentius/chant-lexicon-helm": "workspace:*",
+    "@intentius/chant-lexicon-github": "workspace:*",
+    "@intentius/chant-lexicon-k8s": "workspace:*"
+  },
   "devDependencies": {
     "@typescript-eslint/eslint-plugin": "^8.54.0",
     "@typescript-eslint/parser": "^8.54.0",

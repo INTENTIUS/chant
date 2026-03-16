@@ -6,18 +6,18 @@ description: Start an MCP server for AI agent integration
 ## Synopsis
 
 ```
-npx chant serve mcp [path]
+chant serve mcp [path]
 ```
 
 ## Description
 
 `chant serve mcp` starts an MCP (Model Context Protocol) server over stdio. This allows AI agents that support MCP — such as Claude Code, Cursor, and Windsurf — to interact with your chant project programmatically.
 
-Typically you don't run this directly. `chant init` writes the MCP config to `.mcp.json`, and your agent picks it up automatically. See [Agent Integration](/guide/agent-integration/).
+Typically you don't run this directly. `chant init` detects your IDE and writes the MCP config to the appropriate global config file — `~/.claude/mcp.json` for Claude Code, `~/.cursor/mcp.json` for Cursor, or `~/.config/mcp/mcp.json` otherwise. Your agent picks it up automatically. See [Agent Integration](/chant/guide/agent-integration/).
 
 ## Tools
 
-The server exposes three core tools that agents can invoke:
+The server exposes six core tools that agents can invoke:
 
 ### `build`
 
@@ -53,6 +53,40 @@ Import external templates and convert them to chant TypeScript.
 
 Returns `{ success, lexicon, generatedFiles, warnings }`.
 
+### `explain`
+
+Summarize the resources in a chant project.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `path` | `string` | Yes | Path to the infrastructure directory |
+| `format` | `"markdown" \| "json"` | No | Output format (default: `markdown`) |
+
+Returns a structured summary of resource counts, entity types, and lexicon groupings.
+
+### `scaffold`
+
+Generate starter files for a chant project.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `pattern` | `string` | Yes | Resource pattern to scaffold (e.g. `"s3-bucket"`, `"pipeline"`) |
+| `lexicon` | `string` | No | Lexicon to use for templates |
+
+Returns `{ success, files }` with generated file contents.
+
+### `search`
+
+Search available resource types across loaded lexicons.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `query` | `string` | Yes | Search query (case-insensitive substring match) |
+| `lexicon` | `string` | No | Filter to a specific lexicon |
+| `limit` | `number` | No | Maximum results (default: `20`) |
+
+Returns matching resource type entries sorted by relevance.
+
 ### Plugin Tools
 
 Lexicon plugins can contribute additional tools. Plugin tools are namespaced as `{pluginName}:{toolName}` to avoid conflicts with core tools.
@@ -75,7 +109,15 @@ Lexicon plugins can contribute additional resources, namespaced as `chant://{plu
 
 ### Automatic Setup
 
-`chant init` adds the MCP server to `.mcp.json`:
+`chant init` detects your IDE and adds the MCP server to the appropriate global config file:
+
+| IDE | Config path |
+|-----|------------|
+| Claude Code | `~/.claude/mcp.json` |
+| Cursor | `~/.cursor/mcp.json` |
+| Other | `~/.config/mcp/mcp.json` |
+
+The config looks like:
 
 ```json
 {
@@ -88,12 +130,14 @@ Lexicon plugins can contribute additional resources, namespaced as `chant://{plu
 }
 ```
 
+(`bunx` is used instead of `npx` when bun is detected as the package manager.)
+
 ### Manual Setup
 
-If your agent doesn't auto-detect `.mcp.json`, configure the server manually. The command is:
+If your agent doesn't auto-detect the MCP config, configure the server manually. The command is:
 
 ```bash
-npx chant serve mcp
+chant serve mcp
 ```
 
 The server communicates over stdin/stdout using JSON-RPC 2.0 with line-based framing (one JSON object per line).
@@ -121,5 +165,5 @@ The MCP server implements the [Model Context Protocol](https://modelcontextproto
 
 ## See Also
 
-- [Agent Integration](/guide/agent-integration/) — Setup guide and `.mcp.json` configuration
-- [`chant serve lsp`](/cli/lsp/) — LSP server for editor integration
+- [Agent Integration](/chant/guide/agent-integration/) — Setup guide and `.mcp.json` configuration
+- [`chant serve lsp`](/chant/cli/lsp/) — LSP server for editor integration

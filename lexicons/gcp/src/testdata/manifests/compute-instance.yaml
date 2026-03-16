@@ -1,0 +1,18 @@
+apiVersion: compute.cnrm.cloud.google.com/v1beta1
+kind: ComputeInstance
+metadata:
+  name: my-vm
+  annotations:
+    cnrm.cloud.google.com/project-id: my-project
+spec:
+  machineType: e2-medium
+  zone: us-central1-a
+  bootDisk:
+    initializeParams:
+      sourceImageRef:
+        external: projects/debian-cloud/global/images/debian-11
+  networkInterface:
+    - networkRef:
+        name: my-network
+      subnetworkRef:
+        name: my-subnet

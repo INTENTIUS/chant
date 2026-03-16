@@ -34,13 +34,14 @@ describe("initLexiconCommand", () => {
 
     const expectedFiles = [
       "src/plugin.ts",
+      "src/plugin.test.ts",
       "src/index.ts",
       "src/serializer.ts",
+      "src/serializer.test.ts",
       "src/codegen/generate.ts",
       "src/codegen/generate-cli.ts",
       "src/codegen/naming.ts",
       "src/codegen/package.ts",
-      "src/codegen/rollback.ts",
       "src/codegen/docs.ts",
       "src/spec/fetch.ts",
       "src/spec/parse.ts",
@@ -48,9 +49,8 @@ describe("initLexiconCommand", () => {
       "src/lint/rules/index.ts",
       "src/lsp/completions.ts",
       "src/lsp/hover.ts",
-      "src/import/parser.ts",
-      "src/import/generator.ts",
-      "src/coverage.ts",
+      "src/lsp/completions.test.ts",
+      "src/lsp/hover.test.ts",
       "src/validate.ts",
       "src/validate-cli.ts",
       "package.json",
@@ -63,9 +63,9 @@ describe("initLexiconCommand", () => {
       "docs/astro.config.mjs",
       "docs/src/content.config.ts",
       "docs/src/content/docs/index.mdx",
+      "examples/getting-started/package.json",
+      "examples/getting-started/src/infra.ts",
       "src/generated/.gitkeep",
-      "examples/getting-started/.gitkeep",
-      ".snapshots/.gitkeep",
     ];
 
     for (const file of expectedFiles) {
@@ -83,7 +83,6 @@ describe("initLexiconCommand", () => {
     expect(pluginContent).toContain("async validate(");
     expect(pluginContent).toContain("async coverage(");
     expect(pluginContent).toContain("async package(");
-    expect(pluginContent).toContain("async rollback(");
   });
 
   test("package name uses the provided lexicon name", async () => {
@@ -250,6 +249,16 @@ describe("init-lexicon fixture snapshot", () => {
       name: FIXTURE_LEXICON_NAME,
       path: FIXTURE_DIR,
     });
+
+    // Remove generated .test.ts files so bun test won't try to run them as tests
+    for (const f of [
+      "src/plugin.test.ts",
+      "src/serializer.test.ts",
+      "src/lsp/completions.test.ts",
+      "src/lsp/hover.test.ts",
+    ]) {
+      rmSync(join(FIXTURE_DIR, f), { force: true });
+    }
 
     expect(result.success).toBe(true);
 

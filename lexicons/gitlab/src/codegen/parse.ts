@@ -46,6 +46,7 @@ export interface ParsedResource {
   description?: string;
   properties: ParsedProperty[];
   attributes: Array<{ name: string; tsType: string }>;
+  deprecatedProperties: string[];
 }
 
 export interface GitLabParseResult {
@@ -132,6 +133,7 @@ const PROPERTY_ENTITIES: Array<{
   { typeName: "GitLab::CI::Artifacts", source: "#/definitions/artifacts", description: "Job artifact configuration" },
   { typeName: "GitLab::CI::Cache", source: "#/definitions/cache_item", description: "Cache configuration" },
   { typeName: "GitLab::CI::Image", source: "#/definitions/image", description: "Docker image for a job" },
+  { typeName: "GitLab::CI::Service", source: "#/definitions/services:item", description: "Docker service container for a job" },
   { typeName: "GitLab::CI::Rule", source: "#/definitions/rules:item", description: "Conditional rule for job execution" },
   { typeName: "GitLab::CI::Retry", source: "#/definitions/retry", description: "Job retry configuration" },
   { typeName: "GitLab::CI::AllowFailure", source: "#/definitions/allow_failure", description: "Allow failure configuration" },
@@ -141,17 +143,9 @@ const PROPERTY_ENTITIES: Array<{
   { typeName: "GitLab::CI::Environment", source: "job_template:environment", description: "Deployment environment" },
   { typeName: "GitLab::CI::Trigger", source: "job_template:trigger", description: "Trigger downstream pipeline" },
   { typeName: "GitLab::CI::AutoCancel", source: "#/definitions/workflowAutoCancel", description: "Auto-cancel configuration" },
-];
-
-/**
- * Enum types to extract.
- */
-const ENUM_ENTITIES: Array<{
-  name: string;
-  source: string;
-}> = [
-  { name: "When", source: "#/definitions/when" },
-  { name: "RetryError", source: "#/definitions/retry_errors" },
+  { typeName: "GitLab::CI::WorkflowRule", source: "root:workflow:rules:item", description: "Workflow rule with restricted when values" },
+  { typeName: "GitLab::CI::Need", source: "job_template:needs:item", description: "Job dependency specification" },
+  { typeName: "GitLab::CI::Inherit", source: "job_template:inherit", description: "Control default/variable inheritance" },
 ];
 
 // ── Parser ─────────────────────────────────────────────────────────
@@ -193,15 +187,27 @@ function extractResourceEntity(
   if (!def) return null;
 
   // Find the object variant if it's a oneOf/anyOf
-  const objectDef = findObjectVariant(def);
+  const objectDef = findObjectVariant(def, schema);
   if (!objectDef?.properties) return null;
 
   const requiredSet = new Set<string>(objectDef.required ?? []);
   const properties = parseProperties(objectDef.properties, requiredSet, schema);
   const shortName = gitlabShortName(entity.typeName);
 
+  // Apply property type overrides for known entity references
+  const overrides = RESOURCE_PROPERTY_OVERRIDES[entity.typeName];
+  if (overrides) {
+    for (const prop of properties) {
+      if (overrides[prop.name]) {
+        prop.tsType = overrides[prop.name];
+      }
+    }
+  }
+
   // Extract nested property types from definition properties
   const { propertyTypes, enums } = extractNestedTypes(objectDef, shortName, schema);
+
+  const deprecatedProperties = mineDeprecatedProperties(properties);
 
   return {
     resource: {
@@ -209,6 +215,7 @@ function extractResourceEntity(
       description: entity.description ?? objectDef.description,
       properties,
       attributes: [], // CI entities have no read-only attributes
+      deprecatedProperties,
     },
     propertyTypes,
     enums,
@@ -226,7 +233,7 @@ function extractPropertyEntity(
   const def = resolveSource(schema, entity.source);
   if (!def) return null;
 
-  const objectDef = findObjectVariant(def);
+  const objectDef = findObjectVariant(def, schema);
   if (!objectDef?.properties) {
     // Some entities like Parallel might be simple types
     // Create a minimal entry with no properties
@@ -236,6 +243,7 @@ function extractPropertyEntity(
         description: entity.description ?? def.description,
         properties: [],
         attributes: [],
+        deprecatedProperties: [],
       },
       propertyTypes: [],
       enums: [],
@@ -247,6 +255,7 @@ function extractPropertyEntity(
   const shortName = gitlabShortName(entity.typeName);
 
   const { propertyTypes, enums } = extractNestedTypes(objectDef, shortName, schema);
+  const deprecatedProperties = mineDeprecatedProperties(properties);
 
   return {
     resource: {
@@ -254,6 +263,7 @@ function extractPropertyEntity(
       description: entity.description ?? objectDef.description,
       properties,
       attributes: [],
+      deprecatedProperties,
     },
     propertyTypes,
     enums,
@@ -266,41 +276,57 @@ function extractPropertyEntity(
  * Resolve a source path to a schema definition.
  */
 function resolveSource(schema: CISchema, source: string): CISchemaDefinition | null {
-  // Special case: rules array item extraction
-  if (source === "#/definitions/rules:item") {
-    const rulesDef = schema.definitions?.rules;
-    if (!rulesDef) return null;
-    // rules is an array — get items
-    const items = rulesDef.items;
-    if (!items) return null;
-    return findObjectVariant(items);
-  }
-
   if (source.startsWith("#/definitions/")) {
+    // Array item extraction: "#/definitions/foo:item" → foo.items object variant
+    if (source.includes(":item")) {
+      const defName = source.slice("#/definitions/".length).replace(":item", "");
+      const arrayDef = schema.definitions?.[defName];
+      if (!arrayDef?.items) return null;
+      return findObjectVariant(arrayDef.items, schema);
+    }
     const defName = source.slice("#/definitions/".length);
     return schema.definitions?.[defName] ?? null;
   }
 
+  // Multi-segment path under root: root:prop:subprop:...:item
   if (source.startsWith("root:")) {
-    const propName = source.slice("root:".length);
-    const prop = schema.properties?.[propName];
-    if (!prop) return null;
-    if (prop.$ref) {
-      return resolveRef(prop.$ref, schema);
+    const segments = source.slice("root:".length).split(":");
+    let current: CISchemaDefinition | null = { properties: schema.properties } as CISchemaDefinition;
+
+    for (const seg of segments) {
+      if (!current) return null;
+      if (seg === "item") {
+        if (!current.items) return null;
+        return findObjectVariant(current.items, schema);
+      }
+      if (!current.properties) return null;
+      const prop = current.properties[seg];
+      if (!prop) return null;
+      current = prop.$ref ? resolveRef(prop.$ref, schema) : prop;
     }
-    return prop;
+
+    return current;
   }
 
+  // Multi-segment path under job_template: job_template:prop:...:item
   if (source.startsWith("job_template:")) {
-    const propName = source.slice("job_template:".length);
-    const jobDef = schema.definitions?.job_template;
-    if (!jobDef?.properties) return null;
-    const prop = jobDef.properties[propName];
-    if (!prop) return null;
-    if (prop.$ref) {
-      return resolveRef(prop.$ref, schema);
+    const segments = source.slice("job_template:".length).split(":");
+    let current: CISchemaDefinition | null = schema.definitions?.job_template ?? null;
+    if (!current) return null;
+
+    for (const seg of segments) {
+      if (!current) return null;
+      if (seg === "item") {
+        if (!current.items) return null;
+        return findObjectVariant(current.items, schema);
+      }
+      if (!current.properties) return null;
+      const prop = current.properties[seg];
+      if (!prop) return null;
+      current = prop.$ref ? resolveRef(prop.$ref, schema) : prop;
     }
-    return prop;
+
+    return current;
   }
 
   return null;
@@ -319,35 +345,82 @@ function resolveRef(ref: string, schema: CISchema): CISchemaDefinition | null {
 /**
  * Find the object variant from a oneOf/anyOf union, or return the
  * definition itself if it already has properties.
+ *
+ * When multiple object variants exist, merges their properties:
+ * - Picks the variant with the most properties as the base
+ * - Adds unique properties from other variants
+ * - Union-merges overlapping property types (e.g. exit_codes: integer | integer[])
+ * - Required = intersection of all variants' required sets
  */
-function findObjectVariant(def: CISchemaDefinition): CISchemaDefinition | null {
+function findObjectVariant(def: CISchemaDefinition, schema?: CISchema): CISchemaDefinition | null {
   if (def.properties) return def;
 
   const variants = def.oneOf ?? def.anyOf;
-  if (variants) {
-    // Prefer the variant with the most properties
-    let best: CISchemaDefinition | null = null;
-    let bestCount = 0;
-    for (const v of variants) {
-      // Resolve $ref in variant
-      let resolved: CISchemaDefinition = v;
-      if (v.$ref) {
-        // We don't have schema here, just check properties
-        continue;
-      }
-      if (resolved.properties) {
-        const count = Object.keys(resolved.properties).length;
-        if (count > bestCount) {
-          best = resolved;
-          bestCount = count;
-        }
-      }
+  if (!variants) return null;
+
+  // Collect all object variants, resolving $refs
+  const objectVariants: CISchemaDefinition[] = [];
+  for (const v of variants) {
+    let resolved: CISchemaDefinition = v;
+    if (v.$ref && schema) {
+      const r = resolveRef(v.$ref, schema);
+      if (r) resolved = r;
+      else continue;
+    } else if (v.$ref) {
+      continue;
     }
-    return best;
+    if (resolved.properties) {
+      objectVariants.push(resolved);
+    }
   }
 
-  // If it's a $ref, it would have been resolved before calling this
-  return null;
+  if (objectVariants.length === 0) return null;
+  if (objectVariants.length === 1) return objectVariants[0];
+
+  // Find the variant with the most properties as the base
+  let best = objectVariants[0];
+  let bestCount = Object.keys(best.properties!).length;
+  for (let i = 1; i < objectVariants.length; i++) {
+    const count = Object.keys(objectVariants[i].properties!).length;
+    if (count > bestCount) {
+      best = objectVariants[i];
+      bestCount = count;
+    }
+  }
+
+  // Merge properties from other object variants into the base
+  const mergedProperties: Record<string, CISchemaProperty> = { ...best.properties };
+  const allRequiredSets = objectVariants.map((v) => new Set(v.required ?? []));
+
+  for (const variant of objectVariants) {
+    if (variant === best) continue;
+    for (const [propName, propDef] of Object.entries(variant.properties!)) {
+      if (propName in mergedProperties) {
+        // Property exists in base — if types differ, create a merged oneOf
+        const existing = mergedProperties[propName];
+        if (JSON.stringify(existing) !== JSON.stringify(propDef)) {
+          mergedProperties[propName] = {
+            oneOf: [existing, propDef],
+            description: existing.description ?? propDef.description,
+          };
+        }
+      } else {
+        // New property from another variant
+        mergedProperties[propName] = propDef;
+      }
+    }
+  }
+
+  // Required = intersection across all object variants
+  const requiredIntersection = [...allRequiredSets[0]].filter((r) =>
+    allRequiredSets.every((s) => s.has(r)),
+  );
+
+  return {
+    ...best,
+    properties: mergedProperties,
+    required: requiredIntersection.length > 0 ? requiredIntersection : undefined,
+  };
 }
 
 /**
@@ -444,6 +517,10 @@ function resolvePropertyType(prop: CISchemaProperty, schema: CISchema): string {
     case "array":
       if (prop.items) {
         const itemType = resolvePropertyType(prop.items, schema);
+        // Wrap union types in parens so [] applies to the whole union
+        if (itemType.includes(" | ")) {
+          return `(${itemType})[]`;
+        }
         return `${itemType}[]`;
       }
       return "any[]";
@@ -453,6 +530,24 @@ function resolvePropertyType(prop: CISchemaProperty, schema: CISchema): string {
       return "any";
   }
 }
+
+/**
+ * Property type overrides for resource entities.
+ * Maps entity typeName → property name → desired TS type.
+ * Applied after parseProperties to replace generic types with entity references.
+ */
+const RESOURCE_PROPERTY_OVERRIDES: Record<string, Record<string, string>> = {
+  "GitLab::CI::Job": {
+    environment: "Environment | string",
+    trigger: "Trigger | string",
+    release: "Release",
+    needs: "Need[]",
+    inherit: "Inherit",
+  },
+  "GitLab::CI::Workflow": {
+    rules: "WorkflowRule[]",
+  },
+};
 
 /**
  * Map well-known definition names to their TypeScript entity types.
@@ -478,7 +573,7 @@ function definitionToTsType(defName: string): string | null {
     rulesVariables: "Record<string, any>",
     when: '"on_success" | "on_failure" | "always" | "never" | "manual" | "delayed"',
     workflowAutoCancel: "AutoCancel",
-    id_tokens: "Record<string, any>",
+    id_tokens: "Record<string, { aud: string | string[] }>",
     secrets: "Record<string, any>",
     timeout: "string",
     start_in: "string",
@@ -512,6 +607,21 @@ function extractNestedTypes(
   // The main nested types (Artifacts, Cache, etc.) are extracted as
   // top-level property entities instead.
   return { propertyTypes: [], enums: [] };
+}
+
+const DEPRECATION_RE = /\bDeprecated\b|\bdeprecated\b|\blegacy\b|no longer (available|recommended|used|supported)|is not recommended/i;
+
+/**
+ * Mine property descriptions for deprecation signals.
+ */
+function mineDeprecatedProperties(properties: ParsedProperty[]): string[] {
+  const deprecated: string[] = [];
+  for (const prop of properties) {
+    if (prop.description && DEPRECATION_RE.test(prop.description)) {
+      deprecated.push(prop.name);
+    }
+  }
+  return deprecated;
 }
 
 /**

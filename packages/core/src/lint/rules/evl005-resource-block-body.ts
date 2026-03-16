@@ -41,6 +41,7 @@ export const evl005ResourceBlockBodyRule: LintRule = {
   id: "EVL005",
   severity: "error",
   category: "correctness",
+  description: "The resource() callback must use expression body, not block body",
   check(context: LintContext): LintDiagnostic[] {
     const diagnostics: LintDiagnostic[] = [];
     checkNode(context.sourceFile, context, diagnostics);

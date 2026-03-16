@@ -9,6 +9,7 @@ import {
   withDefaults,
   propagate,
   SHARED_PROPS,
+  mergeDefaults,
 } from "./composite";
 import { DECLARABLE_MARKER, type Declarable } from "./declarable";
 import { AttrRef } from "./attrref";
@@ -116,7 +117,7 @@ describe("Composite", () => {
     });
 
     const instance = MyComp({});
-    const roleProps = instance.members.role.props as Record<string, unknown>;
+    const roleProps = (instance.members.role as MockResource).props;
     expect(roleProps.bucketArn).toBeInstanceOf(AttrRef);
     // The AttrRef's parent should be the bucket instance
     expect((roleProps.bucketArn as AttrRef).attribute).toBe("Arn");
@@ -151,8 +152,8 @@ describe("expandComposite", () => {
 
     const expanded = expandComposite("storage", MyComp({}));
     expect(expanded.size).toBe(2);
-    expect(expanded.get("storage_bucket")?.entityType).toBe("Bucket");
-    expect(expanded.get("storage_role")?.entityType).toBe("Role");
+    expect(expanded.get("storageBucket")?.entityType).toBe("Bucket");
+    expect(expanded.get("storageRole")?.entityType).toBe("Role");
   });
 
   test("handles nested composites", () => {
@@ -167,8 +168,8 @@ describe("expandComposite", () => {
 
     const expanded = expandComposite("app", Outer({}));
     expect(expanded.size).toBe(2);
-    expect(expanded.get("app_bucket")?.entityType).toBe("Bucket");
-    expect(expanded.get("app_nested_table")?.entityType).toBe("Table");
+    expect(expanded.get("appBucket")?.entityType).toBe("Bucket");
+    expect(expanded.get("appNestedTable")?.entityType).toBe("Table");
   });
 
   test("preserves Declarable identity (same object reference)", () => {
@@ -176,7 +177,7 @@ describe("expandComposite", () => {
     const MyComp = Composite<{}>(() => ({ bucket }));
 
     const expanded = expandComposite("s", MyComp({}));
-    expect(expanded.get("s_bucket")).toBe(bucket);
+    expect(expanded.get("sBucket")).toBe(bucket);
   });
 
   test("handles empty composite", () => {
@@ -229,6 +230,22 @@ describe("resource() helper", () => {
   test("returned instance has AttrRef attributes", () => {
     const instance = resource(MockResource, {});
     expect(instance.arn).toBeInstanceOf(AttrRef);
+  });
+
+  test("forwards attributes as second constructor argument", () => {
+    // MockResource doesn't store attributes, so use createResource which does
+    const { createResource } = require("./runtime");
+    const TestRes = createResource("Test::Resource", "test", { arn: "Arn" });
+    const attrs = { DependsOn: ["Other"], Condition: "IsProd" };
+    const instance = resource(TestRes as any, { name: "test" }, attrs);
+    expect((instance as any).attributes).toEqual(attrs);
+  });
+
+  test("without attributes, resource() creates instance with empty attributes", () => {
+    const { createResource } = require("./runtime");
+    const TestRes = createResource("Test::Resource", "test", { arn: "Arn" });
+    const instance = resource(TestRes as any, { name: "test" });
+    expect((instance as any).attributes).toEqual({});
   });
 });
 
@@ -313,6 +330,57 @@ describe("withDefaults", () => {
     expect(CompositeRegistry.size).toBe(1);
   });
 
+  test("function-based defaults receive caller props", () => {
+    let receivedByFn: Partial<{ name: string; timeout: number }> | undefined;
+    const Base = Composite<{ name: string; timeout: number }>((props) => ({
+      item: mockDeclarable(props.name),
+    }));
+
+    const Wrapped = withDefaults(Base, (props) => {
+      receivedByFn = props;
+      return { timeout: 30 } as { timeout: number };
+    });
+    Wrapped({ name: "test" });
+    expect(receivedByFn).toEqual({ name: "test" });
+  });
+
+  test("user props override computed defaults", () => {
+    let received: { timeout: number } | undefined;
+    const Base = Composite<{ timeout: number }>((props) => {
+      received = props;
+      return { item: mockDeclarable() };
+    });
+
+    const Wrapped = withDefaults(Base, () => ({ timeout: 30 }) as { timeout: number });
+    Wrapped({ timeout: 60 });
+    expect(received!.timeout).toBe(60);
+  });
+
+  test("stacking: withDefaults(withDefaults(base, static), fn) works", () => {
+    let received: { a: number; b: number; c: number } | undefined;
+    const Base = Composite<{ a: number; b: number; c: number }>((props) => {
+      received = props;
+      return { item: mockDeclarable() };
+    });
+
+    const Step1 = withDefaults(Base, { a: 1 });
+    const Step2 = withDefaults(Step1, (props) => ({ b: (props.c ?? 0) + 10 }) as { b: number });
+    Step2({ c: 3 });
+    expect(received).toEqual({ a: 1, b: 13, c: 3 });
+  });
+
+  test("undefined computed values don't overwrite user props", () => {
+    let received: { name: string; timeout: number } | undefined;
+    const Base = Composite<{ name: string; timeout: number }>((props) => {
+      received = props;
+      return { item: mockDeclarable() };
+    });
+
+    const Wrapped = withDefaults(Base, () => ({ timeout: undefined }) as unknown as { timeout: number });
+    Wrapped({ name: "test", timeout: 42 });
+    expect(received!.timeout).toBe(42);
+  });
+
   test("expandComposite works identically on defaulted composites", () => {
     const Base = Composite<{ name: string; timeout: number }>((props) => ({
       fn: mockDeclarable(`Fn-${props.name}`),
@@ -323,8 +391,8 @@ describe("withDefaults", () => {
     const expanded = expandComposite("api", Wrapped({ name: "test" }));
 
     expect(expanded.size).toBe(2);
-    expect(expanded.get("api_fn")?.entityType).toBe("Fn-test");
-    expect(expanded.get("api_role")?.entityType).toBe("Role-test");
+    expect(expanded.get("apiFn")?.entityType).toBe("Fn-test");
+    expect(expanded.get("apiRole")?.entityType).toBe("Role-test");
   });
 });
 
@@ -342,8 +410,8 @@ describe("propagate", () => {
     const instance = propagate(MyComp({}), { env: "prod" });
     const expanded = expandComposite("s", instance);
 
-    const bucketProps = (expanded.get("s_bucket") as any).props;
-    const roleProps = (expanded.get("s_role") as any).props;
+    const bucketProps = (expanded.get("sBucket") as any).props;
+    const roleProps = (expanded.get("sRole") as any).props;
     expect(bucketProps.env).toBe("prod");
     expect(roleProps.env).toBe("prod");
   });
@@ -359,7 +427,7 @@ describe("propagate", () => {
       tags: [{ key: "env", value: "prod" }],
     });
     const expanded = expandComposite("s", instance);
-    const tags = (expanded.get("s_bucket") as any).props.tags;
+    const tags = (expanded.get("sBucket") as any).props.tags;
 
     expect(tags).toEqual([
       { key: "env", value: "prod" },
@@ -374,7 +442,7 @@ describe("propagate", () => {
 
     const instance = propagate(MyComp({}), { region: "eu-west-1" });
     const expanded = expandComposite("s", instance);
-    expect((expanded.get("s_bucket") as any).props.region).toBe("us-west-2");
+    expect((expanded.get("sBucket") as any).props.region).toBe("us-west-2");
   });
 
   test("undefined values in shared props are stripped", () => {
@@ -384,7 +452,7 @@ describe("propagate", () => {
 
     const instance = propagate(MyComp({}), { name: undefined, extra: "yes" });
     const expanded = expandComposite("s", instance);
-    const props = (expanded.get("s_bucket") as any).props;
+    const props = (expanded.get("sBucket") as any).props;
     expect(props.name).toBe("data");
     expect(props.extra).toBe("yes");
   });
@@ -402,8 +470,8 @@ describe("propagate", () => {
     const instance = propagate(Outer({}), { env: "prod" });
     const expanded = expandComposite("app", instance);
 
-    expect((expanded.get("app_bucket") as any).props.env).toBe("prod");
-    expect((expanded.get("app_nested_table") as any).props.env).toBe("prod");
+    expect((expanded.get("appBucket") as any).props.env).toBe("prod");
+    expect((expanded.get("appNestedTable") as any).props.env).toBe("prod");
   });
 
   test("expanded declarables are same object references", () => {
@@ -412,7 +480,7 @@ describe("propagate", () => {
 
     const instance = propagate(MyComp({}), { env: "prod" });
     const expanded = expandComposite("s", instance);
-    expect(expanded.get("s_bucket")).toBe(bucket);
+    expect(expanded.get("sBucket")).toBe(bucket);
   });
 
   test("composites without propagate work unchanged", () => {
@@ -421,6 +489,80 @@ describe("propagate", () => {
     }));
 
     const expanded = expandComposite("s", MyComp({}));
-    expect((expanded.get("s_bucket") as any).props.name).toBe("data");
+    expect((expanded.get("sBucket") as any).props.name).toBe("data");
+  });
+});
+
+describe("mergeDefaults", () => {
+  test("returns base unchanged when no overrides", () => {
+    const base = { a: 1, b: "hello" };
+    expect(mergeDefaults(base)).toBe(base);
+    expect(mergeDefaults(base, undefined)).toBe(base);
+  });
+
+  test("scalar override wins", () => {
+    const result = mergeDefaults({ a: 1, b: 2 }, { a: 10 });
+    expect(result).toEqual({ a: 10, b: 2 });
+  });
+
+  test("undefined values in overrides are skipped", () => {
+    const result = mergeDefaults({ a: 1, b: 2 }, { a: undefined });
+    expect(result).toEqual({ a: 1, b: 2 });
+  });
+
+  test("arrays are concatenated (base + overrides)", () => {
+    const result = mergeDefaults(
+      { tags: [{ key: "env", value: "prod" }] },
+      { tags: [{ key: "team", value: "alpha" }] },
+    );
+    expect(result.tags).toEqual([
+      { key: "env", value: "prod" },
+      { key: "team", value: "alpha" },
+    ]);
+  });
+
+  test("object override deep merges nested objects", () => {
+    const result = mergeDefaults(
+      { config: { a: 1, b: 2 } },
+      { config: { a: 10 } as any },
+    );
+    expect(result.config).toEqual({ a: 10, b: 2 } as any);
+  });
+
+  test("new keys from overrides are added", () => {
+    const result = mergeDefaults(
+      { a: 1 } as Record<string, unknown>,
+      { b: 2 },
+    );
+    expect(result).toEqual({ a: 1, b: 2 });
+  });
+
+  test("does not mutate the base object", () => {
+    const base = { a: 1, b: [1, 2] };
+    const result = mergeDefaults(base, { a: 10, b: [3] });
+    expect(base.a).toBe(1);
+    expect(base.b).toEqual([1, 2]);
+    expect(result.a).toBe(10);
+    expect(result.b).toEqual([1, 2, 3]);
+  });
+
+  test("empty overrides returns a shallow copy", () => {
+    const base = { a: 1 };
+    const result = mergeDefaults(base, {});
+    expect(result).toEqual({ a: 1 });
+    expect(result).not.toBe(base);
+  });
+
+  test("mixed: some scalars overridden, some arrays concatenated, some unchanged", () => {
+    const result = mergeDefaults(
+      { name: "orig", count: 5, tags: ["a"], config: { x: 1 } },
+      { name: "new", tags: ["b"], config: undefined },
+    );
+    expect(result).toEqual({
+      name: "new",
+      count: 5,
+      tags: ["a", "b"],
+      config: { x: 1 },
+    });
   });
 });

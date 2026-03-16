@@ -1,0 +1,59 @@
+---
+title: "AI Skills"
+description: "AI agent skills bundled with the AWS CloudFormation lexicon"
+---
+The AWS lexicon ships AI skills that teach AI coding agents how to build, validate, and deploy CloudFormation templates from a chant project.
+
+## What are skills?
+
+Skills are structured markdown documents bundled with a lexicon. When an AI agent works in a chant project, it discovers and loads relevant skills automatically — giving it operational knowledge about the deployment workflow without requiring the user to explain each step.
+
+## Installation
+
+When you scaffold a new project with `chant init --lexicon aws`, the skills are installed to `skills/` for automatic agent discovery.
+
+To refresh skills after a lexicon update:
+
+```bash
+chant update
+```
+
+## Skill: chant-aws
+
+The `chant-aws` skill covers the full CloudFormation deployment lifecycle:
+
+- **Build** — `chant build src/ --output stack.json`
+- **Validate** — `chant lint src/` + `aws cloudformation validate-template`
+- **Deploy** — `aws cloudformation deploy` with capabilities
+- **Update** — change sets for preview, or direct deploy
+- **Delete** — `aws cloudformation delete-stack`
+- **Status** — `describe-stacks` and `describe-stack-events`
+- **Troubleshooting** — event inspection, rollback recovery, drift detection
+
+## Skill: chant-aws-eks
+
+The `chant-aws-eks` skill bridges the AWS and Kubernetes lexicons for end-to-end EKS workflows:
+
+- **EKS Cluster** — provisioning clusters with managed node groups
+- **IAM for Service Accounts** — IRSA and pod identity configuration
+- **Networking** — VPC, subnets, and security group setup for EKS
+- **Add-ons** — CoreDNS, kube-proxy, VPC CNI management
+- **Observability** — CloudWatch Container Insights, logging
+
+## MCP integration
+
+The lexicon also provides MCP (Model Context Protocol) tools and resources that AI agents can use programmatically:
+
+| MCP tool | Description |
+|----------|-------------|
+| `build` | Build the chant project |
+| `lint` | Run lint rules |
+| `explain` | Summarize project resources |
+| `scaffold` | Generate starter files |
+| `search` | Search available resource types |
+| `aws:diff` | Compare current build output against previous |
+
+| MCP resource | Description |
+|--------------|-------------|
+| `resource-catalog` | JSON list of all supported CloudFormation resource types |
+| `examples/basic-stack` | Example stack with S3 bucket and IAM role |

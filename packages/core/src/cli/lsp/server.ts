@@ -362,7 +362,7 @@ export class LspServer {
 
       if (rules.length === 0) return [];
 
-      const diagnostics = await runLint([filePath], rules);
+      const { diagnostics } = await runLint([filePath], rules);
       return toLspDiagnostics(diagnostics);
     } catch {
       return [];

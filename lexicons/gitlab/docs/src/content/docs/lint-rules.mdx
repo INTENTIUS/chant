@@ -1,0 +1,188 @@
+---
+title: "Lint Rules"
+description: "Built-in lint rules and post-synth checks for GitLab CI/CD"
+---
+The GitLab lexicon ships lint rules that run during `chant lint` and post-synth checks that validate the serialized YAML after `chant build`.
+
+## Lint rules
+
+Lint rules analyze your TypeScript source code before build.
+
+### WGL001 — Deprecated only/except
+
+**Severity:** warning | **Category:** style
+
+Flags usage of `only:` and `except:` keywords, which are deprecated in favor of `rules:`. The `rules:` syntax is more flexible and is the recommended approach.
+
+```typescript title="lint-wgl001.ts"
+import { Job, Rule, CI } from "@intentius/chant-lexicon-gitlab";
+
+// chant-disable-next-line WGL001
+export const deployBad = new Job({
+  stage: "deploy",
+  script: ["npm run deploy"],
+  only: ["main"],
+});
+
+export const deployGood = new Job({
+  stage: "deploy",
+  script: ["npm run deploy"],
+  rules: [new Rule({
+    if: `${CI.CommitBranch} == ${CI.DefaultBranch}`,
+  })],
+});
+```
+
+### WGL002 — Missing script
+
+**Severity:** error | **Category:** correctness
+
+A GitLab CI job must have `script`, `trigger`, or `run` defined. Jobs without any of these will fail pipeline validation.
+
+```typescript title="lint-wgl002.ts"
+import { Job, Image, Trigger } from "@intentius/chant-lexicon-gitlab";
+
+// chant-disable-next-line WGL002
+export const wgl002Bad = new Job({
+  stage: "build",
+  image: new Image({ name: "node:20" }),
+});
+
+export const wgl002Good = new Job({
+  stage: "build",
+  image: new Image({ name: "node:20" }),
+  script: ["npm run build"],
+});
+
+export const downstream = new Job({
+  trigger: new Trigger({ project: "my-group/other-repo" }),
+});
+```
+
+### WGL003 — Missing stage
+
+**Severity:** info | **Category:** style
+
+Jobs should declare a `stage` property. Without it, the job defaults to the `test` stage, which may not be the intended behavior.
+
+```typescript title="lint-wgl003.ts"
+import { Job } from "@intentius/chant-lexicon-gitlab";
+
+// chant-disable-next-line WGL003
+export const wgl003Bad = new Job({
+  script: ["npm run build"],
+});
+
+export const wgl003Good = new Job({
+  stage: "build",
+  script: ["npm run build"],
+});
+```
+
+### WGL004 — Artifacts without expiry
+
+**Severity:** warning | **Category:** performance
+
+Flags `Artifacts` without `expireIn`. Artifacts without expiry are kept indefinitely, consuming storage. Always set an expiration.
+
+```typescript title="lint-wgl004.ts"
+import { Job, Artifacts } from "@intentius/chant-lexicon-gitlab";
+
+// chant-disable-next-line WGL004
+export const wgl004Bad = new Job({
+  script: ["npm run build"],
+  artifacts: new Artifacts({
+    paths: ["dist/"],
+  }),
+});
+
+export const wgl004Good = new Job({
+  script: ["npm run build"],
+  artifacts: new Artifacts({
+    paths: ["dist/"],
+    expire_in: "1 hour",
+  }),
+});
+```
+
+## Post-synth checks
+
+Post-synth checks run against the serialized YAML after build. They catch issues only visible in the final output.
+
+### WGL010 — Undefined stage
+
+**Severity:** error
+
+Flags jobs that reference a stage not present in the collected stages list. This causes a pipeline validation error in GitLab.
+
+### WGL011 — Unreachable job
+
+**Severity:** warning
+
+Flags jobs where all `rules:` entries have `when: "never"`, making the job unreachable. This usually indicates a configuration error.
+
+```typescript title="lint-wgl011.ts"
+import { Job, Rule, CI } from "@intentius/chant-lexicon-gitlab";
+
+// chant-disable-next-line WGL011
+export const noop = new Job({
+  script: ["echo unreachable"],
+  rules: [
+    new Rule({ if: CI.CommitBranch, when: "never" }),
+    new Rule({ if: CI.CommitTag, when: "never" }),
+  ],
+});
+```
+
+### WGL012 — Deprecated property usage
+
+**Severity:** warning
+
+Flags properties marked as deprecated in the GitLab CI schema. Deprecation signals are mined from property descriptions (keywords like "deprecated", "legacy", "no longer available"). Using deprecated properties may cause unexpected behavior in future GitLab versions.
+
+### WGL013 — Invalid `needs:` target
+
+**Severity:** error
+
+Flags jobs whose `needs:` entries reference a job not defined in the pipeline, or reference themselves. Both cause GitLab pipeline validation failures. When `include:` is present, the check is skipped since needed jobs may come from included files.
+
+### WGL014 — Invalid `extends:` target
+
+**Severity:** error
+
+Flags jobs whose `extends:` references a template or hidden job not defined in the pipeline. GitLab rejects pipelines with unresolved extends references. When `include:` is present, the check is skipped since templates may come from included files.
+
+### WGL015 — Circular `needs:` chain
+
+**Severity:** error
+
+Detects cycles in the `needs:` dependency graph. If job A needs B and B needs A (directly or transitively), GitLab rejects the pipeline. Reports the full cycle chain in the diagnostic message.
+
+## Running lint
+
+```bash
+# Lint your chant project
+chant lint
+
+# Lint with auto-fix where supported
+chant lint --fix
+```
+
+To suppress a rule on a specific line:
+
+```typescript
+// chant-disable-next-line WGL001
+export const deploy = new Job({ only: ["main"], script: ["deploy"] });
+```
+
+To suppress globally in `chant.config.ts`:
+
+```typescript
+export default {
+  lint: {
+    rules: {
+      WGL003: "off",
+    },
+  },
+};
+```

@@ -14,6 +14,10 @@ export { CI } from "./variables";
 // After running `chant generate`, this re-exports all CI entity classes
 export * from "./generated/index";
 
+// Composites
+export { DockerBuild, NodePipeline, BunPipeline, PnpmPipeline, PythonPipeline, ReviewApp } from "./composites/index";
+export type { DockerBuildProps, NodePipelineProps, PythonPipelineProps, ReviewAppProps } from "./composites/index";
+
 // Spec utilities (for tooling)
 export { fetchCISchema, fetchSchemas, GITLAB_SCHEMA_VERSION } from "./codegen/fetch";
 export { parseCISchema, gitlabShortName, gitlabServiceName } from "./codegen/parse";

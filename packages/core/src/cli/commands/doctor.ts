@@ -1,6 +1,7 @@
 import { existsSync, readFileSync, readdirSync } from "fs";
 import { execSync } from "child_process";
-import { join, resolve } from "path";
+import { join, resolve, dirname } from "path";
+import { fileURLToPath } from "url";
 import { checkVersionCompatibility } from "../../lexicon-manifest";
 import { debug } from "../debug";
 import { loadPlugins, resolveProjectLexicons } from "../plugins";
@@ -109,8 +110,12 @@ export async function doctorCommand(path: string): Promise<DoctorReport> {
         try {
           const manifest = JSON.parse(readFileSync(manifestPath, "utf-8"));
           if (manifest.chantVersion) {
-            // Use a placeholder current version for now
-            const currentVersion = "0.1.0";
+            let currentVersion = "0.0.8";
+            try {
+              const pkgDir = dirname(dirname(dirname(dirname(dirname(fileURLToPath(import.meta.url))))));
+              const corePkg = JSON.parse(readFileSync(join(pkgDir, "package.json"), "utf-8"));
+              currentVersion = corePkg.version ?? currentVersion;
+            } catch { /* fallback */ }
             if (!checkVersionCompatibility(manifest.chantVersion, currentVersion)) {
               checks.push({ name: `lexicon-${lex}-compat`, status: "warn", message: `Lexicon ${lex} requires chant ${manifest.chantVersion}` });
             } else {
@@ -142,7 +147,7 @@ export async function doctorCommand(path: string): Promise<DoctorReport> {
     }
   }
 
-  // Check 8: tsconfig.json has paths
+  // Check 8: tsconfig.json does NOT have paths (they break runtime resolution)
   const tsconfigPath = join(projectPath, "tsconfig.json");
   if (existsSync(tsconfigPath)) {
     try {
@@ -151,8 +156,8 @@ export async function doctorCommand(path: string): Promise<DoctorReport> {
       // Strip single-line comments for basic parsing
       const cleaned = raw.replace(/\/\/.*$/gm, "");
       const tsconfig = JSON.parse(cleaned);
-      if (!tsconfig.compilerOptions?.paths) {
-        checks.push({ name: "tsconfig-paths", status: "warn", message: "tsconfig.json missing compilerOptions.paths" });
+      if (tsconfig.compilerOptions?.paths) {
+        checks.push({ name: "tsconfig-paths", status: "warn", message: "tsconfig.json has compilerOptions.paths — these break runtime module resolution (bun and tsx follow them). Remove the paths block." });
       } else {
         checks.push({ name: "tsconfig-paths", status: "pass" });
       }
@@ -198,10 +203,9 @@ export async function doctorCommand(path: string): Promise<DoctorReport> {
       if (!plugin.skills) continue;
       const skills = plugin.skills();
       if (skills.length === 0) continue;
-      const skillsDir = join(projectPath, ".chant", "skills", plugin.name);
       let missing = 0;
       for (const skill of skills) {
-        if (!existsSync(join(skillsDir, `${skill.name}.md`))) {
+        if (!existsSync(join(projectPath, "skills", skill.name, "SKILL.md"))) {
           missing++;
         }
       }

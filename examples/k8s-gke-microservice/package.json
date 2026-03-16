@@ -1,0 +1,28 @@
+{
+  "name": "k8s-gke-microservice-example",
+  "version": "0.0.1",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "build": "chant build src --lexicon gcp -o config.yaml && chant build src --lexicon k8s -o k8s.yaml",
+    "build:gcp": "chant build src --lexicon gcp -o config.yaml",
+    "build:k8s": "chant build src --lexicon k8s -o k8s.yaml",
+    "lint": "chant lint src",
+    "bootstrap": "bash scripts/bootstrap.sh",
+    "deploy-infra": "kubectl apply -f config.yaml",
+    "configure-kubectl": "gcloud container clusters get-credentials gke-microservice --region ${GCP_REGION:-us-central1} --project ${GCP_PROJECT_ID}",
+    "load-outputs": "bash scripts/load-outputs.sh",
+    "validate": "kubectl apply -f k8s.yaml --dry-run=server",
+    "apply": "kubectl apply -f k8s.yaml",
+    "wait": "kubectl -n microservice rollout status deployment/microservice-api --timeout=120s",
+    "status": "kubectl get pods -n microservice && kubectl get ingress -n microservice && kubectl get daemonsets -n gke-logging && kubectl get daemonsets -n gke-monitoring",
+    "logs": "kubectl logs -n microservice -l app.kubernetes.io/name=microservice-api --tail=50",
+    "deploy": "npm run build && npm run configure-kubectl && npm run deploy-infra && npm run load-outputs && npm run build:k8s && npm run apply && npm run wait && npm run status",
+    "teardown": "bash scripts/teardown.sh"
+  },
+  "dependencies": {
+    "@intentius/chant": "workspace:*",
+    "@intentius/chant-lexicon-gcp": "workspace:*",
+    "@intentius/chant-lexicon-k8s": "workspace:*"
+  }
+}

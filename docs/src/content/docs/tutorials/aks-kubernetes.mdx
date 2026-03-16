@@ -1,0 +1,94 @@
+---
+title: "Azure AKS + Kubernetes"
+description: "Deploy a production-grade AKS cluster with Kubernetes workloads using the Azure ARM lexicon for infrastructure and the K8s lexicon for workloads."
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+Two chant lexicons, one `src/` directory: the Azure lexicon produces an ARM template for the AKS cluster and managed identities; the K8s lexicon produces kubectl-ready YAML for workloads. Managed identity client IDs flow between them via `.env` → `config.ts`.
+
+Unlike GKE (which requires a bootstrap management cluster) and EKS (which requires NS delegation for ACM), AKS deploys in a single pass — the ARM template creates the cluster directly, no separate bootstrap step needed.
+
+## What you'll build
+
+```
+┌─────────────────────────────────────────────────────────┐
+│  Azure Lexicon (ARM) (~14 resources)                    │
+│  VNet + AKS Cluster + ACR                               │
+│  3× Managed Identities (app, dns, monitor)             │
+│  Role Assignments + Azure DNS Zone                      │
+└────────────────────┬────────────────────────────────────┘
+                     │ client IDs via .env → config.ts
+┌────────────────────▼────────────────────────────────────┐
+│  K8s Lexicon (~20 resources)                            │
+│  Namespace + AutoscaledService                          │
+│  AksWorkloadIdentityServiceAccount (client-id ann.)     │
+│  AgicIngress + AksExternalDnsAgent                      │
+│  AzureDiskStorageClass + AzureMonitorCollector          │
+└─────────────────────────────────────────────────────────┘
+```
+
+## What you'll learn
+
+- How AKS Workload Identity differs from GKE WI and IRSA: OIDC federation with Azure AD vs K8s SA annotation alone
+- Why AKS doesn't need a bootstrap step (contrast with GKE's Config Connector management cluster)
+- The cross-lexicon value flow: ARM outputs → `.env` → `config.ts` → K8s composite props
+- AKS-specific nuances: AGIC (Application Gateway Ingress Controller) provisioning time, federated credential requirement
+
+## Cost
+
+AKS control plane free (free tier), Application Gateway ~$20/mo, 3× Standard_B2s nodes ~$75/mo. **Total ~$95/mo.** Teardown after testing.
+
+## Get started
+
+```
+Deploy the k8s-aks-microservice example. My Azure resource group is aks-microservice-rg.
+```
+
+See [`examples/k8s-aks-microservice/`](https://github.com/intentius/chant/tree/main/examples/k8s-aks-microservice) for the full README, deploy workflow, and teardown instructions.
+
+## Key patterns
+
+### AKS Workload Identity: OIDC federation vs annotation-only
+
+GKE Workload Identity needs only a K8s SA annotation pointing to a GCP SA. AKS Workload Identity needs three things:
+
+1. **Managed identity** in Azure (created in ARM template)
+2. **Federated credential** on that identity — binds it to the AKS OIDC issuer + K8s SA
+3. **K8s SA annotation** — `azure.workload.identity/client-id: <clientId>`
+
+The `AksWorkloadIdentityServiceAccount` composite handles step 3. Steps 1 and 2 are in `src/infra/cluster.ts`. If a pod can't authenticate, the most common cause is a missing or misconfigured federated credential.
+
+```typescript
+// src/k8s/app.ts — composite sets the annotation
+export const appSa = AksWorkloadIdentityServiceAccount({
+  name: "app-sa",
+  namespace: "microservice",
+  azureClientId: config.appClientId,    // from .env after load-outputs
+  azureTenantId: config.azureTenantId,
+});
+```
+
+### No bootstrap step needed
+
+GKE requires bootstrapping a management cluster to run Config Connector. EKS creates the cluster directly via CloudFormation but needs a two-phase deploy for ACM. AKS is simpler: the ARM template creates the AKS cluster in one deployment, no additional cluster or setup step.
+
+```bash
+az group create --name $AZURE_RESOURCE_GROUP --location eastus
+npm run build
+npm run deploy-infra   # creates VNet, AKS, ACR, identities, DNS zone (~5-10 min)
+npm run configure-kubectl
+npm run load-outputs
+npm run build:k8s && npm run apply
+```
+
+### Delete order: K8s resources before resource group
+
+Always delete K8s resources before deleting the Azure resource group. AGIC must be running to clean up Application Gateway backend pools. `npm run teardown` handles this: `kubectl delete` → 30s drain wait → `az group delete --no-wait`.
+
+## Further reading
+
+- [Azure ARM lexicon](/chant/lexicons/azure/) — resource reference and composites
+- [AKS Composites](/chant/lexicons/k8s/aks-composites/) — AksWorkloadIdentityServiceAccount, AgicIngress, and more
+- [Kubernetes lexicon](/chant/lexicons/k8s/) — core composites reference
+- [Agent Integration guide](/chant/guide/agent-integration/) — using chant skills with Claude Code

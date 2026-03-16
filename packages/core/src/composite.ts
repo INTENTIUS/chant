@@ -123,7 +123,7 @@ export function expandComposite(
   const shared = (instance as any)[SHARED_PROPS] as Record<string, unknown> | undefined;
 
   for (const [memberName, member] of Object.entries(instance.members)) {
-    const fullName = `${prefix}_${memberName}`;
+    const fullName = `${prefix}${memberName[0].toUpperCase()}${memberName.slice(1)}`;
 
     if (isCompositeInstance(member)) {
       const nested = expandComposite(fullName, member);
@@ -182,10 +182,11 @@ type Simplify<T> = { [K in keyof T]: T[K] };
  */
 export function withDefaults<P, M extends CompositeMembers, D extends Partial<P>>(
   definition: CompositeDefinition<P, M>,
-  defaults: D,
+  defaults: D | ((props: Partial<P>) => D),
 ): CompositeDefinition<Simplify<PartialByDefault<P, D>>, M> {
   const wrapped = ((props: Simplify<PartialByDefault<P, D>>) => {
-    return definition({ ...defaults, ...props } as P);
+    const resolved = typeof defaults === "function" ? defaults(props as Partial<P>) : defaults;
+    return definition({ ...resolved, ...props } as P);
   }) as CompositeDefinition<Simplify<PartialByDefault<P, D>>, M>;
 
   Object.defineProperty(wrapped, "compositeName", {
@@ -236,8 +237,46 @@ export function propagate<M extends CompositeMembers>(
  * Exists so lint tooling can validate composite member construction (EVL005).
  */
 export function resource<T extends Declarable, P>(
-  Type: new (props: P) => T,
+  Type: new (props: P, attributes?: Record<string, unknown>) => T,
   props: P,
+  attributes?: Record<string, unknown>,
 ): T {
-  return new Type(props);
+  return new Type(props, attributes);
+}
+
+/**
+ * Shallow-merges override values into a base props object.
+ *
+ * Merge semantics:
+ * - `undefined` values in overrides are skipped
+ * - Arrays: concatenated (base + overrides), matching `propagate()` semantics
+ * - Scalars / objects: override wins
+ *
+ * No deep merge — too dangerous with IaC props where nested objects
+ * (e.g. policy documents) should be replaced wholesale.
+ */
+export function mergeDefaults<T extends Record<string, unknown>>(
+  base: T,
+  overrides?: Partial<T>,
+): T {
+  if (!overrides) return base;
+  const result = { ...base };
+  for (const [key, value] of Object.entries(overrides)) {
+    if (value === undefined) continue;
+    const existing = result[key as keyof T];
+    if (Array.isArray(existing) && Array.isArray(value)) {
+      (result as any)[key] = [...existing, ...value];
+    } else if (
+      existing != null && typeof existing === "object" && !Array.isArray(existing) &&
+      value != null && typeof value === "object" && !Array.isArray(value)
+    ) {
+      (result as any)[key] = mergeDefaults(
+        existing as Record<string, unknown>,
+        value as Record<string, unknown>,
+      );
+    } else {
+      (result as any)[key] = value;
+    }
+  }
+  return result;
 }

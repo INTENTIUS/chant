@@ -1,0 +1,22 @@
+{
+  "name": "helm-composites-basic-example",
+  "version": "0.0.1",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "build": "chant build src --lexicon helm -o Chart.yaml",
+    "lint": "chant lint src",
+    "dev": "chant build src --lexicon helm -o Chart.yaml --watch",
+    "test": "bun test",
+    "deploy": "helm install composites-basic .",
+    "teardown": "helm uninstall composites-basic"
+  },
+  "dependencies": {
+    "@intentius/chant": "workspace:*",
+    "@intentius/chant-lexicon-helm": "workspace:*",
+    "@intentius/chant-lexicon-k8s": "workspace:*"
+  },
+  "devDependencies": {
+    "typescript": "*"
+  }
+}

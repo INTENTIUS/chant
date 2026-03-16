@@ -1,5 +1,7 @@
 import { INTRINSIC_MARKER, resolveIntrinsicValue, type Intrinsic } from "@intentius/chant/intrinsic";
 import { buildInterpolatedString, defaultInterpolationSerializer } from "@intentius/chant/intrinsic-interpolation";
+import { type Declarable } from "@intentius/chant/declarable";
+import { getLogicalName } from "@intentius/chant/utils";
 
 /**
  * Fn::Sub intrinsic function implementation
@@ -37,26 +39,32 @@ export function Sub(
 
 /**
  * Ref intrinsic function
- * References a parameter or resource by logical name
+ * References a parameter or resource by logical name.
+ * Accepts either a string name or a Declarable entity (e.g. Parameter).
+ * When given a Declarable, the logical name is resolved at serialization time.
  */
 export class RefIntrinsic implements Intrinsic {
   readonly [INTRINSIC_MARKER] = true as const;
-  private name: string;
+  private target: string | Declarable;
 
-  constructor(name: string) {
-    this.name = name;
+  constructor(target: string | Declarable) {
+    this.target = target;
   }
 
   toJSON(): { Ref: string } {
-    return { Ref: this.name };
+    if (typeof this.target === "string") {
+      return { Ref: this.target };
+    }
+    return { Ref: getLogicalName(this.target) };
   }
 }
 
 /**
- * Create a Ref intrinsic
+ * Create a Ref intrinsic.
+ * Pass a string for direct parameter/resource names, or a Declarable (e.g. Parameter) for type-safe references.
  */
-export function Ref(name: string): RefIntrinsic {
-  return new RefIntrinsic(name);
+export function Ref(target: string | Declarable): RefIntrinsic {
+  return new RefIntrinsic(target);
 }
 
 /**
@@ -147,22 +155,25 @@ export function Join(delimiter: string, values: unknown[]): JoinIntrinsic {
 export class SelectIntrinsic implements Intrinsic {
   readonly [INTRINSIC_MARKER] = true as const;
   private index: number;
-  private values: unknown[];
+  private values: unknown[] | Intrinsic;
 
-  constructor(index: number, values: unknown[]) {
+  constructor(index: number, values: unknown[] | Intrinsic) {
     this.index = index;
     this.values = values;
   }
 
-  toJSON(): { "Fn::Select": [string, unknown[]] } {
-    return { "Fn::Select": [String(this.index), this.values.map(resolveIntrinsicValue)] };
+  toJSON(): { "Fn::Select": [string, unknown] } {
+    const resolvedValues = Array.isArray(this.values)
+      ? this.values.map(resolveIntrinsicValue)
+      : (this.values as Intrinsic & { toJSON(): unknown }).toJSON();
+    return { "Fn::Select": [String(this.index), resolvedValues] };
   }
 }
 
 /**
  * Create a Select intrinsic
  */
-export function Select(index: number, values: unknown[]): SelectIntrinsic {
+export function Select(index: number, values: unknown[] | Intrinsic): SelectIntrinsic {
   return new SelectIntrinsic(index, values);
 }
 
@@ -220,4 +231,31 @@ export class Base64Intrinsic implements Intrinsic {
  */
 export function Base64(value: string | Intrinsic): Base64Intrinsic {
   return new Base64Intrinsic(value);
+}
+
+/**
+ * Fn::GetAZs intrinsic function
+ * Returns a list of Availability Zones for a region
+ */
+export class GetAZsIntrinsic implements Intrinsic {
+  readonly [INTRINSIC_MARKER] = true as const;
+  private region: string | Intrinsic;
+
+  constructor(region: string | Intrinsic = "") {
+    this.region = region;
+  }
+
+  toJSON(): { "Fn::GetAZs": unknown } {
+    const regionValue = typeof this.region === "string"
+      ? this.region
+      : (this.region as Intrinsic & { toJSON(): unknown }).toJSON();
+    return { "Fn::GetAZs": regionValue };
+  }
+}
+
+/**
+ * Create a GetAZs intrinsic
+ */
+export function GetAZs(region?: string | Intrinsic): GetAZsIntrinsic {
+  return new GetAZsIntrinsic(region);
 }

@@ -1,0 +1,92 @@
+---
+title: "Examples: Resources"
+description: "GCP Config Connector resource examples — StorageBucket, ComputeInstance, CloudSQL, IAM"
+---
+## StorageBucket
+
+A Storage bucket with encryption, versioning, and lifecycle rules:
+
+```typescript
+import { StorageBucket, GCP } from "@intentius/chant-lexicon-gcp";
+
+export const bucket = new StorageBucket({
+  location: "US",
+  storageClass: "STANDARD",
+  uniformBucketLevelAccess: true,
+  versioning: { enabled: true },
+  encryption: {
+    defaultKmsKeyName: "projects/p/locations/us/keyRings/kr/cryptoKeys/key",
+  },
+  lifecycleRule: [
+    { action: { type: "Delete" }, condition: { age: 365 } },
+    { action: { type: "SetStorageClass", storageClass: "NEARLINE" }, condition: { age: 30 } },
+  ],
+});
+```
+
+## ComputeInstance
+
+A Compute Engine VM with shielded VM configuration:
+
+```typescript
+import { ComputeInstance, GCP } from "@intentius/chant-lexicon-gcp";
+
+export const vm = new ComputeInstance({
+  machineType: "e2-medium",
+  zone: "us-central1-a",
+  bootDisk: {
+    initializeParams: {
+      sourceImageRef: {
+        external: "projects/debian-cloud/global/images/debian-12",
+      },
+    },
+  },
+  networkInterface: [{
+    networkRef: { name: "my-network" },
+    subnetworkRef: { name: "my-subnet" },
+  }],
+  shieldedInstanceConfig: {
+    enableSecureBoot: true,
+    enableVtpm: true,
+    enableIntegrityMonitoring: true,
+  },
+});
+```
+
+## Cloud SQL
+
+A PostgreSQL instance with backups and high availability:
+
+```typescript
+import { CloudSqlInstance } from "@intentius/chant-lexicon-gcp";
+
+const { instance, database, user } = CloudSqlInstance({
+  name: "app-db",
+  databaseVersion: "POSTGRES_15",
+  tier: "db-custom-2-8192",
+  region: "us-central1",
+  backupEnabled: true,
+  highAvailability: true,
+  diskSize: 50,
+});
+
+export { instance, database, user };
+```
+
+## IAM Binding
+
+Grant a service account access to a resource:
+
+```typescript
+import { IAMPolicyMember } from "@intentius/chant-lexicon-gcp";
+
+export const binding = new IAMPolicyMember({
+  member: "serviceAccount:app@my-project.iam.gserviceaccount.com",
+  role: "roles/storage.objectViewer",
+  resourceRef: {
+    apiVersion: "storage.cnrm.cloud.google.com/v1beta1",
+    kind: "StorageBucket",
+    name: "my-bucket",
+  },
+});
+```

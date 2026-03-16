@@ -5,9 +5,14 @@
  * for GitLab CI/CD pipelines.
  */
 
-import type { LexiconPlugin, IntrinsicDef, SkillDefinition } from "@intentius/chant/lexicon";
+import { createRequire } from "module";
+import type { LexiconPlugin, IntrinsicDef, InitTemplateSet } from "@intentius/chant/lexicon";
+const require = createRequire(import.meta.url);
 import type { LintRule } from "@intentius/chant/lint/rule";
-import type { PostSynthCheck } from "@intentius/chant/lint/post-synth";
+import { discoverPostSynthChecks } from "@intentius/chant/lint/discover";
+import { createSkillsLoader, createDiffTool, createCatalogResource } from "@intentius/chant/lexicon-plugin-helpers";
+import { join, dirname } from "path";
+import { fileURLToPath } from "url";
 import { gitlabSerializer } from "./serializer";
 
 export const gitlabPlugin: LexiconPlugin = {
@@ -22,10 +27,9 @@ export const gitlabPlugin: LexiconPlugin = {
     return [deprecatedOnlyExceptRule, missingScriptRule, missingStageRule, artifactNoExpiryRule];
   },
 
-  postSynthChecks(): PostSynthCheck[] {
-    const { wgl010 } = require("./lint/post-synth/wgl010");
-    const { wgl011 } = require("./lint/post-synth/wgl011");
-    return [wgl010, wgl011];
+  postSynthChecks() {
+    const postSynthDir = join(dirname(fileURLToPath(import.meta.url)), "lint", "post-synth");
+    return discoverPostSynthChecks(postSynthDir, import.meta.url);
   },
 
   intrinsics(): IntrinsicDef[] {
@@ -39,46 +43,125 @@ export const gitlabPlugin: LexiconPlugin = {
     ];
   },
 
-  initTemplates(): Record<string, string> {
+  initTemplates(template?: string): InitTemplateSet {
+    if (template === "node-pipeline") {
+      return {
+        src: {
+          "pipeline.ts": `import { NodePipeline } from "@intentius/chant-lexicon-gitlab";
+
+export const app = NodePipeline({
+  nodeVersion: "22",
+  installCommand: "npm install",
+  buildScript: "build",
+  testScript: "test",
+});
+`,
+        },
+      };
+    }
+
+    if (template === "python-pipeline") {
+      return {
+        src: {
+          "pipeline.ts": `import { PythonPipeline } from "@intentius/chant-lexicon-gitlab";
+
+export const app = PythonPipeline({
+  pythonVersion: "3.12",
+  lintCommand: null,
+});
+`,
+        },
+      };
+    }
+
+    if (template === "docker-build") {
+      return {
+        src: {
+          "pipeline.ts": `import { DockerBuild, Job, Image } from "@intentius/chant-lexicon-gitlab";
+
+export const docker = DockerBuild({
+  dockerfile: "Dockerfile",
+  tagLatest: true,
+});
+
+export const test = new Job({
+  stage: "test",
+  image: new Image({ name: "node:22-alpine" }),
+  script: ["node test.js"],
+});
+`,
+        },
+      };
+    }
+
+    if (template === "review-app") {
+      return {
+        src: {
+          "pipeline.ts": `import { ReviewApp, Job, Image } from "@intentius/chant-lexicon-gitlab";
+
+export const review = ReviewApp({
+  name: "review",
+  deployScript: "echo deploy",
+});
+
+export const test = new Job({
+  stage: "test",
+  image: new Image({ name: "node:22-alpine" }),
+  script: ["node test.js"],
+});
+`,
+        },
+      };
+    }
+
+    // Default template — basic pipeline with shared config
     return {
-      "_.ts": `export * from "./config";\n`,
-      "config.ts": `/**
+      src: {
+        "config.ts": `/**
  * Shared pipeline configuration
  */
 
-import * as gl from "@intentius/chant-lexicon-gitlab";
+import { Image, Cache } from "@intentius/chant-lexicon-gitlab";
 
 // Default image for all jobs
-export const defaultImage = new gl.Image({
+export const defaultImage = new Image({
   name: "node:20-alpine",
 });
 
 // Standard cache configuration
-export const npmCache = new gl.Cache({
+export const npmCache = new Cache({
   key: "$CI_COMMIT_REF_SLUG",
   paths: ["node_modules/"],
   policy: "pull-push",
 });
 `,
-      "test.ts": `/**
- * Test job
- */
+        "pipeline.ts": `import { Job, Artifacts } from "@intentius/chant-lexicon-gitlab";
+import { defaultImage, npmCache } from "./config";
 
-import * as gl from "@intentius/chant-lexicon-gitlab";
-import * as _ from "./_";
+export const junitReports = { junit: "coverage/junit.xml" };
 
-export const test = new gl.Job({
+export const testArtifacts = new Artifacts({
+  reports: junitReports,
+  paths: ["coverage/"],
+  expire_in: "1 week",
+});
+
+export const build = new Job({
+  stage: "build",
+  image: defaultImage,
+  cache: npmCache,
+  script: ["npm install", "npm run build"],
+});
+
+export const test = new Job({
   stage: "test",
-  image: _.defaultImage,
-  cache: _.npmCache,
-  script: ["npm ci", "npm test"],
-  artifacts: new gl.Artifacts({
-    reports: { junit: "coverage/junit.xml" },
-    paths: ["coverage/"],
-    expireIn: "1 week",
-  }),
+  image: defaultImage,
+  cache: npmCache,
+  script: ["npm install", "npm test"],
+  artifacts: testArtifacts,
 });
 `,
+      },
     };
   },
 
@@ -142,18 +225,9 @@ export const test = new gl.Job({
 
   async validate(options?: { verbose?: boolean }): Promise<void> {
     const { validate } = await import("./validate");
+    const { printValidationResult } = await import("@intentius/chant/codegen/validate");
     const result = await validate();
-
-    for (const check of result.checks) {
-      const status = check.ok ? "OK" : "FAIL";
-      const msg = check.error ? ` — ${check.error}` : "";
-      console.error(`  [${status}] ${check.name}${msg}`);
-    }
-
-    if (!result.success) {
-      throw new Error("Validation failed");
-    }
-    console.error("All validation checks passed.");
+    printValidationResult(result);
   },
 
   async coverage(options?: { verbose?: boolean; minOverall?: number }): Promise<void> {
@@ -166,7 +240,7 @@ export const test = new gl.Job({
 
   async package(options?: { verbose?: boolean; force?: boolean }): Promise<void> {
     const { packageLexicon } = await import("./codegen/package");
-    const { writeFileSync, mkdirSync } = await import("fs");
+    const { writeBundleSpec } = await import("@intentius/chant/codegen/package");
     const { join, dirname } = await import("path");
     const { fileURLToPath } = await import("url");
 
@@ -174,96 +248,18 @@ export const test = new gl.Job({
 
     const pkgDir = dirname(dirname(fileURLToPath(import.meta.url)));
     const distDir = join(pkgDir, "dist");
-    mkdirSync(join(distDir, "types"), { recursive: true });
-    mkdirSync(join(distDir, "rules"), { recursive: true });
-    mkdirSync(join(distDir, "skills"), { recursive: true });
-
-    writeFileSync(join(distDir, "manifest.json"), JSON.stringify(spec.manifest, null, 2));
-    writeFileSync(join(distDir, "meta.json"), spec.registry);
-    writeFileSync(join(distDir, "types", "index.d.ts"), spec.typesDTS);
-
-    for (const [name, content] of spec.rules) {
-      writeFileSync(join(distDir, "rules", name), content);
-    }
-    for (const [name, content] of spec.skills) {
-      writeFileSync(join(distDir, "skills", name), content);
-    }
-
-    if (spec.integrity) {
-      writeFileSync(join(distDir, "integrity.json"), JSON.stringify(spec.integrity, null, 2));
-    }
+    writeBundleSpec(spec, distDir);
 
     console.error(`Packaged ${stats.resources} entities, ${stats.ruleCount} rules, ${stats.skillCount} skills`);
   },
 
-  async rollback(options?: { restore?: string; verbose?: boolean }): Promise<void> {
-    const { listSnapshots, restoreSnapshot } = await import("./codegen/rollback");
-    const { join, dirname } = await import("path");
-    const { fileURLToPath } = await import("url");
-
-    const pkgDir = dirname(dirname(fileURLToPath(import.meta.url)));
-    const snapshotsDir = join(pkgDir, ".snapshots");
-
-    if (options?.restore) {
-      const generatedDir = join(pkgDir, "src", "generated");
-      restoreSnapshot(String(options.restore), generatedDir);
-      console.error(`Restored snapshot: ${options.restore}`);
-    } else {
-      const snapshots = listSnapshots(snapshotsDir);
-      if (snapshots.length === 0) {
-        console.error("No snapshots available.");
-      } else {
-        console.error(`Available snapshots (${snapshots.length}):`);
-        for (const s of snapshots) {
-          console.error(`  ${s.timestamp}  ${s.resourceCount} resources  ${s.path}`);
-        }
-      }
-    }
-  },
-
   mcpTools() {
-    return [
-      {
-        name: "diff",
-        description: "Compare current build output against previous output for GitLab CI",
-        inputSchema: {
-          type: "object" as const,
-          properties: {
-            path: {
-              type: "string",
-              description: "Path to the infrastructure project directory",
-            },
-          },
-        },
-        async handler(params: Record<string, unknown>): Promise<unknown> {
-          const { diffCommand } = await import("@intentius/chant/cli/commands/diff");
-          const result = await diffCommand({
-            path: (params.path as string) ?? ".",
-            serializers: [gitlabSerializer],
-          });
-          return result;
-        },
-      },
-    ];
+    return [createDiffTool(gitlabSerializer, "Compare current build output against previous output for GitLab CI")];
   },
 
   mcpResources() {
     return [
-      {
-        uri: "resource-catalog",
-        name: "GitLab CI Entity Catalog",
-        description: "JSON list of all supported GitLab CI entity types",
-        mimeType: "application/json",
-        async handler(): Promise<string> {
-          const lexicon = require("./generated/lexicon-gitlab.json") as Record<string, { resourceType: string; kind: string }>;
-          const entries = Object.entries(lexicon).map(([className, entry]) => ({
-            className,
-            resourceType: entry.resourceType,
-            kind: entry.kind,
-          }));
-          return JSON.stringify(entries);
-        },
-      },
+      createCatalogResource(import.meta.url, "GitLab CI Entity Catalog", "JSON list of all supported GitLab CI entity types", "lexicon-gitlab.json"),
       {
         uri: "examples/basic-pipeline",
         name: "Basic Pipeline Example",
@@ -307,60 +303,34 @@ export const deploy = new Job({
     await generateDocs(options);
   },
 
-  skills(): SkillDefinition[] {
-    return [
-      {
-        name: "gitlab-ci",
-        description: "GitLab CI/CD best practices and common patterns",
-        content: `---
-name: gitlab-ci
-description: GitLab CI/CD best practices and common patterns
----
-
-# GitLab CI/CD with Chant
-
-## Common Entity Types
-
-- \`Job\` — Pipeline job definition
-- \`Default\` — Default settings inherited by all jobs
-- \`Workflow\` — Pipeline-level configuration
-- \`Artifacts\` — Job artifact configuration
-- \`Cache\` — Cache configuration
-- \`Image\` — Docker image for a job
-- \`Rule\` — Conditional execution rule
-- \`Environment\` — Deployment environment
-- \`Trigger\` — Trigger downstream pipeline
-- \`Include\` — Include external CI configuration
-
-## Predefined Variables
-
-- \`CI.CommitBranch\` — Current branch name
-- \`CI.CommitSha\` — Current commit SHA
-- \`CI.PipelineSource\` — What triggered the pipeline
-- \`CI.ProjectPath\` — Project path (group/project)
-- \`CI.Registry\` — Container registry URL
-- \`CI.MergeRequestIid\` — MR internal ID
-
-## Best Practices
-
-1. **Use stages** — Organize jobs into logical stages (build, test, deploy)
-2. **Cache dependencies** — Cache node_modules, pip packages, etc.
-3. **Use rules** — Prefer \`rules:\` over \`only:/except:\` for conditional execution
-4. **Minimize artifacts** — Only preserve files needed by later stages
-5. **Use includes** — Share common configuration across projects
-6. **Set timeouts** — Prevent stuck jobs from blocking pipelines
-`,
-        triggers: [
-          { type: "file-pattern", value: "**/*.gitlab.ts" },
-          { type: "context", value: "gitlab" },
-        ],
-        parameters: [],
-        examples: [
-          {
-            title: "Basic test job",
-            description: "Create a test job with caching and artifacts",
-            input: "Create a test job",
-            output: `new Job({
+  skills: createSkillsLoader(import.meta.url, [
+    {
+      file: "chant-gitlab.md",
+      name: "chant-gitlab",
+      description: "GitLab CI/CD pipeline lifecycle — build, validate, deploy, monitor, rollback, and troubleshoot",
+      triggers: [
+        { type: "file-pattern", value: "**/*.gitlab.ts" },
+        { type: "file-pattern", value: "**/.gitlab-ci.yml" },
+        { type: "context", value: "gitlab" },
+        { type: "context", value: "pipeline" },
+        { type: "context", value: "deploy" },
+      ],
+      preConditions: [
+        "chant CLI is installed (chant --version succeeds)",
+        "git is configured and can push to the remote",
+        "Project has chant source files in src/",
+      ],
+      postConditions: [
+        "Pipeline is in a stable state (success/manual/scheduled)",
+        "No failed jobs in the pipeline",
+      ],
+      parameters: [],
+      examples: [
+        {
+          title: "Basic test job",
+          description: "Create a test job with caching and artifacts",
+          input: "Create a test job",
+          output: `new Job({
   stage: "test",
   image: new Image({ name: "node:20" }),
   script: ["npm ci", "npm test"],
@@ -372,9 +342,86 @@ description: GitLab CI/CD best practices and common patterns
     reports: { junit: "coverage/junit.xml" },
   }),
 })`,
-          },
-        ],
-      },
-    ];
-  },
+        },
+        {
+          title: "Deploy pipeline update",
+          description: "Build, validate, and deploy a pipeline change via MR workflow",
+          input: "Deploy my pipeline changes to production",
+          output: `chant lint src/
+chant build src/ --output .gitlab-ci.yml
+git checkout -b feature/pipeline-update
+git add .gitlab-ci.yml
+git commit -m "Update pipeline"
+git push -u origin feature/pipeline-update
+# Open MR in GitLab, review pipeline diff, then merge`,
+        },
+        {
+          title: "Preview pipeline changes",
+          description: "Validate pipeline configuration via lint and CI Lint API before deploying",
+          input: "Check if my pipeline changes are valid before pushing",
+          output: `chant lint src/
+chant build src/ --output .gitlab-ci.yml
+# Validate via GitLab CI Lint API
+curl --header "PRIVATE-TOKEN: $GITLAB_TOKEN" \\
+  --header "Content-Type: application/json" \\
+  "https://gitlab.com/api/v4/projects/$PROJECT_ID/ci/lint" \\
+  --data-binary '{"content": "'$(cat .gitlab-ci.yml | jq -Rs .)'", "dry_run": true}'`,
+        },
+        {
+          title: "Scaffold and deploy a Node.js pipeline",
+          description: "Use --template to scaffold a Node.js project, build YAML, and push to GitLab",
+          input: "Create a Node.js CI pipeline and deploy it to GitLab",
+          output: `# Scaffold the project
+chant init --lexicon gitlab --template node-pipeline my-node-app
+cd my-node-app
+
+# Build the YAML
+chant build src/ --output .gitlab-ci.yml
+
+# The GitLab repo needs app files — create them
+echo '{"scripts":{"build":"echo build","test":"node test.js"}}' > package.json
+echo 'console.log("ok")' > test.js
+
+# Push to GitLab
+git init -b main
+git add .gitlab-ci.yml package.json test.js
+git commit -m "Initial pipeline"
+git remote add origin git@gitlab.com:YOUR_GROUP/YOUR_PROJECT.git
+git push -u origin main`,
+        },
+        {
+          title: "Retry a failed pipeline",
+          description: "Retry a failed pipeline and monitor its progress",
+          input: "Pipeline 12345 failed, retry it",
+          output: `# Retry the pipeline
+curl --request POST --header "PRIVATE-TOKEN: $GITLAB_TOKEN" \\
+  "https://gitlab.com/api/v4/projects/$PROJECT_ID/pipelines/12345/retry"
+# Monitor status
+curl --header "PRIVATE-TOKEN: $GITLAB_TOKEN" \\
+  "https://gitlab.com/api/v4/projects/$PROJECT_ID/pipelines/12345"`,
+        },
+      ],
+    },
+    {
+      file: "chant-gitlab-patterns.md",
+      name: "chant-gitlab-patterns",
+      description: "GitLab CI/CD pipeline stages, caching, artifacts, includes, and advanced patterns",
+      triggers: [
+        { type: "context", value: "gitlab pipeline" },
+        { type: "context", value: "gitlab cache" },
+        { type: "context", value: "gitlab artifacts" },
+        { type: "context", value: "gitlab include" },
+        { type: "context", value: "gitlab stages" },
+        { type: "context", value: "review app" },
+      ],
+      parameters: [],
+      examples: [
+        {
+          title: "Pipeline with caching",
+          input: "Set up a Node.js pipeline with proper caching",
+          output: "import { Job, Cache } from \"@intentius/chant-lexicon-gitlab\";\n\nconst cache = new Cache({ key: { files: [\"package-lock.json\"] }, paths: [\"node_modules/\"] });",
+        },
+      ],
+    },
+  ]),
 };

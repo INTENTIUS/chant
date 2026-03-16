@@ -29,6 +29,8 @@ export interface BuildResult {
   outputs: Map<string, string | SerializerResult>;
   /** Map of entity name to Declarable entity */
   entities: Map<string, Declarable>;
+  /** Resource-level dependency graph from discovery */
+  dependencies: Map<string, Set<string>>;
   /** Array of warnings encountered during the build */
   warnings: string[];
   /** Array of errors encountered during discovery and build */
@@ -53,6 +55,8 @@ export function partitionByLexicon(
   const partitions = new Map<string, Map<string, Declarable>>();
 
   for (const [name, entity] of entities) {
+    // LexiconOutput instances are collected separately; skip them here
+    if (isLexiconOutput(entity)) continue;
     const lexicon = entity.lexicon;
     if (!partitions.has(lexicon)) {
       partitions.set(lexicon, new Map());
@@ -100,7 +104,18 @@ export function collectLexiconOutputs(
   for (const [name, entity] of entities) {
     if (isLexiconOutput(entity as unknown)) {
       const lexiconOutput = entity as unknown as LexiconOutput;
-      lexiconOutput._setSourceEntity(name);
+      // Resolve source entity name from the WeakRef parent identity
+      const parent = lexiconOutput._sourceParent.deref();
+      let sourceName = name;
+      if (parent) {
+        for (const [entityName, e] of entities) {
+          if (e === parent) {
+            sourceName = entityName;
+            break;
+          }
+        }
+      }
+      lexiconOutput._setSourceEntity(sourceName);
       outputs.push(lexiconOutput);
       continue;
     }
@@ -417,6 +432,7 @@ export async function build(
   return {
     outputs,
     entities: discoveryResult.entities,
+    dependencies: discoveryResult.dependencies,
     warnings,
     errors,
     manifest,

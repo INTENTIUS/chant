@@ -1,0 +1,351 @@
+---
+title: "Lint Rules"
+description: "Built-in lint rules and post-synth checks for AWS CloudFormation"
+---
+The AWS lexicon ships lint rules that run during `chant lint` and post-synth checks that validate the serialized CloudFormation output after `chant build`.
+
+## Lint rules
+
+Lint rules analyze your TypeScript source code before build.
+
+### WAW001 — Hardcoded Region
+
+**Severity:** warning | **Category:** security
+
+Flags hardcoded AWS region strings like `us-east-1`. Use `AWS.Region` instead so templates are portable across regions.
+
+**Bad** — triggers WAW001:
+
+```typescript title="lint-waw001-bad.ts"
+import { Sub, AWS } from "@intentius/chant-lexicon-aws";
+
+// chant-disable-next-line WAW001
+export const hardcodedEndpoint = Sub`s3.us-east-1.amazonaws.com/${AWS.StackName}`;
+```
+
+**Good** — uses `AWS.Region`:
+
+```typescript title="lint-waw001-good.ts"
+import { Sub, AWS } from "@intentius/chant-lexicon-aws";
+
+export const regionEndpoint = Sub`s3.${AWS.Region}.amazonaws.com/${AWS.StackName}`;
+```
+
+### WAW006 — S3 Bucket Encryption
+
+**Severity:** warning | **Category:** security
+
+Flags S3 buckets that don't configure server-side encryption. AWS recommends enabling encryption on all buckets.
+
+**Bad** — triggers WAW006:
+
+```typescript title="lint-waw006-bad.ts"
+import { Bucket } from "@intentius/chant-lexicon-aws";
+
+// chant-disable-next-line WAW006
+export const hardcodedBucket = new Bucket({
+  BucketName: "my-bucket",
+  PublicAccessBlockConfiguration: {
+    BlockPublicAcls: true,
+    BlockPublicPolicy: true,
+    IgnorePublicAcls: true,
+    RestrictPublicBuckets: true,
+  },
+});
+```
+
+**Good** — encryption configured:
+
+```typescript title="lint-waw006-good.ts"
+import { Bucket } from "@intentius/chant-lexicon-aws";
+
+export const bucket = new Bucket({
+  BucketName: "my-bucket",
+  BucketEncryption: {
+    ServerSideEncryptionConfiguration: [
+      {
+        ServerSideEncryptionByDefault: { SSEAlgorithm: "AES256" },
+      },
+    ],
+  },
+  PublicAccessBlockConfiguration: {
+    BlockPublicAcls: true,
+    BlockPublicPolicy: true,
+    IgnorePublicAcls: true,
+    RestrictPublicBuckets: true,
+  },
+});
+```
+
+### WAW009 — IAM Wildcard Resource
+
+**Severity:** warning | **Category:** security
+
+Flags IAM policy statements that use `"Resource": "*"`. Prefer scoped resource ARNs following the principle of least privilege.
+
+**Bad** — triggers WAW009:
+
+```typescript title="lint-waw009-bad.ts"
+import { Role, ManagedPolicy, Sub, AWS } from "@intentius/chant-lexicon-aws";
+
+export const roleBad = new Role({
+  RoleName: Sub`${AWS.StackName}-role`,
+  AssumeRolePolicyDocument: {
+    Version: "2012-10-17",
+    Statement: [
+      {
+        Effect: "Allow",
+        Principal: { Service: "lambda.amazonaws.com" },
+        Action: "sts:AssumeRole",
+      },
+    ],
+  },
+});
+
+export const policyBad = new ManagedPolicy({
+  PolicyDocument: {
+    Statement: [
+      {
+        Effect: "Allow",
+        Action: ["s3:GetObject"],
+        // chant-disable-next-line WAW009
+        Resource: "*",
+      },
+    ],
+  },
+  Roles: [roleBad],
+});
+```
+
+**Good** — scoped ARN:
+
+```typescript title="lint-waw009-good.ts"
+import { Role, ManagedPolicy, Sub, AWS } from "@intentius/chant-lexicon-aws";
+
+export const roleGood = new Role({
+  RoleName: Sub`${AWS.StackName}-role`,
+  AssumeRolePolicyDocument: {
+    Version: "2012-10-17",
+    Statement: [
+      {
+        Effect: "Allow",
+        Principal: { Service: "lambda.amazonaws.com" },
+        Action: "sts:AssumeRole",
+      },
+    ],
+  },
+});
+
+export const policyGood = new ManagedPolicy({
+  PolicyDocument: {
+    Statement: [
+      {
+        Effect: "Allow",
+        Action: ["s3:GetObject"],
+        Resource: Sub`arn:aws:s3:::${AWS.StackName}-data/*`,
+      },
+    ],
+  },
+  Roles: [roleGood],
+});
+```
+
+IAM policy documents use PascalCase keys (`Effect`, `Action`, `Resource`) matching the IAM JSON Policy Language spec. The `PolicyDocument` and `IamPolicyStatement` types provide full autocomplete for these fields.
+
+## Post-synth checks
+
+Post-synth checks run against the serialized CloudFormation JSON after build. They catch issues that are only visible in the final template.
+
+### COR020 — Circular Resource Dependency
+
+Detects cycles in the resource dependency graph built from `Ref`, `Fn::GetAtt`, and `DependsOn` entries. Circular dependencies cause CloudFormation deployments to fail.
+
+### EXT001 — Extension Constraint Violation
+
+Validates cross-property constraints from CloudFormation's cfn-lint extension schemas. For example, an EC2 instance might require `SubnetId` when `NetworkInterfaces` is not set.
+
+### WAW010 — Redundant DependsOn
+
+Flags `DependsOn` entries where the target resource is already referenced via `Ref` or `Fn::GetAtt` in the resource's properties. CloudFormation automatically creates dependencies for these references, making the explicit `DependsOn` unnecessary.
+
+### WAW011 — Deprecated Lambda Runtime
+
+Flags Lambda functions using deprecated or approaching-end-of-life runtimes (e.g. `nodejs16.x`, `python3.8`). Using deprecated runtimes prevents function updates and may cause deployment failures.
+
+### WAW013 — No Stack Outputs
+
+**Severity:** error | **Category:** correctness
+
+Flags child projects (nested stacks) that have no `stackOutput()` exports. Without outputs, the parent stack can't reference any values from the child — either add `stackOutput()` declarations or remove the `nestedStack()` reference.
+
+### WAW014 — Unreferenced Stack Outputs
+
+**Severity:** warning | **Category:** style
+
+Flags `nestedStack()` references whose outputs are never used from the parent. If no cross-stack references exist, the child project could just be built and deployed independently.
+
+### WAW015 — Circular Project References
+
+**Severity:** error | **Category:** correctness
+
+Detects circular references between child projects (e.g. project A references project B which references project A). Circular project dependencies cause infinite build recursion.
+
+### WAW016 — Deprecated Property Usage
+
+**Severity:** warning | **Category:** correctness
+
+Flags properties marked as deprecated in the CloudFormation Registry. Data comes from two sources: the explicit `deprecatedProperties` array in the Registry schema, and description text mining (keywords like "deprecated", "legacy", "no longer recommended").
+
+For example, `AccessControl` on `AWS::S3::Bucket` is a legacy property — use a bucket policy to grant access instead.
+
+```
+WAW016: Resource "MyBucket" (AWS::S3::Bucket) uses deprecated property "AccessControl" — consider alternatives
+```
+
+### WAW017 — Missing Tags on Taggable Resource
+
+**Severity:** info | **Category:** best practice
+
+Flags resources that support tagging but have no `Tags` property set. Tags are important for cost allocation, compliance, and operational visibility. The check uses the `tagging` metadata from the CloudFormation Registry to determine which resources are taggable.
+
+```
+WAW017: Resource "MyBucket" (AWS::S3::Bucket) supports tagging but has no Tags — consider adding tags for cost allocation and compliance
+```
+
+### WAW029 — Invalid DependsOn Target
+
+**Severity:** error | **Category:** correctness
+
+Flags `DependsOn` entries that reference a non-existent resource (typo or deleted resource) or that create a self-reference. Both cases cause CloudFormation deployments to fail immediately.
+
+```
+WAW029: Resource "MyService" has DependsOn "MyBukcet" which does not exist in the template
+WAW029: Resource "MyBucket" has a DependsOn on itself — self-references are invalid
+```
+
+### WAW030 — Missing DependsOn for Known Patterns
+
+**Severity:** warning | **Category:** best practice
+
+Flags resources that are likely missing a required explicit `DependsOn` based on well-known CloudFormation ordering requirements:
+
+- **ECS Service + Listener**: An ECS Service with `LoadBalancers` should depend on the ALB Listener so the target group is fully configured before the service starts registering tasks.
+- **EC2 Route + VPCGatewayAttachment**: A Route using a `GatewayId` should depend on the VPCGatewayAttachment so the gateway is attached to the VPC before the route is created.
+- **API Gateway Deployment + Method**: A Deployment only references `RestApiId` — it needs an explicit `DependsOn` on its Methods or CloudFormation may create the deployment before any methods exist.
+- **API Gateway V2 Deployment + Route**: Same as above for HTTP APIs — a V2 Deployment needs `DependsOn` on its Routes.
+- **DynamoDB Table + ScalableTarget**: A ScalableTarget with `ServiceNamespace: "dynamodb"` references the table by string `ResourceId`, not `Ref` — it needs `DependsOn` so the table exists before scaling is registered.
+- **ECS Service + ScalableTarget**: A ScalableTarget with `ServiceNamespace: "ecs"` references the service by string — it needs `DependsOn` so the ECS Service exists first.
+
+```
+WAW030: ECS Service "MyService" has LoadBalancers but no DependsOn on a Listener
+WAW030: Route "PublicRoute" uses a Gateway but has no dependency on VPCGatewayAttachment
+WAW030: API Gateway Deployment "MyDeployment" has no DependsOn on any Method
+WAW030: ScalableTarget "MyTarget" targets DynamoDB but has no DependsOn on any Table
+```
+
+### WAW018 — S3 Bucket Missing Public Access Block
+
+**Severity:** error | **Category:** security
+
+Flags S3 buckets without a `PublicAccessBlockConfiguration`. Without an explicit public access block, the bucket may be publicly accessible. Always set `BlockPublicAcls`, `BlockPublicPolicy`, `IgnorePublicAcls`, and `RestrictPublicBuckets` to `true`.
+
+### WAW019 — Security Group Unrestricted Ingress on Sensitive Ports
+
+**Severity:** error | **Category:** security
+
+Flags security group ingress rules that allow unrestricted access (`0.0.0.0/0` or `::/0`) on sensitive ports (22, 3389, 3306, 5432, 1433, 6379, 27017). Restrict ingress to known CIDR ranges or security groups.
+
+### WAW020 — IAM Policy Uses Wildcard Action
+
+**Severity:** warning | **Category:** security
+
+Flags IAM policy statements that use wildcard actions (`"Action": "*"` or `"Action": "s3:*"`). Use specific action names following the principle of least privilege.
+
+### WAW021 — RDS Storage Not Encrypted
+
+**Severity:** error | **Category:** security
+
+Flags RDS instances without `StorageEncrypted: true`. All RDS instances should encrypt data at rest to meet compliance and security requirements.
+
+### WAW022 — Lambda Not in VPC
+
+**Severity:** warning | **Category:** security
+
+Flags Lambda functions without a `VpcConfig`. Functions that access internal resources (databases, caches, internal APIs) should run inside a VPC. Functions that only call public APIs can safely skip VPC configuration.
+
+### WAW023 — CloudFront Without WAF
+
+**Severity:** warning | **Category:** security
+
+Flags CloudFront distributions without a `WebACLId`. Attaching a WAF web ACL protects your distribution from common web exploits and bots.
+
+### WAW024 — ALB Without Access Logging
+
+**Severity:** warning | **Category:** best practice
+
+Flags Application Load Balancers without access logging enabled. Enable `access_logs.s3.enabled` to capture request logs for debugging and compliance.
+
+### WAW025 — SNS Topic Not Encrypted
+
+**Severity:** warning | **Category:** security
+
+Flags SNS topics without `KmsMasterKeyId`. Encrypting topics at rest protects sensitive notification payloads.
+
+### WAW026 — SQS Queue Not Encrypted
+
+**Severity:** warning | **Category:** security
+
+Flags SQS queues without `KmsMasterKeyId` or `SqsManagedSseEnabled`. Encrypting queues at rest protects sensitive message payloads.
+
+### WAW027 — DynamoDB Missing Point-in-Time Recovery
+
+**Severity:** info | **Category:** best practice
+
+Flags DynamoDB tables without `PointInTimeRecoverySpecification.PointInTimeRecoveryEnabled` set to `true`. Point-in-time recovery provides continuous backups and protects against accidental writes or deletes.
+
+### WAW028 — EBS Volume Not Encrypted
+
+**Severity:** warning | **Category:** security
+
+Flags EBS volumes without `Encrypted: true`. All EBS volumes should encrypt data at rest for compliance and security.
+
+### WAW031 — EKS Addon Missing ServiceAccountRoleArn
+
+**Severity:** warning | **Category:** correctness
+
+Flags EKS addons that require an IRSA role but don't have `ServiceAccountRoleArn` set. Without an IRSA role, the addon pods can't authenticate to AWS APIs and the addon hangs in CREATING status. Known addons that require IRSA: `aws-ebs-csi-driver`, `aws-efs-csi-driver`, `adot`, `amazon-cloudwatch-observability`.
+
+```
+WAW031: EKS Addon "EbsCsiAddon" (aws-ebs-csi-driver) has no ServiceAccountRoleArn — it needs an IRSA role for EBS API access
+```
+
+## Running lint
+
+```bash
+# Lint your chant project
+chant lint
+
+# Lint with auto-fix where supported
+chant lint --fix
+```
+
+To suppress a rule on a specific line:
+
+```typescript
+// chant-disable-next-line WAW001
+const endpoint = "s3.us-east-1.amazonaws.com";
+```
+
+To suppress globally in `chant.config.ts`:
+
+```typescript
+export default {
+  lint: {
+    rules: {
+      WAW001: "off",
+    },
+  },
+};
+```
+
+See also [Custom Lint Rules](../custom-rules/) for writing project-specific rules.

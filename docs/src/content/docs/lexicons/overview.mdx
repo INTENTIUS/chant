@@ -9,8 +9,13 @@ A **lexicon** is a collection of types and semantic lint rules for an operationa
 
 | Lexicon | Package | Resources | Reference |
 |---------|---------|-----------|-----------|
-| AWS CloudFormation | `@intentius/chant-lexicon-aws` | 1500+ | [Reference](/lexicons/aws/) |
-| GitLab CI/CD | `@intentius/chant-lexicon-gitlab` | 3 resources, 13 properties | [Reference](/lexicons/gitlab/) |
+| AWS CloudFormation | `@intentius/chant-lexicon-aws` | 1500+ | [Reference](/chant/lexicons/aws/) |
+| Azure ARM | `@intentius/chant-lexicon-azure` | 200+ | [Reference](/chant/lexicons/azure/) |
+| GCP Config Connector | `@intentius/chant-lexicon-gcp` | 150+ | [Reference](/chant/lexicons/gcp/) |
+| Kubernetes | `@intentius/chant-lexicon-k8s` | 50+ resources, 35+ properties | [Reference](/chant/lexicons/k8s/) |
+| Helm | `@intentius/chant-lexicon-helm` | 10+ resources | [Reference](/chant/lexicons/helm/) |
+| GitLab CI/CD | `@intentius/chant-lexicon-gitlab` | 3 resources, 16 properties | [Reference](/chant/lexicons/gitlab/) |
+| Flyway | `@intentius/chant-lexicon-flyway` | 5 resources, 20 properties | [Reference](/chant/lexicons/flyway/) |
 
 ## What a Lexicon Provides
 
@@ -20,7 +25,7 @@ TypeScript definition files that describe available resource classes, their prop
 
 ### Rules
 
-Lint rules specific to the target ecosystem. These integrate with `npx chant lint` to catch provider-specific mistakes like invalid resource configurations or naming convention violations.
+Lint rules specific to the target ecosystem. These integrate with `chant lint` to catch provider-specific mistakes like invalid resource configurations or naming convention violations.
 
 ### Serialization
 
@@ -30,7 +35,7 @@ Each lexicon implements the Serializer interface to convert evaluated resources 
 interface Serializer {
   name: string;
   rulePrefix: string;
-  serialize(entities: Map<string, Declarable>, outputs?: LexiconOutput[]): string;
+  serialize(entities: Map<string, Declarable>, outputs?: LexiconOutput[]): string | SerializerResult;
 }
 ```
 
@@ -41,8 +46,9 @@ A **bundle** is the distributable form of a lexicon — a `dist/` directory cont
 | Artifact | Description |
 |----------|-------------|
 | `manifest.json` | Lexicon metadata (name, version, intrinsics, pseudo-parameters) |
-| `lexicon.json` | Resource registry mapping type names to definitions |
-| `index.d.ts` | TypeScript declarations for all resource and property types |
+| `meta.json` | Resource registry mapping type names to definitions |
+| `types/index.d.ts` | TypeScript declarations for all resource and property types |
+| `integrity.json` | Per-artifact xxhash64 checksums |
 | `rules/` | Lint rule implementations |
 | `skills/` | AI assistant skill definitions |
 
@@ -61,6 +67,5 @@ Lexicons bridge this gap:
 
 ## Next Steps
 
-- [Managing Lexicons](/guide/managing-lexicons/) — add, remove, and update lexicons
-- [Sync Mechanism](/lexicons/sync/) — how type definitions stay in sync
-- [Lexicon Authoring](/lexicon-authoring/overview/) — create and publish your own lexicons
+- [Managing Lexicons](/chant/guide/managing-lexicons/) — add, remove, and update lexicons
+- [Lexicon Authoring](/chant/lexicon-authoring/overview/) — create and publish your own lexicons

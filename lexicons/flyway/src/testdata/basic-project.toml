@@ -1,0 +1,21 @@
+id = "my-app"
+name = "my-app"
+databaseType = "postgresql"
+
+[flyway]
+locations = ["filesystem:sql/migrations"]
+defaultSchema = "public"
+cleanDisabled = true
+validateMigrationNaming = true
+
+[environments.dev]
+url = "jdbc:postgresql://localhost:5432/myapp_dev"
+user = "dev_user"
+password = "dev_pass"
+schemas = ["public"]
+
+[environments.prod]
+url = "jdbc:postgresql://prod:5432/myapp"
+schemas = ["public"]
+cleanDisabled = true
+validateOnMigrate = true

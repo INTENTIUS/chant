@@ -1,0 +1,69 @@
+---
+title: "AI Skills"
+description: "AI agent skills bundled with the Helm lexicon"
+---
+The Helm lexicon ships AI skills that teach AI coding agents how to build, validate, and deploy Helm charts from a chant project.
+
+## What are skills?
+
+Skills are structured markdown documents bundled with a lexicon. When an AI agent works in a chant project, it discovers and loads relevant skills automatically — giving it operational knowledge about the deployment workflow without requiring the user to explain each step.
+
+## Installation
+
+When you scaffold a new project with `chant init --lexicon helm`, the skills are installed to `skills/` for automatic agent discovery.
+
+To refresh skills after a lexicon update:
+
+```bash
+chant update
+```
+
+## Skill: chant-helm
+
+The `chant-helm` skill covers the core Helm chart workflow:
+
+- **Resource types** — Chart, Values, HelmTest, HelmNotes, HelmHook, HelmDependency, HelmMaintainer, HelmCRD
+- **Build** — `chant build src/` to synthesize chart directory
+- **Validate** — `chant lint src/` + `helm lint`
+- **Template functions** — include, required, helmDefault, toYaml, etc.
+- **Values proxy** — `.Values.*` reference generation
+- **Troubleshooting** — lint rule violations, template errors
+
+## Skill: chant-helm-patterns
+
+The `chant-helm-patterns` skill covers advanced Helm chart patterns:
+
+- **Dependencies** — chart dependencies and subcharts
+- **Hooks** — pre/post install, upgrade, delete hooks
+- **Tests** — Helm test definitions and execution
+- **Library charts** — shared template libraries
+- **Composites** — high-level reusable chart groupings
+
+## Skill: chant-helm-security
+
+The `chant-helm-security` skill covers security best practices for Helm charts:
+
+- **Pod security** — security contexts, non-root containers in templates
+- **RBAC** — service account and role template patterns
+- **Secrets** — secret management in values and templates
+- **Image policies** — digest pinning, registry restrictions
+- **Post-synth checks** — maps to relevant Helm lint rules
+
+## MCP integration
+
+The lexicon also provides MCP (Model Context Protocol) tools and resources that AI agents can use programmatically:
+
+| MCP tool | Description |
+|----------|-------------|
+| `build` | Build the chant project |
+| `lint` | Run lint rules |
+| `explain` | Summarize project resources |
+| `scaffold` | Generate starter files |
+| `search` | Search available resource types |
+
+## LSP integration
+
+The Helm lexicon also provides LSP support via `chant serve lsp`:
+- **Completions** — type `new ` to get Helm resource completions
+- **Hover** — hover over type names to see template output hints
+- **Diagnostics** — real-time lint warnings as you type

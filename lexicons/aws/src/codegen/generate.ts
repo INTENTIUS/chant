@@ -144,17 +144,13 @@ export function writeGeneratedFiles(result: GenerateResult, baseDir: string): vo
       "lexicon-aws.json": result.lexiconJSON,
       "index.d.ts": result.typesDTS,
       "index.ts": result.indexTS,
-    },
-    snapshot: (generatedDir) => {
-      const { snapshotArtifacts, saveSnapshot } = require("./rollback");
-      const lexiconPath = join(generatedDir, "lexicon-aws.json");
-      if (existsSync(lexiconPath)) {
-        const snapshot = snapshotArtifacts(generatedDir);
-        if (Object.keys(snapshot.files).length > 0) {
-          const snapshotsDir = join(baseDir, ".snapshots");
-          saveSnapshot(snapshot, snapshotsDir);
-        }
-      }
+      "runtime.ts": [
+        "/**",
+        " * Runtime factory constructors — re-exported from core.",
+        " */",
+        'export { createResource, createProperty } from "@intentius/chant/runtime";',
+        "",
+      ].join("\n"),
     },
   });
 }
@@ -174,11 +170,11 @@ function generateRuntimeIndex(
     const tsName = naming.resolve(cfnType);
     if (!tsName) continue;
 
-    // Build attrs map
+    // Build attrs map: TS key (underscores) → CF attr name (dots)
     const attrs: Record<string, string> = {};
     for (const a of r.resource.attributes) {
-      const camelName = a.name.charAt(0).toLowerCase() + a.name.slice(1);
-      attrs[camelName] = a.name;
+      const tsKey = a.name.replace(/\./g, "_").replace(/\*/g, "Item");  // Subscribers.*.Status → Subscribers_Item_Status
+      attrs[tsKey] = a.name;                      // maps to "Endpoint.Address" for GetAtt
     }
 
     resourceEntries.push({ tsName, resourceType: cfnType, attrs });
@@ -193,7 +189,7 @@ function generateRuntimeIndex(
     for (const pt of r.propertyTypes) {
       const defName = extractDefName(pt.name, shortName);
       const ptName = propertyTypeName(tsName, defName);
-      const ptCfnType = `${cfnType}.${pt.cfnType}`;
+      const ptCfnType = `${cfnType}.${pt.specType}`;
       propertyEntries.push({ tsName: ptName, resourceType: ptCfnType });
 
       if (ptAliases) {

@@ -1,10 +1,15 @@
-import type { LexiconPlugin, IntrinsicDef, SkillDefinition } from "@intentius/chant/lexicon";
+import { createRequire } from "module";
+import type { LexiconPlugin, IntrinsicDef, ResourceMetadata } from "@intentius/chant/lexicon";
+const require = createRequire(import.meta.url);
 import type { LintRule } from "@intentius/chant/lint/rule";
-import type { PostSynthCheck } from "@intentius/chant/lint/post-synth";
 import type { TemplateParser } from "@intentius/chant/import/parser";
 import type { TypeScriptGenerator } from "@intentius/chant/import/generator";
 import type { CompletionContext, CompletionItem, HoverContext, HoverInfo } from "@intentius/chant/lsp/types";
-import type { McpToolContribution, McpResourceContribution } from "@intentius/chant/mcp/types";
+import { discoverLintRules, discoverPostSynthChecks } from "@intentius/chant/lint/discover";
+import { createSkillsLoader, createDiffTool, createCatalogResource } from "@intentius/chant/lexicon-plugin-helpers";
+import { readFileSync } from "fs";
+import { join, dirname } from "path";
+import { fileURLToPath } from "url";
 import { awsSerializer } from "./serializer";
 
 /**
@@ -18,11 +23,8 @@ export const awsPlugin: LexiconPlugin = {
   serializer: awsSerializer,
 
   lintRules(): LintRule[] {
-    // Lazy-load to avoid pulling in rules unless needed
-    const { hardcodedRegionRule } = require("./lint/rules/hardcoded-region");
-    const { s3EncryptionRule } = require("./lint/rules/s3-encryption");
-    const { iamWildcardRule } = require("./lint/rules/iam-wildcard");
-    return [hardcodedRegionRule, s3EncryptionRule, iamWildcardRule];
+    const rulesDir = join(dirname(fileURLToPath(import.meta.url)), "lint", "rules");
+    return discoverLintRules(rulesDir, import.meta.url);
   },
 
   intrinsics(): IntrinsicDef[] {
@@ -35,6 +37,7 @@ export const awsPlugin: LexiconPlugin = {
       { name: "Select", description: "Fn::Select — select value by index" },
       { name: "Split", description: "Fn::Split — split string by delimiter" },
       { name: "Base64", description: "Fn::Base64 — encode to Base64" },
+      { name: "GetAZs", description: "Fn::GetAZs — list Availability Zones" },
     ];
   },
 
@@ -51,73 +54,179 @@ export const awsPlugin: LexiconPlugin = {
     ];
   },
 
-  initTemplates(): Record<string, string> {
-    return {
-      "_.ts": `export * from "./config";\n`,
+  initTemplates(template?: string) {
+    if (template === "eks") {
+      return { src: {
+        "infra/cluster.ts": `/**
+ * EKS Cluster + Managed Node Group + OIDC Provider
+ */
+
+import { Cluster, Nodegroup, OIDCProvider, Role, InstanceProfile, Sub, AWS } from "@intentius/chant-lexicon-aws";
+
+// EKS Cluster Role
+export const clusterRole = new Role({
+  RoleName: Sub\`\${AWS.StackName}-eks-cluster-role\`,
+  AssumeRolePolicyDocument: {
+    Version: "2012-10-17",
+    Statement: [{
+      Effect: "Allow",
+      Principal: { Service: "eks.amazonaws.com" },
+      Action: "sts:AssumeRole",
+    }],
+  },
+  ManagedPolicyArns: [
+    "arn:aws:iam::aws:policy/AmazonEKSClusterPolicy",
+  ],
+});
+
+// EKS Cluster
+export const cluster = new Cluster({
+  Name: Sub\`\${AWS.StackName}-cluster\`,
+  RoleArn: clusterRole,
+  Version: "1.29",
+});
+
+// Node Role
+export const nodeRole = new Role({
+  RoleName: Sub\`\${AWS.StackName}-eks-node-role\`,
+  AssumeRolePolicyDocument: {
+    Version: "2012-10-17",
+    Statement: [{
+      Effect: "Allow",
+      Principal: { Service: "ec2.amazonaws.com" },
+      Action: "sts:AssumeRole",
+    }],
+  },
+  ManagedPolicyArns: [
+    "arn:aws:iam::aws:policy/AmazonEKSWorkerNodePolicy",
+    "arn:aws:iam::aws:policy/AmazonEKS_CNI_Policy",
+    "arn:aws:iam::aws:policy/AmazonEC2ContainerRegistryReadOnly",
+  ],
+});
+
+// Managed Node Group
+export const nodeGroup = new Nodegroup({
+  ClusterName: cluster,
+  NodegroupName: Sub\`\${AWS.StackName}-nodes\`,
+  NodeRole: nodeRole,
+  ScalingConfig: {
+    MinSize: 2,
+    MaxSize: 10,
+    DesiredSize: 3,
+  },
+  InstanceTypes: ["t3.medium"],
+});
+`,
+        "k8s/namespace.ts": `/**
+ * K8s namespace with quotas and network isolation
+ */
+
+import { NamespaceEnv } from "@intentius/chant-lexicon-k8s";
+
+export const { namespace, resourceQuota, limitRange, networkPolicy } = NamespaceEnv({
+  name: "prod",
+  cpuQuota: "16",
+  memoryQuota: "32Gi",
+  defaultCpuRequest: "100m",
+  defaultMemoryRequest: "128Mi",
+  defaultCpuLimit: "500m",
+  defaultMemoryLimit: "512Mi",
+  defaultDenyIngress: true,
+});
+`,
+        "k8s/app.ts": `/**
+ * Application deployment with IRSA and autoscaling
+ */
+
+import { AutoscaledService, IrsaServiceAccount } from "@intentius/chant-lexicon-k8s";
+
+// IRSA ServiceAccount — replace with your IAM Role ARN from CloudFormation outputs
+export const { serviceAccount } = IrsaServiceAccount({
+  name: "app-sa",
+  iamRoleArn: "arn:aws:iam::123456789012:role/app-role",  // TODO: update from CF output
+  namespace: "prod",
+});
+
+export const { deployment, service, hpa, pdb } = AutoscaledService({
+  name: "my-app",
+  image: "my-app:1.0",
+  port: 8080,
+  maxReplicas: 10,
+  cpuRequest: "200m",
+  memoryRequest: "256Mi",
+  namespace: "prod",
+});
+`,
+      } };
+    }
+
+    return { src: {
       "config.ts": `/**
  * Shared bucket configuration — encryption, versioning, public access
  */
 
-import * as aws from "@intentius/chant-lexicon-aws";
+import { ServerSideEncryptionByDefault, ServerSideEncryptionRule, BucketEncryption, PublicAccessBlockConfiguration, VersioningConfiguration } from "@intentius/chant-lexicon-aws";
 
 // Encryption default — AES256 server-side encryption
-export const encryptionDefault = new aws.ServerSideEncryptionByDefault({
-  sseAlgorithm: "AES256",
+export const encryptionDefault = new ServerSideEncryptionByDefault({
+  SSEAlgorithm: "AES256",
 });
 
 // Encryption rule wrapping the default
-export const encryptionRule = new aws.ServerSideEncryptionRule({
-  serverSideEncryptionByDefault: encryptionDefault,
+export const encryptionRule = new ServerSideEncryptionRule({
+  ServerSideEncryptionByDefault: encryptionDefault,
 });
 
 // Bucket encryption configuration
-export const bucketEncryption = new aws.BucketEncryption({
-  serverSideEncryptionConfiguration: [encryptionRule],
+export const bucketEncryption = new BucketEncryption({
+  ServerSideEncryptionConfiguration: [encryptionRule],
 });
 
 // Public access block — deny all public access
-export const publicAccessBlock = new aws.PublicAccessBlockConfiguration({
-  blockPublicAcls: true,
-  blockPublicPolicy: true,
-  ignorePublicAcls: true,
-  restrictPublicBuckets: true,
+export const publicAccessBlock = new PublicAccessBlockConfiguration({
+  BlockPublicAcls: true,
+  BlockPublicPolicy: true,
+  IgnorePublicAcls: true,
+  RestrictPublicBuckets: true,
 });
 
 // Versioning — enabled
-export const versioningEnabled = new aws.VersioningConfiguration({
-  status: "Enabled",
+export const versioningEnabled = new VersioningConfiguration({
+  Status: "Enabled",
 });
 `,
       "data-bucket.ts": `/**
  * Data bucket — primary storage with encryption and versioning
  */
 
-import * as aws from "@intentius/chant-lexicon-aws";
-import * as _ from "./_";
+import { Bucket, Sub, AWS } from "@intentius/chant-lexicon-aws";
+import { versioningEnabled, bucketEncryption, publicAccessBlock } from "./config";
 
-export const dataBucket = new aws.Bucket({
-  bucketName: aws.Sub\`\${aws.AWS.StackName}-data\`,
-  versioningConfiguration: _.versioningEnabled,
-  bucketEncryption: _.bucketEncryption,
-  publicAccessBlockConfiguration: _.publicAccessBlock,
+export const dataBucket = new Bucket({
+  BucketName: Sub\`\${AWS.StackName}-\${AWS.AccountId}-data\`,
+  VersioningConfiguration: versioningEnabled,
+  BucketEncryption: bucketEncryption,
+  PublicAccessBlockConfiguration: publicAccessBlock,
 });
 `,
       "logs-bucket.ts": `/**
  * Logs bucket — log delivery with encryption and versioning
+ *
+ * Note: AccessControl is a legacy property. Use a bucket policy to grant
+ * log delivery access instead (s3:PutObject permission for the logging service principal).
  */
 
-import * as aws from "@intentius/chant-lexicon-aws";
-import * as _ from "./_";
+import { Bucket, Sub, AWS } from "@intentius/chant-lexicon-aws";
+import { versioningEnabled, bucketEncryption, publicAccessBlock } from "./config";
 
-export const logsBucket = new aws.Bucket({
-  bucketName: aws.Sub\`\${aws.AWS.StackName}-logs\`,
-  accessControl: "LogDeliveryWrite",
-  versioningConfiguration: _.versioningEnabled,
-  bucketEncryption: _.bucketEncryption,
-  publicAccessBlockConfiguration: _.publicAccessBlock,
+export const logsBucket = new Bucket({
+  BucketName: Sub\`\${AWS.StackName}-\${AWS.AccountId}-logs\`,
+  VersioningConfiguration: versioningEnabled,
+  BucketEncryption: bucketEncryption,
+  PublicAccessBlockConfiguration: publicAccessBlock,
 });
 `,
-    };
+    } };
   },
 
   detectTemplate(data: unknown): boolean {
@@ -152,16 +261,9 @@ export const logsBucket = new aws.Bucket({
     return new CFGenerator();
   },
 
-  postSynthChecks(): PostSynthCheck[] {
-    // Lazy-load to avoid pulling in checks unless needed
-    const { waw010 } = require("./lint/post-synth/waw010");
-    const { waw011 } = require("./lint/post-synth/waw011");
-    const { cor020 } = require("./lint/post-synth/cor020");
-    const { ext001 } = require("./lint/post-synth/ext001");
-    const { waw013 } = require("./lint/post-synth/waw013");
-    const { waw014 } = require("./lint/post-synth/waw014");
-    const { waw015 } = require("./lint/post-synth/waw015");
-    return [waw010, waw011, cor020, ext001, waw013, waw014, waw015];
+  postSynthChecks() {
+    const postSynthDir = join(dirname(fileURLToPath(import.meta.url)), "lint", "post-synth");
+    return discoverPostSynthChecks(postSynthDir, import.meta.url);
   },
 
   async generate(options?: { verbose?: boolean }): Promise<void> {
@@ -184,18 +286,9 @@ export const logsBucket = new aws.Bucket({
 
   async validate(options?: { verbose?: boolean }): Promise<void> {
     const { validate } = await import("./validate");
+    const { printValidationResult } = await import("@intentius/chant/codegen/validate");
     const result = await validate();
-
-    for (const check of result.checks) {
-      const status = check.ok ? "OK" : "FAIL";
-      const msg = check.error ? ` — ${check.error}` : "";
-      console.error(`  [${status}] ${check.name}${msg}`);
-    }
-
-    if (!result.success) {
-      throw new Error("Validation failed");
-    }
-    console.error("All validation checks passed.");
+    printValidationResult(result);
   },
 
   async coverage(options?: { verbose?: boolean; minOverall?: number }): Promise<void> {
@@ -226,75 +319,29 @@ export const logsBucket = new aws.Bucket({
 
   async package(options?: { verbose?: boolean; force?: boolean }): Promise<void> {
     const { packageLexicon } = await import("./codegen/package");
-    const { writeFileSync, mkdirSync } = await import("fs");
+    const { writeBundleSpec } = await import("@intentius/chant/codegen/package");
     const { join, dirname } = await import("path");
     const { fileURLToPath } = await import("url");
 
     const { spec, stats } = await packageLexicon({ verbose: options?.verbose, force: options?.force });
 
-    // Write manifest and artifacts to dist/
     const pkgDir = dirname(dirname(fileURLToPath(import.meta.url)));
     const distDir = join(pkgDir, "dist");
-    mkdirSync(join(distDir, "types"), { recursive: true });
-    mkdirSync(join(distDir, "rules"), { recursive: true });
-    mkdirSync(join(distDir, "skills"), { recursive: true });
-
-    writeFileSync(join(distDir, "manifest.json"), JSON.stringify(spec.manifest, null, 2));
-    writeFileSync(join(distDir, "meta.json"), spec.registry);
-    writeFileSync(join(distDir, "types", "index.d.ts"), spec.typesDTS);
-
-    for (const [name, content] of spec.rules) {
-      writeFileSync(join(distDir, "rules", name), content);
-    }
-    for (const [name, content] of spec.skills) {
-      writeFileSync(join(distDir, "skills", name), content);
-    }
-
-    // Write integrity.json if available
-    if (spec.integrity) {
-      writeFileSync(join(distDir, "integrity.json"), JSON.stringify(spec.integrity, null, 2));
-    }
+    writeBundleSpec(spec, distDir);
 
     console.error(`Packaged ${stats.resources} resources, ${stats.ruleCount} rules, ${stats.skillCount} skills`);
 
-    // Produce .tgz via bun pm pack
-    const packProc = Bun.spawn(["bun", "pm", "pack"], {
-      cwd: pkgDir,
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const packOut = await new Response(packProc.stdout).text();
-    const packErr = await new Response(packProc.stderr).text();
-    const packExit = await packProc.exited;
+    // Produce .tgz via pack command
+    const { getRuntime } = await import("@intentius/chant/runtime-adapter");
+    const rt = getRuntime();
+    const { stdout: packOut, stderr: packErr, exitCode: packExit } = await rt.spawn(
+      rt.commands.packCmd,
+      { cwd: pkgDir },
+    );
     if (packExit === 0) {
       console.error(`Tarball: ${packOut.trim()}`);
     } else {
-      console.error(`bun pm pack failed: ${packErr}`);
-    }
-  },
-
-  async rollback(options?: { restore?: string; verbose?: boolean }): Promise<void> {
-    const { listSnapshots, restoreSnapshot } = await import("./codegen/rollback");
-    const { join, dirname } = await import("path");
-    const { fileURLToPath } = await import("url");
-
-    const pkgDir = dirname(dirname(fileURLToPath(import.meta.url)));
-    const snapshotsDir = join(pkgDir, ".snapshots");
-
-    if (options?.restore) {
-      const generatedDir = join(pkgDir, "src", "generated");
-      restoreSnapshot(String(options.restore), generatedDir);
-      console.error(`Restored snapshot: ${options.restore}`);
-    } else {
-      const snapshots = listSnapshots(snapshotsDir);
-      if (snapshots.length === 0) {
-        console.error("No snapshots available.");
-      } else {
-        console.error(`Available snapshots (${snapshots.length}):`);
-        for (const s of snapshots) {
-          console.error(`  ${s.timestamp}  ${s.resourceCount} resources  ${s.path}`);
-        }
-      }
+      console.error(`${rt.commands.packCmd.join(" ")} failed: ${packErr}`);
     }
   },
 
@@ -303,71 +350,42 @@ export const logsBucket = new aws.Bucket({
     await generateDocs(options);
   },
 
-  skills(): SkillDefinition[] {
-    return [
-      {
-        name: "aws-cloudformation",
-        description: "AWS CloudFormation best practices and common patterns",
-        content: `---
-name: aws-cloudformation
-description: AWS CloudFormation best practices and common patterns
----
-
-# AWS CloudFormation with Chant
-
-## Common Resource Types
-
-- \`AWS::S3::Bucket\` — Object storage
-- \`AWS::Lambda::Function\` — Serverless compute
-- \`AWS::DynamoDB::Table\` — NoSQL database
-- \`AWS::IAM::Role\` — Identity and access management
-- \`AWS::SNS::Topic\` — Pub/sub messaging
-- \`AWS::SQS::Queue\` — Message queue
-- \`AWS::EC2::SecurityGroup\` — Network firewall rules
-
-## Intrinsic Functions
-
-- \`Sub\` — String interpolation with \`\${}\` syntax
-- \`Ref\` — Reference a resource or parameter
-- \`GetAtt\` — Get a resource attribute (e.g. ARN)
-- \`If\` — Conditional value based on a condition
-- \`Join\` — Join strings with a delimiter
-- \`Select\` — Pick an item from a list by index
-
-## Pseudo Parameters
-
-- \`AWS::StackName\` — Name of the current stack
-- \`AWS::Region\` — Current deployment region
-- \`AWS::AccountId\` — Current AWS account ID
-- \`AWS::Partition\` — Partition (aws, aws-cn, aws-us-gov)
-
-## Best Practices
-
-1. **Always enable encryption** — Use \`BucketEncryption\` for S3, \`SSESpecification\` for DynamoDB
-2. **Block public access** — Set \`PublicAccessBlockConfiguration\` on all S3 buckets
-3. **Use least-privilege IAM** — Avoid \`*\` in IAM policy actions and resources
-4. **Enable versioning** — Turn on \`VersioningConfiguration\` for data buckets
-5. **Use Sub for dynamic names** — \`Sub\\\`\\\${AWS::StackName}-suffix\\\`\` for unique naming
-6. **Share config via barrel files** — Put common settings in \`_.ts\` and import as \`* as _\`
-`,
-        triggers: [
-          { type: "file-pattern", value: "**/*.aws.ts" },
-          { type: "context", value: "aws" },
-        ],
-        parameters: [
-          {
-            name: "resourceType",
-            description: "AWS CloudFormation resource type (e.g. AWS::S3::Bucket)",
-            type: "string",
-            required: false,
-          },
-        ],
-        examples: [
-          {
-            title: "S3 Bucket with encryption",
-            description: "Create an S3 bucket with server-side encryption enabled",
-            input: "Create an encrypted S3 bucket",
-            output: `new Bucket("MyBucket", {
+  skills: createSkillsLoader(import.meta.url, [
+    {
+      file: "chant-aws.md",
+      name: "chant-aws",
+      description: "AWS CloudFormation lifecycle — build, diff, deploy, rollback, and troubleshoot from a chant project",
+      triggers: [
+        { type: "file-pattern", value: "**/*.aws.ts" },
+        { type: "file-pattern", value: "**/stack.json" },
+        { type: "file-pattern", value: "**/template.yaml" },
+        { type: "context", value: "aws" },
+        { type: "context", value: "cloudformation" },
+        { type: "context", value: "deploy" },
+      ],
+      preConditions: [
+        "AWS CLI is installed and configured (aws sts get-caller-identity succeeds)",
+        "chant CLI is installed (chant --version succeeds)",
+        "Project has chant source files in src/",
+      ],
+      postConditions: [
+        "Stack is in a stable state (*_COMPLETE)",
+        "No failed resources in stack events",
+      ],
+      parameters: [
+        {
+          name: "resourceType",
+          description: "AWS CloudFormation resource type (e.g. AWS::S3::Bucket)",
+          type: "string",
+          required: false,
+        },
+      ],
+      examples: [
+        {
+          title: "S3 Bucket with encryption",
+          description: "Create an S3 bucket with server-side encryption enabled",
+          input: "Create an encrypted S3 bucket",
+          output: `new Bucket("MyBucket", {
   BucketEncryption: {
     ServerSideEncryptionConfiguration: [
       { ServerSideEncryptionByDefault: { SSEAlgorithm: "aws:kms" } }
@@ -380,11 +398,68 @@ description: AWS CloudFormation best practices and common patterns
     RestrictPublicBuckets: true,
   },
 })`,
-          },
-        ],
-      },
-    ];
-  },
+        },
+        {
+          title: "Deploy a new stack",
+          description: "Build a chant project and deploy it as a new CloudFormation stack",
+          input: "Deploy this project as a new stack called my-app-prod",
+          output: `chant lint src/
+chant build src/ --output stack.json
+aws cloudformation validate-template --template-body file://stack.json
+aws cloudformation deploy \\
+  --template-file stack.json \\
+  --stack-name my-app-prod \\
+  --capabilities CAPABILITY_NAMED_IAM`,
+        },
+        {
+          title: "Preview changes before updating",
+          description: "Create a change set to review what will change before applying an update",
+          input: "Show me what will change if I deploy this update to my-app-prod",
+          output: `chant build src/ --output stack.json
+aws cloudformation create-change-set \\
+  --stack-name my-app-prod \\
+  --template-body file://stack.json \\
+  --change-set-name review-$(date +%s) \\
+  --capabilities CAPABILITY_NAMED_IAM
+# Wait for change set to compute, then review:
+aws cloudformation describe-change-set \\
+  --stack-name my-app-prod \\
+  --change-set-name review-<id>`,
+        },
+        {
+          title: "Fix a stuck rollback",
+          description: "Recover a stack stuck in UPDATE_ROLLBACK_FAILED state",
+          input: "My stack my-app-prod is stuck in UPDATE_ROLLBACK_FAILED, help me fix it",
+          output: `# Identify the stuck resource
+aws cloudformation describe-stack-events \\
+  --stack-name my-app-prod \\
+  --query "StackEvents[?ResourceStatus=='UPDATE_FAILED'].[LogicalResourceId,ResourceStatusReason]" \\
+  --output table
+# Attempt to continue the rollback
+aws cloudformation continue-update-rollback --stack-name my-app-prod
+aws cloudformation wait stack-update-complete --stack-name my-app-prod`,
+        },
+      ],
+    },
+    {
+      file: "chant-aws-eks.md",
+      name: "chant-aws-eks",
+      description: "EKS end-to-end workflow — provision cluster, configure kubectl, deploy K8s workloads",
+      triggers: [
+        { type: "context", value: "eks" },
+        { type: "context", value: "kubernetes" },
+        { type: "context", value: "k8s-workloads" },
+      ],
+      parameters: [],
+      examples: [
+        {
+          title: "Full EKS deployment",
+          input: "Set up a complete EKS environment with my API",
+          output: "chant build src/infra/ --output infra.json && aws cloudformation deploy --template-file infra.json --stack-name my-eks --capabilities CAPABILITY_NAMED_IAM",
+        },
+      ],
+    },
+  ]),
 
   completionProvider(ctx: CompletionContext): CompletionItem[] {
     const { awsCompletions } = require("./lsp/completions");
@@ -396,13 +471,98 @@ description: AWS CloudFormation best practices and common patterns
     return awsHover(ctx);
   },
 
-  mcpTools(): McpToolContribution[] {
+  async describeResources(options: {
+    environment: string;
+    buildOutput: string;
+    entityNames: string[];
+  }): Promise<Record<string, ResourceMetadata>> {
+    const { getRuntime } = await import("@intentius/chant/runtime-adapter");
+    const rt = getRuntime();
+    const resources: Record<string, ResourceMetadata> = {};
+
+    // Derive stack name: environment-based convention
+    // Try to parse the build output to detect stack name from Metadata or use convention
+    const stackName = `${options.environment}`;
+
+    // Describe stack resources
+    const listResult = await rt.spawn([
+      "aws", "cloudformation", "describe-stack-resources",
+      "--stack-name", stackName,
+      "--output", "json",
+    ]);
+
+    if (listResult.exitCode !== 0) {
+      throw new Error(`Failed to describe stack "${stackName}": ${listResult.stderr}`);
+    }
+
+    const data = JSON.parse(listResult.stdout) as {
+      StackResources: Array<{
+        LogicalResourceId: string;
+        ResourceType: string;
+        PhysicalResourceId: string;
+        ResourceStatus: string;
+        Timestamp: string;
+      }>;
+    };
+
+    // Map logical names from build to stack resources
+    const stackResourceMap = new Map<string, typeof data.StackResources[0]>();
+    for (const r of data.StackResources) {
+      stackResourceMap.set(r.LogicalResourceId, r);
+    }
+
+    // Get stack outputs
+    const describeResult = await rt.spawn([
+      "aws", "cloudformation", "describe-stacks",
+      "--stack-name", stackName,
+      "--output", "json",
+    ]);
+
+    let stackOutputs: Record<string, string> = {};
+    if (describeResult.exitCode === 0) {
+      const stacks = JSON.parse(describeResult.stdout) as {
+        Stacks: Array<{ Outputs?: Array<{ OutputKey: string; OutputValue: string }> }>;
+      };
+      if (stacks.Stacks[0]?.Outputs) {
+        for (const o of stacks.Stacks[0].Outputs) {
+          stackOutputs[o.OutputKey] = o.OutputValue;
+        }
+      }
+    }
+
+    for (const entityName of options.entityNames) {
+      const stackResource = stackResourceMap.get(entityName);
+      if (!stackResource) continue;
+
+      const attributes: Record<string, unknown> = {};
+      // Include stack outputs as attributes (scrub sensitive ones)
+      for (const [key, value] of Object.entries(stackOutputs)) {
+        if (/password|secret|token|key/i.test(key)) {
+          attributes[key] = "[REDACTED]";
+        } else {
+          attributes[key] = value;
+        }
+      }
+
+      resources[entityName] = {
+        type: stackResource.ResourceType,
+        physicalId: stackResource.PhysicalResourceId,
+        status: stackResource.ResourceStatus,
+        lastUpdated: stackResource.Timestamp,
+        attributes: Object.keys(attributes).length > 0 ? attributes : undefined,
+      };
+    }
+
+    return resources;
+  },
+
+  mcpTools() {
     return [
       {
         name: "diff",
         description: "Compare current build output against previous output for AWS CloudFormation",
         inputSchema: {
-          type: "object",
+          type: "object" as const,
           properties: {
             path: {
               type: "string",
@@ -428,7 +588,7 @@ description: AWS CloudFormation best practices and common patterns
     ];
   },
 
-  mcpResources(): McpResourceContribution[] {
+  mcpResources() {
     return [
       {
         uri: "resource-catalog",
@@ -452,31 +612,31 @@ description: AWS CloudFormation best practices and common patterns
         description: "AWS S3 bucket with versioning and encryption",
         mimeType: "text/typescript",
         async handler(): Promise<string> {
-          return `import * as aws from "@intentius/chant-lexicon-aws";
+          return `import { ServerSideEncryptionByDefault, ServerSideEncryptionRule, BucketEncryption, VersioningConfiguration, Bucket, Sub, AWS } from "@intentius/chant-lexicon-aws";
 
 // Encryption configuration
-export const encryptionDefault = new aws.ServerSideEncryptionByDefault({
-  sseAlgorithm: "AES256",
+export const encryptionDefault = new ServerSideEncryptionByDefault({
+  SSEAlgorithm: "AES256",
 });
 
-export const encryptionRule = new aws.ServerSideEncryptionRule({
-  serverSideEncryptionByDefault: encryptionDefault,
+export const encryptionRule = new ServerSideEncryptionRule({
+  ServerSideEncryptionByDefault: encryptionDefault,
 });
 
-export const bucketEncryption = new aws.BucketEncryption({
-  serverSideEncryptionConfiguration: [encryptionRule],
+export const bucketEncryption = new BucketEncryption({
+  ServerSideEncryptionConfiguration: [encryptionRule],
 });
 
 // Versioning
-export const versioningEnabled = new aws.VersioningConfiguration({
-  status: "Enabled",
+export const versioningEnabled = new VersioningConfiguration({
+  Status: "Enabled",
 });
 
-// Create a versioned bucket with encryption
-export const dataBucket = new aws.Bucket({
-  bucketName: aws.Sub\`\${aws.AWS.StackName}-data\`,
-  versioningConfiguration: versioningEnabled,
-  bucketEncryption: bucketEncryption,
+// Create a versioned bucket with encryption (AccountId ensures global uniqueness)
+export const dataBucket = new Bucket({
+  BucketName: Sub\`\${AWS.StackName}-\${AWS.AccountId}-data\`,
+  VersioningConfiguration: versioningEnabled,
+  BucketEncryption: bucketEncryption,
 });
 `;
         },
@@ -487,17 +647,17 @@ export const dataBucket = new aws.Bucket({
         description: "Using AttrRefs for cross-resource references",
         mimeType: "text/typescript",
         async handler(): Promise<string> {
-          return `import * as aws from "@intentius/chant-lexicon-aws";
+          return `import { Bucket, VersioningConfiguration, Role } from "@intentius/chant-lexicon-aws";
 
 // Create a bucket
-export const dataBucket = new aws.Bucket({
-  bucketName: "my-data-bucket",
-  versioningConfiguration: new aws.VersioningConfiguration({ status: "Enabled" }),
+export const dataBucket = new Bucket({
+  BucketName: "my-data-bucket",
+  VersioningConfiguration: new VersioningConfiguration({ Status: "Enabled" }),
 });
 
 // Create a role that references the bucket's ARN
-export const role = new aws.Role({
-  assumeRolePolicyDocument: {
+export const role = new Role({
+  AssumeRolePolicyDocument: {
     Version: "2012-10-17",
     Statement: [{
       Effect: "Allow",

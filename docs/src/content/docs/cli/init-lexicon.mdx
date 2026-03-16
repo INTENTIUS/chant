@@ -43,19 +43,18 @@ From the provided name, the command derives:
 
 | File | Purpose |
 |------|---------|
-| `src/plugin.ts` | `LexiconPlugin` with all 5 required lifecycle methods |
+| `src/plugin.ts` | `LexiconPlugin` with all 4 required lifecycle methods |
 | `src/index.ts` | Re-exports plugin and serializer |
 | `src/serializer.ts` | Stub `Serializer` producing minimal JSON |
 | `src/codegen/generate.ts` | Calls core `generatePipeline` with TODO callbacks |
 | `src/codegen/generate-cli.ts` | Bun entry point for `just generate` |
 | `src/codegen/naming.ts` | `NamingStrategy` with empty data tables |
 | `src/codegen/package.ts` | Calls core `packagePipeline` |
-| `src/codegen/rollback.ts` | Snapshot list/restore helpers |
 | `src/codegen/docs.ts` | Calls core `docsPipeline` |
 | `src/spec/fetch.ts` | `fetchWithCache` stub with TODO URL |
 | `src/spec/parse.ts` | `parseSchema` stub with `ParseResult` type |
 | `src/lint/rules/sample.ts` | Example `LintRule` using derived prefix |
-| `src/lint/rules/index.ts` | Barrel re-export |
+| `src/lint/rules/index.ts` | Re-export for lint rules |
 | `src/lsp/completions.ts` | Stub using core `lexiconCompletions` |
 | `src/lsp/hover.ts` | Stub using core `lexiconHover` |
 | `src/import/parser.ts` | Stub `TemplateParser` |
@@ -92,6 +91,9 @@ After scaffolding:
 4. Edit `src/spec/parse.ts` — parse your schema format
 5. `chant dev generate` to generate types
 6. `chant dev publish` to package for distribution
+7. `chant dev onboard <name>` to wire into CI, Docker, and npm publish
+
+See the full [authoring workflow](/chant/lexicon-authoring/overview/#authoring-workflow) for details on each step.
 
 ## Exit codes
 

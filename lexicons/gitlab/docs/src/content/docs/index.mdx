@@ -1,0 +1,56 @@
+---
+title: "GitLab CI/CD"
+description: "Typed constructors for GitLab CI/CD pipeline configuration"
+---
+
+The **GitLab CI/CD** lexicon provides typed constructors for GitLab CI pipeline
+configuration. It covers jobs, workflow settings, artifacts, caching, images,
+rules, environments, triggers, and more.
+
+Install it with:
+
+```bash
+npm install --save-dev @intentius/chant-lexicon-gitlab
+```
+
+## Quick Start
+
+```typescript title="quickstart.ts"
+import { Job, Image, Cache, Artifacts, CI } from "@intentius/chant-lexicon-gitlab";
+
+export const testJob = new Job({
+  stage: "test",
+  image: new Image({ name: "node:20" }),
+  cache: new Cache({ key: CI.CommitRef, paths: ["node_modules/"] }),
+  script: ["npm ci", "npm test"],
+  artifacts: new Artifacts({
+    paths: ["coverage/"],
+    expire_in: "1 week",
+  }),
+});
+```
+
+The lexicon provides **3 resources** (Job, Workflow, Default), **16 property types** (Image, Cache, Artifacts, Rule, Environment, Trigger, Need, Service, and more), the `CI` pseudo-parameter object for predefined variables, and the `reference()` intrinsic for YAML `!reference` tags.
+
+
+## At a Glance
+
+| Metric | Count |
+|--------|-------|
+| Resources | 3 |
+| Property types | 16 |
+| Services | 1 |
+| Intrinsic functions | 1 |
+| Pseudo-parameters | 0 |
+| Lint rules | 23 |
+
+**Lexicon version:** 0.0.22  
+**Namespace:** `GitLab`
+
+- [Pipeline Concepts](./pipeline-concepts)
+- [Predefined Variables](./variables)
+- [Intrinsic Functions](./intrinsics)
+- [Lint Rules](./lint-rules)
+- [Examples](./examples)
+- [AI Skills](./skills)
+- [Serialization](./serialization) — output format details

@@ -128,6 +128,7 @@ export const noCyclicDeclarableRefRule: LintRule = {
   id: "COR011",
   severity: "error",
   category: "correctness",
+  description: "Detects circular references between declarables in the same file",
   check(context: LintContext): LintDiagnostic[] {
     const diagnostics: LintDiagnostic[] = [];
     const declarables = collectExportedDeclarables(context.sourceFile);

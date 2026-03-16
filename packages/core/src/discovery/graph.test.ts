@@ -12,6 +12,7 @@ describe("buildDependencyGraph", () => {
 
   test("returns graph with no dependencies for single entity", () => {
     const entity: Declarable = {
+      lexicon: "test",
       entityType: "test",
       [DECLARABLE_MARKER]: true,
     };
@@ -25,11 +26,13 @@ describe("buildDependencyGraph", () => {
 
   test("returns graph with no dependencies for multiple unrelated entities", () => {
     const entity1: Declarable = {
+      lexicon: "test",
       entityType: "test",
       [DECLARABLE_MARKER]: true,
     };
 
     const entity2: Declarable = {
+      lexicon: "test",
       entityType: "test",
       [DECLARABLE_MARKER]: true,
     };
@@ -47,11 +50,13 @@ describe("buildDependencyGraph", () => {
 
   test("detects dependency from AttrRef", () => {
     const parent: Declarable = {
+      lexicon: "test",
       entityType: "parent",
       [DECLARABLE_MARKER]: true,
     };
 
     const child: Declarable & { ref: AttrRef } = {
+      lexicon: "test",
       entityType: "child",
       [DECLARABLE_MARKER]: true,
       ref: new AttrRef(parent, "someAttr"),
@@ -71,11 +76,13 @@ describe("buildDependencyGraph", () => {
 
   test("detects dependency from direct Declarable reference", () => {
     const entity1: Declarable = {
+      lexicon: "test",
       entityType: "type1",
       [DECLARABLE_MARKER]: true,
     };
 
     const entity2: Declarable & { dependency: Declarable } = {
+      lexicon: "test",
       entityType: "type2",
       [DECLARABLE_MARKER]: true,
       dependency: entity1,
@@ -95,16 +102,19 @@ describe("buildDependencyGraph", () => {
 
   test("detects multiple dependencies from one entity", () => {
     const entity1: Declarable = {
+      lexicon: "test",
       entityType: "type1",
       [DECLARABLE_MARKER]: true,
     };
 
     const entity2: Declarable = {
+      lexicon: "test",
       entityType: "type2",
       [DECLARABLE_MARKER]: true,
     };
 
     const entity3: Declarable & { dep1: Declarable; dep2: Declarable } = {
+      lexicon: "test",
       entityType: "type3",
       [DECLARABLE_MARKER]: true,
       dep1: entity1,
@@ -126,11 +136,13 @@ describe("buildDependencyGraph", () => {
 
   test("detects dependencies in nested objects", () => {
     const entity1: Declarable = {
+      lexicon: "test",
       entityType: "type1",
       [DECLARABLE_MARKER]: true,
     };
 
     const entity2: Declarable & { nested: { deep: Declarable } } = {
+      lexicon: "test",
       entityType: "type2",
       [DECLARABLE_MARKER]: true,
       nested: {
@@ -150,16 +162,19 @@ describe("buildDependencyGraph", () => {
 
   test("detects dependencies in arrays", () => {
     const entity1: Declarable = {
+      lexicon: "test",
       entityType: "type1",
       [DECLARABLE_MARKER]: true,
     };
 
     const entity2: Declarable = {
+      lexicon: "test",
       entityType: "type2",
       [DECLARABLE_MARKER]: true,
     };
 
     const entity3: Declarable & { deps: Declarable[] } = {
+      lexicon: "test",
       entityType: "type3",
       [DECLARABLE_MARKER]: true,
       deps: [entity1, entity2],
@@ -179,16 +194,19 @@ describe("buildDependencyGraph", () => {
 
   test("detects mixed AttrRef and Declarable dependencies", () => {
     const entity1: Declarable = {
+      lexicon: "test",
       entityType: "type1",
       [DECLARABLE_MARKER]: true,
     };
 
     const entity2: Declarable = {
+      lexicon: "test",
       entityType: "type2",
       [DECLARABLE_MARKER]: true,
     };
 
     const entity3: Declarable & { ref: AttrRef; dep: Declarable } = {
+      lexicon: "test",
       entityType: "type3",
       [DECLARABLE_MARKER]: true,
       ref: new AttrRef(entity1, "attr"),
@@ -209,17 +227,20 @@ describe("buildDependencyGraph", () => {
 
   test("handles transitive dependencies correctly", () => {
     const entity1: Declarable = {
+      lexicon: "test",
       entityType: "type1",
       [DECLARABLE_MARKER]: true,
     };
 
     const entity2: Declarable & { dep: Declarable } = {
+      lexicon: "test",
       entityType: "type2",
       [DECLARABLE_MARKER]: true,
       dep: entity1,
     };
 
     const entity3: Declarable & { dep: Declarable } = {
+      lexicon: "test",
       entityType: "type3",
       [DECLARABLE_MARKER]: true,
       dep: entity2,
@@ -241,16 +262,19 @@ describe("buildDependencyGraph", () => {
 
   test("ignores non-entity declarables", () => {
     const entity: Declarable = {
+      lexicon: "test",
       entityType: "test",
       [DECLARABLE_MARKER]: true,
     };
 
     const notInEntities: Declarable = {
+      lexicon: "test",
       entityType: "external",
       [DECLARABLE_MARKER]: true,
     };
 
     const entityWithExternal: Declarable & { dep: Declarable } = {
+      lexicon: "test",
       entityType: "test",
       [DECLARABLE_MARKER]: true,
       dep: notInEntities,
@@ -267,11 +291,13 @@ describe("buildDependencyGraph", () => {
 
   test("ignores AttrRef with parent not in entities", () => {
     const externalParent: Declarable = {
+      lexicon: "test",
       entityType: "external",
       [DECLARABLE_MARKER]: true,
     };
 
     const entity: Declarable & { ref: AttrRef } = {
+      lexicon: "test",
       entityType: "test",
       [DECLARABLE_MARKER]: true,
       ref: new AttrRef(externalParent, "attr"),
@@ -285,11 +311,13 @@ describe("buildDependencyGraph", () => {
 
   test("handles circular references without infinite loop", () => {
     const entity1: Declarable & { other?: Declarable } = {
+      lexicon: "test",
       entityType: "type1",
       [DECLARABLE_MARKER]: true,
     };
 
     const entity2: Declarable & { other: Declarable } = {
+      lexicon: "test",
       entityType: "type2",
       [DECLARABLE_MARKER]: true,
       other: entity1,
@@ -309,6 +337,7 @@ describe("buildDependencyGraph", () => {
 
   test("handles self-reference without infinite loop", () => {
     const entity: Declarable & { self?: Declarable } = {
+      lexicon: "test",
       entityType: "test",
       [DECLARABLE_MARKER]: true,
     };
@@ -329,6 +358,7 @@ describe("buildDependencyGraph", () => {
       bool: boolean;
       nul: null;
     } = {
+      lexicon: "test",
       entityType: "test",
       [DECLARABLE_MARKER]: true,
       str: "value",
@@ -348,6 +378,7 @@ describe("buildDependencyGraph", () => {
     // parent is the resource itself (e.g. bucket.arn, bucket.bucketName).
     // These are not real dependencies — they're just attribute accessors.
     const resource: Declarable & { arn?: AttrRef; bucketName?: AttrRef } = {
+      lexicon: "test",
       entityType: "AWS::S3::Bucket",
       [DECLARABLE_MARKER]: true,
     };
@@ -364,6 +395,7 @@ describe("buildDependencyGraph", () => {
     // A resource has its own AttrRefs (self-pointing) AND a property that
     // references a different entity. Only the cross-resource dep should appear.
     const defaults: Declarable = {
+      lexicon: "test",
       entityType: "AWS::S3::VersioningConfiguration",
       [DECLARABLE_MARKER]: true,
     };
@@ -372,6 +404,7 @@ describe("buildDependencyGraph", () => {
       arn?: AttrRef;
       versioningConfiguration?: Declarable;
     } = {
+      lexicon: "test",
       entityType: "AWS::S3::Bucket",
       [DECLARABLE_MARKER]: true,
     };
@@ -391,6 +424,7 @@ describe("buildDependencyGraph", () => {
 
   test("ignores plain objects without markers", () => {
     const entity: Declarable & { data: { key: string } } = {
+      lexicon: "test",
       entityType: "test",
       [DECLARABLE_MARKER]: true,
       data: { key: "value" },
@@ -404,6 +438,7 @@ describe("buildDependencyGraph", () => {
 
   test("handles AttrRef with garbage collected parent gracefully", () => {
     const entity: Declarable & { ref: AttrRef } = {
+      lexicon: "test",
       entityType: "test",
       [DECLARABLE_MARKER]: true,
       ref: new AttrRef({}, "attr"), // Using plain object that will be GC'd
@@ -418,6 +453,7 @@ describe("buildDependencyGraph", () => {
 
   test("detects dependencies deeply nested in arrays and objects", () => {
     const entity1: Declarable = {
+      lexicon: "test",
       entityType: "type1",
       [DECLARABLE_MARKER]: true,
     };
@@ -425,6 +461,7 @@ describe("buildDependencyGraph", () => {
     const entity2: Declarable & {
       complex: { nested: { array: Array<{ item: Declarable }> } };
     } = {
+      lexicon: "test",
       entityType: "type2",
       [DECLARABLE_MARKER]: true,
       complex: {
@@ -446,17 +483,20 @@ describe("buildDependencyGraph", () => {
 
   test("does not traverse into referenced declarables", () => {
     const entity1: Declarable = {
+      lexicon: "test",
       entityType: "type1",
       [DECLARABLE_MARKER]: true,
     };
 
     const entity2: Declarable & { internal: { data: string } } = {
+      lexicon: "test",
       entityType: "type2",
       [DECLARABLE_MARKER]: true,
       internal: { data: "should not traverse this" },
     };
 
     const entity3: Declarable & { dep: Declarable } = {
+      lexicon: "test",
       entityType: "type3",
       [DECLARABLE_MARKER]: true,
       dep: entity2,

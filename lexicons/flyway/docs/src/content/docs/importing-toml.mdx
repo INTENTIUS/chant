@@ -1,0 +1,105 @@
+---
+title: "Importing TOML"
+description: "Convert an existing flyway.toml into typed TypeScript declarations"
+---
+If you already have a `flyway.toml` file, chant can convert it into typed TypeScript declarations.
+
+## Quick import
+
+```bash
+chant import flyway.toml
+```
+
+This reads your TOML config and generates a `src/infra.ts` file with typed constructors.
+
+## Before and after
+
+**Before** — `flyway.toml`:
+
+```toml
+id = "payments"
+name = "payments"
+databaseType = "postgresql"
+
+[flyway]
+locations = ["filesystem:sql/migrations"]
+defaultSchema = "public"
+cleanDisabled = true
+
+[environments.dev]
+url = "jdbc:postgresql://localhost:5432/payments_dev"
+user = "dev_user"
+schemas = ["public"]
+
+[environments.prod]
+url = "jdbc:postgresql://prod:5432/payments"
+user = "${vault.db-user}"
+password = "${vault.db-password}"
+schemas = ["public"]
+cleanDisabled = true
+validateOnMigrate = true
+
+[environments.prod.resolvers.vault]
+url = "https://vault.internal:8200"
+token = "${env.VAULT_TOKEN}"
+engineName = "secret"
+engineVersion = "v2"
+```
+
+**After** — `src/infra.ts`:
+
+```typescript
+import {
+  FlywayProject, FlywayConfig, Environment,
+  VaultResolver, resolve,
+} from "@intentius/chant-lexicon-flyway";
+
+export const project = new FlywayProject({
+  id: "payments",
+  name: "payments",
+  databaseType: "postgresql",
+});
+
+export const config = new FlywayConfig({
+  locations: ["filesystem:sql/migrations"],
+  defaultSchema: "public",
+  cleanDisabled: true,
+});
+
+export const dev = new Environment({
+  url: "jdbc:postgresql://localhost:5432/payments_dev",
+  user: "dev_user",
+  schemas: ["public"],
+  displayName: "dev",
+});
+
+export const vaultResolver = new VaultResolver({
+  url: "https://vault.internal:8200",
+  token: "${env.VAULT_TOKEN}",
+  engineName: "secret",
+  engineVersion: "v2",
+});
+
+export const prod = new Environment({
+  url: "jdbc:postgresql://prod:5432/payments",
+  user: resolve("vault", "db-user"),
+  password: resolve("vault", "db-password"),
+  schemas: ["public"],
+  cleanDisabled: true,
+  validateOnMigrate: true,
+  displayName: "prod",
+});
+```
+
+## What changes
+
+| TOML | TypeScript |
+|------|-----------|
+| Inline strings | Typed constructor properties |
+| `${resolver.key}` patterns | `resolve("resolver", "key")` calls |
+| `${flyway:name}` placeholders | `FLYWAY.name` constants |
+| Nested resolver configs | Separate `VaultResolver` / `GcpResolver` exports |
+
+## Round-trip fidelity
+
+Running `chant build` on the generated TypeScript produces TOML that is semantically identical to the original input. The only differences are formatting (key ordering, whitespace).

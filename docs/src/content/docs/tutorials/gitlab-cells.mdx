@@ -1,0 +1,278 @@
+---
+title: "GitLab Cells on GKE"
+description: "A production implementation of GitLab's Cells architecture — multi-tenant GitLab with per-cell isolation, custom request routing, and config-driven scale-out — all defined in TypeScript with four chant lexicons."
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+GitLab's [Cells architecture](https://docs.gitlab.com/ee/architecture/blueprints/cells/) is their approach to horizontal scaling: instead of one giant monolith, multiple isolated GitLab instances ("cells") share a single domain. An org is pinned to a cell; all its CI jobs, repos, and data live there. A cell router at the edge directs each request to the right cell transparently.
+
+This example implements that architecture on GKE — the same concepts (Topology Service, routable runner tokens, per-cell isolation, phased deployment), using Cloud SQL instead of Spanner and a custom Nginx/Lua router instead of Cloudflare Workers.
+
+Four chant lexicons (GCP, K8s, Helm, GitLab) generate all of it from TypeScript. One `cells[]` array in `src/config.ts` is the single source of truth: add an entry, run `npm run build`, and a new Cloud SQL instance, Redis pair, GCS bucket, GKE namespace, Helm release, and pipeline jobs are all generated automatically.
+
+## What you'll build
+
+```
+Cloud DNS: *.gitlab.example.com → GKE cluster IP
+                 |
+    ┌────────────▼──────────────────────────────────────────┐
+    │  system namespace                                      │
+    │                                                        │
+    │  NGINX Ingress  ──► Cell Router (Nginx/Lua)            │
+    │                          │                             │
+    │                   routing decision:                    │
+    │                   1. session cookie?  → cell directly  │
+    │                   2. routable token?  → cell directly  │
+    │                   3. org slug?        → Topology Svc   │
+    │                          │                             │
+    │  Topology Service (Go) ◄─┘  maps org → cell            │
+    │  Prometheus + Grafana       health scores per cell     │
+    │  cert-manager               Let's Encrypt DNS-01       │
+    │  External Secrets Operator  GCP Secret Manager sync    │
+    └──────────────┬────────────────────────┬────────────────┘
+                   │                        │
+    ┌──────────────▼──────┐    ┌────────────▼────────────┐
+    │  cell-alpha          │    │  cell-beta               │
+    │  GitLab Helm release │    │  GitLab Helm release     │
+    │  (Puma, Workhorse,   │    │  (isolated — no cross-   │
+    │  Sidekiq, Gitaly,    │    │  cell traffic via K8s    │
+    │  Registry, Runner)   │    │  NetworkPolicy)          │
+    └──────────────────────┘    └─────────────────────────┘
+         │                           │
+    Cloud SQL (HA)             Cloud SQL (HA)
+    Memorystore Redis ×2       Memorystore Redis ×2
+    GCS bucket                 GCS bucket
+    Secret Manager secrets     Secret Manager secrets
+```
+
+## GitLab Cells concept mapping
+
+This implementation mirrors GitLab's official architecture blueprint:
+
+| GitLab blueprint | This implementation |
+|---|---|
+| Cloudflare Worker (HTTP router) | Cell Router Deployment — Nginx/Lua, `src/system/cell-router.ts` |
+| Topology Service (Cloud Spanner) | Go service on Cloud SQL, `src/system/topology-service.ts` |
+| Routable runner tokens | `glrt-t{cellId}_…` tokens issued via GitLab API at deploy time |
+| Cell = isolated GitLab instance | Helm release per K8s namespace, NetworkPolicy blocking cross-cell |
+| Cell-local PostgreSQL | Cloud SQL HA instance per cell |
+| Cell-local Redis | Memorystore Redis ×2 per cell (persistent queues + ephemeral cache) |
+| Cell-local object storage | GCS bucket per cell |
+| Phased deployment | 9-stage canary-first pipeline |
+
+## What you'll learn
+
+- How a TypeScript `cells[]` array fans out to GCP infra, K8s namespaces, Helm charts, and CI pipeline jobs — one entry, everything generated
+- The three-tier request routing logic: session cookie → routable token → topology lookup
+- How routable runner tokens pin CI jobs to the correct cell — and the bootstrapping trick that makes it work
+- Why the Topology Service needs a fallback, and how health-aware routing works
+- The 9-stage canary-first pipeline and why each stage exists
+- Two non-obvious gotchas: port 8181 vs 8080 for git operations, and Nginx wildcard depth
+
+## Cost
+
+~$1.17/hr for 2 cells on a shared GKE cluster (~$28/day). Scales roughly linearly with cell count; the GKE cluster and Cloud NAT are shared. See the [example README](https://github.com/intentius/chant/tree/main/examples/gitlab-cells-single-region-gke#cost-estimate) for the full breakdown. Teardown after testing.
+
+## Get started
+
+```
+Deploy the gitlab-cells-single-region-gke example. My domain is gitlab.mycompany.com.
+```
+
+See [`examples/gitlab-cells-single-region-gke/`](https://github.com/intentius/chant/tree/main/examples/gitlab-cells-single-region-gke) for the full README, prerequisites validation script (`bash scripts/check-prereqs.sh`), and step-by-step deploy workflow.
+
+## Key patterns
+
+### Config-driven fan-out: one entry, everything generated
+
+The entire deployment derives from a typed array. Each `CellConfig` entry fully specifies a cell's resource tiers and GitLab version:
+
+```typescript
+// src/config.ts
+export const cells: CellConfig[] = [
+  {
+    name: "alpha",
+    cellId: 1,
+    canary: true,                         // receives new deploys first
+    sqlTier: "db-custom-2-8192",          // Cloud SQL machine type
+    redisPersistentTier: "STANDARD_HA",   // Sidekiq queue storage
+    redisCacheTier: "BASIC",              // session cache
+    gitlabVersion: "17.8.1",
+    initialAdminEmail: "admin@alpha.example.com",
+    sequenceOffset: 0,                    // GitLab ID namespace (0, 1_000_000, 2_000_000…)
+  },
+  {
+    name: "beta",
+    cellId: 2,
+    canary: false,
+    sequenceOffset: 1_000_000,
+    // ...
+  },
+];
+```
+
+`src/cell/factory.ts` maps each entry to a complete set of resources across all four lexicons:
+
+```typescript
+// src/cell/factory.ts
+export function createCell(cell: CellConfig) {
+  return {
+    sql:     new SQLInstance({ tier: cell.sqlTier, ... }),          // GCP
+    redis:   [new RedisInstance({ tier: cell.redisPersistentTier }), // GCP
+              new RedisInstance({ tier: cell.redisCacheTier })],
+    bucket:  new StorageBucket({ name: `gitlab-cell-${cell.name}` }),// GCP
+    ns:      NamespaceEnv({ name: `cell-${cell.name}`, ... }),       // K8s
+    chart:   new HelmRelease({ chart: "gitlab/gitlab",               // Helm
+               values: { gitlab: { webservice: { ... } } } }),
+    job:     new Job({ name: `deploy-cell-${cell.name}`, ... }),     // GitLab CI
+  };
+}
+
+export const allCells = cells.map(createCell);
+```
+
+`npm run build` discovers all four lexicons and writes four output files:
+- `config.yaml` — all GCP Config Connector resources (Cloud SQL, Redis, GCS, DNS, KMS, IAM)
+- `k8s.yaml` — all K8s resources (system namespace, cell namespaces, NetworkPolicies, ExternalSecrets)
+- `gitlab-cell/` — Helm wrapper chart with `gitlab/gitlab` as a dependency
+- `.gitlab-ci.yml` — 9-stage pipeline
+
+**Adding a cell** is one config entry + `npm run build` + apply. Config Connector provisions Cloud SQL and Redis; the pipeline Helm-installs GitLab and registers the runner.
+
+### Three-tier request routing
+
+The Cell Router is a custom Nginx deployment (with `lua-resty-http`) that routes each request in priority order:
+
+**Tier 1 — Session cookie** (fastest path, ~0ms lookup): Every authenticated request carries `_gitlab_session_cell_<name>=<token>`. The router extracts the cell name from the cookie prefix and proxies directly — no external lookup.
+
+**Tier 2 — Routable runner token** (CI job routing): GitLab 17.7+ runner tokens embed the cell ID: `glrt-t{cellId}_{random}`. The router parses the `JOB-TOKEN` or `PRIVATE-TOKEN` header, extracts the cell ID, and routes the CI job to the correct cell's Gitaly/Workhorse without touching the Topology Service.
+
+**Tier 3 — Topology Service lookup** (new sessions, API requests): For requests without a cell cookie or routable token, the router calls the Topology Service with the org slug. The Topology Service queries its Cloud SQL database, returns the cell assignment, and the router sets the session cookie for all future requests from that org.
+
+```typescript
+// src/system/routing-rules.ts — declarative routing rule definitions
+export const sessionRule = new SessionTokenRule({
+  cookiePrefix: "_gitlab_session_cell_",
+  // Router extracts cell name from cookie prefix
+});
+
+export const tokenRule = new RoutableTokenRule({
+  tokenPrefix: "glrt-t",
+  // Router extracts cellId from token, maps to cell name
+});
+
+export const pathRule = new PathRule({
+  topologyServiceUrl: "http://topology-service:8080",
+  fallbackCell: cells.find(c => c.canary)!.name,  // alpha if topology unreachable
+});
+```
+
+**Topology Service fallback**: If the Topology Service is unavailable (pod crash, Cloud SQL issue), all requests without an existing session fall back to the canary cell. No data loss; users get a slightly wrong cell until it recovers. The fallback is configured in `src/system/topology-service.ts` and is the `canary: true` cell from `cells[]`.
+
+### Health-aware routing via Prometheus
+
+The Topology Service reads per-cell health scores from Prometheus before making routing decisions. Each cell has a `PrometheusRule` CRD that computes a composite health score from GitLab's own metrics:
+
+```typescript
+// src/system/monitoring.ts — per-cell health rule, generated for each cell
+export const healthRules = cells.map(cell => new PrometheusRule({
+  metadata: { name: `cell-${cell.name}-health` },
+  spec: {
+    groups: [{
+      name: "cell-health",
+      rules: [{
+        record: `gitlab_cell_health_score`,
+        labels: { cell: cell.name },
+        expr: `
+          (
+            avg(up{job="gitlab-webservice", namespace="cell-${cell.name}"}) * 0.4 +
+            avg(up{job="gitlab-sidekiq",    namespace="cell-${cell.name}"}) * 0.3 +
+            avg(up{job="gitaly",            namespace="cell-${cell.name}"}) * 0.3
+          )
+        `,
+      }],
+    }],
+  },
+}));
+```
+
+When a cell's health score drops below threshold, the Topology Service stops assigning new orgs to it and routes new sessions to healthier cells instead. Existing sessions continue to their pinned cell (they already have the cookie).
+
+### Routable runner tokens and the bootstrapping trick
+
+Runner tokens are issued by the GitLab Rails API — they can't be created until GitLab is running. But the runner pod starts with the Helm release, before the token exists. The solution uses an `optional: true` secret volume:
+
+```
+Phase 1: Helm install  →  runner pod starts, no token, picks up 0 jobs (healthy)
+Phase 2: register-runners pipeline job  →  POST /api/v4/runners with routable token format
+                          →  store token in K8s Secret
+                          →  kubectl rollout restart deployment/runner
+Phase 3: runner reads token Secret, registers, starts polling
+```
+
+The `register-runners` pipeline job runs **after all cells are deployed** — it's stage 6 of 9. The routable token format (`glrt-t{cellId}_{random}`) encodes the cell ID, so the Cell Router can route CI job requests to the right cell's Workhorse without a topology lookup.
+
+### The 9-stage canary-first pipeline
+
+```
+1. infra          →  kubectl apply config.yaml  (Cloud SQL, Redis, GCS)
+2. system         →  kubectl apply k8s.yaml     (NGINX, cell-router, cert-manager, ESO)
+3. validate       →  helm diff per cell         (dry-run preview, fails fast)
+4. deploy-canary  →  helm install cell-alpha    (wait for rollout)
+5. deploy-remaining → helm install cell-beta, cell-gamma, ...  (parallel, depends on canary)
+6. register-runners → GitLab API per cell, store token Secret, restart runner
+7. smoke-test     →  scripts/e2e-test.sh        (real HTTP requests, routing assertions)
+8. backup         →  backup-utility per cell    (scheduled job: GCS snapshots)
+9. migrate-org    →  manual trigger only        (topology-cli, see below)
+```
+
+Stages 4 and 5 enforce the canary pattern: if cell-alpha's Helm install fails or the pod health check fails, the pipeline stops before deploying to any other cells. Stage 3's `helm diff` means you see exactly what's changing before anything touches production.
+
+### Non-obvious gotchas
+
+**Port 8181, not 8080, for git operations:** GitLab Webservice exposes two ports. Port 8080 is Puma/Rails directly — it returns `403 Nil JSON web token` for git operations because JWT signing happens in Workhorse. Port 8181 is the Workhorse TCP listener, which handles `git clone`, `git push`, and LFS. The Cell Router's `cell-registry.json` targets **8181** for all cells. Pointing it at 8080 breaks git with a misleading 403.
+
+**Nginx wildcard depth:** Nginx's `*.gitlab.example.com` wildcard matches exactly one subdomain level. Cell URLs like `gitlab.alpha.gitlab.example.com` are two levels deep and don't match. The cell-router Ingress therefore includes both `*.gitlab.example.com` (top-level) and `*.alpha.gitlab.example.com`, `*.beta.gitlab.example.com`, etc. (per-cell). These are generated automatically from `cells[]` in `src/system/cell-router.ts`.
+
+### Moving orgs between cells
+
+The Topology Service's org → cell mapping can be updated at any time — no downtime, no data movement required.
+
+**Via the pipeline** — stage 9 is a manual `migrate-org` job. Trigger it from the GitLab UI with `ORG_ID` and `TARGET_CELL` as pipeline variables.
+
+**Via the CLI:**
+
+```bash
+kubectl -n system exec deploy/topology-service -- \
+  topology-cli migrate-org --org $ORG_ID --target-cell $TARGET_CELL
+```
+
+After the mapping updates, the Cell Router routes new requests for that org to the target cell immediately. In-flight sessions continue to the old cell until the `_gitlab_session_cell_<old>` cookie expires — typically at logout or after the session TTL.
+
+**Important:** migrating routing is not the same as migrating data. Git repos, database rows, and uploads remain on the source cell's Cloud SQL and GCS. For a full data migration, use GitLab's group migration tooling after the routing switch.
+
+**Before removing a cell**, migrate all its orgs first and verify:
+
+```bash
+kubectl -n system exec deploy/topology-service -- \
+  topology-cli list-orgs --cell $CELL_NAME
+```
+
+### Local k3d smoke test: validate routing in 3 minutes
+
+Before a 60-minute GCP deploy, validate the cell router config and Helm chart rendering locally:
+
+```bash
+bash scripts/k3d-smoke.sh
+```
+
+The smoke test starts a k3d cluster, deploys nginx and the cell router, spins up a stub Nginx pod per cell (port 8181 only, from `k3d/mock-cell.ts`), and asserts that session cookies, routable tokens, and org-slug routing all land on the correct stub. It catches misconfigured routing rules, broken Helm templates, and cell-router Lua errors before they cost you an hour of GCP time.
+
+## Further reading
+
+- [GCP Config Connector lexicon](/chant/lexicons/gcp/) — Cloud SQL, Memorystore, GCS, and other composites
+- [Helm lexicon](/chant/lexicons/helm/) — HelmRelease, wrapper chart pattern, value overrides
+- [GitLab CI/CD lexicon](/chant/lexicons/gitlab/) — pipeline composites, multi-stage patterns, environments
+- [Multi-Lexicon Projects guide](/chant/guide/multi-lexicon/) — patterns for mixed-lexicon src/ directories
+- [GitLab Cells architecture blueprint](https://docs.gitlab.com/ee/architecture/blueprints/cells/) — the upstream design this implements

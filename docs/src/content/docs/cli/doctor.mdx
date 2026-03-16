@@ -6,7 +6,7 @@ description: Check project health and configuration
 ## Synopsis
 
 ```
-npx chant doctor [path]
+chant doctor [path]
 ```
 
 ## Description
@@ -25,15 +25,15 @@ npx chant doctor [path]
 | `stale-dirs` | No orphaned `.chant/types/lexicon-*` directories for unconfigured lexicons |
 | `tsconfig-paths` | `tsconfig.json` has `compilerOptions.paths` configured |
 | `mcp-config` | `.mcp.json` exists with a `chant` server entry |
-| `skills-<name>` | Lexicon skill files are installed in `.chant/skills/<name>/` |
+| `skills-<name>` | Lexicon skill files are installed in `skills/<name>/` |
 
 ## Usage
 
 ```bash
-npx chant doctor
+chant doctor
 
 # Check a specific project
-npx chant doctor ./my-infra
+chant doctor ./my-infra
 ```
 
 ## Output

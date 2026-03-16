@@ -1,0 +1,24 @@
+{
+  "name": "k8s-web-platform-example",
+  "version": "0.0.1",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "build": "chant build src --lexicon k8s -o k8s.yaml",
+    "lint": "chant lint src",
+    "dev": "chant build src --lexicon k8s --watch -o k8s.yaml",
+    "apply": "kubectl apply -f k8s.yaml",
+    "wait": "kubectl -n web-platform rollout status deployment/frontend --timeout=120s",
+    "status": "kubectl get pods -n web-platform",
+    "logs": "kubectl logs -n web-platform -l app.kubernetes.io/name=frontend --tail=50",
+    "deploy": "npm run build && npm run apply && npm run wait && npm run status",
+    "teardown": "kubectl delete -f k8s.yaml"
+  },
+  "dependencies": {
+    "@intentius/chant": "workspace:*",
+    "@intentius/chant-lexicon-k8s": "workspace:*"
+  },
+  "devDependencies": {
+    "typescript": "*"
+  }
+}

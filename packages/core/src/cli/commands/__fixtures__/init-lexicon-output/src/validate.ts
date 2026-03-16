@@ -1,24 +1,28 @@
 /**
- * Validate generated artifacts for the fixture lexicon.
+ * Validate generated lexicon-fixture artifacts.
  *
- * TODO: Add validation checks for your generated files.
+ * Thin wrapper around the core validation framework
+ * with fixture-specific configuration.
  */
-export async function validate(options?: { verbose?: boolean }): Promise<void> {
-  const checks = [
-    // TODO: Add checks — e.g. verify lexicon JSON exists, types compile,
-    // registry has expected resources, etc.
-    { name: "placeholder", ok: true, error: undefined as string | undefined },
-  ];
 
-  for (const check of checks) {
-    const status = check.ok ? "OK" : "FAIL";
-    const msg = check.error ? ` — ${check.error}` : "";
-    console.error(`  [${status}] ${check.name}${msg}`);
-  }
+import { dirname } from "path";
+import { fileURLToPath } from "url";
+import { validateLexiconArtifacts, type ValidateResult } from "@intentius/chant/codegen/validate";
 
-  const failed = checks.filter((c) => !c.ok);
-  if (failed.length > 0) {
-    throw new Error("Validation failed");
-  }
-  console.error("All validation checks passed.");
+export type { ValidateCheck, ValidateResult } from "@intentius/chant/codegen/validate";
+
+// TODO: Add names of required entities for your lexicon
+const REQUIRED_NAMES: string[] = [];
+
+/**
+ * Validate the generated lexicon-fixture artifacts.
+ */
+export async function validate(opts?: { basePath?: string }): Promise<ValidateResult> {
+  const basePath = opts?.basePath ?? dirname(dirname(fileURLToPath(import.meta.url)));
+
+  return validateLexiconArtifacts({
+    lexiconJsonFilename: "lexicon-fixture.json",
+    requiredNames: REQUIRED_NAMES,
+    basePath,
+  });
 }

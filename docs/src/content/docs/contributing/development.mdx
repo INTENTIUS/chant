@@ -40,13 +40,60 @@ just docs-build   # build the unified documentation site
 bun test                    # all tests
 bun test packages/core/     # core package only
 bun test lexicons/aws/      # AWS lexicon only
+bun test lexicons/k8s/      # K8s lexicon only
+```
+
+#### Kubernetes roundtrip tests
+
+The K8s lexicon has additional integration tests that run against real manifests from `kubernetes/examples`:
+
+```bash
+cd lexicons/k8s
+
+# Parse-only roundtrip (parse → generate)
+just import-samples --skip-clone --verbose
+
+# Full roundtrip (parse → generate → import → serialize → compare)
+just full-roundtrip --skip-clone --verbose
+
+# k3d cluster validation (requires k3d + kubectl + Docker)
+just k3d-validate --verbose
 ```
 
 ### Test Patterns
 
 - Unit tests live next to source files or in `__tests__/` directories
-- Integration tests (like example projects) are in `examples/` directories with `*.test.ts` files
-- The `packages/test-utils/` directory provides shared test fixtures and assertions
+- The `packages/test-utils/` directory (`@intentius/chant-test-utils`) provides shared test fixtures, assertions, and the example test harness
+
+### Example Tests
+
+Example tests are centralized — each lexicon has a single `examples.test.ts` that auto-discovers all its examples. Example directories contain only source code (no `.test.ts` files), so users who copy examples get clean projects.
+
+**Per-lexicon examples** live at `lexicons/<name>/examples/<example>/src/` and are tested by `lexicons/<name>/examples/examples.test.ts`.
+
+**Cross-lexicon examples** (e.g. AWS + K8s, GitLab + AWS) live at `examples/<name>/src/` and are tested by `examples/examples.test.ts`.
+
+Both use the shared harness from `@intentius/chant-test-utils/example-harness`:
+
+```typescript
+import { describeAllExamples } from "@intentius/chant-test-utils/example-harness";
+import { mySerializer } from "@intentius/chant-lexicon-my-lexicon";
+
+describeAllExamples({
+  lexicon: "my-lexicon",
+  serializer: mySerializer,
+  outputKey: "my-lexicon",
+  examplesDir: import.meta.dir,
+}, {
+  // Per-example overrides (optional)
+  "docs-snippets": { skipLint: true },
+  "my-example": {
+    checks: (output) => { expect(output).toContain("expected"); },
+  },
+});
+```
+
+**Adding a new example:** create a subdirectory with `src/` and a `package.json` — the centralized `examples.test.ts` auto-discovers it with no test file changes needed. Add an override entry only if you need custom assertions or to skip lint/build.
 
 ## Type Checking
 
@@ -69,10 +116,11 @@ chant/
 │   │       │   └── fetch.ts            fetchWithCache, extractFromZip
 │   │       └── lsp/
 │   │           └── lexicon-providers.ts LexiconIndex, completions, hover
-│   └── test-utils/     @intentius/chant-test-utils — test helpers
+│   └── test-utils/     shared test fixtures and assertions
 ├── lexicons/
-│   ├── aws/            @intentius/chant-lexicon-aws — AWS lexicon (wraps core pipelines)
-│   └── chant/          @intentius/chant-lexicon-chant — core lint rules
+│   ├── aws/            @intentius/chant-lexicon-aws — AWS CloudFormation lexicon
+│   ├── gitlab/         @intentius/chant-lexicon-gitlab — GitLab CI/CD lexicon
+│   └── k8s/            @intentius/chant-lexicon-k8s — Kubernetes lexicon
 ├── docs/               Astro Starlight documentation site
 └── package.json
 ```
@@ -83,5 +131,5 @@ The `packages/core/src/codegen/` directory contains reusable infrastructure for 
 
 ## What's Next
 
-- [Architecture Overview](/architecture/overview/) — understand how the pieces fit together
-- [Core Type System](/architecture/core-type-system/) — Declarable, Resource, Property types
+- [Architecture Overview](/chant/architecture/overview/) — understand how the pieces fit together
+- [Core Type System](/chant/architecture/core-type-system/) — Declarable, Resource, Property types

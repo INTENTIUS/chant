@@ -1,0 +1,9 @@
+{
+  "name": "@intentius/chant-lexicon-fixture-example-getting-started",
+  "version": "0.0.1",
+  "private": true,
+  "dependencies": {
+    "@intentius/chant-lexicon-fixture": "workspace:*",
+    "@intentius/chant": "workspace:*"
+  }
+}

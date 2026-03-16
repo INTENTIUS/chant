@@ -1,0 +1,26 @@
+services:
+  dev-db:
+    image: postgres:16
+    environment:
+      POSTGRES_DB: lifecycle_dev
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    ports:
+      - "5432:5432"
+    volumes:
+      - dev-data:/var/lib/postgresql/data
+
+  shadow-db:
+    image: postgres:16
+    environment:
+      POSTGRES_DB: lifecycle_shadow
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    ports:
+      - "5433:5432"
+    volumes:
+      - shadow-data:/var/lib/postgresql/data
+
+volumes:
+  dev-data:
+  shadow-data:

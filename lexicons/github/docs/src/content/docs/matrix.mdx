@@ -1,0 +1,238 @@
+---
+title: "Matrix Strategies"
+description: "Matrix builds, dynamic matrices, fail-fast, max-parallel, and include/exclude patterns"
+---
+
+Matrix strategies let you run a job across multiple configurations in parallel. Define a `strategy.matrix` on a job to generate one run per combination of values.
+
+## Basic matrix
+
+```typescript
+import { Job, Step, Checkout, SetupNode } from "@intentius/chant-lexicon-github";
+
+export const test = new Job({
+  "runs-on": "ubuntu-latest",
+  strategy: {
+    matrix: {
+      "node-version": ["18", "20", "22"],
+    },
+  },
+  steps: [
+    Checkout({}).step,
+    SetupNode({ nodeVersion: "${{ matrix.node-version }}", cache: "npm" }).step,
+    new Step({ name: "Install", run: "npm ci" }),
+    new Step({ name: "Test", run: "npm test" }),
+  ],
+});
+```
+
+This creates 3 parallel job runs -- one for each Node.js version.
+
+## Multi-dimension matrix
+
+Combine multiple dimensions. GitHub runs every combination:
+
+```typescript
+import { Job, Step, Checkout, SetupNode } from "@intentius/chant-lexicon-github";
+
+export const test = new Job({
+  "runs-on": "${{ matrix.os }}",
+  strategy: {
+    matrix: {
+      os: ["ubuntu-latest", "macos-latest", "windows-latest"],
+      "node-version": ["20", "22"],
+    },
+  },
+  steps: [
+    Checkout({}).step,
+    SetupNode({ nodeVersion: "${{ matrix.node-version }}" }).step,
+    new Step({ name: "Test", run: "npm test" }),
+  ],
+});
+```
+
+This produces 6 runs (3 OS x 2 Node versions).
+
+## Using typed matrix expressions
+
+Instead of raw `${{ matrix.* }}` strings, use the typed `matrix()` accessor:
+
+```typescript
+import { Job, Step, Checkout, SetupNode, matrix } from "@intentius/chant-lexicon-github";
+
+export const test = new Job({
+  "runs-on": matrix("os"),
+  strategy: {
+    matrix: {
+      os: ["ubuntu-latest", "macos-latest"],
+      "node-version": ["20", "22"],
+    },
+  },
+  steps: [
+    Checkout({}).step,
+    SetupNode({ nodeVersion: matrix("node-version") }).step,
+    new Step({ name: "Test", run: "npm test" }),
+  ],
+});
+```
+
+The `matrix()` function returns an `Expression` that serializes to `${{ matrix.<key> }}`.
+
+## Fail-fast and max-parallel
+
+Control matrix execution behavior:
+
+```typescript
+import { Job, Step } from "@intentius/chant-lexicon-github";
+
+export const test = new Job({
+  "runs-on": "ubuntu-latest",
+  strategy: {
+    matrix: {
+      "python-version": ["3.10", "3.11", "3.12"],
+    },
+    "fail-fast": false,     // Continue other runs if one fails
+    "max-parallel": 2,      // Run at most 2 jobs concurrently
+  },
+  steps: [
+    new Step({ name: "Test", run: "pytest" }),
+  ],
+});
+```
+
+- **`fail-fast`** (default: `true`) -- when `true`, GitHub cancels remaining matrix runs if any run fails. Set to `false` to run all combinations regardless of failures.
+- **`max-parallel`** -- limit concurrent matrix runs. Useful for rate-limited resources or expensive runners.
+
+## Include and exclude
+
+Add specific combinations or remove unwanted ones:
+
+```typescript
+import { Job, Step, Checkout, SetupNode } from "@intentius/chant-lexicon-github";
+
+export const test = new Job({
+  "runs-on": "${{ matrix.os }}",
+  strategy: {
+    matrix: {
+      os: ["ubuntu-latest", "macos-latest", "windows-latest"],
+      "node-version": ["20", "22"],
+      exclude: [
+        // Skip Node 20 on Windows
+        { os: "windows-latest", "node-version": "20" },
+      ],
+      include: [
+        // Add a specific experimental combination
+        { os: "ubuntu-latest", "node-version": "23", experimental: true },
+      ],
+    },
+  },
+  steps: [
+    Checkout({}).step,
+    SetupNode({ nodeVersion: "${{ matrix.node-version }}" }).step,
+    new Step({ name: "Test", run: "npm test" }),
+  ],
+});
+```
+
+## Dynamic matrix with fromJSON
+
+Generate matrix values dynamically from a previous step:
+
+```typescript
+import { Job, Step, Checkout, fromJSON, steps } from "@intentius/chant-lexicon-github";
+
+export const prepare = new Job({
+  "runs-on": "ubuntu-latest",
+  outputs: { matrix: "${{ steps.set-matrix.outputs.matrix }}" },
+  steps: [
+    Checkout({}).step,
+    new Step({
+      id: "set-matrix",
+      name: "Compute matrix",
+      run: `echo "matrix=$(node -e "
+        const pkgs = require('./package.json').workspaces;
+        console.log(JSON.stringify({ package: pkgs }));
+      ")" >> $GITHUB_OUTPUT`,
+    }),
+  ],
+});
+
+export const test = new Job({
+  "runs-on": "ubuntu-latest",
+  needs: ["prepare"],
+  strategy: {
+    matrix: fromJSON("${{ needs.prepare.outputs.matrix }}"),
+  },
+  steps: [
+    Checkout({}).step,
+    new Step({
+      name: "Test package",
+      run: "cd ${{ matrix.package }} && npm test",
+    }),
+  ],
+});
+```
+
+## Matrix with environment-specific settings
+
+Use matrix values to drive different behaviors per configuration:
+
+```typescript
+import { Job, Step, Checkout, SetupNode } from "@intentius/chant-lexicon-github";
+
+export const deploy = new Job({
+  "runs-on": "ubuntu-latest",
+  strategy: {
+    matrix: {
+      environment: ["staging", "production"],
+      include: [
+        { environment: "staging", url: "https://staging.example.com", auto_deploy: true },
+        { environment: "production", url: "https://example.com", auto_deploy: false },
+      ],
+    },
+    "max-parallel": 1, // Deploy sequentially
+  },
+  environment: {
+    name: "${{ matrix.environment }}",
+    url: "${{ matrix.url }}",
+  },
+  steps: [
+    Checkout({}).step,
+    new Step({
+      name: "Deploy",
+      run: "npm run deploy -- --env ${{ matrix.environment }}",
+    }),
+  ],
+});
+```
+
+## Lint rules for matrices
+
+The GHA004 lint rule flags inline matrix objects and suggests extracting them to named constants for readability:
+
+```typescript
+import { Job, Step } from "@intentius/chant-lexicon-github";
+
+// Flagged by GHA004 — extract to a constant
+export const test = new Job({
+  "runs-on": "ubuntu-latest",
+  strategy: {
+    matrix: { os: ["ubuntu-latest", "macos-latest"], node: ["20", "22"] },
+  },
+  steps: [new Step({ name: "Test", run: "npm test" })],
+});
+
+// Better — named constant
+const platforms = {
+  os: ["ubuntu-latest", "macos-latest"],
+  node: ["20", "22"],
+};
+
+export const testBetter = new Job({
+  "runs-on": "ubuntu-latest",
+  strategy: { matrix: platforms },
+  steps: [new Step({ name: "Test", run: "npm test" })],
+});
+```
+
+The GHA009 post-synth check catches empty matrix dimensions (an empty values array causes the job to be silently skipped).

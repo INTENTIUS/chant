@@ -1,0 +1,105 @@
+# Persona: Release validation (actual cloud deploys)
+# Questions answered:
+#   - Do examples deploy end-to-end to real cloud providers?
+#   - Does the full lifecycle (build → deploy → verify → teardown) work?
+# Flow: Stage 1 (bun) packs tarballs → Stage 2 (node + deploy tools) runs e2e-smoke.sh at container start
+# Requires: cloud credentials mounted via Docker -v / -e flags
+#
+# NOTE: This image is always built as linux/amd64 because Flyway CLI does not
+# provide a linux-aarch64 build.  On Apple Silicon the runner stage uses
+# Rosetta emulation transparently.
+
+# ── Stage 1: builder ─────────────────────────────────────────────────────────
+FROM --platform=linux/amd64 oven/bun:latest AS builder
+
+WORKDIR /app
+
+RUN apt-get update && apt-get install -y jq && rm -rf /var/lib/apt/lists/*
+
+COPY . .
+
+RUN bun install
+
+# Generate dist/ artifacts for each lexicon
+RUN for lex in aws azure gcp gitlab k8s flyway; do \
+      echo "=== prepack lexicons/$lex ===" && \
+      bun run --cwd "lexicons/$lex" prepack; \
+    done
+
+# Fix workspace:* deps → real version, strip scripts
+RUN CORE_VERSION=$(jq -r '.version' packages/core/package.json) && \
+    cd /app/packages/core && \
+    jq 'del(.scripts)' package.json > tmp.json && mv tmp.json package.json && \
+    for lex in aws azure gcp gitlab k8s flyway; do \
+      cd /app/lexicons/$lex && \
+      jq --arg v "$CORE_VERSION" \
+        '(.dependencies // {}) |= with_entries(if .value == "workspace:*" then .value = $v else . end) | del(.scripts)' \
+        package.json > tmp.json && mv tmp.json package.json; \
+    done
+
+# Pack tarballs (rm stale .tgz first — glob with multiple matches breaks mv)
+RUN mkdir -p /tarballs && \
+    cd /app/packages/core && rm -f *.tgz && bun pm pack && mv *.tgz /tarballs/core.tgz && \
+    cd /app/lexicons/aws && rm -f *.tgz && bun pm pack && mv *.tgz /tarballs/lexicon-aws.tgz && \
+    cd /app/lexicons/gitlab && rm -f *.tgz && bun pm pack && mv *.tgz /tarballs/lexicon-gitlab.tgz && \
+    cd /app/lexicons/k8s && rm -f *.tgz && bun pm pack && mv *.tgz /tarballs/lexicon-k8s.tgz && \
+    cd /app/lexicons/flyway && rm -f *.tgz && bun pm pack && mv *.tgz /tarballs/lexicon-flyway.tgz && \
+    cd /app/lexicons/gcp && rm -f *.tgz && bun pm pack && mv *.tgz /tarballs/lexicon-gcp.tgz && \
+    cd /app/lexicons/azure && rm -f *.tgz && bun pm pack && mv *.tgz /tarballs/lexicon-azure.tgz
+
+# ── Stage 2: E2E runner ──────────────────────────────────────────────────────
+FROM --platform=linux/amd64 node:22-slim
+
+# Install base tools
+RUN apt-get update && apt-get install -y \
+      curl unzip jq git ca-certificates gnupg \
+    && rm -rf /var/lib/apt/lists/*
+
+# tsx — the chant bin wrapper uses it as fallback runtime
+RUN npm install -g tsx
+
+# Git identity for E2E commits (push_to_gitlab needs this)
+RUN git config --global user.email "e2e@chant.dev" && \
+    git config --global user.name "Chant E2E"
+
+# kubectl
+RUN curl -fsSL "https://dl.k8s.io/release/$(curl -fsSL https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl" \
+      -o /usr/local/bin/kubectl && chmod +x /usr/local/bin/kubectl
+
+# AWS CLI v2
+RUN curl -fsSL "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o /tmp/awscliv2.zip && \
+    unzip -q /tmp/awscliv2.zip -d /tmp && /tmp/aws/install && rm -rf /tmp/aws /tmp/awscliv2.zip
+
+# gcloud CLI + GKE auth plugin
+RUN curl -fsSL https://dl.google.com/dl/cloudsdk/channels/rapid/downloads/google-cloud-cli-linux-x86_64.tar.gz \
+      -o /tmp/gcloud.tar.gz && \
+    tar xzf /tmp/gcloud.tar.gz -C /opt && \
+    /opt/google-cloud-sdk/install.sh --quiet --path-update=true && \
+    /opt/google-cloud-sdk/bin/gcloud components install gke-gcloud-auth-plugin --quiet && \
+    rm /tmp/gcloud.tar.gz
+ENV PATH="/opt/google-cloud-sdk/bin:$PATH"
+ENV USE_GKE_GCLOUD_AUTH_PLUGIN=True
+
+# Azure CLI
+RUN curl -fsSL https://aka.ms/InstallAzureCLIDeb | bash
+
+# Flyway CLI (standalone with embedded JRE — x64 only, no arm64 build available)
+RUN FLYWAY_VERSION=11.3.3 && \
+    curl -fsSL "https://download.red-gate.com/maven/release/com/redgate/flyway/flyway-commandline/${FLYWAY_VERSION}/flyway-commandline-${FLYWAY_VERSION}-linux-x64.tar.gz" \
+      -o /tmp/flyway.tar.gz && \
+    tar xzf /tmp/flyway.tar.gz -C /opt && \
+    ln -s /opt/flyway-${FLYWAY_VERSION}/flyway /usr/local/bin/flyway && \
+    rm /tmp/flyway.tar.gz
+
+# Copy tarballs from builder
+COPY --from=builder /tarballs /tarballs
+
+# Copy example source directories
+COPY --from=builder /app/examples /examples
+
+# Copy E2E test script
+COPY test/e2e-smoke.sh /e2e-smoke.sh
+RUN chmod +x /e2e-smoke.sh
+
+ENTRYPOINT ["/e2e-smoke.sh"]
+CMD ["all"]

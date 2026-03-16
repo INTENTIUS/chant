@@ -1,0 +1,21 @@
+{
+  "name": "private-endpoint-example",
+  "version": "0.0.1",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "test": "bun test",
+    "build": "chant build src --lexicon azure -o template.json",
+    "dev": "chant build src --lexicon azure --watch -o template.json",
+    "lint": "chant lint src",
+    "deploy": "az deployment group create --resource-group \"$RESOURCE_GROUP\" --template-file template.json",
+    "teardown": "az group delete --name \"$RESOURCE_GROUP\" --yes"
+  },
+  "dependencies": {
+    "@intentius/chant": "^0.0.14",
+    "@intentius/chant-lexicon-azure": "^0.0.14"
+  },
+  "devDependencies": {
+    "typescript": "^5.0.0"
+  }
+}

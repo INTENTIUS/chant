@@ -62,14 +62,14 @@ function samFunction(): SchemaParseResult {
     propertyTypes: [
       {
         name: "Function_Environment",
-        cfnType: "Environment",
+        specType: "Environment",
         properties: [
           { name: "Variables", tsType: "Record<string, any>", required: false, constraints: {} },
         ],
       },
       {
         name: "Function_VpcConfig",
-        cfnType: "VpcConfig",
+        specType: "VpcConfig",
         properties: [
           { name: "SecurityGroupIds", tsType: "string[]", required: true, constraints: {} },
           { name: "SubnetIds", tsType: "string[]", required: true, constraints: {} },
@@ -77,7 +77,7 @@ function samFunction(): SchemaParseResult {
       },
       {
         name: "Function_DeadLetterQueue",
-        cfnType: "DeadLetterQueue",
+        specType: "DeadLetterQueue",
         properties: [
           { name: "Type", tsType: "string", required: true, constraints: {} },
           { name: "TargetArn", tsType: "string", required: true, constraints: {} },
@@ -85,7 +85,7 @@ function samFunction(): SchemaParseResult {
       },
       {
         name: "Function_DeploymentPreference",
-        cfnType: "DeploymentPreference",
+        specType: "DeploymentPreference",
         properties: [
           { name: "Type", tsType: "string", required: true, constraints: {} },
           { name: "Enabled", tsType: "boolean", required: false, constraints: {} },
@@ -95,7 +95,7 @@ function samFunction(): SchemaParseResult {
       },
       {
         name: "Function_EventSource",
-        cfnType: "EventSource",
+        specType: "EventSource",
         properties: [
           { name: "Type", tsType: "string", required: true, constraints: {} },
           { name: "Properties", tsType: "any", required: false, constraints: {} },
@@ -103,7 +103,7 @@ function samFunction(): SchemaParseResult {
       },
       {
         name: "Function_S3Location",
-        cfnType: "S3Location",
+        specType: "S3Location",
         properties: [
           { name: "Bucket", tsType: "string", required: true, constraints: {} },
           { name: "Key", tsType: "string", required: true, constraints: {} },
@@ -148,7 +148,7 @@ function samApi(): SchemaParseResult {
     propertyTypes: [
       {
         name: "Api_Auth",
-        cfnType: "Auth",
+        specType: "Auth",
         properties: [
           { name: "DefaultAuthorizer", tsType: "string", required: false, constraints: {} },
           { name: "Authorizers", tsType: "Record<string, any>", required: false, constraints: {} },
@@ -158,7 +158,7 @@ function samApi(): SchemaParseResult {
       },
       {
         name: "Api_CorsConfiguration",
-        cfnType: "CorsConfiguration",
+        specType: "CorsConfiguration",
         properties: [
           { name: "AllowOrigin", tsType: "string", required: true, constraints: {} },
           { name: "AllowHeaders", tsType: "string", required: false, constraints: {} },
@@ -199,7 +199,7 @@ function samHttpApi(): SchemaParseResult {
     propertyTypes: [
       {
         name: "HttpApi_CorsConfiguration",
-        cfnType: "CorsConfiguration",
+        specType: "CorsConfiguration",
         properties: [
           { name: "AllowOrigins", tsType: "string[]", required: false, constraints: {} },
           { name: "AllowHeaders", tsType: "string[]", required: false, constraints: {} },
@@ -233,7 +233,7 @@ function samSimpleTable(): SchemaParseResult {
     propertyTypes: [
       {
         name: "SimpleTable_PrimaryKey",
-        cfnType: "PrimaryKey",
+        specType: "PrimaryKey",
         properties: [
           { name: "Name", tsType: "string", required: true, constraints: {} },
           { name: "Type", tsType: "string", required: true, constraints: {} },
@@ -299,7 +299,7 @@ function samStateMachine(): SchemaParseResult {
     propertyTypes: [
       {
         name: "StateMachine_S3Location",
-        cfnType: "S3Location",
+        specType: "S3Location",
         properties: [
           { name: "Bucket", tsType: "string", required: true, constraints: {} },
           { name: "Key", tsType: "string", required: true, constraints: {} },

@@ -18,5 +18,17 @@ docs-build:
     bun install --cwd docs
     bun --cwd docs build
 
+# Run all tests
+test:
+    bun test
+
+# Import real-world GitLab CI samples and run roundtrip tests
+import-samples *ARGS:
+    bash scripts/import-gitlab-samples.sh {{ARGS}}
+
+# Run full roundtrip (parse → generate → import → serialize back)
+full-roundtrip *ARGS:
+    bash scripts/full-roundtrip.sh {{ARGS}}
+
 # Package the lexicon (generate)
 package: generate

@@ -1,0 +1,20 @@
+{
+  "name": "k8s-cronjob-cleanup-example",
+  "version": "0.0.1",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "build": "chant build src --lexicon k8s -o k8s.yaml",
+    "lint": "chant lint src",
+    "dev": "chant build src --lexicon k8s --watch -o k8s.yaml",
+    "deploy": "kubectl apply -f k8s.yaml",
+    "teardown": "kubectl delete -f k8s.yaml"
+  },
+  "dependencies": {
+    "@intentius/chant": "^0.0.14",
+    "@intentius/chant-lexicon-k8s": "^0.0.14"
+  },
+  "devDependencies": {
+    "typescript": "^5.0.0"
+  }
+}

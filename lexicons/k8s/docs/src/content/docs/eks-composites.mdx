@@ -1,0 +1,189 @@
+---
+title: "EKS Composites"
+description: "Vendor-specific composites for Amazon EKS — IRSA, ALB Ingress, EBS/EFS storage, CloudWatch logging, ADOT metrics, and ExternalDNS."
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+These composites produce K8s YAML with EKS-specific annotations and configurations. They complement the [generic composites](./composite-examples) by adding AWS service integrations.
+
+## IrsaServiceAccount
+
+ServiceAccount annotated for IAM Roles for Service Accounts (IRSA):
+
+```typescript
+import { IrsaServiceAccount } from "@intentius/chant-lexicon-k8s";
+
+const { serviceAccount, role, roleBinding } = IrsaServiceAccount({
+  name: "app-sa",
+  iamRoleArn: "arn:aws:iam::123456789012:role/my-app-role",
+  rbacRules: [
+    { apiGroups: [""], resources: ["secrets"], verbs: ["get"] },
+  ],
+  namespace: "prod",
+});
+```
+
+- Sets `eks.amazonaws.com/role-arn` annotation on the ServiceAccount
+- Optional RBAC rules create a Role + RoleBinding scoped to the namespace
+- The IAM role trust policy must include an OIDC condition for `system:serviceaccount:<namespace>:<name>`
+
+## AlbIngress
+
+Ingress with AWS ALB Controller annotations:
+
+```typescript
+import { AlbIngress } from "@intentius/chant-lexicon-k8s";
+
+const { ingress } = AlbIngress({
+  name: "api-ingress",
+  hosts: [
+    {
+      hostname: "api.example.com",
+      paths: [{ path: "/", serviceName: "api", servicePort: 80 }],
+    },
+  ],
+  scheme: "internet-facing",
+  certificateArn: "arn:aws:acm:us-east-1:123456789012:certificate/abc-123",
+  groupName: "shared-alb",
+  healthCheckPath: "/healthz",
+});
+```
+
+- Auto-sets `alb.ingress.kubernetes.io/*` annotations
+- SSL redirect enabled by default when `certificateArn` is set
+- `groupName` shares a single ALB across multiple Ingress resources
+- `wafAclArn` for WAFv2 integration
+- `scheme` controls internet-facing vs internal ALB
+
+## EbsStorageClass
+
+StorageClass for the EBS CSI driver:
+
+```typescript
+import { EbsStorageClass } from "@intentius/chant-lexicon-k8s";
+
+const { storageClass } = EbsStorageClass({
+  name: "gp3-encrypted",
+  type: "gp3",
+  encrypted: true,
+  iops: "3000",
+  throughput: "125",
+});
+```
+
+- Provisions `ebs.csi.aws.com` volumes
+- Supports `gp2`, `gp3`, `io1`, `io2`, `st1`, `sc1` types
+- `encrypted: true` enables at-rest encryption (recommended)
+
+## EfsStorageClass
+
+StorageClass for the EFS CSI driver (ReadWriteMany):
+
+```typescript
+import { EfsStorageClass } from "@intentius/chant-lexicon-k8s";
+
+const { storageClass } = EfsStorageClass({
+  name: "efs-shared",
+  fileSystemId: "fs-12345678",
+});
+```
+
+- ReadWriteMany access — shared across pods and nodes
+- Requires the EFS CSI driver EKS add-on
+- Use EBS for ReadWriteOnce (single pod), EFS for ReadWriteMany (shared)
+
+## FluentBitAgent
+
+DaemonSet for CloudWatch logging:
+
+```typescript
+import { FluentBitAgent } from "@intentius/chant-lexicon-k8s";
+
+const result = FluentBitAgent({
+  logGroup: "/aws/eks/my-cluster/containers",
+  region: "us-east-1",
+  clusterName: "my-cluster",
+});
+```
+
+- Deploys Fluent Bit as a DaemonSet with host path mounts for `/var/log`
+- Forwards container logs to CloudWatch Logs
+- Uses IRSA for authentication (pair with `IrsaServiceAccount`)
+
+## ExternalDnsAgent
+
+ExternalDNS for Route53 integration:
+
+```typescript
+import { ExternalDnsAgent } from "@intentius/chant-lexicon-k8s";
+
+const result = ExternalDnsAgent({
+  iamRoleArn: "arn:aws:iam::123456789012:role/external-dns-role",
+  domainFilters: ["example.com"],
+  txtOwnerId: "my-cluster",
+});
+```
+
+- Watches Ingress/Service resources and creates Route53 records
+- `domainFilters` restricts which domains ExternalDNS can manage
+- `txtOwnerId` prevents conflicts between multiple clusters
+
+## AdotCollector
+
+AWS Distro for OpenTelemetry (ADOT) for CloudWatch and X-Ray:
+
+```typescript
+import { AdotCollector } from "@intentius/chant-lexicon-k8s";
+
+const result = AdotCollector({
+  region: "us-east-1",
+  clusterName: "my-cluster",
+  exporters: ["cloudwatch", "xray"],
+});
+```
+
+- Deploys ADOT as a DaemonSet collecting metrics and traces
+- Exports to CloudWatch Metrics and/or X-Ray
+- Uses IRSA for authentication (pair with `IrsaServiceAccount`)
+
+## Pod Identity vs IRSA
+
+| Feature | IRSA | Pod Identity |
+|---------|------|-------------|
+| K8s annotation needed | Yes (`eks.amazonaws.com/role-arn`) | No |
+| Composite available | **IrsaServiceAccount** | None needed |
+| Setup | OIDC provider + IAM role trust policy | EKS Pod Identity Agent add-on + association |
+| When to use | Existing clusters, broad compatibility | New clusters (EKS 1.28+), simpler management |
+
+For Pod Identity, no K8s-side composite is needed — configure the association via AWS API/CloudFormation and use a plain ServiceAccount.
+
+## Fargate considerations
+
+When running on EKS Fargate:
+- **No DaemonSets** — `FluentBitAgent` and `AdotCollector` cannot run on Fargate nodes
+- **No hostPath volumes** — use EFS for shared storage
+- **No privileged containers** — security context restrictions apply
+- For Fargate logging, use the built-in Fluent Bit log router (Fargate logging configuration)
+
+## EKS add-ons
+
+Common add-ons managed via AWS (not K8s manifests):
+
+| Add-on | Required for |
+|--------|-------------|
+| vpc-cni | Amazon VPC CNI plugin |
+| coredns | Cluster DNS |
+| kube-proxy | Network proxy |
+| aws-ebs-csi-driver | `EbsStorageClass` |
+| aws-efs-csi-driver | `EfsStorageClass` |
+| adot | Alternative to `AdotCollector` composite |
+| aws-guardduty-agent | Runtime threat detection |
+
+Configure add-ons via the [AWS CloudFormation lexicon](/chant/lexicons/aws/).
+
+## Further reading
+
+- [AWS EKS + Kubernetes tutorial](/chant/tutorials/eks-kubernetes/) — full deployment walkthrough
+- [Deploying to EKS](/chant/lexicons/aws/eks-kubernetes/) — AWS lexicon bridge page
+- [Generic composites](./composite-examples) — WebApp, AutoscaledService, NamespaceEnv, and more

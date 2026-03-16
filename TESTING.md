@@ -371,6 +371,116 @@ Example CI configuration:
   run: bun test --coverage --coverage-reporter=lcov
 ```
 
+## Smoke Tests (Docker)
+
+Smoke tests run inside Docker containers to verify chant works in a clean environment with no host state leaking in. Each Docker image / test path maps to a specific **persona** with clear questions it answers.
+
+### Persona: New User (`just smoke-npm` / `smoke.sh npm`)
+
+**"I npm/bun installed chant. Does it work?"**
+
+- Installs chant + each lexicon from tarballs (simulates `npm install`)
+- Runs `chant init --lexicon <X>` for all 6 lexicons
+- Builds and lints scaffolded projects
+- Builds and lints hand-crafted projects
+- Builds real cross-lexicon examples from packages
+- Tests both npm and bun runtimes (stages 2 and 3 of `Dockerfile.smoke-npm`)
+
+### Persona: Developer / Contributor (`just smoke-bun` / `smoke.sh workspace`)
+
+**"I cloned the repo. Does everything work?"**
+
+- Fresh checkout + `bun install` + build from workspace
+- Full CLI coverage for all 6 lexicons: build, lint, list, doctor, init
+- MCP and LSP server startup
+- Output formats: `--output` file, `--format yaml`, `--format json`, `--format sarif`
+- `chant init lexicon` scaffold
+- Multi-stack builds
+- All root cross-lexicon examples build
+- Tested by `Dockerfile.smoke` → `integration.sh` (Bun only)
+
+### Persona: Release Validation (`smoke.sh smoke-{aws,eks,gke,aks,all}`)
+
+**"Do examples deploy end-to-end to real cloud providers?"**
+
+- Actual cloud deploys: build → deploy → verify → teardown
+- Requires cloud credentials mounted via Docker `-v` / `-e` flags
+- Tested by `Dockerfile.smoke-e2e` → `e2e-smoke.sh`
+
+### Build Examples (`just smoke-build-examples` / `smoke.sh build-examples`)
+
+Builds all root examples in Docker and extracts artifacts to `test/example-builds/` for agent-driven deployment.
+
+### justfile recipes
+
+| Recipe | What it does |
+|--------|--------------|
+| `just smoke-bun` | Developer tests — builds `Dockerfile.smoke`, runs `integration.sh`, drops into bash |
+| `just smoke-npm` | New User tests — delegates to `./test/smoke.sh npm` |
+| `just smoke-build-examples` | Delegates to `./test/smoke.sh build-examples` |
+| `just smoke` | Runs `smoke-bun` then `smoke-npm` |
+
+### smoke.sh modes
+
+| Mode | What it does |
+|------|--------------|
+| `workspace` | Builds `Dockerfile.smoke`, runs `integration.sh` during build (non-interactive) |
+| `npm` | Runs prepack on host, then builds `Dockerfile.smoke-npm` — 3-stage tarball test |
+| `build-examples` | Builds workspace image, runs `build-examples.sh`, copies artifacts to `test/example-builds/` |
+| `smoke-aws` | E2E: deploys AWS/GitLab examples (needs `AWS_*` + `GITLAB_*` env vars) |
+| `smoke-eks` | E2E: deploys EKS example (needs `AWS_*` + `EKS_DOMAIN`) |
+| `smoke-gke` | E2E: deploys GKE example (needs GCP credentials) |
+| `smoke-aks` | E2E: deploys AKS example (needs Azure credentials) |
+| `smoke-all` | E2E: all 4 deployment groups |
+| `all` | Runs `workspace` + `npm` (no E2E) |
+
+### Expected artifacts (build-examples)
+
+| Example | Artifacts |
+|---------|-----------|
+| `flyway-postgresql-gitlab-aws-rds` | `templates/template.json`, `flyway.toml`, `.gitlab-ci.yml` |
+| `gitlab-aws-alb-infra` | `templates/template.json`, `.gitlab-ci.yml` |
+| `gitlab-aws-alb-api` | `templates/template.json`, `.gitlab-ci.yml` |
+| `gitlab-aws-alb-ui` | `templates/template.json`, `.gitlab-ci.yml` |
+| `k8s-eks-microservice` | `templates/infra.json`, `k8s.yaml` |
+
+Each example directory also gets `README.md`, `package.json`, and any deploy scripts (`scripts/`, `setup.sh`, `sql/`, `.env.example`) copied to `/output` for agent-driven deployment from outside the container. Skills come from the installed lexicon packages, not from the examples themselves.
+
+### Files
+
+| File | Purpose |
+|------|---------|
+| `test/smoke.sh` | Orchestrator — `workspace`, `npm`, `build-examples`, `smoke-{aws,eks,gke,aks,all}`, `all` |
+| `test/Dockerfile.smoke` | Developer persona — Bun workspace image, runs `integration.sh` during build |
+| `test/Dockerfile.smoke-npm` | New User persona — 3-stage tarball image: pack, test npm, test bun |
+| `test/Dockerfile.smoke-e2e` | Release persona — E2E image with deploy tools, runs `e2e-smoke.sh` at container start |
+| `test/integration.sh` | Developer test harness: CLI, build, lint, MCP, LSP, init for all 6 lexicons + examples |
+| `test/npm-smoke.sh` | New User test harness: tarball install, init flow, examples — all 6 lexicons, both runtimes |
+| `test/e2e-smoke.sh` | E2E deployment harness: deploy, verify, teardown for AWS/GitLab, EKS, GKE, AKS |
+| `test/build-examples.sh` | Builds all root examples, copies artifacts to `/output` |
+
+## Distribution Safety
+
+How confident can we be that published npm packages actually work for end users? This section documents what the smoke tests cover and known gaps.
+
+### What's well covered
+
+- **Tarball install + CLI execution**: `npm install` from tarballs for all 6 lexicons, then `chant build` and `chant lint` with both npm and bun runtimes
+- **Tarball content verification**: Explicit assertions that core tarball contains `bin/chant`, `src/cli/main.ts`, `src/index.ts`, and each lexicon tarball contains `dist/manifest.json`, `dist/meta.json`, `dist/types/index.d.ts`, `src/index.ts`
+- **`chant init` flow**: Scaffolding tested for all 6 lexicons — init, install, build, lint
+- **`workspace:*` resolution**: `bun publish` auto-resolves; smoke Dockerfile resolves manually with jq (because `bun pm pack` does not)
+- **Prepack pipeline**: All lexicons run `generate → bundle → validate` with schema and artifact checks
+- **Type resolution**: `tsc --noEmit` check after tarball install (soft pass — chant targets bun/tsx, not vanilla tsc)
+
+### Known gaps
+
+| Gap | Severity | Notes |
+|-----|----------|-------|
+| Smoke tests disabled in CI | Accepted | Docker builds are slow (~10min). Publish workflow runs `prepack` + `bun test` as a gate. Run `just smoke` locally before releases. |
+| `integrity.json` never verified at runtime | Low | `verifyIntegrity()` exists in `lexicon-integrity.ts` but `loadPlugin()` in `cli/plugins.ts` doesn't call it. Defense-in-depth, not a correctness issue. |
+| Lexicon tarballs include entire `src/` | Low | Ships codegen scripts, fetch utilities, and test files. Bloats tarballs but doesn't break anything. Could narrow `"files"` in package.json. |
+| Sequential publish — partial failure risk | Low | If npm goes down mid-publish, some packages may be at different versions. `--tolerate-republish` on retry fixes this. Acceptable at current scale. |
+
 ## Troubleshooting
 
 ### Tests fail with "ENOENT" errors

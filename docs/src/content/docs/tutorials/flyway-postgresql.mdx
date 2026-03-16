@@ -1,0 +1,97 @@
+---
+title: "Flyway + PostgreSQL + GitLab CI + AWS RDS"
+description: "Three lexicons (AWS, Flyway, GitLab) from a single src/ directory — RDS infrastructure, migration config, and CI pipeline all in TypeScript."
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+One `src/` directory imports from three lexicon packages. `chant build --lexicon aws` produces a CloudFormation template for RDS. `chant build --lexicon flyway` produces `flyway.toml`. `chant build --lexicon gitlab` produces `.gitlab-ci.yml`. The GitLab pipeline deploys the CF stack then runs Flyway migrations — the DB host and password are resolved at runtime from stack outputs and SSM.
+
+## What you'll build
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│  GitLab CI Pipeline (.gitlab-ci.yml)                            │
+│                                                                  │
+│  deploy-infra: aws cloudformation deploy                        │
+│    → VPC + private subnets + RDS PostgreSQL                     │
+│    → outputs: DbEndpoint                                        │
+│                                                                  │
+│  run-migrations: flyway migrate                                  │
+│    → DB_HOST from CF outputs                                    │
+│    → DB_PASSWORD from SSM SecureString                          │
+│    → V1__init.sql, V2__add_users.sql, V3__add_orders.sql        │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+## What you'll learn
+
+- How `${env.*}` runtime resolution works in `flyway.toml` — values injected by the GitLab pipeline, not at build time
+- How `chant build --lexicon <name>` selects only the resources belonging to that lexicon from a mixed `src/` directory
+- The SSM SecureString pattern: password never appears in source code or CF templates
+
+## Cost
+
+~$50/mo while running: RDS db.t3.micro ~$15/mo, NAT gateway ~$32/mo, data transfer ~$3/mo. Teardown after testing.
+
+## Get started
+
+```
+Set up the flyway-postgresql-gitlab-aws-rds example for GitLab CI deployment.
+```
+
+See [`examples/flyway-postgresql-gitlab-aws-rds/`](https://github.com/intentius/chant/tree/main/examples/flyway-postgresql-gitlab-aws-rds) for the full README, prerequisites, and step-by-step deploy instructions.
+
+## Key patterns
+
+### Three lexicons, one src/ directory
+
+Each file in `src/` declares resources for one lexicon, but they all live in the same directory:
+
+```
+src/
+├── network.ts      # AWS — VpcDefault composite
+├── database.ts     # AWS — RdsInstance composite
+├── params.ts       # AWS — CloudFormation parameters
+├── outputs.ts      # AWS — CloudFormation outputs
+├── tags.ts         # AWS — default tags
+├── migrations.ts   # Flyway — FlywayProject, FlywayConfig, Environment
+└── pipeline.ts     # GitLab — 2-stage pipeline
+```
+
+`chant build --lexicon aws -o templates/template.json` discovers only the AWS declarables. `chant build --lexicon flyway -o flyway.toml` discovers only the Flyway declarables. The lexicon filter runs at discovery time — no manual grouping needed.
+
+### Runtime variable resolution with `$&#123;env.*&#125;`
+
+`FlywayProject` uses `${env.DB_HOST}` and `${env.DB_PASSWORD}` — these appear literally in the generated `flyway.toml`. Flyway resolves them at migration time from environment variables that the GitLab pipeline sets:
+
+```typescript
+// src/migrations.ts
+export const deployEnv = new Environment({
+  name: "deploy",
+  url: `jdbc:postgresql://\${env.DB_HOST}:5432/appdb`,
+  user: "appuser",
+  password: "${env.DB_PASSWORD}",
+});
+```
+
+The pipeline extracts `DB_HOST` from CF stack outputs and `DB_PASSWORD` from SSM, then runs `flyway migrate`. The password is fetched at runtime — it never appears in `flyway.toml`, source code, or CI logs.
+
+### The SSM SecureString pattern
+
+```bash
+# One-time setup: store password in SSM (KMS-encrypted)
+./setup.sh /myapp/dev/db-password
+
+# Pipeline fetches it at runtime
+DB_PASSWORD=$(aws ssm get-parameter --name /myapp/dev/db-password --with-decryption --query 'Parameter.Value' --output text)
+```
+
+The CloudFormation template receives the SSM path as a parameter (`DbPasswordSsmPath`), not the password itself. RDS uses the SSM parameter to set the master password via `ManageMasterUserPassword: false` + direct reference — the password never travels through CF.
+
+## Further reading
+
+- [AWS CloudFormation lexicon](/chant/lexicons/aws/) — VpcDefault, RdsInstance, and more
+- [Flyway lexicon](/chant/lexicons/flyway/) — FlywayProject, FlywayConfig, Environment
+- [GitLab CI/CD lexicon](/chant/lexicons/gitlab/) — job types, stages, pipeline composites
+- [Multi-Lexicon Projects guide](/chant/guide/multi-lexicon/) — patterns for mixed-lexicon src/ directories

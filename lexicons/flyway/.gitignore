@@ -1,0 +1,5 @@
+src/generated/
+!src/generated/index.ts
+!src/generated/lexicon-flyway.json
+dist/
+*.tgz

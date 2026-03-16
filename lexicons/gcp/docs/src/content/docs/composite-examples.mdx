@@ -1,0 +1,203 @@
+---
+title: "Examples: Composites"
+description: "All 10 GCP composites with full code and deployment workflow"
+---
+Composites are higher-level constructs that produce multiple coordinated Config Connector resources from a single function call.
+
+## GkeCluster
+
+GKE cluster with node pool and workload identity:
+
+```typescript
+import { GkeCluster } from "@intentius/chant-lexicon-gcp";
+
+const { cluster, nodePool } = GkeCluster({
+  name: "my-cluster",
+  location: "us-central1",
+  machineType: "e2-standard-4",
+  minNodeCount: 1,
+  maxNodeCount: 10,
+  workloadIdentity: true,
+});
+
+export { cluster, nodePool };
+```
+
+## CloudRunService
+
+Cloud Run service with optional public access:
+
+```typescript
+import { CloudRunService } from "@intentius/chant-lexicon-gcp";
+
+const { service, publicIam } = CloudRunService({
+  name: "my-api",
+  image: "gcr.io/my-project/api:1.0",
+  port: 8080,
+  publicAccess: true,
+  minInstanceCount: 1,
+  maxInstanceCount: 10,
+});
+
+export { service, publicIam };
+```
+
+## CloudSqlInstance
+
+PostgreSQL with database and user:
+
+```typescript
+import { CloudSqlInstance } from "@intentius/chant-lexicon-gcp";
+
+const { instance, database, user } = CloudSqlInstance({
+  name: "app-db",
+  tier: "db-custom-2-8192",
+  backupEnabled: true,
+  highAvailability: true,
+});
+
+export { instance, database, user };
+```
+
+## GcsBucket
+
+Storage bucket with encryption and lifecycle:
+
+```typescript
+import { GcsBucket } from "@intentius/chant-lexicon-gcp";
+
+const { bucket } = GcsBucket({
+  name: "data-lake",
+  location: "US",
+  versioning: true,
+  kmsKeyName: "projects/p/locations/us/keyRings/kr/cryptoKeys/key",
+  lifecycleDeleteAfterDays: 365,
+  lifecycleNearlineAfterDays: 30,
+});
+
+export { bucket };
+```
+
+## VpcNetwork
+
+VPC with subnets, firewalls, and Cloud NAT:
+
+```typescript
+import { VpcNetwork } from "@intentius/chant-lexicon-gcp";
+
+const { network, subnets, firewalls, router, routerNat } = VpcNetwork({
+  name: "production",
+  subnets: [
+    { name: "app", ipCidrRange: "10.0.0.0/24", region: "us-central1" },
+    { name: "data", ipCidrRange: "10.0.1.0/24", region: "us-central1" },
+  ],
+  enableNat: true,
+  natRegion: "us-central1",
+  allowIapSsh: true,
+});
+
+export { network, subnets, firewalls, router, routerNat };
+```
+
+## PubSubPipeline
+
+Topic + Subscription + optional dead-letter queue:
+
+```typescript
+import { PubSubPipeline } from "@intentius/chant-lexicon-gcp";
+
+const { topic, subscription, deadLetterTopic, subscriberIam } = PubSubPipeline({
+  name: "order-events",
+  enableDeadLetterQueue: true,
+  maxDeliveryAttempts: 5,
+  subscriberServiceAccount: "worker@my-project.iam.gserviceaccount.com",
+});
+
+export { topic, subscription, deadLetterTopic, subscriberIam };
+```
+
+## CloudFunctionWithTrigger
+
+Cloud Function + source bucket + optional public invoker IAM:
+
+```typescript
+import { CloudFunctionWithTrigger } from "@intentius/chant-lexicon-gcp";
+
+const { function: fn, sourceBucket, invokerIam } = CloudFunctionWithTrigger({
+  name: "process-upload",
+  runtime: "nodejs20",
+  entryPoint: "handler",
+  triggerType: "pubsub",
+  triggerTopic: "file-uploads",
+  region: "us-central1",
+});
+
+export { fn, sourceBucket, invokerIam };
+```
+
+## PrivateService
+
+Private service networking (VPC peering):
+
+```typescript
+import { PrivateService } from "@intentius/chant-lexicon-gcp";
+
+const { globalAddress, serviceConnection, dnsZone } = PrivateService({
+  name: "db-peering",
+  networkName: "production",
+  enableDns: true,
+});
+
+export { globalAddress, serviceConnection, dnsZone };
+```
+
+## ManagedCertificate
+
+Google-managed SSL certificate + optional HTTPS proxy:
+
+```typescript
+import { ManagedCertificate } from "@intentius/chant-lexicon-gcp";
+
+const { certificate, targetHttpsProxy, urlMap } = ManagedCertificate({
+  name: "web-cert",
+  domains: ["example.com", "www.example.com"],
+  createProxy: true,
+  backendServiceName: "web-backend",
+});
+
+export { certificate, targetHttpsProxy, urlMap };
+```
+
+## SecureProject
+
+Project with audit logging, API enablement, and IAM:
+
+```typescript
+import { SecureProject } from "@intentius/chant-lexicon-gcp";
+
+const { project, auditConfig, services, ownerIam, loggingSink } = SecureProject({
+  name: "my-project",
+  orgId: "123456789",
+  billingAccountRef: "ABCDEF-123456-ABCDEF",
+  owner: "user:admin@example.com",
+  loggingSinkDestination: "bigquery.googleapis.com/projects/audit/datasets/logs",
+});
+
+export { project, auditConfig, services, ownerIam, loggingSink };
+```
+
+## Deploying composites
+
+```bash
+# Build YAML manifests
+chant build src/ --output manifests.yaml
+
+# Lint for common issues
+chant lint src/
+
+# Dry run
+kubectl apply -f manifests.yaml --dry-run=server
+
+# Apply
+kubectl apply -f manifests.yaml
+```

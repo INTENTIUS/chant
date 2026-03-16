@@ -1,0 +1,220 @@
+---
+title: Testing Your Lexicon
+description: What each test file should cover and patterns for writing effective lexicon tests
+---
+
+This guide documents what each test file in a lexicon should cover, with patterns and checklists. Follow these to ensure consistent test quality across lexicons.
+
+## serializer.test.ts
+
+The serializer is the core of your lexicon — it converts declarables to output format. Cover these 12 cases:
+
+### Mock helpers
+
+Create `mockResource` and `mockProperty` helpers using `DECLARABLE_MARKER`:
+
+```typescript
+import { DECLARABLE_MARKER } from "@intentius/chant/declarable";
+
+function mockResource(entityType: string, props: Record<string, unknown>): any {
+  return {
+    [DECLARABLE_MARKER]: true,
+    lexicon: "my-lexicon",
+    entityType,
+    kind: "resource",
+    props,
+  };
+}
+
+function mockProperty(entityType: string, props: Record<string, unknown>): any {
+  return {
+    [DECLARABLE_MARKER]: true,
+    lexicon: "my-lexicon",
+    entityType,
+    kind: "property",
+    props,
+  };
+}
+```
+
+### Checklist
+
+| # | Test case | What it verifies |
+|---|-----------|-----------------|
+| 1 | Serializer name | `serializer.name` matches lexicon |
+| 2 | Rule prefix | `serializer.rulePrefix` matches convention |
+| 3 | Empty entities | `serialize(new Map())` returns empty string |
+| 4 | Single resource | Produces valid output format (YAML/JSON) |
+| 5 | Auto-generated name | camelCase export name → kebab-case metadata.name |
+| 6 | Explicit name preserved | User-set metadata.name not overwritten |
+| 7 | Multi-resource | Multiple entities joined correctly (e.g., `---` separator) |
+| 8 | Default labels merged | `defaultLabels()` values appear in all resources |
+| 9 | Default annotations merged | `defaultAnnotations()` values appear in all resources |
+| 10 | Explicit labels override | Resource-level labels take precedence |
+| 11 | Property entities skipped | `kind: "property"` entities don't appear as separate documents |
+| 12 | Key ordering | Output keys in canonical order (e.g., apiVersion → kind → metadata → spec) |
+
+Additional lexicon-specific cases:
+- Specless types (K8s: ConfigMap, Secret)
+- Fallback type resolution (GCP: derive GVK from entity type string)
+
+## default-labels.test.ts
+
+Test the label/annotation declaration utilities:
+
+| Test case | What it verifies |
+|-----------|-----------------|
+| Correct markers | `DEFAULT_LABELS_MARKER` and `DECLARABLE_MARKER` are `true` |
+| Lexicon property | `.lexicon` matches your lexicon name |
+| Entity type | `.entityType` matches convention |
+| Accessible values | Labels/annotations are readable |
+| Empty allowed | `defaultLabels({})` doesn't throw |
+| Type guards | `isDefaultLabels()` true for labels, false for annotations/null/undefined |
+| Cross-checks | `isDefaultAnnotations()` false for labels, and vice versa |
+
+## LSP tests
+
+### Pattern: conditional skip
+
+Use `test.skipIf(!hasGenerated)` for tests that depend on the generated lexicon registry:
+
+```typescript
+import { existsSync, readFileSync } from "fs";
+import { join, dirname } from "path";
+import { fileURLToPath } from "url";
+
+const pkgDir = dirname(dirname(dirname(fileURLToPath(import.meta.url))));
+const lexiconPath = join(pkgDir, "src", "generated", "lexicon-{name}.json");
+const hasGenerated = existsSync(lexiconPath) && (() => {
+  try {
+    const content = JSON.parse(readFileSync(lexiconPath, "utf-8"));
+    return Object.keys(content).length > 0;
+  } catch { return false; }
+})();
+```
+
+### completions.test.ts
+
+| Test case | hasGenerated | What it verifies |
+|-----------|-------------|-----------------|
+| Non-constructor context | No | Returns empty array for `const x = 42` |
+| Constructor prefix | Yes | `new D` returns results including `Deployment` |
+| Prefix filtering | Yes | `new StatefulS` returns `StatefulSet` |
+
+### hover.test.ts
+
+| Test case | hasGenerated | What it verifies |
+|-----------|-------------|-----------------|
+| Unknown word | No | Returns `undefined` for nonexistent resource |
+| Known resource | Yes | Returns defined hover info |
+| Empty string | Yes | Returns `undefined` |
+| Content check | Yes | Hover content is non-empty |
+
+## Import tests
+
+### parser.test.ts
+
+| Test case | What it verifies |
+|-----------|-----------------|
+| Empty YAML | Returns empty resources and parameters |
+| Single resource | Correct type mapping (apiVersion+kind → type name) |
+| Multi-doc | Multiple resources from `---`-separated YAML |
+| Type mapping | Each apiVersion/kind combo maps correctly |
+| Non-lexicon filtered | Resources from other lexicons are ignored |
+| Logical name | metadata.name extracted correctly |
+| Properties | Include metadata+spec, exclude apiVersion/kind |
+| Parameters empty | Lexicons without parameters return `[]` |
+
+### generator.test.ts
+
+| Test case | What it verifies |
+|-----------|-----------------|
+| Valid TypeScript | Output contains import + constructor |
+| Correct import source | Uses `@intentius/chant-lexicon-{name}` |
+| Multiple resources | Multiple `export const` declarations |
+| Variable naming | kebab-case → camelCase conversion |
+| Empty IR | Doesn't crash on empty input |
+| Nested objects | Proper formatting of nested props |
+
+### roundtrip.test.ts
+
+Create testdata manifests as instance YAML (not CRD schemas):
+
+```
+src/testdata/manifests/
+├── resource-a.yaml      # Single resource
+├── resource-b.yaml      # Single resource
+└── full-app.yaml         # Multi-doc with 3+ resources
+```
+
+| Test case | What it verifies |
+|-----------|-----------------|
+| Single resource roundtrip | Parse → generate → contains constructor |
+| Multi-doc roundtrip | All resources present in output |
+| Inline YAML | Parse+generate works without fixture file |
+
+## coverage.test.ts
+
+```typescript
+const hasGenerated = existsSync(join(generatedDir, "lexicon-{name}.json"));
+
+test.skipIf(!hasGenerated)("analyze function exists", async () => {
+  const { analyze } = await import("./coverage");
+  expect(typeof analyze).toBe("function");
+});
+
+test("handles missing files gracefully", async () => {
+  if (!hasGenerated) {
+    try { await analyze(); } catch { /* Expected */ }
+  }
+});
+```
+
+## post-synth tests
+
+### Pattern: makeCtx helper
+
+```typescript
+function makeCtx(yaml: string) {
+  return {
+    outputs: new Map([["lexicon-name", yaml]]),
+  };
+}
+```
+
+### Structure
+
+Every post-synth check needs both positive and negative tests:
+
+```typescript
+describe("WGCXXX: description", () => {
+  test("flags bad pattern", () => {
+    const yaml = `...bad yaml...`;
+    const diags = wgcXXX.check(makeCtx(yaml));
+    expect(diags.length).toBeGreaterThanOrEqual(1);
+    expect(diags[0].checkId).toBe("WGCXXX");
+  });
+
+  test("no diagnostic when correct", () => {
+    const yaml = `...good yaml...`;
+    const diags = wgcXXX.check(makeCtx(yaml));
+    expect(diags).toHaveLength(0);
+  });
+});
+```
+
+### YAML parsing note
+
+The chant YAML parser treats unquoted `https://...` as key-value pairs. Always quote URLs in test YAML:
+
+```yaml
+# Bad — parsed as { https: "//..." }
+- https://www.googleapis.com/auth/cloud-platform
+
+# Good
+- "https://www.googleapis.com/auth/cloud-platform"
+```
+
+## Next Steps
+
+With tests in place, run the full test suite: `bun test lexicons/{name}/` and verify all pass.

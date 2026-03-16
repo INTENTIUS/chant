@@ -1,0 +1,83 @@
+---
+title: "Getting Started"
+description: "Install chant and deploy your first GCP resource in 5 minutes"
+---
+## What is chant?
+
+Chant is a TypeScript-to-YAML compiler. You write typed TypeScript declarations, and chant outputs Config Connector YAML manifests that can be applied to a GKE cluster with Config Connector installed.
+
+## Prerequisites
+
+1. A GKE cluster with [Config Connector](https://cloud.google.com/config-connector/docs/overview) installed
+2. A `ConfigConnectorContext` resource configured per namespace
+3. A GCP Service Account bound to the Config Connector controller
+
+## Install
+
+```bash
+npm install --save-dev @intentius/chant @intentius/chant-lexicon-gcp
+```
+
+## Your first resource
+
+The fastest path is the **GcsBucket** composite — one function call that produces a properly configured Storage bucket:
+
+```typescript
+// src/infra.gcp.ts
+import { GcsBucket } from "@intentius/chant-lexicon-gcp";
+import { defaultAnnotations, GCP } from "@intentius/chant-lexicon-gcp";
+
+export const annotations = defaultAnnotations({
+  "cnrm.cloud.google.com/project-id": GCP.ProjectId,
+});
+
+const { bucket } = GcsBucket({
+  name: "my-data-bucket",
+  location: "US",
+  versioning: true,
+});
+
+export { bucket };
+```
+
+## Build and deploy
+
+```bash
+# Generate Config Connector YAML
+chant build --output dist/manifests.yaml
+
+# Validate against the cluster API (no changes applied)
+kubectl apply -f dist/manifests.yaml --dry-run=server
+
+# Apply
+kubectl apply -f dist/manifests.yaml
+```
+
+## Using resource constructors
+
+```typescript
+import { StorageBucket, IAMPolicyMember, GCP } from "@intentius/chant-lexicon-gcp";
+
+export const bucket = new StorageBucket({
+  location: "US",
+  storageClass: "STANDARD",
+  uniformBucketLevelAccess: true,
+  versioning: { enabled: true },
+});
+
+export const reader = new IAMPolicyMember({
+  member: "serviceAccount:app@my-project.iam.gserviceaccount.com",
+  role: "roles/storage.objectViewer",
+  resourceRef: {
+    apiVersion: "storage.cnrm.cloud.google.com/v1beta1",
+    kind: "StorageBucket",
+    name: bucket,
+  },
+});
+```
+
+## Next steps
+
+- [Config Connector Concepts](/chant/lexicons/gcp/config-connector-concepts/) — resource structure, references, project binding
+- [Examples](/chant/lexicons/gcp/examples/) — StorageBucket, ComputeInstance, CloudSQL, IAM
+- [Lint Rules](/chant/lexicons/gcp/lint-rules/) — built-in checks for security and best practices

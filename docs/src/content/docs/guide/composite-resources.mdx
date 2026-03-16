@@ -3,81 +3,38 @@ title: Composite Resources
 description: Grouping related resources into reusable units
 ---
 
+import { Code } from '@astrojs/starlight/components';
+import compositeDefSrc from '../../../../../lexicons/aws/examples/core-concepts/src/composite-definition.ts?raw';
+import compositeUsageSrc from '../../../../../lexicons/aws/examples/core-concepts/src/composite-usage.ts?raw';
+
 A composite groups related resources into a single reusable unit. Instead of defining multiple related resources separately every time, you define them once as a composite and instantiate it with props.
 
 ## Defining a Composite
 
 Use `Composite<Props>` from `@intentius/chant`. The factory function receives props and returns a record of named resources:
 
-```typescript
-import { Composite } from "@intentius/chant";
-import * as _ from "./_";
+<Code code={compositeDefSrc} lang="typescript" title="src/composite-definition.ts" />
 
-interface ServiceProps {
-  name: string;
-  handler: string;
-}
-
-export const Service = Composite<ServiceProps>((props) => {
-  const role = new _.RoleType({
-    roleName: props.name + "-role",
-  });
-  const func = new _.FunctionType({
-    functionName: props.name,
-    handler: props.handler,
-    role: role.arn,
-  });
-  return { role, func };
-});
-```
-
-This defines a `Service` composite that creates two resources: a role and a function. The actual resource types come from whichever lexicon your project uses.
+This defines a `LambdaService` composite that creates two resources: a role and a function.
 
 ## Using a Composite
 
 Instantiate a composite by calling it with props:
 
-```typescript
-import { Service } from "./service";
-
-export const api = Service({ name: "api", handler: "index.handler" });
-```
+<Code code={compositeUsageSrc} lang="typescript" title="src/composite-usage.ts" />
 
 This produces all underlying resources with names derived from the props. The composite instance exposes its members directly, so `api.role` and `api.func` are accessible for cross-references.
 
-## The `resource()` Helper
-
-The `resource()` helper is a marker function for constructing resources within composites:
-
-```typescript
-import { resource } from "@intentius/chant";
-
-const bucket = resource(_.BucketType, { bucketName: "data" });
-```
-
-At runtime it calls `new Type(props)` and returns the result. It exists so lint tooling can validate composite member construction (EVL005).
-
 ## Referencing Members
 
-Within the factory, you can reference other members directly since they're just variables in the same scope:
-
-```typescript
-export const Service = Composite<ServiceProps>((props) => {
-  const role = new _.RoleType({ roleName: props.name + "-role" });
-  const func = new _.FunctionType({
-    functionName: props.name,
-    role: role.arn, // direct reference to the role
-  });
-  return { role, func };
-});
-```
+Within the factory, you can reference other members directly since they're just variables in the same scope (as seen in the definition above — `role: role.arn`).
 
 Outside the composite, access members via the instance:
 
 ```typescript
-export const monitor = new _.MonitorType({
-  name: "api-errors",
-  target: api.func.arn,
+export const monitor = new _.Alarm({
+  alarmName: "api-errors",
+  dimensions: [{ name: "FunctionName", value: api.func.functionName }],
 });
 ```
 
@@ -89,8 +46,71 @@ Composites are useful when:
 - **You want consistent naming** — derive all resource names from a single `name` prop
 - **Cross-resource wiring is complex** — encapsulate the references inside the composite
 
-For sharing default *property values* across resources of the same type, see [Presets](/guide/presets/) instead.
+For sharing default *property values* across resources of the same type, see [Presets](/chant/guide/presets/) instead.
 
-Some lexicons also support **child projects** — subdirectories with their own barrel file that build to separate output files. The parent references a child project via a lexicon-specific function (e.g. AWS `nestedStack()`), and cross-stack values are explicitly exported with `stackOutput()`. See [Multi-Stack Projects](/guide/multi-stack/) for an overview.
+Some lexicons also support **child projects** — subdirectories that build to separate output files. The parent references a child project via a lexicon-specific function (e.g. AWS `nestedStack()`), and cross-stack values are explicitly exported with `stackOutput()`. See [Multi-Stack Projects](/chant/guide/multi-stack/) for an overview.
 
-See your lexicon's documentation for working composite examples with concrete resource types.
+## Kubernetes Composites
+
+The Kubernetes lexicon ships 27 production-ready composites across four categories. Here's a quick overview:
+
+### Generic Composites
+
+Platform-agnostic patterns that work on any conformant cluster:
+
+| Composite | What it creates |
+|-----------|----------------|
+| **WebApp** | Deployment + Service + optional Ingress |
+| **AutoscaledService** | Deployment + Service + HPA + PDB with probes |
+| **CronWorkload** | CronJob with RBAC |
+| **WorkerPool** | Queue worker Deployment with RBAC and autoscaling |
+| **NamespaceEnv** | Namespace with ResourceQuota, LimitRange, and NetworkPolicy |
+| **NodeAgent** | DaemonSet with cluster-wide RBAC and host mounts |
+
+### Cloud-Specific Composites
+
+Each cloud provider has composites that integrate Kubernetes with its native services:
+
+| Pattern | EKS | AKS | GKE |
+|---------|-----|-----|-----|
+| **Workload identity** | `IrsaServiceAccount` | `AksWorkloadIdentityServiceAccount` | `WorkloadIdentityServiceAccount` |
+| **Ingress** | `AlbIngress` | `AgicIngress` | `GceIngress` / `GkeGateway` |
+| **Block storage** | `EbsStorageClass` | `AzureDiskStorageClass` | `GcePdStorageClass` |
+| **Shared storage** | `EfsStorageClass` | `AzureFileStorageClass` | `FilestoreStorageClass` |
+| **DNS** | `ExternalDnsAgent` | `AksExternalDnsAgent` | `GkeExternalDnsAgent` |
+| **Observability** | `FluentBitAgent` / `AdotCollector` | `AzureMonitorCollector` | `GkeFluentBitAgent` / `GkeOtelCollector` |
+
+### Example: AutoscaledService
+
+`AutoscaledService` is the most common composite — a production HTTP service with horizontal autoscaling, disruption budgets, and health probes:
+
+```typescript
+import { AutoscaledService } from "@intentius/chant-lexicon-k8s";
+
+const { deployment, service, hpa, pdb } = AutoscaledService({
+  name: "api",
+  image: "api:2.0",
+  port: 8080,
+  maxReplicas: 10,
+  minReplicas: 3,
+  targetCPUPercent: 60,
+  targetMemoryPercent: 80,
+  cpuRequest: "200m",
+  memoryRequest: "256Mi",
+  cpuLimit: "1",
+  memoryLimit: "1Gi",
+  livenessPath: "/healthz",
+  readinessPath: "/readyz",
+  topologySpread: true,
+  namespace: "production",
+});
+```
+
+All four members (`deployment`, `service`, `hpa`, `pdb`) are available for cross-references just like any other resource.
+
+### Composite Reference Pages
+
+- [Generic Composites](/chant/lexicons/k8s/composite-examples/) — WebApp, AutoscaledService, CronWorkload, WorkerPool, NamespaceEnv, NodeAgent
+- [EKS Composites](/chant/lexicons/k8s/eks-composites/) — IRSA, ALB Ingress, EBS/EFS storage, CloudWatch, ADOT, ExternalDNS
+- [AKS Composites](/chant/lexicons/k8s/aks-composites/) — Workload Identity, AGIC Ingress, Azure Disk/Files, Azure Monitor, ExternalDNS
+- [GKE Composites](/chant/lexicons/k8s/gke-composites/) — Workload Identity, GCE Ingress, Gateway API, PD/Filestore, Cloud Logging, Config Connector

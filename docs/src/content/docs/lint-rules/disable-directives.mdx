@@ -34,6 +34,21 @@ export const myBucket = new _.Resource({
 });
 ```
 
+## Suppression Reasons
+
+Add a reason after `--` to document why a rule is suppressed. The reason is optional and purely informational — it appears in SARIF output for audit trails.
+
+```typescript
+// chant-disable COR001 -- intentional for backwards compat
+// chant-disable-line WAW001 -- CDN must use us-east-1
+// chant-disable-next-line -- legacy code, will refactor
+// chant-disable -- entire file suppressed for migration
+```
+
+The `--` separator follows the convention used by ESLint, clippy, and shellcheck. Everything after the first ` -- ` is the reason text. The reason is always optional — existing disable comments without `--` continue to work unchanged.
+
+When using `--format sarif`, suppressed diagnostics appear in the SARIF output with a `suppressions` array containing the justification text, enabling compliance workflows and audit reporting.
+
 ## Block Comment Syntax
 
 All directives also work with block comments:
@@ -47,4 +62,5 @@ export const helper = { key: "value" };
 
 - Prefer the narrowest scope possible (`disable-next-line` over `disable`)
 - Always specify the rule ID rather than suppressing all rules
+- Include a `-- reason` when suppressing rules in shared or long-lived code
 - Use file-level `disable` sparingly — typically only for generated files

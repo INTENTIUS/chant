@@ -2,7 +2,7 @@ import { describe, test, expect, beforeEach, afterEach } from "bun:test";
 import { parseRuleConfig, loadConfig } from "./config";
 import { fileDeclarableLimitRule } from "./rules/file-declarable-limit";
 import * as ts from "typescript";
-import type { LintContext } from "./rule";
+import type { LintContext, RuleConfig } from "./rule";
 import { writeFileSync, mkdirSync, rmSync } from "fs";
 import { join } from "path";
 
@@ -37,12 +37,12 @@ describe("parseRuleConfig", () => {
   });
 
   test("parses [severity, options] tuple", () => {
-    const result = parseRuleConfig(["warning", { max: 12 }]);
+    const result = parseRuleConfig(["warning" as const, { max: 12 }]);
     expect(result).toEqual({ severity: "warning", options: { max: 12 } });
   });
 
   test("throws for invalid tuple length", () => {
-    expect(() => parseRuleConfig([] as unknown as [string, Record<string, unknown>])).toThrow(
+    expect(() => parseRuleConfig([] as unknown as RuleConfig)).toThrow(
       /expected a severity string or \[severity, options\] tuple/
     );
   });

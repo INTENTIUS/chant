@@ -85,8 +85,12 @@ Users install your lexicon with:
 npm install --save-dev @intentius/chant-lexicon-<name>
 ```
 
+## Next step
+
+Once the bundle is ready, run [`chant dev onboard`](/chant/cli/onboard/) to wire the lexicon into CI, Docker smoke tests, and the npm publish workflow. See [CI & Distribution](/chant/lexicon-authoring/ci-integration/) for the full checklist.
+
 ## CLI Commands
 
-- [`chant dev generate`](/cli/generate/) — run the generation pipeline
-- [`chant dev publish`](/cli/package/) — build the distributable bundle
-- [`chant dev rollback`](/cli/rollback/) — list or restore generation snapshots
+- [`chant dev generate`](/chant/cli/generate/) — run the generation pipeline
+- [`chant dev publish`](/chant/cli/package/) — build the distributable bundle
+- [`chant dev onboard`](/chant/cli/onboard/) — wire CI, Docker, and publish workflow

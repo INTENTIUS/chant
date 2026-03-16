@@ -1,0 +1,80 @@
+---
+title: "Predefined Variables"
+description: "GitLab CI/CD predefined variable references"
+---
+The `CI` object provides type-safe access to GitLab CI/CD predefined variables. These map to `$CI_*` environment variables at runtime.
+
+```typescript title="variables-usage.ts"
+import { Rule, Cache, CI } from "@intentius/chant-lexicon-gitlab";
+
+// Use in rule conditions
+export const onDefault = new Rule({
+  if: `${CI.CommitBranch} == ${CI.DefaultBranch}`,
+});
+
+// Use in cache keys
+export const cache = new Cache({
+  key: CI.CommitRef,
+  paths: ["node_modules/"],
+});
+```
+
+## Variable reference
+
+| Property | Variable | Description |
+|----------|----------|-------------|
+| `CI.CommitBranch` | `$CI_COMMIT_BRANCH` | Current branch name (not set for tag pipelines) |
+| `CI.CommitRef` | `$CI_COMMIT_REF_NAME` | Branch or tag name |
+| `CI.CommitSha` | `$CI_COMMIT_SHA` | Full commit SHA |
+| `CI.CommitTag` | `$CI_COMMIT_TAG` | Tag name (only set for tag pipelines) |
+| `CI.DefaultBranch` | `$CI_DEFAULT_BRANCH` | Default branch (usually `main`) |
+| `CI.Environment` | `$CI_ENVIRONMENT_NAME` | Environment name (set during deploy jobs) |
+| `CI.JobId` | `$CI_JOB_ID` | Unique job ID |
+| `CI.JobName` | `$CI_JOB_NAME` | Job name |
+| `CI.JobStage` | `$CI_JOB_STAGE` | Job stage name |
+| `CI.MergeRequestIid` | `$CI_MERGE_REQUEST_IID` | MR internal ID (merge request pipelines only) |
+| `CI.PipelineId` | `$CI_PIPELINE_ID` | Unique pipeline ID |
+| `CI.PipelineSource` | `$CI_PIPELINE_SOURCE` | How the pipeline was triggered (`push`, `merge_request_event`, `schedule`, etc.) |
+| `CI.ProjectDir` | `$CI_PROJECT_DIR` | Full path of the repository clone |
+| `CI.ProjectId` | `$CI_PROJECT_ID` | Unique project ID |
+| `CI.ProjectName` | `$CI_PROJECT_NAME` | Project name (URL-safe) |
+| `CI.ProjectPath` | `$CI_PROJECT_PATH` | Project namespace with project name |
+| `CI.Registry` | `$CI_REGISTRY` | Container registry URL |
+| `CI.RegistryImage` | `$CI_REGISTRY_IMAGE` | Registry image path for the project |
+
+## Common patterns
+
+```typescript title="variables-patterns.ts"
+import { Rule, Job, Image, Environment, CI } from "@intentius/chant-lexicon-gitlab";
+
+// Only on merge requests
+export const onMR = new Rule({ if: CI.MergeRequestIid });
+
+// Only on default branch
+export const onMain = new Rule({
+  if: `${CI.CommitBranch} == ${CI.DefaultBranch}`,
+});
+
+// Only on tags
+export const onTag = new Rule({ if: CI.CommitTag });
+
+// Dynamic environment naming
+export const reviewDeploy = new Job({
+  stage: "deploy",
+  environment: new Environment({
+    name: `review/${CI.CommitRef}`,
+    url: `https://${CI.CommitRef}.preview.example.com`,
+  }),
+  script: ["deploy-preview"],
+});
+
+// Container registry
+export const buildImage = new Job({
+  stage: "build",
+  image: new Image({ name: "docker:24" }),
+  script: [
+    `docker build -t ${CI.RegistryImage}:${CI.CommitSha} .`,
+    `docker push ${CI.RegistryImage}:${CI.CommitSha}`,
+  ],
+});
+```

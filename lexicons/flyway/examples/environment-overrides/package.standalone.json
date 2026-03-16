@@ -1,0 +1,18 @@
+{
+  "name": "flyway-environment-overrides-example",
+  "version": "0.0.1",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "build": "chant build src --lexicon flyway -o flyway.toml",
+    "lint": "chant lint src",
+    "dev": "chant build src --lexicon flyway -o flyway.toml --watch"
+  },
+  "dependencies": {
+    "@intentius/chant": "^0.0.14",
+    "@intentius/chant-lexicon-flyway": "^0.0.14"
+  },
+  "devDependencies": {
+    "typescript": "^5.0.0"
+  }
+}

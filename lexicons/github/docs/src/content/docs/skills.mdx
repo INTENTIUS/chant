@@ -1,0 +1,62 @@
+---
+title: "AI Skills"
+description: "AI agent skills bundled with the GitHub Actions lexicon"
+---
+The GitHub Actions lexicon ships several AI skills that teach AI coding agents how to build, validate, and deploy GitHub Actions workflows from a chant project.
+
+## What are skills?
+
+Skills are structured markdown documents bundled with a lexicon. When an AI agent works in a chant project, it discovers and loads relevant skills automatically — giving it operational knowledge about the deployment workflow without requiring the user to explain each step.
+
+## Installation
+
+When you scaffold a new project with `chant init --lexicon github`, the skills are installed to `skills/` for automatic agent discovery.
+
+To refresh skills after a lexicon update:
+
+```bash
+chant update
+```
+
+## Skill: chant-github
+
+The `chant-github` skill covers the full GitHub Actions workflow lifecycle:
+
+- **Build** — `chant build src/ --output .github/workflows/`
+- **Validate** — `chant lint src/` for workflow correctness
+- **Deploy** — `git push` to trigger workflows (chant synthesis is local-only)
+- **Diff** — compare synthesized YAML against previous output
+- **Troubleshooting** — workflow run inspection, failure diagnosis
+
+## Skill: chant-github-patterns
+
+The `chant-github-patterns` skill covers workflow patterns and best practices:
+
+- **Triggers** — push, pull_request, schedule, workflow_dispatch, repository_dispatch
+- **Job Structure** — runner selection, dependencies, concurrency groups
+- **Matrix Strategies** — multi-dimensional build matrices, include/exclude
+- **Caching** — dependency caching, build artifact caching
+- **Artifacts** — upload/download patterns, retention policies
+- **Reusable Workflows** — `workflow_call` and shared workflow libraries
+
+## Skill: chant-github-security
+
+The `chant-github-security` skill covers security hardening for GitHub Actions:
+
+- **Permissions** — least-privilege GITHUB_TOKEN scopes at workflow and job level
+- **Secret Management** — environment secrets, OIDC for cloud providers
+- **Supply Chain** — pinned action versions, Sigstore verification
+- **Code Scanning** — CodeQL integration, SARIF uploads
+- **Dependency Review** — automated dependency vulnerability checks
+
+## MCP integration
+
+The lexicon also provides MCP (Model Context Protocol) tools and resources that AI agents can use programmatically:
+
+| MCP tool | Description |
+|----------|-------------|
+| `build` | Build the chant project |
+| `lint` | Run lint rules |
+| `explain` | Summarize project resources |
+| `scaffold` | Generate starter files |
+| `search` | Search available resource types |

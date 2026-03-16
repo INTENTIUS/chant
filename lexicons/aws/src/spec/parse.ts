@@ -36,7 +36,7 @@ export interface ParsedAttribute {
 
 export interface ParsedPropertyType {
   name: string;
-  cfnType: string;
+  specType: string;
   properties: ParsedProperty[];
 }
 
@@ -52,6 +52,10 @@ export interface ParsedResource {
   createOnly: string[];
   writeOnly: string[];
   primaryIdentifier: string[];
+  deprecatedProperties: string[];
+  conditionalCreateOnly: string[];
+  replacementStrategy?: "delete_then_create" | "create_then_delete";
+  tagging?: { taggable: boolean; tagOnCreate: boolean; tagUpdatable: boolean };
 }
 
 export interface SchemaParseResult {
@@ -89,15 +93,18 @@ export function parseCFNSchema(data: string | Buffer): SchemaParseResult {
   const attrs: ParsedAttribute[] = [];
   for (const path of schema.readOnlyProperties ?? []) {
     const attrName = stripPointerPath(path);
-    // Skip nested paths (contain "/" after stripping prefix, or ".")
-    if (attrName.includes("/") || attrName.includes(".")) continue;
 
-    // Try to find type from properties, default to string
+    // Flatten nested paths: "Endpoint/Address" → attr name "Endpoint.Address"
+    const cfnAttr = attrName.replace(/\//g, ".");
+
     let tsType = "string";
-    if (schema.properties?.[attrName]) {
-      tsType = resolvePropertyType(schema.properties[attrName], schema);
+    // For top-level attrs, look up type from properties
+    if (!cfnAttr.includes(".") && schema.properties?.[cfnAttr]) {
+      tsType = resolvePropertyType(schema.properties[cfnAttr], schema);
     }
-    attrs.push({ name: attrName, tsType });
+    // For nested attrs, type is always string (CF GetAtt returns strings for leaf values)
+
+    attrs.push({ name: cfnAttr, tsType });
   }
 
   // Parse definitions into property types and enums
@@ -130,11 +137,43 @@ export function parseCFNSchema(data: string | Buffer): SchemaParseResult {
         }
         propertyTypes.push({
           name: `${shortName}_${defName}`,
-          cfnType: defName,
+          specType: defName,
           properties: defProps,
         });
       }
     }
+  }
+
+  // --- Deprecated properties: explicit + description-mined ---
+  const deprecatedSet = new Set<string>(
+    stripPointerPaths(schema.deprecatedProperties ?? []),
+  );
+
+  const DEPRECATION_RE = /\bdeprecated\b|\blegacy\b|no longer (available|recommended|used|supported)|is not recommended|has been discontinued/i;
+
+  // Mine top-level property descriptions
+  if (schema.properties) {
+    for (const [name, prop] of Object.entries(schema.properties)) {
+      if (prop.description && DEPRECATION_RE.test(prop.description)) {
+        deprecatedSet.add(name);
+      }
+    }
+  }
+
+  // --- Tagging ---
+  let tagging: ParsedResource["tagging"];
+  if (schema.tagging && schema.tagging.taggable) {
+    tagging = {
+      taggable: true,
+      tagOnCreate: schema.tagging.tagOnCreate ?? false,
+      tagUpdatable: schema.tagging.tagUpdatable ?? false,
+    };
+  }
+
+  // --- Replacement strategy ---
+  let replacementStrategy: ParsedResource["replacementStrategy"];
+  if (schema.replacementStrategy === "delete_then_create" || schema.replacementStrategy === "create_then_delete") {
+    replacementStrategy = schema.replacementStrategy;
   }
 
   return {
@@ -145,6 +184,10 @@ export function parseCFNSchema(data: string | Buffer): SchemaParseResult {
       createOnly: stripPointerPaths(schema.createOnlyProperties ?? []),
       writeOnly: stripPointerPaths(schema.writeOnlyProperties ?? []),
       primaryIdentifier: stripPointerPaths(schema.primaryIdentifier ?? []),
+      deprecatedProperties: [...deprecatedSet],
+      conditionalCreateOnly: stripPointerPaths(schema.conditionalCreateOnlyProperties ?? []),
+      ...(replacementStrategy && { replacementStrategy }),
+      ...(tagging && { tagging }),
     },
     propertyTypes,
     enums,

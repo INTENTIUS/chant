@@ -61,6 +61,7 @@ export const evl010CompositeNoTransformRule: LintRule = {
   id: "EVL010",
   severity: "warning",
   category: "style",
+  description: "Flags data transformations (map, filter, reduce) inside Composite factories",
   check(context: LintContext): LintDiagnostic[] {
     const diagnostics: LintDiagnostic[] = [];
     checkNode(context.sourceFile, context, diagnostics);

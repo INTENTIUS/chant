@@ -3,50 +3,32 @@ title: Multi-Stack Projects
 description: Splitting resources across multiple stacks
 ---
 
+import { Code } from '@astrojs/starlight/components';
+import outputsSrc from '../../../../../lexicons/aws/src/testdata/nested-stacks/network/outputs.ts?raw';
+import appSrc from '../../../../../lexicons/aws/src/testdata/nested-stacks/app.ts?raw';
+
 chant supports splitting resources across multiple stacks with automatic cross-stack reference resolution.
 
 When resources in different stacks reference each other, chant generates cross-stack outputs and imports using the appropriate provider-specific mechanism.
 
-## Multi-lexicon partitioning
-
-When a project uses multiple lexicons, each lexicon's resources are serialized into a separate output file. chant resolves cross-lexicon references automatically via `LexiconOutput`.
-
 ## Child projects (nested stacks)
 
-chant supports **child projects** — subdirectories with their own barrel file (`_.ts`) that build to separate, independently-valid templates. The parent references a child project via a lexicon-specific function, and cross-stack outputs are declared explicitly with `stackOutput()`.
+chant supports **child projects** — subdirectories that build to separate, independently-valid templates. The parent references a child project via a lexicon-specific function, and cross-stack outputs are declared explicitly with `stackOutput()`.
 
 For example, the AWS lexicon's `nestedStack()` function references a child project directory and produces separate CloudFormation child templates:
 
 ```
 src/
-  _.ts              # parent barrel
   app.ts            # parent resources
   network/          # ← child project
-    _.ts            # child barrel
     vpc.ts          # child resources
     outputs.ts      # stackOutput() declarations
 ```
 
-```typescript
-// src/network/outputs.ts — child declares what the parent can reference
-import * as _ from "./_";
-import { stackOutput } from "@intentius/chant";
+<Code code={outputsSrc} lang="typescript" title="src/network/outputs.ts" />
 
-export const vpcId = stackOutput(_.$.vpc.vpcId);
-export const subnetId = stackOutput(_.$.subnet.subnetId);
-```
+<Code code={appSrc} lang="typescript" title="src/app.ts" />
 
-```typescript
-// src/app.ts — parent references child outputs
-import * as _ from "./_";
+The child can be built independently (`chant build src/network/`), and the parent build produces multiple template files. See your lexicon's documentation for details — for AWS, see the [Nested Stacks](/chant/lexicons/aws/nested-stacks) guide.
 
-const network = _.nestedStack("network", import.meta.dir + "/network");
-
-export const handler = new _.Function({
-  vpcConfig: { subnetIds: [network.outputs.subnetId] },
-});
-```
-
-The child can be built independently (`chant build src/network/`), and the parent build produces multiple template files. See your lexicon's documentation for details — for AWS, see the [Nested Stacks](/lexicons/aws/nested-stacks) guide.
-
-For details on how multi-stack serialization works, see [Multi-Stack Output](/serialization/multi-stack/).
+For details on how multi-stack serialization works, see [Multi-Stack Output](/chant/serialization/multi-stack/).

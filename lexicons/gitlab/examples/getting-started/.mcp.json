@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "chant": {
+      "command": "chant",
+      "args": ["serve", "mcp"],
+      "type": "stdio"
+    }
+  }
+}

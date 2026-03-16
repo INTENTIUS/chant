@@ -20,8 +20,10 @@ export async function detectLexicons(files: string[]): Promise<string[]> {
       continue;
     }
 
-    // Match @intentius/chant-lexicon-<name> in import/export statements
-    const regex = /(?:import|export)\s+.*\s+from\s+['"]@intentius\/chant-lexicon-([a-z][\w-]*)['"]/g;
+    // Match @intentius/chant-lexicon-<name> in import/export statements.
+    // Uses [\s\S] instead of . to handle multiline imports like:
+    //   import { Foo, Bar } from "@intentius/chant-lexicon-k8s";
+    const regex = /(?:import|export)\s+[\s\S]*?\s+from\s+['"]@intentius\/chant-lexicon-([a-z][\w-]*)['"]/g;
 
     for (const match of content.matchAll(regex)) {
       detectedLexicons.add(match[1]);

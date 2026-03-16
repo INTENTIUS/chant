@@ -1,0 +1,159 @@
+---
+title: "Examples"
+description: "Walkthrough of Flyway examples — standard projects, Desktop workflows, and environment overrides"
+---
+Runnable examples live in the lexicon's `examples/` directory. Clone the repo and try them:
+
+```bash
+cd examples/basic-project
+bun install
+chant build    # produces flyway.toml
+chant lint     # runs lint rules
+bun test       # runs the example's tests
+```
+
+## Basic Project
+
+`examples/basic-project/` — a single-environment setup (dev only) using raw primitives (`FlywayProject`, `FlywayConfig`, `Environment`).
+
+```typescript
+import { FlywayProject, FlywayConfig, Environment } from "@intentius/chant-lexicon-flyway";
+
+export const project = new FlywayProject({
+  name: "basic-app",
+});
+
+export const config = new FlywayConfig({
+  defaultSchema: "public",
+  locations: ["filesystem:sql"],
+  databaseType: "postgresql",
+  validateMigrationNaming: true,
+  baselineOnMigrate: false,
+});
+
+export const dev = new Environment({
+  name: "dev",
+  url: "jdbc:postgresql://localhost:5432/basic_app_dev",
+  schemas: ["public"],
+  provisioner: "clean",
+});
+```
+
+## Desktop Project
+
+`examples/desktop-project/` — the canonical Redgate Desktop workflow with development + shadow environments, `[flywayDesktop]` and `[redgateCompare]` sections.
+
+```typescript
+import {
+  DesktopProject, FlywayProject, FlywayConfig,
+  Environment, FlywayDesktopConfig, RedgateCompareConfig,
+} from "@intentius/chant-lexicon-flyway";
+
+const result = DesktopProject({
+  name: "inventory-service",
+  databaseType: "postgresql",
+  devUrl: "jdbc:postgresql://localhost:5432/inventory_dev",
+  shadowUrl: "jdbc:postgresql://localhost:5432/inventory_shadow",
+  schemas: ["public", "inventory"],
+  environments: [
+    { name: "test", url: "jdbc:postgresql://test:5432/db" },
+    { name: "prod", url: "jdbc:postgresql://prod:5432/db" },
+  ],
+  filterFile: "./Filter.scpf",
+});
+
+export const project = new FlywayProject(result.project);
+export const config = new FlywayConfig(result.config);
+export const desktop = new FlywayDesktopConfig(result.desktop);
+export const compare = new RedgateCompareConfig(result.compare!);
+export const development = new Environment(result.development);
+export const shadow = new Environment(result.shadow);
+```
+
+**Key patterns:**
+- Shadow always gets `provisioner: "clean"` (forgetting this breaks Desktop workflows)
+- Uses `schemaModelLocation` in `[flyway]` (not the deprecated `schemaModel` in `[flywayDesktop]`)
+- `[redgateCompare]` section only emitted when `filterFile` is provided
+
+## Environment Overrides
+
+`examples/environment-overrides/` — shared config deep-merged into per-environment overrides using `environmentGroup()`. Addresses the #1 Flyway feature request: per-environment placeholders without config repetition.
+
+```typescript
+import { environmentGroup, Environment } from "@intentius/chant-lexicon-flyway";
+
+const envs = environmentGroup({
+  schemas: ["public"],
+  flyway: {
+    locations: ["filesystem:migrations"],
+    cleanDisabled: true,
+    placeholders: { appName: "payments", logLevel: "info" },
+  },
+  environments: {
+    dev: {
+      url: "jdbc:postgresql://localhost:5432/payments_dev",
+      flyway: {
+        cleanDisabled: false,
+        placeholders: { logLevel: "debug" },
+      },
+    },
+    staging: {
+      url: "jdbc:postgresql://staging:5432/payments",
+    },
+    prod: {
+      url: "jdbc:postgresql://prod:5432/payments",
+      flyway: {
+        validateOnMigrate: true,
+        placeholders: { logLevel: "warn" },
+      },
+    },
+  },
+});
+
+export const devEnv = new Environment(envs.dev);
+export const stagingEnv = new Environment(envs.staging);
+export const prodEnv = new Environment(envs.prod);
+```
+
+**Deep merge semantics:**
+- Scalars: child wins (override)
+- Objects (like `placeholders`): recursive merge — child keys override, parent keys preserved
+- Arrays (like `locations`): replace, not concatenate
+
+**Result:** `dev.flyway.placeholders = { appName: "payments", logLevel: "debug" }` — `appName` inherited, `logLevel` overridden.
+
+## Multi-Environment
+
+`examples/multi-environment/` — four environments (dev, shadow, staging, prod) using the `MultiEnvironmentProject` composite.
+
+## Vault-Secured
+
+`examples/vault-secured/` — environments with HashiCorp Vault-backed credentials using `${vault.*}` resolver references.
+
+## Docker Dev
+
+`examples/docker-dev/` — local development with Docker-provisioned databases.
+
+## CI Pipeline
+
+`examples/ci-pipeline/` — CI/CD-optimized project with environment variable credentials (`${env.*}` patterns).
+
+## Azure Secured
+
+`examples/azure-secured/` — Azure AD authentication with `AzureAdResolver` for managed identity or service principal credentials to Azure SQL / PostgreSQL.
+
+## GCP Secured
+
+`examples/gcp-secured/` — environments with Google Cloud Secret Manager credentials.
+
+## Multi-Schema
+
+`examples/multi-schema/` — multiple schemas with cross-schema placeholder references.
+
+## Callbacks
+
+`examples/callbacks/` — lifecycle callbacks with `BlueprintMigrationSet`.
+
+## Migration Lifecycle
+
+`examples/migration-lifecycle/` — full runnable lifecycle: Docker, SQL migrations (V1→V3), and `environmentGroup` inheritance.

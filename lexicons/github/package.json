@@ -1,0 +1,51 @@
+{
+  "name": "@intentius/chant-lexicon-github",
+  "version": "0.1.0",
+  "description": "GitHub Actions lexicon for chant — declarative IaC in TypeScript",
+  "license": "Apache-2.0",
+  "homepage": "https://intentius.io/chant",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/intentius/chant.git",
+    "directory": "lexicons/github"
+  },
+  "bugs": {
+    "url": "https://github.com/intentius/chant/issues"
+  },
+  "keywords": [
+    "infrastructure-as-code",
+    "iac",
+    "typescript",
+    "github",
+    "github-actions",
+    "chant"
+  ],
+  "type": "module",
+  "files": [
+    "src/",
+    "dist/"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
+  "exports": {
+    ".": "./src/index.ts",
+    "./*": "./src/*.ts",
+    "./manifest": "./dist/manifest.json",
+    "./meta": "./dist/meta.json",
+    "./types": "./dist/types/index.d.ts"
+  },
+  "scripts": {
+    "generate": "bun run src/codegen/generate-cli.ts",
+    "bundle": "bun run src/package-cli.ts",
+    "validate": "bun run src/validate-cli.ts",
+    "docs": "bun run src/codegen/docs-cli.ts",
+    "prepack": "bun run generate && bun run bundle && bun run validate"
+  },
+  "dependencies": {
+    "@intentius/chant": "workspace:*"
+  },
+  "devDependencies": {
+    "typescript": "^5.9.3"
+  }
+}

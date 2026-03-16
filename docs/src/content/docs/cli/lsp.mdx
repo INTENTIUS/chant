@@ -6,7 +6,7 @@ description: Start the LSP server for editor integration
 ## Synopsis
 
 ```
-npx chant serve lsp [path]
+chant serve lsp [path]
 ```
 
 ## Description
@@ -35,7 +35,7 @@ When a lexicon plugin provides completions, the server triggers on these charact
 .  (space)  "  '  `  (
 ```
 
-Completions include resource type names, property names, intrinsic functions, and barrel references.
+Completions include resource type names, property names, intrinsic functions, and cross-file resource references.
 
 ### Diagnostics
 
@@ -82,7 +82,7 @@ lspconfig.chant.setup({})
 Any editor that supports stdio-based LSP servers can use chant. The command is:
 
 ```bash
-npx chant serve lsp
+chant serve lsp
 ```
 
 The server communicates over stdin/stdout using the standard LSP protocol with Content-Length framing.
@@ -96,6 +96,6 @@ The server communicates over stdin/stdout using the standard LSP protocol with C
 
 ## See Also
 
-- [Agent Integration](/guide/agent-integration/) — MCP setup for AI agents
-- [`chant serve mcp`](/cli/mcp/) — MCP server for AI agent integration
-- [`chant lint`](/cli/lint/) — CLI linting (same rules as LSP diagnostics)
+- [Agent Integration](/chant/guide/agent-integration/) — MCP setup for AI agents
+- [`chant serve mcp`](/chant/cli/mcp/) — MCP server for AI agent integration
+- [`chant lint`](/chant/cli/lint/) — CLI linting (same rules as LSP diagnostics)

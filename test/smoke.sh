@@ -5,11 +5,21 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
 
 usage() {
-  echo "Usage: $0 [workspace|npm|all]"
+  echo "Usage: $0 [workspace|npm|build-examples|smoke-aws|smoke-eks|smoke-gke|smoke-aks|smoke-all|all]"
   echo ""
-  echo "  workspace  — Run workspace smoke tests (bun link), keep container up"
-  echo "  npm        — Run npm install smoke tests (bun pm pack)"
-  echo "  all        — Run all smoke tests"
+  echo "BUILD VERIFICATION:"
+  echo "  workspace       — Workspace smoke tests (bun link)"
+  echo "  npm             — npm install smoke tests (bun pm pack)"
+  echo "  build-examples  — Build all examples in Docker"
+  echo ""
+  echo "DEPLOYMENT SMOKE TESTS (verify example npm scripts work in Docker):"
+  echo "  smoke-eks       — EKS example"
+  echo "  smoke-aks       — AKS example"
+  echo "  smoke-gke       — GKE example"
+  echo "  smoke-aws       — AWS/GitLab examples"
+  echo "  smoke-all       — All deployment smoke tests"
+  echo ""
+  echo "  all             — Run workspace + npm smoke tests"
   exit 1
 }
 
@@ -25,16 +35,94 @@ run_workspace() {
 }
 
 run_npm() {
-  if [ ! -f "$SCRIPT_DIR/Dockerfile.smoke-npm" ]; then
-    echo "ERROR: Dockerfile.smoke-npm not found (Item 9b not yet implemented)"
-    exit 1
-  fi
+  echo "Running codegen (prepack) for all lexicons..."
+  for lex in aws azure gcp gitlab k8s flyway; do
+    echo "  prepack lexicons/$lex"
+    bun run --cwd "$PROJECT_DIR/lexicons/$lex" prepack
+  done
 
-  echo "Building npm smoke test image..."
+  echo "Building npm smoke test image (tests run during build)..."
   docker build -f "$SCRIPT_DIR/Dockerfile.smoke-npm" -t chant-smoke-npm "$PROJECT_DIR"
+  echo "npm smoke tests passed (ran during docker build)."
+}
 
-  echo "Running npm smoke tests..."
-  docker run --rm chant-smoke-npm
+build_e2e_image() {
+  echo "Running codegen (prepack) for all lexicons..."
+  for lex in aws azure gcp gitlab k8s flyway; do
+    echo "  prepack lexicons/$lex"
+    bun run --cwd "$PROJECT_DIR/lexicons/$lex" prepack
+  done
+
+  echo "Building E2E smoke test image..."
+  docker build --platform linux/amd64 -f "$SCRIPT_DIR/Dockerfile.smoke-e2e" -t chant-smoke-e2e "$PROJECT_DIR"
+}
+
+run_e2e_aws() {
+  build_e2e_image
+  echo "Running AWS/GitLab E2E tests..."
+  docker run --rm --platform linux/amd64 \
+    -v "$HOME/.aws:/root/.aws:ro" \
+    -e AWS_ACCESS_KEY_ID -e AWS_SECRET_ACCESS_KEY -e AWS_DEFAULT_REGION \
+    -e GITLAB_TOKEN -e GITLAB_URL -e GITLAB_GROUP \
+    chant-smoke-e2e aws
+}
+
+run_e2e_eks() {
+  build_e2e_image
+  echo "Running EKS E2E tests..."
+  docker run --rm --platform linux/amd64 \
+    -v "$HOME/.aws:/root/.aws:ro" \
+    -e AWS_ACCESS_KEY_ID -e AWS_SECRET_ACCESS_KEY -e AWS_DEFAULT_REGION \
+    -e EKS_DOMAIN \
+    chant-smoke-e2e eks
+}
+
+run_e2e_gke() {
+  build_e2e_image
+  echo "Running GKE E2E tests..."
+  docker run --rm --platform linux/amd64 \
+    -v "$HOME/.config/gcloud:/root/.config/gcloud" \
+    chant-smoke-e2e gke
+}
+
+run_e2e_aks() {
+  build_e2e_image
+  echo "Running AKS E2E tests..."
+  docker run --rm --platform linux/amd64 \
+    -v "$HOME/.azure:/root/.azure" \
+    chant-smoke-e2e aks
+}
+
+run_e2e_all() {
+  build_e2e_image
+  echo "Running all E2E tests..."
+  docker run --rm --platform linux/amd64 \
+    -v "$HOME/.aws:/root/.aws:ro" \
+    -v "$HOME/.config/gcloud:/root/.config/gcloud" \
+    -v "$HOME/.azure:/root/.azure" \
+    -e AWS_ACCESS_KEY_ID -e AWS_SECRET_ACCESS_KEY -e AWS_DEFAULT_REGION \
+    -e GITLAB_TOKEN -e GITLAB_URL -e GITLAB_GROUP \
+    -e EKS_DOMAIN \
+    chant-smoke-e2e all
+}
+
+run_build_examples() {
+  echo "Building smoke image..."
+  docker build -f "$SCRIPT_DIR/Dockerfile.smoke" -t chant-smoke-workspace "$PROJECT_DIR"
+
+  local output_dir="$PROJECT_DIR/test/example-builds"
+  rm -rf "$output_dir"
+  mkdir -p "$output_dir"
+
+  echo "Building examples inside container (isolated)..."
+  docker run --rm \
+    -v "$output_dir:/output" \
+    chant-smoke-workspace \
+    bash /app/test/build-examples.sh
+
+  echo ""
+  echo "Artifacts written to test/example-builds/"
+  ls -la "$output_dir"/*/
 }
 
 case "${1:-workspace}" in
@@ -43,6 +131,24 @@ case "${1:-workspace}" in
     ;;
   npm)
     run_npm
+    ;;
+  build-examples)
+    run_build_examples
+    ;;
+  smoke-aws)
+    run_e2e_aws
+    ;;
+  smoke-eks)
+    run_e2e_eks
+    ;;
+  smoke-gke)
+    run_e2e_gke
+    ;;
+  smoke-aks)
+    run_e2e_aks
+    ;;
+  smoke-all)
+    run_e2e_all
     ;;
   all)
     run_workspace

@@ -141,6 +141,7 @@ export const evl001NonLiteralExpressionRule: LintRule = {
   id: "EVL001",
   severity: "error",
   category: "correctness",
+  description: "Resource constructor property values must be statically evaluable — no function calls",
   check(context: LintContext): LintDiagnostic[] {
     const diagnostics: LintDiagnostic[] = [];
     checkNode(context.sourceFile, context, diagnostics);

@@ -51,8 +51,8 @@ export async function listCommand(options: ListOptions): Promise<ListResult> {
   for (const [name, decl] of result.entities) {
     entities.push({
       name,
-      lexicon: decl.lexicon,
-      entityType: decl.entityType,
+      lexicon: decl.lexicon ?? "",
+      entityType: decl.entityType ?? "",
       kind: decl.kind ?? "resource",
     });
   }

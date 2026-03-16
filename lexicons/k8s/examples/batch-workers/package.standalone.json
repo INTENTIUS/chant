@@ -1,0 +1,24 @@
+{
+  "name": "k8s-batch-workers-example",
+  "version": "0.0.1",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "build": "chant build src --lexicon k8s -o k8s.yaml",
+    "lint": "chant lint src",
+    "dev": "chant build src --lexicon k8s --watch -o k8s.yaml",
+    "apply": "kubectl apply -f k8s.yaml",
+    "wait": "kubectl -n batch-workers rollout status deployment/queue-worker --timeout=120s",
+    "status": "kubectl get pods -n batch-workers",
+    "logs": "kubectl logs -n batch-workers -l app.kubernetes.io/name=queue-worker --tail=50",
+    "deploy": "npm run build && npm run apply && npm run wait && npm run status",
+    "teardown": "kubectl delete -f k8s.yaml"
+  },
+  "dependencies": {
+    "@intentius/chant": "^0.0.14",
+    "@intentius/chant-lexicon-k8s": "^0.0.14"
+  },
+  "devDependencies": {
+    "typescript": "^5.0.0"
+  }
+}

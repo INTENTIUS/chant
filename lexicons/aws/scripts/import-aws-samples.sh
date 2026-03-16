@@ -86,12 +86,19 @@ IGNORE_LIST=(
   "CloudFormation/MacrosExamples/DateFunctions/date.yaml"
   "CloudFormation/MacrosExamples/PyPlate/python.yaml"
   "CloudFormation/MacrosExamples/StringFunctions/string.yaml"
+  "CloudFormation/MacrosExamples/Count/event.json"
+  "CloudFormation/MacrosExamples/Count/event_bad.json"
   "ElastiCache/Elasticache-snapshot.yaml"
   "IoT/amzn2-greengrass-cfn.yaml"
+  "IoT/amzn2-greengrass-cfn.json"
   "Solutions/Gitea/Gitea.yaml"
+  "Solutions/Gitea/Gitea.json"
   "Solutions/GitLab/GitLabServer.yaml"
+  "Solutions/GitLab/GitLabServer.json"
   "Solutions/GitLabAndVSCode/GitLabAndVSCode.yaml"
+  "Solutions/GitLabAndVSCode/GitLabAndVSCode.json"
   "Solutions/VSCode/VSCodeServer.yaml"
+  "Solutions/VSCode/VSCodeServer.json"
 )
 
 should_ignore() {

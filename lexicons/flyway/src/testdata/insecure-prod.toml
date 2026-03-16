@@ -1,0 +1,14 @@
+# Intentionally insecure config — triggers multiple lint warnings.
+# Used as a negative test fixture.
+
+id = "insecure"
+name = "insecure"
+databaseType = "postgresql"
+
+[environments.dev]
+url = "jdbc:postgresql://localhost:5432/dev"
+user = "admin"
+
+[environments.prod]
+url = "jdbc:postgresql://prod:5432/db"
+baselineOnMigrate = true

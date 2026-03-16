@@ -1,0 +1,159 @@
+---
+title: "Lint Rules"
+description: "Built-in lint rules and post-synth checks for GitHub Actions workflows"
+---
+
+The GitHub Actions lexicon ships lint rules that run during `chant lint` and post-synth checks that validate the serialized YAML after `chant build`.
+
+## Pre-synth lint rules
+
+Lint rules analyze your TypeScript source code before build.
+
+| Rule | Severity | Category | Description |
+|------|----------|----------|-------------|
+| GHA001 | warning | style | Use typed action composites instead of raw `uses:` strings |
+| GHA002 | warning | style | Use Expression helpers instead of raw `${{ }}` in `if:` conditions |
+| GHA003 | error | security | No hardcoded secrets (GitHub tokens, AWS keys, etc.) |
+| GHA004 | info | style | Extract inline matrix objects to named constants |
+| GHA005 | info | style | Extract deeply nested inline objects to named constants |
+| GHA007 | warning | style | Too many jobs per file (limit: 10) |
+| GHA008 | info | style | Avoid raw `${{ }}` expression strings outside `if:` fields |
+| GHA010 | warning | correctness | Setup action missing version input |
+| GHA012 | warning | correctness | Deprecated action version detected |
+| GHA014 | warning | correctness | Job missing `timeoutMinutes` |
+| GHA015 | warning | performance | Setup action without cache enabled |
+| GHA016 | warning | correctness | Concurrency `cancel-in-progress` without a `group` |
+| GHA020 | error | security | Potential secret detected in string literal |
+
+### GHA001 -- Use typed action composites
+
+Flags raw `uses:` strings when a typed composite wrapper is available. Typed composites provide better IDE support and catch configuration errors at compile time.
+
+```typescript
+// Flagged
+new Step({ uses: "actions/checkout@v4" });
+
+// Preferred
+Checkout({}).step;
+```
+
+### GHA002 -- Use Expression helpers
+
+Flags raw `${{ }}` strings in `if:` conditions. Use the typed Expression helpers for type safety.
+
+```typescript
+// Flagged
+new Job({ "runs-on": "ubuntu-latest", if: "${{ github.ref == 'refs/heads/main' }}", steps: [] });
+
+// Preferred
+import { branch } from "@intentius/chant-lexicon-github";
+new Job({ "runs-on": "ubuntu-latest", if: branch("main"), steps: [] });
+```
+
+### GHA003 -- No hardcoded secrets
+
+Flags hardcoded GitHub tokens, AWS keys, and other secret patterns in source code.
+
+```typescript
+// Flagged
+new Step({ name: "Deploy", env: { TOKEN: "ghp_xxxxxxxxxxxx" }, run: "deploy" });
+
+// Preferred
+import { secrets } from "@intentius/chant-lexicon-github";
+new Step({ name: "Deploy", env: { TOKEN: secrets("DEPLOY_TOKEN") }, run: "deploy" });
+```
+
+### GHA014 -- Missing timeout
+
+Flags jobs without `timeoutMinutes`. Jobs without a timeout default to 360 minutes (6 hours), which can waste runner minutes if stuck.
+
+```typescript
+// Flagged
+new Job({ "runs-on": "ubuntu-latest", steps: [...] });
+
+// Preferred
+new Job({ "runs-on": "ubuntu-latest", timeoutMinutes: 15, steps: [...] });
+```
+
+### GHA015 -- Setup without cache
+
+Flags setup action composites (SetupNode, SetupGo, SetupPython) without a paired `CacheAction` or built-in `cache` option.
+
+```typescript
+// Flagged
+SetupNode({ nodeVersion: "22" }).step;
+
+// Preferred
+SetupNode({ nodeVersion: "22", cache: "npm" }).step;
+```
+
+## Post-synth checks
+
+Post-synth checks run against the serialized YAML after build. They catch issues only visible in the final output.
+
+| Rule | Severity | Description |
+|------|----------|-------------|
+| GHA006 | error | Duplicate workflow names |
+| GHA009 | error | Empty matrix dimension |
+| GHA011 | error | Invalid `needs` target (references non-existent job) |
+| GHA017 | info | Missing `permissions` block |
+| GHA018 | warning | `pull_request_target` with checkout (security risk) |
+| GHA019 | error | Circular `needs` chain |
+| GHA020 | warning | Missing job-level permissions for sensitive triggers |
+| GHA021 | warning | `actions/checkout` used without pinned SHA |
+| GHA022 | warning | Job without `timeout-minutes` |
+| GHA023 | warning | Deprecated `::set-output` command usage |
+| GHA024 | warning | Missing concurrency block for deploy workflow |
+| GHA025 | warning | Using `pull_request_target` without restrictions |
+| GHA026 | warning | Secret passed to action without environment protection |
+| GHA027 | warning | Missing `if: always()` on cleanup steps |
+| GHA028 | error | Workflow with no `on` triggers |
+
+### GHA006 -- Duplicate workflow names
+
+Flags multiple workflows that share the same `name:` value. Duplicate names cause confusion in the GitHub Actions UI.
+
+### GHA009 -- Empty matrix dimension
+
+Flags matrix strategy dimensions with an empty values array. An empty dimension causes the job to be skipped entirely.
+
+### GHA011 -- Invalid needs target
+
+Flags jobs whose `needs:` entries reference a job not defined in the workflow. This causes a workflow validation error on GitHub.
+
+### GHA019 -- Circular needs chain
+
+Detects cycles in the `needs:` dependency graph. Reports the full cycle chain in the diagnostic message.
+
+### GHA028 -- Workflow with no triggers
+
+Flags workflows that have no `on:` triggers defined. A workflow without triggers will never run.
+
+## Running lint
+
+```bash
+# Lint your chant project
+chant lint src/
+
+# Lint with auto-fix where supported
+chant lint --fix src/
+```
+
+To suppress a rule on a specific line:
+
+```typescript
+// chant-disable-next-line GHA001
+new Step({ uses: "actions/checkout@v4" });
+```
+
+To suppress globally in `chant.config.ts`:
+
+```typescript
+export default {
+  lint: {
+    rules: {
+      GHA014: "off",
+    },
+  },
+};
+```

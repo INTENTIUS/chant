@@ -74,7 +74,7 @@ export function isNestedStackInstance(value: unknown): value is NestedStackInsta
 /**
  * Create a nested stack that references a child project directory.
  *
- * The child directory must contain its own `_.ts` barrel and resource files.
+ * The child directory must contain its own resource files.
  * It can be built independently with `chant build`. Cross-stack outputs
  * are declared in the child via `stackOutput()`.
  *
@@ -85,7 +85,7 @@ export function isNestedStackInstance(value: unknown): value is NestedStackInsta
  *
  * @example
  * ```ts
- * const network = _.nestedStack("network", import.meta.dir + "/network", {
+ * const network = _.nestedStack("network", import.meta.dirname + "/network", {
  *   parameters: { Environment: "prod" },
  * });
  *

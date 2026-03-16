@@ -1,0 +1,102 @@
+---
+title: "Resources"
+description: "Azure resource types, resource-level fields, and apiVersion"
+---
+
+## Resource types
+
+Every Azure resource has a **type** in the format `Microsoft.{Provider}/{ResourceType}`. The lexicon generates a TypeScript class for each type.
+
+```typescript
+import { StorageAccount, VirtualMachine, WebApp } from "@intentius/chant-lexicon-azure";
+```
+
+Common resource types:
+
+| Type | Class | Description |
+|------|-------|-------------|
+| `Microsoft.Storage/storageAccounts` | `StorageAccount` | Blob, file, queue, table storage |
+| `Microsoft.Compute/virtualMachines` | `VirtualMachine` | IaaS virtual machines |
+| `Microsoft.Web/sites` | `WebApp` | App Service web applications |
+| `Microsoft.Web/serverfarms` | `AppServicePlan` | App Service plans |
+| `Microsoft.Network/virtualNetworks` | `VirtualNetwork` | Virtual networks |
+| `Microsoft.Network/networkSecurityGroups` | `NetworkSecurityGroup` | Firewall rules |
+| `Microsoft.ContainerService/managedClusters` | `ManagedCluster` | AKS Kubernetes clusters |
+| `Microsoft.KeyVault/vaults` | `KeyVault` | Secret and key management |
+| `Microsoft.Sql/servers` | `SqlServer` | Azure SQL logical servers |
+| `Microsoft.ContainerRegistry/registries` | `ContainerRegistry` | Docker container registries |
+
+## Resource-level fields
+
+ARM templates have fields that sit at the resource level (outside `properties`):
+
+### sku
+The pricing tier or capability level:
+```typescript
+export const storage = new StorageAccount({
+  sku: { name: "Standard_GRS" },
+});
+```
+
+### kind
+Disambiguates resource subtypes:
+```typescript
+export const storage = new StorageAccount({
+  kind: "StorageV2", // or "BlobStorage", "BlockBlobStorage"
+});
+```
+
+### identity
+Managed identity configuration:
+```typescript
+export const app = new WebApp({
+  identity: { type: "SystemAssigned" },
+});
+```
+
+### tags
+Key-value metadata:
+```typescript
+export const storage = new StorageAccount({
+  tags: { environment: "production", team: "platform" },
+});
+```
+
+### zones
+Availability zone placement:
+```typescript
+export const vm = new VirtualMachine({
+  zones: ["1"],
+});
+```
+
+### plan
+Marketplace plan information:
+```typescript
+export const vm = new VirtualMachine({
+  plan: {
+    name: "my-plan",
+    publisher: "my-publisher",
+    product: "my-product",
+  },
+});
+```
+
+### location
+Azure region. Defaults to `[resourceGroup().location]`:
+```typescript
+import { Azure } from "@intentius/chant-lexicon-azure";
+
+export const storage = new StorageAccount({
+  location: Azure.ResourceGroupLocation, // default
+  // or: location: "eastus2",
+});
+```
+
+## apiVersion
+
+Every ARM resource requires an `apiVersion` — the serializer injects the latest stable version automatically. You typically never set this manually.
+
+The post-synth checks AZR011 and AZR012 validate:
+- **AZR011**: apiVersion exists and follows YYYY-MM-DD format
+- **AZR012**: apiVersion is not outdated (older than 2023-01-01)

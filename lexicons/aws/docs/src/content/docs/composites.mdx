@@ -1,0 +1,383 @@
+---
+title: "Composites"
+description: "Composite resources, built-in composites, action constants, and withDefaults presets in the AWS CloudFormation lexicon"
+---
+Composites group related resources into reusable factories. See also the core [Composite Resources](/guide/composite-resources/) guide.
+
+```typescript title="lambda-api.ts"
+import { Role, Function, Permission, Code, Environment, Sub, Role_Policy } from "@intentius/chant-lexicon-aws";
+import { Composite } from "@intentius/chant";
+import { lambdaTrustPolicy, lambdaBasicExecutionArn } from "./defaults";
+
+export interface LambdaApiProps {
+  name: string | ReturnType<typeof Sub>;
+  runtime: string;
+  handler: string;
+  code: InstanceType<typeof Code> | { ZipFile: string };
+  timeout?: number;
+  memorySize?: number;
+  environment?: InstanceType<typeof Environment> | { Variables: Record<string, unknown> };
+  policies?: InstanceType<typeof Role_Policy>[];
+}
+
+export const LambdaApi = Composite<LambdaApiProps>((props) => {
+  const role = new Role({
+    AssumeRolePolicyDocument: lambdaTrustPolicy,
+    ManagedPolicyArns: [lambdaBasicExecutionArn],
+    Policies: props.policies,
+  });
+
+  const func = new Function({
+    FunctionName: props.name,
+    Runtime: props.runtime,
+    Handler: props.handler,
+    Code: props.code,
+    Role: role.Arn,
+    Timeout: props.timeout,
+    MemorySize: props.memorySize,
+    Environment: props.environment,
+  });
+
+  const permission = new Permission({
+    FunctionName: func.Arn,
+    Action: "lambda:InvokeFunction",
+    Principal: "apigateway.amazonaws.com",
+  });
+
+  return { role, func, permission };
+}, "LambdaApi");
+
+export function SecureApi(props: Partial<LambdaApiProps>) {
+  return LambdaApi({
+    name: props.name!,
+    runtime: props.runtime ?? "nodejs20.x",
+    handler: props.handler ?? "index.handler",
+    code: props.code!,
+    timeout: props.timeout ?? 10,
+    memorySize: props.memorySize ?? 256,
+    environment: props.environment,
+    policies: props.policies,
+  });
+}
+
+export function HighMemoryApi(props: Partial<LambdaApiProps>) {
+  return LambdaApi({
+    name: props.name!,
+    runtime: props.runtime ?? "nodejs20.x",
+    handler: props.handler ?? "index.handler",
+    code: props.code!,
+    timeout: props.timeout ?? 25,
+    memorySize: props.memorySize ?? 1024,
+    environment: props.environment,
+    policies: props.policies,
+  });
+}
+```
+
+Instantiate and export:
+
+```typescript title="health-api.ts"
+import { Sub, AWS, Ref } from "@intentius/chant-lexicon-aws";
+import { SecureApi } from "./lambda-api";
+import { environment } from "./params";
+
+export const healthApi = SecureApi({
+  name: Sub`${AWS.StackName}-${Ref(environment)}-health`,
+  runtime: "nodejs20.x",
+  handler: "index.handler",
+  code: {
+    ZipFile: `exports.handler = async () => ({
+      statusCode: 200,
+      body: JSON.stringify({ status: 'healthy' })
+    });`,
+  },
+});
+```
+
+During build, composites expand to flat CloudFormation resources: `healthApiRole`, `healthApiFunc`, `healthApiPermission`.
+
+## Built-in composites
+
+The AWS lexicon ships ready-to-use composites for common patterns. Import them from `@intentius/chant-lexicon-aws`:
+
+```typescript title="builtin-composites.ts"
+import { Sub, AWS, Ref } from "@intentius/chant-lexicon-aws";
+import { LambdaNode, LambdaApi, LambdaScheduled, S3Actions, VpcDefault, FargateAlb, RdsInstance } from "@intentius/chant-lexicon-aws";
+import { Role_Policy, Parameter } from "@intentius/chant-lexicon-aws";
+
+// LambdaNode: Role + Function with nodejs20.x defaults
+export const worker = LambdaNode({
+  name: Sub`${AWS.StackName}-worker`,
+  Code: { ZipFile: `exports.handler = async () => ({ statusCode: 200 });` },
+});
+
+// LambdaApi: Role + Function + Permission for API Gateway
+export const api = LambdaApi({
+  name: Sub`${AWS.StackName}-api`,
+  Runtime: "nodejs20.x",
+  Handler: "index.handler",
+  Code: { ZipFile: `exports.handler = async () => ({ statusCode: 200 });` },
+  Timeout: 10,
+  sourceArn: Sub`arn:aws:execute-api:${AWS.Region}:${AWS.AccountId}:*/prod/*`,
+});
+
+// LambdaScheduled: Role + Function + EventBridge Rule + Permission
+export const cron = LambdaScheduled({
+  name: Sub`${AWS.StackName}-cron`,
+  Runtime: "python3.12",
+  Handler: "handler.handler",
+  Code: { ZipFile: `def handler(event, context): return {"statusCode": 200}` },
+  schedule: "rate(5 minutes)",
+});
+
+// VpcDefault: Production-ready VPC (17 resources)
+export const network = VpcDefault({});
+
+// FargateAlb: Fargate service behind an ALB (11 resources)
+export const web = FargateAlb({
+  image: "nginx:latest",
+  vpcId: network.vpc.VpcId,
+  publicSubnetIds: [network.publicSubnet1.SubnetId, network.publicSubnet2.SubnetId],
+  privateSubnetIds: [network.privateSubnet1.SubnetId, network.privateSubnet2.SubnetId],
+});
+
+// RdsInstance: DBSubnetGroup + SecurityGroup + DBInstance (3-4 resources)
+export const dbPassword = new Parameter("AWS::SSM::Parameter::Value<String>", {
+  description: "SSM path to the database password",
+  defaultValue: "/myapp/dev/db-password",
+});
+export const rdsDatabase = RdsInstance({
+  engine: "postgres",
+  vpcId: network.vpc.VpcId,
+  subnetIds: [network.privateSubnet1.SubnetId, network.privateSubnet2.SubnetId],
+  masterPassword: Ref(dbPassword) as unknown as string,
+  databaseName: "myapp",
+});
+
+// Composites accept extra IAM policies
+export const reader = LambdaNode({
+  name: Sub`${AWS.StackName}-reader`,
+  Code: { ZipFile: `exports.handler = async () => ({});` },
+  Policies: [
+    new Role_Policy({
+      PolicyName: "S3Read",
+      PolicyDocument: {
+        Version: "2012-10-17",
+        Statement: [{
+          Effect: "Allow",
+          Action: S3Actions.ReadOnly,
+          Resource: "*",
+        }],
+      },
+    }),
+  ],
+});
+```
+
+| Composite | Members | Description |
+|-----------|---------|-------------|
+| `LambdaFunction` | `role`, `func` | IAM Role + Lambda Function. Auto-attaches `AWSLambdaBasicExecutionRole`; adds `AWSLambdaVPCAccessExecutionRole` when `VpcConfig` is provided. |
+| `LambdaNode` | `role`, `func` | `LambdaFunction` preset with `Runtime: "nodejs20.x"` and `Handler: "index.handler"` |
+| `LambdaPython` | `role`, `func` | `LambdaFunction` preset with `Runtime: "python3.12"` and `Handler: "handler.handler"` |
+| `LambdaApi` | `role`, `func`, `permission` | `LambdaFunction` + Lambda Permission for API Gateway invocation |
+| `LambdaScheduled` | `role`, `func`, `rule`, `permission` | `LambdaFunction` + EventBridge Rule + Lambda Permission |
+| `LambdaSqs` | `queue`, `role`, `func` | SQS Queue + Lambda + EventSourceMapping. Auto-attaches SQS receive policy. |
+| `LambdaEventBridge` | `rule`, `role`, `func`, `permission` | EventBridge Rule + Lambda. Supports `schedule` and/or `eventPattern`. |
+| `LambdaDynamoDB` | `table`, `role`, `func` | DynamoDB Table + Lambda. Auto-attaches DynamoDB policy and injects `TABLE_NAME` env var. |
+| `LambdaS3` | `bucket`, `role`, `func` | S3 Bucket (encrypted, public access blocked) + Lambda. Auto-attaches S3 policy and injects `BUCKET_NAME` env var. |
+| `LambdaSns` | `topic`, `role`, `func`, `subscription`, `permission` | SNS Topic + Lambda via Subscription. Auto-attaches invoke permission for SNS. |
+| `VpcDefault` | `vpc`, `igw`, `igwAttachment`, `publicSubnet1`, `publicSubnet2`, `privateSubnet1`, `privateSubnet2`, `publicRouteTable`, `publicRoute`, `publicRta1`, `publicRta2`, `privateRouteTable`, `privateRta1`, `privateRta2`, `natEip`, `natGateway`, `privateRoute` | Production-ready VPC: 2 public + 2 private subnets across 2 AZs, internet gateway, single NAT gateway. |
+| `FargateAlb` | `cluster`, `executionRole`, `taskRole`, `logGroup`, `taskDef`, `albSg`, `taskSg`, `alb`, `targetGroup`, `listener`, `service` | Fargate service behind an ALB. Accepts VPC outputs as props. |
+| `AlbShared` | `cluster`, `executionRole`, `albSg`, `alb`, `listener` | Shared ALB infrastructure (ECS cluster, execution role, ALB, listener with 404 default). Created once, consumed by multiple `FargateService` instances. |
+| `FargateService` | `taskRole`, `logGroup`, `taskDef`, `taskSg`, `targetGroup`, `rule`, `service` | Per-service Fargate resources with listener rule routing. Wire to an `AlbShared` instance for multi-service ALB patterns. |
+| `RdsInstance` | `subnetGroup`, `sg`, `db` (+ `parameterGroup` if configured) | RDS instance (postgres, mysql, mariadb) in private subnets. Creates DB subnet group, security group, and optionally a parameter group. Engine-specific defaults for port, username, and version. Encrypted by default. |
+
+All built-in composites accept `ManagedPolicyArns` and `Policies` for adding IAM permissions to the auto-created role.
+
+## Action constants
+
+Typed IAM action constants for common AWS services. Use them in policy documents instead of hand-typing action strings:
+
+```typescript title="action-constants.ts"
+import { Role, Role_Policy, Bucket, Sub, AWS } from "@intentius/chant-lexicon-aws";
+import { S3Actions } from "@intentius/chant-lexicon-aws";
+
+export const s3DataBucket = new Bucket({
+  BucketName: Sub`${AWS.StackName}-data`,
+  PublicAccessBlockConfiguration: {
+    BlockPublicAcls: true,
+    BlockPublicPolicy: true,
+    IgnorePublicAcls: true,
+    RestrictPublicBuckets: true,
+  },
+});
+
+export const s3ReaderRole = new Role({
+  AssumeRolePolicyDocument: {
+    Version: "2012-10-17",
+    Statement: [
+      {
+        Effect: "Allow",
+        Principal: { Service: "lambda.amazonaws.com" },
+        Action: "sts:AssumeRole",
+      },
+    ],
+  },
+  Policies: [
+    new Role_Policy({
+      PolicyName: "S3Read",
+      PolicyDocument: {
+        Version: "2012-10-17",
+        Statement: [
+          {
+            Effect: "Allow",
+            Action: S3Actions.ReadOnly,
+            Resource: s3DataBucket.Arn,
+          },
+        ],
+      },
+    }),
+  ],
+});
+```
+
+Available constants:
+
+| Constant | Key groups |
+|----------|------------|
+| `S3Actions` | `ReadOnly`, `WriteOnly`, `ReadWrite`, `Full`, `GetObject`, `PutObject`, `DeleteObject`, `ListObjects` |
+| `LambdaActions` | `Invoke`, `ReadOnly`, `Full` |
+| `DynamoDBActions` | `ReadOnly`, `WriteOnly`, `ReadWrite`, `Full`, `GetItem`, `PutItem`, `Query`, `Scan` |
+| `SQSActions` | `SendMessage`, `ReceiveMessage`, `Full` |
+| `SNSActions` | `Publish`, `Subscribe`, `Full` |
+| `IAMActions` | `PassRole` |
+| `ECRActions` | `Pull`, `Full` |
+| `LogsActions` | `Write`, `Full` |
+| `ECSActions` | `RunTask`, `Service`, `Full` |
+
+Broad groups like `ReadWrite` are always supersets of their narrow counterparts (`ReadOnly` + `WriteOnly`). All values are `as const` arrays for full type safety.
+
+## `withDefaults` — composite presets
+
+Wrap a composite with pre-applied defaults. Defaulted props become optional:
+
+```typescript title="with-defaults.ts"
+import { Sub, AWS, Function as LambdaFunction } from "@intentius/chant-lexicon-aws";
+import { Composite, withDefaults } from "@intentius/chant";
+
+interface LambdaApiProps {
+  name: string;
+  runtime: string;
+  handler: string;
+  timeout: number;
+  memorySize: number;
+  code: { ZipFile: string };
+}
+
+const LambdaApi = Composite<LambdaApiProps>((props) => ({
+  fn: new LambdaFunction({
+    FunctionName: props.name,
+    Runtime: props.runtime,
+    Handler: props.handler,
+    Timeout: props.timeout,
+    MemorySize: props.memorySize,
+    Code: props.code,
+  }),
+}), "LambdaApi");
+
+const SecureApi = withDefaults(LambdaApi, {
+  runtime: "nodejs20.x",
+  handler: "index.handler",
+  timeout: 10,
+  memorySize: 256,
+});
+
+export const healthApi = SecureApi({
+  name: Sub`${AWS.StackName}-health`,
+  code: { ZipFile: `exports.handler = async () => ({ statusCode: 200 });` },
+});
+
+// Composable — stack defaults on top of defaults
+export const HighMemoryApi = withDefaults(SecureApi, { memorySize: 2048, timeout: 25 });
+```
+
+`withDefaults` preserves the original composite's identity — same `_id` and `compositeName`, no new registry entry.
+
+### Computed defaults
+
+`withDefaults` also accepts a function that receives the caller's props and returns defaults. This enables conditional logic without generating extra resources:
+
+```typescript title="computed-defaults.ts"
+import { Composite, withDefaults } from "@intentius/chant";
+import { Function as LambdaFunction } from "@intentius/chant-lexicon-aws";
+
+interface ApiProps {
+  name: string;
+  runtime: string;
+  handler: string;
+  timeout: number;
+  memorySize: number;
+  code: { ZipFile: string };
+}
+
+const Api = Composite<ApiProps>((props) => ({
+  fn: new LambdaFunction({
+    FunctionName: props.name,
+    Runtime: props.runtime as any,
+    Handler: props.handler,
+    Timeout: props.timeout,
+    MemorySize: props.memorySize,
+    Code: props.code,
+  }),
+}), "Api");
+
+// Function-based defaults can compute values from caller props
+const SmartApi = withDefaults(Api, (props) => ({
+  runtime: "nodejs20.x",
+  handler: "index.handler",
+  // Scale timeout with memory — higher memory → longer timeout
+  timeout: (props.memorySize ?? 128) >= 1024 ? 60 : 10,
+  memorySize: 256,
+}));
+
+export const fast = SmartApi({
+  name: "fast-api",
+  code: { ZipFile: `exports.handler = async () => ({ statusCode: 200 });` },
+});
+
+// memorySize >= 1024 triggers the longer timeout
+export const heavy = SmartApi({
+  name: "heavy-api",
+  memorySize: 2048,
+  code: { ZipFile: `exports.handler = async () => ({ statusCode: 200 });` },
+});
+```
+
+Merge order: computed defaults are applied first, then user-provided props override them.
+
+## `propagate` — shared properties
+
+Attach properties that merge into every member during expansion:
+
+```typescript title="propagate.ts"
+import { propagate } from "@intentius/chant";
+import { healthApi } from "./with-defaults";
+
+export const propagatedApi = propagate(
+  healthApi,
+  { Tags: [{ Key: "env", Value: "prod" }] },
+);
+```
+
+Merge semantics:
+- **Scalars** — member-specific value wins over shared
+- **Arrays** (e.g. tags) — shared values prepended, member values appended
+- **`undefined`** — stripped from shared props, never overwrites
+
+## Nested stacks
+
+:::caution
+Nested stacks add deployment complexity and are not recommended for most projects. Prefer flat composites instead.
+:::
+
+When you need to split resources into a separate CloudFormation template, the lexicon supports nested stacks via `nestedStack()`. See the [Nested Stacks](../nested-stacks/) page for details.

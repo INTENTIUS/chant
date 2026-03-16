@@ -11,6 +11,7 @@ export const iamWildcardRule: LintRule = {
   id: "WAW009",
   severity: "warning",
   category: "security",
+  description: "Detects IAM policies with wildcard (*) resources — specify explicit resource ARNs for better security",
 
   check(context: LintContext): LintDiagnostic[] {
     const { sourceFile } = context;

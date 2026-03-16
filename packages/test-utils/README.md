@@ -1,326 +1,94 @@
 # @intentius/chant-test-utils
 
-> Part of the [chant](../../README.md) monorepo. Not yet published to npm.
+Internal testing utilities for the [chant](https://intentius.io/chant/) monorepo. Not published to npm.
 
-Shared testing utilities for chant packages.
+Provides shared helpers used across all chant packages: temporary directory management (`withTestDir`), mock factories for declarables, serializers, lint rules and contexts, typed error assertions (`expectToThrow`), and the **example test harness**. Designed for Bun's test runner.
 
-## Overview
+## Example Test Harness
 
-This package provides testing utilities used across all chant packages:
+The example harness (`@intentius/chant-test-utils/example-harness`) centralizes example testing so each lexicon has a single `examples.test.ts` instead of per-example test files. It auto-discovers example subdirectories and runs lint + build tests for each.
 
-- **Filesystem utilities**: Temporary directory creation and cleanup
-- **Mock factories**: Create test declarables, serializers, lint rules, and contexts
-- **Error assertions**: Test error conditions with `expectToThrow`
-- **Test isolation**: Automatic cleanup and error handling
-
-## Filesystem Utilities
-
-### withTestDir
-
-The recommended way to test filesystem operations. Automatically creates and cleans up temporary directories:
+### Quick start
 
 ```typescript
-import { withTestDir } from "@intentius/chant-test-utils";
-import { writeFile } from "node:fs/promises";
-import { join } from "node:path";
+// lexicons/my-lexicon/examples/examples.test.ts
+import { describeAllExamples } from "@intentius/chant-test-utils/example-harness";
+import { mySerializer } from "@intentius/chant-lexicon-my-lexicon";
 
-test("creates file", async () => {
-  await withTestDir(async (dir) => {
-    // dir is a unique temp directory
-    // Example: /tmp/chant-test-1234567890-0.123
-    await writeFile(join(dir, "app.ts"), "export const app = {};");
-
-    // Test your code that uses the directory
-    const files = await findInfraFiles(dir);
-    expect(files).toHaveLength(1);
-
-    // Directory is automatically cleaned up after the test
-  });
+describeAllExamples({
+  lexicon: "my-lexicon",
+  serializer: mySerializer,
+  outputKey: "my-lexicon",
+  examplesDir: import.meta.dir,
 });
 ```
 
-Benefits:
-- Unique directory per test (no conflicts)
-- Automatic cleanup (even if test fails)
-- Async-safe (handles concurrent tests)
-- No manual cleanup code needed
+This scans `examplesDir` for subdirectories containing a `src/` folder and registers a `describe()` block for each with two tests: **passes lint** and **build succeeds**.
 
-### createTestDir / cleanupTestDir
+### Per-example overrides
 
-For manual control over directory lifecycle:
+Pass custom assertions or skip tests for specific examples:
 
 ```typescript
-import { createTestDir, cleanupTestDir } from "@intentius/chant-test-utils";
-
-test("manual cleanup", async () => {
-  const dir = await createTestDir();
-  try {
-    // Your test code
-    await writeFile(join(dir, "test.ts"), "code");
-  } finally {
-    await cleanupTestDir(dir);
-  }
-});
-```
-
-When to use manual cleanup:
-- You need the directory path before the test logic
-- You're sharing a directory across multiple operations
-- You want explicit control over cleanup timing
-
-## Mock Factories
-
-### createMockEntity
-
-Create test declarable entities:
-
-```typescript
-import { createMockEntity } from "@intentius/chant-test-utils";
-
-test("processes entity", () => {
-  const entity = createMockEntity("TestEntity");
-
-  expect(entity.entityType).toBe("TestEntity");
-  expect(entity[DECLARABLE_MARKER]).toBe(true);
-});
-
-// With custom properties
-const entityWithProps = createMockEntity("AWS::S3::Bucket", {
-  bucketName: "my-bucket",
-  versioning: { status: "Enabled" },
-});
-```
-
-### createMockSerializer
-
-Create test serializer implementations:
-
-```typescript
-import { createMockSerializer } from "@intentius/chant-test-utils";
-
-test("serializes entities", () => {
-  const serializer = createMockSerializer("test");
-
-  const entities = new Map([
-    ["myEntity", createMockEntity("TestType")],
-  ]);
-
-  const output = serializer.serialize(entities);
-  expect(output).toContain("resources");
-  expect(output).toContain("myEntity");
-});
-
-// Custom serialization
-const customSerializer = createMockSerializer("custom", {
-  serialize: (entities) => {
-    return JSON.stringify({
-      custom: Array.from(entities.keys()),
-    });
+describeAllExamples(config, {
+  "my-example": {
+    checks: (output) => {
+      expect(output).toContain("expected-content");
+    },
   },
+  "docs-snippets": { skipLint: true, skipBuild: true },
+  "wip-example": { skipLint: true },
 });
 ```
 
-### createMockLintRule
+### Single example
 
-Create test lint rules:
+Use `describeExample` for one-off examples or cross-lexicon scenarios:
 
 ```typescript
-import { createMockLintRule } from "@intentius/chant-test-utils";
+import { describeExample } from "@intentius/chant-test-utils/example-harness";
 
-test("runs lint rule", () => {
-  const rule = createMockLintRule("test-rule", [
-    { message: "Error found", line: 1, column: 5 },
-  ]);
-
-  const context = createMockLintContext("const x = 1;", "test.ts");
-  const diagnostics = rule.check(context);
-
-  expect(diagnostics).toHaveLength(1);
-  expect(diagnostics[0].message).toBe("Error found");
-  expect(diagnostics[0].line).toBe(1);
-});
-
-// With custom check function
-const customRule = createMockLintRule("custom-rule", [], {
-  check: (context) => {
-    // Custom lint logic
-    if (context.sourceFile.text.includes("bad")) {
-      return [{
-        message: "Found 'bad' keyword",
-        line: 1,
-        column: 1,
-        ruleId: "custom-rule",
-        severity: "error",
-      }];
-    }
-    return [];
-  },
+describeExample("aws-k8s", {
+  lexicon: "aws-k8s",
+  serializer: [awsSerializer, k8sSerializer],
+  outputKey: ["aws", "k8s"],
+  examplesDir: import.meta.dir,
 });
 ```
 
-### createMockLintContext
+### API
 
-Create test lint contexts:
+#### `describeAllExamples(config, overrides?)`
 
-```typescript
-import { createMockLintContext } from "@intentius/chant-test-utils";
+Auto-discovers all subdirectories with `src/` under `config.examplesDir` and registers tests.
 
-test("analyzes code", () => {
-  const context = createMockLintContext(
-    'const x = "us-east-1";',
-    "test.ts"
-  );
+#### `describeExample(name, config, opts?)`
 
-  expect(context.filePath).toBe("test.ts");
-  expect(context.sourceFile).toBeDefined();
-  expect(context.sourceFile.text).toContain("us-east-1");
-});
-```
+Registers a `describe()` block for a single example with lint + build tests.
 
-## Error Assertions
+#### `ExampleHarnessConfig`
 
-### expectToThrow
+| Field | Type | Description |
+|-------|------|-------------|
+| `lexicon` | `string` | Label used in describe block names |
+| `serializer` | `Serializer \| Serializer[]` | Serializer(s) to build with |
+| `outputKey` | `string \| string[]` | Key(s) in `result.outputs` map to assert |
+| `examplesDir` | `string` | Directory to scan (use `import.meta.dir`) |
 
-Test that code throws expected errors:
+#### `ExampleOpts`
 
-```typescript
-import { expectToThrow } from "@intentius/chant-test-utils";
-import { DiscoveryError } from "@intentius/chant";
+| Field | Type | Description |
+|-------|------|-------------|
+| `checks` | `(output: string) => void` | Custom assertions on the primary output |
+| `skipLint` | `boolean` | Skip the lint test |
+| `skipBuild` | `boolean` | Skip the build test |
 
-test("throws DiscoveryError on import failure", async () => {
-  const error = await expectToThrow(
-    () => importModule("/invalid/path.ts"),
-    DiscoveryError
-  );
+### Adding a new example
 
-  expect(error.type).toBe("import");
-  expect(error.file).toBe("/invalid/path.ts");
-});
-
-// With validation callback
-test("validates error properties", async () => {
-  await expectToThrow(
-    () => buildEntity("BadEntity"),
-    BuildError,
-    (error) => {
-      expect(error.entityName).toBe("BadEntity");
-      expect(error.message).toContain("Failed to build");
-    }
-  );
-});
-
-// Async errors
-test("handles async errors", async () => {
-  await expectToThrow(
-    async () => await fetchData(),
-    Error
-  );
-});
-```
-
-Features:
-- Type-safe error checking
-- Supports sync and async functions
-- Optional validation callback
-- Fails if no error is thrown
-- Fails if wrong error type is thrown
-
-## Test Patterns
-
-### Filesystem Tests
-
-Always use `withTestDir` for filesystem operations:
-
-```typescript
-import { withTestDir } from "@intentius/chant-test-utils";
-
-test("discovers files", async () => {
-  await withTestDir(async (dir) => {
-    // Create test files
-    await writeFile(join(dir, "app.ts"), "export const app = {};");
-    await writeFile(join(dir, "config.ts"), "export const config = {};");
-
-    // Test discovery
-    const files = await findInfraFiles(dir);
-    expect(files).toHaveLength(2);
-  });
-});
-```
-
-### Error Testing
-
-Use `expectToThrow` for all error conditions:
-
-```typescript
-test("validates input", async () => {
-  await expectToThrow(
-    () => validateInput(""),
-    ValidationError,
-    (error) => {
-      expect(error.message).toContain("required");
-    }
-  );
-});
-```
-
-### Mock Objects
-
-Use mock factories for consistent test objects:
-
-```typescript
-test("serializes entity", () => {
-  const serializer = createMockSerializer("test");
-  const entity = createMockEntity("TestType", { name: "test" });
-  const entities = new Map([["testEntity", entity]]);
-
-  const output = serializer.serialize(entities);
-  expect(output).toBeDefined();
-});
-```
-
-## Usage with Bun Test
-
-These utilities are designed for [Bun's test runner](https://bun.sh/docs/cli/test):
-
-```typescript
-import { test, expect, describe } from "bun:test";
-import { withTestDir, createMockEntity, expectToThrow } from "@intentius/chant-test-utils";
-
-describe("MyModule", () => {
-  test("does something", async () => {
-    await withTestDir(async (dir) => {
-      // Test code
-    });
-  });
-
-  test("handles errors", async () => {
-    await expectToThrow(() => myFunction(), Error);
-  });
-});
-```
-
-## TypeScript Support
-
-This package is written in TypeScript and provides full type definitions for all utilities.
-
-## Examples
-
-See the test files across chant packages for usage examples:
-
-- `packages/core/src/discovery/files.test.ts` - Filesystem testing
-- `packages/core/src/errors.test.ts` - Error assertion testing
-- `packages/core/src/lint/rule.test.ts` - Mock factory usage
-- `lexicons/aws/src/serializer.test.ts` - Serializer testing
-
-## Documentation
-
-- [Testing Guide](../../TESTING.md) - Comprehensive testing documentation with patterns and examples
-- [Core Concepts](../../docs/src/content/docs/guides/core-concepts.md) - Understanding declarables and errors
-
-## Related Packages
-
-- `@intentius/chant` - Core functionality and types
-- `@intentius/chant-lexicon-aws` - AWS CloudFormation lexicon
+1. Create `lexicons/<lexicon>/examples/<name>/src/` with your TypeScript source files
+2. Add a `package.json` in `lexicons/<lexicon>/examples/<name>/` (workspace member)
+3. The centralized `examples.test.ts` auto-discovers it — no test file changes needed
+4. If your example needs custom assertions or lint/build skips, add an override entry
 
 ## License
 

@@ -50,10 +50,10 @@ export function isStackOutput(value: unknown): value is StackOutput {
  * @example
  * ```ts
  * import { stackOutput } from "@intentius/chant";
- * import * as _ from "./_";
+ * import { vpc, subnet } from "./vpc";
  *
- * export const vpcId = stackOutput(_.$.vpc.vpcId);
- * export const subnetId = stackOutput(_.$.subnet.subnetId, {
+ * export const vpcId = stackOutput(vpc.vpcId);
+ * export const subnetId = stackOutput(subnet.subnetId, {
  *   description: "Primary subnet ID",
  * });
  * ```

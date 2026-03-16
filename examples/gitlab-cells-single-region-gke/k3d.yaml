@@ -1,0 +1,403 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: cell-router
+  namespace: system
+  labels:
+    app.kubernetes.io/name: cell-router
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: cell-router
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: cell-router
+    spec:
+      containers:
+        - name: cell-router
+          image: cell-router:local
+          imagePullPolicy: Never
+          ports:
+            - name: http
+              containerPort: 8080
+          resources:
+            requests:
+              cpu: '20m'
+              memory: '32Mi'
+            limits:
+              cpu: '500m'
+              memory: '128Mi'
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: 8080
+            initialDelaySeconds: 3
+            periodSeconds: 10
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: 8080
+            initialDelaySeconds: 2
+            periodSeconds: 5
+          volumeMounts:
+            - name: routing-rules
+              mountPath: /etc/cell-router
+      volumes:
+        - name: routing-rules
+          configMap:
+            name: cell-router-rules
+
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: cell-router
+  namespace: system
+  annotations:
+    kubernetes.io/ingress.class: nginx
+spec:
+  ingressClassName: nginx
+  rules:
+    - host: '*.gitlab.intentius.io'
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: cell-router
+                port:
+                  number: 8080
+    - host: '*.alpha.gitlab.intentius.io'
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: cell-router
+                port:
+                  number: 8080
+    - host: '*.beta.gitlab.intentius.io'
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: cell-router
+                port:
+                  number: 8080
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: cell-router
+  namespace: system
+  labels:
+    app.kubernetes.io/name: cell-router
+spec:
+  type: NodePort
+  selector:
+    app.kubernetes.io/name: cell-router
+  ports:
+    - name: http
+      port: 8080
+      targetPort: http
+      nodePort: 30080
+
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: topology-service-k3d
+  namespace: system
+data:
+  config.yaml: |
+    
+    database:
+      host: 127.0.0.1
+      port: 5432
+      name: topology_smoke
+      user: unused
+      sslmode: disable
+    server:
+      port: 8080
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: topology-service
+  namespace: system
+  labels:
+    app.kubernetes.io/name: topology-service
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: topology-service
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: topology-service
+    spec:
+      containers:
+        - name: topology-service
+          image: topology-service:local
+          imagePullPolicy: Never
+          ports:
+            - name: http
+              containerPort: 8080
+          resources:
+            requests:
+              cpu: '20m'
+              memory: '32Mi'
+            limits:
+              cpu: '200m'
+              memory: '128Mi'
+          env:
+            - name: DB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: topology-smoke-db-secret
+                  key: password
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: 8080
+            initialDelaySeconds: 3
+            periodSeconds: 10
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: 8080
+            initialDelaySeconds: 2
+            periodSeconds: 5
+          volumeMounts:
+            - name: config
+              mountPath: /etc/topology-service
+      volumes:
+        - name: config
+          configMap:
+            name: topology-service-k3d
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: topology-service
+  namespace: system
+  labels:
+    app.kubernetes.io/name: topology-service
+spec:
+  selector:
+    app.kubernetes.io/name: topology-service
+  ports:
+    - name: http
+      port: 8080
+      targetPort: http
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mock-gitlab-alpha
+  namespace: cell-alpha
+  labels:
+    app.kubernetes.io/name: mock-gitlab-alpha
+    gitlab.example.com/cell: alpha
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: mock-gitlab-alpha
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: mock-gitlab-alpha
+    spec:
+      containers:
+        - name: mock-gitlab
+          image: nginx:alpine
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: workhorse
+              containerPort: 8181
+          resources:
+            requests:
+              cpu: '10m'
+              memory: '32Mi'
+            limits:
+              cpu: '100m'
+              memory: '64Mi'
+          volumeMounts:
+            - name: nginx-conf
+              mountPath: /etc/nginx/conf.d
+      volumes:
+        - name: nginx-conf
+          configMap:
+            name: mock-gitlab-alpha
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mock-gitlab-beta
+  namespace: cell-beta
+  labels:
+    app.kubernetes.io/name: mock-gitlab-beta
+    gitlab.example.com/cell: beta
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: mock-gitlab-beta
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: mock-gitlab-beta
+    spec:
+      containers:
+        - name: mock-gitlab
+          image: nginx:alpine
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: workhorse
+              containerPort: 8181
+          resources:
+            requests:
+              cpu: '10m'
+              memory: '32Mi'
+            limits:
+              cpu: '100m'
+              memory: '64Mi'
+          volumeMounts:
+            - name: nginx-conf
+              mountPath: /etc/nginx/conf.d
+      volumes:
+        - name: nginx-conf
+          configMap:
+            name: mock-gitlab-beta
+
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: mock-gitlab-alpha
+  namespace: cell-alpha
+data:
+  default.conf: |
+    
+    server {
+      listen 8181;
+      server_name _;
+      location / {
+        add_header X-Cell "alpha";
+        add_header X-Cell-Port "8181";
+        return 200 "cell=alpha\n";
+      }
+      location /healthz {
+        return 200 "ok\n";
+      }
+    }
+
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: mock-gitlab-beta
+  namespace: cell-beta
+data:
+  default.conf: |
+    
+    server {
+      listen 8181;
+      server_name _;
+      location / {
+        add_header X-Cell "beta";
+        add_header X-Cell-Port "8181";
+        return 200 "cell=beta\n";
+      }
+      location /healthz {
+        return 200 "ok\n";
+      }
+    }
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: gitlab-cell-alpha-webservice-default
+  namespace: cell-alpha
+  labels:
+    app.kubernetes.io/name: mock-gitlab-alpha
+    gitlab.example.com/cell: alpha
+spec:
+  selector:
+    app.kubernetes.io/name: mock-gitlab-alpha
+  ports:
+    - name: workhorse
+      port: 8181
+      targetPort: workhorse
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: gitlab-cell-beta-webservice-default
+  namespace: cell-beta
+  labels:
+    app.kubernetes.io/name: mock-gitlab-beta
+    gitlab.example.com/cell: beta
+spec:
+  selector:
+    app.kubernetes.io/name: mock-gitlab-beta
+  ports:
+    - name: workhorse
+      port: 8181
+      targetPort: workhorse
+
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: cell-router-rules
+  namespace: system
+  labels:
+    app.kubernetes.io/part-of: system
+data:
+  routing-rules.json: |
+    [
+      {
+        "type": "session_token",
+        "cookieName": "_gitlab_session",
+        "cellPrefixMap": {
+          "cell1_": "alpha",
+          "cell2_": "beta"
+        }
+      },
+      {
+        "type": "routable_token",
+        "tokenPattern": "^glrt-cell_(\\d+)_",
+        "cellIdMap": {
+          "1": "alpha",
+          "2": "beta"
+        }
+      },
+      {
+        "type": "path",
+        "pathPattern": "^/([^/]+)/",
+        "topologyServiceAddress": "topology-service.system.svc.cluster.local:8080",
+        "lookupParam": "org_slug"
+      }
+    ]
+  cell-registry.json: |
+    {
+      "alpha": "http://gitlab-cell-alpha-webservice-default.cell-alpha.svc.cluster.local:8181",
+      "beta": "http://gitlab-cell-beta-webservice-default.cell-beta.svc.cluster.local:8181"
+    }
+  router-config.json: '{"topologyServiceAddress":"topology-service.system.svc.cluster.local:8080","healthScoreThreshold":0.5,"healthcheckPath":"/healthz"}'

@@ -1,0 +1,52 @@
+include:
+  - template: Auto-DevOps.gitlab-ci.yml
+  - project: my-group/ci-templates
+    ref: main
+    file: /templates/build.yml
+
+stages:
+  - build
+  - test
+  - deploy
+
+default:
+  image: node:22-alpine
+  interruptible: true
+  retry:
+    max: 2
+    when:
+      - runner_system_failure
+      - stuck_or_timeout_failure
+
+.test-template: &test-defaults
+  stage: test
+  before_script:
+    - npm ci
+
+build:
+  stage: build
+  extends: .build-template
+  script:
+    - npm ci
+    - npm run build
+
+unit-test:
+  <<: *test-defaults
+  script:
+    - npm test
+
+integration-test:
+  <<: *test-defaults
+  script:
+    - npm run test:integration
+  rules:
+    - if: $CI_MERGE_REQUEST_IID
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+
+deploy:
+  stage: deploy
+  extends: .deploy-template
+  script:
+    - deploy.sh
+  rules:
+    - if: $CI_COMMIT_TAG

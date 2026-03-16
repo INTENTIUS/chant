@@ -6,7 +6,7 @@ description: Running lint and type checks on your chant project
 chant includes a built-in linter that validates your resource files. Run it with:
 
 ```bash
-npx chant lint
+chant lint
 ```
 
 A clean project produces no output. Errors and warnings are printed to stderr:
@@ -20,8 +20,10 @@ src/api.ts:12:1 error [EVL002] resource declaration must not be inside an if sta
 
 Lint runs two layers in one pass:
 
-1. **Evaluability rules (EVL)** — ensures all resource property expressions can be statically evaluated. See [Evaluability Rules](/lint-rules/evaluability/).
-2. **Correctness & style rules (COR)** — structural constraints like missing exports, circular dependencies, naming conventions. See [Correctness Rules](/lint-rules/correctness/).
+1. **Evaluability rules (EVL)** — ensures all resource property expressions can be statically evaluated. See [Evaluability Rules](/chant/lint-rules/evaluability/).
+2. **Correctness & style rules (COR)** — structural constraints like missing exports, circular dependencies, naming conventions. See [Correctness Rules](/chant/lint-rules/correctness/).
+
+Additionally, `chant build` runs **post-synth checks** against the serialized output (YAML, JSON, etc.). These lexicon-specific rules catch issues that only manifest in the generated output — for example, security misconfigurations, missing health probes, or invalid container commands. See your lexicon's lint rules documentation for the full list.
 
 ## Output Formats
 
@@ -32,7 +34,7 @@ Lint runs two layers in one pass:
 | `--format sarif` | SARIF 2.1.0 for CI integrations |
 
 ```bash
-npx chant lint --format json
+chant lint --format json
 ```
 
 ## Watch Mode
@@ -40,9 +42,9 @@ npx chant lint --format json
 Re-run lint automatically on file changes:
 
 ```bash
-npx chant lint --watch
+chant lint --watch
 ```
 
 ## Configuring Rules
 
-Rules are configured in `chant.config.ts`. See [Rule Configuration](/lint-rules/configuration/).
+Rules are configured in `chant.config.ts`. See [Rule Configuration](/chant/lint-rules/configuration/).

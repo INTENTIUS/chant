@@ -18,8 +18,8 @@ describe("writeResourceClass", () => {
     );
     const output = lines.join("\n");
     expect(output).toContain("export declare class Bucket {");
-    expect(output).toContain("bucketName: string;");
-    expect(output).toContain("readonly arn: string;");
+    expect(output).toContain("BucketName: string;");
+    expect(output).toContain("readonly Arn: string;");
     expect(output).toContain("}");
   });
 
@@ -34,7 +34,7 @@ describe("writeResourceClass", () => {
       remap,
     );
     const output = lines.join("\n");
-    expect(output).toContain("readonly config: BucketConfig;");
+    expect(output).toContain("readonly Config: BucketConfig;");
   });
 });
 
@@ -48,7 +48,7 @@ describe("writePropertyClass", () => {
     );
     const output = lines.join("\n");
     expect(output).toContain("export declare class BucketConfig {");
-    expect(output).toContain("enabled?: boolean;");
+    expect(output).toContain("Enabled?: boolean;");
     expect(output).toContain("}");
   });
 });
@@ -71,8 +71,8 @@ describe("writeConstructor", () => {
       undefined,
     );
     const output = lines.join("\n");
-    const reqIdx = output.indexOf("required:");
-    const optIdx = output.indexOf("optional?:");
+    const reqIdx = output.indexOf("Required:");
+    const optIdx = output.indexOf("Optional?:");
     expect(reqIdx).toBeLessThan(optIdx);
   });
 
@@ -85,6 +85,70 @@ describe("writeConstructor", () => {
     );
     const output = lines.join("\n");
     expect(output).toContain("/** The bucket name */");
+  });
+});
+
+describe("writeConstructor with resourceAttributesType", () => {
+  test("empty props with attributes type emits both params", () => {
+    const lines: string[] = [];
+    writeConstructor(lines, [], undefined, "CFResourceAttributes");
+    expect(lines.join("\n")).toContain(
+      "constructor(props: Record<string, unknown>, attributes?: CFResourceAttributes);",
+    );
+  });
+
+  test("props with attributes type emits second param after closing brace", () => {
+    const lines: string[] = [];
+    writeConstructor(
+      lines,
+      [{ name: "BucketName", type: "string", required: true }],
+      undefined,
+      "CFResourceAttributes",
+    );
+    const output = lines.join("\n");
+    expect(output).toContain("constructor(props: {");
+    expect(output).toContain("BucketName: string;");
+    expect(output).toContain("}, attributes?: CFResourceAttributes);");
+  });
+
+  test("without attributes type, closing brace has no second param", () => {
+    const lines: string[] = [];
+    writeConstructor(
+      lines,
+      [{ name: "Name", type: "string", required: true }],
+      undefined,
+    );
+    const output = lines.join("\n");
+    expect(output).toContain("  });");
+    expect(output).not.toContain("attributes?");
+  });
+});
+
+describe("writeResourceClass with resourceAttributesType", () => {
+  test("resource class constructor includes attributes param", () => {
+    const lines: string[] = [];
+    writeResourceClass(
+      lines,
+      "Bucket",
+      [{ name: "BucketName", type: "string", required: false }],
+      [{ name: "Arn", type: "string" }],
+      undefined,
+      "CFResourceAttributes",
+    );
+    const output = lines.join("\n");
+    expect(output).toContain("}, attributes?: CFResourceAttributes);");
+    expect(output).toContain("readonly Arn: string;");
+  });
+
+  test("property class does not get attributes param", () => {
+    const lines: string[] = [];
+    writePropertyClass(
+      lines,
+      "BucketConfig",
+      [{ name: "Enabled", type: "boolean", required: false }],
+    );
+    const output = lines.join("\n");
+    expect(output).not.toContain("attributes?");
   });
 });
 

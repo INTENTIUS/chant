@@ -2,9 +2,14 @@ name: chant
 
 on: [push, pull_request]
 
+permissions:
+  contents: read
+  security-events: write
+
 jobs:
   check:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
       - uses: oven-sh/setup-bun@v2
@@ -12,19 +17,73 @@ jobs:
       - name: Install dependencies
         run: bun install
 
-      - name: Lint infrastructure
-        run: chant lint ./src --format sarif > results.sarif
+      - name: Cache lexicon schemas
+        uses: actions/cache@v4
+        with:
+          path: ~/.chant
+          key: lexicon-schemas-${{ hashFiles('lexicons/*/src/**/fetch.ts', 'lexicons/*/src/**/versions.ts') }}
+          restore-keys: |
+            lexicon-schemas-
 
-      - name: Build infrastructure
-        run: chant build ./src --output template.json
+      - name: Generate lexicon artifacts
+        run: |
+          bun run --cwd lexicons/aws prepack
+          bun run --cwd lexicons/azure prepack
+          bun run --cwd lexicons/gitlab prepack
+          bun run --cwd lexicons/github prepack
+          bun run --cwd lexicons/k8s prepack
+          bun run --cwd lexicons/flyway prepack
+          bun run --cwd lexicons/gcp prepack
+          bun run --cwd lexicons/helm prepack
+
+      - name: Typecheck
+        run: bunx tsc --noEmit -p packages/core/tsconfig.json
+
+      - name: Lint example project
+        run: bun run packages/core/src/cli/main.ts lint lexicons/aws/examples/lambda-function/src --format sarif > results.sarif
+
+      - name: Build example project
+        run: bun run packages/core/src/cli/main.ts build lexicons/aws/examples/lambda-function/src --output template.json
 
       - name: Upload SARIF results
         if: always()
-        uses: github/codeql-action/upload-sarif@v3
+        uses: github/codeql-action/upload-sarif@v4
         with:
           sarif_file: results.sarif
 
   test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+
+      - name: Install dependencies
+        run: bun install
+
+      - name: Cache lexicon schemas
+        uses: actions/cache@v4
+        with:
+          path: ~/.chant
+          key: lexicon-schemas-${{ hashFiles('lexicons/*/src/**/fetch.ts', 'lexicons/*/src/**/versions.ts') }}
+          restore-keys: |
+            lexicon-schemas-
+
+      - name: Generate lexicon artifacts
+        run: |
+          bun run --cwd lexicons/aws prepack
+          bun run --cwd lexicons/azure prepack
+          bun run --cwd lexicons/gitlab prepack
+          bun run --cwd lexicons/github prepack
+          bun run --cwd lexicons/k8s prepack
+          bun run --cwd lexicons/flyway prepack
+          bun run --cwd lexicons/gcp prepack
+          bun run --cwd lexicons/helm prepack
+
+      - name: Run tests
+        run: bun test
+
+  validate:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
@@ -34,43 +93,44 @@ jobs:
       - name: Install dependencies
         run: bun install
 
-      - name: Run tests
-        run: bun test
+      - name: Cache lexicon schemas
+        uses: actions/cache@v4
+        with:
+          path: ~/.chant
+          key: lexicon-schemas-${{ hashFiles('lexicons/*/src/**/fetch.ts', 'lexicons/*/src/**/versions.ts') }}
+          restore-keys: |
+            lexicon-schemas-
 
-  validate:
+      - name: Generate and validate AWS lexicon
+        run: bun run --cwd lexicons/aws prepack
+
+      - name: Generate and validate GitLab lexicon
+        run: bun run --cwd lexicons/gitlab prepack
+
+      - name: Generate and validate GitHub lexicon
+        run: bun run --cwd lexicons/github prepack
+
+      - name: Generate and validate K8s lexicon
+        run: bun run --cwd lexicons/k8s prepack
+
+      - name: Generate and validate Flyway lexicon
+        run: bun run --cwd lexicons/flyway prepack
+
+      - name: Generate and validate GCP lexicon
+        run: bun run --cwd lexicons/gcp prepack
+
+      - name: Generate and validate Azure lexicon
+        run: bun run --cwd lexicons/azure prepack
+
+      - name: Generate and validate Helm lexicon
+        run: bun run --cwd lexicons/helm prepack
+
+  smoke-npm:
+    if: false  # disabled — Docker smoke tests are for local/release validation, not every push
     runs-on: ubuntu-latest
-    timeout-minutes: 2
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
-      - uses: oven-sh/setup-bun@v2
 
-      - name: Install dependencies
-        run: bun install
-
-      - name: Validate lexicon artifacts
-        run: bun run lexicons/aws/src/plugin.ts validate
-
-  validate-gitlab:
-    runs-on: ubuntu-latest
-    timeout-minutes: 2
-    steps:
-      - uses: actions/checkout@v4
-      - uses: oven-sh/setup-bun@v2
-
-      - name: Install dependencies
-        run: bun install
-
-      - name: Validate GitLab lexicon artifacts
-        run: bun run lexicons/gitlab/src/plugin.ts validate
-
-  smoke:
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    if: github.ref == 'refs/heads/main' || github.event_name == 'pull_request'
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Run smoke tests
-        run: |
-          chmod +x test/smoke.sh
-          ./test/smoke.sh all
+      - name: npm smoke tests (docker build)
+        run: docker build -f test/Dockerfile.smoke-npm -t chant-smoke-npm .

@@ -1,0 +1,105 @@
+---
+title: "Kubernetes Concepts"
+description: "How Kubernetes resources map to chant constructs — apiVersion, kind, metadata, spec"
+---
+Every exported resource declaration becomes a Kubernetes manifest document in the generated YAML. The serializer handles the translation automatically:
+
+- Resolves the correct `apiVersion` and `kind` from the resource type
+- Converts the export name to a kebab-case `metadata.name`
+- Nests user properties under `spec` (or at the top level for specless types like ConfigMap)
+- Merges default labels and annotations from `defaultLabels()`/`defaultAnnotations()`
+
+## Resource structure
+
+Every Kubernetes resource has four standard fields:
+
+| Field | Source | Example |
+|-------|--------|---------|
+| `apiVersion` | Resolved from resource type | `apps/v1` |
+| `kind` | Resolved from resource type | `Deployment` |
+| `metadata` | From `metadata` property | `{ name: "my-app", labels: {...} }` |
+| `spec` | From `spec` property or remaining props | Resource-specific configuration |
+
+## API groups
+
+K8s resources are organized by API group:
+
+| Group | apiVersion | Resources |
+|-------|-----------|-----------|
+| Core | `v1` | Pod, Service, ConfigMap, Secret, Namespace, ServiceAccount |
+| Apps | `apps/v1` | Deployment, StatefulSet, DaemonSet, ReplicaSet |
+| Batch | `batch/v1` | Job, CronJob |
+| Networking | `networking.k8s.io/v1` | Ingress, NetworkPolicy |
+| RBAC | `rbac.authorization.k8s.io/v1` | Role, ClusterRole, RoleBinding, ClusterRoleBinding |
+| Autoscaling | `autoscaling/v2` | HorizontalPodAutoscaler |
+| Policy | `policy/v1` | PodDisruptionBudget |
+
+## Property types
+
+Nested objects like containers, probes, and volumes are expressed as property types:
+
+```typescript
+import { Deployment, Container, Probe, ResourceRequirements } from "@intentius/chant-lexicon-k8s";
+
+export const app = new Deployment({
+  metadata: { name: "my-app" },
+  spec: {
+    replicas: 2,
+    selector: { matchLabels: { app: "my-app" } },
+    template: {
+      metadata: { labels: { app: "my-app" } },
+      spec: {
+        containers: [
+          new Container({
+            name: "app",
+            image: "my-app:1.0",
+            resources: new ResourceRequirements({
+              limits: { cpu: "500m", memory: "256Mi" },
+              requests: { cpu: "100m", memory: "128Mi" },
+            }),
+            livenessProbe: new Probe({
+              httpGet: { path: "/healthz", port: 8080 },
+              initialDelaySeconds: 10,
+            }),
+          }),
+        ],
+      },
+    },
+  },
+});
+```
+
+## Specless types
+
+Some K8s resources (ConfigMap, Secret, Namespace, ServiceAccount) don't have a `spec` field. Their data goes directly on the manifest:
+
+```typescript
+import { ConfigMap, Secret } from "@intentius/chant-lexicon-k8s";
+
+export const config = new ConfigMap({
+  metadata: { name: "app-config" },
+  data: { DATABASE_URL: "postgres://localhost:5432/mydb" },
+});
+
+export const secret = new Secret({
+  metadata: { name: "app-secret" },
+  stringData: { API_KEY: "changeme" },
+});
+```
+
+## Default labels and annotations
+
+Use `defaultLabels()` and `defaultAnnotations()` to inject metadata into all resources:
+
+```typescript
+import { defaultLabels } from "@intentius/chant-lexicon-k8s";
+
+export const labels = defaultLabels({
+  "app.kubernetes.io/managed-by": "chant",
+  "app.kubernetes.io/part-of": "my-system",
+});
+```
+
+Explicit labels on individual resources take precedence over defaults.
+
+> **Tip:** Avoid hardcoding `metadata.namespace` — the [WK8001 lint rule](/chant/lexicons/k8s/lint-rules/) will flag it. Use a config variable or pass namespace at deploy time instead.

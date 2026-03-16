@@ -51,6 +51,9 @@ function collectExportedDeclarables(sourceFile: ts.SourceFile): DeclarableInfo[]
       const className = getNewExpressionClassName(decl.initializer);
       if (!className || !isCapitalized(className)) continue;
 
+      // Parameters are inherently cross-file (declared in params.ts, consumed via Ref() elsewhere)
+      if (className === "Parameter") continue;
+
       declarables.push({
         name: decl.name.text,
         node,
@@ -92,6 +95,7 @@ export const noUnusedDeclarableRule: LintRule = {
   id: "COR004",
   severity: "warning",
   category: "correctness",
+  description: "Detects exported declarables that are never referenced in the same file",
   check(context: LintContext): LintDiagnostic[] {
     const diagnostics: LintDiagnostic[] = [];
     const declarables = collectExportedDeclarables(context.sourceFile);

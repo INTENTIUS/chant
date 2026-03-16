@@ -1,4 +1,5 @@
-import type { LintDiagnostic } from "../../lint/rule";
+import type { LintDiagnostic, LintRule, Severity } from "../../lint/rule";
+import { pathToFileURL } from "node:url";
 
 /**
  * ANSI color codes
@@ -35,7 +36,7 @@ function color(text: string, colorCode: string): string {
  */
 export function formatStylish(diagnostics: LintDiagnostic[]): string {
   if (diagnostics.length === 0) {
-    return "";
+    return formatSummary(0, 0);
   }
 
   // Group by file
@@ -122,9 +123,89 @@ export function formatJson(diagnostics: LintDiagnostic[]): string {
 }
 
 /**
- * Format diagnostics as SARIF (Static Analysis Results Interchange Format)
+ * Map lint severity to SARIF level
  */
-export function formatSarif(diagnostics: LintDiagnostic[]): string {
+function mapSeverity(severity: Severity): "error" | "warning" | "note" {
+  if (severity === "error") return "error";
+  if (severity === "warning") return "warning";
+  return "note";
+}
+
+/**
+ * Build a SARIF region object, only including endLine/endColumn when available
+ */
+function buildRegion(diag: LintDiagnostic): Record<string, number> {
+  const region: Record<string, number> = {
+    startLine: diag.line,
+    startColumn: diag.column,
+  };
+  if (diag.endLine !== undefined) region.endLine = diag.endLine;
+  if (diag.endColumn !== undefined) region.endColumn = diag.endColumn;
+  return region;
+}
+
+/**
+ * Build a SARIF result from a diagnostic
+ */
+function buildSarifResult(diag: LintDiagnostic, ruleIndex: Map<string, number>) {
+  const result: Record<string, unknown> = {
+    ruleId: diag.ruleId,
+    ruleIndex: ruleIndex.get(diag.ruleId),
+    level: mapSeverity(diag.severity),
+    message: { text: diag.message },
+    locations: [
+      {
+        physicalLocation: {
+          artifactLocation: {
+            uri: diag.file.startsWith("/") ? pathToFileURL(diag.file).href : diag.file,
+          },
+          region: buildRegion(diag),
+        },
+      },
+    ],
+    fingerprints: {
+      "chant/v1": `${diag.ruleId}:${diag.file}:${diag.line}:${diag.column}`,
+    },
+  };
+  return result;
+}
+
+/**
+ * Format diagnostics as SARIF (Static Analysis Results Interchange Format)
+ *
+ * @param diagnostics - Active (non-suppressed) diagnostics
+ * @param rules - Full list of loaded LintRules for rich metadata (optional)
+ * @param suppressed - Suppressed diagnostics with optional reason (optional)
+ * @param version - Tool version string (optional, defaults to "0.1.0")
+ */
+export function formatSarif(
+  diagnostics: LintDiagnostic[],
+  rules?: LintRule[],
+  suppressed?: Array<LintDiagnostic & { reason?: string }>,
+  version?: string,
+): string {
+  // Build rule metadata from LintRule objects when available, otherwise from diagnostics
+  const { sarifRules, ruleIndex } = buildRuleMetadata(diagnostics, suppressed ?? [], rules);
+
+  // Build active results
+  const results: Record<string, unknown>[] = diagnostics.map((diag) =>
+    buildSarifResult(diag, ruleIndex),
+  );
+
+  // Append suppressed results with SARIF suppressions
+  if (suppressed) {
+    for (const diag of suppressed) {
+      const result = buildSarifResult(diag, ruleIndex);
+      result.suppressions = [
+        {
+          kind: "inSource",
+          ...(diag.reason ? { justification: diag.reason } : {}),
+        },
+      ];
+      results.push(result);
+    }
+  }
+
   const sarif = {
     $schema: "https://raw.githubusercontent.com/oasis-tcs/sarif-spec/master/Schemata/sarif-schema-2.1.0.json",
     version: "2.1.0",
@@ -133,31 +214,12 @@ export function formatSarif(diagnostics: LintDiagnostic[]): string {
         tool: {
           driver: {
             name: "chant",
-            version: "0.1.0",
+            version: version ?? "0.1.0",
             informationUri: "https://chant.dev",
-            rules: getUniqueRules(diagnostics),
+            rules: sarifRules,
           },
         },
-        results: diagnostics.map((diag) => ({
-          ruleId: diag.ruleId,
-          level: diag.severity === "error" ? "error" : diag.severity === "warning" ? "warning" : "note",
-          message: {
-            text: diag.message,
-          },
-          locations: [
-            {
-              physicalLocation: {
-                artifactLocation: {
-                  uri: diag.file,
-                },
-                region: {
-                  startLine: diag.line,
-                  startColumn: diag.column,
-                },
-              },
-            },
-          ],
-        })),
+        results,
       },
     ],
   };
@@ -166,21 +228,56 @@ export function formatSarif(diagnostics: LintDiagnostic[]): string {
 }
 
 /**
- * Extract unique rules from diagnostics for SARIF
+ * Build SARIF rule metadata from loaded LintRules and/or diagnostics.
+ * Returns both the rules array and a ruleId→index map for result references.
  */
-function getUniqueRules(diagnostics: LintDiagnostic[]): Array<{ id: string; shortDescription: { text: string } }> {
-  const ruleIds = new Set<string>();
-  const rules: Array<{ id: string; shortDescription: { text: string } }> = [];
-
-  for (const diag of diagnostics) {
-    if (!ruleIds.has(diag.ruleId)) {
-      ruleIds.add(diag.ruleId);
-      rules.push({
-        id: diag.ruleId,
-        shortDescription: { text: diag.ruleId },
-      });
+function buildRuleMetadata(
+  diagnostics: LintDiagnostic[],
+  suppressed: LintDiagnostic[],
+  rules?: LintRule[],
+): {
+  sarifRules: Record<string, unknown>[];
+  ruleIndex: Map<string, number>;
+} {
+  // Build a lookup from rule objects
+  const ruleMap = new Map<string, LintRule>();
+  if (rules) {
+    for (const r of rules) {
+      ruleMap.set(r.id, r);
     }
   }
 
-  return rules;
+  // Collect all unique rule IDs from diagnostics + suppressed
+  const seen = new Set<string>();
+  const orderedIds: string[] = [];
+  for (const diag of [...diagnostics, ...suppressed]) {
+    if (!seen.has(diag.ruleId)) {
+      seen.add(diag.ruleId);
+      orderedIds.push(diag.ruleId);
+    }
+  }
+
+  const sarifRules: Record<string, unknown>[] = [];
+  const ruleIndex = new Map<string, number>();
+
+  for (const id of orderedIds) {
+    const rule = ruleMap.get(id);
+    const descText = rule?.description || id;
+    const entry: Record<string, unknown> = {
+      id,
+      shortDescription: { text: descText },
+      fullDescription: { text: descText },
+      helpUri: rule?.helpUri || `https://chant.dev/lint-rules/${id.toLowerCase()}`,
+      defaultConfiguration: {
+        level: mapSeverity(rule?.severity ?? "warning"),
+      },
+    };
+    if (rule?.category) {
+      entry.properties = { category: rule.category };
+    }
+    ruleIndex.set(id, sarifRules.length);
+    sarifRules.push(entry);
+  }
+
+  return { sarifRules, ruleIndex };
 }

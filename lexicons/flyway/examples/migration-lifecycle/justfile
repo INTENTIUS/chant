@@ -1,0 +1,34 @@
+# Migration lifecycle example — recipes for the full workflow.
+# Requires: bun, docker, flyway CLI on PATH.
+
+chant := "bun run --cwd ../../../packages/core src/cli/main.ts"
+
+# Start dev and shadow databases
+up:
+    docker compose up -d
+
+# Stop databases
+down:
+    docker compose down
+
+# Build flyway.toml from chant source
+build:
+    {{chant}} build src --lexicon flyway
+
+# Run pending migrations against dev
+migrate:
+    flyway -environment=devEnv migrate
+
+# Show migration status for dev
+info:
+    flyway -environment=devEnv info
+
+# Clean dev database (removes all objects)
+clean:
+    flyway -environment=devEnv clean
+
+# Full run: start DBs, build config, migrate
+run: up build migrate
+
+# Reset: clean then re-migrate
+reset: clean migrate

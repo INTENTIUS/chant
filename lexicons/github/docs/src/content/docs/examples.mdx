@@ -1,0 +1,283 @@
+---
+title: "Examples"
+description: "Walkthrough of GitHub Actions examples -- workflows, composites, pipelines, and patterns"
+---
+
+Runnable examples live in the lexicon's `examples/` directory. Clone the repo and try them:
+
+```bash
+cd examples/getting-started
+bun install
+chant build    # produces .github/workflows/ci.yml
+chant lint     # runs lint rules
+bun test       # runs the example's tests
+```
+
+## Getting Started
+
+`examples/getting-started/` -- a CI workflow with build and test steps for a Node.js project.
+
+```
+src/
+  ci.ts    # Workflow + Job definitions
+```
+
+### Source
+
+```typescript
+import { Workflow, Job, Step, Checkout, SetupNode } from "@intentius/chant-lexicon-github";
+
+export const workflow = new Workflow({
+  name: "CI",
+  on: {
+    push: { branches: ["main"] },
+    pull_request: { branches: ["main"] },
+  },
+  permissions: { contents: "read" },
+});
+
+export const build = new Job({
+  "runs-on": "ubuntu-latest",
+  timeoutMinutes: 15,
+  steps: [
+    Checkout({}).step,
+    SetupNode({ nodeVersion: "22", cache: "npm" }).step,
+    new Step({ name: "Install", run: "npm ci" }),
+    new Step({ name: "Build", run: "npm run build" }),
+    new Step({ name: "Test", run: "npm test" }),
+  ],
+});
+```
+
+### Generated output
+
+`chant build` produces `.github/workflows/ci.yml`:
+
+```yaml
+name: CI
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+permissions:
+  contents: read
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - name: Install
+        run: npm ci
+      - name: Build
+        run: npm run build
+      - name: Test
+        run: npm test
+```
+
+**Patterns demonstrated:**
+
+1. **Typed composites** -- `Checkout({})` and `SetupNode({...})` instead of raw `uses:` strings
+2. **Permissions** -- explicit `contents: read` following least-privilege
+3. **Timeout** -- `timeoutMinutes: 15` prevents runaway jobs
+4. **Trigger scoping** -- push and PR on `main` only
+
+## Composites usage
+
+`examples/docs-snippets/` -- demonstrates all composites and multi-job pipelines.
+
+### Action wrappers
+
+```typescript
+import { Checkout, SetupNode, SetupGo, CacheAction, UploadArtifact, DownloadArtifact } from "@intentius/chant-lexicon-github";
+
+// Checkout with full history
+const checkout = Checkout({ fetchDepth: 0 });
+
+// SetupNode with npm caching
+const setupNode = SetupNode({ nodeVersion: "22", cache: "npm" });
+
+// SetupGo
+const setupGo = SetupGo({ goVersion: "1.22" });
+
+// Custom cache
+const cache = CacheAction({
+  path: "~/.cache/my-tool",
+  key: "my-tool-cache-${{ runner.os }}",
+});
+
+// Artifact upload/download
+const upload = UploadArtifact({ name: "build-output", path: "dist/" });
+const download = DownloadArtifact({ name: "build-output", path: "dist/" });
+```
+
+### Multi-job pipelines
+
+```typescript
+import { NodePipeline, BunPipeline, PythonCI, DockerBuild, DeployEnvironment, GoCI } from "@intentius/chant-lexicon-github";
+
+// Node pipeline with artifact passing
+const node = NodePipeline({ nodeVersion: "22", packageManager: "pnpm" });
+export const nodeWorkflow = node.workflow;
+export const nodeBuild = node.buildJob;
+export const nodeTest = node.testJob;
+
+// Bun preset
+const bun = BunPipeline({});
+export const bunWorkflow = bun.workflow;
+
+// Python CI with lint
+const python = PythonCI({ pythonVersion: "3.12" });
+export const pythonWorkflow = python.workflow;
+
+// Docker build and push
+const docker = DockerBuild({ imageName: "ghcr.io/my-org/my-app" });
+export const dockerWorkflow = docker.workflow;
+
+// Deploy with environment protection
+const deploy = DeployEnvironment({
+  name: "staging",
+  deployScript: "npm run deploy",
+});
+export const deployJob = deploy.deployJob;
+
+// Go CI with lint
+const go = GoCI({ goVersion: "1.22" });
+export const goWorkflow = go.workflow;
+```
+
+## Expressions usage
+
+`examples/docs-snippets/` -- demonstrates the typed expression system.
+
+```typescript
+import {
+  github, runner, secrets, steps,
+  always, failure,
+  contains, startsWith,
+  branch, tag,
+} from "@intentius/chant-lexicon-github";
+
+// Logical operators
+const isMainBranch = github.ref.eq("refs/heads/main");
+const isPR = github.eventName.eq("pull_request");
+const mainOrPR = isMainBranch.or(isPR);
+
+// Condition helpers
+const alwaysRun = always(); // ${{ always() }}
+const onFailure = failure(); // ${{ failure() }}
+
+// Function helpers
+const hasLabel = contains(github.event, "bug");
+const isRelease = startsWith(github.ref, "refs/tags/v");
+
+// Convenience helpers
+const onMain = branch("main");   // github.ref == 'refs/heads/main'
+const onV1Tag = tag("v1");       // startsWith(github.ref, 'refs/tags/v1')
+
+// Dynamic context
+const token = secrets("NPM_TOKEN");
+const buildOutput = steps("build").outputs("artifact-path");
+const osType = runner.os;
+```
+
+## Variables usage
+
+`examples/docs-snippets/` -- PascalCase context variable references for template strings.
+
+```typescript
+import { Job, Step, GitHub, Runner } from "@intentius/chant-lexicon-github";
+
+export const deploy = new Job({
+  "runs-on": "ubuntu-latest",
+  steps: [
+    new Step({
+      name: "Print context",
+      run: `echo "Branch: ${GitHub.RefName}"
+echo "SHA: ${GitHub.Sha}"
+echo "Actor: ${GitHub.Actor}"
+echo "Repo: ${GitHub.Repository}"
+echo "Runner OS: ${Runner.Os}"`,
+    }),
+  ],
+});
+```
+
+## Common patterns
+
+### Multi-OS build matrix
+
+```typescript
+import { Job, Step, Checkout, SetupNode, matrix } from "@intentius/chant-lexicon-github";
+
+export const test = new Job({
+  "runs-on": matrix("os"),
+  strategy: {
+    matrix: {
+      os: ["ubuntu-latest", "macos-latest", "windows-latest"],
+      "node-version": ["20", "22"],
+    },
+    "fail-fast": false,
+  },
+  steps: [
+    Checkout({}).step,
+    SetupNode({ nodeVersion: matrix("node-version"), cache: "npm" }).step,
+    new Step({ name: "Test", run: "npm test" }),
+  ],
+});
+```
+
+### Release workflow with tag trigger
+
+```typescript
+import { Workflow, Job, Step, Checkout, SetupNode } from "@intentius/chant-lexicon-github";
+
+export const workflow = new Workflow({
+  name: "Release",
+  on: { push: { tags: ["v*"] } },
+  permissions: { contents: "write", packages: "write" },
+});
+
+export const publish = new Job({
+  "runs-on": "ubuntu-latest",
+  timeoutMinutes: 10,
+  steps: [
+    Checkout({}).step,
+    SetupNode({ nodeVersion: "22", cache: "npm" }).step,
+    new Step({ name: "Install", run: "npm ci" }),
+    new Step({ name: "Build", run: "npm run build" }),
+    new Step({ name: "Publish", run: "npm publish", env: { NODE_AUTH_TOKEN: "${{ secrets.NPM_TOKEN }}" } }),
+  ],
+});
+```
+
+### Deploy with environment protection
+
+```typescript
+import { Workflow, Job, Step, Checkout } from "@intentius/chant-lexicon-github";
+
+export const workflow = new Workflow({
+  name: "Deploy",
+  on: { push: { branches: ["main"] } },
+  concurrency: { group: "deploy", "cancel-in-progress": false },
+});
+
+export const deploy = new Job({
+  "runs-on": "ubuntu-latest",
+  timeoutMinutes: 30,
+  environment: { name: "production", url: "https://example.com" },
+  steps: [
+    Checkout({}).step,
+    new Step({ name: "Deploy", run: "npm run deploy" }),
+  ],
+});
+```

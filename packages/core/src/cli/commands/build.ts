@@ -3,9 +3,10 @@ import type { Serializer, SerializerResult } from "../../serializer";
 import type { LexiconPlugin } from "../../lexicon";
 import { runPostSynthChecks } from "../../lint/post-synth";
 import type { PostSynthCheck } from "../../lint/post-synth";
+import { sortedJsonReplacer } from "../../utils";
 import { formatError, formatWarning, formatSuccess, formatBold, formatInfo } from "../format";
 import { writeFileSync } from "fs";
-import { resolve } from "path";
+import { resolve, dirname, join } from "path";
 import { watchDirectory, formatTimestamp, formatChangedFiles } from "../watch";
 
 /**
@@ -72,17 +73,22 @@ export async function buildCommand(options: BuildOptions): Promise<BuildResult> 
     warnings.push(formatWarning({ message: warning }));
   }
 
-  // Run post-synth checks from plugins
+  // Run post-synth checks from plugins — each plugin only sees its own lexicon's output
   if (result.errors.length === 0 && options.plugins) {
-    const postSynthChecks: PostSynthCheck[] = [];
     for (const plugin of options.plugins) {
-      if (plugin.postSynthChecks) {
-        postSynthChecks.push(...plugin.postSynthChecks());
-      }
-    }
+      if (!plugin.postSynthChecks) continue;
+      const checks = plugin.postSynthChecks();
+      if (checks.length === 0) continue;
 
-    if (postSynthChecks.length > 0) {
-      const postDiags = runPostSynthChecks(postSynthChecks, result);
+      // Scope outputs to this plugin's lexicon so cross-lexicon outputs don't interfere
+      const scopedOutputs = new Map<string, string | SerializerResult>();
+      const pluginOutput = result.outputs.get(plugin.name);
+      if (pluginOutput !== undefined) {
+        scopedOutputs.set(plugin.name, pluginOutput);
+      }
+
+      const scopedResult = { ...result, outputs: scopedOutputs };
+      const postDiags = runPostSynthChecks(checks, scopedResult);
       for (const diag of postDiags) {
         const prefix = diag.entity ? `[${diag.entity}] ` : "";
         const lexiconSuffix = diag.lexicon ? ` (${diag.lexicon})` : "";
@@ -172,7 +178,6 @@ export async function buildCommand(options: BuildOptions): Promise<BuildResult> 
 
         // Write additional files (e.g. nested stack templates) alongside the primary output
         if (additionalFiles.size > 0) {
-          const { dirname, join } = require("path");
           const outputDir = dirname(outputPath);
           for (const [filename, content] of additionalFiles) {
             let fileContent = content;
@@ -210,6 +215,10 @@ export async function buildCommand(options: BuildOptions): Promise<BuildResult> 
   const resourceCount = result.entities.size;
   const fileCount = result.sourceFileCount;
 
+  if (fileCount === 0 && errors.length === 0) {
+    console.error(formatInfo("No source files found — create .ts files in the target directory"));
+  }
+
   if (options.verbose && errors.length === 0) {
     console.error(
       formatSuccess(
@@ -225,18 +234,6 @@ export async function buildCommand(options: BuildOptions): Promise<BuildResult> 
     errors,
     warnings,
   };
-}
-
-/**
- * JSON.stringify replacer that sorts object keys for deterministic output
- */
-function sortedJsonReplacer(_key: string, value: unknown): unknown {
-  if (value && typeof value === "object" && !Array.isArray(value)) {
-    return Object.fromEntries(
-      Object.entries(value as Record<string, unknown>).sort(([a], [b]) => a.localeCompare(b))
-    );
-  }
-  return value;
 }
 
 /**

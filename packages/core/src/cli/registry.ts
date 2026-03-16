@@ -14,6 +14,7 @@ export interface ParsedArgs {
   force?: boolean;
   fix: boolean;
   lexicon?: string;
+  template?: string;
   watch: boolean;
   verbose: boolean;
   help: boolean;

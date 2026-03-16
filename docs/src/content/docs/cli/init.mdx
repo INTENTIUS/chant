@@ -8,7 +8,7 @@ Scaffold a new chant project with the standard directory structure and configura
 ## Synopsis
 
 ```
-npx chant init <path> --lexicon <name> [flags]
+chant init <path> --lexicon <name> [flags]
 ```
 
 ## Flags
@@ -16,6 +16,7 @@ npx chant init <path> --lexicon <name> [flags]
 | Flag | Description |
 |------|-------------|
 | `-d, --lexicon <name>` | Select lexicon (**required**) |
+| `-t, --template <name>` | Init template (e.g. `node-pipeline`, `docker-build`) |
 | `--force` | Overwrite existing files |
 
 ## Description
@@ -26,7 +27,6 @@ npx chant init <path> --lexicon <name> [flags]
 
 | File | Purpose |
 |------|---------|
-| `src/_.ts` | Barrel file that re-exports the lexicon and creates `$` |
 | `src/` sample resources | Starter resource definitions |
 | `chant.config.ts` | Project configuration (lexicons, strict lint preset) |
 | `tsconfig.json` | TypeScript compiler options |
@@ -36,12 +36,12 @@ npx chant init <path> --lexicon <name> [flags]
 ## Usage
 
 ```bash
-npx chant init my-infra --lexicon aws
+chant init my-infra --lexicon aws
 cd my-infra
-npx chant build
+chant build
 
 # Overwrite existing files
-npx chant init my-infra --lexicon aws --force
+chant init my-infra --lexicon aws --force
 ```
 
 ## Lexicon scaffold mode
@@ -49,17 +49,17 @@ npx chant init my-infra --lexicon aws --force
 To scaffold a new **lexicon plugin** project (for lexicon authors), use:
 
 ```
-npx chant init lexicon <name> [path] [--force]
+chant init lexicon <name> [path] [--force]
 ```
 
-This creates a complete lexicon plugin project with stubs for every required lifecycle method. See [`init lexicon`](/cli/init-lexicon/) for full details.
+This creates a complete lexicon plugin project with stubs for every required lifecycle method. See [`init lexicon`](/chant/cli/init-lexicon/) for full details.
 
 ```bash
 # Scaffold a new lexicon
-npx chant init lexicon k8s
+chant init lexicon k8s
 
 # Scaffold at a custom path
-npx chant init lexicon gcp ./my-gcp-lexicon
+chant init lexicon gcp ./my-gcp-lexicon
 ```
 
 ## Exit Codes

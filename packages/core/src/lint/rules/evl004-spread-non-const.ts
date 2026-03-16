@@ -103,6 +103,7 @@ export const evl004SpreadNonConstRule: LintRule = {
   id: "EVL004",
   severity: "error",
   category: "correctness",
+  description: "Spread expressions must reference a const variable or literal, not a dynamic source",
   check(context: LintContext): LintDiagnostic[] {
     const diagnostics: LintDiagnostic[] = [];
     checkNode(context.sourceFile, context, diagnostics);

@@ -51,7 +51,7 @@ describe("buildRegistry", () => {
     const entries = buildRegistry(resources, naming, testConfig);
 
     expect(entries["Bucket"]).toBeDefined();
-    expect(entries["Bucket"].attrs).toEqual({ arn: "Arn", domainName: "DomainName" });
+    expect(entries["Bucket"].attrs).toEqual({ Arn: "Arn", DomainName: "DomainName" });
   });
 
   test("omits attrs when empty", () => {
@@ -69,7 +69,7 @@ describe("buildRegistry", () => {
         typeName: "Test::S3::Bucket",
         attributes: [],
         properties: [],
-        propertyTypes: [{ name: "Bucket_Versioning", cfnType: "Versioning" }],
+        propertyTypes: [{ name: "Bucket_Versioning", specType: "Versioning" }],
       },
     ];
     const naming = makeNaming(resources);

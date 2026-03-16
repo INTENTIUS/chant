@@ -98,10 +98,22 @@ export interface IntrinsicDef {
 }
 
 /**
+ * Structured init template output from a lexicon plugin.
+ */
+export interface InitTemplateSet {
+  /** Source files written to src/ */
+  src: Record<string, string>;
+  /** Application scaffold files written to project root */
+  root?: Record<string, string>;
+  /** Scripts merged into generated package.json */
+  scripts?: Record<string, string>;
+}
+
+/**
  * Plugin interface for lexicon packages.
  *
  * Required lifecycle methods enforce consistency: every lexicon must support
- * generate, validate, coverage, package, and rollback operations.
+ * generate, validate, coverage, and package operations.
  */
 export interface LexiconPlugin {
   // ── Required ──────────────────────────────────────────────
@@ -122,9 +134,6 @@ export interface LexiconPlugin {
 
   /** Package lexicon into distributable tarball */
   package(options?: { verbose?: boolean; force?: boolean }): Promise<void>;
-
-  /** List or restore generation snapshots */
-  rollback(options?: { restore?: string; verbose?: boolean }): Promise<void>;
 
   // ── Optional extensions ───────────────────────────────────
   /** Return lint rules provided by this lexicon */
@@ -159,7 +168,7 @@ export interface LexiconPlugin {
   skills?(): SkillDefinition[];
 
   /** Return source file templates for `chant init` project scaffolding */
-  initTemplates?(): Record<string, string>;
+  initTemplates?(template?: string): InitTemplateSet;
 
   /** Optional initialization hook */
   init?(): void | Promise<void>;
@@ -184,6 +193,30 @@ export interface LexiconPlugin {
 
   /** Return MCP resource contributions */
   mcpResources?(): McpResourceContribution[];
+
+  // State
+  /** Query deployed resources and return API metadata. Opt-in. */
+  describeResources?(options: {
+    environment: string;
+    buildOutput: string;
+    entityNames: string[];
+  }): Promise<Record<string, ResourceMetadata>>;
+}
+
+/**
+ * Metadata about a deployed resource, returned by describeResources.
+ */
+export interface ResourceMetadata {
+  /** Entity type (e.g. AWS::S3::Bucket, K8s::Apps::Deployment) */
+  type: string;
+  /** Provider-assigned physical ID (ARN, resource ID, pod name) */
+  physicalId?: string;
+  /** Provider-specific status string */
+  status: string;
+  /** ISO timestamp of last update */
+  lastUpdated?: string;
+  /** Cloud-assigned output properties */
+  attributes?: Record<string, unknown>;
 }
 
 /**
@@ -206,7 +239,6 @@ export function isLexiconPlugin(value: unknown): value is LexiconPlugin {
     typeof obj.generate === "function" &&
     typeof obj.validate === "function" &&
     typeof obj.coverage === "function" &&
-    typeof obj.package === "function" &&
-    typeof obj.rollback === "function"
+    typeof obj.package === "function"
   );
 }

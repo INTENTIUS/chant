@@ -1,0 +1,71 @@
+name: VS Code Extension
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - "editors/vscode/**"
+    tags:
+      - "ext-vscode-v*"
+  pull_request:
+    paths:
+      - "editors/vscode/**"
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - run: npm install
+        working-directory: editors/vscode
+      - run: npm run build
+        working-directory: editors/vscode
+      - run: npx @vscode/vsce package --no-dependencies
+        working-directory: editors/vscode
+      - uses: actions/upload-artifact@v4
+        with:
+          name: chant-vscode-${{ github.sha }}
+          path: editors/vscode/*.vsix
+
+  publish-vscode:
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/ext-vscode-v') || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - run: npm install
+        working-directory: editors/vscode
+      - run: npm run build
+        working-directory: editors/vscode
+
+      - name: Publish to VS Code Marketplace
+        working-directory: editors/vscode
+        run: npx @vscode/vsce publish --no-dependencies
+        env:
+          VSCE_PAT: ${{ secrets.VSCE_PAT }}
+
+  # TODO: Re-enable once Open VSX namespace is approved
+  # publish-openvsx:
+  #   needs: build
+  #   if: startsWith(github.ref, 'refs/tags/ext-vscode-v')
+  #   runs-on: ubuntu-latest
+  #   steps:
+  #     - uses: actions/checkout@v4
+  #     - uses: actions/setup-node@v4
+  #       with:
+  #         node-version: "22"
+  #     - run: npm install
+  #       working-directory: editors/vscode
+  #     - run: npm run build
+  #       working-directory: editors/vscode
+  #     - name: Publish to Open VSX Registry
+  #       working-directory: editors/vscode
+  #       run: npx ovsx publish --no-dependencies -p "$OVSX_PAT"
+  #       env:
+  #         OVSX_PAT: ${{ secrets.OVSX_PAT }}

@@ -1,0 +1,73 @@
+---
+title: "Operational Playbook"
+description: "Build, lint, apply, troubleshoot Config Connector resources"
+---
+This playbook covers the full lifecycle of chant-produced Config Connector manifests.
+
+## Build & validate
+
+| Step | Command | What it catches |
+|------|---------|-----------------|
+| Lint source | `chant lint src/` | Hardcoded project IDs (WGC001), regions (WGC002), public IAM (WGC003) |
+| Build manifests | `chant build src/ --output manifests.yaml` | Post-synth: missing encryption (WGC101), public IAM (WGC102), missing project annotation (WGC103), 14 more checks |
+| Server dry-run | `kubectl apply -f manifests.yaml --dry-run=server` | K8s API validation: CRD schema errors, admission webhooks |
+
+## Deploy to Kubernetes
+
+```bash
+# Build
+chant build src/ --output manifests.yaml
+
+# Diff before applying
+kubectl diff -f manifests.yaml
+
+# Dry run
+kubectl apply -f manifests.yaml --dry-run=server
+
+# Apply
+kubectl apply -f manifests.yaml
+```
+
+## Monitoring reconciliation
+
+```bash
+# List all Config Connector resources
+kubectl get gcp -A
+
+# Check specific resource status
+kubectl describe storagebuckets.storage.cnrm.cloud.google.com my-bucket
+
+# Watch for status changes
+kubectl get gcp -A -w
+```
+
+## Troubleshooting
+
+| Status | Meaning | Diagnostic | Fix |
+|--------|---------|------------|-----|
+| UpToDate | Resource in sync | None needed | — |
+| Updating | Applying changes | `kubectl describe` → Events | Wait for completion |
+| UpdateFailed | GCP API error | `kubectl describe` → Events | Check IAM permissions, quota, API enablement |
+| DependencyNotReady | Waiting for ref | `kubectl get gcp` | Ensure referenced resource exists and is UpToDate |
+| DeletionFailed | Cannot delete | `kubectl describe` → Events | Check IAM permissions, child resource dependencies |
+
+## Common issues
+
+| Symptom | Cause | Resolution |
+|---------|-------|------------|
+| Resource stuck in Updating | Missing GCP API | Enable API: add Service resource or `gcloud services enable` |
+| Permission denied | Service account lacks IAM role | Grant role to Config Connector SA |
+| Resource recreated on every apply | Missing deletion-policy annotation | Add `cnrm.cloud.google.com/deletion-policy: abandon` |
+| Namespace not found | ConfigConnectorContext missing | Create ConfigConnectorContext in namespace |
+| Cross-project reference fails | Missing project annotation | Add `cnrm.cloud.google.com/project-id` annotation |
+
+## Quick reference
+
+| Command | Description |
+|---------|-------------|
+| `chant build src/` | Synthesize manifests |
+| `chant lint src/` | Check for anti-patterns |
+| `kubectl apply -f manifests.yaml` | Apply to cluster |
+| `kubectl get gcp -A` | List all Config Connector resources |
+| `kubectl describe <resource>` | Check reconciliation status |
+| `kubectl delete -f manifests.yaml` | Remove resources |

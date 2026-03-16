@@ -1,0 +1,117 @@
+---
+title: "GCP GKE + Kubernetes"
+description: "Deploy a production-grade GKE microservice with GCP Config Connector for infrastructure and the K8s lexicon for workloads — all in TypeScript."
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+Two chant lexicons, one `src/` directory: the GCP lexicon produces Config Connector YAML that creates real GCP resources; the K8s lexicon produces kubectl-ready YAML for workloads. A single `.env` file bridges the two — Config Connector outputs (SA emails) flow in, K8s composites consume them.
+
+## What you'll build
+
+```
+┌─────────────────────────────────────────────────────────┐
+│  GCP Lexicon (Config Connector) (~15 resources)         │
+│  ├── VPC + Subnets + Cloud NAT                          │
+│  ├── GKE Cluster + Node Pool (Workload Identity)        │
+│  ├── 4× GCP Service Accounts                           │
+│  ├── IAM Policy Members (WI bindings + role grants)     │
+│  └── Cloud DNS Managed Zone                             │
+└────────────────────┬────────────────────────────────────┘
+                     │ SA emails via .env → config.ts
+┌────────────────────▼────────────────────────────────────┐
+│  K8s Lexicon (~20 resources)                            │
+│  ├── Namespace (quotas, limits, network policy)         │
+│  ├── AutoscaledService (Deployment + HPA + PDB)         │
+│  ├── WorkloadIdentityServiceAccount (GKE)               │
+│  ├── GceIngress + GkeExternalDnsAgent                   │
+│  ├── GcePdStorageClass                                  │
+│  ├── GkeFluentBitAgent (Cloud Logging)                  │
+│  └── GkeOtelCollector (Cloud Trace + Monitoring)        │
+└─────────────────────────────────────────────────────────┘
+```
+
+## What you'll learn
+
+- How Config Connector turns GCP resources into K8s CRDs — and why that means one `kubectl apply` creates real GCP infrastructure
+- The cross-lexicon value flow: CC outputs → `.env` → `config.ts` → K8s composite props
+- How `WorkloadIdentityServiceAccount` wires a K8s SA to a GCP SA (annotation + IAM binding)
+- The deploy order that matters: CC resources first, K8s workloads second — and why teardown reverses it
+
+## Cost
+
+GKE control plane free (one zonal cluster), Cloud NAT ~$32/mo, 3× e2-medium nodes ~$75/mo. **Total ~$107/mo.** Teardown after testing.
+
+## Get started
+
+```
+Deploy the k8s-gke-microservice example. My GCP project is <your-project-id>.
+```
+
+See [`examples/k8s-gke-microservice/`](https://github.com/intentius/chant/tree/main/examples/k8s-gke-microservice) for the full README, deploy workflow, and teardown instructions.
+
+## Key patterns
+
+### Config Connector as the GCP–K8s bridge
+
+Config Connector resources look like regular K8s objects but they represent real GCP resources. When you `kubectl apply` a `ContainerCluster` CRD, Config Connector calls the GKE API and creates the cluster. When you delete it, the cluster is deleted too.
+
+```typescript
+// src/infra/cluster.ts — GKE cluster as a K8s CRD
+export const cluster = new ContainerCluster({
+  metadata: { name: "gke-microservice", namespace: gcpProjectId },
+  spec: {
+    location: "us-central1-a",
+    workloadIdentityConfig: { workloadPool: `${gcpProjectId}.svc.id.goog` },
+    // ...
+  },
+});
+```
+
+The management cluster runs Config Connector and manages all GCP infra this way. The workload cluster runs your app.
+
+### Cross-lexicon wiring via `.env`
+
+After `npm run deploy-infra`, Config Connector has created the GCP service accounts. Their email addresses are in the CC resource status — `npm run load-outputs` extracts them and writes them to `.env`:
+
+```
+APP_GSA_EMAIL=app-sa@my-project.iam.gserviceaccount.com
+EXTERNAL_DNS_GSA_EMAIL=external-dns-sa@my-project.iam.gserviceaccount.com
+```
+
+Then `npm run build:k8s` reads these from `.env` via `config.ts` and passes them to K8s composites:
+
+```typescript
+// src/k8s/app.ts — the SA email wires GCP identity to K8s workload
+export const appSa = WorkloadIdentityServiceAccount({
+  name: "app-sa",
+  gcpServiceAccountEmail: config.appGsaEmail,  // from .env
+});
+```
+
+`WorkloadIdentityServiceAccount` sets the `iam.gke.io/gcp-service-account` annotation on the K8s ServiceAccount. GKE's Workload Identity mutating webhook injects the credential into pods that use this SA — no JSON key files, no secrets.
+
+### Deploy and teardown order
+
+```
+Build (both lexicons)
+  → kubectl apply CC resources (GCP infra)
+    → load-outputs (SA emails → .env)
+      → Build K8s manifests (with real emails)
+        → kubectl apply K8s workloads
+
+Teardown (reverse):
+  kubectl delete K8s workloads  ← ingress controller must be running to clean up LB
+  kubectl delete CC resources   ← CC controller must be running to delete GCP resources
+  delete CC service account
+  delete GKE cluster (bootstrap cluster)
+```
+
+Always delete K8s resources before CC resources. If CC resources are deleted first, the GCE load balancer provisioned by the ingress object becomes orphaned.
+
+## Further reading
+
+- [GCP Config Connector lexicon](/chant/lexicons/gcp/) — resource reference and composites
+- [GKE Composites](/chant/lexicons/k8s/gke-composites/) — WorkloadIdentityServiceAccount, GceIngress, and more
+- [Kubernetes lexicon](/chant/lexicons/k8s/) — core composites reference
+- [Agent Integration guide](/chant/guide/agent-integration/) — using chant skills with Claude Code

@@ -1,0 +1,302 @@
+---
+title: "Intrinsic Functions"
+description: "Built-in intrinsic functions for the Helm lexicon"
+---
+
+The Helm lexicon provides **24** intrinsic functions organized into categories: values access, built-in objects, template functions, control flow, and file access.
+
+## Values Access
+
+### values
+
+Proxy object for generating `.Values.*` template references. Every property access builds a path.
+
+```typescript
+import { values } from "@intentius/chant-lexicon-helm";
+
+values.replicaCount;          // {{ .Values.replicaCount }}
+values.image.repository;      // {{ .Values.image.repository }}
+values.global.ingress.tls;    // {{ .Values.global.ingress.tls }}
+```
+
+## Built-in Objects
+
+### Release
+
+Access to the Helm release object.
+
+```typescript
+import { Release } from "@intentius/chant-lexicon-helm";
+
+Release.Name;        // {{ .Release.Name }}
+Release.Namespace;   // {{ .Release.Namespace }}
+Release.Service;     // {{ .Release.Service }}
+Release.Revision;    // {{ .Release.Revision }}
+Release.IsUpgrade;   // {{ .Release.IsUpgrade }}
+Release.IsInstall;   // {{ .Release.IsInstall }}
+```
+
+### ChartRef
+
+Access to chart metadata at render time.
+
+```typescript
+import { ChartRef } from "@intentius/chant-lexicon-helm";
+
+ChartRef.Name;        // {{ .Chart.Name }}
+ChartRef.Version;     // {{ .Chart.Version }}
+ChartRef.AppVersion;  // {{ .Chart.AppVersion }}
+```
+
+### Capabilities
+
+Query the target cluster's capabilities.
+
+```typescript
+import { Capabilities } from "@intentius/chant-lexicon-helm";
+
+Capabilities.kubeVersion;               // {{ .Capabilities.KubeVersion }}
+Capabilities.apiVersions("policy/v1");  // {{ .Capabilities.APIVersions.Has "policy/v1" }}
+```
+
+### Template
+
+Access to the current template's metadata.
+
+```typescript
+import { Template } from "@intentius/chant-lexicon-helm";
+
+Template.Name;      // {{ .Template.Name }}
+Template.BasePath;  // {{ .Template.BasePath }}
+```
+
+## Template Functions
+
+### include
+
+Include a named template.
+
+```typescript
+import { include } from "@intentius/chant-lexicon-helm";
+
+include("my-chart.labels", {});
+// {{ include "my-chart.labels" . }}
+
+include("my-chart.selectorLabels", {});
+// {{ include "my-chart.selectorLabels" . }}
+```
+
+### required
+
+Fail rendering if a value is empty.
+
+```typescript
+import { required, values } from "@intentius/chant-lexicon-helm";
+
+required("image.repository must be set", values.image.repository);
+// {{ required "image.repository must be set" .Values.image.repository }}
+```
+
+### helmDefault
+
+Provide a default value when the referenced value is empty.
+
+```typescript
+import { helmDefault, values } from "@intentius/chant-lexicon-helm";
+
+helmDefault(values.image.pullPolicy, "IfNotPresent");
+// {{ default "IfNotPresent" .Values.image.pullPolicy }}
+
+helmDefault(values.nameOverride, "my-app");
+// {{ default "my-app" .Values.nameOverride }}
+```
+
+### toYaml
+
+Serialize a value as YAML (commonly used with `nindent`).
+
+```typescript
+import { toYaml, values } from "@intentius/chant-lexicon-helm";
+
+toYaml(values.resources);
+// {{ toYaml .Values.resources | nindent 12 }}
+
+toYaml(values.nodeSelector);
+// {{ toYaml .Values.nodeSelector | nindent 8 }}
+```
+
+### quote
+
+Wrap a value in double quotes.
+
+```typescript
+import { quote, values } from "@intentius/chant-lexicon-helm";
+
+quote(values.image.tag);
+// {{ quote .Values.image.tag }}
+```
+
+### printf
+
+Format a string with arguments.
+
+```typescript
+import { printf, values, Release } from "@intentius/chant-lexicon-helm";
+
+printf("%s-%s", Release.Name, values.component);
+// {{ printf "%s-%s" .Release.Name .Values.component }}
+```
+
+### tpl
+
+Render a string as a template.
+
+```typescript
+import { tpl, values } from "@intentius/chant-lexicon-helm";
+
+tpl(values.customAnnotations, {});
+// {{ tpl .Values.customAnnotations . }}
+```
+
+### lookup
+
+Look up an existing resource in the cluster.
+
+```typescript
+import { lookup } from "@intentius/chant-lexicon-helm";
+
+lookup("v1", "Secret", "default", "my-secret");
+// {{ lookup "v1" "Secret" "default" "my-secret" }}
+```
+
+## File Access
+
+### filesGet
+
+Read a file from the chart's `files/` directory.
+
+```typescript
+import { filesGet } from "@intentius/chant-lexicon-helm";
+
+filesGet("config/app.conf");
+// {{ .Files.Get "config/app.conf" }}
+```
+
+### filesGlob
+
+Match files by glob pattern.
+
+```typescript
+import { filesGlob } from "@intentius/chant-lexicon-helm";
+
+filesGlob("config/*.yaml");
+// {{ .Files.Glob "config/*.yaml" }}
+```
+
+### filesAsConfig
+
+Create a ConfigMap data block from matched files.
+
+```typescript
+import { filesAsConfig } from "@intentius/chant-lexicon-helm";
+
+filesAsConfig("config/*");
+// {{ (.Files.Glob "config/*").AsConfig }}
+```
+
+### filesAsSecrets
+
+Create a Secret data block from matched files (base64-encoded).
+
+```typescript
+import { filesAsSecrets } from "@intentius/chant-lexicon-helm";
+
+filesAsSecrets("secrets/*");
+// {{ (.Files.Glob "secrets/*").AsSecrets }}
+```
+
+## Control Flow
+
+### If
+
+Conditional block that renders content when the condition is truthy.
+
+```typescript
+import { If, values } from "@intentius/chant-lexicon-helm";
+
+If(values.ingress.enabled, {
+  apiVersion: "networking.k8s.io/v1",
+  kind: "Ingress",
+});
+// {{- if .Values.ingress.enabled }}
+// apiVersion: networking.k8s.io/v1
+// kind: Ingress
+// {{- end }}
+```
+
+### ElseIf
+
+Else-if branch within a conditional block.
+
+```typescript
+import { If, ElseIf, values } from "@intentius/chant-lexicon-helm";
+
+If(values.service.type, {
+  clusterIP: ElseIf("ClusterIP", { clusterIP: "None" }),
+});
+```
+
+### Range
+
+Iterate over a list or map.
+
+```typescript
+import { Range, values } from "@intentius/chant-lexicon-helm";
+
+Range(values.ingress.hosts, (host) => ({
+  host: host.name,
+  paths: host.paths,
+}));
+// {{- range .Values.ingress.hosts }}
+// - host: {{ .name }}
+//   paths: {{ .paths }}
+// {{- end }}
+```
+
+### With
+
+Scoped context block — sets `.` to the given value inside the block.
+
+```typescript
+import { With, values } from "@intentius/chant-lexicon-helm";
+
+With(values.ingress.tls, (tls) => ({
+  secretName: tls.secretName,
+}));
+// {{- with .Values.ingress.tls }}
+// secretName: {{ .secretName }}
+// {{- end }}
+```
+
+### withOrder
+
+Control the rendering order of template blocks within a single file.
+
+```typescript
+import { withOrder } from "@intentius/chant-lexicon-helm";
+
+withOrder(1, "metadata");
+withOrder(2, "spec");
+```
+
+### argoWave
+
+Set Argo CD sync wave annotations for ordered deployment.
+
+```typescript
+import { argoWave } from "@intentius/chant-lexicon-helm";
+
+argoWave(-1);  // argocd.argoproj.io/sync-wave: "-1"
+argoWave(0);   // argocd.argoproj.io/sync-wave: "0"
+argoWave(1);   // argocd.argoproj.io/sync-wave: "1"
+```

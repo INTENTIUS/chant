@@ -4,12 +4,16 @@ import { resolve } from "node:path";
 import { formatSuccess, formatError } from "./format";
 import { loadPlugins, resolveProjectLexicons } from "./plugins";
 import { resolveCommand, type CommandDef, type ParsedArgs } from "./registry";
+import { loadChantConfig } from "../config";
+import { initRuntime } from "../runtime-adapter";
 import { runBuild } from "./handlers/build";
 import { runLint } from "./handlers/lint";
-import { runDevGenerate, runDevPublish, runDevRollback, runDevUnknown } from "./handlers/dev";
+import { runDevGenerate, runDevPublish, runDevOnboard, runDevCheckLexicon, runDevUnknown } from "./handlers/dev";
 import { runServeLsp, runServeMcp, runServeUnknown } from "./handlers/serve";
 import { runInit, runInitLexicon } from "./handlers/init";
 import { runList, runImport, runUpdate, runDoctor } from "./handlers/misc";
+import { runStateSnapshot, runStateShow, runStateDiff, runStateLog, runStateUnknown } from "./handlers/state";
+import { runSpellAdd, runSpellRm, runSpellList, runSpellShow, runSpellCast, runSpellDone, runGraph, runSpellUnknown } from "./handlers/spell";
 
 /**
  * Parse command line arguments
@@ -25,6 +29,7 @@ export function parseArgs(args: string[]): ParsedArgs {
     force: undefined,
     fix: false,
     lexicon: undefined,
+    template: undefined,
     watch: false,
     verbose: false,
     help: false,
@@ -42,6 +47,8 @@ export function parseArgs(args: string[]): ParsedArgs {
       result.format = args[++i];
     } else if (arg === "--lexicon" || arg === "-d") {
       result.lexicon = args[++i];
+    } else if (arg === "--template" || arg === "-t") {
+      result.template = args[++i];
     } else if (arg === "--force") {
       result.force = true;
     } else if (arg === "--fix") {
@@ -86,10 +93,26 @@ Commands:
   list                  List discovered entities
   import                Import external template into TypeScript
 
+Spells:
+  spell add <name>      Create a new spell
+  spell rm <name>       Remove a spell
+  spell list            List all spells with status
+  spell show <name>     Show spell details
+  spell cast <name>     Generate bootstrap prompt for agent
+  spell done <name> <N> Mark task N as done
+  graph                 Show spell dependency graph
+
+State:
+  state snapshot <env>  Query API, save metadata to orphan branch
+  state show <env>      Show latest state snapshot
+  state diff <env>      Compare current build against last snapshot
+  state log [env]       History of state snapshots
+
 Lexicon development:
   dev generate          Generate lexicon artifacts (+ validate + coverage)
   dev publish           Package lexicon for distribution
-  dev rollback          List or restore generation snapshots
+  dev onboard <name>    Patch CI, Dockerfiles, and workflows for a new lexicon
+  dev check-lexicon <dir>  Check lexicon completeness (tier 1/2/3)
 
 Servers:
   serve lsp             Start the LSP server (stdio)
@@ -106,6 +129,7 @@ Options:
                         - list: text (default) or json
                         - lint: stylish (default), json, or sarif
   -d, --lexicon <name>  Build only the specified lexicon (e.g. aws, gitlab)
+  -t, --template <name> Init template (e.g. node-pipeline, docker-build)
   --fix                 Auto-fix fixable issues (lint command)
   --force               Force overwrite existing files (import command)
   -w, --watch           Watch for changes and rebuild/re-lint (build, lint)
@@ -161,19 +185,37 @@ const registry: CommandDef[] = [
   { name: "import", handler: runImport },
   { name: "init", handler: runInit },
   { name: "init lexicon", handler: runInitLexicon },
-  { name: "update", handler: runUpdate },
+{ name: "update", handler: runUpdate },
   { name: "doctor", handler: runDoctor },
 
   // Dev subcommands
   { name: "dev generate", requiresPlugins: true, handler: runDevGenerate },
   { name: "dev publish", requiresPlugins: true, handler: runDevPublish },
-  { name: "dev rollback", requiresPlugins: true, handler: runDevRollback },
+  { name: "dev onboard", handler: runDevOnboard },
+  { name: "dev check-lexicon", handler: runDevCheckLexicon },
+
+  // Spell subcommands
+  { name: "spell add", handler: runSpellAdd },
+  { name: "spell rm", handler: runSpellRm },
+  { name: "spell list", handler: runSpellList },
+  { name: "spell show", handler: runSpellShow },
+  { name: "spell cast", handler: runSpellCast },
+  { name: "spell done", handler: runSpellDone },
+  { name: "graph", handler: runGraph },
+
+  // State subcommands
+  { name: "state snapshot", requiresPlugins: true, handler: runStateSnapshot },
+  { name: "state show", handler: runStateShow },
+  { name: "state diff", requiresPlugins: true, handler: runStateDiff },
+  { name: "state log", handler: runStateLog },
 
   // Serve subcommands
   { name: "serve lsp", requiresPlugins: true, handler: runServeLsp },
   { name: "serve mcp", requiresPlugins: true, handler: runServeMcp },
 
   // Fallback for unknown subcommands (must come after compound entries)
+  { name: "spell", handler: runSpellUnknown },
+  { name: "state", handler: runStateUnknown },
   { name: "dev", handler: runDevUnknown },
   { name: "serve", handler: runServeUnknown },
 ];
@@ -189,6 +231,16 @@ async function main(): Promise<void> {
     process.exit(args.help ? 0 : 1);
   }
 
+  // Initialize runtime adapter early — before plugins or commands run
+  const projectPath0 = resolve(args.path === "." ? "." : args.path);
+  try {
+    const { config } = await loadChantConfig(projectPath0);
+    initRuntime(config.runtime);
+  } catch {
+    // Config may not exist yet (e.g. `chant init`); auto-detect runtime
+    initRuntime();
+  }
+
   const match = resolveCommand(args, registry);
   if (!match) {
     console.error(formatError({
@@ -198,9 +250,9 @@ async function main(): Promise<void> {
     process.exit(1);
   }
 
-  // For compound commands (e.g. "dev generate"), args.path is the subcommand,
-  // so the project path shifts to extraPositional. For simple commands, use args.path.
-  const projectPath = match.compound ? (args.extraPositional ?? ".") : args.path;
+  // For compound commands (e.g. "spell cast"), args.path is the subcommand,
+  // so always use "." as the project path. For simple commands, use args.path.
+  const projectPath = match.compound ? (args.extraPositional || ".") : args.path;
   const plugins = match.def.requiresPlugins
     ? await loadPluginsOrExit(projectPath)
     : [];

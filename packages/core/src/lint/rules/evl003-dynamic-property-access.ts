@@ -33,6 +33,7 @@ export const evl003DynamicPropertyAccessRule: LintRule = {
   id: "EVL003",
   severity: "error",
   category: "correctness",
+  description: "Computed property access must use a string or numeric literal key",
   check(context: LintContext): LintDiagnostic[] {
     const diagnostics: LintDiagnostic[] = [];
     checkNode(context.sourceFile, context, diagnostics);

@@ -1,0 +1,299 @@
+---
+title: "Temporal Workflow-Driven Deployment"
+description: "Replace a 200-line bash deploy script with a durable, observable, resumable Temporal workflow — using the CockroachDB multi-region GKE example as the target."
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+A 50-minute infrastructure deployment is a bad fit for a bash script. When it fails at phase 7, you re-run from scratch. When it's running, you grep logs. When a loop hangs, you wait. This tutorial shows how to replace that bash script with a [Temporal](https://temporal.io) workflow — durable, observable, and resumable — layered on top of the chant-generated YAML.
+
+## What you'll build
+
+The `temporal-crdb-deploy` example is a copy of `cockroachdb-multi-region-gke` with a `temporal/` directory added. The chant sources and deploy scripts are unchanged. The bash orchestration is replaced by a TypeScript workflow that:
+
+- Runs the same `kubectl`/`gcloud`/`helm` commands as the original script
+- Heartbeats during long infra waits so Temporal knows the activity is alive
+- Auto-detects DNS delegation via polling; manual signal still works as override
+- Deploys across all 3 regions in parallel instead of sequentially
+- Lets you query the current phase or RPC-call `validate-dns` from the terminal at any time
+- Tags each workflow run with `GcpProject` + `CrdbDomain` for filtering in the UI
+- Resumes automatically if the worker crashes mid-deploy
+
+```
+deployMultiRegionCRDB(params)
+├── buildStacks()
+├── applySharedInfra()
+├── Promise.all([applyRegionalInfra × 3])       ← parallel, heartbeated
+├── race: waitForDnsDelegation() ‖ signal        ← auto-detect + manual override
+├── configureKubectl()
+├── generateAndDistributeCerts()
+├── Promise.all([installESO × 3])
+├── pushSecretsToSecretManager()
+├── Promise.all([applyK8sManifests × 3])
+├── waitForExternalDNS()                         ← heartbeated
+├── Promise.all([waitForStatefulSets × 3])       ← heartbeated
+├── initializeCockroachDB()
+├── configureMultiRegion()
+└── setupBackupSchedule()
+```
+
+## What is Temporal?
+
+Temporal is a durable workflow engine. You write workflows in TypeScript (or Go, Python, Java). Temporal executes them reliably: if the process crashes mid-workflow, the workflow resumes from its last checkpoint when the process restarts. If an activity fails, Temporal retries it automatically with the retry policy you configure.
+
+Two concepts to know:
+
+- **Workflow** — orchestration logic written in TypeScript. Runs in a deterministic sandbox (no I/O, no random). Defines what activities to run and in what order.
+- **Activity** — the actual work. Calls `kubectl`, `gcloud`, `helm`. Can do any I/O. Retried on failure.
+
+The workflow state lives in Temporal Cloud (or a self-hosted Temporal server). Your machine runs a **worker** that pulls tasks from Temporal, executes the activities, and reports results back. If the worker dies, Temporal re-delivers the in-flight task to the next worker that comes online.
+
+## Why infra deployments are a perfect fit
+
+Bash deploy scripts are stateless — they can't resume. They have no visibility (grep logs). Their retry logic is ad hoc (`sleep 15; done`). Long-running loops with no heartbeat are invisible to any monitoring system.
+
+Temporal solves exactly these problems:
+
+| Bash pattern | Temporal equivalent |
+|---|---|
+| `for i in $(seq 1 60); do ... sleep 15; done` | Activity heartbeat + retry policy |
+| "re-run the script if it fails" | Workflow resumes from last checkpoint |
+| Grepping logs for current step | `defineQuery` — query any running workflow |
+| "configure DNS manually, then re-run" | `defineSignal` + `condition()` — workflow pauses, operator sends signal |
+| Sequential regional deploys | `Promise.all` — Temporal schedules activities in parallel |
+| "is DNS up yet?" (no feedback) | `defineUpdate` — bidirectional RPC, returns structured result |
+| All workflows look identical in the UI | Search attributes — filter by `GcpProject` or `CrdbDomain` |
+
+## The seven key patterns
+
+### 1. Activity heartbeat
+
+Long infra waits — GKE cluster creation (~10 min), ExternalDNS propagation — must heartbeat so Temporal knows the activity is alive. Without heartbeating, a hung activity looks identical to a healthy one until `startToCloseTimeout` fires.
+
+```typescript
+// temporal/activities/infra.ts
+export async function applyRegionalInfra(params: DeployParams, region: Region): Promise<void> {
+  const ctx = Context.current();
+
+  await execAsync(`kubectl apply -f dist/${region}-infra.yaml`, { cwd: ROOT_DIR });
+
+  for (let attempt = 1; attempt <= 60; attempt++) {
+    // heartbeat payload is visible in the Temporal Cloud UI Events tab
+    ctx.heartbeat({ phase: 'waiting for GKE Ready', region, attempt });
+
+    const { stdout } = await execAsync(
+      `kubectl get containercluster gke-crdb-${region} -o jsonpath='{...}'`
+    ).catch(() => ({ stdout: '' }));
+
+    if (stdout.trim() === 'True') break;
+    await sleep(15_000);
+  }
+}
+```
+
+The proxy is configured with `heartbeatTimeout: '60s'`: if no heartbeat arrives in 60 s, Temporal considers the activity dead and retries it.
+
+```typescript
+// temporal/workflows/deploy.ts
+const { applyRegionalInfra } = proxyActivities<typeof InfraActivities>({
+  startToCloseTimeout: '20m',
+  heartbeatTimeout: '60s',
+  retry: { maximumAttempts: 3, initialInterval: '30s', backoffCoefficient: 2 },
+});
+```
+
+### 2. Signal — human-in-the-loop override
+
+After regional infra is up, the DNS zones exist but the operator must delegate the subdomains at their registrar before ingress certificates resolve. The workflow pauses here — zero CPU, zero cost — until it's unblocked (either automatically or via signal).
+
+```typescript
+// temporal/workflows/deploy.ts
+export const dnsConfiguredSignal = defineSignal('dns-configured');
+
+setHandler(dnsConfiguredSignal, () => {
+  dnsConfigured = true;
+});
+```
+
+The operator can always unblock the workflow manually:
+
+```bash
+npm run temporal:signal -- dns-configured
+```
+
+In the Temporal Cloud UI, you can see the workflow in `WAITING` state with the pending signal visible.
+
+### 3. Auto-DNS detection (parallel race)
+
+The workflow doesn't only wait for the signal — it also runs `waitForDnsDelegation` as an activity in the background. That activity polls `dig +short NS` for each subdomain every 30 s for up to 45 minutes. If delegation is detected, it sets `dnsConfigured = true` automatically. Signal and auto-detection race; the first one to fire wins.
+
+```typescript
+// temporal/workflows/deploy.ts
+
+// Auto-detect: polls dig +short NS every 30 s, heartbeats throughout
+void waitForDnsDelegation(params).then(() => {
+  dnsConfigured = true;
+}).catch(() => {
+  // Timed out — workflow still waits for the manual signal
+  console.log('Auto-detection timed out — waiting for dns-configured signal');
+});
+
+// Manual override always works
+setHandler(dnsConfiguredSignal, () => { dnsConfigured = true; });
+
+// Block until either path fires (or 48 h elapses)
+await condition(() => dnsConfigured, '48h');
+```
+
+```typescript
+// temporal/activities/infra.ts
+export async function waitForDnsDelegation(params: DeployParams): Promise<void> {
+  const ctx = Context.current();
+  const subdomains = ['east', 'central', 'west'];
+
+  for (let attempt = 1; attempt <= 90; attempt++) {       // 90 × 30 s = 45 min
+    ctx.heartbeat({ phase: 'waiting for DNS delegation', attempt });
+
+    const missing: string[] = [];
+    for (const sub of subdomains) {
+      const { stdout } = await execAsync(
+        `dig +short NS ${sub}.crdb.${params.crdbDomain}`
+      ).catch(() => ({ stdout: '' }));
+      if (!stdout.trim()) missing.push(sub);
+    }
+
+    if (missing.length === 0) return;   // all zones delegated
+    await sleep(30_000);
+  }
+  throw new Error(`DNS delegation not detected after 45 min`);
+}
+```
+
+### 4. Update — bidirectional RPC
+
+Signals are fire-and-forget — no feedback. `defineUpdate` adds a return value: the workflow executes a handler and echoes the result back to the caller synchronously.
+
+`validate-dns` checks whether NS records are live for each zone and returns `{ ready: boolean; missing: string[] }`:
+
+```typescript
+// temporal/workflows/deploy.ts
+export const validateDnsUpdate = defineUpdate<{ ready: boolean; missing: string[] }>('validate-dns');
+
+// Handler runs checkDnsZones as a local activity (I/O outside the sandbox)
+setHandler(validateDnsUpdate, async () => checkDnsZones(params.crdbDomain));
+```
+
+```bash
+npm run temporal:update -- validate-dns
+# → DNS delegation pending. Missing zones: west
+# → Wait for NS records to propagate, then retry
+```
+
+The update handler calls `checkDnsZones` as a **local activity** — local activities run directly on the worker process rather than being scheduled via Temporal's task queue, which allows them to do I/O (like `dig`) inside what would otherwise be a sandbox-restricted workflow.
+
+```typescript
+const { checkDnsZones } = proxyLocalActivities<typeof InfraActivities>({
+  startToCloseTimeout: '30s',
+});
+```
+
+### 5. Query — inspect running state
+
+```typescript
+// temporal/workflows/deploy.ts
+export const currentPhaseQuery = defineQuery<Phase>('current-phase');
+
+setHandler(currentPhaseQuery, () => currentPhase);
+```
+
+Query it from the terminal at any time without touching logs:
+
+```bash
+npm run temporal:query -- current-phase
+# → Current phase: WAIT_DNS_RECORDS
+```
+
+Or view it in the Temporal Cloud UI — the workflow state is always visible.
+
+### 6. Parallel activities
+
+The original bash script deploys regions sequentially. With Temporal, `Promise.all` schedules all three activities simultaneously — Temporal distributes them across available worker threads.
+
+```typescript
+// Phase 3: regional infra — all 3 GKE clusters created in parallel
+await Promise.all([
+  applyRegionalInfra(params, 'east'),
+  applyRegionalInfra(params, 'central'),
+  applyRegionalInfra(params, 'west'),
+]);
+```
+
+If one region fails, the others complete. Temporal retries the failed one independently.
+
+### 7. Search attributes — filter in the UI
+
+Every workflow run is tagged with the GCP project and CRDB domain. In the Temporal Cloud UI, filter by `GcpProject = "my-project"` to see all deployments for a project across all runs.
+
+```typescript
+// temporal/client.ts
+const handle = await client.workflow.start(deployMultiRegionCRDB, {
+  taskQueue: 'crdb-deploy',
+  workflowId: id,
+  args: [params],
+  searchAttributes: {
+    GcpProject: [gcpProjectId],
+    CrdbDomain: [crdbDomain],
+  },
+});
+```
+
+Requires one-time registration in Temporal Cloud: **Settings → Search Attributes → Add** — `GcpProject` (Text) and `CrdbDomain` (Text).
+
+## Workflow → activities → existing scripts
+
+The architecture has three layers:
+
+```
+Temporal workflow (deploy.ts)
+  └── proxyActivities → activity functions
+        └── execAsync('bash scripts/...') or kubectl/gcloud/helm
+```
+
+The existing chant-generated YAML files and deploy scripts are untouched. Activities are thin wrappers that call the same commands the bash script does — they just do it with retry, heartbeat, and result reporting baked in.
+
+## Get started
+
+See [`examples/temporal-crdb-deploy/`](https://github.com/intentius/chant/tree/main/examples/temporal-crdb-deploy) for the full README, including:
+
+- Sign up for Temporal Cloud (free tier)
+- Set the three `TEMPORAL_*` env vars
+- Two-terminal quick start (`temporal:worker` + `temporal:deploy`)
+- DNS delegation step (auto-detection + signal walkthrough)
+- How to resume after failure
+
+## Run it with an agent
+
+After `npm install`, the `temporal-crdb-deploy` skill is loaded alongside 5 lexicon skills covering GKE bootstrap, GCP infra, and K8s manifests. A single prompt is enough to start the full deployment:
+
+```
+Deploy the temporal-crdb-deploy example.
+My GCP project is my-project-id. My domain is crdb.mycompany.com.
+My Temporal Cloud namespace is myns.a2dd6, address myns.a2dd6.tmprl.cloud:7233.
+```
+
+The agent works at three layers simultaneously:
+
+- **Temporal layer** — starts the worker, launches the workflow, polls `current-phase`, monitors heartbeat payloads in the Events tab
+- **GCP layer** — applies Config Connector manifests on the management cluster, waits for GKE clusters and ExternalDNS records
+- **K8s layer** — distributes TLS certs, installs ESO, applies manifests across all 3 regional clusters, and runs `cockroach init`
+
+<Aside type="caution">
+There is one manual step the agent cannot do for you: **DNS delegation**. After phase 3, the workflow pauses at `WAIT_DNS_DELEGATION`. The workflow auto-detects delegation by polling `dig +short NS` — but you still need to add NS records at your registrar pointing `east/central/west.crdb.yourdomain.com` to the Cloud DNS nameservers. The agent will prompt you with the exact nameserver values. You can also run `npm run temporal:update -- validate-dns` at any time to check which zones are still pending.
+</Aside>
+
+## Further reading
+
+- [Temporal TypeScript SDK docs](https://docs.temporal.io/develop/typescript)
+- [Temporal Cloud free tier signup](https://cloud.temporal.io)
+- [CockroachDB Multi-Region on GKE](/chant/tutorials/cockroachdb-multi-region/) — the base example this builds on
+- [GKE Composites](/chant/lexicons/k8s/gke-composites/) — the chant composites used in the K8s manifests

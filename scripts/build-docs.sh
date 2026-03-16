@@ -4,26 +4,88 @@ set -euo pipefail
 OUT=".docs-dist"
 rm -rf "$OUT"
 
+# Nest under chant/ to match Astro's base: '/chant'.
+# GitHub Pages serves project repos at /<repo>/, so upload-pages-artifact
+# uses the parent directory. Local serve (bunx serve .docs-dist) also works.
+SITE="$OUT/chant"
+
 # 1. Build main docs
 echo "Building main docs..."
 bun install --cwd docs
 bun --cwd docs build
-cp -r docs/dist "$OUT"
+mkdir -p "$SITE"
+cp -r docs/dist/* "$SITE/"
 
 # 2. Generate + build AWS lexicon docs
 echo "Building AWS lexicon docs..."
 cd lexicons/aws
+bun run prepack
 bun run src/codegen/docs-cli.ts
 cd docs && bun install && bun run build && cd ../../..
-mkdir -p "$OUT/lexicons/aws"
-cp -r lexicons/aws/docs/dist/* "$OUT/lexicons/aws/"
+mkdir -p "$SITE/lexicons/aws"
+cp -r lexicons/aws/docs/dist/* "$SITE/lexicons/aws/"
 
 # 3. Generate + build GitLab lexicon docs
 echo "Building GitLab lexicon docs..."
 cd lexicons/gitlab
+bun run prepack
 bun run src/codegen/docs-cli.ts
 cd docs && bun install && bun run build && cd ../../..
-mkdir -p "$OUT/lexicons/gitlab"
-cp -r lexicons/gitlab/docs/dist/* "$OUT/lexicons/gitlab/"
+mkdir -p "$SITE/lexicons/gitlab"
+cp -r lexicons/gitlab/docs/dist/* "$SITE/lexicons/gitlab/"
+
+# 4. Generate + build K8s lexicon docs
+echo "Building K8s lexicon docs..."
+cd lexicons/k8s
+bun run prepack
+bun run src/codegen/docs-cli.ts
+cd docs && bun install && bun run build && cd ../../..
+mkdir -p "$SITE/lexicons/k8s"
+cp -r lexicons/k8s/docs/dist/* "$SITE/lexicons/k8s/"
+
+# 5. Generate + build Flyway lexicon docs
+echo "Building Flyway lexicon docs..."
+cd lexicons/flyway
+bun run prepack
+bun run src/codegen/docs-cli.ts
+cd docs && bun install && bun run build && cd ../../..
+mkdir -p "$SITE/lexicons/flyway"
+cp -r lexicons/flyway/docs/dist/* "$SITE/lexicons/flyway/"
+
+# 6. Generate + build Azure lexicon docs
+echo "Building Azure lexicon docs..."
+cd lexicons/azure
+bun run prepack
+bun run src/codegen/docs-cli.ts
+cd docs && bun install && bun run build && cd ../../..
+mkdir -p "$SITE/lexicons/azure"
+cp -r lexicons/azure/docs/dist/* "$SITE/lexicons/azure/"
+
+# 7. Generate + build GCP lexicon docs
+echo "Building GCP lexicon docs..."
+cd lexicons/gcp
+bun run prepack
+bun run src/codegen/docs-cli.ts
+cd docs && bun install && bun run build && cd ../../..
+mkdir -p "$SITE/lexicons/gcp"
+cp -r lexicons/gcp/docs/dist/* "$SITE/lexicons/gcp/"
+
+# 8. Generate + build Helm lexicon docs
+echo "Building Helm lexicon docs..."
+cd lexicons/helm
+bun run prepack
+bun run src/codegen/docs-cli.ts
+cd docs && bun install && bun run build && cd ../../..
+mkdir -p "$SITE/lexicons/helm"
+cp -r lexicons/helm/docs/dist/* "$SITE/lexicons/helm/"
+
+# 9. Generate + build GitHub lexicon docs
+echo "Building GitHub lexicon docs..."
+cd lexicons/github
+bun run prepack
+bun run src/codegen/docs-cli.ts
+cd docs && bun install && bun run build && cd ../../..
+mkdir -p "$SITE/lexicons/github"
+cp -r lexicons/github/docs/dist/* "$SITE/lexicons/github/"
 
 echo "Unified docs built to $OUT/"

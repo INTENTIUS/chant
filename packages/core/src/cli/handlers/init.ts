@@ -16,6 +16,7 @@ export async function runInit(ctx: CommandContext): Promise<number> {
   const result = await initCommand({
     path: args.path === "." ? undefined : args.path,
     lexicon: args.lexicon,
+    template: args.template,
     force: args.force,
     skipInstall: true,
   });

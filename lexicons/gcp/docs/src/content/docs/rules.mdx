@@ -1,0 +1,44 @@
+---
+title: "Lint Rules"
+description: "Lint rules and post-synth checks provided by the GCP Config Connector lexicon"
+---
+
+The GCP Config Connector lexicon provides **26** rules: 3 lint rules and 23 post-synth checks.
+
+## Lint Rules
+
+| ID | Severity | Category | Description |
+|----|----------|----------|-------------|
+| `WGC001` | warning | security | Hardcoded GCP Project ID |
+| `WGC002` | warning | security | Hardcoded GCP Region/Zone |
+| `WGC003` | warning | security | Public IAM Binding |
+
+## Post-Synth Checks
+
+Post-synth checks validate the serialized output after the build pipeline completes.
+
+| ID | Description |
+|----|-------------|
+| `WGC101` | StorageBucket or SQLInstance without encryption configuration |
+| `WGC102` | allUsers/allAuthenticatedUsers detected in serialized Config Connector YAML |
+| `WGC103` | Config Connector resource without cnrm.cloud.google.com/project-id annotation |
+| `WGC104` | StorageBucket without uniformBucketLevelAccess enabled |
+| `WGC105` | Cloud SQL instance with public 0.0.0.0/0 in authorizedNetworks |
+| `WGC106` | Config Connector resource without cnrm.cloud.google.com/deletion-policy annotation |
+| `WGC107` | StorageBucket without versioning enabled |
+| `WGC108` | SQLInstance without backup configuration enabled |
+| `WGC109` | ComputeFirewall with sourceRanges containing 0.0.0.0/0 |
+| `WGC110` | KMS CryptoKey without rotation period configured |
+| `WGC111` | Resource reference points to a name not defined in the output |
+| `WGC112` | Config Connector resource has missing or invalid apiVersion |
+| `WGC113` | Config Connector resource uses an alpha API version |
+| `WGC201` | Config Connector resource without app.kubernetes.io/managed-by label |
+| `WGC202` | ContainerCluster without workload identity configuration |
+| `WGC203` | ContainerNodePool using overly broad cloud-platform OAuth scope |
+| `WGC204` | ComputeInstance without shielded VM configuration |
+| `WGC301` | No IAMAuditConfig resource found in output — audit logging may not be configured |
+| `WGC302` | No Service resource found — GCP APIs may not be explicitly enabled |
+| `WGC303` | No AccessContextManager ServicePerimeter found — VPC Service Controls not configured |
+| `WGC401` | Config Connector resource spec contains unknown field |
+| `WGC402` | Config Connector resource is missing a required spec field |
+| `WGC403` | Config Connector resource spec field has wrong type or structure |

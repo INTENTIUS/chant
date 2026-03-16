@@ -15,6 +15,7 @@ export const noStringRefRule: LintRule = {
   id: "COR003",
   severity: "warning",
   category: "correctness",
+  description: "Flags string-based GetAtt() and Ref() calls — use typed property access instead",
   check(context: LintContext): LintDiagnostic[] {
     const diagnostics: LintDiagnostic[] = [];
     const sf = context.sourceFile;

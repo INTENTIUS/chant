@@ -11,6 +11,7 @@ export const s3EncryptionRule: LintRule = {
   id: "WAW006",
   severity: "warning",
   category: "security",
+  description: "Detects S3 Bucket creation without encryption configuration — all buckets should have server-side encryption enabled",
 
   check(context: LintContext): LintDiagnostic[] {
     const { sourceFile } = context;
@@ -38,9 +39,8 @@ export const s3EncryptionRule: LintRule = {
           if (ts.isObjectLiteralExpression(props)) {
             const hasEncryption = props.properties.some((prop) => {
               if (ts.isPropertyAssignment(prop) && ts.isIdentifier(prop.name)) {
-                return prop.name.text === "bucketEncryption" ||
-                       prop.name.text === "encryption" ||
-                       prop.name.text === "serverSideEncryptionConfiguration";
+                return prop.name.text === "BucketEncryption" ||
+                       prop.name.text === "ServerSideEncryptionConfiguration";
               }
               return false;
             });

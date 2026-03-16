@@ -53,6 +53,7 @@ export const evl002ControlFlowResourceRule: LintRule = {
   id: "EVL002",
   severity: "error",
   category: "correctness",
+  description: "Resource constructors must not appear inside control flow statements",
   check(context: LintContext): LintDiagnostic[] {
     const diagnostics: LintDiagnostic[] = [];
     checkNode(context.sourceFile, context, diagnostics);

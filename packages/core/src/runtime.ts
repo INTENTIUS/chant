@@ -22,13 +22,18 @@ export function createResource(
   type: string,
   lexicon: string,
   attrMap: Record<string, string>,
-): new (props: Record<string, unknown>) => Record<string, unknown> {
-  const ResourceClass = function (this: Record<string, unknown>, props: Record<string, unknown>) {
+): new (props: Record<string, unknown>, attributes?: Record<string, unknown>) => Record<string, unknown> {
+  const ResourceClass = function (this: Record<string, unknown>, props: Record<string, unknown>, attributes?: Record<string, unknown>) {
     Object.defineProperty(this, DECLARABLE_MARKER, { value: true, enumerable: false });
     Object.defineProperty(this, "lexicon", { value: lexicon, enumerable: false });
     Object.defineProperty(this, "entityType", { value: type, enumerable: false });
     Object.defineProperty(this, "kind", { value: "resource", enumerable: false });
     Object.defineProperty(this, "props", { value: props ?? {}, enumerable: false, configurable: true });
+    Object.defineProperty(this, "attributes", { value: attributes ?? {}, enumerable: false, configurable: true });
+
+    // Ref returns the resource instance itself — the serializer walker
+    // detects Declarable objects and emits { Ref: logicalName }
+    Object.defineProperty(this, "Ref", { value: this, enumerable: false });
 
     // Create AttrRef instances for each attribute
     // Must be enumerable so getAttributes() can discover them for resolveAttrRefs()
@@ -39,7 +44,7 @@ export function createResource(
         writable: false,
       });
     }
-  } as unknown as new (props: Record<string, unknown>) => Record<string, unknown>;
+  } as unknown as new (props: Record<string, unknown>, attributes?: Record<string, unknown>) => Record<string, unknown>;
 
   // Set the constructor name for debugging
   Object.defineProperty(ResourceClass, "name", { value: type.split("::").pop() ?? type });

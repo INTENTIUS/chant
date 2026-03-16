@@ -7,7 +7,7 @@ import { isCompositeCallee } from "./composite-scope";
  *
  * The second argument to Composite() (the name string) must match the
  * const variable it's assigned to. This name is used in resource expansion
- * (e.g. healthApi_role, healthApi_func) and in error messages.
+ * (e.g. healthApiRole, healthApiFunc) and in error messages.
  *
  * Triggers on: const LambdaApi = Composite(fn, "MyFunction")  — mismatch
  * Triggers on: const LambdaApi = Composite(fn)                — missing name
@@ -100,6 +100,7 @@ export const cor017CompositeNameMatchRule: LintRule = {
   id: "COR017",
   severity: "error",
   category: "correctness",
+  description: "Composite name argument must match the variable it is assigned to",
   check(context: LintContext): LintDiagnostic[] {
     const diagnostics: LintDiagnostic[] = [];
     checkNode(context.sourceFile, context, diagnostics);

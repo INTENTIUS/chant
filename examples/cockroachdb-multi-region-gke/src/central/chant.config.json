@@ -1,0 +1,23 @@
+{
+  "extends": ["@intentius/chant/lint/presets/strict"],
+  "_ruleNotes": {
+    "COR001": "Inline objects OK — K8s composite props are simple and readable inline",
+    "COR004": "Unused exports expected — resources are consumed by serializers, not same-file refs",
+    "COR009": "File count limit too strict for multi-resource cluster configs",
+    "COR013": "Mixed resource/config acceptable — cluster configs are tightly coupled to their resources",
+    "EVL001": "Dynamic env var lookups required for project ID and GSA emails",
+    "EVL004": "Spread from shared config (CRDB_CLUSTER) is safe and traceable",
+    "WGC002": "Hardcoded GCP region intentional — fixed deployment region",
+    "WK8001": "Hardcoded K8s namespace intentional — each region has a dedicated namespace"
+  },
+  "rules": {
+    "COR001": "off",
+    "COR004": "off",
+    "COR009": "off",
+    "COR013": "off",
+    "EVL001": "off",
+    "EVL004": "off",
+    "WGC002": "off",
+    "WK8001": "off"
+  }
+}

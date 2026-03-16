@@ -22,14 +22,13 @@ describe("initCommand", () => {
       expect(result.createdFiles).toContain("tsconfig.json");
       expect(result.createdFiles).toContain("chant.config.ts");
       expect(result.createdFiles).toContain(".gitignore");
-      expect(result.createdFiles).toContain("src/_.ts");
       expect(result.createdFiles).toContain("src/config.ts");
       expect(result.createdFiles).toContain("src/data-bucket.ts");
       expect(result.createdFiles).toContain("src/logs-bucket.ts");
     });
   });
 
-  test("aws source files use namespace imports", async () => {
+  test("aws source files use direct imports", async () => {
     await withTestDir(async (testDir) => {
       const options: InitOptions = {
         path: testDir,
@@ -41,15 +40,15 @@ describe("initCommand", () => {
       await initCommand(options);
 
       const configContent = readFileSync(join(testDir, "src", "config.ts"), "utf-8");
-      expect(configContent).toContain('import * as aws from "@intentius/chant-lexicon-aws"');
+      expect(configContent).toContain('from "@intentius/chant-lexicon-aws"');
 
       const dataBucketContent = readFileSync(join(testDir, "src", "data-bucket.ts"), "utf-8");
-      expect(dataBucketContent).toContain('import * as aws from "@intentius/chant-lexicon-aws"');
-      expect(dataBucketContent).toContain('import * as _ from "./_"');
+      expect(dataBucketContent).toContain('from "@intentius/chant-lexicon-aws"');
+      expect(dataBucketContent).toContain('from "./config"');
 
       const logsBucketContent = readFileSync(join(testDir, "src", "logs-bucket.ts"), "utf-8");
-      expect(logsBucketContent).toContain('import * as aws from "@intentius/chant-lexicon-aws"');
-      expect(logsBucketContent).toContain('import * as _ from "./_"');
+      expect(logsBucketContent).toContain('from "@intentius/chant-lexicon-aws"');
+      expect(logsBucketContent).toContain('from "./config"');
     });
   });
 
@@ -95,7 +94,7 @@ describe("initCommand", () => {
     });
   });
 
-  test("generates valid tsconfig.json with path mappings", async () => {
+  test("generates valid tsconfig.json without path mappings", async () => {
     await withTestDir(async (testDir) => {
       const options: InitOptions = {
         path: testDir,
@@ -115,8 +114,7 @@ describe("initCommand", () => {
       expect(tsconfig.compilerOptions.strict).toBe(true);
       expect(tsconfig.compilerOptions.rootDir).toBe("./src");
       expect(tsconfig.include).toContain("src");
-      expect(tsconfig.compilerOptions.paths["@intentius/chant"]).toEqual(["./.chant/types/core"]);
-      expect(tsconfig.compilerOptions.paths["@intentius/chant-lexicon-aws"]).toEqual(["./.chant/types/lexicon-aws"]);
+      expect(tsconfig.compilerOptions.paths).toBeUndefined();
     });
   });
 
@@ -177,7 +175,7 @@ describe("initCommand", () => {
     });
   });
 
-  test("generates barrel file", async () => {
+  test("does not generate re-export file", async () => {
     await withTestDir(async (testDir) => {
       const options: InitOptions = {
         path: testDir,
@@ -188,13 +186,11 @@ describe("initCommand", () => {
 
       await initCommand(options);
 
-      const barrelPath = join(testDir, "src", "_.ts");
-      expect(existsSync(barrelPath)).toBe(true);
+      // No _.ts re-export — direct imports are used instead
+      const reexportPath = join(testDir, "src", "_.ts");
+      expect(existsSync(reexportPath)).toBe(false);
 
-      const barrelContent = readFileSync(barrelPath, "utf-8");
-      expect(barrelContent).toContain('export * from "./config"');
-
-      // No index.ts — barrel re-exports cause duplicate entity errors during build
+      // No index.ts either
       const indexPath = join(testDir, "src", "index.ts");
       expect(existsSync(indexPath)).toBe(false);
     });
@@ -218,7 +214,6 @@ describe("initCommand", () => {
       expect(coreContent).toContain("Value<T>");
       expect(coreContent).toContain("Serializer");
       expect(coreContent).toContain("ChantConfig");
-      expect(coreContent).toContain("barrel");
 
       const corePkg = join(testDir, ".chant", "types", "core", "package.json");
       expect(existsSync(corePkg)).toBe(true);
@@ -311,6 +306,46 @@ describe("initCommand", () => {
 
       expect(result.success).toBe(true);
       expect(existsSync(newDir)).toBe(true);
+    });
+  });
+
+  test("gitlab init creates src files", async () => {
+    await withTestDir(async (testDir) => {
+      const options: InitOptions = {
+        path: testDir,
+        lexicon: "gitlab",
+        skipMcp: true,
+        skipInstall: true,
+      };
+
+      const result = await initCommand(options);
+
+      expect(result.success).toBe(true);
+      expect(result.createdFiles).toContain("src/config.ts");
+      expect(result.createdFiles).toContain("src/pipeline.ts");
+
+      const pkg = JSON.parse(readFileSync(join(testDir, "package.json"), "utf-8"));
+      expect(pkg.scripts.build).toContain("gitlab");
+    });
+  });
+
+  test("gitlab init with --template passes template to plugin", async () => {
+    await withTestDir(async (testDir) => {
+      const options: InitOptions = {
+        path: testDir,
+        lexicon: "gitlab",
+        template: "node-pipeline",
+        skipMcp: true,
+        skipInstall: true,
+      };
+
+      const result = await initCommand(options);
+
+      expect(result.success).toBe(true);
+      expect(result.createdFiles).toContain("src/pipeline.ts");
+
+      const pipeline = readFileSync(join(testDir, "src", "pipeline.ts"), "utf-8");
+      expect(pipeline).toContain("NodePipeline");
     });
   });
 });

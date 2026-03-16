@@ -1,0 +1,158 @@
+---
+title: "Getting Started"
+description: "Install chant and build your first GitHub Actions workflow in 5 minutes"
+---
+
+## What is chant?
+
+Chant is a TypeScript-to-YAML compiler for GitHub Actions. You write typed TypeScript declarations, and chant outputs workflow YAML files ready to commit to `.github/workflows/`.
+
+## Install
+
+```bash
+mkdir my-project && cd my-project
+npm init -y
+npm install --save-dev @intentius/chant @intentius/chant-lexicon-github typescript
+```
+
+## Your first workflow
+
+Create `src/ci.ts`:
+
+```typescript
+import { Workflow, Job, Step, Checkout, SetupNode } from "@intentius/chant-lexicon-github";
+
+export const workflow = new Workflow({
+  name: "CI",
+  on: {
+    push: { branches: ["main"] },
+    pull_request: { branches: ["main"] },
+  },
+  permissions: { contents: "read" },
+});
+
+export const build = new Job({
+  "runs-on": "ubuntu-latest",
+  timeoutMinutes: 15,
+  steps: [
+    Checkout({}).step,
+    SetupNode({ nodeVersion: "22", cache: "npm" }).step,
+    new Step({ name: "Install", run: "npm ci" }),
+    new Step({ name: "Build", run: "npm run build" }),
+    new Step({ name: "Test", run: "npm test" }),
+  ],
+});
+```
+
+## Build
+
+```bash
+chant build src/ --output .github/workflows/ci.yml
+```
+
+This produces `.github/workflows/ci.yml`:
+
+```yaml
+name: CI
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+permissions:
+  contents: read
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - name: Install
+        run: npm ci
+      - name: Build
+        run: npm run build
+      - name: Test
+        run: npm test
+```
+
+## Lint
+
+```bash
+chant lint src/
+```
+
+Lint checks for common issues -- missing timeouts, hardcoded secrets, raw expression strings, and more. See the [Lint Rules](/chant/lexicons/github/lint-rules/) page for the full list.
+
+## Deploy
+
+Commit the generated YAML and push:
+
+```bash
+git add .github/workflows/ci.yml
+git commit -m "Add CI workflow"
+git push
+```
+
+GitHub automatically picks up any `.github/workflows/*.yml` files and runs them on the configured triggers.
+
+## Project structure
+
+A typical chant GitHub Actions project looks like this:
+
+```
+my-project/
+  chant.config.ts          # chant configuration
+  src/
+    ci.ts                  # CI workflow
+    deploy.ts              # Deploy workflow
+    release.ts             # Release workflow
+  .github/
+    workflows/
+      ci.yml               # Generated — do not edit
+      deploy.yml           # Generated — do not edit
+      release.yml          # Generated — do not edit
+  package.json
+  tsconfig.json
+```
+
+Each `.ts` source file exports a `Workflow` and one or more `Job` declarations. Running `chant build` compiles them to `.yml` files.
+
+## Using composites
+
+The fastest path is using a higher-level composite. For example, `NodeCI` produces a complete CI workflow in one call:
+
+```typescript
+import { NodeCI } from "@intentius/chant-lexicon-github";
+
+const ci = NodeCI({ nodeVersion: "22", packageManager: "npm" });
+
+export const workflow = ci.workflow;
+export const build = ci.job;
+```
+
+For multi-job pipelines with artifact passing, use `NodePipeline`:
+
+```typescript
+import { NodePipeline } from "@intentius/chant-lexicon-github";
+
+const pipeline = NodePipeline({ nodeVersion: "22", packageManager: "pnpm" });
+
+export const workflow = pipeline.workflow;
+export const buildJob = pipeline.buildJob;
+export const testJob = pipeline.testJob;
+```
+
+## Next steps
+
+- [Workflows](/chant/lexicons/github/workflows/) -- triggers, permissions, concurrency, job dependencies
+- [Actions & Composites](/chant/lexicons/github/actions/) -- Checkout, SetupNode, DockerBuild, and more
+- [Expressions](/chant/lexicons/github/expressions/) -- typed expression system and condition helpers
+- [Lint Rules](/chant/lexicons/github/lint-rules/) -- 13 lint rules and 15 post-synth checks

@@ -1,5 +1,6 @@
-import { existsSync, mkdirSync, writeFileSync, cpSync, readdirSync, statSync } from "fs";
+import { existsSync, mkdirSync, writeFileSync, cpSync, readdirSync, statSync, readFileSync } from "fs";
 import { join, resolve } from "path";
+import { createRequire } from "module";
 import { formatSuccess, formatWarning, formatError } from "../format";
 import { loadChantConfig } from "../../config";
 import { loadPlugins } from "../plugins";
@@ -63,13 +64,14 @@ function copyTypeFiles(src: string, dest: string): number {
 function resolvePackagePath(packageName: string, projectDir: string): string | undefined {
   // Try resolve from project dir
   try {
-    const entryPoint = require.resolve(packageName, { paths: [projectDir] });
+    const _require = createRequire(join(projectDir, "package.json"));
+    const entryPoint = _require.resolve(packageName);
     // Walk up from entry point to find package root
     let dir = entryPoint;
     while (dir !== "/") {
       dir = join(dir, "..");
       if (existsSync(join(dir, "package.json"))) {
-        const pkg = JSON.parse(require("fs").readFileSync(join(dir, "package.json"), "utf-8"));
+        const pkg = JSON.parse(readFileSync(join(dir, "package.json"), "utf-8"));
         if (pkg.name === packageName) return dir;
       }
     }
@@ -162,10 +164,10 @@ export async function updateCommand(options: UpdateOptions): Promise<UpdateResul
       if (plugin.skills) {
         const skills = plugin.skills();
         if (skills.length > 0) {
-          const skillsDir = join(projectDir, ".chant", "skills", plugin.name);
-          mkdirSync(skillsDir, { recursive: true });
           for (const skill of skills) {
-            writeFileSync(join(skillsDir, `${skill.name}.md`), skill.content);
+            const skillDir = join(projectDir, "skills", skill.name);
+            mkdirSync(skillDir, { recursive: true });
+            writeFileSync(join(skillDir, "SKILL.md"), skill.content);
           }
           synced.push(`${plugin.name} skills (${skills.length})`);
         }

@@ -1,3 +1,10 @@
+// Parameter
+export { Parameter } from "./parameter";
+
+// Default Tags
+export { defaultTags, isDefaultTags, DEFAULT_TAGS_MARKER } from "./default-tags";
+export type { DefaultTags, TagEntry } from "./default-tags";
+
 // Serializer
 export { awsSerializer } from "./serializer";
 
@@ -5,11 +12,13 @@ export { awsSerializer } from "./serializer";
 export { nestedStack, isNestedStackInstance, NestedStackOutputRef, isNestedStackOutputRef, NESTED_STACK_MARKER } from "./nested-stack";
 export type { NestedStackOptions, NestedStackInstance } from "./nested-stack";
 
-// Re-export core child project and stack output primitives
+// Re-export core child project, stack output, and lexicon output primitives
 export { isChildProject, CHILD_PROJECT_MARKER } from "@intentius/chant/child-project";
 export type { ChildProjectInstance } from "@intentius/chant/child-project";
 export { stackOutput, isStackOutput, STACK_OUTPUT_MARKER } from "@intentius/chant/stack-output";
 export type { StackOutput } from "@intentius/chant/stack-output";
+export { output, isLexiconOutput } from "@intentius/chant/lexicon-output";
+export type { LexiconOutput } from "@intentius/chant/lexicon-output";
 
 // Plugin
 export { awsPlugin } from "./plugin";
@@ -24,6 +33,7 @@ export {
   Select,
   Split,
   Base64,
+  GetAZs,
   SubIntrinsic,
   RefIntrinsic,
   GetAttIntrinsic,
@@ -32,6 +42,7 @@ export {
   SelectIntrinsic,
   SplitIntrinsic,
   Base64Intrinsic,
+  GetAZsIntrinsic,
 } from "./intrinsics";
 
 // Pseudo-parameters
@@ -56,6 +67,23 @@ export { fetchSchemaZip } from "./spec/fetch";
 export type { CFNSchema, SchemaProperty, SchemaDefinition } from "./spec/fetch";
 export { parseCFNSchema, cfnShortName, cfnServiceName } from "./spec/parse";
 export type { SchemaParseResult, ParsedResource, ParsedProperty, ParsedAttribute, ParsedPropertyType, ParsedEnum, PropertyConstraints } from "./spec/parse";
+
+// Action constants
+export { S3Actions, LambdaActions, DynamoDBActions, SQSActions, SNSActions, IAMActions, ECRActions, LogsActions, ECSActions } from "./actions/index";
+
+// Built-in composites
+export {
+  LambdaFunction, LambdaNode, LambdaPython, NodeLambda, PythonLambda,
+  LambdaApi,
+  LambdaScheduled, ScheduledLambda,
+  LambdaSqs, LambdaEventBridge, LambdaDynamoDB, LambdaS3, LambdaSns,
+  VpcDefault, FargateAlb, AlbShared, FargateService, RdsInstance, RdsPostgres,
+} from "./composites/index";
+export type {
+  LambdaFunctionProps, LambdaApiProps, ScheduledLambdaProps,
+  LambdaSqsProps, LambdaEventBridgeProps, LambdaDynamoDBProps, LambdaS3Props, LambdaSnsProps,
+  VpcDefaultProps, FargateAlbProps, AlbSharedProps, FargateServiceProps, RdsInstanceProps, RdsPostgresProps,
+} from "./composites/index";
 
 // Code generation pipeline
 export { generate, writeGeneratedFiles } from "./codegen/generate";

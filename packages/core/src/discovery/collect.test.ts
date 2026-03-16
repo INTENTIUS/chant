@@ -54,6 +54,40 @@ describe("collectEntities", () => {
     expect(result.get("entity3")).toBe(entity3);
   });
 
+  test("collects arrays of declarable entities with indexed names", () => {
+    const e0 = createMockEntity("type");
+    const e1 = createMockEntity("type");
+    const e2 = createMockEntity("type");
+
+    const modules = [
+      {
+        file: "test.ts",
+        exports: { myResources: [e0, e1, e2] },
+      },
+    ];
+
+    const result = collectEntities(modules);
+    expect(result.size).toBe(3);
+    expect(result.get("myResources_0")).toBe(e0);
+    expect(result.get("myResources_1")).toBe(e1);
+    expect(result.get("myResources_2")).toBe(e2);
+  });
+
+  test("ignores non-declarable items within arrays", () => {
+    const e0 = createMockEntity("type");
+
+    const modules = [
+      {
+        file: "test.ts",
+        exports: { mixed: [e0, "string", 42, null] },
+      },
+    ];
+
+    const result = collectEntities(modules);
+    expect(result.size).toBe(1);
+    expect(result.get("mixed_0")).toBe(e0);
+  });
+
   test("ignores non-declarable exports", () => {
     const entity = createMockEntity("test");
 
@@ -262,8 +296,8 @@ describe("collectEntities with composites", () => {
       { file: "test.ts", exports: { myComp: instance } },
     ]);
 
-    expect(entities.has("myComp_a")).toBe(true);
-    expect(entities.has("myComp_b")).toBe(true);
+    expect(entities.has("myCompA")).toBe(true);
+    expect(entities.has("myCompB")).toBe(true);
     expect(entities.has("myComp")).toBe(false);
   });
 });

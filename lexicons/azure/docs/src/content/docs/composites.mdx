@@ -1,0 +1,210 @@
+---
+title: "Composites"
+description: "High-level resource composites for common Azure patterns"
+---
+
+Composites are factory functions that return multiple related resources with best-practice defaults. They eliminate boilerplate and enforce security patterns.
+
+## StorageAccountSecure
+
+A storage account with HTTPS-only, encryption at rest, TLS 1.2, and default-deny network rules.
+
+```typescript
+import { StorageAccountSecure } from "@intentius/chant-lexicon-azure";
+
+const { storageAccount } = StorageAccountSecure({
+  name: "myappstorage01",
+  sku: "Standard_GRS",         // default: "Standard_LRS"
+  tags: { environment: "prod" },
+});
+
+export { storageAccount };
+```
+
+**Resources created:** 1 (`Microsoft.Storage/storageAccounts`)
+
+**Security defaults:**
+- `supportsHttpsTrafficOnly: true`
+- `minimumTlsVersion: "TLS1_2"`
+- `allowBlobPublicAccess: false`
+- All 4 encryption services enabled (blob, file, table, queue)
+- Network ACLs default to Deny
+
+## VnetDefault
+
+A virtual network with two subnets, NSG, and route table.
+
+```typescript
+import { VnetDefault } from "@intentius/chant-lexicon-azure";
+
+const { virtualNetwork, subnet1, subnet2, nsg, routeTable } = VnetDefault({
+  name: "my-vnet",
+  addressPrefix: "10.0.0.0/16",
+  subnetPrefixes: ["10.0.1.0/24", "10.0.2.0/24"],
+});
+
+export { virtualNetwork, subnet1, subnet2, nsg, routeTable };
+```
+
+**Resources created:** 5 (VNet, 2 Subnets, NSG, Route Table)
+
+**Defaults:**
+- Address space: `10.0.0.0/16`
+- Subnet 1: `10.0.1.0/24`, Subnet 2: `10.0.2.0/24`
+- Both subnets reference the NSG and route table
+
+## AppService
+
+An App Service Plan + Web App with managed identity, HTTPS, and TLS 1.2.
+
+```typescript
+import { AppService } from "@intentius/chant-lexicon-azure";
+
+const { plan, webApp } = AppService({
+  name: "my-web-app",
+  sku: "P1v3",                 // default: "B1"
+  runtime: "DOTNETCORE|8.0",   // default: "NODE|18-lts"
+  tags: { environment: "staging" },
+});
+
+export { plan, webApp };
+```
+
+**Resources created:** 2 (`Microsoft.Web/serverfarms`, `Microsoft.Web/sites`)
+
+**Security defaults:**
+- `identity.type: "SystemAssigned"`
+- `httpsOnly: true`
+- `siteConfig.minTlsVersion: "1.2"`
+- `siteConfig.ftpsState: "Disabled"`
+- Web App references Plan via `serverFarmId`
+
+## AksCluster
+
+An AKS managed cluster with RBAC, managed identity, and Azure CNI.
+
+```typescript
+import { AksCluster } from "@intentius/chant-lexicon-azure";
+
+const { cluster } = AksCluster({
+  name: "my-aks",
+  nodeCount: 5,                // default: 3
+  vmSize: "Standard_D4s_v5",   // default: "Standard_D2s_v5"
+  kubernetesVersion: "1.29",   // default: "1.28"
+});
+
+export { cluster };
+```
+
+**Resources created:** 1 (`Microsoft.ContainerService/managedClusters`)
+
+**Security defaults:**
+- `identity.type: "SystemAssigned"`
+- `enableRBAC: true`
+- Azure CNI network plugin
+- Standard load balancer
+
+## SqlDatabase
+
+A SQL Server + Database + Firewall Rule.
+
+```typescript
+import { SqlDatabase } from "@intentius/chant-lexicon-azure";
+
+const { server, database, firewallRule } = SqlDatabase({
+  name: "my-sql-server",
+  adminLogin: "sqladmin",
+  adminPassword: "P@ssw0rd!",
+  sku: "S1",                   // default: "S0"
+});
+
+export { server, database, firewallRule };
+```
+
+**Resources created:** 3 (Server, Database, Firewall Rule)
+
+**Defaults:**
+- `minimalTlsVersion: "1.2"`
+- Database named `{name}-db`
+- AllowAllAzureIps firewall rule
+
+## KeyVaultSecure
+
+A Key Vault with soft delete, purge protection, and network bypass for Azure services.
+
+```typescript
+import { KeyVaultSecure } from "@intentius/chant-lexicon-azure";
+
+const { vault } = KeyVaultSecure({
+  name: "my-keyvault",
+  tenantId: "00000000-0000-0000-0000-000000000000",
+  accessPolicies: [
+    {
+      tenantId: "00000000-0000-0000-0000-000000000000",
+      objectId: "11111111-1111-1111-1111-111111111111",
+      permissions: { secrets: ["get", "list", "set"] },
+    },
+  ],
+});
+
+export { vault };
+```
+
+**Resources created:** 1 (`Microsoft.KeyVault/vaults`)
+
+**Security defaults:**
+- `enableSoftDelete: true`
+- `softDeleteRetentionInDays: 90`
+- `enablePurgeProtection: true`
+- Network bypass for Azure Services
+
+## ContainerRegistrySecure
+
+An Azure Container Registry with admin disabled, content trust, and retention policy.
+
+```typescript
+import { ContainerRegistrySecure } from "@intentius/chant-lexicon-azure";
+
+const { registry } = ContainerRegistrySecure({
+  name: "myacr01",
+  sku: "Premium",              // default: "Premium"
+  tags: { environment: "production" },
+});
+
+export { registry };
+```
+
+**Resources created:** 1 (`Microsoft.ContainerRegistry/registries`)
+
+**Security defaults:**
+- `adminUserEnabled: false`
+- Content trust (Notary) enabled
+- Quarantine policy enabled
+- 30-day retention policy
+
+## VmLinux
+
+A Linux VM with NIC, NSG, SSH key authentication, and optional public IP.
+
+```typescript
+import { VmLinux } from "@intentius/chant-lexicon-azure";
+
+const { virtualMachine, nic, nsg, publicIpAddress } = VmLinux({
+  name: "my-vm",
+  vmSize: "Standard_B2s",
+  adminUsername: "azureuser",
+  sshPublicKey: "ssh-rsa AAAA...",
+  subnetId: "[resourceId('Microsoft.Network/virtualNetworks/subnets', 'my-vnet', 'subnet-1')]",
+  publicIp: true,
+});
+
+export { virtualMachine, nic, nsg, publicIpAddress };
+```
+
+**Resources created:** 3–4 (VM, NIC, NSG, optional Public IP)
+
+**Defaults:**
+- SSH key authentication (password disabled)
+- Ubuntu 22.04 LTS image
+- Premium managed disk
+- NSG with SSH inbound rule

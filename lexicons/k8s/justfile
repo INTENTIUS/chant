@@ -1,0 +1,38 @@
+# Default recipe - list all available commands
+default:
+    @just --list
+
+# Generate types and metadata from Kubernetes OpenAPI spec
+generate:
+    bun run src/codegen/generate-cli.ts
+
+# Generate docs site, install deps, and start dev server
+docs:
+    bun run src/codegen/docs-cli.ts
+    bun install --cwd docs
+    bun --cwd docs dev
+
+# Build docs site for production
+docs-build:
+    bun run src/codegen/docs-cli.ts
+    bun install --cwd docs
+    bun --cwd docs build
+
+# Package the lexicon (generate)
+package: generate
+
+# Run import samples roundtrip test
+import-samples *FLAGS:
+    bash scripts/import-k8s-samples.sh {{FLAGS}}
+
+# Run full roundtrip test (parse → generate → import → serialize → compare)
+full-roundtrip *FLAGS:
+    bash scripts/full-roundtrip.sh {{FLAGS}}
+
+# Validate serialized YAML against a real k3d cluster
+k3d-validate *FLAGS:
+    bash scripts/k3d-validate.sh {{FLAGS}}
+
+# Validate composite resources against a real k3d cluster
+k3d-validate-composites *FLAGS:
+    bash scripts/k3d-validate-composites.sh {{FLAGS}}

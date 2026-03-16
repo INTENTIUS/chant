@@ -1,0 +1,92 @@
+---
+title: "Deploying to EKS"
+description: "How AWS CloudFormation infrastructure connects to Kubernetes workloads on EKS via chant's cross-lexicon build."
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+Chant supports cross-lexicon projects where AWS infrastructure and Kubernetes workloads live in the same `src/` directory. The AWS lexicon produces a CloudFormation template; the K8s lexicon produces kubectl-ready YAML.
+
+## Architecture
+
+```
+┌─────────────────────────────────────┐
+│  AWS Lexicon (CloudFormation)       │
+│  ┌──────────┐  ┌──────────────┐    │
+│  │ VPC/Nets │  │ EKS Cluster  │    │
+│  └──────────┘  └──────┬───────┘    │
+│  ┌──────────┐         │            │
+│  │ IAM Roles│ ←── OIDC Provider    │
+│  └────┬─────┘                      │
+│  ┌────┴─────────────────────┐      │
+│  │ Add-ons: vpc-cni, ebs,  │      │
+│  │ coredns, kube-proxy     │      │
+│  └──────────────────────────┘      │
+└───────┼─────────────────────────────┘
+        │ ARNs flow down via .env
+┌───────▼─────────────────────────────┐
+│  K8s Lexicon (kubectl apply)        │
+│  ┌────────────┐  ┌──────────────┐  │
+│  │ Namespace  │  │ IRSA SA      │  │
+│  │ + Quotas   │  │ (role-arn)   │  │
+│  └────────────┘  └──────────────┘  │
+│  ┌────────────┐  ┌──────────────┐  │
+│  │ Autoscaled │  │ ALB Ingress  │  │
+│  │ Service    │  │ (cert-arn)   │  │
+│  └────────────┘  └──────────────┘  │
+│  ┌────────────┐  ┌──────────────┐  │
+│  │ EBS Storage│  │ FluentBit    │  │
+│  │ Class      │  │ + ADOT       │  │
+│  └────────────┘  └──────────────┘  │
+└─────────────────────────────────────┘
+```
+
+## Cross-lexicon value flow
+
+CloudFormation stack outputs map to K8s composite props via `.env`:
+
+| CF Output | K8s Composite Prop |
+|-----------|-------------------|
+| `appRoleArn` | `IrsaServiceAccount({ iamRoleArn })` |
+| `externalDnsRoleArn` | `ExternalDnsAgent({ iamRoleArn })` |
+| `fluentBitRoleArn` | `FluentBitAgent({ iamRoleArn })` |
+| `adotRoleArn` | `AdotCollector({ iamRoleArn })` |
+| ACM cert ARN | `AlbIngress({ certificateArn })` |
+| Cluster name | `FluentBitAgent({ clusterName })`, `AdotCollector({ clusterName })` |
+
+Values flow through `.env` → `config.ts` → K8s source files. `npm run load-outputs` refreshes `.env` after any infra deploy.
+
+## K8s composites used
+
+The K8s lexicon provides EKS-specific composites for the workload side:
+
+- **IrsaServiceAccount** — ServiceAccount with IAM role annotation for IRSA
+- **AlbIngress** — Ingress with ALB Controller annotations, SSL redirect, shared ALB groups
+- **EbsStorageClass** — gp3 encrypted StorageClass via EBS CSI
+- **EfsStorageClass** — ReadWriteMany StorageClass via EFS CSI
+- **FluentBitAgent** — DaemonSet for CloudWatch logging
+- **ExternalDnsAgent** — Route53 DNS record management
+- **AdotCollector** — CloudWatch/X-Ray metrics and traces
+
+See the [EKS Composites reference](/chant/lexicons/k8s/eks-composites/) for full API details.
+
+## Deploy workflow
+
+```bash
+npm run build          # Build CF template + K8s manifests
+npm run deploy-infra   # Deploy CloudFormation stack
+npm run configure-kubectl  # Set up kubeconfig
+npm run load-outputs   # Write real ARNs to .env
+npm run build:k8s      # Rebuild K8s with real values
+npm run apply          # kubectl apply
+```
+
+<Aside type="caution">
+Always delete K8s resources before the CloudFormation stack. The ALB controller must be running to clean up the ALB it created.
+</Aside>
+
+## Further reading
+
+- [AWS EKS + Kubernetes tutorial](/chant/tutorials/eks-kubernetes/) — step-by-step deployment walkthrough
+- [EKS Composites](/chant/lexicons/k8s/eks-composites/) — K8s lexicon EKS composite reference
+- [k8s-eks-microservice example](https://github.com/intentius/chant/tree/main/examples/k8s-eks-microservice) — full source code

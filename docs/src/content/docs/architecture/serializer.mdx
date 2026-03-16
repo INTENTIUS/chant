@@ -28,14 +28,14 @@ When `serialize()` returns a `SerializerResult` instead of a plain string, the b
 
 ## Child Projects
 
-Lexicons that split resources into separate deployment units (nested stacks, modules, linked templates) use chant's **child project** pattern. A child project is a subdirectory with its own barrel file (`_.ts`) that builds independently to a valid template.
+Lexicons that split resources into separate deployment units (nested stacks, modules, linked templates) use chant's **child project** pattern. A child project is a subdirectory that builds independently to a valid template.
 
 The core provides two primitives:
 
 - **`stackOutput(ref)`** — wraps an `AttrRef` into a `Declarable` with `kind: "output"`. The serializer emits it into the template's `Outputs` section.
 - **`ChildProjectInstance`** — a `Declarable` representing a reference to a child project directory. The build pipeline detects these and recursively builds the child before serialization.
 
-During build, `findInfraFiles()` stops recursing when it encounters a subdirectory with a `_.ts` barrel — that directory is a separate project scope. The parent's `ChildProjectInstance` entity triggers the child's build, and the serializer uses the child's `BuildResult` to produce the additional output files.
+During build, `findInfraFiles()` stops recursing when it encounters a child project subdirectory — that directory is a separate project scope. The parent's `ChildProjectInstance` entity triggers the child's build, and the serializer uses the child's `BuildResult` to produce the additional output files.
 
 Cross-stack references are explicit: the child declares `stackOutput()` exports, and the parent reads them via a Proxy on the `ChildProjectInstance.outputs` property. The Proxy creates lexicon-specific intrinsic objects (e.g. `NestedStackOutputRef` for AWS) that serialize to the appropriate reference syntax.
 

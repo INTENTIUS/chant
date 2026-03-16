@@ -1,21 +1,21 @@
 import { existsSync, mkdirSync, writeFileSync, readdirSync, readFileSync } from "fs";
-import { join, resolve } from "path";
+import { join, resolve, dirname } from "path";
+import { fileURLToPath } from "url";
 import { homedir } from "os";
 import { createInterface } from "readline";
-import { z } from "zod";
 import { formatSuccess, formatWarning } from "../format";
 import { loadPlugin } from "../plugins";
 
-/**
- * Schema for validating generated package.json — catches template bugs early.
- */
-const GeneratedPackageJsonSchema = z.object({
-  name: z.string().min(1),
-  version: z.string(),
-  type: z.literal("module"),
-  scripts: z.record(z.string(), z.string()),
-  dependencies: z.record(z.string(), z.string()),
-});
+/** Read the current chant package version from our own package.json. */
+function getChantVersion(): string {
+  try {
+    const pkgDir = dirname(dirname(dirname(dirname(fileURLToPath(import.meta.url)))));
+    const pkg = JSON.parse(readFileSync(join(pkgDir, "package.json"), "utf-8"));
+    return pkg.version ?? "0.0.13";
+  } catch {
+    return "0.0.13";
+  }
+}
 
 /**
  * Init command options
@@ -25,6 +25,8 @@ export interface InitOptions {
   path?: string;
   /** Lexicon to use */
   lexicon: string;
+  /** Template name (e.g. "node-pipeline", "docker-build") */
+  template?: string;
   /** Force init even in non-empty directory */
   force?: boolean;
   /** Skip MCP config generation */
@@ -45,6 +47,16 @@ export interface InitResult {
   warnings: string[];
   /** Error message if failed */
   error?: string;
+}
+
+/**
+ * Detect whether the user's project uses bun or npm.
+ * Checks for lock files first, then falls back to runtime detection.
+ */
+function detectPackageManager(dir?: string): "bun" | "npm" {
+  if (dir && (existsSync(join(dir, "bun.lockb")) || existsSync(join(dir, "bun.lock")))) return "bun";
+  if (typeof globalThis.Bun !== "undefined") return "bun";
+  return "npm";
 }
 
 /**
@@ -81,32 +93,28 @@ function getMcpConfigDir(ide: "claude-code" | "cursor" | "generic"): string {
 /**
  * Generate package.json content
  */
-function generatePackageJson(lexicon: string): string {
+function generatePackageJson(lexicon: string, extraScripts?: Record<string, string>): string {
+  const ver = getChantVersion();
   const dependencies: Record<string, string> = {
-    "@intentius/chant": "^0.1.0",
-    [`@intentius/chant-lexicon-${lexicon}`]: "^0.1.0",
+    "@intentius/chant": `^${ver}`,
+    [`@intentius/chant-lexicon-${lexicon}`]: `^${ver}`,
   };
 
   const pkg = {
     name: "chant-project",
-    version: "0.1.0",
+    version: ver,
     type: "module" as const,
     scripts: {
       build: `chant build src --lexicon ${lexicon}`,
       lint: "chant lint src",
       dev: `chant build src --lexicon ${lexicon} --watch`,
+      ...extraScripts,
     },
     dependencies,
     devDependencies: {
       typescript: "^5.0.0",
     },
   };
-
-  // Validate generated output to catch template bugs
-  const result = GeneratedPackageJsonSchema.safeParse(pkg);
-  if (!result.success) {
-    throw new Error(`Bug: generated package.json is invalid: ${result.error.issues[0].message}`);
-  }
 
   return JSON.stringify(pkg, null, 2);
 }
@@ -126,12 +134,6 @@ function generateTsConfig(lexicon: string): string {
       declaration: true,
       outDir: "./dist",
       rootDir: "./src",
-      paths: {
-        "@intentius/chant": ["./.chant/types/core"],
-        "@intentius/chant/*": ["./.chant/types/core/*"],
-        [`@intentius/chant-lexicon-${lexicon}`]: [`./.chant/types/lexicon-${lexicon}`],
-        [`@intentius/chant-lexicon-${lexicon}/*`]: [`./.chant/types/lexicon-${lexicon}/*`],
-      },
     },
     include: ["src"],
     exclude: ["node_modules", "dist"],
@@ -161,7 +163,7 @@ node_modules/
 .chant/types/
 .chant/meta/
 .chant/rules/
-.chant/skills/
+skills/
 `;
 }
 
@@ -214,19 +216,17 @@ export interface ChantConfig {
   };
 }
 
-/** Barrel proxy — lazy-loads all sibling exports */
-export declare function barrel(dir: string): Record<string, unknown>;
 `;
 }
 
 /**
  * Generate MCP config
  */
-function generateMcpConfig(_ide: "claude-code" | "cursor" | "generic"): string {
+function generateMcpConfig(pm: "bun" | "npm"): string {
   const config = {
     mcpServers: {
       chant: {
-        command: "npx",
+        command: pm === "bun" ? "bunx" : "npx",
         args: ["chant", "serve", "mcp"],
       },
     },
@@ -303,6 +303,17 @@ export async function initCommand(options: InitOptions): Promise<InitResult> {
     mkdirSync(targetDir, { recursive: true });
   }
 
+  // Load plugin early to get template set (used for scripts + source files)
+  let templateSet: import("../../lexicon").InitTemplateSet | undefined;
+  try {
+    const plugin = await loadPlugin(options.lexicon);
+    if (plugin.initTemplates) {
+      templateSet = plugin.initTemplates(options.template);
+    }
+  } catch {
+    // Plugin not yet installed — no source files to scaffold
+  }
+
   // Create src directory
   const srcDir = join(targetDir, "src");
   if (!existsSync(srcDir)) {
@@ -312,7 +323,7 @@ export async function initCommand(options: InitOptions): Promise<InitResult> {
   // Generate package.json
   writeIfNotExists(
     join(targetDir, "package.json"),
-    generatePackageJson(options.lexicon),
+    generatePackageJson(options.lexicon, templateSet?.scripts),
     "package.json",
     createdFiles,
     warnings,
@@ -345,27 +356,29 @@ export async function initCommand(options: InitOptions): Promise<InitResult> {
     warnings,
   );
 
-  // Generate source files from plugin (or fallback to a minimal barrel)
-  let sourceFiles: Record<string, string> = {};
-  try {
-    const plugin = await loadPlugin(options.lexicon);
-    if (plugin.initTemplates) {
-      sourceFiles = plugin.initTemplates();
+  // Write source files from plugin template set
+  if (templateSet) {
+    for (const [filename, content] of Object.entries(templateSet.src)) {
+      writeIfNotExists(
+        join(srcDir, filename),
+        content,
+        `src/${filename}`,
+        createdFiles,
+        warnings,
+      );
     }
-  } catch {
-    // Plugin not yet installed — write a minimal barrel stub
-    sourceFiles = {
-      "_.ts": "// Barrel — re-export shared config here\n",
-    };
-  }
-  for (const [filename, content] of Object.entries(sourceFiles)) {
-    writeIfNotExists(
-      join(srcDir, filename),
-      content,
-      `src/${filename}`,
-      createdFiles,
-      warnings,
-    );
+    // Write root scaffold files (e.g. index.js, test.js, Dockerfile)
+    if (templateSet.root) {
+      for (const [filename, content] of Object.entries(templateSet.root)) {
+        writeIfNotExists(
+          join(targetDir, filename),
+          content,
+          filename,
+          createdFiles,
+          warnings,
+        );
+      }
+    }
   }
 
   // Scaffold .chant/types/core/ with embedded type definitions
@@ -423,7 +436,7 @@ export async function initCommand(options: InitOptions): Promise<InitResult> {
 
     writeIfNotExists(
       join(mcpDir, "mcp.json"),
-      generateMcpConfig(ide),
+      generateMcpConfig(detectPackageManager(targetDir)),
       `~/.${ide === "generic" ? "config/mcp" : ide}/mcp.json`,
       createdFiles,
       warnings,
@@ -436,12 +449,11 @@ export async function initCommand(options: InitOptions): Promise<InitResult> {
     if (plugin.skills) {
       const skills = plugin.skills();
       if (skills.length > 0) {
-        const skillsDir = join(targetDir, ".chant", "skills", options.lexicon);
-        mkdirSync(skillsDir, { recursive: true });
         for (const skill of skills) {
-          const skillPath = join(skillsDir, `${skill.name}.md`);
-          writeFileSync(skillPath, skill.content);
-          createdFiles.push(`.chant/skills/${options.lexicon}/${skill.name}.md`);
+          const skillDir = join(targetDir, "skills", skill.name);
+          mkdirSync(skillDir, { recursive: true });
+          writeFileSync(join(skillDir, "SKILL.md"), skill.content);
+          createdFiles.push(`skills/${skill.name}/SKILL.md`);
         }
       }
     }
@@ -481,6 +493,8 @@ export async function printInitResult(
 
   console.log("");
 
+  const pm = detectPackageManager(options?.cwd);
+
   // Interactive install prompt
   if (!options?.skipInstall) {
     const shouldInstall = await promptInstall();
@@ -489,9 +503,9 @@ export async function printInitResult(
       const cwd = options?.cwd ?? ".";
       console.log("Installing dependencies...");
       try {
-        execSync("npm install", { cwd, stdio: "inherit" });
+        execSync(`${pm} install`, { cwd, stdio: "inherit" });
       } catch {
-        console.error(formatWarning({ message: "Install failed. Run 'npm install' manually." }));
+        console.error(formatWarning({ message: `Install failed. Run '${pm} install' manually.` }));
       }
     }
   }
@@ -500,6 +514,6 @@ export async function printInitResult(
   console.log("Next steps:");
   console.log("  1. Edit src/config.ts");
   console.log("  2. Add resources in src/");
-  console.log("  3. npm run build");
+  console.log(`  3. ${pm} run build`);
 }
 

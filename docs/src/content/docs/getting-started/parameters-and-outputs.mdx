@@ -1,0 +1,63 @@
+---
+title: Parameters & Outputs
+description: Declare CloudFormation parameters and stack outputs in chant
+---
+
+import { Code } from '@astrojs/starlight/components';
+import parameterExampleSrc from '../../../../../lexicons/aws/examples/docs-snippets/src/parameter-declaration.ts?raw';
+import defaultsSrc from '../../../../../lexicons/aws/examples/lambda-api/src/defaults.ts?raw';
+import parameterDeclarationSrc from '../../../../../lexicons/aws/examples/docs-snippets/src/parameter-declaration.ts?raw';
+import parameterRefSrc from '../../../../../lexicons/aws/examples/docs-snippets/src/parameter-ref.ts?raw';
+import parameterCrossFileRefSrc from '../../../../../lexicons/aws/examples/docs-snippets/src/parameter-cross-file-ref.ts?raw';
+import outputExplicitSrc from '../../../../../lexicons/aws/examples/docs-snippets/src/output-explicit.ts?raw';
+
+Parameters let you customize a stack at deploy time. Outputs expose values from the stack for use by other stacks or scripts.
+
+## Full example
+
+<Code code={defaultsSrc} lang="typescript" title="src/defaults.ts" />
+<Code code={parameterExampleSrc} lang="typescript" title="src/parameter.ts" />
+
+## Parameters
+
+Export a `Parameter` to add it to the template's `Parameters` section:
+
+<Code code={parameterDeclarationSrc} lang="typescript" title="src/parameter-declaration.ts" />
+
+The first argument is the CloudFormation parameter type (`"String"`, `"Number"`, `"List<Number>"`, `"CommaDelimitedList"`, or an AWS SSM type). The second argument supports:
+
+- `description` — human-readable description
+- `defaultValue` — value used when none is provided at deploy time
+
+The exported variable name becomes the logical parameter name (PascalCased). `name` becomes `Name` in the template.
+
+### Referencing parameters
+
+Use `Ref` to reference a parameter's value inside resource properties:
+
+<Code code={parameterRefSrc} lang="typescript" title="src/parameter-ref.ts" />
+
+Or import it directly when the parameter is in another file:
+
+<Code code={parameterCrossFileRefSrc} lang="typescript" title="src/parameter-cross-file-ref.ts" />
+
+## Outputs
+
+Use `output()` to create explicit stack outputs. An output wraps an `AttrRef` (a resource attribute reference) with a name:
+
+<Code code={outputExplicitSrc} lang="typescript" title="src/output-explicit.ts" />
+
+This produces:
+
+```json
+"Outputs": {
+  "DataBucketArn": {
+    "Value": { "Fn::GetAtt": ["DataBucket", "Arn"] }
+  }
+}
+```
+
+## Next steps
+
+- [AWS CloudFormation Concepts](/chant/lexicons/aws/cloudformation/) — pseudo-parameters, intrinsics, conditions, and more
+- [Nested Stacks](/chant/lexicons/aws/nested-stacks/) — cross-stack references with `stackOutput()`

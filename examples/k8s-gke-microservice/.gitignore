@@ -1,0 +1,6 @@
+dist/
+node_modules/
+.chant/
+templates/
+config.yaml
+k8s.yaml

@@ -25,30 +25,29 @@ docs/
 │   ├── assets/           # Static assets (images, etc.)
 │   ├── content/
 │   │   └── docs/         # Documentation content (MDX/Markdown)
-│   │       ├── guides/   # User guides
-│   │       ├── reference/# Reference documentation
-│   │       └── api/      # API documentation
+│   │       ├── getting-started/   # Quick start and setup
+│   │       ├── concepts/          # Core concepts
+│   │       ├── cli/               # CLI command reference
+│   │       ├── architecture/      # Architecture deep dives
+│   │       ├── lexicons/          # Lexicon-specific docs
+│   │       ├── lexicon-authoring/ # Authoring custom lexicons
+│   │       ├── lint-rules/        # Lint rule documentation
+│   │       ├── configuration/     # Configuration reference
+│   │       ├── serialization/     # Output format details
+│   │       ├── tutorials/         # Step-by-step tutorials
+│   │       ├── api/               # API documentation
+│   │       ├── guide/             # User guides
+│   │       ├── contributing/      # Contributor docs
+│   │       └── troubleshooting/   # Troubleshooting guides
 │   └── content.config.ts # Content configuration
 ├── public/               # Static files (favicons, etc.)
-├── astro.config.mjs      # Astro configuration
+├── astro.config.mjs      # Astro + Starlight configuration (includes sidebar)
 └── package.json
 ```
 
 ## Writing Documentation
 
 Documentation is written in Markdown or MDX format. Files are located in `src/content/docs/`.
-
-### File Structure
-
-- **Guides** (`guides/`) - Tutorials and conceptual guides
-  - `getting-started.md` - Quick start guide
-- **Advanced** (`advanced/`) - In-depth technical documentation
-  - `core-type-system.md` - Core type system deep dive
-
-- **Reference** (`reference/`) - Technical reference documentation
-  - `cli.md` - CLI command reference
-
-- **API** (`api/`) - Generated API documentation
 
 ### Frontmatter
 
@@ -65,7 +64,7 @@ description: Brief description of the page
 
 1. Create a new `.md` or `.mdx` file in the appropriate directory
 2. Add frontmatter with title and description
-3. The page will automatically appear in navigation based on file location
+3. Add the page to the sidebar in `astro.config.mjs` — Starlight does **not** auto-discover pages
 
 ## Starlight Features
 

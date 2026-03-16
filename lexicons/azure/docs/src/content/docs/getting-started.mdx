@@ -1,0 +1,101 @@
+---
+title: "Getting Started"
+description: "Install chant and deploy your first ARM template in 5 minutes"
+---
+
+## What is chant?
+
+Chant is a TypeScript-to-JSON compiler for Azure ARM templates. You write typed TypeScript declarations, and chant outputs deployment-ready ARM templates.
+
+## Install
+
+```bash
+npm install --save-dev @intentius/chant @intentius/chant-lexicon-azure
+```
+
+## Your first ARM template
+
+The fastest path is the **StorageAccountSecure** composite — one function call that produces a fully configured storage account:
+
+```typescript
+// src/main.ts
+import { StorageAccountSecure } from "@intentius/chant-lexicon-azure";
+
+const { storageAccount } = StorageAccountSecure({
+  name: "myappstorage01",
+  sku: "Standard_LRS",
+  tags: { environment: "dev" },
+});
+
+export { storageAccount };
+```
+
+Build and deploy:
+
+```bash
+# Generate ARM template JSON
+chant build --output dist/template.json
+
+# Validate with Azure CLI (no changes applied)
+az deployment group validate \
+  --resource-group my-rg \
+  --template-file dist/template.json
+
+# Deploy for real
+az deployment group create \
+  --resource-group my-rg \
+  --template-file dist/template.json
+```
+
+## Using resource constructors
+
+Composites are convenient, but you can also use the lower-level resource constructors directly:
+
+```typescript
+import { StorageAccount, Azure } from "@intentius/chant-lexicon-azure";
+
+export const storage = new StorageAccount({
+  name: "mystorageaccount",
+  location: Azure.ResourceGroupLocation,
+  kind: "StorageV2",
+  sku: { name: "Standard_LRS" },
+  supportsHttpsTrafficOnly: true,
+  minimumTlsVersion: "TLS1_2",
+});
+```
+
+## Default tags
+
+Apply tags to every taggable resource in your project:
+
+```typescript
+// src/tags.ts
+import { defaultTags } from "@intentius/chant-lexicon-azure";
+
+export const tags = defaultTags([
+  { key: "Project", value: "my-app" },
+  { key: "Environment", value: "dev" },
+  { key: "ManagedBy", value: "chant" },
+]);
+```
+
+## Init templates
+
+Start a new project with a template:
+
+```bash
+# Default — basic storage account
+chant init --lexicon azure
+
+# Web app — App Service with managed identity
+chant init --lexicon azure --template web-app
+
+# AKS cluster — Kubernetes with VNet and ACR
+chant init --lexicon azure --template aks-cluster
+```
+
+## Next steps
+
+- [Resources](/chant/lexicons/azure/resources/) — Learn about resource types and fields
+- [Composites](/chant/lexicons/azure/composites/) — Use high-level composites
+- [Lint Rules](/chant/lexicons/azure/lint-rules/) — Understand security checks

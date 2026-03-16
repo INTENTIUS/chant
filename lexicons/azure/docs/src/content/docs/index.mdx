@@ -1,0 +1,66 @@
+---
+title: "Azure"
+description: "Typed constructors for Azure ARM template resources"
+---
+
+The **Azure** lexicon provides typed constructors for Azure Resource Manager (ARM)
+template resources. It covers Storage Accounts, Virtual Machines, App Services,
+AKS Clusters, Key Vaults, SQL Databases, Virtual Networks, and hundreds more.
+
+New? Start with the [Getting Started](/chant/lexicons/azure/getting-started/) guide.
+
+Install it with:
+
+```bash
+npm install --save-dev @intentius/chant-lexicon-azure
+```
+
+## Quick Start
+
+```typescript
+import { StorageAccount, Azure } from "@intentius/chant-lexicon-azure";
+
+export const storage = new StorageAccount({
+  name: "mystorageaccount",
+  location: Azure.ResourceGroupLocation,
+  kind: "StorageV2",
+  sku: { name: "Standard_LRS" },
+  supportsHttpsTrafficOnly: true,
+  minimumTlsVersion: "TLS1_2",
+  allowBlobPublicAccess: false,
+});
+```
+
+Build an ARM template:
+
+```bash
+chant build --output dist/template.json
+```
+
+## Features
+
+- **Type-safe ARM resources** — Full TypeScript types for all Azure resource properties
+- **ARM intrinsics** — `ResourceId()`, `Reference()`, `Concat()`, `If()`, and more
+- **Azure pseudo-parameters** — `Azure.ResourceGroupLocation`, `Azure.SubscriptionId`, etc.
+- **8 composites** — High-level constructs for common patterns (StorageAccountSecure, AppService, AksCluster, etc.)
+- **20 post-synth checks** — Security and best-practice validation (AZR010–AZR029)
+- **3 pre-synth lint rules** — Catch issues before synthesis (hardcoded location, storage HTTPS, NSG wildcards)
+- **Import existing ARM templates** — Parse JSON → generate TypeScript
+- **Default tags** — Project-wide tagging for all taggable resources
+- **LSP integration** — Completions and hover information in your editor
+- **MCP tools** — AI agent integration with resource lookup and example browsing
+
+## Pages
+
+| Page | Description |
+|------|-------------|
+| [Getting Started](/chant/lexicons/azure/getting-started/) | First ARM template with chant |
+| [Resources](/chant/lexicons/azure/resources/) | Resource types, resource-level fields, apiVersion |
+| [Intrinsics](/chant/lexicons/azure/intrinsics/) | ARM template functions |
+| [Pseudo-Parameters](/chant/lexicons/azure/pseudo-parameters/) | Azure.\* pseudo-parameters |
+| [Composites](/chant/lexicons/azure/composites/) | High-level resource composites |
+| [Parameters & Outputs](/chant/lexicons/azure/parameters-outputs/) | ARM parameters and outputs |
+| [Lint Rules](/chant/lexicons/azure/lint-rules/) | Pre-synth and post-synth checks |
+| [Importing](/chant/lexicons/azure/importing/) | Import existing ARM templates |
+| [Linked Templates](/chant/lexicons/azure/linked-templates/) | Linked template deployments |
+| [Examples](/chant/lexicons/azure/examples/) | Example project walkthroughs |

@@ -70,28 +70,6 @@ rain deploy dist/template.json my-stack
 sam deploy --template-file dist/template.json --stack-name my-stack
 \`\`\`
 
-## Multi-file output (nested stacks)
-
-When your project uses [nested stacks](./nested-stacks), \`chant build\` produces multiple template files:
-
-\`\`\`bash
-chant build -o template.json
-# Produces:
-#   template.json              — parent template
-#   network.template.json      — child template (one per nestedStack)
-\`\`\`
-
-The parent template includes a \`TemplateBasePath\` parameter that controls where CloudFormation looks for child templates. Override it at deploy time to point to an S3 bucket:
-
-\`\`\`bash
-aws cloudformation deploy \\
-  --template-file template.json \\
-  --stack-name my-stack \\
-  --parameter-overrides TemplateBasePath=https://my-bucket.s3.amazonaws.com/templates
-\`\`\`
-
-All child template files must be uploaded alongside the parent template (or to the S3 path specified by \`TemplateBasePath\`).
-
 ## Compatibility
 
 The output is compatible with:
@@ -115,7 +93,7 @@ export async function generateDocs(options?: { verbose?: boolean }): Promise<voi
 
   const config: DocsConfig = {
     name: "aws",
-    basePath: process.env.DOCS_BASE_PATH ?? "/lexicons/aws/",
+    basePath: process.env.DOCS_BASE_PATH ?? "/chant/lexicons/aws/",
     displayName: "AWS CloudFormation",
     description: "AWS CloudFormation lexicon for chant — resource types, intrinsics, and lint rules",
     distDir,
@@ -125,6 +103,7 @@ export async function generateDocs(options?: { verbose?: boolean }): Promise<voi
     outputFormat,
     serviceFromType,
     suppressPages: ["pseudo-parameters", "intrinsics", "rules"],
+    examplesDir: join(pkgDir, "examples"),
     extraPages: [
       {
         slug: "cloudformation",
@@ -137,27 +116,9 @@ export async function generateDocs(options?: { verbose?: boolean }): Promise<voi
 - Resolves \`AttrRef\` references to \`Fn::GetAtt\`
 - Resolves resource references to \`Ref\` intrinsics
 
-\`\`\`typescript
-// This chant declaration...
-export const dataBucket = new Bucket({
-  bucketName: Sub\`\${AWS.StackName}-data\`,
-  versioningConfiguration: $.versioningEnabled,
-});
-\`\`\`
+{{file:lambda-s3/src/main.ts}}
 
-Produces this CloudFormation resource:
-
-\`\`\`json
-"DataBucket": {
-  "Type": "AWS::S3::Bucket",
-  "Properties": {
-    "BucketName": { "Fn::Sub": "\${AWS::StackName}-data" },
-    "VersioningConfiguration": { "Status": "Enabled" }
-  }
-}
-\`\`\`
-
-Notice how \`dataBucket\` becomes \`DataBucket\` (PascalCase logical ID), and \`bucketName\` becomes \`BucketName\`. This mapping is automatic.
+The \`LambdaS3\` composite expands to 3 CloudFormation resources: an S3 Bucket, an IAM Role (with S3 read policy), and a Lambda Function. Property names like \`BucketName\` use the CloudFormation spec-native PascalCase directly, and the export name \`app\` becomes the resource name prefix (e.g. \`appBucket\`, \`appRole\`, \`appFunc\`).
 
 ## Resource types and naming
 
@@ -176,43 +137,19 @@ Common resources get fixed short names for stability. When two services define t
 
 **Discovering available resources:** Your editor's autocomplete is the best tool — every resource is a named export from the lexicon. You can also run \`chant list\` to see all resource types, or browse the generated TypeScript types.
 
-## The barrel file
+## Imports and cross-file references
 
-Every chant project has a barrel file (conventionally \`_.ts\`) that re-exports the lexicon and provides cross-file references:
+Chant projects use standard TypeScript imports. Lexicon types come from the lexicon package, and cross-file references are standard imports:
 
-\`\`\`typescript
-// _.ts — the barrel file
-export * from "@intentius/chant-lexicon-aws";
-import * as core from "@intentius/chant";
-export const $ = core.barrel(import.meta.dir);
-\`\`\`
+{{file:lambda-api/src/health-api.ts}}
 
-Other files import the barrel and use \`$\` to reference sibling exports:
-
-\`\`\`typescript
-// data-bucket.ts
-import * as _ from "./_";
-
-export const dataBucket = new _.Bucket({
-  bucketName: _.Sub\`\${_.AWS.StackName}-data\`,
-  serverSideEncryptionConfiguration: _.$.encryptionDefault, // from defaults.ts
-});
-\`\`\`
-
-The \`$\` proxy lazily resolves exports from other files in the same directory. When the serializer encounters \`_.$.encryptionDefault\`, it resolves to the actual exported value and serializes the reference as \`Fn::GetAtt\` or \`Ref\` as appropriate. This is how cross-file references work without circular imports.
+When you reference a resource or attribute from another file (e.g. \`dataBucket.Arn\`), the serializer resolves it to \`Fn::GetAtt\` or \`Ref\` as appropriate. This is how cross-file references work — standard imports, no indirection.
 
 ## Parameters
 
 CloudFormation parameters let you customize a stack at deploy time. Export a \`Parameter\` to add it to the template's \`Parameters\` section:
 
-\`\`\`typescript
-import { Parameter } from "@intentius/chant-lexicon-aws";
-
-export const environment = new Parameter("String", {
-  description: "Deployment environment",
-  defaultValue: "dev",
-});
-\`\`\`
+{{file:docs-snippets/src/parameter-declaration.ts}}
 
 Produces:
 
@@ -220,31 +157,21 @@ Produces:
 "Parameters": {
   "Environment": {
     "Type": "String",
-    "Description": "Deployment environment",
-    "Default": "dev"
+    "Default": "dev",
+    "Description": "Deployment environment"
   }
 }
 \`\`\`
 
 Reference parameters with \`Ref\`:
 
-\`\`\`typescript
-import { Ref } from "@intentius/chant-lexicon-aws";
-
-export const bucket = new Bucket({
-  bucketName: Sub\`\${Ref("Environment")}-data\`,
-});
-\`\`\`
+{{file:docs-snippets/src/parameter-cross-file-ref.ts}}
 
 ## Outputs
 
 Use \`output()\` to create explicit stack outputs. Cross-resource \`AttrRef\` usage is also auto-detected and promoted to outputs when needed.
 
-\`\`\`typescript
-import { output } from "@intentius/chant";
-
-export const bucketArn = output(dataBucket.arn, "DataBucketArn");
-\`\`\`
+{{file:docs-snippets/src/output-explicit.ts}}
 
 Produces:
 
@@ -260,11 +187,7 @@ Produces:
 
 Runtime context values available in every template, accessed via the \`AWS\` namespace:
 
-\`\`\`typescript
-import { AWS, Sub } from "@intentius/chant-lexicon-aws";
-
-const endpoint = Sub\`https://s3.\${AWS.Region}.\${AWS.URLSuffix}\`;
-\`\`\`
+{{file:docs-snippets/src/pseudo-params.ts}}
 
 | Pseudo-parameter | Description |
 |---|---|
@@ -279,23 +202,37 @@ const endpoint = Sub\`https://s3.\${AWS.Region}.\${AWS.URLSuffix}\`;
 
 ## Intrinsic functions
 
-The lexicon provides 8 intrinsic functions (\`Sub\`, \`Ref\`, \`GetAtt\`, \`If\`, \`Join\`, \`Select\`, \`Split\`, \`Base64\`) that map directly to CloudFormation \`Fn::\` calls. See [Intrinsic Functions](./intrinsics) for full usage examples.
+The lexicon provides 9 intrinsic functions (\`Sub\`, \`Ref\`, \`GetAtt\`, \`If\`, \`Join\`, \`Select\`, \`Split\`, \`Base64\`, \`GetAZs\`) that map directly to CloudFormation \`Fn::\` calls. See [Intrinsic Functions](../intrinsics/) for full usage examples.
 
 ## Dependencies
 
 CloudFormation automatically creates dependencies between resources when you use \`Ref\` or \`Fn::GetAtt\`. Chant leverages this — when you reference \`$.myBucket.arn\`, the serializer emits \`Fn::GetAtt\` and CloudFormation infers the dependency.
 
-For cases where you need an explicit dependency without a property reference, set \`dependsOn\`:
+For cases where you need an explicit dependency without a property reference, pass \`DependsOn\` as a resource-level attribute (second constructor argument):
 
-\`\`\`typescript
-export const appServer = new Instance({
-  imageId: "ami-12345678",
-  instanceType: "t3.micro",
-  dependsOn: ["DatabaseCluster"],
-});
-\`\`\`
+{{file:docs-snippets/src/depends-on.ts}}
+
+\`DependsOn\` values can be string logical names or references to other resource objects — Declarable references are resolved to their logical names automatically at build time.
 
 The \`WAW010\` post-synth check warns if a \`DependsOn\` target is already referenced via \`Ref\` or \`Fn::GetAtt\` in properties — in that case the explicit dependency is redundant.
+
+## Resource attributes
+
+Every resource constructor accepts an optional second argument for CloudFormation resource-level attributes. These control lifecycle behavior, conditional creation, and metadata — they are distinct from resource *properties* (the first argument).
+
+{{file:docs-snippets/src/resource-attributes.ts}}
+
+| Attribute | Type | Description |
+|-----------|------|-------------|
+| \`DependsOn\` | \`Declarable \\| Declarable[] \\| string \\| string[]\` | Explicit ordering dependency. Accepts resource references or logical name strings. |
+| \`Condition\` | \`string\` | Only create this resource when the named Condition evaluates to true. |
+| \`DeletionPolicy\` | \`"Delete" \\| "Retain" \\| "RetainExceptOnCreate" \\| "Snapshot"\` | What happens when the resource is removed from the template or the stack is deleted. |
+| \`UpdateReplacePolicy\` | \`"Delete" \\| "Retain" \\| "Snapshot"\` | What happens to the old resource when CloudFormation replaces it during an update. |
+| \`UpdatePolicy\` | \`object\` | Controls how Auto Scaling Groups perform rolling updates (\`AutoScalingRollingUpdate\`, \`AutoScalingReplacingUpdate\`). |
+| \`CreationPolicy\` | \`object\` | Wait for resource signals before marking creation complete (\`ResourceSignal\` with \`Count\` and \`Timeout\`). |
+| \`Metadata\` | \`Record<string, unknown>\` | Arbitrary metadata. Commonly used for \`AWS::CloudFormation::Init\` (cfn-init bootstrapping). Intrinsic functions in metadata values are resolved at build time. |
+
+All attributes are optional. When omitted, CloudFormation uses its defaults (e.g. \`DeletionPolicy: "Delete"\`).
 
 ## Policy documents
 
@@ -311,58 +248,17 @@ The \`PolicyDocument\` interface and its supporting types:
 
 Policy documents use **PascalCase keys** (\`Effect\`, \`Action\`, \`Resource\`) because they follow the IAM JSON Policy Language spec — CloudFormation passes them through to IAM as-is, unlike resource properties which are automatically converted from camelCase.
 
-The recommended pattern is to extract policies into your \`defaults.ts\` and reference them via the barrel:
+The recommended pattern is to extract policies into your \`defaults.ts\` and import them directly:
 
-\`\`\`typescript
-// defaults.ts — shared trust policies and permission policies
-import { Sub, AWS, type PolicyDocument } from "@intentius/chant-lexicon-aws";
-
-export const lambdaTrustPolicy: PolicyDocument = {
-  Version: "2012-10-17",
-  Statement: [{
-    Effect: "Allow",
-    Principal: { Service: "lambda.amazonaws.com" },
-    Action: "sts:AssumeRole",
-  }],
-};
-
-export const s3ReadPolicy: PolicyDocument = {
-  Statement: [{
-    Effect: "Allow",
-    Action: ["s3:GetObject", "s3:ListBucket"],
-    Resource: "*",
-  }],
-};
-\`\`\`
+{{file:docs-snippets/src/policy-trust.ts}}
 
 Then reference them from resource files:
 
-\`\`\`typescript
-// role.ts
-import * as _ from "./_";
-
-export const functionRole = new _.Role({
-  assumeRolePolicyDocument: _.$.lambdaTrustPolicy,
-});
-
-export const readPolicy = new _.ManagedPolicy({
-  policyDocument: _.$.s3ReadPolicy,
-  roles: [_.$.functionRole],
-});
-\`\`\`
+{{file:docs-snippets/src/policy-role.ts}}
 
 For scoped resource ARNs, use \`Sub\` in the policy constant:
 
-\`\`\`typescript
-// defaults.ts
-export const bucketWritePolicy: PolicyDocument = {
-  Statement: [{
-    Effect: "Allow",
-    Action: ["s3:PutObject"],
-    Resource: Sub\`arn:aws:s3:::\${AWS.StackName}-data/*\`,
-  }],
-};
-\`\`\`
+{{file:docs-snippets/src/policy-scoped.ts}}
 
 The \`IamPolicyPrincipal\` type supports all principal forms — wildcard (\`"*"\`), AWS accounts, services, and federated providers:
 
@@ -384,13 +280,7 @@ Principal: { Service: ["lambda.amazonaws.com", "edgelambda.amazonaws.com"] },
 
 Use the \`If\` intrinsic for conditional values within resource properties:
 
-\`\`\`typescript
-import { If } from "@intentius/chant-lexicon-aws";
-
-export const bucket = new Bucket({
-  bucketName: If("IsProduction", "prod-data", "dev-data"),
-});
-\`\`\`
+{{file:docs-snippets/src/conditions.ts}}
 
 CloudFormation \`Conditions\` blocks are recognized by the serializer when importing existing templates. For new stacks, use TypeScript logic for build-time decisions and \`If\` for deploy-time decisions.
 
@@ -398,73 +288,27 @@ CloudFormation \`Conditions\` blocks are recognized by the serializer when impor
 
 CloudFormation Mappings are a static lookup mechanism. In chant, use TypeScript objects instead — they're evaluated at build time and produce the same result:
 
-\`\`\`typescript
-const regionAMIs: Record<string, string> = {
-  "us-east-1": "ami-12345678",
-  "us-west-2": "ami-87654321",
-  "eu-west-1": "ami-abcdef01",
-};
-
-// Use directly in resource properties
-export const server = new Instance({
-  imageId: regionAMIs["us-east-1"],
-  instanceType: "t3.micro",
-});
-\`\`\`
+{{file:docs-snippets/src/mappings.ts}}
 
 For deploy-time region lookups, combine \`AWS.Region\` with \`If\` or use \`Fn::Sub\` with SSM parameter store references.
 
 ## Nested stacks
 
-CloudFormation nested stacks (\`AWS::CloudFormation::Stack\`) let you decompose large templates into smaller, reusable child templates. Use \`nestedStack()\` to reference a child project directory — a subdirectory with its own barrel file that builds independently:
+:::caution
+Nested stacks add deployment complexity and are not recommended for most projects. Prefer [flat composites](../composites/) instead.
+:::
 
-\`\`\`typescript
-// Child project declares outputs with stackOutput()
-// src/network/outputs.ts
-export const vpcId = stackOutput(_.$.vpc.vpcId);
-export const subnetId = stackOutput(_.$.subnet.subnetId);
-export const lambdaSgId = stackOutput(_.$.lambdaSg.groupId);
-
-// Parent references the child project
-// src/app.ts
-const network = _.nestedStack("network", import.meta.dir + "/network");
-
-export const handler = new _.Function({
-  vpcConfig: {
-    subnetIds: [network.outputs.subnetId],      // cross-stack ref
-    securityGroupIds: [network.outputs.lambdaSgId],
-  },
-});
-\`\`\`
-
-chant handles the wiring: child template gets an \`Outputs\` section, parent uses \`Fn::GetAtt\` on the stack resource. A \`TemplateBasePath\` parameter lets you configure child template URLs per environment.
-
-See [Nested Stacks](./nested-stacks) for the full guide.
+CloudFormation nested stacks (\`AWS::CloudFormation::Stack\`) split resources into child templates. The lexicon supports them via \`nestedStack()\` for cases where you exceed the 500-resource limit or need to package reusable infrastructure as a black box. See the [Nested Stacks](../nested-stacks/) page for details.
 
 ## Tagging
 
-Tags are standard CloudFormation \`Key\`/\`Value\` arrays. Pass them on any resource that supports tagging:
+Use \`defaultTags()\` to declare project-wide tags. The serializer automatically injects them into every taggable resource at synthesis time:
 
-\`\`\`typescript
-export const bucket = new Bucket({
-  bucketName: "my-bucket",
-  tags: [
-    { key: "Environment", value: "production" },
-    { key: "Team", value: "platform" },
-  ],
-});
-\`\`\`
+{{file:docs-snippets/src/tagging.ts}}
 
-To apply tags across all members of a composite, use [\`propagate\`](./composites#propagate--shared-properties):
+No other changes needed — all taggable resources in the project get these tags automatically. Resources with explicit \`Tags\` keep them (explicit key wins over default). Non-taggable resources like \`AWS::Lambda::Permission\` are never tagged.
 
-\`\`\`typescript
-import { propagate } from "@intentius/chant";
-
-export const api = propagate(
-  LambdaApi({ name: "myApi", code: lambdaCode }),
-  { tags: [{ key: "env", value: "prod" }] },
-);
-\`\`\``,
+Tag values support strings, \`Parameter\` references, and intrinsic functions (\`Sub\`, \`Ref\`, etc.).`,
       },
       {
         slug: "intrinsics",
@@ -472,26 +316,15 @@ export const api = propagate(
         description: "CloudFormation intrinsic functions and their chant syntax",
         content: `CloudFormation intrinsic functions are available as imports from the lexicon. They produce the corresponding \`Fn::\` calls in the serialized template.
 
-\`\`\`typescript
-import { Sub, Ref, GetAtt, If, Join, Select, Split, Base64, AWS } from "@intentius/chant-lexicon-aws";
-\`\`\`
+Here is a complete example using all intrinsic functions:
+
+{{file:docs-snippets/src/intrinsics.ts}}
 
 ## \`Sub\` — string substitution
 
 Tagged template literal that produces \`Fn::Sub\`. The most common intrinsic — use it for dynamic naming with pseudo-parameters and attribute references:
 
-\`\`\`typescript
-// Simple pseudo-parameter substitution
-const bucketName = Sub\`\${AWS.StackName}-data\`;
-// → { "Fn::Sub": "\${AWS::StackName}-data" }
-
-// Multiple pseudo-parameters
-const arn = Sub\`arn:aws:s3:::\${AWS.AccountId}:\${AWS.Region}:*\`;
-
-// With resource attribute references
-const url = Sub\`https://\${bucket.domainName}/path\`;
-// → { "Fn::Sub": "https://\${DataBucket.DomainName}/path" }
-\`\`\`
+{{file:docs-snippets/src/intrinsics-detail.ts:3-5}}
 
 \`Sub\` is a tagged template — use it with backticks, not as a function call.
 
@@ -499,178 +332,135 @@ const url = Sub\`https://\${bucket.domainName}/path\`;
 
 References a resource's physical ID or a parameter's value:
 
-\`\`\`typescript
-// Reference a parameter
-const envRef = Ref("Environment");
-// → { "Ref": "Environment" }
+{{file:docs-snippets/src/intrinsics-detail.ts:7-9}}
 
-// Reference a resource (returns its physical ID)
-const bucketRef = Ref("DataBucket");
-// → { "Ref": "DataBucket" }
-\`\`\`
-
-In most cases you don't need \`Ref\` directly — the serializer automatically generates \`Ref\` when you reference a resource via the barrel (e.g. \`_.$.dataBucket\`).
+In most cases you don't need \`Ref\` directly — the serializer automatically generates \`Ref\` when you reference an imported resource (e.g. \`dataBucket\` imported from another file).
 
 ## \`GetAtt\` — resource attributes
 
-Retrieves an attribute from a resource:
-
-\`\`\`typescript
-// Explicit GetAtt
-const bucketArn = GetAtt("DataBucket", "Arn");
-// → { "Fn::GetAtt": ["DataBucket", "Arn"] }
-\`\`\`
-
-**Preferred:** Use AttrRef directly via the resource's typed properties. When you write \`$.dataBucket.arn\`, the serializer automatically emits \`Fn::GetAtt\`. Explicit \`GetAtt\` is only needed for dynamic or imported resource names.
+**Preferred:** Use AttrRef directly via the resource's typed properties. When you write \`dataBucket.arn\` (imported from the file that defines it), the serializer automatically emits \`Fn::GetAtt\`. Explicit \`GetAtt\` is only needed for dynamic or imported resource names.
 
 ## \`If\` — conditional values
 
 Returns one of two values based on a condition:
 
-\`\`\`typescript
-const value = If("IsProduction", "prod-value", "dev-value");
-// → { "Fn::If": ["IsProduction", "prod-value", "dev-value"] }
-\`\`\`
+{{file:docs-snippets/src/intrinsics-detail.ts:11-12}}
 
-Use with \`AWS.NoValue\` to conditionally omit a property:
-
-\`\`\`typescript
-export const bucket = new Bucket({
-  bucketName: "my-bucket",
-  accelerateConfiguration: If("EnableAcceleration",
-    { accelerationStatus: "Enabled" },
-    AWS.NoValue,
-  ),
-});
-\`\`\`
+Use with \`AWS.NoValue\` to conditionally omit a property — see [Conditions](#conditions) on the CloudFormation Concepts page.
 
 ## \`Join\` — join values
 
 Joins values with a delimiter:
 
-\`\`\`typescript
-const joined = Join("-", ["prefix", AWS.StackName, "suffix"]);
-// → { "Fn::Join": ["-", ["prefix", { "Ref": "AWS::StackName" }, "suffix"]] }
-\`\`\`
+{{file:docs-snippets/src/intrinsics-detail.ts:14-15}}
 
 ## \`Select\` — select by index
 
 Selects a value from a list by index:
 
-\`\`\`typescript
-const first = Select(0, Split(",", "a,b,c"));
-// → { "Fn::Select": [0, { "Fn::Split": [",", "a,b,c"] }] }
-\`\`\`
+{{file:docs-snippets/src/intrinsics-detail.ts:17-18}}
 
 ## \`Split\` — split string
 
 Splits a string by a delimiter:
 
-\`\`\`typescript
-const parts = Split(",", "a,b,c");
-// → { "Fn::Split": [",", "a,b,c"] }
-\`\`\`
+{{file:docs-snippets/src/intrinsics-detail.ts:20-21}}
 
 ## \`Base64\` — encode to Base64
 
 Encodes a string to Base64, commonly used for EC2 user data:
 
-\`\`\`typescript
-const userData = Base64(Sub\`#!/bin/bash
-echo "Stack: \${AWS.StackName}"
-yum update -y
-\`);
-// → { "Fn::Base64": { "Fn::Sub": "..." } }
-\`\`\``,
+{{file:docs-snippets/src/intrinsics-detail.ts:23-27}}
+
+## \`GetAZs\` — availability zones
+
+Returns the list of Availability Zones for a region:
+
+{{file:docs-snippets/src/intrinsics-detail.ts:29-31}}`,
       },
       {
         slug: "composites",
         title: "Composites",
-        description: "Composite resources, withDefaults presets, and propagate in the AWS CloudFormation lexicon",
+        description: "Composite resources, built-in composites, action constants, and withDefaults presets in the AWS CloudFormation lexicon",
         content: `Composites group related resources into reusable factories. See also the core [Composite Resources](/guide/composite-resources/) guide.
 
-\`\`\`typescript
-import * as _ from "./_";
-
-export const LambdaApi = _.Composite<LambdaApiProps>((props) => {
-  const role = new _.Role({
-    assumeRolePolicyDocument: _.$.lambdaTrustPolicy,
-    managedPolicyArns: [_.$.lambdaBasicExecutionArn],
-    policies: props.policies,
-  });
-
-  const func = new _.Function({
-    functionName: props.name,
-    runtime: props.runtime,
-    handler: props.handler,
-    code: props.code,
-    role: role.arn,
-    timeout: props.timeout,
-    memorySize: props.memorySize,
-  });
-
-  const permission = new _.Permission({
-    functionName: func.arn,
-    action: "lambda:InvokeFunction",
-    principal: "apigateway.amazonaws.com",
-  });
-
-  return { role, func, permission };
-}, "LambdaApi");
-\`\`\`
+{{file:lambda-api/src/lambda-api.ts}}
 
 Instantiate and export:
 
-\`\`\`typescript
-export const healthApi = LambdaApi({
-  name: Sub\`\${AWS.StackName}-health\`,
-  runtime: "nodejs20.x",
-  handler: "index.handler",
-  code: { zipFile: \`exports.handler = async () => ({ statusCode: 200 });\` },
-});
-\`\`\`
+{{file:lambda-api/src/health-api.ts}}
 
-During build, composites expand to flat CloudFormation resources: \`healthApi_role\` → \`HealthApiRole\`, \`healthApi_func\` → \`HealthApiFunc\`, \`healthApi_permission\` → \`HealthApiPermission\`.
+During build, composites expand to flat CloudFormation resources: \`healthApiRole\`, \`healthApiFunc\`, \`healthApiPermission\`.
+
+## Built-in composites
+
+The AWS lexicon ships ready-to-use composites for common patterns. Import them from \`@intentius/chant-lexicon-aws\`:
+
+{{file:docs-snippets/src/builtin-composites.ts}}
+
+| Composite | Members | Description |
+|-----------|---------|-------------|
+| \`LambdaFunction\` | \`role\`, \`func\` | IAM Role + Lambda Function. Auto-attaches \`AWSLambdaBasicExecutionRole\`; adds \`AWSLambdaVPCAccessExecutionRole\` when \`VpcConfig\` is provided. |
+| \`LambdaNode\` | \`role\`, \`func\` | \`LambdaFunction\` preset with \`Runtime: "nodejs20.x"\` and \`Handler: "index.handler"\` |
+| \`LambdaPython\` | \`role\`, \`func\` | \`LambdaFunction\` preset with \`Runtime: "python3.12"\` and \`Handler: "handler.handler"\` |
+| \`LambdaApi\` | \`role\`, \`func\`, \`permission\` | \`LambdaFunction\` + Lambda Permission for API Gateway invocation |
+| \`LambdaScheduled\` | \`role\`, \`func\`, \`rule\`, \`permission\` | \`LambdaFunction\` + EventBridge Rule + Lambda Permission |
+| \`LambdaSqs\` | \`queue\`, \`role\`, \`func\` | SQS Queue + Lambda + EventSourceMapping. Auto-attaches SQS receive policy. |
+| \`LambdaEventBridge\` | \`rule\`, \`role\`, \`func\`, \`permission\` | EventBridge Rule + Lambda. Supports \`schedule\` and/or \`eventPattern\`. |
+| \`LambdaDynamoDB\` | \`table\`, \`role\`, \`func\` | DynamoDB Table + Lambda. Auto-attaches DynamoDB policy and injects \`TABLE_NAME\` env var. |
+| \`LambdaS3\` | \`bucket\`, \`role\`, \`func\` | S3 Bucket (encrypted, public access blocked) + Lambda. Auto-attaches S3 policy and injects \`BUCKET_NAME\` env var. |
+| \`LambdaSns\` | \`topic\`, \`role\`, \`func\`, \`subscription\`, \`permission\` | SNS Topic + Lambda via Subscription. Auto-attaches invoke permission for SNS. |
+| \`VpcDefault\` | \`vpc\`, \`igw\`, \`igwAttachment\`, \`publicSubnet1\`, \`publicSubnet2\`, \`privateSubnet1\`, \`privateSubnet2\`, \`publicRouteTable\`, \`publicRoute\`, \`publicRta1\`, \`publicRta2\`, \`privateRouteTable\`, \`privateRta1\`, \`privateRta2\`, \`natEip\`, \`natGateway\`, \`privateRoute\` | Production-ready VPC: 2 public + 2 private subnets across 2 AZs, internet gateway, single NAT gateway. |
+| \`FargateAlb\` | \`cluster\`, \`executionRole\`, \`taskRole\`, \`logGroup\`, \`taskDef\`, \`albSg\`, \`taskSg\`, \`alb\`, \`targetGroup\`, \`listener\`, \`service\` | Fargate service behind an ALB. Accepts VPC outputs as props. |
+| \`AlbShared\` | \`cluster\`, \`executionRole\`, \`albSg\`, \`alb\`, \`listener\` | Shared ALB infrastructure (ECS cluster, execution role, ALB, listener with 404 default). Created once, consumed by multiple \`FargateService\` instances. |
+| \`FargateService\` | \`taskRole\`, \`logGroup\`, \`taskDef\`, \`taskSg\`, \`targetGroup\`, \`rule\`, \`service\` | Per-service Fargate resources with listener rule routing. Wire to an \`AlbShared\` instance for multi-service ALB patterns. |
+| \`RdsInstance\` | \`subnetGroup\`, \`sg\`, \`db\` (+ \`parameterGroup\` if configured) | RDS instance (postgres, mysql, mariadb) in private subnets. Creates DB subnet group, security group, and optionally a parameter group. Engine-specific defaults for port, username, and version. Encrypted by default. |
+
+All built-in composites accept \`ManagedPolicyArns\` and \`Policies\` for adding IAM permissions to the auto-created role.
+
+## Action constants
+
+Typed IAM action constants for common AWS services. Use them in policy documents instead of hand-typing action strings:
+
+{{file:docs-snippets/src/action-constants.ts}}
+
+Available constants:
+
+| Constant | Key groups |
+|----------|------------|
+| \`S3Actions\` | \`ReadOnly\`, \`WriteOnly\`, \`ReadWrite\`, \`Full\`, \`GetObject\`, \`PutObject\`, \`DeleteObject\`, \`ListObjects\` |
+| \`LambdaActions\` | \`Invoke\`, \`ReadOnly\`, \`Full\` |
+| \`DynamoDBActions\` | \`ReadOnly\`, \`WriteOnly\`, \`ReadWrite\`, \`Full\`, \`GetItem\`, \`PutItem\`, \`Query\`, \`Scan\` |
+| \`SQSActions\` | \`SendMessage\`, \`ReceiveMessage\`, \`Full\` |
+| \`SNSActions\` | \`Publish\`, \`Subscribe\`, \`Full\` |
+| \`IAMActions\` | \`PassRole\` |
+| \`ECRActions\` | \`Pull\`, \`Full\` |
+| \`LogsActions\` | \`Write\`, \`Full\` |
+| \`ECSActions\` | \`RunTask\`, \`Service\`, \`Full\` |
+
+Broad groups like \`ReadWrite\` are always supersets of their narrow counterparts (\`ReadOnly\` + \`WriteOnly\`). All values are \`as const\` arrays for full type safety.
 
 ## \`withDefaults\` — composite presets
 
 Wrap a composite with pre-applied defaults. Defaulted props become optional:
 
-\`\`\`typescript
-import { withDefaults } from "@intentius/chant";
-
-const SecureApi = withDefaults(LambdaApi, {
-  runtime: "nodejs20.x",
-  handler: "index.handler",
-  timeout: 10,
-  memorySize: 256,
-});
-
-// Only name and code are required now
-export const healthApi = SecureApi({
-  name: Sub\`\${AWS.StackName}-health\`,
-  code: { zipFile: \`exports.handler = async () => ({ statusCode: 200 });\` },
-});
-
-// Composable — stack defaults on top of defaults
-const HighMemoryApi = withDefaults(SecureApi, { memorySize: 2048, timeout: 25 });
-\`\`\`
+{{file:docs-snippets/src/with-defaults.ts}}
 
 \`withDefaults\` preserves the original composite's identity — same \`_id\` and \`compositeName\`, no new registry entry.
+
+### Computed defaults
+
+\`withDefaults\` also accepts a function that receives the caller's props and returns defaults. This enables conditional logic without generating extra resources:
+
+{{file:docs-snippets/src/computed-defaults.ts}}
+
+Merge order: computed defaults are applied first, then user-provided props override them.
 
 ## \`propagate\` — shared properties
 
 Attach properties that merge into every member during expansion:
 
-\`\`\`typescript
-import { propagate } from "@intentius/chant";
-
-export const api = propagate(
-  LambdaApi({ name: "myApi", code: lambdaCode }),
-  { tags: [{ key: "env", value: "prod" }] },
-);
-// role, func, and permission all receive the env tag
-\`\`\`
+{{file:docs-snippets/src/propagate.ts}}
 
 Merge semantics:
 - **Scalars** — member-specific value wins over shared
@@ -679,36 +469,31 @@ Merge semantics:
 
 ## Nested stacks
 
-When resources should produce a separate CloudFormation template instead of expanding into the parent, use a **child project** — a subdirectory with its own barrel file (\`_.ts\`) that builds independently. The parent references it with \`nestedStack()\`:
+:::caution
+Nested stacks add deployment complexity and are not recommended for most projects. Prefer flat composites instead.
+:::
 
-\`\`\`typescript
-// src/app.ts — parent references child project directory
-const network = _.nestedStack("network", import.meta.dir + "/network");
-
-// Cross-stack reference via outputs proxy
-export const handler = new _.Function({
-  vpcConfig: { subnetIds: [network.outputs.subnetId] },
-});
-\`\`\`
-
-See [Nested Stacks](./nested-stacks) for the full guide.`,
+When you need to split resources into a separate CloudFormation template, the lexicon supports nested stacks via \`nestedStack()\`. See the [Nested Stacks](../nested-stacks/) page for details.`,
       },
       {
         slug: "nested-stacks",
         title: "Nested Stacks",
+        sidebar: false,
         description: "Splitting resources into child CloudFormation templates with automatic cross-stack reference wiring",
-        content: `CloudFormation nested stacks (\`AWS::CloudFormation::Stack\`) let you decompose large templates into smaller, reusable child templates. The AWS lexicon's \`nestedStack()\` function references a **child project directory** — a subdirectory with its own barrel file that builds independently to a valid CloudFormation template.
+        content: `CloudFormation nested stacks (\`AWS::CloudFormation::Stack\`) let you decompose large templates into smaller, reusable child templates. The AWS lexicon's \`nestedStack()\` function references a **child project directory** — a subdirectory that builds independently to a valid CloudFormation template.
+
+:::caution[Consider alternatives first]
+Nested stacks add deployment complexity: child templates must be uploaded to S3, rollbacks are all-or-nothing at the parent level, drift detection doesn't recurse into children, and debugging failures requires drilling into child stack events. For most projects, [flat composites](../composites/) are simpler. Nested stacks are supported for specific cases — exceeding CloudFormation's 500-resource limit or packaging reusable infrastructure as a black box — but are not the recommended default.
+:::
 
 ## Project structure
 
-A nested stack is a child project — a subdirectory with its own \`_.ts\` barrel, resource files, and explicit \`stackOutput()\` declarations:
+A nested stack is a child project — a subdirectory with its own resource files and explicit \`stackOutput()\` declarations:
 
 \`\`\`
 src/
-  _.ts                    # parent barrel
   app.ts                  # parent resources
   network/                # ← child project (nested stack)
-    _.ts                  # its own barrel
     vpc.ts                # VPC, subnet, internet gateway, routing
     security.ts           # security group for Lambda
     outputs.ts            # declares cross-stack outputs
@@ -718,15 +503,7 @@ src/
 
 Use \`stackOutput()\` to mark values that the parent can reference. Each \`stackOutput()\` becomes an entry in the child template's \`Outputs\` section:
 
-\`\`\`typescript
-// src/network/outputs.ts
-import * as _ from "./_";
-import { stackOutput } from "@intentius/chant";
-
-export const vpcId = stackOutput(_.$.vpc.vpcId, { description: "VPC ID" });
-export const subnetId = stackOutput(_.$.subnet.subnetId, { description: "Public subnet ID" });
-export const lambdaSgId = stackOutput(_.$.lambdaSg.groupId, { description: "Lambda security group ID" });
-\`\`\`
+{{file:../src/testdata/nested-stacks/network/outputs.ts}}
 
 The child can be built independently:
 
@@ -739,24 +516,7 @@ chant build src/network/ -o network.json
 
 Use \`nestedStack()\` in the parent to reference a child project directory. It returns an object with an \`outputs\` proxy for cross-stack references:
 
-\`\`\`typescript
-// src/app.ts
-import * as _ from "./_";
-
-const network = _.nestedStack("network", import.meta.dir + "/network");
-
-export const handler = new _.Function({
-  functionName: _.Sub\`\${_.AWS.StackName}-handler\`,
-  runtime: "nodejs20.x",
-  handler: "index.handler",
-  role: _.Ref("LambdaExecutionRole"),
-  code: { zipFile: "exports.handler = async () => ({ statusCode: 200 });" },
-  vpcConfig: {
-    subnetIds: [network.outputs.subnetId],
-    securityGroupIds: [network.outputs.lambdaSgId],
-  },
-});
-\`\`\`
+{{file:../src/testdata/nested-stacks/app.ts}}
 
 \`network.outputs.subnetId\` produces a \`NestedStackOutputRef\` that serializes to \`{ "Fn::GetAtt": ["Network", "Outputs.SubnetId"] }\`.
 
@@ -799,12 +559,16 @@ aws cloudformation deploy \\
 
 Child templates also receive the \`TemplateBasePath\` parameter so it propagates through all nesting levels.
 
+All child template files must be uploaded alongside the parent template (or to the S3 path specified by \`TemplateBasePath\`).
+
 ## Explicit parameters
 
 Pass CloudFormation Parameters to child stacks with the \`parameters\` option:
 
 \`\`\`typescript
-const network = _.nestedStack("network", import.meta.dir + "/network", {
+import { nestedStack } from "@intentius/chant-lexicon-aws";
+
+const network = nestedStack("network", import.meta.dirname + "/network", {
   parameters: { Environment: "prod", CidrBlock: "10.0.0.0/16" },
 });
 \`\`\`
@@ -815,16 +579,12 @@ Child projects can themselves reference grandchild projects. Each level produces
 
 \`\`\`
 src/
-  _.ts
   app.ts
   infra/
-    _.ts
     network/
-      _.ts
       vpc.ts
       outputs.ts
     database/
-      _.ts
       cluster.ts
       outputs.ts
 \`\`\`
@@ -843,17 +603,14 @@ Three lint rules help catch common nested stack issues:
 
 ## When to use nested stacks
 
-**Use nested stacks when:**
+**Prefer flat composites** for most projects. Composites expand into a single template, deploy atomically, and are simpler to debug.
+
+**Use nested stacks only when:**
 - Your template exceeds CloudFormation's 500-resource limit
-- You want to reuse a group of resources across multiple parent stacks
-- You need independent update/rollback boundaries for parts of your infrastructure
+- You're packaging reusable infrastructure for other teams to deploy as a black box
+- You need independent update/rollback boundaries (rare — this usually means the resources should be separate stacks entirely)
 
-**Use flat composites when:**
-- Resources are tightly coupled and always deploy together
-- You don't need independent update boundaries
-- Your template is within resource limits
-
-See [Composites](./composites) for the flat composite approach, and [Examples](./examples#nested-stacks) for a runnable nested stack example.`,
+See [Composites](../composites/) for the flat composite approach.`,
       },
       {
         slug: "lint-rules",
@@ -871,13 +628,13 @@ Lint rules analyze your TypeScript source code before build.
 
 Flags hardcoded AWS region strings like \`us-east-1\`. Use \`AWS.Region\` instead so templates are portable across regions.
 
-\`\`\`typescript
-// Triggers WAW001
-const endpoint = "s3.us-east-1.amazonaws.com";
+**Bad** — triggers WAW001:
 
-// Fixed
-const endpoint = Sub\`s3.\${AWS.Region}.amazonaws.com\`;
-\`\`\`
+{{file:docs-snippets/src/lint-waw001-bad.ts}}
+
+**Good** — uses \`AWS.Region\`:
+
+{{file:docs-snippets/src/lint-waw001-good.ts}}
 
 ### WAW006 — S3 Bucket Encryption
 
@@ -885,20 +642,13 @@ const endpoint = Sub\`s3.\${AWS.Region}.amazonaws.com\`;
 
 Flags S3 buckets that don't configure server-side encryption. AWS recommends enabling encryption on all buckets.
 
-\`\`\`typescript
-// Triggers WAW006
-export const bucket = new Bucket({ bucketName: "my-bucket" });
+**Bad** — triggers WAW006:
 
-// Fixed — add encryption configuration
-export const bucket = new Bucket({
-  bucketName: "my-bucket",
-  bucketEncryption: {
-    serverSideEncryptionConfiguration: [{
-      serverSideEncryptionByDefault: { sseAlgorithm: "AES256" },
-    }],
-  },
-});
-\`\`\`
+{{file:docs-snippets/src/lint-waw006-bad.ts}}
+
+**Good** — encryption configured:
+
+{{file:docs-snippets/src/lint-waw006-good.ts}}
 
 ### WAW009 — IAM Wildcard Resource
 
@@ -906,13 +656,13 @@ export const bucket = new Bucket({
 
 Flags IAM policy statements that use \`"Resource": "*"\`. Prefer scoped resource ARNs following the principle of least privilege.
 
-\`\`\`typescript
-// Triggers WAW009
-{ Effect: "Allow", Action: ["s3:GetObject"], Resource: "*" }
+**Bad** — triggers WAW009:
 
-// Fixed — scope to a specific bucket
-{ Effect: "Allow", Action: ["s3:GetObject"], Resource: Sub\`arn:aws:s3:::\${AWS.StackName}-data/*\` }
-\`\`\`
+{{file:docs-snippets/src/lint-waw009-bad.ts}}
+
+**Good** — scoped ARN:
+
+{{file:docs-snippets/src/lint-waw009-good.ts}}
 
 IAM policy documents use PascalCase keys (\`Effect\`, \`Action\`, \`Resource\`) matching the IAM JSON Policy Language spec. The \`PolicyDocument\` and \`IamPolicyStatement\` types provide full autocomplete for these fields.
 
@@ -954,6 +704,135 @@ Flags \`nestedStack()\` references whose outputs are never used from the parent.
 
 Detects circular references between child projects (e.g. project A references project B which references project A). Circular project dependencies cause infinite build recursion.
 
+### WAW016 — Deprecated Property Usage
+
+**Severity:** warning | **Category:** correctness
+
+Flags properties marked as deprecated in the CloudFormation Registry. Data comes from two sources: the explicit \`deprecatedProperties\` array in the Registry schema, and description text mining (keywords like "deprecated", "legacy", "no longer recommended").
+
+For example, \`AccessControl\` on \`AWS::S3::Bucket\` is a legacy property — use a bucket policy to grant access instead.
+
+\`\`\`
+WAW016: Resource "MyBucket" (AWS::S3::Bucket) uses deprecated property "AccessControl" — consider alternatives
+\`\`\`
+
+### WAW017 — Missing Tags on Taggable Resource
+
+**Severity:** info | **Category:** best practice
+
+Flags resources that support tagging but have no \`Tags\` property set. Tags are important for cost allocation, compliance, and operational visibility. The check uses the \`tagging\` metadata from the CloudFormation Registry to determine which resources are taggable.
+
+\`\`\`
+WAW017: Resource "MyBucket" (AWS::S3::Bucket) supports tagging but has no Tags — consider adding tags for cost allocation and compliance
+\`\`\`
+
+### WAW029 — Invalid DependsOn Target
+
+**Severity:** error | **Category:** correctness
+
+Flags \`DependsOn\` entries that reference a non-existent resource (typo or deleted resource) or that create a self-reference. Both cases cause CloudFormation deployments to fail immediately.
+
+\`\`\`
+WAW029: Resource "MyService" has DependsOn "MyBukcet" which does not exist in the template
+WAW029: Resource "MyBucket" has a DependsOn on itself — self-references are invalid
+\`\`\`
+
+### WAW030 — Missing DependsOn for Known Patterns
+
+**Severity:** warning | **Category:** best practice
+
+Flags resources that are likely missing a required explicit \`DependsOn\` based on well-known CloudFormation ordering requirements:
+
+- **ECS Service + Listener**: An ECS Service with \`LoadBalancers\` should depend on the ALB Listener so the target group is fully configured before the service starts registering tasks.
+- **EC2 Route + VPCGatewayAttachment**: A Route using a \`GatewayId\` should depend on the VPCGatewayAttachment so the gateway is attached to the VPC before the route is created.
+- **API Gateway Deployment + Method**: A Deployment only references \`RestApiId\` — it needs an explicit \`DependsOn\` on its Methods or CloudFormation may create the deployment before any methods exist.
+- **API Gateway V2 Deployment + Route**: Same as above for HTTP APIs — a V2 Deployment needs \`DependsOn\` on its Routes.
+- **DynamoDB Table + ScalableTarget**: A ScalableTarget with \`ServiceNamespace: "dynamodb"\` references the table by string \`ResourceId\`, not \`Ref\` — it needs \`DependsOn\` so the table exists before scaling is registered.
+- **ECS Service + ScalableTarget**: A ScalableTarget with \`ServiceNamespace: "ecs"\` references the service by string — it needs \`DependsOn\` so the ECS Service exists first.
+
+\`\`\`
+WAW030: ECS Service "MyService" has LoadBalancers but no DependsOn on a Listener
+WAW030: Route "PublicRoute" uses a Gateway but has no dependency on VPCGatewayAttachment
+WAW030: API Gateway Deployment "MyDeployment" has no DependsOn on any Method
+WAW030: ScalableTarget "MyTarget" targets DynamoDB but has no DependsOn on any Table
+\`\`\`
+
+### WAW018 — S3 Bucket Missing Public Access Block
+
+**Severity:** error | **Category:** security
+
+Flags S3 buckets without a \`PublicAccessBlockConfiguration\`. Without an explicit public access block, the bucket may be publicly accessible. Always set \`BlockPublicAcls\`, \`BlockPublicPolicy\`, \`IgnorePublicAcls\`, and \`RestrictPublicBuckets\` to \`true\`.
+
+### WAW019 — Security Group Unrestricted Ingress on Sensitive Ports
+
+**Severity:** error | **Category:** security
+
+Flags security group ingress rules that allow unrestricted access (\`0.0.0.0/0\` or \`::/0\`) on sensitive ports (22, 3389, 3306, 5432, 1433, 6379, 27017). Restrict ingress to known CIDR ranges or security groups.
+
+### WAW020 — IAM Policy Uses Wildcard Action
+
+**Severity:** warning | **Category:** security
+
+Flags IAM policy statements that use wildcard actions (\`"Action": "*"\` or \`"Action": "s3:*"\`). Use specific action names following the principle of least privilege.
+
+### WAW021 — RDS Storage Not Encrypted
+
+**Severity:** error | **Category:** security
+
+Flags RDS instances without \`StorageEncrypted: true\`. All RDS instances should encrypt data at rest to meet compliance and security requirements.
+
+### WAW022 — Lambda Not in VPC
+
+**Severity:** warning | **Category:** security
+
+Flags Lambda functions without a \`VpcConfig\`. Functions that access internal resources (databases, caches, internal APIs) should run inside a VPC. Functions that only call public APIs can safely skip VPC configuration.
+
+### WAW023 — CloudFront Without WAF
+
+**Severity:** warning | **Category:** security
+
+Flags CloudFront distributions without a \`WebACLId\`. Attaching a WAF web ACL protects your distribution from common web exploits and bots.
+
+### WAW024 — ALB Without Access Logging
+
+**Severity:** warning | **Category:** best practice
+
+Flags Application Load Balancers without access logging enabled. Enable \`access_logs.s3.enabled\` to capture request logs for debugging and compliance.
+
+### WAW025 — SNS Topic Not Encrypted
+
+**Severity:** warning | **Category:** security
+
+Flags SNS topics without \`KmsMasterKeyId\`. Encrypting topics at rest protects sensitive notification payloads.
+
+### WAW026 — SQS Queue Not Encrypted
+
+**Severity:** warning | **Category:** security
+
+Flags SQS queues without \`KmsMasterKeyId\` or \`SqsManagedSseEnabled\`. Encrypting queues at rest protects sensitive message payloads.
+
+### WAW027 — DynamoDB Missing Point-in-Time Recovery
+
+**Severity:** info | **Category:** best practice
+
+Flags DynamoDB tables without \`PointInTimeRecoverySpecification.PointInTimeRecoveryEnabled\` set to \`true\`. Point-in-time recovery provides continuous backups and protects against accidental writes or deletes.
+
+### WAW028 — EBS Volume Not Encrypted
+
+**Severity:** warning | **Category:** security
+
+Flags EBS volumes without \`Encrypted: true\`. All EBS volumes should encrypt data at rest for compliance and security.
+
+### WAW031 — EKS Addon Missing ServiceAccountRoleArn
+
+**Severity:** warning | **Category:** correctness
+
+Flags EKS addons that require an IRSA role but don't have \`ServiceAccountRoleArn\` set. Without an IRSA role, the addon pods can't authenticate to AWS APIs and the addon hangs in CREATING status. Known addons that require IRSA: \`aws-ebs-csi-driver\`, \`aws-efs-csi-driver\`, \`adot\`, \`amazon-cloudwatch-observability\`.
+
+\`\`\`
+WAW031: EKS Addon "EbsCsiAddon" (aws-ebs-csi-driver) has no ServiceAccountRoleArn — it needs an IRSA role for EBS API access
+\`\`\`
+
 ## Running lint
 
 \`\`\`bash
@@ -983,7 +862,7 @@ export default {
 };
 \`\`\`
 
-See also [Custom Lint Rules](./custom-rules) for writing project-specific rules.`,
+See also [Custom Lint Rules](../custom-rules/) for writing project-specific rules.`,
       },
       {
         slug: "custom-rules",
@@ -993,130 +872,154 @@ See also [Custom Lint Rules](./custom-rules) for writing project-specific rules.
 
 ## Anatomy of a lint rule
 
-\`\`\`typescript
-import type { LintRule, LintDiagnostic, LintContext } from "@intentius/chant/lint/rule";
-import * as ts from "typescript";
+The lambda-api example includes a full custom rule implementation:
 
-export const apiTimeoutRule: LintRule = {
-  id: "WAW012",               // unique ID (WAW = AWS-specific prefix)
-  severity: "error",           // "error" | "warning"
-  category: "correctness",     // "correctness" | "style" | "security"
+{{file:lambda-api/src/lint/api-timeout.ts}}
 
-  check(context: LintContext): LintDiagnostic[] {
-    const { sourceFile } = context;
-    const diagnostics: LintDiagnostic[] = [];
-
-    function visit(node: ts.Node): void {
-      // Walk the AST looking for violations
-      if (ts.isCallExpression(node)) {
-        // Inspect arguments, report diagnostics
-      }
-      ts.forEachChild(node, visit);
-    }
-
-    visit(sourceFile);
-    return diagnostics;
-  },
-};
-\`\`\`
-
-## Example: API Gateway timeout (WAW012)
-
-The advanced example includes a rule that flags Lambda API composites with \`timeout > 29\` — API Gateway's synchronous limit:
-
-\`\`\`typescript
-const API_FACTORIES = new Set(["LambdaApi", "SecureApi", "HighMemoryApi"]);
-
-export const apiTimeoutRule: LintRule = {
-  id: "WAW012",
-  severity: "error",
-  category: "correctness",
-
-  check(context: LintContext): LintDiagnostic[] {
-    // Walks AST for calls to API factory functions,
-    // inspects the timeout property, reports if > 29
-  },
-};
-\`\`\`
+The \`check\` function receives a \`LintContext\` containing the TypeScript \`sourceFile\` and returns an array of diagnostics with file, line, column, and message.
 
 ## Registering custom rules
 
 Add a \`chant.config.ts\` to your project:
 
-\`\`\`typescript
-export default {
-  lint: {
-    extends: ["@intentius/chant/lint/presets/strict"],
-    rules: {
-      COR004: "off",                   // disable a built-in rule
-    },
-    plugins: ["./lint/api-timeout.ts"], // load custom rules
-  },
-};
-\`\`\`
+{{file:lambda-api/src/chant.config.ts}}
 
 The \`plugins\` array accepts relative paths. Each plugin module should export a \`LintRule\` object.`,
       },
       {
         slug: "examples",
         title: "Examples",
-        description: "Walkthrough of the getting-started and advanced AWS CloudFormation examples",
-        content: `Two runnable examples live in the lexicon's \`examples/\` directory. Clone the repo and try them:
+        description: "Walkthrough of the AWS CloudFormation lexicon examples",
+        content: `Runnable examples live in the lexicon's \`examples/\` directory — one per built-in composite. Clone the repo and try them:
 
 \`\`\`bash
-cd examples/getting-started
+cd examples/lambda-function
 bun install
 chant build    # produces CloudFormation JSON
 chant lint     # runs lint rules
 bun test       # runs the example's tests
 \`\`\`
 
-## Getting Started
+## Lambda Function
 
-\`examples/getting-started/\` — 4 resources across separate files: two S3 buckets, an IAM role, and a Lambda function.
+\`examples/lambda-function/\` — the simplest possible example. Uses \`LambdaNode\` to create a basic Lambda.
+
+{{file:lambda-function/src/main.ts}}
+
+Produces 2 CloudFormation resources: IAM Role + Lambda Function.
+
+## Lambda S3
+
+\`examples/lambda-s3/\` — Lambda that lists S3 objects using the \`LambdaS3\` composite.
+
+{{file:lambda-s3/src/main.ts}}
+
+Produces 3 resources: S3 Bucket (encrypted, public access blocked) + IAM Role (with S3 read policy) + Lambda Function. The \`BUCKET_NAME\` environment variable is auto-injected.
+
+## Lambda DynamoDB
+
+\`examples/lambda-dynamodb/\` — Lambda that reads/writes DynamoDB items using the \`LambdaDynamoDB\` composite.
+
+{{file:lambda-dynamodb/src/main.ts}}
+
+Produces 3 resources: DynamoDB Table + IAM Role (with DynamoDB read/write policy) + Lambda Function. The \`TABLE_NAME\` environment variable is auto-injected.
+
+## Lambda SQS
+
+\`examples/lambda-sqs/\` — Lambda processing messages from an SQS queue using the \`LambdaSqs\` composite.
+
+{{file:lambda-sqs/src/main.ts}}
+
+Produces 4 resources: SQS Queue + IAM Role (with SQS receive policy) + Lambda Function + EventSourceMapping.
+
+## Lambda SNS
+
+\`examples/lambda-sns/\` — Lambda triggered by SNS notifications using the \`LambdaSns\` composite.
+
+{{file:lambda-sns/src/main.ts}}
+
+Produces 5 resources: SNS Topic + IAM Role + Lambda Function + SNS Subscription + Lambda Permission.
+
+## Lambda Scheduled
+
+\`examples/lambda-scheduled/\` — Lambda on a cron schedule using the \`LambdaScheduled\` composite.
+
+{{file:lambda-scheduled/src/main.ts}}
+
+Produces 4 resources: IAM Role + Lambda Function + EventBridge Rule + Lambda Permission.
+
+## Lambda EventBridge
+
+\`examples/lambda-eventbridge/\` — Lambda triggered by EventBridge events using the \`LambdaEventBridge\` composite.
+
+{{file:lambda-eventbridge/src/main.ts}}
+
+Produces 4 resources: EventBridge Rule + IAM Role + Lambda Function + Lambda Permission.
+
+## VPC
+
+\`examples/vpc/\` — production-ready VPC using the \`VpcDefault\` composite.
+
+{{file:vpc/src/main.ts}}
+
+Produces 17 CloudFormation resources: VPC, Internet Gateway, 2 public + 2 private subnets, NAT Gateway with EIP, route tables, routes, and associations.
+
+## Fargate ALB
+
+\`examples/fargate-alb/\` — Fargate service behind an ALB, consuming a VPC. Demonstrates composite composability.
+
+{{file:fargate-alb/src/network.ts}}
+
+{{file:fargate-alb/src/service.ts}}
+
+Produces 28 CloudFormation resources: 17 from VpcDefault + 11 from FargateAlb (ECS Cluster, execution/task roles, log group, task definition, security groups, ALB, target group, listener, and ECS service).
+
+## Multi-Service ALB
+
+\`examples/multi-service-alb/\` — multiple Fargate services behind a single shared ALB using \`AlbShared\` + \`FargateService\`.
+
+{{file:multi-service-alb/src/shared.ts}}
+
+{{file:multi-service-alb/src/services.ts}}
+
+Produces 36 CloudFormation resources: 17 from VpcDefault + 5 from AlbShared + 7×2 from FargateService (task role, log group, task definition, task security group, target group, listener rule, and ECS service per service).
+
+## Shared ALB (Separate Projects)
+
+\`examples/shared-alb/\`, \`examples/shared-alb-api/\`, \`examples/shared-alb-ui/\` — the same multi-service ALB pattern as above, but split across separate CloudFormation stacks for independent deployment.
+
+### Infra stack
+
+The shared-alb stack contains VPC, ALB, ECS cluster, and ECR repositories. It exports outputs that service stacks consume as parameters:
+
+{{file:shared-alb/src/alb.ts}}
+
+{{file:shared-alb/src/ecr.ts}}
+
+{{file:shared-alb/src/outputs.ts}}
+
+### Service stacks
+
+Each service stack receives shared infrastructure as parameters and deploys a single Fargate service:
+
+{{file:shared-alb-api/src/params.ts}}
+
+{{file:shared-alb-api/src/service.ts}}
+
+**Deployment pattern:**
+
+1. Deploy the infra stack first — creates VPC, ALB, ECS cluster, and ECR repos
+2. Deploy each service stack independently with \`--parameter-overrides\` mapping infra outputs to service parameters
+3. Each service gets its own \`image\` parameter for CI/CD pipelines to inject the container image URI
+
+The separate-project pattern enables independent team ownership and deployment cadences. See the [GitLab CI/CD lexicon examples](/chant/lexicons/gitlab/examples/) for pipeline definitions that automate this workflow.
+
+## Lambda API (Custom Composite)
+
+\`examples/lambda-api/\` — demonstrates building your own composite factory with presets and a custom lint rule. This is the only example that teaches custom composite authoring.
 
 \`\`\`
 src/
-├── _.ts              # Barrel — re-exports lexicon + auto-discovers siblings
-├── defaults.ts       # Shared config: encryption, versioning, public access block
-├── data-bucket.ts    # S3 bucket using barrel defaults
-├── logs-bucket.ts    # S3 bucket for access logs
-├── role.ts           # IAM role with Lambda assume-role policy
-└── handler.ts        # Lambda function referencing role and bucket
-\`\`\`
-
-**Patterns demonstrated:**
-
-1. **Barrel file** — \`_.ts\` re-exports the AWS lexicon and creates the \`$\` proxy for cross-file references
-2. **Shared defaults** — \`defaults.ts\` exports reusable property objects (\`encryptionDefault\`, \`publicAccessBlock\`) that other files reference via \`_.$\`
-3. **Cross-resource references** — \`_.$.dataBucket.arn\` in \`handler.ts\` serializes to \`Fn::GetAtt\` in the template
-4. **Intrinsics** — \`Sub\` tagged templates with pseudo-parameters for dynamic naming
-
-\`\`\`typescript
-// handler.ts — Lambda function referencing other resources
-import * as _ from "./_";
-
-const lambdaCode = { zipFile: "exports.handler = async () => ({ statusCode: 200 });" };
-
-export const handler = new _.Function({
-  functionName: _.Sub\`\${_.AWS.StackName}-handler\`,
-  handler: "index.handler",
-  runtime: "nodejs20.x",
-  role: _.$.functionRole.arn,          // → Fn::GetAtt
-  code: lambdaCode,
-  environment: {
-    variables: { BUCKET_ARN: _.$.dataBucket.arn },  // → Fn::GetAtt
-  },
-});
-\`\`\`
-
-## Advanced
-
-\`examples/advanced/\` — builds on getting-started with composites, presets, inline IAM policies, and a custom lint rule.
-
-\`\`\`
-src/
-├── _.ts              # Barrel + re-exports Composite from core
 ├── chant.config.ts   # Lint config: strict preset + custom plugin
 ├── defaults.ts       # Encryption, versioning, access block, Lambda trust policy
 ├── data-bucket.ts    # S3 bucket
@@ -1128,69 +1031,84 @@ src/
     └── api-timeout.ts  # Custom WAW012 rule
 \`\`\`
 
-**What it adds:**
+**Patterns demonstrated:**
 
-- **Composites** — \`LambdaApi\` groups Role + Function + Permission into a reusable unit (see [Composites](./composites))
-- **Composite presets** — \`SecureApi\` (low memory, short timeout) and \`HighMemoryApi\` (high memory, longer timeout) created with \`withDefaults\`
-- **Inline IAM policies** — \`upload-api.ts\` and \`process-api.ts\` attach \`Role_Policy\` objects for scoped S3 access
-- **Custom lint rule** — \`api-timeout.ts\` enforces API Gateway's 29-second timeout limit (see [Custom Lint Rules](./custom-rules))
-- **Lint config** — \`chant.config.ts\` extends the strict preset and loads the custom plugin
+- **Custom composites** — \`LambdaApi\` groups Role + Function + Permission into a reusable unit (see [Composites](../composites/))
+- **Composite presets** — \`SecureApi\` (low memory, short timeout) and \`HighMemoryApi\` (high memory, longer timeout)
+- **Custom lint rule** — \`api-timeout.ts\` enforces API Gateway's 29-second timeout limit (see [Custom Lint Rules](../custom-rules/))
 
 The example produces 10 CloudFormation resources: 1 S3 bucket + 3 composites × 3 members each.
 
-## Nested Stacks
+## RDS Instance
 
-\`examples/nested-stacks/\` — demonstrates child projects for splitting resources into child CloudFormation templates with automatic cross-stack reference wiring.
+\`examples/rds-postgres/\` — production RDS PostgreSQL instance using the \`RdsInstance\` composite with VPC networking and SSM parameter references.
 
-\`\`\`
-src/
-├── _.ts              # Parent barrel
-├── app.ts            # Lambda function (references network outputs)
-└── network/          # Child project (nested stack)
-    ├── _.ts          # Child barrel
-    ├── vpc.ts        # VPC, subnet, internet gateway, route table
-    ├── security.ts   # Security group for Lambda
-    └── outputs.ts    # stackOutput() declarations
-\`\`\`
+{{file:rds-postgres/src/params.ts}}
 
-**Patterns demonstrated:**
+{{file:rds-postgres/src/network.ts}}
 
-1. **Child project** — \`network/\` is a separate project directory with its own barrel, resources, and \`stackOutput()\` exports
-2. **Cross-stack references** — \`app.ts\` accesses \`network.outputs.subnetId\` and \`network.outputs.lambdaSgId\`, which serialize to \`Fn::GetAtt\` on the parent's \`AWS::CloudFormation::Stack\` resource
-3. **Multi-file output** — build produces \`template.json\` (parent) and \`network.template.json\` (child)
-4. **TemplateBasePath** — auto-generated parameter for configuring child template URLs per environment
+{{file:rds-postgres/src/database.ts}}
 
-\`\`\`typescript
-// network/outputs.ts — child declares what the parent can reference
-import * as _ from "./_";
-import { stackOutput } from "@intentius/chant";
-
-export const vpcId = stackOutput(_.$.vpc.vpcId, { description: "VPC ID" });
-export const subnetId = stackOutput(_.$.subnet.subnetId, { description: "Public subnet ID" });
-export const lambdaSgId = stackOutput(_.$.lambdaSg.groupId, { description: "Lambda security group ID" });
-\`\`\`
-
-\`\`\`typescript
-// app.ts — parent references child project
-import * as _ from "./_";
-
-const network = _.nestedStack("network", import.meta.dir + "/network");
-
-export const handler = new _.Function({
-  functionName: _.Sub\`\${_.AWS.StackName}-handler\`,
-  runtime: "nodejs20.x",
-  handler: "index.handler",
-  role: _.Ref("LambdaExecutionRole"),
-  code: { zipFile: "exports.handler = async () => ({ statusCode: 200 });" },
-  vpcConfig: {
-    subnetIds: [network.outputs.subnetId],
-    securityGroupIds: [network.outputs.lambdaSgId],
-  },
-});
-\`\`\`
-
-See [Nested Stacks](./nested-stacks) for the full guide.`,
+Produces a complete RDS stack: VPC infrastructure (from \`VpcDefault\`), DB subnet group, security group, and RDS instance with encrypted storage.`,
       },
+      {
+        slug: "skills",
+        title: "AI Skills",
+        description: "AI agent skills bundled with the AWS CloudFormation lexicon",
+        content: `The AWS lexicon ships an AI skill called **chant-aws** that teaches AI coding agents (like Claude Code) how to build, validate, and deploy CloudFormation templates from a chant project.
+
+## What are skills?
+
+Skills are structured markdown documents bundled with a lexicon. When an AI agent works in a chant project, it discovers and loads relevant skills automatically — giving it operational knowledge about the deployment workflow without requiring the user to explain each step.
+
+## Installation
+
+When you scaffold a new project with \`chant init --lexicon aws\`, the skill is installed to \`skills/chant-aws/SKILL.md\` for automatic discovery by Claude Code.
+
+For existing projects, create the file manually:
+
+\`\`\`
+.claude/
+  skills/
+    chant-aws/
+      SKILL.md    # skill content (see below)
+\`\`\`
+
+## Skill: chant-aws
+
+The \`chant-aws\` skill covers the full deployment lifecycle:
+
+- **Build** — \`chant build src/ --output stack.json\`
+- **Validate** — \`chant lint src/\` + \`aws cloudformation validate-template\`
+- **Deploy** — \`aws cloudformation deploy\` with capabilities
+- **Update** — change sets for preview, or direct deploy
+- **Delete** — \`aws cloudformation delete-stack\`
+- **Status** — \`describe-stacks\` and \`describe-stack-events\`
+- **Troubleshooting** — event inspection, rollback recovery, drift detection
+
+The skill is invocable as a slash command: \`/chant-aws\`
+
+## MCP integration
+
+The lexicon also provides MCP (Model Context Protocol) tools and resources that AI agents can use programmatically:
+
+| MCP tool | Description |
+|----------|-------------|
+| \`build\` | Build the chant project |
+| \`lint\` | Run lint rules |
+| \`explain\` | Summarize project resources |
+| \`scaffold\` | Generate starter files |
+| \`search\` | Search available resource types |
+| \`aws:diff\` | Compare current build output against previous |
+
+| MCP resource | Description |
+|--------------|-------------|
+| \`resource-catalog\` | JSON list of all supported CloudFormation resource types |
+| \`examples/basic-stack\` | Example stack with S3 bucket and IAM role |`,
+      },
+    ],
+    sidebarExtra: [
+      { label: "Deploying to EKS", slug: "eks-kubernetes" },
     ],
   };
 

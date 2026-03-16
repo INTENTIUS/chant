@@ -5,24 +5,25 @@ description: How to install chant
 
 ## Requirements
 
-- **Bun >= 1.0** — chant uses Bun as its runtime. Install it from [bun.sh](https://bun.sh).
+- **Bun** (recommended) or **Node.js 18+** — chant auto-detects the available runtime.
+  Install Bun from [bun.sh](https://bun.sh) or Node.js from [nodejs.org](https://nodejs.org).
 
-## npm
+## Install
 
-Install a lexicon for your target platform (this also installs chant):
+A **lexicon** is a platform-specific plugin that teaches chant how to generate infrastructure for a target (AWS, Azure, K8s, etc.). Install a lexicon for your target platform (this also installs the chant CLI):
 
 ```bash
 npm install --save-dev @intentius/chant-lexicon-aws
 ```
 
-See the [AWS lexicon reference](/lexicons/aws/) for intrinsic functions, composites, and examples.
+See the [AWS lexicon reference](/chant/lexicons/aws/) for intrinsic functions, composites, and examples.
 
 ## Verify the Installation
 
 After installing, confirm chant is available:
 
 ```bash
-npx chant --version
+chant --version
 ```
 
-You're ready to proceed to the [Quick Start](/getting-started/quick-start/).
+You're ready to proceed to the [Quick Start](/chant/getting-started/quick-start/).

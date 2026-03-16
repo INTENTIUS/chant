@@ -28,8 +28,8 @@ describe("importModule", () => {
 
       const module = await importModule(filePath);
       expect(module.default).toBeDefined();
-      expect(module.default.name).toBe("test");
-      expect(module.default.value).toBe(123);
+      expect((module.default as any).name).toBe("test");
+      expect((module.default as any).value).toBe(123);
     });
   });
 
@@ -125,7 +125,7 @@ describe("importModule", () => {
 
       const module = await importModule(filePath);
       expect(module.MyClass).toBeDefined();
-      const instance = new module.MyClass(100);
+      const instance = new (module.MyClass as any)(100);
       expect(instance.getValue()).toBe(100);
     });
   });
@@ -142,8 +142,8 @@ describe("importModule", () => {
       const module = await importModule(filePath);
       expect(module.add).toBeInstanceOf(Function);
       expect(module.multiply).toBeInstanceOf(Function);
-      expect(module.add(2, 3)).toBe(5);
-      expect(module.multiply(4, 5)).toBe(20);
+      expect((module.add as Function)(2, 3)).toBe(5);
+      expect((module.multiply as Function)(4, 5)).toBe(20);
     });
   });
 

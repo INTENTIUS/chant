@@ -1,0 +1,44 @@
+---
+title: "Serialization"
+description: "Output format for the Flyway lexicon"
+---
+
+The Flyway lexicon serializes resources into **TOML** format compatible with
+Flyway v10+ CLI configuration (`flyway.toml`).
+
+## Building
+
+Run `chant build` to produce Flyway config from your declarations:
+
+```bash
+chant build
+# Writes dist/flyway.toml
+```
+
+The generated file includes:
+
+- Root-level project properties (id, name, databaseType)
+- `[flyway]` namespace with global settings
+- `[environments.<name>]` sections for each environment
+- `[environments.<name>.resolvers.<type>]` for credential resolvers
+- `[flywayDesktop]` and `[redgateCompare]` optional namespaces
+
+## Key conversions
+
+| Chant (TypeScript) | TOML output | Rule |
+|--------------------|-------------|------|
+| `new FlywayProject({...})` | Root-level keys | Project properties at document root |
+| `new FlywayConfig({...})` | `[flyway]` section | Global Flyway settings |
+| `new Environment({displayName: "dev", ...})` | `[environments.dev]` | Named environment section |
+| `resolve("vault", "password")` | `${vault.password}` | Resolver reference string |
+| `placeholder("defaultSchema")` | `${flyway:defaultSchema}` | Built-in placeholder string |
+
+## Applying
+
+The output is standard Flyway TOML. Use with the Flyway CLI:
+
+```bash
+flyway -environment=dev migrate
+flyway -environment=prod validate
+```
+

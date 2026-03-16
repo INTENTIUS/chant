@@ -30,7 +30,7 @@ const mySerializer: Serializer = {
 
 ## Using `walkValue` and `SerializerVisitor`
 
-The basic example above only emits `entity.entityType`. A real serializer must handle property values — including `AttrRef` (attribute references like `bucket.arn`), nested `Declarable` references (property types), `Intrinsic` values (Sub, Ref, etc.), and key transformation (e.g. camelCase to PascalCase).
+The basic example above only emits `entity.entityType`. A real serializer must handle property values — including `AttrRef` (attribute references like `bucket.Arn`), nested `Declarable` references (property types), and `Intrinsic` values (Sub, Ref, etc.). Property names use spec-native casing and are passed through verbatim.
 
 Use `walkValue` and `SerializerVisitor` from `@intentius/chant/serializer-walker` to handle all of these generically:
 
@@ -59,10 +59,6 @@ const visitor: SerializerVisitor = {
     return props;
   },
 
-  // Optional: transform property keys (e.g. camelCase → PascalCase)
-  transformKey(key) {
-    return key.charAt(0).toUpperCase() + key.slice(1);
-  },
 };
 
 const mySerializer: Serializer = {
@@ -125,7 +121,7 @@ The build pipeline writes each entry in `files` alongside the primary output fil
 
 ## Child Projects
 
-If your lexicon needs to split resources into separate deployment units (like AWS nested stacks, Terraform modules, or Azure linked templates), use the core **child project** pattern. A child project is a subdirectory with its own barrel file (`_.ts`) that builds independently to a valid template.
+If your lexicon needs to split resources into separate deployment units (like AWS nested stacks, Terraform modules, or Azure linked templates), use the core **child project** pattern. A child project is a subdirectory that builds independently to a valid template.
 
 ### Core primitives
 
@@ -217,13 +213,32 @@ for (const [name, entity] of entities) {
 
 ### How it works at build time
 
-1. **Discovery** stops at barrel boundaries — `findInfraFiles()` skips subdirectories with `_.ts`
+1. **Discovery** stops at child project boundaries — `findInfraFiles()` skips child project subdirectories
 2. **Build** detects `ChildProjectInstance` entities and recursively builds each child project
 3. **Cycle detection** tracks the build stack and errors on circular references
 4. **Serialization** receives entities with populated `buildResult` — the serializer extracts child templates and emits parent references
 
 > See `lexicons/aws/src/nested-stack.ts` and `lexicons/aws/src/serializer.ts` for a complete working example.
 
+## Testing
+
+Your serializer test file (`serializer.test.ts`) should cover at minimum:
+
+1. **Identity** — `serializer.name` and `serializer.rulePrefix` are correct
+2. **Empty** — `serialize(new Map())` returns empty string
+3. **Single resource** — produces valid output format
+4. **Name generation** — camelCase export → kebab-case metadata name
+5. **Explicit name** — user-set name is preserved
+6. **Multi-doc** — multiple entities joined correctly
+7. **Default labels** — merged into all resources
+8. **Default annotations** — merged into all resources
+9. **Explicit overrides** — resource-level labels take precedence
+10. **Property entities** — `kind: "property"` skipped in output
+11. **DefaultLabels/Annotations entities** — skipped in output
+12. **Key ordering** — canonical order (e.g., apiVersion, kind, metadata, spec)
+
+Use `mockResource()` and `mockProperty()` helpers with `DECLARABLE_MARKER` to create test entities without constructing real resource classes. See [Testing Your Lexicon](/chant/lexicon-authoring/testing/) for the full pattern.
+
 ## Next Steps
 
-With serialization in place, the next step is to [write lint rules](/lexicon-authoring/lint-rules/) for your provider.
+With serialization in place, the next step is to [write lint rules](/chant/lexicon-authoring/lint-rules/) for your provider.

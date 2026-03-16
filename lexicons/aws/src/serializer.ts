@@ -3,9 +3,11 @@ import { isPropertyDeclarable } from "@intentius/chant/declarable";
 import type { Serializer, SerializerResult } from "@intentius/chant/serializer";
 import type { LexiconOutput } from "@intentius/chant/lexicon-output";
 import { walkValue, type SerializerVisitor } from "@intentius/chant/serializer-walker";
-import { toPascalCase } from "@intentius/chant/codegen/case";
 import { isChildProject, type ChildProjectInstance } from "@intentius/chant/child-project";
 import { isStackOutput, type StackOutput } from "@intentius/chant/stack-output";
+import { resolveDependsOn } from "@intentius/chant/resource-attributes";
+import { isDefaultTags, type TagEntry } from "./default-tags";
+import { loadTaggableResources } from "./taggable";
 
 /**
  * Check if a declarable is a CoreParameter
@@ -50,6 +52,10 @@ interface CFResource {
   Properties?: Record<string, unknown>;
   DependsOn?: string | string[];
   Condition?: string;
+  DeletionPolicy?: string;
+  UpdateReplacePolicy?: string;
+  UpdatePolicy?: unknown;
+  CreationPolicy?: unknown;
   Metadata?: Record<string, unknown>;
 }
 
@@ -68,7 +74,7 @@ interface CFOutput {
  */
 function cfnVisitor(entityNames: Map<Declarable, string>): SerializerVisitor {
   return {
-    attrRef: (name, attr) => ({ "Fn::GetAttr": [name, attr] }),
+    attrRef: (name, attr) => ({ "Fn::GetAtt": [name, attr] }),
     resourceRef: (name) => ({ Ref: name }),
     propertyDeclarable: (entity, walk) => {
       if (!("props" in entity) || typeof entity.props !== "object" || entity.props === null) {
@@ -78,26 +84,19 @@ function cfnVisitor(entityNames: Map<Declarable, string>): SerializerVisitor {
       const cfProps: Record<string, unknown> = {};
       for (const [key, value] of Object.entries(props)) {
         if (value !== undefined) {
-          const cfKey = toPascalCase(key);
-          cfProps[cfKey] = walk(value);
+          cfProps[key] = walk(value);
         }
       }
       return Object.keys(cfProps).length > 0 ? cfProps : undefined;
     },
-    transformKey: toPascalCase,
   };
 }
 
 /**
  * Convert a value to CF-compatible JSON using the generic walker.
  */
-function toCFValue(value: unknown, entityNames: Map<Declarable, string>, convertKeys = false): unknown {
-  const visitor = cfnVisitor(entityNames);
-  if (!convertKeys) {
-    // When not converting keys, use a visitor without transformKey
-    return walkValue(value, entityNames, { ...visitor, transformKey: undefined });
-  }
-  return walkValue(value, entityNames, visitor);
+function toCFValue(value: unknown, entityNames: Map<Declarable, string>): unknown {
+  return walkValue(value, entityNames, cfnVisitor(entityNames));
 }
 
 /**
@@ -116,8 +115,7 @@ function toProperties(
 
   for (const [key, value] of Object.entries(props)) {
     if (value !== undefined) {
-      const cfKey = toPascalCase(key);
-      cfProps[cfKey] = toCFValue(value, entityNames, true);
+      cfProps[key] = toCFValue(value, entityNames);
     }
   }
 
@@ -150,10 +148,23 @@ function serializeToTemplate(
     entityNames.set(entity, name);
   }
 
+  // Collect default tags
+  const defaultTagEntries: TagEntry[] = [];
+  for (const [, entity] of entities) {
+    if (isDefaultTags(entity)) {
+      defaultTagEntries.push(...entity.tags);
+    }
+  }
+
   // Process entities
   for (const [name, entity] of entities) {
     // Skip StackOutput entities — they go in the Outputs section
     if (isStackOutput(entity)) {
+      continue;
+    }
+
+    // Skip DefaultTags entities — handled via tag injection below
+    if (isDefaultTags(entity)) {
       continue;
     }
 
@@ -211,12 +222,53 @@ function serializeToTemplate(
         Type: entity.entityType,
       };
 
+      // Read resource-level attributes from the second constructor arg
+      const attrs = ("attributes" in entity && typeof entity.attributes === "object" && entity.attributes !== null)
+        ? entity.attributes as Record<string, unknown>
+        : undefined;
+
+      if (attrs) {
+        // DependsOn — resolve Declarable refs to logical names
+        if (attrs.DependsOn !== undefined) {
+          const resolved = resolveDependsOn(attrs.DependsOn, entityNames, name);
+          if (resolved.length > 0) {
+            resource.DependsOn = resolved.length === 1 ? resolved[0] : resolved;
+          }
+        }
+        // Pass-through attributes
+        if (attrs.Condition) resource.Condition = attrs.Condition as string;
+        if (attrs.DeletionPolicy) resource.DeletionPolicy = attrs.DeletionPolicy as string;
+        if (attrs.UpdateReplacePolicy) resource.UpdateReplacePolicy = attrs.UpdateReplacePolicy as string;
+        if (attrs.UpdatePolicy) resource.UpdatePolicy = attrs.UpdatePolicy;
+        if (attrs.CreationPolicy) resource.CreationPolicy = attrs.CreationPolicy;
+        if (attrs.Metadata) resource.Metadata = toCFValue(attrs.Metadata, entityNames) as Record<string, unknown>;
+      }
+
       const properties = toProperties(entity, entityNames);
       if (properties) {
-        resource.Properties = properties;
+        if (Object.keys(properties).length > 0) {
+          resource.Properties = properties;
+        }
       }
 
       template.Resources[name] = resource;
+    }
+  }
+
+  // Inject default tags into taggable resources
+  if (defaultTagEntries.length > 0) {
+    const taggable = loadTaggableResources();
+    for (const [, resource] of Object.entries(template.Resources)) {
+      if (!taggable.has(resource.Type)) continue;
+      const resolved = defaultTagEntries.map(t => ({
+        Key: t.Key,
+        Value: toCFValue(t.Value, entityNames),
+      }));
+      const explicit = (resource.Properties?.Tags ?? []) as Array<{ Key: string }>;
+      const explicitKeys = new Set(explicit.map(t => t.Key));
+      const merged = [...resolved.filter(t => !explicitKeys.has(t.Key)), ...explicit];
+      if (!resource.Properties) resource.Properties = {};
+      resource.Properties.Tags = merged;
     }
   }
 
@@ -230,8 +282,13 @@ function serializeToTemplate(
       const ref = stackOutput.sourceRef;
       const logicalName = ref.getLogicalName();
       if (logicalName) {
+        // Use Ref for primary identifier ("Id") since not all resources
+        // support Fn::GetAtt for their primary identifier (e.g. ACM Certificate).
+        // Ref always returns the primary identifier for any CF resource.
         const output: CFOutput = {
-          Value: { "Fn::GetAttr": [logicalName, ref.attribute] },
+          Value: ref.attribute === "Id"
+            ? { Ref: logicalName }
+            : { "Fn::GetAtt": [logicalName, ref.attribute] },
         };
         if (stackOutput.description) {
           output.Description = stackOutput.description;
@@ -247,7 +304,7 @@ function serializeToTemplate(
     for (const output of outputs) {
       template.Outputs[output.outputName] = {
         Value: {
-          "Fn::GetAttr": [output.sourceEntity, output.sourceAttribute],
+          "Fn::GetAtt": [output.sourceEntity, output.sourceAttribute],
         },
       };
     }
