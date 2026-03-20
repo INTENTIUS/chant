@@ -4,7 +4,7 @@
   "type": "module",
   "private": true,
   "scripts": {
-    "build": "chant build src --lexicon aws -o templates/template.json && chant build src --lexicon flyway -o flyway.toml && chant build src --lexicon gitlab -o .gitlab-ci.yml",
+    "build": "chant build src --lexicon aws -o templates/template.json && chant build src --lexicon flyway -o flyway.toml && chant build src --lexicon gitlab -o .gitlab-ci.yml && chant build src --lexicon docker -o docker-compose.yml",
     "build:aws": "chant build src --lexicon aws",
     "build:flyway": "chant build src --lexicon flyway",
     "build:gitlab": "chant build src --lexicon gitlab",
@@ -15,6 +15,7 @@
     "@intentius/chant": "workspace:*",
     "@intentius/chant-lexicon-aws": "workspace:*",
     "@intentius/chant-lexicon-flyway": "workspace:*",
-    "@intentius/chant-lexicon-gitlab": "workspace:*"
+    "@intentius/chant-lexicon-gitlab": "workspace:*",
+    "@intentius/chant-lexicon-docker": "workspace:*"
   }
 }

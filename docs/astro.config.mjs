@@ -85,6 +85,7 @@ export default defineConfig({
 						{ label: 'GitHub Actions', link: '/lexicons/github/' },
 						{ label: 'GitLab CI/CD', link: '/lexicons/gitlab/' },
 						{ label: 'Flyway', link: '/lexicons/flyway/' },
+						{ label: 'Docker', link: '/lexicons/docker/' },
 					],
 				},
 				{

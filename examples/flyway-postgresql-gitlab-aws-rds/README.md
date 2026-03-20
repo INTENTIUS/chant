@@ -1,10 +1,16 @@
 # Flyway + PostgreSQL + GitLab CI + AWS RDS
 
-A cross-lexicon example combining **three** lexicons: AWS (RDS infrastructure), Flyway (migration config), and GitLab (CI pipeline). The GitLab pipeline deploys the CloudFormation stack then runs Flyway migrations against the new RDS endpoint.
+A cross-lexicon example combining **four** lexicons: AWS (RDS infrastructure), Flyway (migration config), GitLab (CI pipeline), and Docker (local development PostgreSQL). The GitLab pipeline deploys the CloudFormation stack then runs Flyway migrations against the new RDS endpoint.
 
 ## Architecture
 
 ```
+┌─────────────────────────────────────────────────────────────────┐
+│  Local Dev                                                       │
+│  docker compose up → PostgreSQL:5432 (myapp db)                  │
+│  flyway migrate → V1, V2, V3 SQL migrations (local)             │
+└─────────────────────────────────────────────────────────────────┘
+
 ┌─────────────────────────────────────────────────────────────────┐
 │  GitLab CI Pipeline                                              │
 │                                                                  │
@@ -31,13 +37,14 @@ A cross-lexicon example combining **three** lexicons: AWS (RDS infrastructure), 
 
 ## Skills
 
-The lexicon packages ship skills for agent-guided deployment. After `chant init --lexicon aws`, `chant init --lexicon flyway`, and `chant init --lexicon gitlab`, your agent has access to:
+The lexicon packages ship skills for agent-guided deployment. After `chant init --lexicon aws`, `chant init --lexicon flyway`, `chant init --lexicon gitlab`, and `chant init --lexicon docker`, your agent has access to:
 
 | Skill | Package | Purpose |
 |-------|---------|---------|
 | `chant-gitlab` | `@intentius/chant-lexicon-gitlab` | GitLab CI/CD lifecycle: build, validate, push, monitor pipelines |
 | `chant-aws` | `@intentius/chant-lexicon-aws` | CloudFormation lifecycle: build, validate, change sets, rollback |
 | `chant-flyway` | `@intentius/chant-lexicon-flyway` | Flyway migration lifecycle: build, validate, migrate, repair |
+| `chant-docker` | `@intentius/chant-lexicon-docker` | Docker Compose lifecycle: build, up, down, validate |
 
 > **Using Claude Code?** This example deploys through GitLab CI, not directly. Ask:
 >
@@ -50,6 +57,7 @@ The lexicon packages ship skills for agent-guided deployment. After `chant init 
 - **AWS** (`templates/template.json`): CloudFormation template with 20 resources (17 VPC + 3 RDS)
 - **Flyway** (`flyway.toml`): Project config with deploy environment using `${env.*}` variable resolution
 - **GitLab** (`.gitlab-ci.yml`): 2-stage pipeline (deploy infrastructure → run migrations)
+- **Docker** (`docker-compose.yml`): Local PostgreSQL matching the production database name and engine
 
 ## Source files
 
@@ -62,11 +70,28 @@ The lexicon packages ship skills for agent-guided deployment. After `chant init 
 | `src/tags.ts` | AWS | Default resource tags |
 | `src/migrations.ts` | Flyway | FlywayProject, FlywayConfig, deploy Environment |
 | `src/pipeline.ts` | GitLab | 2-stage pipeline: deploy-infra → run-migrations |
+| `src/local-dev.ts` | Docker | Local PostgreSQL for development (mirrors production RDS) |
 | `sql/migrations/` | — | SQL migration files (V1–V3) |
 
 ## How cross-lexicon build works
 
 Each `chant build --lexicon <name>` invocation selects only the resources belonging to that lexicon. The Flyway config uses `${env.DB_HOST}` and `${env.DB_PASSWORD}` — resolved at runtime by the GitLab pipeline, which extracts the RDS endpoint from CF stack outputs and the password from SSM.
+
+## Local development
+
+Spin up a local PostgreSQL instance matching the production database — no AWS account required:
+
+```bash
+npx chant build src --lexicon docker -o docker-compose.yml
+docker compose up -d
+flyway -url=jdbc:postgresql://localhost:5432/myapp -user=postgres -password=localdev migrate
+```
+
+Tear down when done:
+
+```bash
+docker compose down -v
+```
 
 ## Prerequisites
 

@@ -468,6 +468,13 @@ mkdir -p "$TESTDIR/src" && cp /app/test/fixtures/gcp.ts "$TESTDIR/src/"
 test_init "gcp" "$TESTDIR"
 rm -rf "$TESTDIR"
 
+# Docker
+test_lexicon "docker" "/app/test/fixtures/docker.ts" 'grep -q "services:"' 'grep -q "services:"'
+TESTDIR="/app/_smoke_test_docker"
+mkdir -p "$TESTDIR/src" && cp /app/test/fixtures/docker.ts "$TESTDIR/src/"
+test_init "docker" "$TESTDIR"
+rm -rf "$TESTDIR"
+
 # ── Multi-stack smoke test ────────────────────────────────────────────
 
 log "test_build_multistack"
