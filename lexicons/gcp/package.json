@@ -43,11 +43,14 @@
     "prepack": "bun run generate && bun run bundle && bun run validate"
   },
   "dependencies": {
-    "@intentius/chant": "workspace:*",
     "fflate": "^0.8.2",
     "js-yaml": "^4.1.0"
   },
   "devDependencies": {
+    "@intentius/chant": "workspace:*",
     "typescript": "^5.9.3"
+  },
+  "peerDependencies": {
+    "@intentius/chant": "^0.1.0"
   }
 }

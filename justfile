@@ -38,7 +38,7 @@ bench:
 smoke-bun:
     docker build -f test/Dockerfile.smoke -t chant-smoke-bun . && docker run -it --rm -v "$HOME/.claude:/root/.claude" -v "$HOME/.claude.json:/root/.claude.json" -v "$HOME/.aws:/root/.aws:ro" chant-smoke-bun
 
-# Build and run npm tarball smoke test (all 6 lexicons, both npm and bun runtimes)
+# Build and run npm tarball smoke test (all 9 lexicons, both npm and bun runtimes)
 smoke-npm:
     ./test/smoke.sh npm
 
@@ -87,6 +87,28 @@ release bump="patch":
     git tag "v$next"
     git push origin main "v$next"
     echo "Released v$next — publish workflow triggered"
+
+# Bump a single lexicon version and tag (e.g. just release-lexicon docker patch)
+release-lexicon name bump="patch":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    current=$(jq -r .version lexicons/{{name}}/package.json)
+    IFS='.' read -r major minor patch <<< "$current"
+    case "{{bump}}" in
+      major) major=$((major + 1)); minor=0; patch=0 ;;
+      minor) minor=$((minor + 1)); patch=0 ;;
+      patch) patch=$((patch + 1)) ;;
+      *) echo "Usage: just release-lexicon <name> [major|minor|patch]"; exit 1 ;;
+    esac
+    next="$major.$minor.$patch"
+    echo "Bumping @intentius/chant-lexicon-{{name}} $current → $next"
+    jq --arg v "$next" '.version = $v' lexicons/{{name}}/package.json \
+      > lexicons/{{name}}/package.json.tmp && mv lexicons/{{name}}/package.json.tmp lexicons/{{name}}/package.json
+    git add lexicons/{{name}}/package.json
+    git commit -m "lexicon-{{name}}: v$next"
+    git tag "lexicon-{{name}}-v$next"
+    git push origin HEAD "lexicon-{{name}}-v$next"
+    echo "Released @intentius/chant-lexicon-{{name}} v$next — publish workflow triggered"
 
 # Build Zed extension (WASM)
 ext-zed-build:

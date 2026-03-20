@@ -42,10 +42,11 @@
     "docs": "bun run src/codegen/docs-cli.ts",
     "prepack": "bun run generate && bun run bundle && bun run validate"
   },
-  "dependencies": {
-    "@intentius/chant": "workspace:*"
-  },
   "devDependencies": {
+    "@intentius/chant": "workspace:*",
     "typescript": "^5.9.3"
+  },
+  "peerDependencies": {
+    "@intentius/chant": "^0.1.0"
   }
 }
