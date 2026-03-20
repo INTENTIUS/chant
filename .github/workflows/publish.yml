@@ -29,6 +29,7 @@ jobs:
       - run: bun run --cwd lexicons/flyway prepack
       - run: bun run --cwd lexicons/gcp prepack
       - run: bun run --cwd lexicons/helm prepack
+      - run: bun run --cwd lexicons/docker prepack
       - run: bun test
 
   publish:
@@ -77,4 +78,8 @@ jobs:
 
       - name: Publish @intentius/chant-lexicon-azure
         working-directory: lexicons/azure
+        run: bun publish --access public --tolerate-republish
+
+      - name: Publish @intentius/chant-lexicon-docker
+        working-directory: lexicons/docker
         run: bun publish --access public --tolerate-republish

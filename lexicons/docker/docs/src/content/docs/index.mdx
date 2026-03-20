@@ -1,0 +1,63 @@
+---
+title: "Docker"
+description: "Typed constructors for Docker Compose and Dockerfile configuration"
+---
+
+The **Docker** lexicon provides typed constructors for Docker Compose services
+and Dockerfile build instructions — services, volumes, networks, configs, secrets,
+and multi-stage Dockerfiles.
+
+```bash
+npm install --save-dev @intentius/chant-lexicon-docker
+```
+
+## Quick Start
+
+```typescript
+import { Service, Volume, Dockerfile, env } from "@intentius/chant-lexicon-docker";
+
+export const db = new Service({
+  image: "postgres:16-alpine",
+  environment: {
+    POSTGRES_DB: "myapp",
+    POSTGRES_PASSWORD: env("DB_PASSWORD", { required: true }),
+  },
+  volumes: ["pgdata:/var/lib/postgresql/data"],
+});
+
+export const pgdata = new Volume({});
+
+export const api = new Service({
+  image: "myapp:1.0",
+  ports: ["8080:8080"],
+  depends_on: ["db"],
+});
+```
+
+Build:
+
+```bash
+chant build src --lexicon docker -o docker-compose.yml
+```
+
+## Output Domains
+
+| Entity | Output file | Section |
+|--------|-------------|---------|
+| `Service` | `docker-compose.yml` | `services:` |
+| `Volume` | `docker-compose.yml` | `volumes:` |
+| `Network` | `docker-compose.yml` | `networks:` |
+| `Config` | `docker-compose.yml` | `configs:` |
+| `Secret` | `docker-compose.yml` | `secrets:` |
+| `Dockerfile` | `Dockerfile.{name}` | — |
+
+## At a Glance
+
+| Metric | Count |
+|--------|-------|
+| Compose resources | 5 |
+| Dockerfile resources | 1 |
+| Pre-synth lint rules | 1 |
+| Post-synth checks | 6 |
+
+**Namespace:** `Docker`

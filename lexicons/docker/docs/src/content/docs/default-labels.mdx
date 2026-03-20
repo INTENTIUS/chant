@@ -1,0 +1,38 @@
+---
+title: "Default Labels"
+description: "Inject labels into all services with defaultLabels()"
+---
+
+`defaultLabels()` merges a set of labels into every `Service` in the same source file. Declare it once; all services inherit it automatically.
+
+```typescript
+import { defaultLabels, Service } from "@intentius/chant-lexicon-docker";
+
+export const labels = defaultLabels({
+  "com.example.team": "platform",
+  "com.example.managed-by": "chant",
+  "com.example.env": "production",
+});
+
+export const api = new Service({ image: "myapp:1.0" });
+export const worker = new Service({ image: "myapp-worker:1.0" });
+```
+
+Both `api` and `worker` will have all three labels in the output.
+
+## Per-service override
+
+Labels set directly on a service take precedence:
+
+```typescript
+export const debug = new Service({
+  image: "myapp:1.0",
+  labels: {
+    "com.example.env": "debug",  // overrides the default
+  },
+});
+```
+
+## Scope
+
+`defaultLabels()` applies to all `Service` entities discovered in the **same build**. To scope labels to a subset of services, use separate source directories and build each with `--lexicon docker`.

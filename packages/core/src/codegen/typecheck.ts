@@ -65,6 +65,19 @@ export async function typecheckDTS(content: string): Promise<TypeCheckResult> {
       MINIMAL_LIB,
     );
 
+    // Write stubs for @intentius/chant sub-path imports used in generated .d.ts files.
+    // tsc runs in a temp dir with no node_modules, so these must be declared manually.
+    const chantDeclarableDir = join(dir, "node_modules", "@intentius", "chant", "declarable");
+    mkdirSync(chantDeclarableDir, { recursive: true });
+    writeFileSync(
+      join(chantDeclarableDir, "index.d.ts"),
+      `export interface Declarable<TProps = Record<string, unknown>> { props: TProps; }\n`,
+    );
+    writeFileSync(
+      join(chantDeclarableDir, "package.json"),
+      JSON.stringify({ name: "@intentius/chant/declarable", main: "index.d.ts", types: "index.d.ts" }),
+    );
+
     // Write a minimal tsconfig — noLib: true prevents tsc from looking for
     // standard lib files; our lib.d.ts is included via the include array.
     const tsconfig = {

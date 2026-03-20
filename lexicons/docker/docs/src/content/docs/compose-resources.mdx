@@ -1,0 +1,127 @@
+---
+title: "Compose Resources"
+description: "Service, Volume, Network, Config, and Secret constructors"
+---
+
+All Compose resources are exported from `@intentius/chant-lexicon-docker`. The export variable name becomes the key in the output section.
+
+## Service
+
+Maps to `services.<name>` in `docker-compose.yml`.
+
+```typescript
+import { Service, env } from "@intentius/chant-lexicon-docker";
+
+export const api = new Service({
+  image: "myapp:1.0",
+  ports: ["8080:8080"],
+  environment: {
+    NODE_ENV: "production",
+    DB_URL: env("DATABASE_URL", { required: true }),
+  },
+  depends_on: ["db"],
+  restart: "unless-stopped",
+  healthcheck: {
+    test: ["CMD", "curl", "-f", "http://localhost:8080/health"],
+    interval: "30s",
+    timeout: "10s",
+    retries: 3,
+  },
+  deploy: {
+    replicas: 2,
+    resources: {
+      limits: { cpus: "0.5", memory: "512M" },
+    },
+  },
+});
+```
+
+## Volume
+
+Maps to `volumes.<name>` in `docker-compose.yml`.
+
+```typescript
+import { Volume } from "@intentius/chant-lexicon-docker";
+
+// Named volume (default driver)
+export const pgdata = new Volume({});
+
+// Custom driver options (e.g. NFS)
+export const nfsdata = new Volume({
+  driver: "local",
+  driver_opts: {
+    type: "nfs",
+    o: "addr=192.168.1.1,rw",
+    device: ":/path/to/share",
+  },
+});
+
+// External volume (pre-existing)
+export const shared = new Volume({ external: true });
+```
+
+## Network
+
+Maps to `networks.<name>` in `docker-compose.yml`.
+
+```typescript
+import { Network } from "@intentius/chant-lexicon-docker";
+
+export const backend = new Network({ driver: "bridge" });
+
+export const frontend = new Network({
+  driver: "overlay",
+  attachable: true,
+});
+```
+
+Attach a service to named networks:
+
+```typescript
+export const api = new Service({
+  image: "myapp:1.0",
+  networks: ["frontend", "backend"],
+});
+```
+
+## Config
+
+Maps to `configs.<name>` in `docker-compose.yml`. Used for non-sensitive configuration files.
+
+```typescript
+import { Config } from "@intentius/chant-lexicon-docker";
+
+export const nginxConf = new Config({ file: "./nginx.conf" });
+```
+
+Mount it in a service:
+
+```typescript
+export const proxy = new Service({
+  image: "nginx:alpine",
+  configs: [{ source: "nginxConf", target: "/etc/nginx/nginx.conf" }],
+});
+```
+
+## Secret
+
+Maps to `secrets.<name>` in `docker-compose.yml`. For sensitive values.
+
+```typescript
+import { Secret } from "@intentius/chant-lexicon-docker";
+
+// File-backed
+export const dbPassword = new Secret({ file: "./secrets/db_password.txt" });
+
+// External (managed outside Compose)
+export const apiKey = new Secret({ external: true });
+```
+
+Mount in a service:
+
+```typescript
+export const api = new Service({
+  image: "myapp:1.0",
+  secrets: ["dbPassword", "apiKey"],
+});
+```

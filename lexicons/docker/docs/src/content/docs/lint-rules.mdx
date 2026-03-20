@@ -1,0 +1,84 @@
+---
+title: "Lint Rules"
+description: "Built-in lint rules and post-synth checks for Docker resources"
+---
+
+Rules run in two phases:
+
+- **Pre-synth** (`chant lint`) — static analysis on TypeScript source
+- **Post-synth** (`chant build`) — checks on the generated `docker-compose.yml` / `Dockerfile.*`
+
+## Pre-synth rules
+
+### DKRS001 — No latest tag
+**Severity:** warning | **Category:** reproducibility
+
+Warns when a `Service.image` prop is a literal string ending in `:latest` or has no tag. Applies to source-level string literals; `env()` values are skipped.
+
+```typescript
+// ✗ triggers DKRS001
+export const api = new Service({ image: "myapp" });
+export const api = new Service({ image: "myapp:latest" });
+
+// ✓ ok
+export const api = new Service({ image: "myapp:1.0" });
+export const api = new Service({ image: env("APP_IMAGE") });
+```
+
+## Post-synth checks
+
+Post-synth checks run after build and inspect the serialized output.
+
+### DKRD001 — Latest image tag
+**Severity:** warning
+
+Same as DKRS001 but catches cases the pre-synth rule misses (e.g. dynamic values that resolve to `:latest` at build time).
+
+### DKRD002 — Unused named volume
+**Severity:** warning
+
+A `Volume` entity is declared but not mounted by any service.
+
+```typescript
+export const orphan = new Volume({});  // ✗ never mounted
+```
+
+### DKRD003 — SSH port exposed
+**Severity:** error
+
+A service exposes port 22 externally. SSH should not be accessible from the host.
+
+```typescript
+export const svc = new Service({ ports: ["22:22"] });  // ✗
+```
+
+### DKRD010 — apt-get without --no-install-recommends
+**Severity:** warning | **Applies to:** Dockerfiles
+
+`apt-get install` without `--no-install-recommends` installs unnecessary packages and bloats image size.
+
+```dockerfile
+# ✗
+RUN apt-get install -y curl
+
+# ✓
+RUN apt-get install -y --no-install-recommends curl
+```
+
+### DKRD011 — Prefer COPY over ADD
+**Severity:** info | **Applies to:** Dockerfiles
+
+`ADD` has implicit behaviours (URL fetching, tar extraction). Use `COPY` for plain file copies; use `ADD` only when its extra features are intentionally needed.
+
+### DKRD012 — No USER instruction
+**Severity:** warning | **Applies to:** Dockerfiles
+
+A Dockerfile has no `USER` instruction, meaning the container runs as root. Set an unprivileged user.
+
+```typescript
+export const app = new Dockerfile({
+  from: "node:20-alpine",
+  user: "node",  // ✓
+  cmd: `["node", "index.js"]`,
+});
+```

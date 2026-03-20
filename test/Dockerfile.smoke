@@ -28,7 +28,7 @@ RUN bun install
 
 # Validate that dist/ artifacts exist — codegen runs on the host before docker build.
 # Run: just prepack  (or bun run prepack per lexicon) before building this Dockerfile.
-RUN for lex in aws azure gcp gitlab k8s flyway; do \
+RUN for lex in aws azure gcp gitlab k8s flyway docker; do \
       if [ ! -f "lexicons/$lex/dist/manifest.json" ]; then \
         echo "ERROR: lexicons/$lex/dist/ not found. Run codegen first: bun run --cwd lexicons/$lex prepack" >&2; \
         exit 1; \

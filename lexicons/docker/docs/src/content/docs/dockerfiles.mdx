@@ -1,0 +1,84 @@
+---
+title: "Dockerfiles"
+description: "Typed Dockerfile definitions with single-stage and multi-stage support"
+---
+
+The `Dockerfile` constructor generates a `Dockerfile.{name}` file alongside `docker-compose.yml`. The export variable name is used as the suffix.
+
+## Single-stage
+
+```typescript
+import { Dockerfile } from "@intentius/chant-lexicon-docker";
+
+export const server = new Dockerfile({
+  from: "node:20-alpine",
+  workdir: "/app",
+  copy: ["package*.json ./"],
+  run: ["npm ci --only=production"],
+  copy: ["src/ ./src/"],
+  user: "node",
+  expose: [3000],
+  cmd: `["node", "src/index.js"]`,
+});
+```
+
+Produces `Dockerfile.server`.
+
+## Multi-stage
+
+```typescript
+export const app = new Dockerfile({
+  stages: [
+    {
+      from: "node:20-alpine",
+      as: "build",
+      workdir: "/app",
+      copy: ["package*.json ./"],
+      run: ["npm ci"],
+      copy: ["src/ ./src/"],
+      run: ["npm run build"],
+    },
+    {
+      from: "node:20-alpine",
+      workdir: "/app",
+      copy: ["--from=build /app/dist ./dist", "--from=build /app/node_modules ./node_modules"],
+      user: "node",
+      expose: [3000],
+      cmd: `["node", "dist/index.js"]`,
+    },
+  ],
+});
+```
+
+Produces `Dockerfile.app`.
+
+## Supported instructions
+
+| Field | Dockerfile instruction |
+|-------|----------------------|
+| `from` | `FROM` |
+| `as` | `FROM … AS` |
+| `workdir` | `WORKDIR` |
+| `run` | `RUN` (one instruction per array entry) |
+| `copy` | `COPY` |
+| `add` | `ADD` |
+| `env` | `ENV` |
+| `arg` | `ARG` |
+| `expose` | `EXPOSE` |
+| `user` | `USER` |
+| `cmd` | `CMD` |
+| `entrypoint` | `ENTRYPOINT` |
+| `label` | `LABEL` |
+| `volume` | `VOLUME` |
+| `healthcheck` | `HEALTHCHECK` |
+
+## Using in Compose
+
+Reference a built image from a Dockerfile entity:
+
+```typescript
+export const api = new Service({
+  build: { context: ".", dockerfile: "Dockerfile.app" },
+  ports: ["3000:3000"],
+});
+```

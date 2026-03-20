@@ -18,21 +18,6 @@ COPY . .
 
 RUN bun install
 
-# Generate dist/ artifacts for each lexicon (prepack runs codegen + package).
-# Helm skipped — has pre-existing validation failures.
-RUN for lex in aws azure gcp gitlab k8s flyway; do \
-      echo "=== prepack lexicons/$lex ===" && \
-      bun run --cwd "lexicons/$lex" prepack; \
-    done
-
-# Validate that dist/ artifacts were produced
-RUN for lex in aws azure gcp gitlab k8s flyway; do \
-      if [ ! -f "lexicons/$lex/dist/manifest.json" ]; then \
-        echo "ERROR: lexicons/$lex/dist/manifest.json not found after prepack" >&2; \
-        exit 1; \
-      fi; \
-    done
-
 # Fix workspace:* deps → real version, strip scripts so npm doesn't run them
 RUN CORE_VERSION=$(jq -r '.version' packages/core/package.json) && \
     echo "Core version: $CORE_VERSION" && \
@@ -40,27 +25,24 @@ RUN CORE_VERSION=$(jq -r '.version' packages/core/package.json) && \
     cd /app/packages/core && \
     jq 'del(.scripts)' package.json > tmp.json && mv tmp.json package.json && \
     # Each lexicon: replace workspace:* with version, strip scripts
-    for lex in aws azure gcp gitlab k8s flyway; do \
+    for lex in aws azure gcp gitlab k8s flyway docker; do \
       cd /app/lexicons/$lex && \
       jq --arg v "$CORE_VERSION" \
         '(.dependencies // {}) |= with_entries(if .value == "workspace:*" then .value = $v else . end) | del(.scripts)' \
         package.json > tmp.json && mv tmp.json package.json; \
     done
 
-# Pack tarballs (rm stale .tgz first — glob with multiple matches breaks mv)
+# Pack tarballs:
+# - Core: bun pm pack works (src/ and bin/ are not gitignored)
+# - Lexicons: tar — bun pm pack with del(.scripts) excludes gitignored dist/.
+#   smoke.sh ran prepack locally; COPY . . already brought dist/ into this stage.
 RUN mkdir -p /tarballs && \
     cd /app/packages/core && rm -f *.tgz && bun pm pack && mv *.tgz /tarballs/core.tgz && \
-    cd /app/lexicons/aws && rm -f *.tgz && bun pm pack && mv *.tgz /tarballs/lexicon-aws.tgz && \
-    cd /app/lexicons/azure && rm -f *.tgz && bun pm pack && mv *.tgz /tarballs/lexicon-azure.tgz && \
-    cd /app/lexicons/gcp && rm -f *.tgz && bun pm pack && mv *.tgz /tarballs/lexicon-gcp.tgz && \
-    cd /app/lexicons/gitlab && rm -f *.tgz && bun pm pack && mv *.tgz /tarballs/lexicon-gitlab.tgz && \
-    cd /app/lexicons/k8s && rm -f *.tgz && bun pm pack && mv *.tgz /tarballs/lexicon-k8s.tgz && \
-    cd /app/lexicons/flyway && rm -f *.tgz && bun pm pack && mv *.tgz /tarballs/lexicon-flyway.tgz
-
-# Verify tarballs contain dist/
-RUN for tb in /tarballs/lexicon-*.tgz; do \
-      echo "=== $(basename $tb) ===" && \
-      tar tzf "$tb" | grep dist/ | head -3; \
+    for lex in aws azure gcp gitlab k8s flyway docker; do \
+      tar czf /tarballs/lexicon-${lex}.tgz \
+        -C /app/lexicons/$lex \
+        --transform='s|^\./|package/|' \
+        ./package.json ./src ./dist || exit 1; \
     done
 
 # ── Stage 2: test (node only, no bun) ────────────────────────────────────────

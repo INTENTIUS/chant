@@ -85,6 +85,7 @@ export default defineConfig({
 						{ label: 'GitHub Actions', link: '/lexicons/github/' },
 						{ label: 'GitLab CI/CD', link: '/lexicons/gitlab/' },
 						{ label: 'Flyway', link: '/lexicons/flyway/' },
+						{ label: 'Docker', link: '/lexicons/docker/' },
 					],
 				},
 				{
@@ -146,6 +147,7 @@ export default defineConfig({
 						{ label: 'Skills', slug: 'lexicon-authoring/skills' },
 						{ label: 'Post-Synth Checks', slug: 'lexicon-authoring/post-synth-checks' },
 						{ label: 'Testing', slug: 'lexicon-authoring/testing' },
+						{ label: 'Implementing Import', slug: 'lexicon-authoring/importing' },
 						{ label: 'Completeness Checklist', slug: 'lexicon-authoring/completeness-checklist' },
 						{ label: 'Package & Publish', slug: 'lexicon-authoring/package' },
 						{ label: 'CI & Distribution', slug: 'lexicon-authoring/ci-integration' },
