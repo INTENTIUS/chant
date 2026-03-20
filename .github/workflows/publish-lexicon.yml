@@ -1,0 +1,44 @@
+name: publish-lexicon
+
+on:
+  push:
+    tags: ['lexicon-*-v*']
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+      - run: bun install
+
+      - name: Extract lexicon name from tag
+        id: meta
+        run: |
+          # Tag: lexicon-docker-v0.1.1  →  name=docker
+          tag="${{ github.ref_name }}"
+          name="${tag#lexicon-}"          # strip "lexicon-"
+          name="${name%-v*}"              # strip "-v<version>"
+          echo "name=$name" >> $GITHUB_OUTPUT
+
+      - name: Cache lexicon schemas
+        uses: actions/cache@v4
+        with:
+          path: ~/.chant
+          key: lexicon-schemas-${{ hashFiles('lexicons/*/src/**/fetch.ts', 'lexicons/*/src/**/versions.ts') }}
+          restore-keys: lexicon-schemas-
+
+      - name: Prepack lexicon
+        run: bun run --cwd lexicons/${{ steps.meta.outputs.name }} prepack
+
+      - name: Run tests
+        run: bun test lexicons/${{ steps.meta.outputs.name }}
+
+      - name: Publish
+        working-directory: lexicons/${{ steps.meta.outputs.name }}
+        run: |
+          echo "//registry.npmjs.org/:_authToken=${{ secrets.NPM_TOKEN }}" > ../../.npmrc
+          bun publish --access public --tolerate-republish
