@@ -128,12 +128,15 @@
       "name": "@intentius/chant-lexicon-aws",
       "version": "0.1.0",
       "dependencies": {
-        "@intentius/chant": "workspace:*",
         "fflate": "^0.8.2",
         "js-yaml": "^4.1.0",
       },
       "devDependencies": {
+        "@intentius/chant": "workspace:*",
         "typescript": "^5.9.3",
+      },
+      "peerDependencies": {
+        "@intentius/chant": "^0.1.0",
       },
     },
     "lexicons/aws/examples/core-concepts": {
@@ -160,6 +163,39 @@
     },
     "lexicons/aws/examples/fargate-alb": {
       "name": "fargate-alb-example",
+      "version": "0.0.1",
+      "dependencies": {
+        "@intentius/chant": "workspace:*",
+        "@intentius/chant-lexicon-aws": "workspace:*",
+      },
+      "devDependencies": {
+        "typescript": "*",
+      },
+    },
+    "lexicons/aws/examples/fargate-lucene-efs-connectors": {
+      "name": "fargate-lucene-efs-connectors-example",
+      "version": "0.0.1",
+      "dependencies": {
+        "@intentius/chant": "workspace:*",
+        "@intentius/chant-lexicon-aws": "workspace:*",
+      },
+      "devDependencies": {
+        "typescript": "*",
+      },
+    },
+    "lexicons/aws/examples/fargate-lucene-efs-infra": {
+      "name": "fargate-lucene-efs-infra-example",
+      "version": "0.0.1",
+      "dependencies": {
+        "@intentius/chant": "workspace:*",
+        "@intentius/chant-lexicon-aws": "workspace:*",
+      },
+      "devDependencies": {
+        "typescript": "*",
+      },
+    },
+    "lexicons/aws/examples/fargate-lucene-efs-solr": {
+      "name": "fargate-lucene-efs-solr-example",
       "version": "0.0.1",
       "dependencies": {
         "@intentius/chant": "workspace:*",
@@ -327,11 +363,14 @@
       "name": "@intentius/chant-lexicon-azure",
       "version": "0.1.0",
       "dependencies": {
-        "@intentius/chant": "workspace:*",
         "fflate": "^0.8.2",
       },
       "devDependencies": {
+        "@intentius/chant": "workspace:*",
         "typescript": "^5.9.3",
+      },
+      "peerDependencies": {
+        "@intentius/chant": "^0.1.0",
       },
     },
     "lexicons/azure/examples/aks-cluster": {
@@ -480,11 +519,12 @@
     "lexicons/docker": {
       "name": "@intentius/chant-lexicon-docker",
       "version": "0.1.0",
-      "dependencies": {
-        "@intentius/chant": "workspace:*",
-      },
       "devDependencies": {
+        "@intentius/chant": "workspace:*",
         "typescript": "^5.9.3",
+      },
+      "peerDependencies": {
+        "@intentius/chant": "^0.1.0",
       },
     },
     "lexicons/docker/examples/basic-app": {
@@ -501,11 +541,12 @@
     "lexicons/flyway": {
       "name": "@intentius/chant-lexicon-flyway",
       "version": "0.1.0",
-      "dependencies": {
-        "@intentius/chant": "workspace:*",
-      },
       "devDependencies": {
+        "@intentius/chant": "workspace:*",
         "typescript": "^5.9.3",
+      },
+      "peerDependencies": {
+        "@intentius/chant": "^0.1.0",
       },
     },
     "lexicons/flyway/examples/azure-secured": {
@@ -644,12 +685,15 @@
       "name": "@intentius/chant-lexicon-gcp",
       "version": "0.1.0",
       "dependencies": {
-        "@intentius/chant": "workspace:*",
         "fflate": "^0.8.2",
         "js-yaml": "^4.1.0",
       },
       "devDependencies": {
+        "@intentius/chant": "workspace:*",
         "typescript": "^5.9.3",
+      },
+      "peerDependencies": {
+        "@intentius/chant": "^0.1.0",
       },
     },
     "lexicons/gcp/examples/basic-bucket": {
@@ -743,11 +787,12 @@
     "lexicons/github": {
       "name": "@intentius/chant-lexicon-github",
       "version": "0.1.0",
-      "dependencies": {
-        "@intentius/chant": "workspace:*",
-      },
       "devDependencies": {
+        "@intentius/chant": "workspace:*",
         "typescript": "^5.9.3",
+      },
+      "peerDependencies": {
+        "@intentius/chant": "^0.1.0",
       },
     },
     "lexicons/github/examples/deploy-pages": {
@@ -841,11 +886,12 @@
     "lexicons/gitlab": {
       "name": "@intentius/chant-lexicon-gitlab",
       "version": "0.1.0",
-      "dependencies": {
-        "@intentius/chant": "workspace:*",
-      },
       "devDependencies": {
+        "@intentius/chant": "workspace:*",
         "typescript": "^5.9.3",
+      },
+      "peerDependencies": {
+        "@intentius/chant": "^0.1.0",
       },
     },
     "lexicons/gitlab/examples/docker-build": {
@@ -940,11 +986,14 @@
       "name": "@intentius/chant-lexicon-helm",
       "version": "0.1.0",
       "dependencies": {
-        "@intentius/chant": "workspace:*",
         "@intentius/chant-lexicon-k8s": "workspace:*",
       },
       "devDependencies": {
+        "@intentius/chant": "workspace:*",
         "typescript": "^5.9.3",
+      },
+      "peerDependencies": {
+        "@intentius/chant": "^0.1.0",
       },
     },
     "lexicons/helm/examples/composites-basic": {
@@ -1046,11 +1095,12 @@
     "lexicons/k8s": {
       "name": "@intentius/chant-lexicon-k8s",
       "version": "0.1.0",
-      "dependencies": {
-        "@intentius/chant": "workspace:*",
-      },
       "devDependencies": {
+        "@intentius/chant": "workspace:*",
         "typescript": "^5.9.3",
+      },
+      "peerDependencies": {
+        "@intentius/chant": "^0.1.0",
       },
     },
     "lexicons/k8s/examples/basic-deployment": {
@@ -1540,6 +1590,12 @@
     "events": ["events@3.3.0", "", {}, "sha512-mQw+2fkQbALzQ7V0MY0IqdnXNOeTtP4r0lN9z7AAawCXgqea7bDii20AYrIBrFd/Hx0M2Ocz6S111CaFkUcb0Q=="],
 
     "fargate-alb-example": ["fargate-alb-example@workspace:lexicons/aws/examples/fargate-alb"],
+
+    "fargate-lucene-efs-connectors-example": ["fargate-lucene-efs-connectors-example@workspace:lexicons/aws/examples/fargate-lucene-efs-connectors"],
+
+    "fargate-lucene-efs-infra-example": ["fargate-lucene-efs-infra-example@workspace:lexicons/aws/examples/fargate-lucene-efs-infra"],
+
+    "fargate-lucene-efs-solr-example": ["fargate-lucene-efs-solr-example@workspace:lexicons/aws/examples/fargate-lucene-efs-solr"],
 
     "fast-deep-equal": ["fast-deep-equal@3.1.3", "", {}, "sha512-f3qQ9oQy9j2AhBe/H9VC91wLmKBCCU/gDOnKNAYG5hswO7BLKj09Hc5HYNz9cGI++xlpDCIgDaitVs03ATR84Q=="],
 

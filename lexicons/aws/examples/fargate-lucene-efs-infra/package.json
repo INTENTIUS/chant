@@ -1,0 +1,20 @@
+{
+  "name": "fargate-lucene-efs-infra-example",
+  "version": "0.0.1",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "build": "chant build src --lexicon aws -o template.json",
+    "lint": "chant lint src",
+    "dev": "chant build src --lexicon aws --watch -o template.json",
+    "deploy": "aws cloudformation deploy --template-file template.json --stack-name fargate-lucene-efs-infra --capabilities CAPABILITY_NAMED_IAM",
+    "teardown": "aws cloudformation delete-stack --stack-name fargate-lucene-efs-infra"
+  },
+  "dependencies": {
+    "@intentius/chant": "workspace:*",
+    "@intentius/chant-lexicon-aws": "workspace:*"
+  },
+  "devDependencies": {
+    "typescript": "*"
+  }
+}
