@@ -1,0 +1,63 @@
+---
+title: "Importing"
+description: "Convert existing docker-compose.yml files and Dockerfiles to chant TypeScript"
+---
+
+The Docker lexicon can parse existing `docker-compose.yml` files and `Dockerfile`s and generate typed TypeScript equivalents.
+
+## Import docker-compose.yml
+
+```bash
+chant import --lexicon docker docker-compose.yml -o src/compose.ts
+```
+
+Given:
+
+```yaml
+services:
+  api:
+    image: myapp:1.0
+    ports:
+      - "8080:8080"
+    environment:
+      NODE_ENV: production
+volumes:
+  pgdata: null
+```
+
+Produces `src/compose.ts`:
+
+```typescript
+import { Service, Volume } from "@intentius/chant-lexicon-docker";
+
+export const api = new Service({
+  image: "myapp:1.0",
+  ports: ["8080:8080"],
+  environment: {
+    NODE_ENV: "production",
+  },
+});
+
+export const pgdata = new Volume({});
+```
+
+## Import Dockerfile
+
+```bash
+chant import --lexicon docker Dockerfile -o src/dockerfile.ts
+```
+
+## Workflow
+
+Import is a one-time migration step, not an ongoing sync. After importing:
+
+1. Review the generated TypeScript — complex fields may need manual adjustment
+2. Run `chant lint src/` to catch issues
+3. Run `chant build src --lexicon docker -o docker-compose.yml` and diff against the original
+4. Delete the original file and commit the TypeScript source
+
+## Limitations
+
+- `extends:` (Compose file inheritance) is not supported
+- Build args with complex shell expressions may require manual cleanup
+- Environment variable syntax (`${VAR}`) is preserved as-is; replace with `env()` manually if desired

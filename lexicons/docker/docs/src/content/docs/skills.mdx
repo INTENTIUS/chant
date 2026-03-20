@@ -1,0 +1,60 @@
+---
+title: "AI Skills"
+description: "AI agent skills bundled with the Docker lexicon"
+---
+
+The Docker lexicon ships two AI skills that give coding agents operational knowledge about Docker Compose and Dockerfile patterns without requiring manual explanation.
+
+## Installation
+
+Skills are installed automatically when you scaffold a project:
+
+```bash
+chant init --lexicon docker my-project
+```
+
+To refresh skills after a lexicon update:
+
+```bash
+chant update
+```
+
+## Skill: chant-docker
+
+Core Docker lexicon usage:
+
+- **Resource types** — Service, Volume, Network, Config, Secret, Dockerfile
+- **Build** — `chant build src --lexicon docker -o docker-compose.yml`
+- **Lint** — `chant lint src/` + post-synth checks
+- **Variable interpolation** — `env()` with required/default semantics
+- **Default labels** — `defaultLabels()` scope and merge
+
+## Skill: chant-docker-patterns
+
+Common patterns and composition:
+
+- Database services with health checks and named volumes
+- Redis cache, Nginx reverse proxy
+- Multi-stage Dockerfiles
+- Secret management with `env()` and Docker secrets
+- Service networking with named networks
+
+## MCP integration
+
+The lexicon provides MCP tools usable by AI agents programmatically:
+
+| Tool | Description |
+|------|-------------|
+| `build` | Build the chant project |
+| `lint` | Run lint rules |
+| `explain` | Summarize project resources |
+| `scaffold` | Generate starter files |
+| `search` | Search available resource types |
+| `diff` | Show changes between builds |
+
+## LSP integration
+
+Via `chant serve lsp`:
+
+- **Completions** — type `new ` to get Docker resource completions
+- **Hover** — hover over type names to see Compose/Dockerfile serialization hints

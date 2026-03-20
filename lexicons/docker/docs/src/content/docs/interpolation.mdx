@@ -1,0 +1,63 @@
+---
+title: "Variable Interpolation"
+description: "env() for Docker Compose variable substitution"
+---
+
+Use `env()` to emit Docker Compose variable interpolation syntax. Values are substituted at runtime by `docker compose` from the environment or a `.env` file.
+
+## Syntax
+
+```typescript
+import { env } from "@intentius/chant-lexicon-docker";
+
+// Optional with default
+env("VAR", { default: "fallback" })     // → ${VAR:-fallback}
+
+// Required — compose exits with error if unset
+env("VAR", { required: true })          // → ${VAR:?VAR is required}
+
+// Custom error message
+env("VAR", { required: "Set VAR to the database URL" })  // → ${VAR:?Set VAR to the database URL}
+
+// Plain substitution (empty string allowed)
+env("VAR")                              // → ${VAR}
+```
+
+## Example
+
+```typescript
+import { Service, env } from "@intentius/chant-lexicon-docker";
+
+export const api = new Service({
+  image: env("APP_IMAGE", { default: "myapp:latest" }),
+  environment: {
+    DATABASE_URL: env("DATABASE_URL", { required: true }),
+    LOG_LEVEL: env("LOG_LEVEL", { default: "info" }),
+    FEATURE_FLAG: env("FEATURE_FLAG"),
+  },
+});
+```
+
+Serializes to:
+
+```yaml
+services:
+  api:
+    image: ${APP_IMAGE:-myapp:latest}
+    environment:
+      DATABASE_URL: ${DATABASE_URL:?DATABASE_URL is required}
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      FEATURE_FLAG: ${FEATURE_FLAG}
+```
+
+## .env file
+
+Create a `.env` file alongside `docker-compose.yml` for local development defaults:
+
+```bash
+APP_IMAGE=myapp:dev
+DATABASE_URL=postgresql://localhost:5432/myapp
+LOG_LEVEL=debug
+```
+
+`docker compose` automatically loads `.env`. Do not commit secrets to `.env` — use `.env.example` for documentation.

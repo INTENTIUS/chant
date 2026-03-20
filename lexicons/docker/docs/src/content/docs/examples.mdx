@@ -1,0 +1,120 @@
+---
+title: "Examples"
+description: "Common Docker Compose and Dockerfile patterns"
+---
+
+## Web app with database
+
+API service + PostgreSQL + named volume.
+
+```typescript
+import { Service, Volume, env } from "@intentius/chant-lexicon-docker";
+
+export const db = new Service({
+  image: "postgres:16-alpine",
+  environment: {
+    POSTGRES_DB: "myapp",
+    POSTGRES_USER: "myapp",
+    POSTGRES_PASSWORD: env("DB_PASSWORD", { required: true }),
+  },
+  volumes: ["pgdata:/var/lib/postgresql/data"],
+  restart: "unless-stopped",
+  healthcheck: {
+    test: ["CMD-SHELL", "pg_isready -U myapp"],
+    interval: "10s",
+    timeout: "5s",
+    retries: 5,
+  },
+});
+
+export const pgdata = new Volume({});
+
+export const api = new Service({
+  image: env("API_IMAGE", { default: "myapp:latest" }),
+  ports: ["8080:8080"],
+  environment: {
+    DATABASE_URL: "postgresql://myapp:${DB_PASSWORD}@db:5432/myapp",
+  },
+  depends_on: ["db"],
+  restart: "unless-stopped",
+});
+```
+
+## App with Redis cache
+
+```typescript
+export const redis = new Service({
+  image: "redis:7-alpine",
+  volumes: ["redisdata:/data"],
+  command: "redis-server --appendonly yes",
+  restart: "unless-stopped",
+});
+
+export const redisdata = new Volume({});
+```
+
+## Nginx reverse proxy
+
+```typescript
+import { Service, Config } from "@intentius/chant-lexicon-docker";
+
+export const nginxConf = new Config({ file: "./nginx.conf" });
+
+export const proxy = new Service({
+  image: "nginx:1.25-alpine",
+  ports: ["80:80", "443:443"],
+  configs: [{ source: "nginxConf", target: "/etc/nginx/nginx.conf" }],
+  depends_on: ["api"],
+  restart: "unless-stopped",
+});
+```
+
+## Multi-stage build
+
+```typescript
+import { Dockerfile, Service } from "@intentius/chant-lexicon-docker";
+
+export const app = new Dockerfile({
+  stages: [
+    {
+      from: "node:20-alpine",
+      as: "build",
+      workdir: "/app",
+      copy: ["package*.json ./"],
+      run: ["npm ci"],
+      copy: ["src/ ./src/"],
+      run: ["npm run build"],
+    },
+    {
+      from: "node:20-alpine",
+      workdir: "/app",
+      copy: ["--from=build /app/dist ./dist"],
+      run: ["npm ci --only=production"],
+      user: "node",
+      expose: [3000],
+      cmd: `["node", "dist/index.js"]`,
+    },
+  ],
+});
+
+export const api = new Service({
+  build: { context: ".", dockerfile: "Dockerfile.app" },
+  ports: ["3000:3000"],
+  restart: "unless-stopped",
+});
+```
+
+## Team-wide labels
+
+```typescript
+import { defaultLabels, Service, Volume } from "@intentius/chant-lexicon-docker";
+
+export const labels = defaultLabels({
+  "com.example.team": "platform",
+  "com.example.managed-by": "chant",
+});
+
+export const api = new Service({ image: "myapp:1.0" });
+export const db = new Service({ image: "postgres:16-alpine" });
+// Both api and db inherit the labels above
+```

@@ -4,10 +4,8 @@ description: "Typed constructors for Docker Compose and Dockerfile configuration
 ---
 
 The **Docker** lexicon provides typed constructors for Docker Compose services
-and Dockerfile build instructions. It covers services, volumes, networks, configs,
-secrets, multi-stage Dockerfiles, and variable interpolation.
-
-Install it with:
+and Dockerfile build instructions — services, volumes, networks, configs, secrets,
+and multi-stage Dockerfiles.
 
 ```bash
 npm install --save-dev @intentius/chant-lexicon-docker
@@ -18,12 +16,10 @@ npm install --save-dev @intentius/chant-lexicon-docker
 ```typescript
 import { Service, Volume, Dockerfile, env } from "@intentius/chant-lexicon-docker";
 
-// docker-compose.yml entities
 export const db = new Service({
   image: "postgres:16-alpine",
   environment: {
     POSTGRES_DB: "myapp",
-    POSTGRES_USER: "myapp",
     POSTGRES_PASSWORD: env("DB_PASSWORD", { required: true }),
   },
   volumes: ["pgdata:/var/lib/postgresql/data"],
@@ -36,96 +32,24 @@ export const api = new Service({
   ports: ["8080:8080"],
   depends_on: ["db"],
 });
-
-// Dockerfile entity → emitted as Dockerfile.builder
-export const builder = new Dockerfile({
-  stages: [
-    {
-      from: "node:20-alpine",
-      as: "deps",
-      workdir: "/app",
-      copy: ["package*.json ./"],
-      run: ["npm ci --only=production"],
-    },
-    {
-      from: "node:20-alpine",
-      workdir: "/app",
-      copy: ["--from=deps /app/node_modules ./node_modules"],
-      user: "node",
-      cmd: `["node", "dist/index.js"]`,
-    },
-  ],
-});
 ```
 
-The lexicon produces:
-- `docker-compose.yml` — primary output with all Compose entities
-- `Dockerfile.{name}` — one file per Dockerfile entity
+Build:
+
+```bash
+chant build src --lexicon docker -o docker-compose.yml
+```
 
 ## Output Domains
 
-| Entity Type | Output |
-|-------------|--------|
-| `Docker::Compose::Service` | `docker-compose.yml` → `services:` |
-| `Docker::Compose::Volume` | `docker-compose.yml` → `volumes:` |
-| `Docker::Compose::Network` | `docker-compose.yml` → `networks:` |
-| `Docker::Compose::Config` | `docker-compose.yml` → `configs:` |
-| `Docker::Compose::Secret` | `docker-compose.yml` → `secrets:` |
-| `Docker::Dockerfile` | `Dockerfile.{name}` |
-
-## Variable Interpolation
-
-Use `env()` for Docker Compose variable interpolation:
-
-```typescript
-import { Service, env } from "@intentius/chant-lexicon-docker";
-
-export const api = new Service({
-  image: env("APP_IMAGE", { default: "myapp:latest" }),
-  environment: {
-    DB_URL: env("DATABASE_URL", { required: true }),
-    LOG_LEVEL: env("LOG_LEVEL", { default: "info" }),
-  },
-});
-```
-
-Serializes to:
-```yaml
-services:
-  api:
-    image: ${APP_IMAGE:-myapp:latest}
-    environment:
-      DB_URL: ${DATABASE_URL:?DATABASE_URL is required}
-      LOG_LEVEL: ${LOG_LEVEL:-info}
-```
-
-## Default Labels
-
-Use `defaultLabels()` to inject labels into all services:
-
-```typescript
-import { defaultLabels, Service } from "@intentius/chant-lexicon-docker";
-
-export const labels = defaultLabels({
-  "com.example.team": "platform",
-  "com.example.managed-by": "chant",
-});
-
-export const api = new Service({ image: "myapp:1.0" });
-// api will automatically get the labels above
-```
-
-## Lint Rules
-
-| Rule ID | Severity | Description |
-|---------|----------|-------------|
-| DKRS001 | warning | Avoid `:latest` or untagged image tags |
-| DKRD001 | warning | Service uses `:latest` or untagged image |
-| DKRD002 | warning | Named volume declared but not mounted |
-| DKRD003 | error | SSH port 22 exposed externally |
-| DKRD010 | warning | `apt-get install` without `--no-install-recommends` |
-| DKRD011 | info | Prefer `COPY` over `ADD` |
-| DKRD012 | warning | No `USER` instruction (runs as root) |
+| Entity | Output file | Section |
+|--------|-------------|---------|
+| `Service` | `docker-compose.yml` | `services:` |
+| `Volume` | `docker-compose.yml` | `volumes:` |
+| `Network` | `docker-compose.yml` | `networks:` |
+| `Config` | `docker-compose.yml` | `configs:` |
+| `Secret` | `docker-compose.yml` | `secrets:` |
+| `Dockerfile` | `Dockerfile.{name}` | — |
 
 ## At a Glance
 
@@ -133,7 +57,7 @@ export const api = new Service({ image: "myapp:1.0" });
 |--------|-------|
 | Compose resources | 5 |
 | Dockerfile resources | 1 |
-| Lint rules (pre-synth) | 1 |
+| Pre-synth lint rules | 1 |
 | Post-synth checks | 6 |
 
 **Namespace:** `Docker`

@@ -17,7 +17,11 @@ export default defineConfig({
                   "slug": "index"
             },
             {
-                  "label": "Services & Volumes",
+                  "label": "Getting Started",
+                  "slug": "getting-started"
+            },
+            {
+                  "label": "Compose Resources",
                   "slug": "compose-resources"
             },
             {
@@ -41,8 +45,20 @@ export default defineConfig({
                   "slug": "examples"
             },
             {
+                  "label": "Importing",
+                  "slug": "importing"
+            },
+            {
                   "label": "Serialization",
                   "slug": "serialization"
+            },
+            {
+                  "label": "Operational Playbook",
+                  "slug": "operational-playbook"
+            },
+            {
+                  "label": "AI Skills",
+                  "slug": "skills"
             }
       ],
     }),

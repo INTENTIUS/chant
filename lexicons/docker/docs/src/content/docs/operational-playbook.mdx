@@ -1,0 +1,100 @@
+---
+title: "Operational Playbook"
+description: "Build, run, debug, and troubleshoot Docker stacks produced by chant"
+---
+
+## Build & validate
+
+| Step | Command | What it catches |
+|------|---------|-----------------|
+| Lint source | `chant lint src/` | Latest tags (DKRS001) |
+| Build | `chant build src --lexicon docker -o docker-compose.yml` | Post-synth: unused volumes, SSH exposure, Dockerfile issues |
+| Validate config | `docker compose config` | Compose schema validation |
+
+Run lint on every edit. Build + `docker compose config` before deploying.
+
+## Bring up a stack
+
+```bash
+# Build
+chant build src --lexicon docker -o docker-compose.yml
+
+# Validate
+docker compose config --quiet
+
+# Start detached
+docker compose up -d
+
+# Watch logs
+docker compose logs -f
+```
+
+## Teardown
+
+```bash
+# Stop containers (keep volumes)
+docker compose down
+
+# Stop and remove volumes
+docker compose down -v
+```
+
+## Debugging
+
+```bash
+# Container status and health
+docker compose ps
+
+# Logs for a specific service
+docker compose logs api
+docker compose logs api --follow
+
+# Exec into a running container
+docker compose exec api sh
+
+# Inspect a stopped container
+docker compose run --rm api sh
+```
+
+## Common error patterns
+
+| Symptom | Likely cause | Fix |
+|---------|-------------|-----|
+| `service "x" depends on undefined service "y"` | `depends_on` references wrong name | Match the TypeScript export name |
+| Container exits immediately | App crash on start | `docker compose logs <service>` |
+| Port already in use | Host port conflict | Change host port in `ports:` |
+| Volume not persisting | Anonymous volume vs named volume | Use `volumename:/path` not just `/path` |
+| Service can't reach another | Wrong hostname | Use the service name as hostname |
+| `required variable ... is not set` | Missing env var for `env("X", { required: true })` | Set var in environment or `.env` |
+
+## Health checks
+
+Add health checks to stateful services so dependents wait for readiness:
+
+```typescript
+export const db = new Service({
+  image: "postgres:16-alpine",
+  healthcheck: {
+    test: ["CMD-SHELL", "pg_isready -U myapp"],
+    interval: "10s",
+    timeout: "5s",
+    retries: 5,
+    start_period: "10s",
+  },
+});
+
+export const api = new Service({
+  image: "myapp:1.0",
+  depends_on: {
+    db: { condition: "service_healthy" },
+  },
+});
+```
+
+## Production safety
+
+- Pin image tags — avoid `:latest` (DKRS001 / DKRD001 flags this)
+- Do not expose port 22 (DKRD003 flags this)
+- Set `restart: "unless-stopped"` or `restart: "always"` for long-running services
+- Use named volumes for persistent data — never rely on container filesystem
+- Use `env()` with `{ required: true }` for secrets rather than hardcoding

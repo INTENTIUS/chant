@@ -1,0 +1,62 @@
+---
+title: "Getting Started"
+description: "Install the Docker lexicon and build your first docker-compose.yml"
+---
+
+## Installation
+
+```bash
+# New project
+chant init --lexicon docker my-project
+cd my-project
+
+# Existing project
+npm install --save-dev @intentius/chant-lexicon-docker
+```
+
+## Your first Compose stack
+
+Create `src/compose.ts`:
+
+```typescript
+import { Service, Volume, env } from "@intentius/chant-lexicon-docker";
+
+export const db = new Service({
+  image: "postgres:16-alpine",
+  environment: {
+    POSTGRES_DB: "myapp",
+    POSTGRES_USER: "myapp",
+    POSTGRES_PASSWORD: env("DB_PASSWORD", { required: true }),
+  },
+  volumes: ["pgdata:/var/lib/postgresql/data"],
+  restart: "unless-stopped",
+});
+
+export const pgdata = new Volume({});
+
+export const api = new Service({
+  image: "myapp:1.0",
+  ports: ["8080:8080"],
+  depends_on: ["db"],
+});
+```
+
+## Build and run
+
+```bash
+# Generate docker-compose.yml
+chant build src --lexicon docker -o docker-compose.yml
+
+# Lint for issues before running
+chant lint src
+
+# Bring up the stack
+docker compose up -d
+```
+
+## Next steps
+
+- [Compose Resources](/chant/lexicons/docker/compose-resources/) — Service, Volume, Network, Config, Secret
+- [Dockerfiles](/chant/lexicons/docker/dockerfiles/) — multi-stage build definitions
+- [Examples](/chant/lexicons/docker/examples/) — real-world patterns
+- [Lint Rules](/chant/lexicons/docker/lint-rules/) — what `chant lint` checks

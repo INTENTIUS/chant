@@ -1,0 +1,72 @@
+---
+title: "Serialization"
+description: "How chant entities map to docker-compose.yml and Dockerfile output"
+---
+
+The Docker lexicon serializes to two output formats.
+
+## docker-compose.yml
+
+```bash
+chant build src --lexicon docker -o docker-compose.yml
+```
+
+Each entity type maps to a top-level Compose section. The TypeScript export name becomes the key within that section.
+
+```typescript
+export const db = new Service({ image: "postgres:16-alpine" });
+export const pgdata = new Volume({});
+export const backend = new Network({ driver: "bridge" });
+```
+
+Produces:
+
+```yaml
+services:
+  db:
+    image: postgres:16-alpine
+
+volumes:
+  pgdata: null
+
+networks:
+  backend:
+    driver: bridge
+```
+
+`defaultLabels()` entities are not emitted as separate keys — their labels are merged into each service.
+
+## Dockerfile.\{name\}
+
+```bash
+chant build src --lexicon docker
+# Writes Dockerfile.app, Dockerfile.builder, etc.
+```
+
+Each `Dockerfile` entity produces a separate file. The export name is the suffix.
+
+```typescript
+export const builder = new Dockerfile({ from: "node:20-alpine", ... });
+// → Dockerfile.builder
+```
+
+## Field mapping
+
+| TypeScript | docker-compose.yml | Notes |
+|-----------|-------------------|-------|
+| `env("X", { required: true })` | `${X:?X is required}` | Compose interpolation |
+| `env("X", { default: "v" })` | `${X:-v}` | Compose interpolation |
+| `env("X")` | `${X}` | Compose interpolation |
+| `external: true` | `external: true` | Volume/Network |
+
+## Specifying lexicon at build time
+
+The `--lexicon docker` flag restricts output to Docker entities only — useful in mixed-lexicon projects:
+
+```bash
+# Only Docker output
+chant build src --lexicon docker -o docker-compose.yml
+
+# Other lexicons still get their own outputs
+chant build src --lexicon aws -o template.json
+```
