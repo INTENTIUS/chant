@@ -54,7 +54,10 @@ verify_tarball_contains() {
   local tarball="$1"
   local path="$2"
   local label="$3"
-  if tar tzf "$tarball" | grep -q "$path"; then
+  # Subshell with pipefail disabled: grep -q exits on first match, causing tar
+  # to receive SIGPIPE (exit 141); with pipefail that would make the pipeline
+  # return non-zero even when the pattern was found.
+  if (set +o pipefail; tar tzf "$tarball" | grep -q "$path"); then
     pass "$label"
   else
     fail "$label"
@@ -65,7 +68,7 @@ verify_tarball_contains /tarballs/core.tgz "package/bin/chant" "core tarball con
 verify_tarball_contains /tarballs/core.tgz "package/src/cli/main.ts" "core tarball contains CLI entrypoint"
 verify_tarball_contains /tarballs/core.tgz "package/src/index.ts" "core tarball contains main export"
 
-for lex in aws azure gcp gitlab k8s flyway; do
+for lex in aws azure gcp gitlab k8s flyway docker; do
   verify_tarball_contains "/tarballs/lexicon-$lex.tgz" "package/dist/manifest.json" "$lex tarball contains dist/manifest.json"
   verify_tarball_contains "/tarballs/lexicon-$lex.tgz" "package/dist/meta.json" "$lex tarball contains dist/meta.json"
   verify_tarball_contains "/tarballs/lexicon-$lex.tgz" "package/dist/types/index.d.ts" "$lex tarball contains dist/types/index.d.ts"
@@ -147,8 +150,9 @@ export const storage = new StorageAccount({
 
 # Flyway manual project
 test_manual_project "flyway" "/tarballs/lexicon-flyway.tgz" \
-  'import { FlywayProject } from "@intentius/chant-lexicon-flyway";
-export const project = new FlywayProject({ name: "smoke-test-db" });'
+  'import { FlywayProject, FlywayConfig } from "@intentius/chant-lexicon-flyway";
+export const project = new FlywayProject({ name: "smoke-test-db" });
+export const config = new FlywayConfig({ locations: ["classpath:db/migration"] });'
 
 # GCP manual project
 test_manual_project "gcp" "/tarballs/lexicon-gcp.tgz" \
@@ -262,8 +266,9 @@ export const storage = new StorageAccount({
 });'
 
 test_init_flow "flyway" "/tarballs/lexicon-flyway.tgz" \
-  'import { FlywayProject } from "@intentius/chant-lexicon-flyway";
-export const project = new FlywayProject({ name: "smoke-db" });'
+  'import { FlywayProject, FlywayConfig } from "@intentius/chant-lexicon-flyway";
+export const project = new FlywayProject({ name: "smoke-db" });
+export const config = new FlywayConfig({ locations: ["classpath:db/migration"] });'
 
 test_init_flow "gcp" "/tarballs/lexicon-gcp.tgz" \
   'import { StorageBucket } from "@intentius/chant-lexicon-gcp";
@@ -339,7 +344,8 @@ if [ -d /examples ]; then
   test_example "flyway-postgresql-gitlab-aws-rds" \
     /tarballs/lexicon-aws.tgz aws \
     /tarballs/lexicon-flyway.tgz flyway \
-    /tarballs/lexicon-gitlab.tgz gitlab
+    /tarballs/lexicon-gitlab.tgz gitlab \
+    /tarballs/lexicon-docker.tgz docker
 
   test_example "k8s-eks-microservice" \
     /tarballs/lexicon-aws.tgz aws \

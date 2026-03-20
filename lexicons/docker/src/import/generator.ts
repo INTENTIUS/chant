@@ -4,7 +4,7 @@
  * Converts parsed IR to valid chant TypeScript source code.
  */
 
-import type { DockerIR, ServiceIR, VolumeIR, NetworkIR, DockerfileIR } from "./parser";
+import type { DockerIR, ServiceIR, VolumeIR, NetworkIR, ConfigIR, SecretIR, DockerfileIR } from "./parser";
 
 export interface GenerateResult {
   source: string;
@@ -33,6 +33,14 @@ export class DockerGenerator {
         case "network":
           imports.add("Network");
           lines.push(generateNetwork(entity));
+          break;
+        case "config":
+          imports.add("Config");
+          lines.push(generateConfig(entity));
+          break;
+        case "secret":
+          imports.add("Secret");
+          lines.push(generateSecret(entity));
           break;
         case "dockerfile":
           imports.add("Dockerfile");
@@ -64,13 +72,32 @@ function generateNetwork(net: NetworkIR): string {
   return `export const ${sanitizeName(net.name)} = new Network(${hasProps ? JSON.stringify(net.props) : "{}"});`;
 }
 
+function generateConfig(cfg: ConfigIR): string {
+  const hasProps = Object.keys(cfg.props).length > 0;
+  return `export const ${sanitizeName(cfg.name)} = new Config(${hasProps ? JSON.stringify(cfg.props) : "{}"});`;
+}
+
+function generateSecret(sec: SecretIR): string {
+  const hasProps = Object.keys(sec.props).length > 0;
+  return `export const ${sanitizeName(sec.name)} = new Secret(${hasProps ? JSON.stringify(sec.props) : "{}"});`;
+}
+
 function generateDockerfile(df: DockerfileIR): string {
+  if (df.stages.length > 1) {
+    // Multi-stage: emit stages array
+    const props = { stages: df.stages };
+    const propsStr = JSON.stringify(props, null, 2).replace(/"([a-z_][a-z0-9_]*)":/g, "$1:");
+    return `export const ${sanitizeName(df.name)} = new Dockerfile(${propsStr});`;
+  }
+
+  // Single-stage: flat props (preserved behaviour)
+  const stage = df.stages[0];
   const props: Record<string, unknown> = {};
-  if (df.from) props.from = df.from;
+  if (stage) props.from = stage.from;
 
   // Group instructions by type
   const grouped: Record<string, string[]> = {};
-  for (const { instruction, value } of df.instructions) {
+  for (const { instruction, value } of stage?.instructions ?? []) {
     const key = instruction.toLowerCase();
     if (!grouped[key]) grouped[key] = [];
     grouped[key].push(value);

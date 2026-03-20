@@ -1,0 +1,43 @@
+services:
+  app:
+    image: myapp:latest
+    ports:
+      - "8080:8080"
+    environment:
+      DB_URL: postgres://db:5432/mydb
+    networks:
+      - frontend
+      - backend
+    secrets:
+      - db-password
+    configs:
+      - app-config
+
+  db:
+    image: postgres:16
+    networks:
+      - backend
+
+volumes:
+  db-data:
+    driver: local
+  app-uploads:
+    driver: local
+    driver_opts:
+      type: nfs
+      o: addr=10.0.0.1,rw
+
+networks:
+  frontend:
+    driver: bridge
+  backend:
+    driver: bridge
+    internal: true
+
+configs:
+  app-config:
+    file: ./config/app.conf
+
+secrets:
+  db-password:
+    file: ./secrets/db-password.txt

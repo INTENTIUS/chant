@@ -1,0 +1,287 @@
+---
+title: Implementing Import
+description: How to write parser.ts, generator.ts, and roundtrip tests so users can import existing infrastructure files into chant TypeScript
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+The `chant import` command reads existing infrastructure files (YAML, Dockerfiles, Helm charts) and emits TypeScript source using your lexicon's types. Each lexicon implements import through three files: a parser, a generator, and roundtrip tests.
+
+## The three files
+
+| File | Responsibility |
+|------|---------------|
+| `src/import/parser.ts` | Parse source format → IR |
+| `src/import/generator.ts` | IR → TypeScript source string |
+| `src/import/roundtrip.test.ts` | End-to-end fixture tests |
+
+## The IR shape
+
+Every entity your parser produces must have this shape:
+
+```typescript
+interface EntityIR {
+  kind: string;           // discriminant — "service", "volume", etc.
+  name: string;           // identifier used as the export name
+  props: Record<string, unknown>;  // all properties, captured faithfully
+}
+```
+
+**Capture all props.** The IR is a lossless intermediate. Every property from the source file should appear in `props` so the generator can emit them. Dropping props silently causes roundtrip failures and user surprise.
+
+## parser.ts
+
+### Use `parseYAML`, never regex
+
+```typescript
+import { parseYAML } from "@intentius/chant/yaml";
+```
+
+`parseYAML` handles the YAML subset found in real infrastructure files — nested maps, block sequences, inline JSON, booleans, and quoted scalars with colons (e.g. `"80:80"` port strings). Custom regex parsers miss edge cases and drift from the core parser's behaviour.
+
+<Aside type="caution">
+When a scalar contains a colon but is not a mapping (e.g. Docker port `"80:80"`, volume `"data:/path"`), **quote it in the source YAML**. Unquoted `key:value` is valid YAML syntax for a single-key mapping, not a scalar.
+</Aside>
+
+### Iterate top-level sections
+
+For multi-section formats (Docker Compose, Kubernetes), parse each section independently by reading keys from the top-level object:
+
+```typescript
+export class DockerParser {
+  parse(content: string): ParseResult {
+    if (!content.trim()) return { entities: [], warnings: [] };
+    const entities: DockerIR[] = [];
+    const doc = parseYAML(content) as Record<string, unknown>;
+
+    const services = doc["services"];
+    if (services && typeof services === "object" && !Array.isArray(services)) {
+      for (const [name, raw] of Object.entries(services as Record<string, unknown>)) {
+        entities.push({ kind: "service", name, props: extractProps(raw, SERVICE_PROPS) });
+      }
+    }
+
+    const volumes = doc["volumes"];
+    if (volumes && typeof volumes === "object" && !Array.isArray(volumes)) {
+      for (const [name, raw] of Object.entries(volumes as Record<string, unknown>)) {
+        entities.push({ kind: "volume", name, props: extractProps(raw, VOLUME_PROPS) });
+      }
+    }
+    // ... networks, configs, secrets, etc.
+
+    return { entities, warnings };
+  }
+}
+```
+
+### Use an allowlist for props
+
+Don't pass the raw object through as `props`. Define an allowlist of known property names and extract only those:
+
+```typescript
+const SERVICE_PROPS = [
+  "image", "ports", "environment", "volumes", "depends_on",
+  "restart", "healthcheck", "labels", "command", "entrypoint",
+  "networks", "build", "deploy", "secrets", "configs",
+] as const;
+
+function extractProps(raw: unknown, allowed: readonly string[]): Record<string, unknown> {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return {};
+  const obj = raw as Record<string, unknown>;
+  const props: Record<string, unknown> = {};
+  for (const key of allowed) {
+    if (key in obj) props[key] = obj[key];
+  }
+  return props;
+}
+```
+
+This keeps `props` predictable and avoids emitting internal YAML anchors or parser artifacts.
+
+### Multi-document / multi-stage formats
+
+For Dockerfiles with multiple `FROM` stages, split on `FROM` boundaries and produce a `stages` array:
+
+```typescript
+export class DockerfileParser {
+  parse(name: string, content: string): DockerfileIR {
+    const stages: DockerfileStage[] = [];
+    let current: DockerfileStage | null = null;
+
+    for (const line of content.split("\n")) {
+      const trimmed = line.trim();
+      if (!trimmed || trimmed.startsWith("#")) continue;
+      const match = trimmed.match(/^([A-Z]+)\s+([\s\S]+)$/);
+      if (!match) continue;
+      const [, instruction, value] = match;
+      if (instruction === "FROM") {
+        const asMatch = value.match(/^(.+?)\s+[Aa][Ss]\s+(\S+)$/);
+        current = asMatch
+          ? { from: asMatch[1].trim(), as: asMatch[2].trim(), instructions: [] }
+          : { from: value.trim(), instructions: [] };
+        stages.push(current);
+      } else if (current) {
+        current.instructions.push({ instruction, value: value.trim() });
+      }
+    }
+    return { kind: "dockerfile", name, stages };
+  }
+}
+```
+
+## generator.ts
+
+### Collect imports, emit constructors
+
+```typescript
+export class DockerGenerator {
+  generate(entities: DockerIR[]): GenerateResult {
+    const imports = new Set<string>();
+    const lines: string[] = [];
+
+    for (const entity of entities) {
+      switch (entity.kind) {
+        case "service":
+          imports.add("Service");
+          lines.push(generateService(entity));
+          break;
+        case "volume":
+          imports.add("Volume");
+          lines.push(generateVolume(entity));
+          break;
+        // ...
+      }
+    }
+
+    const importLine = `import { ${[...imports].sort().join(", ")} } from "@intentius/chant-lexicon-docker";`;
+    return { source: [importLine, "", ...lines].join("\n"), warnings: [] };
+  }
+}
+```
+
+### Emit all props with `JSON.stringify` + key unquoting
+
+```typescript
+function generateService(svc: ServiceIR): string {
+  const propsStr = JSON.stringify(svc.props, null, 2)
+    .replace(/"([a-z_][a-z0-9_]*)":/g, "$1:");
+  return `export const ${sanitizeName(svc.name)} = new Service(${propsStr});`;
+}
+```
+
+The `JSON.stringify` + regex approach:
+- Preserves all props the parser captured
+- Emits valid TypeScript (unquotes simple identifiers as keys)
+- Handles nested objects, arrays, booleans, and numbers correctly
+
+### Name sanitization
+
+Export names must be valid JavaScript identifiers. Convert kebab-case and snake_case to camelCase:
+
+```typescript
+function sanitizeName(name: string): string {
+  return name.replace(/[-_]([a-z])/g, (_, c) => c.toUpperCase());
+}
+```
+
+### Multi-stage branching
+
+Detect `stages.length > 1` and switch the emitted format:
+
+```typescript
+function generateDockerfile(df: DockerfileIR): string {
+  if (df.stages.length > 1) {
+    const propsStr = JSON.stringify({ stages: df.stages }, null, 2)
+      .replace(/"([a-z_][a-z0-9_]*)":/g, "$1:");
+    return `export const ${sanitizeName(df.name)} = new Dockerfile(${propsStr});`;
+  }
+  // single-stage: flat props
+  const stage = df.stages[0];
+  const props: Record<string, unknown> = {};
+  if (stage) props.from = stage.from;
+  // ... group and emit instructions
+}
+```
+
+## Fixtures and roundtrip tests
+
+### Fixture directory
+
+Put one `.yaml` (or `.dockerfile`, etc.) per scenario in `src/import/testdata/`:
+
+```
+src/import/testdata/
+  simple.yaml      # minimal case — one service + one volume
+  webapp.yaml      # realistic multi-service with ports/env/healthcheck
+  full.yaml        # exercises every top-level section
+```
+
+Load fixtures in tests using `readFileSync` relative to `import.meta.dir`:
+
+```typescript
+const testdata = (file: string) =>
+  readFileSync(join(import.meta.dir, "testdata", file), "utf8");
+```
+
+### roundtrip.test.ts pattern
+
+```typescript
+test("simple.yaml → Service + Volume constructors", () => {
+  const { entities } = new DockerParser().parse(testdata("simple.yaml"));
+  const { source } = new DockerGenerator().generate(entities);
+  expect(source).toContain("new Service(");
+  expect(source).toContain("new Volume(");
+});
+```
+
+## Testing checklist
+
+### parser.test.ts
+
+| # | Test case |
+|---|-----------|
+| 1 | `image` extracted correctly |
+| 2 | `ports` array preserved (quoted: `"80:80"`) |
+| 3 | `environment` map preserved |
+| 4 | `volumes` list preserved (quoted: `"data:/path"`) |
+| 5 | `depends_on` list preserved |
+| 6 | `restart` string preserved |
+| 7 | `healthcheck` object preserved |
+| 8 | Top-level `volumes:` → `VolumeIR` entities |
+| 9 | Top-level `networks:` → `NetworkIR` entities |
+| 10 | Top-level `configs:` → `ConfigIR` entities |
+| 11 | Top-level `secrets:` → `SecretIR` entities |
+| 12 | Dockerfile multi-stage: two `stages` with correct `from`/`as` |
+| 13 | Dockerfile single-stage: `stages[0].from` correct |
+| 14 | Skips comments and blank lines in Dockerfiles |
+| 15 | Empty compose: empty entities |
+
+### generator.test.ts
+
+| # | Test case |
+|---|-----------|
+| 1 | Service with image generates correct TypeScript |
+| 2 | Service with ports/env generates all props |
+| 3 | `Config` entity generates correct constructor |
+| 4 | `Secret` entity generates correct constructor |
+| 5 | Single-stage Dockerfile generates flat props |
+| 6 | Multi-stage Dockerfile generates `stages:` array |
+| 7 | Import line includes only needed types |
+| 8 | Multiple entity types → sorted combined import |
+| 9 | Kebab-case name → camelCase export |
+| 10 | `Network` entity generates correct constructor |
+
+### roundtrip.test.ts
+
+| # | Test case |
+|---|-----------|
+| 1 | `simple.yaml` → `Service` + `Volume` constructors |
+| 2 | `webapp.yaml` → ports / healthcheck / depends_on survive |
+| 3 | `full.yaml` → `Config` / `Secret` / `Network` constructors |
+| 4 | Multi-stage Dockerfile inline → `stages:` in output |
+
+## Reference implementations
+
+- **K8s** — uses `parseYAML`; iterates multi-document YAML separated by `---`
+- **AWS** — uses a custom YAML schema layer for CloudFormation intrinsic functions (`!Ref`, `!Sub`, etc.)
+- **Docker** — uses `parseYAML`; iterates top-level Compose sections

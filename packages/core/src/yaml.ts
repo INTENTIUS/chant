@@ -308,8 +308,13 @@ export function parseYAMLArray(
     const itemMatch = line.match(/^(\s*)- (.*)$/);
     if (itemMatch && indent === baseIndent) {
       const itemValue = itemMatch[2].trim();
-      // Check if it's a key-value pair (object item in array)
-      const kvMatch = itemValue.match(/^([^\s:][^:]*?):\s*(.*)$/);
+      // Check if it's a key-value pair (object item in array).
+      // Skip quoted scalars — a quoted string containing a colon (e.g. "80:80")
+      // must not be treated as a key-value pair.
+      const isQuotedScalar =
+        (itemValue.startsWith('"') && itemValue.endsWith('"')) ||
+        (itemValue.startsWith("'") && itemValue.endsWith("'"));
+      const kvMatch = !isQuotedScalar && itemValue.match(/^([^\s:][^:]*?):\s*(.*)$/);
       if (kvMatch) {
         const obj: Record<string, unknown> = {};
         obj[kvMatch[1].trim()] = parseArrayItemValue(kvMatch[2].trim(), lines, i, indent + 2);

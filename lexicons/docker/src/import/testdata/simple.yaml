@@ -1,0 +1,9 @@
+services:
+  web:
+    image: nginx:1.25
+    ports:
+      - "80:80"
+
+volumes:
+  webdata:
+    driver: local
