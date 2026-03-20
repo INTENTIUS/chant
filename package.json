@@ -11,6 +11,7 @@
     "lexicons/gcp/examples/*",
     "lexicons/azure/examples/*",
     "lexicons/github/examples/*",
+    "lexicons/docker/examples/*",
     "examples/*"
   ],
   "scripts": {
@@ -25,6 +26,7 @@
     "@intentius/chant-lexicon-gcp": "workspace:*",
     "@intentius/chant-lexicon-gitlab": "workspace:*",
     "@intentius/chant-lexicon-helm": "workspace:*",
+    "@intentius/chant-lexicon-docker": "workspace:*",
     "@intentius/chant-lexicon-github": "workspace:*",
     "@intentius/chant-lexicon-k8s": "workspace:*"
   },
