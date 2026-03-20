@@ -46,6 +46,10 @@ smoke-npm:
 smoke-build-examples:
     ./test/smoke.sh build-examples
 
+# Smoke test against published npm packages (run after just release — local only, never CI)
+smoke-npm-registry:
+    ./test/smoke.sh npm-registry
+
 # Run all smoke tests
 smoke: smoke-bun smoke-npm
 

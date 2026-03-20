@@ -8,6 +8,7 @@ set -euo pipefail
 #        RUNTIME=bun ./npm-smoke.sh
 
 RUNTIME="${RUNTIME:-npm}"
+INSTALL_MODE="${INSTALL_MODE:-tarball}"
 
 PASS=0
 FAIL=0
@@ -48,7 +49,17 @@ install_from_tarballs() {
   pkg_install /tarballs/core.tgz "$1"
 }
 
+install_from_registry() {
+  # $1 = lexicon package name (e.g. "@intentius/chant-lexicon-aws"); core always included
+  # Uses @latest — always tests whatever is currently live on npm
+  local pkgs=("@intentius/chant@latest")
+  [ -n "${1:-}" ] && pkgs+=("${1}@latest")
+  pkg_install "${pkgs[@]}"
+}
+
 # ── Test group 0: Tarball content verification ────────────────────────────────
+
+if [ "$INSTALL_MODE" = "tarball" ]; then
 
 verify_tarball_contains() {
   local tarball="$1"
@@ -75,6 +86,8 @@ for lex in aws azure gcp gitlab k8s flyway docker; do
   verify_tarball_contains "/tarballs/lexicon-$lex.tgz" "package/src/index.ts" "$lex tarball contains src/index.ts"
 done
 
+fi # INSTALL_MODE=tarball
+
 
 # ── Test group 1: Manual projects (hand-crafted source files) ─────────────────
 
@@ -93,7 +106,11 @@ test_manual_project() {
   cd "$dir"
 
   pkg_init
-  install_from_tarballs "$tarball"
+  if [ "$INSTALL_MODE" = "registry" ]; then
+    install_from_registry "@intentius/chant-lexicon-$lexicon"
+  else
+    install_from_tarballs "$tarball"
+  fi
 
   # Write the test source file
   echo "$source" > src/infra.ts
@@ -165,7 +182,7 @@ export const bucket = new StorageBucket({ resourceID: "test-bucket", location: "
 # chant targets bun/tsx (raw .ts exports), so vanilla tsc may not resolve —
 # we test it but don't treat failure as fatal.
 
-if command -v npx >/dev/null 2>&1; then
+if [ "$INSTALL_MODE" = "tarball" ] && command -v npx >/dev/null 2>&1; then
   echo ""
   echo "=== Test: type-resolution ==="
   TYPE_DIR="/tmp/test-type-resolution"
@@ -209,7 +226,11 @@ test_init_flow() {
   pkg_init
 
   # Install core first (provides the chant CLI)
-  pkg_install /tarballs/core.tgz
+  if [ "$INSTALL_MODE" = "registry" ]; then
+    pkg_install "@intentius/chant@latest"
+  else
+    pkg_install /tarballs/core.tgz
+  fi
 
   # Run chant init — --force because dir already has package.json + node_modules
   if pkg_run chant init --lexicon "$lexicon" --force . 2>&1; then
@@ -219,8 +240,12 @@ test_init_flow() {
     return
   fi
 
-  # Install the lexicon tarball (init scaffolds the dep but can't resolve from tarball)
-  pkg_install "$tarball"
+  # Install the lexicon (init scaffolds the dep but can't resolve from tarball)
+  if [ "$INSTALL_MODE" = "registry" ]; then
+    pkg_install "@intentius/chant-lexicon-$lexicon@latest"
+  else
+    pkg_install "$tarball"
+  fi
 
   # Write a source file — init scaffolds config but not infra code
   mkdir -p src
@@ -292,14 +317,24 @@ test_example() {
 
   pkg_init
 
-  # Install core + all required lexicon tarballs
-  local install_args=(/tarballs/core.tgz)
+  # Install core + all required lexicons
+  local install_args
   local lexicons=()
+  if [ "$INSTALL_MODE" = "registry" ]; then
+    install_args=("@intentius/chant@latest")
+  else
+    install_args=(/tarballs/core.tgz)
+  fi
   while [ $# -ge 2 ]; do
-    install_args+=("$1")
+    [ "$INSTALL_MODE" != "registry" ] && install_args+=("$1")
     lexicons+=("$2")
     shift 2
   done
+  if [ "$INSTALL_MODE" = "registry" ]; then
+    for lex in "${lexicons[@]}"; do
+      install_args+=("@intentius/chant-lexicon-$lex@latest")
+    done
+  fi
   pkg_install "${install_args[@]}"
 
   # Copy example source files

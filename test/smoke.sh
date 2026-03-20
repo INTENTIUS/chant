@@ -5,11 +5,12 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
 
 usage() {
-  echo "Usage: $0 [workspace|npm|build-examples|smoke-aws|smoke-eks|smoke-gke|smoke-aks|smoke-all|all]"
+  echo "Usage: $0 [workspace|npm|npm-registry|build-examples|smoke-aws|smoke-eks|smoke-gke|smoke-aks|smoke-all|all]"
   echo ""
   echo "BUILD VERIFICATION:"
   echo "  workspace       — Workspace smoke tests (bun link)"
   echo "  npm             — npm install smoke tests (bun pm pack)"
+  echo "  npm-registry    — Registry smoke tests (install from npmjs.com @latest)"
   echo "  build-examples  — Build all examples in Docker"
   echo ""
   echo "DEPLOYMENT SMOKE TESTS (verify example npm scripts work in Docker):"
@@ -106,6 +107,14 @@ run_e2e_all() {
     chant-smoke-e2e all
 }
 
+run_npm_registry() {
+  echo "Running registry smoke tests (@latest)..."
+  docker build \
+    -f "$PROJECT_DIR/test/Dockerfile.smoke-npm-registry" \
+    -t chant-smoke-npm-registry \
+    "$PROJECT_DIR"
+}
+
 run_build_examples() {
   echo "Building smoke image..."
   docker build -f "$SCRIPT_DIR/Dockerfile.smoke" -t chant-smoke-workspace "$PROJECT_DIR"
@@ -131,6 +140,9 @@ case "${1:-workspace}" in
     ;;
   npm)
     run_npm
+    ;;
+  npm-registry)
+    run_npm_registry
     ;;
   build-examples)
     run_build_examples
