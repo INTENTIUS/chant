@@ -28,7 +28,7 @@ RUN CORE_VERSION=$(jq -r '.version' packages/core/package.json) && \
     for lex in aws azure gcp gitlab k8s flyway docker; do \
       cd /app/lexicons/$lex && \
       jq --arg v "$CORE_VERSION" \
-        '(.dependencies // {}) |= with_entries(if .value == "workspace:*" then .value = $v else . end) | del(.scripts)' \
+        '(if .dependencies then .dependencies |= with_entries(if .value == "workspace:*" then .value = $v else . end) else . end) | del(.scripts)' \
         package.json > tmp.json && mv tmp.json package.json; \
     done
 
