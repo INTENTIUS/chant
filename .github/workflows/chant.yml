@@ -35,6 +35,7 @@ jobs:
           bun run --cwd lexicons/flyway prepack
           bun run --cwd lexicons/gcp prepack
           bun run --cwd lexicons/helm prepack
+          bun run --cwd lexicons/docker prepack
 
       - name: Typecheck
         run: bunx tsc --noEmit -p packages/core/tsconfig.json
@@ -79,6 +80,7 @@ jobs:
           bun run --cwd lexicons/flyway prepack
           bun run --cwd lexicons/gcp prepack
           bun run --cwd lexicons/helm prepack
+          bun run --cwd lexicons/docker prepack
 
       - name: Run tests
         run: bun test
@@ -124,6 +126,9 @@ jobs:
 
       - name: Generate and validate Helm lexicon
         run: bun run --cwd lexicons/helm prepack
+
+      - name: Generate and validate Docker lexicon
+        run: bun run --cwd lexicons/docker prepack
 
   smoke-npm:
     if: false  # disabled — Docker smoke tests are for local/release validation, not every push
