@@ -14,21 +14,23 @@ import { Sub, GetAtt } from "@intentius/chant-lexicon-aws";
 import { spotHandlerRole } from "./iam";
 import { config } from "./config";
 
-// Inline handler — production would use a deployment package / Lambda Layer
-// See lambda/spot-handler.ts for the full implementation
+// Inline handler — see lambda/spot-handler.ts for the full TypeScript source.
+// ZipFile accepts plain JS only, so this is the compiled form bundled inline.
+// @aws-sdk/client-ssm is available in the Node.js 20 managed runtime.
 const SPOT_HANDLER_CODE = `
 exports.handler = async (event) => {
   const instanceId = event.detail['instance-id'];
   const { SSMClient, SendCommandCommand } = require('@aws-sdk/client-ssm');
   const ssm = new SSMClient({});
-  // Drain the node and requeue its jobs via scontrol + squeue + scontrol requeue
   await ssm.send(new SendCommandCommand({
     InstanceIds: [process.env.HEAD_NODE_ID],
     DocumentName: 'AWS-RunShellScript',
     Parameters: {
       commands: [
-        \`/usr/bin/scontrol update NodeName=$(sinfo -N -n ${instanceId} -h -o %N) State=drain Reason="spot-interruption"\`,
-        \`/usr/bin/squeue -w $(sinfo -N -n ${instanceId} -h -o %N) -h -o %i | xargs -r scontrol requeue\`,
+        \`NODE=$(sinfo -N -h -o '%N %e' | grep '\${instanceId}' | awk '{print $1}' | head -1)\`,
+        \`[ -z "$NODE" ] && exit 0\`,
+        \`scontrol update NodeName=$NODE State=drain Reason="spot-interruption-\${instanceId}"\`,
+        \`squeue -w $NODE -h -o '%i' | xargs -r -n1 scontrol requeue\`,
       ],
     },
   }));

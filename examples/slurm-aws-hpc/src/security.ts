@@ -1,4 +1,4 @@
-import { SecurityGroup, SecurityGroup_Ingress } from "@intentius/chant-lexicon-aws";
+import { SecurityGroup, SecurityGroup_Ingress, EC2SecurityGroupIngress } from "@intentius/chant-lexicon-aws";
 import { vpc } from "./networking";
 import { config } from "./config";
 
@@ -14,10 +14,16 @@ export const clusterSg = new SecurityGroup({
     new SecurityGroup_Ingress({ IpProtocol: "tcp", FromPort: 830, ToPort: 830, CidrIp: config.vpcCidr }),
     // MPI (OpenMPI uses ephemeral range via PMIx)
     new SecurityGroup_Ingress({ IpProtocol: "tcp", FromPort: 1024, ToPort: 65535, CidrIp: config.vpcCidr }),
-    // EFA uses its own fabric — all traffic within SG for EFA-enabled instances
-    new SecurityGroup_Ingress({ IpProtocol: "-1", SourceSecurityGroupId: { Ref: "clusterSg" } } as any),
   ],
   Tags: [{ Key: "Name", Value: `${config.clusterName}-cluster-sg` }],
+});
+
+// EFA self-referencing rule: all traffic within the cluster SG for EFA fabric.
+// Must be a separate resource — CloudFormation can't self-reference inline.
+export const efaSelfIngress = new EC2SecurityGroupIngress({
+  GroupId: clusterSg.GroupId,
+  IpProtocol: "-1",
+  SourceSecurityGroupId: clusterSg.GroupId,
 });
 
 // ── FSx security group (Lustre port 988) ─────────────────────────

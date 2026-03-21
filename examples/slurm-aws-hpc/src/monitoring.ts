@@ -34,7 +34,7 @@ export const rdsAlarm = new Alarm({
   AlarmDescription: "Aurora MySQL (slurmdbd) CPU utilization above 80%",
   Namespace: "AWS/RDS",
   MetricName: "CPUUtilization",
-  Dimensions: [{ Name: "DBClusterIdentifier", Value: dbCluster.DBClusterArn }],
+  Dimensions: [{ Name: "DBClusterIdentifier", Value: config.dbClusterIdentifier }],
   Period: 60,
   EvaluationPeriods: 5,
   Statistic: "Average",

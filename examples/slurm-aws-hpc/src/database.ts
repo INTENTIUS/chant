@@ -22,6 +22,7 @@ export const dbSubnetGroup = new RDSDBSubnetGroup({
 });
 
 export const dbCluster = new DbCluster({
+  DBClusterIdentifier: config.dbClusterIdentifier,  // explicit ID so monitoring can reference it
   Engine: "aurora-mysql",
   EngineVersion: "8.0.mysql_aurora.3.05.2",
   EngineMode: "provisioned",
@@ -42,7 +43,7 @@ export const dbCluster = new DbCluster({
 export const dbInstance = new DbInstance({
   Engine: "aurora-mysql",
   DBInstanceClass: "db.serverless",
-  DBClusterIdentifier: dbCluster.DBClusterArn,
+  DBClusterIdentifier: config.dbClusterIdentifier,
   Tags: [{ Key: "Name", Value: `${config.clusterName}-slurmdbd-instance` }],
 });
 

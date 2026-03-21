@@ -44,4 +44,7 @@ export const config = {
 
   // Slurm accounting
   accountingStorageType: "accounting_storage/slurmdbd",
+
+  // Aurora cluster identifier — used in both database.ts and monitoring.ts
+  dbClusterIdentifier: "eda-hpc-slurmdbd",
 } as const;

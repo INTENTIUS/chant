@@ -4,8 +4,12 @@
   "type": "module",
   "private": true,
   "scripts": {
-    "build": "chant build src --lexicon aws && chant build src --lexicon slurm -o dist/slurm.conf",
-    "lint": "chant lint src"
+    "build": "npm run build:aws && npm run build:slurm",
+    "build:aws": "chant build src --lexicon aws -o dist/infra.json",
+    "build:slurm": "chant build src --lexicon slurm -o dist/slurm.conf",
+    "lint": "chant lint src",
+    "deploy": "bash scripts/deploy.sh",
+    "teardown": "bash scripts/teardown.sh"
   },
   "dependencies": {
     "@intentius/chant": "workspace:*",

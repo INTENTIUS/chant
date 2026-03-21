@@ -1,153 +1,128 @@
 /**
- * SSM Automation document for orchestrated cluster deployment.
+ * SSM Automation document for post-provision cluster configuration.
  *
- * Why SSM Automation instead of a script:
- *   - AWS-native durable orchestration — no extra runtime dependencies
+ * Why SSM Automation for post-provision steps (not shell script):
  *   - Each step is retried by SSM on transient failures (API throttle, etc.)
- *   - Integrates with EventBridge for progress notifications
  *   - Step output is stored in SSM execution history — easy post-mortem
+ *   - Integrates with EventBridge for step-level progress notifications
+ *   - No SSH bastion needed — SSM Run Command works over the SSM agent
  *
- * Deploy via scripts/deploy.sh:
- *   aws ssm start-automation-execution \
- *     --document-name EdaHpcBootstrap \
- *     --parameters ClusterName=eda-hpc,...
+ * Scope: This document handles everything AFTER CloudFormation stacks are
+ * deployed. CloudFormation stacks are deployed by scripts/deploy.sh directly
+ * (passing large templates as SSM parameters isn't reliable).
+ *
+ * Steps:
+ *   1. GenerateMungeKey   — creates a 1024-byte random key, stores in SSM SecureString
+ *   2. ReconfigureSlurm   — reloads slurm.conf on the head node
+ *   3. WaitNodesJoin      — polls sinfo until compute nodes appear (up to 15 min)
+ *   4. SetupAccounts      — creates default sacctmgr cluster/account/user
+ *
+ * Deploy via scripts/deploy.sh (called automatically after CFN stacks are up).
  */
 
 import { Document, SsmParameter } from "@intentius/chant-lexicon-aws";
 import { Sub } from "@intentius/chant-lexicon-aws";
 import { config } from "./config";
 
-// The automation document content (see ssm/bootstrap.yaml for the full YAML source)
-const AUTOMATION_STEPS = [
+const POST_PROVISION_STEPS = [
   {
-    name: "DeployNetworking",
-    action: "aws:executeAwsApi",
+    name: "GenerateMungeKey",
+    action: "aws:executeScript",
+    description: "Generate MUNGE authentication key and store in SSM SecureString",
+    onFailure: "Abort",
     inputs: {
-      Service: "cloudformation",
-      Api: "CreateStack",
-      StackName: Sub(`${config.clusterName}-networking`),
-      TemplateBody: "{{TemplateBody}}",
+      Runtime: "python3.11",
+      Handler: "generate_munge_key",
+      Script: [
+        "import boto3, secrets, base64",
+        "def generate_munge_key(events, context):",
+        "    ssm = boto3.client('ssm')",
+        "    key = base64.b64encode(secrets.token_bytes(1024)).decode()",
+        "    ssm.put_parameter(",
+        "        Name=f\"/{events['ClusterName']}/munge/key\",",
+        "        Value=key, Type='SecureString', Overwrite=True)",
+        "    return {'status': 'ok', 'parameter': f\"/{events['ClusterName']}/munge/key\"}",
+      ].join("\n"),
+      InputPayload: { ClusterName: "{{ ClusterName }}" },
     },
-  },
-  {
-    name: "WaitNetworking",
-    action: "aws:waitForAwsResourceProperty",
-    inputs: {
-      Service: "cloudformation",
-      Api: "DescribeStacks",
-      StackName: Sub(`${config.clusterName}-networking`),
-      PropertySelector: "$.Stacks[0].StackStatus",
-      DesiredValues: ["CREATE_COMPLETE"],
-    },
-    timeoutSeconds: 300,
-  },
-  {
-    name: "DeployStorage",
-    action: "aws:executeAwsApi",
-    inputs: {
-      Service: "cloudformation",
-      Api: "CreateStack",
-      StackName: Sub(`${config.clusterName}-storage`),
-      TemplateBody: "{{TemplateBody}}",
-    },
-    // FSx PERSISTENT_2 takes 8–15 minutes to provision
-    timeoutSeconds: 1200,
-  },
-  {
-    name: "DeployDatabase",
-    action: "aws:executeAwsApi",
-    inputs: {
-      Service: "cloudformation",
-      Api: "CreateStack",
-      StackName: Sub(`${config.clusterName}-database`),
-      TemplateBody: "{{TemplateBody}}",
-    },
-    timeoutSeconds: 600,
-  },
-  {
-    name: "DeployCompute",
-    action: "aws:executeAwsApi",
-    inputs: {
-      Service: "cloudformation",
-      Api: "CreateStack",
-      StackName: Sub(`${config.clusterName}-compute`),
-      TemplateBody: "{{TemplateBody}}",
-    },
-    timeoutSeconds: 300,
-  },
-  {
-    name: "WaitHeadNodeReady",
-    action: "aws:waitForAwsResourceProperty",
-    inputs: {
-      Service: "cloudformation",
-      Api: "DescribeStacks",
-      StackName: Sub(`${config.clusterName}-compute`),
-      PropertySelector: "$.Stacks[0].StackStatus",
-      DesiredValues: ["CREATE_COMPLETE"],
-    },
-    timeoutSeconds: 600,
   },
   {
     name: "ReconfigureSlurm",
     action: "aws:runCommand",
+    description: "Reload slurm.conf on the head node after initial provisioning",
+    onFailure: "Continue",
     inputs: {
       DocumentName: "AWS-RunShellScript",
-      Targets: [{ Key: "tag:role", Values: ["head"] }],
-      Parameters: { commands: ["scontrol reconfigure"] },
+      Targets: [{ Key: `tag:cluster`, Values: ["{{ ClusterName }}"] },
+                { Key: "tag:role", Values: ["head"] }],
+      Parameters: { commands: ["scontrol reconfigure || true"] },
+      TimeoutSeconds: 30,
     },
   },
   {
     name: "WaitNodesJoin",
     action: "aws:executeScript",
+    description: "Poll sinfo until at least one compute node appears (up to 15 min)",
+    onFailure: "Continue",
+    timeoutSeconds: 900,
     inputs: {
       Runtime: "python3.11",
       Handler: "wait_nodes",
       Script: [
-        "import boto3, subprocess, time",
+        "import subprocess, time",
         "def wait_nodes(events, context):",
-        "  for _ in range(30):",
-        "    out = subprocess.check_output(['sinfo', '--noheader', '-o', '%T']).decode()",
-        "    if 'idle' in out or 'mix' in out: return {'status': 'ready'}",
-        "    time.sleep(30)",
-        "  raise Exception('Nodes did not join within 15 minutes')",
+        "    for attempt in range(30):",
+        "        try:",
+        "            out = subprocess.check_output(['sinfo', '--noheader', '-o', '%T']).decode()",
+        "            if 'idle' in out or 'mix' in out:",
+        "                return {'status': 'ready', 'attempts': attempt + 1}",
+        "        except subprocess.CalledProcessError:",
+        "            pass",
+        "        time.sleep(30)",
+        "    return {'status': 'timeout', 'message': 'No nodes joined in 15 min — check slurmd on compute nodes'}",
       ].join("\n"),
     },
   },
   {
     name: "SetupAccounts",
     action: "aws:runCommand",
+    description: "Create default Slurm accounting cluster, account, and admin user",
+    onFailure: "Continue",
     inputs: {
       DocumentName: "AWS-RunShellScript",
-      Targets: [{ Key: "tag:role", Values: ["head"] }],
+      Targets: [{ Key: `tag:cluster`, Values: ["{{ ClusterName }}"] },
+                { Key: "tag:role", Values: ["head"] }],
       Parameters: {
         commands: [
-          `sacctmgr -i add cluster ${config.clusterName}`,
-          "sacctmgr -i add account default description='default account' organization=hpc",
-          "sacctmgr -i add user $(whoami) account=default adminlevel=admin",
+          "sacctmgr -i add cluster {{ ClusterName }} || true",
+          "sacctmgr -i add account default description='default account' organization=hpc || true",
+          "sacctmgr -i add user admin account=default adminlevel=admin || true",
         ],
       },
+      TimeoutSeconds: 60,
     },
   },
 ];
 
-export const bootstrapDocument = new Document({
-  Name: "EdaHpcBootstrap",
+export const postProvisionDocument = new Document({
+  Name: `${config.clusterName}-post-provision`,
   DocumentType: "Automation",
   DocumentFormat: "JSON",
   Content: {
     schemaVersion: "0.3",
-    description: `Bootstrap the ${config.clusterName} EDA HPC cluster`,
+    description: `Post-provision configuration for the ${config.clusterName} EDA HPC cluster`,
     parameters: {
       ClusterName: { type: "String", default: config.clusterName },
     },
-    mainSteps: AUTOMATION_STEPS,
+    mainSteps: POST_PROVISION_STEPS,
   },
 });
 
-// Store the document name in SSM for scripts/deploy.sh
+// Expose the document name in SSM so scripts/deploy.sh can read it without
+// hard-coding the name (useful if clusterName is overridden via env).
 export const documentNameParam = new SsmParameter({
-  Name: Sub(`/${config.clusterName}/automation/bootstrap-document`),
+  Name: Sub(`/${config.clusterName}/automation/post-provision-document`),
   Type: "String",
-  Value: "EdaHpcBootstrap",
-  Description: `SSM Automation document name for ${config.clusterName} bootstrap`,
+  Value: Sub(`${config.clusterName}-post-provision`),
+  Description: `SSM Automation document name for ${config.clusterName} post-provision`,
 });
