@@ -1,0 +1,50 @@
+cluster_name := env_var_or_default("GKE_CLUSTER_NAME", "ray-gke")
+region       := env_var_or_default("GCP_REGION", "us-central1")
+project_id   := env_var_or_default("GCP_PROJECT_ID", "my-project")
+namespace    := "ray-system"
+
+# Build and deploy everything (infra → K8s)
+deploy: deploy-infra get-credentials install-operator deploy-k8s
+
+# Build and apply GCP infrastructure (Config Connector)
+deploy-infra:
+  npm run build:gcp
+  kubectl apply -f config.yaml
+
+# Get kubeconfig for the GKE cluster
+get-credentials:
+  gcloud container clusters get-credentials {{cluster_name}} \
+    --region {{region}} --project {{project_id}}
+
+# Install KubeRay operator
+install-operator:
+  kubectl apply -f https://github.com/ray-project/kuberay/releases/download/v1.3.0/kuberay-operator.yaml
+  kubectl -n kuberay-operator wait deploy/kuberay-operator \
+    --for=condition=Available --timeout=120s
+
+# Build and apply K8s manifests
+deploy-k8s:
+  npm run build:k8s
+  kubectl apply -f k8s.yaml
+
+# Wait for the Ray cluster to be ready
+wait:
+  kubectl -n {{namespace}} wait raycluster/ray \
+    --for=jsonpath='{.status.state}'=ready --timeout=300s
+  kubectl -n {{namespace}} get pods -l ray.io/cluster-name=ray
+
+# Port-forward the Ray dashboard (http://localhost:8265)
+dashboard:
+  kubectl -n {{namespace}} port-forward svc/ray-head-svc 8265:8265
+
+# Submit a test job to verify the cluster
+test-job:
+  kubectl -n {{namespace}} exec -it \
+    $(kubectl -n {{namespace}} get pod -l ray.io/node-type=head -o name | head -1) \
+    -- ray job submit --address http://localhost:8265 \
+    -- python -c "import ray; ray.init(); print(ray.cluster_resources())"
+
+# Tear down K8s resources then GCP infrastructure
+teardown:
+  -kubectl delete -f k8s.yaml
+  -kubectl delete -f config.yaml

@@ -1,0 +1,25 @@
+{
+  "name": "ray-kuberay-gke-example",
+  "version": "0.0.1",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "build": "chant build src --lexicon gcp -o config.yaml && chant build src --lexicon k8s -o k8s.yaml",
+    "build:gcp": "chant build src --lexicon gcp -o config.yaml",
+    "build:k8s": "chant build src --lexicon k8s -o k8s.yaml",
+    "lint": "chant lint src",
+    "deploy-infra": "kubectl apply -f config.yaml",
+    "configure-kubectl": "gcloud container clusters get-credentials ${GKE_CLUSTER_NAME:-ray-gke} --region ${GCP_REGION:-us-central1} --project ${GCP_PROJECT_ID}",
+    "install-operator": "kubectl apply -f https://github.com/ray-project/kuberay/releases/download/v1.3.0/kuberay-operator.yaml && kubectl -n kuberay-operator wait deploy/kuberay-operator --for=condition=Available --timeout=120s",
+    "apply": "kubectl apply -f k8s.yaml",
+    "status": "kubectl -n ray-system get raycluster ray && kubectl -n ray-system get pods -l ray.io/cluster-name=ray",
+    "dashboard": "kubectl -n ray-system port-forward svc/ray-head-svc 8265:8265",
+    "deploy": "npm run build:gcp && npm run deploy-infra && npm run configure-kubectl && npm run install-operator && npm run build:k8s && npm run apply",
+    "teardown": "kubectl delete -f k8s.yaml; kubectl delete -f config.yaml"
+  },
+  "dependencies": {
+    "@intentius/chant": "workspace:*",
+    "@intentius/chant-lexicon-gcp": "workspace:*",
+    "@intentius/chant-lexicon-k8s": "workspace:*"
+  }
+}

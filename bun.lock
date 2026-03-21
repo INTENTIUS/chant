@@ -126,7 +126,7 @@
     },
     "lexicons/aws": {
       "name": "@intentius/chant-lexicon-aws",
-      "version": "0.1.0",
+      "version": "0.1.1",
       "dependencies": {
         "fflate": "^0.8.2",
         "js-yaml": "^4.1.0",
@@ -1111,6 +1111,8 @@
       "version": "0.1.0",
       "devDependencies": {
         "@intentius/chant": "workspace:*",
+        "@types/js-yaml": "^4.0.9",
+        "js-yaml": "^4.1.1",
         "typescript": "^5.9.3",
       },
       "peerDependencies": {
@@ -1207,7 +1209,7 @@
     },
     "packages/core": {
       "name": "@intentius/chant",
-      "version": "0.1.0",
+      "version": "0.1.1",
       "bin": {
         "chant": "./bin/chant",
       },
@@ -1630,6 +1632,8 @@
     "@types/eslint-scope": ["@types/eslint-scope@3.7.7", "", { "dependencies": { "@types/eslint": "*", "@types/estree": "*" } }, "sha512-MzMFlSLBqNF2gcHWO0G1vP/YQyfvrxZ0bF+u7mzUdZ1/xK4A4sru+nraZz5i3iEIk1l1uyicaDVTB4QbbEkAYg=="],
 
     "@types/estree": ["@types/estree@1.0.8", "", {}, "sha512-dWHzHa2WqEXI/O1E9OjrocMTKJl2mSrEolh1Iomrv6U+JuNwaHXsXx9bLu5gG7BUWFIN0skIQJQ/L1rIex4X6w=="],
+
+    "@types/js-yaml": ["@types/js-yaml@4.0.9", "", {}, "sha512-k4MGaQl5TGo/iipqb2UDG2UwjXziSWkh0uysQelTlJpX1qGlpUZYm8PnO4DxG1qBomtJUdYJ6qR6xdIah10JLg=="],
 
     "@types/json-schema": ["@types/json-schema@7.0.15", "", {}, "sha512-5+fP8P8MFNC+AyZCDxrB2pkZFPGzqQWUzpSeuuVLvm8VMcorNYavBqoFcxK8bQz4Qsbn4oUEEem4wDLfcysGHA=="],
 

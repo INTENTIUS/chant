@@ -95,6 +95,8 @@ const API_GROUP_VERSIONS: Record<string, string> = {
   CertManager: "cert-manager.io/v1",
   ExternalSecrets: "external-secrets.io/v1",
   Monitoring: "monitoring.coreos.com/v1",
+  // KubeRay operator CRDs
+  Ray: "ray.io/v1",
 };
 
 function deriveGVKFromType(entityType: string): { apiVersion: string; kind: string } | null {

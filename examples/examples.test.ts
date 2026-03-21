@@ -591,3 +591,74 @@ describe("gitlab-cells-single-region-gke example", () => {
     expect(yaml).toContain("stage: deploy-canary");
   });
 });
+
+// ── Ray / KubeRay on GKE ──────────────────────────────────────────────
+
+describe("ray-kuberay-gke example", () => {
+  const srcDir = resolve(import.meta.dir, "ray-kuberay-gke", "src");
+
+  test("passes lint", async () => {
+    const result = await lintCommand({ path: srcDir, format: "stylish", fix: true });
+    if (!result.success || result.errorCount > 0) console.log(result.output);
+    expect(result.success).toBe(true);
+    expect(result.errorCount).toBe(0);
+  });
+
+  test("GCP build succeeds with expected resources", async () => {
+    const result = await build(srcDir, [gcpSerializer]);
+    expect(result.errors).toHaveLength(0);
+    const output = result.outputs.get("gcp")!;
+    expect(output).toContain("ContainerCluster");
+    expect(output).toContain("NodePool");
+    expect(output).toContain("FilestoreInstance");
+    expect(output).toContain("StorageBucket");
+    expect(output).toContain("IAMServiceAccount");
+    expect(output).toContain("IAMPolicyMember");
+    expect(output).toContain("roles/iam.workloadIdentityUser");
+    expect(output).toContain("roles/storage.objectAdmin");
+  });
+
+  test("K8s build succeeds with expected resources", async () => {
+    const result = await build(srcDir, [k8sSerializer]);
+    expect(result.errors).toHaveLength(0);
+    const docs = parseK8sDocs(result.outputs.get("k8s")!);
+    const kinds = docs.map((d) => d.kind);
+    expect(kinds).toContain("Namespace");
+    expect(kinds).toContain("StorageClass");
+    expect(kinds).toContain("NetworkPolicy");
+    expect(kinds).toContain("PodDisruptionBudget");
+    expect(kinds).toContain("PersistentVolumeClaim");
+    expect(kinds).toContain("ServiceAccount");
+    expect(kinds).toContain("ClusterRole");
+    expect(kinds).toContain("ClusterRoleBinding");
+    expect(kinds).toContain("RayCluster");
+  });
+
+  test("RayCluster CR has production defaults", async () => {
+    const result = await build(srcDir, [k8sSerializer]);
+    const output = result.outputs.get("k8s")!;
+    // preStop hook — serialized as array ["ray", "stop"]
+    expect(output).toContain("preStop");
+    // terminationGracePeriodSeconds
+    expect(output).toContain("120");
+    // Spillover bucket config
+    expect(output).toContain("RAY_object_spilling_config");
+    // num-cpus derived from resources.cpu
+    expect(output).toContain("num-cpus");
+    // Workload Identity annotation on ServiceAccount
+    expect(output).toContain("iam.gke.io/gcp-service-account");
+  });
+
+  test("NetworkPolicy uses podSelector for intra-cluster rules", async () => {
+    const result = await build(srcDir, [k8sSerializer]);
+    const output = result.outputs.get("k8s")!;
+    const docs = parseK8sDocs(output);
+    const netpol = docs.find((d) => d.kind === "NetworkPolicy")!;
+    expect(netpol).toBeDefined();
+    // podSelector-based rules (no ipBlock for intra-cluster)
+    expect(netpol.doc).toContain("ray.io/cluster-name");
+    // GCS egress with RFC1918 exclusion
+    expect(netpol.doc).toContain("0.0.0.0/0");
+    expect(netpol.doc).toContain("10.0.0.0/8");
+  });
+});

@@ -13,6 +13,8 @@ import {
 } from "@intentius/chant/codegen/generate";
 import { fetchSchemas } from "../spec/fetch";
 import { parseK8sSwagger, k8sShortName, type K8sParseResult } from "../spec/parse";
+import { loadMultipleCRDs } from "../crd/loader";
+import { CRD_SOURCES } from "../crd/crd-sources";
 import { NamingStrategy, propertyTypeName, extractDefName } from "./naming";
 import { generateLexiconJSON } from "./generate-lexicon";
 import { generateTypeScriptDeclarations } from "./generate-typescript";
@@ -53,6 +55,26 @@ export async function generate(opts: K8sGenerateOptions = {}): Promise<GenerateR
     },
 
     createNaming: (results) => new NamingStrategy(results),
+
+    augmentSchemas: async (schemas, _opts, log) => {
+      // Load third-party CRDs and return as extraResults so they are
+      // included in the generated types alongside the core K8s resources.
+      const crdResults: K8sParseResult[] = [];
+      const warnings: Array<{ file: string; error: string }> = [];
+      for (const source of CRD_SOURCES) {
+        try {
+          const parsed = await loadMultipleCRDs([source]);
+          crdResults.push(...parsed);
+          log(`Loaded ${parsed.length} CRD type(s) from ${source.url ?? source.path ?? "cluster"}`);
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          warnings.push({ file: source.url ?? source.path ?? "cluster", error: msg });
+          log(`Warning: failed to load CRD: ${msg}`);
+        }
+      }
+      log(`Total CRD types loaded: ${crdResults.length}`);
+      return { schemas, extraResults: crdResults, warnings };
+    },
 
     augmentResults: (results, _opts, log) => {
       // Add the remaining results from the single-schema parse
