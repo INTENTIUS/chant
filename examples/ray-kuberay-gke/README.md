@@ -95,7 +95,7 @@ cd examples/ray-kuberay-gke
 npm run build:gcp
 ```
 
-Runs `chant build src --lexicon gcp`, producing `config.yaml` — Config Connector resources for the GKE cluster, GPU node pool, Filestore ENTERPRISE instance, GCS spillover bucket, Artifact Registry, and IAM bindings.
+Runs `chant build src --lexicon gcp`, producing `config.yaml` — Config Connector resources for the GKE cluster, GPU node pool, Filestore BASIC_HDD instance, GCS spillover bucket, Artifact Registry, and IAM bindings.
 
 ### Phase 2 — Apply GCP infrastructure
 
@@ -122,15 +122,27 @@ just get-credentials
 just install-operator
 ```
 
-Applies the KubeRay v1.3.0 operator manifest and waits for the controller to be Available. The operator installs three CRDs: `RayCluster`, `RayJob`, `RayService`.
+Installs the KubeRay operator v1.3.2 via Helm and waits for the controller to be Available. The operator installs three CRDs: `RayCluster`, `RayJob`, `RayService`.
 
 ### Phase 5 — Build K8s manifests
 
+After the GCP infrastructure is ready, get the Filestore instance IP:
+
 ```bash
-npm run build:k8s
+export FILESTORE_IP=$(gcloud filestore instances describe ray-filestore \
+  --zone ${GCP_REGION:-us-central1}-a \
+  --format='value(networks[0].ipAddresses[0])')
 ```
 
-Runs `chant build src --lexicon k8s`, producing `k8s.yaml` — Namespace, StorageClass, ServiceAccount, ClusterRole, NetworkPolicy, PodDisruptionBudget, PVC, and RayCluster CR.
+Then build:
+
+```bash
+FILESTORE_IP=$FILESTORE_IP npm run build:k8s
+```
+
+Runs `chant build src --lexicon k8s`, producing `k8s.yaml` — Namespace, static NFS PersistentVolume (backed by the CC-managed Filestore instance), ServiceAccount, ClusterRole, NetworkPolicy, PodDisruptionBudget, PVC, and RayCluster CR.
+
+> **Why static NFS PV?** The Filestore CSI driver creates its own Filestore instance per PVC. Since the infra layer already provisions a Filestore instance via Config Connector, we mount it directly as an NFS PV — no extra instances, no CSI driver addon required.
 
 ### Phase 6 — Apply K8s manifests and verify
 

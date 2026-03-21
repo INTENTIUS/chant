@@ -1,21 +1,41 @@
-// FilestoreStorageClass for the GCP Filestore CSI driver.
+// Static NFS PersistentVolume backed by the GCP Filestore instance created
+// in the infra layer.
 //
-// The CSI driver provisions ReadWriteMany volumes backed by the Filestore
-// ENTERPRISE instance created in the infra layer. The RayCluster composite
-// references this StorageClass via sharedStorage.storageClass.
+// Why static instead of dynamic CSI provisioning:
+//   - Dynamic provisioning (FilestoreStorageClass) requires the Filestore CSI
+//     driver addon to be enabled on the cluster.
+//   - Static NFS PV works with any GKE cluster out of the box — the NFS client
+//     is built into the Linux kernel.
+//   - The Filestore instance is already managed by Config Connector (infra layer),
+//     so dynamic CSI provisioning would create a redundant second instance.
 //
-// Prerequisites:
-//   - GCP Filestore CSI driver must be enabled on the GKE cluster.
-//     Enable via: gcloud container clusters update <name> \
-//       --update-addons=GcpFilestoreCsiDriver=ENABLED --region <region>
+// After `just deploy-infra`, get the Filestore IP with:
+//   gcloud filestore instances describe ray-filestore \
+//     --zone ${GCP_REGION}-a --format='value(networks[0].ipAddresses[0])'
+// Then set FILESTORE_IP before `npm run build:k8s`.
 
-import { FilestoreStorageClass } from "@intentius/chant-lexicon-k8s";
+import { PersistentVolume } from "@intentius/chant-lexicon-k8s";
 import { config } from "../config";
 
-export const { storageClass } = FilestoreStorageClass({
-  name: config.filestoreStorageClass,
-  tier: "enterprise",
-  network: config.vpcName,
-  reclaimPolicy: "Retain",   // Retain — training data is precious
-  volumeBindingMode: "WaitForFirstConsumer",
+// Static PV bound to the Filestore share.
+// The claimRef ensures this PV is reserved exclusively for the ray-shared PVC.
+export const sharedDataPv = new PersistentVolume({
+  metadata: {
+    name: "ray-shared-pv",
+    labels: { "app.kubernetes.io/managed-by": "chant" },
+  },
+  spec: {
+    capacity: { storage: "1Ti" },
+    accessModes: ["ReadWriteMany"],
+    persistentVolumeReclaimPolicy: "Retain",
+    storageClassName: config.filestoreStorageClass,
+    nfs: {
+      server: config.filestoreIp,
+      path: "/ray_data",
+    },
+    claimRef: {
+      namespace: config.namespace,
+      name: "ray-shared",
+    },
+  },
 });

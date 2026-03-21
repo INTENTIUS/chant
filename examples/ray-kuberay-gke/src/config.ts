@@ -16,6 +16,9 @@ export const config = {
   // Filestore (created in infra layer)
   filestoreName: process.env.FILESTORE_NAME ?? "ray-filestore",
   filestoreStorageClass: "ray-filestore",
+  // IP of the CC-managed Filestore instance (available after `just deploy-infra`).
+  // Get it with: gcloud filestore instances describe ray-filestore --zone us-central1-a --format='value(networks[0].ipAddresses[0])'
+  filestoreIp: process.env.FILESTORE_IP ?? "10.0.0.0",
 
   // GCS spillover bucket
   spilloverBucketName: process.env.SPILLOVER_BUCKET ?? "ray-spill",

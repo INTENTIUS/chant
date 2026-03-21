@@ -5,7 +5,7 @@
 //   - ClusterRole/CRB ray-autoscaler (pod CRUD for in-tree autoscaler)
 //   - NetworkPolicy ray (podSelector-only, avoids GKE pod CIDR mismatch)
 //   - PodDisruptionBudget ray-head (minAvailable: 1)
-//   - PersistentVolumeClaim ray-shared (ReadWriteMany, Filestore ENTERPRISE)
+//   - PersistentVolumeClaim ray-shared (ReadWriteMany, binds to static NFS PV from storage.ts)
 //   - RayCluster ray (KubeRay CR with production defaults)
 //
 // Production defaults encoded in composite:
@@ -71,7 +71,7 @@ export const {
     ],
   },
 
-  // Shared training data volume (Filestore ENTERPRISE, ReadWriteMany).
+  // Shared training data volume (Filestore BASIC_HDD via static NFS PV, ReadWriteMany).
   // All pods mount this at /mnt/ray-data for shared dataset access.
   // Without shared storage, workers re-download training data on reschedule.
   sharedStorage: {

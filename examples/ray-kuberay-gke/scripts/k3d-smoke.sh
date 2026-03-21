@@ -16,7 +16,7 @@ set -euo pipefail
 
 CLUSTER="ray-kuberay-smoke"
 NAMESPACE="ray-system"
-KUBERAY_VERSION="v1.3.0"
+KUBERAY_HELM_VERSION="1.3.2"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 
@@ -46,8 +46,11 @@ k3d cluster create "$CLUSTER" \
   --wait
 
 # --- 3. Install KubeRay operator ---
-echo "=== Installing KubeRay operator ($KUBERAY_VERSION) ==="
-kubectl apply -f "https://github.com/ray-project/kuberay/releases/download/${KUBERAY_VERSION}/kuberay-operator.yaml"
+echo "=== Installing KubeRay operator (helm $KUBERAY_HELM_VERSION) ==="
+helm repo add kuberay https://ray-project.github.io/kuberay-helm/ 2>/dev/null || true
+helm repo update
+helm upgrade --install kuberay-operator kuberay/kuberay-operator \
+  -n kuberay-operator --create-namespace --version "$KUBERAY_HELM_VERSION"
 kubectl -n kuberay-operator wait deploy/kuberay-operator \
   --for=condition=Available --timeout=120s
 

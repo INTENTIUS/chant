@@ -211,7 +211,7 @@ export function buildRayClusterParts(
       name: "RAY_object_spilling_config",
       value: JSON.stringify({
         type: "smart_open",
-        params: { uri: `gs://${spilloverBucket}/spill`, num_threads: 16 },
+        params: { uri: `gs://${spilloverBucket}/spill` },
       }),
     });
   }
