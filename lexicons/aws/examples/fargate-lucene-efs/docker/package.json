@@ -1,0 +1,21 @@
+{
+  "name": "lucene-solr-example",
+  "version": "0.0.1",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "build": "mkdir -p dist && chant build src --lexicon docker -o dist/docker-compose.yml",
+    "lint":  "chant lint src",
+    "dev":   "mkdir -p dist && chant build src --lexicon docker --watch -o dist/docker-compose.yml"
+  },
+  "dependencies": {
+    "@intentius/chant": "workspace:*",
+    "@intentius/chant-lexicon-docker": "workspace:*",
+    "@aws-sdk/client-dynamodb": "^3",
+    "@aws-sdk/client-dynamodb-streams": "^3",
+    "@aws-sdk/client-s3": "^3"
+  },
+  "devDependencies": {
+    "typescript": "*"
+  }
+}

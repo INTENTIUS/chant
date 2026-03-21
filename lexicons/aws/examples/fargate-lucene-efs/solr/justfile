@@ -1,0 +1,35 @@
+STACK  := "fargate-lucene-efs-solr"
+INFRA  := "fargate-lucene-efs-infra"
+
+# Build CloudFormation template
+build:
+    npm run build
+
+# Deploy — reads infra stack outputs automatically as parameter overrides
+deploy: build
+    aws cloudformation deploy \
+      --template-file template.json \
+      --stack-name {{STACK}} \
+      --capabilities CAPABILITY_NAMED_IAM \
+      --parameter-overrides \
+        $(aws cloudformation describe-stacks --stack-name {{INFRA}} \
+            --query 'Stacks[0].Outputs[].{k:OutputKey,v:OutputValue}' \
+            --output text | awk '{print $1"="$2}' | tr '\n' ' ')
+
+# Tear down the solr stack
+teardown:
+    aws cloudformation delete-stack --stack-name {{STACK}}
+
+# Show stack status
+status:
+    aws cloudformation describe-stacks --stack-name {{STACK}} \
+      --query 'Stacks[0].StackStatus' --output text
+
+# Show outputs (clusterArn, solrUrl, etc. — passed to connectors)
+outputs:
+    aws cloudformation describe-stacks --stack-name {{STACK}} \
+      --query 'Stacks[0].Outputs' --output table
+
+# Tail ECS/Solr logs (requires log group name from infra outputs)
+logs:
+    aws logs tail /ecs/solr --follow

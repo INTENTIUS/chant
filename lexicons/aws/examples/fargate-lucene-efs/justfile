@@ -1,0 +1,30 @@
+# Build all four stacks
+build-all:
+    just -f infra/justfile build
+    just -f solr/justfile build
+    just -f connectors/justfile build
+    just -f docker/justfile build
+
+# Deploy AWS stacks in order: infra → solr → connectors
+deploy-all:
+    just -f infra/justfile deploy
+    just -f solr/justfile deploy
+    just -f connectors/justfile deploy
+
+# Tear down AWS stacks in reverse order
+teardown-all:
+    just -f connectors/justfile teardown
+    just -f solr/justfile teardown
+    just -f infra/justfile teardown
+
+# Start local Docker Compose stack (builds compose file first)
+up:
+    just -f docker/justfile up
+
+# Stop local stack (preserves volumes)
+down:
+    just -f docker/justfile down
+
+# Stop local stack and delete volumes
+clean:
+    just -f docker/justfile clean

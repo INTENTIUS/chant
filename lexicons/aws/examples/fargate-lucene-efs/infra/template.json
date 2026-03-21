@@ -96,7 +96,7 @@
           {
             "Key": "Name",
             "Value": {
-              "Fn::Sub": "${AWS::StackName}-${appName}-ap"
+              "Fn::Sub": "${AWS::StackName}-${appName}"
             }
           }
         ],
@@ -124,9 +124,6 @@
     "efsSecurityGroup": {
       "Properties": {
         "GroupDescription": "EFS mount target SG",
-        "GroupName": {
-          "Fn::Sub": "${AWS::StackName}-${appName}-efs-sg"
-        },
         "SecurityGroupIngress": [
           {
             "CidrIp": "0.0.0.0/0",

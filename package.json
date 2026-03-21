@@ -4,6 +4,7 @@
     "packages/*",
     "lexicons/*",
     "lexicons/aws/examples/*",
+    "lexicons/aws/examples/fargate-lucene-efs/*",
     "lexicons/gitlab/examples/*",
     "lexicons/k8s/examples/*",
     "lexicons/flyway/examples/*",

@@ -1,0 +1,26 @@
+STACK := "fargate-lucene-efs-connectors"
+SOLR  := "fargate-lucene-efs-solr"
+
+build:
+    npm run build
+
+deploy: build
+    aws cloudformation deploy \
+      --template-file template.json \
+      --stack-name {{STACK}} \
+      --capabilities CAPABILITY_NAMED_IAM \
+      --parameter-overrides \
+        $(aws cloudformation describe-stacks --stack-name {{SOLR}} \
+            --query 'Stacks[0].Outputs[].{k:OutputKey,v:OutputValue}' \
+            --output text | awk '{print $1"="$2}' | tr '\n' ' ')
+
+teardown:
+    aws cloudformation delete-stack --stack-name {{STACK}}
+
+status:
+    aws cloudformation describe-stacks --stack-name {{STACK}} \
+      --query 'Stacks[0].StackStatus' --output text
+
+outputs:
+    aws cloudformation describe-stacks --stack-name {{STACK}} \
+      --query 'Stacks[0].Outputs' --output table

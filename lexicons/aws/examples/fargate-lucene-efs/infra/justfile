@@ -1,0 +1,26 @@
+STACK := "fargate-lucene-efs-infra"
+
+# Build CloudFormation template
+build:
+    npm run build
+
+# Deploy the infra stack (VPC, ALB, ECS cluster, EFS)
+deploy: build
+    aws cloudformation deploy \
+      --template-file template.json \
+      --stack-name {{STACK}} \
+      --capabilities CAPABILITY_NAMED_IAM
+
+# Delete the infra stack (destroys EFS data — run teardown-solr first)
+teardown:
+    aws cloudformation delete-stack --stack-name {{STACK}}
+
+# Show stack status
+status:
+    aws cloudformation describe-stacks --stack-name {{STACK}} \
+      --query 'Stacks[0].StackStatus' --output text
+
+# Show outputs (pass these as params to the solr stack)
+outputs:
+    aws cloudformation describe-stacks --stack-name {{STACK}} \
+      --query 'Stacks[0].Outputs' --output table

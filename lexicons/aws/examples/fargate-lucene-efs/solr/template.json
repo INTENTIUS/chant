@@ -76,7 +76,44 @@
     }
   },
   "Resources": {
-    "scalableTarget": {
+    "solrLogGroup": {
+      "Properties": {
+        "RetentionInDays": 30
+      },
+      "Type": "AWS::Logs::LogGroup"
+    },
+    "solrRule": {
+      "Properties": {
+        "Actions": [
+          {
+            "TargetGroupArn": {
+              "Fn::GetAtt": [
+                "solrTargetGroup",
+                "TargetGroupArn"
+              ]
+            },
+            "Type": "forward"
+          }
+        ],
+        "Conditions": [
+          {
+            "Field": "path-pattern",
+            "PathPatternConfig": {
+              "Values": [
+                "/solr",
+                "/solr/*"
+              ]
+            }
+          }
+        ],
+        "ListenerArn": {
+          "Ref": "listenerArn"
+        },
+        "Priority": 100
+      },
+      "Type": "AWS::ElasticLoadBalancingV2::ListenerRule"
+    },
+    "solrScalableTarget": {
       "Properties": {
         "MaxCapacity": 6,
         "MinCapacity": 1,
@@ -112,10 +149,10 @@
       },
       "Type": "AWS::ApplicationAutoScaling::ScalableTarget"
     },
-    "scalingPolicy": {
+    "solrScalingPolicy": {
       "Properties": {
         "PolicyName": {
-          "Fn::Sub": "${AWS::StackName}-${appName}-cpu"
+          "Fn::Sub": "${AWS::StackName}-cpu"
         },
         "PolicyType": "TargetTrackingScaling",
         "ResourceId": {
@@ -155,43 +192,6 @@
         }
       },
       "Type": "AWS::ApplicationAutoScaling::ScalingPolicy"
-    },
-    "solrLogGroup": {
-      "Properties": {
-        "RetentionInDays": 30
-      },
-      "Type": "AWS::Logs::LogGroup"
-    },
-    "solrRule": {
-      "Properties": {
-        "Actions": [
-          {
-            "TargetGroupArn": {
-              "Fn::GetAtt": [
-                "solrTargetGroup",
-                "TargetGroupArn"
-              ]
-            },
-            "Type": "forward"
-          }
-        ],
-        "Conditions": [
-          {
-            "Field": "path-pattern",
-            "PathPatternConfig": {
-              "Values": [
-                "/solr",
-                "/solr/*"
-              ]
-            }
-          }
-        ],
-        "ListenerArn": {
-          "Ref": "listenerArn"
-        },
-        "Priority": 100
-      },
-      "Type": "AWS::ElasticLoadBalancingV2::ListenerRule"
     },
     "solrService": {
       "DependsOn": "solrRule",
@@ -260,6 +260,12 @@
       "Properties": {
         "ContainerDefinitions": [
           {
+            "Command": [
+              "solr-precreate",
+              {
+                "Ref": "solrCollection"
+              }
+            ],
             "Environment": [
               {
                 "Name": "SOLR_HEAP",
@@ -282,6 +288,12 @@
                 "awslogs-stream-prefix": "ecs"
               }
             },
+            "MountPoints": [
+              {
+                "ContainerPath": "/var/solr",
+                "SourceVolume": "efs-0"
+              }
+            ],
             "Name": "app",
             "PortMappings": [
               {
@@ -319,7 +331,7 @@
               },
               "TransitEncryption": "ENABLED"
             },
-            "Name": "solr-data"
+            "Name": "efs-0"
           }
         ]
       },
