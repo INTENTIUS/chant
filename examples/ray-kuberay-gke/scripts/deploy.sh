@@ -51,5 +51,10 @@ echo "==> Waiting for RayCluster to be ready (~5 minutes)..."
 kubectl -n ray-system wait raycluster/ray \
   --for=jsonpath='{.status.state}'=ready --timeout=300s
 
+echo "==> Running distributed verification job..."
+head_pod=$(kubectl -n ray-system get pod -l ray.io/node-type=head -o name | head -1 | sed 's|pod/||')
+kubectl -n ray-system cp scripts/verify.py "$head_pod:/tmp/verify.py" -c ray-head
+kubectl -n ray-system exec "$head_pod" -c ray-head -- python /tmp/verify.py
+
 echo ""
 echo "Deploy complete."

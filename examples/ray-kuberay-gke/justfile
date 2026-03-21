@@ -48,12 +48,13 @@ wait:
 dashboard:
   kubectl -n {{namespace}} port-forward svc/ray-head-svc 8265:8265
 
-# Submit a test job to verify the cluster
+# Run the distributed verification job (scripts/verify.py) on the head pod
 test-job:
-  kubectl -n {{namespace}} exec \
-    $(kubectl -n {{namespace}} get pod -l ray.io/node-type=head -o name | head -1) \
-    -c ray-head \
-    -- python -c "import ray; ray.init(address='auto'); r=ray.cluster_resources(); print(r); assert r.get('CPU',0)>=4, f'want >=4 CPUs, got {r[\"CPU\"]}'; print('OK')"
+  #!/usr/bin/env bash
+  set -euo pipefail
+  HEAD=$(kubectl -n {{namespace}} get pod -l ray.io/node-type=head -o name | head -1 | sed 's|pod/||')
+  kubectl -n {{namespace}} cp scripts/verify.py "$HEAD:/tmp/verify.py" -c ray-head
+  kubectl -n {{namespace}} exec "$HEAD" -c ray-head -- python /tmp/verify.py
 
 # Tear down K8s resources then GCP infrastructure
 teardown:

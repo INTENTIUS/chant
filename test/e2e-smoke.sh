@@ -486,20 +486,18 @@ test_ray_kuberay_gke() {
     pass "$name: raycluster ready"
   else
     fail "$name: raycluster ready (state=$status)"
+    return
   fi
 
-  # Verify: ray.cluster_resources() shows >= 4 CPUs (head + at least 1 worker)
+  # Verify: run scripts/verify.py (distributed job + shared volume + spill config)
   local head_pod
-  head_pod=$(kubectl -n ray-system get pod -l ray.io/node-type=head -o name 2>/dev/null | head -1)
+  head_pod=$(kubectl -n ray-system get pod -l ray.io/node-type=head -o name 2>/dev/null | head -1 | sed 's|pod/||')
   if [ -n "$head_pod" ]; then
-    local cpus
-    cpus=$(kubectl -n ray-system exec "$head_pod" -c ray-head -- \
-      python -c "import ray; ray.init(address='auto'); print(ray.cluster_resources().get('CPU',0))" \
-      2>/dev/null | tail -1) || cpus=0
-    if awk "BEGIN{exit !($cpus >= 4)}"; then
-      pass "$name: cluster_resources CPU=$cpus"
+    kubectl -n ray-system cp scripts/verify.py "$head_pod:/tmp/verify.py" -c ray-head 2>&1
+    if kubectl -n ray-system exec "$head_pod" -c ray-head -- python /tmp/verify.py 2>&1; then
+      pass "$name: verify.py"
     else
-      fail "$name: cluster_resources CPU=$cpus (want >=4)"
+      fail "$name: verify.py"
     fi
   else
     fail "$name: head pod not found"
