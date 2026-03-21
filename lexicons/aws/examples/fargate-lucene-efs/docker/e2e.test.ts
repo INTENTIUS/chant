@@ -4,6 +4,9 @@ import { compose, dynamo, mc, solrCount, retry, SOLR } from "./test-helpers";
 
 $.verbose = false;
 
+// These tests require `just up` to be running. Skip in CI.
+if (process.env.CI) process.exit(0);
+
 beforeAll(async () => {
   await $`npm run build`;
   await compose("up", "--build", "-d");

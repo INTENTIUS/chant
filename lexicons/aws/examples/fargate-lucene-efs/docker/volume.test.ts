@@ -4,6 +4,9 @@ import { dynamo, mc, solrCount, retry, SOLR } from "./test-helpers";
 
 $.verbose = false;
 
+// These tests require `just up` to be running. Skip in CI.
+if (process.env.CI) process.exit(0);
+
 const N_DYNAMO = 25;
 const N_S3     = 10;
 
