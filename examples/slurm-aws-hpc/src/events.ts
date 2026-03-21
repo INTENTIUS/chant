@@ -10,8 +10,9 @@
 
 import { Function, EventRule, Permission } from "@intentius/chant-lexicon-aws";
 import { EventRule_Target } from "@intentius/chant-lexicon-aws";
-import { Sub, GetAtt } from "@intentius/chant-lexicon-aws";
+import { Sub } from "@intentius/chant-lexicon-aws";
 import { spotHandlerRole } from "./iam";
+import { headNode } from "./head-node";
 import { config } from "./config";
 
 // Inline handler — see lambda/spot-handler.ts for the full TypeScript source.
@@ -27,10 +28,11 @@ exports.handler = async (event) => {
     DocumentName: 'AWS-RunShellScript',
     Parameters: {
       commands: [
-        \`NODE=$(sinfo -N -h -o '%N %e' | grep '\${instanceId}' | awk '{print $1}' | head -1)\`,
-        \`[ -z "$NODE" ] && exit 0\`,
-        \`scontrol update NodeName=$NODE State=drain Reason="spot-interruption-\${instanceId}"\`,
-        \`squeue -w $NODE -h -o '%i' | xargs -r -n1 scontrol requeue\`,
+        \`PRIVATE_IP=$(aws ec2 describe-instances --instance-ids \${instanceId} --query 'Reservations[0].Instances[0].PrivateIpAddress' --output text)\`,
+        \`NODE_NAME=$(scontrol show nodes | grep -B5 "NodeAddr=$PRIVATE_IP" | grep NodeName | awk '{print $1}' | sed 's/NodeName=//')\`,
+        \`[ -z "$NODE_NAME" ] && exit 0\`,
+        \`scontrol update NodeName=$NODE_NAME State=drain Reason="spot-interruption-\${instanceId}"\`,
+        \`squeue -w $NODE_NAME -h -o '%i' | xargs -r -n1 scontrol requeue\`,
       ],
     },
   }));
@@ -49,9 +51,11 @@ export const spotHandlerFn = new Function({
   Environment: {
     Variables: {
       CLUSTER_NAME: config.clusterName,
+      // Resolved at CFN deploy time from the parameter written by head node UserData on boot
+      HEAD_NODE_ID: `{{resolve:ssm:/${config.clusterName}/head-node/instance-id}}`,
     },
   },
-});
+}, { DependsOn: headNode });
 
 // EventBridge rule: EC2 Spot Instance Interruption Warning
 export const spotInterruptionRule = new EventRule({

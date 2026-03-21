@@ -65,7 +65,7 @@ export const headNodeRole = new Role({
           },
           {
             Effect: "Allow",
-            Action: ["ssm:GetParameter"],
+            Action: ["ssm:GetParameter", "ssm:PutParameter"],
             Resource: [Sub(`arn:aws:ssm:${config.region}:*:parameter/${config.clusterName}/*`)],
           },
           {

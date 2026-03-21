@@ -4,10 +4,13 @@ import {
   InternetGateway,
   VPCGatewayAttachment,
   RouteTable,
+  EC2Route,
+  SubnetRouteTableAssociation,
   NatGateway,
+  EIP,
   PlacementGroup,
 } from "@intentius/chant-lexicon-aws";
-import { Ref, Sub, GetAtt } from "@intentius/chant-lexicon-aws";
+import { Sub } from "@intentius/chant-lexicon-aws";
 import { config } from "./config";
 
 // ── VPC ───────────────────────────────────────────────────────────
@@ -19,7 +22,16 @@ export const vpc = new Vpc({
   Tags: [{ Key: "Name", Value: Sub(`${config.clusterName}-vpc`) }],
 });
 
-// ── Subnets (private — HPC nodes don't need public IPs) ──────────
+// ── Subnets ───────────────────────────────────────────────────────
+// One public subnet (for NAT Gateway) + three private subnets (HPC nodes)
+
+export const publicSubnet = new Subnet({
+  VpcId: vpc.VpcId,
+  CidrBlock: "10.0.0.0/24",
+  AvailabilityZone: Sub(`${config.region}a`),
+  MapPublicIpOnLaunch: true,
+  Tags: [{ Key: "Name", Value: `${config.clusterName}-public-1` }],
+});
 
 export const privateSubnet1 = new Subnet({
   VpcId: vpc.VpcId,
@@ -42,7 +54,7 @@ export const privateSubnet3 = new Subnet({
   Tags: [{ Key: "Name", Value: `${config.clusterName}-private-3` }],
 });
 
-// ── Internet Gateway (for NAT + head node egress) ──────────────────
+// ── Internet Gateway ───────────────────────────────────────────────
 
 export const igw = new InternetGateway({
   Tags: [{ Key: "Name", Value: `${config.clusterName}-igw` }],
@@ -53,11 +65,62 @@ export const igwAttachment = new VPCGatewayAttachment({
   InternetGatewayId: igw.InternetGatewayId,
 });
 
+// ── NAT Gateway (outbound internet for private subnets) ───────────
+
+export const natEip = new EIP({
+  Domain: "vpc",
+  Tags: [{ Key: "Name", Value: `${config.clusterName}-nat-eip` }],
+});
+
+export const natGateway = new NatGateway({
+  SubnetId: publicSubnet.SubnetId,
+  AllocationId: natEip.AllocationId,
+  Tags: [{ Key: "Name", Value: `${config.clusterName}-nat` }],
+});
+
 // ── Route tables ───────────────────────────────────────────────────
+
+export const publicRouteTable = new RouteTable({
+  VpcId: vpc.VpcId,
+  Tags: [{ Key: "Name", Value: `${config.clusterName}-public-rt` }],
+});
+
+export const publicRoute = new EC2Route({
+  RouteTableId: publicRouteTable.RouteTableId,
+  DestinationCidrBlock: "0.0.0.0/0",
+  GatewayId: igw.InternetGatewayId,
+});
+
+export const publicSubnetRta = new SubnetRouteTableAssociation({
+  SubnetId: publicSubnet.SubnetId,
+  RouteTableId: publicRouteTable.RouteTableId,
+});
 
 export const privateRouteTable = new RouteTable({
   VpcId: vpc.VpcId,
   Tags: [{ Key: "Name", Value: `${config.clusterName}-private-rt` }],
+});
+
+// Default route for private subnets → NAT Gateway
+export const privateRoute = new EC2Route({
+  RouteTableId: privateRouteTable.RouteTableId,
+  DestinationCidrBlock: "0.0.0.0/0",
+  NatGatewayId: natGateway.NatGatewayId,
+});
+
+export const privateSubnet1Rta = new SubnetRouteTableAssociation({
+  SubnetId: privateSubnet1.SubnetId,
+  RouteTableId: privateRouteTable.RouteTableId,
+});
+
+export const privateSubnet2Rta = new SubnetRouteTableAssociation({
+  SubnetId: privateSubnet2.SubnetId,
+  RouteTableId: privateRouteTable.RouteTableId,
+});
+
+export const privateSubnet3Rta = new SubnetRouteTableAssociation({
+  SubnetId: privateSubnet3.SubnetId,
+  RouteTableId: privateRouteTable.RouteTableId,
 });
 
 // ── EFA Cluster Placement Group ────────────────────────────────────

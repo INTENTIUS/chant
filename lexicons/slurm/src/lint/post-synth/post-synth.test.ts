@@ -19,6 +19,12 @@ import { slr021 } from "./slr021-priority-fairshare";
 import { slr022 } from "./slr022-default-partition";
 import { slr023 } from "./slr023-node-state-valid";
 import { slr024 } from "./slr024-suspend-resume-pair";
+import { slr025 } from "./slr025-gres-conf-missing";
+import { slr026 } from "./slr026-return-to-service";
+import { slr027 } from "./slr027-cgroup-conf-missing";
+import { slr028 } from "./slr028-topology-missing";
+import { slr029 } from "./slr029-rapl-freq";
+import { slr030 } from "./slr030-preempt-type";
 
 function makeCtx(conf: string): PostSynthContext {
   return {
@@ -26,6 +32,21 @@ function makeCtx(conf: string): PostSynthContext {
     entities: new Map(),
     buildResult: {
       outputs: new Map([["slurm", conf]]),
+      entities: new Map(),
+      warnings: [],
+      errors: [],
+      sourceFileCount: 1,
+    },
+  };
+}
+
+function makeCtxWithFiles(conf: string, files: Record<string, string>): PostSynthContext {
+  const output = { primary: conf, files };
+  return {
+    outputs: new Map([["slurm", output as unknown as string]]),
+    entities: new Map(),
+    buildResult: {
+      outputs: new Map([["slurm", output as unknown as string]]),
       entities: new Map(),
       warnings: [],
       errors: [],
@@ -322,5 +343,171 @@ describe("SLR024: suspend/resume pair", () => {
   test("passes when neither is set", () => {
     const conf = "ClusterName=hpc\n";
     expect(slr024.check(makeCtx(conf))).toHaveLength(0);
+  });
+});
+
+// ── SLR025 ────────────────────────────────────────────────────────
+
+describe("SLR025: GPU nodes without gres.conf", () => {
+  test("warns when GPU nodes present but no gres.conf in output", () => {
+    const conf = "GresTypes=gpu\nNodeName=gpu[001-016] CPUs=96 Gres=gpu:a100:8 State=CLOUD\n";
+    const diags = slr025.check(makeCtx(conf));
+    expect(diags.length).toBeGreaterThanOrEqual(1);
+    expect(diags[0].checkId).toBe("SLR025");
+    expect(diags[0].severity).toBe("warning");
+  });
+
+  test("passes when GPU nodes present and gres.conf file exists", () => {
+    const conf = "GresTypes=gpu\nNodeName=gpu[001-016] CPUs=96 Gres=gpu:a100:8 State=CLOUD\n";
+    const diags = slr025.check(makeCtxWithFiles(conf, { "gres.conf": "NodeName=gpu[001-016] Name=gpu AutoDetect=nvml\n" }));
+    expect(diags).toHaveLength(0);
+  });
+
+  test("passes when no GPU nodes present", () => {
+    const conf = "NodeName=cpu[001-032] CPUs=36 RealMemory=71680 State=CLOUD\n";
+    expect(slr025.check(makeCtx(conf))).toHaveLength(0);
+  });
+});
+
+// ── SLR026 ────────────────────────────────────────────────────────
+
+describe("SLR026: CLOUD nodes without ReturnToService", () => {
+  test("warns when CLOUD nodes present but ReturnToService not set", () => {
+    const conf = "NodeName=cpu[001-032] CPUs=36 RealMemory=71680 State=CLOUD\n";
+    const diags = slr026.check(makeCtx(conf));
+    expect(diags.length).toBeGreaterThanOrEqual(1);
+    expect(diags[0].checkId).toBe("SLR026");
+    expect(diags[0].severity).toBe("warning");
+  });
+
+  test("passes when CLOUD nodes present and ReturnToService is set", () => {
+    const conf = "ReturnToService=1\nNodeName=cpu[001-032] CPUs=36 State=CLOUD\n";
+    expect(slr026.check(makeCtx(conf))).toHaveLength(0);
+  });
+
+  test("passes when no CLOUD nodes present", () => {
+    const conf = "NodeName=cpu[001-032] CPUs=36 State=UNKNOWN\n";
+    expect(slr026.check(makeCtx(conf))).toHaveLength(0);
+  });
+});
+
+// ── SLR027 ────────────────────────────────────────────────────────
+
+describe("SLR027: proctrack/cgroup without cgroup.conf", () => {
+  test("warns when proctrack/cgroup set but no cgroup.conf in output", () => {
+    const conf = "ProctrackType=proctrack/cgroup\n";
+    const diags = slr027.check(makeCtx(conf));
+    expect(diags.length).toBeGreaterThanOrEqual(1);
+    expect(diags[0].checkId).toBe("SLR027");
+    expect(diags[0].severity).toBe("warning");
+  });
+
+  test("passes when proctrack/cgroup set and cgroup.conf file exists", () => {
+    const conf = "ProctrackType=proctrack/cgroup\n";
+    const diags = slr027.check(makeCtxWithFiles(conf, { "cgroup.conf": "CgroupPlugin=cgroup/v2\nConstrainRAMSpace=true\n" }));
+    expect(diags).toHaveLength(0);
+  });
+
+  test("passes when proctrack/cgroup is not set", () => {
+    const conf = "ProctrackType=proctrack/linuxproc\n";
+    expect(slr027.check(makeCtx(conf))).toHaveLength(0);
+  });
+});
+
+// ── SLR028 ────────────────────────────────────────────────────────
+
+describe("SLR028: multi-node GPU cluster without TopologyPlugin", () => {
+  test("warns for multi-node GPU cluster without TopologyPlugin", () => {
+    const conf = "GresTypes=gpu\nNodeName=gpu[001-016] CPUs=96 Gres=gpu:a100:8 State=CLOUD\n";
+    const diags = slr028.check(makeCtx(conf));
+    expect(diags.length).toBeGreaterThanOrEqual(1);
+    expect(diags[0].checkId).toBe("SLR028");
+    expect(diags[0].severity).toBe("warning");
+  });
+
+  test("passes when TopologyPlugin is configured", () => {
+    const conf = "GresTypes=gpu\nTopologyPlugin=topology/tree\nNodeName=gpu[001-016] CPUs=96 Gres=gpu:a100:8 State=CLOUD\n";
+    expect(slr028.check(makeCtx(conf))).toHaveLength(0);
+  });
+
+  test("passes for single-node GPU stanza (no brackets)", () => {
+    const conf = "GresTypes=gpu\nNodeName=gpu001 CPUs=96 Gres=gpu:a100:8 State=UNKNOWN\n";
+    expect(slr028.check(makeCtx(conf))).toHaveLength(0);
+  });
+
+  test("passes when no GresTypes=gpu", () => {
+    const conf = "NodeName=gpu[001-016] CPUs=96 State=CLOUD\n";
+    expect(slr028.check(makeCtx(conf))).toHaveLength(0);
+  });
+});
+
+// ── SLR029 ────────────────────────────────────────────────────────
+
+describe("SLR029: RAPL energy accounting overflow risk", () => {
+  test("errors when AcctGatherNodeFreq >= 300 with rapl", () => {
+    const conf = "AcctGatherEnergyType=acct_gather_energy/rapl\nAcctGatherNodeFreq=300\n";
+    const diags = slr029.check(makeCtx(conf));
+    expect(diags.length).toBeGreaterThanOrEqual(1);
+    expect(diags[0].checkId).toBe("SLR029");
+    expect(diags[0].severity).toBe("error");
+  });
+
+  test("errors for freq > 300", () => {
+    const conf = "AcctGatherEnergyType=acct_gather_energy/rapl\nAcctGatherNodeFreq=600\n";
+    expect(slr029.check(makeCtx(conf)).length).toBeGreaterThanOrEqual(1);
+  });
+
+  test("passes when AcctGatherNodeFreq < 300", () => {
+    const conf = "AcctGatherEnergyType=acct_gather_energy/rapl\nAcctGatherNodeFreq=30\n";
+    expect(slr029.check(makeCtx(conf))).toHaveLength(0);
+  });
+
+  test("passes when energy type is not rapl", () => {
+    const conf = "AcctGatherEnergyType=acct_gather_energy/gpu\nAcctGatherNodeFreq=300\n";
+    expect(slr029.check(makeCtx(conf))).toHaveLength(0);
+  });
+
+  test("passes when AcctGatherNodeFreq not set (no overflow risk at default)", () => {
+    const conf = "AcctGatherEnergyType=acct_gather_energy/rapl\n";
+    expect(slr029.check(makeCtx(conf))).toHaveLength(0);
+  });
+});
+
+// ── SLR030 ────────────────────────────────────────────────────────
+
+describe("SLR030: PreemptMode without effective PreemptType", () => {
+  test("warns when partition has PreemptMode but PreemptType is absent", () => {
+    const conf = "PartitionName=low Nodes=cpu[001-016] PreemptMode=REQUEUE\n";
+    const diags = slr030.check(makeCtx(conf));
+    expect(diags.length).toBeGreaterThanOrEqual(1);
+    expect(diags[0].checkId).toBe("SLR030");
+    expect(diags[0].severity).toBe("warning");
+    expect(diags[0].message).toContain("low");
+  });
+
+  test("warns when PreemptType=preempt/none explicitly set", () => {
+    const conf = "PreemptType=preempt/none\nPartitionName=low Nodes=cpu[001-016] PreemptMode=CANCEL\n";
+    const diags = slr030.check(makeCtx(conf));
+    expect(diags.length).toBeGreaterThanOrEqual(1);
+  });
+
+  test("passes when PreemptType=preempt/qos set", () => {
+    const conf = "PreemptType=preempt/qos\nPartitionName=low Nodes=cpu[001-016] PreemptMode=REQUEUE\n";
+    expect(slr030.check(makeCtx(conf))).toHaveLength(0);
+  });
+
+  test("passes when PreemptType=preempt/partition_prio set", () => {
+    const conf = "PreemptType=preempt/partition_prio\nPartitionName=low Nodes=cpu[001-016] PreemptMode=CANCEL\n";
+    expect(slr030.check(makeCtx(conf))).toHaveLength(0);
+  });
+
+  test("passes when PreemptMode=OFF", () => {
+    const conf = "PartitionName=low Nodes=cpu[001-016] PreemptMode=OFF\n";
+    expect(slr030.check(makeCtx(conf))).toHaveLength(0);
+  });
+
+  test("passes when no partitions have PreemptMode set", () => {
+    const conf = "PartitionName=cpu Nodes=cpu[001-016] Default=YES\n";
+    expect(slr030.check(makeCtx(conf))).toHaveLength(0);
   });
 });

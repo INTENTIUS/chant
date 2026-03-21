@@ -73,3 +73,9 @@ Post-synth checks inspect the generated `slurm.conf` text.
 | SLR022 | warning | Exactly one partition must have `Default=YES` |
 | SLR023 | warning | `NodeName.State` must be a valid initial state (UNKNOWN/DOWN/FUTURE/CLOUD/DRAIN) |
 | SLR024 | error/warning | `SuspendProgram` and `ResumeProgram` must be set together |
+| SLR025 | warning | GPU nodes configured but no `GresNode` resources defined (gres.conf missing) |
+| SLR026 | warning | `CLOUD` nodes present but `ReturnToService` not set |
+| SLR027 | warning | `proctrack/cgroup` without `cgroup.conf` — memory constraints inactive |
+| SLR028 | warning | Multi-node GPU cluster without `TopologyPlugin` — NCCL co-location disabled |
+| SLR029 | error | `AcctGatherEnergyType=rapl` with `AcctGatherNodeFreq ≥ 300` — RAPL counter overflow |
+| SLR030 | warning | Partition `PreemptMode` set but `PreemptType=preempt/none` (default) — no effect |

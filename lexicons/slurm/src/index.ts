@@ -5,8 +5,8 @@ export { slurmPlugin } from "./plugin";
 export { slurmSerializer } from "./serializer";
 
 // Conf resources (hand-written)
-export { Cluster, Partition, Node, License } from "./conf/resources";
-export type { ClusterProps, PartitionProps, NodeProps, LicenseProps } from "./conf/resources";
+export { Cluster, Partition, Node, License, GresNode, CgroupConf, Switch } from "./conf/resources";
+export type { ClusterProps, PartitionProps, NodeProps, LicenseProps, GresNodeProps, CgroupConfProps, SwitchProps } from "./conf/resources";
 
 // Composites
 export { GpuPartition } from "./composites/gpu-partition";

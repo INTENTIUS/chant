@@ -181,4 +181,83 @@ describe("slurm serializer", () => {
     expect(result).toContain("Gres=gpu:a100:8");
     expect(result).toContain("Feature=efa,a100");
   });
+
+  it("emits cgroup.conf when CgroupConf entity present", () => {
+    const entities = new Map([
+      ["cgroup", makeEntity("Slurm::Conf::CgroupConf", {
+        CgroupPlugin: "cgroup/v2",
+        ConstrainRAMSpace: true,
+        ConstrainCores: true,
+        ConstrainDevices: true,
+        AllowedRAMSpace: 95,
+        MinRAMSpace: 30,
+      })],
+    ]);
+    const result = slurmSerializer.serialize(entities) as { primary: string; files: Record<string, string> };
+    expect(result.files["cgroup.conf"]).toBeDefined();
+    expect(result.files["cgroup.conf"]).toContain("CgroupPlugin=cgroup/v2");
+    expect(result.files["cgroup.conf"]).toContain("ConstrainRAMSpace=true");
+    expect(result.files["cgroup.conf"]).toContain("ConstrainCores=true");
+    expect(result.files["cgroup.conf"]).toContain("AllowedRAMSpace=95");
+    expect(result.files["cgroup.conf"]).toContain("MinRAMSpace=30");
+  });
+
+  it("emits booleans as true/false in cgroup.conf, not 1/0", () => {
+    const entities = new Map([
+      ["cgroup", makeEntity("Slurm::Conf::CgroupConf", {
+        ConstrainRAMSpace: true,
+        ConstrainSwapSpace: false,
+      })],
+    ]);
+    const result = slurmSerializer.serialize(entities) as { primary: string; files: Record<string, string> };
+    expect(result.files["cgroup.conf"]).toContain("ConstrainRAMSpace=true");
+    expect(result.files["cgroup.conf"]).toContain("ConstrainSwapSpace=false");
+    expect(result.files["cgroup.conf"]).not.toContain("ConstrainRAMSpace=1");
+  });
+
+  it("excludes CgroupConf from primary slurm.conf", () => {
+    const entities = new Map([
+      ["cluster", makeEntity("Slurm::Conf::Cluster", { ClusterName: "hpc", ControlMachine: "head01" })],
+      ["cgroup", makeEntity("Slurm::Conf::CgroupConf", { CgroupPlugin: "cgroup/v2", ConstrainRAMSpace: true })],
+    ]);
+    const result = slurmSerializer.serialize(entities) as { primary: string; files: Record<string, string> };
+    expect(result.primary).not.toContain("CgroupPlugin");
+    expect(result.primary).not.toContain("ConstrainRAMSpace");
+  });
+
+  it("emits topology.conf when Switch entity present", () => {
+    const entities = new Map([
+      ["efaSwitch", makeEntity("Slurm::Conf::Switch", {
+        SwitchName: "efa",
+        Nodes: "gpu[001-016]",
+      })],
+    ]);
+    const result = slurmSerializer.serialize(entities) as { primary: string; files: Record<string, string> };
+    expect(result.files["topology.conf"]).toBeDefined();
+    expect(result.files["topology.conf"]).toContain("SwitchName=efa");
+    expect(result.files["topology.conf"]).toContain("Nodes=gpu[001-016]");
+  });
+
+  it("emits SwitchName first in topology.conf stanza", () => {
+    const entities = new Map([
+      ["spineSwitch", makeEntity("Slurm::Conf::Switch", {
+        SwitchName: "spine",
+        Switches: "tor[01-02]",
+      })],
+    ]);
+    const result = slurmSerializer.serialize(entities) as { primary: string; files: Record<string, string> };
+    const line = result.files["topology.conf"].split("\n").find((l) => l.startsWith("SwitchName=spine"));
+    expect(line).toBeDefined();
+    expect(line).toContain("SwitchName=spine");
+    expect(line).toContain("Switches=tor[01-02]");
+  });
+
+  it("excludes Switch from primary slurm.conf", () => {
+    const entities = new Map([
+      ["cluster", makeEntity("Slurm::Conf::Cluster", { ClusterName: "hpc", ControlMachine: "head01" })],
+      ["sw", makeEntity("Slurm::Conf::Switch", { SwitchName: "efa", Nodes: "gpu[001-016]" })],
+    ]);
+    const result = slurmSerializer.serialize(entities) as { primary: string; files: Record<string, string> };
+    expect(result.primary).not.toContain("SwitchName");
+  });
 });

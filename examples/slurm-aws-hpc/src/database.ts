@@ -44,6 +44,7 @@ export const dbInstance = new DbInstance({
   Engine: "aurora-mysql",
   DBInstanceClass: "db.serverless",
   DBClusterIdentifier: config.dbClusterIdentifier,
+  StorageEncrypted: true,  // inherited from cluster; explicit for lint compliance
   Tags: [{ Key: "Name", Value: `${config.clusterName}-slurmdbd-instance` }],
 });
 

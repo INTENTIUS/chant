@@ -11,9 +11,10 @@
  */
 
 export const config = {
-  // Cluster identity
-  clusterName: "eda-hpc",
-  region: "us-east-1",
+  // Cluster identity — read from env so .env is the single source of truth.
+  // Falls back to the example defaults if the vars are not set.
+  clusterName: process.env.CLUSTER_NAME ?? "eda-hpc",
+  region:      process.env.AWS_REGION   ?? "us-east-1",
 
   // VPC (pre-existing or created elsewhere)
   vpcCidr: "10.0.0.0/16",

@@ -6,7 +6,7 @@
  * memory/time defaults for EDA/ML workloads.
  */
 
-import { Partition, Node, type PartitionProps, type NodeProps } from "../conf/resources";
+import { Partition, Node, GresNode, type PartitionProps, type NodeProps, type GresNodeProps } from "../conf/resources";
 
 export interface GpuPartitionConfig {
   /** Partition name (e.g. "gpu_eda", "train"). */
@@ -39,11 +39,27 @@ export interface GpuPartitionConfig {
    * @default 50
    */
   priority?: number;
+  /** Number of sockets per node (e.g. 2 for p4d.24xlarge). */
+  socketsPerNode?: number;
+  /** Number of cores per socket. */
+  coresPerSocket?: number;
+  /** Threads per core — set to 1 to disable hyperthreading for GPU jobs. */
+  threadsPerCore?: number;
+  /**
+   * When provided, creates a GresNode resource for gres.conf.
+   * autoDetect defaults to "nvml" when this option is set.
+   */
+  gresConf?: {
+    autoDetect?: "nvml" | "off";
+    /** Device path glob (e.g. "/dev/nvidia[0-7]") — only needed when autoDetect="off" */
+    file?: string;
+  };
 }
 
 export interface GpuPartitionResources {
   nodes: InstanceType<typeof Node>;
   partition: InstanceType<typeof Partition>;
+  gresNode?: InstanceType<typeof GresNode>;
 }
 
 /**
@@ -79,6 +95,9 @@ export function GpuPartition(config: GpuPartitionConfig): GpuPartitionResources 
     Gres: `gpu:${config.gpuTypeCount}`,
     Feature: features,
     State: "UNKNOWN",
+    ...(config.socketsPerNode !== undefined && { Sockets: config.socketsPerNode }),
+    ...(config.coresPerSocket !== undefined && { CoresPerSocket: config.coresPerSocket }),
+    ...(config.threadsPerCore !== undefined && { ThreadsPerCore: config.threadsPerCore }),
   };
 
   const partitionProps: PartitionProps = {
@@ -91,8 +110,23 @@ export function GpuPartition(config: GpuPartitionConfig): GpuPartitionResources 
     OverSubscribe: "NO",
   };
 
-  return {
+  const result: GpuPartitionResources = {
     nodes: new Node(nodeProps as unknown as Record<string, unknown>),
     partition: new Partition(partitionProps as unknown as Record<string, unknown>),
   };
+
+  if (config.gresConf) {
+    // gpuTypeCount format: "<model>:<count>" e.g. "a100:8"
+    const gpuModel = config.gpuTypeCount.split(":")[0]; // "a100"
+    const gresNodeProps: GresNodeProps = {
+      NodeName: config.nodePattern,
+      Name: "gpu",
+      ...(gpuModel && { Type: gpuModel }),
+      ...(config.gresConf.file && { File: config.gresConf.file }),
+      AutoDetect: config.gresConf.autoDetect ?? "nvml",
+    };
+    result.gresNode = new GresNode(gresNodeProps as unknown as Record<string, unknown>);
+  }
+
+  return result;
 }

@@ -2,7 +2,6 @@ import { Alarm } from "@intentius/chant-lexicon-aws";
 import { Sub } from "@intentius/chant-lexicon-aws";
 import { scratchFs } from "./storage";
 import { dbCluster } from "./database";
-import { gpuAsg } from "./compute";
 import { config } from "./config";
 
 // ── FSx Lustre throughput alarm ───────────────────────────────────
@@ -52,7 +51,7 @@ export const spotInterruptionAlarm = new Alarm({
   AlarmDescription: "High spot interruption rate on GPU fleet — consider adding instance types",
   Namespace: "AWS/AutoScaling",
   MetricName: "WarmPoolTerminatedInstances",
-  Dimensions: [{ Name: "AutoScalingGroupName", Value: gpuAsg.AutoScalingGroupARN }],
+  Dimensions: [{ Name: "AutoScalingGroupName", Value: Sub(`${config.clusterName}-gpu-asg`) }],
   Period: 300,
   EvaluationPeriods: 1,
   Statistic: "Sum",
@@ -70,7 +69,7 @@ export const asgLagAlarm = new Alarm({
   AlarmDescription: "GPU ASG desired capacity exceeds in-service for >15min — ResumeProgram issue",
   Namespace: "AWS/AutoScaling",
   MetricName: "PendingInstances",
-  Dimensions: [{ Name: "AutoScalingGroupName", Value: gpuAsg.AutoScalingGroupARN }],
+  Dimensions: [{ Name: "AutoScalingGroupName", Value: Sub(`${config.clusterName}-gpu-asg`) }],
   Period: 300,
   EvaluationPeriods: 3,
   Statistic: "Maximum",

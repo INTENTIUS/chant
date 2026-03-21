@@ -19,6 +19,8 @@ import {
   Partition,
   License,
   GpuPartition,
+  CgroupConf,
+  Switch,
 } from "@intentius/chant-lexicon-slurm";
 import { config } from "./config";
 
@@ -26,7 +28,11 @@ import { config } from "./config";
 
 export const cluster = new Cluster({
   ClusterName: config.clusterName,
+  // ControlMachine is required by slurm.conf but the actual hostname is resolved
+  // at runtime. enable_configless broadcasts config automatically so nodes don't
+  // need a hard-coded host. head01 is a placeholder — slurmctld replaces it at boot.
   ControlMachine: "head01",
+  SlurmctldParameters: "enable_configless",
   AuthType: "auth/munge",
 
   // cons_tres: allocates CPUs + memory per-task (required for EDA license accuracy)
@@ -41,8 +47,9 @@ export const cluster = new Cluster({
 
   // slurmdbd on Aurora MySQL — enables QOS enforcement and fairshare
   AccountingStorageType: "accounting_storage/slurmdbd",
-  AccountingStorageHost: "head01",
+  AccountingStorageHost: "localhost",   // slurmdbd runs on the same node as slurmctld
   AccountingStorageEnforce: "associations,limits,qos",
+  StateSaveLocation: "/scratch/slurm/state",  // FSx-backed — survives head node replacement
 
   // GPU GRES — must match gres.conf AutoDetect=nvml on GPU nodes
   GresTypes: "gpu",
@@ -64,6 +71,31 @@ export const cluster = new Cluster({
   ResumeProgram: "/usr/local/bin/slurm_resume_node",
   SuspendTime: 300,       // idle for 5 min → suspend
   ResumeTimeout: 600,     // 10 min to provision + join cluster
+
+  // CLOUD nodes must be able to re-register after spot resume
+  ReturnToService: 1,
+
+  // LBNL NHC: run on any node every 30s to catch hardware failures early
+  HealthCheckProgram: "/usr/sbin/nhc",
+  HealthCheckInterval: 30,
+  HealthCheckNodeState: "ANY",
+
+  // PMIx for both OpenMPI (EDA sim) and NCCL (GPU training)
+  MpiDefault: "pmix",
+  TaskPlugin: "task/cgroup",
+
+  // Faster DOWN detection for spot instances (default is 300s)
+  SlurmdTimeout: 30,
+
+  // Network topology for NCCL/MPI job co-location on EFA
+  TopologyPlugin: "topology/tree",
+
+  // GPU power via NVML — no RAPL on AWS instances (RAPL requires bare-metal CPU counters)
+  AcctGatherEnergyType: "acct_gather_energy/gpu",
+  AcctGatherNodeFreq: 30,
+
+  // Preemption: QOS-based so low-priority jobs can be requeued by high-priority ones
+  PreemptType: "preempt/qos",
 });
 
 // ── CPU compute nodes (synthesis + simulation) ────────────────────
@@ -72,18 +104,25 @@ export const cpuNodes = new Node({
   NodeName: "cpu[001-032]",
   CPUs: 36,               // c5.9xlarge: 36 vCPU, 72 GB RAM
   RealMemory: 71680,      // MB (leave 4GB for OS)
+  Sockets: 2,
+  CoresPerSocket: 9,      // c5.9xlarge: 2 sockets × 9 cores × 2 HT = 36 vCPU
+  ThreadsPerCore: 2,
   State: "CLOUD",         // CLOUD: nodes start stopped, Slurm provisions on demand
 });
 
 // ── GPU compute nodes (EDA AI tools + multi-node training) ────────
 
-export const { nodes: gpuNodes, partition: gpuPartition } = GpuPartition({
+export const { nodes: gpuNodes, partition: gpuPartition, gresNode } = GpuPartition({
   partitionName: "gpu_eda",
   nodePattern: "gpu[001-016]",
   gpuTypeCount: "a100:8",   // 8×A100-80GB per p4d.24xlarge
   cpusPerNode: 96,
   memoryMb: 1_044_480,       // 1020 GB (p4d.24xlarge has 1096 GB, leave headroom)
   maxTime: "1-00:00:00",     // EDA AI tools: 24h max (prevent runaway jobs)
+  socketsPerNode: 2,
+  coresPerSocket: 48,        // p4d.24xlarge: 2 sockets × 48 cores × 1 HT = 96 vCPU
+  threadsPerCore: 1,         // disable HT for GPU jobs (NCCL latency)
+  gresConf: { autoDetect: "nvml" }, // NVML auto-detects A100 devices in gres.conf
 });
 
 // ── EDA partitions ────────────────────────────────────────────────
@@ -96,6 +135,8 @@ export const synthesisPartition = new Partition({
   Priority: 50,
   DefMemPerCPU: 2048,            // 2 GB/CPU default (synthesis is memory-light)
   State: "UP",
+  PowerDownOnIdle: "YES",        // terminate idle nodes as soon as last job finishes
+  SuspendTime: 120,              // per-partition override: 2 min idle before suspend
 });
 
 export const simPartition = new Partition({
@@ -106,6 +147,8 @@ export const simPartition = new Partition({
   Priority: 30,
   DefMemPerCPU: 4096,            // 4 GB/CPU (gate-level sim is memory-heavy)
   State: "UP",
+  PowerDownOnIdle: "YES",        // terminate idle nodes as soon as last job finishes
+  SuspendTime: 120,              // per-partition override: 2 min idle before suspend
 });
 
 // ── License declarations (individual entities → aggregated Licenses= line) ─
@@ -113,3 +156,25 @@ export const simPartition = new Partition({
 export const synthLicense = new License({ LicenseName: "eda_synth", Count: config.licenses.eda_synth });
 export const simLicense = new License({ LicenseName: "eda_sim", Count: config.licenses.eda_sim });
 export const drcLicense = new License({ LicenseName: "calibre_drc", Count: config.licenses.calibre_drc });
+
+// ── cgroup.conf — enforce memory/core/device isolation ────────────
+// Required when ProctrackType=proctrack/cgroup. Without this file,
+// ConstrainRAMSpace defaults to false and runaway EDA jobs can OOM the node.
+
+export const cgroupConf = new CgroupConf({
+  CgroupPlugin: "cgroup/v2",
+  ConstrainRAMSpace: true,
+  ConstrainCores: true,
+  ConstrainDevices: true,   // GPU device isolation via gres.conf AutoDetect=nvml
+  AllowedRAMSpace: 95,      // allow 95% of allocation (5% slack prevents false OOM kills)
+  MinRAMSpace: 30,          // MB floor — prevents slurmstepd from being terminated
+});
+
+// ── topology.conf — EFA flat topology for NCCL co-location ───────
+// All GPU nodes share the same EFA placement group / switch.
+// TopologyPlugin=topology/tree above instructs Slurm to use this file.
+
+export const efaSwitch = new Switch({
+  SwitchName: "efa",
+  Nodes: "gpu[001-016]",
+});

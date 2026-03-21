@@ -18,8 +18,25 @@ import { computeInstanceProfile } from "./iam";
 import { scratchFs } from "./storage";
 import { config } from "./config";
 
-// User data installs Slurm compute daemon and mounts FSx
-const COMPUTE_USERDATA = Sub([
+// Shared bootstrap snippet: resolves head01 via SSM and writes a minimal slurm.conf
+// so slurmd can locate slurmctld for the enable_configless initial fetch.
+const SLURMD_BOOTSTRAP = [
+  `CLUSTER_NAME=${config.clusterName}`,
+  `REGION=${config.region}`,
+  "HEAD_IP=$(aws ssm get-parameter \\",
+  "  --name /$CLUSTER_NAME/head-node/private-ip \\",
+  "  --region $REGION --query Parameter.Value --output text)",
+  "echo \"$HEAD_IP head01\" >> /etc/hosts",
+  "mkdir -p /etc/slurm",
+  "cat > /etc/slurm/slurm.conf << 'EOF'",
+  `ClusterName=${config.clusterName}`,
+  "SlurmctldHost=head01",
+  "AuthType=auth/munge",
+  "EOF",
+];
+
+// GPU compute: ECS GPU-optimized AMI, gres.conf for NVML, then slurmd
+const GPU_COMPUTE_USERDATA = Sub([
   "#!/bin/bash",
   "set -euo pipefail",
   "",
@@ -28,9 +45,70 @@ const COMPUTE_USERDATA = Sub([
   `amazon-linux-extras install -y lustre`,
   `mount -t lustre -o relatime,flock \${${scratchFs.DNSName}}@tcp:/${scratchFs.LustreMountName} /scratch`,
   "",
+  "# Resolve head01 and bootstrap minimal slurm.conf for configless startup",
+  ...SLURMD_BOOTSTRAP,
+  "",
+  "# GPU resource detection (required for GRES accounting)",
+  "cat > /etc/slurm/gres.conf << 'EOF'",
+  "AutoDetect=nvml",
+  "EOF",
+  "",
   "# Start slurmd",
   "systemctl enable --now slurmd",
 ].join("\\n"));
+
+// CPU compute: standard Amazon Linux 2 AMI, no GPU gres.conf
+const CPU_COMPUTE_USERDATA = Sub([
+  "#!/bin/bash",
+  "set -euo pipefail",
+  "",
+  "# Install Slurm compute daemon",
+  "amazon-linux-extras install -y epel",
+  "yum install -y slurm slurm-slurmd 2>/dev/null || \\",
+  "  yum install -y --enablerepo=epel slurm slurm-slurmd",
+  "",
+  "# Mount FSx Lustre",
+  `mkdir -p /scratch`,
+  `amazon-linux-extras install -y lustre`,
+  `mount -t lustre -o relatime,flock \${${scratchFs.DNSName}}@tcp:/${scratchFs.LustreMountName} /scratch`,
+  "",
+  "# Resolve head01 and bootstrap minimal slurm.conf for configless startup",
+  ...SLURMD_BOOTSTRAP,
+  "",
+  "# Start slurmd",
+  "systemctl enable --now slurmd",
+].join("\\n"));
+
+export const cpuLaunchTemplate = new LaunchTemplate({
+  LaunchTemplateName: Sub(`${config.clusterName}-cpu-lt`),
+  LaunchTemplateData: {
+    ImageId: "{{resolve:ssm:/aws/service/ami-amazon-linux-latest/amzn2-ami-hvm-x86_64-gp2}}",
+    InstanceType: config.cpuInstanceType,
+    IamInstanceProfile: { Arn: computeInstanceProfile.Arn },
+    SecurityGroupIds: [clusterSg.GroupId],
+    SubnetId: privateSubnet1.SubnetId,
+    UserData: CPU_COMPUTE_USERDATA,
+    TagSpecifications: [
+      {
+        ResourceType: "instance",
+        Tags: [{ Key: "cluster", Value: config.clusterName }, { Key: "role", Value: "compute-cpu" }],
+      },
+    ],
+  },
+});
+
+export const cpuAsg = new AutoScalingGroup({
+  AutoScalingGroupName: Sub(`${config.clusterName}-cpu-asg`),
+  MinSize: "0",
+  MaxSize: "32",         // matches cpu[001-032] in slurm-cluster.ts
+  DesiredCapacity: "0",  // Slurm SuspendProgram/ResumeProgram controls capacity
+  VPCZoneIdentifier: [privateSubnet1.SubnetId],
+  LaunchTemplate: {
+    LaunchTemplateId: cpuLaunchTemplate.LaunchTemplateId,
+    Version: cpuLaunchTemplate.LatestVersionNumber,
+  },
+  Tags: [{ Key: "cluster", Value: config.clusterName, PropagateAtLaunch: true }],
+});
 
 export const gpuLaunchTemplate = new LaunchTemplate({
   LaunchTemplateName: Sub(`${config.clusterName}-gpu-lt`),
@@ -38,7 +116,7 @@ export const gpuLaunchTemplate = new LaunchTemplate({
     ImageId: "{{resolve:ssm:/aws/service/ecs/optimized-ami/amazon-linux-2/gpu/recommended/image_id}}",
     IamInstanceProfile: { Arn: computeInstanceProfile.Arn },
     SecurityGroupIds: [clusterSg.GroupId],
-    UserData: COMPUTE_USERDATA,
+    UserData: GPU_COMPUTE_USERDATA,
     // EFA network interface — required for p4d.24xlarge full bandwidth
     NetworkInterfaces: [
       {
@@ -83,8 +161,10 @@ export const gpuAsg = new AutoScalingGroup({
 
 // Lifecycle hook: delays instance termination by 5 minutes so Slurm can requeue jobs
 // The spot-handler Lambda completes this hook after drain + requeue.
+// Name must match what spot-handler.ts uses: ${clusterName}-spot-termination-hook
 export const spotTerminationHook = new LifecycleHook({
-  AutoScalingGroupName: gpuAsg.AutoScalingGroupARN,
+  LifecycleHookName: Sub(`${config.clusterName}-spot-termination-hook`),
+  AutoScalingGroupName: Sub(`${config.clusterName}-gpu-asg`),
   LifecycleTransition: "autoscaling:EC2_INSTANCE_TERMINATING",
   HeartbeatTimeout: 300,   // 5 minutes — Slurm spot interruption warning is 2 min
   DefaultResult: "CONTINUE",

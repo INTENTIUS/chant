@@ -47,6 +47,27 @@ const POST_PROVISION_STEPS = [
     },
   },
   {
+    name: "GenerateJwtKey",
+    action: "aws:runCommand",
+    description: "Generate JWT signing key for slurmrestd and store in SSM SecureString",
+    onFailure: "Continue",
+    inputs: {
+      DocumentName: "AWS-RunShellScript",
+      Targets: [{ Key: "tag:cluster", Values: ["{{ ClusterName }}"] },
+                { Key: "tag:role", Values: ["head"] }],
+      Parameters: {
+        commands: [
+          "openssl rand -base64 32 > /etc/slurm/jwt_hs256.key",
+          "chmod 600 /etc/slurm/jwt_hs256.key",
+          "chown slurm:slurm /etc/slurm/jwt_hs256.key",
+          "aws ssm put-parameter --name /{{ ClusterName }}/slurm/jwt-key " +
+          "--value \"$(cat /etc/slurm/jwt_hs256.key)\" --type SecureString --overwrite",
+        ],
+      },
+      TimeoutSeconds: 30,
+    },
+  },
+  {
     name: "ReconfigureSlurm",
     action: "aws:runCommand",
     description: "Reload slurm.conf on the head node after initial provisioning",
@@ -56,6 +77,24 @@ const POST_PROVISION_STEPS = [
       Targets: [{ Key: `tag:cluster`, Values: ["{{ ClusterName }}"] },
                 { Key: "tag:role", Values: ["head"] }],
       Parameters: { commands: ["scontrol reconfigure || true"] },
+      TimeoutSeconds: 30,
+    },
+  },
+  {
+    name: "StartSlurmrestd",
+    action: "aws:runCommand",
+    description: "Enable and start slurmrestd REST API daemon on head node",
+    onFailure: "Continue",
+    inputs: {
+      DocumentName: "AWS-RunShellScript",
+      Targets: [{ Key: "tag:cluster", Values: ["{{ ClusterName }}"] },
+                { Key: "tag:role", Values: ["head"] }],
+      Parameters: {
+        commands: [
+          "systemctl enable --now slurmrestd",
+          "sleep 2 && curl -sf http://localhost:6820/slurm/v0.0.38/ping | jq .meta.Slurm.version || true",
+        ],
+      },
       TimeoutSeconds: 30,
     },
   },

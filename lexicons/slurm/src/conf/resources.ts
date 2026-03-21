@@ -54,6 +54,26 @@ export interface ClusterProps {
   ResumeProgram?: string;         // script path for node resume
   SuspendTime?: number;           // seconds before idle node suspended
   ResumeTimeout?: number;         // max seconds for node to resume
+  SuspendExcNodes?: string;       // node list excluded from power-down (e.g. "head01")
+  SuspendExcParts?: string;       // partition list excluded from power-down
+  ResumeRate?: number;            // max nodes/min to resume (default 300); lower = gentler ASG scaling
+  SuspendRate?: number;           // max nodes/min to suspend (default 60)
+  HealthCheckProgram?: string;    // path to NHC script (e.g. "/usr/sbin/nhc")
+  HealthCheckInterval?: number;   // seconds between health checks (Slurm default: 30)
+  HealthCheckNodeState?: "ALLOC" | "ANY" | "CYCLE" | "IDLE" | "MIXED";
+  MpiDefault?: "none" | "pmi2" | "pmix" | "pmix_v2" | "pmix_v3" | string;
+  TaskPlugin?: "task/affinity" | "task/cgroup" | string;
+  ReturnToService?: 0 | 1 | 2;   // 1 = return CLOUD node when it re-registers (essential for spot)
+  SlurmdTimeout?: number;         // seconds before node marked DOWN (lower = faster spot detection)
+  InactiveLimit?: number;         // seconds a job can be inactive before being killed
+  TopologyPlugin?: "topology/tree" | "topology/block" | "topology/flat" | string;
+  AcctGatherEnergyType?: "acct_gather_energy/rapl" | "acct_gather_energy/ipmi" |
+                          "acct_gather_energy/gpu" | "acct_gather_energy/none" | string;
+  AcctGatherNodeFreq?: number;    // seconds; MUST be <300 for RAPL (counter overflow)
+  AcctGatherInterconnectType?: "acct_gather_interconnect/ofed" |
+                                "acct_gather_interconnect/sysfs" |
+                                "acct_gather_interconnect/none" | string;
+  PreemptType?: "preempt/none" | "preempt/partition_prio" | "preempt/qos" | string;
 }
 
 // ── Partition ────────────────────────────────────────────────────────
@@ -80,6 +100,8 @@ export interface PartitionProps {
   PreemptMode?: "OFF" | "CANCEL" | "CHECKPOINT" | "GANG" | "REQUEUE" | "SUSPEND";
   TRESBillingWeights?: string;  // "CPU=1.0,Mem=0.25G,GRES/gpu=2.0"
   LLN?: "YES" | "NO";          // Least Loaded Node scheduling
+  PowerDownOnIdle?: "YES" | "NO"; // suspend node as soon as its last job finishes
+  SuspendTime?: number;         // per-partition SuspendTime override in seconds
 }
 
 // ── Node ─────────────────────────────────────────────────────────────
@@ -102,6 +124,23 @@ export interface NodeProps {
   TmpDisk?: number;             // local tmp disk in MB
 }
 
+// ── GresNode ─────────────────────────────────────────────────────
+// Maps to entries in gres.conf (not slurm.conf).
+// The serializer routes GresNode entities to a separate gres.conf file.
+
+export const GresNode = createResource("Slurm::Conf::GresNode", "slurm", {});
+
+export interface GresNodeProps {
+  NodeName: string;              // matches Node stanza NodeName
+  Name: "gpu" | "nic" | string; // resource family
+  Type?: string;                 // "a100", "h100", "v100"
+  File?: string;                 // "/dev/nvidia[0-7]"
+  Count?: number;                // explicit count (when not using AutoDetect)
+  AutoDetect?: "nvml" | "rsmi" | "oneapi" | "nrt" | "off"; // nvml = NVIDIA, rsmi = AMD, oneapi = Intel, nrt = AWS Neuron
+  Cores?: string;                // CPU cores NUMA-local to this GPU, e.g. "0-11" or "0-47"
+  Links?: string;                // NVLink topology matrix "0,0,-1,0,0,-1,-1,-1"
+}
+
 // ── License ──────────────────────────────────────────────────────────
 // Represents a license resource managed by Slurm via sacctmgr.
 // In slurm.conf this maps to the Licenses= global key.
@@ -113,4 +152,38 @@ export interface LicenseProps {
   LicenseName: string;          // e.g. "vcs_sim"
   Count: number;                // total token count
   Server?: string;              // license server (optional; for info only)
+}
+
+// ── CgroupConf ───────────────────────────────────────────────────────
+// Maps to /etc/slurm/cgroup.conf — required when ProctrackType=proctrack/cgroup.
+// Without cgroup.conf, ConstrainRAMSpace defaults to false and runaway jobs can
+// consume all node memory.
+
+export const CgroupConf = createResource("Slurm::Conf::CgroupConf", "slurm", {});
+
+export interface CgroupConfProps {
+  CgroupPlugin?: "cgroup/v2" | "cgroup/v1" | "autodetect" | string;
+  ConstrainRAMSpace?: boolean;   // hard memory limits (default false — must set true)
+  ConstrainCores?: boolean;      // cpuset isolation
+  ConstrainDevices?: boolean;    // GPU device isolation (requires gres.conf File=)
+  ConstrainSwapSpace?: boolean;
+  AllowedRAMSpace?: number;      // % of allocation (100 = exact, 95 = recommended)
+  AllowedSwapSpace?: number;     // %
+  MaxRAMPercent?: number;        // cap for unspecified job memory requests
+  MinRAMSpace?: number;          // MB floor — prevents slurmstepd termination
+  SystemdTimeout?: number;       // ms for cgroup cleanup (default 1000)
+}
+
+// ── Switch ───────────────────────────────────────────────────────────
+// Maps to stanzas in /etc/slurm/topology.conf.
+// Required when TopologyPlugin=topology/tree is set in slurm.conf.
+// Enables co-location of NCCL/MPI jobs on the same network switch.
+
+export const Switch = createResource("Slurm::Conf::Switch", "slurm", {});
+
+export interface SwitchProps {
+  SwitchName: string;   // unique identifier (max 64 chars)
+  Nodes?: string;       // leaf nodes (NodeName expression); mutually exclusive with Switches
+  Switches?: string;    // child switch names; mutually exclusive with Nodes
+  LinkSpeed?: number;   // MB/s (informational; currently unused by scheduler)
 }

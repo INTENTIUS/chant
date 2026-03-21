@@ -12,7 +12,7 @@
  * Reference architecture: OpenHPC + SchedMD recommendations for EDA
  */
 
-import { Cluster, Partition, Node, License, type ClusterProps, type PartitionProps, type NodeProps, type LicenseProps } from "../conf/resources";
+import { Cluster, Partition, Node, License, GresNode, CgroupConf, type ClusterProps, type PartitionProps, type NodeProps, type LicenseProps } from "../conf/resources";
 import { GpuPartition, type GpuPartitionConfig } from "./gpu-partition";
 
 export interface EDALicenseConfig {
@@ -39,6 +39,9 @@ export interface EDAClusterConfig {
     cpusPerNode: number;
     memoryMb: number;
     count: number;
+    socketsPerNode?: number;
+    coresPerSocket?: number;
+    threadsPerCore?: number;
   };
   /** GPU nodes for RTL simulation acceleration / ML */
   gpuNodes?: GpuPartitionConfig;
@@ -52,7 +55,44 @@ export interface EDAClusterConfig {
     resumeProgram: string;
     suspendTime: number;
     resumeTimeout: number;
+    excludeNodes?: string;   // nodes excluded from power-down (e.g. "head01")
+    excludeParts?: string;   // partitions excluded from power-down
+    resumeRate?: number;     // max nodes/min to resume (default 300)
+    suspendRate?: number;    // max nodes/min to suspend (default 60)
   };
+  /** cgroup.conf generation — required when ProctrackType=proctrack/cgroup */
+  cgroupConf?: {
+    plugin?: "cgroup/v2" | "autodetect";
+    constrainRAMSpace?: boolean;
+    constrainCores?: boolean;
+    constrainDevices?: boolean;
+    allowedRAMSpace?: number;
+    minRAMSpace?: number;
+  };
+  /** Energy accounting plugin */
+  acctGatherEnergy?: {
+    type: "rapl" | "ipmi" | "gpu" | "none";
+    nodeFreq?: number;
+  };
+  /** Preemption plugin */
+  preemptType?: "preempt/none" | "preempt/partition_prio" | "preempt/qos" | string;
+  /** LBNL NHC or similar node health check program */
+  healthCheck?: {
+    program: string;
+    interval?: number;
+    nodeState?: "ALLOC" | "ANY" | "CYCLE" | "IDLE" | "MIXED";
+  };
+  /** MPI default plugin — "pmix" recommended for OpenMPI + NCCL workloads */
+  mpiDefault?: "none" | "pmi2" | "pmix" | string;
+  /** Task plugin for affinity/cgroup binding */
+  taskPlugin?: "task/affinity" | "task/cgroup" | string;
+  /**
+   * ReturnToService policy for CLOUD nodes.
+   * Defaults to 1 when suspend is configured (nodes must re-register after spot resume).
+   */
+  returnToService?: 0 | 1 | 2;
+  /** Seconds before a non-responding slurmd marks a node DOWN. Lower = faster spot detection. */
+  slurmdTimeout?: number;
 }
 
 export interface EDAClusterResources {
@@ -62,7 +102,9 @@ export interface EDAClusterResources {
   simPartition: InstanceType<typeof Partition>;
   gpuNodes?: InstanceType<typeof Node>;
   gpuPartition?: InstanceType<typeof Partition>;
+  gresNode?: InstanceType<typeof GresNode>;
   licenses: Array<InstanceType<typeof License>>;
+  cgroupConf?: InstanceType<typeof CgroupConf>;
 }
 
 /**
@@ -135,7 +177,37 @@ export function EDACluster(config: EDAClusterConfig): EDAClusterResources {
       ResumeProgram: config.suspend.resumeProgram,
       SuspendTime: config.suspend.suspendTime,
       ResumeTimeout: config.suspend.resumeTimeout,
+      ...(config.suspend.excludeNodes !== undefined && { SuspendExcNodes: config.suspend.excludeNodes }),
+      ...(config.suspend.excludeParts !== undefined && { SuspendExcParts: config.suspend.excludeParts }),
+      ...(config.suspend.resumeRate !== undefined && { ResumeRate: config.suspend.resumeRate }),
+      ...(config.suspend.suspendRate !== undefined && { SuspendRate: config.suspend.suspendRate }),
     }),
+
+    // ReturnToService: default to 1 when suspend is configured (CLOUD nodes must re-register)
+    ReturnToService: config.returnToService ?? (config.suspend ? 1 : undefined),
+
+    // Node health checking
+    ...(config.healthCheck && {
+      HealthCheckProgram: config.healthCheck.program,
+      HealthCheckInterval: config.healthCheck.interval,
+      HealthCheckNodeState: config.healthCheck.nodeState,
+    }),
+
+    // MPI and task affinity
+    ...(config.mpiDefault !== undefined && { MpiDefault: config.mpiDefault }),
+    ...(config.taskPlugin !== undefined && { TaskPlugin: config.taskPlugin }),
+
+    // Slurmd timeout for faster DOWN detection on spot instances
+    ...(config.slurmdTimeout !== undefined && { SlurmdTimeout: config.slurmdTimeout }),
+
+    // Energy accounting
+    ...(config.acctGatherEnergy && {
+      AcctGatherEnergyType: `acct_gather_energy/${config.acctGatherEnergy.type}`,
+      ...(config.acctGatherEnergy.nodeFreq !== undefined && { AcctGatherNodeFreq: config.acctGatherEnergy.nodeFreq }),
+    }),
+
+    // Preemption
+    ...(config.preemptType !== undefined && { PreemptType: config.preemptType }),
   };
 
   const cpuNodeProps: NodeProps = {
@@ -143,6 +215,9 @@ export function EDACluster(config: EDAClusterConfig): EDAClusterResources {
     CPUs: config.cpuNodes.cpusPerNode,
     RealMemory: config.cpuNodes.memoryMb,
     State: "UNKNOWN",
+    ...(config.cpuNodes.socketsPerNode !== undefined && { Sockets: config.cpuNodes.socketsPerNode }),
+    ...(config.cpuNodes.coresPerSocket !== undefined && { CoresPerSocket: config.cpuNodes.coresPerSocket }),
+    ...(config.cpuNodes.threadsPerCore !== undefined && { ThreadsPerCore: config.cpuNodes.threadsPerCore }),
   };
 
   const synthesisProps: PartitionProps = {
@@ -153,6 +228,7 @@ export function EDACluster(config: EDAClusterConfig): EDAClusterResources {
     State: "UP",
     Priority: 50,
     DefMemPerCPU: Math.floor(config.cpuNodes.memoryMb / config.cpuNodes.cpusPerNode),
+    ...(config.suspend && { PowerDownOnIdle: "YES" }),
   };
 
   const simProps: PartitionProps = {
@@ -163,6 +239,7 @@ export function EDACluster(config: EDAClusterConfig): EDAClusterResources {
     State: "UP",
     Priority: 30,
     DefMemPerCPU: Math.floor(config.cpuNodes.memoryMb / config.cpuNodes.cpusPerNode),
+    ...(config.suspend && { PowerDownOnIdle: "YES" }),
   };
 
   const licenseResources = (config.licenses ?? []).map((l) => {
@@ -185,6 +262,21 @@ export function EDACluster(config: EDAClusterConfig): EDAClusterResources {
     const gpu = GpuPartition(config.gpuNodes);
     result.gpuNodes = gpu.nodes;
     result.gpuPartition = gpu.partition;
+    if (gpu.gresNode) result.gresNode = gpu.gresNode;
+  }
+
+  if (config.cgroupConf !== undefined) {
+    const hasGpuNodes = config.gpuNodes !== undefined;
+    result.cgroupConf = new CgroupConf({
+      CgroupPlugin: config.cgroupConf.plugin ?? "cgroup/v2",
+      ConstrainRAMSpace: config.cgroupConf.constrainRAMSpace ?? true,
+      ConstrainCores: config.cgroupConf.constrainCores ?? true,
+      ...(config.cgroupConf.constrainDevices !== undefined
+        ? { ConstrainDevices: config.cgroupConf.constrainDevices }
+        : hasGpuNodes ? { ConstrainDevices: true } : {}),
+      AllowedRAMSpace: config.cgroupConf.allowedRAMSpace ?? 95,
+      MinRAMSpace: config.cgroupConf.minRAMSpace ?? 30,
+    } as unknown as Record<string, unknown>);
   }
 
   return result;

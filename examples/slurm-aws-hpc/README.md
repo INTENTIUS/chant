@@ -59,12 +59,63 @@ The agent builds the stacks, deploys them, and runs the post-provision automatio
 
 - AWS CLI ≥ 2.x configured with credentials (`aws sts get-caller-identity` works)
 - Bun ≥ 1.x or Node.js ≥ 20.x
+- `jq` (used by deploy scripts)
 - An AWS account with service limits for p4d.24xlarge (request via Service Quotas if needed)
 
 ```bash
 npm install
 cp .env.example .env
 # Edit .env: set AWS_REGION and CLUSTER_NAME
+npm run bootstrap
+```
+
+> `src/config.ts` reads `CLUSTER_NAME` and `AWS_REGION` from the environment, so `.env` is the single source of truth for both the scripts and the CloudFormation template.
+
+`npm run bootstrap` checks all prerequisites before you deploy: AWS CLI version, credentials, p4d.24xlarge vCPU quota, and that your `.env` file is present. Fix any `[FAIL]` lines before proceeding. `[WARN]` lines (e.g. quota below target) are non-blocking.
+
+## Project structure
+
+```
+src/
+  config.ts          — cluster name, region, instance types, CIDR blocks
+  networking.ts      → VPC, subnets, NAT Gateway, route tables, security groups
+  head-node.ts       → EC2 instance (c5.2xlarge) with UserData bootstrap script
+  compute.ts         → GPU ASG launch template + Auto Scaling Group
+  storage.ts         → FSx Lustre PERSISTENT_2 filesystem
+  database.ts        → Aurora MySQL Serverless v2 (slurmdbd backend)
+  iam.ts             → IAM roles and instance profiles (head node + compute)
+  security.ts        → Security group rules
+  monitoring.ts      → CloudWatch alarms
+  events.ts          → EventBridge rule + Lambda for spot interruption
+  automation.ts      → SSM Automation document (post-provision steps)
+  slurm-cluster.ts   → Slurm lexicon entry point
+
+dist/
+  infra.json         — CloudFormation template (all AWS resources above)
+  slurm.conf         — Slurm configuration file (distributed to head node by deploy.sh)
+
+scripts/
+  bootstrap.sh       — prerequisite checks (run before deploy)
+  deploy.sh          — deploys CFN stack, then copies dist/slurm.conf to the head node
+  e2e-test.sh        — post-deploy validation (stack, head node, FSx, Aurora, munge, test job)
+  slurm_resume_node.sh  — ResumeProgram hook source (installed by head node UserData)
+  slurm_suspend_node.sh — SuspendProgram hook source (installed by head node UserData)
+  teardown.sh        — deletes the CFN stack
+
+lambda/
+  spot-handler.ts    — TypeScript source of the spot interruption handler (reference only;
+                       the compiled JS is inlined in src/events.ts for CFN ZipFile deployment)
+
+ssm/                 — reserved for future SSM document YAML sources (currently empty)
+```
+
+## Local verification
+
+Verify the build and lint pass before touching AWS:
+
+```bash
+npm run build   # produces dist/infra.json and dist/slurm.conf — no AWS calls
+npm run lint    # chant lint src (pre-synth checks)
 ```
 
 ## Phase-by-phase walkthrough
@@ -97,9 +148,12 @@ aws cloudformation deploy \
 **Estimated time:** ~25 minutes. The long pole is FSx Lustre PERSISTENT_2 provisioning (8–15 min).
 
 What gets created:
-- VPC with 3 private subnets + Internet Gateway
+- VPC (10.0.0.0/16) with 3 private subnets + 1 public subnet
+- Internet Gateway, NAT Gateway, Elastic IP for NAT
+- Route tables and subnet associations (public → IGW, private → NAT)
 - EFA cluster placement group
 - Security groups (cluster, FSx, RDS)
+- **Head node EC2 instance** (c5.2xlarge) with UserData bootstrap script
 - FSx for Lustre PERSISTENT_2 (1200 GiB, 200 MB/s/TiB)
 - Aurora MySQL Serverless v2 (0.5–4 ACU)
 - IAM roles for head node and compute nodes
@@ -110,7 +164,9 @@ What gets created:
 
 ### Phase 3 — Post-provision configuration
 
-Runs automatically after CFN deployment via `npm run deploy`. Runs 4 steps as an SSM Automation execution:
+`deploy.sh` does two things after the CFN stack reaches `CREATE_COMPLETE`: it copies `dist/slurm.conf` to `/etc/slurm/slurm.conf` on the head node via `ssm:send-command`, then triggers the SSM Automation document for post-provision steps. This is why there are two build outputs — `infra.json` goes to CloudFormation; `slurm.conf` goes to the head node.
+
+Runs 4 steps as an SSM Automation execution:
 
 1. **GenerateMungeKey** — creates a 1024-byte random MUNGE authentication key, stores as SSM SecureString at `/${CLUSTER_NAME}/munge/key`
 2. **ReconfigureSlurm** — reloads `slurm.conf` on the head node (`scontrol reconfigure`)
@@ -147,12 +203,21 @@ Submit a test job:
 
 ```bash
 srun --partition=synthesis --ntasks=4 --cpus-per-task=1 hostname
-# Should print: cpu[001-004] (or similar)
+# Should print 4 OS hostnames from the cpu[001-032] pool (e.g. ip-10-0-1-XX.us-east-1.compute.internal)
+# To see Slurm node names instead: srun --partition=synthesis --ntasks=4 scontrol show hostname
 
 # Test license tracking:
 srun --partition=synthesis --licenses=eda_synth:1 sleep 10 &
 squeue  # shows job with license reservation
 ```
+
+Or run the automated validation suite from your local machine:
+
+```bash
+npm run e2e-test
+```
+
+`e2e-test.sh` checks the CFN stack status, head node, FSx and Aurora availability, SSM munge key parameter, munge authentication on the head node, and submits a short `srun` test job via SSM Run Command. Exit 0 means the cluster is fully operational.
 
 ### Phase 5 — GPU fleet
 
@@ -260,4 +325,43 @@ aws lambda get-function-configuration --function-name eda-hpc-spot-handler \
 # On head node: check slurmdbd is running and connected
 sacctmgr show cluster
 # If empty: restart slurmdbd and check /var/log/slurm/slurmdbd.log
+```
+
+**CFN stack stuck at CREATE_IN_PROGRESS:**
+
+The head node UserData script has a 10-minute `CreationPolicy` timeout — if `cfn-signal` isn't received in time, the stack rolls back. To diagnose, connect via SSM before the rollback completes:
+```bash
+aws ssm start-session --target <head-node-instance-id> --region us-east-1
+sudo tail -f /var/log/slurm-bootstrap.log
+```
+Common causes: missing IAM permissions preventing SSM agent start, or `aws s3 cp` of Slurm RPMs failing. Fix the underlying issue and redeploy.
+
+**HEAD_NODE_ID SSM parameter not found (Lambda environment variable):**
+
+The spot-handler Lambda uses `{{resolve:ssm:/${CLUSTER_NAME}/head-node-id}}` in its environment. CloudFormation resolves this at deploy time via a `DependsOn` on the head node resource. If you see `ParameterNotFound` in Lambda logs, the head node either hasn't finished booting or the UserData script failed to write the parameter. Check `/var/log/slurm-bootstrap.log` and redeploy after the head node is healthy.
+
+**Compute nodes stuck in CLOUD state (ResumeProgram ran but ASG didn't scale):**
+```bash
+# Verify the head node IAM role has autoscaling permissions
+aws iam simulate-principal-policy \
+  --policy-source-arn $(aws ec2 describe-instances \
+    --filters Name=tag:role,Values=head Name=tag:cluster,Values=eda-hpc \
+    --query "Reservations[0].Instances[0].IamInstanceProfile.Arn" --output text) \
+  --action-names autoscaling:SetDesiredCapacity \
+  --resource-arns "*"
+# Check ResumeProgram logs on the head node
+sudo cat /var/log/slurm/slurmctld.log | grep -i resume
+```
+
+**munge: Authentication error on compute nodes:**
+
+MUNGE requires all nodes to share the same key. The `GenerateMungeKey` SSM Automation step writes the key to SSM Parameter Store; the head node UserData and compute node launch template pull it from there. If you see `munge: ERROR: Failed to access "/var/run/munge/munge.socket.2"` or auth errors:
+```bash
+# Check the Automation step completed successfully
+aws ssm list-command-invocations --filter key=DocumentName,value=eda-hpc-automation \
+  --details --query "CommandInvocations[*].{Status:Status,Step:CommandPlugins[0].Name}"
+# On the affected node, verify the key was installed
+aws ssm start-session --target <instance-id>
+sudo ls -la /etc/munge/munge.key   # should be owned by munge:munge, mode 0400
+sudo systemctl restart munge && sudo systemctl status munge
 ```

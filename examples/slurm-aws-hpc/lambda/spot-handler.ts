@@ -43,9 +43,10 @@ export const handler = async (event: SpotInterruptionEvent): Promise<void> => {
       DocumentName: "AWS-RunShellScript",
       Parameters: {
         commands: [
-          // Resolve EC2 instance ID → Slurm node name via sinfo
-          `NODE_NAME=$(sinfo -N -h -o "%N %e" | grep -i "${instanceId}" | awk '{print $1}' | head -1)`,
-          `if [ -z "$NODE_NAME" ]; then echo "Node not found in Slurm for instance ${instanceId}"; exit 0; fi`,
+          // Resolve EC2 instance ID → private IP → Slurm node name via NodeAddr
+          `PRIVATE_IP=$(aws ec2 describe-instances --instance-ids ${instanceId} --query 'Reservations[0].Instances[0].PrivateIpAddress' --output text)`,
+          `NODE_NAME=$(scontrol show nodes | grep -B5 "NodeAddr=$PRIVATE_IP" | grep NodeName | awk '{print $1}' | sed 's/NodeName=//')`,
+          `if [ -z "$NODE_NAME" ]; then echo "Node not found in Slurm for instance ${instanceId} (IP=$PRIVATE_IP)"; exit 0; fi`,
           // Drain the node (new jobs won't be scheduled here)
           `scontrol update NodeName=$NODE_NAME State=drain Reason="spot-interruption-${instanceId}"`,
           // Requeue any running jobs on this node so they start elsewhere
