@@ -37,6 +37,10 @@ Paste this to Claude Code from the repo root:
 ```
 Run the ray-kuberay-gke local smoke test.
 The example is in examples/ray-kuberay-gke.
+
+Run npm install from the repo root first, then follow the instructions
+in examples/ray-kuberay-gke/README.md.
+Prerequisites: k3d and kubectl must be installed.
 ```
 
 Or manually:

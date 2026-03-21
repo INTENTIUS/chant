@@ -38,6 +38,7 @@ K8s layer (KubeRay → k8s.yaml)
 |---|---|---|
 | GCP infra | `src/infra/` | `config.yaml` |
 | K8s workloads | `src/k8s/` | `k8s.yaml` |
+| Local k3d smoke test | `k3d/src/` | `k3d/k3d.yaml` |
 
 <Aside type="caution">
 GKE cluster (3× n2-standard-4) + Filestore ENTERPRISE (1Ti) + NAT gateway ≈ $300+/mo while running. The GPU node pool scales to zero. Tear down after testing.
@@ -140,6 +141,32 @@ No key files, no Secrets. The GKE metadata server handles token exchange automat
 ### KubeRay scale ceiling
 
 KubeRay handles clusters up to ~1,000 nodes reliably. Beyond that, the single-controller architecture becomes a bottleneck — the Tencent Weixin team hit this and built a custom distributed scheduler (Starlink) and federated multi-cluster topology. For most production use cases, 1,000 nodes is more than sufficient. If you're approaching that scale, the decision point is: federate multiple KubeRay clusters behind a single submission endpoint, or adopt a custom scheduler.
+
+## Local smoke test (no GCP required)
+
+Before spending $300+/mo on GKE, validate the KubeRay lifecycle locally with k3d. The smoke test runs in ~3 minutes with no cloud credentials.
+
+Paste this to Claude Code from the repo root:
+
+```
+Run the ray-kuberay-gke local smoke test.
+The example is in examples/ray-kuberay-gke.
+
+Run npm install from the repo root first, then follow the instructions
+in examples/ray-kuberay-gke/README.md.
+Prerequisites: k3d and kubectl must be installed.
+```
+
+The agent will create a k3d cluster, install the KubeRay operator, build `k3d/k3d.yaml` from the local chant sources, apply it, and verify that `ray.cluster_resources()` returns ≥ 2 CPUs.
+
+**What the k3d layer validates:**
+- KubeRay operator deploys and becomes Available
+- `RayCluster` CR is accepted and reaches `state=ready`
+- Head + 1 CPU worker join the cluster
+
+**What it does not validate** (all covered by the production GKE deploy): NetworkPolicy enforcement, GPU scheduling, ReadWriteMany shared storage, GCS spillover, Workload Identity.
+
+The k3d config substitutes GCP-specific dependencies with local equivalents: `rayproject/ray:2.40.0` from Docker Hub instead of Artifact Registry, k3s `local-path` StorageClass instead of Filestore, and removes the Workload Identity annotation and GCS spillover config entirely.
 
 ## Deploy
 
