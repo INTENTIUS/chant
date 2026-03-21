@@ -190,24 +190,40 @@ The agent will create a k3d cluster, install the KubeRay operator, build `k3d/k3
 
 **What it does not validate** (all covered by the production GKE deploy): NetworkPolicy enforcement, GPU scheduling, ReadWriteMany shared storage, GCS spillover, Workload Identity.
 
-The k3d config substitutes GCP-specific dependencies with local equivalents: `rayproject/ray:2.40.0` from Docker Hub instead of Artifact Registry, k3s `local-path` StorageClass instead of Filestore, and removes the Workload Identity annotation and GCS spillover config entirely.
+The k3d config substitutes GCP-specific dependencies with local equivalents: `rayproject/ray:2.54.0-py311` from Docker Hub instead of Artifact Registry (aarch64 variant selected automatically on Apple Silicon), k3s `local-path` StorageClass instead of Filestore, and removes the Workload Identity annotation and GCS spillover config entirely.
 
 ## Deploy
 
 See `examples/ray-kuberay-gke/README.md` for the full phase-by-phase deploy guide and paste-ready agent prompt.
 
-Quick reference:
+### Bootstrap Config Connector (one-time)
+
+Config Connector is a GKE addon that manages GCP resources via `kubectl apply`. You need a management cluster with it running before you can apply `config.yaml`. Every chant GKE example ships a bootstrap script for this:
+
+```bash
+export GCP_PROJECT_ID=my-project
+cd examples/ray-kuberay-gke
+just bootstrap   # ~5 minutes
+```
+
+This creates `ray-mgmt` — a single-node GKE cluster in `us-central1` that runs Config Connector. It enables the required GCP APIs (container, compute, file, storage, artifactregistry), creates a `config-connector-sa` service account with `roles/editor` + `roles/iam.securityAdmin`, and wires Workload Identity so the K8s SA can impersonate it.
+
+If you already have a Config Connector management cluster from another chant GKE example, skip this step.
+
+### Quick reference
 
 ```bash
 export GCP_PROJECT_ID=my-project GCP_REGION=us-central1
 cd examples/ray-kuberay-gke
 npm install         # from repo root first
+just bootstrap      # one-time: create Config Connector management cluster
 npm run build:gcp && kubectl apply -f config.yaml
-# wait for cluster
+# wait for cluster (~10 min)
 just get-credentials
 just install-operator
 npm run build:k8s && kubectl apply -f k8s.yaml
 just wait && just test-job
+just install-monitoring && just grafana
 ```
 
 ## Tear down

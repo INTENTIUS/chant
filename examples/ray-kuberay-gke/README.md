@@ -67,9 +67,22 @@ just local-test    # print ray.cluster_resources()
 just local-down    # delete cluster
 ```
 
-### Phase 0 — Prerequisites
+### Phase 0 — Bootstrap Config Connector (one-time)
 
-- A GKE management cluster running Config Connector (needed to apply `config.yaml`). If you don't have one, see the `cockroachdb-multi-region-gke` example for a bootstrap script.
+Config Connector is a GKE addon that lets you manage GCP resources via `kubectl apply`. You need a management cluster with it installed before you can apply `config.yaml`.
+
+If you don't have one:
+
+```bash
+export GCP_PROJECT_ID=my-project
+just bootstrap   # ~5 minutes
+```
+
+This creates `ray-mgmt` — a single-node GKE cluster in `us-central1` with Config Connector and Workload Identity. All `kubectl apply -f config.yaml` commands run against this cluster. Config Connector reconciles the GCP resources (GKE cluster, Filestore, GCS, Artifact Registry, IAM) from there.
+
+If you already have a Config Connector management cluster, skip this step and set your kubectl context to it before Phase 2.
+
+**Other prerequisites:**
 - `gcloud` CLI authenticated: `gcloud auth application-default login`
 - Bun installed: [https://bun.sh](https://bun.sh)
 - `npm install` run from the repo root

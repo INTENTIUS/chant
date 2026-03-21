@@ -4,6 +4,7 @@
   "type": "module",
   "private": true,
   "scripts": {
+    "bootstrap": "bash scripts/bootstrap.sh",
     "build": "chant build src --lexicon gcp -o config.yaml && chant build src --lexicon k8s -o k8s.yaml",
     "build:gcp": "chant build src --lexicon gcp -o config.yaml",
     "build:k8s": "chant build src --lexicon k8s -o k8s.yaml",

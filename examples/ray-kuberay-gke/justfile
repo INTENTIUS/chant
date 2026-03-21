@@ -3,6 +3,10 @@ region       := env_var_or_default("GCP_REGION", "us-central1")
 project_id   := env_var_or_default("GCP_PROJECT_ID", "my-project")
 namespace    := "ray-system"
 
+# Create Config Connector management cluster (one-time setup)
+bootstrap:
+  bash scripts/bootstrap.sh
+
 # Build and deploy everything (infra → K8s)
 deploy: deploy-infra get-credentials install-operator deploy-k8s
 
