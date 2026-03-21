@@ -62,6 +62,8 @@ export default defineConfig({
 						{ label: 'CockroachDB Multi-Region', slug: 'tutorials/cockroachdb-multi-region' },
 						{ label: 'GitLab Cells on GKE', slug: 'tutorials/gitlab-cells' },
 						{ label: 'Temporal Workflow-Driven Deploy', slug: 'tutorials/temporal-crdb-deploy' },
+						{ label: 'Fargate + Lucene/Solr + EFS', slug: 'tutorials/fargate-lucene-efs-solr' },
+						{ label: 'Ray + KubeRay on GKE', slug: 'tutorials/ray-kuberay-gke' },
 					],
 				},
 				{
