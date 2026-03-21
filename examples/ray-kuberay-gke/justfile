@@ -48,3 +48,37 @@ test-job:
 teardown:
   -kubectl delete -f k8s.yaml
   -kubectl delete -f config.yaml
+
+# ── Local k3d smoke test (no GCP required) ────────────────────────────────────
+
+# Full local smoke test: create k3d cluster → install operator → build → apply → verify → clean up
+local-smoke:
+  bash scripts/k3d-smoke.sh
+
+# Create a persistent local k3d cluster for iterative development
+local-up:
+  k3d cluster create ray-kuberay-smoke \
+    --k3s-arg "--disable=traefik@server:*" \
+    --k3s-arg "--disable=servicelb@server:*" \
+    --wait
+  kubectl apply -f https://github.com/ray-project/kuberay/releases/download/v1.3.0/kuberay-operator.yaml
+  kubectl -n kuberay-operator wait deploy/kuberay-operator \
+    --for=condition=Available --timeout=120s
+  npm run build:k3d
+  kubectl apply -f k3d/k3d.yaml
+
+# Wait for the local RayCluster to be ready
+local-wait:
+  kubectl -n {{namespace}} wait raycluster/ray \
+    --for=jsonpath='{.status.state}'=ready --timeout=300s
+  kubectl -n {{namespace}} get pods -l ray.io/cluster-name=ray
+
+# Verify the local cluster: prints ray.cluster_resources()
+local-test:
+  kubectl -n {{namespace}} exec \
+    $(kubectl -n {{namespace}} get pod -l ray.io/node-type=head -o name | head -1) \
+    -- python -c "import ray; ray.init(address='auto'); print(ray.cluster_resources())"
+
+# Delete the local k3d cluster
+local-down:
+  k3d cluster delete ray-kuberay-smoke

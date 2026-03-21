@@ -7,6 +7,7 @@
     "build": "chant build src --lexicon gcp -o config.yaml && chant build src --lexicon k8s -o k8s.yaml",
     "build:gcp": "chant build src --lexicon gcp -o config.yaml",
     "build:k8s": "chant build src --lexicon k8s -o k8s.yaml",
+    "build:k3d": "chant build k3d/src --lexicon k8s -o k3d/k3d.yaml",
     "lint": "chant lint src",
     "deploy-infra": "kubectl apply -f config.yaml",
     "configure-kubectl": "gcloud container clusters get-credentials ${GKE_CLUSTER_NAME:-ray-gke} --region ${GCP_REGION:-us-central1} --project ${GCP_PROJECT_ID}",

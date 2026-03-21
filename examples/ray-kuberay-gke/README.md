@@ -28,6 +28,41 @@ Set GCP_PROJECT_ID=my-project-id before running any commands.
 
 The agent uses `chant-gcp` and `chant-gcp-gke` for the GCP infrastructure layer, then `chant-k8s` and `chant-k8s-ray` for the KubeRay cluster. The phase-by-phase breakdown below shows what it does under the hood.
 
+## Local smoke test (no GCP required)
+
+Validate the KubeRay lifecycle on your laptop before deploying to GKE. Runtime: ~3 minutes. No cloud credentials needed. Prerequisites: `k3d`, `kubectl`.
+
+Paste this to Claude Code from the repo root:
+
+```
+Run the ray-kuberay-gke local smoke test.
+The example is in examples/ray-kuberay-gke.
+```
+
+Or manually:
+
+```bash
+cd examples/ray-kuberay-gke
+just local-smoke
+```
+
+What it validates:
+- KubeRay operator deploys and becomes Available
+- `RayCluster` CR is accepted and reaches `state=ready`
+- Head + 1 CPU worker join the cluster
+- `ray.cluster_resources()` shows ≥ 2 CPUs available
+
+What it does **not** validate: NetworkPolicy enforcement (k3s/flannel does not enforce it), GPU scheduling, ReadWriteMany shared storage, GCS spillover, Workload Identity. These are covered by the production GKE deploy and the unit tests in `examples/examples.test.ts`.
+
+For iterative development without running the full smoke test each time:
+
+```bash
+just local-up      # create cluster, install operator, deploy
+just local-wait    # wait for RayCluster ready
+just local-test    # print ray.cluster_resources()
+just local-down    # delete cluster
+```
+
 ### Phase 0 — Prerequisites
 
 - A GKE management cluster running Config Connector (needed to apply `config.yaml`). If you don't have one, see the `cockroachdb-multi-region-gke` example for a bootstrap script.
