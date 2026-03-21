@@ -42,6 +42,12 @@ export interface HeadGroupSpec {
    * Prevents OOM when PyTorch workers share tensors via /dev/shm.
    */
   shmSize?: string;
+  /**
+   * When true, sets num-cpus=0 so the Ray scheduler never places user tasks on
+   * the head node. Recommended for production — keeps the head free for GCS,
+   * dashboard, and autoscaler. Default: false.
+   */
+  reserveHead?: boolean;
   /** Additional Ray start params merged into defaults. */
   rayStartParams?: Record<string, string>;
   /** Additional environment variables for the head container. */
@@ -187,6 +193,20 @@ function buildVolumeMounts(mountPath?: string): Array<Record<string, unknown>> {
   return mounts;
 }
 
+/**
+ * Extract the Ray version from a container image reference.
+ * Used to populate spec.rayVersion on KubeRay CRs so the autoscaler
+ * pulls an image that matches the running Ray version.
+ *
+ * "rayproject/ray:2.40.0-py310-cpu" → "2.40.0"
+ * "rayproject/ray:latest"           → undefined
+ */
+function extractRayVersion(image: string): string | undefined {
+  const tag = image.includes(":") ? image.split(":").pop()! : image;
+  const m = /^([0-9]+\.[0-9]+\.[0-9]+)/.exec(tag);
+  return m ? m[1] : undefined;
+}
+
 // ── Shared cluster spec builder (used by RayJob and RayService too) ──────────
 
 /**
@@ -199,8 +219,9 @@ export function buildRayClusterParts(
   spilloverBucket: string | undefined,
   pvcName: string | undefined,
   mountPath: string | undefined,
-): { headGroupSpec: Record<string, unknown>; workerGroupSpecs: Array<Record<string, unknown>> } {
+): { headGroupSpec: Record<string, unknown>; workerGroupSpecs: Array<Record<string, unknown>>; rayVersion: string | undefined } {
   const { image, head, workerGroups } = cluster;
+  const rayVersion = extractRayVersion(image);
   const shmSize = head.shmSize ?? "2Gi";
   const resolvedMountPath = pvcName ? (mountPath ?? "/mnt/ray-data") : undefined;
 
@@ -232,7 +253,10 @@ export function buildRayClusterParts(
   };
 
   const headGroupSpec: Record<string, unknown> = {
-    rayStartParams: { ...(head.rayStartParams ?? {}) },
+    rayStartParams: {
+      ...(head.reserveHead && { "num-cpus": "0" }),
+      ...(head.rayStartParams ?? {}),
+    },
     template: {
       spec: {
         serviceAccountName: saName,
@@ -245,11 +269,19 @@ export function buildRayClusterParts(
 
   // ── Worker groups ───────────────────────────────────────────────────────
   const workerGroupSpecs = workerGroups.map((group) => {
+    // Always inject the GCS reconnect timeout — default 60s terminates workers
+    // when the head is briefly unavailable (eviction, rolling restart). 600s gives
+    // workers 10 minutes to wait for head recovery before self-terminating.
+    const workerEnv: Array<Record<string, unknown>> = [
+      { name: "RAY_gcs_rpc_server_reconnect_timeout_s", value: "600" },
+      ...(group.env ?? []),
+    ];
+
     const workerContainer: Record<string, unknown> = {
       name: "ray-worker",
       image,
       resources: buildResources(group.resources),
-      ...(group.env && group.env.length > 0 && { env: group.env }),
+      env: workerEnv,
       volumeMounts: buildVolumeMounts(resolvedMountPath),
       lifecycle: { preStop: { exec: { command: ["ray", "stop"] } } },
     };
@@ -283,7 +315,7 @@ export function buildRayClusterParts(
     };
   });
 
-  return { headGroupSpec, workerGroupSpecs };
+  return { headGroupSpec, workerGroupSpecs, rayVersion };
 }
 
 // ── NetworkPolicy builder ─────────────────────────────────────────────────────
@@ -527,7 +559,7 @@ export const RayCluster = Composite<RayClusterProps>((props) => {
 
   // -- RayCluster CR --
 
-  const { headGroupSpec, workerGroupSpecs } = buildRayClusterParts(
+  const { headGroupSpec, workerGroupSpecs, rayVersion } = buildRayClusterParts(
     cluster, saName, spilloverBucket, pvcName, mountPath,
   );
 
@@ -538,6 +570,7 @@ export const RayCluster = Composite<RayClusterProps>((props) => {
       labels: commonLabels,
     },
     spec: {
+      ...(rayVersion && { rayVersion }),
       ...(enableAutoscaler && { enableInTreeAutoscaling: true }),
       headGroupSpec,
       workerGroupSpecs,

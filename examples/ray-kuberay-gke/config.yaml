@@ -1,0 +1,267 @@
+apiVersion: filestore.cnrm.cloud.google.com/v1beta1
+kind: FilestoreInstance
+metadata:
+  name: ray-filestore
+  labels:
+    app.kubernetes.io/managed-by: chant
+spec:
+  location: us-central1-a
+  tier: BASIC_HDD
+  projectRef:
+    external: lucid-volt-257820
+  fileShares:
+    - name: ray_data
+      capacityGb: 1024
+  networks:
+    - networkRef:
+        external: projects/lucid-volt-257820/global/networks/ray-vpc
+      modes:
+        - MODE_IPV4
+
+---
+apiVersion: artifactregistry.cnrm.cloud.google.com/v1beta1
+kind: ArtifactRegistryRepository
+metadata:
+  name: ray-images
+  annotations:
+    cnrm.cloud.google.com/project-id: lucid-volt-257820
+  labels:
+    app.kubernetes.io/managed-by: chant
+spec:
+  location: us-central1
+  format: DOCKER
+  description: Pre-built Ray images for KubeRay workers
+
+---
+apiVersion: storage.cnrm.cloud.google.com/v1beta1
+kind: StorageBucket
+metadata:
+  name: ray-spill
+  labels:
+    app.kubernetes.io/name: ray-spill
+    app.kubernetes.io/managed-by: chant
+    app.kubernetes.io/component: storage
+spec:
+  location: us-central1
+  storageClass: STANDARD
+  uniformBucketLevelAccess: true
+  lifecycleRule:
+    - action:
+        type: Delete
+      condition:
+        age: 7
+
+---
+apiVersion: container.cnrm.cloud.google.com/v1beta1
+kind: ContainerCluster
+metadata:
+  name: ray-gke
+  labels:
+    app.kubernetes.io/name: ray-gke
+    app.kubernetes.io/managed-by: chant
+    app.kubernetes.io/component: cluster
+spec:
+  initialNodeCount: 1
+  nodeConfig:
+    machineType: n2-standard-4
+    diskType: pd-standard
+    diskSizeGb: 50
+  releaseChannel:
+    channel: REGULAR
+  location: us-central1
+  networkRef:
+    name: ray-vpc
+  subnetworkRef:
+    name: ray-vpc-nodes
+  privateClusterConfig:
+    enablePrivateNodes: true
+    enablePrivateEndpoint: false
+    masterIpv4CidrBlock: '172.16.0.0/28'
+  workloadIdentityConfig:
+    workloadPool: lucid-volt-257820.svc.id.goog
+
+---
+apiVersion: container.cnrm.cloud.google.com/v1beta1
+kind: ContainerNodePool
+metadata:
+  name: ray-gke-gpu
+  labels:
+    app.kubernetes.io/managed-by: chant
+spec:
+  clusterRef:
+    name: ray-gke
+  location: us-central1
+  initialNodeCount: 0
+  autoscaling:
+    minNodeCount: 0
+    maxNodeCount: 4
+    locationPolicy: ANY
+  nodeConfig:
+    machineType: n1-standard-8
+    diskSizeGb: 200
+    diskType: pd-ssd
+    guestAccelerator:
+      - count: 1
+        type: nvidia-tesla-t4
+    taint:
+      - key: nvidia.com/gpu
+        value: present
+        effect: NO_SCHEDULE
+    workloadMetadataConfig:
+      mode: GKE_METADATA
+    oauthScopes:
+      - https://www.googleapis.com/auth/cloud-platform
+  management:
+    autoRepair: true
+    autoUpgrade: true
+
+---
+apiVersion: container.cnrm.cloud.google.com/v1beta1
+kind: ContainerNodePool
+metadata:
+  name: ray-gke-nodes
+  labels:
+    app.kubernetes.io/name: ray-gke
+    app.kubernetes.io/managed-by: chant
+    app.kubernetes.io/component: node-pool
+spec:
+  clusterRef:
+    name: ray-gke
+  initialNodeCount: 1
+  autoscaling:
+    minNodeCount: 1
+    maxNodeCount: 5
+  nodeConfig:
+    machineType: n2-standard-4
+    diskSizeGb: 100
+    diskType: pd-standard
+    oauthScopes:
+      - https://www.googleapis.com/auth/cloud-platform
+    workloadMetadataConfig:
+      mode: GKE_METADATA
+  management:
+    autoRepair: true
+    autoUpgrade: true
+  location: us-central1
+
+---
+apiVersion: iam.cnrm.cloud.google.com/v1beta1
+kind: IAMPolicyMember
+metadata:
+  name: ray-workload-gcs
+  labels:
+    app.kubernetes.io/managed-by: chant
+spec:
+  member: serviceAccount:ray-workload@lucid-volt-257820.iam.gserviceaccount.com
+  role: roles/storage.objectAdmin
+  resourceRef:
+    apiVersion: storage.cnrm.cloud.google.com/v1beta1
+    kind: StorageBucket
+    name: ray-spill
+
+---
+apiVersion: iam.cnrm.cloud.google.com/v1beta1
+kind: IAMServiceAccount
+metadata:
+  name: ray-workload
+  labels:
+    app.kubernetes.io/managed-by: chant
+spec:
+  displayName: Ray KubeRay head workload identity
+
+---
+apiVersion: iam.cnrm.cloud.google.com/v1beta1
+kind: IAMPolicyMember
+metadata:
+  name: ray-workload-wi
+  labels:
+    app.kubernetes.io/managed-by: chant
+spec:
+  member: serviceAccount:lucid-volt-257820.svc.id.goog[ray-system/ray-head]
+  role: roles/iam.workloadIdentityUser
+  resourceRef:
+    apiVersion: iam.cnrm.cloud.google.com/v1beta1
+    kind: IAMServiceAccount
+    name: ray-workload
+
+---
+apiVersion: compute.cnrm.cloud.google.com/v1beta1
+kind: ComputeNetwork
+metadata:
+  name: ray-vpc
+  labels:
+    app.kubernetes.io/name: ray-vpc
+    app.kubernetes.io/managed-by: chant
+    app.kubernetes.io/component: network
+spec:
+  autoCreateSubnetworks: false
+  routingMode: REGIONAL
+
+---
+apiVersion: compute.cnrm.cloud.google.com/v1beta1
+kind: ComputeSubnetwork
+metadata:
+  name: ray-vpc-nodes
+  labels:
+    app.kubernetes.io/name: ray-vpc
+    app.kubernetes.io/managed-by: chant
+    app.kubernetes.io/component: subnet
+spec:
+  networkRef:
+    name: ray-vpc
+  ipCidrRange: '10.0.0.0/20'
+  region: us-central1
+  privateIpGoogleAccess: true
+
+---
+apiVersion: compute.cnrm.cloud.google.com/v1beta1
+kind: ComputeFirewall
+metadata:
+  name: ray-vpc-allow-internal
+  labels:
+    app.kubernetes.io/name: ray-vpc
+    app.kubernetes.io/managed-by: chant
+    app.kubernetes.io/component: firewall
+spec:
+  networkRef:
+    name: ray-vpc
+  allow:
+    - protocol: tcp
+      ports:
+        - '0-65535'
+    - protocol: udp
+      ports:
+        - '0-65535'
+    - protocol: icmp
+  sourceRanges:
+    - '10.0.0.0/20'
+
+---
+apiVersion: compute.cnrm.cloud.google.com/v1beta1
+kind: ComputeRouter
+metadata:
+  name: ray-vpc-router
+  labels:
+    app.kubernetes.io/name: ray-vpc
+    app.kubernetes.io/managed-by: chant
+    app.kubernetes.io/component: router
+spec:
+  networkRef:
+    name: ray-vpc
+  region: us-central1
+
+---
+apiVersion: compute.cnrm.cloud.google.com/v1beta1
+kind: ComputeRouterNAT
+metadata:
+  name: ray-vpc-nat
+  labels:
+    app.kubernetes.io/name: ray-vpc
+    app.kubernetes.io/managed-by: chant
+    app.kubernetes.io/component: nat
+spec:
+  routerRef:
+    name: ray-vpc-router
+  region: us-central1
+  natIpAllocateOption: AUTO_ONLY
+  sourceSubnetworkIpRangesToNat: ALL_SUBNETWORKS_ALL_IP_RANGES

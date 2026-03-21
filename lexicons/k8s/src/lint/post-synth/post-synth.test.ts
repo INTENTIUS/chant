@@ -25,6 +25,9 @@ import { wk8303 } from "./wk8303";
 import { wk8304 } from "./wk8304";
 import { wk8305 } from "./wk8305";
 import { wk8306 } from "./wk8306";
+import { wk8401 } from "./wk8401";
+import { wk8402 } from "./wk8402";
+import { wk8403 } from "./wk8403";
 
 function makeCtx(yaml: string): PostSynthContext {
   return {

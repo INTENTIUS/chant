@@ -200,7 +200,7 @@ export const RayJob = Composite<RayJobProps>((props) => {
 
   // -- RayJob CR --
 
-  const { headGroupSpec, workerGroupSpecs } = buildRayClusterParts(
+  const { headGroupSpec, workerGroupSpecs, rayVersion } = buildRayClusterParts(
     cluster, saName, spilloverBucket, pvcName, mountPath,
   );
 
@@ -216,6 +216,7 @@ export const RayJob = Composite<RayJobProps>((props) => {
       shutdownAfterJobFinishes,
       ttlSecondsAfterFinished,
       rayClusterSpec: {
+        ...(rayVersion && { rayVersion }),
         ...(enableAutoscaler && { enableInTreeAutoscaling: true }),
         headGroupSpec,
         workerGroupSpecs,

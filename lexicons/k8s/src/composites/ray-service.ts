@@ -237,7 +237,7 @@ export const RayService = Composite<RayServiceProps>((props) => {
 
   // -- RayService CR --
 
-  const { headGroupSpec, workerGroupSpecs } = buildRayClusterParts(
+  const { headGroupSpec, workerGroupSpecs, rayVersion } = buildRayClusterParts(
     cluster, saName, spilloverBucket, pvcName, mountPath,
   );
 
@@ -250,6 +250,7 @@ export const RayService = Composite<RayServiceProps>((props) => {
     spec: {
       serveConfigV2,
       rayClusterConfig: {
+        ...(rayVersion && { rayVersion }),
         ...(enableAutoscaler && { enableInTreeAutoscaling: true }),
         headGroupSpec,
         workerGroupSpecs,
