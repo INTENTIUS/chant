@@ -13,6 +13,7 @@
         "@intentius/chant-lexicon-gitlab": "workspace:*",
         "@intentius/chant-lexicon-helm": "workspace:*",
         "@intentius/chant-lexicon-k8s": "workspace:*",
+        "@intentius/chant-lexicon-slurm": "workspace:*",
       },
       "devDependencies": {
         "@typescript-eslint/eslint-plugin": "^8.54.0",

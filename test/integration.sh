@@ -475,6 +475,13 @@ mkdir -p "$TESTDIR/src" && cp /app/test/fixtures/docker.ts "$TESTDIR/src/"
 test_init "docker" "$TESTDIR"
 rm -rf "$TESTDIR"
 
+# Slurm
+test_lexicon "slurm" "/app/test/fixtures/slurm.ts" 'grep -q "ClusterName="' 'grep -q "ClusterName="'
+TESTDIR="/app/_smoke_test_slurm"
+mkdir -p "$TESTDIR/src" && cp /app/test/fixtures/slurm.ts "$TESTDIR/src/"
+test_init "slurm" "$TESTDIR"
+rm -rf "$TESTDIR"
+
 # ── Multi-stack smoke test ────────────────────────────────────────────
 
 log "test_build_multistack"

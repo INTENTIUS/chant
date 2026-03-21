@@ -24,13 +24,14 @@
   "dependencies": {
     "@intentius/chant-lexicon-aws": "workspace:*",
     "@intentius/chant-lexicon-azure": "workspace:*",
+    "@intentius/chant-lexicon-docker": "workspace:*",
     "@intentius/chant-lexicon-flyway": "workspace:*",
     "@intentius/chant-lexicon-gcp": "workspace:*",
+    "@intentius/chant-lexicon-github": "workspace:*",
     "@intentius/chant-lexicon-gitlab": "workspace:*",
     "@intentius/chant-lexicon-helm": "workspace:*",
-    "@intentius/chant-lexicon-docker": "workspace:*",
-    "@intentius/chant-lexicon-github": "workspace:*",
-    "@intentius/chant-lexicon-k8s": "workspace:*"
+    "@intentius/chant-lexicon-k8s": "workspace:*",
+    "@intentius/chant-lexicon-slurm": "workspace:*"
   },
   "devDependencies": {
     "@typescript-eslint/eslint-plugin": "^8.54.0",
