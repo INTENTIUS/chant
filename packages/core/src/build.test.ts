@@ -2,6 +2,7 @@ import { describe, test, expect, beforeEach, afterEach } from "bun:test";
 import { build, partitionByLexicon, detectCrossLexiconRefs } from "./build";
 import { output } from "./lexicon-output";
 import { AttrRef } from "./attrref";
+import { INTRINSIC_MARKER } from "./intrinsic";
 import type { Serializer } from "./serializer";
 import type { Declarable } from "./declarable";
 import { DECLARABLE_MARKER } from "./declarable";
@@ -410,7 +411,6 @@ describe("detectCrossLexiconRefs", () => {
       [DECLARABLE_MARKER]: true,
     } as Declarable;
 
-    const { INTRINSIC_MARKER } = require("./intrinsic");
     const mockIntrinsic = {
       [INTRINSIC_MARKER]: true as const,
       toJSON: () => ({ "Fn::Sub": "http://example.com/path" }),

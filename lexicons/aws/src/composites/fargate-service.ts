@@ -325,7 +325,7 @@ export const FargateService = Composite<FargateServiceProps>((props) => {
     targetGroup,
     rule,
     service,
-    scalableTarget,
-    scalingPolicy,
+    ...(scalableTarget ? { scalableTarget } : {}),
+    ...(scalingPolicy ? { scalingPolicy } : {}),
   };
 }, "FargateService");

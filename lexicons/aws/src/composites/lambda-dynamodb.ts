@@ -114,5 +114,5 @@ export const LambdaDynamoDB = Composite<LambdaDynamoDBProps>((props) => {
     }, defaults?.eventSourceMapping));
   }
 
-  return { table, role, func, eventSourceMapping };
+  return { table, role, func, ...(eventSourceMapping ? { eventSourceMapping } : {}) };
 }, "LambdaDynamoDB");
