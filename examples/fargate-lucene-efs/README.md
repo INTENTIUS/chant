@@ -4,6 +4,14 @@ Three CloudFormation stacks wire together a VPC, an EFS-backed Solr service on F
 
 ## Agent walkthrough
 
+The lexicon packages ship skills for agent-guided deployment. After `npm install`, your agent has access to:
+
+| Skill | Package | Purpose |
+|-------|---------|---------|
+| `chant-aws` | `@intentius/chant-lexicon-aws` | CloudFormation lifecycle: build, validate, change sets, deploy, rollback |
+| `chant-docker` | `@intentius/chant-lexicon-docker` | Docker Compose lifecycle: build, up, down, validate |
+| `chant-docker-patterns` | `@intentius/chant-lexicon-docker` | Common Docker Compose patterns: databases, volumes, healthchecks |
+
 Paste this to Claude Code in the repo root:
 
 ```
@@ -11,7 +19,7 @@ Deploy the fargate-lucene-efs example to AWS.
 My AWS region is us-east-1.
 ```
 
-The agent builds all stacks, smoke-tests locally with Docker, then deploys the three AWS stacks in order. The phase-by-phase breakdown below shows what it does under the hood, for reference.
+The agent uses `chant-aws` for CloudFormation and `chant-docker` for the local smoke test, then deploys the three AWS stacks in order. The phase-by-phase breakdown below shows what it does under the hood, for reference.
 
 ### Phase 0 — Local smoke test
 
