@@ -133,6 +133,42 @@ Open the dashboard:
 just dashboard     # → http://localhost:8265
 ```
 
+## Job portability
+
+Any Ray job that runs against a local KubeRay cluster runs unchanged against this GKE deployment. The Ray Jobs HTTP API is the same:
+
+```bash
+kubectl port-forward -n ray-system svc/ray-head-svc 8265:8265
+ray job submit --address http://localhost:8265 -- python your_job.py
+```
+
+One pattern difference: local clusters often use `runtime_env` YAML for pip dependencies — convenient for iteration. At 10+ workers, `runtime_env` pip installs run on every restart and add significant startup time. The pre-built Artifact Registry image approach this example uses avoids that.
+
+## Observability
+
+Install Prometheus + Grafana via kube-prometheus-stack. The same Helm command works locally (k3d) and on GKE:
+
+```bash
+just install-monitoring
+just grafana        # → http://localhost:3000, admin/admin
+```
+
+The Ray dashboard Metrics tab is enabled via `RAY_GRAFANA_HOST` — set automatically to the in-cluster Grafana service. To import Ray's pre-built dashboards into Grafana, copy the JSON files from the head pod:
+
+```bash
+HEAD=$(kubectl -n ray-system get pod -l ray.io/node-type=head -o name | head -1)
+kubectl -n ray-system exec "$HEAD" -- \
+  ls /tmp/ray/session_latest/metrics/grafana/dashboards/
+```
+
+For local development:
+
+```bash
+just local-up
+just local-monitoring   # install monitoring in k3d
+just grafana
+```
+
 ## Configuration
 
 Set these environment variables before building or running `just` targets:
@@ -143,7 +179,8 @@ Set these environment variables before building or running `just` targets:
 | `GCP_REGION` | `us-central1` | Region for GKE cluster and Filestore |
 | `GKE_CLUSTER_NAME` | `ray-gke` | GKE cluster name |
 | `RAY_GSA_EMAIL` | `ray-workload@my-project.iam.gserviceaccount.com` | GCP service account email for Workload Identity |
-| `RAY_IMAGE` | `us-central1-docker.pkg.dev/my-project/ray-images/ray:2.40.0` | Pre-built Ray image in Artifact Registry |
+| `RAY_IMAGE` | `us-central1-docker.pkg.dev/my-project/ray-images/ray:2.54.0` | Pre-built Ray image in Artifact Registry |
+| `RAY_GRAFANA_HOST` | `http://kube-prometheus-stack-grafana.monitoring.svc.cluster.local` | Grafana URL for Ray dashboard Metrics tab |
 
 ## Cost
 

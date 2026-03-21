@@ -34,6 +34,7 @@ export const {
     head: {
       resources: { cpu: "1", memory: "2Gi" },
       shmSize: "1Gi",
+      env: [{ name: "RAY_GRAFANA_HOST", value: localConfig.grafanaHost }],
     },
     workerGroups: [
       {

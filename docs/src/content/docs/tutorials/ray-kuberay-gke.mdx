@@ -16,7 +16,7 @@ GCP infra layer (Config Connector → config.yaml)
   └── GPU node pool (n1-standard-8 + T4, scales to zero)
   Filestore ENTERPRISE (1Ti, ReadWriteMany)
   GCS spillover bucket (7-day lifecycle)
-  Artifact Registry (pre-built Ray images)
+  Artifact Registry (pre-built Ray images, ray:2.54.0)
   IAM: GSA ray-workload → Workload Identity → K8s SA ray-head
        ray-workload → roles/storage.objectAdmin → spillover bucket
 
@@ -137,6 +137,30 @@ defaults: {
 ```
 
 No key files, no Secrets. The GKE metadata server handles token exchange automatically.
+
+### Observability: Prometheus + Grafana via Helm
+
+The same `helm install kube-prometheus-stack` command installs Prometheus + Grafana in both k3d and GKE:
+
+```bash
+just install-monitoring   # works in k3d and on GKE
+just grafana              # port-forward → http://localhost:3000
+```
+
+The `RayCluster` composite sets `RAY_GRAFANA_HOST` on the head pod, which enables the Ray dashboard's Metrics tab to embed the Grafana iframe. The env var points at the in-cluster kube-prometheus-stack Grafana service — the same DNS name resolves in both environments because both use the same Helm release name.
+
+Ray ships six pre-built Grafana dashboard JSONs at `/tmp/ray/session_latest/metrics/grafana/dashboards/` inside the head pod. Copy them into Grafana to get per-cluster, per-worker, and per-job panels out of the box.
+
+### Job portability
+
+Ray's HTTP Jobs API is the same whether you're talking to a local KubeRay cluster or this GKE deployment:
+
+```bash
+kubectl port-forward -n ray-system svc/ray-head-svc 8265:8265
+ray job submit --address http://localhost:8265 -- python your_job.py
+```
+
+Jobs written with standard `@ray.remote` decorators, Ray Tune, or Ray Data require no changes to run on GKE. The one pattern that diverges: `runtime_env` YAML for pip dependencies works fine locally but serializes across all workers on cluster startup at scale — 100 workers each running `pip install` adds 20+ minutes to cold start. Pre-built images (the approach this example uses) eliminate that overhead entirely.
 
 ### KubeRay scale ceiling
 

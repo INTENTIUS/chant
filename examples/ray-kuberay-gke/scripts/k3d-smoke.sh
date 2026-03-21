@@ -42,6 +42,7 @@ echo "=== Creating k3d cluster: $CLUSTER ==="
 k3d cluster create "$CLUSTER" \
   --k3s-arg "--disable=traefik@server:*" \
   --k3s-arg "--disable=servicelb@server:*" \
+  --k3s-arg "--kubelet-arg=pod-max-pids=4096@server:*" \
   --wait
 
 # --- 3. Install KubeRay operator ---

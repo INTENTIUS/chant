@@ -60,6 +60,7 @@ local-up:
   k3d cluster create ray-kuberay-smoke \
     --k3s-arg "--disable=traefik@server:*" \
     --k3s-arg "--disable=servicelb@server:*" \
+    --k3s-arg "--kubelet-arg=pod-max-pids=4096@server:*" \
     --wait
   kubectl apply -f https://github.com/ray-project/kuberay/releases/download/v1.3.0/kuberay-operator.yaml
   kubectl -n kuberay-operator wait deploy/kuberay-operator \
@@ -82,3 +83,23 @@ local-test:
 # Delete the local k3d cluster
 local-down:
   k3d cluster delete ray-kuberay-smoke
+
+# ── Observability (Prometheus + Grafana) ──────────────────────────────────────
+
+# Install kube-prometheus-stack (works in both k3d and GKE)
+install-monitoring:
+  helm repo add prometheus-community https://prometheus-community.github.io/helm-charts
+  helm repo update
+  helm upgrade --install kube-prometheus-stack prometheus-community/kube-prometheus-stack \
+    -n monitoring --create-namespace \
+    --set grafana.adminPassword=admin \
+    --set grafana.sidecar.dashboards.enabled=true
+  kubectl -n monitoring wait deploy/kube-prometheus-stack-grafana \
+    --for=condition=Available --timeout=120s
+
+# Port-forward Grafana (http://localhost:3000, admin/admin)
+grafana:
+  kubectl -n monitoring port-forward svc/kube-prometheus-stack-grafana 3000:80
+
+# Install monitoring in the local k3d cluster
+local-monitoring: install-monitoring

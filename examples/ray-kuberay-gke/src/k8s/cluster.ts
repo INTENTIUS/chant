@@ -43,6 +43,9 @@ export const {
     head: {
       resources: { cpu: "2", memory: "8Gi" },
       shmSize: "4Gi",    // Larger /dev/shm for PyTorch multi-process tensor sharing
+      // Enable the Ray dashboard Metrics tab by pointing at the Grafana service.
+      // Install monitoring first: `just install-monitoring`
+      env: [{ name: "RAY_GRAFANA_HOST", value: config.grafanaHost }],
     },
 
     workerGroups: [

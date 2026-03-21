@@ -29,5 +29,10 @@ export const config = {
   // Ray namespace and image
   namespace: "ray-system",
   rayImage: process.env.RAY_IMAGE
-    ?? "us-central1-docker.pkg.dev/my-project/ray-images/ray:2.40.0",
+    ?? "us-central1-docker.pkg.dev/my-project/ray-images/ray:2.54.0",
+
+  // Grafana host for Ray dashboard Metrics tab (RAY_GRAFANA_HOST).
+  // Points at kube-prometheus-stack Grafana installed via `just install-monitoring`.
+  grafanaHost: process.env.RAY_GRAFANA_HOST
+    ?? "http://kube-prometheus-stack-grafana.monitoring.svc.cluster.local",
 };
