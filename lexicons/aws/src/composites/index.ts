@@ -26,3 +26,5 @@ export { RdsInstance, RdsInstance as RdsPostgres } from "./rds-instance";
 export type { RdsInstanceProps, RdsInstanceProps as RdsPostgresProps } from "./rds-instance";
 export { EfsWithAccessPoint } from "./efs-with-access-point";
 export type { EfsWithAccessPointProps } from "./efs-with-access-point";
+export { SolrFargateService } from "./solr-fargate-service";
+export type { SolrFargateServiceProps } from "./solr-fargate-service";
