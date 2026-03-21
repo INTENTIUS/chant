@@ -60,9 +60,12 @@ done
 
 echo "==> Binding Config Connector SA to K8s SA via Workload Identity..."
 gcloud iam service-accounts add-iam-policy-binding "$cc_sa_email" \
-  --member "serviceAccount:${project_id}.svc.id.goog[cnrm-system/cnrm-controller-manager]" \
+  --member "serviceAccount:${project_id}.svc.id.goog[cnrm-system/cnrm-controller-manager-default]" \
   --role roles/iam.workloadIdentityUser \
   --project "$project_id" --quiet
+
+echo "==> Annotating default namespace with project ID..."
+kubectl annotate namespace default "cnrm.cloud.google.com/project-id=${project_id}" --overwrite
 
 echo "==> Creating ConfigConnectorContext in default namespace..."
 kubectl apply -f - <<EOF

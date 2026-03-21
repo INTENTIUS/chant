@@ -10,7 +10,8 @@ export const config = {
   // GKE
   clusterName: process.env.GKE_CLUSTER_NAME ?? "ray-gke",
   vpcName: process.env.VPC_NAME ?? "ray-vpc",
-  subnetName: process.env.SUBNET_NAME ?? "ray-subnet",
+  // CC resource name for the subnet (VpcNetwork creates it as "${vpcName}-nodes").
+  subnetName: process.env.SUBNET_NAME ?? "ray-vpc-nodes",
 
   // Filestore (created in infra layer)
   filestoreName: process.env.FILESTORE_NAME ?? "ray-filestore",

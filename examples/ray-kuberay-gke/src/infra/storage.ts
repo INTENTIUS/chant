@@ -28,9 +28,7 @@ export const rayRegistry = new ArtifactRegistryRepository({
     },
     labels: { "app.kubernetes.io/managed-by": "chant" },
   },
-  spec: {
-    location: config.region,
-    format: "DOCKER",
-    description: "Pre-built Ray images for KubeRay workers",
-  },
+  location: config.region,
+  format: "DOCKER",
+  description: "Pre-built Ray images for KubeRay workers",
 });

@@ -1,7 +1,9 @@
 // GCP Filestore instance for shared Ray training data.
 //
-// ENTERPRISE tier provides 99.99% SLA (vs STANDARD's 99.9%) and supports
-// ReadWriteMany access from all Ray workers simultaneously.
+// BASIC_HDD: NFS share accessible by all Ray workers simultaneously (ReadWriteMany).
+// For production, upgrade to ENTERPRISE tier for 99.99% SLA and regional HA — but
+// ENTERPRISE requires a quota increase (default quota is 0). BASIC_HDD works out
+// of the box and is sufficient for development and moderate workloads.
 // This instance is referenced by the FilestoreStorageClass in the K8s layer.
 
 import { FilestoreInstance } from "@intentius/chant-lexicon-gcp";
@@ -10,26 +12,23 @@ import { config } from "../config";
 export const filestoreInstance = new FilestoreInstance({
   metadata: {
     name: config.filestoreName,
-    annotations: {
-      "cnrm.cloud.google.com/project-id": config.projectId,
-    },
     labels: { "app.kubernetes.io/managed-by": "chant" },
   },
-  spec: {
-    // Zone within the region — Filestore ENTERPRISE is a single-zone resource.
-    location: `${config.region}-a`,
-    tier: "ENTERPRISE",
-    fileShares: [
-      {
-        name: "ray_data",
-        capacityGb: 1024,
-      },
-    ],
-    networks: [
-      {
-        network: config.vpcName,
-        modes: ["MODE_IPV4"],
-      },
-    ],
-  },
+  // BASIC_HDD is zonal — use a zone within the region.
+  // ENTERPRISE requires a quota increase; BASIC_HDD works on new projects.
+  location: `${config.region}-a`,
+  tier: "BASIC_HDD",
+  projectRef: { external: config.projectId },
+  fileShares: [
+    {
+      name: "ray_data",
+      capacityGb: 1024,
+    },
+  ],
+  networks: [
+    {
+      networkRef: { external: `projects/${config.projectId}/global/networks/${config.vpcName}` },
+      modes: ["MODE_IPV4"],
+    },
+  ],
 });
