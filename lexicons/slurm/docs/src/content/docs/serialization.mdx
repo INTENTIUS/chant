@@ -7,14 +7,18 @@ The Slurm lexicon uses a routing serializer that dispatches on entity type prefi
 
 ## Conf resources → slurm.conf
 
-Resources with type prefix `Slurm::Conf::*` serialize into the primary `slurm.conf` output.
+Resources with type prefix `Slurm::Conf::*` serialize into the primary `slurm.conf` output,
+with the following exceptions that route to separate files:
 
-| Resource | Serialization |
-|---|---|
-| `Cluster` | Top-level key=value lines |
-| `Node` | `NodeName=<pattern> CPUs=... RealMemory=...` stanza |
-| `Partition` | `PartitionName=<name> Nodes=... MaxTime=...` stanza |
-| `License` | Aggregated into a single `Licenses=name1:count1,name2:count2` line |
+| Resource | Output file | Format |
+|---|---|---|
+| `Cluster` | `slurm.conf` (primary) | Top-level key=value lines |
+| `Node` | `slurm.conf` (primary) | `NodeName=<pattern> CPUs=... RealMemory=...` stanza |
+| `Partition` | `slurm.conf` (primary) | `PartitionName=<name> Nodes=... MaxTime=...` stanza |
+| `License` | `slurm.conf` (primary) | Aggregated into a single `Licenses=name1:count1,...` line |
+| `GresNode` | `gres.conf` | `NodeName=... Name=... AutoDetect=...` stanza |
+| `CgroupConf` | `cgroup.conf` | Flat `Key=value` file (booleans as `true`/`false`) |
+| `Switch` | `topology.conf` | `SwitchName=... Nodes=...` stanza |
 
 Example output:
 
@@ -55,13 +59,19 @@ When REST resources are present, the build returns a `SerializerResult` with:
 ```
 dist/
 ├── slurm.conf          (primary)
+├── gres.conf           (GresNode entities)
+├── cgroup.conf         (CgroupConf entity)
+├── topology.conf       (Switch entities)
 ├── jobs/
 │   └── llm-train.json
 └── qos/
     └── high-priority.json
 ```
 
+When any of `GresNode`, `CgroupConf`, or `Switch` entities are present, the build returns
+a `SerializerResult` with `{ primary, files }` instead of a plain string.
+
 ## rulePrefix
 
 The serializer uses `rulePrefix: "SLR"`. Lint rules and post-synth checks are
-namespaced under this prefix (SLRC001, SLRS001, SLR010–SLR024).
+namespaced under this prefix (SLRC001, SLRS001, SLR010–SLR030).

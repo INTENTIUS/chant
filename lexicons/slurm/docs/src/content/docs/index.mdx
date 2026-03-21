@@ -15,17 +15,17 @@ drift detection, and no type-safe schema. A typo in `SelectTypeParameters` silen
 disables fair memory allocation across hundreds of nodes.
 
 Chant fills this gap: TypeScript source is the single source of truth, CI builds
-deterministic output, and 15 post-synth checks catch production gotchas before deploy.
+deterministic output, and 21 post-synth checks catch production gotchas before deploy.
 
 ## What's included
 
 | Feature | Details |
 |---|---|
-| **Conf resources** | `Cluster`, `Node`, `Partition`, `License` |
+| **Conf resources** | `Cluster`, `Node`, `Partition`, `License`, `GresNode`, `CgroupConf`, `Switch` |
 | **REST resources** | `Job`, `Reservation`, `QoS` (Slurm 23.11 / v0.0.39) |
 | **Composites** | `GpuPartition`, `EDACluster`, `TrainingJob` |
 | **Lint rules** | 4 pre-synth rules (SLRC001, SLRS001, SLRC002, SLRC003) |
-| **Post-synth checks** | 15 checks (SLR010–SLR024) |
+| **Post-synth checks** | 21 checks (SLR010–SLR030) |
 | **Import** | `chant import --lexicon slurm slurm.conf` |
 | **LSP** | Completions + hover in VS Code |
 | **AI skills** | Generate jobs, clusters, explain fairshare |
@@ -49,3 +49,5 @@ The post-synth checks encode real production failures:
 - **SLR018** — Missing `GresTypes=gpu` means GPUs are never allocated to jobs
 - **SLR021** — `PriorityWeightFairshare=10` makes fairshare irrelevant vs age/job-size weights
 - **SLR024** — `SuspendProgram` without `ResumeProgram` permanently suspends nodes
+- **SLR027** — `proctrack/cgroup` without `cgroup.conf` means `ConstrainRAMSpace=false` — runaway jobs OOM the node
+- **SLR029** — `AcctGatherEnergyType=rapl` with `AcctGatherNodeFreq≥300` produces silent counter overflow (data corruption)
