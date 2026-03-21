@@ -7,7 +7,7 @@ set -euo pipefail
 # Usage: e2e-smoke.sh [aws|eks|gke|aks|all]
 #   aws — gitlab-aws-alb-{infra,api,ui}, flyway-postgresql-gitlab-aws-rds (needs AWS + GitLab)
 #   eks — k8s-eks-microservice (needs AWS + domain)
-#   gke — k8s-gke-microservice (needs GCP project)
+#   gke — k8s-gke-microservice, ray-kuberay-gke (needs GCP project)
 #   aks — k8s-aks-microservice (needs Azure subscription)
 #   all — everything
 
@@ -28,6 +28,7 @@ CF_STACKS_CREATED=()              # CF stack names to delete (reverse order)
 SSM_PARAMS_CREATED=()             # SSM parameter paths to delete
 EKS_TEARDOWN_DIR=""               # dir with k8s.yaml + scripts/teardown.sh
 GKE_TEARDOWN_DIR=""               # dir with scripts/teardown.sh (GKE)
+RAY_GKE_TEARDOWN_DIR=""           # dir with scripts/teardown.sh (ray-kuberay-gke)
 AKS_TEARDOWN_DIR=""               # dir with scripts/teardown.sh (AKS)
 
 cleanup_all() {
@@ -44,6 +45,12 @@ cleanup_all() {
   if [ -n "$GKE_TEARDOWN_DIR" ] && [ -f "$GKE_TEARDOWN_DIR/scripts/teardown.sh" ]; then
     echo "  Running GKE example teardown..."
     (cd "$GKE_TEARDOWN_DIR" && bash scripts/teardown.sh) 2>/dev/null || true
+  fi
+
+  # ray-kuberay-gke: separate teardown dir (has its own management cluster)
+  if [ -n "$RAY_GKE_TEARDOWN_DIR" ] && [ -f "$RAY_GKE_TEARDOWN_DIR/scripts/teardown.sh" ]; then
+    echo "  Running ray-kuberay-gke teardown..."
+    (cd "$RAY_GKE_TEARDOWN_DIR" && bash scripts/teardown.sh) 2>/dev/null || true
   fi
 
   # AKS: run the example's own teardown if available
@@ -444,6 +451,70 @@ test_k8s_gke_microservice() {
   fi
 }
 
+test_ray_kuberay_gke() {
+  local name="ray-kuberay-gke"
+  echo ""
+  echo "=== E2E: $name ==="
+
+  setup_example "$name" /tarballs/lexicon-gcp.tgz /tarballs/lexicon-k8s.tgz
+
+  export GCP_PROJECT_ID="${GCP_PROJECT_ID}"
+
+  # Register for cleanup safety net (separate from GKE_TEARDOWN_DIR — has its own mgmt cluster)
+  RAY_GKE_TEARDOWN_DIR="$(pwd)"
+
+  # Bootstrap: create ray-mgmt GKE cluster + Config Connector (~10 minutes)
+  echo "  Running npm run bootstrap..."
+  if ! npm run bootstrap 2>&1; then
+    fail "$name: bootstrap"; return
+  fi
+
+  # Deploy: build GCP infra → apply → wait for GCP resources → get-credentials →
+  #         install KubeRay operator → query Filestore IP → build K8s → apply → wait ready
+  echo "  Running npm run deploy (~15 minutes)..."
+  if npm run deploy 2>&1; then
+    pass "$name: deploy"
+  else
+    fail "$name: deploy"; return
+  fi
+
+  # Verify: RayCluster reports ready
+  local status
+  status=$(kubectl -n ray-system get raycluster ray \
+    -o jsonpath='{.status.state}' 2>&1) || true
+  if [ "$status" = "ready" ]; then
+    pass "$name: raycluster ready"
+  else
+    fail "$name: raycluster ready (state=$status)"
+  fi
+
+  # Verify: ray.cluster_resources() shows >= 4 CPUs (head + at least 1 worker)
+  local head_pod
+  head_pod=$(kubectl -n ray-system get pod -l ray.io/node-type=head -o name 2>/dev/null | head -1)
+  if [ -n "$head_pod" ]; then
+    local cpus
+    cpus=$(kubectl -n ray-system exec "$head_pod" -c ray-head -- \
+      python -c "import ray; ray.init(address='auto'); print(ray.cluster_resources().get('CPU',0))" \
+      2>/dev/null | tail -1) || cpus=0
+    if awk "BEGIN{exit !($cpus >= 4)}"; then
+      pass "$name: cluster_resources CPU=$cpus"
+    else
+      fail "$name: cluster_resources CPU=$cpus (want >=4)"
+    fi
+  else
+    fail "$name: head pod not found"
+  fi
+
+  # Teardown
+  echo "  Running npm run teardown..."
+  if npm run teardown 2>&1; then
+    pass "$name: teardown"
+    RAY_GKE_TEARDOWN_DIR=""
+  else
+    fail "$name: teardown"
+  fi
+}
+
 run_gke_group() {
   echo ""
   echo "========================================"
@@ -457,6 +528,7 @@ run_gke_group() {
   require_env GCP_PROJECT_ID
 
   test_k8s_gke_microservice
+  test_ray_kuberay_gke
 }
 
 # ── AKS group ───────────────────────────────────────────────────────────────

@@ -16,8 +16,8 @@
     "apply": "kubectl apply -f k8s.yaml",
     "status": "kubectl -n ray-system get raycluster ray && kubectl -n ray-system get pods -l ray.io/cluster-name=ray",
     "dashboard": "kubectl -n ray-system port-forward svc/ray-head-svc 8265:8265",
-    "deploy": "npm run build:gcp && npm run deploy-infra && npm run configure-kubectl && npm run install-operator && npm run build:k8s && npm run apply",
-    "teardown": "kubectl delete -f k8s.yaml; kubectl delete -f config.yaml"
+    "deploy": "bash scripts/deploy.sh",
+    "teardown": "bash scripts/teardown.sh"
   },
   "dependencies": {
     "@intentius/chant": "workspace:*",
