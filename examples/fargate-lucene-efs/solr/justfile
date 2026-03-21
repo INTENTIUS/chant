@@ -1,5 +1,6 @@
 STACK  := "fargate-lucene-efs-solr"
 INFRA  := "fargate-lucene-efs-infra"
+REGION := env_var_or_default("AWS_REGION", env_var_or_default("AWS_DEFAULT_REGION", "us-east-1"))
 
 # Build CloudFormation template
 build:
@@ -10,25 +11,28 @@ deploy: build
     aws cloudformation deploy \
       --template-file template.json \
       --stack-name {{STACK}} \
+      --region {{REGION}} \
       --capabilities CAPABILITY_NAMED_IAM \
       --parameter-overrides \
-        $(aws cloudformation describe-stacks --stack-name {{INFRA}} \
+        $(aws cloudformation describe-stacks --stack-name {{INFRA}} --region {{REGION}} \
             --query 'Stacks[0].Outputs[].{k:OutputKey,v:OutputValue}' \
             --output text | awk '{print $1"="$2}' | tr '\n' ' ')
 
 # Tear down the solr stack
 teardown:
-    aws cloudformation delete-stack --stack-name {{STACK}}
-    aws cloudformation wait stack-delete-complete --stack-name {{STACK}}
+    aws cloudformation delete-stack --stack-name {{STACK}} --region {{REGION}}
+    aws cloudformation wait stack-delete-complete --stack-name {{STACK}} --region {{REGION}}
 
 # Show stack status
 status:
     aws cloudformation describe-stacks --stack-name {{STACK}} \
+      --region {{REGION}} \
       --query 'Stacks[0].StackStatus' --output text
 
 # Show outputs (clusterArn, solrUrl, etc. — passed to connectors)
 outputs:
     aws cloudformation describe-stacks --stack-name {{STACK}} \
+      --region {{REGION}} \
       --query 'Stacks[0].Outputs' --output table
 
 # Tail ECS/Solr logs
@@ -36,6 +40,7 @@ logs:
     aws logs tail \
       $(aws cloudformation describe-stack-resource \
           --stack-name {{STACK}} \
+          --region {{REGION}} \
           --logical-resource-id solrLogGroup \
           --query 'StackResourceDetail.PhysicalResourceId' \
           --output text) \

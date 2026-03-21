@@ -1,5 +1,6 @@
-STACK := "fargate-lucene-efs-connectors"
-SOLR  := "fargate-lucene-efs-solr"
+STACK  := "fargate-lucene-efs-connectors"
+SOLR   := "fargate-lucene-efs-solr"
+REGION := env_var_or_default("AWS_REGION", env_var_or_default("AWS_DEFAULT_REGION", "us-east-1"))
 
 build:
     npm run build
@@ -8,20 +9,23 @@ deploy: build
     aws cloudformation deploy \
       --template-file template.json \
       --stack-name {{STACK}} \
+      --region {{REGION}} \
       --capabilities CAPABILITY_NAMED_IAM \
       --parameter-overrides \
-        $(aws cloudformation describe-stacks --stack-name {{SOLR}} \
+        $(aws cloudformation describe-stacks --stack-name {{SOLR}} --region {{REGION}} \
             --query 'Stacks[0].Outputs[].{k:OutputKey,v:OutputValue}' \
             --output text | awk '{print $1"="$2}' | tr '\n' ' ')
 
 teardown:
-    aws cloudformation delete-stack --stack-name {{STACK}}
-    aws cloudformation wait stack-delete-complete --stack-name {{STACK}}
+    aws cloudformation delete-stack --stack-name {{STACK}} --region {{REGION}}
+    aws cloudformation wait stack-delete-complete --stack-name {{STACK}} --region {{REGION}}
 
 status:
     aws cloudformation describe-stacks --stack-name {{STACK}} \
+      --region {{REGION}} \
       --query 'Stacks[0].StackStatus' --output text
 
 outputs:
     aws cloudformation describe-stacks --stack-name {{STACK}} \
+      --region {{REGION}} \
       --query 'Stacks[0].Outputs' --output table

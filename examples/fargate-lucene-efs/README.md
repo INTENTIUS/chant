@@ -12,18 +12,27 @@ The lexicon packages ship skills for agent-guided deployment. After `npm install
 | `chant-docker` | `@intentius/chant-lexicon-docker` | Docker Compose lifecycle: build, up, down, validate |
 | `chant-docker-patterns` | `@intentius/chant-lexicon-docker` | Common Docker Compose patterns: databases, volumes, healthchecks |
 
-Paste this to Claude Code in the repo root:
+Paste this to Claude Code from the repo root:
 
 ```
-Deploy the fargate-lucene-efs example to AWS.
+Deploy the fargate-lucene-efs example.
+The example is in examples/fargate-lucene-efs.
 My AWS region is us-east-1.
+
+Run npm install from the repo root first, then follow the phase-by-phase
+instructions in examples/fargate-lucene-efs/README.md.
+Set AWS_REGION=us-east-1 before running any just commands.
 ```
 
 The agent uses `chant-aws` for CloudFormation and `chant-docker` for the local smoke test, then deploys the three AWS stacks in order. The phase-by-phase breakdown below shows what it does under the hood, for reference.
 
-### Phase 0 — Local smoke test
+### Phase 0 — Install and local smoke test
 
 ```bash
+# From repo root
+npm install
+cd examples/fargate-lucene-efs
+export AWS_REGION=us-east-1
 just up && just -f docker/justfile verify
 ```
 
@@ -75,7 +84,8 @@ NAT gateway (~$32/mo) + ALB (~$16/mo) + EFS (~$0.30/GB-mo) ≈ $48+/mo while the
 ## Tear down
 
 ```
-Tear down the fargate-lucene-efs stacks in us-east-1.
+Tear down the fargate-lucene-efs stacks.
+The example is in examples/fargate-lucene-efs. AWS_REGION=us-east-1.
 ```
 
 Or manually, in reverse order:
