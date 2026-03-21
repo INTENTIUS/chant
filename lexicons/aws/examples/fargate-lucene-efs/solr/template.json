@@ -16,6 +16,11 @@
           "Name"
         ]
       }
+    },
+    "solrUrl": {
+      "Value": {
+        "Fn::Sub": "http://${albDnsName}/solr"
+      }
     }
   },
   "Parameters": {
@@ -42,6 +47,10 @@
     },
     "efsId": {
       "Description": "EFS File System ID",
+      "Type": "String"
+    },
+    "efsSecurityGroupId": {
+      "Description": "EFS Security Group ID",
       "Type": "String"
     },
     "executionRoleArn": {
@@ -76,6 +85,23 @@
     }
   },
   "Resources": {
+    "efsAccessFromTask": {
+      "Properties": {
+        "FromPort": 2049,
+        "GroupId": {
+          "Ref": "efsSecurityGroupId"
+        },
+        "IpProtocol": "tcp",
+        "SourceSecurityGroupId": {
+          "Fn::GetAtt": [
+            "solrTaskSg",
+            "GroupId"
+          ]
+        },
+        "ToPort": 2049
+      },
+      "Type": "AWS::EC2::SecurityGroupIngress"
+    },
     "solrLogGroup": {
       "Properties": {
         "RetentionInDays": 30

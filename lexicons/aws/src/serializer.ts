@@ -303,9 +303,7 @@ function serializeToTemplate(
     template.Outputs = template.Outputs ?? {};
     for (const output of outputs) {
       template.Outputs[output.outputName] = {
-        Value: {
-          "Fn::GetAtt": [output.sourceEntity, output.sourceAttribute],
-        },
+        Value: output.getOutputValue(),
       };
     }
   }

@@ -71,6 +71,27 @@ describe("LexiconOutput", () => {
 
     expect(() => new LexiconOutput(ref, "Test")).toThrow("no lexicon field");
   });
+
+  test("accepts an Intrinsic and sets sourceAttribute to null", () => {
+    const mockIntrinsic = { [INTRINSIC_MARKER]: true as const, toJSON: () => ({ "Fn::Sub": "hello" }) };
+    const lo = new LexiconOutput(mockIntrinsic, "MyOutput");
+    expect(lo.sourceAttribute).toBeNull();
+    expect(lo.sourceLexicon).toBe("");
+    expect(lo.outputName).toBe("MyOutput");
+  });
+
+  test("getOutputValue() returns Fn::GetAtt for AttrRef-based output", () => {
+    const bucket = new MockResource();
+    const lo = new LexiconOutput(bucket.arn, "BucketArn");
+    lo._setSourceEntity("myBucket");
+    expect(lo.getOutputValue()).toEqual({ "Fn::GetAtt": ["myBucket", "Arn"] });
+  });
+
+  test("getOutputValue() returns intrinsic toJSON for Intrinsic-based output", () => {
+    const mockIntrinsic = { [INTRINSIC_MARKER]: true as const, toJSON: () => ({ "Fn::Sub": "http://${Param}/path" }) };
+    const lo = new LexiconOutput(mockIntrinsic, "MyUrl");
+    expect(lo.getOutputValue()).toEqual({ "Fn::Sub": "http://${Param}/path" });
+  });
 });
 
 describe("LexiconOutput.auto", () => {

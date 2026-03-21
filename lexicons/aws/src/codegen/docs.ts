@@ -169,7 +169,9 @@ Reference parameters with \`Ref\`:
 
 ## Outputs
 
-Use \`output()\` to create explicit stack outputs. Cross-resource \`AttrRef\` usage is also auto-detected and promoted to outputs when needed.
+Use \`output()\` to create explicit stack outputs. Accepts an \`AttrRef\` (resource attribute)
+or any intrinsic (e.g. \`Sub\`, \`Join\`) for computed values. Cross-resource \`AttrRef\` usage
+is also auto-detected and promoted to outputs when needed.
 
 {{file:docs-snippets/src/output-explicit.ts}}
 
@@ -181,6 +183,12 @@ Produces:
     "Value": { "Fn::GetAtt": ["DataBucket", "Arn"] }
   }
 }
+\`\`\`
+
+Use \`Sub\` to export a computed value like a constructed URL:
+
+\`\`\`typescript
+export const solrUrl = output(Sub\`http://\${Ref(albDnsName)}/solr\`, "solrUrl");
 \`\`\`
 
 ## Pseudo-parameters

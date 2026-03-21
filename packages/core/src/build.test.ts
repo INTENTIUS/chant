@@ -359,14 +359,14 @@ describe("detectCrossLexiconRefs", () => {
     expect(explicitOutputs[0].outputName).toBe("MyCustomArnName");
 
     // Merge logic: explicit wins (same parent object + attribute)
-    const explicitRefs = explicitOutputs.map((o: { _sourceParent: WeakRef<object>; sourceAttribute: string }) => ({
-      parent: o._sourceParent.deref(),
+    const explicitRefs = explicitOutputs.map((o: { _sourceParent: WeakRef<object> | null; sourceAttribute: string | null }) => ({
+      parent: o._sourceParent?.deref(),
       attribute: o.sourceAttribute,
     }));
     const merged = [
       ...explicitOutputs,
       ...autoDetected.filter((auto) => {
-        const autoParent = auto._sourceParent.deref();
+        const autoParent = auto._sourceParent?.deref();
         return !explicitRefs.some(
           (e: { parent: object | undefined; attribute: string }) =>
             e.parent === autoParent && e.attribute === auto.sourceAttribute
@@ -401,6 +401,33 @@ describe("detectCrossLexiconRefs", () => {
 
     const detected = detectCrossLexiconRefs(entities);
     expect(detected).toHaveLength(0);
+  });
+
+  test("intrinsic-based output() is passed to every lexicon's serializer", () => {
+    const alphaEntity = {
+      lexicon: "alpha",
+      entityType: "Alpha::Resource",
+      [DECLARABLE_MARKER]: true,
+    } as Declarable;
+
+    const { INTRINSIC_MARKER } = require("./intrinsic");
+    const mockIntrinsic = {
+      [INTRINSIC_MARKER]: true as const,
+      toJSON: () => ({ "Fn::Sub": "http://example.com/path" }),
+    };
+    const intrinsicOutput = output(mockIntrinsic, "MyUrl");
+
+    const entities = new Map<string, Declarable>([
+      ["alphaEntity", alphaEntity],
+      ["myUrl", intrinsicOutput as unknown as Declarable],
+    ]);
+
+    const { collectLexiconOutputs } = require("./build");
+    const collected = collectLexiconOutputs(entities);
+    expect(collected).toHaveLength(1);
+    expect(collected[0].outputName).toBe("MyUrl");
+    expect(collected[0].sourceLexicon).toBe("");
+    expect(collected[0].getOutputValue()).toEqual({ "Fn::Sub": "http://example.com/path" });
   });
 
   test("deduplicates when same cross-lexicon ref appears in multiple entities", () => {

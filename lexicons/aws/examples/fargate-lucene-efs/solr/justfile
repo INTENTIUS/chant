@@ -19,6 +19,7 @@ deploy: build
 # Tear down the solr stack
 teardown:
     aws cloudformation delete-stack --stack-name {{STACK}}
+    aws cloudformation wait stack-delete-complete --stack-name {{STACK}}
 
 # Show stack status
 status:
@@ -30,6 +31,12 @@ outputs:
     aws cloudformation describe-stacks --stack-name {{STACK}} \
       --query 'Stacks[0].Outputs' --output table
 
-# Tail ECS/Solr logs (requires log group name from infra outputs)
+# Tail ECS/Solr logs
 logs:
-    aws logs tail /ecs/solr --follow
+    aws logs tail \
+      $(aws cloudformation describe-stack-resource \
+          --stack-name {{STACK}} \
+          --logical-resource-id solrLogGroup \
+          --query 'StackResourceDetail.PhysicalResourceId' \
+          --output text) \
+      --follow

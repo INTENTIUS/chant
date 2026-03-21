@@ -13,6 +13,7 @@ export const privateSubnet2 = new Parameter("String", { description: "Private Su
 export const efsId = new Parameter("String", { description: "EFS File System ID" });
 export const accessPointId = new Parameter("String", { description: "EFS Access Point ID" });
 export const albDnsName = new Parameter("String", { description: "ALB DNS Name" });
+export const efsSecurityGroupId = new Parameter("String", { description: "EFS Security Group ID" });
 
 // Solr config
 export const solrImage = new Parameter("String", {

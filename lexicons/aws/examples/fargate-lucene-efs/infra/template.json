@@ -1,7 +1,7 @@
 {
   "AWSTemplateFormatVersion": "2010-09-09",
   "Outputs": {
-    "AccessPointId": {
+    "accessPointId": {
       "Value": {
         "Fn::GetAtt": [
           "accessPoint",
@@ -9,7 +9,7 @@
         ]
       }
     },
-    "AlbDnsName": {
+    "albDnsName": {
       "Value": {
         "Fn::GetAtt": [
           "sharedAlb",
@@ -17,7 +17,7 @@
         ]
       }
     },
-    "AlbSgId": {
+    "albSgId": {
       "Value": {
         "Fn::GetAtt": [
           "sharedAlbSg",
@@ -25,7 +25,7 @@
         ]
       }
     },
-    "ClusterArn": {
+    "clusterArn": {
       "Value": {
         "Fn::GetAtt": [
           "sharedCluster",
@@ -33,7 +33,7 @@
         ]
       }
     },
-    "EfsId": {
+    "efsId": {
       "Value": {
         "Fn::GetAtt": [
           "fs",
@@ -41,7 +41,15 @@
         ]
       }
     },
-    "ExecutionRoleArn": {
+    "efsSecurityGroupId": {
+      "Value": {
+        "Fn::GetAtt": [
+          "efsSecurityGroup",
+          "GroupId"
+        ]
+      }
+    },
+    "executionRoleArn": {
       "Value": {
         "Fn::GetAtt": [
           "sharedExecutionRole",
@@ -49,7 +57,7 @@
         ]
       }
     },
-    "ListenerArn": {
+    "listenerArn": {
       "Value": {
         "Fn::GetAtt": [
           "sharedListener",
@@ -57,7 +65,7 @@
         ]
       }
     },
-    "PrivateSubnet1": {
+    "privateSubnet1": {
       "Value": {
         "Fn::GetAtt": [
           "networkPrivateSubnet1",
@@ -65,7 +73,7 @@
         ]
       }
     },
-    "PrivateSubnet2": {
+    "privateSubnet2": {
       "Value": {
         "Fn::GetAtt": [
           "networkPrivateSubnet2",
@@ -73,7 +81,7 @@
         ]
       }
     },
-    "VpcId": {
+    "vpcId": {
       "Value": {
         "Fn::GetAtt": [
           "networkVpc",
@@ -124,14 +132,6 @@
     "efsSecurityGroup": {
       "Properties": {
         "GroupDescription": "EFS mount target SG",
-        "SecurityGroupIngress": [
-          {
-            "CidrIp": "0.0.0.0/0",
-            "FromPort": 2049,
-            "IpProtocol": "tcp",
-            "ToPort": 2049
-          }
-        ],
         "VpcId": {
           "Fn::GetAtt": [
             "networkVpc",

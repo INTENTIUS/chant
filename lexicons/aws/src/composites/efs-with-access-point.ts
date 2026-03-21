@@ -18,25 +18,38 @@ export interface EfsWithAccessPointProps {
   gid: string;
   rootPath: string;
   permissions?: string;
+  /** CIDR allowed inbound on NFS port 2049. Mutually exclusive with sourceSecurityGroupId.
+   *  When neither ingressCidr nor sourceSecurityGroupId is set, no inline ingress rule is created
+   *  (add a cross-stack EC2SecurityGroupIngress separately). */
   ingressCidr?: string;
+  /** Security group ID allowed inbound on NFS port 2049. When provided, overrides ingressCidr. */
+  sourceSecurityGroupId?: string;
   performanceMode?: "generalPurpose" | "maxIO";
   throughputMode?: "bursting" | "provisioned" | "elastic";
 }
 
 export const EfsWithAccessPoint = Composite<EfsWithAccessPointProps>((props) => {
-  const ingressCidr = props.ingressCidr ?? "0.0.0.0/0";
-
-  const efsIngress = new SecurityGroup_Ingress({
-    IpProtocol: "tcp",
-    FromPort: 2049,
-    ToPort: 2049,
-    CidrIp: ingressCidr,
-  });
+  const ingressRules: SecurityGroup_Ingress[] = [];
+  if (props.sourceSecurityGroupId) {
+    ingressRules.push(new SecurityGroup_Ingress({
+      IpProtocol: "tcp",
+      FromPort: 2049,
+      ToPort: 2049,
+      SourceSecurityGroupId: props.sourceSecurityGroupId,
+    }));
+  } else if (props.ingressCidr) {
+    ingressRules.push(new SecurityGroup_Ingress({
+      IpProtocol: "tcp",
+      FromPort: 2049,
+      ToPort: 2049,
+      CidrIp: props.ingressCidr,
+    }));
+  }
 
   const securityGroup = new SecurityGroup({
     GroupDescription: "EFS mount target SG",
     VpcId: props.vpcId,
-    SecurityGroupIngress: [efsIngress],
+    ...(ingressRules.length > 0 ? { SecurityGroupIngress: ingressRules } : {}),
   });
 
   const nameTag = new EFSFileSystem_ElasticFileSystemTag({

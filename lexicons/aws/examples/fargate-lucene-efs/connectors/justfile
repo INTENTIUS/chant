@@ -16,6 +16,7 @@ deploy: build
 
 teardown:
     aws cloudformation delete-stack --stack-name {{STACK}}
+    aws cloudformation wait stack-delete-complete --stack-name {{STACK}}
 
 status:
     aws cloudformation describe-stacks --stack-name {{STACK}} \

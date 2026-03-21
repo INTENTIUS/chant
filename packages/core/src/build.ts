@@ -105,7 +105,7 @@ export function collectLexiconOutputs(
     if (isLexiconOutput(entity as unknown)) {
       const lexiconOutput = entity as unknown as LexiconOutput;
       // Resolve source entity name from the WeakRef parent identity
-      const parent = lexiconOutput._sourceParent.deref();
+      const parent = lexiconOutput._sourceParent?.deref();
       let sourceName = name;
       if (parent) {
         for (const [entityName, e] of entities) {
@@ -287,7 +287,7 @@ function generateManifest(
     outputsRecord[output.outputName] = {
       source: output.sourceLexicon,
       entity: output.sourceEntity,
-      attribute: output.sourceAttribute,
+      attribute: output.sourceAttribute ?? "",
     };
   }
 
@@ -391,22 +391,29 @@ export async function build(
   // Merge: explicit outputs take precedence over auto-detected ones.
   // Match by parent object identity + attribute to detect collisions.
   const explicitRefs = explicitOutputs.map((o) => ({
-    parent: o._sourceParent.deref(),
+    parent: o._sourceParent?.deref(),
     attribute: o.sourceAttribute,
   }));
   const lexiconOutputs = [
     ...explicitOutputs,
     ...autoOutputs.filter((auto) => {
-      const autoParent = auto._sourceParent.deref();
+      const autoParent = auto._sourceParent?.deref();
       return !explicitRefs.some(
         (e) => e.parent === autoParent && e.attribute === auto.sourceAttribute
       );
     }),
   ];
 
-  // Group outputs by source lexicon
+  // Group outputs by source lexicon.
+  // Intrinsic-based outputs (sourceLexicon === "") have no source entity to derive a lexicon from,
+  // so they are included in every lexicon's output list.
   const outputsByLexicon = new Map<string, LexiconOutput[]>();
+  const unassignedOutputs: LexiconOutput[] = [];
   for (const output of lexiconOutputs) {
+    if (!output.sourceLexicon) {
+      unassignedOutputs.push(output);
+      continue;
+    }
     if (!outputsByLexicon.has(output.sourceLexicon)) {
       outputsByLexicon.set(output.sourceLexicon, []);
     }
@@ -418,7 +425,10 @@ export async function build(
   for (const [lexiconName, lexiconEntities] of partitions) {
     const serializer = serializersByName.get(lexiconName);
     if (serializer) {
-      const lexiconLexiconOutputs = outputsByLexicon.get(lexiconName) ?? [];
+      const lexiconLexiconOutputs = [
+        ...(outputsByLexicon.get(lexiconName) ?? []),
+        ...unassignedOutputs,
+      ];
       outputs.set(lexiconName, serializer.serialize(lexiconEntities, lexiconLexiconOutputs));
     } else {
       warnings.push(`No serializer found for lexicon "${lexiconName}"`);

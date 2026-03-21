@@ -72,6 +72,11 @@ just up && just -f docker/justfile verify
 
 ## Deploy to AWS
 
+<Aside type="caution">
+The ALB listener is HTTP only with no authentication — Solr is publicly accessible to anyone
+with the DNS name. Tear down the stacks immediately after testing.
+</Aside>
+
 Paste this prompt to Claude Code in the repo root:
 
 ```
