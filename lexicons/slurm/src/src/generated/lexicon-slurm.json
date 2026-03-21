@@ -1,0 +1,20 @@
+{
+  "Job": {
+    "resourceType": "Slurm::Rest::Job",
+    "kind": "resource",
+    "lexicon": "slurm",
+    "description": "Slurm job submission request (POST /slurm/v0.0.39/job/submit)"
+  },
+  "QoS": {
+    "resourceType": "Slurm::Rest::QoS",
+    "kind": "resource",
+    "lexicon": "slurm",
+    "description": "Slurm Quality of Service definition (slurmdbd QoS management)"
+  },
+  "Reservation": {
+    "resourceType": "Slurm::Rest::Reservation",
+    "kind": "resource",
+    "lexicon": "slurm",
+    "description": "Slurm reservation (POST /slurm/v0.0.39/reservation)"
+  }
+}

@@ -1,0 +1,78 @@
+---
+title: "Importing"
+description: "Convert existing slurm.conf files to chant TypeScript"
+---
+
+The Slurm lexicon can parse existing `slurm.conf` files and generate typed TypeScript equivalents.
+
+## Import a slurm.conf
+
+```bash
+chant import --lexicon slurm slurm.conf -o src/cluster.ts
+```
+
+Given:
+
+```conf
+ClusterName=hpc
+ControlMachine=head01
+AuthType=auth/munge
+SelectType=select/cons_tres
+SelectTypeParameters=CR_Core_Memory
+
+NodeName=node[001-016] CPUs=96 RealMemory=196608 State=UNKNOWN
+PartitionName=cpu Nodes=node[001-016] Default=YES MaxTime=7-00:00:00
+```
+
+Produces `src/cluster.ts`:
+
+```typescript
+import { Cluster, Node, Partition } from "@intentius/chant-lexicon-slurm";
+
+export const cluster = new Cluster({
+  ClusterName: "hpc",
+  ControlMachine: "head01",
+  AuthType: "auth/munge",
+  SelectType: "select/cons_tres",
+  SelectTypeParameters: "CR_Core_Memory",
+});
+
+export const node001To016 = new Node({
+  NodeName: "node[001-016]",
+  CPUs: 96,
+  RealMemory: 196608,
+  State: "UNKNOWN",
+});
+
+export const cpuPartition = new Partition({
+  PartitionName: "cpu",
+  Nodes: "node[001-016]",
+  Default: "YES",
+  MaxTime: "7-00:00:00",
+});
+```
+
+## Workflow
+
+Import is a one-time migration step. After importing:
+
+1. Review the generated TypeScript — `Licenses=` lines become separate `License` entities
+2. Run `chant lint src/` to catch issues (SLR010–SLR024)
+3. Run `chant build src --lexicon slurm` and diff against the original
+4. Commit the TypeScript source and delete the hand-written conf file
+
+## License handling
+
+`Licenses=eda_synth:50,eda_sim:200` is split into individual `License` entities:
+
+```typescript
+export const edaSynth = new License({ LicenseName: "eda_synth", Count: 50 });
+export const edaSim = new License({ LicenseName: "eda_sim", Count: 200 });
+```
+
+## Limitations
+
+- `Include` directives (for split conf files) are not followed — merge the files first
+- `gres.conf` is not imported (it's node-local hardware config)
+- Complex `SuspendExcNodes=` bracket expressions may need manual cleanup
+- `AuthAltParameters` values are imported as-is (key paths remain literal strings)

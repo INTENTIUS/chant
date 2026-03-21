@@ -1,0 +1,67 @@
+---
+title: "Getting Started"
+description: "Install the Slurm lexicon and build your first slurm.conf"
+---
+
+## Installation
+
+```bash
+# New project
+chant init --lexicon slurm my-cluster
+cd my-cluster
+
+# Existing project
+npm install --save-dev @intentius/chant-lexicon-slurm
+```
+
+## Your first cluster
+
+Create `src/cluster.ts`:
+
+```typescript
+import { Cluster, Node, Partition } from "@intentius/chant-lexicon-slurm";
+
+export const cluster = new Cluster({
+  ClusterName: "mycluster",
+  ControlMachine: "head01",
+  AuthType: "auth/munge",
+  SelectType: "select/cons_tres",
+  SelectTypeParameters: "CR_Core_Memory",
+});
+
+export const computeNodes = new Node({
+  NodeName: "node[001-004]",
+  CPUs: 32,
+  RealMemory: 65536,
+  State: "UNKNOWN",
+});
+
+export const cpuPartition = new Partition({
+  PartitionName: "cpu",
+  Nodes: "node[001-004]",
+  Default: "YES",
+  MaxTime: "7-00:00:00",
+});
+```
+
+Build:
+
+```bash
+chant build src --lexicon slurm -o slurm.conf
+```
+
+This emits a fully-specified `slurm.conf` ready to distribute to all nodes.
+
+## Templates
+
+`chant init` supports three templates:
+
+| Template | Description |
+|---|---|
+| `default` | Single CPU partition |
+| `gpu` | GPU partition with GpuPartition composite |
+| `multi-partition` | CPU + high-memory partitions with accounting |
+
+```bash
+chant init --lexicon slurm --template gpu my-gpu-cluster
+```

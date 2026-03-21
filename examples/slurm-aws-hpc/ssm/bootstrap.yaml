@@ -1,0 +1,203 @@
+---
+# SSM Automation document for EDA HPC cluster bootstrap.
+# This YAML is the source of truth; the CFN resource in src/automation.ts
+# embeds it as a JSON object (AWS::SSM::Document Content field).
+#
+# Deploy:
+#   aws ssm start-automation-execution \
+#     --document-name EdaHpcBootstrap \
+#     --parameters ClusterName=eda-hpc
+
+schemaVersion: "0.3"
+description: Bootstrap the EDA HPC Slurm cluster on AWS
+assumeRole: "{{ AutomationAssumeRole }}"
+
+parameters:
+  ClusterName:
+    type: String
+    description: Slurm cluster name
+    default: eda-hpc
+  Region:
+    type: String
+    description: AWS region
+    default: us-east-1
+
+mainSteps:
+  - name: DeployNetworking
+    action: aws:executeAwsApi
+    description: Create VPC, subnets, placement group
+    onFailure: Abort
+    inputs:
+      Service: cloudformation
+      Api: CreateStack
+      StackName: "{{ ClusterName }}-networking"
+      Capabilities: ["CAPABILITY_IAM"]
+      TemplateBody: "{{ NetworkingTemplate }}"
+    outputs:
+      - Name: VpcId
+        Selector: $.StackId
+        Type: String
+
+  - name: WaitNetworking
+    action: aws:waitForAwsResourceProperty
+    description: Wait for networking stack to complete
+    onFailure: Abort
+    timeoutSeconds: 300
+    inputs:
+      Service: cloudformation
+      Api: DescribeStacks
+      StackName: "{{ ClusterName }}-networking"
+      PropertySelector: "$.Stacks[0].StackStatus"
+      DesiredValues:
+        - CREATE_COMPLETE
+
+  - name: DeployStorage
+    action: aws:executeAwsApi
+    description: Create FSx for Lustre PERSISTENT_2 (8-15 min)
+    onFailure: Abort
+    timeoutSeconds: 1200
+    inputs:
+      Service: cloudformation
+      Api: CreateStack
+      StackName: "{{ ClusterName }}-storage"
+      TemplateBody: "{{ StorageTemplate }}"
+
+  - name: WaitStorage
+    action: aws:waitForAwsResourceProperty
+    description: Wait for FSx filesystem to be AVAILABLE
+    onFailure: Abort
+    timeoutSeconds: 1200
+    inputs:
+      Service: cloudformation
+      Api: DescribeStacks
+      StackName: "{{ ClusterName }}-storage"
+      PropertySelector: "$.Stacks[0].StackStatus"
+      DesiredValues:
+        - CREATE_COMPLETE
+
+  - name: DeployDatabase
+    action: aws:executeAwsApi
+    description: Create Aurora MySQL Serverless v2 for slurmdbd
+    onFailure: Abort
+    timeoutSeconds: 600
+    inputs:
+      Service: cloudformation
+      Api: CreateStack
+      StackName: "{{ ClusterName }}-database"
+      TemplateBody: "{{ DatabaseTemplate }}"
+
+  - name: DeployIAM
+    action: aws:executeAwsApi
+    description: Create IAM roles and instance profiles
+    onFailure: Abort
+    timeoutSeconds: 120
+    inputs:
+      Service: cloudformation
+      Api: CreateStack
+      StackName: "{{ ClusterName }}-iam"
+      Capabilities: ["CAPABILITY_NAMED_IAM"]
+      TemplateBody: "{{ IAMTemplate }}"
+
+  - name: GenerateMungeKey
+    action: aws:executeScript
+    description: Generate munge key and store in SSM Parameter Store
+    onFailure: Abort
+    inputs:
+      Runtime: python3.11
+      Handler: generate_munge_key
+      Script: |
+        import boto3, secrets, base64
+
+        def generate_munge_key(events, context):
+          ssm = boto3.client('ssm')
+          key = base64.b64encode(secrets.token_bytes(1024)).decode()
+          ssm.put_parameter(
+            Name=f"/{events['ClusterName']}/munge/key",
+            Value=key,
+            Type='SecureString',
+            Overwrite=True
+          )
+          return {'status': 'ok'}
+      InputPayload:
+        ClusterName: "{{ ClusterName }}"
+
+  - name: DeployCompute
+    action: aws:executeAwsApi
+    description: Create head node, GPU ASG, EventBridge spot handler
+    onFailure: Abort
+    timeoutSeconds: 600
+    inputs:
+      Service: cloudformation
+      Api: CreateStack
+      StackName: "{{ ClusterName }}-compute"
+      Capabilities: ["CAPABILITY_IAM"]
+      TemplateBody: "{{ ComputeTemplate }}"
+
+  - name: WaitHeadNodeReady
+    action: aws:waitForAwsResourceProperty
+    description: Wait for head node stack to complete
+    onFailure: Abort
+    timeoutSeconds: 600
+    inputs:
+      Service: cloudformation
+      Api: DescribeStacks
+      StackName: "{{ ClusterName }}-compute"
+      PropertySelector: "$.Stacks[0].StackStatus"
+      DesiredValues:
+        - CREATE_COMPLETE
+
+  - name: ReconfigureSlurm
+    action: aws:runCommand
+    description: Reload slurm.conf on head node
+    onFailure: Continue
+    inputs:
+      DocumentName: AWS-RunShellScript
+      Targets:
+        - Key: "tag:cluster"
+          Values: ["{{ ClusterName }}"]
+        - Key: "tag:role"
+          Values: ["head"]
+      Parameters:
+        commands:
+          - scontrol reconfigure
+      TimeoutSeconds: 30
+
+  - name: WaitNodesJoin
+    action: aws:executeScript
+    description: Wait for compute nodes to join cluster (up to 15 min)
+    onFailure: Continue
+    timeoutSeconds: 900
+    inputs:
+      Runtime: python3.11
+      Handler: wait_nodes
+      Script: |
+        import subprocess, time
+
+        def wait_nodes(events, context):
+          for attempt in range(30):
+            try:
+              out = subprocess.check_output(['sinfo', '--noheader', '-o', '%T']).decode()
+              if 'idle' in out or 'mix' in out:
+                return {'status': 'ready', 'attempts': attempt + 1}
+            except subprocess.CalledProcessError:
+              pass
+            time.sleep(30)
+          return {'status': 'timeout', 'message': 'No nodes joined within 15 minutes'}
+
+  - name: SetupAccounts
+    action: aws:runCommand
+    description: Create default Slurm accounts and users
+    onFailure: Continue
+    inputs:
+      DocumentName: AWS-RunShellScript
+      Targets:
+        - Key: "tag:cluster"
+          Values: ["{{ ClusterName }}"]
+        - Key: "tag:role"
+          Values: ["head"]
+      Parameters:
+        commands:
+          - "sacctmgr -i add cluster {{ ClusterName }} || true"
+          - "sacctmgr -i add account default description='default account' organization=hpc || true"
+          - "sacctmgr -i add user admin account=default adminlevel=admin || true"
+      TimeoutSeconds: 60

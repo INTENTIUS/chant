@@ -1,0 +1,26 @@
+# Default recipe - list all available commands
+default:
+    @just --list
+
+# Generate types and metadata from upstream schemas
+generate:
+    bun run src/codegen/generate-cli.ts
+
+# Validate generated artifacts
+validate:
+    bun run src/validate-cli.ts
+
+# Generate docs site, install deps, and start dev server
+docs:
+    bun run src/codegen/docs-cli.ts
+    bun install --cwd docs
+    bun --cwd docs dev
+
+# Build docs site for production
+docs-build:
+    bun run src/codegen/docs-cli.ts
+    bun install --cwd docs
+    bun --cwd docs build
+
+# Package the lexicon (generate + validate)
+package: generate validate

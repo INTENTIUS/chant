@@ -13,6 +13,7 @@
     "lexicons/azure/examples/*",
     "lexicons/github/examples/*",
     "lexicons/docker/examples/*",
+    "lexicons/slurm/examples/*",
     "examples/*"
   ],
   "scripts": {

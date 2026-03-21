@@ -1,0 +1,84 @@
+---
+title: "Composites"
+description: "High-level factory patterns: GpuPartition, EDACluster, TrainingJob"
+---
+
+Composites are factory functions that return bundles of related resources. They encode
+best practices so you don't have to look up the Slurm documentation for common patterns.
+
+## GpuPartition
+
+Creates a matching `Node` + `Partition` pair for a GPU fleet.
+Automatically sets `Gres=gpu:<type>:<count>` on the node.
+
+```typescript
+import { GpuPartition } from "@intentius/chant-lexicon-slurm";
+
+export const { nodes: gpuNodes, partition: gpuPartition } = GpuPartition({
+  partitionName: "gpu",
+  nodePattern: "gpu[001-008]",
+  gpuTypeCount: "a100:8",     // <type>:<count> per node
+  cpusPerNode: 96,
+  memoryMb: 1_048_576,        // 1 TB
+  maxTime: "1-00:00:00",      // 24 hours
+});
+```
+
+Emits:
+```conf
+NodeName=gpu[001-008] CPUs=96 RealMemory=1048576 Gres=gpu:a100:8 State=UNKNOWN
+PartitionName=gpu Nodes=gpu[001-008] MaxTime=1-00:00:00 State=UP
+```
+
+**Note:** Also add `GresTypes=gpu` and `GresTypes: "gpu"` to your `Cluster` resource,
+and configure `/etc/slurm/gres.conf` with `AutoDetect=nvml` on GPU nodes.
+
+## TrainingJob
+
+Creates a REST `Job` entity pre-configured for multi-node distributed training.
+
+```typescript
+import { TrainingJob } from "@intentius/chant-lexicon-slurm";
+
+export const train = TrainingJob({
+  name: "llm-finetune",
+  nodeCount: 4,
+  gpusPerNode: 8,
+  gpuType: "a100",
+  partition: "gpu",
+  maxTime: "12:00:00",
+  script: "torchrun --nproc_per_node=8 finetune.py",
+  environment: { NCCL_DEBUG: "INFO", MASTER_PORT: "29500" },
+});
+```
+
+## EDACluster
+
+Creates a full EDA-optimized Slurm cluster with synthesis, simulation, and GPU partitions,
+plus license declarations.
+
+```typescript
+import { EDACluster } from "@intentius/chant-lexicon-slurm";
+
+export const { cluster, partitions, nodes, licenses } = EDACluster({
+  clusterName: "eda-hpc",
+  controlMachine: "head01",
+  accountingHost: "head01",
+  edaLicenses: {
+    eda_synth: 50,
+    eda_sim: 200,
+    calibre_drc: 30,
+  },
+  synthNodes: { pattern: "cpu[001-032]", cpus: 96, memoryMb: 196608 },
+  simNodes: { pattern: "cpu[033-064]", cpus: 96, memoryMb: 196608 },
+  gpuNodes: { pattern: "gpu[001-008]", cpus: 96, memoryMb: 1_048_576, gpuTypeCount: "a100:8" },
+});
+```
+
+The `EDACluster` composite sets:
+- `ProctrackType: "proctrack/cgroup"` — required for EDA license tracking
+- `SelectType: "select/cons_tres"` + `SelectTypeParameters: "CR_Core_Memory"`
+- `PriorityWeightFairshare: 10000`, `PriorityWeightAge: 1000` (multifactor priority)
+- Synthesis partition: `MaxTime=48:00:00`, CPU partition, named `synthesis`
+- Simulation partition: `MaxTime=168:00:00`, CPU partition, named `sim`
+- GPU partition via `GpuPartition` composite

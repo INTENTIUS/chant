@@ -1,0 +1,128 @@
+import { Role, InstanceProfile } from "@intentius/chant-lexicon-aws";
+import { Sub } from "@intentius/chant-lexicon-aws";
+import { scratchFs } from "./storage";
+import { dbCluster } from "./database";
+import { config } from "./config";
+
+const EC2_ASSUME_ROLE = {
+  Version: "2012-10-17",
+  Statement: [{ Effect: "Allow", Principal: { Service: "ec2.amazonaws.com" }, Action: "sts:AssumeRole" }],
+};
+
+// ── Compute node role ─────────────────────────────────────────────
+// Compute nodes need: SSM (for fleet management), FSx access, CloudWatch metrics
+
+export const computeRole = new Role({
+  RoleName: Sub(`${config.clusterName}-compute-role`),
+  AssumeRolePolicyDocument: EC2_ASSUME_ROLE,
+  ManagedPolicyArns: [
+    "arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore",
+    "arn:aws:iam::aws:policy/CloudWatchAgentServerPolicy",
+  ],
+  Policies: [
+    {
+      PolicyName: "fsx-access",
+      PolicyDocument: {
+        Version: "2012-10-17",
+        Statement: [
+          {
+            Effect: "Allow",
+            Action: ["fsx:DescribeFileSystems", "fsx:CreateDataRepositoryTask"],
+            Resource: [scratchFs.ResourceARN],
+          },
+        ],
+      },
+    },
+  ],
+});
+
+export const computeInstanceProfile = new InstanceProfile({
+  InstanceProfileName: Sub(`${config.clusterName}-compute-profile`),
+  Roles: [computeRole.RoleId],
+});
+
+// ── Head node role ────────────────────────────────────────────────
+// Head node additionally needs: Secrets Manager (for slurmdbd password),
+// AutoScaling (for SuspendProgram/ResumeProgram hooks), SSM Parameter Store
+
+export const headNodeRole = new Role({
+  RoleName: Sub(`${config.clusterName}-head-role`),
+  AssumeRolePolicyDocument: EC2_ASSUME_ROLE,
+  ManagedPolicyArns: [
+    "arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore",
+    "arn:aws:iam::aws:policy/CloudWatchAgentServerPolicy",
+  ],
+  Policies: [
+    {
+      PolicyName: "slurmdbd-secrets",
+      PolicyDocument: {
+        Version: "2012-10-17",
+        Statement: [
+          {
+            Effect: "Allow",
+            Action: ["secretsmanager:GetSecretValue"],
+            Resource: [dbCluster["MasterUserSecret.SecretArn"]],
+          },
+          {
+            Effect: "Allow",
+            Action: ["ssm:GetParameter"],
+            Resource: [Sub(`arn:aws:ssm:${config.region}:*:parameter/${config.clusterName}/*`)],
+          },
+          {
+            Effect: "Allow",
+            Action: ["fsx:DescribeFileSystems", "fsx:CreateDataRepositoryTask"],
+            Resource: [scratchFs.ResourceARN],
+          },
+          {
+            Effect: "Allow",
+            Action: ["autoscaling:SetDesiredCapacity", "autoscaling:TerminateInstanceInAutoScalingGroup"],
+            Resource: ["*"],
+          },
+        ],
+      },
+    },
+  ],
+});
+
+export const headNodeInstanceProfile = new InstanceProfile({
+  InstanceProfileName: Sub(`${config.clusterName}-head-profile`),
+  Roles: [headNodeRole.RoleId],
+});
+
+// ── Spot interruption Lambda role ─────────────────────────────────
+
+const LAMBDA_ASSUME_ROLE = {
+  Version: "2012-10-17",
+  Statement: [{ Effect: "Allow", Principal: { Service: "lambda.amazonaws.com" }, Action: "sts:AssumeRole" }],
+};
+
+export const spotHandlerRole = new Role({
+  RoleName: Sub(`${config.clusterName}-spot-handler-role`),
+  AssumeRolePolicyDocument: LAMBDA_ASSUME_ROLE,
+  ManagedPolicyArns: ["arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole"],
+  Policies: [
+    {
+      PolicyName: "ssm-run-command",
+      PolicyDocument: {
+        Version: "2012-10-17",
+        Statement: [
+          {
+            Effect: "Allow",
+            Action: ["ssm:SendCommand", "ssm:GetCommandInvocation"],
+            Resource: ["*"],
+          },
+          {
+            Effect: "Allow",
+            Action: ["ec2:DescribeInstances"],
+            Resource: ["*"],
+          },
+          {
+            Effect: "Allow",
+            Action: ["autoscaling:CompleteLifecycleAction"],
+            Resource: ["*"],
+          },
+        ],
+      },
+    },
+  ],
+});

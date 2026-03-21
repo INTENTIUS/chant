@@ -1,0 +1,109 @@
+---
+title: "Resources"
+description: "Slurm conf resources: Cluster, Partition, Node, License"
+---
+
+The Slurm lexicon provides four hand-written conf resources that map directly to `slurm.conf` stanzas, plus three REST resources for submitting jobs via slurmrestd.
+
+## Cluster
+
+Global `slurm.conf` settings. Serializes to top-level key=value lines.
+
+```typescript
+import { Cluster } from "@intentius/chant-lexicon-slurm";
+
+export const cluster = new Cluster({
+  ClusterName: "hpc",
+  ControlMachine: "head01",
+  AuthType: "auth/munge",
+  SelectType: "select/cons_tres",
+  SelectTypeParameters: "CR_Core_Memory",
+  ProctrackType: "proctrack/cgroup",
+  GresTypes: "gpu",
+  AccountingStorageType: "accounting_storage/slurmdbd",
+  AccountingStorageHost: "head01",
+  AccountingStorageEnforce: "associations,limits,qos",
+  PriorityType: "priority/multifactor",
+  PriorityWeightFairshare: 10000,
+});
+```
+
+## Node
+
+Defines a set of compute nodes. Serializes to `NodeName=...` stanzas.
+
+```typescript
+import { Node } from "@intentius/chant-lexicon-slurm";
+
+export const cpuNodes = new Node({
+  NodeName: "node[001-016]",
+  CPUs: 96,
+  RealMemory: 196608,   // MB
+  State: "UNKNOWN",     // valid initial states: UNKNOWN, DOWN, FUTURE, CLOUD, DRAIN
+});
+
+export const gpuNodes = new Node({
+  NodeName: "gpu[001-004]",
+  CPUs: 96,
+  RealMemory: 1_048_576,
+  Gres: "gpu:a100:8",
+  Feature: "efa,a100",
+  State: "UNKNOWN",
+});
+```
+
+**Valid initial `State` values:** `UNKNOWN`, `DOWN`, `FUTURE`, `CLOUD`, `DRAIN`. Runtime states
+(`UP`, `IDLE`, `ALLOCATED`) are silently ignored by slurmctld.
+
+## Partition
+
+Defines a job queue. Serializes to `PartitionName=...` stanzas.
+
+```typescript
+import { Partition } from "@intentius/chant-lexicon-slurm";
+
+export const cpuPart = new Partition({
+  PartitionName: "cpu",
+  Nodes: "node[001-016]",
+  Default: "YES",
+  MaxTime: "7-00:00:00",   // D-HH:MM:SS or UNLIMITED
+  DefMemPerCPU: 2048,      // MB per CPU
+});
+```
+
+Exactly one partition must have `Default: "YES"`. The lint rule `SLR022` flags zero or multiple defaults.
+
+## License
+
+Declares a software license resource for Slurm to track and enforce.
+Multiple License entities are aggregated into a single `Licenses=` line.
+
+```typescript
+import { License } from "@intentius/chant-lexicon-slurm";
+
+export const synthLicense = new License({ LicenseName: "eda_synth", Count: 50 });
+export const simLicense = new License({ LicenseName: "eda_sim", Count: 200 });
+// emits: Licenses=eda_synth:50,eda_sim:200
+```
+
+## REST resources
+
+For job submission via slurmrestd (Slurm 23.11 / v0.0.39):
+
+```typescript
+import { Job, Reservation, QoS } from "@intentius/chant-lexicon-slurm";
+
+export const trainJob = new Job({
+  name: "llm-train",
+  partition: "gpu",
+  node_count: 8,
+  task_count: 64,
+  cpus_per_task: 12,
+  gres_per_node: "gpu:a100:8",
+  time_limit: "24:00:00",
+  script: "#!/bin/bash\ntorchrun --nproc_per_node=8 train.py",
+  environment: { NCCL_DEBUG: "INFO" },
+});
+```
+
+REST entities serialize to JSON files (e.g. `jobs/llm-train.json`) alongside the primary `slurm.conf`.
