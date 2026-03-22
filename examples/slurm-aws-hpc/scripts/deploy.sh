@@ -106,17 +106,25 @@ if [ "${HEAD_INSTANCE}" = "None" ] || [ -z "${HEAD_INSTANCE}" ]; then
   echo "WARNING: Head node not yet running — skipping slurm.conf upload."
   echo "         Run 'aws ssm send-command ...' manually after the head node starts."
 else
-  CONF_CONTENT=$(cat "${ROOT_DIR}/dist/slurm.conf")
-  aws ssm send-command \
+  # Stage slurm.conf in SSM Parameter Store to avoid embedding multi-line content
+  # with shell-special characters ($, \, ") inside SSM command JSON.
+  aws ssm put-parameter \
+    --name "/${CLUSTER_NAME}/slurm/conf" \
+    --value "$(cat "${ROOT_DIR}/dist/slurm.conf")" \
+    --type "String" \
+    --overwrite \
+    --region "${REGION}" > /dev/null
+
+  CMD_ID=$(aws ssm send-command \
     --instance-ids "${HEAD_INSTANCE}" \
     --document-name "AWS-RunShellScript" \
     --region "${REGION}" \
     --parameters "commands=[
-      \"cat > /etc/slurm/slurm.conf << 'SLURMCONF'\n${CONF_CONTENT}\nSLURMCONF\",
-      \"scontrol reconfigure\"
+      \"aws ssm get-parameter --name /${CLUSTER_NAME}/slurm/conf --query Parameter.Value --output text --region ${REGION} > /etc/slurm/slurm.conf\",
+      \"scontrol reconfigure || true\"
     ]" \
-    --output text --query "Command.CommandId" > /dev/null
-  echo "    slurm.conf pushed to ${HEAD_INSTANCE}"
+    --output text --query "Command.CommandId")
+  echo "    slurm.conf staged to SSM and pushed (command: ${CMD_ID})"
 fi
 
 echo ""
