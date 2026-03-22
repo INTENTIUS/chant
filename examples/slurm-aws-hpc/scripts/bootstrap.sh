@@ -64,6 +64,8 @@ QUOTA=$(aws service-quotas get-service-quota \
 QUOTA_INT=${QUOTA%%.*}
 if [[ "$QUOTA_INT" -ge "$REQUIRED_P4D_VCPUS" ]]; then
   ok "p4d vCPU quota: $QUOTA_INT (need $REQUIRED_P4D_VCPUS)"
+elif [[ "$QUOTA_INT" -eq 0 ]]; then
+  fail "p4d vCPU quota: 0 — you have no P-instance quota. Request at least $REQUIRED_P4D_VCPUS vCPUs at https://console.aws.amazon.com/servicequotas (quota L-417A185B)."
 else
   warn "p4d vCPU quota: $QUOTA_INT — need at least $REQUIRED_P4D_VCPUS for one p4d.24xlarge. Request an increase at Service Quotas console."
 fi

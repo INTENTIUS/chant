@@ -136,7 +136,7 @@ export const synthesisPartition = new Partition({
   DefMemPerCPU: 2048,            // 2 GB/CPU default (synthesis is memory-light)
   State: "UP",
   PowerDownOnIdle: "YES",        // terminate idle nodes as soon as last job finishes
-  SuspendTime: 120,              // per-partition override: 2 min idle before suspend
+  SuspendTime: 600,              // 10 min idle before suspend — avoids churn during EDA job bursts
 });
 
 export const simPartition = new Partition({
@@ -148,7 +148,7 @@ export const simPartition = new Partition({
   DefMemPerCPU: 4096,            // 4 GB/CPU (gate-level sim is memory-heavy)
   State: "UP",
   PowerDownOnIdle: "YES",        // terminate idle nodes as soon as last job finishes
-  SuspendTime: 120,              // per-partition override: 2 min idle before suspend
+  SuspendTime: 600,              // 10 min idle before suspend — sim jobs have high restart cost
 });
 
 // ── License declarations (individual entities → aggregated Licenses= line) ─
