@@ -121,7 +121,8 @@ export const gpuLaunchTemplate = new LaunchTemplate({
   LaunchTemplateData: {
     ImageId: "{{resolve:ssm:/aws/service/ecs/optimized-ami/amazon-linux-2/gpu/recommended/image_id}}",
     IamInstanceProfile: { Arn: computeInstanceProfile.Arn },
-    SecurityGroupIds: [clusterSg.GroupId],
+    // SecurityGroupIds must NOT be set when NetworkInterfaces is present — CFN rejects the combination.
+    // Security group is specified inside NetworkInterfaces[0].Groups below.
     UserData: GPU_COMPUTE_USERDATA,
     // EFA network interface — required for p4d.24xlarge full bandwidth
     NetworkInterfaces: [
