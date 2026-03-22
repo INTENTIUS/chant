@@ -92,7 +92,7 @@ export const cpuLaunchTemplate = new LaunchTemplate({
     InstanceType: config.cpuInstanceType,
     IamInstanceProfile: { Arn: computeInstanceProfile.Arn },
     SecurityGroupIds: [clusterSg.GroupId],
-    SubnetId: privateSubnet1.SubnetId,
+    // SubnetId is not a valid LaunchTemplateData property; subnet is set on the ASG (VPCZoneIdentifier)
     UserData: CPU_COMPUTE_USERDATA,
     TagSpecifications: [
       {
