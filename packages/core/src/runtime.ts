@@ -5,7 +5,7 @@
  * lexicon, entityType, kind, and attribute references.
  */
 
-import { DECLARABLE_MARKER } from "./declarable";
+import { DECLARABLE_MARKER, type Declarable } from "./declarable";
 import { AttrRef } from "./attrref";
 
 /**
@@ -22,7 +22,7 @@ export function createResource(
   type: string,
   lexicon: string,
   attrMap: Record<string, string>,
-): new (props: Record<string, unknown>, attributes?: Record<string, unknown>) => Record<string, unknown> {
+): new (props: Record<string, unknown>, attributes?: Record<string, unknown>) => Declarable & Record<string, string> {
   const ResourceClass = function (this: Record<string, unknown>, props: Record<string, unknown>, attributes?: Record<string, unknown>) {
     Object.defineProperty(this, DECLARABLE_MARKER, { value: true, enumerable: false });
     Object.defineProperty(this, "lexicon", { value: lexicon, enumerable: false });
@@ -44,7 +44,7 @@ export function createResource(
         writable: false,
       });
     }
-  } as unknown as new (props: Record<string, unknown>, attributes?: Record<string, unknown>) => Record<string, unknown>;
+  } as unknown as new (props: Record<string, unknown>, attributes?: Record<string, unknown>) => Declarable & Record<string, string>;
 
   // Set the constructor name for debugging
   Object.defineProperty(ResourceClass, "name", { value: type.split("::").pop() ?? type });

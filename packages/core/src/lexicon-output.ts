@@ -21,7 +21,7 @@ export class LexiconOutput implements Intrinsic {
   /** @internal Intrinsic value when constructed from an Intrinsic rather than AttrRef */
   private readonly _intrinsic: Intrinsic | null;
 
-  constructor(ref: AttrRef | Intrinsic, name: string) {
+  constructor(ref: AttrRef | Intrinsic | string, name: string) {
     if (ref instanceof AttrRef) {
       const parent = ref.parent.deref();
       if (!parent) {
@@ -40,12 +40,14 @@ export class LexiconOutput implements Intrinsic {
       this._intrinsic = null;
     } else {
       // Intrinsic (Sub, Join, Ref, etc.) — no parent entity tracking needed
+      // Note: `string` in the union is for attribute accessors typed as string at the
+      // TypeScript level (they are AttrRef at runtime, caught by instanceof above).
       this.sourceLexicon = "";
       this.sourceEntity = "";
       this.sourceAttribute = null;
       this.outputName = name;
       this._sourceParent = null;
-      this._intrinsic = ref;
+      this._intrinsic = typeof ref !== "string" ? ref : null;
     }
   }
 
@@ -103,7 +105,7 @@ export class LexiconOutput implements Intrinsic {
  * const solrUrl = output(Sub`http://${Ref(albDnsName)}/solr`, "solrUrl");
  * ```
  */
-export function output(ref: AttrRef | Intrinsic, name: string): LexiconOutput {
+export function output(ref: AttrRef | Intrinsic | string, name: string): LexiconOutput {
   return new LexiconOutput(ref, name);
 }
 

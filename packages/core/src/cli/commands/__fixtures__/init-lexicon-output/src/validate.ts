@@ -17,7 +17,7 @@ const REQUIRED_NAMES: string[] = [];
 /**
  * Validate the generated lexicon-fixture artifacts.
  */
-export async function validate(opts?: { basePath?: string }): Promise<ValidateResult> {
+export async function validate(opts?: { basePath?: string; verbose?: boolean }): Promise<ValidateResult> {
   const basePath = opts?.basePath ?? dirname(dirname(fileURLToPath(import.meta.url)));
 
   return validateLexiconArtifacts({
