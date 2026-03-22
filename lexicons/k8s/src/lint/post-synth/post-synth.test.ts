@@ -1331,3 +1331,148 @@ describe("WK8306: Container command starts with flag", () => {
     expect(diags.length).toBe(0);
   });
 });
+
+// ── WK8401: shmSize exceeds memory limit ────────────────────────────────────
+
+function makeRayCluster(overrides: {
+  shmSizeLimit?: string;
+  memoryLimit?: string;
+  workerShmSizeLimit?: string;
+  workerMemoryLimit?: string;
+  rayVersion?: string;
+  headImage?: string;
+}) {
+  const headImage = overrides.headImage ?? "rayproject/ray:2.40.0-py310-cpu";
+  return JSON.stringify({
+    apiVersion: "ray.io/v1alpha1",
+    kind: "RayCluster",
+    metadata: { name: "ray" },
+    spec: {
+      ...(overrides.rayVersion !== undefined && { rayVersion: overrides.rayVersion }),
+      headGroupSpec: {
+        template: {
+          spec: {
+            volumes: [{ name: "dshm", emptyDir: { medium: "Memory", ...(overrides.shmSizeLimit !== undefined && { sizeLimit: overrides.shmSizeLimit }) } }],
+            containers: [{ name: "ray-head", image: headImage, resources: { limits: { memory: overrides.memoryLimit ?? "8Gi" } } }],
+          },
+        },
+      },
+      workerGroupSpecs: [
+        {
+          groupName: "cpu",
+          template: {
+            spec: {
+              volumes: [{ name: "dshm", emptyDir: { medium: "Memory", ...(overrides.workerShmSizeLimit !== undefined && { sizeLimit: overrides.workerShmSizeLimit }) } }],
+              containers: [{ name: "ray-worker", image: headImage, resources: { limits: { memory: overrides.workerMemoryLimit ?? "4Gi" } } }],
+            },
+          },
+        },
+      ],
+    },
+  });
+}
+
+describe("WK8401: shmSize exceeds memory limit", () => {
+  test("passes when shmSize equals memory limit", () => {
+    const ctx = makeCtx(makeRayCluster({ shmSizeLimit: "8Gi", memoryLimit: "8Gi" }));
+    const diags = wk8401.check(ctx);
+    expect(diags.filter((d) => d.checkId === "WK8401").length).toBe(0);
+  });
+
+  test("passes when shmSize is less than memory limit", () => {
+    const ctx = makeCtx(makeRayCluster({ shmSizeLimit: "2Gi", memoryLimit: "8Gi" }));
+    const diags = wk8401.check(ctx);
+    expect(diags.filter((d) => d.checkId === "WK8401").length).toBe(0);
+  });
+
+  test("errors when head shmSize exceeds memory limit", () => {
+    const ctx = makeCtx(makeRayCluster({ shmSizeLimit: "16Gi", memoryLimit: "8Gi" }));
+    const diags = wk8401.check(ctx);
+    const errors = diags.filter((d) => d.checkId === "WK8401" && d.severity === "error");
+    expect(errors.length).toBeGreaterThanOrEqual(1);
+    expect(errors[0].message).toContain("head");
+    expect(errors[0].message).toContain("16Gi");
+  });
+
+  test("errors when worker shmSize exceeds memory limit", () => {
+    const ctx = makeCtx(makeRayCluster({ workerShmSizeLimit: "8Gi", workerMemoryLimit: "4Gi" }));
+    const diags = wk8401.check(ctx);
+    const errors = diags.filter((d) => d.checkId === "WK8401" && d.severity === "error");
+    expect(errors.length).toBeGreaterThanOrEqual(1);
+    expect(errors[0].message).toContain("worker");
+  });
+
+  test("skips check when no sizeLimit set on emptyDir", () => {
+    const ctx = makeCtx(makeRayCluster({ shmSizeLimit: undefined }));
+    const diags = wk8401.check(ctx);
+    expect(diags.filter((d) => d.checkId === "WK8401").length).toBe(0);
+  });
+
+  test("ignores non-RayCluster manifests", () => {
+    const ctx = makeCtx(JSON.stringify({
+      apiVersion: "apps/v1",
+      kind: "Deployment",
+      metadata: { name: "app" },
+      spec: { template: { spec: { volumes: [{ name: "dshm", emptyDir: { medium: "Memory", sizeLimit: "16Gi" } }], containers: [{ name: "app", image: "app:1.0", resources: { limits: { memory: "4Gi" } } }] } } },
+    }));
+    const diags = wk8401.check(ctx);
+    expect(diags.filter((d) => d.checkId === "WK8401").length).toBe(0);
+  });
+});
+
+// ── WK8402: RayCluster missing spec.rayVersion ───────────────────────────────
+
+describe("WK8402: RayCluster missing spec.rayVersion", () => {
+  test("passes when rayVersion is set", () => {
+    const ctx = makeCtx(makeRayCluster({ rayVersion: "2.40.0" }));
+    const diags = wk8402.check(ctx);
+    expect(diags.filter((d) => d.checkId === "WK8402").length).toBe(0);
+  });
+
+  test("warns when rayVersion is absent", () => {
+    const ctx = makeCtx(makeRayCluster({}));
+    const diags = wk8402.check(ctx);
+    const warns = diags.filter((d) => d.checkId === "WK8402");
+    expect(warns.length).toBe(1);
+    expect(warns[0].severity).toBe("warning");
+    expect(warns[0].message).toContain("latest");
+  });
+
+  test("ignores non-RayCluster manifests", () => {
+    const ctx = makeCtx(JSON.stringify({ apiVersion: "apps/v1", kind: "Deployment", metadata: { name: "app" }, spec: {} }));
+    const diags = wk8402.check(ctx);
+    expect(diags.filter((d) => d.checkId === "WK8402").length).toBe(0);
+  });
+});
+
+// ── WK8403: spec.rayVersion / image tag mismatch ─────────────────────────────
+
+describe("WK8403: spec.rayVersion does not match image tag", () => {
+  test("passes when versions match", () => {
+    const ctx = makeCtx(makeRayCluster({ rayVersion: "2.40.0", headImage: "rayproject/ray:2.40.0-py310-cpu" }));
+    const diags = wk8403.check(ctx);
+    expect(diags.filter((d) => d.checkId === "WK8403").length).toBe(0);
+  });
+
+  test("warns when rayVersion does not match image tag", () => {
+    const ctx = makeCtx(makeRayCluster({ rayVersion: "2.39.0", headImage: "rayproject/ray:2.40.0-py310-cpu" }));
+    const diags = wk8403.check(ctx);
+    const warns = diags.filter((d) => d.checkId === "WK8403");
+    expect(warns.length).toBe(1);
+    expect(warns[0].severity).toBe("warning");
+    expect(warns[0].message).toContain("2.39.0");
+    expect(warns[0].message).toContain("2.40.0");
+  });
+
+  test("skips when rayVersion is absent (WK8402 covers that)", () => {
+    const ctx = makeCtx(makeRayCluster({ headImage: "rayproject/ray:2.40.0" }));
+    const diags = wk8403.check(ctx);
+    expect(diags.filter((d) => d.checkId === "WK8403").length).toBe(0);
+  });
+
+  test("skips when image tag has no parseable version", () => {
+    const ctx = makeCtx(makeRayCluster({ rayVersion: "2.40.0", headImage: "rayproject/ray:latest" }));
+    const diags = wk8403.check(ctx);
+    expect(diags.filter((d) => d.checkId === "WK8403").length).toBe(0);
+  });
+});
