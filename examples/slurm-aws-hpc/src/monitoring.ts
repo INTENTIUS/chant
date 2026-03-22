@@ -48,7 +48,7 @@ export const rdsAlarm = new Alarm({
 
 export const spotInterruptionAlarm = new Alarm({
   AlarmName: Sub(`${config.clusterName}-spot-interruptions`),
-  AlarmDescription: "High spot interruption rate on GPU fleet — consider adding instance types",
+  AlarmDescription: "High spot interruption rate on GPU fleet - consider adding instance types",
   Namespace: "AWS/AutoScaling",
   MetricName: "WarmPoolTerminatedInstances",
   Dimensions: [{ Name: "AutoScalingGroupName", Value: Sub(`${config.clusterName}-gpu-asg`) }],
@@ -66,7 +66,7 @@ export const spotInterruptionAlarm = new Alarm({
 
 export const asgLagAlarm = new Alarm({
   AlarmName: Sub(`${config.clusterName}-gpu-asg-launch-lag`),
-  AlarmDescription: "GPU ASG desired capacity exceeds in-service for >15min — ResumeProgram issue",
+  AlarmDescription: "GPU ASG desired capacity exceeds in-service for >15min - ResumeProgram issue",
   Namespace: "AWS/AutoScaling",
   MetricName: "PendingInstances",
   Dimensions: [{ Name: "AutoScalingGroupName", Value: Sub(`${config.clusterName}-gpu-asg`) }],
