@@ -36,7 +36,7 @@ export const config = {
 
   // FSx Lustre
   fsxStorageCapacityGiB: 1200,
-  fsxThroughputPerTiBMBps: 200,
+  fsxThroughputPerTiBMBps: 250,
 
   // Spot fleet
   spotAllocationStrategy: "capacity-optimized" as const,
