@@ -32,10 +32,10 @@ export const fsxSg = new SecurityGroup({
   GroupDescription: `${config.clusterName} FSx Lustre access`,
   VpcId: vpc.VpcId,
   SecurityGroupIngress: [
-    // Lustre mount protocol (TCP 988)
-    new SecurityGroup_Ingress({ IpProtocol: "tcp", FromPort: 988, ToPort: 988, SourceSecurityGroupId: clusterSg.GroupId }),
+    // Lustre mount protocol (TCP 988) — CIDR-based so FSx property validation passes
+    new SecurityGroup_Ingress({ IpProtocol: "tcp", FromPort: 988, ToPort: 988, CidrIp: config.vpcCidr }),
     // Lustre data transfer ports
-    new SecurityGroup_Ingress({ IpProtocol: "tcp", FromPort: 1018, ToPort: 1023, SourceSecurityGroupId: clusterSg.GroupId }),
+    new SecurityGroup_Ingress({ IpProtocol: "tcp", FromPort: 1018, ToPort: 1023, CidrIp: config.vpcCidr }),
   ],
   Tags: [{ Key: "Name", Value: `${config.clusterName}-fsx-sg` }],
 });
