@@ -1,5 +1,5 @@
 import { Alarm } from "@intentius/chant-lexicon-aws";
-import { Sub } from "@intentius/chant-lexicon-aws";
+import { Sub, Ref } from "@intentius/chant-lexicon-aws";
 import { scratchFs } from "./storage";
 import { dbCluster } from "./database";
 import { config } from "./config";
@@ -14,7 +14,7 @@ export const fsxThroughputAlarm = new Alarm({
   AlarmDescription: "FSx Lustre read throughput exceeds 80% of provisioned capacity",
   Namespace: "AWS/FSx",
   MetricName: "DataReadBytes",
-  Dimensions: [{ Name: "FileSystemId", Value: scratchFs.Id }],
+  Dimensions: [{ Name: "FileSystemId", Value: Ref(scratchFs) }],
   Period: 300,
   EvaluationPeriods: 3,
   Statistic: "Sum",

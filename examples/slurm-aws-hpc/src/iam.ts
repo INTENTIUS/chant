@@ -114,6 +114,11 @@ export const spotHandlerRole = new Role({
           },
           {
             Effect: "Allow",
+            Action: ["ssm:GetParameter"],
+            Resource: [Sub(`arn:aws:ssm:${config.region}:*:parameter/${config.clusterName}/head-node/*`)],
+          },
+          {
+            Effect: "Allow",
             Action: ["ec2:DescribeInstances"],
             Resource: ["*"],
           },

@@ -18,13 +18,19 @@ import { config } from "./config";
 // Inline handler — see lambda/spot-handler.ts for the full TypeScript source.
 // ZipFile accepts plain JS only, so this is the compiled form bundled inline.
 // @aws-sdk/client-ssm is available in the Node.js 20 managed runtime.
+// HEAD_NODE_ID is looked up from SSM at invocation time (not deploy time) because
+// the SSM parameter is written by the head node's first-boot UserData script.
 const SPOT_HANDLER_CODE = `
 exports.handler = async (event) => {
   const instanceId = event.detail['instance-id'];
-  const { SSMClient, SendCommandCommand } = require('@aws-sdk/client-ssm');
+  const { SSMClient, SendCommandCommand, GetParameterCommand } = require('@aws-sdk/client-ssm');
   const ssm = new SSMClient({});
+  const { Parameter } = await ssm.send(new GetParameterCommand({
+    Name: '/' + process.env.CLUSTER_NAME + '/head-node/instance-id',
+  }));
+  const headNodeId = Parameter.Value;
   await ssm.send(new SendCommandCommand({
-    InstanceIds: [process.env.HEAD_NODE_ID],
+    InstanceIds: [headNodeId],
     DocumentName: 'AWS-RunShellScript',
     Parameters: {
       commands: [
@@ -51,8 +57,6 @@ export const spotHandlerFn = new Function({
   Environment: {
     Variables: {
       CLUSTER_NAME: config.clusterName,
-      // Resolved at CFN deploy time from the parameter written by head node UserData on boot
-      HEAD_NODE_ID: `{{resolve:ssm:/${config.clusterName}/head-node/instance-id}}`,
     },
   },
 }, { DependsOn: headNode });

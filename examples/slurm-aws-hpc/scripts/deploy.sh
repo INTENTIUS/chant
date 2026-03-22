@@ -44,6 +44,25 @@ echo "    Region  : ${REGION}"
 echo "    Cluster : ${CLUSTER_NAME}"
 echo ""
 
+# ── Ensure S3 bucket for template upload ───────────────────────────
+# CFN templates > 51,200 bytes must be uploaded to S3.
+
+CFN_BUCKET="cfn-templates-${ACCOUNT_ID}-${REGION}"
+
+if ! aws s3api head-bucket --bucket "${CFN_BUCKET}" --region "${REGION}" &>/dev/null; then
+  echo "==> Creating S3 bucket for CloudFormation templates: ${CFN_BUCKET}"
+  if [ "${REGION}" = "us-east-1" ]; then
+    aws s3api create-bucket --bucket "${CFN_BUCKET}" --region "${REGION}" > /dev/null
+  else
+    aws s3api create-bucket --bucket "${CFN_BUCKET}" --region "${REGION}" \
+      --create-bucket-configuration LocationConstraint="${REGION}" > /dev/null
+  fi
+  aws s3api put-bucket-versioning --bucket "${CFN_BUCKET}" \
+    --versioning-configuration Status=Enabled > /dev/null
+  echo "    Created: s3://${CFN_BUCKET}"
+  echo ""
+fi
+
 # ── Build ──────────────────────────────────────────────────────────
 
 echo "==> Building CloudFormation template and slurm.conf"
@@ -68,6 +87,8 @@ deploy_stack() {
     --template-file "${template_file}" \
     --capabilities CAPABILITY_NAMED_IAM \
     --region "${REGION}" \
+    --s3-bucket "${CFN_BUCKET}" \
+    --s3-prefix "${CLUSTER_NAME}" \
     --tags "cluster=${CLUSTER_NAME}" \
     ${extra_args} || {
       echo "ERROR: Stack ${stack_name} failed. Check CloudFormation events:"

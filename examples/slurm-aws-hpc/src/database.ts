@@ -53,6 +53,6 @@ export const dbInstance = new DbInstance({
 export const dbEndpointParam = new SsmParameter({
   Name: Sub(`/${config.clusterName}/slurmdbd/endpoint`),
   Type: "String",
-  Value: dbCluster["Endpoint.Address"],
+  Value: dbCluster.Endpoint_Address,
   Description: "Aurora MySQL endpoint for slurmdbd",
 });
