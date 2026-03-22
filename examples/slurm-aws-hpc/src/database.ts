@@ -48,11 +48,20 @@ export const dbInstance = new DbInstance({
   Tags: [{ Key: "Name", Value: `${config.clusterName}-slurmdbd-instance` }],
 });
 
-// Store the cluster endpoint in SSM so head-node UserData can retrieve it
-// without baking the DNS name into the AMI.
+// Store the cluster endpoint and secret ARN in SSM so head-node UserData can
+// retrieve them without baking DNS names or ARNs into the AMI.
 export const dbEndpointParam = new SsmParameter({
   Name: Sub(`/${config.clusterName}/slurmdbd/endpoint`),
   Type: "String",
   Value: dbCluster.Endpoint_Address,
   Description: "Aurora MySQL endpoint for slurmdbd",
+});
+
+// ManageMasterUserPassword generates an auto-named secret; store the ARN so
+// the head node can call GetSecretValue without needing rds:DescribeDBClusters.
+export const dbSecretArnParam = new SsmParameter({
+  Name: Sub(`/${config.clusterName}/slurmdbd/secret-arn`),
+  Type: "String",
+  Value: dbCluster.MasterUserSecret_SecretArn,
+  Description: "Secrets Manager ARN for Aurora slurmdbd master user",
 });
