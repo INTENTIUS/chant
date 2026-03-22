@@ -24,7 +24,7 @@ export const dbSubnetGroup = new RDSDBSubnetGroup({
 export const dbCluster = new DbCluster({
   DBClusterIdentifier: config.dbClusterIdentifier,  // explicit ID so monitoring can reference it
   Engine: "aurora-mysql",
-  EngineVersion: "8.0.mysql_aurora.3.05.2",
+  EngineVersion: "8.0.mysql_aurora.3.08.0",
   EngineMode: "provisioned",
   DatabaseName: "slurm_acct_db",
   MasterUsername: "slurm",
