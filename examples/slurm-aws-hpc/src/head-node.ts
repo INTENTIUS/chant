@@ -14,7 +14,7 @@
  */
 
 import { Instance } from "@intentius/chant-lexicon-aws";
-import { Sub } from "@intentius/chant-lexicon-aws";
+import { Sub, Join, Base64 } from "@intentius/chant-lexicon-aws";
 import { privateSubnet1 } from "./networking";
 import { clusterSg } from "./security";
 import { headNodeInstanceProfile } from "./iam";
@@ -22,8 +22,9 @@ import { scratchFs } from "./storage";
 import { config } from "./config";
 
 // Inline bash — runs on first boot via cloud-init.
-// Using Sub so CFN resolves ${AWS::StackName} and ${AWS::Region} at deploy time.
-const HEAD_NODE_USERDATA = Sub([
+// Base64(Join) lets us mix plain strings with Sub intrinsics for CFN attribute refs.
+// Lines needing CFN variable resolution (AWS::StackName, FSx attrs) use Sub tagged template.
+const HEAD_NODE_USERDATA = Base64(Join("\n", [
   "#!/bin/bash",
   "set -euo pipefail",
   "exec > >(tee /var/log/slurm-bootstrap.log) 2>&1",
@@ -46,7 +47,7 @@ const HEAD_NODE_USERDATA = Sub([
   "",
   "# ── 2. Mount FSx Lustre ──────────────────────────────────────────",
   "mkdir -p /scratch",
-  `mount -t lustre -o relatime,flock \${${scratchFs.DNSName}}@tcp:/${scratchFs.LustreMountName} /scratch`,
+  Sub`mount -t lustre -o relatime,flock ${scratchFs.DNSName}@tcp:/${scratchFs.LustreMountName} /scratch`,
   "mkdir -p /scratch/slurm/state",
   "chown slurm:slurm /scratch/slurm/state",
   "",
@@ -203,8 +204,8 @@ const HEAD_NODE_USERDATA = Sub([
   "systemctl enable --now slurmctld",
   "",
   "# Signal CloudFormation that bootstrap completed successfully",
-  `cfn-signal -e $? --stack \${AWS::StackName} --resource HeadNode --region \${AWS::Region}`,
-].join("\\n"));
+  Sub`cfn-signal -e $? --stack \${AWS::StackName} --resource HeadNode --region \${AWS::Region}`,
+]));
 
 export const headNode = new Instance(
   {

@@ -10,7 +10,7 @@
  */
 
 import { LaunchTemplate, AutoScalingGroup, LifecycleHook } from "@intentius/chant-lexicon-aws";
-import { Sub } from "@intentius/chant-lexicon-aws";
+import { Sub, Join, Base64 } from "@intentius/chant-lexicon-aws";
 import { privateSubnet1 } from "./networking";
 import { clusterSg } from "./security";
 import { efaPlacementGroup } from "./networking";
@@ -36,17 +36,17 @@ const SLURMD_BOOTSTRAP = [
 ];
 
 // GPU compute: ECS GPU-optimized AMI, gres.conf for NVML, then slurmd
-const GPU_COMPUTE_USERDATA = Sub([
+const GPU_COMPUTE_USERDATA = Base64(Join("\n", [
   "#!/bin/bash",
   "set -euo pipefail",
   "",
   "# Mount FSx Lustre",
-  `mkdir -p /scratch`,
-  `amazon-linux-extras install -y lustre`,
-  `mount -t lustre -o relatime,flock \${${scratchFs.DNSName}}@tcp:/${scratchFs.LustreMountName} /scratch || {`,
-  `  echo "ERROR: FSx Lustre mount failed — verify security groups allow ports 988/1018-1023 and filesystem is AVAILABLE" >&2`,
-  `  exit 1`,
-  `}`,
+  "mkdir -p /scratch",
+  "amazon-linux-extras install -y lustre",
+  Sub`mount -t lustre -o relatime,flock ${scratchFs.DNSName}@tcp:/${scratchFs.LustreMountName} /scratch || {`,
+  '  echo "ERROR: FSx Lustre mount failed — verify security groups allow ports 988/1018-1023 and filesystem is AVAILABLE" >&2',
+  "  exit 1",
+  "}",
   "",
   "# Resolve head01 and bootstrap minimal slurm.conf for configless startup",
   ...SLURMD_BOOTSTRAP,
@@ -58,10 +58,10 @@ const GPU_COMPUTE_USERDATA = Sub([
   "",
   "# Start slurmd",
   "systemctl enable --now slurmd",
-].join("\\n"));
+]));
 
 // CPU compute: standard Amazon Linux 2 AMI, no GPU gres.conf
-const CPU_COMPUTE_USERDATA = Sub([
+const CPU_COMPUTE_USERDATA = Base64(Join("\n", [
   "#!/bin/bash",
   "set -euo pipefail",
   "",
@@ -71,19 +71,19 @@ const CPU_COMPUTE_USERDATA = Sub([
   "  yum install -y --enablerepo=epel slurm slurm-slurmd",
   "",
   "# Mount FSx Lustre",
-  `mkdir -p /scratch`,
-  `amazon-linux-extras install -y lustre`,
-  `mount -t lustre -o relatime,flock \${${scratchFs.DNSName}}@tcp:/${scratchFs.LustreMountName} /scratch || {`,
-  `  echo "ERROR: FSx Lustre mount failed — verify security groups allow ports 988/1018-1023 and filesystem is AVAILABLE" >&2`,
-  `  exit 1`,
-  `}`,
+  "mkdir -p /scratch",
+  "amazon-linux-extras install -y lustre",
+  Sub`mount -t lustre -o relatime,flock ${scratchFs.DNSName}@tcp:/${scratchFs.LustreMountName} /scratch || {`,
+  '  echo "ERROR: FSx Lustre mount failed — verify security groups allow ports 988/1018-1023 and filesystem is AVAILABLE" >&2',
+  "  exit 1",
+  "}",
   "",
   "# Resolve head01 and bootstrap minimal slurm.conf for configless startup",
   ...SLURMD_BOOTSTRAP,
   "",
   "# Start slurmd",
   "systemctl enable --now slurmd",
-].join("\\n"));
+]));
 
 export const cpuLaunchTemplate = new LaunchTemplate({
   LaunchTemplateName: Sub(`${config.clusterName}-cpu-lt`),
