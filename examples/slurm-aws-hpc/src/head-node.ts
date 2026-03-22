@@ -209,7 +209,7 @@ const HEAD_NODE_USERDATA = Base64(Join("\n", [
   "systemctl enable --now slurmctld",
   "",
   "# Signal CloudFormation that bootstrap completed successfully",
-  Sub`cfn-signal -e $? --stack \${AWS::StackName} --resource HeadNode --region \${AWS::Region}`,
+  Sub`cfn-signal -e $? --stack \${AWS::StackName} --resource headNode --region \${AWS::Region}`,
 ]));
 
 export const headNode = new Instance(
@@ -227,6 +227,6 @@ export const headNode = new Instance(
     ],
   },
   {
-    CreationPolicy: { ResourceSignal: { Timeout: "PT10M" } },
+    CreationPolicy: { ResourceSignal: { Timeout: "PT30M" } },
   },
 );
