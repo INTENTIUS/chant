@@ -13,7 +13,7 @@ const EC2_ASSUME_ROLE = {
 // Compute nodes need: SSM (for fleet management), FSx access, CloudWatch metrics
 
 export const computeRole = new Role({
-  RoleName: Sub(`${config.clusterName}-compute-role`),
+  RoleName: Sub("\${AWS::StackName}-compute-role"),
   AssumeRolePolicyDocument: EC2_ASSUME_ROLE,
   ManagedPolicyArns: [
     "arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore",
@@ -37,7 +37,7 @@ export const computeRole = new Role({
 });
 
 export const computeInstanceProfile = new InstanceProfile({
-  InstanceProfileName: Sub(`${config.clusterName}-compute-profile`),
+  InstanceProfileName: Sub("\${AWS::StackName}-compute-profile"),
   Roles: [Ref(computeRole)],
 });
 
@@ -46,7 +46,7 @@ export const computeInstanceProfile = new InstanceProfile({
 // AutoScaling (for SuspendProgram/ResumeProgram hooks), SSM Parameter Store
 
 export const headNodeRole = new Role({
-  RoleName: Sub(`${config.clusterName}-head-role`),
+  RoleName: Sub("\${AWS::StackName}-head-role"),
   AssumeRolePolicyDocument: EC2_ASSUME_ROLE,
   ManagedPolicyArns: [
     "arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore",
@@ -67,7 +67,7 @@ export const headNodeRole = new Role({
           {
             Effect: "Allow",
             Action: ["ssm:GetParameter", "ssm:PutParameter"],
-            Resource: [Sub(`arn:aws:ssm:${config.region}:*:parameter/${config.clusterName}/*`)],
+            Resource: [Sub(`arn:aws:ssm:${config.region}:*:parameter/\${AWS::StackName}/*`)],
           },
           {
             Effect: "Allow",
@@ -86,7 +86,7 @@ export const headNodeRole = new Role({
 });
 
 export const headNodeInstanceProfile = new InstanceProfile({
-  InstanceProfileName: Sub(`${config.clusterName}-head-profile`),
+  InstanceProfileName: Sub("\${AWS::StackName}-head-profile"),
   Roles: [Ref(headNodeRole)],
 });
 
@@ -98,7 +98,7 @@ const LAMBDA_ASSUME_ROLE = {
 };
 
 export const spotHandlerRole = new Role({
-  RoleName: Sub(`${config.clusterName}-spot-handler-role`),
+  RoleName: Sub("\${AWS::StackName}-spot-handler-role"),
   AssumeRolePolicyDocument: LAMBDA_ASSUME_ROLE,
   ManagedPolicyArns: ["arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole"],
   Policies: [
@@ -115,7 +115,7 @@ export const spotHandlerRole = new Role({
           {
             Effect: "Allow",
             Action: ["ssm:GetParameter"],
-            Resource: [Sub(`arn:aws:ssm:${config.region}:*:parameter/${config.clusterName}/head-node/*`)],
+            Resource: [Sub(`arn:aws:ssm:${config.region}:*:parameter/\${AWS::StackName}/head-node/*`)],
           },
           {
             Effect: "Allow",

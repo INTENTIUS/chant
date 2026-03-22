@@ -46,7 +46,7 @@ exports.handler = async (event) => {
 `.trim();
 
 export const spotHandlerFn = new Function({
-  FunctionName: Sub(`${config.clusterName}-spot-handler`),
+  FunctionName: Sub("\${AWS::StackName}-spot-handler"),
   Runtime: "nodejs20.x",
   Role: spotHandlerRole.Arn,
   Handler: "index.handler",
@@ -56,14 +56,14 @@ export const spotHandlerFn = new Function({
   },
   Environment: {
     Variables: {
-      CLUSTER_NAME: config.clusterName,
+      CLUSTER_NAME: Sub("\${AWS::StackName}"),
     },
   },
 }, { DependsOn: headNode });
 
 // EventBridge rule: EC2 Spot Instance Interruption Warning
 export const spotInterruptionRule = new EventRule({
-  Name: Sub(`${config.clusterName}-spot-interruption`),
+  Name: Sub("\${AWS::StackName}-spot-interruption"),
   Description: "Drain and requeue Slurm jobs on spot interruption",
   State: "ENABLED",
   EventPattern: {

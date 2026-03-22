@@ -167,7 +167,7 @@ echo ""
 
 # chant build produces a single infra.json; in production you'd split into
 # nested stacks per logical group. For this example we deploy as one stack.
-deploy_stack "${CLUSTER_NAME}-infra" "${ROOT_DIR}/dist/infra.json"
+deploy_stack "${CLUSTER_NAME}" "${ROOT_DIR}/dist/infra.json"
 
 echo ""
 

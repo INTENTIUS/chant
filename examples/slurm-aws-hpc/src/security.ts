@@ -1,11 +1,12 @@
 import { SecurityGroup, SecurityGroup_Ingress, EC2SecurityGroupIngress } from "@intentius/chant-lexicon-aws";
+import { Sub } from "@intentius/chant-lexicon-aws";
 import { vpc } from "./networking";
 import { config } from "./config";
 
 // ── Cluster security group (all Slurm nodes) ──────────────────────
 
 export const clusterSg = new SecurityGroup({
-  GroupDescription: `${config.clusterName} cluster nodes - Slurm + MPI + EFA`,
+  GroupDescription: Sub("\${AWS::StackName} cluster nodes - Slurm + MPI + EFA"),
   VpcId: vpc.VpcId,
   SecurityGroupIngress: [
     // Slurm: slurmctld (6817), slurmd (6818), slurmrestd (6820)
@@ -15,7 +16,7 @@ export const clusterSg = new SecurityGroup({
     // MPI (OpenMPI uses ephemeral range via PMIx)
     new SecurityGroup_Ingress({ IpProtocol: "tcp", FromPort: 1024, ToPort: 65535, CidrIp: config.vpcCidr }),
   ],
-  Tags: [{ Key: "Name", Value: `${config.clusterName}-cluster-sg` }],
+  Tags: [{ Key: "Name", Value: Sub("\${AWS::StackName}-cluster-sg") }],
 });
 
 // EFA self-referencing rule: all traffic within the cluster SG for EFA fabric.
@@ -29,7 +30,7 @@ export const efaSelfIngress = new EC2SecurityGroupIngress({
 // ── FSx security group (Lustre port 988) ─────────────────────────
 
 export const fsxSg = new SecurityGroup({
-  GroupDescription: `${config.clusterName} FSx Lustre access`,
+  GroupDescription: Sub("\${AWS::StackName} FSx Lustre access"),
   VpcId: vpc.VpcId,
   SecurityGroupIngress: [
     // Lustre mount protocol (TCP 988) — CIDR-based so FSx property validation passes
@@ -37,17 +38,17 @@ export const fsxSg = new SecurityGroup({
     // Lustre data transfer ports
     new SecurityGroup_Ingress({ IpProtocol: "tcp", FromPort: 1018, ToPort: 1023, CidrIp: config.vpcCidr }),
   ],
-  Tags: [{ Key: "Name", Value: `${config.clusterName}-fsx-sg` }],
+  Tags: [{ Key: "Name", Value: Sub("\${AWS::StackName}-fsx-sg") }],
 });
 
 // ── RDS (slurmdbd) security group ─────────────────────────────────
 // Only the head node runs slurmdbd — restrict to clusterSg
 
 export const rdsSg = new SecurityGroup({
-  GroupDescription: `${config.clusterName} Aurora MySQL (slurmdbd)`,
+  GroupDescription: Sub("\${AWS::StackName} Aurora MySQL (slurmdbd)"),
   VpcId: vpc.VpcId,
   SecurityGroupIngress: [
     new SecurityGroup_Ingress({ IpProtocol: "tcp", FromPort: 3306, ToPort: 3306, SourceSecurityGroupId: clusterSg.GroupId }),
   ],
-  Tags: [{ Key: "Name", Value: `${config.clusterName}-rds-sg` }],
+  Tags: [{ Key: "Name", Value: Sub("\${AWS::StackName}-rds-sg") }],
 });

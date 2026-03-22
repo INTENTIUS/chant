@@ -16,13 +16,13 @@ import { rdsSg } from "./security";
 import { config } from "./config";
 
 export const dbSubnetGroup = new RDSDBSubnetGroup({
-  DBSubnetGroupDescription: `${config.clusterName} slurmdbd subnet group`,
+  DBSubnetGroupDescription: Sub("\${AWS::StackName} slurmdbd subnet group"),
   SubnetIds: [privateSubnet1.SubnetId, privateSubnet2.SubnetId],
-  Tags: [{ Key: "Name", Value: `${config.clusterName}-slurmdbd-sg` }],
+  Tags: [{ Key: "Name", Value: Sub("\${AWS::StackName}-slurmdbd-sg") }],
 });
 
 export const dbCluster = new DbCluster({
-  DBClusterIdentifier: config.dbClusterIdentifier,  // explicit ID so monitoring can reference it
+  DBClusterIdentifier: Sub("\${AWS::StackName}-slurmdbd"),  // explicit ID so monitoring can reference it
   Engine: "aurora-mysql",
   EngineVersion: "8.0.mysql_aurora.3.08.0",
   EngineMode: "provisioned",
@@ -37,7 +37,7 @@ export const dbCluster = new DbCluster({
   },
   BackupRetentionPeriod: 7,
   StorageEncrypted: true,
-  Tags: [{ Key: "Name", Value: `${config.clusterName}-slurmdbd` }],
+  Tags: [{ Key: "Name", Value: Sub("\${AWS::StackName}-slurmdbd") }],
 });
 
 export const dbInstance = new DbInstance({
@@ -45,13 +45,13 @@ export const dbInstance = new DbInstance({
   DBInstanceClass: "db.serverless",
   DBClusterIdentifier: Ref(dbCluster),
   StorageEncrypted: true,  // inherited from cluster; explicit for lint compliance
-  Tags: [{ Key: "Name", Value: `${config.clusterName}-slurmdbd-instance` }],
+  Tags: [{ Key: "Name", Value: Sub("\${AWS::StackName}-slurmdbd-instance") }],
 });
 
 // Store the cluster endpoint and secret ARN in SSM so head-node UserData can
 // retrieve them without baking DNS names or ARNs into the AMI.
 export const dbEndpointParam = new SsmParameter({
-  Name: Sub(`/${config.clusterName}/slurmdbd/endpoint`),
+  Name: Sub("\/${AWS::StackName}/slurmdbd/endpoint"),
   Type: "String",
   Value: dbCluster.Endpoint_Address,
   Description: "Aurora MySQL endpoint for slurmdbd",
@@ -60,7 +60,7 @@ export const dbEndpointParam = new SsmParameter({
 // ManageMasterUserPassword generates an auto-named secret; store the ARN so
 // the head node can call GetSecretValue without needing rds:DescribeDBClusters.
 export const dbSecretArnParam = new SsmParameter({
-  Name: Sub(`/${config.clusterName}/slurmdbd/secret-arn`),
+  Name: Sub("\/${AWS::StackName}/slurmdbd/secret-arn"),
   Type: "String",
   Value: dbCluster.MasterUserSecret_SecretArn,
   Description: "Secrets Manager ARN for Aurora slurmdbd master user",

@@ -21,7 +21,7 @@ import { config } from "./config";
 // Shared bootstrap snippet: resolves head01 via SSM and writes a minimal slurm.conf
 // so slurmd can locate slurmctld for the enable_configless initial fetch.
 const SLURMD_BOOTSTRAP = [
-  `CLUSTER_NAME=${config.clusterName}`,
+  Sub`CLUSTER_NAME=\${AWS::StackName}`,
   `REGION=${config.region}`,
   "HEAD_IP=$(aws ssm get-parameter \\",
   "  --name /$CLUSTER_NAME/head-node/private-ip \\",
@@ -29,7 +29,7 @@ const SLURMD_BOOTSTRAP = [
   "echo \"$HEAD_IP head01\" >> /etc/hosts",
   "mkdir -p /etc/slurm",
   "cat > /etc/slurm/slurm.conf << 'EOF'",
-  `ClusterName=${config.clusterName}`,
+  Sub`ClusterName=\${AWS::StackName}`,
   "SlurmctldHost=head01",
   "AuthType=auth/munge",
   "EOF",
@@ -86,7 +86,7 @@ const CPU_COMPUTE_USERDATA = Base64(Join("\n", [
 ]));
 
 export const cpuLaunchTemplate = new LaunchTemplate({
-  LaunchTemplateName: Sub(`${config.clusterName}-cpu-lt`),
+  LaunchTemplateName: Sub("\${AWS::StackName}-cpu-lt"),
   LaunchTemplateData: {
     ImageId: "{{resolve:ssm:/aws/service/ami-amazon-linux-latest/amzn2-ami-hvm-x86_64-gp2}}",
     InstanceType: config.cpuInstanceType,
@@ -97,14 +97,14 @@ export const cpuLaunchTemplate = new LaunchTemplate({
     TagSpecifications: [
       {
         ResourceType: "instance",
-        Tags: [{ Key: "cluster", Value: config.clusterName }, { Key: "role", Value: "compute-cpu" }],
+        Tags: [{ Key: "cluster", Value: Sub("\${AWS::StackName}") }, { Key: "role", Value: "compute-cpu" }],
       },
     ],
   },
 });
 
 export const cpuAsg = new AutoScalingGroup({
-  AutoScalingGroupName: Sub(`${config.clusterName}-cpu-asg`),
+  AutoScalingGroupName: Sub("\${AWS::StackName}-cpu-asg"),
   MinSize: "0",
   MaxSize: "32",         // matches cpu[001-032] in slurm-cluster.ts
   DesiredCapacity: "0",  // Slurm SuspendProgram/ResumeProgram controls capacity
@@ -113,11 +113,11 @@ export const cpuAsg = new AutoScalingGroup({
     LaunchTemplateId: cpuLaunchTemplate.LaunchTemplateId,
     Version: cpuLaunchTemplate.LatestVersionNumber,
   },
-  Tags: [{ Key: "cluster", Value: config.clusterName, PropagateAtLaunch: true }],
+  Tags: [{ Key: "cluster", Value: Sub("\${AWS::StackName}"), PropagateAtLaunch: true }],
 });
 
 export const gpuLaunchTemplate = new LaunchTemplate({
-  LaunchTemplateName: Sub(`${config.clusterName}-gpu-lt`),
+  LaunchTemplateName: Sub("\${AWS::StackName}-gpu-lt"),
   LaunchTemplateData: {
     ImageId: "{{resolve:ssm:/aws/service/ecs/optimized-ami/amazon-linux-2/gpu/recommended/image_id}}",
     IamInstanceProfile: { Arn: computeInstanceProfile.Arn },
@@ -136,14 +136,14 @@ export const gpuLaunchTemplate = new LaunchTemplate({
     TagSpecifications: [
       {
         ResourceType: "instance",
-        Tags: [{ Key: "cluster", Value: config.clusterName }, { Key: "role", Value: "compute" }],
+        Tags: [{ Key: "cluster", Value: Sub("\${AWS::StackName}") }, { Key: "role", Value: "compute" }],
       },
     ],
   },
 });
 
 export const gpuAsg = new AutoScalingGroup({
-  AutoScalingGroupName: Sub(`${config.clusterName}-gpu-asg`),
+  AutoScalingGroupName: Sub("\${AWS::StackName}-gpu-asg"),
   MinSize: "0",
   MaxSize: "16",          // 16 × p4d.24xlarge = 128 A100 GPUs
   DesiredCapacity: "0",   // Slurm SuspendProgram/ResumeProgram controls capacity
@@ -163,14 +163,14 @@ export const gpuAsg = new AutoScalingGroup({
       SpotAllocationStrategy: config.spotAllocationStrategy,
     },
   },
-  Tags: [{ Key: "cluster", Value: config.clusterName, PropagateAtLaunch: true }],
+  Tags: [{ Key: "cluster", Value: Sub("\${AWS::StackName}"), PropagateAtLaunch: true }],
 });
 
 // Lifecycle hook: delays instance termination by 5 minutes so Slurm can requeue jobs
 // The spot-handler Lambda completes this hook after drain + requeue.
 // Name must match what spot-handler.ts uses: ${clusterName}-spot-termination-hook
 export const spotTerminationHook = new LifecycleHook({
-  LifecycleHookName: Sub(`${config.clusterName}-spot-termination-hook`),
+  LifecycleHookName: Sub("\${AWS::StackName}-spot-termination-hook"),
   AutoScalingGroupName: Ref(gpuAsg),
   LifecycleTransition: "autoscaling:EC2_INSTANCE_TERMINATING",
   HeartbeatTimeout: 300,   // 5 minutes — Slurm spot interruption warning is 2 min

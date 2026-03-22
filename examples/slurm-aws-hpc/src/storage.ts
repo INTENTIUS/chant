@@ -11,6 +11,7 @@
  */
 
 import { FSxFileSystem } from "@intentius/chant-lexicon-aws";
+import { Sub } from "@intentius/chant-lexicon-aws";
 import { privateSubnet1 } from "./networking";
 import { fsxSg } from "./security";
 import { config } from "./config";
@@ -26,5 +27,5 @@ export const scratchFs = new FSxFileSystem({
     PerUnitStorageThroughput: config.fsxThroughputPerTiBMBps, // 200 MB/s/TiB = 240 GB/s total
     // DataCompressionType omitted — EDA waveform files compress well but CPU cost is measurable
   },
-  Tags: [{ Key: "Name", Value: `${config.clusterName}-scratch` }],
+  Tags: [{ Key: "Name", Value: Sub("\${AWS::StackName}-scratch") }],
 });

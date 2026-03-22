@@ -19,7 +19,7 @@ export const vpc = new Vpc({
   CidrBlock: config.vpcCidr,
   EnableDnsHostnames: true,
   EnableDnsSupport: true,
-  Tags: [{ Key: "Name", Value: Sub(`${config.clusterName}-vpc`) }],
+  Tags: [{ Key: "Name", Value: Sub("\${AWS::StackName}-vpc") }],
 });
 
 // ── Subnets ───────────────────────────────────────────────────────
@@ -30,34 +30,34 @@ export const publicSubnet = new Subnet({
   CidrBlock: "10.0.0.0/24",
   AvailabilityZone: Sub(`${config.region}a`),
   MapPublicIpOnLaunch: true,
-  Tags: [{ Key: "Name", Value: `${config.clusterName}-public-1` }],
+  Tags: [{ Key: "Name", Value: Sub("\${AWS::StackName}-public-1") }],
 });
 
 export const privateSubnet1 = new Subnet({
   VpcId: vpc.VpcId,
   CidrBlock: config.privateSubnet1Cidr,
   AvailabilityZone: Sub(`${config.region}a`),
-  Tags: [{ Key: "Name", Value: `${config.clusterName}-private-1` }],
+  Tags: [{ Key: "Name", Value: Sub("\${AWS::StackName}-private-1") }],
 });
 
 export const privateSubnet2 = new Subnet({
   VpcId: vpc.VpcId,
   CidrBlock: config.privateSubnet2Cidr,
   AvailabilityZone: Sub(`${config.region}b`),
-  Tags: [{ Key: "Name", Value: `${config.clusterName}-private-2` }],
+  Tags: [{ Key: "Name", Value: Sub("\${AWS::StackName}-private-2") }],
 });
 
 export const privateSubnet3 = new Subnet({
   VpcId: vpc.VpcId,
   CidrBlock: config.privateSubnet3Cidr,
   AvailabilityZone: Sub(`${config.region}c`),
-  Tags: [{ Key: "Name", Value: `${config.clusterName}-private-3` }],
+  Tags: [{ Key: "Name", Value: Sub("\${AWS::StackName}-private-3") }],
 });
 
 // ── Internet Gateway ───────────────────────────────────────────────
 
 export const igw = new InternetGateway({
-  Tags: [{ Key: "Name", Value: `${config.clusterName}-igw` }],
+  Tags: [{ Key: "Name", Value: Sub("\${AWS::StackName}-igw") }],
 });
 
 export const igwAttachment = new VPCGatewayAttachment({
@@ -69,20 +69,20 @@ export const igwAttachment = new VPCGatewayAttachment({
 
 export const natEip = new EIP({
   Domain: "vpc",
-  Tags: [{ Key: "Name", Value: `${config.clusterName}-nat-eip` }],
+  Tags: [{ Key: "Name", Value: Sub("\${AWS::StackName}-nat-eip") }],
 });
 
 export const natGateway = new NatGateway({
   SubnetId: publicSubnet.SubnetId,
   AllocationId: natEip.AllocationId,
-  Tags: [{ Key: "Name", Value: `${config.clusterName}-nat` }],
+  Tags: [{ Key: "Name", Value: Sub("\${AWS::StackName}-nat") }],
 });
 
 // ── Route tables ───────────────────────────────────────────────────
 
 export const publicRouteTable = new RouteTable({
   VpcId: vpc.VpcId,
-  Tags: [{ Key: "Name", Value: `${config.clusterName}-public-rt` }],
+  Tags: [{ Key: "Name", Value: Sub("\${AWS::StackName}-public-rt") }],
 });
 
 export const publicRoute = new EC2Route({
@@ -98,7 +98,7 @@ export const publicSubnetRta = new SubnetRouteTableAssociation({
 
 export const privateRouteTable = new RouteTable({
   VpcId: vpc.VpcId,
-  Tags: [{ Key: "Name", Value: `${config.clusterName}-private-rt` }],
+  Tags: [{ Key: "Name", Value: Sub("\${AWS::StackName}-private-rt") }],
 });
 
 // Default route for private subnets → NAT Gateway
@@ -129,5 +129,5 @@ export const privateSubnet3Rta = new SubnetRouteTableAssociation({
 
 export const efaPlacementGroup = new PlacementGroup({
   Strategy: "cluster",
-  Tags: [{ Key: "Name", Value: `${config.clusterName}-efa-pg` }],
+  Tags: [{ Key: "Name", Value: Sub("\${AWS::StackName}-efa-pg") }],
 });

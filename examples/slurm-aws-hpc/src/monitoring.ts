@@ -10,7 +10,7 @@ import { config } from "./config";
 // (Note: EFS would use BurstCreditBalance alarm — FSx Lustre has no burst model)
 
 export const fsxThroughputAlarm = new Alarm({
-  AlarmName: Sub(`${config.clusterName}-fsx-throughput-high`),
+  AlarmName: Sub("\${AWS::StackName}-fsx-throughput-high"),
   AlarmDescription: "FSx Lustre read throughput exceeds 80% of provisioned capacity",
   Namespace: "AWS/FSx",
   MetricName: "DataReadBytes",
@@ -29,11 +29,11 @@ export const fsxThroughputAlarm = new Alarm({
 // misconfigured sacct queries hammering the DB.
 
 export const rdsAlarm = new Alarm({
-  AlarmName: Sub(`${config.clusterName}-slurmdbd-cpu-high`),
+  AlarmName: Sub("\${AWS::StackName}-slurmdbd-cpu-high"),
   AlarmDescription: "Aurora MySQL (slurmdbd) CPU utilization above 80%",
   Namespace: "AWS/RDS",
   MetricName: "CPUUtilization",
-  Dimensions: [{ Name: "DBClusterIdentifier", Value: config.dbClusterIdentifier }],
+  Dimensions: [{ Name: "DBClusterIdentifier", Value: Sub("\${AWS::StackName}-slurmdbd") }],
   Period: 60,
   EvaluationPeriods: 5,
   Statistic: "Average",
@@ -47,11 +47,11 @@ export const rdsAlarm = new Alarm({
 // Switch allocation strategy or add more override instance types.
 
 export const spotInterruptionAlarm = new Alarm({
-  AlarmName: Sub(`${config.clusterName}-spot-interruptions`),
+  AlarmName: Sub("\${AWS::StackName}-spot-interruptions"),
   AlarmDescription: "High spot interruption rate on GPU fleet - consider adding instance types",
   Namespace: "AWS/AutoScaling",
   MetricName: "WarmPoolTerminatedInstances",
-  Dimensions: [{ Name: "AutoScalingGroupName", Value: Sub(`${config.clusterName}-gpu-asg`) }],
+  Dimensions: [{ Name: "AutoScalingGroupName", Value: Sub("\${AWS::StackName}-gpu-asg") }],
   Period: 300,
   EvaluationPeriods: 1,
   Statistic: "Sum",
@@ -65,11 +65,11 @@ export const spotInterruptionAlarm = new Alarm({
 // Common causes: AMI not in region, launch template IAM role misconfigured.
 
 export const asgLagAlarm = new Alarm({
-  AlarmName: Sub(`${config.clusterName}-gpu-asg-launch-lag`),
+  AlarmName: Sub("\${AWS::StackName}-gpu-asg-launch-lag"),
   AlarmDescription: "GPU ASG desired capacity exceeds in-service for >15min - ResumeProgram issue",
   Namespace: "AWS/AutoScaling",
   MetricName: "PendingInstances",
-  Dimensions: [{ Name: "AutoScalingGroupName", Value: Sub(`${config.clusterName}-gpu-asg`) }],
+  Dimensions: [{ Name: "AutoScalingGroupName", Value: Sub("\${AWS::StackName}-gpu-asg") }],
   Period: 300,
   EvaluationPeriods: 3,
   Statistic: "Maximum",

@@ -154,14 +154,14 @@ const POST_PROVISION_STEPS = [
 ];
 
 export const postProvisionDocument = new Document({
-  Name: `${config.clusterName}-post-provision`,
+  Name: Sub("\${AWS::StackName}-post-provision"),
   DocumentType: "Automation",
   DocumentFormat: "JSON",
   Content: {
     schemaVersion: "0.3",
-    description: `Post-provision configuration for the ${config.clusterName} EDA HPC cluster`,
+    description: Sub("Post-provision configuration for the \${AWS::StackName} EDA HPC cluster"),
     parameters: {
-      ClusterName: { type: "String", default: config.clusterName },
+      ClusterName: { type: "String", default: Sub("\${AWS::StackName}") },
     },
     mainSteps: POST_PROVISION_STEPS,
   },
@@ -170,8 +170,8 @@ export const postProvisionDocument = new Document({
 // Expose the document name in SSM so scripts/deploy.sh can read it without
 // hard-coding the name (useful if clusterName is overridden via env).
 export const documentNameParam = new SsmParameter({
-  Name: Sub(`/${config.clusterName}/automation/post-provision-document`),
+  Name: Sub("\/${AWS::StackName}/automation/post-provision-document"),
   Type: "String",
-  Value: Sub(`${config.clusterName}-post-provision`),
-  Description: `SSM Automation document name for ${config.clusterName} post-provision`,
+  Value: Sub("\${AWS::StackName}-post-provision"),
+  Description: Sub("SSM Automation document name for \${AWS::StackName} post-provision"),
 });
