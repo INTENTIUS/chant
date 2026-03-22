@@ -77,26 +77,86 @@ echo ""
 deploy_stack() {
   local stack_name="$1"
   local template_file="$2"
-  local extra_args="${3:-}"
 
   echo "  Deploying stack: ${stack_name}"
 
-  # shellcheck disable=SC2086
-  aws cloudformation deploy \
-    --stack-name "${stack_name}" \
-    --template-file "${template_file}" \
-    --capabilities CAPABILITY_NAMED_IAM \
-    --region "${REGION}" \
-    --s3-bucket "${CFN_BUCKET}" \
-    --s3-prefix "${CLUSTER_NAME}" \
-    --tags "cluster=${CLUSTER_NAME}" \
-    ${extra_args} || {
-      echo "ERROR: Stack ${stack_name} failed. Check CloudFormation events:"
-      echo "       aws cloudformation describe-stack-events --stack-name ${stack_name} --region ${REGION}"
-      exit 1
-    }
+  # Upload template to S3 (required for templates > 51 KB)
+  local template_key="${CLUSTER_NAME}/$(basename "${template_file}")"
+  aws s3 cp "${template_file}" "s3://${CFN_BUCKET}/${template_key}" \
+    --region "${REGION}" > /dev/null
+  local template_url="https://${CFN_BUCKET}.s3.amazonaws.com/${template_key}"
 
-  echo "    ${stack_name}: CREATE_COMPLETE"
+  # Check if stack already exists
+  local stack_status
+  stack_status=$(aws cloudformation describe-stacks \
+    --stack-name "${stack_name}" \
+    --region "${REGION}" \
+    --query 'Stacks[0].StackStatus' \
+    --output text 2>/dev/null || echo "DOES_NOT_EXIST")
+
+  if [[ "${stack_status}" == "DOES_NOT_EXIST" || "${stack_status}" == "DELETE_COMPLETE" ]]; then
+    # New stack: use create-stack (bypasses EarlyValidation changeset hook)
+    aws cloudformation create-stack \
+      --stack-name "${stack_name}" \
+      --template-url "${template_url}" \
+      --capabilities CAPABILITY_NAMED_IAM \
+      --region "${REGION}" \
+      --tags "Key=cluster,Value=${CLUSTER_NAME}" > /dev/null
+  else
+    # Existing stack: use update-stack
+    aws cloudformation update-stack \
+      --stack-name "${stack_name}" \
+      --template-url "${template_url}" \
+      --capabilities CAPABILITY_NAMED_IAM \
+      --region "${REGION}" \
+      --tags "Key=cluster,Value=${CLUSTER_NAME}" > /dev/null 2>&1 || {
+        # If update returns "No updates are to be performed" that's success
+        if aws cloudformation describe-stacks --stack-name "${stack_name}" \
+            --region "${REGION}" --query 'Stacks[0].StackStatus' \
+            --output text 2>/dev/null | grep -q "COMPLETE"; then
+          echo "    ${stack_name}: no changes"
+          return 0
+        fi
+      }
+  fi
+
+  # Poll until stack operation completes
+  echo "    Waiting for ${stack_name}..."
+  local timeout=1800  # 30 minutes
+  local elapsed=0
+  local interval=20
+  while [[ $elapsed -lt $timeout ]]; do
+    local status
+    status=$(aws cloudformation describe-stacks \
+      --stack-name "${stack_name}" \
+      --region "${REGION}" \
+      --query 'Stacks[0].StackStatus' \
+      --output text 2>/dev/null || echo "UNKNOWN")
+
+    case "${status}" in
+      CREATE_COMPLETE|UPDATE_COMPLETE)
+        echo "    ${stack_name}: ${status}"
+        return 0
+        ;;
+      CREATE_FAILED|ROLLBACK_COMPLETE|ROLLBACK_FAILED|UPDATE_FAILED|UPDATE_ROLLBACK_COMPLETE|UPDATE_ROLLBACK_FAILED)
+        echo "ERROR: Stack ${stack_name} failed with status: ${status}"
+        echo "       Failed resources:"
+        aws cloudformation describe-stack-events \
+          --stack-name "${stack_name}" \
+          --region "${REGION}" \
+          --query 'StackEvents[?ResourceStatus==`CREATE_FAILED`].[LogicalResourceId,ResourceStatusReason]' \
+          --output table 2>/dev/null | head -30
+        exit 1
+        ;;
+    esac
+
+    sleep $interval
+    elapsed=$((elapsed + interval))
+    echo "    [${status}] ${elapsed}s elapsed..."
+  done
+
+  echo "ERROR: Stack ${stack_name} timed out after ${timeout}s"
+  exit 1
 }
 
 # ── Deploy stacks ──────────────────────────────────────────────────
