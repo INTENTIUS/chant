@@ -89,7 +89,7 @@ export const publicRoute = new EC2Route({
   RouteTableId: publicRouteTable.RouteTableId,
   DestinationCidrBlock: "0.0.0.0/0",
   GatewayId: igw.InternetGatewayId,
-});
+}, { DependsOn: igwAttachment });
 
 export const publicSubnetRta = new SubnetRouteTableAssociation({
   SubnetId: publicSubnet.SubnetId,

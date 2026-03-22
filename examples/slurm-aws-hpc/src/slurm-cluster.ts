@@ -54,8 +54,7 @@ export const cluster = new Cluster({
   // GPU GRES — must match gres.conf AutoDetect=nvml on GPU nodes
   GresTypes: "gpu",
 
-  // EDA license pool — Slurm queues jobs if tokens are exhausted
-  Licenses: `eda_synth:${config.licenses.eda_synth},eda_sim:${config.licenses.eda_sim},calibre_drc:${config.licenses.calibre_drc}`,
+  // License pool is declared via License entities below — do not duplicate here.
 
   // Multifactor priority: fairshare dominates (10000 >> age 1000 >> job-size 500)
   PriorityType: "priority/multifactor",

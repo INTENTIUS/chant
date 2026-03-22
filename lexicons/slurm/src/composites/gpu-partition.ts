@@ -46,6 +46,12 @@ export interface GpuPartitionConfig {
   /** Threads per core — set to 1 to disable hyperthreading for GPU jobs. */
   threadsPerCore?: number;
   /**
+   * Slurm node state.
+   * @default "CLOUD" — enables suspend/resume for cloud-managed nodes.
+   *   Use "UNKNOWN" only when nodes are physically present but not yet registered.
+   */
+  state?: "CLOUD" | "UNKNOWN" | "DOWN" | "DRAIN";
+  /**
    * When provided, creates a GresNode resource for gres.conf.
    * autoDetect defaults to "nvml" when this option is set.
    */
@@ -94,7 +100,7 @@ export function GpuPartition(config: GpuPartitionConfig): GpuPartitionResources 
     RealMemory: config.memoryMb,
     Gres: `gpu:${config.gpuTypeCount}`,
     Feature: features,
-    State: "UNKNOWN",
+    State: config.state ?? "CLOUD",
     ...(config.socketsPerNode !== undefined && { Sockets: config.socketsPerNode }),
     ...(config.coresPerSocket !== undefined && { CoresPerSocket: config.coresPerSocket }),
     ...(config.threadsPerCore !== undefined && { ThreadsPerCore: config.threadsPerCore }),
