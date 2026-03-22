@@ -1,5 +1,5 @@
 import { Role, InstanceProfile } from "@intentius/chant-lexicon-aws";
-import { Sub } from "@intentius/chant-lexicon-aws";
+import { Sub, Ref } from "@intentius/chant-lexicon-aws";
 import { scratchFs } from "./storage";
 import { dbCluster } from "./database";
 import { config } from "./config";
@@ -38,7 +38,7 @@ export const computeRole = new Role({
 
 export const computeInstanceProfile = new InstanceProfile({
   InstanceProfileName: Sub(`${config.clusterName}-compute-profile`),
-  Roles: [computeRole.RoleId],
+  Roles: [Ref(computeRole)],
 });
 
 // ── Head node role ────────────────────────────────────────────────
@@ -87,7 +87,7 @@ export const headNodeRole = new Role({
 
 export const headNodeInstanceProfile = new InstanceProfile({
   InstanceProfileName: Sub(`${config.clusterName}-head-profile`),
-  Roles: [headNodeRole.RoleId],
+  Roles: [Ref(headNodeRole)],
 });
 
 // ── Spot interruption Lambda role ─────────────────────────────────

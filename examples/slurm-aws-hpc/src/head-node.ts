@@ -14,7 +14,7 @@
  */
 
 import { Instance } from "@intentius/chant-lexicon-aws";
-import { Sub, Join, Base64 } from "@intentius/chant-lexicon-aws";
+import { Sub, Join, Base64, Ref } from "@intentius/chant-lexicon-aws";
 import { privateSubnet1 } from "./networking";
 import { clusterSg } from "./security";
 import { headNodeInstanceProfile } from "./iam";
@@ -211,7 +211,7 @@ export const headNode = new Instance(
   {
     ImageId: "{{resolve:ssm:/aws/service/ami-amazon-linux-latest/amzn2-ami-hvm-x86_64-gp2}}",
     InstanceType: config.headNodeInstanceType,
-    IamInstanceProfile: headNodeInstanceProfile.InstanceProfileName,
+    IamInstanceProfile: Ref(headNodeInstanceProfile),
     SubnetId: privateSubnet1.SubnetId,
     SecurityGroupIds: [clusterSg.GroupId],
     UserData: HEAD_NODE_USERDATA,

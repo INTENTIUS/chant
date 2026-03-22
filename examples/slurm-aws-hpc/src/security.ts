@@ -5,7 +5,7 @@ import { config } from "./config";
 // ── Cluster security group (all Slurm nodes) ──────────────────────
 
 export const clusterSg = new SecurityGroup({
-  GroupDescription: `${config.clusterName} cluster nodes — Slurm + MPI + EFA`,
+  GroupDescription: `${config.clusterName} cluster nodes - Slurm + MPI + EFA`,
   VpcId: vpc.VpcId,
   SecurityGroupIngress: [
     // Slurm: slurmctld (6817), slurmd (6818), slurmrestd (6820)

@@ -10,7 +10,7 @@
  */
 
 import { LaunchTemplate, AutoScalingGroup, LifecycleHook } from "@intentius/chant-lexicon-aws";
-import { Sub, Join, Base64 } from "@intentius/chant-lexicon-aws";
+import { Sub, Join, Base64, Ref } from "@intentius/chant-lexicon-aws";
 import { privateSubnet1 } from "./networking";
 import { clusterSg } from "./security";
 import { efaPlacementGroup } from "./networking";
@@ -170,7 +170,7 @@ export const gpuAsg = new AutoScalingGroup({
 // Name must match what spot-handler.ts uses: ${clusterName}-spot-termination-hook
 export const spotTerminationHook = new LifecycleHook({
   LifecycleHookName: Sub(`${config.clusterName}-spot-termination-hook`),
-  AutoScalingGroupName: Sub(`${config.clusterName}-gpu-asg`),
+  AutoScalingGroupName: Ref(gpuAsg),
   LifecycleTransition: "autoscaling:EC2_INSTANCE_TERMINATING",
   HeartbeatTimeout: 300,   // 5 minutes — Slurm spot interruption warning is 2 min
   DefaultResult: "CONTINUE",
