@@ -1,0 +1,193 @@
+---
+title: "Composites"
+description: "High-level factory patterns: GpuPartition, EDACluster, TrainingJob"
+---
+
+Composites are factory functions that return bundles of related resources. They encode
+best practices so you don't have to look up the Slurm documentation for common patterns.
+
+## GpuPartition
+
+Creates a matching `Node` + `Partition` pair for a GPU fleet.
+Automatically sets `Gres=gpu:<type>:<count>` on the node.
+
+```typescript
+import { GpuPartition } from "@intentius/chant-lexicon-slurm";
+
+export const { nodes: gpuNodes, partition: gpuPartition } = GpuPartition({
+  partitionName: "gpu",
+  nodePattern: "gpu[001-008]",
+  gpuTypeCount: "a100:8",     // <type>:<count> per node
+  cpusPerNode: 96,
+  memoryMb: 1_048_576,        // 1 TB
+  maxTime: "1-00:00:00",      // 24 hours
+});
+```
+
+Emits:
+```conf
+NodeName=gpu[001-008] CPUs=96 RealMemory=1048576 Gres=gpu:a100:8 State=UNKNOWN
+PartitionName=gpu Nodes=gpu[001-008] MaxTime=1-00:00:00 State=UP
+```
+
+**Note:** Also add `GresTypes=gpu` and `GresTypes: "gpu"` to your `Cluster` resource,
+and configure `/etc/slurm/gres.conf` with `AutoDetect=nvml` on GPU nodes.
+
+## TrainingJob
+
+Creates a REST `Job` entity pre-configured for multi-node distributed training.
+
+```typescript
+import { TrainingJob } from "@intentius/chant-lexicon-slurm";
+
+export const train = TrainingJob({
+  name: "llm-finetune",
+  nodeCount: 4,
+  gpusPerNode: 8,
+  gpuType: "a100",
+  partition: "gpu",
+  maxTime: "12:00:00",
+  script: "torchrun --nproc_per_node=8 finetune.py",
+  environment: { NCCL_DEBUG: "INFO", MASTER_PORT: "29500" },
+});
+```
+
+## EDACluster
+
+Creates a full EDA-optimized Slurm cluster with synthesis, simulation, and GPU partitions,
+plus license declarations.
+
+```typescript
+import { EDACluster } from "@intentius/chant-lexicon-slurm";
+
+const { cluster, cpuNodes, synthesisPartition, simPartition, licenses } = EDACluster({
+  clusterName: "eda-hpc",
+  controlMachine: "head01",
+  accountingHost: "db.internal",
+  stateSaveLocation: "/fsx/slurm/state",
+  cpuNodes: { pattern: "cpu[001-032]", cpusPerNode: 96, memoryMb: 196608, count: 32 },
+  licenses: [
+    { name: "eda_synth", count: 50 },
+    { name: "eda_sim", count: 200 },
+    { name: "calibre_drc", count: 30 },
+  ],
+  gpuNodes: {
+    partitionName: "gpu_eda",
+    nodePattern: "gpu[001-008]",
+    gpuTypeCount: "a100:8",
+    cpusPerNode: 96,
+    memoryMb: 1_048_576,
+  },
+});
+```
+
+The `EDACluster` composite sets:
+- `ProctrackType: "proctrack/cgroup"` — required for EDA license tracking
+- `SelectType: "select/cons_tres"` + `SelectTypeParameters: "CR_Core_Memory"`
+- `PriorityWeightFairshare: 10000`, `PriorityWeightAge: 1000` (multifactor priority)
+- Synthesis partition: `MaxTime=48:00:00`, CPU partition, named `synthesis`
+- Simulation partition: `MaxTime=168:00:00`, CPU partition, named `sim`
+- GPU partition via `GpuPartition` composite
+
+### cgroupConf option
+
+Generates a `CgroupConf` resource with production defaults:
+
+```typescript
+const { cluster, cgroupConf } = EDACluster({
+  ...base,
+  cgroupConf: {
+    plugin: "cgroup/v2",        // default
+    constrainRAMSpace: true,    // default
+    constrainCores: true,       // default
+    allowedRAMSpace: 95,        // default — 5% slack prevents false OOM kills
+    minRAMSpace: 30,            // default MB floor
+  },
+});
+```
+
+- `ConstrainDevices` is set to `true` automatically when `gpuNodes` is also configured
+  (requires `gres.conf File=` for each GPU device)
+- `cgroupConf` is `undefined` in the result when the option is not provided
+
+### suspend extensions
+
+```typescript
+EDACluster({
+  ...base,
+  suspend: {
+    program: "/usr/local/bin/suspend_node",
+    resumeProgram: "/usr/local/bin/resume_node",
+    suspendTime: 300,
+    resumeTimeout: 600,
+    excludeNodes: "head01",     // nodes excluded from power-down
+    excludeParts: "gpu_eda",    // partitions excluded from power-down
+    resumeRate: 10,             // max nodes/min to resume (gentler ASG scaling)
+    suspendRate: 5,             // max nodes/min to suspend
+  },
+});
+```
+
+When `suspend` is configured, the synthesis and sim partitions automatically get
+`PowerDownOnIdle: "YES"` so nodes are terminated as soon as their last job finishes.
+
+### acctGatherEnergy option
+
+```typescript
+EDACluster({
+  ...base,
+  acctGatherEnergy: {
+    type: "gpu",    // "rapl" | "ipmi" | "gpu" | "none"
+    nodeFreq: 30,   // sampling interval in seconds
+  },
+});
+```
+
+:::caution[RAPL requires nodeFreq < 300]
+When `type: "rapl"`, set `nodeFreq` to 30 or lower. Lint rule **SLR029** flags values ≥ 300.
+:::
+
+### preemptType option
+
+```typescript
+EDACluster({
+  ...base,
+  preemptType: "preempt/qos",  // enables QOS-based license preemption
+});
+```
+
+Use with `PreemptMode` on partitions to allow high-priority jobs to requeue lower-priority
+ones when EDA license tokens are exhausted.
+
+### Full example with all new fields
+
+```typescript
+export const { cluster, synthesisPartition, simPartition, cgroupConf } = EDACluster({
+  clusterName: "hpc-eda",
+  controlMachine: "head01",
+  accountingHost: "db.internal",
+  stateSaveLocation: "/fsx/slurm/state",
+  cpuNodes: { pattern: "cpu[001-032]", cpusPerNode: 36, memoryMb: 71680, count: 32 },
+  gpuNodes: {
+    partitionName: "gpu_eda",
+    nodePattern: "gpu[001-016]",
+    gpuTypeCount: "a100:8",
+    cpusPerNode: 96,
+    memoryMb: 1_044_480,
+    gresConf: { autoDetect: "nvml" },
+  },
+  licenses: [{ name: "eda_synth", count: 200 }, { name: "calibre_drc", count: 30 }],
+  cgroupConf: {},  // uses all defaults; ConstrainDevices=true auto-set (gpuNodes present)
+  suspend: {
+    program: "/usr/local/bin/suspend",
+    resumeProgram: "/usr/local/bin/resume",
+    suspendTime: 300,
+    resumeTimeout: 600,
+    excludeNodes: "head01",
+    resumeRate: 10,
+  },
+  acctGatherEnergy: { type: "gpu", nodeFreq: 30 },
+  preemptType: "preempt/qos",
+  jwtKeyPath: "/etc/slurm/jwt_hs256.key",
+});
+```

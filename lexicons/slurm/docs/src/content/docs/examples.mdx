@@ -1,0 +1,81 @@
+---
+title: "Examples"
+description: "Bundled Slurm configuration examples"
+---
+
+Three examples ship with the Slurm lexicon, covering common deployment patterns.
+
+## getting-started
+
+A minimal single-partition CPU cluster. Good starting point for new deployments.
+
+```
+lexicons/slurm/examples/getting-started/
+└── src/cluster.ts   # Cluster + Node + Partition
+```
+
+Build: `chant build src --lexicon slurm`
+
+Emits a `slurm.conf` with `ClusterName`, `ControlMachine`, one node range, and one CPU partition.
+
+## gpu-cluster
+
+A GPU-focused cluster using the `GpuPartition` composite. Demonstrates:
+
+- `GresTypes: "gpu"` on the Cluster
+- `GpuPartition` composite for `gpu[001-008]` with A100×8 per node
+- Multifactor priority with `PriorityWeightFairshare: 10000`
+- Login partition separate from the GPU partition
+
+```
+lexicons/slurm/examples/gpu-cluster/
+└── src/cluster.ts   # Cluster + loginNodes + GpuPartition + loginPartition
+```
+
+## multi-partition
+
+A multi-partition cluster with accounting and fairshare. Demonstrates:
+
+- `AccountingStorageType: "accounting_storage/slurmdbd"` wired to a local slurmdbd
+- `AccountingStorageEnforce: "associations,limits,qos"` — enforces QOS limits
+- Two node types: standard CPU and high-memory
+- Two partitions: `cpu` (default) and `himem`
+
+```
+lexicons/slurm/examples/multi-partition/
+└── src/cluster.ts   # Cluster + cpuNodes + hiMemNodes + cpuPartition + hiMemPartition
+```
+
+## AWS HPC cluster
+
+A production-grade EDA HPC cluster on AWS with:
+
+- FSx for Lustre (`PERSISTENT_2`) shared storage
+- Aurora MySQL Serverless v2 for slurmdbd
+- EFA networking with cluster placement groups
+- Spot fleet with ASG lifecycle hooks + EventBridge Lambda for spot interruption handling
+- SSM Automation document for orchestrated deploy
+- EDA license management (synthesis, simulation, DRC)
+
+```
+examples/slurm-aws-hpc/
+├── src/                 # chant TypeScript source
+│   ├── config.ts
+│   ├── networking.ts
+│   ├── security.ts
+│   ├── storage.ts       # FSx Lustre
+│   ├── database.ts      # Aurora MySQL
+│   ├── iam.ts
+│   ├── head-node.ts
+│   ├── compute.ts       # EFA + spot fleet
+│   ├── events.ts        # EventBridge + Lambda
+│   ├── automation.ts    # SSM Automation
+│   ├── slurm-cluster.ts # EDA partitions + licenses
+│   └── monitoring.ts
+├── lambda/
+│   └── spot-handler.ts  # Drain + requeue on spot interruption
+└── ssm/
+    └── bootstrap.yaml   # SSM Automation document
+```
+
+See `examples/slurm-aws-hpc/README.md` for deployment instructions.

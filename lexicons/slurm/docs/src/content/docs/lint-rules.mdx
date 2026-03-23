@@ -1,0 +1,81 @@
+---
+title: "Lint Rules"
+description: "Built-in lint rules and post-synth checks for Slurm resources"
+---
+
+Rules run in two phases:
+
+- **Pre-synth** (`chant lint`) — static analysis on TypeScript source
+- **Post-synth** (`chant build`) — checks on the generated `slurm.conf`
+
+## Pre-synth rules
+
+### SLRC001 — Partition nodes defined
+**Severity:** error | **Category:** correctness
+
+A `Partition.Nodes` value references a node pattern with no matching `NodeName` stanza.
+Slurm silently ignores undefined nodes, leaving the partition empty.
+
+```typescript
+// ✗ triggers SLRC001
+export const part = new Partition({ PartitionName: "gpu", Nodes: "gpu[001-004]" });
+// no Node with NodeName matching gpu[001-004]
+
+// ✓ ok
+export const nodes = new Node({ NodeName: "gpu[001-004]", CPUs: 96, RealMemory: 196608 });
+export const part = new Partition({ PartitionName: "gpu", Nodes: "gpu[001-004]" });
+```
+
+### SLRS001 — MaxTime format
+**Severity:** warning | **Category:** style
+
+`Partition.MaxTime` should be `UNLIMITED` or `D-HH:MM:SS` format.
+Values like `"24h"` or `"1440"` are not accepted by slurmctld.
+
+```typescript
+// ✗ triggers SLRS001
+new Partition({ MaxTime: "24h" });
+
+// ✓ ok
+new Partition({ MaxTime: "1-00:00:00" });
+new Partition({ MaxTime: "UNLIMITED" });
+```
+
+### SLRC002 — SelectType deprecated
+**Severity:** warning | **Category:** correctness
+
+`SelectType: "select/cons_res"` is deprecated in Slurm 23.x. Use `"select/cons_tres"`.
+
+### SLRC003 — DefMem conflict
+**Severity:** error | **Category:** correctness
+
+`DefMemPerCPU` and `DefMemPerNode` are mutually exclusive on a partition.
+Setting both causes Slurm to reject the configuration.
+
+## Post-synth checks
+
+Post-synth checks inspect the generated `slurm.conf` text.
+
+| Check | Severity | Description |
+|---|---|---|
+| SLR010 | error | `ClusterName` and `ControlMachine` are both required |
+| SLR011 | error | Every `PartitionName.Nodes=` must match a `NodeName=` stanza |
+| SLR012 | warning | GPU GRES must specify type: `gpu:a100:8`, not `gpu:8` |
+| SLR013 | error | `AuthType=auth/none` is insecure — use `auth/munge` |
+| SLR014 | warning | `StateSaveLocation` should be on shared storage, not local disk |
+| SLR015 | warning | `SelectType=cons_tres` without `SelectTypeParameters` (recommend `CR_Core_Memory`) |
+| SLR016 | warning | `SelectType=cons_res` is deprecated — use `cons_tres` |
+| SLR017 | error | `DefMemPerCPU` and `DefMemPerNode` cannot both be set on a partition |
+| SLR018 | error | `GresTypes=gpu` must be set globally when nodes declare GPU GRES |
+| SLR019 | warning | `AccountingStorageType=slurmdbd` without `AccountingStorageEnforce` |
+| SLR020 | warning | `ProctrackType=proctrack/linuxproc` is unsafe — use `proctrack/cgroup` |
+| SLR021 | warning | `PriorityWeightFairshare` < 1000 makes fairshare irrelevant |
+| SLR022 | warning | Exactly one partition must have `Default=YES` |
+| SLR023 | warning | `NodeName.State` must be a valid initial state (UNKNOWN/DOWN/FUTURE/CLOUD/DRAIN) |
+| SLR024 | error/warning | `SuspendProgram` and `ResumeProgram` must be set together |
+| SLR025 | warning | GPU nodes configured but no `GresNode` resources defined (gres.conf missing) |
+| SLR026 | warning | `CLOUD` nodes present but `ReturnToService` not set |
+| SLR027 | warning | `proctrack/cgroup` without `cgroup.conf` — memory constraints inactive |
+| SLR028 | warning | Multi-node GPU cluster without `TopologyPlugin` — NCCL co-location disabled |
+| SLR029 | error | `AcctGatherEnergyType=rapl` with `AcctGatherNodeFreq ≥ 300` — RAPL counter overflow |
+| SLR030 | warning | Partition `PreemptMode` set but `PreemptType=preempt/none` (default) — no effect |

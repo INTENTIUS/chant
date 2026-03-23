@@ -1,0 +1,21 @@
+{
+  "name": "slurm-aws-hpc-example",
+  "version": "0.0.1",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "build": "npm run build:aws && npm run build:slurm",
+    "build:aws": "chant build src --lexicon aws -o dist/infra.json",
+    "build:slurm": "chant build src --lexicon slurm -o dist/slurm.conf",
+    "lint": "chant lint src",
+    "bootstrap": "bash scripts/bootstrap.sh",
+    "deploy": "bash scripts/deploy.sh",
+    "e2e-test": "bash scripts/e2e-test.sh",
+    "teardown": "bash scripts/teardown.sh"
+  },
+  "dependencies": {
+    "@intentius/chant": "workspace:*",
+    "@intentius/chant-lexicon-aws": "workspace:*",
+    "@intentius/chant-lexicon-slurm": "workspace:*"
+  }
+}

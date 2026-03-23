@@ -31,6 +31,7 @@ RUN bun install
 RUN for lex in aws azure gcp gitlab k8s flyway docker; do \
       if [ ! -f "lexicons/$lex/dist/manifest.json" ]; then \
         echo "ERROR: lexicons/$lex/dist/ not found. Run codegen first: bun run --cwd lexicons/$lex prepack" >&2; \
+        echo "ERROR: lexicons/$lex/dist/ not found. Run codegen first: bun run --cwd lexicons/$lex prepack" >&2; \
         exit 1; \
       fi; \
     done

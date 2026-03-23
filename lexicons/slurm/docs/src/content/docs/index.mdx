@@ -1,0 +1,53 @@
+---
+title: "Slurm Lexicon"
+description: "Type-safe Slurm cluster configuration as code with chant"
+---
+
+The Slurm lexicon brings infrastructure-as-code discipline to HPC cluster management.
+Define your `slurm.conf` in TypeScript, get static analysis, and generate deterministic
+configuration files ready to distribute to all nodes.
+
+## Why
+
+`slurm.conf` must be **identical on every cluster node** — but there is no IaC tooling
+for it. Sites use Ansible/Jinja2 templates, but there is no plan/apply workflow, no
+drift detection, and no type-safe schema. A typo in `SelectTypeParameters` silently
+disables fair memory allocation across hundreds of nodes.
+
+Chant fills this gap: TypeScript source is the single source of truth, CI builds
+deterministic output, and 21 post-synth checks catch production gotchas before deploy.
+
+## What's included
+
+| Feature | Details |
+|---|---|
+| **Conf resources** | `Cluster`, `Node`, `Partition`, `License`, `GresNode`, `CgroupConf`, `Switch` |
+| **REST resources** | `Job`, `Reservation`, `QoS` (Slurm 23.11 / v0.0.39) |
+| **Composites** | `GpuPartition`, `EDACluster`, `TrainingJob` |
+| **Lint rules** | 4 pre-synth rules (SLRC001, SLRS001, SLRC002, SLRC003) |
+| **Post-synth checks** | 21 checks (SLR010–SLR030) |
+| **Import** | `chant import --lexicon slurm slurm.conf` |
+| **LSP** | Completions + hover in VS Code |
+| **AI skills** | Generate jobs, clusters, explain fairshare |
+
+## Quick start
+
+```bash
+chant init --lexicon slurm my-cluster
+cd my-cluster
+chant build src --lexicon slurm
+```
+
+See [Getting Started](/getting-started) for a full walkthrough.
+
+## Key catches
+
+The post-synth checks encode real production failures:
+
+- **SLR013** — `AuthType=auth/none` exposes slurmctld to unauthenticated job submission
+- **SLR017** — `DefMemPerCPU` + `DefMemPerNode` on the same partition is a silent config error
+- **SLR018** — Missing `GresTypes=gpu` means GPUs are never allocated to jobs
+- **SLR021** — `PriorityWeightFairshare=10` makes fairshare irrelevant vs age/job-size weights
+- **SLR024** — `SuspendProgram` without `ResumeProgram` permanently suspends nodes
+- **SLR027** — `proctrack/cgroup` without `cgroup.conf` means `ConstrainRAMSpace=false` — runaway jobs OOM the node
+- **SLR029** — `AcctGatherEnergyType=rapl` with `AcctGatherNodeFreq≥300` produces silent counter overflow (data corruption)

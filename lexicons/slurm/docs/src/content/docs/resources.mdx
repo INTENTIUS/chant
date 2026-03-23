@@ -1,0 +1,284 @@
+---
+title: "Resources"
+description: "Slurm conf resources: Cluster, Partition, Node, License, GresNode, CgroupConf, Switch"
+---
+
+The Slurm lexicon provides seven hand-written conf resources that map directly to Slurm configuration files, plus three REST resources for submitting jobs via slurmrestd.
+
+## Cluster
+
+Global `slurm.conf` settings. Serializes to top-level key=value lines.
+
+```typescript
+import { Cluster } from "@intentius/chant-lexicon-slurm";
+
+export const cluster = new Cluster({
+  ClusterName: "hpc",
+  ControlMachine: "head01",
+  AuthType: "auth/munge",
+  SelectType: "select/cons_tres",
+  SelectTypeParameters: "CR_Core_Memory",
+  ProctrackType: "proctrack/cgroup",
+  GresTypes: "gpu",
+  AccountingStorageType: "accounting_storage/slurmdbd",
+  AccountingStorageHost: "head01",
+  AccountingStorageEnforce: "associations,limits,qos",
+  PriorityType: "priority/multifactor",
+  PriorityWeightFairshare: 10000,
+  TopologyPlugin: "topology/tree",
+  AcctGatherEnergyType: "acct_gather_energy/gpu",
+  AcctGatherNodeFreq: 30,
+  PreemptType: "preempt/qos",
+});
+```
+
+**Power management fields** (cloud bursting):
+
+| Field | Type | Description |
+|---|---|---|
+| `SuspendExcNodes` | string | Nodes excluded from automatic power-down (e.g. `"head01"`) |
+| `SuspendExcParts` | string | Partitions excluded from power-down |
+| `ResumeRate` | number | Max nodes/min to resume (default 300) — lower = gentler ASG scaling |
+| `SuspendRate` | number | Max nodes/min to suspend (default 60) |
+
+**Energy accounting fields**:
+
+| Field | Type | Description |
+|---|---|---|
+| `AcctGatherEnergyType` | string | `"acct_gather_energy/gpu"` (NVML), `"acct_gather_energy/rapl"` (Intel CPU), `"acct_gather_energy/ipmi"` |
+| `AcctGatherNodeFreq` | number | Sampling interval in seconds. **Must be < 300 when using RAPL** (see SLR029) |
+| `AcctGatherInterconnectType` | string | `"acct_gather_interconnect/ofed"`, `"sysfs"`, or `"none"` |
+
+:::caution[RAPL counter overflow]
+When `AcctGatherEnergyType=acct_gather_energy/rapl`, set `AcctGatherNodeFreq` to 30 or lower.
+Intel RAPL 32-bit counters overflow in ~60–300 seconds depending on CPU TDP. Sampling at 300s
+or more produces incorrect (negative or wrapped) energy readings. Lint rule **SLR029** flags this.
+:::
+
+**Topology field**:
+
+| Field | Type | Description |
+|---|---|---|
+| `TopologyPlugin` | string | `"topology/tree"` (hierarchy), `"topology/block"`, `"topology/flat"` |
+
+**Preemption field**:
+
+| Field | Type | Description |
+|---|---|---|
+| `PreemptType` | string | `"preempt/qos"`, `"preempt/partition_prio"`, or `"preempt/none"` (default) |
+
+## Node
+
+Defines a set of compute nodes. Serializes to `NodeName=...` stanzas.
+
+```typescript
+import { Node } from "@intentius/chant-lexicon-slurm";
+
+export const cpuNodes = new Node({
+  NodeName: "node[001-016]",
+  CPUs: 96,
+  RealMemory: 196608,   // MB
+  State: "UNKNOWN",     // valid initial states: UNKNOWN, DOWN, FUTURE, CLOUD, DRAIN
+});
+
+export const gpuNodes = new Node({
+  NodeName: "gpu[001-004]",
+  CPUs: 96,
+  RealMemory: 1_048_576,
+  Gres: "gpu:a100:8",
+  Feature: "efa,a100",
+  State: "UNKNOWN",
+});
+```
+
+**Valid initial `State` values:** `UNKNOWN`, `DOWN`, `FUTURE`, `CLOUD`, `DRAIN`. Runtime states
+(`UP`, `IDLE`, `ALLOCATED`) are silently ignored by slurmctld.
+
+## Partition
+
+Defines a job queue. Serializes to `PartitionName=...` stanzas.
+
+```typescript
+import { Partition } from "@intentius/chant-lexicon-slurm";
+
+export const cpuPart = new Partition({
+  PartitionName: "cpu",
+  Nodes: "node[001-016]",
+  Default: "YES",
+  MaxTime: "7-00:00:00",   // D-HH:MM:SS or UNLIMITED
+  DefMemPerCPU: 2048,      // MB per CPU
+});
+```
+
+Exactly one partition must have `Default: "YES"`. The lint rule `SLR022` flags zero or multiple defaults.
+
+**Additional partition fields** for cloud power management:
+
+| Field | Type | Description |
+|---|---|---|
+| `PowerDownOnIdle` | `"YES" \| "NO"` | Suspend node immediately when its last job finishes |
+| `SuspendTime` | number | Per-partition override for node idle-before-suspend (seconds) |
+
+## License
+
+Declares a software license resource for Slurm to track and enforce.
+Multiple License entities are aggregated into a single `Licenses=` line.
+
+```typescript
+import { License } from "@intentius/chant-lexicon-slurm";
+
+export const synthLicense = new License({ LicenseName: "eda_synth", Count: 50 });
+export const simLicense = new License({ LicenseName: "eda_sim", Count: 200 });
+// emits: Licenses=eda_synth:50,eda_sim:200
+```
+
+## GresNode
+
+Defines device entries in `gres.conf`. The serializer routes `GresNode` entities to a
+separate `gres.conf` file, not `slurm.conf`.
+
+```typescript
+import { GresNode } from "@intentius/chant-lexicon-slurm";
+
+export const gpuGres = new GresNode({
+  NodeName: "gpu[001-016]",
+  Name: "gpu",
+  Type: "a100",
+  AutoDetect: "nvml",    // NVIDIA NVML auto-detection
+});
+```
+
+**AutoDetect values:** `"nvml"` (NVIDIA), `"rsmi"` (AMD ROCm), `"oneapi"` (Intel GPU),
+`"nrt"` (AWS Neuron Runtime — Trainium/Inferentia), `"off"` (manual `File=` path).
+
+**Additional fields for NUMA locality:**
+
+| Field | Type | Description |
+|---|---|---|
+| `Cores` | string | CPU cores NUMA-local to this GPU, e.g. `"0-47"` — requires `File=` for per-device mapping |
+| `Links` | string | NVLink topology matrix, e.g. `"0,0,-1,0,0,-1,-1,-1"` |
+
+## CgroupConf
+
+Generates `/etc/slurm/cgroup.conf` — required when `ProctrackType=proctrack/cgroup` is set.
+
+Without `cgroup.conf`, `ConstrainRAMSpace` defaults to `false`. Runaway EDA or ML jobs can
+consume all node memory and cause OOM kills of unrelated processes including `slurmstepd`.
+
+```typescript
+import { CgroupConf } from "@intentius/chant-lexicon-slurm";
+
+// Minimal production configuration
+export const cgroupConf = new CgroupConf({
+  CgroupPlugin: "cgroup/v2",
+  ConstrainRAMSpace: true,
+  ConstrainCores: true,
+  AllowedRAMSpace: 95,    // 5% slack prevents false OOM kills at exact limit
+  MinRAMSpace: 30,        // MB floor — prevents slurmstepd itself from being killed
+});
+```
+
+```typescript
+// With GPU device isolation
+export const cgroupConf = new CgroupConf({
+  CgroupPlugin: "cgroup/v2",
+  ConstrainRAMSpace: true,
+  ConstrainCores: true,
+  ConstrainDevices: true,   // requires gres.conf File=/dev/nvidia[0-7] per node
+  AllowedRAMSpace: 95,
+  MinRAMSpace: 30,
+});
+```
+
+:::note[ConstrainDevices requires File= in gres.conf]
+`ConstrainDevices: true` only works when each `GresNode` entry has an explicit `File=`
+path (e.g. `File=/dev/nvidia[0-7]`). It does not work with `AutoDetect=nvml` alone.
+:::
+
+**All `CgroupConf` fields:**
+
+| Field | Type | Description |
+|---|---|---|
+| `CgroupPlugin` | string | `"cgroup/v2"` (default on modern Linux), `"cgroup/v1"`, `"autodetect"` |
+| `ConstrainRAMSpace` | boolean | Hard memory limits (default `false` — set `true` in production) |
+| `ConstrainCores` | boolean | cpuset CPU isolation |
+| `ConstrainDevices` | boolean | GPU device isolation (requires `File=` in gres.conf) |
+| `ConstrainSwapSpace` | boolean | Swap space limiting |
+| `AllowedRAMSpace` | number | % of allocation allowed (95 = 5% slack, recommended) |
+| `AllowedSwapSpace` | number | % of swap allowed |
+| `MaxRAMPercent` | number | Cap on memory for jobs without explicit limits |
+| `MinRAMSpace` | number | MB floor — prevents slurmstepd from being killed |
+| `SystemdTimeout` | number | ms for cgroup cleanup (default 1000) |
+
+The `CgroupConf` entity is excluded from `slurm.conf` — it serializes to `cgroup.conf`.
+Lint rule **SLR027** warns if `proctrack/cgroup` is set but no `CgroupConf` resource exists.
+
+## Switch
+
+Defines network switch stanzas in `topology.conf` — required when `TopologyPlugin=topology/tree`
+is set on the cluster. Enables Slurm to co-locate NCCL/MPI jobs on the same network switch.
+
+```typescript
+import { Switch } from "@intentius/chant-lexicon-slurm";
+
+// Two-level hierarchy: spine → ToR switches → GPU nodes
+export const spineSwitch = new Switch({
+  SwitchName: "spine",
+  Switches: "tor[01-02]",     // child switches (mutually exclusive with Nodes)
+});
+
+export const tor01 = new Switch({
+  SwitchName: "tor01",
+  Nodes: "gpu[001-016]",      // leaf nodes (mutually exclusive with Switches)
+});
+
+export const tor02 = new Switch({
+  SwitchName: "tor02",
+  Nodes: "gpu[017-032]",
+});
+```
+
+Emits `topology.conf`:
+```conf
+# topology.conf — generated by chant. DO NOT EDIT directly.
+# Source of truth: the chant TypeScript project.
+
+SwitchName=spine Switches=tor[01-02]
+SwitchName=tor01 Nodes=gpu[001-016]
+SwitchName=tor02 Nodes=gpu[017-032]
+```
+
+For EFA clusters where all GPU nodes share the same placement group, a single flat switch
+is sufficient:
+
+```typescript
+export const efaSwitch = new Switch({
+  SwitchName: "efa",
+  Nodes: "gpu[001-016]",
+});
+```
+
+`Switch` entities are excluded from `slurm.conf`. Lint rule **SLR028** warns if a multi-node
+GPU cluster is present but no `TopologyPlugin` is set.
+
+## REST resources
+
+For job submission via slurmrestd (Slurm 23.11 / v0.0.39):
+
+```typescript
+import { Job, Reservation, QoS } from "@intentius/chant-lexicon-slurm";
+
+export const trainJob = new Job({
+  name: "llm-train",
+  partition: "gpu",
+  node_count: 8,
+  task_count: 64,
+  cpus_per_task: 12,
+  gres_per_node: "gpu:a100:8",
+  time_limit: "24:00:00",
+  script: "#!/bin/bash\ntorchrun --nproc_per_node=8 train.py",
+  environment: { NCCL_DEBUG: "INFO" },
+});
+```
+
+REST entities serialize to JSON files (e.g. `jobs/llm-train.json`) alongside the primary `slurm.conf`.

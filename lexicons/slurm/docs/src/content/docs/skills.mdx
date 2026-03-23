@@ -1,0 +1,67 @@
+---
+title: "AI Skills"
+description: "AI-assisted Slurm configuration generation and explanation"
+---
+
+The Slurm lexicon ships three AI skills accessible via `chant ask`.
+
+## slurm-generate-job
+
+Generates a Slurm batch job submission TypeScript declaration.
+
+```bash
+chant ask "Generate a job that runs 4-node PyTorch training with A100 GPUs for 12 hours"
+```
+
+Example output:
+
+```typescript
+import { Job } from "@intentius/chant-lexicon-slurm";
+
+export const pytorchTrain = new Job({
+  name: "pytorch-train",
+  partition: "gpu",
+  node_count: 4,
+  task_count: 32,
+  cpus_per_task: 12,
+  gres_per_node: "gpu:a100:8",
+  time_limit: "12:00:00",
+  standard_output: "logs/train-%j.out",
+  standard_error: "logs/train-%j.err",
+  environment: {
+    NCCL_DEBUG: "INFO",
+    MASTER_PORT: "29500",
+  },
+  script: [
+    "#!/bin/bash",
+    "source /etc/profile.d/modules.sh",
+    "module load cuda/12.2 nccl/2.18",
+    "torchrun --nproc_per_node=8 --nnodes=4 train.py",
+  ].join("\n"),
+});
+```
+
+## slurm-generate-cluster
+
+Generates a complete Slurm cluster configuration from a description.
+
+```bash
+chant ask "Generate a 3-partition HPC cluster: CPU, GPU with A100s, and high-memory. Use slurmdbd accounting."
+```
+
+The skill emits `Cluster`, `Node`, and `Partition` resources with all required best-practice
+settings pre-configured (munge auth, cons_tres, cgroup process tracking, accounting enforcement).
+
+## slurm-explain-fairshare
+
+Explains Slurm multifactor priority and fairshare scheduling for a given configuration.
+
+```bash
+chant ask "Why are all my jobs getting the same priority even with PriorityWeightFairshare=10?"
+```
+
+The skill explains:
+- Why `PriorityWeightFairshare=10` is too low (relative to `PriorityWeightAge=1000`)
+- How the fairshare decay half-life (`PriorityDecayHalfLife`) affects score accumulation
+- How to inspect current fairshare scores with `sshare -l`
+- Recommended weight ratios for multi-team HPC clusters

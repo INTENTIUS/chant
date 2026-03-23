@@ -1,0 +1,9 @@
+{
+  "name": "@intentius/chant-lexicon-slurm-example-getting-started",
+  "version": "0.0.1",
+  "private": true,
+  "dependencies": {
+    "@intentius/chant-lexicon-slurm": "workspace:*",
+    "@intentius/chant": "workspace:*"
+  }
+}
