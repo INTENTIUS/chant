@@ -1,89 +1,182 @@
 /**
  * Compute fleet: EFA-enabled spot instances with cluster placement group.
  *
- * Why this topology:
- *   - p4d.24xlarge: 8×A100-80GB, 400Gbps EFA, 96 vCPU — best for multi-node training
- *   - p3.16xlarge: spot overflow when p4d capacity is scarce (same EFA lane widths)
- *   - Cluster placement group: keeps EFA traffic within a single AZ rack
- *   - capacity-optimized: maximizes spot availability for GPU instances
- *   - LifecycleHook: gives Slurm 5 minutes to requeue jobs before the instance disappears
+ * Why ec2 run-instances instead of ASG:
+ *   - Slurm CLOUD nodes need a specific name (e.g., cpu003) embedded at launch time.
+ *   - ASG launches interchangeable instances with no per-node identity.
+ *   - ResumeProgram uses run-instances so it can set slurm-node=<name> tag and
+ *     MetadataOptions.InstanceMetadataTags=enabled so the compute UserData can
+ *     read the tag to self-assign the correct hostname.
+ *   - SuspendProgram finds the instance by slurm-node tag and terminates it.
+ *
+ * GPU nodes use spot instances (--instance-market-options MarketType=spot).
+ * For multi-instance-type fallback (p4d → p3), use SpotFleet in production.
  */
 
-import { LaunchTemplate, AutoScalingGroup, LifecycleHook } from "@intentius/chant-lexicon-aws";
+import { LaunchTemplate, SsmParameter } from "@intentius/chant-lexicon-aws";
 import { Sub, Join, Base64, Ref } from "@intentius/chant-lexicon-aws";
-import { privateSubnet1 } from "./networking";
+import { privateSubnet1, efaPlacementGroup } from "./networking";
 import { clusterSg } from "./security";
-import { efaPlacementGroup } from "./networking";
 import { computeInstanceProfile } from "./iam";
 import { scratchFs } from "./storage";
 import { config } from "./config";
 
-// Shared bootstrap snippet: resolves head01 via SSM and writes a minimal slurm.conf
-// so slurmd can locate slurmctld for the enable_configless initial fetch.
-const SLURMD_BOOTSTRAP = [
-  Sub`CLUSTER_NAME=\${AWS::StackName}`,
-  `REGION=${config.region}`,
+// ── Shared bootstrap: munge key, slurm.conf, FSx mount ────────────
+// Used by both CPU and GPU compute UserData.
+// Reads CLUSTER_NAME and REGION from environment (set at top of each UserData).
+
+const SHARED_BOOTSTRAP = [
+  "# ── 3. Fetch munge key from SSM ────────────────────────────────────",
+  "MUNGE_KEY=$(aws ssm get-parameter \\",
+  "  --name /$CLUSTER_NAME/munge/key \\",
+  "  --with-decryption \\",
+  "  --region $REGION \\",
+  "  --query Parameter.Value --output text)",
+  "echo \"$MUNGE_KEY\" | base64 -d > /etc/munge/munge.key",
+  "chown munge:munge /etc/munge/munge.key",
+  "chmod 400 /etc/munge/munge.key",
+  "",
+  "# ── 4. Fetch Slurm configuration from SSM ──────────────────────────",
+  "# deploy.sh writes slurm.conf, topology.conf, cgroup.conf to SSM after build.",
+  "mkdir -p /etc/slurm",
+  "aws ssm get-parameter \\",
+  "  --name /$CLUSTER_NAME/slurm/conf \\",
+  "  --region $REGION \\",
+  "  --query Parameter.Value --output text > /etc/slurm/slurm.conf",
+  "aws ssm get-parameter \\",
+  "  --name /$CLUSTER_NAME/slurm/topology-conf \\",
+  "  --region $REGION \\",
+  "  --query Parameter.Value --output text > /etc/slurm/topology.conf 2>/dev/null || true",
+  "aws ssm get-parameter \\",
+  "  --name /$CLUSTER_NAME/slurm/cgroup-conf \\",
+  "  --region $REGION \\",
+  "  --query Parameter.Value --output text > /etc/slurm/cgroup.conf 2>/dev/null || true",
+  "# Resolve head01 → private IP so slurmctld is reachable",
   "HEAD_IP=$(aws ssm get-parameter \\",
   "  --name /$CLUSTER_NAME/head-node/private-ip \\",
-  "  --region $REGION --query Parameter.Value --output text)",
+  "  --region $REGION \\",
+  "  --query Parameter.Value --output text)",
   "echo \"$HEAD_IP head01\" >> /etc/hosts",
-  "mkdir -p /etc/slurm",
-  "cat > /etc/slurm/slurm.conf << 'EOF'",
-  Sub`ClusterName=\${AWS::StackName}`,
-  "SlurmctldHost=head01",
-  "AuthType=auth/munge",
-  "EOF",
+  "",
+  "# ── 5. Mount FSx Lustre (persistent via fstab) ─────────────────────",
+  "mkdir -p /scratch",
+  Sub`mount -t lustre -o relatime,flock ${scratchFs.DNSName}@tcp:/${scratchFs.LustreMountName} /scratch || {`,
+  "  echo \"ERROR: FSx Lustre mount failed — verify SG allows ports 988/1018-1023\" >&2",
+  "  exit 1",
+  "}",
+  Sub`echo '${scratchFs.DNSName}@tcp:/${scratchFs.LustreMountName} /scratch lustre relatime,flock,_netdev 0 0' >> /etc/fstab`,
+  "",
+  "# ── 6. Create Slurm spool directory ───────────────────────────────",
+  "mkdir -p /var/spool/slurmd",
+  "chown slurm:slurm /var/spool/slurmd",
 ];
 
-// GPU compute: ECS GPU-optimized AMI, gres.conf for NVML, then slurmd
+// ── CPU compute: Amazon Linux 2, no GPU gres.conf ────────────────
+// UserData reads the slurm-node EC2 tag (set by ResumeProgram) to self-assign
+// its Slurm node name and registers NodeAddr with slurmctld after slurmd starts.
+
+const CPU_COMPUTE_USERDATA = Base64(Join("\n", [
+  "#!/bin/bash",
+  "set -euo pipefail",
+  "exec > >(tee /var/log/slurm-compute-bootstrap.log) 2>&1",
+  "",
+  Sub`CLUSTER_NAME=\${AWS::StackName}`,
+  `REGION=${config.region}`,
+  "",
+  "# ── 1. Discover Slurm node name from EC2 instance tag ─────────────",
+  "# ResumeProgram sets slurm-node=<name> tag at launch with InstanceMetadataTags enabled.",
+  "TOKEN=$(curl -s -X PUT 'http://169.254.169.254/latest/api/token' \\",
+  "  -H 'X-aws-ec2-metadata-token-ttl-seconds: 300')",
+  "SLURM_NODE=$(curl -s -H \"X-aws-ec2-metadata-token: $TOKEN\" \\",
+  "  http://169.254.169.254/latest/meta-data/tags/instance/slurm-node)",
+  "if [[ -z \"$SLURM_NODE\" ]]; then",
+  "  echo 'ERROR: slurm-node tag not found in instance metadata' >&2",
+  "  exit 1",
+  "fi",
+  "hostnamectl set-hostname \"$SLURM_NODE\"",
+  "PRIVATE_IP=$(curl -s -H \"X-aws-ec2-metadata-token: $TOKEN\" \\",
+  "  http://169.254.169.254/latest/meta-data/local-ipv4)",
+  "",
+  "# ── 2. Install Slurm compute daemon and munge ─────────────────────",
+  "amazon-linux-extras install -y epel lustre",
+  "yum install -y munge munge-libs",
+  "yum install -y slurm slurm-slurmd 2>/dev/null || \\",
+  "  yum install -y --enablerepo=epel slurm slurm-slurmd",
+  "id slurm &>/dev/null || useradd -r -s /bin/false -d /var/lib/slurm slurm",
+  "",
+  ...SHARED_BOOTSTRAP,
+  "",
+  "# ── 7. Start munge and slurmd ─────────────────────────────────────",
+  "systemctl enable --now munge",
+  "systemctl enable --now slurmd",
+  "",
+  "# ── 8. Register NodeAddr with slurmctld ────────────────────────────",
+  "# slurmctld resolves NodeAddr=cpu001 via DNS, but EC2 private hostnames",
+  "# aren't registered in VPC DNS. Update NodeAddr to the actual private IP",
+  "# so slurmctld can ping slurmd for health monitoring.",
+  "for i in $(seq 1 12); do",
+  "  scontrol update NodeName=\"$SLURM_NODE\" NodeAddr=\"$PRIVATE_IP\" 2>/dev/null && break",
+  "  echo \"Waiting for slurmd to register (attempt $i/12)...\"",
+  "  sleep 5",
+  "done",
+]));
+
+// ── GPU compute: ECS GPU-optimized AMI, gres.conf for NVML ──────
+// Identical structure to CPU but with gres.conf for A100 NVML detection.
+
 const GPU_COMPUTE_USERDATA = Base64(Join("\n", [
   "#!/bin/bash",
   "set -euo pipefail",
+  "exec > >(tee /var/log/slurm-compute-bootstrap.log) 2>&1",
   "",
-  "# Mount FSx Lustre",
-  "mkdir -p /scratch",
-  "amazon-linux-extras install -y lustre",
-  Sub`mount -t lustre -o relatime,flock ${scratchFs.DNSName}@tcp:/${scratchFs.LustreMountName} /scratch || {`,
-  '  echo "ERROR: FSx Lustre mount failed — verify security groups allow ports 988/1018-1023 and filesystem is AVAILABLE" >&2',
+  Sub`CLUSTER_NAME=\${AWS::StackName}`,
+  `REGION=${config.region}`,
+  "",
+  "# ── 1. Discover Slurm node name from EC2 instance tag ─────────────",
+  "TOKEN=$(curl -s -X PUT 'http://169.254.169.254/latest/api/token' \\",
+  "  -H 'X-aws-ec2-metadata-token-ttl-seconds: 300')",
+  "SLURM_NODE=$(curl -s -H \"X-aws-ec2-metadata-token: $TOKEN\" \\",
+  "  http://169.254.169.254/latest/meta-data/tags/instance/slurm-node)",
+  "if [[ -z \"$SLURM_NODE\" ]]; then",
+  "  echo 'ERROR: slurm-node tag not found in instance metadata' >&2",
   "  exit 1",
-  "}",
+  "fi",
+  "hostnamectl set-hostname \"$SLURM_NODE\"",
+  "PRIVATE_IP=$(curl -s -H \"X-aws-ec2-metadata-token: $TOKEN\" \\",
+  "  http://169.254.169.254/latest/meta-data/local-ipv4)",
   "",
-  "# Resolve head01 and bootstrap minimal slurm.conf for configless startup",
-  ...SLURMD_BOOTSTRAP,
+  "# ── 2. Install Slurm compute daemon and munge ─────────────────────",
+  "# ECS GPU AMI has CUDA + NVIDIA drivers pre-installed.",
+  "amazon-linux-extras install -y epel",
+  "yum install -y munge munge-libs",
+  "yum install -y slurm slurm-slurmd 2>/dev/null || \\",
+  "  yum install -y --enablerepo=epel slurm slurm-slurmd",
+  "id slurm &>/dev/null || useradd -r -s /bin/false -d /var/lib/slurm slurm",
   "",
-  "# GPU resource detection (required for GRES accounting)",
+  ...SHARED_BOOTSTRAP,
+  "",
+  "# ── GPU resource detection (required for GRES accounting) ──────────",
   "cat > /etc/slurm/gres.conf << 'EOF'",
   "AutoDetect=nvml",
   "EOF",
   "",
-  "# Start slurmd",
+  "# ── 7. Start munge and slurmd ─────────────────────────────────────",
+  "systemctl enable --now munge",
   "systemctl enable --now slurmd",
+  "",
+  "# ── 8. Register NodeAddr with slurmctld ────────────────────────────",
+  "for i in $(seq 1 12); do",
+  "  scontrol update NodeName=\"$SLURM_NODE\" NodeAddr=\"$PRIVATE_IP\" 2>/dev/null && break",
+  "  echo \"Waiting for slurmd to register (attempt $i/12)...\"",
+  "  sleep 5",
+  "done",
 ]));
 
-// CPU compute: standard Amazon Linux 2 AMI, no GPU gres.conf
-const CPU_COMPUTE_USERDATA = Base64(Join("\n", [
-  "#!/bin/bash",
-  "set -euo pipefail",
-  "",
-  "# Install Slurm compute daemon",
-  "amazon-linux-extras install -y epel",
-  "yum install -y slurm slurm-slurmd 2>/dev/null || \\",
-  "  yum install -y --enablerepo=epel slurm slurm-slurmd",
-  "",
-  "# Mount FSx Lustre",
-  "mkdir -p /scratch",
-  "amazon-linux-extras install -y lustre",
-  Sub`mount -t lustre -o relatime,flock ${scratchFs.DNSName}@tcp:/${scratchFs.LustreMountName} /scratch || {`,
-  '  echo "ERROR: FSx Lustre mount failed — verify security groups allow ports 988/1018-1023 and filesystem is AVAILABLE" >&2',
-  "  exit 1",
-  "}",
-  "",
-  "# Resolve head01 and bootstrap minimal slurm.conf for configless startup",
-  ...SLURMD_BOOTSTRAP,
-  "",
-  "# Start slurmd",
-  "systemctl enable --now slurmd",
-]));
+// ── CPU launch template ────────────────────────────────────────────
+// NetworkInterfaces[0] embeds subnet + SG so ResumeProgram only needs
+// --launch-template and --tag-specifications (no subnet/sg flags needed).
+// MetadataOptions.InstanceMetadataTags=enabled makes slurm-node tag readable
+// from within UserData via the IMDS API.
 
 export const cpuLaunchTemplate = new LaunchTemplate({
   LaunchTemplateName: Sub("\${AWS::StackName}-cpu-lt"),
@@ -91,88 +184,90 @@ export const cpuLaunchTemplate = new LaunchTemplate({
     ImageId: "{{resolve:ssm:/aws/service/ami-amazon-linux-latest/amzn2-ami-hvm-x86_64-gp2}}",
     InstanceType: config.cpuInstanceType,
     IamInstanceProfile: { Arn: computeInstanceProfile.Arn },
-    SecurityGroupIds: [clusterSg.GroupId],
-    // SubnetId is not a valid LaunchTemplateData property; subnet is set on the ASG (VPCZoneIdentifier)
+    MetadataOptions: {
+      HttpTokens: "optional",             // IMDSv1 + v2 both allowed
+      InstanceMetadataTags: "enabled",    // slurm-node tag readable via metadata
+    },
+    NetworkInterfaces: [
+      {
+        DeviceIndex: 0,
+        SubnetId: privateSubnet1.SubnetId,
+        Groups: [clusterSg.GroupId],
+        DeleteOnTermination: true,
+      },
+    ],
     UserData: CPU_COMPUTE_USERDATA,
     TagSpecifications: [
       {
         ResourceType: "instance",
-        Tags: [{ Key: "cluster", Value: Sub("\${AWS::StackName}") }, { Key: "role", Value: "compute-cpu" }],
+        Tags: [
+          { Key: "cluster", Value: Sub("\${AWS::StackName}") },
+          { Key: "role", Value: "compute-cpu" },
+        ],
       },
     ],
   },
 });
 
-export const cpuAsg = new AutoScalingGroup({
-  AutoScalingGroupName: Sub("\${AWS::StackName}-cpu-asg"),
-  MinSize: "0",
-  MaxSize: "32",         // matches cpu[001-032] in slurm-cluster.ts
-  DesiredCapacity: "0",  // Slurm SuspendProgram/ResumeProgram controls capacity
-  VPCZoneIdentifier: [privateSubnet1.SubnetId],
-  LaunchTemplate: {
-    LaunchTemplateId: cpuLaunchTemplate.LaunchTemplateId,
-    Version: cpuLaunchTemplate.LatestVersionNumber,
-  },
-  Tags: [{ Key: "cluster", Value: Sub("\${AWS::StackName}"), PropagateAtLaunch: true }],
-});
+// ── GPU launch template ────────────────────────────────────────────
+// EFA network interface requires InterfaceType=efa and a placement group.
+// The placement group name is stored in SSM for use by the GPU ResumeProgram.
 
 export const gpuLaunchTemplate = new LaunchTemplate({
   LaunchTemplateName: Sub("\${AWS::StackName}-gpu-lt"),
   LaunchTemplateData: {
     ImageId: "{{resolve:ssm:/aws/service/ecs/optimized-ami/amazon-linux-2/gpu/recommended/image_id}}",
+    InstanceType: config.gpuInstanceTypes[0],   // primary type; fallback set in ResumeProgram
     IamInstanceProfile: { Arn: computeInstanceProfile.Arn },
-    // SecurityGroupIds must NOT be set when NetworkInterfaces is present — CFN rejects the combination.
-    // Security group is specified inside NetworkInterfaces[0].Groups below.
-    UserData: GPU_COMPUTE_USERDATA,
-    // EFA network interface — required for p4d.24xlarge full bandwidth
+    MetadataOptions: {
+      HttpTokens: "optional",
+      InstanceMetadataTags: "enabled",
+    },
+    // EFA network interface — required for p4d.24xlarge full 400 Gbps bandwidth
     NetworkInterfaces: [
       {
         InterfaceType: "efa",
         DeviceIndex: 0,
         Groups: [clusterSg.GroupId],
         SubnetId: privateSubnet1.SubnetId,
+        DeleteOnTermination: true,
       },
     ],
+    UserData: GPU_COMPUTE_USERDATA,
     TagSpecifications: [
       {
         ResourceType: "instance",
-        Tags: [{ Key: "cluster", Value: Sub("\${AWS::StackName}") }, { Key: "role", Value: "compute" }],
+        Tags: [
+          { Key: "cluster", Value: Sub("\${AWS::StackName}") },
+          { Key: "role", Value: "compute-gpu" },
+        ],
       },
     ],
   },
 });
 
-export const gpuAsg = new AutoScalingGroup({
-  AutoScalingGroupName: Sub("\${AWS::StackName}-gpu-asg"),
-  MinSize: "0",
-  MaxSize: "16",          // 16 × p4d.24xlarge = 128 A100 GPUs
-  DesiredCapacity: "0",   // Slurm SuspendProgram/ResumeProgram controls capacity
-  PlacementGroup: efaPlacementGroup.GroupName,
-  // Mixed instances policy: primary=p4d.24xlarge, fallback=p3.16xlarge
-  MixedInstancesPolicy: {
-    LaunchTemplate: {
-      LaunchTemplateSpecification: {
-        LaunchTemplateId: gpuLaunchTemplate.LaunchTemplateId,
-        Version: gpuLaunchTemplate.LatestVersionNumber,
-      },
-      Overrides: config.gpuInstanceTypes.map((InstanceType) => ({ InstanceType })),
-    },
-    InstancesDistribution: {
-      OnDemandBaseCapacity: config.onDemandBaseCapacity,
-      OnDemandPercentageAboveBaseCapacity: 100 - config.spotInstancePercentage,
-      SpotAllocationStrategy: config.spotAllocationStrategy,
-    },
-  },
-  Tags: [{ Key: "cluster", Value: Sub("\${AWS::StackName}"), PropagateAtLaunch: true }],
+// ── SSM parameters for launch template IDs ─────────────────────────
+// ResumeProgram reads these to launch instances via ec2 run-instances.
+// Stored as SSM parameters so the bash scripts on the head node can
+// resolve them without baking CFN resource IDs into the scripts.
+
+export const cpuLtIdParam = new SsmParameter({
+  Name: Sub("/\${AWS::StackName}/compute/cpu/launch-template-id"),
+  Type: "String",
+  Value: cpuLaunchTemplate.LaunchTemplateId,
+  Description: Sub("CPU compute launch template ID for \${AWS::StackName}"),
 });
 
-// Lifecycle hook: delays instance termination by 5 minutes so Slurm can requeue jobs
-// The spot-handler Lambda completes this hook after drain + requeue.
-// Name must match what spot-handler.ts uses: ${clusterName}-spot-termination-hook
-export const spotTerminationHook = new LifecycleHook({
-  LifecycleHookName: Sub("\${AWS::StackName}-spot-termination-hook"),
-  AutoScalingGroupName: Ref(gpuAsg),
-  LifecycleTransition: "autoscaling:EC2_INSTANCE_TERMINATING",
-  HeartbeatTimeout: 300,   // 5 minutes — Slurm spot interruption warning is 2 min
-  DefaultResult: "CONTINUE",
+export const gpuLtIdParam = new SsmParameter({
+  Name: Sub("/\${AWS::StackName}/compute/gpu/launch-template-id"),
+  Type: "String",
+  Value: gpuLaunchTemplate.LaunchTemplateId,
+  Description: Sub("GPU compute launch template ID for \${AWS::StackName}"),
+});
+
+export const gpuPlacementGroupParam = new SsmParameter({
+  Name: Sub("/\${AWS::StackName}/compute/gpu/placement-group"),
+  Type: "String",
+  Value: Ref(efaPlacementGroup),
+  Description: Sub("EFA placement group name for GPU nodes in \${AWS::StackName}"),
 });
