@@ -2,8 +2,8 @@
  * EDA HPC Slurm cluster configuration.
  *
  * This is the core chant-lexicon-slurm output. Three partitions:
- *   - synthesis: c5.9xlarge, MaxTime=48h — Verilog synthesis, place-and-route
- *   - sim:       c5.9xlarge, MaxTime=168h — gate-level simulation, formal verification
+ *   - synthesis: c5.2xlarge, MaxTime=48h — Verilog synthesis, place-and-route
+ *   - sim:       c5.2xlarge, MaxTime=168h — gate-level simulation, formal verification
  *   - gpu_eda:   p4d.24xlarge+EFA, MaxTime=24h — ML-driven optimization, AI EDA tools
  *
  * License management: Slurm tracks license tokens natively (no FlexLM integration).
@@ -79,8 +79,9 @@ export const cluster = new Cluster({
   HealthCheckInterval: 30,
   HealthCheckNodeState: "ANY",
 
-  // PMIx for both OpenMPI (EDA sim) and NCCL (GPU training)
-  MpiDefault: "pmix",
+  // pmi2 is the default available in EPEL 20.11.9 on Amazon Linux 2.
+  // pmix requires a separately-compiled package not in EPEL.
+  MpiDefault: "pmi2",
   TaskPlugin: "task/cgroup",
 
   // Faster DOWN detection for spot instances (default is 300s)
@@ -89,22 +90,20 @@ export const cluster = new Cluster({
   // Network topology for NCCL/MPI job co-location on EFA
   TopologyPlugin: "topology/tree",
 
-  // GPU power via NVML — no RAPL on AWS instances (RAPL requires bare-metal CPU counters)
-  AcctGatherEnergyType: "acct_gather_energy/gpu",
-  AcctGatherNodeFreq: 30,
-
-  // Preemption: QOS-based so low-priority jobs can be requeued by high-priority ones
+  // Preemption: QOS-based so low-priority jobs can be requeued by high-priority ones.
+  // PreemptMode=CANCEL is required when PreemptType=preempt/qos (OFF is incompatible).
   PreemptType: "preempt/qos",
+  PreemptMode: "CANCEL",
 });
 
 // ── CPU compute nodes (synthesis + simulation) ────────────────────
 
 export const cpuNodes = new Node({
   NodeName: "cpu[001-032]",
-  CPUs: 36,               // c5.9xlarge: 36 vCPU, 72 GB RAM
-  RealMemory: 71680,      // MB (leave 4GB for OS)
+  CPUs: 8,                // c5.2xlarge: 8 vCPU, 16 GB RAM (within default On-Demand Standard vCPU quota)
+  RealMemory: 14336,      // MB (leave 2GB for OS)
   Sockets: 2,
-  CoresPerSocket: 9,      // c5.9xlarge: 2 sockets × 9 cores × 2 HT = 36 vCPU
+  CoresPerSocket: 2,      // c5.2xlarge: 2 sockets × 2 cores × 2 HT = 8 vCPU
   ThreadsPerCore: 2,
   State: "CLOUD",         // CLOUD: nodes start stopped, Slurm provisions on demand
 });
@@ -134,8 +133,8 @@ export const synthesisPartition = new Partition({
   Priority: 50,
   DefMemPerCPU: 2048,            // 2 GB/CPU default (synthesis is memory-light)
   State: "UP",
-  PowerDownOnIdle: "YES",        // terminate idle nodes as soon as last job finishes
-  SuspendTime: 600,              // 10 min idle before suspend — avoids churn during EDA job bursts
+  // PowerDownOnIdle and per-partition SuspendTime require Slurm 21.08+.
+  // Use the global SuspendTime=300 (cluster level) for CLOUD node power-down.
 });
 
 export const simPartition = new Partition({
@@ -144,10 +143,10 @@ export const simPartition = new Partition({
   Default: "NO",
   MaxTime: "7-00:00:00",         // 168h: formal verification can take days
   Priority: 30,
-  DefMemPerCPU: 4096,            // 4 GB/CPU (gate-level sim is memory-heavy)
+  DefMemPerCPU: 1792,            // 1792 MB/CPU = 14336 MB / 8 CPUs (c5.2xlarge constraint)
   State: "UP",
-  PowerDownOnIdle: "YES",        // terminate idle nodes as soon as last job finishes
-  SuspendTime: 600,              // 10 min idle before suspend — sim jobs have high restart cost
+  // PowerDownOnIdle and per-partition SuspendTime require Slurm 21.08+.
+  // Use the global SuspendTime=300 (cluster level) for CLOUD node power-down.
 });
 
 // ── License declarations (individual entities → aggregated Licenses= line) ─
@@ -161,7 +160,8 @@ export const drcLicense = new License({ LicenseName: "calibre_drc", Count: confi
 // ConstrainRAMSpace defaults to false and runaway EDA jobs can OOM the node.
 
 export const cgroupConf = new CgroupConf({
-  CgroupPlugin: "cgroup/v2",
+  // CgroupPlugin (cgroup/v1 vs v2) requires Slurm 21.08+. AL2 EPEL ships 20.11.9
+  // which uses cgroup v1 implicitly. Omitting CgroupPlugin uses the default (v1).
   ConstrainRAMSpace: true,
   ConstrainCores: true,
   ConstrainDevices: true,   // GPU device isolation via gres.conf AutoDetect=nvml
@@ -169,11 +169,18 @@ export const cgroupConf = new CgroupConf({
   MinRAMSpace: 30,          // MB floor — prevents slurmstepd from being terminated
 });
 
-// ── topology.conf — EFA flat topology for NCCL co-location ───────
-// All GPU nodes share the same EFA placement group / switch.
-// TopologyPlugin=topology/tree above instructs Slurm to use this file.
+// ── topology.conf — switch topology for NCCL co-location and CPU ──
+// topology/tree requires ALL nodes to be reachable through the switch
+// tree. CPU nodes (Ethernet) need their own switch entry or slurmctld
+// will log "switches lack access to N nodes" and CLOUD nodes won't be
+// schedulable (jobs fail with BadConstraints instead of pending).
 
 export const efaSwitch = new Switch({
   SwitchName: "efa",
   Nodes: "gpu[001-016]",
+});
+
+export const ethernetSwitch = new Switch({
+  SwitchName: "ethernet",
+  Nodes: "cpu[001-032]",
 });

@@ -24,7 +24,7 @@ export const config = {
 
   // EC2 sizing
   headNodeInstanceType: "c5.2xlarge",
-  cpuInstanceType: "c5.9xlarge",       // 36 vCPUs, 72 GB RAM — synthesis + sim
+  cpuInstanceType: "c5.2xlarge",       // 8 vCPUs, 16 GB RAM — synthesis + sim (within default vCPU quota)
   gpuInstanceTypes: ["p4d.24xlarge", "p3.16xlarge"], // spot fleet overrides
 
   // EDA license counts
