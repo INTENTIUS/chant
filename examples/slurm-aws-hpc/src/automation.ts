@@ -21,33 +21,37 @@
  */
 
 import { Document, SsmParameter } from "@intentius/chant-lexicon-aws";
-import { Sub } from "@intentius/chant-lexicon-aws";
+import { Sub, Ref } from "@intentius/chant-lexicon-aws";
 import { config } from "./config";
 
 const POST_PROVISION_STEPS = [
   {
     name: "GenerateMungeKey",
-    action: "aws:executeScript",
-    description: "Generate MUNGE authentication key and store in SSM SecureString (skips if key already present — head node may have self-generated one)",
+    action: "aws:runCommand",
+    // Runs on the head node EC2 (instance profile already has ssm:GetParameter/PutParameter
+    // on the cluster path). Skips if the key already exists — head node may have
+    // self-generated it during bootstrap.
+    description: "Generate MUNGE authentication key and store in SSM SecureString (skips if key already present)",
     onFailure: "Abort",
     inputs: {
-      Runtime: "python3.11",
-      Handler: "generate_munge_key",
-      Script: [
-        "import boto3, secrets, base64",
-        "def generate_munge_key(events, context):",
-        "    ssm = boto3.client('ssm')",
-        "    param_name = f\"/{events['ClusterName']}/munge/key\"",
-        "    try:",
-        "        ssm.get_parameter(Name=param_name, WithDecryption=True)",
-        "        return {'status': 'exists', 'message': 'Munge key already set (head node self-generated)'}",
-        "    except ssm.exceptions.ParameterNotFound:",
-        "        pass",
-        "    key = base64.b64encode(secrets.token_bytes(1024)).decode()",
-        "    ssm.put_parameter(Name=param_name, Value=key, Type='SecureString', Overwrite=True)",
-        "    return {'status': 'ok', 'parameter': param_name}",
-      ].join("\n"),
-      InputPayload: { ClusterName: "{{ ClusterName }}" },
+      DocumentName: "AWS-RunShellScript",
+      Targets: [{ Key: "tag:cluster", Values: ["{{ ClusterName }}"] },
+                { Key: "tag:role", Values: ["head"] }],
+      Parameters: {
+        commands: [
+          "CLUSTER_NAME={{ ClusterName }}",
+          "REGION=$(curl -s http://169.254.169.254/latest/meta-data/placement/region)",
+          "PARAM_NAME=/$CLUSTER_NAME/munge/key",
+          "if aws ssm get-parameter --name \"$PARAM_NAME\" --region \"$REGION\" --query Parameter.Value --output text &>/dev/null; then",
+          "  echo 'Munge key already set — skipping generation'",
+          "  exit 0",
+          "fi",
+          "KEY=$(dd if=/dev/urandom bs=1024 count=1 2>/dev/null | base64 -w 0)",
+          "aws ssm put-parameter --name \"$PARAM_NAME\" --value \"$KEY\" --type SecureString --overwrite --region \"$REGION\"",
+          "echo \"Munge key stored at $PARAM_NAME\"",
+        ],
+      },
+      TimeoutSeconds: 60,
     },
   },
   {
@@ -61,11 +65,12 @@ const POST_PROVISION_STEPS = [
                 { Key: "tag:role", Values: ["head"] }],
       Parameters: {
         commands: [
+          "REGION=$(curl -s http://169.254.169.254/latest/meta-data/placement/region)",
           "openssl rand -base64 32 > /etc/slurm/jwt_hs256.key",
           "chmod 600 /etc/slurm/jwt_hs256.key",
           "chown slurm:slurm /etc/slurm/jwt_hs256.key",
           "aws ssm put-parameter --name /{{ ClusterName }}/slurm/jwt-key " +
-          "--value \"$(cat /etc/slurm/jwt_hs256.key)\" --type SecureString --overwrite",
+          "--value \"$(cat /etc/slurm/jwt_hs256.key)\" --type SecureString --overwrite --region \"$REGION\"",
         ],
       },
       TimeoutSeconds: 30,
@@ -154,7 +159,8 @@ const POST_PROVISION_STEPS = [
 ];
 
 export const postProvisionDocument = new Document({
-  Name: Sub("\${AWS::StackName}-post-provision"),
+  // No custom Name — allows CFN to replace the document freely when content changes.
+  // The actual name (auto-generated) is stored in the SSM parameter below.
   DocumentType: "Automation",
   DocumentFormat: "JSON",
   Content: {
@@ -172,6 +178,6 @@ export const postProvisionDocument = new Document({
 export const documentNameParam = new SsmParameter({
   Name: Sub("\/${AWS::StackName}/automation/post-provision-document"),
   Type: "String",
-  Value: Sub("\${AWS::StackName}-post-provision"),
+  Value: Ref(postProvisionDocument),
   Description: Sub("SSM Automation document name for \${AWS::StackName} post-provision"),
 });
