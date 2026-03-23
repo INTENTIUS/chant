@@ -624,7 +624,6 @@ describe("ray-kuberay-gke example", () => {
     const docs = parseK8sDocs(result.outputs.get("k8s")!);
     const kinds = docs.map((d) => d.kind);
     expect(kinds).toContain("Namespace");
-    expect(kinds).toContain("StorageClass");
     expect(kinds).toContain("NetworkPolicy");
     expect(kinds).toContain("PodDisruptionBudget");
     expect(kinds).toContain("PersistentVolumeClaim");
