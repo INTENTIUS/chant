@@ -187,14 +187,34 @@ if [ "${HEAD_INSTANCE}" = "None" ] || [ -z "${HEAD_INSTANCE}" ]; then
   echo "WARNING: Head node not yet running — skipping slurm.conf upload."
   echo "         Run 'aws ssm send-command ...' manually after the head node starts."
 else
-  # Stage slurm.conf in SSM Parameter Store to avoid embedding multi-line content
-  # with shell-special characters ($, \, ") inside SSM command JSON.
+  # Stage slurm.conf, topology.conf, cgroup.conf in SSM Parameter Store.
+  # Compute node UserData reads these at boot to self-configure.
   aws ssm put-parameter \
     --name "/${CLUSTER_NAME}/slurm/conf" \
     --value "$(cat "${ROOT_DIR}/dist/slurm.conf")" \
     --type "String" \
     --overwrite \
     --region "${REGION}" > /dev/null
+
+  if [ -f "${ROOT_DIR}/dist/topology.conf" ]; then
+    aws ssm put-parameter \
+      --name "/${CLUSTER_NAME}/slurm/topology-conf" \
+      --value "$(cat "${ROOT_DIR}/dist/topology.conf")" \
+      --type "String" \
+      --overwrite \
+      --region "${REGION}" > /dev/null
+    echo "    topology.conf staged to SSM"
+  fi
+
+  if [ -f "${ROOT_DIR}/dist/cgroup.conf" ]; then
+    aws ssm put-parameter \
+      --name "/${CLUSTER_NAME}/slurm/cgroup-conf" \
+      --value "$(cat "${ROOT_DIR}/dist/cgroup.conf")" \
+      --type "String" \
+      --overwrite \
+      --region "${REGION}" > /dev/null
+    echo "    cgroup.conf staged to SSM"
+  fi
 
   CMD_ID=$(aws ssm send-command \
     --instance-ids "${HEAD_INSTANCE}" \
@@ -212,8 +232,14 @@ echo ""
 
 # ── SSM Automation post-provision ─────────────────────────────────
 
-DOCUMENT_NAME="${CLUSTER_NAME}-post-provision"
-
+DOCUMENT_NAME=$(aws ssm get-parameter \
+  --name "/${CLUSTER_NAME}/automation/post-provision-document" \
+  --region "${REGION}" \
+  --query Parameter.Value --output text 2>/dev/null || echo "")
+if [[ -z "${DOCUMENT_NAME}" ]]; then
+  echo "ERROR: Could not read automation document name from SSM. Is the stack deployed?"
+  exit 1
+fi
 echo "==> Running post-provision automation: ${DOCUMENT_NAME}"
 
 EXECUTION_ID=$(aws ssm start-automation-execution \
