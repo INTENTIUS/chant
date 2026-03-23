@@ -33,6 +33,30 @@ export const computeRole = new Role({
         ],
       },
     },
+    {
+      PolicyName: "slurm-config-read",
+      PolicyDocument: {
+        Version: "2012-10-17",
+        Statement: [
+          {
+            // Read munge key (SecureString), slurm.conf, topology/cgroup conf, head node IP
+            Effect: "Allow",
+            Action: ["ssm:GetParameter"],
+            Resource: [
+              Sub(`arn:aws:ssm:${config.region}:*:parameter/\${AWS::StackName}/munge/key`),
+              Sub(`arn:aws:ssm:${config.region}:*:parameter/\${AWS::StackName}/slurm/*`),
+              Sub(`arn:aws:ssm:${config.region}:*:parameter/\${AWS::StackName}/head-node/private-ip`),
+            ],
+          },
+          {
+            // Decrypt the munge key SecureString (uses AWS managed key aws/ssm)
+            Effect: "Allow",
+            Action: ["kms:Decrypt"],
+            Resource: ["*"],
+          },
+        ],
+      },
+    },
   ],
 });
 
@@ -42,8 +66,8 @@ export const computeInstanceProfile = new InstanceProfile({
 });
 
 // ── Head node role ────────────────────────────────────────────────
-// Head node additionally needs: Secrets Manager (for slurmdbd password),
-// AutoScaling (for SuspendProgram/ResumeProgram hooks), SSM Parameter Store
+// Head node needs: Secrets Manager (slurmdbd), SSM, FSx, and EC2 permissions
+// for the ResumeProgram/SuspendProgram (run-instances / terminate-instances).
 
 export const headNodeRole = new Role({
   RoleName: Sub("\${AWS::StackName}-head-role"),
@@ -70,14 +94,43 @@ export const headNodeRole = new Role({
             Resource: [Sub(`arn:aws:ssm:${config.region}:*:parameter/\${AWS::StackName}/*`)],
           },
           {
+            // SSM path for public AMI lookups (used by ResumeProgram to find latest AL2 AMI)
+            Effect: "Allow",
+            Action: ["ssm:GetParameter"],
+            Resource: ["arn:aws:ssm:*::parameter/aws/service/ami-amazon-linux-latest/*"],
+          },
+          {
             Effect: "Allow",
             Action: ["fsx:DescribeFileSystems", "fsx:CreateDataRepositoryTask"],
             Resource: [scratchFs.ResourceARN],
           },
           {
+            // ResumeProgram: launch compute instances via ec2 run-instances using launch template
             Effect: "Allow",
-            Action: ["autoscaling:SetDesiredCapacity", "autoscaling:TerminateInstanceInAutoScalingGroup"],
+            Action: ["ec2:RunInstances"],
             Resource: ["*"],
+          },
+          {
+            // SuspendProgram: terminate compute instances tagged with cluster name
+            Effect: "Allow",
+            Action: ["ec2:TerminateInstances"],
+            Resource: ["arn:aws:ec2:*:*:instance/*"],
+            Condition: {
+              StringEquals: {
+                "ec2:ResourceTag/cluster": Sub("\${AWS::StackName}"),
+              },
+            },
+          },
+          {
+            Effect: "Allow",
+            Action: ["ec2:DescribeInstances"],
+            Resource: ["*"],
+          },
+          {
+            // Required for ec2:RunInstances with --iam-instance-profile
+            Effect: "Allow",
+            Action: ["iam:PassRole"],
+            Resource: [computeRole.Arn],
           },
         ],
       },
@@ -96,6 +149,34 @@ const LAMBDA_ASSUME_ROLE = {
   Version: "2012-10-17",
   Statement: [{ Effect: "Allow", Principal: { Service: "lambda.amazonaws.com" }, Action: "sts:AssumeRole" }],
 };
+
+// ── SSM Automation role ────────────────────────────────────────────
+// aws:executeScript steps run Lambda-like and need explicit IAM permissions
+// to call other AWS services. aws:runCommand also needs ssm:SendCommand.
+
+export const automationRole = new Role({
+  RoleName: Sub("\${AWS::StackName}-automation-role"),
+  AssumeRolePolicyDocument: {
+    Version: "2012-10-17",
+    Statement: [{ Effect: "Allow", Principal: { Service: "ssm.amazonaws.com" }, Action: "sts:AssumeRole" }],
+  },
+  ManagedPolicyArns: ["arn:aws:iam::aws:policy/AmazonSSMFullAccess"],
+  Policies: [
+    {
+      PolicyName: "automation-kms",
+      PolicyDocument: {
+        Version: "2012-10-17",
+        Statement: [
+          {
+            Effect: "Allow",
+            Action: ["kms:Decrypt", "kms:GenerateDataKey"],
+            Resource: ["*"],
+          },
+        ],
+      },
+    },
+  ],
+});
 
 export const spotHandlerRole = new Role({
   RoleName: Sub("\${AWS::StackName}-spot-handler-role"),
