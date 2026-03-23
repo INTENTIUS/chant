@@ -1,5 +1,6 @@
 import { Composite, withDefaults, mergeDefaults } from "@intentius/chant";
 import { Role, Function, Function_VpcConfig, Role_Policy } from "../generated";
+import { Sub } from "../intrinsics";
 
 const lambdaTrustPolicy = {
   Version: "2012-10-17" as const,
@@ -18,7 +19,7 @@ const VPC_ACCESS_ARN =
   "arn:aws:iam::aws:policy/service-role/AWSLambdaVPCAccessExecutionRole";
 
 export interface LambdaFunctionProps {
-  name: string;
+  name: string | ReturnType<typeof Sub>;
   Runtime: string;
   Handler: string;
   Code: ConstructorParameters<typeof Function>[0]["Code"];

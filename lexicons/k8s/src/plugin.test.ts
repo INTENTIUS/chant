@@ -30,10 +30,10 @@ describe("k8sPlugin", () => {
     expect(rules.some((r) => r.id === "WK8001")).toBe(true);
   });
 
-  test("postSynthChecks() returns array of 22 checks", () => {
+  test("postSynthChecks() returns array of post-synth checks", () => {
     const checks = k8sPlugin.postSynthChecks!();
     expect(Array.isArray(checks)).toBe(true);
-    expect(checks.length).toBe(23);
+    expect(checks.length).toBe(26);
   });
 
   test("intrinsics() returns empty array", () => {

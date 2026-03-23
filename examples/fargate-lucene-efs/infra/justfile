@@ -1,4 +1,5 @@
-STACK := "fargate-lucene-efs-infra"
+STACK  := "fargate-lucene-efs-infra"
+REGION := env_var_or_default("AWS_REGION", env_var_or_default("AWS_DEFAULT_REGION", "us-east-1"))
 
 # Build CloudFormation template
 build:
@@ -9,19 +10,22 @@ deploy: build
     aws cloudformation deploy \
       --template-file template.json \
       --stack-name {{STACK}} \
+      --region {{REGION}} \
       --capabilities CAPABILITY_NAMED_IAM
 
 # Delete the infra stack (destroys EFS data — run teardown-solr first)
 teardown:
-    aws cloudformation delete-stack --stack-name {{STACK}}
-    aws cloudformation wait stack-delete-complete --stack-name {{STACK}}
+    aws cloudformation delete-stack --stack-name {{STACK}} --region {{REGION}}
+    aws cloudformation wait stack-delete-complete --stack-name {{STACK}} --region {{REGION}}
 
 # Show stack status
 status:
     aws cloudformation describe-stacks --stack-name {{STACK}} \
+      --region {{REGION}} \
       --query 'Stacks[0].StackStatus' --output text
 
 # Show outputs (pass these as params to the solr stack)
 outputs:
     aws cloudformation describe-stacks --stack-name {{STACK}} \
+      --region {{REGION}} \
       --query 'Stacks[0].Outputs' --output table

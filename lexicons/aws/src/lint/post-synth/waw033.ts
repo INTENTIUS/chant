@@ -1,49 +1,30 @@
 /**
- * WAW033: Null Values in CloudFormation Resource Properties
+ * WAW033: Solr Heap Exceeds 50% of Container Memory
  *
- * `resource.PropName` where PropName is not a real GetAtt attribute returns null
- * silently in chant's AttrRef system — the TypeScript types say `string` but the
- * runtime value is null. This produces a template with literal null values that
- * CloudFormation rejects at changeset time with an unhelpful "Invalid template"
- * error.
- *
- * Common causes:
- *   - `resource.SomeId` instead of `Ref(resource)` (use Ref for the primary identifier)
- *   - `resource.SomeProp` where SomeProp is not listed in AWS CloudFormation GetAtt docs
- *   - Typo in an attribute name (e.g. `resource.GroupName` vs `resource.GroupId`)
- *
- * This check scans every resource's Properties for null values at any depth and
- * reports the logical resource ID and dotted property path.
+ * When SOLR_HEAP is set on a Fargate task running a Solr image, validates that
+ * the heap does not exceed 50% of the task's allocated memory. Exceeding this
+ * leaves insufficient headroom for the OS file cache that Lucene MMap relies on,
+ * causing the OOM killer to terminate the container.
  */
 
 import type { PostSynthCheck, PostSynthContext, PostSynthDiagnostic } from "@intentius/chant/lint/post-synth";
 import { parseCFTemplate } from "./cf-refs";
 
-interface NullLocation {
-  logicalId: string;
-  path: string;
+/** Parse heap strings like "4g", "2048m", "2048" → megabytes */
+function parseHeapMb(value: string): number | null {
+  const lower = value.trim().toLowerCase();
+  const gMatch = lower.match(/^(\d+(?:\.\d+)?)g$/);
+  if (gMatch) return Math.round(parseFloat(gMatch[1]) * 1024);
+  const mMatch = lower.match(/^(\d+(?:\.\d+)?)m?$/);
+  if (mMatch) return Math.round(parseFloat(mMatch[1]));
+  return null;
 }
 
-/** Recursively collect all paths where the value is null. */
-function collectNullPaths(value: unknown, path: string, results: NullLocation[], logicalId: string): void {
-  if (value === null) {
-    results.push({ logicalId, path });
-    return;
-  }
-  if (Array.isArray(value)) {
-    for (let i = 0; i < value.length; i++) {
-      collectNullPaths(value[i], `${path}[${i}]`, results, logicalId);
-    }
-    return;
-  }
-  if (typeof value === "object") {
-    for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
-      collectNullPaths(v, path ? `${path}.${k}` : k, results, logicalId);
-    }
-  }
+function isSolrImage(image: unknown): boolean {
+  return typeof image === "string" && image.toLowerCase().includes("solr");
 }
 
-export function checkNullProperties(ctx: PostSynthContext): PostSynthDiagnostic[] {
+export function checkSolrHeapRatio(ctx: PostSynthContext): PostSynthDiagnostic[] {
   const diagnostics: PostSynthDiagnostic[] = [];
 
   for (const [_lexicon, output] of ctx.outputs) {
@@ -51,19 +32,43 @@ export function checkNullProperties(ctx: PostSynthContext): PostSynthDiagnostic[
     if (!template?.Resources) continue;
 
     for (const [logicalId, resource] of Object.entries(template.Resources)) {
-      if (!resource.Properties) continue;
+      if (resource.Type !== "AWS::ECS::TaskDefinition") continue;
 
-      const nullLocations: NullLocation[] = [];
-      collectNullPaths(resource.Properties, "", nullLocations, logicalId);
+      const props = resource.Properties ?? {};
+      if (typeof props.Memory !== "string") continue;
+      const taskMemoryMb = parseInt(props.Memory);
+      if (!taskMemoryMb) continue;
 
-      for (const loc of nullLocations) {
-        diagnostics.push({
-          checkId: "WAW033",
-          severity: "error",
-          message: `${resource.Type} "${logicalId}" has a null value at Properties.${loc.path} — likely a .PropName AttrRef on a non-existent GetAtt attribute. Use Ref(resource) for the primary identifier, or check the attribute name.`,
-          entity: logicalId,
-          lexicon: "aws",
-        });
+      const containers: unknown[] = Array.isArray(props.ContainerDefinitions)
+        ? props.ContainerDefinitions
+        : [];
+
+      for (const container of containers) {
+        if (typeof container !== "object" || container === null) continue;
+        const c = container as Record<string, unknown>;
+
+        if (!isSolrImage(c.Image)) continue;
+
+        const envVars: unknown[] = Array.isArray(c.Environment) ? c.Environment : [];
+        const heapEntry = envVars.find(
+          (e): e is Record<string, unknown> =>
+            typeof e === "object" && e !== null && (e as Record<string, unknown>).Name === "SOLR_HEAP",
+        );
+
+        if (!heapEntry) continue; // WAW034 covers missing heap
+
+        const heapMb = parseHeapMb(String(heapEntry.Value ?? ""));
+        if (heapMb === null) continue;
+
+        if (heapMb > taskMemoryMb * 0.5) {
+          diagnostics.push({
+            checkId: "WAW033",
+            severity: "error",
+            message: `Solr container "${c.Name ?? "app"}" SOLR_HEAP (${heapMb}MB) exceeds 50% of task memory (${taskMemoryMb}MB) — risk of OOM kill; set SOLR_HEAP <= ${Math.floor(taskMemoryMb * 0.45)}m`,
+            entity: logicalId,
+            lexicon: "aws",
+          });
+        }
       }
     }
   }
@@ -73,9 +78,9 @@ export function checkNullProperties(ctx: PostSynthContext): PostSynthDiagnostic[
 
 export const waw033: PostSynthCheck = {
   id: "WAW033",
-  description: "Null values in CFN resource properties — caused by invalid AttrRef (.PropName) usage",
+  description: "Solr SOLR_HEAP exceeds 50% of Fargate task memory",
 
   check(ctx: PostSynthContext): PostSynthDiagnostic[] {
-    return checkNullProperties(ctx);
+    return checkSolrHeapRatio(ctx);
   },
 };

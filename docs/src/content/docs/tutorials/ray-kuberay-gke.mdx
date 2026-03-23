@@ -1,0 +1,236 @@
+---
+title: "Ray + KubeRay on GKE"
+description: "A persistent Ray cluster on GKE backed by Filestore shared storage and GCS spillover, deployed via Config Connector and KubeRay."
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+A persistent Ray cluster on GKE with CPU and GPU worker groups, shared Filestore storage, and GCS object-store spillover. Config Connector manages the GCP infrastructure declaratively; KubeRay manages the Ray cluster lifecycle.
+
+## What you'll build
+
+```
+GCP infra layer (Config Connector → config.yaml)
+  GKE cluster (regional, 3-zone, private nodes)
+  ├── CPU node pool (n2-standard-4, autoscaling 1–5)
+  └── GPU node pool (n1-standard-8 + T4, scales to zero)
+  Filestore ENTERPRISE (1Ti, ReadWriteMany)
+  GCS spillover bucket (7-day lifecycle)
+  Artifact Registry (pre-built Ray images, ray:2.54.0)
+  IAM: GSA ray-workload → Workload Identity → K8s SA ray-head
+       ray-workload → roles/storage.objectAdmin → spillover bucket
+
+K8s layer (KubeRay → k8s.yaml)
+  Namespace ray-system + ResourceQuota
+  FilestoreStorageClass → PVC ray-shared (/mnt/ray-data)
+  RayCluster composite:
+    head pod (2 CPU, 8Gi, shmSize 4Gi)
+    cpu workers (2 replicas → max 8, 2 CPU, 4Gi)
+    gpu workers (0 → max 4, 4 CPU, 16Gi, T4)
+    NetworkPolicy (podSelector + RFC1918 GCS egress)
+    PodDisruptionBudget (head minAvailable: 1)
+    ClusterRole autoscaler (pod get/list/watch/create/delete/patch)
+```
+
+**Source layout:**
+
+| Layer | Source | Output |
+|---|---|---|
+| GCP infra | `src/infra/` | `config.yaml` |
+| K8s workloads | `src/k8s/` | `k8s.yaml` |
+| Local k3d smoke test | `k3d/src/` | `k3d/k3d.yaml` |
+
+<Aside type="caution">
+GKE cluster (3× n2-standard-4) + Filestore ENTERPRISE (1Ti) + NAT gateway ≈ $300+/mo while running. The GPU node pool scales to zero. Tear down after testing.
+</Aside>
+
+## What you'll learn
+
+- The two-phase deploy pattern: GCP infra via Config Connector, then K8s manifests via KubeRay
+- Why `RayCluster` uses podSelector-only NetworkPolicy — the GKE pod CIDR mismatch problem
+- How GCS object-store spillover prevents head OOM on large models and shuffled datasets
+- Why pre-built Artifact Registry images matter at scale vs `runtimeEnv` pip installs
+- Workload Identity wiring: GSA → K8s ServiceAccount → GCS access without key files
+
+## Key patterns
+
+### Two-phase deploy with Config Connector
+
+The example splits GCP infrastructure and K8s workloads into two separate chant build targets. The split exists because the GKE cluster must exist before you can apply K8s manifests to it:
+
+```bash
+npm run build:gcp   # → config.yaml (Config Connector resources)
+kubectl apply -f config.yaml
+# wait for GKE cluster ready (~10 min)
+npm run build:k8s   # → k8s.yaml (K8s + KubeRay resources)
+kubectl apply -f k8s.yaml
+```
+
+Config Connector resources live in the same TypeScript source (`src/infra/`) as the rest of the config. The single `chant build src --lexicon gcp` command extracts only the GCP resources; `--lexicon k8s` extracts only the K8s resources. The shared `config.ts` passes values (storage class name, namespace, GSA email) between layers without a separate outputs mechanism.
+
+### NetworkPolicy: podSelector-only strategy
+
+The `RayCluster` composite emits a `NetworkPolicy` that uses `podSelector` for all intra-cluster ingress and egress rules — no IP CIDR blocks for Ray traffic. This is intentional.
+
+GKE allocates pod IPs from secondary IP ranges that differ from the declared subnet CIDRs. A rule like `ipBlock: 10.128.0.0/9` silently fails when GKE places pods on a secondary range like `10.64.0.0/14`. Using `podSelector: { ray.io/cluster-name: ray }` matches the actual pods regardless of their IP, so the rule works correctly even when secondary ranges shift between node pools or cluster upgrades.
+
+GCS egress is the one place where ipBlock is needed — `storage.googleapis.com` resolves to Google's public IP space. The composite allows `0.0.0.0/0` port 443 with RFC1918 ranges excluded. This permits Google APIs while preventing lateral movement to other services in the VPC.
+
+### GCS object-store spillover
+
+Ray's shared object store lives in the head pod's memory. When large objects (model weights, shuffled datasets) exceed available RAM, Ray falls back to local disk — and then OOMs or slows to a crawl on large jobs.
+
+Setting `spilloverBucket` on the `RayCluster` composite injects `RAY_object_spilling_config` into the head container:
+
+```json
+{
+  "type": "smart_open",
+  "params": { "uri": "gs://ray-spill/spill", "num_threads": 16 }
+}
+```
+
+Ray spills objects to GCS transparently. The head pod needs GCS write access — provided by Workload Identity binding the K8s `ray-head` ServiceAccount to a GCP SA with `roles/storage.objectAdmin` on the bucket. The 7-day lifecycle rule on the bucket auto-deletes orphaned spill files.
+
+### Pre-built images vs runtimeEnv pip installs
+
+Ray's `runtimeEnv` mechanism re-runs `pip install` on every worker restart. On a 4-worker cluster this adds 2–5 minutes to cold start; at 100+ workers it serializes across all nodes on the cluster Redis channel, adding 20+ minutes. The Tencent Weixin team confirmed pre-built images as the production-grade approach.
+
+The example uses an Artifact Registry image (`ray:2.40.0`) with all dependencies pre-installed. The `RAY_IMAGE` env var points builds at your registry image. The Artifact Registry repository in the infra layer stores it:
+
+```bash
+# Build and push your image (example)
+docker build -t us-central1-docker.pkg.dev/my-project/ray-images/ray:2.40.0 .
+docker push us-central1-docker.pkg.dev/my-project/ray-images/ray:2.40.0
+```
+
+### PreStop hooks and graceful drain
+
+The composite injects a `preStop` lifecycle hook on all worker containers:
+
+```yaml
+lifecycle:
+  preStop:
+    exec:
+      command: ["ray", "stop"]
+terminationGracePeriodSeconds: 120
+```
+
+When a worker pod is evicted (spot instance reclaim, node drain, rolling upgrade), Kubernetes sends SIGTERM and waits up to 120 seconds before force-killing. The `ray stop` preStop hook runs first, draining in-flight tasks from the worker's local task queue. Without this, workers on preemptible/spot nodes lose their in-flight tasks instantly — any job with more tasks than the remaining workers must restart from scratch.
+
+### Workload Identity for GCS access
+
+The head pod needs GCS credentials for spillover. The composite emits a `ServiceAccount` named `${name}-head`. The infra layer creates a GCP service account (`ray-workload`) and two IAM bindings:
+
+1. `roles/storage.objectAdmin` on the spillover bucket → scoped to the minimum needed
+2. `roles/iam.workloadIdentityUser` binding `[ray-system/ray-head]` to the GCP SA
+
+The `defaults.serviceAccount` prop on `RayCluster` injects the Workload Identity annotation:
+
+```typescript
+defaults: {
+  serviceAccount: {
+    metadata: {
+      annotations: { "iam.gke.io/gcp-service-account": config.rayGsaEmail },
+    },
+  },
+},
+```
+
+No key files, no Secrets. The GKE metadata server handles token exchange automatically.
+
+### Observability: Prometheus + Grafana via Helm
+
+The same `helm install kube-prometheus-stack` command installs Prometheus + Grafana in both k3d and GKE:
+
+```bash
+just install-monitoring   # works in k3d and on GKE
+just grafana              # port-forward → http://localhost:3000
+```
+
+The `RayCluster` composite sets `RAY_GRAFANA_HOST` on the head pod, which enables the Ray dashboard's Metrics tab to embed the Grafana iframe. The env var points at the in-cluster kube-prometheus-stack Grafana service — the same DNS name resolves in both environments because both use the same Helm release name.
+
+Ray ships six pre-built Grafana dashboard JSONs at `/tmp/ray/session_latest/metrics/grafana/dashboards/` inside the head pod. Copy them into Grafana to get per-cluster, per-worker, and per-job panels out of the box.
+
+### Job portability
+
+Ray's HTTP Jobs API is the same whether you're talking to a local KubeRay cluster or this GKE deployment:
+
+```bash
+kubectl port-forward -n ray-system svc/ray-head-svc 8265:8265
+ray job submit --address http://localhost:8265 -- python your_job.py
+```
+
+Jobs written with standard `@ray.remote` decorators, Ray Tune, or Ray Data require no changes to run on GKE. The one pattern that diverges: `runtime_env` YAML for pip dependencies works fine locally but serializes across all workers on cluster startup at scale — 100 workers each running `pip install` adds 20+ minutes to cold start. Pre-built images (the approach this example uses) eliminate that overhead entirely.
+
+### KubeRay scale ceiling
+
+KubeRay handles clusters up to ~1,000 nodes reliably. Beyond that, the single-controller architecture becomes a bottleneck — the Tencent Weixin team hit this and built a custom distributed scheduler (Starlink) and federated multi-cluster topology. For most production use cases, 1,000 nodes is more than sufficient. If you're approaching that scale, the decision point is: federate multiple KubeRay clusters behind a single submission endpoint, or adopt a custom scheduler.
+
+## Local smoke test (no GCP required)
+
+Before spending $300+/mo on GKE, validate the KubeRay lifecycle locally with k3d. The smoke test runs in ~3 minutes with no cloud credentials.
+
+Paste this to Claude Code from the repo root:
+
+```
+Run the ray-kuberay-gke local smoke test.
+The example is in examples/ray-kuberay-gke.
+
+Run npm install from the repo root first, then follow the instructions
+in examples/ray-kuberay-gke/README.md.
+Prerequisites: k3d and kubectl must be installed.
+```
+
+The agent will create a k3d cluster, install the KubeRay operator, build `k3d/k3d.yaml` from the local chant sources, apply it, and verify that `ray.cluster_resources()` returns ≥ 2 CPUs.
+
+**What the k3d layer validates:**
+- KubeRay operator deploys and becomes Available
+- `RayCluster` CR is accepted and reaches `state=ready`
+- Head + 1 CPU worker join the cluster
+
+**What it does not validate** (all covered by the production GKE deploy): NetworkPolicy enforcement, GPU scheduling, ReadWriteMany shared storage, GCS spillover, Workload Identity.
+
+The k3d config substitutes GCP-specific dependencies with local equivalents: `rayproject/ray:2.54.0-py311` from Docker Hub instead of Artifact Registry (aarch64 variant selected automatically on Apple Silicon), k3s `local-path` StorageClass instead of Filestore, and removes the Workload Identity annotation and GCS spillover config entirely.
+
+## Deploy
+
+See `examples/ray-kuberay-gke/README.md` for the full phase-by-phase deploy guide and paste-ready agent prompt.
+
+### Bootstrap Config Connector (one-time)
+
+Config Connector is a GKE addon that manages GCP resources via `kubectl apply`. You need a management cluster with it running before you can apply `config.yaml`. Every chant GKE example ships a bootstrap script for this:
+
+```bash
+export GCP_PROJECT_ID=my-project
+cd examples/ray-kuberay-gke
+just bootstrap   # ~5 minutes
+```
+
+This creates `ray-mgmt` — a single-node GKE cluster in `us-central1` that runs Config Connector. It enables the required GCP APIs (container, compute, file, storage, artifactregistry), creates a `config-connector-sa` service account with `roles/editor` + `roles/iam.securityAdmin`, and wires Workload Identity so the K8s SA can impersonate it.
+
+If you already have a Config Connector management cluster from another chant GKE example, skip this step.
+
+### Quick reference
+
+```bash
+export GCP_PROJECT_ID=my-project GCP_REGION=us-central1
+cd examples/ray-kuberay-gke
+npm install         # from repo root first
+just bootstrap      # one-time: create Config Connector management cluster
+npm run build:gcp && kubectl apply -f config.yaml
+# wait for cluster (~10 min)
+just get-credentials
+just install-operator
+npm run build:k8s && kubectl apply -f k8s.yaml
+just wait && just test-job
+just install-monitoring && just grafana
+```
+
+## Tear down
+
+```bash
+just teardown
+# deletes k8s.yaml resources first, then config.yaml (GCP infra)
+```
+
+GCP resources (GKE cluster, Filestore, GCS bucket) are deleted when Config Connector reconciles the deletion. The Filestore ENTERPRISE instance takes ~5 minutes to delete.

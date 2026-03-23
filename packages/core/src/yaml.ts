@@ -188,7 +188,10 @@ export function parseYAMLLines(
         if (i + 1 < lines.length) {
           const nextLine = lines[i + 1];
           const nextIndent = nextLine.search(/\S/);
-          if (nextIndent > indent && nextLine.trimStart().startsWith("- ")) {
+          if (nextLine.trimStart().startsWith("- ") && nextIndent >= indent) {
+            // Same-indent arrays are valid YAML (e.g. controller-gen output):
+            //   versions:
+            //   - name: v1
             const arr = parseYAMLArray(lines, i + 1, nextIndent);
             result[key] = arr.value;
             i = arr.endIndex;

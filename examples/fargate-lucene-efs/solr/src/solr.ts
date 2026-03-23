@@ -1,4 +1,4 @@
-import { FargateService, EC2SecurityGroupIngress, Ref } from "@intentius/chant-lexicon-aws";
+import { SolrFargateService, EC2SecurityGroupIngress, Ref } from "@intentius/chant-lexicon-aws";
 import {
   clusterArn,
   listenerArn,
@@ -14,7 +14,7 @@ import {
   solrCollection,
 } from "./params";
 
-export const solr = FargateService({
+export const solr = SolrFargateService({
   clusterArn: Ref(clusterArn),
   listenerArn: Ref(listenerArn),
   albSecurityGroupId: Ref(albSgId),
@@ -22,14 +22,11 @@ export const solr = FargateService({
   vpcId: Ref(vpcId),
   privateSubnetIds: [Ref(privateSubnet1), Ref(privateSubnet2)],
   image: Ref(solrImage),
-  containerPort: 8983,
   cpu: "1024",
-  memory: "2048",
+  memory: "4096",
   desiredCount: 1,
   priority: 100,
   pathPatterns: ["/solr", "/solr/*"],
-  healthCheckPath: "/solr/",
-  environment: { SOLR_HEAP: "1g" },
   command: ["solr-precreate", Ref(solrCollection)],
   efsMounts: [{ fileSystemId: Ref(efsId), accessPointId: Ref(accessPointId), containerPath: "/var/solr" }],
   autoscaling: { minCapacity: 1, maxCapacity: 6, cpuTarget: 60 },

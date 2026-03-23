@@ -147,3 +147,42 @@ export const WORKLOAD_KINDS = new Set([
   "Job",
   "CronJob",
 ]);
+
+/**
+ * Parse a Kubernetes memory string to bytes.
+ *
+ * Handles binary suffixes (Ki, Mi, Gi, Ti) and SI suffixes (K, M, G, T).
+ * Returns NaN for unrecognised strings — callers should skip checks on NaN.
+ *
+ * @example
+ * parseMemoryBytes("4Gi")  // 4294967296
+ * parseMemoryBytes("512Mi") // 536870912
+ * parseMemoryBytes("2048") // 2048
+ */
+export function parseMemoryBytes(s: string): number {
+  const m = /^([0-9]+(?:\.[0-9]+)?)(Ki|Mi|Gi|Ti|K|M|G|T)?$/.exec(s.trim());
+  if (!m) return NaN;
+  const n = parseFloat(m[1]);
+  const multipliers: Record<string, number> = {
+    Ki: 1024, Mi: 1024 ** 2, Gi: 1024 ** 3, Ti: 1024 ** 4,
+    K: 1000, M: 1000 ** 2, G: 1000 ** 3, T: 1000 ** 4,
+  };
+  return n * (multipliers[m[2] ?? ""] ?? 1);
+}
+
+/**
+ * Extract the Ray version from an image tag.
+ *
+ * Looks for a semver-style version prefix in the image tag:
+ *   "rayproject/ray:2.40.0"          → "2.40.0"
+ *   "rayproject/ray:2.40.0-py310"    → "2.40.0"
+ *   "us-docker.pkg.dev/.../ray:2.9.3-gpu" → "2.9.3"
+ *   "rayproject/ray:latest"          → undefined
+ *
+ * Returns undefined when no version can be found.
+ */
+export function extractRayVersion(image: string): string | undefined {
+  const tag = image.includes(":") ? image.split(":").pop()! : image;
+  const m = /^([0-9]+\.[0-9]+\.[0-9]+)/.exec(tag);
+  return m ? m[1] : undefined;
+}

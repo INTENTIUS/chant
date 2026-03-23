@@ -10,7 +10,7 @@
 import type { K8sParseResult, ParsedProperty, ParsedPropertyType, GroupVersionKind } from "../spec/parse";
 import type { CRDSpec } from "./types";
 import type { PropertyConstraints } from "@intentius/chant/codegen/json-schema";
-import { parseYAML } from "@intentius/chant/yaml";
+import { loadAll } from "js-yaml";
 
 /**
  * Normalize a CRD group to a PascalCase namespace segment.
@@ -34,17 +34,17 @@ function normalizeGroupName(group: string): string {
 export function parseCRD(content: string): K8sParseResult[] {
   const results: K8sParseResult[] = [];
 
-  // Support multi-document YAML for CRD bundles
-  const documents = content
-    .split(/^---\s*$/m)
-    .map((d) => d.trim())
-    .filter((d) => d.length > 0);
+  // Use js-yaml to handle full YAML spec (CRD YAMLs use same-indent arrays,
+  // nested block scalars, and deep nesting not supported by the lightweight parser).
+  const documents: unknown[] = [];
+  loadAll(content, (doc) => documents.push(doc));
 
-  for (const docStr of documents) {
-    const doc = parseYAML(docStr) as Record<string, unknown>;
-    if (!doc || doc.kind !== "CustomResourceDefinition") continue;
+  for (const doc of documents) {
+    if (!doc || typeof doc !== "object") continue;
+    const docObj = doc as Record<string, unknown>;
+    if (docObj.kind !== "CustomResourceDefinition") continue;
 
-    const spec = doc.spec as CRDSpec | undefined;
+    const spec = docObj.spec as CRDSpec | undefined;
     if (!spec?.group || !spec?.names?.kind || !spec?.versions) continue;
 
     const crdResults = parseCRDSpec(spec);
@@ -160,10 +160,15 @@ function extractPropertyTypes(schema: OpenAPISchema, parentTypeName: string): Pa
   const specSchema = schema.properties?.spec;
   if (!specSchema?.properties) return results;
 
+  // Use the short name (last :: segment) as prefix so the naming pipeline
+  // produces valid TS identifiers: "RayCluster_AutoscalerOptions" not
+  // "K8s::Ray::RayCluster::AutoscalerOptions".
+  const shortName = parentTypeName.split("::").pop()!;
+
   for (const [name, prop] of Object.entries(specSchema.properties)) {
     // Extract inline object definitions as property types
     if (prop.type === "object" && prop.properties) {
-      const ptName = `${parentTypeName}::${pascalCase(name)}`;
+      const ptName = `${shortName}_${pascalCase(name)}`;
       const requiredSet = new Set<string>(prop.required ?? []);
 
       results.push({
@@ -184,7 +189,7 @@ function extractPropertyTypes(schema: OpenAPISchema, parentTypeName: string): Pa
     if (prop.type === "array" && prop.items?.type === "object" && prop.items.properties) {
       const itemSchema = prop.items;
       const itemProps = itemSchema.properties!;
-      const ptName = `${parentTypeName}::${pascalCase(singularize(name))}`;
+      const ptName = `${shortName}_${pascalCase(singularize(name))}`;
       const requiredSet = new Set<string>(itemSchema.required ?? []);
 
       results.push({

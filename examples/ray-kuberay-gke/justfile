@@ -1,0 +1,120 @@
+cluster_name := env_var_or_default("GKE_CLUSTER_NAME", "ray-gke")
+region       := env_var_or_default("GCP_REGION", "us-central1")
+project_id   := env_var_or_default("GCP_PROJECT_ID", "my-project")
+namespace    := "ray-system"
+
+# Create Config Connector management cluster (one-time setup)
+bootstrap:
+  bash scripts/bootstrap.sh
+
+# Build and deploy everything (infra → K8s)
+deploy: deploy-infra get-credentials install-operator deploy-k8s
+
+# Build and apply GCP infrastructure (Config Connector)
+deploy-infra:
+  npm run build:gcp
+  kubectl apply -f config.yaml
+
+# Get kubeconfig for the GKE cluster
+get-credentials:
+  gcloud container clusters get-credentials {{cluster_name}} \
+    --region {{region}} --project {{project_id}}
+
+# Install KubeRay operator via Helm (operator YAML no longer shipped as release asset)
+install-operator:
+  helm repo add kuberay https://ray-project.github.io/kuberay-helm/
+  helm repo update
+  helm upgrade --install kuberay-operator kuberay/kuberay-operator \
+    -n kuberay-operator --create-namespace --version 1.3.2
+  kubectl -n kuberay-operator wait deploy/kuberay-operator \
+    --for=condition=Available --timeout=120s
+
+# Build and apply K8s manifests
+# Requires FILESTORE_IP: gcloud filestore instances describe ray-filestore --zone ${GCP_REGION}-a --format='value(networks[0].ipAddresses[0])'
+deploy-k8s:
+  FILESTORE_IP=$(gcloud filestore instances describe {{env_var_or_default("FILESTORE_NAME", "ray-filestore")}} \
+    --zone {{region}}-a --project {{project_id}} \
+    --format='value(networks[0].ipAddresses[0])') \
+    npm run build:k8s
+  kubectl apply -f k8s.yaml
+
+# Wait for the Ray cluster to be ready
+wait:
+  kubectl -n {{namespace}} wait raycluster/ray \
+    --for=jsonpath='{.status.state}'=ready --timeout=300s
+  kubectl -n {{namespace}} get pods -l ray.io/cluster-name=ray
+
+# Port-forward the Ray dashboard (http://localhost:8265)
+dashboard:
+  kubectl -n {{namespace}} port-forward svc/ray-head-svc 8265:8265
+
+# Run the distributed verification job (scripts/verify.py) on the head pod
+test-job:
+  #!/usr/bin/env bash
+  set -euo pipefail
+  HEAD=$(kubectl -n {{namespace}} get pod -l ray.io/node-type=head -o name | head -1 | sed 's|pod/||')
+  kubectl -n {{namespace}} cp scripts/verify.py "$HEAD:/tmp/verify.py" -c ray-head
+  kubectl -n {{namespace}} exec "$HEAD" -c ray-head -- python /tmp/verify.py
+
+# Tear down K8s resources then GCP infrastructure
+teardown:
+  -kubectl delete -f k8s.yaml
+  -kubectl delete -f config.yaml
+
+# ── Local k3d smoke test (no GCP required) ────────────────────────────────────
+
+# Full local smoke test: create k3d cluster → install operator → build → apply → verify → clean up
+local-smoke:
+  bash scripts/k3d-smoke.sh
+
+# Create a persistent local k3d cluster for iterative development
+local-up:
+  k3d cluster create ray-kuberay-smoke \
+    --k3s-arg "--disable=traefik@server:*" \
+    --k3s-arg "--disable=servicelb@server:*" \
+    --k3s-arg "--kubelet-arg=pod-max-pids=4096@server:*" \
+    --wait
+  helm repo add kuberay https://ray-project.github.io/kuberay-helm/
+  helm repo update
+  helm upgrade --install kuberay-operator kuberay/kuberay-operator \
+    -n kuberay-operator --create-namespace --version 1.3.2
+  kubectl -n kuberay-operator wait deploy/kuberay-operator \
+    --for=condition=Available --timeout=120s
+  npm run build:k3d
+  kubectl apply -f k3d/k3d.yaml
+
+# Wait for the local RayCluster to be ready
+local-wait:
+  kubectl -n {{namespace}} wait raycluster/ray \
+    --for=jsonpath='{.status.state}'=ready --timeout=300s
+  kubectl -n {{namespace}} get pods -l ray.io/cluster-name=ray
+
+# Verify the local cluster: prints ray.cluster_resources()
+local-test:
+  kubectl -n {{namespace}} exec \
+    $(kubectl -n {{namespace}} get pod -l ray.io/node-type=head -o name | head -1) \
+    -- python -c "import ray; ray.init(address='auto'); print(ray.cluster_resources())"
+
+# Delete the local k3d cluster
+local-down:
+  k3d cluster delete ray-kuberay-smoke
+
+# ── Observability (Prometheus + Grafana) ──────────────────────────────────────
+
+# Install kube-prometheus-stack (works in both k3d and GKE)
+install-monitoring:
+  helm repo add prometheus-community https://prometheus-community.github.io/helm-charts
+  helm repo update
+  helm upgrade --install kube-prometheus-stack prometheus-community/kube-prometheus-stack \
+    -n monitoring --create-namespace \
+    --set grafana.adminPassword=admin \
+    --set grafana.sidecar.dashboards.enabled=true
+  kubectl -n monitoring wait deploy/kube-prometheus-stack-grafana \
+    --for=condition=Available --timeout=120s
+
+# Port-forward Grafana (http://localhost:3000, admin/admin)
+grafana:
+  kubectl -n monitoring port-forward svc/kube-prometheus-stack-grafana 3000:80
+
+# Install monitoring in the local k3d cluster
+local-monitoring: install-monitoring

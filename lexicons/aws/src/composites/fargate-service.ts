@@ -12,6 +12,7 @@ import {
   TaskDefinition_KeyValuePair,
   TaskDefinition_EFSVolumeConfiguration,
   TaskDefinition_Volume,
+  TaskDefinition_Ulimit,
   TargetGroup,
   ListenerRule,
   ListenerRule_Action,
@@ -73,6 +74,9 @@ export interface FargateServiceProps {
   vpcId: string;
   privateSubnetIds: string[];
   healthCheckPath?: string;
+
+  // Ulimits (container-level)
+  ulimits?: Array<{ name: string; softLimit: number; hardLimit: number }>;
 
   // IAM
   ManagedPolicyArns?: string[];
@@ -175,6 +179,11 @@ export const FargateService = Composite<FargateServiceProps>((props) => {
     Environment: environmentVars.length > 0 ? environmentVars : undefined,
     Command: props.command,
     MountPoints: allMountPoints.length > 0 ? allMountPoints : undefined,
+    Ulimits: props.ulimits?.map(u => new TaskDefinition_Ulimit({
+      Name: u.name,
+      SoftLimit: u.softLimit,
+      HardLimit: u.hardLimit,
+    })),
   });
 
   // Task definition
