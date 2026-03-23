@@ -111,6 +111,21 @@ export const headNodeRole = new Role({
             Resource: ["*"],
           },
           {
+            // Tag instances/volumes/ENIs during run-instances (--tag-specifications requires CreateTags)
+            Effect: "Allow",
+            Action: ["ec2:CreateTags"],
+            Resource: [
+              "arn:aws:ec2:*:*:instance/*",
+              "arn:aws:ec2:*:*:volume/*",
+              "arn:aws:ec2:*:*:network-interface/*",
+            ],
+            Condition: {
+              StringEquals: {
+                "ec2:CreateAction": "RunInstances",
+              },
+            },
+          },
+          {
             // SuspendProgram: terminate compute instances tagged with cluster name
             Effect: "Allow",
             Action: ["ec2:TerminateInstances"],

@@ -74,11 +74,6 @@ export const cluster = new Cluster({
   // CLOUD nodes must be able to re-register after spot resume
   ReturnToService: 1,
 
-  // LBNL NHC: run on any node every 30s to catch hardware failures early
-  HealthCheckProgram: "/usr/sbin/nhc",
-  HealthCheckInterval: 30,
-  HealthCheckNodeState: "ANY",
-
   // pmi2 is the default available in EPEL 20.11.9 on Amazon Linux 2.
   // pmix requires a separately-compiled package not in EPEL.
   MpiDefault: "pmi2",
