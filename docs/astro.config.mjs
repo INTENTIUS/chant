@@ -62,6 +62,7 @@ export default defineConfig({
 						{ label: 'CockroachDB Multi-Region', slug: 'tutorials/cockroachdb-multi-region' },
 						{ label: 'GitLab Cells on GKE', slug: 'tutorials/gitlab-cells' },
 						{ label: 'Temporal Workflow-Driven Deploy', slug: 'tutorials/temporal-crdb-deploy' },
+						{ label: 'Slurm EDA HPC on AWS', slug: 'tutorials/slurm-aws-hpc' },
 					],
 				},
 				{
@@ -86,6 +87,7 @@ export default defineConfig({
 						{ label: 'GitLab CI/CD', link: '/lexicons/gitlab/' },
 						{ label: 'Flyway', link: '/lexicons/flyway/' },
 						{ label: 'Docker', link: '/lexicons/docker/' },
+						{ label: 'Slurm', link: '/lexicons/slurm/' },
 					],
 				},
 				{

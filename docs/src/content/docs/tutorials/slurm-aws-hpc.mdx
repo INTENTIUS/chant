@@ -1,0 +1,162 @@
+---
+title: "Slurm EDA HPC Cluster on AWS"
+description: "A production EDA HPC cluster running Slurm 23.11 on AWS with FSx for Lustre, Aurora MySQL job accounting, EFA-enabled spot GPU fleet, and EventBridge-driven spot interruption handling — defined in TypeScript using two chant lexicons."
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+One TypeScript project, two output formats: a CloudFormation template (`dist/infra.json`) and a ready-to-distribute `dist/slurm.conf`. The key insight: `@intentius/chant-lexicon-aws` and `@intentius/chant-lexicon-slurm` share the same `src/` tree, so config values like node names and partition assignments are never duplicated between cloud infrastructure and Slurm configuration.
+
+## What you'll build
+
+```
+                      ┌──────────────────────────────────────────────┐
+                      │  VPC 10.0.0.0/16  (us-east-1)               │
+                      │                                              │
+┌──────────────┐      │  ┌─────────────┐    ┌─────────────────────┐ │
+│  Aurora MySQL│◄─────┼──┤  Head node  │    │  EFA Placement Grp  │ │
+│  Serverless  │:3306 │  │  c5.2xlarge │    │                     │ │
+│  (slurmdbd)  │      │  │  slurmctld  │    │  p4d.24xlarge (GPU) │ │
+└──────────────┘      │  │  slurmdbd   │    │  gpu[001-016] spot  │ │
+                      │  └──────┬──────┘    └──────────┬──────────┘ │
+┌──────────────┐      │         │                      │            │
+│  FSx Lustre  │◄─────┼─────────┴──────────────────────┘            │
+│  /scratch    │      │  CPU nodes: cpu[001-032]  c5.2xlarge CLOUD   │
+└──────────────┘      └──────────────────────────────────────────────┘
+                                     │
+                       EventBridge: EC2 Spot Interruption Warning
+                                     ▼
+                             Lambda (drain + requeue)
+```
+
+**Partitions:**
+| Partition | Nodes | MaxTime | Use case |
+|---|---|---|---|
+| `synthesis` (default) | cpu[001-016] | 48h | RTL synthesis, place-and-route |
+| `sim` | cpu[017-032] | 7d | Gate-level simulation, formal verification |
+| `gpu_eda` | gpu[001-016] | 24h | AI-driven EDA tools, ML training |
+
+## What you'll learn
+
+- The cross-lexicon pattern: `@intentius/chant-lexicon-aws` + `@intentius/chant-lexicon-slurm` in one `src/` tree producing both CloudFormation JSON and `slurm.conf` in one build
+- How `GpuPartition` composite wires together a `Node`, `Partition`, and `gres.conf` entry, including EFA placement group and NVML auto-detection
+- CLOUD node lifecycle: `State=CLOUD` nodes are invisible until a job triggers `ResumeProgram`; `sinfo` shows `0 n/a` — this is correct
+- How `SuspendProgram`/`ResumeProgram` launch and terminate individual EC2 instances (not ASG scaling), with instance identity passed via `slurm-node` tag
+- Slurm-native license tracking: jobs request tokens via `--licenses=eda_synth:1`, Slurm queues them if the pool is exhausted — no FlexLM required
+- Fairshare accounting with slurmdbd on Aurora MySQL, enforcing per-team QOS and priority decay
+
+## Cost
+
+~$0.50/hr for the always-on components (head node + Aurora + FSx). CPU and GPU compute nodes are provisioned on demand by Slurm and terminated when idle. See the [example README](https://github.com/intentius/chant/tree/main/examples/slurm-aws-hpc#cost-estimate) for the full breakdown.
+
+<Aside type="caution">
+p4d.24xlarge instances require a vCPU quota increase (L-417A185B) in your AWS account. GPU jobs won't run without it, but the head node, CPU partitions, and all infrastructure deploy without it.
+</Aside>
+
+## Get started
+
+```
+Deploy the slurm-aws-hpc example.
+My AWS region is us-east-1. My cluster name is eda-hpc.
+```
+
+See [`examples/slurm-aws-hpc/`](https://github.com/intentius/chant/tree/main/examples/slurm-aws-hpc) for the full README, deploy walkthrough, and teardown instructions.
+
+## Key patterns
+
+### Cross-lexicon build: one `src/`, two output formats
+
+Most chant projects use one lexicon. This example uses two in the same `src/` tree:
+
+```typescript
+// src/slurm-cluster.ts — @intentius/chant-lexicon-slurm
+import { Cluster, Node, Partition, License, GpuPartition } from "@intentius/chant-lexicon-slurm";
+
+export const cpuNodes = new Node({
+  NodeName: "cpu[001-032]",
+  CPUs: 8,
+  State: "CLOUD",
+});
+
+// src/compute.ts — @intentius/chant-lexicon-aws
+import { LaunchTemplate, AutoScalingGroup } from "@intentius/chant-lexicon-aws";
+// LaunchTemplate references cpuNodes.NodeName — same value, no duplication
+```
+
+`chant build` partitions declarables by lexicon and serializes them to separate outputs:
+- AWS resources → `dist/infra.json` (CloudFormation template)
+- Slurm resources → `dist/slurm.conf`, `dist/cgroup.conf`, `dist/topology.conf`
+
+### GpuPartition composite
+
+`GpuPartition` is a factory that returns three coordinated resources — a `Node`, a `Partition`, and a `gres.conf` entry:
+
+```typescript
+export const { nodes: gpuNodes, partition: gpuPartition, gresNode } = GpuPartition({
+  partitionName: "gpu_eda",
+  nodePattern: "gpu[001-016]",
+  gpuTypeCount: "a100:8",        // 8×A100-80GB per p4d.24xlarge
+  cpusPerNode: 96,
+  memoryMb: 1_044_480,
+  maxTime: "1-00:00:00",
+  gresConf: { autoDetect: "nvml" }, // NVML auto-detects A100 devices
+});
+```
+
+The `gresNode` output serializes to a `gres.conf` line — without it, `GresTypes=gpu` in `slurm.conf` has no backing configuration and GPU jobs fail at scheduling.
+
+### CLOUD node lifecycle
+
+`State=CLOUD` in `slurm.conf` means nodes are in Slurm's "future" set: they consume no resources and are invisible to `scontrol show nodes` until a job triggers `ResumeProgram`. `sinfo` reporting `0 n/a` is correct — not a bug.
+
+When a job is submitted to a CLOUD node:
+1. `ResumeProgram` launches an EC2 instance tagged `slurm-node=cpu001`
+2. Instance UserData reads the tag from IMDS, sets its hostname, fetches `slurm.conf` from SSM, starts `slurmd`
+3. `slurmd` registers with `slurmctld`; node transitions `configuring → idle`
+4. Job runs; `SuspendProgram` terminates the instance after `SuspendTime=300` seconds idle
+
+The resume and suspend scripts launch/terminate individual instances rather than adjusting ASG capacity — this gives Slurm per-node control for heterogeneous workloads.
+
+### Slurm-native EDA license tracking
+
+Slurm tracks license pools natively — no FlexLM integration needed for queue-based enforcement:
+
+```typescript
+export const synthLicense = new License({ LicenseName: "eda_synth", Count: 50 });
+export const simLicense   = new License({ LicenseName: "eda_sim",   Count: 200 });
+export const drcLicense   = new License({ LicenseName: "calibre_drc", Count: 30 });
+```
+
+Jobs request tokens at submission time:
+
+```bash
+sbatch --partition=synthesis --licenses=eda_synth:1 run_synthesis.sh
+```
+
+If all tokens are in use, Slurm queues the job automatically. No separate license server polling or external scripts required.
+
+### Munge key bootstrap ordering
+
+The munge key must exist on the head node before `slurmd` starts on any compute node — but SSM Automation runs after the stack deploys. The head node UserData handles this by retrying SSM for 10 minutes and self-generating the key if it's still absent:
+
+```bash
+for i in $(seq 1 20); do
+  MUNGE_KEY=$(aws ssm get-parameter --name /$CLUSTER_NAME/munge/key \
+    --with-decryption --query Parameter.Value --output text 2>/dev/null) && break
+  sleep 30
+done
+if [[ -z "$MUNGE_KEY" ]]; then
+  MUNGE_KEY=$(dd if=/dev/urandom bs=1024 count=1 2>/dev/null | base64 -w 0)
+  aws ssm put-parameter --name /$CLUSTER_NAME/munge/key --value "$MUNGE_KEY" \
+    --type SecureString --overwrite ...
+fi
+```
+
+Compute nodes read the same SSM parameter at boot — same key, no manual distribution.
+
+## Further reading
+
+- [Slurm lexicon](/chant/lexicons/slurm/) — resource reference, composites, lint rules
+- [AWS CloudFormation lexicon](/chant/lexicons/aws/) — EC2, IAM, FSx, Aurora resources
+- [Composites guide](/chant/guide/composite-resources/) — building and consuming factory patterns
+- [Multi-Stack Projects guide](/chant/guide/multi-stack/) — patterns for splitting outputs across stacks
