@@ -1,5 +1,5 @@
 ---
-name: generate-cluster
+name: chant-slurm-generate-cluster
 description: Generate a complete Slurm cluster configuration with Cluster, Partition, and Node resources
 triggers:
   - "generate a slurm cluster config"

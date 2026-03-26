@@ -1,5 +1,5 @@
 ---
-name: generate-job
+name: chant-slurm-generate-job
 description: Generate a Slurm batch job submission TypeScript declaration
 triggers:
   - "generate a slurm job"

@@ -8,7 +8,7 @@ import { fileURLToPath } from "url";
  *
  * Each callback has a TODO describing what to implement.
  */
-export async function generate(options?: { verbose?: boolean; force?: boolean }): Promise<GenerateResult> {
+export async function generate(options?: { verbose?: boolean }): Promise<GenerateResult> {
   const result = await generatePipeline({
     // Must return Map<typeName, Buffer> — each entry is one schema file.
     // Example: fetch a zip, extract JSON files, key by type name.

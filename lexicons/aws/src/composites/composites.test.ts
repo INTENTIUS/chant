@@ -14,6 +14,8 @@ import { FargateAlb } from "./fargate-alb";
 import { AlbShared } from "./alb-shared";
 import { FargateService } from "./fargate-service";
 import { RdsInstance } from "./rds-instance";
+import { Ec2InstanceRole } from "./ec2-instance-role";
+import { MinimalVpc } from "./minimal-vpc";
 
 const baseProps = {
   name: "TestFunc",
@@ -863,5 +865,68 @@ describe("per-member defaults", () => {
     const funcPropsB = (withDefaults.func as any).props;
     expect(funcPropsA.FunctionName).toBe(funcPropsB.FunctionName);
     expect(funcPropsA.Timeout).toBe(funcPropsB.Timeout);
+  });
+});
+
+describe("Ec2InstanceRole", () => {
+  test("returns role and instanceProfile members", () => {
+    const instance = Ec2InstanceRole({});
+    expect(instance.role).toBeDefined();
+    expect(instance.instanceProfile).toBeDefined();
+    expect(Object.keys(instance.members)).toEqual(["role", "instanceProfile"]);
+  });
+
+  test("role has EC2 trust policy", () => {
+    const instance = Ec2InstanceRole({});
+    const roleProps = (instance.role as any).props;
+    expect(roleProps.AssumeRolePolicyDocument.Statement[0].Principal.Service).toBe("ec2.amazonaws.com");
+  });
+
+  test("ManagedPolicyArns are passed through", () => {
+    const arn = "arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore";
+    const instance = Ec2InstanceRole({ ManagedPolicyArns: [arn] });
+    const roleProps = (instance.role as any).props;
+    expect(roleProps.ManagedPolicyArns).toContain(arn);
+  });
+
+  test("expandComposite produces 2 entries", () => {
+    const expanded = expandComposite("myRole", Ec2InstanceRole({}));
+    expect(expanded.size).toBe(2);
+    expect(expanded.has("myRoleRole")).toBe(true);
+    expect(expanded.has("myRoleInstanceProfile")).toBe(true);
+  });
+});
+
+describe("MinimalVpc", () => {
+  test("returns 8 members", () => {
+    const instance = MinimalVpc({});
+    expect(Object.keys(instance.members)).toEqual([
+      "vpc", "subnet", "igw", "igwAttachment", "routeTable", "defaultRoute", "subnetRta", "securityGroup",
+    ]);
+  });
+
+  test("subnet uses Select/GetAZs for AZ (not a plain string)", () => {
+    const instance = MinimalVpc({});
+    const subnetProps = (instance.subnet as any).props;
+    expect(typeof subnetProps.AvailabilityZone).not.toBe("string");
+  });
+
+  test("vpc cidr defaults to 10.0.0.0/24", () => {
+    const instance = MinimalVpc({});
+    const vpcProps = (instance.vpc as any).props;
+    expect(vpcProps.CidrBlock).toBe("10.0.0.0/24");
+  });
+
+  test("custom cidr is respected", () => {
+    const instance = MinimalVpc({ cidr: "192.168.0.0/16", subnetCidr: "192.168.1.0/24" });
+    const vpcProps = (instance.vpc as any).props;
+    const subnetProps = (instance.subnet as any).props;
+    expect(vpcProps.CidrBlock).toBe("192.168.0.0/16");
+    expect(subnetProps.CidrBlock).toBe("192.168.1.0/24");
+  });
+
+  test("expandComposite produces 8 entries", () => {
+    const expanded = expandComposite("net", MinimalVpc({}));
+    expect(expanded.size).toBe(8);
   });
 });

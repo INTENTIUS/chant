@@ -28,3 +28,7 @@ export { EfsWithAccessPoint } from "./efs-with-access-point";
 export type { EfsWithAccessPointProps } from "./efs-with-access-point";
 export { SolrFargateService } from "./solr-fargate-service";
 export type { SolrFargateServiceProps } from "./solr-fargate-service";
+export { Ec2InstanceRole } from "./ec2-instance-role";
+export type { Ec2InstanceRoleProps } from "./ec2-instance-role";
+export { MinimalVpc } from "./minimal-vpc";
+export type { MinimalVpcProps } from "./minimal-vpc";

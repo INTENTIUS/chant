@@ -1,5 +1,5 @@
 ---
-name: explain-fairshare
+name: chant-slurm-explain-fairshare
 description: Explain Slurm multifactor priority and fairshare scheduling configuration
 triggers:
   - "explain slurm fairshare"
