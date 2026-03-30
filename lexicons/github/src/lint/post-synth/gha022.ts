@@ -23,17 +23,20 @@ export const gha022: PostSynthCheck = {
       const jobsIdx = yaml.search(/^jobs:\s*$/m);
       if (jobsIdx === -1) continue;
 
-      const afterJobs = yaml.slice(jobsIdx + yaml.slice(jobsIdx).indexOf("\n") + 1);
-      const endMatch = afterJobs.search(/^[a-z]/m);
-      const jobsContent = endMatch === -1 ? afterJobs : afterJobs.slice(0, endMatch);
+      const jobsContent = yaml.slice(jobsIdx + yaml.slice(jobsIdx).indexOf("\n") + 1);
 
       for (const [jobName] of jobs) {
-        // Find this job's section in the raw YAML
-        const jobPattern = new RegExp(`^  ${jobName}:\\n([\\s\\S]*?)(?=\\n  [a-z]|$)`, "m");
-        const jobSection = jobsContent.match(jobPattern);
-        const section = jobSection ? jobSection[0] : "";
+        const jobHeader = `  ${jobName}:\n`;
+        const start = jobsContent.indexOf(jobHeader);
+        if (start === -1) continue;
 
-        if (!/timeout-minutes:/m.test(section)) {
+        // Slice from after the job header to find its content.
+        // Use literal \n  \w (no m flag) to locate the next sibling job at 2-space indent.
+        const rest = jobsContent.slice(start + jobHeader.length);
+        const nextJobMatch = rest.search(/\n  \w/);
+        const section = nextJobMatch === -1 ? rest : rest.slice(0, nextJobMatch);
+
+        if (!/timeout-minutes:/.test(section)) {
           diagnostics.push({
             checkId: "GHA022",
             severity: "info",

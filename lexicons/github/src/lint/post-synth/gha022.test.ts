@@ -34,6 +34,44 @@ jobs:
     expect(diags[0].message).toContain("build");
   });
 
+  test("does not flag job that has timeout-minutes as a later property", () => {
+    const yaml = `name: CI
+on:
+  push:
+jobs:
+  build:
+    name: Build
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - run: echo test
+`;
+    const diags = gha022.check(makeCtx(yaml));
+    expect(diags).toHaveLength(0);
+  });
+
+  test("does not flag multi-job workflow where all jobs have timeout-minutes", () => {
+    const yaml = `name: CI
+on:
+  push:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - run: cargo test
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    needs:
+      - test
+    steps:
+      - run: cargo build
+`;
+    const diags = gha022.check(makeCtx(yaml));
+    expect(diags).toHaveLength(0);
+  });
+
   test("does not flag workflow without jobs", () => {
     const yaml = `name: CI
 on:

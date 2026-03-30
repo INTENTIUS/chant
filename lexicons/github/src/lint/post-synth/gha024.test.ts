@@ -51,6 +51,23 @@ jobs:
     expect(diags).toHaveLength(0);
   });
 
+  test("does not flag deploy workflow with job-level concurrency", () => {
+    const yaml = `name: CI/CD Pipeline
+on:
+  push:
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    concurrency:
+      group: deploy-production
+      cancel-in-progress: true
+    steps:
+      - run: echo deploy
+`;
+    const diags = gha024.check(makeCtx(yaml));
+    expect(diags).toHaveLength(0);
+  });
+
   test("does not flag non-deploy workflow without concurrency", () => {
     const yaml = `name: CI
 on:

@@ -27,7 +27,7 @@ export const gha024: PostSynthCheck = {
 
       if (!isDeployWorkflow) continue;
 
-      if (!/^concurrency:/m.test(yaml)) {
+      if (!/^\s*concurrency:/m.test(yaml)) {
         diagnostics.push({
           checkId: "GHA024",
           severity: "info",
