@@ -109,6 +109,78 @@ function toYAMLValue(value: unknown, entityNames: Map<Declarable, string>): unkn
   return walkValue(preprocessed, entityNames, githubVisitor(entityNames));
 }
 
+// ── Inline job serialization ──────────────────────────────────────
+
+const JOB_ENTITY_TYPES = new Set([
+  "GitHub::Actions::Job",
+  "GitHub::Actions::ReusableWorkflowCallJob",
+]);
+
+/**
+ * Serialize a value from Workflow.props.jobs into a YAML job object.
+ *
+ * When the value is a Job entity (resource Declarable), its props are inlined
+ * directly rather than emitted as a resource reference. This allows callers to
+ * pass `new Job({...})` directly inside `Workflow({ jobs: { name: new Job({...}) } })`.
+ *
+ * Plain objects are accepted too (JSON-style job definitions).
+ */
+function serializeInlineJob(
+  jobValue: unknown,
+  entityNames: Map<Declarable, string>,
+): Record<string, unknown> | undefined {
+  if (!jobValue || typeof jobValue !== "object") return undefined;
+  const obj = jobValue as Record<string, unknown>;
+
+  if ("entityType" in obj && "props" in obj && JOB_ENTITY_TYPES.has(obj.entityType as string)) {
+    // Job entity: serialize its props inline (not as a resource reference)
+    const props = toYAMLValue(obj.props, entityNames);
+    return props && typeof props === "object"
+      ? convertKeys(props as Record<string, unknown>)
+      : undefined;
+  }
+
+  // Plain object job definition (JSON-style)
+  return convertKeys(convertValueKeys(obj) as Record<string, unknown>);
+}
+
+/**
+ * Build a jobs section from Workflow.props.jobs entries.
+ * Returns undefined when props.jobs is absent or empty.
+ */
+function buildInlineJobsSection(
+  props: Record<string, unknown>,
+  entityNames: Map<Declarable, string>,
+): Record<string, unknown> | undefined {
+  if (!props.jobs || typeof props.jobs !== "object" || Array.isArray(props.jobs)) return undefined;
+  const jobsSection: Record<string, unknown> = {};
+  for (const [jName, jobValue] of Object.entries(props.jobs as Record<string, unknown>)) {
+    const serialized = serializeInlineJob(jobValue, entityNames);
+    if (serialized) jobsSection[toKebabCase(jName)] = serialized;
+  }
+  return Object.keys(jobsSection).length > 0 ? jobsSection : undefined;
+}
+
+/**
+ * Build a jobs section from standalone top-level Job entity exports.
+ * Returns undefined when there are no standalone jobs.
+ */
+function buildStandaloneJobsSection(
+  jobs: Array<[string, Declarable]>,
+  entityNames: Map<Declarable, string>,
+): Record<string, unknown> | undefined {
+  if (jobs.length === 0) return undefined;
+  const jobsSection: Record<string, unknown> = {};
+  for (const [name, job] of jobs) {
+    const jProps = toYAMLValue(
+      (job as unknown as Record<string, unknown>).props,
+      entityNames,
+    ) as Record<string, unknown> | undefined;
+    if (jProps) jobsSection[toKebabCase(name)] = convertKeys(jProps);
+  }
+  return Object.keys(jobsSection).length > 0 ? jobsSection : undefined;
+}
+
 // ── Key conversion for YAML output ────────────────────────────────
 
 /**
@@ -166,7 +238,7 @@ export const githubSerializer: Serializer = {
     for (const [name, entity] of entities) {
       if (isPropertyDeclarable(entity)) continue;
 
-      const entityType = (entity as Record<string, unknown>).entityType as string;
+      const entityType = (entity as unknown as Record<string, unknown>).entityType as string;
       if (entityType === "GitHub::Actions::Workflow") {
         workflows.push([name, entity]);
       } else if (entityType === "GitHub::Actions::Job" || entityType === "GitHub::Actions::ReusableWorkflowCallJob") {
@@ -200,7 +272,7 @@ function serializeSingleWorkflow(
   // Workflow-level properties
   if (workflows.length > 0) {
     const [, wf] = workflows[0];
-    const props = toYAMLValue((wf as Record<string, unknown>).props, entityNames) as Record<string, unknown> | undefined;
+    const props = toYAMLValue((wf as unknown as Record<string, unknown>).props, entityNames) as Record<string, unknown> | undefined;
     if (props) {
       if (props.name) doc.name = props.name;
       if (props["run-name"] || props.runName) doc["run-name"] = props["run-name"] ?? props.runName;
@@ -220,11 +292,11 @@ function serializeSingleWorkflow(
   if (triggers.length > 0) {
     const onSection = (doc.on as Record<string, unknown>) ?? {};
     for (const [, trigger] of triggers) {
-      const entityType = (trigger as Record<string, unknown>).entityType as string;
+      const entityType = (trigger as unknown as Record<string, unknown>).entityType as string;
       const eventName = TRIGGER_TYPE_TO_EVENT[entityType];
       if (!eventName) continue;
 
-      const props = toYAMLValue((trigger as Record<string, unknown>).props, entityNames) as Record<string, unknown> | undefined;
+      const props = toYAMLValue((trigger as unknown as Record<string, unknown>).props, entityNames) as Record<string, unknown> | undefined;
       if (props && Object.keys(props).length > 0) {
         onSection[eventName] = convertValueKeys(props);
       } else {
@@ -234,18 +306,14 @@ function serializeSingleWorkflow(
     doc.on = onSection;
   }
 
-  // Jobs
-  if (jobs.length > 0) {
-    const jobsSection: Record<string, unknown> = {};
-    for (const [name, job] of jobs) {
-      const props = toYAMLValue((job as Record<string, unknown>).props, entityNames) as Record<string, unknown> | undefined;
-      if (props) {
-        const yamlName = toKebabCase(name);
-        jobsSection[yamlName] = convertKeys(props);
-      }
-    }
-    doc.jobs = jobsSection;
+  // Jobs: prefer Workflow.props.jobs (raw) when present; fall back to standalone Job exports
+  let jobsSection: Record<string, unknown> | undefined;
+  if (workflows.length > 0) {
+    const rawProps = (workflows[0][1] as unknown as Record<string, unknown>).props as Record<string, unknown>;
+    jobsSection = buildInlineJobsSection(rawProps, entityNames);
   }
+  if (!jobsSection) jobsSection = buildStandaloneJobsSection(jobs, entityNames);
+  if (jobsSection) doc.jobs = jobsSection;
 
   return emitYAMLDocument(doc);
 }
@@ -257,16 +325,13 @@ function serializeMultiWorkflow(
   _entities: Map<string, Declarable>,
   entityNames: Map<Declarable, string>,
 ): SerializerResult {
-  // For multi-workflow, each workflow gets its own file.
-  // Jobs and triggers need to be associated with workflows somehow.
-  // For now, first workflow gets all unscoped entities.
   const files: Record<string, string> = {};
   let primary = "";
 
   for (let i = 0; i < workflows.length; i++) {
     const [name, wf] = workflows[i];
     const doc: Record<string, unknown> = {};
-    const props = toYAMLValue((wf as Record<string, unknown>).props, entityNames) as Record<string, unknown> | undefined;
+    const props = toYAMLValue((wf as unknown as Record<string, unknown>).props, entityNames) as Record<string, unknown> | undefined;
 
     if (props) {
       if (props.name) doc.name = props.name;
@@ -281,10 +346,10 @@ function serializeMultiWorkflow(
     if (i === 0 && triggers.length > 0) {
       const onSection = (doc.on as Record<string, unknown>) ?? {};
       for (const [, trigger] of triggers) {
-        const entityType = (trigger as Record<string, unknown>).entityType as string;
+        const entityType = (trigger as unknown as Record<string, unknown>).entityType as string;
         const eventName = TRIGGER_TYPE_TO_EVENT[entityType];
         if (!eventName) continue;
-        const tProps = toYAMLValue((trigger as Record<string, unknown>).props, entityNames) as Record<string, unknown> | undefined;
+        const tProps = toYAMLValue((trigger as unknown as Record<string, unknown>).props, entityNames) as Record<string, unknown> | undefined;
         if (tProps && Object.keys(tProps).length > 0) {
           onSection[eventName] = convertValueKeys(tProps);
         } else {
@@ -294,17 +359,12 @@ function serializeMultiWorkflow(
       doc.on = onSection;
     }
 
-    // Attach all jobs to first workflow for now
-    if (i === 0 && jobs.length > 0) {
-      const jobsSection: Record<string, unknown> = {};
-      for (const [jName, job] of jobs) {
-        const jProps = toYAMLValue((job as Record<string, unknown>).props, entityNames) as Record<string, unknown> | undefined;
-        if (jProps) {
-          jobsSection[toKebabCase(jName)] = convertKeys(jProps);
-        }
-      }
-      doc.jobs = jobsSection;
-    }
+    // Jobs: use Workflow.props.jobs when defined, otherwise fall back to standalone exports
+    // (standalone exports only assigned to first workflow, for backwards compat with composites)
+    const rawProps = (wf as unknown as Record<string, unknown>).props as Record<string, unknown>;
+    const inlineJobs = buildInlineJobsSection(rawProps, entityNames);
+    const jobsSection = inlineJobs ?? (i === 0 ? buildStandaloneJobsSection(jobs, entityNames) : undefined);
+    if (jobsSection) doc.jobs = jobsSection;
 
     const content = emitYAMLDocument(doc);
     const fileName = `${toKebabCase(name)}.yml`;

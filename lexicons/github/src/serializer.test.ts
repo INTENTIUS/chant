@@ -197,16 +197,122 @@ describe("githubSerializer.serialize", () => {
   });
 });
 
-describe("multi-workflow output", () => {
-  test("produces SerializerResult with files", () => {
+describe("Workflow.props.jobs", () => {
+  test("single-workflow: inline Job entity is serialized into the jobs section", () => {
+    const entities = new Map<string, Declarable>();
+    entities.set("workflow", new MockWorkflow({
+      name: "CI",
+      on: { push: { branches: ["main"] } },
+      jobs: {
+        build: new MockJob({ "runs-on": "ubuntu-latest" }),
+      },
+    }));
+
+    const output = githubSerializer.serialize(entities) as string;
+    expect(output).toContain("jobs:");
+    expect(output).toContain("build:");
+    expect(output).toContain("runs-on: ubuntu-latest");
+  });
+
+  test("single-workflow: inline Job with steps serializes step content", () => {
+    const entities = new Map<string, Declarable>();
+    entities.set("workflow", new MockWorkflow({
+      name: "CI",
+      on: { push: null },
+      jobs: {
+        test: new MockJob({
+          "runs-on": "ubuntu-latest",
+          steps: [
+            new MockStep({ name: "Run tests", run: "npm test" }),
+          ],
+        }),
+      },
+    }));
+
+    const output = githubSerializer.serialize(entities) as string;
+    expect(output).toContain("test:");
+    expect(output).toContain("run: npm test");
+  });
+
+  test("single-workflow: standalone Job export still works when Workflow.props.jobs is absent", () => {
+    const entities = new Map<string, Declarable>();
+    entities.set("workflow", new MockWorkflow({
+      name: "CI",
+      on: { push: null },
+    }));
+    entities.set("build", new MockJob({ "runs-on": "ubuntu-latest" }));
+
+    const output = githubSerializer.serialize(entities) as string;
+    expect(output).toContain("jobs:");
+    expect(output).toContain("build:");
+    expect(output).toContain("runs-on: ubuntu-latest");
+  });
+
+  test("multi-workflow: each workflow gets its own inline jobs", () => {
     const entities = new Map<string, Declarable>();
     entities.set("ci", new MockWorkflow({
       name: "CI",
       on: { push: { branches: ["main"] } },
+      jobs: { build: new MockJob({ "runs-on": "ubuntu-latest", name: "Build" }) },
+    }));
+    entities.set("deploy", new MockWorkflow({
+      name: "Deploy",
+      on: { workflowDispatch: null },
+      jobs: { release: new MockJob({ "runs-on": "ubuntu-latest", name: "Release" }) },
+    }));
+
+    const result = githubSerializer.serialize(entities) as { primary: string; files: Record<string, string> };
+    expect(result.primary).toContain("name: CI");
+    expect(result.primary).toContain("build:");
+    expect(result.primary).not.toContain("release:");
+    expect(result.files["deploy.yml"]).toContain("name: Deploy");
+    expect(result.files["deploy.yml"]).toContain("release:");
+    expect(result.files["deploy.yml"]).not.toContain("build:");
+  });
+
+  test("multi-workflow: workflow with no props.jobs gets no jobs section", () => {
+    const entities = new Map<string, Declarable>();
+    entities.set("ci", new MockWorkflow({
+      name: "CI",
+      on: { push: null },
+      jobs: { build: new MockJob({ "runs-on": "ubuntu-latest" }) },
+    }));
+    entities.set("notify", new MockWorkflow({
+      name: "Notify",
+      on: { workflowDispatch: null },
+      // no jobs
+    }));
+
+    const result = githubSerializer.serialize(entities) as { primary: string; files: Record<string, string> };
+    expect(result.primary).toContain("jobs:");
+    expect(result.files["notify.yml"]).not.toContain("jobs:");
+  });
+
+  test("multi-workflow: standalone Job exports fall back to first workflow (backwards compat for composites)", () => {
+    const entities = new Map<string, Declarable>();
+    entities.set("ci", new MockWorkflow({ name: "CI", on: { push: null } }));
+    entities.set("deploy", new MockWorkflow({ name: "Deploy", on: { workflowDispatch: null } }));
+    entities.set("build", new MockJob({ "runs-on": "ubuntu-latest" }));
+
+    const result = githubSerializer.serialize(entities) as { primary: string; files: Record<string, string> };
+    // standalone job goes to first workflow only
+    expect(result.primary).toContain("build:");
+    expect(result.files["deploy.yml"]).not.toContain("jobs:");
+  });
+});
+
+describe("multi-workflow output", () => {
+  test("produces SerializerResult with files, each containing their own jobs", () => {
+    const entities = new Map<string, Declarable>();
+    entities.set("ci", new MockWorkflow({
+      name: "CI",
+      on: { push: { branches: ["main"] } },
+      jobs: { build: new MockJob({ "runs-on": "ubuntu-latest" }) },
     }));
     entities.set("deploy", new MockWorkflow({
       name: "Deploy",
       on: { push: { branches: ["main"] } },
+      jobs: { ship: new MockJob({ "runs-on": "ubuntu-latest" }) },
     }));
 
     const output = githubSerializer.serialize(entities);
@@ -215,6 +321,8 @@ describe("multi-workflow output", () => {
     expect(result.files).toBeDefined();
     expect(Object.keys(result.files).length).toBe(2);
     expect(result.primary).toContain("name: CI");
+    expect(result.primary).toContain("build:");
+    expect(result.files["deploy.yml"]).toContain("ship:");
   });
 });
 
