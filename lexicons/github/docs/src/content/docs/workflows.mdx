@@ -192,3 +192,20 @@ Build with:
 ```bash
 chant build src/ --output .github/workflows/ci.yml
 ```
+
+### Inline jobs (`Workflow.jobs`)
+
+Instead of exporting standalone `Job` entities, you can scope jobs directly on the `Workflow` using the `jobs` prop. This is required when a source directory exports multiple workflows:
+
+```typescript
+export const ci = new Workflow({
+  name: "CI",
+  on: { push: { branches: ["main"] } },
+  jobs: {
+    build: new Job({ "runs-on": "ubuntu-latest", ... }),
+    test: new Job({ "runs-on": "ubuntu-latest", ... }),
+  },
+});
+```
+
+See [Multiple Workflows](/chant/lexicons/github/multi-workflow/) for the full pattern.

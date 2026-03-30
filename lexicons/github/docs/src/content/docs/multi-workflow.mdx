@@ -1,0 +1,183 @@
+---
+title: "Multiple Workflows"
+description: "Define multiple GitHub Actions workflow files from a single Chant source directory using Workflow.jobs"
+---
+
+A single Chant source directory can produce multiple `.github/workflows/*.yml` files. Export multiple `Workflow` entities and scope jobs to each one using `Workflow.jobs`.
+
+## Inline jobs with `Workflow.jobs`
+
+Pass jobs directly in the `Workflow` constructor using the `jobs` prop:
+
+```typescript
+import { Job, Step, Workflow } from "@intentius/chant-lexicon-github";
+
+export const nightly = new Workflow({
+  name: "Nightly Build",
+  on: { schedule: [{ cron: "0 2 * * *" }] },
+  permissions: { "id-token": "write", contents: "read" },
+  jobs: {
+    build: new Job({
+      "runs-on": "ubuntu-latest",
+      "timeout-minutes": 30,
+      steps: [
+        new Step({ name: "Checkout", uses: "actions/checkout@v4" }),
+        new Step({ name: "Build", run: "npm run build" }),
+      ],
+    }),
+  },
+});
+
+export const weekly = new Workflow({
+  name: "Weekly Report",
+  on: { schedule: [{ cron: "0 9 * * 1" }] },
+  jobs: {
+    report: new Job({
+      "runs-on": "ubuntu-latest",
+      steps: [
+        new Step({ name: "Generate report", run: "./scripts/report.sh" }),
+      ],
+    }),
+  },
+});
+```
+
+## Output file naming
+
+The primary output file is named by the `-o` flag. Additional workflow files are named by converting the export variable name to kebab-case and appending `.yml`:
+
+| Export name | Output file |
+|-------------|-------------|
+| `-o pipeline.yml` (primary) | `pipeline.yml` |
+| `export const dbSnapshot` | `db-snapshot.yml` |
+| `export const weekly` | `weekly.yml` |
+| `export const ciLint` | `ci-lint.yml` |
+
+When building, pass the primary output path — all other workflows are written alongside it:
+
+```bash
+chant build src --lexicon github -o .github/workflows/pipeline.yml
+```
+
+This produces:
+```
+.github/workflows/
+  pipeline.yml       ← primary (first workflow alphabetically)
+  db-snapshot.yml    ← from export const dbSnapshot
+  weekly.yml         ← from export const weekly
+```
+
+## Single vs multi-workflow mode
+
+**Single workflow** — one `Workflow` export, standalone `Job` exports attach to it automatically:
+
+```typescript
+// Single workflow: standalone Job exports attach here
+export const workflow = new Workflow({ name: "CI", on: { push: null } });
+export const build = new Job({ "runs-on": "ubuntu-latest", ... });
+export const test = new Job({ "runs-on": "ubuntu-latest", ... });
+```
+
+**Multiple workflows** — each `Workflow` owns its jobs via `Workflow.jobs`:
+
+```typescript
+// Multi workflow: each Workflow owns its jobs
+export const ci = new Workflow({
+  name: "CI",
+  on: { push: { branches: ["main"] } },
+  jobs: {
+    build: new Job({ "runs-on": "ubuntu-latest", ... }),
+    test: new Job({ "runs-on": "ubuntu-latest", ... }),
+  },
+});
+
+export const deploy = new Workflow({
+  name: "Deploy",
+  on: { workflowDispatch: null },
+  jobs: {
+    release: new Job({ "runs-on": "ubuntu-latest", ... }),
+  },
+});
+```
+
+## Backwards compatibility
+
+Standalone `Job` exports without `Workflow.jobs` still work when there is only one `Workflow`. When multiple workflows are present and none define `Workflow.jobs`, standalone jobs fall back to the first workflow — the same behavior as before multi-workflow support was added. This keeps existing composite patterns (`DockerBuild`, `DeployEnvironment`) working unchanged.
+
+## Ops workflow example
+
+A common use case is ops workflows that need manual dispatch:
+
+```typescript
+import { Job, Step, Workflow } from "@intentius/chant-lexicon-github";
+
+export const dbBackup = new Workflow({
+  name: "DB Backup",
+  on: {
+    workflowDispatch: {
+      inputs: {
+        label: { description: "Backup label", required: false, default: "manual", type: "string" },
+      },
+    },
+    schedule: [{ cron: "0 3 * * 0" }],
+  },
+  permissions: { "id-token": "write", contents: "read" },
+  jobs: {
+    backup: new Job({
+      name: "Create backup",
+      "runs-on": "ubuntu-latest",
+      "timeout-minutes": 30,
+      environment: { name: "production" },
+      steps: [
+        new Step({
+          name: "Configure AWS credentials",
+          uses: "aws-actions/configure-aws-credentials@v4",
+          with: {
+            "role-to-assume": "${{ vars.AWS_DEPLOY_ROLE_ARN }}",
+            "aws-region": "${{ vars.AWS_REGION }}",
+          },
+        }),
+        new Step({ name: "Create backup", run: `./scripts/backup.sh` }),
+      ],
+    }),
+  },
+});
+
+export const dbRestore = new Workflow({
+  name: "DB Restore",
+  on: {
+    workflowDispatch: {
+      inputs: {
+        snapshot: { description: "Snapshot identifier", required: true, type: "string" },
+        confirm: { description: "Type CONFIRMED to proceed", required: true, type: "string" },
+      },
+    },
+  },
+  permissions: { "id-token": "write", contents: "read" },
+  jobs: {
+    restore: new Job({
+      name: "Restore from snapshot",
+      "runs-on": "ubuntu-latest",
+      "timeout-minutes": 60,
+      environment: { name: "production" },
+      steps: [
+        new Step({
+          name: "Verify confirmation",
+          run: `if [ "${{ github.event.inputs.confirm }}" != "CONFIRMED" ]; then exit 1; fi`,
+        }),
+        new Step({
+          name: "Configure AWS credentials",
+          uses: "aws-actions/configure-aws-credentials@v4",
+          with: {
+            "role-to-assume": "${{ vars.AWS_DEPLOY_ROLE_ARN }}",
+            "aws-region": "${{ vars.AWS_REGION }}",
+          },
+        }),
+        new Step({ name: "Restore", run: `./scripts/restore.sh "${{ github.event.inputs.snapshot }}"` }),
+      ],
+    }),
+  },
+});
+```
+
+Both workflows are declared in one file, produce separate `db-backup.yml` and `db-restore.yml` output files, and require no workaround directories.

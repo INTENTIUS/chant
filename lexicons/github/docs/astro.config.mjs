@@ -25,6 +25,10 @@ export default defineConfig({
                   "slug": "workflows"
             },
             {
+                  "label": "Multiple Workflows",
+                  "slug": "multi-workflow"
+            },
+            {
                   "label": "Actions & Composites",
                   "slug": "actions"
             },
