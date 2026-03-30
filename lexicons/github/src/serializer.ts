@@ -367,10 +367,12 @@ function serializeMultiWorkflow(
     if (jobsSection) doc.jobs = jobsSection;
 
     const content = emitYAMLDocument(doc);
-    const fileName = `${toKebabCase(name)}.yml`;
-    files[fileName] = content;
-
-    if (i === 0) primary = content;
+    if (i === 0) {
+      primary = content;
+      // primary is written to the -o path by the CLI; don't also add it to files[]
+    } else {
+      files[`${toKebabCase(name)}.yml`] = content;
+    }
   }
 
   return { primary, files };

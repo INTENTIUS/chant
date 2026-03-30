@@ -319,7 +319,8 @@ describe("multi-workflow output", () => {
     expect(typeof output).toBe("object");
     const result = output as { primary: string; files: Record<string, string> };
     expect(result.files).toBeDefined();
-    expect(Object.keys(result.files).length).toBe(2);
+    expect(Object.keys(result.files).length).toBe(1);
+    expect(result.files["ci.yml"]).toBeUndefined(); // primary is not a secondary file
     expect(result.primary).toContain("name: CI");
     expect(result.primary).toContain("build:");
     expect(result.files["deploy.yml"]).toContain("ship:");
