@@ -1,4 +1,4 @@
-import { describe, test, expect } from "bun:test";
+import { describe, test, expect } from "vitest";
 import { helmPlugin } from "./plugin";
 import { isLexiconPlugin } from "@intentius/chant/lexicon";
 

@@ -1,6 +1,6 @@
-// Bun Snapshot v1, https://bun.sh/docs/test/snapshots
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
 
-exports[`init-lexicon fixture snapshot fixture generate.ts matches snapshot 1`] = `
+exports[`init-lexicon fixture snapshot > fixture generate.ts matches snapshot 1`] = `
 "import { generatePipeline, writeGeneratedArtifacts } from "@intentius/chant/codegen/generate";
 import type { GenerateResult } from "@intentius/chant/codegen/generate";
 import { dirname } from "path";
@@ -78,7 +78,7 @@ export function writeGeneratedFiles(result: GenerateResult, pkgDir?: string): vo
 "
 `;
 
-exports[`init-lexicon fixture snapshot fixture package.ts matches snapshot 1`] = `
+exports[`init-lexicon fixture snapshot > fixture package.ts matches snapshot 1`] = `
 "import { packagePipeline } from "@intentius/chant/codegen/package";
 import type { PackagePipelineConfig } from "@intentius/chant/codegen/package";
 import { generate } from "./generate";
@@ -107,13 +107,16 @@ export async function packageLexicon(options?: { verbose?: boolean; force?: bool
 "
 `;
 
-exports[`init-lexicon fixture snapshot fixture plugin.ts matches snapshot 1`] = `
+exports[`init-lexicon fixture snapshot > fixture plugin.ts matches snapshot 1`] = `
 "import type { LexiconPlugin, SkillDefinition, IntrinsicDef } from "@intentius/chant/lexicon";
 import type { LintRule } from "@intentius/chant/lint/rule";
 import type { PostSynthCheck } from "@intentius/chant/lint/post-synth";
 import type { CompletionContext, CompletionItem, HoverContext, HoverInfo } from "@intentius/chant/lsp/types";
 import type { McpToolContribution, McpResourceContribution } from "@intentius/chant/mcp/types";
 import { fixtureSerializer } from "./serializer";
+import { rules } from "./lint/rules";
+import { completions } from "./lsp/completions";
+import { hover } from "./lsp/hover";
 
 /**
  * fixture lexicon plugin.
@@ -159,7 +162,6 @@ export const fixturePlugin: LexiconPlugin = {
   // ── Optional extensions ────────────────────────────────────
 
   lintRules() {
-    const { rules } = require("./lint/rules");
     return rules;
   },
 
@@ -184,12 +186,10 @@ export const fixturePlugin: LexiconPlugin = {
   },
 
   completionProvider(ctx: CompletionContext) {
-    const { completions } = require("./lsp/completions");
     return completions(ctx);
   },
 
   hoverProvider(ctx: HoverContext) {
-    const { hover } = require("./lsp/hover");
     return hover(ctx);
   },
 

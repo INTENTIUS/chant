@@ -1,4 +1,4 @@
-import { describe, test, expect } from "bun:test";
+import { describe, test, expect } from "vitest";
 import { findInfraFiles } from "./files";
 import { withTestDir } from "@intentius/chant-test-utils";
 import { mkdir, writeFile } from "node:fs/promises";

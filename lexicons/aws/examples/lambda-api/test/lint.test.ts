@@ -1,4 +1,4 @@
-import { describe, it, expect } from "bun:test";
+import { describe, it, expect } from "vitest";
 import * as ts from "typescript";
 import { apiTimeoutRule } from "../src/lint/api-timeout";
 import type { LintContext } from "@intentius/chant/lint/rule";

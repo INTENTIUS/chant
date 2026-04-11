@@ -1,4 +1,4 @@
-import { describe, test, expect } from "bun:test";
+import { describe, test, expect } from "vitest";
 import { getCachePath, KCC_VERSION } from "./fetch";
 
 describe("fetch", () => {
@@ -6,7 +6,7 @@ describe("fetch", () => {
     const path = getCachePath();
     expect(path).toContain(KCC_VERSION);
     expect(path).toContain(".chant");
-    expect(path).toEndWith(".tar.gz");
+    expect(path.endsWith(".tar.gz")).toBe(true);
   });
 
   test("custom version in cache path", () => {

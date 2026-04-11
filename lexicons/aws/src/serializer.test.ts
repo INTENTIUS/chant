@@ -1,4 +1,4 @@
-import { describe, test, expect } from "bun:test";
+import { describe, test, expect } from "vitest";
 import { awsSerializer } from "./serializer";
 import { AttrRef } from "@intentius/chant/attrref";
 import { DECLARABLE_MARKER, type Declarable } from "@intentius/chant/declarable";

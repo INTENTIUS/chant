@@ -1,4 +1,4 @@
-import { expect } from "bun:test";
+import { expect } from "vitest";
 import { describeAllExamples } from "@intentius/chant-test-utils/example-harness";
 import { helmSerializer } from "@intentius/chant-lexicon-helm";
 
@@ -7,7 +7,7 @@ describeAllExamples(
     lexicon: "helm",
     serializer: helmSerializer,
     outputKey: "helm",
-    examplesDir: import.meta.dir,
+    examplesDir: import.meta.dirname,
   },
   {
     "stateful-service": {

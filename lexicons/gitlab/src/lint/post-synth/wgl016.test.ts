@@ -1,4 +1,4 @@
-import { describe, test, expect } from "bun:test";
+import { describe, test, expect } from "vitest";
 import { wgl016, checkSecretsInVariables } from "./wgl016";
 
 describe("WGL016: Secrets in Variables", () => {

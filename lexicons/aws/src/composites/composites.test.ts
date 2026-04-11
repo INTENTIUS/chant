@@ -1,4 +1,4 @@
-import { describe, test, expect, beforeEach } from "bun:test";
+import { describe, test, expect, beforeEach } from "vitest";
 import { expandComposite, CompositeRegistry, isCompositeInstance } from "@intentius/chant";
 import { AttrRef } from "@intentius/chant/attrref";
 import { LambdaFunction, LambdaNode, LambdaPython, NodeLambda, PythonLambda } from "./lambda-function";

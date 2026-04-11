@@ -1,4 +1,4 @@
-import { describe, test, expect } from "bun:test";
+import { describe, test, expect } from "vitest";
 import { INTRINSIC_MARKER } from "@intentius/chant/intrinsic";
 import { HelmWebApp } from "./helm-web-app";
 import { HelmStatefulService } from "./helm-stateful-service";

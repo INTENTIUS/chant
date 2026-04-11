@@ -1,4 +1,4 @@
-import { describe, test, expect } from "bun:test";
+import { describe, test, expect } from "vitest";
 import * as ts from "typescript";
 import { evl001NonLiteralExpressionRule } from "./evl001-non-literal-expression";
 import type { LintContext } from "../rule";

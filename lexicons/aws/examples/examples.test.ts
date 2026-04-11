@@ -1,8 +1,9 @@
-import { describe, test, expect } from "bun:test";
+import { describe, test, expect } from "vitest";
 import { describeAllExamples } from "@intentius/chant-test-utils/example-harness";
 import { lintCommand } from "@intentius/chant/cli/commands/lint";
 import { awsSerializer } from "@intentius/chant-lexicon-aws";
 import { resolve } from "path";
+import { readdirSync } from "fs";
 
 /** Helper: parse CFN JSON and assert resource existence + count */
 function cfnChecks(
@@ -47,7 +48,7 @@ const config = {
   lexicon: "aws",
   serializer: awsSerializer,
   outputKey: "aws",
-  examplesDir: import.meta.dir,
+  examplesDir: import.meta.dirname,
 };
 
 describeAllExamples(config, {
@@ -217,7 +218,7 @@ describeAllExamples(config, {
 
 // core-concepts: relaxed lint + file import validation
 describe("aws core-concepts example", () => {
-  const srcDir = resolve(import.meta.dir, "core-concepts", "src");
+  const srcDir = resolve(import.meta.dirname, "core-concepts", "src");
 
   test("lint runs without crashing", async () => {
     const result = await lintCommand({
@@ -229,12 +230,7 @@ describe("aws core-concepts example", () => {
   });
 
   test("all source files can be imported", async () => {
-    const glob = new Bun.Glob("*.ts");
-    const files: string[] = [];
-    for await (const file of glob.scan({ cwd: srcDir })) {
-      if (file === "_.ts") continue;
-      files.push(file);
-    }
+    const files = readdirSync(srcDir).filter((f) => f.endsWith(".ts") && f !== "_.ts");
     expect(files.length).toBeGreaterThan(0);
     for (const file of files) {
       expect(() => require(resolve(srcDir, file))).not.toThrow();
@@ -244,7 +240,7 @@ describe("aws core-concepts example", () => {
 
 // docs-snippets: relaxed lint + file import validation
 describe("aws docs-snippets example", () => {
-  const srcDir = resolve(import.meta.dir, "docs-snippets", "src");
+  const srcDir = resolve(import.meta.dirname, "docs-snippets", "src");
 
   test("lint runs without crashing", async () => {
     const result = await lintCommand({
@@ -256,12 +252,7 @@ describe("aws docs-snippets example", () => {
   });
 
   test("all snippet files can be imported", async () => {
-    const glob = new Bun.Glob("*.ts");
-    const files: string[] = [];
-    for await (const file of glob.scan({ cwd: srcDir })) {
-      if (file === "_.ts") continue;
-      files.push(file);
-    }
+    const files = readdirSync(srcDir).filter((f) => f.endsWith(".ts") && f !== "_.ts");
     expect(files.length).toBeGreaterThan(0);
     for (const file of files) {
       expect(() => require(resolve(srcDir, file))).not.toThrow();

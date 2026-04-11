@@ -1,4 +1,4 @@
-import { describe, it, expect } from "bun:test";
+import { describe, it, expect } from "vitest";
 import { ResourceId, Reference, Concat, ResourceGroup, Subscription, UniqueString, Format, If, ListKeys } from "./intrinsics";
 
 describe("ResourceId", () => {

@@ -1,4 +1,4 @@
-import { describe, test, expect } from "bun:test";
+import { describe, test, expect } from "vitest";
 import { StorageAccountSecure } from "./storage-account";
 import { VnetDefault } from "./vnet-default";
 import { VmLinux } from "./vm-linux";

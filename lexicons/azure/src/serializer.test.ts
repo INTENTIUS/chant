@@ -1,4 +1,4 @@
-import { describe, it, expect } from "bun:test";
+import { describe, it, expect } from "vitest";
 import { azureSerializer } from "./serializer";
 import { DECLARABLE_MARKER } from "@intentius/chant/declarable";
 

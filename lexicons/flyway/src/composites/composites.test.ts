@@ -1,4 +1,4 @@
-import { describe, test, expect } from "bun:test";
+import { describe, test, expect } from "vitest";
 import { isCompositeInstance } from "@intentius/chant";
 import { StandardProject } from "./standard-project";
 import { MultiEnvironmentProject } from "./multi-environment-project";

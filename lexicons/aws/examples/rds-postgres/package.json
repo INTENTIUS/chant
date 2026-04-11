@@ -13,8 +13,8 @@
     "teardown": "aws cloudformation delete-stack --stack-name rds-postgres-example"
   },
   "dependencies": {
-    "@intentius/chant-lexicon-aws": "workspace:*",
-    "@intentius/chant": "workspace:*"
+    "@intentius/chant-lexicon-aws": "*",
+    "@intentius/chant": "*"
   },
   "devDependencies": {
     "typescript": "*"

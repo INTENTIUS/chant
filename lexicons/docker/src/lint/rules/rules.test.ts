@@ -1,4 +1,4 @@
-import { describe, test, expect } from "bun:test";
+import { describe, test, expect } from "vitest";
 import { noLatestTagRule } from "./no-latest-tag";
 import type { LintContext } from "@intentius/chant/lint/rule";
 import * as ts from "typescript";

@@ -1,4 +1,4 @@
-import { describe, test, expect } from "bun:test";
+import { describe, test, expect } from "vitest";
 import { DOCKER_VARS, COMPOSE_VARS } from "./variables";
 
 describe("DOCKER_VARS", () => {

@@ -12,9 +12,9 @@
     "teardown": "helm uninstall stateful-service"
   },
   "dependencies": {
-    "@intentius/chant": "workspace:*",
-    "@intentius/chant-lexicon-helm": "workspace:*",
-    "@intentius/chant-lexicon-k8s": "workspace:*"
+    "@intentius/chant": "*",
+    "@intentius/chant-lexicon-helm": "*",
+    "@intentius/chant-lexicon-k8s": "*"
   },
   "devDependencies": {
     "typescript": "*"

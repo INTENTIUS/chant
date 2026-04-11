@@ -1,4 +1,4 @@
-import { describe, test, expect } from "bun:test";
+import { describe, test, expect } from "vitest";
 import * as ts from "typescript";
 import { noCyclicDeclarableRefRule } from "./no-cyclic-declarable-ref";
 import type { LintContext } from "../rule";

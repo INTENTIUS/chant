@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test";
+import { describe, expect, test } from "vitest";
 import { buildRegistry, serializeRegistry, type RegistryResource, type RegistryConfig } from "./generate-registry";
 import { NamingStrategy, type NamingInput, type NamingConfig } from "./naming";
 

@@ -1,4 +1,4 @@
-import { describe, test, expect, beforeEach, afterEach } from "bun:test";
+import { describe, test, expect, beforeEach, afterEach } from "vitest";
 import { buildCommand, type BuildOptions } from "./build";
 import type { Serializer } from "../../serializer";
 import { mkdir, rm, writeFile } from "node:fs/promises";

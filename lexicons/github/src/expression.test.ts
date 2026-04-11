@@ -1,4 +1,4 @@
-import { describe, test, expect } from "bun:test";
+import { describe, test, expect } from "vitest";
 import {
   Expression,
   github, runner, secrets, matrix, steps, needs, inputs, vars, env,

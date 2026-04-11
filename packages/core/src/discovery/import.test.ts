@@ -1,4 +1,4 @@
-import { describe, test, expect } from "bun:test";
+import { describe, test, expect } from "vitest";
 import { importModule } from "./import";
 import { DiscoveryError } from "../errors";
 import { withTestDir, expectToThrow } from "@intentius/chant-test-utils";

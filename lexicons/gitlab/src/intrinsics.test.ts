@@ -1,4 +1,4 @@
-import { describe, test, expect } from "bun:test";
+import { describe, test, expect } from "vitest";
 import { reference, ReferenceIntrinsic } from "./intrinsics";
 import { INTRINSIC_MARKER } from "@intentius/chant/intrinsic";
 

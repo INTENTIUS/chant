@@ -1,4 +1,4 @@
-import { describe, test, expect } from "bun:test";
+import { describe, test, expect } from "vitest";
 import { walkValue, type SerializerVisitor } from "./serializer-walker";
 import { DECLARABLE_MARKER, type Declarable } from "./declarable";
 import { INTRINSIC_MARKER } from "./intrinsic";

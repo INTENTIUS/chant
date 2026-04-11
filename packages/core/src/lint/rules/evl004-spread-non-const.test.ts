@@ -1,4 +1,4 @@
-import { describe, test, expect } from "bun:test";
+import { describe, test, expect } from "vitest";
 import * as ts from "typescript";
 import { evl004SpreadNonConstRule } from "./evl004-spread-non-const";
 import type { LintContext } from "../rule";

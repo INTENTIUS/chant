@@ -1,4 +1,4 @@
-import { describe, test, expect, beforeEach } from "bun:test";
+import { describe, test, expect, beforeEach } from "vitest";
 import {
   Composite,
   isCompositeInstance,
@@ -13,6 +13,7 @@ import {
 } from "./composite";
 import { DECLARABLE_MARKER, type Declarable } from "./declarable";
 import { AttrRef } from "./attrref";
+import { createResource } from "./runtime";
 
 function mockDeclarable(type = "TestEntity", lexicon = "test"): Declarable {
   return {
@@ -234,7 +235,6 @@ describe("resource() helper", () => {
 
   test("forwards attributes as second constructor argument", () => {
     // MockResource doesn't store attributes, so use createResource which does
-    const { createResource } = require("./runtime");
     const TestRes = createResource("Test::Resource", "test", { arn: "Arn" });
     const attrs = { DependsOn: ["Other"], Condition: "IsProd" };
     const instance = resource(TestRes as any, { name: "test" }, attrs);
@@ -242,7 +242,6 @@ describe("resource() helper", () => {
   });
 
   test("without attributes, resource() creates instance with empty attributes", () => {
-    const { createResource } = require("./runtime");
     const TestRes = createResource("Test::Resource", "test", { arn: "Arn" });
     const instance = resource(TestRes as any, { name: "test" });
     expect((instance as any).attributes).toEqual({});

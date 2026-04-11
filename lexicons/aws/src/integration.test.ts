@@ -1,4 +1,4 @@
-import { describe, test, expect } from "bun:test";
+import { describe, test, expect } from "vitest";
 import { awsSerializer } from "./serializer";
 import { Sub, If, Join, AWS } from "./index";
 import { Bucket, Function, Role } from "./generated/index";

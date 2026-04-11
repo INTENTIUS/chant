@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test";
+import { describe, expect, test } from "vitest";
 import { createPostSynthContext } from "@intentius/chant-test-utils";
 import { waw010 } from "./waw010";
 import { waw011 } from "./waw011";

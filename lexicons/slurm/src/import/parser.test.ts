@@ -2,13 +2,13 @@
  * SlurmConfParser tests.
  */
 
-import { describe, test, expect } from "bun:test";
+import { describe, test, expect } from "vitest";
 import { readFileSync } from "fs";
 import { join } from "path";
 import { SlurmConfParser } from "./parser";
 
 const testdata = (file: string) =>
-  readFileSync(join(import.meta.dir, "testdata", file), "utf8");
+  readFileSync(join(import.meta.dirname, "testdata", file), "utf8");
 
 describe("SlurmConfParser", () => {
   test("returns empty entities for empty input", () => {

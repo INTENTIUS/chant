@@ -4,7 +4,19 @@
 import { writeFileSync, mkdirSync, rmSync } from "fs";
 import { join } from "path";
 import { tmpdir } from "os";
+import { createRequire } from "module";
 import { getRuntime } from "../runtime-adapter";
+
+// Resolve tsc binary path — works regardless of cwd when spawning.
+function resolveTsc(): string {
+  try {
+    const req = createRequire(import.meta.url);
+    const tscPkg = req.resolve("typescript/bin/tsc");
+    return tscPkg;
+  } catch {
+    return "tsc";
+  }
+}
 
 /**
  * Minimal TypeScript lib stub — declares just enough built-in types for
@@ -94,12 +106,13 @@ export async function typecheckDTS(content: string): Promise<TypeCheckResult> {
     };
     writeFileSync(join(dir, "tsconfig.json"), JSON.stringify(tsconfig, null, 2));
 
-    // Run tsc
+    // Run tsc using absolute path to avoid npx/cwd resolution issues
     const rt = getRuntime();
-    const { stdout, stderr, exitCode } = await rt.spawn(
-      [rt.commands.exec, "tsc", "--noEmit", "--project", "tsconfig.json"],
-      { cwd: dir },
-    );
+    const tscBin = resolveTsc();
+    const cmd = tscBin === "tsc"
+      ? [rt.commands.exec, "tsc", "--noEmit", "--project", "tsconfig.json"]
+      : [rt.commands.runner, tscBin, "--noEmit", "--project", "tsconfig.json"];
+    const { stdout, stderr, exitCode } = await rt.spawn(cmd, { cwd: dir });
 
     // Parse diagnostics from stdout (tsc writes errors to stdout)
     const output = stdout + stderr;

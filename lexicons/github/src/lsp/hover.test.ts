@@ -1,4 +1,4 @@
-import { describe, test, expect } from "bun:test";
+import { describe, test, expect } from "vitest";
 
 describe("github hover", () => {
   test("hover module exports githubHover", async () => {

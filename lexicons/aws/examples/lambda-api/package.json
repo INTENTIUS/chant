@@ -12,8 +12,8 @@
     "teardown": "aws cloudformation delete-stack --stack-name lambda-api"
   },
   "dependencies": {
-    "@intentius/chant-lexicon-aws": "workspace:*",
-    "@intentius/chant": "workspace:*"
+    "@intentius/chant-lexicon-aws": "*",
+    "@intentius/chant": "*"
   },
   "devDependencies": {
     "typescript": "*"

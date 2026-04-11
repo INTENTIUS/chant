@@ -4,7 +4,7 @@
  * Parser and generator unit tests are in parser.test.ts and generator.test.ts.
  */
 
-import { describe, it, expect } from "bun:test";
+import { describe, it, expect } from "vitest";
 import { ArmParser } from "./parser";
 import { ArmGenerator } from "./generator";
 

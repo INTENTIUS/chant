@@ -1,4 +1,4 @@
-import { describe, test, expect } from "bun:test";
+import { describe, test, expect } from "vitest";
 import { validateManifest } from "./lexicon-schema";
 import { checkVersionCompatibility } from "./lexicon-manifest";
 

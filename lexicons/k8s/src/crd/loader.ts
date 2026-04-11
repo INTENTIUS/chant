@@ -5,6 +5,7 @@
  * live cluster introspection via kubectl.
  */
 
+import { existsSync, readFileSync } from "fs";
 import type { CRDSource, CRDSpec } from "./types";
 import type { K8sParseResult } from "../spec/parse";
 import { parseCRD } from "./parser";
@@ -53,13 +54,11 @@ async function loadFromFile(source: CRDSource): Promise<string> {
     throw new Error("CRD source type 'file' requires a 'path' property");
   }
 
-  const file = Bun.file(source.path);
-  const exists = await file.exists();
-  if (!exists) {
+  if (!existsSync(source.path)) {
     throw new Error(`CRD file not found: ${source.path}`);
   }
 
-  return file.text();
+  return readFileSync(source.path, "utf8");
 }
 
 /**
@@ -85,28 +84,21 @@ async function loadFromURL(source: CRDSource): Promise<string> {
  * requires kubectl access and proper authentication.
  */
 async function loadFromCluster(source: CRDSource): Promise<string> {
-  const contextArg = source.context ? `--context=${source.context}` : "";
-  const nsArg = source.namespace ? `--namespace=${source.namespace}` : "";
+  const { execFile } = await import("child_process");
+  const { promisify } = await import("util");
+  const execFileAsync = promisify(execFile);
 
-  const args = ["kubectl", "get", "crds", "-o", "yaml"];
-  if (contextArg) args.push(contextArg);
-  if (nsArg) args.push(nsArg);
+  const args = ["get", "crds", "-o", "yaml"];
+  if (source.context) args.push(`--context=${source.context}`);
+  if (source.namespace) args.push(`--namespace=${source.namespace}`);
 
-  const proc = Bun.spawn(args, {
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-
-  const stdout = await new Response(proc.stdout).text();
-  const stderr = await new Response(proc.stderr).text();
-  const exitCode = await proc.exited;
-
-  if (exitCode !== 0) {
+  const { stdout, stderr } = await execFileAsync("kubectl", args).catch((err: NodeJS.ErrnoException & { stdout?: string; stderr?: string }) => {
     throw new Error(
-      `kubectl failed (exit ${exitCode}): ${stderr.trim() || "unknown error"}. ` +
+      `kubectl failed: ${err.stderr?.trim() || err.message}. ` +
       "Ensure kubectl is installed and configured with access to the target cluster.",
     );
-  }
+  });
 
+  void stderr;
   return stdout;
 }

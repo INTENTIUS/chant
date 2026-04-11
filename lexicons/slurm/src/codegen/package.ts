@@ -2,8 +2,8 @@
  * Slurm lexicon packaging — delegates to core packagePipeline.
  */
 
-import { createRequire } from "module";
 import { readFileSync } from "fs";
+import { slurmPlugin } from "../plugin";
 import { join, dirname } from "path";
 import { fileURLToPath } from "url";
 import {
@@ -16,7 +16,6 @@ import { generate } from "./generate";
 
 export type { PackageOptions, PackageResult };
 
-const require = createRequire(import.meta.url);
 // package.ts is at src/codegen/package.ts — 2 dirname calls reach src/
 // then join(pkgDir, "..") is the package root where package.json lives
 const pkgDir = dirname(dirname(fileURLToPath(import.meta.url)));
@@ -32,8 +31,6 @@ export async function packageLexicon(opts: PackageOptions = {}): Promise<Package
       generate: (genOpts) => generate({ verbose: genOpts.verbose, force: genOpts.force }),
 
       buildManifest: (_genResult) => {
-        const { slurmPlugin } = require("../plugin");
-
         return {
           name: "slurm",
           version: pkgJson.version ?? "0.0.1",
@@ -46,9 +43,7 @@ export async function packageLexicon(opts: PackageOptions = {}): Promise<Package
 
       srcDir: pkgDir,
 
-      collectSkills: () => {
-        const { slurmPlugin } = require("../plugin");
-        const skillDefs = slurmPlugin.skills?.() ?? [];
+      collectSkills: () => {        const skillDefs = slurmPlugin.skills?.() ?? [];
         return collectSkills(skillDefs);
       },
 

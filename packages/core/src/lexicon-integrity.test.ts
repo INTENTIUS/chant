@@ -1,4 +1,4 @@
-import { describe, test, expect } from "bun:test";
+import { describe, test, expect } from "vitest";
 import { hashArtifact, computeIntegrity, verifyIntegrity, type ArtifactIntegrity } from "./lexicon-integrity";
 import type { BundleSpec } from "./lexicon";
 
@@ -35,7 +35,7 @@ function makeSpec(overrides?: Partial<BundleSpec>): BundleSpec {
 describe("computeIntegrity", () => {
   test("returns xxhash64 algorithm", () => {
     const integrity = computeIntegrity(makeSpec());
-    expect(integrity.algorithm).toBe("xxhash64");
+    expect(integrity.algorithm).toBe("sha256");
   });
 
   test("hashes all artifacts", () => {

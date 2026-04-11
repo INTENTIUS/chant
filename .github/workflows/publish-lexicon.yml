@@ -12,8 +12,12 @@ jobs:
       id-token: write
     steps:
       - uses: actions/checkout@v4
-      - uses: oven-sh/setup-bun@v2
-      - run: bun install
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          registry-url: 'https://registry.npmjs.org'
+      - run: npm install
 
       - name: Extract lexicon name from tag
         id: meta
@@ -32,13 +36,13 @@ jobs:
           restore-keys: lexicon-schemas-
 
       - name: Prepack lexicon
-        run: bun run --cwd lexicons/${{ steps.meta.outputs.name }} prepack
+        run: npm run --prefix lexicons/${{ steps.meta.outputs.name }} prepack
 
       - name: Run tests
-        run: bun test lexicons/${{ steps.meta.outputs.name }}
+        run: npx vitest run lexicons/${{ steps.meta.outputs.name }}
 
       - name: Publish
         working-directory: lexicons/${{ steps.meta.outputs.name }}
         run: |
           echo "//registry.npmjs.org/:_authToken=${{ secrets.NPM_TOKEN }}" > ../../.npmrc
-          bun publish --access public --tolerate-republish
+          npm publish --access public

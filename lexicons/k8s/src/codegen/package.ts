@@ -3,9 +3,8 @@
  * with K8s-specific manifest building and skill collection.
  */
 
-import { createRequire } from "module";
 import { readFileSync } from "fs";
-const require = createRequire(import.meta.url);
+import { k8sPlugin } from "../plugin";
 import { join, dirname } from "path";
 import { fileURLToPath } from "url";
 import {
@@ -43,9 +42,7 @@ export async function packageLexicon(opts: PackageOptions = {}): Promise<Package
 
       srcDir: pkgDir,
 
-      collectSkills: () => {
-        const { k8sPlugin } = require("../plugin");
-        const skillDefs = k8sPlugin.skills?.() ?? [];
+      collectSkills: () => {        const skillDefs = k8sPlugin.skills?.() ?? [];
         return collectSkills(skillDefs);
       },
 

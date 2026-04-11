@@ -11,6 +11,16 @@ import { createRequire } from "module";
 import type { LintRule } from "./rule";
 import type { PostSynthCheck } from "./post-synth";
 
+// Register tsx so createRequire can load TypeScript files in Node.js ESM context.
+// This is a no-op if tsx is not available or already registered.
+try {
+  const _req = createRequire(import.meta.url);
+  const { register } = _req("tsx/cjs/api") as { register: () => void };
+  register();
+} catch {
+  // tsx not available; only pre-compiled .js files can be require()'d
+}
+
 /**
  * Discover lint rules from a directory.
  *

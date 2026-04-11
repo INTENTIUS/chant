@@ -9,7 +9,7 @@ import { join } from "path";
  * Load the minimal CI schema fixture for offline testing.
  */
 export function loadSchemaFixture(): Buffer {
-  const fixturePath = join(import.meta.dir, "ci-schema-fixture.json");
+  const fixturePath = join(import.meta.dirname, "ci-schema-fixture.json");
   return Buffer.from(readFileSync(fixturePath));
 }
 

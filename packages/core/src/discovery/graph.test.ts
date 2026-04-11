@@ -1,4 +1,4 @@
-import { describe, test, expect } from "bun:test";
+import { describe, test, expect } from "vitest";
 import { buildDependencyGraph } from "./graph";
 import { DECLARABLE_MARKER, type Declarable } from "../declarable";
 import { AttrRef } from "../attrref";

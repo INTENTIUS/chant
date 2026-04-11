@@ -9,8 +9,8 @@
     "dev":   "mkdir -p dist && chant build src --lexicon docker --watch -o dist/docker-compose.yml"
   },
   "dependencies": {
-    "@intentius/chant": "workspace:*",
-    "@intentius/chant-lexicon-docker": "workspace:*",
+    "@intentius/chant": "*",
+    "@intentius/chant-lexicon-docker": "*",
     "@aws-sdk/client-dynamodb": "^3",
     "@aws-sdk/client-dynamodb-streams": "^3",
     "@aws-sdk/client-s3": "^3"

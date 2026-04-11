@@ -1,4 +1,4 @@
-import { describe, test, expectTypeOf } from "bun:test";
+import { describe, test, expectTypeOf } from "vitest";
 import type { Value, AllValues, PartialValues, RequiredProps } from "./types";
 import type { Intrinsic } from "./intrinsic";
 

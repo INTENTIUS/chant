@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test";
+import { describe, expect, test } from "vitest";
 import { PseudoParameter, createPseudoParameters } from "./pseudo-parameter";
 import { INTRINSIC_MARKER } from "./intrinsic";
 

@@ -1,4 +1,4 @@
-import { describe, test, expect, beforeAll, afterAll } from "bun:test";
+import { describe, test, expect, beforeAll, afterAll } from "vitest";
 import { mkdtempSync, writeFileSync, mkdirSync, rmSync } from "fs";
 import { join } from "path";
 import { tmpdir } from "os";
@@ -29,8 +29,8 @@ describe("expandFileMarkers", () => {
     expect(result).toContain('```typescript title="example.ts"');
     expect(result).toContain('import { Bucket } from "@intentius/chant-lexicon-aws";');
     expect(result).toContain("```");
-    expect(result).toStartWith("Before\n\n");
-    expect(result).toEndWith("\n\nAfter");
+    expect(result.startsWith("Before\n\n")).toBe(true);
+    expect(result.endsWith("\n\nAfter")).toBe(true);
   });
 
   test("expands line range", () => {

@@ -1,10 +1,10 @@
-import { describe, test, expect } from "bun:test";
+import { describe, test, expect } from "vitest";
 import { readFileSync } from "fs";
 import { join } from "path";
 import { DockerParser, DockerfileParser } from "./parser";
 
 const testdata = (file: string) =>
-  readFileSync(join(import.meta.dir, "testdata", file), "utf8");
+  readFileSync(join(import.meta.dirname, "testdata", file), "utf8");
 
 describe("DockerParser — services", () => {
   test("image extracted correctly", () => {

@@ -2,7 +2,7 @@
  * Slurm serializer tests — 12 required test cases from the authoring guide.
  */
 
-import { describe, expect, it } from "bun:test";
+import { describe, expect, it } from "vitest";
 import { slurmSerializer } from "./serializer";
 import { DECLARABLE_MARKER } from "@intentius/chant/declarable";
 

@@ -15,7 +15,7 @@ export class CFGenerator implements TypeScriptGenerator {
 
   constructor() {
     // Build reverse lookup from dist/meta.json: resourceType → className
-    const metaPath = join(import.meta.dir, "../../dist/meta.json");
+    const metaPath = join(import.meta.dirname, "../../dist/meta.json");
     const meta: Record<string, { resourceType: string; kind: string }> =
       require(metaPath);
     this.typeToClass = new Map();

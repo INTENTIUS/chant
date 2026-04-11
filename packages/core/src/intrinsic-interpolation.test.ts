@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test";
+import { describe, expect, test } from "vitest";
 import { buildInterpolatedString, defaultInterpolationSerializer } from "./intrinsic-interpolation";
 import { AttrRef } from "./attrref";
 import { INTRINSIC_MARKER } from "./intrinsic";

@@ -1,4 +1,4 @@
-import { describe, test, expect } from "bun:test";
+import { describe, test, expect } from "vitest";
 import { DECLARABLE_MARKER } from "@intentius/chant/declarable";
 import { defaultTags, isDefaultTags, DEFAULT_TAGS_MARKER } from "./default-tags";
 

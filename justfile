@@ -4,27 +4,27 @@ default:
 
 # Install all dependencies
 install:
-    bun install
-    bun install --cwd docs
+    npm install
+    npm install --prefix docs
 
 # Type check the project
 build:
-    bun run tsc --noEmit
+    npx tsc --noEmit -p packages/core/tsconfig.json
 
 # Run tests
 test:
-    bun test
+    npx vitest run
 
 # Run linter
 lint:
-    bun run eslint packages/
+    npx eslint packages/
 
 # Run all checks (build, lint, test)
 check: build lint test
 
 # Start chant docs dev server
 docs:
-    bun --cwd docs dev
+    npm --prefix docs run dev
 
 # Start a lexicon docs dev server (e.g. just docs-lexicon aws)
 docs-lexicon lexicon:
@@ -32,9 +32,9 @@ docs-lexicon lexicon:
 
 # Run performance benchmarks
 bench:
-    bun test bench
+    npx vitest run bench
 
-# Build and run Bun smoke test (drops into bash at lambda-function example)
+# Build and run smoke test (drops into bash at lambda-function example)
 smoke-bun:
     docker build -f test/Dockerfile.smoke -t chant-smoke-bun . && docker run -it --rm -v "$HOME/.claude:/root/.claude" -v "$HOME/.claude.json:/root/.claude.json" -v "$HOME/.aws:/root/.aws:ro" chant-smoke-bun
 
@@ -59,7 +59,7 @@ docs-build:
 
 # Build and serve unified docs locally
 docs-serve: docs-build
-    bunx serve .docs-dist
+    npx serve .docs-dist
 
 # Build VS Code extension
 ext-vscode-build:

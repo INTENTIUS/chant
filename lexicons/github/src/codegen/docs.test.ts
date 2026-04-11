@@ -1,5 +1,5 @@
-import { describe, test, expect } from "bun:test";
-import { existsSync } from "fs";
+import { describe, test, expect } from "vitest";
+import { existsSync, readFileSync } from "fs";
 import { join, dirname } from "path";
 import { fileURLToPath } from "url";
 
@@ -13,7 +13,7 @@ describe("docs pipeline", () => {
   test("docs.ts exports generateDocs function", () => {
     // docs.ts has template literal parse issues in Bun due to ${{ }} expressions
     // in inline strings. Verify the file exists and contains the export.
-    const content = Bun.file(join(thisDir, "docs.ts")).text();
-    expect(content).resolves.toContain("export async function generateDocs");
+    const content = readFileSync(join(thisDir, "docs.ts"), "utf8");
+    expect(content).toContain("export async function generateDocs");
   });
 });

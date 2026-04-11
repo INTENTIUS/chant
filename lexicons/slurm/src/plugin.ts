@@ -6,15 +6,17 @@
  * skills, and import (chant import).
  */
 
-import { createRequire } from "module";
 import { join, dirname } from "path";
 import { fileURLToPath } from "url";
 import type { LexiconPlugin } from "@intentius/chant/lexicon";
 import { discoverLintRules, discoverPostSynthChecks } from "@intentius/chant/lint/discover";
 import { createSkillsLoader } from "@intentius/chant/lexicon-plugin-helpers";
 import { slurmSerializer } from "./serializer";
+import { completions as slurmCompletions } from "./lsp/completions";
+import { hover as slurmHover } from "./lsp/hover";
+import { SlurmConfParser } from "./import/parser";
+import { SlurmGenerator } from "./import/generator";
 
-const require = createRequire(import.meta.url);
 const srcDir = dirname(fileURLToPath(import.meta.url));
 const rulesDir = join(srcDir, "lint/rules");
 const postSynthDir = join(srcDir, "lint/post-synth");
@@ -180,13 +182,11 @@ export const slurmPlugin: LexiconPlugin = {
   },
 
   completionProvider(ctx) {
-    const { completions } = require("./lsp/completions");
-    return completions(ctx);
+    return slurmCompletions(ctx);
   },
 
   hoverProvider(ctx) {
-    const { hover } = require("./lsp/hover");
-    return hover(ctx);
+    return slurmHover(ctx);
   },
 
   detectTemplate(data: unknown): boolean {
@@ -196,12 +196,10 @@ export const slurmPlugin: LexiconPlugin = {
   },
 
   templateParser() {
-    const { SlurmConfParser } = require("./import/parser");
     return new SlurmConfParser();
   },
 
   templateGenerator() {
-    const { SlurmGenerator } = require("./import/generator");
     return new SlurmGenerator();
   },
 

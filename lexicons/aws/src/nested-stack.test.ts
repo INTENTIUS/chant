@@ -1,4 +1,4 @@
-import { describe, test, expect } from "bun:test";
+import { describe, test, expect } from "vitest";
 import { nestedStack, isNestedStackInstance, NestedStackOutputRef, NESTED_STACK_MARKER } from "./nested-stack";
 import { DECLARABLE_MARKER, isDeclarable } from "@intentius/chant/declarable";
 import { CHILD_PROJECT_MARKER, isChildProject } from "@intentius/chant/child-project";

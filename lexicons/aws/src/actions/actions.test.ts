@@ -1,4 +1,4 @@
-import { describe, test, expect } from "bun:test";
+import { describe, test, expect } from "vitest";
 import { S3Actions } from "./s3";
 import { LambdaActions } from "./lambda";
 import { DynamoDBActions } from "./dynamodb";

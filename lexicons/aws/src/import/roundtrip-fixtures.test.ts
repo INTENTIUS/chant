@@ -1,4 +1,4 @@
-import { describe, test, expect } from "bun:test";
+import { describe, test, expect } from "vitest";
 import { readdirSync, readFileSync, mkdtempSync, writeFileSync, mkdirSync, rmSync } from "fs";
 import { join } from "path";
 import { CFParser } from "./parser";
@@ -11,8 +11,8 @@ const awsLexicon = await import("../index");
 const parser = new CFParser();
 const generator = new CFGenerator();
 
-const roundtripDir = join(import.meta.dir, "../testdata/roundtrip");
-const samDir = join(import.meta.dir, "../testdata/sam-fixtures");
+const roundtripDir = join(import.meta.dirname, "../testdata/roundtrip");
+const samDir = join(import.meta.dirname, "../testdata/sam-fixtures");
 
 /** Extract imported symbols from `import { A, B } from "..."` statements */
 function extractImportedSymbols(code: string): string[] {
@@ -75,7 +75,7 @@ describe("parameters.json build roundtrip", () => {
     const mainFile = files.find((f) => f.path === "main.ts")!;
 
     // Write generated code to a temp directory inside the monorepo (so workspace packages resolve)
-    const dir = mkdtempSync(join(import.meta.dir, "../../.roundtrip-tmp-"));
+    const dir = mkdtempSync(join(import.meta.dirname, "../../.roundtrip-tmp-"));
     try {
     const srcDir = join(dir, "src");
     mkdirSync(srcDir);

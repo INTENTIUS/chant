@@ -9,8 +9,8 @@
     "dev": "chant build src --lexicon docker --watch -o dist/"
   },
   "dependencies": {
-    "@intentius/chant-lexicon-docker": "workspace:*",
-    "@intentius/chant": "workspace:*"
+    "@intentius/chant-lexicon-docker": "*",
+    "@intentius/chant": "*"
   },
   "devDependencies": {
     "typescript": "*"

@@ -1,4 +1,4 @@
-import { describe, test, expect, beforeEach, afterEach } from "bun:test";
+import { describe, test, expect, beforeEach, afterEach } from "vitest";
 import { lintCommand, isLintRule, loadPluginRules, type LintOptions } from "./lint";
 import { mkdir, rm, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
@@ -218,7 +218,7 @@ describe("isLintRule", () => {
 
 describe("loadPluginRules", () => {
   test("loads rules from a plugin file", async () => {
-    const fixtureDir = resolve(import.meta.dir, "__fixtures__");
+    const fixtureDir = resolve(import.meta.dirname, "__fixtures__");
     const rules = await loadPluginRules(["./sample-rule.ts"], fixtureDir);
 
     expect(rules.size).toBe(1);
@@ -230,7 +230,7 @@ describe("loadPluginRules", () => {
   });
 
   test("silently skips non-LintRule exports", async () => {
-    const fixtureDir = resolve(import.meta.dir, "__fixtures__");
+    const fixtureDir = resolve(import.meta.dirname, "__fixtures__");
     const rules = await loadPluginRules(["./sample-rule.ts"], fixtureDir);
 
     // sample-rule.ts exports notARule too, which should be skipped

@@ -1,9 +1,9 @@
-import { describe, test, expect, beforeEach, afterEach } from "bun:test";
+import { describe, test, expect, beforeEach, afterEach } from "vitest";
 import { validateProjectStructure } from "./project-validation";
 import { mkdirSync, writeFileSync, rmSync } from "fs";
 import { join } from "path";
 
-const TEST_DIR = join(import.meta.dir, "__test_project_validation__");
+const TEST_DIR = join(import.meta.dirname, "__test_project_validation__");
 
 beforeEach(() => {
   mkdirSync(TEST_DIR, { recursive: true });

@@ -9,8 +9,8 @@
     "dev": "chant build src --lexicon github --watch -o .github/workflows/release-please.yml"
   },
   "dependencies": {
-    "@intentius/chant-lexicon-github": "workspace:*",
-    "@intentius/chant": "workspace:*"
+    "@intentius/chant-lexicon-github": "*",
+    "@intentius/chant": "*"
   },
   "devDependencies": {
     "typescript": "*"

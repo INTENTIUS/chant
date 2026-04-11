@@ -1,4 +1,4 @@
-import { expect } from "bun:test";
+import { expect } from "vitest";
 import { describeAllExamples } from "@intentius/chant-test-utils/example-harness";
 import { k8sSerializer } from "@intentius/chant-lexicon-k8s";
 
@@ -7,7 +7,7 @@ describeAllExamples(
     lexicon: "k8s",
     serializer: k8sSerializer,
     outputKey: "k8s",
-    examplesDir: import.meta.dir,
+    examplesDir: import.meta.dirname,
   },
   {
     "basic-deployment": { skipLint: true },

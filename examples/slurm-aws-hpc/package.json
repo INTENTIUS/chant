@@ -14,8 +14,8 @@
     "teardown": "bash scripts/teardown.sh"
   },
   "dependencies": {
-    "@intentius/chant": "workspace:*",
-    "@intentius/chant-lexicon-aws": "workspace:*",
-    "@intentius/chant-lexicon-slurm": "workspace:*"
+    "@intentius/chant": "*",
+    "@intentius/chant-lexicon-aws": "*",
+    "@intentius/chant-lexicon-slurm": "*"
   }
 }

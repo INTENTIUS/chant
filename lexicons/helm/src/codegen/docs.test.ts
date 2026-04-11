@@ -1,9 +1,9 @@
-import { describe, test, expect } from "bun:test";
+import { describe, test, expect } from "vitest";
 
 describe("Helm docs generation", () => {
   test("docs module is importable", async () => {
     const mod = await import("./docs");
-    expect(mod.generateDocs).toBeFunction();
+    expect(typeof mod.generateDocs).toBe("function");
   });
 
   test("generateDocs function signature accepts options", async () => {

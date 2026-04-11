@@ -1,4 +1,4 @@
-import { describe, test, expect } from "bun:test";
+import { describe, test, expect } from "vitest";
 import { LexiconOutput, output, isLexiconOutput } from "./lexicon-output";
 import { AttrRef } from "./attrref";
 import { INTRINSIC_MARKER } from "./intrinsic";

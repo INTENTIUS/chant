@@ -39,7 +39,7 @@ const minimal = {
   required: schema.required || [],
 };
 
-const outPath = join(import.meta.dir, "ci-schema-fixture.json");
+const outPath = join(import.meta.dirname, "ci-schema-fixture.json");
 writeFileSync(outPath, JSON.stringify(minimal, null, 2));
 console.log(`Fixture written to ${outPath}`);
 console.log(`Definitions: ${Object.keys(defs).length}`);

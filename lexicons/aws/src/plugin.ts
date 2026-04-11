@@ -11,6 +11,10 @@ import { readFileSync } from "fs";
 import { join, dirname } from "path";
 import { fileURLToPath } from "url";
 import { awsSerializer } from "./serializer";
+import { CFParser } from "./import/parser";
+import { CFGenerator } from "./import/generator";
+import { awsCompletions } from "./lsp/completions";
+import { awsHover } from "./lsp/hover";
 
 /**
  * AWS CloudFormation lexicon plugin.
@@ -252,12 +256,10 @@ export const logsBucket = new Bucket({
   },
 
   templateParser(): TemplateParser {
-    const { CFParser } = require("./import/parser");
     return new CFParser();
   },
 
   templateGenerator(): TypeScriptGenerator {
-    const { CFGenerator } = require("./import/generator");
     return new CFGenerator();
   },
 
@@ -462,12 +464,10 @@ aws cloudformation wait stack-update-complete --stack-name my-app-prod`,
   ]),
 
   completionProvider(ctx: CompletionContext): CompletionItem[] {
-    const { awsCompletions } = require("./lsp/completions");
     return awsCompletions(ctx);
   },
 
   hoverProvider(ctx: HoverContext): HoverInfo | undefined {
-    const { awsHover } = require("./lsp/hover");
     return awsHover(ctx);
   },
 

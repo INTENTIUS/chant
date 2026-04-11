@@ -2,9 +2,8 @@
  * GitHub Actions lexicon packaging — delegates to core packagePipeline.
  */
 
-import { createRequire } from "module";
 import { readFileSync } from "fs";
-const require = createRequire(import.meta.url);
+import { githubPlugin } from "../plugin";
 import { join, dirname } from "path";
 import { fileURLToPath } from "url";
 import type { IntrinsicDef } from "@intentius/chant/lexicon";
@@ -52,9 +51,7 @@ export async function packageLexicon(opts: PackageOptions = {}): Promise<Package
 
       srcDir: pkgDir,
 
-      collectSkills: () => {
-        const { githubPlugin } = require("../plugin");
-        const skillDefs = githubPlugin.skills?.() ?? [];
+      collectSkills: () => {        const skillDefs = githubPlugin.skills?.() ?? [];
         return collectSkills(skillDefs);
       },
 

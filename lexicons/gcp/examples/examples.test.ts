@@ -6,7 +6,7 @@ describeAllExamples(
     lexicon: "gcp",
     serializer: gcpSerializer,
     outputKey: "gcp",
-    examplesDir: import.meta.dir,
+    examplesDir: import.meta.dirname,
   },
   {
     // These examples use hardcoded regions for simplicity (WGC002 warnings)

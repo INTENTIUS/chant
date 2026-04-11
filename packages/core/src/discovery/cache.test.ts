@@ -1,4 +1,4 @@
-import { describe, test, expect } from "bun:test";
+import { describe, test, expect } from "vitest";
 import { DiscoveryCache } from "./cache";
 import { writeFileSync, mkdirSync, rmSync } from "fs";
 import { join } from "path";

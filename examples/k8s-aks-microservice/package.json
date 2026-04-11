@@ -20,8 +20,8 @@
     "teardown": "bash scripts/teardown.sh"
   },
   "dependencies": {
-    "@intentius/chant": "workspace:*",
-    "@intentius/chant-lexicon-azure": "workspace:*",
-    "@intentius/chant-lexicon-k8s": "workspace:*"
+    "@intentius/chant": "*",
+    "@intentius/chant-lexicon-azure": "*",
+    "@intentius/chant-lexicon-k8s": "*"
   }
 }

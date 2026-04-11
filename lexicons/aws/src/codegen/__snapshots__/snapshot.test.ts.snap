@@ -1,6 +1,24 @@
-// Bun Snapshot v1, https://bun.sh/docs/test/snapshots
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
 
-exports[`snapshot tests Bucket lexicon entry 1`] = `
+exports[`snapshot tests > Bucket .d.ts class declaration 1`] = `
+"export declare class Bucket {
+  constructor(props: {
+    /** A name for the bucket. */
+    BucketName: string;
+    /** The Amazon Resource Name (ARN) of the bucket. */
+    Arn?: string;
+    /** Specifies default encryption for a bucket. */
+    BucketEncryption?: Bucket_BucketEncryption;
+    /** An arbitrary set of tags (key-value pairs) for this S3 bucket. */
+    Tags?: Bucket_Tag[];
+    /** Enables multiple versions of all objects in this bucket. */
+    VersioningConfiguration?: Bucket_VersioningConfiguration;
+  }, attributes?: CFResourceAttributes);
+  readonly Arn: string;
+}"
+`;
+
+exports[`snapshot tests > Bucket lexicon entry 1`] = `
 {
   "attrs": {
     "Arn": "Arn",
@@ -24,7 +42,29 @@ exports[`snapshot tests Bucket lexicon entry 1`] = `
 }
 `;
 
-exports[`snapshot tests Function lexicon entry 1`] = `
+exports[`snapshot tests > Function .d.ts class declaration 1`] = `
+"export declare class Function {
+  constructor(props: {
+    /** The code for the function. */
+    Code: Function_Code;
+    /** The ARN of the function's execution role. */
+    Role: string;
+    /** The ARN of the function. */
+    Arn?: string;
+    /** The name of the Lambda function. */
+    FunctionName?: string;
+    /** The name of the method within your code that Lambda calls to run your function. */
+    Handler?: string;
+    /** The amount of memory available to the function at runtime. */
+    MemorySize?: number;
+    /** The identifier of the function's runtime. */
+    Runtime?: "java17" | "java21" | "nodejs18.x" | "nodejs20.x" | "python3.11" | "python3.12";
+  }, attributes?: CFResourceAttributes);
+  readonly Arn: string;
+}"
+`;
+
+exports[`snapshot tests > Function lexicon entry 1`] = `
 {
   "attrs": {
     "Arn": "Arn",
@@ -76,7 +116,7 @@ exports[`snapshot tests Function lexicon entry 1`] = `
 }
 `;
 
-exports[`snapshot tests Role lexicon entry 1`] = `
+exports[`snapshot tests > Role lexicon entry 1`] = `
 {
   "attrs": {
     "Arn": "Arn",
@@ -98,7 +138,7 @@ exports[`snapshot tests Role lexicon entry 1`] = `
 }
 `;
 
-exports[`snapshot tests generated resource names 1`] = `
+exports[`snapshot tests > generated resource names 1`] = `
 [
   "Api",
   "Api_Auth",
@@ -154,44 +194,4 @@ exports[`snapshot tests generated resource names 1`] = `
   "VersioningConfiguration",
   "VpcConfig",
 ]
-`;
-
-exports[`snapshot tests Bucket .d.ts class declaration 1`] = `
-"export declare class Bucket {
-  constructor(props: {
-    /** A name for the bucket. */
-    BucketName: string;
-    /** The Amazon Resource Name (ARN) of the bucket. */
-    Arn?: string;
-    /** Specifies default encryption for a bucket. */
-    BucketEncryption?: Bucket_BucketEncryption;
-    /** An arbitrary set of tags (key-value pairs) for this S3 bucket. */
-    Tags?: Bucket_Tag[];
-    /** Enables multiple versions of all objects in this bucket. */
-    VersioningConfiguration?: Bucket_VersioningConfiguration;
-  }, attributes?: CFResourceAttributes);
-  readonly Arn: string;
-}"
-`;
-
-exports[`snapshot tests Function .d.ts class declaration 1`] = `
-"export declare class Function {
-  constructor(props: {
-    /** The code for the function. */
-    Code: Function_Code;
-    /** The ARN of the function's execution role. */
-    Role: string;
-    /** The ARN of the function. */
-    Arn?: string;
-    /** The name of the Lambda function. */
-    FunctionName?: string;
-    /** The name of the method within your code that Lambda calls to run your function. */
-    Handler?: string;
-    /** The amount of memory available to the function at runtime. */
-    MemorySize?: number;
-    /** The identifier of the function's runtime. */
-    Runtime?: "java17" | "java21" | "nodejs18.x" | "nodejs20.x" | "python3.11" | "python3.12";
-  }, attributes?: CFResourceAttributes);
-  readonly Arn: string;
-}"
 `;

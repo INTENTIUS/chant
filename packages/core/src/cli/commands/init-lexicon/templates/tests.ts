@@ -3,7 +3,7 @@
  */
 
 export function generatePluginTestTs(name: string, names: { pluginVarName: string }): string {
-  return `import { describe, expect, it } from "bun:test";
+  return `import { describe, expect, it } from "vitest";
 import { ${names.pluginVarName} } from "./plugin";
 import { isLexiconPlugin } from "@intentius/chant/lexicon";
 
@@ -24,7 +24,7 @@ describe("${name} plugin", () => {
 }
 
 export function generateSerializerTestTs(name: string, names: { serializerVarName: string }): string {
-  return `import { describe, expect, it } from "bun:test";
+  return `import { describe, expect, it } from "vitest";
 import { ${names.serializerVarName} } from "./serializer";
 
 describe("${name} serializer", () => {
@@ -42,7 +42,7 @@ describe("${name} serializer", () => {
 }
 
 export function generateCompletionsTestTs(): string {
-  return `import { describe, expect, it } from "bun:test";
+  return `import { describe, expect, it } from "vitest";
 import { completions } from "./completions";
 
 describe("LSP completions", () => {
@@ -56,7 +56,7 @@ describe("LSP completions", () => {
 }
 
 export function generateHoverTestTs(): string {
-  return `import { describe, expect, it } from "bun:test";
+  return `import { describe, expect, it } from "vitest";
 import { hover } from "./hover";
 
 describe("LSP hover", () => {

@@ -1,4 +1,4 @@
-import { describe, test, expect } from "bun:test";
+import { describe, test, expect } from "vitest";
 import { Sub, Ref, GetAtt, If, Join, Select, Split, Base64 } from "./intrinsics";
 import { AWS } from "./pseudo";
 import { AttrRef } from "@intentius/chant/attrref";

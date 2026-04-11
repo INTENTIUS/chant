@@ -1,4 +1,4 @@
-import { describe, test, expect } from "bun:test";
+import { describe, test, expect } from "vitest";
 import { gitlabSerializer } from "./serializer";
 import { DECLARABLE_MARKER, type Declarable } from "@intentius/chant/declarable";
 import { createProperty, createResource } from "@intentius/chant/runtime";

@@ -1,4 +1,4 @@
-import { describe, test, expect } from "bun:test";
+import { describe, test, expect } from "vitest";
 import { Checkout } from "./checkout";
 import { SetupNode } from "./setup-node";
 import { SetupGo } from "./setup-go";

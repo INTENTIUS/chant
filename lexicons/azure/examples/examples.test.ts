@@ -1,6 +1,6 @@
 import { describeAllExamples } from "@intentius/chant-test-utils/example-harness";
 import { azureSerializer } from "@intentius/chant-lexicon-azure";
-import { expect } from "bun:test";
+import { expect } from "vitest";
 
 /**
  * armChecks — validates ARM template resources by searching the resources
@@ -35,7 +35,7 @@ describeAllExamples(
     lexicon: "azure",
     serializer: azureSerializer,
     outputKey: "azure",
-    examplesDir: import.meta.dir,
+    examplesDir: import.meta.dirname,
   },
   {
     "web-app": {

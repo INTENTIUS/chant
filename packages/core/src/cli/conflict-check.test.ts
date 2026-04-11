@@ -1,4 +1,4 @@
-import { describe, test, expect } from "bun:test";
+import { describe, test, expect } from "vitest";
 import { checkConflicts } from "./conflict-check";
 import type { LexiconPlugin } from "../lexicon";
 
@@ -261,7 +261,7 @@ describe("skill naming consistency", () => {
   test("all skill names match chant-{lexicon}(-{topic})* pattern", async () => {
     const { readdirSync, readFileSync } = await import("fs");
     const { join } = await import("path");
-    const lexiconsDir = join(import.meta.dir, "../../../../lexicons");
+    const lexiconsDir = join(import.meta.dirname, "../../../../lexicons");
     const lexiconNames = readdirSync(lexiconsDir, { withFileTypes: true })
       .filter((d) => d.isDirectory())
       .map((d) => d.name);

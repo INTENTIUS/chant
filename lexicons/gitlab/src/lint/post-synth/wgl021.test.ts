@@ -1,4 +1,4 @@
-import { describe, test, expect } from "bun:test";
+import { describe, test, expect } from "vitest";
 import { wgl021, checkUnusedVariables } from "./wgl021";
 
 describe("WGL021: Unused Variables", () => {

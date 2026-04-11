@@ -1,4 +1,4 @@
-import { describe, test, expect } from "bun:test";
+import { describe, test, expect } from "vitest";
 import { K8sParser } from "./parser";
 
 const parser = new K8sParser();

@@ -1,4 +1,4 @@
-import { describe, test, expect } from "bun:test";
+import { describe, test, expect } from "vitest";
 import type { PostSynthContext } from "@intentius/chant/lint/post-synth";
 import type { SerializerResult } from "@intentius/chant/serializer";
 import { whm407 } from "./whm407";

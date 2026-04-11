@@ -1,4 +1,4 @@
-import { describe, it, expect } from "bun:test";
+import { describe, it, expect } from "vitest";
 import { GCP, ProjectId, Region, Zone, PseudoParameter } from "./pseudo";
 
 describe("GCP pseudo-parameters", () => {

@@ -1,4 +1,4 @@
-import { describe, test, expect } from "bun:test";
+import { describe, test, expect } from "vitest";
 import { topologicalSort } from "./sort";
 import { BuildError } from "./errors";
 

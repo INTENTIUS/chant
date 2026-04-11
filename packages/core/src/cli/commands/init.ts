@@ -51,11 +51,10 @@ export interface InitResult {
 
 /**
  * Detect whether the user's project uses bun or npm.
- * Checks for lock files first, then falls back to runtime detection.
+ * Checks for lock files.
  */
 function detectPackageManager(dir?: string): "bun" | "npm" {
   if (dir && (existsSync(join(dir, "bun.lockb")) || existsSync(join(dir, "bun.lock")))) return "bun";
-  if (typeof globalThis.Bun !== "undefined") return "bun";
   return "npm";
 }
 

@@ -1,4 +1,4 @@
-import { describe, test, expect } from "bun:test";
+import { describe, test, expect } from "vitest";
 import { join, dirname } from "path";
 import { fileURLToPath } from "url";
 import { discoverLintRules, discoverPostSynthChecks } from "./discover";

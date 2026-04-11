@@ -1,4 +1,4 @@
-import { describe, test, expect } from "bun:test";
+import { describe, test, expect } from "vitest";
 import { hardcodedCredentialsRule } from "./hardcoded-credentials";
 import { hardcodedUrlRule } from "./hardcoded-url";
 import { missingSchemasRule } from "./missing-schemas";

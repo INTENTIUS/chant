@@ -1,4 +1,4 @@
-import { describe, test, expect } from "bun:test";
+import { describe, test, expect } from "vitest";
 import { flywaySerializer } from "./serializer";
 import { FlywayProject, FlywayConfig, Environment, FlywayDesktopConfig, RedgateCompareConfig } from "./generated/index";
 

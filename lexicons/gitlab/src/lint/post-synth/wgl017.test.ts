@@ -1,4 +1,4 @@
-import { describe, test, expect } from "bun:test";
+import { describe, test, expect } from "vitest";
 import { wgl017, checkInsecureRegistry } from "./wgl017";
 
 describe("WGL017: Insecure Registry", () => {

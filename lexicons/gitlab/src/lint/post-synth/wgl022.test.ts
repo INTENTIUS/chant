@@ -1,4 +1,4 @@
-import { describe, test, expect } from "bun:test";
+import { describe, test, expect } from "vitest";
 import { DECLARABLE_MARKER, type Declarable } from "@intentius/chant/declarable";
 import type { PostSynthContext } from "@intentius/chant/lint/post-synth";
 import { wgl022 } from "./wgl022";

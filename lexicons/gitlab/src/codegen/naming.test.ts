@@ -1,4 +1,4 @@
-import { describe, test, expect } from "bun:test";
+import { describe, test, expect } from "vitest";
 import { gitlabShortName, type GitLabParseResult } from "./parse";
 import { NamingStrategy } from "./naming";
 

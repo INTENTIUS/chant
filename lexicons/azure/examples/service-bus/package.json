@@ -12,8 +12,8 @@
     "teardown": "az group delete --name \"$RESOURCE_GROUP\" --yes"
   },
   "dependencies": {
-    "@intentius/chant-lexicon-azure": "workspace:*",
-    "@intentius/chant": "workspace:*"
+    "@intentius/chant-lexicon-azure": "*",
+    "@intentius/chant": "*"
   },
   "devDependencies": {
     "typescript": "*"
