@@ -3,7 +3,7 @@ set -euo pipefail
 
 PASS=0
 FAIL=0
-RUNTIME="${CHANT_RUNTIME:-bun}"
+RUNTIME="${CHANT_RUNTIME:-npx}"
 if [ "$RUNTIME" = "bun" ]; then
   CHANT="bun run /app/packages/core/src/cli/main.ts"
 else

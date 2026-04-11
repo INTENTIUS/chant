@@ -42,10 +42,12 @@
     "docs": "tsx src/codegen/docs-cli.ts",
     "prepack": "npm run generate && npm run bundle && npm run validate"
   },
+  "dependencies": {
+    "js-yaml": "^4.1.1"
+  },
   "devDependencies": {
     "@intentius/chant": "*",
     "@types/js-yaml": "^4.0.9",
-    "js-yaml": "^4.1.1",
     "typescript": "^5.9.3"
   },
   "peerDependencies": {

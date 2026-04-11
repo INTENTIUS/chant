@@ -34,11 +34,11 @@ docs-lexicon lexicon:
 bench:
     npx vitest run bench
 
-# Build and run smoke test (drops into bash at lambda-function example)
-smoke-bun:
-    docker build -f test/Dockerfile.smoke -t chant-smoke-bun . && docker run -it --rm -v "$HOME/.claude:/root/.claude" -v "$HOME/.claude.json:/root/.claude.json" -v "$HOME/.aws:/root/.aws:ro" chant-smoke-bun
+# Build and run workspace smoke test (drops into bash)
+smoke-workspace:
+    docker build -f test/Dockerfile.smoke -t chant-smoke-workspace . && docker run -it --rm chant-smoke-workspace
 
-# Build and run npm tarball smoke test (all 9 lexicons, both npm and bun runtimes)
+# Build and run npm tarball smoke test (all 9 lexicons)
 smoke-npm:
     ./test/smoke.sh npm
 
@@ -51,7 +51,7 @@ smoke-npm-registry:
     ./test/smoke.sh npm-registry
 
 # Run all smoke tests
-smoke: smoke-bun smoke-npm
+smoke: smoke-workspace smoke-npm
 
 # Build unified documentation site (main + lexicon docs)
 docs-build:

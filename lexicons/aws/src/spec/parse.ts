@@ -90,12 +90,18 @@ export function parseCFNSchema(data: string | Buffer): SchemaParseResult {
   }
 
   // Parse readOnlyProperties as attributes
+  // Deduplicate — some upstream schemas (e.g. aws-s3files-filesystem) list the same
+  // property twice in readOnlyProperties, which would produce duplicate class members.
   const attrs: ParsedAttribute[] = [];
+  const seenAttrs = new Set<string>();
   for (const path of schema.readOnlyProperties ?? []) {
     const attrName = stripPointerPath(path);
 
     // Flatten nested paths: "Endpoint/Address" → attr name "Endpoint.Address"
     const cfnAttr = attrName.replace(/\//g, ".");
+
+    if (seenAttrs.has(cfnAttr)) continue;
+    seenAttrs.add(cfnAttr);
 
     let tsType = "string";
     // For top-level attrs, look up type from properties
