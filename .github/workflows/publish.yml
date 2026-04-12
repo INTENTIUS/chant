@@ -35,6 +35,7 @@ jobs:
       - run: npm run --prefix lexicons/helm prepack
       - run: npm run --prefix lexicons/docker prepack
       - run: npm run --prefix lexicons/slurm prepack
+      - run: npm run --prefix lexicons/temporal prepack
       - run: npx vitest run
 
   publish:
@@ -128,4 +129,11 @@ jobs:
         run: |
           V=$(node -e "process.stdout.write(require('./package.json').version)")
           P=$(npm view @intentius/chant-lexicon-slurm version 2>/dev/null || echo "none")
+          [ "$V" = "$P" ] && echo "Already at $V, skipping" || npm publish --access public
+
+      - name: Publish @intentius/chant-lexicon-temporal
+        working-directory: lexicons/temporal
+        run: |
+          V=$(node -e "process.stdout.write(require('./package.json').version)")
+          P=$(npm view @intentius/chant-lexicon-temporal version 2>/dev/null || echo "none")
           [ "$V" = "$P" ] && echo "Already at $V, skipping" || npm publish --access public
