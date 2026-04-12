@@ -1,7 +1,7 @@
 # Migration lifecycle example — recipes for the full workflow.
-# Requires: bun, docker, flyway CLI on PATH.
+# Requires: node, tsx, docker, flyway CLI on PATH.
 
-chant := "bun run --cwd ../../../packages/core src/cli/main.ts"
+chant := "npx tsx ../../../packages/core/src/cli/main.ts"
 
 # Start dev and shadow databases
 up:

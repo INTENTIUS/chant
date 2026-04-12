@@ -57,7 +57,7 @@ chant build src --lexicon k8s  → k8s.yaml      (K8s workload YAML)
 
 - **gcloud CLI** — authenticated with a project that has billing enabled
 - **kubectl** — installed and on PATH
-- **bun** — for building chant sources
+- **Node.js 20+** — for building chant sources
 
 ## Quick start (local verification)
 

@@ -159,7 +159,7 @@ while IFS= read -r manifest; do
   fi
 
   export VERBOSE
-  if bun run "$HELPER" ${HELPER_ARGS[@]+"${HELPER_ARGS[@]}"} "$manifest" 2>/dev/null; then
+  if npx tsx "$HELPER" ${HELPER_ARGS[@]+"${HELPER_ARGS[@]}"} "$manifest" 2>/dev/null; then
     ((pass++)) || true
     if [[ "$VERBOSE" == "true" ]]; then
       echo "PASS: $rel"

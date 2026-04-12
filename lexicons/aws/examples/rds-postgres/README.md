@@ -19,7 +19,7 @@ The lexicon packages ship skills for agent-guided deployment. After `chant init 
 ## Quick Start
 
 ```bash
-bun run build
+npm run build
 ```
 
 ## What It Does
@@ -56,12 +56,12 @@ src/
 
 **One-command deploy** (creates SSM parameter + builds + deploys):
 ```bash
-bun run deploy
+npm run deploy
 ```
 
 **Step by step:**
-1. `bun run setup` — creates SSM SecureString at `/myapp/dev/db-password` with a random password
-2. `bun run build` — generates CloudFormation template
+1. `npm run setup` — creates SSM SecureString at `/myapp/dev/db-password` with a random password
+2. `npm run build` — generates CloudFormation template
 3. `aws cloudformation deploy --template-file stack.json --stack-name rds-postgres-example`
 
 To use a custom SSM path:

@@ -1,8 +1,20 @@
-import { $ } from "bun";
-import { describe, it, expect, beforeAll } from "bun:test";
+import { describe, it, expect, beforeAll } from "vitest";
+import { promisify } from "util";
+import { exec } from "child_process";
 import { dynamo, mc, solrCount, retry, SOLR } from "./test-helpers";
 
-$.verbose = false;
+const execAsync = promisify(exec);
+function $(strings: TemplateStringsArray, ...values: unknown[]) {
+  const parts: string[] = [];
+  strings.forEach((str, i) => {
+    parts.push(str);
+    if (i < values.length) {
+      const val = values[i];
+      parts.push(Array.isArray(val) ? (val as string[]).join(" ") : String(val ?? ""));
+    }
+  });
+  return execAsync(parts.join(""));
+}
 
 // These tests require `just up` to be running. Skip in CI.
 if (process.env.CI) process.exit(0);
@@ -18,7 +30,7 @@ beforeAll(async () => {
     "--key-schema", "AttributeName=id,KeyType=HASH",
     "--billing-mode", "PAY_PER_REQUEST",
     "--stream-specification", "StreamEnabled=true,StreamViewType=NEW_AND_OLD_IMAGES",
-  ).nothrow();
+  ).catch(() => {});
   await mc("mb", "--ignore-existing", "local/documents");
 }, 15_000);
 

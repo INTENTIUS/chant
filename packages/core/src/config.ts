@@ -7,7 +7,7 @@ import type { LintConfig } from "./lint/config";
  * Zod schema for ChantConfig validation.
  */
 export const ChantConfigSchema = z.object({
-  runtime: z.enum(["bun", "node"]).optional(),
+  runtime: z.enum(["node", "bun"]).optional(),
   lexicons: z.array(z.string().min(1)).optional(),
   environments: z.array(z.string().min(1)).optional(),
   lint: z.record(z.string(), z.unknown()).optional(),
@@ -19,8 +19,8 @@ export const ChantConfigSchema = z.object({
  * Loaded from `chant.config.ts` (preferred) or `chant.config.json`.
  */
 export interface ChantConfig {
-  /** JS runtime to use for spawned commands: "bun" (default) or "node" */
-  runtime?: "bun" | "node";
+  /** JS runtime to use for spawned commands: "node" (default) or "bun" */
+  runtime?: "node" | "bun";
 
   /** Lexicon package names to load (e.g. ["aws"]) */
   lexicons?: string[];

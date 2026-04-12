@@ -3,7 +3,7 @@ set -euo pipefail
 
 [ -f .env ] && { set -a; source .env; set +a; }
 
-CELLS="${CELLS:-$(bun -e "import { cells } from './src/config.ts'; process.stdout.write(cells.map(c => c.name).join(' '))")}"
+CELLS="${CELLS:-$(npx tsx --eval "import { cells } from './src/config.ts'; process.stdout.write(cells.map(c => c.name).join(' '))")}"
 
 # Accept --yes flag or TEARDOWN_CLUSTER=yes env var to skip interactive prompt.
 TEARDOWN_CLUSTER="${TEARDOWN_CLUSTER:-no}"

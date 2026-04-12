@@ -13,7 +13,7 @@ E2E tests verify that every root example can be built from published tarballs an
 Docker (build only)                          Host (deploy)
 ───────────────────                          ─────────────
 Dockerfile.smoke-e2e                         Agent + skill
-  ├─ Stage 1: bun builds tarballs            cd examples/<name>
+  ├─ Stage 1: node builds tarballs           cd examples/<name>
   └─ Stage 2: npm install from .tgz          npm run deploy
               npm run build                  npm run teardown
 ```
@@ -76,7 +76,7 @@ Each example provides its own teardown script (`npm run teardown` or equivalent)
 | File | Purpose |
 |------|---------|
 | `test/smoke.sh` | Builds Docker image, installs and compiles examples from tarballs |
-| `test/Dockerfile.smoke-e2e` | Two-stage Dockerfile: bun builder → node runner |
+| `test/Dockerfile.smoke-e2e` | Two-stage Dockerfile: node builder → node runner |
 | `examples/<name>/README.md` | Deploy instructions for each example |
 | `examples/<name>/package.json` | npm scripts for build, deploy, teardown |
 

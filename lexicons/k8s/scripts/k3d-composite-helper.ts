@@ -4,7 +4,7 @@
  * Imports each composite, creates k3d-safe instances, serializes via
  * emitYAML from @intentius/chant/yaml, and outputs YAML to stdout in dependency order.
  *
- * Usage: bun run scripts/k3d-composite-helper.ts
+ * Usage: npx tsx scripts/k3d-composite-helper.ts
  */
 import { emitYAML } from "@intentius/chant/yaml";
 import { AutoscaledService } from "../src/composites/autoscaled-service";

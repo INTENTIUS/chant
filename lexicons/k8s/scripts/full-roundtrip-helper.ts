@@ -10,7 +10,7 @@
  *
  * Exit 0 on success, 1 on failure.
  *
- * Usage: bun run scripts/full-roundtrip-helper.ts [--skip-serialize] <manifest-file>
+ * Usage: npx tsx scripts/full-roundtrip-helper.ts [--skip-serialize] <manifest-file>
  */
 import { readFileSync, mkdtempSync, writeFileSync, mkdirSync, rmSync } from "fs";
 import { join, dirname } from "path";
@@ -33,7 +33,7 @@ if (import.meta.main) {
   }
 
   if (!file) {
-    console.error("Usage: bun run full-roundtrip-helper.ts [--skip-serialize] <manifest-file>");
+    console.error("Usage: npx tsx full-roundtrip-helper.ts [--skip-serialize] <manifest-file>");
     process.exit(1);
   }
 

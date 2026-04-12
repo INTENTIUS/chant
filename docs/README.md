@@ -6,13 +6,13 @@ This directory contains the documentation site for chant, built with [Astro Star
 
 ```bash
 # Start dev server
-bun --cwd docs dev
+npm run --prefix docs dev
 
 # Build documentation
-bun --cwd docs build
+npm run --prefix docs build
 
 # Preview production build
-bun --cwd docs preview
+npm run --prefix docs preview
 ```
 
 The dev server will start at `http://localhost:4321`.
@@ -86,7 +86,7 @@ The documentation site can be deployed to any static hosting service:
 
 ```bash
 # Build for production
-bun --cwd docs build
+npm run --prefix docs build
 
 # Output will be in docs/dist/
 ```

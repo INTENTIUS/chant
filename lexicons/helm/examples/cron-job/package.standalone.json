@@ -4,7 +4,7 @@
   "type": "module",
   "private": true,
   "scripts": {
-    "test": "bun test",
+    "test": "npx vitest run",
     "build": "chant build src --lexicon helm -o Chart.yaml",
     "lint": "chant lint src",
     "dev": "chant build src --lexicon helm -o Chart.yaml --watch",

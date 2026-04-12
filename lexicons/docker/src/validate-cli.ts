@@ -1,6 +1,6 @@
-#!/usr/bin/env bun
+#!/usr/bin/env tsx
 /**
- * Thin entry point for `bun run validate` in lexicon-docker.
+ * Thin entry point for `npm run validate` in lexicon-docker.
  */
 import { validate } from "./validate";
 

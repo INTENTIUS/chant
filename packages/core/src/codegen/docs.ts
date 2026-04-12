@@ -148,7 +148,7 @@ export function writeDocsPages(result: DocsResult, outDir: string): void {
  *
  * Writes: package.json, astro.config.mjs, tsconfig.json, and all content
  * pages under src/content/docs/. The resulting directory can be built with
- * `bun install && bun run build`.
+ * `npm install && npm run build`.
  */
 export function writeDocsSite(config: DocsConfig, result: DocsResult): void {
   const outDir = config.outDir;

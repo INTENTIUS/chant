@@ -1,6 +1,6 @@
-#!/usr/bin/env bun
+#!/usr/bin/env tsx
 /**
- * Thin entry point for `bun run bundle` in lexicon-docker.
+ * Thin entry point for `npm run bundle` in lexicon-docker.
  */
 import { generate, writeGeneratedFiles } from "./codegen/generate";
 import { packageLexicon } from "./codegen/package";

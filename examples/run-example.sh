@@ -7,4 +7,4 @@ prompt="${2:-Build, lint, and test this example.}"
 cd "$(dirname "$0")/$example"
 
 claude -p "$prompt" \
-  --allowedTools "Bash(bun run *)" "Bash(kubectl *)" "Bash(aws *)" "Read" "Glob" "Grep"
+  --allowedTools "Bash(npm run *)" "Bash(kubectl *)" "Bash(aws *)" "Read" "Glob" "Grep"

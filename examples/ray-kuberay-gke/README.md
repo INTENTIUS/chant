@@ -84,7 +84,7 @@ If you already have a Config Connector management cluster, skip this step and se
 
 **Other prerequisites:**
 - `gcloud` CLI authenticated: `gcloud auth application-default login`
-- Bun installed: [https://bun.sh](https://bun.sh)
+- Node.js 20+ — [https://nodejs.org](https://nodejs.org)
 - `npm install` run from the repo root
 
 ### Phase 1 — Build GCP manifests

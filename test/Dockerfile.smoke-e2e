@@ -2,7 +2,7 @@
 # Questions answered:
 #   - Do examples deploy end-to-end to real cloud providers?
 #   - Does the full lifecycle (build → deploy → verify → teardown) work?
-# Flow: Stage 1 (bun) packs tarballs → Stage 2 (node + deploy tools) runs e2e-smoke.sh at container start
+# Flow: Stage 1 (node) packs tarballs → Stage 2 (node + deploy tools) runs e2e-smoke.sh at container start
 # Requires: cloud credentials mounted via Docker -v / -e flags
 #
 # NOTE: This image is always built as linux/amd64 because Flyway CLI does not
@@ -10,20 +10,21 @@
 # Rosetta emulation transparently.
 
 # ── Stage 1: builder ─────────────────────────────────────────────────────────
-FROM --platform=linux/amd64 oven/bun:latest AS builder
+FROM --platform=linux/amd64 node:22-slim AS builder
 
 WORKDIR /app
 
 RUN apt-get update && apt-get install -y jq && rm -rf /var/lib/apt/lists/*
+RUN npm install -g tsx
 
 COPY . .
 
-RUN bun install
+RUN npm install
 
 # Generate dist/ artifacts for each lexicon
 RUN for lex in aws azure gcp gitlab k8s flyway; do \
       echo "=== prepack lexicons/$lex ===" && \
-      bun run --cwd "lexicons/$lex" prepack; \
+      npm run --prefix "lexicons/$lex" prepack; \
     done
 
 # Fix workspace:* deps → real version, strip scripts
@@ -39,13 +40,13 @@ RUN CORE_VERSION=$(jq -r '.version' packages/core/package.json) && \
 
 # Pack tarballs (rm stale .tgz first — glob with multiple matches breaks mv)
 RUN mkdir -p /tarballs && \
-    cd /app/packages/core && rm -f *.tgz && bun pm pack && mv *.tgz /tarballs/core.tgz && \
-    cd /app/lexicons/aws && rm -f *.tgz && bun pm pack && mv *.tgz /tarballs/lexicon-aws.tgz && \
-    cd /app/lexicons/gitlab && rm -f *.tgz && bun pm pack && mv *.tgz /tarballs/lexicon-gitlab.tgz && \
-    cd /app/lexicons/k8s && rm -f *.tgz && bun pm pack && mv *.tgz /tarballs/lexicon-k8s.tgz && \
-    cd /app/lexicons/flyway && rm -f *.tgz && bun pm pack && mv *.tgz /tarballs/lexicon-flyway.tgz && \
-    cd /app/lexicons/gcp && rm -f *.tgz && bun pm pack && mv *.tgz /tarballs/lexicon-gcp.tgz && \
-    cd /app/lexicons/azure && rm -f *.tgz && bun pm pack && mv *.tgz /tarballs/lexicon-azure.tgz
+    cd /app/packages/core && rm -f *.tgz && npm pack && mv *.tgz /tarballs/core.tgz && \
+    cd /app/lexicons/aws && rm -f *.tgz && npm pack && mv *.tgz /tarballs/lexicon-aws.tgz && \
+    cd /app/lexicons/gitlab && rm -f *.tgz && npm pack && mv *.tgz /tarballs/lexicon-gitlab.tgz && \
+    cd /app/lexicons/k8s && rm -f *.tgz && npm pack && mv *.tgz /tarballs/lexicon-k8s.tgz && \
+    cd /app/lexicons/flyway && rm -f *.tgz && npm pack && mv *.tgz /tarballs/lexicon-flyway.tgz && \
+    cd /app/lexicons/gcp && rm -f *.tgz && npm pack && mv *.tgz /tarballs/lexicon-gcp.tgz && \
+    cd /app/lexicons/azure && rm -f *.tgz && npm pack && mv *.tgz /tarballs/lexicon-azure.tgz
 
 # ── Stage 2: E2E runner ──────────────────────────────────────────────────────
 FROM --platform=linux/amd64 node:22-slim

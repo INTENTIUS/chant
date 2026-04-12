@@ -28,13 +28,13 @@ Generates Chart.yaml, values.yaml, and templates/ for a Deployment with two cont
 
 ## Prerequisites
 
-- [Bun](https://bun.sh) or [Node.js](https://nodejs.org/) >= 22
+- [Node.js](https://nodejs.org/) >= 22
 - [Helm](https://helm.sh/docs/intro/install/)
 
 ## Build
 
 ```bash
-bun install && bun run build && bun run lint
+npm install && npm run build && npm run lint
 ```
 
 ## Deploy

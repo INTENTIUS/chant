@@ -1,6 +1,6 @@
-#!/usr/bin/env bun
+#!/usr/bin/env tsx
 /**
- * CLI entry point for `bun run package` in lexicon-slurm.
+ * CLI entry point for `npm run package` in lexicon-slurm.
  */
 import { packageLexicon } from "./package";
 import { writeBundleSpec } from "@intentius/chant/codegen/package";

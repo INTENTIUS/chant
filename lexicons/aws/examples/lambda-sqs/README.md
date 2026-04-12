@@ -27,7 +27,7 @@ chant spell cast lambda-sqs
 ## Quick Start
 
 ```bash
-bun run build
+npm run build
 ```
 
 ## What It Does

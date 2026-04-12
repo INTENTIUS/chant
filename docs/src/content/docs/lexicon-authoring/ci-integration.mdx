@@ -20,8 +20,8 @@ This patches 5 files:
 | `package.json` (root) | `@intentius/chant-lexicon-<name>: "workspace:*"` dependency |
 | `.github/workflows/chant.yml` | Prepack lines in check/test jobs + validate step |
 | `.github/workflows/publish.yml` | Prepack line in test job + publish step |
-| `test/Dockerfile.smoke` | `RUN bun run --cwd lexicons/<name> prepack` |
-| `test/Dockerfile.smoke-node` | Same prepack line for Node.js smoke test |
+| `test/Dockerfile.smoke` | Prepack validation line for workspace smoke test |
+| `test/Dockerfile.smoke-npm` | Prepack validation line for npm tarball smoke test |
 
 The command is idempotent — running it twice skips already-configured files.
 
@@ -31,7 +31,7 @@ The command is idempotent — running it twice skips already-configured files.
 
 1. **Create an example workspace**
 
-   Bun only creates virtual module links for workspace packages that have at least one dependent. Without an example, `import("@intentius/chant-lexicon-<name>")` will fail from `packages/core`.
+   npm workspace resolution requires at least one dependent for each package. Without an example, `import("@intentius/chant-lexicon-<name>")` will fail from `packages/core`.
 
    ```
    lexicons/<name>/examples/basic-deployment/
@@ -83,20 +83,20 @@ The command is idempotent — running it twice skips already-configured files.
    - LSP server initialize
    - `chant init --lexicon <name>` (skill install, build, lint)
 
-3. **Run `bun install`** to update workspace links
+3. **Run `npm install`** to update workspace links
 
 4. **Verify locally** before pushing:
 
    ```bash
    # Unit tests
-   bun test --cwd lexicons/<name>
+   npx vitest run lexicons/<name>
 
    # Full test suite
-   bun test
+   npx vitest run
 
    # Docker smoke tests (optional but recommended)
    docker build -f test/Dockerfile.smoke -t chant-smoke .
-   docker build -f test/Dockerfile.smoke-node -t chant-smoke-node .
+   docker build -f test/Dockerfile.smoke-npm -t chant-smoke-npm .
    ```
 
 </Steps>
@@ -110,10 +110,10 @@ git tag v<version>
 git push origin v<version>
 ```
 
-The workflow runs `bun publish --access public --tolerate-republish` for each package. The `--tolerate-republish` flag means existing packages are a no-op.
+The workflow runs `npm publish --access public` for each package with `--tolerate-republish` so existing packages are a no-op.
 
 <Aside type="caution" title="First-time scoped packages">
-`bun publish --access public` may land as **private** on the first publish of a scoped package. After the workflow completes, check [npmjs.com/org/intentius](https://www.npmjs.com/org/intentius) and toggle the package to public if needed. Subsequent publishes will stay public.
+`npm publish --access public` may land as **private** on the first publish of a scoped package. After the workflow completes, check [npmjs.com/org/intentius](https://www.npmjs.com/org/intentius) and toggle the package to public if needed. Subsequent publishes will stay public.
 </Aside>
 
 ## Version coupling
@@ -128,7 +128,7 @@ With 0.x semver, `^0.0.13` pins to **exactly** `0.0.13` (not `>=0.0.13 <0.1.0`).
 
 ## Why the root dependency matters
 
-Bun's workspace resolution only creates virtual module links for packages that have at least one dependent in the workspace graph. The root `package.json` dependency ensures that `packages/core` can dynamically import your lexicon via:
+npm workspace resolution only installs packages that have at least one dependent in the workspace graph. The root `package.json` dependency ensures that `packages/core` can dynamically import your lexicon via:
 
 ```typescript
 import(`@intentius/chant-lexicon-${name}`)

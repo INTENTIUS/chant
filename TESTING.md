@@ -1,6 +1,6 @@
 # Testing
 
-chant uses [Bun's built-in test runner](https://bun.sh/docs/cli/test) for all tests. The test suite includes 1288+ passing tests across the project.
+chant uses [Vitest](https://vitest.dev/) for all tests. The test suite includes 1000+ passing tests across the project.
 
 > **See also**: [Core Concepts](docs/src/content/docs/guides/core-concepts.md) for information on testing declarables, intrinsics, and error handling patterns.
 
@@ -8,24 +8,24 @@ chant uses [Bun's built-in test runner](https://bun.sh/docs/cli/test) for all te
 
 ```bash
 # Run all tests
-bun test
+npx vitest run
 
 # Run tests for a specific package
-bun test packages/core
-bun test packages/aws
-bun test packages/test-utils
+npx vitest run packages/core
+npx vitest run lexicons/aws
+npx vitest run packages/test-utils
 
 # Run a single test file
-bun test packages/core/src/errors.test.ts
+npx vitest run packages/core/src/errors.test.ts
 
 # Run tests matching a pattern
-bun test --test-name-pattern "DiscoveryError"
+npx vitest run -t "DiscoveryError"
 
 # Run tests in watch mode
-bun test --watch
+npx vitest
 
 # Run with coverage
-bun test --coverage
+npx vitest run --coverage
 ```
 
 ## Test Organization
@@ -160,7 +160,7 @@ test("validates error properties", async () => {
 
 ### Async Code Testing
 
-Bun test runner handles async tests automatically:
+Vitest handles async tests automatically:
 
 ```typescript
 test("async operation completes", async () => {
@@ -187,7 +187,7 @@ test("promise rejects with error", async () => {
 ### Test Naming Conventions
 
 ```typescript
-import { describe, test, expect } from "bun:test";
+import { describe, test, expect } from "vitest";
 
 describe("ModuleName", () => {
   test("does something specific", () => {
@@ -261,7 +261,7 @@ Three tests are skipped because they require network access to fetch AWS CloudFo
 
 ```bash
 # Remove .skip from the test file or run with network access
-bun test packages/aws/src/spec/fetch.test.ts
+npx vitest run packages/aws/src/spec/fetch.test.ts
 ```
 
 These tests are skipped by default to:
@@ -275,21 +275,17 @@ In a CI environment, you would typically mock the AWS API calls or run these tes
 
 ### Current Status
 
-- **Total tests**: 646 passing, 3 skipped
-- **Test files**: 54 files across 4 packages
-- **Assertions**: 1420+ `expect()` calls
+- **Test files**: 458 files across the project
+- **Assertions**: 1000+ `expect()` calls
 
 ### Generating Coverage Reports
 
 ```bash
 # Generate coverage report (text format by default)
-bun test --coverage
+npx vitest run --coverage
 
 # Generate lcov format for coverage tools
-bun test --coverage --coverage-reporter=lcov
-
-# Specify coverage output directory
-bun test --coverage --coverage-dir=coverage-reports
+npx vitest run --coverage --coverage-reporter=lcov
 ```
 
 ### Coverage Goals
@@ -308,54 +304,34 @@ When adding new functionality:
 1. Write tests alongside your code in a `.test.ts` file
 2. Test both success and failure cases
 3. Use shared utilities from `@intentius/chant-test-utils`
-4. Run tests before committing: `bun test`
+4. Run tests before committing: `npx vitest run`
 
 ## Additional Test Options
 
 ### Running Specific Tests
 
 ```bash
-# Run only tests marked with test.only()
-bun test --only
+# Run only tests matching a pattern
+npx vitest run -t "pattern"
 
-# Run tests marked with test.todo()
-bun test --todo
+# Re-run failed tests (retry flaky tests)
+npx vitest run --retry=3
 
-# Re-run each test file multiple times (catch flaky tests)
-bun test --rerun-each=5
-
-# Run tests in random order
-bun test --randomize
+# Run tests in a specific file
+npx vitest run path/to/file.test.ts
 ```
 
 ### Debugging Tests
 
 ```bash
-# Show only failures
-bun test --only-failures
-
 # Set test timeout (default: 5000ms)
-bun test --timeout=10000
-
-# Bail after N failures
-bun test --bail=1
-```
-
-### Controlling Concurrency
-
-```bash
-# Limit concurrent test execution (default: 20)
-bun test --max-concurrency=5
-
-# Run all tests concurrently
-bun test --concurrent
+npx vitest run --testTimeout=10000
 ```
 
 ## CI/CD Integration
 
 The test suite is designed to run in continuous integration:
 
-- Fast execution (~230ms for full suite)
 - No external dependencies by default (network tests are skipped)
 - Deterministic results with automatic cleanup
 - Exit code 0 on success, non-zero on failure
@@ -365,10 +341,10 @@ Example CI configuration:
 ```yaml
 # GitHub Actions example
 - name: Run tests
-  run: bun test
+  run: npx vitest run
 
 - name: Generate coverage
-  run: bun test --coverage --coverage-reporter=lcov
+  run: npx vitest run --coverage --coverage-reporter=lcov
 ```
 
 ## Smoke Tests (Docker)
@@ -377,27 +353,27 @@ Smoke tests run inside Docker containers to verify chant works in a clean enviro
 
 ### Persona: New User (`just smoke-npm` / `smoke.sh npm`)
 
-**"I npm/bun installed chant. Does it work?"**
+**"I npm installed chant. Does it work?"**
 
 - Installs chant + each lexicon from tarballs (simulates `npm install`)
 - Runs `chant init --lexicon <X>` for all 6 lexicons
 - Builds and lints scaffolded projects
 - Builds and lints hand-crafted projects
 - Builds real cross-lexicon examples from packages
-- Tests both npm and bun runtimes (stages 2 and 3 of `Dockerfile.smoke-npm`)
+- Tested by `Dockerfile.smoke-npm` → `npm-smoke.sh`
 
-### Persona: Developer / Contributor (`just smoke-bun` / `smoke.sh workspace`)
+### Persona: Developer / Contributor (`just smoke-workspace` / `smoke.sh workspace`)
 
 **"I cloned the repo. Does everything work?"**
 
-- Fresh checkout + `bun install` + build from workspace
+- Fresh checkout + `npm install` + build from workspace
 - Full CLI coverage for all 6 lexicons: build, lint, list, doctor, init
 - MCP and LSP server startup
 - Output formats: `--output` file, `--format yaml`, `--format json`, `--format sarif`
 - `chant init lexicon` scaffold
 - Multi-stack builds
 - All root cross-lexicon examples build
-- Tested by `Dockerfile.smoke` → `integration.sh` (Bun only)
+- Tested by `Dockerfile.smoke` → `integration.sh`
 
 ### Persona: Release Validation (`smoke.sh smoke-{aws,eks,gke,aks,all}`)
 
@@ -415,10 +391,10 @@ Builds all root examples in Docker and extracts artifacts to `test/example-build
 
 | Recipe | What it does |
 |--------|--------------|
-| `just smoke-bun` | Developer tests — builds `Dockerfile.smoke`, runs `integration.sh`, drops into bash |
+| `just smoke-workspace` | Developer tests — builds `Dockerfile.smoke`, runs `integration.sh`, drops into bash |
 | `just smoke-npm` | New User tests — delegates to `./test/smoke.sh npm` |
 | `just smoke-build-examples` | Delegates to `./test/smoke.sh build-examples` |
-| `just smoke` | Runs `smoke-bun` then `smoke-npm` |
+| `just smoke` | Runs `smoke-workspace` then `smoke-npm` |
 
 ### smoke.sh modes
 
@@ -451,8 +427,8 @@ Each example directory also gets `README.md`, `package.json`, and any deploy scr
 | File | Purpose |
 |------|---------|
 | `test/smoke.sh` | Orchestrator — `workspace`, `npm`, `build-examples`, `smoke-{aws,eks,gke,aks,all}`, `all` |
-| `test/Dockerfile.smoke` | Developer persona — Bun workspace image, runs `integration.sh` during build |
-| `test/Dockerfile.smoke-npm` | New User persona — 3-stage tarball image: pack, test npm, test bun |
+| `test/Dockerfile.smoke` | Developer persona — Node.js workspace image, runs `integration.sh` during build |
+| `test/Dockerfile.smoke-npm` | New User persona — 2-stage tarball image: pack, test npm |
 | `test/Dockerfile.smoke-e2e` | Release persona — E2E image with deploy tools, runs `e2e-smoke.sh` at container start |
 | `test/integration.sh` | Developer test harness: CLI, build, lint, MCP, LSP, init for all 6 lexicons + examples |
 | `test/npm-smoke.sh` | New User test harness: tarball install, init flow, examples — all 6 lexicons, both runtimes |
@@ -465,21 +441,21 @@ How confident can we be that published npm packages actually work for end users?
 
 ### What's well covered
 
-- **Tarball install + CLI execution**: `npm install` from tarballs for all 6 lexicons, then `chant build` and `chant lint` with both npm and bun runtimes
+- **Tarball install + CLI execution**: `npm install` from tarballs for all 6 lexicons, then `chant build` and `chant lint` via `npx`
 - **Tarball content verification**: Explicit assertions that core tarball contains `bin/chant`, `src/cli/main.ts`, `src/index.ts`, and each lexicon tarball contains `dist/manifest.json`, `dist/meta.json`, `dist/types/index.d.ts`, `src/index.ts`
 - **`chant init` flow**: Scaffolding tested for all 6 lexicons — init, install, build, lint
-- **`workspace:*` resolution**: `bun publish` auto-resolves; smoke Dockerfile resolves manually with jq (because `bun pm pack` does not)
+- **`workspace:*` resolution**: smoke Dockerfile resolves manually with jq before packing tarballs
 - **Prepack pipeline**: All lexicons run `generate → bundle → validate` with schema and artifact checks
-- **Type resolution**: `tsc --noEmit` check after tarball install (soft pass — chant targets bun/tsx, not vanilla tsc)
+- **Type resolution**: `tsc --noEmit` check after tarball install (soft pass — chant targets tsx with `.ts` exports, not vanilla tsc)
 
 ### Known gaps
 
 | Gap | Severity | Notes |
 |-----|----------|-------|
-| Smoke tests disabled in CI | Accepted | Docker builds are slow (~10min). Publish workflow runs `prepack` + `bun test` as a gate. Run `just smoke` locally before releases. |
+| Smoke tests disabled in CI | Accepted | Docker builds are slow (~10min). Publish workflow runs `prepack` + `npx vitest run` as a gate. Run `just smoke` locally before releases. |
 | `integrity.json` never verified at runtime | Low | `verifyIntegrity()` exists in `lexicon-integrity.ts` but `loadPlugin()` in `cli/plugins.ts` doesn't call it. Defense-in-depth, not a correctness issue. |
 | Lexicon tarballs include entire `src/` | Low | Ships codegen scripts, fetch utilities, and test files. Bloats tarballs but doesn't break anything. Could narrow `"files"` in package.json. |
-| Sequential publish — partial failure risk | Low | If npm goes down mid-publish, some packages may be at different versions. `--tolerate-republish` on retry fixes this. Acceptable at current scale. |
+| Sequential publish — partial failure risk | Low | If npm goes down mid-publish, some packages may be at different versions. Retry with `--tolerate-republish` fixes this. Acceptable at current scale. |
 
 ## Troubleshooting
 
@@ -500,15 +476,15 @@ test("slow operation", async () => {
 Or use the command-line flag:
 
 ```bash
-bun test --timeout=10000
+npx vitest run --testTimeout=10000
 ```
 
 ### Flaky tests
 
-Run tests multiple times to identify flakiness:
+Run tests with retry to identify flakiness:
 
 ```bash
-bun test --rerun-each=10 --randomize
+npx vitest run --retry=5
 ```
 
 Check for:

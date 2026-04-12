@@ -90,11 +90,11 @@ A comprehensive docs site should have these pages (as MDX files in `docs/src/con
 ```bash
 # Development server
 cd lexicons/my-lexicon/docs
-bun install
-bun run dev
+npm install
+npm run dev
 
 # Production build
-bun run build
+npm run build
 ```
 
 ## Wiring into Package Scripts
@@ -104,9 +104,9 @@ Add a `docs` script to your lexicon's `package.json`:
 ```json
 {
   "scripts": {
-    "docs": "bun src/codegen/docs-cli.ts",
-    "docs:dev": "cd docs && bun run dev",
-    "docs:build": "cd docs && bun run build"
+    "docs": "npx tsx src/codegen/docs-cli.ts",
+    "docs:dev": "cd docs && npm run dev",
+    "docs:build": "cd docs && npm run build"
   }
 }
 ```

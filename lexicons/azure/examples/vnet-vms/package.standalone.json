@@ -4,7 +4,7 @@
   "type": "module",
   "private": true,
   "scripts": {
-    "test": "bun test",
+    "test": "npx vitest run",
     "build": "chant build src --lexicon azure -o template.json",
     "dev": "chant build src --lexicon azure --watch -o template.json",
     "lint": "chant lint src",

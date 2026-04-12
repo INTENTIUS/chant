@@ -17,7 +17,7 @@ export { defaultLabels, defaultAnnotations, isDefaultLabels, isDefaultAnnotation
 export { DEFAULT_LABELS_MARKER, DEFAULT_ANNOTATIONS_MARKER } from "./default-labels";
 export type { DefaultLabels, DefaultAnnotations } from "./default-labels";
 
-// Generated entities — populated by `bun run generate`
+// Generated entities — populated by `npm run generate`
 export * from "./generated/index";
 
 // Composites (to be added in Tier 2)

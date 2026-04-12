@@ -29,13 +29,11 @@ else
   fi
 fi
 
-# ── Node / bun ───────────────────────────────────────────────────────────────
-if command -v bun &>/dev/null; then
-  ok "bun $(bun --version)"
-elif command -v npm &>/dev/null; then
-  ok "npm $(npm --version)"
+# ── Node ─────────────────────────────────────────────────────────────────────
+if command -v node &>/dev/null; then
+  ok "node $(node --version)"
 else
-  fail "npm or bun required"
+  fail "node required"
 fi
 
 # ── jq ───────────────────────────────────────────────────────────────────────

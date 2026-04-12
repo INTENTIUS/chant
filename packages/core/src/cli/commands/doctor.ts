@@ -21,13 +21,13 @@ export async function doctorCommand(path: string): Promise<DoctorReport> {
   const checks: DoctorCheck[] = [];
   const projectPath = path || ".";
 
-  // Check 0: Bun is installed
+  // Check 0: Node.js is installed
   try {
-    const bunVersion = execSync("bun --version", { encoding: "utf-8" }).trim();
-    checks.push({ name: "bun-installed", status: "pass", message: `v${bunVersion}` });
+    const nodeVersion = execSync("node --version", { encoding: "utf-8" }).trim();
+    checks.push({ name: "node-installed", status: "pass", message: nodeVersion });
   } catch (e) {
-    debug("bun version check failed:", e);
-    checks.push({ name: "bun-installed", status: "fail", message: "Bun is not installed — see https://bun.sh" });
+    debug("node version check failed:", e);
+    checks.push({ name: "node-installed", status: "fail", message: "Node.js is not installed — see https://nodejs.org" });
   }
 
   // Check 1: Config exists and parses
@@ -157,7 +157,7 @@ export async function doctorCommand(path: string): Promise<DoctorReport> {
       const cleaned = raw.replace(/\/\/.*$/gm, "");
       const tsconfig = JSON.parse(cleaned);
       if (tsconfig.compilerOptions?.paths) {
-        checks.push({ name: "tsconfig-paths", status: "warn", message: "tsconfig.json has compilerOptions.paths — these break runtime module resolution (bun and tsx follow them). Remove the paths block." });
+        checks.push({ name: "tsconfig-paths", status: "warn", message: "tsconfig.json has compilerOptions.paths — these break runtime module resolution (tsx follows them). Remove the paths block." });
       } else {
         checks.push({ name: "tsconfig-paths", status: "pass" });
       }

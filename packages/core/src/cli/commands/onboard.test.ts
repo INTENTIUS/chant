@@ -64,32 +64,32 @@ jobs:
     steps:
       - name: Generate lexicon artifacts
         run: |
-          bun run --cwd lexicons/aws prepack
-          bun run --cwd lexicons/gitlab prepack
-          bun run --cwd lexicons/k8s prepack
+          npm run --prefix lexicons/aws prepack
+          npm run --prefix lexicons/gitlab prepack
+          npm run --prefix lexicons/k8s prepack
       - name: Run tests
-        run: bun test
+        run: npx vitest run
 
   test:
     steps:
       - name: Generate lexicon artifacts
         run: |
-          bun run --cwd lexicons/aws prepack
-          bun run --cwd lexicons/gitlab prepack
-          bun run --cwd lexicons/k8s prepack
+          npm run --prefix lexicons/aws prepack
+          npm run --prefix lexicons/gitlab prepack
+          npm run --prefix lexicons/k8s prepack
       - name: Run tests
-        run: bun test
+        run: npx vitest run
 
   validate:
     steps:
       - name: Generate and validate AWS lexicon
-        run: bun run --cwd lexicons/aws prepack
+        run: npm run --prefix lexicons/aws prepack
 
       - name: Generate and validate GitLab lexicon
-        run: bun run --cwd lexicons/gitlab prepack
+        run: npm run --prefix lexicons/gitlab prepack
 
       - name: Generate and validate K8s lexicon
-        run: bun run --cwd lexicons/k8s prepack
+        run: npm run --prefix lexicons/k8s prepack
 `;
 
     test("inserts prepack line in multi-line blocks", () => {
@@ -105,7 +105,7 @@ jobs:
       for (let i = 0; i <= lines.length; i++) {
         const isPrepack =
           i < lines.length &&
-          lines[i].includes("bun run --cwd lexicons/") &&
+          lines[i].includes("npm run --prefix lexicons/") &&
           lines[i].includes("prepack");
         if (isPrepack && groupStart === -1) {
           groupStart = i;
@@ -155,13 +155,13 @@ jobs:
       const block = [
         "",
         "      - name: Generate and validate Terraform lexicon",
-        "        run: bun run --cwd lexicons/terraform prepack",
+        "        run: npm run --prefix lexicons/terraform prepack",
       ];
       lines.splice(lastValidateRunIdx + 1, 0, ...block);
       const result = lines.join("\n");
 
       expect(result).toContain("Generate and validate Terraform lexicon");
-      expect(result).toContain("bun run --cwd lexicons/terraform prepack");
+      expect(result).toContain("npm run --prefix lexicons/terraform prepack");
     });
   });
 
@@ -175,20 +175,20 @@ on:
 jobs:
   test:
     steps:
-      - run: bun run --cwd lexicons/aws prepack
-      - run: bun run --cwd lexicons/gitlab prepack
-      - run: bun run --cwd lexicons/k8s prepack
-      - run: bun test
+      - run: npm run --prefix lexicons/aws prepack
+      - run: npm run --prefix lexicons/gitlab prepack
+      - run: npm run --prefix lexicons/k8s prepack
+      - run: npx vitest run
 
   publish:
     steps:
       - name: Publish @intentius/chant-lexicon-aws
         working-directory: lexicons/aws
-        run: bun publish --access public --tolerate-republish
+        run: npm publish --access public
 
       - name: Publish @intentius/chant-lexicon-k8s
         working-directory: lexicons/k8s
-        run: bun publish --access public --tolerate-republish
+        run: npm publish --access public
 `;
 
     test("adds prepack line in test job", () => {
@@ -199,10 +199,10 @@ jobs:
       // Find contiguous prepack group in test job
       const insertAfter: number[] = [];
       for (let i = 0; i < lines.length; i++) {
-        if (!lines[i].includes("bun run --cwd lexicons/") || !lines[i].includes("prepack")) continue;
+        if (!lines[i].includes("npm run --prefix lexicons/") || !lines[i].includes("prepack")) continue;
         const nextIsAlsoPrepack =
           i + 1 < lines.length &&
-          lines[i + 1].includes("bun run --cwd lexicons/") &&
+          lines[i + 1].includes("npm run --prefix lexicons/") &&
           lines[i + 1].includes("prepack");
         if (!nextIsAlsoPrepack) insertAfter.push(i);
       }
@@ -224,7 +224,7 @@ jobs:
 
       let lastPublishRunIdx = -1;
       for (let i = 0; i < lines.length; i++) {
-        if (lines[i].includes("bun publish --access public --tolerate-republish")) {
+        if (lines[i].includes("npm publish --access public")) {
           lastPublishRunIdx = i;
         }
       }
@@ -235,7 +235,7 @@ jobs:
         "",
         "      - name: Publish @intentius/chant-lexicon-terraform",
         "        working-directory: lexicons/terraform",
-        "        run: bun publish --access public --tolerate-republish",
+        "        run: npm publish --access public",
       ];
       lines.splice(lastPublishRunIdx + 1, 0, ...block);
       const result = lines.join("\n");
@@ -248,13 +248,13 @@ jobs:
   // ── Dockerfile ──────────────────────────────────────────
 
   describe("Dockerfile patching", () => {
-    const dockerContent = `FROM oven/bun:latest
+    const dockerContent = `FROM node:22-slim
 WORKDIR /app
 COPY . .
-RUN bun install
-RUN bun run --cwd lexicons/aws prepack
-RUN bun run --cwd lexicons/gitlab prepack
-RUN bun run --cwd lexicons/k8s prepack
+RUN npm install
+RUN npm run --prefix lexicons/aws prepack
+RUN npm run --prefix lexicons/gitlab prepack
+RUN npm run --prefix lexicons/k8s prepack
 COPY test/integration.sh /app/test/integration.sh
 `;
 
@@ -265,7 +265,7 @@ COPY test/integration.sh /app/test/integration.sh
 
       let lastIdx = -1;
       for (let i = 0; i < lines.length; i++) {
-        if (lines[i].includes("bun run --cwd lexicons/") && lines[i].includes("prepack")) {
+        if (lines[i].includes("npm run --prefix lexicons/") && lines[i].includes("prepack")) {
           lastIdx = i;
         }
       }
@@ -276,7 +276,7 @@ COPY test/integration.sh /app/test/integration.sh
       lines.splice(lastIdx + 1, 0, newLine);
       const result = lines.join("\n");
 
-      expect(result).toContain("RUN bun run --cwd lexicons/terraform prepack");
+      expect(result).toContain("RUN npm run --prefix lexicons/terraform prepack");
       // Should come after k8s line
       const k8sIdx = result.indexOf("lexicons/k8s prepack");
       const tfIdx = result.indexOf("lexicons/terraform prepack");
@@ -284,7 +284,7 @@ COPY test/integration.sh /app/test/integration.sh
     });
 
     test("does not add duplicate", () => {
-      const withTerraform = dockerContent + "RUN bun run --cwd lexicons/terraform prepack\n";
+      const withTerraform = dockerContent + "RUN npm run --prefix lexicons/terraform prepack\n";
       writeFileSync(join(root, "test/Dockerfile.smoke"), withTerraform);
       const content = readFileSync(join(root, "test/Dockerfile.smoke"), "utf-8");
 

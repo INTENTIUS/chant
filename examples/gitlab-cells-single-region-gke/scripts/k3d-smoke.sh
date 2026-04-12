@@ -79,7 +79,7 @@ helm upgrade --install ingress-nginx ingress-nginx/ingress-nginx \
 # --- 4. Create namespaces ---
 echo "=== Creating namespaces ==="
 # Derive cell names from config — no hardcoded alpha/beta.
-CELL_NAMES=$(bun -e "import { cells } from './src/config.ts'; process.stdout.write(cells.map(c => c.name).join(' '))")
+CELL_NAMES=$(npx tsx --eval "import { cells } from './src/config.ts'; process.stdout.write(cells.map(c => c.name).join(' '))")
 kubectl create namespace system --dry-run=client -o yaml | kubectl apply -f -
 for CELL_NAME in $CELL_NAMES; do
   kubectl create namespace "cell-${CELL_NAME}" --dry-run=client -o yaml | kubectl apply -f -

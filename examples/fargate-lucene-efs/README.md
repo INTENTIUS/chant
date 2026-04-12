@@ -74,7 +74,7 @@ Reads the solr stack outputs. Creates a DynamoDB table with Streams enabled and 
 
 - AWS CLI configured (`aws sts get-caller-identity` should return your account)
 - Docker Desktop running (for Phase 0)
-- Bun installed — [https://bun.sh](https://bun.sh)
+- Node.js 20+ — [https://nodejs.org](https://nodejs.org)
 - `npm install` run from the repo root
 
 ## Cost

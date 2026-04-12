@@ -372,7 +372,7 @@ export const tags = defaultTags([
             .slice(0, 10);
           return JSON.stringify(matches, null, 2);
         } catch {
-          return "Lexicon not available — run `bun run generate` first.";
+          return "Lexicon not available — run `npm run generate` first.";
         }
       },
     }];

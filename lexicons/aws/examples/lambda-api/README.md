@@ -30,7 +30,7 @@ chant spell cast lambda-api
 ## Quick Start
 
 ```bash
-bun run build
+npm run build
 ```
 
 ## What It Does

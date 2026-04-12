@@ -17,10 +17,10 @@ export function generatePackageJson(name: string, names: { packageName: string }
       "./types": "./dist/types/index.d.ts",
     },
     scripts: {
-      generate: "bun run src/codegen/generate-cli.ts",
-      validate: "bun run src/validate-cli.ts",
-      docs: "bun src/codegen/docs-cli.ts",
-      prepack: "bun run generate && bun run validate",
+      generate: "npx tsx src/codegen/generate-cli.ts",
+      validate: "npx tsx src/validate-cli.ts",
+      docs: "npx tsx src/codegen/docs-cli.ts",
+      prepack: "npm run generate && npm run validate",
     },
     dependencies: {
       "@intentius/chant": "workspace:*",
@@ -53,23 +53,23 @@ default:
 
 # Generate types and metadata from upstream schemas
 generate:
-    bun run src/codegen/generate-cli.ts
+    npx tsx src/codegen/generate-cli.ts
 
 # Validate generated artifacts
 validate:
-    bun run src/validate-cli.ts
+    npx tsx src/validate-cli.ts
 
 # Generate docs site, install deps, and start dev server
 docs:
-    bun run src/codegen/docs-cli.ts
-    bun install --cwd docs
-    bun --cwd docs dev
+    npx tsx src/codegen/docs-cli.ts
+    npm install --prefix docs
+    npm run --prefix docs dev
 
 # Build docs site for production
 docs-build:
-    bun run src/codegen/docs-cli.ts
-    bun install --cwd docs
-    bun --cwd docs build
+    npx tsx src/codegen/docs-cli.ts
+    npm install --prefix docs
+    npm run --prefix docs build
 
 # Package the lexicon (generate + validate)
 package: generate validate
@@ -174,7 +174,7 @@ export async function validate(opts?: { basePath?: string }): Promise<ValidateRe
 }
 
 export function generateValidateCliTs(): string {
-  return `#!/usr/bin/env bun
+  return `#!/usr/bin/env tsx
 import { validate } from "./validate";
 
 await validate({ verbose: true });

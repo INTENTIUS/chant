@@ -1,4 +1,4 @@
-#!/usr/bin/env bun
+#!/usr/bin/env tsx
 /**
  * Build dist/ artifacts for lexicon-flyway package.
  * Used by the Docker npm smoke test.

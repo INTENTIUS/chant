@@ -5,7 +5,8 @@ description: Setting up a development environment for chant
 
 ## Prerequisites
 
-- **[Bun](https://bun.sh/)** — runtime, package manager, and test runner
+- **[Node.js 20+](https://nodejs.org/)** — runtime
+- **[tsx](https://github.com/privatenumber/tsx)** — TypeScript execution (`npm install -g tsx`)
 - **Git** — for version control
 - **[just](https://just.systems/)** — task runner (optional, but recommended)
 
@@ -14,7 +15,7 @@ description: Setting up a development environment for chant
 ```bash
 git clone https://github.com/intentius/chant.git
 cd chant
-bun install
+npm install
 ```
 
 ## Justfile Commands
@@ -24,7 +25,7 @@ The project uses `just` for common tasks. Run `just` with no arguments to see al
 ```bash
 just              # list all commands
 just install      # install all dependencies (including docs)
-just build        # type-check the project (bun run tsc --noEmit)
+just build        # type-check the project (npx tsc --noEmit)
 just test         # run all tests
 just lint         # run eslint on packages/
 just check        # run build + lint + test
@@ -37,10 +38,10 @@ just docs-build   # build the unified documentation site
 ## Run Tests
 
 ```bash
-bun test                    # all tests
-bun test packages/core/     # core package only
-bun test lexicons/aws/      # AWS lexicon only
-bun test lexicons/k8s/      # K8s lexicon only
+npx vitest run                    # all tests
+npx vitest run packages/core      # core package only
+npx vitest run lexicons/aws       # AWS lexicon only
+npx vitest run lexicons/k8s       # K8s lexicon only
 ```
 
 #### Kubernetes roundtrip tests
@@ -83,7 +84,7 @@ describeAllExamples({
   lexicon: "my-lexicon",
   serializer: mySerializer,
   outputKey: "my-lexicon",
-  examplesDir: import.meta.dir,
+  examplesDir: import.meta.dirname,
 }, {
   // Per-example overrides (optional)
   "docs-snippets": { skipLint: true },
@@ -98,7 +99,7 @@ describeAllExamples({
 ## Type Checking
 
 ```bash
-bun run tsc --noEmit
+npx tsc --noEmit -p packages/core/tsconfig.json
 ```
 
 ## Project Layout

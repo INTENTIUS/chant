@@ -1,4 +1,4 @@
-#!/usr/bin/env bun
+#!/usr/bin/env tsx
 import { generateDocs } from "./docs";
 
 generateDocs({ verbose: true }).catch((err) => {

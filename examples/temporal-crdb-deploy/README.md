@@ -164,7 +164,7 @@ This is a Bun workspace — install from the monorepo root:
 ```bash
 # From the repo root:
 cd ../..
-bun install
+npm install
 cd examples/temporal-crdb-deploy
 ```
 

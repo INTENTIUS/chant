@@ -1,4 +1,4 @@
-#!/usr/bin/env bun
+#!/usr/bin/env tsx
 import { packageLexicon } from "./codegen/package";
 import { writeBundleSpec } from "@intentius/chant/codegen/package";
 import { join, dirname } from "path";

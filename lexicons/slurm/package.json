@@ -17,7 +17,7 @@
     "generate": "tsx src/codegen/generate-cli.ts",
     "validate": "tsx src/validate-cli.ts",
     "package": "tsx src/codegen/package-cli.ts",
-    "docs": "bun src/codegen/docs-cli.ts",
+    "docs": "npx tsx src/codegen/docs-cli.ts",
     "prepack": "npm run generate && npm run validate"
   },
   "devDependencies": {

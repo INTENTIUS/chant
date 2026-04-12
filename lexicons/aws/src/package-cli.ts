@@ -1,10 +1,10 @@
-#!/usr/bin/env bun
+#!/usr/bin/env tsx
 /**
- * Thin entry point for `bun run bundle` in lexicon-aws.
+ * Thin entry point for `npm run bundle` in lexicon-aws.
  * Generates src/generated/ files and writes dist/ bundle.
  *
  * NOTE: Does NOT call plugin.package() because that internally spawns
- * `bun pm pack`, which would cause infinite recursion when invoked
+ * `npm pack`, which would cause infinite recursion when invoked
  * from a prepack lifecycle script.
  */
 import { generate, writeGeneratedFiles } from "./codegen/generate";

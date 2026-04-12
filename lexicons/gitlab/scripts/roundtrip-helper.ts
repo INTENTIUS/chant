@@ -10,7 +10,7 @@
  *
  * Exit 0 on success, 1 on failure.
  *
- * Usage: bun run scripts/roundtrip-helper.ts <pipeline-file>
+ * Usage: npx tsx scripts/roundtrip-helper.ts <pipeline-file>
  */
 import { readFileSync, mkdtempSync, writeFileSync, mkdirSync, rmSync } from "fs";
 import { join, dirname } from "path";
@@ -20,7 +20,7 @@ import { GitLabGenerator } from "../src/import/generator";
 if (import.meta.main) {
   const file = process.argv[2];
   if (!file) {
-    console.error("Usage: bun run roundtrip-helper.ts <pipeline-file>");
+    console.error("Usage: npx tsx roundtrip-helper.ts <pipeline-file>");
     process.exit(1);
   }
 

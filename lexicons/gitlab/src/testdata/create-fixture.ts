@@ -1,7 +1,7 @@
-#!/usr/bin/env bun
+#!/usr/bin/env tsx
 /**
  * Script to create a minimal CI schema fixture for tests.
- * Run once: bun run src/testdata/create-fixture.ts
+ * Run once: npx tsx src/testdata/create-fixture.ts
  */
 
 import { readFileSync, writeFileSync } from "fs";

@@ -14,9 +14,9 @@ SMOKE_DOMAIN="${DOMAIN:-gitlab.example.com}"
 
 # Derive cell names from config.ts — no hardcoded alpha/beta.
 # CELL_1/CELL_2 are keyed by cellId (routing token prefix integer).
-CELL_1=$(bun -e "import { cells } from './src/config.ts'; process.stdout.write(cells.find(c => c.cellId === 1)?.name ?? '')")
-CELL_2=$(bun -e "import { cells } from './src/config.ts'; process.stdout.write(cells.find(c => c.cellId === 2)?.name ?? '')")
-CANARY_CELL=$(bun -e "import { cells } from './src/config.ts'; process.stdout.write(cells.find(c => c.canary)?.name ?? '')")
+CELL_1=$(npx tsx --eval "import { cells } from './src/config.ts'; process.stdout.write(cells.find(c => c.cellId === 1)?.name ?? '')")
+CELL_2=$(npx tsx --eval "import { cells } from './src/config.ts'; process.stdout.write(cells.find(c => c.cellId === 2)?.name ?? '')")
+CANARY_CELL=$(npx tsx --eval "import { cells } from './src/config.ts'; process.stdout.write(cells.find(c => c.canary)?.name ?? '')")
 
 PASS=0
 FAIL=0
