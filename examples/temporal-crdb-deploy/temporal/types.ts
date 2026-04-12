@@ -29,3 +29,23 @@ export const REGION_CONFIG: Record<Region, { gkeCluster: string; gkeRegion: stri
   central: { gkeCluster: 'gke-crdb-central', gkeRegion: 'us-central1', namespace: 'crdb-central' },
   west:    { gkeCluster: 'gke-crdb-west',    gkeRegion: 'us-west1',    namespace: 'crdb-west' },
 };
+
+/**
+ * Search attribute keys declared in src/temporal.ts via TemporalCloudStack.
+ *
+ * Usage in the workflow:
+ *   workflow.upsertSearchAttributes({
+ *     [SEARCH_ATTRS.DeployPhase]: [Phase.APPLY_SHARED_INFRA],
+ *     [SEARCH_ATTRS.GcpProject]:  [params.gcpProjectId],
+ *   });
+ *
+ * This lets the Temporal Cloud UI workflow list act as a deployment dashboard:
+ *   • Filter by DeployPhase to see all workflows in WAIT_DNS_DELEGATION
+ *   • Filter by DeployRegion to see which regions are active
+ */
+export const SEARCH_ATTRS = {
+  GcpProject:   'GcpProject',
+  CrdbDomain:   'CrdbDomain',
+  DeployPhase:  'DeployPhase',
+  DeployRegion: 'DeployRegion',
+} as const;

@@ -22,7 +22,8 @@
     "@intentius/chant-lexicon-gitlab": "*",
     "@intentius/chant-lexicon-helm": "*",
     "@intentius/chant-lexicon-k8s": "*",
-    "@intentius/chant-lexicon-slurm": "*"
+    "@intentius/chant-lexicon-slurm": "*",
+    "@intentius/chant-lexicon-temporal": "*"
   },
   "devDependencies": {
     "@types/node": "^20.0.0",

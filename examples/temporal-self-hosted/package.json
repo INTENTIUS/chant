@@ -1,0 +1,17 @@
+{
+  "name": "temporal-self-hosted-example",
+  "version": "0.0.1",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "build":  "chant build src --lexicon temporal -o dist/docker-compose.yml",
+    "start":  "docker compose -f dist/docker-compose.yml up -d",
+    "setup":  "bash dist/temporal-setup.sh",
+    "stop":   "docker compose -f dist/docker-compose.yml down",
+    "lint":   "chant lint src"
+  },
+  "dependencies": {
+    "@intentius/chant": "*",
+    "@intentius/chant-lexicon-temporal": "*"
+  }
+}

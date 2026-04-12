@@ -40,6 +40,7 @@ jobs:
           npm run --prefix lexicons/helm prepack
           npm run --prefix lexicons/docker prepack
           npm run --prefix lexicons/slurm prepack
+          npm run --prefix lexicons/temporal prepack
 
       - name: Typecheck
         run: npx tsc --noEmit -p packages/core/tsconfig.json
@@ -89,6 +90,7 @@ jobs:
           npm run --prefix lexicons/helm prepack
           npm run --prefix lexicons/docker prepack
           npm run --prefix lexicons/slurm prepack
+          npm run --prefix lexicons/temporal prepack
 
       - name: Run tests
         run: npx vitest run
@@ -143,6 +145,9 @@ jobs:
 
       - name: Generate and validate Slurm lexicon
         run: npm run --prefix lexicons/slurm prepack
+
+      - name: Generate and validate Temporal lexicon
+        run: npm run --prefix lexicons/temporal prepack
 
   smoke-npm:
     if: false  # disabled — Docker smoke tests are for local/release validation, not every push

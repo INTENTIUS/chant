@@ -1,0 +1,13 @@
+---
+title: Lint Rules
+description: Temporal lexicon lint rules.
+---
+
+No lint rules are defined in this version of the Temporal lexicon.
+
+Future versions may add rules such as:
+- `TMP001` — `TemporalServer` should not use `mode: "full"` without explicit `postgresVersion`
+- `TMP002` — `TemporalSchedule` with `overlap: "AllowAll"` should have a comment explaining the intent
+- `TMP003` — `TemporalNamespace` retention shorter than 3 days may cause data loss
+
+To write custom rules for your project, see the [lint-rules authoring guide](/chant/docs/lexicon-authoring/lint-rules/).

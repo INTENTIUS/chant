@@ -1,0 +1,58 @@
+---
+title: Temporal Lexicon
+description: Temporal.io server deployment, namespace provisioning, search attributes, and SDK schedule creation for chant projects.
+---
+
+The `@intentius/chant-lexicon-temporal` package bridges Temporal.io's infrastructure concerns
+into chant's build pipeline. Declare server configurations, namespaces, search attributes, and
+schedules in TypeScript — `chant build` compiles them to deployment artifacts.
+
+## Stats
+
+| Category | Count |
+|---|---|
+| Resources | 4 |
+| Intrinsics | 0 |
+| Pseudo-parameters | 0 |
+| Lint rules | 0 |
+| Skills | 2 |
+
+## Resources
+
+| Resource | Entity type | Output |
+|---|---|---|
+| `TemporalServer` | `Temporal::Server` | `docker-compose.yml` + `temporal-helm-values.yaml` |
+| `TemporalNamespace` | `Temporal::Namespace` | `temporal-setup.sh` (namespace create) |
+| `SearchAttribute` | `Temporal::SearchAttribute` | `temporal-setup.sh` (search-attribute create) |
+| `TemporalSchedule` | `Temporal::Schedule` | `schedules/<id>.ts` (SDK schedule creation) |
+
+## Install
+
+```bash
+npm install @intentius/chant-lexicon-temporal
+```
+
+Add to `chant.config.ts`:
+
+```ts
+export default {
+  lexicons: ["temporal"],
+};
+```
+
+## Quick example
+
+```ts
+import { TemporalServer, TemporalNamespace } from "@intentius/chant-lexicon-temporal";
+
+export const server = new TemporalServer({ mode: "dev" });
+export const ns = new TemporalNamespace({ name: "default", retention: "7d" });
+```
+
+Build:
+
+```bash
+chant build src/ --output dist/
+docker compose up -d          # starts Temporal dev server
+bash dist/temporal-setup.sh   # creates namespace
+```
