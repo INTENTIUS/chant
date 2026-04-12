@@ -1,4 +1,4 @@
-import { describe, test, expect } from "bun:test";
+import { describe, test, expect } from "vitest";
 import { walkValue, type SerializerVisitor } from "./serializer-walker";
 import { DECLARABLE_MARKER, type Declarable } from "./declarable";
 import { INTRINSIC_MARKER } from "./intrinsic";
@@ -98,6 +98,7 @@ describe("walkValue", () => {
     const TestTable = createResource("Test::Table", "test", {});
     const resource = new TestTable({}) as unknown as Declarable;
     const names = new Map<Declarable, string>([[resource, "MyTable"]]);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     expect(walkValue((resource as any).Ref, names, mockVisitor)).toEqual({ __ref: "MyTable" });
   });
 

@@ -1,4 +1,4 @@
-import { describe, test, expect } from "bun:test";
+import { describe, test, expect } from "vitest";
 import { buildRuleRegistry } from "./rule-registry";
 import type { LintRule, LintContext, LintDiagnostic } from "./rule";
 import type { PostSynthCheck, PostSynthContext, PostSynthDiagnostic } from "./post-synth";

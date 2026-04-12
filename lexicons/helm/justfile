@@ -2,19 +2,19 @@ default:
     @just --list
 
 generate:
-    bun run src/codegen/generate-cli.ts
+    npx tsx src/codegen/generate-cli.ts
 
 validate:
-    bun run src/validate-cli.ts
+    npx tsx src/validate-cli.ts
 
 docs:
-    bun run src/codegen/docs-cli.ts
-    bun install --cwd docs
-    bun --cwd docs dev
+    npx tsx src/codegen/docs-cli.ts
+    npm install --prefix docs
+    npm run --prefix docs dev
 
 docs-build:
-    bun run src/codegen/docs-cli.ts
-    bun install --cwd docs
-    bun --cwd docs build
+    npx tsx src/codegen/docs-cli.ts
+    npm install --prefix docs
+    npm run --prefix docs build
 
 package: generate validate

@@ -1,4 +1,4 @@
-import { describe, test, expect, beforeEach } from "bun:test";
+import { describe, test, expect, beforeEach } from "vitest";
 import { collectEntities } from "./collect";
 import { DECLARABLE_MARKER } from "../declarable";
 import { DiscoveryError } from "../errors";

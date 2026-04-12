@@ -4,23 +4,23 @@ default:
 
 # Generate types and metadata from GitLab CI schema
 generate:
-    bun run src/codegen/generate-cli.ts
+    npx tsx src/codegen/generate-cli.ts
 
 # Generate docs site, install deps, and start dev server
 docs:
-    bun run src/codegen/docs-cli.ts
-    bun install --cwd docs
-    bun --cwd docs dev
+    npx tsx src/codegen/docs-cli.ts
+    npm install --prefix docs
+    npm run --prefix docs dev
 
 # Build docs site for production
 docs-build:
-    bun run src/codegen/docs-cli.ts
-    bun install --cwd docs
-    bun --cwd docs build
+    npx tsx src/codegen/docs-cli.ts
+    npm install --prefix docs
+    npm run --prefix docs build
 
 # Run all tests
 test:
-    bun test
+    npx vitest run
 
 # Import real-world GitLab CI samples and run roundtrip tests
 import-samples *ARGS:

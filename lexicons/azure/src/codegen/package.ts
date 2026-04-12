@@ -3,9 +3,8 @@
  * with Azure-specific manifest building and skill collection.
  */
 
-import { createRequire } from "module";
 import { readFileSync } from "fs";
-const require = createRequire(import.meta.url);
+import { azurePlugin } from "../plugin";
 import { dirname } from "path";
 import { fileURLToPath } from "url";
 import type { IntrinsicDef } from "@intentius/chant/lexicon";
@@ -40,8 +39,6 @@ export async function packageLexicon(opts: PackageOptions = {}): Promise<Package
 
       buildManifest: (_genResult) => {
         // Lazy-import to avoid circular dependency
-        const { azurePlugin } = require("../plugin");
-
         const intrinsics: IntrinsicDef[] = (azurePlugin.intrinsics?.() ?? []).map(
           (i: { name: string; description: string }) => ({
             name: i.name,
@@ -70,9 +67,7 @@ export async function packageLexicon(opts: PackageOptions = {}): Promise<Package
 
       srcDir: pkgDir,
 
-      collectSkills: () => {
-        const { azurePlugin } = require("../plugin");
-        const skillDefs = azurePlugin.skills?.() ?? [];
+      collectSkills: () => {        const skillDefs = azurePlugin.skills?.() ?? [];
         return collectSkills(skillDefs);
       },
 

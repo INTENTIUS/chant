@@ -6,7 +6,7 @@
  *
  * Exit 0 on success, 1 on failure.
  *
- * Usage: bun run scripts/roundtrip-helper.ts <template-file>
+ * Usage: npx tsx scripts/roundtrip-helper.ts <template-file>
  */
 import { readFileSync, mkdtempSync, writeFileSync, mkdirSync, rmSync } from "fs";
 import { join, dirname } from "path";
@@ -16,7 +16,7 @@ import { CFGenerator } from "../src/import/generator";
 if (import.meta.main) {
   const file = process.argv[2];
   if (!file) {
-    console.error("Usage: bun run roundtrip-helper.ts <template-file>");
+    console.error("Usage: npx tsx roundtrip-helper.ts <template-file>");
     process.exit(1);
   }
 

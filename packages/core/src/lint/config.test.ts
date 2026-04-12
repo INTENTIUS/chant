@@ -1,9 +1,9 @@
-import { describe, test, expect, beforeEach, afterEach } from "bun:test";
+import { describe, test, expect, beforeEach, afterEach } from "vitest";
 import { loadConfig, DEFAULT_CONFIG } from "./config";
 import { writeFileSync, mkdirSync, rmSync } from "fs";
 import { join } from "path";
 
-const TEST_DIR = join(import.meta.dir, "__test_config__");
+const TEST_DIR = join(import.meta.dirname, "__test_config__");
 
 beforeEach(() => {
   // Create test directory

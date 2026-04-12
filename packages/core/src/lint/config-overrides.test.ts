@@ -1,9 +1,9 @@
-import { describe, test, expect, beforeEach, afterEach } from "bun:test";
+import { describe, test, expect, beforeEach, afterEach } from "vitest";
 import { loadConfig, resolveRulesForFile, type LintConfig } from "./config";
 import { writeFileSync, mkdirSync, rmSync } from "fs";
 import { join } from "path";
 
-const TEST_DIR = join(import.meta.dir, "__test_config_overrides__");
+const TEST_DIR = join(import.meta.dirname, "__test_config_overrides__");
 
 beforeEach(() => {
   mkdirSync(TEST_DIR, { recursive: true });

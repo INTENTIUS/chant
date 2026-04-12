@@ -1,6 +1,6 @@
 {
   "name": "@intentius/chant-lexicon-slurm",
-  "version": "0.1.4",
+  "version": "0.1.5",
   "type": "module",
   "files": [
     "src/",
@@ -14,14 +14,14 @@
     "./types": "./dist/types/index.d.ts"
   },
   "scripts": {
-    "generate": "bun run src/codegen/generate-cli.ts",
-    "validate": "bun run src/validate-cli.ts",
-    "package": "bun run src/codegen/package-cli.ts",
-    "docs": "bun src/codegen/docs-cli.ts",
-    "prepack": "bun run generate && bun run validate"
+    "generate": "tsx src/codegen/generate-cli.ts",
+    "validate": "tsx src/validate-cli.ts",
+    "package": "tsx src/codegen/package-cli.ts",
+    "docs": "npx tsx src/codegen/docs-cli.ts",
+    "prepack": "npm run generate && npm run validate"
   },
   "devDependencies": {
-    "@intentius/chant": "workspace:*",
+    "@intentius/chant": "*",
     "typescript": "^5.9.3"
   },
   "peerDependencies": {

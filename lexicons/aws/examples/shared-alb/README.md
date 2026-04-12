@@ -28,7 +28,7 @@ chant spell cast alb-infra
 
 ```bash
 # 1. Build and deploy the shared infrastructure
-bun run build
+npm run build
 aws cloudformation deploy \
   --template-file template.json \
   --stack-name shared-alb \

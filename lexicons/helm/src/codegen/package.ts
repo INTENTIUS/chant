@@ -3,11 +3,10 @@
  * with Helm-specific manifest building and skill collection.
  */
 
-import { createRequire } from "module";
 import { readFileSync } from "fs";
-const require = createRequire(import.meta.url);
 import { join, dirname } from "path";
 import { fileURLToPath } from "url";
+import { helmPlugin } from "../plugin";
 import {
   packagePipeline,
   collectSkills,
@@ -52,7 +51,6 @@ export async function packageLexicon(opts: PackageOptions = {}): Promise<Package
       srcDir: pkgDir,
 
       collectSkills: () => {
-        const { helmPlugin } = require("../plugin");
         const skillDefs = helmPlugin.skills?.() ?? [];
         return collectSkills(skillDefs);
       },

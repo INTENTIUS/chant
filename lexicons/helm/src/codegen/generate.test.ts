@@ -1,11 +1,11 @@
-import { describe, test, expect } from "bun:test";
+import { describe, test, expect } from "vitest";
 import { generate } from "./generate";
 
 describe("Helm generate pipeline", () => {
   test("generate module is importable", async () => {
     const mod = await import("./generate");
-    expect(mod.generate).toBeFunction();
-    expect(mod.writeGeneratedFiles).toBeFunction();
+    expect(typeof mod.generate).toBe("function");
+    expect(typeof mod.writeGeneratedFiles).toBe("function");
   });
 
   test("generates lexicon JSON, types, and index", async () => {

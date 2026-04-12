@@ -1,4 +1,4 @@
-#!/usr/bin/env bun
+#!/usr/bin/env tsx
 
 import { resolve } from "node:path";
 import { formatSuccess, formatError } from "./format";
@@ -234,10 +234,10 @@ async function main(): Promise<void> {
   // Initialize runtime adapter early — before plugins or commands run
   const projectPath0 = resolve(args.path === "." ? "." : args.path);
   try {
-    const { config } = await loadChantConfig(projectPath0);
-    initRuntime(config.runtime);
+    await loadChantConfig(projectPath0);
+    initRuntime();
   } catch {
-    // Config may not exist yet (e.g. `chant init`); auto-detect runtime
+    // Config may not exist yet (e.g. `chant init`)
     initRuntime();
   }
 
@@ -263,7 +263,8 @@ async function main(): Promise<void> {
 }
 
 // Only run main when executed directly, not when imported
-if (import.meta.main) {
+const isMain = import.meta.url === `file://${process.argv[1]}`;
+if (isMain) {
   main().catch((err) => {
     const verbose = process.argv.includes("--verbose") || process.argv.includes("-v");
     if (verbose && err instanceof Error && err.stack) {

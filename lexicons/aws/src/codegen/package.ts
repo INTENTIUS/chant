@@ -3,9 +3,8 @@
  * with AWS-specific manifest building and skill collection.
  */
 
-import { createRequire } from "module";
 import { readFileSync } from "fs";
-const require = createRequire(import.meta.url);
+import { awsPlugin } from "../plugin";
 import { join, dirname } from "path";
 import { fileURLToPath } from "url";
 import type { IntrinsicDef } from "@intentius/chant/lexicon";
@@ -43,8 +42,6 @@ export async function packageLexicon(opts: PackageOptions = {}): Promise<Package
 
       buildManifest: (_genResult) => {
         // Lazy-import to avoid circular dependency
-        const { awsPlugin } = require("../plugin");
-
         const intrinsics: IntrinsicDef[] = (awsPlugin.intrinsics?.() ?? []).map(
           (i: { name: string; description: string }) => ({
             name: i.name,
@@ -73,9 +70,7 @@ export async function packageLexicon(opts: PackageOptions = {}): Promise<Package
 
       srcDir: pkgDir,
 
-      collectSkills: () => {
-        const { awsPlugin } = require("../plugin");
-        const skillDefs = awsPlugin.skills?.() ?? [];
+      collectSkills: () => {        const skillDefs = awsPlugin.skills?.() ?? [];
         return collectSkills(skillDefs);
       },
 

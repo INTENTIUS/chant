@@ -19,7 +19,7 @@ The lexicon packages ship skills for agent-guided deployment. After `chant init 
 ## Quick Start
 
 ```bash
-bun run build
+npm run build
 ```
 
 ## What It Does

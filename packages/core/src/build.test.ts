@@ -1,5 +1,5 @@
-import { describe, test, expect, beforeEach, afterEach } from "bun:test";
-import { build, partitionByLexicon, detectCrossLexiconRefs } from "./build";
+import { describe, test, expect, beforeEach, afterEach } from "vitest";
+import { build, partitionByLexicon, detectCrossLexiconRefs, collectLexiconOutputs } from "./build";
 import { output } from "./lexicon-output";
 import { AttrRef } from "./attrref";
 import { INTRINSIC_MARKER } from "./intrinsic";
@@ -354,7 +354,6 @@ describe("detectCrossLexiconRefs", () => {
     expect(autoDetected[0].outputName).toBe("dataBucket_Arn");
 
     // But when collecting explicit outputs, the explicit one is found
-    const { collectLexiconOutputs } = require("./build");
     const explicitOutputs = collectLexiconOutputs(entities);
     expect(explicitOutputs).toHaveLength(1);
     expect(explicitOutputs[0].outputName).toBe("MyCustomArnName");
@@ -369,7 +368,7 @@ describe("detectCrossLexiconRefs", () => {
       ...autoDetected.filter((auto) => {
         const autoParent = auto._sourceParent?.deref();
         return !explicitRefs.some(
-          (e: { parent: object | undefined; attribute: string }) =>
+          (e: { parent: object | undefined; attribute: string | null }) =>
             e.parent === autoParent && e.attribute === auto.sourceAttribute
         );
       }),
@@ -422,7 +421,6 @@ describe("detectCrossLexiconRefs", () => {
       ["myUrl", intrinsicOutput as unknown as Declarable],
     ]);
 
-    const { collectLexiconOutputs } = require("./build");
     const collected = collectLexiconOutputs(entities);
     expect(collected).toHaveLength(1);
     expect(collected[0].outputName).toBe("MyUrl");

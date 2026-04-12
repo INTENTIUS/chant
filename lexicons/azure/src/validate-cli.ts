@@ -1,6 +1,6 @@
-#!/usr/bin/env bun
+#!/usr/bin/env tsx
 /**
- * Thin entry point for `bun run validate` in lexicon-azure.
+ * Thin entry point for `npm run validate` in lexicon-azure.
  */
 import { validate } from "./validate";
 

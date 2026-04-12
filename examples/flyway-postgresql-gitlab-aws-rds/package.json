@@ -12,10 +12,10 @@
     "dev": "chant build src --watch"
   },
   "dependencies": {
-    "@intentius/chant": "workspace:*",
-    "@intentius/chant-lexicon-aws": "workspace:*",
-    "@intentius/chant-lexicon-flyway": "workspace:*",
-    "@intentius/chant-lexicon-gitlab": "workspace:*",
-    "@intentius/chant-lexicon-docker": "workspace:*"
+    "@intentius/chant": "*",
+    "@intentius/chant-lexicon-aws": "*",
+    "@intentius/chant-lexicon-flyway": "*",
+    "@intentius/chant-lexicon-gitlab": "*",
+    "@intentius/chant-lexicon-docker": "*"
   }
 }

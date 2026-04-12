@@ -8,7 +8,7 @@
     "lint": "chant lint src"
   },
   "dependencies": {
-    "@intentius/chant": "workspace:*",
-    "@intentius/chant-lexicon-slurm": "workspace:*"
+    "@intentius/chant": "*",
+    "@intentius/chant-lexicon-slurm": "*"
   }
 }

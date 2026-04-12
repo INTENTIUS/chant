@@ -1,10 +1,10 @@
-import { describe, test, expect } from "bun:test";
+import { describe, test, expect } from "vitest";
 import { packageLexicon } from "./package";
 
 describe("Helm package pipeline", () => {
   test("packageLexicon is importable", async () => {
     const mod = await import("./package");
-    expect(mod.packageLexicon).toBeFunction();
+    expect(typeof mod.packageLexicon).toBe("function");
   });
 
   test("packageLexicon returns a valid result", async () => {

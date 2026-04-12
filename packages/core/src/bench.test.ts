@@ -1,4 +1,4 @@
-import { describe, test, expect } from "bun:test";
+import { describe, test, expect } from "vitest";
 import { withTestDir } from "@intentius/chant-test-utils";
 import { writeFile, mkdir } from "node:fs/promises";
 import { join } from "node:path";

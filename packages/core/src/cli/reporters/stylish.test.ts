@@ -1,4 +1,4 @@
-import { describe, test, expect, beforeEach, afterEach } from "bun:test";
+import { describe, test, expect, beforeEach, afterEach } from "vitest";
 import { formatStylish, formatSummary, formatJson, formatSarif } from "./stylish";
 import type { LintDiagnostic, LintRule } from "../../lint/rule";
 

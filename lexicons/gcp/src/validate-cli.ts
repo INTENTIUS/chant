@@ -1,4 +1,4 @@
-#!/usr/bin/env bun
+#!/usr/bin/env tsx
 import { validate } from "./validate";
 import { printValidationResult } from "@intentius/chant/codegen/validate";
 

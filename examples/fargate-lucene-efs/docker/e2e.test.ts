@@ -1,8 +1,20 @@
-import { $ } from "bun";
-import { describe, it, expect, beforeAll, afterAll } from "bun:test";
+import { describe, it, expect, beforeAll, afterAll } from "vitest";
+import { promisify } from "util";
+import { exec } from "child_process";
 import { compose, dynamo, mc, solrCount, retry, SOLR } from "./test-helpers";
 
-$.verbose = false;
+const execAsync = promisify(exec);
+function $(strings: TemplateStringsArray, ...values: unknown[]) {
+  const parts: string[] = [];
+  strings.forEach((str, i) => {
+    parts.push(str);
+    if (i < values.length) {
+      const val = values[i];
+      parts.push(Array.isArray(val) ? (val as string[]).join(" ") : String(val ?? ""));
+    }
+  });
+  return execAsync(parts.join(""));
+}
 
 // These tests require `just up` to be running. Skip in CI.
 if (process.env.CI) process.exit(0);
@@ -31,7 +43,7 @@ beforeAll(async () => {
 }, 120_000);
 
 afterAll(async () => {
-  await compose("down", "-v").nothrow();
+  await compose("down", "-v").catch(() => {});
 });
 
 describe("DynamoDB relay", () => {

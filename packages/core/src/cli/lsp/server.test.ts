@@ -1,4 +1,4 @@
-import { describe, test, expect, beforeEach } from "bun:test";
+import { describe, test, expect, beforeEach, vi } from "vitest";
 import { LspServer } from "./server";
 import { computeCapabilities } from "./capabilities";
 import { toLspDiagnostics } from "./diagnostics";
@@ -217,12 +217,16 @@ describe("LspServer", () => {
         method: "textDocument/didOpen",
         params: { textDocument: { uri: "file:///a.ts", text: "const x = 1;" } },
       });
-      // Give async diagnostics time to emit
-      await new Promise((r) => setTimeout(r, 50));
+      // Wait for async diagnostics to emit (dynamic import may take longer in Node.js)
+      await vi.waitFor(() => {
+        const diagNotif = server.sentNotifications.find(
+          (n) => n.method === "textDocument/publishDiagnostics",
+        );
+        expect(diagNotif).toBeDefined();
+      }, { timeout: 2000 });
       const diagNotif = server.sentNotifications.find(
         (n) => n.method === "textDocument/publishDiagnostics",
       );
-      expect(diagNotif).toBeDefined();
       expect(diagNotif!.params.uri).toBe("file:///a.ts");
     });
   });

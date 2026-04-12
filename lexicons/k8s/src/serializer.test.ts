@@ -1,4 +1,4 @@
-import { describe, test, expect } from "bun:test";
+import { describe, test, expect } from "vitest";
 import { k8sSerializer } from "./serializer";
 import { DECLARABLE_MARKER } from "@intentius/chant/declarable";
 import {

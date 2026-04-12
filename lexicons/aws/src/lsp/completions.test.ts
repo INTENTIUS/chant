@@ -1,4 +1,4 @@
-import { describe, test, expect } from "bun:test";
+import { describe, test, expect } from "vitest";
 import { awsCompletions } from "./completions";
 import type { CompletionContext } from "@intentius/chant/lsp/types";
 

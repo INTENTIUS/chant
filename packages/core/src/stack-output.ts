@@ -64,8 +64,8 @@ export function stackOutput(
 ): StackOutput {
   // Derive lexicon from the AttrRef's parent entity
   const parent = ref.parent.deref();
-  const lexicon = parent && typeof (parent as any).lexicon === "string"
-    ? (parent as any).lexicon
+  const lexicon = parent && typeof (parent as Record<string, unknown>).lexicon === "string"
+    ? (parent as Record<string, unknown>).lexicon as string
     : "unknown";
 
   const output: StackOutput = {

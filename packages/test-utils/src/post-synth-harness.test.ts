@@ -1,4 +1,4 @@
-import { describe, test, expect } from "bun:test";
+import { describe, test, expect } from "vitest";
 import {
   makePostSynthCtx,
   makePostSynthCtxFromFiles,
@@ -48,18 +48,18 @@ describe("makePostSynthCtxFromFiles", () => {
     const ctx = makePostSynthCtxFromFiles("helm", files);
     const output = ctx.outputs.get("helm");
     expect(typeof output).toBe("object");
-    expect((output as any).files["Chart.yaml"]).toContain("apiVersion: v2");
-    expect((output as any).files["values.yaml"]).toContain("replicas: 1");
+    expect(((output as Record<string, unknown>).files as Record<string, unknown>)["Chart.yaml"]).toContain("apiVersion: v2");
+    expect(((output as Record<string, unknown>).files as Record<string, unknown>)["values.yaml"]).toContain("replicas: 1");
   });
 
   test("uses first file as primary when not specified", () => {
     const ctx = makePostSynthCtxFromFiles("helm", { "Chart.yaml": "data" });
-    expect((ctx.outputs.get("helm") as any).primary).toBe("data");
+    expect((ctx.outputs.get("helm") as Record<string, unknown>).primary).toBe("data");
   });
 
   test("uses custom primary", () => {
     const ctx = makePostSynthCtxFromFiles("helm", { "a.yaml": "a" }, "custom primary");
-    expect((ctx.outputs.get("helm") as any).primary).toBe("custom primary");
+    expect((ctx.outputs.get("helm") as Record<string, unknown>).primary).toBe("custom primary");
   });
 });
 

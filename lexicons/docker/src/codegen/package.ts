@@ -2,9 +2,8 @@
  * Docker lexicon packaging — delegates to core packagePipeline.
  */
 
-import { createRequire } from "module";
 import { readFileSync } from "fs";
-const require = createRequire(import.meta.url);
+import { dockerPlugin } from "../plugin";
 import { join, dirname } from "path";
 import { fileURLToPath } from "url";
 import type { IntrinsicDef } from "@intentius/chant/lexicon";
@@ -52,9 +51,7 @@ export async function packageLexicon(opts: PackageOptions = {}): Promise<Package
 
       srcDir: pkgDir,
 
-      collectSkills: () => {
-        const { dockerPlugin } = require("../plugin");
-        const skillDefs = dockerPlugin.skills?.() ?? [];
+      collectSkills: () => {        const skillDefs = dockerPlugin.skills?.() ?? [];
         return collectSkills(skillDefs);
       },
 

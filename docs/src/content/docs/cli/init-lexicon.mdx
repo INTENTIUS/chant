@@ -47,7 +47,7 @@ From the provided name, the command derives:
 | `src/index.ts` | Re-exports plugin and serializer |
 | `src/serializer.ts` | Stub `Serializer` producing minimal JSON |
 | `src/codegen/generate.ts` | Calls core `generatePipeline` with TODO callbacks |
-| `src/codegen/generate-cli.ts` | Bun entry point for `just generate` |
+| `src/codegen/generate-cli.ts` | tsx entry point for `just generate` |
 | `src/codegen/naming.ts` | `NamingStrategy` with empty data tables |
 | `src/codegen/package.ts` | Calls core `packagePipeline` |
 | `src/codegen/docs.ts` | Calls core `docsPipeline` |
@@ -61,7 +61,7 @@ From the provided name, the command derives:
 | `src/import/generator.ts` | Stub `TypeScriptGenerator` |
 | `src/coverage.ts` | Stub coverage analysis |
 | `src/validate.ts` | Stub validation checks |
-| `src/validate-cli.ts` | Bun entry point for `just validate` |
+| `src/validate-cli.ts` | tsx entry point for `just validate` |
 | `package.json` | Package config with `workspace:*` dep on `@intentius/chant` |
 | `tsconfig.json` | Extends root TypeScript config |
 | `justfile` | `generate`, `validate`, `docs`, `package` recipes |
@@ -86,7 +86,7 @@ chant init lexicon k8s --force
 After scaffolding:
 
 1. `cd lexicons/<name>`
-2. `bun install`
+2. `npm install`
 3. Edit `src/spec/fetch.ts` — point at your upstream schema source
 4. Edit `src/spec/parse.ts` — parse your schema format
 5. `chant dev generate` to generate types

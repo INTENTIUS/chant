@@ -1,4 +1,4 @@
-import { describe, test, expect } from "bun:test";
+import { describe, test, expect } from "vitest";
 import { CFGenerator } from "./generator";
 import type { TemplateIR } from "@intentius/chant/import/parser";
 

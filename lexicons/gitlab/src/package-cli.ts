@@ -1,6 +1,6 @@
-#!/usr/bin/env bun
+#!/usr/bin/env tsx
 /**
- * Thin entry point for `bun run bundle` in lexicon-gitlab.
+ * Thin entry point for `npm run bundle` in lexicon-gitlab.
  * Generates src/generated/ files and writes dist/ bundle.
  */
 import { generate, writeGeneratedFiles } from "./codegen/generate";

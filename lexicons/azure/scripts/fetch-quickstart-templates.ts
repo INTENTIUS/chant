@@ -1,11 +1,11 @@
-#!/usr/bin/env bun
+#!/usr/bin/env tsx
 /**
  * Fetch curated ARM templates from Azure Quickstart Templates for round-trip testing.
  *
  * Downloads 10 templates to testdata/azure-quickstarts/.
  * Each is validated: valid JSON, has $schema, contentVersion, resources[].
  *
- * Usage: bun run scripts/fetch-quickstart-templates.ts
+ * Usage: npx tsx scripts/fetch-quickstart-templates.ts
  */
 
 import { mkdirSync, writeFileSync, existsSync } from "fs";

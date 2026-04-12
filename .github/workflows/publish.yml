@@ -10,8 +10,11 @@ jobs:
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@v4
-      - uses: oven-sh/setup-bun@v2
-      - run: bun install
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+      - run: npm install
 
       - name: Cache lexicon schemas
         uses: actions/cache@v4
@@ -21,17 +24,17 @@ jobs:
           restore-keys: |
             lexicon-schemas-
 
-      - run: bun run --cwd lexicons/aws prepack
-      - run: bun run --cwd lexicons/azure prepack
-      - run: bun run --cwd lexicons/gitlab prepack
-      - run: bun run --cwd lexicons/github prepack
-      - run: bun run --cwd lexicons/k8s prepack
-      - run: bun run --cwd lexicons/flyway prepack
-      - run: bun run --cwd lexicons/gcp prepack
-      - run: bun run --cwd lexicons/helm prepack
-      - run: bun run --cwd lexicons/docker prepack
-      - run: bun run --cwd lexicons/slurm prepack
-      - run: bun test
+      - run: npm run --prefix lexicons/aws prepack
+      - run: npm run --prefix lexicons/azure prepack
+      - run: npm run --prefix lexicons/gitlab prepack
+      - run: npm run --prefix lexicons/github prepack
+      - run: npm run --prefix lexicons/k8s prepack
+      - run: npm run --prefix lexicons/flyway prepack
+      - run: npm run --prefix lexicons/gcp prepack
+      - run: npm run --prefix lexicons/helm prepack
+      - run: npm run --prefix lexicons/docker prepack
+      - run: npm run --prefix lexicons/slurm prepack
+      - run: npx vitest run
 
   publish:
     needs: test
@@ -41,50 +44,54 @@ jobs:
       id-token: write
     steps:
       - uses: actions/checkout@v4
-      - uses: oven-sh/setup-bun@v2
-      - run: bun install
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          registry-url: 'https://registry.npmjs.org'
+      - run: npm install
       - run: echo "//registry.npmjs.org/:_authToken=${{ secrets.NPM_TOKEN }}" > .npmrc
 
       - name: Publish @intentius/chant
         working-directory: packages/core
-        run: bun publish --access public --tolerate-republish
+        run: npm publish --access public
 
       - name: Publish @intentius/chant-lexicon-aws
         working-directory: lexicons/aws
-        run: bun publish --access public --tolerate-republish
+        run: npm publish --access public
 
       - name: Publish @intentius/chant-lexicon-gitlab
         working-directory: lexicons/gitlab
-        run: bun publish --access public --tolerate-republish
+        run: npm publish --access public
 
       - name: Publish @intentius/chant-lexicon-github
         working-directory: lexicons/github
-        run: bun publish --access public --tolerate-republish
+        run: npm publish --access public
 
       - name: Publish @intentius/chant-lexicon-k8s
         working-directory: lexicons/k8s
-        run: bun publish --access public --tolerate-republish
+        run: npm publish --access public
 
       - name: Publish @intentius/chant-lexicon-flyway
         working-directory: lexicons/flyway
-        run: bun publish --access public --tolerate-republish
+        run: npm publish --access public
 
       - name: Publish @intentius/chant-lexicon-gcp
         working-directory: lexicons/gcp
-        run: bun publish --access public --tolerate-republish
+        run: npm publish --access public
 
       - name: Publish @intentius/chant-lexicon-helm
         working-directory: lexicons/helm
-        run: bun publish --access public --tolerate-republish
+        run: npm publish --access public
 
       - name: Publish @intentius/chant-lexicon-azure
         working-directory: lexicons/azure
-        run: bun publish --access public --tolerate-republish
+        run: npm publish --access public
 
       - name: Publish @intentius/chant-lexicon-docker
         working-directory: lexicons/docker
-        run: bun publish --access public --tolerate-republish
+        run: npm publish --access public
 
       - name: Publish @intentius/chant-lexicon-slurm
         working-directory: lexicons/slurm
-        run: bun publish --access public --tolerate-republish
+        run: npm publish --access public

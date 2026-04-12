@@ -1,43 +1,36 @@
 {
+  "name": "chant-monorepo",
+  "version": "0.0.0",
+  "private": true,
   "type": "module",
   "workspaces": [
     "packages/*",
-    "lexicons/*",
-    "lexicons/aws/examples/*",
-    "examples/fargate-lucene-efs/*",
-    "lexicons/gitlab/examples/*",
-    "lexicons/k8s/examples/*",
-    "lexicons/flyway/examples/*",
-    "lexicons/helm/examples/*",
-    "lexicons/gcp/examples/*",
-    "lexicons/azure/examples/*",
-    "lexicons/github/examples/*",
-    "lexicons/docker/examples/*",
-    "lexicons/slurm/examples/*",
-    "examples/*"
+    "lexicons/*"
   ],
   "scripts": {
     "tsc": "tsc",
-    "docs": "bun --cwd docs dev",
-    "generate": "for d in lexicons/*/; do (cd \"$d\" && bun run generate); done"
+    "docs": "npm --prefix docs run dev",
+    "generate": "for d in lexicons/*/; do (cd \"$d\" && npm run generate); done"
   },
   "dependencies": {
-    "@intentius/chant-lexicon-aws": "workspace:*",
-    "@intentius/chant-lexicon-azure": "workspace:*",
-    "@intentius/chant-lexicon-docker": "workspace:*",
-    "@intentius/chant-lexicon-flyway": "workspace:*",
-    "@intentius/chant-lexicon-gcp": "workspace:*",
-    "@intentius/chant-lexicon-github": "workspace:*",
-    "@intentius/chant-lexicon-gitlab": "workspace:*",
-    "@intentius/chant-lexicon-helm": "workspace:*",
-    "@intentius/chant-lexicon-k8s": "workspace:*",
-    "@intentius/chant-lexicon-slurm": "workspace:*"
+    "@intentius/chant-lexicon-aws": "*",
+    "@intentius/chant-lexicon-azure": "*",
+    "@intentius/chant-lexicon-docker": "*",
+    "@intentius/chant-lexicon-flyway": "*",
+    "@intentius/chant-lexicon-gcp": "*",
+    "@intentius/chant-lexicon-github": "*",
+    "@intentius/chant-lexicon-gitlab": "*",
+    "@intentius/chant-lexicon-helm": "*",
+    "@intentius/chant-lexicon-k8s": "*",
+    "@intentius/chant-lexicon-slurm": "*"
   },
   "devDependencies": {
+    "@types/node": "^20.0.0",
     "@typescript-eslint/eslint-plugin": "^8.54.0",
     "@typescript-eslint/parser": "^8.54.0",
-    "bun-types": "^1.3.8",
     "eslint": "^9.39.2",
-    "typescript": "^5.9.3"
+    "typescript": "^5.9.3",
+    "vite-tsconfig-paths": "^5.0.0",
+    "vitest": "^3.0.0"
   }
 }

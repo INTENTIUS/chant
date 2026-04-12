@@ -1,4 +1,4 @@
-import { describe, test, expect } from "bun:test";
+import { describe, test, expect } from "vitest";
 import { generate } from "./generate";
 import { loadSchemaFixtures } from "../testdata/load-fixtures";
 

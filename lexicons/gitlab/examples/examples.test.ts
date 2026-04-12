@@ -1,14 +1,15 @@
 import { describeAllExamples, describeExample } from "@intentius/chant-test-utils/example-harness";
-import { describe, test, expect } from "bun:test";
+import { describe, test, expect } from "vitest";
 import { lintCommand } from "@intentius/chant/cli/commands/lint";
 import { gitlabSerializer } from "@intentius/chant-lexicon-gitlab";
 import { resolve } from "path";
+import { readdirSync } from "fs";
 
 const config = {
   lexicon: "gitlab",
   serializer: gitlabSerializer,
   outputKey: "gitlab",
-  examplesDir: import.meta.dir,
+  examplesDir: import.meta.dirname,
 };
 
 describeAllExamples(config, {
@@ -83,7 +84,7 @@ describeAllExamples(config, {
 
 // docs-snippets has a unique pattern: relaxed lint + file import validation
 describe("gitlab docs-snippets example", () => {
-  const srcDir = resolve(import.meta.dir, "docs-snippets", "src");
+  const srcDir = resolve(import.meta.dirname, "docs-snippets", "src");
 
   test("lint runs without crashing", async () => {
     const result = await lintCommand({
@@ -95,12 +96,7 @@ describe("gitlab docs-snippets example", () => {
   });
 
   test("all snippet files can be imported", async () => {
-    const glob = new Bun.Glob("*.ts");
-    const files: string[] = [];
-    for await (const file of glob.scan({ cwd: srcDir })) {
-      if (file === "_.ts") continue;
-      files.push(file);
-    }
+    const files = readdirSync(srcDir).filter((f) => f.endsWith(".ts") && f !== "_.ts");
     expect(files.length).toBeGreaterThan(0);
     for (const file of files) {
       expect(() => require(resolve(srcDir, file))).not.toThrow();

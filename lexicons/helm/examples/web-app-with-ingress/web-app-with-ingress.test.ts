@@ -1,4 +1,4 @@
-import { describe, test, expect } from "bun:test";
+import { describe, test, expect } from "vitest";
 import type { Declarable } from "@intentius/chant/declarable";
 import type { SerializerResult } from "@intentius/chant/serializer";
 import { helmSerializer } from "../../src/serializer";

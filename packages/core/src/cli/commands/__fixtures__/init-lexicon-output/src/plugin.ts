@@ -4,6 +4,9 @@ import type { PostSynthCheck } from "@intentius/chant/lint/post-synth";
 import type { CompletionContext, CompletionItem, HoverContext, HoverInfo } from "@intentius/chant/lsp/types";
 import type { McpToolContribution, McpResourceContribution } from "@intentius/chant/mcp/types";
 import { fixtureSerializer } from "./serializer";
+import { rules } from "./lint/rules";
+import { completions } from "./lsp/completions";
+import { hover } from "./lsp/hover";
 
 /**
  * fixture lexicon plugin.
@@ -49,7 +52,6 @@ export const fixturePlugin: LexiconPlugin = {
   // ── Optional extensions ────────────────────────────────────
 
   lintRules() {
-    const { rules } = require("./lint/rules");
     return rules;
   },
 
@@ -74,12 +76,10 @@ export const fixturePlugin: LexiconPlugin = {
   },
 
   completionProvider(ctx: CompletionContext) {
-    const { completions } = require("./lsp/completions");
     return completions(ctx);
   },
 
   hoverProvider(ctx: HoverContext) {
-    const { hover } = require("./lsp/hover");
     return hover(ctx);
   },
 

@@ -1,10 +1,10 @@
-import { describe, test, expect, beforeAll, afterAll } from "bun:test";
+import { describe, test, expect, beforeAll, afterAll } from "vitest";
 import { parseFile } from "./parser";
 import { writeFileSync, unlinkSync, mkdirSync } from "fs";
 import { join } from "path";
 import * as ts from "typescript";
 
-const TEST_DIR = join(import.meta.dir, "__test_parser__");
+const TEST_DIR = join(import.meta.dirname, "__test_parser__");
 const VALID_FILE = join(TEST_DIR, "valid.ts");
 const INVALID_FILE = join(TEST_DIR, "invalid.ts");
 const NONEXISTENT_FILE = join(TEST_DIR, "nonexistent.ts");

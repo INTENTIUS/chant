@@ -1,4 +1,4 @@
-import { describe, test, expect } from "bun:test";
+import { describe, test, expect } from "vitest";
 import * as ts from "typescript";
 import { evl003DynamicPropertyAccessRule } from "./evl003-dynamic-property-access";
 import type { LintContext } from "../rule";

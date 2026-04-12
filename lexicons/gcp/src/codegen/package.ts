@@ -3,9 +3,8 @@
  * with GCP-specific manifest building and skill collection.
  */
 
-import { createRequire } from "module";
 import { readFileSync } from "fs";
-const require = createRequire(import.meta.url);
+import { gcpPlugin } from "../plugin";
 import { dirname } from "path";
 import { fileURLToPath } from "url";
 import {
@@ -32,8 +31,6 @@ export async function packageLexicon(opts: PackageOptions = {}): Promise<Package
       generate: (genOpts) => generate({ verbose: genOpts.verbose, force: genOpts.force }),
 
       buildManifest: (_genResult) => {
-        const { gcpPlugin } = require("../plugin");
-
         const pseudoParams: string[] = gcpPlugin.pseudoParameters?.() ?? [];
         const pseudoParameters: Record<string, string> = {};
         for (const p of pseudoParams) {
@@ -53,9 +50,7 @@ export async function packageLexicon(opts: PackageOptions = {}): Promise<Package
 
       srcDir: pkgDir,
 
-      collectSkills: () => {
-        const { gcpPlugin } = require("../plugin");
-        const skillDefs = gcpPlugin.skills?.() ?? [];
+      collectSkills: () => {        const skillDefs = gcpPlugin.skills?.() ?? [];
         return collectSkills(skillDefs);
       },
 

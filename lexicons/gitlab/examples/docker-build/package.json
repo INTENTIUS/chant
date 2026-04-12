@@ -10,8 +10,8 @@
     "test": "node test.js"
   },
   "dependencies": {
-    "@intentius/chant-lexicon-gitlab": "workspace:*",
-    "@intentius/chant": "workspace:*"
+    "@intentius/chant-lexicon-gitlab": "*",
+    "@intentius/chant": "*"
   },
   "devDependencies": {
     "typescript": "*"

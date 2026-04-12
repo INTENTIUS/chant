@@ -1,4 +1,4 @@
-import { describe, test, expect } from "bun:test";
+import { describe, test, expect } from "vitest";
 import { resolve, placeholder, env, ResolverRefIntrinsic, PlaceholderRefIntrinsic, EnvRefIntrinsic } from "./intrinsics";
 import { INTRINSIC_MARKER } from "@intentius/chant/intrinsic";
 

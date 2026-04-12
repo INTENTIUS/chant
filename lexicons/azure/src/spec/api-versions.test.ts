@@ -1,4 +1,4 @@
-import { describe, it, expect } from "bun:test";
+import { describe, it, expect } from "vitest";
 import { parseSchemaPath, latestVersionPerProvider, compareApiDates } from "./api-versions";
 
 describe("parseSchemaPath", () => {

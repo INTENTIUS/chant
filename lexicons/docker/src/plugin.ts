@@ -5,22 +5,24 @@
  * and code generation for Docker Compose and Dockerfile resources.
  */
 
-import { createRequire } from "module";
 import type { LexiconPlugin, IntrinsicDef, InitTemplateSet } from "@intentius/chant/lexicon";
-const require = createRequire(import.meta.url);
 import type { LintRule } from "@intentius/chant/lint/rule";
 import { discoverPostSynthChecks } from "@intentius/chant/lint/discover";
 import { createSkillsLoader, createDiffTool, createCatalogResource } from "@intentius/chant/lexicon-plugin-helpers";
 import { join, dirname } from "path";
 import { fileURLToPath } from "url";
 import { dockerSerializer } from "./serializer";
+import { noLatestTagRule } from "./lint/rules/no-latest-tag";
+import { dockerCompletions } from "./lsp/completions";
+import { dockerHover } from "./lsp/hover";
+import { DockerParser } from "./import/parser";
+import { DockerGenerator } from "./import/generator";
 
 export const dockerPlugin: LexiconPlugin = {
   name: "docker",
   serializer: dockerSerializer,
 
   lintRules(): LintRule[] {
-    const { noLatestTagRule } = require("./lint/rules/no-latest-tag");
     return [noLatestTagRule];
   },
 
@@ -94,22 +96,18 @@ export const api = new Service({
   },
 
   completionProvider(ctx: import("@intentius/chant/lsp/types").CompletionContext) {
-    const { dockerCompletions } = require("./lsp/completions");
     return dockerCompletions(ctx);
   },
 
   hoverProvider(ctx: import("@intentius/chant/lsp/types").HoverContext) {
-    const { dockerHover } = require("./lsp/hover");
     return dockerHover(ctx);
   },
 
   templateParser() {
-    const { DockerParser } = require("./import/parser");
     return new DockerParser();
   },
 
   templateGenerator() {
-    const { DockerGenerator } = require("./import/generator");
     return new DockerGenerator();
   },
 

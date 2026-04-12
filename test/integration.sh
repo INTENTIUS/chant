@@ -3,12 +3,7 @@ set -euo pipefail
 
 PASS=0
 FAIL=0
-RUNTIME="${CHANT_RUNTIME:-bun}"
-if [ "$RUNTIME" = "bun" ]; then
-  CHANT="bun run /app/packages/core/src/cli/main.ts"
-else
-  CHANT="npx tsx /app/packages/core/src/cli/main.ts"
-fi
+CHANT="npx tsx /app/packages/core/src/cli/main.ts"
 
 log() { echo "=== $1 ==="; }
 pass() { echo "  PASS: $1"; PASS=$((PASS + 1)); }
@@ -229,7 +224,7 @@ test_init() {
 
   if $CHANT init --lexicon "$name" "$init_dir" > /dev/null 2>&1; then
     # Check scaffolded source files
-    if [ -f "$init_dir/src/infra.ts" ] || [ -f "$init_dir/src/_.ts" ] || [ -f "$init_dir/src/config.ts" ] || [ -f "$init_dir/src/main.ts" ]; then
+    if [ -f "$init_dir/src/infra.ts" ] || [ -f "$init_dir/src/_.ts" ] || [ -f "$init_dir/src/config.ts" ] || [ -f "$init_dir/src/main.ts" ] || [ -f "$init_dir/src/compose.ts" ] || [ -f "$init_dir/src/cluster.ts" ]; then
       pass "$name init creates source files"
     else
       fail "$name init missing source files"
@@ -548,10 +543,10 @@ for example_dir in /app/examples/*/; do
   rm -rf "$example_dir/node_modules"
   ln -sfn /app/node_modules "$example_dir/node_modules"
   # Use the example's own build script (handles multi-cloud, per-lexicon builds).
-  if (cd "$example_dir" && bun run build > /dev/null 2>&1); then
+  if (cd "$example_dir" && npm run build > /dev/null 2>&1); then
     pass "root example $name builds"
   else
-    BUILD_ERR=$(cd "$example_dir" && bun run build 2>&1 || true)
+    BUILD_ERR=$(cd "$example_dir" && npm run build 2>&1 || true)
     echo "  stderr: $BUILD_ERR"
     fail "root example $name build failed"
   fi

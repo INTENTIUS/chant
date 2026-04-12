@@ -1,18 +1,18 @@
 # GCP Config Connector lexicon
 
 generate:
-    bun run src/codegen/generate-cli.ts
+    npx tsx src/codegen/generate-cli.ts
 
 bundle:
-    bun run src/package-cli.ts
+    npx tsx src/package-cli.ts
 
 validate:
-    bun run src/validate-cli.ts
+    npx tsx src/validate-cli.ts
 
 docs:
-    bun run src/codegen/docs-cli.ts
+    npx tsx src/codegen/docs-cli.ts
 
 test:
-    bun test
+    npx vitest run
 
 prepack: generate bundle validate

@@ -1,4 +1,4 @@
-import { describe, test, expect } from "bun:test";
+import { describe, test, expect } from "vitest";
 import { GcpGenerator } from "./generator";
 
 const generator = new GcpGenerator();

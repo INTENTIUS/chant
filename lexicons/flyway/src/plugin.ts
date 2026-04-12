@@ -5,9 +5,7 @@
  * lint rules, and LSP/MCP integration for Flyway TOML config.
  */
 
-import { createRequire } from "module";
 import type { LexiconPlugin, IntrinsicDef, InitTemplateSet } from "@intentius/chant/lexicon";
-const require = createRequire(import.meta.url);
 import type { LintRule } from "@intentius/chant/lint/rule";
 import { discoverPostSynthChecks } from "@intentius/chant/lint/discover";
 import { createSkillsLoader, createDiffTool, createCatalogResource } from "@intentius/chant/lexicon-plugin-helpers";
@@ -15,17 +13,21 @@ import { join, dirname } from "path";
 import { fileURLToPath } from "url";
 import { flywaySerializer } from "./serializer";
 import { parseTOML } from "@intentius/chant/toml";
+import { hardcodedCredentialsRule } from "./lint/rules/hardcoded-credentials";
+import { hardcodedUrlRule } from "./lint/rules/hardcoded-url";
+import { missingSchemasRule } from "./lint/rules/missing-schemas";
+import { invalidMigrationNameRule } from "./lint/rules/invalid-migration-name";
+import { duplicateVersionRule } from "./lint/rules/duplicate-version";
+import { flywayCompletions } from "./lsp/completions";
+import { flywayHover } from "./lsp/hover";
+import { FlywayParser } from "./import/parser";
+import { FlywayGenerator } from "./import/generator";
 
 export const flywayPlugin: LexiconPlugin = {
   name: "flyway",
   serializer: flywaySerializer,
 
   lintRules(): LintRule[] {
-    const { hardcodedCredentialsRule } = require("./lint/rules/hardcoded-credentials");
-    const { hardcodedUrlRule } = require("./lint/rules/hardcoded-url");
-    const { missingSchemasRule } = require("./lint/rules/missing-schemas");
-    const { invalidMigrationNameRule } = require("./lint/rules/invalid-migration-name");
-    const { duplicateVersionRule } = require("./lint/rules/duplicate-version");
     return [hardcodedCredentialsRule, hardcodedUrlRule, missingSchemasRule, invalidMigrationNameRule, duplicateVersionRule];
   },
 
@@ -269,22 +271,18 @@ export const dev = new Environment({
   },
 
   completionProvider(ctx: import("@intentius/chant/lsp/types").CompletionContext) {
-    const { flywayCompletions } = require("./lsp/completions");
     return flywayCompletions(ctx);
   },
 
   hoverProvider(ctx: import("@intentius/chant/lsp/types").HoverContext) {
-    const { flywayHover } = require("./lsp/hover");
     return flywayHover(ctx);
   },
 
   templateParser() {
-    const { FlywayParser } = require("./import/parser");
     return new FlywayParser();
   },
 
   templateGenerator() {
-    const { FlywayGenerator } = require("./import/generator");
     return new FlywayGenerator();
   },
 

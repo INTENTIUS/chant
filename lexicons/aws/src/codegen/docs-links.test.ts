@@ -1,9 +1,9 @@
-import { describe, test, expect } from "bun:test";
+import { describe, test, expect } from "vitest";
 import { existsSync, readdirSync, readFileSync } from "fs";
 import { join, basename } from "path";
 
-const docsDir = join(import.meta.dir, "..", "..", "docs", "src", "content", "docs");
-const docsSource = join(import.meta.dir, "docs.ts");
+const docsDir = join(import.meta.dirname, "..", "..", "docs", "src", "content", "docs");
+const docsSource = join(import.meta.dirname, "docs.ts");
 const docsExist = existsSync(docsDir);
 
 /**

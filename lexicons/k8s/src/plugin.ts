@@ -5,24 +5,26 @@
  * lint rules, and LSP/MCP integration for Kubernetes manifests.
  */
 
-import { createRequire } from "module";
 import type { LexiconPlugin, InitTemplateSet, ResourceMetadata } from "@intentius/chant/lexicon";
-const require = createRequire(import.meta.url);
 import type { LintRule } from "@intentius/chant/lint/rule";
 import { discoverPostSynthChecks } from "@intentius/chant/lint/discover";
 import { createSkillsLoader, createDiffTool, createCatalogResource } from "@intentius/chant/lexicon-plugin-helpers";
 import { join, dirname } from "path";
 import { fileURLToPath } from "url";
 import { k8sSerializer } from "./serializer";
+import { hardcodedNamespaceRule } from "./lint/rules/hardcoded-namespace";
+import { latestImageTagRule } from "./lint/rules/latest-image-tag";
+import { missingResourceLimitsRule } from "./lint/rules/missing-resource-limits";
+import { k8sCompletions } from "./lsp/completions";
+import { k8sHover } from "./lsp/hover";
+import { K8sParser } from "./import/parser";
+import { K8sGenerator } from "./import/generator";
 
 export const k8sPlugin: LexiconPlugin = {
   name: "k8s",
   serializer: k8sSerializer,
 
   lintRules(): LintRule[] {
-    const { hardcodedNamespaceRule } = require("./lint/rules/hardcoded-namespace");
-    const { latestImageTagRule } = require("./lint/rules/latest-image-tag");
-    const { missingResourceLimitsRule } = require("./lint/rules/missing-resource-limits");
     return [hardcodedNamespaceRule, latestImageTagRule, missingResourceLimitsRule];
   },
 
@@ -204,22 +206,18 @@ export const service = new Service({
   },
 
   completionProvider(ctx: import("@intentius/chant/lsp/types").CompletionContext) {
-    const { k8sCompletions } = require("./lsp/completions");
     return k8sCompletions(ctx);
   },
 
   hoverProvider(ctx: import("@intentius/chant/lsp/types").HoverContext) {
-    const { k8sHover } = require("./lsp/hover");
     return k8sHover(ctx);
   },
 
   templateParser() {
-    const { K8sParser } = require("./import/parser");
     return new K8sParser();
   },
 
   templateGenerator() {
-    const { K8sGenerator } = require("./import/generator");
     return new K8sGenerator();
   },
 

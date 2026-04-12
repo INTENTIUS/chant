@@ -1,4 +1,4 @@
-import { describe, test, expect } from "bun:test";
+import { describe, test, expect } from "vitest";
 import { generatePipeline, type GeneratePipelineConfig, type ParsedResult } from "./generate";
 import { NamingStrategy } from "./naming";
 

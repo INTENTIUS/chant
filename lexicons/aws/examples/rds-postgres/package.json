@@ -7,14 +7,14 @@
     "build": "chant build src --lexicon aws -o stack.json",
     "lint": "chant lint src",
     "dev": "chant build src --lexicon aws --watch -o stack.json",
-    "test": "bun test",
+    "test": "npx vitest run",
     "setup": "bash setup.sh",
     "deploy": "bash setup.sh && chant build src --lexicon aws -o stack.json && aws cloudformation deploy --template-file stack.json --stack-name rds-postgres-example --no-fail-on-empty-changeset",
     "teardown": "aws cloudformation delete-stack --stack-name rds-postgres-example"
   },
   "dependencies": {
-    "@intentius/chant-lexicon-aws": "workspace:*",
-    "@intentius/chant": "workspace:*"
+    "@intentius/chant-lexicon-aws": "*",
+    "@intentius/chant": "*"
   },
   "devDependencies": {
     "typescript": "*"

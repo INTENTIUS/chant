@@ -12,10 +12,13 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
-      - uses: oven-sh/setup-bun@v2
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
 
       - name: Install dependencies
-        run: bun install
+        run: npm install
 
       - name: Cache lexicon schemas
         uses: actions/cache@v4
@@ -27,25 +30,25 @@ jobs:
 
       - name: Generate lexicon artifacts
         run: |
-          bun run --cwd lexicons/aws prepack
-          bun run --cwd lexicons/azure prepack
-          bun run --cwd lexicons/gitlab prepack
-          bun run --cwd lexicons/github prepack
-          bun run --cwd lexicons/k8s prepack
-          bun run --cwd lexicons/flyway prepack
-          bun run --cwd lexicons/gcp prepack
-          bun run --cwd lexicons/helm prepack
-          bun run --cwd lexicons/docker prepack
-          bun run --cwd lexicons/slurm prepack
+          npm run --prefix lexicons/aws prepack
+          npm run --prefix lexicons/azure prepack
+          npm run --prefix lexicons/gitlab prepack
+          npm run --prefix lexicons/github prepack
+          npm run --prefix lexicons/k8s prepack
+          npm run --prefix lexicons/flyway prepack
+          npm run --prefix lexicons/gcp prepack
+          npm run --prefix lexicons/helm prepack
+          npm run --prefix lexicons/docker prepack
+          npm run --prefix lexicons/slurm prepack
 
       - name: Typecheck
-        run: bunx tsc --noEmit -p packages/core/tsconfig.json
+        run: npx tsc --noEmit -p packages/core/tsconfig.json
 
       - name: Lint example project
-        run: bun run packages/core/src/cli/main.ts lint lexicons/aws/examples/lambda-function/src --format sarif > results.sarif
+        run: npx tsx packages/core/src/cli/main.ts lint lexicons/aws/examples/lambda-function/src --format sarif > results.sarif
 
       - name: Build example project
-        run: bun run packages/core/src/cli/main.ts build lexicons/aws/examples/lambda-function/src --output template.json
+        run: npx tsx packages/core/src/cli/main.ts build lexicons/aws/examples/lambda-function/src --output template.json
 
       - name: Upload SARIF results
         if: always()
@@ -58,10 +61,13 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
-      - uses: oven-sh/setup-bun@v2
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
 
       - name: Install dependencies
-        run: bun install
+        run: npm install
 
       - name: Cache lexicon schemas
         uses: actions/cache@v4
@@ -73,29 +79,32 @@ jobs:
 
       - name: Generate lexicon artifacts
         run: |
-          bun run --cwd lexicons/aws prepack
-          bun run --cwd lexicons/azure prepack
-          bun run --cwd lexicons/gitlab prepack
-          bun run --cwd lexicons/github prepack
-          bun run --cwd lexicons/k8s prepack
-          bun run --cwd lexicons/flyway prepack
-          bun run --cwd lexicons/gcp prepack
-          bun run --cwd lexicons/helm prepack
-          bun run --cwd lexicons/docker prepack
-          bun run --cwd lexicons/slurm prepack
+          npm run --prefix lexicons/aws prepack
+          npm run --prefix lexicons/azure prepack
+          npm run --prefix lexicons/gitlab prepack
+          npm run --prefix lexicons/github prepack
+          npm run --prefix lexicons/k8s prepack
+          npm run --prefix lexicons/flyway prepack
+          npm run --prefix lexicons/gcp prepack
+          npm run --prefix lexicons/helm prepack
+          npm run --prefix lexicons/docker prepack
+          npm run --prefix lexicons/slurm prepack
 
       - name: Run tests
-        run: bun test
+        run: npx vitest run
 
   validate:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@v4
-      - uses: oven-sh/setup-bun@v2
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
 
       - name: Install dependencies
-        run: bun install
+        run: npm install
 
       - name: Cache lexicon schemas
         uses: actions/cache@v4
@@ -106,34 +115,34 @@ jobs:
             lexicon-schemas-
 
       - name: Generate and validate AWS lexicon
-        run: bun run --cwd lexicons/aws prepack
+        run: npm run --prefix lexicons/aws prepack
 
       - name: Generate and validate GitLab lexicon
-        run: bun run --cwd lexicons/gitlab prepack
+        run: npm run --prefix lexicons/gitlab prepack
 
       - name: Generate and validate GitHub lexicon
-        run: bun run --cwd lexicons/github prepack
+        run: npm run --prefix lexicons/github prepack
 
       - name: Generate and validate K8s lexicon
-        run: bun run --cwd lexicons/k8s prepack
+        run: npm run --prefix lexicons/k8s prepack
 
       - name: Generate and validate Flyway lexicon
-        run: bun run --cwd lexicons/flyway prepack
+        run: npm run --prefix lexicons/flyway prepack
 
       - name: Generate and validate GCP lexicon
-        run: bun run --cwd lexicons/gcp prepack
+        run: npm run --prefix lexicons/gcp prepack
 
       - name: Generate and validate Azure lexicon
-        run: bun run --cwd lexicons/azure prepack
+        run: npm run --prefix lexicons/azure prepack
 
       - name: Generate and validate Helm lexicon
-        run: bun run --cwd lexicons/helm prepack
+        run: npm run --prefix lexicons/helm prepack
 
       - name: Generate and validate Docker lexicon
-        run: bun run --cwd lexicons/docker prepack
+        run: npm run --prefix lexicons/docker prepack
 
       - name: Generate and validate Slurm lexicon
-        run: bun run --cwd lexicons/slurm prepack
+        run: npm run --prefix lexicons/slurm prepack
 
   smoke-npm:
     if: false  # disabled — Docker smoke tests are for local/release validation, not every push

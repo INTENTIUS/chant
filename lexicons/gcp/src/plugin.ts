@@ -5,9 +5,7 @@
  * import parsing, and code generation for GCP Config Connector resources.
  */
 
-import { createRequire } from "module";
 import type { LexiconPlugin, InitTemplateSet, ResourceMetadata } from "@intentius/chant/lexicon";
-const require = createRequire(import.meta.url);
 import type { LintRule } from "@intentius/chant/lint/rule";
 import type { TemplateParser } from "@intentius/chant/import/parser";
 import type { TypeScriptGenerator } from "@intentius/chant/import/generator";
@@ -17,15 +15,19 @@ import { createSkillsLoader, createDiffTool, createCatalogResource } from "@inte
 import { join, dirname } from "path";
 import { fileURLToPath } from "url";
 import { gcpSerializer } from "./serializer";
+import { hardcodedProjectRule } from "./lint/rules/hardcoded-project";
+import { hardcodedRegionRule } from "./lint/rules/hardcoded-region";
+import { publicIamRule } from "./lint/rules/public-iam";
+import { GcpParser } from "./import/parser";
+import { GcpGenerator } from "./import/generator";
+import { gcpCompletions } from "./lsp/completions";
+import { gcpHover } from "./lsp/hover";
 
 export const gcpPlugin: LexiconPlugin = {
   name: "gcp",
   serializer: gcpSerializer,
 
   lintRules(): LintRule[] {
-    const { hardcodedProjectRule } = require("./lint/rules/hardcoded-project");
-    const { hardcodedRegionRule } = require("./lint/rules/hardcoded-region");
-    const { publicIamRule } = require("./lint/rules/public-iam");
     return [hardcodedProjectRule, hardcodedRegionRule, publicIamRule];
   },
 
@@ -190,22 +192,18 @@ export const bucketReader = new IAMPolicyMember({
   },
 
   templateParser(): TemplateParser {
-    const { GcpParser } = require("./import/parser");
     return new GcpParser();
   },
 
   templateGenerator(): TypeScriptGenerator {
-    const { GcpGenerator } = require("./import/generator");
     return new GcpGenerator();
   },
 
   completionProvider(ctx: CompletionContext): CompletionItem[] {
-    const { gcpCompletions } = require("./lsp/completions");
     return gcpCompletions(ctx);
   },
 
   hoverProvider(ctx: HoverContext): HoverInfo | undefined {
-    const { gcpHover } = require("./lsp/hover");
     return gcpHover(ctx);
   },
 

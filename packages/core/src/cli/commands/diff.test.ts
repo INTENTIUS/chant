@@ -1,4 +1,4 @@
-import { describe, test, expect, beforeEach, afterEach } from "bun:test";
+import { describe, test, expect, beforeEach, afterEach } from "vitest";
 import { diffCommand, type DiffOptions } from "./diff";
 import type { Serializer } from "../../serializer";
 import { mkdir, rm, writeFile } from "node:fs/promises";

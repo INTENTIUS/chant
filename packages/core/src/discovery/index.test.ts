@@ -1,4 +1,4 @@
-import { describe, test, expect, beforeEach, afterEach } from "bun:test";
+import { describe, test, expect, beforeEach, afterEach } from "vitest";
 import { discover } from "./index";
 import { mkdir, writeFile, rm } from "node:fs/promises";
 import { join } from "node:path";

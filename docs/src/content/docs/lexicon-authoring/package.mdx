@@ -67,7 +67,7 @@ const result = docsPipeline(config);
 writeDocsSite(config, result);
 ```
 
-This creates a self-contained Starlight site with pages for resources, intrinsics, pseudo-parameters, rules, and serialization. Build it with `cd docs && bun install && bun run build`.
+This creates a self-contained Starlight site with pages for resources, intrinsics, pseudo-parameters, rules, and serialization. Build it with `cd docs && npm install && npm run build`.
 
 Add a `docs()` method to your plugin and a `"docs"` script to your `package.json` so documentation stays in sync with each generation cycle.
 
@@ -77,7 +77,7 @@ Once the bundle is built:
 
 1. Verify the `dist/` directory contains all expected artifacts
 2. Ensure `package.json` has the correct `files` field pointing to `dist/`
-3. Publish with `bun pm pack` (for testing) or `npm publish`
+3. Publish with `npm pack` (for testing) or `npm publish`
 
 Users install your lexicon with:
 

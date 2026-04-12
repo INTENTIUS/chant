@@ -19,7 +19,7 @@ export class ArmGenerator implements TypeScriptGenerator {
   constructor() {
     this.typeToClass = new Map();
     try {
-      const metaPath = join(import.meta.dir, "../../dist/meta.json");
+      const metaPath = join(import.meta.dirname, "../../dist/meta.json");
       const meta: Record<string, { resourceType: string; kind: string }> = require(metaPath);
       for (const [className, entry] of Object.entries(meta)) {
         if (entry.kind === "resource" && !className.includes("_")) {

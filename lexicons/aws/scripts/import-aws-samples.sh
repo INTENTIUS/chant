@@ -163,7 +163,7 @@ while IFS= read -r template; do
   fi
 
   export VERBOSE
-  if bun run "$HELPER" "$template" 2>/dev/null; then
+  if npx tsx "$HELPER" "$template" 2>/dev/null; then
     ((pass++)) || true
     if [[ "$VERBOSE" == "true" ]]; then
       echo "PASS: $rel"

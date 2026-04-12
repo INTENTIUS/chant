@@ -1,4 +1,4 @@
-import { describe, it, expect } from "bun:test";
+import { describe, it, expect } from "vitest";
 import { Azure, ResourceGroupName, ResourceGroupLocation, ResourceGroupId, SubscriptionId, TenantId, DeploymentName } from "./pseudo";
 
 describe("Azure pseudo-parameters", () => {

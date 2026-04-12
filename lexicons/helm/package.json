@@ -36,17 +36,17 @@
     "./types": "./dist/types/index.d.ts"
   },
   "scripts": {
-    "generate": "bun run src/codegen/generate-cli.ts",
-    "bundle": "bun run src/package-cli.ts",
-    "validate": "bun run src/validate-cli.ts",
-    "docs": "bun run src/codegen/docs-cli.ts",
-    "prepack": "bun run generate && bun run bundle && bun run validate"
+    "generate": "tsx src/codegen/generate-cli.ts",
+    "bundle": "tsx src/package-cli.ts",
+    "validate": "tsx src/validate-cli.ts",
+    "docs": "tsx src/codegen/docs-cli.ts",
+    "prepack": "npm run generate && npm run bundle && npm run validate"
   },
   "dependencies": {
-    "@intentius/chant-lexicon-k8s": "workspace:*"
+    "@intentius/chant-lexicon-k8s": "*"
   },
   "devDependencies": {
-    "@intentius/chant": "workspace:*",
+    "@intentius/chant": "*",
     "typescript": "^5.9.3"
   },
   "peerDependencies": {

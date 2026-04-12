@@ -1,15 +1,15 @@
-import { describe, test, expect, mock } from "bun:test";
+import { describe, test, expect, vi } from "vitest";
 import { generate, writeGeneratedFiles } from "./generate";
 import { mkdirSync, rmSync, existsSync, readFileSync } from "fs";
 import { join } from "path";
 import { tmpdir } from "os";
 
 // Mock the network fetches so tests run offline and fast
-mock.module("../spec/fetch-compose", () => ({
+vi.mock("../spec/fetch-compose", () => ({
   fetchComposeSpec: async () => Buffer.from("{}"),
 }));
 
-mock.module("../spec/fetch-engine", () => ({
+vi.mock("../spec/fetch-engine", () => ({
   fetchEngineApi: async () => Buffer.from("{}"),
 }));
 

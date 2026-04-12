@@ -2,12 +2,9 @@
 set -euo pipefail
 
 # Smoke tests for installing chant from tarballs and running build/lint.
-# Works with both npm (node:22-slim) and bun (oven/bun) runtimes.
 #
-# Usage: RUNTIME=npm ./npm-smoke.sh   (default)
-#        RUNTIME=bun ./npm-smoke.sh
+# Usage: ./npm-smoke.sh
 
-RUNTIME="${RUNTIME:-npm}"
 INSTALL_MODE="${INSTALL_MODE:-tarball}"
 
 PASS=0
@@ -17,25 +14,18 @@ ERRORS=""
 pass() { echo "  PASS: $1"; PASS=$((PASS + 1)); }
 fail() { echo "  FAIL: $1"; FAIL=$((FAIL + 1)); ERRORS="${ERRORS}\n  - $1"; }
 
-echo "=== Runtime: $RUNTIME ==="
+echo "=== npm smoke tests ==="
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
 pkg_install() {
-  # Always use npm for tarball installs — bun add from tarballs doesn't
-  # deduplicate transitive deps properly (installs a separate copy from
-  # the npm registry alongside the tarball). Real users install from the
-  # registry where this isn't an issue.
+  # Always use npm for tarball installs.
   npm install --no-audit --no-fund "$@"
 }
 
 pkg_run() {
   # Run a package bin (e.g. chant build src)
-  if [ "$RUNTIME" = "bun" ]; then
-    bunx "$@"
-  else
-    npx "$@"
-  fi
+  npx "$@"
 }
 
 pkg_init() {
@@ -95,7 +85,7 @@ test_manual_project() {
   local lexicon="$1"    # e.g. "aws"
   local tarball="$2"    # e.g. "/tarballs/lexicon-aws.tgz"
   local source="$3"     # TypeScript source code
-  local label="$RUNTIME-manual-$lexicon"
+  local label="npm-manual-$lexicon"
 
   echo ""
   echo "=== Test: $label ==="
@@ -179,7 +169,7 @@ export const bucket = new StorageBucket({ resourceID: "test-bucket", location: "
 
 # ── Test: type resolution ─────────────────────────────────────────────────────
 # Verify TypeScript can resolve lexicon exports via tsc --noEmit.
-# chant targets bun/tsx (raw .ts exports), so vanilla tsc may not resolve —
+# chant targets tsx (raw .ts exports), so vanilla tsc may not resolve —
 # we test it but don't treat failure as fatal.
 
 if [ "$INSTALL_MODE" = "tarball" ] && command -v npx >/dev/null 2>&1; then
@@ -201,7 +191,7 @@ SRC
   if npx tsc --noEmit 2>&1; then
     pass "tsc resolves lexicon types"
   else
-    # Not a hard failure — chant targets bun/tsx, not vanilla tsc
+    # Not a hard failure — chant targets tsx (.ts exports), not vanilla tsc
     pass "tsc type resolution skipped (expected with .ts exports)"
   fi
 fi
@@ -213,7 +203,7 @@ test_init_flow() {
   local lexicon="$1"    # e.g. "aws"
   local tarball="$2"    # e.g. "/tarballs/lexicon-aws.tgz"
   local source="$3"     # TypeScript source to write into src/
-  local label="$RUNTIME-init-$lexicon"
+  local label="npm-init-$lexicon"
 
   echo ""
   echo "=== Test: $label ==="
@@ -304,7 +294,7 @@ export const bucket = new StorageBucket({ resourceID: "smoke-bucket", location: 
 
 test_example() {
   local name="$1"       # e.g. "flyway-postgresql-k8s"
-  local label="$RUNTIME-example-$name"
+  local label="npm-example-$name"
   shift                 # remaining args: pairs of "tarball lexicon" ...
 
   echo ""

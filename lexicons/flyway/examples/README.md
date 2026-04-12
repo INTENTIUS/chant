@@ -34,7 +34,7 @@ The skill provides the full operational playbook: scaffolding, build/lint, deplo
 ## Running tests
 
 ```bash
-bun test lexicons/flyway/examples/
+npx vitest run lexicons/flyway/examples/
 ```
 
 This builds each example through the serializer and verifies the output contains expected TOML structure.

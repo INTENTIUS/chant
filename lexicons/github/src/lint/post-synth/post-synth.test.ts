@@ -1,4 +1,4 @@
-import { describe, test, expect } from "bun:test";
+import { describe, test, expect } from "vitest";
 import type { PostSynthContext } from "@intentius/chant/lint/post-synth";
 import { gha006 } from "./gha006";
 import { gha009 } from "./gha009";

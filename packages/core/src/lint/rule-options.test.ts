@@ -1,4 +1,4 @@
-import { describe, test, expect, beforeEach, afterEach } from "bun:test";
+import { describe, test, expect, beforeEach, afterEach } from "vitest";
 import { parseRuleConfig, loadConfig } from "./config";
 import { fileDeclarableLimitRule } from "./rules/file-declarable-limit";
 import * as ts from "typescript";
@@ -15,7 +15,7 @@ function makeNewExprs(names: string[]): string {
   return names.map((n) => `const x = new ${n}({ name: "a" });`).join("\n");
 }
 
-const TEST_DIR = join(import.meta.dir, "__test_rule_options__");
+const TEST_DIR = join(import.meta.dirname, "__test_rule_options__");
 
 beforeEach(() => {
   mkdirSync(TEST_DIR, { recursive: true });

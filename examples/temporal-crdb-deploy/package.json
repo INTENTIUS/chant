@@ -20,9 +20,9 @@
     "temporal:update": "tsx temporal/client.ts update"
   },
   "dependencies": {
-    "@intentius/chant": "workspace:*",
-    "@intentius/chant-lexicon-gcp": "workspace:*",
-    "@intentius/chant-lexicon-k8s": "workspace:*",
+    "@intentius/chant": "*",
+    "@intentius/chant-lexicon-gcp": "*",
+    "@intentius/chant-lexicon-k8s": "*",
     "@temporalio/activity": "^1.10.4",
     "@temporalio/client": "^1.10.4",
     "@temporalio/worker": "^1.10.4",

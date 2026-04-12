@@ -1,4 +1,4 @@
-import { describe, test, expect } from "bun:test";
+import { describe, test, expect } from "vitest";
 import { importModule } from "./import";
 import { DiscoveryError } from "../errors";
 import { withTestDir, expectToThrow } from "@intentius/chant-test-utils";
@@ -28,8 +28,8 @@ describe("importModule", () => {
 
       const module = await importModule(filePath);
       expect(module.default).toBeDefined();
-      expect((module.default as any).name).toBe("test");
-      expect((module.default as any).value).toBe(123);
+      expect((module.default as Record<string, unknown>).name).toBe("test");
+      expect((module.default as Record<string, unknown>).value).toBe(123);
     });
   });
 
@@ -125,6 +125,7 @@ describe("importModule", () => {
 
       const module = await importModule(filePath);
       expect(module.MyClass).toBeDefined();
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const instance = new (module.MyClass as any)(100);
       expect(instance.getValue()).toBe(100);
     });

@@ -1,9 +1,9 @@
-import { describe, test, expect, beforeAll, afterAll } from "bun:test";
+import { describe, test, expect, beforeAll, afterAll } from "vitest";
 import { mkdirSync, writeFileSync, rmSync, existsSync } from "fs";
 import { join } from "path";
 import { loadLocalRules } from "./rule-loader";
 
-const TEST_DIR = join(import.meta.dir, "__test_rules_fixture__");
+const TEST_DIR = join(import.meta.dirname, "__test_rules_fixture__");
 const RULES_DIR = join(TEST_DIR, ".chant", "rules");
 
 beforeAll(() => {

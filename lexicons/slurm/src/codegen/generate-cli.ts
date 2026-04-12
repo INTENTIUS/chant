@@ -1,6 +1,6 @@
-#!/usr/bin/env bun
+#!/usr/bin/env tsx
 /**
- * Thin entry point for `bun run generate` in lexicon-slurm.
+ * Thin entry point for `npm run generate` in lexicon-slurm.
  */
 import { generate, writeGeneratedFiles } from "./generate";
 import { dirname } from "path";

@@ -1,4 +1,4 @@
-import { describe, test, expect } from "bun:test";
+import { describe, test, expect } from "vitest";
 import { updateCommand } from "./update";
 import { withTestDir } from "@intentius/chant-test-utils";
 import { writeFileSync, mkdirSync, existsSync, readFileSync } from "fs";

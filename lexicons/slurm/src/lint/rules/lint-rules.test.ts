@@ -2,7 +2,7 @@
  * Lint rule tests — SLRC001, SLRS001, SLRC002, SLRC003.
  */
 
-import { describe, test, expect } from "bun:test";
+import { describe, test, expect } from "vitest";
 import type { LintContext } from "@intentius/chant/lint/rule";
 import { DECLARABLE_MARKER } from "@intentius/chant/declarable";
 import { partitionNodesDefined } from "./partition-nodes-defined";

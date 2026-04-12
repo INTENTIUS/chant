@@ -1,4 +1,4 @@
-import { describe, test, expect } from "bun:test";
+import { describe, test, expect } from "vitest";
 import * as ts from "typescript";
 import { evl002ControlFlowResourceRule } from "./evl002-control-flow-resource";
 import type { LintContext } from "../rule";

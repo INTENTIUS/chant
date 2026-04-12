@@ -8,8 +8,8 @@ usage() {
   echo "Usage: $0 [workspace|npm|npm-registry|build-examples|smoke-aws|smoke-eks|smoke-gke|smoke-aks|smoke-all|all]"
   echo ""
   echo "BUILD VERIFICATION:"
-  echo "  workspace       — Workspace smoke tests (bun link)"
-  echo "  npm             — npm install smoke tests (bun pm pack)"
+  echo "  workspace       — Workspace smoke tests (Node.js)"
+  echo "  npm             — npm install smoke tests (npm pack)"
   echo "  npm-registry    — Registry smoke tests (install from npmjs.com @latest)"
   echo "  build-examples  — Build all examples in Docker"
   echo ""
@@ -39,7 +39,7 @@ run_npm() {
   echo "Running codegen (prepack) for all lexicons..."
   for lex in aws azure gcp gitlab k8s flyway docker; do
     echo "  prepack lexicons/$lex"
-    bun run --cwd "$PROJECT_DIR/lexicons/$lex" prepack
+    npm run --prefix "$PROJECT_DIR/lexicons/$lex" prepack
   done
 
   echo "Building npm smoke test image (tests run during build)..."
@@ -51,7 +51,7 @@ build_e2e_image() {
   echo "Running codegen (prepack) for all lexicons..."
   for lex in aws azure gcp gitlab k8s flyway docker; do
     echo "  prepack lexicons/$lex"
-    bun run --cwd "$PROJECT_DIR/lexicons/$lex" prepack
+    npm run --prefix "$PROJECT_DIR/lexicons/$lex" prepack
   done
 
   echo "Building E2E smoke test image..."

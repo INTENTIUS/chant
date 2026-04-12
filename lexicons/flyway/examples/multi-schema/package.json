@@ -9,8 +9,8 @@
     "dev": "chant build src --lexicon flyway -o flyway.toml --watch"
   },
   "dependencies": {
-    "@intentius/chant-lexicon-flyway": "workspace:*",
-    "@intentius/chant": "workspace:*"
+    "@intentius/chant-lexicon-flyway": "*",
+    "@intentius/chant": "*"
   },
   "devDependencies": {
     "typescript": "*"

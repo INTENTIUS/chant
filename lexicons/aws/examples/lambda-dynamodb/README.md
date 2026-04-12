@@ -27,7 +27,7 @@ chant spell cast lambda-dynamodb
 ## Quick Start
 
 ```bash
-bun run build
+npm run build
 ```
 
 ## What It Does

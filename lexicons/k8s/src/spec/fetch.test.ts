@@ -1,4 +1,4 @@
-import { describe, test, expect } from "bun:test";
+import { describe, test, expect } from "vitest";
 import { fetchK8sSchema, fetchSchemas, K8S_SCHEMA_VERSION } from "./fetch";
 
 describe("fetch", () => {

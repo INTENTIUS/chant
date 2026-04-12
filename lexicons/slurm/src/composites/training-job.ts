@@ -8,11 +8,13 @@
  * - MPI/NCCL environment defaults
  */
 
+import { createRequire } from "module";
 import type { Job as JobConstructor } from "../generated/index";
 
 // We can't import the generated constructor class directly (it's created via
 // createResource at runtime). Use a type-safe factory wrapper instead.
-const { Job } = require("../generated/index") as { Job: typeof JobConstructor };
+const _require = createRequire(import.meta.url);
+const { Job } = _require("../generated/index") as { Job: typeof JobConstructor };
 
 export interface TrainingJobConfig {
   /** Job name */

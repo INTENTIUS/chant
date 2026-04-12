@@ -64,7 +64,7 @@ function insertPrepackInContiguousGroups(lines: string[], name: string): boolean
   for (let i = 0; i <= lines.length; i++) {
     const isPrepack =
       i < lines.length &&
-      lines[i].includes("bun run --cwd lexicons/") &&
+      lines[i].includes("npm run --prefix lexicons/") &&
       lines[i].includes("prepack");
     if (isPrepack && groupStart === -1) {
       groupStart = i;
@@ -97,10 +97,10 @@ function insertPrepackAfterEach(lines: string[], name: string): boolean {
 
   const insertAfter: number[] = [];
   for (let i = 0; i < lines.length; i++) {
-    if (!lines[i].includes("bun run --cwd lexicons/") || !lines[i].includes("prepack")) continue;
+    if (!lines[i].includes("npm run --prefix lexicons/") || !lines[i].includes("prepack")) continue;
     const nextIsAlsoPrepack =
       i + 1 < lines.length &&
-      lines[i + 1].includes("bun run --cwd lexicons/") &&
+      lines[i + 1].includes("npm run --prefix lexicons/") &&
       lines[i + 1].includes("prepack");
     if (!nextIsAlsoPrepack) {
       insertAfter.push(i);
@@ -122,8 +122,8 @@ function insertPrepackAfterEach(lines: string[], name: string): boolean {
  * and add a new validate step.
  *
  * The file has two patterns:
- * 1. Multi-line blocks (check + test jobs): `run: |\n  bun run --cwd lexicons/aws prepack\n  ...`
- * 2. Standalone steps (validate job): `- name: Generate and validate ...\n  run: bun run --cwd ...`
+ * 1. Multi-line blocks (check + test jobs): `run: |\n  npm run --prefix lexicons/aws prepack\n  ...`
+ * 2. Standalone steps (validate job): `- name: Generate and validate ...\n  run: npm run --prefix ...`
  *
  * We only insert into pattern 1 (contiguous groups) and separately add a new pattern 2 step.
  */
@@ -160,7 +160,7 @@ function patchCiWorkflow(root: string, name: string): { patched: boolean; reason
       const block = [
         "",
         `      - name: ${validateStepName}`,
-        `        run: bun run --cwd lexicons/${name} prepack`,
+        `        run: npm run --prefix lexicons/${name} prepack`,
       ];
       lines.splice(lastValidateRunIdx + 1, 0, ...block);
     }
@@ -190,7 +190,7 @@ function patchPublishWorkflow(root: string, name: string): { patched: boolean; r
   // Add publish step after the last existing publish step
   let lastPublishRunIdx = -1;
   for (let i = 0; i < lines.length; i++) {
-    if (lines[i].includes("bun publish --access public --tolerate-republish")) {
+    if (lines[i].includes("npm publish --access public")) {
       lastPublishRunIdx = i;
     }
   }
@@ -200,7 +200,7 @@ function patchPublishWorkflow(root: string, name: string): { patched: boolean; r
       "",
       `      - name: Publish @intentius/chant-lexicon-${name}`,
       `        working-directory: lexicons/${name}`,
-      "        run: bun publish --access public --tolerate-republish",
+      "        run: npm publish --access public",
     ];
     lines.splice(lastPublishRunIdx + 1, 0, ...block);
   }
@@ -251,15 +251,15 @@ export function onboardCommand(options: OnboardOptions): OnboardResult {
 
   // 4. Dockerfiles
   const dockerBun = join(root, "test/Dockerfile.smoke");
-  const dockerNode = join(root, "test/Dockerfile.smoke-node");
+  const dockerNpm = join(root, "test/Dockerfile.smoke-npm");
 
   const db = patchDockerfile(dockerBun, options.name);
   if (db.patched) patched.push("Dockerfile.smoke (prepack)");
   else skipped.push(`Dockerfile.smoke: ${db.reason}`);
 
-  const dn = patchDockerfile(dockerNode, options.name);
-  if (dn.patched) patched.push("Dockerfile.smoke-node (prepack)");
-  else skipped.push(`Dockerfile.smoke-node: ${dn.reason}`);
+  const dn = patchDockerfile(dockerNpm, options.name);
+  if (dn.patched) patched.push("Dockerfile.smoke-npm (prepack)");
+  else skipped.push(`Dockerfile.smoke-npm: ${dn.reason}`);
 
   return { success: true, patched, skipped };
 }
@@ -293,7 +293,7 @@ export async function printOnboardResult(result: OnboardResult, name: string): P
   console.log(`  1. Create an example: lexicons/${name}/examples/<example-name>/`);
   console.log(`     (must depend on @intentius/chant-lexicon-${name} for workspace resolution)`);
   console.log(`  2. Add smoke tests to test/integration.sh`);
-  console.log(`  3. Run: bun install (to update workspace links)`);
+  console.log(`  3. Run: npm install (to update workspace links)`);
   console.log(`  4. First npm publish: tag with v<version> and push`);
   console.log(`  5. Run: chant dev check-lexicon lexicons/${name} (to see completeness status)`);
   console.log(formatWarning({

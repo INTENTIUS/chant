@@ -1,4 +1,4 @@
-import { describe, test, expect } from "bun:test";
+import { describe, test, expect } from "vitest";
 import { K8sGenerator } from "./generator";
 import type { TemplateIR, ResourceIR } from "@intentius/chant/import/parser";
 

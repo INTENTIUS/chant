@@ -1,4 +1,4 @@
-import { describe, test, expect } from "bun:test";
+import { describe, test, expect } from "vitest";
 import { awsHover } from "./hover";
 import type { HoverContext } from "@intentius/chant/lsp/types";
 

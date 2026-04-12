@@ -1,4 +1,4 @@
-import { describe, test, expect } from "bun:test";
+import { describe, test, expect } from "vitest";
 import { parseCISchema, gitlabShortName, gitlabServiceName } from "./parse";
 import { loadSchemaFixture } from "../testdata/load-fixtures";
 

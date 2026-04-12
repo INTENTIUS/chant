@@ -1,7 +1,8 @@
-import { describe, test, expect } from "bun:test";
+import { describe, test, expect } from "vitest";
 import { checkConflicts } from "./conflict-check";
 import type { LexiconPlugin } from "../lexicon";
 
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
 const mockSerializer = { name: "test", serialize: () => ({}) } as any;
 
 const noopAsync = async () => {};
@@ -31,6 +32,7 @@ function makePlugin(
       category: "correctness" as const,
       check: () => [],
     }));
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     (plugin as any).lintRules = () => rules;
   }
 
@@ -40,6 +42,7 @@ function makePlugin(
       description: "",
       content: "",
     }));
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     (plugin as any).skills = () => skills;
   }
 
@@ -50,6 +53,7 @@ function makePlugin(
       inputSchema: { type: "object" as const, properties: {} },
       handler: async () => "",
     }));
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     (plugin as any).mcpTools = () => tools;
   }
 
@@ -60,6 +64,7 @@ function makePlugin(
       description: "",
       handler: async () => "",
     }));
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     (plugin as any).mcpResources = () => resources;
   }
 
@@ -261,7 +266,7 @@ describe("skill naming consistency", () => {
   test("all skill names match chant-{lexicon}(-{topic})* pattern", async () => {
     const { readdirSync, readFileSync } = await import("fs");
     const { join } = await import("path");
-    const lexiconsDir = join(import.meta.dir, "../../../../lexicons");
+    const lexiconsDir = join(import.meta.dirname, "../../../../lexicons");
     const lexiconNames = readdirSync(lexiconsDir, { withFileTypes: true })
       .filter((d) => d.isDirectory())
       .map((d) => d.name);

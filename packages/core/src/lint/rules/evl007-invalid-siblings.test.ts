@@ -1,4 +1,4 @@
-import { describe, test, expect } from "bun:test";
+import { describe, test, expect } from "vitest";
 import * as ts from "typescript";
 import { evl007InvalidSiblingsRule } from "./evl007-invalid-siblings";
 import type { LintContext } from "../rule";

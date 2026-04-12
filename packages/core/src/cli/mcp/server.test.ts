@@ -1,4 +1,4 @@
-import { describe, test, expect, beforeEach, afterEach } from "bun:test";
+import { describe, test, expect, beforeEach, afterEach } from "vitest";
 import { McpServer } from "./server";
 import { mkdir, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";

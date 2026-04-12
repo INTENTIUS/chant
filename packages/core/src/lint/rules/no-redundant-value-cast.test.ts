@@ -1,4 +1,4 @@
-import { describe, test, expect } from "bun:test";
+import { describe, test, expect } from "vitest";
 import * as ts from "typescript";
 import { noRedundantValueCastRule } from "./no-redundant-value-cast";
 import type { LintContext } from "../rule";

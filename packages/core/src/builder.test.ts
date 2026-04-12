@@ -1,4 +1,4 @@
-import { describe, test, expect } from "bun:test";
+import { describe, test, expect } from "vitest";
 import { Builder } from "./builder";
 import type { Declarable } from "./declarable";
 import { DECLARABLE_MARKER } from "./declarable";

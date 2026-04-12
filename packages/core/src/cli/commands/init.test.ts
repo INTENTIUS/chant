@@ -1,4 +1,4 @@
-import { describe, test, expect } from "bun:test";
+import { describe, test, expect } from "vitest";
 import { initCommand, type InitOptions } from "./init";
 import { withTestDir } from "@intentius/chant-test-utils";
 import { writeFile } from "node:fs/promises";

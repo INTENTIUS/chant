@@ -1,4 +1,4 @@
-import { describe, test, expect } from "bun:test";
+import { describe, test, expect } from "vitest";
 import { runLint } from "./engine";
 import type { LintRule, LintContext, LintDiagnostic } from "./rule";
 import { withTestDir } from "@intentius/chant-test-utils";

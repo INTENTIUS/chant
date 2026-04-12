@@ -1,6 +1,6 @@
-#!/usr/bin/env bun
+#!/usr/bin/env tsx
 /**
- * Thin entry point for `bun run bundle` in lexicon-gcp.
+ * Thin entry point for `npm run bundle` in lexicon-gcp.
  * Generates src/generated/ files and writes dist/ bundle.
  *
  * NOTE: Uses top-level await (matching AWS/Azure pattern) to avoid

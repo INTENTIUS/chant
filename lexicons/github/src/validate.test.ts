@@ -1,4 +1,4 @@
-import { describe, test, expect } from "bun:test";
+import { describe, test, expect } from "vitest";
 import { validate } from "./validate";
 
 describe("validate", () => {
@@ -8,5 +8,5 @@ describe("validate", () => {
 
   // Note: Full validation requires generated artifacts to exist.
   // This test verifies the validate module loads correctly.
-  // Run `bun run generate` first for full validation tests.
+  // Run `npm run generate` first for full validation tests.
 });

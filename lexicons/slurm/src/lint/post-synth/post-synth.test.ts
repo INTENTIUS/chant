@@ -2,7 +2,7 @@
  * Post-synth check tests — SLR010 through SLR021.
  */
 
-import { describe, test, expect } from "bun:test";
+import { describe, test, expect } from "vitest";
 import type { PostSynthContext } from "@intentius/chant/lint/post-synth";
 import { slr010 } from "./slr010-cluster-required";
 import { slr011 } from "./slr011-partition-has-nodes";

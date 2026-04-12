@@ -1,4 +1,4 @@
-import { describe, test, expect, jest } from "bun:test";
+import { describe, test, expect, vi } from "vitest";
 import { isCompositeInstance } from "@intentius/chant";
 import { emitYAML } from "@intentius/chant/yaml";
 import { WebApp } from "./web-app";
@@ -899,7 +899,7 @@ describe("NamespaceEnv", () => {
   });
 
   test("warns when quota set without limits", () => {
-    const warnSpy = jest.spyOn(console, "warn").mockImplementation(() => {});
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
     NamespaceEnv({ name: "warn-test", cpuQuota: "4", defaultDenyIngress: false });
     expect(warnSpy).toHaveBeenCalledWith(
       expect.stringContaining("ResourceQuota set but no LimitRange defaults"),
@@ -908,7 +908,7 @@ describe("NamespaceEnv", () => {
   });
 
   test("no warning when both quota and limits set", () => {
-    const warnSpy = jest.spyOn(console, "warn").mockImplementation(() => {});
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
     NamespaceEnv({
       name: "both-test",
       cpuQuota: "4",
@@ -920,7 +920,7 @@ describe("NamespaceEnv", () => {
   });
 
   test("no warning when limits only (no quota)", () => {
-    const warnSpy = jest.spyOn(console, "warn").mockImplementation(() => {});
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
     NamespaceEnv({
       name: "limits-only",
       defaultCpuRequest: "100m",

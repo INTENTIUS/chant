@@ -3,7 +3,7 @@ set -euo pipefail
 
 set -a; source .env; set +a
 
-CELLS="${CELLS:-$(bun -e "import { cells } from './src/config.ts'; process.stdout.write(cells.map(c => c.name).join(' '))")}"
+CELLS="${CELLS:-$(npx tsx --eval "import { cells } from './src/config.ts'; process.stdout.write(cells.map(c => c.name).join(' '))")}"
 
 echo "================================================================"
 echo "  GitLab Cells — Full Deploy"

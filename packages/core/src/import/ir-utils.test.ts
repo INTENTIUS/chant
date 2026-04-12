@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test";
+import { describe, expect, test } from "vitest";
 import { hasIntrinsicInValue, irUsesIntrinsic, collectDependencies } from "./ir-utils";
 import type { TemplateIR } from "./parser";
 

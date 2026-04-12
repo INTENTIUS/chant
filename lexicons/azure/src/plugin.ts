@@ -1,6 +1,4 @@
-import { createRequire } from "module";
 import type { LexiconPlugin, IntrinsicDef } from "@intentius/chant/lexicon";
-const require = createRequire(import.meta.url);
 import type { LintRule } from "@intentius/chant/lint/rule";
 import type { TemplateParser } from "@intentius/chant/import/parser";
 import type { TypeScriptGenerator } from "@intentius/chant/import/generator";
@@ -8,7 +6,17 @@ import type { CompletionContext, CompletionItem, HoverContext, HoverInfo } from 
 import type { McpToolContribution, McpResourceContribution } from "@intentius/chant/mcp/types";
 import { discoverPostSynthChecks } from "@intentius/chant/lint/discover";
 import { createSkillsLoader } from "@intentius/chant/lexicon-plugin-helpers";
+import { readFileSync, readdirSync, existsSync } from "fs";
+import { join, dirname } from "path";
+import { fileURLToPath } from "url";
 import { azureSerializer } from "./serializer";
+import { hardcodedLocationRule } from "./lint/rules/hardcoded-location";
+import { storageHttpsRule } from "./lint/rules/storage-https";
+import { nsgWildcardRule } from "./lint/rules/nsg-wildcard";
+import { ArmParser } from "./import/parser";
+import { ArmGenerator } from "./import/generator";
+import { azureCompletions } from "./lsp/completions";
+import { azureHover } from "./lsp/hover";
 
 /**
  * Azure Resource Manager lexicon plugin.
@@ -21,9 +29,6 @@ export const azurePlugin: LexiconPlugin = {
   serializer: azureSerializer,
 
   lintRules(): LintRule[] {
-    const { hardcodedLocationRule } = require("./lint/rules/hardcoded-location");
-    const { storageHttpsRule } = require("./lint/rules/storage-https");
-    const { nsgWildcardRule } = require("./lint/rules/nsg-wildcard");
     return [hardcodedLocationRule, storageHttpsRule, nsgWildcardRule];
   },
 
@@ -250,18 +255,14 @@ export const tags = defaultTags([
   },
 
   templateParser(): TemplateParser {
-    const { ArmParser } = require("./import/parser");
     return new ArmParser();
   },
 
   templateGenerator(): TypeScriptGenerator {
-    const { ArmGenerator } = require("./import/generator");
     return new ArmGenerator();
   },
 
   postSynthChecks() {
-    const { join, dirname } = require("path");
-    const { fileURLToPath } = require("url");
     const postSynthDir = join(dirname(fileURLToPath(import.meta.url)), "lint", "post-synth");
     return discoverPostSynthChecks(postSynthDir, import.meta.url);
   },
@@ -341,17 +342,11 @@ export const tags = defaultTags([
   ]),
 
   completionProvider() {
-    return (ctx: CompletionContext): CompletionItem[] => {
-      const { azureCompletions } = require("./lsp/completions");
-      return azureCompletions(ctx);
-    };
+    return (ctx: CompletionContext): CompletionItem[] => azureCompletions(ctx);
   },
 
   hoverProvider() {
-    return (ctx: HoverContext): HoverInfo | undefined => {
-      const { azureHover } = require("./lsp/hover");
-      return azureHover(ctx);
-    };
+    return (ctx: HoverContext): HoverInfo | undefined => azureHover(ctx);
   },
 
   mcpTools(): McpToolContribution[] {
@@ -366,9 +361,6 @@ export const tags = defaultTags([
         required: ["query"],
       },
       handler: async (args: Record<string, unknown>) => {
-        const { readFileSync } = require("fs");
-        const { join, dirname } = require("path");
-        const { fileURLToPath } = require("url");
         const dir = dirname(fileURLToPath(import.meta.url));
         try {
           const lexicon = JSON.parse(
@@ -380,7 +372,7 @@ export const tags = defaultTags([
             .slice(0, 10);
           return JSON.stringify(matches, null, 2);
         } catch {
-          return "Lexicon not available — run `bun run generate` first.";
+          return "Lexicon not available — run `npm run generate` first.";
         }
       },
     }];
@@ -394,9 +386,6 @@ export const tags = defaultTags([
         description: "All available Azure resource types",
         mimeType: "application/json",
         handler: async () => {
-          const { readFileSync } = require("fs");
-          const { join, dirname } = require("path");
-          const { fileURLToPath } = require("url");
           const dir = dirname(fileURLToPath(import.meta.url));
           try {
             return readFileSync(join(dir, "generated", "lexicon-azure.json"), "utf-8");
@@ -411,9 +400,6 @@ export const tags = defaultTags([
         description: "Example project summaries with code snippets for Azure ARM templates",
         mimeType: "application/json",
         handler: async () => {
-          const { readFileSync, readdirSync, existsSync } = require("fs");
-          const { join, dirname } = require("path");
-          const { fileURLToPath } = require("url");
           const pkgDir = dirname(dirname(fileURLToPath(import.meta.url)));
           const examplesDir = join(pkgDir, "examples");
           const examples: Array<{ name: string; files: Record<string, string> }> = [];
@@ -446,26 +432,24 @@ export const tags = defaultTags([
   },
 
   async generate(opts) {
-    const { generate: gen, writeGeneratedFiles } = require("./codegen/generate");
-    const { dirname: d } = require("path");
-    const { fileURLToPath: fu } = require("url");
+    const { generate: gen, writeGeneratedFiles } = await import("./codegen/generate");
     const result = await gen(opts);
-    writeGeneratedFiles(result, d(d(fu(import.meta.url))));
+    writeGeneratedFiles(result, dirname(dirname(fileURLToPath(import.meta.url))));
     return result;
   },
 
   async validate(opts) {
-    const { validate } = require("./validate");
+    const { validate } = await import("./validate");
     return validate(opts);
   },
 
   async coverage() {
-    const { computeCoverage } = require("./coverage");
+    const { computeCoverage } = await import("./coverage");
     return computeCoverage();
   },
 
   async package(opts) {
-    const { packageLexicon } = require("./codegen/package");
+    const { packageLexicon } = await import("./codegen/package");
     return packageLexicon(opts);
   },
 };

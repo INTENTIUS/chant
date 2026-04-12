@@ -1,9 +1,9 @@
-import { describe, test, expect, beforeEach, afterEach } from "bun:test";
+import { describe, test, expect, beforeEach, afterEach } from "vitest";
 import { loadChantConfig, DEFAULT_CHANT_CONFIG } from "./config";
 import { writeFileSync, mkdirSync, rmSync } from "fs";
 import { join } from "path";
 
-const TEST_DIR = join(import.meta.dir, "__test_chant_config__");
+const TEST_DIR = join(import.meta.dirname, "__test_chant_config__");
 
 beforeEach(() => {
   mkdirSync(TEST_DIR, { recursive: true });
@@ -68,7 +68,7 @@ describe("loadChantConfig", () => {
     );
 
     const result = await loadChantConfig(TEST_DIR);
-    expect(result.configPath).toEndWith("chant.config.ts");
+    expect(result.configPath?.endsWith("chant.config.ts")).toBe(true);
   });
 
   test("handles empty config", async () => {

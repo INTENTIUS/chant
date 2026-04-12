@@ -124,7 +124,7 @@ for rel in "${ALLOWLIST[@]}"; do
   # Run full roundtrip, capturing serialized YAML
   YAML_OUTPUT=$(mktemp)
   export VERBOSE EMIT_YAML=1
-  if ! bun run "$HELPER" "$manifest" > "$YAML_OUTPUT" 2>/dev/null; then
+  if ! npx tsx "$HELPER" "$manifest" > "$YAML_OUTPUT" 2>/dev/null; then
     ((fail++)) || true
     echo "FAIL (roundtrip): $rel"
     rm -f "$YAML_OUTPUT"

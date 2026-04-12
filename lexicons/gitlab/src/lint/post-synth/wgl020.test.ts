@@ -1,4 +1,4 @@
-import { describe, test, expect } from "bun:test";
+import { describe, test, expect } from "vitest";
 import { wgl020, checkDuplicateJobNames } from "./wgl020";
 
 describe("WGL020: Duplicate Job Names", () => {

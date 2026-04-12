@@ -1,4 +1,4 @@
-import { describe, test, expect } from "bun:test";
+import { describe, test, expect } from "vitest";
 import { build } from "@intentius/chant/build";
 import { lintCommand } from "@intentius/chant/cli/commands/lint";
 import { resolve } from "path";
@@ -15,7 +15,7 @@ export interface ExampleHarnessConfig {
   serializer: Serializer | Serializer[];
   /** Output key(s) in result.outputs map — must match serializer order if array */
   outputKey: string | string[];
-  /** Directory containing example subdirectories (typically import.meta.dir) */
+  /** Directory containing example subdirectories (typically import.meta.dirname) */
   examplesDir: string;
 }
 
@@ -47,6 +47,9 @@ export function describeExample(
   const outputKeys = Array.isArray(config.outputKey)
     ? config.outputKey
     : [config.outputKey];
+
+  // Skip entirely if both lint and build are skipped (would produce empty describe)
+  if (opts?.skipLint && opts?.skipBuild) return;
 
   describe(`${config.lexicon} ${name} example`, () => {
     const srcDir = resolve(config.examplesDir, name, "src");

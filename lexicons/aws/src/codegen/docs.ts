@@ -902,10 +902,10 @@ The \`plugins\` array accepts relative paths. Each plugin module should export a
 
 \`\`\`bash
 cd examples/lambda-function
-bun install
+npm install
 chant build    # produces CloudFormation JSON
 chant lint     # runs lint rules
-bun test       # runs the example's tests
+npx vitest run    # run the tests
 \`\`\`
 
 ## Lambda Function

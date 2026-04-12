@@ -1,4 +1,4 @@
-#!/usr/bin/env bun
+#!/usr/bin/env tsx
 import { generate, writeGeneratedFiles } from "./generate";
 import { dirname } from "path";
 import { fileURLToPath } from "url";

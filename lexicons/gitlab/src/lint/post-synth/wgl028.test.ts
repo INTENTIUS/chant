@@ -1,4 +1,4 @@
-import { describe, test, expect } from "bun:test";
+import { describe, test, expect } from "vitest";
 import { wgl028, checkRedundantNeeds } from "./wgl028";
 
 describe("WGL028: Redundant Needs", () => {

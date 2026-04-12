@@ -6,10 +6,10 @@ Runnable examples live in the lexicon's `examples/` directory. Clone the repo an
 
 ```bash
 cd examples/getting-started
-bun install
+npm install
 chant build    # produces .gitlab-ci.yml
 chant lint     # runs lint rules
-bun test       # runs the example's tests
+npx vitest run    # run the tests
 ```
 
 ## Getting Started
@@ -157,6 +157,34 @@ import { NodePipeline } from "@intentius/chant-lexicon-gitlab";
 export const app = NodePipeline({
   nodeVersion: "22",
   installCommand: "npm install",
+  buildScript: "build",
+  testScript: "test",
+});
+```
+
+## Bun Pipeline
+
+Use `BunPipeline` for projects that use the [Bun](https://bun.sh) runtime. It is a preset
+of `NodePipeline` with Bun-specific defaults: `bun install --frozen-lockfile`, cache under
+`.bun/install/cache` keyed on `bun.lock`, and `bun run` as the script prefix.
+
+```typescript title="pipeline.ts"
+import { BunPipeline } from "@intentius/chant-lexicon-gitlab";
+
+export const app = BunPipeline({
+  buildScript: "build",
+  testScript: "test",
+});
+```
+
+To keep most `NodePipeline` options while switching the package manager:
+
+```typescript
+import { NodePipeline } from "@intentius/chant-lexicon-gitlab";
+
+export const app = NodePipeline({
+  packageManager: "bun",
+  nodeVersion: "22",
   buildScript: "build",
   testScript: "test",
 });

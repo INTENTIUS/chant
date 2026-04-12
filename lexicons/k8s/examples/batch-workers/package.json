@@ -15,8 +15,8 @@
     "teardown": "kubectl delete -f k8s.yaml"
   },
   "dependencies": {
-    "@intentius/chant": "workspace:*",
-    "@intentius/chant-lexicon-k8s": "workspace:*"
+    "@intentius/chant": "*",
+    "@intentius/chant-lexicon-k8s": "*"
   },
   "devDependencies": {
     "typescript": "*"

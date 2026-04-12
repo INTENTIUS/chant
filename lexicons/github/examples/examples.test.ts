@@ -1,4 +1,4 @@
-import { expect } from "bun:test";
+import { expect } from "vitest";
 import { describeAllExamples } from "@intentius/chant-test-utils/example-harness";
 import { githubSerializer } from "@intentius/chant-lexicon-github";
 
@@ -7,7 +7,7 @@ describeAllExamples(
     lexicon: "github",
     serializer: githubSerializer,
     outputKey: "github",
-    examplesDir: import.meta.dir,
+    examplesDir: import.meta.dirname,
   },
   {
     "getting-started": { skipLint: true },

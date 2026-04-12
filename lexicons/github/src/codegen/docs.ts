@@ -1001,10 +1001,10 @@ export default {
 
 \`\`\`bash
 cd examples/getting-started
-bun install
+npm install
 chant build    # produces .github/workflows/ci.yml
 chant lint     # runs lint rules
-bun test       # runs the example's tests
+npx vitest run    # run the tests
 \`\`\`
 
 ## Getting Started

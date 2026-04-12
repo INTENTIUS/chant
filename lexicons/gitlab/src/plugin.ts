@@ -5,25 +5,27 @@
  * for GitLab CI/CD pipelines.
  */
 
-import { createRequire } from "module";
 import type { LexiconPlugin, IntrinsicDef, InitTemplateSet } from "@intentius/chant/lexicon";
-const require = createRequire(import.meta.url);
 import type { LintRule } from "@intentius/chant/lint/rule";
 import { discoverPostSynthChecks } from "@intentius/chant/lint/discover";
 import { createSkillsLoader, createDiffTool, createCatalogResource } from "@intentius/chant/lexicon-plugin-helpers";
 import { join, dirname } from "path";
 import { fileURLToPath } from "url";
 import { gitlabSerializer } from "./serializer";
+import { deprecatedOnlyExceptRule } from "./lint/rules/deprecated-only-except";
+import { missingScriptRule } from "./lint/rules/missing-script";
+import { missingStageRule } from "./lint/rules/missing-stage";
+import { artifactNoExpiryRule } from "./lint/rules/artifact-no-expiry";
+import { gitlabCompletions } from "./lsp/completions";
+import { gitlabHover } from "./lsp/hover";
+import { GitLabParser } from "./import/parser";
+import { GitLabGenerator } from "./import/generator";
 
 export const gitlabPlugin: LexiconPlugin = {
   name: "gitlab",
   serializer: gitlabSerializer,
 
   lintRules(): LintRule[] {
-    const { deprecatedOnlyExceptRule } = require("./lint/rules/deprecated-only-except");
-    const { missingScriptRule } = require("./lint/rules/missing-script");
-    const { missingStageRule } = require("./lint/rules/missing-stage");
-    const { artifactNoExpiryRule } = require("./lint/rules/artifact-no-expiry");
     return [deprecatedOnlyExceptRule, missingScriptRule, missingStageRule, artifactNoExpiryRule];
   },
 
@@ -187,22 +189,18 @@ export const test = new Job({
   },
 
   completionProvider(ctx: import("@intentius/chant/lsp/types").CompletionContext) {
-    const { gitlabCompletions } = require("./lsp/completions");
     return gitlabCompletions(ctx);
   },
 
   hoverProvider(ctx: import("@intentius/chant/lsp/types").HoverContext) {
-    const { gitlabHover } = require("./lsp/hover");
     return gitlabHover(ctx);
   },
 
   templateParser() {
-    const { GitLabParser } = require("./import/parser");
     return new GitLabParser();
   },
 
   templateGenerator() {
-    const { GitLabGenerator } = require("./import/generator");
     return new GitLabGenerator();
   },
 

@@ -15,7 +15,7 @@ export { GCP, ProjectId, Region, Zone } from "./pseudo";
 export { GcpAnnotations } from "./variables";
 
 // Generated entities — export everything from generated index
-// After running `bun run generate`, this re-exports all Config Connector resource classes
+// After running `npm run generate`, this re-exports all Config Connector resource classes
 export * from "./generated/index";
 
 // Composites

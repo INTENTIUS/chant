@@ -7,14 +7,14 @@
     "build": "chant build src --lexicon helm -o Chart.yaml",
     "lint": "chant lint src",
     "dev": "chant build src --lexicon helm -o Chart.yaml --watch",
-    "test": "bun test",
+    "test": "npx vitest run",
     "deploy": "helm install web-app-ingress .",
     "teardown": "helm uninstall web-app-ingress"
   },
   "dependencies": {
-    "@intentius/chant": "workspace:*",
-    "@intentius/chant-lexicon-helm": "workspace:*",
-    "@intentius/chant-lexicon-k8s": "workspace:*"
+    "@intentius/chant": "*",
+    "@intentius/chant-lexicon-helm": "*",
+    "@intentius/chant-lexicon-k8s": "*"
   },
   "devDependencies": {
     "typescript": "*"

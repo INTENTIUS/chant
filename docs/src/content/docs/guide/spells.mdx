@@ -75,8 +75,8 @@ tasks: [
 
 // ❌ Bad — micromanages what skills already handle
 tasks: [
-  task("Build: cd lexicons/aws/examples/lambda-sqs && bun run build"),
-  task("Lint: cd lexicons/aws/examples/lambda-sqs && bun run lint"),
+  task("Build: cd lexicons/aws/examples/lambda-sqs && npm run build"),
+  task("Lint: cd lexicons/aws/examples/lambda-sqs && npm run lint"),
   task("Verify template.json contains 4 resources"),
 ],
 ```

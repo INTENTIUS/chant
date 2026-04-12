@@ -1,4 +1,4 @@
-import { describe, test, expect } from "bun:test";
+import { describe, test, expect } from "vitest";
 import { k8sShortName, type K8sParseResult } from "../spec/parse";
 import { NamingStrategy } from "./naming";
 

@@ -1,4 +1,4 @@
-import { describe, test, expect } from "bun:test";
+import { describe, test, expect } from "vitest";
 import { hardcodedNamespaceRule } from "./hardcoded-namespace";
 import { latestImageTagRule } from "./latest-image-tag";
 import { missingResourceLimitsRule } from "./missing-resource-limits";

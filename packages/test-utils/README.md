@@ -19,7 +19,7 @@ describeAllExamples({
   lexicon: "my-lexicon",
   serializer: mySerializer,
   outputKey: "my-lexicon",
-  examplesDir: import.meta.dir,
+  examplesDir: import.meta.dirname,
 });
 ```
 
@@ -52,7 +52,7 @@ describeExample("aws-k8s", {
   lexicon: "aws-k8s",
   serializer: [awsSerializer, k8sSerializer],
   outputKey: ["aws", "k8s"],
-  examplesDir: import.meta.dir,
+  examplesDir: import.meta.dirname,
 });
 ```
 
@@ -73,7 +73,7 @@ Registers a `describe()` block for a single example with lint + build tests.
 | `lexicon` | `string` | Label used in describe block names |
 | `serializer` | `Serializer \| Serializer[]` | Serializer(s) to build with |
 | `outputKey` | `string \| string[]` | Key(s) in `result.outputs` map to assert |
-| `examplesDir` | `string` | Directory to scan (use `import.meta.dir`) |
+| `examplesDir` | `string` | Directory to scan (use `import.meta.dirname|
 
 #### `ExampleOpts`
 

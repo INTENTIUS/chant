@@ -42,7 +42,7 @@ function isBadSeverityError(issue: z.ZodIssue, config: unknown, path: readonly (
   let value: unknown = config;
   for (const key of path) {
     if (value == null || typeof value !== "object") return null;
-    value = (value as any)[key];
+    value = (value as Record<string, unknown>)[key];
   }
 
   // If the value is a string, the user meant it as a severity — show the specific severity error

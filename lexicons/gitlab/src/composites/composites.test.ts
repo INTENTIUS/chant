@@ -1,4 +1,4 @@
-import { describe, test, expect } from "bun:test";
+import { describe, test, expect } from "vitest";
 import { expandComposite, isCompositeInstance } from "@intentius/chant";
 import { DockerBuild } from "./docker-build";
 import { NodePipeline, BunPipeline, PnpmPipeline } from "./node-pipeline";

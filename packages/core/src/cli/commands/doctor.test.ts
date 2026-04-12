@@ -1,4 +1,4 @@
-import { describe, test, expect } from "bun:test";
+import { describe, test, expect } from "vitest";
 import { doctorCommand } from "./doctor";
 import { withTestDir } from "@intentius/chant-test-utils";
 import { writeFileSync, mkdirSync } from "fs";

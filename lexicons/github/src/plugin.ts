@@ -5,34 +5,36 @@
  * for GitHub Actions workflows.
  */
 
-import { createRequire } from "module";
 import type { LexiconPlugin, IntrinsicDef, InitTemplateSet } from "@intentius/chant/lexicon";
-const require = createRequire(import.meta.url);
 import type { LintRule } from "@intentius/chant/lint/rule";
 import { discoverPostSynthChecks } from "@intentius/chant/lint/discover";
 import { createSkillsLoader, createDiffTool, createCatalogResource } from "@intentius/chant/lexicon-plugin-helpers";
 import { join, dirname } from "path";
 import { fileURLToPath } from "url";
 import { githubSerializer } from "./serializer";
+import { useTypedActionsRule } from "./lint/rules/use-typed-actions";
+import { useConditionBuildersRule } from "./lint/rules/use-condition-builders";
+import { noHardcodedSecretsRule } from "./lint/rules/no-hardcoded-secrets";
+import { useMatrixBuilderRule } from "./lint/rules/use-matrix-builder";
+import { extractInlineStructsRule } from "./lint/rules/extract-inline-structs";
+import { fileJobLimitRule } from "./lint/rules/file-job-limit";
+import { noRawExpressionsRule } from "./lint/rules/no-raw-expressions";
+import { missingRecommendedInputsRule } from "./lint/rules/missing-recommended-inputs";
+import { deprecatedActionVersionRule } from "./lint/rules/deprecated-action-version";
+import { jobTimeoutRule } from "./lint/rules/job-timeout";
+import { suggestCacheRule } from "./lint/rules/suggest-cache";
+import { validateConcurrencyRule } from "./lint/rules/validate-concurrency";
+import { detectSecretsRule } from "./lint/rules/detect-secrets";
+import { githubCompletions } from "./lsp/completions";
+import { githubHover } from "./lsp/hover";
+import { GitHubActionsParser } from "./import/parser";
+import { GitHubActionsGenerator } from "./import/generator";
 
 export const githubPlugin: LexiconPlugin = {
   name: "github",
   serializer: githubSerializer,
 
   lintRules(): LintRule[] {
-    const { useTypedActionsRule } = require("./lint/rules/use-typed-actions");
-    const { useConditionBuildersRule } = require("./lint/rules/use-condition-builders");
-    const { noHardcodedSecretsRule } = require("./lint/rules/no-hardcoded-secrets");
-    const { useMatrixBuilderRule } = require("./lint/rules/use-matrix-builder");
-    const { extractInlineStructsRule } = require("./lint/rules/extract-inline-structs");
-    const { fileJobLimitRule } = require("./lint/rules/file-job-limit");
-    const { noRawExpressionsRule } = require("./lint/rules/no-raw-expressions");
-    const { missingRecommendedInputsRule } = require("./lint/rules/missing-recommended-inputs");
-    const { deprecatedActionVersionRule } = require("./lint/rules/deprecated-action-version");
-    const { jobTimeoutRule } = require("./lint/rules/job-timeout");
-    const { suggestCacheRule } = require("./lint/rules/suggest-cache");
-    const { validateConcurrencyRule } = require("./lint/rules/validate-concurrency");
-    const { detectSecretsRule } = require("./lint/rules/detect-secrets");
     return [
       useTypedActionsRule,
       useConditionBuildersRule,
@@ -159,22 +161,18 @@ export const build = new Job({
   },
 
   completionProvider(ctx: import("@intentius/chant/lsp/types").CompletionContext) {
-    const { githubCompletions } = require("./lsp/completions");
     return githubCompletions(ctx);
   },
 
   hoverProvider(ctx: import("@intentius/chant/lsp/types").HoverContext) {
-    const { githubHover } = require("./lsp/hover");
     return githubHover(ctx);
   },
 
   templateParser() {
-    const { GitHubActionsParser } = require("./import/parser");
     return new GitHubActionsParser();
   },
 
   templateGenerator() {
-    const { GitHubActionsGenerator } = require("./import/generator");
     return new GitHubActionsGenerator();
   },
 

@@ -1,4 +1,19 @@
-import { $ } from "bun";
+import { promisify } from "util";
+import { exec } from "child_process";
+
+const execAsync = promisify(exec);
+
+function $(strings: TemplateStringsArray, ...values: unknown[]) {
+  const parts: string[] = [];
+  strings.forEach((str, i) => {
+    parts.push(str);
+    if (i < values.length) {
+      const val = values[i];
+      parts.push(Array.isArray(val) ? (val as string[]).join(" ") : String(val ?? ""));
+    }
+  });
+  return execAsync(parts.join(""));
+}
 
 export const SOLR = "http://localhost:8983/solr/lucene";
 
@@ -21,7 +36,7 @@ export async function retry(times: number, interval: string, fn: () => Promise<v
   for (let i = 0; i < times; i++) {
     try { await fn(); return; } catch (e) {
       if (i === times - 1) throw e;
-      await Bun.sleep(ms);
+      await new Promise<void>(r => setTimeout(r, ms));
     }
   }
 }

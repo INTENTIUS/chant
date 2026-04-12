@@ -1,4 +1,4 @@
-import { describe, test, expect, spyOn } from "bun:test";
+import { describe, test, expect, vi } from "vitest";
 import { resolveDependsOn } from "./resource-attributes";
 import { DECLARABLE_MARKER, type Declarable } from "./declarable";
 
@@ -55,7 +55,7 @@ describe("resolveDependsOn", () => {
   test("warns and skips Declarable not found in entityNames", () => {
     const bucket = mockDeclarable();
     const entityNames = new Map<Declarable, string>(); // bucket not registered
-    const spy = spyOn(console, "warn").mockImplementation(() => {});
+    const spy = vi.spyOn(console, "warn").mockImplementation(() => {});
 
     const result = resolveDependsOn(bucket, entityNames, "MyResource");
     expect(result).toEqual([]);

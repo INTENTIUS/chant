@@ -28,13 +28,13 @@ A `flyway.toml` configuration file with three environments (dev, staging, prod) 
 
 ## Prerequisites
 
-- [Bun](https://bun.sh) or [Node.js](https://nodejs.org/) >= 22
+- [Node.js](https://nodejs.org/) >= 22
 - [Flyway CLI](https://documentation.red-gate.com/fd/command-line-184127404.html)
 
 ## Build
 
 ```bash
-bun install && bun run build && bun run lint
+npm install && npm run build && npm run lint
 ```
 
 ## Related examples

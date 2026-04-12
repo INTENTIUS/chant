@@ -216,7 +216,7 @@ export async function printInitLexiconResult(result: InitLexiconResult): Promise
   console.log("");
   console.log("Next steps:");
   console.log("  1. cd into the lexicon directory");
-  console.log("  2. bun install");
+  console.log("  2. npm install");
   console.log("  3. Edit src/spec/fetch.ts — point at your upstream schema source");
   console.log("  4. Edit src/spec/parse.ts — parse your schema format");
   console.log("  5. just generate — generate types from spec");

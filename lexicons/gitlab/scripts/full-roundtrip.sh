@@ -47,7 +47,7 @@ run_file() {
   ((total++)) || true
 
   export VERBOSE
-  if bun run "$HELPER" "${HELPER_ARGS[@]}" "$file" 2>/dev/null; then
+  if npx tsx "$HELPER" "${HELPER_ARGS[@]}" "$file" 2>/dev/null; then
     ((pass++)) || true
     if [[ "$VERBOSE" == "true" ]]; then
       echo "PASS: $rel"

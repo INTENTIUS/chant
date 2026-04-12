@@ -17,7 +17,7 @@ for example_dir in /app/examples/*/; do
   ln -sfn /app/node_modules "$example_dir/node_modules"
   mkdir -p "$example_dir/templates" 2>/dev/null || true
 
-  if (cd "$example_dir" && bun run build 2>&1); then
+  if (cd "$example_dir" && npm run build 2>&1); then
     echo "  OK: $name"
     PASS=$((PASS + 1))
   else

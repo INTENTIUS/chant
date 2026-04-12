@@ -1,4 +1,4 @@
-import { describe, test, expect } from "bun:test";
+import { describe, test, expect } from "vitest";
 import * as ts from "typescript";
 import type { LintContext } from "@intentius/chant/lint/rule";
 import { suggestCacheRule } from "./suggest-cache";

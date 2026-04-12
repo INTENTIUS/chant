@@ -1,4 +1,4 @@
-import { describe, test, expect } from "bun:test";
+import { describe, test, expect } from "vitest";
 import type { PostSynthContext } from "@intentius/chant/lint/post-synth";
 import { checkUnknownStateCloudNodes, slr031 } from "./slr031-unknown-state-cloud-nodes";
 

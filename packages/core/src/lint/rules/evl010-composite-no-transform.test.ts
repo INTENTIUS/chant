@@ -1,4 +1,4 @@
-import { describe, test, expect } from "bun:test";
+import { describe, test, expect } from "vitest";
 import * as ts from "typescript";
 import { evl010CompositeNoTransformRule } from "./evl010-composite-no-transform";
 import type { LintContext } from "../rule";

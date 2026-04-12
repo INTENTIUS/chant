@@ -1,4 +1,4 @@
-import { expect } from "bun:test";
+import { expect } from "vitest";
 import { describeAllExamples } from "@intentius/chant-test-utils/example-harness";
 import { flywaySerializer } from "@intentius/chant-lexicon-flyway";
 
@@ -7,7 +7,7 @@ describeAllExamples(
     lexicon: "flyway",
     serializer: flywaySerializer,
     outputKey: "flyway",
-    examplesDir: import.meta.dir,
+    examplesDir: import.meta.dirname,
   },
   {
     "basic-project": {

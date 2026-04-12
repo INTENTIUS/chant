@@ -81,7 +81,7 @@ export function writeGeneratedFiles(result: GenerateResult, pkgDir?: string): vo
 }
 
 export function generateCodegenGenerateCliTs(): string {
-  return `#!/usr/bin/env bun
+  return `#!/usr/bin/env tsx
 import { generate, writeGeneratedFiles } from "./generate";
 import { dirname } from "path";
 import { fileURLToPath } from "url";

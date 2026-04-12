@@ -34,7 +34,7 @@ done
 
 # --- Prerequisite checks ---
 
-for cmd in k3d kubectl bun; do
+for cmd in k3d kubectl npx; do
   if ! command -v "$cmd" &>/dev/null; then
     echo "ERROR: $cmd is not installed or not on PATH"
     exit 1
@@ -84,7 +84,7 @@ echo "=== Generating composite YAML ==="
 echo ""
 
 YAML_OUTPUT=$(mktemp)
-if ! bun run "$HELPER" > "$YAML_OUTPUT" 2>/dev/null; then
+if ! npx tsx "$HELPER" > "$YAML_OUTPUT" 2>/dev/null; then
   echo "FAIL: k3d-composite-helper.ts failed to generate YAML"
   rm -f "$YAML_OUTPUT"
   exit 1

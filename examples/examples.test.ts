@@ -1,4 +1,4 @@
-import { describe, test, expect } from "bun:test";
+import { describe, test, expect } from "vitest";
 import { describeExample } from "@intentius/chant-test-utils/example-harness";
 import { build } from "@intentius/chant/build";
 import { lintCommand } from "@intentius/chant/cli/commands/lint";

@@ -298,10 +298,10 @@ Flags duplicate version numbers in migration arrays.
 
 \`\`\`bash
 cd examples/basic-project
-bun install
+npm install
 chant build    # produces flyway.toml
 chant lint     # runs lint rules
-bun test       # runs the example's tests
+npx vitest run    # run the tests
 \`\`\`
 
 ## Basic Project

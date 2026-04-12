@@ -1,6 +1,6 @@
-// Bun Snapshot v1, https://bun.sh/docs/test/snapshots
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
 
-exports[`generated lexicon-gitlab.json entries match snapshot 1`] = `
+exports[`generated lexicon-gitlab.json > entries match snapshot 1`] = `
 {
   "constraints": {
     "coverage": {
@@ -14,7 +14,7 @@ exports[`generated lexicon-gitlab.json entries match snapshot 1`] = `
 }
 `;
 
-exports[`generated lexicon-gitlab.json entries match snapshot 2`] = `
+exports[`generated lexicon-gitlab.json > entries match snapshot 2`] = `
 {
   "constraints": {
     "access": {
@@ -46,7 +46,7 @@ exports[`generated lexicon-gitlab.json entries match snapshot 2`] = `
 }
 `;
 
-exports[`generated lexicon-gitlab.json entries match snapshot 3`] = `
+exports[`generated lexicon-gitlab.json > entries match snapshot 3`] = `
 {
   "constraints": {
     "policy": {
@@ -74,7 +74,7 @@ exports[`generated lexicon-gitlab.json entries match snapshot 3`] = `
 }
 `;
 
-exports[`generated lexicon-gitlab.json entries match snapshot 4`] = `
+exports[`generated lexicon-gitlab.json > entries match snapshot 4`] = `
 {
   "constraints": {
     "name": {

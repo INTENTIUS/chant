@@ -1,4 +1,4 @@
-import { describe, test, expect } from "bun:test";
+import { describe, test, expect } from "vitest";
 import { wgc401 } from "./wgc401";
 
 function makeCtx(yaml: string) {

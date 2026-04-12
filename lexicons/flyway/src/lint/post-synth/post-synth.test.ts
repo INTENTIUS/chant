@@ -3,7 +3,7 @@
  * multi-environment Flyway config to verify they work together.
  */
 
-import { describe, test, expect } from "bun:test";
+import { describe, test, expect } from "vitest";
 import type { PostSynthContext } from "@intentius/chant/lint/post-synth";
 
 import { wfw101 } from "./wfw101";

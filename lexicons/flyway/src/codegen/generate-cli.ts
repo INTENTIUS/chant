@@ -1,4 +1,4 @@
-#!/usr/bin/env bun
+#!/usr/bin/env tsx
 import { generate } from "./generate";
 
 const result = await generate({ verbose: true });

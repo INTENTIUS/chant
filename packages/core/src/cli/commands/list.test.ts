@@ -1,4 +1,4 @@
-import { describe, test, expect, beforeEach, afterEach } from "bun:test";
+import { describe, test, expect, beforeEach, afterEach } from "vitest";
 import { listCommand, type ListOptions } from "./list";
 import { mkdir, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -68,7 +68,7 @@ export const myFunc = {
 
     expect(result.success).toBe(true);
     const parsed = JSON.parse(result.output);
-    expect(parsed).toBeArrayOfSize(1);
+    expect(parsed).toHaveLength(1);
     expect(parsed[0].name).toBe("myFunc");
   });
 

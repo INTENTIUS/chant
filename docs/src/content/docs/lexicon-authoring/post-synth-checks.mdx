@@ -119,7 +119,7 @@ if (apiDate < deprecationThreshold) {
 Every check should have both a positive (flagged) and negative (clean) test:
 
 ```typescript
-import { describe, test, expect } from "bun:test";
+import { describe, test, expect } from "vitest";
 import { createPostSynthContext } from "@intentius/chant-test-utils";
 import { myCheck } from "./my-check";
 

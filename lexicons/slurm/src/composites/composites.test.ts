@@ -2,7 +2,7 @@
  * Composite unit tests — GpuPartition and EDACluster.
  */
 
-import { describe, test, expect } from "bun:test";
+import { describe, test, expect } from "vitest";
 import { GpuPartition } from "./gpu-partition";
 import { EDACluster } from "./eda-cluster";
 

@@ -6,11 +6,11 @@ MC         := "docker run --rm --network lucene-solr_solrNet -e MC_HOST_local=ht
 
 # E2E test: launch stack, exercise both relays, destroy
 test:
-    bun test e2e.test.ts
+    npx vitest run e2e.test.ts
 
 # Volume test: assumes `just up` is already running
 volume:
-    bun test volume.test.ts
+    npx vitest run volume.test.ts
 
 # Build compose file from chant sources
 build:

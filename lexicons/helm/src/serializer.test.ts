@@ -1,8 +1,9 @@
-import { describe, test, expect } from "bun:test";
+import { describe, test, expect } from "vitest";
 import { createResource, createProperty } from "@intentius/chant/runtime";
 import type { Declarable } from "@intentius/chant/declarable";
 import type { SerializerResult } from "@intentius/chant/serializer";
 import { helmSerializer } from "./serializer";
+import { generateHelpers } from "./helpers";
 import { Chart, Values, ValuesOverride, HelmNotes, HelmTest, HelmHook, HelmDependency, HelmMaintainer, HelmCRD } from "./resources";
 import { values, include, printf, toYaml, quote, helmDefault, required, If, ElseIf, Range, With, Release, ChartRef, Capabilities, runtimeSlot } from "./intrinsics";
 
@@ -318,12 +319,12 @@ describe("resource-level If", () => {
     const template = result.files!["templates/ingress.yaml"];
 
     expect(template).toBeDefined();
-    expect(template).toStartWith("{{- if .Values.ingress.enabled }}\n");
+    expect(template.startsWith("{{- if .Values.ingress.enabled }}\n")).toBe(true);
     expect(template).toContain("apiVersion: networking.k8s.io/v1");
     expect(template).toContain("kind: Ingress");
     expect(template).toContain('{{ include "test.fullname" . }}');
     expect(template).toContain("{{ .Values.ingress.host }}");
-    expect(template.trimEnd()).toEndWith("{{- end }}");
+    expect(template.trimEnd().endsWith("{{- end }}")).toBe(true);
   });
 
   test("does not wrap non-conditional resources", () => {
@@ -905,7 +906,6 @@ describe("ValuesOverride serialization", () => {
 
 describe("helpers", () => {
   test("generateHelpers includes all standard templates", () => {
-    const { generateHelpers } = require("./helpers");
     const content = generateHelpers({ chartName: "my-chart" });
 
     expect(content).toContain('define "my-chart.name"');
@@ -917,7 +917,6 @@ describe("helpers", () => {
   });
 
   test("generateHelpers respects includeServiceAccount=false", () => {
-    const { generateHelpers } = require("./helpers");
     const content = generateHelpers({ chartName: "test", includeServiceAccount: false });
 
     expect(content).toContain('define "test.name"');

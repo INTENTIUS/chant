@@ -2,9 +2,8 @@
  * Flyway lexicon packaging — delegates to core packagePipeline.
  */
 
-import { createRequire } from "module";
 import { readFileSync } from "fs";
-const require = createRequire(import.meta.url);
+import { flywayPlugin } from "../plugin";
 import { join, dirname } from "path";
 import { fileURLToPath } from "url";
 import {
@@ -69,9 +68,7 @@ export async function packageLexicon(opts: PackageOptions = {}): Promise<Package
 
       srcDir: pkgDir,
 
-      collectSkills: () => {
-        const { flywayPlugin } = require("../plugin");
-        const skillDefs = flywayPlugin.skills?.() ?? [];
+      collectSkills: () => {        const skillDefs = flywayPlugin.skills?.() ?? [];
         return collectSkills(skillDefs);
       },
 

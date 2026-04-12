@@ -1,4 +1,4 @@
-#!/usr/bin/env bun
+#!/usr/bin/env tsx
 /**
  * CLI entry point for GitLab CI lexicon generation.
  */

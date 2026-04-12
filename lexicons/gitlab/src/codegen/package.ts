@@ -3,9 +3,8 @@
  * with GitLab-specific manifest building and skill collection.
  */
 
-import { createRequire } from "module";
 import { readFileSync } from "fs";
-const require = createRequire(import.meta.url);
+import { gitlabPlugin } from "../plugin";
 import { join, dirname } from "path";
 import { fileURLToPath } from "url";
 import type { IntrinsicDef } from "@intentius/chant/lexicon";
@@ -53,9 +52,7 @@ export async function packageLexicon(opts: PackageOptions = {}): Promise<Package
 
       srcDir: pkgDir,
 
-      collectSkills: () => {
-        const { gitlabPlugin } = require("../plugin");
-        const skillDefs = gitlabPlugin.skills?.() ?? [];
+      collectSkills: () => {        const skillDefs = gitlabPlugin.skills?.() ?? [];
         return collectSkills(skillDefs);
       },
 

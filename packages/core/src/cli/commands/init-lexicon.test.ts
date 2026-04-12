@@ -1,4 +1,4 @@
-import { describe, test, expect, beforeEach, afterEach } from "bun:test";
+import { describe, test, expect, beforeEach, afterEach } from "vitest";
 import { existsSync, readFileSync, mkdirSync, writeFileSync, rmSync, readdirSync } from "fs";
 import { join, dirname } from "path";
 import { tmpdir } from "os";
@@ -250,7 +250,7 @@ describe("init-lexicon fixture snapshot", () => {
       path: FIXTURE_DIR,
     });
 
-    // Remove generated .test.ts files so bun test won't try to run them as tests
+    // Remove generated .test.ts files so they won't be discovered by the test runner
     for (const f of [
       "src/plugin.test.ts",
       "src/serializer.test.ts",

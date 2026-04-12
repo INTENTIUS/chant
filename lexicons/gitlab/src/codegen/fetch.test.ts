@@ -1,4 +1,4 @@
-import { describe, test, expect } from "bun:test";
+import { describe, test, expect } from "vitest";
 import { fetchCISchema, fetchSchemas, getCachePath, GITLAB_SCHEMA_VERSION } from "./fetch";
 
 describe("fetch", () => {

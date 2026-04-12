@@ -2,14 +2,14 @@
  * Roundtrip tests — parse testdata fixtures and verify TypeScript output.
  */
 
-import { test, expect } from "bun:test";
+import { test, expect } from "vitest";
 import { readFileSync } from "fs";
 import { join } from "path";
 import { SlurmConfParser } from "./parser";
 import { SlurmGenerator } from "./generator";
 
 const testdata = (file: string) =>
-  readFileSync(join(import.meta.dir, "testdata", file), "utf8");
+  readFileSync(join(import.meta.dirname, "testdata", file), "utf8");
 
 test("simple.conf → Cluster + Node + Partition constructors", () => {
   const { entities } = new SlurmConfParser().parse(testdata("simple.conf"));

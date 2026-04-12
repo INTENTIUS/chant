@@ -1,4 +1,4 @@
-import { describe, test, expect } from "bun:test";
+import { describe, test, expect } from "vitest";
 import * as ts from "typescript";
 import { cor018CompositePreferLexiconTypeRule } from "./cor018-composite-prefer-lexicon-type";
 import type { LintContext } from "../rule";
