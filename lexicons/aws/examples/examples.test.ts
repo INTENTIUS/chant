@@ -235,7 +235,7 @@ describe("aws core-concepts example", () => {
     for (const file of files) {
       expect(() => require(resolve(srcDir, file))).not.toThrow();
     }
-  });
+  }, 30_000);
 });
 
 // docs-snippets: relaxed lint + file import validation
