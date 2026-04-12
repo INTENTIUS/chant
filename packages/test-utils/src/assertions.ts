@@ -1,6 +1,7 @@
 /**
  * Type constraint for Error constructors
  */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
 type ErrorConstructor<T extends Error> = abstract new (...args: any[]) => T;
 
 /**

@@ -237,14 +237,16 @@ describe("resource() helper", () => {
     // MockResource doesn't store attributes, so use createResource which does
     const TestRes = createResource("Test::Resource", "test", { arn: "Arn" });
     const attrs = { DependsOn: ["Other"], Condition: "IsProd" };
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const instance = resource(TestRes as any, { name: "test" }, attrs);
-    expect((instance as any).attributes).toEqual(attrs);
+    expect((instance as unknown as Record<string, unknown>).attributes).toEqual(attrs);
   });
 
   test("without attributes, resource() creates instance with empty attributes", () => {
     const TestRes = createResource("Test::Resource", "test", { arn: "Arn" });
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const instance = resource(TestRes as any, { name: "test" });
-    expect((instance as any).attributes).toEqual({});
+    expect((instance as unknown as Record<string, unknown>).attributes).toEqual({});
   });
 });
 
@@ -409,8 +411,8 @@ describe("propagate", () => {
     const instance = propagate(MyComp({}), { env: "prod" });
     const expanded = expandComposite("s", instance);
 
-    const bucketProps = (expanded.get("sBucket") as any).props;
-    const roleProps = (expanded.get("sRole") as any).props;
+    const bucketProps = (expanded.get("sBucket") as unknown as Record<string, unknown>).props as Record<string, unknown>;
+    const roleProps = (expanded.get("sRole") as unknown as Record<string, unknown>).props as Record<string, unknown>;
     expect(bucketProps.env).toBe("prod");
     expect(roleProps.env).toBe("prod");
   });
@@ -426,7 +428,7 @@ describe("propagate", () => {
       tags: [{ key: "env", value: "prod" }],
     });
     const expanded = expandComposite("s", instance);
-    const tags = (expanded.get("sBucket") as any).props.tags;
+    const tags = ((expanded.get("sBucket") as unknown as Record<string, unknown>).props as Record<string, unknown>).tags;
 
     expect(tags).toEqual([
       { key: "env", value: "prod" },
@@ -441,7 +443,7 @@ describe("propagate", () => {
 
     const instance = propagate(MyComp({}), { region: "eu-west-1" });
     const expanded = expandComposite("s", instance);
-    expect((expanded.get("sBucket") as any).props.region).toBe("us-west-2");
+    expect(((expanded.get("sBucket") as unknown as Record<string, unknown>).props as Record<string, unknown>).region).toBe("us-west-2");
   });
 
   test("undefined values in shared props are stripped", () => {
@@ -451,7 +453,7 @@ describe("propagate", () => {
 
     const instance = propagate(MyComp({}), { name: undefined, extra: "yes" });
     const expanded = expandComposite("s", instance);
-    const props = (expanded.get("sBucket") as any).props;
+    const props = (expanded.get("sBucket") as unknown as Record<string, unknown>).props as Record<string, unknown>;
     expect(props.name).toBe("data");
     expect(props.extra).toBe("yes");
   });
@@ -469,8 +471,8 @@ describe("propagate", () => {
     const instance = propagate(Outer({}), { env: "prod" });
     const expanded = expandComposite("app", instance);
 
-    expect((expanded.get("appBucket") as any).props.env).toBe("prod");
-    expect((expanded.get("appNestedTable") as any).props.env).toBe("prod");
+    expect(((expanded.get("appBucket") as unknown as Record<string, unknown>).props as Record<string, unknown>).env).toBe("prod");
+    expect(((expanded.get("appNestedTable") as unknown as Record<string, unknown>).props as Record<string, unknown>).env).toBe("prod");
   });
 
   test("expanded declarables are same object references", () => {
@@ -488,7 +490,7 @@ describe("propagate", () => {
     }));
 
     const expanded = expandComposite("s", MyComp({}));
-    expect((expanded.get("sBucket") as any).props.name).toBe("data");
+    expect(((expanded.get("sBucket") as unknown as Record<string, unknown>).props as Record<string, unknown>).name).toBe("data");
   });
 });
 
@@ -522,10 +524,10 @@ describe("mergeDefaults", () => {
 
   test("object override deep merges nested objects", () => {
     const result = mergeDefaults(
-      { config: { a: 1, b: 2 } },
-      { config: { a: 10 } as any },
+      { config: { a: 1, b: 2 } } as Record<string, unknown>,
+      { config: { a: 10 } },
     );
-    expect(result.config).toEqual({ a: 10, b: 2 } as any);
+    expect(result["config"]).toEqual({ a: 10, b: 2 });
   });
 
   test("new keys from overrides are added", () => {

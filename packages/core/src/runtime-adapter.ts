@@ -65,6 +65,7 @@ class NodeRuntimeAdapter implements RuntimeAdapter {
         resolve({
           stdout: stdout ?? "",
           stderr: stderr ?? "",
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
           exitCode: err ? (err as any).code ?? 1 : 0,
         });
       });

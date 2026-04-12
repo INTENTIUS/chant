@@ -89,7 +89,7 @@ export async function doctorCommand(path: string): Promise<DoctorReport> {
   }
 
   // Check 4-6: Per-lexicon checks
-  const lexicons = (config as any)?.lexicons as string[] | undefined;
+  const lexicons = config?.lexicons as string[] | undefined;
   if (lexicons && Array.isArray(lexicons)) {
     for (const lex of lexicons) {
       const lexDir = join(projectPath, ".chant", "types", `lexicon-${lex}`);

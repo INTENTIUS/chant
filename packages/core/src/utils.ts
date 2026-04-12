@@ -19,8 +19,8 @@ export function isAttrRefLike(value: unknown): value is AttrRef {
     "parent" in value &&
     "attribute" in value &&
     "_setLogicalName" in value &&
-    typeof (value as any).parent === "object" &&
-    typeof (value as any).attribute === "string"
+    typeof (value as Record<string, unknown>).parent === "object" &&
+    typeof (value as Record<string, unknown>).attribute === "string"
   );
 }
 

@@ -16,6 +16,7 @@ export type CompositeMembers = Record<string, Declarable>;
 export interface CompositeInstance<M extends CompositeMembers = CompositeMembers> {
   readonly [COMPOSITE_MARKER]: true;
   readonly members: M;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   readonly _definition: CompositeDefinition<any, M>;
 }
 
@@ -120,7 +121,7 @@ export function expandComposite(
   instance: CompositeInstance,
 ): Map<string, Declarable> {
   const result = new Map<string, Declarable>();
-  const shared = (instance as any)[SHARED_PROPS] as Record<string, unknown> | undefined;
+  const shared = (instance as unknown as Record<symbol, unknown>)[SHARED_PROPS] as Record<string, unknown> | undefined;
 
   for (const [memberName, member] of Object.entries(instance.members)) {
     const fullName = `${prefix}${memberName[0].toUpperCase()}${memberName.slice(1)}`;
@@ -265,17 +266,17 @@ export function mergeDefaults<T extends Record<string, unknown>>(
     if (value === undefined) continue;
     const existing = result[key as keyof T];
     if (Array.isArray(existing) && Array.isArray(value)) {
-      (result as any)[key] = [...existing, ...value];
+      (result as Record<string, unknown>)[key] =[...existing, ...value];
     } else if (
       existing != null && typeof existing === "object" && !Array.isArray(existing) &&
       value != null && typeof value === "object" && !Array.isArray(value)
     ) {
-      (result as any)[key] = mergeDefaults(
+      (result as Record<string, unknown>)[key] =mergeDefaults(
         existing as Record<string, unknown>,
         value as Record<string, unknown>,
       );
     } else {
-      (result as any)[key] = value;
+      (result as Record<string, unknown>)[key] =value;
     }
   }
   return result;
