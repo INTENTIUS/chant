@@ -35,6 +35,7 @@ This creates `src/` with chant pipeline definitions. It does NOT create applicat
 |----------|-------------------|----------|
 | *(default)* | `config.ts` + `pipeline.ts` with build/test jobs | Custom pipelines from scratch |
 | `node-pipeline` | `NodePipeline` composite with npm install/build/test | Node.js apps |
+| `bun-pipeline` | `BunPipeline` composite — Bun runtime with frozen lockfile | Bun apps |
 | `python-pipeline` | `PythonPipeline` composite with venv/pytest | Python apps |
 | `docker-build` | `DockerBuild` composite + test job | Containerized apps |
 | `review-app` | `ReviewApp` composite + test job | Apps needing per-MR environments |
@@ -86,6 +87,8 @@ NodePipeline({
 ```
 
 Or generate a lockfile: `npm install && git add package-lock.json`.
+
+For Bun projects, use `BunPipeline` instead — it auto-configures `bun install --frozen-lockfile` and Bun's cache directory (`.bun/install/cache`). You can also pass `packageManager: "bun"` directly to `NodePipeline` for more control.
 
 ### Step-by-step: push to GitLab
 

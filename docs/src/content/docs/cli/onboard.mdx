@@ -20,7 +20,7 @@ The command modifies 5 files:
 | `package.json` (root) | Adds `@intentius/chant-lexicon-<name>: "workspace:*"` to dependencies |
 | `.github/workflows/chant.yml` | Adds prepack lines to check/test jobs + a validate step |
 | `.github/workflows/publish.yml` | Adds prepack line to test job + a publish step |
-| `test/Dockerfile.smoke` | Adds `RUN bun run --cwd lexicons/<name> prepack` |
+| `test/Dockerfile.smoke` | Adds `RUN npm run --prefix lexicons/<name> prepack` |
 | `test/Dockerfile.smoke-node` | Same prepack line for Node.js smoke test |
 
 The command is **idempotent** — running it again on an already-onboarded lexicon skips all changes.
@@ -49,7 +49,7 @@ After running `dev onboard`, you still need to:
 
 1. Create an example workspace under `lexicons/<name>/examples/`
 2. Add smoke tests to `test/integration.sh`
-3. Run `bun install` to update workspace links
+3. Run `npm install` to update workspace links
 4. Tag and push for the first npm publish
 
 See [CI & Distribution](/chant/lexicon-authoring/ci-integration/) for details.
