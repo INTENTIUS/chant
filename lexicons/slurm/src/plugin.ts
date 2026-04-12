@@ -77,17 +77,22 @@ export const slurmPlugin: LexiconPlugin = {
   skills() {
     return createSkillsLoader(import.meta.url, [
       {
-        file: "generate-job.md",
+        file: "chant-slurm.md",
+        name: "chant-slurm",
+        description: "Slurm HPC cluster configuration: partitions, nodes, and scheduling",
+      },
+      {
+        file: "chant-slurm-generate-job.md",
         name: "slurm-generate-job",
         description: "Generate a Slurm batch job submission TypeScript declaration",
       },
       {
-        file: "generate-cluster.md",
+        file: "chant-slurm-generate-cluster.md",
         name: "slurm-generate-cluster",
         description: "Generate a complete Slurm cluster configuration",
       },
       {
-        file: "explain-fairshare.md",
+        file: "chant-slurm-explain-fairshare.md",
         name: "slurm-explain-fairshare",
         description: "Explain Slurm multifactor priority and fairshare scheduling",
       },
@@ -105,79 +110,85 @@ export const slurmPlugin: LexiconPlugin = {
   initTemplates(template?: string) {
     if (template === "gpu") {
       return {
-        "src/cluster.ts": [
-          'import { Cluster, GpuPartition } from "@intentius/chant-lexicon-slurm";',
-          "",
-          "export const cluster = new Cluster({",
-          '  ClusterName: "hpc-prod",',
-          '  ControlMachine: "head01",',
-          '  AuthType: "auth/munge",',
-          '  SelectType: "select/cons_tres",',
-          '  SelectTypeParameters: "CR_Core_Memory",',
-          '  ProctrackType: "proctrack/cgroup",',
-          '  GresTypes: "gpu",',
-          "});",
-          "",
-          "export const { nodes: gpuNodes, partition: gpuPartition } = GpuPartition({",
-          '  partitionName: "gpu",',
-          '  nodePattern: "gpu[001-002]",',
-          '  gpuTypeCount: "a100:8",',
-          "  cpusPerNode: 96,",
-          "  memoryMb: 1_048_576,",
-          "  maxTime: \"1-00:00:00\",",
-          "});",
-        ].join("\n"),
+        src: {
+          "cluster.ts": [
+            'import { Cluster, GpuPartition } from "@intentius/chant-lexicon-slurm";',
+            "",
+            "export const cluster = new Cluster({",
+            '  ClusterName: "hpc-prod",',
+            '  ControlMachine: "head01",',
+            '  AuthType: "auth/munge",',
+            '  SelectType: "select/cons_tres",',
+            '  SelectTypeParameters: "CR_Core_Memory",',
+            '  ProctrackType: "proctrack/cgroup",',
+            '  GresTypes: "gpu",',
+            "});",
+            "",
+            "export const { nodes: gpuNodes, partition: gpuPartition } = GpuPartition({",
+            '  partitionName: "gpu",',
+            '  nodePattern: "gpu[001-002]",',
+            '  gpuTypeCount: "a100:8",',
+            "  cpusPerNode: 96,",
+            "  memoryMb: 1_048_576,",
+            "  maxTime: \"1-00:00:00\",",
+            "});",
+          ].join("\n"),
+        },
       };
     }
     if (template === "multi-partition") {
       return {
-        "src/cluster.ts": [
+        src: {
+          "cluster.ts": [
+            'import { Cluster, Partition, Node } from "@intentius/chant-lexicon-slurm";',
+            "",
+            "export const cluster = new Cluster({",
+            '  ClusterName: "hpc",',
+            '  ControlMachine: "head01",',
+            '  AuthType: "auth/munge",',
+            '  SelectType: "select/cons_tres",',
+            '  SelectTypeParameters: "CR_Core_Memory",',
+            "});",
+            "",
+            "export const cpuNodes = new Node({ NodeName: \"cpu[001-016]\", CPUs: 96, RealMemory: 196608, State: \"UNKNOWN\" });",
+            "export const hiMemNodes = new Node({ NodeName: \"himem[001-004]\", CPUs: 96, RealMemory: 786432, State: \"UNKNOWN\" });",
+            "",
+            "export const cpuPartition = new Partition({ PartitionName: \"cpu\", Nodes: \"cpu[001-016]\", Default: \"YES\", MaxTime: \"7-00:00:00\" });",
+            "export const hiMemPartition = new Partition({ PartitionName: \"himem\", Nodes: \"himem[001-004]\", Default: \"NO\", MaxTime: \"2-00:00:00\" });",
+          ].join("\n"),
+        },
+      };
+    }
+    // default
+    return {
+      src: {
+        "cluster.ts": [
           'import { Cluster, Partition, Node } from "@intentius/chant-lexicon-slurm";',
           "",
           "export const cluster = new Cluster({",
-          '  ClusterName: "hpc",',
+          '  ClusterName: "mycluster",',
           '  ControlMachine: "head01",',
           '  AuthType: "auth/munge",',
           '  SelectType: "select/cons_tres",',
           '  SelectTypeParameters: "CR_Core_Memory",',
           "});",
           "",
-          "export const cpuNodes = new Node({ NodeName: \"cpu[001-016]\", CPUs: 96, RealMemory: 196608, State: \"UNKNOWN\" });",
-          "export const hiMemNodes = new Node({ NodeName: \"himem[001-004]\", CPUs: 96, RealMemory: 786432, State: \"UNKNOWN\" });",
+          "export const computeNodes = new Node({",
+          '  NodeName: "node[001-004]",',
+          "  CPUs: 32,",
+          "  RealMemory: 65536,",
+          '  State: "UNKNOWN",',
+          "});",
           "",
-          "export const cpuPartition = new Partition({ PartitionName: \"cpu\", Nodes: \"cpu[001-016]\", Default: \"YES\", MaxTime: \"7-00:00:00\" });",
-          "export const hiMemPartition = new Partition({ PartitionName: \"himem\", Nodes: \"himem[001-004]\", Default: \"NO\", MaxTime: \"2-00:00:00\" });",
+          "export const cpuPartition = new Partition({",
+          '  PartitionName: "cpu",',
+          '  Nodes: "node[001-004]",',
+          '  Default: "YES",',
+          '  MaxTime: "7-00:00:00",',
+          '  State: "UP",',
+          "});",
         ].join("\n"),
-      };
-    }
-    // default
-    return {
-      "src/cluster.ts": [
-        'import { Cluster, Partition, Node } from "@intentius/chant-lexicon-slurm";',
-        "",
-        "export const cluster = new Cluster({",
-        '  ClusterName: "mycluster",',
-        '  ControlMachine: "head01",',
-        '  AuthType: "auth/munge",',
-        '  SelectType: "select/cons_tres",',
-        '  SelectTypeParameters: "CR_Core_Memory",',
-        "});",
-        "",
-        "export const computeNodes = new Node({",
-        '  NodeName: "node[001-004]",',
-        "  CPUs: 32,",
-        "  RealMemory: 65536,",
-        '  State: "UNKNOWN",',
-        "});",
-        "",
-        "export const cpuPartition = new Partition({",
-        '  PartitionName: "cpu",',
-        '  Nodes: "node[001-004]",',
-        '  Default: "YES",',
-        '  MaxTime: "7-00:00:00",',
-        '  State: "UP",',
-        "});",
-      ].join("\n"),
+      },
     };
   },
 

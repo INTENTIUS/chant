@@ -224,7 +224,7 @@ test_init() {
 
   if $CHANT init --lexicon "$name" "$init_dir" > /dev/null 2>&1; then
     # Check scaffolded source files
-    if [ -f "$init_dir/src/infra.ts" ] || [ -f "$init_dir/src/_.ts" ] || [ -f "$init_dir/src/config.ts" ] || [ -f "$init_dir/src/main.ts" ]; then
+    if [ -f "$init_dir/src/infra.ts" ] || [ -f "$init_dir/src/_.ts" ] || [ -f "$init_dir/src/config.ts" ] || [ -f "$init_dir/src/main.ts" ] || [ -f "$init_dir/src/compose.ts" ] || [ -f "$init_dir/src/cluster.ts" ]; then
       pass "$name init creates source files"
     else
       fail "$name init missing source files"

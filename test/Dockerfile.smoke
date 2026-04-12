@@ -35,6 +35,9 @@ RUN for lex in aws azure gcp gitlab k8s flyway docker; do \
       fi; \
     done
 
+# Generate dist/ artifacts for slurm (not required to be pre-generated on host)
+RUN npm run --prefix lexicons/slurm prepack
+
 # Run integration tests during build — build fails if tests fail
 COPY test/integration.sh /app/test/integration.sh
 RUN chmod +x /app/test/integration.sh && CHANT_RUNTIME=npx /app/test/integration.sh
