@@ -1,6 +1,6 @@
 {
   "name": "@intentius/chant",
-  "version": "0.1.5",
+  "version": "0.1.6",
   "description": "Declarative infrastructure-as-code toolkit — TypeScript on Node.js",
   "license": "Apache-2.0",
   "homepage": "https://intentius.io/chant",
@@ -36,6 +36,7 @@
     ".": "./src/index.ts",
     "./cli": "./src/cli/index.ts",
     "./cli/*": "./src/cli/*.ts",
+    "./op": "./src/op/index.ts",
     "./*": "./src/*.ts"
   },
   "dependencies": {

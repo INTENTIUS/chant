@@ -14,6 +14,7 @@
 import type { Declarable } from "@intentius/chant/declarable";
 import type { Serializer, SerializerResult } from "@intentius/chant/serializer";
 import type { TemporalServerProps, TemporalNamespaceProps, SearchAttributeProps, TemporalScheduleProps } from "./resources";
+import { serializeOps } from "./op/serializer";
 
 // ── Helpers ─────────────────────────────────────────────────────────
 
@@ -263,6 +264,7 @@ export const temporalSerializer: Serializer = {
     const namespaces = new Map<string, Declarable>();
     const searchAttrs = new Map<string, Declarable>();
     const schedules = new Map<string, Declarable>();
+    const ops = new Map<string, Declarable>();
 
     for (const [name, entity] of entities) {
       const et = entityType(entity);
@@ -270,21 +272,17 @@ export const temporalSerializer: Serializer = {
       else if (et === "Temporal::Namespace") namespaces.set(name, entity);
       else if (et === "Temporal::SearchAttribute") searchAttrs.set(name, entity);
       else if (et === "Temporal::Schedule") schedules.set(name, entity);
+      else if (et === "Temporal::Op") ops.set(name, entity);
     }
 
     const primary = serializeDockerCompose(servers);
 
-    const hasExtraFiles =
-      servers.size > 0 ||   // always emit helm-values when a server exists
-      namespaces.size > 0 ||
-      searchAttrs.size > 0 ||
-      schedules.size > 0;
-
-    // Only-server case: no extra files needed beyond docker-compose → return string
+    // Only-server case with no Ops: no extra files needed beyond docker-compose → return string
     if (
       namespaces.size === 0 &&
       searchAttrs.size === 0 &&
-      schedules.size === 0
+      schedules.size === 0 &&
+      ops.size === 0
     ) {
       return primary;
     }
@@ -303,6 +301,10 @@ export const temporalSerializer: Serializer = {
       const props = getProps(entity) as TemporalScheduleProps;
       const scheduleId = props.scheduleId ?? name;
       files[`schedules/${scheduleId}.ts`] = serializeSchedule(scheduleId, props);
+    }
+
+    if (ops.size > 0) {
+      Object.assign(files, serializeOps(ops));
     }
 
     return { primary, files };

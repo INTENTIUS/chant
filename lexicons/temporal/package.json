@@ -1,6 +1,6 @@
 {
   "name": "@intentius/chant-lexicon-temporal",
-  "version": "0.1.5",
+  "version": "0.1.6",
   "description": "Temporal lexicon for chant — server deployment, namespaces, search attributes, and schedules",
   "license": "Apache-2.0",
   "type": "module",
@@ -11,6 +11,7 @@
   "exports": {
     ".": "./src/index.ts",
     "./*": "./src/*.ts",
+    "./op/activities": "./src/op/activities/index.ts",
     "./manifest": "./dist/manifest.json",
     "./meta": "./dist/meta.json",
     "./types": "./dist/types/index.d.ts"

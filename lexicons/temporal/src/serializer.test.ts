@@ -289,4 +289,43 @@ describe("temporal serializer", () => {
     const result = temporalSerializer.serialize(entities) as { primary: string; files: Record<string, string> };
     expect(result.files["temporal-setup.sh"]).toContain("set -euo pipefail");
   });
+
+  // ── Temporal::Op ──────────────────────────────────────────────────
+
+  function makeOp(name: string, phases: unknown[] = []): [string, Record<string, unknown>] {
+    return [name, makeEntity("Temporal::Op", { name, overview: `${name} op`, phases })];
+  }
+
+  it("includes ops/<name>/workflow.ts when an Op entity is present", () => {
+    const entities = new Map([makeOp("alb-deploy")]);
+    const result = temporalSerializer.serialize(entities) as { primary: string; files: Record<string, string> };
+    expect(typeof result).toBe("object");
+    expect(result.files["ops/alb-deploy/workflow.ts"]).toBeDefined();
+  });
+
+  it("includes ops/<name>/activities.ts and worker.ts for each Op", () => {
+    const entities = new Map([makeOp("my-op")]);
+    const result = temporalSerializer.serialize(entities) as { primary: string; files: Record<string, string> };
+    expect(result.files["ops/my-op/activities.ts"]).toBeDefined();
+    expect(result.files["ops/my-op/worker.ts"]).toBeDefined();
+  });
+
+  it("still returns SerializerResult (not plain string) when only Op entities present", () => {
+    const entities = new Map([makeOp("op")]);
+    const result = temporalSerializer.serialize(entities);
+    expect(typeof result).toBe("object");
+  });
+
+  it("combines Op files with schedule and namespace files in mixed entities", () => {
+    const entities = new Map([
+      makeServer(),
+      makeNamespace("default"),
+      makeSchedule("weekly"),
+      makeOp("deploy-op"),
+    ]);
+    const result = temporalSerializer.serialize(entities) as { primary: string; files: Record<string, string> };
+    expect(result.files["ops/deploy-op/workflow.ts"]).toBeDefined();
+    expect(result.files["temporal-setup.sh"]).toBeDefined();
+    expect(result.files["schedules/weekly.ts"]).toBeDefined();
+  });
 });
