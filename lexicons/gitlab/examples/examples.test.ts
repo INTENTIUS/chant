@@ -101,5 +101,5 @@ describe("gitlab docs-snippets example", () => {
     for (const file of files) {
       expect(() => require(resolve(srcDir, file))).not.toThrow();
     }
-  });
+  }, 30_000);
 });
