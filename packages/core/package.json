@@ -36,6 +36,7 @@
     ".": "./src/index.ts",
     "./cli": "./src/cli/index.ts",
     "./cli/*": "./src/cli/*.ts",
+    "./op": "./src/op/index.ts",
     "./*": "./src/*.ts"
   },
   "dependencies": {
