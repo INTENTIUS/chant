@@ -1,0 +1,32 @@
+{
+  "name": "@intentius/chant-lexicon-temporal",
+  "version": "0.1.5",
+  "description": "Temporal lexicon for chant — server deployment, namespaces, search attributes, and schedules",
+  "license": "Apache-2.0",
+  "type": "module",
+  "files": [
+    "src/",
+    "dist/"
+  ],
+  "exports": {
+    ".": "./src/index.ts",
+    "./*": "./src/*.ts",
+    "./manifest": "./dist/manifest.json",
+    "./meta": "./dist/meta.json",
+    "./types": "./dist/types/index.d.ts"
+  },
+  "scripts": {
+    "generate": "tsx src/codegen/generate-cli.ts",
+    "bundle": "tsx src/codegen/package-cli.ts",
+    "validate": "tsx src/validate-cli.ts",
+    "docs": "tsx src/codegen/docs-cli.ts",
+    "prepack": "npm run generate && npm run bundle && npm run validate"
+  },
+  "peerDependencies": {
+    "@intentius/chant": "^0.1.0"
+  },
+  "devDependencies": {
+    "@intentius/chant": "*",
+    "typescript": "^5.9.3"
+  }
+}

@@ -2,10 +2,9 @@
  * Temporal worker — connects to Temporal Cloud and registers the deploy workflow
  * with all four activity groups.
  *
- * Required env vars:
- *   TEMPORAL_ADDRESS    — e.g. myns.a2dd6.tmprl.cloud:7233
- *   TEMPORAL_NAMESPACE  — e.g. myns.a2dd6
- *   TEMPORAL_API_KEY    — Temporal Cloud API key (Settings → API Keys)
+ * Connection config is sourced from chant.config.ts (a TypeScript-typed profile),
+ * not raw env vars. This makes misconfigured workers a compile error, not a runtime
+ * failure 5 minutes into a deployment.
  *
  * Run: npm run temporal:worker
  */
@@ -17,35 +16,44 @@ import * as k8sActivities from './activities/kubernetes.js';
 import * as crdbActivities from './activities/cockroachdb.js';
 import * as certsActivities from './activities/certs.js';
 
-async function run(): Promise<void> {
-  const address = process.env.TEMPORAL_ADDRESS;
-  const namespace = process.env.TEMPORAL_NAMESPACE;
-  const apiKey = process.env.TEMPORAL_API_KEY;
+import chantConfig from '../chant.config.ts';
 
-  if (!address || !namespace || !apiKey) {
+async function run(): Promise<void> {
+  const profileName = process.env.TEMPORAL_PROFILE ?? chantConfig.temporal.defaultProfile ?? 'cloud';
+  const profile = chantConfig.temporal.profiles[profileName];
+
+  if (!profile) {
+    console.error(`Unknown Temporal profile "${profileName}". Available: ${Object.keys(chantConfig.temporal.profiles).join(', ')}`);
+    process.exit(1);
+  }
+
+  // Resolve API key — either a literal string or an env var reference.
+  const apiKey = typeof profile.apiKey === 'object' && profile.apiKey !== null
+    ? process.env[(profile.apiKey as { env: string }).env]
+    : profile.apiKey as string | undefined;
+
+  if (profile.tls && !apiKey) {
     console.error(
-      'Missing required env vars: TEMPORAL_ADDRESS, TEMPORAL_NAMESPACE, TEMPORAL_API_KEY\n' +
-        'Set them in .env and source it: set -a && source .env && set +a',
+      `Profile "${profileName}" requires an API key.\n` +
+      `Set TEMPORAL_API_KEY in .env: set -a && source .env && set +a`,
     );
     process.exit(1);
   }
 
-  console.log(`Connecting to Temporal Cloud: ${address} (namespace: ${namespace})`);
+  console.log(`Connecting to Temporal (profile: ${profileName}): ${profile.address} (namespace: ${profile.namespace})`);
 
   const connection = await NativeConnection.connect({
-    address,
-    tls: {},
-    metadata: {
-      Authorization: `Bearer ${apiKey}`,
-    },
+    address: profile.address,
+    ...(profile.tls && {
+      tls: typeof profile.tls === 'object' ? profile.tls : {},
+      metadata: apiKey ? { Authorization: `Bearer ${apiKey}` } : {},
+    }),
   });
 
   const worker = await Worker.create({
     connection,
-    namespace,
-    taskQueue: 'crdb-deploy',
-    // `@temporalio/worker` ships its own TypeScript loader — .ts workflow files
-    // are bundled into Temporal's deterministic V8 sandbox automatically.
+    namespace: profile.namespace,
+    taskQueue: profile.taskQueue,
     workflowsPath: fileURLToPath(new URL('./workflows/deploy.ts', import.meta.url)),
     activities: {
       ...infraActivities,
@@ -55,7 +63,7 @@ async function run(): Promise<void> {
     },
   });
 
-  console.log('Worker ready — polling task queue: crdb-deploy');
+  console.log(`Worker ready — polling task queue: ${profile.taskQueue}`);
   await worker.run();
 }
 

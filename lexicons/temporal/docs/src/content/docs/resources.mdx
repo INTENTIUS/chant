@@ -1,0 +1,113 @@
+---
+title: Resources
+description: Full reference for all 4 Temporal lexicon resource types.
+---
+
+## TemporalServer
+
+Serializes to `docker-compose.yml` (primary output) and `temporal-helm-values.yaml`.
+
+```ts
+import { TemporalServer } from "@intentius/chant-lexicon-temporal";
+
+export const server = new TemporalServer({
+  version: "1.26.2",
+  mode: "dev",
+  port: 7233,
+  uiPort: 8080,
+});
+```
+
+| Prop | Type | Default | Description |
+|---|---|---|---|
+| `version` | `string` | `"1.26.2"` | Temporal server image tag |
+| `mode` | `"dev" \| "full"` | `"dev"` | Deployment mode |
+| `port` | `number` | `7233` | gRPC port |
+| `uiPort` | `number` | `8080` | Web UI port |
+| `postgresVersion` | `string` | `"16-alpine"` | PostgreSQL tag (full mode) |
+| `helmChartVersion` | `string` | — | Helm chart version comment |
+
+---
+
+## TemporalNamespace
+
+Serializes to `temporal-setup.sh` as a `temporal operator namespace create` command.
+
+```ts
+import { TemporalNamespace } from "@intentius/chant-lexicon-temporal";
+
+export const ns = new TemporalNamespace({
+  name: "prod-deploy",
+  retention: "30d",
+  description: "Production deployment workflows",
+});
+```
+
+| Prop | Type | Default | Description |
+|---|---|---|---|
+| `name` | `string` | — | Namespace name (required) |
+| `retention` | `string` | `"7d"` | History retention (e.g. `"30d"`) |
+| `description` | `string` | — | Human-readable description |
+| `isGlobalNamespace` | `boolean` | — | Multi-cluster global namespace |
+
+---
+
+## SearchAttribute
+
+Serializes to `temporal-setup.sh` as `temporal operator search-attribute create` commands.
+
+```ts
+import { SearchAttribute } from "@intentius/chant-lexicon-temporal";
+
+export const gcpProject = new SearchAttribute({
+  name: "GcpProject",
+  type: "Text",
+  namespace: "prod-deploy",
+});
+```
+
+| Prop | Type | Default | Description |
+|---|---|---|---|
+| `name` | `string` | — | Attribute name (required, PascalCase) |
+| `type` | `AttributeType` | — | Value type (required) |
+| `namespace` | `string` | — | Target namespace (omit for global) |
+
+**Attribute types:** `Text`, `Keyword`, `Int`, `Double`, `Bool`, `Datetime`, `KeywordList`
+
+---
+
+## TemporalSchedule
+
+Serializes to `schedules/<scheduleId>.ts` — a standalone TypeScript runner using the Temporal SDK.
+
+```ts
+import { TemporalSchedule } from "@intentius/chant-lexicon-temporal";
+
+export const weekly = new TemporalSchedule({
+  scheduleId: "weekly-backup",
+  spec: { cronExpressions: ["0 3 * * SUN"] },
+  action: {
+    workflowType: "backupWorkflow",
+    taskQueue: "backup-queue",
+    args: [{ bucket: "my-backup-bucket" }],
+  },
+  policies: {
+    overlap: "Skip",
+    pauseOnFailure: true,
+  },
+  namespace: "prod-deploy",
+});
+```
+
+| Prop | Type | Description |
+|---|---|---|
+| `scheduleId` | `string` | Unique schedule ID (required) |
+| `spec.cronExpressions` | `string[]` | Cron expressions |
+| `spec.intervals` | `Array<{every, offset?}>` | Fixed intervals (e.g. `"1d"`) |
+| `action.workflowType` | `string` | Workflow function name (required) |
+| `action.taskQueue` | `string` | Worker task queue (required) |
+| `action.args` | `unknown[]` | Workflow input arguments |
+| `policies.overlap` | `OverlapPolicy` | Concurrent run policy |
+| `policies.pauseOnFailure` | `boolean` | Pause schedule after failure |
+| `state.paused` | `boolean` | Start paused |
+| `namespace` | `string` | Target namespace |

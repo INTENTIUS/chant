@@ -1,0 +1,29 @@
+---
+title: AI Skills
+description: The Temporal lexicon ships two AI skills for operational workflows.
+---
+
+The Temporal lexicon registers two skills in the chant MCP server.
+
+## chant-temporal
+
+**Trigger conditions:** `*.ts` files with temporal imports, "temporal" or "workflow" context.
+
+Covers:
+- Building Temporal projects with `chant build`
+- Starting the dev server via generated `docker-compose.yml`
+- Running namespace provisioning (`bash dist/temporal-setup.sh`)
+- Deploying with Helm (`temporal-helm-values.yaml`)
+- Registering schedules (`npx tsx dist/schedules/<id>.ts`)
+
+## chant-temporal-ops
+
+**Trigger conditions:** "temporal workflow", "stuck activity", "chant run" context.
+
+Covers:
+- Signaling gate steps to unblock paused workflows
+- Diagnosing stuck activities (heartbeat timeout vs. schedule-to-start)
+- Resetting workflows to a previous checkpoint via `temporal workflow reset`
+- Inspecting run history with `temporal workflow show`
+- Pausing/resuming/canceling schedules
+- Common failure patterns (no pollers, infinite retries, duplicate workflow IDs)

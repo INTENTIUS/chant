@@ -20,3 +20,7 @@ export { SecureProject } from "./secure-project";
 export type { SecureProjectProps } from "./secure-project";
 export { MemorystoreRedis } from "./memorystore-redis";
 export type { MemorystoreRedisProps } from "./memorystore-redis";
+export { MultiRegionVpc } from "./multi-region-vpc";
+export type { MultiRegionVpcConfig, MultiRegionVpcRegion } from "./multi-region-vpc";
+export { GkeCrdbRegion } from "./gke-crdb-region";
+export type { GkeCrdbRegionConfig, GkeCrdbRegionNodeConfig } from "./gke-crdb-region";

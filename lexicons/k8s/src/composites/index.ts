@@ -73,6 +73,8 @@ export { AksExternalDnsAgent } from "./aks-external-dns-agent";
 export type { AksExternalDnsAgentProps, AksExternalDnsAgentResult } from "./aks-external-dns-agent";
 export { CockroachDbCluster } from "./cockroachdb-cluster";
 export type { CockroachDbClusterProps, CockroachDbClusterResult } from "./cockroachdb-cluster";
+export { CockroachDbRegionStack } from "./cockroachdb-region-stack";
+export type { CockroachDbRegionStackConfig, CockroachDbRegionCockroachConfig, CockroachDbRegionTlsConfig } from "./cockroachdb-region-stack";
 export { RayCluster } from "./ray-cluster";
 export type { RayClusterProps, RayClusterResult, RayClusterSpec, ResourceSpec, HeadGroupSpec, WorkerGroupSpec } from "./ray-cluster";
 export { RayJob } from "./ray-job";

@@ -1,0 +1,76 @@
+---
+title: Temporal Concepts
+description: Core Temporal.io concepts relevant to the chant lexicon.
+---
+
+## Server modes
+
+The `TemporalServer` resource supports two deployment modes:
+
+### dev mode (default)
+
+Runs a single container using `temporal server start-dev`. Backed by an in-memory SQLite database — state is lost on restart. Ideal for local development.
+
+```ts
+export const server = new TemporalServer({ mode: "dev" });
+```
+
+### full mode
+
+Runs `temporalio/auto-setup` with a PostgreSQL database and the Temporal Web UI as separate services. State persists across restarts.
+
+```ts
+export const server = new TemporalServer({ mode: "full" });
+```
+
+## Namespaces
+
+Namespaces are isolated units of workflow execution. Each namespace has its own retention policy (how long workflow history is kept after completion).
+
+```ts
+export const ns = new TemporalNamespace({
+  name: "prod-deploy",
+  retention: "30d",
+});
+```
+
+The serializer emits `temporal operator namespace create` commands to `temporal-setup.sh`. Run this script once after the server is ready.
+
+## Search Attributes
+
+Search attributes let you filter workflows in the Temporal Web UI and via `temporal workflow list --query`. They must be registered before workflows can use them.
+
+```ts
+export const gcpProject = new SearchAttribute({
+  name: "GcpProject",
+  type: "Text",
+  namespace: "prod-deploy",
+});
+```
+
+Types: `Text`, `Keyword`, `Int`, `Double`, `Bool`, `Datetime`, `KeywordList`
+
+## Schedules
+
+A `TemporalSchedule` declares a recurring workflow trigger. The serializer emits a self-contained TypeScript runner (`schedules/<id>.ts`) that uses the Temporal SDK to create the schedule.
+
+```ts
+export const daily = new TemporalSchedule({
+  scheduleId: "daily-report",
+  spec: { cronExpressions: ["0 9 * * MON-FRI"] },
+  action: {
+    workflowType: "generateReport",
+    taskQueue: "reports",
+  },
+  policies: { overlap: "Skip" },
+});
+```
+
+Overlap policies:
+- `Skip` — skip the new run if one is already running (most common)
+- `BufferOne` — buffer one run while another is active
+- `AllowAll` — run concurrently (use with care)
+
+## Worker profiles
+
+Worker profiles (defined in `chant.config.ts`) tell `chant run` how to connect to Temporal. See the [Worker Profiles](/worker-profiles) page.

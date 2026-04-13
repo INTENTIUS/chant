@@ -1,0 +1,50 @@
+---
+title: Getting Started
+description: Scaffold your first Temporal project with chant.
+---
+
+## Prerequisites
+
+- chant installed: `npm install -g @intentius/chant`
+- Docker or Temporal CLI for local dev
+- Node.js 20+
+
+## Scaffold a new project
+
+```bash
+chant init --lexicon temporal --template local
+```
+
+This creates `src/temporal.ts` with a dev server and default namespace.
+
+## Build
+
+```bash
+chant build src/ --output dist/
+```
+
+Outputs:
+- `dist/docker-compose.yml` — Temporal dev server
+- `dist/temporal-setup.sh` — namespace provisioning
+
+## Start the server and provision
+
+```bash
+docker compose -f dist/docker-compose.yml up -d
+TEMPORAL_ADDRESS=localhost:7233 bash dist/temporal-setup.sh
+```
+
+Open the Web UI: http://localhost:8080
+
+## Templates
+
+| Template | Use case |
+|---|---|
+| `local` (default) | Local dev with `temporal server start-dev` |
+| `cloud` | Temporal Cloud — namespaces, search attrs, schedules |
+| `full` | Full stack — all 4 resource types, production server mode |
+
+```bash
+chant init --lexicon temporal --template cloud
+chant init --lexicon temporal --template full
+```

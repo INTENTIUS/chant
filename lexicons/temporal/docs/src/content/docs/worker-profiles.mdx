@@ -1,0 +1,74 @@
+---
+title: Worker Profiles
+description: Configure chant.config.ts with Temporal connection profiles for chant run.
+---
+
+Worker profiles define how `chant run` (issue #8) connects to a Temporal server. They are stored in `chant.config.ts` under the `temporal.profiles` key.
+
+## Profile shape
+
+```ts
+import type { TemporalChantConfig } from "@intentius/chant-lexicon-temporal";
+
+export default {
+  lexicons: ["temporal"],
+  temporal: {
+    profiles: {
+      local: {
+        address: "localhost:7233",
+        namespace: "default",
+        taskQueue: "my-deploy",
+        autoStart: true,
+      },
+      cloud: {
+        address: "myns.a2dd6.tmprl.cloud:7233",
+        namespace: "myns.a2dd6",
+        taskQueue: "my-deploy",
+        tls: true,
+        apiKey: { env: "TEMPORAL_API_KEY" },
+      },
+    },
+    defaultProfile: "local",
+  } satisfies TemporalChantConfig,
+};
+```
+
+## Profile fields
+
+| Field | Type | Description |
+|---|---|---|
+| `address` | `string` | gRPC address, e.g. `"localhost:7233"` |
+| `namespace` | `string` | Temporal namespace |
+| `taskQueue` | `string` | Task queue the worker polls |
+| `tls` | `boolean \| { serverNameOverride? }` | TLS config (use `true` for Temporal Cloud) |
+| `apiKey` | `string \| { env: string }` | API key (Temporal Cloud) |
+| `autoStart` | `boolean` | Auto-start `temporal server start-dev` (local only) |
+
+## API key patterns
+
+```ts
+// Inline (not recommended for production)
+apiKey: "my-secret-key"
+
+// From environment variable (recommended)
+apiKey: { env: "TEMPORAL_API_KEY" }
+```
+
+## Selecting a profile
+
+```bash
+# Use defaultProfile
+chant run alb-deploy
+
+# Override profile
+chant run alb-deploy --profile cloud
+```
+
+## Environment variable fallback
+
+If no profile is specified, `chant run` also respects:
+- `TEMPORAL_ADDRESS`
+- `TEMPORAL_NAMESPACE`
+- `TEMPORAL_API_KEY`
+
+These match the convention used in the `temporal-crdb-deploy` example.
