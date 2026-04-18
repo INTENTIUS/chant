@@ -14,6 +14,7 @@ import { runInit, runInitLexicon } from "./handlers/init";
 import { runList, runImport, runUpdate, runDoctor } from "./handlers/misc";
 import { runStateSnapshot, runStateShow, runStateDiff, runStateLog, runStateUnknown } from "./handlers/state";
 import { runSpellAdd, runSpellRm, runSpellList, runSpellShow, runSpellCast, runSpellDone, runGraph, runSpellUnknown } from "./handlers/spell";
+import { runOp, runOpList, runOpStatus, runOpSignal, runOpCancel, runOpLog } from "./handlers/run";
 
 /**
  * Parse command line arguments
@@ -33,6 +34,8 @@ export function parseArgs(args: string[]): ParsedArgs {
     watch: false,
     verbose: false,
     help: false,
+    profile: undefined,
+    report: undefined,
   };
 
   let i = 0;
@@ -57,6 +60,10 @@ export function parseArgs(args: string[]): ParsedArgs {
       result.watch = true;
     } else if (arg === "--verbose" || arg === "-v") {
       result.verbose = true;
+    } else if (arg === "--profile" || arg === "-p") {
+      result.profile = args[++i];
+    } else if (arg === "--report") {
+      result.report = true;
     } else if (!arg.startsWith("-")) {
       if (!result.command) {
         result.command = arg;
@@ -92,6 +99,14 @@ Commands:
   lint                  Check specifications for issues
   list                  List discovered entities
   import                Import external template into TypeScript
+
+Ops:
+  run <name>            Start an Op workflow (spawns worker + submits to Temporal)
+  run list              List all Ops with current run status
+  run status <name>     Show current workflow run state
+  run signal <name> <signal>  Send a named signal to unblock a gate
+  run cancel <name>     Cancel the active workflow run (requires --force)
+  run log <name>        Show run history for an Op
 
 Spells:
   spell add <name>      Create a new spell
@@ -135,6 +150,8 @@ Options:
   -w, --watch           Watch for changes and rebuild/re-lint (build, lint)
   -v, --verbose         Show stack traces on errors
   -h, --help            Show this help message
+  -p, --profile <name>  Temporal worker profile to use (run command)
+  --report              Print deployment report instead of running (run command)
 
 Examples:
   chant build ./infra/
@@ -193,6 +210,14 @@ const registry: CommandDef[] = [
   { name: "dev publish", requiresPlugins: true, handler: runDevPublish },
   { name: "dev onboard", handler: runDevOnboard },
   { name: "dev check-lexicon", handler: runDevCheckLexicon },
+
+  // Op / run subcommands
+  { name: "run list", handler: runOpList },
+  { name: "run status", handler: runOpStatus },
+  { name: "run signal", handler: runOpSignal },
+  { name: "run cancel", handler: runOpCancel },
+  { name: "run log", handler: runOpLog },
+  { name: "run", handler: runOp },
 
   // Spell subcommands
   { name: "spell add", handler: runSpellAdd },
