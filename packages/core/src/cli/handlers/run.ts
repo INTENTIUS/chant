@@ -25,7 +25,7 @@ function workflowFnName(opName: string): string {
   return kebabToCamel(opName) + "Workflow";
 }
 
-async function makeTemporalClient(profileName: string | undefined, projectPath: string) {
+export async function makeTemporalClient(profileName: string | undefined, projectPath: string) {
   const { config } = await loadChantConfig(projectPath);
   const profile = resolveProfile(config as Record<string, unknown>, profileName);
   const { Connection, Client } = await loadTemporalClient();

@@ -8,7 +8,8 @@ import { scaffoldTool, createScaffoldHandler } from "./tools/scaffold";
 import { searchTool, createSearchHandler } from "./tools/search";
 import type { LexiconPlugin } from "../../lexicon";
 import type { McpRequest, McpResponse, ToolDefinition, ToolHandler, ResourceDefinition } from "./types";
-import { createSnapshotTool, createDiffTool, createSpellDoneTool } from "./state-tools";
+import { createSnapshotTool, createDiffTool } from "./state-tools";
+import { createOpListTool, createOpRunTool, createOpStatusTool, createOpSignalTool, createOpReportTool } from "./op-tools";
 import { buildResourcesList, handleResourcesRead } from "./resource-handlers";
 
 /**
@@ -35,8 +36,11 @@ export class McpServer {
     const diff = createDiffTool(plugins ?? []);
     this.registerTool(diff.definition, diff.handler);
 
-    const spellDone = createSpellDoneTool();
-    this.registerTool(spellDone.definition, spellDone.handler);
+    // Register Op tools
+    for (const factory of [createOpListTool, createOpRunTool, createOpStatusTool, createOpSignalTool, createOpReportTool]) {
+      const t = factory();
+      this.registerTool(t.definition, t.handler);
+    }
 
     // Register plugin contributions
     if (plugins) {

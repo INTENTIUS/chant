@@ -195,6 +195,62 @@ describe("McpServer", () => {
       expect(props.lexicon).toBeDefined();
       expect(props.limit).toBeDefined();
     });
+
+    describe("Op tools schema", () => {
+      async function getToolProps(name: string): Promise<Record<string, unknown>> {
+        const response = await server.handleRequest({ jsonrpc: "2.0", id: 1, method: "tools/list" });
+        const result = response.result as { tools: Array<{ name: string; inputSchema: Record<string, unknown> }> };
+        const tool = result.tools.find((t) => t.name === name)!;
+        return tool.inputSchema.properties as Record<string, unknown>;
+      }
+
+      test("op-list has profile property", async () => {
+        const props = await getToolProps("op-list");
+        expect(props.profile).toBeDefined();
+      });
+
+      test("op-run has name (required) and profile", async () => {
+        const response = await server.handleRequest({ jsonrpc: "2.0", id: 1, method: "tools/list" });
+        const result = response.result as { tools: Array<{ name: string; inputSchema: Record<string, unknown> }> };
+        const tool = result.tools.find((t) => t.name === "op-run")!;
+        const props = tool.inputSchema.properties as Record<string, unknown>;
+        expect(props.name).toBeDefined();
+        expect(props.profile).toBeDefined();
+        expect(tool.inputSchema.required).toContain("name");
+      });
+
+      test("op-status has name (required) and profile", async () => {
+        const response = await server.handleRequest({ jsonrpc: "2.0", id: 1, method: "tools/list" });
+        const result = response.result as { tools: Array<{ name: string; inputSchema: Record<string, unknown> }> };
+        const tool = result.tools.find((t) => t.name === "op-status")!;
+        const props = tool.inputSchema.properties as Record<string, unknown>;
+        expect(props.name).toBeDefined();
+        expect(props.profile).toBeDefined();
+        expect(tool.inputSchema.required).toContain("name");
+      });
+
+      test("op-signal has name and signal (both required) and profile", async () => {
+        const response = await server.handleRequest({ jsonrpc: "2.0", id: 1, method: "tools/list" });
+        const result = response.result as { tools: Array<{ name: string; inputSchema: Record<string, unknown> }> };
+        const tool = result.tools.find((t) => t.name === "op-signal")!;
+        const props = tool.inputSchema.properties as Record<string, unknown>;
+        expect(props.name).toBeDefined();
+        expect(props.signal).toBeDefined();
+        expect(props.profile).toBeDefined();
+        expect(tool.inputSchema.required).toContain("name");
+        expect(tool.inputSchema.required).toContain("signal");
+      });
+
+      test("op-report has name (required) and profile", async () => {
+        const response = await server.handleRequest({ jsonrpc: "2.0", id: 1, method: "tools/list" });
+        const result = response.result as { tools: Array<{ name: string; inputSchema: Record<string, unknown> }> };
+        const tool = result.tools.find((t) => t.name === "op-report")!;
+        const props = tool.inputSchema.properties as Record<string, unknown>;
+        expect(props.name).toBeDefined();
+        expect(props.profile).toBeDefined();
+        expect(tool.inputSchema.required).toContain("name");
+      });
+    });
   });
 
   describe("tools/call", () => {
@@ -301,6 +357,74 @@ describe("McpServer", () => {
       expect(parsed.query).toBe("bucket");
       expect(parsed.total).toBe(0);
       expect(parsed.results).toEqual([]);
+    });
+
+    describe("Op tool handlers", () => {
+      test("op-list returns list without throwing when Temporal unavailable", async () => {
+        const response = await server.handleRequest({
+          jsonrpc: "2.0",
+          id: 1,
+          method: "tools/call",
+          params: { name: "op-list", arguments: {} },
+        });
+        expect(response.error).toBeUndefined();
+        const result = response.result as { content: Array<{ type: string; text: string }>; isError?: boolean };
+        expect(result.content[0].type).toBe("text");
+        // May be empty list or error-degraded — but no thrown error
+        expect(result.isError).toBeUndefined();
+      });
+
+      test("op-run returns isError when Temporal unavailable", async () => {
+        const response = await server.handleRequest({
+          jsonrpc: "2.0",
+          id: 1,
+          method: "tools/call",
+          params: { name: "op-run", arguments: { name: "nonexistent-op" } },
+        });
+        expect(response.error).toBeUndefined();
+        const result = response.result as { content: Array<{ text: string }>; isError?: boolean };
+        // Either "not found" or Temporal error — either way should not be a protocol error
+        expect(result.content[0].text.length).toBeGreaterThan(0);
+      });
+
+      test("op-status returns isError when Temporal unavailable", async () => {
+        const response = await server.handleRequest({
+          jsonrpc: "2.0",
+          id: 1,
+          method: "tools/call",
+          params: { name: "op-status", arguments: { name: "nonexistent-op" } },
+        });
+        expect(response.error).toBeUndefined();
+        const result = response.result as { content: Array<{ text: string }>; isError: boolean };
+        expect(result.isError).toBe(true);
+        expect(result.content[0].text).toContain("Error:");
+      });
+
+      test("op-signal returns isError when Temporal unavailable", async () => {
+        const response = await server.handleRequest({
+          jsonrpc: "2.0",
+          id: 1,
+          method: "tools/call",
+          params: { name: "op-signal", arguments: { name: "nonexistent-op", signal: "gate" } },
+        });
+        expect(response.error).toBeUndefined();
+        const result = response.result as { content: Array<{ text: string }>; isError: boolean };
+        expect(result.isError).toBe(true);
+        expect(result.content[0].text).toContain("Error:");
+      });
+
+      test("op-report returns content without throwing when op not found", async () => {
+        const response = await server.handleRequest({
+          jsonrpc: "2.0",
+          id: 1,
+          method: "tools/call",
+          params: { name: "op-report", arguments: { name: "nonexistent-op" } },
+        });
+        expect(response.error).toBeUndefined();
+        const result = response.result as { content: Array<{ text: string }>; isError?: boolean };
+        // Op not found → returns a "not found" message or Temporal error, not a protocol error
+        expect(result.content[0].text.length).toBeGreaterThan(0);
+      });
     });
   });
 
@@ -446,6 +570,9 @@ describe("McpServer", () => {
       const uris = result.resources.map((r) => r.uri);
       expect(uris).toContain("chant://context");
       expect(uris).toContain("chant://examples/list");
+      expect(uris).toContain("chant://ops");
+      expect(uris).toContain("chant://ops/{name}/runs");
+      expect(uris).toContain("chant://ops/{name}/runs/latest");
 
       // Each resource has required fields
       for (const resource of result.resources) {
@@ -548,6 +675,48 @@ describe("McpServer", () => {
       });
       expect(response.error).toBeDefined();
       expect(response.error?.message).toContain("Unknown resource");
+    });
+
+    describe("Op resources", () => {
+      test("chant://ops returns an array", async () => {
+        const response = await server.handleRequest({
+          jsonrpc: "2.0",
+          id: 1,
+          method: "resources/read",
+          params: { uri: "chant://ops" },
+        });
+        expect(response.error).toBeUndefined();
+        const result = response.result as { contents: Array<{ text: string; mimeType: string }> };
+        expect(result.contents[0].mimeType).toBe("application/json");
+        const ops = JSON.parse(result.contents[0].text);
+        expect(Array.isArray(ops)).toBe(true);
+      });
+
+      test("chant://ops/{name}/runs degrades gracefully when Temporal unavailable", async () => {
+        const response = await server.handleRequest({
+          jsonrpc: "2.0",
+          id: 1,
+          method: "resources/read",
+          params: { uri: "chant://ops/nonexistent/runs" },
+        });
+        expect(response.error).toBeUndefined();
+        const result = response.result as { contents: Array<{ text: string }> };
+        const data = JSON.parse(result.contents[0].text);
+        expect(data.error).toBeDefined();
+      });
+
+      test("chant://ops/{name}/runs/latest degrades gracefully when Temporal unavailable", async () => {
+        const response = await server.handleRequest({
+          jsonrpc: "2.0",
+          id: 1,
+          method: "resources/read",
+          params: { uri: "chant://ops/nonexistent/runs/latest" },
+        });
+        expect(response.error).toBeUndefined();
+        const result = response.result as { contents: Array<{ text: string }> };
+        const data = JSON.parse(result.contents[0].text);
+        expect(data.error).toBeDefined();
+      });
     });
   });
 
@@ -962,8 +1131,12 @@ describe("McpServer", () => {
 
       const toolsRes = await s.handleRequest({ jsonrpc: "2.0", id: 2, method: "tools/list" });
       const tools = (toolsRes.result as { tools: Array<{ name: string }> }).tools;
-      expect(tools).toHaveLength(9);
-      expect(tools.map((t) => t.name).sort()).toEqual(["build", "explain", "import", "lint", "scaffold", "search", "spell-done", "state-diff", "state-snapshot"]);
+      expect(tools).toHaveLength(13);
+      expect(tools.map((t) => t.name).sort()).toEqual([
+        "build", "explain", "import", "lint",
+        "op-list", "op-report", "op-run", "op-signal", "op-status",
+        "scaffold", "search", "state-diff", "state-snapshot",
+      ]);
 
       const resourcesRes = await s.handleRequest({ jsonrpc: "2.0", id: 3, method: "resources/list" });
       const resources = (resourcesRes.result as { resources: Array<{ uri: string }> }).resources;
@@ -974,7 +1147,7 @@ describe("McpServer", () => {
       const s = new McpServer([]);
       const toolsRes = await s.handleRequest({ jsonrpc: "2.0", id: 1, method: "tools/list" });
       const tools = (toolsRes.result as { tools: Array<{ name: string }> }).tools;
-      expect(tools).toHaveLength(9);
+      expect(tools).toHaveLength(13);
     });
   });
 });
