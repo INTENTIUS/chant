@@ -6,8 +6,6 @@ import { build } from "../../build";
 import { computeBuildDigest, diffDigests } from "../../state/digest";
 import { takeSnapshot } from "../../state/snapshot";
 import type { StateSnapshot } from "../../state/types";
-import { discoverSpells } from "../../spell/discovery";
-
 export interface ToolRegistration {
   definition: ToolDefinition;
   handler: ToolHandler;
@@ -87,52 +85,3 @@ export function createDiffTool(plugins: LexiconPlugin[]): ToolRegistration {
   };
 }
 
-/**
- * Create spell-done tool definition and handler
- */
-export function createSpellDoneTool(): ToolRegistration {
-  return {
-    definition: {
-      name: "spell-done",
-      description: "Mark a spell task as done",
-      inputSchema: {
-        type: "object",
-        properties: {
-          name: { type: "string", description: "Spell name" },
-          taskNumber: { type: "number", description: "Task number (1-based)" },
-        },
-        required: ["name", "taskNumber"],
-      },
-    },
-    handler: async (params) => {
-      const { readFileSync, writeFileSync } = await import("node:fs");
-      const { spells } = await discoverSpells();
-      const name = params.name as string;
-      const taskNumber = params.taskNumber as number;
-      const spell = spells.get(name);
-      if (!spell) return `Spell "${name}" not found`;
-      if (taskNumber < 1 || taskNumber > spell.definition.tasks.length) {
-        return `Invalid task number ${taskNumber}`;
-      }
-      const task = spell.definition.tasks[taskNumber - 1];
-      if (task.done) return `Task ${taskNumber} is already done`;
-
-      const content = readFileSync(spell.filePath, "utf-8");
-      let count = 0;
-      const rewritten = content.replace(
-        /task\(("[^"]*"|'[^']*'|`[^`]*`)((?:\s*,\s*\{[^}]*\})?)\)/g,
-        (match, desc, opts) => {
-          count++;
-          if (count !== taskNumber) return match;
-          if (opts && opts.includes("done:")) {
-            return match.replace(/done:\s*false/, "done: true");
-          }
-          return `task(${desc}, { done: true })`;
-        },
-      );
-      if (rewritten === content) return `Could not rewrite task ${taskNumber}`;
-      writeFileSync(spell.filePath, rewritten);
-      return `Task ${taskNumber} marked done: "${task.description}"`;
-    },
-  };
-}

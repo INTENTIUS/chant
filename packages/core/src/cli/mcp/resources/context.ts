@@ -49,6 +49,33 @@ chant import template.json    # Convert external template
 chant import template.json -o ./src/  # Custom output dir
 \`\`\`
 
+## Ops (Temporal Workflows)
+
+Ops are durable workflow definitions backed by Temporal. Each \`*.op.ts\` file declares an Op with named phases and activity steps.
+
+### Op MCP Tools
+
+| Tool | Description |
+|---|---|
+| \`op-list\` | List all discovered Ops with current run status. Optional \`profile\` param. |
+| \`op-run\` | Submit an Op workflow. Requires \`name\`. Worker must already be running via \`chant run <name>\`. |
+| \`op-status\` | Get current run state (status, activity counts, times). Requires \`name\`. |
+| \`op-signal\` | Send a signal to unblock a gate step. Requires \`name\` and \`signal\`. |
+| \`op-report\` | Return a markdown deployment report for the latest run. Requires \`name\`. |
+
+All Op tools accept an optional \`profile\` parameter matching a profile name in \`chant.config.ts\` \`temporal.profiles\`.
+
+### Op MCP Resources
+
+| URI | Description |
+|---|---|
+| \`chant://ops\` | JSON array of all Op definitions (name, overview, phases, taskQueue, depends) |
+| \`chant://ops/{name}/runs\` | Workflow run history for a named Op |
+| \`chant://ops/{name}/runs/latest\` | Latest run state for a named Op |
+
+### Workflow IDs
+Ops use deterministic workflow IDs: \`chant-op-<opName>\` (e.g. \`chant-op-alb-deploy\`).
+
 ## Best Practices
 
 1. **Flat Declarations**: Keep declarations at module level, avoid deep nesting
