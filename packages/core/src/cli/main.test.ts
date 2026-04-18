@@ -254,4 +254,68 @@ describe("resolveCommand", () => {
     expect(result!.def.name).toBe("dev generate");
     expect(result!.compound).toBe(true);
   });
+
+  test("resolves run status as compound command", () => {
+    const registry: CommandDef[] = [
+      { name: "run list", handler: noop },
+      { name: "run status", handler: noop },
+      { name: "run signal", handler: noop },
+      { name: "run cancel", handler: noop },
+      { name: "run log", handler: noop },
+      { name: "run", handler: noop },
+    ];
+    const result = resolveCommand(makeArgs({ command: "run", path: "status" }), registry);
+    expect(result!.def.name).toBe("run status");
+    expect(result!.compound).toBe(true);
+  });
+
+  test("resolves run <name> as simple command", () => {
+    const registry: CommandDef[] = [
+      { name: "run list", handler: noop },
+      { name: "run status", handler: noop },
+      { name: "run", handler: noop },
+    ];
+    const result = resolveCommand(makeArgs({ command: "run", path: "alb-deploy" }), registry);
+    expect(result!.def.name).toBe("run");
+    expect(result!.compound).toBe(false);
+  });
+});
+
+describe("parseArgs — run flags", () => {
+  test("parses --profile flag", () => {
+    const result = parseArgs(["run", "alb-deploy", "--profile", "local"]);
+    expect(result.command).toBe("run");
+    expect(result.path).toBe("alb-deploy");
+    expect(result.profile).toBe("local");
+  });
+
+  test("parses -p shorthand for --profile", () => {
+    const result = parseArgs(["run", "alb-deploy", "-p", "cloud"]);
+    expect(result.profile).toBe("cloud");
+  });
+
+  test("parses --report flag", () => {
+    const result = parseArgs(["run", "alb-deploy", "--report"]);
+    expect(result.command).toBe("run");
+    expect(result.path).toBe("alb-deploy");
+    expect(result.report).toBe(true);
+  });
+
+  test("report is undefined when not provided", () => {
+    const result = parseArgs(["run", "alb-deploy"]);
+    expect(result.report).toBe(undefined);
+  });
+
+  test("profile is undefined when not provided", () => {
+    const result = parseArgs(["run", "alb-deploy"]);
+    expect(result.profile).toBe(undefined);
+  });
+
+  test("run signal parses op name and signal into positionals", () => {
+    const result = parseArgs(["run", "signal", "alb-deploy", "gate-dns"]);
+    expect(result.command).toBe("run");
+    expect(result.path).toBe("signal");
+    expect(result.extraPositional).toBe("alb-deploy");
+    expect(result.extraPositional2).toBe("gate-dns");
+  });
 });

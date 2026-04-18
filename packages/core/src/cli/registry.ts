@@ -18,6 +18,8 @@ export interface ParsedArgs {
   watch: boolean;
   verbose: boolean;
   help: boolean;
+  profile?: string;
+  report?: boolean;
 }
 
 /**

@@ -3,6 +3,7 @@ import { writeFileSync, unlinkSync, readFileSync } from "node:fs";
 import { mkdirSync, existsSync } from "node:fs";
 import { getRuntime } from "../../runtime-adapter";
 import { discoverSpells } from "../../spell/discovery";
+import { discoverOps } from "../../op/discover";
 import { generatePrompt } from "../../spell/prompt";
 import { formatError, formatWarning, formatSuccess, formatBold } from "../format";
 import { loadPlugin } from "../plugins";
@@ -352,32 +353,54 @@ function markTaskDone(source: string, taskNum: number): string {
 }
 
 /**
- * chant graph — show dependency graph
+ * chant graph — show dependency graph for spells and Ops
  */
 export async function runGraph(ctx: CommandContext): Promise<number> {
-  const { spells, errors } = await discoverSpells();
+  const [{ spells, errors: spellErrors }, { ops, errors: opErrors }] = await Promise.all([
+    discoverSpells(),
+    discoverOps(),
+  ]);
 
-  for (const err of errors) {
-    console.error(formatError({ message: err }));
-  }
-
-  if (spells.size === 0) {
-    console.error(formatWarning({ message: "No spells found" }));
-    return 0;
-  }
+  for (const err of spellErrors) console.error(formatError({ message: err }));
+  for (const err of opErrors) console.error(formatError({ message: err }));
 
   let hasEdges = false;
-  for (const [name, spell] of spells) {
-    const deps = spell.definition.depends;
-    if (deps && deps.length > 0) {
-      for (const dep of deps) {
-        console.log(`${dep} → ${name}`);
-        hasEdges = true;
+
+  if (spells.size > 0) {
+    for (const [name, spell] of spells) {
+      const deps = spell.definition.depends;
+      if (deps && deps.length > 0) {
+        for (const dep of deps) {
+          console.log(`${dep} → ${name}`);
+          hasEdges = true;
+        }
       }
     }
   }
 
-  if (!hasEdges) {
+  if (ops.size > 0) {
+    let hasOpEdges = false;
+    for (const [name, { config }] of ops) {
+      const deps = config.depends;
+      if (deps && deps.length > 0) {
+        if (!hasOpEdges) {
+          console.log("\nOps:");
+          hasOpEdges = true;
+        }
+        for (const dep of deps) {
+          console.log(`  ${dep} → ${name}`);
+          hasEdges = true;
+        }
+      }
+    }
+    if (!hasOpEdges && ops.size > 0) {
+      console.log("\nOps: No dependencies");
+    }
+  }
+
+  if (!hasEdges && spells.size === 0 && ops.size === 0) {
+    console.log("No spells or Ops found");
+  } else if (!hasEdges) {
     console.log("No dependencies");
   }
 
