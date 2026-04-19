@@ -1,0 +1,21 @@
+digraph module_graph {
+  graph [fontname="Helvetica,Arial,sans-serif" bgcolor="transparent" pad="0.6" ranksep="0.7" nodesep="0.6"
+         label="Module graph example \u2014 file D changes, watch mode reverse-walks to find affected files"
+         labelloc=t fontname="Helvetica,Arial,sans-serif" fontsize=10 fontcolor="#475569"]
+  node  [fontname="Helvetica,Arial,sans-serif" shape=box style="filled,rounded" margin="0.18,0.1"]
+  edge  [fontname="Helvetica,Arial,sans-serif" fontsize=9 fontcolor="#475569"]
+
+  A [label="src/app.ts\n\u26a0 affected"       fillcolor="#FEF2F2" color="#DC2626" fontcolor="#7F1D1D"]
+  B [label="src/resources.ts\n\u26a0 affected"  fillcolor="#FEF2F2" color="#DC2626" fontcolor="#7F1D1D"]
+  C [label="src/config.ts"                      fillcolor="#EEF2FF" color="#4F46E5" fontcolor="#1E1B4B"]
+  D [label="src/shared.ts\n\u25cf changed"      fillcolor="#FEF3C7" color="#D97706" fontcolor="#78350F"]
+
+  // Forward import edges
+  A -> B [label="imports" color="#6366F1"]
+  A -> C [label="imports" color="#6366F1"]
+  B -> D [label="imports" color="#6366F1"]
+
+  // Reverse walk (watch mode)
+  D -> B [label="re-evaluate" style=dashed color="#DC2626" fontcolor="#DC2626"]
+  B -> A [label="re-evaluate" style=dashed color="#DC2626" fontcolor="#DC2626"]
+}

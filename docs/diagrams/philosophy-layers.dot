@@ -1,0 +1,18 @@
+digraph philosophy_layers {
+  rankdir=TB
+  graph [fontname="Helvetica,Arial,sans-serif" bgcolor="transparent" pad="0.5" ranksep="0.45" nodesep="1.0"]
+  node  [fontname="Helvetica,Arial,sans-serif" shape=box style="filled,rounded" margin="0.3,0.15" width=4.6]
+  edge  [fontname="Helvetica,Arial,sans-serif" fontsize=9 fontcolor="#475569"]
+
+  core [label="Synthesis Core\nchant build \u2014 discover \u00b7 evaluate \u00b7 serialize\ndeterministic \u00b7 pure \u00b7 no side effects"
+        fillcolor="#DCFCE7" color="#16A34A" fontcolor="#14532D"]
+
+  ops  [label="Operational Extensions (opt-in)\nOps (*.op.ts) \u00b7 chant state \u00b7 Skills \u00b7 MCP"
+        fillcolor="#DBEAFE" color="#2563EB" fontcolor="#1E3A8A"]
+
+  agent [label="Agent / CI / Operator\ndeploy \u00b7 monitor \u00b7 remediate \u00b7 approve"
+         fillcolor="#F3E8FF" color="#7C3AED" fontcolor="#3B0764"]
+
+  core  -> ops   [label="opt-in: add temporal lexicon" color="#2563EB" fontcolor="#2563EB"]
+  ops   -> agent [label="observability \u00b7 signals \u00b7 results" color="#7C3AED" fontcolor="#7C3AED" style=dashed]
+}

@@ -22,8 +22,12 @@ lint:
 # Run all checks (build, lint, test)
 check: build lint test
 
-# Start chant docs dev server
-docs:
+# Build diagram SVGs from .dot source files (requires graphviz)
+diagrams:
+    bash scripts/build-diagrams.sh
+
+# Start chant docs dev server (builds diagrams first)
+docs: diagrams
     npm --prefix docs run dev
 
 # Start a lexicon docs dev server (e.g. just docs-lexicon aws)
@@ -53,7 +57,7 @@ smoke-npm-registry:
 # Run all smoke tests
 smoke: smoke-workspace smoke-npm
 
-# Build unified documentation site (main + lexicon docs)
+# Build unified documentation site (main + lexicon docs, includes diagrams)
 docs-build:
     bash scripts/build-docs.sh
 

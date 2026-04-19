@@ -3,9 +3,13 @@ title: Ops
 description: Define named, phased Temporal workflows alongside your chant specs using *.op.ts files and chant run.
 ---
 
+import Diagram from '../../components/Diagram.astro';
+
 An **Op** is a named, phased Temporal workflow defined in a `*.op.ts` file. Ops replace ad-hoc deployment scripts with durable workflows that survive restarts, surface progress in the Temporal UI, and can pause at gate steps until a signal unblocks them.
 
 `chant build` compiles each `*.op.ts` into `dist/ops/<name>/{workflow.ts, activities.ts, worker.ts}`. `chant run <name>` spawns the worker and submits the workflow to Temporal.
+
+<Diagram name="ops-codegen-runtime" alt="*.op.ts source file through chant build to generated worker code, then chant run spawning a Temporal worker connected to the Temporal cluster" caption="Op codegen and runtime flow" />
 
 ## Minimal example
 

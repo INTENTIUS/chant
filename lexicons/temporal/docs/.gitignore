@@ -1,0 +1,14 @@
+# build output
+dist/
+
+# generated types
+.astro/
+
+# generated diagram SVGs (built from diagrams/*.dot via scripts/build-diagrams.sh)
+public/diagrams/
+
+# dependencies
+node_modules/
+
+# macOS
+.DS_Store

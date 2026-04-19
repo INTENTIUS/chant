@@ -1,0 +1,20 @@
+digraph discovery_pipeline {
+  rankdir=LR
+  graph [fontname="Helvetica,Arial,sans-serif" bgcolor="transparent" pad="0.5" ranksep="0.55" splines=ortho]
+  node  [fontname="Helvetica,Arial,sans-serif" shape=box style="filled,rounded" margin="0.22,0.12"
+         fillcolor="#EEF2FF" color="#4F46E5" fontcolor="#1E1B4B"]
+  edge  [color="#6366F1" fontname="Helvetica,Arial,sans-serif" fontsize=9]
+
+  call   [label="discover('./src')" shape=oval fillcolor="#DCFCE7" color="#16A34A" fontcolor="#14532D"]
+
+  s1 [label="1. Scan files\nfind *.ts\nexclude tests / node_modules"]
+  s2 [label="2. Import modules\ndynamic import\nDiscoveryError on failure"]
+  s3 [label="3. Collect entities\nextract Declarable exports\nMap<name, Declarable>"]
+  s4 [label="4. Resolve AttrRefs\nset logical names\nenable toJSON()"]
+  s5 [label="5. Build graph\ndependency graph\ncycle detection"]
+
+  result [label="DiscoveryResult\nentities \u00b7 dependencies\nsourceFiles \u00b7 errors"
+          shape=oval fillcolor="#DCFCE7" color="#16A34A" fontcolor="#14532D"]
+
+  call -> s1 -> s2 -> s3 -> s4 -> s5 -> result
+}

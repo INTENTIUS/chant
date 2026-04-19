@@ -1,0 +1,38 @@
+digraph ops_codegen {
+  rankdir=LR
+  graph [fontname="Helvetica,Arial,sans-serif" bgcolor="transparent" pad="0.5" ranksep="0.8" nodesep="0.5"]
+  node  [fontname="Helvetica,Arial,sans-serif" shape=box style="filled,rounded" margin="0.22,0.12"]
+  edge  [fontname="Helvetica,Arial,sans-serif" fontsize=9 fontcolor="#475569" color="#6366F1"]
+
+  op    [label="*.op.ts\nphases \u00b7 steps\ngates \u00b7 compensation"
+         fillcolor="#EEF2FF" color="#4F46E5" fontcolor="#1E1B4B"]
+
+  build [label="chant build"
+         shape=oval fillcolor="#F3E8FF" color="#7C3AED" fontcolor="#3B0764"]
+
+  subgraph cluster_dist {
+    label="dist/ops/" style=filled fillcolor="#FEF3C7" color="#D97706" penwidth=1.5
+    fontname="Helvetica,Arial,sans-serif"
+    gen   [label="worker.ts (generated)\nworkflow function\nactivity stubs\nTemporal config"
+           fillcolor="#FEF9C3" color="#D97706" fontcolor="#78350F"]
+  }
+
+  run   [label="chant run\n--op deploy"
+         shape=oval fillcolor="#F3E8FF" color="#7C3AED" fontcolor="#3B0764"]
+
+  worker [label="Temporal Worker\nregisters workflow\n+ activities"
+          fillcolor="#DBEAFE" color="#2563EB" fontcolor="#1E3A8A"]
+
+  cluster [label="Temporal Cluster\ndurable execution\nobservability \u00b7 retry"
+           fillcolor="#DCFCE7" color="#16A34A" fontcolor="#14532D"]
+
+  signals [label="chant run signal\nchant run status\nMCP op-signal\nMCP op-status"
+           fillcolor="#FEF2F2" color="#DC2626" fontcolor="#7F1D1D"]
+
+  op     -> build  [label="input"]
+  build  -> gen    [label="generates"]
+  gen    -> run    [label="compiled + started by"]
+  run    -> worker [label="spawns"]
+  worker -> cluster [label="connects to"]
+  signals -> cluster [label="observe/control" style=dashed color="#DC2626" fontcolor="#DC2626"]
+}

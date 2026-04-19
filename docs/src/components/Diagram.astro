@@ -1,0 +1,13 @@
+---
+interface Props {
+  name: string;
+  alt: string;
+  caption?: string;
+}
+const { name, alt, caption } = Astro.props;
+const src = `${import.meta.env.BASE_URL}diagrams/${name}.svg`;
+---
+<figure class="diagram not-content">
+  <img src={src} alt={alt} loading="lazy" decoding="async" style="max-width:100%;height:auto;" />
+  {caption && <figcaption style="text-align:center;font-size:0.875rem;color:var(--sl-color-gray-3);margin-top:0.5rem;">{caption}</figcaption>}
+</figure>

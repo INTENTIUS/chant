@@ -4,8 +4,11 @@ description: Synthesis-only, Ops, or raw Temporal — pick the right fit for you
 ---
 
 import { Aside } from '@astrojs/starlight/components';
+import Diagram from '../../../components/Diagram.astro';
 
 chant covers the synthesis step — TypeScript in, validated artifacts out — and offers two optional layers beyond that. Knowing which layer fits your situation avoids unnecessary setup.
+
+<Diagram name="deployment-paths" alt="Decision tree: existing deploy pipeline → synthesis only; need observability/gates → Ops or Raw Temporal" caption="Choosing your deployment model" />
 
 ## Synthesis Only
 

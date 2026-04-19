@@ -1,0 +1,40 @@
+digraph nested_stacks {
+  rankdir=LR
+  graph [fontname="Helvetica,Arial,sans-serif" bgcolor="transparent" pad="0.5" ranksep="0.9" nodesep="0.6"]
+  node  [fontname="Helvetica,Arial,sans-serif" shape=box style="filled,rounded" margin="0.22,0.12"]
+  edge  [fontname="Helvetica,Arial,sans-serif" fontsize=9 fontcolor="#475569" color="#6366F1"]
+
+  subgraph cluster_src {
+    label="Source" style=filled fillcolor="#F8FAFC" color="#94A3B8" penwidth=1.5
+    fontname="Helvetica,Arial,sans-serif"
+
+    parent [label="src/parent/\nNetworkStack\nIamStack"
+            fillcolor="#EEF2FF" color="#4F46E5" fontcolor="#1E1B4B"]
+
+    subgraph cluster_child {
+      label="src/child/ (child project)" style=filled fillcolor="#F0FDF4" color="#16A34A" penwidth=1.5
+      fontname="Helvetica,Arial,sans-serif"
+      child [label="AppStack\nstackOutput(\u2018parent\u2019, \u2018VpcId\u2019)"
+             fillcolor="#DCFCE7" color="#15803D" fontcolor="#14532D"]
+    }
+  }
+
+  subgraph cluster_dist {
+    label="dist/" style=filled fillcolor="#F8FAFC" color="#94A3B8" penwidth=1.5
+    fontname="Helvetica,Arial,sans-serif"
+
+    pout [label="parent.yaml\nVpcId: !Output vpc\nSubnetIds: !Output subnets"
+          fillcolor="#EEF2FF" color="#4F46E5" fontcolor="#1E1B4B"]
+    cout [label="child/app.yaml\nVpcId: \u2190 parent output"
+          fillcolor="#DCFCE7" color="#15803D" fontcolor="#14532D"]
+
+    s3   [label="S3 Bucket\ndeploy artifact"
+          shape=cylinder fillcolor="#FEF3C7" color="#D97706" fontcolor="#78350F"]
+  }
+
+  parent -> pout [label="chant build"]
+  child  -> cout [label="chant build"]
+  child  -> parent [label="stackOutput()" style=dashed color="#94A3B8" fontcolor="#94A3B8"]
+  cout   -> s3   [label="upload" color="#D97706"]
+  pout   -> s3   [label="upload" color="#D97706"]
+}

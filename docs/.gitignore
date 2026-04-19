@@ -1,6 +1,9 @@
 # build output
 dist/
 
+# generated diagram SVGs (built from docs/diagrams/*.dot via scripts/build-diagrams.sh)
+public/diagrams/
+
 # generated API docs (starlight-typedoc)
 src/content/docs/api/
 # generated types

@@ -3,7 +3,11 @@ title: Lexicon Authoring Overview
 description: When and how to create a custom lexicon plugin for chant
 ---
 
+import Diagram from '../../../components/Diagram.astro';
+
 A **lexicon** is a plugin that teaches chant about a specific operational area — types, lint rules, serialization, and build validation. You can create lexicons for any infrastructure platform, internal tool, or custom domain.
+
+<Diagram name="lexicon-plugin-layers" alt="LexiconPlugin entry point connected to three capability clusters: Synthesis (types, serializer), Quality (lint rules, post-synth checks), and Integration (LSP, MCP, Skills)" caption="LexiconPlugin capability layers" />
 
 ## When You Need This Section
 

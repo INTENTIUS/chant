@@ -1,0 +1,36 @@
+digraph cc_lifecycle {
+  rankdir=TB
+  graph [fontname="Helvetica,Arial,sans-serif" bgcolor="transparent" pad="0.5" ranksep="0.6" nodesep="0.7"]
+  node  [fontname="Helvetica,Arial,sans-serif" shape=box style="filled,rounded" margin="0.22,0.12"]
+  edge  [fontname="Helvetica,Arial,sans-serif" fontsize=9 fontcolor="#475569" color="#6366F1"]
+
+  yaml   [label="GCP resource YAML\n(chant build output)"
+          fillcolor="#EEF2FF" color="#4F46E5" fontcolor="#1E1B4B"]
+
+  apply  [label="kubectl apply\n(mgmt cluster)"
+          shape=oval fillcolor="#F3E8FF" color="#7C3AED" fontcolor="#3B0764"]
+
+  pending [label="Pending\nCC controller picks up CRD"
+           fillcolor="#FEF9C3" color="#D97706" fontcolor="#78350F"]
+
+  reconciling [label="Reconciling\ncalling GCP API\ncreating / updating resource"
+               fillcolor="#DBEAFE" color="#2563EB" fontcolor="#1E3A8A"]
+
+  uptodate [label="UpToDate\nGCP resource matches spec\n\u2714 healthy"
+            fillcolor="#DCFCE7" color="#16A34A" fontcolor="#14532D"]
+
+  failed [label="UpdateFailed\nAPI error \u00b7 quota \u00b7 auth\ncondition message has details"
+          fillcolor="#FEF2F2" color="#DC2626" fontcolor="#7F1D1D"]
+
+  dep    [label="DependencyNotReady\nreferenced resource\nnot yet UpToDate"
+          fillcolor="#FEF3C7" color="#D97706" fontcolor="#78350F"]
+
+  yaml      -> apply
+  apply     -> pending      [label="creates CRD"]
+  pending   -> reconciling  [label="CC controller"]
+  reconciling -> uptodate   [label="success"]
+  reconciling -> failed     [label="error"]
+  reconciling -> dep        [label="ref not ready"]
+  dep       -> reconciling  [label="retry when dep resolves" style=dashed]
+  failed    -> reconciling  [label="fix spec + re-apply" style=dashed color="#DC2626" fontcolor="#DC2626"]
+}

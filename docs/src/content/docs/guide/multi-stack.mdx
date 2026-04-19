@@ -6,8 +6,11 @@ description: Splitting resources across multiple stacks
 import { Code } from '@astrojs/starlight/components';
 import outputsSrc from '../../../../../lexicons/aws/src/testdata/nested-stacks/network/outputs.ts?raw';
 import appSrc from '../../../../../lexicons/aws/src/testdata/nested-stacks/app.ts?raw';
+import Diagram from '../../../components/Diagram.astro';
 
 chant supports splitting resources across multiple stacks with automatic cross-stack reference resolution.
+
+<Diagram name="multi-stack-projects" alt="Multi-stack project layout: parent source referencing child project via stackOutput, producing separate output files" caption="Multi-stack source layout and output files" />
 
 When resources in different stacks reference each other, chant generates cross-stack outputs and imports using the appropriate provider-specific mechanism.
 

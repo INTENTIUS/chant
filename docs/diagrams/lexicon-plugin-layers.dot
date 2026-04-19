@@ -1,0 +1,42 @@
+digraph lexicon_layers {
+  rankdir=LR
+  graph [fontname="Helvetica,Arial,sans-serif" bgcolor="transparent" pad="0.5" ranksep="1.0" compound=true]
+  node  [fontname="Helvetica,Arial,sans-serif" shape=box style="filled,rounded" margin="0.2,0.12"]
+  edge  [fontname="Helvetica,Arial,sans-serif" fontsize=9 fontcolor="#475569" color="#6366F1"]
+
+  plugin [label="LexiconPlugin\nentry point"
+          shape=oval fillcolor="#F3E8FF" color="#7C3AED" fontcolor="#3B0764"]
+
+  subgraph cluster_synth {
+    label="Synthesis" style=filled fillcolor="#F0FDF4" color="#16A34A" penwidth=2
+    fontname="Helvetica,Arial,sans-serif"
+    types  [label="Generated Types (.d.ts)\nautocompletion \u00b7 type safety\nproperty validation"
+            fillcolor="#DCFCE7" color="#15803D" fontcolor="#14532D"]
+    serial [label="Serializer\nentities \u2192 target format\n(YAML \u00b7 JSON \u00b7 shell \u00b7 \u2026)"
+            fillcolor="#DCFCE7" color="#15803D" fontcolor="#14532D"]
+  }
+
+  subgraph cluster_quality {
+    label="Quality" style=filled fillcolor="#FEF9C3" color="#D97706" penwidth=2
+    fontname="Helvetica,Arial,sans-serif"
+    rules  [label="Lint rules\nEVL \u00b7 semantic \u00b7 style\ndeclarative + imperative"
+            fillcolor="#FEF3C7" color="#D97706" fontcolor="#78350F"]
+    checks [label="Post-synth checks\nvalidate output artifacts\nsecurity \u00b7 correctness \u00b7 naming"
+            fillcolor="#FEF3C7" color="#D97706" fontcolor="#78350F"]
+  }
+
+  subgraph cluster_integration {
+    label="Integration" style=filled fillcolor="#EEF2FF" color="#4F46E5" penwidth=2
+    fontname="Helvetica,Arial,sans-serif"
+    lsp    [label="LSP providers\ncompletions \u00b7 hover"
+            fillcolor="#E0E7FF" color="#4F46E5" fontcolor="#1E1B4B"]
+    mcp    [label="MCP tools + resources\nprogrammatic agent access"
+            fillcolor="#E0E7FF" color="#4F46E5" fontcolor="#1E1B4B"]
+    skills [label="Skills\nagent playbooks (markdown)\n3-skill pattern: core / platform / advanced"
+            fillcolor="#E0E7FF" color="#4F46E5" fontcolor="#1E1B4B"]
+  }
+
+  plugin -> types  [lhead=cluster_synth]
+  plugin -> rules  [lhead=cluster_quality]
+  plugin -> lsp    [lhead=cluster_integration]
+}

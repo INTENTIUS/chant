@@ -3,11 +3,15 @@ title: Ops
 description: Run named, phased Temporal workflows alongside your chant infrastructure specs
 ---
 
+import Diagram from '../../components/Diagram.astro';
+
 Deciding whether Ops is the right deployment model for your project? See [Choosing Your Deployment Model](/chant/concepts/deployment-paths/).
 
 **Ops** are named, phased Temporal workflows defined in `*.op.ts` files. They turn ad-hoc deployment scripts into durable, observable workflows: progress surfaces in the Temporal UI, gate steps can pause for human approval or external events, and `onFailure` phases handle compensation automatically.
 
 `chant build` compiles each `*.op.ts` into generated Temporal worker code. `chant run <name>` spawns the worker and submits the workflow.
+
+<Diagram name="ops-execution-model" alt="Op execution model: sequential phases, parallel phases, gate steps, and onFailure compensation" caption="Op execution model — phases, gates, and compensation" />
 
 ## Defining an Op
 

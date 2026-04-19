@@ -1,0 +1,40 @@
+digraph arch_packages {
+  rankdir=LR
+  graph [fontname="Helvetica,Arial,sans-serif" bgcolor="transparent" pad="0.5" ranksep="0.9" compound=true]
+  node  [fontname="Helvetica,Arial,sans-serif" shape=box style="filled,rounded" margin="0.2,0.12"]
+  edge  [fontname="Helvetica,Arial,sans-serif" fontsize=9 fontcolor="#475569"]
+
+  CLI [label="CLI\nchant build \u00b7 chant lint\nchant run \u00b7 serve mcp"
+       fillcolor="#EEF2FF" color="#4F46E5" fontcolor="#1E1B4B"]
+
+  subgraph cluster_core {
+    label="@intentius/chant" style=filled fillcolor="#F0F0FF" color="#4F46E5" penwidth=2
+    fontname="Helvetica,Arial,sans-serif"
+    Core    [label="Build pipeline\ndiscovery \u00b7 evaluation\ntopological sort"
+             fillcolor="#EEF2FF" color="#4F46E5" fontcolor="#1E1B4B"]
+    Lint    [label="Lint engine\nEVL \u00b7 semantic \u00b7 post-synth"
+             fillcolor="#EEF2FF" color="#4F46E5" fontcolor="#1E1B4B"]
+    Codegen [label="Codegen infra\ngeneratePipeline \u00b7 packagePipeline\nNamingStrategy \u00b7 LexiconIndex"
+             fillcolor="#EEF2FF" color="#4F46E5" fontcolor="#1E1B4B"]
+  }
+
+  subgraph cluster_lexicon {
+    label="Lexicon Plugin  (aws \u00b7 k8s \u00b7 temporal \u00b7 \u2026)"
+    style=filled fillcolor="#F0FDF4" color="#16A34A" penwidth=2
+    fontname="Helvetica,Arial,sans-serif"
+    Serial [label="Serializer\ntarget format output"      fillcolor="#DCFCE7" color="#15803D" fontcolor="#14532D"]
+    Rules  [label="Lint rules\n+ post-synth checks"       fillcolor="#DCFCE7" color="#15803D" fontcolor="#14532D"]
+    LSPMcp [label="LSP \u00b7 MCP \u00b7 Skills\ncompletions \u00b7 hover \u00b7 tools"
+                                                           fillcolor="#DCFCE7" color="#15803D" fontcolor="#14532D"]
+  }
+
+  TestUtils [label="@intentius/chant-test-utils\nmocks \u00b7 harness \u00b7 assertions"
+             fillcolor="#FEF3C7" color="#D97706" fontcolor="#78350F"]
+
+  CLI      -> Core   [label="build()\nlint()"    color="#4F46E5"]
+  Core     -> Serial [label="serialize()"         color="#16A34A"]
+  Lint     -> Rules  [label="runRules()"           color="#16A34A"]
+  Core     -> LSPMcp [label="completions()\nhover()" color="#16A34A"]
+  Codegen  -> Rules  [label="generatePipeline()"  color="#16A34A" style=dashed]
+  TestUtils -> Core  [label="test helpers"        color="#94A3B8" style=dashed]
+}

@@ -3,29 +3,13 @@ title: Evaluation Pipeline
 description: How chant transforms TypeScript source files into deployment-ready output
 ---
 
+import Diagram from '../../../components/Diagram.astro';
+
 When you run `chant build`, the tool takes your TypeScript source files through a series of stages to produce deployment-ready output.
 
 ## Pipeline Overview
 
-```
-  .ts files
-     |
-     v
-+-----------+     +----------------+     +---------+
-| Discovery | --> | Parse + Check  | --> | Resolve |
-+-----------+     +----------------+     | Imports |
-                                         +---------+
-                                              |
-                                              v
-+-----------+     +----------+     +-----------+
-|   Emit    | <-- | Expand   | <-- | Extract + |
-| (serialize|     | Compos-  |     | Evaluate  |
-|  output)  |     | ites     |     | Resources |
-+-----------+     +----------+     +-----------+
-     |
-     v
-  Output
-```
+<Diagram name="evaluation-pipeline" alt="Six-stage evaluation pipeline: Discovery → Parse+Check → Resolve Imports → Extract+Evaluate → Expand Composites → Emit" caption="chant build evaluation pipeline" />
 
 ## Stage 1: File Discovery
 

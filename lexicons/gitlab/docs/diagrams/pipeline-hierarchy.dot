@@ -1,0 +1,41 @@
+digraph pipeline_hierarchy {
+  rankdir=TB
+  graph [fontname="Helvetica,Arial,sans-serif" bgcolor="transparent" pad="0.5" ranksep="0.6" nodesep="0.7"]
+  node  [fontname="Helvetica,Arial,sans-serif" shape=box style="filled,rounded" margin="0.2,0.1"]
+  edge  [fontname="Helvetica,Arial,sans-serif" fontsize=9 fontcolor="#475569" color="#6366F1"]
+
+  pipeline [label="Pipeline (.gitlab-ci.yml)\nglobal: default \u00b7 variables\nstages: [build, test, deploy]"
+            fillcolor="#F3E8FF" color="#7C3AED" fontcolor="#3B0764"]
+
+  subgraph cluster_build {
+    label="build stage" style=filled fillcolor="#EEF2FF" color="#4F46E5" penwidth=1.5
+    fontname="Helvetica,Arial,sans-serif"
+    j1 [label="docker-build\nimage: docker:24\nscript: docker build"
+        fillcolor="#E0E7FF" color="#4F46E5" fontcolor="#1E1B4B"]
+    j2 [label="compile\nimage: node:24\nscript: npm run build"
+        fillcolor="#E0E7FF" color="#4F46E5" fontcolor="#1E1B4B"]
+  }
+
+  subgraph cluster_test {
+    label="test stage" style=filled fillcolor="#FEF3C7" color="#D97706" penwidth=1.5
+    fontname="Helvetica,Arial,sans-serif"
+    j3 [label="unit-tests\nscript: npm test\ncoverage: …"
+        fillcolor="#FEF9C3" color="#D97706" fontcolor="#78350F"]
+    j4 [label="lint\nscript: npm run lint"
+        fillcolor="#FEF9C3" color="#D97706" fontcolor="#78350F"]
+  }
+
+  subgraph cluster_deploy {
+    label="deploy stage" style=filled fillcolor="#DCFCE7" color="#16A34A" penwidth=1.5
+    fontname="Helvetica,Arial,sans-serif"
+    j5 [label="deploy-prod\nenvironment: production\nwhen: manual"
+        fillcolor="#BBF7D0" color="#15803D" fontcolor="#14532D"]
+  }
+
+  pipeline -> j1 [lhead=cluster_build]
+  pipeline -> j3 [lhead=cluster_test]
+  pipeline -> j5 [lhead=cluster_deploy]
+
+  j1 -> j3 [label="needs: build" ltail=cluster_build lhead=cluster_test]
+  j3 -> j5 [label="needs: test"  ltail=cluster_test  lhead=cluster_deploy]
+}

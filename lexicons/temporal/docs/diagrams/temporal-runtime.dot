@@ -1,0 +1,51 @@
+digraph temporal_runtime {
+  rankdir=LR
+  graph [fontname="Helvetica,Arial,sans-serif" bgcolor="transparent" pad="0.5" ranksep="1.0" nodesep="0.5"]
+  node  [fontname="Helvetica,Arial,sans-serif" shape=box style="filled,rounded" margin="0.22,0.12"]
+  edge  [fontname="Helvetica,Arial,sans-serif" fontsize=9 fontcolor="#475569" color="#6366F1"]
+
+  subgraph cluster_chant {
+    label="chant resources (TypeScript)" style=filled fillcolor="#EEF2FF" color="#4F46E5" penwidth=2
+    fontname="Helvetica,Arial,sans-serif"
+
+    srv   [label="TemporalServer\nhost \u00b7 port \u00b7 uiPort"
+           fillcolor="#E0E7FF" color="#4F46E5" fontcolor="#1E1B4B"]
+    ns    [label="TemporalNamespace\nretentionDays \u00b7 searchAttributes"
+           fillcolor="#E0E7FF" color="#4F46E5" fontcolor="#1E1B4B"]
+    sa    [label="SearchAttribute\nname \u00b7 type"
+           fillcolor="#E0E7FF" color="#4F46E5" fontcolor="#1E1B4B"]
+    sched [label="TemporalSchedule\ncronExpression \u00b7 workflow\npauses \u00b7 overlap"
+           fillcolor="#E0E7FF" color="#4F46E5" fontcolor="#1E1B4B"]
+  }
+
+  subgraph cluster_composites {
+    label="Composites" style=filled fillcolor="#F3E8FF" color="#7C3AED" penwidth=2
+    fontname="Helvetica,Arial,sans-serif"
+
+    dev   [label="TemporalDevStack\nlocal dev server\n+ default namespace"
+           fillcolor="#EDE9FE" color="#7C3AED" fontcolor="#3B0764"]
+    cloud [label="TemporalCloudStack\nTemporal Cloud endpoint\n+ managed namespace"
+           fillcolor="#EDE9FE" color="#7C3AED" fontcolor="#3B0764"]
+  }
+
+  subgraph cluster_runtime {
+    label="Temporal Runtime" style=filled fillcolor="#DCFCE7" color="#16A34A" penwidth=2
+    fontname="Helvetica,Arial,sans-serif"
+
+    tsrv  [label="Temporal Server\n(self-hosted or dev)"
+           fillcolor="#BBF7D0" color="#15803D" fontcolor="#14532D"]
+    tns   [label="Namespace\nvisibility \u00b7 retention"
+           fillcolor="#BBF7D0" color="#15803D" fontcolor="#14532D"]
+    tsc   [label="Schedule\ncron trigger"
+           fillcolor="#BBF7D0" color="#15803D" fontcolor="#14532D"]
+  }
+
+  srv   -> tsrv  [label="serializes to YAML\n\u2192 deployed via kubectl/helm"]
+  ns    -> tns
+  sa    -> tns   [label="registers on"]
+  sched -> tsc
+
+  dev   -> srv   [style=dashed color="#94A3B8" fontcolor="#94A3B8" label="expands to"]
+  dev   -> ns    [style=dashed color="#94A3B8"]
+  cloud -> ns    [style=dashed color="#94A3B8" label="expands to"]
+}

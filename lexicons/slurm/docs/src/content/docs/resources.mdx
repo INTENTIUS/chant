@@ -3,7 +3,11 @@ title: "Resources"
 description: "Slurm conf resources: Cluster, Partition, Node, License, GresNode, CgroupConf, Switch"
 ---
 
+import Diagram from '../../components/Diagram.astro';
+
 The Slurm lexicon provides seven hand-written conf resources that map directly to Slurm configuration files, plus three REST resources for submitting jobs via slurmrestd.
+
+<Diagram name="output-routing" alt="Slurm resource types routing to output files: Cluster and Node to slurm.conf, Node GPU resources to gres.conf, Partition to partitions.conf, Job to batch script" caption="Slurm resource to output file routing" />
 
 ## Cluster
 

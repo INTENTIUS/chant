@@ -1,0 +1,34 @@
+digraph multi_stack {
+  rankdir=LR
+  graph [fontname="Helvetica,Arial,sans-serif" bgcolor="transparent" pad="0.5" ranksep="1.0" compound=true]
+  node  [fontname="Helvetica,Arial,sans-serif" shape=box style="filled,rounded" margin="0.2,0.12"]
+  edge  [fontname="Helvetica,Arial,sans-serif" fontsize=9 fontcolor="#475569"]
+
+  subgraph cluster_src {
+    label="Source" style=filled fillcolor="#F8FAFC" color="#94A3B8" penwidth=1.5
+    fontname="Helvetica,Arial,sans-serif"
+
+    app [label="src/app.ts\nnestedStack('network', './network')\nnetwork.outputs.subnetId"
+         fillcolor="#EEF2FF" color="#4F46E5" fontcolor="#1E1B4B"]
+
+    subgraph cluster_child {
+      label="src/network/  (child project)" style=filled fillcolor="#F0FDF4" color="#16A34A" penwidth=1.5
+      fontname="Helvetica,Arial,sans-serif"
+      csrc [label="vpc.ts \u00b7 security.ts\nresource declarations" fillcolor="#DCFCE7" color="#15803D" fontcolor="#14532D"]
+      cout [label="outputs.ts\nstackOutput(vpc.VpcId)\nstackOutput(lambdaSg.GroupId)"   fillcolor="#DCFCE7" color="#15803D" fontcolor="#14532D"]
+    }
+  }
+
+  subgraph cluster_dist {
+    label="chant build output" style=filled fillcolor="#F8FAFC" color="#94A3B8" penwidth=1.5
+    fontname="Helvetica,Arial,sans-serif"
+    ptmpl [label="template.json\n(parent \u2014 AWS::CloudFormation::Stack)"  fillcolor="#EEF2FF" color="#4F46E5" fontcolor="#1E1B4B"]
+    ctmpl [label="network.template.json\n(child \u2014 standalone template)"   fillcolor="#DCFCE7" color="#15803D" fontcolor="#14532D"]
+  }
+
+  app   -> csrc  [label="nestedStack() ref"       color="#D97706" fontcolor="#D97706"]
+  app   -> ptmpl [label="emits"                   color="#6366F1"]
+  csrc  -> ctmpl [label="emits"                   color="#16A34A"]
+  cout  -> ctmpl [color="#16A34A"]
+  ptmpl -> ctmpl [label="Fn::GetAtt (cross-stack)" color="#D97706" fontcolor="#D97706" style=dashed]
+}

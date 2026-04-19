@@ -1,0 +1,20 @@
+digraph data_flow {
+  rankdir=TB
+  graph [fontname="Helvetica,Arial,sans-serif" bgcolor="transparent" pad="0.4" ranksep="0.32"]
+  node  [fontname="Helvetica,Arial,sans-serif" shape=box style="filled,rounded" margin="0.2,0.12" width=3.8
+         fillcolor="#EEF2FF" color="#4F46E5" fontcolor="#1E1B4B"]
+  edge  [color="#6366F1" fontname="Helvetica,Arial,sans-serif"]
+
+  src [label="User writes TypeScript\nusing lexicon resources"
+       fillcolor="#DCFCE7" color="#16A34A" fontcolor="#14532D"]
+  n1  [label="CLI invokes discovery"]
+  n2  [label="Scan files \u00b7 import modules \u00b7 collect entities"]
+  n3  [label="Resolve AttrRefs \u00b7 build dependency graph"]
+  n4  [label="Detect cycles \u00b7 topological sort"]
+  n5  [label="serializer.serialize(entities)"]
+  n6  [label="CLI writes output"]
+  out [label="Deployment artifacts\n(CloudFormation \u00b7 K8s YAML \u00b7 GitLab CI \u00b7 \u2026)"
+       shape=cylinder fillcolor="#DCFCE7" color="#16A34A" fontcolor="#14532D"]
+
+  src -> n1 -> n2 -> n3 -> n4 -> n5 -> n6 -> out
+}

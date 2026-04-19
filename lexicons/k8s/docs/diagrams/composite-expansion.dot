@@ -1,0 +1,41 @@
+digraph composite_expansion {
+  rankdir=LR
+  graph [fontname="Helvetica,Arial,sans-serif" bgcolor="transparent" pad="0.5" ranksep="1.0" nodesep="0.45"]
+  node  [fontname="Helvetica,Arial,sans-serif" shape=box style="filled,rounded" margin="0.2,0.1"]
+  edge  [fontname="Helvetica,Arial,sans-serif" fontsize=9 fontcolor="#475569" color="#6366F1"]
+
+  composite [label="CockroachDbCluster(\u2026)\none declaration"
+             shape=oval fillcolor="#F3E8FF" color="#7C3AED" fontcolor="#3B0764"]
+
+  subgraph cluster_resources {
+    label="Expanded Kubernetes resources" style=filled fillcolor="#EEF2FF" color="#4F46E5" penwidth=2
+    fontname="Helvetica,Arial,sans-serif"
+
+    ns   [label="Namespace"           fillcolor="#E0E7FF" color="#4F46E5" fontcolor="#1E1B4B"]
+    ss   [label="StatefulSet\n(per node)"           fillcolor="#E0E7FF" color="#4F46E5" fontcolor="#1E1B4B"]
+    svc  [label="Service (headless)\nExternalDNS annotations"  fillcolor="#E0E7FF" color="#4F46E5" fontcolor="#1E1B4B"]
+    sa   [label="ServiceAccount\nWorkload Identity"  fillcolor="#E0E7FF" color="#4F46E5" fontcolor="#1E1B4B"]
+    np   [label="NetworkPolicy\ncross-cluster CIDRs" fillcolor="#E0E7FF" color="#4F46E5" fontcolor="#1E1B4B"]
+    pdb  [label="PodDisruptionBudget" fillcolor="#E0E7FF" color="#4F46E5" fontcolor="#1E1B4B"]
+    cm   [label="ConfigMap\ninit scripts"           fillcolor="#E0E7FF" color="#4F46E5" fontcolor="#1E1B4B"]
+  }
+
+  yaml [label="dist/crdb.yaml\nsingle output file"
+        shape=cylinder fillcolor="#DCFCE7" color="#16A34A" fontcolor="#14532D"]
+
+  composite -> ns  [label="expands\u2192"]
+  composite -> ss
+  composite -> svc
+  composite -> sa
+  composite -> np
+  composite -> pdb
+  composite -> cm
+
+  ns  -> yaml [label="serialized by\nchant build"]
+  ss  -> yaml
+  svc -> yaml
+  sa  -> yaml
+  np  -> yaml
+  pdb -> yaml
+  cm  -> yaml
+}

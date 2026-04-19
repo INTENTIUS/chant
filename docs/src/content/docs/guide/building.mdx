@@ -3,6 +3,8 @@ title: Building
 description: Synthesizing TypeScript resource definitions into deployment-ready output
 ---
 
+import Diagram from '../../../components/Diagram.astro';
+
 Use `chant build` to synthesize your TypeScript resource definitions into deployment-ready output.
 
 ```bash
@@ -25,6 +27,10 @@ The build command:
 4. Builds dependency graph and performs topological sort
 5. Serializes to the lexicon-specific format
 6. Outputs result to stdout or file
+
+`--watch` mode maintains this module graph and re-evaluates only the affected files when a source file changes.
+
+<Diagram name="module-graph-watch" alt="Module graph showing forward import edges and reverse-walk re-evaluation edges when a file changes in watch mode" caption="Watch mode: reverse-walks the module graph to find affected files" />
 
 ## Multi-file output
 

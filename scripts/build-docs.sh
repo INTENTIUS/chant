@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# Generate diagram SVGs from .dot source files before any Astro build runs.
+bash scripts/build-diagrams.sh
+
 OUT=".docs-dist"
 rm -rf "$OUT"
 
