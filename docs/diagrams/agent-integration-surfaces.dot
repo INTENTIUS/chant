@@ -9,14 +9,14 @@ digraph agent_integration {
   skills [label="Skills\noperational playbooks\ninstalled to skills/"
           fillcolor="#FEF3C7" color="#D97706" fontcolor="#78350F"]
 
-  mcp [label="MCP Tools\nbuild \u00b7 lint \u00b7 import\nop-run \u00b7 op-status \u00b7 op-signal"
+  mcp [label="MCP Tools\nbuild · lint · import\nop-run · op-status · op-signal"
        fillcolor="#EEF2FF" color="#4F46E5" fontcolor="#1E1B4B"]
 
-  ops [label="Ops\n*.op.ts workflows\ndurable \u00b7 observable \u00b7 gate-able"
+  ops [label="Ops\n*.op.ts workflows\ndurable · observable · gate-able"
        fillcolor="#DBEAFE" color="#2563EB" fontcolor="#1E3A8A"]
 
-  agent -> skills [label="reads \u2014 always-on guidance"    color="#D97706" fontcolor="#D97706"]
-  agent -> mcp    [label="calls \u2014 programmatic actions"  color="#4F46E5" fontcolor="#4F46E5"]
+  agent -> skills [label="reads — always-on guidance"    color="#D97706" fontcolor="#D97706"]
+  agent -> mcp    [label="calls — programmatic actions"  color="#4F46E5" fontcolor="#4F46E5"]
   agent -> ops    [label="triggers via op-run\nmonitors via op-status" color="#2563EB" fontcolor="#2563EB"]
 
   skills -> mcp   [label="tells agent what to do\nMCP lets it do it"

@@ -8,13 +8,13 @@ digraph temporal_runtime {
     label="chant resources (TypeScript)" style=filled fillcolor="#EEF2FF" color="#4F46E5" penwidth=2
     fontname="Helvetica,Arial,sans-serif"
 
-    srv   [label="TemporalServer\nhost \u00b7 port \u00b7 uiPort"
+    srv   [label="TemporalServer\nhost · port · uiPort"
            fillcolor="#E0E7FF" color="#4F46E5" fontcolor="#1E1B4B"]
-    ns    [label="TemporalNamespace\nretentionDays \u00b7 searchAttributes"
+    ns    [label="TemporalNamespace\nretentionDays · searchAttributes"
            fillcolor="#E0E7FF" color="#4F46E5" fontcolor="#1E1B4B"]
-    sa    [label="SearchAttribute\nname \u00b7 type"
+    sa    [label="SearchAttribute\nname · type"
            fillcolor="#E0E7FF" color="#4F46E5" fontcolor="#1E1B4B"]
-    sched [label="TemporalSchedule\ncronExpression \u00b7 workflow\npauses \u00b7 overlap"
+    sched [label="TemporalSchedule\ncronExpression · workflow\npauses · overlap"
            fillcolor="#E0E7FF" color="#4F46E5" fontcolor="#1E1B4B"]
   }
 
@@ -34,13 +34,13 @@ digraph temporal_runtime {
 
     tsrv  [label="Temporal Server\n(self-hosted or dev)"
            fillcolor="#BBF7D0" color="#15803D" fontcolor="#14532D"]
-    tns   [label="Namespace\nvisibility \u00b7 retention"
+    tns   [label="Namespace\nvisibility · retention"
            fillcolor="#BBF7D0" color="#15803D" fontcolor="#14532D"]
     tsc   [label="Schedule\ncron trigger"
            fillcolor="#BBF7D0" color="#15803D" fontcolor="#14532D"]
   }
 
-  srv   -> tsrv  [label="serializes to YAML\n\u2192 deployed via kubectl/helm"]
+  srv   -> tsrv  [label="serializes to YAML\n→ deployed via kubectl/helm"]
   ns    -> tns
   sa    -> tns   [label="registers on"]
   sched -> tsc

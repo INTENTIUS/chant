@@ -7,7 +7,7 @@ digraph deployment_paths {
   start [label="I need to deploy\ninfrastructure"
          shape=oval fillcolor="#F3E8FF" color="#7C3AED" fontcolor="#3B0764"]
 
-  q1 [label="Existing deploy pipeline?\n(CI \u00b7 ArgoCD \u00b7 Terraform \u00b7 \u2026)"
+  q1 [label="Existing deploy pipeline?\n(CI · ArgoCD · Terraform · …)"
       shape=diamond fillcolor="#FEF3C7" color="#D97706" fontcolor="#78350F" margin="0.3,0.15"]
 
   q2 [label="Need observability,\nhuman gates, or rollback?"
@@ -16,17 +16,17 @@ digraph deployment_paths {
   q3 [label="Already running\nTemporal?"
       shape=diamond fillcolor="#FEF3C7" color="#D97706" fontcolor="#78350F" margin="0.3,0.15"]
 
-  synth [label="Synthesis Only\nchant build \u2192 hand off\nno Temporal required"
+  synth [label="Synthesis Only\nchant build → hand off\nno Temporal required"
          fillcolor="#DCFCE7" color="#16A34A" fontcolor="#14532D"]
 
-  ops   [label="Ops\n*.op.ts \u2192 chant build \u2192 chant run\nphases \u00b7 gates \u00b7 compensation"
+  ops   [label="Ops\n*.op.ts → chant build → chant run\nphases · gates · compensation"
          fillcolor="#DBEAFE" color="#2563EB" fontcolor="#1E3A8A"]
 
   raw   [label="Raw Temporal + chant\nwrite your own workflow\nfull signal / query / update control"
          fillcolor="#EEF2FF" color="#4F46E5" fontcolor="#1E1B4B"]
 
   start -> q1
-  q1 -> synth [label="yes \u2014 keep it"]
+  q1 -> synth [label="yes — keep it"]
   q1 -> q2    [label="no / not yet"]
   q2 -> synth [label="no"]
   q2 -> q3    [label="yes"]

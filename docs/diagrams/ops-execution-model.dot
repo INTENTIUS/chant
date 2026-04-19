@@ -4,25 +4,25 @@ digraph ops_execution {
   node  [fontname="Helvetica,Arial,sans-serif" shape=box style="filled,rounded" margin="0.22,0.12"]
   edge  [fontname="Helvetica,Arial,sans-serif" fontsize=9 fontcolor="#475569" color="#6366F1"]
 
-  start [label="chant run <name>\nspawn worker \u00b7 submit workflow"
+  start [label="chant run <name>\nspawn worker · submit workflow"
          shape=oval fillcolor="#DCFCE7" color="#16A34A" fontcolor="#14532D"]
 
-  p1 [label="Phase \u2014 sequential steps\nstep A \u2192 step B \u2192 step C\neach with retry policy"
+  p1 [label="Phase — sequential steps\nstep A → step B → step C\neach with retry policy"
       fillcolor="#EEF2FF" color="#4F46E5" fontcolor="#1E1B4B"]
 
-  p_par [label="Phase \u2014 parallel steps  (parallel: true)\nstep X \u2016 step Y \u2016 step Z\nTemporal schedules concurrently"
+  p_par [label="Phase — parallel steps  (parallel: true)\nstep X ‖ step Y ‖ step Z\nTemporal schedules concurrently"
          fillcolor="#DBEAFE" color="#2563EB" fontcolor="#1E3A8A"]
 
-  gate [label="Gate step\npause \u00b7 await signal\nor timeout expires"
+  gate [label="Gate step\npause · await signal\nor timeout expires"
         shape=diamond fillcolor="#FEF3C7" color="#D97706" fontcolor="#78350F" margin="0.3,0.15"]
 
-  p2 [label="Remaining phases\u2026"
+  p2 [label="Remaining phases…"
       fillcolor="#EEF2FF" color="#4F46E5" fontcolor="#1E1B4B"]
 
   err [label="Terminal error?"
        shape=diamond fillcolor="#FEF2F2" color="#DC2626" fontcolor="#7F1D1D"]
 
-  fail [label="onFailure phases\ncompensation \u00b7 rollback"
+  fail [label="onFailure phases\ncompensation · rollback"
         fillcolor="#FEF2F2" color="#DC2626" fontcolor="#7F1D1D"]
 
   done [label="Workflow complete"

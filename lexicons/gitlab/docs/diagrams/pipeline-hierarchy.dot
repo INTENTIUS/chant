@@ -4,7 +4,7 @@ digraph pipeline_hierarchy {
   node  [fontname="Helvetica,Arial,sans-serif" shape=box style="filled,rounded" margin="0.2,0.1"]
   edge  [fontname="Helvetica,Arial,sans-serif" fontsize=9 fontcolor="#475569" color="#6366F1"]
 
-  pipeline [label="Pipeline (.gitlab-ci.yml)\nglobal: default \u00b7 variables\nstages: [build, test, deploy]"
+  pipeline [label="Pipeline (.gitlab-ci.yml)\nglobal: default · variables\nstages: [build, test, deploy]"
             fillcolor="#F3E8FF" color="#7C3AED" fontcolor="#3B0764"]
 
   subgraph cluster_build {

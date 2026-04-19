@@ -4,7 +4,7 @@ digraph composite_expansion {
   node  [fontname="Helvetica,Arial,sans-serif" shape=box style="filled,rounded" margin="0.2,0.1"]
   edge  [fontname="Helvetica,Arial,sans-serif" fontsize=9 fontcolor="#475569" color="#6366F1"]
 
-  composite [label="CockroachDbCluster(\u2026)\none declaration"
+  composite [label="CockroachDbCluster(…)\none declaration"
              shape=oval fillcolor="#F3E8FF" color="#7C3AED" fontcolor="#3B0764"]
 
   subgraph cluster_resources {
@@ -23,7 +23,7 @@ digraph composite_expansion {
   yaml [label="dist/crdb.yaml\nsingle output file"
         shape=cylinder fillcolor="#DCFCE7" color="#16A34A" fontcolor="#14532D"]
 
-  composite -> ns  [label="expands\u2192"]
+  composite -> ns  [label="expands→"]
   composite -> ss
   composite -> svc
   composite -> sa

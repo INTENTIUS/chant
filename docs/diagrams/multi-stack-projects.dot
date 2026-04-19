@@ -14,7 +14,7 @@ digraph multi_stack {
     subgraph cluster_child {
       label="src/network/  (child project)" style=filled fillcolor="#F0FDF4" color="#16A34A" penwidth=1.5
       fontname="Helvetica,Arial,sans-serif"
-      csrc [label="vpc.ts \u00b7 security.ts\nresource declarations" fillcolor="#DCFCE7" color="#15803D" fontcolor="#14532D"]
+      csrc [label="vpc.ts · security.ts\nresource declarations" fillcolor="#DCFCE7" color="#15803D" fontcolor="#14532D"]
       cout [label="outputs.ts\nstackOutput(vpc.VpcId)\nstackOutput(lambdaSg.GroupId)"   fillcolor="#DCFCE7" color="#15803D" fontcolor="#14532D"]
     }
   }
@@ -22,8 +22,8 @@ digraph multi_stack {
   subgraph cluster_dist {
     label="chant build output" style=filled fillcolor="#F8FAFC" color="#94A3B8" penwidth=1.5
     fontname="Helvetica,Arial,sans-serif"
-    ptmpl [label="template.json\n(parent \u2014 AWS::CloudFormation::Stack)"  fillcolor="#EEF2FF" color="#4F46E5" fontcolor="#1E1B4B"]
-    ctmpl [label="network.template.json\n(child \u2014 standalone template)"   fillcolor="#DCFCE7" color="#15803D" fontcolor="#14532D"]
+    ptmpl [label="template.json\n(parent — AWS::CloudFormation::Stack)"  fillcolor="#EEF2FF" color="#4F46E5" fontcolor="#1E1B4B"]
+    ctmpl [label="network.template.json\n(child — standalone template)"   fillcolor="#DCFCE7" color="#15803D" fontcolor="#14532D"]
   }
 
   app   -> csrc  [label="nestedStack() ref"       color="#D97706" fontcolor="#D97706"]

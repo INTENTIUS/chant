@@ -13,7 +13,7 @@ digraph discovery_pipeline {
   s4 [label="4. Resolve AttrRefs\nset logical names\nenable toJSON()"]
   s5 [label="5. Build graph\ndependency graph\ncycle detection"]
 
-  result [label="DiscoveryResult\nentities \u00b7 dependencies\nsourceFiles \u00b7 errors"
+  result [label="DiscoveryResult\nentities · dependencies\nsourceFiles · errors"
           shape=oval fillcolor="#DCFCE7" color="#16A34A" fontcolor="#14532D"]
 
   call -> s1 -> s2 -> s3 -> s4 -> s5 -> result

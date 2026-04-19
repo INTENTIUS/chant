@@ -14,7 +14,7 @@ digraph nested_stacks {
     subgraph cluster_child {
       label="src/child/ (child project)" style=filled fillcolor="#F0FDF4" color="#16A34A" penwidth=1.5
       fontname="Helvetica,Arial,sans-serif"
-      child [label="AppStack\nstackOutput(\u2018parent\u2019, \u2018VpcId\u2019)"
+      child [label="AppStack\nstackOutput(‘parent’, ‘VpcId’)"
              fillcolor="#DCFCE7" color="#15803D" fontcolor="#14532D"]
     }
   }
@@ -25,7 +25,7 @@ digraph nested_stacks {
 
     pout [label="parent.yaml\nVpcId: !Output vpc\nSubnetIds: !Output subnets"
           fillcolor="#EEF2FF" color="#4F46E5" fontcolor="#1E1B4B"]
-    cout [label="child/app.yaml\nVpcId: \u2190 parent output"
+    cout [label="child/app.yaml\nVpcId: ← parent output"
           fillcolor="#DCFCE7" color="#15803D" fontcolor="#14532D"]
 
     s3   [label="S3 Bucket\ndeploy artifact"

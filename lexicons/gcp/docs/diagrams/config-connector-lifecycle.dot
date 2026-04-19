@@ -16,10 +16,10 @@ digraph cc_lifecycle {
   reconciling [label="Reconciling\ncalling GCP API\ncreating / updating resource"
                fillcolor="#DBEAFE" color="#2563EB" fontcolor="#1E3A8A"]
 
-  uptodate [label="UpToDate\nGCP resource matches spec\n\u2714 healthy"
+  uptodate [label="UpToDate\nGCP resource matches spec\n✔ healthy"
             fillcolor="#DCFCE7" color="#16A34A" fontcolor="#14532D"]
 
-  failed [label="UpdateFailed\nAPI error \u00b7 quota \u00b7 auth\ncondition message has details"
+  failed [label="UpdateFailed\nAPI error · quota · auth\ncondition message has details"
           fillcolor="#FEF2F2" color="#DC2626" fontcolor="#7F1D1D"]
 
   dep    [label="DependencyNotReady\nreferenced resource\nnot yet UpToDate"

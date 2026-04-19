@@ -4,7 +4,7 @@ digraph ops_codegen {
   node  [fontname="Helvetica,Arial,sans-serif" shape=box style="filled,rounded" margin="0.22,0.12"]
   edge  [fontname="Helvetica,Arial,sans-serif" fontsize=9 fontcolor="#475569" color="#6366F1"]
 
-  op    [label="*.op.ts\nphases \u00b7 steps\ngates \u00b7 compensation"
+  op    [label="*.op.ts\nphases · steps\ngates · compensation"
          fillcolor="#EEF2FF" color="#4F46E5" fontcolor="#1E1B4B"]
 
   build [label="chant build"
@@ -23,7 +23,7 @@ digraph ops_codegen {
   worker [label="Temporal Worker\nregisters workflow\n+ activities"
           fillcolor="#DBEAFE" color="#2563EB" fontcolor="#1E3A8A"]
 
-  cluster [label="Temporal Cluster\ndurable execution\nobservability \u00b7 retry"
+  cluster [label="Temporal Cluster\ndurable execution\nobservability · retry"
            fillcolor="#DCFCE7" color="#16A34A" fontcolor="#14532D"]
 
   signals [label="chant run signal\nchant run status\nMCP op-signal\nMCP op-status"

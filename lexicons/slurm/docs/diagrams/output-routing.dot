@@ -8,13 +8,13 @@ digraph slurm_output_routing {
     label="chant resources" style=filled fillcolor="#EEF2FF" color="#4F46E5" penwidth=2
     fontname="Helvetica,Arial,sans-serif"
 
-    cluster  [label="SlurmCluster\ncontrolMachine \u00b7 clusterName\nschedulerType \u00b7 authType"
+    cluster  [label="SlurmCluster\ncontrolMachine · clusterName\nschedulerType · authType"
               fillcolor="#E0E7FF" color="#4F46E5" fontcolor="#1E1B4B"]
-    node_res [label="SlurmNode\nhostname \u00b7 cpus \u00b7 mem\ngres (GPU) \u00b7 state"
+    node_res [label="SlurmNode\nhostname · cpus · mem\ngres (GPU) · state"
               fillcolor="#E0E7FF" color="#4F46E5" fontcolor="#1E1B4B"]
-    part     [label="SlurmPartition\nnodes \u00b7 maxTime\ndefault \u00b7 state"
+    part     [label="SlurmPartition\nnodes · maxTime\ndefault · state"
               fillcolor="#E0E7FF" color="#4F46E5" fontcolor="#1E1B4B"]
-    job      [label="SlurmJob\nscript \u00b7 ntasks\ngpus \u00b7 partition"
+    job      [label="SlurmJob\nscript · ntasks\ngpus · partition"
               fillcolor="#E0E7FF" color="#4F46E5" fontcolor="#1E1B4B"]
   }
 

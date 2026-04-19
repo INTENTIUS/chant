@@ -4,15 +4,15 @@ digraph philosophy_layers {
   node  [fontname="Helvetica,Arial,sans-serif" shape=box style="filled,rounded" margin="0.3,0.15" width=4.6]
   edge  [fontname="Helvetica,Arial,sans-serif" fontsize=9 fontcolor="#475569"]
 
-  core [label="Synthesis Core\nchant build \u2014 discover \u00b7 evaluate \u00b7 serialize\ndeterministic \u00b7 pure \u00b7 no side effects"
+  core [label="Synthesis Core\nchant build — discover · evaluate · serialize\ndeterministic · pure · no side effects"
         fillcolor="#DCFCE7" color="#16A34A" fontcolor="#14532D"]
 
-  ops  [label="Operational Extensions (opt-in)\nOps (*.op.ts) \u00b7 chant state \u00b7 Skills \u00b7 MCP"
+  ops  [label="Operational Extensions (opt-in)\nOps (*.op.ts) · chant state · Skills · MCP"
         fillcolor="#DBEAFE" color="#2563EB" fontcolor="#1E3A8A"]
 
-  agent [label="Agent / CI / Operator\ndeploy \u00b7 monitor \u00b7 remediate \u00b7 approve"
+  agent [label="Agent / CI / Operator\ndeploy · monitor · remediate · approve"
          fillcolor="#F3E8FF" color="#7C3AED" fontcolor="#3B0764"]
 
   core  -> ops   [label="opt-in: add temporal lexicon" color="#2563EB" fontcolor="#2563EB"]
-  ops   -> agent [label="observability \u00b7 signals \u00b7 results" color="#7C3AED" fontcolor="#7C3AED" style=dashed]
+  ops   -> agent [label="observability · signals · results" color="#7C3AED" fontcolor="#7C3AED" style=dashed]
 }

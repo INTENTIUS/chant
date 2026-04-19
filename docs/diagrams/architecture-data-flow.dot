@@ -8,12 +8,12 @@ digraph data_flow {
   src [label="User writes TypeScript\nusing lexicon resources"
        fillcolor="#DCFCE7" color="#16A34A" fontcolor="#14532D"]
   n1  [label="CLI invokes discovery"]
-  n2  [label="Scan files \u00b7 import modules \u00b7 collect entities"]
-  n3  [label="Resolve AttrRefs \u00b7 build dependency graph"]
-  n4  [label="Detect cycles \u00b7 topological sort"]
+  n2  [label="Scan files · import modules · collect entities"]
+  n3  [label="Resolve AttrRefs · build dependency graph"]
+  n4  [label="Detect cycles · topological sort"]
   n5  [label="serializer.serialize(entities)"]
   n6  [label="CLI writes output"]
-  out [label="Deployment artifacts\n(CloudFormation \u00b7 K8s YAML \u00b7 GitLab CI \u00b7 \u2026)"
+  out [label="Deployment artifacts\n(CloudFormation · K8s YAML · GitLab CI · …)"
        shape=cylinder fillcolor="#DCFCE7" color="#16A34A" fontcolor="#14532D"]
 
   src -> n1 -> n2 -> n3 -> n4 -> n5 -> n6 -> out
