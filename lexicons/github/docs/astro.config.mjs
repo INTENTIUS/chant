@@ -9,7 +9,7 @@ export default defineConfig({
       title: 'GitHub Actions',
       sidebar: [
             {
-                  "label": "\u2190 chant docs",
+                  "label": "← chant docs",
                   "link": "../../"
             },
             {
@@ -21,24 +21,20 @@ export default defineConfig({
                   "slug": "getting-started"
             },
             {
-                  "label": "Workflows",
-                  "slug": "workflows"
-            },
-            {
-                  "label": "Multiple Workflows",
-                  "slug": "multi-workflow"
-            },
-            {
-                  "label": "Actions & Composites",
-                  "slug": "actions"
+                  "label": "Workflow Concepts",
+                  "slug": "workflow-concepts"
             },
             {
                   "label": "Expressions",
                   "slug": "expressions"
             },
             {
-                  "label": "Matrix Strategies",
-                  "slug": "matrix"
+                  "label": "Variables",
+                  "slug": "variables"
+            },
+            {
+                  "label": "Composites",
+                  "slug": "composites"
             },
             {
                   "label": "Lint Rules",
@@ -51,6 +47,10 @@ export default defineConfig({
             {
                   "label": "AI Skills",
                   "slug": "skills"
+            },
+            {
+                  "label": "Serialization",
+                  "slug": "serialization"
             }
       ],
     }),

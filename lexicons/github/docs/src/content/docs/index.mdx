@@ -7,8 +7,6 @@ The **GitHub Actions** lexicon provides typed constructors for GitHub Actions
 workflow configuration. It covers workflows, jobs, steps, triggers, strategy,
 permissions, concurrency, and more.
 
-New? Start with the [Getting Started](/chant/lexicons/github/getting-started/) guide.
-
 Install it with:
 
 ```bash
@@ -17,7 +15,7 @@ npm install --save-dev @intentius/chant-lexicon-github
 
 ## Quick Start
 
-```typescript
+```typescript title="quickstart.ts"
 import { Workflow, Job, Step, Checkout, SetupNode } from "@intentius/chant-lexicon-github";
 
 export const workflow = new Workflow({
@@ -42,25 +40,29 @@ export const build = new Job({
 });
 ```
 
-The lexicon provides **2 resource types** (Workflow, Job), **13 composites** (Checkout, SetupNode, SetupGo, SetupPython, CacheAction, UploadArtifact, DownloadArtifact, NodeCI, NodePipeline, PythonCI, DockerBuild, DeployEnvironment, GoCI) + **3 presets** (BunPipeline, PnpmPipeline, YarnPipeline), a typed **Expression** system with 24 GitHub and 5 Runner context variables, and **13 lint rules** + **15 post-synth checks**.
+The lexicon provides **2 resources** (Workflow, Job), **13 composites** (Checkout, SetupNode, SetupGo, SetupPython, CacheAction, UploadArtifact, DownloadArtifact, NodeCI, NodePipeline, PythonCI, DockerBuild, DeployEnvironment, GoCI) + **3 presets** (BunPipeline, PnpmPipeline, YarnPipeline), a typed **Expression** system with 24 GitHub and 5 Runner context variables, and **13 lint rules** + **6 post-synth checks**.
+
 
 ## At a Glance
 
 | Metric | Count |
 |--------|-------|
-| Resources | 2 |
-| Composites | 13 |
-| Pipeline presets | 3 |
-| Context variables | 29 |
-| Lint rules (pre-synth) | 13 |
-| Post-synth checks | 15 |
+| Resources | 3 |
+| Property types | 19 |
+| Services | 1 |
+| Intrinsic functions | 1 |
+| Pseudo-parameters | 0 |
+| Lint rules | 28 |
 
+**Lexicon version:** 0.1.7  
 **Namespace:** `GitHub`
 
 - [Getting Started](./getting-started)
-- [Workflows](./workflows)
-- [Actions & Composites](./actions)
+- [Workflow Concepts](./workflow-concepts)
 - [Expressions](./expressions)
-- [Matrix Strategies](./matrix)
+- [Variables](./variables)
+- [Composites](./composites)
 - [Lint Rules](./lint-rules)
 - [Examples](./examples)
+- [AI Skills](./skills)
+- [Serialization](./serialization) — output format details

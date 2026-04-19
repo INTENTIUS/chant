@@ -6,11 +6,11 @@ import Diagram from '../../components/Diagram.astro';
 
 CloudFormation nested stacks (`AWS::CloudFormation::Stack`) let you decompose large templates into smaller, reusable child templates. The AWS lexicon's `nestedStack()` function references a **child project directory** — a subdirectory that builds independently to a valid CloudFormation template.
 
-<Diagram name="nested-stacks" alt="Parent and child project source directories producing separate CloudFormation templates, both uploaded to S3" caption="Nested stack source layout and output" />
-
 :::caution[Consider alternatives first]
 Nested stacks add deployment complexity: child templates must be uploaded to S3, rollbacks are all-or-nothing at the parent level, drift detection doesn't recurse into children, and debugging failures requires drilling into child stack events. For most projects, [flat composites](../composites/) are simpler. Nested stacks are supported for specific cases — exceeding CloudFormation's 500-resource limit or packaging reusable infrastructure as a black box — but are not the recommended default.
 :::
+
+<Diagram name="nested-stacks" alt="Parent and child project source directories producing separate CloudFormation templates, both uploaded to S3" caption="Nested stack source layout and output" />
 
 ## Project structure
 

@@ -6,10 +6,10 @@ export default defineConfig({
   base: '/chant/lexicons/helm/',
   integrations: [
     starlight({
-      title: 'Helm Charts',
+      title: 'Helm',
       sidebar: [
             {
-                  "label": "\u2190 chant docs",
+                  "label": "← chant docs",
                   "link": "../../"
             },
             {
@@ -21,8 +21,8 @@ export default defineConfig({
                   "slug": "getting-started"
             },
             {
-                  "label": "Helm Concepts",
-                  "slug": "helm-concepts"
+                  "label": "Intrinsics Reference",
+                  "slug": "intrinsics"
             },
             {
                   "label": "Composites",
@@ -30,19 +30,19 @@ export default defineConfig({
             },
             {
                   "label": "Lint Rules",
-                  "slug": "lint-rules"
+                  "slug": "rules"
             },
             {
-                  "label": "Examples",
-                  "slug": "examples"
+                  "label": "Security",
+                  "slug": "security"
             },
             {
-                  "label": "Skills",
+                  "label": "Best Practices",
+                  "slug": "best-practices"
+            },
+            {
+                  "label": "AI Skills",
                   "slug": "skills"
-            },
-            {
-                  "label": "Intrinsics",
-                  "slug": "intrinsics"
             },
             {
                   "label": "Serialization",

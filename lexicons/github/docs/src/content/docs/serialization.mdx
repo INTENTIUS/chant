@@ -1,0 +1,54 @@
+---
+title: "Serialization"
+description: "Output format for the GitHub Actions lexicon"
+---
+
+The GitHub Actions lexicon serializes resources into **`.github/workflows/*.yml`** YAML files.
+Keys use kebab-case for job properties and snake_case for trigger event names.
+
+## Building
+
+Run `chant build` to produce workflow YAML from your declarations:
+
+```bash
+chant build src/ --output .github/workflows/ci.yml
+# Or build all workflow files
+chant build
+```
+
+The generated file includes:
+
+- `name:` — workflow display name
+- `on:` — trigger events (push, pull_request, schedule, workflow_dispatch, etc.)
+- `permissions:` — workflow-level GITHUB_TOKEN permissions
+- `jobs:` — job definitions with kebab-case keys
+
+## Key conversions
+
+| Chant (TypeScript) | YAML output | Rule |
+|--------------------|-------------|------|
+| `export const buildApp = new Job({...})` | `jobs: build-app:` | Export name → kebab-case job key |
+| `"runs-on": "ubuntu-latest"` | `runs-on: ubuntu-latest` | Property names match GitHub spec |
+| `timeoutMinutes: 15` | `timeout-minutes: 15` | camelCase → kebab-case for job properties |
+| `new Step({ uses: "actions/checkout@v4" })` | `- uses: actions/checkout@v4` | Steps serialize as sequence entries |
+
+## Validating locally
+
+The output is standard GitHub Actions YAML. Validate locally with `act` or push to GitHub:
+
+```bash
+# Using act for local testing
+act -W .github/workflows/ci.yml
+
+# Using GitHub's workflow validation (requires push)
+git add .github/workflows/ci.yml
+git push
+```
+
+## Compatibility
+
+The output is compatible with:
+- GitHub Actions (any GitHub.com or GitHub Enterprise Server)
+- `act` local runner
+- VS Code GitHub Actions extension
+- Any tool that processes `.github/workflows/*.yml` files

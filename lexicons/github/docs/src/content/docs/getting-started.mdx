@@ -1,13 +1,8 @@
 ---
 title: "Getting Started"
-description: "Install chant and build your first GitHub Actions workflow in 5 minutes"
+description: "Step-by-step guide to building your first GitHub Actions workflow with chant"
 ---
-
-## What is chant?
-
-Chant is a TypeScript-to-YAML compiler for GitHub Actions. You write typed TypeScript declarations, and chant outputs workflow YAML files ready to commit to `.github/workflows/`.
-
-## Install
+## 1. Install
 
 ```bash
 mkdir my-project && cd my-project
@@ -15,11 +10,11 @@ npm init -y
 npm install --save-dev @intentius/chant @intentius/chant-lexicon-github typescript
 ```
 
-## Your first workflow
+## 2. Create your workflow
 
 Create `src/ci.ts`:
 
-```typescript
+```typescript title="quickstart.ts"
 import { Workflow, Job, Step, Checkout, SetupNode } from "@intentius/chant-lexicon-github";
 
 export const workflow = new Workflow({
@@ -44,7 +39,7 @@ export const build = new Job({
 });
 ```
 
-## Build
+## 3. Build
 
 ```bash
 chant build src/ --output .github/workflows/ci.yml
@@ -83,15 +78,15 @@ jobs:
         run: npm test
 ```
 
-## Lint
+## 4. Lint
 
 ```bash
 chant lint src/
 ```
 
-Lint checks for common issues -- missing timeouts, hardcoded secrets, raw expression strings, and more. See the [Lint Rules](/chant/lexicons/github/lint-rules/) page for the full list.
+Lint checks for common issues — missing timeouts, hardcoded secrets, raw expression strings, and more. See the [Lint Rules](/chant/lexicons/github/lint-rules/) page for the full list.
 
-## Deploy
+## 5. Deploy
 
 Commit the generated YAML and push:
 
@@ -103,56 +98,9 @@ git push
 
 GitHub automatically picks up any `.github/workflows/*.yml` files and runs them on the configured triggers.
 
-## Project structure
-
-A typical chant GitHub Actions project looks like this:
-
-```
-my-project/
-  chant.config.ts          # chant configuration
-  src/
-    ci.ts                  # CI workflow
-    deploy.ts              # Deploy workflow
-    release.ts             # Release workflow
-  .github/
-    workflows/
-      ci.yml               # Generated — do not edit
-      deploy.yml           # Generated — do not edit
-      release.yml          # Generated — do not edit
-  package.json
-  tsconfig.json
-```
-
-Each `.ts` source file exports a `Workflow` and one or more `Job` declarations. Running `chant build` compiles them to `.yml` files.
-
-## Using composites
-
-The fastest path is using a higher-level composite. For example, `NodeCI` produces a complete CI workflow in one call:
-
-```typescript
-import { NodeCI } from "@intentius/chant-lexicon-github";
-
-const ci = NodeCI({ nodeVersion: "22", packageManager: "npm" });
-
-export const workflow = ci.workflow;
-export const build = ci.job;
-```
-
-For multi-job pipelines with artifact passing, use `NodePipeline`:
-
-```typescript
-import { NodePipeline } from "@intentius/chant-lexicon-github";
-
-const pipeline = NodePipeline({ nodeVersion: "22", packageManager: "pnpm" });
-
-export const workflow = pipeline.workflow;
-export const buildJob = pipeline.buildJob;
-export const testJob = pipeline.testJob;
-```
-
 ## Next steps
 
-- [Workflows](/chant/lexicons/github/workflows/) -- triggers, permissions, concurrency, job dependencies
-- [Actions & Composites](/chant/lexicons/github/actions/) -- Checkout, SetupNode, DockerBuild, and more
-- [Expressions](/chant/lexicons/github/expressions/) -- typed expression system and condition helpers
-- [Lint Rules](/chant/lexicons/github/lint-rules/) -- 13 lint rules and 15 post-synth checks
+- [Workflow Concepts](/chant/lexicons/github/workflow-concepts/) — resource types, triggers, permissions
+- [Expressions](/chant/lexicons/github/expressions/) — typed expression system and condition helpers
+- [Composites](/chant/lexicons/github/composites/) — pre-built action wrappers (Checkout, SetupNode, etc.)
+- [Lint Rules](/chant/lexicons/github/lint-rules/) — 13 lint rules and 6 post-synth checks

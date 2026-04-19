@@ -1,0 +1,78 @@
+---
+title: "Security"
+description: "Security best practices and checks for Helm charts"
+---
+## Secret management
+
+Avoid inline secrets in Kubernetes Secret manifests. Use ExternalSecret or SealedSecret instead:
+
+```typescript
+import { HelmExternalSecret } from "@intentius/chant-lexicon-helm";
+
+const { externalSecret, values } = HelmExternalSecret({
+  name: "app-secrets",
+  secretStoreName: "vault",
+  data: {
+    DB_PASSWORD: "secret/data/db-password",
+    API_KEY: "secret/data/api-key",
+  },
+});
+```
+
+WHM407 warns when a `kind: Secret` template contains inline data values without an ExternalSecret or SealedSecret in the chart.
+
+## Security context best practices
+
+Always set security context on pods and containers:
+
+```typescript
+spec: {
+  securityContext: {
+    runAsNonRoot: true,
+    runAsUser: 1000,
+  },
+  containers: [{
+    securityContext: {
+      readOnlyRootFilesystem: true,
+      allowPrivilegeEscalation: false,
+    },
+  }],
+}
+```
+
+### Related checks
+
+| Check | Severity | Description |
+|-------|----------|-------------|
+| WHM401 | warning | Image uses :latest tag or no tag |
+| WHM402 | warning | runAsNonRoot not set |
+| WHM403 | info | readOnlyRootFilesystem not set |
+| WHM404 | error | privileged: true detected |
+| WHM405 | warning | Resource spec missing cpu/memory |
+| WHM406 | info | CRD lifecycle limitation |
+| WHM407 | warning | Secret with inline data |
+
+## Image pinning
+
+Always pin container images to specific tags or digests:
+
+```typescript
+// Bad — triggers WHM401
+image: "nginx:latest"
+image: "nginx"
+
+// Good
+image: printf("%s:%s", values.image.repository, values.image.tag)
+```
+
+Set a specific default tag in your values:
+
+```typescript
+const valuesSchema = new Values({
+  image: {
+    repository: "nginx",
+    tag: "1.25.0",       // Pinned version
+    pullPolicy: "IfNotPresent",
+  },
+});
+```

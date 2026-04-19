@@ -1,76 +1,67 @@
 ---
-title: "Helm Charts"
-description: "Typed constructors for Helm chart generation — Chart.yaml, values.yaml, and templates"
+title: "Helm"
+description: "Typed constructors for parameterized Helm charts"
 ---
 
-The **Helm** lexicon provides typed constructors for generating complete Helm charts
-from TypeScript. It covers Chart.yaml metadata, values.yaml generation via the values
-proxy, template functions, hooks, dependencies, tests, and CRD lifecycle management.
+The **Helm** lexicon generates production-quality, parameterized Helm charts from typed TypeScript.
+
+Unlike static manifest generators, the Helm lexicon produces real `{{ .Values.x }}` directives, `values.yaml`, `values.schema.json`, conditional resources, Helm hooks, and standard `_helpers.tpl`.
 
 Install it with:
 
 ```bash
-npm install --save-dev @intentius/chant-lexicon-helm
+npm install --save-dev @intentius/chant-lexicon-helm @intentius/chant-lexicon-k8s
 ```
 
 ## Quick Start
 
 ```typescript
-import {
-  Chart, Values, Deployment, Service, values,
-} from "@intentius/chant-lexicon-helm";
+import { Chart, Values } from "@intentius/chant-lexicon-helm";
+import { values, include, printf, toYaml } from "@intentius/chant-lexicon-helm";
+import { Deployment, Service } from "@intentius/chant-lexicon-k8s";
 
 export const chart = new Chart({
+  apiVersion: "v2",
   name: "my-app",
-  version: "1.0.0",
-  appVersion: "2.4.1",
-  description: "My application Helm chart",
+  version: "0.1.0",
   type: "application",
 });
 
-export const vals = new Values({
-  replicaCount: 3,
-  image: {
-    repository: "my-app",
-    tag: "2.4.1",
-    pullPolicy: "IfNotPresent",
-  },
-  service: {
-    type: "ClusterIP",
-    port: 8080,
-  },
+export const valuesSchema = new Values({
+  replicaCount: 1,
+  image: { repository: "nginx", tag: "", pullPolicy: "IfNotPresent" },
+  service: { type: "ClusterIP", port: 80 },
 });
 
 export const deployment = new Deployment({
-  name: "my-app",
-  replicas: values.replicaCount,
-  image: values.image.repository,
-  tag: values.image.tag,
-  port: values.service.port,
-});
-
-export const svc = new Service({
-  name: "my-app",
-  type: values.service.type,
-  port: values.service.port,
-  targetPort: values.service.port,
+  metadata: {
+    name: include("my-app.fullname"),
+    labels: include("my-app.labels"),
+  },
+  spec: {
+    replicas: values.replicaCount,
+    template: {
+      spec: {
+        containers: [{
+          name: "my-app",
+          image: printf("%s:%s", values.image.repository, values.image.tag),
+          ports: [{ containerPort: values.service.port, name: "http" }],
+          resources: toYaml(values.resources),
+        }],
+      },
+    },
+  },
 });
 ```
 
-The lexicon provides **5 resource types** (Chart, Values, HelmTest, HelmNotes, HelmHook),
-**3 property types** (HelmDependency, HelmMaintainer, HelmCRD), **24 intrinsic functions**
-for template logic, and **13 composites** for common chart patterns.
+Build the chart:
 
-## Lint Rules
+```bash
+chant build
+helm lint dist/
+helm template test dist/
+```
 
-chant includes lint rules for Helm charts. For example:
-- Missing or incomplete Chart.yaml metadata
-- Secrets or credentials in values.yaml
-- Hardcoded container images without tag references
-- Missing resource limits and health checks
-- Hook weight ordering issues
-
-See [Lint Rules](./lint-rules) for the full list.
 
 ## At a Glance
 
@@ -78,19 +69,21 @@ See [Lint Rules](./lint-rules) for the full list.
 |--------|-------|
 | Resources | 5 |
 | Property types | 3 |
-| Intrinsic functions | 24 |
-| Lint rules | 23 |
-| Composites | 13 |
+| Services | 5 |
+| Intrinsic functions | 7 |
+| Pseudo-parameters | 0 |
+| Lint rules | 25 |
 
-**Lexicon version:** 0.0.1
+**Lexicon version:** 0.1.4  
 **Namespace:** `Helm`
 
 - [Getting Started](./getting-started)
-- [Helm Concepts](./helm-concepts)
-- [Composites](./composites) — 13 composite patterns
-- [Lint Rules](./lint-rules)
-- [Examples](./examples)
-- [Importing YAML](./importing-yaml)
-- [Skills](./skills)
-- [Intrinsic Functions](./intrinsics) — 24 built-in functions
+- [Intrinsics Reference](./intrinsics)
+- [Composites](./composites)
+- [Lint Rules](./rules)
+- [Security](./security)
+- [Best Practices](./best-practices)
+- [AI Skills](./skills)
+- [Intrinsic Functions](./intrinsics) — 7 built-in functions
+- [Lint Rules](./rules) — 25 rules
 - [Serialization](./serialization) — output format details

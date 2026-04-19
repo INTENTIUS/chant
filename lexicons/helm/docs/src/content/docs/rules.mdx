@@ -1,0 +1,43 @@
+---
+title: "Lint Rules"
+description: "Lint rules and post-synth checks provided by the Helm lexicon"
+---
+
+The Helm lexicon provides **25** rules: 4 lint rules and 21 post-synth checks.
+
+## Lint Rules
+
+| ID | Severity | Category | Description |
+|----|----------|----------|-------------|
+| `WHM001` | error | correctness | Chart Metadata Required |
+| `WHM002` | warning | security | Values Should Not Contain Bare Secrets |
+| `WHM003` | warning | correctness | Container Images Should Use Values References |
+| `WHM004` | warning | correctness | HelmTpl Expression Has No Effect in Values Constructor |
+
+## Post-Synth Checks
+
+Post-synth checks validate the serialized output after the build pipeline completes.
+
+| ID | Description |
+|----|-------------|
+| `WHM005` | Chart with sub-chart dependencies but no templates should deploy upstream chart directly |
+| `WHM101` | Chart.yaml must have required fields (apiVersion v2, name, version) |
+| `WHM102` | values.schema.json should be present when Values are non-empty |
+| `WHM103` | Go template syntax must be valid (balanced braces) |
+| `WHM104` | NOTES.txt should exist for application charts |
+| `WHM105` | _helpers.tpl must exist in templates/ |
+| `WHM201` | K8s resources should include standard Helm labels |
+| `WHM202` | Hook weights should be defined when multiple hooks exist |
+| `WHM203` | Values entries should be documented via schema or comments |
+| `WHM204` | Chart dependencies should use semver ranges, not pinned versions |
+| `WHM301` | Application charts should include at least one Helm test |
+| `WHM302` | Container resources (limits/requests) should be set via values or defaults |
+| `WHM401` | Container images should not use :latest tag or omit tag entirely |
+| `WHM402` | Containers should set runAsNonRoot in security context |
+| `WHM403` | Containers should set readOnlyRootFilesystem in security context |
+| `WHM404` | Containers must not run in privileged mode |
+| `WHM405` | Resource specs should include cpu and memory in limits/requests |
+| `WHM406` | CRDs in crds/ directory are never upgraded or deleted by Helm |
+| `WHM407` | Secrets with inline data should use ExternalSecret or SealedSecret |
+| `WHM501` | Detect values keys that are defined but never referenced in templates |
+| `WHM502` | Detect deprecated or invalid Kubernetes API versions |

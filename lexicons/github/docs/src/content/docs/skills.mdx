@@ -2,7 +2,7 @@
 title: "AI Skills"
 description: "AI agent skills bundled with the GitHub Actions lexicon"
 ---
-The GitHub Actions lexicon ships several AI skills that teach AI coding agents how to build, validate, and deploy GitHub Actions workflows from a chant project.
+The GitHub Actions lexicon ships AI skills that teach AI coding agents (like Claude Code) how to build, validate, and deploy GitHub Actions workflows from a chant project.
 
 ## What are skills?
 
@@ -10,53 +10,51 @@ Skills are structured markdown documents bundled with a lexicon. When an AI agen
 
 ## Installation
 
-When you scaffold a new project with `chant init --lexicon github`, the skills are installed to `skills/` for automatic agent discovery.
+When you scaffold a new project with `chant init --lexicon github`, skills are installed to `.claude/skills/` for automatic discovery by Claude Code.
 
-To refresh skills after a lexicon update:
+For existing projects, create the files manually:
 
-```bash
-chant update
+```
+.claude/
+  skills/
+    chant-github/
+      SKILL.md    # skill content
 ```
 
 ## Skill: chant-github
 
-The `chant-github` skill covers the full GitHub Actions workflow lifecycle:
+The inline `chant-github` skill covers the full workflow lifecycle:
 
-- **Build** — `chant build src/ --output .github/workflows/`
-- **Validate** — `chant lint src/` for workflow correctness
-- **Deploy** — `git push` to trigger workflows (chant synthesis is local-only)
-- **Diff** — compare synthesized YAML against previous output
-- **Troubleshooting** — workflow run inspection, failure diagnosis
+- **Build** — `chant build src/ --output .github/workflows/ci.yml`
+- **Validate** — `chant lint src/`
+- **Deploy** — commit and push the generated YAML
+- **Status** — GitHub Actions UI or `gh run list`
+- **Troubleshooting** — lint rule codes (GHA001–GHA020), post-synth checks (GHA006–GHA019)
 
-## Skill: chant-github-patterns
+The skill is invocable as a slash command: `/chant-github`
 
-The `chant-github-patterns` skill covers workflow patterns and best practices:
+## Skill: github-actions-patterns
 
-- **Triggers** — push, pull_request, schedule, workflow_dispatch, repository_dispatch
-- **Job Structure** — runner selection, dependencies, concurrency groups
-- **Matrix Strategies** — multi-dimensional build matrices, include/exclude
-- **Caching** — dependency caching, build artifact caching
-- **Artifacts** — upload/download patterns, retention policies
-- **Reusable Workflows** — `workflow_call` and shared workflow libraries
+A file-based skill loaded from `src/skills/github-actions-patterns.md`. It provides pattern knowledge for:
 
-## Skill: chant-github-security
-
-The `chant-github-security` skill covers security hardening for GitHub Actions:
-
-- **Permissions** — least-privilege GITHUB_TOKEN scopes at workflow and job level
-- **Secret Management** — environment secrets, OIDC for cloud providers
-- **Supply Chain** — pinned action versions, Sigstore verification
-- **Code Scanning** — CodeQL integration, SARIF uploads
-- **Dependency Review** — automated dependency vulnerability checks
+- **Workflow structure** — name, on, permissions, jobs
+- **Trigger patterns** — push, pull_request, schedule, workflow_dispatch
+- **Matrix strategy** — multi-OS, multi-version builds
+- **Caching** — SetupNode cache option, CacheAction composite
+- **Permissions** — least-privilege patterns
+- **Reusable workflows** — ReusableWorkflowCallJob
+- **Artifacts** — upload/download between jobs
+- **Concurrency** — group + cancel-in-progress
 
 ## MCP integration
 
-The lexicon also provides MCP (Model Context Protocol) tools and resources that AI agents can use programmatically:
+The lexicon provides MCP (Model Context Protocol) tools and resources that AI agents can use programmatically:
 
 | MCP tool | Description |
 |----------|-------------|
-| `build` | Build the chant project |
-| `lint` | Run lint rules |
-| `explain` | Summarize project resources |
-| `scaffold` | Generate starter files |
-| `search` | Search available resource types |
+| `diff` | Compare current build output against previous output |
+
+| MCP resource | Description |
+|--------------|-------------|
+| `resource-catalog` | JSON list of all supported GitHub Actions entity types |
+| `examples/basic-ci` | Example CI workflow with TypeScript source |

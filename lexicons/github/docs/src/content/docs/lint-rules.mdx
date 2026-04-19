@@ -2,132 +2,156 @@
 title: "Lint Rules"
 description: "Built-in lint rules and post-synth checks for GitHub Actions workflows"
 ---
-
 The GitHub Actions lexicon ships lint rules that run during `chant lint` and post-synth checks that validate the serialized YAML after `chant build`.
 
-## Pre-synth lint rules
+## Lint rules
 
 Lint rules analyze your TypeScript source code before build.
 
-| Rule | Severity | Category | Description |
-|------|----------|----------|-------------|
-| GHA001 | warning | style | Use typed action composites instead of raw `uses:` strings |
-| GHA002 | warning | style | Use Expression helpers instead of raw `${{ }}` in `if:` conditions |
-| GHA003 | error | security | No hardcoded secrets (GitHub tokens, AWS keys, etc.) |
-| GHA004 | info | style | Extract inline matrix objects to named constants |
-| GHA005 | info | style | Extract deeply nested inline objects to named constants |
-| GHA007 | warning | style | Too many jobs per file (limit: 10) |
-| GHA008 | info | style | Avoid raw `${{ }}` expression strings outside `if:` fields |
-| GHA010 | warning | correctness | Setup action missing version input |
-| GHA012 | warning | correctness | Deprecated action version detected |
-| GHA014 | warning | correctness | Job missing `timeoutMinutes` |
-| GHA015 | warning | performance | Setup action without cache enabled |
-| GHA016 | warning | correctness | Concurrency `cancel-in-progress` without a `group` |
-| GHA020 | error | security | Potential secret detected in string literal |
+### GHA001 — Use typed action composites
 
-### GHA001 -- Use typed action composites
+**Severity:** warning | **Category:** style
 
-Flags raw `uses:` strings when a typed composite wrapper is available. Typed composites provide better IDE support and catch configuration errors at compile time.
+Flags raw `uses:` strings when a typed composite wrapper is available (e.g. `actions/checkout@v4` → `Checkout({})`). Typed composites provide better IDE support and catch configuration errors at compile time.
 
-```typescript
-// Flagged
-new Step({ uses: "actions/checkout@v4" });
+### GHA002 — Use Expression helpers
 
-// Preferred
-Checkout({}).step;
+**Severity:** warning | **Category:** style
+
+Flags raw `${{ }}` strings in `if:` conditions. Use the typed Expression helpers (`github.ref.eq(...)`, `branch("main")`, `failure()`) instead for type safety and lint coverage.
+
+### GHA003 — No hardcoded secrets
+
+**Severity:** error | **Category:** security
+
+Flags hardcoded GitHub tokens, AWS keys, and other secret patterns in source code. Use `secrets("...")` expressions instead.
+
+```typescript title="lint-gha003.ts"
+import { Job, Step, secrets } from "@intentius/chant-lexicon-github";
+
+// BAD — hardcoded token triggers GHA003
+export const badDeploy = new Job({
+  "runs-on": "ubuntu-latest",
+  steps: [
+    new Step({
+      name: "Deploy",
+      run: "curl -H 'Authorization: token ghp_abc123def456' https://api.github.com/repos",
+    }),
+  ],
+});
+
+// GOOD — use secrets() expression
+export const goodDeploy = new Job({
+  "runs-on": "ubuntu-latest",
+  steps: [
+    new Step({
+      name: "Deploy",
+      env: { GH_TOKEN: secrets("GITHUB_TOKEN") },
+      run: "curl -H \"Authorization: token $GH_TOKEN\" https://api.github.com/repos",
+    }),
+  ],
+});
 ```
 
-### GHA002 -- Use Expression helpers
+### GHA004 — Extract inline matrix
 
-Flags raw `${{ }}` strings in `if:` conditions. Use the typed Expression helpers for type safety.
+**Severity:** info | **Category:** style
 
-```typescript
-// Flagged
-new Job({ "runs-on": "ubuntu-latest", if: "${{ github.ref == 'refs/heads/main' }}", steps: [] });
+Flags inline matrix objects and suggests extracting them to named constants for readability.
 
-// Preferred
-import { branch } from "@intentius/chant-lexicon-github";
-new Job({ "runs-on": "ubuntu-latest", if: branch("main"), steps: [] });
-```
+### GHA005 — Extract deeply nested objects
 
-### GHA003 -- No hardcoded secrets
+**Severity:** info | **Category:** style
 
-Flags hardcoded GitHub tokens, AWS keys, and other secret patterns in source code.
+Flags deeply nested inline objects and suggests extracting them to named constants.
 
-```typescript
-// Flagged
-new Step({ name: "Deploy", env: { TOKEN: "ghp_xxxxxxxxxxxx" }, run: "deploy" });
+### GHA007 — Too many jobs per file
 
-// Preferred
-import { secrets } from "@intentius/chant-lexicon-github";
-new Step({ name: "Deploy", env: { TOKEN: secrets("DEPLOY_TOKEN") }, run: "deploy" });
-```
+**Severity:** warning | **Category:** style
 
-### GHA014 -- Missing timeout
+Flags files with more than 10 job exports. Split large workflows into separate files for maintainability.
+
+### GHA008 — Avoid raw expression strings
+
+**Severity:** info | **Category:** style
+
+Flags raw `${{ }}` expression strings outside of `if:` fields. Use the typed expression helpers (`github.*`, `secrets()`, `matrix()`) for better type safety.
+
+### GHA010 — Setup action missing version
+
+**Severity:** warning | **Category:** correctness
+
+Flags setup action composites (SetupNode, SetupGo, SetupPython) without a version input. Pinning the version ensures reproducible builds.
+
+### GHA012 — Deprecated action version
+
+**Severity:** warning | **Category:** correctness
+
+Flags action `uses:` references that point to deprecated versions. Upgrade to the recommended version.
+
+### GHA014 — Missing timeout
+
+**Severity:** warning | **Category:** correctness
 
 Flags jobs without `timeoutMinutes`. Jobs without a timeout default to 360 minutes (6 hours), which can waste runner minutes if stuck.
 
-```typescript
-// Flagged
-new Job({ "runs-on": "ubuntu-latest", steps: [...] });
+### GHA015 — Setup without cache
 
-// Preferred
-new Job({ "runs-on": "ubuntu-latest", timeoutMinutes: 15, steps: [...] });
-```
+**Severity:** warning | **Category:** performance
 
-### GHA015 -- Setup without cache
+Flags setup action composites (SetupNode, SetupGo, SetupPython) without a paired `CacheAction` or built-in `cache` option. Caching dependencies significantly speeds up builds.
 
-Flags setup action composites (SetupNode, SetupGo, SetupPython) without a paired `CacheAction` or built-in `cache` option.
+### GHA016 — Concurrency missing group
 
-```typescript
-// Flagged
-SetupNode({ nodeVersion: "22" }).step;
+**Severity:** warning | **Category:** correctness
 
-// Preferred
-SetupNode({ nodeVersion: "22", cache: "npm" }).step;
-```
+Flags `concurrency` with `cancel-in-progress: true` but no `group` specified. Without a group, all runs of the workflow share a single concurrency slot.
+
+### GHA020 — Potential secret detected
+
+**Severity:** error | **Category:** security
+
+Flags string literals that match common secret patterns (API keys, tokens, passwords). Use `secrets()` or environment variables instead.
 
 ## Post-synth checks
 
 Post-synth checks run against the serialized YAML after build. They catch issues only visible in the final output.
 
-| Rule | Severity | Description |
-|------|----------|-------------|
-| GHA006 | error | Duplicate workflow names |
-| GHA009 | error | Empty matrix dimension |
-| GHA011 | error | Invalid `needs` target (references non-existent job) |
-| GHA017 | info | Missing `permissions` block |
-| GHA018 | warning | `pull_request_target` with checkout (security risk) |
-| GHA019 | error | Circular `needs` chain |
-| GHA020 | warning | Missing job-level permissions for sensitive triggers |
-| GHA021 | warning | `actions/checkout` used without pinned SHA |
-| GHA022 | warning | Job without `timeout-minutes` |
-| GHA023 | warning | Deprecated `::set-output` command usage |
-| GHA024 | warning | Missing concurrency block for deploy workflow |
-| GHA025 | warning | Using `pull_request_target` without restrictions |
-| GHA026 | warning | Secret passed to action without environment protection |
-| GHA027 | warning | Missing `if: always()` on cleanup steps |
-| GHA028 | error | Workflow with no `on` triggers |
+### GHA006 — Duplicate workflow names
 
-### GHA006 -- Duplicate workflow names
+**Severity:** error
 
 Flags multiple workflows that share the same `name:` value. Duplicate names cause confusion in the GitHub Actions UI.
 
-### GHA009 -- Empty matrix dimension
+### GHA009 — Empty matrix dimension
+
+**Severity:** error
 
 Flags matrix strategy dimensions with an empty values array. An empty dimension causes the job to be skipped entirely.
 
-### GHA011 -- Invalid needs target
+### GHA011 — Invalid needs target
+
+**Severity:** error
 
 Flags jobs whose `needs:` entries reference a job not defined in the workflow. This causes a workflow validation error on GitHub.
 
-### GHA019 -- Circular needs chain
+### GHA017 — Missing permissions block
 
-Detects cycles in the `needs:` dependency graph. Reports the full cycle chain in the diagnostic message.
+**Severity:** info
 
-### GHA028 -- Workflow with no triggers
+Flags workflows without an explicit `permissions:` block. Omitting permissions uses the repository default (often overly broad). Following least-privilege by declaring explicit permissions is a security best practice.
 
-Flags workflows that have no `on:` triggers defined. A workflow without triggers will never run.
+### GHA018 — pull_request_target with checkout
+
+**Severity:** warning
+
+Flags workflows triggered by `pull_request_target` that include `actions/checkout`. This combination can be a security risk because the workflow runs with write permissions in the context of the base branch while checking out potentially untrusted PR code.
+
+### GHA019 — Circular needs chain
+
+**Severity:** error
+
+Detects cycles in the `needs:` dependency graph. If job A needs B and B needs A (directly or transitively), GitHub rejects the workflow. Reports the full cycle chain in the diagnostic message.
 
 ## Running lint
 

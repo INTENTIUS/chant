@@ -1,17 +1,22 @@
 ---
 title: "Expressions"
-description: "Typed expression system, context accessors, condition helpers, and utility functions for GitHub Actions"
+description: "Typed expression system, condition helpers, and utility functions for GitHub Actions"
 ---
-
 The Expression system provides type-safe access to GitHub Actions `${{ }}` expressions. Instead of writing raw strings, use the typed helpers for better IDE support and lint coverage.
 
-```typescript
+```typescript title="expressions-usage.ts"
 import {
   Expression,
-  github, runner, secrets, steps,
-  always, failure,
-  contains, startsWith,
-  branch, tag,
+  github,
+  runner,
+  secrets,
+  steps,
+  always,
+  failure,
+  contains,
+  startsWith,
+  branch,
+  tag,
 } from "@intentius/chant-lexicon-github";
 
 // Combine expressions with logical operators
@@ -29,7 +34,7 @@ const isRelease = startsWith(github.ref, "refs/tags/v");
 
 // Convenience helpers
 const onMain = branch("main"); // github.ref == 'refs/heads/main'
-const onV1Tag = tag("v1");     // startsWith(github.ref, 'refs/tags/v1')
+const onV1Tag = tag("v1"); // startsWith(github.ref, 'refs/tags/v1')
 
 // Access secrets, step outputs, and runner context
 const token = secrets("NPM_TOKEN");
@@ -56,81 +61,18 @@ The `github` and `runner` objects provide typed access to context properties:
 ```typescript
 import { github, runner } from "@intentius/chant-lexicon-github";
 
-github.ref          // ${{ github.ref }}
-github.sha          // ${{ github.sha }}
-github.actor        // ${{ github.actor }}
-github.repository   // ${{ github.repository }}
-github.eventName    // ${{ github.event_name }}
-github.runId        // ${{ github.run_id }}
-github.refName      // ${{ github.ref_name }}
-github.token        // ${{ github.token }}
-runner.os           // ${{ runner.os }}
-runner.arch         // ${{ runner.arch }}
+github.ref      // ${{ github.ref }}
+github.sha      // ${{ github.sha }}
+github.actor    // ${{ github.actor }}
+runner.os       // ${{ runner.os }}
+runner.arch     // ${{ runner.arch }}
 ```
 
-### GitHub context (24 properties)
-
-| Property | Expression |
-|----------|-----------|
-| `github.ref` | `${{ github.ref }}` |
-| `github.refName` | `${{ github.ref_name }}` |
-| `github.refType` | `${{ github.ref_type }}` |
-| `github.sha` | `${{ github.sha }}` |
-| `github.actor` | `${{ github.actor }}` |
-| `github.triggeringActor` | `${{ github.triggering_actor }}` |
-| `github.repository` | `${{ github.repository }}` |
-| `github.repositoryOwner` | `${{ github.repository_owner }}` |
-| `github.eventName` | `${{ github.event_name }}` |
-| `github.event` | `${{ github.event }}` |
-| `github.runId` | `${{ github.run_id }}` |
-| `github.runNumber` | `${{ github.run_number }}` |
-| `github.workflow` | `${{ github.workflow }}` |
-| `github.workspace` | `${{ github.workspace }}` |
-| `github.token` | `${{ github.token }}` |
-| `github.job` | `${{ github.job }}` |
-| `github.headRef` | `${{ github.head_ref }}` |
-| `github.baseRef` | `${{ github.base_ref }}` |
-| `github.serverUrl` | `${{ github.server_url }}` |
-| `github.apiUrl` | `${{ github.api_url }}` |
-| `github.graphqlUrl` | `${{ github.graphql_url }}` |
-| `github.action` | `${{ github.action }}` |
-| `github.actionPath` | `${{ github.action_path }}` |
-
-### Runner context (5 properties)
-
-| Property | Expression |
-|----------|-----------|
-| `runner.os` | `${{ runner.os }}` |
-| `runner.arch` | `${{ runner.arch }}` |
-| `runner.temp` | `${{ runner.temp }}` |
-| `runner.toolCache` | `${{ runner.tool_cache }}` |
-| `runner.name` | `${{ runner.name }}` |
-
-## PascalCase variable references
-
-The `GitHub` and `Runner` objects provide an alternative PascalCase API for template string interpolation:
-
-```typescript
-import { Job, Step, GitHub, Runner } from "@intentius/chant-lexicon-github";
-
-export const deploy = new Job({
-  "runs-on": "ubuntu-latest",
-  steps: [
-    new Step({
-      name: "Print context",
-      run: `echo "Branch: ${GitHub.RefName}"
-echo "SHA: ${GitHub.Sha}"
-echo "Actor: ${GitHub.Actor}"
-echo "Repo: ${GitHub.Repository}"
-echo "Runner OS: ${Runner.Os}"`,
-    }),
-  ],
-});
-```
+See [Variables](/chant/lexicons/github/variables/) for the full reference table.
 
 ## Dynamic context accessors
 
-Access dynamic context values -- secrets, matrix, step outputs, job outputs, inputs, vars, env:
+Access dynamic context values — secrets, matrix, step outputs, job outputs, inputs, vars, env:
 
 ```typescript
 import { secrets, matrix, steps, needs, inputs, vars, env } from "@intentius/chant-lexicon-github";
@@ -201,7 +143,7 @@ branch("main")   // github.ref == 'refs/heads/main'
 tag("v1")        // startsWith(github.ref, 'refs/tags/v1')
 ```
 
-Use them in job `if:` conditions:
+These are useful in job `if:` conditions:
 
 ```typescript
 import { Job, Step, branch } from "@intentius/chant-lexicon-github";

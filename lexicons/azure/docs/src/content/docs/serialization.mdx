@@ -1,0 +1,33 @@
+---
+title: "Serialization"
+description: "Output format for the Azure Resource Manager lexicon"
+---
+
+The Azure lexicon serializes resources into **ARM template JSON**.
+
+## Building
+
+Run `chant build` to produce an ARM template from your declarations:
+
+```bash
+chant build
+# Writes dist/template.json
+```
+
+The generated template includes:
+
+- `$schema` pointing to the ARM deployment template schema
+- `contentVersion: "1.0.0.0"`
+- `parameters` section for input parameters
+- `resources` array with typed Azure resources
+- `outputs` section for stack outputs
+
+## Deploying
+
+Use the Azure CLI to deploy the generated template:
+
+```bash
+az deployment group create \
+  --resource-group my-rg \
+  --template-file dist/template.json
+```

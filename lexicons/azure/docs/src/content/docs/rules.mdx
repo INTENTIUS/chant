@@ -1,0 +1,41 @@
+---
+title: "Lint Rules"
+description: "Lint rules and post-synth checks provided by the Azure Resource Manager lexicon"
+---
+
+The Azure Resource Manager lexicon provides **23** rules: 3 lint rules and 20 post-synth checks.
+
+## Lint Rules
+
+| ID | Severity | Category | Description |
+|----|----------|----------|-------------|
+| `AZR001` | warning | correctness | Hardcoded Azure Location |
+| `AZR002` | warning | security | Storage Account HTTPS Only |
+| `AZR003` | warning | security | NSG Wildcard Source Address |
+
+## Post-Synth Checks
+
+Post-synth checks validate the serialized output after the build pipeline completes.
+
+| ID | Description |
+|----|-------------|
+| `AZR010` | Redundant dependsOn — target is already referenced via reference() or resourceId() in properties |
+| `AZR011` | Missing or invalid apiVersion — every ARM resource must have a valid apiVersion in YYYY-MM-DD format |
+| `AZR012` | Deprecated API version — apiVersion older than 2023 may lack features and security patches |
+| `AZR013` | Resource missing location — most Azure resources require a location property |
+| `AZR014` | Public blob access enabled on storage account — disable allowBlobPublicAccess to prevent public data exposure |
+| `AZR015` | Missing encryption on storage account — enable encryption services to protect data at rest |
+| `AZR016` | Key Vault soft-delete not enabled — enable to protect against accidental deletion |
+| `AZR017` | Key Vault purge protection not enabled — enable to prevent permanent deletion during retention period |
+| `AZR018` | SQL Server missing auditing — enable auditing for compliance and threat detection |
+| `AZR019` | SQL Server database missing TDE — enable Transparent Data Encryption to protect data at rest |
+| `AZR020` | App Service missing managed identity — enable SystemAssigned or UserAssigned identity |
+| `AZR021` | App Service missing HTTPS-only — set httpsOnly to true to enforce encrypted traffic |
+| `AZR022` | App Service missing minimum TLS 1.2 — set minTlsVersion in siteConfig to enforce TLS 1.2+ |
+| `AZR023` | VM missing managed disk — use managed disks for better reliability and management |
+| `AZR024` | VM missing boot diagnostics — enable for troubleshooting startup failures |
+| `AZR025` | AKS cluster missing RBAC — enable Kubernetes RBAC for access control |
+| `AZR026` | AKS cluster missing network policy — configure networkPolicy for pod-to-pod traffic control |
+| `AZR027` | Container Registry admin user enabled — disable admin and use Azure AD or service principals |
+| `AZR028` | Network interface missing NSG — associate an NSG to control network traffic |
+| `AZR029` | Managed disk missing encryption — enable encryption to protect data at rest |

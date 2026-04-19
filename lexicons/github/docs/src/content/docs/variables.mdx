@@ -1,0 +1,116 @@
+---
+title: "Variables"
+description: "GitHub and Runner context variable references for GitHub Actions workflows"
+---
+The `GitHub` and `Runner` objects provide type-safe access to GitHub Actions context variables. These expand to `${{ github.* }}` and `${{ runner.* }}` expressions in the generated YAML.
+
+```typescript title="variables-usage.ts"
+import { Job, Step, GitHub, Runner } from "@intentius/chant-lexicon-github";
+
+// Use GitHub context variables in steps
+export const deploy = new Job({
+  "runs-on": "ubuntu-latest",
+  steps: [
+    new Step({
+      name: "Print context",
+      run: `echo "Branch: ${GitHub.RefName}"
+echo "SHA: ${GitHub.Sha}"
+echo "Actor: ${GitHub.Actor}"
+echo "Repo: ${GitHub.Repository}"
+echo "Runner OS: ${Runner.Os}"`,
+    }),
+  ],
+});
+```
+
+## GitHub context
+
+| Property | Expression | Description |
+|----------|-----------|-------------|
+| `GitHub.Ref` | `${{ github.ref }}` | Full ref (e.g. `refs/heads/main`, `refs/tags/v1.0`) |
+| `GitHub.RefName` | `${{ github.ref_name }}` | Short ref name (e.g. `main`, `v1.0`) |
+| `GitHub.RefType` | `${{ github.ref_type }}` | Ref type: `branch` or `tag` |
+| `GitHub.Sha` | `${{ github.sha }}` | Full commit SHA |
+| `GitHub.Actor` | `${{ github.actor }}` | Username that triggered the workflow |
+| `GitHub.TriggeringActor` | `${{ github.triggering_actor }}` | Username that triggered the workflow run |
+| `GitHub.Repository` | `${{ github.repository }}` | Owner/repo (e.g. `octocat/hello-world`) |
+| `GitHub.RepositoryOwner` | `${{ github.repository_owner }}` | Repository owner (e.g. `octocat`) |
+| `GitHub.EventName` | `${{ github.event_name }}` | Triggering event name (`push`, `pull_request`, etc.) |
+| `GitHub.Event` | `${{ github.event }}` | Full event payload object |
+| `GitHub.RunId` | `${{ github.run_id }}` | Unique run ID |
+| `GitHub.RunNumber` | `${{ github.run_number }}` | Run number for this workflow |
+| `GitHub.RunAttempt` | `${{ github.run_attempt }}` | Attempt number for this run |
+| `GitHub.Workflow` | `${{ github.workflow }}` | Workflow name |
+| `GitHub.WorkflowRef` | `${{ github.workflow_ref }}` | Workflow ref path |
+| `GitHub.Workspace` | `${{ github.workspace }}` | Default working directory on the runner |
+| `GitHub.Token` | `${{ github.token }}` | Automatically-generated GITHUB_TOKEN |
+| `GitHub.Job` | `${{ github.job }}` | Current job ID |
+| `GitHub.HeadRef` | `${{ github.head_ref }}` | PR head branch (pull_request events only) |
+| `GitHub.BaseRef` | `${{ github.base_ref }}` | PR base branch (pull_request events only) |
+| `GitHub.ServerUrl` | `${{ github.server_url }}` | GitHub server URL |
+| `GitHub.ApiUrl` | `${{ github.api_url }}` | GitHub API URL |
+| `GitHub.GraphqlUrl` | `${{ github.graphql_url }}` | GitHub GraphQL API URL |
+| `GitHub.Action` | `${{ github.action }}` | Action name or step ID |
+| `GitHub.ActionPath` | `${{ github.action_path }}` | Path where the action is located |
+
+## Runner context
+
+| Property | Expression | Description |
+|----------|-----------|-------------|
+| `Runner.Os` | `${{ runner.os }}` | Runner operating system (`Linux`, `Windows`, `macOS`) |
+| `Runner.Arch` | `${{ runner.arch }}` | Runner architecture (`X86`, `X64`, `ARM`, `ARM64`) |
+| `Runner.Name` | `${{ runner.name }}` | Runner name |
+| `Runner.Temp` | `${{ runner.temp }}` | Path to a temporary directory on the runner |
+| `Runner.ToolCache` | `${{ runner.tool_cache }}` | Path to the tool cache directory |
+
+## Common patterns
+
+### Branch checks
+
+```typescript
+import { Job, Step, GitHub } from "@intentius/chant-lexicon-github";
+import { branch } from "@intentius/chant-lexicon-github";
+
+// Deploy only on main
+export const deploy = new Job({
+  "runs-on": "ubuntu-latest",
+  if: branch("main"),
+  steps: [
+    new Step({ name: "Deploy", run: "npm run deploy" }),
+  ],
+});
+```
+
+### Event filtering
+
+```typescript
+import { Job, Step, GitHub } from "@intentius/chant-lexicon-github";
+import { github } from "@intentius/chant-lexicon-github";
+
+// Skip scheduled runs
+export const test = new Job({
+  "runs-on": "ubuntu-latest",
+  if: github.eventName.ne("schedule"),
+  steps: [
+    new Step({ name: "Test", run: "npm test" }),
+  ],
+});
+```
+
+### Runner-specific logic
+
+```typescript
+import { Job, Step, runner } from "@intentius/chant-lexicon-github";
+
+export const build = new Job({
+  "runs-on": "ubuntu-latest",
+  steps: [
+    new Step({
+      name: "Platform-specific setup",
+      if: runner.os.eq("Linux"),
+      run: "sudo apt-get update && sudo apt-get install -y jq",
+    }),
+    new Step({ name: "Build", run: "npm run build" }),
+  ],
+});
+```

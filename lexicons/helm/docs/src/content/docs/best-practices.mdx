@@ -1,0 +1,71 @@
+---
+title: "Best Practices"
+description: "Common patterns and recommendations for Helm charts with chant"
+---
+## CRD lifecycle
+
+Helm installs CRDs from the `crds/` directory but **never upgrades or deletes them**. For managed CRD lifecycle, use the `HelmCRDLifecycle` composite:
+
+```typescript
+import { HelmCRDLifecycle } from "@intentius/chant-lexicon-helm";
+
+const lifecycle = HelmCRDLifecycle({
+  name: "my-operator",
+  crdContent: crdYaml,
+  kubectlImage: "bitnami/kubectl",
+  kubectlTag: "1.28",
+});
+```
+
+This creates a Job-based hook that runs `kubectl apply` for CRDs during pre-install/pre-upgrade, with proper RBAC.
+
+## Resource ordering
+
+Use `withOrder()` for Helm hook ordering and `argoWave()` for Argo CD sync waves:
+
+```typescript
+import { withOrder, argoWave } from "@intentius/chant-lexicon-helm";
+
+// Helm hook ordering (lower weight = runs first)
+metadata: { annotations: { ...withOrder(-5) } }
+
+// Argo CD sync waves
+metadata: { annotations: { ...argoWave(1) } }
+```
+
+## Multi-environment values
+
+Structure your chant project with base values and environment overlays:
+
+```
+src/
+  chart.ts          ← Base chart with shared values
+values-dev.yaml     ← Override for dev
+values-staging.yaml ← Override for staging
+values-prod.yaml    ← Override for production
+```
+
+Use `helm install -f values-prod.yaml` to merge environment-specific values.
+
+## List merge workaround
+
+Helm's strategic merge patch does not merge lists — it replaces them. Use map-of-maps instead:
+
+```typescript
+// Instead of a list (hard to override per-environment)
+hosts: [{ host: "app.example.com" }]
+
+// Use a map-of-maps pattern
+hosts:
+  primary:
+    host: "app.example.com"
+    paths: [{ path: "/", pathType: "Prefix" }]
+```
+
+## Unused values
+
+WHM501 detects values keys that are defined but never referenced in templates. This helps keep `values.yaml` clean and avoids confusion.
+
+## Deprecated API versions
+
+WHM502 detects deprecated Kubernetes API versions (like `extensions/v1beta1` for Ingress) and suggests current replacements.
