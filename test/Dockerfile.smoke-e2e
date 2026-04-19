@@ -10,7 +10,7 @@
 # Rosetta emulation transparently.
 
 # ── Stage 1: builder ─────────────────────────────────────────────────────────
-FROM --platform=linux/amd64 node:22-slim AS builder
+FROM --platform=linux/amd64 node:24-slim AS builder
 
 WORKDIR /app
 
@@ -49,7 +49,7 @@ RUN mkdir -p /tarballs && \
     cd /app/lexicons/azure && rm -f *.tgz && npm pack && mv *.tgz /tarballs/lexicon-azure.tgz
 
 # ── Stage 2: E2E runner ──────────────────────────────────────────────────────
-FROM --platform=linux/amd64 node:22-slim
+FROM --platform=linux/amd64 node:24-slim
 
 # Install base tools
 RUN apt-get update && apt-get install -y \

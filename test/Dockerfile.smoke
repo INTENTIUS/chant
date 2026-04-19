@@ -10,7 +10,7 @@
 #   - Do multi-stack builds work?
 #   - Do all root examples build?
 # Flow: COPY workspace → npm install → validate dist/ → RUN integration.sh
-FROM node:22-slim
+FROM node:24-slim
 
 WORKDIR /app
 
