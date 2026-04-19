@@ -1,20 +1,20 @@
 digraph evaluation_pipeline {
-  rankdir=LR
-  graph [fontname="Helvetica,Arial,sans-serif" bgcolor="transparent" pad="0.5" ranksep="0.55" splines=ortho]
+  rankdir=TB
+  graph [fontname="Helvetica,Arial,sans-serif" bgcolor="transparent" pad="0.5" ranksep="0.5" nodesep="0.6"]
   node  [fontname="Helvetica,Arial,sans-serif" shape=box style="filled,rounded" margin="0.25,0.12"
          color="#4F46E5" fillcolor="#EEF2FF" fontcolor="#1E1B4B"]
   edge  [color="#6366F1" fontname="Helvetica,Arial,sans-serif" fontsize=9 fontcolor="#475569"]
 
-  src [label="TypeScript\nsource files" shape=cylinder fillcolor="#DCFCE7" color="#16A34A" fontcolor="#14532D"]
+  src [label="TypeScript source files" shape=cylinder fillcolor="#DCFCE7" color="#16A34A" fontcolor="#14532D"]
 
-  D1 [label="1. Discovery\nscan .ts files\nexclude tests"]
-  D2 [label="2. Parse + Lint\nAST · type check\nEVL rules"]
-  D3 [label="3. Resolve Imports\nmodule graph\ncross-file refs"]
-  D4 [label="4. Extract + Evaluate\nwalk AST\nresolve const refs"]
-  D5 [label="5. Expand Composites\nsubstitute props\nresolve siblings"]
-  D6 [label="6. Emit\nserialize to\ntarget format"]
+  D1 [label="1. Discovery\nscan .ts files · exclude tests"]
+  D2 [label="2. Parse + Lint\nAST · type check · EVL rules"]
+  D3 [label="3. Resolve Imports\nmodule graph · cross-file refs"]
+  D4 [label="4. Extract + Evaluate\nwalk AST · resolve const refs"]
+  D5 [label="5. Expand Composites\nsubstitute props · resolve siblings"]
+  D6 [label="6. Emit\nserialize to target format"]
 
-  out [label="Deployment\nartifacts" shape=cylinder fillcolor="#DCFCE7" color="#16A34A" fontcolor="#14532D"]
+  out [label="Deployment artifacts" shape=cylinder fillcolor="#DCFCE7" color="#16A34A" fontcolor="#14532D"]
 
   src -> D1 -> D2 -> D3 -> D4 -> D5 -> D6 -> out
 }
