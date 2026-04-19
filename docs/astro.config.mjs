@@ -28,6 +28,7 @@ export default defineConfig({
 						{ label: 'How chant compares', slug: 'concepts/comparison' },
 						{ label: 'TypeScript as Data', slug: 'concepts/typescript-as-data' },
 						{ label: 'Evaluation Pipeline', slug: 'concepts/evaluation-pipeline' },
+						{ label: 'Choosing Your Deployment Model', slug: 'concepts/deployment-paths' },
 					],
 				},
 				{
@@ -41,11 +42,11 @@ export default defineConfig({
 						{ label: 'Presets', slug: 'guide/presets' },
 						{ label: 'Linting & Type-Checking', slug: 'guide/linting' },
 						{ label: 'Building', slug: 'guide/building' },
+						{ label: 'Ops', slug: 'guide/ops' },
 						{ label: 'Importing Templates', slug: 'guide/importing-templates' },
 						{ label: 'Multi-Stack Projects', slug: 'guide/multi-stack' },
 						{ label: 'Managing Lexicons', slug: 'guide/managing-lexicons' },
 						{ label: 'Agent Integration', slug: 'guide/agent-integration' },
-						{ label: 'Ops', slug: 'guide/ops' },
 					],
 				},
 				{

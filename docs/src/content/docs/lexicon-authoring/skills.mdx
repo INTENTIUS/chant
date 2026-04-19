@@ -5,6 +5,36 @@ description: AI agent skill files contributed by lexicons
 
 Lexicon authors can include skill files — markdown documents that teach AI agents how to work with the lexicon's resource types and patterns.
 
+## Op-Aware Skills
+
+If your lexicon contributes **Op step builders** — functions users import into `*.op.ts` files — add a dedicated section to your skill content that shows how to use them. Agents authoring Op files will find these instructions alongside your resource authoring patterns.
+
+```markdown
+## Using [My Lexicon] resources in Ops
+
+When your Op needs to apply resources from this lexicon, use the step builders
+exported from `@intentius/chant-lexicon-my-lexicon`:
+
+\`\`\`typescript
+import { Op, phase } from "@intentius/chant-lexicon-temporal";
+import { myLexiconApply } from "@intentius/chant-lexicon-my-lexicon";
+
+export default Op({
+  name: "my-deploy",
+  phases: [
+    phase("Deploy", [myLexiconApply("dist/output.yaml", { profile: "longInfra" })]),
+  ],
+});
+\`\`\`
+
+The MCP server exposes `op-run`, `op-status`, and `op-signal` so you can start
+and monitor this Op programmatically.
+```
+
+The Temporal lexicon's `chant-temporal-ops.md` is the reference example — it teaches agents how to signal gate steps, diagnose stuck activities, and cancel runs via `chant run` and the Temporal CLI.
+
+Not all lexicons need Op-aware skills. Synthesis-only lexicons (those that don't export step builders) don't need this section.
+
 ## The 3-Skill Pattern
 
 A mature lexicon should include 3 skills covering different scopes:
@@ -122,6 +152,8 @@ All 8 lexicons ship skills:
 | GitLab | `chant-gitlab`, `chant-gitlab-patterns` | 2 |
 | Flyway | `chant-flyway`, `chant-flyway-migrations`, `chant-flyway-security` | 3 |
 | Helm | `chant-helm`, `chant-helm-patterns`, `chant-helm-security` | 3 |
+| Temporal | `chant-temporal`, `chant-temporal-ops` | 2 |
+| Slurm | `chant-slurm`, `chant-slurm-generate-cluster`, `chant-slurm-explain-fairshare`, `chant-slurm-generate-job` | 4 |
 
 ## Next Steps
 

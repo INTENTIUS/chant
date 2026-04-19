@@ -1,0 +1,102 @@
+---
+title: Choosing Your Deployment Model
+description: Synthesis-only, Ops, or raw Temporal — pick the right fit for your project
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+chant covers the synthesis step — TypeScript in, validated artifacts out — and offers two optional layers beyond that. Knowing which layer fits your situation avoids unnecessary setup.
+
+## Synthesis Only
+
+`chant build` produces spec-native artifacts (CloudFormation, GitLab CI, Kubernetes manifests, etc.) and stops. Deployment happens however it always has: a CI pipeline, ArgoCD, Terraform, a manual `kubectl apply`. Nothing else to install.
+
+**Use this when:**
+- You already have a deployment pipeline you trust
+- You want to adopt typed, linted IaC without changing operational tooling
+- Your deployments are short-running or trivially retried from scratch
+
+**How to get started:** [Quick Start](/chant/getting-started/quick-start/) — the entire guide is synthesis-only.
+
+```bash
+# That's the complete picture for synthesis-only users
+chant build
+kubectl apply -f dist/infra.yaml   # or whatever your tooling does next
+```
+
+## Ops — Durable Deployment Workflows
+
+Ops are named, phased deployment workflows declared in `*.op.ts` files. `chant build` compiles each Op into a Temporal worker. `chant run <name>` starts the worker and submits the workflow to Temporal.
+
+```typescript
+// deploy.op.ts
+import { Op, phase, kubectlApply, shell } from "@intentius/chant-lexicon-temporal";
+
+export default Op({
+  name: "api-deploy",
+  phases: [
+    phase("Infra", [kubectlApply("dist/infra.yaml", { profile: "longInfra" })]),
+    phase("App",   [kubectlApply("dist/k8s.yaml")]),
+    phase("Smoke", [shell("kubectl rollout status deployment/api")]),
+  ],
+  onFailure: [
+    phase("Rollback", [shell("kubectl delete -f dist/infra.yaml --ignore-not-found")]),
+  ],
+});
+```
+
+```bash
+chant run api-deploy
+```
+
+You get: live phase progress in the Temporal UI, automatic retry on activity failure, `onFailure` phases run if the workflow terminates with an error, and gate steps that pause the workflow until a human or external system sends a signal.
+
+**Use this when:**
+- Deployments take more than a few minutes
+- You want to see current phase and history without grepping logs
+- Some steps need to pause for human approval or an external event (DNS delegation, change-window approval)
+- You want automatic rollback on failure without scripting it yourself
+
+**How to get started:** [Quick Start](/chant/getting-started/quick-start/) for synthesis, then the [Ops guide](/chant/guide/ops/) for Op authoring and `chant run`. Requires a Temporal server or [Temporal Cloud](https://cloud.temporal.io) (free tier available).
+
+## Raw Temporal + chant
+
+You write your own Temporal workflow TypeScript — signals, queries, updates, parallel activities — and use chant-synthesized YAML as the input those activities operate on. This is the approach shown in the [Temporal Workflow-Driven Deploy tutorial](/chant/tutorials/temporal-crdb-deploy/).
+
+```typescript
+// Your own Temporal workflow
+export async function deployWorkflow(params: DeployParams): Promise<void> {
+  await applySharedInfra(params);           // activity calls kubectl apply on chant-built YAML
+  await Promise.all([
+    applyRegionalInfra(params, 'east'),     // parallel activities with heartbeat
+    applyRegionalInfra(params, 'central'),
+    applyRegionalInfra(params, 'west'),
+  ]);
+  setHandler(dnsSignal, () => { dnsReady = true; });
+  await condition(() => dnsReady, '48h');   // gate step — signal or auto-detect
+  // ...
+}
+```
+
+**Use this when:**
+- You're already running Temporal and have existing workers or workflow patterns
+- You need signal/query/update patterns, search attributes, or schedule triggers that Op phases don't expose
+- You want full control over retry policies, heartbeat intervals, and workflow determinism
+
+**How to get started:** [Temporal Workflow-Driven Deploy tutorial](/chant/tutorials/temporal-crdb-deploy/).
+
+<Aside type="note">
+Ops and raw Temporal are not mutually exclusive. A project can have `*.op.ts` files for standard deploys **and** a bespoke workflow for a complex one-off operation. Both consume the same chant-built artifacts.
+</Aside>
+
+## Decision Table
+
+| Situation | Model |
+|-----------|-------|
+| I have ArgoCD / Terraform / an existing deploy pipeline | Synthesis only |
+| My deployment script is more than 50 lines and fails unpredictably | Ops |
+| I need a human approval gate mid-deploy | Ops |
+| I need parallel regional deploys with independent retry | Ops or raw Temporal |
+| I'm already a Temporal shop with existing workers | Raw Temporal |
+| I need custom Temporal search attributes or schedules | Raw Temporal |
+| I need workflow-level queries during a running deploy | Raw Temporal (or Op + MCP `op-status`) |

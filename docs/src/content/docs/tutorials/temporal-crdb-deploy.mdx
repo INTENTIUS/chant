@@ -5,6 +5,10 @@ description: "Replace a 200-line bash deploy script with a durable, observable, 
 
 import { Aside } from '@astrojs/starlight/components';
 
+<Aside type="note" title="Raw Temporal approach">
+This tutorial covers the **raw Temporal path**: you write your own workflow TypeScript with signals, heartbeats, queries, and updates. If you want chant to generate that code from a declarative `*.op.ts` file, see the [Ops guide](/chant/guide/ops/) instead. Not sure which fits your situation? See [Choosing Your Deployment Model](/chant/concepts/deployment-paths/).
+</Aside>
+
 A 50-minute infrastructure deployment is a bad fit for a bash script. When it fails at phase 7, you re-run from scratch. When it's running, you grep logs. When a loop hangs, you wait. This tutorial shows how to replace that bash script with a [Temporal](https://temporal.io) workflow — durable, observable, and resumable — layered on top of the chant-generated YAML.
 
 ## What you'll build
