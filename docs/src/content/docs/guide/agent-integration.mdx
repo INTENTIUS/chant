@@ -3,7 +3,7 @@ title: Agent Integration
 description: How AI agents work with chant — skills, MCP tools, and spells
 ---
 
-chant integrates with AI coding agents through three surfaces: **skills** (operational knowledge), **MCP tools** (programmatic actions), and **spells** (task orchestration). You write TypeScript; the agent uses these surfaces to understand and execute the build → validate → deploy → troubleshoot workflow.
+chant integrates with AI coding agents through three surfaces: **skills** (operational knowledge), **MCP tools** (programmatic actions), and **Ops** (durable deployment workflows). You write TypeScript; the agent uses these surfaces to understand and execute the build → validate → deploy → troubleshoot workflow.
 
 ## Skills
 
@@ -22,7 +22,7 @@ my-project/
     index.ts
 ```
 
-Agents that support file-based skill discovery load these automatically. Skills are also inlined into spell prompts when a spell declares a lexicon (see [Spells](#spells) below).
+Agents that support file-based skill discovery load these automatically.
 
 You don't need to read or manage skill files yourself — they're installed once and the agent reads them as needed.
 
@@ -67,24 +67,28 @@ To configure manually, add the chant MCP server to your IDE's MCP config:
 
 Lexicon plugins can contribute additional tools and resources.
 
-## Spells
+## Ops
 
-Spells orchestrate multi-step agent tasks like deployments. A spell defines **what** to do (deploy this stack, take a state snapshot). When a spell declares a lexicon, the relevant skills are automatically inlined into the generated prompt — the agent gets the full operational playbook without the spell needing to spell out every step.
+Ops are named, phased Temporal workflows defined in `*.op.ts` files. They run durable deployments — phases, gate steps that pause for human signals, compensation on failure — and surface progress in the Temporal UI.
 
 ```bash
-chant spell cast lambda-function
+# Start an Op workflow
+chant run alb-deploy
+
+# Send a signal to unblock a gate step
+chant run signal alb-deploy gate-dns-delegation
 ```
 
-This produces a markdown prompt containing the spell overview, resolved context, inlined skills, and a task checklist. Paste it into your agent to start the work.
+The MCP server exposes Op tools (`op-list`, `op-run`, `op-status`, `op-signal`) so agents can start and monitor deployments programmatically.
 
-See the [Spells guide](/chant/guide/spells/) for details.
+See the [Ops guide](/chant/guide/ops/) for details.
 
 ## When to Use What
 
 | Surface | When | Example |
 |---------|------|---------|
 | **Skills** | Always-on guidance — installed once, agent reads as needed | Agent checks the AWS skill before deploying a CloudFormation stack |
-| **MCP tools** | Programmatic actions during execution | Agent calls `build` to synthesize templates, `lint` to validate |
-| **Spells** | Structured multi-step tasks | Orchestrating a full deploy + state snapshot across dependencies |
+| **MCP tools** | Programmatic actions during execution | Agent calls `build` to synthesize templates, `lint` to validate, `op-run` to start a deployment |
+| **Ops** | Durable multi-step workflows with observability and gate steps | Deploying infra + app layers, waiting for DNS delegation, rollback on failure |
 
-Skills and MCP tools are complementary: skills tell the agent *what to do*, MCP tools let it *do it*. Spells tie both together into repeatable workflows.
+Skills and MCP tools are complementary: skills tell the agent *what to do*, MCP tools let it *do it*. Ops tie both together into repeatable, observable workflows.

@@ -1,0 +1,152 @@
+---
+title: Ops
+description: Run named, phased Temporal workflows alongside your chant infrastructure specs
+---
+
+**Ops** are named, phased Temporal workflows defined in `*.op.ts` files. They turn ad-hoc deployment scripts into durable, observable workflows: progress surfaces in the Temporal UI, gate steps can pause for human approval or external events, and `onFailure` phases handle compensation automatically.
+
+`chant build` compiles each `*.op.ts` into generated Temporal worker code. `chant run <name>` spawns the worker and submits the workflow.
+
+## Defining an Op
+
+Create a `*.op.ts` file anywhere in your project:
+
+```typescript
+import { Op, phase, kubectlApply, shell } from "@intentius/chant-lexicon-temporal";
+
+export default Op({
+  name: "alb-deploy",
+  overview: "Deploy the ALB infra then the application layer",
+  phases: [
+    phase("Infra", [
+      kubectlApply("dist/infra.yaml", { profile: "longInfra" }),
+    ]),
+    phase("App", [
+      kubectlApply("dist/k8s.yaml"),
+      shell("kubectl rollout status deployment/api"),
+    ]),
+  ],
+});
+```
+
+## Phases and steps
+
+Each `phase()` has a name and an ordered list of steps. All steps in a phase run sequentially by default. Set `parallel: true` to run them concurrently via `Promise.all`.
+
+Pre-built step builders:
+
+| Builder | What it does |
+|---------|-------------|
+| `shell(cmd, opts?)` | Run an arbitrary shell command |
+| `build(path)` | Run `chant build` |
+| `kubectlApply(manifest, opts?)` | `kubectl apply -f` |
+| `helmInstall(name, chart, opts?)` | `helm upgrade --install` |
+| `waitForStack(stackFile, opts?)` | Poll until a chant stack output file is ready |
+| `gitlabPipeline(projectId, ref, opts?)` | Trigger a GitLab pipeline and wait |
+| `stateSnapshot(env, opts?)` | `chant state snapshot` |
+| `teardown(path, opts?)` | Build + destroy |
+
+Each step takes an optional `profile` that controls Temporal retry and timeout settings:
+
+| Profile | Suitable for |
+|---------|-------------|
+| `fastIdempotent` (default) | Quick, safe-to-retry steps |
+| `longInfra` | Slow infra changes (cluster create, Helm install) |
+| `k8sWait` | Polling until K8s resources are ready |
+| `humanGate` | Steps that may take hours |
+
+## Gate steps
+
+A gate pauses the workflow until a named signal is received:
+
+```typescript
+import { Op, phase, gate, kubectlApply } from "@intentius/chant-lexicon-temporal";
+
+export default Op({
+  name: "dns-delegation",
+  overview: "Deploy, then wait for DNS delegation before continuing",
+  phases: [
+    phase("Deploy", [kubectlApply("dist/infra.yaml")]),
+    phase("Await DNS", [gate("gate-dns-delegation", "72h")]),
+    phase("Post-delegation", [kubectlApply("dist/k8s.yaml")]),
+  ],
+});
+```
+
+Send the signal when the external action completes:
+
+```bash
+chant run signal dns-delegation gate-dns-delegation
+```
+
+## Compensation on failure
+
+`onFailure` phases run in order if the workflow terminates with an unhandled error:
+
+```typescript
+export default Op({
+  name: "alb-deploy",
+  phases: [
+    phase("Infra", [kubectlApply("dist/infra.yaml", { profile: "longInfra" })]),
+    phase("App",   [kubectlApply("dist/k8s.yaml")]),
+  ],
+  onFailure: [
+    phase("Rollback", [shell("kubectl delete -f dist/infra.yaml --ignore-not-found")]),
+  ],
+});
+```
+
+## Op dependencies
+
+`depends` declares Ops that must succeed before this one starts. `chant build` validates all referenced names exist at build time.
+
+```typescript
+export default Op({
+  name: "app-deploy",
+  depends: ["infra-bootstrap"],
+  // ...
+});
+```
+
+View the dependency graph:
+
+```bash
+chant graph
+```
+
+## Running Ops
+
+```bash
+# Start an Op (spawns Temporal worker + submits workflow)
+chant run alb-deploy
+
+# Use a specific connection profile from chant.config.ts
+chant run alb-deploy --profile cloud
+
+# List all Ops with latest run status
+chant run list
+
+# Show current workflow state
+chant run status alb-deploy
+
+# Unblock a gate step
+chant run signal alb-deploy gate-dns-delegation
+
+# Cancel an active run
+chant run cancel alb-deploy --force
+
+# View run history
+chant run log alb-deploy
+```
+
+See [`chant run`](/chant/cli/run/) for the full CLI reference, and [Worker Profiles](/chant/lexicons/temporal/worker-profiles/) for connection configuration.
+
+## Codegen
+
+`chant build` emits three files per Op under `dist/ops/<name>/`:
+
+| File | Purpose |
+|------|---------|
+| `workflow.ts` | Temporal workflow function — phases, gates, onFailure |
+| `activities.ts` | Re-exports all pre-built activity implementations |
+| `worker.ts` | Worker bootstrap — reads profile from `chant.config.js` |

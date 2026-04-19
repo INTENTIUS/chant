@@ -87,6 +87,53 @@ Search available resource types across loaded lexicons.
 
 Returns matching resource type entries sorted by relevance.
 
+### `op-list`
+
+List all discovered Ops and their latest Temporal run status.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `profile` | `string` | No | Temporal connection profile (default: `defaultProfile`) |
+
+### `op-run`
+
+Start an Op workflow — spawns a worker and submits the workflow to Temporal.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `name` | `string` | Yes | Op name (must match an `*.op.ts` file) |
+| `profile` | `string` | No | Temporal connection profile |
+
+### `op-status`
+
+Show the current state of an Op's latest workflow run.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `name` | `string` | Yes | Op name |
+| `profile` | `string` | No | Temporal connection profile |
+
+Returns `{ workflowId, runId, status, startTime, closeTime, taskQueue, activitiesCompleted, activitiesScheduled }`.
+
+### `op-signal`
+
+Send a named signal to unblock a gate step in a running Op workflow.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `name` | `string` | Yes | Op name |
+| `signal` | `string` | Yes | Signal name (must match the gate's `signalName`) |
+| `profile` | `string` | No | Temporal connection profile |
+
+### `op-report`
+
+Generate a deployment report for an Op without running it.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `name` | `string` | Yes | Op name |
+| `profile` | `string` | No | Temporal connection profile |
+
 ### Plugin Tools
 
 Lexicon plugins can contribute additional tools. Plugin tools are namespaced as `{pluginName}:{toolName}` to avoid conflicts with core tools.
@@ -100,6 +147,9 @@ The server provides resources that agents can read for context:
 | `chant://context` | `text/markdown` | Lexicon-specific instructions, patterns, and best practices |
 | `chant://examples/list` | `application/json` | JSON array of available examples (`[{ name, description }]`) |
 | `chant://examples/<name>` | `text/typescript` | Source code of a specific example |
+| `chant://ops` | `application/json` | List of all discovered Ops with metadata |
+| `chant://ops/{name}/runs` | `application/json` | Recent run history for a specific Op |
+| `chant://ops/{name}/runs/latest` | `application/json` | Latest run state for a specific Op |
 
 ### Plugin Resources
 
@@ -129,8 +179,6 @@ The config looks like:
   }
 }
 ```
-
-(`bunx` is used instead of `npx` when bun is detected as the package manager.)
 
 ### Manual Setup
 
