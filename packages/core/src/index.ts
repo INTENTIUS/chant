@@ -60,7 +60,6 @@ export * from "./lsp/types";
 export * from "./lsp/lexicon-providers";
 export * from "./mcp/types";
 export * from "./state/index";
-export * from "./spell/index";
 // Op builders — use explicit exports to avoid collision with the core `build` function
 export { Op, phase, activity, gate, kubectlApply, helmInstall, waitForStack,
          gitlabPipeline, stateSnapshot, shell, teardown, OpResource } from "./op/index";
