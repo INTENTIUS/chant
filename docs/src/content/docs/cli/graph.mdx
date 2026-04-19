@@ -1,0 +1,49 @@
+---
+title: "chant graph"
+description: Print the Op dependency graph
+---
+
+## Synopsis
+
+```
+chant graph [path]
+```
+
+## Description
+
+`chant graph` discovers all `*.op.ts` files under the given path and prints the dependency edges declared via the `depends` field of each Op.
+
+If no Ops declare dependencies the output is `No Op dependencies`. If no `*.op.ts` files are found the output is `No Ops found`.
+
+## Usage
+
+```bash
+# Graph Ops in current directory
+chant graph
+
+# Graph Ops in a specific directory
+chant graph ./infra
+```
+
+## Output Format
+
+Each dependency is printed as one edge per line:
+
+```
+infra-bootstrap → alb-deploy
+infra-bootstrap → app-deploy
+```
+
+The format is `<dependency> → <dependent>`, meaning the left Op must complete before the right Op can run.
+
+## Exit Codes
+
+| Code | Meaning |
+|------|---------|
+| 0 | Success |
+| 1 | Discovery errors |
+
+## See Also
+
+- [Ops guide](/chant/guide/ops/) — define Op dependencies with `depends`
+- [`chant run`](/chant/cli/run/) — execute an Op workflow

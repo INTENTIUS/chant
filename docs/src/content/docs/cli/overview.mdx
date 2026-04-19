@@ -43,6 +43,31 @@ These commands are for **lexicon authors** — project users don't typically nee
 | [`dev onboard`](/chant/cli/onboard/) | Onboard a new lexicon plugin |
 | [`dev check-lexicon`](/chant/cli/check-lexicon/) | Validate a lexicon bundle |
 
+## Op Commands
+
+Run named Temporal workflows defined in `*.op.ts` files. Requires `@intentius/chant-lexicon-temporal` and a running Temporal server.
+
+| Command | Description |
+|---------|-------------|
+| [`run <name>`](/chant/cli/run/) | Start an Op workflow (spawns worker + submits to Temporal) |
+| [`run list`](/chant/cli/run/) | List all Ops with current run status |
+| [`run status <name>`](/chant/cli/run/) | Show current workflow run state |
+| [`run signal <name> <signal>`](/chant/cli/run/) | Send a named signal to unblock a gate step |
+| [`run cancel <name>`](/chant/cli/run/) | Cancel the active workflow run |
+| [`run log <name>`](/chant/cli/run/) | Show run history for an Op |
+| [`graph`](/chant/cli/graph/) | Print the Op dependency graph |
+
+## State Commands
+
+Capture and compare deployed infrastructure state using orphan git branches.
+
+| Command | Description |
+|---------|-------------|
+| [`state snapshot <env>`](/chant/cli/state/) | Query API, save metadata to orphan branch |
+| [`state show <env>`](/chant/cli/state/) | Show latest state snapshot |
+| [`state diff <env>`](/chant/cli/state/) | Compare current build against last snapshot |
+| [`state log [env]`](/chant/cli/state/) | History of state snapshots |
+
 ## Server Commands
 
 | Command | Description |

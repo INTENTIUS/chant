@@ -1,0 +1,67 @@
+---
+title: "chant state"
+description: Capture and compare deployed infrastructure state
+---
+
+## Synopsis
+
+```
+chant state snapshot <env> [lexicon]
+chant state show <env>
+chant state diff <env>
+chant state log [env]
+```
+
+## Description
+
+`chant state` captures point-in-time snapshots of deployed infrastructure by querying the cloud provider API and saving the result to a git orphan branch. Snapshots enable drift detection — comparing what's currently built against what was last deployed.
+
+The environment name (e.g. `dev`, `staging`, `prod`) must be declared in `chant.config.ts` under `environments`.
+
+## Subcommands
+
+### `state snapshot <env>`
+
+Query the provider API for the current deployed state, then save a snapshot to the `chant-state/<env>` orphan branch.
+
+```bash
+chant state snapshot dev
+chant state snapshot prod aws   # snapshot only the aws lexicon
+```
+
+### `state show <env>`
+
+Print the latest saved snapshot for an environment.
+
+```bash
+chant state show dev
+```
+
+### `state diff <env>`
+
+Build the current project and compare the output against the last snapshot for that environment. Reports added, removed, and modified resources.
+
+```bash
+chant state diff dev
+```
+
+### `state log [env]`
+
+List the history of snapshots. Omit `env` to show all environments.
+
+```bash
+chant state log         # all environments
+chant state log dev     # just dev
+```
+
+## Exit Codes
+
+| Code | Meaning |
+|------|---------|
+| 0 | Success |
+| 1 | Error (invalid environment, API failure, no snapshot found) |
+
+## See Also
+
+- [`chant build`](/chant/cli/build/) — build current output for diffing
+- [Configuration](/chant/configuration/config-file/) — declare `environments` in `chant.config.ts`

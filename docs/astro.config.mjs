@@ -45,7 +45,7 @@ export default defineConfig({
 						{ label: 'Multi-Stack Projects', slug: 'guide/multi-stack' },
 						{ label: 'Managing Lexicons', slug: 'guide/managing-lexicons' },
 						{ label: 'Agent Integration', slug: 'guide/agent-integration' },
-					{ label: 'Spells', slug: 'guide/spells' },
+						{ label: 'Ops', slug: 'guide/ops' },
 					],
 				},
 				{
@@ -90,6 +90,7 @@ export default defineConfig({
 						{ label: 'Flyway', link: '/lexicons/flyway/' },
 						{ label: 'Docker', link: '/lexicons/docker/' },
 						{ label: 'Slurm', link: '/lexicons/slurm/' },
+						{ label: 'Temporal', link: '/lexicons/temporal/' },
 					],
 				},
 				{
@@ -103,6 +104,9 @@ export default defineConfig({
 						{ label: 'import', slug: 'cli/import' },
 						{ label: 'update', slug: 'cli/update' },
 						{ label: 'doctor', slug: 'cli/doctor' },
+						{ label: 'run', slug: 'cli/run' },
+						{ label: 'graph', slug: 'cli/graph' },
+						{ label: 'state', slug: 'cli/state' },
 						{ label: 'serve lsp', slug: 'cli/lsp' },
 						{ label: 'serve mcp', slug: 'cli/mcp' },
 					],

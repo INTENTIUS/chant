@@ -1,0 +1,98 @@
+---
+title: "chant run"
+description: Start and manage Op Temporal workflows
+---
+
+## Synopsis
+
+```
+chant run <name> [flags]
+chant run list [flags]
+chant run status <name> [flags]
+chant run signal <name> <signal> [flags]
+chant run cancel <name> [flags]
+chant run log <name> [flags]
+```
+
+## Description
+
+`chant run` starts and manages **Op** workflows — named, phased Temporal workflows defined in `*.op.ts` files. Running an Op spawns a Temporal worker process and submits the workflow. Requires `@intentius/chant-lexicon-temporal` and a reachable Temporal server.
+
+Connection settings come from `chant.config.ts` under `temporal.profiles`. See [Worker Profiles](/chant/lexicons/temporal/worker-profiles/) for configuration.
+
+## Subcommands
+
+### `run <name>`
+
+Start an Op: spawns the compiled worker for that Op and submits the workflow to Temporal. Polls status every 3 seconds until the workflow completes or fails.
+
+```bash
+chant run alb-deploy
+chant run alb-deploy --profile cloud
+chant run alb-deploy --report   # print deployment report instead of running
+```
+
+### `run list`
+
+List all discovered Ops (`*.op.ts` files) with their current Temporal run status.
+
+```bash
+chant run list
+```
+
+Output columns: `NAME`, `PHASES`, `TASK-QUEUE`, `DEPENDS`, `OVERVIEW`, `STATUS`.
+
+### `run status <name>`
+
+Show the current state of an Op's latest workflow run.
+
+```bash
+chant run status alb-deploy
+```
+
+### `run signal <name> <signal>`
+
+Send a named signal to unblock a gate step in a running workflow.
+
+```bash
+chant run signal alb-deploy gate-dns-delegation
+```
+
+The signal name must match the `signalName` passed to the `gate()` builder in the Op definition.
+
+### `run cancel <name>`
+
+Cancel the active workflow run. Requires `--force`.
+
+```bash
+chant run cancel alb-deploy --force
+```
+
+### `run log <name>`
+
+Show run history for an Op.
+
+```bash
+chant run log alb-deploy
+```
+
+## Flags
+
+| Flag | Description |
+|------|-------------|
+| `-p, --profile <name>` | Temporal worker profile to use (from `chant.config.ts`) |
+| `--report` | Print a deployment report instead of running (`run <name>` only) |
+| `--force` | Required for `run cancel` |
+
+## Exit Codes
+
+| Code | Meaning |
+|------|---------|
+| 0 | Success (workflow completed or command succeeded) |
+| 1 | Error (workflow failed, Op not found, Temporal unreachable) |
+
+## See Also
+
+- [Ops guide](/chant/guide/ops/) — define `*.op.ts` files
+- [Worker Profiles](/chant/lexicons/temporal/worker-profiles/) — configure Temporal connection
+- [`chant graph`](/chant/cli/graph/) — visualize Op dependency graph
