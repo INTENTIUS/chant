@@ -58,9 +58,3 @@ export interface GateStep {
   description?: string;
 }
 
-export interface RetryPolicy {
-  initialInterval?: string;
-  backoffCoefficient?: number;
-  maximumAttempts?: number;
-  maximumInterval?: string;
-}
