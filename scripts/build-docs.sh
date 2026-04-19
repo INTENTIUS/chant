@@ -91,4 +91,31 @@ cd docs && npm install && npm run build && cd ../../..
 mkdir -p "$SITE/lexicons/github"
 cp -r lexicons/github/docs/dist/* "$SITE/lexicons/github/"
 
+# 10. Generate + build Docker lexicon docs
+echo "Building Docker lexicon docs..."
+cd lexicons/docker
+npm run prepack
+npx tsx src/codegen/docs-cli.ts
+cd docs && npm install && npm run build && cd ../../..
+mkdir -p "$SITE/lexicons/docker"
+cp -r lexicons/docker/docs/dist/* "$SITE/lexicons/docker/"
+
+# 11. Generate + build Slurm lexicon docs
+echo "Building Slurm lexicon docs..."
+cd lexicons/slurm
+npm run prepack
+npx tsx src/codegen/docs-cli.ts
+cd docs && npm install && npm run build && cd ../../..
+mkdir -p "$SITE/lexicons/slurm"
+cp -r lexicons/slurm/docs/dist/* "$SITE/lexicons/slurm/"
+
+# 12. Generate + build Temporal lexicon docs
+echo "Building Temporal lexicon docs..."
+cd lexicons/temporal
+npm run prepack
+npx tsx src/codegen/docs-cli.ts
+cd docs && npm install && npm run build && cd ../../..
+mkdir -p "$SITE/lexicons/temporal"
+cp -r lexicons/temporal/docs/dist/* "$SITE/lexicons/temporal/"
+
 echo "Unified docs built to $OUT/"
