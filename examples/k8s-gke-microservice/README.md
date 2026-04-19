@@ -164,13 +164,15 @@ Patterns to add next:
                        → Sidecars, monitoring, TLS, network isolation
 ```
 
-## Spell
+## Op
 
-This example has a corresponding spell for AI-driven deployment:
+This example has a corresponding Op for Temporal-backed deployment:
 
 ```bash
-chant spell cast gke-bootstrap
+chant run gke-bootstrap
 ```
+
+See `ops/gke-bootstrap.op.ts` for the workflow definition.
 
 ## Resource counts
 

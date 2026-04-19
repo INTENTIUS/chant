@@ -13,7 +13,7 @@ import { runServeLsp, runServeMcp, runServeUnknown } from "./handlers/serve";
 import { runInit, runInitLexicon } from "./handlers/init";
 import { runList, runImport, runUpdate, runDoctor } from "./handlers/misc";
 import { runStateSnapshot, runStateShow, runStateDiff, runStateLog, runStateUnknown } from "./handlers/state";
-import { runSpellAdd, runSpellRm, runSpellList, runSpellShow, runSpellCast, runSpellDone, runGraph, runSpellUnknown } from "./handlers/spell";
+import { runGraph } from "./handlers/spell";
 import { runOp, runOpList, runOpStatus, runOpSignal, runOpCancel, runOpLog } from "./handlers/run";
 
 /**
@@ -108,14 +108,7 @@ Ops:
   run cancel <name>     Cancel the active workflow run (requires --force)
   run log <name>        Show run history for an Op
 
-Spells:
-  spell add <name>      Create a new spell
-  spell rm <name>       Remove a spell
-  spell list            List all spells with status
-  spell show <name>     Show spell details
-  spell cast <name>     Generate bootstrap prompt for agent
-  spell done <name> <N> Mark task N as done
-  graph                 Show spell dependency graph
+  graph                 Show Op dependency graph
 
 State:
   state snapshot <env>  Query API, save metadata to orphan branch
@@ -219,13 +212,6 @@ const registry: CommandDef[] = [
   { name: "run log", handler: runOpLog },
   { name: "run", handler: runOp },
 
-  // Spell subcommands
-  { name: "spell add", handler: runSpellAdd },
-  { name: "spell rm", handler: runSpellRm },
-  { name: "spell list", handler: runSpellList },
-  { name: "spell show", handler: runSpellShow },
-  { name: "spell cast", handler: runSpellCast },
-  { name: "spell done", handler: runSpellDone },
   { name: "graph", handler: runGraph },
 
   // State subcommands
@@ -239,7 +225,6 @@ const registry: CommandDef[] = [
   { name: "serve mcp", requiresPlugins: true, handler: runServeMcp },
 
   // Fallback for unknown subcommands (must come after compound entries)
-  { name: "spell", handler: runSpellUnknown },
   { name: "state", handler: runStateUnknown },
   { name: "dev", handler: runDevUnknown },
   { name: "serve", handler: runServeUnknown },
