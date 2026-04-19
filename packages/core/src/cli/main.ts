@@ -13,7 +13,7 @@ import { runServeLsp, runServeMcp, runServeUnknown } from "./handlers/serve";
 import { runInit, runInitLexicon } from "./handlers/init";
 import { runList, runImport, runUpdate, runDoctor } from "./handlers/misc";
 import { runStateSnapshot, runStateShow, runStateDiff, runStateLog, runStateUnknown } from "./handlers/state";
-import { runGraph } from "./handlers/spell";
+import { runGraph } from "./handlers/graph";
 import { runOp, runOpList, runOpStatus, runOpSignal, runOpCancel, runOpLog } from "./handlers/run";
 
 /**
@@ -260,7 +260,7 @@ async function main(): Promise<void> {
     process.exit(1);
   }
 
-  // For compound commands (e.g. "spell cast"), args.path is the subcommand,
+  // For compound commands (e.g. "run list"), args.path is the subcommand,
   // so always use "." as the project path. For simple commands, use args.path.
   const projectPath = match.compound ? (args.extraPositional || ".") : args.path;
   const plugins = match.def.requiresPlugins

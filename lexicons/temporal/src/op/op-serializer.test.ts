@@ -194,6 +194,23 @@ describe("serializeOps()", () => {
       const wf = serializeOps(ops)["ops/op/workflow.ts"];
       expect(wf).toContain("// Phase: Build and Test");
     });
+
+    it("renders onFailure compensation phases after main phases", () => {
+      const ops = new Map([
+        makeOp({
+          name: "safe-op", overview: "o",
+          phases: [
+            { name: "Deploy", steps: [{ kind: "activity", fn: "helmInstall", args: { name: "r", chart: "c" } }] },
+          ],
+          onFailure: [
+            { name: "Rollback", steps: [{ kind: "activity", fn: "helmInstall", args: { name: "r", chart: "c" } }] },
+          ],
+        }),
+      ]);
+      const wf = serializeOps(ops)["ops/safe-op/workflow.ts"];
+      expect(wf).toContain("onFailure compensation");
+      expect(wf).toContain("// Phase: Rollback");
+    });
   });
 
   // ── activities.ts ───────────────────────────────────────────────────────────

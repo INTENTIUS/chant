@@ -14,7 +14,7 @@ schedules in TypeScript — `chant build` compiles them to deployment artifacts.
 | Resources | 4 |
 | Intrinsics | 0 |
 | Pseudo-parameters | 0 |
-| Lint rules | 0 |
+| Lint rules | 2 |
 | Skills | 2 |
 
 ## Resources
@@ -56,3 +56,9 @@ chant build src/ --output dist/
 docker compose up -d          # starts Temporal dev server
 bash dist/temporal-setup.sh   # creates namespace
 ```
+
+## Ops
+
+Ops are named, phased Temporal workflows defined in `*.op.ts` files alongside your chant specs. They replace manual deployment scripts with durable, observable workflows that can be paused at gate steps and resumed with a signal.
+
+See the **[Ops guide](./ops)** for the full Op API, pre-built activity builders, and `chant run` CLI reference.

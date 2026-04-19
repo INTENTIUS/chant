@@ -63,4 +63,4 @@ export * from "./state/index";
 // Op builders — use explicit exports to avoid collision with the core `build` function
 export { Op, phase, activity, gate, kubectlApply, helmInstall, waitForStack,
          gitlabPipeline, stateSnapshot, shell, teardown, OpResource } from "./op/index";
-export type { OpConfig, PhaseDefinition, StepDefinition, ActivityStep, GateStep, RetryPolicy } from "./op/index";
+export type { OpConfig, PhaseDefinition, StepDefinition, ActivityStep, GateStep } from "./op/index";

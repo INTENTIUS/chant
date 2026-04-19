@@ -1,0 +1,186 @@
+---
+title: Ops
+description: Define named, phased Temporal workflows alongside your chant specs using *.op.ts files and chant run.
+---
+
+An **Op** is a named, phased Temporal workflow defined in a `*.op.ts` file. Ops replace ad-hoc deployment scripts with durable workflows that survive restarts, surface progress in the Temporal UI, and can pause at gate steps until a signal unblocks them.
+
+`chant build` compiles each `*.op.ts` into `dist/ops/<name>/{workflow.ts, activities.ts, worker.ts}`. `chant run <name>` spawns the worker and submits the workflow to Temporal.
+
+## Minimal example
+
+```ts
+import { Op, phase, shell } from "@intentius/chant-lexicon-temporal";
+
+export default Op({
+  name: "gke-bootstrap",
+  overview: "Bootstrap a GKE cluster with Config Connector",
+  phases: [
+    phase("Bootstrap", [
+      shell("npm run bootstrap", { cwd: "examples/k8s-gke-microservice" }),
+    ]),
+    phase("Verify", [
+      shell("kubectl get pods -n cnrm-system"),
+    ]),
+  ],
+});
+```
+
+## Op config
+
+| Field | Type | Description |
+|---|---|---|
+| `name` | `string` | Kebab-case identifier. Used as workflow name and output directory. |
+| `overview` | `string` | Human-readable description shown in `chant run list`. |
+| `taskQueue` | `string?` | Temporal task queue. Defaults to `name`. |
+| `namespace` | `string?` | Temporal namespace. Defaults to the active profile's namespace. |
+| `phases` | `PhaseDefinition[]` | Ordered execution phases. |
+| `depends` | `string[]?` | Other Op names that must complete before this Op can run. |
+| `onFailure` | `PhaseDefinition[]?` | Compensation phases run on terminal failure. |
+| `searchAttributes` | `Record<string, string>?` | Temporal search attributes to upsert at workflow start. |
+
+## Phases and steps
+
+Each phase has a `name`, an ordered list of `steps`, and an optional `parallel` flag.
+
+```ts
+phase("Build", [
+  activity("chantBuild", { path: "./src" }),
+  activity("chantBuild", { path: "./infra" }, { profile: "fastIdempotent" }),
+])
+
+// Run all steps concurrently
+phase("Deploy regions", [
+  activity("kubectlApply", { manifest: "east.yaml" }, { profile: "longInfra" }),
+  activity("kubectlApply", { manifest: "west.yaml" }, { profile: "longInfra" }),
+], { parallel: true })
+```
+
+## Pre-built activity builders
+
+These functions return an `ActivityStep` wired to the corresponding pre-built activity in `@intentius/chant-lexicon-temporal/op/activities`.
+
+| Builder | What it runs |
+|---|---|
+| `shell(cmd, opts?)` | Arbitrary shell command (bash) |
+| `build(path)` | `chant build` on the given path |
+| `kubectlApply(manifest, opts?)` | `kubectl apply -f` |
+| `helmInstall(name, chart, opts?)` | `helm upgrade --install` |
+| `waitForStack(stackFile, opts?)` | Poll until a chant stack output is ready |
+| `gitlabPipeline(projectId, ref, opts?)` | Trigger a GitLab pipeline and wait |
+| `stateSnapshot(env, opts?)` | `chant state snapshot` |
+| `teardown(path, opts?)` | `chant build` + destroy |
+
+## Activity profiles
+
+Profiles control Temporal retry and timeout settings via `TEMPORAL_ACTIVITY_PROFILES` from the lexicon package.
+
+| Profile | Suitable for |
+|---|---|
+| `fastIdempotent` (default) | Quick, safe-to-retry steps (build, validate) |
+| `longInfra` | Slow infra changes (cluster create, Helm installs) |
+| `k8sWait` | Polling until K8s resources are ready |
+| `humanGate` | Activities that may take hours (approvals, DNS delegation) |
+
+```ts
+activity("helmInstall", { name: "crdb", chart: "cockroachdb/cockroachdb" }, { profile: "longInfra" })
+```
+
+## Gate steps
+
+A gate step pauses the workflow until a named signal is received (or the timeout expires).
+
+```ts
+import { Op, phase, gate, kubectlApply } from "@intentius/chant-lexicon-temporal";
+
+export default Op({
+  name: "dns-delegation",
+  overview: "Deploy then wait for DNS delegation before continuing",
+  phases: [
+    phase("Deploy", [kubectlApply("dist/infra.yaml")]),
+    phase("Await DNS delegation", [
+      gate("gate-dns-delegation", "72h"),
+    ]),
+    phase("Post-delegation", [kubectlApply("dist/k8s.yaml")]),
+  ],
+});
+```
+
+Send the signal with:
+
+```bash
+chant run signal dns-delegation gate-dns-delegation
+```
+
+## onFailure compensation
+
+`onFailure` phases run in order if the workflow terminates with an error. Use them for rollbacks or cleanup.
+
+```ts
+export default Op({
+  name: "alb-deploy",
+  overview: "Deploy ALB stack with rollback on failure",
+  phases: [
+    phase("Infra", [kubectlApply("dist/infra.yaml", { profile: "longInfra" })]),
+    phase("App", [kubectlApply("dist/k8s.yaml")]),
+  ],
+  onFailure: [
+    phase("Rollback", [shell("kubectl delete -f dist/infra.yaml --ignore-not-found")]),
+  ],
+});
+```
+
+## Op dependencies
+
+`depends` declares other Ops that must complete successfully before this one starts. `chant build` validates that all referenced names exist.
+
+```ts
+export default Op({
+  name: "app-deploy",
+  depends: ["infra-bootstrap"],
+  // ...
+});
+```
+
+View the dependency graph:
+
+```bash
+chant graph
+```
+
+## Codegen output
+
+`chant build` emits three files per Op under `dist/ops/<name>/`:
+
+| File | Contents |
+|---|---|
+| `workflow.ts` | Temporal workflow function — orchestrates phases, gates, onFailure |
+| `activities.ts` | Re-exports all pre-built activities from the lexicon package |
+| `worker.ts` | Worker bootstrap — reads profile from `chant.config.js`, connects to Temporal |
+
+## chant run CLI
+
+```bash
+# Start the Op (spawns worker + submits workflow)
+chant run <name>
+
+# Use a specific Temporal profile from chant.config.ts
+chant run <name> --profile cloud
+
+# List all Ops and their latest run status
+chant run list
+
+# Show current workflow run state
+chant run status <name>
+
+# Send a signal to unblock a gate step
+chant run signal <name> <signal-name>
+
+# Cancel the active workflow run
+chant run cancel <name> --force
+
+# Show run history
+chant run log <name>
+```
+
+See [Worker Profiles](./worker-profiles) for how to configure Temporal connection settings in `chant.config.ts`.
