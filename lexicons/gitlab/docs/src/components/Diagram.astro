@@ -5,7 +5,8 @@ interface Props {
   caption?: string;
 }
 const { name, alt, caption } = Astro.props;
-const src = `${import.meta.env.BASE_URL}diagrams/${name}.svg`;
+const base = import.meta.env.BASE_URL.replace(/\/$/, "");
+const src = `${base}/diagrams/${name}.svg`;
 ---
 <figure class="diagram not-content">
   <img src={src} alt={alt} loading="lazy" decoding="async" style="max-width:100%;height:auto;" />
