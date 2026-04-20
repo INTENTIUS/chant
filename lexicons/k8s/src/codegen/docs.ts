@@ -548,7 +548,11 @@ const { statefulSet, service } = StatefulApp({
         slug: "composite-examples",
         title: "Examples: Composites",
         description: "Composite examples — WebApp, CronWorkload, AutoscaledService, WorkerPool, NamespaceEnv, NodeAgent",
-        content: `Composites are higher-level constructs that produce multiple coordinated K8s resources from a single function call.
+        content: `import Diagram from '../../components/Diagram.astro';
+
+Composites are higher-level constructs that produce multiple coordinated K8s resources from a single function call.
+
+<Diagram name="composite-expansion" alt="Single CockroachDbCluster composite declaration expanding into Namespace, StatefulSet, Service, ServiceAccount, NetworkPolicy, PodDisruptionBudget, and ConfigMap resources serialized to one YAML file" caption="Composite expansion: one declaration → many resources" />
 
 ## WebApp
 

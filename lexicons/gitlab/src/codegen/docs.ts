@@ -105,7 +105,11 @@ export async function generateDocs(opts?: { verbose?: boolean }): Promise<void> 
         slug: "pipeline-concepts",
         title: "Pipeline Concepts",
         description: "Jobs, stages, artifacts, caching, images, rules, environments, and triggers in the GitLab CI/CD lexicon",
-        content: `Every exported \`Job\` declaration becomes a job entry in the generated \`.gitlab-ci.yml\`. The serializer handles the translation automatically:
+        content: `import Diagram from '../../components/Diagram.astro';
+
+Every exported \`Job\` declaration becomes a job entry in the generated \`.gitlab-ci.yml\`. The serializer handles the translation automatically:
+
+<Diagram name="pipeline-hierarchy" alt="GitLab Pipeline with stages (build, test, deploy) each containing jobs, with stage dependencies flowing left to right" caption="GitLab CI pipeline hierarchy" />
 
 - Property names use spec-native snake_case (\`expire_in\`, \`allow_failure\`)
 - Converts export names to kebab-case job keys (\`buildApp\` → \`build-app\`)

@@ -200,7 +200,9 @@ export const reader = new IAMPolicyMember({
         slug: "config-connector-concepts",
         title: "Config Connector Concepts",
         description: "Resource structure, resourceRef, project binding, reconciliation lifecycle",
-        content: `Every exported resource declaration becomes a Config Connector manifest document in the generated YAML.
+        content: `import Diagram from '../../components/Diagram.astro';
+
+Every exported resource declaration becomes a Config Connector manifest document in the generated YAML.
 
 ## Resource structure
 
@@ -256,6 +258,8 @@ This injects the project annotation into every resource. Without it, Config Conn
 ## Reconciliation lifecycle
 
 Config Connector resources go through a reconciliation lifecycle:
+
+<Diagram name="config-connector-lifecycle" alt="Config Connector state machine: YAML applied to kubectl, then Pending → Reconciling → UpToDate, UpdateFailed, or DependencyNotReady with retry paths" caption="Config Connector reconciliation lifecycle" />
 
 | Status | Meaning |
 |--------|---------|
