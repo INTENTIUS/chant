@@ -3,13 +3,24 @@ title: Ops
 description: Run named, phased Temporal workflows alongside your chant infrastructure specs
 ---
 
+import { Aside } from '@astrojs/starlight/components';
 import Diagram from '../../../components/Diagram.astro';
 
 Deciding whether Ops is the right deployment model for your project? See [Choosing Your Deployment Model](/chant/concepts/deployment-paths/).
 
-**Ops** are named, phased Temporal workflows defined in `*.op.ts` files. They turn ad-hoc deployment scripts into durable, observable workflows: progress surfaces in the Temporal UI, gate steps can pause for human approval or external events, and `onFailure` phases handle compensation automatically.
+**Ops** (chant's named-workflow abstraction, not "operations" in general) are named, phased Temporal workflows defined in `*.op.ts` files. They turn ad-hoc deployment scripts into durable, observable workflows: progress surfaces in the Temporal UI, gate steps can pause for human approval or external events, and `onFailure` phases handle compensation automatically.
+
+### When to reach for an Op
+
+- **Long-running deploys** — see current phase without grepping logs.
+- **Gates** — pause for human approval or an external-system event (DNS delegation, change windows).
+- **Automatic rollback** — `onFailure` phases compensate on failure instead of hand-rolled scripts.
 
 `chant build` compiles each `*.op.ts` into generated Temporal worker code. `chant run <name>` spawns the worker and submits the workflow.
+
+<Aside type="note" title="Prerequisites">
+Requires `@intentius/chant-lexicon-temporal` and a reachable Temporal server (or [Temporal Cloud](https://cloud.temporal.io) — free tier available). See [Worker Profiles](/chant/lexicons/temporal/worker-profiles/) for connection configuration.
+</Aside>
 
 <Diagram name="ops-execution-model" alt="Op execution model: sequential phases, parallel phases, gate steps, and onFailure compensation" caption="Op execution model — phases, gates, and compensation" />
 
@@ -34,6 +45,37 @@ export default Op({
   ],
 });
 ```
+
+## Try it locally
+
+Before reaching for real infrastructure, verify your toolchain with a shell-only Op. Save as `hello.op.ts` anywhere in your project:
+
+```typescript
+import { Op, phase, shell } from "@intentius/chant-lexicon-temporal";
+
+export default Op({
+  name: "hello",
+  overview: "Smallest possible Op — one shell step",
+  phases: [
+    phase("Greet", [shell("echo hello from chant")]),
+  ],
+});
+```
+
+In one terminal, start a local Temporal dev server:
+
+```bash
+temporal server start-dev
+```
+
+In another, build and run:
+
+```bash
+chant build
+chant run hello
+```
+
+Once this works end-to-end, swap `shell()` for `kubectlApply()`, `helmInstall()`, or any other step builder to start deploying real resources.
 
 ## Phases and steps
 
@@ -63,7 +105,14 @@ Each step takes an optional `profile` that controls Temporal retry and timeout s
 
 ## Gate steps
 
-A gate pauses the workflow until a named signal is received:
+A gate pauses the workflow until a named signal is received. Typical gate scenarios:
+
+- Human approval inside a change window
+- Manual QA sign-off before promoting to prod
+- Upstream ticket or external-team handoff
+- External system readiness (DNS delegation, TLS cert issuance, vendor provisioning)
+
+The example below waits for DNS delegation to complete before applying the app layer:
 
 ```typescript
 import { Op, phase, gate, kubectlApply } from "@intentius/chant-lexicon-temporal";
