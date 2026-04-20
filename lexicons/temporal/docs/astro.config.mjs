@@ -8,15 +8,22 @@ export default defineConfig({
     starlight({
       title: 'Temporal',
       sidebar: [
-        { label: '← chant docs', link: '../../' },
-        { label: 'Overview', slug: 'index' },
-        { label: 'Getting Started', slug: 'getting-started' },
-        { label: 'Temporal Concepts', slug: 'temporal-concepts' },
-        { label: 'Resources', slug: 'resources' },
-        { label: 'Serialization', slug: 'serialization' },
-        { label: 'Worker Profiles', slug: 'worker-profiles' },
-        { label: 'AI Skills', slug: 'skills' },
-        { label: 'Lint Rules', slug: 'lint-rules' },
+            {
+                  "label": "← chant docs",
+                  "link": "../../"
+            },
+            {
+                  "label": "Overview",
+                  "slug": "index"
+            },
+            {
+                  "label": "Lint Rules",
+                  "slug": "rules"
+            },
+            {
+                  "label": "Serialization",
+                  "slug": "serialization"
+            }
       ],
     }),
   ],

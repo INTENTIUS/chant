@@ -1,0 +1,22 @@
+---
+title: "Lint Rules"
+description: "Lint rules and post-synth checks provided by the Temporal lexicon"
+---
+
+The Temporal lexicon provides **4** rules: 2 lint rules and 2 post-synth checks.
+
+## Lint Rules
+
+| ID | Severity | Category | Description |
+|----|----------|----------|-------------|
+| `TMP001` | error | correctness | TemporalNamespace retention too short |
+| `TMP002` | warning | best-practices | TemporalSchedule AllowAll overlap without explanatory note |
+
+## Post-Synth Checks
+
+Post-synth checks validate the serialized output after the build pipeline completes.
+
+| ID | Description |
+|----|-------------|
+| `TMP010` | TemporalSchedule cron expressions must be valid 5- or 6-field cron syntax |
+| `TMP011` | SearchAttribute.namespace must reference a declared TemporalNamespace entity |
