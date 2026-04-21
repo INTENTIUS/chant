@@ -7,7 +7,7 @@ import Diagram from '../../components/Diagram.astro';
 CloudFormation nested stacks (`AWS::CloudFormation::Stack`) let you decompose large templates into smaller, reusable child templates. The AWS lexicon's `nestedStack()` function references a **child project directory** — a subdirectory that builds independently to a valid CloudFormation template.
 
 :::caution[Consider alternatives first]
-Nested stacks add deployment complexity: child templates must be uploaded to S3, rollbacks are all-or-nothing at the parent level, drift detection doesn't recurse into children, and debugging failures requires drilling into child stack events. For most projects, [flat composites](../composites/) are simpler. Nested stacks are supported for specific cases — exceeding CloudFormation's 500-resource limit or packaging reusable infrastructure as a black box — but are not the recommended default.
+Nested stacks add deployment complexity: child templates must be uploaded to S3, rollbacks are all-or-nothing at the parent level, drift detection doesn't recurse into children, and debugging failures requires drilling into child stack events. For splitting a large project into separately-deployed pieces, prefer [Multi-Stack Projects](/chant/guide/multi-stack/) — each `src/` subdirectory becomes an independent stack with no parent orchestration and no S3 upload step. Nested stacks are supported for specific cases — exceeding CloudFormation's 500-resource limit inside a single deployable unit, or packaging reusable infrastructure for other teams to deploy as a black box — but are not the recommended default.
 :::
 
 <Diagram name="nested-stacks" alt="Parent and child project source directories producing separate CloudFormation templates, both uploaded to S3" caption="Nested stack source layout and output" />
@@ -174,11 +174,12 @@ Three lint rules help catch common nested stack issues:
 
 ## When to use nested stacks
 
-**Prefer flat composites** for most projects. Composites expand into a single template, deploy atomically, and are simpler to debug.
+Most splitting use cases are better served by other mechanisms:
+
+- **Splitting a large project into separately-deployed pieces** → [Multi-Stack Projects](/chant/guide/multi-stack/). Organize `src/` into subdirectories — each becomes an independent stack, deployed on its own, with cross-stack references resolved via standard CloudFormation `Export`/`ImportValue`. No parent template, no S3 upload of children, no `TemplateBasePath` parameter.
+- **Reusing resource patterns within a single template** → [Composites](../composites/). Composites expand into the same template and deploy atomically — they're about DRY, not splitting.
 
 **Use nested stacks only when:**
-- Your template exceeds CloudFormation's 500-resource limit
-- You're packaging reusable infrastructure for other teams to deploy as a black box
-- You need independent update/rollback boundaries (rare — this usually means the resources should be separate stacks entirely)
-
-See [Composites](../composites/) for the flat composite approach.
+- A single deployable unit exceeds CloudFormation's 500-resource limit
+- You're packaging reusable infrastructure for other teams to consume as a black box (the parent-child relationship is load-bearing)
+- You need an orchestrator parent that coordinates child lifecycles via CloudFormation Parameters and Outputs specifically
