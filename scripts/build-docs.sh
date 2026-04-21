@@ -118,4 +118,12 @@ cd docs && npm install && npm run build && cd ../../..
 mkdir -p "$SITE/lexicons/temporal"
 cp -r lexicons/temporal/docs/dist/* "$SITE/lexicons/temporal/"
 
+# Match GitHub Pages: redirect directory URLs to the trailing-slash form so
+# relative links (e.g. ../composites/) resolve the same locally as in prod.
+cat > "$OUT/serve.json" <<'JSON'
+{
+  "trailingSlash": true
+}
+JSON
+
 echo "Unified docs built to $OUT/"
