@@ -6,32 +6,61 @@ description: Splitting resources across multiple stacks
 import { Code } from '@astrojs/starlight/components';
 import outputsSrc from '../../../../../lexicons/aws/src/testdata/nested-stacks/network/outputs.ts?raw';
 import appSrc from '../../../../../lexicons/aws/src/testdata/nested-stacks/app.ts?raw';
-import Diagram from '../../../components/Diagram.astro';
 
-chant supports splitting resources across multiple stacks with automatic cross-stack reference resolution.
+chant supports splitting a project across multiple stacks in two ways:
 
-<Diagram name="multi-stack-projects" alt="Multi-stack project layout: parent source referencing child project via stackOutput, producing separate output files" caption="Multi-stack source layout and output files" />
+- **Directory-based partitioning** — a core chant feature. Subdirectories under `src/` each become a separate stack, with cross-stack references resolved automatically.
+- **Child projects (nested stacks)** — a lexicon-specific feature. A parent file references a child project directory explicitly (e.g. AWS `nestedStack()`), and the child's `stackOutput()` declarations wire the cross-stack references.
 
-When resources in different stacks reference each other, chant generates cross-stack outputs and imports using the appropriate provider-specific mechanism.
+Both modes emit separately-deployable output files. Pick based on how you want the pieces to relate at deploy time: partitioning gives you independent stacks with no orchestrator; child projects give you a parent that references and can deploy the children as a unit.
+
+## Directory-based partitioning
+
+Organize `src/` into subdirectories — each becomes its own stack in `dist/`. Resources in one stack can reference resources in another through normal TypeScript imports; chant translates those into provider-native cross-stack exports/imports (CloudFormation `Export`/`ImportValue`, and so on).
+
+```
+my-project/
+├── chant.config.ts
+├── src/
+│   ├── networking/
+│   │   ├── vpc.ts
+│   │   └── subnets.ts
+│   ├── compute/
+│   │   ├── api-function.ts
+│   │   └── worker-function.ts
+│   └── storage/
+│       ├── data-table.ts
+│       └── assets-bucket.ts
+└── dist/
+    ├── networking.json
+    ├── compute.json
+    ├── storage.json
+    └── manifest.json
+```
+
+See [Multi-Stack Output](/chant/serialization/multi-stack/) for how chant detects single-stack vs. multi-stack mode and the full set of cross-stack primitives.
 
 ## Child projects (nested stacks)
 
-chant supports **child projects** — subdirectories that build to separate, independently-valid templates. The parent references a child project via a lexicon-specific function, and cross-stack outputs are declared explicitly with `stackOutput()`.
+A **child project** is a subdirectory that builds to a separately-valid template, referenced explicitly from a parent file. Unlike partitioning, the parent is aware of the child — it uses a lexicon-specific function like `nestedStack()` and can pass parameters in and read outputs back. Cross-stack values are declared explicitly with `stackOutput()`.
 
 For example, the AWS lexicon's `nestedStack()` function references a child project directory and produces separate CloudFormation child templates:
 
 ```
-src/
-  app.ts            # parent resources
-  network/          # ← child project
-    vpc.ts          # child resources
-    outputs.ts      # stackOutput() declarations
+my-project/
+├── src/
+│   ├── app.ts            ← parent resources + nestedStack() call
+│   └── network/          ← child project
+│       ├── vpc.ts
+│       ├── security.ts
+│       └── outputs.ts    ← stackOutput() declarations
+└── dist/
+    ├── template.json             ← parent (AWS::CloudFormation::Stack)
+    └── network.template.json     ← child (standalone template)
 ```
 
 <Code code={outputsSrc} lang="typescript" title="src/network/outputs.ts" />
 
 <Code code={appSrc} lang="typescript" title="src/app.ts" />
 
-The child can be built independently (`chant build src/network/`), and the parent build produces multiple template files. See your lexicon's documentation for details — for AWS, see the [Nested Stacks](/chant/lexicons/aws/nested-stacks) guide.
-
-For details on how multi-stack serialization works, see [Multi-Stack Output](/chant/serialization/multi-stack/).
+The child can be built independently (`chant build src/network/`), and the parent build produces multiple template files. See your lexicon's documentation for details — for AWS, see the [Nested Stacks](/chant/lexicons/aws/nested-stacks/) guide.
