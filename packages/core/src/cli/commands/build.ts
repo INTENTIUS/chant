@@ -101,6 +101,23 @@ export async function buildCommand(options: BuildOptions): Promise<BuildResult> 
     }
   }
 
+  // Empty-output guard: source files were discovered but no lexicon produced
+  // any output. Almost always indicates broken imports resolving to undefined
+  // (e.g. missing root re-exports from a lexicon) or modules that exported no
+  // Declarables. Without this guard, chant writes "{}" and exits 0.
+  if (
+    result.sourceFileCount > 0 &&
+    result.outputs.size === 0 &&
+    result.errors.length === 0 &&
+    errors.length === 0
+  ) {
+    errors.push(
+      formatError({
+        message: `Discovered ${result.sourceFileCount} source file(s) but produced no output. Likely causes: imports resolving to undefined (missing exports from a lexicon root), or no Declarables/Composites exported. Check that imported names exist in the target package.`,
+      }),
+    );
+  }
+
   // Handle output
   if (result.errors.length === 0 && errors.length === 0) {
     // Extract primary content and collect additional files from SerializerResult
