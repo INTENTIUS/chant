@@ -22,7 +22,7 @@ export * from "./generated/index";
 export {
   GkeCluster, CloudRunServiceComposite, CloudSqlInstance, GcsBucket, VpcNetwork,
   PubSubPipeline, CloudFunctionWithTrigger, PrivateService, ManagedCertificate, SecureProject,
-  MemorystoreRedis,
+  MemorystoreRedis, MultiRegionVpc, GkeCrdbRegion,
 } from "./composites/index";
 export type {
   GkeClusterProps,
@@ -36,6 +36,8 @@ export type {
   ManagedCertificateProps,
   SecureProjectProps,
   MemorystoreRedisProps,
+  MultiRegionVpcConfig, MultiRegionVpcRegion,
+  GkeCrdbRegionConfig, GkeCrdbRegionNodeConfig,
 } from "./composites/index";
 
 // IAM role constants
