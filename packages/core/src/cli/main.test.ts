@@ -198,6 +198,7 @@ describe("resolveCommand", () => {
       watch: false,
       verbose: false,
       help: false,
+      live: false,
       ...overrides,
     };
   }
