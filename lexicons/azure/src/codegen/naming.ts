@@ -82,7 +82,7 @@ const priorityPropertyAliases: Record<string, Record<string, string>> = {
   "Microsoft.Compute/virtualMachines": {
     HardwareProfile: "HardwareProfile",
     StorageProfile: "StorageProfile",
-    OsProfile: "OsProfile",
+    OSProfile: "OsProfile",
     NetworkProfile: "NetworkProfile",
     OSDisk: "OsDisk",
     ImageReference: "ImageReference",
@@ -91,13 +91,13 @@ const priorityPropertyAliases: Record<string, Record<string, string>> = {
     VirtualMachineScaleSetIdentity: "Identity",
   },
   "Microsoft.Network/networkSecurityGroups": {
-    SecurityRule: "SecurityRule",
+    CommonSecurityRule: "SecurityRule",
   },
   "Microsoft.Network/virtualNetworks_subnets": {
-    SubnetPropertiesFormat: "SubnetProperties",
+    CommonSubnetPropertiesFormat: "SubnetProperties",
   },
   "Microsoft.Network/networkInterfaces": {
-    NetworkInterfaceIPConfiguration: "IpConfiguration",
+    CommonNetworkInterfaceIPConfiguration: "IpConfiguration",
   },
   "Microsoft.Sql/servers_databases": {
     Sku: "SqlSku",
