@@ -95,11 +95,16 @@ export function Composite<P, M extends CompositeMembers = CompositeMembers>(
       }
     }
 
-    const instance: CompositeInstance<M> = {
-      [COMPOSITE_MARKER]: true,
-      members,
-      _definition: definition,
-    };
+    // Define `members` and `_definition` as non-enumerable so spreading a
+    // composite instance (`...someComposite`) only exposes the actual member
+    // resources, not the framework's bookkeeping properties. Without this, a
+    // parent composite that does `...childResult` ends up with a `members` key
+    // pointing at the child's CompositeMembers record — not a Declarable —
+    // which then trips the parent's own member validation.
+    const instance = {} as CompositeInstance<M>;
+    Object.defineProperty(instance, COMPOSITE_MARKER, { value: true, enumerable: false });
+    Object.defineProperty(instance, "members", { value: members, enumerable: false });
+    Object.defineProperty(instance, "_definition", { value: definition, enumerable: false });
 
     return Object.assign(instance, members) as CompositeInstance<M> & M;
   }) as CompositeDefinition<P, M>;
