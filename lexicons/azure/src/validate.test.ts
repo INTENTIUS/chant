@@ -22,10 +22,15 @@ describe("validate", () => {
   test.skipIf(!hasGenerated)("validate succeeds with generated artifacts", async () => {
     const { validate } = await import("./validate");
     const result = await validate();
-    // Should return a ValidateResult with checks array
     expect(result).toBeDefined();
     expect(result.checks).toBeDefined();
     expect(Array.isArray(result.checks)).toBe(true);
+
+    // Every check must pass. If any fails, fail the test with a descriptive
+    // message so future upstream schema renames are caught at test time
+    // rather than only at CI generate-and-validate time.
+    const failures = result.checks.filter((c) => !c.ok);
+    expect(failures, `validate checks failed:\n${failures.map((f) => `  ${f.name}: ${f.error ?? "(no message)"}`).join("\n")}`).toEqual([]);
   }, 60_000);
 
   test("handles missing generated files", async () => {

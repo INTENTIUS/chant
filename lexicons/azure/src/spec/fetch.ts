@@ -69,17 +69,10 @@ export interface ArmSchemaDefinition {
   items?: ArmSchemaProperty;
 }
 
-// Pinned to a known-good SHA from before upstream's schema layout changed.
-// Tracking issue: https://github.com/INTENTIUS/chant/issues/23
-// Once the parser is updated to handle the new layout, this can move back
-// to refs/heads/main.tar.gz.
-const SCHEMA_SHA = "5bbb1020775bf57330b4e2c3b0138435e005554f";
 const TARBALL_URL =
-  `https://github.com/Azure/azure-resource-manager-schemas/archive/${SCHEMA_SHA}.tar.gz`;
+  "https://github.com/Azure/azure-resource-manager-schemas/archive/refs/heads/main.tar.gz";
 const CACHE_DIR = join(homedir(), ".chant");
-// Include the SHA in the cache filename so changing the pin invalidates
-// the cache automatically (otherwise a stale tarball would be served until TTL).
-const CACHE_FILE = join(CACHE_DIR, `azure-resource-manager-schemas-${SCHEMA_SHA.slice(0, 12)}.tar.gz`);
+const CACHE_FILE = join(CACHE_DIR, "azure-resource-manager-schemas.tar.gz");
 
 /** Paths to skip (common-types, non-provider files). */
 function isProviderSchema(path: string): boolean {
