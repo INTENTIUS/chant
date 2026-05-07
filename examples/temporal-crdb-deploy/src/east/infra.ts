@@ -28,15 +28,3 @@ export const east = GkeCrdbRegion({
   },
   backupBucket: BACKUP_BUCKET,
 });
-
-// Re-export individual resources for chant discovery
-export const cluster = east.cluster;
-export const nodePool = east.nodePool;
-export const defaultPool = east.defaultPool;
-export const dnsZone = east.dnsZone;
-export const dnsGsa = east.dnsGsa;
-export const dnsWiBinding = east.dnsWiBinding;
-export const dnsAdminBinding = east.dnsAdminBinding;
-export const crdbGsa = east.crdbGsa;
-export const crdbWiBinding = east.crdbWiBinding;
-export const crdbBackupBinding = (east as Record<string, unknown>).crdbBackupBinding;

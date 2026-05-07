@@ -25,13 +25,3 @@ export const west = GkeCrdbRegion({
   backupBucket: BACKUP_BUCKET,
 });
 
-export const cluster = west.cluster;
-export const nodePool = west.nodePool;
-export const defaultPool = west.defaultPool;
-export const dnsZone = west.dnsZone;
-export const dnsGsa = west.dnsGsa;
-export const dnsWiBinding = west.dnsWiBinding;
-export const dnsAdminBinding = west.dnsAdminBinding;
-export const crdbGsa = west.crdbGsa;
-export const crdbWiBinding = west.crdbWiBinding;
-export const crdbBackupBinding = (west as Record<string, unknown>).crdbBackupBinding;
