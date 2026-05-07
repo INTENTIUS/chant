@@ -1,5 +1,5 @@
-import type { LexiconPlugin, ResourceMetadata } from "@intentius/chant";
-import type { Serializer } from "@intentius/chant";
+import type { LexiconPlugin, ResourceMetadata } from "../../core/src/lexicon";
+import type { Serializer } from "../../core/src/serializer";
 import { createMockSerializer } from "./fixtures";
 
 export interface MockPluginOptions {
