@@ -8,13 +8,13 @@ description: Capture and compare deployed infrastructure state
 ```
 chant state snapshot <env> [lexicon]
 chant state show <env>
-chant state diff <env>
+chant state diff <env> [--live]
 chant state log [env]
 ```
 
 ## Description
 
-`chant state` captures point-in-time snapshots of deployed infrastructure by querying the cloud provider API and saving the result to a git orphan branch. Snapshots enable drift detection — comparing what's currently built against what was last deployed.
+`chant state` captures point-in-time snapshots of deployed infrastructure by querying the cloud provider API and saving the result to a git orphan branch. Snapshots enable drift detection — comparing what's currently built against what was last deployed, and (with `--live`) against what's actually in the cloud right now.
 
 The environment name (e.g. `dev`, `staging`, `prod`) must be declared in `chant.config.ts` under `environments`.
 
@@ -39,11 +39,36 @@ chant state show dev
 
 ### `state diff <env>`
 
-Build the current project and compare the output against the last snapshot for that environment. Reports added, removed, and modified resources.
+Two modes, depending on whether `--live` is set.
+
+**Default (digest mode).** Build the current project, fingerprint the resource declarations, and compare against the digest stored in the last snapshot. Fast, offline, and useful as a fast-feedback check inside CI — but only catches changes you've made in source. Ignores the cloud entirely.
 
 ```bash
 chant state diff dev
 ```
+
+Reports added, removed, changed, and unchanged resources at the declaration level.
+
+**`--live` (drift mode).** Query the cloud provider API right now via each lexicon's `describeResources()` plugin method, then compare the live result against both the previous snapshot and the current build. This is the path that actually catches external mutations (someone scaled a node pool by hand, deleted a bucket, etc.).
+
+```bash
+chant state diff prod --live
+```
+
+Output is grouped into six categories per lexicon:
+
+| Category | Meaning |
+|---|---|
+| **missing** | Declared in source, but not present in the cloud right now |
+| **orphan** | Present in the cloud, but not declared in source |
+| **disappeared** | In the previous snapshot, but gone now |
+| **newly observed** | Declared and observed now, but not in any prior snapshot |
+| **drifted** | Observed in both snapshots; status, physical ID, or attributes changed |
+| **unchanged** | Observed in both snapshots; metadata identical |
+
+Drifted entries include attribute-level deltas (`status`, `physicalId`, `lastUpdated`, and each `attributes.*` key).
+
+Lexicons that don't yet implement `describeResources()` are warn-skipped — `--live` doesn't fail the whole command for them. To see which lexicons are covered, the AWS lexicon supports it today; coverage of others is tracked in [issue #27](https://github.com/INTENTIUS/chant/issues/27).
 
 ### `state log [env]`
 
