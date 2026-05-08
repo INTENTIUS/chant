@@ -18,3 +18,5 @@ export {
   expectNoDiagnostics,
   expectDiagnostic,
 } from "./post-synth-harness";
+export { createMockPlugin, staticDescribeResources } from "./mock-plugin";
+export type { MockPluginOptions } from "./mock-plugin";

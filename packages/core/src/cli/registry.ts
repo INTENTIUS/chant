@@ -20,6 +20,7 @@ export interface ParsedArgs {
   help: boolean;
   profile?: string;
   report?: boolean;
+  live: boolean;
 }
 
 /**

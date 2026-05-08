@@ -36,6 +36,7 @@ export function parseArgs(args: string[]): ParsedArgs {
     help: false,
     profile: undefined,
     report: undefined,
+    live: false,
   };
 
   let i = 0;
@@ -64,6 +65,8 @@ export function parseArgs(args: string[]): ParsedArgs {
       result.profile = args[++i];
     } else if (arg === "--report") {
       result.report = true;
+    } else if (arg === "--live") {
+      result.live = true;
     } else if (!arg.startsWith("-")) {
       if (!result.command) {
         result.command = arg;
@@ -114,6 +117,7 @@ State:
   state snapshot <env>  Query API, save metadata to orphan branch
   state show <env>      Show latest state snapshot
   state diff <env>      Compare current build against last snapshot
+                        --live: query cloud now and detect drift
   state log [env]       History of state snapshots
 
 Lexicon development:
