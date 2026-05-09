@@ -195,11 +195,24 @@ export interface LexiconPlugin {
   mcpResources?(): McpResourceContribution[];
 
   // State
-  /** Query deployed resources and return API metadata. Opt-in. */
+  /**
+   * Query deployed resources and return API metadata. Opt-in.
+   *
+   * `entities` carries the chant-side entity declarations for this lexicon,
+   * keyed by chant entity name (e.g. the export name from a `*.ts` file).
+   * Implementations that need to map cloud-side names back to chant entity
+   * names (e.g. Temporal — server-side namespace `prod` ↔ chant entity `ns`
+   * declared with `name: "prod"`) read this; implementations that already
+   * have name parity (e.g. AWS CloudFormation logical IDs == chant entity
+   * names) can ignore it.
+   *
+   * `entityNames` is preserved as a convenience for the simple case.
+   */
   describeResources?(options: {
     environment: string;
     buildOutput: string;
     entityNames: string[];
+    entities: Map<string, { entityType: string; props: Record<string, unknown> }>;
   }): Promise<Record<string, ResourceMetadata>>;
 }
 

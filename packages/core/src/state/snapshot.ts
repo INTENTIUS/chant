@@ -106,11 +106,18 @@ export async function takeSnapshot(
           ? rawOutput
           : (rawOutput as SerializerResult).primary;
 
-    // Get entity names for this lexicon
+    // Get entity names + entity props for this lexicon
     const entityNames: string[] = [];
+    const entities = new Map<string, { entityType: string; props: Record<string, unknown> }>();
     for (const [name, entity] of buildResult.entities) {
       if (entity.lexicon === plugin.name) {
         entityNames.push(name);
+        entities.set(name, {
+          entityType: entity.entityType,
+          props: ("props" in entity && entity.props != null
+            ? entity.props
+            : {}) as Record<string, unknown>,
+        });
       }
     }
 
@@ -119,6 +126,7 @@ export async function takeSnapshot(
         environment,
         buildOutput,
         entityNames,
+        entities,
       });
 
       const { valid, dropped, warnings: validationWarnings } =

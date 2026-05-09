@@ -139,19 +139,81 @@ async function paginateNamespaces(connection: RichConnection): Promise<NonNullab
   return all;
 }
 
-export async function describeResources(_options: {
+/**
+ * Build reverse-lookup maps from server-side identifiers back to chant
+ * entity names, using the `entities` map passed via the plugin contract.
+ *
+ * Mapping rules:
+ *   - Namespace:       props.name              -> entity name
+ *   - SearchAttribute: <ns>/<props.name>       -> entity name
+ *   - Schedule:        <ns>/<props.scheduleId> -> entity name
+ *
+ * For SearchAttribute, the namespace defaults to the *first declared
+ * Temporal::Namespace's name* if the entity itself doesn't pin one — this
+ * matches the serializer's behavior when emitting registration commands.
+ */
+function buildEntityIndex(
+  entities: Map<string, { entityType: string; props: Record<string, unknown> }>,
+): {
+  namespaceByName: Map<string, string>;
+  searchAttrByKey: Map<string, string>;
+  scheduleByKey: Map<string, string>;
+  defaultNamespace?: string;
+} {
+  const namespaceByName = new Map<string, string>();
+  const searchAttrByKey = new Map<string, string>();
+  const scheduleByKey = new Map<string, string>();
+  let defaultNamespace: string | undefined;
+
+  for (const [entityName, { entityType, props }] of entities) {
+    if (entityType === "Temporal::Namespace") {
+      const nsName = (props.name as string) || "";
+      if (nsName) {
+        namespaceByName.set(nsName, entityName);
+        if (!defaultNamespace) defaultNamespace = nsName;
+      }
+    }
+  }
+
+  for (const [entityName, { entityType, props }] of entities) {
+    if (entityType === "Temporal::SearchAttribute") {
+      const attrName = (props.name as string) || "";
+      const ns = (props.namespace as string) || defaultNamespace || "";
+      if (attrName && ns) searchAttrByKey.set(`${ns}/${attrName}`, entityName);
+    } else if (entityType === "Temporal::Schedule") {
+      const scheduleId = (props.scheduleId as string) || "";
+      const ns = (props.namespace as string) || defaultNamespace || "";
+      if (scheduleId && ns) scheduleByKey.set(`${ns}/${scheduleId}`, entityName);
+    }
+  }
+
+  return { namespaceByName, searchAttrByKey, scheduleByKey, defaultNamespace };
+}
+
+export async function describeResources(options: {
   environment: string;
   buildOutput: string;
   entityNames: string[];
+  entities: Map<string, { entityType: string; props: Record<string, unknown> }>;
 }): Promise<Record<string, ResourceMetadata>> {
   const { config } = await loadChantConfig(process.cwd());
-  const profile = resolveProfileForEnv(config as Record<string, unknown>, _options.environment);
+  const profile = resolveProfileForEnv(config as Record<string, unknown>, options.environment);
 
   const mod = (await loadTemporalClient()) as unknown as RichClientModule;
   const connection = await mod.Connection.connect(connectionOptions(profile));
   const client = new mod.Client({ connection });
 
+  const idx = buildEntityIndex(options.entities);
   const result: Record<string, ResourceMetadata> = {};
+
+  // Map a server-side identifier to a chant entity name when possible;
+  // otherwise fall back to the server-side prefixed key (orphan).
+  const keyForNamespace = (name: string): string =>
+    idx.namespaceByName.get(name) ?? `namespace/${name}`;
+  const keyForSearchAttr = (ns: string, attr: string): string =>
+    idx.searchAttrByKey.get(`${ns}/${attr}`) ?? `searchAttribute/${ns}/${attr}`;
+  const keyForSchedule = (ns: string, scheduleId: string): string =>
+    idx.scheduleByKey.get(`${ns}/${scheduleId}`) ?? `schedule/${ns}/${scheduleId}`;
 
   try {
     const namespaces = await paginateNamespaces(connection);
@@ -160,7 +222,7 @@ export async function describeResources(_options: {
       const name = ns.namespaceInfo?.name;
       if (!name) continue;
 
-      result[`namespace/${name}`] = {
+      result[keyForNamespace(name)] = {
         type: "Temporal::Namespace",
         physicalId: name,
         status: namespaceStateToString(ns.namespaceInfo?.state),
@@ -176,7 +238,7 @@ export async function describeResources(_options: {
       try {
         const sa = await connection.operatorService.listSearchAttributes({ namespace: name });
         for (const [attrName, valueType] of Object.entries(sa.customAttributes ?? {})) {
-          result[`searchAttribute/${name}/${attrName}`] = {
+          result[keyForSearchAttr(name, attrName)] = {
             type: "Temporal::SearchAttribute",
             physicalId: `${name}/${attrName}`,
             status: "REGISTERED",
@@ -199,7 +261,7 @@ export async function describeResources(_options: {
       try {
         for await (const s of client.scheduleClient.list({ namespace: name })) {
           if (!s.scheduleId) continue;
-          result[`schedule/${name}/${s.scheduleId}`] = {
+          result[keyForSchedule(name, s.scheduleId)] = {
             type: "Temporal::Schedule",
             physicalId: `${name}/${s.scheduleId}`,
             status: s.state?.paused ? "PAUSED" : "ACTIVE",
