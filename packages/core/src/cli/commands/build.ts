@@ -5,7 +5,7 @@ import { runPostSynthChecks } from "../../lint/post-synth";
 import type { PostSynthCheck } from "../../lint/post-synth";
 import { sortedJsonReplacer } from "../../utils";
 import { formatError, formatWarning, formatSuccess, formatBold, formatInfo } from "../format";
-import { writeFileSync } from "fs";
+import { writeFileSync, mkdirSync } from "fs";
 import { resolve, dirname, join } from "path";
 import { watchDirectory, formatTimestamp, formatChangedFiles } from "../watch";
 
@@ -188,9 +188,11 @@ export async function buildCommand(options: BuildOptions): Promise<BuildResult> 
     }
 
     if (options.output) {
-      // Write to file
+      // Write to file — ensure parent directories exist for both the primary
+      // output path and any nested additional-file paths (e.g. ops/<name>/...).
       try {
         const outputPath = resolve(options.output);
+        mkdirSync(dirname(outputPath), { recursive: true });
         writeFileSync(outputPath, output);
 
         // Write additional files (e.g. nested stack templates) alongside the primary output
@@ -208,7 +210,9 @@ export async function buildCommand(options: BuildOptions): Promise<BuildResult> 
             } catch {
               // If not JSON, write as-is
             }
-            writeFileSync(join(outputDir, filename), fileContent);
+            const targetPath = join(outputDir, filename);
+            mkdirSync(dirname(targetPath), { recursive: true });
+            writeFileSync(targetPath, fileContent);
           }
         }
       } catch (err) {
