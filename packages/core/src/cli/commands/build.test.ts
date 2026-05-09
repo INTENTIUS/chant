@@ -132,18 +132,71 @@ export const testEntity = {
     expect(result.fileCount).toBeDefined();
   });
 
-  test("handles invalid output path", async () => {
+  test("creates parent directories for the primary output path (#38)", async () => {
+    // Write into a nested temp path whose parent dirs don't yet exist —
+    // chant build should mkdir -p the parents rather than fail with ENOENT.
+    const nestedOutput = join(testDir, "deep", "nested", "out", "file.json");
+
     const options: BuildOptions = {
       path: testDir,
-      output: "/nonexistent/directory/file.json",
+      output: nestedOutput,
       format: "json",
       serializers: [mockSerializer],
     };
 
     const result = await buildCommand(options);
 
-    // Should report error about output file
-    expect(result.errors.length).toBeGreaterThan(0);
-    expect(result.errors.some((e) => e.includes("output"))).toBe(true);
+    expect(result.errors).toEqual([]);
+    expect(existsSync(nestedOutput)).toBe(true);
+  });
+
+  test("creates parent directories for nested additional-files (#38)", async () => {
+    // Simulate a multi-file serializer (like the Op codegen) that emits
+    // additional files under nested subpaths.
+    const multiFileSerializer: Serializer = {
+      name: "multi",
+      rulePrefix: "MULTI",
+      serialize: () => ({
+        primary: "{}",
+        files: {
+          "ops/alb-deploy/workflow.ts": "// workflow\n",
+          "ops/alb-deploy/activities.ts": "// activities\n",
+          "ops/alb-deploy/worker.ts": "// worker\n",
+        },
+      }),
+    };
+
+    // Need at least one entity in the "multi" lexicon so the build pipeline
+    // invokes the serializer and the additional files surface.
+    await writeFile(
+      join(testDir, "infra.ts"),
+      [
+        `export const x = {`,
+        `  [Symbol.for("chant.declarable")]: true,`,
+        `  entityType: "X",`,
+        `  lexicon: "multi",`,
+        `  kind: "resource",`,
+        `  props: {},`,
+        `  attributes: {},`,
+        `};`,
+      ].join("\n"),
+    );
+
+    const outputPath = join(testDir, "dist", "manifest.json");
+
+    const options: BuildOptions = {
+      path: testDir,
+      output: outputPath,
+      format: "json",
+      serializers: [multiFileSerializer],
+    };
+
+    const result = await buildCommand(options);
+
+    expect(result.errors).toEqual([]);
+    expect(existsSync(outputPath)).toBe(true);
+    expect(existsSync(join(testDir, "dist", "ops", "alb-deploy", "workflow.ts"))).toBe(true);
+    expect(existsSync(join(testDir, "dist", "ops", "alb-deploy", "activities.ts"))).toBe(true);
+    expect(existsSync(join(testDir, "dist", "ops", "alb-deploy", "worker.ts"))).toBe(true);
   });
 });
