@@ -16,8 +16,8 @@ export type { GitlabPipelineArgs } from "./gitlab";
 export { shellCmd } from "./shell";
 export type { ShellCmdArgs } from "./shell";
 
-export { stateSnapshot } from "./state";
-export type { StateSnapshotArgs } from "./state";
+export { stateSnapshot, stateDiff } from "./state";
+export type { StateSnapshotArgs, StateDiffArgs, StateDiffResult } from "./state";
 
 export { chantTeardown } from "./teardown";
 export type { ChantTeardownArgs } from "./teardown";

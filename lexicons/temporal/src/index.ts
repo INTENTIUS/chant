@@ -27,6 +27,8 @@ export { TemporalDevStack } from "./composites/dev-stack";
 export type { TemporalDevStackConfig, TemporalDevStackResources } from "./composites/dev-stack";
 export { TemporalCloudStack } from "./composites/cloud-stack";
 export type { TemporalCloudStackConfig, TemporalCloudStackResources } from "./composites/cloud-stack";
+export { WatchOp } from "./composites/watch-op";
+export type { WatchOpConfig, WatchOpResources } from "./composites/watch-op";
 
 // Op builders (re-exported from core for single-import convenience)
 export {

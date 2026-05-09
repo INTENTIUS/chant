@@ -201,6 +201,31 @@ For an Op with N phases this is **N+1 upsert calls total**. Values are wrapped a
 
 User-provided keys merge over the `OpName` default; if you set `searchAttributes: { OpName: "custom" }` the user value wins.
 
+## Continuous observation
+
+Pair an Op with a `TemporalSchedule` to get periodic state observation — a deployment dashboard that catches drift between change windows, not just at the next deploy. The `WatchOp` composite wires the pieces together:
+
+```typescript
+import { WatchOp } from "@intentius/chant-lexicon-temporal";
+
+export const { op, schedule } = WatchOp({
+  name: "prod-watch",
+  env: "prod",
+  schedule: "*/15 * * * *",  // every 15 minutes
+});
+```
+
+The composite produces:
+
+- An **Op** with two phases — `Snapshot` (runs `chant state snapshot <env>`) and `Diff` (runs `chant state diff <env> --live`)
+- A **TemporalSchedule** that fires the Op's workflow on the configured cron
+
+Generated `workflow.ts` opens with `upsertSearchAttributes({ OpName, Watch: ["true"], Env: ["prod"] })`, then upserts `Phase: ["Snapshot"]` / `Phase: ["Diff"]` at each phase boundary. In the Temporal UI you can filter on `Watch = "true"` to see all watch runs, then on `Env` to scope to an environment.
+
+Set `live: false` on `WatchOp` to use the digest-only diff (faster, no cloud queries) for environments without `describeResources()` coverage. See [`chant state`](/chant/cli/state/) for the full diff semantics.
+
+> **Drift classification:** `stateDiff` returns the raw diff output rather than a structured `drifted: yes/no` flag — drift filtering today is a "scan workflow event log for the MISSING/ORPHAN/DRIFTED section headers" exercise. A workflow-level `Drift` search attribute would need either an Op codegen extension to feed activity results back into `upsertSearchAttributes` or a small custom workflow; tracked as a follow-up if it becomes important.
+
 ## Op dependencies
 
 `depends` declares Ops that must succeed before this one starts. `chant build` validates all referenced names exist at build time.
