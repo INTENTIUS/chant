@@ -72,6 +72,17 @@ Lexicons that don't yet implement `describeResources()` are warn-skipped — `--
 
 The Temporal lexicon resolves its connection via the chant config: `state snapshot <env>` (or `--live` against `<env>`) looks up `temporal.profiles.<env>` in your `chant.config.ts` and falls back to `temporal.defaultProfile`. The same profile model is used by `chant run`. Server-side identifiers are used as the resource keys (e.g. `namespace/prod`, `searchAttribute/prod/Project`, `schedule/prod/daily-report`).
 
+### Concurrent snapshots
+
+Snapshots are pushed to the orphan `chant/state` branch with `git push --force-with-lease`. If two operators (or a CI job + a human) take a snapshot for the same remote at the same time, the second push is **rejected** rather than silently overwriting the first. You'll see:
+
+```
+error: Another snapshot completed for chant/state after this run started (env: prod).
+hint:  Pull and retry: `git fetch origin chant/state:chant/state` && `chant state snapshot prod`.
+```
+
+Pull the remote ref and re-run — the first snapshot is preserved, the second proceeds against the updated baseline.
+
 ### `state log [env]`
 
 List the history of snapshots. Omit `env` to show all environments.
