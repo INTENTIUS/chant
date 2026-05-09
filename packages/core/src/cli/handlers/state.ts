@@ -234,9 +234,16 @@ async function runStateDiffLive(args: LiveDiffArgs): Promise<number> {
 
     // Resources declared in this lexicon's slice of the build
     const declared = new Set<string>();
+    const entities = new Map<string, { entityType: string; props: Record<string, unknown> }>();
     for (const [name, entity] of args.buildResult.entities) {
       if (entity.lexicon === lexiconName) {
         declared.add(name);
+        entities.set(name, {
+          entityType: entity.entityType,
+          props: ("props" in entity && entity.props != null
+            ? entity.props
+            : {}) as Record<string, unknown>,
+        });
       }
     }
 
@@ -254,6 +261,7 @@ async function runStateDiffLive(args: LiveDiffArgs): Promise<number> {
         environment: args.environment,
         buildOutput,
         entityNames: Array.from(declared),
+        entities,
       });
     } catch (err) {
       console.error(formatError({

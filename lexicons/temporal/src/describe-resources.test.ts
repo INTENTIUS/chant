@@ -130,7 +130,7 @@ describe("describeResources", () => {
     });
     setupClientMock(connection, client);
 
-    const result = await describeResources({ environment: "dev", buildOutput: "", entityNames: [] });
+    const result = await describeResources({ environment: "dev", buildOutput: "", entityNames: [], entities: new Map() });
 
     expect(Object.keys(result).sort()).toEqual([
       "namespace/default",
@@ -155,7 +155,7 @@ describe("describeResources", () => {
     });
     setupClientMock(connection, client);
 
-    const result = await describeResources({ environment: "prod", buildOutput: "", entityNames: [] });
+    const result = await describeResources({ environment: "prod", buildOutput: "", entityNames: [], entities: new Map() });
 
     expect(result["namespace/prod"]).toEqual({
       type: "Temporal::Namespace",
@@ -191,7 +191,7 @@ describe("describeResources", () => {
       Client: vi.fn() as unknown as new () => unknown,
     });
 
-    await expect(describeResources({ environment: "dev", buildOutput: "", entityNames: [] }))
+    await expect(describeResources({ environment: "dev", buildOutput: "", entityNames: [], entities: new Map() }))
       .rejects.toThrow(/UNAVAILABLE/);
   });
 
@@ -200,7 +200,7 @@ describe("describeResources", () => {
     const client = fakeClient({});
     setupClientMock(connection, client);
 
-    const result = await describeResources({ environment: "dev", buildOutput: "", entityNames: [] });
+    const result = await describeResources({ environment: "dev", buildOutput: "", entityNames: [], entities: new Map() });
 
     expect(result).toEqual({});
   });
@@ -220,7 +220,7 @@ describe("describeResources", () => {
     });
     setupClientMock(connection, client);
 
-    const result = await describeResources({ environment: "dev", buildOutput: "", entityNames: [] });
+    const result = await describeResources({ environment: "dev", buildOutput: "", entityNames: [], entities: new Map() });
 
     // Both namespaces present
     expect(result["namespace/broken"]).toBeDefined();
@@ -233,5 +233,96 @@ describe("describeResources", () => {
     // Warnings emitted
     expect(warnSpy).toHaveBeenCalledTimes(2);
     warnSpy.mockRestore();
+  });
+
+  // ── Round-trip mapping via entity props (#39) ───────────────────────────────
+
+  test("maps server-side namespace back to chant entity name when props.name matches", async () => {
+    const connection = fakeConnection({
+      namespaces: [{ name: "prod" }],
+      searchAttributesByNs: {},
+      schedulesByNs: {},
+    });
+    const client = fakeClient({});
+    setupClientMock(connection, client);
+
+    const entities = new Map<string, { entityType: string; props: Record<string, unknown> }>([
+      ["prodNs", { entityType: "Temporal::Namespace", props: { name: "prod", retention: "30d" } }],
+    ]);
+
+    const result = await describeResources({ environment: "prod", buildOutput: "", entityNames: ["prodNs"], entities });
+
+    expect(result["prodNs"]).toBeDefined();
+    expect(result["namespace/prod"]).toBeUndefined();
+    expect(result["prodNs"].physicalId).toBe("prod");
+  });
+
+  test("maps SearchAttribute back to chant entity name via props.name + props.namespace", async () => {
+    const connection = fakeConnection({
+      namespaces: [{ name: "prod" }],
+      searchAttributesByNs: { prod: { Project: 2, OtherAttr: 1 } },
+      schedulesByNs: {},
+    });
+    const client = fakeClient({});
+    setupClientMock(connection, client);
+
+    const entities = new Map<string, { entityType: string; props: Record<string, unknown> }>([
+      ["projectAttr", { entityType: "Temporal::SearchAttribute", props: { name: "Project", type: "Keyword", namespace: "prod" } }],
+    ]);
+
+    const result = await describeResources({ environment: "prod", buildOutput: "", entityNames: ["projectAttr"], entities });
+
+    expect(result["projectAttr"]).toBeDefined();
+    expect(result["searchAttribute/prod/Project"]).toBeUndefined();
+    // Undeclared attr → orphan key (server-side prefix)
+    expect(result["searchAttribute/prod/OtherAttr"]).toBeDefined();
+  });
+
+  test("maps Schedule back to chant entity name via props.scheduleId", async () => {
+    const connection = fakeConnection({
+      namespaces: [{ name: "prod" }],
+      searchAttributesByNs: {},
+      schedulesByNs: {},
+    });
+    const client = fakeClient({
+      schedulesByNs: {
+        prod: [
+          { scheduleId: "daily-report", workflowType: "reportWf" },
+          { scheduleId: "weekly-cleanup", workflowType: "cleanupWf" },
+        ],
+      },
+    });
+    setupClientMock(connection, client);
+
+    const entities = new Map<string, { entityType: string; props: Record<string, unknown> }>([
+      ["dailyReport", { entityType: "Temporal::Schedule", props: { scheduleId: "daily-report", namespace: "prod" } }],
+    ]);
+
+    const result = await describeResources({ environment: "prod", buildOutput: "", entityNames: ["dailyReport"], entities });
+
+    expect(result["dailyReport"]).toBeDefined();
+    expect(result["schedule/prod/daily-report"]).toBeUndefined();
+    expect(result["schedule/prod/weekly-cleanup"]).toBeDefined();
+  });
+
+  test("SearchAttribute without explicit namespace falls back to first declared namespace's name", async () => {
+    const connection = fakeConnection({
+      namespaces: [{ name: "prod" }],
+      searchAttributesByNs: { prod: { Project: 2 } },
+      schedulesByNs: {},
+    });
+    const client = fakeClient({});
+    setupClientMock(connection, client);
+
+    const entities = new Map<string, { entityType: string; props: Record<string, unknown> }>([
+      ["prodNs", { entityType: "Temporal::Namespace", props: { name: "prod" } }],
+      // No namespace prop on the attribute — should default to "prod"
+      ["projectAttr", { entityType: "Temporal::SearchAttribute", props: { name: "Project", type: "Keyword" } }],
+    ]);
+
+    const result = await describeResources({ environment: "prod", buildOutput: "", entityNames: ["prodNs", "projectAttr"], entities });
+
+    expect(result["projectAttr"]).toBeDefined();
+    expect(result["searchAttribute/prod/Project"]).toBeUndefined();
   });
 });
