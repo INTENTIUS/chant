@@ -22,13 +22,8 @@ export async function writeSnapshot(
   const rt = getRuntime();
   const cwd = opts?.cwd;
 
-  // 1. Write blob
-  const hashResult = await rt.spawn(
-    ["git", "hash-object", "-w", "--stdin"],
-    { cwd },
-  );
-  // hash-object reads from stdin, but spawn doesn't support piping directly.
-  // Use a shell pipeline instead.
+  // 1. Write blob — hash-object reads from stdin, but spawn() doesn't expose
+  // a stdin handle, so we run via a shell pipeline (`echo … | git hash-object`).
   const blobResult = await rt.spawn(
     ["sh", "-c", `echo '${json.replace(/'/g, "'\\''")}' | git hash-object -w --stdin`],
     { cwd },
