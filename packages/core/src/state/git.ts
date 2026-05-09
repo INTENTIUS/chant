@@ -174,20 +174,77 @@ export async function listSnapshots(
 }
 
 /**
- * Push the state branch to remote.
+ * Thrown by pushState when the remote chant/state branch has moved since
+ * the local snapshot was prepared — i.e. another snapshot for this or a
+ * different env was pushed concurrently. The caller should fetch and retry.
+ */
+export class StaleStateBranchError extends Error {
+  readonly expected: string | null;
+  constructor(expected: string | null, stderr: string) {
+    super(
+      "chant/state remote branch has moved since this run started — " +
+      "another snapshot was pushed concurrently. " +
+      `git stderr: ${stderr.trim()}`,
+    );
+    this.name = "StaleStateBranchError";
+    this.expected = expected;
+  }
+}
+
+/**
+ * Look up the remote-tracking SHA for chant/state, if any. Returns null when
+ * the remote ref doesn't exist locally yet (e.g. first-ever snapshot).
+ */
+export async function getRemoteStateBranchSha(
+  remote: string,
+  opts?: { cwd?: string },
+): Promise<string | null> {
+  const rt = getRuntime();
+  const ref = `refs/remotes/${remote}/${STATE_BRANCH}`;
+  const result = await rt.spawn(["git", "rev-parse", "--verify", ref], { cwd: opts?.cwd });
+  if (result.exitCode !== 0) return null;
+  return result.stdout.trim() || null;
+}
+
+/**
+ * Push the state branch to remote with --force-with-lease.
+ *
+ * If the remote chant/state ref has advanced past the local remote-tracking
+ * SHA captured at the start of this push, the push is rejected and we throw
+ * StaleStateBranchError so the caller can surface a recovery hint.
+ *
+ * Returns false (without throwing) only when no remote is configured at all.
  */
 export async function pushState(opts?: { cwd?: string }): Promise<boolean> {
   const rt = getRuntime();
-  // Check if remote exists
   const remoteResult = await rt.spawn(["git", "remote"], { cwd: opts?.cwd });
   if (remoteResult.exitCode !== 0 || !remoteResult.stdout.trim()) return false;
 
   const remote = remoteResult.stdout.trim().split("\n")[0];
+
+  // Capture the lease SHA — if null, the remote ref doesn't exist yet
+  // (first-time push) and we send `--force-with-lease=ref:` (empty SHA),
+  // which git interprets as "ref does not exist on remote".
+  const expected = await getRemoteStateBranchSha(remote, opts);
+  const lease = `refs/heads/${STATE_BRANCH}:${expected ?? ""}`;
+
   const pushResult = await rt.spawn(
-    ["git", "push", remote, `${STATE_BRANCH}:${STATE_BRANCH}`],
+    ["git", "push", `--force-with-lease=${lease}`, remote, `${STATE_BRANCH}:${STATE_BRANCH}`],
     { cwd: opts?.cwd },
   );
-  return pushResult.exitCode === 0;
+
+  if (pushResult.exitCode !== 0) {
+    const stderr = pushResult.stderr ?? "";
+    if (
+      stderr.includes("stale info") ||
+      stderr.includes("rejected") ||
+      stderr.includes("non-fast-forward")
+    ) {
+      throw new StaleStateBranchError(expected, stderr);
+    }
+    return false;
+  }
+  return true;
 }
 
 /**

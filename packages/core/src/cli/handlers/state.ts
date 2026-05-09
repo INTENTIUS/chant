@@ -1,7 +1,7 @@
 import { resolve } from "node:path";
 import { build } from "../../build";
 import { takeSnapshot } from "../../state/snapshot";
-import { readSnapshot, readEnvironmentSnapshots, listSnapshots, fetchState } from "../../state/git";
+import { readSnapshot, readEnvironmentSnapshots, listSnapshots, fetchState, StaleStateBranchError } from "../../state/git";
 import { computeBuildDigest, diffDigests } from "../../state/digest";
 import { diffLive, type LiveDiffResult } from "../../state/live-diff";
 import { loadChantConfig } from "../../config";
@@ -58,7 +58,19 @@ export async function runStateSnapshot(ctx: CommandContext): Promise<number> {
     return 1;
   }
 
-  const result = await takeSnapshot(environment, pluginsWithDescribe, buildResult);
+  let result;
+  try {
+    result = await takeSnapshot(environment, pluginsWithDescribe, buildResult);
+  } catch (err) {
+    if (err instanceof StaleStateBranchError) {
+      console.error(formatError({
+        message: `Another snapshot completed for chant/state after this run started (env: ${environment}).`,
+        hint: `Pull and retry: \`git fetch origin ${"chant/state"}:${"chant/state"}\` && \`chant state snapshot ${environment}\`.`,
+      }));
+      return 1;
+    }
+    throw err;
+  }
 
   for (const w of result.warnings) {
     console.error(formatWarning({ message: w }));

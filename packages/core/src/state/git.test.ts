@@ -9,6 +9,8 @@ import {
   readEnvironmentSnapshots,
   listSnapshots,
   getHeadCommit,
+  pushState,
+  StaleStateBranchError,
 } from "./git";
 
 function git(args: string[], cwd: string): { stdout: string; exitCode: number } {
@@ -98,5 +100,92 @@ describe("state/git", () => {
       const head = await getHeadCommit({ cwd: dir });
       expect(head).toMatch(/^[0-9a-f]{40}$/);
     });
+  });
+
+  // ── Concurrent push rejection (#30) ─────────────────────────────────────────
+
+  /**
+   * Build a "remote ↔ clone" pair where `clone` has `remote` configured as
+   * `origin`. Returns the clone path; the caller writes snapshots there.
+   */
+  async function setupClonePair(): Promise<{ clonePath: string; remotePath: string; cleanup: () => Promise<void> }> {
+    const remotePath = join(import.meta.dirname ?? "/tmp", `chant-state-remote-${Date.now()}-${Math.random()}`);
+    const clonePath = join(import.meta.dirname ?? "/tmp", `chant-state-clone-${Date.now()}-${Math.random()}`);
+    const { mkdir, rm } = await import("node:fs/promises");
+    await mkdir(remotePath, { recursive: true });
+    git(["init", "-q", "--bare", "-b", "main"], remotePath);
+    git(["clone", "-q", remotePath, clonePath], import.meta.dirname ?? "/tmp");
+    git(["config", "user.email", "test@chant.dev"], clonePath);
+    git(["config", "user.name", "Test"], clonePath);
+    writeFileSync(join(clonePath, "README.md"), "fixture\n");
+    git(["add", "README.md"], clonePath);
+    git(["commit", "-q", "-m", "init"], clonePath);
+    git(["push", "-q", "origin", "main"], clonePath);
+    return {
+      clonePath,
+      remotePath,
+      cleanup: async () => {
+        await rm(remotePath, { recursive: true, force: true });
+        await rm(clonePath, { recursive: true, force: true });
+      },
+    };
+  }
+
+  test("first push to remote succeeds (no remote ref yet)", async () => {
+    const { clonePath, cleanup } = await setupClonePair();
+    try {
+      await writeSnapshot("prod", "aws", JSON.stringify({ a: 1 }), { cwd: clonePath });
+      const ok = await pushState({ cwd: clonePath });
+      expect(ok).toBe(true);
+    } finally {
+      await cleanup();
+    }
+  });
+
+  test("subsequent push from same clone (after fetch) succeeds via lease", async () => {
+    const { clonePath, cleanup } = await setupClonePair();
+    try {
+      await writeSnapshot("prod", "aws", JSON.stringify({ a: 1 }), { cwd: clonePath });
+      expect(await pushState({ cwd: clonePath })).toBe(true);
+
+      // Pull the remote ref into local remote-tracking, then commit + push again
+      git(["fetch", "-q", "origin", "+refs/heads/chant/state:refs/remotes/origin/chant/state"], clonePath);
+      await writeSnapshot("prod", "aws", JSON.stringify({ a: 2 }), { cwd: clonePath });
+      expect(await pushState({ cwd: clonePath })).toBe(true);
+    } finally {
+      await cleanup();
+    }
+  });
+
+  test("concurrent write rejected: second push throws StaleStateBranchError", async () => {
+    // Simulate two concurrent operators by setting up two clones of the same remote.
+    const { clonePath: cloneA, remotePath, cleanup } = await setupClonePair();
+    const cloneB = join(import.meta.dirname ?? "/tmp", `chant-state-clone-b-${Date.now()}-${Math.random()}`);
+    try {
+      git(["clone", "-q", remotePath, cloneB], import.meta.dirname ?? "/tmp");
+      git(["config", "user.email", "test@chant.dev"], cloneB);
+      git(["config", "user.name", "Test"], cloneB);
+
+      // Operator A writes + pushes first.
+      await writeSnapshot("prod", "aws", JSON.stringify({ a: 1 }), { cwd: cloneA });
+      expect(await pushState({ cwd: cloneA })).toBe(true);
+
+      // Operator B writes from the same baseline (chant/state doesn't exist
+      // on cloneB's remote-tracking yet) and tries to push — should fail
+      // with StaleStateBranchError because A's push moved the remote ref.
+      await writeSnapshot("staging", "gcp", JSON.stringify({ b: 2 }), { cwd: cloneB });
+      await expect(pushState({ cwd: cloneB })).rejects.toBeInstanceOf(StaleStateBranchError);
+    } finally {
+      await cleanup();
+      const { rm } = await import("node:fs/promises");
+      await rm(cloneB, { recursive: true, force: true });
+    }
+  });
+
+  test("StaleStateBranchError carries the expected SHA used as the lease", async () => {
+    const err = new StaleStateBranchError(null, "stale info: ...");
+    expect(err.name).toBe("StaleStateBranchError");
+    expect(err.expected).toBeNull();
+    expect(err.message).toContain("moved");
   });
 });
