@@ -119,6 +119,28 @@ function generateWorkflow(config: OpConfig): string {
   lines.push(`  upsertSearchAttributes(${JSON.stringify(initialAttrs)});`);
   lines.push("");
 
+  // Counter for outcome-attribute capture variables (workflow-scoped).
+  let resultCounter = 0;
+  const nextResultVar = (): string => `__r${resultCounter++}`;
+
+  // Build a `String(<var>?.<from-path>)` fragment from a dot-path.
+  const stringifyFromPath = (varName: string, from?: string): string => {
+    if (!from) return `String(${varName})`;
+    const parts = from.split(".");
+    return `String(${varName}?.${parts.join("?.")})`;
+  };
+
+  // Emit `upsertSearchAttributes({ <name>: [<expr>] })` for an outcome attr.
+  const emitOutcomeUpsert = (
+    step: ActivityStep,
+    varName: string,
+    indent = "  ",
+  ): string | null => {
+    if (!step.outcomeAttribute) return null;
+    const { name, from } = step.outcomeAttribute;
+    return `${indent}upsertSearchAttributes({ ${JSON.stringify(name)}: [${stringifyFromPath(varName, from)}] });`;
+  };
+
   const renderPhases = (phases: PhaseDefinition[]) => {
     for (const phase of phases) {
       const phaseLines: string[] = [];
@@ -129,20 +151,47 @@ function generateWorkflow(config: OpConfig): string {
       const gateSteps = phase.steps.filter(isGateStep);
 
       if (phase.parallel && activitySteps.length > 1) {
-        phaseLines.push("  await Promise.all([");
-        for (const step of activitySteps) {
-          const argsStr = step.args && Object.keys(step.args).length > 0
-            ? JSON.stringify(step.args)
-            : "{}";
-          phaseLines.push(`    ${step.fn}(${argsStr}),`);
+        // Capture results into an array if any step has an outcome attribute,
+        // otherwise just await Promise.all without the destructure.
+        const anyOutcome = activitySteps.some((s) => s.outcomeAttribute);
+        if (anyOutcome) {
+          const vars = activitySteps.map(() => nextResultVar());
+          phaseLines.push(`  const [${vars.join(", ")}] = await Promise.all([`);
+          for (let i = 0; i < activitySteps.length; i++) {
+            const step = activitySteps[i];
+            const argsStr = step.args && Object.keys(step.args).length > 0
+              ? JSON.stringify(step.args)
+              : "{}";
+            phaseLines.push(`    ${step.fn}(${argsStr}),`);
+          }
+          phaseLines.push("  ]);");
+          for (let i = 0; i < activitySteps.length; i++) {
+            const upsert = emitOutcomeUpsert(activitySteps[i], vars[i]);
+            if (upsert) phaseLines.push(upsert);
+          }
+        } else {
+          phaseLines.push("  await Promise.all([");
+          for (const step of activitySteps) {
+            const argsStr = step.args && Object.keys(step.args).length > 0
+              ? JSON.stringify(step.args)
+              : "{}";
+            phaseLines.push(`    ${step.fn}(${argsStr}),`);
+          }
+          phaseLines.push("  ]);");
         }
-        phaseLines.push("  ]);");
       } else {
         for (const step of activitySteps) {
           const argsStr = step.args && Object.keys(step.args).length > 0
             ? JSON.stringify(step.args)
             : "{}";
-          phaseLines.push(`  await ${step.fn}(${argsStr});`);
+          if (step.outcomeAttribute) {
+            const v = nextResultVar();
+            phaseLines.push(`  const ${v} = await ${step.fn}(${argsStr});`);
+            const upsert = emitOutcomeUpsert(step, v);
+            if (upsert) phaseLines.push(upsert);
+          } else {
+            phaseLines.push(`  await ${step.fn}(${argsStr});`);
+          }
         }
       }
 

@@ -169,6 +169,8 @@ describe("WatchOp: configuration", () => {
     expect(diffStep.fn).toBe("stateDiff");
     expect(snapStep.args).toEqual({ env: "prod" });
     expect(diffStep.args).toEqual({ env: "prod", live: true });
+    // Drift is surfaced as a workflow search attribute via outcomeAttribute (#41)
+    expect(diffStep.outcomeAttribute).toEqual({ name: "Drift", from: "drifted" });
   });
 
   test("auto-emit search attrs include Watch + Env", () => {
@@ -224,6 +226,8 @@ describe("WatchOp: serialization", () => {
     expect(wf).toContain('upsertSearchAttributes({ Phase: ["Snapshot"] });');
     expect(wf).toContain('upsertSearchAttributes({ Phase: ["Diff"] });');
     expect(wf).toContain("stateSnapshot(");
-    expect(wf).toContain("stateDiff(");
+    // Diff result captured + Drift search attribute auto-emitted
+    expect(wf).toContain("const __r0 = await stateDiff(");
+    expect(wf).toContain('upsertSearchAttributes({ "Drift": [String(__r0?.drifted)] });');
   });
 });

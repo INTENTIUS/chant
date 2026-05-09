@@ -201,6 +201,31 @@ For an Op with N phases this is **N+1 upsert calls total**. Values are wrapped a
 
 User-provided keys merge over the `OpName` default; if you set `searchAttributes: { OpName: "custom" }` the user value wins.
 
+### Outcome-based search attributes
+
+Activity steps support an optional `outcomeAttribute` field that captures the activity's return value and surfaces it as a workflow search attribute:
+
+```typescript
+phase("Diff", [
+  {
+    kind: "activity",
+    fn: "stateDiff",
+    args: { env: "prod", live: true },
+    // Capture stateDiff's `drifted` field and tag the run Drift=true/false
+    outcomeAttribute: { name: "Drift", from: "drifted" },
+  },
+]),
+```
+
+The serializer turns this into:
+
+```typescript
+const __r0 = await stateDiff({"env":"prod","live":true});
+upsertSearchAttributes({ "Drift": [String(__r0?.drifted)] });
+```
+
+`from` is a dot-path into the return value; when omitted, the whole return value is stringified. Counters are workflow-scoped (`__r0`, `__r1`, ...), and parallel phases destructure `Promise.all` results so each outcome attribute fires after the corresponding activity returns.
+
 ## Continuous observation
 
 Pair an Op with a `TemporalSchedule` to get periodic state observation — a deployment dashboard that catches drift between change windows, not just at the next deploy. The `WatchOp` composite wires the pieces together:
@@ -224,7 +249,7 @@ Generated `workflow.ts` opens with `upsertSearchAttributes({ OpName, Watch: ["tr
 
 Set `live: false` on `WatchOp` to use the digest-only diff (faster, no cloud queries) for environments without `describeResources()` coverage. See [`chant state`](/chant/cli/state/) for the full diff semantics.
 
-> **Drift classification:** `stateDiff` returns the raw diff output rather than a structured `drifted: yes/no` flag — drift filtering today is a "scan workflow event log for the MISSING/ORPHAN/DRIFTED section headers" exercise. A workflow-level `Drift` search attribute would need either an Op codegen extension to feed activity results back into `upsertSearchAttributes` or a small custom workflow; tracked as a follow-up if it becomes important.
+> **Drift classification:** `stateDiff` returns `{ drifted: boolean, output, exitCode }`, and `WatchOp`'s Diff step is declared with `outcomeAttribute: { name: "Drift", from: "drifted" }` so each run is automatically tagged with `Drift = "true"` / `"false"` in the Temporal UI. Filter on `Drift = "true"` to see the runs that detected actual drift.
 
 ## Op dependencies
 

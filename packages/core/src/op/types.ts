@@ -46,6 +46,19 @@ export interface ActivityStep {
    * Default: "fastIdempotent"
    */
   profile?: "fastIdempotent" | "longInfra" | "k8sWait" | "humanGate";
+  /**
+   * Surface this activity's return value as a workflow search attribute.
+   *
+   * The serializer captures the awaited result into a temporary, then emits
+   * `upsertSearchAttributes({ <name>: [String(<from-path>)] })` immediately
+   * after. Useful for filtering runs by outcome (e.g. `Drift: "true"/"false"`
+   * from a stateDiff activity).
+   *
+   * `from` is a dot-path into the return value (e.g. `"drifted"` for
+   * `{ drifted: boolean }`); when omitted, the whole return value is
+   * stringified.
+   */
+  outcomeAttribute?: { name: string; from?: string };
 }
 
 export interface GateStep {

@@ -381,4 +381,128 @@ describe("serializeOps()", () => {
       expect(wf).toContain('upsertSearchAttributes({ Phase: ["Notify"] });');
     });
   });
+
+  // ── outcomeAttribute (#41) ──────────────────────────────────────────────────
+
+  describe("outcomeAttribute auto-emit", () => {
+    it("captures activity result and emits an upsert with from-path", () => {
+      const ops = new Map([
+        makeOp({
+          name: "watch",
+          overview: "watch",
+          phases: [
+            {
+              name: "Diff",
+              steps: [
+                { kind: "activity", fn: "stateDiff", args: { env: "prod" }, outcomeAttribute: { name: "Drift", from: "drifted" } },
+              ],
+            },
+          ],
+        }),
+      ]);
+      const wf = serializeOps(ops)["ops/watch/workflow.ts"];
+      expect(wf).toContain('const __r0 = await stateDiff({"env":"prod"});');
+      expect(wf).toContain('upsertSearchAttributes({ "Drift": [String(__r0?.drifted)] });');
+    });
+
+    it("stringifies whole result when from is omitted", () => {
+      const ops = new Map([
+        makeOp({
+          name: "watch",
+          overview: "watch",
+          phases: [
+            {
+              name: "Check",
+              steps: [
+                { kind: "activity", fn: "checkSomething", outcomeAttribute: { name: "Status" } },
+              ],
+            },
+          ],
+        }),
+      ]);
+      const wf = serializeOps(ops)["ops/watch/workflow.ts"];
+      expect(wf).toContain('upsertSearchAttributes({ "Status": [String(__r0)] });');
+    });
+
+    it("nested from-path uses optional-chain stringify", () => {
+      const ops = new Map([
+        makeOp({
+          name: "watch",
+          overview: "watch",
+          phases: [
+            {
+              name: "Inspect",
+              steps: [
+                { kind: "activity", fn: "deepInspect", outcomeAttribute: { name: "Ok", from: "result.healthy" } },
+              ],
+            },
+          ],
+        }),
+      ]);
+      const wf = serializeOps(ops)["ops/watch/workflow.ts"];
+      expect(wf).toContain('upsertSearchAttributes({ "Ok": [String(__r0?.result?.healthy)] });');
+    });
+
+    it("counter is workflow-scoped: multiple outcome attrs use __r0, __r1, ...", () => {
+      const ops = new Map([
+        makeOp({
+          name: "watch",
+          overview: "watch",
+          phases: [
+            { name: "A", steps: [{ kind: "activity", fn: "first", outcomeAttribute: { name: "FirstResult" } }] },
+            { name: "B", steps: [{ kind: "activity", fn: "second", outcomeAttribute: { name: "SecondResult" } }] },
+          ],
+        }),
+      ]);
+      const wf = serializeOps(ops)["ops/watch/workflow.ts"];
+      expect(wf).toContain("const __r0 = await first(");
+      expect(wf).toContain("const __r1 = await second(");
+      expect(wf).toContain('upsertSearchAttributes({ "FirstResult": [String(__r0)] });');
+      expect(wf).toContain('upsertSearchAttributes({ "SecondResult": [String(__r1)] });');
+    });
+
+    it("activities without outcomeAttribute keep the bare-await form", () => {
+      const ops = new Map([
+        makeOp({
+          name: "mixed",
+          overview: "mixed",
+          phases: [
+            {
+              name: "Mix",
+              steps: [
+                { kind: "activity", fn: "noOutcome" },
+                { kind: "activity", fn: "withOutcome", outcomeAttribute: { name: "Result" } },
+              ],
+            },
+          ],
+        }),
+      ]);
+      const wf = serializeOps(ops)["ops/mixed/workflow.ts"];
+      expect(wf).toContain("await noOutcome({});");
+      expect(wf).toContain("const __r0 = await withOutcome({});");
+    });
+
+    it("parallel phase with outcome attrs destructures Promise.all results", () => {
+      const ops = new Map([
+        makeOp({
+          name: "fan",
+          overview: "fan",
+          phases: [
+            {
+              name: "Parallel",
+              parallel: true,
+              steps: [
+                { kind: "activity", fn: "alpha", outcomeAttribute: { name: "AlphaOk", from: "ok" } },
+                { kind: "activity", fn: "beta", outcomeAttribute: { name: "BetaOk", from: "ok" } },
+              ],
+            },
+          ],
+        }),
+      ]);
+      const wf = serializeOps(ops)["ops/fan/workflow.ts"];
+      expect(wf).toContain("const [__r0, __r1] = await Promise.all([");
+      expect(wf).toContain('upsertSearchAttributes({ "AlphaOk": [String(__r0?.ok)] });');
+      expect(wf).toContain('upsertSearchAttributes({ "BetaOk": [String(__r1?.ok)] });');
+    });
+  });
 });
