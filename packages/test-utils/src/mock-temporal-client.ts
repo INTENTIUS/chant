@@ -115,11 +115,7 @@ export function createMockTemporalClient(opts: MockTemporalClientOptions = {}): 
         async start(workflowFn: unknown, startOpts: Record<string, unknown>) {
           calls.startCalls.push({ workflowFn, opts: startOpts });
           const workflowId = String(startOpts.workflowId ?? "mock-wf");
-          return {
-            workflowId,
-            firstExecutionRunId: "mock-run-id",
-            ...makeHandle(workflowId),
-          };
+          return { ...makeHandle(workflowId), firstExecutionRunId: "mock-run-id" };
         },
         getHandle(workflowId: string) {
           return makeHandle(workflowId);
