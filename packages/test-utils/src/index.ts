@@ -20,3 +20,12 @@ export {
 } from "./post-synth-harness";
 export { createMockPlugin, staticDescribeResources } from "./mock-plugin";
 export type { MockPluginOptions } from "./mock-plugin";
+export { createMockTemporalClient } from "./mock-temporal-client";
+export type {
+  MockTemporalClientOptions,
+  MockTemporalClient,
+  MockWorkflowDescription,
+  MockHistoryEvent,
+  MockWorkflowSummary,
+  RecordedCalls,
+} from "./mock-temporal-client";
