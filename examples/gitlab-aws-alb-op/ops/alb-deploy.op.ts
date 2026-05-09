@@ -17,6 +17,14 @@ export default Op({
   overview: "Build and deploy the ALB multi-service stack to the target environment",
   taskQueue: "alb-deploy",
 
+  // Auto-injected into workflow.upsertSearchAttributes() at workflow start
+  // alongside OpName. Each phase boundary additionally upserts Phase. These
+  // attributes must be registered server-side via SearchAttribute resources.
+  searchAttributes: {
+    Environment: "staging",
+    Region: "us-east-1",
+  },
+
   phases: [
     phase("Build", [
       build("examples/gitlab-aws-alb-infra"),
