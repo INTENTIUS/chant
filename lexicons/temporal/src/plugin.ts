@@ -283,4 +283,9 @@ export const temporalPlugin: LexiconPlugin = {
     const { generateDocs } = await import("./codegen/docs");
     return generateDocs(options);
   },
+
+  async describeResources(options) {
+    const { describeResources } = await import("./describe-resources");
+    return describeResources(options);
+  },
 };
