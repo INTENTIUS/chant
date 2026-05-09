@@ -33,15 +33,33 @@ export interface StateDiffResult {
   output: string;
   /** Process exit code (0 = success). */
   exitCode: number;
+  /**
+   * True when the diff output contains any drift indicators
+   * (MISSING / ORPHAN / DRIFTED / DISAPPEARED section headers from
+   * `chant state diff --live`).
+   */
+  drifted: boolean;
 }
 
 /**
- * Run `chant state diff <env>` and return the output. Read-only; intended
- * for use inside watch/observation workflows. Uses fastIdempotent profile.
+ * Section headers emitted by `chant state diff --live` that indicate a
+ * non-empty drift category. See packages/core/src/cli/handlers/state.ts.
+ */
+const DRIFT_HEADERS = ["MISSING", "ORPHAN", "DISAPPEARED", "DRIFTED"];
+
+function detectDrift(output: string): boolean {
+  return DRIFT_HEADERS.some((h) => output.includes(`${h} (`) || output.includes(`\n${h}`));
+}
+
+/**
+ * Run `chant state diff <env>` and return the output + structured drift
+ * flag. Read-only; intended for use inside watch/observation workflows.
+ * Uses fastIdempotent profile.
  *
- * Does not classify drift itself — callers can scan the output for the
+ * The `drifted` field is computed by scanning the output for any of the
  * MISSING / ORPHAN / DRIFTED / DISAPPEARED section headers documented in
- * cli/state.mdx.
+ * cli/state.mdx. Pair with `outcomeAttribute: { name: "Drift", from: "drifted" }`
+ * on a WatchOp activity step to surface drift as a workflow search attribute.
  */
 export async function stateDiff(args: StateDiffArgs): Promise<StateDiffResult> {
   const liveFlag = args.live ? " --live" : "";
@@ -49,11 +67,11 @@ export async function stateDiff(args: StateDiffArgs): Promise<StateDiffResult> {
     const { stdout, stderr } = await execAsync(`chant state diff ${args.env}${liveFlag}`);
     const output = `${stdout}${stderr}`.trim();
     if (output) console.log(output);
-    return { output, exitCode: 0 };
+    return { output, exitCode: 0, drifted: detectDrift(output) };
   } catch (err) {
     const e = err as { code?: number; stdout?: string; stderr?: string };
     const output = `${e.stdout ?? ""}${e.stderr ?? ""}`.trim();
     if (output) console.error(output);
-    return { output, exitCode: e.code ?? 1 };
+    return { output, exitCode: e.code ?? 1, drifted: detectDrift(output) };
   }
 }

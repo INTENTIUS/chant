@@ -74,7 +74,17 @@ export function WatchOp(config: WatchOpConfig): WatchOpResources {
     },
     phases: [
       phase("Snapshot", [activity("stateSnapshot", { env: config.env })]),
-      phase("Diff", [activity("stateDiff", { env: config.env, live })]),
+      phase("Diff", [
+        // outcomeAttribute surfaces stateDiff's `drifted` boolean as a
+        // workflow-level Drift search attribute, making 'show me runs that
+        // detected drift' a one-filter UI query.
+        {
+          kind: "activity",
+          fn: "stateDiff",
+          args: { env: config.env, live },
+          outcomeAttribute: { name: "Drift", from: "drifted" },
+        },
+      ]),
     ],
   });
 
