@@ -1,10 +1,12 @@
 /**
- * Composite unit tests — TemporalDevStack, TemporalCloudStack.
+ * Composite unit tests — TemporalDevStack, TemporalCloudStack, WatchOp.
  */
 
 import { describe, test, expect } from "vitest";
 import { TemporalDevStack } from "./dev-stack";
 import { TemporalCloudStack } from "./cloud-stack";
+import { WatchOp } from "./watch-op";
+import { serializeOps } from "../op/serializer";
 import { DECLARABLE_MARKER } from "@intentius/chant/declarable";
 
 function getProps(entity: unknown): Record<string, unknown> {
@@ -127,5 +129,101 @@ describe("TemporalCloudStack: basic", () => {
   test("description is forwarded to namespace", () => {
     const { ns } = TemporalCloudStack({ namespace: "prod", description: "Production namespace" });
     expect(getProps(ns).description).toBe("Production namespace");
+  });
+});
+
+// ── WatchOp ──────────────────────────────────────────────────────────
+
+describe("WatchOp: shape", () => {
+  test("returns op + schedule resources", () => {
+    const result = WatchOp({ name: "prod-watch", env: "prod", schedule: "*/15 * * * *" });
+    expect(result.op).toBeDefined();
+    expect(result.schedule).toBeDefined();
+  });
+
+  test("op has entityType Temporal::Op", () => {
+    const { op } = WatchOp({ name: "prod-watch", env: "prod", schedule: "*/15 * * * *" });
+    expect(getEntityType(op)).toBe("Temporal::Op");
+  });
+
+  test("schedule has entityType Temporal::Schedule", () => {
+    const { schedule } = WatchOp({ name: "prod-watch", env: "prod", schedule: "*/15 * * * *" });
+    expect(getEntityType(schedule)).toBe("Temporal::Schedule");
+  });
+
+  test("both entities are Declarable", () => {
+    const { op, schedule } = WatchOp({ name: "prod-watch", env: "prod", schedule: "*/15 * * * *" });
+    expect((op as Record<symbol, unknown>)[DECLARABLE_MARKER]).toBe(true);
+    expect((schedule as Record<symbol, unknown>)[DECLARABLE_MARKER]).toBe(true);
+  });
+});
+
+describe("WatchOp: configuration", () => {
+  test("op has Snapshot + Diff phases referencing the right activities", () => {
+    const { op } = WatchOp({ name: "p", env: "prod", schedule: "*/15 * * * *" });
+    const phases = (getProps(op).phases as Array<Record<string, unknown>>) ?? [];
+    expect(phases.map((p) => p.name)).toEqual(["Snapshot", "Diff"]);
+    const snapStep = (phases[0].steps as Array<Record<string, unknown>>)[0];
+    const diffStep = (phases[1].steps as Array<Record<string, unknown>>)[0];
+    expect(snapStep.fn).toBe("stateSnapshot");
+    expect(diffStep.fn).toBe("stateDiff");
+    expect(snapStep.args).toEqual({ env: "prod" });
+    expect(diffStep.args).toEqual({ env: "prod", live: true });
+  });
+
+  test("auto-emit search attrs include Watch + Env", () => {
+    const { op } = WatchOp({ name: "p", env: "prod", schedule: "* * * * *" });
+    expect(getProps(op).searchAttributes).toEqual({ Watch: "true", Env: "prod" });
+  });
+
+  test("schedule.action.workflowType is camelCase + 'Workflow'", () => {
+    const { schedule } = WatchOp({ name: "prod-watch", env: "prod", schedule: "* * * * *" });
+    const action = (getProps(schedule).action as Record<string, unknown>);
+    expect(action.workflowType).toBe("prodWatchWorkflow");
+  });
+
+  test("schedule.spec.cronExpressions carries the configured cron", () => {
+    const { schedule } = WatchOp({ name: "p", env: "prod", schedule: "0 0 * * *" });
+    const spec = (getProps(schedule).spec as Record<string, unknown>);
+    expect(spec.cronExpressions).toEqual(["0 0 * * *"]);
+  });
+
+  test("scheduleId is `${name}-schedule`", () => {
+    const { schedule } = WatchOp({ name: "prod-watch", env: "prod", schedule: "* * * * *" });
+    expect(getProps(schedule).scheduleId).toBe("prod-watch-schedule");
+  });
+
+  test("taskQueue defaults to name and is shared by op + schedule", () => {
+    const { op, schedule } = WatchOp({ name: "p-watch", env: "prod", schedule: "* * * * *" });
+    expect(getProps(op).taskQueue).toBe("p-watch");
+    expect((getProps(schedule).action as Record<string, unknown>).taskQueue).toBe("p-watch");
+  });
+
+  test("taskQueue override is honored", () => {
+    const { op, schedule } = WatchOp({ name: "p", env: "prod", schedule: "* * * * *", taskQueue: "custom-q" });
+    expect(getProps(op).taskQueue).toBe("custom-q");
+    expect((getProps(schedule).action as Record<string, unknown>).taskQueue).toBe("custom-q");
+  });
+
+  test("live: false produces a digest-only diff step", () => {
+    const { op } = WatchOp({ name: "p", env: "prod", schedule: "* * * * *", live: false });
+    const phases = getProps(op).phases as Array<Record<string, unknown>>;
+    const diffStep = (phases[1].steps as Array<Record<string, unknown>>)[0];
+    expect(diffStep.args).toEqual({ env: "prod", live: false });
+  });
+});
+
+describe("WatchOp: serialization", () => {
+  test("Op serializes into a workflow.ts containing the snapshot+diff sequence and search-attr upserts", () => {
+    const { op } = WatchOp({ name: "prod-watch", env: "prod", schedule: "*/15 * * * *" });
+    const ops = new Map([["prod-watch", op]]) as unknown as Parameters<typeof serializeOps>[0];
+    const files = serializeOps(ops);
+    const wf = files["ops/prod-watch/workflow.ts"];
+    expect(wf).toBeDefined();
+    expect(wf).toContain('upsertSearchAttributes({"OpName":["prod-watch"],"Watch":["true"],"Env":["prod"]});');
+    expect(wf).toContain('upsertSearchAttributes({ Phase: ["Snapshot"] });');
+    expect(wf).toContain('upsertSearchAttributes({ Phase: ["Diff"] });');
+    expect(wf).toContain("stateSnapshot(");
+    expect(wf).toContain("stateDiff(");
   });
 });
