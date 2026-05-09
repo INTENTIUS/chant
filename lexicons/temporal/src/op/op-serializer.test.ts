@@ -291,4 +291,94 @@ describe("serializeOps()", () => {
       expect(() => serializeOps(ops)).toThrow(/nonexistent-op/);
     });
   });
+
+  // ── Auto-emit upsertSearchAttributes (#28) ──────────────────────────────────
+
+  describe("upsertSearchAttributes auto-emit", () => {
+    function countOccurrences(haystack: string, needle: string): number {
+      return haystack.split(needle).length - 1;
+    }
+
+    it("imports upsertSearchAttributes from @temporalio/workflow", () => {
+      const ops = new Map([
+        makeOp({ name: "op", overview: "o", phases: [{ name: "Phase1", steps: [] }] }),
+      ]);
+      const wf = serializeOps(ops)["ops/op/workflow.ts"];
+      expect(wf).toMatch(
+        /import \{[^}]*\bupsertSearchAttributes\b[^}]*\} from '@temporalio\/workflow'/,
+      );
+    });
+
+    it("3-phase Op with no searchAttributes emits exactly 4 upsert calls", () => {
+      const ops = new Map([
+        makeOp({
+          name: "deploy",
+          overview: "o",
+          phases: [
+            { name: "init", steps: [] },
+            { name: "apply", steps: [] },
+            { name: "verify", steps: [] },
+          ],
+        }),
+      ]);
+      const wf = serializeOps(ops)["ops/deploy/workflow.ts"];
+
+      expect(countOccurrences(wf, "upsertSearchAttributes(")).toBe(4);
+      // Initial call: OpName only, no Phase yet
+      expect(wf).toContain('upsertSearchAttributes({"OpName":["deploy"]});');
+      // Phase upserts at each phase boundary
+      expect(wf).toContain('upsertSearchAttributes({ Phase: ["init"] });');
+      expect(wf).toContain('upsertSearchAttributes({ Phase: ["apply"] });');
+      expect(wf).toContain('upsertSearchAttributes({ Phase: ["verify"] });');
+    });
+
+    it("merges user-provided searchAttributes into the initial call (each value as a 1-element array)", () => {
+      const ops = new Map([
+        makeOp({
+          name: "deploy",
+          overview: "o",
+          phases: [{ name: "Build", steps: [] }],
+          searchAttributes: { Region: "us-east-1", Environment: "prod" },
+        }),
+      ]);
+      const wf = serializeOps(ops)["ops/deploy/workflow.ts"];
+
+      expect(wf).toContain(
+        'upsertSearchAttributes({"OpName":["deploy"],"Region":["us-east-1"],"Environment":["prod"]});',
+      );
+    });
+
+    it("single-phase Op produces exactly 2 upsert calls", () => {
+      const ops = new Map([
+        makeOp({
+          name: "tiny",
+          overview: "o",
+          phases: [{ name: "Only", steps: [] }],
+        }),
+      ]);
+      const wf = serializeOps(ops)["ops/tiny/workflow.ts"];
+
+      expect(countOccurrences(wf, "upsertSearchAttributes(")).toBe(2);
+    });
+
+    it("emits Phase upserts inside onFailure compensation phases", () => {
+      const ops = new Map([
+        makeOp({
+          name: "deploy",
+          overview: "o",
+          phases: [{ name: "Apply", steps: [] }],
+          onFailure: [
+            { name: "Rollback", steps: [] },
+            { name: "Notify", steps: [] },
+          ],
+        }),
+      ]);
+      const wf = serializeOps(ops)["ops/deploy/workflow.ts"];
+
+      // 1 initial + 1 Apply + 2 onFailure phases = 4
+      expect(countOccurrences(wf, "upsertSearchAttributes(")).toBe(4);
+      expect(wf).toContain('upsertSearchAttributes({ Phase: ["Rollback"] });');
+      expect(wf).toContain('upsertSearchAttributes({ Phase: ["Notify"] });');
+    });
+  });
 });

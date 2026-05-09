@@ -151,6 +151,56 @@ export default Op({
 });
 ```
 
+## Search attributes
+
+Each generated workflow auto-emits `upsertSearchAttributes()` calls so workflow runs are filterable in the Temporal UI without hand-coded boilerplate. Two emission points:
+
+1. **Initial call** at workflow start: `OpName` plus any `searchAttributes` you declare on the Op
+2. **Per-phase call** at the start of each phase (and each `onFailure` phase): `Phase` set to the current phase name
+
+Declare custom attributes on the Op:
+
+```typescript
+export default Op({
+  name: "alb-deploy",
+  overview: "Deploy ALB stack",
+  searchAttributes: {
+    Environment: "staging",
+    Region: "us-east-1",
+  },
+  phases: [
+    phase("Build",  [/* ... */]),
+    phase("Deploy", [/* ... */]),
+  ],
+});
+```
+
+The generated `workflow.ts` produces:
+
+```typescript
+export async function albDeployWorkflow(): Promise<void> {
+  upsertSearchAttributes({
+    OpName: ["alb-deploy"],
+    Environment: ["staging"],
+    Region: ["us-east-1"],
+  });
+
+  // Phase: Build
+  upsertSearchAttributes({ Phase: ["Build"] });
+  // ...
+
+  // Phase: Deploy
+  upsertSearchAttributes({ Phase: ["Deploy"] });
+  // ...
+}
+```
+
+For an Op with N phases this is **N+1 upsert calls total**. Values are wrapped as single-element arrays for the classic `@temporalio/workflow` API.
+
+> **Registration is separate.** Auto-emit assumes the attributes are already registered server-side. Declare them with the [`SearchAttribute`](/chant/reference/lexicons/temporal/) resource so `chant build` emits the registration commands. See also [`chant state`](/chant/cli/state/) for snapshotting registered attributes against a live cluster.
+
+User-provided keys merge over the `OpName` default; if you set `searchAttributes: { OpName: "custom" }` the user value wins.
+
 ## Op dependencies
 
 `depends` declares Ops that must succeed before this one starts. `chant build` validates all referenced names exist at build time.
