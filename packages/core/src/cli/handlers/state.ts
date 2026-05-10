@@ -3,13 +3,13 @@ import { build } from "../../build";
 import { takeSnapshot } from "../../state/snapshot";
 import { readSnapshot, readEnvironmentSnapshots, listSnapshots, fetchState, StaleStateBranchError } from "../../state/git";
 import { computeBuildDigest, diffDigests } from "../../state/digest";
-import { diffLive, type LiveDiffResult } from "../../state/live-diff";
+import { diffLive, diffLiveArtifacts, type LiveDiffResult, type LiveArtifactDiffResult } from "../../state/live-diff";
 import { loadChantConfig } from "../../config";
 import { formatError, formatWarning, formatSuccess, formatBold } from "../format";
 import type { CommandContext } from "../registry";
 import type { StateSnapshot } from "../../state/types";
 import type { SerializerResult } from "../../serializer";
-import type { LexiconPlugin, ResourceMetadata } from "../../lexicon";
+import type { LexiconPlugin, ResourceMetadata, ArtifactMetadata } from "../../lexicon";
 import type { BuildResult } from "../../build";
 
 /**
@@ -49,10 +49,10 @@ export async function runStateSnapshot(ctx: CommandContext): Promise<number> {
     return 1;
   }
 
-  const pluginsWithDescribe = targetPlugins.filter((p) => p.describeResources);
-  if (pluginsWithDescribe.length === 0) {
+  const observingPlugins = targetPlugins.filter((p) => p.describeResources || p.listArtifacts);
+  if (observingPlugins.length === 0) {
     console.error(formatError({
-      message: "No plugins implement describeResources",
+      message: "No plugins implement describeResources or listArtifacts",
       hint: lexiconFilter ? `Lexicon "${lexiconFilter}" does not support state snapshots` : undefined,
     }));
     return 1;
@@ -60,7 +60,7 @@ export async function runStateSnapshot(ctx: CommandContext): Promise<number> {
 
   let result;
   try {
-    result = await takeSnapshot(environment, pluginsWithDescribe, buildResult);
+    result = await takeSnapshot(environment, observingPlugins, buildResult);
   } catch (err) {
     if (err instanceof StaleStateBranchError) {
       console.error(formatError({
@@ -225,14 +225,14 @@ async function runStateDiffLive(args: LiveDiffArgs): Promise<number> {
     const plugin = args.plugins.find((p) => p.name === lexiconName);
     if (!plugin) continue;
 
-    if (!plugin.describeResources) {
+    if (!plugin.describeResources && !plugin.listArtifacts) {
       console.error(formatWarning({
-        message: `${lexiconName}: lexicon does not implement describeResources — skipping (use without --live for digest diff)`,
+        message: `${lexiconName}: lexicon does not implement describeResources or listArtifacts — skipping (use without --live for digest diff)`,
       }));
       continue;
     }
 
-    // Resources declared in this lexicon's slice of the build
+    // Build per-lexicon entity index
     const declared = new Set<string>();
     const entities = new Map<string, { entityType: string; props: Record<string, unknown> }>();
     for (const [name, entity] of args.buildResult.entities) {
@@ -255,38 +255,60 @@ async function runStateDiffLive(args: LiveDiffArgs): Promise<number> {
           ? rawOutput
           : (rawOutput as SerializerResult).primary;
 
-    let observedNow: Record<string, ResourceMetadata>;
-    try {
-      observedNow = await plugin.describeResources({
-        environment: args.environment,
-        buildOutput,
-        entityNames: Array.from(declared),
-        entities,
-      });
-    } catch (err) {
-      console.error(formatError({
-        message: `${lexiconName}: describeResources failed — ${err instanceof Error ? err.message : String(err)}`,
-      }));
-      continue;
-    }
-
-    let observedThen: Record<string, ResourceMetadata> | undefined;
+    // Read previous snapshot once; both flows pull what they need.
+    let prevSnapshot: StateSnapshot | undefined;
     const content = await readSnapshot(args.environment, lexiconName);
-    if (content) {
-      const snapshot: StateSnapshot = JSON.parse(content);
-      observedThen = snapshot.resources;
+    if (content) prevSnapshot = JSON.parse(content);
+
+    let lexiconChecked = false;
+
+    // ── Resources path (entity-keyed) ──────────────────────────────────────
+    if (plugin.describeResources) {
+      let observedNow: Record<string, ResourceMetadata>;
+      try {
+        observedNow = await plugin.describeResources({
+          environment: args.environment,
+          buildOutput,
+          entityNames: Array.from(declared),
+          entities,
+        });
+      } catch (err) {
+        console.error(formatError({
+          message: `${lexiconName}: describeResources failed — ${err instanceof Error ? err.message : String(err)}`,
+        }));
+        continue;
+      }
+      const observedThen = prevSnapshot?.resources;
+      const diff = diffLive({ declared, observedNow, observedThen });
+      totalDrift += diff.driftedSinceSnapshot.length + diff.missing.length + diff.orphan.length + diff.disappeared.length;
+      renderLiveDiff(lexiconName, args.environment, diff);
+      lexiconChecked = true;
     }
 
-    const diff = diffLive({ declared, observedNow, observedThen });
-    totalLexiconsChecked++;
-    totalDrift += diff.driftedSinceSnapshot.length + diff.missing.length + diff.orphan.length + diff.disappeared.length;
+    // ── Artifacts path (context-keyed) ─────────────────────────────────────
+    if (plugin.listArtifacts) {
+      let observedNow: Record<string, ArtifactMetadata>;
+      try {
+        observedNow = await plugin.listArtifacts({ environment: args.environment, entities });
+      } catch (err) {
+        console.error(formatError({
+          message: `${lexiconName}: listArtifacts failed — ${err instanceof Error ? err.message : String(err)}`,
+        }));
+        continue;
+      }
+      const observedThen = prevSnapshot?.artifacts;
+      const adiff = diffLiveArtifacts({ observedNow, observedThen });
+      totalDrift += adiff.added.length + adiff.removed.length + adiff.changed.length;
+      renderLiveArtifactDiff(lexiconName, args.environment, adiff);
+      lexiconChecked = true;
+    }
 
-    renderLiveDiff(lexiconName, args.environment, diff);
+    if (lexiconChecked) totalLexiconsChecked++;
   }
 
   if (totalLexiconsChecked === 0) {
     console.error(formatWarning({
-      message: "No lexicons implement describeResources — nothing to diff in --live mode",
+      message: "No lexicons implement describeResources or listArtifacts — nothing to diff in --live mode",
     }));
     return 1;
   }
@@ -342,6 +364,42 @@ function formatValue(v: unknown): string {
   if (typeof v === "string") return v.length > 60 ? v.slice(0, 57) + "..." : v;
   const json = JSON.stringify(v);
   return json.length > 60 ? json.slice(0, 57) + "..." : json;
+}
+
+function renderLiveArtifactDiff(lexiconName: string, environment: string, diff: LiveArtifactDiffResult): void {
+  // Skip emission entirely when there's nothing to show — keeps the output
+  // clean for lexicons that only implement describeResources.
+  if (diff.added.length === 0 && diff.removed.length === 0 && diff.changed.length === 0 && diff.unchanged.length === 0) {
+    return;
+  }
+
+  const counts =
+    `${diff.added.length} added, ${diff.removed.length} removed, ` +
+    `${diff.changed.length} changed, ${diff.unchanged.length} unchanged`;
+
+  console.log(`\n${formatBold(lexiconName)} (artifacts) — environment: ${environment}`);
+  console.log(counts);
+  console.log("-".repeat(80));
+
+  if (diff.added.length > 0) {
+    console.log(formatBold("\nARTIFACTS ADDED (in cloud now, not in last snapshot):"));
+    for (const name of diff.added) console.log(`  - ${name}`);
+  }
+  if (diff.removed.length > 0) {
+    console.log(formatBold("\nARTIFACTS REMOVED (in last snapshot, gone now):"));
+    for (const name of diff.removed) console.log(`  - ${name}`);
+  }
+  if (diff.changed.length > 0) {
+    console.log(formatBold("\nARTIFACTS CHANGED (metadata differs since last snapshot):"));
+    for (const drift of diff.changed) {
+      console.log(`  - ${drift.name} (${drift.type})`);
+      for (const change of drift.changes) {
+        const oldStr = formatValue(change.oldValue);
+        const newStr = formatValue(change.newValue);
+        console.log(`      ${change.path}: ${oldStr} → ${newStr}`);
+      }
+    }
+  }
 }
 
 /**

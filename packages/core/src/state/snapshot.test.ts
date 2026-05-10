@@ -1,5 +1,5 @@
 import { describe, test, expect, vi, beforeEach } from "vitest";
-import { createMockPlugin, staticDescribeResources } from "@intentius/chant-test-utils";
+import { createMockPlugin, staticDescribeResources, staticListArtifacts } from "@intentius/chant-test-utils";
 import type { BuildResult } from "../build";
 
 const writeSnapshotMock = vi.fn();
@@ -116,5 +116,56 @@ describe("takeSnapshot", () => {
     });
     const result = await takeSnapshot("prod", [plugin], makeBuildResult({ aws: ["cred"] }));
     expect(result.warnings.some((w) => w.toLowerCase().includes("sensitive"))).toBe(true);
+  });
+
+  // ── listArtifacts() integration (#51) ─────────────────────────────────────
+
+  test("calls listArtifacts when implemented and stores artifacts in snapshot", async () => {
+    const plugin = createMockPlugin({
+      name: "helm",
+      listArtifacts: staticListArtifacts({
+        "release/default/web": { type: "Helm::Release", physicalId: "default/web", status: "deployed" },
+      }),
+    });
+    const result = await takeSnapshot("prod", [plugin], makeBuildResult({ helm: [] }));
+    expect(result.snapshots).toHaveLength(1);
+    expect(result.snapshots[0].artifacts).toEqual({
+      "release/default/web": { type: "Helm::Release", physicalId: "default/web", status: "deployed" },
+    });
+    expect(result.snapshots[0].resources).toEqual({});
+  });
+
+  test("plugin can implement both describeResources and listArtifacts", async () => {
+    const plugin = createMockPlugin({
+      name: "k8s",
+      describeResources: staticDescribeResources({
+        web: { type: "K8s::Apps::Deployment", status: "READY" },
+      }),
+      listArtifacts: staticListArtifacts({
+        "release/default/proxy": { type: "Helm::Release", status: "deployed" },
+      }),
+    });
+    const result = await takeSnapshot("prod", [plugin], makeBuildResult({ k8s: ["web"] }));
+    expect(result.snapshots[0].resources).toEqual({
+      web: { type: "K8s::Apps::Deployment", status: "READY" },
+    });
+    expect(result.snapshots[0].artifacts).toBeDefined();
+    expect(result.snapshots[0].artifacts!["release/default/proxy"]).toBeDefined();
+  });
+
+  test("plugin with neither method is skipped (existing behavior preserved)", async () => {
+    const plugin = createMockPlugin({ name: "noop" });
+    const result = await takeSnapshot("prod", [plugin], makeBuildResult({ noop: ["x"] }));
+    expect(result.snapshots).toEqual([]);
+  });
+
+  test("listArtifacts only, empty result → error 'no valid resources or artifacts returned'", async () => {
+    const plugin = createMockPlugin({
+      name: "helm",
+      listArtifacts: async () => ({}),
+    });
+    const result = await takeSnapshot("prod", [plugin], makeBuildResult({ helm: [] }));
+    expect(result.errors.some((e) => e.includes("helm") && e.includes("no valid"))).toBe(true);
+    expect(result.snapshots).toEqual([]);
   });
 });

@@ -2,7 +2,7 @@
  * Snapshot orchestration: queries plugins for deployed resource metadata,
  * assembles StateSnapshots, computes build digests, and writes to git.
  */
-import type { LexiconPlugin, ResourceMetadata } from "../lexicon";
+import type { LexiconPlugin, ResourceMetadata, ArtifactMetadata } from "../lexicon";
 import type { BuildResult } from "../build";
 import type { SerializerResult } from "../serializer";
 import type { StateSnapshot } from "./types";
@@ -95,7 +95,7 @@ export async function takeSnapshot(
   const digest = computeBuildDigest(buildResult);
 
   for (const plugin of plugins) {
-    if (!plugin.describeResources) continue;
+    if (!plugin.describeResources && !plugin.listArtifacts) continue;
 
     // Get serialized build output for this lexicon
     const rawOutput = buildResult.outputs.get(plugin.name);
@@ -121,26 +121,37 @@ export async function takeSnapshot(
       }
     }
 
+    let resources: Record<string, ResourceMetadata> = {};
+    let artifacts: Record<string, ArtifactMetadata> = {};
+
     try {
-      const resources = await plugin.describeResources({
-        environment,
-        buildOutput,
-        entityNames,
-        entities,
-      });
-
-      const { valid, dropped, warnings: validationWarnings } =
-        validateResources(resources);
-      warnings.push(...validationWarnings);
-
-      if (dropped.length > 0) {
-        warnings.push(
-          `${plugin.name}: dropped ${dropped.length} invalid resource(s)`,
-        );
+      if (plugin.describeResources) {
+        const raw = await plugin.describeResources({
+          environment,
+          buildOutput,
+          entityNames,
+          entities,
+        });
+        const { valid, dropped, warnings: validationWarnings } = validateResources(raw);
+        warnings.push(...validationWarnings);
+        if (dropped.length > 0) {
+          warnings.push(`${plugin.name}: dropped ${dropped.length} invalid resource(s)`);
+        }
+        resources = valid;
       }
 
-      if (Object.keys(valid).length === 0) {
-        errors.push(`${plugin.name}: no valid resources returned`);
+      if (plugin.listArtifacts) {
+        const raw = await plugin.listArtifacts({ environment, entities });
+        const { valid, dropped, warnings: validationWarnings } = validateResources(raw);
+        warnings.push(...validationWarnings);
+        if (dropped.length > 0) {
+          warnings.push(`${plugin.name}: dropped ${dropped.length} invalid artifact(s)`);
+        }
+        artifacts = valid;
+      }
+
+      if (Object.keys(resources).length === 0 && Object.keys(artifacts).length === 0) {
+        errors.push(`${plugin.name}: no valid resources or artifacts returned`);
         continue;
       }
 
@@ -149,7 +160,8 @@ export async function takeSnapshot(
         environment,
         commit: headCommit,
         timestamp,
-        resources: valid,
+        resources,
+        ...(Object.keys(artifacts).length > 0 && { artifacts }),
         digest,
       };
 
