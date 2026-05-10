@@ -230,7 +230,7 @@ upsertSearchAttributes({ "Drift": [String(__r0?.drifted)] });
 
 The `WatchOp` composite pairs an Op with a `TemporalSchedule` so `chant state snapshot` and `chant state diff --live` run on a recurring cron — periodic drift detection between change windows, not just at the next deploy.
 
-See **[Watching State](/chant/guide/watching-state/)** for the full walk-through: composite shape, generated workflow, Temporal UI filters (`Watch = "true"` / `Drift = "true"`), smoke-testing drift end-to-end, and how to triage each diff category.
+See **[Watching State](/chant/guide/watching-state/)** for the full walk-through: composite shape, generated workflow, Temporal UI filters (`Watch = "true"` / `Drift = "true"`), smoke-testing drift end-to-end, and how to triage each diff category. For the conceptual background on what drift means and why chant snapshots are observational, see [Drift Detection](/chant/concepts/drift-detection/).
 
 ## Op dependencies
 

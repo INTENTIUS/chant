@@ -1,0 +1,105 @@
+---
+title: Drift Detection
+description: Why chant's snapshots are observational, what the diff categories mean, and when continuous drift detection earns its keep
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+Drift is the gap between what you declared in source and what's actually deployed. Most IaC tools track this through an authoritative state file — chant doesn't. This page explains the model, the diff vocabulary, and when (and when not) to invest in continuous drift detection.
+
+## The observational snapshot model
+
+`chant state snapshot <env>` writes a record of what was observed in the cloud at a point in time. It's stored on a `chant/state` orphan branch in your repo. There's no central state server, no lock file, no encrypted backend.
+
+This is the opposite of how Terraform, Pulumi, and CDK/CloudFormation think about state. Those tools treat state as **authoritative** — the state file *is* the truth, and `apply` reconciles the cloud to match. The state file must be locked during writes, secured against tampering, and protected from corruption because deployments depend on it.
+
+chant's snapshots are **observational**. They're a forensic record: "this is what we saw at 10:42 UTC on Tuesday." Snapshots don't drive deployments — they exist to be diffed against. Three consequences fall out:
+
+| Authoritative state (Terraform, Pulumi, CDK) | Observational state (chant) |
+|---|---|
+| State must be locked; concurrent writes corrupt | A stale snapshot is inconvenient, not dangerous |
+| Sensitive data leaks into state file | Snapshots record metadata only — no secrets |
+| Bad state breaks deploys | Bad snapshot is a record problem; deploys query live APIs |
+| `apply` knows exactly what to change | No automatic plan/apply — agents verify before acting |
+
+For the broader trade-off comparison, see [State: authoritative vs. observational](/chant/concepts/comparison/#state-authoritative-vs-observational) in the comparison guide.
+
+## Resources and artifacts
+
+Drift can mean two structurally different things, and chant tracks them through two different plugin contracts:
+
+**Resources** are 1:1 cloud equivalents of declared chant entities — an AWS CloudFormation resource, a K8s Deployment, an ARM resource group, a Temporal namespace. Each declaration has a name, the cloud version has a name, and they're correlated. Lexicons that fit this model implement `describeResources()` (entity-keyed: "look up the live state of *these* declared things").
+
+**Artifacts** are runtime concepts created by tooling outside chant's entity model. A Helm release isn't declared in chant — chant declares Chart.yaml + templates, and `helm install` later creates the release. Same story for Docker containers, Flyway migration history, or partition state in a Slurm cluster. Lexicons that fit this model implement `listArtifacts()` (context-keyed: "tell me what artifacts exist *in this environment* right now").
+
+The diff engine treats them differently because they *are* different. Resources have a "declared" axis to compare against; artifacts don't.
+
+For the implementer-side walkthrough, see [Implementing Observation](/chant/lexicon-authoring/observation/).
+
+## The diff categories
+
+`chant state diff <env> --live` returns ten categories — six for resources, four for artifacts.
+
+### Resources (three-way diff)
+
+The diff engine compares three axes: what's declared in source now, what was observed in the previous snapshot, and what the live API reports right now.
+
+| Category | Declared now | In last snapshot | Observed now | Meaning |
+|---|---|---|---|---|
+| **missing** | ✅ | — | ✗ | Declared but not in cloud — never deployed, manually deleted, or stack rolled back |
+| **orphan** | ✗ | — | ✅ | In cloud but not declared — manual creation, untracked tooling, or imported-pending |
+| **disappeared** | — | ✅ | ✗ | Was there at last snapshot, gone now |
+| **newly observed** | — | ✗ | ✅ | Observed now, not in any prior snapshot |
+| **drifted** | — | ✅ | ✅ | Present in both, but `status`, `physicalId`, or `attributes.*` changed |
+| **unchanged** | — | ✅ | ✅ | Present in both, metadata identical |
+
+Drifted entries include attribute-level deltas so you can see *what* changed, not just *that* something changed.
+
+### Artifacts (two-way diff)
+
+There's no "declared" axis, so the engine just compares now-vs-then:
+
+| Category | In last snapshot | Observed now | Meaning |
+|---|---|---|---|
+| **artifacts added** | ✗ | ✅ | Newly created in the cloud since last snapshot |
+| **artifacts removed** | ✅ | ✗ | Existed at last snapshot, gone now |
+| **artifacts changed** | ✅ | ✅ | Present in both, metadata changed |
+| **artifacts unchanged** | ✅ | ✅ | Present in both, metadata identical |
+
+Same lexicon may emit both — for instance a future K8s lexicon could report Deployments as resources *and* in-cluster Pods (created by the Deployment, not by chant) as artifacts. `state diff --live` shows them in separate sections.
+
+## When drift detection earns its keep
+
+Drift detection is most valuable in environments where the gap between source and reality has a real chance of opening:
+
+**It helps when:**
+- **Multiple humans have cluster/cloud access.** Someone scaled an ASG by hand to ride out an incident, didn't get back to update source — drift detection catches the gap on the next snapshot.
+- **Coordination across teams.** Platform team owns the VPC, app teams own services. A platform-side change (subnet CIDR, tag policy) shows up as drift in app-team snapshots before it surfaces as a deploy failure.
+- **Long-running infrastructure between change windows.** Anything declared once and expected to stay put — IAM roles, Cloud DNS zones, KMS keys, Temporal namespaces. The longer the gap between intentional changes, the higher the chance of out-of-band ones.
+- **Audit and incident timelines.** Snapshots in git give you a forensic record: "the bucket policy was permissive on Tuesday morning, restrictive by Wednesday afternoon." Useful at compliance review time.
+
+**It doesn't help when:**
+- **Every deploy is a full teardown + redeploy.** If the env is rebuilt from scratch each release, there's no surface for drift to accumulate on.
+- **Single operator, ephemeral envs.** A solo developer's `dev` cluster that's destroyed nightly doesn't need a drift cron.
+- **Stateless apps with no persistent infra.** If the only thing chant manages is an ECS task definition that's redeployed on every CI run, drift detection adds noise without signal.
+- **Tools outside chant own the resource.** If a third-party operator owns and reconciles a CRD, observed drift will be the operator's normal behavior, not a problem.
+
+The pragmatic test: would you act on a drift signal if it fired right now? If yes, snapshot+diff is worth the cost. If no, skip it for that env.
+
+## Trade-offs to be honest about
+
+chant's observational model is a deliberate choice, not a missing feature. The costs:
+
+- **No automatic remediation.** Drift tells you something changed; it doesn't snap the cloud back. That's an agent or a human decision because the right answer is domain-specific.
+- **No automatic plan/apply.** Without authoritative state, chant can't compute a precise change set the way Terraform does. Diff output is informational; the apply step is your existing tooling.
+- **No locking.** Two operators snapshotting the same env at the same time race on the orphan branch. The push uses `--force-with-lease` so the second writer fails fast rather than silently overwriting (see [Concurrent snapshots](/chant/cli/state/#concurrent-snapshots)).
+- **Coverage is per-lexicon.** A lexicon without `describeResources()` / `listArtifacts()` is warn-skipped. The user-facing matrix in [`chant state`](/chant/cli/state/#coverage-today) lists where coverage exists today.
+
+Read these trade-offs in context in [How chant compares](/chant/concepts/comparison/#honest-trade-offs).
+
+## See also
+
+- [`chant state`](/chant/cli/state/) — CLI reference for snapshot, show, diff, log
+- [Watching State](/chant/guide/watching-state/) — turn `state diff --live` into a recurring Temporal workflow
+- [Implementing Observation](/chant/lexicon-authoring/observation/) — for lexicon authors plugging into the pipeline
+- [State: authoritative vs. observational](/chant/concepts/comparison/#state-authoritative-vs-observational) — the cross-tool comparison

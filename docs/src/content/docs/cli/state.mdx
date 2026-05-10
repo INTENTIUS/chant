@@ -18,6 +18,8 @@ chant state log [env]
 
 The environment name (e.g. `dev`, `staging`, `prod`) must be declared in `chant.config.ts` under `environments`.
 
+For the conceptual model behind these commands — observational vs. authoritative state, resources vs. artifacts, when drift detection earns its keep — see [Drift Detection](/chant/concepts/drift-detection/).
+
 ## Subcommands
 
 ### `state snapshot <env>`
@@ -70,9 +72,7 @@ Drifted entries include attribute-level deltas (`status`, `physicalId`, `lastUpd
 
 ### Resources vs artifacts
 
-Some lexicons describe *authoring primitives* (Helm chart files, Docker compose files, Flyway migration scripts) rather than 1:1 cloud resources. The runtime concept (a Helm release, a running container, an applied migration) is created by tooling outside chant's entity model.
-
-For these, lexicons implement a separate `listArtifacts()` plugin method instead of (or in addition to) `describeResources()`. The artifact diff is **context-keyed**: it reports what's there now vs what was there at the last snapshot, with no `declared` axis (since artifacts aren't declared as chant entities). Categories are:
+A single lexicon may report both **resources** (entity-keyed, via `describeResources()`) and **artifacts** (context-keyed, via `listArtifacts()`); `state diff --live` shows them in separate sections. Artifacts use a four-category two-way diff (no "declared" axis):
 
 | Category | Meaning |
 |---|---|
@@ -81,7 +81,7 @@ For these, lexicons implement a separate `listArtifacts()` plugin method instead
 | **artifacts changed** | In both; metadata changed |
 | **artifacts unchanged** | In both; metadata identical |
 
-A single lexicon may emit both resources (entity-keyed) and artifacts (context-keyed) — `chant state diff --live` shows them in separate sections.
+For the conceptual distinction between resources and artifacts, see [Drift Detection — Resources and artifacts](/chant/concepts/drift-detection/#resources-and-artifacts).
 
 ### Coverage today
 
