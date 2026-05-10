@@ -452,4 +452,9 @@ export const tags = defaultTags([
     const { packageLexicon } = await import("./codegen/package");
     return packageLexicon(opts);
   },
+
+  async describeResources(options) {
+    const { describeResources } = await import("./describe-resources");
+    return describeResources(options);
+  },
 };
