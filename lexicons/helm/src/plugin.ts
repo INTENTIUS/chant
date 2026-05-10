@@ -374,4 +374,9 @@ export const service = new Service({
 
     console.error(`Packaged ${stats.resources} resources, ${stats.ruleCount} rules, ${stats.skillCount} skills`);
   },
+
+  async listArtifacts(options) {
+    const { listArtifacts } = await import("./list-artifacts");
+    return listArtifacts(options);
+  },
 };
