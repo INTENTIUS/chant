@@ -27,6 +27,7 @@ These tools make different design decisions. Each decision has consequences — 
 | **Determinism** | Mostly | No (code executes) | No (code executes) | Yes (by design) |
 | **Walk-away cost** | High (state, HCL) | Medium (CloudFormation remains) | High (state, SDK) | Zero (output is native) |
 | **Semantic validation** | None built-in | None built-in | None built-in | Built-in (lexicon rules) |
+| **Drift detection** | Built-in (`plan` / `refresh`) | Via CloudFormation drift detection | Built-in (`refresh` / `preview`) | Built-in (`state diff --live` against any of 5 cloud lexicons + 4 artifact lexicons) |
 
 **Spec fidelity** means whether the tool's resource model matches the underlying spec 1:1. CDK's L2 and L3 constructs deliberately abstract away from CloudFormation — that's a feature for productivity and a cost for transparency. Terraform providers and Pulumi map closely but not identically to provider APIs. chant lexicons are generated directly from the target spec.
 
@@ -88,6 +89,6 @@ chant's design decisions have real consequences:
 
 - **Static evaluation means no runtime lookups at build time.** You can't call an API during synthesis to get a VPC ID or read a secret. Cross-resource references within a project work (via attribute references). For values that need to be resolved at deploy time, lexicons provide intrinsics. For values that need to be resolved before synthesis, agents or scripts can populate source files.
 
-- **Lexicon coverage is early.** AWS CloudFormation and GitLab CI are public today. The architecture supports any spec-based operational domain, but the ecosystem is young.
+- **Lexicon ecosystem is young, but covering.** Eleven lexicons ship today (AWS CloudFormation, Azure ARM, GCP Config Connector, Kubernetes, Helm, Docker, GitHub Actions, GitLab CI, Flyway, Slurm, Temporal). The architecture supports any spec-based operational domain — see [Lexicons](/chant/lexicons/overview/) for the current set and [Lexicon Authoring](/chant/lexicon-authoring/overview/) for adding new ones.
 
 - **The static subset of TypeScript is a constraint.** No function calls, no control flow around resources, no dynamic property access. This is deliberate — it's what makes synthesis deterministic — but it means some patterns that work in CDK or Pulumi don't work in chant. See [TypeScript as Data](/chant/concepts/typescript-as-data/) for exactly what's supported.

@@ -166,7 +166,7 @@ export default defineConfig({
 							items: [
 								{ label: 'init lexicon', slug: 'cli/init-lexicon' },
 								{ label: 'dev generate', slug: 'cli/generate' },
-								{ label: 'dev publish', slug: 'cli/package' },
+								{ label: 'dev publish', slug: 'cli/dev-publish' },
 								{ label: 'dev onboard', slug: 'cli/onboard' },
 								{ label: 'dev check-lexicon', slug: 'cli/check-lexicon' },
 							],

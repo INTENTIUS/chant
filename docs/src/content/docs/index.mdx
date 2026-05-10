@@ -30,7 +30,7 @@ import { Card, CardGrid } from '@astrojs/starlight/components';
 	<Card title="Composable" icon="document">
 		Build reusable presets and composite resources with plain functions and the spread operator.
 	</Card>
-	<Card title="Deployment Ops" icon="approve-check-circle">
-		Declare deployment phases in `*.op.ts`. `chant build` generates Temporal worker code. `chant run` starts a durable workflow with gate steps, parallel phases, and automatic rollback.
+	<Card title="Deployment Ops & Drift" icon="approve-check-circle">
+		Declare deployment phases in `*.op.ts`. `chant build` generates Temporal worker code; `chant run` starts a durable workflow with gate steps, parallel phases, and automatic rollback. `chant state diff --live` catches out-of-band drift across nine lexicons; `WatchOp` runs the same check on a cron.
 	</Card>
 </CardGrid>
