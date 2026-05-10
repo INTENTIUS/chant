@@ -198,6 +198,9 @@ export interface LexiconPlugin {
   /**
    * Query deployed resources and return API metadata. Opt-in.
    *
+   * Use this when each chant entity has a 1:1 cloud equivalent — e.g. an
+   * AWS CFN resource, a K8s object, an ARM resource, a Temporal namespace.
+   *
    * `entities` carries the chant-side entity declarations for this lexicon,
    * keyed by chant entity name (e.g. the export name from a `*.ts` file).
    * Implementations that need to map cloud-side names back to chant entity
@@ -214,6 +217,26 @@ export interface LexiconPlugin {
     entityNames: string[];
     entities: Map<string, { entityType: string; props: Record<string, unknown> }>;
   }): Promise<Record<string, ResourceMetadata>>;
+
+  /**
+   * List runtime artifacts in the given environment. Opt-in.
+   *
+   * Use this for lexicons whose chant entities describe *authoring*
+   * primitives rather than 1:1 cloud resources — e.g. Helm (charts vs
+   * releases), Docker (Compose vs running containers), Flyway (migration
+   * scripts vs applied migrations). The contract is context-keyed: given an
+   * environment, list all artifacts visible there. There is no `declared`
+   * comparison axis — `state diff --live` reports added/removed/changed
+   * between snapshots, not vs. declared.
+   *
+   * `entities` is passed for cases where the lexicon needs to know what
+   * was declared in order to enumerate (e.g. Flyway needs the declared
+   * `Flyway::Environment` entities to know which DBs to query).
+   */
+  listArtifacts?(options: {
+    environment: string;
+    entities: Map<string, { entityType: string; props: Record<string, unknown> }>;
+  }): Promise<Record<string, ArtifactMetadata>>;
 }
 
 /**
@@ -229,6 +252,26 @@ export interface ResourceMetadata {
   /** ISO timestamp of last update */
   lastUpdated?: string;
   /** Cloud-assigned output properties */
+  attributes?: Record<string, unknown>;
+}
+
+/**
+ * Metadata about a runtime artifact, returned by listArtifacts. Same shape
+ * as ResourceMetadata; the conceptual distinction is whether the lexicon's
+ * chant entities have 1:1 runtime equivalents (resources) or whether the
+ * runtime artifacts are created by tooling outside chant's entity model
+ * (artifacts — e.g. Helm releases, Docker containers, Flyway migrations).
+ */
+export interface ArtifactMetadata {
+  /** Artifact type (e.g. Helm::Release, Docker::Container) */
+  type: string;
+  /** Server-side identifier */
+  physicalId?: string;
+  /** Provider-specific status string */
+  status: string;
+  /** ISO timestamp of last update */
+  lastUpdated?: string;
+  /** Provider-specific properties */
   attributes?: Record<string, unknown>;
 }
 

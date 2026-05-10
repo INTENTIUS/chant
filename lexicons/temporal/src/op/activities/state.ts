@@ -45,7 +45,15 @@ export interface StateDiffResult {
  * Section headers emitted by `chant state diff --live` that indicate a
  * non-empty drift category. See packages/core/src/cli/handlers/state.ts.
  */
-const DRIFT_HEADERS = ["MISSING", "ORPHAN", "DISAPPEARED", "DRIFTED"];
+const DRIFT_HEADERS = [
+  "MISSING",
+  "ORPHAN",
+  "DISAPPEARED",
+  "DRIFTED",
+  "ARTIFACTS ADDED",
+  "ARTIFACTS REMOVED",
+  "ARTIFACTS CHANGED",
+];
 
 function detectDrift(output: string): boolean {
   return DRIFT_HEADERS.some((h) => output.includes(`${h} (`) || output.includes(`\n${h}`));

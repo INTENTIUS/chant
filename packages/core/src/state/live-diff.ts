@@ -4,8 +4,15 @@
  * Produces structured drift signal — *what is in the cloud right now* against
  * both *what was declared in source* and *what was observed at the last
  * snapshot*. Pure function; all I/O happens in the caller.
+ *
+ * Two diff flavors:
+ *   - diffLive       — entity-keyed (declared ↔ observedNow ↔ observedThen)
+ *   - diffLiveArtifacts — context-keyed (observedNow ↔ observedThen only;
+ *                        no `declared` axis since artifacts aren't declared
+ *                        as chant entities — they're created by tooling
+ *                        outside chant's entity model)
  */
-import type { ResourceMetadata } from "../lexicon";
+import type { ResourceMetadata, ArtifactMetadata } from "../lexicon";
 
 export interface AttributeChange {
   /** Attribute path (e.g. "status", "physicalId", "attributes.tags.env"). */
@@ -146,6 +153,63 @@ export function diffLive(input: DiffLiveInput): LiveDiffResult {
     disappeared: disappeared.sort(),
     newlyObserved: newlyObserved.sort(),
     driftedSinceSnapshot: driftedSinceSnapshot.sort((a, b) => a.name.localeCompare(b.name)),
+    unchanged: unchanged.sort(),
+  };
+}
+
+// ── Artifact diff (no `declared` axis) ──────────────────────────────────────
+
+export interface LiveArtifactDiffResult {
+  /** Observed now, not in previous snapshot. */
+  added: string[];
+  /** In previous snapshot, not observed now. */
+  removed: string[];
+  /** In both; metadata changed. */
+  changed: ResourceDrift[];
+  /** In both; metadata identical. */
+  unchanged: string[];
+}
+
+export interface DiffLiveArtifactsInput {
+  /** Artifacts returned by `plugin.listArtifacts()` right now. */
+  observedNow: Record<string, ArtifactMetadata>;
+  /** Artifacts captured by the previous snapshot, if any. */
+  observedThen: Record<string, ArtifactMetadata> | undefined;
+}
+
+export function diffLiveArtifacts(input: DiffLiveArtifactsInput): LiveArtifactDiffResult {
+  const observedThenMap = input.observedThen ?? {};
+  const nowNames = new Set(Object.keys(input.observedNow));
+  const thenNames = new Set(Object.keys(observedThenMap));
+
+  const added: string[] = [];
+  const removed: string[] = [];
+  const changed: ResourceDrift[] = [];
+  const unchanged: string[] = [];
+
+  for (const name of nowNames) {
+    if (!thenNames.has(name)) {
+      added.push(name);
+      continue;
+    }
+    const now = input.observedNow[name];
+    const then = observedThenMap[name];
+    const diffs = compareMetadata(then, now);
+    if (diffs.length === 0) {
+      unchanged.push(name);
+    } else {
+      changed.push({ name, type: now.type, changes: diffs });
+    }
+  }
+
+  for (const name of thenNames) {
+    if (!nowNames.has(name)) removed.push(name);
+  }
+
+  return {
+    added: added.sort(),
+    removed: removed.sort(),
+    changed: changed.sort((a, b) => a.name.localeCompare(b.name)),
     unchanged: unchanged.sort(),
   };
 }

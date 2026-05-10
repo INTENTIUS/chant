@@ -68,7 +68,37 @@ Output is grouped into six categories per lexicon:
 
 Drifted entries include attribute-level deltas (`status`, `physicalId`, `lastUpdated`, and each `attributes.*` key).
 
-Lexicons that don't yet implement `describeResources()` are warn-skipped — `--live` doesn't fail the whole command for them. Today, **AWS**, **Temporal**, **K8s**, **GCP** (via Config Connector), and **Azure** are covered.
+### Resources vs artifacts
+
+Some lexicons describe *authoring primitives* (Helm chart files, Docker compose files, Flyway migration scripts) rather than 1:1 cloud resources. The runtime concept (a Helm release, a running container, an applied migration) is created by tooling outside chant's entity model.
+
+For these, lexicons implement a separate `listArtifacts()` plugin method instead of (or in addition to) `describeResources()`. The artifact diff is **context-keyed**: it reports what's there now vs what was there at the last snapshot, with no `declared` axis (since artifacts aren't declared as chant entities). Categories are:
+
+| Category | Meaning |
+|---|---|
+| **artifacts added** | Observed now, not in last snapshot |
+| **artifacts removed** | In last snapshot, gone now |
+| **artifacts changed** | In both; metadata changed |
+| **artifacts unchanged** | In both; metadata identical |
+
+A single lexicon may emit both resources (entity-keyed) and artifacts (context-keyed) — `chant state diff --live` shows them in separate sections.
+
+### Coverage today
+
+| Lexicon | `describeResources()` | `listArtifacts()` |
+|---|---|---|
+| AWS | ✅ |  |
+| Temporal | ✅ |  |
+| K8s | ✅ |  |
+| GCP (via Config Connector) | ✅ |  |
+| Azure | ✅ |  |
+| Helm | | ⏳ #52 |
+| Docker | | ⏳ #53 |
+| Flyway | | ⏳ #54 |
+| Slurm | | ⏳ #55 |
+| GitHub / GitLab | | N/A — see #56 |
+
+Lexicons that implement neither method are warn-skipped — `--live` doesn't fail the whole command for them.
 
 The Temporal lexicon resolves its connection via the chant config: `state snapshot <env>` (or `--live` against `<env>`) looks up `temporal.profiles.<env>` in your `chant.config.ts` and falls back to `temporal.defaultProfile`. The same profile model is used by `chant run`. With #39's entity-prop pass-through, namespaces/schedules/search-attributes are mapped back to chant entity names when the declared `props.name` (etc.) match the server-side identifier.
 

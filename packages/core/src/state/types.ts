@@ -1,6 +1,6 @@
-import type { ResourceMetadata } from "../lexicon";
+import type { ResourceMetadata, ArtifactMetadata } from "../lexicon";
 
-export type { ResourceMetadata } from "../lexicon";
+export type { ResourceMetadata, ArtifactMetadata } from "../lexicon";
 
 /**
  * State snapshot for a single lexicon in an environment.
@@ -14,6 +14,8 @@ export interface StateSnapshot {
   timestamp: string;
   /** Resource metadata keyed by logical name */
   resources: Record<string, ResourceMetadata>;
+  /** Artifact metadata keyed by server-side identifier (lexicon-specific). */
+  artifacts?: Record<string, ArtifactMetadata>;
   /** Build digest at snapshot time — what was declared when this snapshot was taken */
   digest?: BuildDigest;
 }

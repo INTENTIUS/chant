@@ -1,5 +1,5 @@
 import { describe, test, expect, vi, beforeEach } from "vitest";
-import { createMockPlugin, staticDescribeResources } from "@intentius/chant-test-utils";
+import { createMockPlugin, staticDescribeResources, staticListArtifacts } from "@intentius/chant-test-utils";
 import type { LexiconPlugin, ResourceMetadata } from "../../lexicon";
 import type { BuildResult } from "../../build";
 import type { ParsedArgs } from "../registry";
@@ -145,6 +145,42 @@ describe("runStateDiff --live", () => {
     const stderr = stderrBuf.join("\n");
     expect(stderr).toContain("k8s");
     expect(stderr).toContain("does not implement describeResources");
+  });
+
+  test("--live with a listArtifacts-only plugin diffs artifacts (no resources path)", async () => {
+    buildMock.mockResolvedValue(makeBuildResult({ helm: [] }));
+    fetchStateMock.mockResolvedValue(undefined);
+    // Previous snapshot has no artifact entry for the new release → expect ARTIFACTS ADDED
+    readSnapshotMock.mockResolvedValue(JSON.stringify({
+      lexicon: "helm",
+      environment: "prod",
+      commit: "x",
+      timestamp: "t",
+      resources: {},
+      artifacts: {},
+    }));
+
+    const plugins: LexiconPlugin[] = [
+      createMockPlugin({
+        name: "helm",
+        listArtifacts: staticListArtifacts({
+          "release/default/web": { type: "Helm::Release", physicalId: "default/web", status: "deployed" },
+        }),
+      }),
+    ];
+
+    const ctx = {
+      args: makeArgs({ command: "state", path: "diff", extraPositional: "prod", live: true }),
+      plugins,
+      serializers: plugins.map((p) => p.serializer),
+    };
+
+    const exit = await runStateDiff(ctx);
+
+    expect(exit).toBe(0);
+    const output = stdoutBuf.join("\n");
+    expect(output).toContain("ARTIFACTS ADDED");
+    expect(output).toContain("release/default/web");
   });
 
   test("legacy digest mode still works without --live", async () => {
