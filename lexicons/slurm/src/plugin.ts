@@ -218,4 +218,9 @@ export const slurmPlugin: LexiconPlugin = {
     const { generateDocs } = await import("./codegen/docs");
     return generateDocs(options);
   },
+
+  async listArtifacts(options) {
+    const { listArtifacts } = await import("./list-artifacts");
+    return listArtifacts(options);
+  },
 };
