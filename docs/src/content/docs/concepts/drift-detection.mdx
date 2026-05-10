@@ -93,7 +93,7 @@ chant's observational model is a deliberate choice, not a missing feature. The c
 - **No automatic remediation.** Drift tells you something changed; it doesn't snap the cloud back. That's an agent or a human decision because the right answer is domain-specific.
 - **No automatic plan/apply.** Without authoritative state, chant can't compute a precise change set the way Terraform does. Diff output is informational; the apply step is your existing tooling.
 - **No locking.** Two operators snapshotting the same env at the same time race on the orphan branch. The push uses `--force-with-lease` so the second writer fails fast rather than silently overwriting (see [Concurrent snapshots](/chant/cli/state/#concurrent-snapshots)).
-- **Coverage is per-lexicon.** A lexicon without `describeResources()` / `listArtifacts()` is warn-skipped. The user-facing matrix in [`chant state`](/chant/cli/state/#coverage-today) lists where coverage exists today.
+- **Coverage is per-lexicon.** A lexicon without `describeResources()` / `listArtifacts()` is warn-skipped. The [Runtime observation coverage matrix](/chant/lexicons/overview/#runtime-observation-coverage) lists where coverage exists today.
 
 Read these trade-offs in context in [How chant compares](/chant/concepts/comparison/#honest-trade-offs).
 

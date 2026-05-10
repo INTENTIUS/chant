@@ -1,0 +1,69 @@
+---
+title: What's New
+description: Recent capabilities shipped in chant — observation contracts, drift detection, WatchOp, Op codegen improvements, and more
+---
+
+A hand-curated rollup of capabilities shipped recently. If you learned chant before this lands, this page is the catch-up. Each entry links to the closing issue or PR for the full context.
+
+For the day-to-day reference docs see [`chant state`](/chant/cli/state/), [Watching State](/chant/guide/watching-state/), [Drift Detection](/chant/concepts/drift-detection/), and [Implementing Observation](/chant/lexicon-authoring/observation/).
+
+## Observation & drift detection
+
+The biggest single thread. `chant state diff` went from a digest-vs-digest fingerprint check to a real live-vs-declared-vs-snapshot diff that catches out-of-band cloud mutations across nine lexicons.
+
+| # | Capability |
+|---|---|
+| [#26](https://github.com/INTENTIUS/chant/issues/26) | `chant state diff <env> --live` — three-way diff (declared / observed-now / observed-then), six resource categories (missing / orphan / disappeared / newly observed / drifted / unchanged) with attribute-level deltas |
+| [#27](https://github.com/INTENTIUS/chant/issues/27) | Temporal lexicon `describeResources()` — namespaces, search attributes, schedules |
+| [#39](https://github.com/INTENTIUS/chant/issues/39) | `describeResources()` contract gains entity-prop pass-through — lexicons now receive declared props (e.g. K8s `metadata.name`/`namespace`) and can map cloud-side identifiers back to chant entity names |
+| [#42](https://github.com/INTENTIUS/chant/issues/42) | Five `describeResources()` implementations — AWS, Azure, GCP (Config Connector), Kubernetes, Temporal |
+| [#51](https://github.com/INTENTIUS/chant/issues/51) | `listArtifacts()` plugin contract — context-keyed observation for lexicons whose chant entities describe authoring primitives rather than 1:1 cloud resources |
+| [#52](https://github.com/INTENTIUS/chant/issues/52) | Helm `listArtifacts()` — Helm releases via `helm list -A -o json` |
+| [#53](https://github.com/INTENTIUS/chant/issues/53) | Docker `listArtifacts()` — containers / images / networks via three independent NDJSON queries |
+| [#54](https://github.com/INTENTIUS/chant/issues/54) | Flyway `listArtifacts()` — per-environment migration history |
+| [#55](https://github.com/INTENTIUS/chant/issues/55) | Slurm `listArtifacts()` — partition state via `sinfo` |
+| [#56](https://github.com/INTENTIUS/chant/issues/56) | GitHub / GitLab — runtime observation documented as N/A; both describe git-tracked authoring primitives where drift is `git diff` |
+| [#30](https://github.com/INTENTIUS/chant/issues/30) | `chant/state` orphan branch concurrency — pushes use `--force-with-lease`; concurrent snapshots fail fast instead of silently overwriting |
+| [#31](https://github.com/INTENTIUS/chant/issues/31) | `WatchOp` composite — periodic state observation by pairing an `Op` (Snapshot + Diff phases) with a `TemporalSchedule` |
+
+## Op runtime
+
+The Op composite gained two ergonomic upgrades that were previously hand-coded boilerplate in every example.
+
+| # | Capability |
+|---|---|
+| [#28](https://github.com/INTENTIUS/chant/issues/28) | Op codegen auto-emits `upsertSearchAttributes()` — `OpName` at workflow start, `Phase` at each phase boundary, plus any user-declared `searchAttributes`. No more hand-rolled boilerplate; `chant run list` and Temporal UI filters work out of the box |
+| [#41](https://github.com/INTENTIUS/chant/issues/41) | `outcomeAttribute` on activity steps — capture an activity's return value (e.g. `stateDiff`'s `drifted` boolean) as a workflow search attribute. Used by `WatchOp` to surface `Drift = "true"`/`"false"` per run |
+| [#29](https://github.com/INTENTIUS/chant/issues/29), [#40](https://github.com/INTENTIUS/chant/issues/40) | Test coverage for `cli/handlers/state.ts`, `run.ts`, `graph.ts`, and `runOp` — refactor surface is now safe |
+
+## Build pipeline & lexicon fixes
+
+| # | Capability |
+|---|---|
+| [#21](https://github.com/INTENTIUS/chant/issues/21) | Lexicon root `index.ts` re-exports — three composites that examples imported through deep paths now exported from the package root; silent build failures resolved |
+| [#23](https://github.com/INTENTIUS/chant/issues/23), [#25](https://github.com/INTENTIUS/chant/pull/25) | Azure schema parser — upstream renamed `NetworkInterfaceIPConfiguration` / `SubnetPropertiesFormat` / `SecurityRule` to `Common*`-prefixed names; bare property aliases now apply correctly, CI green |
+| [#38](https://github.com/INTENTIUS/chant/issues/38) | `chant build` writes output paths whose parent directory doesn't exist (mkdir-p) — previously failed with `ENOENT` on first build of a project with nested output dirs |
+
+## Doc rollup
+
+After all the runtime work shipped, the docs site got a sweep to surface it:
+
+| # | Capability |
+|---|---|
+| [#63](https://github.com/INTENTIUS/chant/issues/63) | Accuracy fixes — stale claims, broken links, rollup misses across `index.mdx`, comparison, philosophy, installation, quick-start, cli/overview |
+| [#64](https://github.com/INTENTIUS/chant/issues/64) | [Watching State](/chant/guide/watching-state/) — first-class user-guide page for `WatchOp` (was previously a subsection of the Ops guide) |
+| [#65](https://github.com/INTENTIUS/chant/issues/65) | [Implementing Observation](/chant/lexicon-authoring/observation/) — lexicon-author walkthrough of `describeResources()` and `listArtifacts()` with patterns from all 9 shipping implementations |
+| [#66](https://github.com/INTENTIUS/chant/issues/66) | [Drift Detection](/chant/concepts/drift-detection/) — concept page for the observational state model, ten diff categories, and when drift detection earns its keep |
+| [#67](https://github.com/INTENTIUS/chant/issues/67) | This page + the [lexicon observation coverage matrix](/chant/lexicons/overview/#runtime-observation-coverage) |
+
+## Earlier — the Op core (#5–#11)
+
+These shipped before the observation thread but underpin everything above. Listed for completeness:
+
+- [#5](https://github.com/INTENTIUS/chant/issues/5) Node.js migration + dev toolchain cleanup
+- [#6](https://github.com/INTENTIUS/chant/issues/6) Temporal lexicon — `TemporalNamespace`, `TemporalSchedule`, `SearchAttribute`, plus the lint rules and composites
+- [#7](https://github.com/INTENTIUS/chant/issues/7) Op composite + build pipeline integration
+- [#8](https://github.com/INTENTIUS/chant/issues/8) `chant run` CLI
+- [#9](https://github.com/INTENTIUS/chant/issues/9) MCP tools for Op
+- [#10](https://github.com/INTENTIUS/chant/issues/10) Migrate spells to Ops
+- [#11](https://github.com/INTENTIUS/chant/issues/11) Op replaces spells with Temporal-backed deployment workflows

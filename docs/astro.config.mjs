@@ -19,6 +19,7 @@ export default defineConfig({
 						{ label: 'Quick Start', slug: 'getting-started/quick-start' },
 						{ label: 'Project Structure', slug: 'getting-started/project-structure' },
 						{ label: 'Configuration', slug: 'getting-started/configuration' },
+						{ label: "What's New", slug: 'whats-new' },
 					],
 				},
 				{
