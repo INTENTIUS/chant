@@ -21,6 +21,26 @@ A **lexicon** is a collection of types and semantic lint rules for an operationa
 | Slurm | `@intentius/chant-lexicon-slurm` | 10 resources (conf + REST) | [Reference](/chant/lexicons/slurm/) |
 | Temporal | `@intentius/chant-lexicon-temporal` | 4 resources + Op workflow engine | [Reference](/chant/lexicons/temporal/) |
 
+## Runtime observation coverage
+
+Lexicons opt into the `chant state diff <env> --live` pipeline by implementing one of two plugin methods: `describeResources()` (entity-keyed — for 1:1 cloud resources) or `listArtifacts()` (context-keyed — for runtime concepts created by tooling outside chant's entity model). See [Drift Detection — Resources and artifacts](/chant/concepts/drift-detection/#resources-and-artifacts) for the conceptual distinction, and [Implementing Observation](/chant/lexicon-authoring/observation/) for the author-side walkthrough.
+
+| Lexicon | `describeResources()` | `listArtifacts()` | Notes |
+|---|---|---|---|
+| AWS | ✅ |  | `aws cloudformation describe-stack-resources` |
+| Azure | ✅ |  | `az resource show` per declared entity; resource-group is the env name |
+| GCP (Config Connector) | ✅ |  | `kubectl get <gvk>` against the GKE management cluster |
+| Kubernetes | ✅ |  | `kubectl get <kind>` per declared entity; ~20 common types |
+| Temporal | ✅ |  | Temporal client — namespaces, search attributes, schedules |
+| Helm |  | ✅ | `helm list -A -o json` — releases as artifacts |
+| Docker |  | ✅ | `docker ps`, `docker image ls`, `docker network ls` (NDJSON) |
+| Flyway |  | ✅ | `flyway info -outputType=json` per declared `Flyway::Environment` |
+| Slurm |  | ✅ | `sinfo` partition state |
+| GitHub Actions |  |  | N/A — workflow definitions are git-tracked; drift is `git diff` ([rationale](https://github.com/INTENTIUS/chant/blob/main/lexicons/github/README.md#runtime-observation-na)) |
+| GitLab CI/CD |  |  | N/A — same rationale ([README](https://github.com/INTENTIUS/chant/blob/main/lexicons/gitlab/README.md#runtime-observation-na)) |
+
+Lexicons that implement neither are warn-skipped — `--live` doesn't fail the whole command for them.
+
 ## What a Lexicon Provides
 
 ### Types

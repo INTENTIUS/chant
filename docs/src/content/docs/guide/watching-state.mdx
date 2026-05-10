@@ -55,7 +55,7 @@ The two phases compile down to a workflow that, on each tick:
 1. **`Snapshot`** — calls the `stateSnapshot` activity, which shells out to `chant state snapshot prod`. The result is committed to the `chant/state` orphan branch. (Concurrent runs are protected by `--force-with-lease` — see [Concurrent snapshots](/chant/cli/state/#concurrent-snapshots).)
 2. **`Diff`** — calls `stateDiff` with `live: true`. The activity returns `{ output, exitCode, drifted }`. The `drifted` boolean is captured as a workflow search attribute via `outcomeAttribute: { name: "Drift", from: "drifted" }`.
 
-Set `live: false` on the composite to use digest-only diff (faster, no cloud queries) for environments without `describeResources()` coverage. With `live: true` (the default) you get external-mutation detection.
+Set `live: false` on the composite to use digest-only diff (faster, no cloud queries) for environments without `describeResources()` coverage. With `live: true` (the default) you get external-mutation detection. (See the [Runtime observation coverage matrix](/chant/lexicons/overview/#runtime-observation-coverage) for which lexicons report what.)
 
 ## The Temporal UI experience
 
