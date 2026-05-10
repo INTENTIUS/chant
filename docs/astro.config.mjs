@@ -152,6 +152,7 @@ export default defineConfig({
 						{ label: 'Scaffold a Lexicon', slug: 'lexicon-authoring/scaffold' },
 						{ label: 'Implement Generate', slug: 'lexicon-authoring/generate' },
 						{ label: 'Create a Serializer', slug: 'lexicon-authoring/serializer' },
+						{ label: 'Implementing Observation', slug: 'lexicon-authoring/observation' },
 						{ label: 'Write Lint Rules', slug: 'lexicon-authoring/lint-rules' },
 						{ label: 'LSP & MCP Providers', slug: 'lexicon-authoring/lsp-mcp' },
 						{ label: 'Skills', slug: 'lexicon-authoring/skills' },
