@@ -1,0 +1,168 @@
+---
+title: Watching State
+description: Continuous drift detection by scheduling state snapshots and live diffs in Temporal
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+`WatchOp` turns `chant state snapshot` and `chant state diff --live` into a recurring Temporal workflow. The result is a deployment dashboard that catches drift between change windows — not just at the next deploy.
+
+This page is the tutorial home for that pattern. For the underlying CLI commands, see [`chant state`](/chant/cli/state/); for the Op execution model, see [Ops](/chant/guide/ops/).
+
+## Three layers, one composite
+
+Drift detection in chant is built from three pieces that compose:
+
+| Layer | Command | What it does |
+|---|---|---|
+| **Snapshot** | `chant state snapshot <env>` | Query each lexicon's `describeResources()` / `listArtifacts()`, write the result to the `chant/state` orphan branch |
+| **Live diff** | `chant state diff <env> --live` | Query the cloud right now, compare against the current build *and* the last snapshot, group results into six categories (missing / orphan / disappeared / newly observed / drifted / unchanged) |
+| **Watching** | `WatchOp({ env, schedule })` | Run the two commands above on a Temporal cron, surface drift as a per-run search attribute |
+
+Snapshots without diffs are forensic record. Diffs without scheduling are ad-hoc. The composite is what makes drift a continuous signal rather than a manual chore.
+
+## Declaring a WatchOp
+
+Save anywhere in your project as a `*.op.ts` file. The composite returns a chant `Op` and a `TemporalSchedule`; export both so `chant build` discovers them:
+
+```typescript
+// prod-watch.op.ts
+import { WatchOp } from "@intentius/chant-lexicon-temporal";
+
+export const { op, schedule } = WatchOp({
+  name: "prod-watch",
+  env: "prod",
+  schedule: "*/15 * * * *",  // every 15 minutes
+});
+```
+
+That's the whole declaration. Run `chant build` and you'll get:
+
+- `dist/ops/prod-watch/{workflow,activities,worker}.ts` — generated worker code with a `Snapshot` phase and a `Diff` phase
+- A `TemporalSchedule` resource named `prod-watch-schedule` in the Temporal serializer output, registered via `tctl schedule create` on the next apply
+
+Submit and start the schedule:
+
+```bash
+chant run prod-watch         # one-shot run, useful for smoke-testing
+# or apply the schedule and let Temporal trigger it on the cron
+```
+
+### What the generated workflow does
+
+The two phases compile down to a workflow that, on each tick:
+
+1. **`Snapshot`** — calls the `stateSnapshot` activity, which shells out to `chant state snapshot prod`. The result is committed to the `chant/state` orphan branch. (Concurrent runs are protected by `--force-with-lease` — see [Concurrent snapshots](/chant/cli/state/#concurrent-snapshots).)
+2. **`Diff`** — calls `stateDiff` with `live: true`. The activity returns `{ output, exitCode, drifted }`. The `drifted` boolean is captured as a workflow search attribute via `outcomeAttribute: { name: "Drift", from: "drifted" }`.
+
+Set `live: false` on the composite to use digest-only diff (faster, no cloud queries) for environments without `describeResources()` coverage. With `live: true` (the default) you get external-mutation detection.
+
+## The Temporal UI experience
+
+Each generated workflow opens with:
+
+```typescript
+upsertSearchAttributes({
+  OpName: ["prod-watch"],
+  Watch: ["true"],
+  Env: ["prod"],
+});
+```
+
+After the diff phase resolves, an additional `Drift = "true"` or `Drift = "false"` attribute is upserted. So in the Temporal UI you can filter:
+
+| Filter | What it shows |
+|---|---|
+| `Watch = "true"` | Every watch run across every environment |
+| `Watch = "true" AND Env = "prod"` | Just prod's watch runs |
+| `Watch = "true" AND Drift = "true"` | The runs that actually detected drift — the only ones you usually need to look at |
+
+<Aside type="note" title="Search-attribute registration">
+Custom keys (`Watch`, `Env`, `Drift`, `OpName`) must be registered server-side before the upsert succeeds. Declare them with the [`SearchAttribute`](/chant/lexicons/temporal/) resource so `chant build` emits the registration commands; otherwise the first run will fail with an `UpsertSearchAttribute` error from the workflow worker.
+</Aside>
+
+## Smoke-testing the drift signal
+
+To prove the pipeline end-to-end, introduce a real out-of-band mutation and watch it surface.
+
+The simplest path is the Helm lexicon's `listArtifacts()`, which lists Helm releases visible to your current kubeconfig context. Install something chant doesn't know about:
+
+```bash
+helm install demo-drift bitnami/nginx --set image.tag=hotfix
+chant state diff prod --live
+```
+
+Output (relevant section):
+
+```
+ARTIFACTS ADDED (1)
+  helm:demo-drift  chart=nginx  rev=1
+```
+
+`stateDiff`'s `drifted` flag is true (the `ARTIFACTS ADDED` header matches the drift detector). On the next watch tick the corresponding workflow run will be tagged `Drift = "true"`. Clean up:
+
+```bash
+helm uninstall demo-drift
+```
+
+The next tick should show `Drift = "false"` again.
+
+## How drift becomes a search attribute
+
+`outcomeAttribute` is a generic Op feature, not a `WatchOp`-specific one — see [Outcome-based search attributes](/chant/guide/ops/#outcome-based-search-attributes) for the full contract. The composite wires it like this:
+
+```typescript
+phase("Diff", [
+  {
+    kind: "activity",
+    fn: "stateDiff",
+    args: { env: "prod", live: true },
+    outcomeAttribute: { name: "Drift", from: "drifted" },
+  },
+]),
+```
+
+The serializer produces:
+
+```typescript
+const __r0 = await stateDiff({ env: "prod", live: true });
+upsertSearchAttributes({ Drift: [String(__r0?.drifted)] });
+```
+
+`from` is a dot-path into the activity's return value. With `stateDiff`'s shape `{ output, exitCode, drifted }`, you could just as easily capture the exit code (`from: "exitCode"`) or the raw output (omit `from` to stringify the whole result). The composite picks `drifted` because it's the field most worth filtering on.
+
+## Choosing a schedule
+
+Cron expressions follow standard 5-field syntax. A few starting points:
+
+| Cadence | Cron | When to use |
+|---|---|---|
+| Every 15 min | `*/15 * * * *` | Fast feedback on prod, low API load — the default we recommend |
+| Hourly | `0 * * * *` | Lower-traffic envs, expensive `describeResources()` |
+| Nightly | `0 3 * * *` | Compliance-style audit, no expectation of human follow-up between ticks |
+
+Bias toward less frequent. Each tick re-queries every covered lexicon's API; rate limits and per-call cost are real concerns at minute-level frequencies for large estates.
+
+## Profile selection
+
+`stateSnapshot` and `stateDiff` are activities — they pick up the same Temporal retry/timeout profiles as any other Op step. Both default to `fastIdempotent` (5 min timeout, 3 retries) which is right for most environments.
+
+If your snapshot regularly takes longer than five minutes (large multi-region estates, slow `kubectl` against many resources), declare the activity with `profile: "longInfra"` directly instead of using the composite — `WatchOp` is a thin wrapper, you can always emit the equivalent `Op({ phases: [...] })` by hand.
+
+## What to do when drift fires
+
+The signal tells you *something* changed. The output tells you *what*. The next move depends on which category fired:
+
+- **`MISSING`** — declared in source, gone from the cloud. Usually a deletion or stack-rollback. Re-apply your stack or update source if the deletion was intentional.
+- **`ORPHAN`** — present in the cloud, not in source. Either a teammate created it manually (move it into source) or it's untracked tooling output (use `chant import` to bring it in, or scope it out of the env).
+- **`DRIFTED`** — observed in both snapshots; attributes changed. The deltas are listed inline. Decide whether to re-apply (snap back to declared) or update source (accept the new shape).
+- **`DISAPPEARED`** / **`NEWLY OBSERVED`** — historical context across snapshots. Useful for incident timelines, less actionable per-tick.
+- **`ARTIFACTS ADDED` / `REMOVED` / `CHANGED`** — context-keyed (Helm releases, Docker containers, Flyway migrations). Same triage as the resource categories.
+
+Drift remediation is intentionally not a chant primitive — what to *do* about a drifted security group is a domain decision that doesn't generalize. The `WatchOp` pattern stops at "tell me when it happened."
+
+## See also
+
+- [`chant state`](/chant/cli/state/) — full reference for snapshot/diff CLI
+- [Ops](/chant/guide/ops/) — Op execution model, search attributes, gates, compensation
+- [Choosing Your Deployment Model](/chant/concepts/deployment-paths/) — when to opt into Ops at all

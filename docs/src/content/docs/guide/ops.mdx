@@ -228,28 +228,9 @@ upsertSearchAttributes({ "Drift": [String(__r0?.drifted)] });
 
 ## Continuous observation
 
-Pair an Op with a `TemporalSchedule` to get periodic state observation — a deployment dashboard that catches drift between change windows, not just at the next deploy. The `WatchOp` composite wires the pieces together:
+The `WatchOp` composite pairs an Op with a `TemporalSchedule` so `chant state snapshot` and `chant state diff --live` run on a recurring cron — periodic drift detection between change windows, not just at the next deploy.
 
-```typescript
-import { WatchOp } from "@intentius/chant-lexicon-temporal";
-
-export const { op, schedule } = WatchOp({
-  name: "prod-watch",
-  env: "prod",
-  schedule: "*/15 * * * *",  // every 15 minutes
-});
-```
-
-The composite produces:
-
-- An **Op** with two phases — `Snapshot` (runs `chant state snapshot <env>`) and `Diff` (runs `chant state diff <env> --live`)
-- A **TemporalSchedule** that fires the Op's workflow on the configured cron
-
-Generated `workflow.ts` opens with `upsertSearchAttributes({ OpName, Watch: ["true"], Env: ["prod"] })`, then upserts `Phase: ["Snapshot"]` / `Phase: ["Diff"]` at each phase boundary. In the Temporal UI you can filter on `Watch = "true"` to see all watch runs, then on `Env` to scope to an environment.
-
-Set `live: false` on `WatchOp` to use the digest-only diff (faster, no cloud queries) for environments without `describeResources()` coverage. See [`chant state`](/chant/cli/state/) for the full diff semantics.
-
-> **Drift classification:** `stateDiff` returns `{ drifted: boolean, output, exitCode }`, and `WatchOp`'s Diff step is declared with `outcomeAttribute: { name: "Drift", from: "drifted" }` so each run is automatically tagged with `Drift = "true"` / `"false"` in the Temporal UI. Filter on `Drift = "true"` to see the runs that detected actual drift.
+See **[Watching State](/chant/guide/watching-state/)** for the full walk-through: composite shape, generated workflow, Temporal UI filters (`Watch = "true"` / `Drift = "true"`), smoke-testing drift end-to-end, and how to triage each diff category.
 
 ## Op dependencies
 
