@@ -17,6 +17,16 @@ npm install --save-dev @intentius/chant @intentius/chant-lexicon-gitlab
 | [@intentius/chant](https://www.npmjs.com/package/@intentius/chant) | Core type system, CLI, build pipeline |
 | [@intentius/chant-lexicon-aws](https://www.npmjs.com/package/@intentius/chant-lexicon-aws) | AWS CloudFormation lexicon |
 
+## Runtime observation: N/A
+
+`chant state snapshot` and `chant state diff --live` operate by querying a runtime equivalent of each declared resource. The GitLab lexicon doesn't fit that model:
+
+- The lexicon's chant entities (`Job`, `Workflow`, `Default`, `Image`, `Rule`, etc.) describe **CI pipeline definitions**, which are git-tracked. Drift in the definition itself is just `git diff` — no observation surface needed.
+- Pipeline **runs** are events (per-execution), not declared state. They're observable via the GitLab API but the abstraction is `listRecentRuns()`, not `describeResources()` or `listArtifacts()`. That's a separate plugin contract if/when it's needed.
+- "Is this workflow enabled in the GitLab UI?" is theoretically observable but a marginal use case.
+
+If a concrete observation use case surfaces, file a focused issue rather than retrofitting `listArtifacts()` to fit.
+
 ## License
 
 See the main project LICENSE file.
