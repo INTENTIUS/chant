@@ -1,11 +1,17 @@
 import { describe, test, expect, vi, beforeEach } from "vitest";
 import { createMockTemporalClient } from "@intentius/chant-test-utils";
 import type { ParsedArgs } from "../registry";
+import { EventEmitter } from "node:events";
 
 const discoverOpsMock = vi.fn();
 const loadChantConfigMock = vi.fn();
 const loadTemporalClientMock = vi.fn();
 const resolveProfileMock = vi.fn();
+const existsSyncMock = vi.fn();
+const spawnChildMock = vi.fn();
+const generateReportMock = vi.fn();
+const writeReportMock = vi.fn();
+const waitForTemporalSpy = vi.fn();
 
 vi.mock("../../op/discover", () => ({ discoverOps: () => discoverOpsMock() }));
 vi.mock("../../config", () => ({ loadChantConfig: (...args: unknown[]) => loadChantConfigMock(...args) }));
@@ -15,8 +21,23 @@ vi.mock("./run-client", () => ({
   resolveProfile: (...args: unknown[]) => resolveProfileMock(...args),
   resolveWorkflowId: (name: string) => `chant-op-${name}`,
 }));
+vi.mock("node:fs", async () => {
+  const actual = await vi.importActual<typeof import("node:fs")>("node:fs");
+  return { ...actual, existsSync: (p: string) => existsSyncMock(p) };
+});
+vi.mock("node:child_process", async () => {
+  const actual = await vi.importActual<typeof import("node:child_process")>("node:child_process");
+  return { ...actual, spawn: (...args: unknown[]) => spawnChildMock(...args) };
+});
+vi.mock("./run-report", () => ({
+  generateReport: (...args: unknown[]) => generateReportMock(...args),
+  writeReport: (...args: unknown[]) => writeReportMock(...args),
+}));
 
-const { runOpList, runOpStatus, runOpLog, runOpSignal, runOpCancel } = await import("./run");
+// Speed up runOp polling — POLL_INTERVAL_MS is 3000 in production. We use
+// fake timers in the runOp suite below; vi.advanceTimersByTime drives the loop.
+
+const { runOpList, runOpStatus, runOpLog, runOpSignal, runOpCancel, runOp } = await import("./run");
 
 function makeArgs(overrides: Partial<ParsedArgs> = {}): ParsedArgs {
   return {
@@ -254,5 +275,174 @@ describe("runOpCancel", () => {
     expect(exit).toBe(0);
     expect(mockClient.calls.cancelCalls).toEqual([{ workflowId: "chant-op-alb-deploy" }]);
     expect(stderr.join("\n")).toContain("Cancellation requested");
+  });
+});
+
+// ── runOp (the main `chant run <name>` command) ─────────────────────────────
+
+function makeFakeChildProcess(): { proc: EventEmitter & { kill: () => void } } {
+  const proc = Object.assign(new EventEmitter(), { kill: vi.fn() });
+  return { proc };
+}
+
+describe("runOp", () => {
+  beforeEach(() => {
+    discoverOpsMock.mockReset();
+    loadTemporalClientMock.mockReset();
+    loadChantConfigMock.mockReset();
+    resolveProfileMock.mockReset();
+    existsSyncMock.mockReset();
+    spawnChildMock.mockReset();
+    generateReportMock.mockReset();
+    writeReportMock.mockReset();
+    waitForTemporalSpy.mockReset();
+  });
+
+  test("path defaults to '.' → exit 1 with hint", async () => {
+    const stderr = makeStderrSpy();
+    const exit = await runOp({ args: makeArgs({ path: "." }), plugins: [], serializers: [] });
+    expect(exit).toBe(1);
+    expect(stderr.join("\n")).toContain("Op name is required");
+  });
+
+  test("unknown op name → exit 1 + lists available", async () => {
+    discoverOpsMock.mockResolvedValue({ ops: new Map([makeOp("alb-deploy"), makeOp("infra")]), errors: [] });
+    const stderr = makeStderrSpy();
+    const exit = await runOp({ args: makeArgs({ path: "missing" }), plugins: [], serializers: [] });
+    expect(exit).toBe(1);
+    const out = stderr.join("\n");
+    expect(out).toContain('Op "missing" not found');
+    expect(out).toContain("alb-deploy");
+    expect(out).toContain("infra");
+  });
+
+  test("unknown op + zero discovered ops → exit 1 with create-one hint", async () => {
+    discoverOpsMock.mockResolvedValue({ ops: new Map(), errors: [] });
+    const stderr = makeStderrSpy();
+    const exit = await runOp({ args: makeArgs({ path: "missing" }), plugins: [], serializers: [] });
+    expect(exit).toBe(1);
+    expect(stderr.join("\n")).toContain("No *.op.ts files found");
+  });
+
+  test("profile resolution failure → exit 1", async () => {
+    discoverOpsMock.mockResolvedValue({ ops: new Map([makeOp("alb-deploy")]), errors: [] });
+    loadChantConfigMock.mockResolvedValue({ config: {} });
+    resolveProfileMock.mockImplementation(() => { throw new Error("Profile not found: prod"); });
+    const stderr = makeStderrSpy();
+    const exit = await runOp({ args: makeArgs({ path: "alb-deploy" }), plugins: [], serializers: [] });
+    expect(exit).toBe(1);
+    expect(stderr.join("\n")).toContain("Profile not found: prod");
+  });
+
+  test("missing dist/ops/<name>/worker.ts → exit 1 with build hint", async () => {
+    discoverOpsMock.mockResolvedValue({ ops: new Map([makeOp("alb-deploy")]), errors: [] });
+    loadChantConfigMock.mockResolvedValue({ config: {} });
+    resolveProfileMock.mockReturnValue({ address: "localhost:7233", namespace: "default", taskQueue: "q" });
+    existsSyncMock.mockReturnValue(false);
+    const stderr = makeStderrSpy();
+    const exit = await runOp({ args: makeArgs({ path: "alb-deploy" }), plugins: [], serializers: [] });
+    expect(exit).toBe(1);
+    expect(stderr.join("\n")).toContain("worker.ts not found");
+    expect(stderr.join("\n")).toContain("`chant build` first");
+  });
+
+  test("--report path: prints generated report from describe + history", async () => {
+    discoverOpsMock.mockResolvedValue({ ops: new Map([makeOp("alb-deploy")]), errors: [] });
+    setupTemporalClient(createMockTemporalClient({
+      describeByWorkflowId: {
+        "chant-op-alb-deploy": {
+          workflowId: "chant-op-alb-deploy", runId: "r1",
+          status: { name: "COMPLETED" }, startTime: new Date(),
+          taskQueue: "alb-deploy", type: { name: "albDeployWorkflow" },
+        },
+      },
+      historyByWorkflowId: { "chant-op-alb-deploy": [] },
+    }));
+    generateReportMock.mockReturnValue("# Report\nDeploy completed.");
+    const stdoutSpy = vi.spyOn(process.stdout, "write").mockImplementation(() => true);
+
+    const exit = await runOp({ args: makeArgs({ path: "alb-deploy", report: true }), plugins: [], serializers: [] });
+
+    expect(exit).toBe(0);
+    expect(generateReportMock).toHaveBeenCalledTimes(1);
+    expect(stdoutSpy).toHaveBeenCalledWith("# Report\nDeploy completed.");
+    stdoutSpy.mockRestore();
+  });
+
+  test("happy path: spawns worker, starts workflow, polls until COMPLETED, writes report, exits 0", async () => {
+    vi.useFakeTimers();
+    try {
+      discoverOpsMock.mockResolvedValue({ ops: new Map([makeOp("alb-deploy")]), errors: [] });
+      const mockClient = createMockTemporalClient({
+        describeByWorkflowId: {
+          "chant-op-alb-deploy": {
+            workflowId: "chant-op-alb-deploy", runId: "r1",
+            status: { name: "COMPLETED" }, startTime: new Date(),
+            taskQueue: "alb-deploy", type: { name: "albDeployWorkflow" },
+          },
+        },
+        historyByWorkflowId: {
+          "chant-op-alb-deploy": [{ eventType: "ActivityTaskScheduled" }, { eventType: "ActivityTaskCompleted" }],
+        },
+      });
+      setupTemporalClient(mockClient);
+      existsSyncMock.mockReturnValue(true);
+      const { proc } = makeFakeChildProcess();
+      spawnChildMock.mockReturnValue(proc);
+      generateReportMock.mockReturnValue("# Report");
+      writeReportMock.mockReturnValue("/tmp/report.md");
+      const stderrWriteSpy = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+
+      const promise = runOp({ args: makeArgs({ path: "alb-deploy" }), plugins: [], serializers: [] });
+      // Drive the polling loop forward.
+      await vi.advanceTimersByTimeAsync(5000);
+
+      const exit = await promise;
+      expect(exit).toBe(0);
+      expect(spawnChildMock).toHaveBeenCalledTimes(1);
+      expect(spawnChildMock.mock.calls[0][0]).toBe("npx");
+      expect(mockClient.calls.startCalls).toHaveLength(1);
+      expect(mockClient.calls.startCalls[0].opts.workflowId).toBe("chant-op-alb-deploy");
+      expect(generateReportMock).toHaveBeenCalledTimes(1);
+      expect(writeReportMock).toHaveBeenCalledTimes(1);
+      expect(proc.kill).toHaveBeenCalled();
+
+      stderrWriteSpy.mockRestore();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  test("workflow ends in FAILED → exit 1, worker still killed", async () => {
+    vi.useFakeTimers();
+    try {
+      discoverOpsMock.mockResolvedValue({ ops: new Map([makeOp("alb-deploy")]), errors: [] });
+      const mockClient = createMockTemporalClient({
+        describeByWorkflowId: {
+          "chant-op-alb-deploy": {
+            workflowId: "chant-op-alb-deploy", runId: "r1",
+            status: { name: "FAILED" }, startTime: new Date(),
+            taskQueue: "alb-deploy", type: { name: "albDeployWorkflow" },
+          },
+        },
+        historyByWorkflowId: { "chant-op-alb-deploy": [] },
+      });
+      setupTemporalClient(mockClient);
+      existsSyncMock.mockReturnValue(true);
+      const { proc } = makeFakeChildProcess();
+      spawnChildMock.mockReturnValue(proc);
+      generateReportMock.mockReturnValue("# Report");
+      writeReportMock.mockReturnValue("/tmp/report.md");
+      vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+
+      const promise = runOp({ args: makeArgs({ path: "alb-deploy" }), plugins: [], serializers: [] });
+      await vi.advanceTimersByTimeAsync(5000);
+
+      const exit = await promise;
+      expect(exit).toBe(1);
+      expect(proc.kill).toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
