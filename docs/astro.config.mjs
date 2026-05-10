@@ -29,6 +29,7 @@ export default defineConfig({
 						{ label: 'TypeScript as Data', slug: 'concepts/typescript-as-data' },
 						{ label: 'Evaluation Pipeline', slug: 'concepts/evaluation-pipeline' },
 						{ label: 'Choosing Your Deployment Model', slug: 'concepts/deployment-paths' },
+						{ label: 'Drift Detection', slug: 'concepts/drift-detection' },
 					],
 				},
 				{
