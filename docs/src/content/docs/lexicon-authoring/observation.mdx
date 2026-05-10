@@ -1,0 +1,268 @@
+---
+title: Implementing Observation
+description: How to implement describeResources() and listArtifacts() so your lexicon participates in chant state diff --live
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+`chant state snapshot <env>` and `chant state diff <env> --live` query each lexicon for its view of the deployed world. Two opt-in plugin methods feed that pipeline:
+
+| Method | Returns | Comparison axis |
+|---|---|---|
+| `describeResources()` | Per-declared-entity metadata | Three-way: declared / observed-now / observed-then |
+| `listArtifacts()` | Per-environment artifact metadata | Two-way: observed-now vs. observed-then |
+
+Both are optional. Lexicons that implement neither are warn-skipped — `--live` doesn't fail. This page walks through both contracts using shipping lexicons as references.
+
+## Which contract to implement
+
+Pick based on the relationship between your lexicon's chant entities and the runtime world:
+
+| Your lexicon describes... | The runtime world is... | Use |
+|---|---|---|
+| 1:1 cloud resources (CFN resources, K8s objects, ARM resources, Temporal namespaces) | Created and updated *by chant build + apply* | `describeResources()` |
+| Authoring primitives (Helm charts, Compose files, Flyway migration scripts, CI workflow definitions) | Created by *external tooling* outside chant's entity model (`helm install`, `docker run`, `flyway migrate`) | `listArtifacts()` |
+| Both | A mix of declared resources and runtime artifacts | Implement both — `state diff` shows them in separate sections |
+| Neither (definitions-only, like git-tracked workflow YAML) | Everything is git-tracked already; drift is `git diff` | Implement neither; document the rationale in your lexicon README (see `lexicons/github/README.md`) |
+
+The conceptual difference: `describeResources()` is **entity-keyed** — chant knows what to ask about because you declared it. `listArtifacts()` is **context-keyed** — chant doesn't know what's there until you look, and there's no "declared but missing" axis to report.
+
+## describeResources()
+
+Reference implementation: `lexicons/k8s/src/describe-resources.ts`.
+
+The contract:
+
+```typescript
+describeResources?(options: {
+  environment: string;
+  buildOutput: string;
+  entityNames: string[];
+  entities: Map<string, { entityType: string; props: Record<string, unknown> }>;
+}): Promise<Record<string, ResourceMetadata>>;
+```
+
+Return a map keyed by **chant entity name** (the export name on the `*.ts` file), value is the `ResourceMetadata` chant uses to display status and detect drift.
+
+### Use entity-prop pass-through to find the cloud-side identifier
+
+`entities.get(entityName).props` is the literal props the user passed to the entity constructor. K8s reads `props.metadata.name` and `props.metadata.namespace`; Temporal reads `props.name` for namespaces and `props.scheduleId` for schedules; AWS uses the chant entity name directly because CloudFormation logical IDs and chant export names are 1:1.
+
+The K8s pattern:
+
+```typescript
+for (const [entityName, { entityType, props }] of options.entities) {
+  const kubectlResource = KUBECTL_RESOURCE[entityType];
+  if (!kubectlResource) {
+    skippedTypes.add(entityType);
+    continue;
+  }
+
+  const metadata = props.metadata as { name?: string; namespace?: string } | undefined;
+  const name = metadata?.name;
+  if (!name) continue;
+
+  const cmd = ["kubectl", "get", kubectlResource, name,
+               ...(metadata.namespace ? ["-n", metadata.namespace] : []),
+               "-o", "json"].join(" ");
+  // ... query and build ResourceMetadata
+}
+```
+
+`entityNames` is preserved on the options as a convenience for the simpler case where you don't need the props (just iterate `entityNames` and map each to a probe call), but most non-trivial implementations want `entities`.
+
+### Map provider status to a meaningful string
+
+`ResourceMetadata.status` is what `state show` and the diff display per resource. Different resource shapes report status differently — pick the most useful field per type, with a fallback to "PRESENT".
+
+K8s does this with `statusFromKubectl()`:
+
+```typescript
+function statusFromKubectl(obj: KubectlResponse): string {
+  const phase = obj.status?.phase;                          // Pods
+  if (typeof phase === "string") return phase;
+  const status = obj.status as Record<string, unknown> | undefined;
+  if (status && typeof status.readyReplicas === "number" && typeof status.replicas === "number") {
+    return status.readyReplicas === status.replicas
+      ? "READY"
+      : `PROGRESSING(${status.readyReplicas}/${status.replicas})`;
+  }
+  return "PRESENT";
+}
+```
+
+The status string is opaque to chant's diff logic (any change is "drift"), so you can be expressive — `READY`, `PROGRESSING(2/3)`, `CrashLoopBackOff`, `ACTIVE` all work fine.
+
+### Silent-skip resources that aren't there
+
+Resource-not-found is **expected** during diff — it's how `state diff --live` reports a `MISSING` (declared, not in cloud) entry. Catch the per-resource error and continue:
+
+```typescript
+try {
+  const { stdout } = await execAsync(cmd);
+  const obj = JSON.parse(stdout);
+  result[entityName] = { type: entityType, /* ... */ };
+} catch {
+  // Resource not found / kubectl error — leave it out so state diff
+  // can report it as missing. Don't fail the whole snapshot.
+}
+```
+
+Failing the whole snapshot because one Deployment is gone defeats the point.
+
+### Warn once for unknown entity types
+
+Lexicons grow new resource types over time. If your describe path doesn't cover a type yet, accumulate them and warn once — don't error:
+
+```typescript
+const skippedTypes = new Set<string>();
+// ... in the loop, skippedTypes.add(entityType) when unmapped
+if (skippedTypes.size > 0) {
+  console.warn(`[k8s] skipped ${skippedTypes.size} entity type(s) without kubectl mapping: ${[...skippedTypes].join(", ")}`);
+}
+```
+
+The user gets actionable feedback (PR-able list of types to add); the snapshot proceeds with what's covered.
+
+## listArtifacts()
+
+Reference implementation: `lexicons/helm/src/list-artifacts.ts`.
+
+The contract:
+
+```typescript
+listArtifacts?(options: {
+  environment: string;
+  entities: Map<string, { entityType: string; props: Record<string, unknown> }>;
+}): Promise<Record<string, ArtifactMetadata>>;
+```
+
+Return a map keyed by your **artifact identifier** (whatever uniquely identifies the runtime thing — e.g. `release/<namespace>/<name>` for Helm, `container/<name>` for Docker), value is `ArtifactMetadata` (same shape as `ResourceMetadata`).
+
+### Two-way diff: there is no "declared" axis
+
+`state diff --live` reports four artifact categories per lexicon: **added**, **removed**, **changed**, **unchanged** — comparing now vs. last snapshot, not declared vs. observed. That's all the diff engine can do without a chant entity to anchor each artifact. Don't try to forge an entity-keyed mapping just to fit `describeResources()` — the artifact concept is the right shape for tooling that creates runtime state outside chant.
+
+### Pick a stable, namespaced key
+
+The diff engine compares per-key. Two-snapshot stability matters more than aesthetics. Helm uses `release/<namespace>/<name>`, Docker uses `container/<name>`, `image/<repo>:<tag>`, `network/<name>`, Flyway uses `migration/<env>/<version>`. Type prefix in the key makes the diff output legible (`release/...`, `container/...` are easy to read in the same section).
+
+### Daemon / binary missing → return `{}` cleanly
+
+If the tool you're shelling out to isn't installed or unreachable, return an empty map. Don't fail the whole snapshot — other lexicons should still run:
+
+```typescript
+try {
+  ({ stdout } = await execAsync("helm list -A -o json"));
+} catch {
+  // Binary not installed, no kubeconfig, or some other error — return
+  // empty rather than blocking the whole snapshot.
+  return result;
+}
+```
+
+### Per-source failure isolation
+
+Docker queries three independent surfaces (containers, images, networks). One failure shouldn't stop the others. Run them in parallel, each with its own try/catch, and merge:
+
+```typescript
+const [containers, images, networks] = await Promise.all([
+  listContainers(),
+  listImages(),
+  listNetworks(),
+]);
+return { ...containers, ...images, ...networks };
+```
+
+### Per-environment query when the runtime is multi-tenant
+
+Flyway's runtime is per-DB. The lexicon discovers declared `Flyway::Environment` entities from the `entities` map and queries each:
+
+```typescript
+const declaredEnvs: string[] = [];
+for (const [, { entityType, props }] of options.entities) {
+  if (entityType !== "Flyway::Environment") continue;
+  const name = props.name as string | undefined;
+  if (name) declaredEnvs.push(name);
+}
+
+for (const envName of declaredEnvs) {
+  try {
+    const { stdout } = await execAsync(`flyway info -environments=${envName} -outputType=json`);
+    // ...
+  } catch (err) {
+    console.warn(`[flyway] failed to query "${envName}": ${err}`);
+    continue;  // other envs still proceed
+  }
+}
+```
+
+Per-env warn-soft is the right default: a broken DB connection on `staging` shouldn't block the `prod` artifacts from being recorded.
+
+## Testing
+
+Both contracts are pure async functions of their options — easy to unit-test by mocking `child_process.exec` or whatever client your lexicon uses.
+
+Pattern from `lexicons/k8s/src/describe-resources.test.ts`:
+
+```typescript
+import { describe, test, expect, vi, beforeEach } from "vitest";
+
+const execMock = vi.fn();
+vi.mock("node:child_process", async () => {
+  const actual = await vi.importActual<typeof import("node:child_process")>("node:child_process");
+  return { ...actual, exec: (cmd, cb) => {
+    Promise.resolve(execMock(cmd)).then(
+      (out) => cb(null, out),
+      (err) => cb(err, { stdout: "", stderr: "" }),
+    );
+  }};
+});
+
+const { describeResources } = await import("./describe-resources");
+```
+
+Then drive `execMock` per command pattern and assert on the returned `ResourceMetadata` shape.
+
+### Mocking the plugin contract end-to-end
+
+For tests that exercise consumers of the contract (the `state diff` engine, a custom Op activity), `@intentius/chant-test-utils` ships:
+
+- **`createMockPlugin({ name, describeResources?, listArtifacts? })`** — minimal plugin satisfying the type
+- **`staticDescribeResources(record)`** / **`staticListArtifacts(record)`** — closure-returning factories for tests that don't care about the query mechanics, just the data flow
+
+```typescript
+import { createMockPlugin, staticDescribeResources } from "@intentius/chant-test-utils";
+
+const plugin = createMockPlugin({
+  name: "fake-cloud",
+  describeResources: staticDescribeResources({
+    web: { type: "Fake::Service", status: "READY" },
+  }),
+});
+```
+
+Use the static factories to keep diff-engine and Op-activity tests free of `child_process` mocks they don't need.
+
+## Coverage today
+
+| Lexicon | `describeResources()` | `listArtifacts()` | How it queries |
+|---|---|---|---|
+| AWS | ✅ |  | `aws cloudformation describe-stack-resources` |
+| Azure | ✅ |  | `az resource show` per declared entity |
+| GCP (Config Connector) | ✅ |  | `kubectl get <gvk> <name> -o json` against the GKE cluster |
+| K8s | ✅ |  | `kubectl get <kind> <name> [-n <ns>] -o json` per declared entity |
+| Temporal | ✅ |  | Temporal client (`workflowService.listNamespaces`, `operatorService.listSearchAttributes`, `scheduleClient.list`) |
+| Helm |  | ✅ | `helm list -A -o json` |
+| Docker |  | ✅ | `docker ps`, `docker image ls`, `docker network ls` (NDJSON) |
+| Flyway |  | ✅ | `flyway info -environments=<env> -outputType=json` per declared `Flyway::Environment` |
+| Slurm |  | ✅ | `sinfo` partition state |
+| GitHub / GitLab |  |  | N/A — git-tracked authoring primitives, see [github](/lexicons/github/) and [gitlab](/lexicons/gitlab/) READMEs |
+
+For the user-facing version of this matrix and how the diff output is grouped, see [`chant state`](/chant/cli/state/#coverage-today).
+
+## See also
+
+- [`chant state`](/chant/cli/state/) — user-facing CLI reference
+- [Watching State](/chant/guide/watching-state/) — how observation feeds into continuous drift detection via `WatchOp`
+- [Completeness Checklist](/chant/lexicon-authoring/completeness-checklist/) — full list of what a production-ready lexicon implements
