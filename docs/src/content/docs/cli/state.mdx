@@ -68,9 +68,11 @@ Output is grouped into six categories per lexicon:
 
 Drifted entries include attribute-level deltas (`status`, `physicalId`, `lastUpdated`, and each `attributes.*` key).
 
-Lexicons that don't yet implement `describeResources()` are warn-skipped — `--live` doesn't fail the whole command for them. Today, **AWS** and **Temporal** are covered.
+Lexicons that don't yet implement `describeResources()` are warn-skipped — `--live` doesn't fail the whole command for them. Today, **AWS**, **Temporal**, and **K8s** are covered.
 
-The Temporal lexicon resolves its connection via the chant config: `state snapshot <env>` (or `--live` against `<env>`) looks up `temporal.profiles.<env>` in your `chant.config.ts` and falls back to `temporal.defaultProfile`. The same profile model is used by `chant run`. Server-side identifiers are used as the resource keys (e.g. `namespace/prod`, `searchAttribute/prod/Project`, `schedule/prod/daily-report`).
+The Temporal lexicon resolves its connection via the chant config: `state snapshot <env>` (or `--live` against `<env>`) looks up `temporal.profiles.<env>` in your `chant.config.ts` and falls back to `temporal.defaultProfile`. The same profile model is used by `chant run`. With #39's entity-prop pass-through, namespaces/schedules/search-attributes are mapped back to chant entity names when the declared `props.name` (etc.) match the server-side identifier.
+
+The K8s lexicon shells out to `kubectl get <kind> <name> [-n <namespace>] -o json` per declared entity. The cluster context comes from the user's `kubeconfig` — there's no separate profile model. Twenty common resource types (Deployment, Service, ConfigMap, Secret, Namespace, Pod, PVC, ServiceAccount, Job, CronJob, Ingress, NetworkPolicy, RBAC roles + bindings, ReplicaSet, StatefulSet, DaemonSet) are covered out of the box; CRDs and uncommon types are warn-skipped.
 
 ### Concurrent snapshots
 
