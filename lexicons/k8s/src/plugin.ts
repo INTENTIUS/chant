@@ -657,4 +657,9 @@ const { deployment, service, serviceMonitor, prometheusRule } = MonitoredService
         ],
       },
     ]),
+
+  async describeResources(options) {
+    const { describeResources } = await import("./describe-resources");
+    return describeResources(options);
+  },
 };
