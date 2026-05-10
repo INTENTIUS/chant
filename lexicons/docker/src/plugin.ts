@@ -245,4 +245,9 @@ export const api = new Service({
       ],
     },
   ]),
+
+  async listArtifacts(options) {
+    const { listArtifacts } = await import("./list-artifacts");
+    return listArtifacts(options);
+  },
 };
