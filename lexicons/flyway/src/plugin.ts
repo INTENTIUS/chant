@@ -561,4 +561,9 @@ const result = VaultSecuredProject({
       ],
     },
   ]),
+
+  async listArtifacts(options) {
+    const { listArtifacts } = await import("./list-artifacts");
+    return listArtifacts(options);
+  },
 };
