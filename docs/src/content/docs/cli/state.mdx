@@ -68,13 +68,15 @@ Output is grouped into six categories per lexicon:
 
 Drifted entries include attribute-level deltas (`status`, `physicalId`, `lastUpdated`, and each `attributes.*` key).
 
-Lexicons that don't yet implement `describeResources()` are warn-skipped — `--live` doesn't fail the whole command for them. Today, **AWS**, **Temporal**, **K8s**, and **GCP** (via Config Connector) are covered.
+Lexicons that don't yet implement `describeResources()` are warn-skipped — `--live` doesn't fail the whole command for them. Today, **AWS**, **Temporal**, **K8s**, **GCP** (via Config Connector), and **Azure** are covered.
 
 The Temporal lexicon resolves its connection via the chant config: `state snapshot <env>` (or `--live` against `<env>`) looks up `temporal.profiles.<env>` in your `chant.config.ts` and falls back to `temporal.defaultProfile`. The same profile model is used by `chant run`. With #39's entity-prop pass-through, namespaces/schedules/search-attributes are mapped back to chant entity names when the declared `props.name` (etc.) match the server-side identifier.
 
 The K8s lexicon shells out to `kubectl get <kind> <name> [-n <namespace>] -o json` per declared entity. The cluster context comes from the user's `kubeconfig` — there's no separate profile model. Twenty common resource types (Deployment, Service, ConfigMap, Secret, Namespace, Pod, PVC, ServiceAccount, Job, CronJob, Ingress, NetworkPolicy, RBAC roles + bindings, ReplicaSet, StatefulSet, DaemonSet) are covered out of the box; CRDs and uncommon types are warn-skipped.
 
 The GCP lexicon uses the same `kubectl` shell-out path against [Config Connector](https://cloud.google.com/config-connector) CRDs. The entity type's GVK derivation matches the serializer (`GCP::Storage::Bucket` → `storagebucket.storage.cnrm.cloud.google.com`), so any of the ~300 chant-supported GCP resources work without per-type configuration. `Ready=True` on the resource's status is mapped to `READY`; otherwise the condition's reason is surfaced.
+
+The Azure lexicon shells out to `az resource show --resource-group <env> --name <name> --resource-type <type> -o json` per declared entity. The `<env>` argument is treated as the Azure resource group name. `properties.provisioningState` becomes the `status`. Top-level resources only — nested ARM types (e.g. `Microsoft.Storage/storageAccounts/blobServices`) are warn-skipped since `az resource show` doesn't accept compound type names directly.
 
 ### Concurrent snapshots
 
