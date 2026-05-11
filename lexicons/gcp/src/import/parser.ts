@@ -51,7 +51,7 @@ export class GcpParser extends BaseValueParser implements TemplateParser {
       const metadata = doc.metadata as Record<string, unknown> | undefined;
       const spec = doc.spec as Record<string, unknown> | undefined;
 
-      const logicalName = (metadata?.name as string) ?? kind;
+      const logicalId = (metadata?.name as string) ?? kind;
 
       // Build properties from spec
       const properties: Record<string, unknown> = {};
@@ -65,7 +65,7 @@ export class GcpParser extends BaseValueParser implements TemplateParser {
       }
 
       resources.push({
-        logicalName,
+        logicalId,
         type: typeName,
         properties,
       });
@@ -74,7 +74,6 @@ export class GcpParser extends BaseValueParser implements TemplateParser {
     return {
       resources,
       parameters: [],
-      outputs: [],
     };
   }
 }

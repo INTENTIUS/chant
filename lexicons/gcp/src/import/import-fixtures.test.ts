@@ -16,7 +16,7 @@ spec:
 `;
     const ir = parser.parse(yaml);
     expect(ir.resources).toHaveLength(1);
-    expect(ir.resources[0].logicalName).toBe("my-bucket");
+    expect(ir.resources[0].logicalId).toBe("my-bucket");
     expect(ir.resources[0].type).toContain("Bucket");
   });
 
@@ -40,8 +40,8 @@ spec:
 `;
     const ir = parser.parse(yaml);
     expect(ir.resources).toHaveLength(2);
-    expect(ir.resources[0].logicalName).toBe("my-network");
-    expect(ir.resources[1].logicalName).toBe("my-subnet");
+    expect(ir.resources[0].logicalId).toBe("my-network");
+    expect(ir.resources[1].logicalId).toBe("my-subnet");
   });
 
   test("skips non-Config-Connector resources", () => {
@@ -91,7 +91,7 @@ spec:
 `;
     const ir = parser.parse(yaml);
     const generator = new GcpGenerator();
-    const ts = generator.generate(ir);
+    const ts = generator.generate(ir)[0].content;
     expect(ts).toContain("Bucket");
     expect(ts).toContain("import");
   });

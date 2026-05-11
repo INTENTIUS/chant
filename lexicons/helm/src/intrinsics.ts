@@ -308,7 +308,9 @@ export function quote(val: HelmTpl): HelmTpl {
  * `printf("%s:%s", values.image.repository, values.image.tag)`
  * → `{{ printf "%s:%s" .Values.image.repository .Values.image.tag }}`
  */
-export function printf(fmt: string, ...args: HelmTpl[]): HelmTpl {
+export function printf(fmt: string, ...args: (HelmTpl | string)[]): HelmTpl {
+  // extractExpr already accepts both HelmTpl and string; widening here is
+  // purely additive (existing callers passing HelmTpl[] keep working).
   const argExprs = args.map(extractExpr).join(" ");
   return new HelmTpl(`{{ printf "${fmt}" ${argExprs} }}`);
 }

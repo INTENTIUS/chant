@@ -43,11 +43,11 @@
     "prepack": "npm run generate && npm run bundle && npm run validate"
   },
   "dependencies": {
-    "js-yaml": "^4.1.1"
+    "js-yaml": "^4.1.1",
+    "@types/js-yaml": "^4.0.9"
   },
   "devDependencies": {
     "@intentius/chant": "*",
-    "@types/js-yaml": "^4.0.9",
     "typescript": "^5.9.3"
   },
   "peerDependencies": {

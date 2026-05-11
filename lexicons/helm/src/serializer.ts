@@ -111,7 +111,7 @@ function emitHelmYAML(value: unknown, indent: number, valuesContext: boolean = f
 
   // Detect HelmTpl / Intrinsic objects via INTRINSIC_MARKER before string check
   if (typeof value === "object" && value !== null && INTRINSIC_MARKER in value) {
-    const tplObj = value as { toJSON(): unknown };
+    const tplObj = value as unknown as { toJSON(): unknown };
     if (valuesContext) {
       // In values.yaml context: emit empty placeholder — actual value comes from override files
       return "''";

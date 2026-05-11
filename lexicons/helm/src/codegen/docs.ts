@@ -479,6 +479,6 @@ When you scaffold a new project with \`chant init --lexicon helm\`, the skill is
   writeDocsSite(config, result);
 
   if (opts?.verbose) {
-    console.error(`Generated ${result.pages.length} documentation pages`);
+    console.error(`Generated ${result.pages.size} documentation pages`);
   }
 }

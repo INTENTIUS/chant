@@ -18,7 +18,7 @@ describe("roundtrip: parse YAML → generate TypeScript", () => {
   test("StorageBucket roundtrip", () => {
     const yaml = readFileSync(join(testdataDir, "storage-bucket.yaml"), "utf-8");
     const ir = parser.parse(yaml);
-    const ts = generator.generate(ir);
+    const ts = generator.generate(ir)[0].content;
 
     expect(ir.resources.length).toBe(1);
     expect(ts).toContain("new Bucket");
@@ -28,7 +28,7 @@ describe("roundtrip: parse YAML → generate TypeScript", () => {
   test("ComputeInstance roundtrip", () => {
     const yaml = readFileSync(join(testdataDir, "compute-instance.yaml"), "utf-8");
     const ir = parser.parse(yaml);
-    const ts = generator.generate(ir);
+    const ts = generator.generate(ir)[0].content;
 
     expect(ir.resources.length).toBe(1);
     expect(ts).toContain("new Instance");
@@ -41,7 +41,7 @@ describe("roundtrip: parse YAML → generate TypeScript", () => {
     const ir = parser.parse(yaml);
     expect(ir.resources.length).toBe(3); // StorageBucket + IAMPolicyMember + ComputeNetwork
 
-    const ts = generator.generate(ir);
+    const ts = generator.generate(ir)[0].content;
     expect(ts).toContain("Bucket");
     expect(ts).toContain("PolicyMember");
     expect(ts).toContain("Network");
@@ -58,7 +58,7 @@ spec:
   storageClass: NEARLINE
 `;
     const ir = parser.parse(yaml);
-    const ts = generator.generate(ir);
+    const ts = generator.generate(ir)[0].content;
 
     expect(ts).toContain("new Bucket");
     expect(ts).toContain("export const");

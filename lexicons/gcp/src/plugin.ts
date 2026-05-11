@@ -174,18 +174,17 @@ export const bucketReader = new IAMPolicyMember({
   },
 
   detectTemplate(data: unknown): boolean {
-    if (typeof data !== "object" || data === null) return false;
+    // Handle raw string input (unparsed YAML)
+    if (typeof data === "string") {
+      return data.includes("cnrm.cloud.google.com");
+    }
 
     // Handle parsed YAML objects
+    if (typeof data !== "object" || data === null) return false;
     const obj = data as Record<string, unknown>;
     const apiVersion = obj.apiVersion;
     if (typeof apiVersion === "string" && apiVersion.includes("cnrm.cloud.google.com")) {
       return true;
-    }
-
-    // Handle string input
-    if (typeof data === "string") {
-      return data.includes("cnrm.cloud.google.com");
     }
 
     return false;
@@ -205,124 +204,6 @@ export const bucketReader = new IAMPolicyMember({
 
   hoverProvider(ctx: HoverContext): HoverInfo | undefined {
     return gcpHover(ctx);
-  },
-
-  async describeResources(options: {
-    environment: string;
-    buildOutput: string;
-    entityNames: string[];
-  }): Promise<Record<string, ResourceMetadata>> {
-    const { getRuntime } = await import("@intentius/chant/runtime-adapter");
-    const rt = getRuntime();
-    const resources: Record<string, ResourceMetadata> = {};
-
-    // Convert TypeScript variable names to kebab-case manifest names
-    // (mirrors serializer.ts:165 metadata.name assignment)
-    function entityToManifestName(name: string): string {
-      return name.replace(/([a-z0-9])([A-Z])/g, "$1-$2").toLowerCase();
-    }
-
-    // Detect namespace: prefer namespace from manifests, then kubectl context, fallback "default"
-    let namespace = "default";
-    try {
-      // Check manifests for an explicit namespace
-      const nsMatch = options.buildOutput.match(/^\s+namespace:\s*(.+)$/m);
-      if (nsMatch) {
-        namespace = nsMatch[1].trim();
-      } else {
-        // Try kubectl current context namespace
-        const nsResult = await rt.spawn([
-          "kubectl", "config", "view", "--minify", "-o", "jsonpath={..namespace}",
-        ]);
-        if (nsResult.exitCode === 0 && nsResult.stdout.trim()) {
-          namespace = nsResult.stdout.trim();
-        }
-      }
-    } catch (err) {
-      console.error(`[gcp] describeResources: namespace detection failed, using "default": ${err instanceof Error ? err.message : String(err)}`);
-    }
-
-    // Parse build output to extract kind/name pairs
-    let manifests: Array<{ kind: string; name: string; apiVersion: string; namespace?: string }> = [];
-    try {
-      const docs = options.buildOutput.split(/^---$/m).filter((d) => d.trim());
-      for (const doc of docs) {
-        const kindMatch = doc.match(/^kind:\s*(.+)$/m);
-        const nameMatch = doc.match(/^\s+name:\s*(.+)$/m);
-        const apiVersionMatch = doc.match(/^apiVersion:\s*(.+)$/m);
-        if (kindMatch && nameMatch && apiVersionMatch) {
-          const nsMatch = doc.match(/^\s+namespace:\s*(.+)$/m);
-          manifests.push({
-            kind: kindMatch[1].trim(),
-            name: nameMatch[1].trim(),
-            apiVersion: apiVersionMatch[1].trim(),
-            ...(nsMatch && { namespace: nsMatch[1].trim() }),
-          });
-        }
-      }
-    } catch (err) {
-      console.error(`[gcp] describeResources: failed to parse build output: ${err instanceof Error ? err.message : String(err)}`);
-    }
-
-    let resolved = 0;
-
-    for (const entityName of options.entityNames) {
-      const manifestName = entityToManifestName(entityName);
-      const manifest = manifests.find((m) => m.name === manifestName);
-      if (!manifest) {
-        console.error(`[gcp] describeResources: no manifest found for entity "${entityName}" (expected manifest name "${manifestName}")`);
-        continue;
-      }
-
-      const resourceNs = manifest.namespace ?? namespace;
-      const resourceType = manifest.kind.toLowerCase();
-      const getResult = await rt.spawn([
-        "kubectl", "get", resourceType, manifest.name,
-        "-n", resourceNs, "-o", "json",
-      ]);
-
-      if (getResult.exitCode !== 0) {
-        console.error(`[gcp] describeResources: kubectl get ${resourceType} ${manifest.name} -n ${resourceNs} failed (exit ${getResult.exitCode}): ${getResult.stderr.trim()}`);
-        continue;
-      }
-
-      try {
-        const obj = JSON.parse(getResult.stdout) as {
-          metadata: { name: string; uid: string; creationTimestamp: string };
-          status?: {
-            conditions?: Array<{ type: string; status: string }>;
-            externalRef?: string;
-          };
-        };
-
-        let status = "Unknown";
-        if (obj.status?.conditions) {
-          const ready = obj.status.conditions.find((c) => c.type === "Ready");
-          status = ready?.status === "True" ? "Ready" : "NotReady";
-        }
-
-        const attributes: Record<string, unknown> = {
-          uid: obj.metadata.uid,
-        };
-        if (obj.status?.externalRef) {
-          attributes.externalRef = obj.status.externalRef;
-        }
-
-        resources[entityName] = {
-          type: `${manifest.apiVersion}/${manifest.kind}`,
-          physicalId: obj.status?.externalRef ?? obj.metadata.name,
-          status,
-          lastUpdated: obj.metadata.creationTimestamp,
-          attributes,
-        };
-        resolved++;
-      } catch (err) {
-        console.error(`[gcp] describeResources: failed to parse kubectl output for "${entityName}": ${err instanceof Error ? err.message : String(err)}`);
-      }
-    }
-
-    console.error(`[gcp] describeResources: ${resolved}/${options.entityNames.length} resources resolved`);
-    return resources;
   },
 
   mcpTools() {

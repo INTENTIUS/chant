@@ -228,7 +228,7 @@ export const HelmMonitoredService = Composite<HelmMonitoredServiceProps>((props)
           interval: values.monitoring.scrapeInterval,
         }],
       },
-    }) as Record<string, unknown>,
+    }) as unknown as Record<string, unknown>,
     defs?.serviceMonitor,
   ));
 
@@ -267,7 +267,7 @@ export const HelmMonitoredService = Composite<HelmMonitoredServiceProps>((props)
             rules: toYaml(values.alerting.rules),
           }],
         },
-      }) as Record<string, unknown>,
+      }) as unknown as Record<string, unknown>,
       defs?.prometheusRule,
     ));
   }

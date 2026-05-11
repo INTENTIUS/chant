@@ -4,10 +4,11 @@
  * Converts import IR from the parser into typed chant TypeScript code.
  */
 
-import type { TypeScriptGenerator, TemplateIR } from "@intentius/chant/import/generator";
+import type { TypeScriptGenerator, GeneratedFile } from "@intentius/chant/import/generator";
+import type { TemplateIR } from "@intentius/chant/import/parser";
 
 export class GcpGenerator implements TypeScriptGenerator {
-  generate(ir: TemplateIR): string {
+  generate(ir: TemplateIR): GeneratedFile[] {
     const lines: string[] = [];
     const imports = new Set<string>();
 
@@ -31,13 +32,13 @@ export class GcpGenerator implements TypeScriptGenerator {
     for (const resource of ir.resources) {
       const parts = resource.type.split("::");
       const className = parts.length >= 3 ? parts[2] : resource.type;
-      const varName = camelCase(resource.logicalName);
+      const varName = camelCase(resource.logicalId);
 
       lines.push(`export const ${varName} = new ${className}(${formatProps(resource.properties, 0)});`);
       lines.push("");
     }
 
-    return lines.join("\n");
+    return [{ path: "main.ts", content: lines.join("\n") + "\n" }];
   }
 }
 

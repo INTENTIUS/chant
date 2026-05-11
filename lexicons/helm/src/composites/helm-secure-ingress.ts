@@ -96,7 +96,7 @@ export const HelmSecureIngress = Composite<HelmSecureIngressProps>((props) => {
           },
         }),
       },
-    }) as Record<string, unknown>,
+    }) as unknown as Record<string, unknown>,
     defs?.ingress,
   ));
 
@@ -117,7 +117,7 @@ export const HelmSecureIngress = Composite<HelmSecureIngressProps>((props) => {
         },
         dnsNames: values.ingress.hosts,
       },
-    }) as Record<string, unknown>,
+    }) as unknown as Record<string, unknown>,
     defs?.certificate,
   ));
 

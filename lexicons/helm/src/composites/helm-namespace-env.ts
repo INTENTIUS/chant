@@ -134,7 +134,7 @@ export const HelmNamespaceEnv = Composite<HelmNamespaceEnvProps>((props) => {
         spec: {
           hard: toYaml(values.resourceQuota.hard),
         },
-      }) as Record<string, unknown>,
+      }) as unknown as Record<string, unknown>,
       defs?.resourceQuota,
     ));
   }
@@ -155,7 +155,7 @@ export const HelmNamespaceEnv = Composite<HelmNamespaceEnvProps>((props) => {
             defaultRequest: toYaml(values.limitRange.defaultRequest),
           }],
         },
-      }) as Record<string, unknown>,
+      }) as unknown as Record<string, unknown>,
       defs?.limitRange,
     ));
   }
@@ -173,7 +173,7 @@ export const HelmNamespaceEnv = Composite<HelmNamespaceEnvProps>((props) => {
           podSelector: {},
           policyTypes: ["Ingress", "Egress"],
         },
-      }) as Record<string, unknown>,
+      }) as unknown as Record<string, unknown>,
       defs?.networkPolicy,
     ));
   }

@@ -88,7 +88,7 @@ spec:
     expect(ir.resources).toEqual([]);
   });
 
-  test("metadata.name extracted as logicalName", () => {
+  test("metadata.name extracted as logicalId", () => {
     const yaml = `
 apiVersion: compute.cnrm.cloud.google.com/v1beta1
 kind: ComputeNetwork
@@ -98,7 +98,7 @@ spec:
   autoCreateSubnetworks: false
 `;
     const ir = parser.parse(yaml);
-    expect((ir.resources[0] as any).logicalName).toBe("my-network");
+    expect((ir.resources[0] as any).logicalId).toBe("my-network");
   });
 
   test("properties include metadata and spec fields, exclude apiVersion/kind", () => {
