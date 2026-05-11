@@ -65,6 +65,20 @@ docs-build:
 docs-serve: docs-build
     npx serve .docs-dist
 
+# Check internal doc links across the unified site (requires lychee: brew install lychee)
+docs-check-links: docs-build
+    #!/usr/bin/env bash
+    set -euo pipefail
+    if ! command -v lychee >/dev/null 2>&1; then
+      echo "lychee not installed. Install with: brew install lychee" >&2
+      exit 127
+    fi
+    lychee --offline --no-progress \
+      --root-dir "$PWD/.docs-dist" \
+      --exclude '\.(css|js|mjs|svg|png|jpe?g|ico|woff2?|map|json|xml|webp|avif|gif)$' \
+      --exclude 'pagefind/' \
+      '.docs-dist/chant/**/*.html'
+
 # Build VS Code extension
 ext-vscode-build:
     cd editors/vscode && npm install && npm run build
