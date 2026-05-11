@@ -177,13 +177,13 @@ describe("k8sPlugin", () => {
   test("mcpTools() returns diff tool", () => {
     const tools = k8sPlugin.mcpTools!();
     expect(Array.isArray(tools)).toBe(true);
-    expect(tools.some((t) => t.name === "diff")).toBe(true);
+    expect(tools.some((t) => t.name === "k8s:diff")).toBe(true);
   });
 
   test("mcpResources() returns resource-catalog and examples", () => {
     const resources = k8sPlugin.mcpResources!();
     expect(Array.isArray(resources)).toBe(true);
-    expect(resources.some((r) => r.uri === "resource-catalog")).toBe(true);
+    expect(resources.some((r) => r.uri === "k8s:resource-catalog")).toBe(true);
     expect(resources.some((r) => r.uri === "examples/basic-deployment")).toBe(true);
   });
 

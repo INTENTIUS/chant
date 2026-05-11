@@ -103,6 +103,7 @@ export const temporalPlugin: LexiconPlugin = {
       createDiffTool(
         temporalSerializer,
         "Compare current Temporal build output (docker-compose.yml, temporal-setup.sh, schedules/) against previous version",
+        "temporal",
       ),
     ];
   },
@@ -114,6 +115,7 @@ export const temporalPlugin: LexiconPlugin = {
         "Temporal Resource Types",
         "All supported Temporal resource types: TemporalServer, TemporalNamespace, SearchAttribute, TemporalSchedule",
         "lexicon-temporal.json",
+        "temporal",
       ),
       {
         uri: "examples/dev-server",

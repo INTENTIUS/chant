@@ -559,7 +559,7 @@ aws cloudformation wait stack-update-complete --stack-name my-app-prod`,
   mcpTools() {
     return [
       {
-        name: "diff",
+        name: "aws:diff",
         description: "Compare current build output against previous output for AWS CloudFormation",
         inputSchema: {
           type: "object" as const,
@@ -591,7 +591,7 @@ aws cloudformation wait stack-update-complete --stack-name my-app-prod`,
   mcpResources() {
     return [
       {
-        uri: "resource-catalog",
+        uri: "aws:resource-catalog",
         name: "AWS Resource Catalog",
         description: "JSON list of all supported AWS CloudFormation resource types",
         mimeType: "application/json",

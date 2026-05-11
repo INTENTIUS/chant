@@ -138,13 +138,13 @@ describe("flywayPlugin", () => {
   test("mcpTools() returns diff tool", () => {
     const tools = flywayPlugin.mcpTools!();
     expect(Array.isArray(tools)).toBe(true);
-    expect(tools.some((t) => t.name === "diff")).toBe(true);
+    expect(tools.some((t) => t.name === "flyway:diff")).toBe(true);
   });
 
   test("mcpResources() returns resource-catalog and examples", () => {
     const resources = flywayPlugin.mcpResources!();
     expect(Array.isArray(resources)).toBe(true);
-    expect(resources.some((r) => r.uri === "resource-catalog")).toBe(true);
+    expect(resources.some((r) => r.uri === "flyway:resource-catalog")).toBe(true);
     expect(resources.some((r) => r.uri === "examples/multi-environment")).toBe(true);
   });
 

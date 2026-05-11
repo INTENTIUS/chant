@@ -61,15 +61,18 @@ export function createSkillsLoader(
 /**
  * Create an MCP diff tool contribution for a lexicon.
  *
- * All lexicons (except Azure) expose an identical "diff" tool that compares
- * current build output against previous output using the lexicon's serializer.
+ * All lexicons (except Azure) expose an identical-shape "diff" tool that
+ * compares current build output against previous output using the lexicon's
+ * serializer. The tool name is namespaced by `lexiconName` (e.g. `gcp:diff`)
+ * so multiple lexicons loaded together don't collide on the same tool key.
  */
 export function createDiffTool(
   serializer: Serializer,
   description: string,
+  lexiconName: string,
 ): McpToolContribution {
   return {
-    name: "diff",
+    name: `${lexiconName}:diff`,
     description,
     inputSchema: {
       type: "object" as const,
@@ -96,21 +99,26 @@ export function createDiffTool(
 /**
  * Create an MCP resource that serves the lexicon's meta.json as a catalog.
  *
- * Most lexicons expose a "resource-catalog" resource with identical structure.
+ * Most lexicons expose a "resource-catalog" resource with identical
+ * structure. The URI is namespaced by `lexiconName` (e.g.
+ * `gcp:resource-catalog`) so multiple lexicons loaded together don't
+ * collide on the same resource key.
  *
  * @param importMetaUrl — The plugin's import.meta.url (used to locate generated JSON)
  * @param name — Display name (e.g. "AWS Resource Catalog")
  * @param description — Resource description
  * @param lexiconJsonFile — Filename of the generated lexicon JSON (e.g. "lexicon-aws.json")
+ * @param lexiconName — Short lexicon name (e.g. "aws", "gcp"). Becomes the URI prefix.
  */
 export function createCatalogResource(
   importMetaUrl: string,
   name: string,
   description: string,
   lexiconJsonFile: string,
+  lexiconName: string,
 ): McpResourceContribution {
   return {
-    uri: "resource-catalog",
+    uri: `${lexiconName}:resource-catalog`,
     name,
     description,
     mimeType: "application/json",

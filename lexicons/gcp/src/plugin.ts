@@ -326,12 +326,12 @@ export const bucketReader = new IAMPolicyMember({
   },
 
   mcpTools() {
-    return [createDiffTool(gcpSerializer, "Compare current build output against previous output for GCP Config Connector manifests")];
+    return [createDiffTool(gcpSerializer, "Compare current build output against previous output for GCP Config Connector manifests", "gcp")];
   },
 
   mcpResources() {
     return [
-      createCatalogResource(import.meta.url, "GCP Config Connector Resource Catalog", "JSON list of all supported GCP Config Connector resource types", "lexicon-gcp.json"),
+      createCatalogResource(import.meta.url, "GCP Config Connector Resource Catalog", "JSON list of all supported GCP Config Connector resource types", "lexicon-gcp.json", "gcp"),
       {
         uri: "examples/basic-bucket",
         name: "Basic GCS Bucket Example",

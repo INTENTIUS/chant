@@ -65,13 +65,13 @@ export const helmPlugin: LexiconPlugin = {
   },
 
   mcpTools() {
-    return [createDiffTool(helmSerializer, "Compare current Helm chart build output against previous output")];
+    return [createDiffTool(helmSerializer, "Compare current Helm chart build output against previous output", "helm")];
   },
 
   mcpResources() {
     return [
       {
-        uri: "resource-catalog",
+        uri: "helm:resource-catalog",
         name: "Helm Chart Resource Catalog",
         description: "JSON list of all supported Helm chart resource types",
         mimeType: "application/json",

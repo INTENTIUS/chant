@@ -224,12 +224,12 @@ export const build = new Job({
   },
 
   mcpTools() {
-    return [createDiffTool(githubSerializer, "Compare current build output against previous output for GitHub Actions")];
+    return [createDiffTool(githubSerializer, "Compare current build output against previous output for GitHub Actions", "github")];
   },
 
   mcpResources() {
     return [
-      createCatalogResource(import.meta.url, "GitHub Actions Entity Catalog", "JSON list of all supported GitHub Actions entity types", "lexicon-github.json"),
+      createCatalogResource(import.meta.url, "GitHub Actions Entity Catalog", "JSON list of all supported GitHub Actions entity types", "lexicon-github.json", "github"),
       {
         uri: "examples/basic-ci",
         name: "Basic CI Example",

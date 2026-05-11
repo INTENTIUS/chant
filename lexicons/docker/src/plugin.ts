@@ -159,12 +159,12 @@ export const api = new Service({
   },
 
   mcpTools() {
-    return [createDiffTool(dockerSerializer, "Compare current build output against previous output for Docker Compose")];
+    return [createDiffTool(dockerSerializer, "Compare current build output against previous output for Docker Compose", "docker")];
   },
 
   mcpResources() {
     return [
-      createCatalogResource(import.meta.url, "Docker Entity Catalog", "JSON list of all supported Docker entity types", "lexicon-docker.json"),
+      createCatalogResource(import.meta.url, "Docker Entity Catalog", "JSON list of all supported Docker entity types", "lexicon-docker.json", "docker"),
       {
         uri: "examples/basic-app",
         name: "Basic App Example",

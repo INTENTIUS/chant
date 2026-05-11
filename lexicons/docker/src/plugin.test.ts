@@ -105,13 +105,13 @@ describe("dockerPlugin", () => {
   test("provides MCP tools", () => {
     const tools = dockerPlugin.mcpTools!();
     expect(tools.length).toBe(1);
-    expect(tools[0].name).toBe("diff");
+    expect(tools[0].name).toBe("docker:diff");
   });
 
   test("provides MCP resources", () => {
     const resources = dockerPlugin.mcpResources!();
     expect(resources.length).toBe(2);
-    expect(resources[0].uri).toBe("resource-catalog");
+    expect(resources[0].uri).toBe("docker:resource-catalog");
     expect(resources[1].uri).toBe("examples/basic-app");
   });
 });

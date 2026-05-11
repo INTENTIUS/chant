@@ -52,7 +52,12 @@ export function createSearchHandler(
 
     for (const plugin of candidates) {
       const resources = plugin.mcpResources?.() ?? [];
-      const catalog = resources.find((r) => r.uri === "resource-catalog");
+      // Catalog URIs were unscoped ("resource-catalog") before lexicon
+      // namespacing landed; new lexicons emit "<lexicon>:resource-catalog"
+      // to avoid cross-lexicon collision. Support both.
+      const catalog = resources.find(
+        (r) => r.uri === "resource-catalog" || r.uri.endsWith(":resource-catalog"),
+      );
       if (!catalog) continue;
 
       let entries: CatalogEntry[];

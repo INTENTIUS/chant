@@ -252,12 +252,12 @@ export const test = new Job({
   },
 
   mcpTools() {
-    return [createDiffTool(gitlabSerializer, "Compare current build output against previous output for GitLab CI")];
+    return [createDiffTool(gitlabSerializer, "Compare current build output against previous output for GitLab CI", "gitlab")];
   },
 
   mcpResources() {
     return [
-      createCatalogResource(import.meta.url, "GitLab CI Entity Catalog", "JSON list of all supported GitLab CI entity types", "lexicon-gitlab.json"),
+      createCatalogResource(import.meta.url, "GitLab CI Entity Catalog", "JSON list of all supported GitLab CI entity types", "lexicon-gitlab.json", "gitlab"),
       {
         uri: "examples/basic-pipeline",
         name: "Basic Pipeline Example",

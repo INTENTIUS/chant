@@ -32,7 +32,7 @@ describe("temporal plugin", () => {
     const tools = temporalPlugin.mcpTools?.();
     expect(Array.isArray(tools)).toBe(true);
     expect(tools?.length).toBe(1);
-    expect(tools?.[0].name).toBe("diff");
+    expect(tools?.[0].name).toBe("temporal:diff");
   });
 
   it("mcpResources() returns at least 2 resources including resource-catalog", () => {
@@ -40,7 +40,7 @@ describe("temporal plugin", () => {
     expect(Array.isArray(resources)).toBe(true);
     expect((resources?.length ?? 0)).toBeGreaterThanOrEqual(2);
     const uris = resources?.map((r) => r.uri);
-    expect(uris).toContain("resource-catalog");
+    expect(uris).toContain("temporal:resource-catalog");
   });
 
   it("skills() returns 2 skill entries", () => {

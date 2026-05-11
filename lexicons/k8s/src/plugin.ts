@@ -364,12 +364,12 @@ export const service = new Service({
   },
 
   mcpTools() {
-    return [createDiffTool(k8sSerializer, "Compare current build output against previous output for Kubernetes manifests")];
+    return [createDiffTool(k8sSerializer, "Compare current build output against previous output for Kubernetes manifests", "k8s")];
   },
 
   mcpResources() {
     return [
-      createCatalogResource(import.meta.url, "Kubernetes Resource Catalog", "JSON list of all supported Kubernetes resource types", "lexicon-k8s.json"),
+      createCatalogResource(import.meta.url, "Kubernetes Resource Catalog", "JSON list of all supported Kubernetes resource types", "lexicon-k8s.json", "k8s"),
       {
         uri: "examples/basic-deployment",
         name: "Basic Deployment Example",

@@ -189,7 +189,7 @@ describe("awsPlugin", () => {
 
     test("diff tool has correct structure", () => {
       const tools = awsPlugin.mcpTools!();
-      const diffTool = tools.find((t) => t.name === "diff");
+      const diffTool = tools.find((t) => t.name === "aws:diff");
       expect(diffTool).toBeDefined();
       expect(diffTool!.description.length).toBeGreaterThan(0);
       expect(diffTool!.inputSchema.type).toBe("object");
@@ -199,7 +199,7 @@ describe("awsPlugin", () => {
 
     test("diff tool schema has path as required", () => {
       const tools = awsPlugin.mcpTools!();
-      const diffTool = tools.find((t) => t.name === "diff")!;
+      const diffTool = tools.find((t) => t.name === "aws:diff")!;
       expect(diffTool.inputSchema.required).toContain("path");
     });
   });
@@ -216,7 +216,7 @@ describe("awsPlugin", () => {
 
     test("resource-catalog has correct structure", () => {
       const resources = awsPlugin.mcpResources!();
-      const catalog = resources.find((r) => r.uri === "resource-catalog");
+      const catalog = resources.find((r) => r.uri === "aws:resource-catalog");
       expect(catalog).toBeDefined();
       expect(catalog!.name.length).toBeGreaterThan(0);
       expect(catalog!.description.length).toBeGreaterThan(0);
@@ -226,7 +226,7 @@ describe("awsPlugin", () => {
 
     test("resource-catalog handler returns JSON array of resources", async () => {
       const resources = awsPlugin.mcpResources!();
-      const catalog = resources.find((r) => r.uri === "resource-catalog")!;
+      const catalog = resources.find((r) => r.uri === "aws:resource-catalog")!;
       const content = await catalog.handler();
 
       const parsed = JSON.parse(content) as Array<{ className: string; resourceType: string }>;

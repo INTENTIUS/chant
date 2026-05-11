@@ -214,7 +214,7 @@ describe("gcpPlugin", () => {
 
     test("diff tool has correct structure", () => {
       const tools = gcpPlugin.mcpTools!();
-      const diffTool = tools.find((t) => t.name === "diff");
+      const diffTool = tools.find((t) => t.name === "gcp:diff");
       expect(diffTool).toBeDefined();
       expect(diffTool!.description.length).toBeGreaterThan(0);
       expect(diffTool!.inputSchema.type).toBe("object");
@@ -230,7 +230,7 @@ describe("gcpPlugin", () => {
 
     test("resource-catalog has correct structure", () => {
       const resources = gcpPlugin.mcpResources!();
-      const catalog = resources.find((r) => r.uri === "resource-catalog");
+      const catalog = resources.find((r) => r.uri === "gcp:resource-catalog");
       expect(catalog).toBeDefined();
       expect(catalog!.mimeType).toBe("application/json");
       expect(typeof catalog!.handler).toBe("function");

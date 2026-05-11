@@ -327,12 +327,12 @@ export const dev = new Environment({
   },
 
   mcpTools() {
-    return [createDiffTool(flywaySerializer, "Compare current build output against previous output for Flyway config")];
+    return [createDiffTool(flywaySerializer, "Compare current build output against previous output for Flyway config", "flyway")];
   },
 
   mcpResources() {
     return [
-      createCatalogResource(import.meta.url, "Flyway Resource Catalog", "JSON list of all supported Flyway config types", "lexicon-flyway.json"),
+      createCatalogResource(import.meta.url, "Flyway Resource Catalog", "JSON list of all supported Flyway config types", "lexicon-flyway.json", "flyway"),
       {
         uri: "examples/multi-environment",
         name: "Multi-Environment Flyway Config",

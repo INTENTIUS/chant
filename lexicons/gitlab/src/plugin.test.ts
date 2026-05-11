@@ -215,7 +215,7 @@ describe("gitlabPlugin", () => {
   test("returns MCP tools", () => {
     const tools = gitlabPlugin.mcpTools!();
     expect(tools).toHaveLength(1);
-    expect(tools[0].name).toBe("diff");
+    expect(tools[0].name).toBe("gitlab:diff");
     expect(typeof tools[0].handler).toBe("function");
   });
 
@@ -223,13 +223,13 @@ describe("gitlabPlugin", () => {
     const resources = gitlabPlugin.mcpResources!();
     expect(resources.length).toBeGreaterThan(0);
     const uris = resources.map((r) => r.uri);
-    expect(uris).toContain("resource-catalog");
+    expect(uris).toContain("gitlab:resource-catalog");
     expect(uris).toContain("examples/basic-pipeline");
   });
 
   test("MCP resource-catalog handler returns JSON", async () => {
     const resources = gitlabPlugin.mcpResources!();
-    const catalog = resources.find((r) => r.uri === "resource-catalog")!;
+    const catalog = resources.find((r) => r.uri === "gitlab:resource-catalog")!;
     const result = await catalog.handler();
     const parsed = JSON.parse(result);
     expect(Array.isArray(parsed)).toBe(true);

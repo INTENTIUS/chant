@@ -80,13 +80,13 @@ describe("githubPlugin", () => {
   test("provides MCP tools", () => {
     const tools = githubPlugin.mcpTools!();
     expect(tools.length).toBe(1);
-    expect(tools[0].name).toBe("diff");
+    expect(tools[0].name).toBe("github:diff");
   });
 
   test("provides MCP resources", () => {
     const resources = githubPlugin.mcpResources!();
     expect(resources.length).toBe(2);
-    expect(resources[0].uri).toBe("resource-catalog");
+    expect(resources[0].uri).toBe("github:resource-catalog");
     expect(resources[1].uri).toBe("examples/basic-ci");
   });
 
