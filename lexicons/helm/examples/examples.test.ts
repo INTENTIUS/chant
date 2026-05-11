@@ -36,5 +36,9 @@ describeAllExamples(
     "composites-basic": { skipLint: true, skipBuild: true },
     "composites-infrastructure": { skipLint: true, skipBuild: true },
     "composites-production": { skipLint: true, skipBuild: true },
+    // HelmRender example — fetches a real upstream chart at build time, so
+    // skip in CI (would require network + the helm CLI inside the test
+    // sandbox). render.test.ts covers the codepath via a local chart.
+    "helm-render-external-secrets": { skipLint: true, skipBuild: true },
   },
 );

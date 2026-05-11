@@ -7,6 +7,10 @@ export { helmPlugin } from "./plugin";
 // Resources
 export { Chart, Values, ValuesOverride, HelmTest, HelmNotes, HelmHook, HelmDependency, HelmMaintainer, HelmCRD } from "./resources";
 
+// HelmRender — render an upstream chart at chant build time
+export { HelmRender } from "./render";
+export type { HelmRenderProps } from "./render";
+
 // Intrinsics
 export {
   HelmTpl,
