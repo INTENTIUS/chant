@@ -91,10 +91,10 @@ release bump="patch":
       jq --arg v "$next" '.version = $v' "$f" > "$f.tmp" && mv "$f.tmp" "$f"
     done
     git add packages/core/package.json lexicons/*/package.json
-    git commit -m "v$next"
-    git tag "v$next"
-    git push origin main "v$next"
-    echo "Released v$next — publish workflow triggered"
+    git commit -m "chant-v$next"
+    git tag "chant-v$next"
+    git push origin main "chant-v$next"
+    echo "Released chant-v$next — publish workflow triggered (tag pattern chant-v*)"
 
 # Bump a single lexicon version and tag (e.g. just release-lexicon docker patch)
 release-lexicon name bump="patch":
