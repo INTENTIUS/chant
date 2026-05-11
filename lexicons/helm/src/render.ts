@@ -38,7 +38,10 @@ import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { Composite } from "@intentius/chant";
-import { Deployment } from "@intentius/chant-lexicon-k8s/generated";
+// Use the k8s lexicon's Deployment as a generic Declarable wrapper for
+// arbitrary K8s manifests. The k8s serializer reads props.apiVersion and
+// props.kind verbatim when set, so the actual class doesn't matter.
+import { Deployment } from "@intentius/chant-lexicon-k8s/generated/index";
 import yaml from "js-yaml";
 
 export interface HelmRenderProps {
