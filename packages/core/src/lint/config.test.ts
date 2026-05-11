@@ -641,4 +641,25 @@ describe("loadConfig", () => {
     const config = loadConfig(subDir);
     expect(config).toEqual(DEFAULT_CONFIG);
   });
+
+  test("accepts ChantConfig-shape nested lint key in chant.config.json", () => {
+    const configPath = join(TEST_DIR, "chant.config.json");
+    writeFileSync(
+      configPath,
+      JSON.stringify({
+        lexicons: ["aws"],
+        lint: {
+          rules: {
+            "test-rule": "error",
+            "noisy-rule": "off",
+          },
+        },
+      }),
+    );
+
+    const config = loadConfig(TEST_DIR);
+
+    expect(config.rules?.["test-rule"]).toBe("error");
+    expect(config.rules?.["noisy-rule"]).toBe("off");
+  });
 });

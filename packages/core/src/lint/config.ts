@@ -223,16 +223,32 @@ function loadConfigFile(configPath: string, visited: Set<string> = new Set()): L
     throw new Error(`Failed to read config file ${configPath}: ${err instanceof Error ? err.message : String(err)}`);
   }
 
-  let config: LintConfig;
+  let raw: unknown;
   try {
-    config = JSON.parse(content);
+    raw = JSON.parse(content);
   } catch (err) {
     throw new Error(`Failed to parse config file ${configPath}: ${err instanceof Error ? err.message : String(err)}`);
   }
 
   // Validate config structure
-  if (typeof config !== "object" || config === null || Array.isArray(config)) {
+  if (typeof raw !== "object" || raw === null || Array.isArray(raw)) {
     throw new Error(`Invalid config file ${configPath}: must be an object`);
+  }
+
+  // Accept both shapes: lint fields at top level (legacy) OR nested under a
+  // "lint" key (matches chant.config.ts ChantConfig shape). When the JSON has
+  // both a top-level "rules"/"extends"/etc AND a "lint": {...}, prefer the
+  // nested one — that matches the explicit ChantConfig contract.
+  const rawObj = raw as Record<string, unknown>;
+  let config: LintConfig;
+  if (
+    rawObj.lint &&
+    typeof rawObj.lint === "object" &&
+    !Array.isArray(rawObj.lint)
+  ) {
+    config = rawObj.lint as LintConfig;
+  } else {
+    config = rawObj as LintConfig;
   }
 
   // Validate with Zod schema
