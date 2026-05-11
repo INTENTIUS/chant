@@ -103,11 +103,26 @@ function renderViaHelm(props: HelmRenderProps): string {
     if (props.version) fetchArgs.push("--version", props.version);
   }
 
+  // When --repo is set, isolate helm's repository config + cache to a
+  // chant-private directory. Without this, helm tries to refresh ALL of the
+  // user's existing repo indexes (eks, jetstack, etc.) and fails with
+  // "no cached repo found" if any one has gone stale — even though we
+  // only care about the single repo the consumer asked for.
+  const isolationArgs: string[] = props.repo
+    ? [
+        "--repository-config",
+        "/dev/null",
+        "--repository-cache",
+        join(CACHE_ROOT, "_helm-repo-cache"),
+      ]
+    : [];
+
   const args = [
     "template",
     props.name,
     props.chart,
     ...fetchArgs,
+    ...isolationArgs,
     ...(props.namespace ? ["--namespace", props.namespace] : []),
     ...valuesArgs,
   ];
