@@ -11,6 +11,9 @@ export { DEFAULT_LABELS_MARKER, DEFAULT_ANNOTATIONS_MARKER } from "./default-lab
 // Variables / label constants
 export { K8sLabels, K8sAnnotations } from "./variables";
 
+// MicroTime helpers — see micro-time.ts for why this exists.
+export { microTime, isMicroTimeFormatted } from "./micro-time";
+
 // Generated entities — export everything from generated index
 // After running `chant generate`, this re-exports all K8s resource classes
 export * from "./generated/index";
