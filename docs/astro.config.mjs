@@ -1,11 +1,15 @@
 // @ts-check
 import { defineConfig } from 'astro/config';
 import starlight from '@astrojs/starlight';
+import rehypeBaseUrl from '../packages/core/src/codegen/rehype-base-url.mjs';
 
 // https://astro.build/config
 export default defineConfig({
 	site: 'https://intentius.io',
 	base: '/chant',
+	markdown: {
+		rehypePlugins: [[rehypeBaseUrl, { base: '/chant' }]],
+	},
 	integrations: [
 		starlight({
 			title: 'chant',

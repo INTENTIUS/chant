@@ -1,9 +1,13 @@
 // @ts-check
 import { defineConfig } from 'astro/config';
 import starlight from '@astrojs/starlight';
+import rehypeBaseUrl from './src/rehype-base-url.mjs';
 
 export default defineConfig({
   base: '/chant/lexicons/gcp/',
+  markdown: {
+    rehypePlugins: [[rehypeBaseUrl, { base: '/chant/lexicons/gcp/', projectBase: '/chant' }]],
+  },
   integrations: [
     starlight({
       title: 'GCP Config Connector',
