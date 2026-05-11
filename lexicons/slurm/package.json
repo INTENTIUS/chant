@@ -1,6 +1,6 @@
 {
   "name": "@intentius/chant-lexicon-slurm",
-  "version": "0.1.5",
+  "version": "0.1.8",
   "type": "module",
   "files": [
     "src/",
