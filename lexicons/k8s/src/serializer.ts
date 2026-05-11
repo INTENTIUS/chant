@@ -218,6 +218,28 @@ export const k8sSerializer: Serializer = {
 
       manifest.metadata = metadata;
 
+      // Properties that always belong at the manifest root, never inside
+      // spec. apiVersion/kind allow consumers to override the gvk-derived
+      // defaults (the "CRD wrapper" trick used to declare arbitrary K8s
+      // resources via a generic Declarable class). rules/subjects/roleRef
+      // are the top-level fields for RBAC kinds. data/stringData are for
+      // ConfigMap/Secret. binaryData covers ConfigMap binary entries.
+      const TOP_LEVEL_PROPS = new Set([
+        "apiVersion",
+        "kind",
+        "rules",
+        "subjects",
+        "roleRef",
+        "data",
+        "stringData",
+        "binaryData",
+        "type",
+        "immutable",
+        "automountServiceAccountToken",
+        "secrets",
+        "imagePullSecrets",
+      ]);
+
       // The remaining properties go under spec (or directly on the manifest for certain types)
       if (SPECLESS_TYPES.has(gvk.kind)) {
         // These types have their data directly on the manifest (data, stringData, etc.)
@@ -235,10 +257,14 @@ export const k8sSerializer: Serializer = {
           }
         }
       } else {
-        // Place remaining props under spec
+        // Place remaining props under spec — except known top-level fields
+        // (apiVersion/kind for CRD-wrapper overrides; rules/subjects for RBAC).
         const spec: Record<string, unknown> = {};
         for (const [key, value] of Object.entries(props)) {
-          if (key !== "metadata") {
+          if (key === "metadata") continue;
+          if (TOP_LEVEL_PROPS.has(key)) {
+            manifest[key] = value;
+          } else {
             spec[key] = value;
           }
         }

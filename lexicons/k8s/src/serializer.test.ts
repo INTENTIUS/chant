@@ -392,4 +392,50 @@ describe("k8sSerializer", () => {
     expect(kindIdx).toBeLessThan(metaIdx);
     expect(metaIdx).toBeLessThan(specIdx);
   });
+
+  test("CRD-wrapper trick: props.apiVersion/kind override gvk-derived defaults", () => {
+    // The Deployment-as-generic-CRD-wrapper pattern: pass arbitrary
+    // apiVersion + kind in props and the serializer should respect them
+    // (for emitting non-built-in CRDs through chant).
+    const entities = new Map<string, any>();
+    entities.set(
+      "esoStore",
+      mockResource("K8s::Apps::Deployment", {
+        apiVersion: "external-secrets.io/v1beta1",
+        kind: "ClusterSecretStore",
+        metadata: { name: "my-store" },
+        spec: { provider: { gcpsm: { projectID: "my-proj" } } },
+      }),
+    );
+
+    const result = k8sSerializer.serialize(entities);
+    expect(result).toContain("apiVersion: external-secrets.io/v1beta1");
+    expect(result).toContain("kind: ClusterSecretStore");
+    expect(result).not.toContain("apiVersion: apps/v1");
+    expect(result).not.toContain("kind: Deployment");
+  });
+
+  test("RBAC-shaped resources (rules/subjects/roleRef) stay at top level, not pushed under spec", () => {
+    // ClusterRole / Role / RoleBinding / ClusterRoleBinding don't have a
+    // spec field; their data is at the manifest root. When such a resource
+    // arrives via the CRD-wrapper trick (no spec set in props), the
+    // serializer used to dump rules/subjects/roleRef into a synthetic spec
+    // — produced invalid manifests. Now they stay at top level.
+    const entities = new Map<string, any>();
+    entities.set(
+      "viewerRole",
+      mockResource("K8s::Apps::Deployment", {
+        apiVersion: "rbac.authorization.k8s.io/v1",
+        kind: "ClusterRole",
+        metadata: { name: "viewer" },
+        rules: [{ apiGroups: [""], resources: ["pods"], verbs: ["get", "list"] }],
+      }),
+    );
+
+    const result = k8sSerializer.serialize(entities);
+    expect(result).toContain("kind: ClusterRole");
+    expect(result).toMatch(/^rules:/m);
+    // The bug being guarded against: rules ending up under spec.
+    expect(result).not.toMatch(/^spec:\s*\n\s+rules:/m);
+  });
 });
