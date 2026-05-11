@@ -64,4 +64,32 @@ describe("rule-loader", () => {
     // Clean up
     rmSync(join(RULES_DIR, "my-rule.test.ts"));
   });
+
+  test("walks up to find .chant/rules/ when invoked from a sub-stack dir", async () => {
+    // Project layout: TEST_DIR (root, has .chant/rules/) -> src/east/.
+    const subStack = join(TEST_DIR, "src", "east");
+    mkdirSync(subStack, { recursive: true });
+    writeFileSync(join(TEST_DIR, "package.json"), `{ "name": "fixture" }`);
+    try {
+      const rules = await loadLocalRules(subStack);
+      expect(rules).toHaveLength(1);
+      expect(rules[0].id).toBe("LOCAL001");
+    } finally {
+      rmSync(join(TEST_DIR, "src"), { recursive: true });
+      rmSync(join(TEST_DIR, "package.json"));
+    }
+  });
+
+  test("stops at the nearest package.json — does not climb into an unrelated parent", async () => {
+    const innerProject = join(TEST_DIR, "inner-proj");
+    const innerSubDir = join(innerProject, "src");
+    mkdirSync(innerSubDir, { recursive: true });
+    writeFileSync(join(innerProject, "package.json"), `{ "name": "inner" }`);
+    try {
+      const rules = await loadLocalRules(innerSubDir);
+      expect(rules).toHaveLength(0);
+    } finally {
+      rmSync(innerProject, { recursive: true });
+    }
+  });
 });

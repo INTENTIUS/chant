@@ -1,5 +1,5 @@
 import { readdirSync, existsSync } from "fs";
-import { join, resolve } from "path";
+import { dirname, join, resolve } from "path";
 import type { LintRule } from "./rule";
 
 /**
@@ -19,18 +19,51 @@ function isLintRule(value: unknown): value is LintRule {
 }
 
 /**
- * Load local lint rules from `.chant/rules/` directory.
+ * Walk up from `from` until a directory containing `.chant/rules/` is found,
+ * or until we hit the filesystem root or a non-project boundary (a directory
+ * with `package.json` but no `.chant/rules/` — that's the project root and
+ * we stop there even if no rules dir exists).
  *
- * Scans for `.ts` files, dynamically imports each, and collects
- * all exports that conform to the LintRule interface.
+ * Returns the absolute path to the discovered `.chant/rules/` directory, or
+ * null if none was found before we crossed the project root.
+ */
+function findRulesDir(from: string): string | null {
+  let cur = resolve(from);
+  while (true) {
+    const candidate = join(cur, ".chant", "rules");
+    if (existsSync(candidate)) {
+      return candidate;
+    }
+    // Stop at the nearest project root (where package.json sits) — going
+    // above it would pick up rules belonging to an unrelated parent project.
+    if (existsSync(join(cur, "package.json"))) {
+      return null;
+    }
+    const parent = dirname(cur);
+    if (parent === cur) {
+      return null;
+    }
+    cur = parent;
+  }
+}
+
+/**
+ * Load local lint rules from `.chant/rules/`.
  *
- * @param projectDir - Root directory of the project
- * @returns Array of LintRule objects found in `.chant/rules/`
+ * Scans for `.ts` files in the nearest `.chant/rules/` directory found by
+ * walking up from `projectDir` (stopping at the closest `package.json` to
+ * avoid leaking into unrelated parent projects). Dynamically imports each
+ * file and collects all exports that conform to the LintRule interface.
+ *
+ * @param projectDir - Directory the lint command was invoked against. May be
+ *                     a sub-stack of a larger project — the rules dir is
+ *                     resolved by walking up.
+ * @returns Array of LintRule objects found in the discovered `.chant/rules/`.
  */
 export async function loadLocalRules(projectDir: string): Promise<LintRule[]> {
-  const rulesDir = join(projectDir, ".chant", "rules");
+  const rulesDir = findRulesDir(projectDir);
 
-  if (!existsSync(rulesDir)) {
+  if (rulesDir === null) {
     return [];
   }
 
