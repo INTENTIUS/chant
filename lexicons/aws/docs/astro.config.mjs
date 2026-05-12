@@ -1,9 +1,13 @@
 // @ts-check
 import { defineConfig } from 'astro/config';
 import starlight from '@astrojs/starlight';
+import rehypeBaseUrl from './src/rehype-base-url.mjs';
 
 export default defineConfig({
   base: '/chant/lexicons/aws/',
+  markdown: {
+    rehypePlugins: [[rehypeBaseUrl, { base: '/chant/lexicons/aws/', projectBase: '/chant' }]],
+  },
   integrations: [
     starlight({
       title: 'AWS CloudFormation',

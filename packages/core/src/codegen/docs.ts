@@ -7,8 +7,9 @@
  * (service grouping, resource type URLs, custom overview content).
  */
 
-import { readFileSync, writeFileSync, mkdirSync, rmSync } from "fs";
+import { copyFileSync, readFileSync, writeFileSync, mkdirSync, rmSync } from "fs";
 import { join } from "path";
+import { fileURLToPath } from "url";
 
 import { expandFileMarkers } from "./docs-file-markers";
 import { scanRules, generateRules } from "./docs-rule-scanning";
@@ -222,14 +223,25 @@ export const collections = {
 `,
   );
 
+  // src/rehype-base-url.mjs — copied from chant core so Astro can import it
+  // without the generated docs site needing a workspace dep on @intentius/chant.
+  const pluginSrcPath = fileURLToPath(
+    new URL("./rehype-base-url.mjs", import.meta.url),
+  );
+  copyFileSync(pluginSrcPath, join(outDir, "src", "rehype-base-url.mjs"));
+
   // astro.config.mjs
+  const rehypeLine = config.basePath
+    ? `\n  markdown: {\n    rehypePlugins: [[rehypeBaseUrl, { base: '${config.basePath}', projectBase: '/chant' }]],\n  },`
+    : "";
   writeFileSync(
     join(outDir, "astro.config.mjs"),
     `// @ts-check
 import { defineConfig } from 'astro/config';
 import starlight from '@astrojs/starlight';
+import rehypeBaseUrl from './src/rehype-base-url.mjs';
 
-export default defineConfig({${config.basePath ? `\n  base: '${config.basePath}',` : ""}
+export default defineConfig({${config.basePath ? `\n  base: '${config.basePath}',` : ""}${rehypeLine}
   integrations: [
     starlight({
       title: '${config.displayName}',

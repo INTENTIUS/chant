@@ -150,7 +150,7 @@ export function generateSerialization(config: DocsConfig): string {
     lines.push(
       `The ${config.displayName} lexicon serializes resources into its native output format during the build step.`,
       "",
-      "See the [Serialization](/serialization/output-formats) guide for general information about output formats in chant.",
+      "See the [Serialization](/chant/serialization/output-formats) guide for general information about output formats in chant.",
     );
   }
 

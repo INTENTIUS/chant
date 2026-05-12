@@ -1,9 +1,13 @@
 // @ts-check
 import { defineConfig } from 'astro/config';
 import starlight from '@astrojs/starlight';
+import rehypeBaseUrl from './src/rehype-base-url.mjs';
 
 export default defineConfig({
   base: '/chant/lexicons/gitlab/',
+  markdown: {
+    rehypePlugins: [[rehypeBaseUrl, { base: '/chant/lexicons/gitlab/', projectBase: '/chant' }]],
+  },
   integrations: [
     starlight({
       title: 'GitLab CI/CD',

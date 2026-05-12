@@ -1,9 +1,13 @@
 // @ts-check
 import { defineConfig } from 'astro/config';
 import starlight from '@astrojs/starlight';
+import rehypeBaseUrl from '../../../packages/core/src/codegen/rehype-base-url.mjs';
 
 export default defineConfig({
   base: '/chant/lexicons/docker/',
+  markdown: {
+    rehypePlugins: [[rehypeBaseUrl, { base: '/chant/lexicons/docker/', projectBase: '/chant' }]],
+  },
   integrations: [
     starlight({
       title: 'Docker',
