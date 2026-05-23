@@ -27,6 +27,10 @@ npm install --save-dev @intentius/chant @intentius/chant-lexicon-gitlab
 
 If a concrete observation use case surfaces, file a focused issue rather than retrofitting `listArtifacts()` to fit.
 
+## GitHub Actions migration
+
+`chant migrate` translates `.github/workflows/*.yml` into `.gitlab-ci.yml` or typed chant TypeScript. The transformer, action-mapping registry, and provenance model are ported from `gitlab-org/ci-cd/github-actions-to-gitlab-ci` (MIT). See [Migration](https://intentius.io/chant/lexicons/gitlab/migration/) and [`ATTRIBUTIONS.md`](./ATTRIBUTIONS.md).
+
 ## License
 
 See the main project LICENSE file.
