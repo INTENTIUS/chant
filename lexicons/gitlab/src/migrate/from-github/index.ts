@@ -12,6 +12,7 @@ import { ProvenanceAccumulator, type ProvenanceRecord } from "./provenance";
 import { transformIR } from "./transformer";
 import { emitGitlabYaml } from "./emit-yaml";
 import { provenanceToDiagnostics } from "./diagnostics";
+import { GitLabGenerator } from "../../import/generator";
 import type { ActionMappingRegistry } from "./actions/registry";
 // Importing `./actions/index` triggers auto-registration of Tier 1
 // marketplace action mappings into the default registry. This is the
@@ -75,8 +76,21 @@ export async function transform(
 
   let output: string;
   if (opts.emit === "ts") {
-    // TS emit is added in commit #89; placeholder for now to keep types stable.
-    output = "// chant migrate --emit ts is implemented in a follow-up commit.\n";
+    const generator = new GitLabGenerator();
+    const files = generator.generate(ir);
+    // For single-file emit (default), concatenate. The migration banner
+    // + per-resource provenance comments are interleaved.
+    const banner = `// Migrated from ${opts.sourceFile ?? "(stdin)"} by chant migrate.
+// Source tool: github-actions. Edit freely — chant build will pick this up.\n\n`;
+    output = banner + files.map((f) => f.content).join("\n");
+    // Append NeedsReview TODOs at the bottom for visibility.
+    const todos = provAcc.byCategory("needs-review");
+    if (todos.length > 0) {
+      output += "\n// TODO(migration): items needing manual review:\n";
+      for (const t of todos) {
+        output += `//   - ${t.rule}: ${t.note ?? ""}\n`;
+      }
+    }
   } else {
     output = emitGitlabYaml(ir);
   }
