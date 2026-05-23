@@ -50,12 +50,16 @@ jobs:
         with:
           node-version: '24'
           cache: 'npm'
-          registry-url: 'https://registry.npmjs.org'
+          # Deliberately NOT setting registry-url: that flag makes
+          # actions/setup-node write an .npmrc with `_authToken=${NODE_AUTH_TOKEN}`,
+          # and NODE_AUTH_TOKEN defaults to the literal placeholder
+          # `XXXXX-XXXXX-XXXXX-XXXXX` when not provided. That placeholder
+          # is sent as auth to the registry on `npm publish`, which then
+          # 404s instead of falling through to OIDC. Without registry-url
+          # there's no .npmrc; npm publish detects the absent auth + the
+          # OIDC id-token environment and exchanges for a short-lived
+          # publish token via the trusted-publisher record.
       - run: npm install
-      # OIDC trusted publishing: no NPM_TOKEN needed. The publish job's
-      # id-token: write permission lets npm publish exchange the GitHub
-      # OIDC token for a short-lived npm publish token, gated by the
-      # trusted-publisher config on each @intentius package on npm.
 
       - name: Diagnostic — runtime versions + OIDC context
         run: |
