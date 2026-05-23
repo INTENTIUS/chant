@@ -3,6 +3,15 @@
   "version": "0.1.13",
   "description": "Temporal lexicon for chant — server deployment, namespaces, search attributes, and schedules",
   "license": "Apache-2.0",
+  "homepage": "https://intentius.io/chant",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/INTENTIUS/chant.git",
+    "directory": "lexicons/temporal"
+  },
+  "bugs": {
+    "url": "https://github.com/INTENTIUS/chant/issues"
+  },
   "type": "module",
   "files": [
     "src/",
