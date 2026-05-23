@@ -14,10 +14,14 @@ export type {
 export { createRegistry, getDefaultRegistry, lookupAction, setDefaultRegistry } from "./registry";
 
 import { registerTier1 } from "./tier-1";
+import { registerTier2 } from "./tier-2";
+import { registerTier3 } from "./tier-3";
 import { getDefaultRegistry } from "./registry";
 
-// Auto-register Tier 1 into the default registry the first time this
-// module is imported.
+// Auto-register Tiers 1/2/3 into the default registry the first time
+// this module is imported.
 registerTier1(getDefaultRegistry());
+registerTier2(getDefaultRegistry());
+registerTier3(getDefaultRegistry());
 
-export { registerTier1 };
+export { registerTier1, registerTier2, registerTier3 };
