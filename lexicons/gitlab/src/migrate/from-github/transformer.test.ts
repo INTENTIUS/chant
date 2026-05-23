@@ -154,7 +154,7 @@ jobs:
     expect(result.provenance.some((p) => p.rule === "MIG-PERMISSIONS-001")).toBe(true);
   });
 
-  test("actions/checkout becomes a TODO (no registry in commit 1)", async () => {
+  test("actions/checkout becomes a no-op skip (Tier 1 registry)", async () => {
     const yml = `on: push
 jobs:
   build:
@@ -164,7 +164,22 @@ jobs:
       - run: npm test
 `;
     const result = await transform(yml);
-    // Without commit-3 Tier-1 registry, an unknown action emits TODO
+    // With Tier 1 registry, actions/checkout is intentionally skipped
+    expect(result.provenance.some((p) => p.rule === "ACT-actions-checkout" && p.category === "skipped")).toBe(true);
+    // npm test still emitted
+    expect(result.output).toContain("- npm test");
+  });
+
+  test("unknown action emits MIG-ACTION-UNKNOWN", async () => {
+    const yml = `on: push
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: some-org/never-mapped-action@v1
+      - run: echo done
+`;
+    const result = await transform(yml);
     expect(result.provenance.some((p) => p.rule === "MIG-ACTION-UNKNOWN")).toBe(true);
   });
 });

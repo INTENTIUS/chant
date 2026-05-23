@@ -13,6 +13,10 @@ import { transformIR } from "./transformer";
 import { emitGitlabYaml } from "./emit-yaml";
 import { provenanceToDiagnostics } from "./diagnostics";
 import type { ActionMappingRegistry } from "./actions/registry";
+// Importing `./actions/index` triggers auto-registration of Tier 1
+// marketplace action mappings into the default registry. This is the
+// single chokepoint where the registry is wired up.
+import "./actions/index";
 
 export interface MigrateOptions {
   /** Output format. */

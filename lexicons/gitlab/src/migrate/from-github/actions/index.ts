@@ -1,7 +1,8 @@
 /**
  * Action mapping registry — public surface.
  *
- * Tier 1/2/3 mappings register themselves into the default registry on import.
+ * Tier 1 mappings auto-register into the default registry on import of
+ * this module. Tier 2 and Tier 3 are added in #88.
  */
 
 export type {
@@ -12,5 +13,11 @@ export type {
 } from "./registry";
 export { createRegistry, getDefaultRegistry, lookupAction, setDefaultRegistry } from "./registry";
 
-// Tier mappings register themselves on import (added in #87 and #88).
-// For now, importing this module is a no-op beyond exposing the types.
+import { registerTier1 } from "./tier-1";
+import { getDefaultRegistry } from "./registry";
+
+// Auto-register Tier 1 into the default registry the first time this
+// module is imported.
+registerTier1(getDefaultRegistry());
+
+export { registerTier1 };
