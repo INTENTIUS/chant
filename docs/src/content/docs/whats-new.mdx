@@ -36,6 +36,27 @@ The Op composite gained two ergonomic upgrades that were previously hand-coded b
 | [#41](https://github.com/INTENTIUS/chant/issues/41) | `outcomeAttribute` on activity steps — capture an activity's return value (e.g. `stateDiff`'s `drifted` boolean) as a workflow search attribute. Used by `WatchOp` to surface `Drift = "true"`/`"false"` per run |
 | [#29](https://github.com/INTENTIUS/chant/issues/29), [#40](https://github.com/INTENTIUS/chant/issues/40) | Test coverage for `cli/handlers/state.ts`, `run.ts`, `graph.ts`, and `runOp` — refactor surface is now safe |
 
+## Cross-lexicon migration
+
+A typed-compiler port of the upstream `gitlab-org/ci-cd/github-actions-to-gitlab-ci` Agent Skill (MIT). Translates `.github/workflows/*.yml` into `.gitlab-ci.yml` (or chant TypeScript) with per-key provenance recorded as SARIF, a curated mapping registry for the top 33 marketplace actions, and optional composite-pattern recognition for Node-shaped pipelines. The gitlab plugin exposes the same translation via a `gitlab:migrate` MCP tool and a `chant-gitlab-migrate` skill.
+
+| # | Capability |
+|---|---|
+| [#85](https://github.com/INTENTIUS/chant/issues/85) | GitHub → GitLab IR transformer with per-key provenance side channel; Kahn topo-sort stage inference; 30+ rule IDs for translation events |
+| [#86](https://github.com/INTENTIUS/chant/issues/86) | [`chant migrate` CLI](/chant/cli/migrate/) — top-level command dispatching through a new optional `migrationSource(from)` hook on `LexiconPlugin` |
+| [#87](https://github.com/INTENTIUS/chant/issues/87) | [`ActionMapping[]` registry](/chant/lexicons/gitlab/migration/#mapped-marketplace-actions) — Tier 1 (14 essentials): checkout, setup-*, cache, artifacts, docker/* |
+| [#88](https://github.com/INTENTIUS/chant/issues/88) | ActionMapping Tier 2 (14 common) + Tier 3 (5 niche) — covers all 33 actions from the upstream skill's reference table |
+| [#98](https://github.com/INTENTIUS/chant/issues/98) | Fixtures lifted from the upstream skill's syntax-mapping + marketplace-actions before/after pairs; 16 fixture-driven tests asserting canonical-YAML and shape-of-report equality |
+| [#89](https://github.com/INTENTIUS/chant/issues/89) | `--emit ts` mode — produces typed chant TypeScript the user owns and rebuilds with `chant build` |
+| [#90](https://github.com/INTENTIUS/chant/issues/90) | SARIF v2.1.0 report (`--report <path>`) + `--strict` exit-code escalation on needs-review diagnostics |
+| [#91](https://github.com/INTENTIUS/chant/issues/91) | `--validate` shells out to `glci` (offline) or `glab ci lint` (fallback); skips gracefully when neither is on PATH |
+| [#92](https://github.com/INTENTIUS/chant/issues/92) | `--use-composites` IR-level recogniser — collapses 2-job Node pipelines into a single `NodePipeline({...})` call |
+| [#93](https://github.com/INTENTIUS/chant/issues/93) | `lexicons/gitlab/scripts/migrate-samples.sh` — local roundtrip harness over real public GitHub workflows; 70% pass-rate threshold |
+| [#95](https://github.com/INTENTIUS/chant/issues/95) | [`chant-gitlab-migrate` skill](/chant/lexicons/gitlab/skills/#skill-chant-gitlab-migrate) + new `chant init --skill <name>` filter to install a single skill |
+| [#96](https://github.com/INTENTIUS/chant/issues/96) | `gitlab:migrate` MCP tool registered on the gitlab plugin's MCP server |
+| [#94](https://github.com/INTENTIUS/chant/issues/94) | [Migration docs page](/chant/lexicons/gitlab/migration/) with inspiration / lineage section crediting the upstream MIT-licensed skill |
+| [#97](https://github.com/INTENTIUS/chant/issues/97) | Umbrella — full work landed on [PR #99](https://github.com/INTENTIUS/chant/pull/99) (draft) |
+
 ## Build pipeline & lexicon fixes
 
 | # | Capability |

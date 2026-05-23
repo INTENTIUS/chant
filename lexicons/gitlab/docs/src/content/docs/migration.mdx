@@ -5,13 +5,38 @@ description: "Translate GitHub Actions workflows into GitLab CI/CD pipelines wit
 
 `chant migrate` translates `.github/workflows/*.yml` into `.gitlab-ci.yml` or chant TypeScript source. It's the typed-compiler counterpart to the upstream `gitlab-org/ci-cd/github-actions-to-gitlab-ci` Agent Skill — same translation rules, but deterministic, testable, and re-runnable.
 
+:::note
+The `chant migrate` command lands in the next chant release. Until then, install from the `feat/migrate-github-to-gitlab` branch or wait for the next package publish.
+:::
+
+## Install
+
+```bash
+npm install --save-dev @intentius/chant @intentius/chant-lexicon-gitlab
+```
+
+The migration code lives in the GitLab lexicon and is invoked via the core `chant` CLI. The GitHub lexicon is loaded as an optional peer at runtime, so install it too if you want the parser available immediately:
+
+```bash
+npm install --save-dev @intentius/chant-lexicon-github
+```
+
 ## Quickstart
+
+After installing locally:
 
 ```bash
 npx chant migrate .github/workflows/ci.yml --output .gitlab-ci.yml
 ```
 
 That writes `.gitlab-ci.yml` and prints a Markdown summary to stderr. For CI-friendly machine-readable output, add `--report migration.sarif`.
+
+If you want to run without installing into a project, use `npx` with explicit package resolution:
+
+```bash
+npx -p @intentius/chant -p @intentius/chant-lexicon-gitlab \
+  chant migrate .github/workflows/ci.yml --output .gitlab-ci.yml
+```
 
 ## When to use migrate vs writing chant source from scratch
 
@@ -61,7 +86,7 @@ These GitHub keys map directly to GitLab equivalents:
 
 ## Mapped marketplace actions
 
-33 actions are mapped out of the box (lifted from the upstream skill's [`references/marketplace-actions.md`](https://gitlab.com/gitlab-org/ci-cd/github-actions-to-gitlab-ci/-/blob/master/github-actions-to-gitlab-ci/references/marketplace-actions.md)):
+33 actions are mapped out of the box (lifted from the upstream skill's [`references/marketplace-actions.md`](https://gitlab.com/gitlab-org/ci-cd/github-actions-to-gitlab-ci/-/blob/master/references/marketplace-actions.md)):
 
 | Tier | Examples | Translation pattern |
 |---|---|---|

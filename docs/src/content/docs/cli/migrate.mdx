@@ -1,0 +1,81 @@
+---
+title: "chant migrate"
+description: Translate a workflow definition from one lexicon's format into another
+---
+
+## Synopsis
+
+```
+chant migrate <file> [flags]
+```
+
+## Description
+
+`chant migrate` translates a workflow file from one lexicon's source format into another lexicon's output. v1 ships a single edge: GitHub Actions (`.github/workflows/*.yml`) → GitLab CI (`.gitlab-ci.yml` or chant TypeScript).
+
+The translation is deterministic and typed — the same input produces the same output, every translation decision is recorded as per-key provenance, and unknown patterns surface as machine-readable diagnostics rather than guesswork.
+
+For the full surface (supported translations, marketplace-action coverage, NeedsReview catalog, `--use-composites`, validators), see [GitLab → Migration](/chant/lexicons/gitlab/migration/).
+
+## Flags
+
+| Flag | Type | Default | Description |
+|------|------|---------|-------------|
+| `--from` | `string` | `github` | Source lexicon name |
+| `--to` | `string` | `gitlab` | Target lexicon name |
+| `-o, --output` | `string` | stdout | Write rendered output to this file |
+| `--emit` | `string` | `yaml` | Output format: `yaml` (one-shot) or `ts` (own-it-going-forward chant source) |
+| `--report` | `string` | — | Write SARIF v2.1.0 report to this path |
+| `--strict` | `bool` | `false` | Exit non-zero on any needs-review diagnostic (and on validator failure when `--validate` is set) |
+| `--validate` | `bool` | `false` | Run an external validator (`glci lint` preferred, `glab ci lint` fallback) against the emitted YAML |
+| `--use-composites` | `bool` | `false` | Rewrite recognised IR shapes (NodePipeline, NodeCI) into composite calls |
+
+## Usage
+
+```bash
+# Default: GitHub Actions YAML → GitLab CI YAML on stdout
+chant migrate .github/workflows/ci.yml
+
+# Write to file + emit SARIF report
+chant migrate .github/workflows/ci.yml \
+  --output .gitlab-ci.yml \
+  --report migration.sarif
+
+# Own it going forward: emit typed chant TypeScript
+chant migrate .github/workflows/ci.yml --emit ts --output src/pipeline.ts
+
+# Strict + validate (CI-friendly)
+chant migrate .github/workflows/ci.yml \
+  --output .gitlab-ci.yml \
+  --strict \
+  --validate
+
+# Collapse Node-shaped pipelines into NodePipeline({...}) calls
+chant migrate .github/workflows/ci.yml \
+  --emit ts \
+  --use-composites \
+  --output src/pipeline.ts
+```
+
+## Diagnostics
+
+Diagnostics surface as SARIF v2.1.0 (via `--report`) and as a Markdown summary on stderr. Each diagnostic carries:
+
+- `ruleId` — e.g. `MIG-PERMISSIONS-001`, `MIG-ON-SCHEDULE`, `ACT-actions-checkout`
+- `severity` — `info` / `warning` / `error` (warning becomes error under `--strict`)
+- `message` — human-readable description
+- `file` + `line` — source workflow location
+
+The full rule catalog with explanations lives at [GitLab → Migration → NeedsReview rules](/chant/lexicons/gitlab/migration/#needsreview-rules).
+
+## Exit Codes
+
+| Code | Meaning |
+|------|---------|
+| 0 | Success (or non-strict run with warnings) |
+| 1 | Cannot read source file, target lexicon missing, transform failed, or `--strict` and one or more error-severity diagnostics emitted |
+
+## See Also
+
+- [GitLab → Migration](/chant/lexicons/gitlab/migration/) — full surface, marketplace-action coverage, worked examples, limitations
+- [`chant import`](/chant/cli/import/) — sibling command for importing existing templates into typed chant source (single-lexicon, no cross-lexicon translation)
