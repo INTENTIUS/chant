@@ -252,7 +252,68 @@ export const test = new Job({
   },
 
   mcpTools() {
-    return [createDiffTool(gitlabSerializer, "Compare current build output against previous output for GitLab CI", "gitlab")];
+    return [
+      createDiffTool(gitlabSerializer, "Compare current build output against previous output for GitLab CI", "gitlab"),
+      {
+        name: "migrate",
+        description: "Translate a GitHub Actions workflow YAML into a GitLab CI/CD pipeline. Returns the rendered output plus diagnostic + provenance arrays.",
+        inputSchema: {
+          type: "object" as const,
+          properties: {
+            content: { type: "string", description: "Raw .github/workflows/*.yml content" },
+            emit: { type: "string", enum: ["yaml", "ts"], description: "Output format (default: yaml)" },
+            useComposites: { type: "boolean", description: "Recognise composite patterns and emit NodePipeline/NodeCI calls" },
+            strict: { type: "boolean", description: "Escalate needs-review diagnostics to errors" },
+          },
+          required: ["content"],
+        },
+        async handler(params: Record<string, unknown>): Promise<unknown> {
+          const { transform } = await import("./migrate/from-github/index");
+          const result = await transform(params.content as string, {
+            emit: (params.emit as "yaml" | "ts" | undefined) ?? "yaml",
+            useComposites: !!params.useComposites,
+            strict: !!params.strict,
+            sourceFile: "<mcp-input>",
+          });
+          return {
+            output: result.output,
+            diagnostics: result.diagnostics,
+            provenance: result.provenance,
+            stages: result.stages,
+          };
+        },
+      },
+    ];
+  },
+
+  migrationSource(from: string) {
+    if (from !== "github") return undefined;
+    return {
+      detect(content: string): boolean {
+        // Avoid bringing the migrate code into the import graph until needed
+        if (!/^\s*jobs\s*:/m.test(content)) return false;
+        return /^\s*on\s*:/m.test(content) || /^\s*runs-on\s*:/m.test(content);
+      },
+      async transform(content: string, opts) {
+        const { transform } = await import("./migrate/from-github/index");
+        const result = await transform(content, {
+          emit: opts.emit,
+          useComposites: opts.useComposites,
+          sourceFile: opts.sourceFile,
+          strict: opts.strict,
+        });
+        // The composites rewriter (when enabled) replaces several Job
+        // resources with a single Composite resource — stages: in the
+        // top-level YAML output is now stale for that path. The yaml
+        // emitter reads metadata.stages directly; no special handling
+        // needed at the call site.
+        return {
+          output: result.output,
+          provenance: result.provenance as unknown as Array<Record<string, unknown>>,
+          diagnostics: result.diagnostics as unknown as Array<Record<string, unknown>>,
+        };
+      },
+    };
   },
 
   mcpResources() {
@@ -397,6 +458,49 @@ curl --request POST --header "PRIVATE-TOKEN: $GITLAB_TOKEN" \\
 # Monitor status
 curl --header "PRIVATE-TOKEN: $GITLAB_TOKEN" \\
   "https://gitlab.com/api/v4/projects/$PROJECT_ID/pipelines/12345"`,
+        },
+      ],
+    },
+    {
+      file: "chant-gitlab-migrate.md",
+      name: "chant-gitlab-migrate",
+      description: "Translate GitHub Actions workflows into GitLab CI/CD pipelines via chant migrate",
+      triggers: [
+        { type: "file-pattern", value: "**/.github/workflows/*.yml" },
+        { type: "file-pattern", value: "**/.github/workflows/*.yaml" },
+        { type: "context", value: "migrate from github actions" },
+        { type: "context", value: "github actions to gitlab" },
+        { type: "context", value: "convert workflow" },
+      ],
+      preConditions: [
+        "chant CLI is installed (chant --version succeeds)",
+        "@intentius/chant-lexicon-gitlab is installed",
+      ],
+      postConditions: [
+        "Translated .gitlab-ci.yml or .ts source on disk",
+        "Migration report visible to the user (Markdown + SARIF if --report)",
+      ],
+      parameters: [],
+      examples: [
+        {
+          title: "Translate a single workflow file",
+          description: "Migrate .github/workflows/ci.yml into .gitlab-ci.yml with a SARIF report",
+          input: "Migrate this GitHub workflow to GitLab CI",
+          output: `npx chant migrate .github/workflows/ci.yml \\
+  --output .gitlab-ci.yml \\
+  --report migration.sarif`,
+        },
+        {
+          title: "Translate to chant TypeScript",
+          description: "Produce typed chant source instead of YAML so the user can maintain the pipeline in chant going forward",
+          input: "I want to maintain this in chant — produce TypeScript",
+          output: `npx chant migrate .github/workflows/ci.yml --emit ts --output src/pipeline.ts`,
+        },
+        {
+          title: "Recognise and emit composites",
+          description: "Collapse a 2-job NodePipeline-shaped workflow into a single NodePipeline() call",
+          input: "Use composites for the upgrade",
+          output: `npx chant migrate .github/workflows/ci.yml --emit ts --use-composites --output src/pipeline.ts`,
         },
       ],
     },

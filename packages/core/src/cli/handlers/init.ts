@@ -17,6 +17,7 @@ export async function runInit(ctx: CommandContext): Promise<number> {
     path: args.path === "." ? undefined : args.path,
     lexicon: args.lexicon,
     template: args.template,
+    skill: args.skill,
     force: args.force,
     skipInstall: true,
   });

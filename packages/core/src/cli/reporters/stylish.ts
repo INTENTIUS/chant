@@ -215,7 +215,7 @@ export function formatSarif(
           driver: {
             name: "chant",
             version: version ?? "0.1.0",
-            informationUri: "https://chant.dev",
+            informationUri: "https://intentius.io/chant",
             rules: sarifRules,
           },
         },
@@ -267,7 +267,7 @@ function buildRuleMetadata(
       id,
       shortDescription: { text: descText },
       fullDescription: { text: descText },
-      helpUri: rule?.helpUri || `https://chant.dev/lint-rules/${id.toLowerCase()}`,
+      helpUri: rule?.helpUri || `https://intentius.io/chant/lint-rules/${id.toLowerCase()}`,
       defaultConfiguration: {
         level: mapSeverity(rule?.severity ?? "warning"),
       },

@@ -1,0 +1,13 @@
+on: push
+jobs:
+  flaky-test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    continue-on-error: true
+    concurrency:
+      group: deploy-${{ github.ref }}
+      cancel-in-progress: true
+    permissions:
+      contents: read
+    steps:
+      - run: make test

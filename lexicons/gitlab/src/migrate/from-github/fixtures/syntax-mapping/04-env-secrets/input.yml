@@ -1,0 +1,11 @@
+on: push
+env:
+  GREETING: Hello
+jobs:
+  greet:
+    runs-on: ubuntu-latest
+    env:
+      NAME: World
+    steps:
+      - run: echo "$GREETING $NAME"
+      - run: echo "Token is ${{ secrets.API_TOKEN }}"

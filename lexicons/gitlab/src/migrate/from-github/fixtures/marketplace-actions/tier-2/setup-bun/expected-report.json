@@ -1,0 +1,20 @@
+{
+  "totals": {
+    "error": 0,
+    "warning": 0,
+    "info": 1
+  },
+  "ruleIds": [
+    "ACT-actions-checkout"
+  ],
+  "needsReview": [],
+  "provenance": {
+    "literalRewrites": 2,
+    "actionMappings": [
+      {
+        "action": "oven-sh/setup-bun",
+        "tier": 2
+      }
+    ]
+  }
+}

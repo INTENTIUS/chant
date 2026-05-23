@@ -83,7 +83,7 @@ export function buildRuleRegistry(
           source: plugin.name,
           phase: "post-synth",
           hasAutoFix: false,
-          helpUri: `https://chant.dev/lint-rules/${check.id.toLowerCase()}`,
+          helpUri: `https://intentius.io/chant/lint-rules/${check.id.toLowerCase()}`,
         });
       }
     }

@@ -18,6 +18,17 @@ const TYPE_TO_CLASS: Record<string, string> = {
 };
 
 /**
+ * Composite IR types emit as `FunctionName({...})` factory calls rather
+ * than `new ClassName({...})` constructors. The `chant migrate --use-
+ * composites` rewriter rewrites recognised IR shapes into these sentinel
+ * types (see `lexicons/gitlab/src/migrate/from-github/composites/`).
+ */
+const COMPOSITE_TYPE_TO_FN: Record<string, string> = {
+  "GitLab::Composite::NodePipeline": "NodePipeline",
+  "GitLab::Composite::NodeCI": "NodeCI",
+};
+
+/**
  * Properties that reference known property entities.
  */
 const PROPERTY_CONSTRUCTORS: Record<string, string> = {
@@ -45,6 +56,8 @@ export class GitLabGenerator implements TypeScriptGenerator {
     for (const resource of ir.resources) {
       const cls = TYPE_TO_CLASS[resource.type];
       if (cls) usedConstructors.add(cls);
+      const fn = COMPOSITE_TYPE_TO_FN[resource.type];
+      if (fn) usedConstructors.add(fn);
 
       // Check properties for nested constructors
       this.collectNestedConstructors(resource.properties, usedConstructors);
@@ -78,12 +91,17 @@ export class GitLabGenerator implements TypeScriptGenerator {
     // Emit resources
     for (const resource of ir.resources) {
       const cls = TYPE_TO_CLASS[resource.type];
-      if (!cls) continue;
+      const fn = COMPOSITE_TYPE_TO_FN[resource.type];
+      if (!cls && !fn) continue;
 
       const varName = resource.logicalId;
       const propsStr = this.emitProps(resource.properties, 1);
 
-      lines.push(`export const ${varName} = new ${cls}(${propsStr});`);
+      if (fn) {
+        lines.push(`export const ${varName} = ${fn}(${propsStr});`);
+      } else {
+        lines.push(`export const ${varName} = new ${cls}(${propsStr});`);
+      }
       lines.push("");
     }
 

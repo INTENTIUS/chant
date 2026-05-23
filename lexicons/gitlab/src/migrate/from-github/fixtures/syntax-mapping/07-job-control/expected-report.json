@@ -1,0 +1,20 @@
+{
+  "totals": {
+    "error": 0,
+    "warning": 1,
+    "info": 0
+  },
+  "ruleIds": [
+    "MIG-PERMISSIONS-001"
+  ],
+  "needsReview": [
+    {
+      "line": 1,
+      "ruleId": "MIG-PERMISSIONS-001"
+    }
+  ],
+  "provenance": {
+    "literalRewrites": 6,
+    "actionMappings": []
+  }
+}

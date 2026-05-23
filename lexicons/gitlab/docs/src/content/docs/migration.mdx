@@ -1,0 +1,251 @@
+---
+title: "Migration"
+description: "Translate GitHub Actions workflows into GitLab CI/CD pipelines with chant migrate"
+---
+
+`chant migrate` translates `.github/workflows/*.yml` into `.gitlab-ci.yml` or chant TypeScript source. It's the typed-compiler counterpart to the upstream `gitlab-org/ci-cd/github-actions-to-gitlab-ci` Agent Skill — same translation rules, but deterministic, testable, and re-runnable.
+
+:::note
+The `chant migrate` command lands in the next chant release. Until then, install from the `feat/migrate-github-to-gitlab` branch or wait for the next package publish.
+:::
+
+## Install
+
+```bash
+npm install --save-dev @intentius/chant @intentius/chant-lexicon-gitlab
+```
+
+The migration code lives in the GitLab lexicon and is invoked via the core `chant` CLI. The GitHub lexicon is loaded as an optional peer at runtime, so install it too if you want the parser available immediately:
+
+```bash
+npm install --save-dev @intentius/chant-lexicon-github
+```
+
+## Quickstart
+
+After installing locally:
+
+```bash
+npx chant migrate .github/workflows/ci.yml --output .gitlab-ci.yml
+```
+
+That writes `.gitlab-ci.yml` and prints a Markdown summary to stderr. For CI-friendly machine-readable output, add `--report migration.sarif`.
+
+If you want to run without installing into a project, use `npx` with explicit package resolution:
+
+```bash
+npx -p @intentius/chant -p @intentius/chant-lexicon-gitlab \
+  chant migrate .github/workflows/ci.yml --output .gitlab-ci.yml
+```
+
+## When to use migrate vs writing chant source from scratch
+
+- **Migrate**: you have an existing GitHub Actions workflow and want the equivalent GitLab pipeline (or chant source) without manual translation. Best for one-time conversions and for evaluating GitLab CI/CD.
+- **Write from scratch**: you're starting greenfield. Use `chant init --lexicon gitlab --template node-pipeline` and write your pipeline directly in typed chant.
+
+## Flags
+
+| Flag | Default | Purpose |
+|---|---|---|
+| `--from <name>` | `github` | Source lexicon (only `github` supported in v1) |
+| `--to <name>` | `gitlab` | Target lexicon |
+| `--output <path>` | stdout | Where to write the rendered output |
+| `--emit <fmt>` | `yaml` | `yaml` (one-shot) or `ts` (own-it-going-forward chant source) |
+| `--report <path>` | — | SARIF v2.1.0 report file path |
+| `--strict` | off | Exit non-zero if any needs-review diagnostic is emitted |
+| `--validate` | off | Run `glci` or `glab ci lint` against the emitted YAML |
+| `--use-composites` | off | Recognise Node patterns and emit `NodePipeline({...})` calls |
+
+## Two emit modes
+
+**`--emit yaml`** writes `.gitlab-ci.yml` directly. Best when you want the YAML and you're done with chant going forward.
+
+**`--emit ts`** writes typed chant source. Best when you want to maintain the pipeline as code: edit the TypeScript, rebuild with `chant build src/ --output .gitlab-ci.yml` to refresh.
+
+## What translates literally
+
+These GitHub keys map directly to GitLab equivalents:
+
+| GitHub | GitLab | Notes |
+|---|---|---|
+| `name` | `workflow.name` | Pipeline display name |
+| `on: push` | `workflow.rules` with `$CI_PIPELINE_SOURCE == "push"` | |
+| `on: pull_request` | `workflow.rules` with `$CI_PIPELINE_SOURCE == "merge_request_event"` | |
+| `runs-on: ubuntu-*` | `image: ubuntu:<v>` | Linux only |
+| `runs-on: [self-hosted, gpu]` | `tags: [self-hosted, gpu]` | Multi-label maps to tags |
+| `env:` (workflow/job) | `variables:` | |
+| `if:` | `rules: [{ if: ... }]` | Identifiers substituted to `$CI_*` |
+| `needs:` | `needs:` | Passthrough |
+| `strategy.matrix` | `parallel.matrix` | Keys uppercased |
+| `timeout-minutes` | `timeout` | Stringified `"N minutes"` |
+| `continue-on-error` | `allow_failure` | |
+| `concurrency.group` | `resource_group` | |
+| `concurrency.cancel-in-progress` | `interruptible` | |
+| `container.image` | `image` | |
+| `services` | `services` | Passthrough |
+
+## Mapped marketplace actions
+
+33 actions are mapped out of the box (lifted from the upstream skill's [`references/marketplace-actions.md`](https://gitlab.com/gitlab-org/ci-cd/github-actions-to-gitlab-ci/-/blob/master/references/marketplace-actions.md)):
+
+| Tier | Examples | Translation pattern |
+|---|---|---|
+| 1 (essential) | `actions/checkout`, `actions/setup-{node,python,java,go,ruby}`, `actions/{cache,upload-artifact,download-artifact}`, `docker/{login,build-push,setup-buildx,setup-qemu}-action`, `actions/github-script` | image substitution, native cache/artifacts, or skipped |
+| 2 (common) | `actions/setup-dotnet`, `shivammathur/setup-php`, `aws-actions/configure-aws-credentials`, `google-github-actions/auth`, `azure/login`, `hashicorp/setup-terraform`, `codecov/codecov-action`, `softprops/action-gh-release`, `peter-evans/create-pull-request`, `JamesIves/github-pages-deploy-action`, `pnpm/action-setup`, `oven-sh/setup-bun`, `gradle/gradle-build-action`, `cypress-io/github-action` | image, script, or needs-review with scaffolding |
+| 3 (niche) | `tj-actions/changed-files`, `dorny/paths-filter`, `nick-fields/retry`, `pre-commit/action`, `slackapi/slack-github-action` | inline script or hint to native GitLab keyword |
+
+Unknown `uses:` references emit `MIG-ACTION-UNKNOWN` with a TODO comment in the output.
+
+## NeedsReview rules
+
+Items the transformer flags for manual review (`severity: warning`, escalates to `error` under `--strict`):
+
+| Rule | What it catches |
+|---|---|
+| `MIG-PERMISSIONS-001` | GitHub `permissions:` has no per-job equivalent. Configure CI/CD token access at project level. |
+| `MIG-ON-SCHEDULE` | Cron schedules live in GitLab UI under CI/CD > Schedules, not YAML. |
+| `MIG-ON-DISPATCH` | `workflow_dispatch` inputs need `spec:inputs` (GitLab 17+) with defaults on every input. |
+| `MIG-ON-NON-GIT` | GitLab pipelines only run on git events; `issues`/`release`/`discussion` events have no equivalent. |
+| `MIG-NEEDS-OUTPUTS-001` | `steps.X.outputs` / `needs.X.outputs` require the `artifacts:reports:dotenv` pattern. |
+| `MIG-MATRIX-INCLUDE-001` | `matrix.include` / `matrix.exclude` have no direct GitLab equivalent. |
+| `MIG-FAIL-FAST` | `strategy.fail-fast: true` has no GitLab equivalent (default is non-fail-fast). |
+| `MIG-REUSABLE-WORKFLOW` | GitHub `uses: org/repo/.github/workflows/x.yml` maps to GitLab `include:` (no typed inputs). |
+| `MIG-RUNS-ON-NON-LINUX` | macOS/Windows runners need self-hosted GitLab runners with appropriate tags. |
+| `MIG-EXPR-NO-EQUIV` | Specific GitHub expressions have no GitLab predefined variable (`runner.os`, `github.run_attempt`, etc.). |
+| `MIG-NEEDS-CYCLE-001` | `needs:` cycle detected; each member assigned its own stage. |
+| `MIG-ACTION-UNKNOWN` | Marketplace action has no registered mapping. |
+
+## `--use-composites` (the upgrade moment)
+
+When the transformer recognises a Node-shaped pipeline, `--use-composites` collapses it into a single composite call:
+
+Before (literal — 25 lines of TypeScript):
+```typescript
+export const build = new Job({
+  image: "node:22",
+  script: ["npm ci", "npm run build"],
+  stage: "build",
+  // ...
+});
+export const test = new Job({
+  image: "node:22",
+  script: ["npm ci", "npm test"],
+  stage: "test",
+  needs: ["build"],
+});
+```
+
+After (with `--use-composites` — 4 lines):
+```typescript
+export const app = NodePipeline({
+  nodeVersion: "22",
+  packageManager: "npm",
+});
+```
+
+v1 recognises:
+- **NodePipeline**: 2 jobs (build + test), both `image: node:*`, package-manager autodetected from install commands.
+- **NodeCI**: single job with `image: node:*` + install + (build or test).
+
+Other shapes (Python, Docker, Go) are deferred follow-ups in the [umbrella issue](https://github.com/INTENTIUS/chant/issues/97).
+
+## Validating the output
+
+`--validate` shells out to a local validator:
+
+1. `glci lint` (preferred — offline, no auth)
+2. `glab ci lint` (fallback — requires `glab auth login`)
+
+If neither tool is on PATH, validation is skipped with a warning. Pair with `--strict` to make missing tools or validation failures hard-fail.
+
+Install `glci`:
+```bash
+curl -fsSL https://gitlab.com/gitlab-org/ci-cd/runner-tools/glci/-/raw/main/install.sh | bash
+```
+
+Install `glab`: see [GitLab CLI install docs](https://gitlab.com/gitlab-org/cli#installation).
+
+## Diagnostics and the SARIF report
+
+Every translation decision generates a provenance record. Records categorised as `needs-review` (or `action-map` tier 3) become SARIF diagnostics:
+
+```bash
+chant migrate workflow.yml --output .gitlab-ci.yml --report migration.sarif
+```
+
+The SARIF is v2.1.0 and ingests by GitHub's `codeql-action/upload-sarif` or GitLab's CI integrations. Each rule carries description + `helpUri` linking back to this page.
+
+## Limitations (v1)
+
+- **Composite actions** (`.github/actions/*/action.yml`) — not recursively translated. Replace with `include:` or `extends:` after migration.
+- **Reusable workflows with typed `inputs:`/`outputs:`** — partial: `include:` is emitted but typed inputs require manual `spec:inputs` rewrite.
+- **Multi-file workflow trees** — `chant migrate` operates on one file at a time. Shell-loop for multiple files.
+- **Reverse direction** (GitLab → GitHub) — not implemented.
+- **Custom action-mapping plugins** — registry is internal; `--action-mapping <file>` is a follow-up.
+
+Follow-up tracking lives on [umbrella issue #97](https://github.com/INTENTIUS/chant/issues/97).
+
+## Why chant migrate over the upstream skill
+
+The upstream [`gitlab-org/ci-cd/github-actions-to-gitlab-ci`](https://gitlab.com/gitlab-org/ci-cd/github-actions-to-gitlab-ci) skill (MIT) is excellent for one-shot translation inside an AI agent. chant migrate is the typed-compiler counterpart — same translation rules, different shape. Use chant when you need any of these:
+
+| You need… | The skill | chant migrate |
+|---|---|---|
+| **Reproducible output** — same input → same YAML every run | freehand LLM each invocation; output varies | deterministic typed compiler; byte-stable |
+| **Testable translations** — assert against goldens | no test infrastructure | 16 fixture-driven tests + roundtrip harness against real public repos |
+| **Machine-readable report** for CI ingestion | Markdown only | SARIF v2.1.0 + Markdown |
+| **CI exit-code gating** on translation quality | not available | `--strict` exits non-zero on any needs-review item |
+| **Maintain the pipeline in chant going forward** (typed source you edit) | YAML output only | `--emit ts` produces typed chant TS that rebuilds via `chant build` |
+| **Composite-shape recognition** | suggests in prose | `--use-composites` rewrites IR; emits `NodePipeline({...})` instead of raw jobs |
+| **Programmatic invocation** from CI scripts | requires an agent host | plain `chant migrate` CLI; also an MCP tool (`gitlab:migrate`) and companion skill |
+| **Extend the action mapping table** | edit the prompt, redeploy | typed `ActionMapping[]` registry; user-supplied mappings on roadmap (`--action-mapping <file>`) |
+| **Lint the generated YAML against chant's own rules** | not applicable | 23 WGL lint rules + 19 post-synth checks run on the output via `chant lint` |
+| **Quick translation in an agent context** with no install | ✅ ideal fit — paste workflow, get answer | requires `npm install --save-dev @intentius/chant` first |
+
+The skills are complementary: if you're inside an AI agent helping a user evaluate GitLab CI/CD from a GitHub Actions background, use the upstream skill — it's optimised for that conversation. If you're committing the translation to a repository or running it from CI, use chant migrate.
+
+The chant version is not a replacement for the skill — it's the same translation rules wearing a compiler.
+
+## Coverage vs the upstream skill
+
+chant migrate covers every capability documented in the upstream skill's [`SKILL.md`](https://gitlab.com/gitlab-org/ci-cd/github-actions-to-gitlab-ci/-/blob/master/SKILL.md) plus several net-new ones. The matrix:
+
+| Skill capability | chant equivalent |
+|---|---|
+| Single-file translation | `chant migrate <file>` |
+| Marketplace action mapping (33 actions in upstream `references/marketplace-actions.md`) | `ActionMapping[]` registry covers all 33; auto-registered |
+| Caching & artifacts | Native `cache:` and `artifacts:` keywords via Tier 1 action mappings |
+| Matrix builds | `strategy.matrix` → `parallel.matrix` with uppercased variable names |
+| Conditional execution (`if:` → `rules:if:`) | `translateIfCondition` with expression substitution |
+| Migration report (4 categories) | Markdown report + SARIF v2.1.0 with same Translated/Approximated/NeedsReview/Lost shape |
+| Docker workflows | Tier 1 `docker/*` mappings emit `docker:dind` service + inline docker commands |
+| Secrets & variables (substitution) | `${{ secrets.X }}` / `${{ matrix.X }}` / `${{ github.X }}` all substituted across `script:`, `if:`, `image:`, and `variables:` |
+| Validator integration (glci/glab) | `--validate` shells out with the same backend preference (glci → glab fallback) |
+| Workflow classification (real-CI vs repo-automation) | Repo-automation detection emits an upfront banner; mixed-trigger workflows are flagged |
+| Aggregated manual setup steps | Numbered list at the end of the Markdown report; per-rule actionable instructions |
+| Suggested GitLab improvements (DAG, `rules:changes:`, child pipelines, `include:`, templates, resource groups, protected environments) | Heuristic detection based on workflow shape; surfaced in the Markdown report's "Suggested GitLab improvements" section |
+| Honest caveats | "Honest caveats" section at the end of every report |
+| Composite actions | ❌ same limitation in both |
+| `workflow_call` typed inputs/outputs | ❌ same limitation in both |
+| Repo automation events (issues, labels) | Surfaced as `MIG-ON-NON-GIT` needs-review with the same `gitlab-triage` recommendation |
+
+## Inspired by `github-actions-to-gitlab-ci`
+
+This tool is a typed-compiler port of [`gitlab-org/ci-cd/github-actions-to-gitlab-ci`](https://gitlab.com/gitlab-org/ci-cd/github-actions-to-gitlab-ci) — an MIT-licensed Agent Skill published by the GitLab CI team. Specifically derived:
+
+- The four-category provenance model (Translated / Approximated / NeedsReview / Lost) — used verbatim.
+- The marketplace-action mapping table — ported as a typed `ActionMapping[]` registry in [`src/migrate/from-github/actions/`](https://github.com/INTENTIUS/chant/tree/main/lexicons/gitlab/src/migrate/from-github/actions). All 33 entries from the upstream `references/marketplace-actions.md` are present.
+- The syntax-mapping reference — the `github.*` / `runner.*` → `$CI_*` table is the same shape.
+- The validator-as-final-stage pattern (`glci` / `glab ci lint`) — kept as the last stage rather than replaced.
+
+**What's different:** the upstream skill is a stateless LLM prompt over a curated table; `chant migrate` is a stateful compiler with those mappings encoded as typed, testable TypeScript modules. The skills are complementary — use the upstream skill for one-shot read-and-respond; use `chant migrate` when the translation has to be reproducible, testable, and re-runnable.
+
+Full attribution: see [`lexicons/gitlab/ATTRIBUTIONS.md`](https://github.com/INTENTIUS/chant/blob/main/lexicons/gitlab/ATTRIBUTIONS.md).
+
+## Sample roundtrip harness
+
+For maintainers: `lexicons/gitlab/scripts/migrate-samples.sh` clones a handful of public GitHub repos and asserts a 70% pass-rate on real workflows. Out of CI by design (network-bound, slow); run locally:
+
+```bash
+bash lexicons/gitlab/scripts/migrate-samples.sh --verbose
+```

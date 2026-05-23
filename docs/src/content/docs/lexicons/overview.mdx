@@ -15,7 +15,7 @@ A **lexicon** is a collection of types and semantic lint rules for an operationa
 | Kubernetes | `@intentius/chant-lexicon-k8s` | 50+ resources, 35+ properties | [Reference](/chant/lexicons/k8s/) |
 | Helm | `@intentius/chant-lexicon-helm` | 10+ resources | [Reference](/chant/lexicons/helm/) |
 | GitHub Actions | `@intentius/chant-lexicon-github` | 2 resources, 13 composites | [Reference](/chant/lexicons/github/) |
-| GitLab CI/CD | `@intentius/chant-lexicon-gitlab` | 3 resources, 16 properties | [Reference](/chant/lexicons/gitlab/) |
+| GitLab CI/CD | `@intentius/chant-lexicon-gitlab` | 3 resources, 16 properties | [Reference](/chant/lexicons/gitlab/) — also ships [GitHub Actions migration](/chant/lexicons/gitlab/migration/) |
 | Flyway | `@intentius/chant-lexicon-flyway` | 5 resources, 20 properties | [Reference](/chant/lexicons/flyway/) |
 | Docker | `@intentius/chant-lexicon-docker` | 6 resources (Compose + Dockerfile) | [Reference](/chant/lexicons/docker/) |
 | Slurm | `@intentius/chant-lexicon-slurm` | 10 resources (conf + REST) | [Reference](/chant/lexicons/slurm/) |
@@ -40,6 +40,12 @@ Lexicons opt into the `chant state diff <env> --live` pipeline by implementing o
 | GitLab CI/CD |  |  | N/A — same rationale ([README](https://github.com/INTENTIUS/chant/blob/main/lexicons/gitlab/README.md#runtime-observation-na)) |
 
 Lexicons that implement neither are warn-skipped — `--live` doesn't fail the whole command for them.
+
+## Cross-lexicon migration
+
+The GitLab lexicon ships a `chant migrate` source for `from: github` — translates `.github/workflows/*.yml` into `.gitlab-ci.yml` (or typed chant TypeScript), with provenance recorded as SARIF and a curated mapping table for the top 33 marketplace actions. See [GitLab → Migration](/chant/lexicons/gitlab/migration/) for the full surface, or the [`chant migrate` CLI reference](/chant/cli/migrate/).
+
+Future lexicons can opt into the same machinery by implementing `migrationSource(from: string)` on their plugin.
 
 ## What a Lexicon Provides
 

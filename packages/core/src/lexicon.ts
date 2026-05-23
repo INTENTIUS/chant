@@ -98,6 +98,47 @@ export interface IntrinsicDef {
 }
 
 /**
+ * Options passed to a MigrationSource by `chant migrate`.
+ */
+export interface MigrateOptions {
+  /** Output format. */
+  emit?: "yaml" | "ts";
+  /** Recognise composite patterns when emitting. */
+  useComposites?: boolean;
+  /** Source file path (for provenance display only). */
+  sourceFile?: string;
+  /** Escalate needs-review diagnostics to errors. */
+  strict?: boolean;
+}
+
+/**
+ * Result of `MigrationSource.transform()`.
+ *
+ * Provenance is a generic side channel: each record is `{ sourceKey, rule,
+ * category, note?, ... }`. Diagnostics are SARIF-compatible records derived
+ * from provenance (concrete shape lives in `packages/core/src/lint/rule.ts`).
+ */
+export interface MigrationResult {
+  /** Rendered output (YAML by default, TS when emit: "ts"). */
+  output: string;
+  /** Per-key provenance records (typed loosely at the core level). */
+  provenance: Array<Record<string, unknown>>;
+  /** SARIF-shaped diagnostics. */
+  diagnostics: Array<Record<string, unknown>>;
+}
+
+/**
+ * Edge that translates one lexicon's source format into this lexicon's IR
+ * and output. Exposed via `LexiconPlugin.migrationSource(from)`.
+ */
+export interface MigrationSource {
+  /** Lightweight detector: does this content look like the expected source? */
+  detect(content: string): boolean;
+  /** Run the translation. */
+  transform(content: string, opts: MigrateOptions): Promise<MigrationResult>;
+}
+
+/**
  * Structured init template output from a lexicon plugin.
  */
 export interface InitTemplateSet {
@@ -193,6 +234,16 @@ export interface LexiconPlugin {
 
   /** Return MCP resource contributions */
   mcpResources?(): McpResourceContribution[];
+
+  // Migration
+  /**
+   * Return a migration source for translating from another lexicon's
+   * format into this lexicon. Returns undefined if `from` is not supported.
+   *
+   * Example: the gitlab lexicon implements `migrationSource("github")` to
+   * translate `.github/workflows/*.yml` into `.gitlab-ci.yml`.
+   */
+  migrationSource?(from: string): MigrationSource | undefined;
 
   // State
   /**
