@@ -124,6 +124,19 @@ description: "Brief description for SEO and sidebar"
 Content goes here...
 ```
 
+## Cross-Site Links
+
+The 13 docs sites (main + 12 lexicons) build independently and stitch into a single tree at `.docs-dist/chant/`. Astro's `base: '/chant'` only prefixes its own sidebar/slug entries — root-relative links written in MDX body content don't get prefixed automatically.
+
+A shared `rehype-base-url` plugin (`packages/core/src/codegen/rehype-base-url.mjs`) closes the gap: it walks the HAST tree and prepends the site's `base` to `<a href>` values that start with `/`. The lexicon codegen wires this into every generated `astro.config.mjs`, so new lexicons get it for free.
+
+Two gotchas:
+
+- **Linking across namespaces from a lexicon page.** A lexicon site's base is `/chant/lexicons/<name>`, so `[guide](/guide/composite-resources/)` in `lexicons/aws/...` would get prefixed to `/chant/lexicons/aws/guide/composite-resources/` (wrong). Write the full project path — `/chant/guide/composite-resources/` — and the plugin's idempotency check (`projectBase: '/chant'`) leaves it alone.
+- **Sibling pages in MDX.** `[foo](./foo)` from `aks-composites.mdx` resolves to `aks-composites/foo` (child), not the sibling `foo` page. Use `../foo/` (or the absolute `/chant/...` form).
+
+`just docs-check-links` runs lychee against the built `.docs-dist/chant/` tree and catches both classes of breakage.
+
 ## Reference
 
 - K8s docs: `lexicons/k8s/docs/` — 11 pages with full sidebar navigation

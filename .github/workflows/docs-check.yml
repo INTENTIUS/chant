@@ -1,0 +1,52 @@
+name: docs-check
+
+on:
+  pull_request:
+    paths:
+      - 'docs/**'
+      - 'lexicons/*/docs/**'
+      - 'lexicons/*/src/codegen/**'
+      - 'packages/core/src/codegen/**'
+      - 'scripts/build-docs.sh'
+      - 'scripts/build-diagrams.sh'
+      - 'justfile'
+      - '.github/workflows/docs-check.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  link-check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: 'npm'
+      - run: npm install
+
+      - name: Install Graphviz
+        run: sudo apt-get install -y graphviz
+
+      - name: Cache lexicon schemas
+        uses: actions/cache@v4
+        with:
+          path: ~/.chant
+          key: lexicon-schemas-${{ hashFiles('lexicons/*/src/**/fetch.ts', 'lexicons/*/src/**/versions.ts') }}
+          restore-keys: |
+            lexicon-schemas-
+
+      - name: Build unified docs
+        run: chmod +x scripts/build-docs.sh && ./scripts/build-docs.sh
+
+      - name: Run lychee link check
+        uses: lycheeverse/lychee-action@v2
+        with:
+          args: >-
+            --offline --no-progress
+            --root-dir ${{ github.workspace }}/.docs-dist
+            --exclude '\.(css|js|mjs|svg|png|jpe?g|ico|woff2?|map|json|xml|webp|avif|gif)$'
+            --exclude 'pagefind/'
+            '.docs-dist/chant/**/*.html'
+          fail: true
