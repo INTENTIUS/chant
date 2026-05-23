@@ -252,7 +252,38 @@ export const test = new Job({
   },
 
   mcpTools() {
-    return [createDiffTool(gitlabSerializer, "Compare current build output against previous output for GitLab CI", "gitlab")];
+    return [
+      createDiffTool(gitlabSerializer, "Compare current build output against previous output for GitLab CI", "gitlab"),
+      {
+        name: "migrate",
+        description: "Translate a GitHub Actions workflow YAML into a GitLab CI/CD pipeline. Returns the rendered output plus diagnostic + provenance arrays.",
+        inputSchema: {
+          type: "object" as const,
+          properties: {
+            content: { type: "string", description: "Raw .github/workflows/*.yml content" },
+            emit: { type: "string", enum: ["yaml", "ts"], description: "Output format (default: yaml)" },
+            useComposites: { type: "boolean", description: "Recognise composite patterns and emit NodePipeline/NodeCI calls" },
+            strict: { type: "boolean", description: "Escalate needs-review diagnostics to errors" },
+          },
+          required: ["content"],
+        },
+        async handler(params: Record<string, unknown>): Promise<unknown> {
+          const { transform } = await import("./migrate/from-github/index");
+          const result = await transform(params.content as string, {
+            emit: (params.emit as "yaml" | "ts" | undefined) ?? "yaml",
+            useComposites: !!params.useComposites,
+            strict: !!params.strict,
+            sourceFile: "<mcp-input>",
+          });
+          return {
+            output: result.output,
+            diagnostics: result.diagnostics,
+            provenance: result.provenance,
+            stages: result.stages,
+          };
+        },
+      },
+    ];
   },
 
   migrationSource(from: string) {
