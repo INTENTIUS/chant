@@ -110,6 +110,29 @@ describe("migrateCommand", () => {
     expect(r.exitCode).toBe(1);
   });
 
+  test("--report writes valid SARIF v2.1.0 JSON", async () => {
+    const file = join(testDir, "ci.yml");
+    const out = join(testDir, "out.yml");
+    const report = join(testDir, "r.sarif");
+    writeFileSync(file, "jobs:\n  x:\n    runs-on: ubuntu-latest\n");
+    await migrateCommand({
+      sourceFile: file, from: "github", to: "stub", output: out, reportFile: report,
+      emit: "yaml", strict: false, validate: false, useComposites: false,
+      plugins: [stubPlugin({
+        result: {
+          output: "out",
+          provenance: [],
+          diagnostics: [{ severity: "warning", ruleId: "TEST-W", message: "warn", file: "<in>", line: 2, column: 1 }],
+        },
+      })],
+    });
+    expect(existsSync(report)).toBe(true);
+    const sarif = JSON.parse(readFileSync(report, "utf-8"));
+    expect(sarif.version).toBe("2.1.0");
+    expect(sarif.runs?.[0]?.results?.length).toBe(1);
+    expect(sarif.runs[0].results[0].ruleId).toBe("TEST-W");
+  });
+
   test("--strict off keeps exit 0 even with error diagnostics", async () => {
     const file = join(testDir, "ci.yml");
     writeFileSync(file, "jobs:\n  x:\n    runs-on: ubuntu-latest\n");

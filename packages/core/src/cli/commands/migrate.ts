@@ -8,7 +8,9 @@
 
 import { readFileSync, writeFileSync } from "node:fs";
 import { formatError, formatInfo } from "../format";
+import { formatSarif } from "../reporters/stylish";
 import type { LexiconPlugin } from "../../lexicon";
+import type { LintRule, LintDiagnostic } from "../../lint/rule";
 
 export interface MigrateCliOpts {
   sourceFile: string;
@@ -119,10 +121,26 @@ export async function migrateCommand(opts: MigrateCliOpts): Promise<MigrateCliRe
     process.stdout.write(result.output);
   }
 
+  // SARIF report (--report <path>) — reuse the lint-side formatSarif so any
+  // CI SARIF ingest path treats migration findings uniformly.
+  if (opts.reportFile) {
+    try {
+      const rules = await loadMigrationRules(opts.to);
+      const lintShape = result.diagnostics as unknown as LintDiagnostic[];
+      const sarif = formatSarif(lintShape, rules);
+      writeFileSync(opts.reportFile, sarif);
+    } catch (err) {
+      // Non-fatal: surface the failure but don't abort the migration
+      console.error(`Warning: could not write SARIF report to ${opts.reportFile}: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
+
   // Markdown summary (always to stderr — leaves stdout clean for piping)
   const markdownSummary = formatMarkdownSummary(result.provenance, result.diagnostics);
 
-  // Determine exit code: any error-severity diagnostic fails when --strict
+  // Determine exit code: any error-severity diagnostic fails when --strict.
+  // The transformer already escalates needs-review → error when opts.strict
+  // is passed via MigrationSource.transform(); we double-check here.
   const errorDiagnostics = result.diagnostics.filter((d) => d.severity === "error");
   const exitCode = opts.strict && errorDiagnostics.length > 0 ? 1 : 0;
 
@@ -133,6 +151,25 @@ export async function migrateCommand(opts: MigrateCliOpts): Promise<MigrateCliRe
     provenance: result.provenance,
     markdownSummary,
   };
+}
+
+/**
+ * Lazily load the target lexicon's MIGRATION_RULES (used for SARIF enrichment).
+ * Returns an empty array if the lexicon doesn't expose them.
+ */
+async function loadMigrationRules(targetLexicon: string): Promise<LintRule[]> {
+  // For now only gitlab exposes migration rules. Hard-coded import keeps
+  // the dependency direction explicit; widen the switch when more
+  // lexicons ship their own migrate paths.
+  if (targetLexicon === "gitlab") {
+    try {
+      const mod = await import("@intentius/chant-lexicon-gitlab/migrate/from-github/rules");
+      return (mod as { MIGRATION_RULES: LintRule[] }).MIGRATION_RULES;
+    } catch {
+      return [];
+    }
+  }
+  return [];
 }
 
 function formatMarkdownSummary(
