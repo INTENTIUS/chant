@@ -94,21 +94,23 @@ jobs:
             core.info('OIDC claims that npm trusted publisher matches against:');
             core.info(JSON.stringify(interesting, null, 2));
 
-      # Publish gitlab first as the OIDC diagnostic canary — if this one
-      # publishes, OIDC is healthy and any per-package 404 below is
-      # specific to that package's trusted-publisher config.
-      - name: Publish @intentius/chant-lexicon-gitlab
-        working-directory: lexicons/gitlab
-        run: |
-          V=$(node -e "process.stdout.write(require('./package.json').version)")
-          P=$(npm view @intentius/chant-lexicon-gitlab version 2>/dev/null || echo "none")
-          [ "$V" = "$P" ] && echo "Already at $V, skipping" || npm publish --access public --provenance --loglevel=verbose
-
+      # Publish @intentius/chant first as the OIDC canary — its trusted
+      # publisher was just updated to uppercase INTENTIUS/chant, and the
+      # OIDC token's `repository` claim is uppercase. If this one
+      # publishes, the uppercase theory is confirmed and the remaining
+      # 11 packages need the same casing update.
       - name: Publish @intentius/chant
         working-directory: packages/core
         run: |
           V=$(node -e "process.stdout.write(require('./package.json').version)")
           P=$(npm view @intentius/chant version 2>/dev/null || echo "none")
+          [ "$V" = "$P" ] && echo "Already at $V, skipping" || npm publish --access public --provenance --loglevel=verbose
+
+      - name: Publish @intentius/chant-lexicon-gitlab
+        working-directory: lexicons/gitlab
+        run: |
+          V=$(node -e "process.stdout.write(require('./package.json').version)")
+          P=$(npm view @intentius/chant-lexicon-gitlab version 2>/dev/null || echo "none")
           [ "$V" = "$P" ] && echo "Already at $V, skipping" || npm publish --access public --provenance --loglevel=verbose
         continue-on-error: true
 
