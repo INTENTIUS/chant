@@ -197,7 +197,7 @@ export async function albDeployWorkflow(): Promise<void> {
 
 For an Op with N phases this is **N+1 upsert calls total**. Values are wrapped as single-element arrays for the classic `@temporalio/workflow` API.
 
-> **Registration is separate.** Auto-emit assumes the attributes are already registered server-side. Declare them with the [`SearchAttribute`](/chant/reference/lexicons/temporal/) resource so `chant build` emits the registration commands. See also [`chant state`](/chant/cli/state/) for snapshotting registered attributes against a live cluster.
+> **Registration is separate.** Auto-emit assumes the attributes are already registered server-side. Declare them with the [`SearchAttribute`](/chant/lexicons/temporal/resources/#searchattribute) resource so `chant build` emits the registration commands. See also [`chant state`](/chant/cli/state/) for snapshotting registered attributes against a live cluster.
 
 User-provided keys merge over the `OpName` default; if you set `searchAttributes: { OpName: "custom" }` the user value wins.
 

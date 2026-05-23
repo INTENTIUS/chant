@@ -390,7 +390,7 @@ Returns the list of Availability Zones for a region:
         slug: "composites",
         title: "Composites",
         description: "Composite resources, built-in composites, action constants, and withDefaults presets in the AWS CloudFormation lexicon",
-        content: `Composites group related resources into reusable factories. See also the core [Composite Resources](/guide/composite-resources/) guide.
+        content: `Composites group related resources into reusable factories. See also the core [Composite Resources](/chant/guide/composite-resources/) guide.
 
 {{file:lambda-api/src/lambda-api.ts}}
 
