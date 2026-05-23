@@ -21,6 +21,22 @@ export interface ParsedArgs {
   profile?: string;
   report?: boolean;
   live: boolean;
+  /** `chant migrate --from <name>` (default "github") */
+  migrateFrom?: string;
+  /** `chant migrate --to <name>` (default "gitlab") */
+  migrateTo?: string;
+  /** `chant migrate --emit yaml|ts` */
+  emit?: string;
+  /** Escalate needs-review diagnostics to errors (migrate command) */
+  strict?: boolean;
+  /** Run glci/glab after emit (migrate command) */
+  validate?: boolean;
+  /** Recognise composite patterns in output (migrate command) */
+  useComposites?: boolean;
+  /** Write SARIF report to this path (migrate command); distinct from boolean --report */
+  reportFile?: string;
+  /** `chant init --skill <name>` filter (added in #95 commit) */
+  skill?: string;
 }
 
 /**

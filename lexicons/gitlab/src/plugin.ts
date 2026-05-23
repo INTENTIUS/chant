@@ -255,6 +255,31 @@ export const test = new Job({
     return [createDiffTool(gitlabSerializer, "Compare current build output against previous output for GitLab CI", "gitlab")];
   },
 
+  migrationSource(from: string) {
+    if (from !== "github") return undefined;
+    return {
+      detect(content: string): boolean {
+        // Avoid bringing the migrate code into the import graph until needed
+        if (!/^\s*jobs\s*:/m.test(content)) return false;
+        return /^\s*on\s*:/m.test(content) || /^\s*runs-on\s*:/m.test(content);
+      },
+      async transform(content: string, opts) {
+        const { transform } = await import("./migrate/from-github/index");
+        const result = await transform(content, {
+          emit: opts.emit,
+          useComposites: opts.useComposites,
+          sourceFile: opts.sourceFile,
+          strict: opts.strict,
+        });
+        return {
+          output: result.output,
+          provenance: result.provenance as unknown as Array<Record<string, unknown>>,
+          diagnostics: result.diagnostics as unknown as Array<Record<string, unknown>>,
+        };
+      },
+    };
+  },
+
   mcpResources() {
     return [
       createCatalogResource(import.meta.url, "GitLab CI Entity Catalog", "JSON list of all supported GitLab CI entity types", "lexicon-gitlab.json", "gitlab"),

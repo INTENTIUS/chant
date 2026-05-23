@@ -12,6 +12,7 @@ import { runDevGenerate, runDevPublish, runDevOnboard, runDevCheckLexicon, runDe
 import { runServeLsp, runServeMcp, runServeUnknown } from "./handlers/serve";
 import { runInit, runInitLexicon } from "./handlers/init";
 import { runList, runImport, runUpdate, runDoctor } from "./handlers/misc";
+import { runMigrate } from "./handlers/migrate";
 import { runStateSnapshot, runStateShow, runStateDiff, runStateLog, runStateUnknown } from "./handlers/state";
 import { runGraph } from "./handlers/graph";
 import { runOp, runOpList, runOpStatus, runOpSignal, runOpCancel, runOpLog } from "./handlers/run";
@@ -37,6 +38,14 @@ export function parseArgs(args: string[]): ParsedArgs {
     profile: undefined,
     report: undefined,
     live: false,
+    migrateFrom: undefined,
+    migrateTo: undefined,
+    emit: undefined,
+    strict: false,
+    validate: false,
+    useComposites: false,
+    reportFile: undefined,
+    skill: undefined,
   };
 
   let i = 0;
@@ -64,9 +73,31 @@ export function parseArgs(args: string[]): ParsedArgs {
     } else if (arg === "--profile" || arg === "-p") {
       result.profile = args[++i];
     } else if (arg === "--report") {
-      result.report = true;
+      // --report alone is the boolean (used by `run`); --report <path> is
+      // the migrate-command file path. Look ahead for a non-flag.
+      const next = args[i + 1];
+      if (next && !next.startsWith("-")) {
+        result.reportFile = next;
+        i++;
+      } else {
+        result.report = true;
+      }
     } else if (arg === "--live") {
       result.live = true;
+    } else if (arg === "--from") {
+      result.migrateFrom = args[++i];
+    } else if (arg === "--to") {
+      result.migrateTo = args[++i];
+    } else if (arg === "--emit") {
+      result.emit = args[++i];
+    } else if (arg === "--strict") {
+      result.strict = true;
+    } else if (arg === "--validate") {
+      result.validate = true;
+    } else if (arg === "--use-composites") {
+      result.useComposites = true;
+    } else if (arg === "--skill") {
+      result.skill = args[++i];
     } else if (!arg.startsWith("-")) {
       if (!result.command) {
         result.command = arg;
@@ -102,6 +133,8 @@ Commands:
   lint                  Check specifications for issues
   list                  List discovered entities
   import                Import external template into TypeScript
+  migrate <file>        Translate a workflow between lexicons
+                        (default: --from github --to gitlab)
 
 Ops:
   run <name>            Start an Op workflow (spawns worker + submits to Temporal)
@@ -149,6 +182,13 @@ Options:
   -h, --help            Show this help message
   -p, --profile <name>  Temporal worker profile to use (run command)
   --report              Print deployment report instead of running (run command)
+                        OR with a path arg: SARIF report destination (migrate)
+  --from <name>         Source lexicon for migrate (default: github)
+  --to <name>           Target lexicon for migrate (default: gitlab)
+  --emit <fmt>          Migration output format: yaml (default) or ts
+  --strict              Escalate needs-review/validation to errors (migrate)
+  --validate            Run external validator (glci/glab) after migrate
+  --use-composites      Rewrite to composite calls when patterns match (migrate)
 
 Examples:
   chant build ./infra/
@@ -197,6 +237,7 @@ const registry: CommandDef[] = [
   { name: "lint", handler: runLint },
   { name: "list", handler: runList },
   { name: "import", handler: runImport },
+  { name: "migrate", handler: runMigrate },
   { name: "init", handler: runInit },
   { name: "init lexicon", handler: runInitLexicon },
 { name: "update", handler: runUpdate },
