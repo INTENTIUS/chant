@@ -211,6 +211,56 @@ jobs:
     expect(errors.length).toBeGreaterThan(0);
   });
 
+  test("matrix-driven image substitutes to $NODE (not leaking ${{ }})", async () => {
+    const yml = `on: push
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        node: [18, 20, 22]
+    steps:
+      - uses: actions/setup-node@v4
+        with:
+          node-version: \${{ matrix.node }}
+      - run: npm test
+`;
+    const result = await transform(yml);
+    expect(result.output).toContain("image: node:$node");
+    expect(result.output).not.toContain("\${{ matrix.node }}");
+  });
+
+  test("env value with embedded ${{ secrets.X }} substitutes to $X", async () => {
+    const yml = `on: push
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    env:
+      TOKEN: \${{ secrets.API_TOKEN }}
+    steps:
+      - run: ./deploy.sh
+`;
+    const result = await transform(yml);
+    // YAML emitter quotes strings starting with `$` as `'$API_TOKEN'`
+    expect(result.output).toMatch(/TOKEN:\s*'?\$API_TOKEN'?/);
+    expect(result.output).not.toContain("\${{ secrets.API_TOKEN }}");
+  });
+
+  test("container.image with embedded expression substitutes", async () => {
+    const yml = `on: push
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    container:
+      image: my-registry/app:\${{ github.sha }}
+    steps:
+      - run: ./test.sh
+`;
+    const result = await transform(yml);
+    expect(result.output).toContain("my-registry/app:$CI_COMMIT_SHA");
+    expect(result.output).not.toContain("\${{ github.sha }}");
+  });
+
   test("ir.metadata.migration is set", async () => {
     const yml = `on: push
 jobs:

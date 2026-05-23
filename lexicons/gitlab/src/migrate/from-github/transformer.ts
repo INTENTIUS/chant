@@ -15,6 +15,28 @@ import { substituteExpressions, translateIfCondition } from "./expressions";
 import { inferStages, type GhJobSummary } from "./stages";
 import { lookupAction, type ActionMappingRegistry } from "./actions/registry";
 
+/**
+ * Apply expression substitution to a string that may contain `${{ ... }}`
+ * wrappers anywhere in its content. Used for property values like `image:`,
+ * `variables.*`, and service hostnames that flow through from GitHub source
+ * verbatim and need their embedded expressions translated.
+ *
+ * Returns the substituted string unchanged when no expressions are present.
+ */
+function substituteValueExpressions(
+  value: unknown,
+  gitlabPath: string,
+  sourceKey: string | undefined,
+  prov: ProvenanceAccumulator,
+  sourceFile?: string,
+): unknown {
+  if (typeof value !== "string") return value;
+  if (!value.includes("${{")) return value;
+  const r = substituteExpressions(value, { gitlabPath, sourceKey, sourceFile });
+  prov.pushAll(r.provenance);
+  return r.output;
+}
+
 export interface TransformOptions {
   /** Source file path for provenance (best-effort, no parse) */
   sourceFile?: string;
@@ -258,13 +280,26 @@ function translateJob(
   // runs-on
   if (props["runs-on"] !== undefined) {
     const { image, tags } = translateRunsOn(props["runs-on"], { logicalId, jobName, sourceFile: opts.sourceFile }, prov);
-    if (image) gitlabProps.image = image;
+    if (image) {
+      gitlabProps.image = substituteValueExpressions(image, `jobs.${logicalId}.image`, `jobs.${jobName}.runs-on`, prov, opts.sourceFile);
+    }
     if (tags) gitlabProps.tags = tags;
   }
 
-  // env → variables
+  // env → variables (with embedded ${{ }} substitution on each value)
   if (props.env && typeof props.env === "object") {
-    gitlabProps.variables = { ...(props.env as Record<string, unknown>) };
+    const rawEnv = props.env as Record<string, unknown>;
+    const substituted: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(rawEnv)) {
+      substituted[k] = substituteValueExpressions(
+        v,
+        `jobs.${logicalId}.variables.${k}`,
+        `jobs.${jobName}.env.${k}`,
+        prov,
+        opts.sourceFile,
+      );
+    }
+    gitlabProps.variables = substituted;
     prov.push({
       gitlabPath: `jobs.${logicalId}.variables`,
       gitlabLogicalId: logicalId,
@@ -459,7 +494,13 @@ function translateJob(
   if (props.container && typeof props.container === "object") {
     const container = props.container as Record<string, unknown>;
     if (container.image) {
-      gitlabProps.image = container.image;
+      gitlabProps.image = substituteValueExpressions(
+        container.image,
+        `jobs.${logicalId}.image`,
+        `jobs.${jobName}.container.image`,
+        prov,
+        opts.sourceFile,
+      );
       prov.push({
         gitlabPath: `jobs.${logicalId}.image`,
         gitlabLogicalId: logicalId,
@@ -502,13 +543,35 @@ function translateJob(
           });
           script.push(...result.scriptLines);
           if (result.beforeScript) beforeScript.push(...result.beforeScript);
-          if (result.image) gitlabProps.image = result.image;
+          if (result.image) {
+            // Action-mapping image values pass through user input like
+            // `node-version: ${{ matrix.node }}` verbatim from `with:`; run
+            // expression substitution so embedded ${{ ... }} doesn't leak
+            // into the output as a GitLab-side dead identifier.
+            gitlabProps.image = substituteValueExpressions(
+              result.image,
+              `jobs.${logicalId}.image`,
+              `jobs.${jobName}.steps[${i}].uses`,
+              prov,
+              opts.sourceFile,
+            );
+          }
           if (result.services) gitlabProps.services = result.services;
           if (result.cache) gitlabProps.cache = result.cache;
           if (result.artifacts) gitlabProps.artifacts = result.artifacts;
           if (result.variables) {
             const existing = (gitlabProps.variables as Record<string, unknown> | undefined) ?? {};
-            gitlabProps.variables = { ...existing, ...result.variables };
+            const subbed: Record<string, unknown> = { ...existing };
+            for (const [k, v] of Object.entries(result.variables)) {
+              subbed[k] = substituteValueExpressions(
+                v,
+                `jobs.${logicalId}.variables.${k}`,
+                `jobs.${jobName}.steps[${i}].uses`,
+                prov,
+                opts.sourceFile,
+              );
+            }
+            gitlabProps.variables = subbed;
           }
           prov.pushAll(result.provenance);
         } else {

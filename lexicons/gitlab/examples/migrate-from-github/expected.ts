@@ -35,7 +35,7 @@ export const build = new Job({
   });
 
 export const test = new Job({
-    image: "node:${{ matrix.node }}",
+    image: "node:$node",
     timeout: "15 minutes",
     parallel: new Parallel({
       matrix: [{

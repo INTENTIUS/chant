@@ -38,10 +38,6 @@ diff out.ts expected.ts
 | `if: github.ref == 'refs/heads/main'` | → `rules: [{ if: $CI_COMMIT_REF_NAME == 'refs/heads/main' && $CI_PIPELINE_SOURCE == 'push' }]` |
 | Stage inference | Kahn topo-sort: build (depth 0) → test (depth 1) → deploy (depth 2) |
 
-## Known limitations exposed by this example
-
-The `image: node:${{ matrix.node }}` value in the source workflow stays literal in the output (`image: node:${{ matrix.node }}`). The expression substitution runs on `script:` lines and `if:` conditions but not on `image:` values yet. The simplest fix in the generated YAML is to replace the literal with `image: node:$NODE` after migration — the matrix variable is already injected as `$NODE`. Tracked at [umbrella #97](https://github.com/INTENTIUS/chant/issues/97).
-
 ## Further reading
 
 - [Migration docs page](https://intentius.io/chant/lexicons/gitlab/migration/) — full surface, all 33 mapped actions, NeedsReview catalog, `--use-composites`, `--validate`, SARIF reporting

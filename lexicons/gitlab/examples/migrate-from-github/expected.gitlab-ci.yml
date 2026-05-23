@@ -39,7 +39,7 @@ deploy:
   stage: deploy
 
 test:
-  image: node:${{ matrix.node }}
+  image: node:$node
   timeout: '15 minutes'
   parallel:
     matrix:
