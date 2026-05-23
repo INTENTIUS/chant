@@ -13,6 +13,7 @@ import { transformIR } from "./transformer";
 import { emitGitlabYaml } from "./emit-yaml";
 import { provenanceToDiagnostics } from "./diagnostics";
 import { GitLabGenerator } from "../../import/generator";
+import { applyComposites } from "./composites/rewriter";
 import type { ActionMappingRegistry } from "./actions/registry";
 // Importing `./actions/index` triggers auto-registration of Tier 1
 // marketplace action mappings into the default registry. This is the
@@ -68,11 +69,21 @@ export async function transform(
 
   const ghIR = new GitHubActionsParser().parse(yamlContent);
   const provAcc = new ProvenanceAccumulator();
-  const { ir, stages } = await transformIR(ghIR, {
+  const transformed = await transformIR(ghIR, {
     sourceFile: opts.sourceFile,
     registry: opts.registry,
     provenance: provAcc,
   });
+  let { ir } = transformed;
+  const stages = transformed.stages;
+
+  // --use-composites: opt-in IR rewrite that turns recognised shapes
+  // (NodePipeline / NodeCI) into composite calls.
+  if (opts.useComposites) {
+    const r = applyComposites(ir);
+    ir = r.ir;
+    provAcc.pushAll(r.provenance);
+  }
 
   let output: string;
   if (opts.emit === "ts") {

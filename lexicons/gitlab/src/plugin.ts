@@ -271,6 +271,11 @@ export const test = new Job({
           sourceFile: opts.sourceFile,
           strict: opts.strict,
         });
+        // The composites rewriter (when enabled) replaces several Job
+        // resources with a single Composite resource — stages: in the
+        // top-level YAML output is now stale for that path. The yaml
+        // emitter reads metadata.stages directly; no special handling
+        // needed at the call site.
         return {
           output: result.output,
           provenance: result.provenance as unknown as Array<Record<string, unknown>>,
