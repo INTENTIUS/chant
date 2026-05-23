@@ -150,3 +150,16 @@ describe("migrateCommand", () => {
     expect(r.exitCode).toBe(0);
   });
 });
+
+describe("tryValidateExternal", () => {
+  test("returns ran=false when neither glci nor glab is on PATH", async () => {
+    const { tryValidateExternal } = await import("./migrate");
+    const r = tryValidateExternal("stages:\n  - build\n");
+    if (!r.ran) {
+      expect(r.ok).toBe(false);
+      expect(r.backend).toBeUndefined();
+    } else {
+      expect(["glci", "glab"]).toContain(r.backend);
+    }
+  });
+});

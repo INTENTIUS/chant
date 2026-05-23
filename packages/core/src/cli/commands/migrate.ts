@@ -7,6 +7,7 @@
  */
 
 import { readFileSync, writeFileSync } from "node:fs";
+import { spawnSync } from "node:child_process";
 import { formatError, formatInfo } from "../format";
 import { formatSarif } from "../reporters/stylish";
 import type { LexiconPlugin } from "../../lexicon";
@@ -121,6 +122,37 @@ export async function migrateCommand(opts: MigrateCliOpts): Promise<MigrateCliRe
     process.stdout.write(result.output);
   }
 
+  // External validator (--validate) — glci preferred, glab fallback.
+  let validatorWarning: string | undefined;
+  if (opts.validate && opts.emit === "yaml") {
+    const v = tryValidateExternal(result.output);
+    if (!v.ran) {
+      validatorWarning = "neither glci nor glab is on PATH; skipping --validate";
+      if (opts.strict) {
+        return {
+          exitCode: 1,
+          output: result.output,
+          diagnostics: result.diagnostics,
+          provenance: result.provenance,
+          error: "--strict --validate: neither glci nor glab is on PATH",
+        };
+      }
+    } else if (!v.ok) {
+      console.error(`Validator (${v.backend}) reported errors:\n${v.output}`);
+      if (opts.strict) {
+        return {
+          exitCode: 1,
+          output: result.output,
+          diagnostics: result.diagnostics,
+          provenance: result.provenance,
+          error: `--strict: ${v.backend} validation failed`,
+        };
+      }
+    } else {
+      console.error(`Validator (${v.backend}) OK`);
+    }
+  }
+
   // SARIF report (--report <path>) — reuse the lint-side formatSarif so any
   // CI SARIF ingest path treats migration findings uniformly.
   if (opts.reportFile) {
@@ -151,6 +183,39 @@ export async function migrateCommand(opts: MigrateCliOpts): Promise<MigrateCliRe
     provenance: result.provenance,
     markdownSummary,
   };
+}
+
+interface ValidatorResult {
+  ran: boolean;
+  ok: boolean;
+  backend?: "glci" | "glab";
+  output: string;
+}
+
+function isOnPath(cmd: string): boolean {
+  // Use the OS-native lookup. `which` exists on macOS/Linux; `where` on Windows.
+  const lookup = process.platform === "win32" ? "where" : "which";
+  const r = spawnSync(lookup, [cmd], { encoding: "utf-8" });
+  return r.status === 0;
+}
+
+/**
+ * Run glci or glab against the generated .gitlab-ci.yml. Prefers glci
+ * (offline, no auth). Falls back to glab ci lint. Returns a structured
+ * result so the caller can decide how to surface success/failure.
+ *
+ * Exported for testability.
+ */
+export function tryValidateExternal(yamlText: string): ValidatorResult {
+  if (isOnPath("glci")) {
+    const r = spawnSync("glci", ["lint", "-f", "-"], { input: yamlText, encoding: "utf-8" });
+    return { ran: true, ok: r.status === 0, backend: "glci", output: (r.stdout ?? "") + (r.stderr ?? "") };
+  }
+  if (isOnPath("glab")) {
+    const r = spawnSync("glab", ["ci", "lint", "-f", "-"], { input: yamlText, encoding: "utf-8" });
+    return { ran: true, ok: r.status === 0, backend: "glab", output: (r.stdout ?? "") + (r.stderr ?? "") };
+  }
+  return { ran: false, ok: false, output: "" };
 }
 
 /**
