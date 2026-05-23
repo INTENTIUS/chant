@@ -214,9 +214,13 @@ describe("gitlabPlugin", () => {
 
   test("returns MCP tools", () => {
     const tools = gitlabPlugin.mcpTools!();
-    expect(tools).toHaveLength(1);
-    expect(tools[0].name).toBe("gitlab:diff");
-    expect(typeof tools[0].handler).toBe("function");
+    expect(tools.length).toBeGreaterThanOrEqual(2);
+    const names = tools.map((t) => t.name);
+    expect(names).toContain("gitlab:diff");
+    expect(names).toContain("migrate");
+    for (const t of tools) {
+      expect(typeof t.handler).toBe("function");
+    }
   });
 
   test("returns MCP resources", () => {
