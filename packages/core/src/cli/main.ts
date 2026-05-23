@@ -175,6 +175,7 @@ Options:
                         - lint: stylish (default), json, or sarif
   -d, --lexicon <name>  Build only the specified lexicon (e.g. aws, gitlab)
   -t, --template <name> Init template (e.g. node-pipeline, docker-build)
+  --skill <name>        Init: install only this skill from the lexicon
   --fix                 Auto-fix fixable issues (lint command)
   --force               Force overwrite existing files (import command)
   -w, --watch           Watch for changes and rebuild/re-lint (build, lint)

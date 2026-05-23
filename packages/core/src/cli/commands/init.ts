@@ -33,6 +33,12 @@ export interface InitOptions {
   skipMcp?: boolean;
   /** Skip interactive install prompt */
   skipInstall?: boolean;
+  /**
+   * If set, install only the named skill (e.g. "chant-gitlab-migrate")
+   * rather than every skill the plugin exports. Useful for incremental
+   * skill installation without re-scaffolding the project.
+   */
+  skill?: string;
 }
 
 /**
@@ -442,18 +448,21 @@ export async function initCommand(options: InitOptions): Promise<InitResult> {
     );
   }
 
-  // Install skills from the lexicon's plugin
+  // Install skills from the lexicon's plugin. With --skill, install only
+  // the matching skill; without, install all.
   try {
     const plugin = await loadPlugin(options.lexicon);
     if (plugin.skills) {
-      const skills = plugin.skills();
-      if (skills.length > 0) {
-        for (const skill of skills) {
-          const skillDir = join(targetDir, "skills", skill.name);
-          mkdirSync(skillDir, { recursive: true });
-          writeFileSync(join(skillDir, "SKILL.md"), skill.content);
-          createdFiles.push(`skills/${skill.name}/SKILL.md`);
-        }
+      const all = plugin.skills();
+      const skills = options.skill ? all.filter((s) => s.name === options.skill) : all;
+      if (options.skill && skills.length === 0) {
+        warnings.push(`No skill named "${options.skill}" in lexicon ${options.lexicon}; nothing installed`);
+      }
+      for (const skill of skills) {
+        const skillDir = join(targetDir, "skills", skill.name);
+        mkdirSync(skillDir, { recursive: true });
+        writeFileSync(join(skillDir, "SKILL.md"), skill.content);
+        createdFiles.push(`skills/${skill.name}/SKILL.md`);
       }
     }
   } catch {

@@ -431,6 +431,49 @@ curl --header "PRIVATE-TOKEN: $GITLAB_TOKEN" \\
       ],
     },
     {
+      file: "chant-gitlab-migrate.md",
+      name: "chant-gitlab-migrate",
+      description: "Translate GitHub Actions workflows into GitLab CI/CD pipelines via chant migrate",
+      triggers: [
+        { type: "file-pattern", value: "**/.github/workflows/*.yml" },
+        { type: "file-pattern", value: "**/.github/workflows/*.yaml" },
+        { type: "context", value: "migrate from github actions" },
+        { type: "context", value: "github actions to gitlab" },
+        { type: "context", value: "convert workflow" },
+      ],
+      preConditions: [
+        "chant CLI is installed (chant --version succeeds)",
+        "@intentius/chant-lexicon-gitlab is installed",
+      ],
+      postConditions: [
+        "Translated .gitlab-ci.yml or .ts source on disk",
+        "Migration report visible to the user (Markdown + SARIF if --report)",
+      ],
+      parameters: [],
+      examples: [
+        {
+          title: "Translate a single workflow file",
+          description: "Migrate .github/workflows/ci.yml into .gitlab-ci.yml with a SARIF report",
+          input: "Migrate this GitHub workflow to GitLab CI",
+          output: `npx chant migrate .github/workflows/ci.yml \\
+  --output .gitlab-ci.yml \\
+  --report migration.sarif`,
+        },
+        {
+          title: "Translate to chant TypeScript",
+          description: "Produce typed chant source instead of YAML so the user can maintain the pipeline in chant going forward",
+          input: "I want to maintain this in chant — produce TypeScript",
+          output: `npx chant migrate .github/workflows/ci.yml --emit ts --output src/pipeline.ts`,
+        },
+        {
+          title: "Recognise and emit composites",
+          description: "Collapse a 2-job NodePipeline-shaped workflow into a single NodePipeline() call",
+          input: "Use composites for the upgrade",
+          output: `npx chant migrate .github/workflows/ci.yml --emit ts --use-composites --output src/pipeline.ts`,
+        },
+      ],
+    },
+    {
       file: "chant-gitlab-patterns.md",
       name: "chant-gitlab-patterns",
       description: "GitLab CI/CD pipeline stages, caching, artifacts, includes, and advanced patterns",
