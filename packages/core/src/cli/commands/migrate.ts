@@ -168,7 +168,7 @@ export async function migrateCommand(opts: MigrateCliOpts): Promise<MigrateCliRe
   }
 
   // Markdown summary (always to stderr — leaves stdout clean for piping)
-  const markdownSummary = formatMarkdownSummary(result.provenance, result.diagnostics);
+  const markdownSummary = formatMarkdownSummary(result.provenance, result.diagnostics, content);
 
   // Determine exit code: any error-severity diagnostic fails when --strict.
   // The transformer already escalates needs-review → error when opts.strict
@@ -237,9 +237,19 @@ async function loadMigrationRules(targetLexicon: string): Promise<LintRule[]> {
   return [];
 }
 
+/**
+ * Format the migration report as Markdown, mirroring the output format
+ * prescribed by the upstream gitlab-org/ci-cd/github-actions-to-gitlab-ci
+ * skill: overview, classification, diagnostic table, aggregated manual
+ * setup steps, suggested GitLab improvements, honest caveats.
+ *
+ * The same data backs the SARIF report (via formatSarif); this is the
+ * human-readable surface.
+ */
 function formatMarkdownSummary(
   provenance: Array<Record<string, unknown>>,
   diagnostics: Array<Record<string, unknown>>,
+  sourceContent?: string,
 ): string {
   const totals = { error: 0, warning: 0, info: 0 };
   for (const d of diagnostics) {
@@ -248,13 +258,29 @@ function formatMarkdownSummary(
       totals[sev]++;
     }
   }
+
+  // Derive workflow shape from source (best effort) for the overview line
+  const overview = deriveOverview(sourceContent);
+  const classification = classifyWorkflow(sourceContent);
+  const manualSteps = collectManualSetupSteps(diagnostics);
+  const suggestions = collectSuggestions(provenance, sourceContent);
+
   const lines: string[] = [];
   lines.push("");
   lines.push("## Migration report");
   lines.push("");
+  if (overview) lines.push(`**Overview** — ${overview}`);
+  if (classification) {
+    lines.push("");
+    lines.push(classification);
+  }
+  lines.push("");
   lines.push(`- Provenance records: ${provenance.length}`);
   lines.push(`- Diagnostics: ${totals.error} error, ${totals.warning} warning, ${totals.info} info`);
+
   if (diagnostics.length > 0) {
+    lines.push("");
+    lines.push("### Diagnostics");
     lines.push("");
     lines.push("| Severity | Rule | Message |");
     lines.push("|---|---|---|");
@@ -265,7 +291,166 @@ function formatMarkdownSummary(
       lines.push(`| … | … | ${diagnostics.length - 50} more diagnostics omitted |`);
     }
   }
+
+  if (manualSteps.length > 0) {
+    lines.push("");
+    lines.push("### Manual setup steps");
+    lines.push("");
+    for (let i = 0; i < manualSteps.length; i++) {
+      lines.push(`${i + 1}. ${manualSteps[i]}`);
+    }
+  }
+
+  if (suggestions.length > 0) {
+    lines.push("");
+    lines.push("### Suggested GitLab improvements");
+    lines.push("");
+    for (const s of suggestions) lines.push(`- ${s}`);
+  }
+
+  if (totals.error > 0 || totals.warning > 0) {
+    lines.push("");
+    lines.push("### Honest caveats");
+    lines.push("");
+    lines.push(`The translation has ${totals.error} item${totals.error === 1 ? "" : "s"} needing review and ${totals.warning} approximation${totals.warning === 1 ? "" : "s"}. Review the diagnostics above before pushing the generated YAML.`);
+  }
+
   return lines.join("\n");
+}
+
+/** Derive a one-sentence overview from the source workflow shape. */
+function deriveOverview(content?: string): string | undefined {
+  if (!content) return undefined;
+  const nameMatch = /^\s*name\s*:\s*(.+?)\s*$/m.exec(content);
+  const name = nameMatch ? nameMatch[1].replace(/['"]/g, "") : undefined;
+  const jobCount = countJobs(content);
+  const triggers = (content.match(/^\s*on\s*:/gm) ?? []).length > 0;
+  const parts: string[] = [];
+  if (name) parts.push(`workflow "${name}"`);
+  if (jobCount > 0) parts.push(`${jobCount} job${jobCount === 1 ? "" : "s"}`);
+  if (triggers) parts.push("triggered via on:");
+  if (parts.length === 0) return undefined;
+  return parts.join(", ") + ".";
+}
+
+/** Count top-level entries directly under `jobs:`. */
+function countJobs(content: string): number {
+  // Find the jobs: line, then walk forward collecting indented-2 keys until
+  // we hit a non-indented non-empty line (next top-level key) or EOF.
+  const lines = content.split(/\r?\n/);
+  let inJobs = false;
+  let count = 0;
+  for (const line of lines) {
+    if (/^\s*jobs\s*:\s*$/.test(line)) {
+      inJobs = true;
+      continue;
+    }
+    if (!inJobs) continue;
+    if (/^\S/.test(line)) break; // next top-level key
+    if (/^\s{2}[A-Za-z_][A-Za-z0-9_-]*\s*:\s*$/.test(line)) {
+      count++;
+    }
+  }
+  return count;
+}
+
+/**
+ * Detect workflows whose triggers are predominantly repo-automation
+ * events (issues, labels, comments, discussions) — GitLab CI can't replace
+ * these because pipelines only run on git events.
+ */
+function classifyWorkflow(content?: string): string | undefined {
+  if (!content) return undefined;
+  const onBlockMatch = /^\s*on\s*:([\s\S]*?)(?=^\S|\Z)/m.exec(content);
+  if (!onBlockMatch) return undefined;
+  const onText = onBlockMatch[1];
+  const automationEvents = [
+    "issues", "issue_comment", "pull_request_review", "pull_request_review_comment",
+    "discussion", "discussion_comment", "label", "milestone", "project_card",
+    "release", "star", "watch", "fork", "create", "delete",
+  ];
+  const found = automationEvents.filter((e) =>
+    new RegExp(`^\\s*${e}\\s*:`, "m").test(onText),
+  );
+  const gitEvents = ["push", "pull_request", "schedule", "workflow_dispatch", "workflow_call", "tag"];
+  const foundGit = gitEvents.filter((e) =>
+    new RegExp(`^\\s*${e}\\s*:|${e}\\b`, "m").test(onText),
+  );
+  if (found.length > 0 && foundGit.length === 0) {
+    return `> ⚠️ **Repo-automation workflow detected** (triggers: ${found.join(", ")}). GitLab CI/CD only runs on git events; consider [gitlab-triage](https://gitlab.com/gitlab-org/ruby/gems/gitlab-triage) on a schedule, or webhooks + an external service. The translated YAML below is best-effort.`;
+  }
+  if (found.length > 0 && foundGit.length > 0) {
+    return `> ℹ️ Mixed triggers: git (${foundGit.join(", ")}) + automation (${found.join(", ")}). The automation events have no GitLab equivalent; the translated pipeline only fires on the git events.`;
+  }
+  return undefined;
+}
+
+/** Aggregate the human-actionable manual setup steps from needs-review diagnostics. */
+function collectManualSetupSteps(diagnostics: Array<Record<string, unknown>>): string[] {
+  const seen = new Set<string>();
+  const steps: string[] = [];
+  for (const d of diagnostics) {
+    if (d.severity !== "warning" && d.severity !== "error") continue;
+    const ruleId = d.ruleId as string;
+    const action = manualStepFor(ruleId);
+    if (action && !seen.has(action)) {
+      seen.add(action);
+      steps.push(action);
+    }
+  }
+  return steps;
+}
+
+const MANUAL_STEPS_BY_RULE: Record<string, string> = {
+  "MIG-PERMISSIONS-001": "Configure CI/CD token access at Project Settings > CI/CD > Token Access (no per-job YAML equivalent in GitLab).",
+  "MIG-ON-SCHEDULE": "Create a pipeline schedule at Project Settings > CI/CD > Schedules (cron lives in the GitLab UI, not in YAML).",
+  "MIG-ON-DISPATCH": "Convert `workflow_dispatch.inputs` to `spec:inputs` at the top of the generated YAML (GitLab 17+). Every input must have a default so auto-triggered pipelines don't fail.",
+  "MIG-ON-NON-GIT": "Replace issue/MR/discussion triggers with gitlab-triage on a schedule, or webhooks + an external service. GitLab CI/CD only runs on git events.",
+  "MIG-NEEDS-OUTPUTS-001": "Convert step/job outputs to the `artifacts:reports:dotenv` pattern in the producing job, and add `needs: [{ job: X, artifacts: true }]` in the consuming job.",
+  "MIG-JOB-OUTPUTS": "Replace GitHub job outputs with `artifacts:reports:dotenv` files written by the producing job.",
+  "MIG-MATRIX-INCLUDE-001": "Manually unroll `matrix.include`/`matrix.exclude` entries; GitLab `parallel:matrix:` doesn't support these directly.",
+  "MIG-FAIL-FAST": "GitLab's `parallel:matrix:` doesn't fail-fast by default. If fail-fast is critical, wrap the matrix in a job that exits on first child failure.",
+  "MIG-RUNS-ON-NON-LINUX": "Register a self-hosted GitLab runner with the appropriate `tags:` for macOS or Windows jobs.",
+  "MIG-REUSABLE-WORKFLOW": "Rewrite `uses: org/repo/.github/workflows/*.yml` calls as GitLab `include:project:` + `variables:` parameterisation. Typed inputs aren't supported; document expected variable names.",
+};
+
+function manualStepFor(ruleId: string): string | undefined {
+  return MANUAL_STEPS_BY_RULE[ruleId];
+}
+
+/** Suggest GitLab-native improvements based on workflow shape + provenance. */
+function collectSuggestions(
+  provenance: Array<Record<string, unknown>>,
+  content?: string,
+): string[] {
+  const out: string[] = [];
+  // DAG (needs:) is already passed through; suggest it if multiple jobs exist without explicit needs
+  const hasNeeds = provenance.some((p) => p.rule === "MIG-NEEDS");
+  const jobCount = content ? countJobs(content) : 0;
+  if (jobCount >= 3 && !hasNeeds) {
+    out.push("**DAG with `needs:`** — your jobs run sequentially via stage barriers. Adding explicit `needs:` lets jobs run as soon as their dependencies finish, often cutting pipeline time significantly.");
+  }
+  // rules:changes: when the workflow looks like it might benefit from path filtering
+  if (content && /paths\s*:/m.test(content)) {
+    out.push("**`rules:changes:`** — GitLab supports path-based job filtering natively. Convert GitHub `on:push:paths:` to `rules:changes:` on each job for monorepo-friendly conditional execution.");
+  }
+  // include: for multi-file workflow repos
+  if (content && /\buses\s*:\s*\.\/.+\.ya?ml/m.test(content)) {
+    out.push("**`include:`** — your workflow references local reusable workflows. GitLab `include:local:` merges YAML at parse time; consider migrating those references too.");
+  }
+  // Composite-recogniser hint when --use-composites would simplify
+  if (content && /actions\/setup-node/.test(content) && jobCount >= 1) {
+    out.push("**`--use-composites`** — re-run with this flag to collapse Node-shaped pipelines into a single `NodePipeline({...})` call (5–10× shorter generated TypeScript).");
+  }
+  // resource_group / interruptible already mapped; suggest protected environments for deploy jobs
+  if (content && /\bdeploy\b/i.test(content)) {
+    out.push("**Protected environments** — gate deploy jobs by approval rules and environment-specific variables (Project Settings > CI/CD > Environments). No GitHub equivalent.");
+  }
+  // GitLab CI templates
+  if (content && /security|sast|dast|terraform/i.test(content)) {
+    out.push("**GitLab CI templates** — `include:template:` gives you Auto DevOps, SAST, DAST, Container Scanning, Terraform, etc. out of the box. No GitHub Actions equivalent.");
+  }
+  return out;
 }
 
 export function printMigrateResult(result: MigrateCliResult): void {
