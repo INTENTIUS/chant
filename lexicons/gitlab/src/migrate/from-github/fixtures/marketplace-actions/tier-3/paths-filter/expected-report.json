@@ -1,0 +1,21 @@
+{
+  "totals": {
+    "error": 0,
+    "warning": 1,
+    "info": 1
+  },
+  "ruleIds": [
+    "ACT-actions-checkout",
+    "ACT-dorny-paths-filter"
+  ],
+  "needsReview": [
+    {
+      "line": 1,
+      "ruleId": "ACT-dorny-paths-filter"
+    }
+  ],
+  "provenance": {
+    "literalRewrites": 2,
+    "actionMappings": []
+  }
+}

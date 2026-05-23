@@ -1,0 +1,20 @@
+{
+  "totals": {
+    "error": 0,
+    "warning": 1,
+    "info": 0
+  },
+  "ruleIds": [
+    "MIG-ON-SCHEDULE"
+  ],
+  "needsReview": [
+    {
+      "line": 1,
+      "ruleId": "MIG-ON-SCHEDULE"
+    }
+  ],
+  "provenance": {
+    "literalRewrites": 4,
+    "actionMappings": []
+  }
+}

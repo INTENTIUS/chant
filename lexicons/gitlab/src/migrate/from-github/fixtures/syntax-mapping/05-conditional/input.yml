@@ -1,0 +1,12 @@
+on: push
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    steps:
+      - run: make deploy
+  notify:
+    runs-on: ubuntu-latest
+    if: failure()
+    steps:
+      - run: ./notify-slack.sh
