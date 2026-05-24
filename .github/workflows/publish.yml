@@ -61,135 +61,86 @@ jobs:
           # publish token via the trusted-publisher record.
       - run: npm install
 
-      - name: Diagnostic — runtime versions + OIDC context
-        run: |
-          echo "node: $(node --version)"
-          echo "npm: $(npm --version)"
-          echo "OIDC token endpoint set: ${ACTIONS_ID_TOKEN_REQUEST_URL:+yes}"
-          echo "GITHUB_REPOSITORY: $GITHUB_REPOSITORY"
-          echo "GITHUB_REPOSITORY_OWNER: $GITHUB_REPOSITORY_OWNER"
-          echo "GITHUB_WORKFLOW_REF: $GITHUB_WORKFLOW_REF"
-          # npm OIDC trusted publishing requires npm >= 11.5.1
-          npm --version | awk -F. '{ if ($1 < 11 || ($1 == 11 && $2 < 5)) { print "WARNING: npm < 11.5 may not support OIDC trusted publishing"; exit 0 } }'
-
-      - name: Diagnostic — decode OIDC token claims (subject npm sees)
-        uses: actions/github-script@v7
-        with:
-          script: |
-            const token = await core.getIDToken('npm:registry.npmjs.org');
-            const payload = JSON.parse(Buffer.from(token.split('.')[1], 'base64').toString());
-            const interesting = {
-              repository: payload.repository,
-              repository_owner: payload.repository_owner,
-              repository_id: payload.repository_id,
-              repository_owner_id: payload.repository_owner_id,
-              workflow: payload.workflow,
-              workflow_ref: payload.workflow_ref,
-              job_workflow_ref: payload.job_workflow_ref,
-              ref: payload.ref,
-              environment: payload.environment ?? '(none)',
-              sub: payload.sub,
-              event_name: payload.event_name,
-            };
-            core.info('OIDC claims that npm trusted publisher matches against:');
-            core.info(JSON.stringify(interesting, null, 2));
-
-      # Publish @intentius/chant first as the OIDC canary — its trusted
-      # publisher was just updated to uppercase INTENTIUS/chant, and the
-      # OIDC token's `repository` claim is uppercase. If this one
-      # publishes, the uppercase theory is confirmed and the remaining
-      # 11 packages need the same casing update.
       - name: Publish @intentius/chant
         working-directory: packages/core
         run: |
           V=$(node -e "process.stdout.write(require('./package.json').version)")
           P=$(npm view @intentius/chant version 2>/dev/null || echo "none")
-          [ "$V" = "$P" ] && echo "Already at $V, skipping" || npm publish --access public --provenance --loglevel=verbose
+          [ "$V" = "$P" ] && echo "Already at $V, skipping" || npm publish --access public --provenance
 
       - name: Publish @intentius/chant-lexicon-gitlab
         working-directory: lexicons/gitlab
         run: |
           V=$(node -e "process.stdout.write(require('./package.json').version)")
           P=$(npm view @intentius/chant-lexicon-gitlab version 2>/dev/null || echo "none")
-          [ "$V" = "$P" ] && echo "Already at $V, skipping" || npm publish --access public --provenance --loglevel=verbose
-        continue-on-error: true
+          [ "$V" = "$P" ] && echo "Already at $V, skipping" || npm publish --access public --provenance
 
       - name: Publish @intentius/chant-lexicon-aws
         working-directory: lexicons/aws
         run: |
           V=$(node -e "process.stdout.write(require('./package.json').version)")
           P=$(npm view @intentius/chant-lexicon-aws version 2>/dev/null || echo "none")
-          [ "$V" = "$P" ] && echo "Already at $V, skipping" || npm publish --access public --provenance --loglevel=verbose
-        continue-on-error: true
+          [ "$V" = "$P" ] && echo "Already at $V, skipping" || npm publish --access public --provenance
 
       - name: Publish @intentius/chant-lexicon-github
         working-directory: lexicons/github
         run: |
           V=$(node -e "process.stdout.write(require('./package.json').version)")
           P=$(npm view @intentius/chant-lexicon-github version 2>/dev/null || echo "none")
-          [ "$V" = "$P" ] && echo "Already at $V, skipping" || npm publish --access public --provenance --loglevel=verbose
-        continue-on-error: true
+          [ "$V" = "$P" ] && echo "Already at $V, skipping" || npm publish --access public --provenance
 
       - name: Publish @intentius/chant-lexicon-k8s
         working-directory: lexicons/k8s
         run: |
           V=$(node -e "process.stdout.write(require('./package.json').version)")
           P=$(npm view @intentius/chant-lexicon-k8s version 2>/dev/null || echo "none")
-          [ "$V" = "$P" ] && echo "Already at $V, skipping" || npm publish --access public --provenance --loglevel=verbose
-        continue-on-error: true
+          [ "$V" = "$P" ] && echo "Already at $V, skipping" || npm publish --access public --provenance
 
       - name: Publish @intentius/chant-lexicon-flyway
         working-directory: lexicons/flyway
         run: |
           V=$(node -e "process.stdout.write(require('./package.json').version)")
           P=$(npm view @intentius/chant-lexicon-flyway version 2>/dev/null || echo "none")
-          [ "$V" = "$P" ] && echo "Already at $V, skipping" || npm publish --access public --provenance --loglevel=verbose
-        continue-on-error: true
+          [ "$V" = "$P" ] && echo "Already at $V, skipping" || npm publish --access public --provenance
 
       - name: Publish @intentius/chant-lexicon-gcp
         working-directory: lexicons/gcp
         run: |
           V=$(node -e "process.stdout.write(require('./package.json').version)")
           P=$(npm view @intentius/chant-lexicon-gcp version 2>/dev/null || echo "none")
-          [ "$V" = "$P" ] && echo "Already at $V, skipping" || npm publish --access public --provenance --loglevel=verbose
-        continue-on-error: true
+          [ "$V" = "$P" ] && echo "Already at $V, skipping" || npm publish --access public --provenance
 
       - name: Publish @intentius/chant-lexicon-helm
         working-directory: lexicons/helm
         run: |
           V=$(node -e "process.stdout.write(require('./package.json').version)")
           P=$(npm view @intentius/chant-lexicon-helm version 2>/dev/null || echo "none")
-          [ "$V" = "$P" ] && echo "Already at $V, skipping" || npm publish --access public --provenance --loglevel=verbose
-        continue-on-error: true
+          [ "$V" = "$P" ] && echo "Already at $V, skipping" || npm publish --access public --provenance
 
       - name: Publish @intentius/chant-lexicon-azure
         working-directory: lexicons/azure
         run: |
           V=$(node -e "process.stdout.write(require('./package.json').version)")
           P=$(npm view @intentius/chant-lexicon-azure version 2>/dev/null || echo "none")
-          [ "$V" = "$P" ] && echo "Already at $V, skipping" || npm publish --access public --provenance --loglevel=verbose
-        continue-on-error: true
+          [ "$V" = "$P" ] && echo "Already at $V, skipping" || npm publish --access public --provenance
 
       - name: Publish @intentius/chant-lexicon-docker
         working-directory: lexicons/docker
         run: |
           V=$(node -e "process.stdout.write(require('./package.json').version)")
           P=$(npm view @intentius/chant-lexicon-docker version 2>/dev/null || echo "none")
-          [ "$V" = "$P" ] && echo "Already at $V, skipping" || npm publish --access public --provenance --loglevel=verbose
-        continue-on-error: true
+          [ "$V" = "$P" ] && echo "Already at $V, skipping" || npm publish --access public --provenance
 
       - name: Publish @intentius/chant-lexicon-slurm
         working-directory: lexicons/slurm
         run: |
           V=$(node -e "process.stdout.write(require('./package.json').version)")
           P=$(npm view @intentius/chant-lexicon-slurm version 2>/dev/null || echo "none")
-          [ "$V" = "$P" ] && echo "Already at $V, skipping" || npm publish --access public --provenance --loglevel=verbose
-        continue-on-error: true
+          [ "$V" = "$P" ] && echo "Already at $V, skipping" || npm publish --access public --provenance
 
       - name: Publish @intentius/chant-lexicon-temporal
         working-directory: lexicons/temporal
         run: |
           V=$(node -e "process.stdout.write(require('./package.json').version)")
           P=$(npm view @intentius/chant-lexicon-temporal version 2>/dev/null || echo "none")
-          [ "$V" = "$P" ] && echo "Already at $V, skipping" || npm publish --access public --provenance --loglevel=verbose
-        continue-on-error: true
+          [ "$V" = "$P" ] && echo "Already at $V, skipping" || npm publish --access public --provenance
