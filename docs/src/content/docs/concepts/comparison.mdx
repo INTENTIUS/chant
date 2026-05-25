@@ -67,7 +67,7 @@ The most consequential design difference after execution model is the state mode
 - **No corruption risk** — a bad snapshot doesn't break deployments. Agents verify against live APIs regardless
 - **Minimal overhead** — state is designed to live in git alongside source code
 
-**Trade-offs to be honest about:**
+**Trade-offs:**
 - Non-authoritative state means agents must verify against live APIs before acting, and gaps escalate to human review rather than being resolved automatically
 - Git-based state gives versioning, portability, and offline access, but no locking, no encryption at rest, and no access control separation from source code
 
@@ -81,7 +81,7 @@ The most consequential design difference after execution model is the state mode
 
 **chant** optimizes for typed, linted, deterministic synthesis that's true to the underlying spec. The output is native to the target platform with zero lock-in. The trade-off: chant doesn't deploy anything — you need something else for that.
 
-## Honest trade-offs
+## Trade-offs
 
 chant's design decisions have real consequences:
 

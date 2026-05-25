@@ -241,7 +241,7 @@ async function loadMigrationRules(targetLexicon: string): Promise<LintRule[]> {
  * Format the migration report as Markdown, mirroring the output format
  * prescribed by the upstream gitlab-org/ci-cd/github-actions-to-gitlab-ci
  * skill: overview, classification, diagnostic table, aggregated manual
- * setup steps, suggested GitLab improvements, honest caveats.
+ * setup steps, suggested GitLab improvements, caveats.
  *
  * The same data backs the SARIF report (via formatSarif); this is the
  * human-readable surface.
@@ -310,7 +310,7 @@ function formatMarkdownSummary(
 
   if (totals.error > 0 || totals.warning > 0) {
     lines.push("");
-    lines.push("### Honest caveats");
+    lines.push("### Caveats");
     lines.push("");
     lines.push(`The translation has ${totals.error} item${totals.error === 1 ? "" : "s"} needing review and ${totals.warning} approximation${totals.warning === 1 ? "" : "s"}. Review the diagnostics above before pushing the generated YAML.`);
   }

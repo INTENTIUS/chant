@@ -86,7 +86,7 @@ Drift detection is most valuable in environments where the gap between source an
 
 The pragmatic test: would you act on a drift signal if it fired right now? If yes, snapshot+diff is worth the cost. If no, skip it for that env.
 
-## Trade-offs to be honest about
+## Trade-offs
 
 chant's observational model is a deliberate choice, not a missing feature. The costs:
 
@@ -95,7 +95,7 @@ chant's observational model is a deliberate choice, not a missing feature. The c
 - **No locking.** Two operators snapshotting the same env at the same time race on the orphan branch. The push uses `--force-with-lease` so the second writer fails fast rather than silently overwriting (see [Concurrent snapshots](/chant/cli/state/#concurrent-snapshots)).
 - **Coverage is per-lexicon.** A lexicon without `describeResources()` / `listArtifacts()` is warn-skipped. The [Runtime observation coverage matrix](/chant/lexicons/overview/#runtime-observation-coverage) lists where coverage exists today.
 
-Read these trade-offs in context in [How chant compares](/chant/concepts/comparison/#honest-trade-offs).
+Read these trade-offs in context in [How chant compares](/chant/concepts/comparison/#trade-offs).
 
 ## See also
 
