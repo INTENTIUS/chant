@@ -1,0 +1,58 @@
+---
+title: State and Governance
+description: Why governance, not authoritative state, is the load-bearing part of IaC
+---
+
+State is load-bearing. That is not in dispute. But load-bearing is not the same as authoritative. The properties teams depend on are governance properties, and most of them survive without an authoritative state file.
+
+This page explains where chant draws that line. For the tool-by-tool comparison see [How chant compares](/chant/concepts/comparison/). For the snapshot and diff mechanism see [Drift Detection](/chant/concepts/drift-detection/).
+
+## What a state file actually costs
+
+The familiar costs of state are real. A global lock on every apply. An all-or-nothing change set. Secrets stored in the file because the tool needs them to diff. A corruption surface that can take a stack down.
+
+These are the costs of hosting an authoritative state file yourself. They are properties of self-managed state, not of authoritative state in general. Once that distinction is clear, the field sorts into a spectrum.
+
+## The spectrum of authoritative state
+
+| Model | Who hosts state | What you trade |
+|---|---|---|
+| Self-hosted (Terraform, Pulumi) | You run the backend | Full control, plus the lock, the backups, and the corruption risk |
+| Third-party SaaS | A vendor operates a state database for you | Operational burden gone, replaced by a vendor dependency and your state and secrets living in their system |
+| Platform-managed (CloudFormation, CDK) | The cloud hosts state as part of the service | No file to operate, in exchange for cloud lock-in and all-or-nothing applies |
+| Observational (chant) | No one, because state is a snapshot rather than a source of truth | No file to host or trust, in exchange for no automatic plan and apply |
+
+Every model except the last keeps authoritative state and only changes who operates it. The third-party tier is worth a closer look. It is usually a queryable database, sometimes the real-time graph people picture state evolving into. A faster, better-indexed source of truth is still a source of truth. It still has to be correct and current.
+
+## Governance is the load-bearing part
+
+Separate the requirement from the mechanism. The properties a team cannot give up are governance.
+
+- A known change set before apply
+- A lock so two operators do not collide
+- An audit trail that can be read later
+- Blast-radius limits so one change cannot touch everything
+
+Authoritative state is one mechanism that provides these. It is not the only one. When state is called load-bearing, the load-bearing thing is usually the governance, and authoritative state is the tool that happened to deliver it.
+
+The observational model keeps the governance and drops the authority. Snapshots and diffs live in git, which gives audit and review. Linting runs on the static artifact before apply, which gives pre-apply validation. What is given up is automatic plan and apply, because without authoritative state chant cannot compute a precise change set the way Terraform does.
+
+## A diff, not a plan
+
+chant produces a diff, not a plan. [`chant state diff`](/chant/cli/state/) has two modes. The default builds the project and compares the declarations against the last snapshot, offline. The `--live` mode queries the cloud and compares the live result against both the last snapshot and the current build.
+
+The diff is informational. chant does not apply it. What to do about a diff is the orchestration's decision, whether that is a CI job, an agent, a human, or a [scheduled Temporal workflow](/chant/guide/watching-state/). A team comfortable with the observational model wires the diff to automation. A team that wants a strict gate wires the same artifact into its own approval flow. chant does not force either, because it does not own the apply.
+
+## Blast radius at scale
+
+A common objection is that at scale a single change touches so many resources that verifying it means reading the whole estate.
+
+The scope of a change is bounded by the change, not the estate. A one-subnet change touches one subnet and its dependents whether the account holds a hundred resources or a hundred thousand. `chant state diff --live` queries the cloud for the declared resources through each lexicon's `describeResources()` method, not the entire account, so the read tracks what is declared rather than the size of the estate. The read is also bounded by the write already accepted, so reading the affected scope is less work than mutating it.
+
+There is one case where the affected scope approaches the whole estate, such as rotating a root credential or re-tagging everything. That is the exact change a human or a policy should gate. A scope that large is a signal to decompose or stage the change, not a cost to remove.
+
+## Where truth lives
+
+In the observational model the live system is the source of truth. A snapshot is a baseline for the diff, and it is allowed to be stale, because a stale baseline is inconvenient while a stale source of truth is dangerous.
+
+The file was never the load-bearing part. The governance around the artifact was. See [Drift Detection](/chant/concepts/drift-detection/) for how snapshots and diffs work, and [How chant compares](/chant/concepts/comparison/) for how this differs from Terraform, Pulumi, and CDK.
