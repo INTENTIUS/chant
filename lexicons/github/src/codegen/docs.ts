@@ -95,6 +95,12 @@ export async function generateDocs(opts?: { verbose?: boolean }): Promise<void> 
     serviceFromType,
     suppressPages: ["intrinsics", "rules"],
     examplesDir: join(pkgDir, "examples"),
+    extraSections: [
+      {
+        title: "Migrating to GitLab CI/CD?",
+        content: `The GitLab lexicon ships a typed-compiler migration tool that translates \`.github/workflows/*.yml\` into \`.gitlab-ci.yml\` (or chant TypeScript) with provenance, 33 curated marketplace-action mappings, and optional composite recognition. See [GitLab → Migration from GitHub Actions](/chant/lexicons/gitlab/migration/) or the [\`chant migrate\` CLI reference](/chant/cli/migrate/).`,
+      },
+    ],
     extraPages: [
       {
         slug: "getting-started",

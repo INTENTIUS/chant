@@ -653,6 +653,12 @@ The \`chant-gitlab\` skill covers the full deployment lifecycle:
 
 The skill is invocable as a slash command: \`/chant-gitlab\`
 
+## Skill: chant-gitlab-migrate
+
+Operational glue for translating GitHub Actions workflows to GitLab CI/CD. The skill detects the user's intent (paste a \`.github/workflows/*.yml\`, ask about migrating, etc.), invokes \`chant migrate\`, surfaces the report, and suggests GitLab-native upgrade moments like \`--use-composites\`.
+
+See [Migration](./migration) for the full CLI surface, supported translations, and limitations.
+
 ## MCP integration
 
 The lexicon also provides MCP (Model Context Protocol) tools and resources that AI agents can use programmatically:
@@ -665,6 +671,7 @@ The lexicon also provides MCP (Model Context Protocol) tools and resources that 
 | \`scaffold\` | Generate starter files |
 | \`search\` | Search available resource types |
 | \`gitlab:diff\` | Compare current build output against previous |
+| \`gitlab:migrate\` | Translate a GitHub Actions workflow into GitLab CI/CD (see [Migration](./migration)) |
 
 | MCP resource | Description |
 |--------------|-------------|
@@ -672,6 +679,13 @@ The lexicon also provides MCP (Model Context Protocol) tools and resources that 
 | \`examples/basic-pipeline\` | Example pipeline with build, test, and deploy jobs |`,
       },
     ],
+    extraSections: [
+      {
+        title: "Migrating from GitHub Actions",
+        content: `\`chant migrate\` translates GitHub Actions workflows into GitLab CI/CD pipelines or typed chant source. See [Migration](./migration) for the full CLI surface, supported translations, and limitations.`,
+      },
+    ],
+    sidebarExtra: [{ label: "Migration", slug: "migration" }],
     basePath: "/chant/lexicons/gitlab/",
   };
 
