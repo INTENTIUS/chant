@@ -23,12 +23,12 @@ chant is a compiler. TypeScript in, spec-native output out. This isn't a new ide
 
 Most IaC tools that use general-purpose languages — CDK, Pulumi, Terraform's CDK — work by *executing* your code. Your program runs, makes API calls, and the tool captures the result.
 
-chant doesn't execute your code. It parses `.ts` files, resolves types and imports, evaluates the static subset of expressions it understands, and emits output. Your TypeScript is a declaration of intent, not a program.
+chant runs synthesis only. It imports your `.ts` files, reads the resource objects they export, and emits output. It never calls a cloud API, reads or writes state, or deploys. Your TypeScript declares intent. The build turns that intent into an artifact and stops.
 
-This constraint is the point. Because nothing executes:
+Synthesis does run your code. It runs only a constrained slice of it. The evaluability lint rules (EVL) reject anything that would make a resource depend on more than literals, constants, and cross-resource references. No function calls in props. No control flow around resources. With those rules satisfied, running the file is equivalent to reading static data. That constraint is the point. Because synthesis is side-effect-free and deterministic for conforming source:
 
-- **Evaluation is fast and deterministic** — no side effects, no nondeterminism.
-- **Analysis is single-pass** — type checking, linting, and evaluation in one invocation.
+- **Evaluation is deterministic for code that passes the evaluability rules.** Same source, same output. No API calls during synthesis.
+- **Analysis is a single pass** over the imported modules. Type-checking and linting are separate commands.
 - **Output is auditable** — every value traces to a literal, a const binding, or a cross-resource reference.
 - **IDEs work fully** — types drive the API surface, so autocompletion, inline errors, and go-to-definition come for free.
 

@@ -19,12 +19,12 @@ These tools make different design decisions. Each decision has consequences — 
 
 | Decision | Terraform | CDK | Pulumi | chant |
 |---|---|---|---|---|
-| **Language** | HCL (custom DSL) | TypeScript, Python, Java, Go, C# (executed) | TypeScript, Python, Go, C#, Java, YAML (executed) | TypeScript (as data) |
+| **Language** | HCL (custom DSL) | TypeScript, Python, Java, Go, C# (executed) | TypeScript, Python, Go, C#, Java, YAML (executed) | TypeScript (static subset) |
 | **Spec fidelity** | Provider-mapped | Abstracted (L2/L3) | Provider-mapped | Spec-true |
 | **Output** | State + API calls | CloudFormation | State + API calls | Native spec output |
 | **Lifecycle scope** | Full | Full (via CloudFormation) | Full | Synthesis + opt-in observability |
 | **State model** | Authoritative | Authoritative (via CloudFormation) | Authoritative | Non-authoritative (observational) |
-| **Determinism** | Mostly | No (code executes) | No (code executes) | Yes (by design) |
+| **Determinism** | Mostly | No (code executes) | No (code executes) | Yes (for lint-conforming source) |
 | **Walk-away cost** | High (state, HCL) | Medium (CloudFormation remains) | High (state, SDK) | Zero (output is native) |
 | **Semantic validation** | None built-in | None built-in | None built-in | Built-in (lexicon rules) |
 | **Drift detection** | Built-in (`plan` / `refresh`) | Via CloudFormation drift detection | Built-in (`refresh` / `preview`) | Built-in (`state diff --live` against any of 5 cloud lexicons + 4 artifact lexicons) |
@@ -43,7 +43,7 @@ The core architectural difference is what happens when you "run" each tool:
 
 **Pulumi:** Your TypeScript *executes* similarly to CDK, but the output is state + direct API calls rather than a CloudFormation template. Same nondeterminism concern applies.
 
-**chant:** Your TypeScript is *parsed as data*. Nothing executes. The evaluator reads literals, follows `const` references, resolves cross-file imports, and emits output. Same source always produces the same output.
+**chant:** chant imports your TypeScript and reads the resource objects it exports. Your constructors run. Synthesis does nothing else. No API calls, no state, no deployment. A separate evaluability lint pass (EVL) restricts source to literals, constants, and cross-resource references, so the executed result is equivalent to static data. Same conforming source always produces the same output.
 
 This matters for:
 - **Determinism** — chant's output is a pure function of its input. No environment variables, no network calls, no runtime state.

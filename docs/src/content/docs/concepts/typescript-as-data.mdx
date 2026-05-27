@@ -1,9 +1,9 @@
 ---
 title: TypeScript as Data
-description: How chant reads TypeScript source files as structured data
+description: How chant reads the resource objects your TypeScript exports, and the supported subset
 ---
 
-chant reads your TypeScript source files as structured data. It understands a specific subset of the language — the part that can be evaluated statically without executing code. This page documents exactly which patterns are supported and which are not.
+chant reads the resource objects your TypeScript exports. It supports a specific subset of the language, the part whose value is fully determined by literals, constants, and cross-resource references. `chant build` imports and runs your files to collect those objects. The subset exists so that running them has no side effects and always yields the same output. This page documents exactly which patterns are supported and which are not.
 
 ## Supported Patterns
 
@@ -144,7 +144,7 @@ timeout: props.timeout ?? 30,
 
 ## Unsupported Patterns
 
-The following patterns are caught by the evaluability lint rules (EVL) before the evaluator runs. Your editor shows these as lint errors, and `chant lint` reports them in CI.
+The following patterns are caught by the evaluability lint rules (EVL). Your editor shows them as lint errors, and `chant lint` reports them in CI. They are not enforced by `chant build`, so run lint, or rely on your editor, to keep source inside the supported subset.
 
 ### Function calls as values
 
@@ -196,8 +196,8 @@ For the full EVL rule reference with configuration options, see [Evaluability Ru
 
 ## Why These Constraints?
 
-The supported subset is the set of TypeScript patterns that can be evaluated without executing code — patterns where every value is either a literal, a reference to a known constant, or a symbolic cross-resource reference.
+The supported subset is the set of TypeScript patterns whose value is fully determined by literals, known constants, and symbolic cross-resource references. `chant build` imports and runs your files. The evaluability rules reject patterns that would make the result depend on anything else, so running the supported subset has no side effects.
 
-This makes the evaluator fast (no interpretation overhead), deterministic (same source always produces the same output), and auditable (every output value traces to a specific line in the source).
+This makes synthesis fast, deterministic for conforming source (same source, same output), and auditable (every output value traces to a specific line in the source).
 
 The static boundary also defines a natural division of labor with agentic workflows: agents resolve dynamic values (looking up VPC IDs, reading secrets, querying state), then write or populate chant source files. chant synthesizes the deterministic structure. Agents handle what changes; chant handles what shouldn't.

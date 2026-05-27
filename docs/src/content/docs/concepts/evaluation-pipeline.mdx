@@ -21,11 +21,11 @@ The evaluator scans the project directory for TypeScript source files, applying 
 
 **Related:** [Project Structure](/chant/getting-started/project-structure/)
 
-## Stage 2: Parse and Type-Check
+## Stage 2: Type-Check and Evaluability (lint, not build)
 
-Each discovered file is parsed into an AST and run through the type checker. Type errors are reported with file paths, line numbers, and diagnostic messages.
+Type-checking and the evaluability rules are not part of `chant build`. They run in `chant lint` and in your editor. `chant build` runs under a TypeScript runtime that strips types without checking them.
 
-At this stage, the evaluability lint rules (EVL) also run. These catch patterns that are valid TypeScript but not statically evaluable — function calls in resource props, control flow around resources, dynamic property access, and so on. See [TypeScript as Data](/chant/concepts/typescript-as-data/) for the full list.
+Run `chant lint`, or rely on the editor, to catch type errors and patterns that are valid TypeScript but not statically evaluable. See [TypeScript as Data](/chant/concepts/typescript-as-data/) for the full list. This stage is what guarantees the imported source stays inside the supported subset.
 
 **Related:** [Evaluability Rules](/chant/lint-rules/evaluability/)
 
@@ -41,23 +41,17 @@ The module graph determines which files depend on which, and ensures that cross-
 
 **Related:** [Module Graph](/chant/architecture/module-graph/)
 
-## Stage 4: Extract and Evaluate Resources
+## Stage 4: Import and Collect Resources
 
-The evaluator walks each file's AST looking for the resource pattern:
+chant imports each discovered file with the TypeScript runtime and collects the resource objects it exports.
 
 ```typescript
 export const <name> = new <ResourceType>({...})
 ```
 
-For each match, it:
+Running the file does the resolution. The language evaluates the object literal, applies spreads from `const` sources, and follows cross-file imports. Lexicon constructors turn `new <ResourceType>({...})` into a Declarable. Lexicon-registered tagged templates produce intrinsic objects. Accessing `resource.attribute` on an imported resource yields a symbolic reference.
 
-1. Resolves the resource type from the lexicon registry
-2. Evaluates the object literal argument, which may involve:
-   - Resolving `const` variable references (lazy evaluation with caching)
-   - Following cross-file imports to evaluate referenced bindings
-   - Expanding spread operators from known `const` sources
-   - Converting tagged template literals to intrinsic objects
-   - Resolving `resource.attribute` to symbolic reference values (via direct imports)
+The evaluability rules from Stage 2 keep this safe. They guarantee the file holds only literals, constants, spreads from constants, and cross-resource references, so importing it has no side effects and always produces the same objects.
 
 **Related:** [Evaluator Engine](/chant/architecture/evaluator/)
 
