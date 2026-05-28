@@ -1,9 +1,9 @@
 ---
 title: State and Governance
-description: Why governance, not authoritative state, is the load-bearing part of IaC
+description: Why governance, not authoritative state, is what IaC depends on
 ---
 
-State is load-bearing. That is not in dispute. But load-bearing is not the same as authoritative. The properties teams depend on are governance properties, and most of them survive without an authoritative state file.
+State is essential. That is not in dispute. But essential is not the same as authoritative. The properties teams depend on are governance properties, and most of them survive without an authoritative state file.
 
 This page explains where chant draws that line. For the tool-by-tool comparison see [How chant compares](/chant/concepts/comparison/). For the snapshot and diff mechanism see [Drift Detection](/chant/concepts/drift-detection/).
 
@@ -24,7 +24,7 @@ These are the costs of hosting an authoritative state file yourself. They are pr
 
 Every model except the last keeps authoritative state and only changes who operates it. The third-party tier is worth a closer look. It is usually a queryable database, sometimes the real-time graph people picture state evolving into. A faster, better-indexed source of truth is still a source of truth. It still has to be correct and current.
 
-## Governance is the load-bearing part
+## Governance is the part that matters
 
 Separate the requirement from the mechanism. The properties a team cannot give up are governance.
 
@@ -33,7 +33,7 @@ Separate the requirement from the mechanism. The properties a team cannot give u
 - An audit trail that can be read later
 - Blast-radius limits so one change cannot touch everything
 
-Authoritative state is one mechanism that provides these. It is not the only one. When state is called load-bearing, the load-bearing thing is usually the governance, and authoritative state is the tool that happened to deliver it.
+Authoritative state is one mechanism that provides these. It is not the only one. When state is called essential, the essential thing is usually the governance, and authoritative state is the tool that happened to deliver it.
 
 The observational model keeps the governance and drops the authority. Snapshots and diffs live in git, which gives audit and review. Linting runs on the static artifact before apply, which gives pre-apply validation. What is given up is automatic plan and apply, because without authoritative state chant cannot compute a precise change set the way Terraform does.
 
@@ -55,4 +55,4 @@ There is one case where the affected scope approaches the whole estate, such as 
 
 In the observational model the live system is the source of truth. A snapshot is a baseline for the diff, and it is allowed to be stale, because a stale baseline is inconvenient while a stale source of truth is dangerous.
 
-The file was never the load-bearing part. The governance around the artifact was. See [Drift Detection](/chant/concepts/drift-detection/) for how snapshots and diffs work, and [How chant compares](/chant/concepts/comparison/) for how this differs from Terraform, Pulumi, and CDK.
+The file was never the essential part. The governance around the artifact was. See [Drift Detection](/chant/concepts/drift-detection/) for how snapshots and diffs work, and [How chant compares](/chant/concepts/comparison/) for how this differs from Terraform, Pulumi, and CDK.
