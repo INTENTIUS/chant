@@ -50,6 +50,7 @@ export default defineConfig({
 						{ label: 'Linting & Type-Checking', slug: 'guide/linting' },
 						{ label: 'Building', slug: 'guide/building' },
 						{ label: 'Ops', slug: 'guide/ops' },
+						{ label: 'Local vs Temporal', slug: 'guide/local-vs-temporal' },
 						{ label: 'Watching State', slug: 'guide/watching-state' },
 						{ label: 'Importing Templates', slug: 'guide/importing-templates' },
 						{ label: 'Multi-Stack Projects', slug: 'guide/multi-stack' },

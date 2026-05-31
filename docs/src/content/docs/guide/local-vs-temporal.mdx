@@ -1,0 +1,61 @@
+---
+title: Local vs Temporal
+description: Choose between chant's local in-process Op executor and the Temporal runtime
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+Ops run in one of two modes. They execute the same `*.op.ts` definitions and the
+same activities — they differ only in what they offer on top of phase
+sequencing.
+
+`chant run <name>` runs **local by default**. Pass `--temporal` to run against a
+Temporal cluster. There is no config to inspect and no implicit switch — one
+flag selects the runtime.
+
+## Capability comparison
+
+| | Local mode | Temporal mode |
+|---|---|---|
+| Phase sequencing + retry | ✓ | ✓ |
+| `onFailure` compensation | ✓ | ✓ |
+| Activity profiles (timeout / retry) | ✓ | ✓ |
+| Structured stdout, exit code, `--json` | ✓ | ✓ |
+| Gates (human approval) | ✗ (errors) | ✓ |
+| Schedules | ✗ (errors) | ✓ |
+| Durable resume after a crash | ✗ | ✓ |
+| `chant run history / status / log` | ✗ | ✓ |
+| Search-attribute persistence | ✗ (outcomes go to stdout) | ✓ |
+
+## The graduation story
+
+- **Dev loops, CI, drift / observation Ops → local.** No server, no Docker, no
+  cloud. `chant run hello` works in under a minute on a laptop with nothing
+  running. Retries and `onFailure` rollback still apply.
+- **Long-running deploys, gated rollouts, scheduled jobs → Temporal.** When you
+  need a workflow to survive a process crash, pause for human approval, or run
+  on a schedule, configure a Temporal profile and pass `--temporal`.
+
+Start local. Move an Op to Temporal the day it needs durability — the Op
+definition does not change.
+
+<Aside type="note" title="Local mode still installs the lexicon">
+A local Op imports `Op` / `phase` / `shell` from `@intentius/chant-lexicon-temporal`,
+so the package is still a dependency. What local mode avoids is the running
+**server** — no Temporal cluster, worker process, or `temporal server start-dev`.
+</Aside>
+
+## What local mode does on a gate or schedule
+
+If an Op contains a `gate()` (or a schedule) and you do not pass `--temporal`,
+`chant run` fails fast — before any phase executes — naming the offending step
+and pointing you at `--temporal`:
+
+```
+error: gate "approve-prod" is not supported in local mode — gates and
+schedules need a durable runtime. Re-run with --temporal.
+```
+
+This is intentional: gates and schedules require cross-process persistence that
+an in-process executor cannot provide. See [Ops](/chant/guide/ops/) for the full
+Op model and [`chant run`](/chant/cli/run/) for the flags.

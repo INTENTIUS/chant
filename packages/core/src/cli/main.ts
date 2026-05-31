@@ -37,6 +37,9 @@ export function parseArgs(args: string[]): ParsedArgs {
     help: false,
     profile: undefined,
     report: undefined,
+    local: undefined,
+    temporal: undefined,
+    json: undefined,
     live: false,
     migrateFrom: undefined,
     migrateTo: undefined,
@@ -98,6 +101,12 @@ export function parseArgs(args: string[]): ParsedArgs {
       result.useComposites = true;
     } else if (arg === "--skill") {
       result.skill = args[++i];
+    } else if (arg === "--local") {
+      result.local = true;
+    } else if (arg === "--temporal") {
+      result.temporal = true;
+    } else if (arg === "--json") {
+      result.json = true;
     } else if (!arg.startsWith("-")) {
       if (!result.command) {
         result.command = arg;
@@ -182,6 +191,9 @@ Options:
   -v, --verbose         Show stack traces on errors
   -h, --help            Show this help message
   -p, --profile <name>  Temporal worker profile to use (run command)
+  --local               Run an Op with the local in-process executor (default)
+  --temporal            Run an Op via a Temporal cluster (gates, schedules, durable resume)
+  --json                Emit the structured run result as JSON (run command)
   --report              Print deployment report instead of running (run command)
                         OR with a path arg: SARIF report destination (migrate)
   --from <name>         Source lexicon for migrate (default: github)

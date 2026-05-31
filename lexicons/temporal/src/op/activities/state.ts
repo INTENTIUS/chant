@@ -12,8 +12,8 @@ export interface StateSnapshotArgs {
  * Take a chant state snapshot for the given environment.
  * Uses fastIdempotent profile — 5m timeout, 3 retries.
  */
-export async function stateSnapshot(args: StateSnapshotArgs): Promise<void> {
-  const { stdout, stderr } = await execAsync(`chant state snapshot ${args.env}`);
+export async function stateSnapshot(args: StateSnapshotArgs, signal?: AbortSignal): Promise<void> {
+  const { stdout, stderr } = await execAsync(`chant state snapshot ${args.env}`, { signal });
   if (stdout) console.log(stdout);
   if (stderr) console.error(stderr);
 }
@@ -69,10 +69,10 @@ function detectDrift(output: string): boolean {
  * cli/state.mdx. Pair with `outcomeAttribute: { name: "Drift", from: "drifted" }`
  * on a WatchOp activity step to surface drift as a workflow search attribute.
  */
-export async function stateDiff(args: StateDiffArgs): Promise<StateDiffResult> {
+export async function stateDiff(args: StateDiffArgs, signal?: AbortSignal): Promise<StateDiffResult> {
   const liveFlag = args.live ? " --live" : "";
   try {
-    const { stdout, stderr } = await execAsync(`chant state diff ${args.env}${liveFlag}`);
+    const { stdout, stderr } = await execAsync(`chant state diff ${args.env}${liveFlag}`, { signal });
     const output = `${stdout}${stderr}`.trim();
     if (output) console.log(output);
     return { output, exitCode: 0, drifted: detectDrift(output) };

@@ -94,6 +94,22 @@ describe("serializeOps()", () => {
       expect(wf).toContain("TEMPORAL_ACTIVITY_PROFILES.longInfra");
     });
 
+    it("passes the whole profile object to proxyActivities (carries every retry field, incl. nonRetryableErrorTypes)", () => {
+      // The worker must spread the entire profile — not a hand-picked subset of
+      // fields — so retry policy reaches Temporal's ActivityOptions intact. This
+      // is what makes the --temporal path honor nonRetryableErrorTypes the same
+      // way the local executor does. Reconstructing the options inline would
+      // silently drop any field not explicitly copied; this locks that out.
+      const ops = new Map([
+        makeOp({
+          name: "deploy", overview: "o",
+          phases: [{ name: "Build", steps: [{ kind: "activity", fn: "chantBuild", args: { path: "./a" } }] }],
+        }),
+      ]);
+      const wf = serializeOps(ops)["ops/deploy/workflow.ts"];
+      expect(wf).toMatch(/proxyActivities<typeof activities>\(\s*TEMPORAL_ACTIVITY_PROFILES\.fastIdempotent,\s*\)/);
+    });
+
     it("generates sequential await calls for a non-parallel phase", () => {
       const ops = new Map([
         makeOp({

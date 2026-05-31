@@ -251,6 +251,59 @@ describe("temporal serializer", () => {
     expect(result.files["schedules/with-policy.ts"]).toContain("BufferOne");
   });
 
+  it("emits action.retry from workflowRetryPolicy, including nonRetryableErrorTypes", () => {
+    const entities = new Map([makeSchedule("with-retry", {
+      action: {
+        workflowType: "w", taskQueue: "q",
+        workflowRetryPolicy: {
+          initialInterval: "10s",
+          backoffCoefficient: 2,
+          maximumAttempts: 5,
+          maximumInterval: "5m",
+          nonRetryableErrorTypes: ["ValidationError"],
+        },
+      },
+    })]);
+    const ts = (temporalSerializer.serialize(entities) as { files: Record<string, string> }).files["schedules/with-retry.ts"];
+    expect(ts).toContain("retry:");
+    expect(ts).toContain('"initialInterval": "10s"');
+    expect(ts).toContain('"maximumAttempts": 5');
+    expect(ts).toContain('"nonRetryableErrorTypes"');
+    expect(ts).toContain('"ValidationError"');
+  });
+
+  it("omits action.retry when no workflowRetryPolicy is set", () => {
+    const ts = (temporalSerializer.serialize(new Map([makeSchedule("no-retry")])) as { files: Record<string, string> }).files["schedules/no-retry.ts"];
+    expect(ts).not.toContain("retry:");
+  });
+
+  it("emits action timeouts, memo, and searchAttributes when set", () => {
+    const entities = new Map([makeSchedule("with-action-opts", {
+      action: {
+        workflowType: "w", taskQueue: "q",
+        workflowExecutionTimeout: "1h",
+        workflowRunTimeout: "30m",
+        memo: { owner: "platform" },
+        searchAttributes: { Env: "prod" },
+      },
+    })]);
+    const ts = (temporalSerializer.serialize(entities) as { files: Record<string, string> }).files["schedules/with-action-opts.ts"];
+    expect(ts).toContain('workflowExecutionTimeout: "1h"');
+    expect(ts).toContain('workflowRunTimeout: "30m"');
+    expect(ts).toContain("memo:");
+    expect(ts).toContain('"owner": "platform"');
+    expect(ts).toContain("searchAttributes:");
+    expect(ts).toContain('"Env": "prod"');
+  });
+
+  it("omits action timeouts, memo, and searchAttributes when unset", () => {
+    const ts = (temporalSerializer.serialize(new Map([makeSchedule("bare-action")])) as { files: Record<string, string> }).files["schedules/bare-action.ts"];
+    expect(ts).not.toContain("workflowExecutionTimeout:");
+    expect(ts).not.toContain("workflowRunTimeout:");
+    expect(ts).not.toContain("memo:");
+    expect(ts).not.toContain("searchAttributes:");
+  });
+
   // ── Mixed entities ─────────────────────────────────────────────
 
   it("returns SerializerResult with all keys for mixed entities", () => {

@@ -1,6 +1,6 @@
 import { exec } from "node:child_process";
 import { promisify } from "node:util";
-import { Context } from "@temporalio/activity";
+import { safeHeartbeat } from "./heartbeat";
 
 const execAsync = promisify(exec);
 
@@ -19,20 +19,20 @@ export interface HelmInstallArgs {
 
 /**
  * Run `helm upgrade --install <name> <chart>`.
- * Uses longInfra profile — 20m timeout, heartbeat every 60s.
+ * Uses longInfra profile — 20m timeout, heartbeat every 15s.
  */
-export async function helmInstall(args: HelmInstallArgs): Promise<void> {
+export async function helmInstall(args: HelmInstallArgs, signal?: AbortSignal): Promise<void> {
   const parts = ["helm", "upgrade", "--install", "--wait", args.name, args.chart];
   if (args.namespace) parts.push("--namespace", args.namespace, "--create-namespace");
   if (args.values) parts.push("-f", args.values);
   for (const [k, v] of Object.entries(args.set ?? {})) parts.push("--set", `${k}=${v}`);
 
   const heartbeatInterval = setInterval(() => {
-    Context.current().heartbeat({ step: "helm install", release: args.name });
+    safeHeartbeat({ step: "helm install", release: args.name });
   }, 15_000);
 
   try {
-    const { stdout, stderr } = await execAsync(parts.join(" "));
+    const { stdout, stderr } = await execAsync(parts.join(" "), { signal });
     if (stdout) console.log(stdout);
     if (stderr) console.error(stderr);
   } finally {

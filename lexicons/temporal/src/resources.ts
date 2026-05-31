@@ -91,7 +91,8 @@ export interface TemporalScheduleProps {
     searchAttributes?: Record<string, unknown>;
     /**
      * Retry policy for the triggered workflow execution.
-     * When set, the generated schedule script includes `workflowStartOptions.retry`.
+     * When set, the generated schedule script emits it as the schedule
+     * action's `retry` (Temporal `ScheduleOptions` action.retry).
      */
     workflowRetryPolicy?: {
       /** Initial retry interval (e.g. "10s"). Default: Temporal server default (~1s). */

@@ -1,0 +1,17 @@
+{
+  "name": "local-op-quickstart-example",
+  "version": "0.0.1",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "build": "chant build ops -o dist",
+    "lint": "chant lint ops",
+    "run": "chant run hello",
+    "run:json": "chant run hello --json",
+    "deploy": "chant run hello"
+  },
+  "dependencies": {
+    "@intentius/chant": "*",
+    "@intentius/chant-lexicon-temporal": "*"
+  }
+}

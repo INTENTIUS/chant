@@ -10,11 +10,12 @@ export interface ChantTeardownArgs {
 
 /**
  * Run `chant teardown` in the given project path.
- * Uses longInfra profile — 20m timeout, heartbeat every 60s.
+ * Uses longInfra profile — 20m timeout.
  */
-export async function chantTeardown(args: ChantTeardownArgs): Promise<void> {
+export async function chantTeardown(args: ChantTeardownArgs, signal?: AbortSignal): Promise<void> {
   const { stdout, stderr } = await execAsync("npm run teardown", {
     cwd: args.path,
+    signal,
   });
   if (stdout) console.log(stdout);
   if (stderr) console.error(stderr);

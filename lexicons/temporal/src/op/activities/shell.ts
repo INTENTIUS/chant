@@ -15,10 +15,11 @@ export interface ShellCmdArgs {
  * Run an arbitrary shell command.
  * Uses fastIdempotent profile — 5m timeout, 3 retries.
  */
-export async function shellCmd(args: ShellCmdArgs): Promise<string> {
+export async function shellCmd(args: ShellCmdArgs, signal?: AbortSignal): Promise<string> {
   const { stdout, stderr } = await execAsync(args.cmd, {
     cwd: args.cwd,
     env: { ...process.env, ...args.env },
+    signal,
   });
   if (stderr) console.error(stderr);
   return stdout.trim();

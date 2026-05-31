@@ -16,10 +16,10 @@ Deciding whether Ops is the right deployment model for your project? See [Choosi
 - **Gates** — pause for human approval or an external-system event (DNS delegation, change windows).
 - **Automatic rollback** — `onFailure` phases compensate on failure instead of hand-rolled scripts.
 
-`chant build` compiles each `*.op.ts` into generated Temporal worker code. `chant run <name>` spawns the worker and submits the workflow.
+`chant run <name>` runs an Op **locally by default** — in-process, with no Temporal server. `chant build` compiles each `*.op.ts` into generated Temporal worker code for when you run with `--temporal`, which spawns the worker and submits the workflow. See [Local vs Temporal](/chant/guide/local-vs-temporal/) for the trade-off.
 
 <Aside type="note" title="Prerequisites">
-Requires `@intentius/chant-lexicon-temporal` and a reachable Temporal server (or [Temporal Cloud](https://cloud.temporal.io) — free tier available). See [Worker Profiles](/chant/lexicons/temporal/worker-profiles/) for connection configuration.
+Requires `@intentius/chant-lexicon-temporal` (the package). Local mode needs nothing running. `--temporal` additionally requires a reachable Temporal server (or [Temporal Cloud](https://cloud.temporal.io) — free tier available); see [Worker Profiles](/chant/lexicons/temporal/worker-profiles/) for connection configuration.
 </Aside>
 
 <Diagram name="ops-execution-model" alt="Op execution model: sequential phases, parallel phases, gate steps, and onFailure compensation" caption="Op execution model — phases, gates, and compensation" />

@@ -43,6 +43,9 @@ function makeArgs(overrides: Partial<ParsedArgs> = {}): ParsedArgs {
   return {
     command: "run", path: ".",
     format: "", fix: false, watch: false, verbose: false, help: false, live: false,
+    // These suites exercise the Temporal path; local mode is the CLI default,
+    // so opt in explicitly here. Local-mode behavior is covered separately below.
+    temporal: true,
     ...overrides,
   };
 }
@@ -444,5 +447,100 @@ describe("runOp", () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+});
+
+// ── local mode dispatcher + guards ──────────────────────────────────────────
+
+function localOp(name: string, steps: unknown[]) {
+  return [name, { config: { name, overview: `${name} overview`, phases: [{ name: "Phase", steps }] } }] as const;
+}
+
+describe("runOp dispatcher", () => {
+  beforeEach(() => {
+    discoverOpsMock.mockReset();
+    loadTemporalClientMock.mockReset();
+    loadChantConfigMock.mockReset();
+    resolveProfileMock.mockReset();
+    existsSyncMock.mockReset();
+    spawnChildMock.mockReset();
+  });
+
+  test("no flag → local executor (no Temporal client or worker spawned)", async () => {
+    discoverOpsMock.mockResolvedValue({
+      ops: new Map([localOp("hello", [{ kind: "activity", fn: "shellCmd", args: { cmd: "true" } }])]),
+      errors: [],
+    });
+    const stderrWrite = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+    const exit = await runOp({ args: makeArgs({ path: "hello", temporal: false }), plugins: [], serializers: [] });
+    expect(exit).toBe(0);
+    expect(loadTemporalClientMock).not.toHaveBeenCalled();
+    expect(spawnChildMock).not.toHaveBeenCalled();
+    stderrWrite.mockRestore();
+  });
+
+  test("--temporal → Temporal path (missing worker.ts → exit 1)", async () => {
+    discoverOpsMock.mockResolvedValue({ ops: new Map([makeOp("hello")]), errors: [] });
+    loadChantConfigMock.mockResolvedValue({ config: {} });
+    resolveProfileMock.mockReturnValue({ address: "localhost:7233", namespace: "default", taskQueue: "q" });
+    existsSyncMock.mockReturnValue(false);
+    const stderr = makeStderrSpy();
+    const exit = await runOp({ args: makeArgs({ path: "hello", temporal: true }), plugins: [], serializers: [] });
+    expect(exit).toBe(1);
+    expect(stderr.join("\n")).toContain("worker.ts not found");
+  });
+
+  test("gate in local mode → fast-fail before execution, suggests --temporal", async () => {
+    discoverOpsMock.mockResolvedValue({
+      ops: new Map([localOp("gated", [{ kind: "gate", signalName: "approve-prod" }])]),
+      errors: [],
+    });
+    const stderr = makeStderrSpy();
+    const exit = await runOp({ args: makeArgs({ path: "gated", temporal: false }), plugins: [], serializers: [] });
+    expect(exit).toBe(1);
+    expect(stderr.join("\n")).toContain("--temporal");
+    expect(loadTemporalClientMock).not.toHaveBeenCalled();
+  });
+
+  test("--local and --temporal together → exit 1 before any work", async () => {
+    const stderr = makeStderrSpy();
+    const exit = await runOp({ args: makeArgs({ path: "hello", local: true, temporal: true }), plugins: [], serializers: [] });
+    expect(exit).toBe(1);
+    expect(stderr.join("\n")).toContain("mutually exclusive");
+    expect(discoverOpsMock).not.toHaveBeenCalled();
+    expect(loadTemporalClientMock).not.toHaveBeenCalled();
+  });
+
+  test("--json → structured result on stdout", async () => {
+    discoverOpsMock.mockResolvedValue({
+      ops: new Map([localOp("hello", [{ kind: "activity", fn: "shellCmd", args: { cmd: "true" } }])]),
+      errors: [],
+    });
+    const stdoutWrite = vi.spyOn(process.stdout, "write").mockImplementation(() => true);
+    vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+    const exit = await runOp({ args: makeArgs({ path: "hello", temporal: false, json: true }), plugins: [], serializers: [] });
+    expect(exit).toBe(0);
+    const printed = stdoutWrite.mock.calls.map((c) => String(c[0])).join("");
+    const parsed = JSON.parse(printed.trim());
+    expect(parsed.op).toBe("hello");
+    expect(parsed.ok).toBe(true);
+    vi.restoreAllMocks();
+  });
+});
+
+describe("Temporal-only subcommand guards", () => {
+  const cases: Array<[string, (ctx: { args: ParsedArgs; plugins: never[]; serializers: never[] }) => Promise<number>]> = [
+    ["list", runOpList],
+    ["status", runOpStatus],
+    ["log", runOpLog],
+    ["signal", runOpSignal],
+    ["cancel", runOpCancel],
+  ];
+
+  test.each(cases)("run %s without --temporal → exit 1 + actionable message", async (_name, handler) => {
+    const stderr = makeStderrSpy();
+    const exit = await handler({ args: makeArgs({ temporal: false, extraPositional: "x", extraPositional2: "y" }), plugins: [], serializers: [] });
+    expect(exit).toBe(1);
+    expect(stderr.join("\n")).toContain("not available in local mode");
   });
 });

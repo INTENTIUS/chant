@@ -69,6 +69,13 @@ export interface TemporalActivityProfile {
     maximumAttempts?: number;
     /** Cap on retry intervals (e.g. "5m"). */
     maximumInterval?: string;
+    /**
+     * Error names (`Error.name`) that fail immediately without retry. Honored
+     * in both modes: the generated worker spreads this profile into
+     * `proxyActivities`, so Temporal's RetryPolicy uses it; the local executor
+     * reads it directly to short-circuit its retry loop.
+     */
+    nonRetryableErrorTypes?: string[];
   };
 }
 
