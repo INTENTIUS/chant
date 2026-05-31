@@ -63,7 +63,7 @@ export function createOpRunTool(): ToolRegistration {
     definition: {
       name: "op-run",
       description:
-        "Submit an Op workflow to Temporal. The worker must already be running — start it first with `chant run <name>`.",
+        "Submit an Op workflow to Temporal (Temporal mode). A Temporal worker must already be running — start it with `chant run <name> --temporal`.",
       inputSchema: {
         type: "object",
         properties: {

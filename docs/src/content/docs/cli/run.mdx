@@ -16,25 +16,31 @@ chant run log <name> [flags]
 
 ## Description
 
-`chant run` starts and manages **Op** workflows — named, phased Temporal workflows defined in `*.op.ts` files. Running an Op spawns a Temporal worker process and submits the workflow. Requires `@intentius/chant-lexicon-temporal` and a reachable Temporal server.
+`chant run` starts and manages **Op** workflows — named, phased workflows defined in `*.op.ts` files.
 
-Connection settings come from `chant.config.ts` under `temporal.profiles`. See [Worker Profiles](/chant/lexicons/temporal/worker-profiles/) for configuration.
+`chant run <name>` runs **local by default**: the Op executes in-process with no Temporal server, worker, or built `worker.ts`. Pass `--temporal` to run against a Temporal cluster instead (worker spawn + workflow submission). One flag selects the runtime — no config is inspected. See [Local vs Temporal](/chant/guide/local-vs-temporal/) for the trade-off.
+
+Local mode covers phase sequencing, retries, activity profiles, and `onFailure` compensation. Gates, schedules, durable resume, and the run-management subcommands (`list` / `status` / `log` / `signal` / `cancel`) require `--temporal` and a reachable Temporal server. Connection settings come from `chant.config.ts` under `temporal.profiles`; see [Worker Profiles](/chant/lexicons/temporal/worker-profiles/).
 
 ## Subcommands
 
 ### `run <name>`
 
-Start an Op: spawns the compiled worker for that Op and submits the workflow to Temporal. Polls status every 3 seconds until the workflow completes or fails.
+Run an Op. Local by default — executes in-process, rendering each phase and step as it runs. With `--temporal`, spawns the compiled worker and submits the workflow to Temporal, polling status every 3 seconds until it completes or fails.
 
 ```bash
-chant run alb-deploy
-chant run alb-deploy --profile cloud
-chant run alb-deploy --report   # print deployment report instead of running
+chant run alb-deploy              # local executor (default)
+chant run alb-deploy --json       # structured result on stdout
+chant run alb-deploy --temporal             # run via Temporal
+chant run alb-deploy --temporal --profile cloud
+chant run alb-deploy --temporal --report    # print deployment report instead of running
 ```
+
+A gate or schedule in the Op fails fast in local mode with an actionable message — re-run with `--temporal`.
 
 ### `run list`
 
-List all discovered Ops (`*.op.ts` files) with their current Temporal run status.
+List all discovered Ops (`*.op.ts` files) with their current Temporal run status. Requires `--temporal`.
 
 ```bash
 chant run list
@@ -80,8 +86,11 @@ chant run log alb-deploy
 
 | Flag | Description |
 |------|-------------|
-| `-p, --profile <name>` | Temporal worker profile to use (from `chant.config.ts`) |
-| `--report` | Print a deployment report instead of running (`run <name>` only) |
+| `--local` | Run with the local in-process executor — the default (`run <name>`) |
+| `--temporal` | Run via a Temporal cluster: gates, schedules, durable resume (`run <name>`) |
+| `--json` | Emit the structured run result as JSON on stdout (`run <name>`) |
+| `-p, --profile <name>` | Temporal worker profile to use (from `chant.config.ts`); implies Temporal mode |
+| `--report` | Print a deployment report instead of running (`run <name> --temporal` only) |
 | `--force` | Required for `run cancel` |
 
 ## Exit Codes
@@ -94,5 +103,6 @@ chant run log alb-deploy
 ## See Also
 
 - [Ops guide](/chant/guide/ops/) — define `*.op.ts` files
+- [Local vs Temporal](/chant/guide/local-vs-temporal/) — choose the runtime
 - [Worker Profiles](/chant/lexicons/temporal/worker-profiles/) — configure Temporal connection
 - [`chant graph`](/chant/cli/graph/) — visualize Op dependency graph

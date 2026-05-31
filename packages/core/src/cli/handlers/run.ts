@@ -4,6 +4,9 @@ import { createConnection } from "node:net";
 import { spawn as spawnChild, type ChildProcess } from "node:child_process";
 import { loadChantConfig } from "../../config";
 import { discoverOps } from "../../op/discover";
+import { loadActivities, loadProfiles } from "../../op/activity-registry";
+import { runOpLocally, findGate, LocalGateUnsupportedError, OpRunFailure } from "../../op/local-executor";
+import { renderHuman, renderJson } from "../../op/local-output";
 import { formatError, formatWarning, formatSuccess, formatBold, formatInfo } from "../format";
 import type { CommandContext } from "../registry";
 import {
@@ -25,6 +28,21 @@ function workflowFnName(opName: string): string {
   return kebabToCamel(opName) + "Workflow";
 }
 
+/**
+ * Guard for Temporal-only commands (run list/status/log/signal/cancel, --report).
+ * These query durable run state that only exists under Temporal. Returns true
+ * when `--temporal` was passed; otherwise prints an actionable message and the
+ * caller should return non-zero.
+ */
+function requireTemporalMode(ctx: CommandContext, what: string): boolean {
+  if (ctx.args.temporal) return true;
+  console.error(formatError({
+    message: `\`${what}\` is not available in local mode`,
+    hint: "pass --temporal or configure a profile",
+  }));
+  return false;
+}
+
 export async function makeTemporalClient(profileName: string | undefined, projectPath: string) {
   const { config } = await loadChantConfig(projectPath);
   const profile = resolveProfile(config as Record<string, unknown>, profileName);
@@ -37,6 +55,7 @@ export async function makeTemporalClient(profileName: string | undefined, projec
 // ── chant run list ──────────────────────────────────���─────────────────────────
 
 export async function runOpList(ctx: CommandContext): Promise<number> {
+  if (!requireTemporalMode(ctx, "chant run list")) return 1;
   const { ops, errors } = await discoverOps();
 
   for (const err of errors) {
@@ -102,6 +121,7 @@ export async function runOpList(ctx: CommandContext): Promise<number> {
 // ── chant run status <name> ───────────────────────────────────────────────────
 
 export async function runOpStatus(ctx: CommandContext): Promise<number> {
+  if (!requireTemporalMode(ctx, "chant run status")) return 1;
   const name = ctx.args.extraPositional;
   if (!name) {
     console.error(formatError({ message: "Op name is required: chant run status <name>" }));
@@ -141,6 +161,7 @@ export async function runOpStatus(ctx: CommandContext): Promise<number> {
 // ── chant run log <name> ──────────────────────────────────────────────────────
 
 export async function runOpLog(ctx: CommandContext): Promise<number> {
+  if (!requireTemporalMode(ctx, "chant run log")) return 1;
   const name = ctx.args.extraPositional;
   if (!name) {
     console.error(formatError({ message: "Op name is required: chant run log <name>" }));
@@ -186,6 +207,7 @@ export async function runOpLog(ctx: CommandContext): Promise<number> {
 // ── chant run signal <name> <signal> ─────────────────────────────────────────
 
 export async function runOpSignal(ctx: CommandContext): Promise<number> {
+  if (!requireTemporalMode(ctx, "chant run signal")) return 1;
   const name = ctx.args.extraPositional;
   const signalName = ctx.args.extraPositional2;
 
@@ -212,6 +234,7 @@ export async function runOpSignal(ctx: CommandContext): Promise<number> {
 // ── chant run cancel <name> ───────────────────────────────────────────────────
 
 export async function runOpCancel(ctx: CommandContext): Promise<number> {
+  if (!requireTemporalMode(ctx, "chant run cancel")) return 1;
   const name = ctx.args.extraPositional;
   if (!name) {
     console.error(formatError({ message: "Op name is required: chant run cancel <name>" }));
@@ -274,7 +297,107 @@ function renderProgress(opName: string, history: WorkflowHistoryRaw): void {
   );
 }
 
+/**
+ * `chant run <name>` dispatcher.
+ *
+ * Local mode is the default — it runs the Op in-process with no Temporal
+ * server. `--temporal` opts into a cluster (gates, schedules, durable resume).
+ * `--report` reads a past durable run and is therefore Temporal-only.
+ */
 export async function runOp(ctx: CommandContext): Promise<number> {
+  if (ctx.args.local && ctx.args.temporal) {
+    console.error(formatError({
+      message: "--local and --temporal are mutually exclusive",
+      hint: "omit both for local mode (the default), or pass exactly one",
+    }));
+    return 1;
+  }
+  if (ctx.args.report) {
+    if (!requireTemporalMode(ctx, "chant run --report")) return 1;
+    return runOpTemporal(ctx);
+  }
+  return ctx.args.temporal ? runOpTemporal(ctx) : runOpLocal(ctx);
+}
+
+/**
+ * Run an Op in-process via the local executor — no Temporal worker, server, or
+ * built `worker.ts`. Reads the Op config straight from discovery and resolves
+ * activities from the Temporal lexicon package.
+ */
+export async function runOpLocal(ctx: CommandContext): Promise<number> {
+  const opName = ctx.args.path;
+  if (!opName || opName === ".") {
+    console.error(formatError({
+      message: "Op name is required: chant run <name>",
+      hint: "Run `chant run list --temporal` to see available Ops",
+    }));
+    return 1;
+  }
+
+  const { ops, errors } = await discoverOps();
+  for (const err of errors) console.error(formatWarning({ message: err }));
+
+  const discovered = ops.get(opName);
+  if (!discovered) {
+    const names = [...ops.keys()];
+    console.error(formatError({
+      message: `Op "${opName}" not found`,
+      hint: names.length > 0
+        ? `Available: ${names.join(", ")}`
+        : "No *.op.ts files found — create one",
+    }));
+    return 1;
+  }
+
+  const { config } = discovered;
+
+  // Pre-flight: gates/schedules need a durable runtime — fail before any step.
+  const gate = findGate(config);
+  if (gate) {
+    console.error(formatError({
+      message: new LocalGateUnsupportedError(gate.signalName).message,
+    }));
+    return 1;
+  }
+
+  let activities, profiles;
+  try {
+    [activities, profiles] = await Promise.all([loadActivities(), loadProfiles()]);
+  } catch (err) {
+    console.error(formatError({ message: err instanceof Error ? err.message : String(err) }));
+    return 1;
+  }
+
+  // Ctrl-C aborts in-flight activities (kills their child processes) instead of
+  // orphaning them. The handler is removed in `finally` so it never leaks.
+  const controller = new AbortController();
+  const onSigint = () => {
+    console.error(formatWarning({ message: "interrupted — stopping Op" }));
+    controller.abort();
+  };
+  process.once("SIGINT", onSigint);
+
+  try {
+    const result = await runOpLocally(config, activities, profiles, controller.signal);
+    if (ctx.args.json) renderJson(result); else renderHuman(result);
+    return 0;
+  } catch (err) {
+    if (err instanceof OpRunFailure) {
+      if (ctx.args.json) renderJson(err.result); else renderHuman(err.result);
+      return 1;
+    }
+    if (err instanceof LocalGateUnsupportedError) {
+      console.error(formatError({ message: err.message }));
+      return 1;
+    }
+    console.error(formatError({ message: err instanceof Error ? err.message : String(err) }));
+    return 1;
+  } finally {
+    process.removeListener("SIGINT", onSigint);
+  }
+}
+
+async function runOpTemporal(ctx: CommandContext): Promise<number> {
   const opName = ctx.args.path;
 
   if (!opName || opName === ".") {

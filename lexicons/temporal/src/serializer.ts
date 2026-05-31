@@ -222,8 +222,32 @@ function serializeSchedule(scheduleId: string, props: TemporalScheduleProps): st
     `      workflowType: ${JSON.stringify(props.action.workflowType)},`,
     `      taskQueue: ${JSON.stringify(props.action.taskQueue)},`,
     `      args: ${JSON.stringify(props.action.args ?? [])},`,
-    `    },`,
   ];
+
+  // Optional workflow timeouts → ScheduleOptions action.workflow*Timeout.
+  if (props.action.workflowExecutionTimeout) {
+    lines.push(`      workflowExecutionTimeout: ${JSON.stringify(props.action.workflowExecutionTimeout)},`);
+  }
+  if (props.action.workflowRunTimeout) {
+    lines.push(`      workflowRunTimeout: ${JSON.stringify(props.action.workflowRunTimeout)},`);
+  }
+
+  // Retry policy for the triggered workflow → ScheduleOptions action.retry.
+  if (props.action.workflowRetryPolicy) {
+    lines.push(
+      `      retry: ${JSON.stringify(props.action.workflowRetryPolicy, null, 6).replace(/^/gm, "      ").trimStart()},`,
+    );
+  }
+
+  // Memo + search attributes attached to the triggered workflow.
+  if (props.action.memo) {
+    lines.push(`      memo: ${JSON.stringify(props.action.memo, null, 6).replace(/^/gm, "      ").trimStart()},`);
+  }
+  if (props.action.searchAttributes) {
+    lines.push(`      searchAttributes: ${JSON.stringify(props.action.searchAttributes, null, 6).replace(/^/gm, "      ").trimStart()},`);
+  }
+
+  lines.push(`    },`);
 
   if (props.policies) {
     lines.push(`    policies: ${JSON.stringify(props.policies, null, 6).replace(/^/gm, "    ").trimStart()},`);

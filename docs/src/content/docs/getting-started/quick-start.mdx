@@ -71,6 +71,38 @@ chant build
 
 The build command discovers all `.ts` files, collects exported declarables, resolves dependencies, and serializes to the target format.
 
+## Step 5: Run an Op
+
+Resources synthesize to artifacts. **Ops** *execute* — phased, with retries and rollback. Write a minimal one:
+
+```typescript
+// hello.op.ts
+import { Op, phase, shell } from "@intentius/chant-lexicon-temporal";
+
+export default Op({
+  name: "hello",
+  overview: "Minimal local Op — no Temporal server required",
+  taskQueue: "hello",
+  phases: [
+    phase("Greet", [
+      shell("echo hello from chant"),
+    ]),
+  ],
+});
+```
+
+```bash
+chant run hello
+```
+
+```
+[phase] Greet
+  ✓ shellCmd(cmd=echo hello from chant)   42ms
+Op "hello" completed in 0.1s
+```
+
+No Temporal **server** required — chant runs Ops locally by default. (The Op imports from `@intentius/chant-lexicon-temporal`, so install that package — but nothing has to be running.) For durable resume, gates, and schedules, configure a Temporal profile and pass `--temporal`. See [Local vs Temporal](/chant/guide/local-vs-temporal/).
+
 ## Next Steps
 
 - [Project Structure](/chant/getting-started/project-structure/) — understand what `chant init` created

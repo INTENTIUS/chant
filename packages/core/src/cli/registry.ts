@@ -20,6 +20,12 @@ export interface ParsedArgs {
   help: boolean;
   profile?: string;
   report?: boolean;
+  /** `chant run` — force the local in-process executor (the default). */
+  local?: boolean;
+  /** `chant run` — run via a Temporal cluster instead of the local executor. */
+  temporal?: boolean;
+  /** `chant run` — emit the structured OpRunResult as JSON on stdout. */
+  json?: boolean;
   live: boolean;
   /** `chant migrate --from <name>` (default "github") */
   migrateFrom?: string;

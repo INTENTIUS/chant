@@ -13,10 +13,11 @@ export interface ChantBuildArgs {
  * Run `npm run build` in the given project directory.
  * Uses fastIdempotent profile — 5m timeout, 3 retries.
  */
-export async function chantBuild(args: ChantBuildArgs): Promise<void> {
+export async function chantBuild(args: ChantBuildArgs, signal?: AbortSignal): Promise<void> {
   const { stdout, stderr } = await execAsync("npm run build", {
     cwd: args.path,
     env: { ...process.env, ...args.env },
+    signal,
   });
   if (stdout) console.log(stdout);
   if (stderr) console.error(stderr);

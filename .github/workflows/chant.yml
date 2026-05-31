@@ -51,6 +51,12 @@ jobs:
       - name: Build example project
         run: npx tsx packages/core/src/cli/main.ts build lexicons/aws/examples/lambda-function/src --output template.json
 
+      - name: Run Op in local mode (regression guard)
+        working-directory: examples/local-op-quickstart
+        run: |
+          npx tsx ../../packages/core/src/cli/main.ts run hello --local --json > result.json
+          node -e "process.exit(JSON.parse(require('fs').readFileSync('result.json','utf8')).ok ? 0 : 1)"
+
       - name: Upload SARIF results
         if: always()
         uses: github/codeql-action/upload-sarif@v4
