@@ -70,6 +70,27 @@ Output is grouped into six categories per lexicon:
 
 Drifted entries include attribute-level deltas (`status`, `physicalId`, `lastUpdated`, and each `attributes.*` key).
 
+### `state plan <env>`
+
+Promote the live diff to a typed, **read-only** change set. Where `state diff --live` reports six observation categories, `state plan` classifies each resource into one action you can act on:
+
+```bash
+chant state plan prod
+chant state plan prod --json   # emit the ChangeSet as JSON
+```
+
+| Action | Meaning |
+|---|---|
+| **create** | Declared in source, absent from the cloud |
+| **update** | Declared and live, but the live config drifted |
+| **delete** | A chant-owned resource that is live but no longer declared |
+| **adopt** | Live but undeclared, ownership not established — a candidate to pull back into source, never an auto-delete |
+| **noop** | Declared and live with no drift, or already reconciled |
+
+`create` and `update` are precise from declared-vs-live. `delete` is only ever proposed for a resource a live ownership marker confirms is chant's — until ownership data exists, an undeclared live resource is `adopt`, never `delete`. The classification reads ownership from the live marker, never from the snapshot, so the snapshot never becomes load-bearing.
+
+`state plan` is strictly read-only: it builds, queries, and classifies. It never mutates the cloud and never deploys — `chant build` stays pure.
+
 ### Resources vs artifacts
 
 A single lexicon may report both **resources** (entity-keyed, via `describeResources()`) and **artifacts** (context-keyed, via `listArtifacts()`); `state diff --live` shows them in separate sections. Artifacts use a four-category two-way diff (no "declared" axis):
