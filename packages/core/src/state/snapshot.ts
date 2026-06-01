@@ -2,7 +2,7 @@
  * Snapshot orchestration: queries plugins for deployed resource metadata,
  * assembles StateSnapshots, computes build digests, and writes to git.
  */
-import type { LexiconPlugin, ResourceMetadata, ArtifactMetadata } from "../lexicon";
+import type { ObservationLexicon, ResourceMetadata, ArtifactMetadata } from "../lexicon";
 import type { BuildResult } from "../build";
 import type { SerializerResult } from "../serializer";
 import type { StateSnapshot } from "./types";
@@ -82,7 +82,7 @@ export interface TakeSnapshotResult {
  */
 export async function takeSnapshot(
   environment: string,
-  plugins: LexiconPlugin[],
+  plugins: ObservationLexicon[],
   buildResult: BuildResult,
   opts?: { cwd?: string },
 ): Promise<TakeSnapshotResult> {

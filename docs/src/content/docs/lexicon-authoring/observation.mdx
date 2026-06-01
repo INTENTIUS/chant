@@ -261,6 +261,28 @@ Use the static factories to keep diff-engine and Op-activity tests free of `chil
 
 For the user-facing version of this matrix and how the diff output is grouped, see [`chant state`](/chant/cli/state/#coverage-today).
 
+## Live export — `exportResources()`
+
+`describeResources()` returns **scrubbed output metadata** for diffing. It cannot regenerate a resource — `attributes` are cloud-assigned outputs, not the input config you wrote. Live import needs the other half: the full input config, read from the live API.
+
+That is a separate, opt-in capability:
+
+```typescript
+exportResources?(options: {
+  environment: string;
+  selector?: ResourceSelector;   // { type?, name? }
+  owned?: boolean;               // inert until ownership marking lands
+}): Promise<ExportedTemplate>;
+```
+
+`ExportedTemplate` is the existing import IR (`TemplateIR`) — so the result feeds your lexicon's `templateGenerator()` unchanged — branded distinct from the observation types. The brand is the contract's guardrail: a full-fidelity export (which may carry secrets) can never flow into the `state` code paths, which consume `ResourceMetadata` through the `ObservationLexicon` view that omits `exportResources` entirely.
+
+<Aside type="caution">
+Keep the scrubbing boundary single-purpose. `describeResources()` scrubs for diffing; `exportResources()` returns full config for regeneration. Never overload one method for both — the secret-exposure surface stays in one place.
+</Aside>
+
+Implementing this is what powers [`chant import --from <env>`](/chant/cli/import/). A full authoring walkthrough — per-provider fidelity, the `--verbatim` switch, and the ownership marker — lands in the live-export authoring guide.
+
 ## See also
 
 - [`chant state`](/chant/cli/state/) — user-facing CLI reference
