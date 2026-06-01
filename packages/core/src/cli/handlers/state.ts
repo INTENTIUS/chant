@@ -4,6 +4,7 @@ import { takeSnapshot } from "../../state/snapshot";
 import { readSnapshot, readEnvironmentSnapshots, listSnapshots, fetchState, StaleStateBranchError } from "../../state/git";
 import { computeBuildDigest, diffDigests } from "../../state/digest";
 import { diffLive, diffLiveArtifacts, type LiveDiffResult, type LiveArtifactDiffResult } from "../../state/live-diff";
+import { buildChangeSet, renderChangeSet, type ChangeSet } from "../../state/change-set";
 import { loadChantConfig } from "../../config";
 import { formatError, formatWarning, formatSuccess, formatBold } from "../format";
 import type { CommandContext } from "../registry";
@@ -403,6 +404,116 @@ function renderLiveArtifactDiff(lexiconName: string, environment: string, diff: 
 }
 
 /**
+ * chant state plan <environment> [lexicon]
+ *
+ * Promote the live diff to a typed, read-only change set: per-entity
+ * create / update / delete / adopt / noop. Strictly read-only — never
+ * mutates, never deploys. Deletes are never proposed without ownership
+ * data (added in #121); an undeclared live resource is `adopt`.
+ */
+export async function runStatePlan(ctx: CommandContext): Promise<number> {
+  const { args, plugins, serializers } = ctx;
+  const environment = args.extraPositional;
+  const lexiconFilter = args.extraPositional2;
+
+  if (!environment) {
+    console.error(formatError({ message: "Environment is required: chant state plan <environment> [lexicon]" }));
+    return 1;
+  }
+
+  const targetSerializers = lexiconFilter
+    ? plugins.filter((p) => p.name === lexiconFilter).map((p) => p.serializer)
+    : serializers;
+
+  const projectPath = resolve(".");
+  const buildResult = await build(projectPath, targetSerializers);
+  if (buildResult.errors.length > 0) {
+    console.error(formatError({ message: "Build failed — fix errors before planning" }));
+    return 1;
+  }
+
+  await fetchState();
+
+  const lexicons = lexiconFilter ? [lexiconFilter] : Array.from(buildResult.manifest.lexicons);
+
+  const merged: ChangeSet = { env: environment, entries: [] };
+  let checked = 0;
+
+  for (const lexiconName of lexicons) {
+    const plugin = plugins.find((p) => p.name === lexiconName);
+    if (!plugin) continue;
+    if (!plugin.describeResources) {
+      // Plan is entity-keyed; artifact-only lexicons have no declared axis.
+      if (!args.json) {
+        console.error(formatWarning({
+          message: `${lexiconName}: lexicon does not implement describeResources — skipping (no declared axis to plan against)`,
+        }));
+      }
+      continue;
+    }
+
+    const declared = new Set<string>();
+    const entities = new Map<string, { entityType: string; props: Record<string, unknown> }>();
+    for (const [name, entity] of buildResult.entities) {
+      if (entity.lexicon === lexiconName) {
+        declared.add(name);
+        entities.set(name, {
+          entityType: entity.entityType,
+          props: ("props" in entity && entity.props != null ? entity.props : {}) as Record<string, unknown>,
+        });
+      }
+    }
+
+    const rawOutput = buildResult.outputs.get(lexiconName);
+    const buildOutput =
+      rawOutput === undefined
+        ? ""
+        : typeof rawOutput === "string"
+          ? rawOutput
+          : (rawOutput as SerializerResult).primary;
+
+    let observedNow: Record<string, ResourceMetadata>;
+    try {
+      observedNow = await plugin.describeResources({
+        environment,
+        buildOutput,
+        entityNames: Array.from(declared),
+        entities,
+      });
+    } catch (err) {
+      console.error(formatError({
+        message: `${lexiconName}: describeResources failed — ${err instanceof Error ? err.message : String(err)}`,
+      }));
+      continue;
+    }
+
+    const content = await readSnapshot(environment, lexiconName);
+    const observedThen = content ? (JSON.parse(content) as StateSnapshot).resources : undefined;
+
+    const cs = buildChangeSet(environment, { declared, observedNow, observedThen });
+    merged.entries.push(...cs.entries);
+    checked++;
+  }
+
+  if (checked === 0) {
+    console.error(formatWarning({
+      message: "No lexicons implement describeResources — nothing to plan",
+    }));
+    return 1;
+  }
+
+  merged.entries.sort((a, b) => a.name.localeCompare(b.name));
+
+  if (args.json) {
+    console.log(JSON.stringify(merged, null, 2));
+  } else {
+    console.log(renderChangeSet(merged));
+  }
+
+  return 0;
+}
+
+/**
  * chant state log [environment]
  */
 export async function runStateLog(ctx: CommandContext): Promise<number> {
@@ -430,7 +541,7 @@ export async function runStateLog(ctx: CommandContext): Promise<number> {
 export async function runStateUnknown(ctx: CommandContext): Promise<number> {
   console.error(formatError({
     message: `Unknown state subcommand: ${ctx.args.extraPositional ?? ctx.args.path}`,
-    hint: "Available: chant state snapshot, chant state show, chant state diff, chant state log",
+    hint: "Available: chant state snapshot, chant state show, chant state diff, chant state plan, chant state log",
   }));
   return 1;
 }

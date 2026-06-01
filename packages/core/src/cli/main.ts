@@ -13,7 +13,7 @@ import { runServeLsp, runServeMcp, runServeUnknown } from "./handlers/serve";
 import { runInit, runInitLexicon } from "./handlers/init";
 import { runList, runImport, runUpdate, runDoctor } from "./handlers/misc";
 import { runMigrate } from "./handlers/migrate";
-import { runStateSnapshot, runStateShow, runStateDiff, runStateLog, runStateUnknown } from "./handlers/state";
+import { runStateSnapshot, runStateShow, runStateDiff, runStatePlan, runStateLog, runStateUnknown } from "./handlers/state";
 import { runGraph } from "./handlers/graph";
 import { runOp, runOpList, runOpStatus, runOpSignal, runOpCancel, runOpLog } from "./handlers/run";
 
@@ -160,6 +160,8 @@ State:
   state show <env>      Show latest state snapshot
   state diff <env>      Compare current build against last snapshot
                         --live: query cloud now and detect drift
+  state plan <env>      Typed change set (create/update/delete/adopt) vs live
+                        --json: emit the ChangeSet as JSON
   state log [env]       History of state snapshots
 
 Lexicon development:
@@ -276,6 +278,7 @@ const registry: CommandDef[] = [
   { name: "state snapshot", requiresPlugins: true, handler: runStateSnapshot },
   { name: "state show", handler: runStateShow },
   { name: "state diff", requiresPlugins: true, handler: runStateDiff },
+  { name: "state plan", requiresPlugins: true, handler: runStatePlan },
   { name: "state log", handler: runStateLog },
 
   // Serve subcommands
