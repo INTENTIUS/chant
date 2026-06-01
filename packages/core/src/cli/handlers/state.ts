@@ -9,7 +9,7 @@ import { formatError, formatWarning, formatSuccess, formatBold } from "../format
 import type { CommandContext } from "../registry";
 import type { StateSnapshot } from "../../state/types";
 import type { SerializerResult } from "../../serializer";
-import type { LexiconPlugin, ResourceMetadata, ArtifactMetadata } from "../../lexicon";
+import type { ObservationLexicon, ResourceMetadata, ArtifactMetadata } from "../../lexicon";
 import type { BuildResult } from "../../build";
 
 /**
@@ -213,7 +213,7 @@ async function runStateDiffDigest(args: DigestDiffArgs): Promise<number> {
 interface LiveDiffArgs {
   environment: string;
   lexicons: string[];
-  plugins: LexiconPlugin[];
+  plugins: ObservationLexicon[];
   buildResult: BuildResult;
 }
 

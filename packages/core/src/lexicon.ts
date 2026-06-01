@@ -2,7 +2,7 @@ import type { Serializer } from "./serializer";
 import type { LintRule } from "./lint/rule";
 import type { RuleSpec } from "./lint/declarative";
 import type { PostSynthCheck } from "./lint/post-synth";
-import type { TemplateParser } from "./import/parser";
+import type { TemplateParser, TemplateIR } from "./import/parser";
 import type { TypeScriptGenerator } from "./import/generator";
 import type { ArtifactIntegrity } from "./lexicon-integrity";
 import type { CompletionContext, CompletionItem, HoverContext, HoverInfo, CodeActionContext, CodeAction } from "./lsp/types";
@@ -288,7 +288,66 @@ export interface LexiconPlugin {
     environment: string;
     entities: Map<string, { entityType: string; props: Record<string, unknown> }>;
   }): Promise<Record<string, ArtifactMetadata>>;
+
+  // Live export (cloud → code)
+  /**
+   * Export full-fidelity import IR from a live API — the cloud→code primitive
+   * that lets chant regenerate TypeScript from running cloud/cluster state.
+   *
+   * Deliberately separate from {@link describeResources}: that returns scrubbed
+   * *output* metadata for diffing, this returns full *input* config — enough to
+   * regenerate a resource, and therefore possibly containing secrets. The
+   * scrubbing boundary stays single-purpose; never overload one method for both.
+   *
+   * The return type {@link ExportedTemplate} is branded distinct from the
+   * observation types so a full-fidelity export can never flow into the
+   * observation/`state` code paths by accident.
+   *
+   * `owned` is accepted now but inert until ownership marking exists (#119/#120).
+   */
+  exportResources?(options: {
+    environment: string;
+    selector?: ResourceSelector;
+    owned?: boolean;
+  }): Promise<ExportedTemplate>;
 }
+
+/**
+ * The observation view of a lexicon — every capability except live export.
+ *
+ * State/observation code (snapshots, `state diff --live`) consumes lexicons
+ * through this type so that `exportResources` is unreachable from those paths:
+ * a full-fidelity {@link ExportedTemplate} (which may carry secrets) must never
+ * be read where scrubbed {@link ResourceMetadata} is expected. A full
+ * {@link LexiconPlugin} is assignable to this type; accessing `exportResources`
+ * on it is a compile error.
+ */
+export type ObservationLexicon = Omit<LexiconPlugin, "exportResources">;
+
+/**
+ * Narrows which live resources {@link LexiconPlugin.exportResources} and the
+ * `owned` filter operate on. Both fields are optional; omit to export all.
+ */
+export interface ResourceSelector {
+  /** Restrict to a single chant resource type (e.g. "AWS::S3::Bucket"). */
+  readonly type?: string;
+  /** Restrict to a single resource name. */
+  readonly name?: string;
+}
+
+/**
+ * Full-fidelity import IR read from a live API, branded distinct from the
+ * scrubbed observation metadata. It IS a {@link TemplateIR} — it feeds the
+ * existing `templateGenerator()` unchanged — but the phantom brand keeps it
+ * from being passed where observation metadata is expected, and keeps
+ * observation metadata from being passed where an export is expected.
+ *
+ * The brand is type-only; nothing is added at runtime.
+ */
+export type ExportedTemplate = TemplateIR & {
+  /** Phantom marker — never present at runtime. */
+  readonly __fidelity?: "full-config";
+};
 
 /**
  * Metadata about a deployed resource, returned by describeResources.
