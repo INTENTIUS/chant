@@ -1,20 +1,20 @@
 ---
-title: "chant state"
+title: "chant lifecycle"
 description: Capture and compare deployed infrastructure state
 ---
 
 ## Synopsis
 
 ```
-chant state snapshot <env> [lexicon]
-chant state show <env>
-chant state diff <env> [--live]
-chant state log [env]
+chant lifecycle snapshot <env> [lexicon]
+chant lifecycle show <env>
+chant lifecycle diff <env> [--live]
+chant lifecycle log [env]
 ```
 
 ## Description
 
-`chant state` captures point-in-time snapshots of deployed infrastructure by querying the cloud provider API and saving the result to a git orphan branch. Snapshots enable drift detection — comparing what's currently built against what was last deployed, and (with `--live`) against what's actually in the cloud right now.
+`chant lifecycle` captures point-in-time snapshots of deployed infrastructure by querying the cloud provider API and saving the result to a git orphan branch. Snapshots enable drift detection — comparing what's currently built against what was last deployed, and (with `--live`) against what's actually in the cloud right now.
 
 The environment name (e.g. `dev`, `staging`, `prod`) must be declared in `chant.config.ts` under `environments`.
 
@@ -22,31 +22,31 @@ For the conceptual model behind these commands — observational vs. authoritati
 
 ## Subcommands
 
-### `state snapshot <env>`
+### `lifecycle snapshot <env>`
 
 Query the provider API for the current deployed state, then save a snapshot to the `chant-state/<env>` orphan branch.
 
 ```bash
-chant state snapshot dev
-chant state snapshot prod aws   # snapshot only the aws lexicon
+chant lifecycle snapshot dev
+chant lifecycle snapshot prod aws   # snapshot only the aws lexicon
 ```
 
-### `state show <env>`
+### `lifecycle show <env>`
 
 Print the latest saved snapshot for an environment.
 
 ```bash
-chant state show dev
+chant lifecycle show dev
 ```
 
-### `state diff <env>`
+### `lifecycle diff <env>`
 
 Two modes, depending on whether `--live` is set.
 
 **Default (digest mode).** Build the current project, fingerprint the resource declarations, and compare against the digest stored in the last snapshot. Fast, offline, and useful as a fast-feedback check inside CI — but only catches changes you've made in source. Ignores the cloud entirely.
 
 ```bash
-chant state diff dev
+chant lifecycle diff dev
 ```
 
 Reports added, removed, changed, and unchanged resources at the declaration level.
@@ -54,7 +54,7 @@ Reports added, removed, changed, and unchanged resources at the declaration leve
 **`--live` (drift mode).** Query the cloud provider API right now via each lexicon's `describeResources()` plugin method, then compare the live result against both the previous snapshot and the current build. This is the path that actually catches external mutations (someone scaled a node pool by hand, deleted a bucket, etc.).
 
 ```bash
-chant state diff prod --live
+chant lifecycle diff prod --live
 ```
 
 Output is grouped into six categories per lexicon:
@@ -70,13 +70,13 @@ Output is grouped into six categories per lexicon:
 
 Drifted entries include attribute-level deltas (`status`, `physicalId`, `lastUpdated`, and each `attributes.*` key).
 
-### `state plan <env>`
+### `lifecycle plan <env>`
 
-Promote the live diff to a typed, **read-only** change set. Where `state diff --live` reports six observation categories, `state plan` classifies each resource into one action you can act on:
+Promote the live diff to a typed, **read-only** change set. Where `lifecycle diff --live` reports six observation categories, `lifecycle plan` classifies each resource into one action you can act on:
 
 ```bash
-chant state plan prod
-chant state plan prod --json   # emit the ChangeSet as JSON
+chant lifecycle plan prod
+chant lifecycle plan prod --json   # emit the ChangeSet as JSON
 ```
 
 | Action | Meaning |
@@ -91,11 +91,11 @@ chant state plan prod --json   # emit the ChangeSet as JSON
 
 The classification reads ownership from the live marker, **never from the snapshot**, so the snapshot never becomes load-bearing: the delete decision is identical whether or not a snapshot exists. The moment a mutation trusted the snapshot, the snapshot would have become an authoritative state file under a different name — which chant deliberately avoids.
 
-`state plan` is strictly read-only: it builds, queries, and classifies. It never mutates the cloud and never deploys — `chant build` stays pure.
+`lifecycle plan` is strictly read-only: it builds, queries, and classifies. It never mutates the cloud and never deploys — `chant build` stays pure.
 
 ### Resources vs artifacts
 
-A single lexicon may report both **resources** (entity-keyed, via `describeResources()`) and **artifacts** (context-keyed, via `listArtifacts()`); `state diff --live` shows them in separate sections. Artifacts use a four-category two-way diff (no "declared" axis):
+A single lexicon may report both **resources** (entity-keyed, via `describeResources()`) and **artifacts** (context-keyed, via `listArtifacts()`); `lifecycle diff --live` shows them in separate sections. Artifacts use a four-category two-way diff (no "declared" axis):
 
 | Category | Meaning |
 |---|---|
@@ -125,7 +125,7 @@ See the [Runtime observation coverage matrix](/chant/lexicons/overview/#runtime-
 
 Lexicons that implement neither method are warn-skipped — `--live` doesn't fail the whole command for them.
 
-The Temporal lexicon resolves its connection via the chant config: `state snapshot <env>` (or `--live` against `<env>`) looks up `temporal.profiles.<env>` in your `chant.config.ts` and falls back to `temporal.defaultProfile`. The same profile model is used by `chant run`. With #39's entity-prop pass-through, namespaces/schedules/search-attributes are mapped back to chant entity names when the declared `props.name` (etc.) match the server-side identifier.
+The Temporal lexicon resolves its connection via the chant config: `lifecycle snapshot <env>` (or `--live` against `<env>`) looks up `temporal.profiles.<env>` in your `chant.config.ts` and falls back to `temporal.defaultProfile`. The same profile model is used by `chant run`. With #39's entity-prop pass-through, namespaces/schedules/search-attributes are mapped back to chant entity names when the declared `props.name` (etc.) match the server-side identifier.
 
 The K8s lexicon shells out to `kubectl get <kind> <name> [-n <namespace>] -o json` per declared entity. The cluster context comes from the user's `kubeconfig` — there's no separate profile model. Twenty common resource types (Deployment, Service, ConfigMap, Secret, Namespace, Pod, PVC, ServiceAccount, Job, CronJob, Ingress, NetworkPolicy, RBAC roles + bindings, ReplicaSet, StatefulSet, DaemonSet) are covered out of the box; CRDs and uncommon types are warn-skipped.
 
@@ -135,22 +135,22 @@ The Azure lexicon shells out to `az resource show --resource-group <env> --name 
 
 ### Concurrent snapshots
 
-Snapshots are pushed to the orphan `chant/state` branch with `git push --force-with-lease`. If two operators (or a CI job + a human) take a snapshot for the same remote at the same time, the second push is **rejected** rather than silently overwriting the first. You'll see:
+Snapshots are pushed to the orphan `chant/lifecycle` branch with `git push --force-with-lease`. If two operators (or a CI job + a human) take a snapshot for the same remote at the same time, the second push is **rejected** rather than silently overwriting the first. You'll see:
 
 ```
-error: Another snapshot completed for chant/state after this run started (env: prod).
-hint:  Pull and retry: `git fetch origin chant/state:chant/state` && `chant state snapshot prod`.
+error: Another snapshot completed for chant/lifecycle after this run started (env: prod).
+hint:  Pull and retry: `git fetch origin chant/lifecycle:chant/lifecycle` && `chant lifecycle snapshot prod`.
 ```
 
 Pull the remote ref and re-run — the first snapshot is preserved, the second proceeds against the updated baseline.
 
-### `state log [env]`
+### `lifecycle log [env]`
 
 List the history of snapshots. Omit `env` to show all environments.
 
 ```bash
-chant state log         # all environments
-chant state log dev     # just dev
+chant lifecycle log         # all environments
+chant lifecycle log dev     # just dev
 ```
 
 ## Exit Codes
@@ -164,5 +164,5 @@ chant state log dev     # just dev
 
 - [`chant build`](/chant/cli/build/) — build current output for diffing
 - [Configuration](/chant/configuration/config-file/) — declare `environments` in `chant.config.ts`
-- [Watching State](/chant/guide/watching-state/) — wire `state snapshot` + `state diff --live` to a `TemporalSchedule` via the `WatchOp` composite
+- [Watching Lifecycle](/chant/guide/watching-lifecycle/) — wire `lifecycle snapshot` + `lifecycle diff --live` to a `TemporalSchedule` via the `WatchOp` composite
 - [Implementing Observation](/chant/lexicon-authoring/observation/) — for lexicon authors, how to plug into `--live` via `describeResources()` / `listArtifacts()`

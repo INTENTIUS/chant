@@ -1,13 +1,15 @@
 ---
-title: State Models
-description: The three axes that describe any state model, and where chant sits on each — truth in the live system, reconciliation chosen per environment, ownership answered by live markers.
+title: Lifecycle Models
+description: The three axes that describe any lifecycle model, and where chant sits on each — truth in the live system, reconciliation chosen per environment, ownership answered by live markers.
 ---
 
-Every infrastructure tool takes a position on state, usually implicitly. This page makes the axes explicit so the rest of the docs can point here instead of re-deriving the argument. For the cost side of the trade — what a state file actually buys and charges — see [State and Governance](/chant/concepts/governance/).
+Every infrastructure tool takes a position on the lifecycle — how infrastructure is created, changed, reconciled, and retired — usually implicitly, and usually welded to the compiler so you can't take one without the other. chant declines that bet: **pluggable lexicons in, pluggable lifecycles out, pure synthesis in the middle.** Bring your own lifecycle, and chant makes it durable.
+
+This page makes the axes explicit so the rest of the docs can point here instead of re-deriving the argument. For the cost side of the trade — what an authoritative state file actually buys and charges — see [State and Governance](/chant/concepts/governance/).
 
 ## Three axes
 
-Any state model is a point in a three-dimensional space.
+Any lifecycle model is a point in a three-dimensional space.
 
 ### 1. Where truth lives
 
@@ -51,7 +53,7 @@ observe  →  reconcile  →  authoritative
              PRs)          apply)
 ```
 
-- **observe** — `chant state diff --live` / `WatchOp`. Detect drift, change nothing.
+- **observe** — `chant lifecycle diff --live` / `WatchOp`. Detect drift, change nothing.
 - **reconcile** — `ReconcileOp`. Open PRs that pull live reality back into source.
 - **authoritative** — `ApplyOp`. Push declared source into the cloud, deleting owned orphans.
 
@@ -63,7 +65,7 @@ There is exactly one rule that prevents this model from quietly becoming the thi
 
 > The projection reads ownership from the live marker, never from the snapshot.
 
-The moment a *mutation* trusts the snapshot — uses it to decide what to create, update, or delete — the snapshot becomes load-bearing, and you have rebuilt an authoritative state file under a different name, with all its costs. chant's change set ([`chant state plan`](/chant/cli/state/)) reads ownership only from the live resource. The snapshot can be deleted between runs with no change in behavior. That is the test, and chant holds to it by construction.
+The moment a *mutation* trusts the snapshot — uses it to decide what to create, update, or delete — the snapshot becomes load-bearing, and you have rebuilt an authoritative state file under a different name, with all its costs. chant's change set ([`chant lifecycle plan`](/chant/cli/lifecycle/)) reads ownership only from the live resource. The snapshot can be deleted between runs with no change in behavior. That is the test, and chant holds to it by construction.
 
 ## See also
 

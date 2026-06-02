@@ -31,7 +31,7 @@ These three properties — durable waits, compensation, exactly-once resume — 
 
 That is also exactly why it is optional. The primitives that don't need durability don't pay for it:
 
-- `chant build`, `chant lint`, `chant state plan` are pure and executor-free.
+- `chant build`, `chant lint`, `chant lifecycle plan` are pure and executor-free.
 - One-shot Ops run on the **local executor** in-process — no cluster, no dependency.
 - Only gated or destructive Ops — the ones where a multi-hour approval wait or a crash mid-apply is unacceptable — are Temporal-bound.
 

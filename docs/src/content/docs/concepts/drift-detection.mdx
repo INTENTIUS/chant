@@ -5,11 +5,11 @@ description: Why chant's snapshots are observational, what the diff categories m
 
 import { Aside } from '@astrojs/starlight/components';
 
-Drift is the gap between what you declared in source and what's actually deployed. Most IaC tools track this through an authoritative state file — chant doesn't. This page explains the model, the diff vocabulary, and when (and when not) to invest in continuous drift detection. For where this sits in the broader model — the dial from observe to reconcile to authoritative — see [State Models](/chant/concepts/state-models/).
+Drift is the gap between what you declared in source and what's actually deployed. Most IaC tools track this through an authoritative state file — chant doesn't. This page explains the model, the diff vocabulary, and when (and when not) to invest in continuous drift detection. For where this sits in the broader model — the dial from observe to reconcile to authoritative — see [Lifecycle Models](/chant/concepts/lifecycle-models/).
 
 ## The observational snapshot model
 
-`chant state snapshot <env>` writes a record of what was observed in the cloud at a point in time. It's stored on a `chant/state` orphan branch in your repo. There's no central state server, no lock file, no encrypted backend.
+`chant lifecycle snapshot <env>` writes a record of what was observed in the cloud at a point in time. It's stored on a `chant/lifecycle` orphan branch in your repo. There's no central state server, no lock file, no encrypted backend.
 
 This is the opposite of how Terraform, Pulumi, and CDK/CloudFormation think about state. Those tools treat state as **authoritative** — the state file *is* the truth, and `apply` reconciles the cloud to match. The state file must be locked during writes, secured against tampering, and protected from corruption because deployments depend on it.
 
@@ -38,7 +38,7 @@ For the implementer-side walkthrough, see [Implementing Observation](/chant/lexi
 
 ## The diff categories
 
-`chant state diff <env> --live` returns ten categories — six for resources, four for artifacts.
+`chant lifecycle diff <env> --live` returns ten categories — six for resources, four for artifacts.
 
 ### Resources (three-way diff)
 
@@ -57,10 +57,10 @@ Drifted entries include attribute-level deltas so you can see *what* changed, no
 
 #### Resolving an `orphan`
 
-An orphan is a resource in the cloud that source doesn't know about. Detection is the first position on the [dial](/chant/concepts/state-models/#the-dial); resolving it is the next. There are two moves:
+An orphan is a resource in the cloud that source doesn't know about. Detection is the first position on the [dial](/chant/concepts/lifecycle-models/#the-dial); resolving it is the next. There are two moves:
 
-- **Adopt it into source.** Regenerate the resource as chant TypeScript with [live import](/chant/guide/live-import/): `chant import --from <env> --name <orphan>`. The orphan stops being a surprise and starts being declared — the [`ReconcileOp`](/chant/guide/reconciling-state/) workflow automates this as a PR.
-- **Delete it.** Only ever for a *chant-owned* orphan — one carrying the [ownership marker](/chant/configuration/config-file/#ownership). A foreign orphan (no marker) is never auto-deleted; it escalates to adopt-or-review. `chant state plan` classifies which is which, and `ApplyOp` deletes only the owned ones.
+- **Adopt it into source.** Regenerate the resource as chant TypeScript with [live import](/chant/guide/live-import/): `chant import --from <env> --name <orphan>`. The orphan stops being a surprise and starts being declared — the [`ReconcileOp`](/chant/guide/reconciling-lifecycle/) workflow automates this as a PR.
+- **Delete it.** Only ever for a *chant-owned* orphan — one carrying the [ownership marker](/chant/configuration/config-file/#ownership). A foreign orphan (no marker) is never auto-deleted; it escalates to adopt-or-review. `chant lifecycle plan` classifies which is which, and `ApplyOp` deletes only the owned ones.
 
 ### Artifacts (two-way diff)
 
@@ -73,7 +73,7 @@ There's no "declared" axis, so the engine just compares now-vs-then:
 | **artifacts changed** | ✅ | ✅ | Present in both, metadata changed |
 | **artifacts unchanged** | ✅ | ✅ | Present in both, metadata identical |
 
-Same lexicon may emit both — for instance a future K8s lexicon could report Deployments as resources *and* in-cluster Pods (created by the Deployment, not by chant) as artifacts. `state diff --live` shows them in separate sections.
+Same lexicon may emit both — for instance a future K8s lexicon could report Deployments as resources *and* in-cluster Pods (created by the Deployment, not by chant) as artifacts. `lifecycle diff --live` shows them in separate sections.
 
 ## When drift detection earns its keep
 
@@ -99,14 +99,14 @@ chant's observational model is a deliberate choice, not a missing feature. The c
 
 - **No automatic remediation.** Drift tells you something changed; it doesn't snap the cloud back. That's an agent or a human decision because the right answer is domain-specific.
 - **No automatic plan/apply.** Without authoritative state, chant can't compute a precise change set the way Terraform does. Diff output is informational; the apply step is your existing tooling.
-- **No locking.** Two operators snapshotting the same env at the same time race on the orphan branch. The push uses `--force-with-lease` so the second writer fails fast rather than silently overwriting (see [Concurrent snapshots](/chant/cli/state/#concurrent-snapshots)).
+- **No locking.** Two operators snapshotting the same env at the same time race on the orphan branch. The push uses `--force-with-lease` so the second writer fails fast rather than silently overwriting (see [Concurrent snapshots](/chant/cli/lifecycle/#concurrent-snapshots)).
 - **Coverage is per-lexicon.** A lexicon without `describeResources()` / `listArtifacts()` is warn-skipped. The [Runtime observation coverage matrix](/chant/lexicons/overview/#runtime-observation-coverage) lists where coverage exists today.
 
 Read these trade-offs in context in [How chant compares](/chant/concepts/comparison/#trade-offs).
 
 ## See also
 
-- [`chant state`](/chant/cli/state/) — CLI reference for snapshot, show, diff, log
-- [Watching State](/chant/guide/watching-state/) — turn `state diff --live` into a recurring Temporal workflow
+- [`chant lifecycle`](/chant/cli/lifecycle/) — CLI reference for snapshot, show, diff, log
+- [Watching Lifecycle](/chant/guide/watching-lifecycle/) — turn `lifecycle diff --live` into a recurring Temporal workflow
 - [Implementing Observation](/chant/lexicon-authoring/observation/) — for lexicon authors plugging into the pipeline
 - [State: authoritative vs. observational](/chant/concepts/comparison/#state-authoritative-vs-observational) — the cross-tool comparison

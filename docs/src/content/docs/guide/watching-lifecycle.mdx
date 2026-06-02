@@ -1,13 +1,13 @@
 ---
-title: Watching State
-description: Continuous drift detection by scheduling state snapshots and live diffs in Temporal
+title: Watching Lifecycle
+description: Continuous drift detection by scheduling lifecycle snapshots and live diffs in Temporal
 ---
 
 import { Aside } from '@astrojs/starlight/components';
 
-`WatchOp` turns `chant state snapshot` and `chant state diff --live` into a recurring Temporal workflow. The result is a deployment dashboard that catches drift between change windows — not just at the next deploy.
+`WatchOp` turns `chant lifecycle snapshot` and `chant lifecycle diff --live` into a recurring Temporal workflow. The result is a deployment dashboard that catches drift between change windows — not just at the next deploy.
 
-This page is the tutorial home for that pattern. For the underlying CLI commands, see [`chant state`](/chant/cli/state/); for the Op execution model, see [Ops](/chant/guide/ops/).
+This page is the tutorial home for that pattern. For the underlying CLI commands, see [`chant lifecycle`](/chant/cli/lifecycle/); for the Op execution model, see [Ops](/chant/guide/ops/).
 
 ## Three layers, one composite
 
@@ -15,8 +15,8 @@ Drift detection in chant is built from three pieces that compose:
 
 | Layer | Command | What it does |
 |---|---|---|
-| **Snapshot** | `chant state snapshot <env>` | Query each lexicon's `describeResources()` / `listArtifacts()`, write the result to the `chant/state` orphan branch |
-| **Live diff** | `chant state diff <env> --live` | Query the cloud right now, compare against the current build *and* the last snapshot, group results into six categories (missing / orphan / disappeared / newly observed / drifted / unchanged) |
+| **Snapshot** | `chant lifecycle snapshot <env>` | Query each lexicon's `describeResources()` / `listArtifacts()`, write the result to the `chant/lifecycle` orphan branch |
+| **Live diff** | `chant lifecycle diff <env> --live` | Query the cloud right now, compare against the current build *and* the last snapshot, group results into six categories (missing / orphan / disappeared / newly observed / drifted / unchanged) |
 | **Watching** | `WatchOp({ env, schedule })` | Run the two commands above on a Temporal cron, surface drift as a per-run search attribute |
 
 Snapshots without diffs are forensic record. Diffs without scheduling are ad-hoc. The composite is what makes drift a continuous signal rather than a manual chore.
@@ -52,7 +52,7 @@ chant run prod-watch         # one-shot run, useful for smoke-testing
 
 The two phases compile down to a workflow that, on each tick:
 
-1. **`Snapshot`** — calls the `stateSnapshot` activity, which shells out to `chant state snapshot prod`. The result is committed to the `chant/state` orphan branch. (Concurrent runs are protected by `--force-with-lease` — see [Concurrent snapshots](/chant/cli/state/#concurrent-snapshots).)
+1. **`Snapshot`** — calls the `stateSnapshot` activity, which shells out to `chant lifecycle snapshot prod`. The result is committed to the `chant/lifecycle` orphan branch. (Concurrent runs are protected by `--force-with-lease` — see [Concurrent snapshots](/chant/cli/lifecycle/#concurrent-snapshots).)
 2. **`Diff`** — calls `stateDiff` with `live: true`. The activity returns `{ output, exitCode, drifted }`. The `drifted` boolean is captured as a workflow search attribute via `outcomeAttribute: { name: "Drift", from: "drifted" }`.
 
 Set `live: false` on the composite to use digest-only diff (faster, no cloud queries) for environments without `describeResources()` coverage. With `live: true` (the default) you get external-mutation detection. (See the [Runtime observation coverage matrix](/chant/lexicons/overview/#runtime-observation-coverage) for which lexicons report what.)
@@ -89,7 +89,7 @@ The simplest path is the Helm lexicon's `listArtifacts()`, which lists Helm rele
 
 ```bash
 helm install demo-drift bitnami/nginx --set image.tag=hotfix
-chant state diff prod --live
+chant lifecycle diff prod --live
 ```
 
 Output (relevant section):
@@ -164,6 +164,6 @@ Drift remediation is intentionally not a chant primitive — what to *do* about 
 ## See also
 
 - [Drift Detection](/chant/concepts/drift-detection/) — the conceptual model behind snapshots and the diff categories
-- [`chant state`](/chant/cli/state/) — full reference for snapshot/diff CLI
+- [`chant lifecycle`](/chant/cli/lifecycle/) — full reference for snapshot/diff CLI
 - [Ops](/chant/guide/ops/) — Op execution model, search attributes, gates, compensation
 - [Choosing Your Deployment Model](/chant/concepts/deployment-paths/) — when to opt into Ops at all
