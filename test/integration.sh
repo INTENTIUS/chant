@@ -449,13 +449,6 @@ mkdir -p "$TESTDIR/src" && cp /app/test/fixtures/azure.ts "$TESTDIR/src/"
 test_init "azure" "$TESTDIR" 'jq -e ".resources"'
 rm -rf "$TESTDIR"
 
-# Flyway
-test_lexicon "flyway" "/app/test/fixtures/flyway.ts" 'grep -q "\[flyway\]"' 'grep -q "\[flyway\]"'
-TESTDIR="/app/_smoke_test_flyway"
-mkdir -p "$TESTDIR/src" && cp /app/test/fixtures/flyway.ts "$TESTDIR/src/"
-test_init "flyway" "$TESTDIR"
-rm -rf "$TESTDIR"
-
 # GCP
 test_lexicon "gcp" "/app/test/fixtures/gcp.ts" 'grep -q "apiVersion:"' 'grep -q "kind:"'
 TESTDIR="/app/_smoke_test_gcp"
@@ -468,13 +461,6 @@ test_lexicon "docker" "/app/test/fixtures/docker.ts" 'grep -q "services:"' 'grep
 TESTDIR="/app/_smoke_test_docker"
 mkdir -p "$TESTDIR/src" && cp /app/test/fixtures/docker.ts "$TESTDIR/src/"
 test_init "docker" "$TESTDIR"
-rm -rf "$TESTDIR"
-
-# Slurm
-test_lexicon "slurm" "/app/test/fixtures/slurm.ts" 'grep -q "ClusterName="' 'grep -q "ClusterName="'
-TESTDIR="/app/_smoke_test_slurm"
-mkdir -p "$TESTDIR/src" && cp /app/test/fixtures/slurm.ts "$TESTDIR/src/"
-test_init "slurm" "$TESTDIR"
 rm -rf "$TESTDIR"
 
 # ── Multi-stack smoke test ────────────────────────────────────────────

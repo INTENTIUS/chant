@@ -16,9 +16,7 @@ A **lexicon** is a collection of types and semantic lint rules for an operationa
 | Helm | `@intentius/chant-lexicon-helm` | 10+ resources | [Reference](/chant/lexicons/helm/) |
 | GitHub Actions | `@intentius/chant-lexicon-github` | 2 resources, 13 composites | [Reference](/chant/lexicons/github/) |
 | GitLab CI/CD | `@intentius/chant-lexicon-gitlab` | 3 resources, 16 properties | [Reference](/chant/lexicons/gitlab/) — also ships [GitHub Actions migration](/chant/lexicons/gitlab/migration/) |
-| Flyway | `@intentius/chant-lexicon-flyway` | 5 resources, 20 properties | [Reference](/chant/lexicons/flyway/) |
 | Docker | `@intentius/chant-lexicon-docker` | 6 resources (Compose + Dockerfile) | [Reference](/chant/lexicons/docker/) |
-| Slurm | `@intentius/chant-lexicon-slurm` | 10 resources (conf + REST) | [Reference](/chant/lexicons/slurm/) |
 | Temporal | `@intentius/chant-lexicon-temporal` | 4 resources + Op workflow engine | [Reference](/chant/lexicons/temporal/) |
 
 ## Runtime observation coverage
@@ -34,8 +32,6 @@ Lexicons opt into the `chant lifecycle diff <env> --live` pipeline by implementi
 | Temporal | ✅ |  | — | Temporal client — namespaces, search attributes, schedules |
 | Helm |  | ✅ | — | `helm list -A -o json` — releases as artifacts |
 | Docker |  | ✅ | — | `docker ps`, `docker image ls`, `docker network ls` (NDJSON) |
-| Flyway |  | ✅ | — | `flyway info -outputType=json` per declared `Flyway::Environment` |
-| Slurm |  | ✅ | — | `sinfo` partition state |
 | GitHub Actions |  |  | — | N/A — workflow definitions are git-tracked; drift is `git diff` ([rationale](https://github.com/INTENTIUS/chant/blob/main/lexicons/github/README.md#runtime-observation-na)) |
 | GitLab CI/CD |  |  | — | N/A — same rationale ([README](https://github.com/INTENTIUS/chant/blob/main/lexicons/gitlab/README.md#runtime-observation-na)) |
 

@@ -30,7 +30,7 @@ Drift can mean two structurally different things, and chant tracks them through 
 
 **Resources** are 1:1 cloud equivalents of declared chant entities — an AWS CloudFormation resource, a K8s Deployment, an ARM resource group, a Temporal namespace. Each declaration has a name, the cloud version has a name, and they're correlated. Lexicons that fit this model implement `describeResources()` (entity-keyed: "look up the live state of *these* declared things").
 
-**Artifacts** are runtime concepts created by tooling outside chant's entity model. A Helm release isn't declared in chant — chant declares Chart.yaml + templates, and `helm install` later creates the release. Same story for Docker containers, Flyway migration history, or partition state in a Slurm cluster. Lexicons that fit this model implement `listArtifacts()` (context-keyed: "tell me what artifacts exist *in this environment* right now").
+**Artifacts** are runtime concepts created by tooling outside chant's entity model. A Helm release isn't declared in chant — chant declares Chart.yaml + templates, and `helm install` later creates the release. Same story for Docker containers. Lexicons that fit this model implement `listArtifacts()` (context-keyed: "tell me what artifacts exist *in this environment* right now").
 
 The diff engine treats them differently because they *are* different. Resources have a "declared" axis to compare against; artifacts don't.
 

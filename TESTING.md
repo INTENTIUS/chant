@@ -414,7 +414,6 @@ Builds all root examples in Docker and extracts artifacts to `test/example-build
 
 | Example | Artifacts |
 |---------|-----------|
-| `flyway-postgresql-gitlab-aws-rds` | `templates/template.json`, `flyway.toml`, `.gitlab-ci.yml` |
 | `gitlab-aws-alb-infra` | `templates/template.json`, `.gitlab-ci.yml` |
 | `gitlab-aws-alb-api` | `templates/template.json`, `.gitlab-ci.yml` |
 | `gitlab-aws-alb-ui` | `templates/template.json`, `.gitlab-ci.yml` |

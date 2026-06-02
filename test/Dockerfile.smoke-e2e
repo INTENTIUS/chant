@@ -5,9 +5,9 @@
 # Flow: Stage 1 (node) packs tarballs → Stage 2 (node + deploy tools) runs e2e-smoke.sh at container start
 # Requires: cloud credentials mounted via Docker -v / -e flags
 #
-# NOTE: This image is always built as linux/amd64 because Flyway CLI does not
-# provide a linux-aarch64 build.  On Apple Silicon the runner stage uses
-# Rosetta emulation transparently.
+# NOTE: This image is always built as linux/amd64 because it installs x86_64-only
+# CLI binaries (AWS CLI and gcloud are downloaded via hardcoded x86_64 URLs below).
+# On Apple Silicon the runner stage uses Rosetta emulation transparently.
 
 # ── Stage 1: builder ─────────────────────────────────────────────────────────
 FROM --platform=linux/amd64 node:24-slim AS builder
@@ -22,7 +22,7 @@ COPY . .
 RUN npm install
 
 # Generate dist/ artifacts for each lexicon
-RUN for lex in aws azure gcp gitlab k8s flyway; do \
+RUN for lex in aws azure gcp gitlab k8s; do \
       echo "=== prepack lexicons/$lex ===" && \
       npm run --prefix "lexicons/$lex" prepack; \
     done
@@ -31,7 +31,7 @@ RUN for lex in aws azure gcp gitlab k8s flyway; do \
 RUN CORE_VERSION=$(jq -r '.version' packages/core/package.json) && \
     cd /app/packages/core && \
     jq 'del(.scripts)' package.json > tmp.json && mv tmp.json package.json && \
-    for lex in aws azure gcp gitlab k8s flyway; do \
+    for lex in aws azure gcp gitlab k8s; do \
       cd /app/lexicons/$lex && \
       jq --arg v "$CORE_VERSION" \
         '(.dependencies // {}) |= with_entries(if .value == "workspace:*" then .value = $v else . end) | del(.scripts)' \
@@ -44,7 +44,6 @@ RUN mkdir -p /tarballs && \
     cd /app/lexicons/aws && rm -f *.tgz && npm pack && mv *.tgz /tarballs/lexicon-aws.tgz && \
     cd /app/lexicons/gitlab && rm -f *.tgz && npm pack && mv *.tgz /tarballs/lexicon-gitlab.tgz && \
     cd /app/lexicons/k8s && rm -f *.tgz && npm pack && mv *.tgz /tarballs/lexicon-k8s.tgz && \
-    cd /app/lexicons/flyway && rm -f *.tgz && npm pack && mv *.tgz /tarballs/lexicon-flyway.tgz && \
     cd /app/lexicons/gcp && rm -f *.tgz && npm pack && mv *.tgz /tarballs/lexicon-gcp.tgz && \
     cd /app/lexicons/azure && rm -f *.tgz && npm pack && mv *.tgz /tarballs/lexicon-azure.tgz
 
@@ -83,14 +82,6 @@ ENV USE_GKE_GCLOUD_AUTH_PLUGIN=True
 
 # Azure CLI
 RUN curl -fsSL https://aka.ms/InstallAzureCLIDeb | bash
-
-# Flyway CLI (standalone with embedded JRE — x64 only, no arm64 build available)
-RUN FLYWAY_VERSION=11.3.3 && \
-    curl -fsSL "https://download.red-gate.com/maven/release/com/redgate/flyway/flyway-commandline/${FLYWAY_VERSION}/flyway-commandline-${FLYWAY_VERSION}-linux-x64.tar.gz" \
-      -o /tmp/flyway.tar.gz && \
-    tar xzf /tmp/flyway.tar.gz -C /opt && \
-    ln -s /opt/flyway-${FLYWAY_VERSION}/flyway /usr/local/bin/flyway && \
-    rm /tmp/flyway.tar.gz
 
 # Copy tarballs from builder
 COPY --from=builder /tarballs /tarballs

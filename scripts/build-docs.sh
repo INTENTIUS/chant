@@ -46,16 +46,7 @@ cd docs && npm install && npm run build && cd ../../..
 mkdir -p "$SITE/lexicons/k8s"
 cp -r lexicons/k8s/docs/dist/* "$SITE/lexicons/k8s/"
 
-# 5. Generate + build Flyway lexicon docs
-echo "Building Flyway lexicon docs..."
-cd lexicons/flyway
-npm run prepack
-npx tsx src/codegen/docs-cli.ts
-cd docs && npm install && npm run build && cd ../../..
-mkdir -p "$SITE/lexicons/flyway"
-cp -r lexicons/flyway/docs/dist/* "$SITE/lexicons/flyway/"
-
-# 6. Generate + build Azure lexicon docs
+# 5. Generate + build Azure lexicon docs
 echo "Building Azure lexicon docs..."
 cd lexicons/azure
 npm run prepack
@@ -100,16 +91,7 @@ cd docs && npm install && npm run build && cd ../../..
 mkdir -p "$SITE/lexicons/docker"
 cp -r lexicons/docker/docs/dist/* "$SITE/lexicons/docker/"
 
-# 11. Generate + build Slurm lexicon docs
-echo "Building Slurm lexicon docs..."
-cd lexicons/slurm
-npm run prepack
-npx tsx src/codegen/docs-cli.ts
-cd docs && npm install && npm run build && cd ../../..
-mkdir -p "$SITE/lexicons/slurm"
-cp -r lexicons/slurm/docs/dist/* "$SITE/lexicons/slurm/"
-
-# 12. Generate + build Temporal lexicon docs
+# 11. Generate + build Temporal lexicon docs
 echo "Building Temporal lexicon docs..."
 cd lexicons/temporal
 npm run prepack

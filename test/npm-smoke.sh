@@ -69,7 +69,7 @@ verify_tarball_contains /tarballs/core.tgz "package/bin/chant" "core tarball con
 verify_tarball_contains /tarballs/core.tgz "package/src/cli/main.ts" "core tarball contains CLI entrypoint"
 verify_tarball_contains /tarballs/core.tgz "package/src/index.ts" "core tarball contains main export"
 
-for lex in aws azure gcp gitlab k8s flyway docker; do
+for lex in aws azure gcp gitlab k8s docker; do
   verify_tarball_contains "/tarballs/lexicon-$lex.tgz" "package/dist/manifest.json" "$lex tarball contains dist/manifest.json"
   verify_tarball_contains "/tarballs/lexicon-$lex.tgz" "package/dist/meta.json" "$lex tarball contains dist/meta.json"
   verify_tarball_contains "/tarballs/lexicon-$lex.tgz" "package/dist/types/index.d.ts" "$lex tarball contains dist/types/index.d.ts"
@@ -154,12 +154,6 @@ export const storage = new StorageAccount({
   kind: "StorageV2",
   sku: { name: "Standard_LRS" },
 });'
-
-# Flyway manual project
-test_manual_project "flyway" "/tarballs/lexicon-flyway.tgz" \
-  'import { FlywayProject, FlywayConfig } from "@intentius/chant-lexicon-flyway";
-export const project = new FlywayProject({ name: "smoke-test-db" });
-export const config = new FlywayConfig({ locations: ["classpath:db/migration"] });'
 
 # GCP manual project
 test_manual_project "gcp" "/tarballs/lexicon-gcp.tgz" \
@@ -280,11 +274,6 @@ export const storage = new StorageAccount({
   sku: { name: "Standard_LRS" },
 });'
 
-test_init_flow "flyway" "/tarballs/lexicon-flyway.tgz" \
-  'import { FlywayProject, FlywayConfig } from "@intentius/chant-lexicon-flyway";
-export const project = new FlywayProject({ name: "smoke-db" });
-export const config = new FlywayConfig({ locations: ["classpath:db/migration"] });'
-
 test_init_flow "gcp" "/tarballs/lexicon-gcp.tgz" \
   'import { StorageBucket } from "@intentius/chant-lexicon-gcp";
 export const bucket = new StorageBucket({ resourceID: "smoke-bucket", location: "US" });'
@@ -293,7 +282,7 @@ export const bucket = new StorageBucket({ resourceID: "smoke-bucket", location: 
 # ── Test group 3: Real examples (build from example src directories) ──────────
 
 test_example() {
-  local name="$1"       # e.g. "flyway-postgresql-k8s"
+  local name="$1"       # e.g. "k8s-eks-microservice"
   local label="npm-example-$name"
   shift                 # remaining args: pairs of "tarball lexicon" ...
 
@@ -365,12 +354,6 @@ if [ -d /examples ]; then
   test_example "gitlab-aws-alb-ui" \
     /tarballs/lexicon-aws.tgz aws \
     /tarballs/lexicon-gitlab.tgz gitlab
-
-  test_example "flyway-postgresql-gitlab-aws-rds" \
-    /tarballs/lexicon-aws.tgz aws \
-    /tarballs/lexicon-flyway.tgz flyway \
-    /tarballs/lexicon-gitlab.tgz gitlab \
-    /tarballs/lexicon-docker.tgz docker
 
   test_example "k8s-eks-microservice" \
     /tarballs/lexicon-aws.tgz aws \

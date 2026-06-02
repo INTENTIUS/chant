@@ -7,7 +7,6 @@ import { gcpSerializer } from "@intentius/chant-lexicon-gcp";
 import { azureSerializer } from "@intentius/chant-lexicon-azure";
 import { k8sSerializer } from "@intentius/chant-lexicon-k8s";
 import { gitlabSerializer } from "@intentius/chant-lexicon-gitlab";
-import { flywaySerializer } from "@intentius/chant-lexicon-flyway";
 import { helmSerializer } from "@intentius/chant-lexicon-helm";
 import type { PostSynthContext } from "@intentius/chant/lint/post-synth";
 import { k8sPlugin } from "@intentius/chant-lexicon-k8s/plugin";
@@ -47,15 +46,6 @@ describeExample("gitlab-aws-alb-ui", {
   lexicon: "gitlab-aws-alb",
   serializer: [awsSerializer, gitlabSerializer],
   outputKey: ["aws", "gitlab"],
-  examplesDir: import.meta.dir,
-});
-
-// ── Flyway + GitLab + AWS RDS ────────────────────────────────────────
-
-describeExample("flyway-postgresql-gitlab-aws-rds", {
-  lexicon: "flyway-gitlab-aws",
-  serializer: [awsSerializer, flywaySerializer, gitlabSerializer],
-  outputKey: ["aws", "flyway", "gitlab"],
   examplesDir: import.meta.dir,
 });
 

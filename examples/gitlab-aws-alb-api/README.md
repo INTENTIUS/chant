@@ -124,7 +124,6 @@ Delete this stack before deleting the infra stack.
 
 - [gitlab-aws-alb-infra](../gitlab-aws-alb-infra/) — Shared infrastructure (deploy first)
 - [gitlab-aws-alb-ui](../gitlab-aws-alb-ui/) — UI Fargate service (sibling)
-- [flyway-postgresql-gitlab-aws-rds](../flyway-postgresql-gitlab-aws-rds/) — AWS RDS + Flyway + GitLab
 
 ## Standalone Usage
 

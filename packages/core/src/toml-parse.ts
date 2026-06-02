@@ -10,8 +10,8 @@ import { unescapeString, stripInlineComment } from "./toml-utils";
 /**
  * Parse a TOML document string into a plain object.
  *
- * Uses a built-in parser that handles the TOML subset used by Flyway
- * configuration files.
+ * Uses a built-in parser that handles the common TOML subset used by tool
+ * configuration files (tables, dotted keys, inline tables, and arrays).
  */
 export function parseTOML(content: string): Record<string, unknown> {
   const result: Record<string, unknown> = {};
@@ -106,7 +106,7 @@ function findEquals(line: string): number {
 }
 
 /**
- * Parse a dotted key like `flyway.placeholders.name` into path segments.
+ * Parse a dotted key like `tool.placeholders.name` into path segments.
  */
 function parseDottedKey(raw: string): string[] {
   const parts: string[] = [];

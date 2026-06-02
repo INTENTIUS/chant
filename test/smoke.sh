@@ -37,7 +37,7 @@ run_workspace() {
 
 run_npm() {
   echo "Running codegen (prepack) for all lexicons..."
-  for lex in aws azure gcp gitlab k8s flyway docker; do
+  for lex in aws azure gcp gitlab k8s docker; do
     echo "  prepack lexicons/$lex"
     npm run --prefix "$PROJECT_DIR/lexicons/$lex" prepack
   done
@@ -49,7 +49,7 @@ run_npm() {
 
 build_e2e_image() {
   echo "Running codegen (prepack) for all lexicons..."
-  for lex in aws azure gcp gitlab k8s flyway docker; do
+  for lex in aws azure gcp gitlab k8s docker; do
     echo "  prepack lexicons/$lex"
     npm run --prefix "$PROJECT_DIR/lexicons/$lex" prepack
   done

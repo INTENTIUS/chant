@@ -16,13 +16,11 @@
     "@intentius/chant-lexicon-aws": "*",
     "@intentius/chant-lexicon-azure": "*",
     "@intentius/chant-lexicon-docker": "*",
-    "@intentius/chant-lexicon-flyway": "*",
     "@intentius/chant-lexicon-gcp": "*",
     "@intentius/chant-lexicon-github": "*",
     "@intentius/chant-lexicon-gitlab": "*",
     "@intentius/chant-lexicon-helm": "*",
     "@intentius/chant-lexicon-k8s": "*",
-    "@intentius/chant-lexicon-slurm": "*",
     "@intentius/chant-lexicon-temporal": "*"
   },
   "devDependencies": {

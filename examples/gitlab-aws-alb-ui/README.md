@@ -130,7 +130,6 @@ aws cloudformation wait stack-delete-complete --stack-name shared-alb
 
 - [gitlab-aws-alb-infra](../gitlab-aws-alb-infra/) — Shared infrastructure (deploy first)
 - [gitlab-aws-alb-api](../gitlab-aws-alb-api/) — API Fargate service (sibling)
-- [flyway-postgresql-gitlab-aws-rds](../flyway-postgresql-gitlab-aws-rds/) — AWS RDS + Flyway + GitLab
 
 ## Standalone Usage
 

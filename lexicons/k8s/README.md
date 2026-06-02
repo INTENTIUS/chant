@@ -17,7 +17,6 @@ npm install --save-dev @intentius/chant @intentius/chant-lexicon-k8s
 | [@intentius/chant](https://www.npmjs.com/package/@intentius/chant) | Core type system, CLI, build pipeline |
 | [@intentius/chant-lexicon-aws](https://www.npmjs.com/package/@intentius/chant-lexicon-aws) | AWS CloudFormation lexicon |
 | [@intentius/chant-lexicon-gitlab](https://www.npmjs.com/package/@intentius/chant-lexicon-gitlab) | GitLab CI lexicon |
-| [@intentius/chant-lexicon-flyway](https://www.npmjs.com/package/@intentius/chant-lexicon-flyway) | Flyway migration lexicon |
 
 ## License
 

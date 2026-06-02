@@ -1,6 +1,0 @@
-dist/
-node_modules/
-.chant/
-templates/
-flyway.toml
-.gitlab-ci.yml

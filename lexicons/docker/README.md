@@ -17,7 +17,6 @@ npm install --save-dev @intentius/chant @intentius/chant-lexicon-docker
 | [@intentius/chant](https://www.npmjs.com/package/@intentius/chant) | Core type system, CLI, build pipeline |
 | [@intentius/chant-lexicon-k8s](https://www.npmjs.com/package/@intentius/chant-lexicon-k8s) | Kubernetes lexicon |
 | [@intentius/chant-lexicon-aws](https://www.npmjs.com/package/@intentius/chant-lexicon-aws) | AWS CloudFormation lexicon |
-| [@intentius/chant-lexicon-flyway](https://www.npmjs.com/package/@intentius/chant-lexicon-flyway) | Flyway database migrations lexicon |
 
 ## License
 

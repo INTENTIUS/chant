@@ -34,7 +34,7 @@ export interface ExampleOpts {
 /**
  * Register a describe() block for a single example with lint + build tests.
  *
- * Modeled on Flyway's describeExample pattern but generalized for any lexicon.
+ * A describeExample harness generalized for any lexicon.
  */
 export function describeExample(
   name: string,
