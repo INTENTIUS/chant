@@ -5,7 +5,7 @@ import type { BuildResult } from "../../build";
 import type { ParsedArgs } from "../registry";
 
 const buildMock = vi.fn();
-const fetchStateMock = vi.fn();
+const fetchLifecycleMock = vi.fn();
 const readSnapshotMock = vi.fn();
 const readEnvironmentSnapshotsMock = vi.fn();
 const listSnapshotsMock = vi.fn();
@@ -13,20 +13,20 @@ const takeSnapshotMock = vi.fn();
 const loadChantConfigMock = vi.fn();
 
 vi.mock("../../build", () => ({ build: (...args: unknown[]) => buildMock(...args) }));
-vi.mock("../../state/git", () => ({
-  fetchState: () => fetchStateMock(),
+vi.mock("../../lifecycle/git", () => ({
+  fetchLifecycle: () => fetchLifecycleMock(),
   readSnapshot: (...args: unknown[]) => readSnapshotMock(...args),
   readEnvironmentSnapshots: (...args: unknown[]) => readEnvironmentSnapshotsMock(...args),
   listSnapshots: (...args: unknown[]) => listSnapshotsMock(...args),
 }));
-vi.mock("../../state/snapshot", () => ({
+vi.mock("../../lifecycle/snapshot", () => ({
   takeSnapshot: (...args: unknown[]) => takeSnapshotMock(...args),
 }));
 vi.mock("../../config", () => ({
   loadChantConfig: (...args: unknown[]) => loadChantConfigMock(...args),
 }));
 
-const { runStateDiff, runStateSnapshot, runStateShow, runStateLog, runStateUnknown } = await import("./state");
+const { runLifecycleDiff, runLifecycleSnapshot, runLifecycleShow, runLifecycleLog, runLifecycleUnknown } = await import("./lifecycle");
 
 function makeArgs(overrides: Partial<ParsedArgs>): ParsedArgs {
   return {
@@ -71,7 +71,7 @@ const meta = (overrides: Partial<ResourceMetadata> = {}): ResourceMetadata => ({
   ...overrides,
 });
 
-describe("runStateDiff --live", () => {
+describe("runLifecycleDiff --live", () => {
   let stdoutSpy: ReturnType<typeof vi.spyOn>;
   let stderrSpy: ReturnType<typeof vi.spyOn>;
   let stdoutBuf: string[];
@@ -83,13 +83,13 @@ describe("runStateDiff --live", () => {
     stdoutSpy = vi.spyOn(console, "log").mockImplementation((s: string) => { stdoutBuf.push(s); });
     stderrSpy = vi.spyOn(console, "error").mockImplementation((s: string) => { stderrBuf.push(s); });
     buildMock.mockReset();
-    fetchStateMock.mockReset();
+    fetchLifecycleMock.mockReset();
     readSnapshotMock.mockReset();
   });
 
   test("surfaces drift between previous snapshot and live state", async () => {
     buildMock.mockResolvedValue(makeBuildResult({ aws: ["bucket"] }));
-    fetchStateMock.mockResolvedValue(undefined);
+    fetchLifecycleMock.mockResolvedValue(undefined);
     readSnapshotMock.mockResolvedValue(JSON.stringify({
       lexicon: "aws",
       environment: "prod",
@@ -113,7 +113,7 @@ describe("runStateDiff --live", () => {
       serializers: plugins.map((p) => p.serializer),
     };
 
-    const exit = await runStateDiff(ctx);
+    const exit = await runLifecycleDiff(ctx);
 
     expect(exit).toBe(0);
     const output = stdoutBuf.join("\n");
@@ -126,7 +126,7 @@ describe("runStateDiff --live", () => {
 
   test("warns and skips lexicons without describeResources", async () => {
     buildMock.mockResolvedValue(makeBuildResult({ k8s: ["pod"] }));
-    fetchStateMock.mockResolvedValue(undefined);
+    fetchLifecycleMock.mockResolvedValue(undefined);
     readSnapshotMock.mockResolvedValue(null);
 
     const plugins: LexiconPlugin[] = [
@@ -139,7 +139,7 @@ describe("runStateDiff --live", () => {
       serializers: plugins.map((p) => p.serializer),
     };
 
-    const exit = await runStateDiff(ctx);
+    const exit = await runLifecycleDiff(ctx);
 
     expect(exit).toBe(1);
     const stderr = stderrBuf.join("\n");
@@ -149,7 +149,7 @@ describe("runStateDiff --live", () => {
 
   test("--live with a listArtifacts-only plugin diffs artifacts (no resources path)", async () => {
     buildMock.mockResolvedValue(makeBuildResult({ helm: [] }));
-    fetchStateMock.mockResolvedValue(undefined);
+    fetchLifecycleMock.mockResolvedValue(undefined);
     // Previous snapshot has no artifact entry for the new release → expect ARTIFACTS ADDED
     readSnapshotMock.mockResolvedValue(JSON.stringify({
       lexicon: "helm",
@@ -175,7 +175,7 @@ describe("runStateDiff --live", () => {
       serializers: plugins.map((p) => p.serializer),
     };
 
-    const exit = await runStateDiff(ctx);
+    const exit = await runLifecycleDiff(ctx);
 
     expect(exit).toBe(0);
     const output = stdoutBuf.join("\n");
@@ -185,7 +185,7 @@ describe("runStateDiff --live", () => {
 
   test("legacy digest mode still works without --live", async () => {
     buildMock.mockResolvedValue(makeBuildResult({ aws: ["bucket"] }));
-    fetchStateMock.mockResolvedValue(undefined);
+    fetchLifecycleMock.mockResolvedValue(undefined);
     readSnapshotMock.mockResolvedValue(null);
 
     const plugins: LexiconPlugin[] = [createMockPlugin({ name: "aws" })];
@@ -196,7 +196,7 @@ describe("runStateDiff --live", () => {
       serializers: plugins.map((p) => p.serializer),
     };
 
-    const exit = await runStateDiff(ctx);
+    const exit = await runLifecycleDiff(ctx);
 
     expect(exit).toBe(0);
     const output = stdoutBuf.join("\n");
@@ -206,7 +206,7 @@ describe("runStateDiff --live", () => {
   });
 });
 
-describe("runStateSnapshot", () => {
+describe("runLifecycleSnapshot", () => {
   let stdoutBuf: string[];
   let stderrBuf: string[];
 
@@ -227,7 +227,7 @@ describe("runStateSnapshot", () => {
       plugins: [],
       serializers: [],
     };
-    const exit = await runStateSnapshot(ctx);
+    const exit = await runLifecycleSnapshot(ctx);
     expect(exit).toBe(1);
     expect(stderrBuf.join("\n")).toContain("Environment is required");
   });
@@ -238,7 +238,7 @@ describe("runStateSnapshot", () => {
       plugins: [],
       serializers: [],
     };
-    const exit = await runStateSnapshot(ctx);
+    const exit = await runLifecycleSnapshot(ctx);
     expect(exit).toBe(1);
     expect(stderrBuf.join("\n")).toContain('Unknown environment "unknown"');
   });
@@ -251,7 +251,7 @@ describe("runStateSnapshot", () => {
       plugins,
       serializers: plugins.map((p) => p.serializer),
     };
-    const exit = await runStateSnapshot(ctx);
+    const exit = await runLifecycleSnapshot(ctx);
     expect(exit).toBe(1);
     expect(stderrBuf.join("\n")).toContain("No plugins implement describeResources");
   });
@@ -275,14 +275,14 @@ describe("runStateSnapshot", () => {
       plugins,
       serializers: plugins.map((p) => p.serializer),
     };
-    const exit = await runStateSnapshot(ctx);
+    const exit = await runLifecycleSnapshot(ctx);
     expect(exit).toBe(0);
     expect(stderrBuf.join("\n")).toContain("Snapshot saved");
     expect(takeSnapshotMock).toHaveBeenCalledTimes(1);
   });
 });
 
-describe("runStateShow", () => {
+describe("runLifecycleShow", () => {
   let stdoutBuf: string[];
   let stderrBuf: string[];
 
@@ -291,7 +291,7 @@ describe("runStateShow", () => {
     stderrBuf = [];
     vi.spyOn(console, "log").mockImplementation((s: string) => { stdoutBuf.push(s); });
     vi.spyOn(console, "error").mockImplementation((s: string) => { stderrBuf.push(s); });
-    fetchStateMock.mockReset();
+    fetchLifecycleMock.mockReset();
     readSnapshotMock.mockReset();
     readEnvironmentSnapshotsMock.mockReset();
   });
@@ -301,12 +301,12 @@ describe("runStateShow", () => {
       args: makeArgs({ command: "state", path: "show" }),
       plugins: [], serializers: [],
     };
-    expect(await runStateShow(ctx)).toBe(1);
+    expect(await runLifecycleShow(ctx)).toBe(1);
     expect(stderrBuf.join("\n")).toContain("Environment is required");
   });
 
   test("specific lexicon: prints snapshot table when found", async () => {
-    fetchStateMock.mockResolvedValue(undefined);
+    fetchLifecycleMock.mockResolvedValue(undefined);
     readSnapshotMock.mockResolvedValue(JSON.stringify({
       lexicon: "aws", environment: "prod", commit: "x", timestamp: "t",
       resources: { bucket: { type: "AWS::S3::Bucket", physicalId: "b-1", status: "OK" } },
@@ -315,25 +315,25 @@ describe("runStateShow", () => {
       args: makeArgs({ command: "state", path: "show", extraPositional: "prod", extraPositional2: "aws" }),
       plugins: [], serializers: [],
     };
-    expect(await runStateShow(ctx)).toBe(0);
+    expect(await runLifecycleShow(ctx)).toBe(0);
     const out = stdoutBuf.join("\n");
     expect(out).toContain("bucket");
     expect(out).toContain("AWS::S3::Bucket");
   });
 
   test("specific lexicon: returns 1 when no snapshot found", async () => {
-    fetchStateMock.mockResolvedValue(undefined);
+    fetchLifecycleMock.mockResolvedValue(undefined);
     readSnapshotMock.mockResolvedValue(null);
     const ctx = {
       args: makeArgs({ command: "state", path: "show", extraPositional: "prod", extraPositional2: "aws" }),
       plugins: [], serializers: [],
     };
-    expect(await runStateShow(ctx)).toBe(1);
+    expect(await runLifecycleShow(ctx)).toBe(1);
     expect(stderrBuf.join("\n")).toContain("No snapshot found");
   });
 
   test("no lexicon: lists all lexicons in env", async () => {
-    fetchStateMock.mockResolvedValue(undefined);
+    fetchLifecycleMock.mockResolvedValue(undefined);
     readEnvironmentSnapshotsMock.mockResolvedValue(new Map([
       ["aws", JSON.stringify({ lexicon: "aws", environment: "prod", commit: "x", timestamp: "t", resources: {} })],
       ["gcp", JSON.stringify({ lexicon: "gcp", environment: "prod", commit: "x", timestamp: "t", resources: {} })],
@@ -342,14 +342,14 @@ describe("runStateShow", () => {
       args: makeArgs({ command: "state", path: "show", extraPositional: "prod" }),
       plugins: [], serializers: [],
     };
-    expect(await runStateShow(ctx)).toBe(0);
+    expect(await runLifecycleShow(ctx)).toBe(0);
     const out = stdoutBuf.join("\n");
     expect(out).toContain("prod/aws");
     expect(out).toContain("prod/gcp");
   });
 });
 
-describe("runStateLog", () => {
+describe("runLifecycleLog", () => {
   let stdoutBuf: string[];
   let stderrBuf: string[];
 
@@ -358,23 +358,23 @@ describe("runStateLog", () => {
     stderrBuf = [];
     vi.spyOn(console, "log").mockImplementation((s: string) => { stdoutBuf.push(s); });
     vi.spyOn(console, "error").mockImplementation((s: string) => { stderrBuf.push(s); });
-    fetchStateMock.mockReset();
+    fetchLifecycleMock.mockReset();
     listSnapshotsMock.mockReset();
   });
 
   test("returns 1 with message when no entries exist", async () => {
-    fetchStateMock.mockResolvedValue(undefined);
+    fetchLifecycleMock.mockResolvedValue(undefined);
     listSnapshotsMock.mockResolvedValue([]);
     const ctx = {
       args: makeArgs({ command: "state", path: "log" }),
       plugins: [], serializers: [],
     };
-    expect(await runStateLog(ctx)).toBe(1);
+    expect(await runLifecycleLog(ctx)).toBe(1);
     expect(stderrBuf.join("\n")).toContain("No state snapshots");
   });
 
   test("prints commit / date / message rows for each entry", async () => {
-    fetchStateMock.mockResolvedValue(undefined);
+    fetchLifecycleMock.mockResolvedValue(undefined);
     listSnapshotsMock.mockResolvedValue([
       { commit: "abcdef1234567890", date: "2026-05-01T00:00:00Z", message: "Snapshot prod" },
       { commit: "fedcba9876543210", date: "2026-05-02T00:00:00Z", message: "Snapshot staging" },
@@ -383,7 +383,7 @@ describe("runStateLog", () => {
       args: makeArgs({ command: "state", path: "log" }),
       plugins: [], serializers: [],
     };
-    expect(await runStateLog(ctx)).toBe(0);
+    expect(await runLifecycleLog(ctx)).toBe(0);
     const out = stdoutBuf.join("\n");
     expect(out).toContain("abcdef1");
     expect(out).toContain("Snapshot prod");
@@ -391,7 +391,7 @@ describe("runStateLog", () => {
   });
 });
 
-describe("runStateUnknown", () => {
+describe("runLifecycleUnknown", () => {
   test("returns 1 with subcommand list", async () => {
     const stderrBuf: string[] = [];
     vi.spyOn(console, "error").mockImplementation((s: string) => { stderrBuf.push(s); });
@@ -399,7 +399,7 @@ describe("runStateUnknown", () => {
       args: makeArgs({ command: "state", path: "garbage" }),
       plugins: [], serializers: [],
     };
-    expect(await runStateUnknown(ctx)).toBe(1);
+    expect(await runLifecycleUnknown(ctx)).toBe(1);
     const stderr = stderrBuf.join("\n");
     expect(stderr).toContain("snapshot");
     expect(stderr).toContain("show");

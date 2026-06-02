@@ -46,7 +46,7 @@ export interface WatchOpConfig {
    */
   taskQueue?: string;
   /**
-   * Run `chant state diff --live` (queries cloud APIs) instead of the
+   * Run `chant lifecycle diff --live` (queries cloud APIs) instead of the
    * default digest-only diff. Recommended for real drift detection.
    * @default true
    */

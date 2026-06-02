@@ -4,12 +4,12 @@ import type { BuildResult } from "../build";
 
 const writeSnapshotMock = vi.fn();
 const getHeadCommitMock = vi.fn();
-const pushStateMock = vi.fn();
+const pushLifecycleMock = vi.fn();
 
 vi.mock("./git", () => ({
   writeSnapshot: (...args: unknown[]) => writeSnapshotMock(...args),
   getHeadCommit: () => getHeadCommitMock(),
-  pushState: () => pushStateMock(),
+  pushLifecycle: () => pushLifecycleMock(),
 }));
 
 const { takeSnapshot } = await import("./snapshot");
@@ -34,10 +34,10 @@ describe("takeSnapshot", () => {
   beforeEach(() => {
     writeSnapshotMock.mockReset();
     getHeadCommitMock.mockReset();
-    pushStateMock.mockReset();
+    pushLifecycleMock.mockReset();
     writeSnapshotMock.mockResolvedValue("commit-sha");
     getHeadCommitMock.mockResolvedValue("head-sha");
-    pushStateMock.mockResolvedValue(true);
+    pushLifecycleMock.mockResolvedValue(true);
   });
 
   test("happy path: writes snapshot per plugin with describeResources", async () => {
@@ -56,7 +56,7 @@ describe("takeSnapshot", () => {
       resources: { bucket: { type: "AWS::S3::Bucket", status: "CREATE_COMPLETE" } },
     });
     expect(writeSnapshotMock).toHaveBeenCalledTimes(1);
-    expect(pushStateMock).toHaveBeenCalledTimes(1);
+    expect(pushLifecycleMock).toHaveBeenCalledTimes(1);
   });
 
   test("plugin without describeResources is skipped", async () => {

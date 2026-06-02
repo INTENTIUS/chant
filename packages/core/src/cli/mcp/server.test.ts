@@ -1133,9 +1133,9 @@ describe("McpServer", () => {
       const tools = (toolsRes.result as { tools: Array<{ name: string }> }).tools;
       expect(tools).toHaveLength(13);
       expect(tools.map((t) => t.name).sort()).toEqual([
-        "build", "explain", "import", "lint",
+        "build", "explain", "import", "lifecycle-diff", "lifecycle-snapshot", "lint",
         "op-list", "op-report", "op-run", "op-signal", "op-status",
-        "scaffold", "search", "state-diff", "state-snapshot",
+        "scaffold", "search",
       ]);
 
       const resourcesRes = await s.handleRequest({ jsonrpc: "2.0", id: 3, method: "resources/list" });

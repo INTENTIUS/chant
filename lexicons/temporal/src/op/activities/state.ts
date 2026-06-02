@@ -9,11 +9,11 @@ export interface StateSnapshotArgs {
 }
 
 /**
- * Take a chant state snapshot for the given environment.
+ * Take a chant lifecycle snapshot for the given environment.
  * Uses fastIdempotent profile — 5m timeout, 3 retries.
  */
 export async function stateSnapshot(args: StateSnapshotArgs, signal?: AbortSignal): Promise<void> {
-  const { stdout, stderr } = await execAsync(`chant state snapshot ${args.env}`, { signal });
+  const { stdout, stderr } = await execAsync(`chant lifecycle snapshot ${args.env}`, { signal });
   if (stdout) console.log(stdout);
   if (stderr) console.error(stderr);
 }
@@ -22,7 +22,7 @@ export interface StateDiffArgs {
   /** Environment name (e.g. "dev", "staging", "prod"). */
   env: string;
   /**
-   * When true, run `chant state diff <env> --live` (queries cloud APIs).
+   * When true, run `chant lifecycle diff <env> --live` (queries cloud APIs).
    * When false (default), run digest-only diff against the last snapshot.
    */
   live?: boolean;
@@ -36,13 +36,13 @@ export interface StateDiffResult {
   /**
    * True when the diff output contains any drift indicators
    * (MISSING / ORPHAN / DRIFTED / DISAPPEARED section headers from
-   * `chant state diff --live`).
+   * `chant lifecycle diff --live`).
    */
   drifted: boolean;
 }
 
 /**
- * Section headers emitted by `chant state diff --live` that indicate a
+ * Section headers emitted by `chant lifecycle diff --live` that indicate a
  * non-empty drift category. See packages/core/src/cli/handlers/state.ts.
  */
 const DRIFT_HEADERS = [
@@ -60,7 +60,7 @@ function detectDrift(output: string): boolean {
 }
 
 /**
- * Run `chant state diff <env>` and return the output + structured drift
+ * Run `chant lifecycle diff <env>` and return the output + structured drift
  * flag. Read-only; intended for use inside watch/observation workflows.
  * Uses fastIdempotent profile.
  *
@@ -72,7 +72,7 @@ function detectDrift(output: string): boolean {
 export async function stateDiff(args: StateDiffArgs, signal?: AbortSignal): Promise<StateDiffResult> {
   const liveFlag = args.live ? " --live" : "";
   try {
-    const { stdout, stderr } = await execAsync(`chant state diff ${args.env}${liveFlag}`, { signal });
+    const { stdout, stderr } = await execAsync(`chant lifecycle diff ${args.env}${liveFlag}`, { signal });
     const output = `${stdout}${stderr}`.trim();
     if (output) console.log(output);
     return { output, exitCode: 0, drifted: detectDrift(output) };

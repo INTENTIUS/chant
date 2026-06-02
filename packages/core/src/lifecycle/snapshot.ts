@@ -1,13 +1,13 @@
 /**
  * Snapshot orchestration: queries plugins for deployed resource metadata,
- * assembles StateSnapshots, computes build digests, and writes to git.
+ * assembles LifecycleSnapshots, computes build digests, and writes to git.
  */
 import type { ObservationLexicon, ResourceMetadata, ArtifactMetadata } from "../lexicon";
 import type { BuildResult } from "../build";
 import type { SerializerResult } from "../serializer";
-import type { StateSnapshot } from "./types";
+import type { LifecycleSnapshot } from "./types";
 import { computeBuildDigest } from "./digest";
-import { writeSnapshot, getHeadCommit, pushState } from "./git";
+import { writeSnapshot, getHeadCommit, pushLifecycle } from "./git";
 import { sortedJsonReplacer } from "../utils";
 
 /** Patterns in attribute names that suggest sensitive data. */
@@ -71,7 +71,7 @@ function validateResources(
 }
 
 export interface TakeSnapshotResult {
-  snapshots: StateSnapshot[];
+  snapshots: LifecycleSnapshot[];
   commit: string;
   warnings: string[];
   errors: string[];
@@ -88,7 +88,7 @@ export async function takeSnapshot(
 ): Promise<TakeSnapshotResult> {
   const warnings: string[] = [];
   const errors: string[] = [];
-  const snapshots: StateSnapshot[] = [];
+  const snapshots: LifecycleSnapshot[] = [];
 
   const headCommit = await getHeadCommit(opts);
   const timestamp = new Date().toISOString();
@@ -155,7 +155,7 @@ export async function takeSnapshot(
         continue;
       }
 
-      const snapshot: StateSnapshot = {
+      const snapshot: LifecycleSnapshot = {
         lexicon: plugin.name,
         environment,
         commit: headCommit,
@@ -187,7 +187,7 @@ export async function takeSnapshot(
 
   // Push to remote
   if (snapshots.length > 0) {
-    await pushState(opts);
+    await pushLifecycle(opts);
   }
 
   return {
