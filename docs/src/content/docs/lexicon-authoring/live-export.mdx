@@ -1,0 +1,85 @@
+---
+title: Implementing Live Export
+description: How to implement exportResources() and the ownership marker so your lexicon participates in chant import --from and ownership-gated reconciliation.
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+Two opt-in capabilities let a lexicon participate in the `cloud → code` direction: **live export** (regenerate TypeScript from live config) and the **ownership marker** (tell chant-owned resources from foreign ones). They pair with [observation](/chant/lexicon-authoring/observation/) (the `cloud → report` direction) but are deliberately separate from it.
+
+## `exportResources()`
+
+`describeResources()` returns scrubbed *output* metadata for diffing — you cannot regenerate a resource from it. `exportResources()` returns the full *input* config, suitable for regeneration:
+
+```typescript
+exportResources?(options: {
+  environment: string;
+  selector?: ResourceSelector;   // { type?, name? }
+  owned?: boolean;               // restrict to chant-owned resources
+  verbatim?: boolean;            // keep server-defaulted fields
+}): Promise<ExportedTemplate>;
+```
+
+The result is the existing import IR (`TemplateIR`), branded as `ExportedTemplate`, so it feeds your lexicon's `templateGenerator()` unchanged. The brand keeps a full-fidelity export — which may carry secrets — from flowing into the `state` code paths, which consume scrubbed metadata through the `ObservationLexicon` view.
+
+<Aside type="caution">
+Keep the scrubbing boundary single-purpose. `describeResources()` scrubs for diffing; `exportResources()` returns full config for regeneration. Never overload one method for both — the secret-exposure surface stays in one place.
+</Aside>
+
+### Pattern
+
+Keep all I/O in the activity and the mapping pure, as the shipping lexicons do:
+
+1. Read live objects (`aws cloudformation get-template`, `kubectl get -o json`, …).
+2. **Strip to declared shape** by default — remove server-written fields (`status`, K8s `managedFields`, server metadata, provider bookkeeping annotations). Keep them when `verbatim` is set.
+3. Map to `TemplateIR` by reusing your import parser.
+4. Apply the `selector` (and the `owned` filter, below).
+
+Reference implementations: `lexicons/aws/src/import/live-export.ts`, `lexicons/k8s/src/import/live-export.ts`, `lexicons/gcp/src/import/live-export.ts`.
+
+## The ownership marker
+
+Ownership is what later lets `delete` be precise without a hosted state file. The marker is stamped at synthesis time into the target's native metadata channel:
+
+| Channel | Targets | Keys |
+|---|---|---|
+| Labels | Kubernetes, GCP | `app.kubernetes.io/managed-by=chant`, `chant.intentius.io/stack`, `chant.intentius.io/env` |
+| Tags | AWS | `chant:managed-by=chant`, `chant:stack`, `chant:env` |
+| Tags | Azure | `chant-managed-by=chant`, `chant-stack`, `chant-env` |
+
+Stamp it from your serializer by reading `context.ownership` and merging into your tag/label channel — reuse the core helper:
+
+```typescript
+import { ownershipEntries } from "@intentius/chant/ownership";
+
+serialize(entities, outputs, context) {
+  const ownership = context?.ownership;
+  const labels = ownership ? ownershipEntries("label", ownership) : {};
+  // merge `labels` into each resource's metadata.labels (explicit labels win)
+}
+```
+
+### Querying it for `owned`
+
+Implement the `owned` filter on both `describeResources` and `exportResources` by reading the marker back:
+
+```typescript
+import { hasOwnershipMarker, classifyOwnership } from "@intentius/chant/ownership";
+
+// export: drop objects without the marker
+if (owned && !hasOwnershipMarker(labels, "label")) continue;
+
+// describe: classify so the change set can gate delete
+metadata.ownership = classifyOwnership(labels, "label");
+```
+
+<Aside type="note">
+Where a target has **no durable marker channel**, log that ownership is unavailable and degrade to detect-only — never silently return everything. (AWS `describeResources` does this: `describe-stack-resources` returns no tags, so it warns and skips the filter.)
+</Aside>
+
+## See also
+
+- [Implementing Observation](/chant/lexicon-authoring/observation/) — the `describeResources()` / `listArtifacts()` side
+- [Completeness Checklist](/chant/lexicon-authoring/completeness-checklist/) — where these capabilities sit
+- [Live Import](/chant/guide/live-import/) — the user-facing `chant import --from`
+- [State Models](/chant/concepts/state-models/) — why ownership lives on the resource

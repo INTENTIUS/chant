@@ -55,6 +55,13 @@ The diff engine compares three axes: what's declared in source now, what was obs
 
 Drifted entries include attribute-level deltas so you can see *what* changed, not just *that* something changed.
 
+#### Resolving an `orphan`
+
+An orphan is a resource in the cloud that source doesn't know about. Detection is the first position on the [dial](/chant/concepts/state-models/#the-dial); resolving it is the next. There are two moves:
+
+- **Adopt it into source.** Regenerate the resource as chant TypeScript with [live import](/chant/guide/live-import/): `chant import --from <env> --name <orphan>`. The orphan stops being a surprise and starts being declared — the [`ReconcileOp`](/chant/guide/reconciling-state/) workflow automates this as a PR.
+- **Delete it.** Only ever for a *chant-owned* orphan — one carrying the [ownership marker](/chant/configuration/config-file/#ownership). A foreign orphan (no marker) is never auto-deleted; it escalates to adopt-or-review. `chant state plan` classifies which is which, and `ApplyOp` deletes only the owned ones.
+
 ### Artifacts (two-way diff)
 
 There's no "declared" axis, so the engine just compares now-vs-then:
