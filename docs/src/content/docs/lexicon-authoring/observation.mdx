@@ -283,6 +283,12 @@ Keep the scrubbing boundary single-purpose. `describeResources()` scrubs for dif
 
 Implementing this is what powers [`chant import --from <env>`](/chant/cli/import/). A full authoring walkthrough — per-provider fidelity, the `--verbatim` switch, and the ownership marker — lands in the live-export authoring guide.
 
+Live-export coverage today:
+
+| Lexicon | `exportResources()` | How it reads live config |
+|---|---|---|
+| AWS | ✅ | `aws cloudformation get-template --template-stage Original`, parsed by the CloudFormation import parser |
+
 ## See also
 
 - [`chant state`](/chant/cli/state/) — user-facing CLI reference

@@ -1,5 +1,5 @@
 import { createRequire } from "module";
-import type { LexiconPlugin, IntrinsicDef, ResourceMetadata } from "@intentius/chant/lexicon";
+import type { LexiconPlugin, IntrinsicDef, ResourceMetadata, ExportedTemplate, ResourceSelector } from "@intentius/chant/lexicon";
 const require = createRequire(import.meta.url);
 import type { LintRule } from "@intentius/chant/lint/rule";
 import type { TemplateParser } from "@intentius/chant/import/parser";
@@ -13,6 +13,7 @@ import { fileURLToPath } from "url";
 import { awsSerializer } from "./serializer";
 import { CFParser } from "./import/parser";
 import { CFGenerator } from "./import/generator";
+import { parseStackTemplate } from "./import/live-export";
 import { awsCompletions } from "./lsp/completions";
 import { awsHover } from "./lsp/hover";
 
@@ -554,6 +555,36 @@ aws cloudformation wait stack-update-complete --stack-name my-app-prod`,
     }
 
     return resources;
+  },
+
+  async exportResources(options: {
+    environment: string;
+    selector?: ResourceSelector;
+    owned?: boolean;
+  }): Promise<ExportedTemplate> {
+    const { getRuntime } = await import("@intentius/chant/runtime-adapter");
+    const rt = getRuntime();
+
+    // Same stack-name convention as describeResources.
+    const stackName = `${options.environment}`;
+
+    const result = await rt.spawn([
+      "aws", "cloudformation", "get-template",
+      "--stack-name", stackName,
+      "--template-stage", "Original",
+      "--output", "json",
+    ]);
+    if (result.exitCode !== 0) {
+      throw new Error(`Failed to get template for stack "${stackName}": ${result.stderr}`);
+    }
+
+    const parsed = JSON.parse(result.stdout) as { TemplateBody?: unknown };
+    if (parsed.TemplateBody === undefined) {
+      throw new Error(`Stack "${stackName}" returned no TemplateBody`);
+    }
+
+    // `owned` is accepted but inert until ownership marking lands (#120).
+    return parseStackTemplate(parsed.TemplateBody, options.selector);
   },
 
   mcpTools() {
