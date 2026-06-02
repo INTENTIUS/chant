@@ -13,6 +13,11 @@ sequencing.
 Temporal cluster. There is no config to inspect and no implicit switch — one
 flag selects the runtime.
 
+Temporal-native when you want durability, zero-dependency when you don't. The
+local executor is the on-ramp; the synthesis primitives need no executor at all.
+Reach for Temporal only when an Op must survive a crash, hold a multi-hour
+approval, or roll back a partial failure — never as a baseline requirement.
+
 ## Capability comparison
 
 | | Local mode | Temporal mode |

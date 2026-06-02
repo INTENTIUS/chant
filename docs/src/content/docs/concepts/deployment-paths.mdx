@@ -8,6 +8,8 @@ import Diagram from '../../../components/Diagram.astro';
 
 chant covers the synthesis step — TypeScript in, validated artifacts out — and offers two optional layers beyond that. Knowing which layer fits your situation avoids unnecessary setup.
 
+If you never use the operational layers, chant is a pure synthesis compiler — no executor, no state file, nothing to run. The orchestration layer is Temporal-native when you want durability and zero-dependency when you don't: the local executor runs Ops in-process, and only gated or destructive applies need a Temporal cluster.
+
 <Diagram name="deployment-paths" alt="Decision tree: existing deploy pipeline → synthesis only; need observability/gates → Ops or Raw Temporal" caption="Choosing your deployment model" />
 
 ## Synthesis Only
