@@ -37,6 +37,10 @@
   },
   "devDependencies": {
     "@intentius/chant": "*",
+    "@temporalio/common": "^1.17.2",
+    "@temporalio/testing": "^1.17.2",
+    "@temporalio/worker": "^1.17.2",
+    "@temporalio/workflow": "^1.17.2",
     "typescript": "^5.9.3"
   }
 }

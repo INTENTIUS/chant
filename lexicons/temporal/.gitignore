@@ -1,0 +1,4 @@
+dist/
+node_modules/
+# Transient workflow files written by the runtime harness (#161)
+src/op/__generated__/
