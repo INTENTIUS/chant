@@ -377,6 +377,13 @@ export interface ResourceMetadata {
   lastUpdated?: string;
   /** Cloud-assigned output properties */
   attributes?: Record<string, unknown>;
+  /**
+   * Live ownership verdict from the resource's marker (#119/#120), when the
+   * lexicon could determine it. `owned` = carries chant's marker; `foreign` =
+   * no marker. Absent = the lexicon has no marker channel here. The change set
+   * reads this — never the snapshot — to decide whether an orphan is a delete.
+   */
+  ownership?: "owned" | "foreign";
 }
 
 /**

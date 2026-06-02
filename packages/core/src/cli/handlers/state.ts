@@ -479,6 +479,7 @@ export async function runStatePlan(ctx: CommandContext): Promise<number> {
         buildOutput,
         entityNames: Array.from(declared),
         entities,
+        owned: args.owned,
       });
     } catch (err) {
       console.error(formatError({
