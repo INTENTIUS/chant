@@ -234,6 +234,28 @@ The `WatchOp` composite pairs an Op with a `TemporalSchedule` so `chant state sn
 
 See **[Watching State](/chant/guide/watching-state/)** for the full walk-through: composite shape, generated workflow, Temporal UI filters (`Watch = "true"` / `Drift = "true"`), smoke-testing drift end-to-end, and how to triage each diff category. For the conceptual background on what drift means and why chant snapshots are observational, see [Drift Detection](/chant/concepts/drift-detection/).
 
+## Reconcile (cloud → code)
+
+The `ReconcileOp` composite takes the next step on the dial: when live drifts from declarations, open a PR that regenerates the affected TypeScript. Phases are **snapshot → plan → regenerate → open PR** — the plan is `chant state plan`, and the regenerate-and-PR step is the `reconcilePr` activity.
+
+```typescript
+import { ReconcileOp } from "@intentius/chant-lexicon-temporal";
+
+// one-shot on the local executor
+export const { op } = ReconcileOp({ name: "prod-reconcile", env: "prod" });
+
+// scheduled on Temporal, owned-only
+export const { op, schedule } = ReconcileOp({
+  name: "prod-reconcile",
+  env: "prod",
+  schedule: "0 * * * *",       // hourly
+  scope: { owned: true },
+  onDrift: "pull-request",      // or "issue" | "report"
+});
+```
+
+Run `chant run prod-reconcile` for a one-shot reconcile on the local executor; give it a `schedule` to run continuously on Temporal, where the cron and run history are the value (as with `WatchOp`). The primitives need no executor — only the scheduled, durable form requires Temporal.
+
 ## Op dependencies
 
 `depends` declares Ops that must succeed before this one starts. `chant build` validates all referenced names exist at build time.

@@ -19,8 +19,12 @@ export interface ReconcileEntry {
 export interface ReconcilePrArgs {
   /** Environment to reconcile from (passed to `chant import --from`). */
   env: string;
-  /** The change-set entries that triggered this reconcile. */
-  entries: ReconcileEntry[];
+  /**
+   * The change-set entries that triggered this reconcile. Omit to derive them
+   * from `chant state plan <env> --json` at run time — the form used inside a
+   * workflow, where the entries aren't known until the activity runs.
+   */
+  entries?: ReconcileEntry[];
   /** What to produce. Default: pull-request. */
   mode?: ReconcileMode;
   /** Output directory for regenerated source. Default: ./infra. */
@@ -82,6 +86,33 @@ function shellQuote(s: string): string {
 }
 
 /**
+ * Map a `chant state plan --json` ChangeSet to reconcile entries, dropping
+ * `noop` entries (nothing to reconcile). Pure — exported for testing.
+ */
+export function entriesFromPlan(planJson: string): ReconcileEntry[] {
+  const cs = JSON.parse(planJson) as {
+    entries?: Array<{ name: string; action: string; type?: string }>;
+  };
+  return (cs.entries ?? [])
+    .filter((e) => e.action !== "noop")
+    .map((e) => ({ name: e.name, action: e.action, type: e.type }));
+}
+
+/** Derive reconcile entries from `chant state plan`. */
+async function derivePlanEntries(
+  env: string,
+  owned: boolean,
+  signal?: AbortSignal,
+): Promise<ReconcileEntry[]> {
+  const ownedFlag = owned ? " --owned" : "";
+  const { stdout } = await execAsync(
+    `chant state plan ${shellQuote(env)}${ownedFlag} --json`,
+    { signal },
+  );
+  return entriesFromPlan(stdout);
+}
+
+/**
  * Reconcile activity: turn regenerated TypeScript into a reviewable artifact.
  *
  * - `report` — return the summary only; no git, no network.
@@ -94,11 +125,13 @@ function shellQuote(s: string): string {
  */
 export async function reconcilePr(args: ReconcilePrArgs, signal?: AbortSignal): Promise<ReconcileResult> {
   const mode = args.mode ?? "pull-request";
-  const summary = reconcileSummary(args.env, args.entries);
-  const title = args.title ?? `Reconcile ${args.env}: ${args.entries.length} change(s) from live`;
+  const owned = args.owned ?? false;
+  const entries = args.entries ?? (await derivePlanEntries(args.env, owned, signal));
+  const summary = reconcileSummary(args.env, entries);
+  const title = args.title ?? `Reconcile ${args.env}: ${entries.length} change(s) from live`;
 
   if (mode === "report") {
-    return { mode, summary, entries: args.entries };
+    return { mode, summary, entries };
   }
 
   if (mode === "issue") {
@@ -106,13 +139,13 @@ export async function reconcilePr(args: ReconcilePrArgs, signal?: AbortSignal): 
       `gh issue create --title ${shellQuote(title)} --body ${shellQuote(summary)}`,
       { signal },
     );
-    return { mode, summary, entries: args.entries, issueUrl: stdout.trim() };
+    return { mode, summary, entries, issueUrl: stdout.trim() };
   }
 
   // pull-request
   const branch = args.branch ?? reconcileBranchName(args.env);
   const output = args.output ?? "./infra";
-  const ownedFlag = args.owned ? " --owned" : "";
+  const ownedFlag = owned ? " --owned" : "";
 
   // Never touch the main branch: cut a fresh branch first.
   await execAsync(`git checkout -b ${shellQuote(branch)}`, { signal });
@@ -128,5 +161,5 @@ export async function reconcilePr(args: ReconcilePrArgs, signal?: AbortSignal): 
     { signal },
   );
 
-  return { mode, branch, summary, entries: args.entries, prUrl: stdout.trim() };
+  return { mode, branch, summary, entries, prUrl: stdout.trim() };
 }

@@ -6,6 +6,7 @@ import { describe, test, expect } from "vitest";
 import { TemporalDevStack } from "./dev-stack";
 import { TemporalCloudStack } from "./cloud-stack";
 import { WatchOp } from "./watch-op";
+import { ReconcileOp } from "./reconcile-op";
 import { serializeOps } from "../op/serializer";
 import { DECLARABLE_MARKER } from "@intentius/chant/declarable";
 
@@ -229,5 +230,54 @@ describe("WatchOp: serialization", () => {
     // Diff result captured + Drift search attribute auto-emitted
     expect(wf).toContain("const __r0 = await stateDiff(");
     expect(wf).toContain('upsertSearchAttributes({ "Drift": [String(__r0?.drifted)] });');
+  });
+});
+
+// ── ReconcileOp ──────────────────────────────────────────────────────
+
+describe("ReconcileOp: shape", () => {
+  test("one-shot (no schedule) returns op only", () => {
+    const result = ReconcileOp({ name: "prod-reconcile", env: "prod" });
+    expect(result.op).toBeDefined();
+    expect(result.schedule).toBeUndefined();
+    expect(getEntityType(result.op)).toBe("Temporal::Op");
+    expect((result.op as Record<symbol, unknown>)[DECLARABLE_MARKER]).toBe(true);
+  });
+
+  test("with schedule returns op + schedule", () => {
+    const result = ReconcileOp({ name: "prod-reconcile", env: "prod", schedule: "0 * * * *" });
+    expect(result.op).toBeDefined();
+    expect(result.schedule).toBeDefined();
+    expect(getEntityType(result.schedule)).toBe("Temporal::Schedule");
+  });
+});
+
+describe("ReconcileOp: configuration", () => {
+  test("phases are Snapshot → Plan → Reconcile with the right activities", () => {
+    const { op } = ReconcileOp({ name: "p", env: "prod" });
+    const phases = (getProps(op).phases as Array<Record<string, unknown>>) ?? [];
+    expect(phases.map((p) => p.name)).toEqual(["Snapshot", "Plan", "Reconcile"]);
+    const reconcileStep = (phases[2].steps as Array<Record<string, unknown>>)[0];
+    expect(reconcileStep.fn).toBe("reconcilePr");
+    expect(reconcileStep.args).toEqual({ env: "prod", mode: "pull-request", owned: false });
+  });
+
+  test("scope.owned + onDrift flow into the reconcilePr step", () => {
+    const { op } = ReconcileOp({ name: "p", env: "prod", onDrift: "issue", scope: { owned: true } });
+    const phases = getProps(op).phases as Array<Record<string, unknown>>;
+    const reconcileStep = (phases[2].steps as Array<Record<string, unknown>>)[0];
+    expect(reconcileStep.args).toEqual({ env: "prod", mode: "issue", owned: true });
+  });
+
+  test("auto-emit search attrs include Reconcile + Env", () => {
+    const { op } = ReconcileOp({ name: "p", env: "prod" });
+    expect(getProps(op).searchAttributes).toEqual({ Reconcile: "true", Env: "prod" });
+  });
+
+  test("Plan phase surfaces Drift as a search attribute", () => {
+    const { op } = ReconcileOp({ name: "p", env: "prod" });
+    const phases = getProps(op).phases as Array<Record<string, unknown>>;
+    const diffStep = (phases[1].steps as Array<Record<string, unknown>>)[0];
+    expect(diffStep.outcomeAttribute).toEqual({ name: "Drift", from: "drifted" });
   });
 });
