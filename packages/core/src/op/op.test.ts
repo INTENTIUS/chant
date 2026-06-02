@@ -4,7 +4,7 @@
 
 import { describe, expect, it } from "vitest";
 import { Op, phase, activity, gate, build, kubectlApply, helmInstall,
-         waitForStack, gitlabPipeline, stateSnapshot, shell, teardown } from "./builders";
+         waitForStack, gitlabPipeline, lifecycleSnapshot, shell, teardown } from "./builders";
 import { DECLARABLE_MARKER, type Declarable } from "../declarable";
 
 // ── Op() ──────────────────────────────────────────────────────────────────────
@@ -177,9 +177,9 @@ describe("pre-built shortcuts", () => {
     expect(a.profile).toBe("longInfra");
   });
 
-  it("stateSnapshot() produces stateSnapshot activity with env arg", () => {
-    const a = stateSnapshot("prod");
-    expect(a.fn).toBe("stateSnapshot");
+  it("lifecycleSnapshot() produces lifecycleSnapshot activity with env arg", () => {
+    const a = lifecycleSnapshot("prod");
+    expect(a.fn).toBe("lifecycleSnapshot");
     expect(a.args?.env).toBe("prod");
     expect("profile" in a).toBe(false);
   });

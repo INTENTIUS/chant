@@ -410,14 +410,14 @@ describe("serializeOps()", () => {
             {
               name: "Diff",
               steps: [
-                { kind: "activity", fn: "stateDiff", args: { env: "prod" }, outcomeAttribute: { name: "Drift", from: "drifted" } },
+                { kind: "activity", fn: "lifecycleDiff", args: { env: "prod" }, outcomeAttribute: { name: "Drift", from: "drifted" } },
               ],
             },
           ],
         }),
       ]);
       const wf = serializeOps(ops)["ops/watch/workflow.ts"];
-      expect(wf).toContain('const __r0 = await stateDiff({"env":"prod"});');
+      expect(wf).toContain('const __r0 = await lifecycleDiff({"env":"prod"});');
       expect(wf).toContain('upsertSearchAttributes({ "Drift": [String(__r0?.drifted)] });');
     });
 

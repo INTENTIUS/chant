@@ -1,5 +1,5 @@
 export { Op, phase, activity, gate, build, kubectlApply, helmInstall, waitForStack,
-         gitlabPipeline, stateSnapshot, shell, teardown } from "./builders";
+         gitlabPipeline, lifecycleSnapshot, shell, teardown } from "./builders";
 export { OpResource } from "./resource";
 export type { OpConfig, PhaseDefinition, StepDefinition, ActivityStep, GateStep } from "./types";
 export { discoverOps } from "./discover";

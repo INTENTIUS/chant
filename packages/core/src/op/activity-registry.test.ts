@@ -13,7 +13,7 @@ describe("loadActivities", () => {
     expect(activities.has("shellCmd")).toBe(true);
     expect(activities.has("chantBuild")).toBe(true);
     expect(activities.has("kubectlApply")).toBe(true);
-    expect(activities.has("stateDiff")).toBe(true);
+    expect(activities.has("lifecycleDiff")).toBe(true);
     expect(typeof activities.get("shellCmd")).toBe("function");
   });
 

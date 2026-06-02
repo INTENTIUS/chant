@@ -3,7 +3,7 @@ import { promisify } from "node:util";
 
 const execAsync = promisify(exec);
 
-export interface StateSnapshotArgs {
+export interface LifecycleSnapshotArgs {
   /** Environment name (e.g. "dev", "staging", "prod"). */
   env: string;
 }
@@ -12,13 +12,13 @@ export interface StateSnapshotArgs {
  * Take a chant lifecycle snapshot for the given environment.
  * Uses fastIdempotent profile — 5m timeout, 3 retries.
  */
-export async function stateSnapshot(args: StateSnapshotArgs, signal?: AbortSignal): Promise<void> {
+export async function lifecycleSnapshot(args: LifecycleSnapshotArgs, signal?: AbortSignal): Promise<void> {
   const { stdout, stderr } = await execAsync(`chant lifecycle snapshot ${args.env}`, { signal });
   if (stdout) console.log(stdout);
   if (stderr) console.error(stderr);
 }
 
-export interface StateDiffArgs {
+export interface LifecycleDiffArgs {
   /** Environment name (e.g. "dev", "staging", "prod"). */
   env: string;
   /**
@@ -28,7 +28,7 @@ export interface StateDiffArgs {
   live?: boolean;
 }
 
-export interface StateDiffResult {
+export interface LifecycleDiffResult {
   /** Combined stdout + stderr from the chant command. */
   output: string;
   /** Process exit code (0 = success). */
@@ -69,7 +69,7 @@ function detectDrift(output: string): boolean {
  * cli/state.mdx. Pair with `outcomeAttribute: { name: "Drift", from: "drifted" }`
  * on a WatchOp activity step to surface drift as a workflow search attribute.
  */
-export async function stateDiff(args: StateDiffArgs, signal?: AbortSignal): Promise<StateDiffResult> {
+export async function lifecycleDiff(args: LifecycleDiffArgs, signal?: AbortSignal): Promise<LifecycleDiffResult> {
   const liveFlag = args.live ? " --live" : "";
   try {
     const { stdout, stderr } = await execAsync(`chant lifecycle diff ${args.env}${liveFlag}`, { signal });

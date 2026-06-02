@@ -8,7 +8,7 @@ const RESULT: OpRunResult = {
   ok: true,
   records: [
     { phase: "Greet", fn: "shellCmd", args: { cmd: "echo hello from chant" }, status: "ok", durationMs: 42 },
-    { phase: "Check", fn: "stateDiff", args: { env: "prod" }, status: "ok", durationMs: 1200,
+    { phase: "Check", fn: "lifecycleDiff", args: { env: "prod" }, status: "ok", durationMs: 1200,
       outcome: { name: "Drift", value: false } },
   ],
 };
@@ -22,7 +22,7 @@ describe("renderHuman", () => {
     expect(out).toContain("✓ shellCmd(cmd=echo hello from chant)   42ms");
     expect(out).toContain("[phase] Check");
     expect(out).toContain("[outcome] Drift=false");
-    expect(out).toContain("✓ stateDiff(env=prod)   1.2s");
+    expect(out).toContain("✓ lifecycleDiff(env=prod)   1.2s");
     expect(out).toContain('Op "hello" completed in 0.1s');
   });
 

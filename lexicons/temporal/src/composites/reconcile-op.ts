@@ -78,11 +78,11 @@ export function ReconcileOp(config: ReconcileOpConfig): ReconcileOpResources {
       Env: config.env,
     },
     phases: [
-      phase("Snapshot", [activity("stateSnapshot", { env: config.env })]),
+      phase("Snapshot", [activity("lifecycleSnapshot", { env: config.env })]),
       phase("Plan", [
         {
           kind: "activity",
-          fn: "stateDiff",
+          fn: "lifecycleDiff",
           args: { env: config.env, live: true },
           outcomeAttribute: { name: "Drift", from: "drifted" },
         },
