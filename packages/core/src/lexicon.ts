@@ -304,11 +304,18 @@ export interface LexiconPlugin {
    * observation/`state` code paths by accident.
    *
    * `owned` is accepted now but inert until ownership marking exists (#119/#120).
+   *
+   * `verbatim` controls fidelity: by default an implementation strips
+   * server-defaulted and server-managed fields to reach the declared shape
+   * (the form a user would have authored). `verbatim: true` keeps them. Targets
+   * whose live config is already the declared shape (e.g. a CloudFormation
+   * original template) may ignore it.
    */
   exportResources?(options: {
     environment: string;
     selector?: ResourceSelector;
     owned?: boolean;
+    verbatim?: boolean;
   }): Promise<ExportedTemplate>;
 }
 
