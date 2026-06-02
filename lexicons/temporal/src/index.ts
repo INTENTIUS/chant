@@ -31,6 +31,8 @@ export { WatchOp } from "./composites/watch-op";
 export type { WatchOpConfig, WatchOpResources } from "./composites/watch-op";
 export { ReconcileOp } from "./composites/reconcile-op";
 export type { ReconcileOpConfig, ReconcileOpResources } from "./composites/reconcile-op";
+export { ApplyOp } from "./composites/apply-op";
+export type { ApplyOpConfig, ApplyOpResources } from "./composites/apply-op";
 
 // Op builders (re-exported from core for single-import convenience)
 export {

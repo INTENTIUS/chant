@@ -7,6 +7,7 @@ import { TemporalDevStack } from "./dev-stack";
 import { TemporalCloudStack } from "./cloud-stack";
 import { WatchOp } from "./watch-op";
 import { ReconcileOp } from "./reconcile-op";
+import { ApplyOp } from "./apply-op";
 import { serializeOps } from "../op/serializer";
 import { DECLARABLE_MARKER } from "@intentius/chant/declarable";
 
@@ -279,5 +280,60 @@ describe("ReconcileOp: configuration", () => {
     const phases = getProps(op).phases as Array<Record<string, unknown>>;
     const diffStep = (phases[1].steps as Array<Record<string, unknown>>)[0];
     expect(diffStep.outcomeAttribute).toEqual({ name: "Drift", from: "drifted" });
+  });
+});
+
+// ── ApplyOp ──────────────────────────────────────────────────────────
+
+describe("ApplyOp: shape", () => {
+  test("returns an op (no schedule)", () => {
+    const result = ApplyOp({ name: "prod-apply", env: "prod" });
+    expect(result.op).toBeDefined();
+    expect(getEntityType(result.op)).toBe("Temporal::Op");
+    expect((result.op as Record<symbol, unknown>)[DECLARABLE_MARKER]).toBe(true);
+  });
+
+  test("ungated apply: Build → Plan → Apply (no Approve phase)", () => {
+    const { op } = ApplyOp({ name: "p", env: "prod", target: "kubectl" });
+    const phases = getProps(op).phases as Array<Record<string, unknown>>;
+    expect(phases.map((p) => p.name)).toEqual(["Build", "Plan", "Apply"]);
+    const applyStep = (phases[2].steps as Array<Record<string, unknown>>)[0];
+    expect(applyStep.fn).toBe("nativeApply");
+    expect(applyStep.args).toEqual({ target: "kubectl", env: "prod", output: "dist", deleteMode: "never" });
+  });
+});
+
+describe("ApplyOp: gating + deletes", () => {
+  test("delete: gated inserts an Approve gate phase before Apply", () => {
+    const { op } = ApplyOp({ name: "p", env: "prod", delete: "gated" });
+    const phases = getProps(op).phases as Array<Record<string, unknown>>;
+    expect(phases.map((p) => p.name)).toEqual(["Build", "Plan", "Approve", "Apply"]);
+    const gateStep = (phases[2].steps as Array<Record<string, unknown>>)[0];
+    expect(gateStep.kind).toBe("gate");
+    expect(gateStep.signalName).toBe("approve-p");
+  });
+
+  test("explicit gate config is honored", () => {
+    const { op } = ApplyOp({
+      name: "p",
+      env: "prod",
+      gate: { signalName: "go", description: "ship it" },
+    });
+    const phases = getProps(op).phases as Array<Record<string, unknown>>;
+    const gateStep = (phases[2].steps as Array<Record<string, unknown>>)[0];
+    expect(gateStep.signalName).toBe("go");
+    expect(gateStep.description).toBe("ship it");
+  });
+
+  test("deleteMode flows into the nativeApply step", () => {
+    const { op } = ApplyOp({ name: "p", env: "prod", delete: "owned-only" });
+    const phases = getProps(op).phases as Array<Record<string, unknown>>;
+    const applyStep = (phases.find((p) => p.name === "Apply")!.steps as Array<Record<string, unknown>>)[0];
+    expect((applyStep.args as Record<string, unknown>).deleteMode).toBe("owned-only");
+  });
+
+  test("auto-emit search attrs include Apply + Env", () => {
+    const { op } = ApplyOp({ name: "p", env: "prod" });
+    expect(getProps(op).searchAttributes).toEqual({ Apply: "true", Env: "prod" });
   });
 });

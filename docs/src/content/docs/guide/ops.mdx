@@ -256,6 +256,28 @@ export const { op, schedule } = ReconcileOp({
 
 Run `chant run prod-reconcile` for a one-shot reconcile on the local executor; give it a `schedule` to run continuously on Temporal, where the cron and run history are the value (as with `WatchOp`). The primitives need no executor — only the scheduled, durable form requires Temporal.
 
+## Apply (code → cloud)
+
+The `ApplyOp` composite is the other direction: compute the plan, then apply via the target's native mechanism — `kubectl apply`, CloudFormation `deploy`, or an ARM deployment. Authority stays with the platform; chant hosts no state file.
+
+```typescript
+import { ApplyOp } from "@intentius/chant-lexicon-temporal";
+
+// additive apply on the local executor
+export const { op } = ApplyOp({ name: "prod-apply", env: "prod", target: "kubectl" });
+
+// gated destructive apply on Temporal
+export const { op } = ApplyOp({
+  name: "prod-apply",
+  env: "prod",
+  target: "kubectl",
+  delete: "gated",   // "never" | "owned-only" | "gated"
+  gate: { signalName: "approve-apply", description: "Approve prod apply with deletes" },
+});
+```
+
+`delete` controls how apply treats resources no longer declared. Deletes ride the target's **native** delete path scoped to the ownership marker — `kubectl apply --prune --selector app.kubernetes.io/managed-by=chant`, the CloudFormation stack boundary, or ARM `--mode Complete`. Because the prune is marker-scoped, a foreign (unmarked) resource is never touched: deletes are owned-only by construction. An ungated apply may run on the local executor; `delete: "gated"` (or an explicit `gate`) inserts an approval phase before the destructive apply — that gate becomes durable on Temporal ([durable workflows](/chant/concepts/durable-workflows/)).
+
 ## Op dependencies
 
 `depends` declares Ops that must succeed before this one starts. `chant build` validates all referenced names exist at build time.
