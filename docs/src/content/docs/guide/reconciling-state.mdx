@@ -27,7 +27,7 @@ export const { op, schedule } = ReconcileOp({
 });
 ```
 
-Phases: snapshot → plan → regenerate ([live import](/chant/guide/live-import/)) → open PR. Run `chant run prod-reconcile` for a one-shot reconcile on the local executor; give it a `schedule` to run continuously on Temporal. The PR's diff *is* the regenerated TypeScript, so review is a normal code review.
+Phases: **Snapshot → Plan → Reconcile**, where the Reconcile phase's `reconcilePr` activity regenerates source ([live import](/chant/guide/live-import/)) and opens the PR in one step. Run `chant run prod-reconcile` for a one-shot reconcile on the local executor; give it a `schedule` to run continuously on Temporal. The PR's diff *is* the regenerated TypeScript, so review is a normal code review.
 
 Reconcile never mutates the cloud. It only changes source — the safest reconciliation direction, and a good first step past pure observation.
 
