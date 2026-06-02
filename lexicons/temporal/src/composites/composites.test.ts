@@ -337,3 +337,36 @@ describe("ApplyOp: gating + deletes", () => {
     expect(getProps(op).searchAttributes).toEqual({ Apply: "true", Env: "prod" });
   });
 });
+
+describe("ApplyOp: compensation (#125)", () => {
+  test("destructive apply adds an onFailure Rollback phase by default", () => {
+    const { op } = ApplyOp({ name: "p", env: "prod", delete: "owned-only" });
+    const onFailure = getProps(op).onFailure as Array<Record<string, unknown>> | undefined;
+    expect(onFailure?.map((p) => p.name)).toEqual(["Rollback"]);
+    const step = (onFailure![0].steps as Array<Record<string, unknown>>)[0];
+    expect(step.fn).toBe("compensateApply");
+    expect(step.args).toEqual({ target: "kubectl", env: "prod" });
+  });
+
+  test("additive apply has no compensation by default", () => {
+    const { op } = ApplyOp({ name: "p", env: "prod", delete: "never" });
+    expect(getProps(op).onFailure).toBeUndefined();
+  });
+
+  test("compensate: false disables rollback even when destructive", () => {
+    const { op } = ApplyOp({ name: "p", env: "prod", delete: "owned-only", compensate: false });
+    expect(getProps(op).onFailure).toBeUndefined();
+  });
+
+  test("compensate.command supplies a rollback for targets without a native one", () => {
+    const { op } = ApplyOp({
+      name: "p",
+      env: "prod",
+      target: "kubectl",
+      compensate: { command: "kubectl rollout undo deployment/web" },
+    });
+    const onFailure = getProps(op).onFailure as Array<Record<string, unknown>>;
+    const step = (onFailure[0].steps as Array<Record<string, unknown>>)[0];
+    expect((step.args as Record<string, unknown>).command).toBe("kubectl rollout undo deployment/web");
+  });
+});
