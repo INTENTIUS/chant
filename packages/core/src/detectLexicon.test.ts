@@ -238,12 +238,12 @@ describe("detectLexicons", () => {
     const file = join(testDir, "infra.ts");
     await writeFile(
       file,
-      `import {\n  Namespace,\n  Service,\n} from "@intentius/chant-lexicon-k8s";\nimport {\n  FlywayProject,\n  Environment,\n} from "@intentius/chant-lexicon-flyway";\n\nexport const ns = new Namespace({});`
+      `import {\n  Namespace,\n  Service,\n} from "@intentius/chant-lexicon-k8s";\nimport {\n  HelmRelease,\n  HelmChart,\n} from "@intentius/chant-lexicon-helm";\n\nexport const ns = new Namespace({});`
     );
 
     const result = await detectLexicons([file]);
     expect(result).toContain("k8s");
-    expect(result).toContain("flyway");
+    expect(result).toContain("helm");
     expect(result).toHaveLength(2);
   });
 

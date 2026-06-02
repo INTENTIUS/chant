@@ -40,7 +40,6 @@ if [ -d /output ]; then
     mkdir -p "$out"
     # Copy known artifact patterns
     [ -f "$example_dir/k8s.yaml" ]     && cp "$example_dir/k8s.yaml" "$out/"
-    [ -f "$example_dir/flyway.toml" ]  && cp "$example_dir/flyway.toml" "$out/"
     [ -f "$example_dir/.gitlab-ci.yml" ] && cp "$example_dir/.gitlab-ci.yml" "$out/"
     [ -d "$example_dir/templates" ]    && cp -r "$example_dir/templates" "$out/" 2>/dev/null || true
     # Copy README for context
@@ -49,8 +48,6 @@ if [ -d /output ]; then
     [ -d "$example_dir/scripts" ]      && cp -r "$example_dir/scripts" "$out/"
     [ -f "$example_dir/package.json" ] && cp "$example_dir/package.json" "$out/"
     [ -f "$example_dir/setup.sh" ]     && cp "$example_dir/setup.sh" "$out/"
-    # Copy SQL migrations for flyway examples
-    [ -d "$example_dir/sql" ]          && cp -r "$example_dir/sql" "$out/"
     # Copy .env.example for eks
     [ -f "$example_dir/.env.example" ] && cp "$example_dir/.env.example" "$out/"
   done

@@ -21,7 +21,7 @@ Pick based on the relationship between your lexicon's chant entities and the run
 | Your lexicon describes... | The runtime world is... | Use |
 |---|---|---|
 | 1:1 cloud resources (CFN resources, K8s objects, ARM resources, Temporal namespaces) | Created and updated *by chant build + apply* | `describeResources()` |
-| Authoring primitives (Helm charts, Compose files, Flyway migration scripts, CI workflow definitions) | Created by *external tooling* outside chant's entity model (`helm install`, `docker run`, `flyway migrate`) | `listArtifacts()` |
+| Authoring primitives (Helm charts, Compose files, CI workflow definitions) | Created by *external tooling* outside chant's entity model (`helm install`, `docker run`) | `listArtifacts()` |
 | Both | A mix of declared resources and runtime artifacts | Implement both — `lifecycle diff` shows them in separate sections |
 | Neither (definitions-only, like git-tracked workflow YAML) | Everything is git-tracked already; drift is `git diff` | Implement neither; document the rationale in your lexicon README (see `lexicons/github/README.md`) |
 
@@ -145,7 +145,7 @@ Return a map keyed by your **artifact identifier** (whatever uniquely identifies
 
 ### Pick a stable, namespaced key
 
-The diff engine compares per-key. Two-snapshot stability matters more than aesthetics. Helm uses `release/<namespace>/<name>`, Docker uses `container/<name>`, `image/<repo>:<tag>`, `network/<name>`, Flyway uses `migration/<env>/<version>`. Type prefix in the key makes the diff output legible (`release/...`, `container/...` are easy to read in the same section).
+The diff engine compares per-key. Two-snapshot stability matters more than aesthetics. Helm uses `release/<namespace>/<name>`, Docker uses `container/<name>`, `image/<repo>:<tag>`, `network/<name>`. Type prefix in the key makes the diff output legible (`release/...`, `container/...` are easy to read in the same section).
 
 ### Daemon / binary missing → return `{}` cleanly
 
@@ -174,30 +174,30 @@ const [containers, images, networks] = await Promise.all([
 return { ...containers, ...images, ...networks };
 ```
 
-### Per-environment query when the runtime is multi-tenant
+### Per-tenant query when the runtime is multi-tenant
 
-Flyway's runtime is per-DB. The lexicon discovers declared `Flyway::Environment` entities from the `entities` map and queries each:
+Some runtimes are partitioned per tenant — per database, per cluster, per region — rather than exposing one global list. When that's the case, discover the declared entities that name each tenant from the `entities` map and query each one independently:
 
 ```typescript
-const declaredEnvs: string[] = [];
+const tenants: string[] = [];
 for (const [, { entityType, props }] of options.entities) {
-  if (entityType !== "Flyway::Environment") continue;
+  if (entityType !== "MyLexicon::Tenant") continue;
   const name = props.name as string | undefined;
-  if (name) declaredEnvs.push(name);
+  if (name) tenants.push(name);
 }
 
-for (const envName of declaredEnvs) {
+for (const tenant of tenants) {
   try {
-    const { stdout } = await execAsync(`flyway info -environments=${envName} -outputType=json`);
-    // ...
+    const { stdout } = await execAsync(`mytool info --target=${tenant} --output=json`);
+    // ... merge artifacts keyed by `tenant/<id>`
   } catch (err) {
-    console.warn(`[flyway] failed to query "${envName}": ${err}`);
-    continue;  // other envs still proceed
+    console.warn(`[my-lexicon] failed to query "${tenant}": ${err}`);
+    continue;  // other tenants still proceed
   }
 }
 ```
 
-Per-env warn-soft is the right default: a broken DB connection on `staging` shouldn't block the `prod` artifacts from being recorded.
+Per-tenant warn-soft is the right default: a broken connection on `staging` shouldn't block the `prod` artifacts from being recorded.
 
 ## Testing
 
@@ -255,8 +255,6 @@ Use the static factories to keep diff-engine and Op-activity tests free of `chil
 | Temporal | ✅ |  | Temporal client (`workflowService.listNamespaces`, `operatorService.listSearchAttributes`, `scheduleClient.list`) |
 | Helm |  | ✅ | `helm list -A -o json` |
 | Docker |  | ✅ | `docker ps`, `docker image ls`, `docker network ls` (NDJSON) |
-| Flyway |  | ✅ | `flyway info -environments=<env> -outputType=json` per declared `Flyway::Environment` |
-| Slurm |  | ✅ | `sinfo` partition state |
 | GitHub / GitLab |  |  | N/A — git-tracked authoring primitives, see [github](/lexicons/github/) and [gitlab](/lexicons/gitlab/) READMEs |
 
 For the user-facing version of this matrix and how the diff output is grouped, see [`chant lifecycle`](/chant/cli/lifecycle/#coverage-today).

@@ -35,11 +35,9 @@ jobs:
           npm run --prefix lexicons/gitlab prepack
           npm run --prefix lexicons/github prepack
           npm run --prefix lexicons/k8s prepack
-          npm run --prefix lexicons/flyway prepack
           npm run --prefix lexicons/gcp prepack
           npm run --prefix lexicons/helm prepack
           npm run --prefix lexicons/docker prepack
-          npm run --prefix lexicons/slurm prepack
           npm run --prefix lexicons/temporal prepack
 
       - name: Typecheck
@@ -91,11 +89,9 @@ jobs:
           npm run --prefix lexicons/gitlab prepack
           npm run --prefix lexicons/github prepack
           npm run --prefix lexicons/k8s prepack
-          npm run --prefix lexicons/flyway prepack
           npm run --prefix lexicons/gcp prepack
           npm run --prefix lexicons/helm prepack
           npm run --prefix lexicons/docker prepack
-          npm run --prefix lexicons/slurm prepack
           npm run --prefix lexicons/temporal prepack
 
       - name: Run tests
@@ -134,9 +130,6 @@ jobs:
       - name: Generate and validate K8s lexicon
         run: npm run --prefix lexicons/k8s prepack
 
-      - name: Generate and validate Flyway lexicon
-        run: npm run --prefix lexicons/flyway prepack
-
       - name: Generate and validate GCP lexicon
         run: npm run --prefix lexicons/gcp prepack
 
@@ -148,9 +141,6 @@ jobs:
 
       - name: Generate and validate Docker lexicon
         run: npm run --prefix lexicons/docker prepack
-
-      - name: Generate and validate Slurm lexicon
-        run: npm run --prefix lexicons/slurm prepack
 
       - name: Generate and validate Temporal lexicon
         run: npm run --prefix lexicons/temporal prepack

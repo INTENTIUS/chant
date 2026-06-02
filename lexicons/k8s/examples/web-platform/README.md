@@ -113,7 +113,6 @@ Deletes all resources created by `kubectl apply`.
 
 - [k8s-batch-workers](../k8s-batch-workers/) — Batch processing with workers, cron, jobs
 - [k8s-eks-microservice](../k8s-eks-microservice/) — Production-grade AWS EKS + K8s cross-lexicon
-- [flyway-postgresql-k8s](../flyway-postgresql-k8s/) — K8s + Flyway cross-lexicon
 
 ## Standalone Usage
 

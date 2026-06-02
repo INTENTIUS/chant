@@ -60,7 +60,7 @@ Run named Temporal workflows defined in `*.op.ts` files. Requires `@intentius/ch
 
 ## State Commands
 
-Capture and compare deployed infrastructure state. Snapshots are stored on an orphan git branch (`chant/lifecycle`); `lifecycle diff --live` queries the cloud directly for drift detection. AWS, Temporal, K8s, GCP, and Azure surface their resources entity-keyed; Helm, Docker, Flyway, and Slurm surface runtime artifacts. See [`chant lifecycle`](/chant/cli/lifecycle/) for the full surface.
+Capture and compare deployed infrastructure state. Snapshots are stored on an orphan git branch (`chant/lifecycle`); `lifecycle diff --live` queries the cloud directly for drift detection. AWS, Temporal, K8s, GCP, and Azure surface their resources entity-keyed; Helm and Docker surface runtime artifacts. See [`chant lifecycle`](/chant/cli/lifecycle/) for the full surface.
 
 | Command | Description |
 |---------|-------------|

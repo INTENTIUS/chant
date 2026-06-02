@@ -28,15 +28,12 @@ RUN npm install
 
 # Validate that dist/ artifacts exist — codegen runs on the host before docker build.
 # Run: just prepack  (or npm run --prefix lexicons/<lex> prepack) before building this Dockerfile.
-RUN for lex in aws azure gcp gitlab k8s flyway docker; do \
+RUN for lex in aws azure gcp gitlab k8s docker; do \
       if [ ! -f "lexicons/$lex/dist/manifest.json" ]; then \
         echo "ERROR: lexicons/$lex/dist/ not found. Run codegen first: npm run --prefix lexicons/$lex prepack" >&2; \
         exit 1; \
       fi; \
     done
-
-# Generate dist/ artifacts for slurm (not required to be pre-generated on host)
-RUN npm run --prefix lexicons/slurm prepack
 
 # Run integration tests during build — build fails if tests fail
 COPY test/integration.sh /app/test/integration.sh

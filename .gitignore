@@ -21,7 +21,6 @@ examples/*/.cert-arn
 
 # Example build outputs
 examples/*/k8s.yaml
-examples/*/flyway.toml
 examples/*/templates/*.json
 examples/*/.gitlab-ci.yml
 

@@ -5,7 +5,7 @@ set -euo pipefail
 # Delegates to each example's own npm scripts (run/deploy/teardown/build).
 #
 # Usage: e2e-smoke.sh [aws|eks|gke|aks|all]
-#   aws — gitlab-aws-alb-{infra,api,ui}, flyway-postgresql-gitlab-aws-rds (needs AWS + GitLab)
+#   aws — gitlab-aws-alb-{infra,api,ui} (needs AWS + GitLab)
 #   eks — k8s-eks-microservice (needs AWS + domain)
 #   gke — k8s-gke-microservice, ray-kuberay-gke (needs GCP project)
 #   aks — k8s-aks-microservice (needs Azure subscription)
@@ -112,7 +112,7 @@ setup_example() {
 
   # Copy example source and supporting files
   cp -r "/examples/$name/src" src/
-  for item in sql flyway.toml Dockerfile scripts setup.sh; do
+  for item in sql Dockerfile scripts setup.sh; do
     if [ -e "/examples/$name/$item" ]; then
       cp -r "/examples/$name/$item" "$item"
     fi
@@ -256,61 +256,6 @@ test_gitlab_example() {
   fi
 }
 
-test_flyway_postgresql_gitlab_aws_rds() {
-  local name="flyway-postgresql-gitlab-aws-rds"
-  local stack_name="chant-e2e-flyway-rds"
-  local ssm_path="/chant-e2e/flyway-rds/db-password"
-  echo ""
-  echo "=== E2E: $name ==="
-
-  setup_example "$name" \
-    /tarballs/lexicon-aws.tgz /tarballs/lexicon-flyway.tgz /tarballs/lexicon-gitlab.tgz
-
-  # Build
-  if npm run build 2>&1; then
-    pass "$name: npm run build"
-  else
-    fail "$name: npm run build"; return
-  fi
-
-  # Full GitLab pipeline (optional)
-  if [ -n "${GITLAB_TOKEN:-}" ]; then
-    # Create SSM parameter for DB password (register for cleanup first)
-    SSM_PARAMS_CREATED+=("$ssm_path")
-    local db_password
-    db_password=$(openssl rand -hex 16)
-    aws ssm put-parameter --name "$ssm_path" --type SecureString \
-      --value "$db_password" --overwrite 2>&1 || true
-
-    local project_id
-    project_id=$(create_gitlab_project "chant-e2e-$name-$(date +%s)")
-
-    sed -i "s|flyway-rds|$stack_name|g" .gitlab-ci.yml 2>/dev/null || true
-
-    CF_STACKS_CREATED+=("$stack_name")
-
-    push_to_gitlab "$project_id"
-
-    if wait_for_pipeline "$project_id"; then
-      pass "$name: pipeline succeeded"
-    else
-      fail "$name: pipeline failed"
-    fi
-
-    # Verify CF stack
-    local stack_status
-    stack_status=$(aws cloudformation describe-stacks --stack-name "$stack_name" \
-      --query 'Stacks[0].StackStatus' --output text 2>&1) || true
-    if echo "$stack_status" | grep -q "CREATE_COMPLETE\|UPDATE_COMPLETE"; then
-      pass "$name: stack $stack_name is $stack_status"
-    else
-      fail "$name: stack status is $stack_status"
-    fi
-  else
-    echo "  SKIP: GitLab pipeline (GITLAB_TOKEN not set)"
-  fi
-}
-
 run_aws_group() {
   echo ""
   echo "========================================"
@@ -336,8 +281,6 @@ run_aws_group() {
 
   test_gitlab_example "gitlab-aws-alb-ui" "chant-e2e-shared-alb-ui" "shared-alb-ui" \
     /tarballs/lexicon-aws.tgz /tarballs/lexicon-gitlab.tgz
-
-  test_flyway_postgresql_gitlab_aws_rds
 }
 
 # ── EKS group ────────────────────────────────────────────────────────────────

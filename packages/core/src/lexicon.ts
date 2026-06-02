@@ -281,15 +281,14 @@ export interface LexiconPlugin {
    *
    * Use this for lexicons whose chant entities describe *authoring*
    * primitives rather than 1:1 cloud resources — e.g. Helm (charts vs
-   * releases), Docker (Compose vs running containers), Flyway (migration
-   * scripts vs applied migrations). The contract is context-keyed: given an
-   * environment, list all artifacts visible there. There is no `declared`
-   * comparison axis — `state diff --live` reports added/removed/changed
-   * between snapshots, not vs. declared.
+   * releases), Docker (Compose vs running containers). The contract is
+   * context-keyed: given an environment, list all artifacts visible there.
+   * There is no `declared` comparison axis — `state diff --live` reports
+   * added/removed/changed between snapshots, not vs. declared.
    *
    * `entities` is passed for cases where the lexicon needs to know what
-   * was declared in order to enumerate (e.g. Flyway needs the declared
-   * `Flyway::Environment` entities to know which DBs to query).
+   * was declared in order to scope its enumeration (e.g. a per-tenant
+   * runtime where the declared entities name which tenants to query).
    */
   listArtifacts?(options: {
     environment: string;
@@ -391,7 +390,7 @@ export interface ResourceMetadata {
  * as ResourceMetadata; the conceptual distinction is whether the lexicon's
  * chant entities have 1:1 runtime equivalents (resources) or whether the
  * runtime artifacts are created by tooling outside chant's entity model
- * (artifacts — e.g. Helm releases, Docker containers, Flyway migrations).
+ * (artifacts — e.g. Helm releases, Docker containers).
  */
 export interface ArtifactMetadata {
   /** Artifact type (e.g. Helm::Release, Docker::Container) */

@@ -157,7 +157,7 @@ The signal tells you *something* changed. The output tells you *what*. The next 
 - **`ORPHAN`** — present in the cloud, not in source. Either a teammate created it manually (move it into source) or it's untracked tooling output (use `chant import` to bring it in, or scope it out of the env).
 - **`DRIFTED`** — observed in both snapshots; attributes changed. The deltas are listed inline. Decide whether to re-apply (snap back to declared) or update source (accept the new shape).
 - **`DISAPPEARED`** / **`NEWLY OBSERVED`** — historical context across snapshots. Useful for incident timelines, less actionable per-tick.
-- **`ARTIFACTS ADDED` / `REMOVED` / `CHANGED`** — context-keyed (Helm releases, Docker containers, Flyway migrations). Same triage as the resource categories.
+- **`ARTIFACTS ADDED` / `REMOVED` / `CHANGED`** — context-keyed (Helm releases, Docker containers). Same triage as the resource categories.
 
 Drift remediation is intentionally not a chant primitive — what to *do* about a drifted security group is a domain decision that doesn't generalize. The `WatchOp` pattern stops at "tell me when it happened."
 

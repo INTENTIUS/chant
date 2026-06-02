@@ -104,7 +104,6 @@ Deletes all resources created by `kubectl apply`.
 
 - [k8s-web-platform](../k8s-web-platform/) — Web platform with ingress, sidecars, monitoring
 - [k8s-eks-microservice](../k8s-eks-microservice/) — Production-grade AWS EKS + K8s cross-lexicon
-- [flyway-postgresql-k8s](../flyway-postgresql-k8s/) — K8s + Flyway cross-lexicon
 
 ## Standalone Usage
 
