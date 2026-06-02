@@ -1,0 +1,62 @@
+---
+title: Live Import
+description: Generate chant TypeScript from a running cloud or cluster with chant import --from — the cloud→code direction, and the way to adopt an orphaned resource back into source.
+---
+
+`chant import <template-file>` reads a template from disk. `chant import --from <env>` reads the **live** cloud or cluster instead, regenerating chant TypeScript from what is actually running. This is the `cloud → code` direction — the way to adopt infrastructure you didn't author, or pull an orphan back into source.
+
+## How it works
+
+```bash
+chant import --from prod --output src/
+```
+
+1. Resolve the environment the way [`chant state diff --live`](/chant/cli/state/) does.
+2. Call each project lexicon's `exportResources()` capability for full-fidelity config.
+3. Generate TypeScript with the same by-category organization as file import.
+
+Unlike `state`, which only ever reads scrubbed metadata, live import emits the resource's **full input config** — so it may surface secrets. The command prints a warning; review generated files before committing.
+
+## Selectors
+
+| Flag | Effect |
+|---|---|
+| `--type <ResourceType>` | only resources of this type |
+| `--name <name>` | only the resource with this name |
+| `-d, --lexicon <name>` | restrict to one lexicon (e.g. `aws`, `k8s`) |
+| `--owned` | only chant-owned resources (carrying the [ownership marker](/chant/configuration/config-file/#ownership)) |
+| `--verbatim` | keep server-defaulted fields instead of stripping to declared shape |
+
+## Per-provider fidelity
+
+Each lexicon reads live config its own way and strips it to the shape you would have authored:
+
+| Lexicon | Source | Stripped by default |
+|---|---|---|
+| AWS | `cloudformation get-template --template-stage Original` | nothing — the original template is already declared shape |
+| Kubernetes | `kubectl get <kinds> -A -o json` | `status`, `managedFields`, server metadata, server annotations |
+| GCP (Config Connector) | `kubectl get <*.cnrm.cloud.google.com> -A -o json` | `status`, server metadata, `cnrm.cloud.google.com/*` annotations |
+
+`--verbatim` keeps the stripped fields when you need an exact copy rather than a clean authoring starting point.
+
+## The adopt-an-orphan loop
+
+When [drift detection](/chant/concepts/drift-detection/) reports an `orphan` — something in the cloud that source doesn't declare — live import is how you adopt it:
+
+```bash
+# 1. see what's orphaned
+chant state plan prod
+
+# 2. regenerate the orphan as chant TypeScript
+chant import --from prod --name my-bucket --output src/
+
+# 3. review, commit — the orphan is now declared
+```
+
+To automate this across many resources as a reviewable PR, use the [`ReconcileOp`](/chant/guide/reconciling-state/) workflow, which runs exactly this loop and opens the PR for you.
+
+## See also
+
+- [Reconciling State](/chant/guide/reconciling-state/) — the reconcile and apply workflows
+- [State Models](/chant/concepts/state-models/) — where live import sits on the dial
+- [`chant import`](/chant/cli/import/) — the full CLI reference

@@ -1,0 +1,75 @@
+---
+title: Reconciling State
+description: The two reconciliation directions — reconcile (cloud→code) and apply (code→cloud) — the dial as per-environment configuration, and when to pick each.
+---
+
+Drift detection tells you the cloud and your source disagree. Reconciliation closes the gap. There are two directions, and chant exposes each as an Op composite. Which one you reach for — and whether you reach for either — is the [dial](/chant/concepts/state-models/#the-dial), chosen per environment.
+
+```
+observe  →  reconcile  →  authoritative
+(report)    (cloud→code   (code→cloud
+             PRs)          apply)
+```
+
+## Reconcile — `cloud → code`
+
+When the live system is ahead of source — someone created or changed a resource by hand — pull reality *back into source* so declarations track it. [`ReconcileOp`](/chant/guide/ops/#reconcile-cloud--code) does this by opening a PR:
+
+```typescript
+import { ReconcileOp } from "@intentius/chant-lexicon-temporal";
+
+export const { op, schedule } = ReconcileOp({
+  name: "prod-reconcile",
+  env: "prod",
+  schedule: "0 * * * *",      // hourly, on Temporal
+  scope: { owned: true },     // only chant-owned resources
+  onDrift: "pull-request",    // or "issue" | "report"
+});
+```
+
+Phases: snapshot → plan → regenerate ([live import](/chant/guide/live-import/)) → open PR. Run `chant run prod-reconcile` for a one-shot reconcile on the local executor; give it a `schedule` to run continuously on Temporal. The PR's diff *is* the regenerated TypeScript, so review is a normal code review.
+
+Reconcile never mutates the cloud. It only changes source — the safest reconciliation direction, and a good first step past pure observation.
+
+## Apply — `code → cloud`
+
+When source is the intended truth and the cloud should follow, [`ApplyOp`](/chant/guide/ops/#apply-code--cloud) pushes declared source into the live system via the target's native mechanism — `kubectl apply`, CloudFormation `deploy`, or an ARM deployment:
+
+```typescript
+import { ApplyOp } from "@intentius/chant-lexicon-temporal";
+
+export const { op } = ApplyOp({
+  name: "prod-apply",
+  env: "prod",
+  target: "kubectl",
+  delete: "gated",   // "never" | "owned-only" | "gated"
+  gate: { signalName: "approve-apply" },
+});
+```
+
+Authority stays with the platform — chant hosts no state file. Deletes ride the native delete path scoped to the ownership marker, so they only ever touch **chant-owned** orphans. A destructive apply gets an approval gate and saga-style rollback; see [Gates and compensation](/chant/guide/ops/#gates-and-compensation--where-temporal-is-load-bearing) for why that half is Temporal-bound.
+
+## The dial as configuration
+
+The same project can sit at different positions per environment:
+
+| Environment | Position | What runs |
+|---|---|---|
+| `dev` | observe | `chant state diff --live` in CI; no reconciliation |
+| `staging` | reconcile | `ReconcileOp` opens PRs when staging drifts |
+| `prod` | authoritative | `ApplyOp` with `delete: "gated"` behind approval |
+
+Nothing forces an environment past the position you chose for it. Turn the dial up as trust and tooling allow.
+
+## When to pick each
+
+- **Observe** when the cloud is changed by other tools you don't want to fight, and you just need visibility.
+- **Reconcile** when source should track reality and humans should review each adoption — the default for shared or partially-managed environments.
+- **Apply** when source is authoritative and you want the cloud reconciled to it, with deletes limited to what chant owns. Gate it in production.
+
+## See also
+
+- [State Models](/chant/concepts/state-models/) — the three axes and the dial
+- [Live Import](/chant/guide/live-import/) — the cloud→code regeneration the reconcile workflow uses
+- [Ops](/chant/guide/ops/) — `ReconcileOp` and `ApplyOp` in depth
+- [Durable Workflows](/chant/concepts/durable-workflows/) — why gated apply wants Temporal
