@@ -243,17 +243,18 @@ The `ReconcileOp` composite takes the next step on the dial: when live drifts fr
 ```typescript
 import { ReconcileOp } from "@intentius/chant-lexicon-temporal";
 
-// one-shot on the local executor
-export const { op } = ReconcileOp({ name: "prod-reconcile", env: "prod" });
-
-// scheduled on Temporal, owned-only
-export const { op, schedule } = ReconcileOp({
+// Scheduled on Temporal, owned-only. Omit `schedule` for a one-shot
+// `chant run prod-reconcile` on the local executor.
+const { op, schedule } = ReconcileOp({
   name: "prod-reconcile",
   env: "prod",
   schedule: "0 * * * *",       // hourly
   scope: { owned: true },
   onDrift: "pull-request",      // or "issue" | "report"
 });
+
+export default op;        // the Op — discovered by `chant run prod-reconcile`
+export { schedule };      // the TemporalSchedule — deployed by `chant build`
 ```
 
 Run `chant run prod-reconcile` for a one-shot reconcile on the local executor; give it a `schedule` to run continuously on Temporal, where the cron and run history are the value (as with `WatchOp`). The primitives need no executor — only the scheduled, durable form requires Temporal.
@@ -265,17 +266,17 @@ The `ApplyOp` composite is the other direction: compute the plan, then apply via
 ```typescript
 import { ApplyOp } from "@intentius/chant-lexicon-temporal";
 
-// additive apply on the local executor
-export const { op } = ApplyOp({ name: "prod-apply", env: "prod", target: "kubectl" });
-
-// gated destructive apply on Temporal
-export const { op } = ApplyOp({
+// Gated destructive apply on Temporal. Drop `delete`/`gate` for an additive
+// apply that also runs one-shot on the local executor.
+const { op } = ApplyOp({
   name: "prod-apply",
   env: "prod",
   target: "kubectl",
   delete: "gated",   // "never" | "owned-only" | "gated"
   gate: { signalName: "approve-apply", description: "Approve prod apply with deletes" },
 });
+
+export default op;
 ```
 
 `delete` controls how apply treats resources no longer declared. Deletes ride the target's **native** delete path scoped to the ownership marker — `kubectl apply --prune --selector app.kubernetes.io/managed-by=chant`, the CloudFormation stack boundary, or ARM `--mode Complete`. Because the prune is marker-scoped, a foreign (unmarked) resource is never touched: deletes are owned-only by construction.

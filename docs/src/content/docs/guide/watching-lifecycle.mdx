@@ -29,11 +29,14 @@ Save anywhere in your project as a `*.op.ts` file. The composite returns a chant
 // prod-watch.op.ts
 import { WatchOp } from "@intentius/chant-lexicon-temporal";
 
-export const { op, schedule } = WatchOp({
+const { op, schedule } = WatchOp({
   name: "prod-watch",
   env: "prod",
   schedule: "*/15 * * * *",  // every 15 minutes
 });
+
+export default op;        // the Op — discovered by `chant run prod-watch`
+export { schedule };      // the TemporalSchedule — deployed by `chant build`
 ```
 
 That's the whole declaration. Run `chant build` and you'll get:
