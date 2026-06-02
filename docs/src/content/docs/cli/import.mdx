@@ -7,11 +7,14 @@ description: Import infrastructure templates and generate TypeScript files
 
 ```
 chant import <template-file> [flags]
+chant import --from <env> [flags]
 ```
 
 ## Description
 
 `chant import` reads an existing infrastructure template (e.g. a CloudFormation JSON template), detects which lexicon handles it, and generates TypeScript resource definitions. This lets you adopt chant incrementally by importing your current infrastructure rather than rewriting it from scratch.
+
+With `--from <env>` it reads the **live** cloud/cluster instead of a file: it resolves the environment, calls each project lexicon's `exportResources()` for full-fidelity config, and generates TypeScript from that. This is the cloud→code direction — the way to adopt an orphaned resource back into source.
 
 The import process:
 
@@ -25,20 +28,36 @@ The import process:
 
 | Flag | Description |
 |------|-------------|
+| `--from <env>` | Import from a live environment instead of a template file |
+| `-d, --lexicon <name>` | With `--from`, restrict to one lexicon (e.g. `aws`, `k8s`) |
+| `--type <ResourceType>` | With `--from`, export only resources of this type |
+| `--name <name>` | With `--from`, export only the resource with this name |
+| `--owned` | With `--from`, restrict to chant-owned resources (inert until ownership marking lands) |
+| `--verbatim` | With `--from`, keep server-defaulted fields instead of stripping to declared shape |
 | `-o, --output <dir>` | Output directory (default: `./infra/`) |
 | `--force` | Overwrite existing files |
+
+:::caution
+Live import may emit sensitive values (keys, tokens, passwords) into generated source — unlike `state`, which only reads scrubbed metadata. The command prints a warning; review generated files before committing.
+:::
 
 ## Usage
 
 ```bash
-# Import a template
+# Import a template file
 chant import template.json
 
 # Import to a specific directory
 chant import template.json --output src/
 
-# Overwrite existing files
-chant import template.json --force
+# Import live infrastructure from an environment
+chant import --from prod
+
+# Adopt a single orphaned resource back into source
+chant import --from prod --name my-bucket --output src/
+
+# Keep server-defaulted fields
+chant import --from prod --verbatim
 ```
 
 ## Exit Codes

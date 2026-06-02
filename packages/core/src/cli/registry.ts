@@ -43,6 +43,14 @@ export interface ParsedArgs {
   reportFile?: string;
   /** `chant init --skill <name>` filter (added in #95 commit) */
   skill?: string;
+  /** `chant import --type <ResourceType>` selector */
+  selectType?: string;
+  /** `chant import --name <name>` selector */
+  selectName?: string;
+  /** `chant import --owned` — restrict live import to chant-owned resources */
+  owned?: boolean;
+  /** `chant import --verbatim` — keep server-defaulted fields in live import */
+  verbatim?: boolean;
 }
 
 /**
