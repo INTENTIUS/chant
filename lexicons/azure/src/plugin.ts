@@ -457,4 +457,9 @@ export const tags = defaultTags([
     const { describeResources } = await import("./describe-resources");
     return describeResources(options);
   },
+
+  async exportResources(options) {
+    const { exportResources } = await import("./export-resources");
+    return exportResources(options);
+  },
 };
