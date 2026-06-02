@@ -13,6 +13,16 @@ This isn't a reaction to other tools' failures — it's an approach that was alw
 
 **The agentic angle:** the operational layer — deploying, monitoring, remediating — is increasingly handled by agents and automation. chant handles the part that should be deterministic and auditable: turning typed declarations into spec-native output. The two layers are complementary.
 
+## Nobody sells you a lifecycle
+
+Every infrastructure tool sells you a lifecycle. Synthesis, state, apply, drift, retire — owned end to end. A decade of investment goes into that lifecycle, into a better way to own it. The ownership is the product. That coupling is why a pure synthesis tool never existed. You could not get the compiler without the lifecycle welded to it.
+
+chant sells nothing. Synthesis is pure and the output is native spec — standard CloudFormation, GitLab CI, whatever the lexicon targets. Walk away and there is nothing to unwind. That is the test the claim has to pass, and it is the one most tools fail. You can leave a thing you were never sold.
+
+The lifecycle is still there when you want it. You write your own. Ops are declared as code in `*.op.ts` files and run on a local executor for one-shot work, or on [Temporal](/chant/concepts/durable-workflows/) when an apply needs to outlive a single process — approval gates, rollback, crash-resume. The durable version of what the others sell, for the lifecycle you chose rather than one chosen for you.
+
+Decoupled first. Durable when you ask.
+
 ## Design decisions and their consequences
 
 These tools make different design decisions. Each decision has consequences — some favorable for certain workflows, some not. This isn't a feature matrix; it's a comparison of architectural choices.

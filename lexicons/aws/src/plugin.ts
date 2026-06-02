@@ -476,10 +476,20 @@ aws cloudformation wait stack-update-complete --stack-name my-app-prod`,
     environment: string;
     buildOutput: string;
     entityNames: string[];
+    owned?: boolean;
   }): Promise<Record<string, ResourceMetadata>> {
     const { getRuntime } = await import("@intentius/chant/runtime-adapter");
     const rt = getRuntime();
     const resources: Record<string, ResourceMetadata> = {};
+
+    if (options.owned) {
+      // describe-stack-resources does not return tags, so ownership cannot be
+      // determined here. Degrade to detect-only rather than silently filtering.
+      // eslint-disable-next-line no-console
+      console.warn(
+        "[aws] ownership filter unavailable on describeResources (no tags from describe-stack-resources) — returning all; use `chant import --from <env> --owned` for ownership-filtered export",
+      );
+    }
 
     // Derive stack name: environment-based convention
     // Try to parse the build output to detect stack name from Metadata or use convention
@@ -583,8 +593,7 @@ aws cloudformation wait stack-update-complete --stack-name my-app-prod`,
       throw new Error(`Stack "${stackName}" returned no TemplateBody`);
     }
 
-    // `owned` is accepted but inert until ownership marking lands (#120).
-    return parseStackTemplate(parsed.TemplateBody, options.selector);
+    return parseStackTemplate(parsed.TemplateBody, options.selector, options.owned);
   },
 
   mcpTools() {

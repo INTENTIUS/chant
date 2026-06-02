@@ -4,6 +4,8 @@ import {
   ownershipKeys,
   hasOwnershipMarker,
   readOwnership,
+  classifyOwnership,
+  tagArrayToMap,
   OWNERSHIP_MANAGED_BY_VALUE,
 } from "./ownership";
 import { resolveOwnershipMarker } from "./config";
@@ -60,6 +62,28 @@ describe("hasOwnershipMarker / readOwnership", () => {
 
   test("readOwnership returns undefined when unmarked", () => {
     expect(readOwnership({ foo: "bar" }, "label")).toBeUndefined();
+  });
+});
+
+describe("classifyOwnership / tagArrayToMap (#120)", () => {
+  test("marker present → owned, absent → foreign", () => {
+    expect(classifyOwnership({ "chant:managed-by": "chant" }, "aws-tag")).toBe("owned");
+    expect(classifyOwnership({ team: "x" }, "aws-tag")).toBe("foreign");
+    expect(classifyOwnership(undefined, "label")).toBe("foreign");
+  });
+
+  test("tagArrayToMap converts CloudFormation {Key,Value} tags", () => {
+    const map = tagArrayToMap([
+      { Key: "chant:managed-by", Value: "chant" },
+      { Key: "chant:stack", Value: "billing" },
+    ]);
+    expect(map["chant:managed-by"]).toBe("chant");
+    expect(classifyOwnership(map, "aws-tag")).toBe("owned");
+  });
+
+  test("tagArrayToMap tolerates undefined / malformed entries", () => {
+    expect(tagArrayToMap(undefined)).toEqual({});
+    expect(tagArrayToMap([{ Value: "no-key" }])).toEqual({});
   });
 });
 

@@ -93,6 +93,37 @@ export function hasOwnershipMarker(
 }
 
 /**
+ * The two live-side ownership verdicts a marker query can produce.
+ *
+ * - `owned` — carries chant's marker; an undeclared owned resource is a safe
+ *   delete candidate.
+ * - `foreign` — no marker; can be adopted but never auto-deleted.
+ *
+ * The third verdict, `unknown`, is reserved for when no marker channel was
+ * queried at all (see the `Ownership` type in the change set).
+ */
+export function classifyOwnership(
+  tagsOrLabels: Record<string, unknown> | undefined,
+  channel: OwnershipChannel,
+): "owned" | "foreign" {
+  return hasOwnershipMarker(tagsOrLabels, channel) ? "owned" : "foreign";
+}
+
+/**
+ * Convert a tag array of `{Key, Value}` (AWS/CloudFormation form) into the
+ * key→value map the ownership helpers expect.
+ */
+export function tagArrayToMap(
+  tags: ReadonlyArray<{ Key?: string; Value?: unknown }> | undefined,
+): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  for (const t of tags ?? []) {
+    if (typeof t.Key === "string") out[t.Key] = t.Value;
+  }
+  return out;
+}
+
+/**
  * Read the stack/env identity from a marked resource's tags/labels. Returns
  * undefined when the managed-by marker is absent.
  */

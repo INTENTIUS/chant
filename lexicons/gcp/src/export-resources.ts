@@ -65,9 +65,9 @@ export async function exportResources(options: {
     }
   }
 
-  // `owned` is accepted but inert until ownership marking lands (#120).
   return buildExportFromObjects(objects, {
     verbatim: options.verbatim,
     selector: options.selector,
+    owned: options.owned,
   });
 }

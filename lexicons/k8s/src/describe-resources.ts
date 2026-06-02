@@ -15,6 +15,7 @@
 import { exec } from "node:child_process";
 import { promisify } from "node:util";
 import type { ResourceMetadata } from "@intentius/chant/lexicon";
+import { hasOwnershipMarker } from "@intentius/chant/ownership";
 
 const execAsync = promisify(exec);
 
@@ -85,6 +86,7 @@ export async function describeResources(options: {
   buildOutput: string;
   entityNames: string[];
   entities: Map<string, { entityType: string; props: Record<string, unknown> }>;
+  owned?: boolean;
 }): Promise<Record<string, ResourceMetadata>> {
   const result: Record<string, ResourceMetadata> = {};
   const skippedTypes = new Set<string>();
@@ -106,6 +108,10 @@ export async function describeResources(options: {
     try {
       const { stdout } = await execAsync(cmd);
       const obj: KubectlResponse = JSON.parse(stdout);
+      // owned filter: skip resources not carrying chant's marker label.
+      if (options.owned && !hasOwnershipMarker(obj.metadata?.labels, "label")) {
+        continue;
+      }
       result[entityName] = {
         type: entityType,
         physicalId: obj.metadata?.uid,

@@ -97,6 +97,14 @@ describe("buildExportFromObjects (#116)", () => {
     expect(ir.resources).toHaveLength(2);
   });
 
+  test("owned filter keeps only objects carrying the chant marker label (#120)", () => {
+    const mine = liveDeployment();
+    (mine.metadata as any).labels = { "app.kubernetes.io/managed-by": "chant", "chant.intentius.io/stack": "billing" };
+    const theirs = liveService(); // no chant label
+    const ir = buildExportFromObjects([mine, theirs], { owned: true });
+    expect(ir.resources.map((r) => r.type)).toEqual(["K8s::Apps::Deployment"]);
+  });
+
   test("export IR feeds K8sGenerator (templateGenerator) unchanged", () => {
     const ir = buildExportFromObjects([liveDeployment()]);
     const files = new K8sGenerator().generate(ir);
