@@ -34,6 +34,7 @@ Each lexicon reads live config its own way and strips it to the shape you would 
 | Lexicon | Source | Stripped by default |
 |---|---|---|
 | AWS | `cloudformation get-template --template-stage Original` | nothing — the original template is already declared shape |
+| Azure | `az group export` (the env is the resource group) | nothing — the exported ARM template is already declared shape |
 | Kubernetes | `kubectl get <kinds> -A -o json` | `status`, `managedFields`, server metadata, server annotations |
 | GCP (Config Connector) | `kubectl get <*.cnrm.cloud.google.com> -A -o json` | `status`, server metadata, `cnrm.cloud.google.com/*` annotations |
 
