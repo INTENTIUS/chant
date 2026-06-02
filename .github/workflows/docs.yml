@@ -1,5 +1,8 @@
 name: docs
 
+# Distinct title so it isn't confused with the chant workflow on the same commit.
+run-name: docs — ${{ github.head_ref || github.ref_name }}
+
 on:
   push:
     branches: [main]
