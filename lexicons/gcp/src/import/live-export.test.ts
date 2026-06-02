@@ -89,6 +89,14 @@ describe("GCP buildExportFromObjects (#117)", () => {
     expect(ir.resources.map((r) => r.logicalId)).toEqual(["my-bucket"]);
   });
 
+  test("owned filter keeps only objects carrying the chant marker label (#120)", () => {
+    const mine = liveBucket();
+    (mine.metadata as any).labels = { "app.kubernetes.io/managed-by": "chant", "chant.intentius.io/stack": "billing" };
+    const theirs = livePubsub(); // no chant label
+    const ir = buildExportFromObjects([mine, theirs], { owned: true });
+    expect(ir.resources.map((r) => r.logicalId)).toEqual(["my-bucket"]);
+  });
+
   test("export IR feeds GcpGenerator (templateGenerator) unchanged", () => {
     const ir = buildExportFromObjects([liveBucket()]);
     const files = new GcpGenerator().generate(ir);

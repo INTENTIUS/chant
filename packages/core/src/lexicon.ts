@@ -267,6 +267,13 @@ export interface LexiconPlugin {
     buildOutput: string;
     entityNames: string[];
     entities: Map<string, { entityType: string; props: Record<string, unknown> }>;
+    /**
+     * Restrict the result to chant-owned resources (those carrying the
+     * ownership marker, #119). Where a lexicon has no durable marker channel,
+     * it must log that ownership is unavailable rather than silently returning
+     * everything.
+     */
+    owned?: boolean;
   }): Promise<Record<string, ResourceMetadata>>;
 
   /**

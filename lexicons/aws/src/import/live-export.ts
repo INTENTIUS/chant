@@ -1,4 +1,5 @@
 import type { ExportedTemplate, ResourceSelector } from "@intentius/chant/lexicon";
+import { hasOwnershipMarker, tagArrayToMap } from "@intentius/chant/ownership";
 import { CFParser } from "./parser";
 
 /**
@@ -13,20 +14,25 @@ import { CFParser } from "./parser";
 export function parseStackTemplate(
   templateBody: unknown,
   selector?: ResourceSelector,
+  owned?: boolean,
 ): ExportedTemplate {
   const content =
     typeof templateBody === "string" ? templateBody : JSON.stringify(templateBody);
   const ir = new CFParser().parse(content);
 
-  if (!selector || (selector.type === undefined && selector.name === undefined)) {
-    return ir;
-  }
+  const hasSelector = selector && (selector.type !== undefined || selector.name !== undefined);
+  if (!hasSelector && !owned) return ir;
+
   return {
     ...ir,
-    resources: ir.resources.filter(
-      (r) =>
-        (selector.type === undefined || r.type === selector.type) &&
-        (selector.name === undefined || r.logicalId === selector.name),
-    ),
+    resources: ir.resources.filter((r) => {
+      if (selector?.type !== undefined && r.type !== selector.type) return false;
+      if (selector?.name !== undefined && r.logicalId !== selector.name) return false;
+      if (owned) {
+        const tags = (r.properties as { Tags?: Array<{ Key?: string; Value?: unknown }> }).Tags;
+        if (!hasOwnershipMarker(tagArrayToMap(tags), "aws-tag")) return false;
+      }
+      return true;
+    }),
   };
 }

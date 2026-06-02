@@ -42,6 +42,30 @@ describe("AWS exportResources mapping (#115)", () => {
     expect(ir.resources.map((r) => r.logicalId)).toEqual(["MyBucket"]);
   });
 
+  test("owned filter keeps only resources carrying the chant marker (#120)", () => {
+    const mixed = {
+      AWSTemplateFormatVersion: "2010-09-09",
+      Resources: {
+        Mine: {
+          Type: "AWS::S3::Bucket",
+          Properties: {
+            BucketName: "mine",
+            Tags: [
+              { Key: "chant:managed-by", Value: "chant" },
+              { Key: "chant:stack", Value: "billing" },
+            ],
+          },
+        },
+        Theirs: {
+          Type: "AWS::S3::Bucket",
+          Properties: { BucketName: "theirs", Tags: [{ Key: "team", Value: "other" }] },
+        },
+      },
+    };
+    const ir = parseStackTemplate(mixed, undefined, true);
+    expect(ir.resources.map((r) => r.logicalId)).toEqual(["Mine"]);
+  });
+
   test("export IR feeds CFGenerator (templateGenerator) unchanged", () => {
     const ir = parseStackTemplate(liveTemplate);
     const files = new CFGenerator().generate(ir);
