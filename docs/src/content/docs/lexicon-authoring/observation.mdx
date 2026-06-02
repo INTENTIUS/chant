@@ -272,6 +272,7 @@ exportResources?(options: {
   environment: string;
   selector?: ResourceSelector;   // { type?, name? }
   owned?: boolean;               // inert until ownership marking lands
+  verbatim?: boolean;            // keep server-defaulted fields; default strips
 }): Promise<ExportedTemplate>;
 ```
 
@@ -288,6 +289,7 @@ Live-export coverage today:
 | Lexicon | `exportResources()` | How it reads live config |
 |---|---|---|
 | AWS | ✅ | `aws cloudformation get-template --template-stage Original`, parsed by the CloudFormation import parser |
+| K8s | ✅ | `kubectl get <kinds> -A -o json`, stripped of `status`/`managedFields`/server metadata (kept under `--verbatim`), parsed by the K8s import parser |
 
 ## See also
 

@@ -22,7 +22,7 @@ const execAsync = promisify(exec);
  * Map chant entity types to `kubectl get` resource names. Add entries here
  * as new types are needed.
  */
-const KUBECTL_RESOURCE: Record<string, string> = {
+export const KUBECTL_RESOURCE: Record<string, string> = {
   "K8s::Apps::Deployment": "deployment.apps",
   "K8s::Apps::StatefulSet": "statefulset.apps",
   "K8s::Apps::DaemonSet": "daemonset.apps",
