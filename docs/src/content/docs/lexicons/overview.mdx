@@ -28,7 +28,7 @@ Lexicons opt into the `chant state diff <env> --live` pipeline by implementing o
 | Lexicon | `describeResources()` | `listArtifacts()` | Ownership | Notes |
 |---|---|---|---|---|
 | AWS | ✅ |  | Tags | `aws cloudformation describe-stack-resources`; `--owned` available on live export (not on describe — tags absent there) |
-| Azure | ✅ |  | Tags | `az resource show` per declared entity; resource-group is the env name |
+| Azure | ✅ |  | — | `az resource show` per declared entity; resource-group is the env name. Stamps the ownership marker at synthesis, but the `--owned` query is not yet wired (no `exportResources`) |
 | GCP (Config Connector) | ✅ |  | Labels | `kubectl get <gvk>` against the GKE management cluster |
 | Kubernetes | ✅ |  | Labels | `kubectl get <kind>` per declared entity; ~20 common types |
 | Temporal | ✅ |  | — | Temporal client — namespaces, search attributes, schedules |
@@ -41,7 +41,7 @@ Lexicons opt into the `chant state diff <env> --live` pipeline by implementing o
 
 Lexicons that implement neither are warn-skipped — `--live` doesn't fail the whole command for them.
 
-The **Ownership** column shows which marker channel a lexicon queries for the `--owned` filter ([ownership marking](/chant/configuration/config-file/#ownership)). `—` means no durable marker channel: those targets log that ownership is unavailable and degrade to detect-only rather than silently filtering.
+The **Ownership** column shows the marker channel a lexicon queries for the `--owned` filter ([ownership marking](/chant/configuration/config-file/#ownership)). `—` means the `--owned` query isn't available for that lexicon — either it has no durable marker channel, or (Azure) it stamps the marker at synthesis but the query side isn't wired up yet. Where a lexicon is asked for owned resources but can't read a marker — e.g. AWS `describeResources`, which gets no tags from `describe-stack-resources` — it logs that ownership is unavailable and returns everything rather than silently filtering.
 
 ## Cross-lexicon migration
 
