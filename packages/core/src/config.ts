@@ -2,6 +2,7 @@ import { existsSync } from "fs";
 import { join } from "path";
 import { z } from "zod";
 import type { LintConfig } from "./lint/config";
+import type { OwnershipMarker } from "./ownership";
 
 /**
  * Zod schema for ChantConfig validation.
@@ -10,6 +11,11 @@ export const ChantConfigSchema = z.object({
   lexicons: z.array(z.string().min(1)).optional(),
   environments: z.array(z.string().min(1)).optional(),
   lint: z.record(z.string(), z.unknown()).optional(),
+  ownership: z.object({
+    stack: z.string().min(1).optional(),
+    env: z.string().min(1).optional(),
+    enabled: z.boolean().optional(),
+  }).optional(),
 }).passthrough();
 
 /**
@@ -26,6 +32,21 @@ export interface ChantConfig {
 
   /** Lint configuration (rules, extends, overrides, plugins) */
   lint?: LintConfig;
+
+  /**
+   * Opt-in cloud-side ownership marking. When `stack` is set (and `enabled`
+   * is not false), the serializer stamps a chant ownership marker carrying
+   * this stack/env identity onto every supported resource. See {@link
+   * resolveOwnershipMarker}.
+   */
+  ownership?: {
+    /** Stack identity stamped onto resources (required to enable stamping). */
+    stack?: string;
+    /** Optional environment identity. */
+    env?: string;
+    /** Set false to disable stamping even when `stack` is present. */
+    enabled?: boolean;
+  };
 }
 
 /**
@@ -69,6 +90,16 @@ export async function loadChantConfig(dir: string): Promise<ResolvedConfig> {
   }
 
   return { config: DEFAULT_CHANT_CONFIG };
+}
+
+/**
+ * Resolve the ownership marker to stamp from project config, or undefined when
+ * ownership marking is off (no `stack`, or `enabled: false`).
+ */
+export function resolveOwnershipMarker(config: ChantConfig): OwnershipMarker | undefined {
+  const o = config.ownership;
+  if (!o || !o.stack || o.enabled === false) return undefined;
+  return { stack: o.stack, env: o.env };
 }
 
 /**

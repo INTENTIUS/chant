@@ -1,6 +1,7 @@
 import type { Declarable, CoreParameter } from "@intentius/chant/declarable";
 import { isPropertyDeclarable } from "@intentius/chant/declarable";
-import type { Serializer, SerializerResult } from "@intentius/chant/serializer";
+import type { Serializer, SerializerResult, SerializeContext } from "@intentius/chant/serializer";
+import { ownershipEntries, type OwnershipMarker } from "@intentius/chant/ownership";
 import type { LexiconOutput } from "@intentius/chant/lexicon-output";
 import { walkValue, type SerializerVisitor } from "@intentius/chant/serializer-walker";
 import { isChildProject, type ChildProjectInstance } from "@intentius/chant/child-project";
@@ -131,6 +132,7 @@ function serializeToTemplate(
   outputs?: LexiconOutput[],
   extraParameters?: Record<string, CFParameter>,
   extraOutputs?: Record<string, CFOutput>,
+  ownership?: OwnershipMarker,
 ): CFTemplate {
   const template: CFTemplate = {
     AWSTemplateFormatVersion: "2010-09-09",
@@ -148,8 +150,15 @@ function serializeToTemplate(
     entityNames.set(entity, name);
   }
 
-  // Collect default tags
+  // Collect default tags. The ownership marker is stamped as tags, seeded
+  // first so user default tags (and explicit per-resource tags) take precedence
+  // on key collisions.
   const defaultTagEntries: TagEntry[] = [];
+  if (ownership) {
+    for (const [Key, Value] of Object.entries(ownershipEntries("aws-tag", ownership))) {
+      defaultTagEntries.push({ Key, Value });
+    }
+  }
   for (const [, entity] of entities) {
     if (isDefaultTags(entity)) {
       defaultTagEntries.push(...entity.tags);
@@ -323,7 +332,9 @@ export const awsSerializer: Serializer = {
   name: "aws",
   rulePrefix: "WAW",
 
-  serialize(entities: Map<string, Declarable>, outputs?: LexiconOutput[]): string | SerializerResult {
+  serialize(entities: Map<string, Declarable>, outputs?: LexiconOutput[], context?: SerializeContext): string | SerializerResult {
+    const ownership = context?.ownership;
+
     // Check if any entities are child projects (nested stacks)
     const childProjects = new Map<string, ChildProjectInstance>();
     let hasChildProjects = false;
@@ -337,7 +348,7 @@ export const awsSerializer: Serializer = {
 
     // No nested stacks — use the simple path
     if (!hasChildProjects) {
-      const template = serializeToTemplate(entities, outputs);
+      const template = serializeToTemplate(entities, outputs, undefined, undefined, ownership);
       return JSON.stringify(template, null, 2);
     }
 
@@ -377,7 +388,7 @@ export const awsSerializer: Serializer = {
     }
 
     // Serialize the parent template (ChildProjectInstance entities become CF::Stack resources)
-    const parentTemplate = serializeToTemplate(entities, outputs, parentParams);
+    const parentTemplate = serializeToTemplate(entities, outputs, parentParams, undefined, ownership);
     const primary = JSON.stringify(parentTemplate, null, 2);
 
     return {

@@ -8,7 +8,8 @@
 import { createRequire } from "module";
 import type { Declarable } from "@intentius/chant/declarable";
 import { isPropertyDeclarable } from "@intentius/chant/declarable";
-import type { Serializer, SerializerResult } from "@intentius/chant/serializer";
+import type { Serializer, SerializerResult, SerializeContext } from "@intentius/chant/serializer";
+import { ownershipEntries } from "@intentius/chant/ownership";
 import type { LexiconOutput } from "@intentius/chant/lexicon-output";
 import { walkValue, type SerializerVisitor } from "@intentius/chant/serializer-walker";
 import { emitYAML } from "@intentius/chant/yaml";
@@ -116,15 +117,18 @@ export const gcpSerializer: Serializer = {
   name: "gcp",
   rulePrefix: "WGC",
 
-  serialize(entities: Map<string, Declarable>, _outputs?: LexiconOutput[]): string {
+  serialize(entities: Map<string, Declarable>, _outputs?: LexiconOutput[], context?: SerializeContext): string {
     // Build reverse map: entity → name
     const entityNames = new Map<Declarable, string>();
     for (const [name, entity] of entities) {
       entityNames.set(entity, name);
     }
 
-    // Collect default labels and annotations
-    let defaultLabelEntries: Record<string, unknown> = {};
+    // Collect default labels and annotations. Ownership markers are stamped as
+    // labels (Config Connector resources carry them in metadata.labels).
+    let defaultLabelEntries: Record<string, unknown> = context?.ownership
+      ? { ...ownershipEntries("label", context.ownership) }
+      : {};
     let defaultAnnotationEntries: Record<string, unknown> = {};
 
     for (const [, entity] of entities) {

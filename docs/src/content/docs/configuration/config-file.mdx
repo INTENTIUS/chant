@@ -23,6 +23,28 @@ chant uses a `chant.config.ts` file at the project root for configuration.
 
 An array of lexicon names the project uses.
 
+### `ownership`
+
+Opt-in cloud-side ownership marking. When `stack` is set, the serializer stamps a chant ownership marker carrying this stack (and optional `env`) identity onto every supported resource at synthesis time:
+
+```typescript
+ownership: {
+  stack: "billing",   // stamped onto every resource (enables marking)
+  env: "prod",        // optional environment identity
+  // enabled: false,  // set to disable without removing the block
+}
+```
+
+The marker is the record that later lets `delete` be precise without an authoritative state file — ownership lives on the cloud resource, not in a file chant has to host or lock. It is stamped into each target's native metadata channel:
+
+| Channel | Targets | Keys |
+|---|---|---|
+| Labels | Kubernetes, GCP (Config Connector) | `app.kubernetes.io/managed-by=chant`, `chant.intentius.io/stack`, `chant.intentius.io/env` |
+| Tags | AWS | `chant:managed-by=chant`, `chant:stack`, `chant:env` |
+| Tags | Azure | `chant-managed-by=chant`, `chant-stack`, `chant-env` |
+
+The marker carries **stack identity**, not just `managed=true`, so one stack never mistakes another's resources for its own. Ownership means "carries chant's marker", not "carries only chant's marker" — co-stamping with other tools (ArgoCD, Terraform) is fine, and explicit per-resource tags/labels win on key collisions. Walk-away cost stays zero: these are standard tags/labels, nothing proprietary.
+
 ### `lint.extends`
 
 An array of preset configuration paths to inherit from:
