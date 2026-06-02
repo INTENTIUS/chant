@@ -167,8 +167,8 @@ describe("WatchOp: configuration", () => {
     expect(phases.map((p) => p.name)).toEqual(["Snapshot", "Diff"]);
     const snapStep = (phases[0].steps as Array<Record<string, unknown>>)[0];
     const diffStep = (phases[1].steps as Array<Record<string, unknown>>)[0];
-    expect(snapStep.fn).toBe("stateSnapshot");
-    expect(diffStep.fn).toBe("stateDiff");
+    expect(snapStep.fn).toBe("lifecycleSnapshot");
+    expect(diffStep.fn).toBe("lifecycleDiff");
     expect(snapStep.args).toEqual({ env: "prod" });
     expect(diffStep.args).toEqual({ env: "prod", live: true });
     // Drift is surfaced as a workflow search attribute via outcomeAttribute (#41)
@@ -227,9 +227,9 @@ describe("WatchOp: serialization", () => {
     expect(wf).toContain('upsertSearchAttributes({"OpName":["prod-watch"],"Watch":["true"],"Env":["prod"]});');
     expect(wf).toContain('upsertSearchAttributes({ Phase: ["Snapshot"] });');
     expect(wf).toContain('upsertSearchAttributes({ Phase: ["Diff"] });');
-    expect(wf).toContain("stateSnapshot(");
+    expect(wf).toContain("lifecycleSnapshot(");
     // Diff result captured + Drift search attribute auto-emitted
-    expect(wf).toContain("const __r0 = await stateDiff(");
+    expect(wf).toContain("const __r0 = await lifecycleDiff(");
     expect(wf).toContain('upsertSearchAttributes({ "Drift": [String(__r0?.drifted)] });');
   });
 });

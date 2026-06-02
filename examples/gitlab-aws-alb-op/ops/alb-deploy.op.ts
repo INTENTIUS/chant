@@ -10,7 +10,7 @@
  *   2. Deploy           — apply manifests sequentially (ordered by dependency)
  *   3. Verify           — wait for rollout, then snapshot state
  */
-import { Op, phase, build, kubectlApply, waitForStack, stateSnapshot } from "@intentius/chant-lexicon-temporal";
+import { Op, phase, build, kubectlApply, waitForStack, lifecycleSnapshot } from "@intentius/chant-lexicon-temporal";
 
 export default Op({
   name: "alb-deploy",
@@ -41,7 +41,7 @@ export default Op({
     phase("Verify", [
       waitForStack("alb-api", { namespace: "alb" }),
       waitForStack("alb-ui", { namespace: "alb" }),
-      stateSnapshot("staging"),
+      lifecycleSnapshot("staging"),
     ]),
   ],
 });

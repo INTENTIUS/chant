@@ -5,7 +5,7 @@
  * Composes existing pieces:
  *   - The Op codegen (#7) emits a workflow that runs phases sequentially
  *   - The auto-emit search-attribute behavior (#28) tags each phase
- *   - The pre-built stateSnapshot + stateDiff activities (this commit)
+ *   - The pre-built lifecycleSnapshot + lifecycleDiff activities (this commit)
  *   - TemporalSchedule fires the workflow on a cron schedule
  *
  * @example
@@ -73,14 +73,14 @@ export function WatchOp(config: WatchOpConfig): WatchOpResources {
       Env: config.env,
     },
     phases: [
-      phase("Snapshot", [activity("stateSnapshot", { env: config.env })]),
+      phase("Snapshot", [activity("lifecycleSnapshot", { env: config.env })]),
       phase("Diff", [
-        // outcomeAttribute surfaces stateDiff's `drifted` boolean as a
+        // outcomeAttribute surfaces lifecycleDiff's `drifted` boolean as a
         // workflow-level Drift search attribute, making 'show me runs that
         // detected drift' a one-filter UI query.
         {
           kind: "activity",
-          fn: "stateDiff",
+          fn: "lifecycleDiff",
           args: { env: config.env, live },
           outcomeAttribute: { name: "Drift", from: "drifted" },
         },

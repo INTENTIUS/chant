@@ -84,8 +84,8 @@ export const gitlabPipeline = (name: string, opts?: Record<string, unknown>): Ac
   activity("gitlabPipeline", { name, ...opts }, "longInfra");
 
 /** Take a chant lifecycle snapshot for the given environment. */
-export const stateSnapshot = (env: string): ActivityStep =>
-  activity("stateSnapshot", { env });
+export const lifecycleSnapshot = (env: string): ActivityStep =>
+  activity("lifecycleSnapshot", { env });
 
 /** Run an arbitrary shell command. */
 export const shell = (cmd: string, opts?: { env?: Record<string, string> }): ActivityStep =>

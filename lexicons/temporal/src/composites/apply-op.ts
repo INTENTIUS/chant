@@ -79,7 +79,7 @@ export function ApplyOp(config: ApplyOpConfig): ApplyOpResources {
     phase("Plan", [
       {
         kind: "activity" as const,
-        fn: "stateDiff",
+        fn: "lifecycleDiff",
         args: { env: config.env, live: true },
         outcomeAttribute: { name: "Drift", from: "drifted" },
       },

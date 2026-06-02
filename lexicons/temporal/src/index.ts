@@ -45,7 +45,7 @@ export {
   helmInstall,
   waitForStack,
   gitlabPipeline,
-  stateSnapshot,
+  lifecycleSnapshot,
   shell,
   teardown,
 } from "@intentius/chant/op";

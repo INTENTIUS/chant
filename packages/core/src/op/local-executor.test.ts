@@ -185,10 +185,10 @@ describe("runOpLocally — outcomeAttribute", () => {
     const diff: ActivityFn = async () => ({ output: "...", exitCode: 0, drifted: false });
     const config = op({
       phases: [{ name: "Check", steps: [
-        { kind: "activity", fn: "stateDiff", outcomeAttribute: { name: "Drift", from: "drifted" } },
+        { kind: "activity", fn: "lifecycleDiff", outcomeAttribute: { name: "Drift", from: "drifted" } },
       ] }],
     });
-    const result = await runOpLocally(config, new Map([["stateDiff", diff]]), PROFILES);
+    const result = await runOpLocally(config, new Map([["lifecycleDiff", diff]]), PROFILES);
     expect(result.records[0].outcome).toEqual({ name: "Drift", value: false });
   });
 });
