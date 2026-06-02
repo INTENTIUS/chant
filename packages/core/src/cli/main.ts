@@ -88,7 +88,17 @@ export function parseArgs(args: string[]): ParsedArgs {
     } else if (arg === "--live") {
       result.live = true;
     } else if (arg === "--from") {
+      // Shared by `migrate --from <lexicon>` and `import --from <env>`; the
+      // two commands never run together, so one field carries both.
       result.migrateFrom = args[++i];
+    } else if (arg === "--type") {
+      result.selectType = args[++i];
+    } else if (arg === "--name") {
+      result.selectName = args[++i];
+    } else if (arg === "--owned") {
+      result.owned = true;
+    } else if (arg === "--verbatim") {
+      result.verbatim = true;
     } else if (arg === "--to") {
       result.migrateTo = args[++i];
     } else if (arg === "--emit") {
@@ -211,6 +221,7 @@ Examples:
   chant build ./infra/ --format yaml
   chant build ./infra/ --watch
   chant import template.json --output ./infra/
+  chant import --from prod --name my-bucket --output src/
   chant lint ./infra/
   chant lint ./infra/ --format sarif
   chant lint ./infra/ --watch

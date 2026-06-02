@@ -1,6 +1,7 @@
 import { listCommand, printListResult } from "../commands/list";
-import { importCommand, printImportResult } from "../commands/import";
-import { formatError, formatSuccess } from "../format";
+import { importCommand, importFromLive, printImportResult } from "../commands/import";
+import type { ResourceSelector } from "../../lexicon";
+import { formatError, formatSuccess, formatWarning } from "../format";
 import type { CommandContext } from "../registry";
 
 export async function runList(ctx: CommandContext): Promise<number> {
@@ -21,6 +22,34 @@ export async function runList(ctx: CommandContext): Promise<number> {
 }
 
 export async function runImport(ctx: CommandContext): Promise<number> {
+  const { args } = ctx;
+
+  // `--from <env>` switches import from a template file to a live source.
+  if (args.migrateFrom) {
+    const selector: ResourceSelector | undefined =
+      args.selectType || args.selectName
+        ? { type: args.selectType, name: args.selectName }
+        : undefined;
+
+    // Live config may carry secrets into generated source — warn before writing.
+    console.error(formatWarning({
+      message: "Live import may emit sensitive values (keys, tokens, passwords) into generated source. Review before committing.",
+    }));
+
+    const result = await importFromLive({
+      environment: args.migrateFrom,
+      lexicon: args.lexicon,
+      output: args.output,
+      force: args.force,
+      selector,
+      owned: args.owned,
+      verbatim: args.verbatim,
+    });
+
+    printImportResult(result);
+    return result.success ? 0 : 1;
+  }
+
   const result = await importCommand({
     templatePath: ctx.args.path,
     output: ctx.args.output,

@@ -1,10 +1,10 @@
 import { existsSync, mkdirSync, writeFileSync, readFileSync, readdirSync } from "fs";
 import { join, resolve, basename, dirname } from "path";
 import { formatSuccess, formatWarning, formatError } from "../format";
-import type { TemplateIR, ResourceIR, TemplateParser } from "../../import/parser";
+import type { TemplateIR, ResourceIR, ParameterIR, TemplateParser } from "../../import/parser";
 import type { GeneratedFile, TypeScriptGenerator } from "../../import/generator";
 import { loadPlugins, resolveProjectLexicons } from "../plugins";
-import type { LexiconPlugin } from "../../lexicon";
+import type { LexiconPlugin, ResourceSelector } from "../../lexicon";
 
 /**
  * Import command options
@@ -307,6 +307,156 @@ export async function importCommand(options: ImportOptions): Promise<ImportResul
     generatedFiles,
     warnings,
     lexicon,
+  };
+}
+
+/**
+ * Live import options — read from a running cloud/cluster instead of a file.
+ */
+export interface LiveImportOptions {
+  /** Environment to resolve (passed to each lexicon's exportResources). */
+  environment: string;
+  /** Restrict to one lexicon by name (e.g. "aws", "k8s"). */
+  lexicon?: string;
+  /** Output directory (defaults to ./infra/). */
+  output?: string;
+  /** Force overwrite existing files. */
+  force?: boolean;
+  /** Selector forwarded to the lexicon. */
+  selector?: ResourceSelector;
+  /** Restrict to chant-owned resources (inert until ownership marking lands). */
+  owned?: boolean;
+  /** Keep server-defaulted fields instead of stripping to declared shape. */
+  verbatim?: boolean;
+}
+
+/**
+ * Merge several template IRs into one. Resources and parameters concatenate;
+ * later metadata wins on key collisions.
+ */
+function mergeIR(parts: TemplateIR[]): TemplateIR {
+  const resources: ResourceIR[] = [];
+  const parameters: ParameterIR[] = [];
+  let metadata: Record<string, unknown> | undefined;
+  for (const part of parts) {
+    resources.push(...part.resources);
+    parameters.push(...part.parameters);
+    if (part.metadata) metadata = { ...(metadata ?? {}), ...part.metadata };
+  }
+  return { resources, parameters, metadata };
+}
+
+/**
+ * Import directly from a live environment: ask each lexicon's exportResources
+ * for full-fidelity IR, then generate chant TypeScript from it.
+ *
+ * Unlike file import, the live config may contain secrets — the caller prints a
+ * warning. Reuses the same by-category output organization as file import.
+ */
+export async function importFromLive(options: LiveImportOptions): Promise<ImportResult> {
+  const projectDir = resolve(options.output ? dirname(options.output) : ".");
+
+  // Resolve project lexicons, then hand off to the testable core.
+  let plugins: LexiconPlugin[];
+  try {
+    const lexiconNames = await resolveProjectLexicons(projectDir);
+    plugins = await loadPlugins(lexiconNames);
+  } catch {
+    plugins = [];
+  }
+
+  return liveImportFromPlugins(plugins, options);
+}
+
+/**
+ * Live-import core: given resolved plugins, export and generate. Split from
+ * plugin resolution so it can be tested with fake exporters (no cloud calls).
+ */
+export async function liveImportFromPlugins(
+  plugins: LexiconPlugin[],
+  options: LiveImportOptions,
+): Promise<ImportResult> {
+  const outputDir = resolve(options.output ?? "./infra/");
+  const warnings: string[] = [];
+
+  let exporters = plugins.filter((p) => p.exportResources && p.templateGenerator);
+  if (options.lexicon) {
+    exporters = exporters.filter((p) => p.name === options.lexicon);
+  }
+
+  if (exporters.length === 0) {
+    return {
+      success: false,
+      generatedFiles: [],
+      warnings: [],
+      error: options.lexicon
+        ? `Lexicon "${options.lexicon}" does not support live export, or is not in this project.`
+        : "No project lexicon supports live export (exportResources).",
+    };
+  }
+
+  // Collect IR from every exporter, tagging which lexicon produced output.
+  const irParts: TemplateIR[] = [];
+  let generatorLexicon: LexiconPlugin | undefined;
+  for (const plugin of exporters) {
+    let ir: TemplateIR;
+    try {
+      ir = await plugin.exportResources!({
+        environment: options.environment,
+        selector: options.selector,
+        owned: options.owned,
+        verbatim: options.verbatim,
+      });
+    } catch (err) {
+      warnings.push(`${plugin.name}: live export failed — ${err instanceof Error ? err.message : String(err)}`);
+      continue;
+    }
+    if (ir.resources.length === 0) continue;
+    irParts.push(ir);
+    generatorLexicon ??= plugin;
+  }
+
+  if (irParts.length === 0 || !generatorLexicon) {
+    return {
+      success: false,
+      generatedFiles: [],
+      warnings,
+      error: `No resources exported from environment "${options.environment}".`,
+    };
+  }
+
+  if (exporters.length > 1 && irParts.length > 1) {
+    warnings.push("Multiple lexicons exported resources; generated with the first. Use --lexicon to target one.");
+  }
+
+  const ir = mergeIR(irParts);
+  const generator = generatorLexicon.templateGenerator!();
+
+  if (!existsSync(outputDir)) {
+    mkdirSync(outputDir, { recursive: true });
+  }
+
+  const files = generateOrganizedFiles(ir, generator);
+  const generatedFiles: string[] = [];
+  for (const file of files) {
+    const filePath = join(outputDir, file.path);
+    const dirPath = join(outputDir, file.path.split("/").slice(0, -1).join("/"));
+    if (dirPath && !existsSync(dirPath)) {
+      mkdirSync(dirPath, { recursive: true });
+    }
+    if (existsSync(filePath) && !options.force) {
+      warnings.push(`File ${file.path} already exists, skipping`);
+      continue;
+    }
+    writeFileSync(filePath, file.content);
+    generatedFiles.push(file.path);
+  }
+
+  return {
+    success: true,
+    generatedFiles,
+    warnings,
+    lexicon: generatorLexicon.name,
   };
 }
 
