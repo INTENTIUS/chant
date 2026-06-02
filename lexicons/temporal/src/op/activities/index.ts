@@ -21,3 +21,6 @@ export type { StateSnapshotArgs, StateDiffArgs, StateDiffResult } from "./state"
 
 export { chantTeardown } from "./teardown";
 export type { ChantTeardownArgs } from "./teardown";
+
+export { reconcilePr } from "./reconcile";
+export type { ReconcilePrArgs, ReconcileResult, ReconcileMode, ReconcileEntry } from "./reconcile";

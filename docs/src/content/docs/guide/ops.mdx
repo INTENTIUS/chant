@@ -94,6 +94,8 @@ Pre-built step builders:
 | `stateSnapshot(env, opts?)` | `chant state snapshot` |
 | `teardown(path, opts?)` | Build + destroy |
 
+A reconcile activity is also available via `activity("reconcilePr", args)`: given the change-set entries that triggered it, it regenerates TypeScript with `chant import --from <env>` and opens a reviewable PR (modes: `pull-request`, `issue`, `report`). It never commits to the main branch. It is the building block for the reconcile workflow (cloud → code).
+
 Each step takes an optional `profile` that controls Temporal retry and timeout settings:
 
 | Profile | Suitable for |
