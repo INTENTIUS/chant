@@ -385,4 +385,9 @@ export const bucket = new StorageBucket({
     const { describeResources } = await import("./describe-resources");
     return describeResources(options);
   },
+
+  async exportResources(options) {
+    const { exportResources } = await import("./export-resources");
+    return exportResources(options);
+  },
 };
