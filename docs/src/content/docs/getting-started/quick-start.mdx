@@ -103,6 +103,16 @@ Op "hello" completed in 0.1s
 
 No Temporal **server** required — chant runs Ops locally by default. (The Op imports from `@intentius/chant-lexicon-temporal`, so install that package — but nothing has to be running.) For durable resume, gates, and schedules, configure a Temporal profile and pass `--temporal`. See [Local vs Temporal](/chant/guide/local-vs-temporal/).
 
+## Step 6: See drift, decide what to do
+
+Once resources are deployed, chant tells you when the cloud and your source disagree — without hosting a state file:
+
+```bash
+chant lifecycle diff prod --live
+```
+
+That's the `observe` position: report drift, change nothing. From there you turn the dial up per environment — open `cloud → code` PRs (`ReconcileOp`) or apply `code → cloud` behind a gate (`ApplyOp`). The [`lifecycle-reconcile-aws` example](https://github.com/INTENTIUS/chant/tree/main/lexicons/aws/examples/lifecycle-reconcile-aws) walks the whole loop; [Lifecycle Models](/chant/concepts/lifecycle-models/) explains the dial.
+
 ## Next Steps
 
 - [Project Structure](/chant/getting-started/project-structure/) — understand what `chant init` created
@@ -111,3 +121,4 @@ No Temporal **server** required — chant runs Ops locally by default. (The Op i
 - [Linting & Type-Checking](/chant/guide/linting/) — validate your definitions
 - [Choosing Your Deployment Model](/chant/concepts/deployment-paths/) — synthesize only, or extend into durable deployment workflows
 - [Ops](/chant/guide/ops/) — define `*.op.ts` files for phased, observable deploys with gates and rollback
+- [Lifecycle Models](/chant/concepts/lifecycle-models/) — the observe → reconcile → authoritative dial, chosen per environment
