@@ -35,7 +35,8 @@ These tools make different design decisions. Each decision has consequences — 
 | **Spec fidelity** | Provider-mapped | Abstracted (L2/L3) | Provider-mapped | Spec-true |
 | **Output** | State + API calls | CloudFormation | State + API calls | Native spec output |
 | **Lifecycle scope** | Full | Full (via CloudFormation) | Full | Synthesis + opt-in observability |
-| **State model** | Authoritative | Authoritative (via CloudFormation) | Authoritative | Non-authoritative (observational) |
+| **State model** | Authoritative | Authoritative (via CloudFormation) | Authoritative | No authoritative state file; precise change set via live projection + cloud-side ownership |
+| **Reconciliation** | `code → cloud` | `code → cloud` | `code → cloud` | none / `code → cloud` / `cloud → code` (chosen per environment) |
 | **Determinism** | Mostly | No (code executes) | No (code executes) | Yes (for lint-conforming source) |
 | **Walk-away cost** | High (state, HCL) | Medium (CloudFormation remains) | High (state, SDK) | Zero (output is native) |
 | **Semantic validation** | None built-in | None built-in | None built-in | Built-in (lexicon rules) |
@@ -72,7 +73,7 @@ The most consequential design difference after execution model is the state mode
 
 **CDK** inherits CloudFormation's authoritative state model, which AWS manages as a service. Less operational burden, but the same architectural commitment: state is truth.
 
-**chant** is designed with an observational state model — snapshots record what was observed at a point in time, not what must be true now. This architectural choice gives up precision (no automatic plan/apply) but gains safety and simplicity:
+**chant** is designed with an observational state model — snapshots record what was observed at a point in time, not what must be true now. It does not give up the precise change set, though: chant computes a create/update/delete plan against the live system using [cloud-side ownership markers](/chant/configuration/config-file/#ownership) rather than a hosted state file. What it drops is the *authoritative file*, and with it the costs:
 
 - **No locking** — a stale snapshot is inconvenient, not dangerous
 - **No sensitive data** — scrubbing is a design requirement, not a best-effort guideline
@@ -80,8 +81,8 @@ The most consequential design difference after execution model is the state mode
 - **Minimal overhead** — state is designed to live in git alongside source code
 
 **Trade-offs:**
-- Non-authoritative state means agents must verify against live APIs before acting, and gaps escalate to human review rather than being resolved automatically
-- Git-based state gives versioning, portability, and offline access, but no locking, no encryption at rest, and no access control separation from source code
+- Ownership is answered by a live marker on the resource, so the projection must query live APIs; a resource with no marker is `foreign` and escalates to human review rather than being auto-deleted
+- Git-based snapshots give versioning, portability, and offline access, but no locking, no encryption at rest, and no access control separation from source code
 
 ## What each tool optimizes for
 
