@@ -213,11 +213,23 @@ function generateWorkflow(config: OpConfig): string {
     }
   };
 
-  renderPhases(config.phases);
-
   if (config.onFailure && config.onFailure.length > 0) {
-    lines.push("  // onFailure compensation (executed on terminal failure only)");
-    renderPhases(config.onFailure);
+    // Compensation must run ONLY on terminal failure, in reverse phase order,
+    // and must never mask the original error — matching the local executor
+    // (packages/core/src/op/local-executor.ts). Wrap the main phases in
+    // try/catch; run onFailure phases reversed in the catch (best-effort), then
+    // re-throw the original failure.
+    lines.push("  try {");
+    renderPhases(config.phases);
+    lines.push("  } catch (__opErr) {");
+    lines.push("    // onFailure compensation (reverse phase order, terminal failure only)");
+    lines.push("    try {");
+    renderPhases([...config.onFailure].reverse());
+    lines.push("    } catch { /* best-effort compensation — never mask the original error */ }");
+    lines.push("    throw __opErr;");
+    lines.push("  }");
+  } else {
+    renderPhases(config.phases);
   }
 
   lines.push("}");
