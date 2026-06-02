@@ -18,13 +18,16 @@ When the live system is ahead of source — someone created or changed a resourc
 ```typescript
 import { ReconcileOp } from "@intentius/chant-lexicon-temporal";
 
-export const { op, schedule } = ReconcileOp({
+const { op, schedule } = ReconcileOp({
   name: "prod-reconcile",
   env: "prod",
   schedule: "0 * * * *",      // hourly, on Temporal
   scope: { owned: true },     // only chant-owned resources
   onDrift: "pull-request",    // or "issue" | "report"
 });
+
+export default op;        // the Op — discovered by `chant run prod-reconcile`
+export { schedule };      // the TemporalSchedule — deployed by `chant build`
 ```
 
 Phases: **Snapshot → Plan → Reconcile**, where the Reconcile phase's `reconcilePr` activity regenerates source ([live import](/chant/guide/live-import/)) and opens the PR in one step. Run `chant run prod-reconcile` for a one-shot reconcile on the local executor; give it a `schedule` to run continuously on Temporal. The PR's diff *is* the regenerated TypeScript, so review is a normal code review.
@@ -38,13 +41,15 @@ When source is the intended truth and the cloud should follow, [`ApplyOp`](/chan
 ```typescript
 import { ApplyOp } from "@intentius/chant-lexicon-temporal";
 
-export const { op } = ApplyOp({
+const { op } = ApplyOp({
   name: "prod-apply",
   env: "prod",
   target: "kubectl",
   delete: "gated",   // "never" | "owned-only" | "gated"
   gate: { signalName: "approve-apply" },
 });
+
+export default op;
 ```
 
 Authority stays with the platform — chant hosts no state file. Deletes ride the native delete path scoped to the ownership marker, so they only ever touch **chant-owned** orphans. A destructive apply gets an approval gate and saga-style rollback; see [Gates and compensation](/chant/guide/ops/#gates-and-compensation--where-temporal-is-load-bearing) for why that half is Temporal-bound.
