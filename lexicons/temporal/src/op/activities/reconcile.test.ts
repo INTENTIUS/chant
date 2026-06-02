@@ -1,5 +1,5 @@
 import { describe, test, expect } from "vitest";
-import { reconcilePr, reconcileSummary, reconcileBranchName } from "./reconcile";
+import { reconcilePr, reconcileSummary, reconcileBranchName, entriesFromPlan } from "./reconcile";
 
 const entries = [
   { name: "bucket", action: "adopt", type: "AWS::S3::Bucket" },
@@ -23,6 +23,27 @@ describe("reconcileSummary (#122)", () => {
 
   test("handles an empty entry set", () => {
     expect(reconcileSummary("prod", [])).toContain("_(none)_");
+  });
+});
+
+describe("entriesFromPlan (#123)", () => {
+  test("maps a ChangeSet, dropping noop entries", () => {
+    const plan = JSON.stringify({
+      env: "prod",
+      entries: [
+        { name: "a", action: "create", type: "T1", evidence: {}, ownership: "unknown" },
+        { name: "b", action: "noop", type: "T2", evidence: {}, ownership: "unknown" },
+        { name: "c", action: "delete", type: "T3", evidence: {}, ownership: "owned" },
+      ],
+    });
+    expect(entriesFromPlan(plan)).toEqual([
+      { name: "a", action: "create", type: "T1" },
+      { name: "c", action: "delete", type: "T3" },
+    ]);
+  });
+
+  test("tolerates an empty / entry-less plan", () => {
+    expect(entriesFromPlan(JSON.stringify({ env: "prod" }))).toEqual([]);
   });
 });
 
