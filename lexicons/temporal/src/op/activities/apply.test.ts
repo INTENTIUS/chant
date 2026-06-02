@@ -1,5 +1,5 @@
 import { describe, test, expect } from "vitest";
-import { applyCommand } from "./apply";
+import { applyCommand, rollbackCommand } from "./apply";
 
 describe("applyCommand (#124)", () => {
   test("kubectl never → plain apply, no prune", () => {
@@ -37,5 +37,18 @@ describe("applyCommand (#124)", () => {
     // unscoped delete command, so a foreign (unmarked) resource is never pruned.
     const cmd = applyCommand("kubectl", "prod", "dist", "owned-only");
     expect(cmd).toContain("managed-by=chant");
+  });
+});
+
+describe("rollbackCommand (#125)", () => {
+  test("cloudformation has a native rollback", () => {
+    expect(rollbackCommand("cloudformation", "prod")).toBe(
+      "aws cloudformation rollback-stack --stack-name prod",
+    );
+  });
+
+  test("kubectl / arm have no native single-command rollback", () => {
+    expect(rollbackCommand("kubectl", "prod")).toBeUndefined();
+    expect(rollbackCommand("arm", "rg")).toBeUndefined();
   });
 });

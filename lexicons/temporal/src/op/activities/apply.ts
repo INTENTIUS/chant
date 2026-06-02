@@ -79,3 +79,50 @@ export async function nativeApply(args: NativeApplyArgs, signal?: AbortSignal): 
   if (stderr) console.error(stderr);
   return { command };
 }
+
+/**
+ * The native rollback command for a target, or undefined when the target has
+ * no single-command rollback. Pure — exported for testing.
+ *
+ * Only CloudFormation has a native "return to last known good state" command.
+ * For kubectl/ARM the caller must supply a rollback command; otherwise the
+ * compensation degrades to a logged warning rather than silently doing nothing.
+ */
+export function rollbackCommand(target: ApplyTarget, env: string): string | undefined {
+  switch (target) {
+    case "cloudformation":
+      return `aws cloudformation rollback-stack --stack-name ${env}`;
+    case "kubectl":
+    case "arm":
+      return undefined;
+  }
+}
+
+export interface CompensateApplyArgs {
+  /** Native mechanism that was applied. */
+  target: ApplyTarget;
+  /** Environment — CFN stack name / ARM resource group. */
+  env: string;
+  /** Explicit rollback command, used in preference to the native default. */
+  command?: string;
+}
+
+/**
+ * Compensation step (saga rollback) for a partial apply failure. Runs the
+ * explicit `command` if given, else the target's native rollback. Where no
+ * automatic rollback exists, it warns rather than silently no-op'ing — partial
+ * state should never look reverted when it isn't.
+ */
+export async function compensateApply(args: CompensateApplyArgs, signal?: AbortSignal): Promise<{ command?: string }> {
+  const command = args.command ?? rollbackCommand(args.target, args.env);
+  if (!command) {
+    console.warn(
+      `[apply] no automatic rollback for target "${args.target}" — partial apply to ${args.env} was NOT reverted; supply compensate.command to enable rollback`,
+    );
+    return {};
+  }
+  const { stdout, stderr } = await execAsync(command, { signal });
+  if (stdout) console.log(stdout);
+  if (stderr) console.error(stderr);
+  return { command };
+}

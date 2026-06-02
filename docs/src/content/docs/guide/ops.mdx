@@ -276,7 +276,17 @@ export const { op } = ApplyOp({
 });
 ```
 
-`delete` controls how apply treats resources no longer declared. Deletes ride the target's **native** delete path scoped to the ownership marker — `kubectl apply --prune --selector app.kubernetes.io/managed-by=chant`, the CloudFormation stack boundary, or ARM `--mode Complete`. Because the prune is marker-scoped, a foreign (unmarked) resource is never touched: deletes are owned-only by construction. An ungated apply may run on the local executor; `delete: "gated"` (or an explicit `gate`) inserts an approval phase before the destructive apply — that gate becomes durable on Temporal ([durable workflows](/chant/concepts/durable-workflows/)).
+`delete` controls how apply treats resources no longer declared. Deletes ride the target's **native** delete path scoped to the ownership marker — `kubectl apply --prune --selector app.kubernetes.io/managed-by=chant`, the CloudFormation stack boundary, or ARM `--mode Complete`. Because the prune is marker-scoped, a foreign (unmarked) resource is never touched: deletes are owned-only by construction.
+
+### Gates and compensation — where Temporal is load-bearing
+
+A destructive apply is exactly where durability matters, and where `ApplyOp` leans on Temporal:
+
+- **Approval gate** — `delete: "gated"` (or an explicit `gate`) inserts an Approve phase before the apply. On Temporal this is a durable wait-for-signal: it survives a worker crash and can hold for hours or days without keeping a process open. The local executor cannot.
+- **Compensation** — a destructive apply defaults to an `onFailure` Rollback phase (a `compensateApply` activity), so a partial failure unwinds instead of leaving the cloud half-applied. CloudFormation rolls back natively; for kubectl/ARM, pass `compensate: { command }` (e.g. `kubectl rollout undo …`) — without one, compensation warns rather than silently doing nothing. Set `compensate: false` to opt out.
+- **Crash-resume + audit** — the workflow resumes from the last completed step with no double-acting, and the workflow history is the audit trail.
+
+An ungated, additive apply needs none of this and runs on the local executor. See [Durable Workflows](/chant/concepts/durable-workflows/) for why infra apply wants durable execution — and why it stays optional.
 
 ## Op dependencies
 

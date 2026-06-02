@@ -51,6 +51,13 @@ export interface ApplyOpConfig {
    * set explicitly. Omit `signalName` to default to `approve-<name>`.
    */
   gate?: { signalName?: string; timeout?: string; description?: string };
+  /**
+   * Saga-style rollback on partial apply failure, run as an `onFailure` phase.
+   * Defaults on whenever the apply is destructive (`delete !== "never"`). Pass
+   * `{ command }` to supply a rollback command for targets without a native one
+   * (kubectl, ARM); `false` to disable.
+   */
+  compensate?: boolean | { command?: string };
   /** Override the task queue. Defaults to `name`. */
   taskQueue?: string;
 }
@@ -97,6 +104,13 @@ export function ApplyOp(config: ApplyOpConfig): ApplyOpResources {
     ]),
   );
 
+  // Compensation defaults on for destructive applies — a partial failure should
+  // unwind rather than leave the cloud half-applied.
+  const compensateDefault = deleteMode !== "never";
+  const compensateEnabled = config.compensate === undefined ? compensateDefault : config.compensate !== false;
+  const compensateCommand =
+    typeof config.compensate === "object" ? config.compensate.command : undefined;
+
   const op = Op({
     name: config.name,
     overview: `Apply declared source to the ${config.env} environment (code → cloud)`,
@@ -106,6 +120,19 @@ export function ApplyOp(config: ApplyOpConfig): ApplyOpResources {
       Env: config.env,
     },
     phases,
+    ...(compensateEnabled
+      ? {
+          onFailure: [
+            phase("Rollback", [
+              activity("compensateApply", {
+                target,
+                env: config.env,
+                ...(compensateCommand ? { command: compensateCommand } : {}),
+              }),
+            ]),
+          ],
+        }
+      : {}),
   });
 
   return { op };
