@@ -2,6 +2,8 @@
 
 A type system for operations.
 
+Synthesis is pure and local. There is no authoritative state file — chant computes a precise change set against the live system using cloud-side ownership markers, so you get a plan without hosting state. When an apply needs durability — approval gates, rollback, crash-resume — chant compiles your orchestration to [durable workflows](https://intentius.io/chant/concepts/durable-workflows/): Temporal-native when you want durability, zero-dependency when you don't.
+
 **[Read the docs →](https://intentius.io/chant/getting-started/introduction/)**
 
 > chant is in active development. Packages are published under the [`@intentius`](https://www.npmjs.com/org/intentius) org on npm.

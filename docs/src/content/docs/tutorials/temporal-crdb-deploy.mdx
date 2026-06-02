@@ -1,6 +1,6 @@
 ---
-title: "Temporal Workflow-Driven Deployment"
-description: "Replace a 200-line bash deploy script with a durable, observable, resumable Temporal workflow — using the CockroachDB multi-region GKE example as the target."
+title: "Durable Infrastructure Workflows (Temporal)"
+description: "Build a durable infrastructure workflow: replace a 200-line bash deploy script with a durable, observable, resumable Temporal workflow — using the CockroachDB multi-region GKE example as the target."
 ---
 
 import { Aside } from '@astrojs/starlight/components';
@@ -10,6 +10,8 @@ This tutorial covers the **raw Temporal path**: you write your own workflow Type
 </Aside>
 
 A 50-minute infrastructure deployment is a bad fit for a bash script. When it fails at phase 7, you re-run from scratch. When it's running, you grep logs. When a loop hangs, you wait. This tutorial shows how to replace that bash script with a [Temporal](https://temporal.io) workflow — durable, observable, and resumable — layered on top of the chant-generated YAML.
+
+Temporal-native when you want durability, zero-dependency when you don't: the chant synthesis underneath is pure and local, and one-shot Ops run on the local executor with no cluster. You reach for the durable workflow here precisely because a 50-minute apply needs to survive a crash and resume mid-run. For the conceptual case, see [Durable Workflows](/chant/concepts/durable-workflows/).
 
 ## What you'll build
 

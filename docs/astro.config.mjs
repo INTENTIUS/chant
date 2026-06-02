@@ -36,6 +36,7 @@ export default defineConfig({
 						{ label: 'Choosing Your Deployment Model', slug: 'concepts/deployment-paths' },
 						{ label: 'State and Governance', slug: 'concepts/governance' },
 						{ label: 'Drift Detection', slug: 'concepts/drift-detection' },
+						{ label: 'Durable Workflows', slug: 'concepts/durable-workflows' },
 					],
 				},
 				{
@@ -71,7 +72,7 @@ export default defineConfig({
 						{ label: 'Flyway + PostgreSQL + GitLab', slug: 'tutorials/flyway-postgresql' },
 						{ label: 'CockroachDB Multi-Region', slug: 'tutorials/cockroachdb-multi-region' },
 						{ label: 'GitLab Cells on GKE', slug: 'tutorials/gitlab-cells' },
-						{ label: 'Temporal Workflow-Driven Deploy', slug: 'tutorials/temporal-crdb-deploy' },
+						{ label: 'Durable Infrastructure Workflows', slug: 'tutorials/temporal-crdb-deploy' },
 						{ label: 'Fargate + Lucene/Solr + EFS', slug: 'tutorials/fargate-lucene-efs-solr' },
 						{ label: 'Ray + KubeRay on GKE', slug: 'tutorials/ray-kuberay-gke' },
 						{ label: 'Slurm EDA HPC on AWS', slug: 'tutorials/slurm-aws-hpc' },

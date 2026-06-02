@@ -1,0 +1,51 @@
+---
+title: Durable Workflows for Infrastructure (Temporal IaC)
+description: Why infrastructure orchestration wants durable execution — approval gates, compensation, and crash-resume — and how chant uses Temporal for it.
+---
+
+Most infrastructure-as-code stops at synthesis: it produces the artifact and hands off. The orchestration that actually applies it — the gates, the retries, the rollback when step seven of nine fails — lives in shell scripts, CI YAML, and the operator's memory. chant takes the opposite position. Orchestration is declared as code in `*.op.ts` files and runs as an inspectable, durable workflow.
+
+No other IaC toolchain exposes its orchestration as first-class durable execution. This page explains why that matters, and why it stays optional.
+
+**Temporal-native when you want durability, zero-dependency when you don't.** The primitives — build, lint, synthesize, plan — need no executor at all. The local executor runs Ops in-process for one-shot `chant run`. Temporal is the upgrade you reach for when an Op needs to outlive a single process.
+
+## What durable execution buys an apply
+
+A non-trivial apply is a multi-step sequence against systems that fail independently. Three properties separate a durable workflow from a script that happens to call the same APIs.
+
+### Approval gates
+
+A destructive change should pause for a human. In a script that means a blocking prompt that dies with the terminal, or an out-of-band ticket the script can't see. A durable workflow waits on a signal — for minutes or for days — without holding a process open. The wait survives a worker restart. The approval is part of the workflow history, not a Slack message someone has to remember.
+
+### Compensation and rollback
+
+When step seven of nine fails, the first six steps already happened. A durable workflow models compensation — the saga pattern — so a partial failure unwinds in reverse instead of leaving the system half-applied. The compensation logic is declared alongside the forward step, not bolted on as cleanup nobody tested.
+
+### Crash-resume without double-acting
+
+A worker that dies mid-apply resumes from the last completed step, not from the top, and without re-running steps that already took effect. Determinism plus event-sourced history is what makes "resume" safe rather than a second chance to double-charge.
+
+## Why this is Temporal, and why it is optional
+
+These three properties — durable waits, compensation, exactly-once resume — are what Temporal exists to provide. chant does not reimplement them; it compiles your declared Ops into Temporal worker code and lets the platform own durability.
+
+That is also exactly why it is optional. The primitives that don't need durability don't pay for it:
+
+- `chant build`, `chant lint`, `chant state plan` are pure and executor-free.
+- One-shot Ops run on the **local executor** in-process — no cluster, no dependency.
+- Only gated or destructive Ops — the ones where a multi-hour approval wait or a crash mid-apply is unacceptable — are Temporal-bound.
+
+Lead with the local executor as the on-ramp. Reach for Temporal when the workflow has to survive a crash, hold a long approval, or roll back a partial failure. See [Local vs Temporal](/chant/guide/local-vs-temporal/) for the decision and [Ops](/chant/guide/ops/) for the authoring model.
+
+## Who this is for
+
+Two audiences meet here. Teams searching for durable execution for deployments — approval gates and rollback as infrastructure primitives — and finding nothing purpose-built. And existing Temporal users who already trust durable workflows for their application logic and want the same guarantees for the infrastructure underneath it.
+
+If you are comparing chant against Terraform and bounced on "no state management": durability is a different axis from state. chant has no authoritative state file, and computes a precise change set anyway via [live projection](/chant/concepts/governance/). The durable-workflow layer is what applies that change set safely when you want it to.
+
+## See also
+
+- [Ops](/chant/guide/ops/) — declaring orchestration in `*.op.ts`
+- [Local vs Temporal](/chant/guide/local-vs-temporal/) — when each executor fits
+- [Temporal Workflow-Driven Deploy](/chant/tutorials/temporal-crdb-deploy/) — a durable infrastructure workflow end to end
+- [State and Governance](/chant/concepts/governance/) — why no authoritative state file is needed
