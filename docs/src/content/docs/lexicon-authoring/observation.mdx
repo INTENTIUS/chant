@@ -290,6 +290,7 @@ Live-export coverage today:
 |---|---|---|
 | AWS | ✅ | `aws cloudformation get-template --template-stage Original`, parsed by the CloudFormation import parser |
 | K8s | ✅ | `kubectl get <kinds> -A -o json`, stripped of `status`/`managedFields`/server metadata (kept under `--verbatim`), parsed by the K8s import parser |
+| GCP (Config Connector) | ✅ | `kubectl get <*.cnrm.cloud.google.com> -A -o json` (each CC object is its manifest), stripped of `status`/server metadata/`cnrm.cloud.google.com/*` annotations, parsed by the GCP import parser |
 
 ## See also
 

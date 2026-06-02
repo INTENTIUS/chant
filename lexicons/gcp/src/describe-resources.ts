@@ -38,7 +38,7 @@ interface KubectlResponse {
  * derivation logic local so describeResources can compute the kubectl resource
  * name without importing serializer internals.
  */
-function deriveGVK(entityType: string): { group: string; kind: string } | null {
+export function deriveGVK(entityType: string): { group: string; kind: string } | null {
   const parts = entityType.split("::");
   if (parts.length !== 3 || parts[0] !== "GCP") return null;
   const service = parts[1].toLowerCase();
