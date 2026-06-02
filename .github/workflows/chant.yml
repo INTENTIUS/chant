@@ -1,6 +1,17 @@
 name: chant
 
-on: [push, pull_request]
+# Run once per commit: on PRs (pull_request) and on pushes to main
+# (post-merge validation). Without scoping `push` to main, a commit on a
+# branch that has an open PR triggers two identical runs.
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# Cancel superseded runs on the same ref so a new push stops the previous run.
+concurrency:
+  group: chant-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 permissions:
   contents: read
