@@ -1,4 +1,5 @@
 import { build } from "../../build";
+import { loadChantConfig, resolveOwnershipMarker } from "../../config";
 import type { Serializer, SerializerResult } from "../../serializer";
 import type { LexiconPlugin } from "../../lexicon";
 import { runPostSynthChecks } from "../../lint/post-synth";
@@ -53,8 +54,15 @@ export async function buildCommand(options: BuildOptions): Promise<BuildResult> 
   // Resolve the path
   const infraPath = resolve(options.path);
 
+  // Resolve opt-in ownership marking from project config (search the infra dir
+  // and its parent, where chant.config.* usually lives).
+  const { config } = await loadChantConfig(infraPath).then((r) =>
+    r.configPath ? r : loadChantConfig(dirname(infraPath)),
+  );
+  const ownership = resolveOwnershipMarker(config);
+
   // Run the build
-  const result = await build(infraPath, options.serializers);
+  const result = await build(infraPath, options.serializers, undefined, { ownership });
 
   // Format errors
   for (const error of result.errors) {

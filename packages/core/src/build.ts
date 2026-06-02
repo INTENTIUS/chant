@@ -1,5 +1,6 @@
 import type { Declarable } from "./declarable";
 import type { Serializer, SerializerResult } from "./serializer";
+import type { OwnershipMarker } from "./ownership";
 import type { DiscoveryError, BuildError } from "./errors";
 import { BuildError as BuildErrorClass } from "./errors";
 import { LexiconOutput, isLexiconOutput } from "./lexicon-output";
@@ -24,6 +25,17 @@ export interface BuildManifest {
 /**
  * Result of the build process
  */
+/**
+ * Optional inputs to the build pipeline.
+ */
+export interface BuildOptions {
+  /**
+   * When set, serializers stamp this ownership marker into each resource's
+   * native metadata channel. Resolved from project config by the caller.
+   */
+  ownership?: OwnershipMarker;
+}
+
 export interface BuildResult {
   /** Map of lexicon name to serialized output (string or multi-file result) */
   outputs: Map<string, string | SerializerResult>;
@@ -310,6 +322,7 @@ export async function build(
   path: string,
   serializers: Serializer[],
   parentBuildStack?: Set<string>,
+  options?: BuildOptions,
 ): Promise<BuildResult> {
   const warnings: string[] = [];
   const errors: Array<DiscoveryError | BuildError> = [];
@@ -363,7 +376,7 @@ export async function build(
         );
         continue;
       }
-      const childResult = await build(childPath, serializers, buildStack);
+      const childResult = await build(childPath, serializers, buildStack, options);
       entity.buildResult = childResult;
       if (childResult.errors.length > 0) {
         for (const err of childResult.errors) {
@@ -429,7 +442,10 @@ export async function build(
         ...(outputsByLexicon.get(lexiconName) ?? []),
         ...unassignedOutputs,
       ];
-      outputs.set(lexiconName, serializer.serialize(lexiconEntities, lexiconLexiconOutputs));
+      outputs.set(
+        lexiconName,
+        serializer.serialize(lexiconEntities, lexiconLexiconOutputs, { ownership: options?.ownership }),
+      );
     } else {
       warnings.push(`No serializer found for lexicon "${lexiconName}"`);
     }

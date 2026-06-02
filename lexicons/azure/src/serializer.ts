@@ -12,7 +12,8 @@
 
 import type { Declarable, CoreParameter } from "@intentius/chant/declarable";
 import { isPropertyDeclarable } from "@intentius/chant/declarable";
-import type { Serializer, SerializerResult } from "@intentius/chant/serializer";
+import type { Serializer, SerializerResult, SerializeContext } from "@intentius/chant/serializer";
+import { ownershipEntries, type OwnershipMarker } from "@intentius/chant/ownership";
 import type { LexiconOutput } from "@intentius/chant/lexicon-output";
 import { walkValue, type SerializerVisitor } from "@intentius/chant/serializer-walker";
 import { isChildProject, type ChildProjectInstance } from "@intentius/chant/child-project";
@@ -172,6 +173,7 @@ function toArmValue(value: unknown, entityNames: Map<Declarable, string>): unkno
 function serializeToTemplate(
   entities: Map<string, Declarable>,
   outputs?: LexiconOutput[],
+  ownership?: OwnershipMarker,
 ): ArmTemplate {
   const template: ArmTemplate = {
     $schema: "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
@@ -185,8 +187,14 @@ function serializeToTemplate(
     entityNames.set(entity, name);
   }
 
-  // Collect default tags
+  // Collect default tags. The ownership marker is stamped as tags, seeded
+  // first so user default tags (and explicit per-resource tags) win.
   const defaultTagEntries: TagEntry[] = [];
+  if (ownership) {
+    for (const [key, value] of Object.entries(ownershipEntries("azure-tag", ownership))) {
+      defaultTagEntries.push({ key, value });
+    }
+  }
   for (const [, entity] of entities) {
     if (isDefaultTags(entity)) {
       defaultTagEntries.push(...entity.tags);
@@ -410,7 +418,7 @@ export const azureSerializer: Serializer = {
   name: "azure",
   rulePrefix: "AZR",
 
-  serialize(entities: Map<string, Declarable>, outputs?: LexiconOutput[]): string | SerializerResult {
+  serialize(entities: Map<string, Declarable>, outputs?: LexiconOutput[], context?: SerializeContext): string | SerializerResult {
     // Check for child projects (linked templates)
     let hasChildProjects = false;
     const allFiles: Record<string, string> = {};
@@ -439,7 +447,7 @@ export const azureSerializer: Serializer = {
       }
     }
 
-    const template = serializeToTemplate(entities, outputs);
+    const template = serializeToTemplate(entities, outputs, context?.ownership);
     const primary = JSON.stringify(template, null, 2);
 
     if (!hasChildProjects) {
