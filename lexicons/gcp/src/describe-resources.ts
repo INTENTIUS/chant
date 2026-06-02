@@ -15,7 +15,7 @@
 import { exec } from "node:child_process";
 import { promisify } from "node:util";
 import type { ResourceMetadata } from "@intentius/chant/lexicon";
-import { hasOwnershipMarker } from "@intentius/chant/ownership";
+import { hasOwnershipMarker, classifyOwnership } from "@intentius/chant/ownership";
 
 const execAsync = promisify(exec);
 
@@ -109,6 +109,7 @@ export async function describeResources(options: {
         physicalId: obj.metadata?.uid,
         status: statusFromCC(obj),
         lastUpdated: obj.metadata?.creationTimestamp,
+        ownership: classifyOwnership(obj.metadata?.labels, "label"),
         attributes: pruneUndefined({
           namespace: obj.metadata?.namespace,
           labels: obj.metadata?.labels,

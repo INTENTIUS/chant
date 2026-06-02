@@ -91,6 +91,12 @@ export function buildChangeSet(env: string, input: DiffLiveInput): ChangeSet {
     const type = observedNow[name]?.type ?? observedThen[name]?.type;
     const evidence = { declared: isDeclared, inSnapshot, live };
 
+    // Ownership comes from the LIVE marker only (carried on observedNow), never
+    // from the snapshot. This is the invariant that keeps the snapshot from
+    // becoming load-bearing: a mutation decision (delete) is never made from a
+    // record chant has to host.
+    const ownership: Ownership = observedNow[name]?.ownership ?? "unknown";
+
     let action: ChangeAction;
     let deltas: AttributeChange[] | undefined;
 
@@ -106,14 +112,15 @@ export function buildChangeSet(env: string, input: DiffLiveInput): ChangeSet {
         action = "noop";
       }
     } else if (live) {
-      // Live but undeclared. Cannot become a delete without ownership — adopt.
-      action = "adopt";
+      // Live but undeclared. Only a chant-owned orphan is a safe delete; a
+      // foreign or unknown orphan can be adopted but never auto-deleted.
+      action = ownership === "owned" ? "delete" : "adopt";
     } else {
       // Only in the snapshot: already gone, nothing to reconcile.
       action = "noop";
     }
 
-    entries.push({ name, type, action, evidence, deltas, ownership: "unknown" });
+    entries.push({ name, type, action, evidence, deltas, ownership });
   }
 
   entries.sort((a, b) => a.name.localeCompare(b.name));

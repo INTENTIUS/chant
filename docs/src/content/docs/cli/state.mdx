@@ -87,7 +87,9 @@ chant state plan prod --json   # emit the ChangeSet as JSON
 | **adopt** | Live but undeclared, ownership not established — a candidate to pull back into source, never an auto-delete |
 | **noop** | Declared and live with no drift, or already reconciled |
 
-`create` and `update` are precise from declared-vs-live. `delete` is only ever proposed for a resource a live ownership marker confirms is chant's — until ownership data exists, an undeclared live resource is `adopt`, never `delete`. The classification reads ownership from the live marker, never from the snapshot, so the snapshot never becomes load-bearing.
+`create` and `update` are precise from declared-vs-live. `delete` is only ever proposed for an undeclared resource whose **live ownership marker** ([ownership marking](/chant/configuration/config-file/#ownership)) confirms it is chant's; a foreign orphan is `adopt`, and an orphan with no marker data is `adopt`, never `delete`. Pass `--owned` to restrict the query to chant-owned resources.
+
+The classification reads ownership from the live marker, **never from the snapshot**, so the snapshot never becomes load-bearing: the delete decision is identical whether or not a snapshot exists. The moment a mutation trusted the snapshot, the snapshot would have become an authoritative state file under a different name — which chant deliberately avoids.
 
 `state plan` is strictly read-only: it builds, queries, and classifies. It never mutates the cloud and never deploys — `chant build` stays pure.
 

@@ -41,7 +41,7 @@ describe("buildChangeSet (#118)", () => {
     expect(cs.entries.find((x) => x.name === "queue")!.action).toBe("noop");
   });
 
-  test("live but undeclared → adopt, never delete (no ownership yet)", () => {
+  test("live but undeclared, no ownership data → adopt, never delete", () => {
     const cs = buildChangeSet("prod", {
       declared: new Set(),
       observedNow: { orphan: meta() },
@@ -50,6 +50,50 @@ describe("buildChangeSet (#118)", () => {
     const e = cs.entries.find((x) => x.name === "orphan")!;
     expect(e.action).toBe("adopt");
     expect(e.ownership).toBe("unknown");
+  });
+
+  test("owned orphan → delete (#121)", () => {
+    const cs = buildChangeSet("prod", {
+      declared: new Set(),
+      observedNow: { orphan: meta({ ownership: "owned" }) },
+      observedThen: undefined,
+    });
+    const e = cs.entries.find((x) => x.name === "orphan")!;
+    expect(e.action).toBe("delete");
+    expect(e.ownership).toBe("owned");
+  });
+
+  test("foreign orphan → adopt, never delete (#121)", () => {
+    const cs = buildChangeSet("prod", {
+      declared: new Set(),
+      observedNow: { orphan: meta({ ownership: "foreign" }) },
+      observedThen: undefined,
+    });
+    const e = cs.entries.find((x) => x.name === "orphan")!;
+    expect(e.action).toBe("adopt");
+    expect(e.ownership).toBe("foreign");
+  });
+
+  test("snapshot is never load-bearing: ownership/delete ignores observedThen", () => {
+    // The same live orphan, once with a rich snapshot and once with none.
+    // The delete decision must depend only on the LIVE ownership marker, so the
+    // result must be identical regardless of what the snapshot says.
+    const withSnapshot = buildChangeSet("prod", {
+      declared: new Set(),
+      observedNow: { orphan: meta({ ownership: "owned" }) },
+      observedThen: { orphan: meta({ ownership: "foreign", status: "STALE" }) },
+    });
+    const withoutSnapshot = buildChangeSet("prod", {
+      declared: new Set(),
+      observedNow: { orphan: meta({ ownership: "owned" }) },
+      observedThen: undefined,
+    });
+    const a = withSnapshot.entries.find((x) => x.name === "orphan")!;
+    const b = withoutSnapshot.entries.find((x) => x.name === "orphan")!;
+    expect(a.action).toBe("delete");
+    expect(a.ownership).toBe("owned");
+    expect(a.action).toBe(b.action);
+    expect(a.ownership).toBe(b.ownership);
   });
 
   test("never proposes a delete without ownership data", () => {
