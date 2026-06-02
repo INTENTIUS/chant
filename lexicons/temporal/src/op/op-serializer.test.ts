@@ -227,6 +227,50 @@ describe("serializeOps()", () => {
       expect(wf).toContain("onFailure compensation");
       expect(wf).toContain("// Phase: Rollback");
     });
+
+    it("runs onFailure compensation ONLY on failure: main phases are wrapped in try/catch (#168)", () => {
+      const ops = new Map([
+        makeOp({
+          name: "deploy", overview: "o",
+          phases: [{ name: "Apply", steps: [{ kind: "activity", fn: "helmInstall", args: { name: "r", chart: "c" } }] }],
+          onFailure: [{ name: "Rollback", steps: [{ kind: "activity", fn: "helmInstall", args: { name: "r", chart: "c" } }] }],
+        }),
+      ]);
+      const wf = serializeOps(ops)["ops/deploy/workflow.ts"];
+      // Main phase guarded; compensation lives in the catch and re-throws the original error.
+      expect(wf).toContain("try {");
+      expect(wf).toContain("} catch (__opErr) {");
+      expect(wf).toContain("throw __opErr;");
+      // The compensation Phase upsert must appear after the catch opens, never before.
+      expect(wf.indexOf("catch (__opErr)")).toBeLessThan(wf.indexOf('Phase: ["Rollback"]'));
+    });
+
+    it("has no try/catch when there is no onFailure (#168)", () => {
+      const ops = new Map([
+        makeOp({
+          name: "plain", overview: "o",
+          phases: [{ name: "Apply", steps: [{ kind: "activity", fn: "helmInstall", args: { name: "r", chart: "c" } }] }],
+        }),
+      ]);
+      const wf = serializeOps(ops)["ops/plain/workflow.ts"];
+      expect(wf).not.toContain("catch (__opErr)");
+    });
+
+    it("runs onFailure phases in reverse order, matching the local executor (#168)", () => {
+      const ops = new Map([
+        makeOp({
+          name: "deploy", overview: "o",
+          phases: [{ name: "Apply", steps: [] }],
+          onFailure: [
+            { name: "Rollback", steps: [] },
+            { name: "Notify", steps: [] },
+          ],
+        }),
+      ]);
+      const wf = serializeOps(ops)["ops/deploy/workflow.ts"];
+      // Declared order Rollback→Notify, so compensation emits Notify before Rollback.
+      expect(wf.indexOf('Phase: ["Notify"]')).toBeLessThan(wf.indexOf('Phase: ["Rollback"]'));
+    });
   });
 
   // ── activities.ts ───────────────────────────────────────────────────────────
