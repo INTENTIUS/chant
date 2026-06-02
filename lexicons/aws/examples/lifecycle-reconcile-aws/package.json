@@ -1,0 +1,25 @@
+{
+  "name": "lifecycle-reconcile-aws-example",
+  "version": "0.0.1",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "build": "chant build src --lexicon aws -o template.json",
+    "lint": "chant lint src",
+    "test": "npx vitest run",
+    "deploy": "aws cloudformation deploy --template-file template.json --stack-name prod --capabilities CAPABILITY_NAMED_IAM",
+    "import": "chant import --from prod --owned -o imported",
+    "diff": "chant lifecycle diff prod --live",
+    "reconcile": "chant run prod-reconcile",
+    "apply": "chant run prod-apply --temporal",
+    "teardown": "aws cloudformation delete-stack --stack-name prod"
+  },
+  "dependencies": {
+    "@intentius/chant-lexicon-aws": "*",
+    "@intentius/chant-lexicon-temporal": "*",
+    "@intentius/chant": "*"
+  },
+  "devDependencies": {
+    "typescript": "*"
+  }
+}

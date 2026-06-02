@@ -1,0 +1,7 @@
+dist/
+node_modules/
+.chant/
+template.json
+imported/
+# Generated Temporal workflow/worker output (chant run/build ops writes ops/<name>/)
+ops/*/
