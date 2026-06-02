@@ -1,11 +1,30 @@
 ---
 title: What's New
-description: Recent capabilities shipped in chant — observation contracts, drift detection, WatchOp, Op codegen improvements, and more
+description: Recent capabilities shipped in chant — live import, the state-model dial, ownership markers, reconcile/apply Ops, observation contracts, drift detection, and more
 ---
 
 A hand-curated rollup of capabilities shipped recently. If you learned chant before this lands, this page is the catch-up. Each entry links to the closing issue or PR for the full context.
 
-For the day-to-day reference docs see [`chant state`](/chant/cli/state/), [Watching State](/chant/guide/watching-state/), [Drift Detection](/chant/concepts/drift-detection/), and [Implementing Observation](/chant/lexicon-authoring/observation/).
+For the day-to-day reference docs see [State Models](/chant/concepts/state-models/), [`chant state`](/chant/cli/state/), [Live Import](/chant/guide/live-import/), [Reconciling State](/chant/guide/reconciling-state/), [Drift Detection](/chant/concepts/drift-detection/), and [Implementing Observation](/chant/lexicon-authoring/observation/).
+
+## Live import & the state-model dial
+
+The follow-on to the observation thread: chant turned its single observational drift workflow into a full family — **observe → reconcile → authoritative**, chosen per environment. It gained *live import* (regenerate TypeScript from running cloud/cluster state) and *projection + cloud-side ownership* (a precise create/update/delete change set computed against live), **without** hosting an authoritative state file. The snapshot is never load-bearing — the projection reads ownership from the live resource only. Primitives need no executor; only gated/destructive Ops require Temporal.
+
+| # | Capability |
+|---|---|
+| [#113](https://github.com/INTENTIUS/chant/issues/113) | `exportResources()` on the `LexiconPlugin` contract — full-fidelity import IR from a live API, branded distinct from the scrubbed observation types so a secret-bearing export can never reach the `state` code paths |
+| [#114](https://github.com/INTENTIUS/chant/issues/114) | [`chant import --from <env>`](/chant/cli/import/) — live import driver with `--type` / `--name` / `--owned` / `--verbatim` selectors and a secrets warning |
+| [#115](https://github.com/INTENTIUS/chant/issues/115), [#116](https://github.com/INTENTIUS/chant/issues/116), [#117](https://github.com/INTENTIUS/chant/issues/117) | Live export for AWS (CloudFormation `get-template`), Kubernetes (`kubectl get -o json`, stripped to declared shape), and GCP Config Connector |
+| [#118](https://github.com/INTENTIUS/chant/issues/118) | [`chant state plan`](/chant/cli/state/) — typed `ChangeSet` (create / update / delete / adopt / noop) from the live diff; strictly read-only |
+| [#119](https://github.com/INTENTIUS/chant/issues/119) | Ownership marker contract + serializer stamping — provider-native marker (AWS/Azure tags, K8s/GCP labels) carrying stack identity, stamped at synthesis. Opt-in via [`ownership` config](/chant/configuration/config-file/#ownership); walk-away cost stays zero |
+| [#120](https://github.com/INTENTIUS/chant/issues/120) | `owned` filter on describe/export — query the marker live; marker present + undeclared → delete candidate, absent → `foreign` (adopt only); degrades to detect-only where no marker channel exists |
+| [#121](https://github.com/INTENTIUS/chant/issues/121) | Ownership-gated delete in the change set — `delete` only for owned orphans, read from the live marker, never from the snapshot |
+| [#122](https://github.com/INTENTIUS/chant/issues/122) | `reconcilePr` Op activity — regenerate drifted/orphaned entities and open a reviewable PR (modes: pull-request / issue / report); never commits to the main branch |
+| [#123](https://github.com/INTENTIUS/chant/issues/123) | [`ReconcileOp`](/chant/guide/reconciling-state/) composite — the `cloud → code` workflow (snapshot → plan → reconcile); one-shot on the local executor, continuous on a Temporal cron |
+| [#124](https://github.com/INTENTIUS/chant/issues/124) | [`ApplyOp`](/chant/guide/reconciling-state/) composite — the `code → cloud` workflow via native apply (`kubectl apply` / CloudFormation deploy / ARM); deletes ride the marker-scoped native prune, so they only ever touch owned orphans |
+| [#125](https://github.com/INTENTIUS/chant/issues/125) | Approval gates + compensation for destructive apply — durable wait-for-signal, saga-style `onFailure` rollback, crash-resume; where Temporal is load-bearing |
+| [#126](https://github.com/INTENTIUS/chant/issues/126)–[#131](https://github.com/INTENTIUS/chant/issues/131) | Docs: new [State Models](/chant/concepts/state-models/) (three-axis model + dial) and [Durable Workflows](/chant/concepts/durable-workflows/) concept pages; [Live Import](/chant/guide/live-import/) and [Reconciling State](/chant/guide/reconciling-state/) guides; [Implementing Live Export](/chant/lexicon-authoring/live-export/) authoring guide; governance/comparison revised to retire the "no plan" concession; cross-page tone audit |
 
 ## Observation & drift detection
 
