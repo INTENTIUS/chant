@@ -6,7 +6,7 @@
  *
  * Phases: snapshot → plan → regenerate (live import) → open PR. The
  * regenerate-and-PR step is the `reconcilePr` activity (#122), which derives
- * the change set from `chant state plan` and opens a reviewable PR.
+ * the change set from `chant lifecycle plan` and opens a reviewable PR.
  *
  * Runs on the local Op executor for a one-shot `chant run`; on Temporal when a
  * `schedule` is given (the cron + run history are the value, as with WatchOp).
@@ -88,7 +88,7 @@ export function ReconcileOp(config: ReconcileOpConfig): ReconcileOpResources {
         },
       ]),
       phase("Reconcile", [
-        // reconcilePr derives the change set from `chant state plan`,
+        // reconcilePr derives the change set from `chant lifecycle plan`,
         // regenerates via `chant import --from`, and opens a PR.
         activity("reconcilePr", { env: config.env, mode: onDrift, owned }),
       ]),

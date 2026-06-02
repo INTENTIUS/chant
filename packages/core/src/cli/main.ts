@@ -13,7 +13,7 @@ import { runServeLsp, runServeMcp, runServeUnknown } from "./handlers/serve";
 import { runInit, runInitLexicon } from "./handlers/init";
 import { runList, runImport, runUpdate, runDoctor } from "./handlers/misc";
 import { runMigrate } from "./handlers/migrate";
-import { runStateSnapshot, runStateShow, runStateDiff, runStatePlan, runStateLog, runStateUnknown } from "./handlers/state";
+import { runLifecycleSnapshot, runLifecycleShow, runLifecycleDiff, runLifecyclePlan, runLifecycleLog, runLifecycleUnknown } from "./handlers/lifecycle";
 import { runGraph } from "./handlers/graph";
 import { runOp, runOpList, runOpStatus, runOpSignal, runOpCancel, runOpLog } from "./handlers/run";
 
@@ -165,14 +165,14 @@ Ops:
 
   graph                 Show Op dependency graph
 
-State:
-  state snapshot <env>  Query API, save metadata to orphan branch
-  state show <env>      Show latest state snapshot
-  state diff <env>      Compare current build against last snapshot
-                        --live: query cloud now and detect drift
-  state plan <env>      Typed change set (create/update/delete/adopt) vs live
-                        --json: emit the ChangeSet as JSON
-  state log [env]       History of state snapshots
+Lifecycle (alias: lc):
+  lifecycle snapshot <env>  Query API, save metadata to orphan branch
+  lifecycle show <env>      Show latest lifecycle snapshot
+  lifecycle diff <env>      Compare current build against last snapshot
+                            --live: query cloud now and detect drift
+  lifecycle plan <env>      Typed change set (create/update/delete/adopt) vs live
+                            --json: emit the ChangeSet as JSON
+  lifecycle log [env]       History of lifecycle snapshots
 
 Lexicon development:
   dev generate          Generate lexicon artifacts (+ validate + coverage)
@@ -286,18 +286,18 @@ const registry: CommandDef[] = [
   { name: "graph", handler: runGraph },
 
   // State subcommands
-  { name: "state snapshot", requiresPlugins: true, handler: runStateSnapshot },
-  { name: "state show", handler: runStateShow },
-  { name: "state diff", requiresPlugins: true, handler: runStateDiff },
-  { name: "state plan", requiresPlugins: true, handler: runStatePlan },
-  { name: "state log", handler: runStateLog },
+  { name: "lifecycle snapshot", requiresPlugins: true, handler: runLifecycleSnapshot },
+  { name: "lifecycle show", handler: runLifecycleShow },
+  { name: "lifecycle diff", requiresPlugins: true, handler: runLifecycleDiff },
+  { name: "lifecycle plan", requiresPlugins: true, handler: runLifecyclePlan },
+  { name: "lifecycle log", handler: runLifecycleLog },
 
   // Serve subcommands
   { name: "serve lsp", requiresPlugins: true, handler: runServeLsp },
   { name: "serve mcp", requiresPlugins: true, handler: runServeMcp },
 
   // Fallback for unknown subcommands (must come after compound entries)
-  { name: "state", handler: runStateUnknown },
+  { name: "lifecycle", handler: runLifecycleUnknown },
   { name: "dev", handler: runDevUnknown },
   { name: "serve", handler: runServeUnknown },
 ];

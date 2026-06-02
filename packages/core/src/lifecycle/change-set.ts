@@ -1,7 +1,7 @@
 /**
  * Change set: a typed, read-only projection of a live diff.
  *
- * `chant state diff --live` computes a three-way comparison — declared now /
+ * `chant lifecycle diff --live` computes a three-way comparison — declared now /
  * last snapshot / live now — and prints it. `buildChangeSet` promotes that
  * same signal into a classified create/update/delete/adopt/noop set that other
  * tooling (reconcile, apply) can act on.

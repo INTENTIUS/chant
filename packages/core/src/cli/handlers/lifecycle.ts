@@ -1,28 +1,28 @@
 import { resolve } from "node:path";
 import { build } from "../../build";
-import { takeSnapshot } from "../../state/snapshot";
-import { readSnapshot, readEnvironmentSnapshots, listSnapshots, fetchState, StaleStateBranchError } from "../../state/git";
-import { computeBuildDigest, diffDigests } from "../../state/digest";
-import { diffLive, diffLiveArtifacts, type LiveDiffResult, type LiveArtifactDiffResult } from "../../state/live-diff";
-import { buildChangeSet, renderChangeSet, type ChangeSet } from "../../state/change-set";
+import { takeSnapshot } from "../../lifecycle/snapshot";
+import { readSnapshot, readEnvironmentSnapshots, listSnapshots, fetchLifecycle, StaleLifecycleBranchError } from "../../lifecycle/git";
+import { computeBuildDigest, diffDigests } from "../../lifecycle/digest";
+import { diffLive, diffLiveArtifacts, type LiveDiffResult, type LiveArtifactDiffResult } from "../../lifecycle/live-diff";
+import { buildChangeSet, renderChangeSet, type ChangeSet } from "../../lifecycle/change-set";
 import { loadChantConfig } from "../../config";
 import { formatError, formatWarning, formatSuccess, formatBold } from "../format";
 import type { CommandContext } from "../registry";
-import type { StateSnapshot } from "../../state/types";
+import type { LifecycleSnapshot } from "../../lifecycle/types";
 import type { SerializerResult } from "../../serializer";
 import type { ObservationLexicon, ResourceMetadata, ArtifactMetadata } from "../../lexicon";
 import type { BuildResult } from "../../build";
 
 /**
- * chant state snapshot <environment> [lexicon]
+ * chant lifecycle snapshot <environment> [lexicon]
  */
-export async function runStateSnapshot(ctx: CommandContext): Promise<number> {
+export async function runLifecycleSnapshot(ctx: CommandContext): Promise<number> {
   const { args, plugins } = ctx;
   const environment = args.extraPositional;
   const lexiconFilter = args.extraPositional2;
 
   if (!environment) {
-    console.error(formatError({ message: "Environment is required: chant state snapshot <environment> [lexicon]" }));
+    console.error(formatError({ message: "Environment is required: chant lifecycle snapshot <environment> [lexicon]" }));
     return 1;
   }
 
@@ -63,10 +63,10 @@ export async function runStateSnapshot(ctx: CommandContext): Promise<number> {
   try {
     result = await takeSnapshot(environment, observingPlugins, buildResult);
   } catch (err) {
-    if (err instanceof StaleStateBranchError) {
+    if (err instanceof StaleLifecycleBranchError) {
       console.error(formatError({
-        message: `Another snapshot completed for chant/state after this run started (env: ${environment}).`,
-        hint: `Pull and retry: \`git fetch origin ${"chant/state"}:${"chant/state"}\` && \`chant state snapshot ${environment}\`.`,
+        message: `Another snapshot completed for chant/lifecycle after this run started (env: ${environment}).`,
+        hint: `Pull and retry: \`git fetch origin ${"chant/lifecycle"}:${"chant/lifecycle"}\` && \`chant lifecycle snapshot ${environment}\`.`,
       }));
       return 1;
     }
@@ -84,26 +84,26 @@ export async function runStateSnapshot(ctx: CommandContext): Promise<number> {
     const counts = result.snapshots
       .map((s) => `${s.lexicon}(${Object.keys(s.resources).length})`)
       .join(" ");
-    console.error(formatSuccess(`Snapshot saved to chant/state (${counts})`));
+    console.error(formatSuccess(`Snapshot saved to chant/lifecycle (${counts})`));
   }
 
   return result.errors.length > 0 && result.snapshots.length === 0 ? 1 : 0;
 }
 
 /**
- * chant state show <environment> [lexicon]
+ * chant lifecycle show <environment> [lexicon]
  */
-export async function runStateShow(ctx: CommandContext): Promise<number> {
+export async function runLifecycleShow(ctx: CommandContext): Promise<number> {
   const environment = ctx.args.extraPositional;
   const lexiconFilter = ctx.args.extraPositional2;
 
   if (!environment) {
-    console.error(formatError({ message: "Environment is required: chant state show <environment> [lexicon]" }));
+    console.error(formatError({ message: "Environment is required: chant lifecycle show <environment> [lexicon]" }));
     return 1;
   }
 
   // Fetch from remote first
-  await fetchState();
+  await fetchLifecycle();
 
   if (lexiconFilter) {
     const content = await readSnapshot(environment, lexiconFilter);
@@ -112,7 +112,7 @@ export async function runStateShow(ctx: CommandContext): Promise<number> {
       return 1;
     }
 
-    const snapshot: StateSnapshot = JSON.parse(content);
+    const snapshot: LifecycleSnapshot = JSON.parse(content);
     printSnapshotTable(snapshot);
   } else {
     const snapshots = await readEnvironmentSnapshots(environment);
@@ -122,7 +122,7 @@ export async function runStateShow(ctx: CommandContext): Promise<number> {
     }
 
     for (const [lexicon, content] of snapshots) {
-      const snapshot: StateSnapshot = JSON.parse(content);
+      const snapshot: LifecycleSnapshot = JSON.parse(content);
       console.log(`\n${formatBold(`${environment}/${lexicon}`)} — ${Object.keys(snapshot.resources).length} resources — ${snapshot.timestamp}`);
       printSnapshotTable(snapshot);
     }
@@ -132,15 +132,15 @@ export async function runStateShow(ctx: CommandContext): Promise<number> {
 }
 
 /**
- * chant state diff <environment> [lexicon]
+ * chant lifecycle diff <environment> [lexicon]
  */
-export async function runStateDiff(ctx: CommandContext): Promise<number> {
+export async function runLifecycleDiff(ctx: CommandContext): Promise<number> {
   const { args, plugins, serializers } = ctx;
   const environment = args.extraPositional;
   const lexiconFilter = args.extraPositional2;
 
   if (!environment) {
-    console.error(formatError({ message: "Environment is required: chant state diff <environment> [lexicon]" }));
+    console.error(formatError({ message: "Environment is required: chant lifecycle diff <environment> [lexicon]" }));
     return 1;
   }
 
@@ -158,17 +158,17 @@ export async function runStateDiff(ctx: CommandContext): Promise<number> {
   }
 
   // Fetch and read previous snapshot
-  await fetchState();
+  await fetchLifecycle();
 
   const lexicons = lexiconFilter
     ? [lexiconFilter]
     : Array.from(buildResult.manifest.lexicons);
 
   if (args.live) {
-    return runStateDiffLive({ environment, lexicons, plugins, buildResult });
+    return runLifecycleDiffLive({ environment, lexicons, plugins, buildResult });
   }
 
-  return runStateDiffDigest({ environment, lexicons, buildResult });
+  return runLifecycleDiffDigest({ environment, lexicons, buildResult });
 }
 
 interface DigestDiffArgs {
@@ -177,14 +177,14 @@ interface DigestDiffArgs {
   buildResult: BuildResult;
 }
 
-async function runStateDiffDigest(args: DigestDiffArgs): Promise<number> {
+async function runLifecycleDiffDigest(args: DigestDiffArgs): Promise<number> {
   const currentDigest = computeBuildDigest(args.buildResult);
 
   for (const lexicon of args.lexicons) {
     const content = await readSnapshot(args.environment, lexicon);
     let previousDigest = undefined;
     if (content) {
-      const snapshot: StateSnapshot = JSON.parse(content);
+      const snapshot: LifecycleSnapshot = JSON.parse(content);
       previousDigest = snapshot.digest;
     }
 
@@ -218,7 +218,7 @@ interface LiveDiffArgs {
   buildResult: BuildResult;
 }
 
-async function runStateDiffLive(args: LiveDiffArgs): Promise<number> {
+async function runLifecycleDiffLive(args: LiveDiffArgs): Promise<number> {
   let totalDrift = 0;
   let totalLexiconsChecked = 0;
 
@@ -257,7 +257,7 @@ async function runStateDiffLive(args: LiveDiffArgs): Promise<number> {
           : (rawOutput as SerializerResult).primary;
 
     // Read previous snapshot once; both flows pull what they need.
-    let prevSnapshot: StateSnapshot | undefined;
+    let prevSnapshot: LifecycleSnapshot | undefined;
     const content = await readSnapshot(args.environment, lexiconName);
     if (content) prevSnapshot = JSON.parse(content);
 
@@ -404,20 +404,20 @@ function renderLiveArtifactDiff(lexiconName: string, environment: string, diff: 
 }
 
 /**
- * chant state plan <environment> [lexicon]
+ * chant lifecycle plan <environment> [lexicon]
  *
  * Promote the live diff to a typed, read-only change set: per-entity
  * create / update / delete / adopt / noop. Strictly read-only — never
  * mutates, never deploys. Deletes are never proposed without ownership
  * data (added in #121); an undeclared live resource is `adopt`.
  */
-export async function runStatePlan(ctx: CommandContext): Promise<number> {
+export async function runLifecyclePlan(ctx: CommandContext): Promise<number> {
   const { args, plugins, serializers } = ctx;
   const environment = args.extraPositional;
   const lexiconFilter = args.extraPositional2;
 
   if (!environment) {
-    console.error(formatError({ message: "Environment is required: chant state plan <environment> [lexicon]" }));
+    console.error(formatError({ message: "Environment is required: chant lifecycle plan <environment> [lexicon]" }));
     return 1;
   }
 
@@ -432,7 +432,7 @@ export async function runStatePlan(ctx: CommandContext): Promise<number> {
     return 1;
   }
 
-  await fetchState();
+  await fetchLifecycle();
 
   const lexicons = lexiconFilter ? [lexiconFilter] : Array.from(buildResult.manifest.lexicons);
 
@@ -489,7 +489,7 @@ export async function runStatePlan(ctx: CommandContext): Promise<number> {
     }
 
     const content = await readSnapshot(environment, lexiconName);
-    const observedThen = content ? (JSON.parse(content) as StateSnapshot).resources : undefined;
+    const observedThen = content ? (JSON.parse(content) as LifecycleSnapshot).resources : undefined;
 
     const cs = buildChangeSet(environment, { declared, observedNow, observedThen });
     merged.entries.push(...cs.entries);
@@ -515,12 +515,12 @@ export async function runStatePlan(ctx: CommandContext): Promise<number> {
 }
 
 /**
- * chant state log [environment]
+ * chant lifecycle log [environment]
  */
-export async function runStateLog(ctx: CommandContext): Promise<number> {
+export async function runLifecycleLog(ctx: CommandContext): Promise<number> {
   const environment = ctx.args.extraPositional;
 
-  await fetchState();
+  await fetchLifecycle();
 
   const entries = await listSnapshots({ environment });
   if (entries.length === 0) {
@@ -539,15 +539,15 @@ export async function runStateLog(ctx: CommandContext): Promise<number> {
 /**
  * Fallback for unknown state subcommands.
  */
-export async function runStateUnknown(ctx: CommandContext): Promise<number> {
+export async function runLifecycleUnknown(ctx: CommandContext): Promise<number> {
   console.error(formatError({
     message: `Unknown state subcommand: ${ctx.args.extraPositional ?? ctx.args.path}`,
-    hint: "Available: chant state snapshot, chant state show, chant state diff, chant state plan, chant state log",
+    hint: "Available: chant lifecycle snapshot, chant lifecycle show, chant lifecycle diff, chant lifecycle plan, chant lifecycle log",
   }));
   return 1;
 }
 
-function printSnapshotTable(snapshot: StateSnapshot): void {
+function printSnapshotTable(snapshot: LifecycleSnapshot): void {
   console.log("RESOURCE".padEnd(20) + "TYPE".padEnd(28) + "PHYSICAL ID".padEnd(44) + "STATUS");
   console.log("-".repeat(100));
 

@@ -5,7 +5,7 @@ export type { ResourceMetadata, ArtifactMetadata } from "../lexicon";
 /**
  * State snapshot for a single lexicon in an environment.
  */
-export interface StateSnapshot {
+export interface LifecycleSnapshot {
   lexicon: string;
   environment: string;
   /** Main branch commit this corresponds to */

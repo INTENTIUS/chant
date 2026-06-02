@@ -89,16 +89,21 @@ export interface ResolvedCommand {
  * Supports compound commands like "dev generate" where args.command="dev"
  * and args.path="generate". Falls back to simple command matching.
  */
+/** Short command aliases. `chant lc …` is sugar for `chant lifecycle …`. */
+const COMMAND_ALIASES: Record<string, string> = { lc: "lifecycle" };
+
 export function resolveCommand(args: ParsedArgs, registry: CommandDef[]): ResolvedCommand | null {
+  const command = COMMAND_ALIASES[args.command] ?? args.command;
+
   // Try compound command first: "dev generate", "serve lsp", "init lexicon"
-  const compound = `${args.command} ${args.path}`;
+  const compound = `${command} ${args.path}`;
   const compoundMatch = registry.find((c) => c.name === compound);
   if (compoundMatch) {
     return { def: compoundMatch, compound: true };
   }
 
   // Try simple command
-  const simpleMatch = registry.find((c) => c.name === args.command);
+  const simpleMatch = registry.find((c) => c.name === command);
   if (simpleMatch) {
     return { def: simpleMatch, compound: false };
   }

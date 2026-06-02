@@ -3,7 +3,7 @@ import { discoverOps } from "../../op/discover";
 import { makeTemporalClient } from "../handlers/run";
 import { resolveWorkflowId } from "../handlers/run-client";
 import { generateReport } from "../handlers/run-report";
-import type { ToolRegistration } from "./state-tools";
+import type { ToolRegistration } from "./lifecycle-tools";
 
 function workflowFnName(opName: string): string {
   return opName.replace(/-([a-z])/g, (_, c: string) => c.toUpperCase()) + "Workflow";

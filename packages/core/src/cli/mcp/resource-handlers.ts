@@ -1,7 +1,7 @@
 import { resolve } from "node:path";
 import type { ResourceDefinition } from "./types";
 import { getContext } from "./resources/context";
-import { readSnapshot, readEnvironmentSnapshots } from "../../state/git";
+import { readSnapshot, readEnvironmentSnapshots } from "../../lifecycle/git";
 import { discoverOps } from "../../op/discover";
 import { makeTemporalClient } from "../handlers/run";
 import { resolveWorkflowId } from "../handlers/run-client";

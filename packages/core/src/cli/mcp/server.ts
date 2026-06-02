@@ -8,7 +8,7 @@ import { scaffoldTool, createScaffoldHandler } from "./tools/scaffold";
 import { searchTool, createSearchHandler } from "./tools/search";
 import type { LexiconPlugin } from "../../lexicon";
 import type { McpRequest, McpResponse, ToolDefinition, ToolHandler, ResourceDefinition } from "./types";
-import { createSnapshotTool, createDiffTool } from "./state-tools";
+import { createSnapshotTool, createDiffTool } from "./lifecycle-tools";
 import { createOpListTool, createOpRunTool, createOpStatusTool, createOpSignalTool, createOpReportTool } from "./op-tools";
 import { buildResourcesList, handleResourcesRead } from "./resource-handlers";
 

@@ -83,7 +83,7 @@ export const waitForStack = (name: string, opts?: Record<string, unknown>): Acti
 export const gitlabPipeline = (name: string, opts?: Record<string, unknown>): ActivityStep =>
   activity("gitlabPipeline", { name, ...opts }, "longInfra");
 
-/** Take a chant state snapshot for the given environment. */
+/** Take a chant lifecycle snapshot for the given environment. */
 export const stateSnapshot = (env: string): ActivityStep =>
   activity("stateSnapshot", { env });
 

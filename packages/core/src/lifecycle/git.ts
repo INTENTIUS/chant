@@ -1,12 +1,12 @@
 /**
- * Git plumbing operations for the chant/state orphan branch.
+ * Git plumbing operations for the chant/lifecycle orphan branch.
  *
  * All operations use git plumbing commands — no checkout, no branch switching,
  * no working tree changes.
  */
 import { getRuntime } from "../runtime-adapter";
 
-const STATE_BRANCH = "chant/state";
+const STATE_BRANCH = "chant/lifecycle";
 
 /**
  * Write a state snapshot JSON to the orphan branch.
@@ -174,28 +174,28 @@ export async function listSnapshots(
 }
 
 /**
- * Thrown by pushState when the remote chant/state branch has moved since
+ * Thrown by pushLifecycle when the remote chant/lifecycle branch has moved since
  * the local snapshot was prepared — i.e. another snapshot for this or a
  * different env was pushed concurrently. The caller should fetch and retry.
  */
-export class StaleStateBranchError extends Error {
+export class StaleLifecycleBranchError extends Error {
   readonly expected: string | null;
   constructor(expected: string | null, stderr: string) {
     super(
-      "chant/state remote branch has moved since this run started — " +
+      "chant/lifecycle remote branch has moved since this run started — " +
       "another snapshot was pushed concurrently. " +
       `git stderr: ${stderr.trim()}`,
     );
-    this.name = "StaleStateBranchError";
+    this.name = "StaleLifecycleBranchError";
     this.expected = expected;
   }
 }
 
 /**
- * Look up the remote-tracking SHA for chant/state, if any. Returns null when
+ * Look up the remote-tracking SHA for chant/lifecycle, if any. Returns null when
  * the remote ref doesn't exist locally yet (e.g. first-ever snapshot).
  */
-export async function getRemoteStateBranchSha(
+export async function getRemoteLifecycleBranchSha(
   remote: string,
   opts?: { cwd?: string },
 ): Promise<string | null> {
@@ -209,13 +209,13 @@ export async function getRemoteStateBranchSha(
 /**
  * Push the state branch to remote with --force-with-lease.
  *
- * If the remote chant/state ref has advanced past the local remote-tracking
+ * If the remote chant/lifecycle ref has advanced past the local remote-tracking
  * SHA captured at the start of this push, the push is rejected and we throw
- * StaleStateBranchError so the caller can surface a recovery hint.
+ * StaleLifecycleBranchError so the caller can surface a recovery hint.
  *
  * Returns false (without throwing) only when no remote is configured at all.
  */
-export async function pushState(opts?: { cwd?: string }): Promise<boolean> {
+export async function pushLifecycle(opts?: { cwd?: string }): Promise<boolean> {
   const rt = getRuntime();
   const remoteResult = await rt.spawn(["git", "remote"], { cwd: opts?.cwd });
   if (remoteResult.exitCode !== 0 || !remoteResult.stdout.trim()) return false;
@@ -225,7 +225,7 @@ export async function pushState(opts?: { cwd?: string }): Promise<boolean> {
   // Capture the lease SHA — if null, the remote ref doesn't exist yet
   // (first-time push) and we send `--force-with-lease=ref:` (empty SHA),
   // which git interprets as "ref does not exist on remote".
-  const expected = await getRemoteStateBranchSha(remote, opts);
+  const expected = await getRemoteLifecycleBranchSha(remote, opts);
   const lease = `refs/heads/${STATE_BRANCH}:${expected ?? ""}`;
 
   const pushResult = await rt.spawn(
@@ -240,7 +240,7 @@ export async function pushState(opts?: { cwd?: string }): Promise<boolean> {
       stderr.includes("rejected") ||
       stderr.includes("non-fast-forward")
     ) {
-      throw new StaleStateBranchError(expected, stderr);
+      throw new StaleLifecycleBranchError(expected, stderr);
     }
     return false;
   }
@@ -250,7 +250,7 @@ export async function pushState(opts?: { cwd?: string }): Promise<boolean> {
 /**
  * Fetch the state branch from remote.
  */
-export async function fetchState(opts?: { cwd?: string }): Promise<boolean> {
+export async function fetchLifecycle(opts?: { cwd?: string }): Promise<boolean> {
   const rt = getRuntime();
   const remoteResult = await rt.spawn(["git", "remote"], { cwd: opts?.cwd });
   if (remoteResult.exitCode !== 0 || !remoteResult.stdout.trim()) return false;

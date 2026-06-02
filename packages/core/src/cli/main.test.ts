@@ -187,6 +187,8 @@ describe("resolveCommand", () => {
     { name: "init", handler: noop },
     { name: "init lexicon", handler: noop },
     { name: "dev", handler: noop },
+    { name: "lifecycle plan", handler: noop },
+    { name: "lifecycle", handler: noop },
   ];
 
   function makeArgs(overrides: Partial<ParsedArgs>): ParsedArgs {
@@ -254,6 +256,18 @@ describe("resolveCommand", () => {
     const result = resolveCommand(makeArgs({ command: "dev", path: "generate" }), testRegistry);
     expect(result!.def.name).toBe("dev generate");
     expect(result!.compound).toBe(true);
+  });
+
+  test("`lc` is an alias for `lifecycle` (compound)", () => {
+    const result = resolveCommand(makeArgs({ command: "lc", path: "plan" }), testRegistry);
+    expect(result!.def.name).toBe("lifecycle plan");
+    expect(result!.compound).toBe(true);
+  });
+
+  test("`lc` is an alias for `lifecycle` (simple)", () => {
+    const result = resolveCommand(makeArgs({ command: "lc" }), testRegistry);
+    expect(result!.def.name).toBe("lifecycle");
+    expect(result!.compound).toBe(false);
   });
 
   test("resolves run status as compound command", () => {

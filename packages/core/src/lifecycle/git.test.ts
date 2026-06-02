@@ -9,8 +9,8 @@ import {
   readEnvironmentSnapshots,
   listSnapshots,
   getHeadCommit,
-  pushState,
-  StaleStateBranchError,
+  pushLifecycle,
+  StaleLifecycleBranchError,
 } from "./git";
 
 function git(args: string[], cwd: string): { stdout: string; exitCode: number } {
@@ -28,7 +28,7 @@ async function initRepo(dir: string): Promise<void> {
   git(["commit", "-q", "-m", "init"], dir);
 }
 
-describe("state/git", () => {
+describe("lifecycle/git", () => {
   test("writeSnapshot creates the orphan branch and writes JSON addressable by readSnapshot", async () => {
     await withTestDir(async (dir) => {
       await initRepo(dir);
@@ -135,7 +135,7 @@ describe("state/git", () => {
     const { clonePath, cleanup } = await setupClonePair();
     try {
       await writeSnapshot("prod", "aws", JSON.stringify({ a: 1 }), { cwd: clonePath });
-      const ok = await pushState({ cwd: clonePath });
+      const ok = await pushLifecycle({ cwd: clonePath });
       expect(ok).toBe(true);
     } finally {
       await cleanup();
@@ -146,18 +146,18 @@ describe("state/git", () => {
     const { clonePath, cleanup } = await setupClonePair();
     try {
       await writeSnapshot("prod", "aws", JSON.stringify({ a: 1 }), { cwd: clonePath });
-      expect(await pushState({ cwd: clonePath })).toBe(true);
+      expect(await pushLifecycle({ cwd: clonePath })).toBe(true);
 
       // Pull the remote ref into local remote-tracking, then commit + push again
-      git(["fetch", "-q", "origin", "+refs/heads/chant/state:refs/remotes/origin/chant/state"], clonePath);
+      git(["fetch", "-q", "origin", "+refs/heads/chant/lifecycle:refs/remotes/origin/chant/lifecycle"], clonePath);
       await writeSnapshot("prod", "aws", JSON.stringify({ a: 2 }), { cwd: clonePath });
-      expect(await pushState({ cwd: clonePath })).toBe(true);
+      expect(await pushLifecycle({ cwd: clonePath })).toBe(true);
     } finally {
       await cleanup();
     }
   });
 
-  test("concurrent write rejected: second push throws StaleStateBranchError", async () => {
+  test("concurrent write rejected: second push throws StaleLifecycleBranchError", async () => {
     // Simulate two concurrent operators by setting up two clones of the same remote.
     const { clonePath: cloneA, remotePath, cleanup } = await setupClonePair();
     const cloneB = join(import.meta.dirname ?? "/tmp", `chant-state-clone-b-${Date.now()}-${Math.random()}`);
@@ -168,13 +168,13 @@ describe("state/git", () => {
 
       // Operator A writes + pushes first.
       await writeSnapshot("prod", "aws", JSON.stringify({ a: 1 }), { cwd: cloneA });
-      expect(await pushState({ cwd: cloneA })).toBe(true);
+      expect(await pushLifecycle({ cwd: cloneA })).toBe(true);
 
-      // Operator B writes from the same baseline (chant/state doesn't exist
+      // Operator B writes from the same baseline (chant/lifecycle doesn't exist
       // on cloneB's remote-tracking yet) and tries to push — should fail
-      // with StaleStateBranchError because A's push moved the remote ref.
+      // with StaleLifecycleBranchError because A's push moved the remote ref.
       await writeSnapshot("staging", "gcp", JSON.stringify({ b: 2 }), { cwd: cloneB });
-      await expect(pushState({ cwd: cloneB })).rejects.toBeInstanceOf(StaleStateBranchError);
+      await expect(pushLifecycle({ cwd: cloneB })).rejects.toBeInstanceOf(StaleLifecycleBranchError);
     } finally {
       await cleanup();
       const { rm } = await import("node:fs/promises");
@@ -182,9 +182,9 @@ describe("state/git", () => {
     }
   });
 
-  test("StaleStateBranchError carries the expected SHA used as the lease", async () => {
-    const err = new StaleStateBranchError(null, "stale info: ...");
-    expect(err.name).toBe("StaleStateBranchError");
+  test("StaleLifecycleBranchError carries the expected SHA used as the lease", async () => {
+    const err = new StaleLifecycleBranchError(null, "stale info: ...");
+    expect(err.name).toBe("StaleLifecycleBranchError");
     expect(err.expected).toBeNull();
     expect(err.message).toContain("moved");
   });

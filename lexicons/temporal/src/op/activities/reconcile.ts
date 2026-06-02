@@ -10,7 +10,7 @@ export type ReconcileMode = "pull-request" | "issue" | "report";
 export interface ReconcileEntry {
   /** chant entity name. */
   name: string;
-  /** create | update | delete | adopt | noop (from `chant state plan`). */
+  /** create | update | delete | adopt | noop (from `chant lifecycle plan`). */
   action: string;
   /** Resource type, when known. */
   type?: string;
@@ -21,7 +21,7 @@ export interface ReconcilePrArgs {
   env: string;
   /**
    * The change-set entries that triggered this reconcile. Omit to derive them
-   * from `chant state plan <env> --json` at run time — the form used inside a
+   * from `chant lifecycle plan <env> --json` at run time — the form used inside a
    * workflow, where the entries aren't known until the activity runs.
    */
   entries?: ReconcileEntry[];
@@ -86,7 +86,7 @@ function shellQuote(s: string): string {
 }
 
 /**
- * Map a `chant state plan --json` ChangeSet to reconcile entries, dropping
+ * Map a `chant lifecycle plan --json` ChangeSet to reconcile entries, dropping
  * `noop` entries (nothing to reconcile). Pure — exported for testing.
  */
 export function entriesFromPlan(planJson: string): ReconcileEntry[] {
@@ -98,7 +98,7 @@ export function entriesFromPlan(planJson: string): ReconcileEntry[] {
     .map((e) => ({ name: e.name, action: e.action, type: e.type }));
 }
 
-/** Derive reconcile entries from `chant state plan`. */
+/** Derive reconcile entries from `chant lifecycle plan`. */
 async function derivePlanEntries(
   env: string,
   owned: boolean,
@@ -106,7 +106,7 @@ async function derivePlanEntries(
 ): Promise<ReconcileEntry[]> {
   const ownedFlag = owned ? " --owned" : "";
   const { stdout } = await execAsync(
-    `chant state plan ${shellQuote(env)}${ownedFlag} --json`,
+    `chant lifecycle plan ${shellQuote(env)}${ownedFlag} --json`,
     { signal },
   );
   return entriesFromPlan(stdout);

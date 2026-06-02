@@ -1,23 +1,23 @@
 import { resolve } from "node:path";
 import type { LexiconPlugin } from "../../lexicon";
 import type { ToolDefinition, ToolHandler } from "./types";
-import { readSnapshot } from "../../state/git";
+import { readSnapshot } from "../../lifecycle/git";
 import { build } from "../../build";
-import { computeBuildDigest, diffDigests } from "../../state/digest";
-import { takeSnapshot } from "../../state/snapshot";
-import type { StateSnapshot } from "../../state/types";
+import { computeBuildDigest, diffDigests } from "../../lifecycle/digest";
+import { takeSnapshot } from "../../lifecycle/snapshot";
+import type { LifecycleSnapshot } from "../../lifecycle/types";
 export interface ToolRegistration {
   definition: ToolDefinition;
   handler: ToolHandler;
 }
 
 /**
- * Create state-snapshot tool definition and handler
+ * Create lifecycle-snapshot tool definition and handler
  */
 export function createSnapshotTool(plugins: LexiconPlugin[]): ToolRegistration {
   return {
     definition: {
-      name: "state-snapshot",
+      name: "lifecycle-snapshot",
       description: "Capture deployed state for an environment",
       inputSchema: {
         type: "object",
@@ -46,12 +46,12 @@ export function createSnapshotTool(plugins: LexiconPlugin[]): ToolRegistration {
 }
 
 /**
- * Create state-diff tool definition and handler
+ * Create lifecycle-diff tool definition and handler
  */
 export function createDiffTool(plugins: LexiconPlugin[]): ToolRegistration {
   return {
     definition: {
-      name: "state-diff",
+      name: "lifecycle-diff",
       description: "Compare current build declarations against last snapshot's digest",
       inputSchema: {
         type: "object",
@@ -75,7 +75,7 @@ export function createDiffTool(plugins: LexiconPlugin[]): ToolRegistration {
         const content = await readSnapshot(env, lex);
         let previousDigest = undefined;
         if (content) {
-          const snapshot: StateSnapshot = JSON.parse(content);
+          const snapshot: LifecycleSnapshot = JSON.parse(content);
           previousDigest = snapshot.digest;
         }
         results[lex] = diffDigests(currentDigest, previousDigest);
