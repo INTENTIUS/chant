@@ -37,11 +37,14 @@ Authoritative state is one mechanism that provides these. It is not the only one
 
 The observational model keeps the governance and drops the authority. Snapshots and diffs live in git, which gives audit and review. Linting runs on the static artifact before apply, which gives pre-apply validation. And the change set is not given up: [`chant lifecycle plan`](/chant/cli/lifecycle/) computes a precise create/update/delete set against the live system, using [ownership markers](/chant/configuration/config-file/#ownership) that live on the cloud resource rather than in a hosted state file. The plan survives without the file — the marker, not a record chant has to lock, is what makes `delete` precise. This makes the thesis stronger, not weaker: the file was never the essential part, and now even the one capability it seemed to monopolize comes from projection instead. See [Lifecycle Models](/chant/concepts/lifecycle-models/) for the full model.
 
-## A diff, not a plan
+## It plans, but it never applies
 
-chant produces a diff, not a plan. [`chant lifecycle diff`](/chant/cli/lifecycle/) has two modes. The default builds the project and compares the declarations against the last snapshot, offline. The `--live` mode queries the cloud and compares the live result against both the last snapshot and the current build.
+chant computes the change set; it does not execute it. Two read-only commands sit on the observe side:
 
-The diff is informational. chant does not apply it. What to do about a diff is the orchestration's decision, whether that is a CI job, an agent, a human, or a [scheduled Temporal workflow](/chant/guide/watching-lifecycle/). A team comfortable with the observational model wires the diff to automation. A team that wants a strict gate wires the same artifact into its own approval flow. chant does not force either, because it does not own the apply.
+- [`chant lifecycle diff`](/chant/cli/lifecycle/) — the three-way comparison. The default mode builds and compares declarations against the last snapshot, offline; `--live` queries the cloud and compares the live result against both the snapshot and the current build.
+- [`chant lifecycle plan`](/chant/cli/lifecycle/) — promotes the live diff to a typed create/update/delete change set you can act on.
+
+Both stop at producing the artifact. What to do about it is the orchestration's decision, whether that is a CI job, an agent, a human, or a [scheduled Temporal workflow](/chant/guide/watching-lifecycle/). A team comfortable with the observational model wires the plan to automation. A team that wants a strict gate wires the same artifact into its own approval flow. chant does not force either, because it does not own the apply.
 
 ## Blast radius at scale
 

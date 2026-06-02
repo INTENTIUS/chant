@@ -3,7 +3,19 @@ title: Lifecycle Models
 description: The three axes that describe any lifecycle model, and where chant sits on each — truth in the live system, reconciliation chosen per environment, ownership answered by live markers.
 ---
 
+import { Aside } from '@astrojs/starlight/components';
+
 Every infrastructure tool takes a position on the lifecycle — how infrastructure is created, changed, reconciled, and retired — usually implicitly, and usually welded to the compiler so you can't take one without the other. chant declines that bet: **pluggable lexicons in, pluggable lifecycles out, pure synthesis in the middle.** Bring your own lifecycle, and chant makes it durable.
+
+<Aside type="note" title="What “lifecycle” means here">
+Three things wear this name; this page is careful about which:
+
+- **the lifecycle** (this page) — the *model*: how infrastructure is created, changed, reconciled, and retired.
+- **the `chant lifecycle` commands** — `diff` / `plan` / `snapshot`: the read-only CLI surface for observing it ([CLI reference](/chant/cli/lifecycle/)).
+- **a lifecycle you bring** — orchestration you compose from [Ops](/chant/guide/ops/).
+
+The two "pluggable" axes are **not symmetric**. Lexicons are a shipped plugin contract — a registry with many implementations. Lifecycles today are durable rails you compose from Ops ([Contributing a Lifecycle](/chant/contributing/lifecycles/), Door 1); dropping a foreign lifecycle backend in (Door 2) is stated direction, not a shipped feature.
+</Aside>
 
 This page makes the axes explicit so the rest of the docs can point here instead of re-deriving the argument. For the cost side of the trade — what an authoritative state file actually buys and charges — see [State and Governance](/chant/concepts/governance/).
 
@@ -74,3 +86,4 @@ The moment a *mutation* trusts the snapshot — uses it to decide what to create
 - [How chant compares](/chant/concepts/comparison/) — these axes mapped across tools
 - [Ops](/chant/guide/ops/) — the reconcile (`ReconcileOp`) and apply (`ApplyOp`) workflows
 - [Contributing a Lifecycle](/chant/contributing/lifecycles/) — bring your own lifecycle: write one as Ops, or plug one in
+- [`lifecycle-reconcile-aws` example](https://github.com/INTENTIUS/chant/tree/main/lexicons/aws/examples/lifecycle-reconcile-aws) — the dial on a real stack: deploy → drift → diff → reconcile / apply
