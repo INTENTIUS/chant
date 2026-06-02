@@ -6,10 +6,13 @@ import { ApplyOp } from "@intentius/chant-lexicon-temporal";
 // turns on saga-style rollback on partial failure.
 //
 // Gated/destructive applies require the Temporal executor (the local executor
-// rejects gates). Run the generated worker, then signal `approve-prod-apply`.
-export const { op: applyOp } = ApplyOp({
+// rejects gates): `chant run prod-apply --temporal`, then signal
+// `approve-prod-apply`.
+const { op } = ApplyOp({
   name: "prod-apply",
   env: "prod",
   target: "cloudformation",
   delete: "gated",
 });
+
+export default op;

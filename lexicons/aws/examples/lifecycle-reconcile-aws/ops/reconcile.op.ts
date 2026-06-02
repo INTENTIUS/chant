@@ -6,9 +6,11 @@ import { ReconcileOp } from "@intentius/chant-lexicon-temporal";
 //
 // One-shot on the local executor:  chant run prod-reconcile
 // Continuous on Temporal:           add `schedule` and run the generated worker.
-export const { op: reconcileOp } = ReconcileOp({
+const { op } = ReconcileOp({
   name: "prod-reconcile",
   env: "prod",
   onDrift: "pull-request",
   scope: { owned: true },
 });
+
+export default op;
