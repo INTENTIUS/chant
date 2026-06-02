@@ -110,6 +110,19 @@ describe("serializeOps()", () => {
       expect(wf).toMatch(/proxyActivities<typeof activities>\(\s*TEMPORAL_ACTIVITY_PROFILES\.fastIdempotent,\s*\)/);
     });
 
+    it("imports activity profiles from the config leaf, not the package root (workflow-sandbox-safe)", () => {
+      // The package root re-exports the plugin/serializer (node:fs/path), which
+      // Temporal's workflow sandbox forbids — importing profiles from the root
+      // makes the worker's bundler reject the generated workflow. config.ts is
+      // import-free, so the workflow bundle stays Node-free.
+      const ops = new Map([
+        makeOp({ name: "deploy", overview: "o", phases: [{ name: "Build", steps: [{ kind: "activity", fn: "chantBuild" }] }] }),
+      ]);
+      const wf = serializeOps(ops)["ops/deploy/workflow.ts"];
+      expect(wf).toContain("from '@intentius/chant-lexicon-temporal/config'");
+      expect(wf).not.toContain("from '@intentius/chant-lexicon-temporal';");
+    });
+
     it("generates sequential await calls for a non-parallel phase", () => {
       const ops = new Map([
         makeOp({
