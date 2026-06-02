@@ -1,0 +1,60 @@
+---
+title: Contributing a Lifecycle
+description: How to extend chant's lifecycle layer — write your own as Ops, or plug an existing one in. The pluggable-lifecycle architecture, what ships today, and what is direction.
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+chant's product is the synthesis core: pure, deterministic, lint-gated TypeScript-to-spec compilation. Everything past synthesis — state, apply, drift, reconcile, retire — is the **lifecycle**, and it is a bolt-on, not the core. The shape of the project is:
+
+> **Pluggable lexicons in. Pluggable lifecycles out. Pure synthesis in the middle.**
+
+[Lexicons](/chant/lexicon-authoring/overview/) are the established pluggable axis. This page is about the other one: how you bring your own lifecycle. There are two doors.
+
+<Aside type="note">
+Open is not unopinionated. chant stays opinionated about synthesis — pure, deterministic, validated against lexicon rules. "Pluggable" applies to the lifecycle layer, not the compiler. Rigid where it should be deterministic; open where you should get to choose.
+</Aside>
+
+## Door 1 — Write a lifecycle as Ops
+
+The first door ships today. A lifecycle is just orchestration over chant's primitives, and you declare orchestration as [Ops](/chant/guide/ops/) in `*.op.ts` files — named, phased workflows that run on the local executor or, when you need durability, on Temporal.
+
+The built-in lifecycle composites are themselves nothing more than Ops you could have written:
+
+- [`WatchOp`](/chant/guide/watching-lifecycle/) — observe: snapshot + live diff on a schedule.
+- [`ReconcileOp`](/chant/guide/reconciling-lifecycle/) — `cloud → code`: open PRs when live drifts from source.
+- [`ApplyOp`](/chant/guide/reconciling-lifecycle/) — `code → cloud`: apply via the target's native mechanism, with owned-only deletes.
+
+To contribute a lifecycle this way, compose the primitives your workflow needs:
+
+- `chant lifecycle plan <env>` — the typed change set against live ([CLI](/chant/cli/lifecycle/)).
+- `chant import --from <env>` — regenerate TypeScript from live state ([Live Import](/chant/guide/live-import/)).
+- The pre-built Op activities (`lifecycleSnapshot`, `lifecycleDiff`, `reconcilePr`, `nativeApply`, `compensateApply`) plus your own.
+- Gate steps and `onFailure` compensation when the workflow must survive a crash or hold a human approval.
+
+Package a reusable one as a composite that returns an `Op` (and optionally a `TemporalSchedule`), exactly as the built-ins do — see `lexicons/temporal/src/composites/` for reference. That is a complete, shippable lifecycle.
+
+## Door 2 — Plug an existing lifecycle in
+
+The second door is the **direction**, not a finished feature. The architecture is pluggable: the seams a foreign lifecycle would attach to already exist —
+
+- **Per-lexicon live access** — [`describeResources()`](/chant/lexicon-authoring/observation/) (scrubbed observation) and [`exportResources()`](/chant/lexicon-authoring/live-export/) (full-fidelity export) give a lifecycle a typed view of live infrastructure without a hosted state file.
+- **Ownership markers** — provider-native tags/labels ([ownership marking](/chant/configuration/config-file/#ownership)) let any lifecycle answer "is this mine?" from the resource itself.
+- **A runtime boundary** — the Op executor's local-vs-Temporal split is a clean interface between *declaring* a workflow and *running* it durably.
+
+The intended end state is that a vendor's whole product becomes **one plugin under chant's pure synthesis** — you don't rip out Terraform, you plug it in as a lifecycle backend, and chant owns the socket.
+
+<Aside type="caution">
+To be precise about what exists: the primitives above ship, and Door 1 (lifecycles as Ops) is real and complete. A drop-in "plug in Terraform as a backend" is **not** a shipped capability — it is the architectural direction these seams point toward. Treat this section as a design contract, not a feature list.
+</Aside>
+
+## Why two doors, not one
+
+The two doors close the gap BYOL could otherwise open. "Bring your own lifecycle" must never read as "you're on your own": Door 1 gives you durable rails to build on today (chant makes it durable), and Door 2 means an existing investment isn't thrown away — it's plugged in. Own the socket, outlast the lifecycle war.
+
+## See also
+
+- [Lifecycle Models](/chant/concepts/lifecycle-models/) — the three axes and the observe → reconcile → authoritative dial
+- [Ops](/chant/guide/ops/) — declaring orchestration in `*.op.ts`
+- [Durable Workflows](/chant/concepts/durable-workflows/) — when a lifecycle wants Temporal
+- [Lexicon Authoring](/chant/lexicon-authoring/overview/) — the other pluggable axis
