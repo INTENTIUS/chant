@@ -20,7 +20,7 @@ These are the costs of hosting an authoritative state file yourself. They are pr
 | Self-hosted (Terraform, Pulumi) | You run the backend | Full control, plus the lock, the backups, and the corruption risk |
 | Third-party SaaS | A vendor operates a state database for you | Operational burden gone, replaced by a vendor dependency and your state and secrets living in their system |
 | Platform-managed (CloudFormation, CDK) | The cloud hosts state as part of the service | No file to operate, in exchange for cloud lock-in and all-or-nothing applies |
-| Observational (chant) | No one, because state is a snapshot rather than a source of truth | No file to host or trust, in exchange for no automatic plan and apply |
+| Observational (chant) | No one, because state is a snapshot rather than a source of truth | No file to host or trust; the precise change set comes from live projection + cloud-side ownership instead |
 
 Every model except the last keeps authoritative state and only changes who operates it. The third-party tier is worth a closer look. It is usually a queryable database, sometimes the real-time graph people picture state evolving into. A faster, better-indexed source of truth is still a source of truth. It still has to be correct and current.
 
@@ -35,7 +35,7 @@ Separate the requirement from the mechanism. The properties a team cannot give u
 
 Authoritative state is one mechanism that provides these. It is not the only one. When state is called essential, the essential thing is usually the governance, and authoritative state is the tool that happened to deliver it.
 
-The observational model keeps the governance and drops the authority. Snapshots and diffs live in git, which gives audit and review. Linting runs on the static artifact before apply, which gives pre-apply validation. What is given up is automatic plan and apply, because without authoritative state chant cannot compute a precise change set the way Terraform does.
+The observational model keeps the governance and drops the authority. Snapshots and diffs live in git, which gives audit and review. Linting runs on the static artifact before apply, which gives pre-apply validation. And the change set is not given up: [`chant state plan`](/chant/cli/state/) computes a precise create/update/delete set against the live system, using [ownership markers](/chant/configuration/config-file/#ownership) that live on the cloud resource rather than in a hosted state file. The plan survives without the file — the marker, not a record chant has to lock, is what makes `delete` precise. This makes the thesis stronger, not weaker: the file was never the essential part, and now even the one capability it seemed to monopolize comes from projection instead. See [State Models](/chant/concepts/state-models/) for the full model.
 
 ## A diff, not a plan
 
