@@ -60,15 +60,15 @@ Run named Temporal workflows defined in `*.op.ts` files. Requires `@intentius/ch
 
 ## State Commands
 
-Capture and compare deployed infrastructure state. Snapshots are stored on an orphan git branch (`chant/state`); `state diff --live` queries the cloud directly for drift detection. AWS, Temporal, K8s, GCP, and Azure surface their resources entity-keyed; Helm, Docker, Flyway, and Slurm surface runtime artifacts. See [`chant state`](/chant/cli/state/) for the full surface.
+Capture and compare deployed infrastructure state. Snapshots are stored on an orphan git branch (`chant/lifecycle`); `lifecycle diff --live` queries the cloud directly for drift detection. AWS, Temporal, K8s, GCP, and Azure surface their resources entity-keyed; Helm, Docker, Flyway, and Slurm surface runtime artifacts. See [`chant lifecycle`](/chant/cli/lifecycle/) for the full surface.
 
 | Command | Description |
 |---------|-------------|
-| [`state snapshot <env>`](/chant/cli/state/) | Query lexicon plugins, save resource + artifact metadata to orphan branch |
-| [`state show <env>`](/chant/cli/state/) | Show latest state snapshot |
-| [`state diff <env>`](/chant/cli/state/) | Compare current build against last snapshot (digest mode) |
-| [`state diff <env> --live`](/chant/cli/state/) | Query cloud right now and report drift (six categories: missing, orphan, disappeared, drifted, etc.) |
-| [`state log [env]`](/chant/cli/state/) | History of state snapshots |
+| [`lifecycle snapshot <env>`](/chant/cli/lifecycle/) | Query lexicon plugins, save resource + artifact metadata to orphan branch |
+| [`lifecycle show <env>`](/chant/cli/lifecycle/) | Show latest lifecycle snapshot |
+| [`lifecycle diff <env>`](/chant/cli/lifecycle/) | Compare current build against last snapshot (digest mode) |
+| [`lifecycle diff <env> --live`](/chant/cli/lifecycle/) | Query cloud right now and report drift (six categories: missing, orphan, disappeared, drifted, etc.) |
+| [`lifecycle log [env]`](/chant/cli/lifecycle/) | History of lifecycle snapshots |
 
 ## Server Commands
 

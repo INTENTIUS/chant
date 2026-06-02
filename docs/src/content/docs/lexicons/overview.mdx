@@ -23,7 +23,7 @@ A **lexicon** is a collection of types and semantic lint rules for an operationa
 
 ## Runtime observation coverage
 
-Lexicons opt into the `chant state diff <env> --live` pipeline by implementing one of two plugin methods: `describeResources()` (entity-keyed — for 1:1 cloud resources) or `listArtifacts()` (context-keyed — for runtime concepts created by tooling outside chant's entity model). See [Drift Detection — Resources and artifacts](/chant/concepts/drift-detection/#resources-and-artifacts) for the conceptual distinction, and [Implementing Observation](/chant/lexicon-authoring/observation/) for the author-side walkthrough.
+Lexicons opt into the `chant lifecycle diff <env> --live` pipeline by implementing one of two plugin methods: `describeResources()` (entity-keyed — for 1:1 cloud resources) or `listArtifacts()` (context-keyed — for runtime concepts created by tooling outside chant's entity model). See [Drift Detection — Resources and artifacts](/chant/concepts/drift-detection/#resources-and-artifacts) for the conceptual distinction, and [Implementing Observation](/chant/lexicon-authoring/observation/) for the author-side walkthrough.
 
 | Lexicon | `describeResources()` | `listArtifacts()` | Ownership | Notes |
 |---|---|---|---|---|

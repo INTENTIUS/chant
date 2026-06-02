@@ -93,7 +93,7 @@ Pre-built step builders:
 | `helmInstall(name, chart, opts?)` | `helm upgrade --install` |
 | `waitForStack(stackFile, opts?)` | Poll until a chant stack output file is ready |
 | `gitlabPipeline(projectId, ref, opts?)` | Trigger a GitLab pipeline and wait |
-| `stateSnapshot(env, opts?)` | `chant state snapshot` |
+| `stateSnapshot(env, opts?)` | `chant lifecycle snapshot` |
 | `teardown(path, opts?)` | Build + destroy |
 
 A reconcile activity is also available via `activity("reconcilePr", args)`: given the change-set entries that triggered it, it regenerates TypeScript with `chant import --from <env>` and opens a reviewable PR (modes: `pull-request`, `issue`, `report`). It never commits to the main branch. It is the building block for the reconcile workflow (cloud → code).
@@ -201,7 +201,7 @@ export async function albDeployWorkflow(): Promise<void> {
 
 For an Op with N phases this is **N+1 upsert calls total**. Values are wrapped as single-element arrays for the classic `@temporalio/workflow` API.
 
-> **Registration is separate.** Auto-emit assumes the attributes are already registered server-side. Declare them with the [`SearchAttribute`](/chant/lexicons/temporal/resources/#searchattribute) resource so `chant build` emits the registration commands. See also [`chant state`](/chant/cli/state/) for snapshotting registered attributes against a live cluster.
+> **Registration is separate.** Auto-emit assumes the attributes are already registered server-side. Declare them with the [`SearchAttribute`](/chant/lexicons/temporal/resources/#searchattribute) resource so `chant build` emits the registration commands. See also [`chant lifecycle`](/chant/cli/lifecycle/) for snapshotting registered attributes against a live cluster.
 
 User-provided keys merge over the `OpName` default; if you set `searchAttributes: { OpName: "custom" }` the user value wins.
 
@@ -232,13 +232,13 @@ upsertSearchAttributes({ "Drift": [String(__r0?.drifted)] });
 
 ## Continuous observation
 
-The `WatchOp` composite pairs an Op with a `TemporalSchedule` so `chant state snapshot` and `chant state diff --live` run on a recurring cron — periodic drift detection between change windows, not just at the next deploy.
+The `WatchOp` composite pairs an Op with a `TemporalSchedule` so `chant lifecycle snapshot` and `chant lifecycle diff --live` run on a recurring cron — periodic drift detection between change windows, not just at the next deploy.
 
-See **[Watching State](/chant/guide/watching-state/)** for the full walk-through: composite shape, generated workflow, Temporal UI filters (`Watch = "true"` / `Drift = "true"`), smoke-testing drift end-to-end, and how to triage each diff category. For the conceptual background on what drift means and why chant snapshots are observational, see [Drift Detection](/chant/concepts/drift-detection/).
+See **[Watching Lifecycle](/chant/guide/watching-lifecycle/)** for the full walk-through: composite shape, generated workflow, Temporal UI filters (`Watch = "true"` / `Drift = "true"`), smoke-testing drift end-to-end, and how to triage each diff category. For the conceptual background on what drift means and why chant snapshots are observational, see [Drift Detection](/chant/concepts/drift-detection/).
 
 ## Reconcile (cloud → code)
 
-The `ReconcileOp` composite takes the next step on the dial: when live drifts from declarations, open a PR that regenerates the affected TypeScript. Phases are **snapshot → plan → regenerate → open PR** — the plan is `chant state plan`, and the regenerate-and-PR step is the `reconcilePr` activity.
+The `ReconcileOp` composite takes the next step on the dial: when live drifts from declarations, open a PR that regenerates the affected TypeScript. Phases are **snapshot → plan → regenerate → open PR** — the plan is `chant lifecycle plan`, and the regenerate-and-PR step is the `reconcilePr` activity.
 
 ```typescript
 import { ReconcileOp } from "@intentius/chant-lexicon-temporal";

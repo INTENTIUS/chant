@@ -11,7 +11,7 @@ description: Generate chant TypeScript from a running cloud or cluster with chan
 chant import --from prod --output src/
 ```
 
-1. Resolve the environment the way [`chant state diff --live`](/chant/cli/state/) does.
+1. Resolve the environment the way [`chant lifecycle diff --live`](/chant/cli/lifecycle/) does.
 2. Call each project lexicon's `exportResources()` capability for full-fidelity config.
 3. Generate TypeScript with the same by-category organization as file import.
 
@@ -45,7 +45,7 @@ When [drift detection](/chant/concepts/drift-detection/) reports an `orphan` —
 
 ```bash
 # 1. see what's orphaned
-chant state plan prod
+chant lifecycle plan prod
 
 # 2. regenerate the orphan as chant TypeScript
 chant import --from prod --name my-bucket --output src/
@@ -53,10 +53,10 @@ chant import --from prod --name my-bucket --output src/
 # 3. review, commit — the orphan is now declared
 ```
 
-To automate this across many resources as a reviewable PR, use the [`ReconcileOp`](/chant/guide/reconciling-state/) workflow, which runs exactly this loop and opens the PR for you.
+To automate this across many resources as a reviewable PR, use the [`ReconcileOp`](/chant/guide/reconciling-lifecycle/) workflow, which runs exactly this loop and opens the PR for you.
 
 ## See also
 
-- [Reconciling State](/chant/guide/reconciling-state/) — the reconcile and apply workflows
-- [State Models](/chant/concepts/state-models/) — where live import sits on the dial
+- [Reconciling Lifecycle](/chant/guide/reconciling-lifecycle/) — the reconcile and apply workflows
+- [Lifecycle Models](/chant/concepts/lifecycle-models/) — where live import sits on the dial
 - [`chant import`](/chant/cli/import/) — the full CLI reference

@@ -5,7 +5,7 @@ description: Why governance, not authoritative state, is what IaC depends on
 
 State is essential. That is not in dispute. But essential is not the same as authoritative. The properties teams depend on are governance properties, and most of them survive without an authoritative state file.
 
-This page explains where chant draws that line. For the model that places chant on the three axes of state — where truth lives, reconciliation direction, and who answers "is this mine?" — see [State Models](/chant/concepts/state-models/). For the tool-by-tool comparison see [How chant compares](/chant/concepts/comparison/). For the snapshot and diff mechanism see [Drift Detection](/chant/concepts/drift-detection/).
+This page explains where chant draws that line. For the model that places chant on the three axes of state — where truth lives, reconciliation direction, and who answers "is this mine?" — see [Lifecycle Models](/chant/concepts/lifecycle-models/). For the tool-by-tool comparison see [How chant compares](/chant/concepts/comparison/). For the snapshot and diff mechanism see [Drift Detection](/chant/concepts/drift-detection/).
 
 ## What a state file actually costs
 
@@ -35,19 +35,19 @@ Separate the requirement from the mechanism. The properties a team cannot give u
 
 Authoritative state is one mechanism that provides these. It is not the only one. When state is called essential, the essential thing is usually the governance, and authoritative state is the tool that happened to deliver it.
 
-The observational model keeps the governance and drops the authority. Snapshots and diffs live in git, which gives audit and review. Linting runs on the static artifact before apply, which gives pre-apply validation. And the change set is not given up: [`chant state plan`](/chant/cli/state/) computes a precise create/update/delete set against the live system, using [ownership markers](/chant/configuration/config-file/#ownership) that live on the cloud resource rather than in a hosted state file. The plan survives without the file — the marker, not a record chant has to lock, is what makes `delete` precise. This makes the thesis stronger, not weaker: the file was never the essential part, and now even the one capability it seemed to monopolize comes from projection instead. See [State Models](/chant/concepts/state-models/) for the full model.
+The observational model keeps the governance and drops the authority. Snapshots and diffs live in git, which gives audit and review. Linting runs on the static artifact before apply, which gives pre-apply validation. And the change set is not given up: [`chant lifecycle plan`](/chant/cli/lifecycle/) computes a precise create/update/delete set against the live system, using [ownership markers](/chant/configuration/config-file/#ownership) that live on the cloud resource rather than in a hosted state file. The plan survives without the file — the marker, not a record chant has to lock, is what makes `delete` precise. This makes the thesis stronger, not weaker: the file was never the essential part, and now even the one capability it seemed to monopolize comes from projection instead. See [Lifecycle Models](/chant/concepts/lifecycle-models/) for the full model.
 
 ## A diff, not a plan
 
-chant produces a diff, not a plan. [`chant state diff`](/chant/cli/state/) has two modes. The default builds the project and compares the declarations against the last snapshot, offline. The `--live` mode queries the cloud and compares the live result against both the last snapshot and the current build.
+chant produces a diff, not a plan. [`chant lifecycle diff`](/chant/cli/lifecycle/) has two modes. The default builds the project and compares the declarations against the last snapshot, offline. The `--live` mode queries the cloud and compares the live result against both the last snapshot and the current build.
 
-The diff is informational. chant does not apply it. What to do about a diff is the orchestration's decision, whether that is a CI job, an agent, a human, or a [scheduled Temporal workflow](/chant/guide/watching-state/). A team comfortable with the observational model wires the diff to automation. A team that wants a strict gate wires the same artifact into its own approval flow. chant does not force either, because it does not own the apply.
+The diff is informational. chant does not apply it. What to do about a diff is the orchestration's decision, whether that is a CI job, an agent, a human, or a [scheduled Temporal workflow](/chant/guide/watching-lifecycle/). A team comfortable with the observational model wires the diff to automation. A team that wants a strict gate wires the same artifact into its own approval flow. chant does not force either, because it does not own the apply.
 
 ## Blast radius at scale
 
 A common objection is that at scale a single change touches so many resources that verifying it means reading the whole estate.
 
-The scope of a change is bounded by the change, not the estate. A one-subnet change touches one subnet and its dependents whether the account holds a hundred resources or a hundred thousand. `chant state diff --live` queries the cloud for the declared resources through each lexicon's `describeResources()` method, not the entire account, so the read tracks what is declared rather than the size of the estate. The read is also bounded by the write already accepted, so reading the affected scope is less work than mutating it.
+The scope of a change is bounded by the change, not the estate. A one-subnet change touches one subnet and its dependents whether the account holds a hundred resources or a hundred thousand. `chant lifecycle diff --live` queries the cloud for the declared resources through each lexicon's `describeResources()` method, not the entire account, so the read tracks what is declared rather than the size of the estate. The read is also bounded by the write already accepted, so reading the affected scope is less work than mutating it.
 
 There is one case where the affected scope approaches the whole estate, such as rotating a root credential or re-tagging everything. That is the exact change a human or a policy should gate. A scope that large is a signal to decompose or stage the change, not a cost to remove.
 

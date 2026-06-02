@@ -31,7 +31,10 @@ import { Card, CardGrid } from '@astrojs/starlight/components';
 		Build reusable presets and composite resources with plain functions and the spread operator.
 	</Card>
 	<Card title="Deployment Ops & Drift" icon="approve-check-circle">
-		Declare deployment phases in `*.op.ts`. `chant build` generates Temporal worker code; `chant run` starts a durable workflow with gate steps, parallel phases, and automatic rollback. `chant state diff --live` catches out-of-band drift across nine lexicons; `WatchOp` runs the same check on a cron.
+		Declare deployment phases in `*.op.ts`. `chant build` generates Temporal worker code; `chant run` starts a durable workflow with gate steps, parallel phases, and automatic rollback. `chant lifecycle diff --live` catches out-of-band drift across nine lexicons; `WatchOp` runs the same check on a cron.
+	</Card>
+	<Card title="Bring Your Own Lifecycle" icon="setting">
+		Pluggable lexicons in, pluggable lifecycles out, pure synthesis in the middle. The product is the synthesis core; state, apply, drift, and reconcile are opt-in bolt-ons. Observe, reconcile (`cloud → code` PRs), or apply (`code → cloud`) — chosen per environment, no authoritative state file. [Lifecycle Models](/chant/concepts/lifecycle-models/).
 	</Card>
 	<Card title="Cross-Platform Migration" icon="random">
 		Translate workflows between lexicons with `chant migrate`. v1 ships GitHub Actions → GitLab CI/CD: 33 curated marketplace-action mappings, typed provenance, SARIF reporting, and optional composite-pattern recognition. [Read more](/chant/lexicons/gitlab/migration/).

@@ -9,6 +9,8 @@ chant is a TypeScript-first infrastructure tool. You define cloud resources as p
 TypeScript source → chant build → provider-specific output
 ```
 
+The product is that synthesis core. Everything past it — state, apply, drift, reconcile — is an opt-in bolt-on: **pluggable lexicons in, pluggable lifecycles out, pure synthesis in the middle.** Bring your own lifecycle, and chant makes it durable. See [Lifecycle Models](/chant/concepts/lifecycle-models/) for the full picture.
+
 "No state to manage" means no authoritative state file to host, lock, or trust — not the absence of a change set. chant computes a precise create/update/delete plan against the live system using ownership markers that live on the cloud resource, so you get the plan without the file ([State and Governance](/chant/concepts/governance/)). And when an apply needs to be durable — approval gates, rollback, crash-resume — chant compiles your orchestration to [durable workflows](/chant/concepts/durable-workflows/): Temporal-native when you want durability, zero-dependency when you don't.
 
 You get real `import`/`export`, editor autocompletion, and semantic lint rules that catch misconfigurations before deployment — all in a single local pass.
