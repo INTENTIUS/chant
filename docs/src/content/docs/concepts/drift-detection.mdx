@@ -20,7 +20,7 @@ chant's snapshots are **observational**. They're a forensic record: "this is wha
 | State must be locked; concurrent writes corrupt | A stale snapshot is inconvenient, not dangerous |
 | Sensitive data leaks into state file | Snapshots record metadata only — no secrets |
 | Bad state breaks deploys | Bad snapshot is a record problem; deploys query live APIs |
-| `apply` knows exactly what to change | No automatic plan/apply — agents verify before acting |
+| `apply` knows exactly what to change | Precise change set comes from live projection (`lifecycle plan`); chant computes it but never auto-applies |
 
 For the broader trade-off comparison, see [State: authoritative vs. observational](/chant/concepts/comparison/#state-authoritative-vs-observational) in the comparison guide.
 
@@ -98,7 +98,7 @@ The pragmatic test: would you act on a drift signal if it fired right now? If ye
 chant's observational model is a deliberate choice, not a missing feature. The costs:
 
 - **No automatic remediation.** Drift tells you something changed; it doesn't snap the cloud back. That's an agent or a human decision because the right answer is domain-specific.
-- **No automatic plan/apply.** Without authoritative state, chant can't compute a precise change set the way Terraform does. Diff output is informational; the apply step is your existing tooling.
+- **It plans, but never applies.** chant computes a precise create/update/delete change set against live — [`chant lifecycle plan`](/chant/cli/lifecycle/) reads ownership from the live marker, not the snapshot — but it stops at the artifact. Executing it is your tooling's job: a CI job, an agent, or a [`ReconcileOp`](/chant/guide/reconciling-lifecycle/) / [`ApplyOp`](/chant/guide/reconciling-lifecycle/). The diff is informational; the plan is actionable; neither mutates the cloud.
 - **No locking.** Two operators snapshotting the same env at the same time race on the orphan branch. The push uses `--force-with-lease` so the second writer fails fast rather than silently overwriting (see [Concurrent snapshots](/chant/cli/lifecycle/#concurrent-snapshots)).
 - **Coverage is per-lexicon.** A lexicon without `describeResources()` / `listArtifacts()` is warn-skipped. The [Runtime observation coverage matrix](/chant/lexicons/overview/#runtime-observation-coverage) lists where coverage exists today.
 

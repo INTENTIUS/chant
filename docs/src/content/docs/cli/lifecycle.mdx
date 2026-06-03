@@ -1,6 +1,6 @@
 ---
 title: "chant lifecycle"
-description: Capture and compare deployed infrastructure state
+description: Capture, diff, and plan against deployed infrastructure — the observational lifecycle commands
 ---
 
 ## Synopsis
@@ -9,6 +9,7 @@ description: Capture and compare deployed infrastructure state
 chant lifecycle snapshot <env> [lexicon]
 chant lifecycle show <env>
 chant lifecycle diff <env> [--live]
+chant lifecycle plan <env> [--json] [--owned]
 chant lifecycle log [env]
 ```
 
@@ -24,7 +25,7 @@ For the conceptual model behind these commands — observational vs. authoritati
 
 ### `lifecycle snapshot <env>`
 
-Query the provider API for the current deployed state, then save a snapshot to the `chant-state/<env>` orphan branch.
+Query the provider API for the current deployed state, then save a snapshot to the `chant/lifecycle` orphan branch.
 
 ```bash
 chant lifecycle snapshot dev

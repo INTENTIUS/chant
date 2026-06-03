@@ -1,19 +1,19 @@
 ---
 title: What's New
-description: Recent capabilities shipped in chant — live import, the state-model dial, ownership markers, reconcile/apply Ops, observation contracts, drift detection, and more
+description: Recent capabilities shipped in chant — live import, the lifecycle dial, ownership markers, reconcile/apply Ops, observation contracts, drift detection, and more
 ---
 
 A hand-curated rollup of capabilities shipped recently. If you learned chant before this lands, this page is the catch-up. Each entry links to the closing issue or PR for the full context.
 
 For the day-to-day reference docs see [Lifecycle Models](/chant/concepts/lifecycle-models/), [`chant lifecycle`](/chant/cli/lifecycle/), [Live Import](/chant/guide/live-import/), [Reconciling Lifecycle](/chant/guide/reconciling-lifecycle/), [Drift Detection](/chant/concepts/drift-detection/), and [Implementing Observation](/chant/lexicon-authoring/observation/).
 
-## Live import & the state-model dial
+## Live import & the lifecycle dial
 
 The follow-on to the observation thread: chant turned its single observational drift workflow into a full family — **observe → reconcile → authoritative**, chosen per environment. It gained *live import* (regenerate TypeScript from running cloud/cluster state) and *projection + cloud-side ownership* (a precise create/update/delete change set computed against live), **without** hosting an authoritative state file. The snapshot is never load-bearing — the projection reads ownership from the live resource only. Primitives need no executor; only gated/destructive Ops require Temporal.
 
 | # | Capability |
 |---|---|
-| [#113](https://github.com/INTENTIUS/chant/issues/113) | `exportResources()` on the `LexiconPlugin` contract — full-fidelity import IR from a live API, branded distinct from the scrubbed observation types so a secret-bearing export can never reach the `state` code paths |
+| [#113](https://github.com/INTENTIUS/chant/issues/113) | `exportResources()` on the `LexiconPlugin` contract — full-fidelity import IR from a live API, branded distinct from the scrubbed observation types so a secret-bearing export can never reach the `lifecycle` code paths |
 | [#114](https://github.com/INTENTIUS/chant/issues/114) | [`chant import --from <env>`](/chant/cli/import/) — live import driver with `--type` / `--name` / `--owned` / `--verbatim` selectors and a secrets warning |
 | [#115](https://github.com/INTENTIUS/chant/issues/115), [#116](https://github.com/INTENTIUS/chant/issues/116), [#117](https://github.com/INTENTIUS/chant/issues/117) | Live export for AWS (CloudFormation `get-template`), Kubernetes (`kubectl get -o json`, stripped to declared shape), and GCP Config Connector |
 | [#159](https://github.com/INTENTIUS/chant/issues/159) | Live export for Azure (`az group export`) — makes Azure a full live-import peer alongside AWS, GCP, and Kubernetes; `--owned` filtering via the `chant-managed-by` tag |
@@ -40,8 +40,6 @@ The biggest single thread. `chant lifecycle diff` went from a digest-vs-digest f
 | [#51](https://github.com/INTENTIUS/chant/issues/51) | `listArtifacts()` plugin contract — context-keyed observation for lexicons whose chant entities describe authoring primitives rather than 1:1 cloud resources |
 | [#52](https://github.com/INTENTIUS/chant/issues/52) | Helm `listArtifacts()` — Helm releases via `helm list -A -o json` |
 | [#53](https://github.com/INTENTIUS/chant/issues/53) | Docker `listArtifacts()` — containers / images / networks via three independent NDJSON queries |
-| [#54](https://github.com/INTENTIUS/chant/issues/54) | Flyway `listArtifacts()` — per-environment migration history |
-| [#55](https://github.com/INTENTIUS/chant/issues/55) | Slurm `listArtifacts()` — partition state via `sinfo` |
 | [#56](https://github.com/INTENTIUS/chant/issues/56) | GitHub / GitLab — runtime observation documented as N/A; both describe git-tracked authoring primitives where drift is `git diff` |
 | [#30](https://github.com/INTENTIUS/chant/issues/30) | `chant/lifecycle` orphan branch concurrency — pushes use `--force-with-lease`; concurrent snapshots fail fast instead of silently overwriting |
 | [#31](https://github.com/INTENTIUS/chant/issues/31) | `WatchOp` composite — periodic lifecycle observation by pairing an `Op` (Snapshot + Diff phases) with a `TemporalSchedule` |
@@ -53,8 +51,8 @@ The Op composite gained two ergonomic upgrades that were previously hand-coded b
 | # | Capability |
 |---|---|
 | [#28](https://github.com/INTENTIUS/chant/issues/28) | Op codegen auto-emits `upsertSearchAttributes()` — `OpName` at workflow start, `Phase` at each phase boundary, plus any user-declared `searchAttributes`. No more hand-rolled boilerplate; `chant run list` and Temporal UI filters work out of the box |
-| [#41](https://github.com/INTENTIUS/chant/issues/41) | `outcomeAttribute` on activity steps — capture an activity's return value (e.g. `stateDiff`'s `drifted` boolean) as a workflow search attribute. Used by `WatchOp` to surface `Drift = "true"`/`"false"` per run |
-| [#29](https://github.com/INTENTIUS/chant/issues/29), [#40](https://github.com/INTENTIUS/chant/issues/40) | Test coverage for `cli/handlers/state.ts`, `run.ts`, `graph.ts`, and `runOp` — refactor surface is now safe |
+| [#41](https://github.com/INTENTIUS/chant/issues/41) | `outcomeAttribute` on activity steps — capture an activity's return value (e.g. `lifecycleDiff`'s `drifted` boolean) as a workflow search attribute. Used by `WatchOp` to surface `Drift = "true"`/`"false"` per run |
+| [#29](https://github.com/INTENTIUS/chant/issues/29), [#40](https://github.com/INTENTIUS/chant/issues/40) | Test coverage for `cli/handlers/lifecycle.ts` (then `state.ts`), `run.ts`, `graph.ts`, and `runOp` — refactor surface is now safe |
 | [#161](https://github.com/INTENTIUS/chant/issues/161) | Temporal runtime harness — runs the serializer's *actual* generated workflow under a time-skipping `TestWorkflowEnvironment`: phase ordering, gate waits for the approval signal (not the timeout), `onFailure` compensation in reverse, and `ApplyOp`'s gated destructive apply ([#125](https://github.com/INTENTIUS/chant/issues/125)) |
 | [#162](https://github.com/INTENTIUS/chant/issues/162) | Compile-smoke for generated Op output — type-checks the emitted `workflow.ts`/`worker.ts`/`activities.ts` against the live activity signatures, so an activity-signature change that the serializer doesn't track fails at compile time instead of drifting silently |
 | [#173](https://github.com/INTENTIUS/chant/issues/173) | Generated workflows are workflow-sandbox-safe — activity profiles import from the import-free `config` leaf instead of the package root, so the Temporal worker's bundler no longer drags `node:fs`/`node:path` into the deterministic workflow VM (the generated workflow now bundles and runs). Surfaced by the [#161](https://github.com/INTENTIUS/chant/issues/161) harness |
@@ -96,7 +94,7 @@ After all the runtime work shipped, the docs site got a sweep to surface it:
 |---|---|
 | [#63](https://github.com/INTENTIUS/chant/issues/63) | Accuracy fixes — stale claims, broken links, rollup misses across `index.mdx`, comparison, philosophy, installation, quick-start, cli/overview |
 | [#64](https://github.com/INTENTIUS/chant/issues/64) | [Watching Lifecycle](/chant/guide/watching-lifecycle/) — first-class user-guide page for `WatchOp` (was previously a subsection of the Ops guide) |
-| [#65](https://github.com/INTENTIUS/chant/issues/65) | [Implementing Observation](/chant/lexicon-authoring/observation/) — lexicon-author walkthrough of `describeResources()` and `listArtifacts()` with patterns from all 9 shipping implementations |
+| [#65](https://github.com/INTENTIUS/chant/issues/65) | [Implementing Observation](/chant/lexicon-authoring/observation/) — lexicon-author walkthrough of `describeResources()` and `listArtifacts()` with patterns from every shipping implementation |
 | [#66](https://github.com/INTENTIUS/chant/issues/66) | [Drift Detection](/chant/concepts/drift-detection/) — concept page for the observational lifecycle model, ten diff categories, and when drift detection earns its keep |
 | [#67](https://github.com/INTENTIUS/chant/issues/67) | This page + the [lexicon observation coverage matrix](/chant/lexicons/overview/#runtime-observation-coverage) |
 

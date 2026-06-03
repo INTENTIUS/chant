@@ -15,7 +15,7 @@ chant import --from prod --output src/
 2. Call each project lexicon's `exportResources()` capability for full-fidelity config.
 3. Generate TypeScript with the same by-category organization as file import.
 
-Unlike `state`, which only ever reads scrubbed metadata, live import emits the resource's **full input config** — so it may surface secrets. The command prints a warning; review generated files before committing.
+Unlike `chant lifecycle` observation, which only ever reads scrubbed metadata, live import emits the resource's **full input config** — so it may surface secrets. The command prints a warning; review generated files before committing.
 
 ## Selectors
 

@@ -269,12 +269,12 @@ That is a separate, opt-in capability:
 exportResources?(options: {
   environment: string;
   selector?: ResourceSelector;   // { type?, name? }
-  owned?: boolean;               // inert until ownership marking lands
+  owned?: boolean;               // restrict to chant-owned resources (live marker)
   verbatim?: boolean;            // keep server-defaulted fields; default strips
 }): Promise<ExportedTemplate>;
 ```
 
-`ExportedTemplate` is the existing import IR (`TemplateIR`) — so the result feeds your lexicon's `templateGenerator()` unchanged — branded distinct from the observation types. The brand is the contract's guardrail: a full-fidelity export (which may carry secrets) can never flow into the `state` code paths, which consume `ResourceMetadata` through the `ObservationLexicon` view that omits `exportResources` entirely.
+`ExportedTemplate` is the existing import IR (`TemplateIR`) — so the result feeds your lexicon's `templateGenerator()` unchanged — branded distinct from the observation types. The brand is the contract's guardrail: a full-fidelity export (which may carry secrets) can never flow into the `lifecycle` code paths, which consume `ResourceMetadata` through the `ObservationLexicon` view that omits `exportResources` entirely.
 
 <Aside type="caution">
 Keep the scrubbing boundary single-purpose. `describeResources()` scrubs for diffing; `exportResources()` returns full config for regeneration. Never overload one method for both — the secret-exposure surface stays in one place.
