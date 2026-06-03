@@ -1,5 +1,8 @@
 name: chant
 
+# Distinct title so it isn't confused with other workflows on the same commit.
+run-name: chant — ${{ github.head_ref || github.ref_name }}
+
 # Run once per commit: on PRs (pull_request) and on pushes to main
 # (post-merge validation). Without scoping `push` to main, a commit on a
 # branch that has an open PR triggers two identical runs.
