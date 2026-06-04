@@ -28,6 +28,9 @@ import { wk8306 } from "./wk8306";
 import { wk8401 } from "./wk8401";
 import { wk8402 } from "./wk8402";
 import { wk8403 } from "./wk8403";
+import { argo002 } from "./argo002";
+import { argo003 } from "./argo003";
+import { argo005 } from "./argo005";
 
 function makeCtx(yaml: string): PostSynthContext {
   return {
@@ -41,6 +44,11 @@ function makeCtx(yaml: string): PostSynthContext {
       sourceFileCount: 1,
     },
   };
+}
+
+/** Join several manifests (objects) into a multi-document YAML string. */
+function manifestsCtx(...objs: unknown[]): PostSynthContext {
+  return makeCtx(objs.map((o) => JSON.stringify(o)).join("\n---\n"));
 }
 
 // ── WK8005: Secrets in env ──────────────────────────────────────────
@@ -1474,5 +1482,120 @@ describe("WK8403: spec.rayVersion does not match image tag", () => {
     const ctx = makeCtx(makeRayCluster({ rayVersion: "2.40.0", headImage: "rayproject/ray:latest" }));
     const diags = wk8403.check(ctx);
     expect(diags.filter((d) => d.checkId === "WK8403").length).toBe(0);
+  });
+});
+
+// ── ARGO002: Application.spec.project references a declared AppProject ─────────
+
+function argoApp(name: string, spec: Record<string, unknown>) {
+  return { apiVersion: "argoproj.io/v1alpha1", kind: "Application", metadata: { name }, spec };
+}
+function appProject(name: string) {
+  return { apiVersion: "argoproj.io/v1alpha1", kind: "AppProject", metadata: { name }, spec: {} };
+}
+const inClusterDest = { server: "https://kubernetes.default.svc", namespace: "demo" };
+
+describe("ARGO002: Application project references a declared AppProject", () => {
+  test("metadata", () => {
+    expect(argo002.id).toBe("ARGO002");
+  });
+
+  test("flags an Application referencing an undeclared project", () => {
+    const ctx = manifestsCtx(argoApp("api", { project: "team-a", destination: inClusterDest }));
+    const diags = argo002.check(ctx);
+    expect(diags.length).toBe(1);
+    expect(diags[0].checkId).toBe("ARGO002");
+    expect(diags[0].message).toContain("team-a");
+  });
+
+  test("passes when the AppProject is declared in the same build", () => {
+    const ctx = manifestsCtx(
+      appProject("team-a"),
+      argoApp("api", { project: "team-a", destination: inClusterDest }),
+    );
+    expect(argo002.check(ctx).length).toBe(0);
+  });
+
+  test("does NOT flag the built-in default project", () => {
+    const ctx = manifestsCtx(argoApp("api", { project: "default", destination: inClusterDest }));
+    expect(argo002.check(ctx).length).toBe(0);
+  });
+});
+
+// ── ARGO003: Application destination references a registered cluster ──────────
+
+function clusterSecret(name: string, server: string) {
+  return {
+    apiVersion: "v1",
+    kind: "Secret",
+    metadata: { name, labels: { "argocd.argoproj.io/secret-type": "cluster" } },
+    stringData: { name, server },
+  };
+}
+
+describe("ARGO003: Application destination references a registered cluster", () => {
+  test("metadata", () => {
+    expect(argo003.id).toBe("ARGO003");
+  });
+
+  test("does NOT flag the in-cluster destination", () => {
+    const ctx = manifestsCtx(argoApp("api", { project: "default", destination: inClusterDest }));
+    expect(argo003.check(ctx).length).toBe(0);
+  });
+
+  test("flags an unregistered cluster server", () => {
+    const ctx = manifestsCtx(
+      argoApp("api", { project: "default", destination: { server: "https://prod.example.com", namespace: "demo" } }),
+    );
+    const diags = argo003.check(ctx);
+    expect(diags.length).toBe(1);
+    expect(diags[0].checkId).toBe("ARGO003");
+    expect(diags[0].message).toContain("prod.example.com");
+  });
+
+  test("passes when the cluster is registered via a cluster Secret", () => {
+    const ctx = manifestsCtx(
+      clusterSecret("prod", "https://prod.example.com"),
+      argoApp("api", { project: "default", destination: { server: "https://prod.example.com", namespace: "demo" } }),
+    );
+    expect(argo003.check(ctx).length).toBe(0);
+  });
+
+  test("flags a destination with neither server nor name", () => {
+    const ctx = manifestsCtx(argoApp("api", { project: "default", destination: { namespace: "demo" } }));
+    expect(argo003.check(ctx).length).toBe(1);
+  });
+});
+
+// ── ARGO005: Application source.path resolves to an existing directory ────────
+
+describe("ARGO005: Application source path exists", () => {
+  test("metadata", () => {
+    expect(argo005.id).toBe("ARGO005");
+  });
+
+  test("does NOT flag a path that exists under the build root", () => {
+    // `lexicons` is a directory at the repo root (the vitest cwd).
+    const ctx = manifestsCtx(
+      argoApp("api", { project: "default", destination: inClusterDest, source: { repoURL: "x", path: "lexicons" } }),
+    );
+    expect(argo005.check(ctx).length).toBe(0);
+  });
+
+  test("warns on a path that does not resolve to a directory", () => {
+    const ctx = manifestsCtx(
+      argoApp("api", { project: "default", destination: inClusterDest, source: { repoURL: "x", path: "no-such-argo-dir-xyz" } }),
+    );
+    const diags = argo005.check(ctx);
+    expect(diags.length).toBe(1);
+    expect(diags[0].checkId).toBe("ARGO005");
+    expect(diags[0].severity).toBe("warning");
+  });
+
+  test("skips Helm chart sources", () => {
+    const ctx = manifestsCtx(
+      argoApp("api", { project: "default", destination: inClusterDest, source: { repoURL: "x", chart: "redis" } }),
+    );
+    expect(argo005.check(ctx).length).toBe(0);
   });
 });
