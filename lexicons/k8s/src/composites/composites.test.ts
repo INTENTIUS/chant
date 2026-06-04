@@ -8,6 +8,7 @@ function p(member: unknown): Record<string, unknown> {
   return (member as any).props;
 }
 import { StatefulApp } from "./stateful-app";
+import { ArgoAppFor, ArgoAppSetForRegions, registerArgoCluster } from "./argo-app";
 import { CronWorkload } from "./cron-workload";
 import { AutoscaledService } from "./autoscaled-service";
 import { WorkerPool } from "./worker-pool";
@@ -3221,5 +3222,131 @@ describe("CockroachDbCluster", () => {
     const result = CockroachDbCluster({ name: "crdb", image: "cockroachdb/cockroach:v23.2.0" });
     const container = (p(result.certGenJob).spec as any).template.spec.containers[0];
     expect(container.image).toBe("cockroachdb/cockroach:v23.2.0");
+  });
+});
+
+describe("ArgoAppFor", () => {
+  test("returns a single Application", () => {
+    const result = ArgoAppFor("api", { repo: "https://github.com/acme/infra", path: "dist/api" });
+    expect(result.application).toBeDefined();
+    expect((result.application as any).entityType).toBe("K8s::Argo::Application");
+  });
+
+  test("maps repo/path/revision onto spec.source", () => {
+    const result = ArgoAppFor("api", {
+      repo: "https://github.com/acme/infra",
+      path: "dist/api",
+      targetRevision: "v1.2.3",
+    });
+    const spec = p(result.application).spec as any;
+    expect(spec.source.repoURL).toBe("https://github.com/acme/infra");
+    expect(spec.source.path).toBe("dist/api");
+    expect(spec.source.targetRevision).toBe("v1.2.3");
+  });
+
+  test("defaults to the in-cluster destination and default project", () => {
+    const spec = p(ArgoAppFor("api", { repo: "r", path: "p" }).application).spec as any;
+    expect(spec.destination.server).toBe("https://kubernetes.default.svc");
+    expect(spec.destination.namespace).toBe("api");
+    expect(spec.project).toBe("default");
+  });
+
+  test("default sync policy is automated, non-pruning, self-healing", () => {
+    const spec = p(ArgoAppFor("api", { repo: "r", path: "p" }).application).spec as any;
+    expect(spec.syncPolicy.automated.prune).toBe(false);
+    expect(spec.syncPolicy.automated.selfHeal).toBe(true);
+    expect(spec.syncPolicy.syncOptions).toContain("CreateNamespace=true");
+  });
+
+  test("explicit empty sync policy yields manual sync (no automated block)", () => {
+    const spec = p(ArgoAppFor("api", { repo: "r", path: "p", syncPolicy: {} }).application).spec as any;
+    expect(spec.syncPolicy).toBeUndefined();
+  });
+
+  test("honors an explicit destination", () => {
+    const spec = p(
+      ArgoAppFor("api", {
+        repo: "r",
+        path: "p",
+        destination: { server: "https://east.example.com", namespace: "prod" },
+      }).application,
+    ).spec as any;
+    expect(spec.destination.server).toBe("https://east.example.com");
+    expect(spec.destination.namespace).toBe("prod");
+  });
+});
+
+describe("ArgoAppSetForRegions", () => {
+  const opts = { name: "crdb", repo: "https://github.com/acme/infra", project: "crdb" };
+  const mapper = (region: string) => ({
+    server: `https://${region}.example.com`,
+    namespace: `crdb-${region}`,
+    path: `dist/${region}`,
+  });
+
+  test("produces one ApplicationSet fanned out to 3 Applications", () => {
+    const result = ArgoAppSetForRegions(["east", "central", "west"], mapper, opts);
+    expect((result.applicationSet as any).entityType).toBe("K8s::Argo::ApplicationSet");
+    const spec = p(result.applicationSet).spec as any;
+    const elements = spec.generators[0].list.elements;
+    expect(elements).toHaveLength(3);
+    expect(elements.map((e: any) => e.region)).toEqual(["east", "central", "west"]);
+    expect(elements[0].server).toBe("https://east.example.com");
+    expect(elements[0].path).toBe("dist/east");
+  });
+
+  test("template scopes to a single static AppProject (ARGO004)", () => {
+    const spec = p(ArgoAppSetForRegions(["east"], mapper, opts).applicationSet).spec as any;
+    expect(spec.template.spec.project).toBe("crdb");
+    expect(spec.template.spec.project).not.toContain("{{");
+  });
+
+  test("template destination interpolates the per-region server", () => {
+    const spec = p(ArgoAppSetForRegions(["east"], mapper, opts).applicationSet).spec as any;
+    expect(spec.template.spec.destination.server).toBe("{{server}}");
+    expect(spec.template.spec.destination.namespace).toBe("{{namespace}}");
+  });
+
+  test("falls back to the set-level path when the mapper omits one", () => {
+    const spec = p(
+      ArgoAppSetForRegions(
+        ["east"],
+        (r) => ({ server: `https://${r}.example.com`, namespace: `ns-${r}` }),
+        { ...opts, path: "dist/shared" },
+      ).applicationSet,
+    ).spec as any;
+    expect(spec.generators[0].list.elements[0].path).toBe("dist/shared");
+  });
+
+  test("throws when no path is resolvable for a region", () => {
+    expect(() =>
+      ArgoAppSetForRegions(
+        ["east"],
+        (r) => ({ server: `https://${r}.example.com`, namespace: `ns-${r}` }),
+        opts,
+      ),
+    ).toThrow(/no path/);
+  });
+});
+
+describe("registerArgoCluster", () => {
+  test("emits a Secret labelled as an Argo cluster registration", () => {
+    const result = registerArgoCluster({ name: "east", server: "https://east.example.com" });
+    expect((result.secret as any).entityType).toBe("K8s::Core::Secret");
+    const meta = (p(result.secret).metadata as any);
+    expect(meta.labels["argocd.argoproj.io/secret-type"]).toBe("cluster");
+    const stringData = p(result.secret).stringData as any;
+    expect(stringData.name).toBe("east");
+    expect(stringData.server).toBe("https://east.example.com");
+  });
+
+  test("serializes an object config to JSON", () => {
+    const result = registerArgoCluster({
+      name: "east",
+      server: "https://east.example.com",
+      config: { tlsClientConfig: { insecure: false } },
+    });
+    const stringData = p(result.secret).stringData as any;
+    expect(JSON.parse(stringData.config)).toEqual({ tlsClientConfig: { insecure: false } });
   });
 });
