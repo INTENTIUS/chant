@@ -33,7 +33,12 @@ describe("k8sPlugin", () => {
   test("postSynthChecks() returns array of post-synth checks", () => {
     const checks = k8sPlugin.postSynthChecks!();
     expect(Array.isArray(checks)).toBe(true);
-    expect(checks.length).toBe(26);
+    // Auto-discovered from src/lint/post-synth — assert a floor and representative
+    // IDs rather than an exact count, so adding a check doesn't break this test.
+    expect(checks.length).toBeGreaterThanOrEqual(26);
+    const ids = checks.map((c) => c.id);
+    expect(ids).toContain("WK8101");
+    expect(ids).toContain("ARGO002");
   });
 
   test("intrinsics() returns empty array", () => {
