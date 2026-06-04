@@ -15,6 +15,8 @@ import { k8sSerializer } from "./serializer";
 import { hardcodedNamespaceRule } from "./lint/rules/hardcoded-namespace";
 import { latestImageTagRule } from "./lint/rules/latest-image-tag";
 import { missingResourceLimitsRule } from "./lint/rules/missing-resource-limits";
+import { argoAutomatedPruneRule } from "./lint/rules/argo-automated-prune";
+import { argoAppSetSingleProjectRule } from "./lint/rules/argo-appset-single-project";
 import { k8sCompletions } from "./lsp/completions";
 import { k8sHover } from "./lsp/hover";
 import { K8sParser } from "./import/parser";
@@ -25,7 +27,13 @@ export const k8sPlugin: LexiconPlugin = {
   serializer: k8sSerializer,
 
   lintRules(): LintRule[] {
-    return [hardcodedNamespaceRule, latestImageTagRule, missingResourceLimitsRule];
+    return [
+      hardcodedNamespaceRule,
+      latestImageTagRule,
+      missingResourceLimitsRule,
+      argoAutomatedPruneRule,
+      argoAppSetSingleProjectRule,
+    ];
   },
 
   postSynthChecks() {

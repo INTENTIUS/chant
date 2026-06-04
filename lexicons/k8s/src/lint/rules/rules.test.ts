@@ -2,6 +2,8 @@ import { describe, test, expect } from "vitest";
 import { hardcodedNamespaceRule } from "./hardcoded-namespace";
 import { latestImageTagRule } from "./latest-image-tag";
 import { missingResourceLimitsRule } from "./missing-resource-limits";
+import { argoAutomatedPruneRule } from "./argo-automated-prune";
+import { argoAppSetSingleProjectRule } from "./argo-appset-single-project";
 import * as ts from "typescript";
 
 function createContext(code: string) {
@@ -257,5 +259,112 @@ describe("WK8003: Missing Resource Limits", () => {
     `);
     const diags = missingResourceLimitsRule.check(ctx);
     expect(diags.length).toBe(2);
+  });
+});
+
+describe("ARGO001: Production Application automated prune", () => {
+  test("rule metadata", () => {
+    expect(argoAutomatedPruneRule.id).toBe("ARGO001");
+    expect(argoAutomatedPruneRule.severity).toBe("warning");
+    expect(argoAutomatedPruneRule.category).toBe("correctness");
+  });
+
+  test("flags prod Application with automated prune and no override", () => {
+    const ctx = createContext(`
+      new Application({
+        metadata: { name: "api-prod" },
+        spec: { syncPolicy: { automated: { prune: true, selfHeal: true } } },
+      });
+    `);
+    const diags = argoAutomatedPruneRule.check(ctx);
+    expect(diags.length).toBe(1);
+    expect(diags[0].ruleId).toBe("ARGO001");
+    expect(diags[0].message).toContain("api-prod");
+  });
+
+  test("does NOT flag when prune is false", () => {
+    const ctx = createContext(`
+      new Application({
+        metadata: { name: "api-prod" },
+        spec: { syncPolicy: { automated: { prune: false } } },
+      });
+    `);
+    expect(argoAutomatedPruneRule.check(ctx).length).toBe(0);
+  });
+
+  test("does NOT flag prod Application carrying the allow-prune override annotation", () => {
+    const ctx = createContext(`
+      new Application({
+        metadata: { name: "api-prod", annotations: { "argocd.chant.dev/allow-prune": "true" } },
+        spec: { syncPolicy: { automated: { prune: true } } },
+      });
+    `);
+    expect(argoAutomatedPruneRule.check(ctx).length).toBe(0);
+  });
+
+  test("does NOT flag a non-prod Application with automated prune", () => {
+    const ctx = createContext(`
+      new Application({
+        metadata: { name: "api-staging" },
+        spec: { syncPolicy: { automated: { prune: true } } },
+      });
+    `);
+    expect(argoAutomatedPruneRule.check(ctx).length).toBe(0);
+  });
+
+  test("infers prod from destination namespace", () => {
+    const ctx = createContext(`
+      new Application({
+        metadata: { name: "api" },
+        spec: {
+          destination: { namespace: "production" },
+          syncPolicy: { automated: { prune: true } },
+        },
+      });
+    `);
+    expect(argoAutomatedPruneRule.check(ctx).length).toBe(1);
+  });
+});
+
+describe("ARGO004: ApplicationSet single AppProject", () => {
+  test("rule metadata", () => {
+    expect(argoAppSetSingleProjectRule.id).toBe("ARGO004");
+    expect(argoAppSetSingleProjectRule.severity).toBe("warning");
+    expect(argoAppSetSingleProjectRule.category).toBe("correctness");
+  });
+
+  test("does NOT flag a static single project", () => {
+    const ctx = createContext(`
+      new ApplicationSet({
+        metadata: { name: "team-a-apps" },
+        spec: { template: { spec: { project: "team-a", repoURL: "https://example.com/repo" } } },
+      });
+    `);
+    expect(argoAppSetSingleProjectRule.check(ctx).length).toBe(0);
+  });
+
+  test("flags a missing template project", () => {
+    const ctx = createContext(`
+      new ApplicationSet({
+        metadata: { name: "team-a-apps" },
+        spec: { template: { spec: { repoURL: "https://example.com/repo" } } },
+      });
+    `);
+    const diags = argoAppSetSingleProjectRule.check(ctx);
+    expect(diags.length).toBe(1);
+    expect(diags[0].ruleId).toBe("ARGO004");
+    expect(diags[0].message).toContain("no spec.project");
+  });
+
+  test("flags a templated (generator placeholder) project", () => {
+    const ctx = createContext(`
+      new ApplicationSet({
+        metadata: { name: "per-cluster" },
+        spec: { template: { spec: { project: "{{path.basename}}" } } },
+      });
+    `);
+    const diags = argoAppSetSingleProjectRule.check(ctx);
+    expect(diags.length).toBe(1);
+    expect(diags[0].message).toContain("placeholder");
   });
 });
