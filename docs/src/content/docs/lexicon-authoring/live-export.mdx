@@ -20,7 +20,7 @@ exportResources?(options: {
 }): Promise<ExportedTemplate>;
 ```
 
-The result is the existing import IR (`TemplateIR`), branded as `ExportedTemplate`, so it feeds your lexicon's `templateGenerator()` unchanged. The brand keeps a full-fidelity export — which may carry secrets — from flowing into the `state` code paths, which consume scrubbed metadata through the `ObservationLexicon` view.
+The result is the existing import IR (`TemplateIR`), branded as `ExportedTemplate`, so it feeds your lexicon's `templateGenerator()` unchanged. The brand keeps a full-fidelity export — which may carry secrets — from flowing into the `lifecycle` code paths, which consume scrubbed metadata through the `ObservationLexicon` view.
 
 <Aside type="caution">
 Keep the scrubbing boundary single-purpose. `describeResources()` scrubs for diffing; `exportResources()` returns full config for regeneration. Never overload one method for both — the secret-exposure surface stays in one place.

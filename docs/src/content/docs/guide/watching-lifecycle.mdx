@@ -55,8 +55,8 @@ chant run prod-watch         # one-shot run, useful for smoke-testing
 
 The two phases compile down to a workflow that, on each tick:
 
-1. **`Snapshot`** — calls the `stateSnapshot` activity, which shells out to `chant lifecycle snapshot prod`. The result is committed to the `chant/lifecycle` orphan branch. (Concurrent runs are protected by `--force-with-lease` — see [Concurrent snapshots](/chant/cli/lifecycle/#concurrent-snapshots).)
-2. **`Diff`** — calls `stateDiff` with `live: true`. The activity returns `{ output, exitCode, drifted }`. The `drifted` boolean is captured as a workflow search attribute via `outcomeAttribute: { name: "Drift", from: "drifted" }`.
+1. **`Snapshot`** — calls the `lifecycleSnapshot` activity, which shells out to `chant lifecycle snapshot prod`. The result is committed to the `chant/lifecycle` orphan branch. (Concurrent runs are protected by `--force-with-lease` — see [Concurrent snapshots](/chant/cli/lifecycle/#concurrent-snapshots).)
+2. **`Diff`** — calls `lifecycleDiff` with `live: true`. The activity returns `{ output, exitCode, drifted }`. The `drifted` boolean is captured as a workflow search attribute via `outcomeAttribute: { name: "Drift", from: "drifted" }`.
 
 Set `live: false` on the composite to use digest-only diff (faster, no cloud queries) for environments without `describeResources()` coverage. With `live: true` (the default) you get external-mutation detection. (See the [Runtime observation coverage matrix](/chant/lexicons/overview/#runtime-observation-coverage) for which lexicons report what.)
 
@@ -102,7 +102,7 @@ ARTIFACTS ADDED (1)
   helm:demo-drift  chart=nginx  rev=1
 ```
 
-`stateDiff`'s `drifted` flag is true (the `ARTIFACTS ADDED` header matches the drift detector). On the next watch tick the corresponding workflow run will be tagged `Drift = "true"`. Clean up:
+`lifecycleDiff`'s `drifted` flag is true (the `ARTIFACTS ADDED` header matches the drift detector). On the next watch tick the corresponding workflow run will be tagged `Drift = "true"`. Clean up:
 
 ```bash
 helm uninstall demo-drift
@@ -118,7 +118,7 @@ The next tick should show `Drift = "false"` again.
 phase("Diff", [
   {
     kind: "activity",
-    fn: "stateDiff",
+    fn: "lifecycleDiff",
     args: { env: "prod", live: true },
     outcomeAttribute: { name: "Drift", from: "drifted" },
   },
@@ -128,11 +128,11 @@ phase("Diff", [
 The serializer produces:
 
 ```typescript
-const __r0 = await stateDiff({ env: "prod", live: true });
+const __r0 = await lifecycleDiff({ env: "prod", live: true });
 upsertSearchAttributes({ Drift: [String(__r0?.drifted)] });
 ```
 
-`from` is a dot-path into the activity's return value. With `stateDiff`'s shape `{ output, exitCode, drifted }`, you could just as easily capture the exit code (`from: "exitCode"`) or the raw output (omit `from` to stringify the whole result). The composite picks `drifted` because it's the field most worth filtering on.
+`from` is a dot-path into the activity's return value. With `lifecycleDiff`'s shape `{ output, exitCode, drifted }`, you could just as easily capture the exit code (`from: "exitCode"`) or the raw output (omit `from` to stringify the whole result). The composite picks `drifted` because it's the field most worth filtering on.
 
 ## Choosing a schedule
 
@@ -148,7 +148,7 @@ Bias toward less frequent. Each tick re-queries every covered lexicon's API; rat
 
 ## Profile selection
 
-`stateSnapshot` and `stateDiff` are activities — they pick up the same Temporal retry/timeout profiles as any other Op step. Both default to `fastIdempotent` (5 min timeout, 3 retries) which is right for most environments.
+`lifecycleSnapshot` and `lifecycleDiff` are activities — they pick up the same Temporal retry/timeout profiles as any other Op step. Both default to `fastIdempotent` (5 min timeout, 3 retries) which is right for most environments.
 
 If your snapshot regularly takes longer than five minutes (large multi-region estates, slow `kubectl` against many resources), declare the activity with `profile: "longInfra"` directly instead of using the composite — `WatchOp` is a thin wrapper, you can always emit the equivalent `Op({ phases: [...] })` by hand.
 

@@ -3,7 +3,7 @@ title: Durable Workflows for Infrastructure (Temporal IaC)
 description: Why infrastructure orchestration wants durable execution — approval gates, compensation, and crash-resume — and how chant uses Temporal for it.
 ---
 
-Most infrastructure-as-code stops at synthesis: it produces the artifact and hands off. The orchestration that actually applies it — the gates, the retries, the rollback when step seven of nine fails — lives in shell scripts, CI YAML, and the operator's memory. chant takes the opposite position. Orchestration is declared as code in `*.op.ts` files and runs as an inspectable, durable workflow.
+Synthesis is the easy half. Every IaC toolchain produces an artifact. The hard half is what happens after — the gated, multi-step, cross-system apply, and the rollback when step seven of nine fails. The others weld a fixed lifecycle to their engine and still leave that orchestration to shell scripts, CI YAML, and the operator's memory. chant keeps synthesis pure and holds no opinion of its own, then lets you declare the orchestration as code in `*.op.ts` files that run as inspectable, durable workflows.
 
 No other IaC toolchain exposes its orchestration as first-class durable execution. This page explains why that matters, and why it stays optional.
 

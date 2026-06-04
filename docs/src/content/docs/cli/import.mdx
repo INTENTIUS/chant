@@ -32,13 +32,13 @@ The import process:
 | `-d, --lexicon <name>` | With `--from`, restrict to one lexicon (e.g. `aws`, `k8s`) |
 | `--type <ResourceType>` | With `--from`, export only resources of this type |
 | `--name <name>` | With `--from`, export only the resource with this name |
-| `--owned` | With `--from`, restrict to chant-owned resources (inert until ownership marking lands) |
+| `--owned` | With `--from`, restrict to chant-owned resources — those carrying the live [ownership marker](/chant/configuration/config-file/#ownership) |
 | `--verbatim` | With `--from`, keep server-defaulted fields instead of stripping to declared shape |
 | `-o, --output <dir>` | Output directory (default: `./infra/`) |
 | `--force` | Overwrite existing files |
 
 :::caution
-Live import may emit sensitive values (keys, tokens, passwords) into generated source — unlike `state`, which only reads scrubbed metadata. The command prints a warning; review generated files before committing.
+Live import may emit sensitive values (keys, tokens, passwords) into generated source — unlike `chant lifecycle` observation, which only reads scrubbed metadata. The command prints a warning; review generated files before committing.
 :::
 
 ## Usage

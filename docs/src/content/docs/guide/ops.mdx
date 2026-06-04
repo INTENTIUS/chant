@@ -93,7 +93,7 @@ Pre-built step builders:
 | `helmInstall(name, chart, opts?)` | `helm upgrade --install` |
 | `waitForStack(stackFile, opts?)` | Poll until a chant stack output file is ready |
 | `gitlabPipeline(projectId, ref, opts?)` | Trigger a GitLab pipeline and wait |
-| `stateSnapshot(env, opts?)` | `chant lifecycle snapshot` |
+| `lifecycleSnapshot(env, opts?)` | `chant lifecycle snapshot` |
 | `teardown(path, opts?)` | Build + destroy |
 
 A reconcile activity is also available via `activity("reconcilePr", args)`: given the change-set entries that triggered it, it regenerates TypeScript with `chant import --from <env>` and opens a reviewable PR (modes: `pull-request`, `issue`, `report`). It never commits to the main branch. It is the building block for the reconcile workflow (cloud → code).
@@ -213,9 +213,9 @@ Activity steps support an optional `outcomeAttribute` field that captures the ac
 phase("Diff", [
   {
     kind: "activity",
-    fn: "stateDiff",
+    fn: "lifecycleDiff",
     args: { env: "prod", live: true },
-    // Capture stateDiff's `drifted` field and tag the run Drift=true/false
+    // Capture lifecycleDiff's `drifted` field and tag the run Drift=true/false
     outcomeAttribute: { name: "Drift", from: "drifted" },
   },
 ]),
@@ -224,7 +224,7 @@ phase("Diff", [
 The serializer turns this into:
 
 ```typescript
-const __r0 = await stateDiff({"env":"prod","live":true});
+const __r0 = await lifecycleDiff({"env":"prod","live":true});
 upsertSearchAttributes({ "Drift": [String(__r0?.drifted)] });
 ```
 

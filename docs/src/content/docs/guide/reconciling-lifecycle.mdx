@@ -66,6 +66,8 @@ The same project can sit at different positions per environment:
 
 Nothing forces an environment past the position you chose for it. Turn the dial up as trust and tooling allow.
 
+The position is not a config field. `environments` in `chant.config.ts` is just a list of names — there is no `model` or `dial` setting on an environment. You choose the position by which verb you run against it: `chant lifecycle diff --live` for observe, a `ReconcileOp` for reconcile, an `ApplyOp` for apply. An environment sits at observe until a reconcile or apply Op is wired to it and run. To pin a position, control what exists and what runs — put `lifecycle diff --live` in dev's CI and commit no apply Op for dev, and dev stays observe-only by construction. There is no global switch to flip, which is why nothing can force an environment past where you left it.
+
 ## When to pick each
 
 - **Observe** when the cloud is changed by other tools you don't want to fight, and you just need visibility.

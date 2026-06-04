@@ -1,6 +1,6 @@
 ---
 title: "chant lifecycle"
-description: Capture and compare deployed infrastructure state
+description: Capture, diff, and plan against deployed infrastructure — the observational lifecycle commands
 ---
 
 ## Synopsis
@@ -9,6 +9,7 @@ description: Capture and compare deployed infrastructure state
 chant lifecycle snapshot <env> [lexicon]
 chant lifecycle show <env>
 chant lifecycle diff <env> [--live]
+chant lifecycle plan <env> [--json] [--owned]
 chant lifecycle log [env]
 ```
 
@@ -24,7 +25,7 @@ For the conceptual model behind these commands — observational vs. authoritati
 
 ### `lifecycle snapshot <env>`
 
-Query the provider API for the current deployed state, then save a snapshot to the `chant-state/<env>` orphan branch.
+Query the provider API for the current deployed state, then save a snapshot to the `chant/lifecycle` orphan branch.
 
 ```bash
 chant lifecycle snapshot dev
@@ -92,6 +93,21 @@ chant lifecycle plan prod --json   # emit the ChangeSet as JSON
 The classification reads ownership from the live marker, **never from the snapshot**, so the snapshot never becomes load-bearing: the delete decision is identical whether or not a snapshot exists. The moment a mutation trusted the snapshot, the snapshot would have become an authoritative state file under a different name — which chant deliberately avoids.
 
 `lifecycle plan` is strictly read-only: it builds, queries, and classifies. It never mutates the cloud and never deploys — `chant build` stays pure.
+
+#### Crosswalk: observation categories → plan actions
+
+The six `diff --live` categories and the five `plan` actions describe the same signal on different axes. Observation categories key on three sets — declared in source, observed now, in the last snapshot. The plan collapses the snapshot axis (it's evidence, never authority) and adds an ownership axis. The mapping:
+
+| Observation category (`diff --live`) | Plan action (`plan`) | Why |
+|---|---|---|
+| **missing** | **create** | Declared, absent from the cloud |
+| **drifted** | **update** *(when declared)* | Declared and live, attributes changed since the snapshot |
+| **orphan** | **adopt**, or **delete** when the live ownership marker confirms it's chant's | The one decision the **marker** makes — never the snapshot |
+| **newly observed** | **noop** | Declared and live; no snapshot baseline to drift against yet |
+| **unchanged** | **noop** *(when declared)* | Declared and live, identical |
+| **disappeared** | **create** if still declared, else **noop** | A snapshot-history signal; the plan reads live + source, not snapshot age |
+
+The "when declared" qualifiers are where the axes diverge: an undeclared resource that also **drifted** or is **unchanged** is still an **orphan** to the plan — the snapshot history doesn't change that it's live-but-undeclared, so ownership decides between `adopt` and `delete`.
 
 ### Resources vs artifacts
 
