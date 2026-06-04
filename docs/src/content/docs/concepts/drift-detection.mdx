@@ -55,6 +55,8 @@ The diff engine compares three axes: what's declared in source now, what was obs
 
 Drifted entries include attribute-level deltas so you can see *what* changed, not just *that* something changed.
 
+These six categories collapse into the five `create/update/delete/adopt/noop` actions `chant lifecycle plan` emits — see the [observation-to-action crosswalk](/chant/cli/lifecycle/#crosswalk-observation-categories--plan-actions).
+
 #### Resolving an `orphan`
 
 An orphan is a resource in the cloud that source doesn't know about. Detection is the first position on the [dial](/chant/concepts/lifecycle-models/#the-dial); resolving it is the next. There are two moves:

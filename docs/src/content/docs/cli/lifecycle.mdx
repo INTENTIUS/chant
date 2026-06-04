@@ -94,6 +94,21 @@ The classification reads ownership from the live marker, **never from the snapsh
 
 `lifecycle plan` is strictly read-only: it builds, queries, and classifies. It never mutates the cloud and never deploys — `chant build` stays pure.
 
+#### Crosswalk: observation categories → plan actions
+
+The six `diff --live` categories and the five `plan` actions describe the same signal on different axes. Observation categories key on three sets — declared in source, observed now, in the last snapshot. The plan collapses the snapshot axis (it's evidence, never authority) and adds an ownership axis. The mapping:
+
+| Observation category (`diff --live`) | Plan action (`plan`) | Why |
+|---|---|---|
+| **missing** | **create** | Declared, absent from the cloud |
+| **drifted** | **update** *(when declared)* | Declared and live, attributes changed since the snapshot |
+| **orphan** | **adopt**, or **delete** when the live ownership marker confirms it's chant's | The one decision the **marker** makes — never the snapshot |
+| **newly observed** | **noop** | Declared and live; no snapshot baseline to drift against yet |
+| **unchanged** | **noop** *(when declared)* | Declared and live, identical |
+| **disappeared** | **create** if still declared, else **noop** | A snapshot-history signal; the plan reads live + source, not snapshot age |
+
+The "when declared" qualifiers are where the axes diverge: an undeclared resource that also **drifted** or is **unchanged** is still an **orphan** to the plan — the snapshot history doesn't change that it's live-but-undeclared, so ownership decides between `adopt` and `delete`.
+
 ### Resources vs artifacts
 
 A single lexicon may report both **resources** (entity-keyed, via `describeResources()`) and **artifacts** (context-keyed, via `listArtifacts()`); `lifecycle diff --live` shows them in separate sections. Artifacts use a four-category two-way diff (no "declared" axis):
