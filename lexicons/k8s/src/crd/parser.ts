@@ -13,11 +13,23 @@ import type { PropertyConstraints } from "@intentius/chant/codegen/json-schema";
 import { loadAll } from "js-yaml";
 
 /**
+ * Group names whose first segment doesn't yield the conventional namespace.
+ * "argoproj.io" → "Argo" (not "Argoproj") to match the Argo CD vocabulary
+ * and the ArgoAppFor / ArgoAppSetForRegions composites.
+ */
+const GROUP_NAMESPACE_OVERRIDES: Record<string, string> = {
+  "argoproj.io": "Argo",
+};
+
+/**
  * Normalize a CRD group to a PascalCase namespace segment.
  * "cert-manager.io" → "CertManager"
  * "monitoring.coreos.com" → "Monitoring"
+ * "argoproj.io" → "Argo" (override)
  */
 function normalizeGroupName(group: string): string {
+  const override = GROUP_NAMESPACE_OVERRIDES[group];
+  if (override) return override;
   // Take the first segment before the first dot
   const firstSegment = group.split(".")[0];
   // Convert kebab-case to PascalCase
@@ -165,10 +177,33 @@ function extractPropertyTypes(schema: OpenAPISchema, parentTypeName: string): Pa
   // "K8s::Ray::RayCluster::AutoscalerOptions".
   const shortName = parentTypeName.split("::").pop()!;
 
+  // Property-type identifiers must be unique within a resource. Singularizing
+  // array names can collide a sibling scalar object — e.g. Argo Application has
+  // both `source` (object) and `sources` (array), which both reduce to
+  // `Application_Source`. Track emitted names and fall back to the raw
+  // (un-singularized) name, then a numeric suffix, on collision.
+  const usedNames = new Set<string>();
+  const uniqueName = (base: string, raw: string): string => {
+    if (!usedNames.has(base)) {
+      usedNames.add(base);
+      return base;
+    }
+    const rawCandidate = `${shortName}_${pascalCase(raw)}`;
+    if (!usedNames.has(rawCandidate)) {
+      usedNames.add(rawCandidate);
+      return rawCandidate;
+    }
+    let i = 2;
+    while (usedNames.has(`${base}${i}`)) i++;
+    const suffixed = `${base}${i}`;
+    usedNames.add(suffixed);
+    return suffixed;
+  };
+
   for (const [name, prop] of Object.entries(specSchema.properties)) {
     // Extract inline object definitions as property types
     if (prop.type === "object" && prop.properties) {
-      const ptName = `${shortName}_${pascalCase(name)}`;
+      const ptName = uniqueName(`${shortName}_${pascalCase(name)}`, name);
       const requiredSet = new Set<string>(prop.required ?? []);
 
       results.push({
@@ -189,7 +224,7 @@ function extractPropertyTypes(schema: OpenAPISchema, parentTypeName: string): Pa
     if (prop.type === "array" && prop.items?.type === "object" && prop.items.properties) {
       const itemSchema = prop.items;
       const itemProps = itemSchema.properties!;
-      const ptName = `${shortName}_${pascalCase(singularize(name))}`;
+      const ptName = uniqueName(`${shortName}_${pascalCase(singularize(name))}`, name);
       const requiredSet = new Set<string>(itemSchema.required ?? []);
 
       results.push({
