@@ -125,6 +125,24 @@ export const TEMPORAL_ACTIVITY_PROFILES = {
     heartbeatTimeout: "90s",
     retry: { maximumAttempts: 1 },
   },
+
+  /**
+   * Argo CD sync waits: poll an Application until `health=Healthy && sync=Synced`
+   * (`waitForArgoSync`). Long timeout for slow first syncs, 60s heartbeat, cheap
+   * idempotent retries — re-polling is free. A terminal-unhealthy Application
+   * fails fast via `ArgoSyncFailedError` (non-retryable).
+   */
+  argoSync: {
+    startToCloseTimeout: "30m",
+    heartbeatTimeout: "60s",
+    retry: {
+      maximumAttempts: 5,
+      initialInterval: "10s",
+      backoffCoefficient: 2,
+      maximumInterval: "1m",
+      nonRetryableErrorTypes: ["ArgoSyncFailedError"],
+    },
+  },
 } as const satisfies Record<string, TemporalActivityProfile>;
 
 export interface TemporalWorkerProfile {

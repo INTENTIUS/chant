@@ -27,3 +27,6 @@ export type { ReconcilePrArgs, ReconcileResult, ReconcileMode, ReconcileEntry } 
 
 export { nativeApply, compensateApply } from "./apply";
 export type { NativeApplyArgs, CompensateApplyArgs, ApplyTarget, DeleteMode } from "./apply";
+
+export { waitForArgoSync, defaultArgoStatusFetcher, ArgoSyncFailedError } from "./argo";
+export type { WaitForArgoSyncArgs, ArgoAppStatus, ArgoStatusFetcher } from "./argo";
