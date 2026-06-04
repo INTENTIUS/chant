@@ -37,14 +37,6 @@ export async function configureKubectl(params: DeployParams): Promise<void> {
   }
 }
 
-export async function applyK8sManifests(params: DeployParams, region: Region): Promise<void> {
-  const { stdout } = await execAsync(
-    `kubectl --context ${region} apply -f dist/${region}-k8s.yaml`,
-    { cwd: ROOT_DIR, env: env(params) },
-  );
-  console.log(stdout.trim());
-}
-
 /**
  * Waits for ExternalDNS to register pod IPs as A records in the crdb.internal private zone.
  * Heartbeats every iteration so the 60 s heartbeatTimeout is never exceeded.
@@ -89,29 +81,6 @@ export async function waitForExternalDNS(params: DeployParams): Promise<void> {
       return;
     }
     await sleep(10_000);
-  }
-}
-
-/**
- * Waits for the CockroachDB StatefulSet to finish rolling out in the given region.
- * Heartbeats every 15 s so the 60 s heartbeatTimeout is never exceeded.
- */
-export async function waitForStatefulSets(params: DeployParams, region: Region): Promise<void> {
-  const ctx = Context.current();
-  const { namespace } = REGION_CONFIG[region];
-
-  for (let attempt = 1; attempt <= 40; attempt++) {
-    ctx.heartbeat({ phase: 'waiting for StatefulSet', region, attempt });
-    const { stdout } = await execAsync(
-      `kubectl --context ${region} -n ${namespace} get statefulset/cockroachdb -o jsonpath='{.status.readyReplicas}'`,
-      { cwd: ROOT_DIR, env: env(params) },
-    ).catch(() => ({ stdout: '' }));
-    if (Number(stdout.trim()) >= 3) {
-      console.log(`cockroachdb StatefulSet ready in ${region}`);
-      return;
-    }
-    if (attempt === 40) throw new Error(`cockroachdb StatefulSet not ready in ${region} after 10 min`);
-    await sleep(15_000);
   }
 }
 

@@ -1,0 +1,22 @@
+{
+  "extends": [
+    "@intentius/chant/lint/presets/strict"
+  ],
+  "_ruleNotes": {
+    "ARGO005": "source.path points into the remote ARGO_REPO, not the local build root — existence can't be checked at synth time",
+    "EVL001": "Dynamic env var lookups required for repo/endpoints",
+    "COR001": "Inline composite props are readable",
+    "COR004": "Exports consumed by the serializer, not same-file refs",
+    "EVL004": "Spread of the readonly regions tuple from the shared argo config is safe"
+  },
+  "rules": {
+    "ARGO005": "off",
+    "EVL001": "off",
+    "COR001": "off",
+    "COR004": "off",
+    "COR009": "off",
+    "COR013": "off",
+    "WGC002": "off",
+    "EVL004": "off"
+  }
+}

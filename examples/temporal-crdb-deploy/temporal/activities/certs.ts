@@ -2,7 +2,7 @@ import { exec } from 'child_process';
 import { promisify } from 'util';
 import { dirname, resolve } from 'path';
 import { fileURLToPath } from 'url';
-import type { DeployParams, Region } from '../types.js';
+import type { DeployParams } from '../types.js';
 
 const execAsync = promisify(exec);
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -29,26 +29,6 @@ export async function generateAndDistributeCerts(params: DeployParams): Promise<
   });
   if (stdout) console.log(stdout.trim());
   if (stderr) console.warn(stderr.trim());
-}
-
-export async function installESO(params: DeployParams, region: Region): Promise<void> {
-  await execAsync(
-    'helm repo add external-secrets https://charts.external-secrets.io 2>/dev/null || true' +
-      ' && helm repo update external-secrets',
-    { cwd: ROOT_DIR, env: env(params) },
-  );
-
-  const { stdout } = await execAsync(
-    [
-      'helm upgrade --install external-secrets external-secrets/external-secrets',
-      `--kube-context ${region}`,
-      '--namespace kube-system',
-      '--set installCRDs=true',
-      '--wait --timeout 300s',
-    ].join(' '),
-    { cwd: ROOT_DIR, env: env(params) },
-  );
-  console.log(`ESO installed on ${region}:`, stdout.trim());
 }
 
 export async function pushSecretsToSecretManager(params: DeployParams): Promise<void> {
