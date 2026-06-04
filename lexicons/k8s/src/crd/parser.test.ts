@@ -214,4 +214,65 @@ describe("parseCRDSpec", () => {
     const results = parseCRDSpec(spec);
     expect(results[0].resource.typeName).toBe("K8s::CertManager::Certificate");
   });
+
+  test("argoproj.io group maps to the Argo namespace (override)", () => {
+    const spec = {
+      group: "argoproj.io",
+      names: { kind: "Application", plural: "applications" },
+      scope: "Namespaced" as const,
+      versions: [
+        { name: "v1alpha1", served: true, storage: true },
+      ],
+    };
+
+    const results = parseCRDSpec(spec);
+    expect(results[0].resource.typeName).toBe("K8s::Argo::Application");
+  });
+
+  test("dedupes property-type names when a scalar and array sibling collide", () => {
+    // Argo Application has both `source` (object) and `sources` (array of the
+    // same shape); singularizing `sources` → `Source` would collide.
+    const spec = {
+      group: "argoproj.io",
+      names: { kind: "Application", plural: "applications" },
+      scope: "Namespaced" as const,
+      versions: [
+        {
+          name: "v1alpha1",
+          served: true,
+          storage: true,
+          schema: {
+            openAPIV3Schema: {
+              type: "object",
+              properties: {
+                spec: {
+                  type: "object",
+                  properties: {
+                    source: {
+                      type: "object",
+                      properties: { repoURL: { type: "string" } },
+                    },
+                    sources: {
+                      type: "array",
+                      items: {
+                        type: "object",
+                        properties: { repoURL: { type: "string" } },
+                      },
+                    },
+                  },
+                },
+              },
+            },
+          },
+        },
+      ],
+    };
+
+    const results = parseCRDSpec(spec);
+    const names = results[0].propertyTypes.map((pt) => pt.name);
+    expect(names).toContain("Application_Source");
+    expect(names).toContain("Application_Sources");
+    // No duplicate identifiers.
+    expect(new Set(names).size).toBe(names.length);
+  });
 });

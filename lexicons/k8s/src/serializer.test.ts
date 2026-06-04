@@ -128,6 +128,31 @@ describe("k8sSerializer", () => {
     expect(result).not.toContain("spec:");
   });
 
+  test("Argo Application serializes with argoproj.io/v1alpha1 GVK", () => {
+    const entities = new Map<string, any>();
+    entities.set(
+      "guestbook",
+      mockResource("K8s::Argo::Application", {
+        metadata: { name: "guestbook", namespace: "argocd" },
+        spec: {
+          project: "default",
+          source: {
+            repoURL: "https://github.com/argoproj/argocd-example-apps",
+            path: "guestbook",
+            targetRevision: "HEAD",
+          },
+          destination: { server: "https://kubernetes.default.svc", namespace: "guestbook" },
+        },
+      }),
+    );
+
+    const result = k8sSerializer.serialize(entities);
+    expect(result).toContain("apiVersion: argoproj.io/v1alpha1");
+    expect(result).toContain("kind: Application");
+    expect(result).toContain("name: guestbook");
+    expect(result).toContain("project: default");
+  });
+
   test("Namespace is specless type", () => {
     const entities = new Map<string, any>();
     entities.set(

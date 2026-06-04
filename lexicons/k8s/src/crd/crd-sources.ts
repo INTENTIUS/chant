@@ -22,8 +22,26 @@ import type { CRDSource } from "./types";
 const KUBERAY_VERSION = "v1.3.0";
 const KUBERAY_CRD_BASE = `https://raw.githubusercontent.com/ray-project/kuberay/${KUBERAY_VERSION}/helm-chart/kuberay-operator/crds`;
 
+/**
+ * Argo CD CRDs — argoproj.io/v1alpha1
+ *
+ * Produces (the `argoproj.io` group is mapped to the `Argo` namespace —
+ * see GROUP_NAMESPACE_OVERRIDES in crd/parser.ts):
+ *   K8s::Argo::Application     → apiVersion: argoproj.io/v1alpha1, kind: Application
+ *   K8s::Argo::ApplicationSet  → apiVersion: argoproj.io/v1alpha1, kind: ApplicationSet
+ *   K8s::Argo::AppProject      → apiVersion: argoproj.io/v1alpha1, kind: AppProject
+ *
+ * Operator install: kubectl apply -n argocd -f
+ *   https://raw.githubusercontent.com/argoproj/argo-cd/v2.13.3/manifests/install.yaml
+ */
+const ARGOCD_VERSION = "v2.13.3";
+const ARGOCD_CRD_BASE = `https://raw.githubusercontent.com/argoproj/argo-cd/${ARGOCD_VERSION}/manifests/crds`;
+
 export const CRD_SOURCES: CRDSource[] = [
   { type: "url", url: `${KUBERAY_CRD_BASE}/ray.io_rayclusters.yaml` },
   { type: "url", url: `${KUBERAY_CRD_BASE}/ray.io_rayjobs.yaml` },
   { type: "url", url: `${KUBERAY_CRD_BASE}/ray.io_rayservices.yaml` },
+  { type: "url", url: `${ARGOCD_CRD_BASE}/application-crd.yaml` },
+  { type: "url", url: `${ARGOCD_CRD_BASE}/applicationset-crd.yaml` },
+  { type: "url", url: `${ARGOCD_CRD_BASE}/appproject-crd.yaml` },
 ];
