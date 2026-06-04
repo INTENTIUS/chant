@@ -3,8 +3,7 @@ import { promisify } from 'util';
 import { dirname, resolve } from 'path';
 import { fileURLToPath } from 'url';
 import { Context } from '@temporalio/activity';
-import type { DeployParams, Region } from '../types.js';
-import { REGION_CONFIG } from '../types.js';
+import type { DeployParams } from '../types.js';
 
 const execAsync = promisify(exec);
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -28,83 +27,10 @@ export async function buildStacks(params: DeployParams): Promise<void> {
   if (stderr) console.error(stderr.trim());
 }
 
-export async function applySharedInfra(params: DeployParams): Promise<void> {
-  const { stdout } = await execAsync('kubectl apply -f dist/shared-infra.yaml', {
-    cwd: ROOT_DIR,
-    env: env(params),
-  });
-  console.log(stdout.trim());
-}
-
-/**
- * Applies regional GCP infra and waits for the GKE cluster to become Ready.
- *
- * This activity heartbeats every ~15 s so Temporal knows it's still alive
- * during the ~10-15 min Config Connector reconciliation window.
- */
-export async function applyRegionalInfra(params: DeployParams, region: Region): Promise<void> {
-  const ctx = Context.current();
-  const { gkeCluster, gkeRegion } = REGION_CONFIG[region];
-
-  ctx.heartbeat({ phase: 'applying infra yaml', region });
-  const { stdout } = await execAsync(`kubectl apply -f dist/${region}-infra.yaml`, {
-    cwd: ROOT_DIR,
-    env: env(params),
-  });
-  console.log(stdout.trim());
-
-  // Poll until Config Connector marks the GKE cluster Ready (~10-15 min)
-  for (let attempt = 1; attempt <= 60; attempt++) {
-    ctx.heartbeat({ phase: 'waiting for GKE Ready', region, attempt });
-
-    const { stdout: status } = await execAsync(
-      `kubectl get containercluster ${gkeCluster} -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}'`,
-      { cwd: ROOT_DIR, env: env(params) },
-    ).catch(() => ({ stdout: '' }));
-
-    if (status.trim() === 'True') {
-      console.log(`${gkeCluster}: Ready`);
-      break;
-    }
-
-    console.log(`${gkeCluster}: not Ready yet (${attempt}/60)`);
-    if (attempt === 60) throw new Error(`${gkeCluster} not Ready after 15 minutes`);
-    await sleep(15_000);
-  }
-
-  // Wait for the managed node pool before deleting the default pool
-  for (let attempt = 1; attempt <= 60; attempt++) {
-    ctx.heartbeat({ phase: 'waiting for node pool RUNNING', region, attempt });
-
-    const { stdout: poolStatus } = await execAsync(
-      `gcloud container node-pools describe ${gkeCluster}-nodes` +
-        ` --cluster ${gkeCluster} --region ${gkeRegion}` +
-        ` --project ${params.gcpProjectId} --format='value(status)'`,
-      { cwd: ROOT_DIR, env: env(params) },
-    ).catch(() => ({ stdout: '' }));
-
-    if (poolStatus.trim() === 'RUNNING') {
-      console.log(`${gkeCluster}-nodes: RUNNING`);
-      break;
-    }
-
-    console.log(`${gkeCluster}-nodes: ${poolStatus.trim() || 'not found'} (${attempt}/60)`);
-    if (attempt === 60) throw new Error(`${gkeCluster}-nodes not RUNNING after 15 minutes`);
-    await sleep(15_000);
-  }
-
-  ctx.heartbeat({ phase: 'deleting default-pool', region });
-  await execAsync(
-    `gcloud container node-pools delete default-pool` +
-      ` --cluster ${gkeCluster} --region ${gkeRegion}` +
-      ` --project ${params.gcpProjectId} --quiet`,
-    { cwd: ROOT_DIR, env: env(params) },
-  ).catch(() => {}); // idempotent — pool may already be gone
-}
-
 /**
  * Fetches the Cloud DNS nameservers for the three public zones created during
- * regional infra apply. Returns strings formatted for the nameservers query.
+ * regional infra apply (now reconciled by Argo CD — see src/argo). Returns
+ * strings formatted for the nameservers query.
  */
 export async function fetchNameservers(params: DeployParams): Promise<string[]> {
   const zones = [

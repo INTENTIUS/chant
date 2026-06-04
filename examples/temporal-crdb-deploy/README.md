@@ -1,8 +1,20 @@
 # temporal-crdb-deploy
 
-A 9-node CockroachDB cluster across 3 GCP regions, orchestrated by a **Temporal workflow**.
+A 9-node CockroachDB cluster across 3 GCP regions, deployed across **two layers**: **Argo CD** reconciles the declarative manifests, and a **Temporal workflow** orchestrates the procedural steps Argo can't express.
 
-The chant sources (`src/`) declare all infrastructure and K8s resources. The Temporal workflow in `temporal/` drives the 13-phase deployment: build → GCP infra → DNS delegation gate → K8s → CockroachDB init → backup.
+The chant sources (`src/`) declare all infrastructure and K8s resources *and* the Argo Applications that reconcile them (`src/argo/`). The Temporal workflow in `temporal/` bootstraps those Applications, waits for Argo to converge, and runs the genuinely procedural phases: build → **Argo: infra** → DNS delegation gate → certs → **Argo: ESO + CockroachDB** → init → backup.
+
+### Who owns what
+
+| Layer | Owns | Here |
+|---|---|---|
+| **Chant** | Authoring typed infra → manifests | `src/` (workload + GCP infra), `src/argo/` (the Applications) |
+| **Argo CD** | Continuously reconciling the manifests — the apply layer | shared/regional infra (Config Connector), ESO (Helm), per-region CockroachDB |
+| **Temporal** | Procedural steps Argo can't express | DNS-delegation gate, cert generation, secret push, `cockroach init`, region topology, backups |
+
+**Why the DNS gates stay in Temporal:** delegating subdomains at your registrar (`WAIT_DNS_DELEGATION`) and waiting for ExternalDNS A-records to appear in Cloud DNS (`WAIT_DNS_RECORDS`) are out-of-band — they happen outside git, so Argo has nothing to reconcile. They're a human/registrar action and an eventually-consistent external read, exactly the kind of ordering + gating Temporal exists for. Likewise cert generation (Docker, one-shot), pushing secrets to Secret Manager (out-of-band), and `cockroach init` / region topology (one-shot RPCs against a running cluster) have no declarative form.
+
+Everything that *is* declarative — applying Config Connector resources, installing ESO, rolling out the CockroachDB StatefulSets — moved to Argo. The workflow no longer hand-applies manifests or polls StatefulSet rollout; it calls `waitForArgoSync` and lets Argo's `Health=Healthy` be the signal.
 
 ---
 
@@ -64,31 +76,34 @@ The Temporal workflow replaces all of this with:
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│  Temporal Cloud (free tier)                                 │
+│  Temporal Cloud (free tier)        Argo CD (mgmt cluster)   │
 │                                                             │
 │  Workflow: deployMultiRegionCRDB                            │
 │  ├── buildStacks()                                          │
-│  ├── applySharedInfra()                                     │
-│  ├── Promise.all([applyRegionalInfra × 3])  ← heartbeats   │
+│  ├── applyArgoInfra()  ──────────▶  Applications: shared +  │
+│  ├── syncAll(infra)    ◀── Healthy  east/central/west infra │
 │  ├── race: waitForDnsDelegation ‖ signal    ← auto+manual   │
 │  ├── configureKubectl()                                     │
-│  ├── generateAndDistributeCerts()                           │
-│  ├── Promise.all([installESO × 3])                          │
-│  ├── pushSecretsToSecretManager()                           │
-│  ├── Promise.all([applyK8sManifests × 3])                   │
-│  ├── waitForExternalDNS()                   ← heartbeats   │
-│  ├── Promise.all([waitForStatefulSets × 3]) ← heartbeats   │
-│  ├── initializeCockroachDB()                                │
-│  ├── configureMultiRegion()                                 │
-│  └── setupBackupSchedule()                                  │
+│  ├── generateAndDistributeCerts()           ← procedural   │
+│  ├── applyArgoWorkload() ────────▶  cluster Secrets + ESO   │
+│  ├── syncAll(eso)      ◀── Healthy  (Helm) Applications     │
+│  ├── pushSecretsToSecretManager()           ← procedural   │
+│  ├── syncAll(k8s)      ◀── Healthy  ApplicationSet → CRDB   │
+│  ├── waitForExternalDNS()                   ← procedural   │
+│  ├── initializeCockroachDB()                ← procedural   │
+│  ├── configureMultiRegion()                 ← procedural   │
+│  └── setupBackupSchedule()                  ← procedural   │
 │                                                             │
 │  Worker (your machine) ───────────────────────────────┐    │
-│  │  activities/infra.ts      kubectl apply, gcloud     │    │
-│  │  activities/kubernetes.ts  rollout status, context  │    │
-│  │  activities/cockroachdb.ts  init, configure-regions │    │
-│  │  activities/certs.ts       helm, gcloud secrets     │    │
+│  │  activities/argo.ts       applyArgo*, waitForArgoSync│    │
+│  │  activities/infra.ts      buildStacks, dig, gcloud   │    │
+│  │  activities/kubernetes.ts  configureKubectl, ext-dns │    │
+│  │  activities/cockroachdb.ts  init, configure-regions  │    │
+│  │  activities/certs.ts       certs, gcloud secrets      │    │
 └──┴───────────────────────────────────────────────────────-─-┘
 ```
+
+The declarative apply phases (infra, ESO, CockroachDB) are Argo Applications declared in `src/argo/` via `ArgoAppFor` / `ArgoAppSetForRegions`. The workflow bootstraps them with `applyArgoInfra` / `applyArgoWorkload` (one `kubectl apply` each), then `waitForArgoSync` blocks until Argo reports `Healthy` — which subsumes the old StatefulSet rollout wait.
 
 The worker runs on your machine (or CI). Temporal Cloud stores the workflow state. If the worker crashes, restart it and the workflow picks up exactly where it left off.
 
@@ -213,7 +228,7 @@ The workflow ID is `crdb-deploy-{GCP_PROJECT_ID}`. Running `temporal:deploy` aga
 
 ```bash
 npm run temporal:query -- current-phase
-# → Current phase: APPLY_REGIONAL_INFRA
+# → Current phase: SYNC_INFRA
 ```
 
 **Temporal Cloud UI:**

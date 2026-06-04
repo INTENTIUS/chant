@@ -15,6 +15,7 @@ import * as infraActivities from './activities/infra.js';
 import * as k8sActivities from './activities/kubernetes.js';
 import * as crdbActivities from './activities/cockroachdb.js';
 import * as certsActivities from './activities/certs.js';
+import * as argoActivities from './activities/argo.js';
 
 import chantConfig from '../chant.config.ts';
 
@@ -60,6 +61,7 @@ async function run(): Promise<void> {
       ...k8sActivities,
       ...crdbActivities,
       ...certsActivities,
+      ...argoActivities,
     },
   });
 
