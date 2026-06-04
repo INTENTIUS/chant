@@ -574,6 +574,36 @@ const { deployment, service, serviceMonitor, prometheusRule } = MonitoredService
           },
         ],
       },
+      {
+        file: "chant-k8s-argo.md",
+        name: "chant-k8s-argo",
+        description: "Argo CD composites — ArgoAppFor, ArgoAppSetForRegions, AppProject scoping, cluster registration, and the Argo-vs-Temporal split",
+        triggers: [
+          { type: "context", value: "argo" },
+          { type: "context", value: "argo cd" },
+          { type: "context", value: "argocd" },
+          { type: "context", value: "gitops" },
+          { type: "context", value: "application" },
+          { type: "context", value: "applicationset" },
+          { type: "context", value: "appproject" },
+          { type: "context", value: "reconcile" },
+        ],
+        parameters: [],
+        examples: [
+          {
+            title: "Application from a build target",
+            description: "Reconcile a Chant build target with Argo CD",
+            input: "Deploy my api target through Argo CD",
+            output: "import { ArgoAppFor } from \"@intentius/chant-lexicon-k8s\";\n\nexport const api = ArgoAppFor(\"api\", {\n  repo: \"https://github.com/acme/infra\",\n  path: \"dist/api\",\n  destination: { server: \"https://kubernetes.default.svc\", namespace: \"api\" },\n});",
+          },
+          {
+            title: "Per-region ApplicationSet",
+            description: "Fan one app out across regional clusters",
+            input: "Deploy crdb to east, central, and west clusters via Argo",
+            output: "import { ArgoAppSetForRegions } from \"@intentius/chant-lexicon-k8s\";\n\nexport const crdb = ArgoAppSetForRegions(\n  [\"east\", \"central\", \"west\"],\n  (region) => ({ server: servers[region], namespace: `crdb-${region}`, path: `dist/${region}` }),\n  { name: \"crdb\", repo: \"https://github.com/acme/infra\", project: \"crdb\" },\n);",
+          },
+        ],
+      },
     ]),
 
   async describeResources(options) {
