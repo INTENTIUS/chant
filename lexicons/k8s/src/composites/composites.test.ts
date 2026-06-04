@@ -3350,3 +3350,12 @@ describe("registerArgoCluster", () => {
     expect(JSON.parse(stringData.config)).toEqual({ tlsClientConfig: { insecure: false } });
   });
 });
+
+describe("package index re-exports (regression guard)", () => {
+  test("Argo composites are reachable from the package entry", async () => {
+    const pkg: any = await import("../index");
+    expect(typeof pkg.ArgoAppFor).toBe("function");
+    expect(typeof pkg.ArgoAppSetForRegions).toBe("function");
+    expect(typeof pkg.registerArgoCluster).toBe("function");
+  });
+});

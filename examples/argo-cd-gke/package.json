@@ -1,0 +1,24 @@
+{
+  "name": "argo-cd-gke-example",
+  "version": "0.0.1",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "build": "npm run build:app && npm run build:bootstrap",
+    "build:app": "chant build src/app --lexicon k8s -o dist/app/manifests.yaml",
+    "build:bootstrap": "chant build src/bootstrap --lexicon k8s -o dist/argo.yaml",
+    "lint": "chant lint src/app && chant lint src/bootstrap",
+    "cluster": "gcloud container clusters create-auto ${GKE_CLUSTER_NAME:-argo-demo} --region ${GCP_REGION:-us-central1} --project ${GCP_PROJECT_ID}",
+    "configure-kubectl": "gcloud container clusters get-credentials ${GKE_CLUSTER_NAME:-argo-demo} --region ${GCP_REGION:-us-central1} --project ${GCP_PROJECT_ID}",
+    "install-argocd": "kubectl create namespace argocd --dry-run=client -o yaml | kubectl apply -f - && kubectl apply -n argocd -f https://raw.githubusercontent.com/argoproj/argo-cd/v2.13.3/manifests/install.yaml && kubectl -n argocd wait deploy/argocd-server --for=condition=Available --timeout=180s",
+    "bootstrap": "kubectl apply -f dist/argo.yaml",
+    "status": "kubectl -n argocd get application web -o wide",
+    "wait": "kubectl -n argocd wait application/web --for=jsonpath='{.status.health.status}'=Healthy --timeout=300s",
+    "ui": "kubectl -n argocd port-forward svc/argocd-server 8080:443",
+    "deploy": "bash scripts/deploy.sh"
+  },
+  "dependencies": {
+    "@intentius/chant": "*",
+    "@intentius/chant-lexicon-k8s": "*"
+  }
+}

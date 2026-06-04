@@ -1,0 +1,6 @@
+{
+  "extends": ["@intentius/chant/lint/presets/strict"],
+  "rules": {
+    "WGC002": "off"
+  }
+}
