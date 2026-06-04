@@ -61,6 +61,10 @@ export default defineConfig({
                   "slug": "serialization"
             },
             {
+                  "label": "Argo CD Composites",
+                  "slug": "argo-composites"
+            },
+            {
                   "label": "Vendor Composites",
                   "items": [
                         {

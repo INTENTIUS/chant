@@ -1,0 +1,136 @@
+---
+title: "Argo CD on GKE"
+description: "A minimal Argo CD on-ramp — one Chant-authored workload reconciled by Argo CD on a single GKE cluster, declared in TypeScript with ArgoAppFor."
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+The smallest example of the **three-layer split**: Chant authors typed manifests, Argo CD reconciles them, and Temporal (not needed here) orchestrates anything procedural. A single GKE cluster runs Argo CD, and one Chant-authored workload is deployed through a `K8s::Argo::Application` declared in TypeScript with [`ArgoAppFor`](/chant/lexicons/k8s/argo-composites/).
+
+This mirrors the [`argo-cd-gke` example](https://github.com/INTENTIUS/chant/tree/main/examples/argo-cd-gke).
+
+## What you'll build
+
+```
+GKE cluster (Autopilot)
+  └── Argo CD (namespace argocd)
+        └── Application "web"  ──watches──▶  git repo (dist/app/)
+              └── reconciles ──▶  Deployment + Service  (namespace demo)
+```
+
+The key idea: **the k8s lexicon stays runtime-agnostic.** The workload (`src/app`) is plain Chant k8s — it knows nothing about Argo. Argo is **opt-in**, added by one `ArgoAppFor` call in `src/bootstrap`.
+
+## Layout
+
+```
+src/
+  config.ts                 # repo URL, paths, namespaces, the demo image
+  app/web.ts                # the workload — WebApp (Deployment + Service)
+  bootstrap/application.ts   # ArgoAppFor → the Argo Application that syncs src/app
+```
+
+Two build outputs:
+
+- `dist/app/manifests.yaml` — the workload. Commit it to the repo Argo watches.
+- `dist/argo.yaml` — the Argo `Application`. Apply it once to bootstrap the GitOps loop.
+
+## 1. Declare the workload
+
+`src/app/web.ts` is ordinary Chant — a `WebApp` composite. No Argo anywhere:
+
+```typescript
+import { WebApp } from "@intentius/chant-lexicon-k8s";
+import { config } from "../config";
+
+const { deployment, service } = WebApp({
+  name: config.appName,
+  image: config.appImage,
+  port: config.appPort,
+  namespace: config.appNamespace,
+  replicas: 2,
+});
+
+export { deployment, service };
+```
+
+## 2. Declare the Argo Application
+
+`src/bootstrap/application.ts` adds Argo in one call:
+
+```typescript
+import { ArgoAppFor } from "@intentius/chant-lexicon-k8s";
+import { config } from "../config";
+
+export const web = ArgoAppFor(config.appName, {
+  repo: config.repo,
+  path: config.appPath,
+  destination: { server: config.destinationServer, namespace: config.appNamespace },
+});
+```
+
+That renders to ~20 lines of `Application` YAML with a safe automated, non-pruning, self-healing sync policy:
+
+```yaml
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: web
+  namespace: argocd
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/your-org/argo-cd-gke-demo
+    path: dist/app
+    targetRevision: HEAD
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: demo
+  syncPolicy:
+    automated: { prune: false, selfHeal: true }
+    syncOptions: ["CreateNamespace=true"]
+```
+
+<Aside type="tip">
+`prune: false` keeps this [ARGO001](/chant/lexicons/k8s/lint-rules/)-clean. Flip pruning on per the rule's guidance once you trust the loop.
+</Aside>
+
+## 3. Build and push the workload
+
+```bash
+npm install
+npm run build           # → dist/app/manifests.yaml + dist/argo.yaml
+```
+
+Commit `dist/app/` to the repo referenced by `ARGO_REPO` so Argo has something to sync.
+
+## 4. Create the cluster and install Argo CD
+
+```bash
+npm run cluster           # GKE Autopilot cluster (idempotent)
+npm run configure-kubectl
+npm run install-argocd    # Argo CD v2.13.3 into namespace argocd
+```
+
+## 5. Bootstrap the Application
+
+```bash
+npm run bootstrap         # kubectl apply dist/argo.yaml
+npm run wait              # block until the Application is Healthy
+npm run status
+```
+
+## What success looks like
+
+```
+$ npm run status
+NAME   SYNC STATUS   HEALTH STATUS
+web    Synced        Healthy
+```
+
+The `web` Deployment and Service exist in the `demo` namespace — created by Argo, not by `kubectl apply` of the workload. Change `src/app`, rebuild, push to git, and Argo reconciles the diff on its own.
+
+## Next steps
+
+- Scope the Application to a real `AppProject` for RBAC ([ARGO002](/chant/lexicons/k8s/lint-rules/)).
+- Fan out across regional clusters with [`ArgoAppSetForRegions`](/chant/lexicons/k8s/argo-composites/).
+- Gate procedural steps on Argo finishing with the temporal lexicon's `waitForArgoSync` activity — see the [CockroachDB multi-region tutorial](/chant/tutorials/temporal-crdb-deploy/), which uses Argo for the apply layer and Temporal for the procedural one.

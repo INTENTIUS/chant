@@ -85,10 +85,21 @@ Profiles control Temporal retry and timeout settings via `TEMPORAL_ACTIVITY_PROF
 | `longInfra` | Slow infra changes (cluster create, Helm installs) |
 | `k8sWait` | Polling until K8s resources are ready |
 | `humanGate` | Activities that may take hours (approvals, DNS delegation) |
+| `argoSync` | Waiting for an Argo CD Application to become Healthy + Synced |
 
 ```ts
 activity("helmInstall", { name: "crdb", chart: "cockroachdb/cockroachdb" }, { profile: "longInfra" })
 ```
+
+## Bridging to Argo CD
+
+When Argo CD owns the declarative apply layer, Temporal gates procedural steps on Argo converging. The `waitForArgoSync` activity (dependency-free, primitives-only signature) polls an Application until `health=Healthy && sync=Synced`, paired with the `argoSync` profile (30m timeout, 60s heartbeat, cheap idempotent retries; a terminal-unhealthy Application fails fast).
+
+```ts
+await waitForArgoSync({ appName: "east-crdb", namespace: "argocd" });
+```
+
+See the [Argo CD composites](/chant/lexicons/k8s/argo-composites/) in the k8s lexicon for the manifest side, and the [CockroachDB multi-region tutorial](/chant/tutorials/temporal-crdb-deploy/) for the full Argo + Temporal split.
 
 ## Gate steps
 

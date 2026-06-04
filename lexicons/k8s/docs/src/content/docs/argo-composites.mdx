@@ -1,0 +1,107 @@
+---
+title: "Argo CD Composites"
+description: "Argo CD support in the k8s lexicon — the argoproj.io CRDs, ArgoAppFor / ArgoAppSetForRegions composites, cluster registration, the ARGO00x rules, and the Argo-vs-Temporal split."
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+Argo CD's `Application`, `ApplicationSet`, and `AppProject` are Kubernetes CRDs (`argoproj.io`). The k8s lexicon registers them via codegen — the same precedent as KubeRay — so you get typed `K8s::Argo::*` resources, the serializer, LSP, hover, and MCP for free. The value-add ships as composites, lint rules, and a skill.
+
+<Aside type="note">
+The k8s lexicon stays **runtime-agnostic** — it only emits manifests. Argo is **opt-in** via the composites below; nothing here is implied unless you reach for it.
+</Aside>
+
+## The three-layer model: Argo vs Temporal vs CI
+
+Chant authors typed infra into manifests. From there, who applies them?
+
+| Layer | Owns | Reach for it when |
+|---|---|---|
+| **Argo CD** | Continuously reconciling declarative manifests | the desired state lives in git and *converges* — Deployments, CRs, Helm releases |
+| **Temporal** | Procedural steps with ordering, signals, human gates, one-shot RPCs | the step is a *procedure*, not a state — DNS delegation, cert generation, `db init` |
+| **CI** | One-shot, fire-and-forget apply | a simple pipeline with no reconciliation or long-running orchestration need |
+
+Rule of thumb: **if it's declarative and converges, let Argo reconcile it; if it's a procedure with ordering or gates, orchestrate it in Temporal.** Prefer Argo CD over Argo *Workflows* — the procedural layer stays Temporal. See the [temporal-crdb-deploy tutorial](/chant/tutorials/temporal-crdb-deploy/) for a deployment that uses both.
+
+## The CRDs
+
+Pinned to Argo CD **v2.13.3**, the codegen produces:
+
+| Type | apiVersion / kind |
+|---|---|
+| `Application` | `argoproj.io/v1alpha1` / `Application` |
+| `ApplicationSet` | `argoproj.io/v1alpha1` / `ApplicationSet` |
+| `AppProject` | `argoproj.io/v1alpha1` / `AppProject` |
+
+Install the operator with:
+
+```bash
+kubectl create namespace argocd
+kubectl apply -n argocd -f https://raw.githubusercontent.com/argoproj/argo-cd/v2.13.3/manifests/install.yaml
+```
+
+## ArgoAppFor — one Application from a build target
+
+```typescript
+import { ArgoAppFor } from "@intentius/chant-lexicon-k8s";
+
+export const api = ArgoAppFor("api", {
+  repo: "https://github.com/acme/infra",
+  path: "dist/api",
+  destination: { server: "https://kubernetes.default.svc", namespace: "api" },
+});
+```
+
+One call replaces ~30 lines of hand-written `Application` YAML. Defaults are production-friendly:
+
+- **destination** — the in-cluster target (`https://kubernetes.default.svc`, namespace = target name) when omitted.
+- **project** — `default`. Pass `project` to scope to a declared `AppProject`.
+- **syncPolicy** — automated, **non-pruning**, self-healing, with `CreateNamespace=true`. Pass `syncPolicy: {}` for manual sync.
+
+## ArgoAppSetForRegions — fan out across clusters
+
+```typescript
+import { ArgoAppSetForRegions } from "@intentius/chant-lexicon-k8s";
+
+export const crdb = ArgoAppSetForRegions(
+  ["east", "central", "west"],
+  (region) => ({ server: servers[region], namespace: `crdb-${region}`, path: `dist/${region}` }),
+  { name: "crdb", repo: "https://github.com/acme/infra", project: "crdb" },
+);
+```
+
+Emits one `ApplicationSet` with a list generator — Argo expands it into one synced `Application` per region (`east-crdb`, `central-crdb`, `west-crdb`). The template scopes to a single static `AppProject`.
+
+## registerArgoCluster — external clusters
+
+The in-cluster target needs no registration. For any other cluster:
+
+```typescript
+import { registerArgoCluster } from "@intentius/chant-lexicon-k8s";
+
+export const east = registerArgoCluster({
+  name: "east",
+  server: "https://east.example.com",
+  config: { tlsClientConfig: { insecure: false } },
+});
+```
+
+Produces a `Secret` labelled `argocd.argoproj.io/secret-type: cluster`. Applications can then target it by `destination.server` or `destination.name: "east"`.
+
+## Lint rules
+
+The k8s lexicon ships five Argo-specific checks (see [Lint Rules](../lint-rules/)):
+
+| Rule | Kind | What it catches |
+|---|---|---|
+| **ARGO001** | declarative | Production `Application` with automated `prune: true` and no `argocd.chant.dev/allow-prune` override |
+| **ARGO002** | post-synth | `Application.spec.project` references an undeclared `AppProject` |
+| **ARGO003** | post-synth | `Application.spec.destination` references an unregistered cluster |
+| **ARGO004** | declarative | `ApplicationSet` template doesn't scope to a single static `AppProject` |
+| **ARGO005** | post-synth | `Application` `source.path` doesn't resolve to a directory (warn) |
+
+## See also
+
+- [argo-cd-gke tutorial](/chant/tutorials/argo-cd-gke/) — a minimal single-cluster on-ramp.
+- The `chant-k8s-argo` [skill](../skills/) — agent guidance for these patterns.
+- [temporal-crdb-deploy tutorial](/chant/tutorials/temporal-crdb-deploy/) — Argo + Temporal together.

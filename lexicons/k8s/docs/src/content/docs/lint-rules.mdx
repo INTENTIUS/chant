@@ -61,6 +61,18 @@ Post-synth checks run against the serialized YAML after build.
 | WK8302 | Single replica Deployment |
 | WK8303 | HA Deployment without PodDisruptionBudget |
 
+### Argo CD
+
+Quality checks for the [Argo CD composites](/chant/lexicons/k8s/argo-composites/). ARGO001/ARGO004 are declarative (source AST); ARGO002/003/005 are post-synth (cross-resource / filesystem).
+
+| Rule | Description |
+|------|-------------|
+| ARGO001 | Production `Application` enables automated `prune` without the `argocd.chant.dev/allow-prune` override |
+| ARGO002 | `Application.spec.project` references an undeclared `AppProject` |
+| ARGO003 | `Application.spec.destination` references an unregistered cluster |
+| ARGO004 | `ApplicationSet` template doesn't scope to a single static `AppProject` |
+| ARGO005 | `Application` `source.path` doesn't resolve to a directory (warn) |
+
 ## Running lint
 
 ```bash
