@@ -1,4 +1,4 @@
 dist/
 node_modules/
 .chant/
-template.json
+k8s.yaml

@@ -2,7 +2,8 @@
 
 The one example that teaches chant from the core up. It is built in levels. Each
 level adds one capability over the **same declarations**, so you start with pure
-synthesis and end with a full deployment workflow without rewriting anything.
+synthesis and end with a full deployment workflow without rewriting anything. The
+whole arc is Kubernetes, and every level runs on a laptop.
 
 Start here if you are new to chant. Stop at whatever level answers your question.
 
@@ -14,46 +15,49 @@ Start here if you are new to chant. Stop at whatever level answers your question
 
 | Level | Adds | Needs |
 |---|---|---|
-| **L1 — synthesis** (this directory) | typed resources → `chant build` → spec-native output, plus `chant lint` and `chant graph` | nothing — no server, no cloud |
-| **L2 — Ops, local** | wrap the declarations in an Op, run it in-process | nothing |
-| **L3 — gate + Temporal** | a human-approval gate | a local Temporal (Docker) |
-| **L4 — the lifecycle dial** | observe drift, reconcile, apply | a target environment |
+| **L1 — synthesis** (this directory) | typed resources → `chant build` → plain Kubernetes YAML, plus `chant lint` and `chant list` | nothing — no cluster, no cloud |
+| **L2 — Ops, local** | wrap the declarations in an Op that `kubectl apply`s to a local k3d cluster | k3d (Docker) |
+| **L3 — gate + Temporal** | a human-approval gate before apply | a local Temporal (Docker) |
+| **L4 — the lifecycle dial** | observe drift, reconcile, apply against the cluster | the k3d cluster |
 | **L5 — capstone** | the alert-triage app ([#74](https://github.com/INTENTIUS/chant/issues/74)) | the full local stack |
 
 ## L1 — what is here
 
-A Lambda that lists objects in an S3 bucket, declared as typed TypeScript.
+A web Deployment and its Service, declared as typed TypeScript.
 
 | File | Teaches |
 |---|---|
-| `src/main.ts` | typed resources and composites; intrinsics (`Sub`, `Ref`, `AWS.StackName`) |
-| `src/params.ts` | a deploy-time input (a CloudFormation Parameter the platform fills in) |
-| `src/outputs.ts` | a cross-resource reference (`app.bucket.Arn`) resolved at synthesis |
-| `src/tags.ts` | a reused `const` — static config resolved at synthesis |
+| `src/config.ts` | static data — plain `const` values resolved at synthesis, reused across resources |
+| `src/web.ts` | typed resources via the `WebApp` composite; one call expands to a Deployment, a Service, and a PodDisruptionBudget |
 
 ### Run it
 
 ```bash
 npm install
 
-# Synthesize spec-native CloudFormation. No AWS call, no state, no deploy.
-npm run build      # → template.json
+# Synthesize plain Kubernetes YAML. No cluster call, no state, no apply.
+npm run build      # → k8s.yaml
 
-# Validate meaning, not just structure.
+# Validate meaning, not just structure. Lint is the gate — it must be clean.
 npm run lint
 
-# See the resource dependency graph.
-npm run graph
+# See what you declared.
+npm run list
 ```
 
-`template.json` is standard CloudFormation. You can hand it to
-`aws cloudformation deploy` or any pipeline — there is nothing chant-specific in
-the output. That is the whole of L1: deterministic, spec-true synthesis.
+`k8s.yaml` is standard Kubernetes. You can `kubectl apply -f k8s.yaml` it, or
+hand it to any pipeline — there is nothing chant-specific in the output. That is
+the whole of L1: deterministic, spec-true synthesis.
+
+`chant build` also prints post-synth **advisories** (for example, suggesting an
+explicit `imagePullPolicy` or a read-only root filesystem). Those are guidance,
+not failures — `chant lint` is the gate. Hardening the workload against them is a
+good exercise.
 
 ## A standalone first taste
 
-If you want to run *something* in under a minute with no cloud account and no
-Docker, the [`local-op-quickstart`](../local-op-quickstart/) example runs a
-one-step Op on the local executor (`chant run hello`). It is the smallest Op
-demo and stands on its own; this golden example is the guided path that starts
-from synthesis and builds up.
+If you want to run *something* in under a minute with no cluster and no Docker,
+the [`local-op-quickstart`](../local-op-quickstart/) example runs a one-step Op
+on the local executor (`chant run hello`). It is the smallest Op demo and stands
+on its own; this golden example is the guided path that starts from synthesis and
+builds up.

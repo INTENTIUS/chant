@@ -4,14 +4,14 @@
   "type": "module",
   "private": true,
   "scripts": {
-    "build": "chant build src --lexicon aws -o template.json",
+    "build": "chant build src --lexicon k8s -o k8s.yaml",
     "lint": "chant lint src",
-    "graph": "chant graph src",
-    "dev": "chant build src --lexicon aws --watch -o template.json",
+    "list": "chant list src",
+    "dev": "chant build src --lexicon k8s --watch -o k8s.yaml",
     "test": "npx vitest run"
   },
   "dependencies": {
-    "@intentius/chant-lexicon-aws": "*",
+    "@intentius/chant-lexicon-k8s": "*",
     "@intentius/chant": "*"
   },
   "devDependencies": {
