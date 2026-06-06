@@ -1,5 +1,5 @@
-import { describe, test, expect } from "vitest";
-import { extractFromTar } from "./fetch";
+import { describe, test, expect, vi, afterEach } from "vitest";
+import { extractFromTar, fetchWithRetry } from "./fetch";
 
 /**
  * Build a minimal valid tar buffer with a single file entry.
@@ -115,5 +115,65 @@ describe("extractFromTar", () => {
     const files = extractFromTar(tar);
     expect(files.size).toBe(1);
     expect(files.get("multi.txt")!.toString()).toBe(content);
+  });
+});
+
+describe("fetchWithRetry", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  const ok = () => new Response("payload", { status: 200 });
+  const status = (code: number) => new Response("", { status: code });
+
+  test("returns immediately on a successful response", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(ok());
+    vi.stubGlobal("fetch", fetchMock);
+
+    const resp = await fetchWithRetry("https://example.test/x", 4, 1);
+    expect(resp.ok).toBe(true);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  test("retries a transient status then succeeds", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(status(504))
+      .mockResolvedValueOnce(status(503))
+      .mockResolvedValueOnce(ok());
+    vi.stubGlobal("fetch", fetchMock);
+
+    const resp = await fetchWithRetry("https://example.test/x", 4, 1);
+    expect(resp.ok).toBe(true);
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+  });
+
+  test("retries a network error then succeeds", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockRejectedValueOnce(new Error("ECONNRESET"))
+      .mockResolvedValueOnce(ok());
+    vi.stubGlobal("fetch", fetchMock);
+
+    const resp = await fetchWithRetry("https://example.test/x", 4, 1);
+    expect(resp.ok).toBe(true);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  test("does not retry a permanent status", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(status(404));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(fetchWithRetry("https://example.test/x", 4, 1)).rejects.toThrow("returned 404");
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  test("throws after exhausting retries on a transient status", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(status(504));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(fetchWithRetry("https://example.test/x", 2, 1)).rejects.toThrow("returned 504");
+    // initial attempt + 2 retries
+    expect(fetchMock).toHaveBeenCalledTimes(3);
   });
 });
