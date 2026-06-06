@@ -49,6 +49,27 @@ describeExample("gitlab-aws-alb-ui", {
   examplesDir: import.meta.dir,
 });
 
+// ── Golden teaching example — L1 (synthesis core) ────────────────────
+
+describeExample(
+  "getting-started",
+  {
+    lexicon: "aws",
+    serializer: awsSerializer,
+    outputKey: "aws",
+    examplesDir: import.meta.dir,
+  },
+  {
+    checks: (output) => {
+      const parsed = JSON.parse(output);
+      const types = Object.values(parsed.Resources).map((r: any) => r.Type);
+      expect(types).toContain("AWS::Lambda::Function");
+      expect(types).toContain("AWS::S3::Bucket");
+      expect(Object.keys(parsed.Outputs)).toContain("DocsBucketArn");
+    },
+  },
+);
+
 // ── K8s + AWS EKS microservice (comprehensive) ──────────────────────
 
 describe("k8s-eks-microservice example", () => {

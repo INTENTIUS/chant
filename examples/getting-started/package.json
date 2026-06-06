@@ -1,0 +1,20 @@
+{
+  "name": "getting-started-example",
+  "version": "0.0.1",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "build": "chant build src --lexicon aws -o template.json",
+    "lint": "chant lint src",
+    "graph": "chant graph src",
+    "dev": "chant build src --lexicon aws --watch -o template.json",
+    "test": "npx vitest run"
+  },
+  "dependencies": {
+    "@intentius/chant-lexicon-aws": "*",
+    "@intentius/chant": "*"
+  },
+  "devDependencies": {
+    "typescript": "*"
+  }
+}
