@@ -308,7 +308,7 @@ export const FargateAlb = Composite<FargateAlbProps>((props) => {
     alb,
     targetGroup,
     listener,
-    redirectListener,
+    ...(redirectListener ? { redirectListener } : {}),
     service,
   };
 }, "FargateAlb");
