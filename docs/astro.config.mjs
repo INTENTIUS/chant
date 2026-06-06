@@ -32,6 +32,7 @@ export default defineConfig({
 						{ label: 'Philosophy', slug: 'concepts/philosophy' },
 						{ label: 'How chant compares', slug: 'concepts/comparison' },
 						{ label: 'TypeScript as Data', slug: 'concepts/typescript-as-data' },
+						{ label: 'Where Values Come From', slug: 'concepts/where-values-come-from' },
 						{ label: 'Evaluation Pipeline', slug: 'concepts/evaluation-pipeline' },
 						{ label: 'Choosing Your Deployment Model', slug: 'concepts/deployment-paths' },
 						{ label: 'Lifecycle Models', slug: 'concepts/lifecycle-models' },
