@@ -5,6 +5,8 @@
  * a helper to check for newer Kubernetes releases.
  */
 
+import { fetchWithRetry } from "@intentius/chant/codegen/fetch";
+
 /** Pinned versions of external dependencies. */
 export const PINNED_VERSIONS = {
   k8sOpenAPI: "v1.32.0",
@@ -24,13 +26,12 @@ export function k8sSwaggerUrl(version?: string): string {
  */
 export async function checkForUpdates(): Promise<string | null> {
   try {
-    const res = await fetch(
+    const res = await fetchWithRetry(
       "https://api.github.com/repos/kubernetes/kubernetes/releases/latest",
-      {
-        headers: { Accept: "application/vnd.github+json" },
-      },
+      undefined,
+      undefined,
+      { headers: { Accept: "application/vnd.github+json" } },
     );
-    if (!res.ok) return null;
 
     const data = (await res.json()) as { tag_name?: string };
     const latest = data.tag_name;
@@ -38,6 +39,8 @@ export async function checkForUpdates(): Promise<string | null> {
 
     return latest !== PINNED_VERSIONS.k8sOpenAPI ? latest : null;
   } catch {
+    // Transient failures are retried inside fetchWithRetry; permanent
+    // failures (or exhausted retries) land here — treat as up-to-date.
     return null;
   }
 }

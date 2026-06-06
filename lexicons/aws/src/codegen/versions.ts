@@ -2,6 +2,8 @@
  * Pinned dependency versions for reproducible generation.
  */
 
+import { fetchWithRetry } from "@intentius/chant/codegen/fetch";
+
 export const PINNED_VERSIONS = {
   cfnLint: "v1.32.4",
 } as const;
@@ -22,15 +24,17 @@ export async function checkForUpdates(): Promise<{ cfnLint: { current: string; l
   let latest: string = current;
 
   try {
-    const resp = await fetch("https://api.github.com/repos/aws-cloudformation/cfn-lint/releases/latest", {
-      headers: { Accept: "application/vnd.github.v3+json" },
-    });
-    if (resp.ok) {
-      const data = await resp.json() as { tag_name: string };
-      latest = data.tag_name;
-    }
+    const resp = await fetchWithRetry(
+      "https://api.github.com/repos/aws-cloudformation/cfn-lint/releases/latest",
+      undefined,
+      undefined,
+      { headers: { Accept: "application/vnd.github.v3+json" } },
+    );
+    const data = await resp.json() as { tag_name: string };
+    latest = data.tag_name;
   } catch {
-    // Network failure — return current as latest
+    // Transient failures are retried inside fetchWithRetry; a permanent
+    // failure (or exhausted retries) lands here — return current as latest.
   }
 
   return { cfnLint: { current, latest } };
