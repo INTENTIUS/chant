@@ -6,6 +6,7 @@
  */
 
 import { existsSync, readFileSync } from "fs";
+import { fetchWithRetry } from "@intentius/chant/codegen/fetch";
 import type { CRDSource, CRDSpec } from "./types";
 import type { K8sParseResult } from "../spec/parse";
 import { parseCRD } from "./parser";
@@ -69,11 +70,9 @@ async function loadFromURL(source: CRDSource): Promise<string> {
     throw new Error("CRD source type 'url' requires a 'url' property");
   }
 
-  const response = await fetch(source.url);
-  if (!response.ok) {
-    throw new Error(`Failed to fetch CRD from ${source.url}: ${response.status} ${response.statusText}`);
-  }
-
+  // fetchWithRetry retries transient failures and throws on a permanent
+  // status (or after exhausting retries); the returned response is `ok`.
+  const response = await fetchWithRetry(source.url);
   return response.text();
 }
 

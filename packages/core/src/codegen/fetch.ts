@@ -41,11 +41,16 @@ function sleep(ms: number): Promise<void> {
  *
  * Permanent failures (e.g. 404, 403) are not retried — they throw on the
  * first response. The returned response is guaranteed `ok`.
+ *
+ * `init` is passed through to `fetch` on every attempt, so callers that
+ * need request headers (e.g. the GitHub API `Accept` header) or an abort
+ * signal get retries without duplicating the loop.
  */
 export async function fetchWithRetry(
   url: string,
   retries = DEFAULT_RETRIES,
   backoffMs = DEFAULT_BACKOFF_MS,
+  init?: RequestInit,
 ): Promise<Response> {
   let lastError: Error | undefined;
 
@@ -58,7 +63,7 @@ export async function fetchWithRetry(
 
     let response: Response;
     try {
-      response = await fetch(url);
+      response = init === undefined ? await fetch(url) : await fetch(url, init);
     } catch (e) {
       // Network-level failure (DNS, connection reset, timeout). Transient.
       lastError = e instanceof Error ? e : new Error(String(e));

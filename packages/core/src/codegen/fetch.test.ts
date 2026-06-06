@@ -176,4 +176,45 @@ describe("fetchWithRetry", () => {
     // initial attempt + 2 retries
     expect(fetchMock).toHaveBeenCalledTimes(3);
   });
+
+  test("calls fetch with no init argument when none is given", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(ok());
+    vi.stubGlobal("fetch", fetchMock);
+
+    await fetchWithRetry("https://example.test/x", 4, 1);
+    expect(fetchMock).toHaveBeenCalledWith("https://example.test/x");
+  });
+
+  test("passes request init through to fetch", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(ok());
+    vi.stubGlobal("fetch", fetchMock);
+
+    const init = { headers: { Accept: "application/vnd.github+json" } };
+    await fetchWithRetry("https://example.test/x", 4, 1, init);
+    expect(fetchMock).toHaveBeenCalledWith("https://example.test/x", init);
+  });
+
+  test("preserves init across retries on a transient status", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(status(503))
+      .mockResolvedValueOnce(ok());
+    vi.stubGlobal("fetch", fetchMock);
+
+    const init = { headers: { Accept: "application/vnd.github+json" } };
+    const resp = await fetchWithRetry("https://example.test/x", 4, 1, init);
+    expect(resp.ok).toBe(true);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(fetchMock).toHaveBeenNthCalledWith(1, "https://example.test/x", init);
+    expect(fetchMock).toHaveBeenNthCalledWith(2, "https://example.test/x", init);
+  });
+
+  test("does not retry a permanent status when init is given", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(status(403));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const init = { headers: { Accept: "application/vnd.github+json" } };
+    await expect(fetchWithRetry("https://example.test/x", 4, 1, init)).rejects.toThrow("returned 403");
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
 });
