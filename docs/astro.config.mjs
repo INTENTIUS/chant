@@ -193,6 +193,7 @@ export default defineConfig({
 					badge: { text: 'Core Dev', variant: 'note' },
 					items: [
 						{ label: 'Development Setup', slug: 'contributing/development' },
+						{ label: 'Examples — Tiers and Layout', slug: 'contributing/examples' },
 						{ label: 'Contributing a Lifecycle', slug: 'contributing/lifecycles' },
 					{ label: 'E2E Testing', slug: 'contributing/e2e-testing' },
 						{ label: 'Architecture Overview', slug: 'architecture/overview' },

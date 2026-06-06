@@ -1,0 +1,59 @@
+---
+title: Examples — Tiers and Layout
+description: How chant's examples are organized — feature examples, reference deployments, and the golden teaching example — and where each one lives.
+---
+
+chant's examples do three different jobs. This page names the three tiers, says where each lives, and tags every current example so contributors know which tier a new example belongs in.
+
+## The three tiers
+
+| Tier | Job | Home | Audience |
+|---|---|---|---|
+| **Golden teaching example** | Teach chant from the core up, as one leveled example | a reserved subtree under `examples/` (planned — see [#216](https://github.com/INTENTIUS/chant/issues/216)) | everyone — the first thing a new user runs |
+| **Feature examples** | One concept, in isolation, exhaustively, CI-tested | `lexicons/*/examples/` | reference lookup for a single feature |
+| **Reference deployments** | Real-world, substrate-specific, production-shaped stacks | `examples/` | a starting point to adapt for production |
+
+The tiers are distinguished by job and by where they live, not by being different kinds of file. All three run under the same `describeAllExamples` CI harness, so every tier is type-checked and built on every change.
+
+There is no fourth directory. `examples/` stays the single home for top-level examples. The golden teaching example is a reserved, labeled subtree within it, not a parallel tree.
+
+## Feature examples — `lexicons/*/examples/`
+
+Each lexicon ships small, single-concept examples next to its source — for instance `lexicons/aws/examples/lambda-function/` or `lexicons/gitlab/examples/node-pipeline/`. A feature example demonstrates one resource, composite, or pattern with the least surrounding context needed to build it. Add a new feature example here when you are showing how one piece of a lexicon works.
+
+## Reference deployments — `examples/`
+
+These are the large, deployable, substrate-specific stacks. Most are paired with a tutorial under `docs/src/content/docs/tutorials/`. Add a new example here when you are showing a complete, production-shaped deployment.
+
+| Example | Tier |
+|---|---|
+| `examples/local-op-quickstart` | Golden (seed — becomes L1–L2 of the golden example, [#216](https://github.com/INTENTIUS/chant/issues/216)) |
+| `examples/argo-cd-gke` | Reference deployment |
+| `examples/cockroachdb-multi-region-gke` | Reference deployment |
+| `examples/fargate-lucene-efs` | Reference deployment |
+| `examples/gitlab-aws-alb-infra` | Reference deployment |
+| `examples/gitlab-aws-alb-api` | Reference deployment |
+| `examples/gitlab-aws-alb-ui` | Reference deployment |
+| `examples/gitlab-aws-alb-op` | Reference deployment |
+| `examples/gitlab-cells-single-region-gke` | Reference deployment |
+| `examples/k8s-aks-microservice` | Reference deployment |
+| `examples/k8s-eks-microservice` | Reference deployment |
+| `examples/k8s-gke-microservice` | Reference deployment |
+| `examples/ray-kuberay-gke` | Reference deployment |
+| `examples/slurm-aws-hpc` | Reference deployment |
+| `examples/temporal-crdb-deploy` | Reference deployment |
+| `examples/temporal-self-hosted` | Reference deployment |
+
+Everything under `lexicons/*/examples/` is the feature tier and is not listed individually here.
+
+## The golden teaching example
+
+The golden tier does not exist yet. It is one example that teaches chant in ordered levels — synthesis and lint first, then Ops, then a gate, then the lifecycle dial, then a full app — over the same declarations. `examples/local-op-quickstart` is the seed of its first levels, and the alert-triage app ([#74](https://github.com/INTENTIUS/chant/issues/74)) is the final level. See [#216](https://github.com/INTENTIUS/chant/issues/216) for the design.
+
+When the golden example lands, the getting-started docs point new users at it, and each reference deployment links back to it as the place to start.
+
+## Adding an example — which tier?
+
+- Showing one resource, composite, or feature of a lexicon → feature example under that lexicon's `examples/`.
+- Showing a complete, substrate-specific deployment → reference deployment under `examples/`, usually with a tutorial.
+- Teaching chant itself, level by level → the golden example ([#216](https://github.com/INTENTIUS/chant/issues/216)), not a new top-level example.
