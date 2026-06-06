@@ -27,6 +27,13 @@ import { ecsTrustPolicy } from "./ecs-trust-policy";
 
 export interface FargateAlbProps {
   image: string;
+  /**
+   * Secrets Manager ARN holding private-registry pull credentials
+   * (`{"username","password"}`). Sets the container's `RepositoryCredentials`
+   * and grants the execution role `secretsmanager:GetSecretValue` on it — needed
+   * to pull from a private registry such as GHCR. Omit for public images / ECR.
+   */
+  repositoryCredentials?: string;
   containerPort?: number;
   cpu?: string;
   memory?: string;
@@ -79,6 +86,14 @@ export const FargateAlb = Composite<FargateAlbProps>((props) => {
         Action: LogsActions.Write,
         Resource: "*",
       },
+      // Allow pulling private-registry credentials when configured.
+      ...(props.repositoryCredentials
+        ? [{
+            Effect: "Allow",
+            Action: ["secretsmanager:GetSecretValue"],
+            Resource: props.repositoryCredentials,
+          }]
+        : []),
     ],
   };
 
@@ -136,6 +151,9 @@ export const FargateAlb = Composite<FargateAlbProps>((props) => {
     LogConfiguration: logConfiguration,
     Environment: environmentVars.length > 0 ? environmentVars : undefined,
     Command: props.command,
+    RepositoryCredentials: props.repositoryCredentials
+      ? { CredentialsParameter: props.repositoryCredentials }
+      : undefined,
   });
 
   // Task definition
