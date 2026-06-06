@@ -54,18 +54,21 @@ describeExample("gitlab-aws-alb-ui", {
 describeExample(
   "getting-started",
   {
-    lexicon: "aws",
-    serializer: awsSerializer,
-    outputKey: "aws",
+    lexicon: "k8s",
+    serializer: k8sSerializer,
+    outputKey: "k8s",
     examplesDir: import.meta.dir,
   },
   {
     checks: (output) => {
-      const parsed = JSON.parse(output);
-      const types = Object.values(parsed.Resources).map((r: any) => r.Type);
-      expect(types).toContain("AWS::Lambda::Function");
-      expect(types).toContain("AWS::S3::Bucket");
-      expect(Object.keys(parsed.Outputs)).toContain("DocsBucketArn");
+      const docs = parseK8sDocs(output);
+      const kinds = docs.map((d) => d.kind);
+      expect(kinds).toContain("Deployment");
+      expect(kinds).toContain("Service");
+      expect(kinds).toContain("PodDisruptionBudget");
+      for (const doc of docs) {
+        expect(doc.doc).toContain("app.kubernetes.io/managed-by: chant");
+      }
     },
   },
 );
