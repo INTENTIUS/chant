@@ -20,6 +20,61 @@ export interface FetchConfig {
   cacheTtlMs?: number;
 }
 
+// ── Transient-aware fetch ──────────────────────────────────────────
+
+/**
+ * HTTP statuses worth retrying. These are transient: a gateway hiccup,
+ * a rate limit, or an overloaded upstream — not a permanent 404/403.
+ */
+const RETRYABLE_STATUSES = new Set([408, 425, 429, 500, 502, 503, 504]);
+
+const DEFAULT_RETRIES = 4;
+const DEFAULT_BACKOFF_MS = 1000;
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/**
+ * Fetch a URL, retrying on transient failures (network errors and
+ * retryable HTTP statuses) with exponential backoff.
+ *
+ * Permanent failures (e.g. 404, 403) are not retried — they throw on the
+ * first response. The returned response is guaranteed `ok`.
+ */
+export async function fetchWithRetry(
+  url: string,
+  retries = DEFAULT_RETRIES,
+  backoffMs = DEFAULT_BACKOFF_MS,
+): Promise<Response> {
+  let lastError: Error | undefined;
+
+  for (let attempt = 0; attempt <= retries; attempt++) {
+    if (attempt > 0) {
+      const delay = backoffMs * 2 ** (attempt - 1);
+      debug(`retrying ${url} (attempt ${attempt}/${retries}) after ${delay}ms: ${lastError?.message}`);
+      await sleep(delay);
+    }
+
+    let response: Response;
+    try {
+      response = await fetch(url);
+    } catch (e) {
+      // Network-level failure (DNS, connection reset, timeout). Transient.
+      lastError = e instanceof Error ? e : new Error(String(e));
+      continue;
+    }
+
+    if (response.ok) return response;
+
+    const err = new Error(`Download from ${url} returned ${response.status}`);
+    if (!RETRYABLE_STATUSES.has(response.status)) throw err;
+    lastError = err;
+  }
+
+  throw lastError ?? new Error(`Download from ${url} failed after ${retries} retries`);
+}
+
 // ── Fetch with cache ───────────────────────────────────────────────
 
 const DEFAULT_CACHE_TTL_MS = 24 * 60 * 60 * 1000; // 24 hours
@@ -46,11 +101,7 @@ export async function fetchWithCache(config: FetchConfig, force = false): Promis
     }
   }
 
-  const response = await fetch(config.url);
-  if (!response.ok) {
-    throw new Error(`Download from ${config.url} returned ${response.status}`);
-  }
-
+  const response = await fetchWithRetry(config.url);
   const arrayBuffer = await response.arrayBuffer();
   const data = Buffer.from(arrayBuffer);
 
@@ -205,11 +256,7 @@ export async function fetchAndExtractTar(
     }
   }
 
-  const resp = await fetch(config.url);
-  if (!resp.ok) {
-    throw new Error(`Tarball download from ${config.url} returned ${resp.status}`);
-  }
-
+  const resp = await fetchWithRetry(config.url);
   const compressed = new Uint8Array(await resp.arrayBuffer());
   const { gunzipSync } = await import("fflate");
   const tarData = gunzipSync(compressed);
