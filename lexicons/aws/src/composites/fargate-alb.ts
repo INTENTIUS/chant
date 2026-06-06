@@ -14,6 +14,8 @@ import {
   TargetGroup,
   Listener,
   Listener_Action,
+  Listener_Certificate,
+  Listener_RedirectConfig,
   SecurityGroup,
   SecurityGroup_Ingress,
   LogGroup,
@@ -34,6 +36,13 @@ export interface FargateAlbProps {
    * to pull from a private registry such as GHCR. Omit for public images / ECR.
    */
   repositoryCredentials?: string;
+  /**
+   * ACM certificate ARN. When set, the ALB serves HTTPS on 443 with this cert
+   * and the port-80 listener redirects to HTTPS (301). When omitted, the ALB
+   * serves plain HTTP on `listenerPort` (default 80). The cert + any DNS records
+   * are managed outside this composite (region must match the ALB).
+   */
+  certificateArn?: string;
   containerPort?: number;
   cpu?: string;
   memory?: string;
@@ -167,18 +176,22 @@ export const FargateAlb = Composite<FargateAlbProps>((props) => {
     ContainerDefinitions: [container],
   }, defs?.taskDef));
 
-  // ALB security group — ingress on listener port from anywhere
-  const albIngress = new SecurityGroup_Ingress({
-    IpProtocol: "tcp",
-    FromPort: listenerPort,
-    ToPort: listenerPort,
-    CidrIp: "0.0.0.0/0",
-  });
+  // ALB security group — ingress on the served port(s) from anywhere. With a
+  // cert that's 443 (HTTPS) + 80 (redirect); otherwise the plain listener port.
+  const ingressPorts = props.certificateArn ? [443, 80] : [listenerPort];
+  const albIngress = ingressPorts.map((port) =>
+    new SecurityGroup_Ingress({
+      IpProtocol: "tcp",
+      FromPort: port,
+      ToPort: port,
+      CidrIp: "0.0.0.0/0",
+    }),
+  );
 
   const albSg = new SecurityGroup({
     GroupDescription: "ALB security group",
     VpcId: props.vpcId,
-    SecurityGroupIngress: [albIngress],
+    SecurityGroupIngress: albIngress,
   });
 
   // Task security group — ingress on container port from ALB SG
@@ -212,18 +225,47 @@ export const FargateAlb = Composite<FargateAlbProps>((props) => {
     HealthCheckPath: healthCheckPath,
   }, defs?.targetGroup));
 
-  // Listener
-  const defaultAction = new Listener_Action({
+  // Listener(s). With a cert: HTTPS:443 forwards to the target group and HTTP:80
+  // redirects to HTTPS. Without: a single HTTP listener on `listenerPort`.
+  const forwardAction = new Listener_Action({
     Type: "forward",
     TargetGroupArn: targetGroup.TargetGroupArn,
   });
 
-  const listener = new Listener({
-    LoadBalancerArn: alb.LoadBalancerArn,
-    Port: listenerPort,
-    Protocol: "HTTP",
-    DefaultActions: [defaultAction],
-  });
+  let listener: InstanceType<typeof Listener>;
+  let redirectListener: InstanceType<typeof Listener> | undefined;
+
+  if (props.certificateArn) {
+    listener = new Listener({
+      LoadBalancerArn: alb.LoadBalancerArn,
+      Port: 443,
+      Protocol: "HTTPS",
+      Certificates: [new Listener_Certificate({ CertificateArn: props.certificateArn })],
+      DefaultActions: [forwardAction],
+    });
+    redirectListener = new Listener({
+      LoadBalancerArn: alb.LoadBalancerArn,
+      Port: 80,
+      Protocol: "HTTP",
+      DefaultActions: [
+        new Listener_Action({
+          Type: "redirect",
+          RedirectConfig: new Listener_RedirectConfig({
+            Protocol: "HTTPS",
+            Port: "443",
+            StatusCode: "HTTP_301",
+          }),
+        }),
+      ],
+    });
+  } else {
+    listener = new Listener({
+      LoadBalancerArn: alb.LoadBalancerArn,
+      Port: listenerPort,
+      Protocol: "HTTP",
+      DefaultActions: [forwardAction],
+    });
+  }
 
   // ECS Service
   const serviceLoadBalancer = new EcsService_LoadBalancer({
@@ -266,6 +308,7 @@ export const FargateAlb = Composite<FargateAlbProps>((props) => {
     alb,
     targetGroup,
     listener,
+    redirectListener,
     service,
   };
 }, "FargateAlb");
