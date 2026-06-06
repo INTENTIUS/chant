@@ -201,3 +201,5 @@ The supported subset is the set of TypeScript patterns whose value is fully dete
 This makes synthesis fast, deterministic for conforming source (same source, same output), and auditable (every output value traces to a specific line in the source).
 
 The static boundary also defines a natural division of labor with agentic workflows: agents resolve dynamic values (looking up VPC IDs, reading secrets, querying state), then write or populate chant source files. chant synthesizes the deterministic structure. Agents handle what changes; chant handles what shouldn't.
+
+For where each kind of value belongs — static data resolved at synthesis, a deploy-time input resolved at apply, or a lookup synthesis refuses — see [Where Values Come From](/chant/concepts/where-values-come-from/).

@@ -1,0 +1,58 @@
+---
+title: Where Values Come From
+description: The determinism boundary — which values resolve at synthesis as static data, which arrive at apply as deploy-time inputs, and which lookups synthesis refuses to perform.
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+Every value in a chant resource comes from one of three places. Two are allowed. One is refused, by construction. This page draws that boundary and names which is which, so the rest of the docs can point here instead of re-deriving it.
+
+The boundary exists because synthesis is pure. `chant build` imports your files, reads the resource objects they export, and emits output. It never calls an API, reads a secret, or touches mutable state. That is what makes the output deterministic and auditable — every value traces to a line in the source. The boundary is the price of that property, and it is worth paying.
+
+## The three origins
+
+| Origin | Resolved | Example | Allowed |
+|---|---|---|---|
+| **Static data** | At synthesis | a literal, a `const`, a cross-resource reference | Yes |
+| **Deploy-time input** | At apply, by the platform | a parameter, an intrinsic, an output from another stack | Yes |
+| **Runtime lookup** | At synthesis, by reaching out | an API call, a secret read, an HTTP fetch during build | No |
+
+### Static data
+
+Literals, `const` bindings, spreads from `const` sources, and symbolic references between resources. Their value is fixed by the source. Synthesis reads them directly and the result is the same every time. This is the bulk of what you write, and it is the only thing that resolves *during* the build. See [TypeScript as Data](/chant/concepts/typescript-as-data/) for the exact supported subset.
+
+Layered configuration is static data too. Merging `const` objects across environments is composition over fixed values, not a lookup. It stays inside the boundary as long as the layers are `const` and the merge runs at synthesis.
+
+### Deploy-time input
+
+Some values are not known when you build. A VPC ID minted by another system. A secret ARN that exists only after apply. A value another stack exports. These do not enter synthesis at all. They enter the *artifact* as a placeholder — a parameter or an intrinsic — and the platform resolves them when it applies.
+
+The placeholder is static. The value arrives later. Synthesis emits `${StackName}-data` or a parameter reference and stops. The deploy mechanism fills it in. Determinism holds because the build never saw the resolved value.
+
+### Runtime lookup
+
+Reaching out during the build — calling a cloud API to discover an ID, reading a secret store, fetching HTTP, reading mutable state — is refused. The [evaluability rules](/chant/lint-rules/evaluability/) (EVL) reject it. A value that depends on a function call, a network round-trip, or the moment you ran the build is not a value synthesis can own. Same source would stop meaning same output.
+
+<Aside type="note" title="The test">
+If a value can change without the source changing, it is not static data. It is either a deploy-time input the platform resolves at apply, or it belongs before synthesis — written into the source by an agent or a script. It is never a lookup the build performs.
+</Aside>
+
+## When a value must come from outside
+
+Two ways across the boundary, neither of which breaks it.
+
+**Resolve it before synthesis.** An agent or a script looks the value up — a VPC ID, a secret — and writes it into a source file. By the time `chant build` runs, the value is a literal. This is the natural division of labor with agentic workflows. Agents resolve what changes; chant synthesizes what shouldn't. The dynamic step happens first, and it happens outside synthesis.
+
+**Defer it to apply.** Emit a deploy-time input — a parameter or a lexicon intrinsic — and let the platform resolve it. The build commits to the *shape*, not the value. See your lexicon's intrinsics for what it can defer.
+
+What you cannot do is collapse these into the build itself. The moment synthesis performs the lookup, the output stops being a pure function of the source, and the properties that justify the whole approach — determinism, auditability, walk-away-zero — go with it.
+
+## Why hold the line
+
+It would be convenient to let config pull a value from a secret store at build time. Convenient, and corrosive. A build that reads from a live system is a build whose output you cannot reproduce, cannot audit line-by-line, and cannot trust to be the same tomorrow. The boundary is not a missing feature. It is the feature.
+
+## See also
+
+- [TypeScript as Data](/chant/concepts/typescript-as-data/) — the supported static subset, pattern by pattern
+- [Evaluability Rules](/chant/lint-rules/evaluability/) — the EVL rules that enforce the boundary
+- [Philosophy](/chant/concepts/philosophy/) — why synthesis is pure and where operational work lives
