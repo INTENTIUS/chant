@@ -2,7 +2,10 @@
 //
 // Two workloads: a webhook receiver that accepts incoming alerts over HTTP, and
 // a Temporal worker that runs the triage workflow's activities. Both use
-// composites so the output carries production defaults and lints clean.
+// composites for sensible defaults and lint clean. `chant build` still prints a
+// few post-synth hardening advisories (imagePullPolicy, readOnlyRootFilesystem)
+// — those are guidance, not failures; lint is the gate. Hardening against them
+// is a good exercise.
 import { WebApp, WorkerPool } from "@intentius/chant-lexicon-k8s";
 import { webhookImage, workerImage } from "./config";
 
