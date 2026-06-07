@@ -7,7 +7,7 @@ whole arc is Kubernetes, and every level runs on a laptop.
 
 Start here if you are new to chant. Stop at whatever level answers your question.
 
-> **Status:** L1 is here now. L2–L5 land in follow-up work — see
+> **Status:** L1–L3 are here now. L4–L5 land in follow-up work — see
 > [#216](https://github.com/INTENTIUS/chant/issues/216). The level plan below is
 > the target shape, not a claim that every level already exists.
 
@@ -75,6 +75,30 @@ are operated. Gates, schedules, and crash-resume need `--temporal`; that is L3.
 
 This deploy step is not run in CI (there is no cluster there). CI validates that
 the Op *compiles* to a well-formed workflow; running it is this local step.
+
+## L3 — pause for approval (Temporal)
+
+`deploy-gated.op.ts` is the same deploy with one addition: an **approval gate**
+before the apply, plus a rollback if anything fails. A gate is a durable
+wait-for-signal — it can hold for hours and survives a worker restart — so this
+Op runs on **Temporal**, not the local executor (the local executor errors on a
+gate, by design). L2's `deploy` stays the fast local path; this is the gated
+production shape.
+
+```bash
+# A local Temporal in Docker (separate terminal).
+temporal server start-dev
+
+# Run on Temporal — pauses at the "Approve" phase.
+chant run deploy-gated --temporal
+
+# Release the gate when you're ready.
+chant run signal deploy-gated approve-deploy
+```
+
+Phases: **Build → Approve (gate) → Apply**, with an `onFailure` **Rollback**.
+The Temporal connection comes from the `local` profile in `chant.config.ts`.
+As with L2, CI validates the Op compiles; the gated run is this local step.
 
 ## A standalone first taste
 
