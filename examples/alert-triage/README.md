@@ -29,6 +29,8 @@ steps, not arbitrary app logic.)
 | `activities/triage.ts` | the triage activities (raw Temporal): `classifyAlert`, `gatherContext`, `proposeRemediation`, `applyRemediation` (stubbed), `notifyOutcome` |
 | `activities/workflow.ts` | the triage workflow: classify → context → propose → approval gate → apply → notify |
 | `activities/worker.ts` | the Temporal worker — registers the activities + workflow, connects via the `local` profile |
+| `app/triage-client.ts` | shared Temporal client — `startTriage()` launches the workflow; used by both event sources |
+| `app/parse.ts` | pure event→`Alert` mappers (webhook body and drift entry), unit-tested in `app/parse.test.ts` |
 | `app/webhook.ts` | event source #1 — HTTP receiver, `POST /alert` starts a triage workflow |
 | `app/drift-source.ts` | event source #2 — `chant lifecycle plan --json` → triage each drifted resource |
 | `app/demo.ts` | a synthetic alert (`npm run alert`) |
@@ -52,12 +54,17 @@ See the [Alert Triage (local) tutorial](/chant/tutorials/alert-triage-local/) fo
 the full walk-through. Other scripts:
 
 ```bash
-npm run build      # → k8s.yaml (plain Kubernetes)
-npm run lint       # clean
+npm run build      # → k8s.yaml — also prints post-synth hardening advisories
+npm run lint       # the gate — clean
 npm run alert      # send another alert via the webhook
 npm run drift -- --demo   # the drift event source
 npm test           # unit tests + a time-skipping workflow test
 ```
+
+`npm run build` prints a few post-synth **advisories** (imagePullPolicy and
+`readOnlyRootFilesystem` on the two workloads). Those are guidance, not failures
+— `npm run lint` is the gate, and it is clean. Hardening the workloads against
+the advisories is a good exercise.
 
 ## The triage activities
 

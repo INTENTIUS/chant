@@ -132,9 +132,12 @@ describe("golden example L4 — lifecycle dial", () => {
 });
 
 // ── Golden teaching example — L5 capstone: alert-triage (#74) ────────
-// The app's chant-synthesized k8s manifests. The triage workflow itself is raw
-// Temporal (custom agent activities); its activities are unit-tested separately
-// under examples/alert-triage/activities/. Workflow + worker land in follow-ups.
+// This block validates the app's chant-synthesized k8s manifests. The triage
+// workflow itself is raw Temporal (custom agent activities); its workflow,
+// worker, and activities have their own CI coverage under
+// examples/alert-triage/: a time-skipping workflow test (activities/
+// workflow.test.ts — gate behaviour), activity unit tests (activities/
+// triage.test.ts), and the event→Alert mappers (app/parse.test.ts).
 
 describeExample(
   "alert-triage",
@@ -163,9 +166,6 @@ describeExample(
     },
   },
 );
-
-// The triage workflow is raw Temporal (custom agent activities), not a chant Op.
-// Its activities are unit-tested in examples/alert-triage/activities/.
 
 // ── K8s + AWS EKS microservice (comprehensive) ──────────────────────
 
