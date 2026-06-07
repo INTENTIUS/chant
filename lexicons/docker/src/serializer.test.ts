@@ -119,6 +119,31 @@ describe("dockerSerializer.serialize — single service", () => {
     const output = dockerSerializer.serialize(entities) as string;
     expect(output).not.toContain("restart:");
   });
+
+  test("emits short-form depends_on (list)", () => {
+    const entities = new Map<string, Declarable>();
+    entities.set("api", new MockService({ image: "nginx", depends_on: ["db"] }));
+
+    const output = dockerSerializer.serialize(entities) as string;
+    expect(output).toContain("depends_on:");
+    expect(output).toContain("- db");
+  });
+
+  test("emits long-form depends_on with a wait condition", () => {
+    const entities = new Map<string, Declarable>();
+    entities.set(
+      "api",
+      new MockService({
+        image: "nginx",
+        depends_on: { db: { condition: "service_healthy" } },
+      }),
+    );
+
+    const output = dockerSerializer.serialize(entities) as string;
+    expect(output).toContain("depends_on:");
+    expect(output).toContain("db:");
+    expect(output).toContain("condition: service_healthy");
+  });
 });
 
 // ── Multi-resource ────────────────────────────────────────────────
