@@ -33,10 +33,14 @@ export const webhookService = webhook.service;
 export const webhookIngress = webhook.ingress!;
 export const webhookPdb = webhook.pdb!;
 
-// Temporal worker — Deployment only (no Service); runs the triage activities.
+// Temporal worker — Deployment + PDB (no Service). A Temporal worker talks to
+// Temporal, not the K8s API, so `rbacRules: []` suppresses the ServiceAccount /
+// Role / RoleBinding (and the pod's serviceAccountName) WorkerPool would
+// otherwise create — those weren't exported, leaving a dangling SA reference.
 const worker = WorkerPool({
   name: "alert-worker",
   image: workerImage,
+  rbacRules: [],
   replicas: 2,
   minAvailable: 1,
   cpuRequest: "100m",

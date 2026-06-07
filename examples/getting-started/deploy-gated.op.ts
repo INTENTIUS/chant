@@ -17,18 +17,19 @@ export default Op({
   overview: "Build, pause for human approval, then apply — durable on Temporal",
   taskQueue: "getting-started-deploy",
   phases: [
-    phase("Build", [build("examples/getting-started")]),
+    // Paths are relative to the example dir (where `chant run` is invoked).
+    phase("Build", [build(".")]),
     phase("Approve", [
       gate("approve-deploy", {
         timeout: "24h",
         description: "Approve applying the getting-started manifests to the cluster",
       }),
     ]),
-    phase("Apply", [kubectlApply("examples/getting-started/k8s.yaml")]),
+    phase("Apply", [kubectlApply("k8s.yaml")]),
   ],
   onFailure: [
     phase("Rollback", [
-      shell("kubectl delete -f examples/getting-started/k8s.yaml --ignore-not-found"),
+      shell("kubectl delete -f k8s.yaml --ignore-not-found"),
     ]),
   ],
 });

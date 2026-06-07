@@ -1,10 +1,16 @@
-// Drift source — event source #2. Runs `chant lifecycle diff --live` and starts
-// a triage workflow for each drifted resource, so out-of-band cluster changes go
-// through the same triage as external alerts. This is the runtime counterpart of
-// a WatchOp (which schedules the same diff on a cron).
+// Drift source — event source #2. Runs `chant lifecycle plan --json` and starts
+// a triage workflow for each non-noop change-set entry, so out-of-band cluster
+// changes go through the same triage as external alerts. The runtime counterpart
+// of a WatchOp (which schedules the same check on a cron).
 //
-//   npm run drift            # real: diff the env, triage any drift
+//   npm run drift            # real: plan the env, triage any drift
 //   npm run drift -- --demo  # inject a sample drift to exercise the pipeline
+//
+// NOTE: the real path needs the env deployed + a snapshot, and `chant lifecycle
+// plan` currently builds the project dir with lexicon auto-detection, which does
+// not yet handle this example's mixed layout (chant src/ alongside app/ +
+// activities/). Until that lands (#252), `--demo` is the reliable demonstration;
+// the real path degrades to "no drift" rather than failing.
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { startTriage } from "./triage-client.js";
@@ -19,13 +25,20 @@ async function detectDrift(): Promise<DriftEntry[]> {
     // real out-of-band change. The real path below runs an actual live diff.
     return [{ name: "alert-webhook", type: "Deployment", category: "drifted" }];
   }
+  // `lifecycle plan --json` emits a typed ChangeSet ({ env, entries: [...] }).
+  // (`lifecycle diff` has no --json.) Every non-noop entry is something the live
+  // system and the declared source disagree on — triage each.
   const { stdout } = await execFileAsync(
     "chant",
-    ["lifecycle", "diff", env, "--live", "--json"],
+    ["lifecycle", "plan", env, "k8s", "--json"],
     { cwd: new URL("..", import.meta.url).pathname },
   );
-  const report = JSON.parse(stdout) as { drifted?: DriftEntry[] };
-  return report.drifted ?? [];
+  const plan = JSON.parse(stdout) as {
+    entries?: Array<{ name: string; type?: string; action: string }>;
+  };
+  return (plan.entries ?? [])
+    .filter((e) => e.action !== "noop")
+    .map((e) => ({ name: e.name, type: e.type, category: e.action }));
 }
 
 async function main(): Promise<void> {
