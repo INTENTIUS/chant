@@ -15,6 +15,7 @@ import deployGatedOp from "./getting-started/deploy-gated.op";
 import observeOp from "./getting-started/observe.op";
 import reconcileOp from "./getting-started/reconcile.op";
 import applyOp from "./getting-started/apply.op";
+import alertTriageOp from "./alert-triage/alert-triage.op";
 import { resolve } from "path";
 
 /** Read an Op default export's name. */
@@ -128,6 +129,47 @@ describe("golden example L4 — lifecycle dial", () => {
     expect(opName(observeOp)).toBe("observe");
     expect(opName(reconcileOp)).toBe("reconcile");
     expect(opName(applyOp)).toBe("apply");
+  });
+});
+
+// ── Golden teaching example — L5 capstone: alert-triage (#74) ────────
+// First slice: the app's k8s manifests + the triage Op skeleton. Worker,
+// activities, and WatchOp source land in follow-ups.
+
+describeExample(
+  "alert-triage",
+  {
+    lexicon: "k8s",
+    serializer: k8sSerializer,
+    outputKey: "k8s",
+    examplesDir: import.meta.dirname,
+  },
+  {
+    checks: (output) => {
+      const kinds = parseK8sDocs(output).map((d) => d.kind);
+      // webhook (WebApp) + worker (WorkerPool)
+      expect(kinds.filter((k) => k === "Deployment")).toHaveLength(2);
+      expect(kinds).toContain("Service");
+      expect(kinds).toContain("Ingress");
+    },
+  },
+);
+
+describe("alert-triage L5 — triage Op", () => {
+  test("compiles with the triage phases and an approval gate", () => {
+    const props = (alertTriageOp as unknown as {
+      props: { name: string; phases: Array<{ name: string; steps: Array<{ kind: string }> }> };
+    }).props;
+    expect(props.name).toBe("alert-triage");
+    expect(props.phases.map((p) => p.name)).toEqual([
+      "Classify",
+      "Context",
+      "Propose",
+      "Approve",
+      "Notify",
+    ]);
+    const approve = props.phases.find((p) => p.name === "Approve");
+    expect(approve?.steps.some((s) => s.kind === "gate")).toBe(true);
   });
 });
 

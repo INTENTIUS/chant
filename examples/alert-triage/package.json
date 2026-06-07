@@ -1,0 +1,20 @@
+{
+  "name": "alert-triage-example",
+  "version": "0.0.1",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "build": "chant build src --lexicon k8s -o k8s.yaml",
+    "lint": "chant lint src",
+    "list": "chant list src",
+    "test": "npx vitest run"
+  },
+  "dependencies": {
+    "@intentius/chant-lexicon-k8s": "*",
+    "@intentius/chant-lexicon-temporal": "*",
+    "@intentius/chant": "*"
+  },
+  "devDependencies": {
+    "typescript": "*"
+  }
+}
