@@ -1,5 +1,5 @@
 /**
- * Integration test for the temporal-self-hosted example project.
+ * Integration test for the temporal-stack example project.
  *
  * Builds the example from source using the temporal serializer and
  * verifies all expected output files are produced.
@@ -13,9 +13,9 @@ import { lintCommand } from "@intentius/chant/cli/commands/lint";
 import { temporalSerializer } from "./serializer";
 
 const examplesRoot = resolve(fileURLToPath(import.meta.url), "../../../../examples");
-const srcDir = resolve(examplesRoot, "temporal-self-hosted", "src");
+const srcDir = resolve(examplesRoot, "temporal-stack", "src");
 
-describe("temporal-self-hosted example", () => {
+describe("temporal-stack example", () => {
   test("passes lint", async () => {
     const result = await lintCommand({ path: srcDir, format: "stylish", fix: true });
     if (!result.success || result.errorCount > 0) console.log(result.output);

@@ -1,5 +1,7 @@
 # EKS Microservice — Cross-Lexicon Example
 
+> **New to chant?** Start with the [golden teaching example](../getting-started/) — synthesis → lint → Ops → the lifecycle dial over one set of declarations — then come back here for a production-shaped deployment.
+
 A production-grade cross-lexicon example that defines both **AWS EKS infrastructure** (CloudFormation via the AWS lexicon) and **Kubernetes workloads** (YAML via the K8s lexicon) — all in TypeScript.
 
 This demonstrates chant's multi-lexicon capability: a single `src/` directory imports from both `@intentius/chant-lexicon-aws` and `@intentius/chant-lexicon-k8s`, and builds to two separate outputs.

@@ -1,5 +1,7 @@
 # argo-cd-gke — minimal Argo CD on-ramp
 
+> **New to chant?** Start with the [golden teaching example](../getting-started/) — synthesis → lint → Ops → the lifecycle dial over one set of declarations — then come back here for a production-shaped deployment.
+
 A single GKE cluster, Argo CD installed via Helm/manifests, and **one
 Chant-authored workload reconciled by Argo CD** through a `K8s::Argo::Application`
 declared in TypeScript with `ArgoAppFor`.

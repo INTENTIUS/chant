@@ -1,8 +1,10 @@
-# temporal-self-hosted
+# temporal-stack
 
-Demonstrates using chant to declare a **self-hosted Temporal** setup as code — namespace configuration, search attributes, and schedules version-controlled alongside your application.
+> **New to chant?** Start with the [golden teaching example](../getting-started/), then come back here for a production-shaped Temporal stack.
 
-This is the right example if you run your own Temporal server (Docker or Kubernetes) rather than using Temporal Cloud. For the Temporal Cloud path, see [`temporal-crdb-deploy`](../temporal-crdb-deploy/).
+Declares a **Temporal stack** as code — local Docker for dev, Helm for prod — with namespace configuration, search attributes, and schedules version-controlled alongside your application.
+
+This is the right example if you run your own Temporal infrastructure (Docker locally, Kubernetes/Helm in production) rather than using Temporal Cloud. For the Temporal Cloud path, see [`temporal-crdb-deploy`](../temporal-crdb-deploy/).
 
 ---
 
