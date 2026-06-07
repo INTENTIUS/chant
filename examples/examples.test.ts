@@ -10,6 +10,7 @@ import { gitlabSerializer } from "@intentius/chant-lexicon-gitlab";
 import { helmSerializer } from "@intentius/chant-lexicon-helm";
 import type { PostSynthContext } from "@intentius/chant/lint/post-synth";
 import { k8sPlugin } from "@intentius/chant-lexicon-k8s/plugin";
+import deployOp from "./getting-started/deploy.op";
 import { resolve } from "path";
 
 // ── Helpers ──────────────────────────────────────────────────────────
@@ -72,6 +73,21 @@ describeExample(
     },
   },
 );
+
+// ── Golden teaching example — L2 (deploy Op) ─────────────────────────
+// The deploy Op can't run in CI (no cluster), so this validates that it
+// compiles to a well-formed Op. Running it is a documented local step
+// (k3d + `chant run deploy`).
+
+describe("golden example L2 — deploy Op", () => {
+  test("compiles to a well-formed Op", () => {
+    const props = (deployOp as unknown as {
+      props: { name: string; phases: Array<{ name: string }> };
+    }).props;
+    expect(props.name).toBe("deploy");
+    expect(props.phases.map((p) => p.name)).toEqual(["Build", "Apply"]);
+  });
+});
 
 // ── K8s + AWS EKS microservice (comprehensive) ──────────────────────
 

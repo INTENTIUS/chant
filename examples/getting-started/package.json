@@ -8,10 +8,12 @@
     "lint": "chant lint src",
     "list": "chant list src",
     "dev": "chant build src --lexicon k8s --watch -o k8s.yaml",
+    "deploy": "chant run deploy",
     "test": "npx vitest run"
   },
   "dependencies": {
     "@intentius/chant-lexicon-k8s": "*",
+    "@intentius/chant-lexicon-temporal": "*",
     "@intentius/chant": "*"
   },
   "devDependencies": {
