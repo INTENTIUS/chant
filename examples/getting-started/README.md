@@ -7,7 +7,7 @@ whole arc is Kubernetes, and every level runs on a laptop.
 
 Start here if you are new to chant. Stop at whatever level answers your question.
 
-> **Status:** L1–L3 are here now. L4–L5 land in follow-up work — see
+> **Status:** L1–L4 are here now. L5 lands in follow-up work — see
 > [#216](https://github.com/INTENTIUS/chant/issues/216). The level plan below is
 > the target shape, not a claim that every level already exists.
 
@@ -99,6 +99,29 @@ chant run signal deploy-gated approve-deploy
 Phases: **Build → Approve (gate) → Apply**, with an `onFailure` **Rollback**.
 The Temporal connection comes from the `local` profile in `chant.config.ts`.
 As with L2, CI validates the Op compiles; the gated run is this local step.
+
+## L4 — the lifecycle dial
+
+Same declarations, three positions on one dial — `observe → reconcile →
+authoritative` — each a composite-generated Op. `chant.config.ts` sets an
+`ownership` marker so reconcile and apply can scope to chant-owned resources.
+
+| Op | Direction | What it does |
+|---|---|---|
+| `observe.op.ts` (`WatchOp`) | — | snapshot + live diff on a schedule; reports drift, changes nothing |
+| `reconcile.op.ts` (`ReconcileOp`) | cloud → code | on drift, regenerate the affected TypeScript and open a PR |
+| `apply.op.ts` (`ApplyOp`) | code → cloud | apply via `kubectl`; deletes are owned-only (marker-scoped prune) |
+
+```bash
+chant run observe --temporal     # scheduled drift detection (needs Temporal)
+chant run reconcile              # pull live drift back into source as a PR
+chant run apply                  # push declared source to the cluster
+```
+
+You turn the dial up per environment as trust allows. chant hosts no state
+file — authority stays with `kubectl`; ownership is read from the marker on each
+live resource. As with the other levels, CI validates these Ops compile; running
+them needs the cluster.
 
 ## A standalone first taste
 

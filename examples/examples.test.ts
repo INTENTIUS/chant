@@ -12,7 +12,15 @@ import type { PostSynthContext } from "@intentius/chant/lint/post-synth";
 import { k8sPlugin } from "@intentius/chant-lexicon-k8s/plugin";
 import deployOp from "./getting-started/deploy.op";
 import deployGatedOp from "./getting-started/deploy-gated.op";
+import observeOp from "./getting-started/observe.op";
+import reconcileOp from "./getting-started/reconcile.op";
+import applyOp from "./getting-started/apply.op";
 import { resolve } from "path";
+
+/** Read an Op default export's name. */
+function opName(op: unknown): string {
+  return (op as { props: { name: string } }).props.name;
+}
 
 // ── Helpers ──────────────────────────────────────────────────────────
 
@@ -108,6 +116,18 @@ describe("golden example L3 — gated deploy Op", () => {
     const approve = props.phases.find((p) => p.name === "Approve");
     expect(approve?.steps.some((s) => s.kind === "gate")).toBe(true);
     expect(props.onFailure?.map((p) => p.name)).toEqual(["Rollback"]);
+  });
+});
+
+// ── Golden teaching example — L4 (the lifecycle dial) ────────────────
+// observe → reconcile → authoritative, as three composite-generated Ops.
+// Validated by compilation; running them needs a cluster (local step).
+
+describe("golden example L4 — lifecycle dial", () => {
+  test("observe / reconcile / apply Ops all compile", () => {
+    expect(opName(observeOp)).toBe("observe");
+    expect(opName(reconcileOp)).toBe("reconcile");
+    expect(opName(applyOp)).toBe("apply");
   });
 });
 
