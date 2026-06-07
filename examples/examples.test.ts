@@ -11,6 +11,7 @@ import { helmSerializer } from "@intentius/chant-lexicon-helm";
 import type { PostSynthContext } from "@intentius/chant/lint/post-synth";
 import { k8sPlugin } from "@intentius/chant-lexicon-k8s/plugin";
 import deployOp from "./getting-started/deploy.op";
+import deployGatedOp from "./getting-started/deploy-gated.op";
 import { resolve } from "path";
 
 // ── Helpers ──────────────────────────────────────────────────────────
@@ -86,6 +87,27 @@ describe("golden example L2 — deploy Op", () => {
     }).props;
     expect(props.name).toBe("deploy");
     expect(props.phases.map((p) => p.name)).toEqual(["Build", "Apply"]);
+  });
+});
+
+// ── Golden teaching example — L3 (gate + Temporal) ───────────────────
+// Gated deploy Op — runs on Temporal (--temporal), not the local executor.
+// Validated by compilation; the gated run is a documented local step.
+
+describe("golden example L3 — gated deploy Op", () => {
+  test("compiles with an approval gate and rollback", () => {
+    const props = (deployGatedOp as unknown as {
+      props: {
+        name: string;
+        phases: Array<{ name: string; steps: Array<{ kind: string }> }>;
+        onFailure?: Array<{ name: string }>;
+      };
+    }).props;
+    expect(props.name).toBe("deploy-gated");
+    expect(props.phases.map((p) => p.name)).toEqual(["Build", "Approve", "Apply"]);
+    const approve = props.phases.find((p) => p.name === "Approve");
+    expect(approve?.steps.some((s) => s.kind === "gate")).toBe(true);
+    expect(props.onFailure?.map((p) => p.name)).toEqual(["Rollback"]);
   });
 });
 
