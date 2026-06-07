@@ -45,7 +45,23 @@ export function parseSchemaPath(
 }
 
 /**
- * Given a set of schema paths, return only the latest API version per provider.
+ * Per-provider API-version pins.
+ *
+ * `latestVersionPerProvider` picks the single newest version per provider, but
+ * Azure spreads resources across versions — a newer version can DROP a resource
+ * an older one defined. Microsoft.Authorization's latest preview no longer
+ * includes the plain `roleAssignments` / `roleDefinitions` resources; they live
+ * in 2022-04-01, the latest stable that still has them. Pin it so those
+ * generate (the naming table maps both). See #223.
+ */
+export const PROVIDER_VERSION_OVERRIDES: Record<string, string> = {
+  "Microsoft.Authorization": "2022-04-01",
+};
+
+/**
+ * Given a set of schema paths, return only the latest API version per provider,
+ * with {@link PROVIDER_VERSION_OVERRIDES} pinning specific providers to a chosen
+ * version (used where "latest" drops resources we depend on).
  *
  * Returns a Map of provider → { path, apiVersion }.
  */
@@ -57,6 +73,15 @@ export function latestVersionPerProvider(
   for (const p of paths) {
     const parsed = parseSchemaPath(p);
     if (!parsed) continue;
+
+    const pinned = PROVIDER_VERSION_OVERRIDES[parsed.provider];
+    if (pinned) {
+      // Only accept the pinned version for an overridden provider.
+      if (parsed.apiVersion === pinned) {
+        best.set(parsed.provider, { path: p, apiVersion: parsed.apiVersion });
+      }
+      continue;
+    }
 
     const existing = best.get(parsed.provider);
     if (!existing || compareApiDates(parsed.apiVersion, existing.apiVersion) > 0) {
