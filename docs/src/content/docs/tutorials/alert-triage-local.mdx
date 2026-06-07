@@ -54,7 +54,7 @@ npm run drift -- --demo  # a drift event (the WatchOp/lifecycle counterpart)
 ```
 
 The webhook is the receiver the `WebApp` manifest deploys. The drift source runs
-`chant lifecycle diff --live` and triages each drifted resource — out-of-band
+`chant lifecycle plan --json` and triages each drifted resource — out-of-band
 cluster changes go through the same triage as external alerts. `--demo` injects a
 sample drift so you can see the pipeline without making a real change.
 

@@ -13,9 +13,10 @@ export default Op({
   overview: "Build the getting-started manifests and apply them to the current kube context",
   taskQueue: "getting-started-deploy",
   phases: [
-    // Runs `npm run build` in the example → writes k8s.yaml.
-    phase("Build", [build("examples/getting-started")]),
+    // Runs `npm run build` in this example dir → writes k8s.yaml. Paths are
+    // relative to where `chant run` is invoked (the example dir), hence `.`.
+    phase("Build", [build(".")]),
     // kubectl apply -f against the current context (e.g. local k3d).
-    phase("Apply", [kubectlApply("examples/getting-started/k8s.yaml")]),
+    phase("Apply", [kubectlApply("k8s.yaml")]),
   ],
 });

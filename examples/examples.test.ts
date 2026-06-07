@@ -146,11 +146,20 @@ describeExample(
   },
   {
     checks: (output) => {
-      const kinds = parseK8sDocs(output).map((d) => d.kind);
+      const docs = parseK8sDocs(output);
+      const kinds = docs.map((d) => d.kind);
       // webhook (WebApp) + worker (WorkerPool)
       expect(kinds.filter((k) => k === "Deployment")).toHaveLength(2);
       expect(kinds).toContain("Service");
       expect(kinds).toContain("Ingress");
+      // No dangling ServiceAccount reference: every serviceAccountName a pod
+      // sets must have a matching ServiceAccount doc (regression guard, #236).
+      const saNames = new Set(
+        docs.filter((d) => d.kind === "ServiceAccount").map((d) => d.name),
+      );
+      for (const m of output.matchAll(/serviceAccountName:\s*(\S+)/g)) {
+        expect(saNames.has(m[1])).toBe(true);
+      }
     },
   },
 );

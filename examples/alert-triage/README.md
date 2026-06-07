@@ -25,12 +25,12 @@ steps, not arbitrary app logic.)
 | File | What it is |
 |---|---|
 | `src/config.ts` | pinned image refs (replace with your own builds) |
-| `src/workloads.ts` | chant manifests — the webhook (`WebApp` → Deployment + Service + Ingress + PDB) and the worker (`WorkerPool` → Deployment) |
+| `src/workloads.ts` | chant manifests — the webhook (`WebApp` → Deployment + Service + Ingress + PDB) and the worker (`WorkerPool` → Deployment + PDB, no RBAC) |
 | `activities/triage.ts` | the triage activities (raw Temporal): `classifyAlert`, `gatherContext`, `proposeRemediation`, `notifyOutcome` |
 | `activities/workflow.ts` | the triage workflow: classify → context → propose → approval gate → notify |
 | `activities/worker.ts` | the Temporal worker — registers the activities + workflow, connects via the `local` profile |
 | `app/webhook.ts` | event source #1 — HTTP receiver, `POST /alert` starts a triage workflow |
-| `app/drift-source.ts` | event source #2 — `chant lifecycle diff --live` → triage each drifted resource |
+| `app/drift-source.ts` | event source #2 — `chant lifecycle plan --json` → triage each drifted resource |
 | `app/demo.ts` | a synthetic alert (`npm run alert`) |
 | `chant.config.ts` | k8s + temporal lexicons, and a local Temporal profile |
 
@@ -99,7 +99,7 @@ Both start the same triage workflow:
 - **Webhook** (`app/webhook.ts`, `npm run webhook`) — `POST /alert` with a
   Datadog/PagerDuty-shaped body. This is what the `WebApp` manifest deploys.
 - **Drift** (`app/drift-source.ts`, `npm run drift`) — runs
-  `chant lifecycle diff --live` and triages each drifted resource, so out-of-band
+  `chant lifecycle plan --json` and triages each drifted resource, so out-of-band
   cluster changes get the same triage as external alerts (the runtime counterpart
   of a scheduled `WatchOp`). `npm run drift -- --demo` injects a sample drift.
 
