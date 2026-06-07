@@ -480,11 +480,8 @@ describe("k8s-gke-microservice example", () => {
 });
 
 // ── K8s + Azure AKS microservice (comprehensive) ────────────────────
-// QUARANTINED (#223): the Azure lexicon no longer generates
-// Microsoft.Authorization/roleAssignments, so this example's import of
-// `RoleAssignment` fails at build. Un-skip once #223 restores the resource.
 
-describe.skip("k8s-aks-microservice example", () => {
+describe("k8s-aks-microservice example", () => {
   const srcDir = resolve(import.meta.dirname, "k8s-aks-microservice", "src");
 
   test("passes lint", async () => {
