@@ -15,7 +15,6 @@ import deployGatedOp from "./getting-started/deploy-gated.op";
 import observeOp from "./getting-started/observe.op";
 import reconcileOp from "./getting-started/reconcile.op";
 import applyOp from "./getting-started/apply.op";
-import alertTriageOp from "./alert-triage/alert-triage.op";
 import { resolve } from "path";
 
 /** Read an Op default export's name. */
@@ -133,8 +132,9 @@ describe("golden example L4 — lifecycle dial", () => {
 });
 
 // ── Golden teaching example — L5 capstone: alert-triage (#74) ────────
-// First slice: the app's k8s manifests + the triage Op skeleton. Worker,
-// activities, and WatchOp source land in follow-ups.
+// The app's chant-synthesized k8s manifests. The triage workflow itself is raw
+// Temporal (custom agent activities); its activities are unit-tested separately
+// under examples/alert-triage/activities/. Workflow + worker land in follow-ups.
 
 describeExample(
   "alert-triage",
@@ -155,23 +155,8 @@ describeExample(
   },
 );
 
-describe("alert-triage L5 — triage Op", () => {
-  test("compiles with the triage phases and an approval gate", () => {
-    const props = (alertTriageOp as unknown as {
-      props: { name: string; phases: Array<{ name: string; steps: Array<{ kind: string }> }> };
-    }).props;
-    expect(props.name).toBe("alert-triage");
-    expect(props.phases.map((p) => p.name)).toEqual([
-      "Classify",
-      "Context",
-      "Propose",
-      "Approve",
-      "Notify",
-    ]);
-    const approve = props.phases.find((p) => p.name === "Approve");
-    expect(approve?.steps.some((s) => s.kind === "gate")).toBe(true);
-  });
-});
+// The triage workflow is raw Temporal (custom agent activities), not a chant Op.
+// Its activities are unit-tested in examples/alert-triage/activities/.
 
 // ── K8s + AWS EKS microservice (comprehensive) ──────────────────────
 
