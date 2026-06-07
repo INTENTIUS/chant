@@ -1,0 +1,96 @@
+---
+title: Alert Triage (local)
+description: Run the alert-triage capstone locally — a Temporal-driven incident-triage app with a human-approval gate and an optional agent, on nothing but a Temporal dev server.
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+The [`alert-triage`](https://github.com/INTENTIUS/chant/tree/main/examples/alert-triage)
+example is the capstone (L5) of the [getting-started](https://github.com/INTENTIUS/chant/tree/main/examples/getting-started)
+golden example. It is a Temporal-driven incident-triage app: an alert comes in,
+a phased workflow classifies it, gathers context, proposes a remediation, pauses
+for human approval when the change is risky, then notifies. chant synthesizes the
+Kubernetes manifests; the triage workflow itself is hand-written Temporal — the
+["Raw Temporal + chant"](/chant/concepts/deployment-paths/) split.
+
+This tutorial runs the whole thing locally with no cloud and no cluster — just a
+Temporal dev server.
+
+## Prerequisites
+
+- Node.js and `npm`.
+- The [Temporal CLI](https://docs.temporal.io/cli) (`temporal`) for the dev server.
+
+## Run it
+
+```bash
+cd examples/alert-triage
+npm install
+npm run dev
+```
+
+`npm run dev` starts a Temporal dev server, the triage worker, and the webhook
+receiver, then sends one demo alert. Open the Temporal UI at
+**http://localhost:8233** — you'll see an `alertTriage` workflow. The demo alert
+is high-severity, so it's **risky** and pauses at the approval gate.
+
+Approve it:
+
+```bash
+temporal workflow signal -n default \
+  --query "WorkflowType='alertTriage'" --name approve-remediation
+```
+
+The workflow completes, and the worker logs the outcome (`… — applied after
+approval`). A low-severity alert skips the gate and applies directly.
+
+## Two event sources
+
+Both feed the same triage workflow:
+
+```bash
+npm run alert            # external alert via the webhook (POST /alert)
+npm run drift -- --demo  # a drift event (the WatchOp/lifecycle counterpart)
+```
+
+The webhook is the receiver the `WebApp` manifest deploys. The drift source runs
+`chant lifecycle diff --live` and triages each drifted resource — out-of-band
+cluster changes go through the same triage as external alerts. `--demo` injects a
+sample drift so you can see the pipeline without making a real change.
+
+## The agent (optional)
+
+`proposeRemediation` is a deterministic stub by default — no key, runs offline.
+Set `ANTHROPIC_API_KEY` (and `npm i @anthropic-ai/sdk`) to have it call Claude;
+override the model with `ANTHROPIC_MODEL` (default `claude-sonnet-4-6`). The first
+run shows chant, not an LLM.
+
+## Deploy the manifests
+
+The app's Kubernetes surface is typed chant in `src/`:
+
+```bash
+npm run build      # → k8s.yaml (plain Kubernetes)
+npm run lint
+kubectl apply -f k8s.yaml   # e.g. to a local k3d cluster
+```
+
+<Aside type="note">
+The manifests reference placeholder images (`ghcr.io/intentius/alert-*`). Swap in
+your own builds of the worker and webhook to run the app in-cluster; the local
+`npm run dev` above runs them from source without images.
+</Aside>
+
+## How it fits together
+
+| Piece | What it is |
+|---|---|
+| `src/` | chant manifests — webhook (`WebApp`) and worker (`WorkerPool`) |
+| `activities/triage.ts` | the triage activities (the agent — stub + Claude opt-in) |
+| `activities/workflow.ts` | the Temporal workflow (classify → context → propose → gate → notify) |
+| `activities/worker.ts` | the worker that registers them |
+| `app/` | the event sources (webhook, drift) and the demo alert |
+
+A time-skipping test (`activities/workflow.test.ts`) covers the gate behaviour in
+CI. See the [example README](https://github.com/INTENTIUS/chant/tree/main/examples/alert-triage)
+for the full layout.

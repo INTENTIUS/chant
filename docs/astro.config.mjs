@@ -66,6 +66,7 @@ export default defineConfig({
 				{
 					label: 'Tutorials',
 					items: [
+						{ label: 'Alert Triage (local)', slug: 'tutorials/alert-triage-local' },
 						{ label: 'GCP GKE + Kubernetes', slug: 'tutorials/gke-kubernetes' },
 						{ label: 'GKE Composites', link: '/lexicons/k8s/gke-composites/' },
 						{ label: 'AWS EKS + Kubernetes', slug: 'tutorials/eks-kubernetes' },

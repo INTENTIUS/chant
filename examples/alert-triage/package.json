@@ -8,6 +8,10 @@
     "lint": "chant lint src",
     "list": "chant list src",
     "worker": "tsx activities/worker.ts",
+    "webhook": "tsx app/webhook.ts",
+    "alert": "tsx app/demo.ts",
+    "drift": "tsx app/drift-source.ts",
+    "dev": "bash scripts/dev.sh",
     "test": "npx vitest run"
   },
   "dependencies": {
@@ -15,7 +19,8 @@
     "@intentius/chant-lexicon-temporal": "*",
     "@intentius/chant": "*",
     "@temporalio/workflow": "^1.17.2",
-    "@temporalio/worker": "^1.17.2"
+    "@temporalio/worker": "^1.17.2",
+    "@temporalio/client": "^1.17.2"
   },
   "devDependencies": {
     "@temporalio/testing": "^1.17.2",

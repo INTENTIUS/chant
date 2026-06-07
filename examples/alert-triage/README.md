@@ -13,11 +13,11 @@ This is chant's documented "Raw Temporal + chant" path, the same split as
 `temporal-crdb-deploy`. (chant Ops are for infra-deploy workflows over pre-built
 steps, not arbitrary app logic.)
 
-> **Status:** this ships the app's **Kubernetes manifests**, the **triage
-> activities** (the agent — stubbed by default, real Claude when
-> `ANTHROPIC_API_KEY` is set), and the Temporal **workflow + worker**. A webhook
-> source, a `WatchOp` drift source, and a local `npm run dev` + tutorial land in
-> follow-ups ([#232](https://github.com/INTENTIUS/chant/issues/232)). See
+> **Status:** complete and runnable locally — chant manifests, triage activities
+> (the agent — stubbed by default, real Claude when `ANTHROPIC_API_KEY` is set),
+> the Temporal workflow + worker, two event sources (webhook + drift), and an
+> `npm run dev` local stack. See the
+> [tutorial](/chant/tutorials/alert-triage-local/) and
 > [#74](https://github.com/INTENTIUS/chant/issues/74).
 
 ## What's here now
@@ -29,14 +29,34 @@ steps, not arbitrary app logic.)
 | `activities/triage.ts` | the triage activities (raw Temporal): `classifyAlert`, `gatherContext`, `proposeRemediation`, `notifyOutcome` |
 | `activities/workflow.ts` | the triage workflow: classify → context → propose → approval gate → notify |
 | `activities/worker.ts` | the Temporal worker — registers the activities + workflow, connects via the `local` profile |
+| `app/webhook.ts` | event source #1 — HTTP receiver, `POST /alert` starts a triage workflow |
+| `app/drift-source.ts` | event source #2 — `chant lifecycle diff --live` → triage each drifted resource |
+| `app/demo.ts` | a synthetic alert (`npm run alert`) |
 | `chant.config.ts` | k8s + temporal lexicons, and a local Temporal profile |
+
+## Run it locally
 
 ```bash
 npm install
+npm run dev        # Temporal dev server + worker + webhook + a demo alert
+```
+
+Open the Temporal UI at **http://localhost:8233**. The demo alert is risky, so it
+pauses at the approval gate; release it with:
+
+```bash
+temporal workflow signal -n default --query "WorkflowType='alertTriage'" --name approve-remediation
+```
+
+See the [Alert Triage (local) tutorial](/chant/tutorials/alert-triage-local/) for
+the full walk-through. Other scripts:
+
+```bash
 npm run build      # → k8s.yaml (plain Kubernetes)
 npm run lint       # clean
-npm run list       # what you declared
-npm test           # unit-tests the activities + a time-skipping workflow test
+npm run alert      # send another alert via the webhook
+npm run drift -- --demo   # the drift event source
+npm test           # unit tests + a time-skipping workflow test
 ```
 
 ## The triage activities
@@ -72,9 +92,20 @@ A time-skipping test (`activities/workflow.test.ts`) covers the workflow in CI:
 phase order, the gate clearing on the signal, the safe path skipping the gate,
 and an unapproved risky remediation waiting out the 12h gate.
 
-## Coming in follow-ups
+## Two event sources
 
-- A webhook source, and a `WatchOp` that turns drift on the deployed namespace
-  into a second event source.
-- A local k3d + Temporal `npm run dev` and a tutorial
-  ([#232](https://github.com/INTENTIUS/chant/issues/232)).
+Both start the same triage workflow:
+
+- **Webhook** (`app/webhook.ts`, `npm run webhook`) — `POST /alert` with a
+  Datadog/PagerDuty-shaped body. This is what the `WebApp` manifest deploys.
+- **Drift** (`app/drift-source.ts`, `npm run drift`) — runs
+  `chant lifecycle diff --live` and triages each drifted resource, so out-of-band
+  cluster changes get the same triage as external alerts (the runtime counterpart
+  of a scheduled `WatchOp`). `npm run drift -- --demo` injects a sample drift.
+
+## Deploying the manifests
+
+`src/` is typed chant — `npm run build` emits plain `k8s.yaml` you can
+`kubectl apply` to any cluster (e.g. local k3d). The manifests reference
+placeholder images; swap in your own worker/webhook builds to run in-cluster. The
+`npm run dev` flow above runs them from source without images.
