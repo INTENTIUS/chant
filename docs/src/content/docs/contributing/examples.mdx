@@ -9,13 +9,13 @@ chant's examples do three different jobs. This page names the three tiers, says 
 
 | Tier | Job | Home | Audience |
 |---|---|---|---|
-| **Golden teaching example** | Teach chant from the core up, as one leveled example | a reserved subtree under `examples/` (planned — see [#216](https://github.com/INTENTIUS/chant/issues/216)) | everyone — the first thing a new user runs |
+| **Golden teaching example** | Teach chant from the core up, as one leveled example | `examples/getting-started` (L1–L4) and `examples/alert-triage` (L5) — see [#216](https://github.com/INTENTIUS/chant/issues/216) | everyone — the first thing a new user runs |
 | **Feature examples** | One concept, in isolation, exhaustively, CI-tested | `lexicons/*/examples/` | reference lookup for a single feature |
 | **Reference deployments** | Real-world, substrate-specific, production-shaped stacks | `examples/` | a starting point to adapt for production |
 
 The tiers are distinguished by job and by where they live, not by being different kinds of file. All three run under the same `describeAllExamples` CI harness, so every tier is type-checked and built on every change.
 
-There is no fourth directory. `examples/` stays the single home for top-level examples. The golden teaching example is a reserved, labeled subtree within it, not a parallel tree.
+There is no fourth directory. `examples/` stays the single home for top-level examples. The golden teaching example is two labeled directories within it — `getting-started` (L1–L4) and `alert-triage` (L5) — not a parallel tree.
 
 ## Feature examples — `lexicons/*/examples/`
 
@@ -27,7 +27,9 @@ These are the large, deployable, substrate-specific stacks. Most are paired with
 
 | Example | Tier |
 |---|---|
-| `examples/local-op-quickstart` | Golden (seed — becomes L1–L2 of the golden example, [#216](https://github.com/INTENTIUS/chant/issues/216)) |
+| `examples/getting-started` | Golden (L1–L4 — synthesis, local Op, gate, lifecycle dial) |
+| `examples/alert-triage` | Golden (L5 — the capstone app) |
+| `examples/local-op-quickstart` | Standalone first taste (smallest one-step Op, no cluster) |
 | `examples/argo-cd-gke` | Reference deployment |
 | `examples/cockroachdb-multi-region-gke` | Reference deployment |
 | `examples/fargate-lucene-efs` | Reference deployment |
@@ -48,9 +50,14 @@ Everything under `lexicons/*/examples/` is the feature tier and is not listed in
 
 ## The golden teaching example
 
-The golden tier does not exist yet. It is one example that teaches chant in ordered levels — synthesis and lint first, then Ops, then a gate, then the lifecycle dial, then a full app — over the same declarations. `examples/local-op-quickstart` is the seed of its first levels, and the alert-triage app ([#74](https://github.com/INTENTIUS/chant/issues/74)) is the final level. See [#216](https://github.com/INTENTIUS/chant/issues/216) for the design.
+The golden tier teaches chant in ordered levels — synthesis and lint first, then Ops, then a gate, then the lifecycle dial, then a full app — over the same declarations. It lives in two directories:
 
-When the golden example lands, the getting-started docs point new users at it, and each reference deployment links back to it as the place to start.
+- `examples/getting-started` holds **L1–L4**. L1 is pure synthesis and lint, L2 wraps the same declarations in a local Op, L3 adds an approval gate on Temporal, L4 turns the lifecycle dial (observe → reconcile → authoritative). Each level adds one capability without rewriting the declarations.
+- `examples/alert-triage` is **L5**, the capstone: chant manifests plus a raw-Temporal triage workflow, a worker, two event sources, and a local dev stack ([#74](https://github.com/INTENTIUS/chant/issues/74)).
+
+`examples/local-op-quickstart` is a separate, standalone first taste — the smallest possible Op, runnable in under a minute with no cluster. It is not part of the leveled arc.
+
+The getting-started docs point new users at the golden example, and reference deployments link back to it as the place to start. See [#216](https://github.com/INTENTIUS/chant/issues/216) for the design.
 
 ## Adding an example — which tier?
 

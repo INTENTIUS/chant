@@ -7,9 +7,9 @@ whole arc is Kubernetes, and every level runs on a laptop.
 
 Start here if you are new to chant. Stop at whatever level answers your question.
 
-> **Status:** L1–L4 are here now. L5 lands in follow-up work — see
-> [#216](https://github.com/INTENTIUS/chant/issues/216). The level plan below is
-> the target shape, not a claim that every level already exists.
+> **Status:** L1–L5 are all here. L1–L4 live in this directory; L5 is the
+> [alert-triage app](../alert-triage/). See
+> [#216](https://github.com/INTENTIUS/chant/issues/216) for the design.
 
 ## The levels
 
@@ -19,7 +19,7 @@ Start here if you are new to chant. Stop at whatever level answers your question
 | **L2 — Ops, local** | wrap the declarations in an Op that `kubectl apply`s to a local k3d cluster | k3d (Docker) |
 | **L3 — gate + Temporal** | a human-approval gate before apply | a local Temporal (Docker) |
 | **L4 — the lifecycle dial** | observe drift, reconcile, apply against the cluster | the k3d cluster |
-| **L5 — capstone** | the [alert-triage app](../alert-triage/) ([#74](https://github.com/INTENTIUS/chant/issues/74)) — manifests + triage activities so far | the full local stack |
+| **L5 — capstone** | the [alert-triage app](../alert-triage/) ([#74](https://github.com/INTENTIUS/chant/issues/74)) — chant manifests + a raw-Temporal triage workflow, worker, two event sources (webhook + drift), and an `npm run dev` local stack | the full local stack |
 
 ## L1 — what is here
 

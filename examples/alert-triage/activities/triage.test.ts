@@ -4,6 +4,7 @@ import {
   gatherContext,
   proposeRemediation,
   notifyOutcome,
+  parseRemediation,
   type Alert,
 } from "./triage";
 
@@ -55,5 +56,33 @@ describe("triage activities (stub path)", () => {
     await expect(
       notifyOutcome({ alert, remediation: { summary: "x", risky: false }, approved: true }),
     ).resolves.toBeUndefined();
+  });
+});
+
+describe("parseRemediation (agent reply, fail-safe)", () => {
+  test("explicit SAFE on a complete reply → not risky", () => {
+    const r = parseRemediation("Restart the pod. SAFE", "end_turn");
+    expect(r.risky).toBe(false);
+    expect(r.summary).toBe("Restart the pod.");
+  });
+
+  test("explicit RISKY → risky", () => {
+    const r = parseRemediation("Drop and recreate the table. RISKY", "end_turn");
+    expect(r.risky).toBe(true);
+    expect(r.summary).toBe("Drop and recreate the table.");
+  });
+
+  test("no suffix → risky (ambiguous never skips the gate)", () => {
+    const r = parseRemediation("Scale the deployment to 3 replicas.", "end_turn");
+    expect(r.risky).toBe(true);
+  });
+
+  test("SAFE but truncated → risky (truncation never skips the gate)", () => {
+    const r = parseRemediation("Restart the pod. SAFE", "max_tokens");
+    expect(r.risky).toBe(true);
+  });
+
+  test("empty reply → risky", () => {
+    expect(parseRemediation("", "end_turn").risky).toBe(true);
   });
 });
