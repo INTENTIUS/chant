@@ -7,14 +7,18 @@
     "build": "chant build src --lexicon k8s -o k8s.yaml",
     "lint": "chant lint src",
     "list": "chant list src",
+    "worker": "tsx activities/worker.ts",
     "test": "npx vitest run"
   },
   "dependencies": {
     "@intentius/chant-lexicon-k8s": "*",
     "@intentius/chant-lexicon-temporal": "*",
-    "@intentius/chant": "*"
+    "@intentius/chant": "*",
+    "@temporalio/workflow": "^1.17.2",
+    "@temporalio/worker": "^1.17.2"
   },
   "devDependencies": {
+    "@temporalio/testing": "^1.17.2",
     "typescript": "*"
   }
 }
