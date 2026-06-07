@@ -93,8 +93,26 @@ export async function notifyOutcome(input: {
 
 interface MinimalAnthropic {
   messages: {
-    create(body: unknown): Promise<{ content: Array<{ type: string; text?: string }> }>;
+    create(body: unknown): Promise<{
+      content: Array<{ type: string; text?: string }>;
+      stop_reason?: string | null;
+    }>;
   };
+}
+
+/**
+ * Parse the model's reply into a Remediation. Fails safe: a remediation is
+ * `risky` (routes through the approval gate) unless the model explicitly ends
+ * with SAFE *and* the response was not truncated. A truncated reply
+ * (`stop_reason === "max_tokens"`) or any reply that does not clearly end in
+ * SAFE is treated as risky — we never skip the gate on an ambiguous answer.
+ */
+export function parseRemediation(text: string, stopReason?: string | null): Remediation {
+  const trimmed = text.trim();
+  const summary = trimmed.replace(/\b(RISKY|SAFE)\s*$/i, "").trim();
+  const truncated = stopReason === "max_tokens";
+  const endsSafe = /\bSAFE\s*$/i.test(trimmed);
+  return { summary: summary || trimmed, risky: truncated || !endsSafe };
 }
 
 async function proposeWithClaude(input: {
@@ -123,6 +141,6 @@ async function proposeWithClaude(input: {
     max_tokens: 512,
     messages: [{ role: "user", content: prompt }],
   });
-  const text = res.content.map((b) => b.text ?? "").join("").trim();
-  return { summary: text.replace(/\b(RISKY|SAFE)\s*$/i, "").trim(), risky: /RISKY\s*$/i.test(text) };
+  const text = res.content.map((b) => b.text ?? "").join("");
+  return parseRemediation(text, res.stop_reason);
 }
