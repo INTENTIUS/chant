@@ -16,7 +16,14 @@ jobs:
         with:
           node-version: '24'
           cache: 'npm'
-          registry-url: 'https://registry.npmjs.org'
+          # Deliberately NOT setting registry-url: that flag makes
+          # actions/setup-node write an .npmrc with `_authToken=${NODE_AUTH_TOKEN}`,
+          # and NODE_AUTH_TOKEN defaults to the literal placeholder
+          # `XXXXX-XXXXX-XXXXX-XXXXX` when not provided — which shadows OIDC and
+          # forces token auth (the EOTP failure on lexicon-docker-v0.1.15).
+          # Without registry-url there's no .npmrc; npm publish detects the OIDC
+          # id-token environment and exchanges for a short-lived publish token
+          # via the trusted-publisher record. Mirrors publish.yml.
       - run: npm install
 
       - name: Extract lexicon name from tag
@@ -41,8 +48,6 @@ jobs:
       - name: Run tests
         run: npx vitest run lexicons/${{ steps.meta.outputs.name }}
 
-      - name: Publish
+      - name: Publish (OIDC trusted publishing)
         working-directory: lexicons/${{ steps.meta.outputs.name }}
-        run: |
-          echo "//registry.npmjs.org/:_authToken=${{ secrets.NPM_TOKEN }}" > ../../.npmrc
-          npm publish --access public
+        run: npm publish --access public --provenance
