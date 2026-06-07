@@ -6,10 +6,10 @@ description: Capture, diff, and plan against deployed infrastructure — the obs
 ## Synopsis
 
 ```
-chant lifecycle snapshot <env> [lexicon]
+chant lifecycle snapshot <env> [lexicon] [--src <dir>]
 chant lifecycle show <env>
-chant lifecycle diff <env> [--live]
-chant lifecycle plan <env> [--json] [--owned]
+chant lifecycle diff <env> [--live] [--src <dir>]
+chant lifecycle plan <env> [--json] [--owned] [--src <dir>]
 chant lifecycle log [env]
 ```
 
@@ -18,6 +18,15 @@ chant lifecycle log [env]
 `chant lifecycle` captures point-in-time snapshots of deployed infrastructure by querying the cloud provider API and saving the result to a git orphan branch. Snapshots enable drift detection — comparing what's currently built against what was last deployed, and (with `--live`) against what's actually in the cloud right now.
 
 The environment name (e.g. `dev`, `staging`, `prod`) must be declared in `chant.config.ts` under `environments`.
+
+`snapshot`, `diff`, and `plan` build your declarations to compare against live state. By default they build the project root (`.`). For a mixed-layout project — chant infrastructure in `src/` alongside application code that has import side effects (starts a server, opens a connection) — set `sourceDir` in `chant.config.ts` so the lifecycle build only synthesizes the infra:
+
+```ts
+// chant.config.ts
+export default { lexicons: ["k8s"], sourceDir: "src" };
+```
+
+The `--src <dir>` flag overrides `sourceDir` for a single invocation. Use the same source root for `snapshot` and `diff` so their build digests stay comparable.
 
 For the conceptual model behind these commands — observational vs. authoritative state, resources vs. artifacts, when drift detection earns its keep — see [Drift Detection](/chant/concepts/drift-detection/).
 

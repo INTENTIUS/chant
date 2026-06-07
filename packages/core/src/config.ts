@@ -10,6 +10,7 @@ import type { OwnershipMarker } from "./ownership";
 export const ChantConfigSchema = z.object({
   lexicons: z.array(z.string().min(1)).optional(),
   environments: z.array(z.string().min(1)).optional(),
+  sourceDir: z.string().min(1).optional(),
   lint: z.record(z.string(), z.unknown()).optional(),
   ownership: z.object({
     stack: z.string().min(1).optional(),
@@ -29,6 +30,15 @@ export interface ChantConfig {
 
   /** Environment names (e.g. ["staging", "prod"]) */
   environments?: string[];
+
+  /**
+   * Directory (relative to the project root) that holds the chant infrastructure
+   * source. Lifecycle commands (`snapshot`/`diff`/`plan`) build from here instead
+   * of the project root, so a mixed-layout project — chant `src/` alongside app
+   * code that has import side effects — can scope the build to just the infra.
+   * Defaults to "." (the project root). The `--src` flag overrides it.
+   */
+  sourceDir?: string;
 
   /** Lint configuration (rules, extends, overrides, plugins) */
   lint?: LintConfig;

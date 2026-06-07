@@ -12,6 +12,20 @@ import type { LifecycleSnapshot } from "../../lifecycle/types";
 import type { SerializerResult } from "../../serializer";
 import type { ObservationLexicon, ResourceMetadata, ArtifactMetadata } from "../../lexicon";
 import type { BuildResult } from "../../build";
+import type { ParsedArgs } from "../registry";
+import type { ChantConfig } from "../../config";
+
+/**
+ * Resolve the build root for a lifecycle command. The project root (where
+ * chant.config.ts lives) is always ".", but the *build* can be scoped to a
+ * subdirectory so a mixed-layout project — chant `src/` next to app code with
+ * import side effects — only synthesizes its infra. Precedence: `--src` flag,
+ * then `config.sourceDir`, then "." (the root). Snapshot/diff/plan all use this
+ * so their build digests stay consistent.
+ */
+function resolveBuildRoot(args: ParsedArgs, config: ChantConfig): string {
+  return resolve(args.src ?? config.sourceDir ?? ".");
+}
 
 /**
  * chant lifecycle snapshot <environment> [lexicon]
@@ -44,7 +58,7 @@ export async function runLifecycleSnapshot(ctx: CommandContext): Promise<number>
   const targetSerializers = targetPlugins.map((p) => p.serializer);
 
   // Build first to get entity names and build output
-  const buildResult = await build(projectPath, targetSerializers);
+  const buildResult = await build(resolveBuildRoot(args, config), targetSerializers);
   if (buildResult.errors.length > 0) {
     console.error(formatError({ message: "Build failed — fix errors before taking a snapshot" }));
     return 1;
@@ -149,9 +163,9 @@ export async function runLifecycleDiff(ctx: CommandContext): Promise<number> {
     ? plugins.filter((p) => p.name === lexiconFilter).map((p) => p.serializer)
     : serializers;
 
-  // Build to get current state
-  const projectPath = resolve(".");
-  const buildResult = await build(projectPath, targetSerializers);
+  // Build to get current state (from the configured source root, not necessarily ".")
+  const { config } = await loadChantConfig(resolve("."));
+  const buildResult = await build(resolveBuildRoot(args, config), targetSerializers);
   if (buildResult.errors.length > 0) {
     console.error(formatError({ message: "Build failed — fix errors before diffing" }));
     return 1;
@@ -425,8 +439,8 @@ export async function runLifecyclePlan(ctx: CommandContext): Promise<number> {
     ? plugins.filter((p) => p.name === lexiconFilter).map((p) => p.serializer)
     : serializers;
 
-  const projectPath = resolve(".");
-  const buildResult = await build(projectPath, targetSerializers);
+  const { config } = await loadChantConfig(resolve("."));
+  const buildResult = await build(resolveBuildRoot(args, config), targetSerializers);
   if (buildResult.errors.length > 0) {
     console.error(formatError({ message: "Build failed — fix errors before planning" }));
     return 1;

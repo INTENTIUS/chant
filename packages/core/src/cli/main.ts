@@ -49,6 +49,7 @@ export function parseArgs(args: string[]): ParsedArgs {
     useComposites: false,
     reportFile: undefined,
     skill: undefined,
+    src: undefined,
   };
 
   let i = 0;
@@ -111,6 +112,8 @@ export function parseArgs(args: string[]): ParsedArgs {
       result.useComposites = true;
     } else if (arg === "--skill") {
       result.skill = args[++i];
+    } else if (arg === "--src") {
+      result.src = args[++i];
     } else if (arg === "--local") {
       result.local = true;
     } else if (arg === "--temporal") {
@@ -332,9 +335,14 @@ async function main(): Promise<void> {
     process.exit(1);
   }
 
-  // For compound commands (e.g. "run list"), args.path is the subcommand,
-  // so always use "." as the project path. For simple commands, use args.path.
-  const projectPath = match.compound ? (args.extraPositional || ".") : args.path;
+  // For compound commands (e.g. "run list", "lifecycle plan <env>"), the first
+  // positional is a subcommand argument — an environment, op, or lexicon name —
+  // not a project path. Plugins always load from the cwd; the handler reads its
+  // own positionals from args.extraPositional. Using extraPositional as the path
+  // here pointed plugin resolution at e.g. "./local" for `lifecycle plan local`,
+  // which then fell through to import-detection on an empty file set and failed
+  // with "No lexicon detected" even though chant.config.ts lists the lexicons.
+  const projectPath = match.compound ? "." : args.path;
   const plugins = match.def.requiresPlugins
     ? await loadPluginsOrExit(projectPath)
     : [];
