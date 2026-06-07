@@ -9,7 +9,8 @@ The [`alert-triage`](https://github.com/INTENTIUS/chant/tree/main/examples/alert
 example is the capstone (L5) of the [getting-started](https://github.com/INTENTIUS/chant/tree/main/examples/getting-started)
 golden example. It is a Temporal-driven incident-triage app: an alert comes in,
 a phased workflow classifies it, gathers context, proposes a remediation, pauses
-for human approval when the change is risky, then notifies. chant synthesizes the
+for human approval when the change is risky, applies it (a clearly-stubbed step),
+then notifies. chant synthesizes the
 Kubernetes manifests; the triage workflow itself is hand-written Temporal — the
 ["Raw Temporal + chant"](/chant/concepts/deployment-paths/) split.
 
@@ -87,7 +88,7 @@ your own builds of the worker and webhook to run the app in-cluster; the local
 |---|---|
 | `src/` | chant manifests — webhook (`WebApp`) and worker (`WorkerPool`) |
 | `activities/triage.ts` | the triage activities (the agent — stub + Claude opt-in) |
-| `activities/workflow.ts` | the Temporal workflow (classify → context → propose → gate → notify) |
+| `activities/workflow.ts` | the Temporal workflow (classify → context → propose → gate → apply → notify) |
 | `activities/worker.ts` | the worker that registers them |
 | `app/` | the event sources (webhook, drift) and the demo alert |
 

@@ -26,8 +26,8 @@ steps, not arbitrary app logic.)
 |---|---|
 | `src/config.ts` | pinned image refs (replace with your own builds) |
 | `src/workloads.ts` | chant manifests — the webhook (`WebApp` → Deployment + Service + Ingress + PDB) and the worker (`WorkerPool` → Deployment + PDB, no RBAC) |
-| `activities/triage.ts` | the triage activities (raw Temporal): `classifyAlert`, `gatherContext`, `proposeRemediation`, `notifyOutcome` |
-| `activities/workflow.ts` | the triage workflow: classify → context → propose → approval gate → notify |
+| `activities/triage.ts` | the triage activities (raw Temporal): `classifyAlert`, `gatherContext`, `proposeRemediation`, `applyRemediation` (stubbed), `notifyOutcome` |
+| `activities/workflow.ts` | the triage workflow: classify → context → propose → approval gate → apply → notify |
 | `activities/worker.ts` | the Temporal worker — registers the activities + workflow, connects via the `local` profile |
 | `app/webhook.ts` | event source #1 — HTTP receiver, `POST /alert` starts a triage workflow |
 | `app/drift-source.ts` | event source #2 — `chant lifecycle plan --json` → triage each drifted resource |
@@ -71,15 +71,22 @@ offline with no key:
 - `proposeRemediation` — **stub by default; real Claude when `ANTHROPIC_API_KEY`
   is set** (and `@anthropic-ai/sdk` is installed). The first run shows chant, not
   an LLM. Override the model with `ANTHROPIC_MODEL` (default `claude-sonnet-4-6`).
+  The agent may only *escalate* risk, never de-escalate: a high/critical alert
+  always routes through the gate even if the model calls it SAFE.
+- `applyRemediation` — **clearly stubbed.** A real build would run the change
+  (kubectl, a runbook, an API call); here it just logs. The workflow calls it
+  only after a remediation clears, so it marks the proposed-vs-executed boundary.
 - `notifyOutcome` — logs the outcome; a real build would post to Slack.
 
 ## The workflow and worker
 
 `activities/workflow.ts` is the triage workflow (raw Temporal): classify →
-gather context → propose → **approval gate** → notify. Safe remediations apply
-directly; risky ones wait on the `approve-remediation` signal (up to 12h, then
-held). `activities/worker.ts` registers the activities and workflow and connects
-using the `local` profile in `chant.config.ts`.
+gather context → propose → **approval gate** → **apply** → notify. Safe
+remediations apply directly; risky ones wait on the `approve-remediation` signal
+(up to 12h, then held — and a held remediation is never applied). The apply step
+is a clearly-stubbed `applyRemediation` activity, so the example never claims to
+have executed a change it didn't. `activities/worker.ts` registers the activities
+and workflow and connects using the `local` profile in `chant.config.ts`.
 
 Run it against a local Temporal:
 

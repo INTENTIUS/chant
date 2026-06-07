@@ -6,6 +6,7 @@
 //
 // The agent is stubbed by default — deterministic, no key, runs in CI and
 // offline. When ANTHROPIC_API_KEY is set, `proposeRemediation` calls Claude.
+import { ApplicationFailure } from "@temporalio/common";
 
 export interface Alert {
   id: string;
@@ -29,6 +30,22 @@ export interface Remediation {
   summary: string;
   /** Risky remediations route through the human-approval gate. */
   risky: boolean;
+}
+
+/** High/critical alerts always route through the gate, whatever the agent says. */
+function severityRisky(severity: Severity): boolean {
+  return severity === "high" || severity === "critical";
+}
+
+/**
+ * Combine the agent's parsed reply with the alert severity. The agent may
+ * *escalate* (call a low-severity alert risky) but never *de-escalate*: a
+ * high/critical alert always routes through the gate even if the model calls it
+ * SAFE. This keeps the agent path gating at least as strictly as the
+ * deterministic stub.
+ */
+export function withSeverityFloor(parsed: Remediation, severity: Severity): Remediation {
+  return { summary: parsed.summary, risky: parsed.risky || severityRisky(severity) };
 }
 
 /** Classify severity. Deterministic stub: keyword heuristic. */
@@ -66,13 +83,24 @@ export async function proposeRemediation(input: {
   if (process.env.ANTHROPIC_API_KEY) {
     return proposeWithClaude(input);
   }
-  const risky =
-    input.classification.severity === "high" ||
-    input.classification.severity === "critical";
   return {
     summary: `Proposed (stub): mitigate "${input.alert.title}" [${input.classification.severity}]`,
-    risky,
+    risky: severityRisky(input.classification.severity),
   };
+}
+
+/**
+ * Apply the remediation. Clearly stubbed — a real build would run the change
+ * (kubectl, a runbook, an API call). The workflow calls this only once the
+ * remediation is cleared (safe directly, risky after approval), so a held
+ * remediation is never applied. This is the proposed-vs-executed boundary the
+ * capstone is built to show.
+ */
+export async function applyRemediation(input: {
+  alert: Alert;
+  remediation: Remediation;
+}): Promise<void> {
+  console.log(`[alert-triage] ${input.alert.id}: applying (stub) — ${input.remediation.summary}`);
 }
 
 /** Post the outcome. Stub logs; a real build would post to Slack. */
@@ -80,23 +108,33 @@ export async function notifyOutcome(input: {
   alert: Alert;
   remediation: Remediation;
   approved: boolean;
+  /** Whether `applyRemediation` actually ran (false → held at the gate). */
+  applied: boolean;
 }): Promise<void> {
-  const status = input.remediation.risky
-    ? input.approved
+  const status = input.applied
+    ? input.remediation.risky
       ? "applied after approval"
-      : "held — not approved"
-    : "applied";
+      : "applied"
+    : "held — not approved";
   console.log(`[alert-triage] ${input.alert.id}: ${input.remediation.summary} — ${status}`);
 }
 
 // ── Real-agent path (opt-in) ──────────────────────────────────────────────────
 
+interface AnthropicRequest {
+  model: string;
+  max_tokens: number;
+  messages: Array<{ role: "user" | "assistant"; content: string }>;
+}
+
+interface AnthropicResponse {
+  content: Array<{ type: string; text?: string }>;
+  stop_reason?: string | null;
+}
+
 interface MinimalAnthropic {
   messages: {
-    create(body: unknown): Promise<{
-      content: Array<{ type: string; text?: string }>;
-      stop_reason?: string | null;
-    }>;
+    create(body: AnthropicRequest): Promise<AnthropicResponse>;
   };
 }
 
@@ -125,10 +163,16 @@ async function proposeWithClaude(input: {
   let Anthropic: new () => MinimalAnthropic;
   try {
     Anthropic = ((await import(pkg)) as { default: new () => MinimalAnthropic }).default;
-  } catch {
-    throw new Error(
-      "ANTHROPIC_API_KEY is set but @anthropic-ai/sdk is not installed — run `npm i @anthropic-ai/sdk`.",
-    );
+  } catch (err) {
+    // Only "module not found" means the optional dep is absent. Any other import
+    // error (the package is present but fails to load) must surface its real cause.
+    const code = (err as { code?: string }).code;
+    if (code === "MODULE_NOT_FOUND" || code === "ERR_MODULE_NOT_FOUND") {
+      throw new Error(
+        "ANTHROPIC_API_KEY is set but @anthropic-ai/sdk is not installed — run `npm i @anthropic-ai/sdk`.",
+      );
+    }
+    throw err;
   }
   const client = new Anthropic();
   const model = process.env.ANTHROPIC_MODEL ?? "claude-sonnet-4-6";
@@ -136,11 +180,26 @@ async function proposeWithClaude(input: {
     `Alert: ${input.alert.title}\nSeverity: ${input.classification.severity}\n` +
     `Context: ${input.context.signals.join("; ")}\n\n` +
     `Propose a one-line remediation. End with RISKY or SAFE.`;
-  const res = await client.messages.create({
-    model,
-    max_tokens: 512,
-    messages: [{ role: "user", content: prompt }],
-  });
+  let res: AnthropicResponse;
+  try {
+    res = await client.messages.create({
+      model,
+      max_tokens: 512,
+      messages: [{ role: "user", content: prompt }],
+    });
+  } catch (err) {
+    // 4xx (bad key, bad model, malformed request) will never succeed on retry —
+    // fail the activity non-retryably so Temporal stops instead of masking the
+    // cause as doomed retries. 5xx / network errors fall through to normal retry.
+    const status = (err as { status?: number }).status;
+    if (typeof status === "number" && status >= 400 && status < 500) {
+      throw ApplicationFailure.nonRetryable(
+        `Anthropic API rejected the request (${status}): ${(err as Error).message}`,
+        "AnthropicClientError",
+      );
+    }
+    throw err;
+  }
   const text = res.content.map((b) => b.text ?? "").join("");
-  return parseRemediation(text, res.stop_reason);
+  return withSeverityFloor(parseRemediation(text, res.stop_reason), input.classification.severity);
 }

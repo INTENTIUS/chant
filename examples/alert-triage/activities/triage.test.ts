@@ -3,8 +3,10 @@ import {
   classifyAlert,
   gatherContext,
   proposeRemediation,
+  applyRemediation,
   notifyOutcome,
   parseRemediation,
+  withSeverityFloor,
   type Alert,
 } from "./triage";
 
@@ -52,10 +54,46 @@ describe("triage activities (stub path)", () => {
     expect(r.risky).toBe(false);
   });
 
+  test("applyRemediation (stub) runs without throwing", async () => {
+    await expect(
+      applyRemediation({ alert, remediation: { summary: "x", risky: false } }),
+    ).resolves.toBeUndefined();
+  });
+
   test("notifyOutcome runs without throwing", async () => {
     await expect(
-      notifyOutcome({ alert, remediation: { summary: "x", risky: false }, approved: true }),
+      notifyOutcome({
+        alert,
+        remediation: { summary: "x", risky: false },
+        approved: true,
+        applied: true,
+      }),
     ).resolves.toBeUndefined();
+  });
+});
+
+describe("withSeverityFloor (agent may escalate, never de-escalate)", () => {
+  test("critical + SAFE reply → still risky (no de-escalation)", () => {
+    const r = withSeverityFloor({ summary: "restart", risky: false }, "critical");
+    expect(r.risky).toBe(true);
+  });
+
+  test("high + SAFE reply → still risky", () => {
+    expect(withSeverityFloor({ summary: "x", risky: false }, "high").risky).toBe(true);
+  });
+
+  test("low + SAFE reply → not risky", () => {
+    expect(withSeverityFloor({ summary: "x", risky: false }, "low").risky).toBe(false);
+  });
+
+  test("low + RISKY reply → risky (agent escalation respected)", () => {
+    expect(withSeverityFloor({ summary: "x", risky: true }, "low").risky).toBe(true);
+  });
+
+  test("preserves the summary", () => {
+    expect(withSeverityFloor({ summary: "drain node", risky: false }, "medium").summary).toBe(
+      "drain node",
+    );
   });
 });
 

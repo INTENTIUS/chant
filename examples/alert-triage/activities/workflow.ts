@@ -9,7 +9,7 @@ import { proxyActivities, defineSignal, setHandler, condition } from "@temporali
 import type * as activities from "./triage";
 import type { Alert } from "./triage";
 
-const { classifyAlert, gatherContext, proposeRemediation, notifyOutcome } =
+const { classifyAlert, gatherContext, proposeRemediation, applyRemediation, notifyOutcome } =
   proxyActivities<typeof activities>({ startToCloseTimeout: "1 minute" });
 
 /** Approve a risky remediation. */
@@ -31,5 +31,13 @@ export async function alertTriage(alert: Alert): Promise<void> {
     await condition(() => approved, "12h");
   }
 
-  await notifyOutcome({ alert, remediation, approved });
+  // The proposed-vs-executed boundary: apply only when the remediation is
+  // cleared. A held (unapproved) remediation is never executed.
+  let applied = false;
+  if (approved) {
+    await applyRemediation({ alert, remediation });
+    applied = true;
+  }
+
+  await notifyOutcome({ alert, remediation, approved, applied });
 }
