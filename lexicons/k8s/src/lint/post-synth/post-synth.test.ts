@@ -854,7 +854,7 @@ spec:
 // ── WK8301: Probes required ────────────────────────────────────────
 
 describe("WK8301: Probes required", () => {
-  test("flags container without probes", () => {
+  test("flags port-serving container without probes", () => {
     const ctx = makeCtx(JSON.stringify({
       apiVersion: "apps/v1",
       kind: "Deployment",
@@ -862,7 +862,9 @@ describe("WK8301: Probes required", () => {
       spec: {
         template: {
           spec: {
-            containers: [{ name: "app", image: "app:1.0" }],
+            containers: [
+              { name: "app", image: "app:1.0", ports: [{ containerPort: 8080 }] },
+            ],
           },
         },
       },
@@ -870,6 +872,24 @@ describe("WK8301: Probes required", () => {
     const diags = wk8301.check(ctx);
     expect(diags.length).toBeGreaterThanOrEqual(1);
     expect(diags[0].checkId).toBe("WK8301");
+  });
+
+  test("skips port-less worker Deployment (no inbound traffic to probe)", () => {
+    const ctx = makeCtx(JSON.stringify({
+      apiVersion: "apps/v1",
+      kind: "Deployment",
+      metadata: { name: "worker" },
+      spec: {
+        template: {
+          spec: {
+            // A queue/Temporal worker — long-running, no port, no probes by design.
+            containers: [{ name: "worker", image: "worker:1.0" }],
+          },
+        },
+      },
+    }));
+    const diags = wk8301.check(ctx);
+    expect(diags.length).toBe(0);
   });
 
   test("passes with both probes", () => {
@@ -884,6 +904,7 @@ describe("WK8301: Probes required", () => {
               {
                 name: "app",
                 image: "app:1.0",
+                ports: [{ containerPort: 8080 }],
                 livenessProbe: { httpGet: { path: "/healthz", port: 8080 } },
                 readinessProbe: { httpGet: { path: "/readyz", port: 8080 } },
               },
