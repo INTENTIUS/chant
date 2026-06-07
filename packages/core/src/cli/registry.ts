@@ -51,6 +51,8 @@ export interface ParsedArgs {
   owned?: boolean;
   /** `chant import --verbatim` — keep server-defaulted fields in live import */
   verbatim?: boolean;
+  /** `chant lifecycle … --src <dir>` — build root override for lifecycle commands */
+  src?: string;
 }
 
 /**

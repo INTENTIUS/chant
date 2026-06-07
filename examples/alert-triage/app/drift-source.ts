@@ -6,11 +6,11 @@
 //   npm run drift            # real: plan the env, triage any drift
 //   npm run drift -- --demo  # inject a sample drift to exercise the pipeline
 //
-// NOTE: the real path needs the env deployed + a snapshot, and `chant lifecycle
-// plan` currently builds the project dir with lexicon auto-detection, which does
-// not yet handle this example's mixed layout (chant src/ alongside app/ +
-// activities/). Until that lands (#252), `--demo` is the reliable demonstration;
-// the real path degrades to "no drift" rather than failing.
+// The real path needs the env deployed + a live cluster to plan against;
+// `chant lifecycle plan` scopes its build to `sourceDir: "src"` (chant.config.ts)
+// so this mixed-layout project (chant src/ alongside app/ + activities/) plans
+// cleanly (#252). With no cluster reachable the plan errors and we degrade to
+// "no drift"; `--demo` is the reliable offline demonstration.
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { fileURLToPath } from "node:url";

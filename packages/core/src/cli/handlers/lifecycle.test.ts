@@ -1,4 +1,5 @@
 import { describe, test, expect, vi, beforeEach } from "vitest";
+import { sep } from "node:path";
 import { createMockPlugin, staticDescribeResources, staticListArtifacts } from "@intentius/chant-test-utils";
 import type { LexiconPlugin, ResourceMetadata } from "../../lexicon";
 import type { BuildResult } from "../../build";
@@ -85,6 +86,8 @@ describe("runLifecycleDiff --live", () => {
     buildMock.mockReset();
     fetchLifecycleMock.mockReset();
     readSnapshotMock.mockReset();
+    loadChantConfigMock.mockReset();
+    loadChantConfigMock.mockResolvedValue({ config: {} });
   });
 
   test("surfaces drift between previous snapshot and live state", async () => {
@@ -122,6 +125,46 @@ describe("runLifecycleDiff --live", () => {
     expect(output).toContain("status:");
     expect(output).toContain("CREATE_COMPLETE");
     expect(output).toContain("UPDATE_COMPLETE");
+  });
+
+  test("builds from config.sourceDir on a mixed-layout project", async () => {
+    buildMock.mockResolvedValue(makeBuildResult({ aws: ["bucket"] }));
+    fetchLifecycleMock.mockResolvedValue(undefined);
+    readSnapshotMock.mockResolvedValue(null);
+    loadChantConfigMock.mockResolvedValue({ config: { sourceDir: "src" } });
+
+    const plugins: LexiconPlugin[] = [
+      createMockPlugin({ name: "aws", describeResources: staticDescribeResources({}) }),
+    ];
+    const exit = await runLifecycleDiff({
+      args: makeArgs({ path: "diff", extraPositional: "prod", extraPositional2: "aws", live: true }),
+      plugins,
+      serializers: plugins.map((p) => p.serializer),
+    });
+
+    expect(exit).toBe(0);
+    const builtPath = buildMock.mock.calls[0][0] as string;
+    expect(builtPath.endsWith(`${sep}src`)).toBe(true);
+  });
+
+  test("--src overrides config.sourceDir for the build root", async () => {
+    buildMock.mockResolvedValue(makeBuildResult({ aws: ["bucket"] }));
+    fetchLifecycleMock.mockResolvedValue(undefined);
+    readSnapshotMock.mockResolvedValue(null);
+    loadChantConfigMock.mockResolvedValue({ config: { sourceDir: "src" } });
+
+    const plugins: LexiconPlugin[] = [
+      createMockPlugin({ name: "aws", describeResources: staticDescribeResources({}) }),
+    ];
+    const exit = await runLifecycleDiff({
+      args: makeArgs({ path: "diff", extraPositional: "prod", extraPositional2: "aws", live: true, src: "infra" }),
+      plugins,
+      serializers: plugins.map((p) => p.serializer),
+    });
+
+    expect(exit).toBe(0);
+    const builtPath = buildMock.mock.calls[0][0] as string;
+    expect(builtPath.endsWith(`${sep}infra`)).toBe(true);
   });
 
   test("warns and skips lexicons without describeResources", async () => {
