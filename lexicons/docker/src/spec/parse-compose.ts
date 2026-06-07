@@ -46,7 +46,13 @@ export function parseComposeSpec(_data: Buffer): ComposeParseResult[] {
         { name: "ports", type: "string[]", description: "Published ports" },
         { name: "volumes", type: "string[]", description: "Volume mounts" },
         { name: "networks", type: "string[]", description: "Networks to attach" },
-        { name: "depends_on", type: "string[]", description: "Service dependencies" },
+        {
+          name: "depends_on",
+          // Compose `depends_on` is a oneOf: short list-form, or long form with a
+          // wait condition (service_started/healthy/completed_successfully).
+          type: 'string[] | Record<string, { condition: "service_started" | "service_healthy" | "service_completed_successfully"; restart?: boolean; required?: boolean }>',
+          description: "Service dependencies (short list-form, or long form with a wait condition)",
+        },
         { name: "restart", type: "string", description: "Restart policy" },
         { name: "labels", type: "Record<string, string>", description: "Container labels" },
         { name: "healthcheck", type: "object", description: "Health check configuration" },
