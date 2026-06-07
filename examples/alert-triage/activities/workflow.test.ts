@@ -22,7 +22,10 @@ afterAll(async () => {
   await env?.teardown();
 });
 
-function mockActivities(risky: boolean, record: { approved?: boolean; calls: string[] }) {
+function mockActivities(
+  risky: boolean,
+  record: { approved?: boolean; applied?: boolean; calls: string[] },
+) {
   return {
     classifyAlert: async (): Promise<Classification> => {
       record.calls.push("classify");
@@ -36,15 +39,19 @@ function mockActivities(risky: boolean, record: { approved?: boolean; calls: str
       record.calls.push("propose");
       return { summary: "mock fix", risky };
     },
-    notifyOutcome: async (input: { approved: boolean }): Promise<void> => {
+    applyRemediation: async (): Promise<void> => {
+      record.calls.push("apply");
+    },
+    notifyOutcome: async (input: { approved: boolean; applied: boolean }): Promise<void> => {
       record.calls.push("notify");
       record.approved = input.approved;
+      record.applied = input.applied;
     },
   };
 }
 
 async function runTriage(opts: { risky: boolean; signal?: boolean }) {
-  const record: { approved?: boolean; calls: string[] } = { calls: [] };
+  const record: { approved?: boolean; applied?: boolean; calls: string[] } = { calls: [] };
   const taskQueue = `alert-triage-test-${counter++}`;
   const worker = await Worker.create({
     connection: env.nativeConnection,
@@ -69,23 +76,28 @@ async function runTriage(opts: { risky: boolean; signal?: boolean }) {
 }
 
 describe("alert-triage workflow", () => {
-  test("safe remediation auto-approves and skips the gate", async () => {
+  test("safe remediation auto-approves, applies, and skips the gate", async () => {
     const { record, durationMs } = await runTriage({ risky: false });
-    expect(record.calls).toEqual(["classify", "context", "propose", "notify"]);
+    expect(record.calls).toEqual(["classify", "context", "propose", "apply", "notify"]);
     expect(record.approved).toBe(true);
+    expect(record.applied).toBe(true);
     expect(durationMs).toBeLessThan(60 * 60 * 1000); // no 12h wait
   }, 120_000);
 
-  test("risky remediation proceeds once the approval signal arrives", async () => {
+  test("risky remediation applies once the approval signal arrives", async () => {
     const { record, durationMs } = await runTriage({ risky: true, signal: true });
     expect(record.approved).toBe(true);
-    expect(record.calls).toContain("notify");
+    expect(record.applied).toBe(true);
+    expect(record.calls).toEqual(["classify", "context", "propose", "apply", "notify"]);
     expect(durationMs).toBeLessThan(60 * 60 * 1000); // signal short-circuits the gate
   }, 120_000);
 
-  test("risky remediation without approval waits out the gate and is held", async () => {
+  test("risky remediation without approval waits out the gate and is never applied", async () => {
     const { record, durationMs } = await runTriage({ risky: true });
     expect(record.approved).toBe(false);
+    expect(record.applied).toBe(false);
+    expect(record.calls).not.toContain("apply");
+    expect(record.calls).toContain("notify");
     expect(durationMs).toBeGreaterThan(11 * 60 * 60 * 1000); // ~12h gate timeout
   }, 120_000);
 });

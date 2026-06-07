@@ -13,6 +13,7 @@
 // the real path degrades to "no drift" rather than failing.
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
+import { fileURLToPath } from "node:url";
 import { startTriage } from "./triage-client.js";
 import { alertFromDrift, type DriftEntry } from "./parse.js";
 
@@ -31,7 +32,7 @@ async function detectDrift(): Promise<DriftEntry[]> {
   const { stdout } = await execFileAsync(
     "chant",
     ["lifecycle", "plan", env, "k8s", "--json"],
-    { cwd: new URL("..", import.meta.url).pathname },
+    { cwd: fileURLToPath(new URL("..", import.meta.url)) },
   );
   const plan = JSON.parse(stdout) as {
     entries?: Array<{ name: string; type?: string; action: string }>;
