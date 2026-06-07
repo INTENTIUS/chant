@@ -1,5 +1,7 @@
 # AWS ALB UI Service
 
+> **New to chant?** Start with the [golden teaching example](../getting-started/) — synthesis → lint → Ops → the lifecycle dial over one set of declarations — then come back here for a production-shaped deployment.
+
 UI Fargate service behind a shared Application Load Balancer, with a GitLab CI pipeline for Docker build and CloudFormation deployment.
 
 **Depends on:** [gitlab-aws-alb-infra](../gitlab-aws-alb-infra/) — deploy the shared infrastructure first.

@@ -1,5 +1,7 @@
 # temporal-crdb-deploy
 
+> **New to chant?** Start with the [golden teaching example](../getting-started/) — synthesis → lint → Ops → the lifecycle dial over one set of declarations — then come back here for a production-shaped deployment.
+
 A 9-node CockroachDB cluster across 3 GCP regions, deployed across **two layers**: **Argo CD** reconciles the declarative manifests, and a **Temporal workflow** orchestrates the procedural steps Argo can't express.
 
 The chant sources (`src/`) declare all infrastructure and K8s resources *and* the Argo Applications that reconcile them (`src/argo/`). The Temporal workflow in `temporal/` bootstraps those Applications, waits for Argo to converge, and runs the genuinely procedural phases: build → **Argo: infra** → DNS delegation gate → certs → **Argo: ESO + CockroachDB** → init → backup.

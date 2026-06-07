@@ -1,5 +1,7 @@
 # CockroachDB Multi-Region on GKE
 
+> **New to chant?** Start with the [golden teaching example](../getting-started/) — synthesis → lint → Ops → the lifecycle dial over one set of declarations — then come back here for a production-shaped deployment.
+
 One CockroachDB cluster spanning **3 GCP regions** — 3 nodes per region, 9 nodes total.
 
 Uses a single global VPC with native cross-region routing (~25-45ms). No VPN, no two-pass deploy, single IAM system. A **management cluster** with Config Connector creates all GCP infra via `kubectl apply`, then K8s manifests are applied to the 3 workload clusters. Chant's multi-stack layout: one project, subdirectories per region, each producing separate output stacks.

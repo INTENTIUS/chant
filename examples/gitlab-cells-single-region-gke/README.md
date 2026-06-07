@@ -1,5 +1,7 @@
 # gitlab-cells-single-region-gke
 
+> **New to chant?** Start with the [golden teaching example](../getting-started/) — synthesis → lint → Ops → the lifecycle dial over one set of declarations — then come back here for a production-shaped deployment.
+
 Real GitLab with **Cells architecture** on GKE. 4 lexicons (GCP, K8s, Helm, GitLab) generate all infrastructure, K8s resources, Helm charts, and CI pipeline for a multi-cell GitLab deployment.
 
 ## Skills

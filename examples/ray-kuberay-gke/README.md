@@ -1,5 +1,7 @@
 # Ray + KubeRay on GKE
 
+> **New to chant?** Start with the [golden teaching example](../getting-started/) — synthesis → lint → Ops → the lifecycle dial over one set of declarations — then come back here for a production-shaped deployment.
+
 A persistent Ray cluster on GKE backed by Filestore shared storage and GCS object-store spillover. Config Connector manages the GCP infrastructure; KubeRay manages the Ray cluster lifecycle.
 
 ## Agent walkthrough

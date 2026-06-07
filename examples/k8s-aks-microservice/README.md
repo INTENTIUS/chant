@@ -1,5 +1,7 @@
 # k8s-aks-microservice
 
+> **New to chant?** Start with the [golden teaching example](../getting-started/) — synthesis → lint → Ops → the lifecycle dial over one set of declarations — then come back here for a production-shaped deployment.
+
 Production-grade AKS microservice with cross-lexicon builds — Azure infrastructure via ARM + Kubernetes workloads.
 
 ## What it builds
