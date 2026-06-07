@@ -54,6 +54,28 @@ explicit `imagePullPolicy` or a read-only root filesystem). Those are guidance,
 not failures — `chant lint` is the gate. Hardening the workload against them is a
 good exercise.
 
+## L2 — deploy it locally
+
+`deploy.op.ts` wraps the same L1 declarations in an **Op**: a named, phased
+workflow. `chant run deploy` runs it in-process on the local executor — no
+Temporal server — building the manifests and applying them to your current kube
+context. Point that context at a local k3d cluster:
+
+```bash
+# One-time: a throwaway local cluster.
+k3d cluster create getting-started
+
+# Build the manifests, then kubectl apply them — phased, with retries.
+npm run deploy        # → chant run deploy
+```
+
+The Op has two phases: **Build** (`npm run build` → `k8s.yaml`) and **Apply**
+(`kubectl apply -f k8s.yaml`). Same declarations as L1 — L2 only adds how they
+are operated. Gates, schedules, and crash-resume need `--temporal`; that is L3.
+
+This deploy step is not run in CI (there is no cluster there). CI validates that
+the Op *compiles* to a well-formed workflow; running it is this local step.
+
 ## A standalone first taste
 
 If you want to run *something* in under a minute with no cluster and no Docker,
