@@ -19,7 +19,7 @@ Start here if you are new to chant. Stop at whatever level answers your question
 | **L2 — Ops, local** | wrap the declarations in an Op that `kubectl apply`s to a local k3d cluster | k3d (Docker) |
 | **L3 — gate + Temporal** | a human-approval gate before apply | a local Temporal (Docker) |
 | **L4 — the lifecycle dial** | observe drift, reconcile, apply against the cluster | the k3d cluster |
-| **L5 — capstone** | the [alert-triage app](../alert-triage/) ([#74](https://github.com/INTENTIUS/chant/issues/74)) — manifests + triage Op so far | the full local stack |
+| **L5 — capstone** | the [alert-triage app](../alert-triage/) ([#74](https://github.com/INTENTIUS/chant/issues/74)) — manifests + triage activities so far | the full local stack |
 
 ## L1 — what is here
 
