@@ -32,6 +32,7 @@ export * from "./lint/declarative";
 export * from "./lint/selectors";
 export * from "./lint/named-checks";
 export * from "./lint/post-synth";
+export * from "./lint/policy";
 export * from "./lint/rule-loader";
 export * from "./lint/discover";
 export * from "./import/parser";

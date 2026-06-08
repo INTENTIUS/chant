@@ -66,10 +66,35 @@ language." Org policy is post-synth checks the org authors — nothing more.
 
 ## Gating an apply
 
-Build-time policy fails fast, before anything is applied. Gating an *apply*
-through a policy pass — run the policy, then block or pause for a signed,
-audited override before `ApplyOp` — slots into the existing
-[gate / `onFailure`](/chant/guide/ops/) model and is tracked as a follow-on.
+`chant build` already fails on a policy violation, so any pipeline that builds
+before applying is gated. To gate an apply *inside* an [Op](/chant/guide/ops/),
+add a **`policyGate()`** step before the apply phase:
+
+```ts
+import { Op, phase, build, policyGate, kubectlApply } from "@intentius/chant-lexicon-temporal";
+
+export default Op({
+  name: "deploy",
+  phases: [
+    phase("Build", [build(".")]),
+    // Re-runs lint.policies over the resolved resources; a violation fails the
+    // workflow here, so nothing is applied.
+    phase("Policy", [policyGate({ env: "prod" })]),
+    phase("Apply", [kubectlApply("k8s.yaml")]),
+  ],
+});
+```
+
+`policyGate` builds the project, runs `lint.policies` with the given `env` (or
+`ownership.env`), and **blocks** on any violation — non-retryable and
+single-attempt (a deterministic violation is not worth retrying). It is a plain
+activity, so it gates under both the local executor and Temporal. A clean
+evaluation passes through to the apply.
+
+> **Signed override (deferred).** Pausing for a human, signed, audited override
+> to proceed *despite* a violation requires conditional gating in the generated
+> workflow — it is tracked as a follow-on, not in this version. Today `policyGate`
+> blocks; loosen the policy or fix the violation to proceed.
 
 ## Try it
 

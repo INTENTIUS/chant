@@ -2,8 +2,8 @@ import { build } from "../../build";
 import { loadChantConfig, resolveOwnershipMarker } from "../../config";
 import type { Serializer, SerializerResult } from "../../serializer";
 import type { LexiconPlugin } from "../../lexicon";
-import { runPostSynthChecks, isPostSynthCheck } from "../../lint/post-synth";
-import type { PostSynthCheck } from "../../lint/post-synth";
+import { runPostSynthChecks } from "../../lint/post-synth";
+import { loadPolicyChecks } from "../../lint/policy";
 import { sortedJsonReplacer } from "../../utils";
 import { formatError, formatWarning, formatSuccess, formatBold, formatInfo } from "../format";
 import { writeFileSync, mkdirSync } from "fs";
@@ -34,25 +34,6 @@ export interface BuildOptions {
   env?: string;
 }
 
-/** Load project-authored policy checks from `lint.policies` file paths. */
-async function loadPolicyChecks(paths: string[], configDir: string): Promise<PostSynthCheck[]> {
-  const checks: PostSynthCheck[] = [];
-  for (const p of paths) {
-    const resolved = resolve(configDir, p);
-    let mod: Record<string, unknown>;
-    try {
-      mod = (await import(resolved)) as Record<string, unknown>;
-    } catch (err) {
-      throw new Error(
-        `Failed to load policy "${p}": ${err instanceof Error ? err.message : String(err)}`,
-      );
-    }
-    for (const value of Object.values(mod)) {
-      if (isPostSynthCheck(value)) checks.push(value);
-    }
-  }
-  return checks;
-}
 
 /**
  * Build command result

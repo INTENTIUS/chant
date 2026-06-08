@@ -30,3 +30,6 @@ export type { NativeApplyArgs, CompensateApplyArgs, ApplyTarget, DeleteMode } fr
 
 export { waitForArgoSync, defaultArgoStatusFetcher, ArgoSyncFailedError } from "./argo";
 export type { WaitForArgoSyncArgs, ArgoAppStatus, ArgoStatusFetcher } from "./argo";
+
+export { policyGate } from "./policy";
+export type { PolicyGateArgs } from "./policy";
