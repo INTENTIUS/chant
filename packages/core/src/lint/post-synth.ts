@@ -10,6 +10,12 @@ export interface PostSynthContext {
   outputs: Map<string, string | SerializerResult>;
   /** Map of entity name to Declarable entity */
   entities: Map<string, Declarable>;
+  /**
+   * The environment/stack being built, if known (from `--env` or the project's
+   * `ownership.env`). Lets an organizational policy branch on environment —
+   * e.g. "no public buckets in prod". Undefined when no environment is set.
+   */
+  env?: string;
   /** Raw build result object */
   buildResult: {
     outputs: Map<string, string | SerializerResult>;
@@ -44,7 +50,9 @@ export interface PostSynthDiagnostic {
 }
 
 /**
- * A post-synthesis check that validates build output.
+ * A post-synthesis check that validates build output. Lexicons ship these as
+ * domain rules; projects author them as organizational policy (see the
+ * `lint.policies` config and the Organizational Policy guide).
  */
 export interface PostSynthCheck {
   /** Unique identifier for this check */
@@ -55,16 +63,30 @@ export interface PostSynthCheck {
   check(ctx: PostSynthContext): PostSynthDiagnostic[];
 }
 
+/** Structural type guard — used to collect project-authored policy checks. */
+export function isPostSynthCheck(value: unknown): value is PostSynthCheck {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    typeof (value as PostSynthCheck).id === "string" &&
+    typeof (value as PostSynthCheck).description === "string" &&
+    typeof (value as PostSynthCheck).check === "function"
+  );
+}
+
 /**
- * Run a set of post-synthesis checks against a build result.
+ * Run a set of post-synthesis checks against a build result. `env` is threaded
+ * into the context so a check can branch on the current environment/stack.
  */
 export function runPostSynthChecks(
   checks: PostSynthCheck[],
   buildResult: PostSynthContext["buildResult"],
+  env?: string,
 ): PostSynthDiagnostic[] {
   const ctx: PostSynthContext = {
     outputs: buildResult.outputs,
     entities: buildResult.entities,
+    env,
     buildResult,
   };
 

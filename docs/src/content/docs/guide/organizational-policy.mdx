@@ -1,0 +1,78 @@
+---
+title: Organizational Policy
+description: Enforce org-specific rules ("no public buckets in prod", "every workload has a cost-center tag") as project-authored, environment-aware checks.
+---
+
+import { Code } from '@astrojs/starlight/components';
+import policySrc from '../../../../../lexicons/k8s/examples/org-policy/policies/org.ts?raw';
+import configSrc from '../../../../../lexicons/k8s/examples/org-policy/chant.config.ts?raw';
+
+Lexicon lint answers "is this a coherent resource for its domain." It does not
+express **organizational policy** — "no public load balancers in prod," "every
+workload carries a cost-center tag," "instance types from this allowlist." Those
+are cross-cutting, org-specific, and often need to branch on environment.
+
+chant does not add a separate policy language for this. Organizational policy is
+**project-authored [post-synth checks](/chant/lexicon-authoring/post-synth-checks/),
+run by the existing engine, with the current environment in context** — the same
+`PostSynthCheck` shape lexicons ship as domain rules, authored by your org.
+
+## Writing a policy
+
+A policy reads the resolved resources and returns diagnostics. A diagnostic with
+`severity: "error"` fails `chant build` — that is the gate. The check receives
+`ctx.env`, so a rule can branch on the environment.
+
+<Code code={policySrc} lang="typescript" title="policies/org.ts" />
+
+`ORG-COST-CENTER` runs in every environment; `ORG-PROD-TLS` only fires when the
+build is for `prod`.
+
+## Registering it
+
+Add the policy file(s) to `lint.policies` in `chant.config.ts`. This is distinct
+from `lint.plugins` (declarative lint rules) by authorship and phase — policies
+reason about the **resolved** resources during build — but it is the same engine.
+
+<Code code={configSrc} lang="typescript" title="chant.config.ts" />
+
+## Running it
+
+Policy runs during `chant build`. Pass the environment with `--env` (or set
+`ownership.env` in the config):
+
+```bash
+chant build src                 # cost-center enforced; prod-only rules dormant
+chant build src --env dev       # same — ORG-PROD-TLS skipped
+chant build src --env prod      # ORG-PROD-TLS now enforced
+```
+
+For the example above, the `prod` build fails:
+
+```
+error: [policy:ORG-PROD-TLS] [storefront] Ingress "storefront" must terminate TLS in prod
+```
+
+Policy evaluates the **synthesized artifact**, offline — it never touches the
+cloud. Live checks are [`chant lifecycle`](/chant/cli/lifecycle/), not this.
+
+## Why not a separate engine
+
+chant already has the machinery: a [post-synth phase](/chant/lexicon-authoring/post-synth-checks/)
+that reasons about resolved resources, project-authored rule loading, and the
+[Op gate model](/chant/guide/ops/) for the apply side. A separate policy language
+(Rego/OPA-style) would duplicate the lint engine and break "TypeScript is the one
+language." Org policy is post-synth checks the org authors — nothing more.
+
+## Gating an apply
+
+Build-time policy fails fast, before anything is applied. Gating an *apply*
+through a policy pass — run the policy, then block or pause for a signed,
+audited override before `ApplyOp` — slots into the existing
+[gate / `onFailure`](/chant/guide/ops/) model and is tracked as a follow-on.
+
+## Try it
+
+The full example is
+[`lexicons/k8s/examples/org-policy`](https://github.com/INTENTIUS/chant/tree/main/lexicons/k8s/examples/org-policy)
+— it is exercised in CI (clean in dev, blocked in prod).

@@ -52,6 +52,7 @@ export default defineConfig({
 						{ label: 'Presets', slug: 'guide/presets' },
 						{ label: 'Layered Configuration', slug: 'guide/layered-configuration' },
 						{ label: 'Linting & Type-Checking', slug: 'guide/linting' },
+						{ label: 'Organizational Policy', slug: 'guide/organizational-policy' },
 						{ label: 'Building', slug: 'guide/building' },
 						{ label: 'Ops', slug: 'guide/ops' },
 						{ label: 'Local vs Temporal', slug: 'guide/local-vs-temporal' },

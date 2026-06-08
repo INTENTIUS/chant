@@ -51,6 +51,7 @@ export function parseArgs(args: string[]): ParsedArgs {
     reportFile: undefined,
     skill: undefined,
     src: undefined,
+    env: undefined,
   };
 
   let i = 0;
@@ -115,6 +116,8 @@ export function parseArgs(args: string[]): ParsedArgs {
       result.skill = args[++i];
     } else if (arg === "--src") {
       result.src = args[++i];
+    } else if (arg === "--env") {
+      result.env = args[++i];
     } else if (arg === "--local") {
       result.local = true;
     } else if (arg === "--temporal") {
@@ -201,6 +204,7 @@ Options:
                         - list: text (default) or json
                         - lint: stylish (default), json, or sarif
   -d, --lexicon <name>  Build only the specified lexicon (e.g. aws, gitlab)
+      --env <name>      Environment for organizational policy evaluation (build)
   -t, --template <name> Init template (e.g. node-pipeline, docker-build)
   --skill <name>        Init: install only this skill from the lexicon
   --fix                 Auto-fix fixable issues (lint command)

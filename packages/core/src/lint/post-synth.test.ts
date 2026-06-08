@@ -111,3 +111,33 @@ describe("post-synth checks", () => {
     expect(diags).toHaveLength(0);
   });
 });
+
+describe("environment-aware checks (#201)", () => {
+  // A policy that only fires in prod — the new env-branching primitive.
+  const prodOnly: PostSynthCheck = {
+    id: "ENV-PROD",
+    description: "fires only in prod",
+    check(ctx) {
+      return ctx.env === "prod"
+        ? [{ checkId: "ENV-PROD", severity: "error", message: "blocked in prod" }]
+        : [];
+    },
+  };
+
+  test("env is threaded into the context", () => {
+    expect(runPostSynthChecks([prodOnly], createBuildResult(), "prod")).toHaveLength(1);
+    expect(runPostSynthChecks([prodOnly], createBuildResult(), "dev")).toHaveLength(0);
+    expect(runPostSynthChecks([prodOnly], createBuildResult())).toHaveLength(0); // env undefined
+  });
+});
+
+describe("isPostSynthCheck", () => {
+  test("accepts a well-formed check and rejects others", async () => {
+    const { isPostSynthCheck } = await import("./post-synth");
+    expect(isPostSynthCheck({ id: "X", description: "d", check: () => [] })).toBe(true);
+    expect(isPostSynthCheck({ id: "X", description: "d" })).toBe(false); // no check fn
+    expect(isPostSynthCheck({ check: () => [] })).toBe(false); // no id/description
+    expect(isPostSynthCheck(null)).toBe(false);
+    expect(isPostSynthCheck("nope")).toBe(false);
+  });
+});
