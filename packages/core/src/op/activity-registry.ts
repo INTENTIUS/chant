@@ -63,10 +63,17 @@ export interface ActivityProfile {
  * Dynamically import the lexicon's `TEMPORAL_ACTIVITY_PROFILES` (pure data, no
  * Temporal SDK). Returns an empty record if the lexicon is absent — the
  * executor then falls back to built-in defaults per step.
+ *
+ * Imports the lexicon's `/config` entry, not its root index. `/config` is a
+ * side-effect-free data module; the root index pulls in the plugin, serializer,
+ * composites, and re-exported Op machinery, any of which could throw on load
+ * and make this silently return `{}` — which would drop every profiled step to
+ * the 5-minute default while the Temporal path (reading the same table) kept the
+ * declared timeout. Importing the narrow module keeps the two executors agreed.
  */
 export async function loadProfiles(): Promise<Record<string, ActivityProfile>> {
   try {
-    const spec = "@intentius/chant-lexicon-temporal";
+    const spec = "@intentius/chant-lexicon-temporal/config";
     const mod = (await import(spec)) as { TEMPORAL_ACTIVITY_PROFILES?: Record<string, ActivityProfile> };
     return mod.TEMPORAL_ACTIVITY_PROFILES ?? {};
   } catch {

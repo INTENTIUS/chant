@@ -110,6 +110,22 @@ describe("runOpLocally — retry + timeout", () => {
     const config = op({ phases: [{ name: "P", steps: [{ kind: "activity", fn: "always" }] }] });
     await expect(runOpLocally(config, new Map([["always", always]]), PROFILES)).rejects.toBeInstanceOf(OpRunFailure);
   });
+
+  test("honors a step's non-default profile timeout (not the default)", async () => {
+    // The default profile would time out at 50ms; the step is tagged longInfra,
+    // which gives it room. Guards the bug where a profiled step silently got the
+    // default cap (local vs --temporal disagreement).
+    const slow: ActivityFn = async () => { await new Promise((r) => setTimeout(r, 150)); return "done"; };
+    const profiles = {
+      fastIdempotent: { startToCloseTimeout: "50ms", retry: { maximumAttempts: 1 } },
+      longInfra: { startToCloseTimeout: "5m", retry: { maximumAttempts: 1 } },
+    };
+    const config = op({
+      phases: [{ name: "P", steps: [{ kind: "activity", fn: "slow", profile: "longInfra" }] }],
+    });
+    const result = await runOpLocally(config, new Map([["slow", slow]]), profiles);
+    expect(result.records[0].status).toBe("ok");
+  });
 });
 
 describe("runOpLocally — cancellation", () => {
