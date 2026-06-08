@@ -1,4 +1,5 @@
 import { listCommand, printListResult } from "../commands/list";
+import { describeCommand, printDescribeResult } from "../commands/describe";
 import { importCommand, importFromLive, printImportResult } from "../commands/import";
 import type { ResourceSelector } from "../../lexicon";
 import { formatError, formatSuccess, formatWarning } from "../format";
@@ -18,6 +19,35 @@ export async function runList(ctx: CommandContext): Promise<number> {
   });
 
   printListResult(result);
+  return result.success ? 0 : 1;
+}
+
+export async function runDescribe(ctx: CommandContext): Promise<number> {
+  const { args } = ctx;
+  // `chant describe <component> [path]` — component is the first positional
+  // (args.path), the optional project dir is the second (args.extraPositional).
+  const component = args.path;
+  if (!component || component === ".") {
+    console.error(formatError({
+      message: "Component is required: chant describe <component> [path]",
+      hint: "Run `chant list` to see component names.",
+    }));
+    return 1;
+  }
+
+  const describeFormat = (args.format || "text") as "text" | "json";
+  if (describeFormat !== "text" && describeFormat !== "json") {
+    console.error(formatError({ message: `Invalid format for describe: ${describeFormat}. Expected 'text' or 'json'.` }));
+    return 1;
+  }
+
+  const result = await describeCommand({
+    component,
+    path: args.extraPositional ?? ".",
+    format: describeFormat,
+  });
+
+  printDescribeResult(result);
   return result.success ? 0 : 1;
 }
 

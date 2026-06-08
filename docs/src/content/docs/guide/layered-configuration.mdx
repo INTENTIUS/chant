@@ -1,0 +1,79 @@
+---
+title: Layered Configuration
+description: One composite, many environments — per-environment config with plain object spread.
+---
+
+import { Code } from '@astrojs/starlight/components';
+import configSrc from '../../../../../lexicons/k8s/examples/layered-config/src/config.ts?raw';
+import webSrc from '../../../../../lexicons/k8s/examples/layered-config/src/web.ts?raw';
+
+A common need: **one composite, deployed across several environments, with
+per-environment differences.** [Presets](/chant/guide/presets/) cover the
+single-level case — shared defaults spread into resources. Layered configuration
+is the multi-level generalization: a base config overridden per environment,
+including deep-merged nested objects — using nothing but plain TypeScript object
+spread. No `deepMerge` helper, no per-environment files, no codegen.
+
+## The pattern
+
+Define one `base`, then layer each environment over it. Override only what
+differs; everything else inherits.
+
+<Code code={configSrc} lang="typescript" title="src/config.ts" />
+
+Then instantiate the **same** composite once per environment. Each call is the
+blessed composite factory call with a static (const) prop bag — the layering
+already happened in `config.ts`:
+
+<Code code={webSrc} lang="typescript" title="src/web.ts" />
+
+All three build into one manifest. Per-environment names (`web-dev` /
+`web-staging` / `web-prod`) keep their resources distinct and collision-free.
+
+## Why it resolves at synthesis
+
+chant's [evaluability rules](/chant/concepts/where-values-come-from/) (EVL)
+require resource inputs to resolve to static data. Object spread from a `const`
+qualifies, at any depth:
+
+- `{ ...base, replicas: 6 }` — const spread. Allowed (the same rule presets use).
+- `{ ...base.labels, "acme.io/env": "prod" }` — **static member-access spread**.
+  Allowed: reading a known property of a `const` is static. Only a *computed*
+  access like `config[key]` is rejected (EVL003).
+- `deepMerge(base, prod)` — a **function-call** initializer. Rejected by EVL004.
+  This is the one thing that does not work, and it is why the pattern uses native
+  nested spread instead of a merge helper.
+
+So the shallow level is `...base` and each nested object you want to merge gets
+its own `...base.<key>`. A nested object you *don't* spread is replaced
+wholesale — the same rule presets follow — which is often what you want
+(`securityContext` in the example is set once on the base and inherited
+unchanged).
+
+## Stable per-environment names
+
+Give each environment its own `name` so resources don't collide in a single
+build. In the example the base deliberately omits `name`, and each environment
+supplies its own (`web-dev`, `web-staging`, `web-prod`). Thread an `env` or
+`name` through the composite the same way for any multi-environment stack.
+
+## When you outgrow it
+
+This pattern stays in plain TypeScript on purpose — it is deterministic and
+auditable, and every environment is an explicit, readable object. If you later
+need to know the *effective* config for one environment without merging the
+layers in your head, that is what
+[`chant describe`](/chant/cli/describe/) projects.
+
+## Try it
+
+The full example is
+[`lexicons/k8s/examples/layered-config`](https://github.com/INTENTIUS/chant/tree/main/lexicons/k8s/examples/layered-config)
+— it builds in CI.
+
+```bash
+cd lexicons/k8s/examples/layered-config
+npm install
+npm run build   # → k8s.yaml (three environments)
+npm run lint    # the gate — clean
+```
