@@ -25,6 +25,14 @@ The lifecycle is still there when you want it. You write your own. Ops are decla
 
 Decoupled first. Durable when you ask.
 
+## Owning less
+
+A pure synthesis core also owns less *machinery*. Because the build path makes no API calls, holds no state, and emits native spec, it needs little of the apparatus a full lifecycle pulls in at plan time — no provider SDKs, no state backend, no credentials, no network. What runs to turn source into output is a type-checker, an evaluator over a [static subset of TypeScript](/chant/concepts/typescript-as-data/), and the lexicon packages for the formats you target. That is the whole of it.
+
+A smaller build-time surface is a smaller thing to audit, and a smaller blast radius if something upstream is compromised: fewer packages execute during synthesis, and none of them reach the network or your cloud credentials. This is a property of the architecture, not a security feature — it falls out of synthesis being side-effect-free. The same boundary is described value-by-value in [Where Values Come From](/chant/concepts/where-values-come-from/).
+
+The scope is exact. This is the **build path**. The apply side is whatever lifecycle you brought — the CloudFormation CLI, a CI pipeline, an agent, [Temporal](/chant/concepts/durable-workflows/) — and it carries its own dependencies and its own surface. chant shrinks the build-time surface; it does not remove the apply-time one. Owning less is a build-time property, and only that.
+
 ## Design decisions and their consequences
 
 These tools make different design decisions. Each decision has consequences — some favorable for certain workflows, some not. This isn't a feature matrix; it's a comparison of architectural choices.
