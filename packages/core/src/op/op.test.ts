@@ -197,3 +197,40 @@ describe("pre-built shortcuts", () => {
     expect(a.profile).toBe("longInfra");
   });
 });
+
+describe("profile routing (opts.profile sets the step profile, never leaks into args)", () => {
+  it("shell() routes profile to the step, keeps env in args", () => {
+    const a = shell("docker compose push", { env: { TAG: "v1" }, profile: "longInfra" });
+    expect(a.profile).toBe("longInfra");
+    expect(a.args?.cmd).toBe("docker compose push");
+    expect(a.args?.env).toEqual({ TAG: "v1" });
+    // The footgun this fixes: profile must NOT end up as an activity arg.
+    expect("profile" in (a.args ?? {})).toBe(false);
+  });
+
+  it("shell() without profile leaves the step unprofiled (defaults apply downstream)", () => {
+    const a = shell("echo hi", { env: { A: "1" } });
+    expect("profile" in a).toBe(false);
+    expect(a.args?.env).toEqual({ A: "1" });
+  });
+
+  it("build() accepts a profile override and does not leak it into args", () => {
+    const a = build("./p", { profile: "longInfra" });
+    expect(a.profile).toBe("longInfra");
+    expect(a.args?.path).toBe("./p");
+    expect("profile" in (a.args ?? {})).toBe(false);
+  });
+
+  it("kubectlApply() lets opts.profile override the longInfra default", () => {
+    const a = kubectlApply("dist/infra.yaml", { profile: "k8sWait" });
+    expect(a.profile).toBe("k8sWait");
+    expect(a.args?.manifest).toBe("dist/infra.yaml");
+    expect("profile" in (a.args ?? {})).toBe(false);
+  });
+
+  it("waitForStack() supports the argoSync profile", () => {
+    const a = waitForStack("argo-app", { profile: "argoSync" });
+    expect(a.profile).toBe("argoSync");
+    expect("profile" in (a.args ?? {})).toBe(false);
+  });
+});
