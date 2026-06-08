@@ -57,6 +57,12 @@ export interface ParsedArgs {
   env?: string;
   /** `chant graph --stacks` — render the cross-stack apply-ordering graph */
   stacks?: boolean;
+  /** `chant lifecycle affected --base <ref>` — base git ref to diff against */
+  base?: string;
+  /** `chant lifecycle affected --head <ref>` — head git ref (default: working tree) */
+  head?: string;
+  /** `chant lifecycle affected --include-dependents` — add downstream consumers */
+  includeDependents?: boolean;
 }
 
 /**
