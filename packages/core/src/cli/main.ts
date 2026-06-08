@@ -118,6 +118,8 @@ export function parseArgs(args: string[]): ParsedArgs {
       result.src = args[++i];
     } else if (arg === "--env") {
       result.env = args[++i];
+    } else if (arg === "--stacks") {
+      result.stacks = true;
     } else if (arg === "--local") {
       result.local = true;
     } else if (arg === "--temporal") {
@@ -172,7 +174,7 @@ Ops:
   run cancel <name>     Cancel the active workflow run (requires --force)
   run log <name>        Show run history for an Op
 
-  graph                 Show Op dependency graph
+  graph                 Show Op dependency graph (--stacks for cross-stack order)
 
 Lifecycle (alias: lc):
   lifecycle snapshot <env>  Query API, save metadata to orphan branch

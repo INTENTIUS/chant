@@ -20,6 +20,115 @@ export interface BuildManifest {
     { source: string; entity: string; attribute: string }
   >;
   deployOrder: string[];
+  /** Cross-stack apply-ordering graph (see {@link computeStackGraph}). */
+  stackGraph: StackGraph;
+}
+
+/**
+ * The cross-stack (cross-lexicon) apply-ordering graph chant already computes
+ * while resolving cross-lexicon references — surfaced as tool-agnostic data for
+ * an orchestrator to consume. chant exposes the order; it does not drive the
+ * apply.
+ */
+export interface StackGraph {
+  /** Stacks (lexicon partitions) in the build. */
+  nodes: string[];
+  /**
+   * Consumer→producer edges: `from` imports a value `to` exports, so `to` must
+   * apply before `from`. Inferred from cross-lexicon references.
+   */
+  edges: Array<{ from: string; to: string }>;
+  /** A flat applicable sequence — every producer before its consumers. */
+  order: string[];
+  /**
+   * Levels: stacks in the same wave have no inter-dependency and may apply
+   * concurrently. `order` flattened with parallelism made explicit.
+   */
+  waves: string[][];
+  /** Dependency cycles, if any (each a list of stacks). Normally empty. */
+  cycles: string[][];
+}
+
+/**
+ * Compute the cross-stack apply-ordering graph from resolved entities. Edges are
+ * inferred from cross-lexicon attribute references (a resource in lexicon A
+ * referencing an attribute of a resource in lexicon B ⇒ A depends on B). Returns
+ * the edge set plus a topological order, parallel-safe waves, and any cycles.
+ */
+export function computeStackGraph(
+  entities: Map<string, Declarable>,
+  lexiconNames: string[],
+): StackGraph {
+  const edges: Array<{ from: string; to: string }> = [];
+  const edgeSet = new Set<string>();
+  const addEdge = (from: string, to: string): void => {
+    if (from === to) return;
+    const key = `${from}\0${to}`;
+    if (edgeSet.has(key)) return;
+    edgeSet.add(key);
+    edges.push({ from, to });
+  };
+
+  const walk = (value: unknown, consumer: string, visited: Set<unknown>): void => {
+    if (value === null || value === undefined || typeof value !== "object") return;
+    if (visited.has(value)) return;
+    visited.add(value);
+    if (value instanceof AttrRef) {
+      const parent = value.parent.deref();
+      const producer = parent ? (parent as Record<string, unknown>).lexicon : undefined;
+      if (typeof producer === "string" && producer !== consumer) addEdge(consumer, producer);
+      return;
+    }
+    if (isLexiconOutput(value)) return;
+    if (Array.isArray(value)) {
+      for (const item of value) walk(item, consumer, visited);
+      return;
+    }
+    for (const val of Object.values(value as Record<string, unknown>)) walk(val, consumer, visited);
+  };
+
+  for (const [, entity] of entities) {
+    const consumer = entity.lexicon;
+    const visited = new Set<unknown>();
+    for (const val of Object.values(entity as unknown as Record<string, unknown>)) {
+      walk(val, consumer, visited);
+    }
+    if ("props" in entity && typeof entity.props === "object" && entity.props !== null) {
+      walk(entity.props, consumer, visited);
+    }
+  }
+
+  // Dependency map: node → producers it depends on.
+  const nodes = lexiconNames.length
+    ? [...lexiconNames]
+    : [...new Set([...entities.values()].map((e) => e.lexicon))];
+  const deps = new Map<string, Set<string>>();
+  for (const n of nodes) deps.set(n, new Set());
+  for (const { from, to } of edges) {
+    if (!deps.has(from)) deps.set(from, new Set());
+    if (!deps.has(to)) deps.set(to, new Set());
+    deps.get(from)!.add(to);
+  }
+
+  // Kahn layering: a node is ready once every producer it depends on is placed.
+  const remaining = new Set(deps.keys());
+  const waves: string[][] = [];
+  const order: string[] = [];
+  while (remaining.size > 0) {
+    const wave = [...remaining]
+      .filter((n) => [...deps.get(n)!].every((d) => !remaining.has(d)))
+      .sort();
+    if (wave.length === 0) break; // remaining nodes form a cycle
+    for (const n of wave) {
+      remaining.delete(n);
+      order.push(n);
+    }
+    waves.push(wave);
+  }
+  const cycles: string[][] = remaining.size > 0 ? [[...remaining].sort()] : [];
+
+  edges.sort((a, b) => `${a.from}\0${a.to}`.localeCompare(`${b.from}\0${b.to}`));
+  return { nodes: [...nodes].sort(), edges, order, waves, cycles };
 }
 
 /**
@@ -288,7 +397,8 @@ function computeDeployOrder(
  */
 function generateManifest(
   lexiconNames: string[],
-  lexiconOutputs: LexiconOutput[]
+  lexiconOutputs: LexiconOutput[],
+  entities: Map<string, Declarable>
 ): BuildManifest {
   const outputsRecord: Record<
     string,
@@ -307,6 +417,7 @@ function generateManifest(
     lexicons: lexiconNames,
     outputs: outputsRecord,
     deployOrder: computeDeployOrder(lexiconNames, lexiconOutputs),
+    stackGraph: computeStackGraph(entities, lexiconNames),
   };
 }
 
@@ -453,7 +564,7 @@ export async function build(
 
   // Step 8: Generate manifest
   const lexiconNames = Array.from(partitions.keys());
-  const manifest = generateManifest(lexiconNames, lexiconOutputs);
+  const manifest = generateManifest(lexiconNames, lexiconOutputs, discoveryResult.entities);
 
   return {
     outputs,

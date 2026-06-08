@@ -55,6 +55,8 @@ export interface ParsedArgs {
   src?: string;
   /** `chant build --env <name>` — environment for organizational policy evaluation */
   env?: string;
+  /** `chant graph --stacks` — render the cross-stack apply-ordering graph */
+  stacks?: boolean;
 }
 
 /**

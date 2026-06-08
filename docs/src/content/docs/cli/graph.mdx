@@ -6,7 +6,7 @@ description: Print the Op dependency graph
 ## Synopsis
 
 ```
-chant graph [path]
+chant graph [path] [--stacks] [--json]
 ```
 
 ## Description
@@ -14,6 +14,26 @@ chant graph [path]
 `chant graph` discovers all `*.op.ts` files under the given path and prints the dependency edges declared via the `depends` field of each Op.
 
 If no Ops declare dependencies the output is `No Op dependencies`. If no `*.op.ts` files are found the output is `No Ops found`.
+
+## `--stacks` — cross-stack apply order
+
+`chant graph --stacks [path]` renders the **cross-stack apply-ordering graph** instead of the Op graph. chant resolves cross-lexicon references during build (a resource in one stack referencing an attribute of a resource in another) and already knows the order — a stack that *exports* a value must apply before the stack that *imports* it. `--stacks` surfaces that as tool-agnostic data for your orchestrator (CI, an Op, a platform tool). chant **exposes** the order; it does not drive the apply.
+
+```bash
+chant graph --stacks ./infra
+chant graph --stacks ./infra --json
+```
+
+The output is the stacks, their dependency edges (consumer → producer), a topological apply **order**, and **waves** — levels whose stacks have no inter-dependency and may apply concurrently. `--json` emits the full graph (`nodes`, `edges`, `order`, `waves`, `cycles`). A dependency cycle is reported and exits non-zero.
+
+```
+Apply order (waves apply top-to-bottom; a wave's stacks are parallel-safe):
+  1. aws
+  2. k8s
+
+Dependencies (consumer → producer):
+  k8s → aws
+```
 
 ## Usage
 
@@ -41,7 +61,7 @@ The format is `<dependency> → <dependent>`, meaning the left Op must complete 
 | Code | Meaning |
 |------|---------|
 | 0 | Success |
-| 1 | Discovery errors |
+| 1 | Discovery errors, or (with `--stacks`) a dependency cycle |
 
 ## See Also
 
