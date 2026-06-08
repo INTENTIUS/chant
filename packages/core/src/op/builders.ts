@@ -130,3 +130,17 @@ export const shell = (
 /** Run `chant teardown` in the given project directory. Uses `longInfra` profile. */
 export const teardown = (path: string): ActivityStep =>
   activity("chantTeardown", { path }, "longInfra");
+
+/**
+ * Gate an apply on organizational policy: build the project and run its
+ * `lint.policies` over the resolved resources, blocking the workflow on any
+ * violation. Place it before the apply phase. `env` (or `ownership.env`) lets a
+ * policy branch on environment. Single-attempt (`policyCheck` profile) — a
+ * deterministic violation is not retried.
+ */
+export const policyGate = (opts?: { env?: string; path?: string }): ActivityStep =>
+  activity(
+    "policyGate",
+    { path: opts?.path ?? ".", ...(opts?.env ? { env: opts.env } : {}) },
+    "policyCheck",
+  );

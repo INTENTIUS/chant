@@ -143,6 +143,16 @@ export const TEMPORAL_ACTIVITY_PROFILES = {
       nonRetryableErrorTypes: ["ArgoSyncFailedError"],
     },
   },
+
+  /**
+   * Organizational policy gate (`policyGate`): build the project and evaluate
+   * `lint.policies`. Deterministic — a violation is the same on every attempt —
+   * so a single attempt, short timeout, no retry. Fails fast in both executors.
+   */
+  policyCheck: {
+    startToCloseTimeout: "5m",
+    retry: { maximumAttempts: 1 },
+  },
 } as const satisfies Record<string, TemporalActivityProfile>;
 
 export interface TemporalWorkerProfile {

@@ -4,7 +4,7 @@
 
 import { describe, expect, it } from "vitest";
 import { Op, phase, activity, gate, build, kubectlApply, helmInstall,
-         waitForStack, gitlabPipeline, lifecycleSnapshot, shell, teardown } from "./builders";
+         waitForStack, gitlabPipeline, lifecycleSnapshot, shell, teardown, policyGate } from "./builders";
 import { DECLARABLE_MARKER, type Declarable } from "../declarable";
 
 // ── Op() ──────────────────────────────────────────────────────────────────────
@@ -195,6 +195,20 @@ describe("pre-built shortcuts", () => {
     expect(a.fn).toBe("chantTeardown");
     expect(a.args?.path).toBe("./project");
     expect(a.profile).toBe("longInfra");
+  });
+
+  it("policyGate() produces a policyGate activity with the single-attempt policyCheck profile", () => {
+    const a = policyGate({ env: "prod" });
+    expect(a.fn).toBe("policyGate");
+    expect(a.args?.path).toBe("."); // defaults to the project dir
+    expect(a.args?.env).toBe("prod");
+    expect(a.profile).toBe("policyCheck");
+  });
+
+  it("policyGate() with no opts defaults path to '.' and omits env", () => {
+    const a = policyGate();
+    expect(a.args?.path).toBe(".");
+    expect("env" in (a.args ?? {})).toBe(false);
   });
 });
 

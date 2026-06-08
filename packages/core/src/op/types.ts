@@ -45,7 +45,7 @@ export interface ActivityStep {
    * Key from TEMPORAL_ACTIVITY_PROFILES controlling timeout + retry.
    * Default: "fastIdempotent"
    */
-  profile?: "fastIdempotent" | "longInfra" | "k8sWait" | "humanGate" | "argoSync";
+  profile?: "fastIdempotent" | "longInfra" | "k8sWait" | "humanGate" | "argoSync" | "policyCheck";
   /**
    * Surface this activity's return value as a workflow search attribute.
    *
