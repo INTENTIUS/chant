@@ -1,6 +1,9 @@
-import { expect } from "vitest";
+import { describe, test, expect } from "vitest";
 import { describeAllExamples } from "@intentius/chant-test-utils/example-harness";
-import { k8sSerializer } from "@intentius/chant-lexicon-k8s";
+import { buildCommand } from "@intentius/chant/cli/commands/build";
+import { k8sSerializer, k8sPlugin } from "@intentius/chant-lexicon-k8s";
+import { resolve, join } from "path";
+import { tmpdir } from "os";
 
 describeAllExamples(
   {
@@ -78,3 +81,33 @@ describeAllExamples(
     },
   },
 );
+
+// ── org-policy: environment-aware organizational policy (#201) ──────────────
+// describeAllExamples (above) builds + lints the example like any other; this
+// block exercises the *policy enforcement*, which only runs via buildCommand
+// (it loads chant.config's `lint.policies`). The TLS policy is env-gated.
+
+describe("org-policy example — environment-aware organizational policy", () => {
+  const src = resolve(import.meta.dirname, "org-policy", "src");
+  const out = join(tmpdir(), "chant-org-policy.yaml");
+  const buildEnv = (env?: string) =>
+    buildCommand({ path: src, output: out, format: "yaml", serializers: [k8sSerializer], plugins: [k8sPlugin], env });
+
+  test("builds clean with no env and in dev (prod-only policy dormant)", async () => {
+    expect((await buildEnv(undefined)).success).toBe(true);
+    expect((await buildEnv("dev")).success).toBe(true);
+  });
+
+  test("fails in prod — ORG-PROD-TLS blocks the TLS-less ingress", async () => {
+    const r = await buildEnv("prod");
+    expect(r.success).toBe(false);
+    expect(r.errors.join("\n")).toContain("ORG-PROD-TLS");
+  });
+
+  test("cost-center policy is enforced in every environment (compliant here)", async () => {
+    // The workload carries the cost-center label, so ORG-COST-CENTER passes
+    // even with no env — proving the always-on policy ran and was satisfied.
+    const r = await buildEnv(undefined);
+    expect(r.errors.join("\n")).not.toContain("ORG-COST-CENTER");
+  });
+});

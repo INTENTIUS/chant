@@ -2,7 +2,7 @@ import { build } from "../../build";
 import { loadChantConfig, resolveOwnershipMarker } from "../../config";
 import type { Serializer, SerializerResult } from "../../serializer";
 import type { LexiconPlugin } from "../../lexicon";
-import { runPostSynthChecks } from "../../lint/post-synth";
+import { runPostSynthChecks, isPostSynthCheck } from "../../lint/post-synth";
 import type { PostSynthCheck } from "../../lint/post-synth";
 import { sortedJsonReplacer } from "../../utils";
 import { formatError, formatWarning, formatSuccess, formatBold, formatInfo } from "../format";
@@ -26,6 +26,32 @@ export interface BuildOptions {
   plugins?: LexiconPlugin[];
   /** Print summary to stderr */
   verbose?: boolean;
+  /**
+   * Environment/stack to evaluate policy against (`--env`). Falls back to the
+   * project's `ownership.env`. Passed into post-synth checks so organizational
+   * policy can branch on environment.
+   */
+  env?: string;
+}
+
+/** Load project-authored policy checks from `lint.policies` file paths. */
+async function loadPolicyChecks(paths: string[], configDir: string): Promise<PostSynthCheck[]> {
+  const checks: PostSynthCheck[] = [];
+  for (const p of paths) {
+    const resolved = resolve(configDir, p);
+    let mod: Record<string, unknown>;
+    try {
+      mod = (await import(resolved)) as Record<string, unknown>;
+    } catch (err) {
+      throw new Error(
+        `Failed to load policy "${p}": ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
+    for (const value of Object.values(mod)) {
+      if (isPostSynthCheck(value)) checks.push(value);
+    }
+  }
+  return checks;
 }
 
 /**
@@ -56,10 +82,20 @@ export async function buildCommand(options: BuildOptions): Promise<BuildResult> 
 
   // Resolve opt-in ownership marking from project config (search the infra dir
   // and its parent, where chant.config.* usually lives).
-  const { config } = await loadChantConfig(infraPath).then((r) =>
+  const loaded = await loadChantConfig(infraPath).then((r) =>
     r.configPath ? r : loadChantConfig(dirname(infraPath)),
   );
+  const config = loaded.config;
   const ownership = resolveOwnershipMarker(config);
+
+  // Environment for policy evaluation: explicit --env wins, else ownership.env.
+  const env = options.env ?? config.ownership?.env;
+  // Project-authored organizational policy checks (lint.policies), run over the
+  // resolved resources during build. Resolve paths relative to the config dir.
+  const configDir = loaded.configPath ? dirname(loaded.configPath) : infraPath;
+  const policyChecks = config.lint?.policies?.length
+    ? await loadPolicyChecks(config.lint.policies, configDir)
+    : [];
 
   // Run the build
   const result = await build(infraPath, options.serializers, undefined, { ownership });
@@ -96,7 +132,7 @@ export async function buildCommand(options: BuildOptions): Promise<BuildResult> 
       }
 
       const scopedResult = { ...result, outputs: scopedOutputs };
-      const postDiags = runPostSynthChecks(checks, scopedResult);
+      const postDiags = runPostSynthChecks(checks, scopedResult, env);
       for (const diag of postDiags) {
         const prefix = diag.entity ? `[${diag.entity}] ` : "";
         const lexiconSuffix = diag.lexicon ? ` (${diag.lexicon})` : "";
@@ -105,6 +141,19 @@ export async function buildCommand(options: BuildOptions): Promise<BuildResult> 
         } else {
           warnings.push(formatWarning({ message: `${prefix}${diag.message}${lexiconSuffix}` }));
         }
+      }
+    }
+
+    // Project-authored organizational policy — cross-cutting, so it sees every
+    // lexicon's output at once (not scoped per-plugin), with the current env.
+    if (policyChecks.length > 0) {
+      const policyDiags = runPostSynthChecks(policyChecks, result, env);
+      for (const diag of policyDiags) {
+        const prefix = diag.entity ? `[${diag.entity}] ` : "";
+        const where = diag.lexicon ? ` (${diag.lexicon})` : "";
+        const msg = `[policy:${diag.checkId}] ${prefix}${diag.message}${where}`;
+        if (diag.severity === "error") errors.push(formatError({ message: msg }));
+        else warnings.push(formatWarning({ message: msg }));
       }
     }
   }

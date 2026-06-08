@@ -29,6 +29,7 @@ export const LintConfigSchema = z.object({
     rules: z.record(z.string(), RuleConfigSchema),
   })).optional(),
   plugins: z.array(z.string()).optional(),
+  policies: z.array(z.string()).optional(),
 });
 
 /**
@@ -149,6 +150,14 @@ export interface LintConfig {
   overrides?: LintOverride[];
   /** Array of plugin file paths to load custom rules from (project-local, not inherited) */
   plugins?: string[];
+  /**
+   * Array of file paths to load project-authored organizational policy checks
+   * from — each exporting one or more {@link PostSynthCheck} objects. They run
+   * during `chant build` over the resolved resources, with the current `env` in
+   * context. Distinct from `plugins` (declarative lint rules) by authorship and
+   * phase; same engine.
+   */
+  policies?: string[];
 }
 
 /**

@@ -53,6 +53,8 @@ export interface ParsedArgs {
   verbatim?: boolean;
   /** `chant lifecycle … --src <dir>` — build root override for lifecycle commands */
   src?: string;
+  /** `chant build --env <name>` — environment for organizational policy evaluation */
+  env?: string;
 }
 
 /**

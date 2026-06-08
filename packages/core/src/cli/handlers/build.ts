@@ -44,6 +44,7 @@ export async function runBuild(ctx: CommandContext): Promise<number> {
     serializers,
     plugins,
     verbose: args.verbose,
+    env: args.env,
   });
 
   // When --lexicon filters to a subset, suppress "No serializer" warnings for excluded lexicons
