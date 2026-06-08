@@ -1,0 +1,76 @@
+---
+title: "chant describe"
+description: Show the effective, fully-resolved configuration for one component
+---
+
+## Synopsis
+
+```
+chant describe <component> [path] [flags]
+```
+
+## Description
+
+`chant describe` projects the **effective, fully-resolved** configuration for a
+single named component — its resolved property bag and the resources it produces
+— **offline** (source only, no live calls).
+
+Where `chant list` shows inventory and `chant graph` shows edges, `describe`
+shows the resolved detail for one thing. It is most useful with
+[layered configuration](/chant/guide/layered-configuration/): rather than reading
+and merging every layer by hand, ask "what is the effective config for this
+component, after every spread and override?"
+
+`<component>` is a named export:
+
+- An **exact entity name** (e.g. `webDeployment`) describes that one declarable.
+- A **composite instance** (e.g. `prodApp` from `WebApp(...)`) describes the
+  group of resources it produces (`prodAppDeployment`, `prodAppService`, …),
+  each with its resolved props.
+
+`path` is the project directory (default `.`).
+
+## Flags
+
+| Flag | Type | Default | Description |
+|------|------|---------|-------------|
+| `-f, --format` | `string` | `text` | Output format: `text` or `json` |
+
+## Usage
+
+```bash
+chant describe prodApp src
+chant describe prodApp src --format json
+chant describe webDeployment            # a single declarable, in the current dir
+```
+
+The `--json` output carries the full per-resource breakdown:
+
+```json
+{
+  "component": "prodApp",
+  "composite": true,
+  "resources": [
+    { "name": "prodAppDeployment", "lexicon": "k8s",
+      "entityType": "K8s::Apps::Deployment", "kind": "resource",
+      "props": { "metadata": { "...": "..." }, "spec": { "replicas": 6 } } }
+  ]
+}
+```
+
+## Not yet supported
+
+`describe` v1 is the resolved view. Two capabilities are deferred until there is
+demand for them:
+
+- `--explain` — per-property provenance (which layer set each value, and what it
+  overrode). Cheap only once chant owns the merge (a blessed `deepMerge`), which
+  is itself deferred.
+- `--diff <a> <b>` — compare the effective config across two environments/stacks.
+
+## Exit Codes
+
+| Code | Meaning |
+|------|---------|
+| 0 | Described successfully |
+| 1 | Component not found, or an error |

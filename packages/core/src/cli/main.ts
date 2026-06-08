@@ -11,7 +11,7 @@ import { runLint } from "./handlers/lint";
 import { runDevGenerate, runDevPublish, runDevOnboard, runDevCheckLexicon, runDevUnknown } from "./handlers/dev";
 import { runServeLsp, runServeMcp, runServeUnknown } from "./handlers/serve";
 import { runInit, runInitLexicon } from "./handlers/init";
-import { runList, runImport, runUpdate, runDoctor } from "./handlers/misc";
+import { runList, runDescribe, runImport, runUpdate, runDoctor } from "./handlers/misc";
 import { runMigrate } from "./handlers/migrate";
 import { runLifecycleSnapshot, runLifecycleShow, runLifecycleDiff, runLifecyclePlan, runLifecycleLog, runLifecycleUnknown } from "./handlers/lifecycle";
 import { runGraph } from "./handlers/graph";
@@ -154,6 +154,7 @@ Commands:
   build                 Build infrastructure from specification files
   lint                  Check specifications for issues
   list                  List discovered entities
+  describe              Show the effective config for one component
   import                Import external template into TypeScript
   migrate <file>        Translate a workflow between lexicons
                         (default: --from github --to gitlab)
@@ -230,6 +231,8 @@ Examples:
   chant lint ./infra/ --watch
   chant list ./infra/
   chant list ./infra/ --format json
+  chant describe myComponent src/
+  chant describe myComponent src/ --format json
 `);
 }
 
@@ -265,6 +268,7 @@ const registry: CommandDef[] = [
   { name: "build", requiresPlugins: true, handler: runBuild },
   { name: "lint", handler: runLint },
   { name: "list", handler: runList },
+  { name: "describe", handler: runDescribe },
   { name: "import", handler: runImport },
   { name: "migrate", handler: runMigrate },
   { name: "init", handler: runInit },

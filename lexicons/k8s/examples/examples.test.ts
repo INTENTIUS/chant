@@ -11,6 +11,24 @@ describeAllExamples(
   },
   {
     "basic-deployment": { skipLint: true },
+    "layered-config": {
+      // Layered config must lint clean — it is the example for the "one
+      // composite, many environments" pattern, so the static-spread layering
+      // must pass EVL.
+      checks: (output) => {
+        // One composite instantiated for three environments → distinct names.
+        expect(output).toContain("name: web-dev");
+        expect(output).toContain("name: web-staging");
+        expect(output).toContain("name: web-prod");
+        // Nested `labels` deep-merge: base label inherited everywhere, per-env
+        // override present, and a prod-only key that dev/staging don't get.
+        expect(output).toContain("app.kubernetes.io/part-of: acme-web");
+        expect(output).toContain("acme.io/env: prod");
+        expect(output).toContain("acme.io/tier: critical");
+        // Only prod/staging declare an ingress host (dev inherits no ingress).
+        expect(output).toContain("acme.example");
+      },
+    },
     "statefulset": {
       skipLint: true,
       checks: (output) => {
