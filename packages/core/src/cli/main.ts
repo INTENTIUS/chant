@@ -14,7 +14,7 @@ import { runInit, runInitLexicon } from "./handlers/init";
 import { runList, runDescribe, runImport, runUpdate, runDoctor } from "./handlers/misc";
 import { runVendor } from "./handlers/vendor";
 import { runMigrate } from "./handlers/migrate";
-import { runLifecycleSnapshot, runLifecycleShow, runLifecycleDiff, runLifecyclePlan, runLifecycleLog, runLifecycleUnknown } from "./handlers/lifecycle";
+import { runLifecycleSnapshot, runLifecycleShow, runLifecycleDiff, runLifecyclePlan, runLifecycleAffected, runLifecycleLog, runLifecycleUnknown } from "./handlers/lifecycle";
 import { runGraph } from "./handlers/graph";
 import { runOp, runOpList, runOpStatus, runOpSignal, runOpCancel, runOpLog } from "./handlers/run";
 
@@ -120,6 +120,12 @@ export function parseArgs(args: string[]): ParsedArgs {
       result.env = args[++i];
     } else if (arg === "--stacks") {
       result.stacks = true;
+    } else if (arg === "--base") {
+      result.base = args[++i];
+    } else if (arg === "--head") {
+      result.head = args[++i];
+    } else if (arg === "--include-dependents") {
+      result.includeDependents = true;
     } else if (arg === "--local") {
       result.local = true;
     } else if (arg === "--temporal") {
@@ -182,6 +188,7 @@ Lifecycle (alias: lc):
   lifecycle diff <env>      Compare current build against last snapshot
                             --live: query cloud now and detect drift
   lifecycle plan <env>      Typed change set (create/update/delete/adopt) vs live
+  lifecycle affected        Stacks a change affects (--base <ref> [--include-dependents])
                             --json: emit the ChangeSet as JSON
   lifecycle log [env]       History of lifecycle snapshots
 
@@ -306,6 +313,7 @@ const registry: CommandDef[] = [
   { name: "lifecycle show", handler: runLifecycleShow },
   { name: "lifecycle diff", requiresPlugins: true, handler: runLifecycleDiff },
   { name: "lifecycle plan", requiresPlugins: true, handler: runLifecyclePlan },
+  { name: "lifecycle affected", requiresPlugins: true, handler: runLifecycleAffected },
   { name: "lifecycle log", handler: runLifecycleLog },
 
   // Serve subcommands

@@ -10,6 +10,7 @@ chant lifecycle snapshot <env> [lexicon] [--src <dir>]
 chant lifecycle show <env>
 chant lifecycle diff <env> [--live] [--src <dir>]
 chant lifecycle plan <env> [--json] [--owned] [--src <dir>]
+chant lifecycle affected --base <ref> [--head <ref>] [--include-dependents] [--json]
 chant lifecycle log [env]
 ```
 
@@ -166,6 +167,43 @@ hint:  Pull and retry: `git fetch origin chant/lifecycle:chant/lifecycle` && `ch
 ```
 
 Pull the remote ref and re-run — the first snapshot is preserved, the second proceeds against the updated baseline.
+
+### `lifecycle affected`
+
+In a multi-stack project, answer "which stacks does this change affect?" without planning everything. Read-only — it returns the set; fanning `lifecycle plan` / an `ApplyOp` over it is an [Op](/chant/guide/ops/) you compose.
+
+```bash
+chant lifecycle affected --base origin/main
+chant lifecycle affected --base origin/main --include-dependents --json
+```
+
+"Affected" is two distinct things, because chant serializes cross-stack references symbolically:
+
+- **Directly changed** — the stack's built artifact differs between base and head. Caught by **artifact diff** over deterministic builds, so a comment-only or refactor-with-no-output-change edit is correctly excluded.
+- **Operationally affected (dependents)** — a stack whose own artifact is *unchanged* but which consumes an upstream export whose value changed. Its bytes don't move, yet it may need re-apply. Caught by walking the [cross-stack graph](/chant/cli/graph/) (`chant graph --stacks`) from the directly-changed set, with `--include-dependents`.
+
+A stack whose inputs come from outside synthesis (deploy-time parameters) cannot be judged from a source diff — it is reported as **indeterminate** ("external-input — cannot confirm from source"), not silently included or excluded.
+
+Builds are obtained lazily: **head** is the in-place build of the working tree (or `--head <ref>`); **base** is built from `--base <ref>` in a single throwaway worktree (auto-removed), or skipped entirely if you supply pre-built sources via the library. Because `build` is deterministic, a cached or supplied base is as trustworthy as a rebuild.
+
+`--json` emits `{ changed, dependents, indeterminate }`. The same logic is exported as `affectedStacks()` for programmatic use.
+
+**Composing it.** chant returns the set; you drive the fan-out. For example, plan only the affected stacks in CI:
+
+```bash
+chant lifecycle affected --base "$BASE_SHA" --include-dependents --json \
+  | jq -r '.changed + .dependents | unique[]' \
+  | while read stack; do chant lifecycle plan "$ENV" "$stack"; done
+```
+
+The same shape works from an Op you write — `affected` is the primitive; the fan-out (plan, gate, apply) is yours to compose. chant never blindly applies the set.
+
+| Flag | Meaning |
+|---|---|
+| `--base <ref>` | Base git ref to diff against (required). |
+| `--head <ref>` | Head ref (default: the working tree). |
+| `--include-dependents` | Add downstream consumers of changed stacks. |
+| `--json` | Emit the result as JSON. |
 
 ### `lifecycle log [env]`
 

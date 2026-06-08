@@ -5,6 +5,7 @@ import { readSnapshot, readEnvironmentSnapshots, listSnapshots, fetchLifecycle, 
 import { computeBuildDigest, diffDigests } from "../../lifecycle/digest";
 import { diffLive, diffLiveArtifacts, type LiveDiffResult, type LiveArtifactDiffResult } from "../../lifecycle/live-diff";
 import { buildChangeSet, renderChangeSet, type ChangeSet } from "../../lifecycle/change-set";
+import { affectedStacks } from "../../lifecycle/affected";
 import { loadChantConfig } from "../../config";
 import { formatError, formatWarning, formatSuccess, formatBold } from "../format";
 import type { CommandContext } from "../registry";
@@ -575,4 +576,60 @@ function printSnapshotTable(snapshot: LifecycleSnapshot): void {
       meta.status
     );
   }
+}
+
+/**
+ * chant lifecycle affected --base <ref> [--head <ref>] [--include-dependents] [--json]
+ *
+ * Read-only: report which stacks a change affects (directly-changed via artifact
+ * diff, dependents via the cross-stack graph, external-input as indeterminate).
+ * Returns the set; fanning plan/apply over it is an Op the user composes.
+ */
+export async function runLifecycleAffected(ctx: CommandContext): Promise<number> {
+  const { args, plugins } = ctx;
+  if (!args.base) {
+    console.error(formatError({
+      message: "Base ref is required: chant lifecycle affected --base <ref> [--head <ref>] [--include-dependents]",
+    }));
+    return 1;
+  }
+
+  const { config } = await loadChantConfig(resolve("."));
+  const projectPath = resolveBuildRoot(args, config);
+
+  let result;
+  try {
+    result = await affectedStacks({
+      projectPath,
+      serializers: plugins.map((p) => p.serializer),
+      baseRef: args.base,
+      headRef: args.head,
+      includeDependents: args.includeDependents,
+    });
+  } catch (err) {
+    console.error(formatError({ message: err instanceof Error ? err.message : String(err) }));
+    return 1;
+  }
+
+  if (args.json) {
+    console.log(JSON.stringify(result, null, 2));
+    return 0;
+  }
+
+  if (result.changed.length === 0 && result.dependents.length === 0) {
+    console.error(formatSuccess("No stacks affected"));
+  } else {
+    console.log(formatBold("Directly changed:"));
+    console.log(result.changed.length ? result.changed.map((s) => `  ${s}`).join("\n") : "  (none)");
+    if (args.includeDependents) {
+      console.log(formatBold("\nDependents (consume a changed stack):"));
+      console.log(result.dependents.length ? result.dependents.map((s) => `  ${s}`).join("\n") : "  (none)");
+    }
+  }
+  if (result.indeterminate.length > 0) {
+    console.error(formatWarning({
+      message: `External-input stacks — cannot confirm from source: ${result.indeterminate.join(", ")}`,
+    }));
+  }
+  return 0;
 }
