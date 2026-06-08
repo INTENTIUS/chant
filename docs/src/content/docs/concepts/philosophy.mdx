@@ -42,7 +42,7 @@ This means walk-away cost is zero. The output is standard CloudFormation, standa
 
 ## What chant Doesn't Do
 
-`chant build` produces artifacts — it doesn't deploy them, call cloud APIs, or manage state. Synthesis is pure and deterministic: same source in, same output out, zero side effects. This is a deliberate scope boundary, not a limitation.
+`chant build` produces artifacts — it doesn't deploy them, call cloud APIs, or manage state. Synthesis is pure and deterministic: same source in, same output out, zero side effects. This is a deliberate scope boundary, not a limitation. A pure core also owns less machinery — no provider SDKs, state backend, or network at build time — which means a smaller surface to audit; see [Owning less](/chant/concepts/comparison/#owning-less).
 
 The deployment and operational layer is increasingly handled by agents, CI pipelines, and platform tooling. chant's job is to make the synthesis step typed, linted, and deterministic — then hand off a native artifact that any deployment mechanism can consume.
 
