@@ -1,5 +1,5 @@
 import { describe, test, expect, beforeEach, afterEach } from "vitest";
-import { build, partitionByLexicon, detectCrossLexiconRefs, collectLexiconOutputs } from "./build";
+import { build, partitionByLexicon, detectCrossLexiconRefs, collectLexiconOutputs, computeStackGraph } from "./build";
 import { output } from "./lexicon-output";
 import { AttrRef } from "./attrref";
 import { INTRINSIC_MARKER } from "./intrinsic";
@@ -460,5 +460,52 @@ describe("detectCrossLexiconRefs", () => {
     const detected = detectCrossLexiconRefs(entities);
     expect(detected).toHaveLength(1);
     expect(detected[0].outputName).toBe("dataBucket_Endpoint");
+  });
+});
+
+describe("computeStackGraph (#200 — cross-stack apply ordering)", () => {
+  const ent = (lexicon: string, props: Record<string, unknown> = {}): Declarable =>
+    ({ lexicon, entityType: `${lexicon}::X`, [DECLARABLE_MARKER]: true, props }) as unknown as Declarable;
+
+  test("infers a consumer→producer edge from a cross-lexicon AttrRef", () => {
+    const vpc = ent("aws");
+    const svc = ent("k8s", { vpcId: new AttrRef(vpc, "id") });
+    const g = computeStackGraph(new Map([["vpc", vpc], ["svc", svc]]), ["aws", "k8s"]);
+
+    expect(g.edges).toEqual([{ from: "k8s", to: "aws" }]);
+    expect(g.order).toEqual(["aws", "k8s"]); // producer before consumer
+    expect(g.waves).toEqual([["aws"], ["k8s"]]); // separate waves — ordered
+    expect(g.cycles).toEqual([]);
+  });
+
+  test("independent stacks share a wave (parallel-safe)", () => {
+    const g = computeStackGraph(new Map([["a", ent("aws")], ["b", ent("gcp")]]), ["aws", "gcp"]);
+    expect(g.edges).toEqual([]);
+    expect(g.waves).toEqual([["aws", "gcp"]]); // one wave — no inter-dependency
+  });
+
+  test("reports a dependency cycle", () => {
+    const a = ent("x");
+    const b = ent("y", { ref: new AttrRef(a, "out") });
+    // close the loop: a references b
+    (a as unknown as { props: Record<string, unknown> }).props = { ref: new AttrRef(b, "out") };
+    const g = computeStackGraph(new Map([["a", a], ["b", b]]), ["x", "y"]);
+
+    expect(g.edges).toEqual(expect.arrayContaining([{ from: "x", to: "y" }, { from: "y", to: "x" }]));
+    expect(g.cycles).toEqual([["x", "y"]]);
+    expect(g.order).toEqual([]); // nothing is orderable inside a cycle
+  });
+
+  test("a diamond resolves into three waves", () => {
+    // base ← (left, right) ← top
+    const base = ent("base");
+    const left = ent("left", { b: new AttrRef(base, "id") });
+    const right = ent("right", { b: new AttrRef(base, "id") });
+    const top = ent("top", { l: new AttrRef(left, "id"), r: new AttrRef(right, "id") });
+    const g = computeStackGraph(
+      new Map([["base", base], ["left", left], ["right", right], ["top", top]]),
+      ["base", "left", "right", "top"],
+    );
+    expect(g.waves).toEqual([["base"], ["left", "right"], ["top"]]);
   });
 });

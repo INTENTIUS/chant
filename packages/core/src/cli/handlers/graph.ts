@@ -1,8 +1,21 @@
+import { resolve } from "node:path";
 import { discoverOps } from "../../op/discover";
-import { formatError } from "../format";
+import { discover } from "../../discovery/index";
+import { partitionByLexicon, computeStackGraph } from "../../build";
+import { formatError, formatWarning, formatBold } from "../format";
 import type { CommandContext } from "../registry";
 
-export async function runGraph(_ctx: CommandContext): Promise<number> {
+/**
+ * `chant graph` — the Op dependency graph by default; `--stacks` renders the
+ * cross-stack apply-ordering graph (edges, order, waves) chant computes from
+ * cross-lexicon references.
+ */
+export async function runGraph(ctx: CommandContext): Promise<number> {
+  if (ctx.args.stacks) return runStackGraph(ctx);
+  return runOpGraph();
+}
+
+async function runOpGraph(): Promise<number> {
   const { ops, errors } = await discoverOps();
   for (const err of errors) console.error(formatError({ message: err }));
 
@@ -19,5 +32,45 @@ export async function runGraph(_ctx: CommandContext): Promise<number> {
     }
   }
   if (!hasEdges) console.log("No Op dependencies");
+  return 0;
+}
+
+async function runStackGraph(ctx: CommandContext): Promise<number> {
+  const projectPath = resolve(ctx.args.path === "." ? "." : ctx.args.path);
+  const result = await discover(projectPath);
+  if (result.errors.length > 0) {
+    for (const e of result.errors) console.error(formatError({ message: e.message }));
+    return 1;
+  }
+
+  const lexicons = [...partitionByLexicon(result.entities).keys()];
+  const graph = computeStackGraph(result.entities, lexicons);
+
+  if (ctx.args.json) {
+    console.log(JSON.stringify(graph, null, 2));
+    return graph.cycles.length > 0 ? 1 : 0;
+  }
+
+  if (graph.nodes.length === 0) {
+    console.log("No stacks found");
+    return 0;
+  }
+
+  console.log(formatBold("Apply order (waves apply top-to-bottom; a wave's stacks are parallel-safe):"));
+  graph.waves.forEach((wave, i) => console.log(`  ${i + 1}. ${wave.join(", ")}`));
+
+  if (graph.edges.length > 0) {
+    console.log(formatBold("\nDependencies (consumer → producer):"));
+    for (const { from, to } of graph.edges) console.log(`  ${from} → ${to}`);
+  } else {
+    console.log("\nNo cross-stack dependencies — all stacks are independent.");
+  }
+
+  if (graph.cycles.length > 0) {
+    for (const cycle of graph.cycles) {
+      console.error(formatWarning({ message: `Dependency cycle among stacks: ${cycle.join(" ↔ ")}` }));
+    }
+    return 1;
+  }
   return 0;
 }
