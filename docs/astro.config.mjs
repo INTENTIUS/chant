@@ -117,6 +117,7 @@ export default defineConfig({
 						{ label: 'lint', slug: 'cli/lint' },
 						{ label: 'list', slug: 'cli/list' },
 						{ label: 'describe', slug: 'cli/describe' },
+						{ label: 'vendor', slug: 'cli/vendor' },
 						{ label: 'import', slug: 'cli/import' },
 						{ label: 'update', slug: 'cli/update' },
 						{ label: 'doctor', slug: 'cli/doctor' },

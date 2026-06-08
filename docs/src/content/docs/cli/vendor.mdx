@@ -1,0 +1,102 @@
+---
+title: "chant vendor"
+description: Pull reusable patterns into your repo, pinned and checksummed
+---
+
+## Synopsis
+
+```
+chant vendor [pull [name] | check]
+```
+
+## Description
+
+`chant vendor` pulls reusable **patterns** — composites as source, Ops, init
+templates, example skeletons — from a remote or local source into your own repo,
+recorded in a `vendor.json` manifest with a checksum so the provenance is
+verifiable. `chant vendor` with no subcommand runs `pull`.
+
+This is for source you **copy in and own** — reviewed in diffs, adapted freely —
+not for dependencies you import and never edit. **Lexicons stay npm
+dependencies** (the typed API surface). Vendoring exists for the things npm
+handles badly: source you want in-repo, reviewable, and adaptable.
+
+It is not a package manager. There is no registry and no auto-update — pins
+only, bumped explicitly and reviewed. Vendored files are just source in your
+repo, so `chant lint` / `chant build` cover them like anything else.
+
+## The manifest — `vendor.json`
+
+One entry per vendored artifact:
+
+```json
+{
+  "vendored": [
+    {
+      "name": "web-app",
+      "source": { "type": "local", "path": "../shared/web-app" },
+      "target": "vendor/web-app",
+      "ref": "v1.2.0"
+    },
+    {
+      "name": "alb-deploy-op",
+      "source": {
+        "type": "archive",
+        "url": "https://example.com/patterns-1.4.0.tar.gz",
+        "subpath": "ops/alb"
+      },
+      "target": "vendor/alb",
+      "ref": "1.4.0"
+    }
+  ]
+}
+```
+
+| Field | Meaning |
+|---|---|
+| `name` | Stable identity (used by `pull <name>`). |
+| `source` | `{ type: "local", path }` or `{ type: "archive", url, subpath? }`. |
+| `target` | Path in your repo to write the pulled content. |
+| `ref` | The pin — a tag/version label, recorded for provenance. |
+| `checksum` | sha256 of the pulled content. Written by `pull`, verified by `check`. |
+| `updatePolicy` | Optional; only `"pin"` (explicit-bump) is supported. |
+
+> **v1 sources:** `local` (a path, e.g. a monorepo sibling) and `archive` (an
+> http `.tar.gz`/`.zip`, optionally scoped to a `subpath`). Both reuse chant's
+> existing fetch/extract infrastructure. Git and npm-pack sources are a
+> fast-follow.
+
+## `chant vendor pull [name]`
+
+Resolve each source (or just `name`), write it into `target`, and record the
+content checksum back into `vendor.json`.
+
+```bash
+chant vendor              # pull every entry
+chant vendor pull web-app # pull one
+```
+
+## `chant vendor check`
+
+Verify each target's working copy against its recorded checksum. **Editing
+vendored files is allowed** — `check` only tells you they diverged from the pin.
+
+```bash
+chant vendor check
+```
+
+Drift is a **warning locally** and a **failure in CI** (when `CI` is set), so a
+pipeline catches unrecorded changes while local adaptation stays frictionless.
+
+## Updating a pin
+
+Bump the entry's `ref` (and `source.url` for an archive), re-run `chant vendor
+pull`, and review the resulting in-repo diff. The new content and its checksum
+land together in one reviewable change — that is the whole update flow.
+
+## Exit Codes
+
+| Code | Meaning |
+|------|---------|
+| 0 | Pulled successfully, or `check` clean (or drift, locally) |
+| 1 | A source/manifest error, or `check` drift under CI |

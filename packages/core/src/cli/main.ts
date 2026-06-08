@@ -12,6 +12,7 @@ import { runDevGenerate, runDevPublish, runDevOnboard, runDevCheckLexicon, runDe
 import { runServeLsp, runServeMcp, runServeUnknown } from "./handlers/serve";
 import { runInit, runInitLexicon } from "./handlers/init";
 import { runList, runDescribe, runImport, runUpdate, runDoctor } from "./handlers/misc";
+import { runVendor } from "./handlers/vendor";
 import { runMigrate } from "./handlers/migrate";
 import { runLifecycleSnapshot, runLifecycleShow, runLifecycleDiff, runLifecyclePlan, runLifecycleLog, runLifecycleUnknown } from "./handlers/lifecycle";
 import { runGraph } from "./handlers/graph";
@@ -155,6 +156,7 @@ Commands:
   lint                  Check specifications for issues
   list                  List discovered entities
   describe              Show the effective config for one component
+  vendor                Pull pinned, checksummed patterns into your repo
   import                Import external template into TypeScript
   migrate <file>        Translate a workflow between lexicons
                         (default: --from github --to gitlab)
@@ -291,6 +293,7 @@ const registry: CommandDef[] = [
   { name: "run", handler: runOp },
 
   { name: "graph", handler: runGraph },
+  { name: "vendor", handler: runVendor },
 
   // State subcommands
   { name: "lifecycle snapshot", requiresPlugins: true, handler: runLifecycleSnapshot },
