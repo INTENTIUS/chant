@@ -37,6 +37,26 @@ const KUBERAY_CRD_BASE = `https://raw.githubusercontent.com/ray-project/kuberay/
 const ARGOCD_VERSION = "v2.13.3";
 const ARGOCD_CRD_BASE = `https://raw.githubusercontent.com/argoproj/argo-cd/${ARGOCD_VERSION}/manifests/crds`;
 
+/**
+ * Gateway API CRDs — gateway.networking.k8s.io (standard channel)
+ *
+ * The modern, portable replacement for Ingress. GRPCRoute in particular is the
+ * native way to express a gRPC route (vs. ingress-controller annotations).
+ *
+ * Produces (the `gateway.networking.k8s.io` group maps to the `Gateway`
+ * namespace via the first-segment rule in crd/parser.ts):
+ *   K8s::Gateway::GatewayClass    → apiVersion: gateway.networking.k8s.io/v1,      kind: GatewayClass
+ *   K8s::Gateway::Gateway         → apiVersion: gateway.networking.k8s.io/v1,      kind: Gateway
+ *   K8s::Gateway::HTTPRoute       → apiVersion: gateway.networking.k8s.io/v1,      kind: HTTPRoute
+ *   K8s::Gateway::GRPCRoute       → apiVersion: gateway.networking.k8s.io/v1,      kind: GRPCRoute
+ *   K8s::Gateway::ReferenceGrant  → apiVersion: gateway.networking.k8s.io/v1beta1, kind: ReferenceGrant
+ *
+ * CRD install: kubectl apply -f
+ *   https://github.com/kubernetes-sigs/gateway-api/releases/download/v1.2.1/standard-install.yaml
+ */
+const GATEWAY_API_VERSION = "v1.2.1";
+const GATEWAY_API_CRD_BASE = `https://raw.githubusercontent.com/kubernetes-sigs/gateway-api/${GATEWAY_API_VERSION}/config/crd/standard`;
+
 export const CRD_SOURCES: CRDSource[] = [
   { type: "url", url: `${KUBERAY_CRD_BASE}/ray.io_rayclusters.yaml` },
   { type: "url", url: `${KUBERAY_CRD_BASE}/ray.io_rayjobs.yaml` },
@@ -44,4 +64,9 @@ export const CRD_SOURCES: CRDSource[] = [
   { type: "url", url: `${ARGOCD_CRD_BASE}/application-crd.yaml` },
   { type: "url", url: `${ARGOCD_CRD_BASE}/applicationset-crd.yaml` },
   { type: "url", url: `${ARGOCD_CRD_BASE}/appproject-crd.yaml` },
+  { type: "url", url: `${GATEWAY_API_CRD_BASE}/gateway.networking.k8s.io_gatewayclasses.yaml` },
+  { type: "url", url: `${GATEWAY_API_CRD_BASE}/gateway.networking.k8s.io_gateways.yaml` },
+  { type: "url", url: `${GATEWAY_API_CRD_BASE}/gateway.networking.k8s.io_httproutes.yaml` },
+  { type: "url", url: `${GATEWAY_API_CRD_BASE}/gateway.networking.k8s.io_grpcroutes.yaml` },
+  { type: "url", url: `${GATEWAY_API_CRD_BASE}/gateway.networking.k8s.io_referencegrants.yaml` },
 ];
