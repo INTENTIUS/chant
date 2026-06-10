@@ -74,6 +74,25 @@ const GATEWAY_API_CRD_BASE = `https://raw.githubusercontent.com/kubernetes-sigs/
 const COCKROACH_OPERATOR_VERSION = "v2.17.0";
 const COCKROACH_OPERATOR_CRD_BASE = `https://raw.githubusercontent.com/cockroachdb/cockroach-operator/${COCKROACH_OPERATOR_VERSION}/config/crd/bases`;
 
+/**
+ * cert-manager CRDs — cert-manager.io + acme.cert-manager.io
+ *
+ * The de-facto TLS cert issuance/rotation controller. A single multi-doc bundle
+ * (the parser uses loadAll) produces, under the `CertManager` and `Acme`
+ * namespaces (first-segment rule; "cert-manager.io" → "CertManager"):
+ *   K8s::CertManager::Certificate         → cert-manager.io/v1
+ *   K8s::CertManager::CertificateRequest  → cert-manager.io/v1
+ *   K8s::CertManager::Issuer              → cert-manager.io/v1
+ *   K8s::CertManager::ClusterIssuer       → cert-manager.io/v1
+ *   K8s::Acme::Challenge                  → acme.cert-manager.io/v1
+ *   K8s::Acme::Order                      → acme.cert-manager.io/v1
+ *
+ * Controller install: kubectl apply -f
+ *   https://github.com/cert-manager/cert-manager/releases/download/v1.16.2/cert-manager.yaml
+ */
+const CERT_MANAGER_VERSION = "v1.16.2";
+const CERT_MANAGER_CRD_BUNDLE = `https://github.com/cert-manager/cert-manager/releases/download/${CERT_MANAGER_VERSION}/cert-manager.crds.yaml`;
+
 export const CRD_SOURCES: CRDSource[] = [
   { type: "url", url: `${KUBERAY_CRD_BASE}/ray.io_rayclusters.yaml` },
   { type: "url", url: `${KUBERAY_CRD_BASE}/ray.io_rayjobs.yaml` },
@@ -87,4 +106,5 @@ export const CRD_SOURCES: CRDSource[] = [
   { type: "url", url: `${GATEWAY_API_CRD_BASE}/gateway.networking.k8s.io_grpcroutes.yaml` },
   { type: "url", url: `${GATEWAY_API_CRD_BASE}/gateway.networking.k8s.io_referencegrants.yaml` },
   { type: "url", url: `${COCKROACH_OPERATOR_CRD_BASE}/crdb.cockroachlabs.com_crdbclusters.yaml` },
+  { type: "url", url: CERT_MANAGER_CRD_BUNDLE },
 ];
