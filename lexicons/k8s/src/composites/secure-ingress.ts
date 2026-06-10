@@ -6,7 +6,7 @@
  */
 
 import { Composite, mergeDefaults } from "@intentius/chant";
-import { Ingress } from "../generated";
+import { Ingress, Certificate } from "../generated";
 
 export interface SecureIngressHost {
   /** Hostname (e.g., "api.example.com"). */
@@ -44,7 +44,7 @@ export interface SecureIngressProps {
 
 export interface SecureIngressResult {
   ingress: InstanceType<typeof Ingress>;
-  certificate?: InstanceType<typeof Ingress>; // CRD — use Ingress as proxy Declarable
+  certificate?: InstanceType<typeof Certificate>; // cert-manager.io/v1 Certificate
 }
 
 /**
@@ -135,8 +135,10 @@ export const SecureIngress = Composite<SecureIngressProps>((props) => {
   const result: Record<string, any> = { ingress };
 
   if (clusterIssuer) {
-    // Certificate is a CRD — use Ingress constructor as a generic Declarable wrapper
-    result.certificate = new Ingress(mergeDefaults({
+    // A real cert-manager Certificate (the ingress-shim annotation on the Ingress
+    // above is also set, so either path issues the cert; the explicit resource
+    // makes the cert lifecycle declarable).
+    result.certificate = new Certificate(mergeDefaults({
       metadata: {
         name: secretName,
         ...(namespace && { namespace }),
