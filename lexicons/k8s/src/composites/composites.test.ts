@@ -1486,6 +1486,8 @@ describe("SecureIngress", () => {
   test("creates certificate when clusterIssuer set", () => {
     const result = SecureIngress({ ...minProps, clusterIssuer: "letsencrypt-prod" });
     expect(result.certificate).toBeDefined();
+    // A real cert-manager Certificate, not the former Ingress-proxy placeholder.
+    expect(result.certificate!.constructor.name).toBe("Certificate");
     const certSpec = p(result.certificate!).spec as any;
     expect(certSpec.issuerRef.name).toBe("letsencrypt-prod");
     expect(certSpec.dnsNames).toEqual(["app.example.com"]);
