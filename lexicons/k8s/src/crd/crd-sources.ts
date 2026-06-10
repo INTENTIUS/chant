@@ -57,6 +57,23 @@ const ARGOCD_CRD_BASE = `https://raw.githubusercontent.com/argoproj/argo-cd/${AR
 const GATEWAY_API_VERSION = "v1.2.1";
 const GATEWAY_API_CRD_BASE = `https://raw.githubusercontent.com/kubernetes-sigs/gateway-api/${GATEWAY_API_VERSION}/config/crd/standard`;
 
+/**
+ * CockroachDB Kubernetes Operator CRD — crdb.cockroachlabs.com/v1alpha1
+ *
+ * The operator-managed path for a CockroachDB cluster (the operator handles
+ * version upgrades, scale-down decommissioning, and cert rotation). Complements
+ * the self-managed `CockroachDbCluster` StatefulSet composite.
+ *
+ * Produces (the `crdb.cockroachlabs.com` group maps to the `Crdb` namespace via
+ * the first-segment rule in crd/parser.ts):
+ *   K8s::Crdb::CrdbCluster  → apiVersion: crdb.cockroachlabs.com/v1alpha1, kind: CrdbCluster
+ *
+ * Operator install: kubectl apply -f
+ *   https://github.com/cockroachdb/cockroach-operator/releases/download/v2.17.0/install/operator.yaml
+ */
+const COCKROACH_OPERATOR_VERSION = "v2.17.0";
+const COCKROACH_OPERATOR_CRD_BASE = `https://raw.githubusercontent.com/cockroachdb/cockroach-operator/${COCKROACH_OPERATOR_VERSION}/config/crd/bases`;
+
 export const CRD_SOURCES: CRDSource[] = [
   { type: "url", url: `${KUBERAY_CRD_BASE}/ray.io_rayclusters.yaml` },
   { type: "url", url: `${KUBERAY_CRD_BASE}/ray.io_rayjobs.yaml` },
@@ -69,4 +86,5 @@ export const CRD_SOURCES: CRDSource[] = [
   { type: "url", url: `${GATEWAY_API_CRD_BASE}/gateway.networking.k8s.io_httproutes.yaml` },
   { type: "url", url: `${GATEWAY_API_CRD_BASE}/gateway.networking.k8s.io_grpcroutes.yaml` },
   { type: "url", url: `${GATEWAY_API_CRD_BASE}/gateway.networking.k8s.io_referencegrants.yaml` },
+  { type: "url", url: `${COCKROACH_OPERATOR_CRD_BASE}/crdb.cockroachlabs.com_crdbclusters.yaml` },
 ];
