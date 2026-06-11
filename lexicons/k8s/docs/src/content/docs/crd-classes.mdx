@@ -1,0 +1,176 @@
+---
+title: "CRD-Generated Classes"
+description: "Typed K8s::* classes generated from third-party CRDs — Gateway API, cert-manager, the CockroachDB operator, KubeRay, and Argo CD — plus how the CRD source list works and how to add your own."
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+The k8s lexicon generates typed classes from the core Kubernetes OpenAPI spec **plus a curated list of third-party CRDs**. Each CRD in the list becomes a first-class `K8s::*` resource — with the serializer, LSP hover, type-checking, and MCP — the same as a built-in `Deployment`. No hand-written YAML, no `as any`.
+
+<Aside type="note">
+The lexicon stays **runtime-agnostic** — it only emits manifests. Generated CRD classes describe the custom resource; you still install the upstream **controller/operator** (and its CRDs) in the cluster. Each section below includes the install command.
+</Aside>
+
+## How it works
+
+CRD sources live in `lexicons/k8s/src/crd/crd-sources.ts`. At generation time (`npm run generate`) the CRD YAML is fetched from a pinned upstream URL, parsed, and baked into the lexicon output. The group's first segment maps to a TypeScript namespace via the first-segment rule in `crd/parser.ts` — e.g. `gateway.networking.k8s.io` → `Gateway`, `cert-manager.io` → `CertManager`.
+
+```
+group                          namespace        example class
+─────────────────────────────  ───────────────  ─────────────────────────
+ray.io                         Ray              K8s::Ray::RayCluster
+argoproj.io                    Argo             K8s::Argo::Application
+gateway.networking.k8s.io      Gateway          K8s::Gateway::HTTPRoute
+crdb.cockroachlabs.com         Crdb             K8s::Crdb::CrdbCluster
+cert-manager.io                CertManager      K8s::CertManager::Certificate
+acme.cert-manager.io           Acme             K8s::Acme::Challenge
+```
+
+## Gateway API
+
+`gateway.networking.k8s.io`, pinned to **v1.2.1** (standard channel). The modern, portable replacement for `Ingress` — `GRPCRoute` in particular is the native way to express a gRPC route, instead of ingress-controller annotations.
+
+| Type | apiVersion / kind |
+|---|---|
+| `GatewayClass` | `gateway.networking.k8s.io/v1` / `GatewayClass` |
+| `Gateway` | `gateway.networking.k8s.io/v1` / `Gateway` |
+| `HTTPRoute` | `gateway.networking.k8s.io/v1` / `HTTPRoute` |
+| `GRPCRoute` | `gateway.networking.k8s.io/v1` / `GRPCRoute` |
+| `ReferenceGrant` | `gateway.networking.k8s.io/v1beta1` / `ReferenceGrant` |
+
+```bash
+kubectl apply -f https://github.com/kubernetes-sigs/gateway-api/releases/download/v1.2.1/standard-install.yaml
+```
+
+```typescript
+import { Gateway, HTTPRoute } from "@intentius/chant-lexicon-k8s";
+
+export const gw = new Gateway({
+  metadata: { name: "edge", namespace: "infra" },
+  spec: {
+    gatewayClassName: "istio",
+    listeners: [{ name: "http", protocol: "HTTP", port: 80 }],
+  },
+});
+
+export const route = new HTTPRoute({
+  metadata: { name: "api", namespace: "infra" },
+  spec: {
+    parentRefs: [{ name: "edge" }],
+    rules: [{ backendRefs: [{ name: "api", port: 8080 }] }],
+  },
+});
+```
+
+## cert-manager
+
+`cert-manager.io` + `acme.cert-manager.io`, pinned to **v1.16.2**. The de-facto controller for issuing and rotating TLS certificates. The bundle is a single multi-doc YAML.
+
+| Type | apiVersion |
+|---|---|
+| `Certificate` | `cert-manager.io/v1` |
+| `CertificateRequest` | `cert-manager.io/v1` |
+| `Issuer` | `cert-manager.io/v1` |
+| `ClusterIssuer` | `cert-manager.io/v1` |
+| `Challenge` | `acme.cert-manager.io/v1` |
+| `Order` | `acme.cert-manager.io/v1` |
+
+```bash
+kubectl apply -f https://github.com/cert-manager/cert-manager/releases/download/v1.16.2/cert-manager.yaml
+```
+
+```typescript
+import { ClusterIssuer, Certificate } from "@intentius/chant-lexicon-k8s";
+
+export const issuer = new ClusterIssuer({
+  metadata: { name: "letsencrypt-prod" },
+  spec: {
+    acme: {
+      server: "https://acme-v02.api.letsencrypt.org/directory",
+      email: "ops@acme.io",
+      privateKeySecretRef: { name: "letsencrypt-prod" },
+      solvers: [{ http01: { ingress: { class: "nginx" } } }],
+    },
+  },
+});
+
+export const cert = new Certificate({
+  metadata: { name: "api-tls", namespace: "api" },
+  spec: {
+    secretName: "api-tls",
+    issuerRef: { name: "letsencrypt-prod", kind: "ClusterIssuer" },
+    dnsNames: ["api.acme.io"],
+  },
+});
+```
+
+### SecureIngress emits a real Certificate
+
+When you set `clusterIssuer` on the [`SecureIngress`](/chant/lexicons/k8s/composite-examples/) composite, it now emits a genuine `K8s::CertManager::Certificate` (wired to the named issuer) alongside the ingress-shim annotation — no placeholder.
+
+```typescript
+import { SecureIngress } from "@intentius/chant-lexicon-k8s";
+
+export const ingress = SecureIngress("api", {
+  host: "api.acme.io",
+  serviceName: "api",
+  servicePort: 8080,
+  clusterIssuer: "letsencrypt-prod", // → annotation + a real Certificate
+});
+```
+
+## CockroachDB operator
+
+`crdb.cockroachlabs.com`, pinned to **v2.17.0**. The operator-managed path for a CockroachDB cluster — the operator handles version upgrades, scale-down decommissioning, and cert rotation.
+
+| Type | apiVersion / kind |
+|---|---|
+| `CrdbCluster` | `crdb.cockroachlabs.com/v1alpha1` / `CrdbCluster` |
+
+```bash
+kubectl apply -f https://github.com/cockroachdb/cockroach-operator/releases/download/v2.17.0/install/operator.yaml
+```
+
+```typescript
+import { CrdbCluster } from "@intentius/chant-lexicon-k8s";
+
+export const db = new CrdbCluster({
+  metadata: { name: "cockroachdb", namespace: "crdb" },
+  spec: {
+    dataStore: { pvc: { spec: { resources: { requests: { storage: "60Gi" } } } } },
+    tlsEnabled: true,
+    image: { name: "cockroachdb/cockroach:v24.1.0" },
+    nodes: 3,
+  },
+});
+```
+
+<Aside type="tip">
+The operator-managed `CrdbCluster` is the common single-region production path. For the self-managed, multi-region StatefulSet pattern, use the [`CockroachDbCluster` composite](/chant/tutorials/cockroachdb-multi-region/) instead — the two are complementary.
+</Aside>
+
+## KubeRay & Argo CD
+
+The first two CRD sources. KubeRay (`ray.io`, **v1.3.0**) produces `RayCluster`, `RayJob`, and `RayService`. Argo CD (`argoproj.io`, **v2.13.3**) produces `Application`, `ApplicationSet`, and `AppProject`. Both ship value-add composites — see [Argo CD Composites](/chant/lexicons/k8s/argo-composites/) and the [Ray + KubeRay on GKE tutorial](/chant/tutorials/ray-kuberay-gke/).
+
+## Adding your own CRD
+
+Append an entry to `CRD_SOURCES` in `lexicons/k8s/src/crd/crd-sources.ts` and re-run codegen:
+
+```typescript
+export const CRD_SOURCES: CRDSource[] = [
+  // ...existing entries
+  { type: "url", url: "https://raw.githubusercontent.com/acme/operator/v1.0.0/config/crd/bases/acme.io_widgets.yaml" },
+];
+```
+
+```bash
+cd lexicons/k8s && npm run generate
+```
+
+Guidelines:
+
+- **Pin the version** in the URL (a `vX.Y.Z` tag or release asset), never `main`. Codegen is deterministic only if the source is.
+- **One URL per CRD**, or a single multi-doc bundle URL (the parser uses `loadAll`, as with cert-manager).
+- The group's first segment becomes the namespace. Add a `GROUP_NAMESPACE_OVERRIDES` entry in `crd/parser.ts` if the default mapping reads poorly.
+- Document the produced classes and the operator install command in a comment block next to the entry — match the existing entries.
