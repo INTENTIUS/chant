@@ -61,6 +61,10 @@ export default defineConfig({
                   "slug": "serialization"
             },
             {
+                  "label": "CRD-Generated Classes",
+                  "slug": "crd-classes"
+            },
+            {
                   "label": "Argo CD Composites",
                   "slug": "argo-composites"
             },
