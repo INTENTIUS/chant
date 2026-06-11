@@ -57,7 +57,7 @@ Post-synth checks run against the serialized YAML after build.
 | Rule | Description |
 |------|-------------|
 | WK8201 | Container missing resource limits |
-| WK8301 | Container missing health probes (skips Jobs/CronJobs) |
+| WK8301 | Port-serving container missing health probes (skips Jobs/CronJobs and port-less workers) |
 | WK8302 | Single replica Deployment |
 | WK8303 | HA Deployment without PodDisruptionBudget |
 

@@ -1151,6 +1151,7 @@ The lexicon also provides MCP (Model Context Protocol) tools and resources:
     ],
     basePath: "/chant/lexicons/k8s/",
     sidebarExtra: [
+      { label: "CRD-Generated Classes", slug: "crd-classes" },
       { label: "Argo CD Composites", slug: "argo-composites" },
       {
         label: "Vendor Composites",
