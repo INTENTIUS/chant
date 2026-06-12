@@ -327,3 +327,72 @@ export function isPinnedRef(ref: string): boolean {
   if (/^v?\d+\.\d+\.\d+$/.test(ref)) return true;
   return false;
 }
+
+/** An `id_tokens:` OIDC token declaration within a job. */
+export interface IdTokenDecl {
+  job: string;
+  /** Token variable name (e.g. `GCP_ID_TOKEN`). */
+  name: string;
+  /** Declared audiences (`aud:`), empty if none. */
+  aud: string[];
+}
+
+/**
+ * Extract `id_tokens:` declarations (OIDC) per job, with their audiences.
+ */
+export function extractIdTokens(yaml: string): IdTokenDecl[] {
+  const out: IdTokenDecl[] = [];
+  for (const section of yaml.split("\n\n")) {
+    const lines = section.split("\n");
+    const top = lines[0]?.match(/^(\.?[a-z][a-z0-9_.-]*):/i);
+    if (!top) continue;
+    const job = top[1];
+
+    let inIdTokens = false;
+    let idTokensIndent = -1;
+    let current: IdTokenDecl | undefined;
+    const flush = () => { if (current) out.push(current); current = undefined; };
+
+    for (const line of lines) {
+      if (/^\s+id_tokens:\s*$/.test(line)) {
+        inIdTokens = true;
+        idTokensIndent = line.search(/\S/);
+        continue;
+      }
+      if (!inIdTokens) continue;
+      const indent = line.search(/\S/);
+      if (line.trim() !== "" && indent <= idTokensIndent) { flush(); inIdTokens = false; continue; }
+
+      const tokenName = line.match(/^\s+([A-Z_][A-Z0-9_]*):\s*$/);
+      if (tokenName && indent === idTokensIndent + 2) {
+        flush();
+        current = { job, name: tokenName[1], aud: [] };
+        continue;
+      }
+      const audInline = line.match(/^\s+aud:\s+(\S.*)$/);
+      if (audInline && current) {
+        const v = audInline[1].trim();
+        if (v.startsWith("[")) {
+          for (const p of v.replace(/^\[|\]$/g, "").split(",")) {
+            const t = p.trim().replace(/^['"]|['"]$/g, "");
+            if (t) current.aud.push(t);
+          }
+        } else {
+          current.aud.push(v.replace(/^['"]|['"]$/g, ""));
+        }
+        continue;
+      }
+      const audItem = line.match(/^\s+-\s+(\S.*)$/);
+      if (audItem && current) {
+        current.aud.push(audItem[1].trim().replace(/^['"]|['"]$/g, ""));
+      }
+    }
+    flush();
+  }
+  return out;
+}
+
+/** True if a job section's rules make it reachable from merge-request pipelines. */
+export function isMergeRequestReachable(section: string): boolean {
+  return /merge_request_event|CI_MERGE_REQUEST|CI_PIPELINE_SOURCE\s*==\s*['"]?merge_request/.test(section);
+}
