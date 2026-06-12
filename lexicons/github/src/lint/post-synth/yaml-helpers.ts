@@ -231,6 +231,120 @@ export function extractImageRefs(yaml: string): ImageRef[] {
   return refs;
 }
 
+/**
+ * Walk the `jobs:` block line-by-line, tracking the current job. Robust to `|`
+ * block scalars (which the structural parser does not handle), so it is the
+ * right tool for scanning `run:`/`if:`/`runs-on:` content.
+ */
+function scanJobLines(yaml: string, onLine: (job: string, line: string, indent: number, lineNo: number, lines: string[]) => void): void {
+  const lines = yaml.split("\n");
+  let inJobs = false;
+  let currentJob = "";
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    if (/^jobs:\s*$/.test(line)) { inJobs = true; continue; }
+    if (!inJobs) continue;
+    if (/^\S/.test(line)) { inJobs = false; continue; } // dedented to a new top-level key
+    const jobHeader = line.match(/^ {2}([A-Za-z0-9_-]+):\s*$/);
+    if (jobHeader) { currentJob = jobHeader[1]; continue; }
+    if (!currentJob) continue;
+    const indent = line.search(/\S/);
+    if (indent < 0) continue;
+    onLine(currentJob, line, indent, i, lines);
+  }
+}
+
+/** A `run:` script block with its owning job. */
+export interface RunBlock {
+  job: string;
+  run: string;
+}
+
+/**
+ * Extract every `run:` script (inline and `|`/`>` block scalars) with its
+ * owning job.
+ */
+export function extractRunBlocks(yaml: string): RunBlock[] {
+  const out: RunBlock[] = [];
+  const consumed = new Set<number>();
+  scanJobLines(yaml, (job, line, _indent, lineNo, lines) => {
+    if (consumed.has(lineNo)) return;
+    const m = line.match(/^(\s*)(- )?run:\s*(.*)$/);
+    if (!m) return;
+    const keyIndent = m[1].length + (m[2] ? 2 : 0); // column where `run:` begins
+    const value = m[3].trim();
+    if (value === "|" || value === "|-" || value === ">" || value === ">-" || value === "|+" || value === ">+") {
+      const blockLines: string[] = [];
+      for (let j = lineNo + 1; j < lines.length; j++) {
+        const bl = lines[j];
+        if (bl.trim() === "") { blockLines.push(""); consumed.add(j); continue; }
+        const bi = bl.search(/\S/);
+        if (bi <= keyIndent) break;
+        blockLines.push(bl.trimStart());
+        consumed.add(j);
+      }
+      out.push({ job, run: blockLines.join("\n") });
+    } else {
+      out.push({ job, run: value.replace(/^['"]|['"]$/g, "") });
+    }
+  });
+  return out;
+}
+
+/** An `if:` condition with its owning job. */
+export interface IfCondition {
+  job: string;
+  expr: string;
+}
+
+/** Extract every `if:` condition (job-level and step-level) with its job. */
+export function extractIfConditions(yaml: string): IfCondition[] {
+  const out: IfCondition[] = [];
+  scanJobLines(yaml, (job, line) => {
+    const m = line.match(/^\s+(?:- )?if:\s*(.+)$/);
+    if (m) out.push({ job, expr: m[1].trim().replace(/^['"]|['"]$/g, "") });
+  });
+  return out;
+}
+
+/** Extract each job's `runs-on:` value(s) as a flat list of labels. */
+export function extractRunsOnByJob(yaml: string): Map<string, string[]> {
+  const out = new Map<string, string[]>();
+  scanJobLines(yaml, (job, line, indent, lineNo, lines) => {
+    const m = line.match(/^\s+runs-on:\s*(.*)$/);
+    if (!m) return;
+    const value = m[1].trim();
+    const labels: string[] = [];
+    if (value === "") {
+      for (let j = lineNo + 1; j < lines.length; j++) {
+        const item = lines[j].match(/^\s+- (.+)$/);
+        if (!item) break;
+        labels.push(item[1].trim().replace(/^['"]|['"]$/g, ""));
+      }
+    } else if (value.startsWith("[")) {
+      for (const part of value.replace(/^\[|\]$/g, "").split(",")) {
+        const t = part.trim().replace(/^['"]|['"]$/g, "");
+        if (t) labels.push(t);
+      }
+    } else {
+      labels.push(value.replace(/^['"]|['"]$/g, ""));
+    }
+    out.set(job, labels);
+  });
+  return out;
+}
+
+/** Pull every `${{ ... }}` expression body out of a string. */
+export function extractExpressions(text: string): string[] {
+  const out: string[] = [];
+  const re = /\$\{\{(.+?)\}\}/g;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(text)) !== null) {
+    out.push(m[1].trim());
+  }
+  return out;
+}
+
 /** A permissions value as it appears in YAML: a string preset or a scope map. */
 export type PermissionsValue = string | Record<string, string>;
 
