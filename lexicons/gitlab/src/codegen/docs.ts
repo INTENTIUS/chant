@@ -435,6 +435,30 @@ Flags jobs whose \`extends:\` references a template or hidden job not defined in
 
 Detects cycles in the \`needs:\` dependency graph. If job A needs B and B needs A (directly or transitively), GitLab rejects the pipeline. Reports the full cycle chain in the diagnostic message.
 
+### WGL029 — Unpinned include:project / component
+
+**Severity:** warning
+
+Flags an \`include:project\` or CI/CD \`component:\` resolved by a moving ref — a branch, a missing \`ref:\` (defaults to the default branch), or a floating component version — instead of a pinned tag or commit SHA.
+
+### WGL030 — Mutable or insecure include:remote
+
+**Severity:** error (HTTP) / warning (HTTPS)
+
+Flags \`include:remote\` URLs fetched over HTTP (no transport integrity) or over HTTPS but inherently mutable. Prefer a pinned \`include:project\` or component. Generalizes WGL017 to includes.
+
+### WGL031 — Container image without a digest
+
+**Severity:** warning
+
+Flags \`image:\` and \`services:\` references not pinned to an immutable \`@sha256:\` digest. Variable-based references (e.g. \`$CI_REGISTRY_IMAGE:tag\`) are skipped.
+
+### WGL032 — Look-alike include/component source
+
+**Severity:** warning
+
+Flags an \`include:project\` / \`component:\` source that is a near-miss (edit distance 1–2) of a well-known GitLab CI source but not an exact match — a likely typo or impersonation. Backed by a vendored reference list.
+
 ## Running lint
 
 \`\`\`bash

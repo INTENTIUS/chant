@@ -223,3 +223,107 @@ export function extractJobRules(section: string): ParsedRule[] {
 
   return rules;
 }
+
+/** A container image reference (job/default `image:` or a `services:` entry). */
+export interface ImageRef {
+  /** Owning job name, or "default" for the global image. */
+  job: string;
+  /** The image reference (e.g. `node:20`). */
+  image: string;
+  /** Where the image was declared. */
+  source: "image" | "service";
+}
+
+/**
+ * Extract container image references from `image:` and `services:` across the
+ * pipeline. Handles both the object form (`image:\n  name: ...`) and the inline
+ * string form (`image: ...`).
+ */
+export function extractImageRefs(yaml: string): ImageRef[] {
+  const refs: ImageRef[] = [];
+  for (const section of yaml.split("\n\n")) {
+    const lines = section.split("\n");
+    const top = lines[0]?.match(/^(\.?[a-z][a-z0-9_.-]*):/i);
+    const job = top ? top[1] : "default";
+
+    for (let i = 0; i < lines.length; i++) {
+      // image: as object (next indented `name:`) or inline string
+      const imgInline = lines[i].match(/^\s+image:\s+(\S.*)$/);
+      if (imgInline) {
+        refs.push({ job, image: imgInline[1].trim().replace(/^['"]|['"]$/g, ""), source: "image" });
+        continue;
+      }
+      if (/^\s+image:\s*$/.test(lines[i])) {
+        const nameLine = lines.slice(i + 1, i + 4).find((l) => /^\s+name:\s+/.test(l));
+        if (nameLine) {
+          const v = nameLine.replace(/^\s+name:\s+/, "").trim().replace(/^['"]|['"]$/g, "");
+          refs.push({ job, image: v, source: "image" });
+        }
+        continue;
+      }
+      // services: list entries — `- name:` or `- 'image'`
+      const svcName = lines[i].match(/^\s+-\s+name:\s+(\S.*)$/);
+      if (svcName) {
+        refs.push({ job, image: svcName[1].trim().replace(/^['"]|['"]$/g, ""), source: "service" });
+      }
+    }
+  }
+  return refs;
+}
+
+/** An `include:` entry from the top-level include block. */
+export interface IncludeEntry {
+  kind: "project" | "remote" | "component" | "local" | "template" | "string";
+  /** The primary value (project path, URL, component address, …). */
+  value: string;
+  /** `ref:` for project includes, if present. */
+  ref?: string;
+}
+
+/**
+ * Parse the top-level `include:` block into structured entries.
+ */
+export function extractIncludes(yaml: string): IncludeEntry[] {
+  const entries: IncludeEntry[] = [];
+  const section = yaml.split("\n\n").find((s) => /^include:/.test(s));
+  if (!section) return entries;
+
+  // Inline string form: `include: <value>` (value on the same line, not a list)
+  const inline = section.match(/^include:[ \t]+(\S.*)$/m);
+  if (inline) {
+    entries.push({ kind: "string", value: inline[1].trim().replace(/^['"]|['"]$/g, "") });
+    return entries;
+  }
+
+  const lines = section.split("\n");
+  let current: IncludeEntry | undefined;
+  const push = () => { if (current) entries.push(current); current = undefined; };
+  for (const line of lines) {
+    const start = line.match(/^\s+-\s+(project|remote|component|local|template):\s*(.*)$/);
+    if (start) {
+      push();
+      current = { kind: start[1] as IncludeEntry["kind"], value: start[2].trim().replace(/^['"]|['"]$/g, "") };
+      continue;
+    }
+    const refLine = line.match(/^\s+ref:\s+(.+)$/);
+    if (refLine && current) {
+      current.ref = refLine[1].trim().replace(/^['"]|['"]$/g, "");
+    }
+    // A bare `- 'https://...'` short remote form
+    const bare = line.match(/^\s+-\s+(['"]?https?:\/\/\S+['"]?)\s*$/);
+    if (bare) {
+      push();
+      entries.push({ kind: "remote", value: bare[1].replace(/^['"]|['"]$/g, "") });
+    }
+  }
+  push();
+  return entries;
+}
+
+/** True if a git ref is an immutable pin (40-hex SHA or a vN.N.N-style tag). */
+export function isPinnedRef(ref: string): boolean {
+  if (/^[0-9a-f]{40}$/.test(ref)) return true;
+  // Semver-ish tag with all components fixed (v1.2.3 / 1.2.3)
+  if (/^v?\d+\.\d+\.\d+$/.test(ref)) return true;
+  return false;
+}
