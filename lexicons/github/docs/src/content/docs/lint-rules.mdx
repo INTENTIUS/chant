@@ -159,6 +159,30 @@ Flags workflows triggered by `pull_request_target` that include `actions/checkou
 
 Detects cycles in the `needs:` dependency graph. If job A needs B and B needs A (directly or transitively), GitHub rejects the workflow. Reports the full cycle chain in the diagnostic message.
 
+### GHA029 — Action or reusable workflow not pinned to a commit SHA
+
+**Severity:** warning
+
+Flags any `uses:` — step action or job-level reusable workflow — pinned to a mutable tag or branch instead of a full commit SHA. Tags can be repointed to malicious code after review, so every external reference should be pinned. `actions/checkout` is covered by the more specific GHA021; local (`./`) and `docker://` references are out of scope. Owners in the vendored trusted allowlist are exempt.
+
+### GHA030 — Container image not pinned to a digest
+
+**Severity:** warning
+
+Flags job `container:` images, `services:` images, and `docker://` step references that are not pinned to an immutable `@sha256:` digest. A mutable tag can be repointed to a different image after review.
+
+### GHA031 — Action resembles a well-known action
+
+**Severity:** warning
+
+Flags a `uses:` slug that is a near-miss (edit distance 1–2) of a popular action but not an exact match — a likely typo or impersonation under different ownership. Advisory; backed by a vendored reference list.
+
+### GHA032 — Archived or compromised action
+
+**Severity:** warning
+
+Flags a `uses:` slug that a vendored snapshot marks as archived/abandoned or carrying a disclosed security issue, with remediation. Advisory and necessarily incomplete.
+
 ## Running lint
 
 ```bash
