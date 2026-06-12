@@ -396,3 +396,44 @@ export function extractIdTokens(yaml: string): IdTokenDecl[] {
 export function isMergeRequestReachable(section: string): boolean {
   return /merge_request_event|CI_MERGE_REQUEST|CI_PIPELINE_SOURCE\s*==\s*['"]?merge_request/.test(section);
 }
+
+/** A shell command line from a `script:` / `before_script:` / `after_script:`. */
+export interface ScriptCommand {
+  job: string;
+  command: string;
+}
+
+/**
+ * Extract shell command lines from all `script:` family blocks, per job.
+ */
+export function extractScriptCommands(yaml: string): ScriptCommand[] {
+  const out: ScriptCommand[] = [];
+  for (const section of yaml.split("\n\n")) {
+    const lines = section.split("\n");
+    const top = lines[0]?.match(/^(\.?[a-z][a-z0-9_.-]*):/i);
+    if (!top) continue;
+    const job = top[1];
+
+    let inScript = false;
+    let scriptIndent = -1;
+    for (const line of lines) {
+      if (/^\s+(before_script|after_script|script):\s*$/.test(line)) {
+        inScript = true;
+        scriptIndent = line.search(/\S/);
+        continue;
+      }
+      // inline form `script: cmd`
+      const inlineScript = line.match(/^\s+(?:before_script|after_script|script):\s+(\S.*)$/);
+      if (inlineScript) {
+        out.push({ job, command: inlineScript[1].trim().replace(/^['"]|['"]$/g, "") });
+        continue;
+      }
+      if (!inScript) continue;
+      const indent = line.search(/\S/);
+      if (line.trim() !== "" && indent <= scriptIndent) { inScript = false; continue; }
+      const item = line.match(/^\s+-\s+(.*)$/);
+      if (item) out.push({ job, command: item[1].trim().replace(/^['"]|['"]$/g, "") });
+    }
+  }
+  return out;
+}
