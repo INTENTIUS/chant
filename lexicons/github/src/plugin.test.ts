@@ -30,9 +30,25 @@ describe("githubPlugin", () => {
     expect(checkIds).toContain("GHA006");
     expect(checkIds).toContain("GHA009");
     expect(checkIds).toContain("GHA011");
+    expect(checkIds).toContain("GHA013");
     expect(checkIds).toContain("GHA017");
     expect(checkIds).toContain("GHA018");
     expect(checkIds).toContain("GHA019");
+  });
+
+  test("lint IDs are unique across rules and post-synth checks", () => {
+    const ruleIds = githubPlugin.lintRules!().map((r) => r.id);
+    const checkIds = githubPlugin.postSynthChecks!().map((c) => c.id);
+    const allIds = [...ruleIds, ...checkIds];
+
+    const seen = new Set<string>();
+    const duplicates = new Set<string>();
+    for (const id of allIds) {
+      if (seen.has(id)) duplicates.add(id);
+      seen.add(id);
+    }
+
+    expect(Array.from(duplicates)).toEqual([]);
   });
 
   test("provides intrinsics", () => {
