@@ -16,6 +16,14 @@ build_diagrams() {
     echo "  $f → $out_dir/$name.svg"
     count=$((count + 1))
   done
+  # Hand-authored SVGs (e.g. Venn diagrams graphviz can't draw) are copied through as-is.
+  for f in "$src_dir"/*.svg; do
+    [ -f "$f" ] || continue
+    name=$(basename "$f")
+    cp "$f" "$out_dir/$name"
+    echo "  $f → $out_dir/$name (copied)"
+    count=$((count + 1))
+  done
   [ "$count" -gt 0 ] && echo "  $count diagram(s) built in $out_dir"
 }
 

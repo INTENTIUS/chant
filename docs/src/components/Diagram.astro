@@ -9,6 +9,6 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, '');
 const src = `${base}/diagrams/${name}.svg`;
 ---
 <figure class="diagram not-content" style="overflow-x:auto;margin:1.5rem 0;">
-  <img src={src} alt={alt} loading="lazy" decoding="async" style="display:block;height:auto;min-width:min-content;" />
+  <img src={src} alt={alt} loading="lazy" decoding="async" style="display:block;max-width:100%;height:auto;margin:0 auto;" />
   {caption && <figcaption style="text-align:center;font-size:0.875rem;color:var(--sl-color-gray-3);margin-top:0.5rem;">{caption}</figcaption>}
 </figure>
