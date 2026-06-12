@@ -1048,6 +1048,36 @@ Flags an \`if:\` condition that gates on a commit-author identity field (\`autho
 
 Flags a job on a self-hosted runner under a trigger a fork can reach (\`pull_request\`, \`pull_request_target\`, \`workflow_run\`). Self-hosted runners are non-ephemeral and shared, so untrusted code can persist and compromise later jobs.
 
+### GHA041 — Blanket secrets: inherit into a reusable workflow
+
+**Severity:** warning
+
+Flags a reusable-workflow call passing \`secrets: inherit\`, which hands the called workflow every caller secret. Pass through only the specific secrets it needs.
+
+### GHA042 — Entire secrets context passed
+
+**Severity:** warning
+
+Flags \`toJSON(secrets)\` passed into a step or reusable workflow, serializing every secret where one or two specific references would do.
+
+### GHA043 — Secret consumed without an environment gate
+
+**Severity:** warning
+
+Extends GHA026: when a workflow gates some jobs with an \`environment:\`, flags the specific secret-using jobs that have none — the inconsistent-gating case where a job skips the approval/scoping applied elsewhere.
+
+### GHA044 — Hardcoded registry/container credential
+
+**Severity:** error
+
+Flags a \`password:\` / \`token:\` / \`registry-password:\` set to a literal rather than a \`\${{ secrets.* }}\` reference. Move the credential into a secret.
+
+### GHA045 — Secret interpolated into a run: command
+
+**Severity:** warning
+
+Flags \`\${{ secrets.* }}\` expanded directly into a \`run:\` script, where a transform can defeat log masking and the raw value is exposed to argument injection. Pass it through an \`env:\` variable and reference \`"$VAR"\` quoted.
+
 ## Running lint
 
 \`\`\`bash
