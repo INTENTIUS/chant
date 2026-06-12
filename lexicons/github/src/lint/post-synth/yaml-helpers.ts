@@ -352,6 +352,17 @@ export function jobLines(yaml: string): Array<{ job: string; line: string }> {
   return out;
 }
 
+/** All lines inside the `jobs:` block grouped by owning job. */
+export function linesByJob(yaml: string): Map<string, string[]> {
+  const out = new Map<string, string[]>();
+  scanJobLines(yaml, (job, line) => {
+    const arr = out.get(job) ?? [];
+    arr.push(line);
+    out.set(job, arr);
+  });
+  return out;
+}
+
 /** Set of jobs that declare an `environment:`. */
 export function extractJobEnvironments(yaml: string): Set<string> {
   const set = new Set<string>();

@@ -1096,6 +1096,24 @@ Flags \`contains('literal', <dynamic>)\` — a constant haystack with a dynamic 
 
 Flags an \`if:\` gate whose compared operand is built through \`format()\` / \`join()\` / \`fromJSON()\` indirection. Constructing the operand at evaluation time hides what the gate checks — compare against the value directly.
 
+### GHA049 — Persisted checkout credentials reachable by an artifact
+
+**Severity:** warning
+
+Flags a job that checks out with persisted credentials (the default) and uploads an artifact — the token in \`.git/config\` can be swept into the artifact. Set \`persist-credentials: false\` on the checkout.
+
+### GHA050 — Cache populated in a privileged context
+
+**Severity:** warning
+
+Flags \`actions/cache\` under a privileged trigger (\`pull_request_target\`, \`workflow_run\`). A cache entry influenced by a fork can be restored and executed by a later trusted run (cache poisoning) — restrict caching to trusted triggers.
+
+### GHA051 — Publish step using a long-lived token instead of OIDC
+
+**Severity:** info
+
+Flags a publish/release job that uses a long-lived token secret while requesting no \`id-token: write\`. If the registry supports OIDC, mint a short-lived federated credential per run instead of holding a standing token.
+
 ## Running lint
 
 \`\`\`bash
