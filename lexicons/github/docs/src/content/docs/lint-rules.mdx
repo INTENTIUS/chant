@@ -297,6 +297,38 @@ Flags `actions/cache` under a privileged trigger (`pull_request_target`, `workfl
 
 Flags a publish/release job that uses a long-lived token secret while requesting no `id-token: write`. If the registry supports OIDC, mint a short-lived federated credential per run instead of holding a standing token.
 
+### GHA052 — Software fetched and piped to a shell
+
+**Severity:** warning
+
+Flags a `run:` step that pipes a network download straight into a shell (`curl ... | bash`). The fetched code is unpinned and unverified — download to a file, verify a checksum/signature, then run it.
+
+### GHA053 — Unsafe set-env / add-path opt-in
+
+**Severity:** error
+
+Flags re-enabling the `set-env` / `add-path` workflow commands removed for security (CVE-2020-15228) via `ACTIONS_ALLOW_UNSECURE_COMMANDS` or direct `::set-env::` / `::add-path::`. Use the `$GITHUB_ENV` / `$GITHUB_PATH` files instead.
+
+### GHA054 — Known-bad feature usage
+
+**Severity:** warning
+
+Catch-all, data-driven check flagging emitted content matching a vendored snapshot of risky features (deprecated workflow commands, unsafe runtime opt-ins). Advisory and necessarily incomplete.
+
+### GHA055 — Redundant runtime tool install
+
+**Severity:** info
+
+Flags a `run:` step that installs a tool GitHub-hosted runners already ship. The redundant install adds supply-chain surface for no benefit (irrelevant on self-hosted runners that may lack the tool).
+
+### GHA056 — Workflow without a name
+
+**Severity:** info
+
+Flags a workflow with no top-level `name:`. Without one, GitHub falls back to the file path in the UI and audit logs, making runs harder to identify.
+
+> Two items from issue #295 are intentionally not implemented at the post-synth layer: over-broad/unrevoked app-installation tokens (whether a minted token is scoped wider than used cannot be determined from emitted YAML) and a reference allowlist/denylist policy (configuration, overlapping the GHA029 trusted-owner allowlist).
+
 ## Running lint
 
 ```bash
