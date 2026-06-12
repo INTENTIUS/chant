@@ -2,6 +2,8 @@
  * Helpers for parsing serialized GitHub Actions YAML in post-synth checks.
  */
 
+import { parseYAML } from "@intentius/chant/yaml";
+
 export { getPrimaryOutput } from "@intentius/chant/lint/post-synth";
 
 export interface ParsedJob {
@@ -126,4 +128,120 @@ export function extractWorkflowName(yaml: string): string | undefined {
  */
 export function hasPermissions(yaml: string): boolean {
   return /^permissions:/m.test(yaml);
+}
+
+/** A single `uses:` reference found in a workflow. */
+export interface ActionRef {
+  /** Owning job name. */
+  job: string;
+  /** The raw `uses:` value (e.g. `actions/setup-node@v4`). */
+  ref: string;
+  /** Whether it is a step-level action or a job-level reusable workflow. */
+  level: "step" | "job";
+}
+
+/** A container/service/docker image reference found in a workflow. */
+export interface ImageRef {
+  /** Owning job name. */
+  job: string;
+  /** The raw image reference (e.g. `node:20`). */
+  image: string;
+  /** Where the image was declared. */
+  source: "container" | "service" | "step";
+}
+
+function parseDoc(yaml: string): Record<string, unknown> | undefined {
+  try {
+    return parseYAML(yaml);
+  } catch {
+    return undefined;
+  }
+}
+
+function jobEntries(yaml: string): Array<[string, Record<string, unknown>]> {
+  const doc = parseDoc(yaml);
+  const jobs = doc?.jobs;
+  if (!jobs || typeof jobs !== "object") return [];
+  const out: Array<[string, Record<string, unknown>]> = [];
+  for (const [name, val] of Object.entries(jobs as Record<string, unknown>)) {
+    if (val && typeof val === "object" && !Array.isArray(val)) {
+      out.push([name, val as Record<string, unknown>]);
+    }
+  }
+  return out;
+}
+
+/**
+ * Extract every `uses:` reference from the workflow — both step-level actions
+ * and job-level reusable-workflow calls. Uses the structural YAML parser so
+ * nested jobs/steps are handled reliably.
+ */
+export function extractActionRefs(yaml: string): ActionRef[] {
+  const refs: ActionRef[] = [];
+  for (const [job, jobObj] of jobEntries(yaml)) {
+    if (typeof jobObj.uses === "string") {
+      refs.push({ job, ref: jobObj.uses, level: "job" });
+    }
+    const steps = jobObj.steps;
+    if (Array.isArray(steps)) {
+      for (const step of steps) {
+        if (step && typeof step === "object" && typeof (step as Record<string, unknown>).uses === "string") {
+          refs.push({ job, ref: (step as Record<string, unknown>).uses as string, level: "step" });
+        }
+      }
+    }
+  }
+  return refs;
+}
+
+/**
+ * Extract every container/service/`docker://` image reference from the workflow.
+ */
+export function extractImageRefs(yaml: string): ImageRef[] {
+  const refs: ImageRef[] = [];
+  for (const [job, jobObj] of jobEntries(yaml)) {
+    const container = jobObj.container;
+    if (typeof container === "string") {
+      refs.push({ job, image: container, source: "container" });
+    } else if (container && typeof container === "object" && typeof (container as Record<string, unknown>).image === "string") {
+      refs.push({ job, image: (container as Record<string, unknown>).image as string, source: "container" });
+    }
+
+    const services = jobObj.services;
+    if (services && typeof services === "object" && !Array.isArray(services)) {
+      for (const svc of Object.values(services as Record<string, unknown>)) {
+        if (typeof svc === "string") {
+          refs.push({ job, image: svc, source: "service" });
+        } else if (svc && typeof svc === "object" && typeof (svc as Record<string, unknown>).image === "string") {
+          refs.push({ job, image: (svc as Record<string, unknown>).image as string, source: "service" });
+        }
+      }
+    }
+
+    const steps = jobObj.steps;
+    if (Array.isArray(steps)) {
+      for (const step of steps) {
+        const uses = step && typeof step === "object" ? (step as Record<string, unknown>).uses : undefined;
+        if (typeof uses === "string" && uses.startsWith("docker://")) {
+          refs.push({ job, image: uses.slice("docker://".length), source: "step" });
+        }
+      }
+    }
+  }
+  return refs;
+}
+
+/**
+ * Split an action `uses:` value into its `owner/repo` slug and git ref.
+ * Returns undefined for local (`./`, `../`) and `docker://` references, which
+ * are not GitHub action repository references.
+ */
+export function parseActionUses(uses: string): { owner: string; repo: string; slug: string; gitRef: string } | undefined {
+  if (uses.startsWith("./") || uses.startsWith("../") || uses.startsWith("docker://")) return undefined;
+  const at = uses.lastIndexOf("@");
+  const path = at === -1 ? uses : uses.slice(0, at);
+  const gitRef = at === -1 ? "" : uses.slice(at + 1);
+  const segments = path.split("/");
+  if (segments.length < 2 || !segments[0] || !segments[1]) return undefined;
+  return { owner: segments[0], repo: segments[1], slug: `${segments[0]}/${segments[1]}`, gitRef };
 }
