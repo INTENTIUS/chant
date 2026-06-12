@@ -1000,6 +1000,24 @@ Flags a \`uses:\` slug that is a near-miss (edit distance 1–2) of a popular ac
 
 Flags a \`uses:\` slug that a vendored snapshot marks as archived/abandoned or carrying a disclosed security issue, with remediation. Advisory and necessarily incomplete.
 
+### GHA033 — Blanket write-all permissions
+
+**Severity:** warning
+
+Flags \`permissions: write-all\` at the workflow or job level. It grants the \`GITHUB_TOKEN\` every write scope regardless of need — replace it with the specific scopes the job uses.
+
+### GHA034 — Write permissions granted workflow-wide
+
+**Severity:** warning
+
+Flags individual write scopes declared at the workflow level, which apply to every job even when only one needs them. Move each write scope onto the specific job that uses it. (The \`write-all\` preset is covered by GHA033.)
+
+### GHA035 — Elevated scope on an untrusted-code trigger
+
+**Severity:** error
+
+Flags a workflow that grants the token write access while using a trigger that can run untrusted code (\`pull_request_target\`, \`workflow_run\`). An injected step would run with standing write credentials — drop the write scope or isolate the privileged work in a separate trusted workflow.
+
 ## Running lint
 
 \`\`\`bash

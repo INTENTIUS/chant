@@ -231,6 +231,51 @@ export function extractImageRefs(yaml: string): ImageRef[] {
   return refs;
 }
 
+/** A permissions value as it appears in YAML: a string preset or a scope map. */
+export type PermissionsValue = string | Record<string, string>;
+
+/** The workflow-level `permissions:` value, if present. */
+export function extractWorkflowPermissions(yaml: string): PermissionsValue | undefined {
+  const doc = parseDoc(yaml);
+  const perms = doc?.permissions;
+  if (typeof perms === "string") return perms;
+  if (perms && typeof perms === "object" && !Array.isArray(perms)) return perms as Record<string, string>;
+  return undefined;
+}
+
+/** Per-job `permissions:` values, keyed by job name. Only jobs that declare one. */
+export function extractJobPermissions(yaml: string): Map<string, PermissionsValue> {
+  const out = new Map<string, PermissionsValue>();
+  for (const [job, jobObj] of jobEntries(yaml)) {
+    const perms = jobObj.permissions;
+    if (typeof perms === "string") out.set(job, perms);
+    else if (perms && typeof perms === "object" && !Array.isArray(perms)) out.set(job, perms as Record<string, string>);
+  }
+  return out;
+}
+
+/**
+ * Classify a permissions value's write surface.
+ * `writeAll` is the `write-all` blanket preset; `scopes` lists the individual
+ * scopes granted `write` in map form.
+ */
+export function writeSurface(perms: PermissionsValue): { writeAll: boolean; scopes: string[] } {
+  if (typeof perms === "string") {
+    return { writeAll: perms === "write-all", scopes: [] };
+  }
+  const scopes: string[] = [];
+  for (const [scope, level] of Object.entries(perms)) {
+    if (level === "write") scopes.push(scope);
+  }
+  return { writeAll: false, scopes };
+}
+
+/** True if the permissions value grants any write access (blanket or scoped). */
+export function grantsWrite(perms: PermissionsValue): boolean {
+  const { writeAll, scopes } = writeSurface(perms);
+  return writeAll || scopes.length > 0;
+}
+
 /**
  * Split an action `uses:` value into its `owner/repo` slug and git ref.
  * Returns undefined for local (`./`, `../`) and `docker://` references, which
