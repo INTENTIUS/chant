@@ -1,6 +1,6 @@
 import { describe, test, expect } from "vitest";
 import type { PostSynthContext } from "@intentius/chant/lint/post-synth";
-import { gha020 } from "./gha020";
+import { gha013 } from "./gha013";
 
 function makeCtx(yaml: string): PostSynthContext {
   return {
@@ -16,7 +16,7 @@ function makeCtx(yaml: string): PostSynthContext {
   };
 }
 
-describe("GHA020: missing job-level permissions for sensitive triggers", () => {
+describe("GHA013: missing job-level permissions for sensitive triggers", () => {
   test("flags job without permissions when using pull_request_target", () => {
     const yaml = `name: Review
 on:
@@ -27,9 +27,9 @@ jobs:
     steps:
       - run: echo review
 `;
-    const diags = gha020.check(makeCtx(yaml));
+    const diags = gha013.check(makeCtx(yaml));
     expect(diags).toHaveLength(1);
-    expect(diags[0].checkId).toBe("GHA020");
+    expect(diags[0].checkId).toBe("GHA013");
     expect(diags[0].severity).toBe("warning");
     expect(diags[0].message).toContain("review");
   });
@@ -44,9 +44,9 @@ jobs:
     steps:
       - run: echo deploy
 `;
-    const diags = gha020.check(makeCtx(yaml));
+    const diags = gha013.check(makeCtx(yaml));
     expect(diags).toHaveLength(1);
-    expect(diags[0].checkId).toBe("GHA020");
+    expect(diags[0].checkId).toBe("GHA013");
     expect(diags[0].message).toContain("deploy");
   });
 
@@ -60,7 +60,7 @@ jobs:
     steps:
       - run: echo build
 `;
-    const diags = gha020.check(makeCtx(yaml));
+    const diags = gha013.check(makeCtx(yaml));
     expect(diags).toHaveLength(0);
   });
 });

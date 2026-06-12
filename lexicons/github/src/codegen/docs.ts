@@ -952,6 +952,12 @@ Flags matrix strategy dimensions with an empty values array. An empty dimension 
 
 Flags jobs whose \`needs:\` entries reference a job not defined in the workflow. This causes a workflow validation error on GitHub.
 
+### GHA013 — Missing job-level permissions for sensitive triggers
+
+**Severity:** warning
+
+Flags jobs without an explicit \`permissions:\` block when the workflow uses a sensitive trigger (\`pull_request_target\` or \`workflow_dispatch\`). Declaring job-level permissions keeps least-privilege scope on workflows that run with elevated context.
+
 ### GHA017 — Missing permissions block
 
 **Severity:** info
