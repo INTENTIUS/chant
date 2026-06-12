@@ -345,6 +345,31 @@ export function extractExpressions(text: string): string[] {
   return out;
 }
 
+/** Every line inside the `jobs:` block paired with its owning job name. */
+export function jobLines(yaml: string): Array<{ job: string; line: string }> {
+  const out: Array<{ job: string; line: string }> = [];
+  scanJobLines(yaml, (job, line) => out.push({ job, line }));
+  return out;
+}
+
+/** Set of jobs that declare an `environment:`. */
+export function extractJobEnvironments(yaml: string): Set<string> {
+  const set = new Set<string>();
+  scanJobLines(yaml, (job, line) => {
+    if (/^\s+environment:/.test(line)) set.add(job);
+  });
+  return set;
+}
+
+/** Set of jobs whose body references a `secrets.` context. */
+export function jobsReferencingSecrets(yaml: string): Set<string> {
+  const set = new Set<string>();
+  scanJobLines(yaml, (job, line) => {
+    if (/secrets\./.test(line)) set.add(job);
+  });
+  return set;
+}
+
 /** A permissions value as it appears in YAML: a string preset or a scope map. */
 export type PermissionsValue = string | Record<string, string>;
 
