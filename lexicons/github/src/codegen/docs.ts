@@ -1018,6 +1018,36 @@ Flags individual write scopes declared at the workflow level, which apply to eve
 
 Flags a workflow that grants the token write access while using a trigger that can run untrusted code (\`pull_request_target\`, \`workflow_run\`). An injected step would run with standing write credentials — drop the write scope or isolate the privileged work in a separate trusted workflow.
 
+### GHA036 — Untrusted input in a run: command
+
+**Severity:** error
+
+Flags an attacker-controllable expression context (PR title, branch name, issue/comment body, commit message) interpolated directly into a \`run:\` script — a script-injection sink. Pass the value through an \`env:\` variable and reference it quoted instead.
+
+### GHA037 — Untrusted input written to GITHUB_ENV / GITHUB_PATH
+
+**Severity:** error
+
+Flags a \`run:\` step that writes untrusted input into \`$GITHUB_ENV\` or \`$GITHUB_PATH\`, which set environment/PATH state for later steps and can escalate into takeover of a subsequent privileged step.
+
+### GHA038 — workflow_run trigger checking out untrusted code
+
+**Severity:** warning
+
+Generalizes GHA018 to the \`workflow_run\` trigger, which runs with repo write scope and secrets. Checking out the head/artifact of the triggering run pulls untrusted code into that privileged context.
+
+### GHA039 — Authorization gate on a spoofable identity
+
+**Severity:** warning
+
+Flags an \`if:\` condition that gates on a commit-author identity field (\`author.name\` / \`author.email\`). Those come from git metadata the committer sets freely and can be spoofed — gate on a verified signal (environment protection, CODEOWNERS, verified actor).
+
+### GHA040 — Self-hosted runner on an untrusted-code trigger
+
+**Severity:** warning
+
+Flags a job on a self-hosted runner under a trigger a fork can reach (\`pull_request\`, \`pull_request_target\`, \`workflow_run\`). Self-hosted runners are non-ephemeral and shared, so untrusted code can persist and compromise later jobs.
+
 ## Running lint
 
 \`\`\`bash
