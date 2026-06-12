@@ -1078,6 +1078,24 @@ Flags a \`password:\` / \`token:\` / \`registry-password:\` set to a literal rat
 
 Flags \`\${{ secrets.* }}\` expanded directly into a \`run:\` script, where a transform can defeat log masking and the raw value is exposed to argument injection. Pass it through an \`env:\` variable and reference \`"$VAR"\` quoted.
 
+### GHA046 — Logically unsound guard condition
+
+**Severity:** warning
+
+Flags an \`if:\` condition that reads like a gate but evaluates to a constant — \`true\`/\`false\` literals, an \`X == X\` tautology, or a collapse via \`|| true\` / \`&& false\`. A gate that constrains nothing is misleading.
+
+### GHA047 — Ineffective contains() guard
+
+**Severity:** warning
+
+Flags \`contains('literal', <dynamic>)\` — a constant haystack with a dynamic needle. \`contains(search, item)\` tests whether \`item\` is in \`search\`, so reversed arguments make the result depend on a fixed string. Swap them.
+
+### GHA048 — Obfuscated guard condition
+
+**Severity:** warning
+
+Flags an \`if:\` gate whose compared operand is built through \`format()\` / \`join()\` / \`fromJSON()\` indirection. Constructing the operand at evaluation time hides what the gate checks — compare against the value directly.
+
 ## Running lint
 
 \`\`\`bash

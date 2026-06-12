@@ -24,7 +24,7 @@ describe("githubPlugin", () => {
 
   test("provides post-synth checks", () => {
     const checks = githubPlugin.postSynthChecks!();
-    expect(checks.length).toBe(32);
+    expect(checks.length).toBe(35);
 
     const checkIds = checks.map((c) => c.id);
     expect(checkIds).toContain("GHA006");
@@ -51,6 +51,9 @@ describe("githubPlugin", () => {
     expect(checkIds).toContain("GHA043");
     expect(checkIds).toContain("GHA044");
     expect(checkIds).toContain("GHA045");
+    expect(checkIds).toContain("GHA046");
+    expect(checkIds).toContain("GHA047");
+    expect(checkIds).toContain("GHA048");
   });
 
   test("lint IDs are unique across rules and post-synth checks", () => {
