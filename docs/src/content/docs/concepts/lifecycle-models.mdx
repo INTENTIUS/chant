@@ -4,6 +4,7 @@ description: The three axes that describe any lifecycle model, and where chant s
 ---
 
 import { Aside } from '@astrojs/starlight/components';
+import Diagram from '../../../components/Diagram.astro';
 
 Every infrastructure tool takes a position on the lifecycle — how infrastructure is created, changed, reconciled, and retired — usually implicitly, and usually welded to the compiler so you can't take one without the other. chant declines that bet: **pluggable lexicons in, pluggable lifecycles out, pure synthesis in the middle.** Bring your own lifecycle, and chant makes it durable.
 
@@ -54,6 +55,18 @@ This third axis is the one most tools collapse into the first: they answer "is t
 - **Truth is the live system.** chant reads the cloud directly. The snapshot it stores is evidence for diffing, never a source of truth.
 - **Reconciliation direction is a per-environment choice.** A dev environment might only observe; staging might reconcile `cloud → code`; production might apply `code → cloud` behind a gate. Same project, different dial positions.
 - **Ownership is answered by live markers.** A chant-managed resource carries a [marker](/chant/configuration/config-file/#ownership) — a standard tag or label — that records the stack identity on the resource itself. "Is this mine?" is answered by reading that marker, never by a record chant has to lock.
+
+## Declaration and ownership are independent
+
+<Diagram name="declaration-ownership" alt="Two overlapping bands, Declared and Owned, on a Foreign field. Declared-only is to-create, the overlap is managed, Owned-only is the owned orphan where the delete-or-retain decision lives, and everything outside both bands is foreign and never touched." caption="Declaration and ownership are two overlapping sets. A delete is only possible where a resource is owned but no longer declared — everything outside both is foreign." />
+
+Declaration is your source — what your TypeScript exports. Ownership is a fact recorded on the live resource — a marker chant reads, never a record it locks. Because the two are separate, dropping a resource from your source does not by itself delete it. [`chant lifecycle plan`](/chant/cli/lifecycle/) proposes a delete only for a resource that is owned **and** no longer declared. Three levers decide what happens to it.
+
+- **`ApplyOp delete: "never"`** — stack-wide. Apply never prunes, so an undeclared resource is left alone.
+- **Strip the marker** — per-resource. The prune is marker-scoped, so an unmarked resource is foreign and never touched.
+- **Spec-true retain** — the target spec's own knob. CloudFormation `DeletionPolicy: Retain`, the K8s prune selector. chant passes it through rather than inventing one.
+
+No hosted state file decides this. A resource lives or dies based on what you declare and what its live marker says, which is why the snapshot can be deleted between runs with no change in behavior.
 
 ## The dial
 
