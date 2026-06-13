@@ -33,3 +33,14 @@ export type { WaitForArgoSyncArgs, ArgoAppStatus, ArgoStatusFetcher } from "./ar
 
 export { policyGate } from "./policy";
 export type { PolicyGateArgs } from "./policy";
+
+export { workflowSupplyChainAudit, collectAuditRefs, defaultActionRefResolver } from "./workflow-audit";
+export type {
+  WorkflowAuditArgs,
+  WorkflowAuditResult,
+  WorkflowAuditMode,
+  WorkflowAuditFinding,
+  WorkflowAuditFindingKind,
+  ActionRefResolver,
+  ActionRefResolution,
+} from "./workflow-audit";

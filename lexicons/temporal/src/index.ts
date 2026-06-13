@@ -31,6 +31,8 @@ export { WatchOp } from "./composites/watch-op";
 export type { WatchOpConfig, WatchOpResources } from "./composites/watch-op";
 export { ReconcileOp } from "./composites/reconcile-op";
 export type { ReconcileOpConfig, ReconcileOpResources } from "./composites/reconcile-op";
+export { WorkflowAuditOp } from "./composites/workflow-audit-op";
+export type { WorkflowAuditOpConfig, WorkflowAuditOpResources } from "./composites/workflow-audit-op";
 export { ApplyOp } from "./composites/apply-op";
 export type { ApplyOpConfig, ApplyOpResources } from "./composites/apply-op";
 
