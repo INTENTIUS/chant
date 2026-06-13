@@ -473,6 +473,24 @@ Flags a job that declares \`id_tokens:\` and is reachable from merge-request pip
 
 > The project-level \`CI_JOB_TOKEN\` allowlist and a variable's protected status are project settings, not emitted pipeline YAML, so they are out of scope for these post-synth checks (see issue #298's caveat).
 
+### WGL035 — Untrusted CI variable in a script
+
+**Severity:** warning
+
+Flags an attacker-controllable predefined variable (branch/tag name, commit or MR title/description, author) referenced in a \`script:\` command, where a crafted value can inject shell commands. Quote it and avoid using it in sensitive commands.
+
+### WGL036 — Privileged DinD reachable from merge requests
+
+**Severity:** warning
+
+Flags a Docker-in-Docker (privileged) job reachable from merge-request pipelines, which outside contributors can trigger. Restrict privileged services to protected refs. Complements WGL026.
+
+### WGL037 — Regex gate on an untrusted ref
+
+**Severity:** warning
+
+Flags a \`rules:if\` that gates on a regex match (\`=~\`) over an attacker-controllable ref variable — a crafted branch/tag name can satisfy the pattern. Match the full ref with \`==\` or gate on a protected condition.
+
 ## Running lint
 
 \`\`\`bash
