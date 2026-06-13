@@ -1,4 +1,4 @@
-import { buildCommand, buildCommandWatch, printErrors, printWarnings } from "../commands/build";
+import { buildCommand, buildCommandWatch, printErrors, printWarnings, resolveBuildFormat } from "../commands/build";
 import { formatError, formatInfo } from "../format";
 import type { CommandContext } from "../registry";
 
@@ -15,10 +15,15 @@ export async function runBuild(ctx: CommandContext): Promise<number> {
     }
   }
 
-  const buildFormat = (args.format || "json") as "json" | "yaml";
-  if (buildFormat !== "json" && buildFormat !== "yaml") {
-    console.error(formatError({ message: `Invalid format for build: ${buildFormat}. Expected 'json' or 'yaml'.` }));
+  if (args.format && args.format !== "json" && args.format !== "yaml") {
+    console.error(formatError({ message: `Invalid format for build: ${args.format}. Expected 'json' or 'yaml'.` }));
     return 1;
+  }
+  // Infer format from the -o extension when --format is not given; an explicit
+  // --format wins but a mismatch warns (#284 bug 1).
+  const { format: buildFormat, warning: formatWarningMsg } = resolveBuildFormat(args.format, args.output);
+  if (formatWarningMsg) {
+    console.error(formatInfo(formatWarningMsg));
   }
 
   if (args.watch) {
