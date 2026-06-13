@@ -1385,6 +1385,13 @@ The lexicon provides MCP (Model Context Protocol) tools and resources that AI ag
 | MCP tool | Description |
 |----------|-------------|
 | \`diff\` | Compare current build output against previous output |
+| \`github:checks\` | Build the workflow and return its security findings (the GHA checks) |
+| \`github:workflow\` | Triggers and jobs as written — name, run order, step count |
+| \`github:references\` | Actions and images pulled in, and whether each is pinned to a commit SHA |
+| \`github:affected\` | Given a job, the jobs that would re-run because they depend on it |
+| \`github:workflow-yaml\` | The generated workflow YAML |
+
+The \`github:*\` tools are **read-only context tools** (#327): each builds from your source and returns what chant already computes — before the workflow runs or merges. None touch the live GitHub instance, run history, or write anything.
 
 | MCP resource | Description |
 |--------------|-------------|

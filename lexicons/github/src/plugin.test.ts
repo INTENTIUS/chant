@@ -125,8 +125,17 @@ describe("githubPlugin", () => {
 
   test("provides MCP tools", () => {
     const tools = githubPlugin.mcpTools!();
-    expect(tools.length).toBe(1);
-    expect(tools[0].name).toBe("github:diff");
+    const names = tools.map((t) => t.name);
+    expect(names).toContain("github:diff");
+    // Read-only context tools (#327)
+    expect(names).toContain("github:checks");
+    expect(names).toContain("github:workflow");
+    expect(names).toContain("github:references");
+    expect(names).toContain("github:affected");
+    expect(names).toContain("github:workflow-yaml");
+    for (const t of tools) {
+      expect(typeof t.handler).toBe("function");
+    }
   });
 
   test("provides MCP resources", () => {

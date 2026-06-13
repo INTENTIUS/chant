@@ -29,6 +29,7 @@ import { githubCompletions } from "./lsp/completions";
 import { githubHover } from "./lsp/hover";
 import { GitHubActionsParser } from "./import/parser";
 import { GitHubActionsGenerator } from "./import/generator";
+import { githubContextTools } from "./mcp/context-tools";
 
 export const githubPlugin: LexiconPlugin = {
   name: "github",
@@ -224,7 +225,10 @@ export const build = new Job({
   },
 
   mcpTools() {
-    return [createDiffTool(githubSerializer, "Compare current build output against previous output for GitHub Actions", "github")];
+    return [
+      createDiffTool(githubSerializer, "Compare current build output against previous output for GitHub Actions", "github"),
+      ...githubContextTools(),
+    ];
   },
 
   mcpResources() {
