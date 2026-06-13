@@ -329,6 +329,18 @@ Flags a workflow with no top-level `name:`. Without one, GitHub falls back to th
 
 > Two items from issue #295 are intentionally not implemented at the post-synth layer: over-broad/unrevoked app-installation tokens (whether a minted token is scoped wider than used cannot be determined from emitted YAML) and a reference allowlist/denylist policy (configuration, overlapping the GHA029 trusted-owner allowlist).
 
+### GHA057 — Dependency update executes untrusted code
+
+**Severity:** error
+
+Flags a Dependabot `updates:` entry with `insecure-external-code-execution: allow`, which runs a freshly-pulled dependency's lifecycle scripts during the update itself — a compromised release executes before any review. Set it to `deny`. Requires the `Dependabot` resource so the config is emitted (`.github/dependabot.yml`).
+
+### GHA058 — Dependency update without a cooldown
+
+**Severity:** warning
+
+Flags a Dependabot `updates:` entry with no cooldown — a version published moments ago (including a compromised one) is adopted immediately. Configure a `cooldown:` window. The `Dependabot` composite ships a 7-day default.
+
 ## Running lint
 
 ```bash

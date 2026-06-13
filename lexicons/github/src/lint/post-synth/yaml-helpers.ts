@@ -3,8 +3,30 @@
  */
 
 import { parseYAML } from "@intentius/chant/yaml";
+import type { SerializerResult } from "@intentius/chant/serializer";
 
 export { getPrimaryOutput } from "@intentius/chant/lint/post-synth";
+
+/**
+ * Return the emitted `.github/dependabot.yml` content from a serializer output,
+ * if present (it rides as an additional file alongside the workflow output).
+ */
+export function getDependabotYaml(output: string | SerializerResult): string | undefined {
+  if (typeof output === "string") return undefined;
+  return output.files?.["dependabot.yml"];
+}
+
+/** Parse the `updates:` array from a dependabot.yml document. */
+export function extractDependabotUpdates(dependabotYaml: string): Array<Record<string, unknown>> {
+  let doc: Record<string, unknown>;
+  try {
+    doc = parseYAML(dependabotYaml);
+  } catch {
+    return [];
+  }
+  const updates = doc.updates;
+  return Array.isArray(updates) ? (updates as Array<Record<string, unknown>>) : [];
+}
 
 export interface ParsedJob {
   name: string;
