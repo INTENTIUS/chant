@@ -14,9 +14,11 @@ import { runPostSynthChecks, getPrimaryOutput } from "@intentius/chant/lint/post
 import { discoverPostSynthChecks } from "@intentius/chant/lint/discover";
 import { getProvenance } from "@intentius/chant/provenance";
 import type { McpToolContribution } from "@intentius/chant/mcp/types";
-import { dirname, join, relative, isAbsolute } from "path";
+import { dirname, join, relative, isAbsolute, resolve } from "path";
+import { readFile } from "fs/promises";
 import { fileURLToPath } from "url";
 import { gitlabSerializer } from "../serializer";
+import { transform, detectGitHubWorkflow } from "../migrate/from-github";
 import {
   extractStages,
   extractJobs,
@@ -237,6 +239,43 @@ export function gitlabContextTools(): McpToolContribution[] {
           basis: "declared-in-source",
           note: "GitLab CI jobs are not taggable cloud resources; ownership here means the job is declared by chant in this project. Live ownership markers apply to cloud lexicons (aws/azure/k8s).",
         };
+      },
+    },
+    {
+      name: "gitlab:compare",
+      description:
+        "Given a GitHub Actions workflow file, migrate it to GitLab CI and report which security properties survive the move and which weaken or are lost (the migration safety view). Returns a per-property fate (translated/approximated/needs-review/lost). Read-only — builds and analyzes, never writes.",
+      inputSchema: {
+        type: "object" as const,
+        properties: {
+          file: { type: "string", description: "Path to a .github/workflows/*.yml workflow file to migrate and compare" },
+        },
+        required: ["file"],
+      },
+      async handler(params: Record<string, unknown>): Promise<unknown> {
+        const file = resolve((params.file as string) ?? "");
+        let content: string;
+        try {
+          content = await readFile(file, "utf8");
+        } catch {
+          return { file: params.file ?? null, found: false, note: "could not read the workflow file" };
+        }
+        if (!detectGitHubWorkflow(content)) {
+          return { file: params.file ?? null, found: false, note: "file does not look like a GitHub Actions workflow" };
+        }
+        const migration = await transform(content, { security: true, sourceFile: file });
+        const properties = migration.provenance
+          .filter((r) => r.security)
+          .map((r) => ({
+            property: r.security!.property,
+            fate: r.security!.fate,
+            severity: r.security!.severity,
+            reestablish: r.security!.reestablish ?? null,
+            note: r.note ?? null,
+          }));
+        const summary = { translated: 0, approximated: 0, "needs-review": 0, lost: 0 } as Record<string, number>;
+        for (const p of properties) summary[p.fate] = (summary[p.fate] ?? 0) + 1;
+        return { found: true, properties, summary };
       },
     },
   ];

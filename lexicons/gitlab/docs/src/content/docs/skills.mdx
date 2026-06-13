@@ -61,8 +61,11 @@ The lexicon also provides MCP (Model Context Protocol) tools and resources that 
 | `gitlab:pipeline-yaml` | Build and return the generated `.gitlab-ci.yml` |
 | `gitlab:source` | Given a job, where it came from in the TypeScript — the declaring file and the composite that expanded it, if any (entity-level, not a YAML-line source map) |
 | `gitlab:owns` | Given a job, whether it is declared (owned) by chant in this project. Pipeline jobs are not taggable cloud resources, so ownership here means "declared here" — live ownership markers apply to cloud lexicons |
+| `gitlab:compare` | Given a GitHub Actions workflow file, migrate it to GitLab CI and report which security properties survive (translated/approximated/needs-review/lost) — the migration safety view |
 
-The `gitlab:checks` / `gitlab:pipeline` / `gitlab:references` / `gitlab:affected` / `gitlab:pipeline-yaml` / `gitlab:source` / `gitlab:owns` tools are **read-only**: they build from source and never touch the live GitLab instance. They give an agent a *before-it-runs* view of the pipeline — what it does, what it pulls in, whether it is safe, and where it came from — to complement the *after-it-ran* view it gets from the instance.
+The `gitlab:checks` / `gitlab:pipeline` / `gitlab:references` / `gitlab:affected` / `gitlab:pipeline-yaml` / `gitlab:source` / `gitlab:owns` / `gitlab:compare` tools are **read-only**: they build (or migrate) from source and never touch the live GitLab instance. They give an agent a *before-it-runs* view of the pipeline — what it does, what it pulls in, whether it is safe, where it came from, and what survives a migration — to complement the *after-it-ran* view it gets from the instance.
+
+> **Why no `github:compare`?** The GitHub → GitLab migration lives in the GitLab lexicon (the GitHub lexicon does not depend on GitLab). A `github:compare` would invert that dependency, so the migration safety view is exposed once, here, as `gitlab:compare`.
 
 | MCP resource | Description |
 |--------------|-------------|
