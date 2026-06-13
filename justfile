@@ -54,6 +54,10 @@ smoke-build-examples:
 smoke-npm-registry:
     ./test/smoke.sh npm-registry
 
+# Run a chant-generated GitLab pipeline in Docker (gitlab-ci-local; on-demand, needs Docker)
+gitlab-runtime-e2e:
+    bash test/gitlab-runtime-e2e.sh
+
 # Run all smoke tests
 smoke: smoke-workspace smoke-npm
 
