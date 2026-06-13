@@ -109,6 +109,9 @@ export interface MigrateOptions {
   sourceFile?: string;
   /** Escalate needs-review diagnostics to errors. */
   strict?: boolean;
+  /** Run security-aware migration analysis (classify property fates + run
+   * target security checks). Enabled by `chant migrate --validate`. */
+  security?: boolean;
 }
 
 /**
@@ -125,6 +128,8 @@ export interface MigrationResult {
   provenance: Array<Record<string, unknown>>;
   /** SARIF-shaped diagnostics. */
   diagnostics: Array<Record<string, unknown>>;
+  /** Markdown "Security posture" section, when security analysis ran (#306). */
+  securityPosture?: string;
 }
 
 /**

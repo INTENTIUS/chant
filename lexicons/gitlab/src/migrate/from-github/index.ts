@@ -12,6 +12,7 @@ import { ProvenanceAccumulator, type ProvenanceRecord } from "./provenance";
 import { transformIR } from "./transformer";
 import { emitGitlabYaml } from "./emit-yaml";
 import { provenanceToDiagnostics } from "./diagnostics";
+import { analyzeSecurity, runSecurityChecks, renderSecurityPosture } from "./security";
 import { GitLabGenerator } from "../../import/generator";
 import { applyComposites } from "./composites/rewriter";
 import type { ActionMappingRegistry } from "./actions/registry";
@@ -31,6 +32,12 @@ export interface MigrateOptions {
   registry?: ActionMappingRegistry;
   /** Escalate needs-review diagnostics to errors. */
   strict?: boolean;
+  /**
+   * Security-aware migration (#306): classify each security property's fate
+   * across the edge and run the GitLab security post-synth checks against the
+   * migrated YAML. Enabled by the CLI's `--validate` path.
+   */
+  security?: boolean;
 }
 
 export interface MigrationResult {
@@ -44,6 +51,8 @@ export interface MigrationResult {
   diagnostics: LintDiagnostic[];
   /** Inferred stage list. */
   stages: string[];
+  /** Markdown "Security posture" section (#306). */
+  securityPosture: string;
 }
 
 /**
@@ -106,10 +115,20 @@ export async function transform(
     output = emitGitlabYaml(ir);
   }
 
+  // Security-aware migration (#306): classify each security property's fate
+  // across the edge, and run the GitLab security post-synth checks against the
+  // migrated YAML so weaknesses lost in translation surface on the target side.
+  if (opts.security) {
+    const yamlForSecurity = opts.emit === "ts" ? emitGitlabYaml(ir) : output;
+    provAcc.pushAll(analyzeSecurity(yamlContent, { sourceFile: opts.sourceFile }));
+    provAcc.pushAll(await runSecurityChecks(yamlForSecurity, { sourceFile: opts.sourceFile }));
+  }
+
   const provenance = provAcc.all();
   const diagnostics = provenanceToDiagnostics(provenance, { strict: opts.strict });
+  const securityPosture = renderSecurityPosture(provenance);
 
-  return { ir, output, provenance, diagnostics, stages };
+  return { ir, output, provenance, diagnostics, stages, securityPosture };
 }
 
 /**

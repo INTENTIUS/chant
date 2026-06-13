@@ -79,6 +79,16 @@ npx chant migrate path/to/workflow.yml --output .gitlab-ci.yml --validate
 
 The CLI picks `glci` (offline, no auth) first; `glab ci lint` second. If neither is on PATH, `--validate` warns and skips. Pair with `--strict` to make validation failures hard.
 
+`--validate` also runs the **security backend** (#306): it classifies the fate of each security property across the migration edge and runs the GitLab security post-synth checks (WGL029+) against the emitted YAML — *migrate, then prove the output clears the GitLab security bar*. The report gains a **Security posture** section plus `MIG-*` security diagnostics:
+
+- `MIG-PIN-LOST` — a GitHub SHA pin can't follow the action to its GitLab include/image; re-pin on GitLab (→ #297 / WGL029, WGL031).
+- `MIG-SECRET-UNSCOPED` — a migrated `$VAR` assumes a masked + protected GitLab variable, set outside the YAML (→ #300 / WGL038).
+- `MIG-INJECTION-CARRIED` — an untrusted-input injection site translated verbatim; the weakness carries across (→ #299 / WGL035).
+- `MIG-TRUST-BOUNDARY` — `pull_request_target` → merge-request pipelines that fork contributors can trigger; re-establish protected-ref/approval gating (→ #299 / WGL034, WGL036).
+- `MIG-PERMISSIONS-001` (least-privilege) — no per-job GitLab YAML equivalent; lives in project token settings + `id_tokens` scoping (→ #298 / WGL033).
+
+Fates mirror the functional provenance model: **translated** (weakness carried as-is), **approximated**, **needs-review** (re-establish on GitLab), **lost** (no GitLab equivalent for the property). Use these to tell the user not just *did it migrate* but *did the security posture survive*.
+
 ## Step 5: Decide the emit mode
 
 Two modes serve different intents:
