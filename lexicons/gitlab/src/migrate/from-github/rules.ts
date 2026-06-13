@@ -79,4 +79,11 @@ export const MIGRATION_RULES: LintRule[] = [
 
   // Action mapping fallback
   rule("MIG-ACTION-UNKNOWN", "warning", "Marketplace action has no registered mapping"),
+
+  // ── Security posture across the migration edge (#306) ──────────────────
+  // Each cross-references the endpoint issue that re-establishes the property.
+  rule("MIG-PIN-LOST", "warning", "A pinned action SHA could not be carried to the GitLab include/image — re-pin on the GitLab side (#297)"),
+  rule("MIG-SECRET-UNSCOPED", "warning", "Migrated secret reference assumes a masked + protected GitLab variable (#300)"),
+  rule("MIG-INJECTION-CARRIED", "warning", "An untrusted-input injection site was translated verbatim across the edge (#299)"),
+  rule("MIG-TRUST-BOUNDARY", "warning", "Trigger/fork semantics shifted the trust boundary (pull_request_target → MR/fork pipeline) (#299)"),
 ];

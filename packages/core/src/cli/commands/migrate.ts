@@ -96,6 +96,9 @@ export async function migrateCommand(opts: MigrateCliOpts): Promise<MigrateCliRe
       useComposites: opts.useComposites,
       sourceFile: opts.sourceFile,
       strict: opts.strict,
+      // --validate also runs the target lexicon's security checks against the
+      // migrated output and classifies security-property fates (#306).
+      security: opts.validate,
     });
   } catch (err) {
     return {
@@ -168,7 +171,11 @@ export async function migrateCommand(opts: MigrateCliOpts): Promise<MigrateCliRe
   }
 
   // Markdown summary (always to stderr — leaves stdout clean for piping)
-  const markdownSummary = formatMarkdownSummary(result.provenance, result.diagnostics, content);
+  let markdownSummary = formatMarkdownSummary(result.provenance, result.diagnostics, content);
+  // Append the security posture section when security analysis ran (#306).
+  if (result.securityPosture) {
+    markdownSummary += `\n\n${result.securityPosture}`;
+  }
 
   // Determine exit code: any error-severity diagnostic fails when --strict.
   // The transformer already escalates needs-review → error when opts.strict

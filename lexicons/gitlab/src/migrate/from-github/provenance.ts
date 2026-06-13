@@ -37,6 +37,29 @@ export interface ProvenanceRecord {
   actionRef?: string;
   /** Tier 1/2/3 for action-map records */
   mappingTier?: 1 | 2 | 3;
+  /** Security classification, when this record concerns a security property. */
+  security?: SecurityProvenance;
+}
+
+/**
+ * Fate of a security property as it crosses the GitHub → GitLab boundary,
+ * mirroring the functional provenance categories.
+ */
+export type SecurityFate = "translated" | "approximated" | "needs-review" | "lost";
+
+/**
+ * Security classification attached to a provenance record — tracks whether a
+ * security-relevant property survived migration, alongside the functional one.
+ */
+export interface SecurityProvenance {
+  /** Human label for the property (e.g. "Pinned action SHA"). */
+  property: string;
+  /** What happened to the property across the migration edge. */
+  fate: SecurityFate;
+  /** Diagnostic severity for this finding. */
+  severity: "error" | "warning" | "info";
+  /** Cross-reference to the endpoint that re-establishes the property. */
+  reestablish?: string;
 }
 
 /**
@@ -64,5 +87,10 @@ export class ProvenanceAccumulator {
 
   needsReviewCount(): number {
     return this.records.filter((r) => r.category === "needs-review").length;
+  }
+
+  /** Records carrying a security classification. */
+  securityRecords(): ProvenanceRecord[] {
+    return this.records.filter((r) => r.security !== undefined);
   }
 }

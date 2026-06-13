@@ -22,6 +22,24 @@ export function provenanceToDiagnostics(
 ): LintDiagnostic[] {
   const out: LintDiagnostic[] = [];
   for (const r of records) {
+    // Security records always emit a diagnostic, at their own severity
+    // (escalated to error under --strict when the property was lost or needs
+    // review), independent of the functional category.
+    if (r.security) {
+      const sev =
+        opts.strict && (r.security.fate === "lost" || r.security.fate === "needs-review")
+          ? "error"
+          : r.security.severity;
+      out.push({
+        file: r.sourceFile ?? "<input>",
+        line: r.sourceLine ?? 1,
+        column: r.sourceColumn ?? 1,
+        ruleId: r.rule,
+        severity: sev,
+        message: r.note ?? r.rule,
+      });
+      continue;
+    }
     let severity: "error" | "warning" | "info" | undefined;
     if (r.category === "needs-review") {
       severity = opts.strict ? "error" : "warning";
