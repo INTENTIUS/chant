@@ -123,3 +123,56 @@ export const testApp = { [M]: true, lexicon: "gitlab", entityType: "GitLab::CI::
     expect(foreign.owned).toBe(false);
   });
 });
+
+describe("gitlab:compare — migration safety view (#327)", () => {
+  let dir: string;
+  let wf: string;
+  beforeEach(async () => {
+    dir = join(tmpdir(), `chant-mcp-cmp-${Date.now()}-${Math.random().toString(36).slice(2)}`);
+    await mkdir(dir, { recursive: true });
+    wf = join(dir, "ci.yml");
+    await writeFile(
+      wf,
+      `name: CI
+on:
+  push:
+    branches: [main]
+permissions:
+  contents: read
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@${"a".repeat(40)}
+      - run: npm ci
+`,
+    );
+  });
+  afterEach(async () => {
+    await rm(dir, { recursive: true, force: true });
+  });
+
+  test("reports the SHA pin as lost across the migration edge", async () => {
+    const out = (await call("gitlab:compare", { file: wf })) as {
+      found: boolean;
+      properties: Array<{ property: string; fate: string }>;
+      summary: Record<string, number>;
+    };
+    expect(out.found).toBe(true);
+    const pin = out.properties.find((p) => p.property === "Pinned action SHA");
+    expect(pin?.fate).toBe("lost");
+    expect(out.summary.lost).toBeGreaterThanOrEqual(1);
+  });
+
+  test("not-found for a missing file", async () => {
+    const out = (await call("gitlab:compare", { file: join(dir, "nope.yml") })) as { found: boolean };
+    expect(out.found).toBe(false);
+  });
+
+  test("not-found for a non-workflow file", async () => {
+    const notWf = join(dir, "plain.yml");
+    await writeFile(notWf, "hello: world\n");
+    const out = (await call("gitlab:compare", { file: notWf })) as { found: boolean };
+    expect(out.found).toBe(false);
+  });
+});

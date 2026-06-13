@@ -246,6 +246,7 @@ describe("gitlabPlugin", () => {
     expect(names).toContain("gitlab:pipeline-yaml");
     expect(names).toContain("gitlab:source");
     expect(names).toContain("gitlab:owns");
+    expect(names).toContain("gitlab:compare");
     for (const t of tools) {
       expect(typeof t.handler).toBe("function");
     }
