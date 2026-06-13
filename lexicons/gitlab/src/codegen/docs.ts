@@ -551,6 +551,20 @@ Flags a job that writes a cache (push policy) and is reachable from merge-reques
 
 > Artifact / \`dependencies:\` flow across a *protected* boundary depends on a ref's protected status, a project setting not present in emitted YAML — out of scope here.
 
+### WGL047 — Software fetched and piped to a shell
+
+**Severity:** warning
+
+Flags a \`script:\` command that pipes a network download straight into a shell (\`curl ... | bash\`). The fetched code is unpinned and unverified — download to a file, verify a checksum/signature, then run it.
+
+### WGL048 — Pipeline without a name
+
+**Severity:** info
+
+Flags a pipeline that defines a \`workflow:\` block but no \`workflow:name\`. A pipeline name aids identification in the GitLab UI and audit output.
+
+> Two #304 items stay out of scope: a broad privileged-service / DinD check (already covered by WGL026 for DinD-TLS and WGL036 for MR-reachable DinD; a runner's privileged isolation is not in emitted YAML) and an optional include/component allowlist policy (configuration, overlapping WGL032's vendored source list).
+
 ## Running lint
 
 \`\`\`bash
