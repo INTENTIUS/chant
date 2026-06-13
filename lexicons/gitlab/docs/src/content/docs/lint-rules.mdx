@@ -234,6 +234,26 @@ Flags a `docker login` (or compatible) passing a literal password via `-p`/`--pa
 
 > Variable *masking* and *protected* status are GitLab project/CI-settings, not emitted YAML — WGL016 already nudges toward masked variables; this group covers the exposure paths visible in the pipeline.
 
+### WGL041 — Unsound rules:if condition
+
+**Severity:** warning
+
+Flags a tautological `rules:if` where both sides of `==`/`!=` are identical, so the condition is always true or always false. Generalizes WGL011 to conditions presented as gates.
+
+### WGL042 — Unreachable rules after an unconditional match
+
+**Severity:** warning
+
+Flags rules listed after an unconditional rule (no `if:`, not `when: never`). GitLab takes the first matching rule, so a catch-all makes everything after it dead. Put specific rules first.
+
+### WGL043 — Match-anything regex gate
+
+**Severity:** warning
+
+Flags a `rules:if` whose `=~` regex matches every value (empty, dot-star, anchored dot-star) — a filter that admits everything. Tighten the pattern or remove the gate.
+
+> The auto-fix acceptance item is N/A at the post-synth layer (PostSynthDiagnostic has no fix channel); it belongs to the declarative source-lint rules.
+
 ## Running lint
 
 ```bash
