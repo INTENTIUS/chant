@@ -59,8 +59,10 @@ The lexicon also provides MCP (Model Context Protocol) tools and resources that 
 | `gitlab:references` | Build and list what the pipeline pulls in (includes, components, images) and whether each is pinned |
 | `gitlab:affected` | Given a job, list the jobs that would re-run because they depend on it |
 | `gitlab:pipeline-yaml` | Build and return the generated `.gitlab-ci.yml` |
+| `gitlab:source` | Given a job, where it came from in the TypeScript — the declaring file and the composite that expanded it, if any (entity-level, not a YAML-line source map) |
+| `gitlab:owns` | Given a job, whether it is declared (owned) by chant in this project. Pipeline jobs are not taggable cloud resources, so ownership here means "declared here" — live ownership markers apply to cloud lexicons |
 
-The `gitlab:checks` / `gitlab:pipeline` / `gitlab:references` / `gitlab:affected` / `gitlab:pipeline-yaml` tools are **read-only**: they build from source and never touch the live GitLab instance. They give an agent a *before-it-runs* view of the pipeline — what it does, what it pulls in, and whether it is safe — to complement the *after-it-ran* view it gets from the instance.
+The `gitlab:checks` / `gitlab:pipeline` / `gitlab:references` / `gitlab:affected` / `gitlab:pipeline-yaml` / `gitlab:source` / `gitlab:owns` tools are **read-only**: they build from source and never touch the live GitLab instance. They give an agent a *before-it-runs* view of the pipeline — what it does, what it pulls in, whether it is safe, and where it came from — to complement the *after-it-ran* view it gets from the instance.
 
 | MCP resource | Description |
 |--------------|-------------|

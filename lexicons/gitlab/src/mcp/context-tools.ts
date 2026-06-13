@@ -12,8 +12,9 @@
 import { build, type BuildResult } from "@intentius/chant/build";
 import { runPostSynthChecks, getPrimaryOutput } from "@intentius/chant/lint/post-synth";
 import { discoverPostSynthChecks } from "@intentius/chant/lint/discover";
+import { getProvenance } from "@intentius/chant/provenance";
 import type { McpToolContribution } from "@intentius/chant/mcp/types";
-import { dirname, join } from "path";
+import { dirname, join, relative, isAbsolute } from "path";
 import { fileURLToPath } from "url";
 import { gitlabSerializer } from "../serializer";
 import {
@@ -41,6 +42,27 @@ function gitlabPostSynthChecks() {
 export function componentPinned(value: string): boolean {
   const at = value.lastIndexOf("@");
   return at !== -1 && isPinnedRef(value.slice(at + 1));
+}
+
+/** The YAML job name a build entity serializes to (camelCase → kebab-case). */
+export function jobNameOf(entityName: string): string {
+  return entityName.replace(/([a-z0-9])([A-Z])/g, "$1-$2").toLowerCase();
+}
+
+/** Find the build entity whose serialized job name matches `job`. */
+function entityForJob(result: BuildResult, job: string): { name: string; entity: object } | undefined {
+  for (const [name, entity] of result.entities) {
+    if (name === job || jobNameOf(name) === job) return { name, entity };
+  }
+  return undefined;
+}
+
+/** Render a source-file path relative to the project root, when possible. */
+function relSource(root: string, file: string | undefined): string | undefined {
+  if (!file) return undefined;
+  if (!isAbsolute(file)) return file;
+  const rel = relative(root, file);
+  return rel.startsWith("..") ? file : rel;
 }
 
 /** Jobs that would re-run because they depend (transitively) on `job`. */
@@ -162,6 +184,59 @@ export function gitlabContextTools(): McpToolContribution[] {
       async handler(params: Record<string, unknown>): Promise<unknown> {
         const { yaml } = await buildGitlab((params.path as string) ?? ".");
         return { yaml };
+      },
+    },
+    {
+      name: "gitlab:source",
+      description:
+        "Build the project and, given a job name, say where it came from in the TypeScript source — the file that declared it and the composite that expanded it, if any. Entity-level provenance (file + composite), not a YAML-line source map. Read-only.",
+      inputSchema: {
+        type: "object" as const,
+        properties: {
+          path: { type: "string", description: "Path to the chant project directory (default: current directory)" },
+          job: { type: "string", description: "Job name (as it appears in the generated YAML) to trace back to source" },
+        },
+        required: ["job"],
+      },
+      async handler(params: Record<string, unknown>): Promise<unknown> {
+        const root = (params.path as string) ?? ".";
+        const { result } = await buildGitlab(root);
+        const job = params.job as string;
+        const found = entityForJob(result, job);
+        if (!found) return { job, found: false, note: "no build entity serializes to that job name" };
+        const prov = getProvenance(found.entity);
+        return {
+          job,
+          found: true,
+          entity: found.name,
+          from: relSource(root, prov?.sourceFile) ?? null,
+          via: prov?.composite ?? null,
+        };
+      },
+    },
+    {
+      name: "gitlab:owns",
+      description:
+        "Build the project and report whether a job is declared (owned) by chant in this project's source. For pipeline config, ownership means \"declared here\" — GitLab CI jobs are not taggable cloud resources, so there is no live ownership marker as there is for cloud lexicons. Read-only.",
+      inputSchema: {
+        type: "object" as const,
+        properties: {
+          path: { type: "string", description: "Path to the chant project directory (default: current directory)" },
+          job: { type: "string", description: "Job name (as it appears in the generated YAML) to check" },
+        },
+        required: ["job"],
+      },
+      async handler(params: Record<string, unknown>): Promise<unknown> {
+        const root = (params.path as string) ?? ".";
+        const { result } = await buildGitlab(root);
+        const job = params.job as string;
+        const found = entityForJob(result, job);
+        return {
+          job,
+          owned: Boolean(found),
+          basis: "declared-in-source",
+          note: "GitLab CI jobs are not taggable cloud resources; ownership here means the job is declared by chant in this project. Live ownership markers apply to cloud lexicons (aws/azure/k8s).",
+        };
       },
     },
   ];

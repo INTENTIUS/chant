@@ -1,4 +1,5 @@
 import { isDeclarable, type Declarable } from "./declarable";
+import { setProvenance } from "./provenance";
 
 /**
  * Marker symbol for Composite type identification.
@@ -128,15 +129,20 @@ export function expandComposite(
   const result = new Map<string, Declarable>();
   const shared = (instance as unknown as Record<symbol, unknown>)[SHARED_PROPS] as Record<string, unknown> | undefined;
 
+  const compositeName = instance._definition?.compositeName;
+
   for (const [memberName, member] of Object.entries(instance.members)) {
     const fullName = `${prefix}${memberName[0].toUpperCase()}${memberName.slice(1)}`;
 
     if (isCompositeInstance(member)) {
       const nested = expandComposite(fullName, member);
       for (const [nestedName, nestedEntity] of nested) {
+        // Inner composite already stamped; `??=` keeps the most-specific one.
+        if (compositeName) setProvenance(nestedEntity, { composite: compositeName });
         result.set(nestedName, nestedEntity);
       }
     } else {
+      if (compositeName) setProvenance(member as Declarable, { composite: compositeName });
       result.set(fullName, member as Declarable);
     }
   }

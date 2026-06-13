@@ -6,6 +6,7 @@
 
 export * from "./declarable";
 export * from "./composite";
+export * from "./provenance";
 export * from "./intrinsic";
 export * from "./types";
 export * from "./errors";
