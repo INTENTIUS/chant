@@ -1,6 +1,7 @@
 import { describe, test, expect, beforeEach, afterEach } from "vitest";
-import { buildCommand, type BuildOptions } from "./build";
+import { buildCommand, resolveBuildFormat, type BuildOptions } from "./build";
 import type { Serializer } from "../../serializer";
+import { parseYAML } from "../../yaml";
 import { mkdir, rm, writeFile } from "node:fs/promises";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
@@ -198,5 +199,81 @@ export const testEntity = {
     expect(existsSync(join(testDir, "dist", "ops", "alb-deploy", "workflow.ts"))).toBe(true);
     expect(existsSync(join(testDir, "dist", "ops", "alb-deploy", "activities.ts"))).toBe(true);
     expect(existsSync(join(testDir, "dist", "ops", "alb-deploy", "worker.ts"))).toBe(true);
+  });
+
+  // ── #284 bug 2: array-of-objects must serialize to valid YAML ──────────
+  test("yaml format serializes an array of objects to valid, round-trippable YAML", async () => {
+    // A serializer that emits a CloudFormation-shaped template with a tag list.
+    const cfnSerializer: Serializer = {
+      name: "test",
+      rulePrefix: "TEST",
+      serialize: () =>
+        JSON.stringify({
+          Resources: {
+            Bucket: {
+              Type: "AWS::S3::Bucket",
+              Properties: {
+                BucketName: "x",
+                Tags: [
+                  { Key: "team", Value: "infra" },
+                  { Key: "env", Value: "prod" },
+                ],
+              },
+            },
+          },
+        }),
+    };
+    await writeFile(
+      join(testDir, "test.infra.ts"),
+      `export const e = { lexicon: "test", entityType: "TestEntity", [Symbol.for("chant.declarable")]: true };`,
+    );
+    const yamlOut = join(testDir, "template.yaml");
+
+    const result = await buildCommand({
+      path: testDir,
+      output: yamlOut,
+      format: "yaml",
+      serializers: [cfnSerializer],
+    });
+
+    expect(result.success).toBe(true);
+    const content = readFileSync(yamlOut, "utf-8");
+    // The list item must not be inlined onto the `Tags:` line (same-line dash).
+    expect(content).not.toMatch(/Tags:[ \t]+-/);
+    // And it must round-trip through a real YAML parser to the intended shape.
+    const parsed = parseYAML(content) as {
+      Resources: { Bucket: { Properties: { Tags: Array<{ Key: string; Value: string }> } } };
+    };
+    expect(parsed.Resources.Bucket.Properties.Tags).toEqual([
+      { Key: "team", Value: "infra" },
+      { Key: "env", Value: "prod" },
+    ]);
+  });
+});
+
+// ── #284 bug 1: -o extension drives format when --format is absent ────────
+describe("resolveBuildFormat", () => {
+  test("infers yaml from .yaml / .yml extension", () => {
+    expect(resolveBuildFormat("", "template.yaml")).toEqual({ format: "yaml" });
+    expect(resolveBuildFormat("", "template.yml")).toEqual({ format: "yaml" });
+  });
+
+  test("infers json from .json extension", () => {
+    expect(resolveBuildFormat("", "template.json")).toEqual({ format: "json" });
+  });
+
+  test("defaults to json when there is no extension to infer from", () => {
+    expect(resolveBuildFormat("", undefined)).toEqual({ format: "json" });
+    expect(resolveBuildFormat("", "outdir")).toEqual({ format: "json" });
+  });
+
+  test("explicit --format wins, and a mismatch with the extension warns", () => {
+    const r = resolveBuildFormat("json", "template.yaml");
+    expect(r.format).toBe("json");
+    expect(r.warning).toMatch(/yaml/i);
+  });
+
+  test("explicit --format matching the extension does not warn", () => {
+    expect(resolveBuildFormat("yaml", "template.yaml")).toEqual({ format: "yaml" });
   });
 });

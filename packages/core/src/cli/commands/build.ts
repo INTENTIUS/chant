@@ -34,6 +34,38 @@ export interface BuildOptions {
   env?: string;
 }
 
+/**
+ * Resolve the output format for `chant build`.
+ *
+ * When `--format` is not given, infer it from the `-o` file extension
+ * (`.yaml`/`.yml` → yaml, `.json` → json); fall back to json when there is no
+ * extension to infer from. An explicit `--format` always wins, but a mismatch
+ * with the output extension is surfaced as a warning.
+ */
+export function resolveBuildFormat(
+  explicit: string | undefined,
+  output: string | undefined,
+): { format: "json" | "yaml"; warning?: string } {
+  const inferred = output
+    ? /\.ya?ml$/i.test(output)
+      ? "yaml"
+      : /\.json$/i.test(output)
+        ? "json"
+        : undefined
+    : undefined;
+
+  if (explicit === "json" || explicit === "yaml") {
+    if (inferred && inferred !== explicit) {
+      return {
+        format: explicit,
+        warning: `Output file "${output}" looks like ${inferred} but --format ${explicit} was given; writing ${explicit}.`,
+      };
+    }
+    return { format: explicit };
+  }
+
+  return { format: inferred ?? "json" };
+}
 
 /**
  * Build command result
@@ -326,7 +358,12 @@ function jsonToYaml(obj: unknown, indent = 0): string {
     return entries
       .map(([key, value]) => {
         const yamlValue = jsonToYaml(value, indent + 1);
-        if (typeof value === "object" && value !== null && !Array.isArray(value)) {
+        // A non-empty container (object OR array) renders as a block: the key on
+        // its own line, the value indented beneath it. Arrays were previously
+        // excluded here, which inlined `Tags: - Key: t` as invalid YAML.
+        const isContainer = typeof value === "object" && value !== null;
+        const isEmpty = isContainer && (Array.isArray(value) ? value.length === 0 : Object.keys(value).length === 0);
+        if (isContainer && !isEmpty) {
           return `${spaces}${key}:\n${yamlValue}`;
         }
         return `${spaces}${key}: ${yamlValue.trimStart()}`;
