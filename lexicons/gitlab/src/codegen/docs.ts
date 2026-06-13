@@ -491,6 +491,26 @@ Flags a Docker-in-Docker (privileged) job reachable from merge-request pipelines
 
 Flags a \`rules:if\` that gates on a regex match (\`=~\`) over an attacker-controllable ref variable — a crafted branch/tag name can satisfy the pattern. Match the full ref with \`==\` or gate on a protected condition.
 
+### WGL038 — Secret reachable from a merge-request pipeline
+
+**Severity:** warning
+
+Flags a user-defined secret-like variable read by a job reachable from merge-request pipelines, which can run untrusted code. Gate the job to protected refs or mark the variable protected. (Built-in \`CI_*\` variables are excluded.)
+
+### WGL039 — Secret echoed to job logs
+
+**Severity:** warning
+
+Flags a \`script:\` command that prints a secret-like variable (\`echo\`/\`printf\`/\`cat\`). Logs are broadly readable and masking can be defeated by transforms.
+
+### WGL040 — Hardcoded registry credential
+
+**Severity:** error
+
+Flags a \`docker login\` (or compatible) passing a literal password via \`-p\`/\`--password\` instead of a variable or \`--password-stdin\`. Extends WGL016 to scripts.
+
+> Variable *masking* and *protected* status are GitLab project/CI-settings, not emitted YAML — WGL016 already nudges toward masked variables; this group covers the exposure paths visible in the pipeline.
+
 ## Running lint
 
 \`\`\`bash
