@@ -886,6 +886,13 @@ The lexicon also provides MCP (Model Context Protocol) tools and resources that 
 | \`search\` | Search available resource types |
 | \`gitlab:diff\` | Compare current build output against previous |
 | \`gitlab:migrate\` | Translate a GitHub Actions workflow into GitLab CI/CD (see [Migration](../migration)) |
+| \`gitlab:checks\` | Build and return the pipeline's security/correctness findings (the WGL checks) |
+| \`gitlab:pipeline\` | Build and return the pipeline's stages and jobs (name, stage, run order), as written |
+| \`gitlab:references\` | Build and list what the pipeline pulls in (includes, components, images) and whether each is pinned |
+| \`gitlab:affected\` | Given a job, list the jobs that would re-run because they depend on it |
+| \`gitlab:pipeline-yaml\` | Build and return the generated \`.gitlab-ci.yml\` |
+
+The \`gitlab:checks\` / \`gitlab:pipeline\` / \`gitlab:references\` / \`gitlab:affected\` / \`gitlab:pipeline-yaml\` tools are **read-only**: they build from source and never touch the live GitLab instance. They give an agent a *before-it-runs* view of the pipeline — what it does, what it pulls in, and whether it is safe — to complement the *after-it-ran* view it gets from the instance.
 
 | MCP resource | Description |
 |--------------|-------------|

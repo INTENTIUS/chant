@@ -12,6 +12,7 @@ import { createSkillsLoader, createDiffTool, createCatalogResource } from "@inte
 import { join, dirname } from "path";
 import { fileURLToPath } from "url";
 import { gitlabSerializer } from "./serializer";
+import { gitlabContextTools } from "./mcp/context-tools";
 import { deprecatedOnlyExceptRule } from "./lint/rules/deprecated-only-except";
 import { missingScriptRule } from "./lint/rules/missing-script";
 import { missingStageRule } from "./lint/rules/missing-stage";
@@ -254,6 +255,9 @@ export const test = new Job({
   mcpTools() {
     return [
       createDiffTool(gitlabSerializer, "Compare current build output against previous output for GitLab CI", "gitlab"),
+      // Read-only context tools: what the pipeline does, what it pulls in, and
+      // its security findings — before anything runs (#327/#328).
+      ...gitlabContextTools(),
       {
         name: "migrate",
         description: "Translate a GitHub Actions workflow YAML into a GitLab CI/CD pipeline. Returns the rendered output plus diagnostic + provenance arrays.",

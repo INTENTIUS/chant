@@ -71,6 +71,22 @@ To configure manually, add the chant MCP server to your IDE's MCP config:
 
 Lexicon plugins can contribute additional tools and resources.
 
+### Read-only context tools
+
+Some lexicons add **read-only context tools** that build from your source and return what chant already computes — without touching any live system. They give an agent a *before-it-runs* view of your infrastructure: what a change does, what it pulls in, and whether it is safe, **before it runs or merges**. This is the window live tooling can't see.
+
+The GitLab lexicon ships the first set:
+
+| MCP tool | Answers |
+|----------|---------|
+| `gitlab:checks` | Is there anything risky in this pipeline? (returns the security findings) |
+| `gitlab:pipeline` | What does this pipeline do? (stages, jobs, run order) |
+| `gitlab:references` | What does it pull in from outside, and is it pinned? |
+| `gitlab:affected` | If I change this job, what re-runs? |
+| `gitlab:pipeline-yaml` | The generated `.gitlab-ci.yml` |
+
+Every one of these reads the build only — no live instance, no run history, no writes. That boundary is deliberate: chant is a context *producer*, complementary to (not a copy of) the live tooling an agent already uses.
+
 ## Ops
 
 Ops are named, phased Temporal workflows defined in `*.op.ts` files. They run durable deployments — phases, gate steps that pause for human signals, compensation on failure — and surface progress in the Temporal UI.
