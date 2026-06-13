@@ -75,7 +75,7 @@ Lexicon plugins can contribute additional tools and resources.
 
 Some lexicons add **read-only context tools** that build from your source and return what chant already computes — without touching any live system. They give an agent a *before-it-runs* view of your infrastructure: what a change does, what it pulls in, and whether it is safe, **before it runs or merges**. This is the window live tooling can't see.
 
-The GitLab lexicon ships the first set:
+The GitLab lexicon ships these:
 
 | MCP tool | Answers |
 |----------|---------|
@@ -84,6 +84,16 @@ The GitLab lexicon ships the first set:
 | `gitlab:references` | What does it pull in from outside, and is it pinned? |
 | `gitlab:affected` | If I change this job, what re-runs? |
 | `gitlab:pipeline-yaml` | The generated `.gitlab-ci.yml` |
+
+The GitHub lexicon ships the parallel set for Actions workflows:
+
+| MCP tool | Answers |
+|----------|---------|
+| `github:checks` | Is there anything risky in this workflow? (returns the security findings) |
+| `github:workflow` | What does this workflow do? (triggers, jobs, run order) |
+| `github:references` | What actions/images does it pull in, and are they pinned to a commit SHA? |
+| `github:affected` | If I change this job, what re-runs? |
+| `github:workflow-yaml` | The generated workflow YAML |
 
 Every one of these reads the build only — no live instance, no run history, no writes. That boundary is deliberate: chant is a context *producer*, complementary to (not a copy of) the live tooling an agent already uses.
 
