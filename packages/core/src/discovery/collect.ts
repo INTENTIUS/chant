@@ -2,6 +2,7 @@ import { isDeclarable, type Declarable } from "../declarable";
 import { isCompositeInstance, expandComposite } from "../composite";
 import { isLexiconOutput } from "../lexicon-output";
 import { DiscoveryError } from "../errors";
+import { setProvenance } from "../provenance";
 
 /**
  * Collects all declarable entities from imported modules.
@@ -32,6 +33,7 @@ export function collectEntities(
             );
           }
         } else {
+          setProvenance(value, { sourceFile: file });
           entities.set(name, value);
         }
       } else if (Array.isArray(value)) {
@@ -43,6 +45,7 @@ export function collectEntities(
             if (entities.has(indexedName) && entities.get(indexedName) !== item) {
               throw new DiscoveryError(file, `Duplicate entity name "${indexedName}"`, "resolution");
             }
+            setProvenance(item, { sourceFile: file });
             entities.set(indexedName, item);
           } else if (isCompositeInstance(item)) {
             const indexedName = `${name}_${i}`;
@@ -55,6 +58,7 @@ export function collectEntities(
                   "resolution",
                 );
               }
+              setProvenance(entity, { sourceFile: file });
               entities.set(expandedName, entity);
             }
           }
@@ -69,6 +73,7 @@ export function collectEntities(
               "resolution",
             );
           }
+          setProvenance(entity, { sourceFile: file });
           entities.set(expandedName, entity);
         }
       } else if (isLexiconOutput(value)) {

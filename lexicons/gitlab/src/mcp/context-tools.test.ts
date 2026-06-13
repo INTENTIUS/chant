@@ -99,4 +99,27 @@ export const testApp = { [M]: true, lexicon: "gitlab", entityType: "GitLab::CI::
     expect(typeof out.yaml).toBe("string");
     expect(out.yaml).toContain("stages:");
   });
+
+  test("gitlab:source traces a job back to its declaring file", async () => {
+    const out = (await call("gitlab:source", { path: dir, job: "build-app" })) as {
+      job: string; found: boolean; entity: string; from: string | null; via: string | null;
+    };
+    expect(out.found).toBe(true);
+    expect(out.entity).toBe("buildApp");
+    expect(out.from).toMatch(/pipeline\.infra\.ts$/);
+    expect(out.via).toBeNull(); // plain declarable, not from a composite
+  });
+
+  test("gitlab:source reports not-found for an unknown job", async () => {
+    const out = (await call("gitlab:source", { path: dir, job: "nope" })) as { job: string; found: boolean };
+    expect(out.found).toBe(false);
+  });
+
+  test("gitlab:owns reports a declared job as owned, an unknown one as not", async () => {
+    const owned = (await call("gitlab:owns", { path: dir, job: "test-app" })) as { owned: boolean; basis: string };
+    expect(owned.owned).toBe(true);
+    expect(owned.basis).toBe("declared-in-source");
+    const foreign = (await call("gitlab:owns", { path: dir, job: "not-here" })) as { owned: boolean };
+    expect(foreign.owned).toBe(false);
+  });
 });
