@@ -30,7 +30,7 @@ npm install --save-dev @intentius/chant-lexicon-gitlab
 
 {{file:docs-snippets/src/quickstart.ts}}
 
-The lexicon provides **3 resources** (Job, Workflow, Default), **16 property types** (Image, Cache, Artifacts, Rule, Environment, Trigger, Need, Service, and more), the \`CI\` pseudo-parameter object for predefined variables, and the \`reference()\` intrinsic for YAML \`!reference\` tags.
+The lexicon provides **3 resources** (Job, Workflow, Default), **16 property types** (Image, Cache, Artifacts, Rule, Environment, Trigger, Need, Service, and more), the \`CI\` pseudo-parameter object for predefined variables, and the \`reference()\` intrinsic for YAML \`!reference\` tags. It also ships **4 lint rules** + **39 post-synth checks** (including a CI/CD supply-chain security pass, WGL029–048) and a [\`chant migrate\`](./migration) source for translating GitHub Actions workflows.
 `;
 
 const outputFormat = `The GitLab lexicon serializes resources into **\`.gitlab-ci.yml\` YAML**. Keys are
@@ -435,6 +435,90 @@ Flags jobs whose \`extends:\` references a template or hidden job not defined in
 
 Detects cycles in the \`needs:\` dependency graph. If job A needs B and B needs A (directly or transitively), GitLab rejects the pipeline. Reports the full cycle chain in the diagnostic message.
 
+### WGL016 — Secret in a variables block
+
+**Severity:** error
+
+Detects hardcoded passwords, tokens, or keys in a \`variables:\` block. Move them to CI/CD masked variables instead of committing them to the pipeline. The precursor to the WGL038–040 secret-scoping checks.
+
+### WGL017 — Insecure registry
+
+**Severity:** warning
+
+Flags Docker push/pull to a non-HTTPS registry in a job script. HTTP gives the registry traffic no transport integrity.
+
+### WGL018 — Missing timeout
+
+**Severity:** warning
+
+Flags jobs without an explicit \`timeout:\`. The instance default (often 1 hour) is too long for most jobs and lets a hung job hold a runner.
+
+### WGL019 — Missing retry on deploy jobs
+
+**Severity:** info
+
+Deploy-stage jobs benefit from a \`retry:\` strategy to ride out transient infrastructure failures. Informational, not required.
+
+### WGL020 — Duplicate job names
+
+**Severity:** error
+
+Detects multiple jobs that resolve to the same kebab-case key in the serialized YAML. GitLab silently merges duplicate keys, so one job's config quietly overwrites the other.
+
+### WGL021 — Unused variables
+
+**Severity:** warning
+
+Flags global \`variables:\` not referenced by any job script — usually stale configuration adding noise.
+
+### WGL022 — Missing artifacts expiry
+
+**Severity:** warning
+
+Flags \`artifacts:\` without \`expire_in:\`. Depending on instance config the default is "never expire," which bloats storage.
+
+### WGL023 — Overly broad rules
+
+**Severity:** info
+
+Flags a job whose only rule is \`when: always\` with no conditions (\`if:\`, \`changes:\`, …). That disables all pipeline filtering for the job, which is usually unintended.
+
+### WGL024 — Manual without allow_failure
+
+**Severity:** warning
+
+Flags \`when: manual\` jobs that don't set \`allow_failure: true\`. Without it the manual job blocks the pipeline from progressing past its stage until someone triggers it.
+
+### WGL025 — Missing cache key
+
+**Severity:** warning
+
+Flags \`cache:\` without a \`key:\`. GitLab falls back to the \`default\` key, causing cache collisions between unrelated jobs on the same runner.
+
+### WGL026 — Privileged services without TLS
+
+**Severity:** warning
+
+Flags Docker-in-Docker (DinD) services that don't set \`DOCKER_TLS_CERTDIR\`, leaving the Docker daemon on an unencrypted socket. Extended by WGL036 for the merge-request-reachable case.
+
+### WGL027 — Empty script
+
+**Severity:** error
+
+Detects jobs with \`script: []\` or only empty strings. GitLab rejects empty scripts at pipeline validation time.
+
+### WGL028 — Redundant needs
+
+**Severity:** info
+
+Detects \`needs:\` entries already implied by stage ordering. Not incorrect, but redundant needs add noise and make the pipeline harder to maintain.
+
+## Supply-chain security pass (WGL029–048)
+
+WGL029 onward are a CI/CD supply-chain security pass, the GitLab counterpart to the github lexicon's GHA029–058: pin & vet includes/components/images, scope \`CI_JOB_TOKEN\` and OIDC, guard trust boundaries against untrusted CI input, mask/protect/scope secrets, reject unsound \`rules:\` expressions, and keep artifacts/caches honest. They run statically on the emitted \`.gitlab-ci.yml\`.
+
+The checks that need a *moving external truth* — whether a pinned component/include ref still resolves, whether an upstream was archived or moved, whether a new advisory covers a component in use — live in the operational layer instead. Schedule the [\`PipelineAuditOp\`](/chant/guide/ops/#audit-supply-chain-drift) (temporal lexicon) for that live half; it reads the emitted \`include:\` / \`component:\` / \`image:\` references and reports drift via \`report | issue | merge-request\`.
+
 ### WGL029 — Unpinned include:project / component
 
 **Severity:** warning
@@ -779,7 +863,7 @@ The \`chant-gitlab\` skill covers the full deployment lifecycle:
 - **Status** — GitLab UI or pipelines API
 - **Retry** — retry failed jobs via UI or API
 - **Cancel** — cancel running pipelines via API
-- **Troubleshooting** — job logs, lint rule codes (WGL001–WGL004), post-synth checks (WGL010–WGL015)
+- **Troubleshooting** — job logs, lint rule codes (WGL001–WGL004), post-synth checks (WGL010–WGL048)
 
 The skill is invocable as a slash command: \`/chant-gitlab\`
 

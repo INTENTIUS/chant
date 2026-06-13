@@ -147,12 +147,12 @@ Other shapes (Python, Docker, Go) are deferred follow-ups in the [umbrella issue
 
 ## Validating the output
 
-`--validate` shells out to a local validator:
+`--validate` runs two backends against the migrated pipeline:
 
-1. `glci lint` (preferred — offline, no auth)
-2. `glab ci lint` (fallback — requires `glab auth login`)
+1. **Syntax** — a local validator: `glci lint` (preferred — offline, no auth), falling back to `glab ci lint` (requires `glab auth login`). If neither tool is on PATH, syntax validation is skipped with a warning.
+2. **Security** — the GitLab security post-synth checks ([WGL029–048](/chant/lexicons/gitlab/lint-rules/)) run against the emitted `.gitlab-ci.yml`. The principle is *migrate, then prove the output clears the GitLab security bar* — anything lost in translation that lands as a concrete weakness on the target is caught here, and it composes for free since those checks already run on emitted GitLab YAML.
 
-If neither tool is on PATH, validation is skipped with a warning. Pair with `--strict` to make missing tools or validation failures hard-fail.
+Pair with `--strict` to hard-fail on missing tools, syntax errors, or error-severity security findings.
 
 Install `glci`:
 ```bash
@@ -170,6 +170,20 @@ chant migrate workflow.yml --output .gitlab-ci.yml --report migration.sarif
 ```
 
 The SARIF is v2.1.0 and ingests by GitHub's `codeql-action/upload-sarif` or GitLab's CI integrations. Each rule carries description + `helpUri` linking back to this page.
+
+## Security posture
+
+Migration is the edge between two security endpoints — the [github](/chant/lexicons/github/lint-rules/) and [gitlab](/chant/lexicons/gitlab/lint-rules/) supply-chain checks. Security properties do **not** translate 1:1: some carry across silently, some are lost, some need re-establishing on the GitLab side. Alongside the functional provenance (Translated / Approximated / NeedsReview / Lost), `chant migrate` classifies each security-relevant property's **fate** across the boundary and emits a *Security posture* section in the Markdown report.
+
+| Property (GH → GL) | Fate | Rule | Why |
+|---|---|---|---|
+| Pinned action SHA | **Lost** | `MIG-PIN-LOST` | A GitHub SHA pin has no meaning once the action maps to a GitLab include/image — re-pin the target (WGL029 / WGL031). |
+| Least-privilege `permissions:` | **NeedsReview** | `MIG-PERMISSIONS-001` | No per-job YAML equivalent; lives in project token settings + `id_tokens` scoping (WGL033). |
+| Secret reference | **NeedsReview** | `MIG-SECRET-UNSCOPED` | `${{ secrets.X }}` → `$X` assumes a masked + protected GitLab variable, set outside the YAML (WGL038). |
+| Untrusted-input injection | **Translated (silently)** | `MIG-INJECTION-CARRIED` | An injection site translates verbatim — the risk carries across (WGL035). |
+| Trigger / fork trust boundary | **NeedsReview** | `MIG-TRUST-BOUNDARY` | `pull_request_target` → MR/fork pipelines that fork contributors can trigger; re-establish protected refs / approvals (WGL034 / WGL036). |
+
+Because both lexicons abstracted their security work to the **same core problems**, migration maps problem → problem (pin → pin, least-privilege → least-privilege), preserving the invariant rather than the syntax. Where a problem has a primitive on one side but not the other, that gap *is* a NeedsReview. Run `--validate` (above) to additionally prove the migrated YAML clears the live GitLab security checks.
 
 ## Limitations (v1)
 

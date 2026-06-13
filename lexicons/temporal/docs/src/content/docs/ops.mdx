@@ -173,6 +173,36 @@ chant graph
 | `activities.ts` | Re-exports all pre-built activities from the lexicon package |
 | `worker.ts` | Worker bootstrap — reads profile from `chant.config.js`, connects to Temporal |
 
+## Pre-built Op composites
+
+Beyond hand-written `Op({...})` definitions, the lexicon ships composites that assemble an Op (and an optional `TemporalSchedule`) for common operational patterns:
+
+| Composite | Purpose |
+|---|---|
+| `WatchOp` | Recurring drift detection — `chant lifecycle snapshot` / `diff --live` on a cron |
+| `ReconcileOp` | `cloud → code` — regenerate drifted TypeScript and open a PR |
+| `ApplyOp` | `code → cloud` — native apply (`kubectl apply` / CloudFormation / ARM), gated and compensated |
+| `WorkflowAuditOp` | Live supply-chain audit of GitHub workflows — resolve action/image references upstream, flag stale pins, impostor refs, advisories, archived upstreams |
+| `PipelineAuditOp` | Live audit of GitLab pipelines — resolve `include:` / `component:` / `image:` references upstream |
+
+The two audit composites are the always-fresh counterpart to the deterministic supply-chain checks in the github ([GHA029–058](/chant/lexicons/github/lint-rules/)) and gitlab ([WGL029–048](/chant/lexicons/gitlab/lint-rules/)) lexicons: the build owns everything answerable statically, the Op owns only what needs live resolution against a moving upstream.
+
+```typescript
+import { WorkflowAuditOp } from "@intentius/chant-lexicon-temporal";
+
+// One-shot on the local executor (no Temporal): chant run actions-audit
+export const { op } = WorkflowAuditOp({ name: "actions-audit" });
+
+// Scheduled daily on Temporal; open a PR bumping any stale pin
+export const { op: scheduled, schedule } = WorkflowAuditOp({
+  name: "actions-audit",
+  schedule: "0 6 * * *",
+  onFinding: "pull-request",   // "report" (default) | "issue" | "pull-request"
+});
+```
+
+`PipelineAuditOp` takes the same shape; its finding-modes are `report | issue | merge-request`. See [Ops (core guide)](/chant/guide/ops/#audit-supply-chain-drift) for the full lifecycle framing.
+
 ## chant run CLI
 
 ```bash

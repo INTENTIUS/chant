@@ -325,3 +325,23 @@ const noLint = GoCI({ lintCommand: null });
 ```
 
 **Props:** `goVersion?`, `testCommand?`, `buildCommand?`, `lintCommand?` (null to omit), `runsOn?`
+
+## Dependabot
+
+Models the repository's dependency-update configuration (`.github/dependabot.yml`) as a chant resource, so it is emitted and lintable like a workflow. The composite ships **safe defaults**: a cooldown window on every ecosystem (so a version published moments ago — including a compromised one — is not adopted before anyone can react) and external code execution explicitly denied.
+
+```typescript
+import { Dependabot } from "@intentius/chant-lexicon-github";
+
+export const dependabot = Dependabot({
+  ecosystems: [
+    { packageEcosystem: "npm", directory: "/" },
+    { packageEcosystem: "github-actions", directory: "/" },
+  ],
+  // cooldownDays defaults to 7, openPullRequestsLimit to 5
+});
+```
+
+**Props:** `ecosystems` (required — each `{ packageEcosystem, directory?, interval? }`), `cooldownDays?` (default 7), `openPullRequestsLimit?` (default 5)
+
+For full control, construct the `DependabotConfig` resource directly with raw `updates:` entries. Two post-synth checks validate the emitted config: **GHA057** (`insecure-external-code-execution: allow`) and **GHA058** (no cooldown). See [Lint Rules](/chant/lexicons/github/lint-rules/).
