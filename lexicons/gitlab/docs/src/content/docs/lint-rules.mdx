@@ -254,6 +254,26 @@ Flags a `rules:if` whose `=~` regex matches every value (empty, dot-star, anchor
 
 > The auto-fix acceptance item is N/A at the post-synth layer (PostSynthDiagnostic has no fix channel); it belongs to the declarative source-lint rules.
 
+### WGL044 — Public artifacts
+
+**Severity:** warning
+
+Flags `artifacts:public: true`, which makes build output downloadable by anyone. Keep artifacts private unless they are meant to be world-readable.
+
+### WGL045 — Credential-bearing artifact path
+
+**Severity:** error
+
+Flags an `artifacts:paths:` entry that looks like a credential or sensitive file (`.env`, `*.pem`, `id_rsa`, `*.key`, `.npmrc`, `.netrc`, `credentials`). Artifacts flow downstream and are downloadable — exclude the file.
+
+### WGL046 — Cache poisoning from a merge-request pipeline
+
+**Severity:** warning
+
+Flags a job that writes a cache (push policy) and is reachable from merge-request pipelines. An MR can poison the cache for a later protected run that restores the same key. Restrict cache writes to protected refs or scope the key.
+
+> Artifact / `dependencies:` flow across a *protected* boundary depends on a ref's protected status, a project setting not present in emitted YAML — out of scope here.
+
 ## Running lint
 
 ```bash
