@@ -233,6 +233,7 @@ export const githubSerializer: Serializer = {
     const workflows: Array<[string, Declarable]> = [];
     const jobs: Array<[string, Declarable]> = [];
     const triggers: Array<[string, Declarable]> = [];
+    const dependabot: Array<[string, Declarable]> = [];
     const others: Array<[string, Declarable]> = [];
 
     for (const [name, entity] of entities) {
@@ -245,20 +246,52 @@ export const githubSerializer: Serializer = {
         jobs.push([name, entity]);
       } else if (isTriggerType(entityType)) {
         triggers.push([name, entity]);
+      } else if (entityType === "GitHub::Dependabot::Config") {
+        dependabot.push([name, entity]);
       } else {
         others.push([name, entity]);
       }
     }
 
-    // If multiple workflows, produce multiple files
-    if (workflows.length > 1) {
-      return serializeMultiWorkflow(workflows, jobs, triggers, entities, entityNames);
+    const workflowOut =
+      workflows.length > 1
+        ? serializeMultiWorkflow(workflows, jobs, triggers, entities, entityNames)
+        : serializeSingleWorkflow(workflows, jobs, triggers, entities, entityNames);
+
+    // A DependabotConfig emits an additional `.github/dependabot.yml` file
+    // alongside (or instead of) any workflow output.
+    if (dependabot.length > 0) {
+      const [, dep] = dependabot[0];
+      const depProps = (dep as unknown as Record<string, unknown>).props as Record<string, unknown>;
+      const dependabotYaml = emitDependabotYaml(depProps);
+      if (typeof workflowOut === "string") {
+        return { primary: workflowOut, files: { "dependabot.yml": dependabotYaml } };
+      }
+      return { ...workflowOut, files: { ...(workflowOut.files ?? {}), "dependabot.yml": dependabotYaml } };
     }
 
-    // Single workflow (or implicit workflow from jobs)
-    return serializeSingleWorkflow(workflows, jobs, triggers, entities, entityNames);
+    return workflowOut;
   },
 };
+
+/** Deep camelCase → kebab-case key conversion for dependabot props. */
+function deepKebabKeys(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(deepKebabKeys);
+  if (value !== null && typeof value === "object") {
+    const out: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
+      out[toKebabCase(k)] = deepKebabKeys(v);
+    }
+    return out;
+  }
+  return value;
+}
+
+/** Serialize a DependabotConfig's props into `.github/dependabot.yml`. */
+function emitDependabotYaml(props: Record<string, unknown>): string {
+  const doc = deepKebabKeys(props) as Record<string, unknown>;
+  return emitYAMLDocument(doc);
+}
 
 function serializeSingleWorkflow(
   workflows: Array<[string, Declarable]>,

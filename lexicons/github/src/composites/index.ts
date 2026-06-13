@@ -24,3 +24,5 @@ export { DeployEnvironment } from "./deploy-environment";
 export type { DeployEnvironmentProps } from "./deploy-environment";
 export { GoCI } from "./go-ci";
 export type { GoCIProps } from "./go-ci";
+export { Dependabot, DependabotConfig } from "./dependabot";
+export type { DependabotProps, DependabotConfigProps, DependabotUpdate, DependabotEcosystem } from "./dependabot";

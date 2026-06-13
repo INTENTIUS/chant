@@ -30,6 +30,7 @@ export {
   DockerBuild,
   DeployEnvironment,
   GoCI,
+  Dependabot, DependabotConfig,
 } from "./composites/index";
 export type {
   CheckoutProps, SetupNodeProps, SetupGoProps, SetupPythonProps,
@@ -40,6 +41,7 @@ export type {
   DockerBuildProps,
   DeployEnvironmentProps,
   GoCIProps,
+  DependabotProps, DependabotConfigProps, DependabotUpdate, DependabotEcosystem,
 } from "./composites/index";
 
 // Spec utilities (for tooling)
