@@ -44,3 +44,15 @@ export type {
   ActionRefResolver,
   ActionRefResolution,
 } from "./workflow-audit";
+
+export { pipelineSupplyChainAudit, collectPipelineRefs, defaultGitlabRefResolver } from "./pipeline-audit";
+export type {
+  PipelineAuditArgs,
+  PipelineAuditResult,
+  PipelineAuditMode,
+  PipelineAuditFinding,
+  PipelineAuditFindingKind,
+  PipelineRefKind,
+  GitlabRefResolver,
+  PipelineRefResolution,
+} from "./pipeline-audit";

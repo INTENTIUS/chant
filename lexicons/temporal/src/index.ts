@@ -33,6 +33,8 @@ export { ReconcileOp } from "./composites/reconcile-op";
 export type { ReconcileOpConfig, ReconcileOpResources } from "./composites/reconcile-op";
 export { WorkflowAuditOp } from "./composites/workflow-audit-op";
 export type { WorkflowAuditOpConfig, WorkflowAuditOpResources } from "./composites/workflow-audit-op";
+export { PipelineAuditOp } from "./composites/pipeline-audit-op";
+export type { PipelineAuditOpConfig, PipelineAuditOpResources } from "./composites/pipeline-audit-op";
 export { ApplyOp } from "./composites/apply-op";
 export type { ApplyOpConfig, ApplyOpResources } from "./composites/apply-op";
 
