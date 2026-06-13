@@ -83,7 +83,7 @@ describe("gitlabPlugin", () => {
 
   test("returns post-synth checks", () => {
     const checks = gitlabPlugin.postSynthChecks!();
-    expect(checks).toHaveLength(34);
+    expect(checks).toHaveLength(37);
     const ids = checks.map((c) => c.id);
     expect(ids).toContain("WGL010");
     expect(ids).toContain("WGL011");
@@ -119,6 +119,9 @@ describe("gitlabPlugin", () => {
     expect(ids).toContain("WGL041");
     expect(ids).toContain("WGL042");
     expect(ids).toContain("WGL043");
+    expect(ids).toContain("WGL044");
+    expect(ids).toContain("WGL045");
+    expect(ids).toContain("WGL046");
   });
 
   // -----------------------------------------------------------------------
