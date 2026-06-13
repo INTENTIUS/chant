@@ -182,6 +182,20 @@ Flags `image:` and `services:` references not pinned to an immutable `@sha256:` 
 
 Flags an `include:project` / `component:` source that is a near-miss (edit distance 1–2) of a well-known GitLab CI source but not an exact match — a likely typo or impersonation. Backed by a vendored reference list.
 
+### WGL033 — OIDC id_token without a scoped audience
+
+**Severity:** warning
+
+Flags an `id_tokens:` declaration with no `aud:` or a wildcard audience. The audience binds the minted OIDC token to a relying party; without it a leaked token is accepted anywhere.
+
+### WGL034 — OIDC id_token mintable from a merge-request pipeline
+
+**Severity:** warning
+
+Flags a job that declares `id_tokens:` and is reachable from merge-request pipelines, which outside contributors can trigger. Restrict OIDC jobs to protected refs or require approval.
+
+> The project-level `CI_JOB_TOKEN` allowlist and a variable's protected status are project settings, not emitted pipeline YAML, so they are out of scope for these post-synth checks (see issue #298's caveat).
+
 ## Running lint
 
 ```bash
