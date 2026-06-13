@@ -4,7 +4,7 @@ import { takeSnapshot } from "../../lifecycle/snapshot";
 import { readSnapshot, readEnvironmentSnapshots, listSnapshots, fetchLifecycle, StaleLifecycleBranchError } from "../../lifecycle/git";
 import { computeBuildDigest, diffDigests } from "../../lifecycle/digest";
 import { diffLive, diffLiveArtifacts, type LiveDiffResult, type LiveArtifactDiffResult } from "../../lifecycle/live-diff";
-import { buildChangeSet, renderChangeSet, type ChangeSet } from "../../lifecycle/change-set";
+import { buildChangeSet, renderChangeSet, gitlabMrReport, type ChangeSet } from "../../lifecycle/change-set";
 import { affectedStacks } from "../../lifecycle/affected";
 import { loadChantConfig } from "../../config";
 import { formatError, formatWarning, formatSuccess, formatBold } from "../format";
@@ -519,6 +519,14 @@ export async function runLifecyclePlan(ctx: CommandContext): Promise<number> {
   }
 
   merged.entries.sort((a, b) => a.name.localeCompare(b.name));
+
+  // `--report gitlab-mr` emits the GitLab MR plan-widget artifact instead of the
+  // human render. Write it to a file (`tfplan.json`) in CI and declare it as
+  // `artifacts:reports:terraform` to light up the merge-request widget.
+  if (args.reportFile === "gitlab-mr") {
+    console.log(JSON.stringify(gitlabMrReport(merged)));
+    return 0;
+  }
 
   if (args.json) {
     console.log(JSON.stringify(merged, null, 2));

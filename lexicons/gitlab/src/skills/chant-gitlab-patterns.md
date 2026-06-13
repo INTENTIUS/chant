@@ -197,6 +197,21 @@ export const app = NodePipeline({
 });
 ```
 
+### Publish the plan to the merge request
+
+`MrPlanReport` turns `chant lifecycle plan` into the MR plan widget (the `terraform` artifact type above). It runs the plan with `--report gitlab-mr`, writes the `{create,update,delete}` counts to `tfplan.json`, and declares it as `artifacts:reports:terraform`:
+
+```typescript
+import { MrPlanReport } from "@intentius/chant-lexicon-gitlab";
+
+export const plan = MrPlanReport({
+  environment: "prod",
+  before: ["aws sts get-caller-identity"], // credential setup — the plan reads live state
+});
+```
+
+The widget label always reads "Terraform" (GitLab's fixed string). Counts only — `adopt`/`noop` are excluded; run the plan in the job log for the per-resource breakdown.
+
 ## Rules and Conditional Execution
 
 ### Branch-Based Rules
