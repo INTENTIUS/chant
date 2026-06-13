@@ -227,6 +227,8 @@ Options:
   --json                Emit the structured run result as JSON (run command)
   --report              Print deployment report instead of running (run command)
                         OR with a path arg: SARIF report destination (migrate)
+                        OR '--report gitlab-mr': emit the GitLab MR plan-widget
+                        JSON (lifecycle plan)
   --from <name>         Source lexicon for migrate (default: github)
   --to <name>           Target lexicon for migrate (default: gitlab)
   --emit <fmt>          Migration output format: yaml (default) or ts

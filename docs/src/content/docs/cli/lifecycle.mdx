@@ -9,7 +9,7 @@ description: Capture, diff, and plan against deployed infrastructure — the obs
 chant lifecycle snapshot <env> [lexicon] [--src <dir>]
 chant lifecycle show <env>
 chant lifecycle diff <env> [--live] [--src <dir>]
-chant lifecycle plan <env> [--json] [--owned] [--src <dir>]
+chant lifecycle plan <env> [lexicon] [--json] [--owned] [--report gitlab-mr] [--src <dir>]
 chant lifecycle affected --base <ref> [--head <ref>] [--include-dependents] [--json]
 chant lifecycle log [env]
 ```
@@ -118,6 +118,19 @@ The six `diff --live` categories and the five `plan` actions describe the same s
 | **disappeared** | **create** if still declared, else **noop** | A snapshot-history signal; the plan reads live + source, not snapshot age |
 
 The "when declared" qualifiers are where the axes diverge: an undeclared resource that also **drifted** or is **unchanged** is still an **orphan** to the plan — the snapshot history doesn't change that it's live-but-undeclared, so ownership decides between `adopt` and `delete`.
+
+#### Reporting to a GitLab merge request
+
+`--report gitlab-mr` emits the plan as the JSON GitLab reads for its merge-request plan widget:
+
+```bash
+chant lifecycle plan prod --report gitlab-mr > tfplan.json
+# {"create":3,"update":1,"delete":0}
+```
+
+Declare the file as `artifacts:reports:terraform` and GitLab renders "3 to add, 1 to change, 0 to delete" on the MR. The widget format is generic — any tool that emits this JSON gets it — so the plan maps onto it directly. Only the mutating actions count: `adopt` and `noop` are excluded, since the widget has no column for live-but-undeclared or no-change.
+
+The widget label always reads "Terraform" — that is GitLab's fixed string, not a claim chant makes. The GitLab lexicon ships an [`MrPlanReport`](/chant/lexicons/gitlab/examples/#merge-request-plan-widget) composite that wires the job for you.
 
 ### Resources vs artifacts
 

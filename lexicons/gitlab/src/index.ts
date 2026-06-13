@@ -15,8 +15,8 @@ export { CI } from "./variables";
 export * from "./generated/index";
 
 // Composites
-export { DockerBuild, NodePipeline, BunPipeline, PnpmPipeline, PythonPipeline, ReviewApp } from "./composites/index";
-export type { DockerBuildProps, NodePipelineProps, PythonPipelineProps, ReviewAppProps } from "./composites/index";
+export { DockerBuild, NodePipeline, BunPipeline, PnpmPipeline, PythonPipeline, ReviewApp, MrPlanReport } from "./composites/index";
+export type { DockerBuildProps, NodePipelineProps, PythonPipelineProps, ReviewAppProps, MrPlanReportProps } from "./composites/index";
 
 // Spec utilities (for tooling)
 export { fetchCISchema, fetchSchemas, GITLAB_SCHEMA_VERSION } from "./codegen/fetch";

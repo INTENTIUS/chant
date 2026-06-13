@@ -142,6 +142,30 @@ export function summarize(cs: ChangeSet): Record<ChangeAction, number> {
   return counts;
 }
 
+/**
+ * GitLab MR plan widget report.
+ *
+ * GitLab renders an `artifacts:reports:terraform` artifact in the merge-request
+ * UI as "N to add, M to change, K to delete". The format is generic — any tool
+ * that emits this JSON gets the widget — and the chant plan maps onto it
+ * directly. Only the mutating actions count: `adopt` and `noop` are excluded,
+ * since the widget has no column for "live but undeclared" or "no change".
+ *
+ * The widget label reads "Terraform" regardless of producer; that is GitLab's
+ * fixed string, not a claim chant makes.
+ */
+export interface GitlabMrReport {
+  create: number;
+  update: number;
+  delete: number;
+}
+
+/** Project a change set onto the GitLab MR plan widget shape. Pure. */
+export function gitlabMrReport(cs: ChangeSet): GitlabMrReport {
+  const counts = summarize(cs);
+  return { create: counts.create, update: counts.update, delete: counts.delete };
+}
+
 /** Human-readable render of a change set. Pure — returns a string. */
 export function renderChangeSet(cs: ChangeSet): string {
   const counts = summarize(cs);

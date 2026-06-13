@@ -6,3 +6,5 @@ export { PythonPipeline } from "./python-pipeline";
 export type { PythonPipelineProps } from "./python-pipeline";
 export { ReviewApp } from "./review-app";
 export type { ReviewAppProps } from "./review-app";
+export { MrPlanReport } from "./mr-plan-report";
+export type { MrPlanReportProps } from "./mr-plan-report";

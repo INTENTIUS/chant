@@ -4,6 +4,7 @@ import { DockerBuild } from "./docker-build";
 import { NodePipeline, BunPipeline, PnpmPipeline } from "./node-pipeline";
 import { PythonPipeline } from "./python-pipeline";
 import { ReviewApp } from "./review-app";
+import { MrPlanReport } from "./mr-plan-report";
 
 // ---------------------------------------------------------------------------
 // DockerBuild
@@ -701,5 +702,62 @@ describe("ReviewApp", () => {
     });
     const props = (instance.stop as any).props;
     expect(props.allow_failure).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// MrPlanReport (#329)
+// ---------------------------------------------------------------------------
+describe("MrPlanReport", () => {
+  test("returns a single plan member", () => {
+    const instance = MrPlanReport({ environment: "prod" });
+    expect(instance.plan).toBeDefined();
+    expect(Object.keys(instance.members)).toEqual(["plan"]);
+    expect(isCompositeInstance(instance)).toBe(true);
+  });
+
+  test("declares the terraform report artifact", () => {
+    const props = (MrPlanReport({ environment: "prod" }).plan as any).props;
+    const artifacts = (props.artifacts as any).props;
+    expect(artifacts.reports.terraform).toBe("tfplan.json");
+  });
+
+  test("runs the plan with --report gitlab-mr and redirects to the report file", () => {
+    const props = (MrPlanReport({ environment: "prod" }).plan as any).props;
+    expect(props.script).toContain("npx chant build");
+    expect(props.script.some((s: string) => s.includes("lifecycle plan prod --report gitlab-mr > tfplan.json"))).toBe(true);
+  });
+
+  test("default stage is plan", () => {
+    const props = (MrPlanReport({ environment: "prod" }).plan as any).props;
+    expect(props.stage).toBe("plan");
+  });
+
+  test("lexicon, owned, and custom report file flow into the command", () => {
+    const props = (MrPlanReport({
+      environment: "staging",
+      lexicon: "gitlab",
+      ownedOnly: true,
+      reportFile: "plan.json",
+    }).plan as any).props;
+    const cmd = props.script.find((s: string) => s.includes("lifecycle plan"));
+    expect(cmd).toContain("lifecycle plan staging gitlab --owned --report gitlab-mr > plan.json");
+    expect((props.artifacts as any).props.reports.terraform).toBe("plan.json");
+  });
+
+  test("before commands become before_script (credential setup)", () => {
+    const props = (MrPlanReport({
+      environment: "prod",
+      before: ["gcloud auth ..."],
+    }).plan as any).props;
+    expect(props.before_script).toEqual(["gcloud auth ..."]);
+  });
+
+  test("per-member defaults override the plan job", () => {
+    const props = (MrPlanReport({
+      environment: "prod",
+      defaults: { plan: { tags: ["plan-runner"] } },
+    }).plan as any).props;
+    expect(props.tags).toEqual(["plan-runner"]);
   });
 });

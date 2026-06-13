@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { buildChangeSet, renderChangeSet, summarize } from "./change-set";
+import { buildChangeSet, renderChangeSet, summarize, gitlabMrReport } from "./change-set";
 import type { ResourceMetadata } from "../lexicon";
 
 const meta = (over: Partial<ResourceMetadata> = {}): ResourceMetadata => ({
@@ -147,5 +147,43 @@ describe("summarize / renderChangeSet", () => {
     expect(out).toContain("create-me");
     expect(out).toContain("ADOPT:");
     expect(out).toContain("orphan");
+  });
+});
+
+describe("gitlabMrReport (#329)", () => {
+  test("counts only create/update/delete; adopt and noop are excluded", () => {
+    const cs = buildChangeSet("prod", {
+      declared: new Set(["new-bucket", "drifted-queue", "stable-topic"]),
+      observedNow: {
+        "drifted-queue": meta({ status: "ACTIVE" }), // declared+live+drift → update
+        "stable-topic": meta({ status: "OK" }), // declared+live, no drift → noop
+        "owned-orphan": meta({ ownership: "owned" }), // owned orphan → delete
+        "foreign-orphan": meta({ ownership: "foreign" }), // foreign orphan → adopt
+        // new-bucket: declared, not live → create
+      },
+      observedThen: {
+        "drifted-queue": meta({ status: "CREATING" }),
+        "stable-topic": meta({ status: "OK" }),
+      },
+    });
+    expect(gitlabMrReport(cs)).toEqual({ create: 1, update: 1, delete: 1 });
+  });
+
+  test("empty plan reports all zeros", () => {
+    const cs = buildChangeSet("prod", {
+      declared: new Set(),
+      observedNow: {},
+      observedThen: undefined,
+    });
+    expect(gitlabMrReport(cs)).toEqual({ create: 0, update: 0, delete: 0 });
+  });
+
+  test("adopt-only plan reports zeros — the widget never shows undeclared resources", () => {
+    const cs = buildChangeSet("prod", {
+      declared: new Set(),
+      observedNow: { orphan: meta() }, // unknown ownership → adopt
+      observedThen: undefined,
+    });
+    expect(gitlabMrReport(cs)).toEqual({ create: 0, update: 0, delete: 0 });
   });
 });

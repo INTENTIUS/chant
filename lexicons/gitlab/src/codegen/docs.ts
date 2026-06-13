@@ -789,6 +789,29 @@ The \`DockerBuild\` composite expands to a job with Docker-in-Docker service, re
 
 {{file:review-app/src/pipeline.ts}}
 
+## Merge-request plan widget
+
+The \`MrPlanReport\` composite turns \`chant lifecycle plan\` into the GitLab merge-request plan widget — the "N to add, M to change, K to delete" summary GitLab renders from an \`artifacts:reports:terraform\` artifact:
+
+\`\`\`typescript
+import { MrPlanReport } from "@intentius/chant-lexicon-gitlab";
+
+export const plan = MrPlanReport({
+  environment: "prod",
+  // credential setup — the plan queries the live system to classify drift
+  before: ["aws sts get-caller-identity"],
+});
+\`\`\`
+
+The job runs \`chant lifecycle plan prod --report gitlab-mr\`, writes the count JSON to \`tfplan.json\`, and declares it as \`artifacts:reports:terraform\`. On the merge request, GitLab shows the plan summary inline.
+
+Caveats worth knowing:
+
+- The widget label always reads **"Terraform"** — that is GitLab's fixed string for this report type, not a claim chant makes.
+- It is **counts only** (create/update/delete). \`adopt\` and \`noop\` are excluded, since the widget has no column for live-but-undeclared or no-change. There is no per-resource breakdown — run \`chant lifecycle plan\` in the job log for that.
+- It is a **GitLab-only** surface. The same plan JSON is portable, but the widget is GitLab's.
+- The plan reads the live system, so the job needs cloud credentials — wire them via \`before\` or CI variables.
+
 ## AWS ALB Deployment
 
 A cross-lexicon example showing how to deploy AWS CloudFormation stacks from GitLab CI. Three separate pipelines mirror the separate-project AWS ALB pattern:
