@@ -291,6 +291,28 @@ A destructive apply is exactly where durability matters, and where `ApplyOp` lea
 
 An ungated, additive apply needs none of this and runs on the local executor. See [Durable Workflows](/chant/concepts/durable-workflows/) for why infra apply wants durable execution — and why it stays optional.
 
+## Audit (supply-chain drift)
+
+Some CI/CD security checks can only be answered against a moving external truth: whether a pinned action SHA still corresponds to a real upstream tag, whether a referenced commit still exists, whether a new advisory now covers a dependency already in use, whether an upstream was archived since you pinned it. The reference was correct when authored — the external world moved. That is drift, not a synthesis error, so it cannot live in the pure `chant build`; it belongs in the operational layer, exactly like lifecycle observation. On the dial it sits at **observe**, with a finding-mode as the **reconcile** step.
+
+The github and gitlab lexicons each ship an audit Op for this. The deterministic post-synth checks ([GitHub GHA029–058](/chant/lexicons/github/lint-rules/), [GitLab WGL029–048](/chant/lexicons/gitlab/lint-rules/)) own everything answerable from the build; the audit Op owns *only* what needs live resolution.
+
+```typescript
+import { WorkflowAuditOp } from "@intentius/chant-lexicon-temporal";
+
+// One-shot on the local executor: chant run actions-audit
+export const { op } = WorkflowAuditOp({ name: "actions-audit" });
+
+// Scheduled daily on Temporal; open a PR that bumps a stale pin
+export const { op: scheduledOp, schedule } = WorkflowAuditOp({
+  name: "actions-audit",
+  schedule: "0 6 * * *",
+  onFinding: "pull-request",   // "report" (default) | "issue" | "pull-request"
+});
+```
+
+`PipelineAuditOp` is the GitLab counterpart — it audits `.gitlab-ci.yml` `include:` / `component:` / `image:` references, and its finding-modes are `report | issue | merge-request`. Both run one-shot on the local executor (`chant run <name>`) with no Temporal dependency; only the scheduled, durable form requires Temporal, and `report` mode needs no external services at all. See the [github](/chant/lexicons/github/) and [gitlab](/chant/lexicons/gitlab/) lexicon docs for the per-platform reference lists each audit resolves.
+
 ## Op dependencies
 
 `depends` declares Ops that must succeed before this one starts. `chant build` validates all referenced names exist at build time.

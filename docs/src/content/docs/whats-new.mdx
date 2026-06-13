@@ -1,11 +1,24 @@
 ---
 title: What's New
-description: Recent capabilities shipped in chant — live import, the lifecycle dial, ownership markers, reconcile/apply Ops, observation contracts, drift detection, and more
+description: Recent capabilities shipped in chant — the CI/CD pipeline security audit, live import, the lifecycle dial, ownership markers, reconcile/apply Ops, observation contracts, drift detection, and more
 ---
 
 A hand-curated rollup of capabilities shipped recently. If you learned chant before this lands, this page is the catch-up. Each entry links to the closing issue or PR for the full context.
 
 For the day-to-day reference docs see [Lifecycle Models](/chant/concepts/lifecycle-models/), [`chant lifecycle`](/chant/cli/lifecycle/), [Live Import](/chant/guide/live-import/), [Reconciling Lifecycle](/chant/guide/reconciling-lifecycle/), [Drift Detection](/chant/concepts/drift-detection/), and [Implementing Observation](/chant/lexicon-authoring/observation/).
+
+## CI/CD pipeline security audit
+
+A workflow/pipeline security pass across the github and gitlab lexicons, split along chant's architectural boundary: deterministic checks run in the pure build, live-resolution checks run in the operational layer. Both lexicons were abstracted to the **same core problems** — pin & vet external references, least-privilege tokens, trust boundaries against untrusted input, secret containment, unsound expressions, artifact/cache hygiene — so the GitHub → GitLab migration can map problem → problem and carry the security invariant across the edge.
+
+| # | Capability |
+|---|---|
+| [#296](https://github.com/INTENTIUS/chant/issues/296) | Epic: GitHub workflow security audit — [GHA029–058](/chant/lexicons/github/lint-rules/) post-synth checks generalize SHA-pinning to every `uses:`/`image:`, flag over-broad token scopes, taint untrusted input into `run:`, contain secrets, reject unsound/obfuscated expressions, and enforce artifact/cache hygiene |
+| [#305](https://github.com/INTENTIUS/chant/issues/305) | Epic: GitLab pipeline security audit — [WGL029–048](/chant/lexicons/gitlab/lint-rules/), the same problems on GitLab primitives (includes/components, `CI_JOB_TOKEN`/`id_tokens`, masked/protected variables, `rules:`) |
+| [#292](https://github.com/INTENTIUS/chant/issues/292), [#303](https://github.com/INTENTIUS/chant/issues/303) | [`WorkflowAuditOp` / `PipelineAuditOp`](/chant/guide/ops/#audit-supply-chain-drift) — the live, always-fresh half: resolve pinned refs against moving upstreams (stale SHAs, impostor refs, advisories, archived projects), one-shot on the local executor or scheduled on Temporal, reporting via `report` / `issue` / `pull-request` (or `merge-request`) |
+| [#294](https://github.com/INTENTIUS/chant/issues/294) | [`Dependabot`](/chant/lexicons/github/composites/#dependabot) composite + resource — models `.github/dependabot.yml` so it's emitted and lintable, with safe defaults (cooldown window, external code execution denied); checks GHA057/058 |
+| [#306](https://github.com/INTENTIUS/chant/issues/306) | [Security-aware migration](/chant/lexicons/gitlab/migration/#security-posture) — a security-fate classification (Translated / Approximated / NeedsReview / Lost) on the migration provenance model, new `MIG-*` security rules, and a `--validate` security backend that runs the GitLab checks against migrated output |
+| [#293](https://github.com/INTENTIUS/chant/issues/293) | Fixed a duplicate lint ID — the post-synth "missing job-level permissions" check moved to `GHA013`, freeing `GHA020` for the secret-detection rule |
 
 ## Live import & the lifecycle dial
 

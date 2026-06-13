@@ -25,7 +25,7 @@ npm install --save-dev @intentius/chant-lexicon-github
 
 {{file:docs-snippets/src/quickstart.ts}}
 
-The lexicon provides **2 resources** (Workflow, Job), **13 composites** (Checkout, SetupNode, SetupGo, SetupPython, CacheAction, UploadArtifact, DownloadArtifact, NodeCI, NodePipeline, PythonCI, DockerBuild, DeployEnvironment, GoCI) + **3 presets** (BunPipeline, PnpmPipeline, YarnPipeline), a typed **Expression** system with 24 GitHub and 5 Runner context variables, and **13 lint rules** + **6 post-synth checks**.
+The lexicon provides **3 resources** (Workflow, Job, Dependabot config), **14 composites** (Checkout, SetupNode, SetupGo, SetupPython, CacheAction, UploadArtifact, DownloadArtifact, NodeCI, NodePipeline, PythonCI, DockerBuild, DeployEnvironment, GoCI, Dependabot) + **3 presets** (BunPipeline, PnpmPipeline, YarnPipeline), a typed **Expression** system with 24 GitHub and 5 Runner context variables, and **13 lint rules** + **45 post-synth checks** (including a CI/CD supply-chain security pass, GHA029–058).
 `;
 
 const outputFormat = `The GitHub Actions lexicon serializes resources into **\`.github/workflows/*.yml\`** YAML files.
@@ -184,7 +184,7 @@ GitHub automatically picks up any \`.github/workflows/*.yml\` files and runs the
 - [Workflow Concepts](/chant/lexicons/github/workflow-concepts/) — resource types, triggers, permissions
 - [Expressions](/chant/lexicons/github/expressions/) — typed expression system and condition helpers
 - [Composites](/chant/lexicons/github/composites/) — pre-built action wrappers (Checkout, SetupNode, etc.)
-- [Lint Rules](/chant/lexicons/github/lint-rules/) — 13 lint rules and 6 post-synth checks`,
+- [Lint Rules](/chant/lexicons/github/lint-rules/) — 13 lint rules and 45 post-synth checks`,
       },
       {
         slug: "workflow-concepts",
@@ -838,7 +838,27 @@ const { workflow, buildJob, testJob, lintJob } = GoCI({
 const noLint = GoCI({ lintCommand: null });
 \`\`\`
 
-**Props:** \`goVersion?\`, \`testCommand?\`, \`buildCommand?\`, \`lintCommand?\` (null to omit), \`runsOn?\``,
+**Props:** \`goVersion?\`, \`testCommand?\`, \`buildCommand?\`, \`lintCommand?\` (null to omit), \`runsOn?\`
+
+## Dependabot
+
+Models the repository's dependency-update configuration (\`.github/dependabot.yml\`) as a chant resource, so it is emitted and lintable like a workflow. The composite ships **safe defaults**: a cooldown window on every ecosystem (so a version published moments ago — including a compromised one — is not adopted before anyone can react) and external code execution explicitly denied.
+
+\`\`\`typescript
+import { Dependabot } from "@intentius/chant-lexicon-github";
+
+export const dependabot = Dependabot({
+  ecosystems: [
+    { packageEcosystem: "npm", directory: "/" },
+    { packageEcosystem: "github-actions", directory: "/" },
+  ],
+  // cooldownDays defaults to 7, openPullRequestsLimit to 5
+});
+\`\`\`
+
+**Props:** \`ecosystems\` (required — each \`{ packageEcosystem, directory?, interval? }\`), \`cooldownDays?\` (default 7), \`openPullRequestsLimit?\` (default 5)
+
+For full control, construct the \`DependabotConfig\` resource directly with raw \`updates:\` entries. Two post-synth checks validate the emitted config: **GHA057** (\`insecure-external-code-execution: allow\`) and **GHA058** (no cooldown). See [Lint Rules](/chant/lexicons/github/lint-rules/).`,
       },
       {
         slug: "lint-rules",
@@ -975,6 +995,60 @@ Flags workflows triggered by \`pull_request_target\` that include \`actions/chec
 **Severity:** error
 
 Detects cycles in the \`needs:\` dependency graph. If job A needs B and B needs A (directly or transitively), GitHub rejects the workflow. Reports the full cycle chain in the diagnostic message.
+
+### GHA021 — Checkout action not pinned to a SHA
+
+**Severity:** warning
+
+Flags \`actions/checkout\` referenced by a tag (e.g. \`@v4\`) instead of a pinned commit SHA. The narrower precursor to GHA029, kept because checkout is the most common unpinned action.
+
+### GHA022 — Job without timeout-minutes
+
+**Severity:** info
+
+Flags jobs that omit \`timeout-minutes\`. A hung step otherwise runs to the runner's default cap, burning minutes — set an explicit ceiling.
+
+### GHA023 — Deprecated set-output command
+
+**Severity:** warning
+
+Flags \`::set-output\` in \`run:\` steps. The workflow command is deprecated and disabled on current runners — write to \`$GITHUB_OUTPUT\` instead.
+
+### GHA024 — Missing concurrency for deploy workflows
+
+**Severity:** info
+
+Flags deploy workflows without a \`concurrency:\` block. Without one, two pushes can deploy concurrently and race — add a concurrency group to serialize them.
+
+### GHA025 — pull_request_target without restrictions
+
+**Severity:** warning
+
+Flags \`pull_request_target\` used without a \`types:\` filter. The trigger runs with repository secrets in the base-branch context, so it should be scoped to the specific PR events that need it.
+
+### GHA026 — Secret used without environment protection
+
+**Severity:** info
+
+Flags workflows that reference \`secrets.\` in steps but declare no \`environment:\` on any job, so the secret skips the approval and scoping rules an environment gate provides.
+
+### GHA027 — Cleanup step missing if: always()
+
+**Severity:** info
+
+Flags steps named "cleanup" / "teardown" / "clean up" that lack an \`if:\` condition. Cleanup should run even when a prior step fails — add \`if: always()\`.
+
+### GHA028 — Workflow with no on: triggers
+
+**Severity:** error
+
+Flags a workflow file with no top-level \`on:\` key. Without a trigger the workflow can never run.
+
+## Supply-chain security pass (GHA029–058)
+
+GHA029 onward are a CI/CD supply-chain security pass: pin & vet external references, enforce least-privilege token scopes, guard trust boundaries against untrusted input, contain secrets, reject unsound expressions, and keep artifacts/caches honest. They run statically on the emitted YAML — everything answerable without leaving the build.
+
+The checks that need a *moving external truth* — whether a pinned SHA still maps to a real upstream tag, whether a ref still exists, whether a new advisory now covers an action in use — can't be deterministic, so they live in the operational layer instead. Schedule the [\`WorkflowAuditOp\`](/chant/guide/ops/#audit-supply-chain-drift) (temporal lexicon) for that live, always-fresh half; it reads the same emitted workflow references and reports drift via \`report | issue | pull-request\`.
 
 ### GHA029 — Action or reusable workflow not pinned to a commit SHA
 
@@ -1287,7 +1361,7 @@ The inline \`chant-github\` skill covers the full workflow lifecycle:
 - **Validate** — \`chant lint src/\`
 - **Deploy** — commit and push the generated YAML
 - **Status** — GitHub Actions UI or \`gh run list\`
-- **Troubleshooting** — lint rule codes (GHA001–GHA020), post-synth checks (GHA006–GHA019)
+- **Troubleshooting** — lint rule codes (GHA001–GHA020), post-synth checks (GHA006–GHA058)
 
 The skill is invocable as a slash command: \`/chant-github\`
 
