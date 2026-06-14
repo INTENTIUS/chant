@@ -18,6 +18,7 @@
  */
 
 import { DECLARABLE_MARKER, type Declarable } from "@intentius/chant/declarable";
+import { resolveActionRef } from "./actions";
 
 /**
  * Keys the Forgejo runner ignores. Emitting them is misleading (they look
@@ -28,6 +29,9 @@ const DROPPED_KEYS = new Set(["permissions", "continue-on-error"]);
 
 /** Property key whose value is a runner-label selector. */
 const RUNS_ON_KEY = "runs-on";
+
+/** Property key whose value is an action/workflow reference. */
+const USES_KEY = "uses";
 
 /**
  * Default GitHub-hosted runner label → Forgejo label mapping. `docker` is the
@@ -45,6 +49,8 @@ export const DEFAULT_RUNNER_LABELS: Record<string, string> = {
 export interface ForgejoDialectOptions {
   /** Project-supplied label overrides, merged over {@link DEFAULT_RUNNER_LABELS}. */
   runnerLabels?: Record<string, string>;
+  /** Base for resolving mirrored `uses:` action refs (see ./actions). */
+  actionsRoot?: string;
 }
 
 export interface ForgejoDialectResult {
@@ -65,6 +71,7 @@ function isDeclarable(value: unknown): value is Declarable {
 
 interface TransformCtx {
   labels: Record<string, string>;
+  actionsRoot?: string;
   warnings: string[];
   /** Human-readable location used in warning messages. */
   where: string;
@@ -112,6 +119,12 @@ function transformValue(value: unknown, ctx: TransformCtx): unknown {
       result[key] = remapRunsOn(v, ctx);
       continue;
     }
+    if (kebab === USES_KEY && typeof v === "string") {
+      const { rewritten, warning } = resolveActionRef(v, { actionsRoot: ctx.actionsRoot });
+      if (warning) ctx.warnings.push(`${warning} (in ${ctx.where})`);
+      result[key] = rewritten;
+      continue;
+    }
     result[key] = transformValue(v, ctx);
   }
   return result;
@@ -145,7 +158,7 @@ export function applyForgejoDialect(
   const out = new Map<string, Declarable>();
 
   for (const [name, entity] of entities) {
-    const ctx: TransformCtx = { labels, warnings, where: name };
+    const ctx: TransformCtx = { labels, actionsRoot: options.actionsRoot, warnings, where: name };
     out.set(name, cloneDeclarable(entity, ctx));
   }
 

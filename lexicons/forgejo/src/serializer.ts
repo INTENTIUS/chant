@@ -23,11 +23,15 @@ import { applyForgejoDialect, type ForgejoDialectOptions } from "./dialect";
 function readForgejoOptions(config: Record<string, unknown> | undefined): ForgejoDialectOptions {
   const forgejo = config?.forgejo;
   if (!forgejo || typeof forgejo !== "object") return {};
-  const runnerLabels = (forgejo as Record<string, unknown>).runnerLabels;
-  if (runnerLabels && typeof runnerLabels === "object") {
-    return { runnerLabels: runnerLabels as Record<string, string> };
+  const obj = forgejo as Record<string, unknown>;
+  const options: ForgejoDialectOptions = {};
+  if (obj.runnerLabels && typeof obj.runnerLabels === "object") {
+    options.runnerLabels = obj.runnerLabels as Record<string, string>;
   }
-  return {};
+  if (typeof obj.actionsRoot === "string") {
+    options.actionsRoot = obj.actionsRoot;
+  }
+  return options;
 }
 
 /**

@@ -19,6 +19,16 @@ export {
   type ForgejoDialectResult,
 } from "./dialect";
 
+// Action-reference resolver (exposed for tooling/tests)
+export {
+  resolveActionRef,
+  DEFAULT_ACTIONS_ROOT,
+  KNOWN_ACTIONS,
+  type ActionTarget,
+  type ActionResolveOptions,
+  type ActionResolveResult,
+} from "./actions";
+
 // Reuse the entire github authoring surface: generated entities, expression
 // system, context variables, and composites.
 export * from "@intentius/chant-lexicon-github";
