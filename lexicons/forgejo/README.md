@@ -38,6 +38,13 @@ On build, the Forgejo dialect:
   fixed meaning on Forgejo. They are mapped to a default Forgejo label
   (`docker`), overridable per project. Unmapped labels pass through with a
   warning.
+- **Resolves `uses:` action refs** — Forgejo has no GitHub Marketplace, so a
+  bare `uses: actions/checkout@v4` is rewritten to a resolvable form. Common
+  `actions/*` are mapped under an actions root (`https://code.forgejo.org` by
+  default, overridable via `forgejo.actionsRoot`); `docker/*` are pinned to
+  their full GitHub URL. Local (`./…`), `docker://`, and full-URL refs pass
+  through untouched. Anything else passes through **and is reported** as a
+  warning so it's never silently unresolvable.
 
 Everything else is emitted by the github serializer, which already produces the
 exact YAML shape Forgejo executes.
@@ -65,6 +72,8 @@ export default {
       "ubuntu-latest": "docker",
       "ubuntu-22.04": "ubuntu-lts",
     },
+    // Base for resolving mirrored `uses:` action refs.
+    actionsRoot: "https://code.forgejo.org",
   },
 } satisfies ChantConfig;
 ```

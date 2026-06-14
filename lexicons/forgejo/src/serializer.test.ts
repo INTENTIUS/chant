@@ -1,8 +1,9 @@
 import { describe, test, expect } from "vitest";
-import { Workflow, Job, Step } from "@intentius/chant-lexicon-github";
+import { Workflow, Job, Step, Checkout, SetupNode } from "@intentius/chant-lexicon-github";
 import type { Declarable } from "@intentius/chant/declarable";
 import type { SerializerResult } from "@intentius/chant/serializer";
 import { forgejoSerializer } from "./serializer";
+import { DEFAULT_ACTIONS_ROOT } from "./actions";
 
 function asResult(out: string | SerializerResult): SerializerResult {
   return typeof out === "string" ? { primary: out } : out;
@@ -74,6 +75,37 @@ describe("forgejoSerializer — github-style source roundtrip", () => {
     const result = asResult(out);
     expect(result.primary).toContain("runs-on: windows-latest");
     expect((result.warnings ?? []).filter((w) => w.includes("windows-latest"))).toHaveLength(1);
+  });
+});
+
+describe("forgejoSerializer — uses: action resolution", () => {
+  function withSteps(...steps: unknown[]): Map<string, Declarable> {
+    const job = new Job({ "runs-on": "ubuntu-latest", steps }) as unknown as Declarable;
+    return new Map<string, Declarable>([["build", job]]);
+  }
+
+  test("rewrites composite-emitted action refs under the actions root", () => {
+    const { primary } = asResult(
+      forgejoSerializer.serialize(withSteps(Checkout({}).step, SetupNode({ nodeVersion: "22" }).step)),
+    );
+    expect(primary).toContain(`uses: ${DEFAULT_ACTIONS_ROOT}/actions/checkout@v4`);
+    expect(primary).toContain(`uses: ${DEFAULT_ACTIONS_ROOT}/actions/setup-node@v4`);
+  });
+
+  test("forgejo.actionsRoot override changes the rewritten base", () => {
+    const out = forgejoSerializer.serialize(withSteps(Checkout({}).step), undefined, {
+      config: { forgejo: { actionsRoot: "https://codeberg.org" } },
+    });
+    expect(asResult(out).primary).toContain("uses: https://codeberg.org/actions/checkout@v4");
+  });
+
+  test("an unmapped action ref is passed through and reported", () => {
+    const step = new Step({ name: "Custom", uses: "some-org/custom-action@v1" });
+    const result = asResult(forgejoSerializer.serialize(withSteps(step)));
+    expect(result.primary).toContain("uses: some-org/custom-action@v1");
+    const refWarnings = (result.warnings ?? []).filter((w) => w.includes("some-org/custom-action@v1"));
+    expect(refWarnings).toHaveLength(1);
+    expect(refWarnings[0]).toContain("unresolved action ref");
   });
 });
 
