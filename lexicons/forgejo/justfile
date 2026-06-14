@@ -1,0 +1,11 @@
+# Default recipe - list all available commands
+default:
+    @just --list
+
+# Run all tests
+test:
+    npx vitest run lexicons/forgejo
+
+# Type-check the lexicon
+build:
+    npx tsc --noEmit -p tsconfig.json

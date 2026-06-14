@@ -143,6 +143,12 @@ export interface BuildOptions {
    * native metadata channel. Resolved from project config by the caller.
    */
   ownership?: OwnershipMarker;
+
+  /**
+   * The resolved project configuration, passed through to each serializer's
+   * {@link SerializeContext} so a dialect can read its lexicon-scoped settings.
+   */
+  config?: Record<string, unknown>;
 }
 
 export interface BuildResult {
@@ -553,10 +559,15 @@ export async function build(
         ...(outputsByLexicon.get(lexiconName) ?? []),
         ...unassignedOutputs,
       ];
-      outputs.set(
-        lexiconName,
-        serializer.serialize(lexiconEntities, lexiconLexiconOutputs, { ownership: options?.ownership }),
-      );
+      const serialized = serializer.serialize(lexiconEntities, lexiconLexiconOutputs, {
+        ownership: options?.ownership,
+        config: options?.config,
+      });
+      // Collect any non-fatal serializer diagnostics into the build warnings.
+      if (typeof serialized !== "string" && serialized.warnings) {
+        for (const w of serialized.warnings) warnings.push(w);
+      }
+      outputs.set(lexiconName, serialized);
     } else {
       warnings.push(`No serializer found for lexicon "${lexiconName}"`);
     }

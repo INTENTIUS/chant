@@ -12,6 +12,14 @@ export interface SerializeContext {
    * native metadata channel (AWS/Azure tags, K8s/GCP labels).
    */
   ownership?: OwnershipMarker;
+
+  /**
+   * The resolved project configuration, when a build was driven from a project
+   * with a `chant.config.*`. Lets a serializer read its own lexicon-scoped
+   * settings (e.g. the forgejo dialect's `forgejo.runnerLabels`). Undefined for
+   * ad-hoc builds (e.g. context tools) that pass no config.
+   */
+  config?: Record<string, unknown>;
 }
 
 /**
@@ -22,6 +30,12 @@ export interface SerializerResult {
   primary: string;
   /** Additional files keyed by filename (e.g. "network.template.json" → content) */
   files?: Record<string, string>;
+  /**
+   * Non-fatal diagnostics produced during serialization (e.g. a dialect
+   * dropping keys the target platform ignores). The build pipeline collects
+   * these into its `warnings` array.
+   */
+  warnings?: string[];
 }
 
 /**
