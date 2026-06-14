@@ -14,10 +14,26 @@ export { forgejoPlugin } from "./plugin";
 // Dialect (exposed for tooling/tests)
 export {
   applyForgejoDialect,
+  transformWorkflowObject,
   DEFAULT_RUNNER_LABELS,
   type ForgejoDialectOptions,
   type ForgejoDialectResult,
+  type TransformObjectResult,
 } from "./dialect";
+
+// github → forgejo migration
+export {
+  transform,
+  detectGitHubWorkflow,
+  type MigrateOptions,
+  type MigrationResult,
+} from "./migrate/from-github";
+export {
+  analyzeForgejoSecurity,
+  renderSecurityPosture,
+  type SecurityFate,
+  type SecurityRecord,
+} from "./migrate/from-github/security";
 
 // Action-reference resolver (exposed for tooling/tests)
 export {

@@ -145,6 +145,29 @@ function cloneDeclarable(entity: Declarable, ctx: TransformCtx): Declarable {
   return clone;
 }
 
+export interface TransformObjectResult {
+  /** The transformed plain value (clone; the input is not mutated). */
+  value: unknown;
+  /** One warning per dropped key, unmapped label, and unresolved action ref. */
+  warnings: string[];
+}
+
+/**
+ * Apply the Forgejo dialect to a plain object — e.g. a parsed GitHub Actions
+ * workflow during migration, rather than the resolved entity graph. Same
+ * rules as {@link applyForgejoDialect}: drop ignored keys, remap runner
+ * labels, resolve `uses:` refs.
+ */
+export function transformWorkflowObject(
+  obj: unknown,
+  options: ForgejoDialectOptions = {},
+): TransformObjectResult {
+  const labels = { ...DEFAULT_RUNNER_LABELS, ...(options.runnerLabels ?? {}) };
+  const warnings: string[] = [];
+  const ctx: TransformCtx = { labels, actionsRoot: options.actionsRoot, warnings, where: "workflow" };
+  return { value: transformValue(obj, ctx), warnings };
+}
+
 /**
  * Apply the Forgejo dialect to a resolved entity map. Returns transformed
  * clones plus the diagnostics produced (dropped keys, unmapped labels).
