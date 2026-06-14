@@ -8,8 +8,9 @@
  * intentionally no-ops — they delegate the real work to the github lexicon.
  */
 
-import type { LexiconPlugin, InitTemplateSet } from "@intentius/chant/lexicon";
+import type { LexiconPlugin, InitTemplateSet, MigrationSource } from "@intentius/chant/lexicon";
 import { forgejoSerializer } from "./serializer";
+import { forgejoContextTools } from "./mcp/context-tools";
 
 const reuseNote =
   "forgejo reuses the github lexicon's entities — run `chant generate` in the github lexicon instead.";
@@ -87,6 +88,37 @@ export const build = new Job({
     }
 
     return false;
+  },
+
+  migrationSource(from: string): MigrationSource | undefined {
+    if (from !== "github") return undefined;
+    return {
+      detect(content: string): boolean {
+        // Inline heuristic — keeps the migrate code out of the import graph
+        // until a transform actually runs.
+        if (!/^\s*jobs\s*:/m.test(content)) return false;
+        return /^\s*on\s*:/m.test(content) || /^\s*runs-on\s*:/m.test(content);
+      },
+      async transform(content: string, opts) {
+        const { transform } = await import("./migrate/from-github");
+        const result = await transform(content, {
+          emit: opts.emit,
+          sourceFile: opts.sourceFile,
+          strict: opts.strict,
+          security: opts.security,
+        });
+        return {
+          output: result.output,
+          provenance: result.provenance as unknown as Array<Record<string, unknown>>,
+          diagnostics: result.diagnostics as unknown as Array<Record<string, unknown>>,
+          securityPosture: result.securityPosture,
+        };
+      },
+    };
+  },
+
+  mcpTools() {
+    return [...forgejoContextTools()];
   },
 
   // ── Codegen lifecycle — delegated to github (no own spec) ──────────

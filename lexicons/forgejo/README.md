@@ -58,6 +58,34 @@ Gitea), so point the build output there:
 chant build src -o .forgejo/workflows/ci.yml
 ```
 
+## Migrating from GitHub Actions
+
+Because github → forgejo YAML is near-identical, the migration is thin — it
+applies the same dialect as a build. Its real value is the **compare**: what the
+move costs.
+
+```sh
+chant migrate .github/workflows/ci.yml --to forgejo -o .forgejo/workflows/ci.yml --validate
+```
+
+`--validate` prints a **Security posture** report classifying each property's
+fate across the edge:
+
+| Fate | Meaning |
+|---|---|
+| `translated` | carried across as-is |
+| `approximated` | carried with a close equivalent |
+| `needs-review` | confirm/adjust on Forgejo (unresolved `uses:`, unmapped runner label) |
+| `lost` | the Forgejo runner ignores it (`permissions`, `continue-on-error`) |
+
+The same view is available to agents as the `forgejo:compare` MCP tool, which
+takes a workflow file and returns per-property fates plus summary counts —
+read-only.
+
+> Note: flow-style YAML (`branches: [main]`) is parsed by chant's lightweight
+> core parser, which keeps it as a scalar; prefer block style in sources you
+> intend to migrate. This is shared with the github import path.
+
 ## Configuration
 
 Override runner-label mapping in `chant.config.ts`:
