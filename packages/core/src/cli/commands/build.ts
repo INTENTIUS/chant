@@ -111,7 +111,10 @@ export async function buildCommand(options: BuildOptions): Promise<BuildResult> 
     : [];
 
   // Run the build
-  const result = await build(infraPath, options.serializers, undefined, { ownership });
+  const result = await build(infraPath, options.serializers, undefined, {
+    ownership,
+    config: config as unknown as Record<string, unknown>,
+  });
 
   // Format errors
   for (const error of result.errors) {

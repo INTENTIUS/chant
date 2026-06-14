@@ -32,6 +32,8 @@
       "@intentius/chant-lexicon-azure/*": ["lexicons/azure/src/*"],
       "@intentius/chant-lexicon-github": ["lexicons/github/src/index.ts"],
       "@intentius/chant-lexicon-github/*": ["lexicons/github/src/*"],
+      "@intentius/chant-lexicon-forgejo": ["lexicons/forgejo/src/index.ts"],
+      "@intentius/chant-lexicon-forgejo/*": ["lexicons/forgejo/src/*"],
       "@intentius/chant-test-utils": ["packages/test-utils/src/index.ts"],
       "@intentius/chant-test-utils/*": ["packages/test-utils/src/*"]
     }
