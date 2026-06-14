@@ -1,11 +1,24 @@
 ---
 title: What's New
-description: Recent capabilities shipped in chant — the CI/CD pipeline security audit, live import, the lifecycle dial, ownership markers, reconcile/apply Ops, observation contracts, drift detection, and more
+description: Recent capabilities shipped in chant — read-only pipeline context tools for agents, the CI/CD pipeline security audit, live import, the lifecycle dial, ownership markers, reconcile/apply Ops, observation contracts, drift detection, and more
 ---
 
 A hand-curated rollup of capabilities shipped recently. If you learned chant before this lands, this page is the catch-up. Each entry links to the closing issue or PR for the full context.
 
 For the day-to-day reference docs see [Lifecycle Models](/chant/concepts/lifecycle-models/), [`chant lifecycle`](/chant/cli/lifecycle/), [Live Import](/chant/guide/live-import/), [Reconciling Lifecycle](/chant/guide/reconciling-lifecycle/), [Drift Detection](/chant/concepts/drift-detection/), and [Implementing Observation](/chant/lexicon-authoring/observation/).
+
+## Pipeline context for agents
+
+chant now exposes what `chant build` already computes about a pipeline — its jobs and run order, what it pulls in from outside, its security findings, where each job came from — as a set of **read-only MCP tools**. They give an agent a *before-it-runs* view of a pipeline change, complementary to the *after-it-ran* view live tooling provides. Every tool builds from source and never touches a live instance, reads run history, or writes anything — that boundary is what keeps chant a context *producer*, not a copy of the live tooling. See [Agent Integration](/chant/guide/agent-integration/#read-only-context-tools) for the full tool reference.
+
+| # | Capability |
+|---|---|
+| [#328](https://github.com/INTENTIUS/chant/issues/328), [#331](https://github.com/INTENTIUS/chant/pull/331) | [GitLab read-only context tools](/chant/guide/agent-integration/#read-only-context-tools) — `gitlab:checks` (WGL findings), `gitlab:pipeline` (stages/jobs/order), `gitlab:references` (includes/components/images + pinned?), `gitlab:affected` (needs chain), `gitlab:pipeline-yaml` |
+| [#333](https://github.com/INTENTIUS/chant/pull/333) | The parallel `github:*` set for Actions workflows — `github:checks` (GHA findings), `github:workflow`, `github:references` (actions/images + SHA-pinned?), `github:affected`, `github:workflow-yaml` |
+| [#334](https://github.com/INTENTIUS/chant/pull/334) | `gitlab:source` + `gitlab:owns`, on a new entity-level **build-provenance** side channel in core — trace a job back to its declaring file and composite; report whether a job is declared by chant here (`declared-in-source`, since pipeline jobs are not taggable cloud resources) |
+| [#335](https://github.com/INTENTIUS/chant/pull/335) | `gitlab:compare` — migrate a GitHub workflow to GitLab and report which security properties survive the edge (translated / approximated / needs-review / lost), reusing the [security-fate model](/chant/lexicons/gitlab/migration/#security-posture) |
+| [#329](https://github.com/INTENTIUS/chant/issues/329), [#332](https://github.com/INTENTIUS/chant/pull/332) | [`chant lifecycle plan --report gitlab-mr`](/chant/cli/lifecycle/) + the `MrPlanReport` composite — publish the plan as the GitLab **merge-request plan widget** (`artifacts:reports:terraform`); counts only (create/update/delete) |
+| [#336](https://github.com/INTENTIUS/chant/pull/336) | A Docker **runtime E2E** (`just gitlab-runtime-e2e`) that actually executes a chant-generated `.gitlab-ci.yml` via `gitlab-ci-local` — proves GitLab CI accepts and runs the output, not just that it is well-formed |
 
 ## CI/CD pipeline security audit
 
