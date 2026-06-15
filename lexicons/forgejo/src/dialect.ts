@@ -77,15 +77,14 @@ interface TransformCtx {
   where: string;
 }
 
-/** Map a single runner label, warning (and passing it through) when unmapped. */
+/**
+ * Map a single runner label, passing it through unchanged when unmapped. An
+ * unmapped label that survives into the output is reported by the WFJ011
+ * post-synth check (which surfaces in both `chant build` and `chant lint`),
+ * so the dialect doesn't also warn here — that would double-report.
+ */
 function mapLabel(label: string, ctx: TransformCtx): string {
-  const mapped = ctx.labels[label];
-  if (mapped !== undefined) return mapped;
-  ctx.warnings.push(
-    `forgejo: no runner-label mapping for '${label}' in ${ctx.where}; passing it through unchanged. ` +
-      `Set forgejo.runnerLabels['${label}'] in chant.config.ts to map it.`,
-  );
-  return label;
+  return ctx.labels[label] ?? label;
 }
 
 /** Remap a `runs-on` value (string or string[]); leave other shapes untouched. */
@@ -120,9 +119,10 @@ function transformValue(value: unknown, ctx: TransformCtx): unknown {
       continue;
     }
     if (kebab === USES_KEY && typeof v === "string") {
-      const { rewritten, warning } = resolveActionRef(v, { actionsRoot: ctx.actionsRoot });
-      if (warning) ctx.warnings.push(`${warning} (in ${ctx.where})`);
-      result[key] = rewritten;
+      // Rewrite to a Forgejo-resolvable form. An unresolved ref that survives
+      // is reported by the WFJ010 post-synth check (build + lint), so the
+      // dialect doesn't also warn here — that would double-report.
+      result[key] = resolveActionRef(v, { actionsRoot: ctx.actionsRoot }).rewritten;
       continue;
     }
     result[key] = transformValue(v, ctx);

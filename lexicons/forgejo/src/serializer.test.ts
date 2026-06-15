@@ -69,12 +69,12 @@ describe("forgejoSerializer — github-style source roundtrip", () => {
     expect(asResult(out).primary).toContain("runs-on: big-runner");
   });
 
-  test("an unmapped label passes through with a warning", () => {
+  test("an unmapped label passes through (WFJ011 reports it post-synth, not the serializer)", () => {
     const job = new Job({ "runs-on": "windows-latest", steps: [new Step({ run: "echo hi" })] }) as unknown as Declarable;
     const out = forgejoSerializer.serialize(new Map([["build", job]]));
     const result = asResult(out);
     expect(result.primary).toContain("runs-on: windows-latest");
-    expect((result.warnings ?? []).filter((w) => w.includes("windows-latest"))).toHaveLength(1);
+    expect((result.warnings ?? []).filter((w) => w.includes("windows-latest"))).toHaveLength(0);
   });
 });
 
@@ -99,13 +99,11 @@ describe("forgejoSerializer — uses: action resolution", () => {
     expect(asResult(out).primary).toContain("uses: https://codeberg.org/actions/checkout@v4");
   });
 
-  test("an unmapped action ref is passed through and reported", () => {
+  test("an unmapped action ref is passed through (WFJ010 reports it post-synth)", () => {
     const step = new Step({ name: "Custom", uses: "some-org/custom-action@v1" });
     const result = asResult(forgejoSerializer.serialize(withSteps(step)));
     expect(result.primary).toContain("uses: some-org/custom-action@v1");
-    const refWarnings = (result.warnings ?? []).filter((w) => w.includes("some-org/custom-action@v1"));
-    expect(refWarnings).toHaveLength(1);
-    expect(refWarnings[0]).toContain("unresolved action ref");
+    expect((result.warnings ?? []).filter((w) => w.includes("some-org/custom-action@v1"))).toHaveLength(0);
   });
 });
 
