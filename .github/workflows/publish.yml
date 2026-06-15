@@ -87,6 +87,13 @@ jobs:
           P=$(npm view @intentius/chant-lexicon-github version 2>/dev/null || echo "none")
           [ "$V" = "$P" ] && echo "Already at $V, skipping" || npm publish --access public --provenance
 
+      - name: Publish @intentius/chant-lexicon-forgejo
+        working-directory: lexicons/forgejo
+        run: |
+          V=$(node -e "process.stdout.write(require('./package.json').version)")
+          P=$(npm view @intentius/chant-lexicon-forgejo version 2>/dev/null || echo "none")
+          [ "$V" = "$P" ] && echo "Already at $V, skipping" || npm publish --access public --provenance
+
       - name: Publish @intentius/chant-lexicon-k8s
         working-directory: lexicons/k8s
         run: |
