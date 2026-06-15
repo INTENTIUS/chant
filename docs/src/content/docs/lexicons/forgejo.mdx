@@ -1,0 +1,135 @@
+---
+title: Forgejo Actions
+description: The Forgejo / Codeberg / Gitea Actions lexicon — a thin GitHub Actions dialect, with github→forgejo migration and the forgejo:compare safety view
+---
+
+`@intentius/chant-lexicon-forgejo` targets **Forgejo Actions** — the CI behind
+[Codeberg](https://codeberg.org), self-hosted [Forgejo](https://forgejo.org),
+and [Gitea](https://about.gitea.com). Forgejo runs **GitHub-Actions-compatible**
+workflows, so the lexicon is a **thin dialect of the [github lexicon](/chant/lexicons/github/)**:
+it reuses github's entities and composites wholesale and overrides only the
+serializer. One package covers Codeberg, self-hosted Forgejo, and Gitea.
+
+## Authoring
+
+Author exactly as you would for GitHub Actions — the same `Workflow`, `Job`,
+`Step`, and composites — but import from `@intentius/chant-lexicon-forgejo`:
+
+```ts
+import { Workflow, Job, Step, Checkout, SetupNode } from "@intentius/chant-lexicon-forgejo";
+
+export const workflow = new Workflow({
+  name: "CI",
+  on: { push: { branches: ["main"] } },
+});
+
+export const build = new Job({
+  "runs-on": "ubuntu-latest",
+  steps: [
+    Checkout({}).step,
+    SetupNode({ nodeVersion: "22", cache: "npm" }).step,
+    new Step({ name: "Test", run: "npm test" }),
+  ],
+});
+```
+
+## Build
+
+Forgejo reads workflows from `.forgejo/workflows/` (or `.gitea/workflows/` for
+Gitea), so point the output there — the same way the github lexicon targets
+`.github/workflows/`:
+
+```sh
+chant build src -o .forgejo/workflows/ci.yml
+```
+
+## The dialect
+
+Forgejo Actions YAML *is* GitHub Actions YAML, so the github serializer already
+emits the right shape. On build, the dialect adjusts three things:
+
+| Concern | Behavior |
+|---|---|
+| **Ignored keys** | `permissions` and `continue-on-error` are silently ignored by the Forgejo runner. They are dropped from the output, each with a build warning (emitting them is misleading — they look enforced but aren't). |
+| **Runner labels** | GitHub-hosted labels like `ubuntu-latest` have no fixed meaning on Forgejo. They map to a default label (`docker`), overridable via `forgejo.runnerLabels`. A surviving GitHub-hosted label is flagged by **WFJ011**. |
+| **`uses:` refs** | Forgejo has no GitHub Marketplace. Common `actions/*` rewrite under an actions root (`https://code.forgejo.org` by default), `docker/*` pin to their full GitHub URL, and local / `docker://` / full-URL refs pass through. An unresolved ref is flagged by **WFJ010**. |
+
+## Configuration
+
+Override the runner-label map and the actions root in `chant.config.ts`:
+
+```ts
+import type { ChantConfig } from "@intentius/chant";
+
+export default {
+  lexicons: ["forgejo"],
+  forgejo: {
+    runnerLabels: {
+      "ubuntu-latest": "docker",
+      "ubuntu-22.04": "ubuntu-lts",
+    },
+    actionsRoot: "https://code.forgejo.org",
+  },
+} satisfies ChantConfig;
+```
+
+## Migrating from GitHub Actions
+
+Because github → forgejo YAML is near-identical, the migration is thin — it
+applies the same dialect as a build. Its real value is the **compare**: what the
+move costs.
+
+```sh
+chant migrate .github/workflows/ci.yml --to forgejo -o .forgejo/workflows/ci.yml --validate
+```
+
+`--validate` prints a **Security posture** report classifying each property's
+fate across the edge:
+
+| Fate | Meaning |
+|---|---|
+| `translated` | carried across as-is |
+| `approximated` | carried with a close equivalent |
+| `needs-review` | confirm/adjust on Forgejo (unresolved `uses:`, unmapped runner label) |
+| `lost` | the Forgejo runner ignores it (`permissions`, `continue-on-error`) |
+
+The same view is available to agents as the `forgejo:compare` MCP tool, which
+takes a workflow file and returns per-property fates plus summary counts —
+read-only.
+
+## Read-only context tools
+
+The forgejo lexicon ships the full `forgejo:*` [read-only context tools](/chant/guide/agent-integration/#read-only-context-tools)
+(`checks`, `workflow`, `references`, `affected`, `workflow-yaml`, `source`,
+`owns`, `compare`). Each builds from source and returns what chant already
+computes — without touching any live forge.
+
+## Lint checks
+
+Two post-synth checks specific to the Forgejo edge, surfaced in `chant build`,
+`chant lint`, and `forgejo:checks`:
+
+- **WFJ010** — an unresolved action reference (a `uses:` with no
+  Forgejo-resolvable form).
+- **WFJ011** — a GitHub-hosted runner label (`macos-*` / `windows-*`, or an
+  unmapped `ubuntu-*`) with no Forgejo equivalent.
+
+## Runtime observation
+
+N/A — workflow definitions are git-tracked, so drift is a `git diff`, the same
+rationale as the github and gitlab lexicons. The lexicon implements neither
+`describeResources()` nor `listArtifacts()` and is warn-skipped on `--live`.
+
+## Validating execution
+
+A runtime E2E (`just forgejo-runtime-e2e`) builds a workflow and **runs** the
+generated `.forgejo/workflows/ci.yml` in Docker via a Forgejo runner
+(`forgejo-runner` / `act_runner` / `act` `exec`), proving Forgejo Actions
+accepts and executes chant's output. On-demand — it needs Docker and a runner
+tool, and is not part of the gating CI.
+
+## Caveats
+
+Flow-style YAML (`branches: [main]`) is parsed by chant's lightweight core
+parser, which keeps it as a scalar — prefer block style in sources you intend to
+migrate. This is shared with the github import path.

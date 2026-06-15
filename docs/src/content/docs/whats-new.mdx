@@ -22,14 +22,14 @@ chant now exposes what `chant build` already computes about a pipeline — its j
 
 ## Forgejo lexicon (Codeberg / Forgejo / Gitea)
 
-A new lexicon for **Forgejo Actions** — the CI behind Codeberg, self-hosted Forgejo, and Gitea — built as a **thin dialect of the github lexicon**. Forgejo runs GitHub-Actions-compatible YAML, so you author exactly as for GitHub (same entities and composites, imported from `@intentius/chant-lexicon-forgejo`) and the dialect applies on build. The differentiated value is the github→forgejo **compare**: what the move silently costs.
+A new lexicon for **[Forgejo Actions](/chant/lexicons/forgejo/)** — the CI behind Codeberg, self-hosted Forgejo, and Gitea — built as a **thin dialect of the github lexicon**. Forgejo runs GitHub-Actions-compatible YAML, so you author exactly as for GitHub (same entities and composites, imported from `@intentius/chant-lexicon-forgejo`) and the dialect applies on build. The differentiated value is the github→forgejo **compare**: what the move silently costs.
 
 | # | Capability |
 |---|---|
 | [#339](https://github.com/INTENTIUS/chant/pull/343) | Serializer dialect — emits `.forgejo/workflows/` (or `.gitea/workflows/`); drops keys the Forgejo runner ignores (`permissions`, `continue-on-error`) with build warnings; maps runner labels (`ubuntu-latest` → `docker`, override via `forgejo.runnerLabels`) |
 | [#340](https://github.com/INTENTIUS/chant/pull/344) | `uses:` action-ref resolver — Forgejo has no Marketplace, so common `actions/*` rewrite under `forgejo.actionsRoot` (default `https://code.forgejo.org`), `docker/*` pin to GitHub URLs, and unmapped refs are reported |
 | [#341](https://github.com/INTENTIUS/chant/pull/345) | `chant migrate --to forgejo` + the [`forgejo:compare`](/chant/guide/agent-integration/#read-only-context-tools) MCP tool — a per-property security-fate report (translated / approximated / needs-review / lost) of what survives the move |
-| [#342](https://github.com/INTENTIUS/chant/issues/342) | Parity surface — the full `forgejo:*` [read-only context tools](/chant/guide/agent-integration/#read-only-context-tools), WFJ010/011 lint checks, init templates, a `chant-forgejo` skill, and docs |
+| [#342](https://github.com/INTENTIUS/chant/pull/346) | Parity surface — the full `forgejo:*` [read-only context tools](/chant/guide/agent-integration/#read-only-context-tools), WFJ010/011 lint checks, init templates, a `chant-forgejo` skill, and a [reference page](/chant/lexicons/forgejo/) |
 
 ## CI/CD pipeline security audit
 
