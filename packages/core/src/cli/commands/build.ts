@@ -140,11 +140,15 @@ export async function buildCommand(options: BuildOptions): Promise<BuildResult> 
       const checks = plugin.postSynthChecks();
       if (checks.length === 0) continue;
 
-      // Scope outputs to this plugin's lexicon so cross-lexicon outputs don't interfere
+      // Scope outputs to this plugin's lexicon so cross-lexicon outputs don't
+      // interfere. Outputs are keyed by the serializer's lexicon name (the
+      // build partition key), which differs from plugin.name for a dialect like
+      // forgejo (plugin "forgejo", serializer "github").
+      const outputKey = plugin.serializer.name;
       const scopedOutputs = new Map<string, string | SerializerResult>();
-      const pluginOutput = result.outputs.get(plugin.name);
+      const pluginOutput = result.outputs.get(outputKey);
       if (pluginOutput !== undefined) {
-        scopedOutputs.set(plugin.name, pluginOutput);
+        scopedOutputs.set(outputKey, pluginOutput);
       }
 
       const scopedResult = { ...result, outputs: scopedOutputs };

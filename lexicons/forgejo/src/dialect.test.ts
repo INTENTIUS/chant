@@ -89,17 +89,16 @@ describe("applyForgejoDialect — runner labels", () => {
     expect((entities.get("build") as MockJob).props["runs-on"]).toBe("big-runner");
   });
 
-  test("an unmapped label passes through with a warning", () => {
+  test("an unmapped label passes through unchanged (reported by WFJ011, not here)", () => {
     const job = new MockJob({ "runs-on": "macos-latest" });
     const { entities, warnings } = applyForgejoDialect(entityMap(["build", job]));
     expect((entities.get("build") as MockJob).props["runs-on"]).toBe("macos-latest");
-    expect(warnings.filter((w) => w.includes("macos-latest"))).toHaveLength(1);
+    expect(warnings.filter((w) => w.includes("macos-latest"))).toHaveLength(0);
   });
 
-  test("remaps every label in an array form", () => {
+  test("remaps every label in an array form, leaving unmapped ones untouched", () => {
     const job = new MockJob({ "runs-on": ["ubuntu-latest", "self-hosted"] });
-    const { entities, warnings } = applyForgejoDialect(entityMap(["build", job]));
+    const { entities } = applyForgejoDialect(entityMap(["build", job]));
     expect((entities.get("build") as MockJob).props["runs-on"]).toEqual(["docker", "self-hosted"]);
-    expect(warnings.filter((w) => w.includes("self-hosted"))).toHaveLength(1);
   });
 });

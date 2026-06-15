@@ -9,6 +9,10 @@
  */
 
 import type { LexiconPlugin, InitTemplateSet, MigrationSource } from "@intentius/chant/lexicon";
+import { discoverPostSynthChecks } from "@intentius/chant/lint/discover";
+import { createSkillsLoader, createDiffTool } from "@intentius/chant/lexicon-plugin-helpers";
+import { join, dirname } from "path";
+import { fileURLToPath } from "url";
 import { forgejoSerializer } from "./serializer";
 import { forgejoContextTools } from "./mcp/context-tools";
 
@@ -117,9 +121,41 @@ export const build = new Job({
     };
   },
 
-  mcpTools() {
-    return [...forgejoContextTools()];
+  postSynthChecks() {
+    const dir = join(dirname(fileURLToPath(import.meta.url)), "lint", "post-synth");
+    return discoverPostSynthChecks(dir, import.meta.url);
   },
+
+  mcpTools() {
+    return [
+      createDiffTool(forgejoSerializer, "Compare current build output against previous output for Forgejo Actions", "forgejo"),
+      ...forgejoContextTools(),
+    ];
+  },
+
+  skills: createSkillsLoader(import.meta.url, [
+    {
+      file: "chant-forgejo.md",
+      name: "chant-forgejo",
+      description: "Forgejo / Codeberg / Gitea Actions with chant — build, the dialect (dropped keys, runner labels, uses: resolution), and github→forgejo migration",
+      triggers: [
+        { type: "file-pattern", value: "**/.forgejo/workflows/*.yml" },
+        { type: "file-pattern", value: "**/.gitea/workflows/*.yml" },
+        { type: "context", value: "forgejo" },
+        { type: "context", value: "codeberg" },
+        { type: "context", value: "gitea" },
+      ],
+      parameters: [],
+      examples: [
+        {
+          title: "Build a Forgejo workflow",
+          description: "Author github-style; the forgejo dialect applies on build",
+          input: "Create a CI workflow for Codeberg",
+          output: `chant build src -o .forgejo/workflows/ci.yml`,
+        },
+      ],
+    },
+  ]),
 
   // ── Codegen lifecycle — delegated to github (no own spec) ──────────
   async generate(): Promise<void> {

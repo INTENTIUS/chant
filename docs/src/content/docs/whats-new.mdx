@@ -20,6 +20,17 @@ chant now exposes what `chant build` already computes about a pipeline — its j
 | [#329](https://github.com/INTENTIUS/chant/issues/329), [#332](https://github.com/INTENTIUS/chant/pull/332) | [`chant lifecycle plan --report gitlab-mr`](/chant/cli/lifecycle/) + the `MrPlanReport` composite — publish the plan as the GitLab **merge-request plan widget** (`artifacts:reports:terraform`); counts only (create/update/delete) |
 | [#336](https://github.com/INTENTIUS/chant/pull/336) | A Docker **runtime E2E** (`just gitlab-runtime-e2e`) that actually executes a chant-generated `.gitlab-ci.yml` via `gitlab-ci-local` — proves GitLab CI accepts and runs the output, not just that it is well-formed |
 
+## Forgejo lexicon (Codeberg / Forgejo / Gitea)
+
+A new lexicon for **Forgejo Actions** — the CI behind Codeberg, self-hosted Forgejo, and Gitea — built as a **thin dialect of the github lexicon**. Forgejo runs GitHub-Actions-compatible YAML, so you author exactly as for GitHub (same entities and composites, imported from `@intentius/chant-lexicon-forgejo`) and the dialect applies on build. The differentiated value is the github→forgejo **compare**: what the move silently costs.
+
+| # | Capability |
+|---|---|
+| [#339](https://github.com/INTENTIUS/chant/pull/343) | Serializer dialect — emits `.forgejo/workflows/` (or `.gitea/workflows/`); drops keys the Forgejo runner ignores (`permissions`, `continue-on-error`) with build warnings; maps runner labels (`ubuntu-latest` → `docker`, override via `forgejo.runnerLabels`) |
+| [#340](https://github.com/INTENTIUS/chant/pull/344) | `uses:` action-ref resolver — Forgejo has no Marketplace, so common `actions/*` rewrite under `forgejo.actionsRoot` (default `https://code.forgejo.org`), `docker/*` pin to GitHub URLs, and unmapped refs are reported |
+| [#341](https://github.com/INTENTIUS/chant/pull/345) | `chant migrate --to forgejo` + the [`forgejo:compare`](/chant/guide/agent-integration/#read-only-context-tools) MCP tool — a per-property security-fate report (translated / approximated / needs-review / lost) of what survives the move |
+| [#342](https://github.com/INTENTIUS/chant/issues/342) | Parity surface — the full `forgejo:*` [read-only context tools](/chant/guide/agent-integration/#read-only-context-tools), WFJ010/011 lint checks, init templates, a `chant-forgejo` skill, and docs |
+
 ## CI/CD pipeline security audit
 
 A workflow/pipeline security pass across the github and gitlab lexicons, split along chant's architectural boundary: deterministic checks run in the pure build, live-resolution checks run in the operational layer. Both lexicons were abstracted to the **same core problems** — pin & vet external references, least-privilege tokens, trust boundaries against untrusted input, secret containment, unsound expressions, artifact/cache hygiene — so the GitHub → GitLab migration can map problem → problem and carry the security invariant across the edge.

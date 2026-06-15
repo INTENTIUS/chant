@@ -98,6 +98,19 @@ The GitHub lexicon ships the parallel set for Actions workflows:
 | `github:affected` | If I change this job, what re-runs? |
 | `github:workflow-yaml` | The generated workflow YAML |
 
+The Forgejo lexicon (Codeberg / self-hosted Forgejo / Gitea) ships the same set, plus the migration safety view:
+
+| MCP tool | Answers |
+|----------|---------|
+| `forgejo:checks` | Is there anything that won't work on Forgejo? (WFJ findings: unresolved action refs, GitHub-hosted runner labels) |
+| `forgejo:workflow` | What does this workflow do? (triggers, jobs, run order) |
+| `forgejo:references` | What actions/images does it pull in, and are they pinned to a commit SHA? |
+| `forgejo:affected` | If I change this job, what re-runs? |
+| `forgejo:workflow-yaml` | The generated Forgejo workflow YAML |
+| `forgejo:source` | Where did this job come from in my TypeScript? (file + composite) |
+| `forgejo:owns` | Is this job declared by chant in this project? |
+| `forgejo:compare` | If I migrate this GitHub workflow to Forgejo, which safety properties survive? |
+
 Every one of these reads the build only — no live instance, no run history, no writes. That boundary is deliberate: chant is a context *producer*, complementary to (not a copy of) the live tooling an agent already uses.
 
 ## Ops

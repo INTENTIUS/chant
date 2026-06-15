@@ -16,6 +16,7 @@ A **lexicon** is a collection of types and semantic lint rules for an operationa
 | Helm | `@intentius/chant-lexicon-helm` | 10+ resources | [Reference](/chant/lexicons/helm/) |
 | GitHub Actions | `@intentius/chant-lexicon-github` | 3 resources, 14 composites | [Reference](/chant/lexicons/github/) |
 | GitLab CI/CD | `@intentius/chant-lexicon-gitlab` | 3 resources, 16 properties | [Reference](/chant/lexicons/gitlab/) — also ships [GitHub Actions migration](/chant/lexicons/gitlab/migration/) |
+| Forgejo Actions (Codeberg / Gitea) | `@intentius/chant-lexicon-forgejo` | thin github dialect (reuses github entities) | [README](https://github.com/INTENTIUS/chant/blob/main/lexicons/forgejo/README.md) — ships [GitHub Actions migration + `forgejo:compare`](/chant/guide/agent-integration/#read-only-context-tools) |
 | Docker | `@intentius/chant-lexicon-docker` | 6 resources (Compose + Dockerfile) | [Reference](/chant/lexicons/docker/) |
 | Temporal | `@intentius/chant-lexicon-temporal` | 4 resources + Op workflow engine | [Reference](/chant/lexicons/temporal/) |
 
@@ -34,6 +35,7 @@ Lexicons opt into the `chant lifecycle diff <env> --live` pipeline by implementi
 | Docker |  | ✅ | — | `docker ps`, `docker image ls`, `docker network ls` (NDJSON) |
 | GitHub Actions |  |  | — | N/A — workflow definitions are git-tracked; drift is `git diff` ([rationale](https://github.com/INTENTIUS/chant/blob/main/lexicons/github/README.md#runtime-observation-na)) |
 | GitLab CI/CD |  |  | — | N/A — same rationale ([README](https://github.com/INTENTIUS/chant/blob/main/lexicons/gitlab/README.md#runtime-observation-na)) |
+| Forgejo Actions |  |  | — | N/A — workflow definitions are git-tracked; drift is `git diff` (same as github) |
 
 Lexicons that implement neither are warn-skipped — `--live` doesn't fail the whole command for them.
 
@@ -42,6 +44,8 @@ The **Ownership** column shows the marker channel a lexicon queries for the `--o
 ## Cross-lexicon migration
 
 The GitLab lexicon ships a `chant migrate` source for `from: github` — translates `.github/workflows/*.yml` into `.gitlab-ci.yml` (or typed chant TypeScript), with provenance recorded as SARIF and a curated mapping table for the top 33 marketplace actions. See [GitLab → Migration](/chant/lexicons/gitlab/migration/) for the full surface, or the [`chant migrate` CLI reference](/chant/cli/migrate/).
+
+The Forgejo lexicon implements the same `migrationSource("github")` hook — a **thin** edge, since Forgejo runs GitHub-Actions-compatible YAML. Its value is the [`forgejo:compare`](/chant/guide/agent-integration/#read-only-context-tools) safety view: a per-property security-fate report of what the move costs (`permissions`/`continue-on-error` → lost, unresolved `uses:` → needs-review).
 
 Future lexicons can opt into the same machinery by implementing `migrationSource(from: string)` on their plugin.
 
