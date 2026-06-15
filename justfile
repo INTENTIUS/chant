@@ -58,6 +58,10 @@ smoke-npm-registry:
 gitlab-runtime-e2e:
     bash test/gitlab-runtime-e2e.sh
 
+# Run a chant-generated Forgejo workflow in Docker (forgejo-runner/act exec; on-demand, needs Docker)
+forgejo-runtime-e2e:
+    bash test/forgejo-runtime-e2e.sh
+
 # Run all smoke tests
 smoke: smoke-workspace smoke-npm
 
