@@ -36,11 +36,28 @@ Only the root `.gitlab-ci.yml` is fetched; `include:` files are not resolved, so
 
 | Flag | Description |
 |------|-------------|
-| `-f, --format <fmt>` | Output format: `stylish` (default), `json`, `sarif`, `markdown` |
+| `-f, --format <fmt>` | Output format: `stylish` (default), `json`, `sarif`, `markdown`, `html` |
 | `--json` | Shortcut for `--format json` |
 | `-o, --output <file>` | Write the report to a file instead of stdout |
 | `--tier <tier>` | `all` (default) or `merge-worthy` to show only PR-worthy findings |
 | `--fail-on <level>` | Exit non-zero on `merge-worthy`, `warning`, or `none` (default `none`) |
+| `--template <file>` | `html` only: a full HTML template override (see below) |
+| `--theme <file>` | `html` only: a JSON file of theme knobs (`title`, `logo`, `accent`, `footer`) |
+
+## Report modes
+
+- **Minimized** — `--format markdown` (or `stylish`/`json`/`sarif`). Compact, pastes into a PR or issue; quick wins lead with ready-to-apply diffs, the rest collapses into `<details>`.
+- **Expanded** — `--format html`. A self-contained, presentable HTML document (inline CSS, opens in a browser, shareable as one file): severity badges, tier counts, styled finding cards, syntax-highlighted fix diffs, and a **provenance snapshot** (host, repo, commit SHA, files scanned, timestamp, chant version) so every finding is anchored to an exact commit.
+
+### Customizing the HTML report
+
+- `--theme theme.json` fills knobs into the default template:
+
+  ```json
+  { "title": "Acme CI Audit", "logo": "https://acme.example/logo.svg", "accent": "#0b7285", "footer": "Internal use only." }
+  ```
+
+- `--template my.html` replaces the whole document. Available slots: `{{title}}`, `{{accent}}`, `{{logo}}`, `{{styles}}`, `{{body}}`, `{{footer}}`. The findings render into `{{body}}`.
 
 ## Tokens
 
@@ -80,6 +97,9 @@ chant audit https://codeberg.org/owner/repo
 
 # Save a shareable markdown report
 chant audit https://github.com/owner/repo -f markdown -o report.md
+
+# Generate a presentable, branded HTML report
+chant audit https://github.com/owner/repo -f html --theme theme.json -o report.html
 
 # Only the PR-worthy findings, as JSON, failing CI if any exist
 chant audit . --tier merge-worthy --json --fail-on merge-worthy

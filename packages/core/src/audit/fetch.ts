@@ -308,6 +308,40 @@ export async function resolveImageDigest(
   }
 }
 
+/**
+ * Resolve the audited repo's current commit SHA (best-effort) for the report
+ * snapshot, so findings are anchored to an exact commit. Returns undefined on
+ * any failure.
+ */
+export async function resolveRepoCommit(
+  url: string,
+  opts: { token?: string; fetchImpl?: typeof fetch; timeoutMs?: number } = {},
+): Promise<string | undefined> {
+  let parsed: ParsedRepo;
+  try {
+    parsed = parseRepoUrl(url);
+  } catch {
+    return undefined;
+  }
+  const { host, owner, repo } = parsed;
+  const doFetch = opts.fetchImpl ?? fetch;
+  const headers = authHeaders(host.kind, opts.token);
+  const apiUrl =
+    host.kind === "gitlab"
+      ? `${host.api}/projects/${encodeURIComponent(`${owner}/${repo}`)}/repository/commits?per_page=1`
+      : `${host.api}/repos/${owner}/${repo}/commits?per_page=1&limit=1`;
+  try {
+    const res = await doFetch(apiUrl, { headers, redirect: "error", signal: timeoutSignal(opts.timeoutMs ?? DEFAULTS.timeoutMs) });
+    if (!res.ok) return undefined;
+    const body = (await res.json()) as Array<{ sha?: string; id?: string }>;
+    if (!Array.isArray(body) || body.length === 0) return undefined;
+    const sha = body[0].sha ?? body[0].id;
+    return typeof sha === "string" ? sha : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 async function fetchGitlab(
   host: HostConfig,
   owner: string,

@@ -67,6 +67,8 @@ export interface ParsedArgs {
   tier?: string;
   /** `chant audit --fail-on merge-worthy|warning|none` */
   failOn?: string;
+  /** `chant audit --theme <file>` — JSON theme knobs for the HTML report */
+  theme?: string;
 }
 
 /**

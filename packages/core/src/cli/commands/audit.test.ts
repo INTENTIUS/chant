@@ -138,6 +138,14 @@ describe("auditCommand", () => {
     expect(result.output).toContain("```diff");
   });
 
+  test("html format renders a self-contained document with a snapshot", async () => {
+    const result = await auditCommand({ path: REPO, format: "html", now: "2026-06-16T00:00:00.000Z", toolVersion: "0.4.0" });
+    expect(result.success).toBe(true);
+    expect(result.output.startsWith("<!doctype html>")).toBe(true);
+    expect(result.output).toContain("chant 0.4.0");
+    expect(result.output).toContain("local"); // host for a local audit
+  });
+
   test("a non-allowlisted URL fails cleanly", async () => {
     const result = await auditCommand({ path: "https://evil.example.com/o/r" });
     expect(result.success).toBe(false);
