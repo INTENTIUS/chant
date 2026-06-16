@@ -1,5 +1,5 @@
 import { describe, test, expect } from "vitest";
-import { fetchCiFiles, parseRepoUrl, FetchError } from "./fetch";
+import { fetchCiFiles, parseRepoUrl, resolveActionSha, FetchError } from "./fetch";
 
 const b64 = (s: string) => Buffer.from(s, "utf-8").toString("base64");
 const CI_YAML = "name: CI\non:\n  push:\npermissions: write-all\njobs:\n  build:\n    runs-on: ubuntu-latest\n";
@@ -110,5 +110,28 @@ describe("fetchCiFiles", () => {
     const { impl } = fakeFetch([]); // everything 404s
     const files = await fetchCiFiles("https://github.com/acme/empty", { fetchImpl: impl });
     expect(files).toEqual([]);
+  });
+});
+
+describe("resolveActionSha", () => {
+  const SHA = "11bd71901bbe5b1630ceea73d27597364c9af683";
+
+  test("resolves an action ref to a commit SHA via the GitHub API", async () => {
+    const { impl, calls } = fakeFetch([
+      { match: "/repos/actions/checkout/commits/v4", make: () => new Response(JSON.stringify({ sha: SHA }), { status: 200 }) },
+    ]);
+    const sha = await resolveActionSha("actions/checkout", "v4", { fetchImpl: impl });
+    expect(sha).toBe(SHA);
+    expect(calls[0].url).toContain("api.github.com/repos/actions/checkout/commits/v4");
+  });
+
+  test("returns undefined on a failed lookup", async () => {
+    const { impl } = fakeFetch([]); // 404
+    expect(await resolveActionSha("acme/missing", "v1", { fetchImpl: impl })).toBeUndefined();
+  });
+
+  test("rejects a non-SHA response", async () => {
+    const { impl } = fakeFetch([{ match: "/commits/", make: () => new Response(JSON.stringify({ sha: "not-a-sha" }), { status: 200 }) }]);
+    expect(await resolveActionSha("acme/action", "v1", { fetchImpl: impl })).toBeUndefined();
   });
 });

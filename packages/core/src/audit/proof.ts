@@ -32,9 +32,27 @@ export interface ProofResult {
 }
 
 const SHA_RE = /^[0-9a-f]{40}$/;
+const USES_RE = /^(\s*-?\s*uses:\s*)([^@\s'"]+)@([^\s'"#]+)(.*)$/;
 
 function notApplied(checkId: string, note: string): ProofResult {
   return { checkId, applied: false, note };
+}
+
+/** Extract unpinned `uses: action@ref` references (deduped) from workflow YAML. */
+export function extractUnpinnedActions(content: string): Array<{ action: string; ref: string }> {
+  const seen = new Set<string>();
+  const out: Array<{ action: string; ref: string }> = [];
+  for (const line of content.split("\n")) {
+    const m = line.match(USES_RE);
+    if (!m) continue;
+    const [, , action, ref] = m;
+    if (SHA_RE.test(ref)) continue;
+    const key = `${action}@${ref}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push({ action, ref });
+  }
+  return out;
 }
 
 /** Pin unpinned `uses: action@ref` lines to a SHA. */
@@ -42,9 +60,8 @@ function pinActions(content: string, opts: ProveOptions): { patched: string; cha
   const lines = content.split("\n");
   let changed = false;
   let needsSha = false;
-  const usesRe = /^(\s*-?\s*uses:\s*)([^@\s'"]+)@([^\s'"#]+)(.*)$/;
   for (let i = 0; i < lines.length; i++) {
-    const m = lines[i].match(usesRe);
+    const m = lines[i].match(USES_RE);
     if (!m) continue;
     const [, prefix, action, ref, rest] = m;
     if (SHA_RE.test(ref)) continue; // already pinned

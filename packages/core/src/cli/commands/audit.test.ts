@@ -69,6 +69,27 @@ describe("auditCommand", () => {
     expect(result.findings.some((f) => f.checkId === "GHA033")).toBe(true);
   });
 
+  test("remote markdown audit inlines a pin diff using resolved SHAs", async () => {
+    const b64 = (s: string) => Buffer.from(s, "utf-8").toString("base64");
+    const sha = "11bd71901bbe5b1630ceea73d27597364c9af683";
+    const yaml = "name: CI\non:\n  push:\njobs:\n  build:\n    runs-on: ubuntu-latest\n    steps:\n      - uses: actions/checkout@v4\n";
+    const impl = (async (url: string | URL | Request) => {
+      const u = String(url);
+      if (u.includes("/commits/v4")) return new Response(JSON.stringify({ sha }), { status: 200 });
+      if (u.includes("/contents/.github/workflows/ci.yml")) {
+        return new Response(JSON.stringify({ name: "ci.yml", path: ".github/workflows/ci.yml", type: "file", content: b64(yaml), encoding: "base64" }), { status: 200 });
+      }
+      if (u.includes("/contents/.github/workflows")) {
+        return new Response(JSON.stringify([{ name: "ci.yml", path: ".github/workflows/ci.yml", type: "file", size: 100 }]), { status: 200 });
+      }
+      return new Response("not found", { status: 404 });
+    }) as unknown as typeof fetch;
+
+    const result = await auditCommand({ path: "https://github.com/acme/widgets", format: "markdown", fetchImpl: impl });
+    expect(result.output).toContain(`actions/checkout@${sha}`);
+    expect(result.output).toContain("```diff");
+  });
+
   test("a non-allowlisted URL fails cleanly", async () => {
     const result = await auditCommand({ path: "https://evil.example.com/o/r" });
     expect(result.success).toBe(false);

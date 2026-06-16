@@ -171,6 +171,41 @@ export async function fetchCiFiles(url: string, opts: FetchOptions = {}): Promis
   return inputs;
 }
 
+const SHA40 = /^[0-9a-f]{40}$/;
+
+/**
+ * Resolve an action ref (e.g. action="actions/checkout", ref="v4") to its
+ * commit SHA via the GitHub API. Returns undefined on any failure — pinning
+ * degrades gracefully to guidance. Actions are GitHub-hosted slugs, so this
+ * queries api.github.com regardless of the audited repo's host.
+ */
+export async function resolveActionSha(
+  action: string,
+  ref: string,
+  opts: { token?: string; fetchImpl?: typeof fetch; timeoutMs?: number } = {},
+): Promise<string | undefined> {
+  const parts = action.split("/");
+  if (parts.length < 2 || !parts[0] || !parts[1]) return undefined;
+  const [owner, repo] = parts;
+  const doFetch = opts.fetchImpl ?? fetch;
+  const url = `https://api.github.com/repos/${owner}/${repo}/commits/${encodeURIComponent(ref)}`;
+  try {
+    const res = await doFetch(url, {
+      headers: {
+        Accept: "application/vnd.github+json",
+        ...(opts.token ? { Authorization: `Bearer ${opts.token}` } : {}),
+      },
+      redirect: "error",
+      signal: timeoutSignal(opts.timeoutMs ?? DEFAULTS.timeoutMs),
+    });
+    if (!res.ok) return undefined;
+    const body = (await res.json()) as { sha?: string };
+    return body.sha && SHA40.test(body.sha) ? body.sha : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 async function fetchGitlab(
   host: HostConfig,
   owner: string,
