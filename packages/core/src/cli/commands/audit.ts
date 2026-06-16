@@ -189,6 +189,59 @@ function looksLikeCompose(content: string): boolean {
   }
 }
 
+/** Parse JSON or YAML content into an object, or undefined. */
+function parseStructured(content: string): Record<string, unknown> | undefined {
+  try {
+    const j = JSON.parse(content);
+    if (j && typeof j === "object") return j as Record<string, unknown>;
+  } catch {
+    // not JSON — try YAML
+  }
+  try {
+    const y = parseYAML(content) as Record<string, unknown>;
+    if (y && typeof y === "object") return y;
+  } catch {
+    // not YAML either
+  }
+  return undefined;
+}
+
+/** True if a parsed object is a CloudFormation template. */
+function looksLikeCloudFormation(obj: Record<string, unknown>): boolean {
+  if (obj.AWSTemplateFormatVersion !== undefined) return true;
+  const resources = obj.Resources;
+  if (resources && typeof resources === "object") {
+    for (const r of Object.values(resources as Record<string, unknown>)) {
+      const type = r && typeof r === "object" ? (r as Record<string, unknown>).Type : undefined;
+      if (typeof type === "string" && type.startsWith("AWS::")) return true;
+    }
+  }
+  return false;
+}
+
+/**
+ * Discover CloudFormation templates (JSON or YAML, `.json`/`.yaml`/`.yml`/`.template`).
+ * The aws checks `JSON.parse` the template, so YAML templates are normalized to a
+ * JSON string here (intrinsics like `!Ref` survive as strings — fine for the
+ * structural security checks).
+ */
+export function discoverCloudFormation(root: string): AuditInput[] {
+  const files: string[] = [];
+  walkFiles(root, files);
+  const inputs: AuditInput[] = [];
+  for (const full of files) {
+    const name = basename(full);
+    if (!/\.(json|ya?ml|template)$/i.test(name)) continue;
+    const content = readSafe(full);
+    if (content === undefined) continue;
+    const parsed = parseStructured(content);
+    if (parsed && looksLikeCloudFormation(parsed)) {
+      inputs.push({ path: relative(root, full), content: JSON.stringify(parsed), lexicon: "aws" });
+    }
+  }
+  return inputs;
+}
+
 /** Discover Docker artifacts: Dockerfiles (by name) and Compose files (by `services:`). */
 export function discoverDocker(root: string): AuditInput[] {
   const files: string[] = [];
@@ -337,7 +390,12 @@ export async function auditCommand(options: AuditCommandOptions): Promise<AuditC
     if (!existsSync(options.path)) {
       return { success: false, output: "", findings: [], scanned: [], exitCode: 1, error: `Path not found: ${options.path}` };
     }
-    inputs = [...discoverCiFiles(options.path), ...discoverManifests(options.path), ...discoverDocker(options.path)];
+    inputs = [
+      ...discoverCiFiles(options.path),
+      ...discoverManifests(options.path),
+      ...discoverDocker(options.path),
+      ...discoverCloudFormation(options.path),
+    ];
   }
 
   const scanned = inputs.map((i) => i.path);
