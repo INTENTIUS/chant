@@ -1,6 +1,6 @@
 import { describe, test, expect } from "vitest";
 import { fileURLToPath } from "url";
-import { auditCommand, discoverCiFiles, discoverManifests, discoverDocker, discoverCloudFormation, tokenForHost, coverageNotes } from "./audit";
+import { auditCommand, discoverCiFiles, discoverManifests, discoverDocker, discoverCloudFormation, discoverArm, tokenForHost, coverageNotes } from "./audit";
 import { MissingLexiconError, type AuditInput } from "../../audit/core";
 import { readFileSync, existsSync, rmSync } from "fs";
 import { tmpdir } from "os";
@@ -73,6 +73,15 @@ describe("auditCommand", () => {
     expect(ids).toContain("WAW018"); // S3 missing public access block (JSON template)
     expect(ids).toContain("WAW021"); // RDS not encrypted (JSON template)
     expect(ids).toContain("WAW019"); // SG open SSH (YAML template — proves YAML works)
+  });
+
+  test("discovers and audits Azure ARM templates", async () => {
+    const repo = fileURLToPath(new URL("./__fixtures__/audit-azure", import.meta.url));
+    expect(discoverArm(repo).map((f) => f.path)).toContain("azuredeploy.json");
+    const result = await auditCommand({ path: repo, format: "stylish" });
+    expect(result.success).toBe(true);
+    const ids = new Set(result.findings.map((f) => f.checkId));
+    expect(ids).toContain("AZR014"); // storage allows public blob access
   });
 
   test("discovers CI files under a repo root", () => {

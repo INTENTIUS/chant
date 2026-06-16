@@ -242,6 +242,28 @@ export function discoverCloudFormation(root: string): AuditInput[] {
   return inputs;
 }
 
+/** True if a parsed object is an Azure ARM deployment template. */
+function looksLikeArm(obj: Record<string, unknown>): boolean {
+  return typeof obj.$schema === "string" && obj.$schema.includes("deploymentTemplate") && Array.isArray(obj.resources);
+}
+
+/** Discover Azure ARM templates (`.json`) under a repo root. */
+export function discoverArm(root: string): AuditInput[] {
+  const files: string[] = [];
+  walkFiles(root, files);
+  const inputs: AuditInput[] = [];
+  for (const full of files) {
+    if (!/\.json$/i.test(basename(full))) continue;
+    const content = readSafe(full);
+    if (content === undefined) continue;
+    const parsed = parseStructured(content);
+    if (parsed && looksLikeArm(parsed)) {
+      inputs.push({ path: relative(root, full), content: JSON.stringify(parsed), lexicon: "azure" });
+    }
+  }
+  return inputs;
+}
+
 /** Discover Docker artifacts: Dockerfiles (by name) and Compose files (by `services:`). */
 export function discoverDocker(root: string): AuditInput[] {
   const files: string[] = [];
@@ -395,6 +417,7 @@ export async function auditCommand(options: AuditCommandOptions): Promise<AuditC
       ...discoverManifests(options.path),
       ...discoverDocker(options.path),
       ...discoverCloudFormation(options.path),
+      ...discoverArm(options.path),
     ];
   }
 

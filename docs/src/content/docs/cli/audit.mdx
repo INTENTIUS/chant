@@ -24,6 +24,7 @@ What it scans:
 - Kubernetes manifests (any `*.{yml,yaml}` with `apiVersion` + `kind`), for a local path — runs the `WK8*`/`ARGO*` checks (privileged containers, host namespaces, hardcoded secrets, image pinning, …)
 - Docker — `Dockerfile`/`*.Dockerfile` and Compose files (`*.{yml,yaml}` with `services:`), for a local path — runs the `DKRD*` checks (root user, `:latest` images, exposed SSH, …)
 - AWS CloudFormation — `.json`/`.yaml`/`.yml`/`.template` with `AWSTemplateFormatVersion` or `AWS::*` resources, for a local path — runs the `WAW*`/`COR*`/`EXT*` checks (public S3, open security groups, IAM wildcards, unencrypted storage, …). Both JSON and YAML templates.
+- Azure ARM — `.json` deployment templates (`$schema` with `deploymentTemplate` + `resources`), for a local path — runs the `AZR*` checks (public blob access, missing encryption/TDE, HTTPS-only, TLS 1.2, …)
 
 Every rule a finding cites links to its entry in the [audit rules reference](/chant/lint-rules/audit-rules/).
 
