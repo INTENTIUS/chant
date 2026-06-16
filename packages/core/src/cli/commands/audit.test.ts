@@ -1,7 +1,10 @@
 import { describe, test, expect } from "vitest";
 import { fileURLToPath } from "url";
 import { auditCommand, discoverCiFiles, tokenForHost, coverageNotes } from "./audit";
-import type { AuditInput } from "../../audit/core";
+import { MissingLexiconError, type AuditInput } from "../../audit/core";
+import { readFileSync, existsSync, rmSync } from "fs";
+import { tmpdir } from "os";
+import { join } from "path";
 
 const REPO = fileURLToPath(new URL("./__fixtures__/audit-repo", import.meta.url));
 
@@ -61,6 +64,29 @@ describe("auditCommand", () => {
     const mw = await auditCommand({ path: REPO, tier: "merge-worthy" });
     expect(mw.findings.length).toBeLessThanOrEqual(all.findings.length);
     expect(mw.findings.some((f) => f.checkId === "GHA022")).toBe(false); // report-only
+  });
+
+  test("writes the report to --output instead of returning it for stdout", async () => {
+    const out = join(tmpdir(), `chant-audit-test-${process.pid}.md`);
+    if (existsSync(out)) rmSync(out);
+    const result = await auditCommand({ path: REPO, format: "markdown", output: out });
+    expect(result.success).toBe(true);
+    expect(result.wroteTo).toBe(out);
+    expect(existsSync(out)).toBe(true);
+    expect(readFileSync(out, "utf-8")).toContain("# CI security audit");
+    rmSync(out);
+  });
+
+  test("surfaces a friendly error when a lexicon package is missing", async () => {
+    const result = await auditCommand({
+      path: REPO,
+      checksProvider: async () => {
+        throw new MissingLexiconError("Missing lexicon package needed to audit github workflows. Install it with: npm i @intentius/chant-lexicon-github");
+      },
+    });
+    expect(result.success).toBe(false);
+    expect(result.exitCode).toBe(1);
+    expect(result.error).toMatch(/npm i @intentius\/chant-lexicon-github/);
   });
 
   test("a path with no CI files succeeds with a clear message", async () => {

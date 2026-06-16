@@ -68,19 +68,33 @@ function dedupeById(checks: PostSynthCheck[]): PostSynthCheck[] {
  * checks. Forgejo workflows are GitHub-dialect YAML, so the GitHub security
  * tier is run against them in addition to Forgejo's own checks.
  */
+/** Thrown when a lexicon package the audit needs isn't installed. */
+export class MissingLexiconError extends Error {}
+
+async function load(names: string[]): Promise<Awaited<ReturnType<typeof loadPlugins>>> {
+  try {
+    return await loadPlugins(names);
+  } catch (err) {
+    const pkgs = names.map((n) => `@intentius/chant-lexicon-${n}`).join(" ");
+    throw new MissingLexiconError(
+      `Missing lexicon package needed to audit ${names.join("/")} workflows. Install it with: npm i ${pkgs}\n(${err instanceof Error ? err.message : String(err)})`,
+    );
+  }
+}
+
 async function defaultChecksProvider(lexicon: AuditLexicon): Promise<PostSynthCheck[]> {
   const cached = checksCache.get(lexicon);
   if (cached) return cached;
 
   let checks: PostSynthCheck[];
   if (lexicon === "forgejo") {
-    const [forgejo, github] = await loadPlugins(["forgejo", "github"]);
+    const [forgejo, github] = await load(["forgejo", "github"]);
     checks = dedupeById([
       ...(forgejo?.postSynthChecks?.() ?? []),
       ...(github?.postSynthChecks?.() ?? []),
     ]);
   } else {
-    const [plugin] = await loadPlugins([lexicon]);
+    const [plugin] = await load([lexicon]);
     checks = plugin?.postSynthChecks?.() ?? [];
   }
 

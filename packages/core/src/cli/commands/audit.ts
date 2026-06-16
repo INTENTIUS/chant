@@ -5,9 +5,9 @@
  * directly and runs the real post-synth checks via the audit core.
  */
 
-import { existsSync, readFileSync, readdirSync, statSync } from "fs";
+import { existsSync, readFileSync, readdirSync, statSync, writeFileSync } from "fs";
 import { join, relative } from "path";
-import { auditFiles, type AuditInput, type AuditFinding, type AuditLexicon } from "../../audit/core";
+import { auditFiles, type AuditInput, type AuditFinding, type AuditLexicon, type ChecksProvider } from "../../audit/core";
 import { RULE_CATALOG } from "../../audit/catalog";
 import { renderMarkdown } from "../../audit/report";
 import { fetchCiFiles, resolveActionSha, resolveImageDigest, FetchError } from "../../audit/fetch";
@@ -31,6 +31,10 @@ export interface AuditCommandOptions {
   token?: string;
   /** Injectable fetch for testing remote audits. */
   fetchImpl?: typeof fetch;
+  /** Write the rendered report to this file instead of returning it for stdout. */
+  output?: string;
+  /** Injectable post-synth checks provider (testing). */
+  checksProvider?: ChecksProvider;
 }
 
 export interface AuditCommandResult {
@@ -42,6 +46,8 @@ export interface AuditCommandResult {
   scanned: string[];
   exitCode: number;
   error?: string;
+  /** Set when the report was written to a file (via `output`). */
+  wroteTo?: string;
 }
 
 /**
@@ -212,7 +218,13 @@ export async function auditCommand(options: AuditCommandOptions): Promise<AuditC
     return { success: true, output: `No CI files found under ${options.path}.`, findings: [], scanned: [], exitCode: 0 };
   }
 
-  let findings = await auditFiles(inputs);
+  let findings: AuditFinding[];
+  try {
+    findings = await auditFiles(inputs, { checksProvider: options.checksProvider });
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    return { success: false, output: "", findings: [], scanned, exitCode: 1, error: msg };
+  }
   if (tier === "merge-worthy") findings = findings.filter(isMergeWorthy);
   const notes = coverageNotes(inputs);
 
@@ -273,13 +285,27 @@ export async function auditCommand(options: AuditCommandOptions): Promise<AuditC
       output = renderStylish(findings, scanned, notes);
   }
 
-  return { success: true, output, findings, scanned, exitCode: exitCodeFor(findings, failOn) };
+  const exitCode = exitCodeFor(findings, failOn);
+  if (options.output) {
+    try {
+      writeFileSync(options.output, output);
+    } catch (err) {
+      return { success: false, output, findings, scanned, exitCode: 1, error: `Failed to write ${options.output}: ${err instanceof Error ? err.message : String(err)}` };
+    }
+    return { success: true, output, findings, scanned, exitCode, wroteTo: options.output };
+  }
+
+  return { success: true, output, findings, scanned, exitCode };
 }
 
 /** Print an audit result to stdout. */
 export function printAuditResult(result: AuditCommandResult): void {
   if (!result.success) {
     console.error(result.error ?? "Audit failed");
+    return;
+  }
+  if (result.wroteTo) {
+    console.error(`Wrote report to ${result.wroteTo}`);
     return;
   }
   console.log(result.output);
