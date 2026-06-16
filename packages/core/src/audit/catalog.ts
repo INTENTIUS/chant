@@ -190,3 +190,11 @@ export const RULE_CATALOG: Record<string, RuleMeta> = {
 export function ruleMeta(id: string): RuleMeta | undefined {
   return RULE_CATALOG[id];
 }
+
+/** Docs path for the audit rules reference (one anchor per rule id). */
+export const RULES_DOC_PATH = "/chant/lint-rules/audit-rules/";
+
+/** Absolute URL to a rule's entry in the audit rules reference. */
+export function ruleDocUrl(id: string): string {
+  return `https://intentius.io${RULES_DOC_PATH}#${id.toLowerCase()}`;
+}

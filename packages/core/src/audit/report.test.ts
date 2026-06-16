@@ -31,7 +31,7 @@ describe("renderMarkdown — reworked structure", () => {
   test("quick wins show a real combined diff when file content is provided", () => {
     const out = renderMarkdown(FINDINGS, { files: [{ path: ".github/workflows/ci.yml", content: CI }] });
     expect(out).toContain("## Quick wins (deterministic)");
-    expect(out).toContain("Addresses GHA033 (Blanket write-all permissions):");
+    expect(out).toContain("Addresses [GHA033](https://intentius.io/chant/lint-rules/audit-rules/#gha033) (Blanket write-all permissions):");
     expect(out).toContain("```diff");
     expect(out).toContain("-permissions: write-all");
     expect(out).toContain("+permissions:");
@@ -41,7 +41,7 @@ describe("renderMarkdown — reworked structure", () => {
   test("pin findings without a SHA resolver are listed, not diffed", () => {
     const out = renderMarkdown(FINDINGS, { files: [{ path: ".github/workflows/ci.yml", content: CI }] });
     expect(out).toContain("Needs a value before it can be auto-patched:");
-    expect(out).toContain("**GHA021**");
+    expect(out).toContain("**[GHA021](https://intentius.io/chant/lint-rules/audit-rules/#gha021)**");
   });
 
   test("pin findings are diffed when a SHA resolver is supplied", () => {
@@ -73,15 +73,15 @@ describe("renderMarkdown — reworked structure", () => {
     expect(out).toContain("Preventing pwn requests");
     const clusterIdx = out.indexOf("Preventing pwn requests");
     const after = out.slice(clusterIdx);
-    expect(after).toContain("**GHA035**");
-    expect(after).toContain("**GHA018**");
+    expect(after).toContain("**[GHA035](https://intentius.io/chant/lint-rules/audit-rules/#gha035)**");
+    expect(after).toContain("**[GHA018](https://intentius.io/chant/lint-rules/audit-rules/#gha018)**");
   });
 
   test("report-only hygiene goes in a collapsible table", () => {
     const out = renderMarkdown(FINDINGS);
     expect(out).toContain("<details>");
     expect(out).toContain("<summary>Report-only (hygiene)");
-    expect(out).toContain("| GHA022 |");
+    expect(out).toContain("| [GHA022](https://intentius.io/chant/lint-rules/audit-rules/#gha022) |");
   });
 
   test("suppresses a report-only finding on an entity already flagged merge-worthy", () => {

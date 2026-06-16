@@ -6,7 +6,7 @@
  */
 
 import type { AuditFinding } from "./core";
-import { RULE_CATALOG, type Authority, type FixKind, type RuleMeta, type Tier } from "./catalog";
+import { RULE_CATALOG, ruleDocUrl, type Authority, type FixKind, type RuleMeta, type Tier } from "./catalog";
 import { proveFix, unifiedDiff, type ProveOptions } from "./proof";
 import type { Severity } from "../lint/rule";
 
@@ -91,6 +91,8 @@ export interface SerializedFinding {
   title: string;
   remediation: string;
   authority: Authority[];
+  /** Link to this rule's entry in the audit rules reference. */
+  docUrl: string;
 }
 
 /** The versioned machine-readable audit report. */
@@ -267,6 +269,7 @@ export function buildReportJson(findings: AuditFinding[], opts: { snapshot?: Aud
       title: f.meta.title,
       remediation: f.meta.remediation,
       authority: f.meta.authority ?? [],
+      docUrl: ruleDocUrl(f.checkId),
     })),
   };
 }
