@@ -10,7 +10,8 @@ import { join, relative } from "path";
 import { auditFiles, type AuditInput, type AuditFinding, type AuditLexicon, type ChecksProvider } from "../../audit/core";
 import { RULE_CATALOG } from "../../audit/catalog";
 import { renderMarkdown } from "../../audit/report";
-import { renderHtml, type AuditSnapshot, type ReportTheme } from "../../audit/report-html";
+import { renderHtml, type ReportTheme } from "../../audit/report-html";
+import { buildReportJson, type AuditSnapshot } from "../../audit/report-model";
 import { fetchCiFiles, resolveActionSha, resolveImageDigest, resolveRepoCommit, parseRepoUrl, FetchError } from "../../audit/fetch";
 import { extractUnpinnedActions, extractUnpinnedImages } from "../../audit/proof";
 import type { ProveOptions } from "../../audit/proof";
@@ -304,9 +305,11 @@ export async function auditCommand(options: AuditCommandOptions): Promise<AuditC
   const files = inputs.map((i) => ({ path: i.path, content: i.content }));
   let output: string;
   switch (format) {
-    case "json":
-      output = JSON.stringify({ scanned, findings }, null, 2);
+    case "json": {
+      const snapshot = await buildSnapshot(options, scanned, isUrl);
+      output = JSON.stringify(buildReportJson(findings, { snapshot, toolVersion: options.toolVersion }), null, 2);
       break;
+    }
     case "sarif":
       output = renderSarif(findings);
       break;

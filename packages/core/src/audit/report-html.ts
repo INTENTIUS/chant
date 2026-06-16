@@ -9,19 +9,9 @@
  */
 
 import type { AuditFinding } from "./core";
-import { buildReportModel, type BuildModelOptions, type EnrichedFinding, type GuidanceCluster, type QuickWinFile, type ReportCounts } from "./report-model";
+import { buildReportModel, buildReportJson, type AuditSnapshot, type BuildModelOptions, type EnrichedFinding, type GuidanceCluster, type QuickWinFile, type ReportCounts } from "./report-model";
 
-/** A provenance snapshot of what was audited (anchors findings to a commit). */
-export interface AuditSnapshot {
-  target: string;
-  host?: string;
-  repo?: string;
-  ref?: string;
-  commit?: string;
-  files: string[];
-  generatedAt: string;
-  toolVersion: string;
-}
+export type { AuditSnapshot } from "./report-model";
 
 /** Customizable theme knobs filled into the template. */
 export interface ReportTheme {
@@ -177,14 +167,20 @@ export function renderHtml(findings: AuditFinding[], opts: RenderHtmlOptions = {
   const logo = theme.logo ? (/^https?:\/\//.test(theme.logo) ? `<img class="logo" src="${esc(theme.logo)}" alt="">` : theme.logo) : "";
   const footer = theme.footer ?? DEFAULT_FOOTER;
 
+  // Machine-readable data embedded so the HTML report is also parseable.
+  // `<` escaped so the JSON can't break out of the <script> element.
+  const dataJson = JSON.stringify(buildReportJson(findings, { snapshot: opts.snapshot }), null, 0).replace(/</g, "\\u003c");
+  const dataScript = `<script type="application/json" id="chant-audit-report">${dataJson}</script>`;
+
   let body: string;
   if (model.counts.total === 0) {
-    body = renderHeader(model.counts, opts.snapshot, opts.notes ?? []) + `<section><p>No issues found.</p></section>`;
+    body = renderHeader(model.counts, opts.snapshot, opts.notes ?? []) + `<section><p>No issues found.</p></section>` + dataScript;
   } else {
     const parts = [renderHeader(model.counts, opts.snapshot, opts.notes ?? [])];
     if (model.quickWins.length > 0) parts.push(renderQuickWins(model.quickWins));
     if (model.needsReview.length > 0) parts.push(renderNeedsReview(model.needsReview, model.counts.needsReview));
     if (model.reportOnly.length > 0) parts.push(renderReportOnly(model.reportOnly, model.counts.reportOnly));
+    parts.push(dataScript);
     body = parts.join("\n");
   }
 

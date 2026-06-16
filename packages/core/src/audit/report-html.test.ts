@@ -42,6 +42,18 @@ describe("renderHtml", () => {
     expect(html).toContain("chant 0.4.0");
   });
 
+  test("embeds the machine-readable JSON report (parseable, escaped)", () => {
+    const html = renderHtml(FINDINGS, { snapshot: SNAPSHOT });
+    const m = html.match(/<script type="application\/json" id="chant-audit-report">(.*?)<\/script>/s);
+    expect(m).not.toBeNull();
+    // No raw "<" can break out of the script element.
+    expect(m![1]).not.toContain("<");
+    const data = JSON.parse(m![1].replace(/\\u003c/g, "<"));
+    expect(data.schemaVersion).toBe("1.0");
+    expect(data.snapshot.commit).toBe(SNAPSHOT.commit);
+    expect(data.findings.length).toBe(3);
+  });
+
   test("escapes HTML in finding content (no injection)", () => {
     const evil: AuditFinding[] = [
       { checkId: "GHA036", severity: "error", message: "<script>alert(1)</script>", file: "a.yml", lexicon: "github" },
