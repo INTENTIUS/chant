@@ -64,6 +64,21 @@ jobs:
     expect(diags).toHaveLength(0);
   });
 
+  test("does not flag a SHA pin with a trailing version comment", () => {
+    const yaml = `name: CI
+on:
+  push:
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/setup-node@1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b # v4.0.2
+      - run: echo build
+`;
+    const diags = gha029.check(makeCtx(yaml));
+    expect(diags).toHaveLength(0);
+  });
+
   test("does not flag actions/checkout (owned by GHA021)", () => {
     const yaml = `name: CI
 on:

@@ -50,6 +50,21 @@ jobs:
     expect(diags).toHaveLength(0);
   });
 
+  test("does not flag a SHA pin with a trailing version comment", () => {
+    const yaml = `name: CI
+on:
+  push:
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11 # v4.1.1
+      - run: echo test
+`;
+    const diags = gha021.check(makeCtx(yaml));
+    expect(diags).toHaveLength(0);
+  });
+
   test("does not flag non-checkout actions", () => {
     const yaml = `name: CI
 on:

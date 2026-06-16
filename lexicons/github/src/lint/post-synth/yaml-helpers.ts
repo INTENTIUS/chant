@@ -86,7 +86,7 @@ export function extractJobs(yaml: string): Map<string, ParsedJob> {
         const stepNameMatch = stepEntry.match(/name:\s+(.+)$/m);
         if (usesMatch || runMatch) {
           job.steps.push({
-            uses: usesMatch?.[1]?.trim().replace(/^'|'$/g, ""),
+            uses: usesMatch?.[1] ? stripUsesComment(usesMatch[1].trim().replace(/^'|'$/g, "")) : undefined,
             run: runMatch?.[1]?.trim(),
             name: stepNameMatch?.[1]?.trim().replace(/^'|'$/g, ""),
           });
@@ -453,7 +453,17 @@ export function grantsWrite(perms: PermissionsValue): boolean {
  * Returns undefined for local (`./`, `../`) and `docker://` references, which
  * are not GitHub action repository references.
  */
-export function parseActionUses(uses: string): { owner: string; repo: string; slug: string; gitRef: string } | undefined {
+/**
+ * Strip a trailing inline YAML comment from a `uses:` value. A `uses` ref
+ * cannot contain whitespace, so `<ref> # v1.2.3` (the recommended SHA-pin
+ * style) is safe to trim back to `<ref>`.
+ */
+export function stripUsesComment(uses: string): string {
+  return uses.replace(/\s+#.*$/, "").trim();
+}
+
+export function parseActionUses(rawUses: string): { owner: string; repo: string; slug: string; gitRef: string } | undefined {
+  const uses = stripUsesComment(rawUses);
   if (uses.startsWith("./") || uses.startsWith("../") || uses.startsWith("docker://")) return undefined;
   const at = uses.lastIndexOf("@");
   const path = at === -1 ? uses : uses.slice(0, at);
