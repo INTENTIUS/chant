@@ -10,12 +10,13 @@ import { join, relative } from "path";
 import { auditFiles, type AuditInput, type AuditFinding, type AuditLexicon, type ChecksProvider } from "../../audit/core";
 import { RULE_CATALOG } from "../../audit/catalog";
 import { renderMarkdown } from "../../audit/report";
-import { fetchCiFiles, resolveActionSha, resolveImageDigest, FetchError } from "../../audit/fetch";
+import { renderHtml, type AuditSnapshot, type ReportTheme } from "../../audit/report-html";
+import { fetchCiFiles, resolveActionSha, resolveImageDigest, resolveRepoCommit, parseRepoUrl, FetchError } from "../../audit/fetch";
 import { extractUnpinnedActions, extractUnpinnedImages } from "../../audit/proof";
 import type { ProveOptions } from "../../audit/proof";
 import type { Severity } from "../../lint/rule";
 
-export type AuditFormat = "stylish" | "json" | "sarif" | "markdown";
+export type AuditFormat = "stylish" | "json" | "sarif" | "markdown" | "html";
 export type AuditTier = "merge-worthy" | "all";
 export type AuditFailOn = "merge-worthy" | "warning" | "none";
 
@@ -35,6 +36,14 @@ export interface AuditCommandOptions {
   output?: string;
   /** Injectable post-synth checks provider (testing). */
   checksProvider?: ChecksProvider;
+  /** HTML report: theme knobs (title, logo, accent, footer). */
+  theme?: ReportTheme;
+  /** HTML report: full template override. */
+  template?: string;
+  /** Snapshot timestamp (ISO); defaults to now. Injectable for deterministic output. */
+  now?: string;
+  /** Tool version recorded in the HTML snapshot. */
+  toolVersion?: string;
 }
 
 export interface AuditCommandResult {
@@ -186,6 +195,34 @@ function renderSarif(findings: AuditFinding[]): string {
   );
 }
 
+/** Build a provenance snapshot of what was audited (for the HTML report). */
+async function buildSnapshot(options: AuditCommandOptions, files: string[], isUrl: boolean): Promise<AuditSnapshot> {
+  let host: string | undefined;
+  let repo: string | undefined;
+  let commit: string | undefined;
+  if (isUrl) {
+    try {
+      host = new URL(options.path).hostname;
+      const parsed = parseRepoUrl(options.path);
+      repo = `${parsed.owner}/${parsed.repo}`;
+    } catch {
+      // leave host/repo undefined
+    }
+    commit = await resolveRepoCommit(options.path, { token: options.token ?? tokenForHost(options.path), fetchImpl: options.fetchImpl });
+  } else {
+    host = "local";
+  }
+  return {
+    target: options.path,
+    host,
+    repo,
+    commit,
+    files,
+    generatedAt: options.now ?? new Date().toISOString(),
+    toolVersion: options.toolVersion ?? "0.0.0",
+  };
+}
+
 /** Run the audit and produce a rendered result. */
 export async function auditCommand(options: AuditCommandOptions): Promise<AuditCommandResult> {
   const format = options.format ?? "stylish";
@@ -228,6 +265,43 @@ export async function auditCommand(options: AuditCommandOptions): Promise<AuditC
   if (tier === "merge-worthy") findings = findings.filter(isMergeWorthy);
   const notes = coverageNotes(inputs);
 
+  // Diff-bearing renderers (markdown, html) need action SHAs / image digests
+  // resolved up front (sync maps so rendering stays synchronous).
+  let resolveSha: ProveOptions["resolveSha"];
+  let resolveDigest: ProveOptions["resolveDigest"];
+  if (isUrl && (format === "markdown" || format === "html")) {
+    // Action SHAs always resolve against api.github.com, so use the GitHub
+    // token regardless of which host the repo lives on.
+    const token = githubToken();
+    const refs = new Map<string, { action: string; ref: string }>();
+    const images = new Set<string>();
+    for (const inp of inputs) {
+      for (const a of extractUnpinnedActions(inp.content)) refs.set(`${a.action}@${a.ref}`, a);
+      for (const img of extractUnpinnedImages(inp.content)) images.add(img);
+    }
+    const [resolvedShas, resolvedDigests] = await Promise.all([
+      Promise.all(
+        [...refs.values()].map(async (a) => {
+          const sha = await resolveActionSha(a.action, a.ref, { token, fetchImpl: options.fetchImpl });
+          return [`${a.action}@${a.ref}`, sha] as [string, string | undefined];
+        }),
+      ),
+      Promise.all(
+        [...images].map(async (img) => {
+          const digest = await resolveImageDigest(img, { fetchImpl: options.fetchImpl });
+          return [img, digest] as [string, string | undefined];
+        }),
+      ),
+    ]);
+    const shaMap = new Map<string, string>();
+    for (const [key, sha] of resolvedShas) if (sha) shaMap.set(key, sha);
+    if (shaMap.size > 0) resolveSha = (action, ref) => shaMap.get(`${action}@${ref}`);
+    const digestMap = new Map<string, string>();
+    for (const [img, digest] of resolvedDigests) if (digest) digestMap.set(img, digest);
+    if (digestMap.size > 0) resolveDigest = (img) => digestMap.get(img);
+  }
+
+  const files = inputs.map((i) => ({ path: i.path, content: i.content }));
   let output: string;
   switch (format) {
     case "json":
@@ -236,49 +310,12 @@ export async function auditCommand(options: AuditCommandOptions): Promise<AuditC
     case "sarif":
       output = renderSarif(findings);
       break;
-    case "markdown": {
-      // For remote audits, resolve action SHAs and image digests so pin fixes
-      // render as inline diffs. Pre-resolved into sync maps; render stays sync.
-      let resolveSha: ProveOptions["resolveSha"];
-      let resolveDigest: ProveOptions["resolveDigest"];
-      if (isUrl) {
-        // Action SHAs always resolve against api.github.com, so use the GitHub
-        // token regardless of which host the repo lives on.
-        const token = githubToken();
-        const refs = new Map<string, { action: string; ref: string }>();
-        const images = new Set<string>();
-        for (const inp of inputs) {
-          for (const a of extractUnpinnedActions(inp.content)) refs.set(`${a.action}@${a.ref}`, a);
-          for (const img of extractUnpinnedImages(inp.content)) images.add(img);
-        }
-        const [resolvedShas, resolvedDigests] = await Promise.all([
-          Promise.all(
-            [...refs.values()].map(async (a) => {
-              const sha = await resolveActionSha(a.action, a.ref, { token, fetchImpl: options.fetchImpl });
-              return [`${a.action}@${a.ref}`, sha] as [string, string | undefined];
-            }),
-          ),
-          Promise.all(
-            [...images].map(async (img) => {
-              const digest = await resolveImageDigest(img, { fetchImpl: options.fetchImpl });
-              return [img, digest] as [string, string | undefined];
-            }),
-          ),
-        ]);
-        const shaMap = new Map<string, string>();
-        for (const [key, sha] of resolvedShas) if (sha) shaMap.set(key, sha);
-        if (shaMap.size > 0) resolveSha = (action, ref) => shaMap.get(`${action}@${ref}`);
-        const digestMap = new Map<string, string>();
-        for (const [img, digest] of resolvedDigests) if (digest) digestMap.set(img, digest);
-        if (digestMap.size > 0) resolveDigest = (img) => digestMap.get(img);
-      }
-      output = renderMarkdown(findings, {
-        target: options.path,
-        files: inputs.map((i) => ({ path: i.path, content: i.content })),
-        resolveSha,
-        resolveDigest,
-        notes,
-      });
+    case "markdown":
+      output = renderMarkdown(findings, { target: options.path, files, resolveSha, resolveDigest, notes });
+      break;
+    case "html": {
+      const snapshot = await buildSnapshot(options, scanned, isUrl);
+      output = renderHtml(findings, { files, resolveSha, resolveDigest, notes, snapshot, theme: options.theme, template: options.template });
       break;
     }
     default:

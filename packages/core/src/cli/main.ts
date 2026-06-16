@@ -122,6 +122,8 @@ export function parseArgs(args: string[]): ParsedArgs {
       result.tier = args[++i];
     } else if (arg === "--fail-on") {
       result.failOn = args[++i];
+    } else if (arg === "--theme") {
+      result.theme = args[++i];
     } else if (arg === "--stacks") {
       result.stacks = true;
     } else if (arg === "--base") {
@@ -174,8 +176,9 @@ Commands:
   vendor                Pull pinned, checksummed patterns into your repo
   import                Import external template into TypeScript
   audit [path|url]      Audit a repo's CI YAML for security issues
-                        (--format stylish|json|sarif|markdown, -o <file>,
-                         --tier merge-worthy|all, --fail-on merge-worthy|warning|none)
+                        (--format stylish|json|sarif|markdown|html, -o <file>,
+                         --tier merge-worthy|all, --fail-on merge-worthy|warning|none,
+                         --template <file> / --theme <file> for the html report)
   migrate <file>        Translate a workflow between lexicons
                         (default: --from github --to gitlab)
 

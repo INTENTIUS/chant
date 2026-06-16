@@ -2,11 +2,21 @@ import { listCommand, printListResult } from "../commands/list";
 import { describeCommand, printDescribeResult } from "../commands/describe";
 import { importCommand, importFromLive, printImportResult } from "../commands/import";
 import { auditCommand, printAuditResult, type AuditFormat, type AuditTier, type AuditFailOn } from "../commands/audit";
+import type { ReportTheme } from "../../audit/report-html";
 import type { ResourceSelector } from "../../lexicon";
 import { formatError, formatSuccess, formatWarning } from "../format";
 import type { CommandContext } from "../registry";
+import { createRequire } from "module";
 
-const AUDIT_FORMATS: AuditFormat[] = ["stylish", "json", "sarif", "markdown"];
+const CHANT_VERSION: string = (() => {
+  try {
+    return createRequire(import.meta.url)("../../../package.json").version ?? "0.0.0";
+  } catch {
+    return "0.0.0";
+  }
+})();
+
+const AUDIT_FORMATS: AuditFormat[] = ["stylish", "json", "sarif", "markdown", "html"];
 const AUDIT_TIERS: AuditTier[] = ["merge-worthy", "all"];
 const AUDIT_FAIL_ON: AuditFailOn[] = ["merge-worthy", "warning", "none"];
 
@@ -29,7 +39,39 @@ export async function runAudit(ctx: CommandContext): Promise<number> {
     return 1;
   }
 
-  const result = await auditCommand({ path: args.path, format, tier, failOn, output: args.output });
+  // HTML report customization: --template <file> (full override) + --theme <file> (JSON knobs).
+  let template: string | undefined;
+  let theme: ReportTheme | undefined;
+  if (format === "html") {
+    const { readFileSync } = await import("fs");
+    if (args.template) {
+      try {
+        template = readFileSync(args.template, "utf-8");
+      } catch (err) {
+        console.error(formatError({ message: `Failed to read --template ${args.template}: ${err instanceof Error ? err.message : String(err)}` }));
+        return 1;
+      }
+    }
+    if (args.theme) {
+      try {
+        theme = JSON.parse(readFileSync(args.theme, "utf-8")) as ReportTheme;
+      } catch (err) {
+        console.error(formatError({ message: `Failed to read --theme ${args.theme}: ${err instanceof Error ? err.message : String(err)}` }));
+        return 1;
+      }
+    }
+  }
+
+  const result = await auditCommand({
+    path: args.path,
+    format,
+    tier,
+    failOn,
+    output: args.output,
+    template,
+    theme,
+    toolVersion: CHANT_VERSION,
+  });
   printAuditResult(result);
   return result.exitCode;
 }
