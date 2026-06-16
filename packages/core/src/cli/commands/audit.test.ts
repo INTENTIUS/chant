@@ -1,6 +1,6 @@
 import { describe, test, expect } from "vitest";
 import { fileURLToPath } from "url";
-import { auditCommand, discoverCiFiles, discoverManifests, tokenForHost, coverageNotes } from "./audit";
+import { auditCommand, discoverCiFiles, discoverManifests, discoverDocker, tokenForHost, coverageNotes } from "./audit";
 import { MissingLexiconError, type AuditInput } from "../../audit/core";
 import { readFileSync, existsSync, rmSync } from "fs";
 import { tmpdir } from "os";
@@ -41,6 +41,21 @@ describe("auditCommand", () => {
     const ids = new Set(result.findings.map((f) => f.checkId));
     expect(ids).toContain("WK8202"); // privileged container
     expect(ids).toContain("WK8006"); // :latest image
+  });
+
+  test("discovers and audits Docker artifacts (nested Dockerfile + compose)", async () => {
+    const repo = fileURLToPath(new URL("./__fixtures__/audit-docker", import.meta.url));
+    const files = discoverDocker(repo);
+    const paths = files.map((f) => f.path).sort();
+    expect(paths).toContain("app/Dockerfile");
+    expect(paths).toContain("docker-compose.yml");
+
+    const result = await auditCommand({ path: repo, format: "stylish" });
+    expect(result.success).toBe(true);
+    const ids = new Set(result.findings.map((f) => f.checkId));
+    expect(ids).toContain("DKRD012"); // Dockerfile has no USER (nested — basename-key fix)
+    expect(ids).toContain("DKRD010"); // apt-get without --no-install-recommends
+    expect(ids).toContain("DKRD003"); // compose exposes SSH port 22
   });
 
   test("discovers CI files under a repo root", () => {

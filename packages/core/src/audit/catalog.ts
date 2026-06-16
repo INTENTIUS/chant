@@ -82,6 +82,10 @@ const K8S_SECRETS: Authority = {
   name: "Kubernetes — Good practices for Secrets",
   url: "https://kubernetes.io/docs/concepts/security/secrets-good-practices/",
 };
+const DOCKER_SEC: Authority = {
+  name: "Docker — Security best practices",
+  url: "https://docs.docker.com/develop/security-best-practices/",
+};
 
 function meta(
   id: string,
@@ -223,6 +227,14 @@ export const RULE_CATALOG: Record<string, RuleMeta> = {
   WK8401: meta("WK8401", M, G, "shmSize exceeds the container memory limit", "Lower shmSize or raise the memory limit so the pod can schedule."),
   WK8402: meta("WK8402", R, G, "RayCluster missing spec.rayVersion", "Set spec.rayVersion so KubeRay picks the right autoscaler image."),
   WK8403: meta("WK8403", R, G, "rayVersion does not match the head image tag", "Align spec.rayVersion with the Ray version in the head container image."),
+
+  // ── Docker (DKRD) ──────────────────────────────────────────────────
+  DKRD001: meta("DKRD001", M, G, "Service uses :latest or untagged image", "Pin the image to an explicit version tag (ideally a digest).", [SCORECARD_PINNED]),
+  DKRD002: meta("DKRD002", R, G, "Named volume declared but unused", "Remove the unused volume or mount it in a service."),
+  DKRD003: meta("DKRD003", M, G, "Service exposes SSH (port 22)", "Don't expose SSH from a container; use exec/ephemeral access instead.", [DOCKER_SEC]),
+  DKRD010: meta("DKRD010", R, G, "apt-get install without --no-install-recommends", "Add --no-install-recommends to keep images small."),
+  DKRD011: meta("DKRD011", R, G, "ADD used where COPY would do", "Prefer COPY unless fetching a URL or extracting an archive."),
+  DKRD012: meta("DKRD012", M, G, "No USER instruction — container runs as root", "Add a non-root USER instruction.", [DOCKER_SEC]),
 };
 
 /** Look up catalog metadata for a check id, if known. */

@@ -1,0 +1,5 @@
+services:
+  web:
+    image: myapp:latest
+    ports:
+      - "22:22"
