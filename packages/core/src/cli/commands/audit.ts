@@ -10,6 +10,7 @@ import { join, relative } from "path";
 import { auditFiles, type AuditInput, type AuditFinding, type AuditLexicon } from "../../audit/core";
 import { RULE_CATALOG } from "../../audit/catalog";
 import { renderMarkdown } from "../../audit/report";
+import { fetchCiFiles, FetchError } from "../../audit/fetch";
 import type { Severity } from "../../lint/rule";
 
 export type AuditFormat = "stylish" | "json" | "sarif" | "markdown";
@@ -17,13 +18,17 @@ export type AuditTier = "merge-worthy" | "all";
 export type AuditFailOn = "merge-worthy" | "warning" | "none";
 
 export interface AuditCommandOptions {
-  /** Repo root (or any dir) to scan. */
+  /** Repo root/dir to scan, or an https:// repo URL to fetch and audit. */
   path: string;
   format?: AuditFormat;
   /** Restrict findings to a tier (default "all"). */
   tier?: AuditTier;
   /** Exit-code policy (default "none" — read-only friendly). */
   failOn?: AuditFailOn;
+  /** Server-side token for remote fetch (defaults to env). */
+  token?: string;
+  /** Injectable fetch for testing remote audits. */
+  fetchImpl?: typeof fetch;
 }
 
 export interface AuditCommandResult {
@@ -137,11 +142,26 @@ export async function auditCommand(options: AuditCommandOptions): Promise<AuditC
   const tier = options.tier ?? "all";
   const failOn = options.failOn ?? "none";
 
-  if (!existsSync(options.path)) {
-    return { success: false, output: "", findings: [], scanned: [], exitCode: 1, error: `Path not found: ${options.path}` };
+  const isUrl = /^https?:\/\//.test(options.path);
+
+  let inputs: AuditInput[];
+  if (isUrl) {
+    try {
+      inputs = await fetchCiFiles(options.path, {
+        token: options.token ?? process.env.CHANT_AUDIT_TOKEN ?? process.env.GITHUB_TOKEN,
+        fetchImpl: options.fetchImpl,
+      });
+    } catch (err) {
+      const msg = err instanceof FetchError ? err.message : err instanceof Error ? err.message : String(err);
+      return { success: false, output: "", findings: [], scanned: [], exitCode: 1, error: msg };
+    }
+  } else {
+    if (!existsSync(options.path)) {
+      return { success: false, output: "", findings: [], scanned: [], exitCode: 1, error: `Path not found: ${options.path}` };
+    }
+    inputs = discoverCiFiles(options.path);
   }
 
-  const inputs = discoverCiFiles(options.path);
   const scanned = inputs.map((i) => i.path);
 
   if (inputs.length === 0) {

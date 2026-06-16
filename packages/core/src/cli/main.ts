@@ -173,7 +173,7 @@ Commands:
   describe              Show the effective config for one component
   vendor                Pull pinned, checksummed patterns into your repo
   import                Import external template into TypeScript
-  audit [path]          Audit a repo's CI YAML for security issues
+  audit [path|url]      Audit a repo's CI YAML for security issues
                         (--format stylish|json|sarif|markdown,
                          --tier merge-worthy|all, --fail-on merge-worthy|warning|none)
   migrate <file>        Translate a workflow between lexicons

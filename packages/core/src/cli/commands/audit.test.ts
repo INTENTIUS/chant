@@ -49,6 +49,32 @@ describe("auditCommand", () => {
     expect(result.output).toContain("No CI files found");
   });
 
+  test("audits a remote repo URL via injected fetch", async () => {
+    const b64 = (s: string) => Buffer.from(s, "utf-8").toString("base64");
+    const yaml = "name: CI\non:\n  push:\npermissions: write-all\njobs:\n  build:\n    runs-on: ubuntu-latest\n";
+    const impl = (async (url: string | URL | Request) => {
+      const u = String(url);
+      if (u.includes("/contents/.github/workflows/ci.yml")) {
+        return new Response(JSON.stringify({ name: "ci.yml", path: ".github/workflows/ci.yml", type: "file", content: b64(yaml), encoding: "base64" }), { status: 200 });
+      }
+      if (u.includes("/contents/.github/workflows")) {
+        return new Response(JSON.stringify([{ name: "ci.yml", path: ".github/workflows/ci.yml", type: "file", size: 100 }]), { status: 200 });
+      }
+      return new Response("not found", { status: 404 });
+    }) as unknown as typeof fetch;
+
+    const result = await auditCommand({ path: "https://github.com/acme/widgets", fetchImpl: impl });
+    expect(result.success).toBe(true);
+    expect(result.scanned).toContain(".github/workflows/ci.yml");
+    expect(result.findings.some((f) => f.checkId === "GHA033")).toBe(true);
+  });
+
+  test("a non-allowlisted URL fails cleanly", async () => {
+    const result = await auditCommand({ path: "https://evil.example.com/o/r" });
+    expect(result.success).toBe(false);
+    expect(result.error).toMatch(/Host not allowed/);
+  });
+
   test("sarif output is valid JSON with results", async () => {
     const result = await auditCommand({ path: REPO, format: "sarif" });
     const sarif = JSON.parse(result.output);
