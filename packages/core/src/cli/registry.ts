@@ -63,6 +63,10 @@ export interface ParsedArgs {
   head?: string;
   /** `chant lifecycle affected --include-dependents` — add downstream consumers */
   includeDependents?: boolean;
+  /** `chant audit --tier merge-worthy|all` */
+  tier?: string;
+  /** `chant audit --fail-on merge-worthy|warning|none` */
+  failOn?: string;
 }
 
 /**
