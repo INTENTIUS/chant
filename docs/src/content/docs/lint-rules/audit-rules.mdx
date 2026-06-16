@@ -1352,3 +1352,143 @@ Add the required spec field.
 **Spec field has wrong type/structure** — merge-worthy · guidance
 
 Fix the field's type/structure.
+
+## Helm (WHM)
+
+Run against Helm charts (Chart.yaml + templates).
+
+### WHM005
+
+**Sub-chart wrapper with no templates** — report-only · guidance
+
+Deploy the upstream chart directly instead of an empty wrapper.
+
+### WHM101
+
+**Chart.yaml missing required fields** — merge-worthy · guidance
+
+Set apiVersion (v2), name, and version in Chart.yaml.
+
+### WHM102
+
+**Missing values.schema.json** — report-only · guidance
+
+Add a values.schema.json to validate values.
+
+### WHM103
+
+**Invalid Go template syntax** — merge-worthy · guidance
+
+Fix the unbalanced template braces.
+
+### WHM104
+
+**Missing NOTES.txt** — report-only · guidance
+
+Add templates/NOTES.txt for application charts.
+
+### WHM105
+
+**Missing _helpers.tpl** — report-only · guidance
+
+Add templates/_helpers.tpl.
+
+### WHM201
+
+**Missing standard Helm labels** — report-only · guidance
+
+Add the recommended app.kubernetes.io labels.
+
+### WHM202
+
+**Hook weights undefined** — report-only · guidance
+
+Define hook weights when multiple hooks exist.
+
+### WHM203
+
+**Undocumented values** — report-only · guidance
+
+Document values via schema or comments.
+
+### WHM204
+
+**Dependencies pinned, not ranged** — report-only · guidance
+
+Use semver ranges for chart dependencies.
+
+### WHM301
+
+**No Helm test** — report-only · guidance
+
+Add at least one Helm test for application charts.
+
+### WHM302
+
+**Container resources not set** — report-only · guidance
+
+Set limits/requests via values or defaults.
+
+### WHM401
+
+**Container image uses :latest or no tag** — merge-worthy · guidance
+
+Pin the image to an explicit version tag.
+
+Authority: [OSSF Scorecard — Pinned-Dependencies](https://github.com/ossf/scorecard/blob/main/docs/checks.md#pinned-dependencies)
+
+### WHM402
+
+**Container may run as root** — merge-worthy · guidance
+
+Set runAsNonRoot in the security context.
+
+Authority: [Kubernetes — Pod Security Standards](https://kubernetes.io/docs/concepts/security/pod-security-standards/)
+
+### WHM403
+
+**Root filesystem writable** — merge-worthy · guidance
+
+Set readOnlyRootFilesystem.
+
+Authority: [Kubernetes — Pod Security Standards](https://kubernetes.io/docs/concepts/security/pod-security-standards/)
+
+### WHM404
+
+**Privileged container** — merge-worthy · guidance
+
+Remove privileged mode.
+
+Authority: [Kubernetes — Pod Security Standards](https://kubernetes.io/docs/concepts/security/pod-security-standards/)
+
+### WHM405
+
+**Resource specs missing cpu/memory** — report-only · guidance
+
+Set cpu and memory in limits/requests.
+
+### WHM406
+
+**CRDs in crds/ are never upgraded** — report-only · guidance
+
+Manage CRD upgrades outside Helm or via a separate chart.
+
+### WHM407
+
+**Inline Secret data** — merge-worthy · guidance
+
+Use ExternalSecret/SealedSecret instead of inline Secret data.
+
+Authority: [Kubernetes — Good practices for Secrets](https://kubernetes.io/docs/concepts/security/secrets-good-practices/)
+
+### WHM501
+
+**Unused values key** — report-only · guidance
+
+Remove values defined but never referenced.
+
+### WHM502
+
+**Deprecated/invalid Kubernetes API version** — merge-worthy · guidance
+
+Update to a supported apiVersion.

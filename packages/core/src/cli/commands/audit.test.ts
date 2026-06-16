@@ -1,6 +1,6 @@
 import { describe, test, expect } from "vitest";
 import { fileURLToPath } from "url";
-import { auditCommand, discoverCiFiles, discoverManifests, discoverDocker, discoverCloudFormation, discoverArm, discoverGcp, tokenForHost, coverageNotes } from "./audit";
+import { auditCommand, discoverCiFiles, discoverManifests, discoverDocker, discoverCloudFormation, discoverArm, discoverGcp, discoverHelm, tokenForHost, coverageNotes } from "./audit";
 import { MissingLexiconError, type AuditInput } from "../../audit/core";
 import { readFileSync, existsSync, rmSync } from "fs";
 import { tmpdir } from "os";
@@ -96,6 +96,23 @@ describe("auditCommand", () => {
     const ids = new Set(result.findings.map((f) => f.checkId));
     expect(ids).toContain("WGC109"); // firewall open to 0.0.0.0/0
     // k8s checks did not run on these.
+    expect([...ids].some((id) => id.startsWith("WK8"))).toBe(false);
+  });
+
+  test("discovers and audits a Helm chart (as a bundle, not loose manifests)", async () => {
+    const repo = fileURLToPath(new URL("./__fixtures__/audit-helm", import.meta.url));
+    const charts = discoverHelm(repo);
+    expect(charts).toHaveLength(1);
+    expect(charts[0].lexicon).toBe("helm");
+    expect(charts[0].files!["Chart.yaml"]).toContain("name: mychart");
+    expect(charts[0].files!["templates/deployment.yaml"]).toContain("privileged");
+
+    const result = await auditCommand({ path: repo, format: "stylish" });
+    expect(result.success).toBe(true);
+    const ids = new Set(result.findings.map((f) => f.checkId));
+    expect(ids).toContain("WHM401"); // :latest image in the chart
+    expect(ids).toContain("WHM404"); // privileged container in a template
+    // the chart's template was NOT double-audited as a loose k8s manifest
     expect([...ids].some((id) => id.startsWith("WK8"))).toBe(false);
   });
 
