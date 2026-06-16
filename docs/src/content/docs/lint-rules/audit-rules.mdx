@@ -1,0 +1,618 @@
+---
+title: Audit rules reference
+description: Every rule chant audit can report, with its tier, fix kind, and remediation.
+---
+
+This is the reference for every rule [`chant audit`](/chant/cli/audit/) can report. Each finding in a report links to its rule here.
+
+Each rule is tagged with its **tier** — `merge-worthy` (a security or correctness issue worth a PR) or `report-only` (hygiene) — and its **fix kind** — `deterministic` (a safe mechanical fix the report can apply as a diff) or `guidance` (needs a judgement call).
+
+## GitHub Actions (GHA)
+
+Also applied to Forgejo workflows, which are GitHub-dialect.
+
+### GHA006
+
+**Duplicate workflow name** — report-only · guidance
+
+Give each workflow a unique `name:`.
+
+### GHA009
+
+**Empty matrix dimension** — merge-worthy · guidance
+
+Remove the empty matrix axis or give it values; an empty axis produces zero jobs.
+
+### GHA011
+
+**needs references a non-existent job** — merge-worthy · guidance
+
+Fix the `needs:` target to name a real job.
+
+### GHA013
+
+**Missing job permissions on a sensitive trigger** — merge-worthy · guidance
+
+Add an explicit least-privilege `permissions:` block to jobs under `pull_request_target`/`workflow_dispatch`.
+
+Authority: [OSSF Scorecard — Token-Permissions](https://github.com/ossf/scorecard/blob/main/docs/checks.md#token-permissions) · [GitHub — Automatic token authentication](https://docs.github.com/en/actions/security-for-github-actions/security-guides/automatic-token-authentication)
+
+### GHA017
+
+**No explicit permissions block** — merge-worthy · deterministic
+
+Add a top-level `permissions: { contents: read }` and widen only where a job needs it.
+
+Authority: [OSSF Scorecard — Token-Permissions](https://github.com/ossf/scorecard/blob/main/docs/checks.md#token-permissions) · [GitHub — Automatic token authentication](https://docs.github.com/en/actions/security-for-github-actions/security-guides/automatic-token-authentication)
+
+### GHA018
+
+**pull_request_target checks out untrusted code** — merge-worthy · guidance
+
+Don't check out / run PR head code under `pull_request_target`; split into a privileged + unprivileged workflow.
+
+Authority: [GitHub Security Lab — Preventing pwn requests](https://securitylab.github.com/resources/github-actions-preventing-pwn-requests/)
+
+### GHA019
+
+**Circular needs chain** — merge-worthy · guidance
+
+Break the cycle in the job dependency graph.
+
+### GHA021
+
+**actions/checkout not pinned to a SHA** — merge-worthy · deterministic
+
+Pin `actions/checkout` to a full 40-char commit SHA.
+
+Authority: [OSSF Scorecard — Pinned-Dependencies](https://github.com/ossf/scorecard/blob/main/docs/checks.md#pinned-dependencies) · [GitHub — Using third-party actions](https://docs.github.com/en/actions/security-for-github-actions/security-guides/security-hardening-for-github-actions#using-third-party-actions)
+
+### GHA022
+
+**Job without timeout-minutes** — report-only · guidance
+
+Add `timeout-minutes:` to bound runaway jobs.
+
+### GHA023
+
+**Deprecated ::set-output** — report-only · guidance
+
+Replace `::set-output` with `$GITHUB_OUTPUT`.
+
+### GHA024
+
+**Missing concurrency block** — report-only · guidance
+
+Add a `concurrency:` group to deploy workflows.
+
+### GHA025
+
+**Unrestricted pull_request_target** — merge-worthy · guidance
+
+Gate `pull_request_target` jobs and avoid running untrusted code with elevated scope.
+
+Authority: [GitHub Security Lab — Preventing pwn requests](https://securitylab.github.com/resources/github-actions-preventing-pwn-requests/)
+
+### GHA026
+
+**Secret used without environment protection** — report-only · guidance
+
+Move secret-consuming jobs behind a protected `environment:`.
+
+### GHA027
+
+**Cleanup step without if: always()** — report-only · guidance
+
+Add `if: always()` to cleanup steps.
+
+### GHA028
+
+**Workflow with no triggers** — merge-worthy · guidance
+
+Add an `on:` trigger; the workflow never runs without one.
+
+### GHA029
+
+**Action not pinned to a commit SHA** — merge-worthy · deterministic
+
+Pin the action to a full commit SHA instead of a tag/branch.
+
+Authority: [OSSF Scorecard — Pinned-Dependencies](https://github.com/ossf/scorecard/blob/main/docs/checks.md#pinned-dependencies) · [GitHub — Using third-party actions](https://docs.github.com/en/actions/security-for-github-actions/security-guides/security-hardening-for-github-actions#using-third-party-actions)
+
+### GHA030
+
+**Container image not pinned to a digest** — merge-worthy · deterministic
+
+Pin the image to an immutable `@sha256:` digest.
+
+Authority: [OSSF Scorecard — Pinned-Dependencies](https://github.com/ossf/scorecard/blob/main/docs/checks.md#pinned-dependencies)
+
+### GHA031
+
+**Possible action impersonation** — merge-worthy · guidance
+
+Verify the action owner/slug; it resembles a well-known action.
+
+Authority: [OSSF Scorecard — Pinned-Dependencies](https://github.com/ossf/scorecard/blob/main/docs/checks.md#pinned-dependencies)
+
+### GHA032
+
+**Archived/abandoned or vulnerable action** — merge-worthy · guidance
+
+Replace the archived action or one with a disclosed security issue.
+
+### GHA033
+
+**Blanket write-all permissions** — merge-worthy · deterministic
+
+Replace `write-all` with the specific scopes the jobs need (default `contents: read`).
+
+Authority: [OSSF Scorecard — Token-Permissions](https://github.com/ossf/scorecard/blob/main/docs/checks.md#token-permissions) · [GitHub — Automatic token authentication](https://docs.github.com/en/actions/security-for-github-actions/security-guides/automatic-token-authentication)
+
+### GHA034
+
+**Write permissions granted workflow-wide** — merge-worthy · guidance
+
+Move write scopes to the single job that needs them; keep the workflow least-privilege.
+
+Authority: [OSSF Scorecard — Token-Permissions](https://github.com/ossf/scorecard/blob/main/docs/checks.md#token-permissions) · [GitHub — Automatic token authentication](https://docs.github.com/en/actions/security-for-github-actions/security-guides/automatic-token-authentication)
+
+### GHA035
+
+**Elevated token on an untrusted-code trigger** — merge-worthy · guidance
+
+Drop the elevated `permissions:` on triggers that can run untrusted code.
+
+Authority: [GitHub Security Lab — Preventing pwn requests](https://securitylab.github.com/resources/github-actions-preventing-pwn-requests/) · [OSSF Scorecard — Token-Permissions](https://github.com/ossf/scorecard/blob/main/docs/checks.md#token-permissions)
+
+### GHA036
+
+**Untrusted input interpolated into run:** — merge-worthy · guidance
+
+Pass untrusted `${{ }}` values via an `env:` var and reference `"$VAR"`, never inline in the script.
+
+Authority: [GitHub — Understanding the risk of script injections](https://docs.github.com/en/actions/security-for-github-actions/security-guides/security-hardening-for-github-actions#understanding-the-risk-of-script-injections)
+
+### GHA037
+
+**Untrusted input written to GITHUB_ENV/GITHUB_PATH** — merge-worthy · guidance
+
+Don't write untrusted input to `$GITHUB_ENV`/`$GITHUB_PATH`; sanitize or avoid.
+
+Authority: [GitHub — Understanding the risk of script injections](https://docs.github.com/en/actions/security-for-github-actions/security-guides/security-hardening-for-github-actions#understanding-the-risk-of-script-injections)
+
+### GHA038
+
+**workflow_run checks out untrusted code in a privileged context** — merge-worthy · guidance
+
+Avoid checking out untrusted code under `workflow_run`; treat it as privileged.
+
+Authority: [GitHub Security Lab — Preventing pwn requests](https://securitylab.github.com/resources/github-actions-preventing-pwn-requests/)
+
+### GHA039
+
+**Auth gate on a spoofable author field** — merge-worthy · guidance
+
+Gate on a non-spoofable identity, not a commit-author field.
+
+Authority: [GitHub Security Lab — Preventing pwn requests](https://securitylab.github.com/resources/github-actions-preventing-pwn-requests/)
+
+### GHA040
+
+**Self-hosted runner on an untrusted-code trigger** — merge-worthy · guidance
+
+Don't run untrusted-code triggers on self-hosted runners.
+
+Authority: [GitHub Security Lab — Preventing pwn requests](https://securitylab.github.com/resources/github-actions-preventing-pwn-requests/)
+
+### GHA041
+
+**Blanket secrets: inherit** — merge-worthy · guidance
+
+Pass only the specific secrets the reusable workflow needs.
+
+Authority: [GitHub — Using secrets in GitHub Actions](https://docs.github.com/en/actions/security-for-github-actions/security-guides/using-secrets-in-github-actions)
+
+### GHA042
+
+**Entire secrets context passed** — merge-worthy · guidance
+
+Pass named secrets instead of the whole `secrets` context.
+
+Authority: [GitHub — Using secrets in GitHub Actions](https://docs.github.com/en/actions/security-for-github-actions/security-guides/using-secrets-in-github-actions)
+
+### GHA043
+
+**Secret consumed without an environment gate** — merge-worthy · guidance
+
+Put secret-consuming jobs behind a protected environment.
+
+Authority: [GitHub — Using secrets in GitHub Actions](https://docs.github.com/en/actions/security-for-github-actions/security-guides/using-secrets-in-github-actions)
+
+### GHA044
+
+**Hardcoded registry/container credential** — merge-worthy · guidance
+
+Remove the hardcoded credential, move it to a secret, and rotate it (responsible disclosure first).
+
+Authority: [GitHub — Using secrets in GitHub Actions](https://docs.github.com/en/actions/security-for-github-actions/security-guides/using-secrets-in-github-actions)
+
+### GHA045
+
+**Secret interpolated into run:** — merge-worthy · guidance
+
+Reference secrets via `env:`, not inline in the shell command.
+
+Authority: [GitHub — Understanding the risk of script injections](https://docs.github.com/en/actions/security-for-github-actions/security-guides/security-hardening-for-github-actions#understanding-the-risk-of-script-injections) · [GitHub — Using secrets in GitHub Actions](https://docs.github.com/en/actions/security-for-github-actions/security-guides/using-secrets-in-github-actions)
+
+### GHA046
+
+**Constant/unsound guard condition** — merge-worthy · guidance
+
+Fix the always-true/false `if:` — it may neutralize a security gate.
+
+### GHA047
+
+**Ineffective contains() guard (reversed args)** — merge-worthy · guidance
+
+Swap the `contains()` arguments so the guard actually filters.
+
+### GHA048
+
+**Obfuscated guard condition** — merge-worthy · guidance
+
+Simplify the indirect `if:` so its effect is reviewable.
+
+### GHA049
+
+**Persisted checkout credentials reachable by an artifact** — merge-worthy · guidance
+
+Use `persist-credentials: false` or exclude `.git` from uploaded artifacts.
+
+Authority: [GitHub — Using secrets in GitHub Actions](https://docs.github.com/en/actions/security-for-github-actions/security-guides/using-secrets-in-github-actions)
+
+### GHA050
+
+**Cache populated in a privileged context** — merge-worthy · guidance
+
+Don't populate caches from untrusted code paths (poisoning risk).
+
+Authority: [GitHub Security Lab — Preventing pwn requests](https://securitylab.github.com/resources/github-actions-preventing-pwn-requests/)
+
+### GHA051
+
+**Long-lived token instead of OIDC** — report-only · guidance
+
+Migrate publish/release to OIDC short-lived credentials.
+
+### GHA052
+
+**Software piped to a shell without verification** — merge-worthy · guidance
+
+Verify a checksum/signature before executing fetched scripts.
+
+Authority: [OSSF Scorecard — Pinned-Dependencies](https://github.com/ossf/scorecard/blob/main/docs/checks.md#pinned-dependencies)
+
+### GHA053
+
+**Re-enables unsafe set-env/add-path** — merge-worthy · guidance
+
+Remove `ACTIONS_ALLOW_UNSECURE_COMMANDS`; use `$GITHUB_ENV`/`$GITHUB_PATH`.
+
+Authority: [GitHub — Understanding the risk of script injections](https://docs.github.com/en/actions/security-for-github-actions/security-guides/security-hardening-for-github-actions#understanding-the-risk-of-script-injections)
+
+### GHA054
+
+**Feature with a known security footgun** — merge-worthy · guidance
+
+Replace the flagged feature with the safe alternative.
+
+### GHA055
+
+**Runtime install of a tool already on the runner** — report-only · guidance
+
+Drop the redundant install to save time.
+
+### GHA056
+
+**Workflow without a name** — report-only · guidance
+
+Add a `name:` to the workflow.
+
+### GHA057
+
+**Dependency update can execute untrusted code** — merge-worthy · guidance
+
+Disable the option that lets dependency updates run external code.
+
+Authority: [GitHub Security Lab — Preventing pwn requests](https://securitylab.github.com/resources/github-actions-preventing-pwn-requests/)
+
+### GHA058
+
+**Dependency update has no cooldown window** — report-only · guidance
+
+Add a cooldown so new releases aren't merged instantly.
+
+## GitLab CI (WGL)
+
+### WGL010
+
+**Job references an undefined stage** — merge-worthy · guidance
+
+Add the stage to `stages:` or fix the job's `stage:`.
+
+### WGL011
+
+**Job rules always evaluate to never** — merge-worthy · guidance
+
+Fix the `rules:` so the job can run; it is currently unreachable.
+
+### WGL012
+
+**Deprecated property** — report-only · guidance
+
+Replace the deprecated GitLab CI property.
+
+### WGL013
+
+**Invalid needs target** — merge-worthy · guidance
+
+Fix the dangling/self `needs:` reference.
+
+### WGL014
+
+**Invalid extends target** — merge-worthy · guidance
+
+Point `extends:` at a template that exists in the pipeline.
+
+### WGL015
+
+**Circular needs chain** — merge-worthy · guidance
+
+Break the cycle in the job dependency graph.
+
+### WGL016
+
+**Hardcoded secret in variables** — merge-worthy · guidance
+
+Move the secret out of `variables:` into a masked/protected CI variable and rotate it.
+
+Authority: [GitHub — Using secrets in GitHub Actions](https://docs.github.com/en/actions/security-for-github-actions/security-guides/using-secrets-in-github-actions)
+
+### WGL017
+
+**Insecure (non-HTTPS) registry** — merge-worthy · guidance
+
+Use an HTTPS registry endpoint.
+
+### WGL018
+
+**Missing job timeout** — report-only · guidance
+
+Add a `timeout:` to bound long-running jobs.
+
+### WGL019
+
+**Missing retry on deploy job** — report-only · guidance
+
+Add a `retry:` strategy to deploy jobs.
+
+### WGL020
+
+**Duplicate job names** — merge-worthy · guidance
+
+Rename so each job resolves to a unique name.
+
+### WGL021
+
+**Unused global variable** — report-only · guidance
+
+Remove the unused global `variables:` entry.
+
+### WGL022
+
+**Missing artifacts expiry** — report-only · guidance
+
+Add `expire_in:` to artifacts to avoid disk bloat.
+
+### WGL023
+
+**Overly broad rules (when: always)** — report-only · guidance
+
+Add real conditions to the job's `rules:`.
+
+### WGL024
+
+**Manual job without allow_failure** — report-only · guidance
+
+Add `allow_failure: true` so a manual job doesn't block the pipeline.
+
+### WGL025
+
+**Cache without a key** — report-only · guidance
+
+Add a `cache.key` to avoid cross-job cache collisions.
+
+### WGL026
+
+**Privileged DinD service without TLS** — merge-worthy · guidance
+
+Set `DOCKER_TLS_CERTDIR` for privileged Docker-in-Docker services.
+
+### WGL027
+
+**Empty script** — merge-worthy · guidance
+
+Give the job a non-empty `script:`; it currently does nothing.
+
+### WGL028
+
+**Redundant needs** — report-only · guidance
+
+Drop `needs:` already implied by stage ordering.
+
+### WGL029
+
+**include/component resolved by a moving ref** — merge-worthy · guidance
+
+Pin `include:project`/component to a tag or commit SHA, not a branch.
+
+Authority: [OSSF Scorecard — Pinned-Dependencies](https://github.com/ossf/scorecard/blob/main/docs/checks.md#pinned-dependencies)
+
+### WGL030
+
+**Insecure or mutable include:remote** — merge-worthy · guidance
+
+Use HTTPS and pin the remote include to an immutable ref.
+
+Authority: [OSSF Scorecard — Pinned-Dependencies](https://github.com/ossf/scorecard/blob/main/docs/checks.md#pinned-dependencies)
+
+### WGL031
+
+**Container image not pinned to a digest** — merge-worthy · deterministic
+
+Pin the image to an immutable `@sha256:` digest.
+
+Authority: [OSSF Scorecard — Pinned-Dependencies](https://github.com/ossf/scorecard/blob/main/docs/checks.md#pinned-dependencies)
+
+### WGL032
+
+**Possible include/component impersonation** — merge-worthy · guidance
+
+Verify the include source; it resembles a well-known project.
+
+Authority: [OSSF Scorecard — Pinned-Dependencies](https://github.com/ossf/scorecard/blob/main/docs/checks.md#pinned-dependencies)
+
+### WGL033
+
+**OIDC id_token without a scoped audience** — merge-worthy · guidance
+
+Set a specific `aud:` on the OIDC id_token.
+
+Authority: [GitHub — Security hardening with OpenID Connect](https://docs.github.com/en/actions/concepts/security/openid-connect)
+
+### WGL034
+
+**OIDC id_token mintable from a merge-request pipeline** — merge-worthy · guidance
+
+Restrict OIDC token minting to protected pipelines.
+
+Authority: [GitHub — Security hardening with OpenID Connect](https://docs.github.com/en/actions/concepts/security/openid-connect) · [GitHub Security Lab — Preventing pwn requests](https://securitylab.github.com/resources/github-actions-preventing-pwn-requests/)
+
+### WGL035
+
+**Untrusted CI variable interpolated into a script** — merge-worthy · guidance
+
+Pass untrusted variables via the environment and quote them; don't inline.
+
+Authority: [GitHub — Understanding the risk of script injections](https://docs.github.com/en/actions/security-for-github-actions/security-guides/security-hardening-for-github-actions#understanding-the-risk-of-script-injections)
+
+### WGL036
+
+**Privileged service reachable from merge-request pipelines** — merge-worthy · guidance
+
+Block privileged/DinD services on merge-request pipelines.
+
+Authority: [GitHub Security Lab — Preventing pwn requests](https://securitylab.github.com/resources/github-actions-preventing-pwn-requests/)
+
+### WGL037
+
+**Security gate on an untrusted ref regex** — merge-worthy · guidance
+
+Don't gate security decisions on a regex over an untrusted ref variable.
+
+Authority: [GitHub Security Lab — Preventing pwn requests](https://securitylab.github.com/resources/github-actions-preventing-pwn-requests/)
+
+### WGL038
+
+**Secret reachable from a merge-request pipeline** — merge-worthy · guidance
+
+Scope secret-like variables to protected branches/pipelines.
+
+Authority: [GitHub — Using secrets in GitHub Actions](https://docs.github.com/en/actions/security-for-github-actions/security-guides/using-secrets-in-github-actions) · [GitHub Security Lab — Preventing pwn requests](https://securitylab.github.com/resources/github-actions-preventing-pwn-requests/)
+
+### WGL039
+
+**Secret printed to job logs** — merge-worthy · guidance
+
+Stop echoing the secret-like variable; mask it.
+
+Authority: [GitHub — Using secrets in GitHub Actions](https://docs.github.com/en/actions/security-for-github-actions/security-guides/using-secrets-in-github-actions)
+
+### WGL040
+
+**Hardcoded credential in a registry login** — merge-worthy · guidance
+
+Move the credential to a masked CI variable and rotate it.
+
+Authority: [GitHub — Using secrets in GitHub Actions](https://docs.github.com/en/actions/security-for-github-actions/security-guides/using-secrets-in-github-actions)
+
+### WGL041
+
+**Tautological rules:if condition** — merge-worthy · guidance
+
+Fix the always-true `rules:if`; it may neutralize a gate.
+
+### WGL042
+
+**Unreachable rules after an unconditional match** — report-only · guidance
+
+Remove the dead `rules:` entries after the catch-all.
+
+### WGL043
+
+**Match-anything regex gate in rules:if** — merge-worthy · guidance
+
+Tighten the regex; a match-anything gate is no gate.
+
+Authority: [GitHub Security Lab — Preventing pwn requests](https://securitylab.github.com/resources/github-actions-preventing-pwn-requests/)
+
+### WGL044
+
+**Public artifacts expose build output** — merge-worthy · guidance
+
+Mark sensitive artifacts non-public (`public: false`).
+
+### WGL045
+
+**Artifact path may capture a credential file** — merge-worthy · guidance
+
+Narrow the artifact path so it can't capture credential files.
+
+Authority: [GitHub — Using secrets in GitHub Actions](https://docs.github.com/en/actions/security-for-github-actions/security-guides/using-secrets-in-github-actions)
+
+### WGL046
+
+**Cache populated in a merge-request pipeline** — merge-worthy · guidance
+
+Don't populate caches from merge-request pipelines (poisoning risk).
+
+Authority: [GitHub Security Lab — Preventing pwn requests](https://securitylab.github.com/resources/github-actions-preventing-pwn-requests/)
+
+### WGL047
+
+**Software piped to a shell without verification** — merge-worthy · guidance
+
+Verify a checksum/signature before executing fetched scripts.
+
+Authority: [OSSF Scorecard — Pinned-Dependencies](https://github.com/ossf/scorecard/blob/main/docs/checks.md#pinned-dependencies)
+
+### WGL048
+
+**Pipeline without workflow:name** — report-only · guidance
+
+Add a `workflow:name` for clearer pipeline naming.
+
+## Forgejo (WFJ)
+
+### WFJ010
+
+**Unresolved action reference on Forgejo** — merge-worthy · guidance
+
+Use an action reference Forgejo can resolve (full URL or a mirrored action).
+
+### WFJ011
+
+**GitHub-hosted runner label with no Forgejo equivalent** — merge-worthy · guidance
+
+Use a runner label your Forgejo instance provides.

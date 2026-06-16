@@ -135,6 +135,7 @@ export default defineConfig({
 					label: 'Lint Rules',
 					items: [
 						{ label: 'Overview', slug: 'lint-rules/overview' },
+						{ label: 'Audit Rules Reference', slug: 'lint-rules/audit-rules' },
 						{ label: 'Evaluability (EVL)', slug: 'lint-rules/evaluability' },
 						{ label: 'Style', slug: 'lint-rules/style' },
 						{ label: 'Cross-File', slug: 'lint-rules/cross-file' },

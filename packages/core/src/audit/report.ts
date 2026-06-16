@@ -11,8 +11,14 @@
  */
 
 import type { AuditFinding } from "./core";
+import { ruleDocUrl } from "./catalog";
 import type { ProveOptions } from "./proof";
 import { buildReportModel, type EnrichedFinding, type GuidanceCluster, type QuickWinFile } from "./report-model";
+
+/** A rule id as a Markdown link to its reference entry. */
+function ruleLink(id: string): string {
+  return `[${id}](${ruleDocUrl(id)})`;
+}
 
 export interface RenderOptions {
   /** Repo URL or path shown in the header. */
@@ -36,14 +42,14 @@ function renderQuickWins(files: QuickWinFile[]): string[] {
   for (const qw of files) {
     lines.push(`### \`${qw.file}\``);
     if (qw.diff) {
-      const labels = qw.addressed.map((m) => `${m.id} (${m.title})`).join(", ");
+      const labels = qw.addressed.map((m) => `${ruleLink(m.id)} (${m.title})`).join(", ");
       lines.push("", `Addresses ${labels}:`, "", "```diff", qw.diff, "```");
     }
     if (qw.needsInput.length > 0) {
       lines.push("", "Needs a value before it can be auto-patched:");
       for (const f of qw.needsInput) {
         const where = f.entity ? ` (\`${f.entity}\`)` : "";
-        lines.push(`- **${f.checkId}**${where} — ${f.meta.remediation}`);
+        lines.push(`- **${ruleLink(f.checkId)}**${where} — ${f.meta.remediation}`);
       }
     }
     lines.push("");
@@ -56,7 +62,7 @@ function renderNeedsReview(clusters: GuidanceCluster[]): string[] {
   for (const cluster of clusters) {
     lines.push(`### ${cluster.url ? `[${cluster.name}](${cluster.url})` : cluster.name}`, "");
     for (const { meta, findings } of cluster.rules) {
-      lines.push(`- **${meta.id}** — ${meta.title} (${findings[0].severity}). ${meta.remediation}`);
+      lines.push(`- **${ruleLink(meta.id)}** — ${meta.title} (${findings[0].severity}). ${meta.remediation}`);
       for (const f of findings) {
         const where = f.entity ? `\`${f.file}\` (\`${f.entity}\`)` : `\`${f.file}\``;
         lines.push(`  - ${where} — ${escapeCell(f.message)}`);
@@ -70,7 +76,7 @@ function renderNeedsReview(clusters: GuidanceCluster[]): string[] {
 function renderReportOnly(findings: EnrichedFinding[]): string[] {
   const lines: string[] = ["", "| Rule | Title | File | Detail |", "| --- | --- | --- | --- |"];
   for (const f of findings) {
-    lines.push(`| ${f.checkId} | ${escapeCell(f.meta.title)} | \`${f.file}\` | ${escapeCell(f.message)} |`);
+    lines.push(`| ${ruleLink(f.checkId)} | ${escapeCell(f.meta.title)} | \`${f.file}\` | ${escapeCell(f.message)} |`);
   }
   lines.push("");
   return lines;

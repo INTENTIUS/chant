@@ -9,6 +9,7 @@
  */
 
 import type { AuditFinding } from "./core";
+import { ruleDocUrl } from "./catalog";
 import { buildReportModel, buildReportJson, type AuditSnapshot, type BuildModelOptions, type EnrichedFinding, type GuidanceCluster, type QuickWinFile, type ReportCounts } from "./report-model";
 
 export type { AuditSnapshot } from "./report-model";
@@ -40,6 +41,11 @@ function esc(s: string): string {
   return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 }
 
+/** A rule id as a link to its reference entry. */
+function ruleLink(id: string): string {
+  return `<a class="rule-id" href="${esc(ruleDocUrl(id))}">${esc(id)}</a>`;
+}
+
 function renderDiff(diff: string): string {
   const rows = diff
     .split("\n")
@@ -54,11 +60,11 @@ function renderDiff(diff: string): string {
 function renderQuickWins(files: QuickWinFile[]): string {
   const cards = files
     .map((qw) => {
-      const chips = qw.addressed.map((m) => `<span class="chip">${esc(m.id)} ${esc(m.title)}</span>`).join(" ");
+      const chips = qw.addressed.map((m) => `<span class="chip">${ruleLink(m.id)} ${esc(m.title)}</span>`).join(" ");
       const diff = qw.diff ? renderDiff(qw.diff) : "";
       const needs = qw.needsInput.length
         ? `<div class="needs"><strong>Needs a value to auto-patch:</strong><ul>${qw.needsInput
-            .map((f) => `<li><code>${esc(f.checkId)}</code>${f.entity ? ` (<code>${esc(f.entity)}</code>)` : ""} — ${esc(f.meta.remediation)}</li>`)
+            .map((f) => `<li>${ruleLink(f.checkId)}${f.entity ? ` (<code>${esc(f.entity)}</code>)` : ""} — ${esc(f.meta.remediation)}</li>`)
             .join("")}</ul></div>`
         : "";
       return `<div class="card"><div class="card-head"><code class="file">${esc(qw.file)}</code> ${chips}</div>${diff}${needs}</div>`;
@@ -76,7 +82,7 @@ function renderNeedsReview(clusters: GuidanceCluster[], n: number): string {
           const locs = findings
             .map((f) => `<li><code>${esc(f.file)}</code>${f.entity ? ` (<code>${esc(f.entity)}</code>)` : ""} — ${esc(f.message)}</li>`)
             .join("");
-          return `<div class="rule"><div><span class="sev ${findings[0].severity}"></span><strong>${esc(meta.id)}</strong> — ${esc(meta.title)}. <span class="muted">${esc(meta.remediation)}</span></div><ul>${locs}</ul></div>`;
+          return `<div class="rule"><div><span class="sev ${findings[0].severity}"></span><strong>${ruleLink(meta.id)}</strong> — ${esc(meta.title)}. <span class="muted">${esc(meta.remediation)}</span></div><ul>${locs}</ul></div>`;
         })
         .join("");
       return `<div class="cluster"><h3>${head}</h3>${rules}</div>`;
@@ -87,7 +93,7 @@ function renderNeedsReview(clusters: GuidanceCluster[], n: number): string {
 
 function renderReportOnly(findings: EnrichedFinding[], n: number): string {
   const rows = findings
-    .map((f) => `<tr><td><code>${esc(f.checkId)}</code></td><td>${esc(f.meta.title)}</td><td><code>${esc(f.file)}</code></td><td>${esc(f.message)}</td></tr>`)
+    .map((f) => `<tr><td>${ruleLink(f.checkId)}</td><td>${esc(f.meta.title)}</td><td><code>${esc(f.file)}</code></td><td>${esc(f.message)}</td></tr>`)
     .join("");
   return `<details><summary>Report-only <span class="muted">hygiene — ${n}</span></summary><table><thead><tr><th>Rule</th><th>Title</th><th>File</th><th>Detail</th></tr></thead><tbody>${rows}</tbody></table></details>`;
 }
@@ -146,6 +152,9 @@ th { color: #57606a; }
 code { font: 12.5px ui-monospace,SFMono-Regular,Menlo,Consolas,monospace; }
 footer { margin-top: 40px; padding-top: 16px; border-top: 1px solid #d0d7de; color: #57606a; font-size: 13px; }
 a { color: var(--accent); }
+.rule-id { color: var(--accent); text-decoration: none; font-weight: 600; }
+.rule-id:hover { text-decoration: underline; }
+.card-head .chip .rule-id { color: #fff; }
 `;
 
 const DEFAULT_TEMPLATE = `<!doctype html>

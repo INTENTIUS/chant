@@ -22,6 +22,8 @@ What it scans:
 - `.forgejo/workflows/*.{yml,yaml}` (Forgejo / Codeberg / Gitea)
 - `.gitlab-ci.yml` (GitLab CI)
 
+Every rule a finding cites links to its entry in the [audit rules reference](/chant/lint-rules/audit-rules/).
+
 The report groups findings into:
 
 - **Quick wins (deterministic)** — safe mechanical fixes shown as a ready-to-apply unified `diff` (add a least-privilege `permissions:` block, pin actions to a commit SHA, pin images to a digest).
@@ -71,7 +73,8 @@ For tooling, `--format json` emits a **versioned** envelope (stable contract). T
   "summary": { "total": 0, "quickWin": 0, "needsReview": 0, "reportOnly": 0, "errors": 0, "warnings": 0, "infos": 0 },
   "findings": [
     { "checkId": "GHA033", "severity": "warning", "message": "…", "file": "…", "entity": "…", "lexicon": "github",
-      "tier": "merge-worthy", "fixKind": "deterministic", "title": "…", "remediation": "…", "authority": [{ "name": "…", "url": "…" }] }
+      "tier": "merge-worthy", "fixKind": "deterministic", "title": "…", "remediation": "…",
+      "authority": [{ "name": "…", "url": "…" }], "docUrl": "https://intentius.io/chant/lint-rules/audit-rules/#gha033" }
   ]
 }
 ```
