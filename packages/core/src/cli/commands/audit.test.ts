@@ -1,6 +1,7 @@
 import { describe, test, expect } from "vitest";
 import { fileURLToPath } from "url";
-import { auditCommand, discoverCiFiles, tokenForHost } from "./audit";
+import { auditCommand, discoverCiFiles, tokenForHost, coverageNotes } from "./audit";
+import type { AuditInput } from "../../audit/core";
 
 const REPO = fileURLToPath(new URL("./__fixtures__/audit-repo", import.meta.url));
 
@@ -14,6 +15,16 @@ describe("auditCommand", () => {
     const onlyGh = { GITHUB_TOKEN: "gh" } as unknown as NodeJS.ProcessEnv;
     expect(tokenForHost("https://gitlab.com/o/r", onlyGh)).toBeUndefined();
     expect(tokenForHost("https://codeberg.org/o/r", onlyGh)).toBeUndefined();
+  });
+
+  test("coverageNotes flags unresolved GitLab includes", () => {
+    const withInc: AuditInput[] = [{ path: ".gitlab-ci.yml", content: "include:\n  - local: a.yml\nbuild:\n  script: [echo]\n", lexicon: "gitlab" }];
+    expect(coverageNotes(withInc)[0]).toMatch(/include:/);
+    const without: AuditInput[] = [{ path: ".gitlab-ci.yml", content: "build:\n  script: [echo]\n", lexicon: "gitlab" }];
+    expect(coverageNotes(without)).toEqual([]);
+    // github files never produce the gitlab include note
+    const gh: AuditInput[] = [{ path: ".github/workflows/ci.yml", content: "on: push\n", lexicon: "github" }];
+    expect(coverageNotes(gh)).toEqual([]);
   });
 
   test("discovers CI files under a repo root", () => {

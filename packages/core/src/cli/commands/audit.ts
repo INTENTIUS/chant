@@ -115,8 +115,22 @@ function sarifLevel(sev: Severity): string {
   return sev === "error" ? "error" : sev === "warning" ? "warning" : "note";
 }
 
-function renderStylish(findings: AuditFinding[], scanned: string[]): string {
+/** Coverage caveats about what the audit could and couldn't see. */
+export function coverageNotes(inputs: AuditInput[]): string[] {
+  const notes: string[] = [];
+  const withIncludes = inputs.filter((i) => i.lexicon === "gitlab" && /^include:/m.test(i.content)).length;
+  if (withIncludes > 0) {
+    notes.push(
+      `${withIncludes} GitLab pipeline${withIncludes === 1 ? " uses" : "s use"} \`include:\` — included files are not fetched, so findings cover the root file only.`,
+    );
+  }
+  return notes;
+}
+
+function renderStylish(findings: AuditFinding[], scanned: string[], notes: string[]): string {
   const lines: string[] = [];
+  for (const note of notes) lines.push(`Note: ${note}`);
+  if (notes.length > 0) lines.push("");
   const mw = findings.filter(isMergeWorthy);
   const ro = findings.filter((f) => !isMergeWorthy(f));
   lines.push(
@@ -200,6 +214,7 @@ export async function auditCommand(options: AuditCommandOptions): Promise<AuditC
 
   let findings = await auditFiles(inputs);
   if (tier === "merge-worthy") findings = findings.filter(isMergeWorthy);
+  const notes = coverageNotes(inputs);
 
   let output: string;
   switch (format) {
@@ -250,11 +265,12 @@ export async function auditCommand(options: AuditCommandOptions): Promise<AuditC
         files: inputs.map((i) => ({ path: i.path, content: i.content })),
         resolveSha,
         resolveDigest,
+        notes,
       });
       break;
     }
     default:
-      output = renderStylish(findings, scanned);
+      output = renderStylish(findings, scanned, notes);
   }
 
   return { success: true, output, findings, scanned, exitCode: exitCodeFor(findings, failOn) };
