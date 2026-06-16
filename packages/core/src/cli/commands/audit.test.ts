@@ -1,10 +1,21 @@
 import { describe, test, expect } from "vitest";
 import { fileURLToPath } from "url";
-import { auditCommand, discoverCiFiles } from "./audit";
+import { auditCommand, discoverCiFiles, tokenForHost } from "./audit";
 
 const REPO = fileURLToPath(new URL("./__fixtures__/audit-repo", import.meta.url));
 
 describe("auditCommand", () => {
+  test("selects a host-specific token (no cross-host leakage)", () => {
+    const env = { GITHUB_TOKEN: "gh", GITLAB_TOKEN: "gl", CODEBERG_TOKEN: "cb" } as unknown as NodeJS.ProcessEnv;
+    expect(tokenForHost("https://github.com/o/r", env)).toBe("gh");
+    expect(tokenForHost("https://gitlab.com/o/r", env)).toBe("gl");
+    expect(tokenForHost("https://codeberg.org/o/r", env)).toBe("cb");
+    // A GitHub token is never offered to other hosts.
+    const onlyGh = { GITHUB_TOKEN: "gh" } as unknown as NodeJS.ProcessEnv;
+    expect(tokenForHost("https://gitlab.com/o/r", onlyGh)).toBeUndefined();
+    expect(tokenForHost("https://codeberg.org/o/r", onlyGh)).toBeUndefined();
+  });
+
   test("discovers CI files under a repo root", () => {
     const files = discoverCiFiles(REPO);
     expect(files.map((f) => f.path)).toContain(".github/workflows/ci.yml");

@@ -44,6 +44,34 @@ export interface AuditCommandResult {
   error?: string;
 }
 
+/**
+ * Select the fetch token for a repo host. Tokens are host-specific — a GitHub
+ * PAT sent to GitLab/Codeberg is rejected (401) — so we never cross hosts.
+ */
+export function tokenForHost(url: string, env: NodeJS.ProcessEnv = process.env): string | undefined {
+  let host: string;
+  try {
+    host = new URL(url).hostname;
+  } catch {
+    return undefined;
+  }
+  switch (host) {
+    case "gitlab.com":
+      return env.GITLAB_TOKEN ?? env.CHANT_AUDIT_GITLAB_TOKEN;
+    case "codeberg.org":
+      return env.CODEBERG_TOKEN ?? env.CHANT_AUDIT_CODEBERG_TOKEN;
+    case "github.com":
+      return env.GITHUB_TOKEN ?? env.CHANT_AUDIT_GITHUB_TOKEN;
+    default:
+      return undefined;
+  }
+}
+
+/** GitHub token used for action-SHA resolution (always queries api.github.com). */
+function githubToken(env: NodeJS.ProcessEnv = process.env): string | undefined {
+  return env.GITHUB_TOKEN ?? env.CHANT_AUDIT_GITHUB_TOKEN;
+}
+
 function isYaml(name: string): boolean {
   return name.endsWith(".yml") || name.endsWith(".yaml");
 }
@@ -150,7 +178,7 @@ export async function auditCommand(options: AuditCommandOptions): Promise<AuditC
   if (isUrl) {
     try {
       inputs = await fetchCiFiles(options.path, {
-        token: options.token ?? process.env.CHANT_AUDIT_TOKEN ?? process.env.GITHUB_TOKEN,
+        token: options.token ?? tokenForHost(options.path),
         fetchImpl: options.fetchImpl,
       });
     } catch (err) {
@@ -186,7 +214,9 @@ export async function auditCommand(options: AuditCommandOptions): Promise<AuditC
       // diffs. Pre-resolved into a sync map; render stays synchronous.
       let resolveSha: ProveOptions["resolveSha"];
       if (isUrl) {
-        const token = options.token ?? process.env.CHANT_AUDIT_TOKEN ?? process.env.GITHUB_TOKEN;
+        // Action SHAs always resolve against api.github.com, so use the GitHub
+        // token regardless of which host the repo lives on.
+        const token = githubToken();
         const refs = new Map<string, { action: string; ref: string }>();
         for (const inp of inputs) {
           for (const a of extractUnpinnedActions(inp.content)) refs.set(`${a.action}@${a.ref}`, a);
