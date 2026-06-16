@@ -206,6 +206,108 @@ export async function resolveActionSha(
   }
 }
 
+const DIGEST_RE = /^sha256:[0-9a-f]{64}$/;
+
+/** Public registries we'll talk to. The image ref is untrusted (SSRF guard). */
+const ALLOWED_REGISTRIES = new Set([
+  "registry-1.docker.io",
+  "ghcr.io",
+  "quay.io",
+  "gcr.io",
+  "public.ecr.aws",
+  "mcr.microsoft.com",
+  "registry.gitlab.com",
+]);
+
+interface ImageRef {
+  registry: string;
+  repository: string;
+  tag: string;
+}
+
+/** Parse a Docker/OCI image reference. Returns undefined if already digested. */
+export function parseImageRef(ref: string): ImageRef | undefined {
+  if (ref.includes("@")) return undefined; // already digest-pinned
+  let registry = "registry-1.docker.io";
+  let rest = ref;
+  let repoPrefix = "";
+  const firstSlash = ref.indexOf("/");
+  const firstPart = firstSlash === -1 ? "" : ref.slice(0, firstSlash);
+  if (firstPart && (firstPart.includes(".") || firstPart.includes(":") || firstPart === "localhost")) {
+    registry = firstPart;
+    rest = ref.slice(firstSlash + 1);
+  } else if (firstSlash === -1) {
+    repoPrefix = "library/"; // bare Docker Hub official image
+  }
+  let tag = "latest";
+  const lastColon = rest.lastIndexOf(":");
+  const lastSlash = rest.lastIndexOf("/");
+  if (lastColon > lastSlash) {
+    tag = rest.slice(lastColon + 1);
+    rest = rest.slice(0, lastColon);
+  }
+  if (!rest) return undefined;
+  return { registry, repository: repoPrefix + rest, tag };
+}
+
+/** Parse a `Bearer realm=...,service=...,scope=...` challenge into a token URL. */
+function tokenUrlFromChallenge(header: string): string | undefined {
+  const m = /Bearer\s+(.*)/i.exec(header);
+  if (!m) return undefined;
+  const params: Record<string, string> = {};
+  for (const part of m[1].split(",")) {
+    const kv = /(\w+)="([^"]*)"/.exec(part.trim());
+    if (kv) params[kv[1]] = kv[2];
+  }
+  if (!params.realm) return undefined;
+  const url = new URL(params.realm);
+  if (params.service) url.searchParams.set("service", params.service);
+  if (params.scope) url.searchParams.set("scope", params.scope);
+  return url.toString();
+}
+
+/**
+ * Resolve a container image `name:tag` to its `sha256:...` digest via the OCI
+ * registry v2 API (anonymous bearer-token challenge). Returns undefined on any
+ * failure or for a non-allowlisted registry. The image ref is untrusted, so we
+ * only ever contact allowlisted public registries (SSRF guard).
+ */
+export async function resolveImageDigest(
+  image: string,
+  opts: { fetchImpl?: typeof fetch; timeoutMs?: number } = {},
+): Promise<string | undefined> {
+  const parsed = parseImageRef(image);
+  if (!parsed || !ALLOWED_REGISTRIES.has(parsed.registry)) return undefined;
+  const doFetch = opts.fetchImpl ?? fetch;
+  const ms = opts.timeoutMs ?? DEFAULTS.timeoutMs;
+  const accept = [
+    "application/vnd.oci.image.index.v1+json",
+    "application/vnd.oci.image.manifest.v1+json",
+    "application/vnd.docker.distribution.manifest.list.v2+json",
+    "application/vnd.docker.distribution.manifest.v2+json",
+  ].join(", ");
+  const manifestUrl = `https://${parsed.registry}/v2/${parsed.repository}/manifests/${encodeURIComponent(parsed.tag)}`;
+
+  try {
+    let res = await doFetch(manifestUrl, { headers: { Accept: accept }, redirect: "error", signal: timeoutSignal(ms) });
+    if (res.status === 401) {
+      const tokenUrl = tokenUrlFromChallenge(res.headers.get("www-authenticate") ?? "");
+      if (!tokenUrl) return undefined;
+      const tokRes = await doFetch(tokenUrl, { redirect: "error", signal: timeoutSignal(ms) });
+      if (!tokRes.ok) return undefined;
+      const tok = (await tokRes.json()) as { token?: string; access_token?: string };
+      const bearer = tok.token ?? tok.access_token;
+      if (!bearer) return undefined;
+      res = await doFetch(manifestUrl, { headers: { Accept: accept, Authorization: `Bearer ${bearer}` }, redirect: "error", signal: timeoutSignal(ms) });
+    }
+    if (!res.ok) return undefined;
+    const digest = res.headers.get("docker-content-digest");
+    return digest && DIGEST_RE.test(digest) ? digest : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 async function fetchGitlab(
   host: HostConfig,
   owner: string,

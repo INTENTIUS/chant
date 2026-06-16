@@ -26,6 +26,8 @@ export interface RenderOptions {
   files?: Array<{ path: string; content: string }>;
   /** Resolve an action ref to a SHA so pin fixes can be diffed. */
   resolveSha?: ProveOptions["resolveSha"];
+  /** Resolve a container image to a digest so image-pin fixes can be diffed. */
+  resolveDigest?: ProveOptions["resolveDigest"];
 }
 
 const SEVERITY_WEIGHT: Record<Severity, number> = { error: 0, warning: 1, info: 2 };
@@ -85,7 +87,7 @@ function byFile<T extends { file: string }>(items: T[]): Map<string, T[]> {
 function renderQuickWins(
   findings: EnrichedFinding[],
   contents: Map<string, string>,
-  resolveSha: ProveOptions["resolveSha"],
+  proveOpts: ProveOptions,
 ): string[] {
   const lines: string[] = ["## Quick wins (deterministic)", "", "Safe mechanical fixes — the diff changes only the flagged lines.", ""];
 
@@ -100,7 +102,7 @@ function renderQuickWins(
 
     if (original !== undefined) {
       for (const id of ids) {
-        const res = proveFix(id, patched ?? original, { resolveSha });
+        const res = proveFix(id, patched ?? original, proveOpts);
         if (res.applied && res.patched !== undefined) {
           patched = res.patched;
           addressed.push(id);
@@ -234,7 +236,9 @@ export function renderMarkdown(findings: AuditFinding[], opts: RenderOptions = {
 
   // Quick wins lead, expanded. Needs-review and hygiene collapse so a pasted
   // report opens on the actionable fix.
-  if (quickWins.length > 0) lines.push(...renderQuickWins(quickWins, contents, opts.resolveSha));
+  if (quickWins.length > 0) {
+    lines.push(...renderQuickWins(quickWins, contents, { resolveSha: opts.resolveSha, resolveDigest: opts.resolveDigest }));
+  }
   if (needsReview.length > 0) {
     lines.push("<details>", `<summary>Needs review (guidance) — ${needsReview.length}</summary>`, "");
     lines.push(...renderNeedsReview(needsReview));
