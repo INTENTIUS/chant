@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>CI Security Audit</title>
+<style>
+:root { --accent: #7c3aed; }
+* { box-sizing: border-box; }
+body { font: 15px/1.55 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif; color: #1f2328; margin: 0; background: #f6f8fa; }
+.wrap { max-width: 920px; margin: 0 auto; padding: 32px 20px 64px; }
+header { display: flex; align-items: center; gap: 12px; border-bottom: 3px solid var(--accent); padding-bottom: 16px; margin-bottom: 20px; }
+header h1 { font-size: 22px; margin: 0; }
+.logo { height: 32px; }
+.summary { background: #fff; border: 1px solid #d0d7de; border-radius: 10px; padding: 16px 18px; margin-bottom: 24px; }
+.summary .meta { color: #57606a; font-size: 13px; margin-bottom: 10px; }
+.counts { font-weight: 600; margin-bottom: 8px; }
+.sev { display: inline-block; width: 9px; height: 9px; border-radius: 50%; margin: 0 4px 0 10px; vertical-align: middle; }
+.sev.error { background: #cf222e; } .sev.warning { background: #d4a72c; } .sev.info { background: #8c959f; }
+.sev:first-child { margin-left: 0; }
+.chip { display: inline-block; background: #eef1f4; border: 1px solid #d0d7de; border-radius: 999px; padding: 1px 10px; font-size: 12px; color: #424a53; }
+.tiers .chip { margin-right: 4px; }
+.note { margin-top: 10px; background: #fff8c5; border: 1px solid #d4a72c66; border-radius: 6px; padding: 8px 10px; font-size: 13px; }
+h2 { font-size: 18px; margin: 28px 0 4px; } h3 { font-size: 15px; margin: 16px 0 6px; }
+.muted { color: #57606a; font-weight: 400; font-size: 13px; }
+.card { background: #fff; border: 1px solid #d0d7de; border-radius: 10px; padding: 14px 16px; margin: 12px 0; }
+.card-head { margin-bottom: 8px; display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.file { background: #eef1f4; padding: 2px 7px; border-radius: 6px; font-size: 13px; }
+.card-head .chip { background: var(--accent); border-color: var(--accent); color: #fff; }
+pre.diff { background: #0d1117; color: #c9d1d9; border-radius: 8px; padding: 12px 14px; overflow-x: auto; font: 12.5px/1.5 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace; margin: 0; }
+pre.diff span { display: block; white-space: pre; }
+pre.diff .add { color: #3fb950; } pre.diff .del { color: #f85149; } pre.diff .hunk { color: #a371f7; } pre.diff .ctx { color: #8b949e; }
+.needs { margin-top: 10px; font-size: 13px; }
+details { background: #fff; border: 1px solid #d0d7de; border-radius: 10px; padding: 8px 16px; margin: 16px 0; }
+summary { cursor: pointer; font-size: 16px; font-weight: 600; }
+.cluster { margin: 10px 0; } .rule { margin: 8px 0; } .rule ul, .needs ul { margin: 4px 0 4px 0; }
+table { border-collapse: collapse; width: 100%; font-size: 13px; margin-top: 8px; }
+th, td { text-align: left; border-bottom: 1px solid #d0d7de; padding: 6px 8px; vertical-align: top; }
+th { color: #57606a; }
+code { font: 12.5px ui-monospace,SFMono-Regular,Menlo,Consolas,monospace; }
+footer { margin-top: 40px; padding-top: 16px; border-top: 1px solid #d0d7de; color: #57606a; font-size: 13px; }
+a { color: var(--accent); }
+.rule-id { color: var(--accent); text-decoration: none; font-weight: 600; }
+.rule-id:hover { text-decoration: underline; }
+.card-head .chip .rule-id { color: #fff; }
+</style>
+</head><body><div class="wrap">
+<header><h1>CI Security Audit</h1></header>
+<div class="summary"><div class="meta">local · packages/core/src/cli/commands/__fixtures__/audit-repo · 2026-06-16 · 1 file · chant 0.4.0</div><div class="counts"><span class="sev error"></span>0 error <span class="sev warning"></span>3 warning <span class="sev info"></span>1 info</div><div class="tiers"><span class="chip">3 quick-win</span> <span class="chip">0 needs-review</span> <span class="chip">1 hygiene</span></div></div>
+<section><h2>Quick wins <span class="muted">deterministic</span></h2><p class="muted">Safe mechanical fixes — the diff changes only the flagged lines.</p><div class="card"><div class="card-head"><code class="file">.github/workflows/ci.yml</code> <span class="chip"><a class="rule-id" href="https://intentius.io/chant/lint-rules/audit-rules/#gha033">GHA033</a> Blanket write-all permissions</span></div><pre class="diff"><span class="hunk">@@ -1,7 +1,8 @@</span>
+<span class="ctx"> name: CI</span>
+<span class="ctx"> on:</span>
+<span class="ctx">   push:</span>
+<span class="del">-permissions: write-all</span>
+<span class="add">+permissions:</span>
+<span class="add">+  contents: read</span>
+<span class="ctx"> jobs:</span>
+<span class="ctx">   build:</span>
+<span class="ctx">     runs-on: ubuntu-latest</span></pre><div class="needs"><strong>Needs a value to auto-patch:</strong><ul><li><a class="rule-id" href="https://intentius.io/chant/lint-rules/audit-rules/#gha021">GHA021</a> (<code>build</code>) — Pin `actions/checkout` to a full 40-char commit SHA.</li><li><a class="rule-id" href="https://intentius.io/chant/lint-rules/audit-rules/#gha029">GHA029</a> (<code>build</code>) — Pin the action to a full commit SHA instead of a tag/branch.</li></ul></div></div></section>
+<details><summary>Report-only <span class="muted">hygiene — 1</span></summary><table><thead><tr><th>Rule</th><th>Title</th><th>File</th><th>Detail</th></tr></thead><tbody><tr><td><a class="rule-id" href="https://intentius.io/chant/lint-rules/audit-rules/#gha022">GHA022</a></td><td>Job without timeout-minutes</td><td><code>.github/workflows/ci.yml</code></td><td>Job &quot;build&quot; does not specify timeout-minutes. Consider adding a timeout to prevent hung workflows.</td></tr></tbody></table></details>
+<script type="application/json" id="chant-audit-report">{"schemaVersion":"1.0","tool":{"name":"chant-audit","version":"0.4.0"},"snapshot":{"target":"packages/core/src/cli/commands/__fixtures__/audit-repo","host":"local","files":[".github/workflows/ci.yml"],"generatedAt":"2026-06-16T20:27:19.018Z","toolVersion":"0.4.0"},"summary":{"total":4,"quickWin":3,"needsReview":0,"reportOnly":1,"errors":0,"warnings":3,"infos":1},"findings":[{"checkId":"GHA021","severity":"warning","message":"Job \"build\" uses actions/checkout@v4 — pin to a full commit SHA for supply-chain security.","file":".github/workflows/ci.yml","entity":"build","lexicon":"github","tier":"merge-worthy","fixKind":"deterministic","title":"actions/checkout not pinned to a SHA","remediation":"Pin `actions/checkout` to a full 40-char commit SHA.","authority":[{"name":"OSSF Scorecard — Pinned-Dependencies","url":"https://github.com/ossf/scorecard/blob/main/docs/checks.md#pinned-dependencies"},{"name":"GitHub — Using third-party actions","url":"https://docs.github.com/en/actions/security-for-github-actions/security-guides/security-hardening-for-github-actions#using-third-party-actions"}],"docUrl":"https://intentius.io/chant/lint-rules/audit-rules/#gha021"},{"checkId":"GHA029","severity":"warning","message":"Job \"build\" uses acme/deploy-action@v1 pinned to a tag or branch — pin to a full commit SHA for supply-chain security.","file":".github/workflows/ci.yml","entity":"build","lexicon":"github","tier":"merge-worthy","fixKind":"deterministic","title":"Action not pinned to a commit SHA","remediation":"Pin the action to a full commit SHA instead of a tag/branch.","authority":[{"name":"OSSF Scorecard — Pinned-Dependencies","url":"https://github.com/ossf/scorecard/blob/main/docs/checks.md#pinned-dependencies"},{"name":"GitHub — Using third-party actions","url":"https://docs.github.com/en/actions/security-for-github-actions/security-guides/security-hardening-for-github-actions#using-third-party-actions"}],"docUrl":"https://intentius.io/chant/lint-rules/audit-rules/#gha029"},{"checkId":"GHA033","severity":"warning","message":"Workflow declares permissions: write-all — replace it with the specific scopes the jobs actually need (least privilege).","file":".github/workflows/ci.yml","lexicon":"github","tier":"merge-worthy","fixKind":"deterministic","title":"Blanket write-all permissions","remediation":"Replace `write-all` with the specific scopes the jobs need (default `contents: read`).","authority":[{"name":"OSSF Scorecard — Token-Permissions","url":"https://github.com/ossf/scorecard/blob/main/docs/checks.md#token-permissions"},{"name":"GitHub — Automatic token authentication","url":"https://docs.github.com/en/actions/security-for-github-actions/security-guides/automatic-token-authentication"}],"docUrl":"https://intentius.io/chant/lint-rules/audit-rules/#gha033"},{"checkId":"GHA022","severity":"info","message":"Job \"build\" does not specify timeout-minutes. Consider adding a timeout to prevent hung workflows.","file":".github/workflows/ci.yml","entity":"build","lexicon":"github","tier":"report-only","fixKind":"guidance","title":"Job without timeout-minutes","remediation":"Add `timeout-minutes:` to bound runaway jobs.","authority":[],"docUrl":"https://intentius.io/chant/lint-rules/audit-rules/#gha022"}]}</script>
+<footer>Generated by <a href="https://intentius.io/chant/cli/audit/">chant audit</a>.</footer>
+</div></body></html>

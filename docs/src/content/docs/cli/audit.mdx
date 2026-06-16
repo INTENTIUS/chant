@@ -34,6 +34,37 @@ The report groups findings into:
 Only the root `.gitlab-ci.yml` is fetched; `include:` files are not resolved, so an include-heavy pipeline reports against the root file only. The report prints a note when this applies.
 :::
 
+## Example
+
+The **minimized** (markdown) report leads with ready-to-apply fix diffs; rule IDs link to the [rules reference](/chant/lint-rules/audit-rules/):
+
+````markdown
+# CI security audit
+
+4 findings — 3 quick-win, 0 needs-review, 1 report-only (0 error, 3 warning, 1 info).
+
+## Quick wins (deterministic)
+
+### `.github/workflows/ci.yml`
+
+Addresses [GHA033](/chant/lint-rules/audit-rules/#gha033) (Blanket write-all permissions):
+
+```diff
+-permissions: write-all
++permissions:
++  contents: read
+```
+
+Needs a value before it can be auto-patched:
+- **[GHA021](/chant/lint-rules/audit-rules/#gha021)** (`build`) — Pin `actions/checkout` to a full 40-char commit SHA.
+
+<details><summary>Report-only (hygiene) — 1</summary>
+…
+</details>
+````
+
+The **expanded** (HTML) report renders the same findings with badges, cards, and syntax-highlighted diffs — **[view a sample report →](/chant/audit-sample.html)**.
+
 ## Flags
 
 | Flag | Description |
