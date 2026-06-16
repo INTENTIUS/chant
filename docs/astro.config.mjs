@@ -121,6 +121,7 @@ export default defineConfig({
 						{ label: 'describe', slug: 'cli/describe' },
 						{ label: 'vendor', slug: 'cli/vendor' },
 						{ label: 'import', slug: 'cli/import' },
+						{ label: 'audit', slug: 'cli/audit' },
 						{ label: 'update', slug: 'cli/update' },
 						{ label: 'doctor', slug: 'cli/doctor' },
 						{ label: 'run', slug: 'cli/run' },

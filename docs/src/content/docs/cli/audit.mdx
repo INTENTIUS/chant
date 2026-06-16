@@ -1,0 +1,94 @@
+---
+title: "chant audit"
+description: Audit an existing repository's CI/CD pipelines for security issues
+---
+
+## Synopsis
+
+```
+chant audit [path] [flags]
+chant audit <repo-url> [flags]
+```
+
+## Description
+
+`chant audit` runs chant's CI security rules against an **existing** repository's pipeline YAML — including hand-written workflows chant didn't generate. Point it at a local directory or a public repo URL and it produces a tiered report: security findings worth a pull request, and lower-priority hygiene.
+
+It is read-only and requires no chant project — it reads the repo's CI files directly and runs the same post-synth security checks the build pipeline uses (GitHub Actions `GHA*`, GitLab CI `WGL*`; Forgejo workflows are GitHub-dialect, so the GitHub tier applies to them too).
+
+What it scans:
+
+- `.github/workflows/*.{yml,yaml}` (GitHub Actions / Forgejo)
+- `.forgejo/workflows/*.{yml,yaml}` (Forgejo / Codeberg / Gitea)
+- `.gitlab-ci.yml` (GitLab CI)
+
+The report groups findings into:
+
+- **Quick wins (deterministic)** — safe mechanical fixes shown as a ready-to-apply unified `diff` (add a least-privilege `permissions:` block, pin actions to a commit SHA, pin images to a digest).
+- **Needs review (guidance)** — findings that need a judgement call (script injection, `pull_request_target` hardening, secret scope), clustered by the security area they belong to.
+- **Report-only (hygiene)** — style/perf/deprecation, never something to open a PR over.
+
+:::note
+Only the root `.gitlab-ci.yml` is fetched; `include:` files are not resolved, so an include-heavy pipeline reports against the root file only. The report prints a note when this applies.
+:::
+
+## Flags
+
+| Flag | Description |
+|------|-------------|
+| `-f, --format <fmt>` | Output format: `stylish` (default), `json`, `sarif`, `markdown` |
+| `--json` | Shortcut for `--format json` |
+| `-o, --output <file>` | Write the report to a file instead of stdout |
+| `--tier <tier>` | `all` (default) or `merge-worthy` to show only PR-worthy findings |
+| `--fail-on <level>` | Exit non-zero on `merge-worthy`, `warning`, or `none` (default `none`) |
+
+## Tokens
+
+Auditing a URL calls the host's API. Set a host-specific token to lift rate limits (and, for GitHub, to resolve action SHAs and image digests for the inline fix diffs):
+
+- `GITHUB_TOKEN` — GitHub, plus action-SHA and image-digest resolution (always queries the GitHub/registry APIs)
+- `GITLAB_TOKEN` — GitLab
+- `CODEBERG_TOKEN` — Codeberg
+
+Without a token, unauthenticated GitHub is limited to 60 requests/hour and pin fixes fall back to "needs a value" instead of an inline diff. Tokens are never sent across hosts.
+
+## Prerequisites
+
+`chant audit` needs the relevant CI lexicon packages installed alongside `@intentius/chant`:
+
+```bash
+npm i @intentius/chant-lexicon-github   # GitHub / Forgejo
+npm i @intentius/chant-lexicon-gitlab   # GitLab
+npm i @intentius/chant-lexicon-forgejo  # Forgejo dialect
+```
+
+If a needed lexicon is missing, the command tells you which package to install.
+
+## Usage
+
+```bash
+# Audit the current repo
+chant audit
+
+# Audit a local checkout
+chant audit ../some-repo
+
+# Audit a public repo over the network
+chant audit https://github.com/owner/repo
+chant audit https://gitlab.com/group/project
+chant audit https://codeberg.org/owner/repo
+
+# Save a shareable markdown report
+chant audit https://github.com/owner/repo -f markdown -o report.md
+
+# Only the PR-worthy findings, as JSON, failing CI if any exist
+chant audit . --tier merge-worthy --json --fail-on merge-worthy
+```
+
+## Exit codes
+
+| `--fail-on` | Exit 1 when… |
+|-------------|--------------|
+| `none` (default) | never (read-only) |
+| `merge-worthy` | any merge-worthy finding exists |
+| `warning` | any error- or warning-severity finding exists |
