@@ -74,6 +74,14 @@ const GH_OIDC: Authority = {
   name: "GitHub — Security hardening with OpenID Connect",
   url: "https://docs.github.com/en/actions/concepts/security/openid-connect",
 };
+const K8S_PSS: Authority = {
+  name: "Kubernetes — Pod Security Standards",
+  url: "https://kubernetes.io/docs/concepts/security/pod-security-standards/",
+};
+const K8S_SECRETS: Authority = {
+  name: "Kubernetes — Good practices for Secrets",
+  url: "https://kubernetes.io/docs/concepts/security/secrets-good-practices/",
+};
 
 function meta(
   id: string,
@@ -184,6 +192,37 @@ export const RULE_CATALOG: Record<string, RuleMeta> = {
   // ── Forgejo (WFJ) ──────────────────────────────────────────────────
   WFJ010: meta("WFJ010", M, G, "Unresolved action reference on Forgejo", "Use an action reference Forgejo can resolve (full URL or a mirrored action)."),
   WFJ011: meta("WFJ011", M, G, "GitHub-hosted runner label with no Forgejo equivalent", "Use a runner label your Forgejo instance provides."),
+
+  // ── Kubernetes (WK8 / ARGO) ────────────────────────────────────────
+  ARGO002: meta("ARGO002", M, G, "Argo Application references an undeclared AppProject", "Declare the named AppProject or reference an existing project."),
+  ARGO003: meta("ARGO003", M, G, "Argo Application targets an unregistered cluster", "Point spec.destination at a registered cluster or the in-cluster target."),
+  ARGO005: meta("ARGO005", R, G, "Argo source.path may not resolve", "Ensure the source path exists under the build root."),
+  WK8005: meta("WK8005", M, G, "Hardcoded secret in env var", "Use a secretKeyRef instead of a literal value, and rotate the secret.", [K8S_SECRETS]),
+  WK8006: meta("WK8006", M, G, "Image uses :latest or no tag", "Pin the image to an explicit version tag (ideally a digest).", [SCORECARD_PINNED]),
+  WK8041: meta("WK8041", M, G, "Hardcoded API key in env var", "Move the key to a Secret and rotate it.", [K8S_SECRETS]),
+  WK8042: meta("WK8042", M, G, "Private key stored in a ConfigMap", "Store private keys in a Secret, not a ConfigMap.", [K8S_SECRETS]),
+  WK8101: meta("WK8101", M, G, "Deployment selector does not match template labels", "Align spec.selector with the pod template labels."),
+  WK8102: meta("WK8102", R, G, "Resource missing metadata labels", "Add metadata labels for filtering and tooling."),
+  WK8103: meta("WK8103", M, G, "Container missing name", "Add the required container `name`."),
+  WK8104: meta("WK8104", R, G, "Container ports not named", "Name ports for clearer Service/NetworkPolicy config."),
+  WK8105: meta("WK8105", R, G, "imagePullPolicy not explicit", "Set imagePullPolicy explicitly to avoid surprising defaults."),
+  WK8201: meta("WK8201", R, G, "Container missing resource limits", "Set CPU and memory limits."),
+  WK8202: meta("WK8202", M, G, "Privileged container", "Remove privileged: true; grant only the specific capabilities needed.", [K8S_PSS]),
+  WK8203: meta("WK8203", M, G, "Root filesystem is writable", "Set readOnlyRootFilesystem: true.", [K8S_PSS]),
+  WK8204: meta("WK8204", M, G, "Container may run as root", "Set runAsNonRoot: true (and a non-zero runAsUser).", [K8S_PSS]),
+  WK8205: meta("WK8205", M, G, "Capabilities not dropped", "drop: [ALL] and add back only what is required.", [K8S_PSS]),
+  WK8207: meta("WK8207", M, G, "Pod uses host network", "Remove hostNetwork; it bypasses network isolation.", [K8S_PSS]),
+  WK8208: meta("WK8208", M, G, "Pod shares host PID namespace", "Remove hostPID.", [K8S_PSS]),
+  WK8209: meta("WK8209", M, G, "Pod shares host IPC namespace", "Remove hostIPC.", [K8S_PSS]),
+  WK8301: meta("WK8301", R, G, "Container missing probes", "Add liveness and readiness probes."),
+  WK8302: meta("WK8302", R, G, "Deployment has a single replica", "Use replicas >= 2 for availability."),
+  WK8303: meta("WK8303", R, G, "No PodDisruptionBudget for an HA Deployment", "Add a PDB to protect availability during disruptions."),
+  WK8304: meta("WK8304", R, G, "SSL redirect without a certificate", "Provide a certificate and HTTPS listen-ports for the ssl-redirect annotation."),
+  WK8305: meta("WK8305", M, G, "Ingress backend port does not match the Service", "Point the Ingress backend at a declared Service port."),
+  WK8306: meta("WK8306", M, G, "Container command starts with a flag", "The first command element should be a binary, not a flag."),
+  WK8401: meta("WK8401", M, G, "shmSize exceeds the container memory limit", "Lower shmSize or raise the memory limit so the pod can schedule."),
+  WK8402: meta("WK8402", R, G, "RayCluster missing spec.rayVersion", "Set spec.rayVersion so KubeRay picks the right autoscaler image."),
+  WK8403: meta("WK8403", R, G, "rayVersion does not match the head image tag", "Align spec.rayVersion with the Ray version in the head container image."),
 };
 
 /** Look up catalog metadata for a check id, if known. */

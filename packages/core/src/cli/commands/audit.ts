@@ -7,6 +7,7 @@
 
 import { existsSync, readFileSync, readdirSync, statSync, writeFileSync } from "fs";
 import { join, relative } from "path";
+import { parseYAML } from "../../yaml";
 import { auditFiles, type AuditInput, type AuditFinding, type AuditLexicon, type ChecksProvider } from "../../audit/core";
 import { RULE_CATALOG } from "../../audit/catalog";
 import { renderMarkdown } from "../../audit/report";
@@ -111,6 +112,60 @@ export function discoverCiFiles(root: string): AuditInput[] {
   const gitlab = join(root, ".gitlab-ci.yml");
   if (existsSync(gitlab) && statSync(gitlab).isFile()) {
     inputs.push({ path: ".gitlab-ci.yml", content: readFileSync(gitlab, "utf-8"), lexicon: "gitlab" });
+  }
+  return inputs;
+}
+
+const WALK_SKIP = new Set(["node_modules", ".git", "dist", ".github", ".forgejo"]);
+const MAX_MANIFEST_FILES = 500;
+
+/** Recursively collect YAML file paths under a root, skipping noise dirs. */
+function walkYaml(dir: string, out: string[]): void {
+  if (out.length >= MAX_MANIFEST_FILES) return;
+  let entries;
+  try {
+    entries = readdirSync(dir, { withFileTypes: true });
+  } catch {
+    return;
+  }
+  for (const e of entries.sort((a, b) => (a.name < b.name ? -1 : 1))) {
+    if (out.length >= MAX_MANIFEST_FILES) return;
+    if (e.name.startsWith(".") && e.isDirectory()) continue;
+    if (WALK_SKIP.has(e.name)) continue;
+    const full = join(dir, e.name);
+    if (e.isDirectory()) walkYaml(full, out);
+    else if (isYaml(e.name)) out.push(full);
+  }
+}
+
+/** True if any YAML document in the content is a Kubernetes manifest. */
+function looksLikeK8s(content: string): boolean {
+  for (const doc of content.split(/\n---\n/)) {
+    const t = doc.trim();
+    if (!t) continue;
+    try {
+      const obj = parseYAML(t) as Record<string, unknown>;
+      if (obj && typeof obj.apiVersion === "string" && typeof obj.kind === "string") return true;
+    } catch {
+      // not parseable as a single doc — skip
+    }
+  }
+  return false;
+}
+
+/** Discover Kubernetes manifest files under a repo root (content-detected). */
+export function discoverManifests(root: string): AuditInput[] {
+  const files: string[] = [];
+  walkYaml(root, files);
+  const inputs: AuditInput[] = [];
+  for (const full of files) {
+    let content: string;
+    try {
+      content = readFileSync(full, "utf-8");
+    } catch {
+      continue;
+    }
+    if (looksLikeK8s(content)) inputs.push({ path: relative(root, full), content, lexicon: "k8s" });
   }
   return inputs;
 }
@@ -247,7 +302,7 @@ export async function auditCommand(options: AuditCommandOptions): Promise<AuditC
     if (!existsSync(options.path)) {
       return { success: false, output: "", findings: [], scanned: [], exitCode: 1, error: `Path not found: ${options.path}` };
     }
-    inputs = discoverCiFiles(options.path);
+    inputs = [...discoverCiFiles(options.path), ...discoverManifests(options.path)];
   }
 
   const scanned = inputs.map((i) => i.path);

@@ -9,10 +9,11 @@
 
 import { RULE_CATALOG, type RuleMeta } from "./catalog";
 
-const GROUPS: Array<{ heading: string; prefix: string; blurb: string }> = [
-  { heading: "GitHub Actions (GHA)", prefix: "GHA", blurb: "Also applied to Forgejo workflows, which are GitHub-dialect." },
-  { heading: "GitLab CI (WGL)", prefix: "WGL", blurb: "" },
-  { heading: "Forgejo (WFJ)", prefix: "WFJ", blurb: "" },
+const GROUPS: Array<{ heading: string; prefixes: string[]; blurb: string }> = [
+  { heading: "GitHub Actions (GHA)", prefixes: ["GHA"], blurb: "Also applied to Forgejo workflows, which are GitHub-dialect." },
+  { heading: "GitLab CI (WGL)", prefixes: ["WGL"], blurb: "" },
+  { heading: "Forgejo (WFJ)", prefixes: ["WFJ"], blurb: "" },
+  { heading: "Kubernetes (WK8 / ARGO)", prefixes: ["WK8", "ARGO"], blurb: "Run against Kubernetes manifests." },
 ];
 
 function ruleBlock(m: RuleMeta): string {
@@ -26,8 +27,8 @@ function ruleBlock(m: RuleMeta): string {
 /** Render the full audit rules reference page (frontmatter + body). */
 export function renderRulesReference(): string {
   const ids = Object.keys(RULE_CATALOG).sort();
-  const sections = GROUPS.map(({ heading, prefix, blurb }) => {
-    const blocks = ids.filter((id) => id.startsWith(prefix)).map((id) => ruleBlock(RULE_CATALOG[id]));
+  const sections = GROUPS.map(({ heading, prefixes, blurb }) => {
+    const blocks = ids.filter((id) => prefixes.some((p) => id.startsWith(p))).map((id) => ruleBlock(RULE_CATALOG[id]));
     if (blocks.length === 0) return "";
     return `## ${heading}\n${blurb ? `\n${blurb}\n` : ""}\n${blocks.join("\n\n")}`;
   }).filter(Boolean);

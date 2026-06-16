@@ -616,3 +616,203 @@ Use an action reference Forgejo can resolve (full URL or a mirrored action).
 **GitHub-hosted runner label with no Forgejo equivalent** — merge-worthy · guidance
 
 Use a runner label your Forgejo instance provides.
+
+## Kubernetes (WK8 / ARGO)
+
+Run against Kubernetes manifests.
+
+### ARGO002
+
+**Argo Application references an undeclared AppProject** — merge-worthy · guidance
+
+Declare the named AppProject or reference an existing project.
+
+### ARGO003
+
+**Argo Application targets an unregistered cluster** — merge-worthy · guidance
+
+Point spec.destination at a registered cluster or the in-cluster target.
+
+### ARGO005
+
+**Argo source.path may not resolve** — report-only · guidance
+
+Ensure the source path exists under the build root.
+
+### WK8005
+
+**Hardcoded secret in env var** — merge-worthy · guidance
+
+Use a secretKeyRef instead of a literal value, and rotate the secret.
+
+Authority: [Kubernetes — Good practices for Secrets](https://kubernetes.io/docs/concepts/security/secrets-good-practices/)
+
+### WK8006
+
+**Image uses :latest or no tag** — merge-worthy · guidance
+
+Pin the image to an explicit version tag (ideally a digest).
+
+Authority: [OSSF Scorecard — Pinned-Dependencies](https://github.com/ossf/scorecard/blob/main/docs/checks.md#pinned-dependencies)
+
+### WK8041
+
+**Hardcoded API key in env var** — merge-worthy · guidance
+
+Move the key to a Secret and rotate it.
+
+Authority: [Kubernetes — Good practices for Secrets](https://kubernetes.io/docs/concepts/security/secrets-good-practices/)
+
+### WK8042
+
+**Private key stored in a ConfigMap** — merge-worthy · guidance
+
+Store private keys in a Secret, not a ConfigMap.
+
+Authority: [Kubernetes — Good practices for Secrets](https://kubernetes.io/docs/concepts/security/secrets-good-practices/)
+
+### WK8101
+
+**Deployment selector does not match template labels** — merge-worthy · guidance
+
+Align spec.selector with the pod template labels.
+
+### WK8102
+
+**Resource missing metadata labels** — report-only · guidance
+
+Add metadata labels for filtering and tooling.
+
+### WK8103
+
+**Container missing name** — merge-worthy · guidance
+
+Add the required container `name`.
+
+### WK8104
+
+**Container ports not named** — report-only · guidance
+
+Name ports for clearer Service/NetworkPolicy config.
+
+### WK8105
+
+**imagePullPolicy not explicit** — report-only · guidance
+
+Set imagePullPolicy explicitly to avoid surprising defaults.
+
+### WK8201
+
+**Container missing resource limits** — report-only · guidance
+
+Set CPU and memory limits.
+
+### WK8202
+
+**Privileged container** — merge-worthy · guidance
+
+Remove privileged: true; grant only the specific capabilities needed.
+
+Authority: [Kubernetes — Pod Security Standards](https://kubernetes.io/docs/concepts/security/pod-security-standards/)
+
+### WK8203
+
+**Root filesystem is writable** — merge-worthy · guidance
+
+Set readOnlyRootFilesystem: true.
+
+Authority: [Kubernetes — Pod Security Standards](https://kubernetes.io/docs/concepts/security/pod-security-standards/)
+
+### WK8204
+
+**Container may run as root** — merge-worthy · guidance
+
+Set runAsNonRoot: true (and a non-zero runAsUser).
+
+Authority: [Kubernetes — Pod Security Standards](https://kubernetes.io/docs/concepts/security/pod-security-standards/)
+
+### WK8205
+
+**Capabilities not dropped** — merge-worthy · guidance
+
+drop: [ALL] and add back only what is required.
+
+Authority: [Kubernetes — Pod Security Standards](https://kubernetes.io/docs/concepts/security/pod-security-standards/)
+
+### WK8207
+
+**Pod uses host network** — merge-worthy · guidance
+
+Remove hostNetwork; it bypasses network isolation.
+
+Authority: [Kubernetes — Pod Security Standards](https://kubernetes.io/docs/concepts/security/pod-security-standards/)
+
+### WK8208
+
+**Pod shares host PID namespace** — merge-worthy · guidance
+
+Remove hostPID.
+
+Authority: [Kubernetes — Pod Security Standards](https://kubernetes.io/docs/concepts/security/pod-security-standards/)
+
+### WK8209
+
+**Pod shares host IPC namespace** — merge-worthy · guidance
+
+Remove hostIPC.
+
+Authority: [Kubernetes — Pod Security Standards](https://kubernetes.io/docs/concepts/security/pod-security-standards/)
+
+### WK8301
+
+**Container missing probes** — report-only · guidance
+
+Add liveness and readiness probes.
+
+### WK8302
+
+**Deployment has a single replica** — report-only · guidance
+
+Use replicas >= 2 for availability.
+
+### WK8303
+
+**No PodDisruptionBudget for an HA Deployment** — report-only · guidance
+
+Add a PDB to protect availability during disruptions.
+
+### WK8304
+
+**SSL redirect without a certificate** — report-only · guidance
+
+Provide a certificate and HTTPS listen-ports for the ssl-redirect annotation.
+
+### WK8305
+
+**Ingress backend port does not match the Service** — merge-worthy · guidance
+
+Point the Ingress backend at a declared Service port.
+
+### WK8306
+
+**Container command starts with a flag** — merge-worthy · guidance
+
+The first command element should be a binary, not a flag.
+
+### WK8401
+
+**shmSize exceeds the container memory limit** — merge-worthy · guidance
+
+Lower shmSize or raise the memory limit so the pod can schedule.
+
+### WK8402
+
+**RayCluster missing spec.rayVersion** — report-only · guidance
+
+Set spec.rayVersion so KubeRay picks the right autoscaler image.
+
+### WK8403
+
+**rayVersion does not match the head image tag** — report-only · guidance
+
+Align spec.rayVersion with the Ray version in the head container image.
