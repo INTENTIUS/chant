@@ -1,5 +1,5 @@
 import { describe, test, expect } from "vitest";
-import { proveFix, unifiedDiff } from "./proof";
+import { proveFix, unifiedDiff, extractUnpinnedImages } from "./proof";
 
 const WF = `name: CI
 on:
@@ -71,6 +71,47 @@ describe("proveFix — permissions", () => {
     expect(res.applied).toBe(true);
     expect(res.patched).toContain("permissions:\n  contents: read");
     expect(res.patched).not.toContain("write-all");
+  });
+});
+
+describe("proveFix — pin image digest (GHA030/WGL031)", () => {
+  const WF_IMG = `name: CI
+on:
+  push:
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    container:
+      image: node:20
+`;
+  const digest = "sha256:" + "a".repeat(64);
+
+  test("pins an image to a digest and the diff shows only that line", () => {
+    const res = proveFix("GHA030", WF_IMG, { resolveDigest: () => digest });
+    expect(res.applied).toBe(true);
+    expect(res.patched).toContain(`image: node:20@${digest}`);
+    const removed = res.diff!.split("\n").filter((l) => l.startsWith("-") && !l.startsWith("---"));
+    const added = res.diff!.split("\n").filter((l) => l.startsWith("+") && !l.startsWith("+++"));
+    expect(removed).toEqual(["-      image: node:20"]);
+    expect(added).toEqual([`+      image: node:20@${digest}`]);
+  });
+
+  test("needs a value when no digest can be resolved", () => {
+    const res = proveFix("GHA030", WF_IMG, { resolveDigest: () => undefined });
+    expect(res.applied).toBe(false);
+    expect(res.reason).toBe("needs-input");
+  });
+
+  test("WGL031 uses the same image-pin fix", () => {
+    const gl = "build:\n  image: python:3.12\n  script:\n    - echo hi\n";
+    const res = proveFix("WGL031", gl, { resolveDigest: () => digest });
+    expect(res.applied).toBe(true);
+    expect(res.patched).toContain(`image: python:3.12@${digest}`);
+  });
+
+  test("extractUnpinnedImages finds pinnable images, skips digested/variable", () => {
+    const content = "image: node:20\nimage: foo@sha256:" + "b".repeat(64) + "\nimage: $REG/x:1\n";
+    expect(extractUnpinnedImages(content)).toEqual(["node:20"]);
   });
 });
 

@@ -17,6 +17,8 @@ import { RULE_CATALOG } from "./catalog";
 export interface ProveOptions {
   /** Resolve an action ref (e.g. "actions/checkout@v4") to a 40-char SHA. */
   resolveSha?: (action: string, ref: string) => string | undefined;
+  /** Resolve a container image (e.g. "node:20") to a "sha256:..." digest. */
+  resolveDigest?: (image: string) => string | undefined;
 }
 
 export interface ProofResult {
@@ -41,6 +43,7 @@ export interface ProofResult {
 
 const SHA_RE = /^[0-9a-f]{40}$/;
 const USES_RE = /^(\s*-?\s*uses:\s*)([^@\s'"]+)@([^\s'"#]+)(.*)$/;
+const IMAGE_RE = /^(\s*image:\s*)(["']?)([^\s"'#]+)\2(.*)$/;
 
 function notApplied(checkId: string, reason: "noop" | "needs-input" | "guidance", note: string): ProofResult {
   return { checkId, applied: false, reason, note };
@@ -84,6 +87,47 @@ function pinActions(content: string, opts: ProveOptions): { patched: string; cha
   return { patched: lines.join("\n"), changed, needsSha };
 }
 
+/** A container image is unpinnable here if it lacks a digest and isn't a variable. */
+function isPinnableImage(ref: string): boolean {
+  return !ref.includes("@sha256:") && !ref.includes("$");
+}
+
+/** Extract unpinned `image:` references (deduped) from CI YAML. */
+export function extractUnpinnedImages(content: string): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const line of content.split("\n")) {
+    const m = line.match(IMAGE_RE);
+    if (!m) continue;
+    const ref = m[3];
+    if (!isPinnableImage(ref) || seen.has(ref)) continue;
+    seen.add(ref);
+    out.push(ref);
+  }
+  return out;
+}
+
+/** Pin unpinned `image:` references to a digest via the resolver. */
+function pinImages(content: string, opts: ProveOptions): { patched: string; changed: boolean; needsValue: boolean } {
+  const lines = content.split("\n");
+  let changed = false;
+  let needsValue = false;
+  for (let i = 0; i < lines.length; i++) {
+    const m = lines[i].match(IMAGE_RE);
+    if (!m) continue;
+    const [, prefix, , ref, rest] = m;
+    if (!isPinnableImage(ref)) continue;
+    const digest = opts.resolveDigest?.(ref);
+    if (!digest) {
+      needsValue = true;
+      continue;
+    }
+    lines[i] = `${prefix}${ref}@${digest}${rest.replace(/\s*#.*$/, "")}`;
+    changed = true;
+  }
+  return { patched: lines.join("\n"), changed, needsValue };
+}
+
 /** Insert a least-privilege top-level permissions block if absent. */
 function addPermissions(content: string): { patched: string; changed: boolean } {
   if (/^permissions:/m.test(content)) return { patched: content, changed: false };
@@ -120,6 +164,15 @@ export function proveFix(checkId: string, content: string, opts: ProveOptions = 
         return notApplied(checkId, "needs-input", "A commit SHA is required to pin; resolve it (e.g. via the fetch layer) and re-run.");
       }
       break;
+    case "GHA030":
+    case "WGL031": {
+      const r = pinImages(content, opts);
+      if (!r.changed && r.needsValue) {
+        return notApplied(checkId, "needs-input", "A registry digest is required to pin the image; resolve it (e.g. via the fetch layer) and re-run.");
+      }
+      result = r;
+      break;
+    }
     case "GHA017":
       result = addPermissions(content);
       break;

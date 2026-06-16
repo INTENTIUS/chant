@@ -10,8 +10,8 @@ import { join, relative } from "path";
 import { auditFiles, type AuditInput, type AuditFinding, type AuditLexicon } from "../../audit/core";
 import { RULE_CATALOG } from "../../audit/catalog";
 import { renderMarkdown } from "../../audit/report";
-import { fetchCiFiles, resolveActionSha, FetchError } from "../../audit/fetch";
-import { extractUnpinnedActions } from "../../audit/proof";
+import { fetchCiFiles, resolveActionSha, resolveImageDigest, FetchError } from "../../audit/fetch";
+import { extractUnpinnedActions, extractUnpinnedImages } from "../../audit/proof";
 import type { ProveOptions } from "../../audit/proof";
 import type { Severity } from "../../lint/rule";
 
@@ -210,32 +210,46 @@ export async function auditCommand(options: AuditCommandOptions): Promise<AuditC
       output = renderSarif(findings);
       break;
     case "markdown": {
-      // For remote audits, resolve action SHAs so pin fixes render as inline
-      // diffs. Pre-resolved into a sync map; render stays synchronous.
+      // For remote audits, resolve action SHAs and image digests so pin fixes
+      // render as inline diffs. Pre-resolved into sync maps; render stays sync.
       let resolveSha: ProveOptions["resolveSha"];
+      let resolveDigest: ProveOptions["resolveDigest"];
       if (isUrl) {
         // Action SHAs always resolve against api.github.com, so use the GitHub
         // token regardless of which host the repo lives on.
         const token = githubToken();
         const refs = new Map<string, { action: string; ref: string }>();
+        const images = new Set<string>();
         for (const inp of inputs) {
           for (const a of extractUnpinnedActions(inp.content)) refs.set(`${a.action}@${a.ref}`, a);
+          for (const img of extractUnpinnedImages(inp.content)) images.add(img);
         }
-        const resolved = await Promise.all(
-          [...refs.values()].map(async (a) => {
-            const key = `${a.action}@${a.ref}`;
-            const sha = await resolveActionSha(a.action, a.ref, { token, fetchImpl: options.fetchImpl });
-            return [key, sha] as [string, string | undefined];
-          }),
-        );
+        const [resolvedShas, resolvedDigests] = await Promise.all([
+          Promise.all(
+            [...refs.values()].map(async (a) => {
+              const sha = await resolveActionSha(a.action, a.ref, { token, fetchImpl: options.fetchImpl });
+              return [`${a.action}@${a.ref}`, sha] as [string, string | undefined];
+            }),
+          ),
+          Promise.all(
+            [...images].map(async (img) => {
+              const digest = await resolveImageDigest(img, { fetchImpl: options.fetchImpl });
+              return [img, digest] as [string, string | undefined];
+            }),
+          ),
+        ]);
         const shaMap = new Map<string, string>();
-        for (const [key, sha] of resolved) if (sha) shaMap.set(key, sha);
+        for (const [key, sha] of resolvedShas) if (sha) shaMap.set(key, sha);
         if (shaMap.size > 0) resolveSha = (action, ref) => shaMap.get(`${action}@${ref}`);
+        const digestMap = new Map<string, string>();
+        for (const [img, digest] of resolvedDigests) if (digest) digestMap.set(img, digest);
+        if (digestMap.size > 0) resolveDigest = (img) => digestMap.get(img);
       }
       output = renderMarkdown(findings, {
         target: options.path,
         files: inputs.map((i) => ({ path: i.path, content: i.content })),
         resolveSha,
+        resolveDigest,
       });
       break;
     }
