@@ -1,6 +1,6 @@
 {
   "name": "@intentius/chant-lexicon-temporal",
-  "version": "0.5.0",
+  "version": "0.6.0",
   "description": "Temporal lexicon for chant — server deployment, namespaces, search attributes, and schedules",
   "license": "Apache-2.0",
   "homepage": "https://intentius.io/chant",

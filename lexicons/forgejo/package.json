@@ -1,6 +1,6 @@
 {
   "name": "@intentius/chant-lexicon-forgejo",
-  "version": "0.5.0",
+  "version": "0.6.0",
   "description": "Forgejo / Codeberg / Gitea Actions lexicon for chant — a thin GitHub Actions dialect",
   "license": "Apache-2.0",
   "homepage": "https://intentius.io/chant",
