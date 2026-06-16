@@ -90,6 +90,10 @@ const AWS_SEC: Authority = {
   name: "AWS — Security Pillar (Well-Architected)",
   url: "https://docs.aws.amazon.com/wellarchitected/latest/security-pillar/welcome.html",
 };
+const AZ_SEC: Authority = {
+  name: "Microsoft Cloud Security Benchmark",
+  url: "https://learn.microsoft.com/en-us/security/benchmark/azure/",
+};
 
 function meta(
   id: string,
@@ -270,6 +274,28 @@ export const RULE_CATALOG: Record<string, RuleMeta> = {
   WAW035: meta("WAW035", R, G, "Solr container missing nofile ulimit", "Set a nofile ulimit >= 65535."),
   WAW036: meta("WAW036", M, G, "Non-ASCII characters in resource properties", "Remove non-ASCII characters rejected at changeset time."),
   WAW037: meta("WAW037", M, G, "Null values in resource properties", "Fix the invalid AttrRef producing null property values."),
+
+  // ── Azure ARM (AZR) ────────────────────────────────────────────────
+  AZR010: meta("AZR010", R, G, "Redundant dependsOn", "Remove dependsOn already implied by reference()/resourceId()."),
+  AZR011: meta("AZR011", M, G, "Missing or invalid apiVersion", "Set a valid YYYY-MM-DD apiVersion on every resource."),
+  AZR012: meta("AZR012", R, G, "Deprecated API version", "Move to a current apiVersion."),
+  AZR013: meta("AZR013", M, G, "Resource missing location", "Add the required location property."),
+  AZR014: meta("AZR014", M, G, "Storage account allows public blob access", "Set allowBlobPublicAccess to false.", [AZ_SEC]),
+  AZR015: meta("AZR015", M, G, "Storage account missing encryption", "Enable encryption services for data at rest.", [AZ_SEC]),
+  AZR016: meta("AZR016", R, G, "Key Vault soft-delete not enabled", "Enable soft-delete."),
+  AZR017: meta("AZR017", R, G, "Key Vault purge protection not enabled", "Enable purge protection."),
+  AZR018: meta("AZR018", R, G, "SQL Server missing auditing", "Enable auditing for compliance and threat detection."),
+  AZR019: meta("AZR019", M, G, "SQL database missing TDE", "Enable Transparent Data Encryption.", [AZ_SEC]),
+  AZR020: meta("AZR020", R, G, "App Service missing managed identity", "Enable a system- or user-assigned identity."),
+  AZR021: meta("AZR021", M, G, "App Service not HTTPS-only", "Set httpsOnly to true.", [AZ_SEC]),
+  AZR022: meta("AZR022", M, G, "App Service min TLS below 1.2", "Set minTlsVersion to 1.2+.", [AZ_SEC]),
+  AZR023: meta("AZR023", R, G, "VM not using a managed disk", "Use a managed disk."),
+  AZR024: meta("AZR024", R, G, "VM missing boot diagnostics", "Enable boot diagnostics."),
+  AZR025: meta("AZR025", R, G, "AKS cluster missing RBAC", "Enable Kubernetes RBAC."),
+  AZR026: meta("AZR026", R, G, "AKS cluster missing network policy", "Configure a networkPolicy."),
+  AZR027: meta("AZR027", M, G, "Container Registry admin user enabled", "Disable the admin user; use Azure AD / service principals.", [AZ_SEC]),
+  AZR028: meta("AZR028", R, G, "Network interface missing NSG", "Associate an NSG to control traffic."),
+  AZR029: meta("AZR029", M, G, "Managed disk missing encryption", "Enable encryption for data at rest.", [AZ_SEC]),
 };
 
 /** Look up catalog metadata for a check id, if known. */

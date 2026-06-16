@@ -16,6 +16,7 @@ const GROUPS: Array<{ heading: string; prefixes: string[]; blurb: string }> = [
   { heading: "Kubernetes (WK8 / ARGO)", prefixes: ["WK8", "ARGO"], blurb: "Run against Kubernetes manifests." },
   { heading: "Docker (DKRD)", prefixes: ["DKRD"], blurb: "Run against Dockerfiles and Compose files." },
   { heading: "AWS CloudFormation (WAW / COR / EXT)", prefixes: ["WAW", "COR", "EXT"], blurb: "Run against CloudFormation templates (JSON or YAML)." },
+  { heading: "Azure ARM (AZR)", prefixes: ["AZR"], blurb: "Run against ARM deployment templates (JSON)." },
 ];
 
 function ruleBlock(m: RuleMeta): string {

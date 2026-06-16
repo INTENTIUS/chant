@@ -1056,3 +1056,141 @@ Remove non-ASCII characters rejected at changeset time.
 **Null values in resource properties** — merge-worthy · guidance
 
 Fix the invalid AttrRef producing null property values.
+
+## Azure ARM (AZR)
+
+Run against ARM deployment templates (JSON).
+
+### AZR010
+
+**Redundant dependsOn** — report-only · guidance
+
+Remove dependsOn already implied by reference()/resourceId().
+
+### AZR011
+
+**Missing or invalid apiVersion** — merge-worthy · guidance
+
+Set a valid YYYY-MM-DD apiVersion on every resource.
+
+### AZR012
+
+**Deprecated API version** — report-only · guidance
+
+Move to a current apiVersion.
+
+### AZR013
+
+**Resource missing location** — merge-worthy · guidance
+
+Add the required location property.
+
+### AZR014
+
+**Storage account allows public blob access** — merge-worthy · guidance
+
+Set allowBlobPublicAccess to false.
+
+Authority: [Microsoft Cloud Security Benchmark](https://learn.microsoft.com/en-us/security/benchmark/azure/)
+
+### AZR015
+
+**Storage account missing encryption** — merge-worthy · guidance
+
+Enable encryption services for data at rest.
+
+Authority: [Microsoft Cloud Security Benchmark](https://learn.microsoft.com/en-us/security/benchmark/azure/)
+
+### AZR016
+
+**Key Vault soft-delete not enabled** — report-only · guidance
+
+Enable soft-delete.
+
+### AZR017
+
+**Key Vault purge protection not enabled** — report-only · guidance
+
+Enable purge protection.
+
+### AZR018
+
+**SQL Server missing auditing** — report-only · guidance
+
+Enable auditing for compliance and threat detection.
+
+### AZR019
+
+**SQL database missing TDE** — merge-worthy · guidance
+
+Enable Transparent Data Encryption.
+
+Authority: [Microsoft Cloud Security Benchmark](https://learn.microsoft.com/en-us/security/benchmark/azure/)
+
+### AZR020
+
+**App Service missing managed identity** — report-only · guidance
+
+Enable a system- or user-assigned identity.
+
+### AZR021
+
+**App Service not HTTPS-only** — merge-worthy · guidance
+
+Set httpsOnly to true.
+
+Authority: [Microsoft Cloud Security Benchmark](https://learn.microsoft.com/en-us/security/benchmark/azure/)
+
+### AZR022
+
+**App Service min TLS below 1.2** — merge-worthy · guidance
+
+Set minTlsVersion to 1.2+.
+
+Authority: [Microsoft Cloud Security Benchmark](https://learn.microsoft.com/en-us/security/benchmark/azure/)
+
+### AZR023
+
+**VM not using a managed disk** — report-only · guidance
+
+Use a managed disk.
+
+### AZR024
+
+**VM missing boot diagnostics** — report-only · guidance
+
+Enable boot diagnostics.
+
+### AZR025
+
+**AKS cluster missing RBAC** — report-only · guidance
+
+Enable Kubernetes RBAC.
+
+### AZR026
+
+**AKS cluster missing network policy** — report-only · guidance
+
+Configure a networkPolicy.
+
+### AZR027
+
+**Container Registry admin user enabled** — merge-worthy · guidance
+
+Disable the admin user; use Azure AD / service principals.
+
+Authority: [Microsoft Cloud Security Benchmark](https://learn.microsoft.com/en-us/security/benchmark/azure/)
+
+### AZR028
+
+**Network interface missing NSG** — report-only · guidance
+
+Associate an NSG to control traffic.
+
+### AZR029
+
+**Managed disk missing encryption** — merge-worthy · guidance
+
+Enable encryption for data at rest.
+
+Authority: [Microsoft Cloud Security Benchmark](https://learn.microsoft.com/en-us/security/benchmark/azure/)
