@@ -146,19 +146,52 @@ function readSafe(full: string): string | undefined {
   }
 }
 
-/** True if any YAML document in the content is a Kubernetes manifest. */
+const CNRM = "cnrm.cloud.google.com";
+
+/** True if any YAML doc is a Kubernetes manifest (excluding GCP Config Connector). */
 function looksLikeK8s(content: string): boolean {
   for (const doc of content.split(/\n---\n/)) {
     const t = doc.trim();
     if (!t) continue;
     try {
       const obj = parseYAML(t) as Record<string, unknown>;
-      if (obj && typeof obj.apiVersion === "string" && typeof obj.kind === "string") return true;
+      const apiVersion = obj?.apiVersion;
+      if (typeof apiVersion === "string" && typeof obj.kind === "string" && !apiVersion.includes(CNRM)) return true;
     } catch {
       // not parseable as a single doc — skip
     }
   }
   return false;
+}
+
+/** True if any YAML doc is a GCP Config Connector resource (cnrm.cloud.google.com). */
+function looksLikeGcp(content: string): boolean {
+  for (const doc of content.split(/\n---\n/)) {
+    const t = doc.trim();
+    if (!t) continue;
+    try {
+      const obj = parseYAML(t) as Record<string, unknown>;
+      if (typeof obj?.apiVersion === "string" && obj.apiVersion.includes(CNRM)) return true;
+    } catch {
+      // skip
+    }
+  }
+  return false;
+}
+
+/** Discover GCP Config Connector manifests under a repo root. */
+export function discoverGcp(root: string): AuditInput[] {
+  const files: string[] = [];
+  walkFiles(root, files);
+  const inputs: AuditInput[] = [];
+  for (const full of files) {
+    if (!isYaml(basename(full))) continue;
+    const content = readSafe(full);
+    if (content !== undefined && looksLikeGcp(content)) {
+      inputs.push({ path: relative(root, full), content, lexicon: "gcp" });
+    }
+  }
+  return inputs;
 }
 
 /** Discover Kubernetes manifest files under a repo root (content-detected). */
@@ -418,6 +451,7 @@ export async function auditCommand(options: AuditCommandOptions): Promise<AuditC
       ...discoverDocker(options.path),
       ...discoverCloudFormation(options.path),
       ...discoverArm(options.path),
+      ...discoverGcp(options.path),
     ];
   }
 

@@ -1,6 +1,6 @@
 import { describe, test, expect } from "vitest";
 import { fileURLToPath } from "url";
-import { auditCommand, discoverCiFiles, discoverManifests, discoverDocker, discoverCloudFormation, discoverArm, tokenForHost, coverageNotes } from "./audit";
+import { auditCommand, discoverCiFiles, discoverManifests, discoverDocker, discoverCloudFormation, discoverArm, discoverGcp, tokenForHost, coverageNotes } from "./audit";
 import { MissingLexiconError, type AuditInput } from "../../audit/core";
 import { readFileSync, existsSync, rmSync } from "fs";
 import { tmpdir } from "os";
@@ -82,6 +82,21 @@ describe("auditCommand", () => {
     expect(result.success).toBe(true);
     const ids = new Set(result.findings.map((f) => f.checkId));
     expect(ids).toContain("AZR014"); // storage allows public blob access
+  });
+
+  test("discovers and audits GCP Config Connector (not misclassified as k8s)", async () => {
+    const repo = fileURLToPath(new URL("./__fixtures__/audit-gcp", import.meta.url));
+    const gcp = discoverGcp(repo);
+    expect(gcp.map((f) => f.path).sort()).toEqual(["bucket.yaml", "firewall.yaml"]);
+    // cnrm manifests must NOT also be picked up as k8s.
+    expect(discoverManifests(repo)).toEqual([]);
+
+    const result = await auditCommand({ path: repo, format: "stylish" });
+    expect(result.success).toBe(true);
+    const ids = new Set(result.findings.map((f) => f.checkId));
+    expect(ids).toContain("WGC109"); // firewall open to 0.0.0.0/0
+    // k8s checks did not run on these.
+    expect([...ids].some((id) => id.startsWith("WK8"))).toBe(false);
   });
 
   test("discovers CI files under a repo root", () => {

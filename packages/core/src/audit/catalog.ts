@@ -94,6 +94,10 @@ const AZ_SEC: Authority = {
   name: "Microsoft Cloud Security Benchmark",
   url: "https://learn.microsoft.com/en-us/security/benchmark/azure/",
 };
+const GCP_SEC: Authority = {
+  name: "Google Cloud — Security best practices",
+  url: "https://cloud.google.com/security/best-practices",
+};
 
 function meta(
   id: string,
@@ -296,6 +300,31 @@ export const RULE_CATALOG: Record<string, RuleMeta> = {
   AZR027: meta("AZR027", M, G, "Container Registry admin user enabled", "Disable the admin user; use Azure AD / service principals.", [AZ_SEC]),
   AZR028: meta("AZR028", R, G, "Network interface missing NSG", "Associate an NSG to control traffic."),
   AZR029: meta("AZR029", M, G, "Managed disk missing encryption", "Enable encryption for data at rest.", [AZ_SEC]),
+
+  // ── GCP Config Connector (WGC) ─────────────────────────────────────
+  WGC101: meta("WGC101", M, G, "Storage/SQL without encryption configuration", "Configure encryption (e.g. a CMEK key) for data at rest.", [GCP_SEC]),
+  WGC102: meta("WGC102", M, G, "Public IAM member (allUsers/allAuthenticatedUsers)", "Remove allUsers/allAuthenticatedUsers bindings.", [GCP_SEC]),
+  WGC103: meta("WGC103", R, G, "Missing project-id annotation", "Add the cnrm.cloud.google.com/project-id annotation."),
+  WGC104: meta("WGC104", M, G, "Bucket without uniform bucket-level access", "Enable uniformBucketLevelAccess.", [GCP_SEC]),
+  WGC105: meta("WGC105", M, G, "Cloud SQL open to 0.0.0.0/0", "Restrict authorizedNetworks to known sources.", [GCP_SEC]),
+  WGC106: meta("WGC106", R, G, "Missing deletion-policy annotation", "Add the cnrm.cloud.google.com/deletion-policy annotation."),
+  WGC107: meta("WGC107", R, G, "Bucket versioning disabled", "Enable object versioning."),
+  WGC108: meta("WGC108", R, G, "Cloud SQL backups disabled", "Enable backup configuration."),
+  WGC109: meta("WGC109", M, G, "Firewall open to 0.0.0.0/0", "Restrict sourceRanges to known sources.", [GCP_SEC]),
+  WGC110: meta("WGC110", M, G, "KMS key without rotation", "Set a rotationPeriod on the CryptoKey.", [GCP_SEC]),
+  WGC111: meta("WGC111", M, G, "Reference to an undefined resource", "Point the reference at a resource in the output."),
+  WGC112: meta("WGC112", M, G, "Missing or invalid apiVersion", "Set a valid cnrm.cloud.google.com apiVersion."),
+  WGC113: meta("WGC113", R, G, "Alpha API version", "Move to a beta/GA API version."),
+  WGC201: meta("WGC201", R, G, "Missing managed-by label", "Add the app.kubernetes.io/managed-by label."),
+  WGC202: meta("WGC202", M, G, "Cluster without Workload Identity", "Enable Workload Identity on the ContainerCluster.", [GCP_SEC]),
+  WGC203: meta("WGC203", M, G, "Node pool uses broad cloud-platform scope", "Use narrowly-scoped OAuth scopes instead of cloud-platform.", [GCP_SEC]),
+  WGC204: meta("WGC204", R, G, "Compute instance without Shielded VM", "Enable Shielded VM configuration."),
+  WGC301: meta("WGC301", R, G, "No IAMAuditConfig found", "Configure audit logging via IAMAuditConfig."),
+  WGC302: meta("WGC302", R, G, "No Service (enabled APIs) found", "Declare the GCP APIs you depend on."),
+  WGC303: meta("WGC303", R, G, "No VPC Service Controls perimeter", "Consider an AccessContextManager ServicePerimeter."),
+  WGC401: meta("WGC401", M, G, "Unknown field in resource spec", "Remove the unknown spec field."),
+  WGC402: meta("WGC402", M, G, "Missing required spec field", "Add the required spec field."),
+  WGC403: meta("WGC403", M, G, "Spec field has wrong type/structure", "Fix the field's type/structure."),
 };
 
 /** Look up catalog metadata for a check id, if known. */

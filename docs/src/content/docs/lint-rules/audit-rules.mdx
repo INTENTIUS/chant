@@ -1194,3 +1194,161 @@ Associate an NSG to control traffic.
 Enable encryption for data at rest.
 
 Authority: [Microsoft Cloud Security Benchmark](https://learn.microsoft.com/en-us/security/benchmark/azure/)
+
+## GCP Config Connector (WGC)
+
+Run against Config Connector (cnrm.cloud.google.com) manifests.
+
+### WGC101
+
+**Storage/SQL without encryption configuration** — merge-worthy · guidance
+
+Configure encryption (e.g. a CMEK key) for data at rest.
+
+Authority: [Google Cloud — Security best practices](https://cloud.google.com/security/best-practices)
+
+### WGC102
+
+**Public IAM member (allUsers/allAuthenticatedUsers)** — merge-worthy · guidance
+
+Remove allUsers/allAuthenticatedUsers bindings.
+
+Authority: [Google Cloud — Security best practices](https://cloud.google.com/security/best-practices)
+
+### WGC103
+
+**Missing project-id annotation** — report-only · guidance
+
+Add the cnrm.cloud.google.com/project-id annotation.
+
+### WGC104
+
+**Bucket without uniform bucket-level access** — merge-worthy · guidance
+
+Enable uniformBucketLevelAccess.
+
+Authority: [Google Cloud — Security best practices](https://cloud.google.com/security/best-practices)
+
+### WGC105
+
+**Cloud SQL open to 0.0.0.0/0** — merge-worthy · guidance
+
+Restrict authorizedNetworks to known sources.
+
+Authority: [Google Cloud — Security best practices](https://cloud.google.com/security/best-practices)
+
+### WGC106
+
+**Missing deletion-policy annotation** — report-only · guidance
+
+Add the cnrm.cloud.google.com/deletion-policy annotation.
+
+### WGC107
+
+**Bucket versioning disabled** — report-only · guidance
+
+Enable object versioning.
+
+### WGC108
+
+**Cloud SQL backups disabled** — report-only · guidance
+
+Enable backup configuration.
+
+### WGC109
+
+**Firewall open to 0.0.0.0/0** — merge-worthy · guidance
+
+Restrict sourceRanges to known sources.
+
+Authority: [Google Cloud — Security best practices](https://cloud.google.com/security/best-practices)
+
+### WGC110
+
+**KMS key without rotation** — merge-worthy · guidance
+
+Set a rotationPeriod on the CryptoKey.
+
+Authority: [Google Cloud — Security best practices](https://cloud.google.com/security/best-practices)
+
+### WGC111
+
+**Reference to an undefined resource** — merge-worthy · guidance
+
+Point the reference at a resource in the output.
+
+### WGC112
+
+**Missing or invalid apiVersion** — merge-worthy · guidance
+
+Set a valid cnrm.cloud.google.com apiVersion.
+
+### WGC113
+
+**Alpha API version** — report-only · guidance
+
+Move to a beta/GA API version.
+
+### WGC201
+
+**Missing managed-by label** — report-only · guidance
+
+Add the app.kubernetes.io/managed-by label.
+
+### WGC202
+
+**Cluster without Workload Identity** — merge-worthy · guidance
+
+Enable Workload Identity on the ContainerCluster.
+
+Authority: [Google Cloud — Security best practices](https://cloud.google.com/security/best-practices)
+
+### WGC203
+
+**Node pool uses broad cloud-platform scope** — merge-worthy · guidance
+
+Use narrowly-scoped OAuth scopes instead of cloud-platform.
+
+Authority: [Google Cloud — Security best practices](https://cloud.google.com/security/best-practices)
+
+### WGC204
+
+**Compute instance without Shielded VM** — report-only · guidance
+
+Enable Shielded VM configuration.
+
+### WGC301
+
+**No IAMAuditConfig found** — report-only · guidance
+
+Configure audit logging via IAMAuditConfig.
+
+### WGC302
+
+**No Service (enabled APIs) found** — report-only · guidance
+
+Declare the GCP APIs you depend on.
+
+### WGC303
+
+**No VPC Service Controls perimeter** — report-only · guidance
+
+Consider an AccessContextManager ServicePerimeter.
+
+### WGC401
+
+**Unknown field in resource spec** — merge-worthy · guidance
+
+Remove the unknown spec field.
+
+### WGC402
+
+**Missing required spec field** — merge-worthy · guidance
+
+Add the required spec field.
+
+### WGC403
+
+**Spec field has wrong type/structure** — merge-worthy · guidance
+
+Fix the field's type/structure.
