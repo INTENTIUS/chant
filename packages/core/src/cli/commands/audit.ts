@@ -297,6 +297,31 @@ export function discoverArm(root: string): AuditInput[] {
   return inputs;
 }
 
+/**
+ * Discover Helm charts. A chart (directory with Chart.yaml) is one bundle: the
+ * helm checks read `output.files` keyed by chart-relative path, so all of the
+ * chart's files are collected into a single AuditInput.files map.
+ */
+export function discoverHelm(root: string): AuditInput[] {
+  const all: string[] = [];
+  walkFiles(root, all);
+  const chartDirs = all.filter((f) => basename(f) === "Chart.yaml").map((f) => f.slice(0, -("/Chart.yaml".length)));
+  const inputs: AuditInput[] = [];
+  for (const dir of chartDirs) {
+    const prefix = dir + "/";
+    const files: Record<string, string> = {};
+    for (const f of all) {
+      if (!f.startsWith(prefix)) continue;
+      const content = readSafe(f);
+      if (content !== undefined) files[f.slice(prefix.length)] = content;
+    }
+    if (files["Chart.yaml"] === undefined) continue;
+    const chartPath = relative(root, dir) || ".";
+    inputs.push({ path: chartPath, content: files["Chart.yaml"], lexicon: "helm", files });
+  }
+  return inputs;
+}
+
 /** Discover Docker artifacts: Dockerfiles (by name) and Compose files (by `services:`). */
 export function discoverDocker(root: string): AuditInput[] {
   const files: string[] = [];
@@ -445,14 +470,20 @@ export async function auditCommand(options: AuditCommandOptions): Promise<AuditC
     if (!existsSync(options.path)) {
       return { success: false, output: "", findings: [], scanned: [], exitCode: 1, error: `Path not found: ${options.path}` };
     }
-    inputs = [
+    // Helm claims whole chart directories; exclude chart-internal files from the
+    // other discoverers so raw templates aren't double-audited as loose manifests.
+    const helm = discoverHelm(options.path);
+    const chartPrefixes = helm.map((h) => (h.path === "." ? "" : `${h.path}/`));
+    const underChart = (p: string): boolean => chartPrefixes.some((pre) => (pre === "" ? true : p.startsWith(pre)));
+    const others = [
       ...discoverCiFiles(options.path),
       ...discoverManifests(options.path),
       ...discoverDocker(options.path),
       ...discoverCloudFormation(options.path),
       ...discoverArm(options.path),
       ...discoverGcp(options.path),
-    ];
+    ].filter((i) => !underChart(i.path));
+    inputs = [...others, ...helm];
   }
 
   const scanned = inputs.map((i) => i.path);

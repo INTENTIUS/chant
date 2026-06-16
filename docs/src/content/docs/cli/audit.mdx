@@ -26,6 +26,7 @@ What it scans:
 - AWS CloudFormation — `.json`/`.yaml`/`.yml`/`.template` with `AWSTemplateFormatVersion` or `AWS::*` resources, for a local path — runs the `WAW*`/`COR*`/`EXT*` checks (public S3, open security groups, IAM wildcards, unencrypted storage, …). Both JSON and YAML templates.
 - Azure ARM — `.json` deployment templates (`$schema` with `deploymentTemplate` + `resources`), for a local path — runs the `AZR*` checks (public blob access, missing encryption/TDE, HTTPS-only, TLS 1.2, …)
 - GCP Config Connector — `*.{yml,yaml}` with a `cnrm.cloud.google.com` apiVersion, for a local path — runs the `WGC*` checks (public IAM, open firewalls, public Cloud SQL, missing encryption, Workload Identity, …)
+- Helm charts — any directory with a `Chart.yaml`, for a local path — runs the `WHM*` checks (privileged/root containers, `:latest` images, inline Secrets, chart structure, …). The whole chart is audited as one unit.
 
 Every rule a finding cites links to its entry in the [audit rules reference](/chant/lint-rules/audit-rules/).
 

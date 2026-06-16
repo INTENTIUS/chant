@@ -18,6 +18,7 @@ const GROUPS: Array<{ heading: string; prefixes: string[]; blurb: string }> = [
   { heading: "AWS CloudFormation (WAW / COR / EXT)", prefixes: ["WAW", "COR", "EXT"], blurb: "Run against CloudFormation templates (JSON or YAML)." },
   { heading: "Azure ARM (AZR)", prefixes: ["AZR"], blurb: "Run against ARM deployment templates (JSON)." },
   { heading: "GCP Config Connector (WGC)", prefixes: ["WGC"], blurb: "Run against Config Connector (cnrm.cloud.google.com) manifests." },
+  { heading: "Helm (WHM)", prefixes: ["WHM"], blurb: "Run against Helm charts (Chart.yaml + templates)." },
 ];
 
 function ruleBlock(m: RuleMeta): string {

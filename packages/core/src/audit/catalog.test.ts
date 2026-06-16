@@ -4,7 +4,7 @@ import { loadPlugins } from "../cli/plugins";
 
 /** All post-synth check ids the audit can actually surface, from the lexicons. */
 async function realCheckIds(): Promise<Set<string>> {
-  const plugins = await loadPlugins(["github", "gitlab", "forgejo", "k8s", "docker", "aws", "azure", "gcp"]);
+  const plugins = await loadPlugins(["github", "gitlab", "forgejo", "k8s", "docker", "aws", "azure", "gcp", "helm"]);
   const ids = new Set<string>();
   for (const plugin of plugins) {
     for (const check of plugin.postSynthChecks?.() ?? []) {

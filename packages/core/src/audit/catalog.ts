@@ -325,6 +325,29 @@ export const RULE_CATALOG: Record<string, RuleMeta> = {
   WGC401: meta("WGC401", M, G, "Unknown field in resource spec", "Remove the unknown spec field."),
   WGC402: meta("WGC402", M, G, "Missing required spec field", "Add the required spec field."),
   WGC403: meta("WGC403", M, G, "Spec field has wrong type/structure", "Fix the field's type/structure."),
+
+  // ── Helm (WHM) ─────────────────────────────────────────────────────
+  WHM005: meta("WHM005", R, G, "Sub-chart wrapper with no templates", "Deploy the upstream chart directly instead of an empty wrapper."),
+  WHM101: meta("WHM101", M, G, "Chart.yaml missing required fields", "Set apiVersion (v2), name, and version in Chart.yaml."),
+  WHM102: meta("WHM102", R, G, "Missing values.schema.json", "Add a values.schema.json to validate values."),
+  WHM103: meta("WHM103", M, G, "Invalid Go template syntax", "Fix the unbalanced template braces."),
+  WHM104: meta("WHM104", R, G, "Missing NOTES.txt", "Add templates/NOTES.txt for application charts."),
+  WHM105: meta("WHM105", R, G, "Missing _helpers.tpl", "Add templates/_helpers.tpl."),
+  WHM201: meta("WHM201", R, G, "Missing standard Helm labels", "Add the recommended app.kubernetes.io labels."),
+  WHM202: meta("WHM202", R, G, "Hook weights undefined", "Define hook weights when multiple hooks exist."),
+  WHM203: meta("WHM203", R, G, "Undocumented values", "Document values via schema or comments."),
+  WHM204: meta("WHM204", R, G, "Dependencies pinned, not ranged", "Use semver ranges for chart dependencies."),
+  WHM301: meta("WHM301", R, G, "No Helm test", "Add at least one Helm test for application charts."),
+  WHM302: meta("WHM302", R, G, "Container resources not set", "Set limits/requests via values or defaults."),
+  WHM401: meta("WHM401", M, G, "Container image uses :latest or no tag", "Pin the image to an explicit version tag.", [SCORECARD_PINNED]),
+  WHM402: meta("WHM402", M, G, "Container may run as root", "Set runAsNonRoot in the security context.", [K8S_PSS]),
+  WHM403: meta("WHM403", M, G, "Root filesystem writable", "Set readOnlyRootFilesystem.", [K8S_PSS]),
+  WHM404: meta("WHM404", M, G, "Privileged container", "Remove privileged mode.", [K8S_PSS]),
+  WHM405: meta("WHM405", R, G, "Resource specs missing cpu/memory", "Set cpu and memory in limits/requests."),
+  WHM406: meta("WHM406", R, G, "CRDs in crds/ are never upgraded", "Manage CRD upgrades outside Helm or via a separate chart."),
+  WHM407: meta("WHM407", M, G, "Inline Secret data", "Use ExternalSecret/SealedSecret instead of inline Secret data.", [K8S_SECRETS]),
+  WHM501: meta("WHM501", R, G, "Unused values key", "Remove values defined but never referenced."),
+  WHM502: meta("WHM502", M, G, "Deprecated/invalid Kubernetes API version", "Update to a supported apiVersion."),
 };
 
 /** Look up catalog metadata for a check id, if known. */
