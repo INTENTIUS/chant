@@ -29,7 +29,7 @@ export async function runAudit(ctx: CommandContext): Promise<number> {
     return 1;
   }
 
-  const result = await auditCommand({ path: args.path, format, tier, failOn });
+  const result = await auditCommand({ path: args.path, format, tier, failOn, output: args.output });
   printAuditResult(result);
   return result.exitCode;
 }
