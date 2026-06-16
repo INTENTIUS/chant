@@ -65,7 +65,7 @@ describe("RULE_CATALOG", () => {
       .map((m) => m.id)
       .sort();
     expect(deterministic).toEqual(
-      ["GHA017", "GHA021", "GHA029", "GHA030", "GHA033", "GHA034", "WGL029", "WGL031"].sort(),
+      ["GHA017", "GHA021", "GHA029", "GHA030", "GHA033", "WGL031"].sort(),
     );
   });
 });
