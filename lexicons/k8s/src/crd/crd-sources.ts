@@ -93,6 +93,20 @@ const COCKROACH_OPERATOR_CRD_BASE = `https://raw.githubusercontent.com/cockroach
 const CERT_MANAGER_VERSION = "v1.16.2";
 const CERT_MANAGER_CRD_BUNDLE = `https://github.com/cert-manager/cert-manager/releases/download/${CERT_MANAGER_VERSION}/cert-manager.crds.yaml`;
 
+/**
+ * Prometheus Operator CRDs — monitoring.coreos.com/v1
+ *
+ * Produces (the `monitoring.coreos.com` group maps to the `Monitoring`
+ * namespace):
+ *   K8s::Monitoring::ServiceMonitor  → apiVersion: monitoring.coreos.com/v1, kind: ServiceMonitor
+ *   K8s::Monitoring::PrometheusRule  → apiVersion: monitoring.coreos.com/v1, kind: PrometheusRule
+ *
+ * Operator install: kube-prometheus-stack chart, or
+ *   https://github.com/prometheus-operator/prometheus-operator
+ */
+const PROM_OPERATOR_VERSION = "v0.79.2";
+const PROM_OPERATOR_CRD_BASE = `https://raw.githubusercontent.com/prometheus-operator/prometheus-operator/${PROM_OPERATOR_VERSION}/example/prometheus-operator-crd`;
+
 export const CRD_SOURCES: CRDSource[] = [
   { type: "url", url: `${KUBERAY_CRD_BASE}/ray.io_rayclusters.yaml` },
   { type: "url", url: `${KUBERAY_CRD_BASE}/ray.io_rayjobs.yaml` },
@@ -107,4 +121,6 @@ export const CRD_SOURCES: CRDSource[] = [
   { type: "url", url: `${GATEWAY_API_CRD_BASE}/gateway.networking.k8s.io_referencegrants.yaml` },
   { type: "url", url: `${COCKROACH_OPERATOR_CRD_BASE}/crdb.cockroachlabs.com_crdbclusters.yaml` },
   { type: "url", url: CERT_MANAGER_CRD_BUNDLE },
+  { type: "url", url: `${PROM_OPERATOR_CRD_BASE}/monitoring.coreos.com_servicemonitors.yaml` },
+  { type: "url", url: `${PROM_OPERATOR_CRD_BASE}/monitoring.coreos.com_prometheusrules.yaml` },
 ];

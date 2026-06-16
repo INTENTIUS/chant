@@ -7,7 +7,7 @@
  */
 
 import { Composite, mergeDefaults } from "@intentius/chant";
-import { Deployment, Service } from "../generated";
+import { Deployment, Service, ServiceMonitor, PrometheusRule } from "../generated";
 import type { ContainerSecurityContext } from "./security-context";
 
 export interface AlertRule {
@@ -68,8 +68,8 @@ export interface MonitoredServiceProps {
 export interface MonitoredServiceResult {
   deployment: InstanceType<typeof Deployment>;
   service: InstanceType<typeof Service>;
-  serviceMonitor: InstanceType<typeof Deployment>; // CRD — use Deployment as proxy type
-  prometheusRule?: InstanceType<typeof Deployment>; // CRD — use Deployment as proxy type
+  serviceMonitor: InstanceType<typeof ServiceMonitor>;
+  prometheusRule?: InstanceType<typeof PrometheusRule>;
 }
 
 /**
@@ -175,8 +175,7 @@ export const MonitoredService = Composite<MonitoredServiceProps>((props) => {
     },
   }, defs?.service));
 
-  // ServiceMonitor is a CRD — use Deployment constructor as a generic Declarable wrapper
-  const serviceMonitor = new Deployment(mergeDefaults({
+  const serviceMonitor = new ServiceMonitor(mergeDefaults({
     metadata: {
       name,
       ...(namespace && { namespace }),
@@ -199,7 +198,7 @@ export const MonitoredService = Composite<MonitoredServiceProps>((props) => {
   const result: Record<string, any> = { deployment, service, serviceMonitor };
 
   if (alertRules && alertRules.length > 0) {
-    result.prometheusRule = new Deployment(mergeDefaults({
+    result.prometheusRule = new PrometheusRule(mergeDefaults({
       metadata: {
         name: `${name}-alerts`,
         ...(namespace && { namespace }),

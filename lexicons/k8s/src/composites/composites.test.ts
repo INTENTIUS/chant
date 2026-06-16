@@ -1689,6 +1689,12 @@ describe("MonitoredService", () => {
     expect(spec.groups[0].rules[0].labels.severity).toBe("critical");
   });
 
+  test("serviceMonitor and prometheusRule emit the correct CRD kind (not Deployment)", () => {
+    const result = MonitoredService({ ...minProps, alertRules: [{ name: "A", expr: "1" }] });
+    expect((result.serviceMonitor as any).entityType).toBe("K8s::Monitoring::ServiceMonitor");
+    expect((result.prometheusRule as any).entityType).toBe("K8s::Monitoring::PrometheusRule");
+  });
+
   test("serviceMonitor has correct selector and endpoint", () => {
     const result = MonitoredService({ ...minProps, metricsPort: 9090, metricsPath: "/metrics", scrapeInterval: "15s" });
     const spec = p(result.serviceMonitor).spec as any;
