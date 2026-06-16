@@ -29,13 +29,21 @@ export interface ProofResult {
   diff?: string;
   /** Guidance/explanation when not applied (guidance fix, no-op, or needs-sha). */
   note?: string;
+  /**
+   * Why the result is what it is:
+   *  - applied: a fix was produced
+   *  - noop: nothing to fix (issue absent, or already resolved by a prior fix)
+   *  - needs-input: deterministic but blocked on external input (e.g. a SHA)
+   *  - guidance: not auto-fixable; needs human judgement
+   */
+  reason: "applied" | "noop" | "needs-input" | "guidance";
 }
 
 const SHA_RE = /^[0-9a-f]{40}$/;
 const USES_RE = /^(\s*-?\s*uses:\s*)([^@\s'"]+)@([^\s'"#]+)(.*)$/;
 
-function notApplied(checkId: string, note: string): ProofResult {
-  return { checkId, applied: false, note };
+function notApplied(checkId: string, reason: "noop" | "needs-input" | "guidance", note: string): ProofResult {
+  return { checkId, applied: false, reason, note };
 }
 
 /** Extract unpinned `uses: action@ref` references (deduped) from workflow YAML. */
@@ -100,7 +108,7 @@ function narrowWriteAll(content: string): { patched: string; changed: boolean } 
 export function proveFix(checkId: string, content: string, opts: ProveOptions = {}): ProofResult {
   const cat = RULE_CATALOG[checkId];
   if (cat && cat.fixKind !== "deterministic") {
-    return notApplied(checkId, cat.remediation || "Manual fix required.");
+    return notApplied(checkId, "guidance", cat.remediation || "Manual fix required.");
   }
 
   let result: { patched: string; changed: boolean; needsSha?: boolean };
@@ -109,7 +117,7 @@ export function proveFix(checkId: string, content: string, opts: ProveOptions = 
     case "GHA029":
       result = pinActions(content, opts);
       if (!result.changed && (result as { needsSha?: boolean }).needsSha) {
-        return notApplied(checkId, "A commit SHA is required to pin; resolve it (e.g. via the fetch layer) and re-run.");
+        return notApplied(checkId, "needs-input", "A commit SHA is required to pin; resolve it (e.g. via the fetch layer) and re-run.");
       }
       break;
     case "GHA017":
@@ -119,15 +127,16 @@ export function proveFix(checkId: string, content: string, opts: ProveOptions = 
       result = narrowWriteAll(content);
       break;
     default:
-      return notApplied(checkId, cat?.remediation || "No deterministic fix implemented for this rule yet.");
+      return notApplied(checkId, "needs-input", cat?.remediation || "No deterministic fix implemented for this rule yet.");
   }
 
   if (!result.changed) {
-    return notApplied(checkId, "Nothing to fix — the issue is not present (no-op).");
+    return notApplied(checkId, "noop", "Nothing to fix — the issue is not present (no-op).");
   }
   return {
     checkId,
     applied: true,
+    reason: "applied",
     patched: result.patched,
     diff: unifiedDiff(content, result.patched),
   };

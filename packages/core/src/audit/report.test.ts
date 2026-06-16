@@ -53,6 +53,19 @@ describe("renderMarkdown — reworked structure", () => {
     expect(out).toContain(`actions/checkout@${sha}`);
   });
 
+  test("does not list a finding already resolved by the combined patch", () => {
+    const sha = "11bd71901bbe5b1630ceea73d27597364c9af683";
+    const content = "name: CI\non:\n  push:\njobs:\n  build:\n    runs-on: ubuntu-latest\n    steps:\n      - uses: actions/checkout@v4\n      - uses: acme/deploy-action@v1\n";
+    const findings: AuditFinding[] = [
+      { checkId: "GHA021", severity: "warning", message: "unpinned checkout.", file: ".github/workflows/ci.yml", lexicon: "github", entity: "build" },
+      { checkId: "GHA029", severity: "warning", message: "unpinned acme.", file: ".github/workflows/ci.yml", lexicon: "github", entity: "build" },
+    ];
+    const out = renderMarkdown(findings, { files: [{ path: ".github/workflows/ci.yml", content }], resolveSha: () => sha });
+    // Both actions pinned in one combined diff; neither listed as "needs a value".
+    expect(out).toContain("```diff");
+    expect(out).not.toContain("Needs a value before it can be auto-patched");
+  });
+
   test("guidance findings cluster by authority", () => {
     const out = renderMarkdown(FINDINGS);
     expect(out).toContain("<summary>Needs review (guidance)");

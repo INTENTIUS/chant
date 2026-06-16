@@ -104,10 +104,12 @@ function renderQuickWins(
         if (res.applied && res.patched !== undefined) {
           patched = res.patched;
           addressed.push(id);
-        } else {
-          // Couldn't auto-patch (e.g. pin needs a SHA) — surface as guidance.
+        } else if (res.reason === "needs-input") {
+          // Deterministic but blocked on input (e.g. pin needs a SHA).
           needsInput.push(...group.filter((f) => f.checkId === id));
         }
+        // reason "noop" (already resolved by a prior fix in the combined patch)
+        // is intentionally dropped — not listed as needing attention.
       }
     }
 
