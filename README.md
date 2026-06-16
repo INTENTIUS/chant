@@ -12,6 +12,16 @@ Synthesis is pure and local. There is no authoritative state file — chant comp
 
 Declare infrastructure as typed TypeScript — see the [Quick Start](https://intentius.io/chant/getting-started/quick-start/) for a walkthrough.
 
+## Audit any repo's CI/CD
+
+No project required — point [`chant audit`](https://intentius.io/chant/cli/audit/) at a repo and get a tiered CI security report (GitHub, GitLab, Forgejo/Codeberg):
+
+```bash
+chant audit https://github.com/owner/repo -f markdown -o report.md
+```
+
+It separates PR-worthy security findings (with ready-to-apply fix diffs) from hygiene.
+
 ## Packages
 
 | Package | Description |
