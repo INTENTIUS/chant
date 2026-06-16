@@ -6,9 +6,17 @@
  */
 
 import type { AuditFinding } from "./core";
-import { RULE_CATALOG, type RuleMeta, type Tier } from "./catalog";
+import { RULE_CATALOG, type Authority, type FixKind, type RuleMeta, type Tier } from "./catalog";
 import { proveFix, unifiedDiff, type ProveOptions } from "./proof";
 import type { Severity } from "../lint/rule";
+
+/**
+ * Version of the machine-readable JSON report. Stability contract: additive
+ * changes (new fields) keep the same major; renamed/removed fields bump the
+ * major. Consumers should check the major and ignore unknown fields. See
+ * `docs/cli/audit`.
+ */
+export const REPORT_SCHEMA_VERSION = "1.0";
 
 export const SEVERITY_WEIGHT: Record<Severity, number> = { error: 0, warning: 1, info: 2 };
 
@@ -54,6 +62,44 @@ export interface ReportModel {
   quickWins: QuickWinFile[];
   needsReview: GuidanceCluster[];
   reportOnly: EnrichedFinding[];
+  /** All shown findings (after de-noise), flat and sorted — for serialization. */
+  findings: EnrichedFinding[];
+}
+
+/** Provenance snapshot of what was audited (anchors findings to a commit). */
+export interface AuditSnapshot {
+  target: string;
+  host?: string;
+  repo?: string;
+  ref?: string;
+  commit?: string;
+  files: string[];
+  generatedAt: string;
+  toolVersion: string;
+}
+
+/** A finding flattened for the machine-readable JSON report. */
+export interface SerializedFinding {
+  checkId: string;
+  severity: Severity;
+  message: string;
+  file: string;
+  entity?: string;
+  lexicon: string;
+  tier: Tier;
+  fixKind: FixKind;
+  title: string;
+  remediation: string;
+  authority: Authority[];
+}
+
+/** The versioned machine-readable audit report. */
+export interface AuditReportJson {
+  schemaVersion: string;
+  tool: { name: string; version: string };
+  snapshot?: AuditSnapshot;
+  summary: ReportCounts;
+  findings: SerializedFinding[];
 }
 
 export function metaFor(id: string): RuleMeta {
@@ -196,5 +242,31 @@ export function buildReportModel(findings: AuditFinding[], opts: BuildModelOptio
     quickWins: buildQuickWins(quickWinFindings, contents, { resolveSha: opts.resolveSha, resolveDigest: opts.resolveDigest }),
     needsReview: buildClusters(needsReviewFindings),
     reportOnly: [...reportOnly].sort(sortFindings),
+    findings: [...shown].sort(sortFindings),
+  };
+}
+
+/** Build the versioned, machine-readable JSON report (stable contract). */
+export function buildReportJson(findings: AuditFinding[], opts: { snapshot?: AuditSnapshot; toolVersion?: string } = {}): AuditReportJson {
+  const model = buildReportModel(findings);
+  const version = opts.toolVersion ?? opts.snapshot?.toolVersion ?? "0.0.0";
+  return {
+    schemaVersion: REPORT_SCHEMA_VERSION,
+    tool: { name: "chant-audit", version },
+    snapshot: opts.snapshot,
+    summary: model.counts,
+    findings: model.findings.map((f) => ({
+      checkId: f.checkId,
+      severity: f.severity,
+      message: f.message,
+      file: f.file,
+      entity: f.entity,
+      lexicon: f.lexicon,
+      tier: f.meta.tier,
+      fixKind: f.meta.fixKind,
+      title: f.meta.title,
+      remediation: f.meta.remediation,
+      authority: f.meta.authority ?? [],
+    })),
   };
 }

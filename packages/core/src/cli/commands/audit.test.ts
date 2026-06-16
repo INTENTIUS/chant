@@ -45,11 +45,20 @@ describe("auditCommand", () => {
     expect(result.output).toContain("Merge-worthy:");
   });
 
-  test("--json emits parseable findings", async () => {
-    const result = await auditCommand({ path: REPO, format: "json" });
+  test("--json emits the versioned envelope with snapshot, summary, findings", async () => {
+    const result = await auditCommand({ path: REPO, format: "json", toolVersion: "0.4.0" });
     const parsed = JSON.parse(result.output);
+    expect(parsed.schemaVersion).toBe("1.0");
+    expect(parsed.tool).toEqual({ name: "chant-audit", version: "0.4.0" });
+    expect(parsed.snapshot.files).toContain(".github/workflows/ci.yml");
+    expect(parsed.snapshot.toolVersion).toBe("0.4.0");
+    expect(parsed.summary.total).toBeGreaterThan(0);
     expect(Array.isArray(parsed.findings)).toBe(true);
-    expect(parsed.scanned).toContain(".github/workflows/ci.yml");
+    // Each finding carries its classification, so consumers can filter.
+    const f = parsed.findings.find((x: { checkId: string }) => x.checkId === "GHA033");
+    expect(f.tier).toBe("merge-worthy");
+    expect(f.fixKind).toBe("deterministic");
+    expect(Array.isArray(f.authority)).toBe(true);
   });
 
   test("--fail-on merge-worthy exits nonzero when merge-worthy findings exist", async () => {

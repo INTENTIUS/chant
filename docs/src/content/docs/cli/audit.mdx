@@ -59,6 +59,30 @@ Only the root `.gitlab-ci.yml` is fetched; `include:` files are not resolved, so
 
 - `--template my.html` replaces the whole document. Available slots: `{{title}}`, `{{accent}}`, `{{logo}}`, `{{styles}}`, `{{body}}`, `{{footer}}`. The findings render into `{{body}}`.
 
+## Machine-readable output
+
+For tooling, `--format json` emits a **versioned** envelope (stable contract). The same object is embedded in the HTML report inside `<script type="application/json" id="chant-audit-report">`, so the expanded report is both human- and machine-readable.
+
+```json
+{
+  "schemaVersion": "1.0",
+  "tool": { "name": "chant-audit", "version": "0.4.0" },
+  "snapshot": { "target": "...", "host": "github.com", "repo": "owner/repo", "commit": "…", "files": ["..."], "generatedAt": "…", "toolVersion": "0.4.0" },
+  "summary": { "total": 0, "quickWin": 0, "needsReview": 0, "reportOnly": 0, "errors": 0, "warnings": 0, "infos": 0 },
+  "findings": [
+    { "checkId": "GHA033", "severity": "warning", "message": "…", "file": "…", "entity": "…", "lexicon": "github",
+      "tier": "merge-worthy", "fixKind": "deterministic", "title": "…", "remediation": "…", "authority": [{ "name": "…", "url": "…" }] }
+  ]
+}
+```
+
+**Stability contract:**
+
+- Additive changes (new fields) keep the same `schemaVersion`; renamed or removed fields bump it.
+- Consumers should check the **major** version and **ignore unknown fields**.
+- The `snapshot` anchors findings to an exact commit for reproducibility.
+- For maximum stability, integrate via `--format sarif` — an industry-standard, independently-versioned format.
+
 ## Tokens
 
 Auditing a URL calls the host's API. Set a host-specific token to lift rate limits (and, for GitHub, to resolve action SHAs and image digests for the inline fix diffs):
