@@ -11,7 +11,7 @@ import { runLint } from "./handlers/lint";
 import { runDevGenerate, runDevPublish, runDevOnboard, runDevCheckLexicon, runDevUnknown } from "./handlers/dev";
 import { runServeLsp, runServeMcp, runServeUnknown } from "./handlers/serve";
 import { runInit, runInitLexicon } from "./handlers/init";
-import { runList, runDescribe, runImport, runUpdate, runDoctor } from "./handlers/misc";
+import { runList, runDescribe, runImport, runAudit, runUpdate, runDoctor } from "./handlers/misc";
 import { runVendor } from "./handlers/vendor";
 import { runMigrate } from "./handlers/migrate";
 import { runLifecycleSnapshot, runLifecycleShow, runLifecycleDiff, runLifecyclePlan, runLifecycleAffected, runLifecycleLog, runLifecycleUnknown } from "./handlers/lifecycle";
@@ -118,6 +118,10 @@ export function parseArgs(args: string[]): ParsedArgs {
       result.src = args[++i];
     } else if (arg === "--env") {
       result.env = args[++i];
+    } else if (arg === "--tier") {
+      result.tier = args[++i];
+    } else if (arg === "--fail-on") {
+      result.failOn = args[++i];
     } else if (arg === "--stacks") {
       result.stacks = true;
     } else if (arg === "--base") {
@@ -169,6 +173,9 @@ Commands:
   describe              Show the effective config for one component
   vendor                Pull pinned, checksummed patterns into your repo
   import                Import external template into TypeScript
+  audit [path]          Audit a repo's CI YAML for security issues
+                        (--format stylish|json|sarif|markdown,
+                         --tier merge-worthy|all, --fail-on merge-worthy|warning|none)
   migrate <file>        Translate a workflow between lexicons
                         (default: --from github --to gitlab)
 
@@ -287,6 +294,7 @@ const registry: CommandDef[] = [
   { name: "list", handler: runList },
   { name: "describe", handler: runDescribe },
   { name: "import", handler: runImport },
+  { name: "audit", handler: runAudit },
   { name: "migrate", handler: runMigrate },
   { name: "init", handler: runInit },
   { name: "init lexicon", handler: runInitLexicon },

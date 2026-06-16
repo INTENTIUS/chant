@@ -1,9 +1,38 @@
 import { listCommand, printListResult } from "../commands/list";
 import { describeCommand, printDescribeResult } from "../commands/describe";
 import { importCommand, importFromLive, printImportResult } from "../commands/import";
+import { auditCommand, printAuditResult, type AuditFormat, type AuditTier, type AuditFailOn } from "../commands/audit";
 import type { ResourceSelector } from "../../lexicon";
 import { formatError, formatSuccess, formatWarning } from "../format";
 import type { CommandContext } from "../registry";
+
+const AUDIT_FORMATS: AuditFormat[] = ["stylish", "json", "sarif", "markdown"];
+const AUDIT_TIERS: AuditTier[] = ["merge-worthy", "all"];
+const AUDIT_FAIL_ON: AuditFailOn[] = ["merge-worthy", "warning", "none"];
+
+export async function runAudit(ctx: CommandContext): Promise<number> {
+  const { args } = ctx;
+
+  const format: AuditFormat = args.json ? "json" : ((args.format || "stylish") as AuditFormat);
+  if (!AUDIT_FORMATS.includes(format)) {
+    console.error(formatError({ message: `Invalid --format: ${format}. Expected one of ${AUDIT_FORMATS.join(", ")}.` }));
+    return 1;
+  }
+  const tier = (args.tier ?? "all") as AuditTier;
+  if (!AUDIT_TIERS.includes(tier)) {
+    console.error(formatError({ message: `Invalid --tier: ${tier}. Expected one of ${AUDIT_TIERS.join(", ")}.` }));
+    return 1;
+  }
+  const failOn = (args.failOn ?? "none") as AuditFailOn;
+  if (!AUDIT_FAIL_ON.includes(failOn)) {
+    console.error(formatError({ message: `Invalid --fail-on: ${failOn}. Expected one of ${AUDIT_FAIL_ON.join(", ")}.` }));
+    return 1;
+  }
+
+  const result = await auditCommand({ path: args.path, format, tier, failOn });
+  printAuditResult(result);
+  return result.exitCode;
+}
 
 export async function runList(ctx: CommandContext): Promise<number> {
   const { args } = ctx;
