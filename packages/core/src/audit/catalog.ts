@@ -86,6 +86,10 @@ const DOCKER_SEC: Authority = {
   name: "Docker — Security best practices",
   url: "https://docs.docker.com/develop/security-best-practices/",
 };
+const AWS_SEC: Authority = {
+  name: "AWS — Security Pillar (Well-Architected)",
+  url: "https://docs.aws.amazon.com/wellarchitected/latest/security-pillar/welcome.html",
+};
 
 function meta(
   id: string,
@@ -235,6 +239,37 @@ export const RULE_CATALOG: Record<string, RuleMeta> = {
   DKRD010: meta("DKRD010", R, G, "apt-get install without --no-install-recommends", "Add --no-install-recommends to keep images small."),
   DKRD011: meta("DKRD011", R, G, "ADD used where COPY would do", "Prefer COPY unless fetching a URL or extracting an archive."),
   DKRD012: meta("DKRD012", M, G, "No USER instruction — container runs as root", "Add a non-root USER instruction.", [DOCKER_SEC]),
+
+  // ── AWS CloudFormation (WAW / COR / EXT) ───────────────────────────
+  COR020: meta("COR020", M, G, "Circular resource dependency", "Break the dependency cycle between resources."),
+  EXT001: meta("EXT001", M, G, "Extension constraint violation", "Fix the cross-property constraint flagged by the cfn-lint extension schema."),
+  WAW010: meta("WAW010", R, G, "Redundant DependsOn", "Remove DependsOn already implied by a Ref/GetAtt."),
+  WAW011: meta("WAW011", R, G, "Deprecated Lambda runtime", "Upgrade to a supported Lambda runtime."),
+  WAW013: meta("WAW013", M, G, "Child stack exports nothing", "Add stackOutput() exports the parent can reference."),
+  WAW014: meta("WAW014", R, G, "Nested stack outputs never referenced", "Reference the outputs or split into a separate build."),
+  WAW015: meta("WAW015", M, G, "Circular dependency between nested stacks", "Break the cycle between nested stacks."),
+  WAW016: meta("WAW016", R, G, "Deprecated property", "Replace the deprecated CloudFormation property."),
+  WAW017: meta("WAW017", R, G, "Missing tags on a taggable resource", "Add tags for cost allocation and compliance."),
+  WAW018: meta("WAW018", M, G, "S3 bucket missing public access block", "Add a PublicAccessBlockConfiguration blocking all public access.", [AWS_SEC]),
+  WAW019: meta("WAW019", M, G, "Security group allows unrestricted ingress on a sensitive port", "Restrict the CIDR on SSH/RDP/database ports to known sources.", [AWS_SEC]),
+  WAW020: meta("WAW020", M, G, "IAM policy uses a wildcard Action", "Scope the policy to specific actions (least privilege).", [AWS_SEC]),
+  WAW021: meta("WAW021", M, G, "RDS storage not encrypted", "Enable StorageEncrypted for encryption at rest.", [AWS_SEC]),
+  WAW022: meta("WAW022", R, G, "Lambda has no VpcConfig", "Consider a VpcConfig for network isolation if the function needs VPC resources."),
+  WAW023: meta("WAW023", R, G, "CloudFront has no WAF web ACL", "Consider attaching a WAF web ACL."),
+  WAW024: meta("WAW024", R, G, "ALB access logging disabled", "Enable access logging for audit trails."),
+  WAW025: meta("WAW025", M, G, "SNS topic not encrypted", "Set KmsMasterKeyId for encryption at rest.", [AWS_SEC]),
+  WAW026: meta("WAW026", M, G, "SQS queue not encrypted", "Enable SqsManagedSseEnabled or set KmsMasterKeyId.", [AWS_SEC]),
+  WAW027: meta("WAW027", R, G, "DynamoDB point-in-time recovery disabled", "Enable PITR for recovery."),
+  WAW028: meta("WAW028", M, G, "EBS volume not encrypted", "Enable encryption at rest.", [AWS_SEC]),
+  WAW029: meta("WAW029", M, G, "Invalid DependsOn target", "Fix the dangling/self DependsOn reference."),
+  WAW030: meta("WAW030", R, G, "Missing DependsOn for a known ordering pattern", "Add the DependsOn the pattern requires."),
+  WAW031: meta("WAW031", R, G, "EKS Addon missing ServiceAccountRoleArn", "Set ServiceAccountRoleArn (IRSA) for addons that need it."),
+  WAW032: meta("WAW032", M, G, "EFS transit encryption disabled on Fargate", "Enable transit encryption for the EFS volume.", [AWS_SEC]),
+  WAW033: meta("WAW033", M, G, "Solr heap exceeds Fargate task memory", "Lower SOLR_HEAP or raise task memory."),
+  WAW034: meta("WAW034", R, G, "Fargate Solr task under-provisioned", "Allocate >= 2048MB for the Solr task."),
+  WAW035: meta("WAW035", R, G, "Solr container missing nofile ulimit", "Set a nofile ulimit >= 65535."),
+  WAW036: meta("WAW036", M, G, "Non-ASCII characters in resource properties", "Remove non-ASCII characters rejected at changeset time."),
+  WAW037: meta("WAW037", M, G, "Null values in resource properties", "Fix the invalid AttrRef producing null property values."),
 };
 
 /** Look up catalog metadata for a check id, if known. */

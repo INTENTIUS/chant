@@ -862,3 +862,197 @@ Prefer COPY unless fetching a URL or extracting an archive.
 Add a non-root USER instruction.
 
 Authority: [Docker — Security best practices](https://docs.docker.com/develop/security-best-practices/)
+
+## AWS CloudFormation (WAW / COR / EXT)
+
+Run against CloudFormation templates (JSON or YAML).
+
+### COR020
+
+**Circular resource dependency** — merge-worthy · guidance
+
+Break the dependency cycle between resources.
+
+### EXT001
+
+**Extension constraint violation** — merge-worthy · guidance
+
+Fix the cross-property constraint flagged by the cfn-lint extension schema.
+
+### WAW010
+
+**Redundant DependsOn** — report-only · guidance
+
+Remove DependsOn already implied by a Ref/GetAtt.
+
+### WAW011
+
+**Deprecated Lambda runtime** — report-only · guidance
+
+Upgrade to a supported Lambda runtime.
+
+### WAW013
+
+**Child stack exports nothing** — merge-worthy · guidance
+
+Add stackOutput() exports the parent can reference.
+
+### WAW014
+
+**Nested stack outputs never referenced** — report-only · guidance
+
+Reference the outputs or split into a separate build.
+
+### WAW015
+
+**Circular dependency between nested stacks** — merge-worthy · guidance
+
+Break the cycle between nested stacks.
+
+### WAW016
+
+**Deprecated property** — report-only · guidance
+
+Replace the deprecated CloudFormation property.
+
+### WAW017
+
+**Missing tags on a taggable resource** — report-only · guidance
+
+Add tags for cost allocation and compliance.
+
+### WAW018
+
+**S3 bucket missing public access block** — merge-worthy · guidance
+
+Add a PublicAccessBlockConfiguration blocking all public access.
+
+Authority: [AWS — Security Pillar (Well-Architected)](https://docs.aws.amazon.com/wellarchitected/latest/security-pillar/welcome.html)
+
+### WAW019
+
+**Security group allows unrestricted ingress on a sensitive port** — merge-worthy · guidance
+
+Restrict the CIDR on SSH/RDP/database ports to known sources.
+
+Authority: [AWS — Security Pillar (Well-Architected)](https://docs.aws.amazon.com/wellarchitected/latest/security-pillar/welcome.html)
+
+### WAW020
+
+**IAM policy uses a wildcard Action** — merge-worthy · guidance
+
+Scope the policy to specific actions (least privilege).
+
+Authority: [AWS — Security Pillar (Well-Architected)](https://docs.aws.amazon.com/wellarchitected/latest/security-pillar/welcome.html)
+
+### WAW021
+
+**RDS storage not encrypted** — merge-worthy · guidance
+
+Enable StorageEncrypted for encryption at rest.
+
+Authority: [AWS — Security Pillar (Well-Architected)](https://docs.aws.amazon.com/wellarchitected/latest/security-pillar/welcome.html)
+
+### WAW022
+
+**Lambda has no VpcConfig** — report-only · guidance
+
+Consider a VpcConfig for network isolation if the function needs VPC resources.
+
+### WAW023
+
+**CloudFront has no WAF web ACL** — report-only · guidance
+
+Consider attaching a WAF web ACL.
+
+### WAW024
+
+**ALB access logging disabled** — report-only · guidance
+
+Enable access logging for audit trails.
+
+### WAW025
+
+**SNS topic not encrypted** — merge-worthy · guidance
+
+Set KmsMasterKeyId for encryption at rest.
+
+Authority: [AWS — Security Pillar (Well-Architected)](https://docs.aws.amazon.com/wellarchitected/latest/security-pillar/welcome.html)
+
+### WAW026
+
+**SQS queue not encrypted** — merge-worthy · guidance
+
+Enable SqsManagedSseEnabled or set KmsMasterKeyId.
+
+Authority: [AWS — Security Pillar (Well-Architected)](https://docs.aws.amazon.com/wellarchitected/latest/security-pillar/welcome.html)
+
+### WAW027
+
+**DynamoDB point-in-time recovery disabled** — report-only · guidance
+
+Enable PITR for recovery.
+
+### WAW028
+
+**EBS volume not encrypted** — merge-worthy · guidance
+
+Enable encryption at rest.
+
+Authority: [AWS — Security Pillar (Well-Architected)](https://docs.aws.amazon.com/wellarchitected/latest/security-pillar/welcome.html)
+
+### WAW029
+
+**Invalid DependsOn target** — merge-worthy · guidance
+
+Fix the dangling/self DependsOn reference.
+
+### WAW030
+
+**Missing DependsOn for a known ordering pattern** — report-only · guidance
+
+Add the DependsOn the pattern requires.
+
+### WAW031
+
+**EKS Addon missing ServiceAccountRoleArn** — report-only · guidance
+
+Set ServiceAccountRoleArn (IRSA) for addons that need it.
+
+### WAW032
+
+**EFS transit encryption disabled on Fargate** — merge-worthy · guidance
+
+Enable transit encryption for the EFS volume.
+
+Authority: [AWS — Security Pillar (Well-Architected)](https://docs.aws.amazon.com/wellarchitected/latest/security-pillar/welcome.html)
+
+### WAW033
+
+**Solr heap exceeds Fargate task memory** — merge-worthy · guidance
+
+Lower SOLR_HEAP or raise task memory.
+
+### WAW034
+
+**Fargate Solr task under-provisioned** — report-only · guidance
+
+Allocate >= 2048MB for the Solr task.
+
+### WAW035
+
+**Solr container missing nofile ulimit** — report-only · guidance
+
+Set a nofile ulimit >= 65535.
+
+### WAW036
+
+**Non-ASCII characters in resource properties** — merge-worthy · guidance
+
+Remove non-ASCII characters rejected at changeset time.
+
+### WAW037
+
+**Null values in resource properties** — merge-worthy · guidance
+
+Fix the invalid AttrRef producing null property values.
