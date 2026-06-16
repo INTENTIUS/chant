@@ -14,6 +14,7 @@ const GROUPS: Array<{ heading: string; prefixes: string[]; blurb: string }> = [
   { heading: "GitLab CI (WGL)", prefixes: ["WGL"], blurb: "" },
   { heading: "Forgejo (WFJ)", prefixes: ["WFJ"], blurb: "" },
   { heading: "Kubernetes (WK8 / ARGO)", prefixes: ["WK8", "ARGO"], blurb: "Run against Kubernetes manifests." },
+  { heading: "Docker (DKRD)", prefixes: ["DKRD"], blurb: "Run against Dockerfiles and Compose files." },
 ];
 
 function ruleBlock(m: RuleMeta): string {

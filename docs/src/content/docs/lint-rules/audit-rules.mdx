@@ -816,3 +816,49 @@ Set spec.rayVersion so KubeRay picks the right autoscaler image.
 **rayVersion does not match the head image tag** — report-only · guidance
 
 Align spec.rayVersion with the Ray version in the head container image.
+
+## Docker (DKRD)
+
+Run against Dockerfiles and Compose files.
+
+### DKRD001
+
+**Service uses :latest or untagged image** — merge-worthy · guidance
+
+Pin the image to an explicit version tag (ideally a digest).
+
+Authority: [OSSF Scorecard — Pinned-Dependencies](https://github.com/ossf/scorecard/blob/main/docs/checks.md#pinned-dependencies)
+
+### DKRD002
+
+**Named volume declared but unused** — report-only · guidance
+
+Remove the unused volume or mount it in a service.
+
+### DKRD003
+
+**Service exposes SSH (port 22)** — merge-worthy · guidance
+
+Don't expose SSH from a container; use exec/ephemeral access instead.
+
+Authority: [Docker — Security best practices](https://docs.docker.com/develop/security-best-practices/)
+
+### DKRD010
+
+**apt-get install without --no-install-recommends** — report-only · guidance
+
+Add --no-install-recommends to keep images small.
+
+### DKRD011
+
+**ADD used where COPY would do** — report-only · guidance
+
+Prefer COPY unless fetching a URL or extracting an archive.
+
+### DKRD012
+
+**No USER instruction — container runs as root** — merge-worthy · guidance
+
+Add a non-root USER instruction.
+
+Authority: [Docker — Security best practices](https://docs.docker.com/develop/security-best-practices/)

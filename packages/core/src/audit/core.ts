@@ -16,13 +16,14 @@
  * audited YAML — the security tier is YAML-based, so this is by design.
  */
 
+import { basename } from "path";
 import type { Severity } from "../lint/rule";
 import type { PostSynthCheck, PostSynthContext } from "../lint/post-synth";
 import type { SerializerResult } from "../serializer";
 import { loadPlugins } from "../cli/plugins";
 
 /** Lexicons whose post-synth checks the auditor knows how to run. */
-export type AuditLexicon = "github" | "gitlab" | "forgejo" | "k8s";
+export type AuditLexicon = "github" | "gitlab" | "forgejo" | "k8s" | "docker";
 
 /** A single CI file to audit. */
 export interface AuditInput {
@@ -128,7 +129,11 @@ export async function auditFiles(
     for (const file of files) {
       const output: SerializerResult = {
         primary: file.content,
-        files: { [file.path]: file.content },
+        // Key additional files by basename to match how the build pipeline
+        // emits them (e.g. "Dockerfile", "dependabot.yml") — some checks filter
+        // `files` by name (docker's extractDockerfiles wants names starting
+        // with "Dockerfile").
+        files: { [basename(file.path)]: file.content },
       };
       const buildResult: PostSynthContext["buildResult"] = {
         outputs: new Map<string, string | SerializerResult>([[lexicon, output]]),
