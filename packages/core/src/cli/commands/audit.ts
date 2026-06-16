@@ -10,7 +10,9 @@ import { join, relative } from "path";
 import { auditFiles, type AuditInput, type AuditFinding, type AuditLexicon } from "../../audit/core";
 import { RULE_CATALOG } from "../../audit/catalog";
 import { renderMarkdown } from "../../audit/report";
-import { fetchCiFiles, FetchError } from "../../audit/fetch";
+import { fetchCiFiles, resolveActionSha, FetchError } from "../../audit/fetch";
+import { extractUnpinnedActions } from "../../audit/proof";
+import type { ProveOptions } from "../../audit/proof";
 import type { Severity } from "../../lint/rule";
 
 export type AuditFormat = "stylish" | "json" | "sarif" | "markdown";
@@ -179,9 +181,34 @@ export async function auditCommand(options: AuditCommandOptions): Promise<AuditC
     case "sarif":
       output = renderSarif(findings);
       break;
-    case "markdown":
-      output = renderMarkdown(findings, { target: options.path });
+    case "markdown": {
+      // For remote audits, resolve action SHAs so pin fixes render as inline
+      // diffs. Pre-resolved into a sync map; render stays synchronous.
+      let resolveSha: ProveOptions["resolveSha"];
+      if (isUrl) {
+        const token = options.token ?? process.env.CHANT_AUDIT_TOKEN ?? process.env.GITHUB_TOKEN;
+        const refs = new Map<string, { action: string; ref: string }>();
+        for (const inp of inputs) {
+          for (const a of extractUnpinnedActions(inp.content)) refs.set(`${a.action}@${a.ref}`, a);
+        }
+        const resolved = await Promise.all(
+          [...refs.values()].map(async (a) => {
+            const key = `${a.action}@${a.ref}`;
+            const sha = await resolveActionSha(a.action, a.ref, { token, fetchImpl: options.fetchImpl });
+            return [key, sha] as [string, string | undefined];
+          }),
+        );
+        const shaMap = new Map<string, string>();
+        for (const [key, sha] of resolved) if (sha) shaMap.set(key, sha);
+        if (shaMap.size > 0) resolveSha = (action, ref) => shaMap.get(`${action}@${ref}`);
+      }
+      output = renderMarkdown(findings, {
+        target: options.path,
+        files: inputs.map((i) => ({ path: i.path, content: i.content })),
+        resolveSha,
+      });
       break;
+    }
     default:
       output = renderStylish(findings, scanned);
   }
