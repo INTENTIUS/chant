@@ -1,6 +1,6 @@
 import { describe, test, expect } from "vitest";
 import { fileURLToPath } from "url";
-import { auditCommand, discoverCiFiles, tokenForHost, coverageNotes } from "./audit";
+import { auditCommand, discoverCiFiles, discoverManifests, tokenForHost, coverageNotes } from "./audit";
 import { MissingLexiconError, type AuditInput } from "../../audit/core";
 import { readFileSync, existsSync, rmSync } from "fs";
 import { tmpdir } from "os";
@@ -28,6 +28,19 @@ describe("auditCommand", () => {
     // github files never produce the gitlab include note
     const gh: AuditInput[] = [{ path: ".github/workflows/ci.yml", content: "on: push\n", lexicon: "github" }];
     expect(coverageNotes(gh)).toEqual([]);
+  });
+
+  test("discovers and audits Kubernetes manifests", async () => {
+    const repo = fileURLToPath(new URL("./__fixtures__/audit-k8s", import.meta.url));
+    const files = discoverManifests(repo);
+    expect(files.map((f) => f.path)).toContain("manifests/deploy.yaml");
+    expect(files.every((f) => f.lexicon === "k8s")).toBe(true);
+
+    const result = await auditCommand({ path: repo, format: "stylish" });
+    expect(result.success).toBe(true);
+    const ids = new Set(result.findings.map((f) => f.checkId));
+    expect(ids).toContain("WK8202"); // privileged container
+    expect(ids).toContain("WK8006"); // :latest image
   });
 
   test("discovers CI files under a repo root", () => {
@@ -99,11 +112,14 @@ describe("auditCommand", () => {
   });
 
   test("a path with no CI files succeeds with a clear message", async () => {
-    const tmp = fileURLToPath(new URL(".", import.meta.url)); // commands dir, no CI files
+    const tmp = join(tmpdir(), `chant-audit-empty-${process.pid}`);
+    const { mkdirSync } = await import("fs");
+    mkdirSync(tmp, { recursive: true });
     const result = await auditCommand({ path: tmp });
     expect(result.success).toBe(true);
     expect(result.exitCode).toBe(0);
     expect(result.output).toContain("No CI files found");
+    rmSync(tmp, { recursive: true, force: true });
   });
 
   test("audits a remote repo URL via injected fetch", async () => {

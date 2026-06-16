@@ -22,7 +22,7 @@ import type { SerializerResult } from "../serializer";
 import { loadPlugins } from "../cli/plugins";
 
 /** Lexicons whose post-synth checks the auditor knows how to run. */
-export type AuditLexicon = "github" | "gitlab" | "forgejo";
+export type AuditLexicon = "github" | "gitlab" | "forgejo" | "k8s";
 
 /** A single CI file to audit. */
 export interface AuditInput {

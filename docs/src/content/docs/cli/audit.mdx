@@ -21,6 +21,7 @@ What it scans:
 - `.github/workflows/*.{yml,yaml}` (GitHub Actions / Forgejo)
 - `.forgejo/workflows/*.{yml,yaml}` (Forgejo / Codeberg / Gitea)
 - `.gitlab-ci.yml` (GitLab CI)
+- Kubernetes manifests (any `*.{yml,yaml}` with `apiVersion` + `kind`), for a local path — runs the `WK8*`/`ARGO*` checks (privileged containers, host namespaces, hardcoded secrets, image pinning, …)
 
 Every rule a finding cites links to its entry in the [audit rules reference](/chant/lint-rules/audit-rules/).
 
