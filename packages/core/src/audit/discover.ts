@@ -30,7 +30,6 @@
 import { readdirSync, readFileSync, statSync } from "fs";
 import { basename, join, relative } from "path";
 import { parseYAML } from "../yaml";
-import { loadPlugin } from "../cli/plugins";
 import type { LexiconPlugin } from "../lexicon";
 import type { AuditInput, AuditLexicon } from "./core";
 
@@ -45,6 +44,11 @@ export const AUDIT_LEXICONS = ["github", "gitlab", "forgejo", "k8s", "docker", "
  * its input and needs no plugin setup.
  */
 export async function loadAuditPlugins(names: readonly string[] = AUDIT_LEXICONS): Promise<LexiconPlugin[]> {
+  // Lazy import: a top-level `cli/plugins` import would pull the root barrel
+  // (index.ts -> lint/parser -> the TypeScript compiler) into anyone importing
+  // `classifyFiles`, crashing edge runtimes. Edge callers build detectors from
+  // static `detect` imports and never call this. See #408/#426.
+  const { loadPlugin } = await import("../cli/plugins");
   const plugins: LexiconPlugin[] = [];
   for (const name of names) {
     try {
