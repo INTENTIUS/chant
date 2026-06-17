@@ -31,9 +31,21 @@
     "access": "public"
   },
   "exports": {
-    ".": "./src/index.ts",
-    "./*": "./src/*.ts",
-    "./lint/post-synth": "./src/lint/post-synth/index.ts"
+    ".": {
+      "development": "./src/index.ts",
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./*": {
+      "development": "./src/*.ts",
+      "types": "./dist/*.d.ts",
+      "default": "./dist/*.js"
+    },
+    "./lint/post-synth": {
+      "development": "./src/lint/post-synth/index.ts",
+      "types": "./dist/lint/post-synth/index.d.ts",
+      "default": "./dist/lint/post-synth/index.js"
+    }
   },
   "devDependencies": {
     "@intentius/chant": "*",
@@ -43,5 +55,9 @@
   "peerDependencies": {
     "@intentius/chant": "^0.7.0",
     "@intentius/chant-lexicon-github": "^0.7.0"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json && tsc-alias -p tsconfig.build.json && node ../../scripts/copy-dist-assets.mjs",
+    "prepack": "npm run build"
   }
 }

@@ -9,6 +9,12 @@ while [ -L "$SELF" ]; do
   case "$SELF" in /*) ;; *) SELF="$DIR/$SELF" ;; esac
 done
 SCRIPT_DIR="$(cd "$(dirname "$SELF")" && pwd)"
-MAIN_TS="$SCRIPT_DIR/../src/cli/main.ts"
+MAIN_JS="$SCRIPT_DIR/../dist/cli/main.js"
 
-exec npx tsx "$MAIN_TS" "$@"
+# Published packages ship built JS (dist/) and run on plain node — no tsx needed.
+# In-repo (no dist/) we fall back to running the TypeScript source via tsx.
+if [ -f "$MAIN_JS" ]; then
+  exec node "$MAIN_JS" "$@"
+else
+  exec npx tsx "$SCRIPT_DIR/../src/cli/main.ts" "$@"
+fi

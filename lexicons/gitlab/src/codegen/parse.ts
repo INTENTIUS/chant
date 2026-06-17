@@ -300,7 +300,7 @@ function resolveSource(schema: CISchema, source: string): CISchemaDefinition | n
         return findObjectVariant(current.items, schema);
       }
       if (!current.properties) return null;
-      const prop = current.properties[seg];
+      const prop: CISchemaProperty | undefined = current.properties[seg];
       if (!prop) return null;
       current = prop.$ref ? resolveRef(prop.$ref, schema) : prop;
     }
@@ -321,7 +321,7 @@ function resolveSource(schema: CISchema, source: string): CISchemaDefinition | n
         return findObjectVariant(current.items, schema);
       }
       if (!current.properties) return null;
-      const prop = current.properties[seg];
+      const prop: CISchemaProperty | undefined = current.properties[seg];
       if (!prop) return null;
       current = prop.$ref ? resolveRef(prop.$ref, schema) : prop;
     }

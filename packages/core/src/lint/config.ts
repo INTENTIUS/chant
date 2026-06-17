@@ -4,7 +4,7 @@ import { createRequire } from "module";
 import { z } from "zod";
 import type { Severity, RuleConfig } from "./rule";
 import { moduleDir, getRuntime } from "../runtime-adapter";
-import strictPreset from "./presets/strict.json";
+import strictPreset from "./presets/strict.json" with { type: "json" };
 
 /** Mapping of built-in preset names to their file paths */
 const BUILTIN_PRESETS: Record<string, string> = {

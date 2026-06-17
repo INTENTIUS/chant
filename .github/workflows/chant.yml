@@ -48,6 +48,7 @@ jobs:
           npm run --prefix lexicons/azure prepack
           npm run --prefix lexicons/gitlab prepack
           npm run --prefix lexicons/github prepack
+          npm run --prefix lexicons/forgejo prepack
           npm run --prefix lexicons/k8s prepack
           npm run --prefix lexicons/gcp prepack
           npm run --prefix lexicons/helm prepack
@@ -102,6 +103,7 @@ jobs:
           npm run --prefix lexicons/azure prepack
           npm run --prefix lexicons/gitlab prepack
           npm run --prefix lexicons/github prepack
+          npm run --prefix lexicons/forgejo prepack
           npm run --prefix lexicons/k8s prepack
           npm run --prefix lexicons/gcp prepack
           npm run --prefix lexicons/helm prepack
@@ -140,6 +142,7 @@ jobs:
 
       - name: Generate and validate GitHub lexicon
         run: npm run --prefix lexicons/github prepack
+        run: npm run --prefix lexicons/forgejo prepack
 
       - name: Generate and validate K8s lexicon
         run: npm run --prefix lexicons/k8s prepack

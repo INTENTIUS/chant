@@ -2,6 +2,10 @@ import tsParser from '@typescript-eslint/parser';
 import tsPlugin from '@typescript-eslint/eslint-plugin';
 
 export default [
+  {
+    // Built output (emitted JS/d.ts) is generated, not authored — never lint it.
+    ignores: ['**/dist/**', '**/node_modules/**'],
+  },
 {
     files: ['**/*.ts'],
     languageOptions: {

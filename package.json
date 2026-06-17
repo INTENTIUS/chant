@@ -29,6 +29,7 @@
     "@typescript-eslint/eslint-plugin": "^8.54.0",
     "@typescript-eslint/parser": "^8.54.0",
     "eslint": "^9.39.2",
+    "tsc-alias": "^1.8.17",
     "typescript": "^5.9.3",
     "vite-tsconfig-paths": "^5.0.0",
     "vitest": "^3.0.0"

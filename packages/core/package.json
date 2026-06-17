@@ -24,6 +24,7 @@
   "type": "module",
   "files": [
     "src/",
+    "dist/",
     "bin/"
   ],
   "publishConfig": {
@@ -33,11 +34,35 @@
     "chant": "./bin/chant"
   },
   "exports": {
-    ".": "./src/index.ts",
-    "./cli": "./src/cli/index.ts",
-    "./cli/*": "./src/cli/*.ts",
-    "./op": "./src/op/index.ts",
-    "./*": "./src/*.ts"
+    ".": {
+      "development": "./src/index.ts",
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./cli": {
+      "development": "./src/cli/index.ts",
+      "types": "./dist/cli/index.d.ts",
+      "default": "./dist/cli/index.js"
+    },
+    "./cli/*": {
+      "development": "./src/cli/*.ts",
+      "types": "./dist/cli/*.d.ts",
+      "default": "./dist/cli/*.js"
+    },
+    "./op": {
+      "development": "./src/op/index.ts",
+      "types": "./dist/op/index.d.ts",
+      "default": "./dist/op/index.js"
+    },
+    "./*": {
+      "development": "./src/*.ts",
+      "types": "./dist/*.d.ts",
+      "default": "./dist/*.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json && tsc-alias -p tsconfig.build.json && node ../../scripts/copy-dist-assets.mjs",
+    "prepack": "npm run build"
   },
   "dependencies": {
     "fflate": "^0.8.2",
