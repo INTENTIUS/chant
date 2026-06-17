@@ -6,6 +6,7 @@
  */
 
 import type { LexiconPlugin, IntrinsicDef, InitTemplateSet } from "@intentius/chant/lexicon";
+import { detectTemplate } from "./detect";
 import { discoverLintRules } from "@intentius/chant/lint/discover";
 import { postSynthChecks as postSynthCheckList } from "./lint/post-synth";
 import { createSkillsLoader, createDiffTool } from "@intentius/chant/lexicon-plugin-helpers";
@@ -54,15 +55,7 @@ export const helmPlugin: LexiconPlugin = {
     ];
   },
 
-  detectTemplate(data: unknown): boolean {
-    if (typeof data !== "object" || data === null) return false;
-    const obj = data as Record<string, unknown>;
-    // Helm charts have apiVersion: v2 in Chart.yaml
-    if (obj.apiVersion === "v2" && typeof obj.name === "string" && typeof obj.version === "string") {
-      return true;
-    }
-    return false;
-  },
+  detectTemplate,
 
   mcpTools() {
     return [createDiffTool(helmSerializer, "Compare current Helm chart build output against previous output", "helm")];

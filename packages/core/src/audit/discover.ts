@@ -147,11 +147,11 @@ interface ContentDetector {
    * plugin's detectTemplate. Returns the (possibly normalized) content to feed
    * the checks, or null if it doesn't match.
    */
-  detect(plugin: LexiconPlugin, name: string, content: string): string | null;
+  detect(plugin: DetectPlugin, name: string, content: string): string | null;
 }
 
 /** Run a plugin's detectTemplate over each parsed doc; true if any matches. */
-function anyDoc(plugin: LexiconPlugin, content: string): boolean {
+function anyDoc(plugin: DetectPlugin, content: string): boolean {
   return parseDocs(content).some((doc) => plugin.detectTemplate?.(doc) ?? false);
 }
 
@@ -208,6 +208,17 @@ export interface RepoFile {
   content: string;
 }
 
+/**
+ * The minimal shape `classifyFiles` needs from a lexicon: its name and (for
+ * content-detected lexicons) its `detectTemplate`. Narrower than `LexiconPlugin`
+ * so an edge caller can build detectors from static `@…/detect` imports without
+ * loading the full plugin (which drags the TypeScript compiler — see #426).
+ */
+export interface DetectPlugin {
+  name: string;
+  detectTemplate?: (data: unknown) => boolean;
+}
+
 /** Which CI lexicon a path belongs to (by location — content can't disambiguate github vs forgejo). */
 function ciLexiconForPath(path: string): AuditLexicon | undefined {
   if (/^\.github\/workflows\/[^/]+\.ya?ml$/.test(path)) return "github";
@@ -229,7 +240,7 @@ export function isCandidatePath(path: string): boolean {
 }
 
 /** Collect Helm charts as bundles from an in-memory file set; returns inputs + chart path-prefixes. */
-function classifyHelm(files: RepoFile[], plugin: LexiconPlugin | undefined): { inputs: AuditInput[]; prefixes: string[] } {
+function classifyHelm(files: RepoFile[], plugin: DetectPlugin | undefined): { inputs: AuditInput[]; prefixes: string[] } {
   const inputs: AuditInput[] = [];
   const prefixes: string[] = [];
   if (!plugin) return { inputs, prefixes };
@@ -260,7 +271,7 @@ function classifyHelm(files: RepoFile[], plugin: LexiconPlugin | undefined): { i
  * precedence-ordered content detectors (delegating to each plugin's
  * `detectTemplate`). Lexicons whose plugin isn't provided are skipped.
  */
-export function classifyFiles(files: RepoFile[], plugins: LexiconPlugin[]): AuditInput[] {
+export function classifyFiles(files: RepoFile[], plugins: DetectPlugin[]): AuditInput[] {
   const byName = new Map(plugins.map((p) => [p.name, p]));
 
   // Helm claims whole chart directories first; chart-internal files are excluded

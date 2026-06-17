@@ -6,6 +6,7 @@
  */
 
 import type { LexiconPlugin, IntrinsicDef, InitTemplateSet } from "@intentius/chant/lexicon";
+import { detectTemplate } from "./detect";
 import type { LintRule } from "@intentius/chant/lint/rule";
 import { postSynthChecks as postSynthCheckList } from "./lint/post-synth";
 import { createSkillsLoader, createDiffTool, createCatalogResource } from "@intentius/chant/lexicon-plugin-helpers";
@@ -87,12 +88,7 @@ export const api = new Service({
     };
   },
 
-  detectTemplate(data: unknown): boolean {
-    if (typeof data !== "object" || data === null) return false;
-    const obj = data as Record<string, unknown>;
-    // Docker Compose files have a services: key
-    return "services" in obj;
-  },
+  detectTemplate,
 
   completionProvider(ctx: import("@intentius/chant/lsp/types").CompletionContext) {
     return dockerCompletions(ctx);

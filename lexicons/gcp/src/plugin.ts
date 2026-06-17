@@ -6,6 +6,7 @@
  */
 
 import type { LexiconPlugin, InitTemplateSet, ResourceMetadata } from "@intentius/chant/lexicon";
+import { detectTemplate } from "./detect";
 import type { LintRule } from "@intentius/chant/lint/rule";
 import type { TemplateParser } from "@intentius/chant/import/parser";
 import type { TypeScriptGenerator } from "@intentius/chant/import/generator";
@@ -172,22 +173,7 @@ export const bucketReader = new IAMPolicyMember({
     };
   },
 
-  detectTemplate(data: unknown): boolean {
-    // Handle raw string input (unparsed YAML)
-    if (typeof data === "string") {
-      return data.includes("cnrm.cloud.google.com");
-    }
-
-    // Handle parsed YAML objects
-    if (typeof data !== "object" || data === null) return false;
-    const obj = data as Record<string, unknown>;
-    const apiVersion = obj.apiVersion;
-    if (typeof apiVersion === "string" && apiVersion.includes("cnrm.cloud.google.com")) {
-      return true;
-    }
-
-    return false;
-  },
+  detectTemplate,
 
   templateParser(): TemplateParser {
     return new GcpParser();

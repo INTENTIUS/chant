@@ -1,4 +1,5 @@
 import type { LexiconPlugin, IntrinsicDef } from "@intentius/chant/lexicon";
+import { detectTemplate } from "./detect";
 import type { LintRule } from "@intentius/chant/lint/rule";
 import type { TemplateParser } from "@intentius/chant/import/parser";
 import type { TypeScriptGenerator } from "@intentius/chant/import/generator";
@@ -238,21 +239,7 @@ export const tags = defaultTags([
     };
   },
 
-  detectTemplate(content: string): boolean {
-    try {
-      const parsed = JSON.parse(content);
-      return (
-        typeof parsed === "object" &&
-        parsed !== null &&
-        "$schema" in parsed &&
-        typeof parsed.$schema === "string" &&
-        parsed.$schema.includes("deploymentTemplate") &&
-        Array.isArray(parsed.resources)
-      );
-    } catch {
-      return false;
-    }
-  },
+  detectTemplate,
 
   templateParser(): TemplateParser {
     return new ArmParser();
