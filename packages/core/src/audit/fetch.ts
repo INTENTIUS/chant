@@ -174,6 +174,132 @@ export async function fetchCiFiles(url: string, opts: FetchOptions = {}): Promis
   return inputs;
 }
 
+// ── Whole-repo fetch (all lexicons, not just CI) ─────────────────────────────
+// Mirrors the local walk: list the repo tree, keep candidate paths, fetch their
+// contents (capped), and hand the raw {path, content} set to the shared
+// classifier in discover.ts. SSRF posture is unchanged — allowlisted host,
+// URLs built from parsed owner/repo, redirects refused, counts/bytes capped.
+
+/** Module-level JSON GET that refuses redirects (reused by the tree-walk). */
+async function getJsonAt(
+  url: string,
+  headers: Record<string, string>,
+  doFetch: typeof fetch,
+  timeoutMs: number,
+): Promise<{ status: number; body: unknown }> {
+  let res: Response;
+  try {
+    res = await doFetch(url, { headers, redirect: "manual", signal: timeoutSignal(timeoutMs) });
+  } catch (err) {
+    throw new FetchError(`Request failed: ${err instanceof Error ? err.message : String(err)}`);
+  }
+  if (res.status >= 300 && res.status < 400) throw new FetchError(`Refusing to follow redirect from ${url}`);
+  if (res.status === 404) return { status: 404, body: null };
+  if (!res.ok) throw new FetchError(`${url} returned ${res.status}`);
+  return { status: res.status, body: await res.json() };
+}
+
+function projectId(owner: string, repo: string): string {
+  return encodeURIComponent(`${owner}/${repo}`);
+}
+
+/** The repo's default branch, so the tree request has a concrete ref. */
+async function defaultBranch(host: HostConfig, owner: string, repo: string, doFetch: typeof fetch, headers: Record<string, string>, ms: number): Promise<string> {
+  const url =
+    host.kind === "gitlab"
+      ? `${host.api}/projects/${projectId(owner, repo)}`
+      : `${host.api}/repos/${owner}/${repo}`;
+  const { body } = await getJsonAt(url, headers, doFetch, ms);
+  const branch = (body as { default_branch?: string } | null)?.default_branch;
+  return branch && typeof branch === "string" ? branch : "HEAD";
+}
+
+interface TreeEntry {
+  path: string;
+  type: string;
+  size?: number;
+}
+
+/** List every blob path in the repo (recursive), with size where the host reports it. */
+async function listTree(host: HostConfig, owner: string, repo: string, ref: string, doFetch: typeof fetch, headers: Record<string, string>, ms: number): Promise<TreeEntry[]> {
+  if (host.kind === "gitlab") {
+    const out: TreeEntry[] = [];
+    const MAX_PAGES = 20; // 20 * 100 = 2000 entries — bounded; candidate filter + caps trim further
+    for (let page = 1; page <= MAX_PAGES; page++) {
+      const url = `${host.api}/projects/${projectId(owner, repo)}/repository/tree?recursive=true&per_page=100&page=${page}&ref=${encodeURIComponent(ref)}`;
+      const { body } = await getJsonAt(url, headers, doFetch, ms);
+      if (!Array.isArray(body) || body.length === 0) break;
+      for (const e of body as Array<{ path: string; type: string }>) {
+        if (e.type === "blob") out.push({ path: e.path, type: "blob" });
+      }
+      if (body.length < 100) break;
+    }
+    return out;
+  }
+  // GitHub / Forgejo (Gitea) share the git/trees recursive API.
+  const url = `${host.api}/repos/${owner}/${repo}/git/trees/${encodeURIComponent(ref)}?recursive=1`;
+  const { body } = await getJsonAt(url, headers, doFetch, ms);
+  const tree = (body as { tree?: TreeEntry[] } | null)?.tree;
+  if (!Array.isArray(tree)) return [];
+  return tree.filter((e) => e.type === "blob").map((e) => ({ path: e.path, type: "blob", size: e.size }));
+}
+
+/** Fetch one file's content per host (base64 contents API, or GitLab raw). */
+async function fetchFileContent(host: HostConfig, owner: string, repo: string, path: string, ref: string, doFetch: typeof fetch, headers: Record<string, string>, ms: number): Promise<string | undefined> {
+  if (host.kind === "gitlab") {
+    const url = `${host.api}/projects/${projectId(owner, repo)}/repository/files/${encodeURIComponent(path)}/raw?ref=${encodeURIComponent(ref)}`;
+    let res: Response;
+    try {
+      res = await doFetch(url, { headers, redirect: "manual", signal: timeoutSignal(ms) });
+    } catch {
+      return undefined;
+    }
+    if (!res.ok) return undefined;
+    return await res.text();
+  }
+  const url = `${host.api}/repos/${owner}/${repo}/contents/${path}?ref=${encodeURIComponent(ref)}`;
+  const { body } = await getJsonAt(url, headers, doFetch, ms);
+  const file = body as ContentsEntry | null;
+  if (!file?.content) return undefined;
+  return Buffer.from(file.content, (file.encoding as BufferEncoding) ?? "base64").toString("utf-8");
+}
+
+/**
+ * Fetch every candidate file in a repo (all lexicons), so a URL audit covers the
+ * same ground as a local one. Returns raw {path, content}; classification (which
+ * needs the lexicon plugins) is the caller's job via `classifyFiles`.
+ */
+export async function fetchRepoFiles(url: string, opts: FetchOptions = {}): Promise<Array<{ path: string; content: string }>> {
+  const { isCandidatePath } = await import("./discover");
+  const { host, owner, repo } = parseRepoUrl(url);
+  const doFetch = opts.fetchImpl ?? fetch;
+  const cfg = {
+    maxFiles: opts.maxFiles ?? DEFAULTS.maxFiles,
+    maxBytesPerFile: opts.maxBytesPerFile ?? DEFAULTS.maxBytesPerFile,
+    maxTotalBytes: opts.maxTotalBytes ?? DEFAULTS.maxTotalBytes,
+    timeoutMs: opts.timeoutMs ?? DEFAULTS.timeoutMs,
+  };
+  const headers = authHeaders(host.kind, opts.token);
+  const ref = opts.ref ?? (await defaultBranch(host, owner, repo, doFetch, headers, cfg.timeoutMs));
+
+  const tree = await listTree(host, owner, repo, ref, doFetch, headers, cfg.timeoutMs);
+  const candidates = tree.filter((e) => isCandidatePath(e.path));
+
+  const files: Array<{ path: string; content: string }> = [];
+  let total = 0;
+  for (const entry of candidates) {
+    if (files.length >= cfg.maxFiles) break;
+    if ((entry.size ?? 0) > cfg.maxBytesPerFile) continue; // skip oversize when the host reports size
+    const content = await fetchFileContent(host, owner, repo, entry.path, ref, doFetch, headers, cfg.timeoutMs);
+    if (content === undefined) continue;
+    if (content.length > cfg.maxBytesPerFile) continue;
+    total += content.length;
+    if (total > cfg.maxTotalBytes) throw new FetchError("Repository files exceed the total size cap.");
+    files.push({ path: entry.path, content });
+  }
+  return files;
+}
+
 const SHA40 = /^[0-9a-f]{40}$/;
 
 /**

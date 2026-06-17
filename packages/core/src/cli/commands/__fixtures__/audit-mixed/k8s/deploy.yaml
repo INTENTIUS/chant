@@ -1,0 +1,12 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: x
+spec:
+  template:
+    spec:
+      containers:
+        - name: c
+          image: nginx:latest
+          securityContext:
+            privileged: true

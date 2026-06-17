@@ -206,12 +206,13 @@ describe("auditCommand", () => {
     const yaml = "name: CI\non:\n  push:\npermissions: write-all\njobs:\n  build:\n    runs-on: ubuntu-latest\n";
     const impl = (async (url: string | URL | Request) => {
       const u = String(url);
+      if (u.includes("/git/trees/")) {
+        return new Response(JSON.stringify({ tree: [{ path: ".github/workflows/ci.yml", type: "blob", size: 100 }] }), { status: 200 });
+      }
       if (u.includes("/contents/.github/workflows/ci.yml")) {
         return new Response(JSON.stringify({ name: "ci.yml", path: ".github/workflows/ci.yml", type: "file", content: b64(yaml), encoding: "base64" }), { status: 200 });
       }
-      if (u.includes("/contents/.github/workflows")) {
-        return new Response(JSON.stringify([{ name: "ci.yml", path: ".github/workflows/ci.yml", type: "file", size: 100 }]), { status: 200 });
-      }
+      if (/\/repos\/acme\/widgets(\?|$)/.test(u)) return new Response(JSON.stringify({ default_branch: "main" }), { status: 200 });
       return new Response("not found", { status: 404 });
     }) as unknown as typeof fetch;
 
@@ -228,12 +229,13 @@ describe("auditCommand", () => {
     const impl = (async (url: string | URL | Request) => {
       const u = String(url);
       if (u.includes("/commits/v4")) return new Response(JSON.stringify({ sha }), { status: 200 });
+      if (u.includes("/git/trees/")) {
+        return new Response(JSON.stringify({ tree: [{ path: ".github/workflows/ci.yml", type: "blob", size: 100 }] }), { status: 200 });
+      }
       if (u.includes("/contents/.github/workflows/ci.yml")) {
         return new Response(JSON.stringify({ name: "ci.yml", path: ".github/workflows/ci.yml", type: "file", content: b64(yaml), encoding: "base64" }), { status: 200 });
       }
-      if (u.includes("/contents/.github/workflows")) {
-        return new Response(JSON.stringify([{ name: "ci.yml", path: ".github/workflows/ci.yml", type: "file", size: 100 }]), { status: 200 });
-      }
+      if (/\/repos\/acme\/widgets(\?|$)/.test(u)) return new Response(JSON.stringify({ default_branch: "main" }), { status: 200 });
       return new Response("not found", { status: 404 });
     }) as unknown as typeof fetch;
 

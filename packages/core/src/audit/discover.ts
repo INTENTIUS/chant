@@ -27,7 +27,7 @@
  *     normalized to a JSON string here.
  */
 
-import { existsSync, readdirSync, readFileSync, statSync } from "fs";
+import { readdirSync, readFileSync, statSync } from "fs";
 import { basename, join, relative } from "path";
 import { parseYAML } from "../yaml";
 import { loadPlugin } from "../cli/plugins";
@@ -56,12 +56,14 @@ export async function loadAuditPlugins(names: readonly string[] = AUDIT_LEXICONS
   return plugins;
 }
 
-const WALK_SKIP = new Set(["node_modules", ".git", "dist", ".github", ".forgejo"]);
+const WALK_SKIP = new Set(["node_modules", ".git", "dist"]);
+/** Dot-directories the walk descends into anyway (CI lives here). */
+const WALK_DOT_DIRS = new Set([".github", ".forgejo"]);
 const MAX_WALK_FILES = 1000;
 /** Skip absurdly large files before parsing — mirrors the fetch layer's caps. */
 const MAX_FILE_BYTES = 2 * 1024 * 1024;
 
-/** Recursively collect file paths under a root, skipping noise/dot dirs. */
+/** Recursively collect file paths under a root, skipping noise dirs. */
 function walkFiles(dir: string, out: string[]): void {
   if (out.length >= MAX_WALK_FILES) return;
   let entries;
@@ -72,7 +74,7 @@ function walkFiles(dir: string, out: string[]): void {
   }
   for (const e of entries.sort((a, b) => (a.name < b.name ? -1 : 1))) {
     if (out.length >= MAX_WALK_FILES) return;
-    if (e.name.startsWith(".") && e.isDirectory()) continue;
+    if (e.name.startsWith(".") && e.isDirectory() && !WALK_DOT_DIRS.has(e.name)) continue;
     if (WALK_SKIP.has(e.name)) continue;
     const full = join(dir, e.name);
     if (e.isDirectory()) walkFiles(full, out);
@@ -200,99 +202,113 @@ const CONTENT_DETECTORS: ContentDetector[] = [
   },
 ];
 
-/** Discover CI files by PATH (github/forgejo/gitlab — content can't disambiguate). */
-function discoverCi(root: string): AuditInput[] {
-  const inputs: AuditInput[] = [];
-  const collectDir = (dir: string, lexicon: AuditLexicon) => {
-    const abs = join(root, dir);
-    if (!existsSync(abs) || !statSync(abs).isDirectory()) return;
-    for (const name of readdirSync(abs).sort()) {
-      if (!isYaml(name)) continue;
-      const full = join(abs, name);
-      if (!statSync(full).isFile()) continue;
-      inputs.push({ path: relative(root, full), content: readFileSync(full, "utf-8"), lexicon });
-    }
-  };
-  collectDir(".github/workflows", "github");
-  collectDir(".forgejo/workflows", "forgejo");
-  const gitlab = join(root, ".gitlab-ci.yml");
-  if (existsSync(gitlab) && statSync(gitlab).isFile()) {
-    inputs.push({ path: ".gitlab-ci.yml", content: readFileSync(gitlab, "utf-8"), lexicon: "gitlab" });
-  }
-  return inputs;
+/** A repo file (relative POSIX path + content) — the unit both local and remote feed the classifier. */
+export interface RepoFile {
+  path: string;
+  content: string;
 }
 
-/** Collect Helm charts as bundles, returning [inputs, set of chart path-prefixes]. */
-function discoverHelm(root: string, all: string[], plugin: LexiconPlugin | undefined): { inputs: AuditInput[]; prefixes: string[] } {
+/** Which CI lexicon a path belongs to (by location — content can't disambiguate github vs forgejo). */
+function ciLexiconForPath(path: string): AuditLexicon | undefined {
+  if (/^\.github\/workflows\/[^/]+\.ya?ml$/.test(path)) return "github";
+  if (/^\.forgejo\/workflows\/[^/]+\.ya?ml$/.test(path)) return "forgejo";
+  if (path === ".gitlab-ci.yml") return "gitlab";
+  return undefined;
+}
+
+/**
+ * Whether a path is worth reading/fetching at all. Bounds the local walk and,
+ * crucially, the remote fetch (so we never pull a whole repo's contents).
+ */
+export function isCandidatePath(path: string): boolean {
+  const name = basename(path);
+  if (ciLexiconForPath(path)) return true;
+  if (isDockerfileName(name)) return true;
+  if (name === "Chart.yaml") return true;
+  return /\.(ya?ml|json|template)$/i.test(name);
+}
+
+/** Collect Helm charts as bundles from an in-memory file set; returns inputs + chart path-prefixes. */
+function classifyHelm(files: RepoFile[], plugin: LexiconPlugin | undefined): { inputs: AuditInput[]; prefixes: string[] } {
   const inputs: AuditInput[] = [];
   const prefixes: string[] = [];
   if (!plugin) return { inputs, prefixes };
-  const chartDirs = all.filter((f) => basename(f) === "Chart.yaml").map((f) => f.slice(0, -("/Chart.yaml".length)));
-  for (const dir of chartDirs) {
-    const prefix = dir + "/";
-    const files: Record<string, string> = {};
-    for (const f of all) {
-      if (!f.startsWith(prefix)) continue;
-      const content = readSafe(f);
-      if (content !== undefined) files[f.slice(prefix.length)] = content;
+  const charts = files.filter((f) => f.path === "Chart.yaml" || f.path.endsWith("/Chart.yaml"));
+  for (const chartFile of charts) {
+    const dir = chartFile.path === "Chart.yaml" ? "" : chartFile.path.slice(0, -"/Chart.yaml".length);
+    const prefix = dir === "" ? "" : `${dir}/`;
+    const bundle: Record<string, string> = {};
+    for (const f of files) {
+      if (prefix !== "" && !f.path.startsWith(prefix)) continue;
+      bundle[prefix === "" ? f.path : f.path.slice(prefix.length)] = f.content;
     }
-    const chart = files["Chart.yaml"];
+    const chart = bundle["Chart.yaml"];
     if (chart === undefined) continue;
     const parsed = parseStructured(chart);
     if (!parsed || !plugin.detectTemplate?.(parsed)) continue;
-    const chartPath = relative(root, dir) || ".";
-    inputs.push({ path: chartPath, content: chart, lexicon: "helm", files });
-    prefixes.push(chartPath === "." ? "" : `${chartPath}/`);
+    inputs.push({ path: dir || ".", content: chart, lexicon: "helm", files: bundle });
+    prefixes.push(prefix);
   }
   return { inputs, prefixes };
 }
 
 /**
- * Unified discovery: one walk, plugin-delegated content detection, plus the
- * path/filename/bundle special-cases content shape can't express.
- *
- * `plugins` is the set of loaded lexicon plugins (by name); detection is skipped
- * for any lexicon whose plugin isn't provided, so a caller can scope discovery.
+ * Classify an in-memory set of repo files into per-lexicon audit inputs. Pure
+ * (no fs, no network) so the local walk and the remote tree-fetch share exactly
+ * one detection path. Each file maps to at most one lexicon: CI by path,
+ * Dockerfiles by name, Helm charts as a bundle, everything else by the
+ * precedence-ordered content detectors (delegating to each plugin's
+ * `detectTemplate`). Lexicons whose plugin isn't provided are skipped.
  */
-export function discoverByDetection(root: string, plugins: LexiconPlugin[]): AuditInput[] {
+export function classifyFiles(files: RepoFile[], plugins: LexiconPlugin[]): AuditInput[] {
   const byName = new Map(plugins.map((p) => [p.name, p]));
-  const all: string[] = [];
-  walkFiles(root, all);
 
-  // Helm claims whole chart directories first; everything under a chart is
-  // excluded from the loose-file pass so templates aren't double-audited.
-  const helm = discoverHelm(root, all, byName.get("helm"));
-  const underChart = (rel: string): boolean => helm.prefixes.some((pre) => (pre === "" ? true : rel.startsWith(pre)));
+  // Helm claims whole chart directories first; chart-internal files are excluded
+  // from the loose-file pass so templates aren't double-audited.
+  const helm = classifyHelm(files, byName.get("helm"));
+  const underChart = (p: string): boolean => helm.prefixes.some((pre) => (pre === "" ? true : p.startsWith(pre)));
 
-  const inputs: AuditInput[] = [...discoverCi(root), ...helm.inputs];
+  const inputs: AuditInput[] = [...helm.inputs];
+  for (const { path, content } of files) {
+    if (underChart(path)) continue;
+    const name = basename(path);
 
-  for (const full of all) {
-    const name = basename(full);
-    const rel = relative(root, full);
-    if (underChart(rel)) continue;
-
-    // Dockerfiles: filename-detected (not YAML/JSON, so no detectTemplate).
-    if (isDockerfileName(name) && byName.has("docker")) {
-      const content = readSafe(full);
-      if (content !== undefined) inputs.push({ path: rel, content, lexicon: "docker" });
+    const ci = ciLexiconForPath(path);
+    if (ci) {
+      if (byName.has(ci)) inputs.push({ path, content, lexicon: ci });
       continue;
     }
-
-    let content: string | undefined;
+    if (isDockerfileName(name)) {
+      if (byName.has("docker")) inputs.push({ path, content, lexicon: "docker" });
+      continue;
+    }
     for (const det of CONTENT_DETECTORS) {
       const plugin = byName.get(det.lexicon);
       if (!plugin || !det.accepts(name)) continue;
-      if (content === undefined) {
-        content = readSafe(full);
-        if (content === undefined) break;
-      }
       const normalized = det.detect(plugin, name, content);
       if (normalized !== null) {
-        inputs.push({ path: rel, content: normalized, lexicon: det.lexicon });
+        inputs.push({ path, content: normalized, lexicon: det.lexicon });
         break; // first detector in precedence wins — one lexicon per file
       }
     }
   }
-
   return inputs;
+}
+
+/**
+ * Local discovery: one filesystem walk, candidate-filtered, read into memory,
+ * then handed to the shared `classifyFiles`. Detection is skipped for any
+ * lexicon whose plugin isn't provided, so a caller can scope discovery.
+ */
+export function discoverByDetection(root: string, plugins: LexiconPlugin[]): AuditInput[] {
+  const all: string[] = [];
+  walkFiles(root, all);
+  const files: RepoFile[] = [];
+  for (const full of all) {
+    const path = relative(root, full);
+    if (!isCandidatePath(path)) continue;
+    const content = readSafe(full);
+    if (content !== undefined) files.push({ path, content });
+  }
+  return classifyFiles(files, plugins);
 }
