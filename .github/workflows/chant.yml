@@ -142,6 +142,8 @@ jobs:
 
       - name: Generate and validate GitHub lexicon
         run: npm run --prefix lexicons/github prepack
+
+      - name: Generate and validate Forgejo lexicon
         run: npm run --prefix lexicons/forgejo prepack
 
       - name: Generate and validate K8s lexicon
