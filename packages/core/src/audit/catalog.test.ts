@@ -1,5 +1,5 @@
 import { describe, test, expect } from "vitest";
-import { RULE_CATALOG, ruleMeta } from "./catalog";
+import { RULE_CATALOG, RULE_CATEGORY, ruleMeta } from "./catalog";
 import { loadPlugins } from "../cli/plugins";
 
 /** All post-synth check ids the audit can actually surface, from the lexicons. */
@@ -34,6 +34,21 @@ describe("RULE_CATALOG", () => {
       expect(m.remediation.length, `${id} has remediation`).toBeGreaterThan(0);
       expect(["merge-worthy", "report-only"]).toContain(m.tier);
       expect(["deterministic", "guidance"]).toContain(m.fixKind);
+      expect(["security", "correctness", "best-practice"], `${id} has a valid category`).toContain(m.category);
+    }
+  });
+
+  test("every entry is categorized from the curated map (no fallback)", () => {
+    // meta() falls back to "best-practice" only if RULE_CATEGORY is missing an
+    // id — assert the curated map explicitly covers every catalogued rule, so a
+    // new rule can't silently inherit the fallback.
+    const uncategorized = Object.keys(RULE_CATALOG).filter((id) => !(id in RULE_CATEGORY)).sort();
+    expect(uncategorized, "rules missing an explicit RULE_CATEGORY entry").toEqual([]);
+    // And an authority citation (the strongest signal) always means security.
+    for (const [id, m] of Object.entries(RULE_CATALOG)) {
+      if (m.authority && m.authority.length > 0) {
+        expect(m.category, `${id} cites an authority, so it is security`).toBe("security");
+      }
     }
   });
 

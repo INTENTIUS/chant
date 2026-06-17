@@ -174,7 +174,7 @@ describe("auditCommand", () => {
     expect(result.success).toBe(true);
     expect(result.wroteTo).toBe(out);
     expect(existsSync(out)).toBe(true);
-    expect(readFileSync(out, "utf-8")).toContain("# CI security audit");
+    expect(readFileSync(out, "utf-8")).toContain("# chant audit");
     rmSync(out);
   });
 

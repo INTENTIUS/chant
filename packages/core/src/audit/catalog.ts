@@ -9,15 +9,25 @@
  *    diffed) vs `guidance` (needs human/LLM judgment — emit remediation text
  *    only; never auto-applied; never run by the hosted service).
  *
- * The catalog covers exactly the post-synth checks run by the audit (github
- * GHA*, gitlab WGL*, forgejo WFJ*). A drift-guard test asserts it stays in
- * sync with the lexicons.
+ * The catalog covers exactly the post-synth checks run by the audit across all
+ * lexicons (CI: GHA/WGL/WFJ; IaC and manifests: WK8/WAW/AZR/WGC/WHM/DKRD/ARGO).
+ * A drift-guard test asserts it stays in sync with the lexicons, and that every
+ * entry has a `category`.
  */
 
 export type Tier = "merge-worthy" | "report-only";
 
 /** deterministic = safe auto-fix/diff; guidance = report text only (needs judgment). */
 export type FixKind = "deterministic" | "guidance";
+
+/**
+ * What kind of finding this is — orthogonal to `tier` (fix confidence). Lets the
+ * report say "N security, M best-practice, K correctness" instead of branding
+ * everything "security." `security` = exposure/vuln/supply-chain; `correctness`
+ * = a structural bug (broken reference, invalid schema, never-runs); everything
+ * else is `best-practice` (hygiene/style/deprecation/reliability).
+ */
+export type Category = "security" | "correctness" | "best-practice";
 
 export interface Authority {
   name: string;
@@ -28,6 +38,8 @@ export interface RuleMeta {
   id: string;
   tier: Tier;
   fixKind: FixKind;
+  /** What kind of finding this is (security / correctness / best-practice). */
+  category: Category;
   title: string;
   /** External backing so a finding isn't just chant's opinion. */
   authority?: Authority[];
@@ -107,13 +119,241 @@ function meta(
   remediation: string,
   authority?: Authority[],
 ): RuleMeta {
-  return { id, tier, fixKind, title, remediation, authority, yamlBased: true };
+  // An authority citation is the strongest security signal, so it wins. Otherwise
+  // the curated RULE_CATEGORY map (defined below, before RULE_CATALOG runs)
+  // decides correctness vs best-practice vs security-without-authority; the drift
+  // test guarantees every id is mapped, so the fallback is only a type belt.
+  const category: Category = authority && authority.length > 0 ? "security" : RULE_CATEGORY[id] ?? "best-practice";
+  return { id, tier, fixKind, category, title, remediation, authority, yamlBased: true };
 }
 
 const M = "merge-worthy" as const;
 const R = "report-only" as const;
 const D = "deterministic" as const;
 const G = "guidance" as const;
+
+/**
+ * Finding category per rule (#415). Curated: security rules are those that
+ * cite an authority or guard an exposure; correctness rules flag structural
+ * bugs (broken references, invalid schema, never-runs); the rest are
+ * best-practice. A drift test asserts this covers every catalogued rule.
+ */
+export const RULE_CATEGORY: Record<string, Category> = {
+  ARGO002: "correctness",
+  ARGO003: "correctness",
+  ARGO005: "best-practice",
+  AZR010: "best-practice",
+  AZR011: "correctness",
+  AZR012: "best-practice",
+  AZR013: "correctness",
+  AZR014: "security",
+  AZR015: "security",
+  AZR016: "best-practice",
+  AZR017: "best-practice",
+  AZR018: "best-practice",
+  AZR019: "security",
+  AZR020: "best-practice",
+  AZR021: "security",
+  AZR022: "security",
+  AZR023: "best-practice",
+  AZR024: "best-practice",
+  AZR025: "best-practice",
+  AZR026: "best-practice",
+  AZR027: "security",
+  AZR028: "best-practice",
+  AZR029: "security",
+  COR020: "correctness",
+  DKRD001: "best-practice",
+  DKRD002: "best-practice",
+  DKRD003: "security",
+  DKRD010: "best-practice",
+  DKRD011: "best-practice",
+  DKRD012: "security",
+  EXT001: "correctness",
+  GHA006: "correctness",
+  GHA009: "correctness",
+  GHA011: "correctness",
+  GHA013: "security",
+  GHA017: "security",
+  GHA018: "security",
+  GHA019: "correctness",
+  GHA021: "security",
+  GHA022: "best-practice",
+  GHA023: "best-practice",
+  GHA024: "best-practice",
+  GHA025: "security",
+  GHA026: "best-practice",
+  GHA027: "best-practice",
+  GHA028: "correctness",
+  GHA029: "security",
+  GHA030: "security",
+  GHA031: "security",
+  GHA032: "security",
+  GHA033: "security",
+  GHA034: "security",
+  GHA035: "security",
+  GHA036: "security",
+  GHA037: "security",
+  GHA038: "security",
+  GHA039: "security",
+  GHA040: "security",
+  GHA041: "security",
+  GHA042: "security",
+  GHA043: "security",
+  GHA044: "security",
+  GHA045: "security",
+  GHA046: "correctness",
+  GHA047: "correctness",
+  GHA048: "correctness",
+  GHA049: "security",
+  GHA050: "security",
+  GHA051: "best-practice",
+  GHA052: "security",
+  GHA053: "security",
+  GHA054: "security",
+  GHA055: "best-practice",
+  GHA056: "best-practice",
+  GHA057: "security",
+  GHA058: "best-practice",
+  WAW010: "best-practice",
+  WAW011: "best-practice",
+  WAW013: "correctness",
+  WAW014: "best-practice",
+  WAW015: "correctness",
+  WAW016: "best-practice",
+  WAW017: "best-practice",
+  WAW018: "security",
+  WAW019: "security",
+  WAW020: "security",
+  WAW021: "security",
+  WAW022: "best-practice",
+  WAW023: "best-practice",
+  WAW024: "best-practice",
+  WAW025: "security",
+  WAW026: "security",
+  WAW027: "best-practice",
+  WAW028: "security",
+  WAW029: "correctness",
+  WAW030: "best-practice",
+  WAW031: "best-practice",
+  WAW032: "security",
+  WAW033: "correctness",
+  WAW034: "best-practice",
+  WAW035: "best-practice",
+  WAW036: "correctness",
+  WAW037: "correctness",
+  WFJ010: "correctness",
+  WFJ011: "correctness",
+  WGC101: "security",
+  WGC102: "security",
+  WGC103: "best-practice",
+  WGC104: "security",
+  WGC105: "security",
+  WGC106: "best-practice",
+  WGC107: "best-practice",
+  WGC108: "best-practice",
+  WGC109: "security",
+  WGC110: "security",
+  WGC111: "correctness",
+  WGC112: "correctness",
+  WGC113: "best-practice",
+  WGC201: "best-practice",
+  WGC202: "security",
+  WGC203: "security",
+  WGC204: "best-practice",
+  WGC301: "best-practice",
+  WGC302: "best-practice",
+  WGC303: "best-practice",
+  WGC401: "correctness",
+  WGC402: "correctness",
+  WGC403: "correctness",
+  WGL010: "correctness",
+  WGL011: "correctness",
+  WGL012: "best-practice",
+  WGL013: "correctness",
+  WGL014: "correctness",
+  WGL015: "correctness",
+  WGL016: "security",
+  WGL017: "security",
+  WGL018: "best-practice",
+  WGL019: "best-practice",
+  WGL020: "correctness",
+  WGL021: "best-practice",
+  WGL022: "best-practice",
+  WGL023: "best-practice",
+  WGL024: "best-practice",
+  WGL025: "best-practice",
+  WGL026: "security",
+  WGL027: "correctness",
+  WGL028: "best-practice",
+  WGL029: "security",
+  WGL030: "security",
+  WGL031: "security",
+  WGL032: "security",
+  WGL033: "security",
+  WGL034: "security",
+  WGL035: "security",
+  WGL036: "security",
+  WGL037: "security",
+  WGL038: "security",
+  WGL039: "security",
+  WGL040: "security",
+  WGL041: "correctness",
+  WGL042: "best-practice",
+  WGL043: "security",
+  WGL044: "security",
+  WGL045: "security",
+  WGL046: "security",
+  WGL047: "security",
+  WGL048: "best-practice",
+  WHM005: "best-practice",
+  WHM101: "correctness",
+  WHM102: "best-practice",
+  WHM103: "correctness",
+  WHM104: "best-practice",
+  WHM105: "best-practice",
+  WHM201: "best-practice",
+  WHM202: "best-practice",
+  WHM203: "best-practice",
+  WHM204: "best-practice",
+  WHM301: "best-practice",
+  WHM302: "best-practice",
+  WHM401: "security",
+  WHM402: "security",
+  WHM403: "security",
+  WHM404: "security",
+  WHM405: "best-practice",
+  WHM406: "best-practice",
+  WHM407: "security",
+  WHM501: "best-practice",
+  WHM502: "correctness",
+  WK8005: "security",
+  WK8006: "best-practice",
+  WK8041: "security",
+  WK8042: "security",
+  WK8101: "correctness",
+  WK8102: "best-practice",
+  WK8103: "correctness",
+  WK8104: "best-practice",
+  WK8105: "best-practice",
+  WK8201: "best-practice",
+  WK8202: "security",
+  WK8203: "security",
+  WK8204: "security",
+  WK8205: "security",
+  WK8207: "security",
+  WK8208: "security",
+  WK8209: "security",
+  WK8301: "best-practice",
+  WK8302: "best-practice",
+  WK8303: "best-practice",
+  WK8304: "best-practice",
+  WK8305: "correctness",
+  WK8306: "correctness",
+  WK8401: "correctness",
+  WK8402: "best-practice",
+  WK8403: "best-practice",
+};
 
 /** Every audited post-synth check, keyed by id. */
 export const RULE_CATALOG: Record<string, RuleMeta> = {

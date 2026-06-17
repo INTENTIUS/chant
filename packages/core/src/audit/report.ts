@@ -87,7 +87,7 @@ export function renderMarkdown(findings: AuditFinding[], opts: RenderOptions = {
   const model = buildReportModel(findings, opts);
   const { counts } = model;
 
-  const lines: string[] = ["# CI security audit"];
+  const lines: string[] = ["# chant audit"];
   if (opts.target) lines.push("", `Target: ${opts.target}`);
   lines.push("");
   for (const note of opts.notes ?? []) lines.push(`> Note: ${note}`, "");
@@ -101,6 +101,8 @@ export function renderMarkdown(findings: AuditFinding[], opts: RenderOptions = {
     `${counts.total} finding${counts.total === 1 ? "" : "s"} — ` +
       `${counts.quickWin} quick-win, ${counts.needsReview} needs-review, ${counts.reportOnly} report-only ` +
       `(${counts.errors} error, ${counts.warnings} warning, ${counts.infos} info).`,
+    "",
+    `By category: ${counts.security} security, ${counts.correctness} correctness, ${counts.bestPractice} best-practice.`,
     "",
   );
 

@@ -1,5 +1,5 @@
 /**
- * `chant audit` — run chant's CI security checks against an existing repo's
+ * `chant audit` — run chant's security, correctness, and best-practice checks against an existing repo's
  * pipeline YAML and emit a tiered report. Does not require a chant project;
  * it reads `.github/workflows`, `.gitlab-ci.yml`, and `.forgejo/workflows`
  * directly and runs the real post-synth checks via the audit core.
