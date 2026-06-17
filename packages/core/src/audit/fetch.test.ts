@@ -75,6 +75,11 @@ describe("fetchCiFiles", () => {
     await expect(fetchCiFiles("https://github.com/acme/widgets", { fetchImpl: impl })).rejects.toThrow(/redirect/i);
   });
 
+  test("refuses to follow a redirect on the gitlab path", async () => {
+    const { impl } = fakeFetch([{ match: "/repository/files/", make: () => new Response(null, { status: 301 }) }]);
+    await expect(fetchCiFiles("https://gitlab.com/acme/widgets", { fetchImpl: impl })).rejects.toThrow(/redirect/i);
+  });
+
   test("throws on a non-allowlisted host before any fetch", async () => {
     await expect(fetchCiFiles("https://evil.example.com/o/r")).rejects.toThrow(/Host not allowed/);
   });
