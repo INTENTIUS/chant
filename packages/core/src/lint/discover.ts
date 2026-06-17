@@ -84,7 +84,7 @@ export function discoverPostSynthChecks(dir: string, importMetaUrl: string): Pos
 /**
  * List rule files in a directory (excluding tests, helpers, index).
  */
-function listRuleFiles(dir: string): string[] {
+export function listRuleFiles(dir: string): string[] {
   try {
     return readdirSync(dir).filter((f) => {
       if (!f.endsWith(".ts")) return false;

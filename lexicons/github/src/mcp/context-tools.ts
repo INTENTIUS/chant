@@ -12,10 +12,8 @@
 
 import { build, type BuildResult } from "@intentius/chant/build";
 import { runPostSynthChecks, getPrimaryOutput } from "@intentius/chant/lint/post-synth";
-import { discoverPostSynthChecks } from "@intentius/chant/lint/discover";
+import { postSynthChecks } from "../lint/post-synth";
 import type { McpToolContribution } from "@intentius/chant/mcp/types";
-import { dirname, join } from "path";
-import { fileURLToPath } from "url";
 import { githubSerializer } from "../serializer";
 import {
   extractJobs,
@@ -34,8 +32,7 @@ async function buildGithub(path: string): Promise<{ yaml: string; result: BuildR
 
 /** Discover the lexicon's post-synth checks without depending on the plugin. */
 function githubPostSynthChecks() {
-  const dir = join(dirname(fileURLToPath(import.meta.url)), "..", "lint", "post-synth");
-  return discoverPostSynthChecks(dir, import.meta.url);
+  return postSynthChecks;
 }
 
 /** Is a `uses:` ref pinned to a full commit SHA (the only immutable form)? */

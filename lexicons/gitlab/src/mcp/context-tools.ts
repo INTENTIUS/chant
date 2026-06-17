@@ -11,12 +11,11 @@
 
 import { build, type BuildResult } from "@intentius/chant/build";
 import { runPostSynthChecks, getPrimaryOutput } from "@intentius/chant/lint/post-synth";
-import { discoverPostSynthChecks } from "@intentius/chant/lint/discover";
+import { postSynthChecks } from "../lint/post-synth";
 import { getProvenance } from "@intentius/chant/provenance";
 import type { McpToolContribution } from "@intentius/chant/mcp/types";
-import { dirname, join, relative, isAbsolute, resolve } from "path";
+import { relative, isAbsolute, resolve } from "path";
 import { readFile } from "fs/promises";
-import { fileURLToPath } from "url";
 import { gitlabSerializer } from "../serializer";
 import { transform, detectGitHubWorkflow } from "../migrate/from-github";
 import {
@@ -36,8 +35,7 @@ async function buildGitlab(path: string): Promise<{ yaml: string; result: BuildR
 
 /** Discover the lexicon's post-synth checks without depending on the plugin. */
 function gitlabPostSynthChecks() {
-  const dir = join(dirname(fileURLToPath(import.meta.url)), "..", "lint", "post-synth");
-  return discoverPostSynthChecks(dir, import.meta.url);
+  return postSynthChecks;
 }
 
 /** Is a component address (`host/group/comp@version`) pinned to a fixed version? */

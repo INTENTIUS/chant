@@ -9,7 +9,7 @@
  */
 
 import type { LexiconPlugin, InitTemplateSet, MigrationSource } from "@intentius/chant/lexicon";
-import { discoverPostSynthChecks } from "@intentius/chant/lint/discover";
+import { postSynthChecks as postSynthCheckList } from "./lint/post-synth";
 import { createSkillsLoader, createDiffTool } from "@intentius/chant/lexicon-plugin-helpers";
 import { join, dirname } from "path";
 import { fileURLToPath } from "url";
@@ -122,8 +122,7 @@ export const build = new Job({
   },
 
   postSynthChecks() {
-    const dir = join(dirname(fileURLToPath(import.meta.url)), "lint", "post-synth");
-    return discoverPostSynthChecks(dir, import.meta.url);
+    return postSynthCheckList;
   },
 
   mcpTools() {

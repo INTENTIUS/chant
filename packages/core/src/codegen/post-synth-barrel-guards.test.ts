@@ -1,0 +1,43 @@
+import { describe, test, expect } from "vitest";
+import { build } from "esbuild";
+import { readFileSync, readdirSync, existsSync } from "fs";
+import { fileURLToPath } from "url";
+import { join } from "path";
+import { renderPostSynthBarrelForDir } from "./generate-post-synth-barrel";
+
+const repoRoot = fileURLToPath(new URL("../../../../", import.meta.url));
+const lexiconsDir = join(repoRoot, "lexicons");
+const lexiconDirs = readdirSync(lexiconsDir).filter((name) =>
+  existsSync(join(lexiconsDir, name, "src", "lint", "post-synth", "index.ts")),
+);
+
+describe("post-synth barrel freshness", () => {
+  test.each(lexiconDirs)("%s barrel is up to date (run npm run generate)", (lexicon) => {
+    const dir = join(lexiconsDir, lexicon, "src", "lint", "post-synth");
+    const committed = readFileSync(join(dir, "index.ts"), "utf-8");
+    const regenerated = renderPostSynthBarrelForDir(dir, import.meta.url);
+    expect(committed, `${lexicon} barrel is stale — run \`npm run generate\``).toBe(regenerated);
+  });
+});
+
+describe("post-synth barrel is edge-bundle clean", () => {
+  // The barrel is the entry an edge/bundled deployment imports. It must not drag
+  // in the TypeScript compiler or the fs/tsx runtime loader (#409).
+  test("github barrel bundles without typescript or the fs loader", async () => {
+    const entry = join(lexiconsDir, "github", "src", "lint", "post-synth", "index.ts");
+    const result = await build({
+      entryPoints: [entry],
+      bundle: true,
+      format: "esm",
+      platform: "node",
+      metafile: true,
+      write: false,
+      outfile: "out.js",
+      logLevel: "silent",
+    });
+    const inputs = Object.keys(result.metafile.inputs);
+    expect(inputs.some((p) => p.includes("node_modules/typescript"))).toBe(false);
+    // The runtime fs+tsx loader must not be in the graph.
+    expect(inputs.some((p) => p.includes("lint/discover"))).toBe(false);
+  }, 30_000);
+});

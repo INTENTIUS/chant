@@ -7,7 +7,7 @@
 
 import type { LexiconPlugin, IntrinsicDef, InitTemplateSet } from "@intentius/chant/lexicon";
 import type { LintRule } from "@intentius/chant/lint/rule";
-import { discoverPostSynthChecks } from "@intentius/chant/lint/discover";
+import { postSynthChecks as postSynthCheckList } from "./lint/post-synth";
 import { createSkillsLoader, createDiffTool, createCatalogResource } from "@intentius/chant/lexicon-plugin-helpers";
 import { join, dirname } from "path";
 import { fileURLToPath } from "url";
@@ -54,8 +54,7 @@ export const githubPlugin: LexiconPlugin = {
   },
 
   postSynthChecks() {
-    const postSynthDir = join(dirname(fileURLToPath(import.meta.url)), "lint", "post-synth");
-    return discoverPostSynthChecks(postSynthDir, import.meta.url);
+    return postSynthCheckList;
   },
 
   intrinsics(): IntrinsicDef[] {

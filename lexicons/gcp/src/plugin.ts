@@ -10,7 +10,7 @@ import type { LintRule } from "@intentius/chant/lint/rule";
 import type { TemplateParser } from "@intentius/chant/import/parser";
 import type { TypeScriptGenerator } from "@intentius/chant/import/generator";
 import type { CompletionContext, CompletionItem, HoverContext, HoverInfo } from "@intentius/chant/lsp/types";
-import { discoverPostSynthChecks } from "@intentius/chant/lint/discover";
+import { postSynthChecks as postSynthCheckList } from "./lint/post-synth";
 import { createSkillsLoader, createDiffTool, createCatalogResource } from "@intentius/chant/lexicon-plugin-helpers";
 import { join, dirname } from "path";
 import { fileURLToPath } from "url";
@@ -32,8 +32,7 @@ export const gcpPlugin: LexiconPlugin = {
   },
 
   postSynthChecks() {
-    const postSynthDir = join(dirname(fileURLToPath(import.meta.url)), "lint", "post-synth");
-    return discoverPostSynthChecks(postSynthDir, import.meta.url);
+    return postSynthCheckList;
   },
 
   intrinsics() {

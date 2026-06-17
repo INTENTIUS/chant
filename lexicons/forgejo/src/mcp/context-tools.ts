@@ -14,12 +14,11 @@
 
 import { build, type BuildResult } from "@intentius/chant/build";
 import { runPostSynthChecks, getPrimaryOutput } from "@intentius/chant/lint/post-synth";
-import { discoverPostSynthChecks } from "@intentius/chant/lint/discover";
+import { postSynthChecks } from "../lint/post-synth";
 import { getProvenance } from "@intentius/chant/provenance";
 import type { McpToolContribution } from "@intentius/chant/mcp/types";
-import { dirname, join, relative, isAbsolute, resolve } from "path";
+import { relative, isAbsolute, resolve } from "path";
 import { readFile } from "fs/promises";
-import { fileURLToPath } from "url";
 import {
   extractJobs,
   extractActionRefs,
@@ -43,8 +42,7 @@ async function buildForgejo(path: string): Promise<{ yaml: string; result: Build
 
 /** Discover the forgejo post-synth checks without depending on the plugin. */
 function forgejoPostSynthChecks() {
-  const dir = join(dirname(fileURLToPath(import.meta.url)), "..", "lint", "post-synth");
-  return discoverPostSynthChecks(dir, import.meta.url);
+  return postSynthChecks;
 }
 
 /** Is a `uses:` ref pinned to a full commit SHA (the only immutable form)? */
