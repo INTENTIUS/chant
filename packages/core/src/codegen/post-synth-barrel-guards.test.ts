@@ -20,6 +20,15 @@ describe("post-synth barrel freshness", () => {
   });
 });
 
+describe("post-synth barrel is exported", () => {
+  // A lexicon that ships a barrel must export it so consumers can import
+  // `@intentius/chant-lexicon-<lex>/lint/post-synth` without `/index` (#417).
+  test.each(lexiconDirs)("%s exports ./lint/post-synth", (lexicon) => {
+    const pkg = JSON.parse(readFileSync(join(lexiconsDir, lexicon, "package.json"), "utf-8"));
+    expect(pkg.exports?.["./lint/post-synth"]).toBe("./src/lint/post-synth/index.ts");
+  });
+});
+
 describe("post-synth barrel is edge-bundle clean", () => {
   // The barrel is the entry an edge/bundled deployment imports. It must not drag
   // in the TypeScript compiler or the fs/tsx runtime loader (#409).
