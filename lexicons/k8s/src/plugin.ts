@@ -6,6 +6,7 @@
  */
 
 import type { LexiconPlugin, InitTemplateSet, ResourceMetadata } from "@intentius/chant/lexicon";
+import { detectTemplate } from "./detect";
 import type { LintRule } from "@intentius/chant/lint/rule";
 import { postSynthChecks as postSynthCheckList } from "./lint/post-synth";
 import { createSkillsLoader, createDiffTool, createCatalogResource } from "@intentius/chant/lexicon-plugin-helpers";
@@ -202,15 +203,7 @@ export const service = new Service({
     };
   },
 
-  detectTemplate(data: unknown): boolean {
-    if (typeof data !== "object" || data === null) return false;
-    const obj = data as Record<string, unknown>;
-
-    // K8s manifests have apiVersion + kind
-    if (typeof obj.apiVersion === "string" && typeof obj.kind === "string") return true;
-
-    return false;
-  },
+  detectTemplate,
 
   completionProvider(ctx: import("@intentius/chant/lsp/types").CompletionContext) {
     return k8sCompletions(ctx);
