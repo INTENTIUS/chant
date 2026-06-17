@@ -53,11 +53,11 @@ export function checkDeprecatedProperties(
   for (const [entityName, entity] of ctx.entities) {
     if (isPropertyDeclarable(entity)) continue;
 
-    const entityType = (entity as Record<string, unknown>).entityType as string;
+    const entityType = (entity as unknown as Record<string, unknown>).entityType as string;
     const deprProps = deprecated.get(entityType);
     if (!deprProps) continue;
 
-    const props = (entity as Record<string, unknown>).props as Record<string, unknown> | undefined;
+    const props = (entity as unknown as Record<string, unknown>).props as Record<string, unknown> | undefined;
     if (!props) continue;
 
     for (const propName of Object.keys(props)) {

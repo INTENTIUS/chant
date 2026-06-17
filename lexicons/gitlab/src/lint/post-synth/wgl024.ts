@@ -18,10 +18,10 @@ export const wgl024: PostSynthCheck = {
 
     for (const [entityName, entity] of ctx.entities) {
       if (isPropertyDeclarable(entity)) continue;
-      const entityType = (entity as Record<string, unknown>).entityType as string;
+      const entityType = (entity as unknown as Record<string, unknown>).entityType as string;
       if (entityType !== "GitLab::CI::Job") continue;
 
-      const props = (entity as Record<string, unknown>).props as Record<string, unknown> | undefined;
+      const props = (entity as unknown as Record<string, unknown>).props as Record<string, unknown> | undefined;
       if (!props) continue;
 
       // Check top-level when: manual

@@ -108,7 +108,7 @@ export const gitlabSerializer: Serializer = {
     for (const [name, entity] of entities) {
       if (isPropertyDeclarable(entity)) continue; // Skip property-only entities
 
-      const entityType = (entity as Record<string, unknown>).entityType as string;
+      const entityType = (entity as unknown as Record<string, unknown>).entityType as string;
       if (entityType === "GitLab::CI::Job") {
         jobs.push([name, entity]);
       } else if (entityType === "GitLab::CI::Default") {
@@ -123,7 +123,7 @@ export const gitlabSerializer: Serializer = {
     // Emit stages (collect from jobs)
     const stages = new Set<string>();
     for (const [, entity] of jobs) {
-      const props = (entity as Record<string, unknown>).props as Record<string, unknown> | undefined;
+      const props = (entity as unknown as Record<string, unknown>).props as Record<string, unknown> | undefined;
       if (props?.stage && typeof props.stage === "string") {
         stages.add(props.stage);
       }
@@ -135,7 +135,7 @@ export const gitlabSerializer: Serializer = {
     // Emit defaults
     for (const [, entity] of defaults) {
       const converted = toYAMLValue(
-        (entity as Record<string, unknown>).props,
+        (entity as unknown as Record<string, unknown>).props,
         entityNames,
       ) as Record<string, unknown> | undefined;
       if (converted) {
@@ -146,7 +146,7 @@ export const gitlabSerializer: Serializer = {
     // Emit workflow
     for (const [, entity] of workflows) {
       const converted = toYAMLValue(
-        (entity as Record<string, unknown>).props,
+        (entity as unknown as Record<string, unknown>).props,
         entityNames,
       ) as Record<string, unknown> | undefined;
       if (converted) {
@@ -157,7 +157,7 @@ export const gitlabSerializer: Serializer = {
     // Emit jobs
     for (const [name, entity] of jobs) {
       const converted = toYAMLValue(
-        (entity as Record<string, unknown>).props,
+        (entity as unknown as Record<string, unknown>).props,
         entityNames,
       ) as Record<string, unknown> | undefined;
       if (converted) {

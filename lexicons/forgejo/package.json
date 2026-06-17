@@ -31,9 +31,21 @@
     "access": "public"
   },
   "exports": {
-    ".": "./src/index.ts",
-    "./*": "./src/*.ts",
-    "./lint/post-synth": "./src/lint/post-synth/index.ts"
+    ".": {
+      "development": "./src/index.ts",
+      "types": "./dist/index.d.ts",
+      "default": "./src/index.ts"
+    },
+    "./*": {
+      "development": "./src/*.ts",
+      "types": "./dist/*.d.ts",
+      "default": "./src/*.ts"
+    },
+    "./lint/post-synth": {
+      "development": "./src/lint/post-synth/index.ts",
+      "types": "./dist/lint/post-synth/index.d.ts",
+      "default": "./src/lint/post-synth/index.ts"
+    }
   },
   "devDependencies": {
     "@intentius/chant": "*",
@@ -43,5 +55,9 @@
   "peerDependencies": {
     "@intentius/chant": "^0.7.0",
     "@intentius/chant-lexicon-github": "^0.7.0"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json && tsc-alias -p tsconfig.build.json && find dist -type f \\( -name \"*.js\" -o -name \"*.js.map\" \\) -delete",
+    "prepack": "npm run build"
   }
 }

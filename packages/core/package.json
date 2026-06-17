@@ -24,6 +24,7 @@
   "type": "module",
   "files": [
     "src/",
+    "dist/",
     "bin/"
   ],
   "publishConfig": {
@@ -33,11 +34,35 @@
     "chant": "./bin/chant"
   },
   "exports": {
-    ".": "./src/index.ts",
-    "./cli": "./src/cli/index.ts",
-    "./cli/*": "./src/cli/*.ts",
-    "./op": "./src/op/index.ts",
-    "./*": "./src/*.ts"
+    ".": {
+      "development": "./src/index.ts",
+      "types": "./dist/index.d.ts",
+      "default": "./src/index.ts"
+    },
+    "./cli": {
+      "development": "./src/cli/index.ts",
+      "types": "./dist/cli/index.d.ts",
+      "default": "./src/cli/index.ts"
+    },
+    "./cli/*": {
+      "development": "./src/cli/*.ts",
+      "types": "./dist/cli/*.d.ts",
+      "default": "./src/cli/*.ts"
+    },
+    "./op": {
+      "development": "./src/op/index.ts",
+      "types": "./dist/op/index.d.ts",
+      "default": "./src/op/index.ts"
+    },
+    "./*": {
+      "development": "./src/*.ts",
+      "types": "./dist/*.d.ts",
+      "default": "./src/*.ts"
+    }
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json && tsc-alias -p tsconfig.build.json && find dist -type f \\( -name \"*.js\" -o -name \"*.js.map\" \\) -delete",
+    "prepack": "npm run build"
   },
   "dependencies": {
     "fflate": "^0.8.2",
