@@ -121,7 +121,10 @@ export async function fetchCiFiles(url: string, opts: FetchOptions = {}): Promis
   async function getJson(apiUrl: string): Promise<{ status: number; body: unknown }> {
     let res: Response;
     try {
-      res = await doFetch(apiUrl, { headers, redirect: "error", signal: timeoutSignal(cfg.timeoutMs) });
+      // `redirect: "manual"` (not "error") so we can refuse the redirect ourselves
+      // by inspecting the 3xx below. An off-host redirect is an SSRF vector, and
+      // "error" is unsupported on edge runtimes (Cloudflare Workers).
+      res = await doFetch(apiUrl, { headers, redirect: "manual", signal: timeoutSignal(cfg.timeoutMs) });
     } catch (err) {
       throw new FetchError(`Request failed: ${err instanceof Error ? err.message : String(err)}`);
     }
@@ -195,7 +198,7 @@ export async function resolveActionSha(
         Accept: "application/vnd.github+json",
         ...(opts.token ? { Authorization: `Bearer ${opts.token}` } : {}),
       },
-      redirect: "error",
+      redirect: "manual",
       signal: timeoutSignal(opts.timeoutMs ?? DEFAULTS.timeoutMs),
     });
     if (!res.ok) return undefined;
@@ -289,16 +292,16 @@ export async function resolveImageDigest(
   const manifestUrl = `https://${parsed.registry}/v2/${parsed.repository}/manifests/${encodeURIComponent(parsed.tag)}`;
 
   try {
-    let res = await doFetch(manifestUrl, { headers: { Accept: accept }, redirect: "error", signal: timeoutSignal(ms) });
+    let res = await doFetch(manifestUrl, { headers: { Accept: accept }, redirect: "manual", signal: timeoutSignal(ms) });
     if (res.status === 401) {
       const tokenUrl = tokenUrlFromChallenge(res.headers.get("www-authenticate") ?? "");
       if (!tokenUrl) return undefined;
-      const tokRes = await doFetch(tokenUrl, { redirect: "error", signal: timeoutSignal(ms) });
+      const tokRes = await doFetch(tokenUrl, { redirect: "manual", signal: timeoutSignal(ms) });
       if (!tokRes.ok) return undefined;
       const tok = (await tokRes.json()) as { token?: string; access_token?: string };
       const bearer = tok.token ?? tok.access_token;
       if (!bearer) return undefined;
-      res = await doFetch(manifestUrl, { headers: { Accept: accept, Authorization: `Bearer ${bearer}` }, redirect: "error", signal: timeoutSignal(ms) });
+      res = await doFetch(manifestUrl, { headers: { Accept: accept, Authorization: `Bearer ${bearer}` }, redirect: "manual", signal: timeoutSignal(ms) });
     }
     if (!res.ok) return undefined;
     const digest = res.headers.get("docker-content-digest");
@@ -331,7 +334,7 @@ export async function resolveRepoCommit(
       ? `${host.api}/projects/${encodeURIComponent(`${owner}/${repo}`)}/repository/commits?per_page=1`
       : `${host.api}/repos/${owner}/${repo}/commits?per_page=1&limit=1`;
   try {
-    const res = await doFetch(apiUrl, { headers, redirect: "error", signal: timeoutSignal(opts.timeoutMs ?? DEFAULTS.timeoutMs) });
+    const res = await doFetch(apiUrl, { headers, redirect: "manual", signal: timeoutSignal(opts.timeoutMs ?? DEFAULTS.timeoutMs) });
     if (!res.ok) return undefined;
     const body = (await res.json()) as Array<{ sha?: string; id?: string }>;
     if (!Array.isArray(body) || body.length === 0) return undefined;
@@ -356,7 +359,7 @@ async function fetchGitlab(
   const apiUrl = `${host.api}/projects/${projectId}/repository/files/${encodeURIComponent(".gitlab-ci.yml")}/raw${refQ}`;
   let res: Response;
   try {
-    res = await doFetch(apiUrl, { headers, redirect: "error", signal: timeoutSignal(cfg.timeoutMs) });
+    res = await doFetch(apiUrl, { headers, redirect: "manual", signal: timeoutSignal(cfg.timeoutMs) });
   } catch (err) {
     throw new FetchError(`Request failed: ${err instanceof Error ? err.message : String(err)}`);
   }
