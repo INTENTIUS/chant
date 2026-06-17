@@ -26,15 +26,16 @@ describe("post-synth barrel is exported", () => {
   test.each(lexiconDirs)("%s exports ./lint/post-synth", (lexicon) => {
     const pkg = JSON.parse(readFileSync(join(lexiconsDir, lexicon, "package.json"), "utf-8"));
     const entry = pkg.exports?.["./lint/post-synth"];
-    // Lexicons shipping built artifacts use a conditional export — `development`
-    // resolves to source in-repo, `types`/`default` to the emitted barrel.
-    // Lexicons not yet building dist keep the plain source string.
+    // Lexicons shipping .d.ts use a conditional export — `types` resolves to the
+    // emitted declaration for external consumers; `development`/`default` keep
+    // runtime resolution on source (in-repo and published alike). Lexicons not
+    // yet building dist keep the plain source string.
     if (typeof entry === "string") {
       expect(entry).toBe("./src/lint/post-synth/index.ts");
     } else {
       expect(entry?.development).toBe("./src/lint/post-synth/index.ts");
       expect(entry?.types).toBe("./dist/lint/post-synth/index.d.ts");
-      expect(entry?.default).toBe("./dist/lint/post-synth/index.js");
+      expect(entry?.default).toBe("./src/lint/post-synth/index.ts");
     }
   });
 });

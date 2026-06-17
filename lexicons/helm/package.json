@@ -32,22 +32,22 @@
     ".": {
       "development": "./src/index.ts",
       "types": "./dist/index.d.ts",
-      "default": "./dist/index.js"
+      "default": "./src/index.ts"
     },
     "./*": {
       "development": "./src/*.ts",
       "types": "./dist/*.d.ts",
-      "default": "./dist/*.js"
+      "default": "./src/*.ts"
     },
     "./detect": {
       "development": "./src/detect.ts",
       "types": "./dist/detect.d.ts",
-      "default": "./dist/detect.js"
+      "default": "./src/detect.ts"
     },
     "./lint/post-synth": {
       "development": "./src/lint/post-synth/index.ts",
       "types": "./dist/lint/post-synth/index.d.ts",
-      "default": "./dist/lint/post-synth/index.js"
+      "default": "./src/lint/post-synth/index.ts"
     },
     "./manifest": "./dist/manifest.json",
     "./meta": "./dist/meta.json",
@@ -59,7 +59,7 @@
     "validate": "tsx src/validate-cli.ts",
     "docs": "tsx src/codegen/docs-cli.ts",
     "prepack": "npm run generate && npm run bundle && npm run validate && npm run build",
-    "build": "tsc -p tsconfig.build.json && tsc-alias -p tsconfig.build.json && node ../../scripts/copy-dist-assets.mjs"
+    "build": "tsc -p tsconfig.build.json && tsc-alias -p tsconfig.build.json && find dist -type f \\( -name \"*.js\" -o -name \"*.js.map\" \\) -delete"
   },
   "dependencies": {
     "@intentius/chant-lexicon-k8s": "*"
