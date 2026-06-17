@@ -5,10 +5,9 @@
  * directly and runs the real post-synth checks via the audit core.
  */
 
-import { existsSync, readFileSync, readdirSync, statSync, writeFileSync } from "fs";
-import { join, relative, basename } from "path";
-import { parseYAML } from "../../yaml";
-import { auditFiles, type AuditInput, type AuditFinding, type AuditLexicon, type ChecksProvider } from "../../audit/core";
+import { existsSync, statSync, writeFileSync } from "fs";
+import { auditFiles, type AuditInput, type AuditFinding, type ChecksProvider } from "../../audit/core";
+import { discoverByDetection, loadAuditPlugins } from "../../audit/discover";
 import { RULE_CATALOG } from "../../audit/catalog";
 import { renderMarkdown } from "../../audit/report";
 import { renderHtml, type ReportTheme } from "../../audit/report-html";
@@ -89,255 +88,6 @@ function githubToken(env: NodeJS.ProcessEnv = process.env): string | undefined {
   return env.GITHUB_TOKEN ?? env.CHANT_AUDIT_GITHUB_TOKEN;
 }
 
-function isYaml(name: string): boolean {
-  return name.endsWith(".yml") || name.endsWith(".yaml");
-}
-
-function collectDir(root: string, dir: string, lexicon: AuditLexicon, out: AuditInput[]): void {
-  const abs = join(root, dir);
-  if (!existsSync(abs) || !statSync(abs).isDirectory()) return;
-  for (const name of readdirSync(abs).sort()) {
-    if (!isYaml(name)) continue;
-    const full = join(abs, name);
-    if (!statSync(full).isFile()) continue;
-    out.push({ path: relative(root, full), content: readFileSync(full, "utf-8"), lexicon });
-  }
-}
-
-/** Discover CI files under a repo root. */
-export function discoverCiFiles(root: string): AuditInput[] {
-  const inputs: AuditInput[] = [];
-  collectDir(root, ".github/workflows", "github", inputs);
-  collectDir(root, ".forgejo/workflows", "forgejo", inputs);
-  const gitlab = join(root, ".gitlab-ci.yml");
-  if (existsSync(gitlab) && statSync(gitlab).isFile()) {
-    inputs.push({ path: ".gitlab-ci.yml", content: readFileSync(gitlab, "utf-8"), lexicon: "gitlab" });
-  }
-  return inputs;
-}
-
-const WALK_SKIP = new Set(["node_modules", ".git", "dist", ".github", ".forgejo"]);
-const MAX_WALK_FILES = 1000;
-
-/** Recursively collect file paths under a root, skipping noise/dot dirs. */
-function walkFiles(dir: string, out: string[]): void {
-  if (out.length >= MAX_WALK_FILES) return;
-  let entries;
-  try {
-    entries = readdirSync(dir, { withFileTypes: true });
-  } catch {
-    return;
-  }
-  for (const e of entries.sort((a, b) => (a.name < b.name ? -1 : 1))) {
-    if (out.length >= MAX_WALK_FILES) return;
-    if (e.name.startsWith(".") && e.isDirectory()) continue;
-    if (WALK_SKIP.has(e.name)) continue;
-    const full = join(dir, e.name);
-    if (e.isDirectory()) walkFiles(full, out);
-    else out.push(full);
-  }
-}
-
-function readSafe(full: string): string | undefined {
-  try {
-    return readFileSync(full, "utf-8");
-  } catch {
-    return undefined;
-  }
-}
-
-const CNRM = "cnrm.cloud.google.com";
-
-/** True if any YAML doc is a Kubernetes manifest (excluding GCP Config Connector). */
-function looksLikeK8s(content: string): boolean {
-  for (const doc of content.split(/\n---\n/)) {
-    const t = doc.trim();
-    if (!t) continue;
-    try {
-      const obj = parseYAML(t) as Record<string, unknown>;
-      const apiVersion = obj?.apiVersion;
-      if (typeof apiVersion === "string" && typeof obj.kind === "string" && !apiVersion.includes(CNRM)) return true;
-    } catch {
-      // not parseable as a single doc — skip
-    }
-  }
-  return false;
-}
-
-/** True if any YAML doc is a GCP Config Connector resource (cnrm.cloud.google.com). */
-function looksLikeGcp(content: string): boolean {
-  for (const doc of content.split(/\n---\n/)) {
-    const t = doc.trim();
-    if (!t) continue;
-    try {
-      const obj = parseYAML(t) as Record<string, unknown>;
-      if (typeof obj?.apiVersion === "string" && obj.apiVersion.includes(CNRM)) return true;
-    } catch {
-      // skip
-    }
-  }
-  return false;
-}
-
-/** Discover GCP Config Connector manifests under a repo root. */
-export function discoverGcp(root: string): AuditInput[] {
-  const files: string[] = [];
-  walkFiles(root, files);
-  const inputs: AuditInput[] = [];
-  for (const full of files) {
-    if (!isYaml(basename(full))) continue;
-    const content = readSafe(full);
-    if (content !== undefined && looksLikeGcp(content)) {
-      inputs.push({ path: relative(root, full), content, lexicon: "gcp" });
-    }
-  }
-  return inputs;
-}
-
-/** Discover Kubernetes manifest files under a repo root (content-detected). */
-export function discoverManifests(root: string): AuditInput[] {
-  const files: string[] = [];
-  walkFiles(root, files);
-  const inputs: AuditInput[] = [];
-  for (const full of files) {
-    if (!isYaml(basename(full))) continue;
-    const content = readSafe(full);
-    if (content !== undefined && looksLikeK8s(content)) {
-      inputs.push({ path: relative(root, full), content, lexicon: "k8s" });
-    }
-  }
-  return inputs;
-}
-
-function isDockerfileName(name: string): boolean {
-  return name === "Dockerfile" || name.startsWith("Dockerfile.") || name.endsWith(".Dockerfile") || name.endsWith(".dockerfile");
-}
-
-function looksLikeCompose(content: string): boolean {
-  try {
-    const obj = parseYAML(content) as Record<string, unknown>;
-    return Boolean(obj) && typeof obj === "object" && "services" in obj;
-  } catch {
-    return false;
-  }
-}
-
-/** Parse JSON or YAML content into an object, or undefined. */
-function parseStructured(content: string): Record<string, unknown> | undefined {
-  try {
-    const j = JSON.parse(content);
-    if (j && typeof j === "object") return j as Record<string, unknown>;
-  } catch {
-    // not JSON — try YAML
-  }
-  try {
-    const y = parseYAML(content) as Record<string, unknown>;
-    if (y && typeof y === "object") return y;
-  } catch {
-    // not YAML either
-  }
-  return undefined;
-}
-
-/** True if a parsed object is a CloudFormation template. */
-function looksLikeCloudFormation(obj: Record<string, unknown>): boolean {
-  if (obj.AWSTemplateFormatVersion !== undefined) return true;
-  const resources = obj.Resources;
-  if (resources && typeof resources === "object") {
-    for (const r of Object.values(resources as Record<string, unknown>)) {
-      const type = r && typeof r === "object" ? (r as Record<string, unknown>).Type : undefined;
-      if (typeof type === "string" && type.startsWith("AWS::")) return true;
-    }
-  }
-  return false;
-}
-
-/**
- * Discover CloudFormation templates (JSON or YAML, `.json`/`.yaml`/`.yml`/`.template`).
- * The aws checks `JSON.parse` the template, so YAML templates are normalized to a
- * JSON string here (intrinsics like `!Ref` survive as strings — fine for the
- * structural security checks).
- */
-export function discoverCloudFormation(root: string): AuditInput[] {
-  const files: string[] = [];
-  walkFiles(root, files);
-  const inputs: AuditInput[] = [];
-  for (const full of files) {
-    const name = basename(full);
-    if (!/\.(json|ya?ml|template)$/i.test(name)) continue;
-    const content = readSafe(full);
-    if (content === undefined) continue;
-    const parsed = parseStructured(content);
-    if (parsed && looksLikeCloudFormation(parsed)) {
-      inputs.push({ path: relative(root, full), content: JSON.stringify(parsed), lexicon: "aws" });
-    }
-  }
-  return inputs;
-}
-
-/** True if a parsed object is an Azure ARM deployment template. */
-function looksLikeArm(obj: Record<string, unknown>): boolean {
-  return typeof obj.$schema === "string" && obj.$schema.includes("deploymentTemplate") && Array.isArray(obj.resources);
-}
-
-/** Discover Azure ARM templates (`.json`) under a repo root. */
-export function discoverArm(root: string): AuditInput[] {
-  const files: string[] = [];
-  walkFiles(root, files);
-  const inputs: AuditInput[] = [];
-  for (const full of files) {
-    if (!/\.json$/i.test(basename(full))) continue;
-    const content = readSafe(full);
-    if (content === undefined) continue;
-    const parsed = parseStructured(content);
-    if (parsed && looksLikeArm(parsed)) {
-      inputs.push({ path: relative(root, full), content: JSON.stringify(parsed), lexicon: "azure" });
-    }
-  }
-  return inputs;
-}
-
-/**
- * Discover Helm charts. A chart (directory with Chart.yaml) is one bundle: the
- * helm checks read `output.files` keyed by chart-relative path, so all of the
- * chart's files are collected into a single AuditInput.files map.
- */
-export function discoverHelm(root: string): AuditInput[] {
-  const all: string[] = [];
-  walkFiles(root, all);
-  const chartDirs = all.filter((f) => basename(f) === "Chart.yaml").map((f) => f.slice(0, -("/Chart.yaml".length)));
-  const inputs: AuditInput[] = [];
-  for (const dir of chartDirs) {
-    const prefix = dir + "/";
-    const files: Record<string, string> = {};
-    for (const f of all) {
-      if (!f.startsWith(prefix)) continue;
-      const content = readSafe(f);
-      if (content !== undefined) files[f.slice(prefix.length)] = content;
-    }
-    if (files["Chart.yaml"] === undefined) continue;
-    const chartPath = relative(root, dir) || ".";
-    inputs.push({ path: chartPath, content: files["Chart.yaml"], lexicon: "helm", files });
-  }
-  return inputs;
-}
-
-/** Discover Docker artifacts: Dockerfiles (by name) and Compose files (by `services:`). */
-export function discoverDocker(root: string): AuditInput[] {
-  const files: string[] = [];
-  walkFiles(root, files);
-  const inputs: AuditInput[] = [];
-  for (const full of files) {
-    const name = basename(full);
-    const content = readSafe(full);
-    if (content === undefined) continue;
-    if (isDockerfileName(name) || (isYaml(name) && looksLikeCompose(content))) {
-      inputs.push({ path: relative(root, full), content, lexicon: "docker" });
-    }
-  }
-  return inputs;
-}
-
 function isMergeWorthy(f: AuditFinding): boolean {
   return RULE_CATALOG[f.checkId]?.tier === "merge-worthy";
 }
@@ -373,7 +123,7 @@ function renderStylish(findings: AuditFinding[], scanned: string[], notes: strin
   const mw = findings.filter(isMergeWorthy);
   const ro = findings.filter((f) => !isMergeWorthy(f));
   lines.push(
-    `Audited ${scanned.length} CI file${scanned.length === 1 ? "" : "s"} — ` +
+    `Audited ${scanned.length} file${scanned.length === 1 ? "" : "s"} — ` +
       `${findings.length} finding${findings.length === 1 ? "" : "s"} ` +
       `(${mw.length} merge-worthy, ${ro.length} report-only).`,
   );
@@ -470,26 +220,18 @@ export async function auditCommand(options: AuditCommandOptions): Promise<AuditC
     if (!existsSync(options.path)) {
       return { success: false, output: "", findings: [], scanned: [], exitCode: 1, error: `Path not found: ${options.path}` };
     }
-    // Helm claims whole chart directories; exclude chart-internal files from the
-    // other discoverers so raw templates aren't double-audited as loose manifests.
-    const helm = discoverHelm(options.path);
-    const chartPrefixes = helm.map((h) => (h.path === "." ? "" : `${h.path}/`));
-    const underChart = (p: string): boolean => chartPrefixes.some((pre) => (pre === "" ? true : p.startsWith(pre)));
-    const others = [
-      ...discoverCiFiles(options.path),
-      ...discoverManifests(options.path),
-      ...discoverDocker(options.path),
-      ...discoverCloudFormation(options.path),
-      ...discoverArm(options.path),
-      ...discoverGcp(options.path),
-    ].filter((i) => !underChart(i.path));
-    inputs = [...others, ...helm];
+    // One walk, plugin-delegated detection. Each lexicon plugin's own
+    // `detectTemplate` classifies the files it recognizes; CI (path), Dockerfiles
+    // (name), and Helm charts (bundle) are handled by discoverByDetection's
+    // special-cases since content shape alone can't disambiguate them.
+    const plugins = await loadAuditPlugins();
+    inputs = discoverByDetection(options.path, plugins);
   }
 
   const scanned = inputs.map((i) => i.path);
 
   if (inputs.length === 0) {
-    return { success: true, output: `No CI files found under ${options.path}.`, findings: [], scanned: [], exitCode: 0 };
+    return { success: true, output: `No auditable files found under ${options.path}.`, findings: [], scanned: [], exitCode: 0 };
   }
 
   let findings: AuditFinding[];

@@ -1,7 +1,13 @@
 import { describe, test, expect } from "vitest";
 import { fileURLToPath } from "url";
-import { auditCommand, discoverCiFiles, discoverManifests, discoverDocker, discoverCloudFormation, discoverArm, discoverGcp, discoverHelm, tokenForHost, coverageNotes } from "./audit";
-import { MissingLexiconError, type AuditInput } from "../../audit/core";
+import { auditCommand, tokenForHost, coverageNotes } from "./audit";
+import { discoverByDetection, loadAuditPlugins } from "../../audit/discover";
+import { MissingLexiconError, type AuditInput, type AuditLexicon } from "../../audit/core";
+
+/** Discover with all audit lexicons loaded, then keep one lexicon's inputs. */
+async function discoverLexicon(repo: string, lexicon: AuditLexicon): Promise<AuditInput[]> {
+  return discoverByDetection(repo, await loadAuditPlugins()).filter((i) => i.lexicon === lexicon);
+}
 import { readFileSync, existsSync, rmSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
@@ -32,7 +38,7 @@ describe("auditCommand", () => {
 
   test("discovers and audits Kubernetes manifests", async () => {
     const repo = fileURLToPath(new URL("./__fixtures__/audit-k8s", import.meta.url));
-    const files = discoverManifests(repo);
+    const files = await discoverLexicon(repo, "k8s");
     expect(files.map((f) => f.path)).toContain("manifests/deploy.yaml");
     expect(files.every((f) => f.lexicon === "k8s")).toBe(true);
 
@@ -45,7 +51,7 @@ describe("auditCommand", () => {
 
   test("discovers and audits Docker artifacts (nested Dockerfile + compose)", async () => {
     const repo = fileURLToPath(new URL("./__fixtures__/audit-docker", import.meta.url));
-    const files = discoverDocker(repo);
+    const files = await discoverLexicon(repo, "docker");
     const paths = files.map((f) => f.path).sort();
     expect(paths).toContain("app/Dockerfile");
     expect(paths).toContain("docker-compose.yml");
@@ -60,7 +66,7 @@ describe("auditCommand", () => {
 
   test("discovers and audits CloudFormation (JSON and YAML)", async () => {
     const repo = fileURLToPath(new URL("./__fixtures__/audit-aws", import.meta.url));
-    const files = discoverCloudFormation(repo);
+    const files = await discoverLexicon(repo, "aws");
     const paths = files.map((f) => f.path).sort();
     expect(paths).toContain("template.json");
     expect(paths).toContain("stack.yaml");
@@ -77,7 +83,7 @@ describe("auditCommand", () => {
 
   test("discovers and audits Azure ARM templates", async () => {
     const repo = fileURLToPath(new URL("./__fixtures__/audit-azure", import.meta.url));
-    expect(discoverArm(repo).map((f) => f.path)).toContain("azuredeploy.json");
+    expect((await discoverLexicon(repo, "azure")).map((f) => f.path)).toContain("azuredeploy.json");
     const result = await auditCommand({ path: repo, format: "stylish" });
     expect(result.success).toBe(true);
     const ids = new Set(result.findings.map((f) => f.checkId));
@@ -86,10 +92,10 @@ describe("auditCommand", () => {
 
   test("discovers and audits GCP Config Connector (not misclassified as k8s)", async () => {
     const repo = fileURLToPath(new URL("./__fixtures__/audit-gcp", import.meta.url));
-    const gcp = discoverGcp(repo);
+    const gcp = await discoverLexicon(repo, "gcp");
     expect(gcp.map((f) => f.path).sort()).toEqual(["bucket.yaml", "firewall.yaml"]);
     // cnrm manifests must NOT also be picked up as k8s.
-    expect(discoverManifests(repo)).toEqual([]);
+    expect(await discoverLexicon(repo, "k8s")).toEqual([]);
 
     const result = await auditCommand({ path: repo, format: "stylish" });
     expect(result.success).toBe(true);
@@ -101,7 +107,7 @@ describe("auditCommand", () => {
 
   test("discovers and audits a Helm chart (as a bundle, not loose manifests)", async () => {
     const repo = fileURLToPath(new URL("./__fixtures__/audit-helm", import.meta.url));
-    const charts = discoverHelm(repo);
+    const charts = await discoverLexicon(repo, "helm");
     expect(charts).toHaveLength(1);
     expect(charts[0].lexicon).toBe("helm");
     expect(charts[0].files!["Chart.yaml"]).toContain("name: mychart");
@@ -116,8 +122,8 @@ describe("auditCommand", () => {
     expect([...ids].some((id) => id.startsWith("WK8"))).toBe(false);
   });
 
-  test("discovers CI files under a repo root", () => {
-    const files = discoverCiFiles(REPO);
+  test("discovers CI files under a repo root", async () => {
+    const files = await discoverLexicon(REPO, "github");
     expect(files.map((f) => f.path)).toContain(".github/workflows/ci.yml");
     expect(files.every((f) => f.lexicon === "github")).toBe(true);
   });
@@ -191,7 +197,7 @@ describe("auditCommand", () => {
     const result = await auditCommand({ path: tmp });
     expect(result.success).toBe(true);
     expect(result.exitCode).toBe(0);
-    expect(result.output).toContain("No CI files found");
+    expect(result.output).toContain("No auditable files found");
     rmSync(tmp, { recursive: true, force: true });
   });
 
