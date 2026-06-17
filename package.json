@@ -10,7 +10,8 @@
   "scripts": {
     "tsc": "tsc",
     "docs": "npm --prefix docs run dev",
-    "generate": "for d in lexicons/*/; do (cd \"$d\" && npm run generate); done"
+    "generate": "for d in lexicons/*/; do (cd \"$d\" && npm run generate); done && npm run generate:barrels",
+    "generate:barrels": "tsx scripts/generate-post-synth-barrels.ts"
   },
   "dependencies": {
     "@intentius/chant-lexicon-aws": "*",
