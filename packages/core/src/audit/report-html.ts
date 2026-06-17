@@ -9,7 +9,7 @@
  */
 
 import type { AuditFinding } from "./core";
-import { ruleDocUrl } from "./catalog";
+import { ruleDocUrl, type RuleMeta } from "./catalog";
 import { buildReportModel, buildReportJson, type AuditSnapshot, type BuildModelOptions, type EnrichedFinding, type GuidanceCluster, type QuickWinFile, type ReportCounts } from "./report-model";
 
 export type { AuditSnapshot } from "./report-model";
@@ -46,6 +46,13 @@ function ruleLink(id: string): string {
   return `<a class="rule-id" href="${esc(ruleDocUrl(id))}">${esc(id)}</a>`;
 }
 
+/** External backing for a merge-worthy rule (OSSF Scorecard, CIS, vendor docs). */
+function authorityLinks(meta: RuleMeta): string {
+  if (!meta.authority?.length) return "";
+  const links = meta.authority.map((a) => `<a href="${esc(a.url)}">${esc(a.name)}</a>`).join(", ");
+  return ` <span class="muted">per ${links}</span>`;
+}
+
 function renderDiff(diff: string): string {
   const rows = diff
     .split("\n")
@@ -60,11 +67,11 @@ function renderDiff(diff: string): string {
 function renderQuickWins(files: QuickWinFile[]): string {
   const cards = files
     .map((qw) => {
-      const chips = qw.addressed.map((m) => `<span class="chip">${ruleLink(m.id)} ${esc(m.title)}</span>`).join(" ");
+      const chips = qw.addressed.map((m) => `<span class="chip">${ruleLink(m.id)} ${esc(m.title)}${authorityLinks(m)}</span>`).join(" ");
       const diff = qw.diff ? renderDiff(qw.diff) : "";
       const needs = qw.needsInput.length
         ? `<div class="needs"><strong>Needs a value to auto-patch:</strong><ul>${qw.needsInput
-            .map((f) => `<li>${ruleLink(f.checkId)}${f.entity ? ` (<code>${esc(f.entity)}</code>)` : ""} — ${esc(f.meta.remediation)}</li>`)
+            .map((f) => `<li>${ruleLink(f.checkId)}${f.entity ? ` (<code>${esc(f.entity)}</code>)` : ""} — ${esc(f.meta.remediation)}${authorityLinks(f.meta)}</li>`)
             .join("")}</ul></div>`
         : "";
       return `<div class="card"><div class="card-head"><code class="file">${esc(qw.file)}</code> ${chips}</div>${diff}${needs}</div>`;
@@ -82,7 +89,7 @@ function renderNeedsReview(clusters: GuidanceCluster[], n: number): string {
           const locs = findings
             .map((f) => `<li><code>${esc(f.file)}</code>${f.entity ? ` (<code>${esc(f.entity)}</code>)` : ""} — ${esc(f.message)}</li>`)
             .join("");
-          return `<div class="rule"><div><span class="sev ${findings[0].severity}"></span><strong>${ruleLink(meta.id)}</strong> — ${esc(meta.title)}. <span class="muted">${esc(meta.remediation)}</span></div><ul>${locs}</ul></div>`;
+          return `<div class="rule"><div><span class="sev ${findings[0].severity}"></span><strong>${ruleLink(meta.id)}</strong> — ${esc(meta.title)}. <span class="muted">${esc(meta.remediation)}</span>${authorityLinks(meta)}</div><ul>${locs}</ul></div>`;
         })
         .join("");
       return `<div class="cluster"><h3>${head}</h3>${rules}</div>`;

@@ -31,7 +31,9 @@ describe("renderMarkdown — reworked structure", () => {
   test("quick wins show a real combined diff when file content is provided", () => {
     const out = renderMarkdown(FINDINGS, { files: [{ path: ".github/workflows/ci.yml", content: CI }] });
     expect(out).toContain("## Quick wins (deterministic)");
-    expect(out).toContain("Addresses [GHA033](https://intentius.io/chant/lint-rules/audit-rules/#gha033) (Blanket write-all permissions):");
+    expect(out).toContain("Addresses [GHA033](https://intentius.io/chant/lint-rules/audit-rules/#gha033) (Blanket write-all permissions)");
+    // merge-worthy findings cite their external authority (#351 links surfaced in the layout)
+    expect(out).toContain("per [OSSF Scorecard — Token-Permissions](https://github.com/ossf/scorecard");
     expect(out).toContain("```diff");
     expect(out).toContain("-permissions: write-all");
     expect(out).toContain("+permissions:");
