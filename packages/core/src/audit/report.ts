@@ -11,13 +11,19 @@
  */
 
 import type { AuditFinding } from "./core";
-import { ruleDocUrl } from "./catalog";
+import { ruleDocUrl, type RuleMeta } from "./catalog";
 import type { ProveOptions } from "./proof";
 import { buildReportModel, type EnrichedFinding, type GuidanceCluster, type QuickWinFile } from "./report-model";
 
 /** A rule id as a Markdown link to its reference entry. */
 function ruleLink(id: string): string {
   return `[${id}](${ruleDocUrl(id)})`;
+}
+
+/** External backing for a merge-worthy rule (OSSF Scorecard, CIS, vendor docs). */
+function authorityLinks(meta: RuleMeta): string {
+  if (!meta.authority?.length) return "";
+  return ` — per ${meta.authority.map((a) => `[${a.name}](${a.url})`).join(", ")}`;
 }
 
 export interface RenderOptions {
@@ -42,14 +48,14 @@ function renderQuickWins(files: QuickWinFile[]): string[] {
   for (const qw of files) {
     lines.push(`### \`${qw.file}\``);
     if (qw.diff) {
-      const labels = qw.addressed.map((m) => `${ruleLink(m.id)} (${m.title})`).join(", ");
+      const labels = qw.addressed.map((m) => `${ruleLink(m.id)} (${m.title})${authorityLinks(m)}`).join(", ");
       lines.push("", `Addresses ${labels}:`, "", "```diff", qw.diff, "```");
     }
     if (qw.needsInput.length > 0) {
       lines.push("", "Needs a value before it can be auto-patched:");
       for (const f of qw.needsInput) {
         const where = f.entity ? ` (\`${f.entity}\`)` : "";
-        lines.push(`- **${ruleLink(f.checkId)}**${where} — ${f.meta.remediation}`);
+        lines.push(`- **${ruleLink(f.checkId)}**${where} — ${f.meta.remediation}${authorityLinks(f.meta)}`);
       }
     }
     lines.push("");
@@ -62,7 +68,7 @@ function renderNeedsReview(clusters: GuidanceCluster[]): string[] {
   for (const cluster of clusters) {
     lines.push(`### ${cluster.url ? `[${cluster.name}](${cluster.url})` : cluster.name}`, "");
     for (const { meta, findings } of cluster.rules) {
-      lines.push(`- **${ruleLink(meta.id)}** — ${meta.title} (${findings[0].severity}). ${meta.remediation}`);
+      lines.push(`- **${ruleLink(meta.id)}** — ${meta.title} (${findings[0].severity}). ${meta.remediation}${authorityLinks(meta)}`);
       for (const f of findings) {
         const where = f.entity ? `\`${f.file}\` (\`${f.entity}\`)` : `\`${f.file}\``;
         lines.push(`  - ${where} — ${escapeCell(f.message)}`);
