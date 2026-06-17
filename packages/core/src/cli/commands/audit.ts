@@ -7,7 +7,7 @@
 
 import { existsSync, statSync, writeFileSync } from "fs";
 import { auditFiles, type AuditInput, type AuditFinding, type ChecksProvider } from "../../audit/core";
-import { discoverByDetection, loadAuditPlugins } from "../../audit/discover";
+import { discoverByDetection, loadAuditPlugins, AUDIT_LEXICONS } from "../../audit/discover";
 import { RULE_CATALOG } from "../../audit/catalog";
 import { renderMarkdown } from "../../audit/report";
 import { renderHtml, type ReportTheme } from "../../audit/report-html";
@@ -206,6 +206,10 @@ export async function auditCommand(options: AuditCommandOptions): Promise<AuditC
   const isUrl = /^https?:\/\//.test(options.path);
 
   let inputs: AuditInput[];
+  // Content-detected lexicons whose package isn't installed can't be detected
+  // (detection needs the plugin's `detectTemplate`), so a local audit would
+  // silently find nothing. Track the missing packages to turn that into a hint.
+  let missingHint = "";
   if (isUrl) {
     try {
       inputs = await fetchCiFiles(options.path, {
@@ -225,13 +229,20 @@ export async function auditCommand(options: AuditCommandOptions): Promise<AuditC
     // (name), and Helm charts (bundle) are handled by discoverByDetection's
     // special-cases since content shape alone can't disambiguate them.
     const plugins = await loadAuditPlugins();
+    const loaded = new Set(plugins.map((p) => p.name));
+    const missing = AUDIT_LEXICONS.filter((n) => !loaded.has(n));
+    if (missing.length > 0) {
+      missingHint =
+        ` Some lexicon packages are not installed, so files of those types were not detected: ${missing.join(", ")}.` +
+        ` Install what you need, e.g. npm i ${missing.map((n) => `@intentius/chant-lexicon-${n}`).join(" ")}`;
+    }
     inputs = discoverByDetection(options.path, plugins);
   }
 
   const scanned = inputs.map((i) => i.path);
 
   if (inputs.length === 0) {
-    return { success: true, output: `No auditable files found under ${options.path}.`, findings: [], scanned: [], exitCode: 0 };
+    return { success: true, output: `No auditable files found under ${options.path}.${missingHint}`, findings: [], scanned: [], exitCode: 0 };
   }
 
   let findings: AuditFinding[];
