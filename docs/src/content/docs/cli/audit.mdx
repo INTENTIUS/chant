@@ -135,15 +135,24 @@ Without a token, unauthenticated GitHub is limited to 60 requests/hour and pin f
 
 ## Prerequisites
 
-`chant audit` needs the relevant CI lexicon packages installed alongside `@intentius/chant`:
+`chant audit` runs each lexicon's security checks, so it needs the lexicon packages for the file types you want audited installed alongside `@intentius/chant`:
 
 ```bash
-npm i @intentius/chant-lexicon-github   # GitHub / Forgejo
-npm i @intentius/chant-lexicon-gitlab   # GitLab
+# CI/CD pipelines
+npm i @intentius/chant-lexicon-github   # GitHub Actions (also Forgejo workflows)
+npm i @intentius/chant-lexicon-gitlab   # GitLab CI
 npm i @intentius/chant-lexicon-forgejo  # Forgejo dialect
+
+# Infrastructure & manifests
+npm i @intentius/chant-lexicon-k8s      # Kubernetes manifests
+npm i @intentius/chant-lexicon-helm     # Helm charts
+npm i @intentius/chant-lexicon-docker   # Dockerfiles / Compose
+npm i @intentius/chant-lexicon-aws      # CloudFormation
+npm i @intentius/chant-lexicon-azure    # ARM templates
+npm i @intentius/chant-lexicon-gcp      # Config Connector
 ```
 
-If a needed lexicon is missing, the command tells you which package to install.
+If a needed lexicon package is missing, the command tells you which package to install — either as a friendly error (CI files, detected by path) or, for content-detected file types, as a note when nothing was found.
 
 ## Usage
 

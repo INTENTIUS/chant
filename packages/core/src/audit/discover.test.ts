@@ -64,4 +64,9 @@ describe("discoverByDetection (unified, detectTemplate-driven)", () => {
     const plugins = await loadAuditPlugins(["github", "gitlab", "forgejo", "docker", "aws", "azure", "gcp", "helm"]);
     expect(discoverByDetection(fixture("audit-k8s"), plugins).some((i) => i.lexicon === "k8s")).toBe(false);
   });
+
+  test("loadAuditPlugins skips an uninstalled lexicon instead of throwing", async () => {
+    const plugins = await loadAuditPlugins(["github", "definitely-not-a-real-lexicon"]);
+    expect(plugins.map((p) => p.name)).toEqual(["github"]);
+  });
 });
