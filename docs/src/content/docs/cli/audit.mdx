@@ -12,7 +12,7 @@ chant audit <repo-url> [flags]
 
 ## Description
 
-`chant audit` runs chant's CI security rules against an **existing** repository's pipeline YAML — including hand-written workflows chant didn't generate. Point it at a local directory or a public repo URL and it produces a tiered report: security findings worth a pull request, and lower-priority hygiene.
+`chant audit` runs chant's security, correctness, and best-practice rules against an **existing** repository's config — CI/CD pipelines plus IaC and manifests (Kubernetes, Helm, Docker, CloudFormation, ARM, Config Connector) — including files chant didn't generate. Point it at a local directory or a public repo URL and it produces a tiered report grouped by category, with findings worth a pull request split from lower-priority hygiene.
 
 It is read-only and requires no chant project — it reads the repo's CI files directly and runs the same post-synth security checks the build pipeline uses (GitHub Actions `GHA*`, GitLab CI `WGL*`; Forgejo workflows are GitHub-dialect, so the GitHub tier applies to them too).
 
@@ -45,7 +45,7 @@ Only the root `.gitlab-ci.yml` is fetched; `include:` files are not resolved, so
 The **minimized** (markdown) report leads with ready-to-apply fix diffs; rule IDs link to the [rules reference](/chant/lint-rules/audit-rules/):
 
 ````markdown
-# CI security audit
+# chant audit
 
 4 findings — 3 quick-win, 0 needs-review, 1 report-only (0 error, 3 warning, 1 info).
 
@@ -105,12 +105,12 @@ For tooling, `--format json` emits a **versioned** envelope (stable contract). T
 ```json
 {
   "schemaVersion": "1.0",
-  "tool": { "name": "chant-audit", "version": "0.4.0" },
-  "snapshot": { "target": "...", "host": "github.com", "repo": "owner/repo", "commit": "…", "files": ["..."], "generatedAt": "…", "toolVersion": "0.4.0" },
-  "summary": { "total": 0, "quickWin": 0, "needsReview": 0, "reportOnly": 0, "errors": 0, "warnings": 0, "infos": 0 },
+  "tool": { "name": "chant-audit", "version": "0.7.0" },
+  "snapshot": { "target": "...", "host": "github.com", "repo": "owner/repo", "commit": "…", "files": ["..."], "generatedAt": "…", "toolVersion": "0.7.0" },
+  "summary": { "total": 0, "quickWin": 0, "needsReview": 0, "reportOnly": 0, "errors": 0, "warnings": 0, "infos": 0, "security": 0, "correctness": 0, "bestPractice": 0 },
   "findings": [
     { "checkId": "GHA033", "severity": "warning", "message": "…", "file": "…", "entity": "…", "lexicon": "github",
-      "tier": "merge-worthy", "fixKind": "deterministic", "title": "…", "remediation": "…",
+      "tier": "merge-worthy", "fixKind": "deterministic", "category": "security", "title": "…", "remediation": "…",
       "authority": [{ "name": "…", "url": "…" }], "docUrl": "https://intentius.io/chant/lint-rules/audit-rules/#gha033" }
   ]
 }

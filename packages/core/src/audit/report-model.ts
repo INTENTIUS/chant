@@ -6,7 +6,7 @@
  */
 
 import type { AuditFinding } from "./core";
-import { RULE_CATALOG, ruleDocUrl, type Authority, type FixKind, type RuleMeta, type Tier } from "./catalog";
+import { RULE_CATALOG, ruleDocUrl, type Authority, type Category, type FixKind, type RuleMeta, type Tier } from "./catalog";
 import { proveFix, unifiedDiff, type ProveOptions } from "./proof";
 import type { Severity } from "../lint/rule";
 
@@ -16,6 +16,8 @@ import type { Severity } from "../lint/rule";
  * major. Consumers should check the major and ignore unknown fields. See
  * `docs/cli/audit`.
  */
+// Additive changes (new fields like `category`, #415) keep the same version per
+// the stability contract; only renamed/removed fields bump it.
 export const REPORT_SCHEMA_VERSION = "1.0";
 
 export const SEVERITY_WEIGHT: Record<Severity, number> = { error: 0, warning: 1, info: 2 };
@@ -55,6 +57,10 @@ export interface ReportCounts {
   errors: number;
   warnings: number;
   infos: number;
+  /** Findings by category (#415) — what kind of issue, not how confident the fix. */
+  security: number;
+  correctness: number;
+  bestPractice: number;
 }
 
 export interface ReportModel {
@@ -88,6 +94,8 @@ export interface SerializedFinding {
   lexicon: string;
   tier: Tier;
   fixKind: FixKind;
+  /** What kind of finding this is (security / correctness / best-practice). */
+  category: Category;
   title: string;
   remediation: string;
   authority: Authority[];
@@ -237,6 +245,9 @@ export function buildReportModel(findings: AuditFinding[], opts: BuildModelOptio
     errors: shown.filter((f) => f.severity === "error").length,
     warnings: shown.filter((f) => f.severity === "warning").length,
     infos: shown.filter((f) => f.severity === "info").length,
+    security: shown.filter((f) => f.meta.category === "security").length,
+    correctness: shown.filter((f) => f.meta.category === "correctness").length,
+    bestPractice: shown.filter((f) => f.meta.category === "best-practice").length,
   };
 
   return {
@@ -266,6 +277,7 @@ export function buildReportJson(findings: AuditFinding[], opts: { snapshot?: Aud
       lexicon: f.lexicon,
       tier: f.meta.tier,
       fixKind: f.meta.fixKind,
+      category: f.meta.category,
       title: f.meta.title,
       remediation: f.meta.remediation,
       authority: f.meta.authority ?? [],
