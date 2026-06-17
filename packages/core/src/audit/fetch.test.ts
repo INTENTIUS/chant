@@ -1,5 +1,5 @@
 import { describe, test, expect } from "vitest";
-import { fetchCiFiles, parseRepoUrl, resolveActionSha, resolveImageDigest, parseImageRef, FetchError } from "./fetch";
+import { fetchRepoFiles, parseRepoUrl, resolveActionSha, resolveImageDigest, parseImageRef, FetchError } from "./fetch";
 
 const b64 = (s: string) => Buffer.from(s, "utf-8").toString("base64");
 const CI_YAML = "name: CI\non:\n  push:\npermissions: write-all\njobs:\n  build:\n    runs-on: ubuntu-latest\n";
@@ -9,6 +9,7 @@ interface Route {
   make: () => Response;
 }
 
+/** Route-based fetch mock (used by the resolver tests). */
 function fakeFetch(routes: Route[]) {
   const calls: Array<{ url: string; init?: RequestInit }> = [];
   const impl = (async (url: string | URL | Request, init?: RequestInit) => {
@@ -21,16 +22,51 @@ function fakeFetch(routes: Route[]) {
   return { impl, calls };
 }
 
-const githubRoutes = (size = 100): Route[] => [
-  {
-    match: "/contents/.github/workflows/ci.yml",
-    make: () => new Response(JSON.stringify({ name: "ci.yml", path: ".github/workflows/ci.yml", type: "file", content: b64(CI_YAML), encoding: "base64" }), { status: 200 }),
-  },
-  {
-    match: "/contents/.github/workflows",
-    make: () => new Response(JSON.stringify([{ name: "ci.yml", path: ".github/workflows/ci.yml", type: "file", size }]), { status: 200 }),
-  },
-];
+/**
+ * A GitHub/Forgejo-shaped mock: repo-info default_branch, recursive git/trees,
+ * base64 contents. `sizes` overrides the reported blob size for cap tests.
+ */
+function gitTreeMock(files: Record<string, string>, sizes: Record<string, number> = {}) {
+  const calls: Array<{ url: string; init?: RequestInit }> = [];
+  const impl = (async (url: string | URL | Request, init?: RequestInit) => {
+    const u = String(url);
+    calls.push({ url: u, init });
+    if (u.includes("/git/trees/")) {
+      const tree = Object.keys(files).map((path) => ({ path, type: "blob", size: sizes[path] ?? files[path].length }));
+      return new Response(JSON.stringify({ tree }), { status: 200 });
+    }
+    const cm = u.match(/\/contents\/(.+?)\?/);
+    if (cm) {
+      const path = decodeURIComponent(cm[1]);
+      if (files[path] === undefined) return new Response("not found", { status: 404 });
+      return new Response(JSON.stringify({ path, type: "file", content: b64(files[path]), encoding: "base64" }), { status: 200 });
+    }
+    if (/\/repos\/[^/]+\/[^/]+(\?|$)/.test(u)) return new Response(JSON.stringify({ default_branch: "main" }), { status: 200 });
+    return new Response("not found", { status: 404 });
+  }) as unknown as typeof fetch;
+  return { impl, calls };
+}
+
+/** A GitLab-shaped mock: project default_branch, paginated repository/tree, raw files. */
+function gitlabMock(files: Record<string, string>) {
+  const impl = (async (url: string | URL | Request) => {
+    const u = String(url);
+    if (u.includes("/repository/tree")) {
+      const page = Number(new URL(u).searchParams.get("page") ?? "1");
+      const all = Object.keys(files).map((path) => ({ path, type: "blob" }));
+      return new Response(JSON.stringify(page === 1 ? all : []), { status: 200 });
+    }
+    const rm = u.match(/\/repository\/files\/(.+?)\/raw\?/);
+    if (rm) {
+      const path = decodeURIComponent(rm[1]);
+      if (files[path] === undefined) return new Response("not found", { status: 404 });
+      return new Response(files[path], { status: 200 });
+    }
+    if (/\/projects\/[^/]+(\?|$)/.test(u)) return new Response(JSON.stringify({ default_branch: "main" }), { status: 200 });
+    return new Response("not found", { status: 404 });
+  }) as unknown as typeof fetch;
+  return { impl };
+}
 
 describe("parseRepoUrl", () => {
   test("rejects non-https", () => {
@@ -47,73 +83,63 @@ describe("parseRepoUrl", () => {
   });
 });
 
-describe("fetchCiFiles", () => {
-  test("fetches and decodes github workflow files", async () => {
-    const { impl } = fakeFetch(githubRoutes());
-    const files = await fetchCiFiles("https://github.com/acme/widgets", { fetchImpl: impl });
-    expect(files).toHaveLength(1);
-    expect(files[0].path).toBe(".github/workflows/ci.yml");
-    expect(files[0].lexicon).toBe("github");
+describe("fetchRepoFiles", () => {
+  test("github: tree-walks and decodes candidate files", async () => {
+    const { impl } = gitTreeMock({ ".github/workflows/ci.yml": CI_YAML, "README.md": "# hi" });
+    const files = await fetchRepoFiles("https://github.com/acme/widgets", { fetchImpl: impl });
+    // README.md is not a candidate path; only the workflow is fetched.
+    expect(files.map((f) => f.path)).toEqual([".github/workflows/ci.yml"]);
     expect(files[0].content).toContain("permissions: write-all");
   });
 
   test("sends an auth token when provided", async () => {
-    const { impl, calls } = fakeFetch(githubRoutes());
-    await fetchCiFiles("https://github.com/acme/widgets", { fetchImpl: impl, token: "secret" });
+    const { impl, calls } = gitTreeMock({ ".github/workflows/ci.yml": CI_YAML });
+    await fetchRepoFiles("https://github.com/acme/widgets", { fetchImpl: impl, token: "secret" });
     const auth = calls.map((c) => (c.init?.headers as Record<string, string>)?.Authorization);
     expect(auth).toContain("Bearer secret");
   });
 
-  test("skips a file over the per-file size cap", async () => {
-    const { impl } = fakeFetch(githubRoutes(10_000_000));
-    const files = await fetchCiFiles("https://github.com/acme/widgets", { fetchImpl: impl, maxBytesPerFile: 1024 });
+  test("skips a file over the per-file size cap (reported by the tree)", async () => {
+    const { impl } = gitTreeMock({ ".github/workflows/ci.yml": CI_YAML }, { ".github/workflows/ci.yml": 10_000_000 });
+    const files = await fetchRepoFiles("https://github.com/acme/widgets", { fetchImpl: impl, maxBytesPerFile: 1024 });
     expect(files).toHaveLength(0);
   });
 
-  test("refuses to follow a redirect", async () => {
-    const { impl } = fakeFetch([{ match: "/contents/", make: () => new Response(null, { status: 302 }) }]);
-    await expect(fetchCiFiles("https://github.com/acme/widgets", { fetchImpl: impl })).rejects.toThrow(/redirect/i);
+  test("throws when the total byte cap is exceeded", async () => {
+    const big = "x".repeat(2000);
+    const { impl } = gitTreeMock({ "a.yaml": big, "b.yaml": big });
+    await expect(fetchRepoFiles("https://github.com/acme/widgets", { fetchImpl: impl, maxTotalBytes: 3000 })).rejects.toThrow(/total size cap/i);
   });
 
-  test("refuses to follow a redirect on the gitlab path", async () => {
-    const { impl } = fakeFetch([{ match: "/repository/files/", make: () => new Response(null, { status: 301 }) }]);
-    await expect(fetchCiFiles("https://gitlab.com/acme/widgets", { fetchImpl: impl })).rejects.toThrow(/redirect/i);
+  test("refuses to follow a redirect on the tree request", async () => {
+    const impl = (async (url: string | URL | Request) => {
+      const u = String(url);
+      if (u.includes("/git/trees/")) return new Response(null, { status: 302 });
+      return new Response(JSON.stringify({ default_branch: "main" }), { status: 200 });
+    }) as unknown as typeof fetch;
+    await expect(fetchRepoFiles("https://github.com/acme/widgets", { fetchImpl: impl })).rejects.toThrow(/redirect/i);
   });
 
   test("throws on a non-allowlisted host before any fetch", async () => {
-    await expect(fetchCiFiles("https://evil.example.com/o/r")).rejects.toThrow(/Host not allowed/);
+    await expect(fetchRepoFiles("https://evil.example.com/o/r")).rejects.toThrow(/Host not allowed/);
   });
 
-  test("returns the gitlab pipeline file", async () => {
-    const { impl } = fakeFetch([
-      { match: "/repository/files/", make: () => new Response("stages:\n  - build\n", { status: 200 }) },
-    ]);
-    const files = await fetchCiFiles("https://gitlab.com/acme/widgets", { fetchImpl: impl });
-    expect(files).toHaveLength(1);
-    expect(files[0].path).toBe(".gitlab-ci.yml");
-    expect(files[0].lexicon).toBe("gitlab");
+  test("gitlab: paginated tree + raw file content", async () => {
+    const { impl } = gitlabMock({ ".gitlab-ci.yml": "stages:\n  - build\n" });
+    const files = await fetchRepoFiles("https://gitlab.com/acme/widgets", { fetchImpl: impl });
+    expect(files.map((f) => f.path)).toEqual([".gitlab-ci.yml"]);
+    expect(files[0].content).toContain("stages:");
   });
 
-  test("forgejo (codeberg) reads .forgejo/workflows", async () => {
-    const { impl } = fakeFetch([
-      {
-        match: "/contents/.forgejo/workflows/ci.yml",
-        make: () => new Response(JSON.stringify({ name: "ci.yml", path: ".forgejo/workflows/ci.yml", type: "file", content: b64(CI_YAML), encoding: "base64" }), { status: 200 }),
-      },
-      {
-        match: "/contents/.forgejo/workflows",
-        make: () => new Response(JSON.stringify([{ name: "ci.yml", path: ".forgejo/workflows/ci.yml", type: "file", size: 100 }]), { status: 200 }),
-      },
-    ]);
-    const files = await fetchCiFiles("https://codeberg.org/acme/widgets", { fetchImpl: impl });
-    expect(files).toHaveLength(1);
-    expect(files[0].lexicon).toBe("forgejo");
-    expect(files[0].path).toBe(".forgejo/workflows/ci.yml");
+  test("forgejo (codeberg): gitea tree + contents", async () => {
+    const { impl } = gitTreeMock({ ".forgejo/workflows/ci.yml": CI_YAML });
+    const files = await fetchRepoFiles("https://codeberg.org/acme/widgets", { fetchImpl: impl });
+    expect(files.map((f) => f.path)).toEqual([".forgejo/workflows/ci.yml"]);
   });
 
-  test("a repo with no CI files returns []", async () => {
-    const { impl } = fakeFetch([]); // everything 404s
-    const files = await fetchCiFiles("https://github.com/acme/empty", { fetchImpl: impl });
+  test("an empty repo returns []", async () => {
+    const { impl } = gitTreeMock({});
+    const files = await fetchRepoFiles("https://github.com/acme/empty", { fetchImpl: impl });
     expect(files).toEqual([]);
   });
 });

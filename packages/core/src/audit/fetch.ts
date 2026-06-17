@@ -1,21 +1,21 @@
 /**
- * Remote fetch — pull a repo's CI files from a git host so the auditor can run
- * on a URL, not just a local path. This is the ONLY audit module that touches
- * the network; the core stays pure.
+ * Remote fetch — pull a repo's candidate files (all lexicons) from a git host so
+ * the auditor can run on a URL, not just a local path. This is the ONLY audit
+ * module that touches the network; the core stays pure.
  *
  * SSRF posture: only an allowlisted set of hosts is accepted; request URLs are
  * built from the parsed owner/repo (never a user-controlled host); redirects
  * are refused; and file count / size / total bytes / time are all capped.
  */
 
-import type { AuditInput, AuditLexicon } from "./core";
+import type { AuditLexicon } from "./core";
 
 export interface FetchOptions {
   /** Branch/tag/sha; defaults to the repo's default branch. */
   ref?: string;
   /** Server-side token (lifts rate limits). Never surfaced to callers. */
   token?: string;
-  /** Max number of CI files to fetch (default 50). */
+  /** Max number of files to fetch (default 50). */
   maxFiles?: number;
   /** Max bytes for a single file; larger files are skipped (default 256 KiB). */
   maxBytesPerFile?: number;
@@ -87,10 +87,6 @@ function authHeaders(kind: HostKind, token?: string): Record<string, string> {
   return { "PRIVATE-TOKEN": token };
 }
 
-function isYaml(name: string): boolean {
-  return name.endsWith(".yml") || name.endsWith(".yaml");
-}
-
 function timeoutSignal(ms: number): AbortSignal | undefined {
   return typeof AbortSignal !== "undefined" && typeof AbortSignal.timeout === "function"
     ? AbortSignal.timeout(ms)
@@ -105,73 +101,6 @@ interface ContentsEntry {
   size?: number;
   content?: string;
   encoding?: string;
-}
-
-export async function fetchCiFiles(url: string, opts: FetchOptions = {}): Promise<AuditInput[]> {
-  const { host, owner, repo } = parseRepoUrl(url);
-  const doFetch = opts.fetchImpl ?? fetch;
-  const cfg = {
-    maxFiles: opts.maxFiles ?? DEFAULTS.maxFiles,
-    maxBytesPerFile: opts.maxBytesPerFile ?? DEFAULTS.maxBytesPerFile,
-    maxTotalBytes: opts.maxTotalBytes ?? DEFAULTS.maxTotalBytes,
-    timeoutMs: opts.timeoutMs ?? DEFAULTS.timeoutMs,
-  };
-  const headers = authHeaders(host.kind, opts.token);
-
-  async function getJson(apiUrl: string): Promise<{ status: number; body: unknown }> {
-    let res: Response;
-    try {
-      // `redirect: "manual"` (not "error") so we can refuse the redirect ourselves
-      // by inspecting the 3xx below. An off-host redirect is an SSRF vector, and
-      // "error" is unsupported on edge runtimes (Cloudflare Workers).
-      res = await doFetch(apiUrl, { headers, redirect: "manual", signal: timeoutSignal(cfg.timeoutMs) });
-    } catch (err) {
-      throw new FetchError(`Request failed: ${err instanceof Error ? err.message : String(err)}`);
-    }
-    if (res.status >= 300 && res.status < 400) {
-      throw new FetchError(`Refusing to follow redirect from ${apiUrl}`);
-    }
-    if (res.status === 404) return { status: 404, body: null };
-    if (!res.ok) throw new FetchError(`${apiUrl} returned ${res.status}`);
-    return { status: res.status, body: await res.json() };
-  }
-
-  if (host.kind === "gitlab") {
-    return fetchGitlab(host, owner, repo, opts.ref, cfg, doFetch, headers);
-  }
-
-  // GitHub / Forgejo share the Gitea-style contents API.
-  const dirs = host.kind === "forgejo" ? [".forgejo/workflows", ".github/workflows"] : [".github/workflows"];
-  const ref = opts.ref ? `?ref=${encodeURIComponent(opts.ref)}` : "";
-
-  const candidates: ContentsEntry[] = [];
-  const seen = new Set<string>();
-  for (const dir of dirs) {
-    const { body } = await getJson(`${host.api}/repos/${owner}/${repo}/contents/${dir}${ref}`);
-    if (!Array.isArray(body)) continue;
-    for (const entry of body as ContentsEntry[]) {
-      if (entry.type === "file" && isYaml(entry.name) && !seen.has(entry.path)) {
-        seen.add(entry.path);
-        candidates.push(entry);
-      }
-    }
-  }
-
-  const inputs: AuditInput[] = [];
-  let total = 0;
-  for (const entry of candidates) {
-    if (inputs.length >= cfg.maxFiles) break;
-    if ((entry.size ?? 0) > cfg.maxBytesPerFile) continue; // skip oversize
-    const { body } = await getJson(`${host.api}/repos/${owner}/${repo}/contents/${entry.path}${ref}`);
-    const file = body as ContentsEntry | null;
-    if (!file?.content) continue;
-    const content = Buffer.from(file.content, (file.encoding as BufferEncoding) ?? "base64").toString("utf-8");
-    if (content.length > cfg.maxBytesPerFile) continue;
-    total += content.length;
-    if (total > cfg.maxTotalBytes) throw new FetchError("Repository CI files exceed the total size cap.");
-    inputs.push({ path: entry.path, content, lexicon: host.lexicon });
-  }
-  return inputs;
 }
 
 // ── Whole-repo fetch (all lexicons, not just CI) ─────────────────────────────
@@ -471,30 +400,3 @@ export async function resolveRepoCommit(
   }
 }
 
-async function fetchGitlab(
-  host: HostConfig,
-  owner: string,
-  repo: string,
-  ref: string | undefined,
-  cfg: { maxBytesPerFile: number; maxTotalBytes: number; timeoutMs: number },
-  doFetch: typeof fetch,
-  headers: Record<string, string>,
-): Promise<AuditInput[]> {
-  const projectId = encodeURIComponent(`${owner}/${repo}`);
-  const refQ = `?ref=${encodeURIComponent(ref ?? "HEAD")}`;
-  const apiUrl = `${host.api}/projects/${projectId}/repository/files/${encodeURIComponent(".gitlab-ci.yml")}/raw${refQ}`;
-  let res: Response;
-  try {
-    res = await doFetch(apiUrl, { headers, redirect: "manual", signal: timeoutSignal(cfg.timeoutMs) });
-  } catch (err) {
-    throw new FetchError(`Request failed: ${err instanceof Error ? err.message : String(err)}`);
-  }
-  if (res.status >= 300 && res.status < 400) throw new FetchError(`Refusing to follow redirect from ${apiUrl}`);
-  if (res.status === 404) return [];
-  if (!res.ok) throw new FetchError(`${apiUrl} returned ${res.status}`);
-  const content = await res.text();
-  if (content.length > cfg.maxBytesPerFile || content.length > cfg.maxTotalBytes) {
-    throw new FetchError("Pipeline file exceeds the size cap.");
-  }
-  return [{ path: ".gitlab-ci.yml", content, lexicon: "gitlab" }];
-}
