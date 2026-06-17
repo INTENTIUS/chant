@@ -20,6 +20,7 @@
   "exports": {
     ".": "./src/index.ts",
     "./*": "./src/*.ts",
+    "./lint/post-synth": "./src/lint/post-synth/index.ts",
     "./op/activities": "./src/op/activities/index.ts",
     "./manifest": "./dist/manifest.json",
     "./meta": "./dist/meta.json",
