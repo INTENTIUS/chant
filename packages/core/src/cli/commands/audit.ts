@@ -7,12 +7,12 @@
 
 import { existsSync, statSync, writeFileSync } from "fs";
 import { auditFiles, type AuditInput, type AuditFinding, type ChecksProvider } from "../../audit/core";
-import { discoverByDetection, loadAuditPlugins, AUDIT_LEXICONS } from "../../audit/discover";
+import { discoverByDetection, classifyFiles, loadAuditPlugins, AUDIT_LEXICONS } from "../../audit/discover";
 import { RULE_CATALOG } from "../../audit/catalog";
 import { renderMarkdown } from "../../audit/report";
 import { renderHtml, type ReportTheme } from "../../audit/report-html";
 import { buildReportJson, type AuditSnapshot } from "../../audit/report-model";
-import { fetchCiFiles, resolveActionSha, resolveImageDigest, resolveRepoCommit, parseRepoUrl, FetchError } from "../../audit/fetch";
+import { fetchRepoFiles, resolveActionSha, resolveImageDigest, resolveRepoCommit, parseRepoUrl, FetchError } from "../../audit/fetch";
 import { extractUnpinnedActions, extractUnpinnedImages } from "../../audit/proof";
 import type { ProveOptions } from "../../audit/proof";
 import type { Severity } from "../../lint/rule";
@@ -212,10 +212,13 @@ export async function auditCommand(options: AuditCommandOptions): Promise<AuditC
   let missingHint = "";
   if (isUrl) {
     try {
-      inputs = await fetchCiFiles(options.path, {
+      // Fetch the whole repo's candidate files (all lexicons, not just CI) and
+      // run them through the same classifier the local path uses (#420).
+      const files = await fetchRepoFiles(options.path, {
         token: options.token ?? tokenForHost(options.path),
         fetchImpl: options.fetchImpl,
       });
+      inputs = classifyFiles(files, await loadAuditPlugins());
     } catch (err) {
       const msg = err instanceof FetchError ? err.message : err instanceof Error ? err.message : String(err);
       return { success: false, output: "", findings: [], scanned: [], exitCode: 1, error: msg };
