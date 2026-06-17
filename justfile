@@ -109,8 +109,14 @@ release bump="patch":
     esac
     next="$major.$minor.$patch"
     echo "Bumping $current → $next"
+    # Bump .version everywhere, and keep the @intentius/* peerDependencies ranges
+    # in lockstep (they were frozen at ^0.1.0, which breaks clean installs — #411).
     for f in packages/core/package.json lexicons/*/package.json; do
-      jq --arg v "$next" '.version = $v' "$f" > "$f.tmp" && mv "$f.tmp" "$f"
+      jq --arg v "$next" '
+        .version = $v
+        | if .peerDependencies["@intentius/chant"] then .peerDependencies["@intentius/chant"] = "^" + $v else . end
+        | if .peerDependencies["@intentius/chant-lexicon-github"] then .peerDependencies["@intentius/chant-lexicon-github"] = "^" + $v else . end
+      ' "$f" > "$f.tmp" && mv "$f.tmp" "$f"
     done
     git add packages/core/package.json lexicons/*/package.json
     git commit -m "chant-v$next"
