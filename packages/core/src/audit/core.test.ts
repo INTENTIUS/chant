@@ -128,6 +128,21 @@ describe("auditFiles", () => {
     expect(findings.map((f) => f.file).sort()).toEqual(["a.yml", "b.yml"]);
   });
 
+  test("accepts a lexicon name outside the built-in set (open AuditLexicon)", async () => {
+    const fake: PostSynthCheck = {
+      id: "CUSTOM001",
+      description: "fake",
+      check: () => [{ checkId: "CUSTOM001", severity: "error", message: "hit" }],
+    };
+    // "terraform" isn't in the built-in union — the open type must still accept it,
+    // and the injected provider resolves its checks.
+    const findings = await auditFiles([{ path: "main.tf.json", content: "{}", lexicon: "terraform" }], {
+      checksProvider: async (lexicon) => (lexicon === "terraform" ? [fake] : []),
+    });
+    expect(findings.map((f) => f.checkId)).toEqual(["CUSTOM001"]);
+    expect(findings[0].lexicon).toBe("terraform");
+  });
+
   test("resolves a cross-file relationship (ARGO002 sees the AppProject in another file)", async () => {
     // The Application alone → ARGO002 fires (project not declared here).
     const alone = await auditFiles([{ path: "app.yaml", content: ARGO_APP, lexicon: "k8s" }]);
