@@ -33,7 +33,7 @@
     "prepack": "npm run generate && npm run bundle && npm run validate"
   },
   "peerDependencies": {
-    "@intentius/chant": "^0.1.0"
+    "@intentius/chant": "^0.7.0"
   },
   "devDependencies": {
     "@intentius/chant": "*",

@@ -48,8 +48,8 @@
     "typescript": "^5.9.3"
   },
   "peerDependencies": {
-    "@intentius/chant": "^0.1.0",
-    "@intentius/chant-lexicon-github": "^0.1.0"
+    "@intentius/chant": "^0.7.0",
+    "@intentius/chant-lexicon-github": "^0.7.0"
   },
   "peerDependenciesMeta": {
     "@intentius/chant-lexicon-github": {
