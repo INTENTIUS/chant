@@ -91,11 +91,14 @@ describe("mintInstallationToken", () => {
     const jwt = capturedAuth.replace("Bearer ", "");
     const parts = jwt.split(".");
     expect(parts).toHaveLength(3);
+    const header = JSON.parse(atob(parts[0].replace(/-/g, "+").replace(/_/g, "/")));
+    expect(header.alg).toBe("RS256");
+    expect(header.typ).toBe("JWT");
     const payload = JSON.parse(atob(parts[1].replace(/-/g, "+").replace(/_/g, "/")));
     expect(payload.iss).toBe("999");
     expect(typeof payload.iat).toBe("number");
     expect(typeof payload.exp).toBe("number");
-    expect(payload.exp - payload.iat).toBe(660); // 10 min + 60s backdate
+    expect(payload.exp - payload.iat).toBe(600); // 9 min window + 60s backdate
   });
 
   test("throws AppAuthError on 401", async () => {
@@ -238,6 +241,37 @@ describe("createAppClient", () => {
     expect(mintCount).toBe(1); // only one token mint for all 3 calls
   });
 
+  test("two concurrent requests trigger only one token mint", async () => {
+    let mintCount = 0;
+
+    const mockFetch: typeof fetch = async (input) => {
+      const url = typeof input === "string" ? input : (input as Request).url;
+      if (url.includes("access_tokens")) {
+        mintCount++;
+        // Defer to a microtask so the second concurrent request reaches
+        // getToken() while the first mint is still in flight.
+        await Promise.resolve();
+        return makeTokenResponse(`tok_${mintCount}`);
+      }
+      return new Response(JSON.stringify({}), { status: 200 });
+    };
+
+    const client = createAppClient({
+      appId: "1",
+      privateKeyPem: testPrivateKeyPem,
+      installationId: "2",
+      fetchImpl: mockFetch,
+    });
+
+    // Fire two requests in parallel with no token cached yet.
+    await Promise.all([
+      client.request("GET", "/orgs/my-org"),
+      client.request("GET", "/orgs/my-org/teams"),
+    ]);
+
+    expect(mintCount).toBe(1); // single-flight guard collapses to one mint
+  });
+
   test("refreshes token when near expiry", async () => {
     let mintCount = 0;
     const expiredAt = new Date(Date.now() + 30_000).toISOString(); // expires in 30s (< 60s skew)
@@ -323,6 +357,7 @@ describe("createAppClient", () => {
     const err = await client.request("GET", "/orgs/my-org").catch((e) => e as AppAuthError);
     expect(err).toBeInstanceOf(AppAuthError);
     expect(err.statusCode).toBe(403);
+    expect(err.message).toMatch(/Forbidden/); // response body surfaced for debugging
   });
 
   test("accepts a full URL as the path", async () => {

@@ -121,11 +121,18 @@ function concatUint8(...arrays: Uint8Array[]): Uint8Array {
   return out;
 }
 
-/** Build and sign an App JWT valid for ~10 minutes. */
+/**
+ * Build and sign an App JWT valid for ~9 minutes.
+ *
+ * GitHub rejects App JWTs whose `exp` is more than 10 minutes in the future. We
+ * cap at 9 minutes (`now + 540`) to leave clock-skew headroom — a host clock
+ * running fast would otherwise push `exp` past the limit and trigger a 422.
+ * `iat` is backdated 60s for the same reason (host clock running slow).
+ */
 async function buildAppJwt(appId: string, key: webcrypto.CryptoKey): Promise<string> {
   const now = Math.floor(Date.now() / 1000);
   const header = jsonB64url({ alg: "RS256", typ: "JWT" });
-  const payload = jsonB64url({ iat: now - 60, exp: now + 600, iss: appId });
+  const payload = jsonB64url({ iat: now - 60, exp: now + 540, iss: appId });
   const sigInput = new TextEncoder().encode(`${header}.${payload}`);
   const sig = await crypto.subtle.sign("RSASSA-PKCS1-v1_5", key as Parameters<typeof crypto.subtle.sign>[1], sigInput);
   return `${header}.${payload}.${b64url(sig)}`;
@@ -237,6 +244,11 @@ export interface AppClient {
  */
 export function createAppClient(opts: AppClientOptions): AppClient {
   let cached: InstallationToken | null = null;
+  // Single-flight guard: when a mint is in progress, concurrent callers await
+  // the same promise instead of each kicking off their own token exchange. The
+  // reconciler makes parallel request() calls, so without this two stale/empty
+  // reads would double-mint and waste rate-limit quota.
+  let pendingMint: Promise<InstallationToken> | null = null;
   const doFetch = opts.fetchImpl ?? fetch;
 
   async function getToken(): Promise<string> {
@@ -247,7 +259,12 @@ export function createAppClient(opts: AppClientOptions): AppClient {
         return cached.token;
       }
     }
-    cached = await mintInstallationToken(opts);
+    if (!pendingMint) {
+      pendingMint = mintInstallationToken(opts).finally(() => {
+        pendingMint = null;
+      });
+    }
+    cached = await pendingMint;
     return cached.token;
   }
 
@@ -276,7 +293,17 @@ export function createAppClient(opts: AppClientOptions): AppClient {
       }
 
       if (!res.ok) {
-        throw new AppAuthError(`${method} ${path} returned ${res.status}`, res.status);
+        // GitHub API error bodies carry the failure reason (e.g. which field is
+        // invalid) and contain no secrets, so surfacing them is safe and makes
+        // prod debugging possible. Cap the length to keep error messages sane.
+        let detail = "";
+        try {
+          const text = await res.text();
+          if (text) detail = `: ${text.slice(0, 500)}`;
+        } catch {
+          // best-effort — fall back to the bare status line
+        }
+        throw new AppAuthError(`${method} ${path} returned ${res.status}${detail}`, res.status);
       }
 
       // 204 No Content — return empty object cast to T
