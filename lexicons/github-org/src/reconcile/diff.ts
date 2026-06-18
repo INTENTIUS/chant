@@ -145,6 +145,12 @@ export interface LiveBranchProtectionConfig {
   allowForcePushes?: boolean;
   allowDeletions?: boolean;
   requireLinearHistory?: boolean;
+  /**
+   * Whether admins are subject to the protection. Not exposed in the desired
+   * config (so never diffed) but captured live so the apply path can preserve
+   * it across a full-replacement PUT.
+   */
+  enforceAdmins?: boolean;
 }
 
 export interface LiveRepoConfig {
