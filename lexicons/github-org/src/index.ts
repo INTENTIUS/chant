@@ -75,3 +75,7 @@ export { branchProtectionCycle, fetchLiveForOrg } from "./cycles/branch-protecti
 // Reconcile: dump (export live state to desired-state config)
 export type { DumpOrgOptions, DumpResult } from "./reconcile/dump.js";
 export { dumpOrg, serializeToYaml } from "./reconcile/dump.js";
+
+// Pipeline emitter: governance CI workflow generator
+export type { GovernancePipelineOptions, CycleFilter } from "./emit/pipeline.js";
+export { governancePipeline } from "./emit/pipeline.js";
