@@ -1,0 +1,54 @@
+{
+  "name": "@intentius/chant-lexicon-github-org",
+  "version": "0.8.1",
+  "description": "GitHub org/repo governance lexicon for chant — desired-state config and reconciliation",
+  "license": "Apache-2.0",
+  "homepage": "https://intentius.io/chant",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/INTENTIUS/chant.git",
+    "directory": "lexicons/github-org"
+  },
+  "bugs": {
+    "url": "https://github.com/INTENTIUS/chant/issues"
+  },
+  "keywords": [
+    "infrastructure-as-code",
+    "iac",
+    "typescript",
+    "github",
+    "github-org",
+    "governance",
+    "chant"
+  ],
+  "type": "module",
+  "files": [
+    "src/",
+    "dist/"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
+  "exports": {
+    ".": {
+      "development": "./src/index.ts",
+      "types": "./dist/index.d.ts",
+      "default": "./src/index.ts"
+    },
+    "./*": {
+      "development": "./src/*.ts",
+      "types": "./dist/*.d.ts",
+      "default": "./src/*.ts"
+    }
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json && tsc-alias -p tsconfig.build.json && find dist -type f \\( -name \"*.js\" -o -name \"*.js.map\" \\) -delete"
+  },
+  "peerDependencies": {
+    "@intentius/chant": "^0.8.1"
+  },
+  "devDependencies": {
+    "@intentius/chant": "*",
+    "typescript": "^5.9.3"
+  }
+}
