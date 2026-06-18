@@ -180,9 +180,12 @@ describe("removalDeltaCap", () => {
   });
 
   it("does not count a resolved rename as a delete", () => {
-    // Before rename resolution: 1 delete + 1 create (with previously alias)
-    // After resolution: 1 update — delete fraction is 0%, should pass at any threshold
-    const cs = makeChangeSet([
+    // Before rename resolution: 1 delete + 1 create (with previously alias).
+    // After resolution: 1 update — delete fraction is 0%, should pass at any threshold.
+    //
+    // removalDeltaCap expects a pre-resolved ChangeSet (callers must call
+    // resolveRenames first — the contract matches how runGuardrails uses it).
+    const raw = makeChangeSet([
       {
         kind: "delete",
         resourceType: "member",
@@ -196,8 +199,9 @@ describe("removalDeltaCap", () => {
         after: { login: "new-name", role: "admin", previously: "old-name" },
       },
     ]);
+    const resolved = resolveRenames(raw);
     // With a very low threshold, should still pass because the delete is a rename
-    expect(removalDeltaCap(cs, { maxFraction: 0.01 })).toBeNull();
+    expect(removalDeltaCap(resolved, { maxFraction: 0.01 })).toBeNull();
   });
 });
 

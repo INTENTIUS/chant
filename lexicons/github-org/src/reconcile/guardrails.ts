@@ -159,20 +159,25 @@ export function resolveRenames(changeSet: ChangeSet): ChangeSet {
  * This guards against a typo wiping the entire config in one apply.
  *
  * Default `maxFraction`: 0.25 (25 %).
+ *
+ * CONTRACT: `changeSet` must be RENAME-RESOLVED before passing to this
+ * function. `runGuardrails` calls `resolveRenames` once and passes the result
+ * here. Callers that invoke `removalDeltaCap` standalone MUST call
+ * `resolveRenames(changeSet)` first so that a delete+create rename pair is not
+ * counted as a deletion.
  */
 export function removalDeltaCap(
   changeSet: ChangeSet,
   opts: RemovalDeltaCapOptions = {},
 ): GuardrailDiagnostic | null {
   const maxFraction = opts.maxFraction ?? 0.25;
-  const resolved = resolveRenames(changeSet);
 
   // Pre-existing entries only (deletes + updates); creates excluded. If nothing
   // pre-exists, no deletes are possible → pass (also avoids divide-by-zero/NaN).
-  const total = resolved.entries.filter((e) => e.kind !== "create").length;
+  const total = changeSet.entries.filter((e) => e.kind !== "create").length;
   if (total === 0) return null;
 
-  const deletes = resolved.entries.filter((e) => e.kind === "delete").length;
+  const deletes = changeSet.entries.filter((e) => e.kind === "delete").length;
   const fraction = deletes / total;
 
   if (fraction > maxFraction) {
@@ -307,15 +312,18 @@ export function requireSelf(
  * Returns `{ ok: true }` when no guardrail trips, or
  * `{ ok: false, diagnostics }` with every tripped guardrail's message.
  *
- * Rename aliases are resolved before guardrails run so that a rename is not
- * counted as a deletion.
+ * Rename aliases are resolved ONCE here before any check runs. All individual
+ * guardrail functions (`removalDeltaCap`, `adminFloor`, etc.) receive the
+ * pre-resolved ChangeSet and MUST NOT call `resolveRenames` themselves.
+ * This guarantees a single traversal and a consistent view of renames across
+ * all checks — a rename is collapsed to an update exactly once.
  */
 export function runGuardrails(
   changeSet: ChangeSet,
   live: LiveOrgState,
   config: GuardrailConfig = {},
 ): GuardrailResult {
-  // Resolve renames once; individual checks get the resolved set
+  // Resolve renames once; all checks receive the pre-resolved set.
   const resolved = resolveRenames(changeSet);
 
   const diagnostics: GuardrailDiagnostic[] = [];

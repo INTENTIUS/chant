@@ -425,6 +425,28 @@ export async function dumpOrg(
  *
  * This mirrors how the branch-protection cycle's `fetchLive` works, but discovers
  * all branches rather than limiting to config-declared ones.
+ *
+ * ## KNOWN LIMITATION — wildcard branch patterns are not discovered
+ *
+ * The classic branch-protection REST API
+ * (`GET /repos/{owner}/{repo}/branches/{branch}/protection`) accepts only a
+ * literal branch name, not a wildcard pattern. This function probes protection
+ * by iterating over the repo's actual branch names (step 1 above). A rule set
+ * with a wildcard pattern such as `release/*` exists as a protection rule on
+ * GitHub but is NOT attached to any individual branch returned by the branch
+ * list. It is therefore invisible to this probe and will be SILENTLY OMITTED
+ * from the dump output.
+ *
+ * Consequence: a later `runReconcile` diff between the dumped config and the
+ * live state will PROPOSE DELETING the wildcard rule (because the config never
+ * declared it), breaking the round-trip no-op guarantee for repos that use
+ * wildcard patterns.
+ *
+ * Resolution path: GitHub's repository-ruleset API
+ * (GET /repos/{owner}/{repo}/rulesets) supports wildcard and regex patterns and
+ * is the recommended replacement for classic branch protection. A rulesets cycle
+ * is tracked in issue #462. Until that cycle ships, operators should manually
+ * add any wildcard-pattern rules to the emitted config after running `dump`.
  */
 async function fetchAllBranchProtection(
   client: AppClient,

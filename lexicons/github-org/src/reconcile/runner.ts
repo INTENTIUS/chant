@@ -32,6 +32,19 @@ import type { GuardrailConfig, GuardrailResult } from "./guardrails.js";
  *
  * Concrete cycle implementations live in separate modules (#455 onwards).
  * The runner is agnostic to what a cycle manages — it only drives the loop.
+ *
+ * ## Multi-org scope
+ *
+ * The runner iterates over every org in `config.orgs` and calls each method
+ * once per org, passing the current `orgLogin` explicitly. Cycles MUST use
+ * `orgLogin` (not `scope.org` or any org name embedded in `scope`) when
+ * constructing GitHub API URLs. This ensures a config with two orgs applies
+ * each org's rules to the correct org, not to whatever name appeared in the
+ * caller-supplied `scope`.
+ *
+ * `scope` carries caller-supplied context that does NOT vary by org iteration —
+ * e.g. a repo filter list or a pagination cursor. Org-varying data is passed
+ * via `orgLogin`.
  */
 export interface Cycle<TScope = unknown> {
   /** Human-readable name, e.g. "branch-protection". Used in run output. */
@@ -40,6 +53,9 @@ export interface Cycle<TScope = unknown> {
   /**
    * Fetch the live state for the given org + scope.
    *
+   * `orgLogin` is the current org being iterated. Use it (not `scope`) for
+   * any org-derived GitHub API path.
+   *
    * Each GitHub API page call made inside this method MUST count against the
    * shared rate budget: call `budget.use(n)` (where `n` is the number of
    * requests consumed) and check `budget.exhausted` before paginating further.
@@ -47,16 +63,21 @@ export interface Cycle<TScope = unknown> {
    * partial state it has gathered or throw `BudgetExhaustedError`; either way
    * the runner records the cycle as deferred so nothing is silently truncated.
    */
-  fetchLive(client: AppClient, scope: TScope, budget: RateBudget): Promise<LiveOrgState>;
+  fetchLive(client: AppClient, orgLogin: string, scope: TScope, budget: RateBudget): Promise<LiveOrgState>;
 
   /**
    * Build the desired state from the governance config + scope.
    * Pure — must not perform any I/O.
+   *
+   * `orgLogin` is the current org being iterated.
    */
-  buildDesired(config: OrgConfig, scope: TScope): OrgConfig;
+  buildDesired(config: OrgConfig, orgLogin: string, scope: TScope): OrgConfig;
 
   /**
    * Apply a single ChangeSet entry to GitHub.
+   *
+   * `orgLogin` is the current org being iterated. Use it (not `scope`) for
+   * any org-derived GitHub API path.
    *
    * Called once per entry when mode is "apply" and guardrails pass.
    * Each network call made inside `apply` MUST count against the budget via
@@ -65,6 +86,7 @@ export interface Cycle<TScope = unknown> {
   apply(
     client: AppClient,
     entry: ChangeSetEntry,
+    orgLogin: string,
     scope: TScope,
     budget: RateBudget,
   ): Promise<void>;
@@ -301,9 +323,10 @@ export async function runReconcile<TScope = unknown>(
       // Step 1: fetchLive — the cycle itself tracks budget usage internally.
       // We wrap in a try/catch so a BudgetExhaustedError mid-fetch is recorded
       // as a deferred skip rather than a hard crash.
+      // orgLogin is passed explicitly so multi-org configs target the right org.
       let live: LiveOrgState;
       try {
-        live = await cycle.fetchLive(client, scope as TScope, budget);
+        live = await cycle.fetchLive(client, orgLogin, scope as TScope, budget);
       } catch (err) {
         if (err instanceof BudgetExhaustedError) {
           deferred.skippedCycles.push(`${cycle.name}@${orgLogin}`);
@@ -323,7 +346,7 @@ export async function runReconcile<TScope = unknown>(
       // Step 2: buildDesired (pure).
       let desired: OrgConfig;
       try {
-        desired = cycle.buildDesired(orgConfig, scope as TScope);
+        desired = cycle.buildDesired(orgConfig, orgLogin, scope as TScope);
       } catch (err) {
         erroredCycles.push({
           name: cycle.name,
@@ -381,7 +404,7 @@ export async function runReconcile<TScope = unknown>(
         }
 
         try {
-          await cycle.apply(client, entry, scope as TScope, budget);
+          await cycle.apply(client, entry, orgLogin, scope as TScope, budget);
           cycleResult.applied.push(entry);
         } catch (err) {
           if (err instanceof BudgetExhaustedError) {

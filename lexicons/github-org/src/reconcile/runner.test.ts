@@ -49,16 +49,16 @@ function makeFakeCycle(opts: FakeCycleOptions = {}): Cycle & {
     fetchCount: 0,
     applied: [] as ChangeSetEntry[],
     name: opts.name ?? "fake",
-    async fetchLive(_client: AppClient, _scope: unknown, budget: RateBudget): Promise<LiveOrgState> {
+    async fetchLive(_client: AppClient, _orgLogin: string, _scope: unknown, budget: RateBudget): Promise<LiveOrgState> {
       state.fetchCount++;
       opts.onFetch?.(budget);
       return opts.live ?? {};
     },
-    buildDesired(config: OrgConfig): OrgConfig {
+    buildDesired(config: OrgConfig, _orgLogin: string): OrgConfig {
       // Default: use the org config as-is unless an override is provided.
       return opts.desired ?? config;
     },
-    async apply(_client: AppClient, entry: ChangeSetEntry, _scope: unknown, budget: RateBudget): Promise<void> {
+    async apply(_client: AppClient, entry: ChangeSetEntry, _orgLogin: string, _scope: unknown, budget: RateBudget): Promise<void> {
       opts.onApply?.(entry, budget);
       state.applied.push(entry);
     },
@@ -380,6 +380,56 @@ describe("runReconcile — rate budget", () => {
     expect(result.deferred.skippedEntries).toHaveLength(2);
     expect(result.deferred.skippedEntries.map((s) => s.cycleName)).toEqual(["fake", "fake"]);
     expect(result.completed).toBe(false);
+  });
+
+  it("multi-org: each org's cycle invocations target the correct org", async () => {
+    // A config with two orgs. We record the orgLogin passed to fetchLive for
+    // each invocation and assert that org-a rules go to org-a and org-b rules
+    // go to org-b — never to the other org.
+    const client = makeMockClient();
+
+    const fetchOrgLogins: string[] = [];
+    const applyOrgLogins: string[] = [];
+
+    const cycle: Cycle & { fetchCount: number; applied: ChangeSetEntry[] } = {
+      name: "multi-org-check",
+      fetchCount: 0,
+      applied: [],
+      async fetchLive(_client, orgLogin, _scope, _budget) {
+        fetchOrgLogins.push(orgLogin);
+        cycle.fetchCount++;
+        return {};
+      },
+      buildDesired(config, orgLogin) {
+        // Return a single member per org so the diff produces 1 create per org.
+        return { members: [{ login: `bot-for-${orgLogin}`, role: "member" as const }] };
+      },
+      async apply(_client, entry, orgLogin, _scope, _budget) {
+        applyOrgLogins.push(orgLogin);
+        cycle.applied.push(entry);
+      },
+    };
+
+    const result = await runReconcile({
+      config: {
+        orgs: {
+          "org-a": {},
+          "org-b": {},
+        },
+      },
+      client,
+      cycles: [cycle],
+      mode: "apply",
+      allowGuardrailOverride: true,
+    });
+
+    // fetchLive called once per org — in order.
+    expect(fetchOrgLogins).toEqual(["org-a", "org-b"]);
+    // apply called once per org (one create per org).
+    expect(applyOrgLogins).toEqual(["org-a", "org-b"]);
+    // Two cycle results, one per org.
+    expect(result.cycles).toHaveLength(2);
+    expect(result.cycles.map((c) => c.org)).toEqual(["org-a", "org-b"]);
   });
 
   it("completes cleanly within budget", async () => {

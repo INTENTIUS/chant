@@ -73,11 +73,11 @@ function makeBudget(initial = 100): RateBudget {
 // ---------------------------------------------------------------------------
 
 describe("branchProtectionCycle.buildDesired", () => {
-  const defaultScope: BranchProtectionScope = { org: "test-org" };
+  const defaultScope: BranchProtectionScope = {};
 
   it("returns empty config when no repos are defined", () => {
     const orgConfig: OrgConfig = {};
-    const desired = branchProtectionCycle.buildDesired(orgConfig, defaultScope);
+    const desired = branchProtectionCycle.buildDesired(orgConfig, "test-org", defaultScope);
     expect(desired.repos).toBeUndefined();
   });
 
@@ -87,7 +87,7 @@ describe("branchProtectionCycle.buildDesired", () => {
         "no-bp-repo": { description: "no branch protection config" },
       },
     };
-    const desired = branchProtectionCycle.buildDesired(orgConfig, defaultScope);
+    const desired = branchProtectionCycle.buildDesired(orgConfig, "test-org", defaultScope);
     expect(desired.repos).toEqual({});
   });
 
@@ -97,7 +97,7 @@ describe("branchProtectionCycle.buildDesired", () => {
         "empty-bp-repo": { branchProtection: [] },
       },
     };
-    const desired = branchProtectionCycle.buildDesired(orgConfig, defaultScope);
+    const desired = branchProtectionCycle.buildDesired(orgConfig, "test-org", defaultScope);
     expect(desired.repos).toEqual({});
   });
 
@@ -111,7 +111,7 @@ describe("branchProtectionCycle.buildDesired", () => {
         "unmanaged-repo": { description: "no bp" },
       },
     };
-    const desired = branchProtectionCycle.buildDesired(orgConfig, defaultScope);
+    const desired = branchProtectionCycle.buildDesired(orgConfig, "test-org", defaultScope);
     expect(desired.repos).toHaveProperty("managed-repo");
     expect(desired.repos).not.toHaveProperty("unmanaged-repo");
     // Only branchProtection is retained — other repo fields stripped
@@ -131,7 +131,7 @@ describe("branchProtectionCycle.buildDesired", () => {
         },
       },
     };
-    const desired = branchProtectionCycle.buildDesired(orgConfig, defaultScope);
+    const desired = branchProtectionCycle.buildDesired(orgConfig, "test-org", defaultScope);
     expect(desired.repos!["multi-bp"]!.branchProtection).toHaveLength(2);
   });
 });
@@ -269,11 +269,11 @@ describe("diff integration with branch-protection cycle", () => {
       },
     },
   };
-  const scope: BranchProtectionScope = { org: "test-org" };
+  const scope: BranchProtectionScope = {};
 
   it("emits create when no live protection exists", () => {
     const live: LiveOrgState = { repos: { "my-repo": { branchProtection: [] } } };
-    const desired = branchProtectionCycle.buildDesired(desiredOrgConfig, scope);
+    const desired = branchProtectionCycle.buildDesired(desiredOrgConfig, "test-org", scope);
     const changeSet = diff("test-org", desired, live);
 
     expect(changeSet.entries).toHaveLength(1);
@@ -296,7 +296,7 @@ describe("diff integration with branch-protection cycle", () => {
         },
       },
     };
-    const desired = branchProtectionCycle.buildDesired(desiredOrgConfig, scope);
+    const desired = branchProtectionCycle.buildDesired(desiredOrgConfig, "test-org", scope);
     const changeSet = diff("test-org", desired, live);
 
     expect(changeSet.entries).toHaveLength(1);
@@ -326,7 +326,7 @@ describe("diff integration with branch-protection cycle", () => {
         },
       },
     };
-    const desired = branchProtectionCycle.buildDesired(desiredOrgConfig, scope);
+    const desired = branchProtectionCycle.buildDesired(desiredOrgConfig, "test-org", scope);
     const changeSet = diff("test-org", desired, live);
 
     expect(changeSet.entries).toHaveLength(0);
@@ -343,7 +343,7 @@ describe("diff integration with branch-protection cycle", () => {
         },
       },
     };
-    const desired = branchProtectionCycle.buildDesired(desiredOrgConfig, scope);
+    const desired = branchProtectionCycle.buildDesired(desiredOrgConfig, "test-org", scope);
     const changeSet = diff("test-org", desired, live, {
       isOwned: (_type, key) => key === "my-repo/develop",
     });
@@ -378,7 +378,7 @@ describe("branchProtectionCycle.apply", () => {
       },
     };
 
-    await branchProtectionCycle.apply(client, entry, { org: "test-org" }, makeBudget());
+    await branchProtectionCycle.apply(client, entry, "test-org", {}, makeBudget());
 
     expect(client.calls).toHaveLength(1);
     expect(client.calls[0]!.method).toBe("PUT");
@@ -408,7 +408,7 @@ describe("branchProtectionCycle.apply", () => {
       fields: [{ field: "requiredApprovingReviewCount", before: 1, after: 2 }],
     };
 
-    await branchProtectionCycle.apply(client, entry, { org: "my-org" }, makeBudget());
+    await branchProtectionCycle.apply(client, entry, "my-org", {}, makeBudget());
 
     // Branch pattern with slash should be URL-encoded
     expect(client.calls[0]!.method).toBe("PUT");
@@ -453,7 +453,7 @@ describe("branchProtectionCycle.apply", () => {
       fields: [{ field: "allowDeletions", before: false, after: false }],
     };
 
-    await branchProtectionCycle.apply(client, entry, { org: "test-org" }, makeBudget());
+    await branchProtectionCycle.apply(client, entry, "test-org", {}, makeBudget());
 
     expect(client.calls).toHaveLength(1);
     expect(client.calls[0]!.method).toBe("PUT");
@@ -512,7 +512,7 @@ describe("branchProtectionCycle.apply", () => {
       fields: [{ field: "allowDeletions", before: false, after: true }],
     };
 
-    await branchProtectionCycle.apply(client, entry, { org: "test-org" }, budget);
+    await branchProtectionCycle.apply(client, entry, "test-org", {}, budget);
 
     // One GET (live fetch) + one PUT (apply) → budget charged twice.
     expect(budget.remaining).toBe(3);
@@ -536,7 +536,7 @@ describe("branchProtectionCycle.apply", () => {
       after: { pattern: "main", requirePullRequestReviews: true },
     };
 
-    await branchProtectionCycle.apply(client, entry, { org: "test-org" }, makeBudget());
+    await branchProtectionCycle.apply(client, entry, "test-org", {}, makeBudget());
 
     // No GET — creates have no live to preserve.
     expect(client.calls).toHaveLength(1);
@@ -562,7 +562,7 @@ describe("branchProtectionCycle.apply", () => {
       before: { pattern: "develop" },
     };
 
-    await branchProtectionCycle.apply(client, entry, { org: "my-org" }, makeBudget());
+    await branchProtectionCycle.apply(client, entry, "my-org", {}, makeBudget());
 
     expect(client.calls).toHaveLength(1);
     expect(client.calls[0]!.method).toBe("DELETE");
@@ -581,10 +581,10 @@ describe("branchProtectionCycle.apply", () => {
       before: { pattern: "main" },
     };
 
-    await branchProtectionCycle.apply(client, entry, { org: "my-org" }, budget);
+    await branchProtectionCycle.apply(client, entry, "my-org", {}, budget);
 
     expect(budget.remaining).toBe(4);
-    // The scope object must resolve into the URL — a bare string would yield
+    // orgLogin must resolve into the URL — passing undefined would produce
     // "/repos/undefined/...".
     expect(client.calls).toHaveLength(1);
     expect(client.calls[0]!.path).toBe(
@@ -601,7 +601,7 @@ describe("branchProtectionCycle.apply", () => {
       after: { description: "a team" },
     };
 
-    await branchProtectionCycle.apply(client, entry, { org: "my-org" }, makeBudget());
+    await branchProtectionCycle.apply(client, entry, "my-org", {}, makeBudget());
 
     expect(client.calls).toHaveLength(0);
   });
@@ -616,7 +616,7 @@ describe("branchProtectionCycle.apply", () => {
     };
 
     await expect(
-      branchProtectionCycle.apply(client, entry, { org: "my-org" }, makeBudget()),
+      branchProtectionCycle.apply(client, entry, "my-org", {}, makeBudget()),
     ).rejects.toThrow("malformed entry key");
   });
 });
@@ -654,7 +654,6 @@ describe("branchProtectionCycle via runReconcile", () => {
 
     // scope includes repos so fetchLive fetches live state (404 → empty → creates)
     const scope: BranchProtectionScope = {
-      org: "test-org",
       repos: config.orgs["test-org"]!.repos,
     };
     const result = await runReconcile({
@@ -705,7 +704,6 @@ describe("branchProtectionCycle via runReconcile", () => {
     };
 
     const scope: BranchProtectionScope = {
-      org: "test-org",
       repos: config.orgs["test-org"]!.repos,
     };
 
@@ -759,7 +757,7 @@ describe("branchProtectionCycle via runReconcile", () => {
         },
       },
     };
-    const desired = branchProtectionCycle.buildDesired(desiredConfig, { org: "test-org" });
+    const desired = branchProtectionCycle.buildDesired(desiredConfig, "test-org", {});
 
     // Apply an ownership predicate so all live patterns are owned
     const changeSet = diff("test-org", desired, live, {
@@ -789,7 +787,7 @@ describe("branchProtectionCycle via runReconcile", () => {
       config,
       client,
       cycles: [branchProtectionCycle],
-      scope: { org: "test-org" } satisfies BranchProtectionScope,
+      scope: {} satisfies BranchProtectionScope,
       mode: "dry-run",
     });
 

@@ -25,7 +25,7 @@ absent means "not managed" (selective-by-omission).
 Signature:
 
 ```ts
-fetchLive(client: AppClient, scope: TScope, budget: RateBudget): Promise<LiveOrgState>
+fetchLive(client: AppClient, orgLogin: string, scope: TScope, budget: RateBudget): Promise<LiveOrgState>
 ```
 
 - Call `budget.use(n)` before (or immediately after) each GitHub API call.
@@ -40,7 +40,7 @@ fetchLive(client: AppClient, scope: TScope, budget: RateBudget): Promise<LiveOrg
 Signature:
 
 ```ts
-buildDesired(orgConfig: OrgConfig, scope: TScope): OrgConfig
+buildDesired(config: OrgConfig, orgLogin: string, scope: TScope): OrgConfig
 ```
 
 - Pure — no I/O.
@@ -54,7 +54,7 @@ buildDesired(orgConfig: OrgConfig, scope: TScope): OrgConfig
 Signature:
 
 ```ts
-apply(client: AppClient, entry: ChangeSetEntry, scope: TScope, budget: RateBudget): Promise<void>
+apply(client: AppClient, entry: ChangeSetEntry, orgLogin: string, scope: TScope, budget: RateBudget): Promise<void>
 ```
 
 - Dispatch on `entry.kind`: `"create"` | `"update"` | `"delete"`.
@@ -84,9 +84,10 @@ await runReconcile({
   config,
   client,
   // The scope is a typed object, not a bare string. For branch-protection it is
-  // `BranchProtectionScope` ({ org, repos? }).
+  // `BranchProtectionScope` ({ repos? }). The org login is supplied per-org by
+  // the runner as `orgLogin`, not via scope.
   cycles: [branchProtectionCycle],
-  scope: { org: "my-org", repos: config.orgs["my-org"]?.repos },
+  scope: { repos: config.orgs["my-org"]?.repos },
   mode: "dry-run",
 });
 ```
@@ -103,3 +104,28 @@ await runReconcile({
 - [ ] Cycle exported from `src/index.ts`
 - [ ] Unit tests: buildDesired, fetchLive mapping, diff, apply create/update/delete
 - [ ] Runner integration test: dry-run plan, guardrail trip (if applicable)
+
+---
+
+## Known limitation: wildcard branch-protection patterns
+
+The classic branch-protection cycle (`branch-protection.ts`) fetches live state
+by probing each branch name via
+`GET /repos/{owner}/{repo}/branches/{branch}/protection`. This API accepts only
+**literal** branch names — it cannot enumerate or match wildcard patterns.
+
+A protection rule with a wildcard pattern like `release/*` exists on GitHub's
+side but is never returned by a literal-branch probe. As a result:
+
+- `dump` silently omits wildcard-pattern rules (see `src/reconcile/dump.ts`).
+- A subsequent reconcile diff will propose **deleting** any undiscovered wildcard
+  rule, since it is absent from the desired config.
+
+**Workaround**: after running `dump`, manually inspect the repo's branch
+protection settings in GitHub and add wildcard-pattern rules to the emitted
+config before committing.
+
+**Proper fix**: GitHub's repository-ruleset API
+(`GET /repos/{owner}/{repo}/rulesets`) supports wildcard and regex patterns and
+is the modern replacement for classic branch protection. A rulesets cycle is
+tracked in issue #462. Until it ships, wildcard patterns are not covered.
