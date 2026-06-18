@@ -35,6 +35,13 @@ function gitTreeMock(files: Record<string, string>, sizes: Record<string, number
       const tree = Object.keys(files).map((path) => ({ path, type: "blob", size: sizes[path] ?? files[path].length }));
       return new Response(JSON.stringify({ tree }), { status: 200 });
     }
+    // GitHub content comes from the raw CDN first (plain text, no base64).
+    const rawm = u.match(/raw\.githubusercontent\.com\/[^/]+\/[^/]+\/[^/]+\/(.+)$/);
+    if (rawm) {
+      const path = decodeURIComponent(rawm[1]);
+      if (files[path] === undefined) return new Response("not found", { status: 404 });
+      return new Response(files[path], { status: 200 });
+    }
     const cm = u.match(/\/contents\/(.+?)\?/);
     if (cm) {
       const path = decodeURIComponent(cm[1]);
@@ -104,6 +111,42 @@ describe("fetchRepoFiles", () => {
     await fetchRepoFiles("https://github.com/acme/widgets", { fetchImpl: impl });
     const uas = calls.map((c) => (c.init?.headers as Record<string, string>)?.["User-Agent"]);
     expect(uas.every((ua) => typeof ua === "string" && ua.length > 0)).toBe(true);
+  });
+
+  test("github: reads content from the raw CDN (no contents-API burst)", async () => {
+    const { impl, calls } = gitTreeMock({ ".github/workflows/ci.yml": CI_YAML });
+    const files = await fetchRepoFiles("https://github.com/acme/widgets", { fetchImpl: impl });
+    expect(files[0].content).toContain("permissions: write-all");
+    // Content came from raw.githubusercontent.com — the contents API was not hit.
+    expect(calls.some((c) => c.url.includes("raw.githubusercontent.com"))).toBe(true);
+    expect(calls.some((c) => c.url.includes("/contents/"))).toBe(false);
+  });
+
+  test("does not send the auth token cross-host to the raw CDN", async () => {
+    const { impl, calls } = gitTreeMock({ ".github/workflows/ci.yml": CI_YAML });
+    await fetchRepoFiles("https://github.com/acme/widgets", { fetchImpl: impl, token: "secret" });
+    const rawCall = calls.find((c) => c.url.includes("raw.githubusercontent.com"));
+    expect((rawCall?.init?.headers as Record<string, string>)?.Authorization).toBeUndefined();
+  });
+
+  test("encodes path segments with spaces (would 403 unencoded)", async () => {
+    const spaced = ".changes/v1.16/NEW FEATURES.yaml";
+    const { impl, calls } = gitTreeMock({ [spaced]: "kind: Changelog\n" });
+    const files = await fetchRepoFiles("https://github.com/acme/widgets", { fetchImpl: impl });
+    expect(files.map((f) => f.path)).toContain(spaced);
+    expect(calls.some((c) => c.url.includes("NEW%20FEATURES.yaml"))).toBe(true);
+  });
+
+  test("a single file's failure does not abort the whole walk", async () => {
+    // raw 404s for the bad path → contents API also 404s → that file is skipped,
+    // not fatal; the good file still comes back.
+    const { impl } = gitTreeMock({ ".github/workflows/ci.yml": CI_YAML, "k8s/deploy.yaml": "kind: Deployment\n" });
+    const broken = (async (url: string | URL | Request, init?: RequestInit) => {
+      if (String(url).includes("deploy.yaml")) return new Response("forbidden", { status: 403 });
+      return impl(url, init);
+    }) as unknown as typeof fetch;
+    const files = await fetchRepoFiles("https://github.com/acme/widgets", { fetchImpl: broken });
+    expect(files.map((f) => f.path)).toEqual([".github/workflows/ci.yml"]);
   });
 
   test("skips a file over the per-file size cap (reported by the tree)", async () => {
