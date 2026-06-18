@@ -80,11 +80,16 @@ export function parseRepoUrl(url: string): ParsedRepo {
   return { host, owner: parts[0], repo: parts[1].replace(/\.git$/, "") };
 }
 
+/** GitHub (and good manners) require a User-Agent — workerd's fetch sends none,
+ * so a missing UA 403s every request. Always set one, with or without a token. */
+const USER_AGENT = "chant-audit (+https://github.com/intentius/chant)";
+
 function authHeaders(kind: HostKind, token?: string): Record<string, string> {
-  if (!token) return {};
-  if (kind === "github") return { Authorization: `Bearer ${token}` };
-  if (kind === "forgejo") return { Authorization: `token ${token}` };
-  return { "PRIVATE-TOKEN": token };
+  const base = { "User-Agent": USER_AGENT };
+  if (!token) return base;
+  if (kind === "github") return { ...base, Authorization: `Bearer ${token}` };
+  if (kind === "forgejo") return { ...base, Authorization: `token ${token}` };
+  return { ...base, "PRIVATE-TOKEN": token };
 }
 
 function timeoutSignal(ms: number): AbortSignal | undefined {
@@ -251,6 +256,7 @@ export async function resolveActionSha(
     const res = await doFetch(url, {
       headers: {
         Accept: "application/vnd.github+json",
+        "User-Agent": USER_AGENT,
         ...(opts.token ? { Authorization: `Bearer ${opts.token}` } : {}),
       },
       redirect: "manual",
@@ -347,16 +353,16 @@ export async function resolveImageDigest(
   const manifestUrl = `https://${parsed.registry}/v2/${parsed.repository}/manifests/${encodeURIComponent(parsed.tag)}`;
 
   try {
-    let res = await doFetch(manifestUrl, { headers: { Accept: accept }, redirect: "manual", signal: timeoutSignal(ms) });
+    let res = await doFetch(manifestUrl, { headers: { Accept: accept, "User-Agent": USER_AGENT }, redirect: "manual", signal: timeoutSignal(ms) });
     if (res.status === 401) {
       const tokenUrl = tokenUrlFromChallenge(res.headers.get("www-authenticate") ?? "");
       if (!tokenUrl) return undefined;
-      const tokRes = await doFetch(tokenUrl, { redirect: "manual", signal: timeoutSignal(ms) });
+      const tokRes = await doFetch(tokenUrl, { headers: { "User-Agent": USER_AGENT }, redirect: "manual", signal: timeoutSignal(ms) });
       if (!tokRes.ok) return undefined;
       const tok = (await tokRes.json()) as { token?: string; access_token?: string };
       const bearer = tok.token ?? tok.access_token;
       if (!bearer) return undefined;
-      res = await doFetch(manifestUrl, { headers: { Accept: accept, Authorization: `Bearer ${bearer}` }, redirect: "manual", signal: timeoutSignal(ms) });
+      res = await doFetch(manifestUrl, { headers: { Accept: accept, "User-Agent": USER_AGENT, Authorization: `Bearer ${bearer}` }, redirect: "manual", signal: timeoutSignal(ms) });
     }
     if (!res.ok) return undefined;
     const digest = res.headers.get("docker-content-digest");

@@ -99,6 +99,13 @@ describe("fetchRepoFiles", () => {
     expect(auth).toContain("Bearer secret");
   });
 
+  test("always sends a User-Agent, even without a token (GitHub 403s otherwise)", async () => {
+    const { impl, calls } = gitTreeMock({ ".github/workflows/ci.yml": CI_YAML });
+    await fetchRepoFiles("https://github.com/acme/widgets", { fetchImpl: impl });
+    const uas = calls.map((c) => (c.init?.headers as Record<string, string>)?.["User-Agent"]);
+    expect(uas.every((ua) => typeof ua === "string" && ua.length > 0)).toBe(true);
+  });
+
   test("skips a file over the per-file size cap (reported by the tree)", async () => {
     const { impl } = gitTreeMock({ ".github/workflows/ci.yml": CI_YAML }, { ".github/workflows/ci.yml": 10_000_000 });
     const files = await fetchRepoFiles("https://github.com/acme/widgets", { fetchImpl: impl, maxBytesPerFile: 1024 });
