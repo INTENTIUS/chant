@@ -26,10 +26,12 @@
  *
  * ## Scope
  *
- * `TScope` is `BranchProtectionScope` — a plain object with `org` (required)
- * and an optional `repos` map. When `repos` is present, `fetchLive` fetches
- * the live branch protection state for those repos. When absent, `fetchLive`
- * returns an empty state (all desired entries will appear as creates).
+ * `TScope` is `BranchProtectionScope` — a plain object with only an optional
+ * `repos` map. The org login is NOT part of the scope; it is supplied to each
+ * cycle method as `orgLogin` by the runner (one call per org in the config).
+ * When `repos` is present, `fetchLive` fetches the live branch protection state
+ * for those repos. When absent, `fetchLive` returns an empty state (all desired
+ * entries will appear as creates).
  *
  * Typical usage with the runner:
  *
@@ -39,7 +41,6 @@
  *   client,
  *   cycles: [branchProtectionCycle],
  *   scope: {
- *     org: "my-org",
  *     repos: config.orgs["my-org"]!.repos,
  *   },
  *   mode: "apply",

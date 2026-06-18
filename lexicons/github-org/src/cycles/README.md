@@ -25,7 +25,7 @@ absent means "not managed" (selective-by-omission).
 Signature:
 
 ```ts
-fetchLive(client: AppClient, scope: TScope, budget: RateBudget): Promise<LiveOrgState>
+fetchLive(client: AppClient, orgLogin: string, scope: TScope, budget: RateBudget): Promise<LiveOrgState>
 ```
 
 - Call `budget.use(n)` before (or immediately after) each GitHub API call.
@@ -40,7 +40,7 @@ fetchLive(client: AppClient, scope: TScope, budget: RateBudget): Promise<LiveOrg
 Signature:
 
 ```ts
-buildDesired(orgConfig: OrgConfig, scope: TScope): OrgConfig
+buildDesired(config: OrgConfig, orgLogin: string, scope: TScope): OrgConfig
 ```
 
 - Pure — no I/O.
@@ -54,7 +54,7 @@ buildDesired(orgConfig: OrgConfig, scope: TScope): OrgConfig
 Signature:
 
 ```ts
-apply(client: AppClient, entry: ChangeSetEntry, scope: TScope, budget: RateBudget): Promise<void>
+apply(client: AppClient, entry: ChangeSetEntry, orgLogin: string, scope: TScope, budget: RateBudget): Promise<void>
 ```
 
 - Dispatch on `entry.kind`: `"create"` | `"update"` | `"delete"`.
@@ -84,9 +84,10 @@ await runReconcile({
   config,
   client,
   // The scope is a typed object, not a bare string. For branch-protection it is
-  // `BranchProtectionScope` ({ org, repos? }).
+  // `BranchProtectionScope` ({ repos? }). The org login is supplied per-org by
+  // the runner as `orgLogin`, not via scope.
   cycles: [branchProtectionCycle],
-  scope: { org: "my-org", repos: config.orgs["my-org"]?.repos },
+  scope: { repos: config.orgs["my-org"]?.repos },
   mode: "dry-run",
 });
 ```
