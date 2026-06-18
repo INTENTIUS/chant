@@ -71,3 +71,7 @@ export { runReconcile, BudgetExhaustedError } from "./reconcile/runner.js";
 
 // Cycles
 export { branchProtectionCycle, fetchLiveForOrg } from "./cycles/branch-protection.js";
+
+// Reconcile: dump (export live state to desired-state config)
+export type { DumpOrgOptions, DumpResult } from "./reconcile/dump.js";
+export { dumpOrg, serializeToYaml } from "./reconcile/dump.js";
