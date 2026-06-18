@@ -30,6 +30,7 @@ jobs:
       - run: npm run --prefix lexicons/gitlab prepack
       - run: npm run --prefix lexicons/github prepack
       - run: npm run --prefix lexicons/forgejo prepack
+      - run: npm run --prefix lexicons/github-org prepack
       - run: npm run --prefix lexicons/k8s prepack
       - run: npm run --prefix lexicons/gcp prepack
       - run: npm run --prefix lexicons/helm prepack
@@ -93,6 +94,13 @@ jobs:
         run: |
           V=$(node -e "process.stdout.write(require('./package.json').version)")
           P=$(npm view @intentius/chant-lexicon-forgejo version 2>/dev/null || echo "none")
+          [ "$V" = "$P" ] && echo "Already at $V, skipping" || npm publish --access public --provenance
+
+      - name: Publish @intentius/chant-lexicon-github-org
+        working-directory: lexicons/github-org
+        run: |
+          V=$(node -e "process.stdout.write(require('./package.json').version)")
+          P=$(npm view @intentius/chant-lexicon-github-org version 2>/dev/null || echo "none")
           [ "$V" = "$P" ] && echo "Already at $V, skipping" || npm publish --access public --provenance
 
       - name: Publish @intentius/chant-lexicon-k8s

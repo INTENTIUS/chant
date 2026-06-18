@@ -1,6 +1,6 @@
 {
   "name": "@intentius/chant-lexicon-github-org",
-  "version": "0.8.1",
+  "version": "0.8.2",
   "description": "GitHub org/repo governance lexicon for chant — desired-state config and reconciliation",
   "license": "Apache-2.0",
   "homepage": "https://intentius.io/chant",
@@ -49,8 +49,8 @@
     "prepack": "npm run build"
   },
   "peerDependencies": {
-    "@intentius/chant": "^0.8.1",
-    "@intentius/chant-lexicon-github": "^0.8.1"
+    "@intentius/chant": "^0.8.2",
+    "@intentius/chant-lexicon-github": "^0.8.2"
   },
   "devDependencies": {
     "@intentius/chant": "*",
