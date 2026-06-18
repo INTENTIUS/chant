@@ -158,7 +158,6 @@ exports[`snapshot tests > generated resource names 1`] = `
   "EventSource",
   "Function",
   "Function_Code",
-  "Function_Tag",
   "GraphQLApi",
   "HttpApi",
   "HttpApi_CorsConfiguration",
