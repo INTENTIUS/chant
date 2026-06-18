@@ -80,11 +80,16 @@ export function parseRepoUrl(url: string): ParsedRepo {
   return { host, owner: parts[0], repo: parts[1].replace(/\.git$/, "") };
 }
 
+/** GitHub (and good manners) require a User-Agent — workerd's fetch sends none,
+ * so a missing UA 403s every request. Always set one, with or without a token. */
+const USER_AGENT = "chant-audit (+https://github.com/intentius/chant)";
+
 function authHeaders(kind: HostKind, token?: string): Record<string, string> {
-  if (!token) return {};
-  if (kind === "github") return { Authorization: `Bearer ${token}` };
-  if (kind === "forgejo") return { Authorization: `token ${token}` };
-  return { "PRIVATE-TOKEN": token };
+  const base = { "User-Agent": USER_AGENT };
+  if (!token) return base;
+  if (kind === "github") return { ...base, Authorization: `Bearer ${token}` };
+  if (kind === "forgejo") return { ...base, Authorization: `token ${token}` };
+  return { ...base, "PRIVATE-TOKEN": token };
 }
 
 function timeoutSignal(ms: number): AbortSignal | undefined {
@@ -173,22 +178,69 @@ async function listTree(host: HostConfig, owner: string, repo: string, ref: stri
   return tree.filter((e) => e.type === "blob").map((e) => ({ path: e.path, type: "blob", size: e.size }));
 }
 
-/** Fetch one file's content per host (base64 contents API, or GitLab raw). */
+/**
+ * Resilient GET → text. Returns undefined on any error or non-ok status, so one
+ * file's failure (a bad path, a 403 secondary rate-limit, a timeout) never
+ * aborts the whole walk. `redirect: "manual"` keeps the SSRF posture — a 3xx is
+ * skipped, never followed.
+ */
+async function fetchText(url: string, headers: Record<string, string>, doFetch: typeof fetch, ms: number): Promise<string | undefined> {
+  let res: Response;
+  try {
+    res = await doFetch(url, { headers, redirect: "manual", signal: timeoutSignal(ms) });
+  } catch {
+    return undefined;
+  }
+  if (!res.ok) return undefined;
+  try {
+    return await res.text();
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * Fetch one file's content. GitHub reads from the raw CDN first — a burst of
+ * contents-API calls trips GitHub's *secondary* rate limit on large repos
+ * (dozens of files), whereas raw.githubusercontent.com isn't subject to it and
+ * needs no auth for public repos. The contents API is the fallback for private
+ * repos (raw 404s there without auth). GitLab uses its raw endpoint; Forgejo
+ * uses the contents API.
+ */
 async function fetchFileContent(host: HostConfig, owner: string, repo: string, path: string, ref: string, doFetch: typeof fetch, headers: Record<string, string>, ms: number): Promise<string | undefined> {
+  // Encode each segment (keep the slashes) — paths can contain spaces and other
+  // characters that make an unencoded URL malformed and 403 (e.g. GitHub's
+  // changelog fragments like ".changes/v1.16/NEW FEATURES-….yaml").
+  const encodedPath = path.split("/").map(encodeURIComponent).join("/");
+
   if (host.kind === "gitlab") {
     const url = `${host.api}/projects/${projectId(owner, repo)}/repository/files/${encodeURIComponent(path)}/raw?ref=${encodeURIComponent(ref)}`;
-    let res: Response;
-    try {
-      res = await doFetch(url, { headers, redirect: "manual", signal: timeoutSignal(ms) });
-    } catch {
-      return undefined;
-    }
-    if (!res.ok) return undefined;
-    return await res.text();
+    return fetchText(url, headers, doFetch, ms);
   }
-  const url = `${host.api}/repos/${owner}/${repo}/contents/${path}?ref=${encodeURIComponent(ref)}`;
-  const { body } = await getJsonAt(url, headers, doFetch, ms);
-  const file = body as ContentsEntry | null;
+
+  if (host.kind === "github") {
+    // No token sent cross-host to the CDN; public repos need none.
+    const rawUrl = `https://raw.githubusercontent.com/${owner}/${repo}/${encodeURIComponent(ref)}/${encodedPath}`;
+    const raw = await fetchText(rawUrl, { "User-Agent": USER_AGENT }, doFetch, ms);
+    if (raw !== undefined) return raw;
+    // Private repo (raw 404s without auth) — fall through to the contents API.
+  }
+
+  // Contents API: base64 JSON. Forgejo always; GitHub private-repo fallback.
+  const url = `${host.api}/repos/${owner}/${repo}/contents/${encodedPath}?ref=${encodeURIComponent(ref)}`;
+  let res: Response;
+  try {
+    res = await doFetch(url, { headers, redirect: "manual", signal: timeoutSignal(ms) });
+  } catch {
+    return undefined;
+  }
+  if (!res.ok) return undefined;
+  let file: ContentsEntry | null;
+  try {
+    file = (await res.json()) as ContentsEntry | null;
+  } catch {
+    return undefined;
+  }
   if (!file?.content) return undefined;
   return Buffer.from(file.content, (file.encoding as BufferEncoding) ?? "base64").toString("utf-8");
 }
@@ -251,6 +303,7 @@ export async function resolveActionSha(
     const res = await doFetch(url, {
       headers: {
         Accept: "application/vnd.github+json",
+        "User-Agent": USER_AGENT,
         ...(opts.token ? { Authorization: `Bearer ${opts.token}` } : {}),
       },
       redirect: "manual",
@@ -347,16 +400,16 @@ export async function resolveImageDigest(
   const manifestUrl = `https://${parsed.registry}/v2/${parsed.repository}/manifests/${encodeURIComponent(parsed.tag)}`;
 
   try {
-    let res = await doFetch(manifestUrl, { headers: { Accept: accept }, redirect: "manual", signal: timeoutSignal(ms) });
+    let res = await doFetch(manifestUrl, { headers: { Accept: accept, "User-Agent": USER_AGENT }, redirect: "manual", signal: timeoutSignal(ms) });
     if (res.status === 401) {
       const tokenUrl = tokenUrlFromChallenge(res.headers.get("www-authenticate") ?? "");
       if (!tokenUrl) return undefined;
-      const tokRes = await doFetch(tokenUrl, { redirect: "manual", signal: timeoutSignal(ms) });
+      const tokRes = await doFetch(tokenUrl, { headers: { "User-Agent": USER_AGENT }, redirect: "manual", signal: timeoutSignal(ms) });
       if (!tokRes.ok) return undefined;
       const tok = (await tokRes.json()) as { token?: string; access_token?: string };
       const bearer = tok.token ?? tok.access_token;
       if (!bearer) return undefined;
-      res = await doFetch(manifestUrl, { headers: { Accept: accept, Authorization: `Bearer ${bearer}` }, redirect: "manual", signal: timeoutSignal(ms) });
+      res = await doFetch(manifestUrl, { headers: { Accept: accept, "User-Agent": USER_AGENT, Authorization: `Bearer ${bearer}` }, redirect: "manual", signal: timeoutSignal(ms) });
     }
     if (!res.ok) return undefined;
     const digest = res.headers.get("docker-content-digest");
