@@ -97,7 +97,7 @@ export interface ArgoAppForOptions {
   defaults?: { application?: Partial<Record<string, unknown>> };
 }
 
-export interface ArgoAppForResult {
+export type ArgoAppForResult = {
   application: InstanceType<typeof ApplicationResource>;
 }
 
@@ -196,7 +196,7 @@ export interface ArgoAppSetForRegionsOptions {
   defaults?: { applicationSet?: Partial<Record<string, unknown>> };
 }
 
-export interface ArgoAppSetForRegionsResult {
+export type ArgoAppSetForRegionsResult = {
   applicationSet: InstanceType<typeof ApplicationSetResource>;
 }
 
@@ -324,7 +324,7 @@ export interface RegisterArgoClusterOptions {
   defaults?: { secret?: Partial<Record<string, unknown>> };
 }
 
-export interface RegisterArgoClusterResult {
+export type RegisterArgoClusterResult = {
   secret: InstanceType<typeof SecretResource>;
 }
 
