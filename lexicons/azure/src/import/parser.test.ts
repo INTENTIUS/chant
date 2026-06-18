@@ -122,8 +122,9 @@ describe("ArmParser", () => {
 
     const ir = parser.parse(JSON.stringify(template));
     expect(ir.resources).toHaveLength(2);
-    expect(ir.resources[1].dependsOn).toBeDefined();
-    expect(ir.resources[1].dependsOn!.length).toBeGreaterThan(0);
+    const deps = ir.resources[1].metadata?.dependsOn as string[] | undefined;
+    expect(deps).toBeDefined();
+    expect(deps!.length).toBeGreaterThan(0);
   });
 
   it("parses subscription bracket expression", () => {

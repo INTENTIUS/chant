@@ -110,9 +110,9 @@ describe("azurePlugin", () => {
       expect(azureSkill.triggers).toBeDefined();
       expect(azureSkill.triggers!.length).toBeGreaterThanOrEqual(1);
 
-      const filePatternTrigger = azureSkill.triggers!.find((t) => t.type === "file_pattern");
+      const filePatternTrigger = azureSkill.triggers!.find((t) => t.type === "file-pattern");
       expect(filePatternTrigger).toBeDefined();
-      expect(filePatternTrigger!.pattern).toContain("*.azure.ts");
+      expect(filePatternTrigger!.value).toContain("*.azure.ts");
     });
 
     test("chant-azure skill has parameters", () => {

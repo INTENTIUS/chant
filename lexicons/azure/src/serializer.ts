@@ -263,7 +263,7 @@ function serializeToTemplate(
 
           if (RESOURCE_LEVEL_FIELDS.has(key)) {
             // Hoist to resource level
-            (resource as Record<string, unknown>)[key] = toArmValue(value, entityNames);
+            (resource as unknown as Record<string, unknown>)[key] = toArmValue(value, entityNames);
           } else if (key === "name") {
             resource.name = toArmValue(value, entityNames) as string;
           } else {
@@ -326,7 +326,7 @@ function serializeToTemplate(
     const refs = findArmResourceRefs(resource.properties);
     // Also scan resource-level fields (location, tags, identity, etc.)
     for (const field of RESOURCE_LEVEL_FIELDS) {
-      const val = (resource as Record<string, unknown>)[field];
+      const val = (resource as unknown as Record<string, unknown>)[field];
       if (val !== undefined) {
         for (const ref of findArmResourceRefs(val)) {
           refs.add(ref);

@@ -25,6 +25,14 @@ export interface LexiconValidationConfig {
   lexiconJsonFilename: string;
   /** Required backward-compatible export names to check in lexicon JSON */
   requiredNames: string[];
+  /**
+   * When true, a required name is satisfied if it appears as a substring of any
+   * lexicon JSON key (not only as an exact key). Lexicons that bound their
+   * generated type expansion (e.g. azure, #438) emit shared types under
+   * resource-prefixed/variant names, so the bare curated name is present only
+   * as a substring. Defaults to false (exact-key match).
+   */
+  requiredNamesMatchSubstring?: boolean;
   /** Base path of the lexicon package */
   basePath: string;
   /** Path to the generated directory (defaults to basePath/src/generated) */
@@ -70,7 +78,11 @@ export async function validateLexiconArtifacts(config: LexiconValidationConfig):
 
   // Check 3: Required backward-compatible names present in lexicon JSON
   if (lexiconData && config.requiredNames.length > 0) {
-    const missing = config.requiredNames.filter((name) => !(name in lexiconData!));
+    const keys = Object.keys(lexiconData);
+    const present = config.requiredNamesMatchSubstring
+      ? (name: string) => keys.some((k) => k.includes(name))
+      : (name: string) => name in lexiconData!;
+    const missing = config.requiredNames.filter((name) => !present(name));
     if (missing.length > 0) {
       checks.push({
         name: "required-names",

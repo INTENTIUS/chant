@@ -91,9 +91,10 @@ describe("ARM Import Round-trip", () => {
     expect(ir.resources[0].type).toBe("Microsoft.Storage/storageAccounts");
     expect(ir.resources[1].type).toBe("Microsoft.Web/sites");
 
-    // dependsOn should be parsed
-    expect(ir.resources[1].dependsOn).toBeDefined();
-    expect(ir.resources[1].dependsOn!.length).toBeGreaterThan(0);
+    // dependsOn should be parsed (preserved in resource metadata)
+    const deps = ir.resources[1].metadata?.dependsOn as string[] | undefined;
+    expect(deps).toBeDefined();
+    expect(deps!.length).toBeGreaterThan(0);
 
     const files = generator.generate(ir);
     expect(files.length).toBeGreaterThanOrEqual(1);

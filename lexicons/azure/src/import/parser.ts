@@ -17,6 +17,13 @@ import { BaseValueParser } from "@intentius/chant/import/base-parser";
  * ARM template parser.
  */
 export class ArmParser extends BaseValueParser implements TemplateParser {
+  // ARM expresses intrinsics as bracketed string expressions (e.g.
+  // "[resourceId(...)]"), not single-key objects, so there are no object-form
+  // intrinsics to dispatch during value walking.
+  protected dispatchIntrinsic(): unknown | null {
+    return null;
+  }
+
   parse(content: string): TemplateIR {
     const template = JSON.parse(content);
 
@@ -35,7 +42,7 @@ export class ArmParser extends BaseValueParser implements TemplateParser {
           name,
           type: mapArmParameterType(p.type as string),
           description: (p.metadata as Record<string, string>)?.description ?? p.description as string,
-          default: p.defaultValue,
+          defaultValue: p.defaultValue,
         });
       }
     }
@@ -71,7 +78,8 @@ export class ArmParser extends BaseValueParser implements TemplateParser {
         logicalId: name,
         type,
         properties,
-        dependsOn: deps.length > 0 ? deps : undefined,
+        // ResourceIR has no dedicated dependsOn field — preserve ARM dependencies in metadata.
+        ...(deps.length > 0 && { metadata: { dependsOn: deps } }),
       });
     }
 

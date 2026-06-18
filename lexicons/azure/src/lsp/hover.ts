@@ -28,7 +28,7 @@ function resourceHover(className: string, entry: LexiconEntry): HoverInfo | unde
   lines.push("");
   lines.push(`ARM resource type: \`${entry.resourceType}\``);
 
-  const apiVersion = (entry as Record<string, unknown>).apiVersion;
+  const apiVersion = (entry as unknown as Record<string, unknown>).apiVersion;
   if (apiVersion) {
     lines.push(`API version: \`${apiVersion}\``);
   }
