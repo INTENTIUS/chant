@@ -61,7 +61,7 @@ export interface FargateServiceProps {
   };
   environment?: Record<string, string>;
   command?: string[];
-  mountPoints?: TaskDefinition_MountPoint[];
+  mountPoints?: InstanceType<typeof TaskDefinition_MountPoint>[];
   efsMounts?: Array<{
     fileSystemId: string;
     accessPointId?: string;

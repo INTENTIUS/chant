@@ -35,7 +35,12 @@ export interface LambdaFunctionProps {
   };
 }
 
-export const LambdaFunction = Composite<LambdaFunctionProps>((props) => {
+export type LambdaFunctionResult = {
+  role: InstanceType<typeof Role>;
+  func: InstanceType<typeof Function>;
+};
+
+export const LambdaFunction = Composite<LambdaFunctionProps, LambdaFunctionResult>((props) => {
   const { defaults } = props;
   const managedPolicies = [BASIC_EXECUTION_ARN];
   if (props.VpcConfig) {

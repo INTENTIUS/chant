@@ -1,6 +1,6 @@
 import { createRequire } from "module";
 import { detectTemplate } from "./detect";
-import type { LexiconPlugin, IntrinsicDef, ResourceMetadata, ExportedTemplate, ResourceSelector } from "@intentius/chant/lexicon";
+import type { LexiconPlugin, IntrinsicDef, ResourceMetadata, ExportedTemplate, ResourceSelector, InitTemplateSet } from "@intentius/chant/lexicon";
 const require = createRequire(import.meta.url);
 import type { LintRule } from "@intentius/chant/lint/rule";
 import type { TemplateParser } from "@intentius/chant/import/parser";
@@ -61,7 +61,7 @@ export const awsPlugin: LexiconPlugin = {
     ];
   },
 
-  initTemplates(template?: string) {
+  initTemplates(template?: string): InitTemplateSet {
     if (template === "eks") {
       return { src: {
         "infra/cluster.ts": `/**

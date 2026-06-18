@@ -1,0 +1,28 @@
+{
+  "extends": "../../tsconfig.json",
+  "compilerOptions": {
+    "noEmit": false,
+    "declaration": true,
+    "declarationMap": true,
+    "outDir": "dist",
+    "rootDir": "src",
+    "paths": {},
+    "moduleResolution": "bundler",
+    "customConditions": [
+      "development"
+    ]
+  },
+  "include": [
+    "src/**/*"
+  ],
+  "exclude": [
+    "**/*.test.ts",
+    "node_modules",
+    "dist",
+    "docs",
+    "src/testdata"
+  ],
+  "tsc-alias": {
+    "resolveFullPaths": true
+  }
+}
