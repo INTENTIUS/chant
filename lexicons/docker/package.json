@@ -30,10 +30,26 @@
     "access": "public"
   },
   "exports": {
-    ".": "./src/index.ts",
-    "./*": "./src/*.ts",
-    "./detect": "./src/detect.ts",
-    "./lint/post-synth": "./src/lint/post-synth/index.ts",
+    ".": {
+      "development": "./src/index.ts",
+      "types": "./dist/index.d.ts",
+      "default": "./src/index.ts"
+    },
+    "./*": {
+      "development": "./src/*.ts",
+      "types": "./dist/*.d.ts",
+      "default": "./src/*.ts"
+    },
+    "./detect": {
+      "development": "./src/detect.ts",
+      "types": "./dist/detect.d.ts",
+      "default": "./src/detect.ts"
+    },
+    "./lint/post-synth": {
+      "development": "./src/lint/post-synth/index.ts",
+      "types": "./dist/lint/post-synth/index.d.ts",
+      "default": "./src/lint/post-synth/index.ts"
+    },
     "./manifest": "./dist/manifest.json",
     "./meta": "./dist/meta.json",
     "./types": "./dist/types/index.d.ts"
@@ -43,7 +59,8 @@
     "bundle": "tsx src/package-cli.ts",
     "validate": "tsx src/validate-cli.ts",
     "docs": "tsx src/codegen/docs-cli.ts",
-    "prepack": "npm run generate && npm run bundle && npm run validate"
+    "prepack": "npm run generate && npm run bundle && npm run validate && npm run build",
+    "build": "tsc -p tsconfig.build.json && tsc-alias -p tsconfig.build.json && find dist -type f \\( -name \"*.js\" -o -name \"*.js.map\" \\) -delete"
   },
   "devDependencies": {
     "@intentius/chant": "*",

@@ -16,8 +16,7 @@ import { dockerSerializer } from "./serializer";
 import { noLatestTagRule } from "./lint/rules/no-latest-tag";
 import { dockerCompletions } from "./lsp/completions";
 import { dockerHover } from "./lsp/hover";
-import { DockerParser } from "./import/parser";
-import { DockerGenerator } from "./import/generator";
+import { DockerTemplateParser, DockerTemplateGenerator } from "./import/adapter";
 
 export const dockerPlugin: LexiconPlugin = {
   name: "docker",
@@ -99,11 +98,11 @@ export const api = new Service({
   },
 
   templateParser() {
-    return new DockerParser();
+    return new DockerTemplateParser();
   },
 
   templateGenerator() {
-    return new DockerGenerator();
+    return new DockerTemplateGenerator();
   },
 
   async generate(options?: { verbose?: boolean }): Promise<void> {

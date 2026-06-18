@@ -286,7 +286,7 @@ export const dockerSerializer: Serializer = {
         continue;
       }
 
-      const et = (entity as Record<string, unknown>).entityType as string;
+      const et = (entity as unknown as Record<string, unknown>).entityType as string;
 
       if (et === "Docker::Compose::Service") {
         services.set(name, entity);
