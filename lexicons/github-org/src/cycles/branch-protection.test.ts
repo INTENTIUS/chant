@@ -417,6 +417,142 @@ describe("branchProtectionCycle.apply", () => {
     );
   });
 
+  it("preserves undeclared live fields on update (no silent downgrade)", async () => {
+    // SECURITY INVARIANT: GitHub's PUT is full-replacement. A config that
+    // tightens ONE field must not disable PR-review enforcement or let admins
+    // bypass protection. Applying a config that declares field X must change
+    // ONLY X; every other live setting is echoed back unchanged.
+    const client = makeMockClient();
+
+    // Live state: PR reviews enforced (2 approvals, code-owner reviews) AND
+    // enforce_admins=true. The `before` snapshot is what the diff carries.
+    const before = {
+      pattern: "main",
+      requirePullRequestReviews: true,
+      requiredApprovingReviewCount: 2,
+      dismissStaleReviews: true,
+      requireCodeOwnerReviews: true,
+      requireStatusChecks: true,
+      requiredStatusCheckContexts: ["ci/build"],
+      requireBranchesToBeUpToDate: true,
+      restrictPushes: true,
+      allowForcePushes: false,
+      allowDeletions: false,
+      requireLinearHistory: true,
+      enforceAdmins: true,
+    };
+
+    // Config tightens ONLY allowForcePushes (true → false is already false;
+    // declare allowDeletions=false as the single intended change).
+    const entry = {
+      kind: "update" as const,
+      resourceType: "branch-protection",
+      key: "secure-repo/main",
+      before,
+      after: { pattern: "main", allowDeletions: false },
+      fields: [{ field: "allowDeletions", before: false, after: false }],
+    };
+
+    await branchProtectionCycle.apply(client, entry, { org: "test-org" }, makeBudget());
+
+    expect(client.calls).toHaveLength(1);
+    expect(client.calls[0]!.method).toBe("PUT");
+    expect(client.calls[0]!.path).toBe(
+      "/repos/test-org/secure-repo/branches/main/protection",
+    );
+    const body = client.calls[0]!.body as Record<string, unknown>;
+
+    // PR-review enforcement preserved (not nulled).
+    expect(body.required_pull_request_reviews).toEqual({
+      required_approving_review_count: 2,
+      dismiss_stale_reviews: true,
+      require_code_owner_reviews: true,
+    });
+    // Admin enforcement preserved (not reset to false).
+    expect(body.enforce_admins).toBe(true);
+    // Status checks preserved.
+    expect(body.required_status_checks).toEqual({
+      strict: true,
+      contexts: ["ci/build"],
+    });
+    // Restrictions preserved.
+    expect(body.restrictions).toEqual({ users: [], teams: [] });
+    // Other live booleans preserved.
+    expect(body.allow_force_pushes).toBe(false);
+    expect(body.required_linear_history).toBe(true);
+    // The one declared field is set as declared.
+    expect(body.allow_deletions).toBe(false);
+  });
+
+  it("fetches live protection on update when before snapshot is absent", async () => {
+    // If a change-set entry lacks `before`, apply must read live state (and
+    // charge the budget) rather than null-to-disable undeclared fields.
+    const client = makeMockClient({
+      "GET /repos/test-org/secure-repo/branches/main/protection": {
+        required_pull_request_reviews: {
+          required_approving_review_count: 3,
+          dismiss_stale_reviews: false,
+          require_code_owner_reviews: true,
+        },
+        enforce_admins: { enabled: true },
+        restrictions: null,
+        allow_force_pushes: { enabled: false },
+        allow_deletions: { enabled: false },
+        required_linear_history: { enabled: false },
+      },
+    });
+    const budget = makeBudget(5);
+
+    const entry = {
+      kind: "update" as const,
+      resourceType: "branch-protection",
+      key: "secure-repo/main",
+      // no `before`
+      after: { pattern: "main", allowDeletions: true },
+      fields: [{ field: "allowDeletions", before: false, after: true }],
+    };
+
+    await branchProtectionCycle.apply(client, entry, { org: "test-org" }, budget);
+
+    // One GET (live fetch) + one PUT (apply) → budget charged twice.
+    expect(budget.remaining).toBe(3);
+    const put = client.calls.find((c) => c.method === "PUT")!;
+    const body = put.body as Record<string, unknown>;
+    expect(body.required_pull_request_reviews).toEqual({
+      required_approving_review_count: 3,
+      dismiss_stale_reviews: false,
+      require_code_owner_reviews: true,
+    });
+    expect(body.enforce_admins).toBe(true);
+    expect(body.allow_deletions).toBe(true);
+  });
+
+  it("create entry sets only declared fields with safe defaults (no live)", async () => {
+    const client = makeMockClient();
+    const entry = {
+      kind: "create" as const,
+      resourceType: "branch-protection",
+      key: "new-repo/main",
+      after: { pattern: "main", requirePullRequestReviews: true },
+    };
+
+    await branchProtectionCycle.apply(client, entry, { org: "test-org" }, makeBudget());
+
+    // No GET — creates have no live to preserve.
+    expect(client.calls).toHaveLength(1);
+    const body = client.calls[0]!.body as Record<string, unknown>;
+    expect(body.required_pull_request_reviews).toEqual({
+      required_approving_review_count: 1,
+      dismiss_stale_reviews: false,
+      require_code_owner_reviews: false,
+    });
+    // Required nullable keys present at safe defaults (not enabling anything
+    // the caller did not ask for).
+    expect(body.required_status_checks).toBeNull();
+    expect(body.enforce_admins).toBe(false);
+    expect(body.restrictions).toBeNull();
+  });
+
   it("sends DELETE request for a delete entry", async () => {
     const client = makeMockClient();
     const entry = {
@@ -445,9 +581,15 @@ describe("branchProtectionCycle.apply", () => {
       before: { pattern: "main" },
     };
 
-    await branchProtectionCycle.apply(client, entry, "my-org", budget);
+    await branchProtectionCycle.apply(client, entry, { org: "my-org" }, budget);
 
     expect(budget.remaining).toBe(4);
+    // The scope object must resolve into the URL — a bare string would yield
+    // "/repos/undefined/...".
+    expect(client.calls).toHaveLength(1);
+    expect(client.calls[0]!.path).toBe(
+      "/repos/my-org/repo/branches/main/protection",
+    );
   });
 
   it("skips non-branch-protection entries", async () => {
@@ -474,7 +616,7 @@ describe("branchProtectionCycle.apply", () => {
     };
 
     await expect(
-      branchProtectionCycle.apply(client, entry, "my-org", makeBudget()),
+      branchProtectionCycle.apply(client, entry, { org: "my-org" }, makeBudget()),
     ).rejects.toThrow("malformed entry key");
   });
 });

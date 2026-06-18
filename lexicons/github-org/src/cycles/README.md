@@ -83,8 +83,10 @@ import { branchProtectionCycle } from "@intentius/chant-lexicon-github-org";
 await runReconcile({
   config,
   client,
+  // The scope is a typed object, not a bare string. For branch-protection it is
+  // `BranchProtectionScope` ({ org, repos? }).
   cycles: [branchProtectionCycle],
-  scope: "my-org",
+  scope: { org: "my-org", repos: config.orgs["my-org"]?.repos },
   mode: "dry-run",
 });
 ```

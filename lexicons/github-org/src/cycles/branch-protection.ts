@@ -1,5 +1,10 @@
 /**
- * Branch-protection & repository-ruleset cycle.
+ * Classic branch-protection cycle.
+ *
+ * Covers GitHub's CLASSIC branch protection only
+ * (PUT /repos/{owner}/{repo}/branches/{branch}/protection). Repository
+ * rulesets are a separate REST API and are NOT implemented here — they will be
+ * a separate follow-up.
  *
  * This is the TEMPLATE cycle — the first concrete implementation of the `Cycle`
  * interface. Every subsequent cycle should follow this four-part structure:
@@ -89,6 +94,7 @@ interface GhBranchProtection {
     users: unknown[];
     teams: unknown[];
   } | null;
+  enforce_admins?: { enabled: boolean } | boolean | null;
   allow_force_pushes?: { enabled: boolean } | null;
   allow_deletions?: { enabled: boolean } | null;
   required_linear_history?: { enabled: boolean } | null;
@@ -152,6 +158,12 @@ async function fetchBranchProtection(
   live.allowForcePushes = raw.allow_force_pushes?.enabled ?? false;
   live.allowDeletions = raw.allow_deletions?.enabled ?? false;
   live.requireLinearHistory = raw.required_linear_history?.enabled ?? false;
+  // enforce_admins comes back as { enabled } on GitHub's GET response; tolerate
+  // a bare boolean too. Captured so the apply path can preserve it.
+  live.enforceAdmins =
+    typeof raw.enforce_admins === "boolean"
+      ? raw.enforce_admins
+      : raw.enforce_admins?.enabled ?? false;
 
   return live;
 }
@@ -163,43 +175,150 @@ async function fetchBranchProtection(
 /**
  * Build the GitHub API request body for PUT /branches/{branch}/protection.
  *
- * The GitHub branch-protection PUT endpoint requires ALL top-level keys to be
- * present (even if set to null/false). We build a complete body from a
- * `BranchProtectionConfig`, applying the field only when it is explicitly set.
+ * CRITICAL: the GitHub branch-protection PUT endpoint is a FULL-REPLACEMENT
+ * operation — every top-level key omitted from the body is reset to its
+ * disabled/default value. A naive body that nulls undeclared fields would
+ * silently disable PR-review enforcement, let admins bypass protection, etc.
+ *
+ * To honour selective-by-omission in the apply path we do a read-modify-write:
+ *   1. Seed the body from the LIVE protection state (`live`), so every field
+ *      currently set on the branch is echoed back unchanged.
+ *   2. Overlay ONLY the fields the config actually declares (`desired`).
+ *
+ * Net invariant: applying a config that declares field X changes ONLY X; every
+ * other live setting — including `enforce_admins` and
+ * `required_pull_request_reviews` — is preserved at its live value.
+ *
+ * For a CREATE (no `live`) the body contains only declared fields; the four
+ * GitHub-required nullable keys (`required_status_checks`, `enforce_admins`,
+ * `required_pull_request_reviews`, `restrictions`) are filled with GitHub's
+ * documented safe defaults when not declared — never null-to-disable a field
+ * the caller asked to enable.
+ *
+ * @param desired - The branch-protection fields the config declares.
+ * @param live - Live protection snapshot (`before`) for an update, or null/
+ *   undefined for a create.
  */
-function buildProtectionBody(desired: BranchProtectionConfig): Record<string, unknown> {
+function buildProtectionBody(
+  desired: BranchProtectionConfig,
+  live?: LiveBranchProtectionConfig | null,
+): Record<string, unknown> {
   const body: Record<string, unknown> = {};
 
-  // Required pull request reviews
-  if (desired.requirePullRequestReviews === true) {
-    body.required_pull_request_reviews = {
-      required_approving_review_count: desired.requiredApprovingReviewCount ?? 1,
-      dismiss_stale_reviews: desired.dismissStaleReviews ?? false,
-      require_code_owner_reviews: desired.requireCodeOwnerReviews ?? false,
-    };
+  // ── Seed from LIVE state (update path) ───────────────────────────────────
+  // Echo back every field GitHub's PUT would otherwise reset. The four keys
+  // below are required by the endpoint and are nullable; the rest are optional
+  // booleans that default to false when absent.
+  if (live) {
+    body.required_pull_request_reviews =
+      live.requirePullRequestReviews === true
+        ? {
+            required_approving_review_count: live.requiredApprovingReviewCount ?? 0,
+            dismiss_stale_reviews: live.dismissStaleReviews ?? false,
+            require_code_owner_reviews: live.requireCodeOwnerReviews ?? false,
+          }
+        : null;
+
+    body.required_status_checks =
+      live.requireStatusChecks === true
+        ? {
+            strict: live.requireBranchesToBeUpToDate ?? false,
+            contexts: live.requiredStatusCheckContexts ?? [],
+          }
+        : null;
+
+    // enforce_admins is not exposed in our config — preserve the live value.
+    body.enforce_admins = live.enforceAdmins ?? false;
+    body.restrictions = live.restrictPushes === true ? { users: [], teams: [] } : null;
+    body.allow_force_pushes = live.allowForcePushes ?? false;
+    body.allow_deletions = live.allowDeletions ?? false;
+    body.required_linear_history = live.requireLinearHistory ?? false;
   } else {
+    // ── CREATE path: GitHub-required keys at safe defaults ─────────────────
+    // null here means "feature not enabled", which is the safe default for a
+    // brand-new rule — it does not downgrade any existing setting.
     body.required_pull_request_reviews = null;
-  }
-
-  // Required status checks
-  if (desired.requireStatusChecks === true) {
-    body.required_status_checks = {
-      strict: desired.requireBranchesToBeUpToDate ?? false,
-      contexts: desired.requiredStatusCheckContexts ?? [],
-    };
-  } else {
     body.required_status_checks = null;
+    body.enforce_admins = false;
+    body.restrictions = null;
   }
 
-  // Enforce admins (not exposed in our config; default to false)
-  body.enforce_admins = false;
+  // ── Overlay ONLY declared fields ─────────────────────────────────────────
+  // PR reviews: declared → build from declared sub-fields, falling back to the
+  // live sub-value (then a safe default) for any sub-field not declared.
+  if (desired.requirePullRequestReviews !== undefined) {
+    if (desired.requirePullRequestReviews === true) {
+      body.required_pull_request_reviews = {
+        required_approving_review_count:
+          desired.requiredApprovingReviewCount ?? live?.requiredApprovingReviewCount ?? 1,
+        dismiss_stale_reviews:
+          desired.dismissStaleReviews ?? live?.dismissStaleReviews ?? false,
+        require_code_owner_reviews:
+          desired.requireCodeOwnerReviews ?? live?.requireCodeOwnerReviews ?? false,
+      };
+    } else {
+      body.required_pull_request_reviews = null;
+    }
+  } else if (
+    body.required_pull_request_reviews !== null &&
+    typeof body.required_pull_request_reviews === "object"
+  ) {
+    // Not declared, but live had reviews enabled — allow declared sub-fields
+    // to refine the echoed object without flipping the enabled state.
+    const prr = body.required_pull_request_reviews as Record<string, unknown>;
+    if (desired.requiredApprovingReviewCount !== undefined) {
+      prr.required_approving_review_count = desired.requiredApprovingReviewCount;
+    }
+    if (desired.dismissStaleReviews !== undefined) {
+      prr.dismiss_stale_reviews = desired.dismissStaleReviews;
+    }
+    if (desired.requireCodeOwnerReviews !== undefined) {
+      prr.require_code_owner_reviews = desired.requireCodeOwnerReviews;
+    }
+  }
 
-  // Restrictions (not exposed in our config; leave unrestricted)
-  body.restrictions = desired.restrictPushes === true ? { users: [], teams: [] } : null;
+  // Status checks: declared → build from declared sub-fields, falling back to
+  // live for undeclared sub-fields.
+  if (desired.requireStatusChecks !== undefined) {
+    if (desired.requireStatusChecks === true) {
+      body.required_status_checks = {
+        strict: desired.requireBranchesToBeUpToDate ?? live?.requireBranchesToBeUpToDate ?? false,
+        contexts:
+          desired.requiredStatusCheckContexts ?? live?.requiredStatusCheckContexts ?? [],
+      };
+    } else {
+      body.required_status_checks = null;
+    }
+  } else if (
+    body.required_status_checks !== null &&
+    typeof body.required_status_checks === "object"
+  ) {
+    const rsc = body.required_status_checks as Record<string, unknown>;
+    if (desired.requireBranchesToBeUpToDate !== undefined) {
+      rsc.strict = desired.requireBranchesToBeUpToDate;
+    }
+    if (desired.requiredStatusCheckContexts !== undefined) {
+      rsc.contexts = desired.requiredStatusCheckContexts;
+    }
+  }
 
-  body.allow_force_pushes = desired.allowForcePushes ?? false;
-  body.allow_deletions = desired.allowDeletions ?? false;
-  body.required_linear_history = desired.requireLinearHistory ?? false;
+  // Restrictions: only when declared.
+  if (desired.restrictPushes !== undefined) {
+    body.restrictions = desired.restrictPushes === true ? { users: [], teams: [] } : null;
+  }
+
+  // Optional boolean flags: only set when declared. When undeclared the value
+  // already carries the live setting (update) or is left unset (create, where
+  // GitHub treats absence as the documented default).
+  if (desired.allowForcePushes !== undefined) {
+    body.allow_force_pushes = desired.allowForcePushes;
+  }
+  if (desired.allowDeletions !== undefined) {
+    body.allow_deletions = desired.allowDeletions;
+  }
+  if (desired.requireLinearHistory !== undefined) {
+    body.required_linear_history = desired.requireLinearHistory;
+  }
 
   return body;
 }
@@ -292,9 +411,23 @@ export const branchProtectionCycle: Cycle<BranchProtectionScope> = {
       return;
     }
 
-    // create or update — both use PUT (idempotent on GitHub's side)
+    // create or update — both use PUT (idempotent on GitHub's side).
     const desired = entry.after as BranchProtectionConfig;
-    const body = buildProtectionBody(desired);
+
+    // For an update, GitHub's PUT is a FULL REPLACEMENT, so we must echo back
+    // every undeclared live field. Prefer the change-set entry's `before`
+    // snapshot (the diff already carries it). If it is missing — e.g. the entry
+    // was produced without a live fetch — fetch live protection now and charge
+    // the budget for it, so we never null-to-disable an undeclared field.
+    let live: LiveBranchProtectionConfig | null = null;
+    if (entry.kind === "update") {
+      live = (entry.before as LiveBranchProtectionConfig | undefined) ?? null;
+      if (!live) {
+        live = await fetchBranchProtection(client, owner, repoName, branchPattern, budget);
+      }
+    }
+
+    const body = buildProtectionBody(desired, live);
     budget.use(1);
     await client.request("PUT", url, body);
   },

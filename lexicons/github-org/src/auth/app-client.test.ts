@@ -1,4 +1,5 @@
 import { describe, test, expect, beforeAll } from "vitest";
+import type { webcrypto } from "node:crypto";
 import { mintInstallationToken, createAppClient, AppAuthError } from "./app-client.js";
 
 // ---------------------------------------------------------------------------
@@ -8,7 +9,7 @@ import { mintInstallationToken, createAppClient, AppAuthError } from "./app-clie
 // ---------------------------------------------------------------------------
 
 let testPrivateKeyPem: string;
-let testPublicKey: CryptoKey;
+let testPublicKey: webcrypto.CryptoKey;
 
 function arrayBufferToBase64(buf: ArrayBuffer): string {
   return btoa(String.fromCharCode(...new Uint8Array(buf)));
@@ -51,7 +52,7 @@ describe("mintInstallationToken", () => {
   test("exchanges JWT for an installation token", async () => {
     let capturedRequest: Request | undefined;
     const mockFetch: typeof fetch = async (input, init) => {
-      capturedRequest = new Request(input as RequestInfo, init);
+      capturedRequest = new Request(input as Request | string, init);
       return makeTokenResponse();
     };
 
@@ -128,12 +129,12 @@ describe("mintInstallationToken", () => {
     const mockFetch: typeof fetch = async () =>
       new Response(JSON.stringify({ message: "Not Found" }), { status: 404 });
 
-    const err = await mintInstallationToken({
+    const err = (await mintInstallationToken({
       appId: "1",
       privateKeyPem: testPrivateKeyPem,
       installationId: "999",
       fetchImpl: mockFetch,
-    }).catch((e) => e as AppAuthError);
+    }).catch((e: unknown) => e)) as AppAuthError;
 
     expect(err).toBeInstanceOf(AppAuthError);
     expect(err.statusCode).toBe(404);
@@ -145,12 +146,12 @@ describe("mintInstallationToken", () => {
     const mockFetch: typeof fetch = async () =>
       new Response("Internal Server Error", { status: 500 });
 
-    const err = await mintInstallationToken({
+    const err = (await mintInstallationToken({
       appId: "1",
       privateKeyPem: testPrivateKeyPem,
       installationId: "2",
       fetchImpl: mockFetch,
-    }).catch((e) => e as AppAuthError);
+    }).catch((e: unknown) => e)) as AppAuthError;
 
     expect(err).toBeInstanceOf(AppAuthError);
     expect(err.statusCode).toBe(500);
@@ -354,7 +355,7 @@ describe("createAppClient", () => {
       fetchImpl: mockFetch,
     });
 
-    const err = await client.request("GET", "/orgs/my-org").catch((e) => e as AppAuthError);
+    const err = (await client.request("GET", "/orgs/my-org").catch((e: unknown) => e)) as AppAuthError;
     expect(err).toBeInstanceOf(AppAuthError);
     expect(err.statusCode).toBe(403);
     expect(err.message).toMatch(/Forbidden/); // response body surfaced for debugging
