@@ -38,3 +38,22 @@ export type {
   LiveOrgState,
 } from "./reconcile/diff.js";
 export { diff, summarizeChangeSet, renderChangeSet } from "./reconcile/diff.js";
+
+// Reconcile: guardrails
+export type {
+  GuardrailDiagnostic,
+  GuardrailResult,
+  RemovalDeltaCapOptions,
+  AdminFloorOptions,
+  RequiredAdminsOptions,
+  RequireSelfOptions,
+  GuardrailConfig,
+} from "./reconcile/guardrails.js";
+export {
+  resolveRenames,
+  removalDeltaCap,
+  adminFloor,
+  requiredAdmins,
+  requireSelf,
+  runGuardrails,
+} from "./reconcile/guardrails.js";
