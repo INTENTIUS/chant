@@ -6,7 +6,7 @@
  * failures or running ad-hoc queries against closed workflow executions.
  */
 
-import type { LintRule, LintDiagnostic, LintContext } from "@intentius/chant/lint/rule";
+import type { PostSynthCheck, PostSynthContext, PostSynthDiagnostic } from "@intentius/chant/lint/post-synth";
 
 /** Parse a retention string like "1d", "12h", "3d" → total hours. Returns NaN on unrecognised format. */
 function retentionHours(retention: string): number {
@@ -17,17 +17,15 @@ function retentionHours(retention: string): number {
   return NaN;
 }
 
-export const tmp001: LintRule = {
+export const tmp001: PostSynthCheck = {
   id: "TMP001",
-  severity: "error",
-  category: "correctness",
   description: "TemporalNamespace retention should be at least 3 days to preserve workflow history for debugging",
 
-  check(context: LintContext): LintDiagnostic[] {
-    const diagnostics: LintDiagnostic[] = [];
+  check(ctx: PostSynthContext): PostSynthDiagnostic[] {
+    const diagnostics: PostSynthDiagnostic[] = [];
 
-    for (const [name, entity] of context.entities) {
-      const et = (entity as Record<string, unknown>).entityType as string;
+    for (const [name, entity] of ctx.entities) {
+      const et = (entity as unknown as Record<string, unknown>).entityType as string;
       if (et !== "Temporal::Namespace") continue;
 
       const props = (entity as { props?: Record<string, unknown> }).props ?? {};
@@ -39,11 +37,11 @@ export const tmp001: LintRule = {
 
       if (hours < 72) {
         diagnostics.push({
-          ruleId: "TMP001",
+          checkId: "TMP001",
           severity: "error",
-          message: `Namespace "${name}" has retention "${retention}" — minimum recommended is 3d (72h) to preserve workflow history`,
+          message: `Namespace "${name}" has retention "${retention}" — minimum recommended is 3d (72h) to preserve workflow history. Set retention to at least "3d" — e.g. retention: "7d"`,
           entity: name,
-          fix: 'Set retention to at least "3d" — e.g. retention: "7d"',
+          lexicon: "temporal",
         });
       }
     }

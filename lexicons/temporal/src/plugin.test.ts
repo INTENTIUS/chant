@@ -20,12 +20,11 @@ describe("temporal plugin", () => {
     expect(temporalPlugin.serializer.name).toBe("temporal");
   });
 
-  it("lintRules() returns 2 rules (TMP001, TMP002)", () => {
-    const rules = temporalPlugin.lintRules?.();
-    expect(Array.isArray(rules)).toBe(true);
-    expect(rules?.length).toBe(2);
-    const ids = rules?.map((r) => r.id).sort();
-    expect(ids).toEqual(["TMP001", "TMP002"]);
+  it("postSynthChecks() returns 4 checks (TMP001, TMP002, TMP010, TMP011)", () => {
+    const checks = temporalPlugin.postSynthChecks?.();
+    expect(Array.isArray(checks)).toBe(true);
+    const ids = checks?.map((c) => c.id).sort();
+    expect(ids).toEqual(["TMP001", "TMP002", "TMP010", "TMP011"]);
   });
 
   it("mcpTools() returns 1 diff tool", () => {
