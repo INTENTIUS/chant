@@ -7,19 +7,17 @@
  * the author to document the intent.
  */
 
-import type { LintRule, LintDiagnostic, LintContext } from "@intentius/chant/lint/rule";
+import type { PostSynthCheck, PostSynthContext, PostSynthDiagnostic } from "@intentius/chant/lint/post-synth";
 
-export const tmp002: LintRule = {
+export const tmp002: PostSynthCheck = {
   id: "TMP002",
-  severity: "warning",
-  category: "best-practices",
   description: "TemporalSchedule with overlap AllowAll should include state.note explaining the intent",
 
-  check(context: LintContext): LintDiagnostic[] {
-    const diagnostics: LintDiagnostic[] = [];
+  check(ctx: PostSynthContext): PostSynthDiagnostic[] {
+    const diagnostics: PostSynthDiagnostic[] = [];
 
-    for (const [name, entity] of context.entities) {
-      const et = (entity as Record<string, unknown>).entityType as string;
+    for (const [name, entity] of ctx.entities) {
+      const et = (entity as unknown as Record<string, unknown>).entityType as string;
       if (et !== "Temporal::Schedule") continue;
 
       const props = (entity as { props?: Record<string, unknown> }).props ?? {};
@@ -31,11 +29,11 @@ export const tmp002: LintRule = {
 
       if (!note || note.trim() === "") {
         diagnostics.push({
-          ruleId: "TMP002",
+          checkId: "TMP002",
           severity: "warning",
-          message: `Schedule "${name}" uses overlap "AllowAll" — add state.note explaining why concurrent runs are safe`,
+          message: `Schedule "${name}" uses overlap "AllowAll" — add state.note explaining why concurrent runs are safe. Add state: { note: "Workflow is idempotent — concurrent runs are safe" }`,
           entity: name,
-          fix: 'Add state: { note: "Workflow is idempotent — concurrent runs are safe" }',
+          lexicon: "temporal",
         });
       }
     }

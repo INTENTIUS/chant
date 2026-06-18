@@ -18,7 +18,7 @@ export const tmp011: PostSynthCheck = {
     // Collect declared namespace names
     const declaredNamespaces = new Set<string>();
     for (const [, entity] of ctx.entities) {
-      const et = (entity as Record<string, unknown>).entityType as string;
+      const et = (entity as unknown as Record<string, unknown>).entityType as string;
       if (et !== "Temporal::Namespace") continue;
       const props = (entity as { props?: Record<string, unknown> }).props ?? {};
       const name = props.name as string | undefined;
@@ -27,7 +27,7 @@ export const tmp011: PostSynthCheck = {
 
     // Check each SearchAttribute that specifies a namespace
     for (const [entityKey, entity] of ctx.entities) {
-      const et = (entity as Record<string, unknown>).entityType as string;
+      const et = (entity as unknown as Record<string, unknown>).entityType as string;
       if (et !== "Temporal::SearchAttribute") continue;
 
       const props = (entity as { props?: Record<string, unknown> }).props ?? {};

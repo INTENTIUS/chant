@@ -6,16 +6,10 @@
  * and copies skill markdown files.
  */
 
-import { join, dirname } from "path";
-import { fileURLToPath } from "url";
 import type { LexiconPlugin } from "@intentius/chant/lexicon";
-import { discoverLintRules } from "@intentius/chant/lint/discover";
 import { postSynthChecks as postSynthCheckList } from "./lint/post-synth";
 import { createSkillsLoader, createDiffTool, createCatalogResource } from "@intentius/chant/lexicon-plugin-helpers";
 import { temporalSerializer } from "./serializer";
-
-const srcDir = dirname(fileURLToPath(import.meta.url));
-const rulesDir = join(srcDir, "lint/rules");
 
 export const temporalPlugin: LexiconPlugin = {
   name: "temporal",
@@ -60,10 +54,6 @@ export const temporalPlugin: LexiconPlugin = {
   },
 
   // ── Optional extensions ─────────────────────────────────────────────
-
-  lintRules() {
-    return discoverLintRules(rulesDir, import.meta.url);
-  },
 
   postSynthChecks() {
     return postSynthCheckList;

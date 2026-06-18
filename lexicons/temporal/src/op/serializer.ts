@@ -332,14 +332,14 @@ export function serializeOps(ops: Map<string, Declarable>): Record<string, strin
 
   // First pass: collect all names
   for (const [, entity] of ops) {
-    const props = getProps(entity) as OpConfig;
+    const props = getProps(entity) as unknown as OpConfig;
     if (props.name) knownNames.add(props.name);
   }
 
   const files: Record<string, string> = {};
 
   for (const [, entity] of ops) {
-    const config = getProps(entity) as OpConfig;
+    const config = getProps(entity) as unknown as OpConfig;
 
     if (!config.name) {
       throw new Error("Op entity missing required `name` field.");

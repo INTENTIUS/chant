@@ -26,7 +26,7 @@ function getProps(entity: Declarable): Record<string, unknown> {
 }
 
 function entityType(entity: Declarable): string {
-  return (entity as Record<string, unknown>).entityType as string;
+  return (entity as unknown as Record<string, unknown>).entityType as string;
 }
 
 // ── Docker Compose ───────────────────────────────────────────────────
@@ -43,7 +43,7 @@ function serializeDockerCompose(servers: Map<string, Declarable>): string {
 
   // Use the first server entity (a project should have exactly one)
   const [, serverEntity] = [...servers.entries()][0];
-  const props = getProps(serverEntity) as TemporalServerProps;
+  const props = getProps(serverEntity) as unknown as TemporalServerProps;
   const version = props.version ?? "1.26.2";
   const mode = props.mode ?? "dev";
   const port = props.port ?? 7233;
@@ -100,7 +100,7 @@ function serializeHelmValues(servers: Map<string, Declarable>): string {
   if (servers.size === 0) return "";
 
   const [, serverEntity] = [...servers.entries()][0];
-  const props = getProps(serverEntity) as TemporalServerProps;
+  const props = getProps(serverEntity) as unknown as TemporalServerProps;
   const version = props.version ?? "1.26.2";
   const port = props.port ?? 7233;
   const chartVersion = props.helmChartVersion;
@@ -152,7 +152,7 @@ function serializeSetupScript(
     lines.push("# ── Namespaces ────────────────────────────────────────────────────────");
     lines.push("");
     for (const [, entity] of namespaces) {
-      const props = getProps(entity) as TemporalNamespaceProps;
+      const props = getProps(entity) as unknown as TemporalNamespaceProps;
       const parts: string[] = [
         `temporal operator namespace create \\`,
         `  --address "\${TEMPORAL_ADDRESS}" \\`,
@@ -177,7 +177,7 @@ function serializeSetupScript(
     lines.push("# ── Search Attributes ─────────────────────────────────────────────────");
     lines.push("");
     for (const [, entity] of searchAttrs) {
-      const props = getProps(entity) as SearchAttributeProps;
+      const props = getProps(entity) as unknown as SearchAttributeProps;
       const parts: string[] = [
         `temporal operator search-attribute create \\`,
         `  --address "\${TEMPORAL_ADDRESS}" \\`,
@@ -322,7 +322,7 @@ export const temporalSerializer: Serializer = {
     }
 
     for (const [name, entity] of schedules) {
-      const props = getProps(entity) as TemporalScheduleProps;
+      const props = getProps(entity) as unknown as TemporalScheduleProps;
       const scheduleId = props.scheduleId ?? name;
       files[`schedules/${scheduleId}.ts`] = serializeSchedule(scheduleId, props);
     }
