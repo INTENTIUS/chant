@@ -259,7 +259,7 @@ export const tags = defaultTags([
       name: "chant-azure",
       description: "Azure Resource Manager infrastructure generation with chant",
       triggers: [
-        { type: "file_pattern", pattern: "*.azure.ts" },
+        { type: "file-pattern", value: "*.azure.ts" },
         { type: "context", value: "azure" },
       ],
       parameters: [
@@ -327,12 +327,12 @@ export const tags = defaultTags([
     },
   ]),
 
-  completionProvider() {
-    return (ctx: CompletionContext): CompletionItem[] => azureCompletions(ctx);
+  completionProvider(ctx: CompletionContext): CompletionItem[] {
+    return azureCompletions(ctx);
   },
 
-  hoverProvider() {
-    return (ctx: HoverContext): HoverInfo | undefined => azureHover(ctx);
+  hoverProvider(ctx: HoverContext): HoverInfo | undefined {
+    return azureHover(ctx);
   },
 
   mcpTools(): McpToolContribution[] {
@@ -421,22 +421,21 @@ export const tags = defaultTags([
     const { generate: gen, writeGeneratedFiles } = await import("./codegen/generate");
     const result = await gen(opts);
     writeGeneratedFiles(result, dirname(dirname(fileURLToPath(import.meta.url))));
-    return result;
   },
 
-  async validate(opts) {
+  async validate() {
     const { validate } = await import("./validate");
-    return validate(opts);
+    await validate();
   },
 
-  async coverage() {
-    const { computeCoverage } = await import("./coverage");
-    return computeCoverage();
+  async coverage(options) {
+    const { analyzeAzureCoverage } = await import("./coverage");
+    await analyzeAzureCoverage({ verbose: options?.verbose, minOverall: options?.minOverall });
   },
 
   async package(opts) {
     const { packageLexicon } = await import("./codegen/package");
-    return packageLexicon(opts);
+    await packageLexicon(opts);
   },
 
   async describeResources(options) {

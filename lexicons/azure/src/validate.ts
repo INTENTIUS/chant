@@ -5,6 +5,7 @@
 import { dirname } from "path";
 import { fileURLToPath } from "url";
 import { validateLexiconArtifacts, type ValidateResult } from "@intentius/chant/codegen/validate";
+import { CURATED_PROPERTY_TYPE_DEFS } from "./spec/parse";
 
 export type { ValidateCheck, ValidateResult } from "@intentius/chant/codegen/validate";
 
@@ -26,10 +27,8 @@ const REQUIRED_NAMES = [
   "KeyVault", "ManagedIdentity",
   // DNS & Traffic
   "DnsZone", "TrafficManagerProfile",
-  // Property types
-  "Sku", "Identity", "NetworkProfile", "StorageProfile",
-  "OsDisk", "ImageReference", "IpConfiguration",
-  "SecurityRule", "SubnetProperties", "SiteConfig",
+  // Curated property types kept typed by the codegen (#438) — single source of truth.
+  ...CURATED_PROPERTY_TYPE_DEFS,
 ];
 
 export async function validate(opts?: { basePath?: string }): Promise<ValidateResult> {
@@ -38,6 +37,9 @@ export async function validate(opts?: { basePath?: string }): Promise<ValidateRe
   return validateLexiconArtifacts({
     lexiconJsonFilename: "lexicon-azure.json",
     requiredNames: REQUIRED_NAMES,
+    // Curated property types are emitted under resource-prefixed/variant names
+    // after bounding (#438), so match required names by substring.
+    requiredNamesMatchSubstring: true,
     basePath,
     coverageThresholds: {
       minPropertyPct: 1,
