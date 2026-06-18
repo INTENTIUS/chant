@@ -314,6 +314,41 @@ describe("runReconcile — rate budget", () => {
     expect(result.cycles).toHaveLength(0);
   });
 
+  it("records a cycle as errored and continues when fetchLive throws a generic error", async () => {
+    const client = makeMockClient();
+    // First cycle's fetchLive throws a non-budget error (e.g. a 403). It must
+    // be recorded as errored, and the second cycle must still run.
+    const boomCycle = makeFakeCycle({
+      name: "boom",
+      onFetch: () => {
+        throw new Error("403 Forbidden");
+      },
+    });
+    const okCycle = makeFakeCycle({
+      name: "ok",
+      desired: { members: [{ login: "alice", role: "member" }] },
+    });
+
+    const result = await runReconcile({
+      config: configWithMembers([]),
+      client,
+      cycles: [boomCycle, okCycle],
+    });
+
+    // The run resolves rather than rejecting.
+    expect(result.completed).toBe(false);
+    // The failing cycle is captured as errored, not as a normal cycle result.
+    expect(result.errored).toHaveLength(1);
+    expect(result.errored[0]!.name).toBe("boom");
+    expect(result.errored[0]!.org).toBe("test-org");
+    expect(result.errored[0]!.stage).toBe("fetchLive");
+    expect(result.errored[0]!.error).toBe("403 Forbidden");
+    // The other cycle still ran to completion.
+    expect(okCycle.fetchCount).toBe(1);
+    expect(result.cycles.map((c) => c.name)).toEqual(["ok"]);
+    expect(result.cycles[0]!.counts.create).toBe(1);
+  });
+
   it("defers unapplied entries when budget runs out mid-apply", async () => {
     const client = makeMockClient();
     // Three safe creates; budget allows exactly one apply.

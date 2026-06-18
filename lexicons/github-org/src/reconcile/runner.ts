@@ -111,6 +111,22 @@ export interface CycleResult {
   guardrailBlocked: boolean;
 }
 
+/**
+ * A cycle that could not run because `fetchLive` or `buildDesired` threw a
+ * non-budget error. Recorded per-cycle so the run can continue rather than
+ * rejecting the whole `runReconcile` call.
+ */
+export interface CycleError {
+  /** Cycle name. */
+  name: string;
+  /** Org this error is for. */
+  org: string;
+  /** The stage at which the cycle failed. */
+  stage: "fetchLive" | "buildDesired";
+  /** Error message. */
+  error: string;
+}
+
 /** Summary of work that could not be completed due to rate budget exhaustion. */
 export interface DeferredWork {
   /**
@@ -129,10 +145,18 @@ export interface DeferredWork {
 export interface ReconcileResult {
   /** Run mode used. */
   mode: "dry-run" | "apply";
-  /** Whether the full run completed (false when budget was exhausted early). */
+  /**
+   * Whether the full run completed cleanly (false when budget was exhausted
+   * early or any cycle errored).
+   */
   completed: boolean;
   /** Per-cycle outcomes (only for cycles that were started). */
   cycles: CycleResult[];
+  /**
+   * Cycles that errored during `fetchLive`/`buildDesired` with a non-budget
+   * error. The run continues past these; they are not silently dropped.
+   */
+  errored: CycleError[];
   /** Work deferred due to budget exhaustion (empty when `completed` is true). */
   deferred: DeferredWork;
   /** Remaining budget at the end of the run. */
@@ -261,6 +285,7 @@ export async function runReconcile<TScope = unknown>(
 
   const budget = new MutableRateBudget(requestBudget);
   const cycleResults: CycleResult[] = [];
+  const erroredCycles: CycleError[] = [];
   const deferred: DeferredWork = { skippedCycles: [], skippedEntries: [] };
 
   const orgs = Object.entries(config.orgs);
@@ -284,11 +309,30 @@ export async function runReconcile<TScope = unknown>(
           deferred.skippedCycles.push(`${cycle.name}@${orgLogin}`);
           continue;
         }
-        throw err;
+        // Any other error: record this cycle as errored and move on so the
+        // run isn't abandoned and remaining cycles/orgs still execute.
+        erroredCycles.push({
+          name: cycle.name,
+          org: orgLogin,
+          stage: "fetchLive",
+          error: err instanceof Error ? err.message : String(err),
+        });
+        continue;
       }
 
       // Step 2: buildDesired (pure).
-      const desired = cycle.buildDesired(orgConfig, scope as TScope);
+      let desired: OrgConfig;
+      try {
+        desired = cycle.buildDesired(orgConfig, scope as TScope);
+      } catch (err) {
+        erroredCycles.push({
+          name: cycle.name,
+          org: orgLogin,
+          stage: "buildDesired",
+          error: err instanceof Error ? err.message : String(err),
+        });
+        continue;
+      }
 
       // Step 3: diff.
       const changeSet: ChangeSet = diff(orgLogin, desired, live, diffOptions);
@@ -356,12 +400,15 @@ export async function runReconcile<TScope = unknown>(
   }
 
   const completed =
-    deferred.skippedCycles.length === 0 && deferred.skippedEntries.length === 0;
+    deferred.skippedCycles.length === 0 &&
+    deferred.skippedEntries.length === 0 &&
+    erroredCycles.length === 0;
 
   return {
     mode,
     completed,
     cycles: cycleResults,
+    errored: erroredCycles,
     deferred,
     budgetRemaining: budget.remaining,
   };
