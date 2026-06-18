@@ -17,8 +17,18 @@ import {
   type JsonSchemaProperty,
   type JsonSchemaDefinition,
 } from "@intentius/chant/codegen/json-schema";
+import { boundPropertyTypes } from "@intentius/chant/codegen/bound-property-types";
 
 export type { PropertyConstraints } from "@intentius/chant/codegen/json-schema";
+
+/**
+ * Maximum nesting depth of generated property-type interfaces. Bounds the
+ * shipped `.d.ts` size: property types reachable from a resource's top-level
+ * properties within this depth stay typed; deeper ones are loosened to
+ * `Record<string, unknown>`. Set high enough that the shapes composites consume
+ * (which reach a few levels into CFN config) remain typed. (#440)
+ */
+const MAX_PROPERTY_TYPE_DEPTH = 3;
 
 export interface ParsedProperty {
   name: string;
@@ -182,6 +192,16 @@ export function parseCFNSchema(data: string | Buffer): SchemaParseResult {
     replacementStrategy = schema.replacementStrategy;
   }
 
+  // Bound the emitted property types to keep the shipped declaration small while
+  // preserving the shapes composites and shallow authoring rely on (#440).
+  const boundedPropertyTypes = boundPropertyTypes(
+    shortName,
+    props,
+    propertyTypes,
+    new Set(enums.map((e) => e.name)),
+    { maxDepth: MAX_PROPERTY_TYPE_DEPTH },
+  );
+
   return {
     resource: {
       typeName: schema.typeName,
@@ -195,7 +215,7 @@ export function parseCFNSchema(data: string | Buffer): SchemaParseResult {
       ...(replacementStrategy && { replacementStrategy }),
       ...(tagging && { tagging }),
     },
-    propertyTypes,
+    propertyTypes: boundedPropertyTypes,
     enums,
   };
 }
