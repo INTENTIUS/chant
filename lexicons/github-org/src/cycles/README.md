@@ -103,3 +103,28 @@ await runReconcile({
 - [ ] Cycle exported from `src/index.ts`
 - [ ] Unit tests: buildDesired, fetchLive mapping, diff, apply create/update/delete
 - [ ] Runner integration test: dry-run plan, guardrail trip (if applicable)
+
+---
+
+## Known limitation: wildcard branch-protection patterns
+
+The classic branch-protection cycle (`branch-protection.ts`) fetches live state
+by probing each branch name via
+`GET /repos/{owner}/{repo}/branches/{branch}/protection`. This API accepts only
+**literal** branch names — it cannot enumerate or match wildcard patterns.
+
+A protection rule with a wildcard pattern like `release/*` exists on GitHub's
+side but is never returned by a literal-branch probe. As a result:
+
+- `dump` silently omits wildcard-pattern rules (see `src/reconcile/dump.ts`).
+- A subsequent reconcile diff will propose **deleting** any undiscovered wildcard
+  rule, since it is absent from the desired config.
+
+**Workaround**: after running `dump`, manually inspect the repo's branch
+protection settings in GitHub and add wildcard-pattern rules to the emitted
+config before committing.
+
+**Proper fix**: GitHub's repository-ruleset API
+(`GET /repos/{owner}/{repo}/rulesets`) supports wildcard and regex patterns and
+is the modern replacement for classic branch protection. A rulesets cycle is
+tracked in issue #462. Until it ships, wildcard patterns are not covered.

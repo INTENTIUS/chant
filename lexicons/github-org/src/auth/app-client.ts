@@ -19,6 +19,13 @@ const REFRESH_SKEW_S = 60;
 // ── JWT helpers (RS256 via crypto.subtle) ────────────────────────────────────
 
 function b64url(buf: ArrayBuffer): string {
+  // String.fromCharCode(...new Uint8Array(buf)) is safe here because RSA
+  // signatures are 256–512 bytes (2048–4096-bit keys), well within the call
+  // stack argument limit. If this function were ever used on large buffers
+  // (e.g. file content), the spread would exceed the JS engine argument limit
+  // (~65 k entries in V8) and throw a RangeError. For large inputs, use a
+  // chunked loop: iterate over the array in ~1 k-byte blocks and call btoa on
+  // each chunk, concatenating the results before the base64url substitutions.
   return btoa(String.fromCharCode(...new Uint8Array(buf)))
     .replace(/\+/g, "-")
     .replace(/\//g, "_")

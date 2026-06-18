@@ -63,14 +63,19 @@ import type { Cycle, RateBudget } from "../reconcile/runner.js";
  * for each configured repo). Omit `repos` to get fast-path behaviour where all
  * desired rules are treated as creates (useful when you only need to push new
  * rules and do not care about detecting drift).
+ *
+ * Note: the org login is NOT part of the scope — it is passed to each cycle
+ * method as `orgLogin` by the runner. This means a single scope object can be
+ * shared across all org iterations in a multi-org config.
  */
 export interface BranchProtectionScope {
-  /** GitHub org login. */
-  org: string;
   /**
    * Subset of repos to fetch live protection for. Typically set to
    * `orgConfig.repos` for the relevant org. Absent → no live fetch (all
    * desired rules will be emitted as creates).
+   *
+   * When using a multi-org config, leave this unset and let the runner supply
+   * `orgLogin`; the cycle will read repos from the per-org config automatically.
    */
   repos?: Record<string, RepoConfig>;
 }
@@ -344,6 +349,7 @@ export const branchProtectionCycle: Cycle<BranchProtectionScope> = {
 
   async fetchLive(
     client: AppClient,
+    orgLogin: string,
     scope: BranchProtectionScope,
     budget: RateBudget,
   ): Promise<LiveOrgState> {
@@ -359,12 +365,15 @@ export const branchProtectionCycle: Cycle<BranchProtectionScope> = {
       return { repos: {} };
     }
 
-    return fetchLiveForOrg(client, scope.org, repos, budget);
+    // Use orgLogin (supplied by the runner) — not scope — for GitHub API paths.
+    // This is critical for multi-org configs where the runner iterates orgs and
+    // calls this method once per org: scope is shared, orgLogin is per-org.
+    return fetchLiveForOrg(client, orgLogin, repos, budget);
   },
 
   // ── Part 3: buildDesired ───────────────────────────────────────────────────
 
-  buildDesired(orgConfig: OrgConfig, _scope: BranchProtectionScope): OrgConfig {
+  buildDesired(orgConfig: OrgConfig, _orgLogin: string, _scope: BranchProtectionScope): OrgConfig {
     // Keep only the repos that have branchProtection config. Repo-level fields
     // (description, visibility, etc.) are handled by a separate cycle.
     if (!orgConfig.repos) return {};
@@ -384,7 +393,8 @@ export const branchProtectionCycle: Cycle<BranchProtectionScope> = {
   async apply(
     client: AppClient,
     entry: ChangeSetEntry,
-    scope: BranchProtectionScope,
+    orgLogin: string,
+    _scope: BranchProtectionScope,
     budget: RateBudget,
   ): Promise<void> {
     if (entry.resourceType !== "branch-protection") {
@@ -401,7 +411,8 @@ export const branchProtectionCycle: Cycle<BranchProtectionScope> = {
     }
     const repoName = entry.key.slice(0, slashIdx);
     const branchPattern = entry.key.slice(slashIdx + 1);
-    const owner = scope.org;
+    // Use orgLogin (supplied by the runner) — not scope — for GitHub API paths.
+    const owner = orgLogin;
 
     const url = `/repos/${owner}/${repoName}/branches/${encodeURIComponent(branchPattern)}/protection`;
 
