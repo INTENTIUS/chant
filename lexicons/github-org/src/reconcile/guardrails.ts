@@ -148,9 +148,14 @@ export function resolveRenames(changeSet: ChangeSet): ChangeSet {
 // ---------------------------------------------------------------------------
 
 /**
- * Refuse if deletes exceed `maxFraction` of the total managed entries.
+ * Refuse if deletes exceed `maxFraction` of the pre-existing managed entries.
  *
- * Managed entries = total entries in the ChangeSet after rename resolution.
+ * The denominator is the count of pre-existing entries (deletes + updates),
+ * deliberately EXCLUDING creates. Including creates would let a flood of new
+ * entries dilute the delete fraction (e.g. 5 deletes + 100 creates ≈ 4.7%,
+ * which would sneak under a 25% cap and defeat a mass-deletion typo). Measuring
+ * deletes against only what already exists keeps the cap meaningful.
+ *
  * This guards against a typo wiping the entire config in one apply.
  *
  * Default `maxFraction`: 0.25 (25 %).
@@ -162,7 +167,9 @@ export function removalDeltaCap(
   const maxFraction = opts.maxFraction ?? 0.25;
   const resolved = resolveRenames(changeSet);
 
-  const total = resolved.entries.length;
+  // Pre-existing entries only (deletes + updates); creates excluded. If nothing
+  // pre-exists, no deletes are possible → pass (also avoids divide-by-zero/NaN).
+  const total = resolved.entries.filter((e) => e.kind !== "create").length;
   if (total === 0) return null;
 
   const deletes = resolved.entries.filter((e) => e.kind === "delete").length;
@@ -276,6 +283,17 @@ export function requireSelf(
     };
   }
 
+  // Stricter than membership alone: also refuse if self would be demoted out of
+  // admin. The managing bot must keep admin access, not merely org membership.
+  if (role !== "admin") {
+    return {
+      guardrail: "requireSelf",
+      message:
+        `The managing identity "${selfLogin}" would be demoted from admin to "${role}". ` +
+        `Self-lockout is not allowed. Keep "${selfLogin}" as an org admin in the desired config.`,
+    };
+  }
+
   return null;
 }
 
@@ -347,6 +365,17 @@ function computePostApplyAdmins(
     } else if (e.kind === "create" || e.kind === "update") {
       const after = e.after as { login?: string; role?: string } | undefined;
       const login = after?.login ?? e.key;
+
+      // A rename is collapsed into an update whose resulting login differs from
+      // the prior login (carried in `before`/`key`). Drop the prior login so a
+      // renamed-away admin no longer counts as surviving — otherwise the ghost
+      // would keep adminFloor/requiredAdmins fail-open.
+      if (e.kind === "update") {
+        const before = e.before as { login?: string } | undefined;
+        const priorLogin = before?.login ?? e.key;
+        if (priorLogin !== login) result.delete(priorLogin);
+      }
+
       if (after?.role === "admin") {
         result.add(login);
       } else {

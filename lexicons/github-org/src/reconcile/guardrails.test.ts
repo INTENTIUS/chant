@@ -156,6 +156,29 @@ describe("removalDeltaCap", () => {
     expect(removalDeltaCap(makeChangeSet([]))).toBeNull();
   });
 
+  it("trips when deletes are diluted by many creates", () => {
+    // 5 deletes + 100 creates. If creates were in the denominator, the fraction
+    // would be 5/105 ≈ 4.7% and pass a 25% cap. Excluding creates, the only
+    // pre-existing entries are the 5 deletes → 100% → must TRIP.
+    const cs = makeChangeSet([
+      ...Array.from({ length: 5 }, (_, i) => ({
+        kind: "delete" as const,
+        resourceType: "member",
+        key: `d${i}`,
+        before: { login: `d${i}`, role: "member" },
+      })),
+      ...Array.from({ length: 100 }, (_, i) => ({
+        kind: "create" as const,
+        resourceType: "member",
+        key: `c${i}`,
+        after: { login: `c${i}`, role: "member" },
+      })),
+    ]);
+    const result = removalDeltaCap(cs);
+    expect(result).not.toBeNull();
+    expect(result!.guardrail).toBe("removalDeltaCap");
+  });
+
   it("does not count a resolved rename as a delete", () => {
     // Before rename resolution: 1 delete + 1 create (with previously alias)
     // After resolution: 1 update — delete fraction is 0%, should pass at any threshold
@@ -230,6 +253,40 @@ describe("adminFloor", () => {
     expect(adminFloor(cs, live, { min: 1 })).toBeNull();
   });
 
+  it("trips when a rename removes the only other admin (ghost fix)", () => {
+    // Live: alice + bob (2 admins). Rename bob → bob-new. The renamed admin must
+    // not double-count: surviving admins are alice + bob-new = 2... but we also
+    // delete alice, leaving only bob-new. Without the ghost fix, bob would also
+    // linger as a surviving admin, masking the drop below the floor.
+    const cs = makeChangeSet([
+      {
+        kind: "delete",
+        resourceType: "member",
+        key: "alice",
+        before: { login: "alice", role: "admin" },
+      },
+      {
+        kind: "delete",
+        resourceType: "member",
+        key: "bob",
+        before: { login: "bob", role: "admin" },
+      },
+      {
+        kind: "create",
+        resourceType: "member",
+        key: "bob-new",
+        after: { login: "bob-new", role: "admin", previously: "bob" },
+      },
+    ]);
+    const live = liveWithAdmins(["alice", "bob"]);
+    // After resolution: delete alice, update bob→bob-new (admin). Surviving
+    // admins = { bob-new } = 1, below default floor of 2 → TRIP.
+    const result = adminFloor(cs, live);
+    expect(result).not.toBeNull();
+    expect(result!.guardrail).toBe("adminFloor");
+    expect(result!.message).toMatch(/1 org admin/);
+  });
+
   it("respects a custom min", () => {
     // Live: 5 admins. Delete 4. 1 remains. min=1 → pass.
     const logins = ["a", "b", "c", "d", "e"];
@@ -285,6 +342,31 @@ describe("requiredAdmins", () => {
     expect(result!.guardrail).toBe("requiredAdmins");
   });
 
+  it("trips when a required admin is renamed away (ghost fix)", () => {
+    // alice is required. Rename alice → alice-new. The required login "alice" no
+    // longer survives. Without the ghost fix, alice would linger as a surviving
+    // admin and this would fail-open.
+    const cs = makeChangeSet([
+      {
+        kind: "delete",
+        resourceType: "member",
+        key: "alice",
+        before: { login: "alice", role: "admin" },
+      },
+      {
+        kind: "create",
+        resourceType: "member",
+        key: "alice-new",
+        after: { login: "alice-new", role: "admin", previously: "alice" },
+      },
+    ]);
+    const live = liveWithAdmins(["alice", "bob"]);
+    const result = requiredAdmins(cs, live, { logins: ["alice"] });
+    expect(result).not.toBeNull();
+    expect(result!.guardrail).toBe("requiredAdmins");
+    expect(result!.message).toMatch(/alice/);
+  });
+
   it("passes with an empty logins list", () => {
     const cs = makeChangeSet([
       { kind: "delete", resourceType: "member", key: "alice", before: { login: "alice", role: "admin" } },
@@ -328,7 +410,7 @@ describe("requireSelf", () => {
     expect(result!.message).toMatch(/bot/);
   });
 
-  it("passes when self login is updated (role change but not removed)", () => {
+  it("trips when self login is demoted out of admin", () => {
     const cs = makeChangeSet([
       {
         kind: "update",
@@ -340,8 +422,10 @@ describe("requireSelf", () => {
       },
     ]);
     const live = liveWithMembers([{ login: "bot", role: "admin" }]);
-    // requireSelf only checks org membership, not role
-    expect(requireSelf(cs, live, { selfLogin: "bot" })).toBeNull();
+    // requireSelf refuses membership loss AND admin demotion
+    const result = requireSelf(cs, live, { selfLogin: "bot" });
+    expect(result).not.toBeNull();
+    expect(result!.guardrail).toBe("requireSelf");
   });
 
   it("trips when self does not exist in live and a delete is added", () => {
@@ -406,6 +490,39 @@ describe("runGuardrails", () => {
       // Should trip at least removalDeltaCap and requireSelf
       expect(guardrailNames).toContain("removalDeltaCap");
       expect(guardrailNames).toContain("requireSelf");
+    }
+  });
+
+  it("reports an admin-floor trip caused by a rename plus a delete (ghost fix)", () => {
+    // Live: alice + bob (2 admins). Rename bob → bob-new and delete alice.
+    // Surviving admins = { bob-new } = 1, below the default floor of 2.
+    // The ghost fix ensures bob is not double-counted, so the trip is reported.
+    const cs = makeChangeSet([
+      {
+        kind: "delete",
+        resourceType: "member",
+        key: "alice",
+        before: { login: "alice", role: "admin" },
+      },
+      {
+        kind: "delete",
+        resourceType: "member",
+        key: "bob",
+        before: { login: "bob", role: "admin" },
+      },
+      {
+        kind: "create",
+        resourceType: "member",
+        key: "bob-new",
+        after: { login: "bob-new", role: "admin", previously: "bob" },
+      },
+    ]);
+    const live = liveWithAdmins(["alice", "bob"]);
+    const result = runGuardrails(cs, live);
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      const names = result.diagnostics.map((d) => d.guardrail);
+      expect(names).toContain("adminFloor");
     }
   });
 
