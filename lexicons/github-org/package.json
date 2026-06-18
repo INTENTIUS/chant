@@ -22,6 +22,9 @@
     "chant"
   ],
   "type": "module",
+  "bin": {
+    "chant-governance": "./src/cli.ts"
+  },
   "files": [
     "src/",
     "dist/"
