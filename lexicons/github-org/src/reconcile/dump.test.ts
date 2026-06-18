@@ -13,11 +13,33 @@
 import { describe, it, expect } from "vitest";
 import { dumpOrg, serializeToYaml } from "./dump.js";
 import { diff } from "./diff.js";
-import type { LiveOrgState, LiveBranchProtectionConfig } from "./diff.js";
+import type { LiveOrgState } from "./diff.js";
+import { fetchLiveForOrg } from "../cycles/branch-protection.js";
 import { loadGovernanceConfig } from "../config/load.js";
 import type { AppClient } from "../auth/app-client.js";
+import type { RepoConfig } from "../config/types.js";
 import type { RateBudget } from "./runner.js";
 import { BudgetExhaustedError } from "./runner.js";
+
+/**
+ * Derive the live snapshot from the SAME mock client used for the dump, by
+ * running the cycle's real fetch path (`fetchLiveForOrg` →
+ * `fetchBranchProtection`). This yields the actual — possibly sparse — shape
+ * GitHub responses normalize to in production, instead of a hand-populated
+ * fixture with every sub-field set. Round-trip tests MUST use this so they
+ * can't mask normalization drift between dump and the cycle.
+ */
+async function fetchLiveFromMock(
+  client: AppClient,
+  org: string,
+  repoBranches: Record<string, string[]>,
+): Promise<LiveOrgState> {
+  const repoStubs: Record<string, RepoConfig> = {};
+  for (const [repo, branches] of Object.entries(repoBranches)) {
+    repoStubs[repo] = { branchProtection: branches.map((pattern) => ({ pattern })) };
+  }
+  return fetchLiveForOrg(client, org, repoStubs, makeBudget());
+}
 
 // ---------------------------------------------------------------------------
 // Mock helpers
@@ -70,43 +92,6 @@ function makeBudget(initial = 500): RateBudget {
     },
   };
 }
-
-// ---------------------------------------------------------------------------
-// Shared live state fixture
-// ---------------------------------------------------------------------------
-
-/** A rich live branch-protection rule covering all diffed fields. */
-const LIVE_BP_FULL: LiveBranchProtectionConfig = {
-  pattern: "main",
-  requirePullRequestReviews: true,
-  requiredApprovingReviewCount: 2,
-  dismissStaleReviews: true,
-  requireCodeOwnerReviews: true,
-  requireStatusChecks: true,
-  requiredStatusCheckContexts: ["ci/build", "ci/lint"],
-  requireBranchesToBeUpToDate: true,
-  restrictPushes: false,
-  allowForcePushes: false,
-  allowDeletions: false,
-  requireLinearHistory: true,
-  enforceAdmins: true, // captured live but NOT in config type — must be omitted from dump
-};
-
-/** Minimal branch-protection rule (most fields false/empty). */
-const LIVE_BP_MINIMAL: LiveBranchProtectionConfig = {
-  pattern: "develop",
-  requirePullRequestReviews: false,
-  requiredApprovingReviewCount: 0,
-  dismissStaleReviews: false,
-  requireCodeOwnerReviews: false,
-  requireStatusChecks: false,
-  requiredStatusCheckContexts: [],
-  requireBranchesToBeUpToDate: false,
-  restrictPushes: false,
-  allowForcePushes: false,
-  allowDeletions: true,
-  requireLinearHistory: false,
-};
 
 // ---------------------------------------------------------------------------
 // 1. dumpOrg: config validates under loadGovernanceConfig
@@ -189,36 +174,34 @@ describe("dumpOrg — config validates under loadGovernanceConfig", () => {
 // ---------------------------------------------------------------------------
 
 describe("dumpOrg — round-trip no-op", () => {
-  it("full protection rule: diff is empty after dump", async () => {
-    // Live state: one repo with a fully-configured branch protection rule
-    const live: LiveOrgState = {
-      repos: {
-        "my-repo": {
-          branchProtection: [LIVE_BP_FULL],
-        },
-      },
-    };
+  // These tests derive `live` from the SAME mock client via the cycle's real
+  // `fetchLiveForOrg`/`fetchBranchProtection` path — NOT from hand-populated
+  // fixtures. This guarantees the comparison uses the real (possibly-sparse)
+  // shape GitHub responses normalize to, so the tests cannot mask drift between
+  // dump's normalization and the cycle's normalization.
 
-    // Build a mock client that returns the live BP via the GitHub API shape
+  it("full protection rule: diff is empty after dump", async () => {
     const client = makeMockClient({
       "GET /repos/test-org/my-repo/branches": [{ name: "main" }],
       "GET /repos/test-org/my-repo/branches/main/protection": {
         required_pull_request_reviews: {
-          required_approving_review_count: LIVE_BP_FULL.requiredApprovingReviewCount,
-          dismiss_stale_reviews: LIVE_BP_FULL.dismissStaleReviews,
-          require_code_owner_reviews: LIVE_BP_FULL.requireCodeOwnerReviews,
+          required_approving_review_count: 2,
+          dismiss_stale_reviews: true,
+          require_code_owner_reviews: true,
         },
         required_status_checks: {
-          contexts: LIVE_BP_FULL.requiredStatusCheckContexts,
-          strict: LIVE_BP_FULL.requireBranchesToBeUpToDate,
+          contexts: ["ci/build", "ci/lint"],
+          strict: true,
         },
         restrictions: null,
-        allow_force_pushes: { enabled: LIVE_BP_FULL.allowForcePushes },
-        allow_deletions: { enabled: LIVE_BP_FULL.allowDeletions },
-        required_linear_history: { enabled: LIVE_BP_FULL.requireLinearHistory },
-        enforce_admins: { enabled: LIVE_BP_FULL.enforceAdmins },
+        allow_force_pushes: { enabled: false },
+        allow_deletions: { enabled: false },
+        required_linear_history: { enabled: true },
+        enforce_admins: { enabled: true },
       },
     });
+
+    const live = await fetchLiveFromMock(client, "test-org", { "my-repo": ["main"] });
 
     const { config } = await dumpOrg(client, "test-org", {
       repos: ["my-repo"],
@@ -231,15 +214,12 @@ describe("dumpOrg — round-trip no-op", () => {
     expect(changeSet.entries).toHaveLength(0);
   });
 
-  it("minimal protection rule: diff is empty after dump", async () => {
-    const live: LiveOrgState = {
-      repos: {
-        "simple-repo": {
-          branchProtection: [LIVE_BP_MINIMAL],
-        },
-      },
-    };
-
+  it("branch with NO PR-review requirement: diff is empty after dump (regression for #454)", async () => {
+    // required_pull_request_reviews is null — the majority case. The live
+    // snapshot from fetchBranchProtection leaves requiredApprovingReviewCount,
+    // dismissStaleReviews, and requireCodeOwnerReviews UNDEFINED. dump must NOT
+    // emit those sub-fields (as `0`/`false`), or the diff would compare e.g.
+    // `0` vs `undefined` and produce a spurious update for every such branch.
     const client = makeMockClient({
       "GET /repos/test-org/simple-repo/branches": [{ name: "develop" }],
       "GET /repos/test-org/simple-repo/branches/develop/protection": {
@@ -253,6 +233,17 @@ describe("dumpOrg — round-trip no-op", () => {
       },
     });
 
+    // Live is the REAL sparse shape — requiredApprovingReviewCount etc. absent.
+    const live = await fetchLiveFromMock(client, "test-org", { "simple-repo": ["develop"] });
+
+    const liveBp = live.repos!["simple-repo"]!.branchProtection![0]!;
+    // Sanity-guard the fixture: the cycle must leave these undefined so this
+    // test actually exercises the 0-vs-undefined regression path.
+    expect(liveBp.requirePullRequestReviews).toBe(false);
+    expect(liveBp).not.toHaveProperty("requiredApprovingReviewCount");
+    expect(liveBp.requireStatusChecks).toBe(false);
+    expect(liveBp).not.toHaveProperty("requiredStatusCheckContexts");
+
     const { config } = await dumpOrg(client, "test-org", {
       repos: ["simple-repo"],
       budget: makeBudget(),
@@ -265,32 +256,6 @@ describe("dumpOrg — round-trip no-op", () => {
   });
 
   it("multiple repos and multiple branches: diff is empty after dump", async () => {
-    const live: LiveOrgState = {
-      repos: {
-        "repo-a": {
-          branchProtection: [LIVE_BP_FULL, LIVE_BP_MINIMAL],
-        },
-        "repo-b": {
-          branchProtection: [
-            {
-              pattern: "main",
-              requirePullRequestReviews: false,
-              requiredApprovingReviewCount: 0,
-              dismissStaleReviews: false,
-              requireCodeOwnerReviews: false,
-              requireStatusChecks: true,
-              requiredStatusCheckContexts: ["lint", "test"],
-              requireBranchesToBeUpToDate: false,
-              restrictPushes: true,
-              allowForcePushes: false,
-              allowDeletions: false,
-              requireLinearHistory: false,
-            },
-          ],
-        },
-      },
-    };
-
     const client = makeMockClient({
       "GET /repos/test-org/repo-a/branches": [{ name: "main" }, { name: "develop" }],
       "GET /repos/test-org/repo-a/branches/main/protection": {
@@ -333,6 +298,11 @@ describe("dumpOrg — round-trip no-op", () => {
       },
     });
 
+    const live = await fetchLiveFromMock(client, "test-org", {
+      "repo-a": ["main", "develop"],
+      "repo-b": ["main"],
+    });
+
     const { config } = await dumpOrg(client, "test-org", {
       repos: ["repo-a", "repo-b"],
       budget: makeBudget(),
@@ -345,13 +315,6 @@ describe("dumpOrg — round-trip no-op", () => {
   });
 
   it("unprotected repo: not emitted, no diff entries", async () => {
-    const live: LiveOrgState = {
-      repos: {
-        "protected": { branchProtection: [LIVE_BP_FULL] },
-        "unprotected": { branchProtection: [] },
-      },
-    };
-
     const client = makeMockClient({
       "GET /repos/test-org/protected/branches": [{ name: "main" }],
       "GET /repos/test-org/protected/branches/main/protection": {
@@ -383,6 +346,13 @@ describe("dumpOrg — round-trip no-op", () => {
       }
       return origRequest(method, path, body);
     };
+
+    // Live derived from the same mock: "protected" has a rule, "unprotected"
+    // 404s → no live rule for it.
+    const live = await fetchLiveFromMock(client, "test-org", {
+      "protected": ["main"],
+      "unprotected": ["main"],
+    });
 
     const { config } = await dumpOrg(client, "test-org", {
       repos: ["protected", "unprotected"],

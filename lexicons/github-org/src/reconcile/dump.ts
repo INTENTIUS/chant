@@ -128,8 +128,22 @@ async function listOrgRepos(
  * Map a live branch-protection snapshot to a BranchProtectionConfig that will
  * diff as no-op against the same live state.
  *
- * All fields compared by `diffBranchProtection` in `diff.ts` are emitted with
- * their live values so the diff engine sees no change.
+ * CRITICAL — zero normalization drift: this MUST emit EXACTLY the shape that
+ * `fetchBranchProtection` (in `../cycles/branch-protection.ts`) produces. The
+ * round-trip no-op property (`diff(dump(...), live)` is empty) only holds when
+ * the dumped desired shape matches the live shape field-for-field. The diff
+ * engine compares each key PRESENT in desired against live (`diffObjectKeys`),
+ * so emitting a key that `fetchBranchProtection` leaves undefined (e.g.
+ * `requiredApprovingReviewCount: 0` when PR reviews are off) produces a
+ * SPURIOUS update (`0` vs `undefined`).
+ *
+ * `fetchBranchProtection` sets the review sub-fields ONLY when the parent group
+ * is enabled:
+ *   - `requiredApprovingReviewCount` / `dismissStaleReviews` /
+ *     `requireCodeOwnerReviews` only when `requirePullRequestReviews` is true;
+ *   - `requiredStatusCheckContexts` / `requireBranchesToBeUpToDate` only when
+ *     `requireStatusChecks` is true.
+ * We mirror that conditional emission precisely below.
  *
  * `enforceAdmins` is captured live but is NOT in BranchProtectionConfig
  * (selective-by-omission for an unmanaged field) — it is intentionally omitted.
@@ -140,17 +154,27 @@ function normalizeLiveBranchProtection(
   const bp: BranchProtectionConfig = {
     pattern: live.pattern,
     requirePullRequestReviews: live.requirePullRequestReviews ?? false,
-    requiredApprovingReviewCount: live.requiredApprovingReviewCount ?? 0,
-    dismissStaleReviews: live.dismissStaleReviews ?? false,
-    requireCodeOwnerReviews: live.requireCodeOwnerReviews ?? false,
     requireStatusChecks: live.requireStatusChecks ?? false,
-    requiredStatusCheckContexts: live.requiredStatusCheckContexts ?? [],
-    requireBranchesToBeUpToDate: live.requireBranchesToBeUpToDate ?? false,
     restrictPushes: live.restrictPushes ?? false,
     allowForcePushes: live.allowForcePushes ?? false,
     allowDeletions: live.allowDeletions ?? false,
     requireLinearHistory: live.requireLinearHistory ?? false,
   };
+
+  // PR-review sub-fields: emit ONLY when the parent group is enabled, mirroring
+  // `fetchBranchProtection` (which leaves them undefined otherwise).
+  if (live.requirePullRequestReviews === true) {
+    bp.requiredApprovingReviewCount = live.requiredApprovingReviewCount ?? 0;
+    bp.dismissStaleReviews = live.dismissStaleReviews ?? false;
+    bp.requireCodeOwnerReviews = live.requireCodeOwnerReviews ?? false;
+  }
+
+  // Status-check sub-fields: emit ONLY when the parent group is enabled.
+  if (live.requireStatusChecks === true) {
+    bp.requiredStatusCheckContexts = live.requiredStatusCheckContexts ?? [];
+    bp.requireBranchesToBeUpToDate = live.requireBranchesToBeUpToDate ?? false;
+  }
+
   return bp;
 }
 
@@ -218,7 +242,11 @@ function yamlScalar(value: unknown): string {
       value === "false" ||
       value === "null" ||
       /[:{}\[\],&*#?|<>=!%@`]/.test(value) ||
-      /^\s|\s$/.test(value)
+      /^\s|\s$/.test(value) ||
+      // Purely-numeric or decimal-like strings would round-trip as numbers
+      // (e.g. a status-check context "1234" or a branch pattern "1.x").
+      /^\d+$/.test(value) ||
+      /^\d+\.\d+$/.test(value)
     ) {
       return `"${value.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`;
     }
