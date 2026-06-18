@@ -29,7 +29,7 @@ export interface EfsWithAccessPointProps {
 }
 
 export const EfsWithAccessPoint = Composite<EfsWithAccessPointProps>((props) => {
-  const ingressRules: SecurityGroup_Ingress[] = [];
+  const ingressRules: InstanceType<typeof SecurityGroup_Ingress>[] = [];
   if (props.sourceSecurityGroupId) {
     ingressRules.push(new SecurityGroup_Ingress({
       IpProtocol: "tcp",

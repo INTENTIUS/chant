@@ -1,6 +1,6 @@
 import { Composite, mergeDefaults } from "@intentius/chant";
 import { Permission } from "../generated";
-import { LambdaFunction, type LambdaFunctionProps } from "./lambda-function";
+import { LambdaFunction, type LambdaFunctionProps, type LambdaFunctionResult } from "./lambda-function";
 
 export interface LambdaApiProps extends LambdaFunctionProps {
   sourceArn?: string;
@@ -9,7 +9,11 @@ export interface LambdaApiProps extends LambdaFunctionProps {
   };
 }
 
-export const LambdaApi = Composite<LambdaApiProps>((props) => {
+export type LambdaApiResult = LambdaFunctionResult & {
+  permission: InstanceType<typeof Permission>;
+};
+
+export const LambdaApi = Composite<LambdaApiProps, LambdaApiResult>((props) => {
   const { defaults } = props;
   const { role, func } = LambdaFunction(props);
 

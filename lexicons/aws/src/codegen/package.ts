@@ -43,7 +43,7 @@ export async function packageLexicon(opts: PackageOptions = {}): Promise<Package
       buildManifest: (_genResult) => {
         // Lazy-import to avoid circular dependency
         const intrinsics: IntrinsicDef[] = (awsPlugin.intrinsics?.() ?? []).map(
-          (i: { name: string; description: string }) => ({
+          (i: IntrinsicDef) => ({
             name: i.name,
             description: i.description,
             outputKey: intrinsicOutputKey(i.name),

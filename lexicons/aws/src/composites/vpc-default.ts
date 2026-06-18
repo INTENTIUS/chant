@@ -36,7 +36,31 @@ export interface VpcDefaultProps {
   };
 }
 
-export const VpcDefault = Composite<VpcDefaultProps>((props) => {
+export type VpcDefaultResult = {
+  vpc: InstanceType<typeof Vpc>;
+  igw: InstanceType<typeof InternetGateway>;
+  igwAttachment: InstanceType<typeof VPCGatewayAttachment>;
+  publicSubnet1: InstanceType<typeof Subnet>;
+  publicSubnet2: InstanceType<typeof Subnet>;
+  privateSubnet1: InstanceType<typeof Subnet>;
+  privateSubnet2: InstanceType<typeof Subnet>;
+  publicRouteTable: InstanceType<typeof RouteTable>;
+  publicRoute: InstanceType<typeof EC2Route>;
+  publicRta1: InstanceType<typeof SubnetRouteTableAssociation>;
+  publicRta2: InstanceType<typeof SubnetRouteTableAssociation>;
+  privateRouteTable: InstanceType<typeof RouteTable>;
+  privateRoute: InstanceType<typeof EC2Route>;
+  privateRta1: InstanceType<typeof SubnetRouteTableAssociation>;
+  privateRta2: InstanceType<typeof SubnetRouteTableAssociation>;
+  natEip: InstanceType<typeof EIP>;
+  natGateway: InstanceType<typeof NatGateway>;
+  publicSubnet3?: InstanceType<typeof Subnet>;
+  privateSubnet3?: InstanceType<typeof Subnet>;
+  publicRta3?: InstanceType<typeof SubnetRouteTableAssociation>;
+  privateRta3?: InstanceType<typeof SubnetRouteTableAssociation>;
+};
+
+export const VpcDefault = Composite<VpcDefaultProps, VpcDefaultResult>((props) => {
   const { defaults: defs } = props;
   const cidr = props.cidr ?? "10.0.0.0/16";
   const azCount = props.azCount ?? 2;

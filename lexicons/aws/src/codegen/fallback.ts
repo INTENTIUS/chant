@@ -26,6 +26,8 @@ function fallbackLogGroup(): SchemaParseResult {
       createOnly: [],
       writeOnly: [],
       primaryIdentifier: [],
+      deprecatedProperties: [],
+      conditionalCreateOnly: [],
     },
     propertyTypes: [],
     enums: [],

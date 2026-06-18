@@ -12,7 +12,7 @@ import {
 } from "../generated";
 import { Sub, Join } from "../intrinsics";
 import { S3Actions } from "../actions/s3";
-import { LambdaFunction, type LambdaFunctionProps } from "./lambda-function";
+import { LambdaFunction, type LambdaFunctionProps, type LambdaFunctionResult } from "./lambda-function";
 
 export interface LambdaS3Props extends LambdaFunctionProps {
   bucketName?: string;
@@ -27,7 +27,12 @@ export interface LambdaS3Props extends LambdaFunctionProps {
   };
 }
 
-export const LambdaS3 = Composite<LambdaS3Props>((props) => {
+export type LambdaS3Result = LambdaFunctionResult & {
+  bucket: InstanceType<typeof Bucket>;
+  permission: InstanceType<typeof Permission>;
+};
+
+export const LambdaS3 = Composite<LambdaS3Props, LambdaFunctionResult & { bucket: InstanceType<typeof Bucket>; permission?: InstanceType<typeof Permission> }>((props) => {
   const encryptionDefault = new Bucket_ServerSideEncryptionByDefault({ SSEAlgorithm: "AES256" });
   const encryptionRule = new Bucket_ServerSideEncryptionRule({
     ServerSideEncryptionByDefault: encryptionDefault,

@@ -58,6 +58,8 @@ function samFunction(): SchemaParseResult {
       createOnly: [],
       writeOnly: [],
       primaryIdentifier: [],
+      deprecatedProperties: [],
+      conditionalCreateOnly: [],
     },
     propertyTypes: [
       {
@@ -144,6 +146,8 @@ function samApi(): SchemaParseResult {
       createOnly: [],
       writeOnly: [],
       primaryIdentifier: [],
+      deprecatedProperties: [],
+      conditionalCreateOnly: [],
     },
     propertyTypes: [
       {
@@ -195,6 +199,8 @@ function samHttpApi(): SchemaParseResult {
       createOnly: [],
       writeOnly: [],
       primaryIdentifier: [],
+      deprecatedProperties: [],
+      conditionalCreateOnly: [],
     },
     propertyTypes: [
       {
@@ -229,6 +235,8 @@ function samSimpleTable(): SchemaParseResult {
       createOnly: [],
       writeOnly: [],
       primaryIdentifier: [],
+      deprecatedProperties: [],
+      conditionalCreateOnly: [],
     },
     propertyTypes: [
       {
@@ -264,6 +272,8 @@ function samLayerVersion(): SchemaParseResult {
       createOnly: [],
       writeOnly: [],
       primaryIdentifier: [],
+      deprecatedProperties: [],
+      conditionalCreateOnly: [],
     },
     propertyTypes: [],
     enums: [],
@@ -295,6 +305,8 @@ function samStateMachine(): SchemaParseResult {
       createOnly: [],
       writeOnly: [],
       primaryIdentifier: [],
+      deprecatedProperties: [],
+      conditionalCreateOnly: [],
     },
     propertyTypes: [
       {
@@ -326,6 +338,8 @@ function samApplication(): SchemaParseResult {
       createOnly: [],
       writeOnly: [],
       primaryIdentifier: [],
+      deprecatedProperties: [],
+      conditionalCreateOnly: [],
     },
     propertyTypes: [],
     enums: [],
@@ -345,6 +359,8 @@ function samConnector(): SchemaParseResult {
       createOnly: [],
       writeOnly: [],
       primaryIdentifier: [],
+      deprecatedProperties: [],
+      conditionalCreateOnly: [],
     },
     propertyTypes: [],
     enums: [],
@@ -380,6 +396,8 @@ function samGraphQLApi(): SchemaParseResult {
       createOnly: [],
       writeOnly: [],
       primaryIdentifier: [],
+      deprecatedProperties: [],
+      conditionalCreateOnly: [],
     },
     propertyTypes: [],
     enums: [],
