@@ -57,3 +57,14 @@ export {
   requireSelf,
   runGuardrails,
 } from "./reconcile/guardrails.js";
+
+// Reconcile: runner (orchestrator)
+export type {
+  Cycle,
+  RateBudget,
+  CycleResult,
+  DeferredWork,
+  ReconcileResult,
+  RunReconcileOptions,
+} from "./reconcile/runner.js";
+export { runReconcile, BudgetExhaustedError } from "./reconcile/runner.js";
