@@ -23,7 +23,7 @@
   ],
   "type": "module",
   "bin": {
-    "chant-governance": "./src/cli.ts"
+    "chant-governance": "./dist/cli.js"
   },
   "files": [
     "src/",
@@ -45,7 +45,8 @@
     }
   },
   "scripts": {
-    "build": "tsc -p tsconfig.build.json && tsc-alias -p tsconfig.build.json && find dist -type f \\( -name \"*.js\" -o -name \"*.js.map\" \\) -delete"
+    "build": "tsc -p tsconfig.build.json && tsc-alias -p tsconfig.build.json && chmod +x dist/cli.js",
+    "prepack": "npm run build"
   },
   "peerDependencies": {
     "@intentius/chant": "^0.8.1",

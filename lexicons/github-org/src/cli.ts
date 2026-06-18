@@ -34,6 +34,7 @@
  */
 
 import { readFileSync } from "node:fs";
+import { pathToFileURL } from "node:url";
 import { loadGovernanceConfig } from "./config/load.js";
 import { createAppClient } from "./auth/app-client.js";
 import { runReconcile } from "./reconcile/runner.js";
@@ -44,7 +45,7 @@ import type { Cycle } from "./reconcile/runner.js";
 // Arg parser
 // ---------------------------------------------------------------------------
 
-interface ReconcileArgs {
+export interface ReconcileArgs {
   config: string;
   mode: "dry-run" | "apply";
   cycles: string[];
@@ -55,10 +56,30 @@ interface ReconcileArgs {
 }
 
 /**
- * Parse `process.argv.slice(2)` into `ReconcileArgs`.
- * Exits 2 on any parse error.
+ * Error thrown by `parseReconcileArgs` on bad input.
+ *
+ * Carries the process exit code that `main()` should use when it catches the
+ * error. Keeping the parser pure (throwing instead of calling `process.exit`)
+ * lets the consistency test import and exercise the real parser directly.
  */
-function parseReconcileArgs(argv: string[]): ReconcileArgs {
+export class CliError extends Error {
+  constructor(
+    public readonly code: number,
+    message: string,
+  ) {
+    super(message);
+    this.name = "CliError";
+  }
+}
+
+/**
+ * Parse reconcile argv (everything after the `reconcile` subcommand) into
+ * `ReconcileArgs`.
+ *
+ * Pure function: throws `CliError` (carrying an exit code) on any parse error
+ * instead of touching `process`. `main()` catches `CliError` and exits non-zero.
+ */
+export function parseReconcileArgs(argv: string[]): ReconcileArgs {
   const args: ReconcileArgs = {
     config: "",
     mode: "dry-run",
@@ -84,31 +105,33 @@ function parseReconcileArgs(argv: string[]): ReconcileArgs {
     const flag = argv[i];
 
     if (!flag.startsWith("--")) {
-      die(2, `unexpected positional argument: ${flag}`);
+      throw new CliError(2, `unexpected positional argument: ${flag}`);
     }
 
     if (!knownFlags.has(flag)) {
-      die(2, `unknown flag: ${flag}`);
+      throw new CliError(2, `unknown flag: ${flag}`);
     }
 
     switch (flag) {
       case "--config": {
         const val = argv[++i];
-        if (val === undefined || val.startsWith("--")) die(2, "--config requires a value");
+        if (val === undefined || val.startsWith("--"))
+          throw new CliError(2, "--config requires a value");
         args.config = val;
         break;
       }
       case "--mode": {
         const val = argv[++i];
         if (val !== "dry-run" && val !== "apply") {
-          die(2, `--mode must be "dry-run" or "apply", got: ${val ?? "(missing)"}`);
+          throw new CliError(2, `--mode must be "dry-run" or "apply", got: ${val ?? "(missing)"}`);
         }
         args.mode = val;
         break;
       }
       case "--cycles": {
         const val = argv[++i];
-        if (val === undefined || val.startsWith("--")) die(2, "--cycles requires a value");
+        if (val === undefined || val.startsWith("--"))
+          throw new CliError(2, "--cycles requires a value");
         args.cycles = val
           .split(",")
           .map((s) => s.trim())
@@ -117,20 +140,22 @@ function parseReconcileArgs(argv: string[]): ReconcileArgs {
       }
       case "--app-id-env": {
         const val = argv[++i];
-        if (val === undefined || val.startsWith("--")) die(2, "--app-id-env requires a value");
+        if (val === undefined || val.startsWith("--"))
+          throw new CliError(2, "--app-id-env requires a value");
         args.appIdEnv = val;
         break;
       }
       case "--installation-id-env": {
         const val = argv[++i];
         if (val === undefined || val.startsWith("--"))
-          die(2, "--installation-id-env requires a value");
+          throw new CliError(2, "--installation-id-env requires a value");
         args.installationIdEnv = val;
         break;
       }
       case "--token-env": {
         const val = argv[++i];
-        if (val === undefined || val.startsWith("--")) die(2, "--token-env requires a value");
+        if (val === undefined || val.startsWith("--"))
+          throw new CliError(2, "--token-env requires a value");
         args.tokenEnv = val;
         break;
       }
@@ -143,12 +168,12 @@ function parseReconcileArgs(argv: string[]): ReconcileArgs {
   }
 
   // Validate required flags.
-  if (!args.config) die(2, "--config is required");
+  if (!args.config) throw new CliError(2, "--config is required");
 
   const hasTokenAuth = !!args.tokenEnv;
   const hasAppAuth = !!(args.appIdEnv && args.installationIdEnv);
   if (!hasTokenAuth && !hasAppAuth) {
-    die(
+    throw new CliError(
       2,
       "auth is required: supply --token-env <VAR>, or both --app-id-env <VAR> and --installation-id-env <VAR>",
     );
@@ -240,7 +265,13 @@ async function main() {
     die(2, `unknown subcommand: ${subcommand}. Did you mean "reconcile"?`);
   }
 
-  const args = parseReconcileArgs(argv.slice(1));
+  let args: ReconcileArgs;
+  try {
+    args = parseReconcileArgs(argv.slice(1));
+  } catch (err) {
+    if (err instanceof CliError) die(err.code, err.message);
+    throw err;
+  }
 
   // ── Load config ───────────────────────────────────────────────────────────
 
@@ -619,7 +650,12 @@ function printUsage() {
   );
 }
 
-main().catch((err: unknown) => {
-  process.stderr.write(`chant-governance: fatal: ${errMsg(err)}\n`);
-  process.exit(3);
-});
+// Run only when invoked as the entrypoint (the installed `bin`), not when this
+// module is imported (e.g. by the consistency test, which imports the parser).
+const invokedPath = process.argv[1] ? pathToFileURL(process.argv[1]).href : "";
+if (import.meta.url === invokedPath) {
+  main().catch((err: unknown) => {
+    process.stderr.write(`chant-governance: fatal: ${errMsg(err)}\n`);
+    process.exit(3);
+  });
+}

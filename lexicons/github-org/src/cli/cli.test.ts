@@ -6,129 +6,17 @@
  * to keep the tests deterministic and fast.
  */
 
-import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { describe, it, expect } from "vitest";
 import { CYCLE_REGISTRY } from "./registry.js";
 
 // ---------------------------------------------------------------------------
-// parseReconcileArgs — we import the internal parse helper via a re-export
-// shim. Since cli.ts is a self-contained script, we expose the pieces we want
-// to test by re-implementing them here from the same source of truth (the flag
-// set). This mirrors the approach used in runner.test.ts (re-implementing
-// helpers to keep tests isolated).
+// parseReconcileArgs — import the REAL parser from the CLI source so that any
+// flag rename in cli.ts is caught here (and in the pipeline⇄CLI consistency
+// test below). The parser is a pure function that throws `CliError` on bad
+// input; `main()` catches it and exits non-zero.
 // ---------------------------------------------------------------------------
 
-// ── Inline re-implementation of parseReconcileArgs for unit testing ──────────
-// Keeping the flag definitions in one place (the CLI source) is the source of
-// truth. These tests validate the behaviour; the consistency test below checks
-// that the pipeline's emitted command parses cleanly with the real parser.
-
-interface ReconcileArgs {
-  config: string;
-  mode: "dry-run" | "apply";
-  cycles: string[];
-  appIdEnv: string | undefined;
-  installationIdEnv: string | undefined;
-  tokenEnv: string | undefined;
-  allowGuardrailOverride: boolean;
-}
-
-class CliError extends Error {
-  constructor(
-    public readonly code: number,
-    message: string,
-  ) {
-    super(message);
-  }
-}
-
-function parseReconcileArgs(argv: string[]): ReconcileArgs {
-  const args: ReconcileArgs = {
-    config: "",
-    mode: "dry-run",
-    cycles: [],
-    appIdEnv: undefined,
-    installationIdEnv: undefined,
-    tokenEnv: undefined,
-    allowGuardrailOverride: false,
-  };
-
-  const knownFlags = new Set([
-    "--config",
-    "--mode",
-    "--cycles",
-    "--app-id-env",
-    "--installation-id-env",
-    "--token-env",
-    "--allow-guardrail-override",
-  ]);
-
-  let i = 0;
-  while (i < argv.length) {
-    const flag = argv[i];
-
-    if (!flag.startsWith("--")) throw new CliError(2, `unexpected positional: ${flag}`);
-    if (!knownFlags.has(flag)) throw new CliError(2, `unknown flag: ${flag}`);
-
-    switch (flag) {
-      case "--config": {
-        const val = argv[++i];
-        if (val === undefined || val.startsWith("--")) throw new CliError(2, "--config requires a value");
-        args.config = val;
-        break;
-      }
-      case "--mode": {
-        const val = argv[++i];
-        if (val !== "dry-run" && val !== "apply")
-          throw new CliError(2, `--mode must be "dry-run" or "apply", got: ${val ?? "(missing)"}`);
-        args.mode = val;
-        break;
-      }
-      case "--cycles": {
-        const val = argv[++i];
-        if (val === undefined || val.startsWith("--")) throw new CliError(2, "--cycles requires a value");
-        args.cycles = val
-          .split(",")
-          .map((s) => s.trim())
-          .filter(Boolean);
-        break;
-      }
-      case "--app-id-env": {
-        const val = argv[++i];
-        if (val === undefined || val.startsWith("--")) throw new CliError(2, "--app-id-env requires a value");
-        args.appIdEnv = val;
-        break;
-      }
-      case "--installation-id-env": {
-        const val = argv[++i];
-        if (val === undefined || val.startsWith("--"))
-          throw new CliError(2, "--installation-id-env requires a value");
-        args.installationIdEnv = val;
-        break;
-      }
-      case "--token-env": {
-        const val = argv[++i];
-        if (val === undefined || val.startsWith("--")) throw new CliError(2, "--token-env requires a value");
-        args.tokenEnv = val;
-        break;
-      }
-      case "--allow-guardrail-override": {
-        args.allowGuardrailOverride = true;
-        break;
-      }
-    }
-    i++;
-  }
-
-  if (!args.config) throw new CliError(2, "--config is required");
-
-  const hasTokenAuth = !!args.tokenEnv;
-  const hasAppAuth = !!(args.appIdEnv && args.installationIdEnv);
-  if (!hasTokenAuth && !hasAppAuth) {
-    throw new CliError(2, "auth is required");
-  }
-
-  return args;
-}
+import { parseReconcileArgs, CliError } from "../cli.js";
 
 // ---------------------------------------------------------------------------
 // Arg parsing tests
@@ -201,7 +89,8 @@ describe("parseReconcileArgs", () => {
     expect(args.tokenEnv).toBeUndefined();
   });
 
-  it("throws code 2 when --config is missing", () => {
+  it("throws a CliError with code 2 when --config is missing", () => {
+    expect(() => parseReconcileArgs(["--token-env", "GH_TOKEN"])).toThrow(CliError);
     expect(() =>
       parseReconcileArgs(["--token-env", "GH_TOKEN"]),
     ).toThrow(expect.objectContaining({ code: 2 }));
