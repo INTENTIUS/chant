@@ -193,8 +193,9 @@ Ops:
   run log <name>        Show run history for an Op
 
   graph                 Show Op dependency graph (--stacks for cross-stack order,
-                        --format ir|mermaid for the lint-gated entity-graph IR
-                        or a Mermaid flowchart of it;
+                        --format ir|mermaid|dot|layout for the lint-gated graph IR,
+                        a Mermaid flowchart, Graphviz DOT, or node positions
+                        (layout needs graphviz);
                         --detail 0..3: stacks|composites|declarables|attributes)
 
 Lifecycle (alias: lc):
