@@ -128,6 +128,12 @@ export function parseArgs(args: string[]): ParsedArgs {
       result.stacks = true;
     } else if (arg === "--detail") {
       result.detail = Number(args[++i]);
+    } else if (arg === "--lens") {
+      result.lens = args[++i];
+    } else if (arg === "--up") {
+      result.up = true;
+    } else if (arg === "--down") {
+      result.down = true;
     } else if (arg === "--base") {
       result.base = args[++i];
     } else if (arg === "--head") {
@@ -196,7 +202,8 @@ Ops:
                         --format ir|mermaid|dot|layout for the lint-gated graph IR,
                         a Mermaid flowchart, Graphviz DOT, or node positions
                         (layout needs graphviz);
-                        --detail 0..3: stacks|composites|declarables|attributes)
+                        --detail 0..3: stacks|composites|declarables|attributes;
+                        --lens lexicon:<n>|stack:<n>|blast:<node> (--up/--down))
 
 Lifecycle (alias: lc):
   lifecycle snapshot <env>  Query API, save metadata to orphan branch

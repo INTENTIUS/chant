@@ -4,6 +4,7 @@ import { discover } from "../../discovery/index";
 import { partitionByLexicon, computeStackGraph } from "../../build";
 import { buildGraphIr, type GraphIR } from "../../graph-ir";
 import { applyDetail, type DetailLevel } from "../../graph-detail";
+import { applyLens, parseLens } from "../../graph-lens";
 import { toMermaid } from "../../graph-mermaid";
 import { toDot } from "../../graph-dot";
 import { GraphvizLayout } from "../../graph-layout";
@@ -63,7 +64,18 @@ async function runGraphView(
     return 1;
   }
 
-  const ir: GraphIR = applyDetail(buildGraphIr(result.entities, projectPath), level as DetailLevel);
+  // Build the base IR, focus with a lens (declarable-level, most precise), then
+  // apply the detail tier — so e.g. blast:<resource> works before any collapse.
+  let ir: GraphIR = buildGraphIr(result.entities, projectPath);
+  if (ctx.args.lens) {
+    try {
+      ir = applyLens(ir, parseLens(ctx.args.lens, { up: ctx.args.up, down: ctx.args.down }));
+    } catch (err) {
+      console.error(formatError({ message: err instanceof Error ? err.message : String(err) }));
+      return 1;
+    }
+  }
+  ir = applyDetail(ir, level as DetailLevel);
 
   switch (format) {
     case "mermaid":

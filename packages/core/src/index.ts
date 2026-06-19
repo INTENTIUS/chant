@@ -30,6 +30,7 @@ export * from "./graph-detail";
 export * from "./graph-mermaid";
 export * from "./graph-dot";
 export * from "./graph-layout";
+export * from "./graph-lens";
 export * from "./detectLexicon";
 export * from "./lint/parser";
 export * from "./lint/rule";
