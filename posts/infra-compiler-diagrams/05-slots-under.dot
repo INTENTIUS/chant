@@ -1,0 +1,28 @@
+digraph slots_under {
+  rankdir=TB
+  labelloc="t"
+  label=<<b>chant slots under your stack — nothing comes out</b><br/><font point-size="11" color="#475569">Same reconciler. Same native YAML. Walk-away cost is zero — delete chant and the committed YAML still works.</font><br/> >
+  graph [fontname="Helvetica,Arial,sans-serif" bgcolor="transparent" pad="0.5" ranksep="0.45" nodesep="0.6" fontsize=20 fontcolor="#0F172A" compound=true]
+  node  [fontname="Helvetica,Arial,sans-serif" shape=box style="filled,rounded" margin="0.24,0.15"]
+  edge  [fontname="Helvetica,Arial,sans-serif" fontsize=9 color="#6366F1" penwidth=1.3]
+
+  subgraph cluster_before {
+    label="BEFORE"; labelloc="t"; style="rounded"; color="#CBD5E1"; fontcolor="#64748B"; fontsize=13; margin=16
+    b_src   [label="hand-written\nYAML / Kustomize" fillcolor="#F1F5F9" color="#94A3B8" fontcolor="#475569"]
+    b_flux  [label="GitOps reconciler\nFlux · Argo" fillcolor="#F3E8FF" color="#7C3AED" fontcolor="#3B0764"]
+    b_infra [label="cluster + cloud" fillcolor="#F1F5F9" color="#94A3B8" fontcolor="#475569"]
+    b_src -> b_flux -> b_infra
+  }
+
+  subgraph cluster_after {
+    label="AFTER  (reconciler untouched)"; labelloc="t"; style="rounded"; color="#16A34A"; fontcolor="#16A34A"; fontsize=13; margin=16
+    a_src   [label="typed TypeScript" fillcolor="#F1F5F9" color="#94A3B8" fontcolor="#475569"]
+    a_comp  [label="chant build\ntypes · semantic lint · determinism" fillcolor="#DCFCE7" color="#16A34A" fontcolor="#14532D" penwidth=2.2]
+    a_yaml  [label="dist/*.yaml\nthe same native YAML you commit today" fillcolor="#F1F5F9" color="#94A3B8" fontcolor="#475569"]
+    a_flux  [label="GitOps reconciler   (unchanged)\nFlux · Argo" fillcolor="#F3E8FF" color="#7C3AED" fontcolor="#3B0764"]
+    a_infra [label="cluster + cloud" fillcolor="#F1F5F9" color="#94A3B8" fontcolor="#475569"]
+    a_src -> a_comp -> a_yaml -> a_flux -> a_infra
+  }
+
+  b_src -> a_src [style=invis]
+}

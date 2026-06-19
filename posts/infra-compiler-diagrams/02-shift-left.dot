@@ -1,0 +1,33 @@
+digraph shift_left {
+  rankdir=TB
+  labelloc="t"
+  label=<<b>A compiler moves the catch left</b><br/><font point-size="11" color="#475569">typo · bad reference · invalid enum · semantically-incoherent spec — the same error class</font><br/> >
+  graph [fontname="Helvetica,Arial,sans-serif" bgcolor="transparent" pad="0.4" fontsize=20 fontcolor="#0F172A"]
+  node  [fontname="Helvetica,Arial,sans-serif" shape=plaintext margin=0]
+
+  grid [label=<
+    <table border="0" cellborder="1" cellspacing="0" cellpadding="11" color="#CBD5E1">
+      <tr>
+        <td bgcolor="#FFFFFF00"></td>
+        <td bgcolor="#F1F5F9"><b>author-time</b><br/><font point-size="9">editor squiggle</font></td>
+        <td bgcolor="#F1F5F9"><b>build-time</b><br/><font point-size="9">CI fails</font></td>
+        <td bgcolor="#F1F5F9"><b>apply-time</b><br/><font point-size="9">Flux errors</font></td>
+        <td bgcolor="#F1F5F9"><b>ALARM-time</b><br/><font point-size="9">the 3am page</font></td>
+      </tr>
+      <tr>
+        <td bgcolor="#DCFCE7" align="left"><b>chant</b></td>
+        <td bgcolor="#DCFCE7"><font color="#14532D"><b>✓ caught</b></font></td>
+        <td bgcolor="#DCFCE7"><font color="#14532D"><b>✓ caught</b></font></td>
+        <td bgcolor="#FFFFFF00"></td>
+        <td bgcolor="#FFFFFF00"></td>
+      </tr>
+      <tr>
+        <td bgcolor="#F3E8FF" align="left"><b>hand-written YAML</b></td>
+        <td bgcolor="#F8FAFC"><font color="#94A3B8">—</font></td>
+        <td bgcolor="#F8FAFC"><font color="#94A3B8">—</font></td>
+        <td bgcolor="#FEF3C7"><font color="#78350F">slips through ▸</font></td>
+        <td bgcolor="#FEE2E2"><font color="#7F1D1D"><b>✗ incident</b></font></td>
+      </tr>
+    </table>
+  >]
+}
