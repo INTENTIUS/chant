@@ -5,6 +5,8 @@ import { partitionByLexicon, computeStackGraph } from "../../build";
 import { buildGraphIr, type GraphIR } from "../../graph-ir";
 import { applyDetail, type DetailLevel } from "../../graph-detail";
 import { toMermaid } from "../../graph-mermaid";
+import { toDot } from "../../graph-dot";
+import { GraphvizLayout } from "../../graph-layout";
 import { lintCommand } from "../commands/lint";
 import { formatError, formatWarning, formatBold } from "../format";
 import type { CommandContext } from "../registry";
@@ -16,19 +18,25 @@ import type { CommandContext } from "../registry";
  * entity-graph IR (or a Mermaid flowchart of it) for diagrams (#493/#496).
  */
 export async function runGraph(ctx: CommandContext): Promise<number> {
-  if (ctx.args.format === "ir") return runGraphView(ctx, "ir");
-  if (ctx.args.format === "mermaid") return runGraphView(ctx, "mermaid");
+  const viewFormats = ["ir", "mermaid", "dot", "layout"] as const;
+  if ((viewFormats as readonly string[]).includes(ctx.args.format)) {
+    return runGraphView(ctx, ctx.args.format as (typeof viewFormats)[number]);
+  }
   if (ctx.args.stacks) return runStackGraph(ctx);
   return runOpGraph();
 }
 
 /**
- * `chant graph --format ir|mermaid` — build the graph IR (honouring `--detail`)
- * and emit it as JSON or a Mermaid flowchart. Lint-gated: the IR represents
- * valid infra, so we refuse to emit for source that does not pass lint (EVL +
- * lexicon rules). Non-zero exit on discovery errors.
+ * `chant graph --format ir|mermaid|dot|layout` — build the graph IR (honouring
+ * `--detail`) and emit it as JSON, a Mermaid flowchart, Graphviz DOT, or node
+ * positions from a layout engine. Lint-gated: the IR represents valid infra, so
+ * we refuse to emit for source that does not pass lint. Non-zero on discovery
+ * errors, or on a missing `dot` for `--format layout`.
  */
-async function runGraphView(ctx: CommandContext, format: "ir" | "mermaid"): Promise<number> {
+async function runGraphView(
+  ctx: CommandContext,
+  format: "ir" | "mermaid" | "dot" | "layout",
+): Promise<number> {
   const projectPath = resolve(ctx.args.path === "." ? "." : ctx.args.path);
 
   const level = ctx.args.detail ?? 2;
@@ -56,8 +64,28 @@ async function runGraphView(ctx: CommandContext, format: "ir" | "mermaid"): Prom
   }
 
   const ir: GraphIR = applyDetail(buildGraphIr(result.entities, projectPath), level as DetailLevel);
-  console.log(format === "mermaid" ? toMermaid(ir) : JSON.stringify(ir, null, 2));
-  return 0;
+
+  switch (format) {
+    case "mermaid":
+      console.log(toMermaid(ir));
+      return 0;
+    case "dot":
+      console.log(toDot(ir));
+      return 0;
+    case "layout":
+      try {
+        const layout = await new GraphvizLayout().layout(toDot(ir));
+        console.log(JSON.stringify(layout, null, 2));
+        return 0;
+      } catch (err) {
+        console.error(formatError({ message: err instanceof Error ? err.message : String(err) }));
+        return 1;
+      }
+    case "ir":
+    default:
+      console.log(JSON.stringify(ir, null, 2));
+      return 0;
+  }
 }
 
 async function runOpGraph(): Promise<number> {
