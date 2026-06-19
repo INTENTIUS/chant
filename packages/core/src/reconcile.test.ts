@@ -222,3 +222,151 @@ describe("runGuardrailChecks", () => {
     expect(runGuardrailChecks(cs, [() => null])).toEqual({ ok: true });
   });
 });
+
+// ---------------------------------------------------------------------------
+// Reconcile runner (fake provider — proves provider-agnosticism)
+// ---------------------------------------------------------------------------
+
+import { runReconcile, BudgetExhaustedError } from "./reconcile";
+import type { Cycle } from "./reconcile";
+
+interface FakeClient {
+  calls: string[];
+}
+interface FakeConfig {
+  create?: number;
+}
+type FakeLive = Record<string, never>;
+
+function fakeCycle(
+  name: string,
+  over: Partial<Cycle<FakeClient, FakeConfig, FakeLive>> = {},
+): Cycle<FakeClient, FakeConfig, FakeLive> {
+  return {
+    name,
+    async fetchLive(client, scopeId, _scope, budget) {
+      budget.use(1);
+      client.calls.push(`fetch:${name}@${scopeId}`);
+      return {};
+    },
+    buildDesired(config) {
+      return config;
+    },
+    async apply(client, entry, _scopeId, _scope, budget) {
+      budget.use(1);
+      client.calls.push(`apply:${entry.key}`);
+    },
+    ...over,
+  };
+}
+
+// Injected diff: emit N create entries from config.create.
+const fakeDiff = (scopeId: string, desired: FakeConfig): ChangeSet => ({
+  org: scopeId,
+  entries: Array.from({ length: desired.create ?? 0 }, (_, i) => ({
+    kind: "create" as const,
+    resourceType: "thing",
+    key: `k${i}`,
+  })),
+});
+
+describe("runReconcile (generic)", () => {
+  test("dry-run reports the plan and mutates nothing", async () => {
+    const client: FakeClient = { calls: [] };
+    const result = await runReconcile<FakeClient, FakeConfig, FakeLive>({
+      client,
+      scopes: { acme: { create: 3 } },
+      cycles: [fakeCycle("c1")],
+      diff: fakeDiff,
+      mode: "dry-run",
+    });
+    expect(result.mode).toBe("dry-run");
+    expect(result.completed).toBe(true);
+    expect(result.cycles[0]!.counts.create).toBe(3);
+    expect(result.cycles[0]!.applied).toHaveLength(0);
+    expect(client.calls.filter((c) => c.startsWith("apply:"))).toHaveLength(0);
+  });
+
+  test("apply applies each entry across multiple scopes", async () => {
+    const client: FakeClient = { calls: [] };
+    const result = await runReconcile<FakeClient, FakeConfig, FakeLive>({
+      client,
+      scopes: { acme: { create: 2 }, beta: { create: 1 } },
+      cycles: [fakeCycle("c1")],
+      diff: fakeDiff,
+      mode: "apply",
+    });
+    expect(result.completed).toBe(true);
+    expect(result.cycles.flatMap((c) => c.applied)).toHaveLength(3);
+    expect(client.calls.filter((c) => c.startsWith("apply:"))).toHaveLength(3);
+  });
+
+  test("guardrails block the apply unless overridden", async () => {
+    const client: FakeClient = { calls: [] };
+    const opts = {
+      client,
+      scopes: { acme: { create: 1 } },
+      cycles: [fakeCycle("c1")],
+      diff: fakeDiff,
+      mode: "apply" as const,
+      guardrails: () => ({ ok: false as const, diagnostics: [{ guardrail: "x", message: "no" }] }),
+    };
+    const blocked = await runReconcile<FakeClient, FakeConfig, FakeLive>(opts);
+    expect(blocked.cycles[0]!.guardrailBlocked).toBe(true);
+    expect(blocked.cycles[0]!.applied).toHaveLength(0);
+
+    const overridden = await runReconcile<FakeClient, FakeConfig, FakeLive>({ ...opts, allowGuardrailOverride: true });
+    expect(overridden.cycles[0]!.guardrailBlocked).toBe(false);
+    expect(overridden.cycles[0]!.applied).toHaveLength(1);
+  });
+
+  test("records deferred work when the budget is exhausted", async () => {
+    const client: FakeClient = { calls: [] };
+    const result = await runReconcile<FakeClient, FakeConfig, FakeLive>({
+      client,
+      scopes: { acme: { create: 0 }, beta: { create: 0 } },
+      cycles: [fakeCycle("c1"), fakeCycle("c2")],
+      diff: fakeDiff,
+      requestBudget: 1, // only the first fetchLive fits
+    });
+    expect(result.completed).toBe(false);
+    expect(result.deferred.skippedCycles.length).toBeGreaterThan(0);
+  });
+
+  test("an errored fetchLive is recorded and the run continues", async () => {
+    const client: FakeClient = { calls: [] };
+    const boom = fakeCycle("boom", {
+      async fetchLive() {
+        throw new Error("kaboom");
+      },
+    });
+    const result = await runReconcile<FakeClient, FakeConfig, FakeLive>({
+      client,
+      scopes: { acme: { create: 1 } },
+      cycles: [boom, fakeCycle("ok")],
+      diff: fakeDiff,
+    });
+    expect(result.errored).toHaveLength(1);
+    expect(result.errored[0]!.name).toBe("boom");
+    expect(result.cycles.some((c) => c.name === "ok")).toBe(true); // ran past the error
+  });
+
+  test("a budget-exhausted throw mid-fetch is deferred, not errored", async () => {
+    const client: FakeClient = { calls: [] };
+    const greedy = fakeCycle("greedy", {
+      async fetchLive(_c, _s, _scope, budget) {
+        budget.use(1);
+        throw new BudgetExhaustedError();
+      },
+    });
+    const result = await runReconcile<FakeClient, FakeConfig, FakeLive>({
+      client,
+      scopes: { acme: { create: 0 } },
+      cycles: [greedy],
+      diff: fakeDiff,
+      requestBudget: 5,
+    });
+    expect(result.errored).toHaveLength(0);
+    expect(result.deferred.skippedCycles).toContain("greedy@acme");
+  });
+});
