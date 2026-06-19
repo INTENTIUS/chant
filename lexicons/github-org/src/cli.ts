@@ -251,8 +251,7 @@ function buildClient(args: ReconcileArgs) {
 // Main
 // ---------------------------------------------------------------------------
 
-async function main() {
-  const argv = process.argv.slice(2);
+async function main(argv: string[] = process.argv.slice(2)) {
 
   // Top-level subcommand dispatch.
   const subcommand = argv[0];
@@ -648,6 +647,18 @@ function printUsage() {
       "",
     ].join("\n"),
   );
+}
+
+/**
+ * Public entry point for programmatic invocation.
+ *
+ * Accepts the raw argv array (everything after the binary name, i.e.
+ * `process.argv.slice(2)`). Called by the committed bin launcher
+ * `bin/chant-governance.js` so that the launcher can `import` this module
+ * and invoke the CLI without being the ESM `import.meta.url` entrypoint.
+ */
+export async function run(argv: string[]): Promise<void> {
+  await main(argv);
 }
 
 // Run only when invoked as the entrypoint (the installed `bin`), not when this
