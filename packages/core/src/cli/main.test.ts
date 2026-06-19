@@ -72,6 +72,22 @@ describe("parseArgs", () => {
     expect(result.format).toBe("invalid"); // format is passed as-is to main
   });
 
+  test("parses graph --detail as a number", () => {
+    const result = parseArgs(["graph", "--format", "ir", "--detail", "1"]);
+    expect(result.detail).toBe(1);
+  });
+
+  test("parses graph --lens with a kind:target value", () => {
+    const result = parseArgs(["graph", "--format", "ir", "--lens", "blast:vpc"]);
+    expect(result.lens).toBe("blast:vpc");
+  });
+
+  test("parses graph --up and --down flags", () => {
+    const result = parseArgs(["graph", "--lens", "blast:vpc", "--up", "--down"]);
+    expect(result.up).toBe(true);
+    expect(result.down).toBe(true);
+  });
+
   test("combines multiple options", () => {
     const result = parseArgs([
       "build",
