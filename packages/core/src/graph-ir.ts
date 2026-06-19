@@ -40,11 +40,15 @@ export interface IRNode {
   /** Lexicon the resource belongs to, e.g. "gcp". */
   lexicon: string;
   /**
-   * Name of the composite that expanded this node, when it came from one.
-   * Composite-type-level today (e.g. "CockroachDbCluster"); instance-level
-   * grouping is a detail-tier concern (#494).
+   * Name of the composite *type* that expanded this node, when it came from one
+   * (e.g. "CockroachDbCluster").
    */
   compositeParent?: string;
+  /**
+   * The composite *instance* (export name) this node belongs to — shared by every
+   * node from the same composite call. Detail tiers collapse on this (#494).
+   */
+  compositeInstance?: string;
   /** Literal/const/ref-resolved props. References appear as `{ $ref }`. */
   attrs: Record<string, unknown>;
   /** Where the node was declared. */
@@ -59,6 +63,8 @@ export interface IREdge {
   kind: "ref";
   /** The consumer-side property the reference flows through, when derivable. */
   viaAttr?: string;
+  /** The producer-side attribute referenced (e.g. "id"). Added at detail T3. */
+  toAttr?: string;
 }
 
 /** Grouping metadata for cluster/subgraph rendering. Maps group name -> node ids. */
@@ -243,6 +249,7 @@ export function buildGraphIr(
       attrs: projectConfig(entity, new Set(), reverse),
     };
     if (prov?.composite) node.compositeParent = prov.composite;
+    if (prov?.compositeInstance) node.compositeInstance = prov.compositeInstance;
     const file = relFile(prov?.sourceFile, projectPath);
     if (file) node.sourceLoc = { file };
     nodes.push(node);

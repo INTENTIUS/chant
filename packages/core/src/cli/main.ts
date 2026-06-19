@@ -126,6 +126,8 @@ export function parseArgs(args: string[]): ParsedArgs {
       result.theme = args[++i];
     } else if (arg === "--stacks") {
       result.stacks = true;
+    } else if (arg === "--detail") {
+      result.detail = Number(args[++i]);
     } else if (arg === "--base") {
       result.base = args[++i];
     } else if (arg === "--head") {
@@ -191,7 +193,8 @@ Ops:
   run log <name>        Show run history for an Op
 
   graph                 Show Op dependency graph (--stacks for cross-stack order,
-                        --format ir for the lint-gated entity-graph IR)
+                        --format ir for the lint-gated entity-graph IR;
+                        --detail 0..3: stacks|composites|declarables|attributes)
 
 Lifecycle (alias: lc):
   lifecycle snapshot <env>  Query API, save metadata to orphan branch

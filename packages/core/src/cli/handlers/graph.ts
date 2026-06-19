@@ -3,6 +3,7 @@ import { discoverOps } from "../../op/discover";
 import { discover } from "../../discovery/index";
 import { partitionByLexicon, computeStackGraph } from "../../build";
 import { buildGraphIr } from "../../graph-ir";
+import { applyDetail, type DetailLevel } from "../../graph-detail";
 import { lintCommand } from "../commands/lint";
 import { formatError, formatWarning, formatBold } from "../format";
 import type { CommandContext } from "../registry";
@@ -27,6 +28,12 @@ export async function runGraph(ctx: CommandContext): Promise<number> {
 async function runGraphIr(ctx: CommandContext): Promise<number> {
   const projectPath = resolve(ctx.args.path === "." ? "." : ctx.args.path);
 
+  const level = ctx.args.detail ?? 2;
+  if (![0, 1, 2, 3].includes(level)) {
+    console.error(formatError({ message: `Invalid --detail ${level}. Expected 0, 1, 2, or 3.` }));
+    return 1;
+  }
+
   // Gate: only emit an IR for lint-clean source.
   const lint = await lintCommand({ path: ctx.args.path, format: "stylish" });
   if (!lint.success) {
@@ -45,7 +52,7 @@ async function runGraphIr(ctx: CommandContext): Promise<number> {
     return 1;
   }
 
-  const ir = buildGraphIr(result.entities, projectPath);
+  const ir = applyDetail(buildGraphIr(result.entities, projectPath), level as DetailLevel);
   console.log(JSON.stringify(ir, null, 2));
   return 0;
 }
