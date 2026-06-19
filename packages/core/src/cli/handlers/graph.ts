@@ -2,8 +2,9 @@ import { resolve } from "node:path";
 import { discoverOps } from "../../op/discover";
 import { discover } from "../../discovery/index";
 import { partitionByLexicon, computeStackGraph } from "../../build";
-import { buildGraphIr } from "../../graph-ir";
+import { buildGraphIr, type GraphIR } from "../../graph-ir";
 import { applyDetail, type DetailLevel } from "../../graph-detail";
+import { toMermaid } from "../../graph-mermaid";
 import { lintCommand } from "../commands/lint";
 import { formatError, formatWarning, formatBold } from "../format";
 import type { CommandContext } from "../registry";
@@ -11,21 +12,23 @@ import type { CommandContext } from "../registry";
 /**
  * `chant graph` — the Op dependency graph by default; `--stacks` renders the
  * cross-stack apply-ordering graph (edges, order, waves) chant computes from
- * cross-lexicon references; `--format ir` emits the full entity-graph IR
- * (lint-gated) for diagram painters and the agentic diagrammer (#493).
+ * cross-lexicon references; `--format ir|mermaid` emits the lint-gated
+ * entity-graph IR (or a Mermaid flowchart of it) for diagrams (#493/#496).
  */
 export async function runGraph(ctx: CommandContext): Promise<number> {
-  if (ctx.args.format === "ir") return runGraphIr(ctx);
+  if (ctx.args.format === "ir") return runGraphView(ctx, "ir");
+  if (ctx.args.format === "mermaid") return runGraphView(ctx, "mermaid");
   if (ctx.args.stacks) return runStackGraph(ctx);
   return runOpGraph();
 }
 
 /**
- * `chant graph --format ir` — emit the graph IR as JSON. Lint-gated: the IR is a
- * representation of valid infra, so we refuse to emit it for source that does
- * not pass lint (EVL + lexicon rules). Non-zero exit on discovery errors.
+ * `chant graph --format ir|mermaid` — build the graph IR (honouring `--detail`)
+ * and emit it as JSON or a Mermaid flowchart. Lint-gated: the IR represents
+ * valid infra, so we refuse to emit for source that does not pass lint (EVL +
+ * lexicon rules). Non-zero exit on discovery errors.
  */
-async function runGraphIr(ctx: CommandContext): Promise<number> {
+async function runGraphView(ctx: CommandContext, format: "ir" | "mermaid"): Promise<number> {
   const projectPath = resolve(ctx.args.path === "." ? "." : ctx.args.path);
 
   const level = ctx.args.detail ?? 2;
@@ -34,13 +37,13 @@ async function runGraphIr(ctx: CommandContext): Promise<number> {
     return 1;
   }
 
-  // Gate: only emit an IR for lint-clean source.
+  // Gate: only emit for lint-clean source.
   const lint = await lintCommand({ path: ctx.args.path, format: "stylish" });
   if (!lint.success) {
     console.error(
       formatError({
         message:
-          "Refusing to emit graph IR: source has lint errors. Run `chant lint` and fix them first.",
+          "Refusing to emit graph: source has lint errors. Run `chant lint` and fix them first.",
       }),
     );
     return 1;
@@ -52,8 +55,8 @@ async function runGraphIr(ctx: CommandContext): Promise<number> {
     return 1;
   }
 
-  const ir = applyDetail(buildGraphIr(result.entities, projectPath), level as DetailLevel);
-  console.log(JSON.stringify(ir, null, 2));
+  const ir: GraphIR = applyDetail(buildGraphIr(result.entities, projectPath), level as DetailLevel);
+  console.log(format === "mermaid" ? toMermaid(ir) : JSON.stringify(ir, null, 2));
   return 0;
 }
 
