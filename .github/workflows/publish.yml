@@ -30,7 +30,6 @@ jobs:
       - run: npm run --prefix lexicons/gitlab prepack
       - run: npm run --prefix lexicons/github prepack
       - run: npm run --prefix lexicons/forgejo prepack
-      - run: npm run --prefix lexicons/github-org prepack
       - run: npm run --prefix lexicons/k8s prepack
       - run: npm run --prefix lexicons/gcp prepack
       - run: npm run --prefix lexicons/helm prepack
@@ -95,13 +94,6 @@ jobs:
           V=$(node -e "process.stdout.write(require('./package.json').version)")
           P=$(npm view @intentius/chant-lexicon-forgejo version 2>/dev/null || echo "none")
           [ "$V" = "$P" ] && echo "Already at $V, skipping" || npm publish --access public --provenance
-
-# NOTE: @intentius/chant-lexicon-github-org is NOT published here yet. It is a new
-# package, and OIDC trusted publishing cannot bootstrap a package name that has no
-# trusted-publisher record on npm (first publish fails with ENEEDAUTH). It needs a
-# one-time bootstrap — configure trusted publishing for it on npmjs, or do a single
-# manual `npm publish` with an automation token — after which this step can be
-# re-added. Its build IS still verified via the prepack step in the test job.
 
       - name: Publish @intentius/chant-lexicon-k8s
         working-directory: lexicons/k8s

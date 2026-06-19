@@ -1,0 +1,18 @@
+digraph determinism_ladder {
+  rankdir=TB
+  labelloc="t"
+  label=<<b>Determinism: by avoidance vs. by enforcement</b><br/><font point-size="11" color="#475569">Kustomize-over-Helm buys determinism by avoidance. A compiler enforces it — same inputs, same YAML, always.</font><br/> >
+  graph [fontname="Helvetica,Arial,sans-serif" bgcolor="transparent" pad="0.5" ranksep="0.5" fontsize=20 fontcolor="#0F172A"]
+  node  [fontname="Helvetica,Arial,sans-serif" shape=box style="filled,rounded" width=5.2 margin="0.3,0.18"]
+  edge  [fontname="Helvetica,Arial,sans-serif" fontsize=10 fontcolor="#475569" color="#6366F1" penwidth=1.4]
+
+  helm  [label="Helm    ✗  non-deterministic\nnow() · lookup · randAlphaNum\nsame chart → different YAML"
+         fillcolor="#FEE2E2" color="#DC2626" fontcolor="#7F1D1D"]
+  kust  [label="Kustomize    ◐  deterministic by AVOIDANCE\nno templating — but only if you keep\navoiding Helm, by hand, forever"
+         fillcolor="#FEF3C7" color="#D97706" fontcolor="#78350F"]
+  chant [label="chant    ●  deterministic by ENFORCEMENT\nEVL lint rejects now() / lookup / function calls\nat build — non-determinism can't be merged"
+         fillcolor="#DCFCE7" color="#16A34A" fontcolor="#14532D" penwidth=2.4]
+
+  helm -> kust  [label="non-determinism — so teams avoid it"]
+  kust -> chant [label="enforce it instead of avoiding it by hand"]
+}

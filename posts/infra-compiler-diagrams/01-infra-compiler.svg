@@ -1,0 +1,47 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1120 470" font-family="Helvetica,Arial,sans-serif">
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#6366F1"/>
+    </marker>
+  </defs>
+
+  <!-- title -->
+  <text x="560" y="40" text-anchor="middle" font-size="29" font-weight="bold" fill="#0F172A">A TypeScript compiler for Kubernetes manifests</text>
+  <text x="560" y="68" text-anchor="middle" font-size="14" fill="#475569">Type-check, semantic lint, and deterministic synthesis for Flux and Argo manifests, in TypeScript, not a new DSL.</text>
+
+  <!-- ============ ROW 1  (read left to right) ============ -->
+  <rect x="40" y="110" width="250" height="92" rx="12" fill="#F1F5F9" stroke="#94A3B8" stroke-width="1.5"/>
+  <text x="165" y="150" text-anchor="middle" font-size="15" font-weight="bold" fill="#475569">Typed TypeScript</text>
+  <text x="165" y="172" text-anchor="middle" font-size="12" fill="#64748B">declared intent</text>
+
+  <rect x="350" y="104" width="420" height="104" rx="14" fill="#DCFCE7" stroke="#16A34A" stroke-width="3"/>
+  <text x="560" y="138" text-anchor="middle" font-size="16" font-weight="bold" fill="#14532D">chant</text>
+  <text x="560" y="160" text-anchor="middle" font-size="14" font-weight="bold" fill="#15803D">a TypeScript infrastructure compiler</text>
+  <text x="560" y="182" text-anchor="middle" font-size="11.5" fill="#166534">type-check · semantic lint · deterministic synthesis</text>
+
+  <rect x="830" y="110" width="250" height="92" rx="12" fill="#F1F5F9" stroke="#94A3B8" stroke-width="1.5"/>
+  <text x="955" y="152" text-anchor="middle" font-size="15" font-weight="bold" fill="#475569">Native Kubernetes YAML</text>
+  <text x="955" y="176" text-anchor="middle" font-size="11.5" fill="#64748B">standard manifests · zero lock-in</text>
+
+  <line x1="292" y1="156" x2="344" y2="156" stroke="#6366F1" stroke-width="2.5" marker-end="url(#arrow)"/>
+  <line x1="772" y1="156" x2="824" y2="156" stroke="#6366F1" stroke-width="2.5" marker-end="url(#arrow)"/>
+
+  <line x1="955" y1="202" x2="955" y2="286" stroke="#6366F1" stroke-width="2.5" marker-end="url(#arrow)"/>
+  <text x="970" y="248" font-size="11.5" font-style="italic" fill="#64748B">commit</text>
+
+  <!-- ============ ROW 2  (read right to left) ============ -->
+  <rect x="855" y="290" width="200" height="84" rx="12" fill="#E2E8F0" stroke="#64748B" stroke-width="1.5"/>
+  <text x="955" y="338" text-anchor="middle" font-size="16" font-weight="bold" fill="#334155">git</text>
+
+  <rect x="350" y="284" width="420" height="96" rx="12" fill="#F3E8FF" stroke="#7C3AED" stroke-width="2"/>
+  <text x="560" y="314" text-anchor="middle" font-size="14" font-weight="bold" fill="#3B0764">Deploy + reconcile layer</text>
+  <text x="560" y="336" text-anchor="middle" font-size="12" fill="#5B21B6">GitOps · CI · cloud-native apply</text>
+  <text x="560" y="356" text-anchor="middle" font-size="12" fill="#5B21B6">drift detection + alerts</text>
+
+  <rect x="40" y="290" width="250" height="84" rx="12" fill="#F1F5F9" stroke="#94A3B8" stroke-width="1.5"/>
+  <text x="165" y="338" text-anchor="middle" font-size="15" font-weight="bold" fill="#475569">cluster + cloud</text>
+
+  <line x1="853" y1="332" x2="774" y2="332" stroke="#6366F1" stroke-width="2.5" marker-end="url(#arrow)"/>
+  <line x1="348" y1="332" x2="294" y2="332" stroke="#6366F1" stroke-width="2.5" marker-end="url(#arrow)"/>
+</svg>
