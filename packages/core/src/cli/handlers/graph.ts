@@ -2,17 +2,52 @@ import { resolve } from "node:path";
 import { discoverOps } from "../../op/discover";
 import { discover } from "../../discovery/index";
 import { partitionByLexicon, computeStackGraph } from "../../build";
+import { buildGraphIr } from "../../graph-ir";
+import { lintCommand } from "../commands/lint";
 import { formatError, formatWarning, formatBold } from "../format";
 import type { CommandContext } from "../registry";
 
 /**
  * `chant graph` — the Op dependency graph by default; `--stacks` renders the
  * cross-stack apply-ordering graph (edges, order, waves) chant computes from
- * cross-lexicon references.
+ * cross-lexicon references; `--format ir` emits the full entity-graph IR
+ * (lint-gated) for diagram painters and the agentic diagrammer (#493).
  */
 export async function runGraph(ctx: CommandContext): Promise<number> {
+  if (ctx.args.format === "ir") return runGraphIr(ctx);
   if (ctx.args.stacks) return runStackGraph(ctx);
   return runOpGraph();
+}
+
+/**
+ * `chant graph --format ir` — emit the graph IR as JSON. Lint-gated: the IR is a
+ * representation of valid infra, so we refuse to emit it for source that does
+ * not pass lint (EVL + lexicon rules). Non-zero exit on discovery errors.
+ */
+async function runGraphIr(ctx: CommandContext): Promise<number> {
+  const projectPath = resolve(ctx.args.path === "." ? "." : ctx.args.path);
+
+  // Gate: only emit an IR for lint-clean source.
+  const lint = await lintCommand({ path: ctx.args.path, format: "stylish" });
+  if (!lint.success) {
+    console.error(
+      formatError({
+        message:
+          "Refusing to emit graph IR: source has lint errors. Run `chant lint` and fix them first.",
+      }),
+    );
+    return 1;
+  }
+
+  const result = await discover(projectPath);
+  if (result.errors.length > 0) {
+    for (const e of result.errors) console.error(formatError({ message: e.message }));
+    return 1;
+  }
+
+  const ir = buildGraphIr(result.entities, projectPath);
+  console.log(JSON.stringify(ir, null, 2));
+  return 0;
 }
 
 async function runOpGraph(): Promise<number> {
