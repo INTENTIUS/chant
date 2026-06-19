@@ -15,8 +15,15 @@ const PROVENANCE = Symbol.for("chant.provenance");
 export interface EntityProvenance {
   /** Absolute path of the source file that declared (or exported) the entity. */
   sourceFile?: string;
-  /** The composite that expanded this entity, when it came from one. */
+  /** The composite (type) that expanded this entity, when it came from one. */
   composite?: string;
+  /**
+   * The composite *instance* this entity belongs to — the export name of the
+   * top-level composite, shared by every member it expanded to. Distinguishes
+   * two instances of the same composite type, which `composite` cannot. Used to
+   * collapse a composite to a single node at coarse diagram detail levels (#494).
+   */
+  compositeInstance?: string;
 }
 
 /**
@@ -30,6 +37,7 @@ export function setProvenance(entity: object, prov: EntityProvenance): void {
   if (existing) {
     existing.sourceFile ??= prov.sourceFile;
     existing.composite ??= prov.composite;
+    existing.compositeInstance ??= prov.compositeInstance;
     return;
   }
   Object.defineProperty(entity, PROVENANCE, {

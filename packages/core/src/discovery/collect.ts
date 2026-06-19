@@ -58,7 +58,7 @@ export function collectEntities(
                   "resolution",
                 );
               }
-              setProvenance(entity, { sourceFile: file });
+              setProvenance(entity, { sourceFile: file, compositeInstance: indexedName });
               entities.set(expandedName, entity);
             }
           }
@@ -73,7 +73,7 @@ export function collectEntities(
               "resolution",
             );
           }
-          setProvenance(entity, { sourceFile: file });
+          setProvenance(entity, { sourceFile: file, compositeInstance: name });
           entities.set(expandedName, entity);
         }
       } else if (isLexiconOutput(value)) {
