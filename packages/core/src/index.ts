@@ -25,6 +25,7 @@ export * from "./discovery/graph";
 export * from "./discovery/index";
 export * from "./discovery/cache";
 export * from "./build";
+export * from "./graph-ir";
 export * from "./detectLexicon";
 export * from "./lint/parser";
 export * from "./lint/rule";

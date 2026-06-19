@@ -190,7 +190,8 @@ Ops:
   run cancel <name>     Cancel the active workflow run (requires --force)
   run log <name>        Show run history for an Op
 
-  graph                 Show Op dependency graph (--stacks for cross-stack order)
+  graph                 Show Op dependency graph (--stacks for cross-stack order,
+                        --format ir for the lint-gated entity-graph IR)
 
 Lifecycle (alias: lc):
   lifecycle snapshot <env>  Query API, save metadata to orphan branch
