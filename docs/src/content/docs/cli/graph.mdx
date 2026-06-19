@@ -1,23 +1,87 @@
 ---
 title: "chant graph"
-description: Print the Op dependency graph
+description: Print the Op graph, the cross-stack apply order, or the infra graph as IR, Mermaid, DOT, or layout positions
 ---
 
 ## Synopsis
 
 ```
 chant graph [path] [--stacks] [--json]
+chant graph [path] --format ir|mermaid|dot|layout [--detail 0..3] [--lens <kind>:<target>] [--up] [--down]
 ```
 
 ## Description
 
-`chant graph` discovers all `*.op.ts` files under the given path and prints the dependency edges declared via the `depends` field of each Op.
+`chant graph` has three modes:
 
-If no Ops declare dependencies the output is `No Op dependencies`. If no `*.op.ts` files are found the output is `No Ops found`.
+- **default** — the Op dependency graph (edges from each Op's `depends` field).
+- **`--stacks`** — the cross-stack apply-ordering graph.
+- **`--format ir|mermaid|dot|layout`** — the **infrastructure graph** chant resolves during synthesis, emitted for diagrams. This is the graph of your declared resources and the references between them.
+
+The infra-graph formats are a pure function of lint-clean source — every node traces to a source file, every edge is a real cross-resource reference. They are **lint-gated**: chant refuses to emit a graph for source that does not pass `chant lint`, because the graph represents valid infrastructure.
+
+## Infra graph: `--format`
+
+```bash
+chant graph ./infra --format mermaid   # paste-able Mermaid flowchart (renders in GitHub)
+chant graph ./infra --format ir        # the graph IR as JSON (the contract for tools)
+chant graph ./infra --format dot       # Graphviz DOT (render with `dot -Tsvg`)
+chant graph ./infra --format layout    # node positions from Graphviz (needs `dot`)
+```
+
+| Format | Output | Needs |
+|--------|--------|-------|
+| `mermaid` | A Mermaid `flowchart` with one subgraph per lexicon. The **zero-install default** — renders in GitHub, docs, and browsers. | nothing |
+| `ir` | The graph IR as JSON: `nodes` (id, kind, lexicon, attrs, sourceLoc, composite info), `edges` (real references, labelled with the consumer property), and `groups`. The stable contract downstream diagram tools consume. | nothing |
+| `dot` | Graphviz DOT text, with lexicon clusters and labelled edges. Render directly with `dot -Tsvg`, or feed to a layout engine. | nothing to produce; `dot` to render |
+| `layout` | Node positions from a layout engine: `{ width, height, nodes: [{id, x, y}] }`. For a custom painter that does its own drawing (Graphviz for layout only). | `dot` (`brew install graphviz`) |
+
+If `dot` is not installed, `--format layout` exits non-zero with an install hint and points you at `--format mermaid`, which needs no native dependency.
+
+## Detail tiers: `--detail 0..3`
+
+The detail dial controls how much of the graph each format shows. It is a transform over the same IR, so it works with every `--format`.
+
+| Level | Name | Shows |
+|-------|------|-------|
+| `0` | stacks | one node per lexicon; edges are cross-lexicon dependencies |
+| `1` | composites | each composite instance collapsed to a single node |
+| `2` | declarables | every resource (the default) |
+| `3` | attributes | declarables, plus the referenced attribute on each edge |
+
+```bash
+chant graph ./infra --format mermaid --detail 0   # high-level: lexicons only
+chant graph ./infra --format mermaid --detail 1   # composites as single nodes
+chant graph ./infra --format ir --detail 3        # every resource + attribute-level edges
+```
+
+A handful of composites at `--detail 2` expands to every resource they declare — you describe a few, the graph shows the whole set. Turn the dial down to `0`/`1` for an overview.
+
+## Lenses: `--lens <kind>:<target>`
+
+Lenses focus the graph on a slice. They compose with `--detail` (the lens is applied first, then the detail tier).
+
+| Lens | Keeps |
+|------|-------|
+| `lexicon:<name>` | only that lexicon's nodes |
+| `stack:<name>` | only one stack's nodes (stacks map to lexicon partitions today) |
+| `blast:<node>` | the transitive neighbourhood of a node |
+
+For `blast:`, choose a direction (default is both):
+
+- `--up` — what the node depends on (its producers)
+- `--down` — what depends on the node (its dependents)
+
+```bash
+chant graph ./infra --format mermaid --lens lexicon:gcp
+chant graph ./infra --format mermaid --lens blast:vpc --down   # everything that depends on the VPC
+```
+
+A lens drops edges that would dangle and rebuilds group metadata, so the result is always a self-consistent graph. An unknown or no-match target exits non-zero with a clear message.
 
 ## `--stacks` — cross-stack apply order
 
-`chant graph --stacks [path]` renders the **cross-stack apply-ordering graph** instead of the Op graph. chant resolves cross-lexicon references during build (a resource in one stack referencing an attribute of a resource in another) and already knows the order — a stack that *exports* a value must apply before the stack that *imports* it. `--stacks` surfaces that as tool-agnostic data for your orchestrator (CI, an Op, a platform tool). chant **exposes** the order; it does not drive the apply.
+`chant graph --stacks [path]` renders the **cross-stack apply-ordering graph** instead. chant resolves cross-lexicon references during build and already knows the order — a stack that *exports* a value must apply before the stack that *imports* it. `--stacks` surfaces that as tool-agnostic data for your orchestrator. chant **exposes** the order; it does not drive the apply.
 
 ```bash
 chant graph --stacks ./infra
@@ -35,35 +99,26 @@ Dependencies (consumer → producer):
   k8s → aws
 ```
 
-## Usage
+## Op graph (default)
+
+With no format flag, `chant graph` discovers all `*.op.ts` files under the given path and prints the dependency edges declared via each Op's `depends` field.
 
 ```bash
-# Graph Ops in current directory
-chant graph
-
-# Graph Ops in a specific directory
-chant graph ./infra
+chant graph            # Ops in the current directory
+chant graph ./infra    # Ops in a specific directory
 ```
 
-## Output Format
-
-Each dependency is printed as one edge per line:
-
-```
-infra-bootstrap → alb-deploy
-infra-bootstrap → app-deploy
-```
-
-The format is `<dependency> → <dependent>`, meaning the left Op must complete before the right Op can run.
+Each dependency prints as one edge per line, `<dependency> → <dependent>` — the left Op must complete before the right Op can run. If no Ops declare dependencies the output is `No Op dependencies`; if no `*.op.ts` files are found, `No Ops found`.
 
 ## Exit Codes
 
 | Code | Meaning |
 |------|---------|
 | 0 | Success |
-| 1 | Discovery errors, or (with `--stacks`) a dependency cycle |
+| 1 | Discovery errors; lint errors (infra-graph formats); a dependency cycle (`--stacks`); an invalid `--detail`/`--lens`; or a missing `dot` for `--format layout` |
 
 ## See Also
 
 - [Ops guide](/chant/guide/ops/) — define Op dependencies with `depends`
-- [`chant run`](/chant/cli/run/) — execute an Op workflow
+- [`chant lint`](/chant/cli/lint/) — the gate the infra-graph formats run first
+- [`chant build`](/chant/cli/build/) — synthesize the artifacts the graph describes
