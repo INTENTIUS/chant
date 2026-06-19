@@ -23,9 +23,10 @@
   ],
   "type": "module",
   "bin": {
-    "chant-governance": "./dist/cli.js"
+    "chant-governance": "./bin/chant-governance.js"
   },
   "files": [
+    "bin/",
     "src/",
     "dist/"
   ],
