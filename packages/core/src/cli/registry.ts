@@ -59,6 +59,12 @@ export interface ParsedArgs {
   stacks?: boolean;
   /** `chant graph --format ir --detail <0..3>` — graph IR detail tier */
   detail?: number;
+  /** `chant graph --lens <kind>:<target>` — focus the graph IR on a slice */
+  lens?: string;
+  /** `chant graph --lens blast:<node> --up` — include upstream producers */
+  up?: boolean;
+  /** `chant graph --lens blast:<node> --down` — include downstream dependents */
+  down?: boolean;
   /** `chant lifecycle affected --base <ref>` — base git ref to diff against */
   base?: string;
   /** `chant lifecycle affected --head <ref>` — head git ref (default: working tree) */
