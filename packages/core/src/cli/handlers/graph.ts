@@ -7,8 +7,9 @@ import { applyDetail, type DetailLevel } from "../../graph-detail";
 import { applyLens, parseLens } from "../../graph-lens";
 import { toMermaid } from "../../graph-mermaid";
 import { toDot } from "../../graph-dot";
-import { GraphvizLayout } from "../../graph-layout";
+import { getLayoutEngine, toLayoutInput, type NodeSize } from "../../graph-layout";
 import { lintCommand } from "../commands/lint";
+import { readFileSync } from "node:fs";
 import { formatError, formatWarning, formatBold } from "../format";
 import type { CommandContext } from "../registry";
 
@@ -30,9 +31,11 @@ export async function runGraph(ctx: CommandContext): Promise<number> {
 /**
  * `chant graph --format ir|mermaid|dot|layout` — build the graph IR (honouring
  * `--detail`) and emit it as JSON, a Mermaid flowchart, Graphviz DOT, or node
- * positions from a layout engine. Lint-gated: the IR represents valid infra, so
- * we refuse to emit for source that does not pass lint. Non-zero on discovery
- * errors, or on a missing `dot` for `--format layout`.
+ * positions from a layout engine. `layout` takes optional painter-measured
+ * `--node-sizes` so spacing fits real node footprints, and defaults to the dagre
+ * engine (no native dependency); `--layout-engine graphviz` opts into `dot`.
+ * Lint-gated: the IR represents valid infra, so we refuse to emit for source that
+ * does not pass lint. Non-zero on discovery errors or a layout-engine failure.
  */
 async function runGraphView(
   ctx: CommandContext,
@@ -86,7 +89,9 @@ async function runGraphView(
       return 0;
     case "layout":
       try {
-        const layout = await new GraphvizLayout().layout(toDot(ir));
+        const sizes = readNodeSizes(ctx.args.nodeSizes);
+        const engine = getLayoutEngine(ctx.args.layoutEngine);
+        const layout = await engine.layout(toLayoutInput(ir, sizes));
         console.log(JSON.stringify(layout, null, 2));
         return 0;
       } catch (err) {
@@ -98,6 +103,40 @@ async function runGraphView(
       console.log(JSON.stringify(ir, null, 2));
       return 0;
   }
+}
+
+/**
+ * Resolve the `--node-sizes` value into a `{ id: {w, h} }` map. The spec is one
+ * of: inline JSON, `-` (read JSON from stdin, to dodge arg-length limits), or
+ * `@path` (read from a file). Empty/absent → no sizes (engine uses defaults).
+ * Throws on malformed JSON so a typo fails loudly rather than mis-laying out.
+ */
+function readNodeSizes(spec?: string): Record<string, NodeSize> {
+  if (!spec) return {};
+  let raw: string;
+  if (spec === "-") raw = readFileSync(0, "utf8");
+  else if (spec.startsWith("@")) raw = readFileSync(spec.slice(1), "utf8");
+  else raw = spec;
+  raw = raw.trim();
+  if (!raw) return {};
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch (err) {
+    throw new Error(`--node-sizes is not valid JSON: ${err instanceof Error ? err.message : String(err)}`);
+  }
+  if (typeof parsed !== "object" || parsed === null) {
+    throw new Error("--node-sizes must be a JSON object mapping node id → {w, h}");
+  }
+  const out: Record<string, NodeSize> = {};
+  for (const [id, val] of Object.entries(parsed as Record<string, unknown>)) {
+    const v = val as { w?: unknown; h?: unknown };
+    if (typeof v?.w === "number" && typeof v?.h === "number" && v.w > 0 && v.h > 0) {
+      out[id] = { w: v.w, h: v.h };
+    }
+  }
+  return out;
 }
 
 async function runOpGraph(): Promise<number> {

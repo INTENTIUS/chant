@@ -18,14 +18,12 @@ vi.mock("../commands/lint", () => ({
   lintCommand: () => lintMock(),
 }));
 
-// Avoid shelling out to graphviz in tests; the format dispatch is what matters.
+// Avoid running a real layout engine in tests; the format dispatch + size/engine
+// plumbing is what matters here (engines have their own unit tests).
 const layoutMock = vi.fn();
 vi.mock("../../graph-layout", () => ({
-  GraphvizLayout: class {
-    layout() {
-      return layoutMock();
-    }
-  },
+  toLayoutInput: (ir: { nodes: { id: string }[] }, sizes: unknown) => ({ ir, sizes }),
+  getLayoutEngine: (name?: string) => ({ name: name ?? "dagre", layout: (input: unknown) => layoutMock(input) }),
 }));
 
 const { runGraph } = await import("./graph");

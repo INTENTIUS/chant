@@ -65,6 +65,11 @@ export interface ParsedArgs {
   up?: boolean;
   /** `chant graph --lens blast:<node> --down` — include downstream dependents */
   down?: boolean;
+  /** `chant graph --format layout --node-sizes <json|-|@file>` — painter-measured
+   * node footprints `{id:{w,h}}` so the layout spaces for real card sizes (#509). */
+  nodeSizes?: string;
+  /** `chant graph --format layout --layout-engine dagre|graphviz` (default dagre). */
+  layoutEngine?: string;
   /** `chant lifecycle affected --base <ref>` — base git ref to diff against */
   base?: string;
   /** `chant lifecycle affected --head <ref>` — head git ref (default: working tree) */

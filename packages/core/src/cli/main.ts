@@ -134,6 +134,10 @@ export function parseArgs(args: string[]): ParsedArgs {
       result.up = true;
     } else if (arg === "--down") {
       result.down = true;
+    } else if (arg === "--node-sizes") {
+      result.nodeSizes = args[++i];
+    } else if (arg === "--layout-engine") {
+      result.layoutEngine = args[++i];
     } else if (arg === "--base") {
       result.base = args[++i];
     } else if (arg === "--head") {
@@ -200,8 +204,10 @@ Ops:
 
   graph                 Show Op dependency graph (--stacks for cross-stack order,
                         --format ir|mermaid|dot|layout for the lint-gated graph IR,
-                        a Mermaid flowchart, Graphviz DOT, or node positions
-                        (layout needs graphviz);
+                        a Mermaid flowchart, Graphviz DOT, or node positions;
+                        layout uses dagre by default (no native dep) — pass
+                        --node-sizes <json|-|@file> for size-aware spacing,
+                        --layout-engine graphviz to use dot instead;
                         --detail 0..3: stacks|composites|declarables|attributes;
                         --lens lexicon:<n>|stack:<n>|blast:<node> (--up/--down))
 

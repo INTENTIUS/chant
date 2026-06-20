@@ -8,6 +8,7 @@ description: Print the Op graph, the cross-stack apply order, or the infra graph
 ```
 chant graph [path] [--stacks] [--json]
 chant graph [path] --format ir|mermaid|dot|layout [--detail 0..3] [--lens <kind>:<target>] [--up] [--down]
+chant graph [path] --format layout [--node-sizes <json|-|@file>] [--layout-engine dagre|graphviz]
 ```
 
 ## Description
@@ -26,7 +27,7 @@ The infra-graph formats are a pure function of lint-clean source — every node 
 chant graph ./infra --format mermaid   # paste-able Mermaid flowchart (renders in GitHub)
 chant graph ./infra --format ir        # the graph IR as JSON (the contract for tools)
 chant graph ./infra --format dot       # Graphviz DOT (render with `dot -Tsvg`)
-chant graph ./infra --format layout    # node positions from Graphviz (needs `dot`)
+chant graph ./infra --format layout    # node positions (dagre by default — no native dep)
 ```
 
 | Format | Output | Needs |
@@ -34,9 +35,23 @@ chant graph ./infra --format layout    # node positions from Graphviz (needs `do
 | `mermaid` | A Mermaid `flowchart` with one subgraph per lexicon. The **zero-install default** — renders in GitHub, docs, and browsers. | nothing |
 | `ir` | The graph IR as JSON: `nodes` (id, kind, lexicon, attrs, sourceLoc, composite info), `edges` (real references, labelled with the consumer property), and `groups`. The stable contract downstream diagram tools consume. | nothing |
 | `dot` | Graphviz DOT text, with lexicon clusters and labelled edges. Render directly with `dot -Tsvg`, or feed to a layout engine. | nothing to produce; `dot` to render |
-| `layout` | Node positions from a layout engine: `{ width, height, nodes: [{id, x, y}] }`. For a custom painter that does its own drawing (Graphviz for layout only). | `dot` (`brew install graphviz`) |
+| `layout` | Node positions for a custom painter that does its own drawing: `{ width, height, nodes: [{id, x, y, w, h}] }` (y-up, origin bottom-left). | nothing (dagre); `dot` only with `--layout-engine graphviz` |
 
-If `dot` is not installed, `--format layout` exits non-zero with an install hint and points you at `--format mermaid`, which needs no native dependency.
+### `--format layout`: size-aware positions
+
+The layout step exists for **custom painters** (the [pinhole](https://github.com/INTENTIUS/pinhole) diagrammer is one): chant computes positions, the painter draws. By default it uses **dagre** — a pure-JS engine, so `--format layout` needs **no native dependency**.
+
+A painter draws nodes at a real size (cards, icons, labels), so it can pass those footprints in and get spacing that fits them — no node overlap:
+
+```bash
+# {id: {w, h}} in layout units (≈ px). Inline, or '-' for stdin, or '@file.json'.
+chant graph ./infra --format layout --node-sizes '{"vpc":{"w":180,"h":68}, ...}'
+echo "$SIZES" | chant graph ./infra --format layout --node-sizes -
+```
+
+Without `--node-sizes`, nodes fall back to a default box (the layout still works, but a painter with larger nodes may need to space them itself).
+
+To use Graphviz for layout instead of dagre (e.g. to match `dot`'s routing), pass `--layout-engine graphviz` — this is the only path that needs `dot` (`brew install graphviz`), and it honours lexicon clusters.
 
 ## Detail tiers: `--detail 0..3`
 
@@ -115,7 +130,7 @@ Each dependency prints as one edge per line, `<dependency> → <dependent>` — 
 | Code | Meaning |
 |------|---------|
 | 0 | Success |
-| 1 | Discovery errors; lint errors (infra-graph formats); a dependency cycle (`--stacks`); an invalid `--detail`/`--lens`; or a missing `dot` for `--format layout` |
+| 1 | Discovery errors; lint errors (infra-graph formats); a dependency cycle (`--stacks`); an invalid `--detail`/`--lens`; malformed `--node-sizes`; or a layout-engine failure (e.g. missing `dot` with `--layout-engine graphviz`) |
 
 ## See Also
 
