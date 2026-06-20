@@ -42,6 +42,30 @@ describe("buildGraphIr", () => {
     });
   });
 
+  test("treats a foreign AttrRef (different @intentius/chant copy) as a ref, not an opaque intrinsic (#511)", () => {
+    // A lexicon built against a *separate* copy of chant produces AttrRefs that
+    // fail `instanceof AttrRef` here but carry the global-symbol brand + shape.
+    // (This is the pinhole install scenario; before #511 it flattened to
+    // `{$intrinsic}` with no edge.)
+    const vpc = decl({ lexicon: "aws", entityType: "Vpc" });
+    const foreignRef = {
+      [Symbol.for("chant.intrinsic")]: true,
+      parent: new WeakRef(vpc),
+      attribute: "VpcId",
+      _setLogicalName() {}, // shape utils.isAttrRefLike duck-types on
+      getLogicalName: () => undefined, // resolves via object identity in the reverse map
+    };
+    const sg = decl({ lexicon: "aws", entityType: "SecurityGroup", props: { VpcId: foreignRef } });
+    const entities = new Map<string, Declarable>([
+      ["vpc", vpc],
+      ["sg", sg],
+    ]);
+
+    const ir = buildGraphIr(entities);
+    expect(ir.edges).toEqual([{ from: "sg", to: "vpc", kind: "ref", viaAttr: "VpcId" }]);
+    expect(ir.nodes.find((n) => n.id === "sg")!.attrs).toEqual({ VpcId: { $ref: "vpc.VpcId" } });
+  });
+
   test("excludes property-kind declarables and keeps resources", () => {
     const resource = decl({ lexicon: "k8s", entityType: "Deployment" });
     const prop = decl({ lexicon: "k8s", entityType: "Probe", kind: "property" as const });
