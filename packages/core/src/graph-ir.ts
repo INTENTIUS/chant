@@ -1,5 +1,6 @@
 import { relative, isAbsolute } from "node:path";
 import { AttrRef } from "./attrref";
+import { isAttrRefLike } from "./utils";
 import { type Declarable, isDeclarable } from "./declarable";
 import { isLexiconOutput } from "./lexicon-output";
 import { getProvenance } from "./provenance";
@@ -113,7 +114,11 @@ function project(value: unknown, seen: Set<unknown>, reverse: Map<object, string
   if (t === "string" || t === "number" || t === "boolean") return value;
   if (t !== "object") return undefined; // functions, symbols, undefined
 
-  if (value instanceof AttrRef) {
+  // Duck-type, not `instanceof`: a lexicon built against a different copy of
+  // `@intentius/chant` produces AttrRefs that fail `instanceof AttrRef` but carry
+  // the same shape. Without this, a real cross-resource reference falls through to
+  // the intrinsic branch below and is silently flattened to `{$intrinsic}` (#511).
+  if (isAttrRefLike(value)) {
     const to = refTarget(value, reverse);
     return { $ref: to ? `${to}.${value.attribute}` : value.attribute } satisfies AttrRefEnvelope;
   }
@@ -192,7 +197,7 @@ function collectEdges(
   const seen = new Set<unknown>();
   const visit = (value: unknown, viaAttr: string): void => {
     if (value === null || typeof value !== "object") return;
-    if (value instanceof AttrRef) {
+    if (isAttrRefLike(value)) {
       const to = refTarget(value, reverse);
       if (to && to !== from && nodeIds.has(to)) {
         edges.push({ from, to, kind: "ref", viaAttr });
