@@ -133,6 +133,9 @@ describe("buildGraphIr", () => {
     const ir = buildGraphIr(entities);
     expect(ir.nodes.map((n) => n.id)).toEqual(["alpha", "mid", "zeta"]); // sorted
     expect(ir.groups.byLexicon).toEqual({ gcp: ["alpha", "zeta"], k8s: ["mid"] });
+    // byStack mirrors the lexicon partition today (each lexicon → one deployable
+    // stack); emitted as its own axis so consumers read stacks, not lexicons (#513).
+    expect(ir.groups.byStack).toEqual({ gcp: ["alpha", "zeta"], k8s: ["mid"] });
 
     // Same input (different insertion order) yields identical IR.
     const reordered = new Map<string, Declarable>([
