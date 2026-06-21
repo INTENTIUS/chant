@@ -72,7 +72,9 @@ export interface IREdge {
 export interface IRGroups {
   byLexicon?: Record<string, string[]>;
   byComposite?: Record<string, string[]>;
-  /** Reserved for stack grouping (#494). */
+  /** Deployable-stack grouping (`stackName → nodeIds`). A stack is a lexicon
+   * partition today; #513 phase 2 regroups by nested child-project. Consumers
+   * (e.g. pinhole's boundary boxes) read this rather than inferring stacks. */
   byStack?: Record<string, string[]>;
 }
 
@@ -243,6 +245,7 @@ export function buildGraphIr(
   const nodes: IRNode[] = [];
   const byLexicon: Record<string, string[]> = {};
   const byComposite: Record<string, string[]> = {};
+  const byStack: Record<string, string[]> = {};
 
   for (const [name, entity] of entities) {
     if (!nodeIds.has(name)) continue;
@@ -260,6 +263,12 @@ export function buildGraphIr(
     nodes.push(node);
 
     (byLexicon[entity.lexicon] ??= []).push(name);
+    // A stack is a lexicon partition (each lexicon serialises to one deployable
+    // stack — a CloudFormation template, a CI config). `byStack` mirrors that
+    // today; #513 phase 2 will regroup it by nested child-project. It's a
+    // distinct axis from `byLexicon` (which is for provenance/colouring), so it's
+    // emitted separately even where the two currently coincide.
+    (byStack[entity.lexicon] ??= []).push(name);
     if (prov?.composite) (byComposite[prov.composite] ??= []).push(name);
   }
 
@@ -275,10 +284,12 @@ export function buildGraphIr(
   const edges = [...edgeMap.values()].sort((a, b) => edgeKey(a).localeCompare(edgeKey(b)));
   for (const ids of Object.values(byLexicon)) ids.sort();
   for (const ids of Object.values(byComposite)) ids.sort();
+  for (const ids of Object.values(byStack)) ids.sort();
 
   const groups: IRGroups = {};
   if (Object.keys(byLexicon).length) groups.byLexicon = sortKeys(byLexicon);
   if (Object.keys(byComposite).length) groups.byComposite = sortKeys(byComposite);
+  if (Object.keys(byStack).length) groups.byStack = sortKeys(byStack);
 
   return { nodes, edges, groups };
 }
