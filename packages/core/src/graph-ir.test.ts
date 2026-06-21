@@ -2,6 +2,7 @@ import { describe, test, expect } from "vitest";
 import { buildGraphIr } from "./graph-ir";
 import { DECLARABLE_MARKER, type Declarable } from "./declarable";
 import { AttrRef } from "./attrref";
+import { LexiconOutput } from "./lexicon-output";
 import { resolveAttrRefs } from "./discovery/resolve";
 import { setProvenance } from "./provenance";
 
@@ -64,6 +65,20 @@ describe("buildGraphIr", () => {
     const ir = buildGraphIr(entities);
     expect(ir.edges).toEqual([{ from: "sg", to: "vpc", kind: "ref", viaAttr: "VpcId" }]);
     expect(ir.nodes.find((n) => n.id === "sg")!.attrs).toEqual({ VpcId: { $ref: "vpc.VpcId" } });
+  });
+
+  test("surfaces cross-stack exports with the producing node, not as nodes (#513)", () => {
+    const cluster = decl({ lexicon: "aws", entityType: "AWS::ECS::Cluster" });
+    const out = new LexiconOutput(new AttrRef(cluster, "Arn"), "ClusterArn");
+    const entities = new Map<string, Declarable>([
+      ["cluster", cluster],
+      ["clusterArn", out as unknown as Declarable],
+    ]);
+    resolveAttrRefs(entities);
+
+    const ir = buildGraphIr(entities);
+    expect(ir.nodes.map((n) => n.id)).toEqual(["cluster"]); // the output itself is not a node
+    expect(ir.exports).toEqual([{ name: "ClusterArn", node: "cluster", attr: "Arn" }]);
   });
 
   test("excludes property-kind declarables and keeps resources", () => {

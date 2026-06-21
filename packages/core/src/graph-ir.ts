@@ -2,7 +2,7 @@ import { relative, isAbsolute } from "node:path";
 import { AttrRef } from "./attrref";
 import { isAttrRefLike } from "./utils";
 import { type Declarable, isDeclarable } from "./declarable";
-import { isLexiconOutput } from "./lexicon-output";
+import { isLexiconOutput, type LexiconOutput } from "./lexicon-output";
 import { getProvenance } from "./provenance";
 import { INTRINSIC_MARKER } from "./intrinsic";
 
@@ -78,11 +78,26 @@ export interface IRGroups {
   byStack?: Record<string, string[]>;
 }
 
+/** A cross-stack export this stack publishes (a `stackOutput`/`output`): its
+ * name (the matching key another stack imports by) and the node that produces it. */
+export interface IRExport {
+  /** Output name — the cross-stack handle (e.g. "ClusterArn"). */
+  name: string;
+  /** Logical name of the producing node, when resolvable. */
+  node?: string;
+  /** Producer-side attribute the output reads (e.g. "Arn"). */
+  attr?: string;
+}
+
 /** The full graph IR for a project at the default (declarable) detail level. */
 export interface GraphIR {
   nodes: IRNode[];
   edges: IREdge[];
   groups: IRGroups;
+  /** Outputs this stack publishes for other stacks to import. Imports are already
+   * nodes (`AWS::CloudFormation::Parameter` etc.); a viewer matches an import's
+   * name to an export's name to draw the cross-stack edge to its producer (#513). */
+  exports?: IRExport[];
 }
 
 /** A node is anything that serializes to a resource — not a property or output. */
@@ -291,7 +306,24 @@ export function buildGraphIr(
   if (Object.keys(byComposite).length) groups.byComposite = sortKeys(byComposite);
   if (Object.keys(byStack).length) groups.byStack = sortKeys(byStack);
 
-  return { nodes, edges, groups };
+  // Cross-stack exports: a stack's `output(ref, name)` LexiconOutputs are dropped
+  // from the node set (they're not resources), but their name + producing node is
+  // the handle another stack imports by. Surface them so a viewer can draw the
+  // cross-stack edge (#513). Resolve the producer via the output's source entity.
+  const exports: IRExport[] = [];
+  for (const entity of entities.values()) {
+    if (!isLexiconOutput(entity)) continue;
+    const lo = entity as unknown as LexiconOutput;
+    if (!lo.outputName) continue;
+    const parent = lo._sourceParent?.deref();
+    const node = (parent ? reverse.get(parent) : undefined) ?? (lo.sourceEntity || undefined);
+    exports.push({ name: lo.outputName, ...(node ? { node } : {}), ...(lo.sourceAttribute ? { attr: lo.sourceAttribute } : {}) });
+  }
+  exports.sort((a, b) => a.name.localeCompare(b.name));
+
+  const ir: GraphIR = { nodes, edges, groups };
+  if (exports.length) ir.exports = exports;
+  return ir;
 }
 
 function sortKeys(rec: Record<string, string[]>): Record<string, string[]> {
