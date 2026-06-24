@@ -25,6 +25,7 @@ export * from "./discovery/graph";
 export * from "./discovery/index";
 export * from "./discovery/cache";
 export * from "./build";
+export * from "./env";
 export * from "./graph-ir";
 export * from "./graph-detail";
 export * from "./graph-mermaid";

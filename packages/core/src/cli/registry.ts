@@ -53,7 +53,8 @@ export interface ParsedArgs {
   verbatim?: boolean;
   /** `chant lifecycle … --src <dir>` — build root override for lifecycle commands */
   src?: string;
-  /** `chant build --env <name>` — environment for organizational policy evaluation */
+  /** `--env <name>` — active environment: sets CHANT_ENV so env-aware source
+   * re-evaluates for that environment (`build` + `graph`), and drives policy. */
   env?: string;
   /** `chant graph --stacks` — render the cross-stack apply-ordering graph */
   stacks?: boolean;
