@@ -5,6 +5,7 @@ import { formatSuccess, formatError } from "./format";
 import { loadPlugins, resolveProjectLexicons } from "./plugins";
 import { resolveCommand, type CommandDef, type ParsedArgs } from "./registry";
 import { loadChantConfig } from "../config";
+import { ENV_VAR, unknownEnvError } from "../env";
 import { initRuntime } from "../runtime-adapter";
 import { runBuild } from "./handlers/build";
 import { runLint } from "./handlers/lint";
@@ -242,7 +243,10 @@ Options:
                         - list: text (default) or json
                         - lint: stylish (default), json, or sarif
   -d, --lexicon <name>  Build only the specified lexicon (e.g. aws, gitlab)
-      --env <name>      Environment for organizational policy evaluation (build)
+      --env <name>      Active environment: sets CHANT_ENV so env-aware source
+                        re-evaluates for that environment (build + graph), and
+                        drives organizational policy. Must be in chant.config
+                        \`environments\` when declared.
   -t, --template <name> Init template (e.g. node-pipeline, docker-build)
   --skill <name>        Init: install only this skill from the lexicon
   --fix                 Auto-fix fixable issues (lint command)
@@ -369,14 +373,28 @@ async function main(): Promise<void> {
     process.exit(args.help ? 0 : 1);
   }
 
+  // `--env <name>` is a build-context switch for the whole invocation: set it
+  // *before* anything imports the project so env-aware source (and thus the graph
+  // / build) reflects that environment. Set early, before config import, since
+  // chant.config itself may branch on the env. (#505)
+  if (args.env) process.env[ENV_VAR] = args.env;
+
   // Initialize runtime adapter early — before plugins or commands run
   const projectPath0 = resolve(args.path === "." ? "." : args.path);
+  let loadedConfig;
   try {
-    await loadChantConfig(projectPath0);
+    loadedConfig = await loadChantConfig(projectPath0);
     initRuntime();
   } catch {
     // Config may not exist yet (e.g. `chant init`)
     initRuntime();
+  }
+
+  // Reject an --env that isn't among the project's declared `environments`.
+  const envErr = unknownEnvError(args.env, loadedConfig?.config.environments);
+  if (envErr) {
+    console.error(formatError({ message: envErr, hint: 'Declare it in chant.config `environments`, or omit --env.' }));
+    process.exit(1);
   }
 
   const match = resolveCommand(args, registry);
