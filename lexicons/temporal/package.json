@@ -1,6 +1,6 @@
 {
   "name": "@intentius/chant-lexicon-temporal",
-  "version": "0.12.1",
+  "version": "0.13.0",
   "description": "Temporal lexicon for chant — server deployment, namespaces, search attributes, and schedules",
   "license": "Apache-2.0",
   "homepage": "https://intentius.io/chant",
@@ -54,7 +54,7 @@
     "build": "tsc -p tsconfig.build.json && tsc-alias -p tsconfig.build.json && find dist -type f \\( -name \"*.js\" -o -name \"*.js.map\" \\) -delete"
   },
   "peerDependencies": {
-    "@intentius/chant": "^0.12.1"
+    "@intentius/chant": "^0.13.0"
   },
   "devDependencies": {
     "@intentius/chant": "*",

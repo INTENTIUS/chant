@@ -1,6 +1,6 @@
 {
   "name": "@intentius/chant-lexicon-aws",
-  "version": "0.12.1",
+  "version": "0.13.0",
   "description": "AWS CloudFormation lexicon for chant — declarative IaC in TypeScript",
   "license": "Apache-2.0",
   "homepage": "https://intentius.io/chant",
@@ -70,6 +70,6 @@
     "typescript": "^5.9.3"
   },
   "peerDependencies": {
-    "@intentius/chant": "^0.12.1"
+    "@intentius/chant": "^0.13.0"
   }
 }
