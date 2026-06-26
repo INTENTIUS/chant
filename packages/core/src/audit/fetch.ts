@@ -157,16 +157,29 @@ interface TreeEntry {
 /** List every blob path in the repo (recursive), with size where the host reports it. */
 async function listTree(host: HostConfig, owner: string, repo: string, ref: string, doFetch: typeof fetch, headers: Record<string, string>, ms: number): Promise<TreeEntry[]> {
   if (host.kind === "gitlab") {
+    // GitLab's recursive tree API returns ALL directory nodes before any blob nodes
+    // for large repos (#518). A 20-page recursive scan sees only directories and
+    // yields 0 files. Fix: non-recursive BFS so root blobs (e.g. .gitlab-ci.yml)
+    // appear on the very first request, regardless of repo size.
     const out: TreeEntry[] = [];
-    const MAX_PAGES = 20; // 20 * 100 = 2000 entries — bounded; candidate filter + caps trim further
-    for (let page = 1; page <= MAX_PAGES; page++) {
-      const url = `${host.api}/projects/${projectId(owner, repo)}/repository/tree?recursive=true&per_page=100&page=${page}&ref=${encodeURIComponent(ref)}`;
-      const { body } = await getJsonAt(url, headers, doFetch, ms);
-      if (!Array.isArray(body) || body.length === 0) break;
-      for (const e of body as Array<{ path: string; type: string }>) {
-        if (e.type === "blob") out.push({ path: e.path, type: "blob" });
+    const queue: string[] = [""]; // "" = repo root
+    const MAX_DIRS = 30;          // bound API calls; candidate filter + maxFiles cap trim further
+    const MAX_BLOBS = 200;        // stop early once we have far more than any maxFiles default
+    let dirs = 0;
+    while (queue.length > 0 && dirs < MAX_DIRS && out.length < MAX_BLOBS) {
+      const dir = queue.shift()!;
+      dirs++;
+      const pathParam = dir ? `&path=${encodeURIComponent(dir)}` : "";
+      for (let page = 1; page <= 5; page++) {
+        const url = `${host.api}/projects/${projectId(owner, repo)}/repository/tree?per_page=100&page=${page}&ref=${encodeURIComponent(ref)}${pathParam}`;
+        const { body } = await getJsonAt(url, headers, doFetch, ms);
+        if (!Array.isArray(body) || body.length === 0) break;
+        for (const e of body as Array<{ path: string; type: string }>) {
+          if (e.type === "blob") out.push({ path: e.path, type: "blob" });
+          else if (e.type === "tree") queue.push(e.path);
+        }
+        if (body.length < 100) break;
       }
-      if (body.length < 100) break;
     }
     return out;
   }

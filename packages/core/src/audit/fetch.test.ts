@@ -54,14 +54,52 @@ function gitTreeMock(files: Record<string, string>, sizes: Record<string, number
   return { impl, calls };
 }
 
-/** A GitLab-shaped mock: project default_branch, paginated repository/tree, raw files. */
+/**
+ * A GitLab-shaped mock for simple cases: all files appear as blobs at the root.
+ * The BFS walk fetches root non-recursively (no `path=` param on the first call),
+ * which is where the blobs land, so this shape still exercises the happy path.
+ */
 function gitlabMock(files: Record<string, string>) {
   const impl = (async (url: string | URL | Request) => {
     const u = String(url);
     if (u.includes("/repository/tree")) {
-      const page = Number(new URL(u).searchParams.get("page") ?? "1");
-      const all = Object.keys(files).map((path) => ({ path, type: "blob" }));
+      const params = new URL(u).searchParams;
+      const page = Number(params.get("page") ?? "1");
+      // All files live at the root — BFS root fetch (no path param) returns them.
+      const path = params.get("path") ?? "";
+      const all = path === "" ? Object.keys(files).map((p) => ({ path: p, type: "blob" })) : [];
       return new Response(JSON.stringify(page === 1 ? all : []), { status: 200 });
+    }
+    const rm = u.match(/\/repository\/files\/(.+?)\/raw\?/);
+    if (rm) {
+      const path = decodeURIComponent(rm[1]);
+      if (files[path] === undefined) return new Response("not found", { status: 404 });
+      return new Response(files[path], { status: 200 });
+    }
+    if (/\/projects\/[^/]+(\?|$)/.test(u)) return new Response(JSON.stringify({ default_branch: "main" }), { status: 200 });
+    return new Response("not found", { status: 404 });
+  }) as unknown as typeof fetch;
+  return { impl };
+}
+
+/**
+ * A GitLab mock that serves an explicit per-directory entry list, used to test
+ * the BFS walk. `dirEntries` maps directory path (empty string = repo root) to
+ * the entries the tree API returns for that directory. `files` maps full path →
+ * content for the raw endpoint.
+ */
+function gitlabBfsMock(
+  dirEntries: Record<string, Array<{ path: string; type: "blob" | "tree" }>>,
+  files: Record<string, string>,
+) {
+  const impl = (async (url: string | URL | Request) => {
+    const u = String(url);
+    if (u.includes("/repository/tree")) {
+      const params = new URL(u).searchParams;
+      const dir = params.get("path") ?? "";
+      const page = Number(params.get("page") ?? "1");
+      const entries = dirEntries[dir] ?? [];
+      return new Response(JSON.stringify(page === 1 ? entries : []), { status: 200 });
     }
     const rm = u.match(/\/repository\/files\/(.+?)\/raw\?/);
     if (rm) {
@@ -174,11 +212,37 @@ describe("fetchRepoFiles", () => {
     await expect(fetchRepoFiles("https://evil.example.com/o/r")).rejects.toThrow(/Host not allowed/);
   });
 
-  test("gitlab: paginated tree + raw file content", async () => {
+  test("gitlab: BFS tree walk fetches root blobs", async () => {
     const { impl } = gitlabMock({ ".gitlab-ci.yml": "stages:\n  - build\n" });
     const files = await fetchRepoFiles("https://gitlab.com/acme/widgets", { fetchImpl: impl });
     expect(files.map((f) => f.path)).toEqual([".gitlab-ci.yml"]);
     expect(files[0].content).toContain("stages:");
+  });
+
+  test("gitlab: large monorepo — BFS finds root blobs even when root listing is dominated by subdirectories", async () => {
+    // Reproduces: gitlab-org/gitlab returns 2000 directory nodes before any blob
+    // with recursive=true (#518). Non-recursive BFS finds .gitlab-ci.yml on the
+    // very first request regardless of how many subdirectories follow it.
+    const manySubdirs = Array.from({ length: 50 }, (_, i) => ({ path: `subdir${i}`, type: "tree" as const }));
+    const { impl } = gitlabBfsMock(
+      { "": [...manySubdirs, { path: ".gitlab-ci.yml", type: "blob" }] },
+      { ".gitlab-ci.yml": "stages:\n  - build\n" },
+    );
+    const files = await fetchRepoFiles("https://gitlab.com/acme/monorepo", { fetchImpl: impl });
+    expect(files.map((f) => f.path)).toContain(".gitlab-ci.yml");
+  });
+
+  test("gitlab: BFS recurses into subdirectories to find nested CI files", async () => {
+    const { impl } = gitlabBfsMock(
+      {
+        "": [{ path: ".gitlab", type: "tree" }],
+        ".gitlab": [{ path: ".gitlab/ci", type: "tree" }],
+        ".gitlab/ci": [{ path: ".gitlab/ci/build.gitlab-ci.yml", type: "blob" }],
+      },
+      { ".gitlab/ci/build.gitlab-ci.yml": "stage: build\n" },
+    );
+    const files = await fetchRepoFiles("https://gitlab.com/acme/widgets", { fetchImpl: impl });
+    expect(files.map((f) => f.path)).toContain(".gitlab/ci/build.gitlab-ci.yml");
   });
 
   test("forgejo (codeberg): gitea tree + contents", async () => {
