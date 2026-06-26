@@ -55,20 +55,20 @@ function gitTreeMock(files: Record<string, string>, sizes: Record<string, number
 }
 
 /**
- * A GitLab-shaped mock for simple cases: all files appear as blobs at the root.
- * The BFS walk fetches root non-recursively (no `path=` param on the first call),
- * which is where the blobs land, so this shape still exercises the happy path.
+ * GitLab mock for authenticated search-based discovery. `searchMap` maps search
+ * term → array of blob paths the search API returns. `files` maps path → content.
+ * Pass `token` to fetchRepoFiles when using this mock so the code takes the
+ * search path (unauthenticated calls fall back to BFS).
  */
-function gitlabMock(files: Record<string, string>) {
+function gitlabMock(searchMap: Record<string, string[]>, files: Record<string, string>) {
   const impl = (async (url: string | URL | Request) => {
     const u = String(url);
-    if (u.includes("/repository/tree")) {
+    if (u.includes("/search")) {
       const params = new URL(u).searchParams;
+      const term = params.get("search") ?? "";
       const page = Number(params.get("page") ?? "1");
-      // All files live at the root — BFS root fetch (no path param) returns them.
-      const path = params.get("path") ?? "";
-      const all = path === "" ? Object.keys(files).map((p) => ({ path: p, type: "blob" })) : [];
-      return new Response(JSON.stringify(page === 1 ? all : []), { status: 200 });
+      const paths = page === 1 ? (searchMap[term] ?? []) : [];
+      return new Response(JSON.stringify(paths.map((p) => ({ path: p }))), { status: 200 });
     }
     const rm = u.match(/\/repository\/files\/(.+?)\/raw\?/);
     if (rm) {
@@ -83,10 +83,9 @@ function gitlabMock(files: Record<string, string>) {
 }
 
 /**
- * A GitLab mock that serves an explicit per-directory entry list, used to test
- * the BFS walk. `dirEntries` maps directory path (empty string = repo root) to
- * the entries the tree API returns for that directory. `files` maps full path →
- * content for the raw endpoint.
+ * GitLab mock for the unauthenticated BFS fallback. `dirEntries` maps directory
+ * path (empty = root) to entries returned by the non-recursive tree API. `files`
+ * maps path → content for the raw endpoint.
  */
 function gitlabBfsMock(
   dirEntries: Record<string, Array<{ path: string; type: "blob" | "tree" }>>,
@@ -212,37 +211,78 @@ describe("fetchRepoFiles", () => {
     await expect(fetchRepoFiles("https://evil.example.com/o/r")).rejects.toThrow(/Host not allowed/);
   });
 
-  test("gitlab: BFS tree walk fetches root blobs", async () => {
-    const { impl } = gitlabMock({ ".gitlab-ci.yml": "stages:\n  - build\n" });
-    const files = await fetchRepoFiles("https://gitlab.com/acme/widgets", { fetchImpl: impl });
+  test("gitlab: authenticated search finds .gitlab-ci.yml via stages: term", async () => {
+    const { impl } = gitlabMock(
+      { "stages:": [".gitlab-ci.yml"] },
+      { ".gitlab-ci.yml": "stages:\n  - build\n" },
+    );
+    const files = await fetchRepoFiles("https://gitlab.com/acme/widgets", { fetchImpl: impl, token: "tok" });
     expect(files.map((f) => f.path)).toEqual([".gitlab-ci.yml"]);
     expect(files[0].content).toContain("stages:");
   });
 
-  test("gitlab: large monorepo — BFS finds root blobs even when root listing is dominated by subdirectories", async () => {
-    // Reproduces: gitlab-org/gitlab returns 2000 directory nodes before any blob
-    // with recursive=true (#518). Non-recursive BFS finds .gitlab-ci.yml on the
-    // very first request regardless of how many subdirectories follow it.
-    const manySubdirs = Array.from({ length: 50 }, (_, i) => ({ path: `subdir${i}`, type: "tree" as const }));
-    const { impl } = gitlabBfsMock(
-      { "": [...manySubdirs, { path: ".gitlab-ci.yml", type: "blob" }] },
-      { ".gitlab-ci.yml": "stages:\n  - build\n" },
+  test("gitlab: search finds CI at non-canonical paths (include targets) (#520)", async () => {
+    // A .gitlab-ci.yml with `include:` referencing other CI files — the included
+    // file also has `stages:` so the search finds it without knowing the path.
+    const { impl } = gitlabMock(
+      { "stages:": [".gitlab-ci.yml", ".gitlab/ci/build.gitlab-ci.yml"] },
+      {
+        ".gitlab-ci.yml": "stages:\n  - build\ninclude:\n  - .gitlab/ci/build.gitlab-ci.yml\n",
+        ".gitlab/ci/build.gitlab-ci.yml": "stages:\n  - build\nscript:\n  - make\n",
+      },
     );
-    const files = await fetchRepoFiles("https://gitlab.com/acme/monorepo", { fetchImpl: impl });
-    expect(files.map((f) => f.path)).toContain(".gitlab-ci.yml");
+    const files = await fetchRepoFiles("https://gitlab.com/acme/widgets", { fetchImpl: impl, token: "tok" });
+    expect(files.map((f) => f.path)).toContain(".gitlab/ci/build.gitlab-ci.yml");
   });
 
-  test("gitlab: BFS recurses into subdirectories to find nested CI files", async () => {
-    const { impl } = gitlabBfsMock(
+  test("gitlab: search finds IaC files by content, unaffected by repo size (#518)", async () => {
+    // Previously, gitlab-org/gitlab returned 0 files because the recursive tree
+    // API listed thousands of directories before any blobs. Search-based discovery
+    // is independent of directory count — it goes directly to content.
+    const { impl } = gitlabMock(
       {
-        "": [{ path: ".gitlab", type: "tree" }],
-        ".gitlab": [{ path: ".gitlab/ci", type: "tree" }],
-        ".gitlab/ci": [{ path: ".gitlab/ci/build.gitlab-ci.yml", type: "blob" }],
+        "AWSTemplateFormatVersion": ["infra/stack.json"],
+        "stages:": [".gitlab-ci.yml"],
       },
-      { ".gitlab/ci/build.gitlab-ci.yml": "stage: build\n" },
+      {
+        "infra/stack.json": '{"AWSTemplateFormatVersion":"2010-09-09","Resources":{}}',
+        ".gitlab-ci.yml": "stages:\n  - deploy\n",
+      },
     );
+    const files = await fetchRepoFiles("https://gitlab.com/acme/monorepo", { fetchImpl: impl, token: "tok" });
+    const paths = files.map((f) => f.path);
+    expect(paths).toContain(".gitlab-ci.yml");
+    expect(paths).toContain("infra/stack.json");
+  });
+
+  test("gitlab: search deduplicates paths found by multiple terms", async () => {
+    // A Helm Chart.yaml matches both "apiVersion: v2" and the broader "apiVersion".
+    const { impl } = gitlabMock(
+      {
+        "apiVersion: v2": ["helm/Chart.yaml"],
+        "apiVersion": ["helm/Chart.yaml", "k8s/deploy.yaml"],
+      },
+      {
+        "helm/Chart.yaml": "apiVersion: v2\nname: myapp\nversion: 1.0.0\n",
+        "k8s/deploy.yaml": "apiVersion: apps/v1\nkind: Deployment\n",
+      },
+    );
+    const files = await fetchRepoFiles("https://gitlab.com/acme/widgets", { fetchImpl: impl, token: "tok" });
+    const paths = files.map((f) => f.path);
+    expect(paths.filter((p) => p === "helm/Chart.yaml")).toHaveLength(1);
+    expect(paths).toContain("k8s/deploy.yaml");
+  });
+
+  test("gitlab: unauthenticated falls back to BFS tree walk", async () => {
+    // Without a token, GitLab search returns 401. The BFS fallback walks
+    // directories non-recursively so root blobs appear on the first request.
+    const { impl } = gitlabBfsMock(
+      { "": [{ path: ".gitlab-ci.yml", type: "blob" }] },
+      { ".gitlab-ci.yml": "stages:\n  - build\n" },
+    );
+    // No token → BFS path
     const files = await fetchRepoFiles("https://gitlab.com/acme/widgets", { fetchImpl: impl });
-    expect(files.map((f) => f.path)).toContain(".gitlab/ci/build.gitlab-ci.yml");
+    expect(files.map((f) => f.path)).toContain(".gitlab-ci.yml");
   });
 
   test("forgejo (codeberg): gitea tree + contents", async () => {
