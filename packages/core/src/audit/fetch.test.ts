@@ -54,14 +54,51 @@ function gitTreeMock(files: Record<string, string>, sizes: Record<string, number
   return { impl, calls };
 }
 
-/** A GitLab-shaped mock: project default_branch, paginated repository/tree, raw files. */
-function gitlabMock(files: Record<string, string>) {
+/**
+ * GitLab mock for authenticated search-based discovery. `searchMap` maps search
+ * term → array of blob paths the search API returns. `files` maps path → content.
+ * Pass `token` to fetchRepoFiles when using this mock so the code takes the
+ * search path (unauthenticated calls fall back to BFS).
+ */
+function gitlabMock(searchMap: Record<string, string[]>, files: Record<string, string>) {
+  const impl = (async (url: string | URL | Request) => {
+    const u = String(url);
+    if (u.includes("/search")) {
+      const params = new URL(u).searchParams;
+      const term = params.get("search") ?? "";
+      const page = Number(params.get("page") ?? "1");
+      const paths = page === 1 ? (searchMap[term] ?? []) : [];
+      return new Response(JSON.stringify(paths.map((p) => ({ path: p }))), { status: 200 });
+    }
+    const rm = u.match(/\/repository\/files\/(.+?)\/raw\?/);
+    if (rm) {
+      const path = decodeURIComponent(rm[1]);
+      if (files[path] === undefined) return new Response("not found", { status: 404 });
+      return new Response(files[path], { status: 200 });
+    }
+    if (/\/projects\/[^/]+(\?|$)/.test(u)) return new Response(JSON.stringify({ default_branch: "main" }), { status: 200 });
+    return new Response("not found", { status: 404 });
+  }) as unknown as typeof fetch;
+  return { impl };
+}
+
+/**
+ * GitLab mock for the unauthenticated BFS fallback. `dirEntries` maps directory
+ * path (empty = root) to entries returned by the non-recursive tree API. `files`
+ * maps path → content for the raw endpoint.
+ */
+function gitlabBfsMock(
+  dirEntries: Record<string, Array<{ path: string; type: "blob" | "tree" }>>,
+  files: Record<string, string>,
+) {
   const impl = (async (url: string | URL | Request) => {
     const u = String(url);
     if (u.includes("/repository/tree")) {
-      const page = Number(new URL(u).searchParams.get("page") ?? "1");
-      const all = Object.keys(files).map((path) => ({ path, type: "blob" }));
-      return new Response(JSON.stringify(page === 1 ? all : []), { status: 200 });
+      const params = new URL(u).searchParams;
+      const dir = params.get("path") ?? "";
+      const page = Number(params.get("page") ?? "1");
+      const entries = dirEntries[dir] ?? [];
+      return new Response(JSON.stringify(page === 1 ? entries : []), { status: 200 });
     }
     const rm = u.match(/\/repository\/files\/(.+?)\/raw\?/);
     if (rm) {
@@ -174,11 +211,78 @@ describe("fetchRepoFiles", () => {
     await expect(fetchRepoFiles("https://evil.example.com/o/r")).rejects.toThrow(/Host not allowed/);
   });
 
-  test("gitlab: paginated tree + raw file content", async () => {
-    const { impl } = gitlabMock({ ".gitlab-ci.yml": "stages:\n  - build\n" });
-    const files = await fetchRepoFiles("https://gitlab.com/acme/widgets", { fetchImpl: impl });
+  test("gitlab: authenticated search finds .gitlab-ci.yml via stages: term", async () => {
+    const { impl } = gitlabMock(
+      { "stages:": [".gitlab-ci.yml"] },
+      { ".gitlab-ci.yml": "stages:\n  - build\n" },
+    );
+    const files = await fetchRepoFiles("https://gitlab.com/acme/widgets", { fetchImpl: impl, token: "tok" });
     expect(files.map((f) => f.path)).toEqual([".gitlab-ci.yml"]);
     expect(files[0].content).toContain("stages:");
+  });
+
+  test("gitlab: search finds CI at non-canonical paths (include targets) (#520)", async () => {
+    // A .gitlab-ci.yml with `include:` referencing other CI files — the included
+    // file also has `stages:` so the search finds it without knowing the path.
+    const { impl } = gitlabMock(
+      { "stages:": [".gitlab-ci.yml", ".gitlab/ci/build.gitlab-ci.yml"] },
+      {
+        ".gitlab-ci.yml": "stages:\n  - build\ninclude:\n  - .gitlab/ci/build.gitlab-ci.yml\n",
+        ".gitlab/ci/build.gitlab-ci.yml": "stages:\n  - build\nscript:\n  - make\n",
+      },
+    );
+    const files = await fetchRepoFiles("https://gitlab.com/acme/widgets", { fetchImpl: impl, token: "tok" });
+    expect(files.map((f) => f.path)).toContain(".gitlab/ci/build.gitlab-ci.yml");
+  });
+
+  test("gitlab: search finds IaC files by content, unaffected by repo size (#518)", async () => {
+    // Previously, gitlab-org/gitlab returned 0 files because the recursive tree
+    // API listed thousands of directories before any blobs. Search-based discovery
+    // is independent of directory count — it goes directly to content.
+    const { impl } = gitlabMock(
+      {
+        "AWSTemplateFormatVersion": ["infra/stack.json"],
+        "stages:": [".gitlab-ci.yml"],
+      },
+      {
+        "infra/stack.json": '{"AWSTemplateFormatVersion":"2010-09-09","Resources":{}}',
+        ".gitlab-ci.yml": "stages:\n  - deploy\n",
+      },
+    );
+    const files = await fetchRepoFiles("https://gitlab.com/acme/monorepo", { fetchImpl: impl, token: "tok" });
+    const paths = files.map((f) => f.path);
+    expect(paths).toContain(".gitlab-ci.yml");
+    expect(paths).toContain("infra/stack.json");
+  });
+
+  test("gitlab: search deduplicates paths found by multiple terms", async () => {
+    // A Helm Chart.yaml matches both "apiVersion: v2" and the broader "apiVersion".
+    const { impl } = gitlabMock(
+      {
+        "apiVersion: v2": ["helm/Chart.yaml"],
+        "apiVersion": ["helm/Chart.yaml", "k8s/deploy.yaml"],
+      },
+      {
+        "helm/Chart.yaml": "apiVersion: v2\nname: myapp\nversion: 1.0.0\n",
+        "k8s/deploy.yaml": "apiVersion: apps/v1\nkind: Deployment\n",
+      },
+    );
+    const files = await fetchRepoFiles("https://gitlab.com/acme/widgets", { fetchImpl: impl, token: "tok" });
+    const paths = files.map((f) => f.path);
+    expect(paths.filter((p) => p === "helm/Chart.yaml")).toHaveLength(1);
+    expect(paths).toContain("k8s/deploy.yaml");
+  });
+
+  test("gitlab: unauthenticated falls back to BFS tree walk", async () => {
+    // Without a token, GitLab search returns 401. The BFS fallback walks
+    // directories non-recursively so root blobs appear on the first request.
+    const { impl } = gitlabBfsMock(
+      { "": [{ path: ".gitlab-ci.yml", type: "blob" }] },
+      { ".gitlab-ci.yml": "stages:\n  - build\n" },
+    );
+    // No token → BFS path
+    const files = await fetchRepoFiles("https://gitlab.com/acme/widgets", { fetchImpl: impl });
+    expect(files.map((f) => f.path)).toContain(".gitlab-ci.yml");
   });
 
   test("forgejo (codeberg): gitea tree + contents", async () => {

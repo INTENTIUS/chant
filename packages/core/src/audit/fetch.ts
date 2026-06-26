@@ -157,16 +157,61 @@ interface TreeEntry {
 /** List every blob path in the repo (recursive), with size where the host reports it. */
 async function listTree(host: HostConfig, owner: string, repo: string, ref: string, doFetch: typeof fetch, headers: Record<string, string>, ms: number): Promise<TreeEntry[]> {
   if (host.kind === "gitlab") {
-    const out: TreeEntry[] = [];
-    const MAX_PAGES = 20; // 20 * 100 = 2000 entries — bounded; candidate filter + caps trim further
-    for (let page = 1; page <= MAX_PAGES; page++) {
-      const url = `${host.api}/projects/${projectId(owner, repo)}/repository/tree?recursive=true&per_page=100&page=${page}&ref=${encodeURIComponent(ref)}`;
-      const { body } = await getJsonAt(url, headers, doFetch, ms);
-      if (!Array.isArray(body) || body.length === 0) break;
-      for (const e of body as Array<{ path: string; type: string }>) {
-        if (e.type === "blob") out.push({ path: e.path, type: "blob" });
+    // GitLab search API requires authentication even for public projects. When a
+    // token is present, use content search — one query per lexicon finds only
+    // relevant files regardless of repo size, and catches non-canonical CI paths
+    // that path-based detection misses (#518, #520). Without a token, fall back
+    // to the non-recursive BFS which works for public repos.
+    if ("PRIVATE-TOKEN" in headers) {
+      const out: TreeEntry[] = [];
+      const seen = new Set<string>();
+      const addPath = (p: string) => { if (typeof p === "string" && !seen.has(p)) { seen.add(p); out.push({ path: p, type: "blob" }); } };
+      // Ordered most → least selective so the seen-set dedup reduces noise from
+      // broader terms (e.g. `apiVersion` won't re-add files already found by
+      // the more specific `apiVersion: v2`).
+      const SEARCH_TERMS = [
+        "AWSTemplateFormatVersion", // CloudFormation
+        "deploymentTemplate",        // Azure ARM ($schema substring)
+        "cnrm.cloud.google.com",     // GCP Config Connector
+        "apiVersion: v2",            // Helm Chart.yaml
+        "stages:",                   // GitLab CI — root file + non-canonical includes (#520)
+        "FROM ",                     // Dockerfiles (content-based; space avoids false matches)
+        "services:",                 // Docker Compose
+        "apiVersion",                // k8s manifests (broad; runs last)
+      ];
+      for (const term of SEARCH_TERMS) {
+        for (let page = 1; page <= 3; page++) {
+          const url = `${host.api}/projects/${projectId(owner, repo)}/search?scope=blobs&search=${encodeURIComponent(term)}&per_page=100&page=${page}&ref=${encodeURIComponent(ref)}`;
+          const { body } = await getJsonAt(url, headers, doFetch, ms);
+          if (!Array.isArray(body) || body.length === 0) break;
+          for (const e of body as Array<{ path: string }>) addPath(e.path);
+          if (body.length < 100) break;
+        }
       }
-      if (body.length < 100) break;
+      return out;
+    }
+    // Unauthenticated fallback: non-recursive BFS. GitLab's recursive tree API
+    // lists ALL directories before any blobs for large repos (#518), so we walk
+    // directories breadth-first to ensure root blobs appear on the first request.
+    const out: TreeEntry[] = [];
+    const queue: string[] = [""]; // "" = repo root
+    const MAX_DIRS = 30;
+    const MAX_BLOBS = 200;
+    let dirs = 0;
+    while (queue.length > 0 && dirs < MAX_DIRS && out.length < MAX_BLOBS) {
+      const dir = queue.shift()!;
+      dirs++;
+      const pathParam = dir ? `&path=${encodeURIComponent(dir)}` : "";
+      for (let page = 1; page <= 5; page++) {
+        const url = `${host.api}/projects/${projectId(owner, repo)}/repository/tree?per_page=100&page=${page}&ref=${encodeURIComponent(ref)}${pathParam}`;
+        const { body } = await getJsonAt(url, headers, doFetch, ms);
+        if (!Array.isArray(body) || body.length === 0) break;
+        for (const e of body as Array<{ path: string; type: string }>) {
+          if (e.type === "blob") out.push({ path: e.path, type: "blob" });
+          else if (e.type === "tree") queue.push(e.path);
+        }
+        if (body.length < 100) break;
+      }
     }
     return out;
   }
