@@ -123,6 +123,29 @@ file — authority stays with `kubectl`; ownership is read from the marker on ea
 live resource. As with the other levels, CI validates these Ops compile; running
 them needs the cluster.
 
+## Running an agent against this repo
+
+[`agent-guardrails/`](agent-guardrails/) is a safe operating model for pointing an
+AI agent (Claude Code) at a chant repo. The idea is the one this whole example
+builds toward: the agent produces reviewed diffs, a human deploys.
+
+The repo gitignores `.claude/` and `CLAUDE.md`, so the bundle ships as tracked
+sample files you copy into place (see
+[`agent-guardrails/README.md`](agent-guardrails/README.md)):
+
+- `settings.json` — permission tiers. Build, lint, and `lifecycle plan` are
+  allowed (pure, no credentials). Drift and reconcile are ask-first. The deploy
+  Ops (`deploy`, `deploy-gated`, `apply`), their approval signal, and
+  `kubectl apply` / `delete` are denied to the agent. A PostToolUse hook runs
+  `chant lint` on every edit.
+- `agent-instructions.md` — standing facts, becomes `CLAUDE.md`.
+- `skills/` — `scaffold-stack` and `drift-check`.
+
+The guardrails constrain an agent working in this directory. You, running the
+tutorial by hand, still run the deploy steps above. The point is that chant's
+build path needs no credentials, so the agent's whole authoring loop can run
+sandboxed, and the one dangerous verb — apply — stays with a human behind a gate.
+
 ## A standalone first taste
 
 If you want to run *something* in under a minute with no cluster and no Docker,

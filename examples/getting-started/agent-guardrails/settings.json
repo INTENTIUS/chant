@@ -1,0 +1,38 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(chant build:*)",
+      "Bash(chant lint:*)",
+      "Bash(chant list:*)",
+      "Bash(chant graph:*)",
+      "Bash(chant lifecycle plan:*)",
+      "Bash(chant lifecycle affected:*)"
+    ],
+    "ask": [
+      "Bash(chant lifecycle diff:*)",
+      "Bash(chant lifecycle snapshot:*)",
+      "Bash(chant run reconcile:*)"
+    ],
+    "deny": [
+      "Bash(chant run deploy:*)",
+      "Bash(chant run deploy-gated:*)",
+      "Bash(chant run apply:*)",
+      "Bash(chant run signal:*)",
+      "Bash(kubectl apply:*)",
+      "Bash(kubectl delete:*)"
+    ]
+  },
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write|MultiEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "cd \"$CLAUDE_PROJECT_DIR\" && chant lint src"
+          }
+        ]
+      }
+    ]
+  }
+}
