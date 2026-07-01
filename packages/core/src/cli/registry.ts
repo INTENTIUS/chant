@@ -83,6 +83,12 @@ export interface ParsedArgs {
   failOn?: string;
   /** `chant audit --theme <file>` — JSON theme knobs for the HTML report */
   theme?: string;
+  /** `chant dev surface-diff --update-snapshot` — write the fresh snapshot as the new baseline */
+  updateSnapshot?: boolean;
+  /** `chant dev surface-diff --run-examples` — also run the example build harness */
+  runExamples?: boolean;
+  /** `chant dev surface-diff --pinned-digest <file>` — path to SHA-256 digest file for supply-chain verification */
+  pinnedDigest?: string;
 }
 
 /**

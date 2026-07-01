@@ -46,10 +46,25 @@ export async function runDevCheckLexicon(ctx: CommandContext): Promise<number> {
   return result.tier1Pass ? 0 : 1;
 }
 
+export async function runDevSurfaceDiff(ctx: CommandContext): Promise<number> {
+  const dir = ctx.args.extraPositional ?? ".";
+  const { runSurfaceDiff, printSurfaceDiffResult } = await import("../commands/lexicon-surface-diff");
+  const result = await runSurfaceDiff({
+    lexiconDir: resolve(dir),
+    force: ctx.args.force,
+    verbose: ctx.args.verbose,
+    runExamples: ctx.args.runExamples,
+    pinnedDigestPath: ctx.args.pinnedDigest,
+    updateSnapshot: ctx.args.updateSnapshot,
+  });
+  printSurfaceDiffResult(result, ctx.args.format === "json");
+  return result.ok ? 0 : 1;
+}
+
 export async function runDevUnknown(ctx: CommandContext): Promise<number> {
   console.error(formatError({
     message: `Unknown dev subcommand: ${ctx.args.path}`,
-    hint: "Available: chant dev generate, chant dev publish, chant dev onboard, chant dev check-lexicon",
+    hint: "Available: chant dev generate, chant dev publish, chant dev onboard, chant dev check-lexicon, chant dev surface-diff",
   }));
   return 1;
 }

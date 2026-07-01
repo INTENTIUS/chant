@@ -9,7 +9,7 @@ import { ENV_VAR, unknownEnvError } from "../env";
 import { initRuntime } from "../runtime-adapter";
 import { runBuild } from "./handlers/build";
 import { runLint } from "./handlers/lint";
-import { runDevGenerate, runDevPublish, runDevOnboard, runDevCheckLexicon, runDevUnknown } from "./handlers/dev";
+import { runDevGenerate, runDevPublish, runDevOnboard, runDevCheckLexicon, runDevSurfaceDiff, runDevUnknown } from "./handlers/dev";
 import { runServeLsp, runServeMcp, runServeUnknown } from "./handlers/serve";
 import { runInit, runInitLexicon } from "./handlers/init";
 import { runList, runDescribe, runImport, runAudit, runUpdate, runDoctor } from "./handlers/misc";
@@ -151,6 +151,12 @@ export function parseArgs(args: string[]): ParsedArgs {
       result.temporal = true;
     } else if (arg === "--json") {
       result.json = true;
+    } else if (arg === "--update-snapshot") {
+      result.updateSnapshot = true;
+    } else if (arg === "--run-examples") {
+      result.runExamples = true;
+    } else if (arg === "--pinned-digest") {
+      result.pinnedDigest = args[++i];
     } else if (!arg.startsWith("-")) {
       if (!result.command) {
         result.command = arg;
@@ -227,6 +233,10 @@ Lexicon development:
   dev publish           Package lexicon for distribution
   dev onboard <name>    Patch CI, Dockerfiles, and workflows for a new lexicon
   dev check-lexicon <dir>  Check lexicon completeness (tier 1/2/3)
+  dev surface-diff <dir>   Regen lexicon, validate, diff API surface vs committed baseline
+                           (--force: bypass spec cache; --update-snapshot: write new baseline;
+                            --run-examples: also run example build harness;
+                            --pinned-digest <file>: verify spec digest before regen)
 
 Servers:
   serve lsp             Start the LSP server (stdio)
@@ -332,6 +342,7 @@ const registry: CommandDef[] = [
   { name: "dev publish", requiresPlugins: true, handler: runDevPublish },
   { name: "dev onboard", handler: runDevOnboard },
   { name: "dev check-lexicon", handler: runDevCheckLexicon },
+  { name: "dev surface-diff", handler: runDevSurfaceDiff },
 
   // Op / run subcommands
   { name: "run list", handler: runOpList },

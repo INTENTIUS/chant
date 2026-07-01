@@ -60,6 +60,15 @@ export * from "./codegen/typecheck";
 export * from "./codegen/coverage";
 export * from "./codegen/validate";
 export * from "./codegen/docs";
+export * from "./codegen/surface-snapshot";
+export {
+  regenLexicon,
+  writeSurfaceSnapshot,
+  SNAPSHOT_FILENAME,
+  type RegenOptions,
+  type RegenResult,
+  type RegenFailure,
+} from "./codegen/lexicon-regen";
 export * from "./runtime";
 export * from "./runtime-adapter";
 export * from "./resource-attributes";
