@@ -76,10 +76,22 @@ export async function runDevPinnedUpgrade(ctx: CommandContext): Promise<number> 
   return 0;
 }
 
+export async function runDevRollingUpgrade(ctx: CommandContext): Promise<number> {
+  const dir = ctx.args.extraPositional ?? ".";
+  const { runRollingUpgrade, printRollingUpgradeResult } = await import("../commands/lexicon-rolling-upgrade");
+  const result = await runRollingUpgrade({
+    lexiconDir: resolve(dir),
+    force: ctx.args.force,
+    verbose: ctx.args.verbose,
+  });
+  printRollingUpgradeResult(result, ctx.args.format === "json");
+  return result.validationOk ? 0 : 1;
+}
+
 export async function runDevUnknown(ctx: CommandContext): Promise<number> {
   console.error(formatError({
     message: `Unknown dev subcommand: ${ctx.args.path}`,
-    hint: "Available: chant dev generate, chant dev publish, chant dev onboard, chant dev check-lexicon, chant dev surface-diff, chant dev pinned-upgrade",
+    hint: "Available: chant dev generate, chant dev publish, chant dev onboard, chant dev check-lexicon, chant dev surface-diff, chant dev pinned-upgrade, chant dev rolling-upgrade",
   }));
   return 1;
 }
