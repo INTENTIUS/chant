@@ -61,10 +61,25 @@ export async function runDevSurfaceDiff(ctx: CommandContext): Promise<number> {
   return result.ok ? 0 : 1;
 }
 
+export async function runDevPinnedUpgrade(ctx: CommandContext): Promise<number> {
+  const dir = ctx.args.extraPositional ?? ".";
+  const { runPinnedUpgrade, printPinnedUpgradeResult } = await import("../commands/pinned-upgrade");
+  const result = await runPinnedUpgrade({
+    lexiconDir: resolve(dir),
+    force: ctx.args.force,
+    verbose: ctx.args.verbose,
+  });
+  printPinnedUpgradeResult(result, ctx.args.format === "json");
+  // Exit non-zero when the upstream query failed or the regen validation broke.
+  if (result.fetchError) return 1;
+  if (result.validation && !result.validation.ok) return 1;
+  return 0;
+}
+
 export async function runDevUnknown(ctx: CommandContext): Promise<number> {
   console.error(formatError({
     message: `Unknown dev subcommand: ${ctx.args.path}`,
-    hint: "Available: chant dev generate, chant dev publish, chant dev onboard, chant dev check-lexicon, chant dev surface-diff",
+    hint: "Available: chant dev generate, chant dev publish, chant dev onboard, chant dev check-lexicon, chant dev surface-diff, chant dev pinned-upgrade",
   }));
   return 1;
 }

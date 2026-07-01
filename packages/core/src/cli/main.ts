@@ -9,7 +9,7 @@ import { ENV_VAR, unknownEnvError } from "../env";
 import { initRuntime } from "../runtime-adapter";
 import { runBuild } from "./handlers/build";
 import { runLint } from "./handlers/lint";
-import { runDevGenerate, runDevPublish, runDevOnboard, runDevCheckLexicon, runDevSurfaceDiff, runDevUnknown } from "./handlers/dev";
+import { runDevGenerate, runDevPublish, runDevOnboard, runDevCheckLexicon, runDevSurfaceDiff, runDevPinnedUpgrade, runDevUnknown } from "./handlers/dev";
 import { runServeLsp, runServeMcp, runServeUnknown } from "./handlers/serve";
 import { runInit, runInitLexicon } from "./handlers/init";
 import { runList, runDescribe, runImport, runAudit, runUpdate, runDoctor } from "./handlers/misc";
@@ -237,6 +237,9 @@ Lexicon development:
                            (--force: bypass spec cache; --update-snapshot: write new baseline;
                             --run-examples: also run example build harness;
                             --pinned-digest <file>: verify spec digest before regen)
+  dev pinned-upgrade <dir> Report if a pinned lexicon (k8s|gcp|docker|gitlab) has a newer
+                           upstream release; dry-run bump + regen + surface-diff, then revert
+                           (reports only; --force bypasses the spec cache, -f json for JSON)
 
 Servers:
   serve lsp             Start the LSP server (stdio)
@@ -343,6 +346,7 @@ const registry: CommandDef[] = [
   { name: "dev onboard", handler: runDevOnboard },
   { name: "dev check-lexicon", handler: runDevCheckLexicon },
   { name: "dev surface-diff", handler: runDevSurfaceDiff },
+  { name: "dev pinned-upgrade", handler: runDevPinnedUpgrade },
 
   // Op / run subcommands
   { name: "run list", handler: runOpList },
