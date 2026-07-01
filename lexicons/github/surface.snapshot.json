@@ -1,0 +1,134 @@
+{
+  "schemaVersion": 1,
+  "generatedAt": "2026-07-01T23:01:14.865Z",
+  "entries": {
+    "Concurrency": {
+      "kind": "property",
+      "resourceType": "GitHub::Actions::Concurrency"
+    },
+    "Container": {
+      "kind": "property",
+      "resourceType": "GitHub::Actions::Container"
+    },
+    "Defaults": {
+      "kind": "property",
+      "resourceType": "GitHub::Actions::Defaults"
+    },
+    "Environment": {
+      "kind": "property",
+      "resourceType": "GitHub::Actions::Environment"
+    },
+    "Job": {
+      "kind": "resource",
+      "resourceType": "GitHub::Actions::Job",
+      "props": [
+        "concurrency:false",
+        "container:false",
+        "continue-on-error:false",
+        "defaults:false",
+        "env:false",
+        "environment:false",
+        "if:false",
+        "name:false",
+        "needs:false",
+        "outputs:false",
+        "permissions:false",
+        "runs-on:true",
+        "services:false",
+        "snapshot:false",
+        "steps:false",
+        "strategy:false",
+        "timeout-minutes:false"
+      ]
+    },
+    "Permissions": {
+      "kind": "property",
+      "resourceType": "GitHub::Actions::Permissions"
+    },
+    "PullRequestTargetTrigger": {
+      "kind": "property",
+      "resourceType": "GitHub::Actions::PullRequestTargetTrigger"
+    },
+    "PullRequestTrigger": {
+      "kind": "property",
+      "resourceType": "GitHub::Actions::PullRequestTrigger"
+    },
+    "PushTrigger": {
+      "kind": "property",
+      "resourceType": "GitHub::Actions::PushTrigger"
+    },
+    "RepositoryDispatchTrigger": {
+      "kind": "property",
+      "resourceType": "GitHub::Actions::RepositoryDispatchTrigger"
+    },
+    "ReusableWorkflowCallJob": {
+      "kind": "resource",
+      "resourceType": "GitHub::Actions::ReusableWorkflowCallJob",
+      "props": [
+        "concurrency:false",
+        "if:false",
+        "name:false",
+        "needs:false",
+        "permissions:false",
+        "secrets:false",
+        "strategy:false",
+        "uses:true",
+        "with:false"
+      ]
+    },
+    "ScheduleTrigger": {
+      "kind": "property",
+      "resourceType": "GitHub::Actions::ScheduleTrigger"
+    },
+    "Service": {
+      "kind": "property",
+      "resourceType": "GitHub::Actions::Service"
+    },
+    "Step": {
+      "kind": "property",
+      "resourceType": "GitHub::Actions::Step"
+    },
+    "Strategy": {
+      "kind": "property",
+      "resourceType": "GitHub::Actions::Strategy"
+    },
+    "Workflow": {
+      "kind": "resource",
+      "resourceType": "GitHub::Actions::Workflow",
+      "props": [
+        "concurrency:false",
+        "defaults:false",
+        "env:false",
+        "jobs:true",
+        "name:false",
+        "on:true",
+        "permissions:false",
+        "run-name:false"
+      ]
+    },
+    "WorkflowCallTrigger": {
+      "kind": "property",
+      "resourceType": "GitHub::Actions::WorkflowCallTrigger"
+    },
+    "WorkflowDispatchTrigger": {
+      "kind": "property",
+      "resourceType": "GitHub::Actions::WorkflowDispatchTrigger"
+    },
+    "WorkflowInput": {
+      "kind": "property",
+      "resourceType": "GitHub::Actions::WorkflowInput"
+    },
+    "WorkflowOutput": {
+      "kind": "property",
+      "resourceType": "GitHub::Actions::WorkflowOutput"
+    },
+    "WorkflowRunTrigger": {
+      "kind": "property",
+      "resourceType": "GitHub::Actions::WorkflowRunTrigger"
+    },
+    "WorkflowSecret": {
+      "kind": "property",
+      "resourceType": "GitHub::Actions::WorkflowSecret"
+    }
+  }
+}

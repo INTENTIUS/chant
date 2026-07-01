@@ -69,6 +69,18 @@ export {
   type RegenResult,
   type RegenFailure,
 } from "./codegen/lexicon-regen";
+export {
+  checkRollingUpgrade,
+  classifyDelta,
+  diffRollingSurface,
+  computeAzureApiVersionDelta,
+  diffAzureApiVersions,
+  extractAzureProvider,
+  type RollingLexicon,
+  type RollingUpgradeResult,
+  type CheckRollingUpgradeOptions,
+  type AzureApiVersionChange,
+} from "./codegen/rolling-upgrade";
 export * from "./runtime";
 export * from "./runtime-adapter";
 export * from "./resource-attributes";
