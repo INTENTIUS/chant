@@ -1,0 +1,141 @@
+{
+  "schemaVersion": 1,
+  "generatedAt": "2026-07-02T02:03:44.270Z",
+  "entries": {
+    "AllowFailure": {
+      "kind": "property",
+      "resourceType": "GitLab::CI::AllowFailure"
+    },
+    "Artifacts": {
+      "kind": "property",
+      "resourceType": "GitLab::CI::Artifacts"
+    },
+    "AutoCancel": {
+      "kind": "property",
+      "resourceType": "GitLab::CI::AutoCancel"
+    },
+    "Cache": {
+      "kind": "property",
+      "resourceType": "GitLab::CI::Cache"
+    },
+    "Default": {
+      "kind": "resource",
+      "resourceType": "GitLab::CI::Default",
+      "props": [
+        "after_script:false",
+        "artifacts:false",
+        "before_script:false",
+        "cache:false",
+        "hooks:false",
+        "id_tokens:false",
+        "identity:false",
+        "image:false",
+        "interruptible:false",
+        "retry:false",
+        "services:false",
+        "tags:false",
+        "timeout:false"
+      ]
+    },
+    "Environment": {
+      "kind": "property",
+      "resourceType": "GitLab::CI::Environment"
+    },
+    "Image": {
+      "kind": "property",
+      "resourceType": "GitLab::CI::Image"
+    },
+    "Include": {
+      "kind": "property",
+      "resourceType": "GitLab::CI::Include"
+    },
+    "Inherit": {
+      "kind": "property",
+      "resourceType": "GitLab::CI::Inherit"
+    },
+    "Job": {
+      "kind": "resource",
+      "resourceType": "GitLab::CI::Job",
+      "props": [
+        "after_script:false",
+        "allow_failure:false",
+        "artifacts:false",
+        "before_script:false",
+        "cache:false",
+        "coverage:false",
+        "dependencies:false",
+        "environment:false",
+        "except:false",
+        "extends:false",
+        "hooks:false",
+        "id_tokens:false",
+        "identity:false",
+        "image:false",
+        "inherit:false",
+        "interruptible:false",
+        "manual_confirmation:false",
+        "needs:false",
+        "only:false",
+        "pages:false",
+        "parallel:false",
+        "publish:false",
+        "release:false",
+        "resource_group:false",
+        "retry:false",
+        "rules:false",
+        "run:false",
+        "script:false",
+        "secrets:false",
+        "services:false",
+        "stage:false",
+        "start_in:false",
+        "tags:false",
+        "timeout:false",
+        "trigger:false",
+        "variables:false",
+        "when:false"
+      ]
+    },
+    "Need": {
+      "kind": "property",
+      "resourceType": "GitLab::CI::Need"
+    },
+    "Parallel": {
+      "kind": "property",
+      "resourceType": "GitLab::CI::Parallel"
+    },
+    "Release": {
+      "kind": "property",
+      "resourceType": "GitLab::CI::Release"
+    },
+    "Retry": {
+      "kind": "property",
+      "resourceType": "GitLab::CI::Retry"
+    },
+    "Rule": {
+      "kind": "property",
+      "resourceType": "GitLab::CI::Rule"
+    },
+    "Service": {
+      "kind": "property",
+      "resourceType": "GitLab::CI::Service"
+    },
+    "Trigger": {
+      "kind": "property",
+      "resourceType": "GitLab::CI::Trigger"
+    },
+    "Workflow": {
+      "kind": "resource",
+      "resourceType": "GitLab::CI::Workflow",
+      "props": [
+        "auto_cancel:false",
+        "name:false",
+        "rules:false"
+      ]
+    },
+    "WorkflowRule": {
+      "kind": "property",
+      "resourceType": "GitLab::CI::WorkflowRule"
+    }
+  }
+}

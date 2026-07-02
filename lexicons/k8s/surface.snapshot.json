@@ -1,0 +1,2118 @@
+{
+  "schemaVersion": 1,
+  "generatedAt": "2026-07-02T02:03:24.618Z",
+  "entries": {
+    "APIGroup": {
+      "kind": "resource",
+      "resourceType": "K8s::Core::APIGroup",
+      "props": [
+        "name:true",
+        "preferredVersion:false",
+        "serverAddressByClientCIDRs:false",
+        "versions:true"
+      ]
+    },
+    "APIGroupList": {
+      "kind": "resource",
+      "resourceType": "K8s::Core::APIGroupList",
+      "props": [
+        "groups:true"
+      ]
+    },
+    "APIResourceList": {
+      "kind": "resource",
+      "resourceType": "K8s::Core::APIResourceList",
+      "props": [
+        "groupVersion:true",
+        "resources:true"
+      ]
+    },
+    "APIService": {
+      "kind": "resource",
+      "resourceType": "K8s::Apiregistration::APIService",
+      "props": [
+        "metadata:false",
+        "spec:false"
+      ]
+    },
+    "APIServiceList": {
+      "kind": "resource",
+      "resourceType": "K8s::Apiregistration::APIServiceList",
+      "props": [
+        "items:true",
+        "metadata:false"
+      ]
+    },
+    "APIVersions": {
+      "kind": "resource",
+      "resourceType": "K8s::Core::APIVersions",
+      "props": [
+        "serverAddressByClientCIDRs:true",
+        "versions:true"
+      ]
+    },
+    "AdditionalOutputFormat": {
+      "kind": "property",
+      "resourceType": "K8s::CertManager::Certificate.additionalOutputFormats"
+    },
+    "Address": {
+      "kind": "property",
+      "resourceType": "K8s::Gateway::Gateway.addresses"
+    },
+    "Affinity": {
+      "kind": "property",
+      "resourceType": "K8s::Core::Affinity"
+    },
+    "AppProject": {
+      "kind": "resource",
+      "resourceType": "K8s::Argo::AppProject",
+      "props": [
+        "metadata:true",
+        "spec:true"
+      ]
+    },
+    "AppProject_ClusterResourceBlacklist": {
+      "kind": "property",
+      "resourceType": "K8s::Argo::AppProject.clusterResourceBlacklist"
+    },
+    "AppProject_ClusterResourceWhitelist": {
+      "kind": "property",
+      "resourceType": "K8s::Argo::AppProject.clusterResourceWhitelist"
+    },
+    "AppProject_Destination": {
+      "kind": "property",
+      "resourceType": "K8s::Argo::AppProject.destinations"
+    },
+    "AppProject_DestinationServiceAccount": {
+      "kind": "property",
+      "resourceType": "K8s::Argo::AppProject.destinationServiceAccounts"
+    },
+    "AppProject_NamespaceResourceBlacklist": {
+      "kind": "property",
+      "resourceType": "K8s::Argo::AppProject.namespaceResourceBlacklist"
+    },
+    "AppProject_NamespaceResourceWhitelist": {
+      "kind": "property",
+      "resourceType": "K8s::Argo::AppProject.namespaceResourceWhitelist"
+    },
+    "AppProject_OrphanedResources": {
+      "kind": "property",
+      "resourceType": "K8s::Argo::AppProject.orphanedResources"
+    },
+    "AppProject_Role": {
+      "kind": "property",
+      "resourceType": "K8s::Argo::AppProject.roles"
+    },
+    "AppProject_SignatureKey": {
+      "kind": "property",
+      "resourceType": "K8s::Argo::AppProject.signatureKeys"
+    },
+    "AppProject_SyncWindow": {
+      "kind": "property",
+      "resourceType": "K8s::Argo::AppProject.syncWindows"
+    },
+    "Application": {
+      "kind": "resource",
+      "resourceType": "K8s::Argo::Application",
+      "props": [
+        "metadata:true",
+        "operation:false",
+        "spec:true"
+      ]
+    },
+    "ApplicationSet": {
+      "kind": "resource",
+      "resourceType": "K8s::Argo::ApplicationSet",
+      "props": [
+        "metadata:true",
+        "spec:true"
+      ]
+    },
+    "ApplicationSet_Generator": {
+      "kind": "property",
+      "resourceType": "K8s::Argo::ApplicationSet.generators"
+    },
+    "ApplicationSet_IgnoreApplicationDifference": {
+      "kind": "property",
+      "resourceType": "K8s::Argo::ApplicationSet.ignoreApplicationDifferences"
+    },
+    "ApplicationSet_PreservedFields": {
+      "kind": "property",
+      "resourceType": "K8s::Argo::ApplicationSet.preservedFields"
+    },
+    "ApplicationSet_Strategy": {
+      "kind": "property",
+      "resourceType": "K8s::Argo::ApplicationSet.strategy"
+    },
+    "ApplicationSet_SyncPolicy": {
+      "kind": "property",
+      "resourceType": "K8s::Argo::ApplicationSet.syncPolicy"
+    },
+    "ApplicationSet_Template": {
+      "kind": "property",
+      "resourceType": "K8s::Argo::ApplicationSet.template"
+    },
+    "Application_Destination": {
+      "kind": "property",
+      "resourceType": "K8s::Argo::Application.destination"
+    },
+    "Application_IgnoreDifference": {
+      "kind": "property",
+      "resourceType": "K8s::Argo::Application.ignoreDifferences"
+    },
+    "Application_Info": {
+      "kind": "property",
+      "resourceType": "K8s::Argo::Application.info"
+    },
+    "Application_Source": {
+      "kind": "property",
+      "resourceType": "K8s::Argo::Application.source"
+    },
+    "Application_Sources": {
+      "kind": "property",
+      "resourceType": "K8s::Argo::Application.sources"
+    },
+    "Application_SyncPolicy": {
+      "kind": "property",
+      "resourceType": "K8s::Argo::Application.syncPolicy"
+    },
+    "AttachMetadata": {
+      "kind": "property",
+      "resourceType": "K8s::Monitoring::ServiceMonitor.attachMetadata"
+    },
+    "AutoscalerOptions": {
+      "kind": "property",
+      "resourceType": "K8s::Ray::RayCluster.autoscalerOptions"
+    },
+    "BatchJob": {
+      "kind": "resource",
+      "resourceType": "K8s::Batch::Job",
+      "props": [
+        "metadata:false",
+        "spec:false"
+      ]
+    },
+    "Binding": {
+      "kind": "resource",
+      "resourceType": "K8s::Core::Binding",
+      "props": [
+        "metadata:false",
+        "target:true"
+      ]
+    },
+    "CM": {
+      "kind": "resource",
+      "resourceType": "K8s::Core::ConfigMap",
+      "props": [
+        "binaryData:false",
+        "data:false",
+        "immutable:false",
+        "metadata:false"
+      ]
+    },
+    "CSIDriver": {
+      "kind": "resource",
+      "resourceType": "K8s::Storage::CSIDriver",
+      "props": [
+        "metadata:false",
+        "spec:true"
+      ]
+    },
+    "CSIDriverList": {
+      "kind": "resource",
+      "resourceType": "K8s::Storage::CSIDriverList",
+      "props": [
+        "items:true",
+        "metadata:false"
+      ]
+    },
+    "CSINode": {
+      "kind": "resource",
+      "resourceType": "K8s::Storage::CSINode",
+      "props": [
+        "metadata:false",
+        "spec:true"
+      ]
+    },
+    "CSINodeList": {
+      "kind": "resource",
+      "resourceType": "K8s::Storage::CSINodeList",
+      "props": [
+        "items:true",
+        "metadata:false"
+      ]
+    },
+    "CSIStorageCapacity": {
+      "kind": "resource",
+      "resourceType": "K8s::Storage::CSIStorageCapacity",
+      "props": [
+        "capacity:false",
+        "maximumVolumeSize:false",
+        "metadata:false",
+        "nodeTopology:false",
+        "storageClassName:true"
+      ]
+    },
+    "CSIStorageCapacityList": {
+      "kind": "resource",
+      "resourceType": "K8s::Storage::CSIStorageCapacityList",
+      "props": [
+        "items:true",
+        "metadata:false"
+      ]
+    },
+    "Capabilities": {
+      "kind": "property",
+      "resourceType": "K8s::Core::Capabilities"
+    },
+    "Certificate": {
+      "kind": "resource",
+      "resourceType": "K8s::CertManager::Certificate",
+      "props": [
+        "https:true",
+        "metadata:false",
+        "spec:false"
+      ]
+    },
+    "CertificateRequest": {
+      "kind": "resource",
+      "resourceType": "K8s::CertManager::CertificateRequest",
+      "props": [
+        "https:true",
+        "metadata:false",
+        "spec:false"
+      ]
+    },
+    "CertificateRequest_IssuerRef": {
+      "kind": "property",
+      "resourceType": "K8s::CertManager::CertificateRequest.issuerRef"
+    },
+    "CertificateSigningRequest": {
+      "kind": "resource",
+      "resourceType": "K8s::Certificates::CertificateSigningRequest",
+      "props": [
+        "metadata:false",
+        "spec:true"
+      ]
+    },
+    "CertificateSigningRequestList": {
+      "kind": "resource",
+      "resourceType": "K8s::Certificates::CertificateSigningRequestList",
+      "props": [
+        "items:true",
+        "metadata:false"
+      ]
+    },
+    "Certificate_AdditionalOutputFormat": {
+      "kind": "property",
+      "resourceType": "K8s::CertManager::Certificate.additionalOutputFormats"
+    },
+    "Certificate_IssuerRef": {
+      "kind": "property",
+      "resourceType": "K8s::CertManager::Certificate.issuerRef"
+    },
+    "Certificate_Keystores": {
+      "kind": "property",
+      "resourceType": "K8s::CertManager::Certificate.keystores"
+    },
+    "Certificate_NameConstraints": {
+      "kind": "property",
+      "resourceType": "K8s::CertManager::Certificate.nameConstraints"
+    },
+    "Certificate_OtherName": {
+      "kind": "property",
+      "resourceType": "K8s::CertManager::Certificate.otherNames"
+    },
+    "Certificate_PrivateKey": {
+      "kind": "property",
+      "resourceType": "K8s::CertManager::Certificate.privateKey"
+    },
+    "Certificate_SecretTemplate": {
+      "kind": "property",
+      "resourceType": "K8s::CertManager::Certificate.secretTemplate"
+    },
+    "Certificate_Subject": {
+      "kind": "property",
+      "resourceType": "K8s::CertManager::Certificate.subject"
+    },
+    "Challenge": {
+      "kind": "resource",
+      "resourceType": "K8s::Acme::Challenge",
+      "props": [
+        "metadata:true",
+        "spec:true"
+      ]
+    },
+    "Challenge_IssuerRef": {
+      "kind": "property",
+      "resourceType": "K8s::Acme::Challenge.issuerRef"
+    },
+    "Challenge_Solver": {
+      "kind": "property",
+      "resourceType": "K8s::Acme::Challenge.solver"
+    },
+    "ClusterIssuer": {
+      "kind": "resource",
+      "resourceType": "K8s::CertManager::ClusterIssuer",
+      "props": [
+        "metadata:false",
+        "spec:true"
+      ]
+    },
+    "ClusterIssuer_Acme": {
+      "kind": "property",
+      "resourceType": "K8s::CertManager::ClusterIssuer.acme"
+    },
+    "ClusterIssuer_Ca": {
+      "kind": "property",
+      "resourceType": "K8s::CertManager::ClusterIssuer.ca"
+    },
+    "ClusterIssuer_SelfSigned": {
+      "kind": "property",
+      "resourceType": "K8s::CertManager::ClusterIssuer.selfSigned"
+    },
+    "ClusterIssuer_Vault": {
+      "kind": "property",
+      "resourceType": "K8s::CertManager::ClusterIssuer.vault"
+    },
+    "ClusterIssuer_Venafi": {
+      "kind": "property",
+      "resourceType": "K8s::CertManager::ClusterIssuer.venafi"
+    },
+    "ClusterResourceBlacklist": {
+      "kind": "property",
+      "resourceType": "K8s::Argo::AppProject.clusterResourceBlacklist"
+    },
+    "ClusterResourceWhitelist": {
+      "kind": "property",
+      "resourceType": "K8s::Argo::AppProject.clusterResourceWhitelist"
+    },
+    "ClusterRole": {
+      "kind": "resource",
+      "resourceType": "K8s::Rbac::ClusterRole",
+      "props": [
+        "aggregationRule:false",
+        "metadata:false",
+        "rules:false"
+      ]
+    },
+    "ClusterRoleBinding": {
+      "kind": "resource",
+      "resourceType": "K8s::Rbac::ClusterRoleBinding",
+      "props": [
+        "metadata:false",
+        "roleRef:true",
+        "subjects:false"
+      ]
+    },
+    "ClusterRoleBindingList": {
+      "kind": "resource",
+      "resourceType": "K8s::Rbac::ClusterRoleBindingList",
+      "props": [
+        "items:true",
+        "metadata:false"
+      ]
+    },
+    "ClusterRoleList": {
+      "kind": "resource",
+      "resourceType": "K8s::Rbac::ClusterRoleList",
+      "props": [
+        "items:true",
+        "metadata:false"
+      ]
+    },
+    "ComponentStatus": {
+      "kind": "resource",
+      "resourceType": "K8s::Core::ComponentStatus",
+      "props": [
+        "conditions:false",
+        "metadata:false"
+      ]
+    },
+    "ComponentStatusList": {
+      "kind": "resource",
+      "resourceType": "K8s::Core::ComponentStatusList",
+      "props": [
+        "items:true",
+        "metadata:false"
+      ]
+    },
+    "ConfigMap": {
+      "kind": "resource",
+      "resourceType": "K8s::Core::ConfigMap",
+      "props": [
+        "binaryData:false",
+        "data:false",
+        "immutable:false",
+        "metadata:false"
+      ]
+    },
+    "ConfigMapKeySelector": {
+      "kind": "property",
+      "resourceType": "K8s::Core::ConfigMapKeySelector"
+    },
+    "ConfigMapList": {
+      "kind": "resource",
+      "resourceType": "K8s::Core::ConfigMapList",
+      "props": [
+        "items:true",
+        "metadata:false"
+      ]
+    },
+    "Container": {
+      "kind": "property",
+      "resourceType": "K8s::Core::Container"
+    },
+    "ContainerPort": {
+      "kind": "property",
+      "resourceType": "K8s::Core::ContainerPort"
+    },
+    "ControllerRevision": {
+      "kind": "resource",
+      "resourceType": "K8s::Apps::ControllerRevision",
+      "props": [
+        "data:false",
+        "metadata:false",
+        "revision:true"
+      ]
+    },
+    "ControllerRevisionList": {
+      "kind": "resource",
+      "resourceType": "K8s::Apps::ControllerRevisionList",
+      "props": [
+        "items:true",
+        "metadata:false"
+      ]
+    },
+    "CoreEventList": {
+      "kind": "resource",
+      "resourceType": "K8s::Core::EventList",
+      "props": [
+        "items:true",
+        "metadata:false"
+      ]
+    },
+    "CrdbCluster": {
+      "kind": "resource",
+      "resourceType": "K8s::Crdb::CrdbCluster",
+      "props": [
+        "metadata:false",
+        "spec:false"
+      ]
+    },
+    "CrdbCluster_Affinity": {
+      "kind": "property",
+      "resourceType": "K8s::Crdb::CrdbCluster.affinity"
+    },
+    "CrdbCluster_DataStore": {
+      "kind": "property",
+      "resourceType": "K8s::Crdb::CrdbCluster.dataStore"
+    },
+    "CrdbCluster_Image": {
+      "kind": "property",
+      "resourceType": "K8s::Crdb::CrdbCluster.image"
+    },
+    "CrdbCluster_Ingress": {
+      "kind": "property",
+      "resourceType": "K8s::Crdb::CrdbCluster.ingress"
+    },
+    "CrdbCluster_PodEnvVariable": {
+      "kind": "property",
+      "resourceType": "K8s::Crdb::CrdbCluster.podEnvVariables"
+    },
+    "CrdbCluster_Resources": {
+      "kind": "property",
+      "resourceType": "K8s::Crdb::CrdbCluster.resources"
+    },
+    "CrdbCluster_Toleration": {
+      "kind": "property",
+      "resourceType": "K8s::Crdb::CrdbCluster.tolerations"
+    },
+    "CrdbCluster_TopologySpreadConstraint": {
+      "kind": "property",
+      "resourceType": "K8s::Crdb::CrdbCluster.topologySpreadConstraints"
+    },
+    "CronJob": {
+      "kind": "resource",
+      "resourceType": "K8s::Batch::CronJob",
+      "props": [
+        "metadata:false",
+        "spec:false"
+      ]
+    },
+    "CronJobList": {
+      "kind": "resource",
+      "resourceType": "K8s::Batch::CronJobList",
+      "props": [
+        "items:true",
+        "metadata:false"
+      ]
+    },
+    "CustomResourceDefinition": {
+      "kind": "resource",
+      "resourceType": "K8s::Apiextensions::CustomResourceDefinition",
+      "props": [
+        "metadata:false",
+        "spec:true"
+      ]
+    },
+    "CustomResourceDefinitionList": {
+      "kind": "resource",
+      "resourceType": "K8s::Apiextensions::CustomResourceDefinitionList",
+      "props": [
+        "items:true",
+        "metadata:false"
+      ]
+    },
+    "DS": {
+      "kind": "resource",
+      "resourceType": "K8s::Apps::DaemonSet",
+      "props": [
+        "metadata:false",
+        "spec:false"
+      ]
+    },
+    "DaemonSet": {
+      "kind": "resource",
+      "resourceType": "K8s::Apps::DaemonSet",
+      "props": [
+        "metadata:false",
+        "spec:false"
+      ]
+    },
+    "DaemonSetList": {
+      "kind": "resource",
+      "resourceType": "K8s::Apps::DaemonSetList",
+      "props": [
+        "items:true",
+        "metadata:false"
+      ]
+    },
+    "DataStore": {
+      "kind": "property",
+      "resourceType": "K8s::Crdb::CrdbCluster.dataStore"
+    },
+    "DeleteOptions": {
+      "kind": "resource",
+      "resourceType": "K8s::Core::DeleteOptions",
+      "props": [
+        "dryRun:false",
+        "gracePeriodSeconds:false",
+        "ignoreStoreReadErrorWithClusterBreakingPotential:false",
+        "orphanDependents:false",
+        "preconditions:false",
+        "propagationPolicy:false"
+      ]
+    },
+    "Deploy": {
+      "kind": "resource",
+      "resourceType": "K8s::Apps::Deployment",
+      "props": [
+        "metadata:false",
+        "spec:false"
+      ]
+    },
+    "Deployment": {
+      "kind": "resource",
+      "resourceType": "K8s::Apps::Deployment",
+      "props": [
+        "metadata:false",
+        "spec:false"
+      ]
+    },
+    "DeploymentList": {
+      "kind": "resource",
+      "resourceType": "K8s::Apps::DeploymentList",
+      "props": [
+        "items:true",
+        "metadata:false"
+      ]
+    },
+    "DeploymentStrategy": {
+      "kind": "property",
+      "resourceType": "K8s::Apps::DeploymentStrategy"
+    },
+    "DestinationServiceAccount": {
+      "kind": "property",
+      "resourceType": "K8s::Argo::AppProject.destinationServiceAccounts"
+    },
+    "DeviceClass": {
+      "kind": "resource",
+      "resourceType": "K8s::Resource::DeviceClass",
+      "props": [
+        "metadata:false",
+        "spec:true"
+      ]
+    },
+    "DeviceClassList": {
+      "kind": "resource",
+      "resourceType": "K8s::Resource::DeviceClassList",
+      "props": [
+        "items:true",
+        "metadata:false"
+      ]
+    },
+    "Endpoint": {
+      "kind": "property",
+      "resourceType": "K8s::Monitoring::ServiceMonitor.endpoints"
+    },
+    "EndpointSlice": {
+      "kind": "resource",
+      "resourceType": "K8s::Discovery::EndpointSlice",
+      "props": [
+        "addressType:true",
+        "endpoints:true",
+        "metadata:false",
+        "ports:false"
+      ]
+    },
+    "EndpointSliceList": {
+      "kind": "resource",
+      "resourceType": "K8s::Discovery::EndpointSliceList",
+      "props": [
+        "items:true",
+        "metadata:false"
+      ]
+    },
+    "Endpoints": {
+      "kind": "resource",
+      "resourceType": "K8s::Core::Endpoints",
+      "props": [
+        "metadata:false",
+        "subsets:false"
+      ]
+    },
+    "EndpointsList": {
+      "kind": "resource",
+      "resourceType": "K8s::Core::EndpointsList",
+      "props": [
+        "items:true",
+        "metadata:false"
+      ]
+    },
+    "EnvFromSource": {
+      "kind": "property",
+      "resourceType": "K8s::Core::EnvFromSource"
+    },
+    "EnvVar": {
+      "kind": "property",
+      "resourceType": "K8s::Core::EnvVar"
+    },
+    "EnvVarSource": {
+      "kind": "property",
+      "resourceType": "K8s::Core::EnvVarSource"
+    },
+    "EphemeralContainer": {
+      "kind": "property",
+      "resourceType": "K8s::Core::EphemeralContainer"
+    },
+    "Event": {
+      "kind": "resource",
+      "resourceType": "K8s::Core::Event",
+      "props": [
+        "action:false",
+        "count:false",
+        "eventTime:false",
+        "firstTimestamp:false",
+        "involvedObject:true",
+        "lastTimestamp:false",
+        "message:false",
+        "metadata:true",
+        "reason:false",
+        "related:false",
+        "reportingComponent:false",
+        "reportingInstance:false",
+        "series:false",
+        "source:false",
+        "type:false"
+      ]
+    },
+    "EventsEvent": {
+      "kind": "resource",
+      "resourceType": "K8s::Events::Event",
+      "props": [
+        "action:false",
+        "deprecatedCount:false",
+        "deprecatedFirstTimestamp:false",
+        "deprecatedLastTimestamp:false",
+        "deprecatedSource:false",
+        "eventTime:true",
+        "metadata:false",
+        "note:false",
+        "reason:false",
+        "regarding:false",
+        "related:false",
+        "reportingController:false",
+        "reportingInstance:false",
+        "series:false",
+        "type:false"
+      ]
+    },
+    "EventsEventList": {
+      "kind": "resource",
+      "resourceType": "K8s::Events::EventList",
+      "props": [
+        "items:true",
+        "metadata:false"
+      ]
+    },
+    "Eviction": {
+      "kind": "resource",
+      "resourceType": "K8s::Policy::Eviction",
+      "props": [
+        "deleteOptions:false",
+        "metadata:false"
+      ]
+    },
+    "ExecAction": {
+      "kind": "property",
+      "resourceType": "K8s::Core::ExecAction"
+    },
+    "FlowSchema": {
+      "kind": "resource",
+      "resourceType": "K8s::Flowcontrol::FlowSchema",
+      "props": [
+        "metadata:false",
+        "spec:false"
+      ]
+    },
+    "FlowSchemaList": {
+      "kind": "resource",
+      "resourceType": "K8s::Flowcontrol::FlowSchemaList",
+      "props": [
+        "items:true",
+        "metadata:false"
+      ]
+    },
+    "From": {
+      "kind": "property",
+      "resourceType": "K8s::Gateway::ReferenceGrant.from"
+    },
+    "GRPCRoute": {
+      "kind": "resource",
+      "resourceType": "K8s::Gateway::GRPCRoute",
+      "props": [
+        "metadata:false",
+        "spec:false"
+      ]
+    },
+    "GRPCRoute_ParentRef": {
+      "kind": "property",
+      "resourceType": "K8s::Gateway::GRPCRoute.parentRefs"
+    },
+    "GRPCRoute_Rule": {
+      "kind": "property",
+      "resourceType": "K8s::Gateway::GRPCRoute.rules"
+    },
+    "Gateway": {
+      "kind": "resource",
+      "resourceType": "K8s::Gateway::Gateway",
+      "props": [
+        "metadata:false",
+        "spec:true"
+      ]
+    },
+    "GatewayClass": {
+      "kind": "resource",
+      "resourceType": "K8s::Gateway::GatewayClass",
+      "props": [
+        "metadata:false",
+        "spec:true"
+      ]
+    },
+    "GatewayClass_ParametersRef": {
+      "kind": "property",
+      "resourceType": "K8s::Gateway::GatewayClass.parametersRef"
+    },
+    "Gateway_Address": {
+      "kind": "property",
+      "resourceType": "K8s::Gateway::Gateway.addresses"
+    },
+    "Gateway_Infrastructure": {
+      "kind": "property",
+      "resourceType": "K8s::Gateway::Gateway.infrastructure"
+    },
+    "Gateway_Listener": {
+      "kind": "property",
+      "resourceType": "K8s::Gateway::Gateway.listeners"
+    },
+    "GcsFaultToleranceOptions": {
+      "kind": "property",
+      "resourceType": "K8s::Ray::RayCluster.gcsFaultToleranceOptions"
+    },
+    "Generator": {
+      "kind": "property",
+      "resourceType": "K8s::Argo::ApplicationSet.generators"
+    },
+    "Group": {
+      "kind": "property",
+      "resourceType": "K8s::Monitoring::PrometheusRule.groups"
+    },
+    "HPA": {
+      "kind": "resource",
+      "resourceType": "K8s::Autoscaling::HorizontalPodAutoscaler",
+      "props": [
+        "metadata:false",
+        "spec:false"
+      ]
+    },
+    "HTTPGetAction": {
+      "kind": "property",
+      "resourceType": "K8s::Core::HTTPGetAction"
+    },
+    "HTTPIngressPath": {
+      "kind": "property",
+      "resourceType": "K8s::Networking::HTTPIngressPath"
+    },
+    "HTTPRoute": {
+      "kind": "resource",
+      "resourceType": "K8s::Gateway::HTTPRoute",
+      "props": [
+        "metadata:false",
+        "spec:true"
+      ]
+    },
+    "HTTPRoute_ParentRef": {
+      "kind": "property",
+      "resourceType": "K8s::Gateway::HTTPRoute.parentRefs"
+    },
+    "HTTPRoute_Rule": {
+      "kind": "property",
+      "resourceType": "K8s::Gateway::HTTPRoute.rules"
+    },
+    "HeadGroupSpec": {
+      "kind": "property",
+      "resourceType": "K8s::Ray::RayCluster.headGroupSpec"
+    },
+    "HorizontalPodAutoscaler": {
+      "kind": "resource",
+      "resourceType": "K8s::Autoscaling::HorizontalPodAutoscaler",
+      "props": [
+        "metadata:false",
+        "spec:false"
+      ]
+    },
+    "HorizontalPodAutoscalerBehavior": {
+      "kind": "property",
+      "resourceType": "K8s::Autoscaling::HorizontalPodAutoscalerBehavior"
+    },
+    "HorizontalPodAutoscalerList": {
+      "kind": "resource",
+      "resourceType": "K8s::Autoscaling::HorizontalPodAutoscalerList",
+      "props": [
+        "items:true",
+        "metadata:false"
+      ]
+    },
+    "HostAlias": {
+      "kind": "property",
+      "resourceType": "K8s::Core::HostAlias"
+    },
+    "IPAddress": {
+      "kind": "resource",
+      "resourceType": "K8s::Networking::IPAddress",
+      "props": [
+        "metadata:false",
+        "spec:false"
+      ]
+    },
+    "IPAddressList": {
+      "kind": "resource",
+      "resourceType": "K8s::Networking::IPAddressList",
+      "props": [
+        "items:true",
+        "metadata:false"
+      ]
+    },
+    "IgnoreApplicationDifference": {
+      "kind": "property",
+      "resourceType": "K8s::Argo::ApplicationSet.ignoreApplicationDifferences"
+    },
+    "IgnoreDifference": {
+      "kind": "property",
+      "resourceType": "K8s::Argo::Application.ignoreDifferences"
+    },
+    "Image": {
+      "kind": "property",
+      "resourceType": "K8s::Crdb::CrdbCluster.image"
+    },
+    "Info": {
+      "kind": "property",
+      "resourceType": "K8s::Argo::Application.info"
+    },
+    "Infrastructure": {
+      "kind": "property",
+      "resourceType": "K8s::Gateway::Gateway.infrastructure"
+    },
+    "Ing": {
+      "kind": "resource",
+      "resourceType": "K8s::Networking::Ingress",
+      "props": [
+        "metadata:false",
+        "spec:false"
+      ]
+    },
+    "Ingress": {
+      "kind": "resource",
+      "resourceType": "K8s::Networking::Ingress",
+      "props": [
+        "metadata:false",
+        "spec:false"
+      ]
+    },
+    "IngressBackend": {
+      "kind": "property",
+      "resourceType": "K8s::Networking::IngressBackend"
+    },
+    "IngressClass": {
+      "kind": "resource",
+      "resourceType": "K8s::Networking::IngressClass",
+      "props": [
+        "metadata:false",
+        "spec:false"
+      ]
+    },
+    "IngressClassList": {
+      "kind": "resource",
+      "resourceType": "K8s::Networking::IngressClassList",
+      "props": [
+        "items:true",
+        "metadata:false"
+      ]
+    },
+    "IngressList": {
+      "kind": "resource",
+      "resourceType": "K8s::Networking::IngressList",
+      "props": [
+        "items:true",
+        "metadata:false"
+      ]
+    },
+    "IngressRule": {
+      "kind": "property",
+      "resourceType": "K8s::Networking::IngressRule"
+    },
+    "IngressServiceBackend": {
+      "kind": "property",
+      "resourceType": "K8s::Networking::IngressServiceBackend"
+    },
+    "IngressTLS": {
+      "kind": "property",
+      "resourceType": "K8s::Networking::IngressTLS"
+    },
+    "Issuer": {
+      "kind": "resource",
+      "resourceType": "K8s::CertManager::Issuer",
+      "props": [
+        "metadata:false",
+        "spec:true"
+      ]
+    },
+    "Issuer_Acme": {
+      "kind": "property",
+      "resourceType": "K8s::CertManager::Issuer.acme"
+    },
+    "Issuer_Ca": {
+      "kind": "property",
+      "resourceType": "K8s::CertManager::Issuer.ca"
+    },
+    "Issuer_SelfSigned": {
+      "kind": "property",
+      "resourceType": "K8s::CertManager::Issuer.selfSigned"
+    },
+    "Issuer_Vault": {
+      "kind": "property",
+      "resourceType": "K8s::CertManager::Issuer.vault"
+    },
+    "Issuer_Venafi": {
+      "kind": "property",
+      "resourceType": "K8s::CertManager::Issuer.venafi"
+    },
+    "Job": {
+      "kind": "resource",
+      "resourceType": "K8s::Batch::Job",
+      "props": [
+        "metadata:false",
+        "spec:false"
+      ]
+    },
+    "JobList": {
+      "kind": "resource",
+      "resourceType": "K8s::Batch::JobList",
+      "props": [
+        "items:true",
+        "metadata:false"
+      ]
+    },
+    "KeyToPath": {
+      "kind": "property",
+      "resourceType": "K8s::Core::KeyToPath"
+    },
+    "Keystores": {
+      "kind": "property",
+      "resourceType": "K8s::CertManager::Certificate.keystores"
+    },
+    "LabelSelector": {
+      "kind": "property",
+      "resourceType": "K8s::Meta::LabelSelector"
+    },
+    "LabelSelectorRequirement": {
+      "kind": "property",
+      "resourceType": "K8s::Meta::LabelSelectorRequirement"
+    },
+    "Lease": {
+      "kind": "resource",
+      "resourceType": "K8s::Coordination::Lease",
+      "props": [
+        "metadata:false",
+        "spec:false"
+      ]
+    },
+    "LeaseList": {
+      "kind": "resource",
+      "resourceType": "K8s::Coordination::LeaseList",
+      "props": [
+        "items:true",
+        "metadata:false"
+      ]
+    },
+    "LimitRange": {
+      "kind": "resource",
+      "resourceType": "K8s::Core::LimitRange",
+      "props": [
+        "metadata:false",
+        "spec:false"
+      ]
+    },
+    "LimitRangeList": {
+      "kind": "resource",
+      "resourceType": "K8s::Core::LimitRangeList",
+      "props": [
+        "items:true",
+        "metadata:false"
+      ]
+    },
+    "Listener": {
+      "kind": "property",
+      "resourceType": "K8s::Gateway::Gateway.listeners"
+    },
+    "LocalObjectReference": {
+      "kind": "property",
+      "resourceType": "K8s::Core::LocalObjectReference"
+    },
+    "LocalSubjectAccessReview": {
+      "kind": "resource",
+      "resourceType": "K8s::Authorization::LocalSubjectAccessReview",
+      "props": [
+        "metadata:false",
+        "spec:true"
+      ]
+    },
+    "MetricSpec": {
+      "kind": "property",
+      "resourceType": "K8s::Autoscaling::MetricSpec"
+    },
+    "MutatingWebhookConfiguration": {
+      "kind": "resource",
+      "resourceType": "K8s::Admissionregistration::MutatingWebhookConfiguration",
+      "props": [
+        "metadata:false",
+        "webhooks:false"
+      ]
+    },
+    "MutatingWebhookConfigurationList": {
+      "kind": "resource",
+      "resourceType": "K8s::Admissionregistration::MutatingWebhookConfigurationList",
+      "props": [
+        "items:true",
+        "metadata:false"
+      ]
+    },
+    "NS": {
+      "kind": "resource",
+      "resourceType": "K8s::Core::Namespace",
+      "props": [
+        "metadata:false",
+        "spec:false"
+      ]
+    },
+    "NameConstraints": {
+      "kind": "property",
+      "resourceType": "K8s::CertManager::Certificate.nameConstraints"
+    },
+    "Namespace": {
+      "kind": "resource",
+      "resourceType": "K8s::Core::Namespace",
+      "props": [
+        "metadata:false",
+        "spec:false"
+      ]
+    },
+    "NamespaceList": {
+      "kind": "resource",
+      "resourceType": "K8s::Core::NamespaceList",
+      "props": [
+        "items:true",
+        "metadata:false"
+      ]
+    },
+    "NamespaceResourceBlacklist": {
+      "kind": "property",
+      "resourceType": "K8s::Argo::AppProject.namespaceResourceBlacklist"
+    },
+    "NamespaceResourceWhitelist": {
+      "kind": "property",
+      "resourceType": "K8s::Argo::AppProject.namespaceResourceWhitelist"
+    },
+    "NamespaceSelector": {
+      "kind": "property",
+      "resourceType": "K8s::Monitoring::ServiceMonitor.namespaceSelector"
+    },
+    "NetPol": {
+      "kind": "resource",
+      "resourceType": "K8s::Networking::NetworkPolicy",
+      "props": [
+        "metadata:false",
+        "spec:false"
+      ]
+    },
+    "NetworkPolicy": {
+      "kind": "resource",
+      "resourceType": "K8s::Networking::NetworkPolicy",
+      "props": [
+        "metadata:false",
+        "spec:false"
+      ]
+    },
+    "NetworkPolicyEgressRule": {
+      "kind": "property",
+      "resourceType": "K8s::Networking::NetworkPolicyEgressRule"
+    },
+    "NetworkPolicyIngressRule": {
+      "kind": "property",
+      "resourceType": "K8s::Networking::NetworkPolicyIngressRule"
+    },
+    "NetworkPolicyList": {
+      "kind": "resource",
+      "resourceType": "K8s::Networking::NetworkPolicyList",
+      "props": [
+        "items:true",
+        "metadata:false"
+      ]
+    },
+    "NetworkPolicyPeer": {
+      "kind": "property",
+      "resourceType": "K8s::Networking::NetworkPolicyPeer"
+    },
+    "NetworkPolicyPort": {
+      "kind": "property",
+      "resourceType": "K8s::Networking::NetworkPolicyPort"
+    },
+    "Node": {
+      "kind": "resource",
+      "resourceType": "K8s::Core::Node",
+      "props": [
+        "metadata:false",
+        "spec:false"
+      ]
+    },
+    "NodeList": {
+      "kind": "resource",
+      "resourceType": "K8s::Core::NodeList",
+      "props": [
+        "items:true",
+        "metadata:false"
+      ]
+    },
+    "ObjectMeta": {
+      "kind": "property",
+      "resourceType": "K8s::Meta::ObjectMeta"
+    },
+    "ObjectReference": {
+      "kind": "property",
+      "resourceType": "K8s::Core::ObjectReference"
+    },
+    "Order": {
+      "kind": "resource",
+      "resourceType": "K8s::Acme::Order",
+      "props": [
+        "metadata:true",
+        "spec:true"
+      ]
+    },
+    "Order_IssuerRef": {
+      "kind": "property",
+      "resourceType": "K8s::Acme::Order.issuerRef"
+    },
+    "OrphanedResources": {
+      "kind": "property",
+      "resourceType": "K8s::Argo::AppProject.orphanedResources"
+    },
+    "OtherName": {
+      "kind": "property",
+      "resourceType": "K8s::CertManager::Certificate.otherNames"
+    },
+    "PDB": {
+      "kind": "resource",
+      "resourceType": "K8s::Policy::PodDisruptionBudget",
+      "props": [
+        "metadata:false",
+        "spec:false"
+      ]
+    },
+    "PV": {
+      "kind": "resource",
+      "resourceType": "K8s::Core::PersistentVolume",
+      "props": [
+        "metadata:false",
+        "spec:false"
+      ]
+    },
+    "PVC": {
+      "kind": "resource",
+      "resourceType": "K8s::Core::PersistentVolumeClaim",
+      "props": [
+        "metadata:false",
+        "spec:false"
+      ]
+    },
+    "ParametersRef": {
+      "kind": "property",
+      "resourceType": "K8s::Gateway::GatewayClass.parametersRef"
+    },
+    "PersistentVolume": {
+      "kind": "resource",
+      "resourceType": "K8s::Core::PersistentVolume",
+      "props": [
+        "metadata:false",
+        "spec:false"
+      ]
+    },
+    "PersistentVolumeClaim": {
+      "kind": "resource",
+      "resourceType": "K8s::Core::PersistentVolumeClaim",
+      "props": [
+        "metadata:false",
+        "spec:false"
+      ]
+    },
+    "PersistentVolumeClaimList": {
+      "kind": "resource",
+      "resourceType": "K8s::Core::PersistentVolumeClaimList",
+      "props": [
+        "items:true",
+        "metadata:false"
+      ]
+    },
+    "PersistentVolumeClaimSpec": {
+      "kind": "property",
+      "resourceType": "K8s::Core::PersistentVolumeClaimSpec"
+    },
+    "PersistentVolumeList": {
+      "kind": "resource",
+      "resourceType": "K8s::Core::PersistentVolumeList",
+      "props": [
+        "items:true",
+        "metadata:false"
+      ]
+    },
+    "Pod": {
+      "kind": "resource",
+      "resourceType": "K8s::Core::Pod",
+      "props": [
+        "metadata:false",
+        "spec:false"
+      ]
+    },
+    "PodDisruptionBudget": {
+      "kind": "resource",
+      "resourceType": "K8s::Policy::PodDisruptionBudget",
+      "props": [
+        "metadata:false",
+        "spec:false"
+      ]
+    },
+    "PodDisruptionBudgetList": {
+      "kind": "resource",
+      "resourceType": "K8s::Policy::PodDisruptionBudgetList",
+      "props": [
+        "items:true",
+        "metadata:false"
+      ]
+    },
+    "PodDisruptionBudgetSpec": {
+      "kind": "property",
+      "resourceType": "K8s::Policy::PodDisruptionBudgetSpec"
+    },
+    "PodEnvVariable": {
+      "kind": "property",
+      "resourceType": "K8s::Crdb::CrdbCluster.podEnvVariables"
+    },
+    "PodList": {
+      "kind": "resource",
+      "resourceType": "K8s::Core::PodList",
+      "props": [
+        "items:true",
+        "metadata:false"
+      ]
+    },
+    "PodSecurityContext": {
+      "kind": "property",
+      "resourceType": "K8s::Core::PodSecurityContext"
+    },
+    "PodSpec": {
+      "kind": "property",
+      "resourceType": "K8s::Core::PodSpec"
+    },
+    "PodTemplate": {
+      "kind": "resource",
+      "resourceType": "K8s::Core::PodTemplate",
+      "props": [
+        "metadata:false",
+        "template:false"
+      ]
+    },
+    "PodTemplateList": {
+      "kind": "resource",
+      "resourceType": "K8s::Core::PodTemplateList",
+      "props": [
+        "items:true",
+        "metadata:false"
+      ]
+    },
+    "PodTemplateSpec": {
+      "kind": "property",
+      "resourceType": "K8s::Core::PodTemplateSpec"
+    },
+    "PolicyRule": {
+      "kind": "property",
+      "resourceType": "K8s::Rbac::PolicyRule"
+    },
+    "PreservedFields": {
+      "kind": "property",
+      "resourceType": "K8s::Argo::ApplicationSet.preservedFields"
+    },
+    "PriorityClass": {
+      "kind": "resource",
+      "resourceType": "K8s::Scheduling::PriorityClass",
+      "props": [
+        "description:false",
+        "globalDefault:false",
+        "metadata:false",
+        "preemptionPolicy:false",
+        "value:true"
+      ]
+    },
+    "PriorityClassList": {
+      "kind": "resource",
+      "resourceType": "K8s::Scheduling::PriorityClassList",
+      "props": [
+        "items:true",
+        "metadata:false"
+      ]
+    },
+    "PriorityLevelConfiguration": {
+      "kind": "resource",
+      "resourceType": "K8s::Flowcontrol::PriorityLevelConfiguration",
+      "props": [
+        "metadata:false",
+        "spec:false"
+      ]
+    },
+    "PriorityLevelConfigurationList": {
+      "kind": "resource",
+      "resourceType": "K8s::Flowcontrol::PriorityLevelConfigurationList",
+      "props": [
+        "items:true",
+        "metadata:false"
+      ]
+    },
+    "PrivateKey": {
+      "kind": "property",
+      "resourceType": "K8s::CertManager::Certificate.privateKey"
+    },
+    "Probe": {
+      "kind": "property",
+      "resourceType": "K8s::Core::Probe"
+    },
+    "PrometheusRule": {
+      "kind": "resource",
+      "resourceType": "K8s::Monitoring::PrometheusRule",
+      "props": [
+        "metadata:false",
+        "spec:true"
+      ]
+    },
+    "PrometheusRule_Group": {
+      "kind": "property",
+      "resourceType": "K8s::Monitoring::PrometheusRule.groups"
+    },
+    "RayCluster": {
+      "kind": "resource",
+      "resourceType": "K8s::Ray::RayCluster",
+      "props": [
+        "metadata:false",
+        "spec:false"
+      ]
+    },
+    "RayClusterConfig": {
+      "kind": "property",
+      "resourceType": "K8s::Ray::RayService.rayClusterConfig"
+    },
+    "RayClusterSpec": {
+      "kind": "property",
+      "resourceType": "K8s::Ray::RayJob.rayClusterSpec"
+    },
+    "RayCluster_AutoscalerOptions": {
+      "kind": "property",
+      "resourceType": "K8s::Ray::RayCluster.autoscalerOptions"
+    },
+    "RayCluster_GcsFaultToleranceOptions": {
+      "kind": "property",
+      "resourceType": "K8s::Ray::RayCluster.gcsFaultToleranceOptions"
+    },
+    "RayCluster_HeadGroupSpec": {
+      "kind": "property",
+      "resourceType": "K8s::Ray::RayCluster.headGroupSpec"
+    },
+    "RayCluster_WorkerGroupSpec": {
+      "kind": "property",
+      "resourceType": "K8s::Ray::RayCluster.workerGroupSpecs"
+    },
+    "RayJob": {
+      "kind": "resource",
+      "resourceType": "K8s::Ray::RayJob",
+      "props": [
+        "metadata:false",
+        "spec:false"
+      ]
+    },
+    "RayJob_RayClusterSpec": {
+      "kind": "property",
+      "resourceType": "K8s::Ray::RayJob.rayClusterSpec"
+    },
+    "RayJob_SubmitterConfig": {
+      "kind": "property",
+      "resourceType": "K8s::Ray::RayJob.submitterConfig"
+    },
+    "RayJob_SubmitterPodTemplate": {
+      "kind": "property",
+      "resourceType": "K8s::Ray::RayJob.submitterPodTemplate"
+    },
+    "RayService": {
+      "kind": "resource",
+      "resourceType": "K8s::Ray::RayService",
+      "props": [
+        "metadata:false",
+        "spec:false"
+      ]
+    },
+    "RayService_RayClusterConfig": {
+      "kind": "property",
+      "resourceType": "K8s::Ray::RayService.rayClusterConfig"
+    },
+    "RayService_ServeService": {
+      "kind": "property",
+      "resourceType": "K8s::Ray::RayService.serveService"
+    },
+    "RayService_UpgradeStrategy": {
+      "kind": "property",
+      "resourceType": "K8s::Ray::RayService.upgradeStrategy"
+    },
+    "ReferenceGrant": {
+      "kind": "resource",
+      "resourceType": "K8s::Gateway::ReferenceGrant",
+      "props": [
+        "metadata:false",
+        "spec:false"
+      ]
+    },
+    "ReferenceGrant_From": {
+      "kind": "property",
+      "resourceType": "K8s::Gateway::ReferenceGrant.from"
+    },
+    "ReferenceGrant_To": {
+      "kind": "property",
+      "resourceType": "K8s::Gateway::ReferenceGrant.to"
+    },
+    "ReplicaSet": {
+      "kind": "resource",
+      "resourceType": "K8s::Apps::ReplicaSet",
+      "props": [
+        "metadata:false",
+        "spec:false"
+      ]
+    },
+    "ReplicaSetList": {
+      "kind": "resource",
+      "resourceType": "K8s::Apps::ReplicaSetList",
+      "props": [
+        "items:true",
+        "metadata:false"
+      ]
+    },
+    "ReplicationController": {
+      "kind": "resource",
+      "resourceType": "K8s::Core::ReplicationController",
+      "props": [
+        "metadata:false",
+        "spec:false"
+      ]
+    },
+    "ReplicationControllerList": {
+      "kind": "resource",
+      "resourceType": "K8s::Core::ReplicationControllerList",
+      "props": [
+        "items:true",
+        "metadata:false"
+      ]
+    },
+    "ResourceClaim": {
+      "kind": "resource",
+      "resourceType": "K8s::Resource::ResourceClaim",
+      "props": [
+        "metadata:false",
+        "spec:true"
+      ]
+    },
+    "ResourceClaimList": {
+      "kind": "resource",
+      "resourceType": "K8s::Resource::ResourceClaimList",
+      "props": [
+        "items:true",
+        "metadata:false"
+      ]
+    },
+    "ResourceClaimTemplate": {
+      "kind": "resource",
+      "resourceType": "K8s::Resource::ResourceClaimTemplate",
+      "props": [
+        "metadata:false",
+        "spec:true"
+      ]
+    },
+    "ResourceClaimTemplateList": {
+      "kind": "resource",
+      "resourceType": "K8s::Resource::ResourceClaimTemplateList",
+      "props": [
+        "items:true",
+        "metadata:false"
+      ]
+    },
+    "ResourceQuota": {
+      "kind": "resource",
+      "resourceType": "K8s::Core::ResourceQuota",
+      "props": [
+        "metadata:false",
+        "spec:false"
+      ]
+    },
+    "ResourceQuotaList": {
+      "kind": "resource",
+      "resourceType": "K8s::Core::ResourceQuotaList",
+      "props": [
+        "items:true",
+        "metadata:false"
+      ]
+    },
+    "ResourceRequirements": {
+      "kind": "property",
+      "resourceType": "K8s::Core::ResourceRequirements"
+    },
+    "ResourceSlice": {
+      "kind": "resource",
+      "resourceType": "K8s::Resource::ResourceSlice",
+      "props": [
+        "metadata:false",
+        "spec:true"
+      ]
+    },
+    "ResourceSliceList": {
+      "kind": "resource",
+      "resourceType": "K8s::Resource::ResourceSliceList",
+      "props": [
+        "items:true",
+        "metadata:false"
+      ]
+    },
+    "Resources": {
+      "kind": "property",
+      "resourceType": "K8s::Crdb::CrdbCluster.resources"
+    },
+    "Role": {
+      "kind": "resource",
+      "resourceType": "K8s::Rbac::Role",
+      "props": [
+        "metadata:false",
+        "rules:false"
+      ]
+    },
+    "RoleBinding": {
+      "kind": "resource",
+      "resourceType": "K8s::Rbac::RoleBinding",
+      "props": [
+        "metadata:false",
+        "roleRef:true",
+        "subjects:false"
+      ]
+    },
+    "RoleBindingList": {
+      "kind": "resource",
+      "resourceType": "K8s::Rbac::RoleBindingList",
+      "props": [
+        "items:true",
+        "metadata:false"
+      ]
+    },
+    "RoleList": {
+      "kind": "resource",
+      "resourceType": "K8s::Rbac::RoleList",
+      "props": [
+        "items:true",
+        "metadata:false"
+      ]
+    },
+    "RoleRef": {
+      "kind": "property",
+      "resourceType": "K8s::Rbac::RoleRef"
+    },
+    "RollingUpdateDeployment": {
+      "kind": "property",
+      "resourceType": "K8s::Apps::RollingUpdateDeployment"
+    },
+    "RuntimeClass": {
+      "kind": "resource",
+      "resourceType": "K8s::Node::RuntimeClass",
+      "props": [
+        "handler:true",
+        "https:true",
+        "metadata:false",
+        "overhead:false",
+        "scheduling:false"
+      ]
+    },
+    "RuntimeClassList": {
+      "kind": "resource",
+      "resourceType": "K8s::Node::RuntimeClassList",
+      "props": [
+        "items:true",
+        "metadata:false"
+      ]
+    },
+    "SA": {
+      "kind": "resource",
+      "resourceType": "K8s::Core::ServiceAccount",
+      "props": [
+        "automountServiceAccountToken:false",
+        "imagePullSecrets:false",
+        "metadata:false",
+        "secrets:false"
+      ]
+    },
+    "STS": {
+      "kind": "resource",
+      "resourceType": "K8s::Apps::StatefulSet",
+      "props": [
+        "metadata:false",
+        "spec:false"
+      ]
+    },
+    "Scale": {
+      "kind": "resource",
+      "resourceType": "K8s::Autoscaling::Scale",
+      "props": [
+        "metadata:false",
+        "spec:false"
+      ]
+    },
+    "Sec": {
+      "kind": "resource",
+      "resourceType": "K8s::Core::Secret",
+      "props": [
+        "data:false",
+        "immutable:false",
+        "metadata:false",
+        "stringData:false",
+        "type:false"
+      ]
+    },
+    "Secret": {
+      "kind": "resource",
+      "resourceType": "K8s::Core::Secret",
+      "props": [
+        "data:false",
+        "immutable:false",
+        "metadata:false",
+        "stringData:false",
+        "type:false"
+      ]
+    },
+    "SecretKeySelector": {
+      "kind": "property",
+      "resourceType": "K8s::Core::SecretKeySelector"
+    },
+    "SecretList": {
+      "kind": "resource",
+      "resourceType": "K8s::Core::SecretList",
+      "props": [
+        "items:true",
+        "metadata:false"
+      ]
+    },
+    "SecretTemplate": {
+      "kind": "property",
+      "resourceType": "K8s::CertManager::Certificate.secretTemplate"
+    },
+    "SecurityContext": {
+      "kind": "property",
+      "resourceType": "K8s::Core::SecurityContext"
+    },
+    "Selector": {
+      "kind": "property",
+      "resourceType": "K8s::Monitoring::ServiceMonitor.selector"
+    },
+    "SelfSubjectAccessReview": {
+      "kind": "resource",
+      "resourceType": "K8s::Authorization::SelfSubjectAccessReview",
+      "props": [
+        "metadata:false",
+        "spec:true"
+      ]
+    },
+    "SelfSubjectReview": {
+      "kind": "resource",
+      "resourceType": "K8s::Authentication::SelfSubjectReview",
+      "props": [
+        "metadata:false"
+      ]
+    },
+    "SelfSubjectRulesReview": {
+      "kind": "resource",
+      "resourceType": "K8s::Authorization::SelfSubjectRulesReview",
+      "props": [
+        "metadata:false",
+        "spec:true"
+      ]
+    },
+    "ServeService": {
+      "kind": "property",
+      "resourceType": "K8s::Ray::RayService.serveService"
+    },
+    "Service": {
+      "kind": "resource",
+      "resourceType": "K8s::Core::Service",
+      "props": [
+        "metadata:false",
+        "spec:false"
+      ]
+    },
+    "ServiceAccount": {
+      "kind": "resource",
+      "resourceType": "K8s::Core::ServiceAccount",
+      "props": [
+        "automountServiceAccountToken:false",
+        "imagePullSecrets:false",
+        "metadata:false",
+        "secrets:false"
+      ]
+    },
+    "ServiceAccountList": {
+      "kind": "resource",
+      "resourceType": "K8s::Core::ServiceAccountList",
+      "props": [
+        "items:true",
+        "metadata:false"
+      ]
+    },
+    "ServiceBackendPort": {
+      "kind": "property",
+      "resourceType": "K8s::Networking::ServiceBackendPort"
+    },
+    "ServiceCIDR": {
+      "kind": "resource",
+      "resourceType": "K8s::Networking::ServiceCIDR",
+      "props": [
+        "metadata:false",
+        "spec:false"
+      ]
+    },
+    "ServiceCIDRList": {
+      "kind": "resource",
+      "resourceType": "K8s::Networking::ServiceCIDRList",
+      "props": [
+        "items:true",
+        "metadata:false"
+      ]
+    },
+    "ServiceList": {
+      "kind": "resource",
+      "resourceType": "K8s::Core::ServiceList",
+      "props": [
+        "items:true",
+        "metadata:false"
+      ]
+    },
+    "ServiceMonitor": {
+      "kind": "resource",
+      "resourceType": "K8s::Monitoring::ServiceMonitor",
+      "props": [
+        "metadata:false",
+        "spec:true"
+      ]
+    },
+    "ServiceMonitor_AttachMetadata": {
+      "kind": "property",
+      "resourceType": "K8s::Monitoring::ServiceMonitor.attachMetadata"
+    },
+    "ServiceMonitor_Endpoint": {
+      "kind": "property",
+      "resourceType": "K8s::Monitoring::ServiceMonitor.endpoints"
+    },
+    "ServiceMonitor_NamespaceSelector": {
+      "kind": "property",
+      "resourceType": "K8s::Monitoring::ServiceMonitor.namespaceSelector"
+    },
+    "ServiceMonitor_Selector": {
+      "kind": "property",
+      "resourceType": "K8s::Monitoring::ServiceMonitor.selector"
+    },
+    "ServicePort": {
+      "kind": "property",
+      "resourceType": "K8s::Core::ServicePort"
+    },
+    "SignatureKey": {
+      "kind": "property",
+      "resourceType": "K8s::Argo::AppProject.signatureKeys"
+    },
+    "Solver": {
+      "kind": "property",
+      "resourceType": "K8s::Acme::Challenge.solver"
+    },
+    "Source": {
+      "kind": "property",
+      "resourceType": "K8s::Argo::Application.source"
+    },
+    "Sources": {
+      "kind": "property",
+      "resourceType": "K8s::Argo::Application.sources"
+    },
+    "StatefulSet": {
+      "kind": "resource",
+      "resourceType": "K8s::Apps::StatefulSet",
+      "props": [
+        "metadata:false",
+        "spec:false"
+      ]
+    },
+    "StatefulSetList": {
+      "kind": "resource",
+      "resourceType": "K8s::Apps::StatefulSetList",
+      "props": [
+        "items:true",
+        "metadata:false"
+      ]
+    },
+    "Status": {
+      "kind": "resource",
+      "resourceType": "K8s::Core::Status",
+      "props": [
+        "code:false",
+        "details:false",
+        "message:false",
+        "metadata:false",
+        "reason:false"
+      ]
+    },
+    "StorageClass": {
+      "kind": "resource",
+      "resourceType": "K8s::Storage::StorageClass",
+      "props": [
+        "allowVolumeExpansion:false",
+        "allowedTopologies:false",
+        "metadata:false",
+        "mountOptions:false",
+        "parameters:false",
+        "provisioner:true",
+        "reclaimPolicy:false",
+        "volumeBindingMode:false"
+      ]
+    },
+    "StorageClassList": {
+      "kind": "resource",
+      "resourceType": "K8s::Storage::StorageClassList",
+      "props": [
+        "items:true",
+        "metadata:false"
+      ]
+    },
+    "Strategy": {
+      "kind": "property",
+      "resourceType": "K8s::Argo::ApplicationSet.strategy"
+    },
+    "Subject": {
+      "kind": "property",
+      "resourceType": "K8s::Rbac::Subject"
+    },
+    "SubjectAccessReview": {
+      "kind": "resource",
+      "resourceType": "K8s::Authorization::SubjectAccessReview",
+      "props": [
+        "metadata:false",
+        "spec:true"
+      ]
+    },
+    "SubmitterConfig": {
+      "kind": "property",
+      "resourceType": "K8s::Ray::RayJob.submitterConfig"
+    },
+    "SubmitterPodTemplate": {
+      "kind": "property",
+      "resourceType": "K8s::Ray::RayJob.submitterPodTemplate"
+    },
+    "SyncWindow": {
+      "kind": "property",
+      "resourceType": "K8s::Argo::AppProject.syncWindows"
+    },
+    "TCPSocketAction": {
+      "kind": "property",
+      "resourceType": "K8s::Core::TCPSocketAction"
+    },
+    "Template": {
+      "kind": "property",
+      "resourceType": "K8s::Argo::ApplicationSet.template"
+    },
+    "To": {
+      "kind": "property",
+      "resourceType": "K8s::Gateway::ReferenceGrant.to"
+    },
+    "TokenRequest": {
+      "kind": "resource",
+      "resourceType": "K8s::Authentication::TokenRequest",
+      "props": [
+        "metadata:false",
+        "spec:true"
+      ]
+    },
+    "TokenReview": {
+      "kind": "resource",
+      "resourceType": "K8s::Authentication::TokenReview",
+      "props": [
+        "metadata:false",
+        "spec:true"
+      ]
+    },
+    "Toleration": {
+      "kind": "property",
+      "resourceType": "K8s::Core::Toleration"
+    },
+    "TopologySpreadConstraint": {
+      "kind": "property",
+      "resourceType": "K8s::Core::TopologySpreadConstraint"
+    },
+    "UpgradeStrategy": {
+      "kind": "property",
+      "resourceType": "K8s::Ray::RayService.upgradeStrategy"
+    },
+    "ValidatingAdmissionPolicy": {
+      "kind": "resource",
+      "resourceType": "K8s::Admissionregistration::ValidatingAdmissionPolicy",
+      "props": [
+        "metadata:false",
+        "spec:false"
+      ]
+    },
+    "ValidatingAdmissionPolicyBinding": {
+      "kind": "resource",
+      "resourceType": "K8s::Admissionregistration::ValidatingAdmissionPolicyBinding",
+      "props": [
+        "metadata:false",
+        "spec:false"
+      ]
+    },
+    "ValidatingAdmissionPolicyBindingList": {
+      "kind": "resource",
+      "resourceType": "K8s::Admissionregistration::ValidatingAdmissionPolicyBindingList",
+      "props": [
+        "items:true",
+        "metadata:false"
+      ]
+    },
+    "ValidatingAdmissionPolicyList": {
+      "kind": "resource",
+      "resourceType": "K8s::Admissionregistration::ValidatingAdmissionPolicyList",
+      "props": [
+        "items:true",
+        "metadata:false"
+      ]
+    },
+    "ValidatingWebhookConfiguration": {
+      "kind": "resource",
+      "resourceType": "K8s::Admissionregistration::ValidatingWebhookConfiguration",
+      "props": [
+        "metadata:false",
+        "webhooks:false"
+      ]
+    },
+    "ValidatingWebhookConfigurationList": {
+      "kind": "resource",
+      "resourceType": "K8s::Admissionregistration::ValidatingWebhookConfigurationList",
+      "props": [
+        "items:true",
+        "metadata:false"
+      ]
+    },
+    "Volume": {
+      "kind": "property",
+      "resourceType": "K8s::Core::Volume"
+    },
+    "VolumeAttachment": {
+      "kind": "resource",
+      "resourceType": "K8s::Storage::VolumeAttachment",
+      "props": [
+        "metadata:false",
+        "spec:true"
+      ]
+    },
+    "VolumeAttachmentList": {
+      "kind": "resource",
+      "resourceType": "K8s::Storage::VolumeAttachmentList",
+      "props": [
+        "items:true",
+        "metadata:false"
+      ]
+    },
+    "VolumeAttributesClass": {
+      "kind": "resource",
+      "resourceType": "K8s::Storage::VolumeAttributesClass",
+      "props": [
+        "driverName:true",
+        "metadata:false",
+        "parameters:false"
+      ]
+    },
+    "VolumeAttributesClassList": {
+      "kind": "resource",
+      "resourceType": "K8s::Storage::VolumeAttributesClassList",
+      "props": [
+        "items:true",
+        "metadata:false"
+      ]
+    },
+    "VolumeMount": {
+      "kind": "property",
+      "resourceType": "K8s::Core::VolumeMount"
+    },
+    "WatchEvent": {
+      "kind": "resource",
+      "resourceType": "K8s::Core::WatchEvent",
+      "props": [
+        "object:true",
+        "type:true"
+      ]
+    },
+    "WorkerGroupSpec": {
+      "kind": "property",
+      "resourceType": "K8s::Ray::RayCluster.workerGroupSpecs"
+    }
+  }
+}
