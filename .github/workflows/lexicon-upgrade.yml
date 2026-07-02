@@ -1,0 +1,86 @@
+name: lexicon-upgrade
+
+# Weekly scheduled dogfood of chant: for each in-scope lexicon, detect a newer
+# upstream spec, regen + validate, and open/update a reviewable PR with the API
+# surface delta. PR-only — a human merges and the change rides the next release.
+# This is the first scheduled workflow in the repo (epic #523 / #527).
+run-name: lexicon-upgrade — ${{ github.event_name }}
+
+on:
+  # Mondays at 06:00 UTC. Weekly cadence keeps PR noise low (epic #523).
+  schedule:
+    - cron: '0 6 * * 1'
+  # Allow manual runs for testing / on-demand upgrades.
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: 'Finding mode (report | issue | pull-request)'
+        required: false
+        default: pull-request
+
+# One upgrade run per lexicon at a time; never cancel an in-flight PR update.
+concurrency:
+  group: lexicon-upgrade-${{ github.workflow }}
+  cancel-in-progress: false
+
+permissions:
+  contents: write        # push the long-lived lexicon-upgrade/<lexicon> branch
+  pull-requests: write   # open / update the review PR
+  issues: write          # surface a validation-failure report as an issue
+
+jobs:
+  upgrade:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      # Independent per-lexicon jobs — one failing lexicon must not block others.
+      fail-fast: false
+      matrix:
+        # The 7 in-scope lexicons (epic #523). helm / temporal / forgejo are
+        # excluded — they have no upstream spec to upgrade from.
+        lexicon: [k8s, gcp, docker, gitlab, aws, azure, github]
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          # Full history so the long-lived upgrade branch can be reset from main.
+          fetch-depth: 0
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '24'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Cache lexicon schemas
+        uses: actions/cache@v5
+        with:
+          path: ~/.chant
+          key: lexicon-schemas-${{ hashFiles('lexicons/*/src/**/fetch.ts', 'lexicons/*/src/**/versions.ts') }}
+          restore-keys: |
+            lexicon-schemas-
+
+      - name: Configure git identity for automated PRs
+        run: |
+          git config user.name "chant-bot"
+          git config user.email "chant-bot@users.noreply.github.com"
+
+      - name: Run lexicon upgrade Op (${{ matrix.lexicon }})
+        env:
+          # pull-request opens/updates the long-lived branch; overridable on manual runs.
+          CHANT_UPGRADE_MODE: ${{ github.event.inputs.mode || 'pull-request' }}
+          # The Op's PR automation shells out to `gh` and `git push`.
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Higher upstream-API rate limit for the spec-version resolvers.
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          npx tsx packages/core/src/cli/main.ts run ${{ matrix.lexicon }}-upgrade --local --json > upgrade-${{ matrix.lexicon }}.json
+          cat upgrade-${{ matrix.lexicon }}.json
+
+      - name: Upload upgrade result
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: lexicon-upgrade-${{ matrix.lexicon }}
+          path: upgrade-${{ matrix.lexicon }}.json
+          if-no-files-found: ignore

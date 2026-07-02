@@ -35,6 +35,8 @@ export { WorkflowAuditOp } from "./composites/workflow-audit-op";
 export type { WorkflowAuditOpConfig, WorkflowAuditOpResources } from "./composites/workflow-audit-op";
 export { PipelineAuditOp } from "./composites/pipeline-audit-op";
 export type { PipelineAuditOpConfig, PipelineAuditOpResources } from "./composites/pipeline-audit-op";
+export { LexiconUpgradeOp, IN_SCOPE_LEXICONS } from "./composites/lexicon-upgrade-op";
+export type { LexiconUpgradeOpConfig, LexiconUpgradeOpResources } from "./composites/lexicon-upgrade-op";
 export { ApplyOp } from "./composites/apply-op";
 export type { ApplyOpConfig, ApplyOpResources } from "./composites/apply-op";
 

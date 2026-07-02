@@ -81,6 +81,17 @@ export {
   type CheckRollingUpgradeOptions,
   type AzureApiVersionChange,
 } from "./codegen/rolling-upgrade";
+export {
+  checkPinnedUpgrade,
+  applyPinnedVersionBump,
+  isNewer,
+  parseVersion,
+  isPreRelease,
+  type LexiconId,
+  type UpgradeCheckResult,
+  type CheckPinnedUpgradeOptions,
+  type UpstreamResolver,
+} from "./codegen/pinned-upgrade";
 export * from "./runtime";
 export * from "./runtime-adapter";
 export * from "./resource-attributes";

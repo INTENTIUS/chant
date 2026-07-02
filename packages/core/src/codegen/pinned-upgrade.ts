@@ -414,3 +414,25 @@ export async function checkPinnedUpgrade(opts: CheckPinnedUpgradeOptions): Promi
     fetchError: null,
   };
 }
+
+// ── Branch-commit helper ──────────────────────────────────────────────
+
+/**
+ * Apply a version bump for a lexicon permanently (without reverting).
+ *
+ * Called by LexiconUpgradeOp when it has already decided to commit the bump
+ * to a branch. Returns the absolute path to the modified file so the caller
+ * can stage it with `git add`.
+ *
+ * Unlike `applyVersionBump` (which is generic), this function takes only a
+ * lexicon id and directory — it resolves the pin location internally.
+ */
+export function applyPinnedVersionBump(
+  lexicon: LexiconId,
+  lexiconDir: string,
+  newVersion: string,
+): { filePath: string } {
+  const location = PIN_LOCATIONS[lexicon](lexiconDir);
+  applyVersionBump(location, newVersion);
+  return { filePath: location.filePath };
+}
