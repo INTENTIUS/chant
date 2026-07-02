@@ -30,9 +30,36 @@ const RETRYABLE_STATUSES = new Set([408, 425, 429, 500, 502, 503, 504]);
 
 const DEFAULT_RETRIES = 4;
 const DEFAULT_BACKOFF_MS = 1000;
+/** Hard cap on Retry-After delays so a rogue header cannot stall CI indefinitely. */
+const MAX_RETRY_AFTER_MS = 60_000;
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/**
+ * Parse the `Retry-After` response header and return a delay in milliseconds.
+ *
+ * The header value may be an integer number of seconds or an HTTP-date.
+ * Returns `null` when the header is absent or unparseable.
+ * The returned value is capped at {@link MAX_RETRY_AFTER_MS}.
+ */
+function parseRetryAfter(response: Response): number | null {
+  const raw = response.headers.get("retry-after");
+  if (!raw) return null;
+
+  const seconds = Number(raw.trim());
+  if (!Number.isNaN(seconds) && seconds >= 0) {
+    return Math.min(Math.ceil(seconds * 1000), MAX_RETRY_AFTER_MS);
+  }
+
+  // HTTP-date format: "Wed, 01 Jul 2026 12:00:00 GMT"
+  const date = new Date(raw);
+  if (!Number.isNaN(date.getTime())) {
+    return Math.min(Math.max(0, date.getTime() - Date.now()), MAX_RETRY_AFTER_MS);
+  }
+
+  return null;
 }
 
 /**
@@ -42,9 +69,16 @@ function sleep(ms: number): Promise<void> {
  * Permanent failures (e.g. 404, 403) are not retried — they throw on the
  * first response. The returned response is guaranteed `ok`.
  *
+ * When a `Retry-After` header is present on a 429 or 503 response the delay
+ * from that header is used instead of the exponential back-off for that
+ * specific retry, capped at {@link MAX_RETRY_AFTER_MS}.
+ *
  * `init` is passed through to `fetch` on every attempt, so callers that
  * need request headers (e.g. the GitHub API `Accept` header) or an abort
  * signal get retries without duplicating the loop.
+ *
+ * On exhaustion a descriptive {@link TransientFetchError} is thrown rather
+ * than the raw last error so the caller can surface a human-readable message.
  */
 export async function fetchWithRetry(
   url: string,
@@ -52,12 +86,17 @@ export async function fetchWithRetry(
   backoffMs = DEFAULT_BACKOFF_MS,
   init?: RequestInit,
 ): Promise<Response> {
+  let lastStatus: number | undefined;
   let lastError: Error | undefined;
+  // When a response carries a Retry-After header, the indicated delay replaces
+  // the exponential back-off for that specific next retry.
+  let retryAfterOverride: number | null = null;
 
   for (let attempt = 0; attempt <= retries; attempt++) {
     if (attempt > 0) {
-      const delay = backoffMs * 2 ** (attempt - 1);
+      const delay = retryAfterOverride ?? backoffMs * 2 ** (attempt - 1);
       debug(`retrying ${url} (attempt ${attempt}/${retries}) after ${delay}ms: ${lastError?.message}`);
+      retryAfterOverride = null;
       await sleep(delay);
     }
 
@@ -67,6 +106,7 @@ export async function fetchWithRetry(
     } catch (e) {
       // Network-level failure (DNS, connection reset, timeout). Transient.
       lastError = e instanceof Error ? e : new Error(String(e));
+      lastStatus = undefined;
       continue;
     }
 
@@ -74,10 +114,44 @@ export async function fetchWithRetry(
 
     const err = new Error(`Download from ${url} returned ${response.status}`);
     if (!RETRYABLE_STATUSES.has(response.status)) throw err;
+
     lastError = err;
+    lastStatus = response.status;
+
+    // Capture Retry-After so the next loop iteration uses it instead of backoff
+    const retryAfterMs = parseRetryAfter(response);
+    if (retryAfterMs !== null) {
+      debug(`Retry-After for ${url}: ${retryAfterMs}ms`);
+      retryAfterOverride = retryAfterMs;
+    }
   }
 
-  throw lastError ?? new Error(`Download from ${url} failed after ${retries} retries`);
+  throw new TransientFetchError(url, retries, lastStatus, lastError);
+}
+
+/**
+ * Thrown when {@link fetchWithRetry} exhausts all retry attempts on a
+ * transient failure (429 / 5xx / network error).
+ *
+ * The message is human-readable and actionable: it names the URL, the number
+ * of attempts made, and the last HTTP status (if any) so that an upstream Op
+ * can route it to a report/issue without exposing a raw stack trace.
+ */
+export class TransientFetchError extends Error {
+  constructor(
+    public readonly url: string,
+    public readonly retries: number,
+    public readonly lastStatus: number | undefined,
+    public readonly cause?: Error,
+  ) {
+    const attempts = retries + 1;
+    const statusPart = lastStatus !== undefined ? ` (HTTP ${lastStatus})` : "";
+    super(
+      `Transient fetch failure for ${url}${statusPart} — failed after ${attempts} attempt${attempts === 1 ? "" : "s"}. ` +
+        `This is typically a rate-limit or upstream outage. Retry later or check upstream status.`,
+    );
+    this.name = "TransientFetchError";
+  }
 }
 
 // ── Fetch with cache ───────────────────────────────────────────────

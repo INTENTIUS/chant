@@ -1,5 +1,5 @@
 import { describe, test, expect, vi, afterEach } from "vitest";
-import { extractFromTar, fetchWithRetry } from "./fetch";
+import { extractFromTar, fetchWithRetry, TransientFetchError } from "./fetch";
 
 /**
  * Build a minimal valid tar buffer with a single file entry.
@@ -168,11 +168,16 @@ describe("fetchWithRetry", () => {
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
-  test("throws after exhausting retries on a transient status", async () => {
+  test("throws TransientFetchError after exhausting retries on a transient status", async () => {
     const fetchMock = vi.fn().mockResolvedValue(status(504));
     vi.stubGlobal("fetch", fetchMock);
 
-    await expect(fetchWithRetry("https://example.test/x", 2, 1)).rejects.toThrow("returned 504");
+    const err = await fetchWithRetry("https://example.test/x", 2, 1).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(TransientFetchError);
+    expect((err as TransientFetchError).url).toBe("https://example.test/x");
+    expect((err as TransientFetchError).lastStatus).toBe(504);
+    expect((err as TransientFetchError).message).toContain("Transient fetch failure");
+    expect((err as TransientFetchError).message).toContain("HTTP 504");
     // initial attempt + 2 retries
     expect(fetchMock).toHaveBeenCalledTimes(3);
   });
@@ -216,5 +221,81 @@ describe("fetchWithRetry", () => {
     const init = { headers: { Accept: "application/vnd.github+json" } };
     await expect(fetchWithRetry("https://example.test/x", 4, 1, init)).rejects.toThrow("returned 403");
     expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  test("429 then 200 succeeds after retry", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(status(429))
+      .mockResolvedValueOnce(ok());
+    vi.stubGlobal("fetch", fetchMock);
+
+    const resp = await fetchWithRetry("https://example.test/x", 4, 1);
+    expect(resp.ok).toBe(true);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  test("honors Retry-After header (seconds) on 429", async () => {
+    const sleepCalls: number[] = [];
+    // Intercept sleep without really waiting
+    vi.useFakeTimers();
+
+    const r429 = new Response("", {
+      status: 429,
+      headers: { "Retry-After": "2" },
+    });
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(r429)
+      .mockResolvedValueOnce(ok());
+    vi.stubGlobal("fetch", fetchMock);
+
+    // Run with fake timers — advance all pending timers automatically
+    const resultPromise = fetchWithRetry("https://example.test/x", 4, 1);
+    await vi.runAllTimersAsync();
+    const resp = await resultPromise;
+
+    expect(resp.ok).toBe(true);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+
+    vi.useRealTimers();
+    void sleepCalls;
+  });
+
+  test("throws TransientFetchError with clear message on persistent 429", async () => {
+    const r429 = new Response("", { status: 429 });
+    const fetchMock = vi.fn().mockResolvedValue(r429);
+    vi.stubGlobal("fetch", fetchMock);
+
+    const err = await fetchWithRetry("https://example.test/rate-limited", 2, 1).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(TransientFetchError);
+    const tfe = err as TransientFetchError;
+    expect(tfe.url).toBe("https://example.test/rate-limited");
+    expect(tfe.lastStatus).toBe(429);
+    expect(tfe.message).toContain("Transient fetch failure");
+    expect(tfe.message).toContain("HTTP 429");
+    expect(tfe.message).toContain("rate-limit or upstream outage");
+    expect(tfe.name).toBe("TransientFetchError");
+  });
+
+  test("throws TransientFetchError with clear message on persistent 5xx", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(status(503));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const err = await fetchWithRetry("https://example.test/unavailable", 1, 1).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(TransientFetchError);
+    const tfe = err as TransientFetchError;
+    expect(tfe.lastStatus).toBe(503);
+    expect(tfe.message).toContain("HTTP 503");
+  });
+
+  test("TransientFetchError message includes attempt count", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(status(500));
+    vi.stubGlobal("fetch", fetchMock);
+
+    // 0 retries → exactly 1 attempt
+    const err = await fetchWithRetry("https://example.test/x", 0, 1).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(TransientFetchError);
+    expect((err as TransientFetchError).message).toContain("1 attempt");
   });
 });

@@ -23,6 +23,7 @@
 
 import { readFileSync, writeFileSync } from "fs";
 import { regenLexicon, type RegenResult } from "./lexicon-regen";
+import { fetchWithRetry } from "./fetch";
 
 // ── Public types ──────────────────────────────────────────────────────
 
@@ -255,15 +256,7 @@ async function latestGitHubRelease(
 
   const url = `https://api.github.com/repos/${owner}/${repo}/${kind}?per_page=50`;
 
-  let resp: Response;
-  try {
-    resp = await fetch(url, { headers });
-  } catch (e) {
-    throw new Error(`GitHub API request failed for ${url}: ${String(e)}`);
-  }
-  if (!resp.ok) {
-    throw new Error(`GitHub API ${url} returned ${resp.status}`);
-  }
+  const resp = await fetchWithRetry(url, 4, 1000, { headers });
 
   const items = (await resp.json()) as Array<{
     tag_name?: string;
