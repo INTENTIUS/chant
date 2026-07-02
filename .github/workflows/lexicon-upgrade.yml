@@ -7,14 +7,13 @@ name: lexicon-upgrade
 run-name: lexicon-upgrade — ${{ github.event_name }}
 
 on:
-  # GATED until first-run prep lands — see #536. The weekly schedule is
-  # intentionally disabled so an unprepared run can't fire: without seeded
-  # baselines (#533) it would open whole-surface "everything added" PRs, and
-  # PRs opened via GITHUB_TOKEN get no CI (#534). Re-enable by uncommenting
-  # once #533/#534/#535 are done.
-  #   Mondays at 06:00 UTC — weekly cadence keeps PR noise low (epic #523).
-  # schedule:
-  #   - cron: '0 6 * * 1'
+  # Mondays at 06:00 UTC. Weekly cadence keeps PR noise low (epic #523).
+  # First-run prep is complete: baselines seeded (#533), fetch retry (#535),
+  # and bot PRs open with a GitHub App token so CI runs (#534). Validated by a
+  # pull-request-mode dispatch that opened real upgrade PRs (k8s/gcp bumps, aws
+  # drift) with CI, while azure/docker/gitlab/github stayed quiet (#536).
+  schedule:
+    - cron: '0 6 * * 1'
   # Manual runs stay available (report mode for dry runs).
   workflow_dispatch:
     inputs:
