@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "generatedAt": "2026-07-01T22:07:20.491Z",
+  "generatedAt": "2026-07-02T03:18:19.534Z",
   "entries": {
     "ACL": {
       "kind": "resource",
@@ -1291,6 +1291,95 @@
       "kind": "property",
       "resourceType": "AWS::CertificateManager::Certificate.Tag"
     },
+    "AcmeDomainValidation": {
+      "kind": "resource",
+      "resourceType": "AWS::CertificateManager::AcmeDomainValidation",
+      "attrs": [
+        "Arn"
+      ],
+      "props": [
+        "AcmeEndpointArn:true",
+        "Arn:false",
+        "DomainName:true",
+        "PrevalidationOptions:true",
+        "Tags:false"
+      ],
+      "createOnly": [
+        "AcmeEndpointArn",
+        "DomainName",
+        "PrevalidationOptions/DnsPrevalidation/HostedZoneId"
+      ],
+      "taggable": true
+    },
+    "AcmeDomainValidation_DnsPrevalidationOptions": {
+      "kind": "property",
+      "resourceType": "AWS::CertificateManager::AcmeDomainValidation.DnsPrevalidationOptions"
+    },
+    "AcmeDomainValidation_DomainScope": {
+      "kind": "property",
+      "resourceType": "AWS::CertificateManager::AcmeDomainValidation.DomainScope"
+    },
+    "AcmeDomainValidation_PrevalidationOptions": {
+      "kind": "property",
+      "resourceType": "AWS::CertificateManager::AcmeDomainValidation.PrevalidationOptions"
+    },
+    "AcmeEndpoint": {
+      "kind": "resource",
+      "resourceType": "AWS::CertificateManager::AcmeEndpoint",
+      "attrs": [
+        "AcmeEndpointArn",
+        "EndpointUrl"
+      ],
+      "props": [
+        "AcmeEndpointArn:false",
+        "AuthorizationBehavior:true",
+        "CertificateAuthority:true",
+        "CertificateTags:false",
+        "Contact:false",
+        "EndpointUrl:false",
+        "Tags:false"
+      ],
+      "createOnly": [
+        "CertificateTags"
+      ],
+      "taggable": true
+    },
+    "AcmeEndpoint_CertificateAuthority": {
+      "kind": "property",
+      "resourceType": "AWS::CertificateManager::AcmeEndpoint.CertificateAuthority"
+    },
+    "AcmeEndpoint_PublicCertificateAuthority": {
+      "kind": "property",
+      "resourceType": "AWS::CertificateManager::AcmeEndpoint.PublicCertificateAuthority"
+    },
+    "AcmeEndpoint_Tag": {
+      "kind": "property",
+      "resourceType": "AWS::CertificateManager::AcmeEndpoint.Tag"
+    },
+    "AcmeExternalAccountBinding": {
+      "kind": "resource",
+      "resourceType": "AWS::CertificateManager::AcmeExternalAccountBinding",
+      "attrs": [
+        "AcmeExternalAccountBindingArn"
+      ],
+      "props": [
+        "AcmeEndpointArn:true",
+        "AcmeExternalAccountBindingArn:false",
+        "Expiration:false",
+        "RoleArn:true",
+        "Tags:false"
+      ],
+      "createOnly": [
+        "AcmeEndpointArn",
+        "Expiration",
+        "RoleArn"
+      ],
+      "taggable": true
+    },
+    "AcmeExternalAccountBinding_Expiration": {
+      "kind": "property",
+      "resourceType": "AWS::CertificateManager::AcmeExternalAccountBinding.Expiration"
+    },
     "ActionConfiguration": {
       "kind": "property",
       "resourceType": "AWS::QBusiness::DataAccessor.ActionConfiguration"
@@ -1496,6 +1585,10 @@
       "kind": "property",
       "resourceType": "AWS::EKS::Addon.Tag"
     },
+    "Address": {
+      "kind": "property",
+      "resourceType": "AWS::Outposts::Site.Address"
+    },
     "AdminCreateUserConfig": {
       "kind": "property",
       "resourceType": "AWS::Cognito::UserPool.AdminCreateUserConfig"
@@ -1539,6 +1632,14 @@
     "AfterContactWorkConfigPerChannel": {
       "kind": "property",
       "resourceType": "AWS::Connect::User.AfterContactWorkConfigPerChannel"
+    },
+    "AgentAccessConfig": {
+      "kind": "property",
+      "resourceType": "AWS::AppStream::Stack.AgentAccessConfig"
+    },
+    "AgentAccessSetting": {
+      "kind": "property",
+      "resourceType": "AWS::AppStream::Stack.AgentAccessSetting"
     },
     "AgentActionGroup": {
       "kind": "property",
@@ -1881,6 +1982,72 @@
     "Alarm_Tag": {
       "kind": "property",
       "resourceType": "AWS::CloudWatch::Alarm.Tag"
+    },
+    "Algorithm": {
+      "kind": "resource",
+      "resourceType": "AWS::SageMaker::Algorithm",
+      "attrs": [
+        "AlgorithmArn",
+        "CreationTime"
+      ],
+      "props": [
+        "AlgorithmArn:false",
+        "AlgorithmDescription:false",
+        "AlgorithmName:true",
+        "CertifyForMarketplace:false",
+        "CreationTime:false",
+        "InferenceSpecification:false",
+        "Tags:false",
+        "TrainingSpecification:true"
+      ],
+      "createOnly": [
+        "AlgorithmDescription",
+        "AlgorithmName",
+        "CertifyForMarketplace",
+        "InferenceSpecification",
+        "TrainingSpecification"
+      ],
+      "taggable": true
+    },
+    "Algorithm_ChannelSpecification": {
+      "kind": "property",
+      "resourceType": "AWS::SageMaker::Algorithm.ChannelSpecification"
+    },
+    "Algorithm_HyperParameterSpecification": {
+      "kind": "property",
+      "resourceType": "AWS::SageMaker::Algorithm.HyperParameterSpecification"
+    },
+    "Algorithm_HyperParameterTuningJobObjective": {
+      "kind": "property",
+      "resourceType": "AWS::SageMaker::Algorithm.HyperParameterTuningJobObjective"
+    },
+    "Algorithm_InferenceSpecification": {
+      "kind": "property",
+      "resourceType": "AWS::SageMaker::Algorithm.InferenceSpecification"
+    },
+    "Algorithm_MetricDefinition": {
+      "kind": "property",
+      "resourceType": "AWS::SageMaker::Algorithm.MetricDefinition"
+    },
+    "Algorithm_ModelInput": {
+      "kind": "property",
+      "resourceType": "AWS::SageMaker::Algorithm.ModelInput"
+    },
+    "Algorithm_ModelPackageContainerDefinition": {
+      "kind": "property",
+      "resourceType": "AWS::SageMaker::Algorithm.ModelPackageContainerDefinition"
+    },
+    "Algorithm_ParameterRange": {
+      "kind": "property",
+      "resourceType": "AWS::SageMaker::Algorithm.ParameterRange"
+    },
+    "Algorithm_Tag": {
+      "kind": "property",
+      "resourceType": "AWS::SageMaker::Algorithm.Tag"
+    },
+    "Algorithm_TrainingSpecification": {
+      "kind": "property",
+      "resourceType": "AWS::SageMaker::Algorithm.TrainingSpecification"
     },
     "Alias": {
       "kind": "property",
@@ -2609,6 +2776,10 @@
     "AnnotationStore_SseConfig": {
       "kind": "property",
       "resourceType": "AWS::Omics::AnnotationStore.SseConfig"
+    },
+    "AnnotationTableConfiguration": {
+      "kind": "property",
+      "resourceType": "AWS::S3::Bucket.AnnotationTableConfiguration"
     },
     "AnomalyDetectionComputationModelConfiguration": {
       "kind": "property",
@@ -3855,6 +4026,35 @@
       "kind": "property",
       "resourceType": "AWS::Chime::AppInstanceBot.Tag"
     },
+    "AppInstanceUser": {
+      "kind": "resource",
+      "resourceType": "AWS::Chime::AppInstanceUser",
+      "attrs": [
+        "AppInstanceUserArn"
+      ],
+      "props": [
+        "AppInstanceArn:true",
+        "AppInstanceUserArn:false",
+        "AppInstanceUserId:true",
+        "ExpirationSettings:false",
+        "Metadata:false",
+        "Name:false",
+        "Tags:false"
+      ],
+      "createOnly": [
+        "AppInstanceArn",
+        "AppInstanceUserId"
+      ],
+      "taggable": true
+    },
+    "AppInstanceUser_ExpirationSettings": {
+      "kind": "property",
+      "resourceType": "AWS::Chime::AppInstanceUser.ExpirationSettings"
+    },
+    "AppInstanceUser_Tag": {
+      "kind": "property",
+      "resourceType": "AWS::Chime::AppInstanceUser.Tag"
+    },
     "AppInstance_Tag": {
       "kind": "property",
       "resourceType": "AWS::Chime::AppInstance.Tag"
@@ -4243,6 +4443,7 @@
       ],
       "props": [
         "AccessEndpoints:false",
+        "AgentAccessConfig:false",
         "ApplicationSettings:false",
         "AttributesToDelete:false",
         "ContentRedirection:false",
@@ -4266,6 +4467,14 @@
     "AppStreamStack_AccessEndpoint": {
       "kind": "property",
       "resourceType": "AWS::AppStream::Stack.AccessEndpoint"
+    },
+    "AppStreamStack_AgentAccessConfig": {
+      "kind": "property",
+      "resourceType": "AWS::AppStream::Stack.AgentAccessConfig"
+    },
+    "AppStreamStack_AgentAccessSetting": {
+      "kind": "property",
+      "resourceType": "AWS::AppStream::Stack.AgentAccessSetting"
     },
     "AppStreamStack_ApplicationSettings": {
       "kind": "property",
@@ -4540,6 +4749,44 @@
     "AppSyncParameters": {
       "kind": "property",
       "resourceType": "AWS::Events::Rule.AppSyncParameters"
+    },
+    "AppTestTestCase": {
+      "kind": "resource",
+      "resourceType": "AWS::AppTest::TestCase",
+      "attrs": [
+        "CreationTime",
+        "LastUpdateTime",
+        "LatestVersion",
+        "Status",
+        "TestCaseArn",
+        "TestCaseId",
+        "TestCaseVersion"
+      ],
+      "props": [
+        "CreationTime:false",
+        "Description:false",
+        "LastUpdateTime:false",
+        "LatestVersion:false",
+        "Name:true",
+        "Status:false",
+        "Steps:true",
+        "Tags:false",
+        "TestCaseArn:false",
+        "TestCaseId:false",
+        "TestCaseVersion:false"
+      ],
+      "createOnly": [
+        "Name"
+      ],
+      "taggable": true
+    },
+    "AppTestTestCase_Step": {
+      "kind": "property",
+      "resourceType": "AWS::AppTest::TestCase.Step"
+    },
+    "AppTestTestCase_TestCaseLatestVersion": {
+      "kind": "property",
+      "resourceType": "AWS::AppTest::TestCase.TestCaseLatestVersion"
     },
     "AppleApp": {
       "kind": "property",
@@ -5526,6 +5773,10 @@
     "AudioExtractionConfiguration": {
       "kind": "property",
       "resourceType": "AWS::QBusiness::DataSource.AudioExtractionConfiguration"
+    },
+    "AudioFeedInput": {
+      "kind": "property",
+      "resourceType": "AWS::MediaLive::Channel.AudioFeedInput"
     },
     "AudioFillerSettings": {
       "kind": "property",
@@ -6817,6 +7068,7 @@
         "CreatedAt:false",
         "Definition:true",
         "Description:false",
+        "EnforcementMode:false",
         "Name:true",
         "PolicyArn:false",
         "PolicyEngineId:true",
@@ -6838,6 +7090,10 @@
     "BedrockAgentCorePolicy_PolicyDefinition": {
       "kind": "property",
       "resourceType": "AWS::BedrockAgentCore::Policy.PolicyDefinition"
+    },
+    "BedrockAgentCorePolicy_PolicyStatement": {
+      "kind": "property",
+      "resourceType": "AWS::BedrockAgentCore::Policy.PolicyStatement"
     },
     "BedrockAgentCoreResourcePolicy": {
       "kind": "resource",
@@ -6982,6 +7238,10 @@
       "kind": "property",
       "resourceType": "AWS::Bedrock::DataSource.DataSourceConfiguration"
     },
+    "BedrockDataSource_DeletionProtectionConfiguration": {
+      "kind": "property",
+      "resourceType": "AWS::Bedrock::DataSource.DeletionProtectionConfiguration"
+    },
     "BedrockDataSource_FixedSizeChunkingConfiguration": {
       "kind": "property",
       "resourceType": "AWS::Bedrock::DataSource.FixedSizeChunkingConfiguration"
@@ -6993,6 +7253,14 @@
     "BedrockDataSource_IntermediateStorage": {
       "kind": "property",
       "resourceType": "AWS::Bedrock::DataSource.IntermediateStorage"
+    },
+    "BedrockDataSource_ManagedKnowledgeBaseConnectorConfiguration": {
+      "kind": "property",
+      "resourceType": "AWS::Bedrock::DataSource.ManagedKnowledgeBaseConnectorConfiguration"
+    },
+    "BedrockDataSource_MediaExtractionConfiguration": {
+      "kind": "property",
+      "resourceType": "AWS::Bedrock::DataSource.MediaExtractionConfiguration"
     },
     "BedrockDataSource_ParsingConfiguration": {
       "kind": "property",
@@ -7146,6 +7414,7 @@
       ],
       "createOnly": [
         "KnowledgeBaseConfiguration/KendraKnowledgeBaseConfiguration",
+        "KnowledgeBaseConfiguration/ManagedKnowledgeBaseConfiguration",
         "KnowledgeBaseConfiguration/SqlKnowledgeBaseConfiguration/RedshiftConfiguration/QueryEngineConfiguration",
         "KnowledgeBaseConfiguration/SqlKnowledgeBaseConfiguration/RedshiftConfiguration/StorageConfigurations",
         "KnowledgeBaseConfiguration/SqlKnowledgeBaseConfiguration/Type",
@@ -7166,6 +7435,14 @@
     "BedrockKnowledgeBase_KnowledgeBaseConfiguration": {
       "kind": "property",
       "resourceType": "AWS::Bedrock::KnowledgeBase.KnowledgeBaseConfiguration"
+    },
+    "BedrockKnowledgeBase_ManagedKnowledgeBaseConfiguration": {
+      "kind": "property",
+      "resourceType": "AWS::Bedrock::KnowledgeBase.ManagedKnowledgeBaseConfiguration"
+    },
+    "BedrockKnowledgeBase_ManagedKnowledgeBaseServerSideEncryptionConfiguration": {
+      "kind": "property",
+      "resourceType": "AWS::Bedrock::KnowledgeBase.ManagedKnowledgeBaseServerSideEncryptionConfiguration"
     },
     "BedrockKnowledgeBase_MongoDbAtlasConfiguration": {
       "kind": "property",
@@ -7927,6 +8204,7 @@
         "MqttEndpoints:false",
         "OpenWireEndpoints:false",
         "PubliclyAccessible:true",
+        "ResourceShareArns:false",
         "SecurityGroups:false",
         "StompEndpoints:false",
         "StorageType:false",
@@ -8144,6 +8422,8 @@
         "Arn",
         "DomainName",
         "DualStackDomainName",
+        "MetadataConfiguration_AnnotationTableConfiguration_TableArn",
+        "MetadataConfiguration_AnnotationTableConfiguration_TableName",
         "MetadataConfiguration_Destination",
         "MetadataConfiguration_InventoryTableConfiguration_TableArn",
         "MetadataConfiguration_InventoryTableConfiguration_TableName",
@@ -8212,6 +8492,10 @@
     "Bucket_AnalyticsConfiguration": {
       "kind": "property",
       "resourceType": "AWS::S3::Bucket.AnalyticsConfiguration"
+    },
+    "Bucket_AnnotationTableConfiguration": {
+      "kind": "property",
+      "resourceType": "AWS::S3::Bucket.AnnotationTableConfiguration"
     },
     "Bucket_BlockedEncryptionTypes": {
       "kind": "property",
@@ -9091,6 +9375,10 @@
       "kind": "property",
       "resourceType": "AWS::Lambda::Function.CapacityProviderConfig"
     },
+    "CapacityProviderLoggingConfig": {
+      "kind": "property",
+      "resourceType": "AWS::Lambda::CapacityProvider.CapacityProviderLoggingConfig"
+    },
     "CapacityProviderPermissionsConfig": {
       "kind": "property",
       "resourceType": "AWS::Lambda::CapacityProvider.CapacityProviderPermissionsConfig"
@@ -9098,6 +9386,10 @@
     "CapacityProviderScalingConfig": {
       "kind": "property",
       "resourceType": "AWS::Lambda::CapacityProvider.CapacityProviderScalingConfig"
+    },
+    "CapacityProviderTelemetryConfig": {
+      "kind": "property",
+      "resourceType": "AWS::Lambda::CapacityProvider.CapacityProviderTelemetryConfig"
     },
     "CapacityProviderVpcConfig": {
       "kind": "property",
@@ -9987,6 +10279,10 @@
     "ChannelPlacementGroup_Tags": {
       "kind": "property",
       "resourceType": "AWS::MediaLive::ChannelPlacementGroup.Tags"
+    },
+    "ChannelSpecification": {
+      "kind": "property",
+      "resourceType": "AWS::SageMaker::Algorithm.ChannelSpecification"
     },
     "ChannelStorage": {
       "kind": "property",
@@ -10940,6 +11236,10 @@
       "kind": "property",
       "resourceType": "AWS::SecurityAgent::Pentest.CloudWatchLog"
     },
+    "CloudWatchLogging": {
+      "kind": "property",
+      "resourceType": "AWS::Lambda::MicrovmImage.CloudWatchLogging"
+    },
     "CloudWatchLoggingOption": {
       "kind": "property",
       "resourceType": "AWS::KinesisAnalyticsV2::ApplicationCloudWatchLoggingOption.CloudWatchLoggingOption"
@@ -11144,6 +11444,10 @@
     "Code": {
       "kind": "property",
       "resourceType": "AWS::Lambda::Function.Code"
+    },
+    "CodeArtifact": {
+      "kind": "property",
+      "resourceType": "AWS::Lambda::MicrovmImage.CodeArtifact"
     },
     "CodeArtifactDomain": {
       "kind": "resource",
@@ -12664,6 +12968,7 @@
         "CreatedAt:false",
         "CreatedBy:false",
         "Description:false",
+        "KmsKeyArn:false",
         "LineageMetadata:false",
         "Tags:false",
         "UpdatedAt:false",
@@ -13627,6 +13932,37 @@
     "ConnectSecurityProfile_Tag": {
       "kind": "property",
       "resourceType": "AWS::Connect::SecurityProfile.Tag"
+    },
+    "ConnectTestCase": {
+      "kind": "resource",
+      "resourceType": "AWS::Connect::TestCase",
+      "attrs": [
+        "LastModifiedRegion",
+        "LastModifiedTime",
+        "TestCaseArn"
+      ],
+      "props": [
+        "Content:true",
+        "Description:false",
+        "EntryPoint:false",
+        "InitializationData:false",
+        "InstanceArn:true",
+        "LastModifiedRegion:false",
+        "LastModifiedTime:false",
+        "Name:true",
+        "Status:false",
+        "Tags:false",
+        "TestCaseArn:false"
+      ],
+      "taggable": true
+    },
+    "ConnectTestCase_EntryPoint": {
+      "kind": "property",
+      "resourceType": "AWS::Connect::TestCase.EntryPoint"
+    },
+    "ConnectTestCase_Tag": {
+      "kind": "property",
+      "resourceType": "AWS::Connect::TestCase.Tag"
     },
     "ConnectUser": {
       "kind": "resource",
@@ -14629,6 +14965,10 @@
       "kind": "property",
       "resourceType": "AWS::GameLift::ContainerGroupDefinition.GameServerContainerDefinition"
     },
+    "ContainerGroupDefinition_LinuxCapabilities": {
+      "kind": "property",
+      "resourceType": "AWS::GameLift::ContainerGroupDefinition.LinuxCapabilities"
+    },
     "ContainerGroupDefinition_PortConfiguration": {
       "kind": "property",
       "resourceType": "AWS::GameLift::ContainerGroupDefinition.PortConfiguration"
@@ -15049,6 +15389,10 @@
     "CoverageTime": {
       "kind": "property",
       "resourceType": "AWS::SSMContacts::Rotation.CoverageTime"
+    },
+    "CpuConfiguration": {
+      "kind": "property",
+      "resourceType": "AWS::Lambda::MicrovmImage.CpuConfiguration"
     },
     "CpuOptions": {
       "kind": "property",
@@ -17480,13 +17824,9 @@
     "DataCatalogEncryptionSettings": {
       "kind": "resource",
       "resourceType": "AWS::Glue::DataCatalogEncryptionSettings",
-      "attrs": [
-        "Id"
-      ],
       "props": [
         "CatalogId:true",
-        "DataCatalogEncryptionSettings:true",
-        "Id:false"
+        "DataCatalogEncryptionSettings:true"
       ],
       "createOnly": [
         "CatalogId"
@@ -19672,6 +20012,10 @@
       "kind": "property",
       "resourceType": "AWS::VerifiedPermissions::PolicyStore.DeletionProtection"
     },
+    "DeletionProtectionConfiguration": {
+      "kind": "property",
+      "resourceType": "AWS::Bedrock::DataSource.DeletionProtectionConfiguration"
+    },
     "DeletionSettings": {
       "kind": "property",
       "resourceType": "AWS::ImageBuilder::Image.DeletionSettings"
@@ -21347,6 +21691,10 @@
       "kind": "property",
       "resourceType": "AWS::EC2::VPCEndpoint.DnsOptionsSpecification"
     },
+    "DnsPrevalidationOptions": {
+      "kind": "property",
+      "resourceType": "AWS::CertificateManager::AcmeDomainValidation.DnsPrevalidationOptions"
+    },
     "DnsRecord": {
       "kind": "property",
       "resourceType": "AWS::ServiceDiscovery::Service.DnsRecord"
@@ -21986,6 +22334,10 @@
     "DomainResult": {
       "kind": "property",
       "resourceType": "AWS::CloudFront::DistributionTenant.DomainResult"
+    },
+    "DomainScope": {
+      "kind": "property",
+      "resourceType": "AWS::CertificateManager::AcmeDomainValidation.DomainScope"
     },
     "DomainSettings": {
       "kind": "property",
@@ -22848,6 +23200,7 @@
         "RemoteNetworkConfig:false",
         "ResourcesVpcConfig:true",
         "RoleArn:true",
+        "RollbackConfig:false",
         "StorageConfig:false",
         "Tags:false",
         "UpgradePolicy:false",
@@ -22925,6 +23278,10 @@
     "EKSCluster_ResourcesVpcConfig": {
       "kind": "property",
       "resourceType": "AWS::EKS::Cluster.ResourcesVpcConfig"
+    },
+    "EKSCluster_RollbackConfig": {
+      "kind": "property",
+      "resourceType": "AWS::EKS::Cluster.RollbackConfig"
     },
     "EKSCluster_StorageConfig": {
       "kind": "property",
@@ -23369,7 +23726,7 @@
       ],
       "props": [
         "Checks:false",
-        "ConnectivityInfo:true",
+        "ConnectivityInfo:false",
         "CreatedAt:false",
         "Credentials:false",
         "EnvironmentArn:false",
@@ -23379,15 +23736,15 @@
         "Hosts:false",
         "InitialVlans:false",
         "KmsKeyId:false",
-        "LicenseInfo:true",
+        "LicenseInfo:false",
         "ModifiedAt:false",
         "ServiceAccessSecurityGroups:false",
         "ServiceAccessSubnetId:true",
-        "SiteId:true",
+        "SiteId:false",
         "StateDetails:false",
         "Tags:false",
         "TermsAccepted:true",
-        "VcfHostnames:true",
+        "VcfHostnames:false",
         "VcfVersion:true",
         "VpcId:true"
       ],
@@ -23613,6 +23970,7 @@
         "HealthCheckGracePeriodSeconds:false",
         "LaunchType:false",
         "LoadBalancers:false",
+        "Monitoring:false",
         "Name:false",
         "NetworkConfiguration:false",
         "PlacementConstraints:false",
@@ -23698,6 +24056,14 @@
       "kind": "property",
       "resourceType": "AWS::ECS::Service.LogConfiguration"
     },
+    "EcsService_MetricConfiguration": {
+      "kind": "property",
+      "resourceType": "AWS::ECS::Service.MetricConfiguration"
+    },
+    "EcsService_MonitoringConfiguration": {
+      "kind": "property",
+      "resourceType": "AWS::ECS::Service.MonitoringConfiguration"
+    },
     "EcsService_NetworkConfiguration": {
       "kind": "property",
       "resourceType": "AWS::ECS::Service.NetworkConfiguration"
@@ -23749,6 +24115,10 @@
     "EcsService_Tag": {
       "kind": "property",
       "resourceType": "AWS::ECS::Service.Tag"
+    },
+    "EcsService_ThresholdConfiguration": {
+      "kind": "property",
+      "resourceType": "AWS::ECS::Service.ThresholdConfiguration"
     },
     "EcsService_TimeoutConfiguration": {
       "kind": "property",
@@ -24932,6 +25302,10 @@
       "kind": "property",
       "resourceType": "AWS::ConnectCampaignsV2::Campaign.EntryLimitsConfig"
     },
+    "EntryPoint": {
+      "kind": "property",
+      "resourceType": "AWS::Connect::TestCase.EntryPoint"
+    },
     "Environment": {
       "kind": "property",
       "resourceType": "AWS::Lambda::Function.Environment"
@@ -25201,6 +25575,10 @@
       "kind": "property",
       "resourceType": "AWS::Connect::EvaluationForm.EvaluationFormLanguageConfiguration"
     },
+    "EvaluationFormScoreThreshold": {
+      "kind": "property",
+      "resourceType": "AWS::Connect::EvaluationForm.EvaluationFormScoreThreshold"
+    },
     "EvaluationFormSection": {
       "kind": "property",
       "resourceType": "AWS::Connect::EvaluationForm.EvaluationFormSection"
@@ -25224,6 +25602,10 @@
     "EvaluationForm_EvaluationFormLanguageConfiguration": {
       "kind": "property",
       "resourceType": "AWS::Connect::EvaluationForm.EvaluationFormLanguageConfiguration"
+    },
+    "EvaluationForm_EvaluationFormScoreThreshold": {
+      "kind": "property",
+      "resourceType": "AWS::Connect::EvaluationForm.EvaluationFormScoreThreshold"
     },
     "EvaluationForm_EvaluationFormSection": {
       "kind": "property",
@@ -26312,13 +26694,13 @@
       "kind": "property",
       "resourceType": "AWS::Evidently::Experiment.TreatmentToWeight"
     },
-    "Expiration": {
-      "kind": "property",
-      "resourceType": "AWS::SecurityLake::DataLake.Expiration"
-    },
     "ExpirationDataRule": {
       "kind": "property",
       "resourceType": "AWS::S3Files::FileSystem.ExpirationDataRule"
+    },
+    "ExpirationSettings": {
+      "kind": "property",
+      "resourceType": "AWS::Chime::AppInstanceUser.ExpirationSettings"
     },
     "ExpiryEventsConfiguration": {
       "kind": "property",
@@ -26438,17 +26820,18 @@
         "CreatedAt:false",
         "ECSManagedResourceArns:false",
         "Endpoint:false",
-        "ExecutionRoleArn:true",
+        "ExecutionRoleArn:false",
         "HealthCheckPath:false",
         "InfrastructureRoleArn:true",
         "Memory:false",
         "NetworkConfiguration:false",
-        "PrimaryContainer:true",
+        "PrimaryContainer:false",
         "ScalingTarget:false",
         "ServiceArn:false",
         "ServiceName:false",
         "Status:false",
         "Tags:false",
+        "TaskDefinitionArn:false",
         "TaskRoleArn:false",
         "UpdatedAt:false"
       ],
@@ -26986,6 +27369,10 @@
     "FailoverCondition": {
       "kind": "property",
       "resourceType": "AWS::MediaLive::Channel.FailoverCondition"
+    },
+    "FailoverType": {
+      "kind": "property",
+      "resourceType": "AWS::Cognito::UserPoolDomain.FailoverType"
     },
     "FailureConditions": {
       "kind": "property",
@@ -27599,6 +27986,7 @@
         "CreationTime",
         "CreatorRequestId",
         "FirewallRules_*_FirewallThreatProtectionId",
+        "FirewallRules_*_Status",
         "Id",
         "ModificationTime",
         "OwnerId",
@@ -27681,6 +28069,10 @@
     "FirewallRuleGroup_FirewallRuleType": {
       "kind": "property",
       "resourceType": "AWS::Route53Resolver::FirewallRuleGroup.FirewallRuleType"
+    },
+    "FirewallRuleGroup_PartnerThreatProtectionConfig": {
+      "kind": "property",
+      "resourceType": "AWS::Route53Resolver::FirewallRuleGroup.PartnerThreatProtectionConfig"
     },
     "FirewallRuleGroup_Tag": {
       "kind": "property",
@@ -29216,7 +29608,7 @@
         "GatewayIdentifier:false",
         "LastSynchronizedAt:false",
         "MetadataConfiguration:false",
-        "Name:true",
+        "Name:false",
         "PrivateEndpoint:false",
         "PrivateEndpointManagedResources:false",
         "ProtocolType:false",
@@ -30749,8 +31141,10 @@
         "Environment_AgentCoreRuntimeEnvironment_AgentRuntimeId",
         "Environment_AgentCoreRuntimeEnvironment_AgentRuntimeName",
         "HarnessId",
+        "Memory_ManagedMemoryConfiguration_Arn",
         "Status",
-        "UpdatedAt"
+        "UpdatedAt",
+        "Version"
       ],
       "props": [
         "AllowedTools:false",
@@ -30774,10 +31168,12 @@
         "TimeoutSeconds:false",
         "Tools:false",
         "Truncation:false",
-        "UpdatedAt:false"
+        "UpdatedAt:false",
+        "Version:false"
       ],
       "createOnly": [
-        "HarnessName"
+        "HarnessName",
+        "Memory/ManagedMemoryConfiguration/EncryptionKeyArn"
       ],
       "taggable": true
     },
@@ -30825,6 +31221,10 @@
       "kind": "property",
       "resourceType": "AWS::BedrockAgentCore::Harness.HarnessLiteLlmModelConfig"
     },
+    "HarnessManagedMemoryConfiguration": {
+      "kind": "property",
+      "resourceType": "AWS::BedrockAgentCore::Harness.HarnessManagedMemoryConfiguration"
+    },
     "HarnessMemoryConfiguration": {
       "kind": "property",
       "resourceType": "AWS::BedrockAgentCore::Harness.HarnessMemoryConfiguration"
@@ -30844,6 +31244,10 @@
     "HarnessSkill": {
       "kind": "property",
       "resourceType": "AWS::BedrockAgentCore::Harness.HarnessSkill"
+    },
+    "HarnessSkillAwsSkillsSource": {
+      "kind": "property",
+      "resourceType": "AWS::BedrockAgentCore::Harness.HarnessSkillAwsSkillsSource"
     },
     "HarnessSkillGitAuth": {
       "kind": "property",
@@ -30949,6 +31353,10 @@
       "kind": "property",
       "resourceType": "AWS::BedrockAgentCore::Harness.HarnessLiteLlmModelConfig"
     },
+    "Harness_HarnessManagedMemoryConfiguration": {
+      "kind": "property",
+      "resourceType": "AWS::BedrockAgentCore::Harness.HarnessManagedMemoryConfiguration"
+    },
     "Harness_HarnessMemoryConfiguration": {
       "kind": "property",
       "resourceType": "AWS::BedrockAgentCore::Harness.HarnessMemoryConfiguration"
@@ -30968,6 +31376,10 @@
     "Harness_HarnessSkill": {
       "kind": "property",
       "resourceType": "AWS::BedrockAgentCore::Harness.HarnessSkill"
+    },
+    "Harness_HarnessSkillAwsSkillsSource": {
+      "kind": "property",
+      "resourceType": "AWS::BedrockAgentCore::Harness.HarnessSkillAwsSkillsSource"
     },
     "Harness_HarnessSkillGitAuth": {
       "kind": "property",
@@ -31205,6 +31617,10 @@
     "HookVersion_LoggingConfig": {
       "kind": "property",
       "resourceType": "AWS::CloudFormation::HookVersion.LoggingConfig"
+    },
+    "Hooks": {
+      "kind": "property",
+      "resourceType": "AWS::Lambda::MicrovmImage.Hooks"
     },
     "HopDestination": {
       "kind": "property",
@@ -31586,23 +32002,6 @@
       "kind": "property",
       "resourceType": "AWS::SecurityLake::SubscriberNotification.HttpsNotificationConfiguration"
     },
-    "Hub": {
-      "kind": "resource",
-      "resourceType": "AWS::SecurityHub::Hub",
-      "attrs": [
-        "ARN",
-        "SubscribedAt"
-      ],
-      "props": [
-        "ARN:false",
-        "AutoEnableControls:false",
-        "ControlFindingGenerator:false",
-        "EnableDefaultStandards:false",
-        "SubscribedAt:false",
-        "Tags:false"
-      ],
-      "taggable": true
-    },
     "HubV2": {
       "kind": "resource",
       "resourceType": "AWS::SecurityHub::HubV2",
@@ -31620,6 +32019,14 @@
     "HudiTarget": {
       "kind": "property",
       "resourceType": "AWS::Glue::Crawler.HudiTarget"
+    },
+    "HyperParameterSpecification": {
+      "kind": "property",
+      "resourceType": "AWS::SageMaker::Algorithm.HyperParameterSpecification"
+    },
+    "HyperParameterTuningJobObjective": {
+      "kind": "property",
+      "resourceType": "AWS::SageMaker::Algorithm.HyperParameterTuningJobObjective"
     },
     "Hypervisor": {
       "kind": "resource",
@@ -32709,6 +33116,10 @@
     "IdentityProviderConfiguration": {
       "kind": "property",
       "resourceType": "AWS::HealthLake::FHIRDatastore.IdentityProviderConfiguration"
+    },
+    "IdentityProviderVpcConnectionProperties": {
+      "kind": "property",
+      "resourceType": "AWS::QuickSight::OAuthClientApplication.IdentityProviderVpcConnectionProperties"
     },
     "IdentityProvider_Tag": {
       "kind": "property",
@@ -34029,13 +34440,11 @@
       "kind": "resource",
       "resourceType": "AWS::CloudWatch::InsightRule",
       "attrs": [
-        "Arn",
-        "Id"
+        "Arn"
       ],
       "props": [
         "ApplyOnTransformedLogs:false",
         "Arn:false",
-        "Id:false",
         "RuleBody:true",
         "RuleName:true",
         "RuleState:true",
@@ -34043,7 +34452,8 @@
       ],
       "createOnly": [
         "RuleName"
-      ]
+      ],
+      "taggable": true
     },
     "InsightRule_Tag": {
       "kind": "property",
@@ -36065,6 +36475,10 @@
       "kind": "property",
       "resourceType": "AWS::EC2::LaunchTemplate.Ipv6Add"
     },
+    "IssuerConfiguration": {
+      "kind": "property",
+      "resourceType": "AWS::Cognito::UserPool.IssuerConfiguration"
+    },
     "IssuerData": {
       "kind": "property",
       "resourceType": "AWS::LicenseManager::License.IssuerData"
@@ -36380,6 +36794,10 @@
     "KafkaClusterClientVpcConfig": {
       "kind": "property",
       "resourceType": "AWS::MSK::Replicator.KafkaClusterClientVpcConfig"
+    },
+    "KafkaClusterMtlsAuthentication": {
+      "kind": "property",
+      "resourceType": "AWS::MSK::Replicator.KafkaClusterMtlsAuthentication"
     },
     "KafkaClusterSaslScramAuthentication": {
       "kind": "property",
@@ -36761,6 +37179,10 @@
     "KeyAttributes": {
       "kind": "property",
       "resourceType": "AWS::PaymentCryptography::Key.KeyAttributes"
+    },
+    "KeyConfiguration": {
+      "kind": "property",
+      "resourceType": "AWS::Cognito::UserPool.KeyConfiguration"
     },
     "KeyGroup": {
       "kind": "resource",
@@ -37525,6 +37947,7 @@
         "PropagateTags:false",
         "State:false",
         "Tags:false",
+        "TelemetryConfig:false",
         "VpcConfig:true"
       ],
       "createOnly": [
@@ -37536,6 +37959,10 @@
       ],
       "taggable": true
     },
+    "LambdaCapacityProvider_CapacityProviderLoggingConfig": {
+      "kind": "property",
+      "resourceType": "AWS::Lambda::CapacityProvider.CapacityProviderLoggingConfig"
+    },
     "LambdaCapacityProvider_CapacityProviderPermissionsConfig": {
       "kind": "property",
       "resourceType": "AWS::Lambda::CapacityProvider.CapacityProviderPermissionsConfig"
@@ -37543,6 +37970,10 @@
     "LambdaCapacityProvider_CapacityProviderScalingConfig": {
       "kind": "property",
       "resourceType": "AWS::Lambda::CapacityProvider.CapacityProviderScalingConfig"
+    },
+    "LambdaCapacityProvider_CapacityProviderTelemetryConfig": {
+      "kind": "property",
+      "resourceType": "AWS::Lambda::CapacityProvider.CapacityProviderTelemetryConfig"
     },
     "LambdaCapacityProvider_CapacityProviderVpcConfig": {
       "kind": "property",
@@ -38910,6 +39341,10 @@
     "LinkedinOauth2ProviderConfigInput": {
       "kind": "property",
       "resourceType": "AWS::BedrockAgentCore::OAuth2CredentialProvider.LinkedinOauth2ProviderConfigInput"
+    },
+    "LinuxCapabilities": {
+      "kind": "property",
+      "resourceType": "AWS::GameLift::ContainerGroupDefinition.LinuxCapabilities"
     },
     "List": {
       "kind": "resource",
@@ -41400,6 +41835,25 @@
       "kind": "property",
       "resourceType": "AWS::ManagedBlockchain::Member.VotingPolicy"
     },
+    "ManagedBlockchainNode": {
+      "kind": "resource",
+      "resourceType": "AWS::ManagedBlockchain::Node",
+      "attrs": [
+        "Arn",
+        "NodeId"
+      ],
+      "props": [
+        "Arn:false",
+        "MemberId:false",
+        "NetworkId:true",
+        "NodeConfiguration:true",
+        "NodeId:false"
+      ]
+    },
+    "ManagedBlockchainNode_NodeConfiguration": {
+      "kind": "property",
+      "resourceType": "AWS::ManagedBlockchain::Node.NodeConfiguration"
+    },
     "ManagedCertificateRequest": {
       "kind": "property",
       "resourceType": "AWS::CloudFront::DistributionTenant.ManagedCertificateRequest"
@@ -41423,6 +41877,18 @@
     "ManagedInstancesStorageConfiguration": {
       "kind": "property",
       "resourceType": "AWS::ECS::CapacityProvider.ManagedInstancesStorageConfiguration"
+    },
+    "ManagedKnowledgeBaseConfiguration": {
+      "kind": "property",
+      "resourceType": "AWS::Bedrock::KnowledgeBase.ManagedKnowledgeBaseConfiguration"
+    },
+    "ManagedKnowledgeBaseConnectorConfiguration": {
+      "kind": "property",
+      "resourceType": "AWS::Bedrock::DataSource.ManagedKnowledgeBaseConnectorConfiguration"
+    },
+    "ManagedKnowledgeBaseServerSideEncryptionConfiguration": {
+      "kind": "property",
+      "resourceType": "AWS::Bedrock::KnowledgeBase.ManagedKnowledgeBaseServerSideEncryptionConfiguration"
     },
     "ManagedLoggingConfiguration": {
       "kind": "property",
@@ -42075,10 +42541,6 @@
         "Name"
       ]
     },
-    "MediaExtractionConfiguration": {
-      "kind": "property",
-      "resourceType": "AWS::QBusiness::DataSource.MediaExtractionConfiguration"
-    },
     "MediaItem": {
       "kind": "property",
       "resourceType": "AWS::Connect::Workspace.MediaItem"
@@ -42129,6 +42591,10 @@
     "MediaLiveChannel_AudioDescription": {
       "kind": "property",
       "resourceType": "AWS::MediaLive::Channel.AudioDescription"
+    },
+    "MediaLiveChannel_AudioFeedInput": {
+      "kind": "property",
+      "resourceType": "AWS::MediaLive::Channel.AudioFeedInput"
     },
     "MediaLiveChannel_AudioNormalizationSettings": {
       "kind": "property",
@@ -42473,6 +42939,49 @@
     "MediaLiveInput_SrtSettingsRequest": {
       "kind": "property",
       "resourceType": "AWS::MediaLive::Input.SrtSettingsRequest"
+    },
+    "MediaLiveNode": {
+      "kind": "resource",
+      "resourceType": "AWS::MediaLive::Node",
+      "attrs": [
+        "Arn",
+        "ChannelPlacementGroups",
+        "ConnectionState",
+        "Id",
+        "InstanceArn",
+        "State"
+      ],
+      "props": [
+        "Arn:false",
+        "ChannelPlacementGroups:false",
+        "ClusterId:true",
+        "ConnectionState:false",
+        "Id:false",
+        "InstanceArn:false",
+        "Name:false",
+        "NodeInterfaceMappings:false",
+        "Role:false",
+        "SdiSourceMappings:false",
+        "State:false",
+        "Tags:false"
+      ],
+      "createOnly": [
+        "ClusterId",
+        "NodeInterfaceMappings"
+      ],
+      "taggable": true
+    },
+    "MediaLiveNode_NodeInterfaceMapping": {
+      "kind": "property",
+      "resourceType": "AWS::MediaLive::Node.NodeInterfaceMapping"
+    },
+    "MediaLiveNode_SdiSourceMapping": {
+      "kind": "property",
+      "resourceType": "AWS::MediaLive::Node.SdiSourceMapping"
+    },
+    "MediaLiveNode_Tag": {
+      "kind": "property",
+      "resourceType": "AWS::MediaLive::Node.Tag"
     },
     "MediaPackageAsset": {
       "kind": "resource",
@@ -43598,6 +44107,10 @@
       "kind": "property",
       "resourceType": "AWS::CloudWatch::AnomalyDetector.MetricCharacteristics"
     },
+    "MetricConfiguration": {
+      "kind": "property",
+      "resourceType": "AWS::ECS::Service.MetricConfiguration"
+    },
     "MetricDefinitionObject": {
       "kind": "property",
       "resourceType": "AWS::Evidently::Launch.MetricDefinitionObject"
@@ -43804,6 +44317,92 @@
     "MicrosoftTeamsChannelConfiguration_Tag": {
       "kind": "property",
       "resourceType": "AWS::Chatbot::MicrosoftTeamsChannelConfiguration.Tag"
+    },
+    "MicrovmHooks": {
+      "kind": "property",
+      "resourceType": "AWS::Lambda::MicrovmImage.MicrovmHooks"
+    },
+    "MicrovmImage": {
+      "kind": "resource",
+      "resourceType": "AWS::Lambda::MicrovmImage",
+      "attrs": [
+        "CreatedAt",
+        "ImageArn",
+        "LatestActiveImageVersion",
+        "LatestFailedImageVersion",
+        "State",
+        "UpdatedAt"
+      ],
+      "props": [
+        "AdditionalOsCapabilities:true",
+        "BaseImageArn:true",
+        "BaseImageVersion:true",
+        "BuildRoleArn:true",
+        "CodeArtifact:true",
+        "CpuConfigurations:true",
+        "CreatedAt:false",
+        "Description:true",
+        "EgressNetworkConnectors:true",
+        "EnvironmentVariables:true",
+        "Hooks:true",
+        "ImageArn:false",
+        "LatestActiveImageVersion:false",
+        "LatestFailedImageVersion:false",
+        "Logging:true",
+        "Name:true",
+        "Resources:true",
+        "State:false",
+        "Tags:false",
+        "UpdatedAt:false"
+      ],
+      "createOnly": [
+        "Name"
+      ],
+      "taggable": true
+    },
+    "MicrovmImageHooks": {
+      "kind": "property",
+      "resourceType": "AWS::Lambda::MicrovmImage.MicrovmImageHooks"
+    },
+    "MicrovmImage_CloudWatchLogging": {
+      "kind": "property",
+      "resourceType": "AWS::Lambda::MicrovmImage.CloudWatchLogging"
+    },
+    "MicrovmImage_CodeArtifact": {
+      "kind": "property",
+      "resourceType": "AWS::Lambda::MicrovmImage.CodeArtifact"
+    },
+    "MicrovmImage_CpuConfiguration": {
+      "kind": "property",
+      "resourceType": "AWS::Lambda::MicrovmImage.CpuConfiguration"
+    },
+    "MicrovmImage_EnvironmentVariable": {
+      "kind": "property",
+      "resourceType": "AWS::Lambda::MicrovmImage.EnvironmentVariable"
+    },
+    "MicrovmImage_Hooks": {
+      "kind": "property",
+      "resourceType": "AWS::Lambda::MicrovmImage.Hooks"
+    },
+    "MicrovmImage_Logging": {
+      "kind": "property",
+      "resourceType": "AWS::Lambda::MicrovmImage.Logging"
+    },
+    "MicrovmImage_MicrovmHooks": {
+      "kind": "property",
+      "resourceType": "AWS::Lambda::MicrovmImage.MicrovmHooks"
+    },
+    "MicrovmImage_MicrovmImageHooks": {
+      "kind": "property",
+      "resourceType": "AWS::Lambda::MicrovmImage.MicrovmImageHooks"
+    },
+    "MicrovmImage_Resources": {
+      "kind": "property",
+      "resourceType": "AWS::Lambda::MicrovmImage.Resources"
+    },
+    "MicrovmImage_Tag": {
+      "kind": "property",
+      "resourceType": "AWS::Lambda::MicrovmImage.Tag"
     },
     "MigrationProject": {
       "kind": "resource",
@@ -44167,6 +44766,50 @@
       ],
       "taggable": true
     },
+    "ModelCardExportArtifacts": {
+      "kind": "property",
+      "resourceType": "AWS::SageMaker::ModelCardExportJob.ModelCardExportArtifacts"
+    },
+    "ModelCardExportJob": {
+      "kind": "resource",
+      "resourceType": "AWS::SageMaker::ModelCardExportJob",
+      "attrs": [
+        "CreatedAt",
+        "ExportArtifacts",
+        "LastModifiedAt",
+        "ModelCardExportJobArn",
+        "Status"
+      ],
+      "props": [
+        "CreatedAt:false",
+        "ExportArtifacts:false",
+        "LastModifiedAt:false",
+        "ModelCardExportJobArn:false",
+        "ModelCardExportJobName:true",
+        "ModelCardName:true",
+        "ModelCardVersion:false",
+        "OutputConfig:true",
+        "Status:false"
+      ],
+      "createOnly": [
+        "ModelCardExportJobName",
+        "ModelCardName",
+        "ModelCardVersion",
+        "OutputConfig"
+      ]
+    },
+    "ModelCardExportJob_ModelCardExportArtifacts": {
+      "kind": "property",
+      "resourceType": "AWS::SageMaker::ModelCardExportJob.ModelCardExportArtifacts"
+    },
+    "ModelCardExportJob_ModelCardExportOutputConfig": {
+      "kind": "property",
+      "resourceType": "AWS::SageMaker::ModelCardExportJob.ModelCardExportOutputConfig"
+    },
+    "ModelCardExportOutputConfig": {
+      "kind": "property",
+      "resourceType": "AWS::SageMaker::ModelCardExportJob.ModelCardExportOutputConfig"
+    },
     "ModelCard_AdditionalInformation": {
       "kind": "property",
       "resourceType": "AWS::SageMaker::ModelCard.AdditionalInformation"
@@ -44348,6 +44991,10 @@
       "kind": "property",
       "resourceType": "AWS::SageMaker::InferenceExperiment.ModelInfrastructureConfig"
     },
+    "ModelInput": {
+      "kind": "property",
+      "resourceType": "AWS::SageMaker::Algorithm.ModelInput"
+    },
     "ModelManifest": {
       "kind": "resource",
       "resourceType": "AWS::IoTFleetWise::ModelManifest",
@@ -44441,10 +45088,6 @@
         "ValidationSpecification"
       ],
       "taggable": true
-    },
-    "ModelPackageContainerDefinition": {
-      "kind": "property",
-      "resourceType": "AWS::SageMaker::ModelPackage.ModelPackageContainerDefinition"
     },
     "ModelPackageCreator": {
       "kind": "property",
@@ -45706,6 +46349,38 @@
       "kind": "property",
       "resourceType": "AWS::EC2::LaunchTemplate.NetworkBandwidthGbps"
     },
+    "NetworkConnector": {
+      "kind": "resource",
+      "resourceType": "AWS::Lambda::NetworkConnector",
+      "attrs": [
+        "Arn",
+        "State"
+      ],
+      "props": [
+        "Arn:false",
+        "Configuration:true",
+        "Name:false",
+        "OperatorRole:false",
+        "State:false",
+        "Tags:false"
+      ],
+      "createOnly": [
+        "Name"
+      ],
+      "taggable": true
+    },
+    "NetworkConnector_Config": {
+      "kind": "property",
+      "resourceType": "AWS::Lambda::NetworkConnector.Config"
+    },
+    "NetworkConnector_Tag": {
+      "kind": "property",
+      "resourceType": "AWS::Lambda::NetworkConnector.Tag"
+    },
+    "NetworkConnector_VpcEgressConfiguration": {
+      "kind": "property",
+      "resourceType": "AWS::Lambda::NetworkConnector.VpcEgressConfiguration"
+    },
     "NetworkFabricConfiguration": {
       "kind": "property",
       "resourceType": "AWS::ManagedBlockchain::Member.NetworkFabricConfiguration"
@@ -46239,6 +46914,38 @@
       "kind": "property",
       "resourceType": "AWS::NetworkManager::Link.Tag"
     },
+    "NetworkManagerSite": {
+      "kind": "resource",
+      "resourceType": "AWS::NetworkManager::Site",
+      "attrs": [
+        "CreatedAt",
+        "SiteArn",
+        "SiteId",
+        "State"
+      ],
+      "props": [
+        "CreatedAt:false",
+        "Description:false",
+        "GlobalNetworkId:true",
+        "Location:false",
+        "SiteArn:false",
+        "SiteId:false",
+        "State:false",
+        "Tags:false"
+      ],
+      "createOnly": [
+        "GlobalNetworkId"
+      ],
+      "taggable": true
+    },
+    "NetworkManagerSite_Location": {
+      "kind": "property",
+      "resourceType": "AWS::NetworkManager::Site.Location"
+    },
+    "NetworkManagerSite_Tag": {
+      "kind": "property",
+      "resourceType": "AWS::NetworkManager::Site.Tag"
+    },
     "NetworkPerformanceMetricSubscription": {
       "kind": "resource",
       "resourceType": "AWS::EC2::NetworkPerformanceMetricSubscription",
@@ -46312,21 +47019,6 @@
       "kind": "property",
       "resourceType": "AWS::MediaLive::Channel.NielsenConfiguration"
     },
-    "Node": {
-      "kind": "resource",
-      "resourceType": "AWS::ManagedBlockchain::Node",
-      "attrs": [
-        "Arn",
-        "NodeId"
-      ],
-      "props": [
-        "Arn:false",
-        "MemberId:false",
-        "NetworkId:true",
-        "NodeConfiguration:true",
-        "NodeId:false"
-      ]
-    },
     "NodeConfig": {
       "kind": "property",
       "resourceType": "AWS::OpenSearchService::Domain.NodeConfig"
@@ -46347,6 +47039,10 @@
       "kind": "property",
       "resourceType": "AWS::ElastiCache::ReplicationGroup.NodeGroupConfiguration"
     },
+    "NodeInterfaceMapping": {
+      "kind": "property",
+      "resourceType": "AWS::MediaLive::Node.NodeInterfaceMapping"
+    },
     "NodeOption": {
       "kind": "property",
       "resourceType": "AWS::OpenSearchService::Domain.NodeOption"
@@ -46366,10 +47062,6 @@
     "NodeRepairConfigOverrides": {
       "kind": "property",
       "resourceType": "AWS::EKS::Nodegroup.NodeRepairConfigOverrides"
-    },
-    "Node_NodeConfiguration": {
-      "kind": "property",
-      "resourceType": "AWS::ManagedBlockchain::Node.NodeConfiguration"
     },
     "Nodegroup": {
       "kind": "resource",
@@ -46815,6 +47507,44 @@
     "OAuth2PropertiesInput": {
       "kind": "property",
       "resourceType": "AWS::Glue::Connection.OAuth2PropertiesInput"
+    },
+    "OAuthClientApplication": {
+      "kind": "resource",
+      "resourceType": "AWS::QuickSight::OAuthClientApplication",
+      "attrs": [
+        "Arn",
+        "CreatedTime",
+        "LastUpdatedTime"
+      ],
+      "props": [
+        "Arn:false",
+        "ClientId:false",
+        "ClientSecret:false",
+        "CreatedTime:false",
+        "DataSourceType:false",
+        "IdentityProviderVpcConnectionProperties:false",
+        "LastUpdatedTime:false",
+        "Name:true",
+        "OAuthAuthorizationEndpointUrl:false",
+        "OAuthClientApplicationId:true",
+        "OAuthClientAuthenticationType:true",
+        "OAuthScopes:false",
+        "OAuthTokenEndpointUrl:true",
+        "Tags:false"
+      ],
+      "createOnly": [
+        "OAuthClientApplicationId",
+        "OAuthClientAuthenticationType"
+      ],
+      "taggable": true
+    },
+    "OAuthClientApplication_IdentityProviderVpcConnectionProperties": {
+      "kind": "property",
+      "resourceType": "AWS::QuickSight::OAuthClientApplication.IdentityProviderVpcConnectionProperties"
+    },
+    "OAuthClientApplication_Tag": {
+      "kind": "property",
+      "resourceType": "AWS::QuickSight::OAuthClientApplication.Tag"
     },
     "OIDCProvider": {
       "kind": "resource",
@@ -48682,6 +49412,42 @@
       "kind": "property",
       "resourceType": "AWS::Route53Resolver::OutpostResolver.Tag"
     },
+    "OutpostsSite": {
+      "kind": "resource",
+      "resourceType": "AWS::Outposts::Site",
+      "attrs": [
+        "SiteArn",
+        "SiteId"
+      ],
+      "props": [
+        "Description:false",
+        "Name:true",
+        "Notes:false",
+        "OperatingAddress:false",
+        "RackPhysicalProperties:false",
+        "ShippingAddress:false",
+        "SiteArn:false",
+        "SiteId:false",
+        "Tags:false"
+      ],
+      "createOnly": [
+        "OperatingAddress",
+        "ShippingAddress"
+      ],
+      "taggable": true
+    },
+    "OutpostsSite_Address": {
+      "kind": "property",
+      "resourceType": "AWS::Outposts::Site.Address"
+    },
+    "OutpostsSite_RackPhysicalProperties": {
+      "kind": "property",
+      "resourceType": "AWS::Outposts::Site.RackPhysicalProperties"
+    },
+    "OutpostsSite_Tag": {
+      "kind": "property",
+      "resourceType": "AWS::Outposts::Site.Tag"
+    },
     "OutputArtifact": {
       "kind": "property",
       "resourceType": "AWS::CodePipeline::Pipeline.OutputArtifact"
@@ -48892,7 +49658,6 @@
       "createOnly": [
         "Name",
         "Networking",
-        "Scheduler",
         "Size"
       ],
       "taggable": true
@@ -49177,6 +49942,10 @@
       "kind": "property",
       "resourceType": "AWS::DataPipeline::Pipeline.ParameterObject"
     },
+    "ParameterRange": {
+      "kind": "property",
+      "resourceType": "AWS::SageMaker::Algorithm.ParameterRange"
+    },
     "ParameterValue": {
       "kind": "property",
       "resourceType": "AWS::DataPipeline::Pipeline.ParameterValue"
@@ -49377,6 +50146,10 @@
     "PartnerApp_Tag": {
       "kind": "property",
       "resourceType": "AWS::SageMaker::PartnerApp.Tag"
+    },
+    "PartnerThreatProtectionConfig": {
+      "kind": "property",
+      "resourceType": "AWS::Route53Resolver::FirewallRuleGroup.PartnerThreatProtectionConfig"
     },
     "Partnership": {
       "kind": "resource",
@@ -49711,8 +50484,10 @@
       "props": [
         "AgentSpaceId:true",
         "Assets:true",
+        "CleanUpStrategy:false",
         "CodeRemediationStrategy:false",
         "CreatedAt:false",
+        "DisableManagedSkills:false",
         "ExcludeRiskTypes:false",
         "LogConfig:false",
         "NetworkTrafficConfig:false",
@@ -51452,6 +52227,10 @@
       "kind": "property",
       "resourceType": "AWS::QuickSight::DataSource.PrestoParameters"
     },
+    "PrevalidationOptions": {
+      "kind": "property",
+      "resourceType": "AWS::CertificateManager::AcmeDomainValidation.PrevalidationOptions"
+    },
     "PricingPlan": {
       "kind": "resource",
       "resourceType": "AWS::BillingConductor::PricingPlan",
@@ -52432,6 +53211,10 @@
     "PublicAccessBlockConfiguration": {
       "kind": "property",
       "resourceType": "AWS::S3::Bucket.PublicAccessBlockConfiguration"
+    },
+    "PublicCertificateAuthority": {
+      "kind": "property",
+      "resourceType": "AWS::CertificateManager::AcmeEndpoint.PublicCertificateAuthority"
     },
     "PublicDnsNamespace": {
       "kind": "resource",
@@ -53716,6 +54499,42 @@
       "kind": "property",
       "resourceType": "AWS::QuickSight::DataSource.VpcConnectionProperties"
     },
+    "QuickSightFlow": {
+      "kind": "resource",
+      "resourceType": "AWS::QuickSight::Flow",
+      "attrs": [
+        "Arn",
+        "CreatedTime",
+        "FlowId",
+        "LastUpdatedTime",
+        "PublishState",
+        "StepAliases"
+      ],
+      "props": [
+        "Arn:false",
+        "AwsAccountId:true",
+        "CreatedTime:false",
+        "Description:false",
+        "FlowDefinition:true",
+        "FlowId:false",
+        "LastUpdatedTime:false",
+        "Name:true",
+        "Permissions:false",
+        "PublishState:false",
+        "StepAliases:false"
+      ],
+      "createOnly": [
+        "AwsAccountId"
+      ]
+    },
+    "QuickSightFlow_Permission": {
+      "kind": "property",
+      "resourceType": "AWS::QuickSight::Flow.Permission"
+    },
+    "QuickSightFlow_StepAliasMapping": {
+      "kind": "property",
+      "resourceType": "AWS::QuickSight::Flow.StepAliasMapping"
+    },
     "QuickSightTemplate": {
       "kind": "resource",
       "resourceType": "AWS::QuickSight::Template",
@@ -54383,6 +55202,10 @@
     "RTBFabricLink_ResponderErrorMaskingForHttpCode": {
       "kind": "property",
       "resourceType": "AWS::RTBFabric::Link.ResponderErrorMaskingForHttpCode"
+    },
+    "RackPhysicalProperties": {
+      "kind": "property",
+      "resourceType": "AWS::Outposts::Site.RackPhysicalProperties"
     },
     "RandomCutForestConfiguration": {
       "kind": "property",
@@ -55649,14 +56472,10 @@
     "RemediationConfiguration": {
       "kind": "resource",
       "resourceType": "AWS::Config::RemediationConfiguration",
-      "attrs": [
-        "Id"
-      ],
       "props": [
         "Automatic:false",
         "ConfigRuleName:true",
         "ExecutionControls:false",
-        "Id:false",
         "MaximumAutomaticAttempts:false",
         "Parameters:false",
         "ResourceType:false",
@@ -56139,6 +56958,10 @@
     "Replicator_KafkaClusterEncryptionInTransit": {
       "kind": "property",
       "resourceType": "AWS::MSK::Replicator.KafkaClusterEncryptionInTransit"
+    },
+    "Replicator_KafkaClusterMtlsAuthentication": {
+      "kind": "property",
+      "resourceType": "AWS::MSK::Replicator.KafkaClusterMtlsAuthentication"
     },
     "Replicator_KafkaClusterSaslScramAuthentication": {
       "kind": "property",
@@ -57313,11 +58136,23 @@
         "PermissionArns:false",
         "Principals:false",
         "ResourceArns:false",
+        "ResourceShareConfiguration:false",
         "Sources:false",
         "Status:false",
         "Tags:false"
       ],
+      "createOnly": [
+        "ResourceShareConfiguration/RetainSharingOnAccountLeaveOrganization"
+      ],
       "taggable": true
+    },
+    "ResourceShareConfiguration": {
+      "kind": "property",
+      "resourceType": "AWS::RAM::ResourceShare.ResourceShareConfiguration"
+    },
+    "ResourceShare_ResourceShareConfiguration": {
+      "kind": "property",
+      "resourceType": "AWS::RAM::ResourceShare.ResourceShareConfiguration"
     },
     "ResourceShare_Tag": {
       "kind": "property",
@@ -57402,6 +58237,10 @@
     "ResourceVersion_LoggingConfig": {
       "kind": "property",
       "resourceType": "AWS::CloudFormation::ResourceVersion.LoggingConfig"
+    },
+    "Resources": {
+      "kind": "property",
+      "resourceType": "AWS::Lambda::MicrovmImage.Resources"
     },
     "ResourcesVpcConfig": {
       "kind": "property",
@@ -57999,6 +58838,10 @@
     "RolesAnywhereProfile_Tag": {
       "kind": "property",
       "resourceType": "AWS::RolesAnywhere::Profile.Tag"
+    },
+    "RollbackConfig": {
+      "kind": "property",
+      "resourceType": "AWS::EKS::Cluster.RollbackConfig"
     },
     "RollingInterval": {
       "kind": "property",
@@ -58761,6 +59604,10 @@
     "RoutingStrategy": {
       "kind": "property",
       "resourceType": "AWS::GameLift::Alias.RoutingStrategy"
+    },
+    "RoutingType": {
+      "kind": "property",
+      "resourceType": "AWS::Cognito::UserPoolDomain.RoutingType"
     },
     "RowFilter": {
       "kind": "property",
@@ -60641,6 +61488,37 @@
       "kind": "property",
       "resourceType": "AWS::SageMaker::Endpoint.VariantProperty"
     },
+    "SageMakerHub": {
+      "kind": "resource",
+      "resourceType": "AWS::SageMaker::Hub",
+      "attrs": [
+        "CreationTime",
+        "HubArn",
+        "HubStatus",
+        "LastModifiedTime"
+      ],
+      "props": [
+        "CreationTime:false",
+        "HubArn:false",
+        "HubDescription:true",
+        "HubDisplayName:false",
+        "HubName:true",
+        "HubSearchKeywords:false",
+        "HubStatus:false",
+        "LastModifiedTime:false",
+        "S3StorageConfig:false",
+        "Tags:false"
+      ],
+      "createOnly": [
+        "HubName",
+        "S3StorageConfig"
+      ],
+      "taggable": true
+    },
+    "SageMakerHub_Tag": {
+      "kind": "property",
+      "resourceType": "AWS::SageMaker::Hub.Tag"
+    },
     "SageMakerImage": {
       "kind": "resource",
       "resourceType": "AWS::SageMaker::Image",
@@ -61639,6 +62517,10 @@
       ],
       "taggable": true
     },
+    "SdiSourceMapping": {
+      "kind": "property",
+      "resourceType": "AWS::MediaLive::Node.SdiSourceMapping"
+    },
     "SdiSource_Tags": {
       "kind": "property",
       "resourceType": "AWS::MediaLive::SdiSource.Tags"
@@ -61723,6 +62605,8 @@
       "attrs": [
         "AgentSpaceId",
         "CreatedAt",
+        "IntegratedResources_*_ProviderResources_*_ConfluenceDocument_SpaceTitle",
+        "IntegratedResources_*_ProviderResources_*_ConfluenceDocument_Title",
         "UpdatedAt"
       ],
       "props": [
@@ -62015,6 +62899,23 @@
       "kind": "property",
       "resourceType": "AWS::SecurityHub::AutomationRule.WorkflowUpdate"
     },
+    "SecurityHubHub": {
+      "kind": "resource",
+      "resourceType": "AWS::SecurityHub::Hub",
+      "attrs": [
+        "ARN",
+        "SubscribedAt"
+      ],
+      "props": [
+        "ARN:false",
+        "AutoEnableControls:false",
+        "ControlFindingGenerator:false",
+        "EnableDefaultStandards:false",
+        "SubscribedAt:false",
+        "Tags:false"
+      ],
+      "taggable": true
+    },
     "SecurityHubPolicy": {
       "kind": "property",
       "resourceType": "AWS::SecurityHub::ConfigurationPolicy.SecurityHubPolicy"
@@ -62048,6 +62949,38 @@
         "Name",
         "Type"
       ]
+    },
+    "SecurityRequirement": {
+      "kind": "property",
+      "resourceType": "AWS::SecurityAgent::SecurityRequirementPack.SecurityRequirement"
+    },
+    "SecurityRequirementPack": {
+      "kind": "resource",
+      "resourceType": "AWS::SecurityAgent::SecurityRequirementPack",
+      "attrs": [
+        "PackId"
+      ],
+      "props": [
+        "Description:false",
+        "KmsKeyId:false",
+        "Name:true",
+        "PackId:false",
+        "SecurityRequirements:false",
+        "Status:false",
+        "Tags:false"
+      ],
+      "createOnly": [
+        "KmsKeyId"
+      ],
+      "taggable": true
+    },
+    "SecurityRequirementPack_SecurityRequirement": {
+      "kind": "property",
+      "resourceType": "AWS::SecurityAgent::SecurityRequirementPack.SecurityRequirement"
+    },
+    "SecurityRequirementPack_Tag": {
+      "kind": "property",
+      "resourceType": "AWS::SecurityAgent::SecurityRequirementPack.Tag"
     },
     "SecurityServicePolicyData": {
       "kind": "property",
@@ -63806,30 +64739,6 @@
       ],
       "taggable": true
     },
-    "Site": {
-      "kind": "resource",
-      "resourceType": "AWS::NetworkManager::Site",
-      "attrs": [
-        "CreatedAt",
-        "SiteArn",
-        "SiteId",
-        "State"
-      ],
-      "props": [
-        "CreatedAt:false",
-        "Description:false",
-        "GlobalNetworkId:true",
-        "Location:false",
-        "SiteArn:false",
-        "SiteId:false",
-        "State:false",
-        "Tags:false"
-      ],
-      "createOnly": [
-        "GlobalNetworkId"
-      ],
-      "taggable": true
-    },
     "SiteToSiteVpnAttachment": {
       "kind": "resource",
       "resourceType": "AWS::NetworkManager::SiteToSiteVpnAttachment",
@@ -63886,14 +64795,6 @@
     "SiteToSiteVpnAttachment_Tag": {
       "kind": "property",
       "resourceType": "AWS::NetworkManager::SiteToSiteVpnAttachment.Tag"
-    },
-    "Site_Location": {
-      "kind": "property",
-      "resourceType": "AWS::NetworkManager::Site.Location"
-    },
-    "Site_Tag": {
-      "kind": "property",
-      "resourceType": "AWS::NetworkManager::Site.Tag"
     },
     "Skill": {
       "kind": "resource",
@@ -65323,6 +66224,10 @@
         "Name"
       ]
     },
+    "StepAliasMapping": {
+      "kind": "property",
+      "resourceType": "AWS::QuickSight::Flow.StepAliasMapping"
+    },
     "StepFunctionsAction": {
       "kind": "property",
       "resourceType": "AWS::IoT::TopicRule.StepFunctionsAction"
@@ -66409,6 +67314,7 @@
         "Description:false",
         "KmsKeyId:false",
         "Name:true",
+        "SharingEnabled:false",
         "SystemArn:false",
         "SystemId:false",
         "Tags:false",
@@ -67707,45 +68613,7 @@
       "kind": "property",
       "resourceType": "AWS::Lex::Bot.TestBotAliasSettings"
     },
-    "TestCase": {
-      "kind": "resource",
-      "resourceType": "AWS::AppTest::TestCase",
-      "attrs": [
-        "CreationTime",
-        "LastUpdateTime",
-        "LatestVersion",
-        "Status",
-        "TestCaseArn",
-        "TestCaseId",
-        "TestCaseVersion"
-      ],
-      "props": [
-        "CreationTime:false",
-        "Description:false",
-        "LastUpdateTime:false",
-        "LatestVersion:false",
-        "Name:true",
-        "Status:false",
-        "Steps:true",
-        "Tags:false",
-        "TestCaseArn:false",
-        "TestCaseId:false",
-        "TestCaseVersion:false"
-      ],
-      "createOnly": [
-        "Name"
-      ],
-      "taggable": true
-    },
     "TestCaseLatestVersion": {
-      "kind": "property",
-      "resourceType": "AWS::AppTest::TestCase.TestCaseLatestVersion"
-    },
-    "TestCase_Step": {
-      "kind": "property",
-      "resourceType": "AWS::AppTest::TestCase.Step"
-    },
-    "TestCase_TestCaseLatestVersion": {
       "kind": "property",
       "resourceType": "AWS::AppTest::TestCase.TestCaseLatestVersion"
     },
@@ -67928,6 +68796,10 @@
     "ThreatIntelSet_TagItem": {
       "kind": "property",
       "resourceType": "AWS::GuardDuty::ThreatIntelSet.TagItem"
+    },
+    "ThresholdConfiguration": {
+      "kind": "property",
+      "resourceType": "AWS::ECS::Service.ThresholdConfiguration"
     },
     "ThrottleSettings": {
       "kind": "property",
@@ -68786,6 +69658,10 @@
     "TrainingMetrics": {
       "kind": "property",
       "resourceType": "AWS::CustomerProfiles::Recommender.TrainingMetrics"
+    },
+    "TrainingSpecification": {
+      "kind": "property",
+      "resourceType": "AWS::SageMaker::Algorithm.TrainingSpecification"
     },
     "TransactionSearchConfig": {
       "kind": "resource",
@@ -70190,6 +71066,8 @@
         "EmailVerificationMessage:false",
         "EmailVerificationSubject:false",
         "EnabledMfas:false",
+        "IssuerConfiguration:false",
+        "KeyConfiguration:false",
         "LambdaConfig:false",
         "MfaConfiguration:false",
         "Policies:false",
@@ -70286,6 +71164,7 @@
         "CustomDomainConfig:false",
         "Domain:true",
         "ManagedLoginVersion:false",
+        "Routing:false",
         "UserPoolId:true"
       ],
       "createOnly": [
@@ -70296,6 +71175,14 @@
     "UserPoolDomain_CustomDomainConfigType": {
       "kind": "property",
       "resourceType": "AWS::Cognito::UserPoolDomain.CustomDomainConfigType"
+    },
+    "UserPoolDomain_FailoverType": {
+      "kind": "property",
+      "resourceType": "AWS::Cognito::UserPoolDomain.FailoverType"
+    },
+    "UserPoolDomain_RoutingType": {
+      "kind": "property",
+      "resourceType": "AWS::Cognito::UserPoolDomain.RoutingType"
     },
     "UserPoolGroup": {
       "kind": "resource",
@@ -70484,6 +71371,14 @@
     "UserPool_InviteMessageTemplate": {
       "kind": "property",
       "resourceType": "AWS::Cognito::UserPool.InviteMessageTemplate"
+    },
+    "UserPool_IssuerConfiguration": {
+      "kind": "property",
+      "resourceType": "AWS::Cognito::UserPool.IssuerConfiguration"
+    },
+    "UserPool_KeyConfiguration": {
+      "kind": "property",
+      "resourceType": "AWS::Cognito::UserPool.KeyConfiguration"
     },
     "UserPool_LambdaConfig": {
       "kind": "property",
@@ -72438,6 +73333,10 @@
       "kind": "property",
       "resourceType": "AWS::IoT::TopicRuleDestination.VpcDestinationProperties"
     },
+    "VpcEgressConfiguration": {
+      "kind": "property",
+      "resourceType": "AWS::Lambda::NetworkConnector.VpcEgressConfiguration"
+    },
     "VpcEncryptionControlExclusion": {
       "kind": "property",
       "resourceType": "AWS::EC2::VPCEncryptionControl.VpcEncryptionControlExclusion"
@@ -73251,6 +74150,7 @@
         "Description:false",
         "Id:false",
         "LabelNamespace:false",
+        "MonetizationConfig:false",
         "Name:false",
         "Rules:false",
         "Scope:true",
@@ -73303,6 +74203,10 @@
       "kind": "property",
       "resourceType": "AWS::WAFv2::RuleGroup.CountAction"
     },
+    "WAFv2RuleGroup_CryptoConfig": {
+      "kind": "property",
+      "resourceType": "AWS::WAFv2::RuleGroup.CryptoConfig"
+    },
     "WAFv2RuleGroup_GeoMatchStatement": {
       "kind": "property",
       "resourceType": "AWS::WAFv2::RuleGroup.GeoMatchStatement"
@@ -73326,6 +74230,14 @@
     "WAFv2RuleGroup_LabelSummary": {
       "kind": "property",
       "resourceType": "AWS::WAFv2::RuleGroup.LabelSummary"
+    },
+    "WAFv2RuleGroup_MonetizationConfig": {
+      "kind": "property",
+      "resourceType": "AWS::WAFv2::RuleGroup.MonetizationConfig"
+    },
+    "WAFv2RuleGroup_MonetizeAction": {
+      "kind": "property",
+      "resourceType": "AWS::WAFv2::RuleGroup.MonetizeAction"
     },
     "WAFv2RuleGroup_NotStatement": {
       "kind": "property",
@@ -73401,6 +74313,7 @@
         "Description:false",
         "Id:false",
         "LabelNamespace:false",
+        "MonetizationConfig:false",
         "Name:false",
         "OnSourceDDoSProtectionConfig:false",
         "Rules:false",
@@ -73475,6 +74388,10 @@
       "kind": "property",
       "resourceType": "AWS::WAFv2::WebACL.CountAction"
     },
+    "WAFv2WebACL_CryptoConfig": {
+      "kind": "property",
+      "resourceType": "AWS::WAFv2::WebACL.CryptoConfig"
+    },
     "WAFv2WebACL_CustomRequestHandling": {
       "kind": "property",
       "resourceType": "AWS::WAFv2::WebACL.CustomRequestHandling"
@@ -73514,6 +74431,14 @@
     "WAFv2WebACL_ManagedRuleGroupStatement": {
       "kind": "property",
       "resourceType": "AWS::WAFv2::WebACL.ManagedRuleGroupStatement"
+    },
+    "WAFv2WebACL_MonetizationConfig": {
+      "kind": "property",
+      "resourceType": "AWS::WAFv2::WebACL.MonetizationConfig"
+    },
+    "WAFv2WebACL_MonetizeAction": {
+      "kind": "property",
+      "resourceType": "AWS::WAFv2::WebACL.MonetizeAction"
     },
     "WAFv2WebACL_NotStatement": {
       "kind": "property",
@@ -73788,6 +74713,7 @@
         "Id:false",
         "Name:false",
         "RegisterWithThirdParty:false",
+        "Tags:false",
         "TargetAction:true",
         "TargetPipeline:true",
         "TargetPipelineVersion:false",
@@ -73795,7 +74721,8 @@
       ],
       "createOnly": [
         "Name"
-      ]
+      ],
+      "taggable": true
     },
     "WebhookAuthConfiguration": {
       "kind": "property",
@@ -73804,6 +74731,10 @@
     "WebhookFilterRule": {
       "kind": "property",
       "resourceType": "AWS::CodePipeline::Webhook.WebhookFilterRule"
+    },
+    "Webhook_Tag": {
+      "kind": "property",
+      "resourceType": "AWS::CodePipeline::Webhook.Tag"
     },
     "Webhook_WebhookAuthConfiguration": {
       "kind": "property",
