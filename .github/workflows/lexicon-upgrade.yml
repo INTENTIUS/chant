@@ -45,10 +45,25 @@ jobs:
         # excluded — they have no upstream spec to upgrade from.
         lexicon: [k8s, gcp, docker, gitlab, aws, azure, github]
     steps:
+      # Mint a short-lived GitHub App token so bot PRs trigger CI — a PR opened
+      # with the default GITHUB_TOKEN gets no workflow runs (#534). Skipped in
+      # report mode (no PR is opened). Requires the org-App secrets below; set
+      # them before enabling pull-request mode / un-gating the schedule (#536).
+      - name: Generate app token
+        id: app-token
+        if: ${{ github.event.inputs.mode != 'report' }}
+        uses: actions/create-github-app-token@v2
+        with:
+          app-id: ${{ secrets.LEXICON_UPGRADE_APP_ID }}
+          private-key: ${{ secrets.LEXICON_UPGRADE_APP_PRIVATE_KEY }}
+
       - uses: actions/checkout@v6
         with:
           # Full history so the long-lived upgrade branch can be reset from main.
           fetch-depth: 0
+          # Push the upgrade branch as the App so the PR triggers CI; falls back
+          # to the default token in report mode (which never pushes).
+          token: ${{ steps.app-token.outputs.token || github.token }}
       - uses: actions/setup-node@v6
         with:
           node-version: '24'
@@ -74,10 +89,12 @@ jobs:
         env:
           # pull-request opens/updates the long-lived branch; overridable on manual runs.
           CHANT_UPGRADE_MODE: ${{ github.event.inputs.mode || 'pull-request' }}
-          # The Op's PR automation shells out to `gh` and `git push`.
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # The Op's PR automation shells out to `gh` and `git push`. Use the
+          # App token so the opened PR triggers CI (#534); falls back to the
+          # default token in report mode (no PR opened).
+          GH_TOKEN: ${{ steps.app-token.outputs.token || github.token }}
           # Higher upstream-API rate limit for the spec-version resolvers.
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_TOKEN: ${{ steps.app-token.outputs.token || github.token }}
         run: |
           npx tsx packages/core/src/cli/main.ts run ${{ matrix.lexicon }}-upgrade --local --json > upgrade-${{ matrix.lexicon }}.json
           cat upgrade-${{ matrix.lexicon }}.json
