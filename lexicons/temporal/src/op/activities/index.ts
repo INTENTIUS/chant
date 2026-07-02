@@ -56,3 +56,24 @@ export type {
   GitlabRefResolver,
   PipelineRefResolution,
 } from "./pipeline-audit";
+
+export {
+  lexiconUpgrade,
+  isPinned,
+  isRolling,
+  severityToLabel,
+  upgradeBranchName,
+  upgradePrTitle,
+  buildUpgradeSummary,
+} from "./lexicon-upgrade";
+export type {
+  LexiconUpgradeArgs,
+  LexiconUpgradeResult,
+  LexiconUpgradeMode,
+  SupportedLexicon,
+  SemverLabel,
+  CheckPinnedFn,
+  CheckRollingFn,
+  GhRunner,
+  ApplyBumpFn,
+} from "./lexicon-upgrade";
