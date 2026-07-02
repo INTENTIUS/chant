@@ -8,6 +8,14 @@
  * lexicon (`lexicon-upgrade/<lexicon>`), updates the PR in place when the delta
  * changes, and applies a semver label derived from the surface severity.
  *
+ * For pinned lexicons in pull-request mode, the PR also bumps the lexicon's
+ * own package.json version according to the semver label (minor → minor bump,
+ * breaking → major bump). Merging the PR carries the version change so
+ * publish-on-merge can ship just that lexicon without a full monorepo release.
+ *
+ * Rolling lexicons (aws, azure, github) drift on their own cadence and are not
+ * version-bumped here — they move to drift-issues per #546.
+ *
  * Supply-chain note: this activity never executes spec-provided content.
  * It only reads the artifacts produced by the lexicon's own generate step,
  * which is called through the lexicon's npm prepack chain.
@@ -15,6 +23,8 @@
 
 import { exec } from "node:child_process";
 import { promisify } from "node:util";
+import { readFileSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 import type { UpgradeCheckResult, LexiconId } from "@intentius/chant/codegen/pinned-upgrade";
 import type { RollingUpgradeResult, RollingLexicon } from "@intentius/chant/codegen/rolling-upgrade";
 
@@ -63,6 +73,11 @@ export interface LexiconUpgradeArgs {
    * Override the applyPinnedVersionBump function — inject a mock in tests.
    */
   _applyBump?: ApplyBumpFn;
+  /**
+   * Override the package.json version writer — inject a mock in tests.
+   * Defaults to bumpPackageJsonVersion.
+   */
+  _bumpPackageVersion?: BumpPackageVersionFn;
 }
 
 export interface LexiconUpgradeResult {
@@ -106,6 +121,46 @@ export type GhRunner = (cmd: string) => Promise<{ stdout: string; stderr: string
 
 /** Applies a pinned version bump permanently (no revert). */
 export type ApplyBumpFn = (lexicon: LexiconId, lexiconDir: string, newVersion: string) => { filePath: string };
+
+/**
+ * Write a new version into a package.json, returning the file path.
+ * Injectable for tests via LexiconUpgradeArgs._bumpPackageVersion.
+ */
+export type BumpPackageVersionFn = (packageJsonPath: string, newVersion: string) => void;
+
+// ── Package.json version bumping ──────────────────────────────────────
+
+/**
+ * Compute a bumped semver string from a current version and a semver label.
+ *
+ * "minor"    → increment the minor segment, reset patch to 0.
+ * "breaking" → increment the major segment, reset minor and patch to 0.
+ *
+ * Handles the common "MAJOR.MINOR.PATCH" form. Returns null when the
+ * current version string cannot be parsed as M.m.p.
+ */
+export function computeBumpedVersion(
+  current: string,
+  label: SemverLabel,
+): string | null {
+  const parts = current.replace(/^v/, "").split(".").map(Number);
+  if (parts.length < 3 || parts.some((n) => Number.isNaN(n) || n < 0)) return null;
+  const [major, minor] = parts as [number, number, number];
+  if (label === "minor") return `${major}.${minor + 1}.0`;
+  if (label === "breaking") return `${major + 1}.0.0`;
+  return null;
+}
+
+/**
+ * Read package.json at `packageJsonPath`, set `version` to `newVersion`,
+ * and write it back. Preserves all other fields and 2-space indent.
+ */
+export function bumpPackageJsonVersion(packageJsonPath: string, newVersion: string): void {
+  const raw = readFileSync(packageJsonPath, "utf-8");
+  const pkg = JSON.parse(raw) as Record<string, unknown>;
+  pkg["version"] = newVersion;
+  writeFileSync(packageJsonPath, JSON.stringify(pkg, null, 2) + "\n", "utf-8");
+}
 
 // ── Classification ────────────────────────────────────────────────────
 
@@ -492,46 +547,62 @@ export async function lexiconUpgrade(args: LexiconUpgradeArgs): Promise<LexiconU
   }
 
   // Reset/create the long-lived branch from main and commit the changes.
-  await execAsync(`git fetch origin main`);
-  await execAsync(
+  // All git shell-outs go through the injectable `gh` runner (which defaults to
+  // execAsync) so tests can mock them — a test must never touch the real repo
+  // or push to origin.
+  await gh(`git fetch origin main`);
+  await gh(
     `git branch -f ${shellQuote(branch)} origin/main`,
   ).catch(async () => {
-    await execAsync(`git branch ${shellQuote(branch)} origin/main`);
+    await gh(`git branch ${shellQuote(branch)} origin/main`);
   });
 
   // Save current branch, switch to upgrade branch.
-  const { stdout: currentBranch } = await execAsync(`git rev-parse --abbrev-ref HEAD`);
+  const { stdout: currentBranch } = await gh(`git rev-parse --abbrev-ref HEAD`);
   const savedBranch = currentBranch.trim();
 
-  await execAsync(`git stash --include-untracked`).catch(() => {/* nothing to stash */});
+  await gh(`git stash --include-untracked`).catch(() => {/* nothing to stash */});
 
   try {
-    await execAsync(`git checkout ${shellQuote(branch)}`);
+    await gh(`git checkout ${shellQuote(branch)}`);
 
-    // For pinned lexicons: apply the version bump permanently on this branch.
+    // For pinned lexicons: apply the spec version bump permanently on this branch.
     if (isPinned(lexicon) && to) {
       const applyBump = args._applyBump ?? (await getRealApplyBump());
       const { filePath } = applyBump(lexicon, lexiconDir, to);
-      await execAsync(`git add ${shellQuote(filePath)}`).catch(() => {/* best-effort */});
+      await gh(`git add ${shellQuote(filePath)}`).catch(() => {/* best-effort */});
+
+      // Bump the lexicon's package.json version so merging this PR causes
+      // publish-on-merge to ship exactly this lexicon (minor → minor bump,
+      // breaking → major bump). Rolling lexicons are excluded — they use
+      // drift-issues (#546) and do not pin to a version constant.
+      if (semverLabel) {
+        const pkgJsonPath = join(lexiconDir, "package.json");
+        const raw = readFileSync(pkgJsonPath, "utf-8");
+        const pkg = JSON.parse(raw) as { version?: string };
+        const currentVersion = pkg.version ?? "0.0.0";
+        const bumpedVersion = computeBumpedVersion(currentVersion, semverLabel);
+        if (bumpedVersion) {
+          const doBump = args._bumpPackageVersion ?? bumpPackageJsonVersion;
+          doBump(pkgJsonPath, bumpedVersion);
+          await gh(`git add ${shellQuote(pkgJsonPath)}`).catch(() => {/* best-effort */});
+        }
+      }
     }
 
     // Write and stage the fresh surface snapshot.
     if (freshSnapshotJson) {
-      const { writeFileSync } = await import("node:fs");
-      const { join } = await import("node:path");
       const { SNAPSHOT_FILENAME } = await import("@intentius/chant/codegen/lexicon-regen");
       const snapshotPath = join(lexiconDir, SNAPSHOT_FILENAME);
       writeFileSync(snapshotPath, freshSnapshotJson, "utf-8");
-      await execAsync(`git add ${shellQuote(snapshotPath)}`).catch(() => {/* best-effort */});
+      await gh(`git add ${shellQuote(snapshotPath)}`).catch(() => {/* best-effort */});
     }
 
-    await execAsync(`git commit -m ${shellQuote(title)} --allow-empty`);
+    await gh(`git commit -m ${shellQuote(title)} --allow-empty`);
 
     // Push to origin — force-with-lease, then fall back to force on first push.
-    await execAsync(
-      `git push -u origin ${shellQuote(branch)} --force-with-lease`,
-    ).catch(async () => {
-      await execAsync(`git push -u origin ${shellQuote(branch)} --force`);
+    await gh(`git push -u origin ${shellQuote(branch)} --force-with-lease`).catch(async () => {
+      await gh(`git push -u origin ${shellQuote(branch)} --force`);
     });
 
     // Open or update the PR.
@@ -563,7 +634,7 @@ export async function lexiconUpgrade(args: LexiconUpgradeArgs): Promise<LexiconU
       validationOk: true,
     };
   } finally {
-    await execAsync(`git checkout ${shellQuote(savedBranch)}`).catch(() => {/* best-effort */});
-    await execAsync(`git stash pop`).catch(() => {/* nothing to pop */});
+    await gh(`git checkout ${shellQuote(savedBranch)}`).catch(() => {/* best-effort */});
+    await gh(`git stash pop`).catch(() => {/* nothing to pop */});
   }
 }
