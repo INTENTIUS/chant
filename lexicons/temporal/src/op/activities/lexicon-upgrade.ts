@@ -547,27 +547,30 @@ export async function lexiconUpgrade(args: LexiconUpgradeArgs): Promise<LexiconU
   }
 
   // Reset/create the long-lived branch from main and commit the changes.
-  await execAsync(`git fetch origin main`);
-  await execAsync(
+  // All git shell-outs go through the injectable `gh` runner (which defaults to
+  // execAsync) so tests can mock them — a test must never touch the real repo
+  // or push to origin.
+  await gh(`git fetch origin main`);
+  await gh(
     `git branch -f ${shellQuote(branch)} origin/main`,
   ).catch(async () => {
-    await execAsync(`git branch ${shellQuote(branch)} origin/main`);
+    await gh(`git branch ${shellQuote(branch)} origin/main`);
   });
 
   // Save current branch, switch to upgrade branch.
-  const { stdout: currentBranch } = await execAsync(`git rev-parse --abbrev-ref HEAD`);
+  const { stdout: currentBranch } = await gh(`git rev-parse --abbrev-ref HEAD`);
   const savedBranch = currentBranch.trim();
 
-  await execAsync(`git stash --include-untracked`).catch(() => {/* nothing to stash */});
+  await gh(`git stash --include-untracked`).catch(() => {/* nothing to stash */});
 
   try {
-    await execAsync(`git checkout ${shellQuote(branch)}`);
+    await gh(`git checkout ${shellQuote(branch)}`);
 
     // For pinned lexicons: apply the spec version bump permanently on this branch.
     if (isPinned(lexicon) && to) {
       const applyBump = args._applyBump ?? (await getRealApplyBump());
       const { filePath } = applyBump(lexicon, lexiconDir, to);
-      await execAsync(`git add ${shellQuote(filePath)}`).catch(() => {/* best-effort */});
+      await gh(`git add ${shellQuote(filePath)}`).catch(() => {/* best-effort */});
 
       // Bump the lexicon's package.json version so merging this PR causes
       // publish-on-merge to ship exactly this lexicon (minor → minor bump,
@@ -582,7 +585,7 @@ export async function lexiconUpgrade(args: LexiconUpgradeArgs): Promise<LexiconU
         if (bumpedVersion) {
           const doBump = args._bumpPackageVersion ?? bumpPackageJsonVersion;
           doBump(pkgJsonPath, bumpedVersion);
-          await execAsync(`git add ${shellQuote(pkgJsonPath)}`).catch(() => {/* best-effort */});
+          await gh(`git add ${shellQuote(pkgJsonPath)}`).catch(() => {/* best-effort */});
         }
       }
     }
@@ -592,16 +595,14 @@ export async function lexiconUpgrade(args: LexiconUpgradeArgs): Promise<LexiconU
       const { SNAPSHOT_FILENAME } = await import("@intentius/chant/codegen/lexicon-regen");
       const snapshotPath = join(lexiconDir, SNAPSHOT_FILENAME);
       writeFileSync(snapshotPath, freshSnapshotJson, "utf-8");
-      await execAsync(`git add ${shellQuote(snapshotPath)}`).catch(() => {/* best-effort */});
+      await gh(`git add ${shellQuote(snapshotPath)}`).catch(() => {/* best-effort */});
     }
 
-    await execAsync(`git commit -m ${shellQuote(title)} --allow-empty`);
+    await gh(`git commit -m ${shellQuote(title)} --allow-empty`);
 
     // Push to origin — force-with-lease, then fall back to force on first push.
-    await execAsync(
-      `git push -u origin ${shellQuote(branch)} --force-with-lease`,
-    ).catch(async () => {
-      await execAsync(`git push -u origin ${shellQuote(branch)} --force`);
+    await gh(`git push -u origin ${shellQuote(branch)} --force-with-lease`).catch(async () => {
+      await gh(`git push -u origin ${shellQuote(branch)} --force`);
     });
 
     // Open or update the PR.
@@ -633,7 +634,7 @@ export async function lexiconUpgrade(args: LexiconUpgradeArgs): Promise<LexiconU
       validationOk: true,
     };
   } finally {
-    await execAsync(`git checkout ${shellQuote(savedBranch)}`).catch(() => {/* best-effort */});
-    await execAsync(`git stash pop`).catch(() => {/* nothing to pop */});
+    await gh(`git checkout ${shellQuote(savedBranch)}`).catch(() => {/* best-effort */});
+    await gh(`git stash pop`).catch(() => {/* nothing to pop */});
   }
 }
