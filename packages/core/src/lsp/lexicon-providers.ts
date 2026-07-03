@@ -94,11 +94,21 @@ export function lexiconCompletions(
   // After `new ` — suggest resource class names
   if (/\bnew\s+\w*$/.test(linePrefix)) {
     const resources = index.getResourceNames();
-    const filtered = wordAtCursor
-      ? resources.filter((r) => r.className.toLowerCase().startsWith(wordAtCursor.toLowerCase()))
+    const prefix = wordAtCursor?.toLowerCase();
+    const filtered = prefix
+      ? resources.filter((r) => r.className.toLowerCase().startsWith(prefix))
       : resources;
 
-    return filtered.slice(0, 50).map((r) => ({
+    // Deterministic ordering (the raw index order is arbitrary).
+    const sorted = [...filtered].sort((a, b) => a.className.localeCompare(b.className));
+
+    // When the user has typed a prefix, the set is already narrowed — return
+    // every match so a common resource never gets truncated out of a short
+    // prefix on a large lexicon (e.g. StorageBucket for "S" on gcp/aws, #600).
+    // Only cap the unfiltered `new ` dump, to bound the payload.
+    const items = prefix ? sorted : sorted.slice(0, 100);
+
+    return items.map((r) => ({
       label: r.className,
       insertText: r.className,
       kind: "resource" as const,

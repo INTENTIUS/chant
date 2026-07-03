@@ -46,7 +46,7 @@ describe("awsCompletions", () => {
     }
   });
 
-  test("limits results to 50", () => {
+  test("caps the unfiltered `new ` dump", () => {
     const ctx = makeCtx({
       linePrefix: "const x = new ",
       wordAtCursor: "",
@@ -55,7 +55,9 @@ describe("awsCompletions", () => {
     });
 
     const items = awsCompletions(ctx);
-    expect(items.length).toBeLessThanOrEqual(50);
+    // Bare `new ` (no prefix) returns a bounded sample; a typed prefix returns
+    // every match so common resources aren't truncated (#600).
+    expect(items.length).toBeLessThanOrEqual(100);
   });
 
   test("returns empty for non-matching context", () => {
