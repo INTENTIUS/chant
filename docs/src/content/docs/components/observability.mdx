@@ -116,7 +116,18 @@ chant components status prod --compare-to staging --json
 Both "what's built" and "what's deployed where" resolve to one query each, joined by digest — the property the release ledger exists to protect.
 
 <Aside type="note" title="Component names vs. lexicon entity names">
-Live reconciliation joins on the component's own `name`. Where a pilot component's name matches the underlying lexicon entity/resource name one-for-one, `--live` resolves cleanly. A project where those names diverge should keep that mapping stable — `chant components status` does not invent a second identity system on top of the component contract.
+Live reconciliation joins on the component's own `name` by default. Where a component's name matches the underlying lexicon entity/resource name one-for-one (the pilot components), `--live` resolves cleanly with no further declaration. When they diverge — a component named `search-svc` whose composition targets a stack/service declared under a different name, or a fan-out component that owns several live entities (one stack per node) — declare `liveNames` on the `Component`:
+
+```ts
+export const searchSvc: Component = {
+  name: "search-svc",
+  liveNames: ["search-service-v2"], // the live entity/resource name(s) this component owns
+  dependsOn: [],
+  deploy: [ /* … */ ],
+};
+```
+
+`chant components status --live` joins on `liveNames` when present, aggregating live evidence across every name listed (drift on any one of them surfaces as drift for the component as a whole) — and falls back to `name` itself when `liveNames` is omitted, so existing components need no changes.
 </Aside>
 
 ## Read next

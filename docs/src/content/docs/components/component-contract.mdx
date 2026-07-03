@@ -19,6 +19,8 @@ interface Component {
 
   deploy: Phase[];            // the component's own composition over shared capabilities
   // verify + rollback fall out of the capabilities used
+
+  liveNames?: string[];       // optional: live entity/resource name(s), when they differ from `name`
 }
 ```
 

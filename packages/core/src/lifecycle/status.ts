@@ -76,23 +76,93 @@ export interface LiveComponentEvidence {
 }
 
 /**
+ * Component -> live entity/resource name(s) it owns (#598). Mirrors
+ * `Component.liveNames` (../components/component.ts) without importing it —
+ * this module stays decoupled from the typed authoring form, since a
+ * hand-written JSON component or a future non-chant frontend can supply the
+ * same mapping without going through `Component` at all. A component absent
+ * from this map, or mapped to `undefined`/an empty array, falls back to its
+ * own name as the sole live name — the original name == entity join.
+ */
+export type LiveNameMapping = Map<string, string[] | undefined>;
+
+/** Resolve the live entity/resource name(s) a component owns: its explicit mapping, or `[component]` when none is given. */
+export function resolveLiveNames(component: string, mapping?: LiveNameMapping): string[] {
+  const mapped = mapping?.get(component);
+  return mapped && mapped.length > 0 ? mapped : [component];
+}
+
+/**
+ * Merge live evidence for several entity/resource names owned by one
+ * component into a single verdict. `live` and `ownership` favor the
+ * most-actionable signal (present/owned) over "nothing here"; `action`
+ * favors `update` so that drift on *any* owned entity surfaces as drift for
+ * the component as a whole, matching `reconcileStatus`'s single check for
+ * `action === "update"`.
+ */
+function mergeEvidence(entries: LiveComponentEvidence[]): LiveComponentEvidence | undefined {
+  if (entries.length === 0) return undefined;
+  if (entries.length === 1) return entries[0];
+
+  const live = entries.some((e) => e.live);
+  const ownership = entries.some((e) => e.ownership === "owned")
+    ? "owned"
+    : entries.some((e) => e.ownership === "foreign")
+      ? "foreign"
+      : "unknown";
+  const action = entries.some((e) => e.action === "update")
+    ? "update"
+    : entries.find((e) => e.action !== undefined)?.action;
+
+  return { live, ownership, action };
+}
+
+/**
  * Build a `component -> live evidence` map from a `ChangeSet`. Components and
  * chant entities are different namespaces (a component's `name` need not
  * equal any single lexicon entity name), so callers that want live
- * reconciliation must supply the mapping themselves (typically: the
- * component's name *is* the entity/resource name for the pilot components,
- * see ../components/pilots) — this helper is the identity-keyed common case.
+ * reconciliation for a component whose live name(s) differ from its own name
+ * pass `nameMapping` (typically projected from `Component.liveNames`, see
+ * ../components/component.ts) — e.g. `new Map([["search-svc",
+ * ["search-service-v2"]]])`. Without a mapping (or for a component with no
+ * entry in it), the component's own name is used as its sole live name — the
+ * identity-keyed join that was this function's only behavior before #598,
+ * preserved here as the fallback so existing callers see no change.
  */
-export function liveEvidenceFromChangeSet(cs: ChangeSet): Map<string, LiveComponentEvidence> {
-  const evidence = new Map<string, LiveComponentEvidence>();
+export function liveEvidenceFromChangeSet(
+  cs: ChangeSet,
+  nameMapping?: LiveNameMapping,
+): Map<string, LiveComponentEvidence> {
+  const evidenceByName = new Map<string, LiveComponentEvidence>();
   for (const entry of cs.entries) {
-    evidence.set(entry.name, {
+    evidenceByName.set(entry.name, {
       live: entry.evidence.live,
       action: entry.action,
       ownership: entry.ownership,
     });
   }
-  return evidence;
+
+  if (!nameMapping) return evidenceByName;
+
+  // Re-key by component: for each component that has an explicit mapping,
+  // aggregate evidence across every live name it owns. Components with no
+  // mapping entry keep their identity-keyed evidence as-is (already present
+  // in evidenceByName under their own name).
+  const result = new Map<string, LiveComponentEvidence>(evidenceByName);
+  for (const [component, liveNames] of nameMapping) {
+    if (!liveNames || liveNames.length === 0) continue;
+    const merged = mergeEvidence(
+      liveNames
+        .map((n) => evidenceByName.get(n))
+        .filter((e): e is LiveComponentEvidence => e !== undefined),
+    );
+    if (merged) {
+      result.set(component, merged);
+    } else {
+      result.delete(component);
+    }
+  }
+  return result;
 }
 
 /**
