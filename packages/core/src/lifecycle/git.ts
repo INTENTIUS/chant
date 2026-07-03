@@ -17,8 +17,19 @@ const STATE_BRANCH = "chant/lifecycle";
  * observability") can reuse the identical git-plumbing path for a different
  * filename (`releases.jsonl`) under the same env directory, rather than a
  * parallel storage mechanism.
+ *
+ * Exported (not just used internally) so ./build-ledger-store.ts (#609) can
+ * reuse this exact plumbing for a top-level directory that isn't really an
+ * "environment" (`_builds`, keyed by manifest digest rather than env name) —
+ * a build archive is promoted by digest across environments, never owned by
+ * one, so it belongs in its own digest-keyed namespace on the same orphan
+ * branch rather than duplicated per env. The parameter is still named
+ * `environment` because it is literally the first path segment / root-tree
+ * entry name this function's tree-building logic groups by; callers outside
+ * this module that pass a non-env value (like `_builds`) are relying on that
+ * generic behavior, not on any env-specific semantics.
  */
-async function writeBlobToPath(
+export async function writeBlobToPath(
   environment: string,
   filename: string,
   content: string,
@@ -112,9 +123,11 @@ async function writeBlobToPath(
 /**
  * Read a blob from an arbitrary `<environment>/<filename>` path on the orphan
  * branch. Returns null when the path doesn't exist (missing branch, env, or
- * file). Sibling of `writeBlobToPath`.
+ * file). Sibling of `writeBlobToPath`. Exported for the same reason
+ * `writeBlobToPath` is — ./build-ledger-store.ts (#609) reads manifests back
+ * from the `_builds` namespace through this identical helper.
  */
-async function readBlobFromPath(
+export async function readBlobFromPath(
   environment: string,
   filename: string,
   opts?: { cwd?: string },
@@ -221,6 +234,26 @@ export async function listLedgerEnvironments(opts?: { cwd?: string }): Promise<s
     if (hasLedger) envs.push(name);
   }
   return envs.sort();
+}
+
+/**
+ * List every filename directly under `<dir>/` on the orphan branch (no
+ * recursion), or `[]` when the branch/directory doesn't exist yet. Generic
+ * sibling of `readEnvironmentSnapshots`'s inline file listing, factored out
+ * so ./build-ledger-store.ts (#609) can enumerate every persisted build
+ * manifest (`_builds/<digest>.json`) without duplicating this `git ls-tree
+ * --name-only` call.
+ */
+export async function listFilesInDir(dir: string, opts?: { cwd?: string }): Promise<string[]> {
+  const tip = await getStateBranchTip(opts?.cwd);
+  if (!tip) return [];
+  const rt = getRuntime();
+  const lsResult = await rt.spawn(
+    ["git", "ls-tree", "--name-only", `${STATE_BRANCH}:${dir}/`],
+    { cwd: opts?.cwd },
+  );
+  if (lsResult.exitCode !== 0) return [];
+  return lsResult.stdout.trim().split("\n").filter(Boolean);
 }
 
 /**

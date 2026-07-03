@@ -15,12 +15,17 @@ const listReleaseEnvironmentsMock = vi.fn();
 const loadChantConfigMock = vi.fn();
 const buildMock = vi.fn();
 const discoverComponentsMock = vi.fn();
+const findBuildManifestByArtifactDigestMock = vi.fn();
 
 vi.mock("../../lifecycle/git", () => ({
   getHeadCommit: (...args: unknown[]) => getHeadCommitMock(...args),
   fetchLifecycle: (...args: unknown[]) => fetchLifecycleMock(...args),
   pushLifecycle: (...args: unknown[]) => pushLifecycleMock(...args),
   StaleLifecycleBranchError: class StaleLifecycleBranchError extends Error {},
+}));
+
+vi.mock("../../lifecycle/build-ledger-store", () => ({
+  findBuildManifestByArtifactDigest: (...args: unknown[]) => findBuildManifestByArtifactDigestMock(...args),
 }));
 
 vi.mock("../../lifecycle/release-ledger", async () => {
@@ -104,6 +109,7 @@ describe("components handlers", () => {
     loadChantConfigMock.mockReset().mockResolvedValue({ config: {} });
     buildMock.mockReset().mockResolvedValue(makeBuildResult({}));
     discoverComponentsMock.mockReset().mockResolvedValue({ components: new Map(), sourceFiles: [], errors: [] });
+    findBuildManifestByArtifactDigestMock.mockReset().mockResolvedValue(undefined);
 
     delete process.env.GITHUB_RUN_ID;
     delete process.env.CI_PIPELINE_ID;
@@ -385,11 +391,14 @@ describe("components handlers", () => {
     });
 
     // #614: the JSON contract gains `build.reproducibility` and
-    // `componentBom`. Full manifest wiring into this CLI path is #609's
-    // on-disk persistence (not yet implemented), so both fields are `null`
-    // today — this test locks in that the fields exist in the stable JSON
+    // `componentBom`. #609 wires a real persisted-manifest lookup
+    // (findBuildManifestByArtifactDigest) in front of these fields — when no
+    // manifest was ever persisted for the recorded digest (the default mock
+    // behavior here, and the honest state for a digest that predates #609 or
+    // was recorded via `chant components release` alone), both fields stay
+    // `null` — this test locks in that they still exist in the stable JSON
     // shape (never omitted) rather than the CLI silently dropping them.
-    test("JSON rows always include build.reproducibility and componentBom keys, null absent manifest data (#614, pending #609 persistence)", async () => {
+    test("JSON rows always include build.reproducibility and componentBom keys, null absent a persisted manifest", async () => {
       readReleaseLedgerMock.mockResolvedValue({
         records: [{
           version: 1,
@@ -414,6 +423,65 @@ describe("components handlers", () => {
       const rows = JSON.parse(stdoutBuf.join(""));
       expect(rows[0].build).toBeNull();
       expect(rows[0]).toHaveProperty("componentBom", null);
+      expect(findBuildManifestByArtifactDigestMock).toHaveBeenCalledWith("sha256:abc");
+    });
+
+    // #609 end-to-end: when a manifest *was* persisted for the recorded
+    // digest, `build`/`componentBom` resolve to real data derived from it via
+    // `buildLedgerEntries`/`componentBomSummary` — the same derivation
+    // build-ledger.test.ts exercises directly, now reached through the CLI.
+    test("JSON rows resolve build.reproducibility and componentBom from a persisted manifest (#609)", async () => {
+      readReleaseLedgerMock.mockResolvedValue({
+        records: [{
+          version: 1,
+          component: "svc",
+          env: "prod",
+          digest: "sha256:image1",
+          gitSha: "sha1",
+          runId: "run-1",
+          timestamp: "2026-01-01T00:00:00.000Z",
+          actor: "alice",
+        }],
+        malformed: 0,
+      });
+
+      findBuildManifestByArtifactDigestMock.mockImplementation(async (digest: string) => {
+        if (digest !== "sha256:image1") return undefined;
+        return {
+          version: 1,
+          component: "svc",
+          createdAt: "2026-01-01T00:00:00.000Z",
+          manifestDigest: "sha256:manifestxyz",
+          contents: [
+            { kind: "image", path: "image.tar", digest: "sha256:image1", mediaType: "application/vnd.oci.image.layout.v1.tar", reproducibility: { basis: "best-effort" } },
+            {
+              kind: "sbom", path: "image.tar.sbom.json", digest: "sha256:sbomdoc",
+              mediaType: "application/spdx+json", subjectDigest: "sha256:image1",
+              bomKind: "software", packageCount: 7, generator: "syft",
+            },
+          ],
+        };
+      });
+
+      const ctx = {
+        args: makeArgs({ extraPositional: "prod", json: true }),
+        plugins: [],
+        serializers: [],
+      };
+      const exit = await runComponentsStatus(ctx);
+      expect(exit).toBe(0);
+      const rows = JSON.parse(stdoutBuf.join(""));
+
+      expect(rows[0].build).toMatchObject({
+        manifestDigest: "sha256:manifestxyz",
+        sbom: { mediaType: "application/spdx+json", packageCount: 7, generator: "syft", source: "archive" },
+        reproducibility: { basis: "best-effort" },
+      });
+      expect(rows[0].componentBom).toMatchObject({
+        totalPackageCount: 7,
+        isAssembly: false,
+        leaves: [{ path: "image.tar.sbom.json", bomKind: "software", subjectDigest: "sha256:image1", packageCount: 7, generator: "syft" }],
+      });
     });
 
     test("reports malformed ledger lines as a warning without failing", async () => {

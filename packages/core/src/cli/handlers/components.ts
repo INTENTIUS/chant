@@ -12,6 +12,19 @@
  *    ledger against live evidence (`lifecycle diff --live` + ownership,
  *    reused via `buildChangeSet`) by digest, and reports what's built vs
  *    what's deployed where, flagging unrecorded deploys and drift.
+ *
+ * `componentBom`/`build.reproducibility` (#614) resolve to real data as of
+ * #609: for every recorded digest in an environment's ledger, this handler
+ * looks up the persisted `BuildArchiveManifest` that produced it
+ * (`findBuildManifestByArtifactDigest`, ../../lifecycle/build-ledger-
+ * store.ts) and derives `buildsByDigest`/`componentBomByDigest` from it via
+ * `buildLedgerEntries`/`componentBomSummary` — the same derivation
+ * `build-ledger.test.ts` already exercises directly, now fed by a real
+ * manifest instead of a hand-built one. A digest with no persisted manifest
+ * (predates #609, or was recorded via `chant components release` alone with
+ * no corresponding build) simply has no entry in either map, so `build`/
+ * `componentBom` fall back to `null` exactly as before — no regression for
+ * ledgers with no persisted manifests at all.
  */
 import { resolve } from "node:path";
 import { getHeadCommit, fetchLifecycle, pushLifecycle, StaleLifecycleBranchError } from "../../lifecycle/git";
@@ -23,6 +36,9 @@ import {
 } from "../../lifecycle/release-ledger";
 import { reconcileStatus, liveEvidenceFromChangeSet, compareAcrossEnvironments } from "../../lifecycle/status";
 import { buildChangeSet } from "../../lifecycle/change-set";
+import { buildLedgerEntries, componentBomSummary, type BuildLedgerEntry } from "../../lifecycle/build-ledger";
+import { findBuildManifestByArtifactDigest } from "../../lifecycle/build-ledger-store";
+import type { ComponentBomSummary } from "../../lifecycle/build-ledger";
 import { loadChantConfig } from "../../config";
 import { build } from "../../build";
 import { discoverComponents } from "../../components/discover";
@@ -141,9 +157,11 @@ interface StatusJsonRow {
   } | null;
   /**
    * Component-level BOM aggregation summary (#614), when the recorded
-   * digest's build archive manifest is available. `null` when unavailable
-   * (no archive manifest for this digest — the wiring that supplies one is
-   * #609's on-disk persistence, not yet in this code path) or when the
+   * digest's build archive manifest is available — resolved from the
+   * persisted manifest store (#609, ../../lifecycle/build-ledger-store.ts)
+   * by digest. `null` when unavailable (no manifest was ever persisted for
+   * this digest — it predates #609, or was recorded via `chant components
+   * release` alone with no corresponding `chant build`/`run`) or when the
    * manifest carries no BOM at all.
    */
   componentBom: {
@@ -245,9 +263,28 @@ export async function runComponentsStatus(ctx: CommandContext): Promise<number> 
       liveEvidence = liveEvidenceFromChangeSet(merged, liveNameMapping);
     }
 
+    // #609: resolve the persisted build manifest behind each recorded digest
+    // (if any) so `build`/`componentBom` are real queries, not always null.
+    const buildsByDigest = new Map<string, BuildLedgerEntry>();
+    const componentBomByDigest = new Map<string, ComponentBomSummary>();
+    const recordedDigests = new Set(ledger.records.map((r) => r.digest));
+    for (const digest of recordedDigests) {
+      const manifest = await findBuildManifestByArtifactDigest(digest);
+      if (!manifest) continue;
+
+      const bom = componentBomSummary(manifest);
+      if (bom) componentBomByDigest.set(digest, bom);
+
+      const ledgerEntries = await buildLedgerEntries(manifest);
+      const entry = ledgerEntries.find((e) => e.digest === digest);
+      if (entry) buildsByDigest.set(digest, entry);
+    }
+
     const rows = reconcileStatus(environment, ledger.records, {
       liveEvidence,
       allComponents,
+      buildsByDigest,
+      componentBomByDigest,
     });
 
     for (const row of rows) {
