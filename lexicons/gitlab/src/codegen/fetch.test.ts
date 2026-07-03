@@ -21,7 +21,7 @@ describe("fetch", () => {
     expect(cachePath).toContain("gitlab-ci-schema.json");
   });
 
-  test.skip("integration: fetchCISchema returns Buffer (requires network)", async () => {
+  test("fetchCISchema reads the vendored schema offline (no network)", async () => {
     const data = await fetchCISchema();
     expect(data).toBeInstanceOf(Buffer);
     const parsed = JSON.parse(data.toString("utf-8"));
