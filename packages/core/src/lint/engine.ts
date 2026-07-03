@@ -15,7 +15,7 @@ export interface LintRunResult {
 /**
  * Represents a disable directive found in source code comments
  */
-interface DisableDirective {
+export interface DisableDirective {
   /** Line number where the directive appears (1-based) */
   line: number;
   /** Type of directive */
@@ -90,7 +90,16 @@ function parseDirectiveText(afterDirective: string | undefined): {
   };
 }
 
-function parseDisableComments(content: string): DisableDirective[] {
+/**
+ * Parse `chant-disable`/`chant-disable-line`/`chant-disable-next-line`
+ * comments out of raw file content. Exported (in addition to being used
+ * internally by `runLint`) so other diagnostic sources that are not plain
+ * per-file AST `LintRule`s — e.g. ../lint/rules/comp's component composition
+ * checks, which produce whole-component diagnostics rather than
+ * exact-line ones — can still honor at least the file-level directive form
+ * without duplicating this parsing.
+ */
+export function parseDisableComments(content: string): DisableDirective[] {
   const directives: DisableDirective[] = [];
   const lines = content.split("\n");
 

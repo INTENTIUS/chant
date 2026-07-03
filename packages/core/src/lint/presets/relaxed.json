@@ -14,6 +14,13 @@
     "COR012": "off",
     "COR013": "off",
     "COR014": "off",
-    "COR015": "off"
+    "COR015": "off",
+    "COMP001": "warning",
+    "COMP002": "warning",
+    "COMP003": "off",
+    "COMP004": "warning",
+    "COMP005": "off",
+    "COMP006": "off",
+    "COMP007": "off"
   }
 }
