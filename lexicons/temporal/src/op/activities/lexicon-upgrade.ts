@@ -133,8 +133,13 @@ export type BumpPackageVersionFn = (packageJsonPath: string, newVersion: string)
 /**
  * Compute a bumped semver string from a current version and a semver label.
  *
- * "minor"    → increment the minor segment, reset patch to 0.
- * "breaking" → increment the major segment, reset minor and patch to 0.
+ * The mapping is 0.x-aware, because promoting to 1.0.0 should signal the
+ * lexicon's own API stability, not track an upstream spec's breaking change:
+ *
+ * - Pre-1.0 (major === 0): "breaking" bumps the minor (0.13.1 → 0.14.0),
+ *   "minor" (additive) bumps the patch (0.13.1 → 0.13.2). Never auto-1.0.0.
+ * - >= 1.0.0: "minor" bumps the minor (1.2.3 → 1.3.0), "breaking" bumps the
+ *   major (1.2.3 → 2.0.0).
  *
  * Handles the common "MAJOR.MINOR.PATCH" form. Returns null when the
  * current version string cannot be parsed as M.m.p.
@@ -145,7 +150,14 @@ export function computeBumpedVersion(
 ): string | null {
   const parts = current.replace(/^v/, "").split(".").map(Number);
   if (parts.length < 3 || parts.some((n) => Number.isNaN(n) || n < 0)) return null;
-  const [major, minor] = parts as [number, number, number];
+  const [major, minor, patch] = parts as [number, number, number];
+  // Pre-1.0: keep the package in 0.x — breaking → minor, additive → patch.
+  if (major === 0) {
+    if (label === "minor") return `0.${minor}.${patch + 1}`;
+    if (label === "breaking") return `0.${minor + 1}.0`;
+    return null;
+  }
+  // >= 1.0.0: additive → minor, breaking → major.
   if (label === "minor") return `${major}.${minor + 1}.0`;
   if (label === "breaking") return `${major + 1}.0.0`;
   return null;
