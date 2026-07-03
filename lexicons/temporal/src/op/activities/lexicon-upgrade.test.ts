@@ -91,6 +91,31 @@ describe("buildUpgradeSummary", () => {
     expect(s).toContain("Validation failures");
     expect(s).toContain("tsc exploded");
   });
+
+  test("reports examples lint clean when no example failures (#604)", () => {
+    const s = buildUpgradeSummary({
+      lexicon: "aws",
+      deltaText: "Added: AWS::S3::Bucket",
+      semverLabel: "minor",
+      validationOk: true,
+      failures: [],
+    });
+    expect(s).toContain("**Examples:** lint clean");
+  });
+
+  test("flags failing examples when a lint/examples step fails (#604)", () => {
+    const s = buildUpgradeSummary({
+      lexicon: "k8s",
+      deltaText: "",
+      semverLabel: "breaking",
+      validationOk: false,
+      failures: [{ step: "lint", output: "example web.ts: cannot find name 'Hub'" }],
+    });
+    expect(s).toContain("**Examples:** ⚠️");
+    expect(s).toContain("check(s) failing");
+    // The example failure detail is still rendered in the failures block.
+    expect(s).toContain("cannot find name 'Hub'");
+  });
 });
 
 // ── Mock builders ─────────────────────────────────────────────────────
