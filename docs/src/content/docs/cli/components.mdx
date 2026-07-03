@@ -1,0 +1,100 @@
+---
+title: "chant components"
+description: Record immutable deploy events and reconcile the release ledger against live truth — the build & deploy observability commands
+---
+
+## Synopsis
+
+```
+chant components release <env> --component <name> --digest <sha256:...>
+                                [--git-sha <sha>] [--run-id <id>] [--actor <name>] [--json]
+chant components status [env] [--live] [--json] [--compare-to <env>]
+```
+
+## Description
+
+`chant components` holds the release ledger and status surface for [component](/chant/components/component-contract/) deploys: the recorded half of build & deploy observability. See [Observability](/chant/components/observability/) for the conceptual model. The release ledger lives on the same `chant/lifecycle` orphan branch [`chant lifecycle`](/chant/cli/lifecycle/) snapshots already use, at `<env>/releases.jsonl` — one immutable JSON line per recorded deploy.
+
+## Subcommands
+
+### `components release <env>`
+
+Append one immutable release record: `(component, env, artifact digest, git sha, run id, timestamp, actor)`.
+
+```bash
+chant components release prod \
+  --component search-service \
+  --digest sha256:9fae3d7c... \
+  --git-sha "$(git rev-parse HEAD)" \
+  --run-id "$GITHUB_RUN_ID" \
+  --actor "$GITHUB_ACTOR"
+```
+
+| Flag | Meaning |
+|---|---|
+| `--component <name>` | Required. The component this deploy released. |
+| `--digest <sha256:...>` | Required. The promoted artifact's content digest — the join key with the build archive/ledger. |
+| `--git-sha <sha>` | Git commit the deploy was built from. Defaults to the current `HEAD`. |
+| `--run-id <id>` | Orchestrator/CI run identifier. Defaults to `$GITHUB_RUN_ID` or `$CI_PIPELINE_ID`, else a locally generated id. |
+| `--actor <name>` | Who/what triggered the deploy. Defaults to `$GITHUB_ACTOR`, `$GITLAB_USER_LOGIN`, or `$USER` — but must resolve to something; an unattributed record fails rather than falls back to a placeholder. |
+| `--json` | Print the recorded record as JSON instead of a human summary. |
+
+The timestamp is always a real `new Date()` taken by the CLI at record time — never threaded in from elsewhere, and never re-derived later. A record is never edited or replaced: recording again appends a new line.
+
+Pushes to the remote afterward using the same `--force-with-lease` protocol snapshots use; a concurrent write from another operator is rejected with a recovery hint rather than silently overwritten.
+
+### `components status [env]`
+
+Reconcile the release ledger against live truth (when `--live` is passed) or report the ledger alone.
+
+```bash
+chant components status prod                       # ledger only — no live query
+chant components status prod --live                 # reconcile against live + ownership
+chant components status prod --live --json           # stable JSON contract
+chant components status prod --compare-to staging    # cross-env digest comparison
+chant components status                              # every environment with release records
+```
+
+Without `--live`, every recorded component reports `unknown` reconciliation — the ledger alone can't confirm live state. With `--live`, `chant components status` reuses the same ownership-aware classification [`lifecycle plan`](/chant/cli/lifecycle/) already computes (`buildChangeSet`) to produce one of:
+
+| Reconciliation | Meaning |
+|---|---|
+| `reconciled` | Recorded, and live evidence confirms the component is present and chant-owned. |
+| `unrecorded` | Live and owned, but no release record exists — deployed outside the recorded path. |
+| `stale` | Recorded, but nothing observed live now. |
+| `drifted` | Recorded, but live configuration has drifted since (mirrors `lifecycle plan`'s `update`). |
+| `unknown` | No live evidence requested. |
+
+`--compare-to <env>` answers "which build is in `<env>`, and is it the one tested in `<compare-to>`" as a single query, per component:
+
+```bash
+chant components status prod --compare-to staging --json
+```
+
+```json
+{
+  "rows": [ /* ... */ ],
+  "comparisons": [
+    { "component": "search-service", "envA": "prod", "envB": "staging", "digestA": "sha256:9fae3d...", "digestB": "sha256:9fae3d...", "same": true }
+  ]
+}
+```
+
+| Flag | Meaning |
+|---|---|
+| `--live` | Query lexicon plugins' `describeResources()` now and reconcile against ownership + drift, instead of reporting the ledger alone. |
+| `--json` | Emit a stable array of rows (or `{ rows, comparisons }` with `--compare-to`). |
+| `--compare-to <env>` | Cross-check the requested env's recorded digest against another environment's, per component. |
+
+## Exit Codes
+
+| Code | Meaning |
+|------|---------|
+| 0 | Success |
+| 1 | Error (missing required flags, unresolvable actor, concurrent ledger write) |
+
+## See Also
+
+- [Observability](/chant/components/observability/) — the release ledger, build-ledger referrer discovery, and the reconciliation model this command implements.
+- [`chant lifecycle`](/chant/cli/lifecycle/) — snapshots, `diff --live`, and `plan`, whose ownership/drift classification `components status --live` reuses.
+- [Build Archive](/chant/components/build-archive/) — the content-addressed manifest and digest identity the release ledger joins against.

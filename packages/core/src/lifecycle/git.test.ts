@@ -11,6 +11,9 @@ import {
   getHeadCommit,
   pushLifecycle,
   StaleLifecycleBranchError,
+  appendReleaseRecordLine,
+  readReleaseLedgerLines,
+  listLedgerEnvironments,
 } from "./git";
 
 function git(args: string[], cwd: string): { stdout: string; exitCode: number } {
@@ -187,5 +190,66 @@ describe("lifecycle/git", () => {
     expect(err.name).toBe("StaleLifecycleBranchError");
     expect(err.expected).toBeNull();
     expect(err.message).toContain("moved");
+  });
+
+  // ── Release ledger plumbing (#568) ──────────────────────────────────────
+
+  describe("release ledger plumbing", () => {
+    test("appendReleaseRecordLine creates the orphan branch and is readable via readReleaseLedgerLines", async () => {
+      await withTestDir(async (dir) => {
+        await initRepo(dir);
+        const sha = await appendReleaseRecordLine("prod", '{"v":1}', { cwd: dir });
+        expect(sha).toMatch(/^[0-9a-f]{40}$/);
+        const lines = await readReleaseLedgerLines("prod", { cwd: dir });
+        expect(lines).toEqual(['{"v":1}']);
+      });
+    });
+
+    test("readReleaseLedgerLines returns [] for an environment with no ledger", async () => {
+      await withTestDir(async (dir) => {
+        await initRepo(dir);
+        expect(await readReleaseLedgerLines("prod", { cwd: dir })).toEqual([]);
+      });
+    });
+
+    test("appendReleaseRecordLine appends rather than overwrites", async () => {
+      await withTestDir(async (dir) => {
+        await initRepo(dir);
+        await appendReleaseRecordLine("prod", '{"v":1}', { cwd: dir });
+        await appendReleaseRecordLine("prod", '{"v":2}', { cwd: dir });
+        await appendReleaseRecordLine("prod", '{"v":3}', { cwd: dir });
+        expect(await readReleaseLedgerLines("prod", { cwd: dir })).toEqual(['{"v":1}', '{"v":2}', '{"v":3}']);
+      });
+    });
+
+    test("release ledger and snapshot files coexist under the same env directory", async () => {
+      await withTestDir(async (dir) => {
+        await initRepo(dir);
+        await writeSnapshot("prod", "aws", JSON.stringify({ a: 1 }), { cwd: dir });
+        await appendReleaseRecordLine("prod", '{"v":1}', { cwd: dir });
+        // Both must survive — the release ledger uses a different filename
+        // ("releases.jsonl") than any lexicon snapshot ("<lexicon>.json").
+        expect(await readSnapshot("prod", "aws", { cwd: dir })).toBeTruthy();
+        expect(await readReleaseLedgerLines("prod", { cwd: dir })).toEqual(['{"v":1}']);
+      });
+    });
+
+    test("listLedgerEnvironments finds every env with a release ledger, ignoring envs that only have snapshots", async () => {
+      await withTestDir(async (dir) => {
+        await initRepo(dir);
+        await writeSnapshot("dev", "aws", JSON.stringify({ a: 1 }), { cwd: dir }); // snapshot only, no ledger
+        await appendReleaseRecordLine("staging", '{"v":1}', { cwd: dir });
+        await appendReleaseRecordLine("prod", '{"v":1}', { cwd: dir });
+
+        expect(await listLedgerEnvironments({ cwd: dir })).toEqual(["prod", "staging"]);
+      });
+    });
+
+    test("listLedgerEnvironments returns [] when the orphan branch doesn't exist yet", async () => {
+      await withTestDir(async (dir) => {
+        await initRepo(dir);
+        expect(await listLedgerEnvironments({ cwd: dir })).toEqual([]);
+      });
+    });
   });
 });

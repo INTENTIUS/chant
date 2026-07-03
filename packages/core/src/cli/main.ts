@@ -16,6 +16,7 @@ import { runList, runDescribe, runImport, runAudit, runUpdate, runDoctor } from 
 import { runVendor } from "./handlers/vendor";
 import { runMigrate } from "./handlers/migrate";
 import { runLifecycleSnapshot, runLifecycleShow, runLifecycleDiff, runLifecyclePlan, runLifecycleAffected, runLifecycleLog, runLifecycleUnknown } from "./handlers/lifecycle";
+import { runComponentsStatus, runComponentsReleaseRecord, runComponentsUnknown } from "./handlers/components";
 import { runGraph } from "./handlers/graph";
 import { runOp, runOpList, runOpStatus, runOpSignal, runOpCancel, runOpLog } from "./handlers/run";
 
@@ -163,6 +164,18 @@ export function parseArgs(args: string[]): ParsedArgs {
       result.pinnedDigest = args[++i];
     } else if (arg === "--check") {
       result.check = true;
+    } else if (arg === "--component") {
+      result.component = args[++i];
+    } else if (arg === "--digest") {
+      result.digest = args[++i];
+    } else if (arg === "--git-sha") {
+      result.gitSha = args[++i];
+    } else if (arg === "--run-id") {
+      result.runId = args[++i];
+    } else if (arg === "--actor") {
+      result.actor = args[++i];
+    } else if (arg === "--compare-to") {
+      result.compareTo = args[++i];
     } else if (!arg.startsWith("-")) {
       if (!result.command) {
         result.command = arg;
@@ -239,6 +252,16 @@ Lifecycle (alias: lc):
   lifecycle affected        Stacks a change affects (--base <ref> [--include-dependents])
                             --json: emit the ChangeSet as JSON
   lifecycle log [env]       History of lifecycle snapshots
+
+Component release ledger + status:
+  components status [env]  What's built vs what's deployed where, joined by
+                            digest (--live: reconcile against live+ownership;
+                            --json: stable machine-readable contract;
+                            --compare-to <env>: cross-check the same
+                            component's recorded digest against another env)
+  components release <env> Append one immutable release record
+                            (--component <name> --digest <sha256:...>
+                             [--git-sha <sha>] [--run-id <id>] [--actor <name>])
 
 Lexicon development:
   dev generate          Generate lexicon artifacts (+ validate + coverage)
@@ -392,6 +415,10 @@ const registry: CommandDef[] = [
   { name: "lifecycle affected", requiresPlugins: true, handler: runLifecycleAffected },
   { name: "lifecycle log", handler: runLifecycleLog },
 
+  // Component release ledger + status surface (#568, epic #551)
+  { name: "components status", requiresPlugins: true, handler: runComponentsStatus },
+  { name: "components release", handler: runComponentsReleaseRecord },
+
   // Serve subcommands
   { name: "serve lsp", requiresPlugins: true, handler: runServeLsp },
   { name: "serve mcp", requiresPlugins: true, handler: runServeMcp },
@@ -400,6 +427,7 @@ const registry: CommandDef[] = [
   { name: "lifecycle", handler: runLifecycleUnknown },
   { name: "dev", handler: runDevUnknown },
   { name: "serve", handler: runServeUnknown },
+  { name: "components", handler: runComponentsUnknown },
 ];
 
 /**
@@ -459,9 +487,13 @@ async function main(): Promise<void> {
   // made entirely of components has no reason to declare a chant lexicon
   // plugin at all. Load plugins best-effort here instead of exiting, so
   // generate mode works whether or not `chant.config.ts` names a lexicon.
+  // `components status` (#568) is the same shape: a components-only project
+  // may have no lexicon plugin, and `--live` reconciliation is opt-in, so
+  // missing plugins there is "no live evidence" (a warning), not a hard exit.
   const isGenerateComponents = match.def.name === "build" && args.components && !!args.generate;
+  const isComponentsStatus = match.def.name === "components status";
   const plugins = match.def.requiresPlugins
-    ? isGenerateComponents
+    ? isGenerateComponents || isComponentsStatus
       ? await loadPlugins(await resolveProjectLexicons(resolve(projectPath)).catch(() => [])).catch(() => [])
       : await loadPluginsOrExit(projectPath)
     : [];

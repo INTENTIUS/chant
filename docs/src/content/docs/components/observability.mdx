@@ -1,0 +1,126 @@
+---
+title: Observability
+description: The release ledger, the build ledger's referrer discovery, and chant components status — reconciling what's built and what's deployed against live truth, joined by digest.
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+Two different questions, two different ledgers, joined by one key. Conflating them is where teams lose the thread.
+
+- **What's been built** — the build ledger. Identity is content-addressed: a `sha256:` digest, never a moving tag.
+- **What's been deployed** — the release ledger plus live truth. Two sub-questions: what we *recorded* deploying, and what's *actually running*.
+
+chant already had the live-truth half — [ownership markers](/chant/configuration/config-file/#ownership) and [`lifecycle diff --live`](/chant/cli/lifecycle/) compare declared vs. live, and snapshots on the `chant/lifecycle` branch give a forensic timeline. What was missing was the recorded half. This page covers the three pieces that fill it in: the release ledger, build-ledger referrer discovery, and the `chant components status` surface that joins them.
+
+## The release ledger
+
+Each deploy appends one immutable record to the `chant/lifecycle` orphan branch — the same branch [snapshots](/chant/cli/lifecycle/) already live on, at `<env>/releases.jsonl`:
+
+```
+component, env, artifact digest, git sha, run id, timestamp, actor
+```
+
+```bash
+chant components release prod \
+  --component search-service \
+  --digest sha256:9fae3d... \
+  --git-sha "$(git rev-parse HEAD)" \
+  --run-id "$GITHUB_RUN_ID" \
+  --actor "$GITHUB_ACTOR"
+```
+
+`--git-sha` defaults to the current `HEAD`, and `--run-id`/`--actor` fall back to common CI environment variables (`GITHUB_RUN_ID`/`CI_PIPELINE_ID`, `GITHUB_ACTOR`/`GITLAB_USER_LOGIN`/`USER`) — but `--actor` has no silent placeholder fallback; an unattributed release record defeats the point of a ledger, so the command fails rather than guess.
+
+<Aside type="caution" title="Append-only, never rewritten">
+A release record is never edited or replaced in place. Recording a new deploy appends a new line; it never rewrites a previous one. This is what makes "which build was in staging last Tuesday" answerable months later, even after staging has moved on through a dozen newer digests — the same reason the timestamp is always a real `new Date()` taken at record time by the CLI, never threaded in from elsewhere.
+</Aside>
+
+The binding key is the **digest** — the same identity [`publish-image`/`load-image-on-host`](/chant/components/build-archive/) promote by. Because publish never rebuilds, that identity threads build → dev → staging → prod unchanged, so comparing environments is a digest comparison, never a guess through CI logs.
+
+## Build ledger: referrer discovery
+
+The [build archive manifest](/chant/components/build-archive/) is already content-addressed and already enumerates a build's contents. What this adds is discovery of an image digest's **referrers** — the SBOM, SLSA provenance, and signature attached to the same digest by tooling like `oras discover <digest>` / `cosign tree`.
+
+This is surface-and-consume only. Generating SBOM/provenance/signatures is out of scope here — that belongs with the build archive's signing follow-up. The lookup is injectable (`ReferrerLookup`), defaulting to a no-op so a build-ledger query never requires network/registry access unless a real implementation is wired in:
+
+```ts
+import { buildLedgerEntries, type ReferrerLookup } from "@intentius/chant/lifecycle";
+
+const orasLookup: ReferrerLookup = {
+  async discover(digest) {
+    // shell out to `oras discover` / a registry referrers API, return Referrer[]
+  },
+};
+
+const entries = await buildLedgerEntries(manifest, orasLookup);
+// entries[i].referrers: [{ kind: "sbom" | "provenance" | "signature", digest, mediaType, location? }]
+```
+
+## Reconciling with live
+
+`chant components status` doesn't recompute drift logic — it reuses the same ownership-aware classification [`lifecycle plan`](/chant/cli/lifecycle/) already trusts (`buildChangeSet`), then joins it against the release ledger by component name and digest. Four outcomes:
+
+| Reconciliation | Meaning |
+|---|---|
+| **reconciled** | A release record exists and live evidence confirms the component is present and chant-owned. |
+| **unrecorded** | Something is live and owned, but no release record references it — a deploy that happened outside the recorded path. |
+| **stale** | A release record exists, but nothing live corresponds to it anymore. |
+| **drifted** | A release record exists, but the live configuration has drifted since (the same `update` verdict `lifecycle plan` would give). |
+| **unknown** | No live evidence was requested (`--live` omitted) — the ledger alone doesn't confirm reconciliation either way. |
+
+## `chant components status`
+
+```bash
+chant components status prod                          # ledger only
+chant components status prod --live                    # reconcile against live + ownership
+chant components status prod --live --json              # stable machine-readable contract
+chant components status prod --compare-to staging       # single-query cross-env digest check
+chant components status                                 # every environment with release records
+```
+
+`--json` is a stable array of rows (or, with `--compare-to`, `{ rows, comparisons }`):
+
+```json
+[
+  {
+    "component": "search-service",
+    "env": "prod",
+    "recorded": {
+      "digest": "sha256:9fae3d...",
+      "gitSha": "a1b2c3d",
+      "runId": "4821",
+      "timestamp": "2026-07-02T18:04:11.000Z",
+      "actor": "octocat"
+    },
+    "build": { "manifestDigest": "sha256:...", "referrers": ["sbom", "provenance"] },
+    "reconciliation": "reconciled",
+    "detail": "recorded 2026-07-02T18:04:11.000Z (digest sha256:9fae3d...), live and consistent"
+  }
+]
+```
+
+"Which build is in prod, and is it the one tested in staging" is exactly `--compare-to`:
+
+```bash
+chant components status prod --compare-to staging --json
+```
+
+```json
+{
+  "comparisons": [
+    { "component": "search-service", "envA": "prod", "envB": "staging", "digestA": "sha256:9fae3d...", "digestB": "sha256:9fae3d...", "same": true }
+  ]
+}
+```
+
+Both "what's built" and "what's deployed where" resolve to one query each, joined by digest — the property the release ledger exists to protect.
+
+<Aside type="note" title="Component names vs. lexicon entity names">
+Live reconciliation joins on the component's own `name`. Where a pilot component's name matches the underlying lexicon entity/resource name one-for-one, `--live` resolves cleanly. A project where those names diverge should keep that mapping stable — `chant components status` does not invent a second identity system on top of the component contract.
+</Aside>
+
+## Read next
+
+- [Build Archive](/chant/components/build-archive/) — the manifest and digest identity this ledger joins against.
+- [`chant lifecycle`](/chant/cli/lifecycle/) — snapshots, `diff --live`, and `plan`, which the status surface reuses rather than reimplements.
+- [Orchestration](/chant/components/orchestration/) — where a `Verify` phase or CI job calls `chant components release` after a deploy completes.

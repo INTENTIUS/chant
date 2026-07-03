@@ -9,14 +9,20 @@ import { getRuntime } from "../runtime-adapter";
 const STATE_BRANCH = "chant/lifecycle";
 
 /**
- * Write a state snapshot JSON to the orphan branch.
+ * Write a blob to an arbitrary `<environment>/<filename>` path on the orphan
+ * branch, preserving every other env/file entry already on the branch.
  *
- * Pipeline: hash-object → mktree → commit-tree → update-ref
+ * Pipeline: hash-object → mktree → commit-tree → update-ref. Factored out of
+ * `writeSnapshot` so the release ledger (#568, epic #551 "Build & deploy
+ * observability") can reuse the identical git-plumbing path for a different
+ * filename (`releases.jsonl`) under the same env directory, rather than a
+ * parallel storage mechanism.
  */
-export async function writeSnapshot(
+async function writeBlobToPath(
   environment: string,
-  lexicon: string,
-  json: string,
+  filename: string,
+  content: string,
+  commitMessage: string,
   opts?: { cwd?: string },
 ): Promise<string> {
   const rt = getRuntime();
@@ -25,7 +31,7 @@ export async function writeSnapshot(
   // 1. Write blob — hash-object reads from stdin, but spawn() doesn't expose
   // a stdin handle, so we run via a shell pipeline (`echo … | git hash-object`).
   const blobResult = await rt.spawn(
-    ["sh", "-c", `echo '${json.replace(/'/g, "'\\''")}' | git hash-object -w --stdin`],
+    ["sh", "-c", `echo '${content.replace(/'/g, "'\\''")}' | git hash-object -w --stdin`],
     { cwd },
   );
   if (blobResult.exitCode !== 0) {
@@ -33,13 +39,12 @@ export async function writeSnapshot(
   }
   const blobSha = blobResult.stdout.trim();
 
-  // 2. Read existing tree (if branch exists) to preserve other env/lexicon entries
+  // 2. Read existing tree (if branch exists) to preserve other env/file entries
   const existingTree = await readTree(cwd);
 
   // 3. Build new tree entries
-  const path = `${environment}/${lexicon}.json`;
+  const path = `${environment}/${filename}`;
   const entries = mergeTreeEntry(existingTree, path, blobSha);
-  const treeInput = entries.map((e) => `${e.mode} ${e.type} ${e.sha}\t${e.name}`).join("\n");
 
   // mktree needs a nested tree structure. Build env subtree first, then root tree.
   // Build env subtree
@@ -84,7 +89,7 @@ export async function writeSnapshot(
   const parentRef = await getStateBranchTip(cwd);
   const parentArgs = parentRef ? ["-p", parentRef] : [];
   const commitResult = await rt.spawn(
-    ["git", "commit-tree", ...parentArgs, "-m", "State snapshot", rootTreeSha],
+    ["git", "commit-tree", ...parentArgs, "-m", commitMessage, rootTreeSha],
     { cwd },
   );
   if (commitResult.exitCode !== 0) {
@@ -105,6 +110,39 @@ export async function writeSnapshot(
 }
 
 /**
+ * Read a blob from an arbitrary `<environment>/<filename>` path on the orphan
+ * branch. Returns null when the path doesn't exist (missing branch, env, or
+ * file). Sibling of `writeBlobToPath`.
+ */
+async function readBlobFromPath(
+  environment: string,
+  filename: string,
+  opts?: { cwd?: string },
+): Promise<string | null> {
+  const rt = getRuntime();
+  const result = await rt.spawn(
+    ["git", "show", `${STATE_BRANCH}:${environment}/${filename}`],
+    { cwd: opts?.cwd },
+  );
+  if (result.exitCode !== 0) return null;
+  return result.stdout;
+}
+
+/**
+ * Write a state snapshot JSON to the orphan branch.
+ *
+ * Pipeline: hash-object → mktree → commit-tree → update-ref
+ */
+export async function writeSnapshot(
+  environment: string,
+  lexicon: string,
+  json: string,
+  opts?: { cwd?: string },
+): Promise<string> {
+  return writeBlobToPath(environment, `${lexicon}.json`, json, "State snapshot", opts);
+}
+
+/**
  * Read a snapshot from the orphan branch.
  */
 export async function readSnapshot(
@@ -112,13 +150,77 @@ export async function readSnapshot(
   lexicon: string,
   opts?: { cwd?: string },
 ): Promise<string | null> {
+  return readBlobFromPath(environment, `${lexicon}.json`, opts);
+}
+
+/**
+ * Append one immutable release record line to `<environment>/releases.jsonl`
+ * on the orphan branch (#568, epic #551 "Build & deploy observability"). Same
+ * git-plumbing path `writeSnapshot` uses, just a different filename under the
+ * env directory and append-only (JSON Lines) instead of replace-whole-file:
+ * each deploy adds one line, never rewrites a previous one, so the ledger
+ * stays a durable, append-only history rather than a point-in-time snapshot.
+ *
+ * Low-level plumbing over an already-serialized line; ../release-ledger.ts's
+ * `appendReleaseRecord` is the typed, validated public API most callers want
+ * — named distinctly here (`ReleaseRecordLine`) to avoid re-export ambiguity
+ * between the two modules.
+ *
+ * Returns the new orphan-branch commit SHA — the caller still owns pushing
+ * via `pushLifecycle` under the same concurrent-write lease `writeSnapshot`
+ * uses.
+ */
+export async function appendReleaseRecordLine(
+  environment: string,
+  recordJson: string,
+  opts?: { cwd?: string },
+): Promise<string> {
+  const filename = "releases.jsonl";
+  const existing = await readBlobFromPath(environment, filename, opts);
+  const content = existing ? `${existing.replace(/\n$/, "")}\n${recordJson}` : recordJson;
+  return writeBlobToPath(environment, filename, content, "Release record", opts);
+}
+
+/**
+ * Read every release record line for `environment` from the orphan branch,
+ * oldest first, as raw JSON strings. Returns `[]` when no ledger exists yet
+ * for that env (never throws — a component that has never recorded a deploy
+ * is a normal, expected state). ../release-ledger.ts's `readReleaseLedger`
+ * parses/validates these lines into typed `ReleaseRecord`s.
+ */
+export async function readReleaseLedgerLines(
+  environment: string,
+  opts?: { cwd?: string },
+): Promise<string[]> {
+  const content = await readBlobFromPath(environment, "releases.jsonl", opts);
+  if (!content) return [];
+  return content.split("\n").map((line) => line.trim()).filter(Boolean);
+}
+
+/**
+ * List every environment that has a release ledger on the orphan branch —
+ * the root-level directories under `chant/lifecycle` that carry a
+ * `releases.jsonl` entry. Used by `chant components status` (no env arg) to
+ * discover which environments to report on.
+ */
+export async function listLedgerEnvironments(opts?: { cwd?: string }): Promise<string[]> {
+  const tip = await getStateBranchTip(opts?.cwd);
+  if (!tip) return [];
   const rt = getRuntime();
-  const result = await rt.spawn(
-    ["git", "show", `${STATE_BRANCH}:${environment}/${lexicon}.json`],
-    { cwd: opts?.cwd },
-  );
-  if (result.exitCode !== 0) return null;
-  return result.stdout;
+  const rootResult = await rt.spawn(["git", "ls-tree", STATE_BRANCH], { cwd: opts?.cwd });
+  if (rootResult.exitCode !== 0) return [];
+
+  const envs: string[] = [];
+  const lines = rootResult.stdout.trim().split("\n").filter(Boolean);
+  for (const line of lines) {
+    const match = line.match(/^(\d+)\s+(\w+)\s+([0-9a-f]+)\t(.+)$/);
+    if (!match) continue;
+    const [, , type, , name] = match;
+    if (type !== "tree") continue;
+    const hasLedger = await readBlobFromPath(name, "releases.jsonl", opts);
+    if (hasLedger) envs.push(name);
+  }
+  return envs.sort();
 }
 
 /**

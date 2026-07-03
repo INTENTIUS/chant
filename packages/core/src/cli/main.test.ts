@@ -188,6 +188,37 @@ describe("parseArgs", () => {
     expect(result.extraPositional).toBe(".");
     expect(result.extraPositional2).toBe(undefined);
   });
+
+  // ── components release/status flags (#568) ──────────────────────────────
+
+  test("parses --component, --digest, --git-sha, --run-id, --actor for components release", () => {
+    const result = parseArgs([
+      "components", "release", "prod",
+      "--component", "search-service",
+      "--digest", "sha256:abc123",
+      "--git-sha", "deadbeef",
+      "--run-id", "run-1",
+      "--actor", "alice",
+    ]);
+    expect(result.command).toBe("components");
+    expect(result.path).toBe("release");
+    expect(result.extraPositional).toBe("prod");
+    expect(result.component).toBe("search-service");
+    expect(result.digest).toBe("sha256:abc123");
+    expect(result.gitSha).toBe("deadbeef");
+    expect(result.runId).toBe("run-1");
+    expect(result.actor).toBe("alice");
+  });
+
+  test("parses --compare-to and --live for components status", () => {
+    const result = parseArgs(["components", "status", "prod", "--compare-to", "staging", "--live", "--json"]);
+    expect(result.command).toBe("components");
+    expect(result.path).toBe("status");
+    expect(result.extraPositional).toBe("prod");
+    expect(result.compareTo).toBe("staging");
+    expect(result.live).toBe(true);
+    expect(result.json).toBe(true);
+  });
 });
 
 // ── resolveCommand tests ──────────────────────────────────────────
@@ -205,6 +236,9 @@ describe("resolveCommand", () => {
     { name: "dev", handler: noop },
     { name: "lifecycle plan", handler: noop },
     { name: "lifecycle", handler: noop },
+    { name: "components status", handler: noop },
+    { name: "components release", handler: noop },
+    { name: "components", handler: noop },
   ];
 
   function makeArgs(overrides: Partial<ParsedArgs>): ParsedArgs {
@@ -283,6 +317,24 @@ describe("resolveCommand", () => {
   test("`lc` is an alias for `lifecycle` (simple)", () => {
     const result = resolveCommand(makeArgs({ command: "lc" }), testRegistry);
     expect(result!.def.name).toBe("lifecycle");
+    expect(result!.compound).toBe(false);
+  });
+
+  test("resolves components status as compound command", () => {
+    const result = resolveCommand(makeArgs({ command: "components", path: "status" }), testRegistry);
+    expect(result!.def.name).toBe("components status");
+    expect(result!.compound).toBe(true);
+  });
+
+  test("resolves components release as compound command", () => {
+    const result = resolveCommand(makeArgs({ command: "components", path: "release" }), testRegistry);
+    expect(result!.def.name).toBe("components release");
+    expect(result!.compound).toBe(true);
+  });
+
+  test("falls back to unknown components subcommand handler", () => {
+    const result = resolveCommand(makeArgs({ command: "components", path: "bogus" }), testRegistry);
+    expect(result!.def.name).toBe("components");
     expect(result!.compound).toBe(false);
   });
 
