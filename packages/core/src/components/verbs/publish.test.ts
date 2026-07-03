@@ -8,6 +8,7 @@ import {
 } from "./publish";
 import { createDockerBuildCapability } from "./build";
 import { createMockCloudExecutor } from "./__tests__/mock-cloud-executor";
+import { createMockProcessRunner } from "./__tests__/mock-process-runner";
 
 const ctx = { env: "dev", component: "search-service" };
 
@@ -68,6 +69,101 @@ describe("publish-image (#557)", () => {
     const mock = createMockCloudExecutor();
     const capability = createPublishImageCapability(mock.executor);
     await expect(capability.run(ctx, { from: "archive/search.tar" })).rejects.toThrow(/"to".*is required/);
+  });
+});
+
+describe("publish-image — SBOM/component-BOM referrer attach (#610)", () => {
+  it("does nothing (no oras call at all) when neither sbom nor componentBom is supplied", async () => {
+    const cloud = createMockCloudExecutor();
+    const proc = createMockProcessRunner();
+    const capability = createPublishImageCapability(cloud.executor, proc.runner);
+
+    const output = await capability.run(ctx, { from: "archive/search.tar", to: "123.dkr.ecr.us-east-1.amazonaws.com/search" });
+
+    expect(output.referrerAttach).toBeUndefined();
+    expect(proc.calls).toHaveLength(0);
+  });
+
+  it("attaches the SBOM as an OCI referrer on the pushed digest via oras attach", async () => {
+    const cloud = createMockCloudExecutor();
+    const proc = createMockProcessRunner();
+    const capability = createPublishImageCapability(cloud.executor, proc.runner);
+
+    const output = await capability.run(ctx, {
+      from: "archive/search.tar",
+      to: "123.dkr.ecr.us-east-1.amazonaws.com/search",
+      sbom: { bytes: '{"fake":"sbom"}', mediaType: "application/spdx+json" },
+    });
+
+    expect(output.referrerAttach).toEqual({ attached: true });
+    const attachCall = proc.calls.find((c) => c.command.startsWith("oras attach"))!;
+    expect(attachCall.command).toContain("--artifact-type 'application/spdx+json'");
+    expect(attachCall.command).toContain(`123.dkr.ecr.us-east-1.amazonaws.com/search@${output.digest}`);
+  });
+
+  it("attaches both the SBOM and the component BOM when both are supplied", async () => {
+    const cloud = createMockCloudExecutor();
+    const proc = createMockProcessRunner();
+    const capability = createPublishImageCapability(cloud.executor, proc.runner);
+
+    await capability.run(ctx, {
+      from: "archive/search.tar",
+      to: "123.dkr.ecr.us-east-1.amazonaws.com/search",
+      sbom: { bytes: '{"fake":"sbom"}', mediaType: "application/spdx+json" },
+      componentBom: { bytes: '{"fake":"bom"}', mediaType: "application/vnd.cyclonedx+json" },
+    });
+
+    const attachCalls = proc.calls.filter((c) => c.command.startsWith("oras attach"));
+    expect(attachCalls).toHaveLength(2);
+    expect(attachCalls.some((c) => c.command.includes("application/spdx+json"))).toBe(true);
+    expect(attachCalls.some((c) => c.command.includes("application/vnd.cyclonedx+json"))).toBe(true);
+  });
+
+  it("reports attached: false with a reason, and does not fail the publish, when oras is not installed", async () => {
+    const cloud = createMockCloudExecutor();
+    const proc = createMockProcessRunner({ tools: { oras: false } });
+    const capability = createPublishImageCapability(cloud.executor, proc.runner);
+
+    const output = await capability.run(ctx, {
+      from: "archive/search.tar",
+      to: "123.dkr.ecr.us-east-1.amazonaws.com/search",
+      sbom: { bytes: '{"fake":"sbom"}', mediaType: "application/spdx+json" },
+    });
+
+    expect(output.digest).toMatch(/^sha256:/); // the image itself still published successfully.
+    expect(output.referrerAttach?.attached).toBe(false);
+    expect(output.referrerAttach?.reason).toMatch(/oras.*not installed/);
+    expect(proc.calls.some((c) => c.command.startsWith("oras attach"))).toBe(false);
+  });
+
+  it("reports attached: false with a reason, and does not fail the publish, when oras attach itself fails", async () => {
+    const cloud = createMockCloudExecutor();
+    const proc = createMockProcessRunner({ failures: { "oras attach": "oras: unauthorized" } });
+    const capability = createPublishImageCapability(cloud.executor, proc.runner);
+
+    const output = await capability.run(ctx, {
+      from: "archive/search.tar",
+      to: "123.dkr.ecr.us-east-1.amazonaws.com/search",
+      sbom: { bytes: '{"fake":"sbom"}', mediaType: "application/spdx+json" },
+    });
+
+    expect(output.digest).toMatch(/^sha256:/);
+    expect(output.referrerAttach).toEqual({ attached: false, reason: "oras: unauthorized" });
+  });
+
+  it("load-image-on-host never attempts a referrer attach — registry-less, nothing to attach to", async () => {
+    const cloud = createMockCloudExecutor();
+    const proc = createMockProcessRunner();
+    const capability = createLoadImageOnHostCapability(cloud.executor);
+
+    const output = await capability.run(ctx, {
+      from: "archive/search.tar",
+      host: "i-abc",
+      sbom: { bytes: '{"fake":"sbom"}', mediaType: "application/spdx+json" },
+    });
+
+    expect(output.referrerAttach).toBeUndefined();
+    expect(proc.calls).toHaveLength(0);
   });
 });
 

@@ -26,12 +26,29 @@
  * `publish-artifact` remains a non-AWS-leaf/non-pilot verb and stays a typed
  * stub — out of scope for #557/#564; see ../capability.ts for the "no cloud
  * implementation yet" contract.
+ *
+ * **#610 addition: publish-time SBOM/BOM referrer attach.** `publish-image`
+ * optionally registers the archive's SBOM (and, when given, the
+ * component-level aggregate BOM) as an OCI referrer on the just-pushed image
+ * digest via `oras attach` — a registry-side convenience for `oras
+ * discover`/`cosign tree` layered on top of the archive-carried copy, never a
+ * replacement for it (see ../../lifecycle/build-ledger.ts's module doc: the
+ * archive remains the universal home, working for every artifact type and
+ * the registry-less `load-image-on-host` path, which this attach step
+ * deliberately does not touch — non-image/registry-less publishes stay
+ * archive-carried only). Attach is opt-in per call (`input.sbom` supplied),
+ * guarded on `oras` availability, and never fails the publish itself: a
+ * missing `oras` binary or a failed attach is reported back on the output
+ * (`referrerAttach.attached: false` + a reason) rather than thrown, since the
+ * image is already successfully promoted by the time this step runs — the
+ * one part of this capability that is genuinely best-effort.
  */
 
 import type { Capability } from "../capability";
 import { stubCapability } from "./stub";
 import { defaultCloudExecutor, type CloudExecutor } from "./cloud-executor";
 import { archiveRelativePath } from "./build-archive";
+import { defaultProcessRunner, q, type ProcessRunner } from "./process-runner";
 
 // ── shared backend interface ─────────────────────────────────────────────────
 
@@ -55,6 +72,31 @@ export interface PublishImageInput {
   hostPath?: string;
   /** Additional tags to apply alongside the digest, used only by `publish-image`. */
   tags?: string[];
+  /**
+   * #610: the artifact's software SBOM (typically wired from a prior
+   * `generate-sbom` step's `sbom` output — see ./sbom.ts's
+   * `GenerateSbomOutput`) to attach as an OCI referrer on the pushed image
+   * digest, via `oras attach`. Used only by `publish-image`; ignored by
+   * `load-image-on-host` (registry-less — nothing to attach to). Omit to
+   * skip the attach step entirely (the archive-carried copy remains the
+   * SBOM's home either way).
+   */
+  sbom?: { bytes: string; mediaType: string };
+  /**
+   * #610: the component-level aggregate BOM (wired from
+   * ./component-bom.ts's `aggregateComponentBom` output), attached as a
+   * second OCI referrer alongside `sbom` when supplied. Optional and
+   * independent of `sbom` — a caller may attach either, both, or neither.
+   */
+  componentBom?: { bytes: string; mediaType: string };
+}
+
+/** Result of `publish-image`'s best-effort OCI-referrer attach step (#610) — always present when `input.sbom`/`input.componentBom` was supplied, `undefined` when neither was (nothing to attach, attach step skipped entirely). */
+export interface ReferrerAttachResult {
+  /** True once every requested attach (`sbom`, `componentBom`) succeeded. `false` if `oras` was unavailable or any `oras attach` invocation failed. */
+  attached: boolean;
+  /** Human-readable reason `attached` is `false` (e.g. "oras is not installed"), omitted when `attached` is `true`. */
+  reason?: string;
 }
 
 export interface PublishImageOutput {
@@ -62,6 +104,8 @@ export interface PublishImageOutput {
   digest: string;
   /** Image reference the apply step can pull/run: `registry/repo@sha256:...` for `publish-image`, a host-local reference for `load-image-on-host`. */
   uri: string;
+  /** #610: outcome of the best-effort SBOM/component-BOM referrer attach, when `input.sbom`/`input.componentBom` was supplied. `undefined` for `load-image-on-host` (no attach concept — registry-less) and for `publish-image` calls that supplied neither. */
+  referrerAttach?: ReferrerAttachResult;
 }
 
 /**
@@ -75,6 +119,62 @@ export type PublishImageBackend = Capability<PublishImageInput, PublishImageOutp
 // ── publish-image (registry backend) ────────────────────────────────────────
 
 /**
+ * Attempt to `oras attach` one referrer document (SBOM or component BOM) to
+ * `imageRef`'s digest. Writes the document's bytes to a scratch file (`oras
+ * attach` reads from a file path, not stdin) and shells out through
+ * `runner`. Never throws — a failure here is reported back to the caller as
+ * `{ ok: false, reason }` so a missing/erroring `oras` never fails the
+ * publish itself (see `attachReferrers`'s doc comment for why).
+ */
+async function attachOneReferrer(
+  runner: ProcessRunner,
+  imageRef: string,
+  doc: { bytes: string; mediaType: string },
+  label: string,
+): Promise<{ ok: boolean; reason?: string }> {
+  try {
+    const scratchFile = `/tmp/chant-referrer-attach/${label}-${Date.now()}.json`;
+    await runner.run(`mkdir -p ${q("/tmp/chant-referrer-attach")}`);
+    await runner.run(`printf '%s' ${q(doc.bytes)} > ${q(scratchFile)}`);
+    await runner.run(`oras attach --artifact-type ${q(doc.mediaType)} ${q(imageRef)} ${q(scratchFile)}:${q(doc.mediaType)}`);
+    return { ok: true };
+  } catch (err) {
+    return { ok: false, reason: err instanceof Error ? err.message : String(err) };
+  }
+}
+
+/**
+ * Best-effort OCI-referrer attach for a just-pushed image (#610): attaches
+ * `input.sbom` and/or `input.componentBom`, when supplied, to `imageRef` via
+ * `oras attach`. Guarded on `oras` availability — a missing binary is
+ * reported back as `{ attached: false, reason }` rather than thrown, since
+ * the image itself is already successfully promoted by the time this step
+ * runs (attach is additive registry-side convenience on top of the
+ * archive-carried copy, per this module's doc comment, never a condition the
+ * core promote-by-digest job depends on). Returns `undefined` when neither
+ * `input.sbom` nor `input.componentBom` was supplied — nothing to attach,
+ * skipped entirely, no `oras` call at all.
+ */
+async function attachReferrers(
+  runner: ProcessRunner,
+  imageRef: string,
+  input: Pick<PublishImageInput, "sbom" | "componentBom">,
+): Promise<ReferrerAttachResult | undefined> {
+  if (!input.sbom && !input.componentBom) return undefined;
+
+  if (!(await runner.available("oras"))) {
+    return { attached: false, reason: `"oras" is not installed or not on PATH — required to attach OCI referrers` };
+  }
+
+  const results: Array<{ ok: boolean; reason?: string }> = [];
+  if (input.sbom) results.push(await attachOneReferrer(runner, imageRef, input.sbom, "sbom"));
+  if (input.componentBom) results.push(await attachOneReferrer(runner, imageRef, input.componentBom, "component-bom"));
+
+  const failed = results.find((r) => !r.ok);
+  return failed ? { attached: false, reason: failed.reason } : { attached: true };
+}
+
+/**
  * Promote a built image from the archive into the environment's container
  * registry: `docker load` the archived tarball, tag it for `to` (the env
  * registry), `aws ecr get-login-password | docker login`, then `docker push`.
@@ -83,9 +183,15 @@ export type PublishImageBackend = Capability<PublishImageInput, PublishImageOutp
  * rollback: an already-pushed, still-valid image in the registry is not
  * itself a problem to compensate (immutable, content-addressed, and simply
  * unreferenced if a later step fails) — the opt-out this capability takes.
+ *
+ * #610: when `input.sbom` and/or `input.componentBom` are supplied, also
+ * attaches them as OCI referrers on the pushed digest via `oras attach` (see
+ * `attachReferrers` above) — best-effort, guarded on `oras` availability,
+ * surfaced on the output's `referrerAttach` rather than failing the publish.
  */
 export function createPublishImageCapability(
   executor: CloudExecutor = defaultCloudExecutor(),
+  processRunner: ProcessRunner = defaultProcessRunner(),
 ): PublishImageBackend {
   return {
     kind: "publish-image",
@@ -103,7 +209,9 @@ export function createPublishImageCapability(
         await executor.docker.tag({ source: localDigest, target: tagged });
         await executor.docker.push({ image: tagged });
       }
-      return { digest, uri: `${repo}@${digest}` };
+
+      const referrerAttach = await attachReferrers(processRunner, `${repo}@${digest}`, input);
+      return { digest, uri: `${repo}@${digest}`, ...(referrerAttach ? { referrerAttach } : {}) };
     },
   };
 }
