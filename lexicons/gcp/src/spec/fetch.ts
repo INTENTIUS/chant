@@ -11,7 +11,7 @@ import { fetchWithCache, clearCacheFile } from "@intentius/chant/codegen/fetch";
 /**
  * Pinned Config Connector version for reproducible codegen.
  */
-export const KCC_VERSION = "v1.145.0";
+export const KCC_VERSION = "v1.152.0";
 
 const CACHE_DIR = join(homedir(), ".chant");
 

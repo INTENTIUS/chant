@@ -106,6 +106,20 @@ export interface Component {
   verify?: Phase[];
   /** Optional explicit compensation phases, executed in reverse order on terminal failure of `deploy`. */
   rollback?: Phase[];
+  /**
+   * Optional: the live lexicon entity/resource name(s) this component owns,
+   * when they differ from `name` (#598). `chant components status --live`
+   * joins the release ledger against live evidence by name; components and
+   * lexicon entities are different namespaces in general (see
+   * `../lifecycle/status.ts`), so a component whose deploy composition
+   * targets an entity/resource declared under a different name must say so
+   * explicitly here. A component that owns several entities (e.g. a fan-out
+   * cluster with one stack per node) may list them all — live evidence is
+   * aggregated across every name. Omitted entirely (the common case for the
+   * pilot components) falls back to `[name]`, preserving the original
+   * name == entity join with no behavior change.
+   */
+  liveNames?: string[];
 }
 
 /** Author a named phase. `steps` may mix capability `Step`s, `Gate`s, and nested `Phase`s (fan-out). */

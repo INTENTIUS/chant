@@ -26,6 +26,13 @@ adopting chant.
 
 - **Identity and ordering** — `name`, `dependsOn` (ordering only, resolved by
   `chant graph --stacks`, no logic).
+- **Live name mapping** — `liveNames` (#598), optional: the live lexicon
+  entity/resource name(s) this component owns, when they differ from `name`.
+  `chant components status --live` (`../lifecycle/status.ts`) joins the
+  release ledger against live evidence by name; `liveNames` lets that join
+  work for a component whose own name isn't the entity/resource name it
+  deploys, falling back to `name` itself when omitted. See
+  docs/src/content/docs/components/observability.mdx.
 - **The three archetypes** — service (build → publish → apply → verify),
   infra (apply → verify, no build), and producer/library (build → publish
   only, no service apply). `deploy` being a plain composition is what makes

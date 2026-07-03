@@ -181,6 +181,27 @@ describe("projectToJson()", () => {
     expect("rollback" in projected).toBe(false);
   });
 
+  it("projects an explicit liveNames mapping through unchanged (#598)", () => {
+    const component: Component = {
+      name: "search-svc",
+      dependsOn: [],
+      liveNames: ["search-service-v2"],
+      deploy: [phase("Apply", [{ kind: "cfn-deploy" }])],
+    };
+    const projected = projectToJson(component) as { liveNames?: string[] };
+    expect(projected.liveNames).toEqual(["search-service-v2"]);
+  });
+
+  it("omits liveNames from the projection when not authored (#598)", () => {
+    const component: Component = {
+      name: "table",
+      dependsOn: [],
+      deploy: [phase("Apply", [{ kind: "cfn-deploy" }])],
+    };
+    const projected = projectToJson(component) as Record<string, unknown>;
+    expect("liveNames" in projected).toBe(false);
+  });
+
   it("projects a stackOutput() wiring reference to its plain-JSON form", () => {
     const component: Component = {
       name: "svc",

@@ -25,16 +25,21 @@ describe("gcpCompletions", () => {
     expect(items).toHaveLength(0);
   });
 
+  // Use a resource-specific prefix rather than a single letter: the completion
+  // provider caps results at 50 with no ranking (#600), so on a large lexicon a
+  // one-letter prefix like "S" can truncate common resources (e.g. Storage*)
+  // out of the returned slice. "Storage" isolates the Storage* resources, which
+  // is what this test actually cares about.
   test.skipIf(!hasGenerated)(
-    "returns completions for 'new S' prefix including Storage*",
+    "returns completions for 'new Storage' prefix including Storage*",
     async () => {
       const { gcpCompletions } = await import("./completions");
       const result = gcpCompletions({
         uri: "file:///test.ts",
-        content: "const x = new S",
-        linePrefix: "const x = new S",
-        wordAtCursor: "S",
-        position: { line: 0, character: 15 },
+        content: "const x = new Storage",
+        linePrefix: "const x = new Storage",
+        wordAtCursor: "Storage",
+        position: { line: 0, character: 21 },
       } as any);
 
       expect(result).toBeDefined();

@@ -289,6 +289,101 @@ describe("components handlers", () => {
       expect(rows[0]).toMatchObject({ component: "mystery", reconciliation: "unrecorded" });
     });
 
+    // #598: a component may declare `liveNames` when its own name differs
+    // from the live entity/resource name(s) it owns. `runComponentsStatus`
+    // must join on that mapping instead of assuming component name == entity
+    // name, while components with no `liveNames` keep the identity join.
+    test("--live reconciles a component whose liveNames differ from its own name (#598)", async () => {
+      readReleaseLedgerMock.mockResolvedValue({
+        records: [{
+          version: 1,
+          component: "search-svc",
+          env: "prod",
+          digest: "sha256:abc",
+          gitSha: "sha1",
+          runId: "run-1",
+          timestamp: "2026-01-01T00:00:00.000Z",
+          actor: "alice",
+        }],
+        malformed: 0,
+      });
+      // The live/lexicon-declared entity is named differently from the
+      // component itself — exactly the case #568 flagged as unsupported.
+      buildMock.mockResolvedValue(makeBuildResult({ aws: ["search-service-v2"] }));
+      discoverComponentsMock.mockResolvedValue({
+        components: new Map([[
+          "search-svc",
+          {
+            component: { name: "search-svc", dependsOn: [], deploy: [], liveNames: ["search-service-v2"] },
+            exportName: "searchSvc",
+            filePath: "search.component.ts",
+          },
+        ]]),
+        sourceFiles: [],
+        errors: [],
+      });
+
+      const plugins: LexiconPlugin[] = [
+        createMockPlugin({
+          name: "aws",
+          describeResources: staticDescribeResources({ "search-service-v2": meta() }),
+        }),
+      ];
+
+      const ctx = {
+        args: makeArgs({ extraPositional: "prod", live: true, json: true }),
+        plugins,
+        serializers: plugins.map((p) => p.serializer),
+      };
+      const exit = await runComponentsStatus(ctx);
+      expect(exit).toBe(0);
+      const rows = JSON.parse(stdoutBuf.join(""));
+      expect(rows).toHaveLength(1);
+      expect(rows[0]).toMatchObject({ component: "search-svc", reconciliation: "reconciled" });
+    });
+
+    test("--live still joins by identity when a component has no liveNames (no regression)", async () => {
+      readReleaseLedgerMock.mockResolvedValue({
+        records: [{
+          version: 1,
+          component: "svc",
+          env: "prod",
+          digest: "sha256:abc",
+          gitSha: "sha1",
+          runId: "run-1",
+          timestamp: "2026-01-01T00:00:00.000Z",
+          actor: "alice",
+        }],
+        malformed: 0,
+      });
+      buildMock.mockResolvedValue(makeBuildResult({ aws: ["svc"] }));
+      discoverComponentsMock.mockResolvedValue({
+        components: new Map([[
+          "svc",
+          { component: { name: "svc", dependsOn: [], deploy: [] }, exportName: "svc", filePath: "svc.component.ts" },
+        ]]),
+        sourceFiles: [],
+        errors: [],
+      });
+
+      const plugins: LexiconPlugin[] = [
+        createMockPlugin({
+          name: "aws",
+          describeResources: staticDescribeResources({ svc: meta() }),
+        }),
+      ];
+
+      const ctx = {
+        args: makeArgs({ extraPositional: "prod", live: true, json: true }),
+        plugins,
+        serializers: plugins.map((p) => p.serializer),
+      };
+      const exit = await runComponentsStatus(ctx);
+      expect(exit).toBe(0);
+      const rows = JSON.parse(stdoutBuf.join(""));
+      expect(rows[0]).toMatchObject({ component: "svc", reconciliation: "reconciled" });
+    });
+
     test("reports malformed ledger lines as a warning without failing", async () => {
       readReleaseLedgerMock.mockResolvedValue({ records: [], malformed: 2 });
       const ctx = { args: makeArgs({ extraPositional: "prod" }), plugins: [], serializers: [] };

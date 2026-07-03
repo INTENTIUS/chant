@@ -174,6 +174,17 @@ export async function runComponentsStatus(ctx: CommandContext): Promise<number> 
   const discovery = await discoverComponents(resolve(args.src ?? config.sourceDir ?? "."));
   const allComponents = [...discovery.components.keys()];
 
+  // Component -> live entity/resource name(s) it owns (#598), when declared
+  // explicitly via `Component.liveNames`. Components with no `liveNames`
+  // simply have no entry here, so `liveEvidenceFromChangeSet` falls back to
+  // the name == entity join — no regression for the pilot components.
+  const liveNameMapping = new Map<string, string[] | undefined>();
+  for (const [name, discovered] of discovery.components) {
+    if (discovered.component.liveNames?.length) {
+      liveNameMapping.set(name, discovered.component.liveNames);
+    }
+  }
+
   const allRows: StatusJsonRow[] = [];
   const ledgerByEnv = new Map<string, Awaited<ReturnType<typeof readReleaseLedger>>>();
 
@@ -212,7 +223,7 @@ export async function runComponentsStatus(ctx: CommandContext): Promise<number> 
         const cs = buildChangeSet(environment, { declared, observedNow, observedThen: undefined });
         merged.entries.push(...cs.entries);
       }
-      liveEvidence = liveEvidenceFromChangeSet(merged);
+      liveEvidence = liveEvidenceFromChangeSet(merged, liveNameMapping);
     }
 
     const rows = reconcileStatus(environment, ledger.records, {

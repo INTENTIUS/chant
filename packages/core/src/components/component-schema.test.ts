@@ -100,6 +100,49 @@ describe("Component JSON Schema", () => {
     expect(validate(infra)).toBe(true);
   });
 
+  it("accepts an optional liveNames mapping (#598)", () => {
+    const withLiveNames = {
+      name: "search-svc",
+      archetype: "service",
+      dependsOn: [],
+      liveNames: ["search-service-v2"],
+      deploy: [{ phase: "Apply", steps: [{ kind: "cfn-deploy", template: "t.json" }] }],
+    };
+    expect(validate(withLiveNames)).toBe(true);
+  });
+
+  it("accepts several liveNames for a component that owns multiple live entities (#598)", () => {
+    const fanOutLiveNames = {
+      name: "neo4j-cluster",
+      archetype: "infra",
+      dependsOn: [],
+      liveNames: ["cluster-node-1", "cluster-node-2"],
+      deploy: [{ phase: "Apply", steps: [{ kind: "cfn-deploy", template: "t.json" }] }],
+    };
+    expect(validate(fanOutLiveNames)).toBe(true);
+  });
+
+  it("omitting liveNames still validates (backward-compatible default)", () => {
+    const noLiveNames = {
+      name: "table",
+      archetype: "infra",
+      dependsOn: [],
+      deploy: [{ phase: "Apply", steps: [{ kind: "cfn-deploy", template: "t.json" }] }],
+    };
+    expect(validate(noLiveNames)).toBe(true);
+  });
+
+  it("rejects an empty liveNames array (minItems: 1)", () => {
+    const invalid = {
+      name: "table",
+      archetype: "infra",
+      dependsOn: [],
+      liveNames: [],
+      deploy: [{ phase: "Apply", steps: [{ kind: "cfn-deploy", template: "t.json" }] }],
+    };
+    expect(validate(invalid)).toBe(false);
+  });
+
   it("rejects an invalid archetype value", () => {
     const invalid = {
       name: "x",
