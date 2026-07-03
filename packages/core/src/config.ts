@@ -9,6 +9,7 @@ import type { OwnershipMarker } from "./ownership";
  */
 export const ChantConfigSchema = z.object({
   lexicons: z.array(z.string().min(1)).optional(),
+  capabilities: z.array(z.string().min(1)).optional(),
   environments: z.array(z.string().min(1)).optional(),
   sourceDir: z.string().min(1).optional(),
   lint: z.record(z.string(), z.unknown()).optional(),
@@ -27,6 +28,17 @@ export const ChantConfigSchema = z.object({
 export interface ChantConfig {
   /** Lexicon package names to load (e.g. ["aws"]) */
   lexicons?: string[];
+
+  /**
+   * Capability plugin package names to load in addition to the built-in
+   * starter set (e.g. ["acme"] loads `@intentius/chant-capability-acme`),
+   * mirroring `lexicons` — see {@link CapabilityPlugin} in
+   * `./components/capability-plugin.ts` and `buildCapabilityRegistry` in
+   * `./components/capability-plugin-loader.ts` (#559, epic #551). The
+   * built-in starter verb set (`./components/starter-plugin.ts`) is always
+   * loaded regardless of this field.
+   */
+  capabilities?: string[];
 
   /** Environment names (e.g. ["staging", "prod"]) */
   environments?: string[];

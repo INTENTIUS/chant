@@ -56,6 +56,20 @@ describe("loadChantConfig", () => {
     expect(result.configPath).toBe(jsonPath);
   });
 
+  // #559, epic #551: `capabilities` mirrors `lexicons` — additional
+  // capability plugin package names loaded on top of the built-in starter
+  // set (see ./components/capability-plugin-loader.ts's `buildCapabilityRegistry`).
+  test("loads chant.config.json with capabilities", async () => {
+    const jsonPath = join(TEST_DIR, "chant.config.json");
+    writeFileSync(
+      jsonPath,
+      JSON.stringify({ lexicons: ["aws"], capabilities: ["acme"] }),
+    );
+
+    const result = await loadChantConfig(TEST_DIR);
+    expect(result.config.capabilities).toEqual(["acme"]);
+  });
+
   test("prefers .ts over .json when both exist", async () => {
     // .ts takes priority — verify by checking configPath ends with .ts
     writeFileSync(

@@ -14,6 +14,26 @@ export {
   CapabilityNotImplementedError,
 } from "./capability";
 export { createCapabilityRegistry, STARTER_VERB_FAMILIES } from "./registry";
+export {
+  type CapabilityPlugin,
+  type CapabilityManifest,
+  isCapabilityPlugin,
+} from "./capability-plugin";
+export {
+  CapabilityManifestSchema,
+  type CapabilityManifestParsed,
+  validateCapabilityManifest,
+} from "./capability-plugin-schema";
+export {
+  loadCapabilityPlugin,
+  loadCapabilityPlugins,
+  registerCapabilityPlugins,
+  buildCapabilityRegistry,
+  type BuildCapabilityRegistryOptions,
+  MalformedCapabilityPluginError,
+  DuplicateCapabilityKindError,
+} from "./capability-plugin-loader";
+export { starterCapabilityPlugin } from "./starter-plugin";
 export * from "./verbs/index";
 export {
   type DriverStep,

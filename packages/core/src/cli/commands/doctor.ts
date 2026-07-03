@@ -5,6 +5,8 @@ import { fileURLToPath } from "url";
 import { checkVersionCompatibility } from "../../lexicon-manifest";
 import { debug } from "../debug";
 import { loadPlugins, resolveProjectLexicons } from "../plugins";
+import { loadCapabilityPlugin } from "../../components/capability-plugin-loader";
+import { isCapabilityPlugin } from "../../components/capability-plugin";
 
 export interface DoctorCheck {
   name: string;
@@ -219,6 +221,50 @@ export async function doctorCommand(path: string): Promise<DoctorReport> {
     }
   } catch (e) {
     debug("skills check failed:", e);
+  }
+
+  // Check: Capability plugin packages (#559, epic #551) — each name in
+  // config.capabilities must load and satisfy the CapabilityPlugin contract
+  // (../../components/capability-plugin.ts). A malformed capability package
+  // (missing/broken `capabilities()`, or the package failing to resolve at
+  // all) is reported as a `fail`, mirroring how a missing lexicon type
+  // directory fails above rather than warning.
+  const capabilityNames = config?.capabilities as string[] | undefined;
+  if (capabilityNames && Array.isArray(capabilityNames)) {
+    for (const name of capabilityNames) {
+      try {
+        const plugin = await loadCapabilityPlugin(name);
+        if (!isCapabilityPlugin(plugin)) {
+          checks.push({
+            name: `capability-${name}`,
+            status: "fail",
+            message: `Capability plugin "${name}" does not satisfy the CapabilityPlugin contract (missing name/version/capabilities())`,
+          });
+          continue;
+        }
+        const capabilities = plugin.capabilities();
+        if (!Array.isArray(capabilities)) {
+          checks.push({
+            name: `capability-${name}`,
+            status: "fail",
+            message: `Capability plugin "${name}": capabilities() did not return an array`,
+          });
+          continue;
+        }
+        checks.push({
+          name: `capability-${name}`,
+          status: "pass",
+          message: `${capabilities.length} capability(ies) registered`,
+        });
+      } catch (e) {
+        debug(`capability plugin check failed for ${name}:`, e);
+        checks.push({
+          name: `capability-${name}`,
+          status: "fail",
+          message: `Capability plugin "${name}" could not be loaded: ${e instanceof Error ? e.message : String(e)}`,
+        });
+      }
+    }
   }
 
   return {
