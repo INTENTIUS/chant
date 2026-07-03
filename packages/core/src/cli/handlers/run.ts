@@ -19,7 +19,7 @@ import {
   type WorkflowHistoryRaw,
 } from "./run-client";
 import { generateReport, writeReport } from "./run-report";
-import { runComponents, resolveComponentTargets, findComponentGate } from "../../components/cli-support";
+import { runComponents, resolveComponentTargets, findComponentGate, listComponents } from "../../components/cli-support";
 import { renderDriverHuman, renderDriverJson } from "../../components/driver-output";
 import { loadComponentTemporalCodegen } from "../../components/temporal-codegen-loader";
 
@@ -58,6 +58,8 @@ export async function makeTemporalClient(profileName: string | undefined, projec
 // ── chant run list ──────────────────────────────────���─────────────────────────
 
 export async function runOpList(ctx: CommandContext): Promise<number> {
+  if (ctx.args.components) return runComponentsList(ctx);
+
   if (!requireTemporalMode(ctx, "chant run list")) return 1;
   const { ops, errors } = await discoverOps();
 
@@ -121,15 +123,98 @@ export async function runOpList(ctx: CommandContext): Promise<number> {
   return 0;
 }
 
+/**
+ * `chant run list --components` (#599) — the component counterpart of
+ * `runOpList` above, mirrored shape-for-shape: discover, print a header,
+ * best-effort annotate with Temporal run status, print one row per entry.
+ * Kept behind the same `requireTemporalMode` gate as the Op path — the whole
+ * point of this subcommand is the run-status annotation, and components have
+ * no local notion of a "run" to list either (mirrors the "Temporal-only
+ * subcommand guards" test coverage for the Op list/status/log/signal/cancel
+ * set).
+ *
+ * Discovery + column shape reuses `listComponents` (../../components/cli-
+ * support.ts), the same helper `chant list --components` already uses, so
+ * archetype inference/field projection isn't duplicated here — this function
+ * only adds the Temporal status column. Status lookups use
+ * `componentWorkflowId`, the id space `runOpSignal`/`runOpCancel` established
+ * for components (#589) — kept distinct from `resolveWorkflowId`'s Op id
+ * space so an Op and a component can share a name.
+ */
+async function runComponentsList(ctx: CommandContext): Promise<number> {
+  if (!requireTemporalMode(ctx, "chant run list --components")) return 1;
+
+  const projectPath = resolve(".");
+  const result = await listComponents(projectPath);
+
+  if (!result.success) {
+    for (const err of result.errors) console.error(formatError({ message: err }));
+    return 1;
+  }
+
+  if (result.components.length === 0) {
+    console.error(formatWarning({ message: "No component definitions found (*.component.ts)" }));
+    return 0;
+  }
+
+  console.log(
+    "NAME".padEnd(22) +
+    "ARCHETYPE".padEnd(18) +
+    "PHASES".padEnd(8) +
+    "DEPENDS".padEnd(20) +
+    "FILE",
+  );
+
+  let runStatus: Map<string, string> | undefined;
+  try {
+    const { config } = await loadChantConfig(projectPath);
+    const profile = resolveProfile(config as Record<string, unknown>, ctx.args.profile);
+    const { Connection, Client } = await loadTemporalClient();
+    const connection = await Connection.connect(connectionOptions(profile));
+    const client = new Client({ connection, namespace: profile.namespace });
+    runStatus = new Map();
+    for (const { name } of result.components) {
+      try {
+        const desc = await client.workflow.getHandle(componentWorkflowId(name)).describe();
+        runStatus.set(name, desc.status.name);
+      } catch {
+        runStatus.set(name, "—");
+      }
+    }
+  } catch {
+    // Temporal not available — degrade gracefully
+  }
+
+  for (const c of result.components) {
+    const phases = String(c.phases.length);
+    const deps = c.dependsOn.join(",") || "—";
+    const status = runStatus?.get(c.name);
+    const statusStr = status ? ` [${status}]` : "";
+
+    console.log(
+      (c.name + statusStr).padEnd(22) +
+      c.archetype.padEnd(18) +
+      phases.padEnd(8) +
+      deps.padEnd(20) +
+      c.filePath,
+    );
+  }
+
+  return 0;
+}
+
 // ── chant run status <name> ───────────────────────────────────────────────────
 
 export async function runOpStatus(ctx: CommandContext): Promise<number> {
   if (!requireTemporalMode(ctx, "chant run status")) return 1;
   const name = ctx.args.extraPositional;
   if (!name) {
-    console.error(formatError({ message: "Op name is required: chant run status <name>" }));
+    const label = ctx.args.components ? "Component" : "Op";
+    console.error(formatError({ message: `${label} name is required: chant run status <name>` }));
     return 1;
   }
+
+  if (ctx.args.components) return runComponentStatus(ctx, name);
 
   const projectPath = resolve(".");
   let client, desc: WorkflowExecutionDescription, history: WorkflowHistoryRaw;
@@ -161,15 +246,56 @@ export async function runOpStatus(ctx: CommandContext): Promise<number> {
   return 0;
 }
 
+/**
+ * `chant run status <name> --components` (#599) — the component counterpart
+ * of `runOpStatus` above. Identical describe+history rendering; the only
+ * difference is the workflow id (`componentWorkflowId`, not
+ * `resolveWorkflowId`) and the "Component:" label, mirroring how
+ * `runOpSignal`/`runOpCancel` already distinguish the two id spaces (#589).
+ */
+async function runComponentStatus(ctx: CommandContext, name: string): Promise<number> {
+  const projectPath = resolve(".");
+  let client, desc: WorkflowExecutionDescription, history: WorkflowHistoryRaw;
+  try {
+    ({ client } = await makeTemporalClient(ctx.args.profile, projectPath));
+    const handle = client.workflow.getHandle(componentWorkflowId(name));
+    desc = await handle.describe();
+    history = await handle.fetchHistory();
+  } catch (err) {
+    console.error(formatError({ message: err instanceof Error ? err.message : String(err) }));
+    return 1;
+  }
+
+  console.log(formatBold(`Component: ${name}`));
+  console.log(`  Workflow ID : ${desc.workflowId}`);
+  console.log(`  Run ID      : ${desc.runId}`);
+  console.log(`  Status      : ${desc.status.name}`);
+  console.log(`  Task Queue  : ${desc.taskQueue}`);
+  console.log(`  Started     : ${desc.startTime.toISOString()}`);
+  if (desc.closeTime) console.log(`  Closed      : ${desc.closeTime.toISOString()}`);
+
+  const events = history.events ?? [];
+  const completed = events.filter((e) => e.eventType === "ActivityTaskCompleted").length;
+  const scheduled = events.filter((e) => e.eventType === "ActivityTaskScheduled").length;
+  if (scheduled > 0) {
+    console.log(`  Activities  : ${completed}/${scheduled} completed`);
+  }
+
+  return 0;
+}
+
 // ── chant run log <name> ──────────────────────────────────────────────────────
 
 export async function runOpLog(ctx: CommandContext): Promise<number> {
   if (!requireTemporalMode(ctx, "chant run log")) return 1;
   const name = ctx.args.extraPositional;
   if (!name) {
-    console.error(formatError({ message: "Op name is required: chant run log <name>" }));
+    const label = ctx.args.components ? "Component" : "Op";
+    console.error(formatError({ message: `${label} name is required: chant run log <name>` }));
     return 1;
   }
+
+  if (ctx.args.components) return runComponentLog(ctx, name);
 
   const projectPath = resolve(".");
   let client;
@@ -189,6 +315,61 @@ export async function runOpLog(ctx: CommandContext): Promise<number> {
 
   try {
     const fnName = workflowFnName(name);
+    for await (const run of client.workflow.list({ query: `WorkflowType = "${fnName}"` })) {
+      const start = run.startTime.toISOString().slice(0, 19).replace("T", " ");
+      const close = run.closeTime ? run.closeTime.toISOString().slice(0, 19).replace("T", " ") : "—";
+      console.log(
+        run.runId.padEnd(36) +
+        run.status.name.padEnd(16) +
+        start.padEnd(26) +
+        close,
+      );
+    }
+  } catch (err) {
+    console.error(formatError({ message: err instanceof Error ? err.message : String(err) }));
+    return 1;
+  }
+
+  return 0;
+}
+
+/**
+ * `chant run log <name> --components` (#599) — the component counterpart of
+ * `runOpLog` above. Same table shape; the `WorkflowType` query needs the
+ * component's generated workflow function name rather than
+ * `workflowFnName`'s Op convention, so this loads the Temporal component
+ * codegen module (`../../components/temporal-codegen-loader.ts`, the same
+ * loader `runComponentTemporal` already uses) purely for its
+ * `componentWorkflowFnName` helper — no compilation happens here, `log` only
+ * reads past run history.
+ */
+async function runComponentLog(ctx: CommandContext, name: string): Promise<number> {
+  const projectPath = resolve(".");
+  let client;
+  try {
+    ({ client } = await makeTemporalClient(ctx.args.profile, projectPath));
+  } catch (err) {
+    console.error(formatError({ message: err instanceof Error ? err.message : String(err) }));
+    return 1;
+  }
+
+  let fnName: string;
+  try {
+    const codegen = await loadComponentTemporalCodegen();
+    fnName = codegen.componentWorkflowFnName(name);
+  } catch (err) {
+    console.error(formatError({ message: err instanceof Error ? err.message : String(err) }));
+    return 1;
+  }
+
+  console.log(
+    "RUN-ID".padEnd(36) +
+    "STATUS".padEnd(16) +
+    "STARTED".padEnd(26) +
+    "CLOSED",
+  );
+
+  try {
     for await (const run of client.workflow.list({ query: `WorkflowType = "${fnName}"` })) {
       const start = run.startTime.toISOString().slice(0, 19).replace("T", " ");
       const close = run.closeTime ? run.closeTime.toISOString().slice(0, 19).replace("T", " ") : "—";

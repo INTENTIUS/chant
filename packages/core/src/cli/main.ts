@@ -227,10 +227,16 @@ Commands:
 Ops:
   run <name>            Start an Op workflow (spawns worker + submits to Temporal)
   run list              List all Ops with current run status
+                        --components: list discovered Components instead (--temporal
+                        also annotates each with its latest run status; #599)
   run status <name>     Show current workflow run state
+                        --components: show a Component's durable run state instead (#599)
   run signal <name> <signal>  Send a named signal to unblock a gate
+                        --components: signal a Component's workflow instead (#589)
   run cancel <name>     Cancel the active workflow run (requires --force)
+                        --components: cancel a Component's workflow instead (#589)
   run log <name>        Show run history for an Op
+                        --components: show a Component's run history instead (#599)
   run --components <name|all>  Run discovered Component(s) through the interpret
                         driver on the local executor (--env <env>; #585)
 
