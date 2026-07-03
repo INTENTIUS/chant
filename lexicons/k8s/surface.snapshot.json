@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "generatedAt": "2026-07-02T02:03:24.618Z",
+  "generatedAt": "2026-07-03T14:49:29.679Z",
   "entries": {
     "APIGroup": {
       "kind": "resource",
@@ -421,6 +421,22 @@
         "metadata:false"
       ]
     },
+    "ClusterTrustBundle": {
+      "kind": "resource",
+      "resourceType": "K8s::Certificates::ClusterTrustBundle",
+      "props": [
+        "metadata:false",
+        "spec:true"
+      ]
+    },
+    "ClusterTrustBundleList": {
+      "kind": "resource",
+      "resourceType": "K8s::Certificates::ClusterTrustBundleList",
+      "props": [
+        "items:true",
+        "metadata:false"
+      ]
+    },
     "ComponentStatus": {
       "kind": "resource",
       "resourceType": "K8s::Core::ComponentStatus",
@@ -537,7 +553,7 @@
       "resourceType": "K8s::Batch::CronJob",
       "props": [
         "metadata:false",
-        "spec:false"
+        "spec:true"
       ]
     },
     "CronJobList": {
@@ -652,6 +668,22 @@
         "metadata:false"
       ]
     },
+    "DeviceTaintRule": {
+      "kind": "resource",
+      "resourceType": "K8s::Resource::DeviceTaintRule",
+      "props": [
+        "metadata:false",
+        "spec:true"
+      ]
+    },
+    "DeviceTaintRuleList": {
+      "kind": "resource",
+      "resourceType": "K8s::Resource::DeviceTaintRuleList",
+      "props": [
+        "items:true",
+        "metadata:false"
+      ]
+    },
     "Endpoint": {
       "kind": "property",
       "resourceType": "K8s::Monitoring::ServiceMonitor.endpoints"
@@ -661,7 +693,7 @@
       "resourceType": "K8s::Discovery::EndpointSlice",
       "props": [
         "addressType:true",
-        "endpoints:true",
+        "endpoints:false",
         "metadata:false",
         "ports:false"
       ]
@@ -853,7 +885,7 @@
       "resourceType": "K8s::Autoscaling::HorizontalPodAutoscaler",
       "props": [
         "metadata:false",
-        "spec:false"
+        "spec:true"
       ]
     },
     "HTTPGetAction": {
@@ -889,7 +921,7 @@
       "resourceType": "K8s::Autoscaling::HorizontalPodAutoscaler",
       "props": [
         "metadata:false",
-        "spec:false"
+        "spec:true"
       ]
     },
     "HorizontalPodAutoscalerBehavior": {
@@ -913,7 +945,7 @@
       "resourceType": "K8s::Networking::IPAddress",
       "props": [
         "metadata:false",
-        "spec:false"
+        "spec:true"
       ]
     },
     "IPAddressList": {
@@ -1068,6 +1100,22 @@
         "spec:false"
       ]
     },
+    "LeaseCandidate": {
+      "kind": "resource",
+      "resourceType": "K8s::Coordination::LeaseCandidate",
+      "props": [
+        "metadata:false",
+        "spec:true"
+      ]
+    },
+    "LeaseCandidateList": {
+      "kind": "resource",
+      "resourceType": "K8s::Coordination::LeaseCandidateList",
+      "props": [
+        "items:true",
+        "metadata:false"
+      ]
+    },
     "LeaseList": {
       "kind": "resource",
       "resourceType": "K8s::Coordination::LeaseList",
@@ -1111,6 +1159,38 @@
     "MetricSpec": {
       "kind": "property",
       "resourceType": "K8s::Autoscaling::MetricSpec"
+    },
+    "MutatingAdmissionPolicy": {
+      "kind": "resource",
+      "resourceType": "K8s::Admissionregistration::MutatingAdmissionPolicy",
+      "props": [
+        "metadata:false",
+        "spec:false"
+      ]
+    },
+    "MutatingAdmissionPolicyBinding": {
+      "kind": "resource",
+      "resourceType": "K8s::Admissionregistration::MutatingAdmissionPolicyBinding",
+      "props": [
+        "metadata:false",
+        "spec:false"
+      ]
+    },
+    "MutatingAdmissionPolicyBindingList": {
+      "kind": "resource",
+      "resourceType": "K8s::Admissionregistration::MutatingAdmissionPolicyBindingList",
+      "props": [
+        "items:true",
+        "metadata:false"
+      ]
+    },
+    "MutatingAdmissionPolicyList": {
+      "kind": "resource",
+      "resourceType": "K8s::Admissionregistration::MutatingAdmissionPolicyList",
+      "props": [
+        "items:true",
+        "metadata:false"
+      ]
     },
     "MutatingWebhookConfiguration": {
       "kind": "resource",
@@ -1324,6 +1404,22 @@
         "spec:false"
       ]
     },
+    "PodCertificateRequest": {
+      "kind": "resource",
+      "resourceType": "K8s::Certificates::PodCertificateRequest",
+      "props": [
+        "metadata:false",
+        "spec:true"
+      ]
+    },
+    "PodCertificateRequestList": {
+      "kind": "resource",
+      "resourceType": "K8s::Certificates::PodCertificateRequestList",
+      "props": [
+        "items:true",
+        "metadata:false"
+      ]
+    },
     "PodDisruptionBudget": {
       "kind": "resource",
       "resourceType": "K8s::Policy::PodDisruptionBudget",
@@ -1400,7 +1496,7 @@
         "globalDefault:false",
         "metadata:false",
         "preemptionPolicy:false",
-        "value:true"
+        "value:false"
       ]
     },
     "PriorityClassList": {
@@ -1945,6 +2041,22 @@
         "metadata:false"
       ]
     },
+    "StorageVersionMigration": {
+      "kind": "resource",
+      "resourceType": "K8s::Storagemigration::StorageVersionMigration",
+      "props": [
+        "metadata:false",
+        "spec:false"
+      ]
+    },
+    "StorageVersionMigrationList": {
+      "kind": "resource",
+      "resourceType": "K8s::Storagemigration::StorageVersionMigrationList",
+      "props": [
+        "items:true",
+        "metadata:false"
+      ]
+    },
     "Strategy": {
       "kind": "property",
       "resourceType": "K8s::Argo::ApplicationSet.strategy"
@@ -1990,7 +2102,7 @@
       "resourceType": "K8s::Authentication::TokenRequest",
       "props": [
         "metadata:false",
-        "spec:true"
+        "spec:false"
       ]
     },
     "TokenReview": {
@@ -2026,7 +2138,7 @@
       "resourceType": "K8s::Admissionregistration::ValidatingAdmissionPolicyBinding",
       "props": [
         "metadata:false",
-        "spec:false"
+        "spec:true"
       ]
     },
     "ValidatingAdmissionPolicyBindingList": {
