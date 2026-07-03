@@ -13,14 +13,14 @@
  *
  * The JSON projection of this pilot is authoritative at
  * ../__fixtures__/dynamodb-infra.json (already schema-validated by
- * component-schema.test.ts) — this module is the TypeScript authoring form
- * that composes to that same document; see ./pilots.test.ts, which asserts
- * the two never diverge.
+ * component-schema.test.ts) — this module is the real typed `Component`
+ * authoring form (#560, ../component.ts) that composes to that same
+ * document; see ./pilots.test.ts, which asserts the two never diverge.
  */
 
 import type { CfnDeployInput } from "../verbs/apply";
-import type { Component } from "./authoring-shape";
-import { phase } from "./authoring-shape";
+import type { Component } from "../component";
+import { phase } from "../component";
 
 const cfnSafetyOptions: Pick<CfnDeployInput, "onReplace" | "stageGsi"> = {
   onReplace: "block",

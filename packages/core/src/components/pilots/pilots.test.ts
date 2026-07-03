@@ -26,7 +26,7 @@ import { ordersTable } from "./dynamodb.pilot";
 import { searchService } from "./alb-ecs.pilot";
 import { imageProcessor } from "./lambda.pilot";
 import { projectToJson } from "./project";
-import type { Component } from "./authoring-shape";
+import type { Component } from "../component";
 
 const FIXTURES_DIR = join(import.meta.dirname, "..", "__fixtures__");
 

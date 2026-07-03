@@ -25,13 +25,14 @@
  * for "genuinely novel"; see ../SPRAWL-VALIDATION.md for the full accounting.
  *
  * The JSON projection of this pilot is authoritative at
- * ../__fixtures__/lambda-image-processor.json — this module is the
- * TypeScript authoring form that composes to that same document; see
- * ./pilots.test.ts, which asserts the two never diverge.
+ * ../__fixtures__/lambda-image-processor.json — this module is the real
+ * typed `Component` authoring form (#560, ../component.ts) that composes to
+ * that same document; see ./pilots.test.ts, which asserts the two never
+ * diverge.
  */
 
-import type { Component } from "./authoring-shape";
-import { phase } from "./authoring-shape";
+import type { Component } from "../component";
+import { phase } from "../component";
 
 export const imageProcessor: Component = {
   name: "image-processor-lambda",

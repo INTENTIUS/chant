@@ -127,6 +127,8 @@ export function parseArgs(args: string[]): ParsedArgs {
       result.theme = args[++i];
     } else if (arg === "--stacks") {
       result.stacks = true;
+    } else if (arg === "--components") {
+      result.components = true;
     } else if (arg === "--detail") {
       result.detail = Number(args[++i]);
     } else if (arg === "--lens") {

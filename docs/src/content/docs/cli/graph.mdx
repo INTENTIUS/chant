@@ -7,16 +7,18 @@ description: Print the Op graph, the cross-stack apply order, or the infra graph
 
 ```
 chant graph [path] [--stacks] [--json]
+chant graph [path] [--components] [--json]
 chant graph [path] --format ir|mermaid|dot|layout [--detail 0..3] [--lens <kind>:<target>] [--up] [--down]
 chant graph [path] --format layout [--node-sizes <json|-|@file>] [--layout-engine dagre|graphviz]
 ```
 
 ## Description
 
-`chant graph` has three modes:
+`chant graph` has four modes:
 
 - **default** — the Op dependency graph (edges from each Op's `depends` field).
 - **`--stacks`** — the cross-stack apply-ordering graph.
+- **`--components`** — the [component](/chant/components/component-contract/) dependency graph, from each discovered component's `dependsOn`.
 - **`--format ir|mermaid|dot|layout`** — the **infrastructure graph** chant resolves during synthesis, emitted for diagrams. This is the graph of your declared resources and the references between them.
 
 The infra-graph formats are a pure function of lint-clean source — every node traces to a source file, every edge is a real cross-resource reference. They are **lint-gated**: chant refuses to emit a graph for source that does not pass `chant lint`, because the graph represents valid infrastructure.
@@ -114,6 +116,26 @@ Dependencies (consumer → producer):
   k8s → aws
 ```
 
+## `--components` — component dependency order
+
+`chant graph --components [path]` renders the **component dependency graph**: every `*.component.ts` declaration under `path`, ordered by `dependsOn`. Unlike `--stacks` (which infers edges from cross-lexicon attribute references), a component's dependency is always an explicit name in its own `dependsOn` list, so no reference inference is needed — the same `dependsOn` the [interpret driver](/chant/components/orchestration/) uses to order a real run.
+
+```bash
+chant graph --components ./infra
+chant graph --components ./infra --json
+```
+
+The output is the same shape as `--stacks`: a topological **order**, **waves** (components with no inter-dependency, safe to run concurrently), and dependency **edges** (consumer → producer). `--json` emits the full result. A dependency cycle, or a `dependsOn` naming an undiscovered component, is reported and exits non-zero.
+
+```
+Deploy order (waves apply top-to-bottom; a wave's components are parallel-safe):
+  1. shared-alb, orders-table
+  2. search-service
+
+Dependencies (consumer → producer):
+  search-service → shared-alb
+```
+
 ## Op graph (default)
 
 With no format flag, `chant graph` discovers all `*.op.ts` files under the given path and prints the dependency edges declared via each Op's `depends` field.
@@ -130,7 +152,7 @@ Each dependency prints as one edge per line, `<dependency> → <dependent>` — 
 | Code | Meaning |
 |------|---------|
 | 0 | Success |
-| 1 | Discovery errors; lint errors (infra-graph formats); a dependency cycle (`--stacks`); an invalid `--detail`/`--lens`; malformed `--node-sizes`; or a layout-engine failure (e.g. missing `dot` with `--layout-engine graphviz`) |
+| 1 | Discovery errors; lint errors (infra-graph formats); a dependency cycle (`--stacks`, `--components`) or unknown dependency (`--components`); an invalid `--detail`/`--lens`; malformed `--node-sizes`; or a layout-engine failure (e.g. missing `dot` with `--layout-engine graphviz`) |
 
 ## See Also
 

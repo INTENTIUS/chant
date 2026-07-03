@@ -6,6 +6,37 @@
  */
 
 export {
+  type Archetype,
+  type Wiring,
+  type StackOutputReference,
+  type BuildSpec,
+  type Step,
+  type Gate,
+  type Phase,
+  type Component,
+  phase,
+  gate,
+  stackOutput,
+  inferArchetype,
+  projectToJson,
+  isComponent,
+} from "./component";
+export {
+  type DiscoveredComponent,
+  type ComponentDiscoveryResult,
+  discoverComponents,
+} from "./discover";
+export {
+  type ListedComponent,
+  type ListComponentsResult,
+  type DescribedComponent,
+  type DescribeComponentResult,
+  type ComponentGraphResult,
+  listComponents,
+  describeComponent,
+  computeComponentGraph,
+} from "./cli-support";
+export {
   type Capability,
   type CapabilityInput,
   type CapabilityOutput,

@@ -8,13 +8,13 @@
  *
  * The JSON projection of this pilot is authoritative at
  * ../__fixtures__/neo4j-fanout.json (already schema-validated by
- * component-schema.test.ts) — this module is the TypeScript authoring form
- * that composes to that same document; see ./pilots.test.ts, which asserts
- * the two never diverge.
+ * component-schema.test.ts) — this module is the real typed `Component`
+ * authoring form (#560, ../component.ts) that composes to that same
+ * document; see ./pilots.test.ts, which asserts the two never diverge.
  */
 
-import type { Component, Phase } from "./authoring-shape";
-import { gate, phase } from "./authoring-shape";
+import type { Component, Phase } from "../component";
+import { gate, phase } from "../component";
 
 /** One Neo4j instance's mini-composition: provision, code-deploy the build, then wait for cluster health. */
 interface Neo4jInstanceConfig {

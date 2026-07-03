@@ -76,15 +76,43 @@ draft 2020-12 build) and exercises the schema's negative cases (missing
 required fields, malformed wiring references, an invalid archetype, a gate
 missing `signalName`, and so on).
 
+## Typed authoring form (`component.ts`, #560)
+
+`component.ts` is the real typed `Component` authoring frontend the docs
+describe: `Component`, `Phase`, `Step`, `Gate`, `BuildSpec`, `Wiring` mirror
+this schema's `$defs` field-for-field, plus the `phase()`/`gate()`/
+`stackOutput()` builders and `projectToJson()` (the mechanical TS → JSON
+projection, filling in `archetype` via `inferArchetype` when a component
+doesn't set one explicitly — see the archetype table above). It supersedes
+the Phase 1 stopgap `pilots/authoring-shape.ts` (deleted), which explicitly
+deferred the real API to this issue.
+
+## Discovery (`discover.ts`, #560)
+
+`discoverComponents(path)` finds every `Component` declared under a
+directory, mirroring chant's existing declarable discovery
+(`../discovery/index.ts`) as closely as a structurally distinct type allows,
+and borrowing its file-suffix convention from Op discovery
+(`../op/discover.ts`'s `*.op.ts`): any `.component.ts` file (excluding
+`.test.component.ts`/`.spec.component.ts`) is scanned, every export
+satisfying `isComponent` is collected (any export name, not just `default`,
+so one file may declare several related components), and a duplicate
+`component.name` across files is a discovery error — the same duplicate-name
+discipline `collectEntities`/`discoverOps` already apply to resources/Ops.
+`*.component.ts` was chosen over reusing the generic `.ts` + `Declarable`
+marker convention because a `Component` has no `lexicon`/`entityType` shape
+to tag; see `discover.ts`'s docstring for the full reasoning.
+
 ## Pilots
 
 `pilots/` (#555) authors three of those fixtures — the ALB/ECS service, the
-DynamoDB table, and the Neo4j fan-out cluster — a second way: as illustrative
-TypeScript, composed from the real capability verbs in `verbs/`. Each pilot's
-JSON projection is asserted equal to its `__fixtures__/*.json` counterpart, so
-the fixture stays the one authoritative JSON document; see
-`pilots/README.md` for the axis-by-axis mapping (build vs no-build, single vs
-fan-out, sticky vs simple apply, cross-stack wiring, auto vs no rollback).
+DynamoDB table, and the Neo4j fan-out cluster — a second way: as TypeScript
+authored against `component.ts`, composed from the real capability verbs in
+`verbs/`. Each pilot's JSON projection is asserted equal to its
+`__fixtures__/*.json` counterpart, so the fixture stays the one authoritative
+JSON document; see `pilots/README.md` for the axis-by-axis mapping (build vs
+no-build, single vs fan-out, sticky vs simple apply, cross-stack wiring, auto
+vs no rollback).
 
 `pilots/lambda.pilot.ts` (#558) adds a fourth component the same way — a
 container-image Lambda function — to validate the sprawl metric holds beyond

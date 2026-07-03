@@ -12,20 +12,65 @@ import { lintCommand } from "../commands/lint";
 import { readFileSync } from "node:fs";
 import { formatError, formatWarning, formatBold } from "../format";
 import type { CommandContext } from "../registry";
+import { computeComponentGraph } from "../../components/cli-support";
 
 /**
  * `chant graph` — the Op dependency graph by default; `--stacks` renders the
  * cross-stack apply-ordering graph (edges, order, waves) chant computes from
- * cross-lexicon references; `--format ir|mermaid` emits the lint-gated
- * entity-graph IR (or a Mermaid flowchart of it) for diagrams (#493/#496).
+ * cross-lexicon references; `--components` (#560) renders the same
+ * order/waves shape for discovered `Component` declarations, from their
+ * `dependsOn`; `--format ir|mermaid` emits the lint-gated entity-graph IR (or
+ * a Mermaid flowchart of it) for diagrams (#493/#496).
  */
 export async function runGraph(ctx: CommandContext): Promise<number> {
   const viewFormats = ["ir", "mermaid", "dot", "layout"] as const;
   if ((viewFormats as readonly string[]).includes(ctx.args.format)) {
     return runGraphView(ctx, ctx.args.format as (typeof viewFormats)[number]);
   }
+  if (ctx.args.components) return runComponentGraph(ctx);
   if (ctx.args.stacks) return runStackGraph(ctx);
   return runOpGraph();
+}
+
+/**
+ * `chant graph --components` (#560) — dependency order/waves for discovered
+ * `Component` declarations, mirroring `runStackGraph`'s presentation
+ * (waves top-to-bottom, consumer → producer edges) but sourced from
+ * `computeComponentGraph` (../../components/cli-support.ts), which resolves
+ * order purely from each component's flat `dependsOn` list — no AttrRef-style
+ * cross-lexicon inference needed, since a component's dependency is always
+ * an explicit name.
+ */
+async function runComponentGraph(ctx: CommandContext): Promise<number> {
+  const projectPath = resolve(ctx.args.path === "." ? "." : ctx.args.path);
+  const graph = await computeComponentGraph(projectPath);
+
+  if (!graph.success) {
+    console.error(formatError({ message: graph.error ?? "Failed to compute component graph" }));
+    return 1;
+  }
+
+  if (ctx.args.json) {
+    console.log(JSON.stringify(graph, null, 2));
+    return 0;
+  }
+
+  if (graph.order.length === 0) {
+    console.log("No components found");
+    return 0;
+  }
+
+  console.log(formatBold("Deploy order (waves apply top-to-bottom; a wave's components are parallel-safe):"));
+  graph.waves.forEach((wave, i) => console.log(`  ${i + 1}. ${wave.join(", ")}`));
+
+  if (graph.edges.length > 0) {
+    console.log(formatBold("\nDependencies (consumer → producer):"));
+    for (const { from, to } of graph.edges) console.log(`  ${from} → ${to}`);
+  } else {
+    console.log("\nNo cross-component dependencies — all components are independent.");
+  }
+
+  return 0;
 }
 
 /**

@@ -25,7 +25,7 @@
 import { topoSort } from "../codegen/topo-sort";
 import type { CapabilityRegistry, DeployContext } from "./capability";
 
-// ── Component-shaped input (mirrors component.schema.json / authoring-shape.ts) ──
+// ── Component-shaped input (mirrors component.schema.json / ./component.ts) ──
 
 /** A wiring reference or literal value, as it appears in a step's fields (schema `WiringValue`). */
 export type WiringValue =
