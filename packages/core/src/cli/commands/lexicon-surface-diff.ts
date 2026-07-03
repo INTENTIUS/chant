@@ -11,9 +11,10 @@
  * Pass `--update-snapshot` to commit the fresh snapshot after a successful run.
  */
 
-import { existsSync } from "fs";
-import { resolve } from "path";
+import { existsSync, readFileSync } from "fs";
+import { resolve, join } from "path";
 import { regenLexicon, writeSurfaceSnapshot, SNAPSHOT_FILENAME, type RegenResult } from "../../codegen/lexicon-regen";
+import { bumpForSeverity, bumpPackageJsonVersion } from "../../codegen/version-bump";
 
 // ── Types ─────────────────────────────────────────────────────────────
 
@@ -36,6 +37,11 @@ export interface SurfaceDiffOptions {
   pinnedDigestPath?: string;
   /** After a successful regen, write the fresh snapshot as the new baseline. */
   updateSnapshot?: boolean;
+  /**
+   * When re-baselining (`updateSnapshot`), also bump the lexicon's package.json
+   * version by the drift severity so the accepted surface is publishable (#616).
+   */
+  bump?: boolean;
 }
 
 // ── Main entry ────────────────────────────────────────────────────────
@@ -78,6 +84,24 @@ export async function runSurfaceDiff(opts: SurfaceDiffOptions): Promise<RegenRes
   if (opts.updateSnapshot && result.ok && result.freshSnapshot) {
     writeSurfaceSnapshot(dir, result.freshSnapshot);
     process.stderr.write(`Snapshot updated: ${dir}/${SNAPSHOT_FILENAME}\n`);
+
+    // #616: accepting drift on a rolling lexicon changes the surface but nothing
+    // bumps the version — so skip-if-unchanged would strand the new surface at
+    // publish time. `--bump` raises the version by the drift severity (0.x-aware)
+    // so the accepted drift actually ships.
+    if (opts.bump && result.changed && result.severity !== "none") {
+      const pkgPath = join(dir, "package.json");
+      if (existsSync(pkgPath)) {
+        const current = (JSON.parse(readFileSync(pkgPath, "utf-8")) as { version?: string }).version ?? "0.0.0";
+        const bumped = bumpForSeverity(current, result.severity);
+        if (bumped) {
+          bumpPackageJsonVersion(pkgPath, bumped);
+          process.stderr.write(`Version bumped: ${current} -> ${bumped} (${result.severity})\n`);
+        } else {
+          process.stderr.write(`Version unchanged: could not bump ${current} for severity ${result.severity}\n`);
+        }
+      }
+    }
   }
 
   return result;

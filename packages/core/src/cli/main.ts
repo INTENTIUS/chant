@@ -164,6 +164,8 @@ export function parseArgs(args: string[]): ParsedArgs {
       result.pinnedDigest = args[++i];
     } else if (arg === "--check") {
       result.check = true;
+    } else if (arg === "--bump") {
+      result.bump = true;
     } else if (arg === "--component") {
       result.component = args[++i];
     } else if (arg === "--digest") {
@@ -281,6 +283,8 @@ Lexicon development:
   dev check-lexicon <dir>  Check lexicon completeness (tier 1/2/3)
   dev surface-diff <dir>   Regen lexicon, validate, diff API surface vs committed baseline
                            (--force: bypass spec cache; --update-snapshot: write new baseline;
+                            --bump: with --update-snapshot, bump package version by drift severity;
+                            --check: fail if the committed baseline drifted (never writes);
                             --run-examples: also run example build harness;
                             --pinned-digest <file>: verify spec digest before regen)
   dev pinned-upgrade <dir> Report if a pinned lexicon (k8s|gcp|docker|gitlab) has a newer
