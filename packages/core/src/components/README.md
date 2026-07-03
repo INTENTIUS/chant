@@ -75,3 +75,13 @@ validates every fixture against `component.schema.json` with
 exercises the schema's negative cases (missing required fields, malformed
 wiring references, an invalid archetype, a gate missing `signalName`, and so
 on).
+
+## Pilots
+
+`pilots/` (#555) authors three of those fixtures — the ALB/ECS service, the
+DynamoDB table, and the Neo4j fan-out cluster — a second way: as illustrative
+TypeScript, composed from the real capability verbs in `verbs/`. Each pilot's
+JSON projection is asserted equal to its `__fixtures__/*.json` counterpart, so
+the fixture stays the one authoritative JSON document; see
+`pilots/README.md` for the axis-by-axis mapping (build vs no-build, single vs
+fan-out, sticky vs simple apply, cross-stack wiring, auto vs no rollback).
