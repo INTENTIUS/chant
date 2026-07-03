@@ -1,8 +1,7 @@
 /**
- * Component-native release orchestration — capability contract + starter verb
- * set (epic #551). This phase (#554) ships the typed interface, registry, and
- * stubs only; no cloud implementation and no orchestrator/driver yet.
- * See https://intentius.io/chant/components/capabilities/
+ * Component-native release orchestration — capability contract, starter verb
+ * set, and the thin interpret driver (epic #551, #554/#556). No cloud
+ * implementation yet (see #557). See https://intentius.io/chant/components/orchestration/
  */
 
 export {
@@ -15,3 +14,23 @@ export {
 } from "./capability";
 export { createCapabilityRegistry, STARTER_VERB_FAMILIES } from "./registry";
 export * from "./verbs/index";
+export {
+  type DriverStep,
+  type DriverGate,
+  type DriverPhase,
+  type DriverComponent,
+  type DriverStepRecord,
+  type DriverComponentResult,
+  type DriverRunResult,
+  type ComponentGraph,
+  type InterpretRunOptions,
+  type WiringValue,
+  resolveComponentGraph,
+  resolveWiring,
+  runComponentDeploy,
+  runInterpretDriver,
+  DriverGateUnsupportedError,
+  DependencyCycleError,
+  UnknownDependencyError,
+  DriverRunFailure,
+} from "./driver";
