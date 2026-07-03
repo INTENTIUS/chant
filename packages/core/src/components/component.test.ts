@@ -220,3 +220,32 @@ describe("projectToJson()", () => {
     });
   });
 });
+
+describe("BuildSpec.sbom (#606 — component-level SBOM authoring hint)", () => {
+  it("projects an authored sbom hint through unchanged, riding BuildSpec's open additionalProperties shape", () => {
+    const component: Component = {
+      name: "search-service",
+      dependsOn: [],
+      build: { kind: "docker-build", context: ".", sbom: { format: "cyclonedx" } },
+      deploy: [phase("Publish", [{ kind: "publish-image" }])],
+    };
+    const projected = projectToJson(component) as { build: { sbom?: { format?: string; optOut?: boolean } } };
+    expect(projected.build.sbom).toEqual({ format: "cyclonedx" });
+  });
+
+  it("omits sbom from the projection when not authored (no behavior change for existing components)", () => {
+    const component: Component = {
+      name: "search-service",
+      dependsOn: [],
+      build: { kind: "docker-build", context: "." },
+      deploy: [phase("Publish", [{ kind: "publish-image" }])],
+    };
+    const projected = projectToJson(component) as { build: Record<string, unknown> };
+    expect("sbom" in projected.build).toBe(false);
+  });
+
+  it("supports an explicit opt-out hint", () => {
+    const build = { kind: "docker-build", sbom: { optOut: true } };
+    expect(build.sbom.optOut).toBe(true);
+  });
+});

@@ -3,7 +3,7 @@
  * other build-family verbs) write into (#564, epic #551 "4. Build archive +
  * deferred publish"). See docs/components/build-archive.mdx.
  *
- * A build archive holds three kinds of contents, enumerated by one manifest:
+ * A build archive holds four kinds of contents, enumerated by one manifest:
  *  - `image` — an image tarball in OCI layout (as `docker save` produces),
  *    content-addressed by its digest.
  *  - `template` — a synthesized deploy template (e.g. a CloudFormation
@@ -11,6 +11,15 @@
  *    (see ../verbs/apply.ts's `CfnDeployInput.template`).
  *  - `asset` — any other published artifact (a jar, a zip) the `publish`
  *    family's non-image backends (`publish-artifact`) promote.
+ *  - `sbom` — a Software Bill of Materials attached to another entry's
+ *    digest (#606, epic #551 follow-up to #564/#568), written by the
+ *    `generate-sbom` capability (./sbom.ts). The archive is the **universal
+ *    home** for the SBOM regardless of artifact type: an image's SBOM may
+ *    also be projected as an OCI referrer at publish time (a registry-side
+ *    convenience for `oras discover`/`cosign tree`), but the archive-carried
+ *    copy is what makes non-image artifacts (a jar in S3, a zip) and
+ *    registry-less deploys (`load-image-on-host`) work identically — no
+ *    registry required to read a build's SBOM back.
  *
  * The manifest is itself content-addressed (`manifestDigest`, a stable hash
  * over its entries) so two builds of the same inputs produce the same
@@ -20,23 +29,38 @@
  * lets `docker-build` (./build.ts) and `publish-image`/`load-image-on-host`
  * (./publish.ts) build and promote an archive entirely through the injectable
  * `CloudExecutor`, exercised in tests via `MockCloudExecutor` with no real
- * disk/docker/AWS involved.
+ * disk/docker/AWS involved. The same is true of `generate-sbom` (./sbom.ts)
+ * and the injectable `SbomGenerator` (./sbom-generator.ts).
  */
 
 // ── manifest entries ──────────────────────────────────────────────────────
 
-export type BuildArchiveEntryKind = "image" | "template" | "asset";
+export type BuildArchiveEntryKind = "image" | "template" | "asset" | "sbom";
 
 /** One content-addressed item inside a build archive. */
 export interface BuildArchiveEntry {
-  /** What this entry is — an OCI-layout image tarball, a synthesized template, or a non-image asset (jar/zip). */
+  /** What this entry is — an OCI-layout image tarball, a synthesized template, a non-image asset (jar/zip), or an SBOM. */
   kind: BuildArchiveEntryKind;
   /** Path of this entry inside the archive (what `cfn-deploy`'s `archive:<path>` and `publish-image`/`publish-artifact`'s `from` reference). */
   path: string;
   /** Content-addressed digest of this entry's bytes (`sha256:...`). Identity for promote-by-digest. */
   digest: string;
-  /** Declared media type, mirroring the OCI conventions the epic references (`oras discover`/`cosign tree` attach to the same digest). Defaults are assigned per `kind` by `addArchiveEntry` when omitted. */
+  /** Declared media type, mirroring the OCI conventions the epic references (`oras discover`/`cosign tree` attach to the same digest). Defaults are assigned per `kind` by `addArchiveEntry` when omitted. For a `kind: "sbom"` entry this is the SBOM's own media type (`application/spdx+json` or `application/vnd.cyclonedx+json`) — never hardcoded, always read from the `SbomDocument` that produced the entry (./sbom-generator.ts). */
   mediaType?: string;
+  /**
+   * For a `kind: "sbom"` entry only: the digest of the artifact this SBOM
+   * describes (an `image`/`asset` entry's `digest` elsewhere in the same
+   * manifest) — the OCI "referrer subject" relationship, recorded uniformly
+   * here regardless of whether the backend that produced it was a BuildKit
+   * attestation or a `syft` scan (#606: "the backend owns HOW it attaches
+   * ... the archive manifest records it uniformly"). Absent for non-SBOM
+   * entries.
+   */
+  subjectDigest?: string;
+  /** For a `kind: "sbom"` entry only: number of packages/components the SBOM enumerates, when known — surfaced by `chant components status` without parsing the SBOM bytes. */
+  packageCount?: number;
+  /** For a `kind: "sbom"` entry only: which tool produced it (e.g. "syft", "buildkit") — surfaced alongside format/package count so status reports SBOM *source*. */
+  generator?: string;
 }
 
 /** The manifest of contents for one build archive — the "self-contained format" #564 asks for. */
@@ -59,10 +83,19 @@ export interface BuildArchiveManifest {
   manifestDigest: string;
 }
 
+/**
+ * Fallback media type per entry `kind`, used only when a caller omits
+ * `mediaType` on `addArchiveEntry`. `sbom` has no single default here by
+ * design — SPDX and CycloneDX are both first-class (#606) and the actual
+ * media type always comes from the `SbomDocument` the `generate-sbom`
+ * capability produced (./sbom-generator.ts); this fallback exists only so a
+ * malformed/omitted call doesn't produce an entry with no media type at all.
+ */
 const DEFAULT_MEDIA_TYPES: Record<BuildArchiveEntryKind, string> = {
   image: "application/vnd.oci.image.layout.v1.tar",
   template: "application/json",
   asset: "application/octet-stream",
+  sbom: "application/spdx+json",
 };
 
 /**
@@ -133,4 +166,24 @@ export function archiveRelativePath(ref: string): string {
 /** All `image`-kind entries in a manifest — what a publish backend has to choose from when `from` is ambiguous/omitted. */
 export function imageEntries(manifest: BuildArchiveManifest): BuildArchiveEntry[] {
   return manifest.contents.filter((e) => e.kind === "image");
+}
+
+/** All `sbom`-kind entries in a manifest, regardless of which artifact they describe (#606). */
+export function sbomEntries(manifest: BuildArchiveManifest): BuildArchiveEntry[] {
+  return manifest.contents.filter((e) => e.kind === "sbom");
+}
+
+/**
+ * Find the archive-carried SBOM entry attached to a given artifact digest
+ * (an `image`/`asset` entry's `digest` elsewhere in the same manifest). This
+ * is the archive-native lookup ../../lifecycle/build-ledger.ts's
+ * `buildLedgerEntries` uses to surface "SBOM by digest" without any registry
+ * or `oras`/network access — the archive is the universal home for the SBOM
+ * regardless of artifact type (#606).
+ */
+export function findSbomForSubject(
+  manifest: BuildArchiveManifest,
+  subjectDigest: string,
+): BuildArchiveEntry | undefined {
+  return manifest.contents.find((e) => e.kind === "sbom" && e.subjectDigest === subjectDigest);
 }

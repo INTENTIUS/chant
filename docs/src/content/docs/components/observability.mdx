@@ -41,11 +41,11 @@ A release record is never edited or replaced in place. Recording a new deploy ap
 
 The binding key is the **digest** — the same identity [`publish-image`/`load-image-on-host`](/chant/components/build-archive/) promote by. Because publish never rebuilds, that identity threads build → dev → staging → prod unchanged, so comparing environments is a digest comparison, never a guess through CI logs.
 
-## Build ledger: referrer discovery
+## Build ledger: SBOM and referrer discovery
 
-The [build archive manifest](/chant/components/build-archive/) is already content-addressed and already enumerates a build's contents. What this adds is discovery of an image digest's **referrers** — the SBOM, SLSA provenance, and signature attached to the same digest by tooling like `oras discover <digest>` / `cosign tree`.
+The [build archive manifest](/chant/components/build-archive/) is already content-addressed and already enumerates a build's contents, including an `sbom`-kind entry when a component composed [`generate-sbom`](/chant/components/build-archive/#sbom-format-agnostic-generated-at-build-time). On top of that, the build ledger discovers an image digest's **referrers** — the SBOM, SLSA provenance, and signature attached to the same digest by tooling like `oras discover <digest>` / `cosign tree`.
 
-This is surface-and-consume only. Generating SBOM/provenance/signatures is out of scope here — that belongs with the build archive's signing follow-up. The lookup is injectable (`ReferrerLookup`), defaulting to a no-op so a build-ledger query never requires network/registry access unless a real implementation is wired in:
+SLSA provenance generation and `cosign` signing remain out of scope here — natural siblings to `generate-sbom` that attach by the same digest, left for a follow-up. Referrer discovery is surface-and-consume only: the lookup is injectable (`ReferrerLookup`), defaulting to a no-op so a build-ledger query never requires network/registry access unless a real implementation is wired in:
 
 ```ts
 import { buildLedgerEntries, type ReferrerLookup } from "@intentius/chant/lifecycle";
@@ -58,7 +58,10 @@ const orasLookup: ReferrerLookup = {
 
 const entries = await buildLedgerEntries(manifest, orasLookup);
 // entries[i].referrers: [{ kind: "sbom" | "provenance" | "signature", digest, mediaType, location? }]
+// entries[i].sbom: { mediaType, packageCount?, generator?, source: "archive" | "referrer" } | undefined
 ```
+
+`entries[i].sbom` reads whichever source is available — the archive-carried `sbom` entry first (works for every artifact type and every publish backend, registry or not), the registry-discovered referrer otherwise (image artifacts only). Both trace back to the same `generate-sbom` run for a given digest, so which one answers doesn't change the answer.
 
 ## Reconciling with live
 
@@ -96,7 +99,11 @@ chant components status                                 # every environment with
       "timestamp": "2026-07-02T18:04:11.000Z",
       "actor": "octocat"
     },
-    "build": { "manifestDigest": "sha256:...", "referrers": ["sbom", "provenance"] },
+    "build": {
+      "manifestDigest": "sha256:...",
+      "referrers": ["sbom", "provenance"],
+      "sbom": { "mediaType": "application/spdx+json", "packageCount": 142, "generator": "syft", "source": "archive" }
+    },
     "reconciliation": "reconciled",
     "detail": "recorded 2026-07-02T18:04:11.000Z (digest sha256:9fae3d...), live and consistent"
   }

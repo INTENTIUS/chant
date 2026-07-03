@@ -31,6 +31,7 @@ import {
   dockerBuild,
   zipPackage,
   jvmBuild,
+  generateSbom,
   publishImage,
   loadImageOnHost,
   publishArtifact,
@@ -67,6 +68,7 @@ import type { CapabilityPlugin } from "./capability-plugin";
  */
 export const STARTER_VERB_FAMILIES = {
   build: ["docker-build", "zip-package", "jvm-build"],
+  sbom: ["generate-sbom"],
   publish: ["publish-image", "load-image-on-host", "publish-artifact"],
   apply: ["cfn-deploy", "ecs-update-service", "lambda-deploy", "s3-sync", "cdn-invalidate", "run-migration"],
   jobSubmission: ["emr-start-job-run", "emr-submit-step"],
@@ -95,6 +97,7 @@ function starterCapabilities(): Array<Capability<never, unknown>> {
     dockerBuild,
     zipPackage,
     jvmBuild,
+    generateSbom,
     publishImage,
     loadImageOnHost,
     publishArtifact,

@@ -5,11 +5,16 @@
  * `code-deploy`, `wait-for-stack`, `wait-steady-state`, `wait-cluster-healthy`
  * — are real implementations over the injectable `CloudExecutor` (#557/#564,
  * epic #551, see ./cloud-executor.ts); every other verb remains a typed stub
- * (../capability.ts).
+ * (../capability.ts). `generate-sbom` (#606) is a real implementation over
+ * the injectable, artifact-type-keyed `SbomGenerator` (./sbom-generator.ts),
+ * defaulted to a "not implemented" backend (mirroring `noopReferrerLookup`)
+ * until a real scanner integration is wired in.
  */
 
 export * from "./build-archive";
 export * from "./build";
+export * from "./sbom-generator";
+export * from "./sbom";
 export * from "./publish";
 export * from "./apply";
 export * from "./job-submission";
