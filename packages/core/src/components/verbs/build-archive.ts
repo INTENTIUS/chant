@@ -8,18 +8,29 @@
  *    content-addressed by its digest.
  *  - `template` — a synthesized deploy template (e.g. a CloudFormation
  *    document) referenced by `cfn-deploy`'s `archive:<name>` convention
- *    (see ../verbs/apply.ts's `CfnDeployInput.template`).
+ *    (see ../verbs/apply.ts's `CfnDeployInput.template`). Per #613, a
+ *    `template` entry is a first-class artifact with its own content
+ *    digest — peer to `image`/`asset` — so it can itself be the
+ *    `subjectDigest` a `sbom`-kind entry (specifically a config-BOM,
+ *    `bomKind: "config"`) is attached to.
  *  - `asset` — any other published artifact (a jar, a zip) the `publish`
  *    family's non-image backends (`publish-artifact`) promote.
- *  - `sbom` — a Software Bill of Materials attached to another entry's
- *    digest (#606, epic #551 follow-up to #564/#568), written by the
- *    `generate-sbom` capability (./sbom.ts). The archive is the **universal
- *    home** for the SBOM regardless of artifact type: an image's SBOM may
- *    also be projected as an OCI referrer at publish time (a registry-side
- *    convenience for `oras discover`/`cosign tree`), but the archive-carried
- *    copy is what makes non-image artifacts (a jar in S3, a zip) and
- *    registry-less deploys (`load-image-on-host`) work identically — no
- *    registry required to read a build's SBOM back.
+ *  - `sbom` — a Bill of Materials attached to another entry's digest (#606,
+ *    #613, epic #551 follow-up to #564/#568), written by either the
+ *    `generate-sbom` capability (./sbom.ts, a **software** BOM over an
+ *    image/jar/zip/dir) or the `extract-config-bom` capability
+ *    (./config-bom.ts, a **config-BOM** over a synthesized IaC template's
+ *    declared resources/nested stacks/external references). `bomKind`
+ *    distinguishes the two without introducing a separate entry kind — both
+ *    are content-addressed, digest-linked BOM documents, and every existing
+ *    `sbom`-kind consumer (`findSbomForSubject`, the build ledger) keeps
+ *    working unmodified for either kind. The archive is the **universal
+ *    home** for both: an image's SBOM may also be projected as an OCI
+ *    referrer at publish time (a registry-side convenience for `oras
+ *    discover`/`cosign tree`), but the archive-carried copy is what makes
+ *    non-image artifacts (a jar in S3, a zip, a template) and registry-less
+ *    deploys (`load-image-on-host`) work identically — no registry required
+ *    to read a build's BOM back.
  *
  * The manifest is itself content-addressed (`manifestDigest`, a stable hash
  * over its entries) so two builds of the same inputs produce the same
@@ -61,6 +72,16 @@ export interface BuildArchiveEntry {
   packageCount?: number;
   /** For a `kind: "sbom"` entry only: which tool produced it (e.g. "syft", "buildkit") — surfaced alongside format/package count so status reports SBOM *source*. */
   generator?: string;
+  /**
+   * For a `kind: "sbom"` entry only: whether this is a **software** BOM
+   * (over an image/jar/zip/dir's declared dependencies, ./sbom.ts) or a
+   * **config-BOM** (over a synthesized IaC template's declared resources +
+   * nested stacks + external references, ./config-bom.ts) (#613). Defaults
+   * to `"software"` when omitted, so every pre-#613 `sbom` entry (and every
+   * caller that never set this field) is unambiguously the software kind —
+   * this default must never change without a manifest version bump.
+   */
+  bomKind?: "software" | "config";
 }
 
 /** The manifest of contents for one build archive — the "self-contained format" #564 asks for. */
@@ -186,4 +207,27 @@ export function findSbomForSubject(
   subjectDigest: string,
 ): BuildArchiveEntry | undefined {
   return manifest.contents.find((e) => e.kind === "sbom" && e.subjectDigest === subjectDigest);
+}
+
+/**
+ * Find the archive-carried **config-BOM** entry (`bomKind: "config"`)
+ * attached to a given template digest — the config-BOM analogue of
+ * `findSbomForSubject` (#613). A `template` entry's digest is computed the
+ * same way an `image`/`asset` entry's is (`contentDigest` over its bytes,
+ * see `addArchiveTemplate` in ./build.ts), so config-only/infra components
+ * with no software artifact still resolve a BOM by digest through the same
+ * lookup shape as every other artifact kind.
+ */
+export function findConfigBomForSubject(
+  manifest: BuildArchiveManifest,
+  subjectDigest: string,
+): BuildArchiveEntry | undefined {
+  return manifest.contents.find(
+    (e) => e.kind === "sbom" && e.bomKind === "config" && e.subjectDigest === subjectDigest,
+  );
+}
+
+/** All `template`-kind entries in a manifest — every synthesized IaC document the archive carries, each a first-class artifact with its own content digest (#613). */
+export function templateEntries(manifest: BuildArchiveManifest): BuildArchiveEntry[] {
+  return manifest.contents.filter((e) => e.kind === "template");
 }

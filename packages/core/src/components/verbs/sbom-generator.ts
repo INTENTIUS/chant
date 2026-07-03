@@ -152,12 +152,23 @@ export class SbomGeneratorNotImplementedError extends Error {
  * ../../lifecycle/build-ledger.ts) so importing ./sbom.ts never shells out to
  * a real `syft`/`docker buildx` at import time or in a test that forgets to
  * inject a mock — the failure is loud and specific rather than a silent
- * network/process call. A real chant-native implementation (shelling out to
- * `syft`/`docker buildx --sbom`/`cyclonedx-maven`/`cdxgen`, the same way
- * ./cloud-executor.ts's `realCloudExecutor` shells out to `docker`/`aws`) is
- * intentionally left for a follow-up: this issue's scope is the pluggable
- * boundary + the archive/ledger/status wiring around it, not shipping a
- * particular scanner integration.
+ * network/process call.
+ *
+ * A real, **hermetic** chant-native implementation now exists —
+ * ./lockfile-sbom-generator.ts's `createLockfileSbomGenerator`/
+ * `lockfileSbomGenerator` (#613), which parses `package-lock.json`/`pom.xml`
+ * already on disk with no external tool and no network. It is not wired in
+ * as *this* default: a project opts into it explicitly (constructing
+ * `createGenerateSbomCapability(lockfileSbomGenerator)`) rather than having
+ * every previously-"not implemented" call silently start succeeding, which
+ * would be a behavior change for any caller relying on the loud failure.
+ * `notImplementedSbomGenerator` remains the right default for `forImage`
+ * specifically, since no hermetic backend can see an image's base layers —
+ * a real `syft`/`docker buildx --sbom`/`cyclonedx-maven`/`cdxgen`-backed
+ * implementation for that artifact-type-scan path is left for a follow-up
+ * (the deep-scan path, tracked separately from this hermetic baseline), the
+ * same way ./cloud-executor.ts's `realCloudExecutor` shells out to
+ * `docker`/`aws`.
  */
 export const notImplementedSbomGenerator: SbomGenerator = {
   async forImage(): Promise<SbomDocument> {
