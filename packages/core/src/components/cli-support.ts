@@ -311,33 +311,56 @@ export interface RunComponentsResult {
  * component execution to what already exists for Ops; the epic tracks
  * graduating a gated component to `--temporal` separately).
  */
+/** Result of resolving a `<name|all>` selector against discovered components — shared by the local (`runComponents`) and durable (Temporal codegen, #589) entrypoints. */
+export interface ResolvedComponentTargets {
+  success: boolean;
+  targets: DriverComponent[];
+  error?: string;
+}
+
+/**
+ * Discover every component under `path` and resolve `selector` (`"all"` or a
+ * single component name) to the `DriverComponent`(s) to run, with no gate
+ * check and no dispatch — just discovery + selection, factored out of
+ * `runComponents` so the durable Temporal entrypoint (`chant run --components
+ * <name> --temporal`, #589) can reuse the exact same selection semantics
+ * without also inheriting the local executor's pre-flight gate rejection
+ * (gates are exactly what the durable path exists to support).
+ */
+export async function resolveComponentTargets(path: string, selector: string): Promise<ResolvedComponentTargets> {
+  const result = await discoverComponents(path);
+  if (result.errors.length > 0) {
+    return { success: false, targets: [], error: result.errors.map((e) => e.message).join("\n") };
+  }
+
+  const all = [...result.components.values()].map(({ component }) => toDriverComponent(component));
+
+  if (selector === "all") {
+    return { success: true, targets: all };
+  }
+
+  const found = all.find((c) => c.name === selector);
+  if (!found) {
+    const known = all.map((c) => c.name).sort().join(", ");
+    return {
+      success: false,
+      targets: [],
+      error: `Component "${selector}" not found.${known ? ` Known components: ${known}` : " No components discovered."}`,
+    };
+  }
+  return { success: true, targets: [found] };
+}
+
 export async function runComponents(
   path: string,
   selector: string,
   options: RunComponentsOptions = {},
 ): Promise<RunComponentsResult> {
-  const result = await discoverComponents(path);
-  if (result.errors.length > 0) {
-    return { success: false, selected: [], error: result.errors.map((e) => e.message).join("\n") };
+  const resolved = await resolveComponentTargets(path, selector);
+  if (!resolved.success) {
+    return { success: false, selected: [], error: resolved.error };
   }
-
-  const all = [...result.components.values()].map(({ component }) => toDriverComponent(component));
-
-  let targets: DriverComponent[];
-  if (selector === "all") {
-    targets = all;
-  } else {
-    const found = all.find((c) => c.name === selector);
-    if (!found) {
-      const known = all.map((c) => c.name).sort().join(", ");
-      return {
-        success: false,
-        selected: [],
-        error: `Component "${selector}" not found.${known ? ` Known components: ${known}` : " No components discovered."}`,
-      };
-    }
-    targets = [found];
-  }
+  const targets = resolved.targets;
 
   for (const component of targets) {
     const gate = findComponentGate(component);
