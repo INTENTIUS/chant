@@ -1,8 +1,33 @@
 import { describe, test, expect } from "vitest";
 import { doctorCommand } from "./doctor";
 import { withTestDir } from "@intentius/chant-test-utils";
-import { writeFileSync, mkdirSync } from "fs";
-import { join } from "path";
+import { writeFileSync, mkdirSync, rmSync, existsSync } from "fs";
+import { join, dirname } from "path";
+import { fileURLToPath } from "url";
+
+/**
+ * Root `node_modules/` — where a bare `@intentius/chant-capability-<name>`
+ * specifier actually resolves from from within this package (dynamic
+ * `import()` in ../../components/capability-plugin-loader.ts resolves
+ * relative to the importing module, not to whatever `testDir` a doctor test
+ * points `doctorCommand` at). Used below to install a throwaway, genuinely
+ * malformed capability package for the duration of one test, then remove it.
+ */
+const repoNodeModules = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "..", "..", "..", "node_modules");
+
+/** Write a minimal CJS/ESM-agnostic package under `@intentius/chant-capability-<name>` in the real node_modules, for exercising the doctor's capability-plugin check end to end. Caller must remove it (see `finally` blocks below). */
+function installFakeCapabilityPackage(name: string, indexSource: string): string {
+  const pkgDir = join(repoNodeModules, "@intentius", `chant-capability-${name}`);
+  mkdirSync(pkgDir, { recursive: true });
+  writeFileSync(join(pkgDir, "package.json"), JSON.stringify({ name: `@intentius/chant-capability-${name}`, version: "1.0.0", type: "module", main: "index.js" }));
+  writeFileSync(join(pkgDir, "index.js"), indexSource);
+  return pkgDir;
+}
+
+function removeFakeCapabilityPackage(name: string): void {
+  const pkgDir = join(repoNodeModules, "@intentius", `chant-capability-${name}`);
+  if (existsSync(pkgDir)) rmSync(pkgDir, { recursive: true, force: true });
+}
 
 describe("doctorCommand", () => {
   test("config-exists fails when no config file present", async () => {
@@ -234,6 +259,95 @@ describe("doctorCommand", () => {
       const check = report.checks.find((c) => c.name === "mcp-config");
       expect(check).toBeDefined();
       expect(check!.status).toBe("pass");
+    });
+  });
+
+  // ── Capability plugin checks (#559, epic #551) ─────────────────────────
+
+  test("capability plugin check fails when the named package cannot be found", async () => {
+    await withTestDir(async (testDir) => {
+      writeFileSync(
+        join(testDir, "chant.config.json"),
+        JSON.stringify({ capabilities: ["nonexistent-capability-package"] }),
+      );
+      const report = await doctorCommand(testDir);
+      const check = report.checks.find((c) => c.name === "capability-nonexistent-capability-package");
+      expect(check).toBeDefined();
+      expect(check!.status).toBe("fail");
+      expect(check!.message).toContain("could not be loaded");
+      expect(report.success).toBe(false);
+    });
+  });
+
+  test("capability plugin check fails for a malformed package (no CapabilityPlugin export)", async () => {
+    installFakeCapabilityPackage("broken", "export const notAPlugin = { oops: true };\n");
+    try {
+      await withTestDir(async (testDir) => {
+        writeFileSync(
+          join(testDir, "chant.config.json"),
+          JSON.stringify({ capabilities: ["broken"] }),
+        );
+        const report = await doctorCommand(testDir);
+        const check = report.checks.find((c) => c.name === "capability-broken");
+        expect(check).toBeDefined();
+        expect(check!.status).toBe("fail");
+        expect(check!.message).toMatch(/could not be loaded|does not export/);
+        expect(report.success).toBe(false);
+      });
+    } finally {
+      removeFakeCapabilityPackage("broken");
+    }
+  });
+
+  test("capability plugin check fails when capabilities() is not a function (malformed shape)", async () => {
+    installFakeCapabilityPackage(
+      "half-broken",
+      "export const plugin = { name: 'half-broken', version: '1.0.0', capabilities: 'not-a-function' };\n",
+    );
+    try {
+      await withTestDir(async (testDir) => {
+        writeFileSync(
+          join(testDir, "chant.config.json"),
+          JSON.stringify({ capabilities: ["half-broken"] }),
+        );
+        const report = await doctorCommand(testDir);
+        const check = report.checks.find((c) => c.name === "capability-half-broken");
+        expect(check).toBeDefined();
+        expect(check!.status).toBe("fail");
+      });
+    } finally {
+      removeFakeCapabilityPackage("half-broken");
+    }
+  });
+
+  test("capability plugin check passes for a well-formed package", async () => {
+    installFakeCapabilityPackage(
+      "good",
+      "export const plugin = { name: 'good', version: '1.0.0', capabilities: () => [{ kind: 'demo-verb', run: async () => ({}) }] };\n",
+    );
+    try {
+      await withTestDir(async (testDir) => {
+        writeFileSync(
+          join(testDir, "chant.config.json"),
+          JSON.stringify({ capabilities: ["good"] }),
+        );
+        const report = await doctorCommand(testDir);
+        const check = report.checks.find((c) => c.name === "capability-good");
+        expect(check).toBeDefined();
+        expect(check!.status).toBe("pass");
+        expect(check!.message).toContain("1 capability(ies) registered");
+      });
+    } finally {
+      removeFakeCapabilityPackage("good");
+    }
+  });
+
+  test("no capability checks are added when config.capabilities is absent", async () => {
+    await withTestDir(async (testDir) => {
+      writeFileSync(join(testDir, "chant.config.json"), "{}");
+      const report = await doctorCommand(testDir);
+      const capabilityChecks = report.checks.filter((c) => c.name.startsWith("capability-"));
+      expect(capabilityChecks.length).toBe(0);
     });
   });
 });
