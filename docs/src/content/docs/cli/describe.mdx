@@ -35,6 +35,7 @@ component, after every spread and override?"
 | Flag | Type | Default | Description |
 |------|------|---------|-------------|
 | `-f, --format` | `string` | `text` | Output format: `text` or `json` |
+| `--components` | `boolean` | `false` | Describe a discovered [component](/chant/components/component-contract/) instead of a lexicon resource |
 
 ## Usage
 
@@ -42,6 +43,22 @@ component, after every spread and override?"
 chant describe prodApp src
 chant describe prodApp src --format json
 chant describe webDeployment            # a single declarable, in the current dir
+chant describe search-service --components              # a discovered Component, in the current dir
+chant describe search-service src --components --format json
+```
+
+## `--components`
+
+`chant describe <name> --components` looks up one discovered [`Component`](/chant/components/component-contract/) by its `name` field (not its export name) and prints its full JSON contract projection — the same document `chant build` would hand to the interpret driver, and that validates against `component.schema.json`.
+
+```json
+{
+  "name": "search-service",
+  "archetype": "service",
+  "dependsOn": ["shared-alb"],
+  "build": { "kind": "docker-build", "context": ".", "into": "archive" },
+  "deploy": [ "..." ]
+}
 ```
 
 The `--json` output carries the full per-resource breakdown:

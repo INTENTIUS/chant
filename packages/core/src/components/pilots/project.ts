@@ -1,20 +1,13 @@
 /**
- * Projects the illustrative TypeScript authoring form (./authoring-shape.ts)
- * to the portable JSON contract (component.schema.json).
- *
- * The authoring shape's field names already match the schema 1:1 (see the
- * comment in authoring-shape.ts), so projection is a `JSON.parse(JSON.stringify())`
- * round-trip that drops `undefined` optional fields — the same mechanical
- * relationship component-contract.mdx describes between the TypeScript
- * authoring form and the JSON substrate. A real Phase 2 authoring frontend
- * (#560) may compute derived fields (e.g. inferring `archetype`); this pilot
- * projection stays intentionally dumb so the JSON fixtures remain the single
- * source of truth for each pilot's shape.
+ * Re-exports the real `projectToJson` (#560, ../component.ts) under the
+ * pilots' original import path. Prior to #560, this module held its own
+ * "intentionally dumb" projection over the stopgap `authoring-shape.ts`
+ * (#555); now that the real typed `Component` authoring form exists, its
+ * `projectToJson` (which also fills in `archetype` via `inferArchetype` when
+ * a pilot doesn't set one explicitly) is the single implementation. Kept as a
+ * re-export, rather than inlining `../component`'s import into every pilot
+ * test, so `./pilots.test.ts`/`./pilots-e2e.test.ts`/`../driver.test.ts`
+ * don't need their import paths touched by this migration.
  */
 
-import type { Component } from "./authoring-shape";
-
-/** Project a pilot's TypeScript `Component` to its plain-JSON contract form. */
-export function projectToJson(component: Component): unknown {
-  return JSON.parse(JSON.stringify(component));
-}
+export { projectToJson } from "../component";

@@ -4,9 +4,10 @@ import { importCommand, importFromLive, printImportResult } from "../commands/im
 import { auditCommand, printAuditResult, type AuditFormat, type AuditTier, type AuditFailOn } from "../commands/audit";
 import type { ReportTheme } from "../../audit/report-html";
 import type { ResourceSelector } from "../../lexicon";
-import { formatError, formatSuccess, formatWarning } from "../format";
+import { formatError, formatSuccess, formatWarning, formatBold } from "../format";
 import type { CommandContext } from "../registry";
 import { createRequire } from "module";
+import { listComponents, describeComponent } from "../../components/cli-support";
 
 const CHANT_VERSION: string = (() => {
   try {
@@ -84,6 +85,30 @@ export async function runList(ctx: CommandContext): Promise<number> {
     return 1;
   }
 
+  // `chant list --components` (#560) surfaces discovered `Component`
+  // declarations instead of lexicon resources — a distinct entity kind (no
+  // `lexicon`/`entityType`), so it is a separate branch rather than folded
+  // into `listCommand`'s Declarable-shaped `ListEntity` rows.
+  if (args.components) {
+    const result = await listComponents(args.path);
+    if (!result.success) {
+      for (const e of result.errors) console.error(formatError({ message: e }));
+      return 1;
+    }
+    if (listFormat === "json") {
+      console.log(JSON.stringify(result.components, null, 2));
+    } else if (result.components.length === 0) {
+      console.log("No components found.");
+    } else {
+      console.log(formatBold("NAME") + "  " + formatBold("ARCHETYPE") + "  " + formatBold("DEPENDS ON") + "  " + formatBold("PHASES"));
+      for (const c of result.components) {
+        console.log(`${c.name}  ${c.archetype}  ${c.dependsOn.join(", ") || "-"}  ${c.phases.join(", ")}`);
+      }
+    }
+    console.error(formatSuccess(`Found ${formatBold(String(result.components.length))} component(s)`));
+    return 0;
+  }
+
   const result = await listCommand({
     path: args.path,
     format: listFormat,
@@ -110,6 +135,25 @@ export async function runDescribe(ctx: CommandContext): Promise<number> {
   if (describeFormat !== "text" && describeFormat !== "json") {
     console.error(formatError({ message: `Invalid format for describe: ${describeFormat}. Expected 'text' or 'json'.` }));
     return 1;
+  }
+
+  // `chant describe <name> --components` (#560): describe a discovered
+  // `Component` (its full JSON contract projection) rather than a lexicon
+  // resource's resolved props bag.
+  if (args.components) {
+    const result = await describeComponent(args.extraPositional ?? ".", component);
+    if (!result.success || !result.described) {
+      console.log(result.output);
+      return 1;
+    }
+    if (describeFormat === "json") {
+      console.log(JSON.stringify(result.described.json, null, 2));
+    } else {
+      console.log(`${formatBold(result.described.name)}  (${result.described.filePath})`);
+      console.log(JSON.stringify(result.described.json, null, 2));
+    }
+    console.error(formatSuccess(`Described ${formatBold(component)}`));
+    return 0;
   }
 
   const result = await describeCommand({

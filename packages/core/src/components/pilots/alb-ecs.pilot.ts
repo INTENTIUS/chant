@@ -18,19 +18,19 @@
  *
  * The JSON projection of this pilot is authoritative at
  * ../__fixtures__/alb-ecs-service.json (already schema-validated by
- * component-schema.test.ts) — this module is the TypeScript authoring form
- * that composes to that same document; see ./pilots.test.ts, which asserts
- * the two never diverge.
+ * component-schema.test.ts) — this module is the real typed `Component`
+ * authoring form (#560, ../component.ts) that composes to that same
+ * document; see ./pilots.test.ts, which asserts the two never diverge.
  */
 
-import type { Component } from "./authoring-shape";
-import { phase } from "./authoring-shape";
+import type { Component } from "../component";
+import { phase, stackOutput } from "../component";
 
 /** The shared ALB stack's exported outputs this service imports — the cross-stack wiring axis. */
 const sharedAlbOutputs = {
-  listenerArn: { stackOutput: { stack: "shared-alb", name: "ListenerArn" } },
-  clusterArn: { stackOutput: { stack: "shared-alb", name: "ClusterArn" } },
-  subnets: { stackOutput: { stack: "shared-alb", name: "Subnets" } },
+  listenerArn: stackOutput("shared-alb", "ListenerArn"),
+  clusterArn: stackOutput("shared-alb", "ClusterArn"),
+  subnets: stackOutput("shared-alb", "Subnets"),
 };
 
 export const searchService: Component = {

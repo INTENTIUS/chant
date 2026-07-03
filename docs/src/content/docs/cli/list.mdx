@@ -18,12 +18,25 @@ chant list [path] [flags]
 | Flag | Type | Default | Description |
 |------|------|---------|-------------|
 | `-f, --format` | `string` | `text` | Output format: `text` or `json` |
+| `--components` | `boolean` | `false` | List discovered [components](/chant/components/component-contract/) (`*.component.ts`) instead of lexicon resources |
 
 ## Usage
 
 ```bash
 chant list
 chant list --format json
+chant list --components              # list discovered *.component.ts declarations
+chant list --components --format json
+```
+
+## `--components`
+
+`chant list --components` scans for `*.component.ts` files and lists every exported [`Component`](/chant/components/component-contract/), one row per component (name, [archetype](/chant/components/component-contract/#archetypes), `dependsOn`, whether it has a `build`, and its phase names). Archetype is shown even when a component's declaration omits it explicitly — inferred the same way `chant describe --components`'s JSON projection fills it in.
+
+```
+NAME             ARCHETYPE          DEPENDS ON    PHASES
+orders-table     infra              -             Apply, Verify
+search-service   service            shared-alb    Publish, Apply, Verify
 ```
 
 ## Exit Codes

@@ -83,7 +83,28 @@ The authoring form projects to a portable, versioned JSON contract. This is the 
 Making the contract a spec, not a chant-only runtime object, keeps [walk-away cost](/chant/concepts/comparison/#owning-less) low and lets components that were never authored in chant participate. chant is the typed authoring and lint frontend over it, not a gate you must pass through.
 </Aside>
 
+## Discovery
+
+A component is discovered the same way chant already discovers resources — by convention, from source, with no registration step. Export a `Component` (any export name) from a `*.component.ts` file anywhere under the project (excluding `node_modules` and a nested project's own `chant.config.ts` scope) and chant finds it. `archetype` does not have to be authored explicitly: when omitted, chant infers it from the composition's shape (a `build` present or absent, and whether every step in `deploy` is publish-family) — the same inference `projectToJson` applies before validating against the schema.
+
+```ts title="search-service.component.ts"
+export const searchService: Component = {
+  name: "search-service",
+  // archetype omitted — inferred as "service" (build + a non-publish Apply step)
+  dependsOn: ["shared-alb"],
+  build: dockerBuild({ context: ".", into: "archive" }),
+  deploy: [ /* … */ ],
+};
+```
+
+```bash
+chant list --components                    # inventory: name, archetype, dependsOn, phases
+chant describe search-service --components  # one component's full JSON projection
+chant graph --components                    # dependency order + parallel-safe waves
+```
+
 ## Read next
 
 - [Capabilities](/chant/components/capabilities/) — the verbs a `deploy` composes.
 - [Composition & Wiring](/chant/components/composition-and-wiring/) — phases, fan-out, cross-stack and cross-component references.
+- [`chant list`](/chant/cli/list/), [`chant describe`](/chant/cli/describe/), [`chant graph`](/chant/cli/graph/) — the `--components` surfaces.
