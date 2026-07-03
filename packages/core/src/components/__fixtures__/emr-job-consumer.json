@@ -11,7 +11,8 @@
         {
           "kind": "emr-start-job-run",
           "jar": "@jar-lib.publish.uri",
-          "args": ["--input", "$env.inputPath", "--output", "$env.outputPath"]
+          "args": ["--input", "$env.inputPath", "--output", "$env.outputPath"],
+          "noRollback": "a submitted job run has no automatic undo; cancelling it does not revert data it already wrote"
         }
       ]
     },

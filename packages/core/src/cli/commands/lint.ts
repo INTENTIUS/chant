@@ -1,11 +1,13 @@
 import { resolve, join } from "path";
 import { readFileSync, writeFileSync, readdirSync, statSync } from "fs";
-import { runLint } from "../../lint/engine";
+import { runLint, parseDisableComments } from "../../lint/engine";
 import type { LintRule, LintDiagnostic, LintFix } from "../../lint/rule";
 import { loadPlugins, resolveProjectLexicons } from "../plugins";
 import { formatStylish, formatJson, formatSarif } from "../reporters/stylish";
 import { loadLocalRules } from "../../lint/rule-loader";
 import { loadCoreRules } from "../../lint/rules/index";
+import { loadComponentChecks } from "../../lint/rules/comp/index";
+import { runComponentChecks, type ComponentCheckDiagnostic } from "../../lint/component-checks";
 import { rule } from "../../lint/declarative";
 import { watchDirectory, formatTimestamp, formatChangedFiles } from "../watch";
 import { formatError, formatInfo } from "../format";
@@ -204,6 +206,96 @@ function getDefaultRules(
 }
 
 /**
+ * Run the COMP* composition checks (#562) over the discovered `Component`
+ * graph and convert their results into plain `LintDiagnostic`s so they merge
+ * into the same `chant lint` output (stylish/json/sarif) and the same
+ * error-count gating as every COR/EVL diagnostic.
+ *
+ * These checks operate on the whole discovered component graph, not one
+ * `ts.SourceFile`, so they carry no real line/column — reported at `1:1` in
+ * the file the component was declared in (matching COR009's whole-file
+ * diagnostic convention, see ../../lint/rules/file-declarable-limit.ts).
+ * Config severity overrides (`lint.rules["COMP001"]`, including `"off"`) are
+ * honored the same way `getDefaultRules` honors them for AST rules. Only the
+ * *file-level* disable directive form (`// chant-disable` /
+ * `// chant-disable COMP004 -- reason`, anywhere in the file) is honored —
+ * `-line`/`-next-line` need an exact line to match against, which a
+ * whole-component diagnostic does not have; see
+ * docs/lint-rules/composition.mdx for this documented limitation.
+ */
+async function runComponentCheckDiagnostics(
+  infraPath: string,
+): Promise<{ diagnostics: LintDiagnostic[]; suppressed: Array<LintDiagnostic & { reason?: string }> }> {
+  const config = loadConfig(infraPath);
+  const checks = loadComponentChecks();
+  const allCheckIds = new Set(checks.map((c) => c.id));
+
+  const raw = await runComponentChecks(infraPath, checks);
+
+  const fileDirectivesCache = new Map<string, ReturnType<typeof parseDisableComments>>();
+  const fileLevelDisable = (
+    file: string,
+    checkId: string,
+  ): { suppressed: boolean; reason?: string } => {
+    let directives = fileDirectivesCache.get(file);
+    if (!directives) {
+      let content = "";
+      try {
+        content = readFileSync(file, "utf-8");
+      } catch {
+        // File may be unreadable (e.g. a synthetic discovery-error path) — no directives to honor.
+      }
+      directives = parseDisableComments(content);
+      fileDirectivesCache.set(file, directives);
+    }
+
+    for (const directive of directives) {
+      if (directive.type !== "file") continue;
+      if (!directive.ruleIds) return { suppressed: true, reason: directive.reason };
+      if (directive.ruleIds.some((id) => allCheckIds.has(id) || id === "COMP000") && directive.ruleIds.includes(checkId)) {
+        return { suppressed: true, reason: directive.reason };
+      }
+    }
+    return { suppressed: false };
+  };
+
+  const toLintDiagnostic = (d: ComponentCheckDiagnostic, severity: LintDiagnostic["severity"]): LintDiagnostic => ({
+    file: d.file,
+    line: 1,
+    column: 1,
+    ruleId: d.checkId,
+    severity,
+    message: d.message,
+  });
+
+  const diagnostics: LintDiagnostic[] = [];
+  const suppressed: Array<LintDiagnostic & { reason?: string }> = [];
+
+  for (const d of raw) {
+    // Discovery errors (COMP000) always surface at error severity — not user-configurable.
+    let severity = d.severity;
+    if (d.checkId !== "COMP000") {
+      const configValue = config.rules?.[d.checkId];
+      if (configValue !== undefined) {
+        const parsed = parseRuleConfig(configValue);
+        if (parsed.severity === "off") continue;
+        severity = parsed.severity;
+      }
+    }
+
+    const disable = fileLevelDisable(d.file, d.checkId);
+    const diagnostic = toLintDiagnostic(d, severity);
+    if (disable.suppressed) {
+      suppressed.push({ ...diagnostic, reason: disable.reason });
+    } else {
+      diagnostics.push(diagnostic);
+    }
+  }
+
+  return { diagnostics, suppressed };
+}
+
+/**
  * Apply fixes to a file
  */
 function applyFixes(filePath: string, fixes: LintFix[]): void {
@@ -264,6 +356,15 @@ export async function lintCommand(options: LintOptions): Promise<LintResult> {
     suppressed = result.suppressed;
   }
 
+  // Run the COMP* composition checks (#562) over the discovered `Component`
+  // graph and merge them into the same diagnostics/suppressed lists — a
+  // structurally distinct check family (whole-project, post-discovery,
+  // see ../../lint/component-checks.ts) but the same `chant lint` output and
+  // the same error-severity gating as every COR/EVL diagnostic.
+  const componentResult = await runComponentCheckDiagnostics(infraPath);
+  diagnostics.push(...componentResult.diagnostics);
+  suppressed.push(...componentResult.suppressed);
+
   // Apply fixes if requested
   if (options.fix) {
     // Group fixes by file
@@ -303,6 +404,14 @@ export async function lintCommand(options: LintOptions): Promise<LintResult> {
       diagnostics = postResult.diagnostics;
       suppressed = postResult.suppressed;
     }
+
+    // COMP* checks have no `.fix` (nothing above could have touched a
+    // `*.component.ts` file on their behalf), but a fix applied to another
+    // rule could still be in the same file a component was discovered from —
+    // re-run for consistency with the AST re-lint above.
+    const postComponentResult = await runComponentCheckDiagnostics(infraPath);
+    diagnostics.push(...postComponentResult.diagnostics);
+    suppressed.push(...postComponentResult.suppressed);
   }
 
   // Count errors and warnings

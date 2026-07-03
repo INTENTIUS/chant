@@ -39,7 +39,16 @@ export const ordersTable: Component = {
       "Verify",
       [
         { kind: "wait-for-stack", stack: "orders-table" },
-        { kind: "run-migration", script: "archive:migrations/backfill-gsi.sql" },
+        {
+          kind: "run-migration",
+          script: "archive:migrations/backfill-gsi.sql",
+          // A GSI backfill has no clean inverse: once items are re-projected
+          // onto the new index, "rolling back" the migration would mean a
+          // second migration to undo it, not a mechanical compensation the
+          // capability could run automatically — see COMP003
+          // (lint-rules/composition.mdx) for the opt-out convention.
+          noRollback: "GSI backfill is forward-only; undoing it needs a second, hand-written migration, not automatic compensation",
+        },
       ],
       { parallel: true },
     ),

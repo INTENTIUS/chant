@@ -415,6 +415,13 @@ describe("loadConfig", () => {
       COR013: "info",
       COR014: "warning",
       COR015: "warning",
+      COMP001: "error",
+      COMP002: "error",
+      COMP003: "error",
+      COMP004: "error",
+      COMP005: "error",
+      COMP006: "error",
+      COMP007: "warning",
     });
   });
 
@@ -458,6 +465,13 @@ describe("loadConfig", () => {
       COR013: "off",
       COR014: "off",
       COR015: "off",
+      COMP001: "warning",
+      COMP002: "warning",
+      COMP003: "off",
+      COMP004: "warning",
+      COMP005: "off",
+      COMP006: "off",
+      COMP007: "off",
     });
   });
 
@@ -488,6 +502,13 @@ describe("loadConfig", () => {
       COR013: "info",
       COR014: "warning",
       COR015: "warning",
+      COMP001: "error",
+      COMP002: "error",
+      COMP003: "error",
+      COMP004: "error",
+      COMP005: "error",
+      COMP006: "error",
+      COMP007: "warning",
     });
   });
 

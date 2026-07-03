@@ -14,6 +14,13 @@
     "COR012": "warning",
     "COR013": "info",
     "COR014": "warning",
-    "COR015": "warning"
+    "COR015": "warning",
+    "COMP001": "error",
+    "COMP002": "error",
+    "COMP003": "error",
+    "COMP004": "error",
+    "COMP005": "error",
+    "COMP006": "error",
+    "COMP007": "warning"
   }
 }

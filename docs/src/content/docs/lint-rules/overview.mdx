@@ -14,6 +14,7 @@ chant includes a semantic lint system that validates the meaning of your declara
 | **Cross-File** | COR010–COR011 | Multi-file | Unused exports and circular dependencies |
 | **Correctness** | COR003, COR004, COR007, COR008, COR017 | Single file | Structural errors |
 | **Composite** | EVL009, EVL010, COR017, COR018 | Single file | Best practices for Composite() factories |
+| **Composition** | COMP001–COMP007 | Whole component graph | Semantic checks over the discovered `Component` graph (epic #551 Phase 2) |
 | **Lexicon** | Varies by lexicon | Varies | Provider-specific rules (see lexicon docs) |
 
 ## Severity Levels
@@ -62,6 +63,8 @@ Rules are configured via `chant.config.ts` in your project root. When no config 
 | EVL001–EVL005, EVL007 | error |
 | EVL009 | warning |
 | EVL010 | warning |
+| COMP001–COMP006 | error |
+| COMP007 | warning |
 
 **Relaxed** (`@intentius/chant/lint/presets/relaxed`) — for migration or prototyping. Disables most style rules and relaxes correctness rules to warnings.
 
@@ -86,6 +89,7 @@ See [Disable Directives](/chant/lint-rules/disable-directives/) for details.
 - [Cross-File Rules](/chant/lint-rules/cross-file/) — COR010, COR011
 - [Correctness Rules](/chant/lint-rules/correctness/) — COR003, COR004, COR007, COR008
 - [Composite Rules](/chant/lint-rules/composite/) — EVL009, EVL010, COR017, COR018
+- [Composition Rules](/chant/lint-rules/composition/) — COMP001–COMP007, over the discovered `Component` graph
 - [Custom Rules](/chant/lint-rules/custom-rules/) — project-specific rules
 - [Configuration](/chant/lint-rules/configuration/) — severity, presets, overrides
 - [Auto-Fix](/chant/lint-rules/auto-fix/) — automatic fixes

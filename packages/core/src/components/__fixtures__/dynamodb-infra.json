@@ -21,7 +21,11 @@
       "parallel": true,
       "steps": [
         { "kind": "wait-for-stack", "stack": "orders-table" },
-        { "kind": "run-migration", "script": "archive:migrations/backfill-gsi.sql" }
+        {
+          "kind": "run-migration",
+          "script": "archive:migrations/backfill-gsi.sql",
+          "noRollback": "GSI backfill is forward-only; undoing it needs a second, hand-written migration, not automatic compensation"
+        }
       ]
     }
   ]

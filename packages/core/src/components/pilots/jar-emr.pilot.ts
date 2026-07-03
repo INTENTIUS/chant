@@ -57,6 +57,11 @@ export const emrJob: Component = {
         kind: "emr-start-job-run",
         jar: "@jar-lib.publish.uri",
         args: ["--input", "$env.inputPath", "--output", "$env.outputPath"],
+        // A submitted EMR job run has no automatic "undo": stopping a
+        // running/completed job is not the same as reverting whatever it
+        // already wrote, so compensation is a human/runbook decision, not a
+        // mechanical capability rollback — see COMP003 (lint-rules/composition.mdx).
+        noRollback: "a submitted job run has no automatic undo; cancelling it does not revert data it already wrote",
       },
     ]),
     phase("Verify", [{ kind: "wait-job", runId: "@Submit.runId" }]),
