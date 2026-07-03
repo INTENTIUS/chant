@@ -27,6 +27,9 @@ import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { UpgradeCheckResult, LexiconId } from "@intentius/chant/codegen/pinned-upgrade";
 import type { RollingUpgradeResult, RollingLexicon } from "@intentius/chant/codegen/rolling-upgrade";
+import { bumpForSeverity, bumpPackageJsonVersion } from "@intentius/chant/codegen/version-bump";
+
+export { bumpPackageJsonVersion };
 
 const execAsync = promisify(exec);
 
@@ -148,30 +151,10 @@ export function computeBumpedVersion(
   current: string,
   label: SemverLabel,
 ): string | null {
-  const parts = current.replace(/^v/, "").split(".").map(Number);
-  if (parts.length < 3 || parts.some((n) => Number.isNaN(n) || n < 0)) return null;
-  const [major, minor, patch] = parts as [number, number, number];
-  // Pre-1.0: keep the package in 0.x — breaking → minor, additive → patch.
-  if (major === 0) {
-    if (label === "minor") return `0.${minor}.${patch + 1}`;
-    if (label === "breaking") return `0.${minor + 1}.0`;
-    return null;
-  }
-  // >= 1.0.0: additive → minor, breaking → major.
-  if (label === "minor") return `${major}.${minor + 1}.0`;
-  if (label === "breaking") return `${major + 1}.0.0`;
-  return null;
-}
-
-/**
- * Read package.json at `packageJsonPath`, set `version` to `newVersion`,
- * and write it back. Preserves all other fields and 2-space indent.
- */
-export function bumpPackageJsonVersion(packageJsonPath: string, newVersion: string): void {
-  const raw = readFileSync(packageJsonPath, "utf-8");
-  const pkg = JSON.parse(raw) as Record<string, unknown>;
-  pkg["version"] = newVersion;
-  writeFileSync(packageJsonPath, JSON.stringify(pkg, null, 2) + "\n", "utf-8");
+  // Single source of truth for the 0.x-aware rule lives in core (#616). The
+  // pinned Op's "minor" label maps to an additive surface change; "breaking"
+  // maps straight through.
+  return bumpForSeverity(current, label === "breaking" ? "breaking" : "additive");
 }
 
 // ── Classification ────────────────────────────────────────────────────
@@ -271,6 +254,17 @@ export function buildUpgradeSummary(opts: {
     lines.push(``);
   } else if (validationOk) {
     lines.push(`No surface delta detected.`);
+  }
+
+  // #616: rolling lexicons carry no version pin, so accepting drift must also
+  // bump the package version — otherwise skip-if-unchanged strands the new
+  // surface at publish time. Spell out the `--bump` re-baseline in the issue.
+  if (deltaText && isRolling(lexicon)) {
+    lines.push(`### Accepting this drift`);
+    lines.push(``);
+    lines.push(`Re-baseline and bump the version in one step (bump matches the drift severity, 0.x-aware):`);
+    lines.push(``, "```", `chant dev surface-diff lexicons/${lexicon} --update-snapshot --bump`, "```");
+    lines.push(``);
   }
 
   return lines.join("\n");
@@ -525,7 +519,7 @@ export async function lexiconUpgrade(args: LexiconUpgradeArgs): Promise<LexiconU
   // #546: rolling lexicons have no version pin, so a "pull-request" would only
   // refresh the baseline snapshot — low signal, no build-output change. Surface
   // rolling drift as an issue instead; re-baselining stays a deliberate
-  // maintainer action (`chant dev surface-diff <lexicon> --update-snapshot`).
+  // maintainer action (`chant dev surface-diff <lexicon> --update-snapshot --bump`).
   // Pinned lexicons keep opening version-bump PRs.
   const effectiveMode: LexiconUpgradeMode =
     mode === "pull-request" && isRolling(lexicon) ? "issue" : mode;

@@ -98,6 +98,8 @@ export interface ParsedArgs {
   pinnedDigest?: string;
   /** `chant dev surface-diff --check` — verify the committed baseline matches a fresh regen; exit non-zero if it drifted. Never writes the snapshot. */
   check?: boolean;
+  /** `chant dev surface-diff --update-snapshot --bump` — bump the lexicon's package.json version by the drift severity so the accepted surface is publishable (#616). */
+  bump?: boolean;
   /** `chant components release record --component <name>` (#568) — component name for the release record being appended. */
   component?: string;
   /** `chant components release record --digest <sha256:...>` (#568) — artifact digest to record, joining this release to the build archive/ledger. */

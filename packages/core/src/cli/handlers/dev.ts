@@ -57,6 +57,7 @@ export async function runDevSurfaceDiff(ctx: CommandContext): Promise<number> {
     pinnedDigestPath: ctx.args.pinnedDigest,
     // --check never writes; it verifies the committed baseline is in sync.
     updateSnapshot: ctx.args.check ? false : ctx.args.updateSnapshot,
+    bump: ctx.args.bump,
   });
   printSurfaceDiffResult(result, ctx.args.format === "json");
   // --check: fail if regen failed OR the fresh surface drifted from the
@@ -68,7 +69,7 @@ export async function runDevSurfaceDiff(ctx: CommandContext): Promise<number> {
     if (result.changed) {
       console.error(
         `Baseline out of sync: ${dir}/surface.snapshot.json differs from a fresh regen. ` +
-          `Re-baseline with: chant dev surface-diff ${dir} --update-snapshot`,
+          `Re-baseline with: chant dev surface-diff ${dir} --update-snapshot --bump`,
       );
       return 1;
     }
