@@ -96,6 +96,8 @@ chant run --components all --env production
 
 A `gate` anywhere in a local-mode component's composition fails fast, before any step runs, with an actionable message pointing at `--temporal`.
 
+On a successful run, `chant run --components` auto-emits one immutable release record per component that published a digest-bearing artifact — `(component, env, digest, gitSha, runId, timestamp, actor)`, appended to the same [release ledger](/chant/components/observability/) the standalone [`chant components release`](/chant/cli/components/) command writes to. This is a post-run CLI step: it never runs inside the Temporal workflow (determinism), and it never runs at all when the deploy fails. See [Auto-recorded releases](#auto-recorded-releases) below.
+
 #### `run --components <name> --temporal`
 
 Compiles the named component's composition to a Temporal workflow (phases → workflow, capability steps → activities, `gate` → durable wait-for-signal, `onFailure`/`rollback` → saga compensation — mirroring `Temporal::Op` codegen), writes it to `dist/components/<name>/`, spawns the worker, and submits the workflow. Unlike local mode, a `gate` is fully supported here: the workflow durably waits for the signal, survivable across a worker crash.
@@ -108,6 +110,27 @@ chant run cancel search-service --force --components --temporal            # abo
 
 Scoped to a single named component — `chant run --components all --temporal` is not supported (coordinating multiple durable workflows' cross-component ordering is a separate concern from compiling one component's composition).
 
+The Temporal path auto-emits a release record the same way local mode does, read from the generated workflow's own result (`handle.result()`) once it reports `COMPLETED` — the workflow itself never writes the ledger.
+
+## Auto-recorded releases
+
+Auto-recording is **on by default** — no flag needed. It writes exactly one record per component whose `deploy` composition actually published a digest-bearing artifact (via `publish-image`, `publish-artifact`, or `load-image-on-host`); a component with no publish step, or a failed deploy, writes nothing. A ledger-write failure (e.g. a concurrent push, or no git remote configured) is reported as a warning and never turns an otherwise-successful deploy into a nonzero exit.
+
+Opt out per-invocation with `--no-release-record`, or project-wide via `chant.config.ts`:
+
+```bash
+chant run --components search-service --env staging --no-release-record
+```
+
+```ts
+// chant.config.ts
+export default {
+  release: { autoRecord: false },
+};
+```
+
+The `--no-release-record` flag always wins over config for that one invocation. See [Observability](/chant/components/observability/) for the release ledger this feeds, and [`chant components status`](/chant/cli/components/) to query it.
+
 ## Flags
 
 | Flag | Description |
@@ -115,6 +138,7 @@ Scoped to a single named component — `chant run --components all --temporal` i
 | `--local` | Run with the local in-process executor — the default (`run <name>`, `run --components`) |
 | `--temporal` | Run via a Temporal cluster: gates, schedules, durable resume (`run <name>`, `run --components <name>`) |
 | `--components` | Target a component instead of an Op (`run --components`, and `run signal` / `run cancel` against a component's workflow) |
+| `--no-release-record` | Skip auto-emitting a release-ledger record after a successful `run --components` deploy — default is ON (`run --components`) |
 | `--env <name>` | Target environment, threaded into every capability's context (`run --components`) |
 | `--json` | Emit the structured run result as JSON on stdout (`run <name>`, `run --components`) |
 | `-p, --profile <name>` | Temporal worker profile to use (from `chant.config.ts`); implies Temporal mode |

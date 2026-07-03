@@ -176,6 +176,8 @@ export function parseArgs(args: string[]): ParsedArgs {
       result.actor = args[++i];
     } else if (arg === "--compare-to") {
       result.compareTo = args[++i];
+    } else if (arg === "--no-release-record") {
+      result.noReleaseRecord = true;
     } else if (!arg.startsWith("-")) {
       if (!result.command) {
         result.command = arg;
@@ -238,7 +240,10 @@ Ops:
   run log <name>        Show run history for an Op
                         --components: show a Component's run history instead (#599)
   run --components <name|all>  Run discovered Component(s) through the interpret
-                        driver on the local executor (--env <env>; #585)
+                        driver on the local executor (--env <env>; #585).
+                        On success, auto-emits a release-ledger record per
+                        component that published a digest (default: on;
+                        --no-release-record to opt out; #597)
 
   graph                 Show Op dependency graph (--stacks for cross-stack order,
                         --format ir|mermaid|dot|layout for the lint-gated graph IR,
@@ -330,6 +335,10 @@ Options:
   --generate <lexicon>  Generate mode (build --components only): synthesize CI
                         YAML for <lexicon> instead of running a normal build.
                         Only "gitlab" is implemented for v1.
+  --no-release-record   Skip auto-emitting a release-ledger record after a
+                        successful \`run --components\` deploy (default: on;
+                        also settable via chant.config.ts's
+                        release.autoRecord: false; #597)
 
 Examples:
   chant build ./infra/

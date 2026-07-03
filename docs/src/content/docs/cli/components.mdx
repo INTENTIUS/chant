@@ -15,6 +15,8 @@ chant components status [env] [--live] [--json] [--compare-to <env>]
 
 `chant components` holds the release ledger and status surface for [component](/chant/components/component-contract/) deploys: the recorded half of build & deploy observability. See [Observability](/chant/components/observability/) for the conceptual model. The release ledger lives on the same `chant/lifecycle` orphan branch [`chant lifecycle`](/chant/cli/lifecycle/) snapshots already use, at `<env>/releases.jsonl` — one immutable JSON line per recorded deploy.
 
+`components release` below is the standalone, explicit way to append a record. [`chant run --components`](/chant/cli/run/#auto-recorded-releases) auto-emits one on every successful deploy, so most projects never need to call `components release` directly — it remains useful for CI compositions and Verify phases outside `chant run`'s own execution.
+
 ## Subcommands
 
 ### `components release <env>`

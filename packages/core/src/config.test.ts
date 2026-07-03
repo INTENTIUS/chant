@@ -1,5 +1,5 @@
 import { describe, test, expect, beforeEach, afterEach } from "vitest";
-import { loadChantConfig, DEFAULT_CHANT_CONFIG } from "./config";
+import { loadChantConfig, DEFAULT_CHANT_CONFIG, resolveAutoReleaseDisabled } from "./config";
 import { writeFileSync, mkdirSync, rmSync } from "fs";
 import { join } from "path";
 
@@ -101,5 +101,37 @@ describe("loadChantConfig", () => {
     const result = await loadChantConfig(TEST_DIR);
     expect(result.config.lexicons).toEqual(["testdom"]);
     expect(result.config.lint).toBeUndefined();
+  });
+
+  // #597: release.autoRecord opts out of auto-emitting a release-ledger
+  // record from `chant run --components` post-run.
+  test("loads chant.config.json with release.autoRecord: false", async () => {
+    writeFileSync(
+      join(TEST_DIR, "chant.config.json"),
+      JSON.stringify({ release: { autoRecord: false } }),
+    );
+
+    const result = await loadChantConfig(TEST_DIR);
+    expect(result.config.release?.autoRecord).toBe(false);
+  });
+});
+
+describe("resolveAutoReleaseDisabled", () => {
+  test("default (no flag, no config) → not disabled", () => {
+    expect(resolveAutoReleaseDisabled({})).toBe(false);
+  });
+
+  test("the CLI flag disables regardless of config", () => {
+    expect(resolveAutoReleaseDisabled({}, true)).toBe(true);
+    expect(resolveAutoReleaseDisabled({ release: { autoRecord: true } }, true)).toBe(true);
+  });
+
+  test("release.autoRecord: false disables without the CLI flag", () => {
+    expect(resolveAutoReleaseDisabled({ release: { autoRecord: false } })).toBe(true);
+  });
+
+  test("release.autoRecord: true (or unset) does not disable", () => {
+    expect(resolveAutoReleaseDisabled({ release: { autoRecord: true } })).toBe(false);
+    expect(resolveAutoReleaseDisabled({ release: {} })).toBe(false);
   });
 });

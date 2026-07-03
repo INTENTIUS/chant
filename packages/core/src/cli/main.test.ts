@@ -219,6 +219,20 @@ describe("parseArgs", () => {
     expect(result.live).toBe(true);
     expect(result.json).toBe(true);
   });
+
+  // ── --no-release-record (#597) ───────────────────────────────────────────
+
+  test("parses --no-release-record for run --components", () => {
+    const result = parseArgs(["run", "--components", "search-service", "--env", "staging", "--no-release-record"]);
+    expect(result.components).toBe(true);
+    expect(result.env).toBe("staging");
+    expect(result.noReleaseRecord).toBe(true);
+  });
+
+  test("--no-release-record is undefined (not false) when omitted", () => {
+    const result = parseArgs(["run", "--components", "search-service"]);
+    expect(result.noReleaseRecord).toBeUndefined();
+  });
 });
 
 // ── resolveCommand tests ──────────────────────────────────────────
