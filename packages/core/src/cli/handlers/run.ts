@@ -23,6 +23,7 @@ import { runComponents, resolveComponentTargets, findComponentGate, listComponen
 import { renderDriverHuman, renderDriverJson } from "../../components/driver-output";
 import { loadComponentTemporalCodegen } from "../../components/temporal-codegen-loader";
 import { maybeRecordAutoRelease, extractRunDigestFromPhaseOutputs } from "../../components/auto-release";
+import { maybePersistBuildManifest, extractRunManifestFromPhaseOutputs } from "../../components/manifest-persistence";
 import type { DriverComponentResult } from "../../components/driver";
 
 function kebabToCamel(s: string): string {
@@ -536,11 +537,22 @@ export async function runOp(ctx: CommandContext): Promise<number> {
  * confirming `result.success`/`componentResult.ok`, so a failed deploy writes
  * nothing, by construction.
  *
- * Best-effort and silent on the happy path: a skip (opted out, no digest, no
- * actor) is unremarkable and not printed; only an actual write failure
- * (`reason: "error"`) is surfaced, as a warning — never a nonzero exit, since
- * the deploy itself already succeeded and a ledger-write hiccup must not
- * retroactively fail it.
+ * Also persists the component's accumulated `BuildArchiveManifest`, when its
+ * composition produced one, to the durable build-manifest store (#609,
+ * ../../components/manifest-persistence.ts, ../../lifecycle/build-ledger-
+ * store.ts) — the missing piece that lets `chant components status`'s
+ * `componentBom`/`build.reproducibility` resolve to a real manifest instead
+ * of always reporting `null`. Same `disabled` opt-out flag as the release
+ * record: both are "durably record this successful deploy" side effects, so
+ * `--no-release-record`/`release.autoRecord: false` gates persistence too
+ * rather than needing a second, easy-to-forget knob (see
+ * `ManifestPersistOptions.disabled`'s doc).
+ *
+ * Best-effort and silent on the happy path: a skip (opted out, no digest/
+ * manifest, no actor) is unremarkable and not printed; only an actual write
+ * failure (`reason: "error"`) is surfaced, as a warning — never a nonzero
+ * exit, since the deploy itself already succeeded and a ledger-write hiccup
+ * must not retroactively fail it.
  */
 async function recordAutoReleasesForRun(
   results: DriverComponentResult[],
@@ -567,6 +579,20 @@ async function recordAutoReleasesForRun(
     } else if (outcome.recorded) {
       console.error(formatInfo(
         `Recorded release: ${formatBold(componentResult.component)}@${env} -> ${outcome.record.digest} (commit ${outcome.commit.slice(0, 7)})`,
+      ));
+    }
+
+    const manifestOutcome = await maybePersistBuildManifest(
+      { success: true, records: componentResult.records },
+      { disabled },
+    );
+    if (!manifestOutcome.persisted && manifestOutcome.reason === "error") {
+      console.error(formatWarning({
+        message: `build manifest for "${componentResult.component}"@${env} was not persisted: ${manifestOutcome.error}`,
+      }));
+    } else if (manifestOutcome.persisted) {
+      console.error(formatInfo(
+        `Persisted build manifest: ${formatBold(componentResult.component)} -> ${manifestOutcome.manifestDigest} (commit ${manifestOutcome.commit.slice(0, 7)})`,
       ));
     }
   }
@@ -818,11 +844,14 @@ async function runComponentTemporal(ctx: CommandContext, selector: string): Prom
     // handle.result() on an already-COMPLETED workflow is a plain historical
     // read, not a new activity/side effect.
     let digest: string | undefined;
+    let manifest: ReturnType<typeof extractRunManifestFromPhaseOutputs>;
     try {
       const workflowResult = await handle.result() as { phaseOutputs?: Record<string, Record<string, unknown>> } | undefined;
       digest = extractRunDigestFromPhaseOutputs(workflowResult?.phaseOutputs);
+      manifest = extractRunManifestFromPhaseOutputs(workflowResult?.phaseOutputs);
     } catch {
       digest = undefined;
+      manifest = undefined;
     }
 
     const { config } = await loadChantConfig(projectPath).catch(() => ({ config: {} }));
@@ -837,6 +866,17 @@ async function runComponentTemporal(ctx: CommandContext, selector: string): Prom
     } else if (outcome.recorded) {
       console.error(formatInfo(
         `Recorded release: ${formatBold(component.name)}@${env} -> ${outcome.record.digest} (commit ${outcome.commit.slice(0, 7)})`,
+      ));
+    }
+
+    // (#609) Persist the run's build manifest post-run, same opt-out flag as
+    // the release record above — see ../../components/manifest-persistence.ts.
+    const manifestOutcome = await maybePersistBuildManifest({ success: true, manifest }, { disabled });
+    if (!manifestOutcome.persisted && manifestOutcome.reason === "error") {
+      console.error(formatWarning({ message: `build manifest for "${component.name}"@${env} was not persisted: ${manifestOutcome.error}` }));
+    } else if (manifestOutcome.persisted) {
+      console.error(formatInfo(
+        `Persisted build manifest: ${formatBold(component.name)} -> ${manifestOutcome.manifestDigest} (commit ${manifestOutcome.commit.slice(0, 7)})`,
       ));
     }
   }

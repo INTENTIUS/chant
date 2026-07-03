@@ -14,6 +14,9 @@ import {
   appendReleaseRecordLine,
   readReleaseLedgerLines,
   listLedgerEnvironments,
+  writeBlobToPath,
+  readBlobFromPath,
+  listFilesInDir,
 } from "./git";
 
 function git(args: string[], cwd: string): { stdout: string; exitCode: number } {
@@ -83,6 +86,57 @@ describe("lifecycle/git", () => {
       await writeSnapshot("prod", "gcp", JSON.stringify({ b: 2 }), { cwd: dir });
       const all = await readEnvironmentSnapshots("prod", { cwd: dir });
       expect([...all.keys()].sort()).toEqual(["aws", "gcp"]);
+    });
+  });
+
+  // ── Generic blob helpers used by ./build-ledger-store.ts (#609) ────────────
+
+  describe("writeBlobToPath / readBlobFromPath / listFilesInDir (generic, non-env namespaces)", () => {
+    test("writes/reads a blob under an arbitrary top-level directory, not just an env", async () => {
+      await withTestDir(async (dir) => {
+        await initRepo(dir);
+        const sha = await writeBlobToPath("_builds", "sha256_abc.json", '{"a":1}', "Build manifest", { cwd: dir });
+        expect(sha).toMatch(/^[0-9a-f]{40}$/);
+
+        const out = await readBlobFromPath("_builds", "sha256_abc.json", { cwd: dir });
+        expect(JSON.parse(out!)).toEqual({ a: 1 });
+      });
+    });
+
+    test("readBlobFromPath returns null for a missing directory/file", async () => {
+      await withTestDir(async (dir) => {
+        await initRepo(dir);
+        expect(await readBlobFromPath("_builds", "missing.json", { cwd: dir })).toBeNull();
+      });
+    });
+
+    test("listFilesInDir lists every file directly under a directory", async () => {
+      await withTestDir(async (dir) => {
+        await initRepo(dir);
+        await writeBlobToPath("_builds", "a.json", "{}", "m", { cwd: dir });
+        await writeBlobToPath("_builds", "b.json", "{}", "m", { cwd: dir });
+        const files = await listFilesInDir("_builds", { cwd: dir });
+        expect(files.sort()).toEqual(["a.json", "b.json"]);
+      });
+    });
+
+    test("listFilesInDir returns empty for a directory that doesn't exist yet", async () => {
+      await withTestDir(async (dir) => {
+        await initRepo(dir);
+        expect(await listFilesInDir("_builds", { cwd: dir })).toEqual([]);
+      });
+    });
+
+    test("a non-env top-level directory (_builds) coexists with per-env snapshot/release directories", async () => {
+      await withTestDir(async (dir) => {
+        await initRepo(dir);
+        await writeSnapshot("prod", "aws", JSON.stringify({ a: 1 }), { cwd: dir });
+        await writeBlobToPath("_builds", "sha256_abc.json", '{"b":2}', "Build manifest", { cwd: dir });
+
+        expect(await readSnapshot("prod", "aws", { cwd: dir })).toBeTruthy();
+        const out = await readBlobFromPath("_builds", "sha256_abc.json", { cwd: dir });
+        expect(JSON.parse(out!)).toEqual({ b: 2 });
+      });
     });
   });
 

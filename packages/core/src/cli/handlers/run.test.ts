@@ -19,6 +19,7 @@ const resolveComponentTargetsMock = vi.fn();
 const findComponentGateMock = vi.fn();
 const loadComponentTemporalCodegenMock = vi.fn();
 const maybeRecordAutoReleaseMock = vi.fn();
+const maybePersistBuildManifestMock = vi.fn();
 const listComponentsMock = vi.fn();
 
 vi.mock("../../op/discover", () => ({ discoverOps: () => discoverOpsMock() }));
@@ -31,6 +32,15 @@ vi.mock("../../components/auto-release", () => ({
   extractRunDigestFromPhaseOutputs: (phaseOutputs: Record<string, Record<string, unknown>> | undefined) => {
     for (const output of Object.values(phaseOutputs ?? {})) {
       if (output && typeof output === "object" && "digest" in output) return (output as { digest: string }).digest;
+    }
+    return undefined;
+  },
+}));
+vi.mock("../../components/manifest-persistence", () => ({
+  maybePersistBuildManifest: (...args: unknown[]) => maybePersistBuildManifestMock(...args),
+  extractRunManifestFromPhaseOutputs: (phaseOutputs: Record<string, Record<string, unknown>> | undefined) => {
+    for (const output of Object.values(phaseOutputs ?? {})) {
+      if (output && typeof output === "object" && "manifest" in output) return (output as { manifest: unknown }).manifest;
     }
     return undefined;
   },
@@ -808,6 +818,7 @@ describe("runOp dispatcher: --components routes to runOpComponents", () => {
     runComponentsMock.mockReset();
     loadChantConfigMock.mockReset().mockResolvedValue({ config: {} });
     maybeRecordAutoReleaseMock.mockReset().mockResolvedValue({ recorded: false, reason: "no-digest" });
+    maybePersistBuildManifestMock.mockReset().mockResolvedValue({ persisted: false, reason: "no-manifest" });
   });
 
   test("runOp with --components dispatches to runComponents, not Op discovery", async () => {
@@ -829,6 +840,7 @@ describe("runOpComponents", () => {
     runComponentsMock.mockReset();
     loadChantConfigMock.mockReset().mockResolvedValue({ config: {} });
     maybeRecordAutoReleaseMock.mockReset().mockResolvedValue({ recorded: false, reason: "no-digest" });
+    maybePersistBuildManifestMock.mockReset().mockResolvedValue({ persisted: false, reason: "no-manifest" });
   });
 
   test("no component name → exit 1 with hint", async () => {
@@ -1059,6 +1071,92 @@ describe("runOpComponents", () => {
       vi.restoreAllMocks();
     });
   });
+
+  // ── build-manifest persistence post-run (#609) ──────────────────────────────
+
+  describe("build-manifest persistence", () => {
+    test("a successful run → maybePersistBuildManifest is called once per successful component, with the run's records", async () => {
+      const buildOutput = { archivePath: "image.tar", digest: "sha256:abc", manifest: { version: 1, component: "svc", createdAt: "t", contents: [], manifestDigest: "sha256:manifestabc" } };
+      runComponentsMock.mockResolvedValue({
+        success: true,
+        selected: ["svc"],
+        run: {
+          order: ["svc"],
+          waves: [["svc"]],
+          results: [{ component: "svc", ok: true, records: [{ component: "svc", phase: "Build", kind: "docker-build", status: "ok", durationMs: 5, output: buildOutput }] }],
+          ok: true,
+        },
+      });
+      maybePersistBuildManifestMock.mockResolvedValue({ persisted: true, commit: "a".repeat(40), manifestDigest: "sha256:manifestabc" });
+      vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+
+      const exit = await runOpComponents({ args: makeArgs({ path: "svc", env: "staging", temporal: false }), plugins: [], serializers: [] });
+
+      expect(exit).toBe(0);
+      expect(maybePersistBuildManifestMock).toHaveBeenCalledTimes(1);
+      const [runInfo, options] = maybePersistBuildManifestMock.mock.calls[0];
+      expect(runInfo).toMatchObject({ success: true });
+      expect(runInfo.records).toEqual([{ component: "svc", phase: "Build", kind: "docker-build", status: "ok", durationMs: 5, output: buildOutput }]);
+      expect(options).toMatchObject({ disabled: false });
+      vi.restoreAllMocks();
+    });
+
+    test("a failed run → maybePersistBuildManifest is never called (failed/dry-run deploys persist nothing)", async () => {
+      runComponentsMock.mockResolvedValue({
+        success: false,
+        selected: ["svc"],
+        run: {
+          order: ["svc"],
+          waves: [["svc"]],
+          results: [{ component: "svc", ok: false, records: [{ component: "svc", phase: "Apply", kind: "cfn-deploy", status: "fail", durationMs: 5, error: "boom" }] }],
+          ok: false,
+          failedComponent: "svc",
+        },
+      });
+      vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+
+      const exit = await runOpComponents({ args: makeArgs({ path: "svc", temporal: false }), plugins: [], serializers: [] });
+
+      expect(exit).toBe(1);
+      expect(maybePersistBuildManifestMock).not.toHaveBeenCalled();
+      vi.restoreAllMocks();
+    });
+
+    test("--no-release-record also disables manifest persistence (shared opt-out)", async () => {
+      runComponentsMock.mockResolvedValue({
+        success: true,
+        selected: ["svc"],
+        run: { order: ["svc"], waves: [["svc"]], results: [{ component: "svc", ok: true, records: [] }], ok: true },
+      });
+      maybePersistBuildManifestMock.mockResolvedValue({ persisted: false, reason: "opted-out" });
+      vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+
+      const exit = await runOpComponents({ args: makeArgs({ path: "svc", temporal: false, noReleaseRecord: true }), plugins: [], serializers: [] });
+
+      expect(exit).toBe(0);
+      expect(maybePersistBuildManifestMock).toHaveBeenCalledTimes(1);
+      const [, options] = maybePersistBuildManifestMock.mock.calls[0];
+      expect(options).toMatchObject({ disabled: true });
+      vi.restoreAllMocks();
+    });
+
+    test("a manifest-write error is surfaced as a warning but does not change the exit code", async () => {
+      runComponentsMock.mockResolvedValue({
+        success: true,
+        selected: ["svc"],
+        run: { order: ["svc"], waves: [["svc"]], results: [{ component: "svc", ok: true, records: [] }], ok: true },
+      });
+      maybePersistBuildManifestMock.mockResolvedValue({ persisted: false, reason: "error", error: "manifest push failed" });
+      const stderr = makeStderrSpy();
+      vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+
+      const exit = await runOpComponents({ args: makeArgs({ path: "svc", temporal: false }), plugins: [], serializers: [] });
+
+      expect(exit).toBe(0);
+      expect(stderr.join("\n")).toContain("manifest push failed");
+      vi.restoreAllMocks();
+    });
+  });
 });
 
 // ── chant run --components <name> --temporal (#589) ─────────────────────────
@@ -1075,6 +1173,7 @@ describe("runOpComponents: --temporal routes to the durable path", () => {
     existsSyncMock.mockReset();
     findComponentGateMock.mockReturnValue(undefined);
     maybeRecordAutoReleaseMock.mockReset().mockResolvedValue({ recorded: false, reason: "no-digest" });
+    maybePersistBuildManifestMock.mockReset().mockResolvedValue({ persisted: false, reason: "no-manifest" });
   });
 
   test("all --temporal → exit 1, not supported", async () => {
@@ -1269,6 +1368,91 @@ describe("runOpComponents: --temporal routes to the durable path", () => {
         expect(exit).toBe(0);
         const [runInfo] = maybeRecordAutoReleaseMock.mock.calls[0];
         expect(runInfo.digest).toBeUndefined();
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+  });
+
+  // ── build-manifest persistence post-run (#609) ──────────────────────────────
+
+  describe("build-manifest persistence", () => {
+    async function runCompletedWorkflow(overrides: Partial<ParsedArgs> = {}, resultByWorkflowId?: unknown) {
+      resolveComponentTargetsMock.mockResolvedValue({
+        success: true,
+        targets: [{ name: "gated-svc", dependsOn: [], deploy: [] }],
+      });
+      loadChantConfigMock.mockResolvedValue({ config: {} });
+      resolveProfileMock.mockReturnValue({ address: "localhost:7233", namespace: "default", taskQueue: "q" });
+      loadComponentTemporalCodegenMock.mockResolvedValue({
+        serializeComponent: () => ({ "components/gated-svc/worker.ts": "// worker" }),
+        componentWorkflowFnName: (name: string) => `${name}ComponentWorkflow`,
+      });
+      const mockClient = createMockTemporalClient({
+        describeByWorkflowId: {
+          "chant-component-gated-svc": {
+            workflowId: "chant-component-gated-svc", runId: "r1",
+            status: { name: "COMPLETED" }, startTime: new Date(),
+            taskQueue: "gated-svc", type: { name: "gatedSvcComponentWorkflow" },
+          },
+        },
+        historyByWorkflowId: { "chant-component-gated-svc": [] },
+        resultByWorkflowId: resultByWorkflowId ? { "chant-component-gated-svc": resultByWorkflowId } : undefined,
+      });
+      setupTemporalClient(mockClient);
+      const { proc } = makeFakeChildProcess();
+      spawnChildMock.mockReturnValue(proc);
+      vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+
+      const promise = runOpComponents({ args: makeArgs({ path: "gated-svc", temporal: true, ...overrides }), plugins: [], serializers: [] });
+      await vi.advanceTimersByTimeAsync(5000);
+      const exit = await promise;
+      return { exit };
+    }
+
+    const sampleManifest = { version: 1, component: "gated-svc", createdAt: "t", contents: [], manifestDigest: "sha256:manifest-temporal" };
+
+    test("a COMPLETED workflow → reads the manifest via handle.result() and calls maybePersistBuildManifest once", async () => {
+      vi.useFakeTimers();
+      try {
+        maybePersistBuildManifestMock.mockResolvedValue({ persisted: true, commit: "a".repeat(40), manifestDigest: "sha256:manifest-temporal" });
+
+        const { exit } = await runCompletedWorkflow({ env: "staging" }, { phaseOutputs: { Build: { manifest: sampleManifest } }, componentOutputs: {} });
+
+        expect(exit).toBe(0);
+        expect(maybePersistBuildManifestMock).toHaveBeenCalledTimes(1);
+        const [runInfo, options] = maybePersistBuildManifestMock.mock.calls[0];
+        expect(runInfo).toMatchObject({ success: true, manifest: sampleManifest });
+        expect(options).toMatchObject({ disabled: false });
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    test("--no-release-record also disables manifest persistence on the Temporal path", async () => {
+      vi.useFakeTimers();
+      try {
+        maybePersistBuildManifestMock.mockResolvedValue({ persisted: false, reason: "opted-out" });
+
+        await runCompletedWorkflow({ noReleaseRecord: true });
+
+        const [, options] = maybePersistBuildManifestMock.mock.calls[0];
+        expect(options).toMatchObject({ disabled: true });
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    test("no manifest in the workflow result → maybePersistBuildManifest still called, with manifest: undefined", async () => {
+      vi.useFakeTimers();
+      try {
+        maybePersistBuildManifestMock.mockResolvedValue({ persisted: false, reason: "no-manifest" });
+
+        const { exit } = await runCompletedWorkflow({}, { phaseOutputs: {}, componentOutputs: {} });
+
+        expect(exit).toBe(0);
+        const [runInfo] = maybePersistBuildManifestMock.mock.calls[0];
+        expect(runInfo.manifest).toBeUndefined();
       } finally {
         vi.useRealTimers();
       }
