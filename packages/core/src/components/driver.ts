@@ -1,5 +1,6 @@
 /**
- * Thin interpret driver — Phase 1 (#556, epic #551).
+ * Thin interpret driver — Phase 1 (#556), saga rollback hardened in Phase 4
+ * (#565, epic #551).
  *
  * One generic orchestrator that runs an arbitrary set of components on the
  * local in-process executor: it orders components by `dependsOn` (reusing the
@@ -15,6 +16,24 @@
  * failure unwinds every executed step in reverse via that step's capability
  * `rollback`, then runs `onFailure` phases in reverse order (best-effort),
  * mirroring the Op local executor's saga semantics.
+ *
+ * A step whose capability declares no `rollback` is never silently passed
+ * over during unwind: it gets a `"rollback-opted-out"` record (see
+ * `rollbackExecuted`), carrying the step's `noRollback` reason when the
+ * composition declared one. This mirrors, at run time, the opt-out the
+ * COMP003 lint rule (../lint/rules/comp/comp003-mutating-no-rollback.ts)
+ * already requires at author time — the driver reports the same fact the
+ * lint rule already made a component author state.
+ *
+ * This unwind runs entirely in-process: if the process crashes mid-rollback
+ * on the local executor, nothing resumes it — there is no persisted run state
+ * to resume from. That is the documented Temporal boundary (see
+ * docs/components/orchestration.mdx#rollback-comes-free and
+ * docs/guide/local-vs-temporal.mdx): the *mechanism* (reverse-order unwind
+ * calling each capability's `rollback`) is capability-agnostic and works
+ * identically on both executors, but *durable resume of a rollback already in
+ * progress* is Temporal-only, the same boundary that already applies to
+ * forward `onFailure` compensation on an Op.
  *
  * Contains zero per-component logic: nothing in this module branches on a
  * component or capability `kind`/name. All behavior is either generic
@@ -121,7 +140,7 @@ export interface DriverStepRecord {
   component: string;
   phase: string;
   kind: string;
-  status: "ok" | "fail" | "skipped" | "rolled-back";
+  status: "ok" | "fail" | "skipped" | "rolled-back" | "rollback-opted-out";
   durationMs: number;
   output?: unknown;
   error?: string;
@@ -410,7 +429,20 @@ async function runPhase(
   return { records, executed };
 }
 
-/** Roll back every executed step in reverse order via its capability's `rollback`, if declared. Best-effort: a rollback failure is recorded but does not stop the unwind. */
+/**
+ * Roll back every executed step in reverse order via its capability's
+ * `rollback`, if declared. Best-effort: a rollback failure is recorded but
+ * does not stop the unwind.
+ *
+ * A step whose capability declares no `rollback` is not silently passed over:
+ * it gets its own `"rollback-opted-out"` record, carrying the step's
+ * `noRollback` reason when the composition declared one (the same opt-out
+ * property COMP003 lint requires at author time — see
+ * ../lint/rules/comp/comp003-mutating-no-rollback.ts) or a generic fallback
+ * message otherwise. This is decided purely by whether `capability.rollback`
+ * exists — never by the step's `kind` or the component's name — so it stays
+ * capability-agnostic like the rest of this module.
+ */
 async function rollbackExecuted(
   executed: ExecutedStep[],
   ctx: DeployContext,
@@ -421,7 +453,18 @@ async function rollbackExecuted(
     const start = Date.now();
     try {
       const capability = registry.resolve(step.kind);
-      if (!capability.rollback) continue;
+      if (!capability.rollback) {
+        const reason = typeof step.noRollback === "string" ? step.noRollback : undefined;
+        records.push({
+          component: ctx.component,
+          phase: phaseName,
+          kind: step.kind,
+          status: "rollback-opted-out",
+          durationMs: Date.now() - start,
+          error: reason ?? `capability "${step.kind}" declares no rollback and the step has no "noRollback" reason`,
+        });
+        continue;
+      }
       await capability.rollback(ctx, resolvedInput as never);
       records.push({
         component: ctx.component,

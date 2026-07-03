@@ -271,7 +271,7 @@ describe("runComponentDeploy — onFailure saga rollback", () => {
     expect(rollbackOrder).toEqual(["configure", "provision"]);
   });
 
-  it("does not call rollback for a capability that never declared one", async () => {
+  it("does not call rollback for a capability that never declared one, but reports it as opted-out rather than silently skipping it", async () => {
     const registry = new CapabilityRegistry();
     const { capability, calls } = fakeCapability("no-rollback-step", { run: () => ({ ok: true }) });
     registry.register(capability);
@@ -284,8 +284,46 @@ describe("runComponentDeploy — onFailure saga rollback", () => {
         { phase: "Two", steps: [{ kind: "failing-step" }] },
       ],
     };
-    await runComponentDeploy(component, { env: "dev", component: "c" }, registry, {});
+    const result = await runComponentDeploy(component, { env: "dev", component: "c" }, registry, {});
     expect(calls.some((c) => c.fn === "rollback")).toBe(false);
+
+    const optedOutRecord = result.records.find(
+      (r) => r.kind === "no-rollback-step" && r.status === "rollback-opted-out",
+    );
+    expect(optedOutRecord).toBeDefined();
+    expect(optedOutRecord?.error).toMatch(/declares no rollback/);
+  });
+
+  it("carries the step's declared noRollback reason into the opted-out record instead of the generic fallback message", async () => {
+    const registry = new CapabilityRegistry();
+    registry.register(fakeCapability("emr-start-job-run", { run: () => ({ runId: "run-1" }) }).capability);
+    registry.register(fakeCapability("failing-step", { failRun: true }).capability);
+
+    const component: DriverComponent = {
+      name: "c",
+      deploy: [
+        {
+          phase: "Submit",
+          steps: [
+            {
+              kind: "emr-start-job-run",
+              jar: "s3://bucket/lib.jar",
+              noRollback: "a submitted job run has no automatic undo; cancelling it does not revert data it already wrote",
+            },
+          ],
+        },
+        { phase: "Verify", steps: [{ kind: "failing-step" }] },
+      ],
+    };
+    const result = await runComponentDeploy(component, { env: "dev", component: "c" }, registry, {});
+    expect(result.ok).toBe(false);
+
+    const optedOutRecord = result.records.find(
+      (r) => r.kind === "emr-start-job-run" && r.status === "rollback-opted-out",
+    );
+    expect(optedOutRecord?.error).toBe(
+      "a submitted job run has no automatic undo; cancelling it does not revert data it already wrote",
+    );
   });
 
   it("runs a component-level rollback (schema `rollback` field) after step rollback, matching the ALB/ECS pilot's explicit compensation", async () => {
