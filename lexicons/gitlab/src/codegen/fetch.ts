@@ -3,8 +3,10 @@
  * and caches it locally.
  */
 
-import { join } from "path";
+import { join, dirname } from "path";
 import { homedir } from "os";
+import { readFileSync, writeFileSync } from "fs";
+import { fileURLToPath } from "url";
 import { fetchWithCache, clearCacheFile } from "@intentius/chant/codegen/fetch";
 
 /**
@@ -32,15 +34,33 @@ export function getCachePath(): string {
 }
 
 /**
+ * Path to the vendored CI schema committed in this lexicon. Reading it offline
+ * is the default so `generate` never depends on gitlab.com — which aggressively
+ * 429-rate-limits the raw endpoint and chronically flaked CI (#574). The
+ * `GITLAB_SCHEMA_VERSION` pin already makes the fetch deterministic, so a
+ * committed copy is equivalent and network-free.
+ */
+export function getVendoredSchemaPath(): string {
+  return join(dirname(fileURLToPath(import.meta.url)), "vendored", "gitlab-ci-schema.json");
+}
+
+/**
  * Fetch the GitLab CI JSON Schema, returning the raw JSON buffer.
- * Uses local file caching with 24-hour TTL.
  *
- * @param force  Bypass cache and download fresh.
+ * Default (pinned version, no force): read the vendored, committed schema —
+ * offline, deterministic, no gitlab.com 429s (#574). Pass `force` or a custom
+ * `version` to fetch live — used to verify against upstream or to refresh the
+ * vendored copy when bumping the pin (see {@link refreshVendoredSchema}).
+ *
+ * @param force  Bypass the vendored copy and download fresh.
  * @param version  GitLab ref (tag, branch, or SHA) to fetch from.
  *                 Defaults to {@link GITLAB_SCHEMA_VERSION}.
  */
 export async function fetchCISchema(force?: boolean, version?: string): Promise<Buffer> {
   const ref = version ?? GITLAB_SCHEMA_VERSION;
+  if (!force && ref === GITLAB_SCHEMA_VERSION) {
+    return readFileSync(getVendoredSchemaPath());
+  }
   return fetchWithCache(
     {
       url: schemaUrl(ref),
@@ -48,6 +68,18 @@ export async function fetchCISchema(force?: boolean, version?: string): Promise<
     },
     force,
   );
+}
+
+/**
+ * Refresh the vendored schema from upstream. Call this when bumping
+ * `GITLAB_SCHEMA_VERSION` so the committed copy tracks the new pin — the
+ * lexicon-upgrade pipeline (#523) runs it as part of a gitlab pin bump.
+ * Fetches the given version live and overwrites the vendored file.
+ */
+export async function refreshVendoredSchema(version?: string): Promise<void> {
+  const ref = version ?? GITLAB_SCHEMA_VERSION;
+  const data = await fetchWithCache({ url: schemaUrl(ref), cacheFile: getCachePath() }, true);
+  writeFileSync(getVendoredSchemaPath(), data);
 }
 
 /**
