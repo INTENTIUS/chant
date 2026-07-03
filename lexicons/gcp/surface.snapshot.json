@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "generatedAt": "2026-07-02T02:03:36.241Z",
+  "generatedAt": "2026-07-03T14:49:41.485Z",
   "entries": {
     "API": {
       "kind": "resource",
@@ -229,6 +229,15 @@
       "kind": "property",
       "resourceType": "GCP::Aiplatform::Model.predictSchemata"
     },
+    "AistreamsCluster": {
+      "kind": "resource",
+      "resourceType": "GCP::Aistreams::Cluster",
+      "attrs": [
+        "name",
+        "namespace",
+        "uid"
+      ]
+    },
     "AlertPolicy": {
       "kind": "resource",
       "resourceType": "GCP::Monitoring::AlertPolicy",
@@ -426,6 +435,19 @@
     "ApigeeInstance_AccessLoggingConfig": {
       "kind": "property",
       "resourceType": "GCP::Apigee::Instance.accessLoggingConfig"
+    },
+    "ApihubDeployment": {
+      "kind": "resource",
+      "resourceType": "GCP::Apihub::Deployment",
+      "attrs": [
+        "name",
+        "namespace",
+        "uid"
+      ]
+    },
+    "ApihubDeployment_Documentation": {
+      "kind": "property",
+      "resourceType": "GCP::Apihub::Deployment.documentation"
     },
     "ApikeysKey": {
       "kind": "resource",
@@ -654,6 +676,23 @@
         "namespace",
         "uid"
       ]
+    },
+    "Automation": {
+      "kind": "resource",
+      "resourceType": "GCP::Clouddeploy::Automation",
+      "attrs": [
+        "name",
+        "namespace",
+        "uid"
+      ]
+    },
+    "Automation_Rule": {
+      "kind": "property",
+      "resourceType": "GCP::Clouddeploy::Automation.rules"
+    },
+    "Automation_Selector": {
+      "kind": "property",
+      "resourceType": "GCP::Clouddeploy::Automation.selector"
     },
     "Autoscaler": {
       "kind": "resource",
@@ -1126,6 +1165,19 @@
       "kind": "property",
       "resourceType": "GCP::Bigquery::Dataset.defaultEncryptionConfiguration"
     },
+    "BigQueryExport": {
+      "kind": "resource",
+      "resourceType": "GCP::Securitycenter::BigQueryExport",
+      "attrs": [
+        "name",
+        "namespace",
+        "uid"
+      ]
+    },
+    "BigQueryExport_OrganizationRef": {
+      "kind": "property",
+      "resourceType": "GCP::Securitycenter::BigQueryExport.organizationRef"
+    },
     "BigQueryTable": {
       "kind": "resource",
       "resourceType": "GCP::Bigquery::Table",
@@ -1508,11 +1560,11 @@
         "uid"
       ]
     },
-    "CertificateIssuanceConfig_CertificateAuthorityConfigRef": {
+    "CertificateIssuanceConfig_CertificateAuthorityConfig": {
       "kind": "property",
-      "resourceType": "GCP::Certificatemanager::CertificateIssuanceConfig.certificateAuthorityConfigRef"
+      "resourceType": "GCP::Certificatemanager::CertificateIssuanceConfig.certificateAuthorityConfig"
     },
-    "CertificateIssuanceConfig_CertificateAuthorityConfigRef_CertificateAuthorityServiceConfig": {
+    "CertificateIssuanceConfig_CertificateAuthorityConfig_CertificateAuthorityServiceConfig": {
       "kind": "property",
       "resourceType": "GCP::Certificatemanager::CertificateIssuanceConfig.certificateAuthorityServiceConfig"
     },
@@ -1596,6 +1648,31 @@
       "kind": "property",
       "resourceType": "GCP::Certificatemanager::Certificate.privateKeyPem"
     },
+    "ClientConnectorService": {
+      "kind": "resource",
+      "resourceType": "GCP::Beyondcorp::ClientConnectorService",
+      "attrs": [
+        "name",
+        "namespace",
+        "uid"
+      ]
+    },
+    "ClientConnectorService_Egress": {
+      "kind": "property",
+      "resourceType": "GCP::Beyondcorp::ClientConnectorService.egress"
+    },
+    "ClientConnectorService_Egress_PeeredVPC": {
+      "kind": "property",
+      "resourceType": "GCP::Beyondcorp::ClientConnectorService.peeredVPC"
+    },
+    "ClientConnectorService_Ingress": {
+      "kind": "property",
+      "resourceType": "GCP::Beyondcorp::ClientConnectorService.ingress"
+    },
+    "ClientConnectorService_Ingress_Config": {
+      "kind": "property",
+      "resourceType": "GCP::Beyondcorp::ClientConnectorService.config"
+    },
     "ClientTLSPolicy": {
       "kind": "resource",
       "resourceType": "GCP::Networksecurity::ClientTLSPolicy",
@@ -1620,6 +1697,27 @@
     "ClientTLSPolicy_ServerValidationCa": {
       "kind": "property",
       "resourceType": "GCP::Networksecurity::ClientTLSPolicy.serverValidationCa"
+    },
+    "CloudBatchResourceAllowance": {
+      "kind": "resource",
+      "resourceType": "GCP::Batch::CloudBatchResourceAllowance",
+      "attrs": [
+        "name",
+        "namespace",
+        "uid"
+      ]
+    },
+    "CloudBatchResourceAllowance_Notification": {
+      "kind": "property",
+      "resourceType": "GCP::Batch::CloudBatchResourceAllowance.notifications"
+    },
+    "CloudBatchResourceAllowance_UsageResourceAllowance": {
+      "kind": "property",
+      "resourceType": "GCP::Batch::CloudBatchResourceAllowance.usageResourceAllowance"
+    },
+    "CloudBatchResourceAllowance_UsageResourceAllowance_Spec": {
+      "kind": "property",
+      "resourceType": "GCP::Batch::CloudBatchResourceAllowance.spec"
     },
     "CloudFunction": {
       "kind": "resource",
@@ -2155,6 +2253,10 @@
         "uid"
       ]
     },
+    "ComputeReservation_ShareSettings": {
+      "kind": "property",
+      "resourceType": "GCP::Compute::Reservation.shareSettings"
+    },
     "ComputeReservation_SpecificReservation": {
       "kind": "property",
       "resourceType": "GCP::Compute::Reservation.specificReservation"
@@ -2459,6 +2561,19 @@
         "uid"
       ]
     },
+    "CustomTargetType": {
+      "kind": "resource",
+      "resourceType": "GCP::Clouddeploy::CustomTargetType",
+      "attrs": [
+        "name",
+        "namespace",
+        "uid"
+      ]
+    },
+    "CustomTargetType_CustomActions": {
+      "kind": "property",
+      "resourceType": "GCP::Clouddeploy::CustomTargetType.customActions"
+    },
     "DICOMStore": {
       "kind": "resource",
       "resourceType": "GCP::Healthcare::DICOMStore",
@@ -2580,6 +2695,31 @@
         "namespace",
         "uid"
       ]
+    },
+    "DataLabelingJob": {
+      "kind": "resource",
+      "resourceType": "GCP::Vertexai::DataLabelingJob",
+      "attrs": [
+        "name",
+        "namespace",
+        "uid"
+      ]
+    },
+    "DataLabelingJob_ActiveLearningConfig": {
+      "kind": "property",
+      "resourceType": "GCP::Vertexai::DataLabelingJob.activeLearningConfig"
+    },
+    "DataLabelingJob_ActiveLearningConfig_SampleConfig": {
+      "kind": "property",
+      "resourceType": "GCP::Vertexai::DataLabelingJob.sampleConfig"
+    },
+    "DataLabelingJob_ActiveLearningConfig_TrainingConfig": {
+      "kind": "property",
+      "resourceType": "GCP::Vertexai::DataLabelingJob.trainingConfig"
+    },
+    "DataLabelingJob_EncryptionSpec": {
+      "kind": "property",
+      "resourceType": "GCP::Vertexai::DataLabelingJob.encryptionSpec"
     },
     "DataPolicy": {
       "kind": "resource",
@@ -2906,6 +3046,43 @@
       "kind": "property",
       "resourceType": "GCP::Dataproc::NodeGroup.startupConfig"
     },
+    "DataprocSession": {
+      "kind": "resource",
+      "resourceType": "GCP::Dataproc::Session",
+      "attrs": [
+        "name",
+        "namespace",
+        "uid"
+      ]
+    },
+    "DataprocSession_EnvironmentConfig": {
+      "kind": "property",
+      "resourceType": "GCP::Dataproc::Session.environmentConfig"
+    },
+    "DataprocSession_EnvironmentConfig_ExecutionConfig": {
+      "kind": "property",
+      "resourceType": "GCP::Dataproc::Session.executionConfig"
+    },
+    "DataprocSession_EnvironmentConfig_PeripheralsConfig": {
+      "kind": "property",
+      "resourceType": "GCP::Dataproc::Session.peripheralsConfig"
+    },
+    "DataprocSession_JupyterSession": {
+      "kind": "property",
+      "resourceType": "GCP::Dataproc::Session.jupyterSession"
+    },
+    "DataprocSession_RuntimeConfig": {
+      "kind": "property",
+      "resourceType": "GCP::Dataproc::Session.runtimeConfig"
+    },
+    "DataprocSession_RuntimeConfig_AutotuningConfig": {
+      "kind": "property",
+      "resourceType": "GCP::Dataproc::Session.autotuningConfig"
+    },
+    "DataprocSession_RuntimeConfig_RepositoryConfig": {
+      "kind": "property",
+      "resourceType": "GCP::Dataproc::Session.repositoryConfig"
+    },
     "DatasetAccess": {
       "kind": "resource",
       "resourceType": "GCP::Bigquery::DatasetAccess",
@@ -3031,19 +3208,6 @@
       "kind": "property",
       "resourceType": "GCP::Iam::DenyPolicy.rules"
     },
-    "DeployCustomTargetType": {
-      "kind": "resource",
-      "resourceType": "GCP::Clouddeploy::DeployCustomTargetType",
-      "attrs": [
-        "name",
-        "namespace",
-        "uid"
-      ]
-    },
-    "DeployCustomTargetType_CustomActions": {
-      "kind": "property",
-      "resourceType": "GCP::Clouddeploy::DeployCustomTargetType.customActions"
-    },
     "DeployPolicy": {
       "kind": "resource",
       "resourceType": "GCP::Clouddeploy::DeployPolicy",
@@ -3061,7 +3225,32 @@
       "kind": "property",
       "resourceType": "GCP::Clouddeploy::DeployPolicy.selectors"
     },
-    "Deployment": {
+    "DeploymentResourcePool": {
+      "kind": "resource",
+      "resourceType": "GCP::Vertexai::DeploymentResourcePool",
+      "attrs": [
+        "name",
+        "namespace",
+        "uid"
+      ]
+    },
+    "DeploymentResourcePool_DedicatedResources": {
+      "kind": "property",
+      "resourceType": "GCP::Vertexai::DeploymentResourcePool.dedicatedResources"
+    },
+    "DeploymentResourcePool_DedicatedResources_FlexStart": {
+      "kind": "property",
+      "resourceType": "GCP::Vertexai::DeploymentResourcePool.flexStart"
+    },
+    "DeploymentResourcePool_DedicatedResources_MachineSpec": {
+      "kind": "property",
+      "resourceType": "GCP::Vertexai::DeploymentResourcePool.machineSpec"
+    },
+    "DeploymentResourcePool_EncryptionSpec": {
+      "kind": "property",
+      "resourceType": "GCP::Vertexai::DeploymentResourcePool.encryptionSpec"
+    },
+    "DeploymentmanagerDeployment": {
       "kind": "resource",
       "resourceType": "GCP::Deploymentmanager::Deployment",
       "attrs": [
@@ -3070,11 +3259,11 @@
         "uid"
       ]
     },
-    "Deployment_Target": {
+    "DeploymentmanagerDeployment_Target": {
       "kind": "property",
       "resourceType": "GCP::Deploymentmanager::Deployment.target"
     },
-    "Deployment_Target_Config": {
+    "DeploymentmanagerDeployment_Target_Config": {
       "kind": "property",
       "resourceType": "GCP::Deploymentmanager::Deployment.config"
     },
@@ -3111,6 +3300,19 @@
     "Device_GatewayConfig": {
       "kind": "property",
       "resourceType": "GCP::Cloudiot::Device.gatewayConfig"
+    },
+    "DevicestreamingSession": {
+      "kind": "resource",
+      "resourceType": "GCP::Devicestreaming::Session",
+      "attrs": [
+        "name",
+        "namespace",
+        "uid"
+      ]
+    },
+    "DevicestreamingSession_AndroidDevice": {
+      "kind": "property",
+      "resourceType": "GCP::Devicestreaming::Session.androidDevice"
     },
     "DialogflowAgent": {
       "kind": "resource",
@@ -3461,6 +3663,15 @@
       "kind": "property",
       "resourceType": "GCP::Discoveryengine::Engine.searchEngineConfig"
     },
+    "Enrollment": {
+      "kind": "resource",
+      "resourceType": "GCP::Eventarc::Enrollment",
+      "attrs": [
+        "name",
+        "namespace",
+        "uid"
+      ]
+    },
     "Entitlement": {
       "kind": "resource",
       "resourceType": "GCP::Privilegedaccessmanager::Entitlement",
@@ -3691,6 +3902,19 @@
     "EventarcTrigger_Transport_Pubsub": {
       "kind": "property",
       "resourceType": "GCP::Eventarc::Trigger.pubsub"
+    },
+    "ExampleStore": {
+      "kind": "resource",
+      "resourceType": "GCP::Vertexai::ExampleStore",
+      "attrs": [
+        "name",
+        "namespace",
+        "uid"
+      ]
+    },
+    "ExampleStore_ExampleStoreConfig": {
+      "kind": "property",
+      "resourceType": "GCP::Vertexai::ExampleStore.exampleStoreConfig"
     },
     "ExternalAccessRule": {
       "kind": "resource",
@@ -4221,6 +4445,10 @@
       "kind": "property",
       "resourceType": "GCP::Compute::ForwardingRule.target"
     },
+    "ForwardingRule_Target_MemorystoreInstanceServiceAttachment": {
+      "kind": "property",
+      "resourceType": "GCP::Compute::ForwardingRule.memorystoreInstanceServiceAttachment"
+    },
     "Fulfillment": {
       "kind": "resource",
       "resourceType": "GCP::Dialogflow::Fulfillment",
@@ -4262,6 +4490,47 @@
     "Function_ServiceConfig": {
       "kind": "property",
       "resourceType": "GCP::Cloudfunctions2::Function.serviceConfig"
+    },
+    "FutureReservation": {
+      "kind": "resource",
+      "resourceType": "GCP::Compute::FutureReservation",
+      "attrs": [
+        "name",
+        "namespace",
+        "uid"
+      ]
+    },
+    "FutureReservation_AggregateReservation": {
+      "kind": "property",
+      "resourceType": "GCP::Compute::FutureReservation.aggregateReservation"
+    },
+    "FutureReservation_AutoCreatedReservationsDuration": {
+      "kind": "property",
+      "resourceType": "GCP::Compute::FutureReservation.autoCreatedReservationsDuration"
+    },
+    "FutureReservation_CommitmentInfo": {
+      "kind": "property",
+      "resourceType": "GCP::Compute::FutureReservation.commitmentInfo"
+    },
+    "FutureReservation_ShareSettings": {
+      "kind": "property",
+      "resourceType": "GCP::Compute::FutureReservation.shareSettings"
+    },
+    "FutureReservation_SpecificSkuProperties": {
+      "kind": "property",
+      "resourceType": "GCP::Compute::FutureReservation.specificSkuProperties"
+    },
+    "FutureReservation_SpecificSkuProperties_InstanceProperties": {
+      "kind": "property",
+      "resourceType": "GCP::Compute::FutureReservation.instanceProperties"
+    },
+    "FutureReservation_TimeWindow": {
+      "kind": "property",
+      "resourceType": "GCP::Compute::FutureReservation.timeWindow"
+    },
+    "FutureReservation_TimeWindow_Duration": {
+      "kind": "property",
+      "resourceType": "GCP::Compute::FutureReservation.duration"
     },
     "GCPServiceAccount": {
       "kind": "resource",
@@ -4720,6 +4989,15 @@
       "kind": "property",
       "resourceType": "GCP::Gkehub::Membership.kubernetesResource"
     },
+    "GkehubNamespace": {
+      "kind": "resource",
+      "resourceType": "GCP::Gkehub::Namespace",
+      "attrs": [
+        "name",
+        "namespace",
+        "uid"
+      ]
+    },
     "GlobalNetworkEndpoint": {
       "kind": "resource",
       "resourceType": "GCP::Compute::GlobalNetworkEndpoint",
@@ -5075,6 +5353,19 @@
       "kind": "property",
       "resourceType": "GCP::Spanner::InstanceConfig.replicas"
     },
+    "InstanceEndpoint": {
+      "kind": "resource",
+      "resourceType": "GCP::Memorystore::InstanceEndpoint",
+      "attrs": [
+        "name",
+        "namespace",
+        "uid"
+      ]
+    },
+    "InstanceEndpoint_Endpoint": {
+      "kind": "property",
+      "resourceType": "GCP::Memorystore::InstanceEndpoint.endpoints"
+    },
     "InstanceGroup": {
       "kind": "resource",
       "resourceType": "GCP::Compute::InstanceGroup",
@@ -5203,6 +5494,24 @@
       "kind": "property",
       "resourceType": "GCP::Compute::InstanceTemplate.shieldedInstanceConfig"
     },
+    "InterceptDeployment": {
+      "kind": "resource",
+      "resourceType": "GCP::Networksecurity::InterceptDeployment",
+      "attrs": [
+        "name",
+        "namespace",
+        "uid"
+      ]
+    },
+    "InterceptEndpointGroup": {
+      "kind": "resource",
+      "resourceType": "GCP::Networksecurity::InterceptEndpointGroup",
+      "attrs": [
+        "name",
+        "namespace",
+        "uid"
+      ]
+    },
     "Interconnect": {
       "kind": "resource",
       "resourceType": "GCP::Compute::Interconnect",
@@ -5302,6 +5611,19 @@
         "namespace",
         "uid"
       ]
+    },
+    "LBRouteExtension": {
+      "kind": "resource",
+      "resourceType": "GCP::Networkservices::LBRouteExtension",
+      "attrs": [
+        "name",
+        "namespace",
+        "uid"
+      ]
+    },
+    "LBRouteExtension_ExtensionChain": {
+      "kind": "property",
+      "resourceType": "GCP::Networkservices::LBRouteExtension.extensionChains"
     },
     "Lake": {
       "kind": "resource",
@@ -5566,6 +5888,15 @@
         "uid"
       ]
     },
+    "MembershipBinding": {
+      "kind": "resource",
+      "resourceType": "GCP::Gkehub::MembershipBinding",
+      "attrs": [
+        "name",
+        "namespace",
+        "uid"
+      ]
+    },
     "MemcacheInstance": {
       "kind": "resource",
       "resourceType": "GCP::Memcache::Instance",
@@ -5595,6 +5926,22 @@
         "namespace",
         "uid"
       ]
+    },
+    "MemorystoreInstance_AutomatedBackupConfig": {
+      "kind": "property",
+      "resourceType": "GCP::Memorystore::Instance.automatedBackupConfig"
+    },
+    "MemorystoreInstance_AutomatedBackupConfig_FixedFrequencySchedule": {
+      "kind": "property",
+      "resourceType": "GCP::Memorystore::Instance.fixedFrequencySchedule"
+    },
+    "MemorystoreInstance_CrossInstanceReplicationConfig": {
+      "kind": "property",
+      "resourceType": "GCP::Memorystore::Instance.crossInstanceReplicationConfig"
+    },
+    "MemorystoreInstance_CrossInstanceReplicationConfig_PrimaryInstance": {
+      "kind": "property",
+      "resourceType": "GCP::Memorystore::Instance.primaryInstance"
     },
     "MemorystoreInstance_Endpoint": {
       "kind": "property",
@@ -5790,18 +6137,22 @@
         "uid"
       ]
     },
-    "NATAddress": {
+    "MuteConfig": {
       "kind": "resource",
-      "resourceType": "GCP::Apigee::NATAddress",
+      "resourceType": "GCP::Securitycenter::MuteConfig",
       "attrs": [
         "name",
         "namespace",
         "uid"
       ]
     },
-    "Namespace": {
+    "MuteConfig_OrganizationRef": {
+      "kind": "property",
+      "resourceType": "GCP::Securitycenter::MuteConfig.organizationRef"
+    },
+    "NATAddress": {
       "kind": "resource",
-      "resourceType": "GCP::Servicedirectory::Namespace",
+      "resourceType": "GCP::Apigee::NATAddress",
       "attrs": [
         "name",
         "namespace",
@@ -6424,6 +6775,19 @@
         "uid"
       ]
     },
+    "ParameterVersion": {
+      "kind": "resource",
+      "resourceType": "GCP::Parametermanager::ParameterVersion",
+      "attrs": [
+        "name",
+        "namespace",
+        "uid"
+      ]
+    },
+    "ParameterVersion_Payload": {
+      "kind": "property",
+      "resourceType": "GCP::Parametermanager::ParameterVersion.payload"
+    },
     "PartialPolicy": {
       "kind": "resource",
       "resourceType": "GCP::Iam::PartialPolicy",
@@ -6548,6 +6912,23 @@
     "PhraseSet_Phras": {
       "kind": "property",
       "resourceType": "GCP::Speech::PhraseSet.phrases"
+    },
+    "PlatformPolicy": {
+      "kind": "resource",
+      "resourceType": "GCP::Binaryauthorization::PlatformPolicy",
+      "attrs": [
+        "name",
+        "namespace",
+        "uid"
+      ]
+    },
+    "PlatformPolicy_GkePolicy": {
+      "kind": "property",
+      "resourceType": "GCP::Binaryauthorization::PlatformPolicy.gkePolicy"
+    },
+    "PlatformPolicy_GkePolicy_ImageAllowlist": {
+      "kind": "property",
+      "resourceType": "GCP::Binaryauthorization::PlatformPolicy.imageAllowlist"
     },
     "PolicyTag": {
       "kind": "resource",
@@ -6971,6 +7352,15 @@
     "RegionSSLPolicy": {
       "kind": "resource",
       "resourceType": "GCP::Compute::RegionSSLPolicy",
+      "attrs": [
+        "name",
+        "namespace",
+        "uid"
+      ]
+    },
+    "RegionalEndpoint": {
+      "kind": "resource",
+      "resourceType": "GCP::Networkconnectivity::RegionalEndpoint",
       "attrs": [
         "name",
         "namespace",
@@ -7482,6 +7872,28 @@
         "uid"
       ]
     },
+    "Scope": {
+      "kind": "resource",
+      "resourceType": "GCP::Gkehub::Scope",
+      "attrs": [
+        "name",
+        "namespace",
+        "uid"
+      ]
+    },
+    "ScopeRBACRoleBinding": {
+      "kind": "resource",
+      "resourceType": "GCP::Gkehub::ScopeRBACRoleBinding",
+      "attrs": [
+        "name",
+        "namespace",
+        "uid"
+      ]
+    },
+    "ScopeRBACRoleBinding_Role": {
+      "kind": "property",
+      "resourceType": "GCP::Gkehub::ScopeRBACRoleBinding.role"
+    },
     "SecretCiphertext": {
       "kind": "resource",
       "resourceType": "GCP::Kms::SecretCiphertext",
@@ -7753,6 +8165,15 @@
       "kind": "property",
       "resourceType": "GCP::Accesscontextmanager::ServicePerimeter.vpcAccessibleServices"
     },
+    "ServiceProjectAttachment": {
+      "kind": "resource",
+      "resourceType": "GCP::Apphub::ServiceProjectAttachment",
+      "attrs": [
+        "name",
+        "namespace",
+        "uid"
+      ]
+    },
     "ServiceSplitTraffic": {
       "kind": "resource",
       "resourceType": "GCP::Appengine::ServiceSplitTraffic",
@@ -7769,6 +8190,15 @@
     "ServicedirectoryEndpoint": {
       "kind": "resource",
       "resourceType": "GCP::Servicedirectory::Endpoint",
+      "attrs": [
+        "name",
+        "namespace",
+        "uid"
+      ]
+    },
+    "ServicedirectoryNamespace": {
+      "kind": "resource",
+      "resourceType": "GCP::Servicedirectory::Namespace",
       "attrs": [
         "name",
         "namespace",
@@ -8388,6 +8818,15 @@
         "uid"
       ]
     },
+    "Target": {
+      "kind": "resource",
+      "resourceType": "GCP::Clouddeploy::Target",
+      "attrs": [
+        "name",
+        "namespace",
+        "uid"
+      ]
+    },
     "TargetGRPCProxy": {
       "kind": "resource",
       "resourceType": "GCP::Compute::TargetGRPCProxy",
@@ -8463,6 +8902,30 @@
         "namespace",
         "uid"
       ]
+    },
+    "Target_AnthosCluster": {
+      "kind": "property",
+      "resourceType": "GCP::Clouddeploy::Target.anthosCluster"
+    },
+    "Target_CustomTarget": {
+      "kind": "property",
+      "resourceType": "GCP::Clouddeploy::Target.customTarget"
+    },
+    "Target_ExecutionConfig": {
+      "kind": "property",
+      "resourceType": "GCP::Clouddeploy::Target.executionConfigs"
+    },
+    "Target_Gke": {
+      "kind": "property",
+      "resourceType": "GCP::Clouddeploy::Target.gke"
+    },
+    "Target_MultiTarget": {
+      "kind": "property",
+      "resourceType": "GCP::Clouddeploy::Target.multiTarget"
+    },
+    "Target_Run": {
+      "kind": "property",
+      "resourceType": "GCP::Clouddeploy::Target.run"
     },
     "TasksQueue": {
       "kind": "resource",
@@ -8831,6 +9294,19 @@
     "VpnConnection_VpcProject": {
       "kind": "property",
       "resourceType": "GCP::Edgecontainer::VpnConnection.vpcProject"
+    },
+    "WasmPlugin": {
+      "kind": "resource",
+      "resourceType": "GCP::Networkservices::WasmPlugin",
+      "attrs": [
+        "name",
+        "namespace",
+        "uid"
+      ]
+    },
+    "WasmPlugin_LogConfig": {
+      "kind": "property",
+      "resourceType": "GCP::Networkservices::WasmPlugin.logConfig"
     },
     "WebApp": {
       "kind": "resource",
