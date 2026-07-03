@@ -55,9 +55,25 @@ export async function runDevSurfaceDiff(ctx: CommandContext): Promise<number> {
     verbose: ctx.args.verbose,
     runExamples: ctx.args.runExamples,
     pinnedDigestPath: ctx.args.pinnedDigest,
-    updateSnapshot: ctx.args.updateSnapshot,
+    // --check never writes; it verifies the committed baseline is in sync.
+    updateSnapshot: ctx.args.check ? false : ctx.args.updateSnapshot,
   });
   printSurfaceDiffResult(result, ctx.args.format === "json");
+  // --check: fail if regen failed OR the fresh surface drifted from the
+  // committed baseline (stale/hand-edited baseline, or pin bumped without
+  // updating it). Meaningful for pinned lexicons — a fresh regen at the pinned
+  // version must equal the baseline. #545.
+  if (ctx.args.check) {
+    if (!result.ok) return 1;
+    if (result.changed) {
+      console.error(
+        `Baseline out of sync: ${dir}/surface.snapshot.json differs from a fresh regen. ` +
+          `Re-baseline with: chant dev surface-diff ${dir} --update-snapshot`,
+      );
+      return 1;
+    }
+    return 0;
+  }
   return result.ok ? 0 : 1;
 }
 

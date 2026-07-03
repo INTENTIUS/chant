@@ -98,6 +98,15 @@ jobs:
           npx tsx packages/core/src/cli/main.ts run ${{ matrix.lexicon }}-upgrade --local --json > upgrade-${{ matrix.lexicon }}.json
           cat upgrade-${{ matrix.lexicon }}.json
 
+      # Non-gating baseline-integrity check (#545): for pinned lexicons, verify
+      # the committed surface.snapshot.json still matches a fresh regen at the
+      # pinned version. Surfaces a stale/hand-edited baseline as a step warning
+      # without failing the run. Rolling lexicons drift by design, so excluded.
+      - name: Verify committed baseline (pinned lexicons)
+        if: ${{ contains(fromJSON('["k8s","gcp","docker","gitlab"]'), matrix.lexicon) }}
+        continue-on-error: true
+        run: npx tsx packages/core/src/cli/main.ts dev surface-diff lexicons/${{ matrix.lexicon }} --check
+
       - name: Upload upgrade result
         if: always()
         uses: actions/upload-artifact@v4
