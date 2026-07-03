@@ -10,7 +10,7 @@ import { fetchWithCache, clearCacheFile } from "@intentius/chant/codegen/fetch";
 /**
  * Pinned Kubernetes version for schema download.
  */
-export const K8S_SCHEMA_VERSION = "v1.32.0";
+export const K8S_SCHEMA_VERSION = "v1.36.2";
 
 /**
  * Build the schema URL for a given version.
