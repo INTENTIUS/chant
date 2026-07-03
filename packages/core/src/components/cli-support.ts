@@ -14,12 +14,16 @@
  *    (mirrors `computeStackGraph`/`runStackGraph`, but reuses
  *    `resolveComponentGraph` from ../driver.ts since a component's `dependsOn`
  *    is already a flat name list — no AttrRef-style inference needed).
+ *  - `chant build --components --generate gitlab` — generate mode (#563):
+ *    synthesize CI YAML from the same discovered declarations instead of
+ *    running them, via `generateGitlabPipeline` (../generate-gitlab.ts).
  */
 
 import { discoverComponents } from "./discover";
 import { projectToJson, type Archetype } from "./component";
 import { resolveComponentGraph, UnknownDependencyError, DependencyCycleError } from "./driver";
 import type { DriverComponent } from "./driver";
+import { generateGitlabPipeline, type GenerateGitlabOptions } from "./generate-gitlab";
 
 /** One component in `chant list --components` output. */
 export interface ListedComponent {
@@ -134,6 +138,64 @@ export async function computeComponentGraph(path: string): Promise<ComponentGrap
   } catch (err) {
     if (err instanceof UnknownDependencyError || err instanceof DependencyCycleError) {
       return { success: false, order: [], waves: [], edges: [], error: err.message };
+    }
+    throw err;
+  }
+}
+
+/** Supported generate-mode target lexicons. GitLab is the only implemented target for v1 (#563) — one lexicon is enough per the epic's phasing. */
+export type GenerateLexicon = "gitlab";
+
+/** Result of `chant build --components --generate <lexicon>`. */
+export interface GenerateComponentsResult {
+  success: boolean;
+  /** The synthesized CI YAML, when `success` is true. */
+  yaml?: string;
+  /** Wave-ordered stage names (GitLab: one `stages:` entry per wave). */
+  stages?: string[];
+  /** Every generated job, for a machine-readable view (`--format json`). */
+  jobs?: Array<{ jobName: string; component: string; stage: string; needs: string[] }>;
+  error?: string;
+}
+
+/**
+ * Generate mode (#563): discover every `Component` under `path` and
+ * synthesize a thin CI pipeline for `lexicon` that triggers each component's
+ * own composition in dependency order/waves — the same `resolveComponentGraph`
+ * order `chant graph --components`/the interpret driver use. No deploy logic
+ * is inlined into the generated YAML; a cross-cutting change goes through
+ * `options` (see `generateGitlabPipeline`'s docstring), never per component.
+ */
+export async function generateComponentsPipeline(
+  path: string,
+  lexicon: GenerateLexicon,
+  options?: GenerateGitlabOptions,
+): Promise<GenerateComponentsResult> {
+  const result = await discoverComponents(path);
+  if (result.errors.length > 0) {
+    return { success: false, error: result.errors.map((e) => e.message).join("\n") };
+  }
+
+  const driverComponents: DriverComponent[] = [...result.components.values()].map(({ component }) => ({
+    name: component.name,
+    dependsOn: component.dependsOn,
+    deploy: component.deploy,
+  }));
+
+  try {
+    switch (lexicon) {
+      case "gitlab": {
+        const { yaml, stages, jobs } = generateGitlabPipeline(driverComponents, options);
+        return { success: true, yaml, stages, jobs };
+      }
+      default: {
+        const exhaustive: never = lexicon;
+        return { success: false, error: `Unsupported generate-mode lexicon "${exhaustive as string}". Supported: gitlab.` };
+      }
+    }
+  } catch (err) {
+    if (err instanceof UnknownDependencyError || err instanceof DependencyCycleError) {
+      return { success: false, error: err.message };
     }
     throw err;
   }

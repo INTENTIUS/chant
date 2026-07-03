@@ -1,10 +1,74 @@
+import { writeFileSync, mkdirSync } from "node:fs";
+import { dirname, resolve } from "node:path";
 import { buildCommand, buildCommandWatch, printErrors, printWarnings, resolveBuildFormat } from "../commands/build";
-import { formatError, formatInfo } from "../format";
+import { formatError, formatInfo, formatSuccess, formatBold } from "../format";
 import type { CommandContext } from "../registry";
+import { generateComponentsPipeline, type GenerateLexicon } from "../../components/cli-support";
+
+const GENERATE_LEXICONS: GenerateLexicon[] = ["gitlab"];
+
+/**
+ * `chant build --components --generate <lexicon>` — generate mode (#563,
+ * epic #551 Phase 3). Discovers `Component` declarations under `args.path`
+ * and synthesizes a thin CI pipeline for `lexicon` instead of running a
+ * normal lexicon build: no entity discovery, no serializers, no post-synth
+ * checks — those apply to lexicon resources, which is a different input to
+ * a different command path (`chant build` without `--components`).
+ */
+async function runGenerateComponents(ctx: CommandContext): Promise<number> {
+  const { args } = ctx;
+  const lexicon = args.generate as string;
+  if (!GENERATE_LEXICONS.includes(lexicon as GenerateLexicon)) {
+    console.error(
+      formatError({
+        message: `Unsupported --generate lexicon "${lexicon}". Supported: ${GENERATE_LEXICONS.join(", ")}.`,
+        hint: "Generate mode ships GitLab CI first (#563); GitHub/Forgejo are tracked separately.",
+      }),
+    );
+    return 1;
+  }
+
+  const result = await generateComponentsPipeline(args.path, lexicon as GenerateLexicon, {
+    env: args.env,
+  });
+
+  if (!result.success) {
+    console.error(formatError({ message: result.error ?? "Failed to generate CI pipeline from components" }));
+    return 1;
+  }
+
+  const yaml = result.yaml ?? "";
+  if (args.format === "json") {
+    console.log(JSON.stringify({ stages: result.stages, jobs: result.jobs, yaml }, null, 2));
+  } else if (args.output) {
+    const outputPath = resolve(args.output);
+    mkdirSync(dirname(outputPath), { recursive: true });
+    writeFileSync(outputPath, yaml);
+  } else {
+    console.log(yaml);
+  }
+
+  if (args.verbose || args.output) {
+    console.error(
+      formatSuccess(
+        `Generated ${formatBold(lexicon)} pipeline: ${formatBold(String(result.jobs?.length ?? 0))} job(s) across ${formatBold(String(result.stages?.length ?? 0))} wave(s)`,
+      ),
+    );
+  }
+
+  return 0;
+}
 
 export async function runBuild(ctx: CommandContext): Promise<number> {
   const { args, plugins } = ctx;
   let { serializers } = ctx;
+
+  // Generate mode (#563): synthesize CI YAML from components instead of
+  // running a normal lexicon build. Checked first since it does not need
+  // `serializers`/lexicon resources at all.
+  if (args.components && args.generate) {
+    return runGenerateComponents(ctx);
+  }
 
   // Filter to a single lexicon when --lexicon is specified
   if (args.lexicon) {

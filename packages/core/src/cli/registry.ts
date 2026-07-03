@@ -61,6 +61,10 @@ export interface ParsedArgs {
   /** `chant list --components` / `chant graph --components` — surface discovered
    * `Component` declarations (#560) instead of/alongside lexicon resources. */
   components?: boolean;
+  /** `chant build --components --generate <lexicon>` — generate mode (#563):
+   * synthesize CI YAML from discovered components instead of running a normal
+   * lexicon build. Only "gitlab" is implemented for v1. */
+  generate?: string;
   /** `chant graph --format ir --detail <0..3>` — graph IR detail tier */
   detail?: number;
   /** `chant graph --lens <kind>:<target>` — focus the graph IR on a slice */
