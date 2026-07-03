@@ -328,20 +328,26 @@ describe("lexiconUpgrade pull-request idempotency", () => {
 // ── computeBumpedVersion ──────────────────────────────────────────────
 
 describe("computeBumpedVersion", () => {
-  test("minor label increments minor, resets patch", () => {
-    expect(computeBumpedVersion("0.13.1", "minor")).toBe("0.14.0");
+  test("pre-1.0 (0.x): breaking → minor, additive → patch, never 1.0.0", () => {
+    expect(computeBumpedVersion("0.13.1", "breaking")).toBe("0.14.0");
+    expect(computeBumpedVersion("0.13.1", "minor")).toBe("0.13.2");
+    expect(computeBumpedVersion("0.9.9", "breaking")).toBe("0.10.0"); // never promotes to 1.0.0
+    expect(computeBumpedVersion("0.0.1", "minor")).toBe("0.0.2");
+  });
+
+  test(">= 1.0.0: minor label → minor bump", () => {
     expect(computeBumpedVersion("1.0.0", "minor")).toBe("1.1.0");
     expect(computeBumpedVersion("2.5.9", "minor")).toBe("2.6.0");
   });
 
-  test("breaking label increments major, resets minor and patch", () => {
-    expect(computeBumpedVersion("0.13.1", "breaking")).toBe("1.0.0");
+  test(">= 1.0.0: breaking label → major bump", () => {
     expect(computeBumpedVersion("1.2.3", "breaking")).toBe("2.0.0");
     expect(computeBumpedVersion("10.0.0", "breaking")).toBe("11.0.0");
   });
 
   test("strips leading v prefix", () => {
-    expect(computeBumpedVersion("v0.13.1", "minor")).toBe("0.14.0");
+    expect(computeBumpedVersion("v0.13.1", "minor")).toBe("0.13.2");   // 0.x → patch
+    expect(computeBumpedVersion("v0.13.1", "breaking")).toBe("0.14.0"); // 0.x → minor
     expect(computeBumpedVersion("v2.0.0", "breaking")).toBe("3.0.0");
   });
 
@@ -415,11 +421,11 @@ describe("lexiconUpgrade pull-request mode: package.json version bump", () => {
       _gh: gh,
     });
 
-    // pinnedResult has severity "additive" → label "minor".
-    // Current version is "0.13.1" → bumped to "0.14.0".
+    // pinnedResult has severity "additive" → label "minor". Current version is
+    // "0.13.1" (pre-1.0) → additive bumps the patch → "0.13.2" (0.x-aware, #549).
     expect(bumps.length).toBe(1);
     expect(bumps[0]!.path).toBe(pkgPath);
-    expect(bumps[0]!.version).toBe("0.14.0");
+    expect(bumps[0]!.version).toBe("0.13.2");
   });
 
   test("rolling lexicon (aws): does NOT call _bumpPackageVersion", async () => {
