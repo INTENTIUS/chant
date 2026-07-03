@@ -1,21 +1,25 @@
 /**
- * End-to-end verification for #557/#558: the three pilots (#555) plus the
- * fourth validation component (#558, image-processor-lambda) run to
+ * End-to-end verification for #557/#558/#561: the three pilots (#555) plus
+ * the fourth validation component (#558, image-processor-lambda) run to
  * completion through the real, merged interpret driver (#556, ../driver.ts),
  * dispatching to the real AWS-leaf capability implementations
- * (../verbs/{build,publish,apply,host-delivery,wait-verify}.ts) — not the
- * typed stubs `createCapabilityRegistry()` still returns for non-pilot verbs.
+ * (../verbs/{build,publish,apply,host-delivery,wait-verify,job-submission}.ts)
+ * — not the typed stubs `createCapabilityRegistry()` still returns for
+ * non-pilot verbs.
  *
  * Every capability here is wired to a `MockCloudExecutor`
  * (../verbs/__tests__/mock-cloud-executor.ts): no live AWS, no live docker.
- * This suite is the acceptance-criteria proof from both issues:
+ * This suite is the acceptance-criteria proof from all three issues:
  *  - correct capability dispatch across all four components through one driver;
  *  - `cfn-deploy` refuses a data-losing replacement when `onReplace: "block"`;
  *  - every mutating capability the pilots use declares a `rollback`, or the
  *    component supplies its own explicit compensation phase (documented, not
  *    silent) where the capability itself has none;
  *  - the fourth component (#558) needed exactly one new capability
- *    (`lambda-deploy`) and zero driver edits — see ../SPRAWL-VALIDATION.md.
+ *    (`lambda-deploy`) and zero driver edits — see ../SPRAWL-VALIDATION.md;
+ *  - the JAR-producer/EMR-consumer pair (#561) resolves a cross-component
+ *    artifact reference (`@jar-lib.publish.uri`) purely via the graph, with
+ *    zero driver edits — ../driver.ts was not modified by #561.
  */
 
 import { describe, expect, it } from "vitest";
@@ -25,6 +29,7 @@ import { neo4jCluster } from "./neo4j-fanout.pilot";
 import { ordersTable } from "./dynamodb.pilot";
 import { searchService } from "./alb-ecs.pilot";
 import { imageProcessor } from "./lambda.pilot";
+import { jarLib, emrJob } from "./jar-emr.pilot";
 import { projectToJson } from "./project";
 import { createMockCloudExecutor, type MockCloudExecutor } from "../verbs/__tests__/mock-cloud-executor";
 import { createDockerBuildCapability } from "../verbs/build";
@@ -40,9 +45,11 @@ import {
   createWaitForStackCapability,
   createWaitSteadyStateCapability,
   createWaitClusterHealthyCapability,
+  createWaitJobCapability,
 } from "../verbs/wait-verify";
+import { createEmrStartJobRunCapability } from "../verbs/job-submission";
 
-/** Build a fresh registry with every real #557/#558 capability wired to one shared mock executor, plus the still-stubbed verbs the pilots also reference (run-migration, health-gate, rollback-previous — none of which #557/#558 scopes). */
+/** Build a fresh registry with every real #557/#558/#561 capability wired to one shared mock executor, plus the still-stubbed verbs the pilots also reference (run-migration, health-gate, rollback-previous — none of which #557/#558/#561 scopes). */
 function buildRegistry(mock: MockCloudExecutor): CapabilityRegistry {
   const registry = new CapabilityRegistry();
   registry.register(createDockerBuildCapability(mock.executor));
@@ -54,10 +61,25 @@ function buildRegistry(mock: MockCloudExecutor): CapabilityRegistry {
   registry.register(createWaitForStackCapability(mock.executor));
   registry.register(createWaitSteadyStateCapability(mock.executor));
   registry.register(createWaitClusterHealthyCapability(mock.executor));
+  // #561: still a stub for jar-lib/emr-job's `publish-artifact` (Publish,
+  // ../verbs/publish.ts) — out of #561's scope (a producer publishing a JVM
+  // artifact needs `jvm-build` + `publish-artifact`; neither is an AWS leaf
+  // #557/#561 implements), so faked here to succeed and return a resolvable
+  // `uri`/`digest`, exactly like `run-migration`/`health-gate` below for the
+  // same reason. `emr-start-job-run`/`wait-job` ARE real #561 implementations
+  // (../verbs/job-submission.ts, ../verbs/wait-verify.ts) — registered below,
+  // not faked.
+  registry.register({ kind: "jvm-build", run: async () => ({ archivePath: "lib.jar", digest: "sha256:jar-src" }) });
+  registry.register({
+    kind: "publish-artifact",
+    run: async () => ({ uri: "s3://jar-bucket/jar-lib.jar", digest: "sha256:jar-published" }),
+  });
+  registry.register(createEmrStartJobRunCapability(mock.executor));
+  registry.register(createWaitJobCapability(mock.executor));
   // Non-AWS-leaf / non-pilot-scoped verbs the pilots still reference — out of
-  // #557/#558's scope (still typed stubs in ../verbs/*.ts), so faked here to
-  // succeed so the happy-path E2E run can reach completion. `rollback-previous`
-  // backs the ALB/ECS pilot's own compensation phase.
+  // #557/#558/#561's scope (still typed stubs in ../verbs/*.ts), so faked here
+  // to succeed so the happy-path E2E run can reach completion.
+  // `rollback-previous` backs the ALB/ECS pilot's own compensation phase.
   registry.register({ kind: "run-migration", run: async () => ({ applied: true, version: "1" }) });
   registry.register({ kind: "health-gate", run: async () => ({ healthy: true }) });
   registry.register({ kind: "rollback-previous", run: async () => ({ restored: true }) });
@@ -287,6 +309,59 @@ describe("Pilots end-to-end through the real interpret driver (#557 acceptance c
     const result = await runInterpretDriver([dynamoAllow], registry, { env: "dev" });
     expect(result.ok).toBe(true);
     expect(mock.calls.some((c) => c.method === "executeChangeSet")).toBe(true);
+  });
+});
+
+describe("Cross-component artifact outputs: jar-lib producer -> emr-job consumer (#561 acceptance criteria)", () => {
+  it("orders the producer before the consumer and resolves @jar-lib.publish.uri into the consumer's Submit step, purely via the graph", async () => {
+    const mock = createMockCloudExecutor({ jobRuns: {} });
+    const registry = buildRegistry(mock);
+
+    const jarLibJson = projectToJson(jarLib) as unknown as DriverComponent;
+    const emrJobJson = projectToJson(emrJob) as unknown as DriverComponent;
+
+    const result = await runInterpretDriver([emrJobJson, jarLibJson], registry, {
+      env: "dev",
+      vars: { s3: "s3://jar-bucket", inputPath: "s3://data/in", outputPath: "s3://data/out" },
+    });
+
+    expect(result.ok).toBe(true);
+    // jar-lib (the producer) must land in a strictly earlier wave than
+    // emr-job (the consumer) — resolveComponentGraph ordering from `dependsOn`.
+    expect(result.waves).toEqual([["jar-lib"], ["emr-job"]]);
+    expect(result.order).toEqual(["jar-lib", "emr-job"]);
+
+    // The consumer's emr-start-job-run call received the producer's published
+    // S3 URI, not the literal "@jar-lib.publish.uri" string — resolved by
+    // ../driver.ts's resolveWiring/resolveComponentGraph, never by any
+    // orchestrator- or capability-level special-casing of "jar-lib"/"emr-job".
+    const startJobRunCall = mock.calls.find((c) => c.client === "emr" && c.method === "startJobRun")!;
+    expect(startJobRunCall.args).toMatchObject({ jar: "s3://jar-bucket/jar-lib.jar" });
+
+    // Verify phase's @Submit.runId prior-step reference also resolved.
+    const waitCall = mock.calls.find((c) => c.client === "emr" && c.method === "waitForJobRun")!;
+    expect(waitCall.args).toBe("mock-job-run-1");
+  });
+
+  it("fails the run if the EMR job ends in a non-COMPLETED terminal state, without ever touching driver.ts's generic dispatch", async () => {
+    const mock = createMockCloudExecutor({ jobRuns: { "mock-job-run-1": { terminalState: "FAILED" } } });
+    const registry = buildRegistry(mock);
+
+    const jarLibJson = projectToJson(jarLib) as unknown as DriverComponent;
+    const emrJobJson = projectToJson(emrJob) as unknown as DriverComponent;
+
+    await expect(
+      runInterpretDriver([jarLibJson, emrJobJson], registry, {
+        env: "dev",
+        vars: { s3: "s3://jar-bucket", inputPath: "s3://data/in", outputPath: "s3://data/out" },
+      }),
+    ).rejects.toThrow(DriverRunFailure);
+  });
+
+  it("emr-start-job-run declares no rollback — starting a job run has nothing to compensate once it's running (documented opt-out, matching wait-for-stack's read-only-observation story)", () => {
+    const mock = createMockCloudExecutor();
+    expect(createEmrStartJobRunCapability(mock.executor).rollback).toBeUndefined();
+    expect(createWaitJobCapability(mock.executor).rollback).toBeUndefined();
   });
 });
 

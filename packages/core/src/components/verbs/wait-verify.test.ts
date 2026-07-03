@@ -3,6 +3,7 @@ import {
   createWaitForStackCapability,
   createWaitSteadyStateCapability,
   createWaitClusterHealthyCapability,
+  createWaitJobCapability,
 } from "./wait-verify";
 import { createMockCloudExecutor } from "./__tests__/mock-cloud-executor";
 
@@ -104,6 +105,28 @@ describe("wait-cluster-healthy (#557 — Neo4j bolt/quorum probe)", () => {
 
   it("declares no rollback — a health probe is read-only", () => {
     const capability = createWaitClusterHealthyCapability(createMockCloudExecutor().executor);
+    expect(capability.rollback).toBeUndefined();
+  });
+});
+
+describe("wait-job (#561 — EMR job-run poll)", () => {
+  it("returns the terminal state once the job run completes", async () => {
+    const mock = createMockCloudExecutor({ jobRuns: { "run-1": { terminalState: "COMPLETED" } } });
+    const capability = createWaitJobCapability(mock.executor);
+    const output = await capability.run({ env: "dev", component: "emr-job" }, { runId: "run-1" });
+    expect(output.state).toBe("COMPLETED");
+  });
+
+  it("fails when the job run ends in a non-COMPLETED terminal state", async () => {
+    const mock = createMockCloudExecutor({ jobRuns: { "run-1": { terminalState: "FAILED" } } });
+    const capability = createWaitJobCapability(mock.executor);
+    await expect(capability.run({ env: "dev", component: "emr-job" }, { runId: "run-1" })).rejects.toThrow(
+      /ended in terminal state "FAILED"/,
+    );
+  });
+
+  it("declares no rollback — a job-run poll is read-only", () => {
+    const capability = createWaitJobCapability(createMockCloudExecutor().executor);
     expect(capability.rollback).toBeUndefined();
   });
 });

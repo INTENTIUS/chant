@@ -89,6 +89,21 @@ describe("createCapabilityRegistry", () => {
     }
   });
 
+  // #561 gave these two verbs real implementations (over the same injectable
+  // CloudExecutor, extended with an `emr` client — see ./verbs/cloud-executor.ts)
+  // so the JAR-producer -> EMR-consumer cross-component example
+  // (../__fixtures__/jar-lib-producer.json / emr-job-consumer.json) can run
+  // end to end against a mocked cloud. `emr-submit-step` (a different verb —
+  // submit to an already-running cluster) stays a stub; #561's example only
+  // needs `emr-start-job-run`.
+  test("#561 job-submission/wait-verify verbs (emr-start-job-run, wait-job) are real implementations, not stubs", () => {
+    const registry = createCapabilityRegistry();
+    for (const kind of ["emr-start-job-run", "wait-job"]) {
+      const capability = registry.resolve(kind);
+      expect(typeof capability.run).toBe("function");
+    }
+  });
+
   test("family table covers each documented family (docs/components/capabilities.mdx)", () => {
     expect(Object.keys(STARTER_VERB_FAMILIES).sort()).toEqual(
       [

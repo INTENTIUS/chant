@@ -6,9 +6,12 @@
  * `wait-for-stack`, `wait-steady-state`, and `wait-cluster-healthy` are real
  * implementations (#557, epic #551) over the injectable `CloudExecutor`
  * (./cloud-executor.ts): `wait-cluster-healthy` is the Neo4j bolt/quorum probe
- * this issue scopes explicitly. `wait-endpoint`/`wait-job`/`health-gate` are
- * non-AWS-leaf/non-pilot verbs and stay typed stubs — out of scope for #557;
- * see ../capability.ts for the "no cloud implementation yet" contract.
+ * this issue scopes explicitly. `wait-job` is also a real implementation
+ * (#561, epic #551) — the EMR job-run poll the JAR->EMR cross-component
+ * example's Verify phase needs to reach completion end to end.
+ * `wait-endpoint`/`health-gate` are non-AWS-leaf/non-pilot verbs and stay
+ * typed stubs — out of scope for #557/#561; see ../capability.ts for the "no
+ * cloud implementation yet" contract.
  */
 
 import type { Capability } from "../capability";
@@ -194,6 +197,8 @@ export interface WaitJobInput {
   runId: string;
   /** Poll interval in ms. Default: 10000. */
   intervalMs?: number;
+  /** Overall timeout in ms. */
+  timeoutMs?: number;
 }
 
 export interface WaitJobOutput {
@@ -201,8 +206,34 @@ export interface WaitJobOutput {
   state: string;
 }
 
-/** Poll a submitted job/step until it reaches a terminal state. */
-export const waitJob: Capability<WaitJobInput, WaitJobOutput> = stubCapability("wait-job");
+/**
+ * Poll a submitted job/step (e.g. an EMR job run started by
+ * `emr-start-job-run`) until it reaches a terminal state, failing the step if
+ * that state is not `COMPLETED` — matching `cfn-deploy`'s "a terminal status
+ * that isn't success is still a failure" convention rather than treating
+ * `FAILED`/`CANCELLED` as done. No rollback: read-only observation, nothing
+ * to compensate.
+ */
+export function createWaitJobCapability(
+  executor: CloudExecutor = defaultCloudExecutor(),
+): Capability<WaitJobInput, WaitJobOutput> {
+  return {
+    kind: "wait-job",
+    async run(_ctx, input) {
+      const { state } = await executor.emr.waitForJobRun(input.runId, {
+        intervalMs: input.intervalMs,
+        timeoutMs: input.timeoutMs,
+      });
+      if (state !== "COMPLETED") {
+        throw new Error(`wait-job "${input.runId}" ended in terminal state "${state}", expected "COMPLETED"`);
+      }
+      return { state };
+    },
+  };
+}
+
+/** Default `wait-job` capability, backed by the real `CloudExecutor`. */
+export const waitJob: Capability<WaitJobInput, WaitJobOutput> = createWaitJobCapability();
 
 // ── health-gate ──────────────────────────────────────────────────────────────
 

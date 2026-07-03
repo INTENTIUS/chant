@@ -5,18 +5,38 @@
  * consumes a producer component's published artifact, e.g.
  * `jar: "@jar-lib.publish.uri"`.
  *
- * Typed stubs only; see ../capability.ts for the "no cloud implementation yet" contract.
+ * `emr-start-job-run` is a real implementation (#561, epic #551) — just
+ * enough against the injectable `CloudExecutor` (./cloud-executor.ts) to run
+ * the JAR-producer -> EMR-consumer cross-component example end to end (a
+ * mocked cloud is acceptable per #561's acceptance criteria; the full EMR
+ * surface — retries, Serverless vs EMR-on-EC2 branching, Glue/Batch peers —
+ * stays out of scope, per #561 explicitly deferring "the emr-start-job-run
+ * cloud impl beyond what the example needs"). `emr-submit-step` is a
+ * different verb (submit to an already-running cluster rather than starting
+ * an ephemeral job run) that #561's example doesn't need, so it stays a typed
+ * stub; see ../capability.ts for the "no cloud implementation yet" contract.
  */
 
 import type { Capability } from "../capability";
 import { stubCapability } from "./stub";
+import { defaultCloudExecutor, type CloudExecutor } from "./cloud-executor";
 
 // ── emr-start-job-run ────────────────────────────────────────────────────────
 
 export interface EmrStartJobRunInput {
-  /** EMR (Serverless) application id, or EMR on EC2 cluster id. */
-  clusterOrApplicationId: string;
-  /** Entry point artifact reference (e.g. `"@jar-lib.publish.uri"`). */
+  /**
+   * EMR (Serverless) application id, or EMR on EC2 cluster id. Optional here
+   * (unlike the underlying `CloudExecutor.emr.startJobRun` args) because the
+   * epic's worked JAR->EMR example (component-contract fixture
+   * `../__fixtures__/emr-job-consumer.json`, docs/components/composition-and-wiring.mdx)
+   * wires it as env config rather than a literal in the component
+   * declaration; falls back to `ctx.vars.emrApplicationId`, matching how
+   * `wait-cluster-healthy` (../verbs/wait-verify.ts) falls back to
+   * `ctx.vars.clusterEndpoints` for the same reason (env resolution is the
+   * caller's `DeployContext.vars`, not a literal every component must repeat).
+   */
+  clusterOrApplicationId?: string;
+  /** Entry point artifact reference — resolved by the graph before this capability runs (e.g. from `"@jar-lib.publish.uri"` to a concrete S3 URI). */
   jar: string;
   /** Arguments passed to the job's main class/entry point. */
   args?: string[];
@@ -29,9 +49,40 @@ export interface EmrStartJobRunOutput {
   runId: string;
 }
 
-/** Start an EMR job run (Serverless application or EMR-on-EC2 cluster) against a published artifact. */
+/**
+ * Start an EMR job run (Serverless application or EMR-on-EC2 cluster)
+ * against a published artifact. `input.jar` arrives already resolved by the
+ * driver's graph-driven wiring (`@<component>.publish.uri`) — this capability
+ * never resolves the reference itself, keeping cross-component wiring
+ * entirely the graph's job (../driver.ts's `resolveWiring`), never a
+ * capability- or orchestrator-level special case. No rollback: starting a
+ * job run has no "undo" that restores prior state — a failed/cancelled run
+ * simply produced no usable output, matching `wait-for-stack`/`wait-job`'s
+ * read-only-observation story (there is nothing to compensate for having
+ * asked the cluster to run something).
+ */
+export function createEmrStartJobRunCapability(
+  executor: CloudExecutor = defaultCloudExecutor(),
+): Capability<EmrStartJobRunInput, EmrStartJobRunOutput> {
+  return {
+    kind: "emr-start-job-run",
+    async run(ctx, input) {
+      const clusterOrApplicationId =
+        input.clusterOrApplicationId ?? (ctx.vars?.emrApplicationId as string | undefined) ?? ctx.component;
+      const { runId } = await executor.emr.startJobRun({
+        clusterOrApplicationId,
+        jar: input.jar,
+        args: input.args,
+        executionRoleArn: input.executionRoleArn,
+      });
+      return { runId };
+    },
+  };
+}
+
+/** Default `emr-start-job-run` capability, backed by the real `CloudExecutor`. */
 export const emrStartJobRun: Capability<EmrStartJobRunInput, EmrStartJobRunOutput> =
-  stubCapability("emr-start-job-run");
+  createEmrStartJobRunCapability();
 
 // ── emr-submit-step ──────────────────────────────────────────────────────────
 
