@@ -63,6 +63,21 @@ Because publish promotes by digest, the SBOM scanned in dev is provably the one 
 A lockfile SBOM is complete for **declared** dependencies — accurate name/version for everything the package manager resolved. It is **not** a full image/container-layer scan: it cannot see OS packages baked into a base image or files a Dockerfile `COPY`s in directly. That deeper scan is `syft`'s (or BuildKit's native attestation's) job and remains the optional deep path tracked separately — layered on top of, never replacing, this hermetic baseline.
 </Aside>
 
+### Deep scanning with external tools
+
+`createToolSbomGenerator` (`./components/verbs/tool-sbom-generator.ts`) is the deep-scan `SbomGenerator` backend the section above defers to: it shells out to a real external scanner, selected by artifact type, through an injectable `ProcessRunner` (`./components/verbs/process-runner.ts`) — the SBOM-and-referrer-tooling analogue of `CloudExecutor`. It is opt-in, never the process-wide default; construct `createGenerateSbomCapability(createToolSbomGenerator())` to use it in place of the hermetic lockfile backend.
+
+| Artifact type | Primary tool | Fallback |
+|---|---|---|
+| `image` | BuildKit's native `docker buildx build --sbom=true` attestation, when a `Dockerfile` sits next to the archived tarball and `docker` is available | `syft` scan of the saved tarball |
+| `jar` | `cyclonedx-maven` (`org.cyclonedx:cyclonedx-maven-plugin`), when a `pom.xml` sits next to the jar and `mvn` is available | `syft` scan of the jar |
+| `zip` | `syft` scan of the zip/Lambda package | — |
+| `dir` | `syft` scan of the source directory | `cdxgen` |
+
+Every method checks the tool's availability first (`command -v <tool>`) and throws `ToolNotAvailableError` with an actionable install hint if it's missing, rather than returning an empty or silently wrong SBOM. Required tools: [`syft`](https://github.com/anchore/syft), `docker buildx` (bundled with recent Docker), `mvn` + the `cyclonedx-maven-plugin`, and/or [`cdxgen`](https://github.com/CycloneDX/cdxgen) — install whichever your components' artifact types need.
+
+Tests never invoke a real tool: `MockProcessRunner` (`./components/verbs/__tests__/mock-process-runner.ts`) scripts tool availability and canned command output, so `tool-sbom-generator.test.ts` asserts on the exact command constructed per artifact type with no live `syft`/`buildx`/`mvn`/`cdxgen`/network in CI.
+
 ## Config-BOM: IaC as a first-class artifact
 
 A config-only or infra component (no `build` phase — e.g. a DynamoDB table, an EMR cluster definition) has no image/jar/zip to hand `generate-sbom`, but it does have a synthesized template. Chant treats that synthesized template as a first-class archive artifact — a `template`-kind manifest entry with its own content digest, peer to `image`/`asset` — and the `extract-config-bom` capability (`./components/verbs/config-bom.ts`) walks it structurally to produce a **config-BOM**: every declared resource, every nested stack/module reference (`AWS::CloudFormation::Stack` and equivalents), and every external artifact a resource's properties reference (a container image digest, an AMI id, a lexicon version string).
@@ -98,6 +113,20 @@ A component that produces more than one leaf BOM — a software SBOM for its ima
 Packages are never flattened across leaves — a reader can always tell which packages came from the software SBOM versus the config-BOM. A release-level rollup across multiple components is a natural next step, noted here but deferred.
 
 `chant components status`'s JSON output surfaces a `componentBom` summary (leaf count, combined package count, whether the leaves compose 1:1 or as a real assembly) alongside each build's own `reproducibility` — both keyed by the recorded digest, the same join key every other status field uses.
+
+## Real OCI referrer discovery and publish-time attach
+
+Two more real backends complete the loop between the archive-carried SBOM and a registry's own referrers API:
+
+**`createOrasReferrerLookup`** (`./lifecycle/oras-referrer-lookup.ts`) is a real `ReferrerLookup` — the consume side `buildLedgerEntries` (`./lifecycle/build-ledger.ts`) reads from. It shells out to `oras discover --format json <repo>@<digest>` (again through the shared `ProcessRunner`) and classifies each returned manifest into a `sbom`/`provenance`/`signature` referrer by its artifact/media type. The process-wide default remains `noopReferrerLookup` (reports no referrers, no network) for the same reason the hermetic SBOM backend isn't the SBOM default either — a project opts into the registry-backed lookup explicitly: `buildLedgerEntries(manifest, createOrasReferrerLookup({ repo }))`. Requires [`oras`](https://oras.land) on `PATH`.
+
+**Publish-time attach.** `publish-image` accepts optional `sbom`/`componentBom` fields (wired from a prior `generate-sbom`/`aggregateComponentBom` step's output) and, when supplied, attaches each as an OCI referrer on the just-pushed image digest via `oras attach` — the write side of the same referrers API `createOrasReferrerLookup` reads back. This is additive: the archive-carried copy remains the SBOM's universal home regardless, and `load-image-on-host` (registry-less) never attempts an attach — there is no registry to attach to.
+
+Attach is best-effort by design: a missing `oras` binary or a failed `oras attach` invocation is reported back on the capability's output (`referrerAttach: { attached: false, reason }`) rather than thrown, since the image itself has already published successfully by the time this step runs. A component that wants the attach to be a hard requirement can check `referrerAttach.attached` itself and fail its own composition on `false`.
+
+<Aside type="note" title="No live tools in tests">
+Every #610 real backend (`ToolSbomGenerator`, `OrasReferrerLookup`, `publish-image`'s attach step) shells out through the same injectable `ProcessRunner`. Tests always inject `MockProcessRunner` and assert on the constructed command + parsed output — no live `syft`/`buildx`/`mvn`/`cdxgen`/`oras`/network ever runs in CI.
+</Aside>
 
 ## Read next
 

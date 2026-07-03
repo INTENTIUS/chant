@@ -7,4 +7,5 @@ export * from "./change-set";
 export * from "./affected";
 export * from "./release-ledger";
 export * from "./build-ledger";
+export * from "./oras-referrer-lookup";
 export * from "./status";
