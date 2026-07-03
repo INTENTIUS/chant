@@ -235,9 +235,22 @@ export function buildUpgradeSummary(opts: {
 }): string {
   const { lexicon, from, to, deltaText, semverLabel, validationOk, failures = [] } = opts;
 
+  // Example validation status (#604): the upgrade check lints the lexicon's
+  // examples (regenLexicon step 6), and an example failure makes validation
+  // fail. Surface it explicitly so the PR / drift issue states example health
+  // instead of leaving it implicit in CI. (The authoritative example *build*
+  // still runs in CI — the pinned PR's test job, and main's continuous build
+  // for rolling lexicons.)
+  const exampleFailures = failures.filter((f) => f.step === "lint" || f.step === "examples");
+
   const lines: string[] = [`## Lexicon upgrade: ${lexicon}`];
   if (from) lines.push(``, `**From:** \`${from}\`  **To:** \`${to ?? "latest"}\``);
   if (semverLabel) lines.push(`**Semver label:** \`${semverLabel}\``);
+  lines.push(
+    exampleFailures.length > 0
+      ? `**Examples:** ⚠️ ${exampleFailures.length} check(s) failing — see Validation failures below`
+      : `**Examples:** lint clean`,
+  );
 
   lines.push(``);
 
