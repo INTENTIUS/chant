@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
-import { createDockerBuildCapability } from "./build";
+import { addArchiveTemplate, createDockerBuildCapability } from "./build";
 import { createMockCloudExecutor } from "./__tests__/mock-cloud-executor";
+import { findArchiveEntry } from "./build-archive";
 
 const ctx = { env: "dev", component: "search-service" };
 
@@ -49,5 +50,64 @@ describe("docker-build (#557)", () => {
   it("declares no rollback — a local build has no remote/mutable state to compensate", () => {
     const capability = createDockerBuildCapability(createMockCloudExecutor().executor);
     expect(capability.rollback).toBeUndefined();
+  });
+});
+
+describe("docker-build -> BuildArchive manifest (#564)", () => {
+  it("records the built image as a manifest entry, content-addressed by its digest", async () => {
+    const mock = createMockCloudExecutor();
+    const capability = createDockerBuildCapability(mock.executor);
+
+    const output = await capability.run(ctx, { context: ".", into: "archive/search.tar" });
+
+    expect(output.manifest.component).toBe("search-service");
+    const entry = findArchiveEntry(output.manifest, "archive/search.tar");
+    expect(entry).toMatchObject({ kind: "image", digest: output.digest });
+    expect(output.manifest.manifestDigest).toMatch(/^sha256:/);
+  });
+
+  it("accumulates onto a manifest threaded through from a prior build/template step", async () => {
+    const mock = createMockCloudExecutor();
+    const capability = createDockerBuildCapability(mock.executor);
+
+    const { manifest: templateManifest } = addArchiveTemplate({
+      path: "search.template.json",
+      content: JSON.stringify({ Resources: {} }),
+    });
+    const output = await capability.run(ctx, {
+      context: ".",
+      into: "archive/search.tar",
+      manifest: templateManifest,
+    });
+
+    expect(output.manifest.contents.map((e) => e.kind).sort()).toEqual(["image", "template"]);
+    expect(output.manifest.contents).toHaveLength(2);
+  });
+
+  it("two builds from identical inputs produce the same manifest digest (content-addressed, not build-order-addressed)", async () => {
+    const mockA = createMockCloudExecutor();
+    const mockB = createMockCloudExecutor();
+    const outputA = await createDockerBuildCapability(mockA.executor).run(ctx, {
+      context: ".",
+      into: "archive/search.tar",
+    });
+    const outputB = await createDockerBuildCapability(mockB.executor).run(ctx, {
+      context: ".",
+      into: "archive/search.tar",
+    });
+    expect(outputA.digest).toBe(outputB.digest);
+    expect(outputA.manifest.manifestDigest).toBe(outputB.manifest.manifestDigest);
+  });
+});
+
+describe("addArchiveTemplate (#564)", () => {
+  it("adds a template entry whose digest depends only on content", () => {
+    const a = addArchiveTemplate({ path: "x.template.json", content: '{"a":1}' });
+    const b = addArchiveTemplate({ path: "x.template.json", content: '{"a":1}' });
+    const c = addArchiveTemplate({ path: "x.template.json", content: '{"a":2}' });
+
+    expect(a.digest).toBe(b.digest);
+    expect(a.digest).not.toBe(c.digest);
+    expect(findArchiveEntry(a.manifest, "x.template.json")).toMatchObject({ kind: "template", digest: a.digest });
   });
 });

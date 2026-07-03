@@ -15,7 +15,7 @@
  *    ever, in a test run.
  *
  * Every method is namespaced by service (`docker`, `ecr`, `cloudformation`,
- * `ecs`, `codeDeploy`, `neo4j`) and typed to the minimum surface the
+ * `ecs`, `codeDeploy`, `neo4j`, `host`) and typed to the minimum surface the
  * capabilities in this directory need — not a general-purpose AWS SDK
  * replacement.
  */
@@ -195,6 +195,31 @@ export interface Neo4jClusterClient {
   probe(args: Neo4jProbeArgs): Promise<{ healthyCount: number; total: number }>;
 }
 
+// ── host (registry-less image delivery — #564's `load-image-on-host`) ──────
+
+export interface HostCopyFileArgs {
+  /** Target host (SSM instance id, hostname, or host group — same identifier space as `copy-to-host`/`remote-exec`). */
+  host: string;
+  /** Source path of the file to copy (typically an archive-relative image tarball path). */
+  from: string;
+  /** Destination path on the host. */
+  to: string;
+}
+
+export interface HostDockerLoadArgs {
+  /** Target host the tarball was copied to. */
+  host: string;
+  /** Path of the tarball on the host (matches `HostCopyFileArgs.to`). */
+  path: string;
+}
+
+export interface HostClient {
+  /** Copy a file (an image tarball from the build archive) onto a host, via SSM Run Command / SCP-over-SSH depending on config — the same transport `copy-to-host` documents. */
+  copyFile(args: HostCopyFileArgs): Promise<void>;
+  /** Run `docker load` on the host against a previously copied tarball; returns the digest `docker load` reports, straight into the host's local Docker store (no registry involved). */
+  dockerLoad(args: HostDockerLoadArgs): Promise<{ digest: string }>;
+}
+
 // ── Lambda (#558's one new capability: lambda-deploy) ───────────────────────
 
 export interface LambdaUpdateCodeArgs {
@@ -271,6 +296,7 @@ export interface CloudExecutor {
   neo4j: Neo4jClusterClient;
   lambda: LambdaClient;
   emr: EmrClient;
+  host: HostClient;
 }
 
 // ── Real executor — shells out to `docker`/`aws`; used outside tests ────────
@@ -477,6 +503,28 @@ const realNeo4j: Neo4jClusterClient = {
   },
 };
 
+const realHost: HostClient = {
+  async copyFile(args) {
+    // SSM Run Command, per the same transport `copy-to-host` documents: stage
+    // the tarball via an S3 hop (`aws s3 cp` then a remote `aws s3 cp` inside
+    // the command document) is the common pattern for files too large for an
+    // inline SSM document; kept to a single conceptual step here since the
+    // executor boundary is what tests substitute, not this shell recipe.
+    await run(
+      `aws ssm send-command --instance-ids ${q(args.host)} --document-name AWS-RunShellScript ` +
+        `--parameters ${q(JSON.stringify({ commands: [`aws s3 cp ${args.from} ${args.to}`] }))}`,
+    );
+  },
+  async dockerLoad(args) {
+    const { stdout } = await run(
+      `aws ssm send-command --instance-ids ${q(args.host)} --document-name AWS-RunShellScript ` +
+        `--parameters ${q(JSON.stringify({ commands: [`docker load -i ${args.path}`] }))}`,
+    );
+    const match = stdout.match(/[Ll]oaded image(?: ID)?:\s*(\S+)/);
+    return { digest: match?.[1] ?? stdout.trim() };
+  },
+};
+
 const realLambda: LambdaClient = {
   async updateFunctionCode(args) {
     const { stdout } = await run(
@@ -574,6 +622,7 @@ export function realCloudExecutor(): CloudExecutor {
     neo4j: realNeo4j,
     lambda: realLambda,
     emr: realEmr,
+    host: realHost,
   };
 }
 

@@ -31,6 +31,9 @@ import type {
   EcsUpdateServiceArgs,
   EmrClient,
   EmrStartJobRunArgs,
+  HostClient,
+  HostCopyFileArgs,
+  HostDockerLoadArgs,
   LambdaClient,
   LambdaUpdateAliasArgs,
   LambdaUpdateCodeArgs,
@@ -86,6 +89,8 @@ export interface MockCloudExecutorOptions {
   ecsServices?: Record<string, EcsServiceState>;
   /** Force every docker/ecr call to fail (simulates a build/push failure). */
   failDocker?: boolean;
+  /** Force every `host` (registry-less `load-image-on-host`) call to fail (simulates an unreachable host). */
+  failHost?: boolean;
   /** Lambda functions keyed by function name. */
   lambdas?: Record<string, FakeLambdaConfig>;
   /** Scripted job runs keyed by the run id the test expects (see `MockCloudExecutor.setJobRun` for post-construction control, e.g. before the run id is known). */
@@ -306,8 +311,20 @@ export function createMockCloudExecutor(options: MockCloudExecutorOptions = {}):
     },
   };
 
+  const host: HostClient = {
+    async copyFile(args: HostCopyFileArgs) {
+      record("host", "copyFile", args);
+      if (options.failHost) throw new Error(`host copy failed for ${args.host}`);
+    },
+    async dockerLoad(args: HostDockerLoadArgs) {
+      record("host", "dockerLoad", args);
+      if (options.failHost) throw new Error(`host docker load failed for ${args.host}`);
+      return { digest: `sha256:${fakeDigest("host-load", args.host, args.path)}` };
+    },
+  };
+
   return {
-    executor: { docker, ecr, cloudformation, ecs, codeDeploy, neo4j, lambda, emr },
+    executor: { docker, ecr, cloudformation, ecs, codeDeploy, neo4j, lambda, emr, host },
     calls,
     setStack: (name, config) => stacks.set(name, { ...stacks.get(name), ...config }),
     setDeployment: (id, config) => deployments.set(id, { ...deployments.get(id), ...config }),
