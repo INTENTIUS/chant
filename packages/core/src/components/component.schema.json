@@ -48,6 +48,12 @@
     "archetype": {
       "$ref": "#/$defs/Archetype",
       "description": "Optional explicit archetype hint. When omitted, the archetype is inferred structurally from which phases/capability families are present (see the archetype table in component-contract.mdx)."
+    },
+    "liveNames": {
+      "type": "array",
+      "description": "Optional: the live lexicon entity/resource name(s) this component owns, when they differ from `name` (#598). `chant components status --live` reconciles the release ledger against live evidence by joining on this name; omitted entirely (the default), the join falls back to `name` itself with no behavior change. A component that owns several live entities (e.g. a fan-out cluster with one stack per node) may list them all.",
+      "items": { "type": "string", "minLength": 1 },
+      "minItems": 1
     }
   },
   "$defs": {
