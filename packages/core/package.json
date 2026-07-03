@@ -76,5 +76,8 @@
     "tsx": "^4.0.0",
     "typescript": "^5.5.0",
     "zod": "^4.3.6"
+  },
+  "devDependencies": {
+    "ajv": "^8.20.0"
   }
 }

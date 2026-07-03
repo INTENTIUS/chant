@@ -1,0 +1,16 @@
+{
+  "$schema": "https://intentius.io/chant/schemas/component/v1/component.schema.json",
+  "contractVersion": "1.0.0",
+  "name": "jar-lib",
+  "archetype": "producer-library",
+  "dependsOn": [],
+  "build": { "kind": "jvm-build", "context": ".", "into": "archive" },
+  "deploy": [
+    {
+      "phase": "Publish",
+      "steps": [
+        { "kind": "publish-artifact", "from": "archive", "to": "$env.s3" }
+      ]
+    }
+  ]
+}
