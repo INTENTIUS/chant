@@ -98,6 +98,30 @@ describe("docker-build -> BuildArchive manifest (#564)", () => {
     expect(outputA.digest).toBe(outputB.digest);
     expect(outputA.manifest.manifestDigest).toBe(outputB.manifest.manifestDigest);
   });
+
+  it("defaults to best-effort reproducibility, per #614 — an externally-built image, not chant's own synthesis", async () => {
+    const mock = createMockCloudExecutor();
+    const capability = createDockerBuildCapability(mock.executor);
+    const output = await capability.run(ctx, { context: ".", into: "archive/search.tar" });
+    expect(findArchiveEntry(output.manifest, "archive/search.tar")!.reproducibility).toEqual({ basis: "best-effort" });
+  });
+
+  it("records a provenance link when sourceRef is given (#614)", async () => {
+    const mock = createMockCloudExecutor();
+    const capability = createDockerBuildCapability(mock.executor);
+    const output = await capability.run(ctx, { context: ".", into: "archive/search.tar", sourceRef: "deadbeef" });
+    expect(findArchiveEntry(output.manifest, "archive/search.tar")!.provenance).toEqual({
+      sourceRef: "deadbeef",
+      artifactDigest: output.digest,
+    });
+  });
+
+  it("records no provenance link when sourceRef is omitted", async () => {
+    const mock = createMockCloudExecutor();
+    const capability = createDockerBuildCapability(mock.executor);
+    const output = await capability.run(ctx, { context: ".", into: "archive/search.tar" });
+    expect(findArchiveEntry(output.manifest, "archive/search.tar")!.provenance).toBeUndefined();
+  });
 });
 
 describe("addArchiveTemplate (#564)", () => {
@@ -109,5 +133,30 @@ describe("addArchiveTemplate (#564)", () => {
     expect(a.digest).toBe(b.digest);
     expect(a.digest).not.toBe(c.digest);
     expect(findArchiveEntry(a.manifest, "x.template.json")).toMatchObject({ kind: "template", digest: a.digest });
+  });
+
+  it("defaults to deterministic-synthesis reproducibility, per #614", () => {
+    const { manifest } = addArchiveTemplate({ path: "x.template.json", content: '{"a":1}' });
+    expect(findArchiveEntry(manifest, "x.template.json")!.reproducibility).toEqual({
+      basis: "deterministic-synthesis",
+      verifyBy: "re-synth",
+    });
+  });
+
+  it("records a provenance link when sourceRef is given (#614)", () => {
+    const { manifest, digest } = addArchiveTemplate({
+      path: "x.template.json",
+      content: '{"a":1}',
+      sourceRef: "abc123def",
+    });
+    expect(findArchiveEntry(manifest, "x.template.json")!.provenance).toEqual({
+      sourceRef: "abc123def",
+      artifactDigest: digest,
+    });
+  });
+
+  it("records no provenance link when sourceRef is omitted", () => {
+    const { manifest } = addArchiveTemplate({ path: "x.template.json", content: '{"a":1}' });
+    expect(findArchiveEntry(manifest, "x.template.json")!.provenance).toBeUndefined();
   });
 });

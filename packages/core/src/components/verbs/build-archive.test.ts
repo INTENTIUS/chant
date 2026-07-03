@@ -2,6 +2,8 @@ import { describe, expect, it } from "vitest";
 import {
   addArchiveEntry,
   archiveRelativePath,
+  artifactEntries,
+  assetEntries,
   computeManifestDigest,
   createBuildArchiveManifest,
   findArchiveEntry,
@@ -152,6 +154,98 @@ describe("BuildArchive manifest (#564)", () => {
       });
       const mediaTypes = sbomEntries(manifest).map((e) => e.mediaType).sort();
       expect(mediaTypes).toEqual(["application/spdx+json", "application/vnd.cyclonedx+json"]);
+    });
+  });
+
+  describe("per-artifact reproducibility (#614)", () => {
+    it("a template entry defaults to deterministic-synthesis when the caller supplies none", () => {
+      let manifest = createBuildArchiveManifest("svc");
+      manifest = addArchiveEntry(manifest, { kind: "template", path: "x.template.json", digest: "sha256:1" });
+      expect(findArchiveEntry(manifest, "x.template.json")!.reproducibility).toEqual({
+        basis: "deterministic-synthesis",
+        verifyBy: "re-synth",
+      });
+    });
+
+    it("an image entry defaults to best-effort", () => {
+      let manifest = createBuildArchiveManifest("svc");
+      manifest = addArchiveEntry(manifest, { kind: "image", path: "a.tar", digest: "sha256:1" });
+      expect(findArchiveEntry(manifest, "a.tar")!.reproducibility).toEqual({ basis: "best-effort" });
+    });
+
+    it("an asset entry defaults to best-effort", () => {
+      let manifest = createBuildArchiveManifest("svc");
+      manifest = addArchiveEntry(manifest, { kind: "asset", path: "lib.jar", digest: "sha256:1" });
+      expect(findArchiveEntry(manifest, "lib.jar")!.reproducibility).toEqual({ basis: "best-effort" });
+    });
+
+    it("an sbom entry gets no reproducibility default — it describes another artifact, not one itself", () => {
+      let manifest = createBuildArchiveManifest("svc");
+      manifest = addArchiveEntry(manifest, {
+        kind: "sbom",
+        path: "a.sbom.json",
+        digest: "sha256:1",
+        subjectDigest: "sha256:img",
+      });
+      expect(findArchiveEntry(manifest, "a.sbom.json")!.reproducibility).toBeUndefined();
+    });
+
+    it("an explicit reproducibility always overrides the kind-appropriate default", () => {
+      let manifest = createBuildArchiveManifest("svc");
+      manifest = addArchiveEntry(manifest, {
+        kind: "image",
+        path: "a.tar",
+        digest: "sha256:1",
+        reproducibility: { basis: "deterministic-synthesis", verifyBy: "re-synth" },
+      });
+      expect(findArchiveEntry(manifest, "a.tar")!.reproducibility).toEqual({
+        basis: "deterministic-synthesis",
+        verifyBy: "re-synth",
+      });
+    });
+
+    it("reproducibility is honest per artifact — a template and an image in the same manifest carry different bases", () => {
+      let manifest = createBuildArchiveManifest("svc");
+      manifest = addArchiveEntry(manifest, { kind: "image", path: "a.tar", digest: "sha256:1" });
+      manifest = addArchiveEntry(manifest, { kind: "template", path: "a.template.json", digest: "sha256:2" });
+      expect(findArchiveEntry(manifest, "a.tar")!.reproducibility!.basis).toBe("best-effort");
+      expect(findArchiveEntry(manifest, "a.template.json")!.reproducibility!.basis).toBe("deterministic-synthesis");
+    });
+
+    it("reproducibility/provenance never perturb manifestDigest — recording them later doesn't change archive identity", () => {
+      const base = createBuildArchiveManifest("svc");
+      const withDefault = addArchiveEntry(base, { kind: "image", path: "a.tar", digest: "sha256:1" });
+      const withExplicit = addArchiveEntry(base, {
+        kind: "image",
+        path: "a.tar",
+        digest: "sha256:1",
+        reproducibility: { basis: "deterministic-synthesis", verifyBy: "re-synth" },
+        provenance: { sourceRef: "abc123", artifactDigest: "sha256:1" },
+      });
+      expect(withDefault.manifestDigest).toBe(withExplicit.manifestDigest);
+    });
+  });
+
+  describe("artifact accessors (#614)", () => {
+    it("assetEntries filters to asset-kind entries only", () => {
+      let manifest = createBuildArchiveManifest("svc");
+      manifest = addArchiveEntry(manifest, { kind: "image", path: "a.tar", digest: "sha256:1" });
+      manifest = addArchiveEntry(manifest, { kind: "asset", path: "lib.jar", digest: "sha256:2" });
+      expect(assetEntries(manifest).map((e) => e.path)).toEqual(["lib.jar"]);
+    });
+
+    it("artifactEntries returns image/template/asset entries but excludes sbom entries", () => {
+      let manifest = createBuildArchiveManifest("svc");
+      manifest = addArchiveEntry(manifest, { kind: "image", path: "a.tar", digest: "sha256:1" });
+      manifest = addArchiveEntry(manifest, { kind: "template", path: "a.template.json", digest: "sha256:2" });
+      manifest = addArchiveEntry(manifest, { kind: "asset", path: "lib.jar", digest: "sha256:3" });
+      manifest = addArchiveEntry(manifest, {
+        kind: "sbom",
+        path: "a.tar.sbom.json",
+        digest: "sha256:4",
+        subjectDigest: "sha256:1",
+      });
+      expect(artifactEntries(manifest).map((e) => e.path).sort()).toEqual(["a.tar", "a.template.json", "lib.jar"]);
     });
   });
 });

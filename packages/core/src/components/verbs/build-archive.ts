@@ -42,9 +42,19 @@
  * `CloudExecutor`, exercised in tests via `MockCloudExecutor` with no real
  * disk/docker/AWS involved. The same is true of `generate-sbom` (./sbom.ts)
  * and the injectable `SbomGenerator` (./sbom-generator.ts).
+ *
+ * Per #614, every `image`/`template`/`asset` entry also carries an honest,
+ * per-artifact `reproducibility` record and an optional `provenance`
+ * source->output link (see ./reproducibility.ts) — never a single blanket
+ * flag hoisted to the component, since a component that builds more than one
+ * artifact type (an image plus a synthesized template, say) has a different
+ * true answer for each.
  */
 
 // ── manifest entries ──────────────────────────────────────────────────────
+
+import type { ArtifactReproducibility, ProvenanceLink } from "./reproducibility";
+import { defaultReproducibility } from "./reproducibility";
 
 export type BuildArchiveEntryKind = "image" | "template" | "asset" | "sbom";
 
@@ -82,6 +92,23 @@ export interface BuildArchiveEntry {
    * this default must never change without a manifest version bump.
    */
   bomKind?: "software" | "config";
+  /**
+   * For an `image`/`template`/`asset` entry: the honest, per-artifact
+   * reproducibility basis (#614, see ./reproducibility.ts). Assigned a
+   * kind-appropriate default by `addArchiveEntry` when omitted — see
+   * `defaultReproducibility` — so every entry that can meaningfully carry a
+   * reproducibility claim gets one without every call site having to compute
+   * it. Absent for `sbom` entries, which describe another artifact rather
+   * than being one themselves.
+   */
+  reproducibility?: ArtifactReproducibility;
+  /**
+   * For an `image`/`template`/`asset` entry: the source ref/commit that
+   * produced this artifact's digest (#614). Optional — a caller that hasn't
+   * threaded through a source ref (e.g. a test fixture, or a build run
+   * outside a git checkout) simply omits it rather than fabricating one.
+   */
+  provenance?: ProvenanceLink;
 }
 
 /** The manifest of contents for one build archive — the "self-contained format" #564 asks for. */
@@ -156,12 +183,31 @@ export function createBuildArchiveManifest(component: string, opts?: { now?: () 
  * Add (or replace, by `path`) one entry and return a new manifest with
  * `manifestDigest` recomputed. Pure/immutable so callers (and tests) can hold
  * onto a manifest snapshot before/after a step without aliasing surprises.
+ *
+ * Assigns a kind-appropriate default `reproducibility` (#614,
+ * `defaultReproducibility`) when the caller omits one — `template` entries
+ * default to `deterministic-synthesis`, `image`/`asset` entries default to
+ * `best-effort`, and `sbom` entries get none. An explicit `entry.reproducibility`
+ * (e.g. a future reproducible-build-attested image) always wins over the
+ * default. `reproducibility`/`provenance` are never part of
+ * `computeManifestDigest`'s input — they describe the artifact, they are not
+ * content the artifact's identity depends on, so recording/correcting them
+ * later never perturbs `manifestDigest`.
  */
 export function addArchiveEntry(
   manifest: BuildArchiveManifest,
   entry: BuildArchiveEntry,
 ): BuildArchiveManifest {
-  const resolved: BuildArchiveEntry = { mediaType: DEFAULT_MEDIA_TYPES[entry.kind], ...entry };
+  const reproducibility =
+    entry.reproducibility ??
+    (entry.kind === "image" || entry.kind === "template" || entry.kind === "asset" || entry.kind === "sbom"
+      ? defaultReproducibility(entry.kind)
+      : undefined);
+  const resolved: BuildArchiveEntry = {
+    mediaType: DEFAULT_MEDIA_TYPES[entry.kind],
+    ...entry,
+    ...(reproducibility ? { reproducibility } : {}),
+  };
   const contents = [...manifest.contents.filter((e) => e.path !== resolved.path), resolved];
   return { ...manifest, contents, manifestDigest: computeManifestDigest(contents) };
 }
@@ -230,4 +276,21 @@ export function findConfigBomForSubject(
 /** All `template`-kind entries in a manifest — every synthesized IaC document the archive carries, each a first-class artifact with its own content digest (#613). */
 export function templateEntries(manifest: BuildArchiveManifest): BuildArchiveEntry[] {
   return manifest.contents.filter((e) => e.kind === "template");
+}
+
+/** All `asset`-kind entries in a manifest (non-image published artifacts — a jar, a zip). */
+export function assetEntries(manifest: BuildArchiveManifest): BuildArchiveEntry[] {
+  return manifest.contents.filter((e) => e.kind === "asset");
+}
+
+/**
+ * Every artifact entry in a manifest — `image`, `template`, and `asset`
+ * kinds, excluding `sbom` entries (which describe an artifact rather than
+ * being one) — the set #614's per-artifact reproducibility surface iterates
+ * over. Order is manifest insertion order; callers that need a stable order
+ * for display/JSON output sort by `path` themselves (mirroring
+ * `computeManifestDigest`'s own path-sort convention).
+ */
+export function artifactEntries(manifest: BuildArchiveManifest): BuildArchiveEntry[] {
+  return manifest.contents.filter((e) => e.kind !== "sbom");
 }

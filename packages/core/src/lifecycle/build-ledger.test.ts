@@ -3,6 +3,8 @@ import {
   buildLedgerEntries,
   findReferrer,
   noopReferrerLookup,
+  artifactReproducibilitySummary,
+  componentBomSummary,
   type Referrer,
   type ReferrerLookup,
 } from "./build-ledger";
@@ -207,6 +209,141 @@ describe("build-ledger", () => {
       const entries = await buildLedgerEntries(manifest);
       expect(entries).toEqual([]);
       expect(findSbomForSubject(manifest, "sha256:jar1")).toMatchObject({ mediaType: "application/spdx+json" });
+    });
+
+    test("image entries surface their own reproducibility record (#614)", async () => {
+      let manifest = createBuildArchiveManifest("svc");
+      manifest = addArchiveEntry(manifest, { kind: "image", path: "image.tar", digest: "sha256:image1" });
+      const entries = await buildLedgerEntries(manifest);
+      expect(entries[0].reproducibility).toEqual({ basis: "best-effort" });
+    });
+  });
+
+  describe("artifactReproducibilitySummary (#614)", () => {
+    test("reports every image/template/asset entry's own reproducibility, honestly per artifact type", () => {
+      let manifest = createBuildArchiveManifest("search-service");
+      manifest = addArchiveEntry(manifest, { kind: "image", path: "image.tar", digest: "sha256:img1" });
+      manifest = addArchiveEntry(manifest, { kind: "template", path: "search.template.json", digest: "sha256:tmpl1" });
+      manifest = addArchiveEntry(manifest, { kind: "asset", path: "lib.jar", digest: "sha256:jar1" });
+
+      const summary = artifactReproducibilitySummary(manifest);
+      const byPath = new Map(summary.map((s) => [s.path, s]));
+      expect(byPath.get("image.tar")?.reproducibility).toEqual({ basis: "best-effort" });
+      expect(byPath.get("search.template.json")?.reproducibility).toEqual({
+        basis: "deterministic-synthesis",
+        verifyBy: "re-synth",
+      });
+      expect(byPath.get("lib.jar")?.reproducibility).toEqual({ basis: "best-effort" });
+    });
+
+    test("excludes sbom-kind entries — they describe another artifact, they aren't one themselves", () => {
+      let manifest = createBuildArchiveManifest("svc");
+      manifest = addArchiveEntry(manifest, { kind: "image", path: "image.tar", digest: "sha256:img1" });
+      manifest = addArchiveEntry(manifest, {
+        kind: "sbom",
+        path: "image.tar.sbom.json",
+        digest: "sha256:sbom1",
+        subjectDigest: "sha256:img1",
+      });
+      const summary = artifactReproducibilitySummary(manifest);
+      expect(summary.map((s) => s.path)).toEqual(["image.tar"]);
+    });
+
+    test("surfaces the recorded provenance sourceRef when present", () => {
+      let manifest = createBuildArchiveManifest("svc");
+      manifest = addArchiveEntry(manifest, {
+        kind: "template",
+        path: "t.json",
+        digest: "sha256:t1",
+        provenance: { sourceRef: "abc123", artifactDigest: "sha256:t1" },
+      });
+      const summary = artifactReproducibilitySummary(manifest);
+      expect(summary[0]!.sourceRef).toBe("abc123");
+    });
+
+    test("no artifact entries -> empty summary", () => {
+      const manifest = createBuildArchiveManifest("empty");
+      expect(artifactReproducibilitySummary(manifest)).toEqual([]);
+    });
+  });
+
+  describe("componentBomSummary (#614)", () => {
+    test("undefined when the manifest carries no BOM at all", () => {
+      let manifest = createBuildArchiveManifest("svc");
+      manifest = addArchiveEntry(manifest, { kind: "image", path: "image.tar", digest: "sha256:img1" });
+      expect(componentBomSummary(manifest)).toBeUndefined();
+    });
+
+    test("single leaf: isAssembly is false — a 1:1 component BOM", () => {
+      let manifest = createBuildArchiveManifest("infra-only");
+      manifest = addArchiveEntry(manifest, { kind: "template", path: "t.json", digest: "sha256:t1" });
+      manifest = addArchiveEntry(manifest, {
+        kind: "sbom",
+        bomKind: "config",
+        path: "t.json.config-bom.json",
+        digest: "sha256:sbom1",
+        subjectDigest: "sha256:t1",
+        mediaType: "application/spdx+json",
+        packageCount: 3,
+        generator: "chant-config-bom-extractor",
+      });
+
+      const summary = componentBomSummary(manifest);
+      expect(summary?.isAssembly).toBe(false);
+      expect(summary?.leaves).toHaveLength(1);
+      expect(summary?.leaves[0]).toEqual({
+        path: "t.json.config-bom.json",
+        bomKind: "config",
+        subjectDigest: "sha256:t1",
+        mediaType: "application/spdx+json",
+        packageCount: 3,
+        generator: "chant-config-bom-extractor",
+      });
+      expect(summary?.totalPackageCount).toBe(3);
+    });
+
+    test("multi leaf (software SBOM + config-BOM): isAssembly is true, totalPackageCount sums both leaves", () => {
+      let manifest = createBuildArchiveManifest("search-service");
+      manifest = addArchiveEntry(manifest, { kind: "image", path: "image.tar", digest: "sha256:img1" });
+      manifest = addArchiveEntry(manifest, { kind: "template", path: "search.template.json", digest: "sha256:tmpl1" });
+      manifest = addArchiveEntry(manifest, {
+        kind: "sbom",
+        bomKind: "software",
+        path: "image.tar.sbom.json",
+        digest: "sha256:sbomsoft",
+        subjectDigest: "sha256:img1",
+        mediaType: "application/spdx+json",
+        packageCount: 17,
+        generator: "syft",
+      });
+      manifest = addArchiveEntry(manifest, {
+        kind: "sbom",
+        bomKind: "config",
+        path: "search.template.json.config-bom.json",
+        digest: "sha256:sbomconfig",
+        subjectDigest: "sha256:tmpl1",
+        mediaType: "application/spdx+json",
+        packageCount: 5,
+        generator: "chant-config-bom-extractor",
+      });
+
+      const summary = componentBomSummary(manifest);
+      expect(summary?.isAssembly).toBe(true);
+      expect(summary?.leaves).toHaveLength(2);
+      expect(summary?.totalPackageCount).toBe(22);
+      expect(summary?.leaves.map((l) => l.bomKind).sort()).toEqual(["config", "software"]);
+    });
+
+    test("bomKind defaults to 'software' when a leaf entry omits it, matching BuildArchiveEntry's own default", () => {
+      let manifest = createBuildArchiveManifest("svc");
+      manifest = addArchiveEntry(manifest, {
+        kind: "sbom",
+        path: "a.sbom.json",
+        digest: "sha256:s1",
+        subjectDigest: "sha256:img1",
+      });
+      const summary = componentBomSummary(manifest);
+      expect(summary?.leaves[0]?.bomKind).toBe("software");
     });
   });
 });

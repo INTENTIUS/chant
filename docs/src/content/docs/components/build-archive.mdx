@@ -71,6 +71,34 @@ The config-BOM is emitted through the same native SPDX/CycloneDX writer `generat
 
 A component that composes neither `generate-sbom` nor `extract-config-bom` simply has no BOM step to run — skipping is structural (no step composed), never a special case either capability needs to detect.
 
+## Per-artifact reproducibility and provenance
+
+Every `image`/`template`/`asset` entry in a build archive manifest carries its own `reproducibility` record and an optional `provenance` link (`./components/verbs/reproducibility.ts`). This is deliberately **per artifact**, not per component: a component that builds both a container image and a synthesized template has two different true answers, and collapsing them into one flag would misrepresent one of the two.
+
+| `basis` | When | Verify by |
+|---|---|---|
+| `deterministic-synthesis` | A `template` entry — chant's own synthesized IaC output | `verifyBy: "re-synth"` — re-run `chant build` and compare digests |
+| `best-effort` | An `image`/`asset` entry — built by an external tool (`docker build`, a JVM/zip packager) | none claimed, absent a real reproducible-build attestation |
+
+`addArchiveEntry` assigns the kind-appropriate default automatically; an explicit `reproducibility` on the entry always wins. `sbom`-kind entries carry no reproducibility of their own — they describe another artifact rather than being one.
+
+`provenance` records the source ref/commit that produced an artifact's digest (`{ sourceRef, artifactDigest }`). Both `docker-build` and `addArchiveTemplate` accept an optional `sourceRef` and record it automatically; omit it and no provenance link is recorded, rather than a fabricated one.
+
+<Aside type="caution" title="Honest, not optimistic">
+`best-effort` is the default for every externally-built artifact, not a euphemism for "probably fine." Nothing in this module actually observes whether a `docker build` was bit-for-bit reproducible — timestamps, build-arg ordering, and base-image drift are common causes of non-determinism chant doesn't control. A future reproducible-build-attested backend can upgrade an entry's basis explicitly; until then, the honest default stands.
+</Aside>
+
+## Component-level BOM aggregation
+
+A component that produces more than one leaf BOM — a software SBOM for its image plus a config-BOM for its synthesized template, say — has more than one document describing "what's in this component." `aggregateComponentBom` (`./components/verbs/component-bom.ts`) composes every leaf BOM a component's archive carries into **one** component-level BOM, reusing the same native SPDX/CycloneDX writer rather than hand-rolling a second one.
+
+- **Single-artifact component (1:1).** One leaf BOM becomes the component BOM directly — still a valid, standalone document, just with nothing to nest.
+- **Multi-artifact component (a real assembly).** Two or more leaves compose into a genuine assembly: CycloneDX gets nested `metadata.component.components`, a `compositions` entry (`aggregate: "incomplete"` — this document composes exactly the leaves it was given, not a closed-world claim), and `dependencies` edges from the root to each leaf's own root. SPDX gets a `CONTAINS` relationship from the root package to each leaf's own root package, plus that leaf's own `DEPENDS_ON` edges, namespaced so packages from different leaves never collide even when same-named.
+
+Packages are never flattened across leaves — a reader can always tell which packages came from the software SBOM versus the config-BOM. A release-level rollup across multiple components is a natural next step, noted here but deferred.
+
+`chant components status`'s JSON output surfaces a `componentBom` summary (leaf count, combined package count, whether the leaves compose 1:1 or as a real assembly) alongside each build's own `reproducibility` — both keyed by the recorded digest, the same join key every other status field uses.
+
 ## Read next
 
 - [Capabilities](/chant/components/capabilities/) — the `publish` family and its backends.
