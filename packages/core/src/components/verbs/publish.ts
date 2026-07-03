@@ -10,11 +10,17 @@
  * CodeArtifact) used by producer/library components (e.g. a jar for EMR).
  * See docs/components/build-archive.mdx.
  *
- * Typed stubs only; see ../capability.ts for the "no cloud implementation yet" contract.
+ * `publish-image` is a real implementation (#557, epic #551): it loads the
+ * archived image tarball, tags it for the destination registry, logs in via
+ * ECR, and pushes — promoting by digest, per the epic's build-once invariant.
+ * `load-image-on-host`/`publish-artifact` are non-AWS-leaf/non-pilot verbs and
+ * stay typed stubs — out of scope for #557; see ../capability.ts for the "no
+ * cloud implementation yet" contract.
  */
 
 import type { Capability } from "../capability";
 import { stubCapability } from "./stub";
+import { defaultCloudExecutor, type CloudExecutor } from "./cloud-executor";
 
 // ── shared backend interface ─────────────────────────────────────────────────
 
@@ -43,8 +49,41 @@ export interface PublishImageOutput {
   uri: string;
 }
 
-/** Promote a built image from the archive into the environment's container registry. */
-export const publishImage: PublishImageBackend = stubCapability("publish-image");
+/**
+ * Promote a built image from the archive into the environment's container
+ * registry: `docker load` the archived tarball, tag it for `to` (the env
+ * registry), `aws ecr get-login-password | docker login`, then `docker push`.
+ * Returns the pushed image's registry digest — what `cfn-deploy`/
+ * `ecs-update-service` reference via `imageRef: "@Publish.digest"`. No
+ * rollback: an already-pushed, still-valid image in the registry is not
+ * itself a problem to compensate (immutable, content-addressed, and simply
+ * unreferenced if a later step fails) — the opt-out this capability takes.
+ */
+export function createPublishImageCapability(
+  executor: CloudExecutor = defaultCloudExecutor(),
+): PublishImageBackend {
+  return {
+    kind: "publish-image",
+    async run(_ctx, input) {
+      const { digest: localDigest } = await executor.docker.load({ inFile: input.from });
+      const repo = input.to.replace(/\/+$/, "");
+      const target = `${repo}@${localDigest}`;
+      await executor.docker.tag({ source: localDigest, target });
+      const registry = repo.split("/")[0]!;
+      await executor.ecr.login(registry);
+      const { digest } = await executor.docker.push({ image: target });
+      for (const tag of input.tags ?? []) {
+        const tagged = `${repo}:${tag}`;
+        await executor.docker.tag({ source: localDigest, target: tagged });
+        await executor.docker.push({ image: tagged });
+      }
+      return { digest, uri: `${repo}@${digest}` };
+    },
+  };
+}
+
+/** Default `publish-image` capability, backed by the real `CloudExecutor`. */
+export const publishImage: PublishImageBackend = createPublishImageCapability();
 
 // ── load-image-on-host (host backend) ───────────────────────────────────────
 

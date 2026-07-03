@@ -1,0 +1,244 @@
+/**
+ * `MockCloudExecutor` — an in-memory fake of `CloudExecutor` (../cloud-executor.ts)
+ * for tests. No live AWS, no live docker: every method records its call and
+ * returns/derives a canned result, with enough state (a fake stack registry, a
+ * fake deployment registry, a fake cluster registry) to exercise realistic
+ * scenarios — a changeset that proposes a replacement, a stack that takes a
+ * few polls to go terminal, a CodeDeploy deployment that fails then rolls back,
+ * a cluster that becomes healthy after enough members join.
+ *
+ * Every capability factory in `../*.ts` accepts a `CloudExecutor`, so a test
+ * builds one `MockCloudExecutor` and passes it to every `create*Capability`
+ * under test — never touching the real, `child_process`/`net`-backed
+ * executor in `../cloud-executor.ts`.
+ */
+
+import type {
+  CfnChange,
+  CfnCreateChangeSetArgs,
+  CfnExecuteChangeSetArgs,
+  CfnStackStatus,
+  CloudExecutor,
+  CodeDeployCreateArgs,
+  CodeDeployStatus,
+  DockerBuildArgs,
+  DockerLoadArgs,
+  DockerPushArgs,
+  DockerSaveArgs,
+  DockerTagArgs,
+  EcsClient,
+  EcsServiceState,
+  EcsUpdateServiceArgs,
+  Neo4jProbeArgs,
+} from "../cloud-executor";
+
+export interface RecordedCall {
+  client: string;
+  method: string;
+  args: unknown;
+}
+
+/** Scripted behavior for one fake CloudFormation stack. */
+export interface FakeStackConfig {
+  /** Changes CloudFormation would propose for the next changeset created against this stack. Default: no changes (no-op update). */
+  changes?: CfnChange[];
+  /** Outputs the stack reports once terminal. */
+  outputs?: Record<string, string>;
+  /** Terminal status reported after `executeChangeSet` (or from the start, if the stack pre-exists). Default: "UPDATE_COMPLETE". */
+  terminalStatus?: string;
+  /** True if this is a brand-new stack (no prior stack) — affects `isCreate`. Default: false. */
+  isCreate?: boolean;
+}
+
+export interface FakeDeploymentConfig {
+  /** Terminal status CodeDeploy reports for this deployment. Default: "Succeeded". */
+  terminalStatus?: "Succeeded" | "Failed" | "Stopped";
+}
+
+export interface FakeClusterConfig {
+  /** Number of bolt endpoints (out of however many `cluster` lists) that report healthy. Default: all of them. */
+  healthyCount?: number;
+}
+
+export interface MockCloudExecutorOptions {
+  stacks?: Record<string, FakeStackConfig>;
+  deployments?: Record<string, FakeDeploymentConfig>;
+  clusters?: Record<string, FakeClusterConfig>;
+  /** ECS service states keyed by `cluster/service`, evolved by `updateService`/`rollbackService` calls. */
+  ecsServices?: Record<string, EcsServiceState>;
+  /** Force every docker/ecr call to fail (simulates a build/push failure). */
+  failDocker?: boolean;
+}
+
+/** An injected `CloudExecutor` plus the call log and stack-status controls tests use to script scenarios and assert on I/O. */
+export interface MockCloudExecutor {
+  executor: CloudExecutor;
+  calls: RecordedCall[];
+  /** Change a stack's terminal status/outputs/changes after construction (e.g. to simulate a later poll succeeding). */
+  setStack(name: string, config: FakeStackConfig): void;
+  /** Change a deployment's terminal status after construction. */
+  setDeployment(id: string, config: FakeDeploymentConfig): void;
+  /** Change how many cluster members report healthy after construction (simulates a follower catching up). */
+  setClusterHealth(cluster: string, healthyCount: number): void;
+}
+
+/** Build a fresh mock `CloudExecutor`. Every method is deterministic and synchronous-fast — no real polling delay. */
+export function createMockCloudExecutor(options: MockCloudExecutorOptions = {}): MockCloudExecutor {
+  const calls: RecordedCall[] = [];
+  const record = (client: string, method: string, args: unknown) => calls.push({ client, method, args });
+
+  const stacks = new Map<string, FakeStackConfig>(Object.entries(options.stacks ?? {}));
+  const deployments = new Map<string, FakeDeploymentConfig>(Object.entries(options.deployments ?? {}));
+  const clusters = new Map<string, number>(
+    Object.entries(options.clusters ?? {}).map(([k, v]) => [k, v.healthyCount ?? Number.MAX_SAFE_INTEGER]),
+  );
+  const ecsServices = new Map<string, EcsServiceState>(Object.entries(options.ecsServices ?? {}));
+  const pendingChangeSets = new Map<string, { stackName: string; changes: CfnChange[] }>();
+  let changeSetCounter = 0;
+  let deploymentCounter = 0;
+
+  function stackStatus(name: string): CfnStackStatus {
+    const config = stacks.get(name);
+    return { stackStatus: config?.terminalStatus ?? "UPDATE_COMPLETE", outputs: config?.outputs ?? {} };
+  }
+
+  const docker: CloudExecutor["docker"] = {
+    async build(args: DockerBuildArgs) {
+      record("docker", "build", args);
+      if (options.failDocker) throw new Error(`docker build failed for ${args.context}`);
+      return { digest: `sha256:${fakeDigest("build", args.context, args.tag)}` };
+    },
+    async save(args: DockerSaveArgs) {
+      record("docker", "save", args);
+    },
+    async load(args: DockerLoadArgs) {
+      record("docker", "load", args);
+      return { digest: `sha256:${fakeDigest("load", args.inFile)}` };
+    },
+    async tag(args: DockerTagArgs) {
+      record("docker", "tag", args);
+    },
+    async push(args: DockerPushArgs) {
+      record("docker", "push", args);
+      if (options.failDocker) throw new Error(`docker push failed for ${args.image}`);
+      return { digest: `sha256:${fakeDigest("push", args.image)}` };
+    },
+    async remoteDigest(image: string) {
+      record("docker", "remoteDigest", image);
+      return `sha256:${fakeDigest("remote", image)}`;
+    },
+  };
+
+  const ecr: CloudExecutor["ecr"] = {
+    async login(registry: string) {
+      record("ecr", "login", registry);
+    },
+  };
+
+  const cloudformation: CloudExecutor["cloudformation"] = {
+    async createChangeSet(args: CfnCreateChangeSetArgs) {
+      record("cloudformation", "createChangeSet", args);
+      changeSetCounter += 1;
+      const changeSetName = `mock-changeset-${changeSetCounter}`;
+      const config = stacks.get(args.stackName);
+      const changes = config?.changes ?? [];
+      pendingChangeSets.set(changeSetName, { stackName: args.stackName, changes });
+      return {
+        changeSetName,
+        stackName: args.stackName,
+        status: "CREATE_COMPLETE",
+        isCreate: config?.isCreate ?? false,
+        changes,
+      };
+    },
+    async executeChangeSet(args: CfnExecuteChangeSetArgs) {
+      record("cloudformation", "executeChangeSet", args);
+      pendingChangeSets.delete(args.changeSetName);
+    },
+    async deleteChangeSet(args: CfnExecuteChangeSetArgs) {
+      record("cloudformation", "deleteChangeSet", args);
+      pendingChangeSets.delete(args.changeSetName);
+    },
+    async describeStack(stackName: string) {
+      record("cloudformation", "describeStack", stackName);
+      return stackStatus(stackName);
+    },
+    async waitForStack(stackName: string) {
+      record("cloudformation", "waitForStack", stackName);
+      return stackStatus(stackName);
+    },
+    async rollbackStack(stackName: string) {
+      record("cloudformation", "rollbackStack", stackName);
+      stacks.set(stackName, { ...stacks.get(stackName), terminalStatus: "ROLLBACK_COMPLETE" });
+    },
+  };
+
+  const ecs: EcsClient = {
+    async updateService(args: EcsUpdateServiceArgs) {
+      record("ecs", "updateService", args);
+      const key = `${args.cluster}/${args.service}`;
+      const desired = args.desiredCount ?? ecsServices.get(key)?.desiredCount ?? 1;
+      ecsServices.set(key, { runningCount: desired, desiredCount: desired, stable: true });
+      return { deploymentId: `mock-deployment-${key}` };
+    },
+    async describeService(cluster: string, service: string) {
+      record("ecs", "describeService", { cluster, service });
+      return ecsServices.get(`${cluster}/${service}`) ?? { runningCount: 1, desiredCount: 1, stable: true };
+    },
+    async rollbackService(args: EcsUpdateServiceArgs) {
+      record("ecs", "rollbackService", args);
+      const key = `${args.cluster}/${args.service}`;
+      const current = ecsServices.get(key);
+      ecsServices.set(key, { runningCount: current?.desiredCount ?? 1, desiredCount: current?.desiredCount ?? 1, stable: true });
+    },
+  };
+
+  const codeDeploy: CloudExecutor["codeDeploy"] = {
+    async createDeployment(args: CodeDeployCreateArgs) {
+      record("codeDeploy", "createDeployment", args);
+      deploymentCounter += 1;
+      return { deploymentId: `mock-deployment-${deploymentCounter}` };
+    },
+    async waitForDeployment(deploymentId: string) {
+      record("codeDeploy", "waitForDeployment", deploymentId);
+      const config = deployments.get(deploymentId);
+      const status = config?.terminalStatus ?? "Succeeded";
+      const result: CodeDeployStatus = { status, terminal: true };
+      return result;
+    },
+    async stopAndRollback(deploymentId: string) {
+      record("codeDeploy", "stopAndRollback", deploymentId);
+      deployments.set(deploymentId, { terminalStatus: "Stopped" });
+    },
+  };
+
+  const neo4j: CloudExecutor["neo4j"] = {
+    async probe(args: Neo4jProbeArgs) {
+      record("neo4j", "probe", args);
+      const endpoints = args.cluster
+        .split(",")
+        .map((s) => s.trim())
+        .filter(Boolean);
+      const healthy = clusters.get(args.cluster) ?? endpoints.length;
+      return { healthyCount: Math.min(healthy, endpoints.length), total: endpoints.length };
+    },
+  };
+
+  return {
+    executor: { docker, ecr, cloudformation, ecs, codeDeploy, neo4j },
+    calls,
+    setStack: (name, config) => stacks.set(name, { ...stacks.get(name), ...config }),
+    setDeployment: (id, config) => deployments.set(id, { ...deployments.get(id), ...config }),
+    setClusterHealth: (cluster, healthyCount) => clusters.set(cluster, healthyCount),
+  };
+}
+
+/** Deterministic fake digest suffix derived from its inputs — stable across calls with the same args, distinct otherwise. */
+function fakeDigest(...parts: string[]): string {
+  let hash = 0;
+  const input = parts.join("|");
+  for (let i = 0; i < input.length; i++) {
+    hash = (hash * 31 + input.charCodeAt(i)) | 0;
+  }
+  return Math.abs(hash).toString(16).padStart(8, "0").repeat(4).slice(0, 64);
+}

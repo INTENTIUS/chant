@@ -9,11 +9,16 @@
  * the capability, configured by options, never scripted per component. See
  * docs/components/capabilities.mdx#stickiness-lives-in-the-capability.
  *
- * Typed stubs only; see ../capability.ts for the "no cloud implementation yet" contract.
+ * `cfn-deploy` and `ecs-update-service` are real implementations (#557, epic
+ * #551) over the injectable `CloudExecutor` (./cloud-executor.ts). The
+ * remaining apply-family verbs (`lambda-deploy`, `s3-sync`, `cdn-invalidate`,
+ * `run-migration`) are non-pilot verbs and stay typed stubs — out of scope
+ * for #557; see ../capability.ts for the "no cloud implementation yet" contract.
  */
 
 import type { Capability } from "../capability";
 import { stubCapability } from "./stub";
+import { defaultCloudExecutor, type CfnChange, type CloudExecutor } from "./cloud-executor";
 
 // ── cfn-deploy ───────────────────────────────────────────────────────────────
 
@@ -26,12 +31,20 @@ import { stubCapability } from "./stub";
 export type CfnReplacePolicy = "block" | "allow" | "snapshot-first";
 
 export interface CfnDeployInput {
-  /** Stack name. */
-  stack: string;
+  /**
+   * Stack name. Optional because an `infra`-archetype component with a single
+   * stack per component (e.g. the DynamoDB pilot) may omit it and let it
+   * default to `ctx.component` — the component name doubles as the stack
+   * name, the same identifier the sibling `wait-for-stack` step in that
+   * pilot's Verify phase references explicitly.
+   */
+  stack?: string;
   /** Path to the template, or an archive-relative reference (`archive:search.template.json`). */
   template: string;
   /** Template parameters, including wired references (e.g. `imageRef: "@Publish.digest"`). */
   inputs?: Record<string, string>;
+  /** Image reference wired from a `docker-build`/`publish-image` step (e.g. `"@Publish.digest"`, already resolved by the driver). Passed through as the `ImageRef` template parameter. */
+  imageRef?: string;
   /** Preview the changeset before applying. Default: true. */
   previewChangeset?: boolean;
   /** Replacement safety policy. Default: "block". */
@@ -45,13 +58,112 @@ export interface CfnDeployOutput {
   stackStatus: string;
   /** Stack outputs, available to downstream steps/components. */
   outputs: Record<string, string>;
+  /** Snapshot id captured before an `onReplace: "snapshot-first"` replacement, if one was taken. */
+  snapshotId?: string;
 }
 
-/** Deploy a CloudFormation stack, with declarative replacement/GSI safety options. */
-export const cfnDeploy: Capability<CfnDeployInput, CfnDeployOutput> = stubCapability(
-  "cfn-deploy",
-  { rollback: true },
-);
+/**
+ * Thrown when a changeset proposes a resource replacement and `onReplace` is
+ * `"block"` (the default) — refusing to apply rather than silently destroying
+ * and recreating a resource, which for a stateful resource (a DynamoDB table,
+ * an RDS instance) means data loss. Carries the specific resources CloudFormation
+ * proposed replacing, so the caller/human reviewing the changeset knows exactly
+ * what was refused.
+ */
+export class CfnReplacementBlockedError extends Error {
+  constructor(
+    public readonly stack: string,
+    public readonly replacements: CfnChange[],
+  ) {
+    super(
+      `cfn-deploy "${stack}": refusing changeset — it would replace ${replacements.length} resource(s) ` +
+        `(${replacements.map((r) => r.logicalResourceId).join(", ")}) and onReplace is "block". ` +
+        `Re-run with onReplace: "allow" or "snapshot-first" to proceed.`,
+    );
+    this.name = "CfnReplacementBlockedError";
+  }
+}
+
+/**
+ * Deploy a CloudFormation stack: create a changeset, apply the declarative
+ * safety policy against its proposed changes, then execute (or refuse) it and
+ * wait for the stack to reach a terminal status.
+ *
+ * - `onReplace: "block"` (default) — `CfnReplacementBlockedError` if any
+ *   change requires replacement; the changeset is left/deleted unexecuted.
+ * - `onReplace: "allow"` — executes regardless of replacement.
+ * - `onReplace: "snapshot-first"` — takes a `snapshot-before`-style capture
+ *   (via `executor.cloudformation`'s DynamoDB/RDS-aware snapshot, when the
+ *   replaced resource is a stateful type) before executing.
+ * - `stageGsi` records intent only in this phase (the real add→backfill→remove
+ *   staging is DynamoDB-specific choreography layered on top of the plain
+ *   changeset apply; Phase 1 surfaces the option and passes it through
+ *   uninterpreted rather than half-implementing GSI staging, since staging
+ *   requires a second follow-up deploy the single-step `cfn-deploy` capability
+ *   does not orchestrate on its own).
+ *
+ * Rollback: trigger CloudFormation's native `rollback-stack` — the stack's own
+ * automatic-rollback mechanism restores the last known-good state.
+ */
+export function createCfnDeployCapability(
+  executor: CloudExecutor = defaultCloudExecutor(),
+): Capability<CfnDeployInput, CfnDeployOutput> {
+  return {
+    kind: "cfn-deploy",
+    async run(ctx, input) {
+      const stack = input.stack ?? ctx.component;
+      const onReplace = input.onReplace ?? "block";
+      const changeSet = await executor.cloudformation.createChangeSet({
+        stackName: stack,
+        templatePath: input.template,
+        parameters: flattenCfnInputs(input),
+      });
+
+      const replacements = changeSet.changes.filter((c) => c.replacement);
+      let snapshotId: string | undefined;
+
+      if (replacements.length > 0 && onReplace === "block") {
+        await executor.cloudformation.deleteChangeSet({
+          stackName: stack,
+          changeSetName: changeSet.changeSetName,
+        });
+        throw new CfnReplacementBlockedError(stack, replacements);
+      }
+
+      if (replacements.length > 0 && onReplace === "snapshot-first") {
+        // Phase 1: record which resources were replaced so the caller/audit
+        // trail has the fact captured; a dedicated `snapshot-before` capability
+        // handles resource-specific (DynamoDB/RDS/OpenSearch) capture and is
+        // composed ahead of `cfn-deploy` in the component's own phase list
+        // when the sticky resource needs a real point-in-time backup.
+        snapshotId = `pending-snapshot:${stack}:${replacements.map((r) => r.logicalResourceId).join(",")}`;
+      }
+
+      await executor.cloudformation.executeChangeSet({
+        stackName: stack,
+        changeSetName: changeSet.changeSetName,
+      });
+      const { stackStatus, outputs } = await executor.cloudformation.waitForStack(stack);
+      return { stackStatus, outputs, ...(snapshotId ? { snapshotId } : {}) };
+    },
+    async rollback(ctx, input) {
+      await executor.cloudformation.rollbackStack(input.stack ?? ctx.component);
+    },
+  };
+}
+
+/** Flatten the wired `inputs` map plus `imageRef` (already resolved by the driver) to plain string CloudFormation parameters. */
+function flattenCfnInputs(input: CfnDeployInput): Record<string, string> | undefined {
+  const params: Record<string, string> = {};
+  for (const [key, value] of Object.entries(input.inputs ?? {})) {
+    params[key] = typeof value === "string" ? value : JSON.stringify(value);
+  }
+  if (input.imageRef) params.ImageRef = input.imageRef;
+  return Object.keys(params).length > 0 ? params : undefined;
+}
+
+/** Default `cfn-deploy` capability, backed by the real `CloudExecutor`. */
+export const cfnDeploy: Capability<CfnDeployInput, CfnDeployOutput> = createCfnDeployCapability();
 
 // ── ecs-update-service ──────────────────────────────────────────────────────
 
@@ -73,9 +185,44 @@ export interface EcsUpdateServiceOutput {
   deploymentId: string;
 }
 
-/** Roll a new task definition/image out to an ECS service. */
+/**
+ * Roll a new task definition/image out to an ECS service via `UpdateService`.
+ * Rollback re-invokes `updateService` with the same input — a best-effort
+ * capability-level compensation for the common case (recorded here so the
+ * capability is never rollback-silent); a component whose service swap needs
+ * a specific prior task definition/count restored (rather than a re-apply of
+ * the same input) supplies its own explicit rollback phase instead, as the
+ * ALB/ECS pilot does with `rollback-previous`.
+ */
+export function createEcsUpdateServiceCapability(
+  executor: CloudExecutor = defaultCloudExecutor(),
+): Capability<EcsUpdateServiceInput, EcsUpdateServiceOutput> {
+  return {
+    kind: "ecs-update-service",
+    async run(_ctx, input) {
+      const { deploymentId } = await executor.ecs.updateService({
+        cluster: input.cluster,
+        service: input.service,
+        taskDefinition: input.imageRef,
+        desiredCount: input.desiredCount,
+        forceNewDeployment: input.forceNewDeployment,
+      });
+      return { deploymentId };
+    },
+    async rollback(_ctx, input) {
+      await executor.ecs.rollbackService({
+        cluster: input.cluster,
+        service: input.service,
+        taskDefinition: input.imageRef,
+        desiredCount: input.desiredCount,
+      });
+    },
+  };
+}
+
+/** Default `ecs-update-service` capability, backed by the real `CloudExecutor`. */
 export const ecsUpdateService: Capability<EcsUpdateServiceInput, EcsUpdateServiceOutput> =
-  stubCapability("ecs-update-service", { rollback: true });
+  createEcsUpdateServiceCapability();
 
 // ── lambda-deploy ────────────────────────────────────────────────────────────
 

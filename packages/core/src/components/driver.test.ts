@@ -462,15 +462,20 @@ describe("runInterpretDriver — end to end", () => {
 });
 
 describe("capabilities are consumed exactly as the stub registry provides them", () => {
+  // `cfn-deploy` gained a real implementation in #557 (see ./verbs/apply.ts) —
+  // `lambda-deploy` is a non-pilot apply-family verb #557 explicitly scopes
+  // out, so it is still a typed stub here, making it the right verb to prove
+  // a not-yet-implemented capability still surfaces as an ordinary failed
+  // step rather than crashing the driver.
   it("a still-stubbed capability (CapabilityNotImplementedError) surfaces as a failed step, not a driver crash", async () => {
     const registry = createCapabilityRegistry();
     const component: DriverComponent = {
       name: "c",
-      deploy: [{ phase: "Apply", steps: [{ kind: "cfn-deploy", stack: "x" }] }],
+      deploy: [{ phase: "Apply", steps: [{ kind: "lambda-deploy", functionName: "x", codeRef: "y" }] }],
     };
     const result = await runComponentDeploy(component, { env: "dev", component: "c" }, registry, {});
     expect(result.ok).toBe(false);
     const failed = result.records.find((r) => r.status === "fail");
-    expect(failed?.error).toMatch(/capability "cfn-deploy" is not implemented/);
+    expect(failed?.error).toMatch(/capability "lambda-deploy" is not implemented/);
   });
 });
