@@ -71,6 +71,15 @@ Capture and compare deployed infrastructure state. Snapshots are stored on an or
 | [`lifecycle diff <env> --live`](/chant/cli/lifecycle/) | Query cloud right now and report drift (six categories: missing, orphan, disappeared, drifted, etc.) |
 | [`lifecycle log [env]`](/chant/cli/lifecycle/) | History of lifecycle snapshots |
 
+## Component Release Ledger + Status
+
+Record immutable deploy events and reconcile them against live truth, joined by artifact digest. See [`chant components`](/chant/cli/components/) and [Observability](/chant/components/observability/).
+
+| Command | Description |
+|---------|-------------|
+| [`components release <env>`](/chant/cli/components/) | Append one immutable release record (`component`, digest, git sha, run id, actor) to the `chant/lifecycle` branch |
+| [`components status [env]`](/chant/cli/components/) | What's built vs. what's deployed where, joined by digest (`--live` reconciles against live + ownership; `--compare-to <env>` cross-checks a digest across environments) |
+
 ## Server Commands
 
 | Command | Description |

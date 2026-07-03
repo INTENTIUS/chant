@@ -98,6 +98,18 @@ export interface ParsedArgs {
   pinnedDigest?: string;
   /** `chant dev surface-diff --check` — verify the committed baseline matches a fresh regen; exit non-zero if it drifted. Never writes the snapshot. */
   check?: boolean;
+  /** `chant components release record --component <name>` (#568) — component name for the release record being appended. */
+  component?: string;
+  /** `chant components release record --digest <sha256:...>` (#568) — artifact digest to record, joining this release to the build archive/ledger. */
+  digest?: string;
+  /** `chant components release record --git-sha <sha>` (#568) — git commit the deploy was built from. */
+  gitSha?: string;
+  /** `chant components release record --run-id <id>` (#568) — orchestrator/CI run identifier. */
+  runId?: string;
+  /** `chant components release record --actor <name>` (#568) — who/what triggered the deploy. */
+  actor?: string;
+  /** `chant components status <env> --compare-to <env>` (#568) — a second environment to cross-check the same component's recorded digest against. */
+  compareTo?: string;
 }
 
 /**
