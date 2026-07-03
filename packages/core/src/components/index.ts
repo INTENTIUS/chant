@@ -36,12 +36,14 @@ export {
   type GenerateComponentsResult,
   type RunComponentsOptions,
   type RunComponentsResult,
+  type ResolvedComponentTargets,
   listComponents,
   describeComponent,
   computeComponentGraph,
   generateComponentsPipeline,
   runComponents,
   findComponentGate,
+  resolveComponentTargets,
 } from "./cli-support";
 export {
   type GeneratedJob,
@@ -93,6 +95,7 @@ export {
   type WiringValue,
   resolveComponentGraph,
   resolveWiring,
+  resolveStepInput,
   runComponentDeploy,
   runInterpretDriver,
   DriverGateUnsupportedError,
@@ -108,3 +111,8 @@ export {
   SingleHostComposeComponent,
   type SingleHostComposeComponentConfig,
 } from "./presets/index";
+export {
+  type ComponentTemporalCodegen,
+  type ComponentTemporalCodegenOptions,
+  loadComponentTemporalCodegen,
+} from "./temporal-codegen-loader";

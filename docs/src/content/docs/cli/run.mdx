@@ -1,6 +1,6 @@
 ---
 title: "chant run"
-description: Start and manage Op Temporal workflows
+description: Start and manage Op and component Temporal workflows
 ---
 
 ## Synopsis
@@ -12,11 +12,12 @@ chant run status <name> [flags]
 chant run signal <name> <signal> [flags]
 chant run cancel <name> [flags]
 chant run log <name> [flags]
+chant run --components <name|all> [flags]
 ```
 
 ## Description
 
-`chant run` starts and manages **Op** workflows — named, phased workflows defined in `*.op.ts` files.
+`chant run` starts and manages **Op** workflows — named, phased workflows defined in `*.op.ts` files — and, with `--components`, [component](/chant/components/orchestration/) deploy compositions.
 
 `chant run <name>` runs **local by default**: the Op executes in-process with no Temporal server, worker, or built `worker.ts`. Pass `--temporal` to run against a Temporal cluster instead (worker spawn + workflow submission). One flag selects the runtime — no config is inspected. See [Local vs Temporal](/chant/guide/local-vs-temporal/) for the trade-off.
 
@@ -64,7 +65,7 @@ Send a named signal to unblock a gate step in a running workflow.
 chant run signal alb-deploy gate-dns-delegation
 ```
 
-The signal name must match the `signalName` passed to the `gate()` builder in the Op definition.
+The signal name must match the `signalName` passed to the `gate()` builder in the Op definition. Pass `--components` to signal a component's durable gate instead (see `run --components` below).
 
 ### `run cancel <name>`
 
@@ -74,6 +75,8 @@ Cancel the active workflow run. Requires `--force`.
 chant run cancel alb-deploy --force
 ```
 
+Pass `--components` to cancel a component's durable workflow instead.
+
 ### `run log <name>`
 
 Show run history for an Op.
@@ -82,13 +85,38 @@ Show run history for an Op.
 chant run log alb-deploy
 ```
 
+### `run --components <name|all>`
+
+Run a discovered [component](/chant/components/orchestration/)'s `deploy` composition. Local by default, on the same zero-dependency in-process executor as an Op — no Temporal server, worker, or build step needed. `all` runs every discovered component in dependency order (parallel-safe waves); a single name runs just that component.
+
+```bash
+chant run --components search-service --env staging
+chant run --components all --env production
+```
+
+A `gate` anywhere in a local-mode component's composition fails fast, before any step runs, with an actionable message pointing at `--temporal`.
+
+#### `run --components <name> --temporal`
+
+Compiles the named component's composition to a Temporal workflow (phases → workflow, capability steps → activities, `gate` → durable wait-for-signal, `onFailure`/`rollback` → saga compensation — mirroring `Temporal::Op` codegen), writes it to `dist/components/<name>/`, spawns the worker, and submits the workflow. Unlike local mode, a `gate` is fully supported here: the workflow durably waits for the signal, survivable across a worker crash.
+
+```bash
+chant run --components search-service --temporal
+chant run signal search-service release-approval --components --temporal   # unblock a gate
+chant run cancel search-service --force --components --temporal            # abort a run
+```
+
+Scoped to a single named component — `chant run --components all --temporal` is not supported (coordinating multiple durable workflows' cross-component ordering is a separate concern from compiling one component's composition).
+
 ## Flags
 
 | Flag | Description |
 |------|-------------|
-| `--local` | Run with the local in-process executor — the default (`run <name>`) |
-| `--temporal` | Run via a Temporal cluster: gates, schedules, durable resume (`run <name>`) |
-| `--json` | Emit the structured run result as JSON on stdout (`run <name>`) |
+| `--local` | Run with the local in-process executor — the default (`run <name>`, `run --components`) |
+| `--temporal` | Run via a Temporal cluster: gates, schedules, durable resume (`run <name>`, `run --components <name>`) |
+| `--components` | Target a component instead of an Op (`run --components`, and `run signal` / `run cancel` against a component's workflow) |
+| `--env <name>` | Target environment, threaded into every capability's context (`run --components`) |
+| `--json` | Emit the structured run result as JSON on stdout (`run <name>`, `run --components`) |
 | `-p, --profile <name>` | Temporal worker profile to use (from `chant.config.ts`); implies Temporal mode |
 | `--report` | Print a deployment report instead of running (`run <name> --temporal` only) |
 | `--force` | Required for `run cancel` |

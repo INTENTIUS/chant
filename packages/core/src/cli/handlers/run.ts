@@ -1,5 +1,5 @@
-import { resolve, join } from "node:path";
-import { existsSync } from "node:fs";
+import { resolve, join, dirname } from "node:path";
+import { existsSync, writeFileSync, mkdirSync } from "node:fs";
 import { createConnection } from "node:net";
 import { spawn as spawnChild, type ChildProcess } from "node:child_process";
 import { loadChantConfig } from "../../config";
@@ -19,8 +19,9 @@ import {
   type WorkflowHistoryRaw,
 } from "./run-client";
 import { generateReport, writeReport } from "./run-report";
-import { runComponents } from "../../components/cli-support";
+import { runComponents, resolveComponentTargets, findComponentGate } from "../../components/cli-support";
 import { renderDriverHuman, renderDriverJson } from "../../components/driver-output";
+import { loadComponentTemporalCodegen } from "../../components/temporal-codegen-loader";
 
 function kebabToCamel(s: string): string {
   return s.replace(/-([a-z])/g, (_, c: string) => c.toUpperCase());
@@ -208,33 +209,44 @@ export async function runOpLog(ctx: CommandContext): Promise<number> {
 
 // ── chant run signal <name> <signal> ─────────────────────────────────────────
 
+/**
+ * `chant run signal <name> <signal> [--components]` — sends a signal to a
+ * running Op workflow by default, or a component workflow when `--components`
+ * is passed (#589): the durable path's gate is otherwise unclearable from the
+ * CLI. Resolves the workflow id via `componentWorkflowId` (`chant-component-
+ * <name>`) instead of `resolveWorkflowId` (`chant-op-<name>`) in that case —
+ * the two id spaces are kept distinct so an Op and a component can share a
+ * name without colliding.
+ */
 export async function runOpSignal(ctx: CommandContext): Promise<number> {
   if (!requireTemporalMode(ctx, "chant run signal")) return 1;
   const name = ctx.args.extraPositional;
   const signalName = ctx.args.extraPositional2;
 
   if (!name || !signalName) {
-    console.error(formatError({ message: "Usage: chant run signal <op-name> <signal-name>" }));
+    console.error(formatError({ message: "Usage: chant run signal <name> <signal-name>" }));
     return 1;
   }
 
   const projectPath = resolve(".");
+  const workflowId = ctx.args.components ? componentWorkflowId(name) : resolveWorkflowId(name);
   let handle: WorkflowHandleRaw;
   try {
     const { client } = await makeTemporalClient(ctx.args.profile, projectPath);
-    handle = client.workflow.getHandle(resolveWorkflowId(name));
+    handle = client.workflow.getHandle(workflowId);
     await handle.signal(signalName);
   } catch (err) {
     console.error(formatError({ message: err instanceof Error ? err.message : String(err) }));
     return 1;
   }
 
-  console.error(formatSuccess(`Signal "${signalName}" sent to Op "${name}"`));
+  console.error(formatSuccess(`Signal "${signalName}" sent to ${ctx.args.components ? "component" : "Op"} "${name}"`));
   return 0;
 }
 
 // ── chant run cancel <name> ───────────────────────────────────────────────────
 
+/** `chant run cancel <name> [--components]` — cancels an Op workflow by default, or a component workflow when `--components` is passed (#589), mirroring `runOpSignal`'s id resolution. */
 export async function runOpCancel(ctx: CommandContext): Promise<number> {
   if (!requireTemporalMode(ctx, "chant run cancel")) return 1;
   const name = ctx.args.extraPositional;
@@ -252,17 +264,18 @@ export async function runOpCancel(ctx: CommandContext): Promise<number> {
   }
 
   const projectPath = resolve(".");
+  const workflowId = ctx.args.components ? componentWorkflowId(name) : resolveWorkflowId(name);
   let handle: WorkflowHandleRaw;
   try {
     const { client } = await makeTemporalClient(ctx.args.profile, projectPath);
-    handle = client.workflow.getHandle(resolveWorkflowId(name));
+    handle = client.workflow.getHandle(workflowId);
     await handle.cancel();
   } catch (err) {
     console.error(formatError({ message: err instanceof Error ? err.message : String(err) }));
     return 1;
   }
 
-  console.error(formatSuccess(`Cancellation requested for Op "${name}"`));
+  console.error(formatSuccess(`Cancellation requested for ${ctx.args.components ? "component" : "Op"} "${name}"`));
   return 0;
 }
 
@@ -331,24 +344,28 @@ export async function runOp(ctx: CommandContext): Promise<number> {
 // ── chant run --components <name|all> ────────────────────────────────────────
 
 /**
- * `chant run --components <name|all> [--env <env>]` (#585) — the interpret
- * driver's CLI entrypoint. `args.path` is the component name (or `all`),
- * matching `chant run <name>`'s Op-dispatch convention exactly (`args.path`
- * is the Op name there too) rather than a project directory — components are
- * always discovered from the current working directory, the same way Op
- * discovery (`discoverOps()`) never takes a project-path argument either.
- * Resolves the selector through `runComponents`
- * (`../../components/cli-support.ts`) and runs it on the local in-process
- * executor by default.
+ * `chant run --components <name|all> [--env <env>] [--temporal]` (#585, and
+ * #589 for `--temporal`) — the interpret driver's CLI entrypoint. `args.path`
+ * is the component name (or `all`), matching `chant run <name>`'s Op-dispatch
+ * convention exactly (`args.path` is the Op name there too) rather than a
+ * project directory — components are always discovered from the current
+ * working directory, the same way Op discovery (`discoverOps()`) never takes
+ * a project-path argument either.
  *
- * Gated components are rejected before any step runs (matching
- * `runOpLocal`'s pre-flight `findGate` guard) — `--temporal` for a gated
- * component is not yet wired (no generated orchestrator Op/worker exists for
- * components the way `dist/ops/<name>/worker.ts` does for Ops; out of scope
- * per #585). `--temporal` without a gate present is accepted but currently
- * behaves identically to local mode, since every capability here still runs
- * in-process; this mirrors `runOpLocal`'s docs promise (local by default) and
- * leaves graduating the durable backend to a follow-up, per epic #551 §8.
+ * Local mode (the default) resolves the selector through `runComponents`
+ * (`../../components/cli-support.ts`) and runs it on the local in-process
+ * executor; gated components are rejected before any step runs (matching
+ * `runOpLocal`'s pre-flight `findGate` guard) with an actionable message
+ * pointing at `--temporal`.
+ *
+ * `--temporal` (#589) takes the durable path instead: compiles the named
+ * component's composition to a Temporal workflow/worker (mirroring
+ * `Temporal::Op` codegen — see `runComponentTemporal` below), and gates are
+ * now ACCEPTED — a gate is durable wait-for-signal there, not a local
+ * in-process block. Scoped to a single named component (`all --temporal` is
+ * out of scope for #589: coordinating N durable workflows' cross-component
+ * `dependsOn` durably is a follow-up, not part of "compile a component's
+ * `deploy` composition into a durable orchestrator").
  */
 export async function runOpComponents(ctx: CommandContext): Promise<number> {
   const selector = ctx.args.path;
@@ -360,6 +377,8 @@ export async function runOpComponents(ctx: CommandContext): Promise<number> {
     return 1;
   }
 
+  if (ctx.args.temporal) return runComponentTemporal(ctx, selector);
+
   const result = await runComponents(resolve("."), selector, { env: ctx.args.env });
 
   if (result.gateUnsupported) {
@@ -367,7 +386,7 @@ export async function runOpComponents(ctx: CommandContext): Promise<number> {
       message:
         `component "${result.gateUnsupported.component}": gate "${result.gateUnsupported.signalName}" is not ` +
         `supported on the local executor — gates need a durable runtime.`,
-      hint: "Re-run with a durable (Temporal) backend once this component graduates (see epic #551).",
+      hint: "Re-run with `chant run --components " + result.gateUnsupported.component + " --temporal`.",
     }));
     return 1;
   }
@@ -382,6 +401,171 @@ export async function runOpComponents(ctx: CommandContext): Promise<number> {
   }
 
   return result.success ? 0 : 1;
+}
+
+// ── chant run --components <name> --temporal (#589) ─────────────────────────
+
+function componentWorkflowId(componentName: string): string {
+  return `chant-component-${componentName}`;
+}
+
+/**
+ * `chant run --components <name> --temporal` (#589, epic #551 §5/§8) — the
+ * durable counterpart to `runOpComponents`'s local path. Mirrors
+ * `runOpTemporal`'s shape exactly (build+spawn worker, submit workflow, poll,
+ * report) but "build" here means compiling the component's composition
+ * on-the-fly via `loadComponentTemporalCodegen` (the Temporal lexicon's
+ * `serializeComponent`, mirroring `serializeOps`) rather than reading a
+ * pre-existing `dist/ops/<name>/worker.ts` — components have no separate
+ * `chant build` step that already produced generated files the way Ops do, so
+ * this generates `dist/components/<name>/{workflow,worker,activities}.ts`
+ * itself before spawning.
+ *
+ * Unlike the local executor, a `gate` anywhere in the component's
+ * composition is fully supported: the generated workflow durably waits for
+ * the signal (see `serializeComponent`'s codegen), survivable across a worker
+ * crash and clearable via `chant run signal <name> <signal> --components
+ * --temporal` (`runOpSignal` above, extended for components alongside this
+ * issue).
+ */
+async function runComponentTemporal(ctx: CommandContext, selector: string): Promise<number> {
+  if (selector === "all") {
+    console.error(formatError({
+      message: "`chant run --components all --temporal` is not supported",
+      hint: "Pass a single component name — durable execution is compiled and run per component (see epic #551 #589).",
+    }));
+    return 1;
+  }
+
+  const projectPath = resolve(".");
+  const resolved = await resolveComponentTargets(projectPath, selector);
+  if (!resolved.success || resolved.targets.length === 0) {
+    console.error(formatError({ message: resolved.error ?? `Component "${selector}" not found` }));
+    return 1;
+  }
+  const component = resolved.targets[0];
+
+  // Load config + profile (mirrors runOpTemporal).
+  const { config: chantConfig } = await loadChantConfig(projectPath);
+  let profile;
+  try {
+    profile = resolveProfile(chantConfig as Record<string, unknown>, ctx.args.profile);
+  } catch (err) {
+    console.error(formatError({ message: err instanceof Error ? err.message : String(err) }));
+    return 1;
+  }
+
+  // Compile the component to workflow/worker/activities under dist/components/<name>/.
+  let codegen;
+  try {
+    codegen = await loadComponentTemporalCodegen();
+  } catch (err) {
+    console.error(formatError({ message: err instanceof Error ? err.message : String(err) }));
+    return 1;
+  }
+
+  const files = codegen.serializeComponent(component, { env: ctx.args.env });
+  for (const [relPath, content] of Object.entries(files)) {
+    const outPath = join(projectPath, "dist", relPath);
+    mkdirSync(dirname(outPath), { recursive: true });
+    writeFileSync(outPath, content);
+  }
+
+  const workerPath = join(projectPath, "dist", "components", component.name, "worker.ts");
+
+  // autoStart: spin up temporal server if needed (mirrors runOpTemporal).
+  if (profile.autoStart) {
+    console.error(formatInfo("autoStart: checking Temporal server..."));
+    try {
+      await waitForTemporalServer(profile.address, 2000);
+      console.error(formatInfo("Temporal server already running."));
+    } catch {
+      console.error(formatInfo("Starting temporal server start-dev..."));
+      spawnChild("temporal", ["server", "start-dev"], {
+        cwd: projectPath,
+        stdio: "ignore",
+        detached: true,
+      }).unref();
+      await waitForTemporalServer(profile.address, 30_000);
+      console.error(formatSuccess("Temporal server ready."));
+    }
+  }
+
+  let client;
+  try {
+    ({ client } = await makeTemporalClient(ctx.args.profile, projectPath));
+  } catch (err) {
+    console.error(formatError({ message: err instanceof Error ? err.message : String(err) }));
+    return 1;
+  }
+
+  const profileName = ctx.args.profile ??
+    (((chantConfig as Record<string, unknown>).temporal as Record<string, unknown> | undefined)?.defaultProfile as string | undefined) ??
+    "local";
+
+  console.error(formatInfo(`Spawning worker for component "${component.name}" (profile: ${profileName})...`));
+  const workerProcess: ChildProcess = spawnChild("npx", ["tsx", workerPath], {
+    cwd: projectPath,
+    env: { ...process.env, TEMPORAL_PROFILE: profileName },
+    stdio: ["ignore", "ignore", "inherit"],
+  });
+
+  const workflowId = componentWorkflowId(component.name);
+  const fnName = codegen.componentWorkflowFnName(component.name);
+  const taskQueue = profile.taskQueue ?? component.name;
+
+  let handle: WorkflowHandleRaw;
+  try {
+    handle = await client.workflow.start(fnName, {
+      taskQueue,
+      workflowId,
+      workflowIdConflictPolicy: "FAIL",
+    });
+    console.error(formatSuccess(`Workflow started: ${workflowId}`));
+  } catch (err) {
+    console.error(formatError({ message: err instanceof Error ? err.message : String(err) }));
+    try { workerProcess.kill(); } catch { /* ignore */ }
+    return 1;
+  }
+
+  const gate = findComponentGate(component);
+  if (gate) {
+    console.error(formatInfo(
+      `Component has a gate ("${gate.signalName}") — unblock it with: chant run signal ${component.name} ${gate.signalName} --components --temporal`,
+    ));
+  }
+
+  let finalDesc: WorkflowExecutionDescription | undefined;
+
+  try {
+    while (true) {
+      await new Promise((r) => setTimeout(r, POLL_INTERVAL_MS));
+      const desc = await handle.describe();
+      const history = await handle.fetchHistory();
+      renderProgress(component.name, history);
+      if (TERMINAL_STATUSES.has(desc.status.name)) {
+        process.stderr.write("\n");
+        finalDesc = desc;
+        break;
+      }
+    }
+  } catch (err) {
+    process.stderr.write("\n");
+    console.error(formatError({ message: err instanceof Error ? err.message : String(err) }));
+    return 1;
+  } finally {
+    try { workerProcess.kill(); } catch { /* ignore */ }
+  }
+
+  if (!finalDesc) return 1;
+
+  const status = finalDesc.status.name;
+  console.error(status === "COMPLETED"
+    ? formatSuccess(`Component "${component.name}" completed successfully.`)
+    : formatError({ message: `Component "${component.name}" ended with status: ${status}` }),
+  );
+
+  return status === "COMPLETED" ? 0 : 1;
 }
 
 /**

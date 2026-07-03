@@ -8,11 +8,16 @@ const loadChantConfigMock = vi.fn();
 const loadTemporalClientMock = vi.fn();
 const resolveProfileMock = vi.fn();
 const existsSyncMock = vi.fn();
+const writeFileSyncMock = vi.fn();
+const mkdirSyncMock = vi.fn();
 const spawnChildMock = vi.fn();
 const generateReportMock = vi.fn();
 const writeReportMock = vi.fn();
 const waitForTemporalSpy = vi.fn();
 const runComponentsMock = vi.fn();
+const resolveComponentTargetsMock = vi.fn();
+const findComponentGateMock = vi.fn();
+const loadComponentTemporalCodegenMock = vi.fn();
 
 vi.mock("../../op/discover", () => ({ discoverOps: () => discoverOpsMock() }));
 vi.mock("../../config", () => ({ loadChantConfig: (...args: unknown[]) => loadChantConfigMock(...args) }));
@@ -24,7 +29,12 @@ vi.mock("./run-client", () => ({
 }));
 vi.mock("node:fs", async () => {
   const actual = await vi.importActual<typeof import("node:fs")>("node:fs");
-  return { ...actual, existsSync: (p: string) => existsSyncMock(p) };
+  return {
+    ...actual,
+    existsSync: (p: string) => existsSyncMock(p),
+    writeFileSync: (...args: unknown[]) => writeFileSyncMock(...args),
+    mkdirSync: (...args: unknown[]) => mkdirSyncMock(...args),
+  };
 });
 vi.mock("node:child_process", async () => {
   const actual = await vi.importActual<typeof import("node:child_process")>("node:child_process");
@@ -36,6 +46,11 @@ vi.mock("./run-report", () => ({
 }));
 vi.mock("../../components/cli-support", () => ({
   runComponents: (...args: unknown[]) => runComponentsMock(...args),
+  resolveComponentTargets: (...args: unknown[]) => resolveComponentTargetsMock(...args),
+  findComponentGate: (...args: unknown[]) => findComponentGateMock(...args),
+}));
+vi.mock("../../components/temporal-codegen-loader", () => ({
+  loadComponentTemporalCodegen: () => loadComponentTemporalCodegenMock(),
 }));
 
 // Speed up runOp polling — POLL_INTERVAL_MS is 3000 in production. We use
@@ -245,6 +260,21 @@ describe("runOpSignal", () => {
     expect(stderr.join("\n")).toContain("Signal");
     expect(stderr.join("\n")).toContain("gate-dns");
   });
+
+  test("--components: signals the component workflow id, not the Op one (#589)", async () => {
+    const mockClient = createMockTemporalClient();
+    setupTemporalClient(mockClient);
+    const stderr = makeStderrSpy();
+    const exit = await runOpSignal({
+      args: makeArgs({ extraPositional: "gated-svc", extraPositional2: "release-approval", components: true }),
+      plugins: [], serializers: [],
+    });
+    expect(exit).toBe(0);
+    expect(mockClient.calls.signalCalls).toEqual([
+      { workflowId: "chant-component-gated-svc", signalName: "release-approval" },
+    ]);
+    expect(stderr.join("\n")).toContain("component");
+  });
 });
 
 describe("runOpCancel", () => {
@@ -282,6 +312,19 @@ describe("runOpCancel", () => {
     expect(exit).toBe(0);
     expect(mockClient.calls.cancelCalls).toEqual([{ workflowId: "chant-op-alb-deploy" }]);
     expect(stderr.join("\n")).toContain("Cancellation requested");
+  });
+
+  test("--components: cancels the component workflow id, not the Op one (#589)", async () => {
+    const mockClient = createMockTemporalClient();
+    setupTemporalClient(mockClient);
+    const stderr = makeStderrSpy();
+    const exit = await runOpCancel({
+      args: makeArgs({ extraPositional: "gated-svc", force: true, components: true }),
+      plugins: [], serializers: [],
+    });
+    expect(exit).toBe(0);
+    expect(mockClient.calls.cancelCalls).toEqual([{ workflowId: "chant-component-gated-svc" }]);
+    expect(stderr.join("\n")).toContain("component");
   });
 });
 
@@ -577,7 +620,7 @@ describe("runOpComponents", () => {
 
   test("no component name → exit 1 with hint", async () => {
     const stderr = makeStderrSpy();
-    const exit = await runOpComponents({ args: makeArgs({ path: "." }), plugins: [], serializers: [] });
+    const exit = await runOpComponents({ args: makeArgs({ path: ".", temporal: false }), plugins: [], serializers: [] });
     expect(exit).toBe(1);
     expect(stderr.join("\n")).toContain("Component name is required");
     expect(runComponentsMock).not.toHaveBeenCalled();
@@ -596,7 +639,7 @@ describe("runOpComponents", () => {
     });
     const stderrWrite = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
 
-    const exit = await runOpComponents({ args: makeArgs({ path: "svc" }), plugins: [], serializers: [] });
+    const exit = await runOpComponents({ args: makeArgs({ path: "svc", temporal: false }), plugins: [], serializers: [] });
 
     expect(exit).toBe(0);
     expect(runComponentsMock).toHaveBeenCalledWith(expect.any(String), "svc", { env: undefined });
@@ -609,7 +652,7 @@ describe("runOpComponents", () => {
     runComponentsMock.mockResolvedValue({ success: true, selected: ["svc"], run: { order: ["svc"], waves: [["svc"]], results: [{ component: "svc", ok: true, records: [] }], ok: true } });
     vi.spyOn(process.stderr, "write").mockImplementation(() => true);
 
-    await runOpComponents({ args: makeArgs({ path: "svc", env: "staging" }), plugins: [], serializers: [] });
+    await runOpComponents({ args: makeArgs({ path: "svc", env: "staging", temporal: false }), plugins: [], serializers: [] });
 
     expect(runComponentsMock).toHaveBeenCalledWith(expect.any(String), "svc", { env: "staging" });
     vi.restoreAllMocks();
@@ -620,7 +663,7 @@ describe("runOpComponents", () => {
     runComponentsMock.mockResolvedValue({ success: true, selected: ["svc"], run });
     const stdoutWrite = vi.spyOn(process.stdout, "write").mockImplementation(() => true);
 
-    const exit = await runOpComponents({ args: makeArgs({ path: "svc", json: true }), plugins: [], serializers: [] });
+    const exit = await runOpComponents({ args: makeArgs({ path: "svc", json: true, temporal: false }), plugins: [], serializers: [] });
 
     expect(exit).toBe(0);
     const printed = stdoutWrite.mock.calls.map((c) => String(c[0])).join("");
@@ -644,7 +687,7 @@ describe("runOpComponents", () => {
     });
     const stderrWrite = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
 
-    const exit = await runOpComponents({ args: makeArgs({ path: "all" }), plugins: [], serializers: [] });
+    const exit = await runOpComponents({ args: makeArgs({ path: "all", temporal: false }), plugins: [], serializers: [] });
 
     expect(exit).toBe(0);
     expect(runComponentsMock).toHaveBeenCalledWith(expect.any(String), "all", { env: undefined });
@@ -668,7 +711,7 @@ describe("runOpComponents", () => {
     });
     const stderrWrite = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
 
-    const exit = await runOpComponents({ args: makeArgs({ path: "svc" }), plugins: [], serializers: [] });
+    const exit = await runOpComponents({ args: makeArgs({ path: "svc", temporal: false }), plugins: [], serializers: [] });
 
     expect(exit).toBe(1);
     const printed = stderrWrite.mock.calls.map((c) => String(c[0])).join("");
@@ -680,13 +723,13 @@ describe("runOpComponents", () => {
     runComponentsMock.mockResolvedValue({ success: false, selected: [], error: 'Component "missing" not found. Known components: svc' });
     const stderr = makeStderrSpy();
 
-    const exit = await runOpComponents({ args: makeArgs({ path: "missing" }), plugins: [], serializers: [] });
+    const exit = await runOpComponents({ args: makeArgs({ path: "missing", temporal: false }), plugins: [], serializers: [] });
 
     expect(exit).toBe(1);
     expect(stderr.join("\n")).toContain('Component "missing" not found');
   });
 
-  test("a gate in the component → exit 1 with an actionable, Temporal-pointing message", async () => {
+  test("a gate in the component (local mode) → exit 1 with an actionable, Temporal-pointing message", async () => {
     runComponentsMock.mockResolvedValue({
       success: false,
       selected: ["svc"],
@@ -694,11 +737,137 @@ describe("runOpComponents", () => {
     });
     const stderr = makeStderrSpy();
 
-    const exit = await runOpComponents({ args: makeArgs({ path: "svc" }), plugins: [], serializers: [] });
+    const exit = await runOpComponents({ args: makeArgs({ path: "svc", temporal: false }), plugins: [], serializers: [] });
 
     expect(exit).toBe(1);
     const out = stderr.join("\n");
     expect(out).toContain('gate "release-approval"');
-    expect(out).toContain("durable");
+    expect(out).toContain("--temporal");
+  });
+});
+
+// ── chant run --components <name> --temporal (#589) ─────────────────────────
+
+describe("runOpComponents: --temporal routes to the durable path", () => {
+  beforeEach(() => {
+    resolveComponentTargetsMock.mockReset();
+    findComponentGateMock.mockReset();
+    loadComponentTemporalCodegenMock.mockReset();
+    loadChantConfigMock.mockReset();
+    resolveProfileMock.mockReset();
+    loadTemporalClientMock.mockReset();
+    spawnChildMock.mockReset();
+    existsSyncMock.mockReset();
+    findComponentGateMock.mockReturnValue(undefined);
+  });
+
+  test("all --temporal → exit 1, not supported", async () => {
+    const stderr = makeStderrSpy();
+    const exit = await runOpComponents({ args: makeArgs({ path: "all", temporal: true }), plugins: [], serializers: [] });
+    expect(exit).toBe(1);
+    expect(stderr.join("\n")).toContain("not supported");
+    expect(resolveComponentTargetsMock).not.toHaveBeenCalled();
+  });
+
+  test("unknown component → exit 1 with the resolver's error message", async () => {
+    resolveComponentTargetsMock.mockResolvedValue({ success: false, targets: [], error: 'Component "missing" not found.' });
+    const stderr = makeStderrSpy();
+
+    const exit = await runOpComponents({ args: makeArgs({ path: "missing", temporal: true }), plugins: [], serializers: [] });
+
+    expect(exit).toBe(1);
+    expect(stderr.join("\n")).toContain('Component "missing" not found');
+  });
+
+  test("compiles the component, spawns the worker, submits the workflow, polls to COMPLETED", async () => {
+    vi.useFakeTimers();
+    try {
+      resolveComponentTargetsMock.mockResolvedValue({
+        success: true,
+        targets: [{ name: "gated-svc", dependsOn: [], deploy: [] }],
+      });
+      loadChantConfigMock.mockResolvedValue({ config: {} });
+      resolveProfileMock.mockReturnValue({ address: "localhost:7233", namespace: "default", taskQueue: "q" });
+      const serializeComponentMock = vi.fn().mockReturnValue({
+        "components/gated-svc/workflow.ts": "// wf",
+        "components/gated-svc/activities.ts": "// act",
+        "components/gated-svc/worker.ts": "// worker",
+      });
+      loadComponentTemporalCodegenMock.mockResolvedValue({
+        serializeComponent: serializeComponentMock,
+        componentWorkflowFnName: (name: string) => `${name}ComponentWorkflow`,
+      });
+      const mockClient = createMockTemporalClient({
+        describeByWorkflowId: {
+          "chant-component-gated-svc": {
+            workflowId: "chant-component-gated-svc", runId: "r1",
+            status: { name: "COMPLETED" }, startTime: new Date(),
+            taskQueue: "gated-svc", type: { name: "gatedSvcComponentWorkflow" },
+          },
+        },
+        historyByWorkflowId: { "chant-component-gated-svc": [] },
+      });
+      setupTemporalClient(mockClient);
+      const { proc } = makeFakeChildProcess();
+      spawnChildMock.mockReturnValue(proc);
+      vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+
+      const promise = runOpComponents({ args: makeArgs({ path: "gated-svc", temporal: true, env: "staging" }), plugins: [], serializers: [] });
+      await vi.advanceTimersByTimeAsync(5000);
+      const exit = await promise;
+
+      expect(exit).toBe(0);
+      expect(spawnChildMock).toHaveBeenCalledTimes(1);
+      expect(spawnChildMock.mock.calls[0][0]).toBe("npx");
+      expect(mockClient.calls.startCalls).toHaveLength(1);
+      expect(mockClient.calls.startCalls[0].opts.workflowId).toBe("chant-component-gated-svc");
+      expect(proc.kill).toHaveBeenCalled();
+      // --env must reach the codegen call, not just the local-mode path (the bug this locks in: #589 review).
+      expect(serializeComponentMock).toHaveBeenCalledWith(
+        expect.objectContaining({ name: "gated-svc" }),
+        expect.objectContaining({ env: "staging" }),
+      );
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  test("a failed (non-COMPLETED) workflow → exit 1", async () => {
+    vi.useFakeTimers();
+    try {
+      resolveComponentTargetsMock.mockResolvedValue({
+        success: true,
+        targets: [{ name: "gated-svc", dependsOn: [], deploy: [] }],
+      });
+      loadChantConfigMock.mockResolvedValue({ config: {} });
+      resolveProfileMock.mockReturnValue({ address: "localhost:7233", namespace: "default", taskQueue: "q" });
+      loadComponentTemporalCodegenMock.mockResolvedValue({
+        serializeComponent: () => ({ "components/gated-svc/worker.ts": "// worker" }),
+        componentWorkflowFnName: (name: string) => `${name}ComponentWorkflow`,
+      });
+      const mockClient = createMockTemporalClient({
+        describeByWorkflowId: {
+          "chant-component-gated-svc": {
+            workflowId: "chant-component-gated-svc", runId: "r1",
+            status: { name: "FAILED" }, startTime: new Date(),
+            taskQueue: "gated-svc", type: { name: "gatedSvcComponentWorkflow" },
+          },
+        },
+        historyByWorkflowId: { "chant-component-gated-svc": [] },
+      });
+      setupTemporalClient(mockClient);
+      const { proc } = makeFakeChildProcess();
+      spawnChildMock.mockReturnValue(proc);
+      vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+
+      const promise = runOpComponents({ args: makeArgs({ path: "gated-svc", temporal: true }), plugins: [], serializers: [] });
+      await vi.advanceTimersByTimeAsync(5000);
+      const exit = await promise;
+
+      expect(exit).toBe(1);
+      expect(proc.kill).toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

@@ -268,8 +268,18 @@ export function resolveWiring(
   return value;
 }
 
-/** Deep-walk an object, resolving every string/stackOutput wiring value found. Arrays and nested objects are walked too. */
-function resolveStepInput(
+/**
+ * Deep-walk an object, resolving every string/stackOutput wiring value found.
+ * Arrays and nested objects are walked too.
+ *
+ * Exported (not just used internally) so the durable Temporal path
+ * (`@intentius/chant-lexicon-temporal`'s component workflow codegen, see
+ * epic #551 #589) can resolve a step's wiring the same way inside a Temporal
+ * *activity* — the workflow itself only accumulates `phaseOutputs`/
+ * `componentOutputs` and passes them through; resolution logic stays in one
+ * place so local and durable execution can never silently diverge.
+ */
+export function resolveStepInput(
   input: Record<string, unknown>,
   phaseOutputs: Record<string, Record<string, unknown>>,
   componentOutputs: Record<string, Record<string, unknown>>,
