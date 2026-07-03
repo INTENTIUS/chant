@@ -1,5 +1,5 @@
 import { describe, test, expect, beforeEach, afterEach } from "vitest";
-import { loadChantConfig, DEFAULT_CHANT_CONFIG, resolveAutoReleaseDisabled } from "./config";
+import { loadChantConfig, DEFAULT_CHANT_CONFIG, resolveAutoReleaseDisabled, resolveSbomFormat } from "./config";
 import { writeFileSync, mkdirSync, rmSync } from "fs";
 import { join } from "path";
 
@@ -114,6 +114,18 @@ describe("loadChantConfig", () => {
     const result = await loadChantConfig(TEST_DIR);
     expect(result.config.release?.autoRecord).toBe(false);
   });
+
+  // #606: sbom.format sets the project-wide default SBOM format for every
+  // `generate-sbom` step that doesn't specify its own.
+  test("loads chant.config.json with sbom.format: cyclonedx", async () => {
+    writeFileSync(
+      join(TEST_DIR, "chant.config.json"),
+      JSON.stringify({ sbom: { format: "cyclonedx" } }),
+    );
+
+    const result = await loadChantConfig(TEST_DIR);
+    expect(result.config.sbom?.format).toBe("cyclonedx");
+  });
 });
 
 describe("resolveAutoReleaseDisabled", () => {
@@ -133,5 +145,20 @@ describe("resolveAutoReleaseDisabled", () => {
   test("release.autoRecord: true (or unset) does not disable", () => {
     expect(resolveAutoReleaseDisabled({ release: { autoRecord: true } })).toBe(false);
     expect(resolveAutoReleaseDisabled({ release: {} })).toBe(false);
+  });
+});
+
+describe("resolveSbomFormat (#606)", () => {
+  test("defaults to spdx (DEFAULT_SBOM_FORMAT) with no config and no step override", () => {
+    expect(resolveSbomFormat({})).toBe("spdx");
+  });
+
+  test("project config sbom.format overrides the built-in default", () => {
+    expect(resolveSbomFormat({ sbom: { format: "cyclonedx" } })).toBe("cyclonedx");
+  });
+
+  test("a step-level format always wins over project config", () => {
+    expect(resolveSbomFormat({ sbom: { format: "cyclonedx" } }, "spdx")).toBe("spdx");
+    expect(resolveSbomFormat({}, "cyclonedx")).toBe("cyclonedx");
   });
 });

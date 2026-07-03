@@ -109,6 +109,7 @@ describe("createCapabilityRegistry", () => {
       [
         "apply",
         "build",
+        "sbom",
         "escapeHatch",
         "hostDelivery",
         "jobSubmission",
@@ -117,5 +118,17 @@ describe("createCapabilityRegistry", () => {
         "waitVerify",
       ].sort(),
     );
+  });
+
+  // #606: `generate-sbom` is a real implementation (over the injectable,
+  // artifact-type-keyed SbomGenerator — see ./verbs/sbom-generator.ts),
+  // defaulted to a "not implemented" backend until a real scanner is wired
+  // in, mirroring ./lifecycle/build-ledger.ts's `noopReferrerLookup`
+  // default for the consume side.
+  test("#606 generate-sbom is registered and callable (real capability, default backend not yet wired)", () => {
+    const registry = createCapabilityRegistry();
+    const capability = registry.resolve("generate-sbom");
+    expect(typeof capability.run).toBe("function");
+    expect(capability.rollback).toBeUndefined();
   });
 });

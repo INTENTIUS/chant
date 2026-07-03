@@ -3,6 +3,7 @@ import { join } from "path";
 import { z } from "zod";
 import type { LintConfig } from "./lint/config";
 import type { OwnershipMarker } from "./ownership";
+import { DEFAULT_SBOM_FORMAT, type SbomFormat } from "./components/verbs/sbom-generator";
 
 /**
  * Zod schema for ChantConfig validation.
@@ -20,6 +21,10 @@ export const ChantConfigSchema = z.object({
   }).optional(),
   release: z.object({
     autoRecord: z.boolean().optional(),
+  }).optional(),
+  sbom: z.object({
+    format: z.enum(["spdx", "cyclonedx"]).optional(),
+    enabled: z.boolean().optional(),
   }).optional(),
 }).passthrough();
 
@@ -83,6 +88,22 @@ export interface ChantConfig {
   release?: {
     /** Set false to disable auto-emitting a release record after a successful component deploy project-wide. The `--no-release-record` CLI flag overrides this per-invocation. */
     autoRecord?: boolean;
+  };
+
+  /**
+   * Project-wide SBOM generation defaults (#606, epic #551 follow-up to
+   * #564/#568). Consumed by the `generate-sbom` capability
+   * (./components/verbs/sbom.ts) via {@link resolveSbomFormat} — a
+   * component's own `build.sbom.format` (see `BuildSpec` in
+   * ./components/component.ts) always wins over this project default when
+   * set, mirroring how `ownership`/`release` are project-wide defaults a
+   * more specific caller can override.
+   */
+  sbom?: {
+    /** Default SBOM format for every `generate-sbom` step that doesn't specify its own. Defaults to `DEFAULT_SBOM_FORMAT` ("spdx", see ./components/verbs/sbom-generator.ts) when unset — BuildKit natively emits SPDX attestations for images. */
+    format?: SbomFormat;
+    /** Set false to opt this project out of SBOM generation entirely — components composing a `generate-sbom` step still run it explicitly, but this is the project-wide switch a component author can point to when deciding whether to include the step at all. Purely advisory: `generate-sbom` has no implicit/automatic invocation to suppress (a component's composition always decides), so this flag has no effect unless a component's own authoring code reads it. */
+    enabled?: boolean;
   };
 }
 
@@ -149,6 +170,20 @@ export function resolveOwnershipMarker(config: ChantConfig): OwnershipMarker | u
 export function resolveAutoReleaseDisabled(config: ChantConfig, cliFlag?: boolean): boolean {
   if (cliFlag) return true;
   return config.release?.autoRecord === false;
+}
+
+/**
+ * Resolve which SBOM format a `generate-sbom` step should request (#606),
+ * given the project's `chant.config.ts` `sbom.format` and an optional
+ * component/step-level override. Precedence, most to least specific:
+ * `stepFormat` (the component's own `build.sbom.format` or an explicit
+ * `generate-sbom` step input) > `config.sbom.format` (project default) >
+ * `DEFAULT_SBOM_FORMAT` ("spdx", ./components/verbs/sbom-generator.ts).
+ * Never hardcodes one format as *the* format — this is purely precedence
+ * resolution over the two first-class formats SPDX/CycloneDX.
+ */
+export function resolveSbomFormat(config: ChantConfig, stepFormat?: SbomFormat): SbomFormat {
+  return stepFormat ?? config.sbom?.format ?? DEFAULT_SBOM_FORMAT;
 }
 
 /**

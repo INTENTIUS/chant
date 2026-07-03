@@ -41,6 +41,22 @@ The backend is selectable **per environment**, not just per component. The decid
 
 Choosing between them is environment config, never a pipeline fork, so the decision stops multiplying pipelines.
 
+## SBOM: format-agnostic, generated at build time
+
+A build-producing component can generate a Software Bill of Materials for its artifact via the `generate-sbom` capability. SBOMs are becoming a baseline expectation for procurement under EO 14028, CISA guidance, and the EU CRA, and generating one at build time (rather than after release, or from source alone) is the recommended workflow — it captures exactly what got built, not an approximation of it.
+
+Two formats are first-class: SPDX (`application/spdx+json`) and CycloneDX (`application/vnd.cyclonedx+json`). Chant stores the SBOM as an opaque document — `{ format, mediaType, bytes }` — and every consumer (the build ledger, `chant components status`) keys off `mediaType`, never a hardcoded format. The project default is SPDX, set via `chant.config.ts`'s `sbom.format`; BuildKit natively emits SPDX attestations for images, so that's the path of least resistance for the common case. A component can override the default for itself in its `build.sbom.format`, and either can be overridden per `generate-sbom` step.
+
+Generation is artifact-type-keyed through an injectable `SbomGenerator`, mirroring how `CloudExecutor` keeps the AWS-leaf capabilities testable: an image asks BuildKit's `--sbom` attestation or a `syft` scan; a JAR is scanned with `syft`/`cyclonedx-maven`; a zip or Lambda package is scanned with `syft`; a bare source directory with `syft`/`cdxgen`. Nothing about `generate-sbom` is docker-only.
+
+The archive is the SBOM's universal home — a `sbom`-kind manifest entry, content-addressed and linked to its subject artifact's digest. This is what makes SBOM lookup work for every artifact type and for the registry-less `load-image-on-host` path: no registry required to read a build's SBOM back. For image artifacts published to a registry, the SBOM can additionally be projected as an OCI referrer (`oras discover <digest>`/`cosign tree`) — a convenience on top of the archive-carried copy, not a replacement for it. `chant components status` surfaces whichever is available, by digest, preferring the archive.
+
+<Aside type="note" title="Same digest, same SBOM">
+Because publish promotes by digest, the SBOM scanned in dev is provably the one running in prod — the same "avoid drift" property a registry gets from storing SBOMs alongside images.
+</Aside>
+
+A config-only or infra component with no built artifact has no `generate-sbom` step to run — it skips structurally, not as a special case. A component that wants no SBOM simply omits the step.
+
 ## Read next
 
 - [Capabilities](/chant/components/capabilities/) — the `publish` family and its backends.

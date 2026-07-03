@@ -27,6 +27,7 @@ The set is a plugin registry, not a closed enum. Verbs group into families:
 | Family | Verbs | Notes |
 |---|---|---|
 | **build** | `docker-build`, `zip-package`, `jvm-build` | source → archive, keyed by artifact type |
+| **sbom** | `generate-sbom` | artifact-type-keyed SBOM generation into the build archive (SPDX/CycloneDX) — see [Build Archive](/chant/components/build-archive/#sbom-format-agnostic-generated-at-build-time) |
 | **publish** | `publish-image`, `load-image-on-host`, `publish-asset` / `publish-artifact` | deploy-time, promote by identity; an interface with backends |
 | **apply** | `cfn-deploy`, `ecs-update-service`, `lambda-deploy`, `s3-sync`, `cdn-invalidate`, `run-migration` | `cfn-deploy` carries safety options (changeset preview, `onReplace`, `stageGsi`) |
 | **job submission** | `emr-start-job-run` / `emr-submit-step` | point a running compute service at an artifact; reusable for Glue / Batch / Step Functions |

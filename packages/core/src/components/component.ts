@@ -38,6 +38,22 @@ export interface BuildSpec {
   context?: string;
   /** Build output always lands in the self-contained BuildArchive. */
   into?: "archive";
+  /**
+   * Optional component-level SBOM authoring hint (#606, epic #551 follow-up
+   * to #564/#568) — not itself a `generate-sbom` step (that is composed
+   * explicitly in `deploy`/build tooling, see
+   * ../verbs/sbom.ts's `GenerateSbomInput`); this is metadata an authoring
+   * frontend or generator can read when deciding whether/how to compose
+   * that step for this component. Rides `BuildSpec`'s existing
+   * `additionalProperties: true` in component.schema.json — no schema change
+   * needed for this extension.
+   */
+  sbom?: {
+    /** Preferred SBOM format for this component, overriding `chant.config.ts`'s project-wide `sbom.format` default (see ../../config.ts's `resolveSbomFormat`). */
+    format?: "spdx" | "cyclonedx";
+    /** Set true to skip SBOM generation for this component even where a project default would otherwise include it. `generate-sbom` is never invoked implicitly — this only documents intent for whatever composes the component's build phase. */
+    optOut?: boolean;
+  };
   [extra: string]: unknown;
 }
 

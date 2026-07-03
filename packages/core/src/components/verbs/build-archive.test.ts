@@ -5,7 +5,9 @@ import {
   computeManifestDigest,
   createBuildArchiveManifest,
   findArchiveEntry,
+  findSbomForSubject,
   imageEntries,
+  sbomEntries,
 } from "./build-archive";
 
 describe("BuildArchive manifest (#564)", () => {
@@ -99,5 +101,57 @@ describe("BuildArchive manifest (#564)", () => {
   it("archiveRelativePath strips the archive: wiring prefix and passes plain paths through unchanged", () => {
     expect(archiveRelativePath("archive:search.template.json")).toBe("search.template.json");
     expect(archiveRelativePath("archive/search.tar")).toBe("archive/search.tar");
+  });
+
+  describe("sbom entries (#606)", () => {
+    it("sbomEntries filters to sbom-kind entries only", () => {
+      let manifest = createBuildArchiveManifest("svc");
+      manifest = addArchiveEntry(manifest, { kind: "image", path: "archive/a.tar", digest: "sha256:1" });
+      manifest = addArchiveEntry(manifest, {
+        kind: "sbom",
+        path: "archive/a.tar.sbom.json",
+        digest: "sha256:sbom1",
+        mediaType: "application/spdx+json",
+        subjectDigest: "sha256:1",
+      });
+      expect(sbomEntries(manifest).map((e) => e.path)).toEqual(["archive/a.tar.sbom.json"]);
+    });
+
+    it("findSbomForSubject finds the sbom entry attached to a given subject digest", () => {
+      let manifest = createBuildArchiveManifest("svc");
+      manifest = addArchiveEntry(manifest, { kind: "image", path: "archive/a.tar", digest: "sha256:1" });
+      manifest = addArchiveEntry(manifest, {
+        kind: "sbom",
+        path: "archive/a.tar.sbom.json",
+        digest: "sha256:sbom1",
+        mediaType: "application/vnd.cyclonedx+json",
+        subjectDigest: "sha256:1",
+      });
+      expect(findSbomForSubject(manifest, "sha256:1")).toMatchObject({
+        path: "archive/a.tar.sbom.json",
+        mediaType: "application/vnd.cyclonedx+json",
+      });
+      expect(findSbomForSubject(manifest, "sha256:nonexistent")).toBeUndefined();
+    });
+
+    it("sbom entry mediaType is never hardcoded to one format — carries whatever the generator produced", () => {
+      let manifest = createBuildArchiveManifest("svc");
+      manifest = addArchiveEntry(manifest, {
+        kind: "sbom",
+        path: "a.sbom.json",
+        digest: "sha256:s1",
+        mediaType: "application/spdx+json",
+        subjectDigest: "sha256:1",
+      });
+      manifest = addArchiveEntry(manifest, {
+        kind: "sbom",
+        path: "b.sbom.json",
+        digest: "sha256:s2",
+        mediaType: "application/vnd.cyclonedx+json",
+        subjectDigest: "sha256:2",
+      });
+      const mediaTypes = sbomEntries(manifest).map((e) => e.mediaType).sort();
+      expect(mediaTypes).toEqual(["application/spdx+json", "application/vnd.cyclonedx+json"]);
+    });
   });
 });

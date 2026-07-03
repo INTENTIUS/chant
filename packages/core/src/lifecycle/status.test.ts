@@ -174,6 +174,33 @@ describe("status", () => {
       expect(rows[0].build).toEqual(build);
     });
 
+    // #606: the build ledger's `sbom` summary (format/package count/source)
+    // flows through to `chant components status` unchanged — `reconcileStatus`
+    // treats `BuildLedgerEntry` opaquely, so no reconciliation logic needed to
+    // change for the status surface to gain SBOM visibility.
+    test("surfaces the build-ledger's sbom summary (format, package count, source) by digest", () => {
+      const build: BuildLedgerEntry = {
+        component: "search-service",
+        path: "image.tar",
+        digest: "sha256:abc",
+        createdAt: "2026-01-01T00:00:00.000Z",
+        manifestDigest: "sha256:manifest",
+        referrers: [],
+        sbom: { mediaType: "application/spdx+json", packageCount: 12, generator: "syft", source: "archive" },
+      };
+      const buildsByDigest = new Map([["sha256:abc", build]]);
+      const liveEvidence = new Map<string, LiveComponentEvidence>([
+        ["search-service", { live: true, action: "noop", ownership: "owned" }],
+      ]);
+      const rows = reconcileStatus("prod", [record()], { liveEvidence, buildsByDigest });
+      expect(rows[0].build?.sbom).toEqual({
+        mediaType: "application/spdx+json",
+        packageCount: 12,
+        generator: "syft",
+        source: "archive",
+      });
+    });
+
     test("only the latest record per component is used for reconciliation", () => {
       const records = [
         record({ digest: "sha256:old", timestamp: "2026-01-01T00:00:00.000Z" }),

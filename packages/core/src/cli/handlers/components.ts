@@ -131,7 +131,12 @@ interface StatusJsonRow {
     timestamp: string;
     actor: string;
   } | null;
-  build: { manifestDigest: string; referrers: string[] } | null;
+  build: {
+    manifestDigest: string;
+    referrers: string[];
+    /** SBOM summary for this digest (#606), when one was generated and is discoverable — archive-carried or referrer-projected. `null` when neither source has one (e.g. the component opted out, or has no built artifact). */
+    sbom: { mediaType: string; packageCount?: number; generator?: string; source: string } | null;
+  } | null;
   reconciliation: string;
   detail: string;
 }
@@ -244,7 +249,20 @@ export async function runComponentsStatus(ctx: CommandContext): Promise<number> 
               actor: row.recorded.actor,
             }
           : null,
-        build: row.build ? { manifestDigest: row.build.manifestDigest, referrers: row.build.referrers.map((r) => r.kind) } : null,
+        build: row.build
+          ? {
+              manifestDigest: row.build.manifestDigest,
+              referrers: row.build.referrers.map((r) => r.kind),
+              sbom: row.build.sbom
+                ? {
+                    mediaType: row.build.sbom.mediaType,
+                    packageCount: row.build.sbom.packageCount,
+                    generator: row.build.sbom.generator,
+                    source: row.build.sbom.source,
+                  }
+                : null,
+            }
+          : null,
         reconciliation: row.reconciliation,
         detail: row.detail,
       });
