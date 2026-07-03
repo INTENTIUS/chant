@@ -27,6 +27,7 @@ import {
 import { neo4jCluster } from "./pilots/neo4j-fanout.pilot";
 import { ordersTable } from "./pilots/dynamodb.pilot";
 import { searchService } from "./pilots/alb-ecs.pilot";
+import { imageProcessor } from "./pilots/lambda.pilot";
 import { projectToJson } from "./pilots/project";
 
 /** Build a fake capability that records every call and returns a canned/derived output. */
@@ -459,23 +460,68 @@ describe("runInterpretDriver — end to end", () => {
       ["shared-alb", "orders-table", "neo4j-cluster", "search-service"].sort(),
     );
   });
+
+  it("runs all four components — the original three pilots plus the #558 validation component — through one driver instance with zero per-component driver code (sprawl metric, extended)", async () => {
+    const registry = new CapabilityRegistry();
+    const kinds = [
+      "cfn-deploy",
+      "code-deploy",
+      "wait-cluster-healthy",
+      "docker-build",
+      "publish-image",
+      "ecs-update-service",
+      "wait-steady-state",
+      "health-gate",
+      "rollback-previous",
+      "wait-for-stack",
+      "run-migration",
+      "lambda-deploy",
+    ];
+    for (const kind of kinds) {
+      registry.register(fakeCapability(kind, { run: () => ({ ok: true }) }).capability);
+    }
+
+    const sharedAlb: DriverComponent = {
+      name: "shared-alb",
+      dependsOn: [],
+      deploy: [{ phase: "Apply", steps: [{ kind: "cfn-deploy" }] }],
+    };
+    const dynamo = projectToJson(ordersTable) as unknown as DriverComponent;
+    const neo4jJson = projectToJson(neo4jCluster) as unknown as DriverComponent;
+    const neo4jNoGate: DriverComponent = {
+      ...neo4jJson,
+      deploy: neo4jJson.deploy.map((p) => ({ ...p, steps: p.steps.filter((s) => (s as { kind?: string }).kind !== "gate") })),
+    };
+    const albEcs = projectToJson(searchService) as unknown as DriverComponent;
+    const lambda = projectToJson(imageProcessor) as unknown as DriverComponent;
+
+    const result = await runInterpretDriver([sharedAlb, dynamo, neo4jNoGate, albEcs, lambda], registry, {
+      env: "dev",
+      vars: { registry: "123.dkr.ecr.us-east-1.amazonaws.com", cluster: "prod" },
+    });
+
+    expect(result.ok).toBe(true);
+    expect(result.results.map((r) => r.component).sort()).toEqual(
+      ["shared-alb", "orders-table", "neo4j-cluster", "search-service", "image-processor-lambda"].sort(),
+    );
+  });
 });
 
 describe("capabilities are consumed exactly as the stub registry provides them", () => {
-  // `cfn-deploy` gained a real implementation in #557 (see ./verbs/apply.ts) —
-  // `lambda-deploy` is a non-pilot apply-family verb #557 explicitly scopes
-  // out, so it is still a typed stub here, making it the right verb to prove
-  // a not-yet-implemented capability still surfaces as an ordinary failed
-  // step rather than crashing the driver.
+  // `cfn-deploy` gained a real implementation in #557 and `lambda-deploy` in
+  // #558 (see ./verbs/apply.ts) — `run-migration` is a non-pilot apply-family
+  // verb neither issue scopes, so it is still a typed stub here, making it the
+  // right verb to prove a not-yet-implemented capability still surfaces as an
+  // ordinary failed step rather than crashing the driver.
   it("a still-stubbed capability (CapabilityNotImplementedError) surfaces as a failed step, not a driver crash", async () => {
     const registry = createCapabilityRegistry();
     const component: DriverComponent = {
       name: "c",
-      deploy: [{ phase: "Apply", steps: [{ kind: "lambda-deploy", functionName: "x", codeRef: "y" }] }],
+      deploy: [{ phase: "Apply", steps: [{ kind: "run-migration", tool: "custom", target: "x" }] }],
     };
     const result = await runComponentDeploy(component, { env: "dev", component: "c" }, registry, {});
     expect(result.ok).toBe(false);
     const failed = result.records.find((r) => r.status === "fail");
-    expect(failed?.error).toMatch(/capability "lambda-deploy" is not implemented/);
+    expect(failed?.error).toMatch(/capability "run-migration" is not implemented/);
   });
 });

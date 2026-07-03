@@ -10,10 +10,13 @@
  * docs/components/capabilities.mdx#stickiness-lives-in-the-capability.
  *
  * `cfn-deploy` and `ecs-update-service` are real implementations (#557, epic
- * #551) over the injectable `CloudExecutor` (./cloud-executor.ts). The
- * remaining apply-family verbs (`lambda-deploy`, `s3-sync`, `cdn-invalidate`,
- * `run-migration`) are non-pilot verbs and stay typed stubs — out of scope
- * for #557; see ../capability.ts for the "no cloud implementation yet" contract.
+ * #551) over the injectable `CloudExecutor` (./cloud-executor.ts).
+ * `lambda-deploy` gained a real implementation in #558 (epic #551) — the one
+ * new capability the fourth, genuinely different validation component
+ * (image-processor-lambda) needed; see ../SPRAWL-VALIDATION.md. The remaining
+ * apply-family verbs (`s3-sync`, `cdn-invalidate`, `run-migration`) are
+ * non-pilot verbs and stay typed stubs; see ../capability.ts for the "no cloud
+ * implementation yet" contract.
  */
 
 import type { Capability } from "../capability";
@@ -229,7 +232,7 @@ export const ecsUpdateService: Capability<EcsUpdateServiceInput, EcsUpdateServic
 export interface LambdaDeployInput {
   /** Function name or ARN. */
   functionName: string;
-  /** Reference to the packaged code (e.g. `"@Publish.uri"` for an S3 zip, or an image URI). */
+  /** Reference to the packaged code — an image URI (e.g. `"@Publish.uri"` from `publish-image`) for a container-image function. */
   codeRef: string;
   /** Publish a new immutable version after updating code. Default: true. */
   publish?: boolean;
@@ -244,11 +247,59 @@ export interface LambdaDeployOutput {
   functionArn: string;
 }
 
-/** Update a Lambda function's code and optionally publish a version/move an alias. */
-export const lambdaDeploy: Capability<LambdaDeployInput, LambdaDeployOutput> = stubCapability(
-  "lambda-deploy",
-  { rollback: true },
-);
+/**
+ * Update a Lambda function's code to a new container image, wait for the
+ * update to apply, and (by default) publish an immutable version and repoint
+ * `alias` at it — the same digest-promotion invariant every other apply verb
+ * follows (`imageRef`/`codeRef` is a resolved `publish-image` digest, never a
+ * rebuild). Rollback restores whatever version `alias` pointed at before this
+ * step ran (captured up front), repointing the alias back — mirroring
+ * `ecs-update-service`'s best-effort re-apply style rather than a native
+ * automatic rollback (Lambda has none for code updates).
+ */
+export function createLambdaDeployCapability(
+  executor: CloudExecutor = defaultCloudExecutor(),
+): Capability<LambdaDeployInput, LambdaDeployOutput> {
+  const previousVersionByTarget = new Map<string, string | undefined>();
+
+  return {
+    kind: "lambda-deploy",
+    async run(_ctx, input) {
+      const alias = input.alias ?? "live";
+      if (!previousVersionByTarget.has(input.functionName)) {
+        previousVersionByTarget.set(
+          input.functionName,
+          await executor.lambda.getAliasVersion(input.functionName, alias),
+        );
+      }
+
+      const { functionArn } = await executor.lambda.updateFunctionCode({
+        functionName: input.functionName,
+        imageUri: input.codeRef,
+      });
+      const { status } = await executor.lambda.waitForUpdate(input.functionName);
+      if (status !== "Successful") {
+        throw new Error(`lambda-deploy "${input.functionName}": code update ended "${status}"`);
+      }
+
+      if (input.publish === false) {
+        return { version: "$LATEST", functionArn };
+      }
+      const published = await executor.lambda.publishVersion({ functionName: input.functionName });
+      await executor.lambda.updateAlias({ functionName: input.functionName, alias, version: published.version });
+      return { version: published.version, functionArn: published.functionArn };
+    },
+    async rollback(_ctx, input) {
+      const alias = input.alias ?? "live";
+      const previousVersion = previousVersionByTarget.get(input.functionName);
+      if (!previousVersion) return; // no prior alias version recorded — nothing to restore.
+      await executor.lambda.updateAlias({ functionName: input.functionName, alias, version: previousVersion });
+    },
+  };
+}
+
+/** Default `lambda-deploy` capability, backed by the real `CloudExecutor`. */
+export const lambdaDeploy: Capability<LambdaDeployInput, LambdaDeployOutput> = createLambdaDeployCapability();
 
 // ── s3-sync ──────────────────────────────────────────────────────────────────
 

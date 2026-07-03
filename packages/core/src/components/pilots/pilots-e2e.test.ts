@@ -1,18 +1,21 @@
 /**
- * End-to-end verification for #557: the three pilots (#555) run to completion
- * through the real, merged interpret driver (#556, ../driver.ts), dispatching
- * to the real AWS-leaf capability implementations this issue adds
+ * End-to-end verification for #557/#558: the three pilots (#555) plus the
+ * fourth validation component (#558, image-processor-lambda) run to
+ * completion through the real, merged interpret driver (#556, ../driver.ts),
+ * dispatching to the real AWS-leaf capability implementations
  * (../verbs/{build,publish,apply,host-delivery,wait-verify}.ts) — not the
  * typed stubs `createCapabilityRegistry()` still returns for non-pilot verbs.
  *
  * Every capability here is wired to a `MockCloudExecutor`
  * (../verbs/__tests__/mock-cloud-executor.ts): no live AWS, no live docker.
- * This suite is the acceptance-criteria proof from the issue:
- *  - correct capability dispatch across all three pilots through one driver;
+ * This suite is the acceptance-criteria proof from both issues:
+ *  - correct capability dispatch across all four components through one driver;
  *  - `cfn-deploy` refuses a data-losing replacement when `onReplace: "block"`;
  *  - every mutating capability the pilots use declares a `rollback`, or the
  *    component supplies its own explicit compensation phase (documented, not
- *    silent) where the capability itself has none.
+ *    silent) where the capability itself has none;
+ *  - the fourth component (#558) needed exactly one new capability
+ *    (`lambda-deploy`) and zero driver edits — see ../SPRAWL-VALIDATION.md.
  */
 
 import { describe, expect, it } from "vitest";
@@ -21,11 +24,17 @@ import { runInterpretDriver, DriverRunFailure, type DriverComponent } from "../d
 import { neo4jCluster } from "./neo4j-fanout.pilot";
 import { ordersTable } from "./dynamodb.pilot";
 import { searchService } from "./alb-ecs.pilot";
+import { imageProcessor } from "./lambda.pilot";
 import { projectToJson } from "./project";
 import { createMockCloudExecutor, type MockCloudExecutor } from "../verbs/__tests__/mock-cloud-executor";
 import { createDockerBuildCapability } from "../verbs/build";
 import { createPublishImageCapability } from "../verbs/publish";
-import { createCfnDeployCapability, createEcsUpdateServiceCapability, CfnReplacementBlockedError } from "../verbs/apply";
+import {
+  createCfnDeployCapability,
+  createEcsUpdateServiceCapability,
+  createLambdaDeployCapability,
+  CfnReplacementBlockedError,
+} from "../verbs/apply";
 import { createCodeDeployCapability } from "../verbs/host-delivery";
 import {
   createWaitForStackCapability,
@@ -33,7 +42,7 @@ import {
   createWaitClusterHealthyCapability,
 } from "../verbs/wait-verify";
 
-/** Build a fresh registry with every real #557 capability wired to one shared mock executor, plus the still-stubbed verbs the pilots also reference (run-migration, health-gate, rollback-previous — none of which #557 scopes). */
+/** Build a fresh registry with every real #557/#558 capability wired to one shared mock executor, plus the still-stubbed verbs the pilots also reference (run-migration, health-gate, rollback-previous — none of which #557/#558 scopes). */
 function buildRegistry(mock: MockCloudExecutor): CapabilityRegistry {
   const registry = new CapabilityRegistry();
   registry.register(createDockerBuildCapability(mock.executor));
@@ -41,11 +50,12 @@ function buildRegistry(mock: MockCloudExecutor): CapabilityRegistry {
   registry.register(createCfnDeployCapability(mock.executor));
   registry.register(createEcsUpdateServiceCapability(mock.executor));
   registry.register(createCodeDeployCapability(mock.executor));
+  registry.register(createLambdaDeployCapability(mock.executor));
   registry.register(createWaitForStackCapability(mock.executor));
   registry.register(createWaitSteadyStateCapability(mock.executor));
   registry.register(createWaitClusterHealthyCapability(mock.executor));
   // Non-AWS-leaf / non-pilot-scoped verbs the pilots still reference — out of
-  // #557's scope (still typed stubs in ../verbs/*.ts), so faked here to
+  // #557/#558's scope (still typed stubs in ../verbs/*.ts), so faked here to
   // succeed so the happy-path E2E run can reach completion. `rollback-previous`
   // backs the ALB/ECS pilot's own compensation phase.
   registry.register({ kind: "run-migration", run: async () => ({ applied: true, version: "1" }) });
@@ -141,6 +151,69 @@ describe("Pilots end-to-end through the real interpret driver (#557 acceptance c
     const albWave = result.waves.findIndex((w) => w.includes("shared-alb"));
     const searchWave = result.waves.findIndex((w) => w.includes("search-service"));
     expect(searchWave).toBeGreaterThan(albWave);
+  });
+
+  it("runs all four components — the three pilots plus the #558 image-processor-lambda validation component — to completion through one driver, dispatching every step to its real capability", async () => {
+    const mock = createMockCloudExecutor({
+      stacks: {
+        "orders-table": { outputs: {} },
+        "search-service": { outputs: {} },
+        "neo4j-cluster": { outputs: {} },
+      },
+      ecsServices: { "prod-cluster/search": { runningCount: 2, desiredCount: 2, stable: true } },
+      clusters: {
+        "az0:7687,az1:7687,az2:7687": { healthyCount: 3 },
+      },
+    });
+    const registry = buildRegistry(mock);
+
+    const dynamo = projectToJson(ordersTable) as unknown as DriverComponent;
+    const albEcs = projectToJson(searchService) as unknown as DriverComponent;
+    const lambda = projectToJson(imageProcessor) as unknown as DriverComponent;
+    const sharedAlb: DriverComponent = {
+      name: "shared-alb",
+      dependsOn: [],
+      deploy: [{ phase: "Apply", steps: [{ kind: "cfn-deploy", stack: "shared-alb", template: "archive:alb.json" }] }],
+    };
+    const albEcsResolved: DriverComponent = {
+      ...albEcs,
+      deploy: albEcs.deploy.map((p) => ({
+        ...p,
+        steps: p.steps.map((s) =>
+          (s as { kind?: string }).kind === "ecs-update-service" ? { ...s, cluster: "prod-cluster" } : s,
+        ),
+      })),
+      rollback: albEcs.rollback?.map((p) => ({
+        ...p,
+        steps: p.steps.map((s) => ({ ...s, cluster: "cluster" in s ? "prod-cluster" : undefined })),
+      })),
+    };
+
+    const result = await runInterpretDriver(
+      [sharedAlb, dynamo, neo4jWithoutGate(), albEcsResolved, lambda],
+      registry,
+      {
+        env: "dev",
+        vars: {
+          registry: "123.dkr.ecr.us-east-1.amazonaws.com",
+          cluster: "prod-cluster",
+          clusterEndpoints: "az0:7687,az1:7687,az2:7687",
+        },
+      },
+    );
+
+    expect(result.ok).toBe(true);
+    expect(result.results.map((r) => r.component).sort()).toEqual(
+      ["shared-alb", "orders-table", "neo4j-cluster", "search-service", "image-processor-lambda"].sort(),
+    );
+
+    // image-processor-lambda's Apply phase dispatches to lambda-deploy, never
+    // cfn-deploy — the distinguishing shape #558 added on top of the original
+    // three pilots (all of which apply via CloudFormation).
+    const callsByClient = mock.calls.map((c) => `${c.client}.${c.method}`);
+    expect(callsByClient).toContain("lambda.updateFunctionCode");
+    expect(callsByClient).toContain("lambda.publishVersion");
+    expect(callsByClient).toContain("lambda.updateAlias");
   });
 
   it('cfn-deploy refuses a data-losing replacement when onReplace: "block" — the DynamoDB pilot\'s declared policy', async () => {

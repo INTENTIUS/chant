@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { createCfnDeployCapability, createEcsUpdateServiceCapability, CfnReplacementBlockedError } from "./apply";
+import {
+  createCfnDeployCapability,
+  createEcsUpdateServiceCapability,
+  createLambdaDeployCapability,
+  CfnReplacementBlockedError,
+} from "./apply";
 import { createMockCloudExecutor } from "./__tests__/mock-cloud-executor";
 
 const ctx = { env: "dev", component: "orders-table" };
@@ -149,5 +154,90 @@ describe("ecs-update-service (#557)", () => {
     expect(typeof capability.rollback).toBe("function");
     await capability.rollback!(svcCtx, { cluster: "prod", service: "search" });
     expect(mock.calls.map((c) => c.method)).toEqual(["rollbackService"]);
+  });
+});
+
+describe("lambda-deploy (#558) — the one new capability the fourth validation component needed", () => {
+  const lambdaCtx = { env: "dev", component: "image-processor-lambda" };
+
+  it("updates the function's code, waits for the update, publishes a version, and repoints the alias", async () => {
+    const mock = createMockCloudExecutor();
+    const capability = createLambdaDeployCapability(mock.executor);
+
+    const output = await capability.run(lambdaCtx, {
+      functionName: "image-processor",
+      codeRef: "123.dkr.ecr.us-east-1.amazonaws.com/image-processor@sha256:abc",
+      alias: "live",
+    });
+
+    expect(output.version).toBe("1");
+    expect(output.functionArn).toContain("image-processor");
+    expect(mock.calls.map((c) => c.method)).toEqual([
+      "getAliasVersion",
+      "updateFunctionCode",
+      "waitForUpdate",
+      "publishVersion",
+      "updateAlias",
+    ]);
+    const updateCall = mock.calls.find((c) => c.method === "updateFunctionCode")!;
+    expect(updateCall.args).toMatchObject({
+      functionName: "image-processor",
+      imageUri: "123.dkr.ecr.us-east-1.amazonaws.com/image-processor@sha256:abc",
+    });
+    const aliasCall = mock.calls.find((c) => c.method === "updateAlias")!;
+    expect(aliasCall.args).toMatchObject({ functionName: "image-processor", alias: "live", version: "1" });
+  });
+
+  it('defaults the alias to "live" when omitted', async () => {
+    const mock = createMockCloudExecutor();
+    const capability = createLambdaDeployCapability(mock.executor);
+    await capability.run(lambdaCtx, { functionName: "image-processor", codeRef: "sha256:abc" });
+    const aliasCall = mock.calls.find((c) => c.method === "updateAlias")!;
+    expect(aliasCall.args).toMatchObject({ alias: "live" });
+  });
+
+  it("skips publish/alias when publish: false, returning $LATEST", async () => {
+    const mock = createMockCloudExecutor();
+    const capability = createLambdaDeployCapability(mock.executor);
+    const output = await capability.run(lambdaCtx, {
+      functionName: "image-processor",
+      codeRef: "sha256:abc",
+      publish: false,
+    });
+    expect(output.version).toBe("$LATEST");
+    expect(mock.calls.some((c) => c.method === "publishVersion")).toBe(false);
+    expect(mock.calls.some((c) => c.method === "updateAlias")).toBe(false);
+  });
+
+  it("throws when the code update itself fails", async () => {
+    const mock = createMockCloudExecutor({ lambdas: { "image-processor": { failUpdate: true } } });
+    const capability = createLambdaDeployCapability(mock.executor);
+    await expect(
+      capability.run(lambdaCtx, { functionName: "image-processor", codeRef: "sha256:abc" }),
+    ).rejects.toThrow(/code update ended "Failed"/);
+    expect(mock.calls.some((c) => c.method === "publishVersion")).toBe(false);
+  });
+
+  it("rollback restores whatever version the alias pointed at before this step ran", async () => {
+    const mock = createMockCloudExecutor({ lambdas: { "image-processor": { aliasVersions: { live: "7" } } } });
+    const capability = createLambdaDeployCapability(mock.executor);
+
+    await capability.run(lambdaCtx, { functionName: "image-processor", codeRef: "sha256:new", alias: "live" });
+    await capability.rollback!(lambdaCtx, { functionName: "image-processor", codeRef: "sha256:new", alias: "live" });
+
+    const aliasCalls = mock.calls.filter((c) => c.method === "updateAlias");
+    expect(aliasCalls).toHaveLength(2);
+    expect(aliasCalls[1]!.args).toMatchObject({ version: "7" }); // restored to the pre-deploy version.
+  });
+
+  it("rollback is a no-op when no prior alias version was recorded (first deploy)", async () => {
+    const mock = createMockCloudExecutor();
+    const capability = createLambdaDeployCapability(mock.executor);
+
+    await capability.run(lambdaCtx, { functionName: "image-processor", codeRef: "sha256:new", alias: "live" });
+    await capability.rollback!(lambdaCtx, { functionName: "image-processor", codeRef: "sha256:new", alias: "live" });
+
+    const aliasCalls = mock.calls.filter((c) => c.method === "updateAlias");
+    expect(aliasCalls).toHaveLength(1); // only the run()'s own updateAlias — rollback found nothing to restore.
   });
 });

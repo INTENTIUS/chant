@@ -29,6 +29,9 @@ import type {
   EcsClient,
   EcsServiceState,
   EcsUpdateServiceArgs,
+  LambdaClient,
+  LambdaUpdateAliasArgs,
+  LambdaUpdateCodeArgs,
   Neo4jProbeArgs,
 } from "../cloud-executor";
 
@@ -60,6 +63,13 @@ export interface FakeClusterConfig {
   healthyCount?: number;
 }
 
+export interface FakeLambdaConfig {
+  /** Alias -> version this function's alias currently resolves to, before any deploy in the test runs. */
+  aliasVersions?: Record<string, string>;
+  /** Force `waitForUpdate` to report a failed code update (simulates a bad image). */
+  failUpdate?: boolean;
+}
+
 export interface MockCloudExecutorOptions {
   stacks?: Record<string, FakeStackConfig>;
   deployments?: Record<string, FakeDeploymentConfig>;
@@ -68,6 +78,8 @@ export interface MockCloudExecutorOptions {
   ecsServices?: Record<string, EcsServiceState>;
   /** Force every docker/ecr call to fail (simulates a build/push failure). */
   failDocker?: boolean;
+  /** Lambda functions keyed by function name. */
+  lambdas?: Record<string, FakeLambdaConfig>;
 }
 
 /** An injected `CloudExecutor` plus the call log and stack-status controls tests use to script scenarios and assert on I/O. */
@@ -94,8 +106,13 @@ export function createMockCloudExecutor(options: MockCloudExecutorOptions = {}):
   );
   const ecsServices = new Map<string, EcsServiceState>(Object.entries(options.ecsServices ?? {}));
   const pendingChangeSets = new Map<string, { stackName: string; changes: CfnChange[] }>();
+  const lambdaConfigs = new Map<string, FakeLambdaConfig>(Object.entries(options.lambdas ?? {}));
+  const lambdaAliasVersions = new Map<string, Map<string, string>>(
+    Object.entries(options.lambdas ?? {}).map(([fn, cfg]) => [fn, new Map(Object.entries(cfg.aliasVersions ?? {}))]),
+  );
   let changeSetCounter = 0;
   let deploymentCounter = 0;
+  let lambdaVersionCounter = 0;
 
   function stackStatus(name: string): CfnStackStatus {
     const config = stacks.get(name);
@@ -224,8 +241,39 @@ export function createMockCloudExecutor(options: MockCloudExecutorOptions = {}):
     },
   };
 
+  const lambda: LambdaClient = {
+    async updateFunctionCode(args: LambdaUpdateCodeArgs) {
+      record("lambda", "updateFunctionCode", args);
+      return { functionArn: `arn:aws:lambda:us-east-1:123456789012:function:${args.functionName}` };
+    },
+    async waitForUpdate(functionName: string) {
+      record("lambda", "waitForUpdate", functionName);
+      const failed = lambdaConfigs.get(functionName)?.failUpdate;
+      return { status: failed ? "Failed" : "Successful" };
+    },
+    async publishVersion(args) {
+      record("lambda", "publishVersion", args);
+      lambdaVersionCounter += 1;
+      return {
+        version: String(lambdaVersionCounter),
+        functionArn: `arn:aws:lambda:us-east-1:123456789012:function:${args.functionName}:${lambdaVersionCounter}`,
+      };
+    },
+    async updateAlias(args: LambdaUpdateAliasArgs) {
+      record("lambda", "updateAlias", args);
+      const versions = lambdaAliasVersions.get(args.functionName) ?? new Map<string, string>();
+      versions.set(args.alias, args.version);
+      lambdaAliasVersions.set(args.functionName, versions);
+      return { aliasArn: `arn:aws:lambda:us-east-1:123456789012:function:${args.functionName}:${args.alias}` };
+    },
+    async getAliasVersion(functionName: string, alias: string) {
+      record("lambda", "getAliasVersion", { functionName, alias });
+      return lambdaAliasVersions.get(functionName)?.get(alias);
+    },
+  };
+
   return {
-    executor: { docker, ecr, cloudformation, ecs, codeDeploy, neo4j },
+    executor: { docker, ecr, cloudformation, ecs, codeDeploy, neo4j, lambda },
     calls,
     setStack: (name, config) => stacks.set(name, { ...stacks.get(name), ...config }),
     setDeployment: (id, config) => deployments.set(id, { ...deployments.get(id), ...config }),

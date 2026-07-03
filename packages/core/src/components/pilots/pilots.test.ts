@@ -1,5 +1,5 @@
 /**
- * Validates the three pilot components (#555, epic #551) two ways:
+ * Validates the pilot components (#555, #558, epic #551) two ways:
  *
  * 1. Each pilot's TypeScript authoring form projects to JSON that validates
  *    against component.schema.json (draft 2020-12, via the same ajv 2020
@@ -9,6 +9,11 @@
  *    authoritative JSON projection per pilot rather than a second, divergent
  *    copy. If a pilot's composition changes, the fixture is the file to
  *    update; this test catches the two drifting apart.
+ *
+ * Includes the original three pilots (#555 — Neo4j fan-out, DynamoDB sticky
+ * apply, ALB/ECS cross-stack) plus the fourth validation component #558 added
+ * (image-processor-lambda) to prove the sprawl metric holds beyond the
+ * original three; see ../SPRAWL-VALIDATION.md.
  */
 
 import { readFileSync } from "node:fs";
@@ -19,6 +24,7 @@ import componentSchema from "../component.schema.json";
 import { neo4jCluster } from "./neo4j-fanout.pilot";
 import { ordersTable } from "./dynamodb.pilot";
 import { searchService } from "./alb-ecs.pilot";
+import { imageProcessor } from "./lambda.pilot";
 import { projectToJson } from "./project";
 import type { Component } from "./authoring-shape";
 
@@ -35,6 +41,7 @@ const pilots: Array<{ name: string; component: Component; fixture: string }> = [
   { name: "neo4j per-instance fan-out", component: neo4jCluster, fixture: "neo4j-fanout.json" },
   { name: "DynamoDB sticky apply", component: ordersTable, fixture: "dynamodb-infra.json" },
   { name: "ALB/ECS target", component: searchService, fixture: "alb-ecs-service.json" },
+  { name: "image-processor Lambda (#558 fourth component)", component: imageProcessor, fixture: "lambda-image-processor.json" },
 ];
 
 describe("Pilot component definitions", () => {
@@ -85,5 +92,13 @@ describe("Pilot component definitions", () => {
     const applyPhase = searchService.deploy.find((p) => p.phase === "Apply")!;
     const cfnStep = applyPhase.steps[0] as { inputs?: Record<string, unknown> };
     expect(cfnStep.inputs?.listenerArn).toEqual({ stackOutput: { stack: "shared-alb", name: "ListenerArn" } });
+  });
+
+  it("image-processor Lambda (#558): build present, service archetype, apply has no cfn-deploy at all — the fourth component's distinguishing shape", () => {
+    expect(imageProcessor.archetype).toBe("service");
+    expect(imageProcessor.build).toBeDefined();
+    const applyPhase = imageProcessor.deploy.find((p) => p.phase === "Apply")!;
+    expect(applyPhase.steps.map((s) => (s as { kind: string }).kind)).toEqual(["lambda-deploy"]);
+    expect(applyPhase.steps.some((s) => (s as { kind: string }).kind === "cfn-deploy")).toBe(false);
   });
 });

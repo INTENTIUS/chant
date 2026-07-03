@@ -37,26 +37,28 @@ describe("createCapabilityRegistry", () => {
     ).toThrow('capability "docker-build" is already registered');
   });
 
-  // `cfn-deploy` gained a real implementation in #557 (see ./verbs/apply.ts);
-  // `lambda-deploy` is a non-pilot apply-family verb #557 scopes out, so it
-  // remains the representative still-stubbed capability for this assertion.
+  // `cfn-deploy` gained a real implementation in #557 (see ./verbs/apply.ts)
+  // and `lambda-deploy` gained one in #558 (the fourth validation component's
+  // one new capability); `run-migration` is a non-pilot apply-family verb
+  // neither issue scopes, so it remains the representative still-stubbed
+  // capability for this assertion.
   test("stub run() rejects with CapabilityNotImplementedError, naming the kind", async () => {
     const registry = createCapabilityRegistry();
-    const lambdaDeploy = registry.resolve("lambda-deploy");
+    const runMigration = registry.resolve("run-migration");
     await expect(
-      lambdaDeploy.run({ env: "dev", component: "test" }, {} as never),
+      runMigration.run({ env: "dev", component: "test" }, {} as never),
     ).rejects.toBeInstanceOf(CapabilityNotImplementedError);
     await expect(
-      lambdaDeploy.run({ env: "dev", component: "test" }, {} as never),
-    ).rejects.toThrow('capability "lambda-deploy" is not implemented');
+      runMigration.run({ env: "dev", component: "test" }, {} as never),
+    ).rejects.toThrow('capability "run-migration" is not implemented');
   });
 
   test("capabilities declared with rollback also stub rollback() (still-stubbed verb)", async () => {
     const registry = createCapabilityRegistry();
-    const lambdaDeploy = registry.resolve("lambda-deploy");
-    expect(typeof lambdaDeploy.rollback).toBe("function");
+    const runMigration = registry.resolve("run-migration");
+    expect(typeof runMigration.rollback).toBe("function");
     await expect(
-      lambdaDeploy.rollback?.({ env: "dev", component: "test" }, {} as never),
+      runMigration.rollback?.({ env: "dev", component: "test" }, {} as never),
     ).rejects.toBeInstanceOf(CapabilityNotImplementedError);
   });
 
@@ -66,9 +68,10 @@ describe("createCapabilityRegistry", () => {
   });
 
   // #557 gave these AWS-leaf verbs real implementations (over an injectable
-  // CloudExecutor — see ./verbs/cloud-executor.ts); they are no longer stubs,
-  // and `run`/`rollback` no longer throw CapabilityNotImplementedError.
-  test("#557 AWS-leaf verbs are real implementations, not stubs", () => {
+  // CloudExecutor — see ./verbs/cloud-executor.ts); #558 added `lambda-deploy`.
+  // They are no longer stubs, and `run`/`rollback` no longer throw
+  // CapabilityNotImplementedError.
+  test("#557/#558 AWS-leaf verbs are real implementations, not stubs", () => {
     const registry = createCapabilityRegistry();
     for (const kind of [
       "docker-build",
@@ -79,6 +82,7 @@ describe("createCapabilityRegistry", () => {
       "wait-for-stack",
       "wait-steady-state",
       "wait-cluster-healthy",
+      "lambda-deploy",
     ]) {
       const capability = registry.resolve(kind);
       expect(typeof capability.run).toBe("function");

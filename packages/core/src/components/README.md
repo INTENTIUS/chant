@@ -69,12 +69,12 @@ schema only needs every capability invocation to be representable as
 
 `__fixtures__/` holds real components drawn from the epic (#551): an ALB/ECS
 service, a DynamoDB table, a Neo4j fan-out cluster, a JAR producer and its EMR
-consumer, and a single-host Docker Compose service. `component-schema.test.ts`
-validates every fixture against `component.schema.json` with
-[ajv](https://ajv.js.org/) (`ajv/dist/2020` — the draft 2020-12 build) and
-exercises the schema's negative cases (missing required fields, malformed
-wiring references, an invalid archetype, a gate missing `signalName`, and so
-on).
+consumer, a single-host Docker Compose service, and (#558) a container-image
+Lambda function. `component-schema.test.ts` validates every fixture against
+`component.schema.json` with [ajv](https://ajv.js.org/) (`ajv/dist/2020` — the
+draft 2020-12 build) and exercises the schema's negative cases (missing
+required fields, malformed wiring references, an invalid archetype, a gate
+missing `signalName`, and so on).
 
 ## Pilots
 
@@ -85,3 +85,11 @@ JSON projection is asserted equal to its `__fixtures__/*.json` counterpart, so
 the fixture stays the one authoritative JSON document; see
 `pilots/README.md` for the axis-by-axis mapping (build vs no-build, single vs
 fan-out, sticky vs simple apply, cross-stack wiring, auto vs no rollback).
+
+`pilots/lambda.pilot.ts` (#558) adds a fourth component the same way — a
+container-image Lambda function — to validate the sprawl metric holds beyond
+the three pilots that were picked specifically to prove it. See
+[`SPRAWL-VALIDATION.md`](./SPRAWL-VALIDATION.md) for the full write-up: the
+before/after against the ALB/ECS pipeline's `describe-stacks | jq` glue, and
+the per-component scorecard (new pipelines / driver edits / declarations /
+capabilities) the epic's "definition of done" asks for.

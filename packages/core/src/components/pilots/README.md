@@ -17,6 +17,10 @@ The epic ([#551](https://github.com/INTENTIUS/chant/issues/551)) picked these th
 
 Read together, the three cover every cell at least once: build only shows up for ALB/ECS, fan-out only for Neo4j, sticky-apply only for DynamoDB, cross-stack only for ALB/ECS, and both rollback styles (capability-native vs component-declared) appear once each.
 
+## A fourth component (#558): image-processor Lambda
+
+[`lambda.pilot.ts`](./lambda.pilot.ts) / [`lambda-image-processor.json`](../__fixtures__/lambda-image-processor.json) adds a fourth component, added after the three above to validate the sprawl metric ([#551](https://github.com/INTENTIUS/chant/issues/551)#definition-of-done-the-sprawl-metric), not to re-cover the same axes. It reuses `docker-build`/`publish-image` unchanged (build + promote-by-digest is identical to ALB/ECS's) but its Apply phase dispatches to `lambda-deploy` instead of `cfn-deploy` — the first component in the set with no CloudFormation stack in its apply step at all. `lambda-deploy` was the one new capability this component needed; see [`../SPRAWL-VALIDATION.md`](../SPRAWL-VALIDATION.md) for the full accounting and the ALB/ECS pipeline-glue before/after.
+
 ## Why the fixture is authoritative, not this directory
 
 [#555](https://github.com/INTENTIUS/chant/issues/555) explicitly scopes "committed under an `examples/` or `fixtures/` path" — the schema's own `__fixtures__/` already holds real components drawn from this epic, including these three. Duplicating them here as a second JSON copy would immediately be the "composition copy-paste" / definition-sprawl failure mode the epic itself guards against ([#551](https://github.com/INTENTIUS/chant/issues/551)#failure-modes). Instead:
