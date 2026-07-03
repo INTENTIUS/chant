@@ -32,10 +32,19 @@ export {
   type DescribedComponent,
   type DescribeComponentResult,
   type ComponentGraphResult,
+  type GenerateLexicon,
+  type GenerateComponentsResult,
   listComponents,
   describeComponent,
   computeComponentGraph,
+  generateComponentsPipeline,
 } from "./cli-support";
+export {
+  type GeneratedJob,
+  type GenerateGitlabOptions,
+  type GenerateGitlabResult,
+  generateGitlabPipeline,
+} from "./generate-gitlab";
 export {
   type Capability,
   type CapabilityInput,

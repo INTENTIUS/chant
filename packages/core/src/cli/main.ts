@@ -129,6 +129,8 @@ export function parseArgs(args: string[]): ParsedArgs {
       result.stacks = true;
     } else if (arg === "--components") {
       result.components = true;
+    } else if (arg === "--generate") {
+      result.generate = args[++i];
     } else if (arg === "--detail") {
       result.detail = Number(args[++i]);
     } else if (arg === "--lens") {
@@ -193,6 +195,10 @@ Commands:
   init                  Initialize a new chant project
   init lexicon <name>   Scaffold a new lexicon plugin project
   build                 Build infrastructure from specification files
+                        (--components --generate gitlab: generate mode (#563) —
+                         synthesize a thin .gitlab-ci.yml that triggers each
+                         discovered component's own deploy in wave order,
+                         instead of a normal lexicon build)
   lint                  Check specifications for issues
   list                  List discovered entities
   describe              Show the effective config for one component
@@ -288,12 +294,19 @@ Options:
   --strict              Escalate needs-review/validation to errors (migrate)
   --validate            Run external validator (glci/glab) after migrate
   --use-composites      Rewrite to composite calls when patterns match (migrate)
+  --components          Target discovered Component declarations instead of
+                        lexicon resources (list, describe, graph, build)
+  --generate <lexicon>  Generate mode (build --components only): synthesize CI
+                        YAML for <lexicon> instead of running a normal build.
+                        Only "gitlab" is implemented for v1.
 
 Examples:
   chant build ./infra/
   chant build ./infra/ --output stack.json
   chant build ./infra/ --format yaml
   chant build ./infra/ --watch
+  chant build ./infra/ --components --generate gitlab
+  chant build ./infra/ --components --generate gitlab --output .gitlab-ci.yml
   chant import template.json --output ./infra/
   chant import --from prod --name my-bucket --output src/
   chant lint ./infra/
@@ -437,8 +450,16 @@ async function main(): Promise<void> {
   // which then fell through to import-detection on an empty file set and failed
   // with "No lexicon detected" even though chant.config.ts lists the lexicons.
   const projectPath = match.compound ? "." : args.path;
+  // `chant build --components --generate <lexicon>` (#563, generate mode)
+  // discovers `Component` declarations, not lexicon resources — a project
+  // made entirely of components has no reason to declare a chant lexicon
+  // plugin at all. Load plugins best-effort here instead of exiting, so
+  // generate mode works whether or not `chant.config.ts` names a lexicon.
+  const isGenerateComponents = match.def.name === "build" && args.components && !!args.generate;
   const plugins = match.def.requiresPlugins
-    ? await loadPluginsOrExit(projectPath)
+    ? isGenerateComponents
+      ? await loadPlugins(await resolveProjectLexicons(resolve(projectPath)).catch(() => [])).catch(() => [])
+      : await loadPluginsOrExit(projectPath)
     : [];
   const serializers = plugins.map((p) => p.serializer);
   const ctx = { args, plugins, serializers };
