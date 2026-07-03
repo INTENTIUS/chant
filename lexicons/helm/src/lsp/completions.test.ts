@@ -42,7 +42,7 @@ describe.skipIf(!hasGenerated)("helmCompletions", () => {
     }
   });
 
-  test("limits results to 50", async () => {
+  test("caps the unfiltered `new ` dump", async () => {
     const { helmCompletions } = await import("./completions");
     const ctx = {
       uri: "file:///test.ts",
@@ -53,7 +53,8 @@ describe.skipIf(!hasGenerated)("helmCompletions", () => {
     };
 
     const items = helmCompletions(ctx);
-    expect(items.length).toBeLessThanOrEqual(50);
+    // Bare `new ` returns a bounded sample; a typed prefix returns all matches (#600).
+    expect(items.length).toBeLessThanOrEqual(100);
   });
 
   test("returns empty for non-matching context", async () => {
