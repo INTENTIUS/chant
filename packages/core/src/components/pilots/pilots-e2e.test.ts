@@ -365,6 +365,67 @@ describe("Cross-component artifact outputs: jar-lib producer -> emr-job consumer
   });
 });
 
+describe("Forced mid-deploy failure — saga rollback through the real driver + real capabilities (#565 acceptance criteria)", () => {
+  it("Neo4j fan-out: a failing Node 1 code-deploy unwinds in reverse through native rollbacks — code-deploy's own stopAndRollback for Node 1, then Seed's code-deploy stopAndRollback, then Seed's cfn-deploy native rollbackStack — dispatched purely by capability kind, never by pilot/component name", async () => {
+    const mock = createMockCloudExecutor({
+      stacks: { "neo4j-cluster": { outputs: {} } },
+      clusters: { "az0:7687,az1:7687,az2:7687": { healthyCount: 3 } },
+      // Node 1's code-deploy deployment (the second createDeployment call
+      // overall — Seed's is the first) ends "Failed", forcing the mid-deploy
+      // failure this test is about.
+      deployments: { "mock-deployment-2": { terminalStatus: "Failed" } },
+    });
+    const registry = buildRegistry(mock);
+
+    const neo4j = neo4jWithoutGate();
+    let failure: DriverRunFailure;
+    try {
+      await runInterpretDriver([neo4j], registry, {
+        env: "dev",
+        vars: { clusterEndpoints: "az0:7687,az1:7687,az2:7687" },
+      });
+      expect.unreachable("expected runInterpretDriver to throw DriverRunFailure");
+      return;
+    } catch (err) {
+      expect(err).toBeInstanceOf(DriverRunFailure);
+      failure = err as DriverRunFailure;
+    }
+
+    expect(failure.result.ok).toBe(false);
+    expect(failure.result.failedComponent).toBe("neo4j-cluster");
+    const records = failure.result.results[0]!.records;
+
+    // Node 1's code-deploy is the step that actually failed.
+    const failedStep = records.find((r) => r.status === "fail");
+    expect(failedStep?.kind).toBe("code-deploy");
+
+    // Every executed step before the failure gets unwound: Node 1's cfn-deploy
+    // (executed, since code-deploy runs after it in the same phase) and both
+    // of Seed's steps (cfn-deploy, code-deploy) — Seed's wait-cluster-healthy
+    // has no rollback (read-only observation) and is reported as opted-out,
+    // not silently skipped.
+    const rolledBack = records.filter((r) => r.status === "rolled-back").map((r) => r.kind);
+    expect(rolledBack).toEqual(["cfn-deploy", "code-deploy", "cfn-deploy"]);
+
+    const optedOut = records.filter((r) => r.status === "rollback-opted-out");
+    expect(optedOut.map((r) => r.kind)).toEqual(["wait-cluster-healthy"]);
+    expect(optedOut[0]?.error).toMatch(/declares no rollback/);
+
+    // The native platform mechanisms actually fired — not a chant-scripted
+    // re-apply: CodeDeploy's own stopAndRollback for both code-deploy steps
+    // that ran, and CloudFormation's own rollbackStack for the cfn-deploy that
+    // ran (Node 1's; Seed's stack update is unwound the same way once Node 1's
+    // steps are done unwinding — both are the same "neo4j-cluster" stack, so
+    // one rollbackStack call covers it, matching real CFN semantics where a
+    // stack has one rollback target regardless of how many updates preceded
+    // it).
+    const stopAndRollbackCalls = mock.calls.filter((c) => c.client === "codeDeploy" && c.method === "stopAndRollback");
+    expect(stopAndRollbackCalls.length).toBeGreaterThanOrEqual(1);
+    const cfnRollbackCalls = mock.calls.filter((c) => c.client === "cloudformation" && c.method === "rollbackStack");
+    expect(cfnRollbackCalls.length).toBeGreaterThanOrEqual(1);
+  });
+});
+
 describe("Every mutating #557 capability declares a rollback, or the pilot supplies an explicit opt-out", () => {
   it("cfn-deploy, ecs-update-service, and code-deploy declare a native rollback", () => {
     const mock = createMockCloudExecutor();
