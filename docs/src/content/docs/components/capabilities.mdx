@@ -1,0 +1,77 @@
+---
+title: Capabilities
+description: The bounded, plugin-style registry of verbs that components compose from — the families, the discipline, and the preset layer.
+---
+
+import { Aside } from '@astrojs/starlight/components';
+import Diagram from '../../../components/Diagram.astro';
+
+A **capability** is a typed leaf behavior, registered once and named after an operation. Components compose capabilities; the orchestrator dispatches to them by `kind`. This is the unit of reuse — smaller than a pipeline, smaller than a "kind" of component.
+
+```ts
+interface Capability<In, Out> {
+  kind: string;                                              // "publish-image", "cfn-deploy", ...
+  run(ctx: DeployContext, input: In): Promise<Out>;
+  rollback?(ctx: DeployContext, input: In): Promise<void>;   // paired compensation
+}
+```
+
+Typed `In`/`Out` let compositions wire one step's output into the next and let [lint](/chant/components/orchestration/) check the wiring before anything runs.
+
+<Diagram name="capability-composition" alt="Many distinct components on the left, one generic orchestrator in the middle, and a small shared set of capabilities on the right that every component draws from." caption="The sprawl fix: unbounded components, one generic orchestrator, a bounded capability set." />
+
+## The families
+
+The set is a plugin registry, not a closed enum. Verbs group into families:
+
+| Family | Verbs | Notes |
+|---|---|---|
+| **build** | `docker-build`, `zip-package`, `jvm-build` | source → archive, keyed by artifact type |
+| **publish** | `publish-image`, `load-image-on-host`, `publish-asset` / `publish-artifact` | deploy-time, promote by identity; an interface with backends |
+| **apply** | `cfn-deploy`, `ecs-update-service`, `lambda-deploy`, `s3-sync`, `cdn-invalidate`, `run-migration` | `cfn-deploy` carries safety options (changeset preview, `onReplace`, `stageGsi`) |
+| **job submission** | `emr-start-job-run` / `emr-submit-step` | point a running compute service at an artifact; reusable for Glue / Batch / Step Functions |
+| **host / code delivery** | `code-deploy`, `copy-to-host`, `remote-exec` | `code-deploy` = AWS CodeDeploy; the others are SSM/SSH host verbs |
+| **wait / verify** | `wait-for-stack`, `wait-steady-state`, `wait-cluster-healthy`, `wait-endpoint`, `wait-job`, `health-gate` | |
+| **safety / rollback** | `snapshot-before`, `rollback-previous` | |
+| **escape hatch** | `shell` | typed, lint-flagged |
+
+A genuinely new apply *family* (job submission was one) is written once and then reused across every component of that shape. A new *component* is a declaration only. This is why the family count grows sub-linearly against components — see [the cloud boundary](/chant/components/cloud-boundary/) for how each family's leaf maps per cloud.
+
+## Stickiness lives in the capability
+
+Some applies are sticky. A DynamoDB GSI updates one at a time; a key-schema change forces replacement; RDS and OpenSearch changes can trigger blue/green or replacement that loses data. That knowledge belongs **inside** the capability, configured by declarative options, not scripted per component:
+
+```ts
+phase("Apply", [
+  cfnDeploy({ stack: "ddb", onReplace: "block", stageGsi: true }),   // sticky knowledge, captured once
+]);
+```
+
+Every sticky resource reuses that one implementation. The alternative — each component scripting its own workaround — is exactly the sprawl the model exists to remove. Capabilities are allowed to be smart (preflight, guard, stage), not thin shells.
+
+## The discipline
+
+The pattern holds only if variance stays behind the capability interface. Three guardrails, enforced by lint:
+
+- **Verbs, not nouns.** A capability describes an operation (`cfn-deploy`), never a component (`deploy-search-service`). A capability used by exactly one component is a smell.
+- **No orchestrator special-casing.** The driver takes only the contract. A `shell` escape hatch is allowed but flagged, and must declare a reason.
+- **No composition copy-paste.** Identical compositions repeated across components are a declaration-sprawl signal — reach for a preset.
+
+## Presets — reuse without a closed set
+
+Capabilities give own-destiny, but the common shapes should not be retyped. Presets are named compositions, shipped like the [`ApplyOp`](/chant/guide/ops/#apply-code--cloud) composite:
+
+```ts
+EcsFargateComponent({ service: "search", image: "search", healthPath: "/healthz" });
+```
+
+A component uses a preset, or starts from one and drops to raw capabilities where it is special. Both produce the same [contract](/chant/components/component-contract/) and run through the same orchestrator, so presets remove copy-paste without creating a closed strategy set.
+
+<Aside type="tip" title="Two levels of reuse">
+Level 1 is raw capabilities plus the phase grammar — full control, the reason no component is ever a snowflake. Level 2 is presets for the 80% that look alike. The odd 20% compose by hand.
+</Aside>
+
+## Read next
+
+- [Composition & Wiring](/chant/components/composition-and-wiring/) — arranging capabilities into a deploy.
+- [Cloud-Agnostic Boundary](/chant/components/cloud-boundary/) — which capabilities port across clouds and which are per-cloud leaves.

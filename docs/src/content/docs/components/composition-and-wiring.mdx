@@ -1,0 +1,84 @@
+---
+title: Composition & Wiring
+description: The composition grammar, fan-out as mini-compositions, and the two ways components reference each other — cross-stack outputs and cross-component artifact outputs.
+---
+
+import { Aside } from '@astrojs/starlight/components';
+import Diagram from '../../../components/Diagram.astro';
+
+A component's `deploy` is a composition over [capabilities](/chant/components/capabilities/), expressed in the same grammar as [Ops](/chant/guide/ops/): phases run in order, steps in a phase run sequentially unless `parallel`, `gate` pauses for a signal, and `onFailure` compensates. Steps wire output to input so [lint](/chant/components/orchestration/) can check the graph before anything runs.
+
+```ts
+deploy: [
+  phase("Publish", [publishImage({ from: "archive", to: env.registry })]),   // → @Publish.digest
+  phase("Apply",   [cfnDeploy({ template: "archive:t.json", imageRef: "@Publish.digest" })]),
+  phase("Verify",  [waitSteadyState({ service: "api" }), healthGate({ path: "/healthz" })]),
+]
+```
+
+## Fan-out is composition, not orchestrator knowledge
+
+A single component can expand to many units — one CloudFormation stack per instance in a cluster, one host in a fleet. The fan-out is authored in the composition, never known by the driver.
+
+A fan-out unit is itself a small composition. One EC2 instance is provision (`cfn-deploy`) + code deploy (`code-deploy`) + health. A component that fans out over N instances composes N such mini-compositions, sequenced seed-first then rolling with a health gate between:
+
+```ts
+deploy: [
+  phase("Seed", [cfnDeploy({ stack: "neo4j-az0-0" }), codeDeploy({ instance: 0 }), waitClusterHealthy({ size: 1 })]),
+  ...followers.map((n) =>                       // Array.map over instance configs
+    phase(`Node ${n}`, [cfnDeploy({ stack: `neo4j-${n}` }), codeDeploy({ instance: n }), waitClusterHealthy({ quorum: true })]),
+  ),
+]
+```
+
+<Diagram name="component-fan-out" alt="One component expanding into N per-instance mini-compositions — provision, code deploy, health — sequenced seed-first then rolling, with a health gate between each node." caption="Fan-out: one component composes N per-instance mini-compositions. Single-host is the N=1 case; a fleet is the same shape at N>1." />
+
+The driver never learns that a Neo4j cluster seeds first. If a composition ever needs an `if component.name === …` in the driver, the contract or a capability is missing expressiveness — fix it there, never in the driver.
+
+## Cross-stack outputs
+
+When one component's stack exports a value another needs, the consumer imports it. The graph resolves it, replacing the `describe-stacks | jq` glue a pipeline would otherwise carry.
+
+```ts
+export const searchService: Component = {
+  name: "search-service",
+  dependsOn: ["shared-alb"],
+  deploy: [
+    phase("Apply", [cfnDeploy({ inputs: { ...sharedAlb.outputs } })]),   // listener ARN, cluster ARN, subnets, …
+  ],
+};
+```
+
+`chant graph --stacks` orders `shared-alb` before the service and wires its outputs. See [Multi-Stack Projects](/chant/guide/multi-stack/) for the underlying `stackOutput` mechanism.
+
+## Cross-component outputs
+
+Components also wire by **artifact**, not just by stack output. A [producer](/chant/components/component-contract/#archetypes) publishes an artifact; a consumer references it as `@<component>.publish.uri` (or `.digest` / `.key`). `dependsOn` orders the producer first; the graph resolves the reference into the consumer's step.
+
+```ts
+// producer — a JAR published to S3, publish-only deploy
+export const jarLib: Component = {
+  name: "jar-lib",
+  build: jvmBuild({ tool: "maven" }),
+  deploy: [phase("Publish", [publishArtifact({ from: "archive", to: env.s3 })])],   // → @jar-lib.publish.uri
+};
+
+// consumer — an EMR job that reads the JAR
+export const emrJob: Component = {
+  name: "emr-job",
+  dependsOn: ["jar-lib"],
+  deploy: [
+    phase("Submit", [emrStartJobRun({ jar: "@jar-lib.publish.uri", args: [/* … */] })]),
+    phase("Verify", [waitJob({ runId: "@Submit.runId" })]),
+  ],
+};
+```
+
+<Aside type="note" title="Both wirings, one resolver">
+Cross-stack outputs and cross-component artifact outputs are resolved the same way — by the graph, never by orchestrator code. That is what keeps the driver generic across an unbounded set of components.
+</Aside>
+
+## Read next
+
+- [Build Archive](/chant/components/build-archive/) — where a producer's artifact lives before it is published.
+- [Orchestration](/chant/components/orchestration/) — how the graph order becomes a run.

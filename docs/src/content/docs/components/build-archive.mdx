@@ -1,0 +1,47 @@
+---
+title: Build Archive
+description: The self-contained build artifact, deferred publish, promote-by-digest, and publish as an interface with registry and host backends selectable per environment.
+---
+
+import { Aside } from '@astrojs/starlight/components';
+import Diagram from '../../../components/Diagram.astro';
+
+The build phase produces a **build archive**: a self-contained bundle holding the image tarball(s) in OCI layout, the synthesized templates, and a manifest of contents. The archive is the currency between build and deploy. Everything downstream references it; nothing downstream rebuilds.
+
+<Diagram name="build-archive-flow" alt="Flow from build to deploy: build produces an archive holding an image tarball, templates, and a manifest; at deploy time publish promotes the image either to a registry or onto the host, then apply runs." caption="Build once into an archive; publish at deploy time by digest; then apply." />
+
+## Deferred publish, promote by digest
+
+The container lives in the archive until deploy time, when the target environment is known. Publish then promotes the image **bytes** to that environment, and the apply step references the resulting digest.
+
+<Aside type="caution" title="The one invariant">
+Promote by digest, never rebuild per environment. The image in prod must be byte-identical to the one tested in dev; only its location and tag change. A publish that rebuilds has lost the guarantee the archive exists to provide.
+</Aside>
+
+This model fits environments where the registry is not known — or not wanted — until deploy. It also keeps unpublished images out of a registry entirely when a target can consume them directly.
+
+## Publish is an interface with backends
+
+"Make the image available at the deploy target" has more than one implementation. The publish family is an interface, and the backend is chosen by config:
+
+| Backend | Mechanism | Registry in the path? |
+|---|---|---|
+| `publish-image` | promote the bytes into the environment registry (ECR/ACR/Artifact Registry); the target pulls | yes |
+| `load-image-on-host` | copy the tarball to the host and `docker load` | no |
+
+`load-image-on-host` is genuinely registry-free: build → archive → host → the host's local Docker store, no pull. It suits a single host, air-gapped, or no-registry case. `publish-image` suits a fleet, where hosts share cached layers pulled once.
+
+<Aside type="note" title="Registry-less caveat">
+`load-image-on-host` makes *your built* image registry-free. Third-party images a compose file references (`postgres:16`, `redis`) still pull from their upstream registry at `compose up` unless you archive and load them too.
+</Aside>
+
+## Backend selection is per environment
+
+The backend is selectable **per environment**, not just per component. The deciding factor is whether the target hosts can reach the artifact store to pull the tarball. A locked-down prod with direct archive access can use `load-image-on-host` while dev pulls from ECR — the same component either way. Multiple images generally favor a registry (layer dedup, transfer once); single-host or air-gapped favors load-on-host.
+
+Choosing between them is environment config, never a pipeline fork, so the decision stops multiplying pipelines.
+
+## Read next
+
+- [Capabilities](/chant/components/capabilities/) — the `publish` family and its backends.
+- [Orchestration](/chant/components/orchestration/) — how publish and apply run, and where they run.

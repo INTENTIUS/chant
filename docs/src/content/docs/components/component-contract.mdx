@@ -1,0 +1,89 @@
+---
+title: Component Contract
+description: The shape a component takes — identity, an optional build, a deploy composition, and the three archetypes — plus the portable JSON projection.
+---
+
+import { Aside } from '@astrojs/starlight/components';
+import Diagram from '../../../components/Diagram.astro';
+
+A component is declarative data. Its `deploy` is a composition of [capabilities](/chant/components/capabilities/), not a script. The authoring form is TypeScript; it projects to a portable JSON contract that a non-chant or legacy component can hand-write and the same orchestrator can drive.
+
+## The shape
+
+```ts
+interface Component {
+  name: string;
+  dependsOn: string[];        // ordering only — no logic
+
+  build?: BuildSpec;          // optional: source → BuildArchive (image/zip/jar, held in the archive)
+
+  deploy: Phase[];            // the component's own composition over shared capabilities
+  // verify + rollback fall out of the capabilities used
+}
+```
+
+`build` is optional: a config-only component has none. `deploy` is a composition using the same grammar as [Ops](/chant/guide/ops/) — phases, `parallel`, `gate`, `onFailure`, `dependsOn`. See [Composition & Wiring](/chant/components/composition-and-wiring/).
+
+<Diagram name="component-anatomy" alt="One component as four phases — build, publish, apply, verify — annotated with the three archetypes: service, infra, and producer/library." caption="A component's phases, and the three archetypes that use different subsets of them." />
+
+## Archetypes
+
+Because `deploy` is a composition, build-only and apply-only shapes are first-class, not special cases.
+
+| Archetype | Phases | Example |
+|---|---|---|
+| **Service** | build → publish → apply → verify | An ECS service behind an ALB |
+| **Infra** | apply → verify (no build) | A DynamoDB table, an EMR cluster, RDS/OpenSearch |
+| **Producer / library** | build → publish (no service apply) | A Java/JAR build published to S3 for EMR |
+
+A producer emits an artifact other components consume; its `deploy` is a single Publish phase. See [cross-component wiring](/chant/components/composition-and-wiring/#cross-component-outputs).
+
+## A worked service
+
+An ALB/ECS target: build an image, promote it at deploy time, apply the stack that registers the service on a shared ALB, wait for steady state. The shared-ALB values arrive as [cross-stack outputs](/chant/components/composition-and-wiring/#cross-stack-outputs), resolved by the graph rather than by a `describe-stacks` shell script.
+
+```ts
+export const searchService: Component = {
+  name: "search-service",
+  dependsOn: ["shared-alb"],
+  build: dockerBuild({ context: ".", into: "archive" }),
+  deploy: [
+    phase("Publish", [publishImage({ from: "archive", to: env.registry })]),   // → digest
+    phase("Apply", [
+      cfnDeploy({ template: "archive:search.template.json",
+                  inputs: { ...sharedAlb.outputs, image: "@Publish.digest" } }),
+      ecsUpdateService({ cluster: env.cluster, service: "search" }),
+    ]),
+    phase("Verify", [waitSteadyState({ service: "search" }), healthGate({ path: "/healthz" })]),
+  ],
+};
+```
+
+## The JSON projection
+
+The authoring form projects to a portable, versioned JSON contract. This is the substrate: the same document can be hand-written for a legacy component and driven by the same orchestrator.
+
+```json
+{
+  "name": "search-service",
+  "dependsOn": ["shared-alb"],
+  "build": { "kind": "docker-build", "context": ".", "into": "archive" },
+  "deploy": [
+    { "phase": "Publish", "steps": [{ "kind": "publish-image", "from": "archive", "to": "$env.registry" }] },
+    { "phase": "Apply", "steps": [
+        { "kind": "cfn-deploy", "template": "archive:search.template.json", "imageRef": "@Publish.digest" },
+        { "kind": "ecs-update-service", "cluster": "$env.cluster", "service": "search" } ] },
+    { "phase": "Verify", "steps": [ { "kind": "wait-steady-state", "service": "search" },
+                                    { "kind": "health-gate", "path": "/healthz" } ] }
+  ]
+}
+```
+
+<Aside type="note" title="Why a portable contract">
+Making the contract a spec, not a chant-only runtime object, keeps [walk-away cost](/chant/concepts/comparison/#owning-less) low and lets components that were never authored in chant participate. chant is the typed authoring and lint frontend over it, not a gate you must pass through.
+</Aside>
+
+## Read next
+
+- [Capabilities](/chant/components/capabilities/) — the verbs a `deploy` composes.
+- [Composition & Wiring](/chant/components/composition-and-wiring/) — phases, fan-out, cross-stack and cross-component references.

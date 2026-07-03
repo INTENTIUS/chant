@@ -1,0 +1,41 @@
+---
+title: Cloud-Agnostic Boundary
+description: Where the agnostic core ends and the per-cloud leaf begins — the family-vs-leaf seam, the per-family cloud map, and structural vs portable agnosticism.
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+The component model is agnostic in **structure and orchestration**, and spec-true in the **leaves**. This is chant's [spec-true, not cloud-abstract](/chant/concepts/philosophy/#spec-true-not-cloud-abstract) stance applied to release: no invented cross-cloud resource model, each cloud's real surface, typed and linted.
+
+## The seam is the lexicon boundary
+
+A [component](/chant/components/component-contract/) composes over [capability](/chant/components/capabilities/) *families*. Those family interfaces are cloud-agnostic. The concrete verb behind each family is the cloud-specific leaf, contributed by that cloud's [lexicon](/chant/lexicons/overview/) — the same seam that already provides synthesis, `describeResources`, ownership markers, and the [`ApplyOp`](/chant/guide/ops/#apply-code--cloud) `target`. The release layer invents no new per-cloud plugin system.
+
+## Where each family falls
+
+| Family | Where it sits | AWS leaf | Azure | GCP | k8s / generic |
+|---|---|---|---|---|---|
+| **build** | fully agnostic | docker / zip / jvm | same | same | same |
+| **publish-image** | agnostic (endpoint + auth is env config) | ECR | ACR | Artifact Registry | any OCI |
+| **apply infra** | cloud-shaped | `cfn-deploy` | `arm-deploy` | Config Connector / gcloud | `kubectl` (leveler) / Terraform |
+| **job submission** | cloud-shaped | EMR / Glue / Batch | Synapse / Batch / ADF | Dataproc / Dataflow | Job / Argo / Spark operator |
+| **host / code delivery** | split | SSM + CodeDeploy | Run Command / Arc (no CodeDeploy peer) | OS Config / MIG rolling | SSH (agnostic) |
+| **wait / verify** | split | `wait-for-stack` | ARM wait | DM / CC wait | rollout status; `health-gate` agnostic |
+| **safety / rollback** | coupled to apply | CFN rollback / CodeDeploy auto | ARM | — | rollout undo; saga *mechanism* agnostic |
+| **observe / drift** | lexicon seam | tags | tags | labels | labels |
+
+`build`, `publish-image`, `remote-exec` over SSH, and `health-gate` / `wait-endpoint` port almost unchanged. `apply` is the most cloud-shaped. Managed `code-deploy` is nearly AWS-only — there is no clean Azure or GCP peer, so the portable fallback is `copy-to-host` + `remote-exec`.
+
+## Two kinds of agnostic, only one is free
+
+- **Structural agnosticism (always).** Every component and every cloud shares the contract, the grammar, and one orchestrator. A GCP component and an AWS component are both build → publish → apply → verify, differing only in leaf verbs. Uniform orchestration, one driver, one lint envelope, no per-cloud special-casing. This is most of the value.
+- **Portable component (write once, any cloud).** Only for the subset composed entirely of agnostic capabilities. The clean path is Kubernetes: a `kubectl`-apply component runs on EKS, AKS, and GKE because k8s levels the apply family to a single verb. Off-cluster a component is structurally uniform but cloud-bound, because `cfn-deploy` is AWS by definition. This is why standardizing pipelines was easier inside k8s and harder outside it.
+
+<Aside type="note" title="The honest claim">
+Trying to make a `cfn-deploy` component "just run on GCP" would be exactly the cross-cloud abstraction chant exists to avoid. The agnostic win is that a hundred components across three clouds look identical to the driver, the lint, and the human, while each still deploys the real thing for its cloud.
+</Aside>
+
+## Read next
+
+- [Capabilities](/chant/components/capabilities/) — the families whose leaves this page maps.
+- [How chant compares](/chant/concepts/comparison/) — spec-true output and walk-away cost.
