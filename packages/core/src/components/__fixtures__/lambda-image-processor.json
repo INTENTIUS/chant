@@ -1,0 +1,28 @@
+{
+  "$schema": "https://intentius.io/chant/schemas/component/v1/component.schema.json",
+  "contractVersion": "1.0.0",
+  "name": "image-processor-lambda",
+  "archetype": "service",
+  "dependsOn": [],
+  "build": { "kind": "docker-build", "context": ".", "into": "archive" },
+  "deploy": [
+    {
+      "phase": "Publish",
+      "steps": [
+        { "kind": "publish-image", "from": "archive", "to": "$env.registry" }
+      ]
+    },
+    {
+      "phase": "Apply",
+      "steps": [
+        { "kind": "lambda-deploy", "functionName": "image-processor", "codeRef": "@Publish.uri", "alias": "live" }
+      ]
+    },
+    {
+      "phase": "Verify",
+      "steps": [
+        { "kind": "health-gate", "path": "@Apply.functionArn" }
+      ]
+    }
+  ]
+}

@@ -45,7 +45,7 @@ describe("Component JSON Schema", () => {
 
   it("finds fixtures to validate", () => {
     expect(fixtures.length).toBeGreaterThanOrEqual(4);
-    expect(fixtures.length).toBeLessThanOrEqual(6);
+    expect(fixtures.length).toBeLessThanOrEqual(7);
   });
 
   it.each(fixtures.map((f) => [f.name, f.data] as const))(

@@ -195,6 +195,37 @@ export interface Neo4jClusterClient {
   probe(args: Neo4jProbeArgs): Promise<{ healthyCount: number; total: number }>;
 }
 
+// ── Lambda (#558's one new capability: lambda-deploy) ───────────────────────
+
+export interface LambdaUpdateCodeArgs {
+  functionName: string;
+  /** Container image URI (registry/repo@sha256:...) for an image-package Lambda. */
+  imageUri: string;
+}
+
+export interface LambdaPublishVersionArgs {
+  functionName: string;
+}
+
+export interface LambdaUpdateAliasArgs {
+  functionName: string;
+  alias: string;
+  version: string;
+}
+
+export interface LambdaClient {
+  /** Point the function at a new container image; returns the function ARN (unqualified). */
+  updateFunctionCode(args: LambdaUpdateCodeArgs): Promise<{ functionArn: string }>;
+  /** Wait for the function's last update to finish applying (`Successful`/`Failed`). */
+  waitForUpdate(functionName: string): Promise<{ status: string }>;
+  /** Publish an immutable numbered version from the function's current `$LATEST`. */
+  publishVersion(args: LambdaPublishVersionArgs): Promise<{ version: string; functionArn: string }>;
+  /** Repoint a named alias at a published version (e.g. "live" -> "42"). */
+  updateAlias(args: LambdaUpdateAliasArgs): Promise<{ aliasArn: string }>;
+  /** Current published version an alias points at, so rollback can restore it. */
+  getAliasVersion(functionName: string, alias: string): Promise<string | undefined>;
+}
+
 // ── The aggregate executor ───────────────────────────────────────────────────
 
 /**
@@ -211,6 +242,7 @@ export interface CloudExecutor {
   ecs: EcsClient;
   codeDeploy: CodeDeployClient;
   neo4j: Neo4jClusterClient;
+  lambda: LambdaClient;
 }
 
 // ── Real executor — shells out to `docker`/`aws`; used outside tests ────────
@@ -417,6 +449,43 @@ const realNeo4j: Neo4jClusterClient = {
   },
 };
 
+const realLambda: LambdaClient = {
+  async updateFunctionCode(args) {
+    const { stdout } = await run(
+      `aws lambda update-function-code --function-name ${q(args.functionName)} --image-uri ${q(args.imageUri)}`,
+    );
+    const described = JSON.parse(stdout) as { FunctionArn: string };
+    return { functionArn: described.FunctionArn };
+  },
+  async waitForUpdate(functionName) {
+    await run(`aws lambda wait function-updated-v2 --function-name ${q(functionName)}`);
+    const { stdout } = await run(`aws lambda get-function --function-name ${q(functionName)}`);
+    const described = JSON.parse(stdout) as { Configuration: { LastUpdateStatus: string } };
+    return { status: described.Configuration.LastUpdateStatus };
+  },
+  async publishVersion(args) {
+    const { stdout } = await run(`aws lambda publish-version --function-name ${q(args.functionName)}`);
+    const described = JSON.parse(stdout) as { Version: string; FunctionArn: string };
+    return { version: described.Version, functionArn: described.FunctionArn };
+  },
+  async updateAlias(args) {
+    const { stdout } = await run(
+      `aws lambda update-alias --function-name ${q(args.functionName)} --name ${q(args.alias)} --function-version ${q(args.version)}`,
+    );
+    const described = JSON.parse(stdout) as { AliasArn: string };
+    return { aliasArn: described.AliasArn };
+  },
+  async getAliasVersion(functionName, alias) {
+    try {
+      const { stdout } = await run(`aws lambda get-alias --function-name ${q(functionName)} --name ${q(alias)}`);
+      const described = JSON.parse(stdout) as { FunctionVersion: string };
+      return described.FunctionVersion;
+    } catch {
+      return undefined; // alias does not exist yet (first deploy) — nothing to restore on rollback.
+    }
+  },
+};
+
 /** Probe one `host:port` bolt endpoint by opening (and immediately closing) a TCP socket. */
 function probeBoltPort(endpoint: string, timeoutMs = 5000): Promise<boolean> {
   const [host, portStr] = endpoint.split(":");
@@ -442,6 +511,7 @@ export function realCloudExecutor(): CloudExecutor {
     ecs: realEcs,
     codeDeploy: realCodeDeploy,
     neo4j: realNeo4j,
+    lambda: realLambda,
   };
 }
 
