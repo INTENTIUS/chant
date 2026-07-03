@@ -100,3 +100,11 @@ export {
   UnknownDependencyError,
   DriverRunFailure,
 } from "./driver";
+export {
+  EcsFargateComponent,
+  type EcsFargateComponentConfig,
+  LambdaComponent,
+  type LambdaComponentConfig,
+  SingleHostComposeComponent,
+  type SingleHostComposeComponentConfig,
+} from "./presets/index";
