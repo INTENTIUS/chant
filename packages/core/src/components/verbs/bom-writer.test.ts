@@ -20,7 +20,7 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import Ajv2020 from "ajv/dist/2020";
 import Ajv from "ajv";
-import { writeSpdx, writeCycloneDx, writeBom, type BomInput, type BomPackage } from "./bom-writer";
+import { writeSpdx, writeCycloneDx, writeBom, type BomInput, type BomPackage, type BomSubDocument } from "./bom-writer";
 
 const SCHEMAS_DIR = join(import.meta.dirname, "__fixtures__/schemas");
 
@@ -175,5 +175,157 @@ describe("writeBom (#613) — format dispatch wrapping the project-wide {format,
     expect(doc.format).toBe("cyclonedx");
     expect(doc.mediaType).toBe("application/vnd.cyclonedx+json");
     expect(JSON.parse(doc.bytes).bomFormat).toBe("CycloneDX");
+  });
+});
+
+// ── assembly: BomInput.subDocuments (#614) ──────────────────────────────────
+
+const subDocuments: BomSubDocument[] = [
+  {
+    subjectName: "software:image.tar.sbom.json",
+    subjectId: "sha256:" + "b".repeat(64),
+    packages: [{ name: "left-pad", version: "1.3.0", type: "npm" }],
+  },
+  {
+    subjectName: "config:search.template.json.config-bom.json",
+    subjectId: "sha256:" + "c".repeat(64),
+    packages: [{ name: "SearchBucket", version: "AWS::S3::Bucket", type: "config" }],
+  },
+];
+
+const assemblyInput: BomInput = {
+  subjectName: "search-service",
+  subjectId: "sha256:" + "d".repeat(64),
+  packages: [],
+  generator: "chant-component-bom-aggregator",
+  subDocuments,
+};
+
+describe("writeSpdx assembly (#614) — CONTAINS/DEPENDS_ON relationships for a multi-leaf component BOM", () => {
+  const schema = loadSchema("spdx-2.3.schema.json");
+  const ajvDraft07 = new Ajv({ strict: false, allErrors: true });
+  const validate = ajvDraft07.compile(schema as object);
+
+  it("validates against the real SPDX-2.3 JSON Schema", () => {
+    const bytes = writeSpdx(assemblyInput, FIXED_NOW);
+    const doc = JSON.parse(bytes);
+    const valid = validate(doc);
+    if (!valid) throw new Error(`SPDX assembly failed schema validation: ${ajvDraft07.errorsText(validate.errors)}`);
+    expect(valid).toBe(true);
+  });
+
+  it("emits a CONTAINS relationship from the root subject to each sub-document's own root package", () => {
+    const doc = JSON.parse(writeSpdx(assemblyInput, FIXED_NOW));
+    const containsFromRoot = doc.relationships.filter(
+      (r: { spdxElementId: string; relationshipType: string }) =>
+        r.spdxElementId === "SPDXRef-Package-search-service" && r.relationshipType === "CONTAINS",
+    );
+    expect(containsFromRoot).toHaveLength(2);
+  });
+
+  it("nests each sub-document's own packages under a namespace unique to it, never colliding across sub-documents", () => {
+    const doc = JSON.parse(writeSpdx(assemblyInput, FIXED_NOW));
+    const ids = doc.packages.map((p: { SPDXID: string }) => p.SPDXID);
+    expect(new Set(ids).size).toBe(ids.length); // every SPDXID unique
+    expect(ids).toContain("SPDXRef-Package-sub0-left-pad");
+    expect(ids).toContain("SPDXRef-Package-sub1-SearchBucket");
+  });
+
+  it("a same-named package in two different sub-documents does not collide (distinct SPDX IDs)", () => {
+    const collidingInput: BomInput = {
+      ...assemblyInput,
+      subDocuments: [
+        { subjectName: "leaf-a", subjectId: "sha256:1", packages: [{ name: "shared-name", version: "1.0.0" }] },
+        { subjectName: "leaf-b", subjectId: "sha256:2", packages: [{ name: "shared-name", version: "2.0.0" }] },
+      ],
+    };
+    const doc = JSON.parse(writeSpdx(collidingInput, FIXED_NOW));
+    const ids = doc.packages.map((p: { SPDXID: string }) => p.SPDXID);
+    expect(new Set(ids).size).toBe(ids.length);
+    expect(validate(doc)).toBe(true);
+  });
+
+  it("without subDocuments, behaves exactly as before #614 (no CONTAINS relationships, no behavior change)", () => {
+    const doc = JSON.parse(writeSpdx(sampleInput, FIXED_NOW));
+    const contains = doc.relationships.filter((r: { relationshipType: string }) => r.relationshipType === "CONTAINS");
+    expect(contains).toHaveLength(0);
+  });
+});
+
+describe("writeCycloneDx assembly (#614) — nested components + compositions + dependencies for a multi-leaf component BOM", () => {
+  const cdxSchema = loadSchema("cyclonedx-1.5.schema.json");
+  const jsfSchema = loadSchema("jsf-0.82.schema.json");
+  const spdxLicenseSchema = loadSchema("cyclonedx-spdx-license.schema.json");
+  const ajv = new Ajv({ strict: false, allErrors: true });
+  ajv.addSchema(jsfSchema as object);
+  ajv.addSchema(spdxLicenseSchema as object);
+  const validate = ajv.compile(cdxSchema as object);
+
+  it("validates against the real CycloneDX-1.5 JSON Schema", () => {
+    const bytes = writeCycloneDx(assemblyInput, FIXED_NOW);
+    const doc = JSON.parse(bytes);
+    const valid = validate(doc);
+    if (!valid) throw new Error(`CycloneDX assembly failed schema validation: ${ajv.errorsText(validate.errors)}`);
+    expect(valid).toBe(true);
+  });
+
+  it("nests each sub-document as a real component under metadata.component.components, not flattened into the root's own components array", () => {
+    const doc = JSON.parse(writeCycloneDx(assemblyInput, FIXED_NOW));
+    expect(doc.metadata.component.components).toHaveLength(2);
+    const names = doc.metadata.component.components.map((c: { name: string }) => c.name);
+    expect(names).toEqual(["software:image.tar.sbom.json", "config:search.template.json.config-bom.json"]);
+    // the root-level `components` array (the flat single-document list)
+    // stays empty here since assemblyInput.packages is [] — the aggregate's
+    // own packages live in the nested sub-documents, not flattened up.
+    expect(doc.components).toEqual([]);
+  });
+
+  it("records a compositions entry with aggregate: incomplete, referencing the root and every sub-document", () => {
+    const doc = JSON.parse(writeCycloneDx(assemblyInput, FIXED_NOW));
+    expect(doc.compositions).toHaveLength(1);
+    expect(doc.compositions[0].aggregate).toBe("incomplete");
+    expect(doc.compositions[0].assemblies).toEqual(
+      expect.arrayContaining(["subject:search-service", "sub0:subject:software:image.tar.sbom.json", "sub1:subject:config:search.template.json.config-bom.json"]),
+    );
+  });
+
+  it("dependencies: the root subject depends on each sub-document root, and each sub-document depends on its own packages", () => {
+    const doc = JSON.parse(writeCycloneDx(assemblyInput, FIXED_NOW));
+    const rootDep = doc.dependencies.find((d: { ref: string }) => d.ref === "subject:search-service");
+    expect(rootDep.dependsOn).toEqual(
+      expect.arrayContaining(["sub0:subject:software:image.tar.sbom.json", "sub1:subject:config:search.template.json.config-bom.json"]),
+    );
+    const sub0Dep = doc.dependencies.find((d: { ref: string }) => d.ref === "sub0:subject:software:image.tar.sbom.json");
+    expect(sub0Dep.dependsOn).toEqual(["sub0:left-pad"]);
+  });
+
+  it("a same-named package in two different sub-documents does not collide (distinct bom-refs)", () => {
+    const collidingInput: BomInput = {
+      ...assemblyInput,
+      subDocuments: [
+        { subjectName: "leaf-a", subjectId: "sha256:1", packages: [{ name: "shared-name", version: "1.0.0" }] },
+        { subjectName: "leaf-b", subjectId: "sha256:2", packages: [{ name: "shared-name", version: "2.0.0" }] },
+      ],
+    };
+    const doc = JSON.parse(writeCycloneDx(collidingInput, FIXED_NOW));
+    const allRefs = [
+      doc.metadata.component["bom-ref"],
+      ...doc.metadata.component.components.map((c: { "bom-ref": string }) => c["bom-ref"]),
+      ...doc.metadata.component.components.flatMap((c: { components: Array<{ "bom-ref": string }> }) => c.components.map((cc) => cc["bom-ref"])),
+    ];
+    expect(new Set(allRefs).size).toBe(allRefs.length);
+    expect(validate(doc)).toBe(true);
+  });
+
+  it("without subDocuments, behaves exactly as before #614 (no compositions, no nested components, no behavior change)", () => {
+    const doc = JSON.parse(writeCycloneDx(sampleInput, FIXED_NOW));
+    expect(doc.compositions).toBeUndefined();
+    expect(doc.metadata.component.components).toBeUndefined();
+  });
+
+  it("is deterministic — identical assembly input produces byte-identical output", () => {
+    const a = writeCycloneDx(assemblyInput, FIXED_NOW);
+    const b = writeCycloneDx(assemblyInput, FIXED_NOW);
+    expect(a).toBe(b);
   });
 });

@@ -11,7 +11,10 @@
  * (lockfile/manifest parsing, no external tool). `extract-config-bom`
  * (./config-bom.ts, #613) is a real, hermetic, pure-structural capability —
  * no injectable backend needed since it never shells out. Both #613 verbs
- * share one native SPDX/CycloneDX writer, ./bom-writer.ts.
+ * share one native SPDX/CycloneDX writer, ./bom-writer.ts. ./component-bom.ts
+ * (#614) composes a component's leaf BOMs into one component-level BOM over
+ * that same writer, and ./reproducibility.ts (#614) records per-artifact
+ * reproducibility + provenance on each `BuildArchiveEntry`.
  */
 
 export * from "./build-archive";
@@ -21,6 +24,8 @@ export * from "./sbom-generator";
 export * from "./sbom";
 export * from "./lockfile-sbom-generator";
 export * from "./config-bom";
+export * from "./component-bom";
+export * from "./reproducibility";
 export * from "./publish";
 export * from "./apply";
 export * from "./job-submission";

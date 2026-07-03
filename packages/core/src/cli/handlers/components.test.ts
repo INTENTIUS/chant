@@ -384,6 +384,38 @@ describe("components handlers", () => {
       expect(rows[0]).toMatchObject({ component: "svc", reconciliation: "reconciled" });
     });
 
+    // #614: the JSON contract gains `build.reproducibility` and
+    // `componentBom`. Full manifest wiring into this CLI path is #609's
+    // on-disk persistence (not yet implemented), so both fields are `null`
+    // today — this test locks in that the fields exist in the stable JSON
+    // shape (never omitted) rather than the CLI silently dropping them.
+    test("JSON rows always include build.reproducibility and componentBom keys, null absent manifest data (#614, pending #609 persistence)", async () => {
+      readReleaseLedgerMock.mockResolvedValue({
+        records: [{
+          version: 1,
+          component: "svc",
+          env: "prod",
+          digest: "sha256:abc",
+          gitSha: "sha1",
+          runId: "run-1",
+          timestamp: "2026-01-01T00:00:00.000Z",
+          actor: "alice",
+        }],
+        malformed: 0,
+      });
+
+      const ctx = {
+        args: makeArgs({ extraPositional: "prod", json: true }),
+        plugins: [],
+        serializers: [],
+      };
+      const exit = await runComponentsStatus(ctx);
+      expect(exit).toBe(0);
+      const rows = JSON.parse(stdoutBuf.join(""));
+      expect(rows[0].build).toBeNull();
+      expect(rows[0]).toHaveProperty("componentBom", null);
+    });
+
     test("reports malformed ledger lines as a warning without failing", async () => {
       readReleaseLedgerMock.mockResolvedValue({ records: [], malformed: 2 });
       const ctx = { args: makeArgs({ extraPositional: "prod" }), plugins: [], serializers: [] };

@@ -39,10 +39,34 @@
  * `CloudExecutor` is injectable elsewhere in ../components/verbs: no test and
  * no default implementation shells out to a real `oras`/`cosign`/registry
  * call.
+ *
+ * **#614 additions.** Two more things get surfaced per manifest, both
+ * derived from data the manifest already carries (no new generation, no
+ * re-parsing of BOM bytes):
+ *
+ *  - Each `BuildLedgerEntry` (still one per image, matching this module's
+ *    existing scope) now carries that image's own `reproducibility` — read
+ *    straight off its `BuildArchiveEntry`, never inferred from a sibling
+ *    artifact (see ../components/verbs/reproducibility.ts's module doc for
+ *    why a blanket flag would misrepresent a multi-artifact component).
+ *    `artifactReproducibilitySummary` below reports the same per-artifact
+ *    honesty for *every* artifact entry in a manifest (image, template,
+ *    asset alike) — the full per-artifact picture #614 asks for, not just
+ *    the image-scoped slice `buildLedgerEntries` has always covered.
+ *  - `componentBomSummary` reports the component-level BOM aggregation
+ *    picture (../components/verbs/component-bom.ts): how many leaf BOMs
+ *    (software SBOM + IaC config-BOM) the manifest carries, each one's
+ *    `bomKind`/format/package count, and whether they'd compose into a
+ *    single-artifact (1:1) or real multi-artifact assembly. This is a
+ *    summary read off the manifest's existing `sbom`-kind entries — it does
+ *    not regenerate or re-validate the aggregate document (that stays
+ *    `aggregateComponentBom`'s job, given each leaf's `BomPackage[]`, which
+ *    the manifest alone does not carry).
  */
 
-import type { BuildArchiveManifest } from "../components/verbs/build-archive";
-import { findSbomForSubject, imageEntries } from "../components/verbs/build-archive";
+import type { BuildArchiveManifest, BuildArchiveEntry } from "../components/verbs/build-archive";
+import { findSbomForSubject, imageEntries, sbomEntries, artifactEntries } from "../components/verbs/build-archive";
+import type { ArtifactReproducibility } from "../components/verbs/reproducibility";
 
 /** The kind of referrer artifact attached to an image digest (mirrors the OCI referrers API / `oras discover` output). */
 export type ReferrerKind = "sbom" | "provenance" | "signature";
@@ -128,6 +152,15 @@ export interface BuildLedgerEntry {
    * — including when the component opted out of `generate-sbom` entirely.
    */
   sbom?: SbomSummary;
+  /**
+   * This image's own honest, per-artifact reproducibility record (#614) —
+   * read from its `BuildArchiveEntry.reproducibility`. An `image` entry
+   * defaults to `{ basis: "best-effort" }` (see
+   * ../components/verbs/reproducibility.ts's `defaultReproducibility`)
+   * absent a real reproducible-build attestation; never inferred from a
+   * sibling `template`/`asset` entry's basis.
+   */
+  reproducibility?: ArtifactReproducibility;
 }
 
 /**
@@ -169,6 +202,7 @@ export async function buildLedgerEntries(
       manifestDigest: manifest.manifestDigest,
       referrers,
       sbom,
+      reproducibility: image.reproducibility,
     });
   }
   return entries;
@@ -177,4 +211,95 @@ export async function buildLedgerEntries(
 /** Find the referrer of a given kind for a digest, if any (a convenience for "does this build have a signature/SBOM/provenance"). */
 export function findReferrer(referrers: Referrer[], kind: ReferrerKind): Referrer | undefined {
   return referrers.find((r) => r.kind === kind);
+}
+
+// ── #614: per-artifact reproducibility + component BOM summary ─────────────
+
+/** One artifact's reproducibility, named for display (`chant components status`) rather than just keyed by digest. */
+export interface ArtifactReproducibilitySummary {
+  /** Archive-relative path of the artifact (`BuildArchiveEntry.path`). */
+  path: string;
+  /** Which kind of artifact this is. */
+  kind: BuildArchiveEntry["kind"];
+  /** Content-addressed digest of the artifact. */
+  digest: string;
+  /** The artifact's own reproducibility record, when one is recorded (absent only for `sbom`-kind entries, which describe another artifact rather than being one). */
+  reproducibility?: ArtifactReproducibility;
+  /** Source ref/commit that produced this artifact, when recorded (#614's provenance link). */
+  sourceRef?: string;
+}
+
+/**
+ * Report every artifact entry's (`image`/`template`/`asset`) own
+ * reproducibility + provenance, honestly per-artifact — the full picture
+ * #614 asks for, wider than `buildLedgerEntries`'s image-only scope. Order
+ * matches `artifactEntries`' manifest insertion order; sort by `path`
+ * yourself for a stable display order (mirroring
+ * `computeManifestDigest`'s own path-sort convention).
+ */
+export function artifactReproducibilitySummary(manifest: BuildArchiveManifest): ArtifactReproducibilitySummary[] {
+  return artifactEntries(manifest).map((entry) => ({
+    path: entry.path,
+    kind: entry.kind,
+    digest: entry.digest,
+    reproducibility: entry.reproducibility,
+    sourceRef: entry.provenance?.sourceRef,
+  }));
+}
+
+/** One leaf BOM in a component's aggregation picture — the summary form `componentBomSummary` reports, without regenerating or re-validating the aggregate document itself. */
+export interface ComponentBomLeafSummary {
+  /** Archive-relative path of the leaf BOM document. */
+  path: string;
+  /** Software SBOM or IaC config-BOM (#613's `bomKind`, defaulting to `"software"` the same way `BuildArchiveEntry.bomKind` does). */
+  bomKind: "software" | "config";
+  /** Digest of the artifact this leaf describes (`subjectDigest`), when recorded. */
+  subjectDigest?: string;
+  /** Media type of the leaf document (format-agnostic key, per #613's convention). */
+  mediaType: string;
+  /** Package/component count this leaf enumerates, when known. */
+  packageCount?: number;
+  /** Which tool produced this leaf, when known. */
+  generator?: string;
+}
+
+/**
+ * Summary of a component's BOM aggregation picture (#614,
+ * ../components/verbs/component-bom.ts): every leaf BOM the manifest
+ * carries, whether they compose 1:1 (a single-artifact component — the leaf
+ * BOM *is* the component BOM, structurally) or as a real multi-artifact
+ * assembly (2+ leaves), and the combined package count across every leaf.
+ */
+export interface ComponentBomSummary {
+  /** Every leaf BOM (software SBOM + IaC config-BOM) the manifest carries. */
+  leaves: ComponentBomLeafSummary[];
+  /** Sum of every leaf's `packageCount` (0 for a leaf with an unknown count). */
+  totalPackageCount: number;
+  /** `false` when there are 0 or 1 leaves (nothing to assemble, or a 1:1 component BOM); `true` when there are 2+ leaves (a real multi-artifact assembly, per #614's "single-artifact = 1:1, multi-artifact = a real assembly"). */
+  isAssembly: boolean;
+}
+
+/**
+ * Build the component BOM summary for one manifest, straight from its
+ * existing `sbom`-kind entries — no regeneration, no re-parsing of BOM
+ * bytes. `undefined` when the manifest carries no BOM at all (a component
+ * that composed neither `generate-sbom` nor `extract-config-bom` — skipping
+ * is structural, matching every other BOM consumer's convention in this
+ * codebase).
+ */
+export function componentBomSummary(manifest: BuildArchiveManifest): ComponentBomSummary | undefined {
+  const boms = sbomEntries(manifest);
+  if (boms.length === 0) return undefined;
+
+  const leaves: ComponentBomLeafSummary[] = boms.map((entry) => ({
+    path: entry.path,
+    bomKind: entry.bomKind ?? "software",
+    subjectDigest: entry.subjectDigest,
+    mediaType: entry.mediaType ?? "application/octet-stream",
+    packageCount: entry.packageCount,
+    generator: entry.generator,
+  }));
+  const totalPackageCount = leaves.reduce((sum, l) => sum + (l.packageCount ?? 0), 0);
+
+  return { leaves, totalPackageCount, isAssembly: leaves.length > 1 };
 }

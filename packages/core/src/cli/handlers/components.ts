@@ -136,6 +136,20 @@ interface StatusJsonRow {
     referrers: string[];
     /** SBOM summary for this digest (#606), when one was generated and is discoverable — archive-carried or referrer-projected. `null` when neither source has one (e.g. the component opted out, or has no built artifact). */
     sbom: { mediaType: string; packageCount?: number; generator?: string; source: string } | null;
+    /** This artifact's own honest, per-artifact reproducibility record (#614) — `null` when none is recorded. */
+    reproducibility: { basis: string; verifyBy?: string } | null;
+  } | null;
+  /**
+   * Component-level BOM aggregation summary (#614), when the recorded
+   * digest's build archive manifest is available. `null` when unavailable
+   * (no archive manifest for this digest — the wiring that supplies one is
+   * #609's on-disk persistence, not yet in this code path) or when the
+   * manifest carries no BOM at all.
+   */
+  componentBom: {
+    leaves: Array<{ path: string; bomKind: string; subjectDigest?: string; mediaType: string; packageCount?: number; generator?: string }>;
+    totalPackageCount: number;
+    isAssembly: boolean;
   } | null;
   reconciliation: string;
   detail: string;
@@ -261,6 +275,23 @@ export async function runComponentsStatus(ctx: CommandContext): Promise<number> 
                     source: row.build.sbom.source,
                   }
                 : null,
+              reproducibility: row.build.reproducibility
+                ? { basis: row.build.reproducibility.basis, verifyBy: row.build.reproducibility.verifyBy }
+                : null,
+            }
+          : null,
+        componentBom: row.componentBom
+          ? {
+              leaves: row.componentBom.leaves.map((l) => ({
+                path: l.path,
+                bomKind: l.bomKind,
+                subjectDigest: l.subjectDigest,
+                mediaType: l.mediaType,
+                packageCount: l.packageCount,
+                generator: l.generator,
+              })),
+              totalPackageCount: row.componentBom.totalPackageCount,
+              isAssembly: row.componentBom.isAssembly,
             }
           : null,
         reconciliation: row.reconciliation,

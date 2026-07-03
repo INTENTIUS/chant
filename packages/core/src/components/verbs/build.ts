@@ -16,6 +16,12 @@
  * deploy templates (e.g. CloudFormation JSON, already written into the
  * archive by chant's existing synthesis step) into the same manifest, so one
  * document enumerates every content kind the archive holds.
+ *
+ * Per #614, both entry points accept an optional `sourceRef` (a git sha, or
+ * `"<sha>:<path>"` for a monorepo subpath) that becomes the entry's
+ * `provenance` link. `image`/`template` entries otherwise default to their
+ * kind-appropriate `reproducibility` basis via `addArchiveEntry` — see
+ * ./reproducibility.ts.
  */
 
 import type { Capability } from "../capability";
@@ -27,6 +33,7 @@ import {
   createBuildArchiveManifest,
   type BuildArchiveManifest,
 } from "./build-archive";
+import type { ProvenanceLink } from "./reproducibility";
 
 // ── docker-build ────────────────────────────────────────────────────────────
 
@@ -49,6 +56,8 @@ export interface DockerBuildInput {
    * single-entry manifest for this build alone.
    */
   manifest?: BuildArchiveManifest;
+  /** Source ref/commit this build was run against (#614) — recorded as the entry's `provenance.sourceRef`. Omit when unknown (e.g. a build run outside a git checkout); no `provenance` is recorded in that case. */
+  sourceRef?: string;
 }
 
 export interface DockerBuildOutput {
@@ -87,7 +96,15 @@ export function createDockerBuildCapability(
       });
       await executor.docker.save({ image: tag, outFile: input.into });
       const base = input.manifest ?? createBuildArchiveManifest(ctx.component);
-      const manifest = addArchiveEntry(base, { kind: "image", path: input.into, digest });
+      const provenance: ProvenanceLink | undefined = input.sourceRef
+        ? { sourceRef: input.sourceRef, artifactDigest: digest }
+        : undefined;
+      const manifest = addArchiveEntry(base, {
+        kind: "image",
+        path: input.into,
+        digest,
+        ...(provenance ? { provenance } : {}),
+      });
       return { archivePath: input.into, digest, manifest };
     },
   };
@@ -105,6 +122,8 @@ export interface AddArchiveTemplateInput {
   content: string;
   /** Manifest to extend. Omit to start a new manifest holding just this template. */
   manifest?: BuildArchiveManifest;
+  /** Source ref/commit this template was synthesized from (#614) — recorded as the entry's `provenance.sourceRef`. Omit when unknown; no `provenance` is recorded in that case. */
+  sourceRef?: string;
 }
 
 export interface AddArchiveTemplateOutput {
@@ -128,7 +147,15 @@ export interface AddArchiveTemplateOutput {
 export function addArchiveTemplate(input: AddArchiveTemplateInput): AddArchiveTemplateOutput {
   const digest = contentDigest(input.content);
   const base = input.manifest ?? createBuildArchiveManifest("unknown");
-  const manifest = addArchiveEntry(base, { kind: "template", path: input.path, digest });
+  const provenance: ProvenanceLink | undefined = input.sourceRef
+    ? { sourceRef: input.sourceRef, artifactDigest: digest }
+    : undefined;
+  const manifest = addArchiveEntry(base, {
+    kind: "template",
+    path: input.path,
+    digest,
+    ...(provenance ? { provenance } : {}),
+  });
   return { digest, manifest };
 }
 

@@ -40,6 +40,19 @@
  *    content-addressing property ./build-archive.ts's `contentDigest`
  *    depends on for its "identical inputs -> identical manifest digest"
  *    guarantee (see ./sbom.test.ts's existing test of that property).
+ *
+ * **Assembly (#614).** `BomInput.subDocuments`, when present, projects each
+ * sub-document as a real nested unit rather than flattening its packages into
+ * the root's own list — CycloneDX's `metadata.component.components` +
+ * `compositions` (`aggregate: "incomplete"`, since a component BOM only
+ * composes the leaf BOMs it was given, never a closed-world claim over
+ * everything the artifact might contain), SPDX's `hasFiles`-style `CONTAINS`
+ * relationship from the root package to each sub-document's own root package
+ * plus that sub-document's own `DEPENDS_ON` edges. This is what
+ * ./component-bom.ts's `aggregateComponentBom` uses to compose a component's
+ * leaf BOMs (a software SBOM plus an IaC config-BOM) into one document
+ * without flattening away which packages came from which leaf — still one
+ * writer per standard, extended rather than duplicated.
  */
 
 import { SBOM_MEDIA_TYPES, type SbomFormat } from "./sbom-generator";
@@ -68,6 +81,24 @@ export interface BomPackage {
   dependsOn?: string[];
 }
 
+/**
+ * One nested BOM unit an assembly (#614) composes into its root document —
+ * projected as a real nested `components` entry in CycloneDX and a
+ * `CONTAINS`-linked sub-package group in SPDX, never flattened into the
+ * root's own package list. Typically one leaf BOM (a software SBOM or an IaC
+ * config-BOM) a component produced, see ./component-bom.ts.
+ */
+export interface BomSubDocument {
+  /** Human-readable name for this sub-document's own subject (e.g. an artifact's archive path). */
+  subjectName: string;
+  /** Version of this sub-document's subject, when known. */
+  subjectVersion?: string;
+  /** Stable identity for this sub-document's subject — typically the artifact digest it describes, so the assembly's `CONTAINS`/nested-component edge is traceable back to a real `BuildArchiveEntry.digest`. */
+  subjectId: string;
+  /** Every package/component this sub-document enumerates. */
+  packages: BomPackage[];
+}
+
 /** Input to both writers: the subject the BOM describes plus its enumerated packages/components. */
 export interface BomInput {
   /** Human-readable name for the BOM's subject (a package name, a template/stack name). */
@@ -80,6 +111,13 @@ export interface BomInput {
   packages: BomPackage[];
   /** Name of the tool that produced this document (surfaced in SPDX's `creationInfo.creators` / CycloneDX's `metadata.tools`). */
   generator: string;
+  /**
+   * Nested BOM units to compose into this document as an assembly (#614) —
+   * present only for a component-level aggregation BOM (see
+   * ./component-bom.ts). When omitted, `writeSpdx`/`writeCycloneDx` behave
+   * exactly as before #614: a flat single-subject document.
+   */
+  subDocuments?: BomSubDocument[];
 }
 
 /** Deterministic, dependency-free short hash used to derive stable SPDX document namespaces / CycloneDX serial numbers from `BomInput.subjectId`. Not a security hash — just stable and collision-unlikely enough for a namespace suffix. */
@@ -99,20 +137,20 @@ function spdxSafeId(name: string): string {
 // ── SPDX-2.3 JSON ────────────────────────────────────────────────────────────
 
 /**
- * Native SPDX-2.3 JSON writer. Emits the required top-level fields
- * (`spdxVersion`, `dataLicense`, `SPDXID`, `name`, `documentNamespace`,
- * `creationInfo`, `packages`) plus a `relationships` array recording the
- * document's `DESCRIBES` edge to the subject package and each package's
- * declared `DEPENDS_ON` edges — the "valid relationships section where
- * applicable" #613 calls for.
+ * Build one SPDX package record + its `DEPENDS_ON` relationship edges for a
+ * flat package list, with SPDX IDs namespaced under `idPrefix` so a
+ * sub-document's packages (#614 assembly) never collide with the root's own
+ * or another sub-document's, even when two leaf BOMs happen to enumerate a
+ * same-named package.
  */
-export function writeSpdx(input: BomInput, now: () => Date = () => new Date()): string {
-  const rootId = "SPDXRef-DOCUMENT";
-  const subjectSpdxId = `SPDXRef-Package-${spdxSafeId(input.subjectName)}`;
-
-  const packages = input.packages.map((pkg) => ({
+function spdxPackagesAndDeps(
+  packages: BomPackage[],
+  idPrefix: string,
+): { packages: unknown[]; relationships: Array<{ spdxElementId: string; relationshipType: string; relatedSpdxElement: string }> } {
+  const spdxId = (name: string) => `SPDXRef-Package-${idPrefix}${spdxSafeId(name)}`;
+  const pkgs = packages.map((pkg) => ({
     name: pkg.name,
-    SPDXID: `SPDXRef-Package-${spdxSafeId(pkg.name)}`,
+    SPDXID: spdxId(pkg.name),
     versionInfo: pkg.version ?? "NOASSERTION",
     downloadLocation: pkg.downloadLocation ?? "NOASSERTION",
     filesAnalyzed: false,
@@ -127,19 +165,75 @@ export function writeSpdx(input: BomInput, now: () => Date = () => new Date()): 
         }
       : {}),
   }));
+  const relationships = packages.flatMap((pkg) =>
+    (pkg.dependsOn ?? []).map((dep) => ({
+      spdxElementId: spdxId(pkg.name),
+      relationshipType: "DEPENDS_ON",
+      relatedSpdxElement: spdxId(dep),
+    })),
+  );
+  return { packages: pkgs, relationships };
+}
+
+/**
+ * Native SPDX-2.3 JSON writer. Emits the required top-level fields
+ * (`spdxVersion`, `dataLicense`, `SPDXID`, `name`, `documentNamespace`,
+ * `creationInfo`, `packages`) plus a `relationships` array recording the
+ * document's `DESCRIBES` edge to the subject package and each package's
+ * declared `DEPENDS_ON` edges — the "valid relationships section where
+ * applicable" #613 calls for.
+ *
+ * When `input.subDocuments` is present (#614 assembly), each sub-document's
+ * own root package is emitted alongside the top-level subject, linked from
+ * the top-level subject via a `CONTAINS` relationship, with that
+ * sub-document's own packages and `DEPENDS_ON` edges nested under an
+ * SPDX-ID namespace unique to it (`SPDXRef-Package-sub<n>-...`) so packages
+ * from different leaf BOMs never collide even if same-named.
+ */
+export function writeSpdx(input: BomInput, now: () => Date = () => new Date()): string {
+  const rootId = "SPDXRef-DOCUMENT";
+  const subjectSpdxId = `SPDXRef-Package-${spdxSafeId(input.subjectName)}`;
+
+  const { packages, relationships: packageRelationships } = spdxPackagesAndDeps(input.packages, "");
 
   const relationships: Array<{ spdxElementId: string; relationshipType: string; relatedSpdxElement: string }> = [
     { spdxElementId: rootId, relationshipType: "DESCRIBES", relatedSpdxElement: subjectSpdxId },
+    ...packageRelationships,
   ];
-  for (const pkg of input.packages) {
-    for (const dep of pkg.dependsOn ?? []) {
-      relationships.push({
-        spdxElementId: `SPDXRef-Package-${spdxSafeId(pkg.name)}`,
-        relationshipType: "DEPENDS_ON",
-        relatedSpdxElement: `SPDXRef-Package-${spdxSafeId(dep)}`,
-      });
-    }
-  }
+
+  const subDocumentPackages: unknown[] = [];
+  (input.subDocuments ?? []).forEach((sub, i) => {
+    const subRootId = `SPDXRef-Package-sub${i}-${spdxSafeId(sub.subjectName)}`;
+    subDocumentPackages.push({
+      name: sub.subjectName,
+      SPDXID: subRootId,
+      versionInfo: sub.subjectVersion ?? "NOASSERTION",
+      downloadLocation: "NOASSERTION",
+      filesAnalyzed: false,
+      licenseConcluded: "NOASSERTION",
+      licenseDeclared: "NOASSERTION",
+      copyrightText: "NOASSERTION",
+      comment: `subjectId: ${sub.subjectId}`,
+    });
+    relationships.push({
+      spdxElementId: subjectSpdxId,
+      relationshipType: "CONTAINS",
+      relatedSpdxElement: subRootId,
+    });
+    const { packages: subPkgs, relationships: subRels } = spdxPackagesAndDeps(sub.packages, `sub${i}-`);
+    subDocumentPackages.push(...subPkgs);
+    relationships.push(
+      // CONTAINS (not DEPENDS_ON): membership in this leaf BOM, not a
+      // literal dependency edge — the leaf's own DEPENDS_ON edges (from
+      // BomPackage.dependsOn) are `subRels`, pushed separately below.
+      ...subPkgs.map((p) => ({
+        spdxElementId: subRootId,
+        relationshipType: "CONTAINS",
+        relatedSpdxElement: (p as { SPDXID: string }).SPDXID,
+      })),
+      ...subRels,
+    );
+  });
 
   const document = {
     spdxVersion: "SPDX-2.3",
@@ -163,6 +257,7 @@ export function writeSpdx(input: BomInput, now: () => Date = () => new Date()): 
         copyrightText: "NOASSERTION",
       },
       ...packages,
+      ...subDocumentPackages,
     ],
     relationships,
   };
@@ -172,29 +267,81 @@ export function writeSpdx(input: BomInput, now: () => Date = () => new Date()): 
 
 // ── CycloneDX-1.5 JSON ───────────────────────────────────────────────────────
 
+/** Project a flat package list into CycloneDX `components`, with `bom-ref`s namespaced under `refPrefix` so a sub-document's components (#614 assembly) never collide with the root's own or another sub-document's. */
+function cycloneDxComponents(packages: BomPackage[], refPrefix: string): Array<Record<string, unknown>> {
+  return packages.map((pkg) => ({
+    type: pkg.type === "config" ? "application" : "library",
+    "bom-ref": `${refPrefix}${pkg.name}`,
+    name: pkg.name,
+    ...(pkg.version ? { version: pkg.version } : {}),
+    ...(pkg.purl ? { purl: pkg.purl } : {}),
+  }));
+}
+
+/** Project a flat package list's `dependsOn` edges into CycloneDX `dependencies` entries, `bom-ref`s namespaced the same way `cycloneDxComponents` namespaces its components. */
+function cycloneDxDependencies(packages: BomPackage[], refPrefix: string): Array<{ ref: string; dependsOn: string[] }> {
+  return packages
+    .filter((p) => (p.dependsOn?.length ?? 0) > 0)
+    .map((p) => ({ ref: `${refPrefix}${p.name}`, dependsOn: p.dependsOn!.map((d) => `${refPrefix}${d}`) }));
+}
+
 /**
  * Native CycloneDX-1.5 JSON writer. Emits the required top-level fields
  * (`bomFormat`, `specVersion`, `serialNumber`, `version`, `metadata`,
  * `components`) plus a `dependencies` array recording the root subject's
  * direct dependencies and each component's own declared dependencies.
+ *
+ * When `input.subDocuments` is present (#614 assembly), each sub-document is
+ * projected as a real nested component under `metadata.component.components`
+ * (CycloneDX's own "hierarchical representation of component assemblies,
+ * similar to system -> subsystem -> parts" per its schema doc) — never
+ * flattened into the root's own `components` array — with a `compositions`
+ * entry recording the aggregate as `"incomplete"` (this document composes
+ * exactly the leaf BOMs it was given, not a closed-world claim over
+ * everything the artifact might contain) and a root `dependencies` edge from
+ * the top-level subject to each sub-document's root.
  */
 export function writeCycloneDx(input: BomInput, now: () => Date = () => new Date()): string {
   const rootRef = `subject:${input.subjectName}`;
 
-  const components = input.packages.map((pkg) => ({
-    type: pkg.type === "config" ? "application" : "library",
-    "bom-ref": pkg.name,
-    name: pkg.name,
-    ...(pkg.version ? { version: pkg.version } : {}),
-    ...(pkg.purl ? { purl: pkg.purl } : {}),
-  }));
+  const components = cycloneDxComponents(input.packages, "");
 
+  const subDocuments = input.subDocuments ?? [];
+  const subComponents = subDocuments.map((sub, i) => {
+    const refPrefix = `sub${i}:`;
+    const subRef = `${refPrefix}subject:${sub.subjectName}`;
+    return {
+      type: "application",
+      "bom-ref": subRef,
+      name: sub.subjectName,
+      ...(sub.subjectVersion ? { version: sub.subjectVersion } : {}),
+      properties: [{ name: "chant:subjectId", value: sub.subjectId }],
+      components: cycloneDxComponents(sub.packages, refPrefix),
+    };
+  });
+  const subDependencies = subDocuments.flatMap((sub, i) => {
+    const refPrefix = `sub${i}:`;
+    const subRef = `${refPrefix}subject:${sub.subjectName}`;
+    return [
+      { ref: subRef, dependsOn: sub.packages.map((p) => `${refPrefix}${p.name}`) },
+      ...cycloneDxDependencies(sub.packages, refPrefix),
+    ];
+  });
+
+  // Root subject depends on its own flat packages plus, when this is an
+  // assembly (#614), each sub-document's own root — one entry, not two, so
+  // the root ref never appears twice in `dependencies`.
+  const rootDependsOn = [...input.packages.map((p) => p.name), ...subComponents.map((c) => c["bom-ref"] as string)];
   const dependencies = [
-    { ref: rootRef, dependsOn: input.packages.map((p) => p.name) },
-    ...input.packages
-      .filter((p) => (p.dependsOn?.length ?? 0) > 0)
-      .map((p) => ({ ref: p.name, dependsOn: p.dependsOn! })),
+    { ref: rootRef, dependsOn: rootDependsOn },
+    ...cycloneDxDependencies(input.packages, ""),
+    ...subDependencies,
   ];
+
+  const compositions =
+    subDocuments.length > 0
+      ? [{ aggregate: "incomplete" as const, assemblies: [rootRef, ...subComponents.map((c) => c["bom-ref"] as string)] }]
+      : undefined;
 
   const document = {
     bomFormat: "CycloneDX",
@@ -209,10 +356,12 @@ export function writeCycloneDx(input: BomInput, now: () => Date = () => new Date
         "bom-ref": rootRef,
         name: input.subjectName,
         ...(input.subjectVersion ? { version: input.subjectVersion } : {}),
+        ...(subComponents.length > 0 ? { components: subComponents } : {}),
       },
     },
     components,
     dependencies,
+    ...(compositions ? { compositions } : {}),
   };
 
   return JSON.stringify(document, null, 2);

@@ -9,7 +9,7 @@ import {
 } from "./status";
 import type { ReleaseRecord } from "./release-ledger";
 import type { ChangeSet } from "./change-set";
-import type { BuildLedgerEntry } from "./build-ledger";
+import type { BuildLedgerEntry, ComponentBomSummary } from "./build-ledger";
 
 function record(overrides?: Partial<ReleaseRecord>): ReleaseRecord {
   return {
@@ -199,6 +199,50 @@ describe("status", () => {
         generator: "syft",
         source: "archive",
       });
+    });
+
+    // #614: component-level BOM aggregation summary, keyed by digest — the
+    // same join key as `buildsByDigest`, but independent of it (a
+    // config-only/infra component with no image entry still has a component
+    // BOM to report, even though it has no `BuildLedgerEntry` at all).
+    test("attaches the component BOM summary keyed by the recorded digest (#614)", () => {
+      const componentBom: ComponentBomSummary = {
+        leaves: [
+          { path: "image.tar.sbom.json", bomKind: "software", subjectDigest: "sha256:img1", mediaType: "application/spdx+json", packageCount: 17, generator: "syft" },
+          { path: "search.template.json.config-bom.json", bomKind: "config", subjectDigest: "sha256:tmpl1", mediaType: "application/spdx+json", packageCount: 5 },
+        ],
+        totalPackageCount: 22,
+        isAssembly: true,
+      };
+      const componentBomByDigest = new Map([["sha256:abc", componentBom]]);
+      const liveEvidence = new Map<string, LiveComponentEvidence>([
+        ["search-service", { live: true, action: "noop", ownership: "owned" }],
+      ]);
+      const rows = reconcileStatus("prod", [record()], { liveEvidence, componentBomByDigest });
+      expect(rows[0].componentBom).toEqual(componentBom);
+    });
+
+    test("componentBom is undefined when no summary is keyed to the recorded digest", () => {
+      const liveEvidence = new Map<string, LiveComponentEvidence>([
+        ["search-service", { live: true, action: "noop", ownership: "owned" }],
+      ]);
+      const rows = reconcileStatus("prod", [record()], { liveEvidence, componentBomByDigest: new Map() });
+      expect(rows[0].componentBom).toBeUndefined();
+    });
+
+    test("componentBom and build are independent — a componentBomByDigest hit with no matching buildsByDigest entry still surfaces the BOM summary", () => {
+      const componentBom: ComponentBomSummary = {
+        leaves: [{ path: "t.json.config-bom.json", bomKind: "config", mediaType: "application/spdx+json", packageCount: 3 }],
+        totalPackageCount: 3,
+        isAssembly: false,
+      };
+      const componentBomByDigest = new Map([["sha256:abc", componentBom]]);
+      const liveEvidence = new Map<string, LiveComponentEvidence>([
+        ["search-service", { live: true, action: "noop", ownership: "owned" }],
+      ]);
+      const rows = reconcileStatus("prod", [record()], { liveEvidence, componentBomByDigest });
+      expect(rows[0].build).toBeUndefined();
+      expect(rows[0].componentBom).toEqual(componentBom);
     });
 
     test("only the latest record per component is used for reconciliation", () => {

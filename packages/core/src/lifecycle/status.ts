@@ -35,7 +35,7 @@
 
 import type { ChangeSet, ChangeAction } from "./change-set";
 import { latestPerComponent, type ReleaseRecord } from "./release-ledger";
-import type { BuildLedgerEntry } from "./build-ledger";
+import type { BuildLedgerEntry, ComponentBomSummary } from "./build-ledger";
 
 /** One row of `chant components status [env]` — the per-component join of recorded vs live. */
 export interface ComponentStatusRow {
@@ -43,8 +43,19 @@ export interface ComponentStatusRow {
   env: string;
   /** The latest recorded release for this component/env, if any. */
   recorded?: ReleaseRecord;
-  /** Build-ledger detail for the recorded digest, when discoverable (referrers, manifest digest). */
+  /** Build-ledger detail for the recorded digest, when discoverable (referrers, manifest digest, this artifact's own reproducibility — #614). */
   build?: BuildLedgerEntry;
+  /**
+   * Component-level BOM aggregation summary (#614,
+   * ../components/verbs/component-bom.ts), when the recorded digest's build
+   * archive manifest is available (`opts.componentBomByDigest`). Reports
+   * every leaf BOM (software SBOM + IaC config-BOM) the component's archive
+   * carries and whether they compose 1:1 or as a real multi-artifact
+   * assembly — independent of `build`/`buildsByDigest` (which stays scoped
+   * to image entries), since a config-only/infra component with no image
+   * still has a component BOM to report.
+   */
+  componentBom?: ComponentBomSummary;
   /** Live reconciliation verdict for this row. */
   reconciliation: "reconciled" | "unrecorded" | "stale" | "drifted" | "unknown";
   /** Human-readable detail backing the verdict. */
@@ -170,8 +181,10 @@ export function liveEvidenceFromChangeSet(
  * Pure — no I/O. Callers assemble `records` (./release-ledger.ts's
  * `readReleaseLedger`), `liveEvidence` (from a `ChangeSet` via
  * `liveEvidenceFromChangeSet`, or `undefined` when `--live` wasn't
- * requested), and `builds` (a `component -> BuildLedgerEntry` lookup keyed by
- * digest, from ./build-ledger.ts) ahead of time.
+ * requested), `builds` (a `component -> BuildLedgerEntry` lookup keyed by
+ * digest, from ./build-ledger.ts), and `componentBomByDigest` (#614, a
+ * `digest -> ComponentBomSummary` lookup, also from ./build-ledger.ts) ahead
+ * of time.
  */
 export function reconcileStatus(
   env: string,
@@ -180,6 +193,8 @@ export function reconcileStatus(
     liveEvidence?: Map<string, LiveComponentEvidence>;
     /** Build-ledger detail keyed by digest, when available. */
     buildsByDigest?: Map<string, BuildLedgerEntry>;
+    /** Component-level BOM aggregation summary keyed by digest, when available (#614). Independent of `buildsByDigest` — a config-only/infra component with no image entry still has a component BOM to report. */
+    componentBomByDigest?: Map<string, ComponentBomSummary>;
     /** Component names known to exist (from `discoverComponents`) but with no release record at all — still reported as `unrecorded` when live evidence says they're running. */
     allComponents?: string[];
   },
@@ -193,6 +208,7 @@ export function reconcileStatus(
     const recorded = latest.get(component);
     const evidence = liveEvidence?.get(component);
     const build = recorded ? opts?.buildsByDigest?.get(recorded.digest) : undefined;
+    const componentBom = recorded ? opts?.componentBomByDigest?.get(recorded.digest) : undefined;
 
     let reconciliation: ComponentStatusRow["reconciliation"];
     let detail: string;
@@ -222,7 +238,7 @@ export function reconcileStatus(
       detail = `recorded ${recorded!.timestamp} (digest ${recorded!.digest}), live and consistent`;
     }
 
-    rows.push({ component, env, recorded, build, reconciliation, detail });
+    rows.push({ component, env, recorded, build, componentBom, reconciliation, detail });
   }
 
   return rows;
