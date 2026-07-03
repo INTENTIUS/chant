@@ -52,6 +52,15 @@ describe("createMockTemporalClient", () => {
     expect(mock.calls.cancelCalls).toEqual([{ workflowId: "chant-op-foo" }]);
   });
 
+  test("getHandle().result() resolves the configured value, undefined when unset", async () => {
+    const mock = createMockTemporalClient({
+      resultByWorkflowId: { "chant-component-svc": { phaseOutputs: { Publish: { digest: "sha256:abc" } }, componentOutputs: {} } },
+    });
+    const result = await mock.client.workflow.getHandle("chant-component-svc").result();
+    expect(result).toEqual({ phaseOutputs: { Publish: { digest: "sha256:abc" } }, componentOutputs: {} });
+    expect(await mock.client.workflow.getHandle("other").result()).toBeUndefined();
+  });
+
   test("workflow.list yields configured summaries", async () => {
     const mock = createMockTemporalClient({
       list: [

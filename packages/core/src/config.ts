@@ -18,6 +18,9 @@ export const ChantConfigSchema = z.object({
     env: z.string().min(1).optional(),
     enabled: z.boolean().optional(),
   }).optional(),
+  release: z.object({
+    autoRecord: z.boolean().optional(),
+  }).optional(),
 }).passthrough();
 
 /**
@@ -68,6 +71,18 @@ export interface ChantConfig {
     env?: string;
     /** Set false to disable stamping even when `stack` is present. */
     enabled?: boolean;
+  };
+
+  /**
+   * Release-ledger recording behavior (#597, epic #551). Auto-emitting a
+   * release record on a successful `chant run --components <name> --env
+   * <env>` deploy is ON by default — this is opt-**out**, not opt-in, per
+   * #597's "populate the ledger by construction." See {@link
+   * resolveAutoReleaseDisabled}.
+   */
+  release?: {
+    /** Set false to disable auto-emitting a release record after a successful component deploy project-wide. The `--no-release-record` CLI flag overrides this per-invocation. */
+    autoRecord?: boolean;
   };
 }
 
@@ -122,6 +137,18 @@ export function resolveOwnershipMarker(config: ChantConfig): OwnershipMarker | u
   const o = config.ownership;
   if (!o || !o.stack || o.enabled === false) return undefined;
   return { stack: o.stack, env: o.env };
+}
+
+/**
+ * Whether auto-emitting a release-ledger record after a successful `chant
+ * run --components` deploy should be skipped (#597). Opt-out, not opt-in:
+ * recording happens unless the CLI's `--no-release-record` flag was passed
+ * (`cliFlag`) or the project config sets `release.autoRecord: false` — the
+ * flag always wins for that one invocation, regardless of config.
+ */
+export function resolveAutoReleaseDisabled(config: ChantConfig, cliFlag?: boolean): boolean {
+  if (cliFlag) return true;
+  return config.release?.autoRecord === false;
 }
 
 /**

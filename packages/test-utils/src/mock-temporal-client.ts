@@ -47,6 +47,8 @@ export interface MockTemporalClientOptions {
   list?: MockWorkflowSummary[];
   /** If set, getHandle().describe() throws this error (simulates not-found / no cluster) */
   describeError?: Error;
+  /** Map of workflowId -> resolved value for getHandle(...).result() (e.g. a component workflow's `{ phaseOutputs, componentOutputs }`, #597). Defaults to `undefined` when unset. */
+  resultByWorkflowId?: Record<string, unknown>;
 }
 
 export interface RecordedCalls {
@@ -105,7 +107,7 @@ export function createMockTemporalClient(opts: MockTemporalClientOptions = {}): 
       calls.cancelCalls.push({ workflowId });
     },
     async result(): Promise<unknown> {
-      return undefined;
+      return opts.resultByWorkflowId?.[workflowId];
     },
   });
 

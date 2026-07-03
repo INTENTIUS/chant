@@ -20,6 +20,10 @@ The orchestrator is an [Op](/chant/guide/ops/), so it runs **local by default** 
 Temporal is required only for components whose composition includes a **gate** (a durable human-approval wait) or that need **durable crash-resume**. Schedules do **not** require it — a schedule externalizes to any native scheduler (CI `schedule:`, K8s CronJob, EventBridge). Graduation is per-component via one flag — `chant run --components <name> --temporal` compiles the component's composition to a Temporal workflow/worker (phases → workflow, capability steps → activities, `gate` → durable wait-for-signal, `onFailure`/rollback → saga compensation, mirroring `Temporal::Op` codegen) and runs it durably; the component definition does not change. See [`chant run`](/chant/cli/run/) and [Local vs Temporal](/chant/guide/local-vs-temporal/).
 </Aside>
 
+<Aside type="note" title="Release recording stays outside the workflow">
+On a successful deploy, `chant run --components` auto-emits a [release-ledger](/chant/components/observability/) record — always as a CLI post-run step, on both the local executor and `--temporal`, never inside the generated workflow itself. The workflow returns its final phase outputs so the CLI can read the published digest once the run reports `COMPLETED`; a ledger write is a non-deterministic side effect (git, network, wall-clock time) that has no business running as workflow code.
+</Aside>
+
 ## Generate mode
 
 The same declarations synthesize plain CI YAML through the [GitHub](/chant/lexicons/github/), [GitLab](/chant/lexicons/gitlab/), or [Forgejo](/chant/lexicons/forgejo/) lexicon. Pipeline files still exist, but nobody maintains them by hand, and a cross-cutting change is one edit to the generator. The generated YAML is a thin trigger and runner; the deploy logic stays in the component, not the YAML.

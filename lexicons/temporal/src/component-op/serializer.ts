@@ -129,6 +129,14 @@ function generateWorkflow(component: DriverComponent, options: SerializeComponen
     `const __env = ${JSON.stringify(env)};`,
     `const __vars: Record<string, unknown> = ${varsLiteral};`,
     "",
+    "// The workflow's final phaseOutputs/componentOutputs, returned so the CLI can",
+    "// read the run's published digest via handle.result() post-completion (#597) —",
+    "// see packages/core/src/components/auto-release.ts.",
+    "interface ComponentWorkflowResult {",
+    "  phaseOutputs: Record<string, Record<string, unknown>>;",
+    "  componentOutputs: Record<string, Record<string, unknown>>;",
+    "}",
+    "",
   ];
 
   if (allGates.length > 0) {
@@ -138,7 +146,7 @@ function generateWorkflow(component: DriverComponent, options: SerializeComponen
     lines.push("");
   }
 
-  lines.push(`export async function ${fnName}(): Promise<void> {`);
+  lines.push(`export async function ${fnName}(): Promise<ComponentWorkflowResult> {`);
   lines.push(`  upsertSearchAttributes({ ComponentName: [${JSON.stringify(component.name)}] });`);
   lines.push("");
   lines.push("  // phaseOutputs/componentOutputs mirror the local interpret driver's wiring");
@@ -271,6 +279,15 @@ function generateWorkflow(component: DriverComponent, options: SerializeComponen
   renderRollback(hasRollback ? component.rollback : undefined, "    ");
   lines.push("    throw __compErr;");
   lines.push("  }");
+  lines.push("");
+  lines.push("  // Returned so the CLI (chant run --components <name> --temporal, #597) can read");
+  lines.push("  // the promoted artifact's digest via handle.result() after a COMPLETED run, to");
+  lines.push("  // auto-emit a release-ledger record — never computed inside the CLI itself, since");
+  lines.push("  // phaseOutputs/componentOutputs are only ever produced here, deterministically,");
+  lines.push("  // from values this workflow already computed (mirrors runComponentDeploy's");
+  lines.push("  // return shape locally; adds no new non-determinism, just returns state that");
+  lines.push("  // already existed).");
+  lines.push("  return { phaseOutputs, componentOutputs };");
   lines.push("}");
   lines.push("");
 

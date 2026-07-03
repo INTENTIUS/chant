@@ -130,7 +130,7 @@ async function runComponent(
   component: DriverComponent,
   activities: Record<string, (...args: never[]) => unknown>,
   opts: { signal?: string } = {},
-): Promise<{ durationMs: number; failed: boolean }> {
+): Promise<{ durationMs: number; failed: boolean; result?: { phaseOutputs: Record<string, Record<string, unknown>>; componentOutputs: Record<string, Record<string, unknown>> } }> {
   const files = serializeComponent(component);
   const wfKey = Object.keys(files).find((k) => k.endsWith("/workflow.ts"))!;
   const wfPath = join(GEN_DIR, `${component.name}.workflow.ts`);
@@ -153,12 +153,13 @@ async function runComponent(
   if (opts.signal) await handle.signal(opts.signal);
 
   let failed = false;
-  await worker.runUntil(handle.result()).catch(() => { failed = true; });
+  let result: { phaseOutputs: Record<string, Record<string, unknown>>; componentOutputs: Record<string, Record<string, unknown>> } | undefined;
+  await worker.runUntil(handle.result()).then((r) => { result = r as typeof result; }).catch(() => { failed = true; });
 
   const desc = await handle.describe();
   const durationMs =
     desc.closeTime && desc.startTime ? desc.closeTime.getTime() - desc.startTime.getTime() : 0;
-  return { durationMs, failed };
+  return { durationMs, failed, result };
 }
 
 describe("component → Temporal runtime harness (#589)", () => {
@@ -177,9 +178,12 @@ describe("component → Temporal runtime harness (#589)", () => {
       "cfn-deploy": (input) => { order.push(`apply:${input.imageRef as string}`); return { ok: true }; },
     });
 
-    const { failed } = await runComponent(component, { runCapabilityStep, rollbackCapabilityStep });
+    const { failed, result } = await runComponent(component, { runCapabilityStep, rollbackCapabilityStep });
     expect(failed).toBe(false);
     expect(order).toEqual(["publish", "apply:sha256:abc123"]);
+    // (#597) the workflow returns its final phaseOutputs so the CLI can read the
+    // published digest via handle.result() and auto-emit a release record.
+    expect(result?.phaseOutputs.Publish).toEqual({ digest: "sha256:abc123" });
   }, 120_000);
 
   test("gate — the workflow waits for the approval signal, not the timeout", async () => {

@@ -110,6 +110,8 @@ export interface ParsedArgs {
   actor?: string;
   /** `chant components status <env> --compare-to <env>` (#568) — a second environment to cross-check the same component's recorded digest against. */
   compareTo?: string;
+  /** `chant run --components <name> --env <env> --no-release-record` (#597) — opt out of auto-emitting a release-ledger record after a successful component deploy. Default (flag omitted): recording is ON. Also settable project-wide via `chant.config.ts`'s `release.autoRecord: false`. */
+  noReleaseRecord?: boolean;
 }
 
 /**

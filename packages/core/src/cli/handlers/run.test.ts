@@ -18,9 +18,22 @@ const runComponentsMock = vi.fn();
 const resolveComponentTargetsMock = vi.fn();
 const findComponentGateMock = vi.fn();
 const loadComponentTemporalCodegenMock = vi.fn();
+const maybeRecordAutoReleaseMock = vi.fn();
 
 vi.mock("../../op/discover", () => ({ discoverOps: () => discoverOpsMock() }));
-vi.mock("../../config", () => ({ loadChantConfig: (...args: unknown[]) => loadChantConfigMock(...args) }));
+vi.mock("../../config", async () => {
+  const actual = await vi.importActual<typeof import("../../config")>("../../config");
+  return { ...actual, loadChantConfig: (...args: unknown[]) => loadChantConfigMock(...args) };
+});
+vi.mock("../../components/auto-release", () => ({
+  maybeRecordAutoRelease: (...args: unknown[]) => maybeRecordAutoReleaseMock(...args),
+  extractRunDigestFromPhaseOutputs: (phaseOutputs: Record<string, Record<string, unknown>> | undefined) => {
+    for (const output of Object.values(phaseOutputs ?? {})) {
+      if (output && typeof output === "object" && "digest" in output) return (output as { digest: string }).digest;
+    }
+    return undefined;
+  },
+}));
 vi.mock("./run-client", () => ({
   loadTemporalClient: () => loadTemporalClientMock(),
   connectionOptions: (profile: { address: string }) => ({ address: profile.address }),
@@ -597,6 +610,8 @@ describe("Temporal-only subcommand guards", () => {
 describe("runOp dispatcher: --components routes to runOpComponents", () => {
   beforeEach(() => {
     runComponentsMock.mockReset();
+    loadChantConfigMock.mockReset().mockResolvedValue({ config: {} });
+    maybeRecordAutoReleaseMock.mockReset().mockResolvedValue({ recorded: false, reason: "no-digest" });
   });
 
   test("runOp with --components dispatches to runComponents, not Op discovery", async () => {
@@ -616,6 +631,8 @@ describe("runOp dispatcher: --components routes to runOpComponents", () => {
 describe("runOpComponents", () => {
   beforeEach(() => {
     runComponentsMock.mockReset();
+    loadChantConfigMock.mockReset().mockResolvedValue({ config: {} });
+    maybeRecordAutoReleaseMock.mockReset().mockResolvedValue({ recorded: false, reason: "no-digest" });
   });
 
   test("no component name → exit 1 with hint", async () => {
@@ -744,6 +761,108 @@ describe("runOpComponents", () => {
     expect(out).toContain('gate "release-approval"');
     expect(out).toContain("--temporal");
   });
+
+  // ── auto-release recording post-run (#597) ────────────────────────────────
+
+  describe("auto-release recording", () => {
+    test("a successful run → maybeRecordAutoRelease is called once per successful component, with the run's records", async () => {
+      runComponentsMock.mockResolvedValue({
+        success: true,
+        selected: ["svc"],
+        run: {
+          order: ["svc"],
+          waves: [["svc"]],
+          results: [{ component: "svc", ok: true, records: [{ component: "svc", phase: "Publish", kind: "publish-image", status: "ok", durationMs: 5, output: { digest: "sha256:abc" } }] }],
+          ok: true,
+        },
+      });
+      maybeRecordAutoReleaseMock.mockResolvedValue({ recorded: true, commit: "a".repeat(40), record: { version: 1, component: "svc", env: "staging", digest: "sha256:abc", gitSha: "x", runId: "local-1", timestamp: "t", actor: "a" } });
+      vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+
+      const exit = await runOpComponents({ args: makeArgs({ path: "svc", env: "staging", temporal: false }), plugins: [], serializers: [] });
+
+      expect(exit).toBe(0);
+      expect(maybeRecordAutoReleaseMock).toHaveBeenCalledTimes(1);
+      const [runInfo, options] = maybeRecordAutoReleaseMock.mock.calls[0];
+      expect(runInfo).toMatchObject({ component: "svc", env: "staging", success: true });
+      expect(runInfo.records).toEqual([{ component: "svc", phase: "Publish", kind: "publish-image", status: "ok", durationMs: 5, output: { digest: "sha256:abc" } }]);
+      expect(options).toMatchObject({ disabled: false });
+      vi.restoreAllMocks();
+    });
+
+    test("a failed run → maybeRecordAutoRelease is never called (failed components write nothing)", async () => {
+      runComponentsMock.mockResolvedValue({
+        success: false,
+        selected: ["svc"],
+        run: {
+          order: ["svc"],
+          waves: [["svc"]],
+          results: [{ component: "svc", ok: false, records: [{ component: "svc", phase: "Apply", kind: "cfn-deploy", status: "fail", durationMs: 5, error: "boom" }] }],
+          ok: false,
+          failedComponent: "svc",
+        },
+      });
+      vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+
+      const exit = await runOpComponents({ args: makeArgs({ path: "svc", temporal: false }), plugins: [], serializers: [] });
+
+      expect(exit).toBe(1);
+      expect(maybeRecordAutoReleaseMock).not.toHaveBeenCalled();
+      vi.restoreAllMocks();
+    });
+
+    test("--no-release-record → maybeRecordAutoRelease is called with disabled: true", async () => {
+      runComponentsMock.mockResolvedValue({
+        success: true,
+        selected: ["svc"],
+        run: { order: ["svc"], waves: [["svc"]], results: [{ component: "svc", ok: true, records: [] }], ok: true },
+      });
+      maybeRecordAutoReleaseMock.mockResolvedValue({ recorded: false, reason: "opted-out" });
+      vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+
+      const exit = await runOpComponents({ args: makeArgs({ path: "svc", temporal: false, noReleaseRecord: true }), plugins: [], serializers: [] });
+
+      expect(exit).toBe(0);
+      expect(maybeRecordAutoReleaseMock).toHaveBeenCalledTimes(1);
+      const [, options] = maybeRecordAutoReleaseMock.mock.calls[0];
+      expect(options).toMatchObject({ disabled: true });
+      vi.restoreAllMocks();
+    });
+
+    test("chant.config.ts release.autoRecord: false → disabled without the CLI flag", async () => {
+      runComponentsMock.mockResolvedValue({
+        success: true,
+        selected: ["svc"],
+        run: { order: ["svc"], waves: [["svc"]], results: [{ component: "svc", ok: true, records: [] }], ok: true },
+      });
+      loadChantConfigMock.mockResolvedValue({ config: { release: { autoRecord: false } } });
+      maybeRecordAutoReleaseMock.mockResolvedValue({ recorded: false, reason: "opted-out" });
+      vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+
+      await runOpComponents({ args: makeArgs({ path: "svc", temporal: false }), plugins: [], serializers: [] });
+
+      const [, options] = maybeRecordAutoReleaseMock.mock.calls[0];
+      expect(options).toMatchObject({ disabled: true });
+      vi.restoreAllMocks();
+    });
+
+    test("a release-write error is surfaced as a warning but does not change the exit code", async () => {
+      runComponentsMock.mockResolvedValue({
+        success: true,
+        selected: ["svc"],
+        run: { order: ["svc"], waves: [["svc"]], results: [{ component: "svc", ok: true, records: [] }], ok: true },
+      });
+      maybeRecordAutoReleaseMock.mockResolvedValue({ recorded: false, reason: "error", error: "ledger push failed" });
+      const stderr = makeStderrSpy();
+      vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+
+      const exit = await runOpComponents({ args: makeArgs({ path: "svc", temporal: false }), plugins: [], serializers: [] });
+
+      expect(exit).toBe(0);
+      expect(stderr.join("\n")).toContain("ledger push failed");
+      vi.restoreAllMocks();
+    });
+  });
 });
 
 // ── chant run --components <name> --temporal (#589) ─────────────────────────
@@ -759,6 +878,7 @@ describe("runOpComponents: --temporal routes to the durable path", () => {
     spawnChildMock.mockReset();
     existsSyncMock.mockReset();
     findComponentGateMock.mockReturnValue(undefined);
+    maybeRecordAutoReleaseMock.mockReset().mockResolvedValue({ recorded: false, reason: "no-digest" });
   });
 
   test("all --temporal → exit 1, not supported", async () => {
@@ -866,8 +986,96 @@ describe("runOpComponents: --temporal routes to the durable path", () => {
 
       expect(exit).toBe(1);
       expect(proc.kill).toHaveBeenCalled();
+      // (#597) a failed workflow never reaches auto-release recording.
+      expect(maybeRecordAutoReleaseMock).not.toHaveBeenCalled();
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  // ── auto-release recording post-run (#597) ────────────────────────────────
+
+  describe("auto-release recording", () => {
+    async function runCompletedWorkflow(overrides: Partial<ParsedArgs> = {}, resultByWorkflowId?: unknown) {
+      resolveComponentTargetsMock.mockResolvedValue({
+        success: true,
+        targets: [{ name: "gated-svc", dependsOn: [], deploy: [] }],
+      });
+      loadChantConfigMock.mockResolvedValue({ config: {} });
+      resolveProfileMock.mockReturnValue({ address: "localhost:7233", namespace: "default", taskQueue: "q" });
+      loadComponentTemporalCodegenMock.mockResolvedValue({
+        serializeComponent: () => ({ "components/gated-svc/worker.ts": "// worker" }),
+        componentWorkflowFnName: (name: string) => `${name}ComponentWorkflow`,
+      });
+      const mockClient = createMockTemporalClient({
+        describeByWorkflowId: {
+          "chant-component-gated-svc": {
+            workflowId: "chant-component-gated-svc", runId: "r1",
+            status: { name: "COMPLETED" }, startTime: new Date(),
+            taskQueue: "gated-svc", type: { name: "gatedSvcComponentWorkflow" },
+          },
+        },
+        historyByWorkflowId: { "chant-component-gated-svc": [] },
+        resultByWorkflowId: resultByWorkflowId ? { "chant-component-gated-svc": resultByWorkflowId } : undefined,
+      });
+      setupTemporalClient(mockClient);
+      const { proc } = makeFakeChildProcess();
+      spawnChildMock.mockReturnValue(proc);
+      vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+
+      const promise = runOpComponents({ args: makeArgs({ path: "gated-svc", temporal: true, ...overrides }), plugins: [], serializers: [] });
+      await vi.advanceTimersByTimeAsync(5000);
+      const exit = await promise;
+      return { exit };
+    }
+
+    test("a COMPLETED workflow → reads the digest via handle.result() and calls maybeRecordAutoRelease once", async () => {
+      vi.useFakeTimers();
+      try {
+        maybeRecordAutoReleaseMock.mockResolvedValue({
+          recorded: true, commit: "a".repeat(40),
+          record: { version: 1, component: "gated-svc", env: "staging", digest: "sha256:temporal-digest", gitSha: "x", runId: "r1", timestamp: "t", actor: "a" },
+        });
+
+        const { exit } = await runCompletedWorkflow({ env: "staging" }, { phaseOutputs: { Publish: { digest: "sha256:temporal-digest" } }, componentOutputs: {} });
+
+        expect(exit).toBe(0);
+        expect(maybeRecordAutoReleaseMock).toHaveBeenCalledTimes(1);
+        const [runInfo, options] = maybeRecordAutoReleaseMock.mock.calls[0];
+        expect(runInfo).toMatchObject({ component: "gated-svc", env: "staging", success: true, digest: "sha256:temporal-digest", runId: "r1" });
+        expect(options).toMatchObject({ disabled: false });
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    test("--no-release-record → disabled: true is threaded through on the Temporal path too", async () => {
+      vi.useFakeTimers();
+      try {
+        maybeRecordAutoReleaseMock.mockResolvedValue({ recorded: false, reason: "opted-out" });
+
+        await runCompletedWorkflow({ noReleaseRecord: true });
+
+        const [, options] = maybeRecordAutoReleaseMock.mock.calls[0];
+        expect(options).toMatchObject({ disabled: true });
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    test("no digest in the workflow result → maybeRecordAutoRelease still called, with digest: undefined", async () => {
+      vi.useFakeTimers();
+      try {
+        maybeRecordAutoReleaseMock.mockResolvedValue({ recorded: false, reason: "no-digest" });
+
+        const { exit } = await runCompletedWorkflow({}, { phaseOutputs: {}, componentOutputs: {} });
+
+        expect(exit).toBe(0);
+        const [runInfo] = maybeRecordAutoReleaseMock.mock.calls[0];
+        expect(runInfo.digest).toBeUndefined();
+      } finally {
+        vi.useRealTimers();
+      }
+    });
   });
 });

@@ -2,7 +2,7 @@ import { resolve, join, dirname } from "node:path";
 import { existsSync, writeFileSync, mkdirSync } from "node:fs";
 import { createConnection } from "node:net";
 import { spawn as spawnChild, type ChildProcess } from "node:child_process";
-import { loadChantConfig } from "../../config";
+import { loadChantConfig, resolveAutoReleaseDisabled } from "../../config";
 import { discoverOps } from "../../op/discover";
 import { loadActivities, loadProfiles } from "../../op/activity-registry";
 import { runOpLocally, findGate, LocalGateUnsupportedError, OpRunFailure } from "../../op/local-executor";
@@ -22,6 +22,8 @@ import { generateReport, writeReport } from "./run-report";
 import { runComponents, resolveComponentTargets, findComponentGate } from "../../components/cli-support";
 import { renderDriverHuman, renderDriverJson } from "../../components/driver-output";
 import { loadComponentTemporalCodegen } from "../../components/temporal-codegen-loader";
+import { maybeRecordAutoRelease, extractRunDigestFromPhaseOutputs } from "../../components/auto-release";
+import type { DriverComponentResult } from "../../components/driver";
 
 function kebabToCamel(s: string): string {
   return s.replace(/-([a-z])/g, (_, c: string) => c.toUpperCase());
@@ -341,6 +343,54 @@ export async function runOp(ctx: CommandContext): Promise<number> {
   return ctx.args.temporal ? runOpTemporal(ctx) : runOpLocal(ctx);
 }
 
+// ── Auto-release recording post-run (#597) ──────────────────────────────────
+
+/**
+ * After a successful `chant run --components` (local executor), auto-emit
+ * one release record per successfully deployed component that published a
+ * digest-bearing artifact — reusing `maybeRecordAutoRelease`
+ * (../../components/auto-release.ts), which itself reuses
+ * `../../lifecycle/release-ledger.ts`'s `appendReleaseRecord` verbatim. Never
+ * called on a failed run: both call sites below only reach this after
+ * confirming `result.success`/`componentResult.ok`, so a failed deploy writes
+ * nothing, by construction.
+ *
+ * Best-effort and silent on the happy path: a skip (opted out, no digest, no
+ * actor) is unremarkable and not printed; only an actual write failure
+ * (`reason: "error"`) is surfaced, as a warning — never a nonzero exit, since
+ * the deploy itself already succeeded and a ledger-write hiccup must not
+ * retroactively fail it.
+ */
+async function recordAutoReleasesForRun(
+  results: DriverComponentResult[],
+  env: string,
+  runId: string,
+  disabled: boolean,
+): Promise<void> {
+  for (const componentResult of results) {
+    if (!componentResult.ok) continue;
+    const outcome = await maybeRecordAutoRelease(
+      {
+        component: componentResult.component,
+        env,
+        success: true,
+        records: componentResult.records,
+        runId,
+      },
+      { disabled },
+    );
+    if (!outcome.recorded && outcome.reason === "error") {
+      console.error(formatWarning({
+        message: `release record for "${componentResult.component}"@${env} was not recorded: ${outcome.error}`,
+      }));
+    } else if (outcome.recorded) {
+      console.error(formatInfo(
+        `Recorded release: ${formatBold(componentResult.component)}@${env} -> ${outcome.record.digest} (commit ${outcome.commit.slice(0, 7)})`,
+      ));
+    }
+  }
+}
+
 // ── chant run --components <name|all> ────────────────────────────────────────
 
 /**
@@ -366,6 +416,14 @@ export async function runOp(ctx: CommandContext): Promise<number> {
  * out of scope for #589: coordinating N durable workflows' cross-component
  * `dependsOn` durably is a follow-up, not part of "compile a component's
  * `deploy` composition into a durable orchestrator").
+ *
+ * On a successful run, auto-emits one release-ledger record per component
+ * that published a digest (#597, `recordAutoReleasesForRun` above) — a
+ * *post-run* CLI step, not a change to the driver itself (`../../components/
+ * driver.ts` stays capability-agnostic and knows nothing about the ledger).
+ * Opt out with `--no-release-record` or `chant.config.ts`'s
+ * `release.autoRecord: false`; the default is ON. A failed run never reaches
+ * this step, so it writes nothing.
  */
 export async function runOpComponents(ctx: CommandContext): Promise<number> {
   const selector = ctx.args.path;
@@ -379,6 +437,7 @@ export async function runOpComponents(ctx: CommandContext): Promise<number> {
 
   if (ctx.args.temporal) return runComponentTemporal(ctx, selector);
 
+  const env = ctx.args.env ?? "local";
   const result = await runComponents(resolve("."), selector, { env: ctx.args.env });
 
   if (result.gateUnsupported) {
@@ -398,6 +457,12 @@ export async function runOpComponents(ctx: CommandContext): Promise<number> {
 
   if (result.run) {
     if (ctx.args.json) renderDriverJson(result.run); else renderDriverHuman(result.run);
+  }
+
+  if (result.success && result.run) {
+    const { config } = await loadChantConfig(resolve(".")).catch(() => ({ config: {} }));
+    const disabled = resolveAutoReleaseDisabled(config, ctx.args.noReleaseRecord);
+    await recordAutoReleasesForRun(result.run.results, env, `local-${Date.now()}`, disabled);
   }
 
   return result.success ? 0 : 1;
@@ -564,6 +629,36 @@ async function runComponentTemporal(ctx: CommandContext, selector: string): Prom
     ? formatSuccess(`Component "${component.name}" completed successfully.`)
     : formatError({ message: `Component "${component.name}" ended with status: ${status}` }),
   );
+
+  if (status === "COMPLETED") {
+    // (#597) Auto-emit a release record post-run — never inside the generated
+    // workflow (determinism). The workflow returns its final phaseOutputs
+    // (see serializeComponent's codegen) precisely so this read is possible;
+    // handle.result() on an already-COMPLETED workflow is a plain historical
+    // read, not a new activity/side effect.
+    let digest: string | undefined;
+    try {
+      const workflowResult = await handle.result() as { phaseOutputs?: Record<string, Record<string, unknown>> } | undefined;
+      digest = extractRunDigestFromPhaseOutputs(workflowResult?.phaseOutputs);
+    } catch {
+      digest = undefined;
+    }
+
+    const { config } = await loadChantConfig(projectPath).catch(() => ({ config: {} }));
+    const disabled = resolveAutoReleaseDisabled(config, ctx.args.noReleaseRecord);
+    const env = ctx.args.env ?? "local";
+    const outcome = await maybeRecordAutoRelease(
+      { component: component.name, env, success: true, digest, runId: finalDesc.runId },
+      { disabled },
+    );
+    if (!outcome.recorded && outcome.reason === "error") {
+      console.error(formatWarning({ message: `release record for "${component.name}"@${env} was not recorded: ${outcome.error}` }));
+    } else if (outcome.recorded) {
+      console.error(formatInfo(
+        `Recorded release: ${formatBold(component.name)}@${env} -> ${outcome.record.digest} (commit ${outcome.commit.slice(0, 7)})`,
+      ));
+    }
+  }
 
   return status === "COMPLETED" ? 0 : 1;
 }

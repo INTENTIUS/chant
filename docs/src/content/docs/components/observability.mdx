@@ -31,6 +31,10 @@ chant components release prod \
 
 `--git-sha` defaults to the current `HEAD`, and `--run-id`/`--actor` fall back to common CI environment variables (`GITHUB_RUN_ID`/`CI_PIPELINE_ID`, `GITHUB_ACTOR`/`GITLAB_USER_LOGIN`/`USER`) — but `--actor` has no silent placeholder fallback; an unattributed release record defeats the point of a ledger, so the command fails rather than guess.
 
+<Aside type="tip" title="Populated by construction">
+`chant components release` is the standalone, explicit way to append a record — but `chant run --components <name> --env <env>` (both local and `--temporal`) auto-emits one on every successful deploy that published a digest, so the ledger fills in without a separate step. Opt out with `--no-release-record` or `chant.config.ts`'s `release.autoRecord: false`; see [`chant run`](/chant/cli/run/#auto-recorded-releases). The auto-recorded path is a CLI post-run step in both cases — never inside the Temporal workflow, which must stay deterministic.
+</Aside>
+
 <Aside type="caution" title="Append-only, never rewritten">
 A release record is never edited or replaced in place. Recording a new deploy appends a new line; it never rewrites a previous one. This is what makes "which build was in staging last Tuesday" answerable months later, even after staging has moved on through a dozen newer digests — the same reason the timestamp is always a real `new Date()` taken at record time by the CLI, never threaded in from elsewhere.
 </Aside>

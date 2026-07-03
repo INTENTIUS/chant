@@ -116,7 +116,7 @@ describe("serializeComponent()", () => {
       const component: DriverComponent = { name: "3d-viewer", dependsOn: [], deploy: [] };
       const wf = serializeComponent(component)["components/3d-viewer/workflow.ts"];
       // Must not start with a digit — "3dViewerComponentWorkflow" is a syntax error.
-      expect(wf).toMatch(/export async function [A-Za-z_$][A-Za-z0-9_$]*\(\): Promise<void>/);
+      expect(wf).toMatch(/export async function [A-Za-z_$][A-Za-z0-9_$]*\(\): Promise<ComponentWorkflowResult>/);
       expect(componentWorkflowFnName("3d-viewer")).toMatch(/^[A-Za-z_$]/);
     });
 
