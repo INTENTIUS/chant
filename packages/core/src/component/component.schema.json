@@ -1,0 +1,229 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://intentius.io/chant/schemas/component/v1/component.schema.json",
+  "title": "Component",
+  "description": "The portable JSON contract for a chant component — a releasable unit (service, infra, or producer/library) declared as data. This document is the substrate: chant's TypeScript authoring form projects to it, and a non-chant or legacy component may hand-write it directly. See docs/src/content/docs/components/component-contract.mdx and composition-and-wiring.mdx, which are authoritative over this schema.",
+  "type": "object",
+  "required": ["name", "dependsOn", "deploy"],
+  "additionalProperties": false,
+  "properties": {
+    "$schema": {
+      "type": "string",
+      "description": "Optional self-reference to this schema's $id, for editor tooling and validators."
+    },
+    "contractVersion": {
+      "type": "string",
+      "const": "1.0.0",
+      "description": "Version of the Component contract this document conforms to. Versioned independently of chant's own release train."
+    },
+    "name": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$",
+      "description": "Kebab-case component identifier, unique within the project. Used as the node name in the dependency graph and as the `@<component>` prefix in cross-component wiring references."
+    },
+    "dependsOn": {
+      "type": "array",
+      "description": "Other component names that must complete before this one runs. Ordering only — no logic. Resolved by `chant graph --stacks` into order and parallel-safe waves.",
+      "items": { "type": "string", "minLength": 1 },
+      "default": []
+    },
+    "build": { "$ref": "#/$defs/BuildSpec" },
+    "deploy": {
+      "type": "array",
+      "description": "The component's own composition over shared capabilities: an ordered list of phases. verify and rollback fall out of the capabilities used (e.g. a Verify phase, or a capability's own compensation) rather than being separate top-level fields.",
+      "items": { "$ref": "#/$defs/Phase" },
+      "minItems": 1
+    },
+    "verify": {
+      "type": "array",
+      "description": "Optional standalone verify phases, for components that separate verification from the main deploy composition (e.g. re-run as a health check outside a deploy). Most components instead include a Verify phase inline in `deploy`.",
+      "items": { "$ref": "#/$defs/Phase" }
+    },
+    "rollback": {
+      "type": "array",
+      "description": "Optional explicit compensation phases, executed in reverse order on terminal failure of `deploy` (a saga). Equivalent in shape to an Op's `onFailure`. Most rollback instead falls out of per-step `rollback`/compensation declared by the capabilities used; this field is for a component-level override or an escape-hatch capability with no native compensation.",
+      "items": { "$ref": "#/$defs/Phase" }
+    },
+    "archetype": {
+      "$ref": "#/$defs/Archetype",
+      "description": "Optional explicit archetype hint. When omitted, the archetype is inferred structurally from which phases/capability families are present (see the archetype table in component-contract.mdx)."
+    }
+  },
+  "$defs": {
+    "Archetype": {
+      "type": "string",
+      "enum": ["service", "infra", "producer-library"],
+      "description": "The three first-class shapes `deploy` can take. service: build -> publish -> apply -> verify (e.g. an ECS service behind an ALB). infra: apply -> verify, no build (e.g. a DynamoDB table, an EMR cluster). producer-library: build -> publish only, no service apply — emits an artifact other components consume (e.g. a JAR published to S3 for EMR)."
+    },
+
+    "BuildSpec": {
+      "type": "object",
+      "description": "Optional: source -> BuildArchive. Omitted entirely for config-only / infra components that apply existing templates with no build step.",
+      "required": ["kind"],
+      "properties": {
+        "kind": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Build capability verb, keyed by artifact type, e.g. \"docker-build\", \"zip-package\", \"jvm-build\". Not a closed enum — the capability registry is a plugin registry."
+        },
+        "context": {
+          "type": "string",
+          "description": "Build context path (e.g. a Docker build context directory)."
+        },
+        "into": {
+          "type": "string",
+          "const": "archive",
+          "description": "Build output always lands in the self-contained BuildArchive; this field documents that destination explicitly in the JSON projection."
+        }
+      },
+      "additionalProperties": true
+    },
+
+    "Phase": {
+      "type": "object",
+      "description": "One named phase of a deploy composition, run in order relative to sibling phases. Steps within a phase run sequentially unless `parallel` is set.",
+      "required": ["phase", "steps"],
+      "additionalProperties": false,
+      "properties": {
+        "phase": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Phase display name (e.g. \"Publish\", \"Apply\", \"Verify\", \"Seed\", \"Node 1\"). Also the namespace prior-step wiring references key off (`@Phase.field`)."
+        },
+        "steps": {
+          "type": "array",
+          "description": "Ordered steps in this phase. A step may itself be a Step (a capability invocation), a Gate, or a nested Phase — a fan-out unit is itself a mini-composition (see composition-and-wiring.mdx).",
+          "items": {
+            "anyOf": [
+              { "$ref": "#/$defs/Step" },
+              { "$ref": "#/$defs/Gate" },
+              { "$ref": "#/$defs/Phase" }
+            ]
+          },
+          "minItems": 1
+        },
+        "parallel": {
+          "type": "boolean",
+          "default": false,
+          "description": "Run all steps in this phase concurrently instead of sequentially."
+        },
+        "onFailure": {
+          "type": "array",
+          "description": "Compensation phases for this phase, executed in reverse order on failure (saga rollback). Capabilities that declare their own compensation get this for free; this field is for an explicit override.",
+          "items": { "$ref": "#/$defs/Phase" }
+        }
+      }
+    },
+
+    "Step": {
+      "type": "object",
+      "description": "A single capability invocation — the leaf unit of a composition. `kind` selects the capability (a verb, e.g. \"cfn-deploy\", \"publish-image\", \"ecs-update-service\"); the remaining properties are that capability's typed input. Capability-specific properties are open (the capability interface itself is out of scope for this schema — see #554); the handful of cross-cutting properties below are typed as WiringValue because they commonly carry a reference rather than a literal. `kind: \"gate\"` is reserved for the Gate step shape below, not a capability.",
+      "required": ["kind"],
+      "additionalProperties": true,
+      "properties": {
+        "kind": {
+          "type": "string",
+          "minLength": 1,
+          "not": { "const": "gate" },
+          "description": "Capability verb this step dispatches to, e.g. \"docker-build\", \"publish-image\", \"cfn-deploy\", \"ecs-update-service\", \"emr-start-job-run\", \"code-deploy\", \"wait-steady-state\", \"health-gate\", \"shell\". Not a closed enum — the capability registry is a plugin registry; new verbs are added without changing this schema."
+        },
+        "imageRef": {
+          "$ref": "#/$defs/WiringValue",
+          "description": "Reference to a published image digest, typically a prior-step reference like \"@Publish.digest\"."
+        },
+        "jar": {
+          "$ref": "#/$defs/WiringValue",
+          "description": "Reference to a published JAR/artifact location, typically a cross-component artifact reference like \"@jar-lib.publish.uri\"."
+        },
+        "revision": {
+          "$ref": "#/$defs/WiringValue",
+          "description": "Reference to a published revision/bundle location for host/code-delivery capabilities (e.g. code-deploy)."
+        },
+        "inputs": {
+          "type": "object",
+          "description": "Named inputs passed into an apply step, each of which may be a literal or any WiringValue reference — most commonly a stackOutput reference imported from another component's stack.",
+          "additionalProperties": { "$ref": "#/$defs/WiringValue" }
+        }
+      }
+    },
+
+    "Gate": {
+      "type": "object",
+      "description": "Pauses the composition for an external signal (typically human approval) before continuing. A gate in a component's composition requires the durable (Temporal) execution backend; it cannot run on the local in-process executor.",
+      "required": ["kind", "signalName"],
+      "additionalProperties": false,
+      "properties": {
+        "kind": { "type": "string", "const": "gate" },
+        "signalName": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Signal name the generated workflow waits for before continuing."
+        },
+        "timeout": {
+          "type": "string",
+          "description": "Duration string bounding the wait, e.g. \"48h\". Default: \"48h\"."
+        },
+        "description": {
+          "type": "string",
+          "description": "Human-readable description of the action required to unblock this gate."
+        }
+      }
+    },
+
+    "WiringValue": {
+      "description": "A string value that is either a literal or one of the three reference forms components use to wire to configuration, prior steps, cross-stack outputs, or cross-component artifacts. All forms are resolved by the graph (`chant graph --stacks`), never by orchestrator code.",
+      "oneOf": [
+        { "type": "string", "not": { "pattern": "^(\\$env\\.|@)" } },
+        { "$ref": "#/$defs/EnvReference" },
+        { "$ref": "#/$defs/PriorStepReference" },
+        { "$ref": "#/$defs/ComponentArtifactReference" },
+        { "$ref": "#/$defs/StackOutputReference" }
+      ]
+    },
+
+    "EnvReference": {
+      "type": "string",
+      "pattern": "^\\$env\\.[A-Za-z0-9_]+(\\.[A-Za-z0-9_]+)*$",
+      "description": "Reference to the current deploy environment's config, e.g. \"$env.registry\", \"$env.cluster\"."
+    },
+
+    "PriorStepReference": {
+      "type": "string",
+      "pattern": "^@[A-Za-z0-9_ ]+\\.[A-Za-z0-9_]+(\\.[A-Za-z0-9_]+)*$",
+      "description": "Reference to a prior step's output within the same component, addressed by phase name, e.g. \"@Publish.digest\", \"@Submit.runId\". Does not contain a dot before the phase name, distinguishing it from a cross-component reference (\"@<component>.publish...\")."
+    },
+
+    "ComponentArtifactReference": {
+      "type": "string",
+      "pattern": "^@[a-z0-9]+(-[a-z0-9]+)*\\.publish\\.(uri|digest|key)$",
+      "description": "Reference to another component's published artifact output, e.g. \"@jar-lib.publish.uri\", \"@search-service.publish.digest\". The referenced component must appear in this component's dependsOn; the graph resolves the reference into this step, never the orchestrator."
+    },
+
+    "StackOutputReference": {
+      "type": "object",
+      "description": "Reference to a cross-stack (CloudFormation/ARM/...) output exported by another stack, resolved by the graph the same way `stackOutput()` is resolved in the TypeScript authoring form. Replaces a `describe-stacks | jq` pipeline step.",
+      "required": ["stackOutput"],
+      "additionalProperties": false,
+      "properties": {
+        "stackOutput": {
+          "type": "object",
+          "required": ["stack", "name"],
+          "additionalProperties": false,
+          "properties": {
+            "stack": {
+              "type": "string",
+              "minLength": 1,
+              "description": "Name of the exporting component/stack, e.g. \"shared-alb\"."
+            },
+            "name": {
+              "type": "string",
+              "minLength": 1,
+              "description": "Name of the exported output, e.g. \"ListenerArn\", \"ClusterArn\"."
+            }
+          }
+        }
+      }
+    }
+  }
+}

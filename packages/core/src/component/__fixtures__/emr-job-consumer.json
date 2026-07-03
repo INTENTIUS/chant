@@ -1,0 +1,25 @@
+{
+  "$schema": "https://intentius.io/chant/schemas/component/v1/component.schema.json",
+  "contractVersion": "1.0.0",
+  "name": "emr-job",
+  "archetype": "infra",
+  "dependsOn": ["jar-lib"],
+  "deploy": [
+    {
+      "phase": "Submit",
+      "steps": [
+        {
+          "kind": "emr-start-job-run",
+          "jar": "@jar-lib.publish.uri",
+          "args": ["--input", "$env.inputPath", "--output", "$env.outputPath"]
+        }
+      ]
+    },
+    {
+      "phase": "Verify",
+      "steps": [
+        { "kind": "wait-job", "runId": "@Submit.runId" }
+      ]
+    }
+  ]
+}

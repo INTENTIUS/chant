@@ -1,0 +1,29 @@
+{
+  "$schema": "https://intentius.io/chant/schemas/component/v1/component.schema.json",
+  "contractVersion": "1.0.0",
+  "name": "monitoring-host",
+  "archetype": "service",
+  "dependsOn": [],
+  "build": { "kind": "docker-build", "context": ".", "into": "archive" },
+  "deploy": [
+    {
+      "phase": "Publish",
+      "steps": [
+        { "kind": "load-image-on-host", "from": "archive", "host": "$env.host" }
+      ]
+    },
+    {
+      "phase": "Apply",
+      "steps": [
+        { "kind": "copy-to-host", "from": "archive:compose.yaml", "to": "/opt/monitoring/compose.yaml", "host": "$env.host" },
+        { "kind": "remote-exec", "host": "$env.host", "command": "docker compose -f /opt/monitoring/compose.yaml up -d" }
+      ]
+    },
+    {
+      "phase": "Verify",
+      "steps": [
+        { "kind": "wait-endpoint", "host": "$env.host", "path": "/-/healthy", "port": 9090 }
+      ]
+    }
+  ]
+}

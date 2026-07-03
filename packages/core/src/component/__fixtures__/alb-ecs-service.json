@@ -1,0 +1,51 @@
+{
+  "$schema": "https://intentius.io/chant/schemas/component/v1/component.schema.json",
+  "contractVersion": "1.0.0",
+  "name": "search-service",
+  "archetype": "service",
+  "dependsOn": ["shared-alb"],
+  "build": { "kind": "docker-build", "context": ".", "into": "archive" },
+  "deploy": [
+    {
+      "phase": "Publish",
+      "steps": [
+        { "kind": "publish-image", "from": "archive", "to": "$env.registry" }
+      ]
+    },
+    {
+      "phase": "Apply",
+      "steps": [
+        {
+          "kind": "cfn-deploy",
+          "template": "archive:search.template.json",
+          "imageRef": "@Publish.digest",
+          "inputs": {
+            "listenerArn": { "stackOutput": { "stack": "shared-alb", "name": "ListenerArn" } },
+            "clusterArn": { "stackOutput": { "stack": "shared-alb", "name": "ClusterArn" } },
+            "subnets": { "stackOutput": { "stack": "shared-alb", "name": "Subnets" } }
+          }
+        },
+        {
+          "kind": "ecs-update-service",
+          "cluster": "$env.cluster",
+          "service": "search"
+        }
+      ]
+    },
+    {
+      "phase": "Verify",
+      "steps": [
+        { "kind": "wait-steady-state", "service": "search" },
+        { "kind": "health-gate", "path": "/healthz" }
+      ]
+    }
+  ],
+  "rollback": [
+    {
+      "phase": "Rollback",
+      "steps": [
+        { "kind": "rollback-previous", "service": "search", "cluster": "$env.cluster" }
+      ]
+    }
+  ]
+}
