@@ -509,10 +509,18 @@ export async function lexiconUpgrade(args: LexiconUpgradeArgs): Promise<LexiconU
 
   const title = upgradePrTitle(lexicon, from, to);
 
-  if (mode === "report") {
+  // #546: rolling lexicons have no version pin, so a "pull-request" would only
+  // refresh the baseline snapshot — low signal, no build-output change. Surface
+  // rolling drift as an issue instead; re-baselining stays a deliberate
+  // maintainer action (`chant dev surface-diff <lexicon> --update-snapshot`).
+  // Pinned lexicons keep opening version-bump PRs.
+  const effectiveMode: LexiconUpgradeMode =
+    mode === "pull-request" && isRolling(lexicon) ? "issue" : mode;
+
+  if (effectiveMode === "report") {
     return {
       lexicon,
-      mode,
+      mode: effectiveMode,
       hasUpgrade: true,
       deltaText,
       semverLabel,
@@ -521,13 +529,13 @@ export async function lexiconUpgrade(args: LexiconUpgradeArgs): Promise<LexiconU
     };
   }
 
-  if (mode === "issue") {
+  if (effectiveMode === "issue") {
     const { stdout } = await gh(
       `gh issue create --title ${shellQuote(title)} --body ${shellQuote(summary)}`,
     );
     return {
       lexicon,
-      mode,
+      mode: effectiveMode,
       hasUpgrade: true,
       deltaText,
       semverLabel,
