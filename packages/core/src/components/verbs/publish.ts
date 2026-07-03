@@ -13,41 +13,66 @@
  * `publish-image` is a real implementation (#557, epic #551): it loads the
  * archived image tarball, tags it for the destination registry, logs in via
  * ECR, and pushes — promoting by digest, per the epic's build-once invariant.
- * `load-image-on-host`/`publish-artifact` are non-AWS-leaf/non-pilot verbs and
- * stay typed stubs — out of scope for #557; see ../capability.ts for the "no
- * cloud implementation yet" contract.
+ *
+ * `load-image-on-host` is a real implementation (#564, epic #551 "4. Build
+ * archive + deferred publish"): it copies the archived tarball onto a host
+ * and runs `docker load` there via the injected `CloudExecutor.host` — no
+ * registry in the path at all. Both backends promote **by digest**, never
+ * rebuilding: the bytes they move are exactly what `docker-build` produced
+ * into the archive (see ./build-archive.ts). `selectPublishBackend` below is
+ * the per-environment choice between them — env config, not a pipeline fork,
+ * per docs/components/build-archive.mdx#backend-selection-is-per-environment.
+ *
+ * `publish-artifact` remains a non-AWS-leaf/non-pilot verb and stays a typed
+ * stub — out of scope for #557/#564; see ../capability.ts for the "no cloud
+ * implementation yet" contract.
  */
 
 import type { Capability } from "../capability";
 import { stubCapability } from "./stub";
 import { defaultCloudExecutor, type CloudExecutor } from "./cloud-executor";
+import { archiveRelativePath } from "./build-archive";
 
 // ── shared backend interface ─────────────────────────────────────────────────
 
 /**
- * Common shape both image-publish backends satisfy: promote the image bytes
- * held in the build archive to wherever the deploy target can consume them,
- * and return the identity the apply step references.
+ * Common input shape both image-publish backends accept: promote the image
+ * bytes at archive path `from` to wherever the deploy target can consume
+ * them. `to` (registry) and `host` (bare host) are each meaningful to only
+ * one backend, so a component authors one step shape (see
+ * docs/components/build-archive.mdx) and the env-selected backend (see
+ * `selectPublishBackend` below) reads whichever field it needs — the
+ * unselected backend's field is simply unused, never a pipeline fork.
  */
-export type PublishImageBackend = Capability<PublishImageInput, PublishImageOutput>;
-
-// ── publish-image (registry backend) ────────────────────────────────────────
-
 export interface PublishImageInput {
-  /** Path of the image tarball inside the build archive (as produced by `docker-build`). */
+  /** Path of the image tarball inside the build archive (as produced by `docker-build`; an `archive:`-prefixed reference is accepted and stripped). */
   from: string;
-  /** Destination registry (e.g. `$env.registry` resolved by the orchestrator). */
-  to: string;
-  /** Additional tags to apply alongside the digest. */
+  /** Destination registry — required by `publish-image`, ignored by `load-image-on-host` (e.g. `$env.registry` resolved by the orchestrator). */
+  to?: string;
+  /** Target host — required by `load-image-on-host`, ignored by `publish-image` (SSM instance id, hostname, or host group). */
+  host?: string;
+  /** Destination path for the tarball on the host, used only by `load-image-on-host`. Default: `/tmp/chant-archive/<basename of from>`. */
+  hostPath?: string;
+  /** Additional tags to apply alongside the digest, used only by `publish-image`. */
   tags?: string[];
 }
 
 export interface PublishImageOutput {
   /** Content-addressed digest of the promoted image (`sha256:...`) — what the apply step references. */
   digest: string;
-  /** Fully qualified image reference (`registry/repo@sha256:...`). */
+  /** Image reference the apply step can pull/run: `registry/repo@sha256:...` for `publish-image`, a host-local reference for `load-image-on-host`. */
   uri: string;
 }
+
+/**
+ * Common shape both image-publish backends satisfy: promote the image bytes
+ * held in the build archive to wherever the deploy target can consume them,
+ * and return the identity the apply step references. The backend is
+ * selected per environment (`selectPublishBackend`), never per component.
+ */
+export type PublishImageBackend = Capability<PublishImageInput, PublishImageOutput>;
+
+// ── publish-image (registry backend) ────────────────────────────────────────
 
 /**
  * Promote a built image from the archive into the environment's container
@@ -65,7 +90,8 @@ export function createPublishImageCapability(
   return {
     kind: "publish-image",
     async run(_ctx, input) {
-      const { digest: localDigest } = await executor.docker.load({ inFile: input.from });
+      if (!input.to) throw new Error(`publish-image "${input.from}": "to" (destination registry) is required`);
+      const { digest: localDigest } = await executor.docker.load({ inFile: archiveRelativePath(input.from) });
       const repo = input.to.replace(/\/+$/, "");
       const target = `${repo}@${localDigest}`;
       await executor.docker.tag({ source: localDigest, target });
@@ -87,22 +113,81 @@ export const publishImage: PublishImageBackend = createPublishImageCapability();
 
 // ── load-image-on-host (host backend) ───────────────────────────────────────
 
-export interface LoadImageOnHostInput {
-  /** Path of the image tarball inside the build archive. */
-  from: string;
-  /** Target host (SSM instance id, hostname, or host group). */
-  host: string;
+/** Default on-host tarball destination when `hostPath` is omitted, derived from the archive path's basename. */
+function defaultHostPath(from: string): string {
+  const base = archiveRelativePath(from).split("/").pop() ?? "image.tar";
+  return `/tmp/chant-archive/${base}`;
 }
 
-export interface LoadImageOnHostOutput {
-  /** Content-addressed digest of the loaded image (`sha256:...`) — what the apply step references. */
-  digest: string;
-  /** Local image reference in the host's Docker store (no registry involved). */
-  localRef: string;
+/**
+ * Copy the image tarball straight onto a host and `docker load` it there —
+ * genuinely registry-free promotion (#564): no `docker.push`, no ECR login,
+ * no registry ever in the path. Still promotes **by digest**: the tarball
+ * copied is the exact archive artifact `docker-build` produced, so the image
+ * loaded on the host is byte-identical to the one tested in any other
+ * environment, satisfying the same build-once invariant `publish-image`
+ * does. No rollback, for the same reason `publish-image` declares none: an
+ * already-loaded, content-addressed image sitting in a host's local Docker
+ * store is not itself a problem to compensate.
+ *
+ * See docs/components/build-archive.mdx#registry-less-caveat: this makes
+ * *your built* image registry-free. Third-party images a compose file
+ * references (`postgres:16`, `redis`) still pull from their upstream
+ * registry at `compose up` unless they are archived and loaded the same way.
+ */
+export function createLoadImageOnHostCapability(
+  executor: CloudExecutor = defaultCloudExecutor(),
+): PublishImageBackend {
+  return {
+    kind: "load-image-on-host",
+    async run(_ctx, input) {
+      if (!input.host) throw new Error(`load-image-on-host "${input.from}": "host" is required`);
+      const from = archiveRelativePath(input.from);
+      const to = input.hostPath ?? defaultHostPath(input.from);
+      await executor.host.copyFile({ host: input.host, from, to });
+      const { digest } = await executor.host.dockerLoad({ host: input.host, path: to });
+      return { digest, uri: `host:${input.host}#${digest}` };
+    },
+  };
 }
 
-/** Copy the image tarball to a host and `docker load` it — registry-free promotion. */
-export const loadImageOnHost: PublishImageBackend = stubCapability("load-image-on-host");
+/** Default `load-image-on-host` capability, backed by the real `CloudExecutor`. */
+export const loadImageOnHost: PublishImageBackend = createLoadImageOnHostCapability();
+
+// ── per-environment backend selection ───────────────────────────────────────
+
+/** The `kind` of either image-publish backend — what an environment's config declares as its choice. */
+export type PublishImageBackendKind = "publish-image" | "load-image-on-host";
+
+/**
+ * Resolve which publish backend an environment uses, given its declared
+ * `kind` (`$env.publish.kind` in the component's env config — see
+ * docs/components/build-archive.mdx#backend-selection-is-per-environment).
+ * The decision is per environment, not per component: the same component's
+ * `Publish` phase runs `publish-image` against dev's ECR and
+ * `load-image-on-host` against a locked-down prod host, with no change to
+ * the component's own composition — only the env config `kind` differs.
+ *
+ * Accepts an optional registry of backends so a caller can extend the set
+ * (e.g. a third-party plugin registering another `PublishImageBackend`)
+ * without this function needing to change; defaults to the two starter-set
+ * backends built above.
+ */
+export function selectPublishBackend(
+  kind: PublishImageBackendKind,
+  backends: Partial<Record<PublishImageBackendKind, PublishImageBackend>> = {
+    "publish-image": publishImage,
+    "load-image-on-host": loadImageOnHost,
+  },
+): PublishImageBackend {
+  const backend = backends[kind];
+  if (!backend) {
+    throw new Error(
+      `no publish backend registered for kind "${kind}" (known: ${Object.keys(backends).sort().join(", ")})`,
+    );
+  }
+  return backend;
+}
 
 // ── publish-asset / publish-artifact ────────────────────────────────────────
 

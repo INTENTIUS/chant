@@ -1,0 +1,103 @@
+import { describe, expect, it } from "vitest";
+import {
+  addArchiveEntry,
+  archiveRelativePath,
+  computeManifestDigest,
+  createBuildArchiveManifest,
+  findArchiveEntry,
+  imageEntries,
+} from "./build-archive";
+
+describe("BuildArchive manifest (#564)", () => {
+  it("starts empty and content-addressed", () => {
+    const manifest = createBuildArchiveManifest("search-service");
+    expect(manifest.version).toBe(1);
+    expect(manifest.component).toBe("search-service");
+    expect(manifest.contents).toEqual([]);
+    expect(manifest.manifestDigest).toMatch(/^sha256:/);
+  });
+
+  it("adding an entry changes the manifest digest and records the entry", () => {
+    const empty = createBuildArchiveManifest("search-service");
+    const withImage = addArchiveEntry(empty, {
+      kind: "image",
+      path: "archive/search.tar",
+      digest: "sha256:abc123",
+    });
+
+    expect(withImage.manifestDigest).not.toBe(empty.manifestDigest);
+    expect(withImage.contents).toHaveLength(1);
+    expect(findArchiveEntry(withImage, "archive/search.tar")).toMatchObject({
+      kind: "image",
+      digest: "sha256:abc123",
+      mediaType: "application/vnd.oci.image.layout.v1.tar",
+    });
+  });
+
+  it("is content-addressed: two manifests built from the same entries produce the same digest, regardless of createdAt or insertion order", () => {
+    const a = addArchiveEntry(
+      addArchiveEntry(createBuildArchiveManifest("svc", { now: () => new Date("2024-01-01") }), {
+        kind: "image",
+        path: "archive/x.tar",
+        digest: "sha256:111",
+      }),
+      { kind: "template", path: "x.template.json", digest: "sha256:222" },
+    );
+    const b = addArchiveEntry(
+      addArchiveEntry(createBuildArchiveManifest("svc", { now: () => new Date("2099-12-31") }), {
+        kind: "template",
+        path: "x.template.json",
+        digest: "sha256:222",
+      }),
+      { kind: "image", path: "archive/x.tar", digest: "sha256:111" },
+    );
+
+    expect(a.manifestDigest).toBe(b.manifestDigest);
+    expect(a.createdAt).not.toBe(b.createdAt);
+  });
+
+  it("changed content changes the digest", () => {
+    const base = createBuildArchiveManifest("svc");
+    const v1 = addArchiveEntry(base, { kind: "image", path: "archive/x.tar", digest: "sha256:111" });
+    const v2 = addArchiveEntry(base, { kind: "image", path: "archive/x.tar", digest: "sha256:999" });
+    expect(v1.manifestDigest).not.toBe(v2.manifestDigest);
+  });
+
+  it("replaces an entry at the same path rather than duplicating it", () => {
+    const base = createBuildArchiveManifest("svc");
+    const v1 = addArchiveEntry(base, { kind: "image", path: "archive/x.tar", digest: "sha256:111" });
+    const v2 = addArchiveEntry(v1, { kind: "image", path: "archive/x.tar", digest: "sha256:222" });
+    expect(v2.contents).toHaveLength(1);
+    expect(v2.contents[0]!.digest).toBe("sha256:222");
+  });
+
+  it("is immutable: adding an entry never mutates the input manifest", () => {
+    const base = createBuildArchiveManifest("svc");
+    const before = JSON.stringify(base);
+    addArchiveEntry(base, { kind: "asset", path: "lib.jar", digest: "sha256:333" });
+    expect(JSON.stringify(base)).toBe(before);
+  });
+
+  it("computeManifestDigest matches what addArchiveEntry produces incrementally", () => {
+    const entries = [
+      { kind: "image" as const, path: "archive/x.tar", digest: "sha256:111" },
+      { kind: "template" as const, path: "x.template.json", digest: "sha256:222" },
+    ];
+    let manifest = createBuildArchiveManifest("svc");
+    for (const entry of entries) manifest = addArchiveEntry(manifest, entry);
+    expect(manifest.manifestDigest).toBe(computeManifestDigest(manifest.contents));
+  });
+
+  it("imageEntries filters to image-kind entries only", () => {
+    let manifest = createBuildArchiveManifest("svc");
+    manifest = addArchiveEntry(manifest, { kind: "image", path: "archive/a.tar", digest: "sha256:1" });
+    manifest = addArchiveEntry(manifest, { kind: "template", path: "a.template.json", digest: "sha256:2" });
+    manifest = addArchiveEntry(manifest, { kind: "asset", path: "a.jar", digest: "sha256:3" });
+    expect(imageEntries(manifest).map((e) => e.path)).toEqual(["archive/a.tar"]);
+  });
+
+  it("archiveRelativePath strips the archive: wiring prefix and passes plain paths through unchanged", () => {
+    expect(archiveRelativePath("archive:search.template.json")).toBe("search.template.json");
+    expect(archiveRelativePath("archive/search.tar")).toBe("archive/search.tar");
+  });
+});

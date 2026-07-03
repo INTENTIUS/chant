@@ -1,5 +1,12 @@
 import { describe, expect, it } from "vitest";
-import { createPublishImageCapability } from "./publish";
+import {
+  createLoadImageOnHostCapability,
+  createPublishImageCapability,
+  loadImageOnHost,
+  publishImage,
+  selectPublishBackend,
+} from "./publish";
+import { createDockerBuildCapability } from "./build";
 import { createMockCloudExecutor } from "./__tests__/mock-cloud-executor";
 
 const ctx = { env: "dev", component: "search-service" };
@@ -47,5 +54,124 @@ describe("publish-image (#557)", () => {
   it("declares no rollback — an already-pushed, content-addressed image is not itself something to undo", () => {
     const capability = createPublishImageCapability(createMockCloudExecutor().executor);
     expect(capability.rollback).toBeUndefined();
+  });
+
+  it("accepts an archive: wiring reference the same way cfn-deploy's template field does", async () => {
+    const mock = createMockCloudExecutor();
+    const capability = createPublishImageCapability(mock.executor);
+    await capability.run(ctx, { from: "archive:search.tar", to: "123.dkr.ecr.us-east-1.amazonaws.com/search" });
+    const loadCall = mock.calls.find((c) => c.method === "load")!;
+    expect(loadCall.args).toMatchObject({ inFile: "search.tar" });
+  });
+
+  it("requires to — throws a clear error rather than silently no-op-ing when the env forgot to configure a registry", async () => {
+    const mock = createMockCloudExecutor();
+    const capability = createPublishImageCapability(mock.executor);
+    await expect(capability.run(ctx, { from: "archive/search.tar" })).rejects.toThrow(/"to".*is required/);
+  });
+});
+
+describe("load-image-on-host (#564 — registry-less backend)", () => {
+  it("copies the archived tarball to the host and docker-loads it there, with no registry/ECR calls at all", async () => {
+    const mock = createMockCloudExecutor();
+    const capability = createLoadImageOnHostCapability(mock.executor);
+
+    const output = await capability.run(ctx, { from: "archive/search.tar", host: "i-0123456789abcdef0" });
+
+    expect(output.digest).toMatch(/^sha256:/);
+    expect(output.uri).toBe(`host:i-0123456789abcdef0#${output.digest}`);
+    expect(mock.calls.map((c) => `${c.client}.${c.method}`)).toEqual(["host.copyFile", "host.dockerLoad"]);
+    expect(mock.calls.some((c) => c.client === "ecr" || c.client === "docker")).toBe(false);
+  });
+
+  it("defaults the on-host path to the archive path's basename under /tmp/chant-archive", async () => {
+    const mock = createMockCloudExecutor();
+    const capability = createLoadImageOnHostCapability(mock.executor);
+    await capability.run(ctx, { from: "archive/search.tar", host: "i-abc" });
+    const copyCall = mock.calls.find((c) => c.method === "copyFile")!;
+    expect(copyCall.args).toMatchObject({ to: "/tmp/chant-archive/search.tar" });
+  });
+
+  it("accepts an archive: wiring reference and an explicit destination path", async () => {
+    const mock = createMockCloudExecutor();
+    const capability = createLoadImageOnHostCapability(mock.executor);
+    await capability.run(ctx, { from: "archive:search.tar", host: "i-abc", hostPath: "/opt/images/search.tar" });
+    const copyCall = mock.calls.find((c) => c.method === "copyFile")!;
+    expect(copyCall.args).toMatchObject({ from: "search.tar", to: "/opt/images/search.tar" });
+  });
+
+  it("requires host — throws a clear error rather than silently no-op-ing when the env forgot to configure one", async () => {
+    const mock = createMockCloudExecutor();
+    const capability = createLoadImageOnHostCapability(mock.executor);
+    await expect(capability.run(ctx, { from: "archive/search.tar" })).rejects.toThrow(/"host" is required/);
+  });
+
+  it("surfaces a host copy/load failure (unreachable host) as a rejected promise", async () => {
+    const mock = createMockCloudExecutor({ failHost: true });
+    const capability = createLoadImageOnHostCapability(mock.executor);
+    await expect(capability.run(ctx, { from: "archive/search.tar", host: "i-abc" })).rejects.toThrow(
+      /host copy failed/,
+    );
+  });
+
+  it("declares no rollback — an already-loaded, content-addressed image on the host is not itself something to undo", () => {
+    const capability = createLoadImageOnHostCapability(createMockCloudExecutor().executor);
+    expect(capability.rollback).toBeUndefined();
+  });
+});
+
+describe("promote by digest — deferred publish never rebuilds per environment (#564 acceptance criterion)", () => {
+  it("one docker-build's archived image promotes to two environments (registry + host-load) from the same archive, with no second build", async () => {
+    // One archive/executor shared across build + both env promotions — the
+    // same archive the build produced is what each environment's publish
+    // step reads from, never a fresh build.
+    const mock = createMockCloudExecutor();
+    const { archivePath } = await createDockerBuildCapability(mock.executor).run(ctx, {
+      context: ".",
+      into: "archive/search.tar",
+    });
+    expect(mock.calls.filter((c) => c.method === "build")).toHaveLength(1);
+
+    // dev: env config selects the registry backend.
+    const devBackend = selectPublishBackend("publish-image", {
+      "publish-image": createPublishImageCapability(mock.executor),
+      "load-image-on-host": createLoadImageOnHostCapability(mock.executor),
+    });
+    const devOutput = await devBackend.run(
+      { env: "dev", component: "search-service" },
+      { from: archivePath, to: "123.dkr.ecr.us-east-1.amazonaws.com/search" },
+    );
+
+    // prod: env config selects the registry-less host backend for the *same archive path* — no rebuild.
+    const prodBackend = selectPublishBackend("load-image-on-host", {
+      "publish-image": createPublishImageCapability(mock.executor),
+      "load-image-on-host": createLoadImageOnHostCapability(mock.executor),
+    });
+    const prodOutput = await prodBackend.run(
+      { env: "prod", component: "search-service" },
+      { from: archivePath, host: "i-prodhost" },
+    );
+
+    // Exactly one build happened for the whole scenario — both environment
+    // promotions read the same archived tarball rather than triggering a
+    // second `docker build`. `publish-image` reads it via `docker.load`;
+    // `load-image-on-host` reads the very same path via `host.copyFile`
+    // instead — two different backends, one unrebuilt archive.
+    expect(mock.calls.filter((c) => c.method === "build")).toHaveLength(1);
+    expect(mock.calls.find((c) => c.method === "load")?.args).toMatchObject({ inFile: archivePath });
+    expect(mock.calls.find((c) => c.method === "copyFile")?.args).toMatchObject({ from: archivePath });
+    expect(devOutput.digest).toMatch(/^sha256:/);
+    expect(prodOutput.digest).toMatch(/^sha256:/);
+  });
+
+  it("selectPublishBackend defaults to the two starter-set backends and throws on an unknown kind", () => {
+    expect(selectPublishBackend("publish-image")).toBe(publishImage);
+    expect(selectPublishBackend("load-image-on-host")).toBe(loadImageOnHost);
+    expect(() =>
+      selectPublishBackend(
+        // @ts-expect-error deliberately invalid kind to exercise the error path
+        "something-else",
+      ),
+    ).toThrow(/no publish backend registered/);
   });
 });
