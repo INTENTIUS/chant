@@ -157,6 +157,8 @@ export function parseArgs(args: string[]): ParsedArgs {
       result.runExamples = true;
     } else if (arg === "--pinned-digest") {
       result.pinnedDigest = args[++i];
+    } else if (arg === "--check") {
+      result.check = true;
     } else if (!arg.startsWith("-")) {
       if (!result.command) {
         result.command = arg;

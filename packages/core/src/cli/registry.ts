@@ -89,6 +89,8 @@ export interface ParsedArgs {
   runExamples?: boolean;
   /** `chant dev surface-diff --pinned-digest <file>` — path to SHA-256 digest file for supply-chain verification */
   pinnedDigest?: string;
+  /** `chant dev surface-diff --check` — verify the committed baseline matches a fresh regen; exit non-zero if it drifted. Never writes the snapshot. */
+  check?: boolean;
 }
 
 /**
