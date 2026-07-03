@@ -226,6 +226,33 @@ export interface LambdaClient {
   getAliasVersion(functionName: string, alias: string): Promise<string | undefined>;
 }
 
+// ── EMR (job submission — #561's one new client) ─────────────────────────────
+
+export interface EmrStartJobRunArgs {
+  /** EMR Serverless application id, or EMR-on-EC2 cluster id. */
+  clusterOrApplicationId: string;
+  /** Entry point artifact reference (resolved by the graph before this executor is called, e.g. an S3 URI). */
+  jar: string;
+  args?: string[];
+  executionRoleArn?: string;
+}
+
+export interface EmrJobRunStatus {
+  /** Terminal job state (`COMPLETED`, `FAILED`, `CANCELLED`), or an in-flight state (`RUNNING`, `PENDING`) while polling. */
+  state: string;
+}
+
+export interface EmrClient {
+  /** Start a job run (EMR Serverless application or EMR-on-EC2 cluster) against a published artifact; returns the run id for polling. */
+  startJobRun(args: EmrStartJobRunArgs): Promise<{ runId: string }>;
+  /** Poll a job run until it reaches a terminal state (`COMPLETED`/`FAILED`/`CANCELLED`). */
+  waitForJobRun(runId: string, opts?: { intervalMs?: number; timeoutMs?: number }): Promise<EmrJobRunStatus>;
+  /** Current state of a job run, without waiting. */
+  describeJobRun(runId: string): Promise<EmrJobRunStatus>;
+  /** Cancel an in-flight job run (saga compensation). */
+  cancelJobRun(runId: string): Promise<void>;
+}
+
 // ── The aggregate executor ───────────────────────────────────────────────────
 
 /**
@@ -243,6 +270,7 @@ export interface CloudExecutor {
   codeDeploy: CodeDeployClient;
   neo4j: Neo4jClusterClient;
   lambda: LambdaClient;
+  emr: EmrClient;
 }
 
 // ── Real executor — shells out to `docker`/`aws`; used outside tests ────────
@@ -486,6 +514,39 @@ const realLambda: LambdaClient = {
   },
 };
 
+const realEmr: EmrClient = {
+  async startJobRun(args) {
+    const parts = [
+      `aws emr-serverless start-job-run`,
+      `--application-id ${q(args.clusterOrApplicationId)}`,
+      `--execution-role-arn ${q(args.executionRoleArn ?? "")}`,
+      `--job-driver ${q(JSON.stringify({ sparkSubmit: { entryPoint: args.jar, entryPointArguments: args.args ?? [] } }))}`,
+    ];
+    const { stdout } = await run(parts.join(" "));
+    const described = JSON.parse(stdout) as { jobRunId: string };
+    return { runId: described.jobRunId };
+  },
+  async describeJobRun(runId) {
+    const { stdout } = await run(`aws emr-serverless get-job-run --job-run-id ${q(runId)}`);
+    const described = JSON.parse(stdout) as { jobRun: { state: string } };
+    return { state: described.jobRun.state };
+  },
+  async waitForJobRun(runId, opts) {
+    const intervalMs = opts?.intervalMs ?? 10_000;
+    const deadline = opts?.timeoutMs ? Date.now() + opts.timeoutMs : undefined;
+    const terminal = new Set(["COMPLETED", "FAILED", "CANCELLED"]);
+    while (true) {
+      const status = await realEmr.describeJobRun(runId);
+      if (terminal.has(status.state)) return status;
+      if (deadline && Date.now() > deadline) throw new Error(`waitForJobRun "${runId}" timed out`);
+      await new Promise((resolve) => setTimeout(resolve, intervalMs));
+    }
+  },
+  async cancelJobRun(runId) {
+    await run(`aws emr-serverless cancel-job-run --job-run-id ${q(runId)}`);
+  },
+};
+
 /** Probe one `host:port` bolt endpoint by opening (and immediately closing) a TCP socket. */
 function probeBoltPort(endpoint: string, timeoutMs = 5000): Promise<boolean> {
   const [host, portStr] = endpoint.split(":");
@@ -512,6 +573,7 @@ export function realCloudExecutor(): CloudExecutor {
     codeDeploy: realCodeDeploy,
     neo4j: realNeo4j,
     lambda: realLambda,
+    emr: realEmr,
   };
 }
 

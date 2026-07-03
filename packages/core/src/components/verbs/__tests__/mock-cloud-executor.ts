@@ -29,6 +29,8 @@ import type {
   EcsClient,
   EcsServiceState,
   EcsUpdateServiceArgs,
+  EmrClient,
+  EmrStartJobRunArgs,
   LambdaClient,
   LambdaUpdateAliasArgs,
   LambdaUpdateCodeArgs,
@@ -70,6 +72,12 @@ export interface FakeLambdaConfig {
   failUpdate?: boolean;
 }
 
+/** Scripted behavior for one fake EMR job run. */
+export interface FakeJobRunConfig {
+  /** Terminal state reported once the run "completes". Default: "COMPLETED". */
+  terminalState?: "COMPLETED" | "FAILED" | "CANCELLED";
+}
+
 export interface MockCloudExecutorOptions {
   stacks?: Record<string, FakeStackConfig>;
   deployments?: Record<string, FakeDeploymentConfig>;
@@ -80,6 +88,8 @@ export interface MockCloudExecutorOptions {
   failDocker?: boolean;
   /** Lambda functions keyed by function name. */
   lambdas?: Record<string, FakeLambdaConfig>;
+  /** Scripted job runs keyed by the run id the test expects (see `MockCloudExecutor.setJobRun` for post-construction control, e.g. before the run id is known). */
+  jobRuns?: Record<string, FakeJobRunConfig>;
 }
 
 /** An injected `CloudExecutor` plus the call log and stack-status controls tests use to script scenarios and assert on I/O. */
@@ -92,6 +102,8 @@ export interface MockCloudExecutor {
   setDeployment(id: string, config: FakeDeploymentConfig): void;
   /** Change how many cluster members report healthy after construction (simulates a follower catching up). */
   setClusterHealth(cluster: string, healthyCount: number): void;
+  /** Change a job run's terminal state after construction (e.g. once its runId is known from a prior `startJobRun` call). */
+  setJobRun(runId: string, config: FakeJobRunConfig): void;
 }
 
 /** Build a fresh mock `CloudExecutor`. Every method is deterministic and synchronous-fast — no real polling delay. */
@@ -110,9 +122,11 @@ export function createMockCloudExecutor(options: MockCloudExecutorOptions = {}):
   const lambdaAliasVersions = new Map<string, Map<string, string>>(
     Object.entries(options.lambdas ?? {}).map(([fn, cfg]) => [fn, new Map(Object.entries(cfg.aliasVersions ?? {}))]),
   );
+  const jobRuns = new Map<string, FakeJobRunConfig>(Object.entries(options.jobRuns ?? {}));
   let changeSetCounter = 0;
   let deploymentCounter = 0;
   let lambdaVersionCounter = 0;
+  let jobRunCounter = 0;
 
   function stackStatus(name: string): CfnStackStatus {
     const config = stacks.get(name);
@@ -272,12 +286,33 @@ export function createMockCloudExecutor(options: MockCloudExecutorOptions = {}):
     },
   };
 
+  const emr: EmrClient = {
+    async startJobRun(args: EmrStartJobRunArgs) {
+      record("emr", "startJobRun", args);
+      jobRunCounter += 1;
+      return { runId: `mock-job-run-${jobRunCounter}` };
+    },
+    async describeJobRun(runId: string) {
+      record("emr", "describeJobRun", runId);
+      return { state: jobRuns.get(runId)?.terminalState ?? "COMPLETED" };
+    },
+    async waitForJobRun(runId: string) {
+      record("emr", "waitForJobRun", runId);
+      return { state: jobRuns.get(runId)?.terminalState ?? "COMPLETED" };
+    },
+    async cancelJobRun(runId: string) {
+      record("emr", "cancelJobRun", runId);
+      jobRuns.set(runId, { terminalState: "CANCELLED" });
+    },
+  };
+
   return {
-    executor: { docker, ecr, cloudformation, ecs, codeDeploy, neo4j, lambda },
+    executor: { docker, ecr, cloudformation, ecs, codeDeploy, neo4j, lambda, emr },
     calls,
     setStack: (name, config) => stacks.set(name, { ...stacks.get(name), ...config }),
     setDeployment: (id, config) => deployments.set(id, { ...deployments.get(id), ...config }),
     setClusterHealth: (cluster, healthyCount) => clusters.set(cluster, healthyCount),
+    setJobRun: (runId, config) => jobRuns.set(runId, { ...jobRuns.get(runId), ...config }),
   };
 }
 
