@@ -288,13 +288,19 @@ describe("out-of-scope lexicons", () => {
 
 describe("lexiconUpgrade pull-request idempotency", () => {
   test("when the open PR body already matches, skip git entirely and return the existing PR", async () => {
-    const checkRolling: CheckRollingFn = vi.fn(async () => rollingResult());
-    // Compute what the summary will be so the mock can echo it back.
+    // A pinned lexicon (k8s) — pull-request idempotency applies to the version-bump
+    // PR path; rolling lexicons route to issues (#546).
+    const checkPinned: CheckPinnedFn = vi.fn(async () => pinnedResult());
+    // Compute what the summary will be so the mock can echo it back — must match
+    // the activity's own buildUpgradeSummary args for pinnedResult().
     const expectedSummary = buildUpgradeSummary({
-      lexicon: "aws",
-      deltaText: "Removed: AWS::Foo::Bar",
-      semverLabel: "breaking",
+      lexicon: "k8s",
+      from: "v1.32.0",
+      to: "v1.33.0",
+      deltaText: "Added: apps/v1 Deployment field",
+      semverLabel: "minor",
       validationOk: true,
+      failures: [],
     });
 
     const calls: string[] = [];
@@ -311,9 +317,11 @@ describe("lexiconUpgrade pull-request idempotency", () => {
     });
 
     const r = await lexiconUpgrade({
-      lexicon: "aws",
+      lexicon: "k8s",
       mode: "pull-request",
-      _checkRolling: checkRolling,
+      _checkPinned: checkPinned,
+      _applyBump: vi.fn(() => ({ filePath: "/tmp/k8s/versions.ts" })),
+      _bumpPackageVersion: vi.fn(),
       _gh: gh,
     });
 
@@ -428,16 +436,19 @@ describe("lexiconUpgrade pull-request mode: package.json version bump", () => {
     expect(bumps[0]!.version).toBe("0.13.2");
   });
 
-  test("rolling lexicon (aws): does NOT call _bumpPackageVersion", async () => {
+  test("rolling lexicon (aws) in pull-request mode opens an issue, not a PR (#546)", async () => {
     const checkRolling: CheckRollingFn = vi.fn(async () => rollingResult());
     const bumpFn: BumpPackageVersionFn = vi.fn();
 
+    const calls: string[] = [];
     const gh = vi.fn(async (cmd: string) => {
+      calls.push(cmd);
+      if (cmd.includes("gh issue create")) return { stdout: "https://gh/issue/9", stderr: "" };
       if (cmd.includes("gh pr create")) return { stdout: "https://gh/pr/3", stderr: "" };
       return { stdout: "", stderr: "" };
     });
 
-    await lexiconUpgrade({
+    const r = await lexiconUpgrade({
       lexicon: "aws",
       mode: "pull-request",
       _checkRolling: checkRolling,
@@ -445,6 +456,12 @@ describe("lexiconUpgrade pull-request mode: package.json version bump", () => {
       _gh: gh,
     });
 
+    // Rolling drift → issue, never a baseline-only PR, a branch push, or a bump.
+    expect(r.mode).toBe("issue");
+    expect(r.issueUrl).toBe("https://gh/issue/9");
+    expect(calls.some((c) => c.includes("gh issue create"))).toBe(true);
+    expect(calls.some((c) => c.includes("gh pr create"))).toBe(false);
+    expect(calls.some((c) => c.startsWith("git "))).toBe(false);
     expect(bumpFn).not.toHaveBeenCalled();
   });
 });
