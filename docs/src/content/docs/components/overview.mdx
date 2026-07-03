@@ -1,0 +1,75 @@
+---
+title: Components Overview
+description: A component release model that composes deploys from a bounded set of capabilities instead of a pipeline per component.
+---
+
+import { Card, CardGrid, Aside } from '@astrojs/starlight/components';
+import Diagram from '../../../components/Diagram.astro';
+
+A **component** is a releasable unit — a service, a table, a cluster, a library — declared as data. It says what it builds, what it produces, and how it deploys, and a single generic orchestrator runs it. New components compose in without new pipelines.
+
+This is the layer above [synthesis](/chant/concepts/philosophy/). `chant build` turns typed intent into spec-native artifacts. Components turn those artifacts into a release: build once, publish at deploy time, apply, verify, roll back.
+
+<Aside type="note" title="Where this sits">
+Synthesis (`chant build`) produces artifacts and stops. [Ops](/chant/guide/ops/) run phased, durable workflows. Components are the release model on top: each declares a composition of capabilities, and the orchestrator is a generated Op. Temporal stays optional — the local executor is the default.
+</Aside>
+
+## The problem: pipeline sprawl
+
+Outside Kubernetes, every component tends to drag its own hand-maintained pipeline. Two failures follow, and both compound as you add components:
+
+- **Definition sprawl.** N components produce N pipeline definitions that duplicate orchestration with small variations and drift apart. A cross-cutting change — sign every image, add a gate everywhere — means editing every pipeline.
+- **Orchestrator glue sprawl.** The deploy path accretes custom code per pipeline it has to call. Components get wrapped in brittle, component-specific glue, and adding a component means adding glue.
+
+Kubernetes hid this by collapsing *apply* into one shared verb (`kubectl`). Off-cluster there is no shared apply verb, so build, delivery, and apply all vary per component and the variance leaks into pipelines.
+
+The goal is one property:
+
+> Pipeline count stops being a function of component count. The 200th component adds zero pipelines and zero edits to the orchestrator.
+
+## The insight: unbounded components, bounded primitives
+
+Two things are true at once, and holding both is the whole design:
+
+- Components are **unbounded** and each is unique. Every one draws its own destiny.
+- The primitive operations underneath are **bounded**: build an image, promote an artifact by digest, deploy a CloudFormation stack, submit a job, run a command on a host, wait for healthy, roll back. Roughly a dozen verbs, and the set does not grow when you add components.
+
+Sprawl is that bounded set re-expressed as bespoke pipeline code once per component. The fix is to express the primitives once as [capabilities](/chant/components/capabilities/) and let each [component](/chant/components/component-contract/) be a unique composition of them. Uniqueness lives in the composition, which is cheap and declarative. Commonality lives in the capabilities, which are coded and tested. The expensive part stops being copied.
+
+<Diagram name="component-layers" alt="Three concentric layers: pure synthesis (chant build) at the core, the build archive around it, and release orchestration — capabilities composed into components — on the outside." caption="Components sit above synthesis: a generic orchestrator drives declarations composed from a bounded capability set." />
+
+## What you get
+
+<CardGrid>
+	<Card title="Composition, not pipelines" icon="puzzle">
+		A component declares an ordered composition of capabilities. The orchestrator is generic and contains no per-component code. Adding a component is a declaration, not a pipeline.
+	</Card>
+	<Card title="Reusable behaviors" icon="setting">
+		Capabilities are a bounded, plugin-style registry of verbs — build, publish, apply, submit, deliver, wait, roll back. Written once, reused across every component of that shape.
+	</Card>
+	<Card title="Build once, deploy many" icon="rocket">
+		Build produces a self-contained archive. Publish is deferred to deploy time and promotes by digest, so the artifact tested in dev is byte-identical in prod. See [Build Archive](/chant/components/build-archive/).
+	</Card>
+	<Card title="Rollback for free" icon="approve-check">
+		Each capability declares its own compensation. On failure the orchestrator unwinds executed steps in reverse. No hand-written rollback pipelines.
+	</Card>
+	<Card title="Spec-true, cloud-agnostic" icon="random">
+		Agnostic in structure and orchestration, spec-true in the leaves. The per-cloud seam is the [lexicon boundary](/chant/components/cloud-boundary/). One driver, one lint, real per-cloud deploys.
+	</Card>
+	<Card title="Zero exotic dependencies" icon="document">
+		The default runs on plain CI plus the local executor plus native scheduling. Temporal and Dagster are opt-in backends, not baseline. See [Orchestration](/chant/components/orchestration/).
+	</Card>
+</CardGrid>
+
+## Read next
+
+- [Component Contract](/chant/components/component-contract/) — the shape a component takes and its archetypes.
+- [Capabilities](/chant/components/capabilities/) — the bounded verb registry and how to compose one.
+- [Composition & Wiring](/chant/components/composition-and-wiring/) — phases, fan-out, and how components reference each other.
+- [Build Archive](/chant/components/build-archive/) — the artifact, deferred publish, and publish backends.
+- [Orchestration](/chant/components/orchestration/) — interpret vs generate mode and the execution backends.
+- [Cloud-Agnostic Boundary](/chant/components/cloud-boundary/) — what ports across clouds and what does not.
+
+<Aside type="caution" title="Proposed">
+This model is a proposed design under active development. The pages here document the target behavior; the CLI surface may change as it lands.
+</Aside>

@@ -1,0 +1,30 @@
+digraph capability_composition {
+  rankdir=LR
+  graph [fontname="Helvetica,Arial,sans-serif" bgcolor="transparent" pad="0.4" nodesep="0.35" ranksep="1.0"]
+  node  [fontname="Helvetica,Arial,sans-serif" shape=box style="filled,rounded" margin="0.2,0.11"]
+  edge  [color="#6366F1" arrowsize=0.7]
+
+  subgraph cluster_components {
+    label="Components (unbounded, each unique)" labelloc="t" fontsize=11 fontcolor="#334155" style="rounded" color="#CBD5E1"
+    c1 [label="search-service" fillcolor="#F3E8FF" color="#7C3AED" fontcolor="#3B0764"]
+    c2 [label="ddb-table" fillcolor="#F3E8FF" color="#7C3AED" fontcolor="#3B0764"]
+    c3 [label="neo4j-cluster" fillcolor="#F3E8FF" color="#7C3AED" fontcolor="#3B0764"]
+    c4 [label="jar-lib → emr-job" fillcolor="#F3E8FF" color="#7C3AED" fontcolor="#3B0764"]
+    c5 [label="legacy-app (compose)" fillcolor="#F3E8FF" color="#7C3AED" fontcolor="#3B0764"]
+  }
+
+  orch [label="Generic orchestrator\nno per-component code" shape=box style="filled,rounded"
+        fillcolor="#DBEAFE" color="#2563EB" fontcolor="#1E3A8A" margin="0.3,0.2"]
+
+  subgraph cluster_caps {
+    label="Capabilities (bounded, shared)" labelloc="t" fontsize=11 fontcolor="#334155" style="rounded" color="#CBD5E1"
+    k1 [label="cfn-deploy" fillcolor="#FEF3C7" color="#D97706" fontcolor="#78350F"]
+    k2 [label="publish-image" fillcolor="#FEF3C7" color="#D97706" fontcolor="#78350F"]
+    k3 [label="code-deploy" fillcolor="#FEF3C7" color="#D97706" fontcolor="#78350F"]
+    k4 [label="emr-start-job-run" fillcolor="#FEF3C7" color="#D97706" fontcolor="#78350F"]
+    k5 [label="wait / health-gate" fillcolor="#FEF3C7" color="#D97706" fontcolor="#78350F"]
+  }
+
+  c1 -> orch; c2 -> orch; c3 -> orch; c4 -> orch; c5 -> orch
+  orch -> k1; orch -> k2; orch -> k3; orch -> k4; orch -> k5
+}

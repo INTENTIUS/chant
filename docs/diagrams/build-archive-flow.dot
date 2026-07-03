@@ -1,0 +1,25 @@
+digraph build_archive_flow {
+  rankdir=LR
+  graph [fontname="Helvetica,Arial,sans-serif" bgcolor="transparent" pad="0.4" nodesep="0.45" ranksep="0.7"]
+  node  [fontname="Helvetica,Arial,sans-serif" shape=box style="filled,rounded" margin="0.24,0.13"]
+  edge  [fontname="Helvetica,Arial,sans-serif" fontsize=9 fontcolor="#475569" color="#6366F1"]
+
+  build [label="build\n(image / zip / jar)" fillcolor="#DCFCE7" color="#16A34A" fontcolor="#14532D"]
+
+  subgraph cluster_archive {
+    label="build archive (self-contained)" labelloc="t" fontsize=10 fontcolor="#334155" style="rounded" color="#CBD5E1"
+    tar  [label="image tarball\n(OCI layout)" fillcolor="#FFFFFF" color="#2563EB" fontcolor="#1E3A8A"]
+    tpl  [label="templates" fillcolor="#FFFFFF" color="#2563EB" fontcolor="#1E3A8A"]
+    man  [label="manifest" fillcolor="#FFFFFF" color="#2563EB" fontcolor="#1E3A8A"]
+  }
+
+  reg  [label="publish-image\n→ registry (ECR)" fillcolor="#DBEAFE" color="#2563EB" fontcolor="#1E3A8A"]
+  host [label="load-image-on-host\n→ docker load (no registry)" fillcolor="#DBEAFE" color="#2563EB" fontcolor="#1E3A8A"]
+  apply [label="apply\n(references the digest)" fillcolor="#FEF3C7" color="#D97706" fontcolor="#78350F"]
+
+  build -> tar [label="save"]
+  tar -> reg  [label="deploy-time · by digest"]
+  tar -> host [label="deploy-time · by digest"]
+  reg -> apply
+  host -> apply
+}

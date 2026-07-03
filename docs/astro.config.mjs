@@ -66,6 +66,18 @@ export default defineConfig({
 					],
 				},
 				{
+					label: 'Components',
+					items: [
+						{ label: 'Overview', slug: 'components/overview' },
+						{ label: 'Component Contract', slug: 'components/component-contract' },
+						{ label: 'Capabilities', slug: 'components/capabilities' },
+						{ label: 'Composition & Wiring', slug: 'components/composition-and-wiring' },
+						{ label: 'Build Archive', slug: 'components/build-archive' },
+						{ label: 'Orchestration', slug: 'components/orchestration' },
+						{ label: 'Cloud-Agnostic Boundary', slug: 'components/cloud-boundary' },
+					],
+				},
+				{
 					label: 'Tutorials',
 					items: [
 						{ label: 'Alert Triage (local)', slug: 'tutorials/alert-triage-local' },
