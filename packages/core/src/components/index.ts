@@ -1,7 +1,8 @@
 /**
  * Component-native release orchestration — capability contract, starter verb
- * set, and the thin interpret driver (epic #551, #554/#556). No cloud
- * implementation yet (see #557). See https://intentius.io/chant/components/orchestration/
+ * set, and the thin interpret driver (epic #551, #554/#556). The pilot AWS
+ * leaves have real implementations over an injectable `CloudExecutor` (#557);
+ * every other verb remains a typed stub. See https://intentius.io/chant/components/orchestration/
  */
 
 export {
