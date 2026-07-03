@@ -12,6 +12,7 @@ const spawnChildMock = vi.fn();
 const generateReportMock = vi.fn();
 const writeReportMock = vi.fn();
 const waitForTemporalSpy = vi.fn();
+const runComponentsMock = vi.fn();
 
 vi.mock("../../op/discover", () => ({ discoverOps: () => discoverOpsMock() }));
 vi.mock("../../config", () => ({ loadChantConfig: (...args: unknown[]) => loadChantConfigMock(...args) }));
@@ -33,11 +34,14 @@ vi.mock("./run-report", () => ({
   generateReport: (...args: unknown[]) => generateReportMock(...args),
   writeReport: (...args: unknown[]) => writeReportMock(...args),
 }));
+vi.mock("../../components/cli-support", () => ({
+  runComponents: (...args: unknown[]) => runComponentsMock(...args),
+}));
 
 // Speed up runOp polling — POLL_INTERVAL_MS is 3000 in production. We use
 // fake timers in the runOp suite below; vi.advanceTimersByTime drives the loop.
 
-const { runOpList, runOpStatus, runOpLog, runOpSignal, runOpCancel, runOp } = await import("./run");
+const { runOpList, runOpStatus, runOpLog, runOpSignal, runOpCancel, runOp, runOpComponents } = await import("./run");
 
 function makeArgs(overrides: Partial<ParsedArgs> = {}): ParsedArgs {
   return {
@@ -542,5 +546,159 @@ describe("Temporal-only subcommand guards", () => {
     const exit = await handler({ args: makeArgs({ temporal: false, extraPositional: "x", extraPositional2: "y" }), plugins: [], serializers: [] });
     expect(exit).toBe(1);
     expect(stderr.join("\n")).toContain("not available in local mode");
+  });
+});
+
+// ── chant run --components <name|all> (#585) ────────────────────────────────
+
+describe("runOp dispatcher: --components routes to runOpComponents", () => {
+  beforeEach(() => {
+    runComponentsMock.mockReset();
+  });
+
+  test("runOp with --components dispatches to runComponents, not Op discovery", async () => {
+    discoverOpsMock.mockReset();
+    runComponentsMock.mockResolvedValue({ success: true, selected: ["svc"], run: { order: ["svc"], waves: [["svc"]], results: [{ component: "svc", ok: true, records: [] }], ok: true } });
+    vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+
+    const exit = await runOp({ args: makeArgs({ path: "svc", components: true, temporal: false }), plugins: [], serializers: [] });
+
+    expect(exit).toBe(0);
+    expect(runComponentsMock).toHaveBeenCalledWith(expect.any(String), "svc", { env: undefined });
+    expect(discoverOpsMock).not.toHaveBeenCalled();
+    vi.restoreAllMocks();
+  });
+});
+
+describe("runOpComponents", () => {
+  beforeEach(() => {
+    runComponentsMock.mockReset();
+  });
+
+  test("no component name → exit 1 with hint", async () => {
+    const stderr = makeStderrSpy();
+    const exit = await runOpComponents({ args: makeArgs({ path: "." }), plugins: [], serializers: [] });
+    expect(exit).toBe(1);
+    expect(stderr.join("\n")).toContain("Component name is required");
+    expect(runComponentsMock).not.toHaveBeenCalled();
+  });
+
+  test("happy path: single component, human output, exit 0", async () => {
+    runComponentsMock.mockResolvedValue({
+      success: true,
+      selected: ["svc"],
+      run: {
+        order: ["svc"],
+        waves: [["svc"]],
+        results: [{ component: "svc", ok: true, records: [{ component: "svc", phase: "Apply", kind: "cfn-deploy", status: "ok", durationMs: 5 }] }],
+        ok: true,
+      },
+    });
+    const stderrWrite = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+
+    const exit = await runOpComponents({ args: makeArgs({ path: "svc" }), plugins: [], serializers: [] });
+
+    expect(exit).toBe(0);
+    expect(runComponentsMock).toHaveBeenCalledWith(expect.any(String), "svc", { env: undefined });
+    const printed = stderrWrite.mock.calls.map((c) => String(c[0])).join("");
+    expect(printed).toContain("interpret run completed");
+    vi.restoreAllMocks();
+  });
+
+  test("threads --env through to runComponents", async () => {
+    runComponentsMock.mockResolvedValue({ success: true, selected: ["svc"], run: { order: ["svc"], waves: [["svc"]], results: [{ component: "svc", ok: true, records: [] }], ok: true } });
+    vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+
+    await runOpComponents({ args: makeArgs({ path: "svc", env: "staging" }), plugins: [], serializers: [] });
+
+    expect(runComponentsMock).toHaveBeenCalledWith(expect.any(String), "svc", { env: "staging" });
+    vi.restoreAllMocks();
+  });
+
+  test("--json emits the DriverRunResult as JSON on stdout", async () => {
+    const run = { order: ["svc"], waves: [["svc"]], results: [{ component: "svc", ok: true, records: [] }], ok: true };
+    runComponentsMock.mockResolvedValue({ success: true, selected: ["svc"], run });
+    const stdoutWrite = vi.spyOn(process.stdout, "write").mockImplementation(() => true);
+
+    const exit = await runOpComponents({ args: makeArgs({ path: "svc", json: true }), plugins: [], serializers: [] });
+
+    expect(exit).toBe(0);
+    const printed = stdoutWrite.mock.calls.map((c) => String(c[0])).join("");
+    expect(JSON.parse(printed.trim())).toEqual(run);
+    vi.restoreAllMocks();
+  });
+
+  test("all: dispatches the 'all' selector and renders every component", async () => {
+    runComponentsMock.mockResolvedValue({
+      success: true,
+      selected: ["shared-alb", "search-service"],
+      run: {
+        order: ["shared-alb", "search-service"],
+        waves: [["shared-alb"], ["search-service"]],
+        results: [
+          { component: "shared-alb", ok: true, records: [] },
+          { component: "search-service", ok: true, records: [] },
+        ],
+        ok: true,
+      },
+    });
+    const stderrWrite = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+
+    const exit = await runOpComponents({ args: makeArgs({ path: "all" }), plugins: [], serializers: [] });
+
+    expect(exit).toBe(0);
+    expect(runComponentsMock).toHaveBeenCalledWith(expect.any(String), "all", { env: undefined });
+    const printed = stderrWrite.mock.calls.map((c) => String(c[0])).join("");
+    expect(printed).toContain("shared-alb");
+    expect(printed).toContain("search-service");
+    vi.restoreAllMocks();
+  });
+
+  test("a failed component run → exit 1", async () => {
+    runComponentsMock.mockResolvedValue({
+      success: false,
+      selected: ["svc"],
+      run: {
+        order: ["svc"],
+        waves: [["svc"]],
+        results: [{ component: "svc", ok: false, records: [{ component: "svc", phase: "Apply", kind: "cfn-deploy", status: "fail", durationMs: 5, error: "boom" }] }],
+        ok: false,
+        failedComponent: "svc",
+      },
+    });
+    const stderrWrite = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+
+    const exit = await runOpComponents({ args: makeArgs({ path: "svc" }), plugins: [], serializers: [] });
+
+    expect(exit).toBe(1);
+    const printed = stderrWrite.mock.calls.map((c) => String(c[0])).join("");
+    expect(printed).toContain("interpret run failed");
+    vi.restoreAllMocks();
+  });
+
+  test("unknown component → exit 1 with the runComponents error message", async () => {
+    runComponentsMock.mockResolvedValue({ success: false, selected: [], error: 'Component "missing" not found. Known components: svc' });
+    const stderr = makeStderrSpy();
+
+    const exit = await runOpComponents({ args: makeArgs({ path: "missing" }), plugins: [], serializers: [] });
+
+    expect(exit).toBe(1);
+    expect(stderr.join("\n")).toContain('Component "missing" not found');
+  });
+
+  test("a gate in the component → exit 1 with an actionable, Temporal-pointing message", async () => {
+    runComponentsMock.mockResolvedValue({
+      success: false,
+      selected: ["svc"],
+      gateUnsupported: { component: "svc", signalName: "release-approval" },
+    });
+    const stderr = makeStderrSpy();
+
+    const exit = await runOpComponents({ args: makeArgs({ path: "svc" }), plugins: [], serializers: [] });
+
+    expect(exit).toBe(1);
+    const out = stderr.join("\n");
+    expect(out).toContain('gate "release-approval"');
+    expect(out).toContain("durable");
   });
 });

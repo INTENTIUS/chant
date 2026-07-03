@@ -34,10 +34,14 @@ export {
   type ComponentGraphResult,
   type GenerateLexicon,
   type GenerateComponentsResult,
+  type RunComponentsOptions,
+  type RunComponentsResult,
   listComponents,
   describeComponent,
   computeComponentGraph,
   generateComponentsPipeline,
+  runComponents,
+  findComponentGate,
 } from "./cli-support";
 export {
   type GeneratedJob,
@@ -45,6 +49,7 @@ export {
   type GenerateGitlabResult,
   generateGitlabPipeline,
 } from "./generate-gitlab";
+export { renderDriverHuman, renderDriverJson } from "./driver-output";
 export {
   type Capability,
   type CapabilityInput,

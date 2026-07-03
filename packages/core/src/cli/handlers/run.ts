@@ -19,6 +19,8 @@ import {
   type WorkflowHistoryRaw,
 } from "./run-client";
 import { generateReport, writeReport } from "./run-report";
+import { runComponents } from "../../components/cli-support";
+import { renderDriverHuman, renderDriverJson } from "../../components/driver-output";
 
 function kebabToCamel(s: string): string {
   return s.replace(/-([a-z])/g, (_, c: string) => c.toUpperCase());
@@ -303,8 +305,15 @@ function renderProgress(opName: string, history: WorkflowHistoryRaw): void {
  * Local mode is the default — it runs the Op in-process with no Temporal
  * server. `--temporal` opts into a cluster (gates, schedules, durable resume).
  * `--report` reads a past durable run and is therefore Temporal-only.
+ *
+ * `chant run --components <name|all>` (#585) is a separate target: discovered
+ * `Component` declarations dispatched through the interpret driver
+ * (`../../components/driver.ts`) rather than a `*.op.ts` Op. Checked first,
+ * mirroring `runGraph`'s `if (ctx.args.components) return
+ * runComponentGraph(ctx)` branch (../handlers/graph.ts).
  */
 export async function runOp(ctx: CommandContext): Promise<number> {
+  if (ctx.args.components) return runOpComponents(ctx);
   if (ctx.args.local && ctx.args.temporal) {
     console.error(formatError({
       message: "--local and --temporal are mutually exclusive",
@@ -317,6 +326,62 @@ export async function runOp(ctx: CommandContext): Promise<number> {
     return runOpTemporal(ctx);
   }
   return ctx.args.temporal ? runOpTemporal(ctx) : runOpLocal(ctx);
+}
+
+// ── chant run --components <name|all> ────────────────────────────────────────
+
+/**
+ * `chant run --components <name|all> [--env <env>]` (#585) — the interpret
+ * driver's CLI entrypoint. `args.path` is the component name (or `all`),
+ * matching `chant run <name>`'s Op-dispatch convention exactly (`args.path`
+ * is the Op name there too) rather than a project directory — components are
+ * always discovered from the current working directory, the same way Op
+ * discovery (`discoverOps()`) never takes a project-path argument either.
+ * Resolves the selector through `runComponents`
+ * (`../../components/cli-support.ts`) and runs it on the local in-process
+ * executor by default.
+ *
+ * Gated components are rejected before any step runs (matching
+ * `runOpLocal`'s pre-flight `findGate` guard) — `--temporal` for a gated
+ * component is not yet wired (no generated orchestrator Op/worker exists for
+ * components the way `dist/ops/<name>/worker.ts` does for Ops; out of scope
+ * per #585). `--temporal` without a gate present is accepted but currently
+ * behaves identically to local mode, since every capability here still runs
+ * in-process; this mirrors `runOpLocal`'s docs promise (local by default) and
+ * leaves graduating the durable backend to a follow-up, per epic #551 §8.
+ */
+export async function runOpComponents(ctx: CommandContext): Promise<number> {
+  const selector = ctx.args.path;
+  if (!selector || selector === ".") {
+    console.error(formatError({
+      message: "Component name is required: chant run --components <name|all>",
+      hint: "Run `chant list --components` to see available components.",
+    }));
+    return 1;
+  }
+
+  const result = await runComponents(resolve("."), selector, { env: ctx.args.env });
+
+  if (result.gateUnsupported) {
+    console.error(formatError({
+      message:
+        `component "${result.gateUnsupported.component}": gate "${result.gateUnsupported.signalName}" is not ` +
+        `supported on the local executor — gates need a durable runtime.`,
+      hint: "Re-run with a durable (Temporal) backend once this component graduates (see epic #551).",
+    }));
+    return 1;
+  }
+
+  if (!result.success && !result.run) {
+    console.error(formatError({ message: result.error ?? "Failed to run component(s)" }));
+    return 1;
+  }
+
+  if (result.run) {
+    if (ctx.args.json) renderDriverJson(result.run); else renderDriverHuman(result.run);
+  }
+
+  return result.success ? 0 : 1;
 }
 
 /**

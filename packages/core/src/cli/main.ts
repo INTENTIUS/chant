@@ -218,6 +218,8 @@ Ops:
   run signal <name> <signal>  Send a named signal to unblock a gate
   run cancel <name>     Cancel the active workflow run (requires --force)
   run log <name>        Show run history for an Op
+  run --components <name|all>  Run discovered Component(s) through the interpret
+                        driver on the local executor (--env <env>; #585)
 
   graph                 Show Op dependency graph (--stacks for cross-stack order,
                         --format ir|mermaid|dot|layout for the lint-gated graph IR,
@@ -295,7 +297,7 @@ Options:
   --validate            Run external validator (glci/glab) after migrate
   --use-composites      Rewrite to composite calls when patterns match (migrate)
   --components          Target discovered Component declarations instead of
-                        lexicon resources (list, describe, graph, build)
+                        lexicon resources (list, describe, graph, build, run)
   --generate <lexicon>  Generate mode (build --components only): synthesize CI
                         YAML for <lexicon> instead of running a normal build.
                         Only "gitlab" is implemented for v1.
@@ -307,6 +309,8 @@ Examples:
   chant build ./infra/ --watch
   chant build ./infra/ --components --generate gitlab
   chant build ./infra/ --components --generate gitlab --output .gitlab-ci.yml
+  chant run --components search-service --env staging
+  chant run --components all --env production
   chant import template.json --output ./infra/
   chant import --from prod --name my-bucket --output src/
   chant lint ./infra/
