@@ -55,7 +55,21 @@ The archive is the SBOM's universal home — a `sbom`-kind manifest entry, conte
 Because publish promotes by digest, the SBOM scanned in dev is provably the one running in prod — the same "avoid drift" property a registry gets from storing SBOMs alongside images.
 </Aside>
 
-A config-only or infra component with no built artifact has no `generate-sbom` step to run — it skips structurally, not as a special case. A component that wants no SBOM simply omits the step.
+### Native, hermetic generation from lockfiles
+
+`createLockfileSbomGenerator` (`./components/verbs/lockfile-sbom-generator.ts`) is a real, pure-TypeScript `SbomGenerator` backend — no `syft`, no `docker buildx`, no `cyclonedx-maven`, no network. It parses a declared-dependency manifest already on disk — Node's `package-lock.json` (lockfile v1–v3) or a JVM `pom.xml`'s top-level `<dependencies>` — and writes a real SPDX-2.3 or CycloneDX-1.5 JSON document via the native BOM writer (`./components/verbs/bom-writer.ts`), both to the archive manifest and to disk as `sbom.<format>.json`.
+
+<Aside type="caution" title="Declared deps, not a container-layer scan">
+A lockfile SBOM is complete for **declared** dependencies — accurate name/version for everything the package manager resolved. It is **not** a full image/container-layer scan: it cannot see OS packages baked into a base image or files a Dockerfile `COPY`s in directly. That deeper scan is `syft`'s (or BuildKit's native attestation's) job and remains the optional deep path tracked separately — layered on top of, never replacing, this hermetic baseline.
+</Aside>
+
+## Config-BOM: IaC as a first-class artifact
+
+A config-only or infra component (no `build` phase — e.g. a DynamoDB table, an EMR cluster definition) has no image/jar/zip to hand `generate-sbom`, but it does have a synthesized template. Chant treats that synthesized template as a first-class archive artifact — a `template`-kind manifest entry with its own content digest, peer to `image`/`asset` — and the `extract-config-bom` capability (`./components/verbs/config-bom.ts`) walks it structurally to produce a **config-BOM**: every declared resource, every nested stack/module reference (`AWS::CloudFormation::Stack` and equivalents), and every external artifact a resource's properties reference (a container image digest, an AMI id, a lexicon version string).
+
+The config-BOM is emitted through the same native SPDX/CycloneDX writer `generate-sbom` uses, and recorded in the archive manifest the same way — an `sbom`-kind entry linked to the template's digest via `subjectDigest`, distinguished from a software SBOM only by `bomKind: "config"`. Every existing SBOM consumer (`findSbomForSubject`, the build ledger) keeps working unmodified; `findConfigBomForSubject` is the config-BOM-specific lookup. This corrects an earlier assumption: a config-only/infra component is not artifact-less, and therefore not BOM-less either — its BOM is just the config kind rather than the software kind.
+
+A component that composes neither `generate-sbom` nor `extract-config-bom` simply has no BOM step to run — skipping is structural (no step composed), never a special case either capability needs to detect.
 
 ## Read next
 
