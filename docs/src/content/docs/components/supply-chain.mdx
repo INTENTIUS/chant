@@ -1,0 +1,128 @@
+---
+title: Supply-Chain Attestations
+description: SBOM, SLSA provenance, and keyless signing in plain language, plus the sign/verify capabilities that build → sign → verify one artifact digest.
+---
+
+import { Aside } from '@astrojs/starlight/components';
+import Diagram from '../../../components/Diagram.astro';
+
+This page is for the first time you're asked to sign an artifact and you're not sure what any of the acronyms mean. It covers four things chant attaches to a build, in plain language, then walks through doing it for real with the `sign` and `verify` capabilities.
+
+## Glossary
+
+| Term | What it actually is |
+|---|---|
+| **SBOM** (Software Bill of Materials) | A list of every package/library in the artifact — name, version, license. Answers "what's in this thing," the same way a food label answers "what's in this can." |
+| **SLSA provenance** | A signed statement of where the artifact came from and how it was built — source commit, builder identity, build timestamp. Answers "who built this and from what," not "what's in it." |
+| **Signature** | Cryptographic proof that a specific identity (a person or a CI workflow) produced this exact artifact, plus a public record that the signature happened. Answers "who vouches for these exact bytes." |
+| **VEX / CVE** | A CVE is a known vulnerability in some package. VEX is a statement about whether a given CVE actually affects *this* artifact the way it's used. Answers "of everything the SBOM lists, what actually matters." |
+
+An SBOM tells you what's inside. Provenance tells you where it came from. A signature tells you who's vouching for it. None of the three answers the other two — that's why chant attaches all three separately, to the same artifact, rather than treating any one as a stand-in for the others.
+
+<Aside type="note" title="VEX/CVE gating is not built yet">
+Chant generates SBOMs today (see [Build Archive](/chant/components/build-archive/)), so the raw material for VEX/CVE matching exists. Actually gating a deploy on "no unaddressed critical CVEs" is a planned follow-up, not something `verify` checks yet — this page covers signing and provenance, which are real today.
+</Aside>
+
+## Why keyless signing
+
+The obvious way to sign something is a private key: generate a keypair, sign with the private half, publish the public half for verification. That works, but it hands a beginner a new hazard — a key file that can leak, that can be lost (taking your ability to sign with it), and that someone has to remember to rotate.
+
+Keyless signing removes the key file entirely. Instead of a long-lived secret, cosign asks an OIDC identity provider you already use — your CI system's built-in token, or a browser login — "prove who you are," and gets back a short-lived certificate good for a few minutes. It signs with that, and logs the signature to a public transparency log (Rekor) so anyone can later confirm a signature really was issued at that time for that identity. The certificate expires almost immediately; there's nothing left to steal afterward.
+
+This is why chant's `sign` capability defaults to keyless with no configuration: there's no key to generate before your first signature, and nothing to rotate afterward. Key-based signing still exists as an explicit opt-in (`key` config) for teams with an existing KMS policy, but it is never what a new project reaches for first.
+
+## The one thing you must set: an OIDC identity
+
+Signing needs no setup — cosign detects ambient OIDC automatically in GitHub Actions, GitLab CI, and most CI providers, and falls back to an interactive browser login locally. **Verifying** does need one thing from you: telling `verify` which identity is allowed to have signed.
+
+Without this, "verify" would only mean "some signature exists" — which any keyless signer, including an attacker who can also complete an OIDC login, can produce. Naming the expected issuer and identity is what turns "a signature exists" into "the identity I trust signed this."
+
+Set it in two places that must agree:
+
+```ts title="chant.config.ts"
+export default {
+  signing: {
+    oidcIssuer: "https://token.actions.githubusercontent.com",
+    identity: "https://github.com/my-org/my-repo/.github/workflows/release.yml@refs/heads/main",
+  },
+};
+```
+
+```ts title="a component's verify step"
+import { verify } from "@intentius/chant/components/verbs/verify";
+
+await verify.run(ctx, {
+  imageRef: "@Sign.imageRef",
+  policy: {
+    expectedIssuer: "https://token.actions.githubusercontent.com",
+    expectedIdentity: "https://github.com/my-org/my-repo/.github/workflows/release.yml@refs/heads/main",
+  },
+});
+```
+
+`resolveSigningDefaults()` (`packages/core/src/config.ts`) reads the `signing` block from `chant.config.ts` so a component's `verify` step doesn't have to repeat the issuer/identity literally — it resolves project-wide defaults a per-call `policy` can still override.
+
+For GitHub Actions and GitLab CI, `oidcIssuer` is the provider's fixed token endpoint and `identity` is your own workflow's ref — both values you can read straight off the provider's own OIDC docs, not something chant invents. Locally, signing falls back to an interactive Sigstore login (a browser tab), and `identity` becomes the email cosign's certificate records for that login.
+
+`identityIsRegexp: true` treats `identity` as a pattern instead of a literal match, for teams whose workflow ref varies by branch or tag and don't want to enumerate every one.
+
+<Aside type="caution" title="Both fields are required, on purpose">
+`IdentityPolicy` has no "verify but accept any identity" mode. An identity-less verify would defeat the entire point of keyless signing — anyone's Rekor-logged signature would pass. `expectedIssuer` and `expectedIdentity` are both required fields, not an optional pair a beginner could forget to set.
+</Aside>
+
+## Why digest, not tag
+
+A tag like `myapp:latest` is a pointer that can move — the next push retargets it to different bytes without changing the tag. Signing a tag would only ever mean "something with this name was signed at some point," which says nothing about what a `docker pull` actually resolves to by the time someone runs it.
+
+A digest (`myapp@sha256:...`) is the artifact's own content hash. It cannot be reassigned to different bytes; a signature on a digest is a signature on those exact bytes, forever.
+
+`sign` and `attest-provenance` enforce this structurally: both throw `SignTargetNotDigestError` before ever invoking `cosign` if the reference isn't digest-qualified. In practice you never construct that digest by hand — it comes from a prior publish step's output (`"@Publish.uri"`, itself `repo@sha256:...`; see [Build Archive](/chant/components/build-archive/)).
+
+## First-signing walkthrough
+
+One digest carries all three attestations — SBOM, provenance, and signature — and `verify` checks that digest before a deploy is allowed to proceed.
+
+<Diagram name="supply-chain-attestations" alt="A build produces an image, publish promotes it to a registry by digest, and generate-sbom, attest-provenance, and sign all attach to that same digest. A verify step checks the signature and provenance against an identity policy before apply runs, and throws on failure." caption="SBOM, provenance, and signature all attach to one artifact digest. Verify gates apply on that digest." />
+
+```ts title="a component's deploy composition"
+deploy: [
+  { capability: "docker-build", input: { /* … */ sourceRef: "@Env.gitSha" } }, // → "@DockerBuild.digest"
+  { capability: "publish-image", input: { /* … */ } },       // → "@Publish.uri", e.g. repo@sha256:abc...
+  { capability: "generate-sbom", input: { imageRef: "@Publish.uri" } },
+  {
+    capability: "attest-provenance",
+    input: {
+      imageRef: "@Publish.uri",
+      // { sourceRef, artifactDigest } — the same link docker-build folded into the archive manifest (#614)
+      provenance: { sourceRef: "@Env.gitSha", artifactDigest: "@DockerBuild.digest" },
+      builderId: "https://github.com/actions/runner",
+    },
+  },
+  { capability: "sign", input: { imageRef: "@Publish.uri" } }, // keyless — no key config needed
+  {
+    capability: "verify",
+    input: {
+      imageRef: "@Publish.uri",
+      policy: {
+        expectedIssuer: "https://token.actions.githubusercontent.com",
+        expectedIdentity: "https://github.com/my-org/my-repo/.github/workflows/release.yml@refs/heads/main",
+      },
+    },
+  },
+  { capability: "cfn-deploy", input: { /* … apply, only runs if verify passed */ } },
+]
+```
+
+Every step after `publish-image` takes the same `"@Publish.uri"` digest — build once, attest three times, verify once, all against bytes that never change underneath you.
+
+"Done right" here means: the digest deployed is the digest that was signed, and `verify` ran and passed *before* `apply` — not signed-and-forgotten, and not a signature that gets checked manually after the fact if someone remembers. Put `verify` before the apply step in the composition and a failed check throws, halting the deploy the same way any other thrown capability error does (see [Orchestration](/chant/components/orchestration/)) — an unsigned or wrongly-signed artifact never reaches `apply`.
+
+<Aside type="caution" title="cosign must be installed">
+Both capabilities shell out to the real `cosign` binary. If it's missing, you get a clear `ToolNotAvailableError` naming the missing tool and what was being attempted — never a silent skip or a fake pass. Install cosign from [docs.sigstore.dev/cosign/system_config/installation](https://docs.sigstore.dev/cosign/system_config/installation) and it's on `PATH` for every environment that runs `sign`/`attest-provenance`/`verify`, including CI.
+</Aside>
+
+## Read next
+
+- [Build Archive](/chant/components/build-archive/) — how the SBOM is generated and where the digest `sign`/`verify` operate on comes from.
+- [Observability](/chant/components/observability/) — the build ledger's referrer discovery, which can surface a digest's signature/provenance/SBOM referrers after the fact.
+- [Orchestration](/chant/components/orchestration/) — how a thrown `VerificationFailedError` halts a composition before `apply` runs.

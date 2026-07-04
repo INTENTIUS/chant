@@ -73,6 +73,7 @@ export default defineConfig({
 						{ label: 'Capabilities', slug: 'components/capabilities' },
 						{ label: 'Composition & Wiring', slug: 'components/composition-and-wiring' },
 						{ label: 'Build Archive', slug: 'components/build-archive' },
+						{ label: 'Supply-Chain Attestations', slug: 'components/supply-chain' },
 						{ label: 'Observability', slug: 'components/observability' },
 						{ label: 'Orchestration', slug: 'components/orchestration' },
 						{ label: 'Cloud-Agnostic Boundary', slug: 'components/cloud-boundary' },
