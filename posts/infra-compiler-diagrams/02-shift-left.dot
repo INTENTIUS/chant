@@ -12,7 +12,7 @@ digraph shift_left {
         <td bgcolor="#F1F5F9"><b>author-time</b><br/><font point-size="9">editor squiggle</font></td>
         <td bgcolor="#F1F5F9"><b>build-time</b><br/><font point-size="9">CI fails</font></td>
         <td bgcolor="#F1F5F9"><b>apply-time</b><br/><font point-size="9">Flux errors</font></td>
-        <td bgcolor="#F1F5F9"><b>ALARM-time</b><br/><font point-size="9">the 3am page</font></td>
+        <td bgcolor="#F1F5F9"><b>ALARM-time</b><br/><font point-size="9">the pager fires</font></td>
       </tr>
       <tr>
         <td bgcolor="#DCFCE7" align="left"><b>chant</b></td>

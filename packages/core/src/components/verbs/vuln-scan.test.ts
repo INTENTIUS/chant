@@ -12,6 +12,7 @@ import {
   parseTrivyOutput,
   createToolVulnScanner,
   createScanVulnerabilitiesCapability,
+  autoDetectVulnScanner,
   type VulnFinding,
   type VulnScanner,
 } from "./vuln-scan";
@@ -98,6 +99,33 @@ describe("createToolVulnScanner (grype, via MockProcessRunner)", () => {
     const mock = createMockProcessRunner({ tools: { grype: false }, defaultAvailable: false });
     const scanner = createToolVulnScanner("grype", mock.runner);
     await expect(scanner.scan({ sbom: SBOM })).rejects.toBeInstanceOf(ToolNotAvailableError);
+  });
+});
+
+describe("autoDetectVulnScanner — the registered default (#634)", () => {
+  const TRIVY_JSON = JSON.stringify({
+    Results: [{ Vulnerabilities: [{ VulnerabilityID: "CVE-2024-9999", Severity: "HIGH", PkgName: "lodash", InstalledVersion: "4.17.20", FixedVersion: "4.17.21" }] }],
+  });
+
+  test("prefers grype when present", async () => {
+    const mock = createMockProcessRunner({ tools: { grype: true, trivy: true }, responses: { "grype sbom:": GRYPE_JSON } });
+    const findings = await autoDetectVulnScanner(mock.runner).scan({ sbom: SBOM });
+    expect(findings).toHaveLength(2);
+    expect(mock.calls.some((c) => c.command.includes("grype sbom:"))).toBe(true);
+    expect(mock.calls.some((c) => c.command.includes("trivy sbom"))).toBe(false);
+  });
+
+  test("falls back to trivy when grype is absent", async () => {
+    const mock = createMockProcessRunner({ tools: { grype: false, trivy: true }, defaultAvailable: false, responses: { "trivy sbom": TRIVY_JSON } });
+    const findings = await autoDetectVulnScanner(mock.runner).scan({ sbom: SBOM });
+    expect(findings).toHaveLength(1);
+    expect(mock.calls.some((c) => c.command.includes("trivy sbom"))).toBe(true);
+  });
+
+  test("throws ToolNotAvailableError naming both tools when neither is installed (not VulnScannerNotImplementedError)", async () => {
+    const mock = createMockProcessRunner({ tools: { grype: false, trivy: false }, defaultAvailable: false });
+    await expect(autoDetectVulnScanner(mock.runner).scan({ sbom: SBOM })).rejects.toBeInstanceOf(ToolNotAvailableError);
+    await expect(autoDetectVulnScanner(mock.runner).scan({ sbom: SBOM })).rejects.toThrow(/grype or trivy/);
   });
 });
 
