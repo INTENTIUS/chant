@@ -134,7 +134,7 @@ The `Sbom` phase below uses `artifactType: "image"`, which throws `SbomGenerator
 
 <Diagram name="supply-chain-attestations" alt="A build produces an image, publish promotes it to a registry by digest, and generate-sbom, attest-provenance, and sign all attach to that same digest. A verify step checks the signature and provenance against an identity policy before apply runs, and throws on failure." caption="SBOM, provenance, and signature all attach to one artifact digest. Verify gates apply on that digest." />
 
-The composition below is the real authoring shape — a `Component` built from `phase()`/`Step` (`packages/core/src/components/component.ts`), the exact shape `chant run --components` dispatches, not a paraphrase:
+The composition below is the real authoring shape — a `Component` built from `phase()`/`Step` (`packages/core/src/components/component.ts`), the exact shape `chant run --components` dispatches, not a paraphrase. It's written here as `{ kind: … }` literals to keep every field visible; each step also has a typed builder (`sign({ … })`, `verify({ … })`) — see [Component Contract](/chant/components/component-contract/#two-ways-to-author-a-step):
 
 ```ts title="deploy-with-attestations.component.ts"
 import { phase, type Component } from "@intentius/chant/components/component";

@@ -10,9 +10,9 @@ A component's `deploy` is a composition over [capabilities](/chant/components/ca
 
 ```ts
 deploy: [
-  phase("Publish", [{ kind: "publish-image", from: "archive", to: "$env.registry" }]),   // → @Publish.digest
-  phase("Apply",   [{ kind: "cfn-deploy", template: "archive:t.json", imageRef: "@Publish.digest" }]),
-  phase("Verify",  [{ kind: "wait-steady-state", service: "api" }, { kind: "health-gate", path: "/healthz" }]),
+  phase("Publish", [publishImage({ from: "archive", to: "$env.registry" })]),   // → @Publish.digest
+  phase("Apply",   [cfnDeploy({ template: "archive:t.json", imageRef: "@Publish.digest" })]),
+  phase("Verify",  [waitSteadyState({ service: "api" }), healthGate({ path: "/healthz" })]),
 ]
 ```
 
@@ -24,9 +24,9 @@ A fan-out unit is itself a small composition. One EC2 instance is provision (`cf
 
 ```ts
 deploy: [
-  phase("Seed", [{ kind: "cfn-deploy", stack: "neo4j-az0-0" }, { kind: "code-deploy", instance: 0 }, { kind: "wait-cluster-healthy", size: 1 }]),
+  phase("Seed", [cfnDeploy({ stack: "neo4j-az0-0", template: "archive:neo4j.template.json" }), codeDeploy({ instance: 0, revision: "$env.appBundle" }), waitClusterHealthy({ size: 1 })]),
   ...followers.map((n) =>                       // Array.map over instance configs
-    phase(`Node ${n}`, [{ kind: "cfn-deploy", stack: `neo4j-${n}` }, { kind: "code-deploy", instance: n }, { kind: "wait-cluster-healthy", quorum: true }]),
+    phase(`Node ${n}`, [cfnDeploy({ stack: `neo4j-${n}`, template: "archive:neo4j.template.json" }), codeDeploy({ instance: n, revision: "$env.appBundle" }), waitClusterHealthy({ quorum: true })]),
   ),
 ]
 ```
@@ -44,7 +44,7 @@ export const searchService: Component = {
   name: "search-service",
   dependsOn: ["shared-alb"],
   deploy: [
-    phase("Apply", [{ kind: "cfn-deploy", inputs: { ...sharedAlb.outputs } }]),   // listener ARN, cluster ARN, subnets, …
+    phase("Apply", [cfnDeploy({ template: "archive:search.template.json", inputs: { ...sharedAlb.outputs } })]),   // listener ARN, cluster ARN, subnets, …
   ],
 };
 ```
@@ -59,8 +59,8 @@ Components also wire by **artifact**, not just by stack output. A [producer](/ch
 // producer — a JAR published to S3, publish-only deploy
 export const jarLib: Component = {
   name: "jar-lib",
-  build: { kind: "jvm-build", tool: "maven" },
-  deploy: [phase("Publish", [{ kind: "publish-artifact", from: "archive", to: "$env.s3" }])],   // → @jar-lib.publish.uri
+  build: jvmBuild({ tool: "maven", path: ".", into: "archive" }),
+  deploy: [phase("Publish", [publishArtifact({ from: "archive", to: "$env.s3" })])],   // → @jar-lib.publish.uri
 };
 
 // consumer — an EMR job that reads the JAR
@@ -68,8 +68,8 @@ export const emrJob: Component = {
   name: "emr-job",
   dependsOn: ["jar-lib"],
   deploy: [
-    phase("Submit", [{ kind: "emr-start-job-run", jar: "@jar-lib.publish.uri", args: [/* … */] }]),
-    phase("Verify", [{ kind: "wait-job", runId: "@Submit.runId" }]),
+    phase("Submit", [emrStartJobRun({ jar: "@jar-lib.publish.uri", args: [/* … */] })]),
+    phase("Verify", [waitJob({ runId: "@Submit.runId" })]),
   ],
 };
 ```

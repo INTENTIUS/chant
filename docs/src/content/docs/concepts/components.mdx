@@ -45,25 +45,26 @@ So the layering is: a Component is authored declaratively, and it compiles down 
 <Aside type="caution" title="Two `phase()` and two `chant run`, on purpose">
 Ops and Components each expose a function named `phase()` and each launch through `chant run`, but they are different surfaces:
 
-- An **Op** imports from `@intentius/chant-lexicon-temporal`; its steps are builder calls like `kubectlApply(...)` and `shell(...)`; you launch it with `chant run <name>`.
-- A **Component** imports from `@intentius/chant/components/component`; its steps are kind-literals like `{ kind: "publish-image", ... }`; you launch it with `chant run --components <name>`.
+- An **Op** imports its step builders (`kubectlApply`, `shell`, …) from `@intentius/chant-lexicon-temporal`; you launch it with `chant run <name>`.
+- A **Component** imports its step builders (`publishImage`, `cfnDeploy`, …) from `@intentius/chant/components` — or writes the equivalent `{ kind: "publish-image", … }` literals; you launch it with `chant run --components <name>`.
 
-Check the import and the `--components` flag to tell which surface a snippet is about.
+The tell is the import path and the `--components` flag, not the syntax — both surfaces compose `phase()`.
 </Aside>
 
 ## A minimal component
 
 ```ts title="search-service.component.ts"
 import { phase, type Component } from "@intentius/chant/components/component";
+import { dockerBuild, publishImage, cfnDeploy, waitSteadyState } from "@intentius/chant/components";
 
 export const searchService: Component = {
   name: "search-service",
   dependsOn: ["shared-alb"],
-  build: { kind: "docker-build", context: ".", into: "archive" },
+  build: dockerBuild({ context: ".", into: "archive" }),
   deploy: [
-    phase("Publish", [{ kind: "publish-image", from: "archive", to: "$env.registry" }]),
-    phase("Apply", [{ kind: "cfn-deploy", template: "archive:search.template.json", imageRef: "@Publish.digest" }]),
-    phase("Verify", [{ kind: "wait-steady-state", service: "search" }]),
+    phase("Publish", [publishImage({ from: "archive", to: "$env.registry" })]),
+    phase("Apply", [cfnDeploy({ template: "archive:search.template.json", imageRef: "@Publish.digest" })]),
+    phase("Verify", [waitSteadyState({ service: "search" })]),
   ],
 };
 ```

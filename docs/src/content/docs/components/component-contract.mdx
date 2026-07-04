@@ -26,8 +26,8 @@ interface Component {
 
 `build` is optional: a config-only component has none. `deploy` is a composition using the same grammar as [Ops](/chant/guide/ops/) — phases, `parallel`, `gate`, `onFailure`, `dependsOn`. See [Composition & Wiring](/chant/components/composition-and-wiring/).
 
-<Aside type="note" title="Steps are kind-literals">
-A step is a plain object tagged by `kind` — `{ kind: "publish-image", … }` — the same shape as the JSON projection below. `phase()`, `gate()`, and `stackOutput()` are the only authoring helpers today. A typed per-verb builder API (`publishImage({ … })`) is planned as sugar over these literals ([#658](https://github.com/INTENTIUS/chant/issues/658)).
+<Aside type="note" title="Two ways to author a step">
+A step can be written as a typed **builder** — `publishImage({ from, to })` — or as the plain **kind-literal** it projects to — `{ kind: "publish-image", from, to }`. Builders ([#658](https://github.com/INTENTIUS/chant/issues/658)), imported from `@intentius/chant/components`, add per-verb argument checking and autocomplete; the kind-literal is the underlying [JSON contract](#the-json-projection) a hand-written or non-chant-authored component uses. The examples here use builders; the JSON projection below shows the same steps as literals.
 </Aside>
 
 <Diagram name="component-anatomy" alt="One component as four phases — build, publish, apply, verify — annotated with the three archetypes: service, infra, and producer/library." caption="A component's phases, and the three archetypes that use different subsets of them." />
@@ -49,18 +49,21 @@ A producer emits an artifact other components consume; its `deploy` is a single 
 An ALB/ECS target: build an image, promote it at deploy time, apply the stack that registers the service on a shared ALB, wait for steady state. The shared-ALB values arrive as [cross-stack outputs](/chant/components/composition-and-wiring/#cross-stack-outputs), resolved by the graph rather than by a `describe-stacks` shell script.
 
 ```ts
+import { phase, type Component } from "@intentius/chant/components/component";
+import { dockerBuild, publishImage, cfnDeploy, ecsUpdateService, waitSteadyState, healthGate } from "@intentius/chant/components";
+
 export const searchService: Component = {
   name: "search-service",
   dependsOn: ["shared-alb"],
-  build: { kind: "docker-build", context: ".", into: "archive" },
+  build: dockerBuild({ context: ".", into: "archive" }),
   deploy: [
-    phase("Publish", [{ kind: "publish-image", from: "archive", to: "$env.registry" }]),   // → digest
+    phase("Publish", [publishImage({ from: "archive", to: "$env.registry" })]),   // → digest
     phase("Apply", [
-      { kind: "cfn-deploy", template: "archive:search.template.json",
-        inputs: { ...sharedAlb.outputs, image: "@Publish.digest" } },
-      { kind: "ecs-update-service", cluster: "$env.cluster", service: "search" },
+      cfnDeploy({ template: "archive:search.template.json",
+                  inputs: { ...sharedAlb.outputs, image: "@Publish.digest" } }),
+      ecsUpdateService({ cluster: "$env.cluster", service: "search" }),
     ]),
-    phase("Verify", [{ kind: "wait-steady-state", service: "search" }, { kind: "health-gate", path: "/healthz" }]),
+    phase("Verify", [waitSteadyState({ service: "search" }), healthGate({ path: "/healthz" })]),
   ],
 };
 ```
@@ -98,7 +101,7 @@ export const searchService: Component = {
   name: "search-service",
   // archetype omitted — inferred as "service" (build + a non-publish Apply step)
   dependsOn: ["shared-alb"],
-  build: { kind: "docker-build", context: ".", into: "archive" },
+  build: dockerBuild({ context: ".", into: "archive" }),
   deploy: [ /* … */ ],
 };
 ```
