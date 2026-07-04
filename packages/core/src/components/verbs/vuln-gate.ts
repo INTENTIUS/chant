@@ -1,0 +1,162 @@
+/**
+ * `vuln-gate` capability (#626) — the deploy-time gate that closes the
+ * supply-chain loop: scan the SBOM (./vuln-scan.ts) for known CVEs, suppress
+ * the ones VEX says don't matter (./vex.ts), check licenses (./license-policy.ts),
+ * and **throw** on a policy violation so composing it before an apply phase
+ * fails the deploy — the same throw-to-halt mechanism as ./verify.ts and
+ * `policyGate` (../../lint/policy.ts). No new gate plumbing.
+ *
+ * **Beginner-safe default policy:** fail on `severity >= critical AND fixable
+ * AND not VEX-suppressed`; findings at/above the warn severity (default
+ * `high`) that don't reach the fail bar are reported as warnings, not blocked;
+ * license findings are report-only unless `failOnLicense` is set. Everything
+ * is configurable via `chant.config.ts`'s `vulnPolicy` section (see
+ * ../../config.ts `resolveVulnPolicy`). The intent is that a first-timer who
+ * just adds a `vuln-gate` step gets a sensible, non-noisy gate that blocks the
+ * genuinely actionable (critical + fixable) and reports the rest.
+ */
+
+import type { Capability } from "../capability";
+import type { SbomDocument } from "./sbom-generator";
+import {
+  defaultVulnScanner,
+  SEVERITY_RANK,
+  type Severity,
+  type VulnFinding,
+  type VulnScanner,
+} from "./vuln-scan";
+import { applyVex, parseVexDocument, type SuppressedFinding, type VexStatement } from "./vex";
+import { evaluateLicensePolicy, type LicensePolicy, type LicenseViolation } from "./license-policy";
+
+/** The gate's policy. Defaults (per `resolveVulnPolicy`, ../../config.ts) are beginner-safe: fail critical+fixable, warn high, license report-only. */
+export interface VulnPolicy {
+  /** Minimum severity that FAILS the gate. Default `"critical"`. */
+  failSeverity: Severity;
+  /** When true (default), only *fixable* findings at/above `failSeverity` fail the gate — an unfixable finding can't be actioned by upgrading, so it warns instead of blocking. */
+  fixableOnly: boolean;
+  /** Minimum severity reported as a warning (below `failSeverity`). Default `"high"`. */
+  warnSeverity: Severity;
+  /** License allow/deny policy. Evaluated always; only *blocks* when `failOnLicense` is true. */
+  license?: LicensePolicy;
+  /** Block the deploy on a license violation. Default `false` (report-only) — license posture is context-dependent. */
+  failOnLicense: boolean;
+}
+
+/** Beginner-safe defaults, also encoded in `resolveVulnPolicy` (../../config.ts). */
+export const DEFAULT_VULN_POLICY: VulnPolicy = {
+  failSeverity: "critical",
+  fixableOnly: true,
+  warnSeverity: "high",
+  failOnLicense: false,
+};
+
+export interface VulnGateInput {
+  /** The artifact's SBOM. Scanned in-place unless `findings` is supplied. */
+  sbom: SbomDocument;
+  /** Pre-scanned findings (e.g. from a prior `scan-vulnerabilities` step). If omitted, the gate scans `sbom` itself via the injected scanner. */
+  findings?: VulnFinding[];
+  /** VEX documents (OpenVEX or CycloneDX-embedded), as serialized JSON, applied to suppress findings. */
+  vex?: string[];
+  /** Policy override; merged over `DEFAULT_VULN_POLICY`. */
+  policy?: Partial<VulnPolicy>;
+  /** Artifact digest, for reporting. */
+  digest?: string;
+}
+
+/** A finding that fails the gate, with why. */
+export interface BlockingFinding {
+  finding: VulnFinding;
+  reason: "severity-threshold";
+}
+
+export interface VulnGateOutput {
+  /** Always `true` when returned — a violation throws instead (mirrors ./verify.ts's `verified`). */
+  passed: true;
+  /** Findings at/above `warnSeverity` that did not reach the fail bar. */
+  warnings: VulnFinding[];
+  /** Findings suppressed by VEX, with justification (never silently dropped). */
+  suppressed: SuppressedFinding[];
+  /** License findings — reported even when `failOnLicense` is false. */
+  licenseFindings: LicenseViolation[];
+}
+
+/**
+ * Thrown when the gate blocks a deploy — carries the blocking findings and any
+ * blocking license violations so a reviewer sees exactly what to fix (or VEX).
+ * Distinct from a scanner-not-installed error (`VulnScannerNotImplementedError`/
+ * `ToolNotAvailableError`) so a caller can tell "policy said no" from "no
+ * scanner."
+ */
+export class VulnGateFailedError extends Error {
+  constructor(
+    public readonly blocking: BlockingFinding[],
+    public readonly blockingLicenses: LicenseViolation[],
+  ) {
+    const cveList = blocking.map((b) => `${b.finding.cveId} (${b.finding.severity}, ${b.finding.package})`).join(", ");
+    const licList = blockingLicenses.map((l) => `${l.license} in ${l.package}`).join(", ");
+    const parts: string[] = [];
+    if (blocking.length) parts.push(`${blocking.length} vulnerability finding(s): ${cveList}`);
+    if (blockingLicenses.length) parts.push(`${blockingLicenses.length} license violation(s): ${licList}`);
+    super(`vuln-gate blocked the deploy — ${parts.join("; ")}. Fix the dependency, or record a VEX statement if it is not exploitable.`);
+    this.name = "VulnGateFailedError";
+  }
+}
+
+/** Parse every supplied VEX document into a flat statement list (ignoring any that fail to parse into a known shape). */
+function collectVex(docs: string[] | undefined): VexStatement[] {
+  const out: VexStatement[] = [];
+  for (const bytes of docs ?? []) out.push(...parseVexDocument(bytes));
+  return out;
+}
+
+/**
+ * Build the `vuln-gate` capability. Scans `sbom` (or uses supplied `findings`),
+ * applies VEX, evaluates the license policy, and classifies every gating
+ * finding: it BLOCKS (throws `VulnGateFailedError`) any finding at/above
+ * `failSeverity` that satisfies `fixableOnly`, plus license violations when
+ * `failOnLicense`; everything at/above `warnSeverity` below the fail bar is a
+ * warning. On a clean pass it returns the warnings/suppressed/license report
+ * for logging.
+ */
+export function createVulnGateCapability(
+  scanner: VulnScanner = defaultVulnScanner(),
+): Capability<VulnGateInput, VulnGateOutput> {
+  return {
+    kind: "vuln-gate",
+    async run(_ctx, input) {
+      const policy: VulnPolicy = { ...DEFAULT_VULN_POLICY, ...input.policy };
+      const rawFindings = input.findings ?? (await scanner.scan({ sbom: input.sbom, digest: input.digest }));
+
+      // 1. VEX suppression.
+      const { gating, suppressed } = applyVex(rawFindings, collectVex(input.vex));
+
+      // 2. Classify gating findings against the severity policy.
+      const failRank = SEVERITY_RANK[policy.failSeverity];
+      const warnRank = SEVERITY_RANK[policy.warnSeverity];
+      const blocking: BlockingFinding[] = [];
+      const warnings: VulnFinding[] = [];
+      for (const f of gating) {
+        const rank = SEVERITY_RANK[f.severity];
+        const meetsFail = rank >= failRank && (!policy.fixableOnly || f.fixable);
+        if (meetsFail) {
+          blocking.push({ finding: f, reason: "severity-threshold" });
+        } else if (rank >= warnRank) {
+          warnings.push(f);
+        }
+      }
+
+      // 3. License policy (always evaluated; blocks only when opted in).
+      const licenseFindings = policy.license ? evaluateLicensePolicy(input.sbom, policy.license) : [];
+      const blockingLicenses = policy.failOnLicense ? licenseFindings : [];
+
+      if (blocking.length > 0 || blockingLicenses.length > 0) {
+        throw new VulnGateFailedError(blocking, blockingLicenses);
+      }
+
+      return { passed: true, warnings, suppressed, licenseFindings };
+    },
+  };
+}
+
+/** Default `vuln-gate` capability (inject a real/mock scanner, or supply `findings`). */
+export const vulnGate: Capability<VulnGateInput, VulnGateOutput> = createVulnGateCapability();
