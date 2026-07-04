@@ -59,7 +59,7 @@ build-archive.ts`'s `contentDigest`).
 those four steps needs a real tool on `PATH`:
 
 - `sign` / `attest-provenance` / `verify` → [cosign](https://docs.sigstore.dev/cosign/system_config/installation)
-- `scan-vulnerabilities` (which `vuln-gate` scans through) → [syft](https://github.com/anchore/syft) + [grype](https://github.com/anchore/grype)
+- `vuln-gate` scans the SBOM this component already produced, so it needs a scanner — [grype](https://github.com/anchore/grype) (preferred) or [trivy](https://github.com/aquasecurity/trivy). The registered `vuln-gate` auto-detects whichever is on `PATH` (#634); no `syft` needed here since the SBOM is already generated hermetically.
 
 ```bash
 npm run supply-chain:full

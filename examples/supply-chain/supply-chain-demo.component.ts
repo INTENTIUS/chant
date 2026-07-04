@@ -104,23 +104,19 @@ export const supplyChainDemo: Component = {
  *     specific `ToolNotAvailableError` naming it when missing
  *     (https://docs.sigstore.dev/cosign/system_config/installation).
  *   - `vuln-gate` scans via the injectable `VulnScanner`
- *     (packages/core/src/components/verbs/vuln-scan.ts) — a real backend
- *     shells out to grype/trivy (`createToolVulnScanner`), but the
- *     `vuln-gate` capability `chant run --components` actually registers
- *     (starter-plugin.ts) still defaults to `notImplementedVulnScanner`, so
- *     this step throws `VulnScannerNotImplementedError` even with
- *     grype/syft on PATH — wiring the starter plugin's `vuln-gate` to a real
- *     scanner by default is a separate, not-yet-done follow-up (out of
- *     scope for #630, which only changes `generate-sbom`'s default). Kept
- *     in the composition anyway so the step SHAPE — sbom wiring, policy
- *     fill-in from chant.config.ts — is accurate and copy-pasteable; a
- *     project that wants this step to actually pass today must inject its
- *     own registry (see `RunComponentsOptions.registry`,
- *     packages/core/src/components/cli-support.ts) wired to
- *     `createVulnGateCapability(createToolVulnScanner())`.
+ *     (packages/core/src/components/verbs/vuln-scan.ts). The `vuln-gate`
+ *     capability `chant run --components` registers now auto-detects a real
+ *     backend at scan time — grype if present, else trivy
+ *     (`autoDetectVulnScanner`, #634) — so this step works the moment either
+ *     tool is on PATH, no registry wiring. With neither installed it throws
+ *     a `ToolNotAvailableError` naming what to install (not a silent empty
+ *     scan). To pin a tool or inject a mock, build your own registry (see
+ *     `RunComponentsOptions.registry`, packages/core/src/components/
+ *     cli-support.ts) wired to
+ *     `createVulnGateCapability(createToolVulnScanner("grype"))`.
  *
- * Run: `npm run supply-chain:full` once cosign is installed (vuln-gate will
- * still throw `VulnScannerNotImplementedError` — see above). This component
+ * Run: `npm run supply-chain:full` once cosign is installed (and grype or
+ * trivy for the vuln-gate step). This component
  * is NOT what `npm install && npm run supply-chain` exercises — that only
  * runs the hermetic `supply-chain-demo` above. Kept as a separate component
  * (rather than folded into one long composition) so a newcomer's first run
@@ -175,13 +171,13 @@ export const supplyChainDemoSigned: Component = {
         policy: {},
       },
     ]),
-    // ↓↓↓ needs syft + grype on PATH (scan-vulnerabilities' real backend) ↓↓↓
+    // ↓↓↓ needs grype or trivy on PATH (scan-vulnerabilities' real backend) ↓↓↓
     phase("VulnGate", [
       {
         kind: "vuln-gate",
         // Wire the hermetic SBOM this same component already generated —
-        // vuln-gate scans it via the injected VulnScanner (default: shells
-        // out to grype) unless `findings` is supplied directly.
+        // vuln-gate scans it via the injected VulnScanner (default: auto-
+        // detects grype, else trivy) unless `findings` is supplied directly.
         sbom: "@Sbom.sbom",
         // policy is filled from chant.config.ts's `vulnPolicy` block by the
         // same #629 config-defaults pass when omitted here.

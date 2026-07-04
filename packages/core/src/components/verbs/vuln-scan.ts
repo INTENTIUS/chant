@@ -21,7 +21,7 @@ import { join } from "node:path";
 import { createHash } from "node:crypto";
 import type { Capability } from "../capability";
 import type { SbomDocument } from "./sbom-generator";
-import { defaultProcessRunner, q, requireTool, type ProcessRunner } from "./process-runner";
+import { defaultProcessRunner, q, requireTool, ToolNotAvailableError, type ProcessRunner } from "./process-runner";
 
 // ── findings ─────────────────────────────────────────────────────────────────
 
@@ -187,18 +187,44 @@ export class VulnScannerNotImplementedError extends Error {
   }
 }
 
-/** Default `VulnScanner`: throws `VulnScannerNotImplementedError`. A project opts into a real scanner explicitly (constructing `createScanVulnerabilitiesCapability(createToolVulnScanner())`), same as ./sbom-generator.ts's `notImplementedSbomGenerator`. */
+/** Kept for tests and for a caller that wants the old loud "no scanner wired" behavior; no longer the registered default (#634). */
 export const notImplementedVulnScanner: VulnScanner = {
   async scan() {
     throw new VulnScannerNotImplementedError();
   },
 };
 
+/**
+ * A `VulnScanner` that picks a real backend at scan time — `grype` if present,
+ * else `trivy`. Unlike SBOM generation there is no hermetic fallback (a scan
+ * needs a real vuln DB), so when neither tool is on `PATH` this throws a
+ * `ToolNotAvailableError` naming what to install — an error a config-only user
+ * can act on — rather than `VulnScannerNotImplementedError`, which told them to
+ * edit code. This is the vuln-side analog of #630's hermetic-by-default SBOM
+ * generator: the registered `scan-vulnerabilities`/`vuln-gate` capabilities now
+ * work the moment a scanner is installed, with no code wiring.
+ */
+export function autoDetectVulnScanner(processRunner: ProcessRunner = defaultProcessRunner()): VulnScanner {
+  return {
+    async scan(input) {
+      const tool: ScannerTool | undefined = (await processRunner.available("grype"))
+        ? "grype"
+        : (await processRunner.available("trivy"))
+          ? "trivy"
+          : undefined;
+      if (!tool) {
+        throw new ToolNotAvailableError("grype or trivy", "scan the SBOM for known vulnerabilities");
+      }
+      return createToolVulnScanner(tool, processRunner).scan(input);
+    },
+  };
+}
+
 let defaultScanner: VulnScanner | undefined;
 
-/** The default `VulnScanner` the `scan-vulnerabilities` capability falls back to when none is supplied. */
+/** The default `VulnScanner` the `scan-vulnerabilities`/`vuln-gate` capabilities fall back to when none is supplied: auto-detects `grype`/`trivy` and throws `ToolNotAvailableError` if neither is installed (#634). */
 export function defaultVulnScanner(): VulnScanner {
-  if (!defaultScanner) defaultScanner = notImplementedVulnScanner;
+  if (!defaultScanner) defaultScanner = autoDetectVulnScanner();
   return defaultScanner;
 }
 
