@@ -70,6 +70,15 @@ jobs:
           npx tsx ../../packages/core/src/cli/main.ts run hello --local --json > result.json
           node -e "process.exit(JSON.parse(require('fs').readFileSync('result.json','utf8')).ok ? 0 : 1)"
 
+      - name: Run supply-chain example component (regression guard, #630)
+        working-directory: examples/supply-chain
+        run: |
+          npx tsx ../../packages/core/src/cli/main.ts run --components supply-chain-demo --env local --json > result.json
+          node -e "process.exit(JSON.parse(require('fs').readFileSync('result.json','utf8')).results[0].ok ? 0 : 1)"
+          test -s sbom.spdx.json
+          test -s config-bom.spdx.json
+          rm -f result.json sbom.spdx.json config-bom.spdx.json
+
       - name: Upload SARIF results
         if: always()
         uses: github/codeql-action/upload-sarif@v4

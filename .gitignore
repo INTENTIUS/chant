@@ -24,6 +24,10 @@ examples/*/k8s.yaml
 examples/*/templates/*.json
 examples/*/.gitlab-ci.yml
 
+# supply-chain example: generated SBOM/config-BOM (npm run supply-chain)
+examples/supply-chain/sbom.*.json
+examples/supply-chain/config-bom.*.json
+
 # Docker smoke build artifacts
 test/example-builds/
 

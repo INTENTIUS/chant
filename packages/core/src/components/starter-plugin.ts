@@ -32,6 +32,7 @@ import {
   zipPackage,
   jvmBuild,
   generateSbom,
+  extractConfigBom,
   publishImage,
   loadImageOnHost,
   publishArtifact,
@@ -73,7 +74,10 @@ import type { CapabilityPlugin } from "./capability-plugin";
  */
 export const STARTER_VERB_FAMILIES = {
   build: ["docker-build", "zip-package", "jvm-build"],
-  sbom: ["generate-sbom"],
+  // `extract-config-bom` (./verbs/config-bom.ts, #613) was a real, exported
+  // capability that never made it into this registration list — genuinely
+  // unreachable from `chant run --components` until #630 added it here.
+  sbom: ["generate-sbom", "extract-config-bom"],
   publish: ["publish-image", "load-image-on-host", "publish-artifact"],
   supplyChainSecurity: ["sign", "attest-provenance", "verify"],
   supplyChainPolicy: ["scan-vulnerabilities", "vuln-gate"],
@@ -105,6 +109,7 @@ function starterCapabilities(): Array<Capability<never, unknown>> {
     zipPackage,
     jvmBuild,
     generateSbom,
+    extractConfigBom,
     publishImage,
     loadImageOnHost,
     publishArtifact,

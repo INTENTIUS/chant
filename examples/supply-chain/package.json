@@ -1,0 +1,19 @@
+{
+  "name": "supply-chain-example",
+  "version": "1.0.0",
+  "type": "module",
+  "private": true,
+  "description": "Golden supply-chain example: hermetic SBOM + config-BOM tool-free, plus the cosign/syft/grype-gated sign/verify/vuln-gate steps for when you have those tools installed.",
+  "dependencies": {
+    "is-odd": "3.0.1",
+    "left-pad": "1.3.0"
+  },
+  "devDependencies": {
+    "@intentius/chant": "*",
+    "typescript": "*"
+  },
+  "scripts": {
+    "supply-chain": "chant run --components supply-chain-demo --env local",
+    "supply-chain:full": "chant run --components supply-chain-demo-signed --env local"
+  }
+}
