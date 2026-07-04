@@ -176,4 +176,4 @@ export function createVerifyCapability(
 }
 
 /** Default `verify` capability, backed by the real `ProcessRunner`. */
-export const verify: Capability<VerifyInput, VerifyOutput> = createVerifyCapability();
+export const verifyCapability: Capability<VerifyInput, VerifyOutput> = createVerifyCapability();

@@ -262,5 +262,5 @@ export function createScanVulnerabilitiesCapability(
 }
 
 /** Default `scan-vulnerabilities` capability, backed by the not-implemented scanner (inject a real/mock one). */
-export const scanVulnerabilities: Capability<ScanVulnerabilitiesInput, ScanVulnerabilitiesOutput> =
+export const scanVulnerabilitiesCapability: Capability<ScanVulnerabilitiesInput, ScanVulnerabilitiesOutput> =
   createScanVulnerabilitiesCapability();

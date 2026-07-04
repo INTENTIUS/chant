@@ -113,7 +113,7 @@ export function createCodeDeployCapability(
 }
 
 /** Default `code-deploy` capability, backed by the real `CloudExecutor`. */
-export const codeDeploy: Capability<CodeDeployInput, CodeDeployOutput> = createCodeDeployCapability();
+export const codeDeployCapability: Capability<CodeDeployInput, CodeDeployOutput> = createCodeDeployCapability();
 
 // ── copy-to-host ─────────────────────────────────────────────────────────────
 
@@ -132,7 +132,7 @@ export interface CopyToHostOutput {
 }
 
 /** Copy a file/archive to a host, via SSM or SSH depending on config. Cloud-agnostic. */
-export const copyToHost: Capability<CopyToHostInput, CopyToHostOutput> =
+export const copyToHostCapability: Capability<CopyToHostInput, CopyToHostOutput> =
   stubCapability("copy-to-host");
 
 // ── remote-exec ──────────────────────────────────────────────────────────────
@@ -156,5 +156,5 @@ export interface RemoteExecOutput {
 }
 
 /** Run a command on a remote host via SSM Run Command or SSH. Cloud-agnostic. */
-export const remoteExec: Capability<RemoteExecInput, RemoteExecOutput> =
+export const remoteExecCapability: Capability<RemoteExecInput, RemoteExecOutput> =
   stubCapability("remote-exec");

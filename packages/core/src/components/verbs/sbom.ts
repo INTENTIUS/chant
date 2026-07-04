@@ -149,4 +149,4 @@ export function createGenerateSbomCapability(
 }
 
 /** Default `generate-sbom` capability, backed by the process-wide default `SbomGenerator` (throws until a real backend is injected — see ./sbom-generator.ts's `notImplementedSbomGenerator`). */
-export const generateSbom: Capability<GenerateSbomInput, GenerateSbomOutput> = createGenerateSbomCapability();
+export const generateSbomCapability: Capability<GenerateSbomInput, GenerateSbomOutput> = createGenerateSbomCapability();

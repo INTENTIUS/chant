@@ -30,4 +30,4 @@ export interface ShellOutput {
 }
 
 /** Run an arbitrary shell command. The escape hatch — typed, but lint-flagged; requires a `reason`. */
-export const shell: Capability<ShellInput, ShellOutput> = stubCapability("shell");
+export const shellCapability: Capability<ShellInput, ShellOutput> = stubCapability("shell");

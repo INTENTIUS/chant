@@ -55,7 +55,7 @@ export function createWaitForStackCapability(
 }
 
 /** Default `wait-for-stack` capability, backed by the real `CloudExecutor`. */
-export const waitForStack: Capability<WaitForStackInput, WaitForStackOutput> = createWaitForStackCapability();
+export const waitForStackCapability: Capability<WaitForStackInput, WaitForStackOutput> = createWaitForStackCapability();
 
 // ── wait-steady-state ────────────────────────────────────────────────────────
 
@@ -102,7 +102,7 @@ export function createWaitSteadyStateCapability(
 }
 
 /** Default `wait-steady-state` capability, backed by the real `CloudExecutor`. */
-export const waitSteadyState: Capability<WaitSteadyStateInput, WaitSteadyStateOutput> =
+export const waitSteadyStateCapability: Capability<WaitSteadyStateInput, WaitSteadyStateOutput> =
   createWaitSteadyStateCapability();
 
 // ── wait-cluster-healthy ─────────────────────────────────────────────────────
@@ -164,7 +164,7 @@ export function createWaitClusterHealthyCapability(
 }
 
 /** Default `wait-cluster-healthy` capability, backed by the real `CloudExecutor`. */
-export const waitClusterHealthy: Capability<WaitClusterHealthyInput, WaitClusterHealthyOutput> =
+export const waitClusterHealthyCapability: Capability<WaitClusterHealthyInput, WaitClusterHealthyOutput> =
   createWaitClusterHealthyCapability();
 
 // ── wait-endpoint ────────────────────────────────────────────────────────────
@@ -186,7 +186,7 @@ export interface WaitEndpointOutput {
 }
 
 /** Poll an HTTP(S) endpoint until it responds with an expected status. Cloud-agnostic. */
-export const waitEndpoint: Capability<WaitEndpointInput, WaitEndpointOutput> = stubCapability(
+export const waitEndpointCapability: Capability<WaitEndpointInput, WaitEndpointOutput> = stubCapability(
   "wait-endpoint",
 );
 
@@ -233,7 +233,7 @@ export function createWaitJobCapability(
 }
 
 /** Default `wait-job` capability, backed by the real `CloudExecutor`. */
-export const waitJob: Capability<WaitJobInput, WaitJobOutput> = createWaitJobCapability();
+export const waitJobCapability: Capability<WaitJobInput, WaitJobOutput> = createWaitJobCapability();
 
 // ── health-gate ──────────────────────────────────────────────────────────────
 
@@ -252,6 +252,6 @@ export interface HealthGateOutput {
 }
 
 /** Block progression until a health check passes — the generic post-deploy verification gate. Cloud-agnostic. */
-export const healthGate: Capability<HealthGateInput, HealthGateOutput> = stubCapability(
+export const healthGateCapability: Capability<HealthGateInput, HealthGateOutput> = stubCapability(
   "health-gate",
 );

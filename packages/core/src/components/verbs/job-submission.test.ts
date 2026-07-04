@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { createEmrStartJobRunCapability, emrSubmitStep } from "./job-submission";
+import { createEmrStartJobRunCapability, emrSubmitStepCapability as emrSubmitStep } from "./job-submission";
 import { createMockCloudExecutor } from "./__tests__/mock-cloud-executor";
 import { CapabilityNotImplementedError } from "../capability";
 
