@@ -50,7 +50,7 @@ An ALB/ECS target: build an image, promote it at deploy time, apply the stack th
 
 ```ts
 import { phase, type Component } from "@intentius/chant/components/component";
-import { dockerBuild, publishImage, cfnDeploy, ecsUpdateService, waitSteadyState, healthGate } from "@intentius/chant/components";
+import { dockerBuild, publishImage, cfnDeploy, ecsUpdateService, waitSteadyState } from "@intentius/chant/components";
 
 export const searchService: Component = {
   name: "search-service",
@@ -63,7 +63,7 @@ export const searchService: Component = {
                   inputs: { ...sharedAlb.outputs, image: "@Publish.digest" } }),
       ecsUpdateService({ cluster: "$env.cluster", service: "search" }),
     ]),
-    phase("Verify", [waitSteadyState({ service: "search" }), healthGate({ path: "/healthz" })]),
+    phase("Verify", [waitSteadyState({ service: "search" })]),
   ],
 };
 ```
@@ -82,8 +82,7 @@ The authoring form projects to a portable, versioned JSON contract. This is the 
     { "phase": "Apply", "steps": [
         { "kind": "cfn-deploy", "template": "archive:search.template.json", "imageRef": "@Publish.digest" },
         { "kind": "ecs-update-service", "cluster": "$env.cluster", "service": "search" } ] },
-    { "phase": "Verify", "steps": [ { "kind": "wait-steady-state", "service": "search" },
-                                    { "kind": "health-gate", "path": "/healthz" } ] }
+    { "phase": "Verify", "steps": [ { "kind": "wait-steady-state", "service": "search" } ] }
   ]
 }
 ```
