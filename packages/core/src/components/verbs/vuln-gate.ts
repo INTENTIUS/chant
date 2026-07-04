@@ -40,6 +40,8 @@ export interface VulnPolicy {
   license?: LicensePolicy;
   /** Block the deploy on a license violation. Default `false` (report-only) — license posture is context-dependent. */
   failOnLicense: boolean;
+  /** Block on an `unknown`-severity finding (a scanner that didn't report a severity chant could map). Default `false` — but such a finding is ALWAYS at least warned, never silently dropped, regardless of this flag. Set true for a strict shop that won't ship an unclassifiable finding. */
+  failOnUnknownSeverity: boolean;
 }
 
 /** Beginner-safe defaults, also encoded in `resolveVulnPolicy` (../../config.ts). */
@@ -48,6 +50,7 @@ export const DEFAULT_VULN_POLICY: VulnPolicy = {
   fixableOnly: true,
   warnSeverity: "high",
   failOnLicense: false,
+  failOnUnknownSeverity: false,
 };
 
 export interface VulnGateInput {
@@ -66,7 +69,7 @@ export interface VulnGateInput {
 /** A finding that fails the gate, with why. */
 export interface BlockingFinding {
   finding: VulnFinding;
-  reason: "severity-threshold";
+  reason: "severity-threshold" | "unknown-severity";
 }
 
 export interface VulnGateOutput {
@@ -137,9 +140,14 @@ export function createVulnGateCapability(
       const warnings: VulnFinding[] = [];
       for (const f of gating) {
         const rank = SEVERITY_RANK[f.severity];
-        const meetsFail = rank >= failRank && (!policy.fixableOnly || f.fixable);
-        if (meetsFail) {
+        if (rank >= failRank && (!policy.fixableOnly || f.fixable)) {
           blocking.push({ finding: f, reason: "severity-threshold" });
+        } else if (f.severity === "unknown") {
+          // Never silently pass an unclassifiable finding — a real critical
+          // could arrive mislabeled from a broken/compromised scanner. Surface
+          // it always; block it when the policy opts in.
+          if (policy.failOnUnknownSeverity) blocking.push({ finding: f, reason: "unknown-severity" });
+          else warnings.push(f);
         } else if (rank >= warnRank) {
           warnings.push(f);
         }

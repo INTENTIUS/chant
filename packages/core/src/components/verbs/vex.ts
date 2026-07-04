@@ -111,9 +111,20 @@ export function parseCycloneDxVex(bytes: string): VexStatement[] {
   return out;
 }
 
-/** Parse a VEX document of either format — dispatched on shape (`statements` -> OpenVEX, `vulnerabilities` -> CycloneDX). */
+/**
+ * Parse a VEX document of either format — dispatched on shape (`statements` ->
+ * OpenVEX, `vulnerabilities` -> CycloneDX). A malformed/unparseable document
+ * yields NO statements (returns `[]`) rather than throwing: it therefore
+ * suppresses nothing, keeping the gate strict (fail-closed) instead of
+ * crashing on attacker- or typo-supplied input.
+ */
 export function parseVexDocument(bytes: string): VexStatement[] {
-  const doc = JSON.parse(bytes) as OpenVexDoc & CycloneDxVexDoc;
+  let doc: OpenVexDoc & CycloneDxVexDoc;
+  try {
+    doc = JSON.parse(bytes) as OpenVexDoc & CycloneDxVexDoc;
+  } catch {
+    return [];
+  }
   if (Array.isArray(doc.statements)) return parseOpenVex(bytes);
   if (Array.isArray(doc.vulnerabilities)) return parseCycloneDxVex(bytes);
   return [];
@@ -137,22 +148,32 @@ export interface VexResult {
 }
 
 /**
- * Filter `findings` through `statements`: a finding whose `cveId` has a
- * suppressing VEX status (`not_affected`/`fixed`) moves to `suppressed` (with
- * its justification); everything else stays in `gating`. A CVE with multiple
- * statements is suppressed only if its most-recent/only status suppresses —
- * here we take the last matching statement, so an ordered VEX document's later
- * assertion wins.
+ * Filter `findings` through `statements`. A finding is suppressed only when
+ * some statement for its CVE suppresses it (`not_affected`/`fixed`) AND **no**
+ * statement for that CVE asserts it is `affected`/`under_investigation`.
+ *
+ * This is the conservative merge, deliberately NOT "last statement wins":
+ * when VEX comes from several sources (repo-local files + referrer-attached),
+ * a later `not_affected` must not be able to override an earlier `affected` to
+ * unblock a real vulnerability. Merging VEX can only ever make the gate
+ * *stricter*, never quietly weaker — so an attacker who can append a statement
+ * cannot suppress a finding another source flagged as affected.
  */
 export function applyVex(findings: VulnFinding[], statements: VexStatement[]): VexResult {
-  const byCve = new Map<string, VexStatement>();
-  for (const s of statements) byCve.set(s.cveId, s); // last wins
+  const byCve = new Map<string, VexStatement[]>();
+  for (const s of statements) {
+    const list = byCve.get(s.cveId);
+    if (list) list.push(s);
+    else byCve.set(s.cveId, [s]);
+  }
   const gating: VulnFinding[] = [];
   const suppressed: SuppressedFinding[] = [];
   for (const f of findings) {
-    const st = byCve.get(f.cveId);
-    if (st && suppresses(st.status)) {
-      suppressed.push({ finding: f, status: st.status, justification: st.justification });
+    const list = byCve.get(f.cveId) ?? [];
+    const contested = list.some((s) => s.status === "affected" || s.status === "under_investigation");
+    const suppressor = contested ? undefined : list.find((s) => suppresses(s.status));
+    if (suppressor) {
+      suppressed.push({ finding: f, status: suppressor.status, justification: suppressor.justification });
     } else {
       gating.push(f);
     }
