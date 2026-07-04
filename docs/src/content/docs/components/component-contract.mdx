@@ -26,6 +26,10 @@ interface Component {
 
 `build` is optional: a config-only component has none. `deploy` is a composition using the same grammar as [Ops](/chant/guide/ops/) — phases, `parallel`, `gate`, `onFailure`, `dependsOn`. See [Composition & Wiring](/chant/components/composition-and-wiring/).
 
+<Aside type="note" title="Steps are kind-literals">
+A step is a plain object tagged by `kind` — `{ kind: "publish-image", … }` — the same shape as the JSON projection below. `phase()`, `gate()`, and `stackOutput()` are the only authoring helpers today. A typed per-verb builder API (`publishImage({ … })`) is planned as sugar over these literals ([#658](https://github.com/INTENTIUS/chant/issues/658)).
+</Aside>
+
 <Diagram name="component-anatomy" alt="One component as four phases — build, publish, apply, verify — annotated with the three archetypes: service, infra, and producer/library." caption="A component's phases, and the three archetypes that use different subsets of them." />
 
 ## Archetypes
@@ -48,15 +52,15 @@ An ALB/ECS target: build an image, promote it at deploy time, apply the stack th
 export const searchService: Component = {
   name: "search-service",
   dependsOn: ["shared-alb"],
-  build: dockerBuild({ context: ".", into: "archive" }),
+  build: { kind: "docker-build", context: ".", into: "archive" },
   deploy: [
-    phase("Publish", [publishImage({ from: "archive", to: env.registry })]),   // → digest
+    phase("Publish", [{ kind: "publish-image", from: "archive", to: "$env.registry" }]),   // → digest
     phase("Apply", [
-      cfnDeploy({ template: "archive:search.template.json",
-                  inputs: { ...sharedAlb.outputs, image: "@Publish.digest" } }),
-      ecsUpdateService({ cluster: env.cluster, service: "search" }),
+      { kind: "cfn-deploy", template: "archive:search.template.json",
+        inputs: { ...sharedAlb.outputs, image: "@Publish.digest" } },
+      { kind: "ecs-update-service", cluster: "$env.cluster", service: "search" },
     ]),
-    phase("Verify", [waitSteadyState({ service: "search" }), healthGate({ path: "/healthz" })]),
+    phase("Verify", [{ kind: "wait-steady-state", service: "search" }, { kind: "health-gate", path: "/healthz" }]),
   ],
 };
 ```
@@ -94,7 +98,7 @@ export const searchService: Component = {
   name: "search-service",
   // archetype omitted — inferred as "service" (build + a non-publish Apply step)
   dependsOn: ["shared-alb"],
-  build: dockerBuild({ context: ".", into: "archive" }),
+  build: { kind: "docker-build", context: ".", into: "archive" },
   deploy: [ /* … */ ],
 };
 ```
