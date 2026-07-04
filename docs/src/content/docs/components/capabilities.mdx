@@ -44,7 +44,7 @@ Some applies are sticky. A DynamoDB GSI updates one at a time; a key-schema chan
 
 ```ts
 phase("Apply", [
-  { kind: "cfn-deploy", stack: "ddb", onReplace: "block", stageGsi: true },   // sticky knowledge, captured once
+  cfnDeploy({ stack: "ddb", template: "archive:ddb.template.json", onReplace: "block", stageGsi: true }),   // sticky knowledge, captured once
 ]);
 ```
 
