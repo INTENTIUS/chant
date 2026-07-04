@@ -45,7 +45,7 @@ The binding key is the **digest** — the same identity [`publish-image`/`load-i
 
 The [build archive manifest](/chant/components/build-archive/) is already content-addressed and already enumerates a build's contents, including an `sbom`-kind entry when a component composed [`generate-sbom`](/chant/components/build-archive/#sbom-format-agnostic-generated-at-build-time). On top of that, the build ledger discovers an image digest's **referrers** — the SBOM, SLSA provenance, and signature attached to the same digest by tooling like `oras discover <digest>` / `cosign tree`.
 
-SLSA provenance generation and `cosign` signing remain out of scope here — natural siblings to `generate-sbom` that attach by the same digest, left for a follow-up. Referrer discovery is surface-and-consume only: the lookup is injectable (`ReferrerLookup`), defaulting to a no-op so a build-ledger query never requires network/registry access unless a real implementation is wired in:
+SLSA provenance generation and `cosign` signing are covered separately — see [Supply-Chain Attestations](/chant/components/supply-chain/) for the `attest-provenance`/`sign`/`verify` capabilities that produce the provenance and signature referrers this section discovers. Referrer discovery itself is surface-and-consume only: the lookup is injectable (`ReferrerLookup`), defaulting to a no-op so a build-ledger query never requires network/registry access unless a real implementation is wired in:
 
 ```ts
 import { buildLedgerEntries, type ReferrerLookup } from "@intentius/chant/lifecycle";
