@@ -22,6 +22,7 @@ import { generateReport, writeReport } from "./run-report";
 import { runComponents, resolveComponentTargets, findComponentGate, listComponents } from "../../components/cli-support";
 import { renderDriverHuman, renderDriverJson } from "../../components/driver-output";
 import { loadComponentTemporalCodegen } from "../../components/temporal-codegen-loader";
+import { applyConfigDefaults } from "../../components/config-defaults";
 import { maybeRecordAutoRelease, extractRunDigestFromPhaseOutputs } from "../../components/auto-release";
 import { maybePersistBuildManifest, extractRunManifestFromPhaseOutputs } from "../../components/manifest-persistence";
 import type { DriverComponentResult } from "../../components/driver";
@@ -736,7 +737,16 @@ async function runComponentTemporal(ctx: CommandContext, selector: string): Prom
     return 1;
   }
 
-  const files = codegen.serializeComponent(component, { env: ctx.args.env });
+  // (#629) Fill `chant.config.ts`'s `sbom`/`signing`/`vulnPolicy` defaults into
+  // every recognized step BEFORE codegen — same pass the interpret/local path
+  // runs in `runComponents` (../../components/cli-support.ts). The Temporal path
+  // *inlines* the resolved composition into the generated workflow/activities,
+  // so if we serialized the raw component the durable path would silently drop
+  // project-level supply-chain defaults the local path honors. (The GitLab
+  // generate path needs no equivalent: it emits thin `chant run --components`
+  // trigger jobs, so defaults are applied at run time inside the triggered job.)
+  const resolvedComponent = applyConfigDefaults(component, chantConfig);
+  const files = codegen.serializeComponent(resolvedComponent, { env: ctx.args.env });
   for (const [relPath, content] of Object.entries(files)) {
     const outPath = join(projectPath, "dist", relPath);
     mkdirSync(dirname(outPath), { recursive: true });

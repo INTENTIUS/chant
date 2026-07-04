@@ -450,6 +450,55 @@ describe("runOpLog --components", () => {
   });
 });
 
+// ── chant run <name> --components --temporal: config defaults reach codegen ──
+// The interpret/local path fills chant.config's sbom/signing/vulnPolicy
+// defaults via runComponents; the durable path inlines the composition into
+// generated workflow code, so it must apply the same pass before serializing
+// — otherwise the Temporal path silently drops project defaults the local
+// path honors.
+describe("runComponentTemporal — applies chant.config defaults before codegen", () => {
+  beforeEach(() => {
+    loadTemporalClientMock.mockReset();
+    loadChantConfigMock.mockReset();
+    resolveProfileMock.mockReset();
+    resolveComponentTargetsMock.mockReset();
+    loadComponentTemporalCodegenMock.mockReset();
+    writeFileSyncMock.mockReset();
+    mkdirSyncMock.mockReset();
+  });
+
+  test("serializeComponent receives a component with config's sbom.format filled in", async () => {
+    resolveComponentTargetsMock.mockResolvedValue({
+      success: true,
+      targets: [{
+        name: "search-svc",
+        dependsOn: [],
+        deploy: [{ phase: "Build", steps: [{ kind: "generate-sbom", artifactType: "image", path: "img" }] }],
+      }],
+    });
+    // config sets a project-wide SBOM format the step itself omits.
+    loadChantConfigMock.mockResolvedValue({ config: { sbom: { format: "cyclonedx" } } });
+    resolveProfileMock.mockReturnValue({ autoStart: false, address: "localhost:7233", namespace: "default", taskQueue: "q" });
+
+    const serializeSpy = vi.fn().mockReturnValue({});
+    loadComponentTemporalCodegenMock.mockResolvedValue({
+      serializeComponent: serializeSpy,
+      componentWorkflowFnName: (n: string) => `${n}ComponentWorkflow`,
+    });
+    // Fail the client connect right after codegen so the handler returns
+    // without driving the whole workflow-start machinery — the spy has already
+    // captured the (resolved) component by then.
+    loadTemporalClientMock.mockRejectedValue(new Error("client-unavailable"));
+    makeStderrSpy();
+
+    await runOpComponents({ args: makeArgs({ path: "search-svc", components: true, temporal: true }), plugins: [], serializers: [] });
+
+    expect(serializeSpy).toHaveBeenCalledTimes(1);
+    const passedComponent = serializeSpy.mock.calls[0]![0] as { deploy: Array<{ steps: Array<{ format?: string }> }> };
+    expect(passedComponent.deploy[0]!.steps[0]!.format).toBe("cyclonedx");
+  });
+});
+
 describe("runOpSignal", () => {
   beforeEach(() => {
     loadTemporalClientMock.mockReset();
