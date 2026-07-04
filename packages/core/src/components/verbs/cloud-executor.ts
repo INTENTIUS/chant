@@ -301,8 +301,22 @@ export interface CloudExecutor {
 
 // ── Real executor — shells out to `docker`/`aws`; used outside tests ────────
 
+/**
+ * Inject `--endpoint-url` into an `aws …` command when an endpoint is set, so the
+ * same component can target a local AWS emulator (Floci, LocalStack, …) or any
+ * custom endpoint without a wrapper. We add the flag ourselves rather than rely
+ * on the CLI reading `AWS_ENDPOINT_URL` — older `aws` v2 releases (<2.13) don't.
+ * Non-`aws` commands (docker, …) pass through untouched.
+ */
+export function applyAwsEndpoint(command: string, endpoint: string | undefined): string {
+  if (!endpoint || !/^aws\s/.test(command)) return command;
+  return command.replace(/^aws\s/, `aws --endpoint-url ${q(endpoint)} `);
+}
+
 function run(command: string): Promise<{ stdout: string; stderr: string }> {
-  return execFileAsync(command, { maxBuffer: 64 * 1024 * 1024 });
+  return execFileAsync(applyAwsEndpoint(command, process.env.AWS_ENDPOINT_URL), {
+    maxBuffer: 64 * 1024 * 1024,
+  });
 }
 
 /** Shell-quote a single argument for POSIX shells (wrap in single quotes, escaping embedded ones). */
@@ -349,6 +363,17 @@ const realEcr: EcrClient = {
   },
 };
 
+/** CREATE for a stack that doesn't exist (or is stuck in REVIEW_IN_PROGRESS from a prior unexecuted CREATE), else UPDATE. */
+async function cfnChangeSetType(stackName: string): Promise<"CREATE" | "UPDATE"> {
+  try {
+    const { stdout } = await run(`aws cloudformation describe-stacks --stack-name ${q(stackName)}`);
+    const status = (JSON.parse(stdout) as { Stacks?: Array<{ StackStatus?: string }> }).Stacks?.[0]?.StackStatus;
+    return status === "REVIEW_IN_PROGRESS" ? "CREATE" : "UPDATE";
+  } catch {
+    return "CREATE"; // describe-stacks errors when the stack doesn't exist
+  }
+}
+
 const realCloudFormation: CloudFormationClient = {
   async createChangeSet(args) {
     const changeSetName = `cs-${Date.now()}`;
@@ -356,8 +381,14 @@ const realCloudFormation: CloudFormationClient = {
       .map(([k, v]) => `ParameterKey=${k},ParameterValue=${v}`)
       .join(" ");
     const paramFlag = params ? ` --parameters ${params}` : "";
+    // A change set defaults to type UPDATE, which fails on a stack that doesn't
+    // exist yet ("Stack ... does not exist"). Pick CREATE for a new stack, and
+    // for one still in REVIEW_IN_PROGRESS (a prior CREATE change set never
+    // executed), mirroring what `aws cloudformation deploy` does under the hood.
+    const changeSetType = await cfnChangeSetType(args.stackName);
     await run(
       `aws cloudformation create-change-set --stack-name ${q(args.stackName)} --change-set-name ${q(changeSetName)} ` +
+        `--change-set-type ${changeSetType} ` +
         `--template-body file://${args.templatePath} --capabilities CAPABILITY_NAMED_IAM${paramFlag}`,
     );
     await run(

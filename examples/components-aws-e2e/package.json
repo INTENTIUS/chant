@@ -1,0 +1,18 @@
+{
+  "name": "components-aws-e2e",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "End-to-end: the AWS lexicon synthesizes a CloudFormation stack, and the component release model deploys exactly that template via cfn-deploy.",
+  "devDependencies": {
+    "@intentius/chant": "*",
+    "@intentius/chant-lexicon-aws": "*",
+    "typescript": "*"
+  },
+  "scripts": {
+    "build": "chant build src --lexicon aws -o template.json",
+    "deploy": "chant run --components demo-infra --env local --no-release-record",
+    "status": "chant components status local --live --no-release-record",
+    "teardown": "aws cloudformation delete-stack --stack-name components-aws-e2e"
+  }
+}
