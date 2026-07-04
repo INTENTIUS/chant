@@ -82,6 +82,7 @@ export {
 } from "./capability-plugin-loader";
 export { starterCapabilityPlugin } from "./starter-plugin";
 export * from "./verbs/index";
+export * from "./builders";
 export {
   type DriverStep,
   type DriverGate,
