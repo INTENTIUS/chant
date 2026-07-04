@@ -85,7 +85,7 @@ Like the release record, manifest persistence is a post-run CLI step — never i
 
 ## Reconciling with live
 
-`chant components status` doesn't recompute drift logic — it reuses the same ownership-aware classification [`lifecycle plan`](/chant/cli/lifecycle/) already trusts (`buildChangeSet`), then joins it against the release ledger by component name and digest. Four outcomes:
+`chant components status` doesn't recompute drift logic — it reuses the same ownership-aware classification [`lifecycle plan`](/chant/cli/lifecycle/) already trusts (`buildChangeSet`), then joins it against the release ledger by component name and digest. Four reconciliation outcomes, plus `unknown` when `--live` is omitted:
 
 | Reconciliation | Meaning |
 |---|---|
