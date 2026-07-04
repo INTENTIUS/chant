@@ -37,6 +37,15 @@
  * handed.
  */
 
+// `lockfileSbomGenerator` (#630's hermetic default, below) lives in
+// ./lockfile-sbom-generator.ts, which itself imports `DEFAULT_SBOM_FORMAT`/
+// `SbomGeneratorNotImplementedError` from *this* module — a deliberate
+// circular import. Safe here because the only use of `lockfileSbomGenerator`
+// in this file is inside `defaultSbomGenerator()`'s function body (evaluated
+// lazily, on first call), never at this module's own top-level/import time,
+// so it doesn't matter which module's evaluation finishes first.
+import { lockfileSbomGenerator } from "./lockfile-sbom-generator";
+
 // ── the SBOM document ────────────────────────────────────────────────────────
 
 /** The two SBOM standards this module supports. Never hardcode one — consumers key off `mediaType`. */
@@ -146,29 +155,12 @@ export class SbomGeneratorNotImplementedError extends Error {
 }
 
 /**
- * Default `SbomGenerator`: every method throws
- * `SbomGeneratorNotImplementedError`. Chosen as the process-wide default
- * (mirroring `noopReferrerLookup`'s conservative default in
- * ../../lifecycle/build-ledger.ts) so importing ./sbom.ts never shells out to
- * a real `syft`/`docker buildx` at import time or in a test that forgets to
- * inject a mock — the failure is loud and specific rather than a silent
- * network/process call.
- *
- * A real, **hermetic** chant-native implementation now exists —
- * ./lockfile-sbom-generator.ts's `createLockfileSbomGenerator`/
- * `lockfileSbomGenerator` (#613), which parses `package-lock.json`/`pom.xml`
- * already on disk with no external tool and no network. It is not wired in
- * as *this* default: a project opts into it explicitly (constructing
- * `createGenerateSbomCapability(lockfileSbomGenerator)`) rather than having
- * every previously-"not implemented" call silently start succeeding, which
- * would be a behavior change for any caller relying on the loud failure.
- * `notImplementedSbomGenerator` remains the right default for `forImage`
- * specifically, since no hermetic backend can see an image's base layers —
- * a real `syft`/`docker buildx --sbom`/`cyclonedx-maven`/`cdxgen`-backed
- * implementation for that artifact-type-scan path is left for a follow-up
- * (the deep-scan path, tracked separately from this hermetic baseline), the
- * same way ./cloud-executor.ts's `realCloudExecutor` shells out to
- * `docker`/`aws`.
+ * All-throwing `SbomGenerator`: every method throws
+ * `SbomGeneratorNotImplementedError`. No longer the process-wide default (see
+ * `defaultSbomGenerator` below, #630) — kept exported for callers that
+ * deliberately want the loud, no-backend-at-all behavior (e.g. a test
+ * asserting on the thrown error itself, or a caller that wants to force
+ * "nothing is wired" rather than silently getting the hermetic backend).
  */
 export const notImplementedSbomGenerator: SbomGenerator = {
   async forImage(): Promise<SbomDocument> {
@@ -188,8 +180,30 @@ export const notImplementedSbomGenerator: SbomGenerator = {
 /** Lazily-constructed process-wide default, mirroring ./cloud-executor.ts's `defaultCloudExecutor`. */
 let defaultGenerator: SbomGenerator | undefined;
 
-/** The default `SbomGenerator` the `generate-sbom` capability falls back to when none is supplied. */
+/**
+ * The default `SbomGenerator` the `generate-sbom` capability falls back to
+ * when none is supplied.
+ *
+ * **Hermetic by default (#630).** This is `./lockfile-sbom-generator.ts`'s
+ * `lockfileSbomGenerator` — `forDir`/`forZip`/`forJar` parse a
+ * `package-lock.json`/`pom.xml` already on disk (no `syft`, no network, no
+ * external tool) and emit a real SPDX/CycloneDX document. That means a
+ * newcomer composing `generate-sbom` over a source directory, a zip/Lambda
+ * package, or a JAR gets a working SBOM the moment they `chant run
+ * --components`, with nothing to install first — the whole point of #630's
+ * "runnable proof" bar. `forImage` still throws
+ * `SbomGeneratorNotImplementedError`: no hermetic backend can see an image's
+ * base layers, so an image SBOM still needs the real deep-scan tool backend
+ * (`syft`/`docker buildx --sbom`/`cyclonedx-maven`/`cdxgen`, #610) — a
+ * documented, deliberate gap, not an oversight. This was previously
+ * `notImplementedSbomGenerator` (every method throwing); switching the
+ * default is intentional per #630 — the prior "loud failure by default"
+ * traded newcomer runnability for a default nobody exercised without opting
+ * in, which #613 already built a hermetic backend to fix but never wired up.
+ * A project that truly wants the old all-throwing behavior can construct
+ * `createGenerateSbomCapability(notImplementedSbomGenerator)` explicitly.
+ */
 export function defaultSbomGenerator(): SbomGenerator {
-  if (!defaultGenerator) defaultGenerator = notImplementedSbomGenerator;
+  if (!defaultGenerator) defaultGenerator = lockfileSbomGenerator;
   return defaultGenerator;
 }

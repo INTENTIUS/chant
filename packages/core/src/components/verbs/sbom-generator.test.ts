@@ -1,4 +1,7 @@
 import { describe, expect, it } from "vitest";
+import { mkdtempSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import {
   DEFAULT_SBOM_FORMAT,
   SBOM_MEDIA_TYPES,
@@ -6,6 +9,7 @@ import {
   defaultSbomGenerator,
   notImplementedSbomGenerator,
 } from "./sbom-generator";
+import { lockfileSbomGenerator } from "./lockfile-sbom-generator";
 import { createMockSbomGenerator } from "./__tests__/mock-sbom-generator";
 
 describe("SBOM document media types (#606 — format-agnostic storage)", () => {
@@ -19,7 +23,7 @@ describe("SBOM document media types (#606 — format-agnostic storage)", () => {
   });
 });
 
-describe("notImplementedSbomGenerator / defaultSbomGenerator (#606)", () => {
+describe("notImplementedSbomGenerator (#606) — still exported, no longer the default", () => {
   it("every method throws SbomGeneratorNotImplementedError, naming the method", async () => {
     await expect(notImplementedSbomGenerator.forImage({ imagePath: "x", digest: "sha256:1" })).rejects.toBeInstanceOf(
       SbomGeneratorNotImplementedError,
@@ -32,9 +36,35 @@ describe("notImplementedSbomGenerator / defaultSbomGenerator (#606)", () => {
     );
     await expect(notImplementedSbomGenerator.forDir({ path: "x" })).rejects.toThrow(/forDir/);
   });
+});
 
-  it("defaultSbomGenerator() returns the same not-implemented backend, never shelling out at import/call time", () => {
-    expect(defaultSbomGenerator()).toBe(notImplementedSbomGenerator);
+describe("defaultSbomGenerator (#630 — hermetic by default)", () => {
+  it("returns the same lockfileSbomGenerator instance every call, never shelling out at import/call time", () => {
+    expect(defaultSbomGenerator()).toBe(lockfileSbomGenerator);
+    expect(defaultSbomGenerator()).toBe(defaultSbomGenerator());
+  });
+
+  it("forImage still throws SbomGeneratorNotImplementedError — no hermetic backend can see an image's base layers", async () => {
+    await expect(defaultSbomGenerator().forImage({ imagePath: "x", digest: "sha256:1" })).rejects.toBeInstanceOf(
+      SbomGeneratorNotImplementedError,
+    );
+  });
+
+  it("forDir generates a real SBOM tool-free from a package-lock.json on disk", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "chant-sbom-default-"));
+    writeFileSync(
+      join(dir, "package-lock.json"),
+      JSON.stringify({
+        name: "fixture",
+        version: "1.0.0",
+        packages: { "": { name: "fixture" }, "node_modules/left-pad": { version: "1.3.0" } },
+      }),
+    );
+
+    const doc = await defaultSbomGenerator().forDir({ path: dir });
+    expect(doc.packageCount).toBe(1);
+    expect(doc.generator).toBe("chant-lockfile-sbom/package-lock.json");
+    expect(JSON.parse(doc.bytes)).toBeTruthy();
   });
 });
 

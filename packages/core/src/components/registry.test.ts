@@ -124,10 +124,10 @@ describe("createCapabilityRegistry", () => {
 
   // #606: `generate-sbom` is a real implementation (over the injectable,
   // artifact-type-keyed SbomGenerator — see ./verbs/sbom-generator.ts),
-  // defaulted to a "not implemented" backend until a real scanner is wired
-  // in, mirroring ./lifecycle/build-ledger.ts's `noopReferrerLookup`
-  // default for the consume side.
-  test("#606 generate-sbom is registered and callable (real capability, default backend not yet wired)", () => {
+  // defaulted to the hermetic lockfile-backed generator for dir/zip/jar
+  // artifacts (#630) — `forImage` still needs a real scanner backend wired
+  // in explicitly (#610).
+  test("#606 generate-sbom is registered and callable (default backend is the hermetic lockfile generator, #630)", () => {
     const registry = createCapabilityRegistry();
     const capability = registry.resolve("generate-sbom");
     expect(typeof capability.run).toBe("function");
