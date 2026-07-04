@@ -192,7 +192,7 @@ export function createSignCapability(
 }
 
 /** Default `sign` capability, backed by the real `ProcessRunner`. */
-export const sign: Capability<SignInput, SignOutput> = createSignCapability();
+export const signCapability: Capability<SignInput, SignOutput> = createSignCapability();
 
 // ── SLSA provenance attestation (attest-provenance) ─────────────────────────
 
@@ -346,5 +346,5 @@ export function createAttestProvenanceCapability(
 }
 
 /** Default `attest-provenance` capability, backed by the real `ProcessRunner`. */
-export const attestProvenance: Capability<AttestProvenanceInput, AttestProvenanceOutput> =
+export const attestProvenanceCapability: Capability<AttestProvenanceInput, AttestProvenanceOutput> =
   createAttestProvenanceCapability();

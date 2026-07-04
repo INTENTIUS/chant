@@ -111,7 +111,7 @@ export function createDockerBuildCapability(
 }
 
 /** Default `docker-build` capability, backed by the real `CloudExecutor`. */
-export const dockerBuild: Capability<DockerBuildInput, DockerBuildOutput> = createDockerBuildCapability();
+export const dockerBuildCapability: Capability<DockerBuildInput, DockerBuildOutput> = createDockerBuildCapability();
 
 // ── archive templates ────────────────────────────────────────────────────────
 
@@ -178,7 +178,7 @@ export interface ZipPackageOutput {
 }
 
 /** Package a directory into a zip artifact (e.g. a Lambda deployment package) into the build archive. */
-export const zipPackage: Capability<ZipPackageInput, ZipPackageOutput> = stubCapability(
+export const zipPackageCapability: Capability<ZipPackageInput, ZipPackageOutput> = stubCapability(
   "zip-package",
 );
 
@@ -203,4 +203,4 @@ export interface JvmBuildOutput {
 }
 
 /** Compile and package a JVM project (Maven/Gradle) into a jar in the build archive. */
-export const jvmBuild: Capability<JvmBuildInput, JvmBuildOutput> = stubCapability("jvm-build");
+export const jvmBuildCapability: Capability<JvmBuildInput, JvmBuildOutput> = stubCapability("jvm-build");

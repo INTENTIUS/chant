@@ -217,7 +217,7 @@ export function createPublishImageCapability(
 }
 
 /** Default `publish-image` capability, backed by the real `CloudExecutor`. */
-export const publishImage: PublishImageBackend = createPublishImageCapability();
+export const publishImageCapability: PublishImageBackend = createPublishImageCapability();
 
 // ── load-image-on-host (host backend) ───────────────────────────────────────
 
@@ -260,7 +260,7 @@ export function createLoadImageOnHostCapability(
 }
 
 /** Default `load-image-on-host` capability, backed by the real `CloudExecutor`. */
-export const loadImageOnHost: PublishImageBackend = createLoadImageOnHostCapability();
+export const loadImageOnHostCapability: PublishImageBackend = createLoadImageOnHostCapability();
 
 // ── per-environment backend selection ───────────────────────────────────────
 
@@ -284,8 +284,8 @@ export type PublishImageBackendKind = "publish-image" | "load-image-on-host";
 export function selectPublishBackend(
   kind: PublishImageBackendKind,
   backends: Partial<Record<PublishImageBackendKind, PublishImageBackend>> = {
-    "publish-image": publishImage,
-    "load-image-on-host": loadImageOnHost,
+    "publish-image": publishImageCapability,
+    "load-image-on-host": loadImageOnHostCapability,
   },
 ): PublishImageBackend {
   const backend = backends[kind];
@@ -314,8 +314,8 @@ export interface PublishArtifactOutput {
 }
 
 /** Promote a non-image artifact (jar, zip, arbitrary asset) from the archive to S3/CodeArtifact. */
-export const publishArtifact: Capability<PublishArtifactInput, PublishArtifactOutput> =
+export const publishArtifactCapability: Capability<PublishArtifactInput, PublishArtifactOutput> =
   stubCapability("publish-artifact");
 
 /** Alias for `publishArtifact` — same capability, the docs/epic use both names for the same verb. */
-export const publishAsset = publishArtifact;
+export const publishAssetCapability = publishArtifactCapability;

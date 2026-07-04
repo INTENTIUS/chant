@@ -24,7 +24,7 @@ export interface SnapshotBeforeOutput {
 }
 
 /** Capture a restorable snapshot before a risky/destructive apply step. */
-export const snapshotBefore: Capability<SnapshotBeforeInput, SnapshotBeforeOutput> =
+export const snapshotBeforeCapability: Capability<SnapshotBeforeInput, SnapshotBeforeOutput> =
   stubCapability("snapshot-before");
 
 // ── rollback-previous ────────────────────────────────────────────────────────
@@ -42,5 +42,5 @@ export interface RollbackPreviousOutput {
 }
 
 /** Restore a resource from a prior `snapshot-before` capture — explicit rollback, not auto-triggered. */
-export const rollbackPrevious: Capability<RollbackPreviousInput, RollbackPreviousOutput> =
+export const rollbackPreviousCapability: Capability<RollbackPreviousInput, RollbackPreviousOutput> =
   stubCapability("rollback-previous");

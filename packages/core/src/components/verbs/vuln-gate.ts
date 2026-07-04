@@ -167,4 +167,4 @@ export function createVulnGateCapability(
 }
 
 /** Default `vuln-gate` capability (inject a real/mock scanner, or supply `findings`). */
-export const vulnGate: Capability<VulnGateInput, VulnGateOutput> = createVulnGateCapability();
+export const vulnGateCapability: Capability<VulnGateInput, VulnGateOutput> = createVulnGateCapability();

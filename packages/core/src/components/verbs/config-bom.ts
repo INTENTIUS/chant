@@ -306,5 +306,5 @@ export function createExtractConfigBomCapability(): Capability<ExtractConfigBomI
  * artifact, peer to `image`/`jar`), and this capability attaches the
  * resulting config-BOM to that same digest.
  */
-export const extractConfigBom: Capability<ExtractConfigBomInput, ExtractConfigBomOutput> =
+export const extractConfigBomCapability: Capability<ExtractConfigBomInput, ExtractConfigBomOutput> =
   createExtractConfigBomCapability();

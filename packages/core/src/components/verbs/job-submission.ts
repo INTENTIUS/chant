@@ -81,7 +81,7 @@ export function createEmrStartJobRunCapability(
 }
 
 /** Default `emr-start-job-run` capability, backed by the real `CloudExecutor`. */
-export const emrStartJobRun: Capability<EmrStartJobRunInput, EmrStartJobRunOutput> =
+export const emrStartJobRunCapability: Capability<EmrStartJobRunInput, EmrStartJobRunOutput> =
   createEmrStartJobRunCapability();
 
 // ── emr-submit-step ──────────────────────────────────────────────────────────
@@ -103,6 +103,6 @@ export interface EmrSubmitStepOutput {
 }
 
 /** Submit a step to a long-running EMR cluster (as opposed to starting an ephemeral job run). */
-export const emrSubmitStep: Capability<EmrSubmitStepInput, EmrSubmitStepOutput> = stubCapability(
+export const emrSubmitStepCapability: Capability<EmrSubmitStepInput, EmrSubmitStepOutput> = stubCapability(
   "emr-submit-step",
 );

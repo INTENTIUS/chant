@@ -166,7 +166,7 @@ function flattenCfnInputs(input: CfnDeployInput): Record<string, string> | undef
 }
 
 /** Default `cfn-deploy` capability, backed by the real `CloudExecutor`. */
-export const cfnDeploy: Capability<CfnDeployInput, CfnDeployOutput> = createCfnDeployCapability();
+export const cfnDeployCapability: Capability<CfnDeployInput, CfnDeployOutput> = createCfnDeployCapability();
 
 // ── ecs-update-service ──────────────────────────────────────────────────────
 
@@ -224,7 +224,7 @@ export function createEcsUpdateServiceCapability(
 }
 
 /** Default `ecs-update-service` capability, backed by the real `CloudExecutor`. */
-export const ecsUpdateService: Capability<EcsUpdateServiceInput, EcsUpdateServiceOutput> =
+export const ecsUpdateServiceCapability: Capability<EcsUpdateServiceInput, EcsUpdateServiceOutput> =
   createEcsUpdateServiceCapability();
 
 // ── lambda-deploy ────────────────────────────────────────────────────────────
@@ -299,7 +299,7 @@ export function createLambdaDeployCapability(
 }
 
 /** Default `lambda-deploy` capability, backed by the real `CloudExecutor`. */
-export const lambdaDeploy: Capability<LambdaDeployInput, LambdaDeployOutput> = createLambdaDeployCapability();
+export const lambdaDeployCapability: Capability<LambdaDeployInput, LambdaDeployOutput> = createLambdaDeployCapability();
 
 // ── s3-sync ──────────────────────────────────────────────────────────────────
 
@@ -320,7 +320,7 @@ export interface S3SyncOutput {
 }
 
 /** Sync a directory of static assets to an S3 bucket. */
-export const s3Sync: Capability<S3SyncInput, S3SyncOutput> = stubCapability("s3-sync");
+export const s3SyncCapability: Capability<S3SyncInput, S3SyncOutput> = stubCapability("s3-sync");
 
 // ── cdn-invalidate ───────────────────────────────────────────────────────────
 
@@ -337,7 +337,7 @@ export interface CdnInvalidateOutput {
 }
 
 /** Invalidate CDN cache paths after a content update (e.g. following `s3-sync`). */
-export const cdnInvalidate: Capability<CdnInvalidateInput, CdnInvalidateOutput> = stubCapability(
+export const cdnInvalidateCapability: Capability<CdnInvalidateInput, CdnInvalidateOutput> = stubCapability(
   "cdn-invalidate",
 );
 
@@ -360,7 +360,7 @@ export interface RunMigrationOutput {
 }
 
 /** Run a database/schema migration against a target as a deploy step. */
-export const runMigration: Capability<RunMigrationInput, RunMigrationOutput> = stubCapability(
+export const runMigrationCapability: Capability<RunMigrationInput, RunMigrationOutput> = stubCapability(
   "run-migration",
   { rollback: true },
 );

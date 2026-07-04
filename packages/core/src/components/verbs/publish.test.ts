@@ -2,8 +2,8 @@ import { describe, expect, it } from "vitest";
 import {
   createLoadImageOnHostCapability,
   createPublishImageCapability,
-  loadImageOnHost,
-  publishImage,
+  loadImageOnHostCapability as loadImageOnHost,
+  publishImageCapability as publishImage,
   selectPublishBackend,
 } from "./publish";
 import { createDockerBuildCapability } from "./build";
