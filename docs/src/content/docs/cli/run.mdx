@@ -139,7 +139,7 @@ The `--no-release-record` flag always wins over config for that one invocation. 
 | `--temporal` | Run via a Temporal cluster: gates, schedules, durable resume (`run <name>`, `run --components <name>`) |
 | `--components` | Target a component instead of an Op (`run --components`, and `run signal` / `run cancel` against a component's workflow) |
 | `--no-release-record` | Skip auto-emitting a release-ledger record after a successful `run --components` deploy — default is ON (`run --components`) |
-| `--env <name>` | Target environment, threaded into every capability's context (`run --components`) |
+| `--env <name>` | Target [environment](/chant/configuration/config-file/#environments), threaded into every capability's context (`run --components`); defaults to `local` |
 | `--json` | Emit the structured run result as JSON on stdout (`run <name>`, `run --components`) |
 | `-p, --profile <name>` | Temporal worker profile to use (from `chant.config.ts`); implies Temporal mode |
 | `--report` | Print a deployment report instead of running (`run <name> --temporal` only) |

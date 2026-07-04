@@ -128,6 +128,10 @@ A digest (`myapp@sha256:...`) is the artifact's own content hash. It cannot be r
 
 One digest carries all three attestations — SBOM, provenance, and signature — and `verify` checks that digest before a deploy is allowed to proceed.
 
+<Aside type="caution" title="This walkthrough's SBOM step needs a scanner">
+The `Sbom` phase below uses `artifactType: "image"`, which throws `SbomGeneratorNotImplementedError` by default until a scanner backend is wired in ([#610](https://github.com/INTENTIUS/chant/issues/610)) — see the [Prerequisites](#prerequisites) table. For a first run that needs no external tool at all, start from [Generating an SBOM tool-free](#generating-an-sbom-tool-free) (`dir`/`zip`/`jar` artifacts), then layer on the sign/verify steps shown here once `cosign` is installed.
+</Aside>
+
 <Diagram name="supply-chain-attestations" alt="A build produces an image, publish promotes it to a registry by digest, and generate-sbom, attest-provenance, and sign all attach to that same digest. A verify step checks the signature and provenance against an identity policy before apply runs, and throws on failure." caption="SBOM, provenance, and signature all attach to one artifact digest. Verify gates apply on that digest." />
 
 The composition below is the real authoring shape — a `Component` built from `phase()`/`Step` (`packages/core/src/components/component.ts`), the exact shape `chant run --components` dispatches, not a paraphrase:
