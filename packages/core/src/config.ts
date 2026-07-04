@@ -40,6 +40,7 @@ export const ChantConfigSchema = z.object({
     fixableOnly: z.boolean().optional(),
     warnSeverity: z.enum(["critical", "high", "medium", "low", "negligible", "unknown"]).optional(),
     failOnLicense: z.boolean().optional(),
+    failOnUnknownSeverity: z.boolean().optional(),
     license: z.object({
       allow: z.array(z.string()).optional(),
       deny: z.array(z.string()).optional(),
@@ -171,6 +172,8 @@ export interface ChantConfig {
     warnSeverity?: Severity;
     /** Block on a license violation (else report-only). Default `false`. */
     failOnLicense?: boolean;
+    /** Block on an `unknown`-severity finding (always warned regardless). Default `false`. */
+    failOnUnknownSeverity?: boolean;
     /** License allow/deny lists evaluated against the SBOM's declared licenses. */
     license?: { allow?: string[]; deny?: string[] };
     /** Which real scanner a `ProcessRunner`-backed `vuln-gate`/`scan-vulnerabilities` shells out to. Default `"grype"`. Read where the capability/scanner is constructed. */
@@ -323,6 +326,7 @@ export function resolveVulnPolicy(config: ChantConfig): Partial<VulnPolicy> {
   if (v.fixableOnly !== undefined) out.fixableOnly = v.fixableOnly;
   if (v.warnSeverity) out.warnSeverity = v.warnSeverity;
   if (v.failOnLicense !== undefined) out.failOnLicense = v.failOnLicense;
+  if (v.failOnUnknownSeverity !== undefined) out.failOnUnknownSeverity = v.failOnUnknownSeverity;
   if (v.license) out.license = v.license;
   return out;
 }

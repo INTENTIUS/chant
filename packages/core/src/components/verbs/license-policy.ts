@@ -72,20 +72,42 @@ function includesCi(list: string[], value: string): boolean {
 }
 
 /**
- * Evaluate an SBOM's licenses against `policy`. A package violates if its
- * license is in `deny`, or (when `allow` is set) not in `allow`. Packages with
- * no declared license (`NOASSERTION`/empty) are not flagged — an undeclared
- * license is not asserted to be denied.
+ * Split an SPDX license expression into its component license atoms, so a
+ * deny/allow list matches a license hidden inside an expression like
+ * `"GPL-3.0 OR MIT"` or `"(Apache-2.0 AND MIT)"` — an exact-string compare on
+ * the whole expression would miss `GPL-3.0` and let it through. Conservative:
+ * we only need the *set* of licenses referenced, so we split on `OR`/`AND`,
+ * drop parentheses, and strip any `WITH <exception>` suffix. A single license
+ * id returns itself unchanged.
+ */
+export function licenseAtoms(expr: string): string[] {
+  return expr
+    .replace(/[()]/g, " ")
+    .split(/\s+(?:OR|AND)\s+/i)
+    .map((a) => a.split(/\s+WITH\s+/i)[0].trim())
+    .filter(Boolean);
+}
+
+/**
+ * Evaluate an SBOM's licenses against `policy`. A package violates if ANY atom
+ * of its (possibly compound) SPDX license expression is in `deny`, or (when
+ * `allow` is set) any atom is not in `allow`. This is conservative on `OR`
+ * expressions — `"GPL-3.0 OR MIT"` counts as a `GPL-3.0` deny hit even though a
+ * consumer could choose MIT — because a policy gate should surface the presence
+ * of a denied license, not silently rely on the consumer picking the permissive
+ * branch. Packages with no declared license (`NOASSERTION`/empty) are not
+ * flagged — an undeclared license is not asserted to be denied.
  */
 export function evaluateLicensePolicy(sbom: SbomDocument, policy: LicensePolicy): LicenseViolation[] {
   const out: LicenseViolation[] = [];
   for (const { package: pkg, license } of extractLicenses(sbom)) {
     if (!license || license === "NOASSERTION") continue;
-    if (policy.deny && includesCi(policy.deny, license)) {
+    const atoms = licenseAtoms(license);
+    if (policy.deny && atoms.some((a) => includesCi(policy.deny!, a))) {
       out.push({ package: pkg, license, reason: "denied" });
       continue;
     }
-    if (policy.allow && policy.allow.length > 0 && !includesCi(policy.allow, license)) {
+    if (policy.allow && policy.allow.length > 0 && atoms.some((a) => !includesCi(policy.allow!, a))) {
       out.push({ package: pkg, license, reason: "not-allowed" });
     }
   }

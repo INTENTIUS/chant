@@ -144,6 +144,48 @@ describe("vuln-gate", () => {
   });
 });
 
+// ── audit hardening (#628) ───────────────────────────────────────────────────
+
+describe("audit hardening (#628)", () => {
+  const CRIT: VulnFinding = { cveId: "CVE-X", severity: "critical", package: "p", installedVersion: "1", fixedVersion: "2", fixable: true };
+  const UNKNOWN: VulnFinding = { cveId: "CVE-U", severity: "unknown", package: "q", installedVersion: "1", fixable: true };
+
+  test("VEX conservative merge: an `affected` statement blocks a later `not_affected` from suppressing", () => {
+    const { gating, suppressed } = applyVex(
+      [CRIT],
+      [
+        { cveId: "CVE-X", status: "affected" },
+        { cveId: "CVE-X", status: "not_affected", justification: "attacker-appended" },
+      ],
+    );
+    expect(gating.map((f) => f.cveId)).toEqual(["CVE-X"]);
+    expect(suppressed).toHaveLength(0);
+  });
+
+  test("malformed VEX does not crash and suppresses nothing (gate stays strict)", async () => {
+    await expect(gate({ sbom: SBOM_SPDX, findings: [CRIT], vex: ['{"bad json'] })).rejects.toBeInstanceOf(VulnGateFailedError);
+  });
+
+  test("SPDX license expression: deny matches a license hidden in an OR expression", () => {
+    const sbom: SbomDocument = {
+      format: "spdx",
+      mediaType: "application/spdx+json",
+      generator: "lockfile",
+      bytes: JSON.stringify({ packages: [{ name: "z", licenseConcluded: "GPL-3.0 OR MIT" }] }),
+    };
+    const v = evaluateLicensePolicy(sbom, { deny: ["GPL-3.0"] });
+    expect(v).toHaveLength(1);
+    expect(v[0].package).toBe("z");
+  });
+
+  test("unknown-severity is warned by default (never silently dropped), and blocks when opted in", async () => {
+    const warned = await gate({ sbom: SBOM_SPDX, findings: [UNKNOWN] });
+    expect(warned.passed).toBe(true);
+    expect(warned.warnings.map((f) => f.cveId)).toEqual(["CVE-U"]);
+    await expect(gate({ sbom: SBOM_SPDX, findings: [UNKNOWN], policy: { failOnUnknownSeverity: true } })).rejects.toBeInstanceOf(VulnGateFailedError);
+  });
+});
+
 // ── config resolver ──────────────────────────────────────────────────────────
 
 describe("resolveVulnPolicy", () => {
