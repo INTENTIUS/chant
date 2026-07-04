@@ -115,6 +115,7 @@ describe("createCapabilityRegistry", () => {
         "jobSubmission",
         "publish",
         "supplyChainSecurity",
+        "supplyChainPolicy",
         "safety",
         "waitVerify",
       ].sort(),

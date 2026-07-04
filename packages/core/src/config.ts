@@ -4,6 +4,8 @@ import { z } from "zod";
 import type { LintConfig } from "./lint/config";
 import type { OwnershipMarker } from "./ownership";
 import { DEFAULT_SBOM_FORMAT, type SbomFormat } from "./components/verbs/sbom-generator";
+import type { Severity } from "./components/verbs/vuln-scan";
+import type { VulnPolicy } from "./components/verbs/vuln-gate";
 
 /**
  * Zod schema for ChantConfig validation.
@@ -32,6 +34,18 @@ export const ChantConfigSchema = z.object({
     identity: z.string().min(1).optional(),
     identityIsRegexp: z.boolean().optional(),
     key: z.string().min(1).optional(),
+  }).optional(),
+  vulnPolicy: z.object({
+    failSeverity: z.enum(["critical", "high", "medium", "low", "negligible", "unknown"]).optional(),
+    fixableOnly: z.boolean().optional(),
+    warnSeverity: z.enum(["critical", "high", "medium", "low", "negligible", "unknown"]).optional(),
+    failOnLicense: z.boolean().optional(),
+    license: z.object({
+      allow: z.array(z.string()).optional(),
+      deny: z.array(z.string()).optional(),
+    }).optional(),
+    scanner: z.enum(["grype", "trivy"]).optional(),
+    vexSources: z.array(z.string()).optional(),
   }).optional(),
 }).passthrough();
 
@@ -137,6 +151,32 @@ export interface ChantConfig {
     identityIsRegexp?: boolean;
     /** Opt-in key-based override (a path, or `kms://`/`awskms://`/... reference) for `sign`/`attest-provenance`/`verify` alike. Presence alone does not disable keyless — pair with `keyless: false` for clarity, though a capability call that explicitly sets its own `key`/`policy.key` always wins over this project default either way. */
     key?: string;
+  };
+
+  /**
+   * Project-wide vulnerability/license policy-gate defaults (#626, epic #551
+   * supply-chain follow-up to the SBOM stack). Consumed by
+   * `./components/verbs/vuln-gate.ts`'s `vuln-gate` capability via {@link
+   * resolveVulnPolicy}. **Beginner-safe defaults** (see `DEFAULT_VULN_POLICY`
+   * in `./components/verbs/vuln-gate.ts`): block only `critical` + `fixable` +
+   * not-VEX-suppressed findings, warn on `high`, license report-only. Every
+   * field here overrides one of those defaults.
+   */
+  vulnPolicy?: {
+    /** Minimum severity that FAILS the gate. Default `"critical"`. */
+    failSeverity?: Severity;
+    /** Only fixable findings at/above `failSeverity` block. Default `true`. */
+    fixableOnly?: boolean;
+    /** Minimum severity reported as a warning. Default `"high"`. */
+    warnSeverity?: Severity;
+    /** Block on a license violation (else report-only). Default `false`. */
+    failOnLicense?: boolean;
+    /** License allow/deny lists evaluated against the SBOM's declared licenses. */
+    license?: { allow?: string[]; deny?: string[] };
+    /** Which real scanner a `ProcessRunner`-backed `vuln-gate`/`scan-vulnerabilities` shells out to. Default `"grype"`. Read where the capability/scanner is constructed. */
+    scanner?: "grype" | "trivy";
+    /** Default VEX document paths (OpenVEX/CycloneDX) applied to every gate. Read where the gate step is composed. */
+    vexSources?: string[];
   };
 }
 
@@ -265,6 +305,26 @@ export function resolveSigningDefaults(config: ChantConfig): ResolvedSigningDefa
       key: s?.keyless === false ? s?.key : undefined,
     },
   };
+}
+
+/**
+ * Resolve the `vuln-gate` policy overrides from `chant.config.ts`'s
+ * `vulnPolicy` section (#626). Returns only the fields the project set; the
+ * gate merges these over its own `DEFAULT_VULN_POLICY`
+ * (`./components/verbs/vuln-gate.ts`), so an empty/absent section yields the
+ * beginner-safe defaults. `scanner`/`vexSources` are not policy fields — they
+ * configure how the capability is constructed and are read separately.
+ */
+export function resolveVulnPolicy(config: ChantConfig): Partial<VulnPolicy> {
+  const v = config.vulnPolicy;
+  if (!v) return {};
+  const out: Partial<VulnPolicy> = {};
+  if (v.failSeverity) out.failSeverity = v.failSeverity;
+  if (v.fixableOnly !== undefined) out.fixableOnly = v.fixableOnly;
+  if (v.warnSeverity) out.warnSeverity = v.warnSeverity;
+  if (v.failOnLicense !== undefined) out.failOnLicense = v.failOnLicense;
+  if (v.license) out.license = v.license;
+  return out;
 }
 
 /**
