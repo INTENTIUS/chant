@@ -1,0 +1,82 @@
+---
+title: Components
+description: The release model — where it sits relative to synthesis, Ops, and the lifecycle dial, how a Component differs from a Composite, and how it relates to Ops.
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+A **component** is a releasable unit declared as data. It says what it builds, what it produces, and how it deploys. One generic orchestrator runs it, so adding a component adds a declaration, not a pipeline. This page places the release model against the rest of chant and clears up two names that collide.
+
+For the model's own internals — the contract, the capability registry, wiring, and the orchestrator — start at [Components Overview](/chant/components/overview/). This page is the conceptual placement.
+
+## Where it sits
+
+chant is a pure synthesis core with three opt-in layers around it. Components are the outermost.
+
+| Ring | Layer | What it does |
+|---|---|---|
+| 0 | Synthesis (`chant build`) | typed TypeScript in, spec-native artifacts out |
+| 1 | [Ops](/chant/guide/ops/) | named, phased workflows over those artifacts |
+| 2 | [Lifecycle dial](/chant/concepts/lifecycle-models/) | observe, reconcile, or apply — per environment |
+| 3 | Components | a release composed from a bounded capability set |
+
+Synthesis produces artifacts and stops. Components turn those artifacts into a release — build once, publish at deploy time, apply, verify, roll back — driven by a generated Op. If you never author a component, none of this runs.
+
+## Component is not Composite
+
+The two names rhyme and both are reusable units discovered from source. They belong to different rings and do different work.
+
+| | Composite | Component |
+|---|---|---|
+| Ring | 0 — synthesis | 3 — release |
+| Authored in | any `.ts` resource file | a `*.component.ts` file |
+| Is | a factory that returns resources | a release unit with a deploy composition |
+| Expands into | Declarables, at build time | a phased deploy, at run time |
+| Answers | what infrastructure exists | how a unit ships |
+
+A [Composite](/chant/guide/composite-resources/) such as `LambdaNode` or `CockroachDbCluster` is a plain function that returns a bundle of typed resources. `chant build` serializes them. A Component composes [capabilities](/chant/components/capabilities/) into a `deploy` that the orchestrator runs. One shapes the artifact. The other ships it.
+
+## Components and Ops
+
+A Component's `deploy` uses the same phase grammar as an Op — phases, `parallel`, `gate`, `onFailure`. That is not a coincidence. `chant build` generates **one** orchestrator Op that reads every component and drives each composition. The orchestrator is an Op, so a component runs on the local executor by default and reaches for Temporal only when a step needs a durable gate or crash-resume ([Orchestration](/chant/components/orchestration/)).
+
+So the layering is: a Component is authored declaratively, and it compiles down to an Op. You reach for a hand-written Op when a single deploy needs bespoke workflow logic. You reach for a Component when you have many releasable units and want one orchestrator to run all of them without a pipeline each. A project can hold both — `*.op.ts` files and `*.component.ts` files — and they consume the same chant-built artifacts.
+
+<Aside type="caution" title="Two `phase()` and two `chant run`, on purpose">
+Ops and Components each expose a function named `phase()` and each launch through `chant run`, but they are different surfaces:
+
+- An **Op** imports from `@intentius/chant-lexicon-temporal`; its steps are builder calls like `kubectlApply(...)` and `shell(...)`; you launch it with `chant run <name>`.
+- A **Component** imports from `@intentius/chant/components/component`; its steps are kind-literals like `{ kind: "publish-image", ... }`; you launch it with `chant run --components <name>`.
+
+Check the import and the `--components` flag to tell which surface a snippet is about.
+</Aside>
+
+## A minimal component
+
+```ts title="search-service.component.ts"
+import { phase, type Component } from "@intentius/chant/components/component";
+
+export const searchService: Component = {
+  name: "search-service",
+  dependsOn: ["shared-alb"],
+  build: { kind: "docker-build", context: ".", into: "archive" },
+  deploy: [
+    phase("Publish", [{ kind: "publish-image", from: "archive", to: "$env.registry" }]),
+    phase("Apply", [{ kind: "cfn-deploy", template: "archive:search.template.json", imageRef: "@Publish.digest" }]),
+    phase("Verify", [{ kind: "wait-steady-state", service: "search" }]),
+  ],
+};
+```
+
+```bash
+chant list --components          # inventory
+chant run --components search-service --env staging
+```
+
+## See also
+
+- [Components Overview](/chant/components/overview/) — the model's internals and archetypes
+- [Component Contract](/chant/components/component-contract/) — the shape and the portable JSON projection
+- [Supply-Chain Attestations](/chant/components/supply-chain/) — SBOM, provenance, and signing on a component's artifact
+- [Ops](/chant/guide/ops/) — the workflow layer a component compiles down to
+- [Choosing Your Deployment Model](/chant/concepts/deployment-paths/) — synthesis-only, Ops, Components, or raw Temporal

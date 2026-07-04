@@ -39,6 +39,7 @@ export default defineConfig({
 						{ label: 'State and Governance', slug: 'concepts/governance' },
 						{ label: 'Drift Detection', slug: 'concepts/drift-detection' },
 						{ label: 'Durable Workflows', slug: 'concepts/durable-workflows' },
+						{ label: 'Components', slug: 'concepts/components' },
 					],
 				},
 				{

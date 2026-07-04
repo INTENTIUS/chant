@@ -6,7 +6,7 @@ description: Synthesis-only, Ops, or raw Temporal — pick the right fit for you
 import { Aside } from '@astrojs/starlight/components';
 import Diagram from '../../../components/Diagram.astro';
 
-chant covers the synthesis step — TypeScript in, validated artifacts out — and offers two optional layers beyond that. Knowing which layer fits your situation avoids unnecessary setup.
+chant covers the synthesis step — TypeScript in, validated artifacts out — and offers optional layers beyond that: Ops, the lifecycle dial, and the component release model. Knowing which layer fits your situation avoids unnecessary setup.
 
 If you never use the operational layers, chant is a pure synthesis compiler — no executor, no state file, nothing to run. The orchestration layer is Temporal-native when you want durability and zero-dependency when you don't: the local executor runs Ops in-process, and only gated or destructive applies need a Temporal cluster.
 
@@ -64,6 +64,17 @@ You get: live phase progress in the Temporal UI, automatic retry on activity fai
 
 **How to get started:** [Quick Start](/chant/getting-started/quick-start/) for synthesis, then the [Ops guide](/chant/guide/ops/) for Op authoring and `chant run`. Requires a Temporal server or [Temporal Cloud](https://cloud.temporal.io) (free tier available).
 
+## Components — Release Model
+
+When you have many releasable units — services, tables, clusters, libraries — and don't want a hand-maintained pipeline per unit, declare each as a `*.component.ts` [component](/chant/components/overview/). A component says what it builds, what it produces, and how it deploys, composed from a bounded [capability](/chant/components/capabilities/) set. `chant build` generates one generic orchestrator Op that runs them in dependency order; `chant run --components <name>` runs one. Adding a component adds a declaration, not a pipeline. Supply-chain attestations — SBOM, SLSA provenance, keyless signing — attach to the artifact, and a `verify` step gates apply.
+
+**Use this when:**
+- You deploy many units off-cluster and each currently drags its own pipeline
+- You want build-once / publish-by-digest with SBOM, signing, and a verify gate
+- You want rollback via per-capability compensation instead of hand-written scripts
+
+**How to get started:** [Components Overview](/chant/components/overview/), then [Component Contract](/chant/components/component-contract/). Runs on the local executor by default; only gated or crash-resumable components need Temporal. For where this sits against Ops and the lifecycle dial, see [Components](/chant/concepts/components/).
+
 ## Raw Temporal + chant
 
 You write your own Temporal workflow TypeScript — signals, queries, updates, parallel activities — and use chant-synthesized YAML as the input those activities operate on. This is the approach shown in the [Temporal Workflow-Driven Deploy tutorial](/chant/tutorials/temporal-crdb-deploy/).
@@ -101,6 +112,8 @@ Ops and raw Temporal are not mutually exclusive. A project can have `*.op.ts` fi
 | I have ArgoCD / Terraform / an existing deploy pipeline | Synthesis only |
 | My deployment script is more than 50 lines and fails unpredictably | Ops |
 | I need a human approval gate mid-deploy | Ops |
+| I have many deployable units each dragging its own pipeline | Components |
+| I want build-once, SBOM + signing, and a verify gate before apply | Components |
 | I need parallel regional deploys with independent retry | Ops or raw Temporal |
 | I'm already a Temporal shop with existing workers | Raw Temporal |
 | I need custom Temporal search attributes or schedules | Raw Temporal |
