@@ -489,4 +489,91 @@ describe("runComponents", () => {
     expect(result.success).toBe(false);
     expect(result.error).toBeDefined();
   });
+
+  // ── config-defaults wiring (#629) ──────────────────────────────────────────
+
+  test("threads chant.config.ts's signing defaults into a verify step's policy before dispatch", async () => {
+    await writeFile(
+      join(testDir, "svc.component.ts"),
+      `export const svc = { name: "svc", dependsOn: [], deploy: [{ phase: "Verify", steps: [{ kind: "verify", imageRef: "repo@sha256:abc", policy: {} }] }] };`,
+    );
+
+    const capability = fakeCapability("verify");
+    const registry = new CapabilityRegistry();
+    registry.register(capability);
+
+    const result = await runComponents(testDir, "svc", {
+      registry,
+      config: {
+        signing: {
+          oidcIssuer: "https://token.actions.githubusercontent.com",
+          identity: "https://github.com/acme/repo/.github/workflows/release.yml@refs/heads/main",
+        },
+      },
+    });
+
+    expect(result.success).toBe(true);
+    expect(capability.calls[0]?.input).toMatchObject({
+      policy: {
+        expectedIssuer: "https://token.actions.githubusercontent.com",
+        expectedIdentity: "https://github.com/acme/repo/.github/workflows/release.yml@refs/heads/main",
+      },
+    });
+  });
+
+  test("a per-step verify policy value overrides the configured default", async () => {
+    await writeFile(
+      join(testDir, "svc.component.ts"),
+      `export const svc = { name: "svc", dependsOn: [], deploy: [{ phase: "Verify", steps: [{ kind: "verify", imageRef: "repo@sha256:abc", policy: { expectedIssuer: "https://per-step-issuer.example.com" } }] }] };`,
+    );
+
+    const capability = fakeCapability("verify");
+    const registry = new CapabilityRegistry();
+    registry.register(capability);
+
+    await runComponents(testDir, "svc", {
+      registry,
+      config: { signing: { oidcIssuer: "https://token.actions.githubusercontent.com" } },
+    });
+
+    expect(capability.calls[0]?.input).toMatchObject({
+      policy: { expectedIssuer: "https://per-step-issuer.example.com" },
+    });
+  });
+
+  test("a vulnPolicy in config changes a vuln-gate step's effective policy before dispatch", async () => {
+    await writeFile(
+      join(testDir, "svc.component.ts"),
+      `export const svc = { name: "svc", dependsOn: [], deploy: [{ phase: "Gate", steps: [{ kind: "vuln-gate", sbom: { bytes: "", mediaType: "application/json", packageCount: 0, generator: "x", format: "spdx" } }] }] };`,
+    );
+
+    const capability = fakeCapability("vuln-gate", { output: { passed: true, warnings: [], suppressed: [], licenseFindings: [] } });
+    const registry = new CapabilityRegistry();
+    registry.register(capability);
+
+    await runComponents(testDir, "svc", {
+      registry,
+      config: { vulnPolicy: { failSeverity: "high" } },
+    });
+
+    expect(capability.calls[0]?.input).toMatchObject({ policy: { failSeverity: "high" } });
+  });
+
+  test("generate-sbom picks up sbom.format from config", async () => {
+    await writeFile(
+      join(testDir, "svc.component.ts"),
+      `export const svc = { name: "svc", dependsOn: [], deploy: [{ phase: "Build", steps: [{ kind: "generate-sbom", artifactType: "image", path: "img" }] }] };`,
+    );
+
+    const capability = fakeCapability("generate-sbom");
+    const registry = new CapabilityRegistry();
+    registry.register(capability);
+
+    await runComponents(testDir, "svc", {
+      registry,
+      config: { sbom: { format: "cyclonedx" } },
+    });
+
+    expect(capability.calls[0]?.input).toMatchObject({ format: "cyclonedx" });
+  });
 });
