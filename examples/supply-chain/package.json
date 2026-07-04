@@ -13,7 +13,7 @@
     "typescript": "*"
   },
   "scripts": {
-    "supply-chain": "chant run --components supply-chain-demo --env local",
-    "supply-chain:full": "chant run --components supply-chain-demo-signed --env local"
+    "supply-chain": "chant run --components supply-chain-demo --env local --no-release-record",
+    "supply-chain:full": "chant run --components supply-chain-demo-signed --env local --no-release-record"
   }
 }

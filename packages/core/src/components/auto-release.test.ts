@@ -33,6 +33,12 @@ function applyRecord(): DriverStepRecord {
   return { component: "svc", phase: "Apply", kind: "cfn-deploy", status: "ok", durationMs: 5, output: { ok: true } };
 }
 
+// A generate-sbom step output: carries the SBOM document's own content `digest`
+// but no location `uri` — must NOT count as a promoted artifact (#665).
+function sbomRecord(digest: string): DriverStepRecord {
+  return { component: "svc", phase: "Sbom", kind: "generate-sbom", status: "ok", durationMs: 5, output: { digest, archivePath: "sbom.spdx.json" } };
+}
+
 describe("extractRunDigest", () => {
   test("finds the digest from a publish-shaped step output", () => {
     expect(extractRunDigest([publishRecord("sha256:abc"), applyRecord()])).toBe("sha256:abc");
@@ -50,6 +56,12 @@ describe("extractRunDigest", () => {
   test("takes the last digest-bearing output when multiple steps publish", () => {
     expect(extractRunDigest([publishRecord("sha256:first"), publishRecord("sha256:second")])).toBe("sha256:second");
   });
+
+  test("ignores an SBOM output's content digest — no uri means nothing was promoted (#665)", () => {
+    expect(extractRunDigest([sbomRecord("sha256:sbombytes")])).toBeUndefined();
+    // an SBOM step alongside a real publish still yields the publish digest, not the SBOM's
+    expect(extractRunDigest([sbomRecord("sha256:sbombytes"), publishRecord("sha256:real")])).toBe("sha256:real");
+  });
 });
 
 describe("extractRunDigestFromPhaseOutputs", () => {
@@ -60,6 +72,10 @@ describe("extractRunDigestFromPhaseOutputs", () => {
   test("returns undefined for undefined/empty phaseOutputs", () => {
     expect(extractRunDigestFromPhaseOutputs(undefined)).toBeUndefined();
     expect(extractRunDigestFromPhaseOutputs({})).toBeUndefined();
+  });
+
+  test("ignores a phase output carrying only a content digest (SBOM, #665)", () => {
+    expect(extractRunDigestFromPhaseOutputs({ Sbom: { digest: "sha256:sbombytes" } })).toBeUndefined();
   });
 });
 

@@ -33,27 +33,39 @@ import { getHeadCommit, pushLifecycle, StaleLifecycleBranchError } from "../life
 import { appendReleaseRecord, InvalidReleaseRecordError, type ReleaseRecord } from "../lifecycle/release-ledger";
 import type { DriverStepRecord } from "./driver";
 
-/** A step output shaped like a publish result — carries at least one of `uri`/`digest`/`key` (mirrors ../components/driver.ts's `findPublishOutput`). */
-function isPublishShaped(output: unknown): output is { digest?: string; uri?: string; key?: string } {
-  return !!output && typeof output === "object" && ("uri" in output || "digest" in output || "key" in output);
+/**
+ * A step output that represents a *promoted* artifact — a publish-family result
+ * (publish-image / publish-artifact / load-image-on-host), identified by the
+ * location `uri` all three carry (`repo@sha256:…`, `host:…#…`, an artifact URL).
+ * This deliberately excludes outputs that carry only a content `digest`: e.g.
+ * `generate-sbom`'s `digest` is the SBOM document's own bytes, and
+ * `extract-config-bom` likewise *describes* an artifact rather than promoting
+ * one. Those must not trigger a release record (#665) — a release means "we
+ * promoted this by digest to a location", not "we hashed some bytes". The
+ * driver's own `findPublishOutput` stays looser (uri/digest/key) because it
+ * only feeds `@<component>.publish.*` wiring, where a false positive is harmless.
+ */
+function isPromotedArtifact(output: unknown): output is { uri: string; digest?: string } {
+  return !!output && typeof output === "object" && "uri" in output && typeof (output as { uri?: unknown }).uri === "string";
 }
 
 /**
- * Extract the artifact digest a component run produced, by scanning its step
- * records for the last publish-shaped output that carries a `digest` field —
- * the same duck-typed detection `findPublishOutput` (./driver.ts) uses to
- * populate `@<component>.publish.*`, so a release record is only ever
- * attempted when the run actually promoted something by digest. Returns
- * undefined when no step published a digest (e.g. a component whose deploy
- * has no publish step) — the caller treats that as "nothing to record", not
- * an error. Used by the local-executor CLI path, which has the full
- * `DriverStepRecord[]` from `runComponentDeploy`.
+ * Extract the artifact digest a component run promoted, by scanning its step
+ * records for the last {@link isPromotedArtifact promoted-artifact} output (a
+ * publish-family result carrying a location `uri`) and taking its `digest`, so
+ * a release record is only ever attempted when the run actually promoted
+ * something by digest. Returns undefined when no step promoted an artifact —
+ * e.g. a component whose deploy has no publish step, even if it ran
+ * `generate-sbom` (whose content `digest` is not a promotion, #665) — the
+ * caller treats that as "nothing to record", not an error. Used by the
+ * local-executor CLI path, which has the full `DriverStepRecord[]` from
+ * `runComponentDeploy`.
  */
 export function extractRunDigest(records: DriverStepRecord[]): string | undefined {
   let found: string | undefined;
   for (const record of records) {
     if (record.status !== "ok") continue;
-    if (isPublishShaped(record.output) && typeof record.output.digest === "string") {
+    if (isPromotedArtifact(record.output) && typeof record.output.digest === "string") {
       found = record.output.digest;
     }
   }
@@ -74,7 +86,7 @@ export function extractRunDigestFromPhaseOutputs(
 ): string | undefined {
   let found: string | undefined;
   for (const output of Object.values(phaseOutputs ?? {})) {
-    if (isPublishShaped(output) && typeof output.digest === "string") {
+    if (isPromotedArtifact(output) && typeof output.digest === "string") {
       found = output.digest;
     }
   }
