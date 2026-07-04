@@ -39,6 +39,8 @@ import {
 import { generateGitlabPipeline, type GenerateGitlabOptions } from "./generate-gitlab";
 import { buildCapabilityRegistry } from "./capability-plugin-loader";
 import type { CapabilityRegistry } from "./capability";
+import { applyConfigDefaults } from "./config-defaults";
+import { loadChantConfig, type ChantConfig } from "../config";
 
 /** One component in `chant list --components` output. */
 export interface ListedComponent {
@@ -271,6 +273,15 @@ export interface RunComponentsOptions {
    * `CapabilityNotImplementedError` (see `./verbs/stub.ts`).
    */
   registry?: CapabilityRegistry;
+  /**
+   * Pre-loaded project config to resolve `sbom`/`signing`/`vulnPolicy`
+   * defaults from (#629), bypassing `loadChantConfig` entirely. Real callers
+   * (the CLI handler) should leave this unset — `runComponents` loads
+   * `chant.config.ts`/`chant.config.json` from `path` itself; this exists so
+   * tests can inject a config object directly, the same escape hatch
+   * `registry` above provides for the capability registry.
+   */
+  config?: ChantConfig;
 }
 
 /** Result of `chant run --components <name|all>`. */
@@ -378,15 +389,24 @@ export async function runComponents(
   const env = options.env ?? "local";
   const selected = targets.map((c) => c.name);
 
+  // (#629) Resolve `chant.config.ts`'s `sbom`/`signing`/`vulnPolicy` sections
+  // and fill their defaults into every recognized step (`generate-sbom`,
+  // `sign`/`attest-provenance`, `verify`, `vuln-gate`) that didn't already
+  // specify the value itself, BEFORE dispatching to the driver — the driver
+  // itself stays capability-agnostic and never reads project config (see
+  // ./config-defaults.ts's module doc).
+  const { config } = options.config ? { config: options.config } : await loadChantConfig(path);
+  const resolvedTargets = targets.map((component) => applyConfigDefaults(component, config));
+
   try {
     if (selector === "all") {
-      const run = await runInterpretDriver(targets, registry, { env });
+      const run = await runInterpretDriver(resolvedTargets, registry, { env });
       return { success: true, run, selected };
     }
 
     // Single-component invocation: run just this component, bypassing
     // whole-graph `dependsOn` resolution (see docstring above).
-    const componentResult = await runComponentDeploy(targets[0], { env, component: targets[0].name }, registry, {});
+    const componentResult = await runComponentDeploy(resolvedTargets[0], { env, component: resolvedTargets[0].name }, registry, {});
     const run: DriverRunResult = {
       order: selected,
       waves: [selected],
