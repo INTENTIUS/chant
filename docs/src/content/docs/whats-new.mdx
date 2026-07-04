@@ -7,6 +7,24 @@ A hand-curated rollup of capabilities shipped recently. If you learned chant bef
 
 For the day-to-day reference docs see [Lifecycle Models](/chant/concepts/lifecycle-models/), [`chant lifecycle`](/chant/cli/lifecycle/), [Live Import](/chant/guide/live-import/), [Reconciling Lifecycle](/chant/guide/reconciling-lifecycle/), [Drift Detection](/chant/concepts/drift-detection/), and [Implementing Observation](/chant/lexicon-authoring/observation/).
 
+## Components & supply-chain attestations
+
+The newest thread. The [components](/chant/components/overview/) release model — a deploy composed from a bounded set of capabilities, run by one generic orchestrator — gained supply-chain attestations: SBOM, SLSA provenance, and keyless signing attached to the artifact digest, with a `verify` gate that halts a deploy before apply. `chant run --components` runs a component's `deploy` composition on the local executor by default. The `dir`/`zip`/`jar` SBOM path is hermetic — no external tool. See [Supply-Chain Attestations](/chant/components/supply-chain/).
+
+| # | Capability |
+|---|---|
+| [#606](https://github.com/INTENTIUS/chant/issues/606), [#608](https://github.com/INTENTIUS/chant/pull/608) | SBOM generation + attach for build-producing components |
+| [#613](https://github.com/INTENTIUS/chant/issues/613), [#615](https://github.com/INTENTIUS/chant/pull/615) | Native SPDX/CycloneDX BOM writer — hermetic lockfile SBOM (no external tool) + IaC config-BOM |
+| [#614](https://github.com/INTENTIUS/chant/issues/614), [#619](https://github.com/INTENTIUS/chant/pull/619) | Per-artifact reproducibility/provenance + component BOM aggregation |
+| [#610](https://github.com/INTENTIUS/chant/issues/610), [#620](https://github.com/INTENTIUS/chant/pull/620) | Real `SbomGenerator` (syft/buildx), `ReferrerLookup` (oras), publish-time referrer attach |
+| [#622](https://github.com/INTENTIUS/chant/issues/622), [#624](https://github.com/INTENTIUS/chant/pull/624) | Keyless cosign signing + SLSA provenance + `verify` gate |
+| [#623](https://github.com/INTENTIUS/chant/issues/623), [#625](https://github.com/INTENTIUS/chant/pull/625) | [Supply-Chain Attestations](/chant/components/supply-chain/) — first-timer docs page |
+| [#628](https://github.com/INTENTIUS/chant/issues/628), [#631](https://github.com/INTENTIUS/chant/pull/631) | `vuln-gate` correctness hardening |
+| [#629](https://github.com/INTENTIUS/chant/issues/629), [#632](https://github.com/INTENTIUS/chant/pull/632) | Wire `chant.config.ts` `sbom`/`signing`/`vulnPolicy` into `run --components` |
+| [#630](https://github.com/INTENTIUS/chant/issues/630), [#633](https://github.com/INTENTIUS/chant/pull/633) | Runnable [`examples/supply-chain`](https://github.com/INTENTIUS/chant/tree/main/examples/supply-chain) + hermetic SBOM default |
+| [#634](https://github.com/INTENTIUS/chant/issues/634), [#635](https://github.com/INTENTIUS/chant/pull/635) | Default `vuln-gate`/`scan-vulnerabilities` to a real auto-detecting scanner (grype → trivy) |
+| [#637](https://github.com/INTENTIUS/chant/issues/637), [#638](https://github.com/INTENTIUS/chant/pull/638) | Apply `chant.config` defaults on the Temporal codegen path |
+
 ## Pipeline context for agents
 
 chant now exposes what `chant build` already computes about a pipeline — its jobs and run order, what it pulls in from outside, its security findings, where each job came from — as a set of **read-only MCP tools**. They give an agent a *before-it-runs* view of a pipeline change, complementary to the *after-it-ran* view live tooling provides. Every tool builds from source and never touches a live instance, reads run history, or writes anything — that boundary is what keeps chant a context *producer*, not a copy of the live tooling. See [Agent Integration](/chant/guide/agent-integration/#read-only-context-tools) for the full tool reference.

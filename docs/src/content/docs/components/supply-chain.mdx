@@ -23,9 +23,20 @@ This page is for the first time you're asked to sign an artifact and you're not 
 
 An SBOM tells you what's inside. Provenance tells you where it came from. A signature tells you who's vouching for it. None of the three answers the other two — that's why chant attaches all three separately, to the same artifact, rather than treating any one as a stand-in for the others.
 
-<Aside type="note" title="VEX/CVE gating: the gate exists, the default scanner doesn't (yet)">
-`vuln-gate` is real: it scans an SBOM for known CVEs, applies VEX suppression, evaluates a license policy, and **throws** `VulnGateFailedError` on a policy violation — see [VEX/CVE gating](#vexcve-gating-with-vuln-gate) below. What's still missing: the `vuln-gate` capability `chant run --components` registers by default has no scanner wired in, so it throws `VulnScannerNotImplementedError` even with `grype`/`syft` installed, until a project injects `createToolVulnScanner()` itself (see that section for how). Signing and provenance, covered next, have no such gap — `sign`/`attest-provenance`/`verify` are real end-to-end once `cosign` is on `PATH`.
+<Aside type="note" title="What each capability needs to run">
+`vuln-gate` is real: it scans an SBOM for known CVEs, applies VEX suppression, evaluates a license policy, and **throws** `VulnGateFailedError` on a policy violation — see [VEX/CVE gating](#vexcve-gating-with-vuln-gate) below. The scanner it registers by default auto-detects a real backend at scan time — `grype` if present, else `trivy` — and throws only when neither is on `PATH`. Signing and provenance are real end-to-end once `cosign` is on `PATH`. See the [Prerequisites](#prerequisites) table below for the full tool surface.
 </Aside>
+
+## Prerequisites
+
+What each capability needs installed. The `dir`/`zip`/`jar` SBOM path is the only one that runs with nothing external installed.
+
+| Capability | External tool | Tool-free? |
+|---|---|---|
+| `generate-sbom` — `dir` / `zip` / `jar` | none (pure-TypeScript lockfile backend) | Yes |
+| `generate-sbom` — `image` | `syft` or `docker buildx` ([#610](https://github.com/INTENTIUS/chant/issues/610)) | No |
+| `sign` / `attest-provenance` / `verify` | `cosign` | No |
+| `vuln-gate` | `grype` or `trivy` (auto-detected at scan time) | No |
 
 ## Generating an SBOM tool-free
 
