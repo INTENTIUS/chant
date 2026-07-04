@@ -12,7 +12,7 @@ The orchestrator runs a set of [components](/chant/components/component-contract
 
 ## Interpret mode
 
-chant generates one orchestrator Op that reads the declarations, orders them with `chant graph --stacks` (order plus parallel-safe waves), and drives each composition. No per-component pipeline files exist.
+chant generates one orchestrator Op that reads the declarations, orders them with `chant graph --components` (dependency order from each component's `dependsOn`, plus parallel-safe waves), and drives each composition. No per-component pipeline files exist.
 
 The orchestrator is an [Op](/chant/guide/ops/), so it runs **local by default** on the in-process executor. Phase sequencing, retries, activity profiles, and `onFailure` saga rollback all work locally with nothing installed.
 
