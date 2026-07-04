@@ -26,6 +26,13 @@ export const ChantConfigSchema = z.object({
     format: z.enum(["spdx", "cyclonedx"]).optional(),
     enabled: z.boolean().optional(),
   }).optional(),
+  signing: z.object({
+    keyless: z.boolean().optional(),
+    oidcIssuer: z.string().min(1).optional(),
+    identity: z.string().min(1).optional(),
+    identityIsRegexp: z.boolean().optional(),
+    key: z.string().min(1).optional(),
+  }).optional(),
 }).passthrough();
 
 /**
@@ -104,6 +111,32 @@ export interface ChantConfig {
     format?: SbomFormat;
     /** Set false to opt this project out of SBOM generation entirely — components composing a `generate-sbom` step still run it explicitly, but this is the project-wide switch a component author can point to when deciding whether to include the step at all. Purely advisory: `generate-sbom` has no implicit/automatic invocation to suppress (a component's composition always decides), so this flag has no effect unless a component's own authoring code reads it. */
     enabled?: boolean;
+  };
+
+  /**
+   * Project-wide signing/verification defaults (#622, epic #551 follow-up to
+   * #614's reproducibility/provenance material). Consumed by
+   * `./components/verbs/sign.ts`'s `sign`/`attest-provenance` capabilities and
+   * `./components/verbs/verify.ts`'s `verify` gate via {@link
+   * resolveSigningDefaults}. **Keyless is the default** — `keyless: false`
+   * plus `key` is the opt-in override for a team with an existing KMS/file
+   * key policy (see `./components/verbs/sign.ts`'s module doc for why keyless
+   * is never something a beginner has to turn on). `oidcIssuer`/`identity`
+   * are the one identity-setup step #622 asks projects to document: the
+   * expected signer for `verify`'s identity policy (e.g. GitHub Actions'
+   * OIDC issuer + a workflow ref).
+   */
+  signing?: {
+    /** Set false only alongside `key` to opt into key-based signing instead of the keyless default. Omit (or leave `true`) for the default keyless flow. */
+    keyless?: boolean;
+    /** Expected OIDC issuer for keyless signing/verification (e.g. `"https://token.actions.githubusercontent.com"` for GitHub Actions). Required for `verify`'s identity policy; optional for `sign`/`attest-provenance`, which can rely on cosign's own ambient OIDC detection in CI. */
+    oidcIssuer?: string;
+    /** Expected signer identity (e.g. a workflow ref URI) `verify` checks the certificate against. Required for `verify`'s identity policy. */
+    identity?: string;
+    /** Treat `identity` as a regexp rather than a literal match — see `IdentityPolicy.identityIsRegexp` in `./components/verbs/verify.ts`. */
+    identityIsRegexp?: boolean;
+    /** Opt-in key-based override (a path, or `kms://`/`awskms://`/... reference) for `sign`/`attest-provenance`/`verify` alike. Presence alone does not disable keyless — pair with `keyless: false` for clarity, though a capability call that explicitly sets its own `key`/`policy.key` always wins over this project default either way. */
+    key?: string;
   };
 }
 
@@ -184,6 +217,54 @@ export function resolveAutoReleaseDisabled(config: ChantConfig, cliFlag?: boolea
  */
 export function resolveSbomFormat(config: ChantConfig, stepFormat?: SbomFormat): SbomFormat {
   return stepFormat ?? config.sbom?.format ?? DEFAULT_SBOM_FORMAT;
+}
+
+/**
+ * Resolved signing defaults a `sign`/`attest-provenance`/`verify` capability
+ * call can spread its own `keyless`/`key`/`policy` input over (#622). Shaped
+ * to match `./components/verbs/sign.ts`'s `KeyBasedSigningConfig` (the `key`
+ * field) and `./components/verbs/verify.ts`'s `IdentityPolicy` (`expectedIssuer`/
+ * `expectedIdentity`/`identityIsRegexp`) so a caller can do
+ * `{ ...resolveSigningDefaults(config).identityPolicyDefaults, ...override }`
+ * without a config module import inside `./components/verbs/*` (no verb
+ * module imports `../../config.ts` directly — same convention `resolveSbomFormat`'s
+ * callers already follow: the orchestrator/caller resolves config, capabilities
+ * stay config-free).
+ */
+export interface ResolvedSigningDefaults {
+  /** False only when the project opted into the key-based override (`signing.keyless === false`). True (keyless) otherwise — the #622 default. */
+  keyless: boolean;
+  /** `./components/verbs/sign.ts`'s `KeyBasedSigningConfig`, present only when key-based signing is configured (`signing.key` set). */
+  key?: { key: string };
+  /** Partial `./components/verbs/verify.ts` `IdentityPolicy` fields resolved from project config — a caller still supplies any per-call override and must ensure `expectedIssuer`/`expectedIdentity` end up set before calling `verify` (config alone does not guarantee both are present). */
+  identityPolicyDefaults: {
+    expectedIssuer?: string;
+    expectedIdentity?: string;
+    identityIsRegexp?: boolean;
+    key?: string;
+  };
+}
+
+/**
+ * Resolve project-wide signing defaults from `chant.config.ts`'s `signing`
+ * section (#622). Keyless unless `signing.keyless === false` — the same
+ * "default is the safe choice, override is explicit" precedence
+ * `resolveOwnershipMarker`/`resolveAutoReleaseDisabled` already use for their
+ * respective opt-outs.
+ */
+export function resolveSigningDefaults(config: ChantConfig): ResolvedSigningDefaults {
+  const s = config.signing;
+  const keyless = s?.keyless !== false;
+  return {
+    keyless,
+    ...(!keyless && s?.key ? { key: { key: s.key } } : {}),
+    identityPolicyDefaults: {
+      expectedIssuer: s?.oidcIssuer,
+      expectedIdentity: s?.identity,
+      identityIsRegexp: s?.identityIsRegexp,
+      key: s?.keyless === false ? s?.key : undefined,
+    },
+  };
 }
 
 /**

@@ -20,6 +20,12 @@
  * reproducibility + provenance on each `BuildArchiveEntry`. `publish-image`
  * (#610) also gained a best-effort OCI-referrer attach step (`oras attach`,
  * also via `ProcessRunner`) for a supplied SBOM/component BOM — see ./publish.ts.
+ * `sign`/`attest-provenance` (#622, ./sign.ts) are real implementations over
+ * the same injectable `ProcessRunner`: keyless-by-default `cosign sign`/
+ * `cosign attest` for signature + SLSA provenance, reusing #614's
+ * `ProvenanceLink` material. `verify` (#622, ./verify.ts) is the matching
+ * deploy-time gate — `cosign verify`/`verify-attestation` against a
+ * configured identity policy, mirroring ../../lint/policy.ts's `policyGate`.
  */
 
 export * from "./build-archive";
@@ -33,6 +39,8 @@ export * from "./config-bom";
 export * from "./component-bom";
 export * from "./reproducibility";
 export * from "./publish";
+export * from "./sign";
+export * from "./verify";
 export * from "./apply";
 export * from "./job-submission";
 export * from "./host-delivery";
