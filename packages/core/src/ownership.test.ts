@@ -1,42 +1,40 @@
 import { describe, expect, test } from "vitest";
 import {
   ownershipEntries,
-  ownershipKeys,
   hasOwnershipMarker,
   readOwnership,
   classifyOwnership,
   tagArrayToMap,
+  LABEL_OWNERSHIP_KEYS,
   OWNERSHIP_MANAGED_BY_VALUE,
+  type ChannelKeys,
 } from "./ownership";
 import { resolveOwnershipMarker } from "./config";
 
+// A stand-in for a lexicon-provided convention (e.g. AWS's colon keys), to
+// prove the core helpers are generic over any `ChannelKeys` — the per-provider
+// conventions themselves live in their lexicons (aws/azure), not here.
+const COLON_KEYS: ChannelKeys = { managedBy: "chant:managed-by", stack: "chant:stack", env: "chant:env" };
+
 describe("ownershipEntries (#119)", () => {
-  test("label channel carries managed-by + stack + env", () => {
-    const e = ownershipEntries("label", { stack: "billing", env: "prod" });
+  test("the default label keys carry managed-by + stack + env", () => {
+    const e = ownershipEntries(LABEL_OWNERSHIP_KEYS, { stack: "billing", env: "prod" });
     expect(e["app.kubernetes.io/managed-by"]).toBe("chant");
     expect(e["chant.intentius.io/stack"]).toBe("billing");
     expect(e["chant.intentius.io/env"]).toBe("prod");
   });
 
-  test("aws-tag channel uses colon keys", () => {
-    const e = ownershipEntries("aws-tag", { stack: "billing" });
+  test("stamps whatever key names the provided ChannelKeys names, env omitted when unset", () => {
+    const e = ownershipEntries(COLON_KEYS, { stack: "billing" });
     expect(e["chant:managed-by"]).toBe("chant");
     expect(e["chant:stack"]).toBe("billing");
     expect(e["chant:env"]).toBeUndefined(); // env omitted when not set
   });
 
-  test("azure-tag channel uses hyphen keys (no slash, which Azure forbids)", () => {
-    const e = ownershipEntries("azure-tag", { stack: "billing", env: "stg" });
-    expect(e["chant-managed-by"]).toBe("chant");
-    expect(e["chant-stack"]).toBe("billing");
-    expect(e["chant-env"]).toBe("stg");
-    expect(Object.keys(e).some((k) => k.includes("/"))).toBe(false);
-  });
-
   test("carries stack identity, not just managed=true", () => {
-    const a = ownershipEntries("label", { stack: "stack-a" });
-    const b = ownershipEntries("label", { stack: "stack-b" });
-    expect(a[ownershipKeys("label").stack]).not.toBe(b[ownershipKeys("label").stack]);
+    const a = ownershipEntries(LABEL_OWNERSHIP_KEYS, { stack: "stack-a" });
+    const b = ownershipEntries(LABEL_OWNERSHIP_KEYS, { stack: "stack-b" });
+    expect(a[LABEL_OWNERSHIP_KEYS.stack]).not.toBe(b[LABEL_OWNERSHIP_KEYS.stack]);
   });
 });
 
@@ -47,29 +45,29 @@ describe("hasOwnershipMarker / readOwnership", () => {
       "chant:stack": "billing",
       "team": "payments", // foreign co-stamp
     };
-    expect(hasOwnershipMarker(tags, "aws-tag")).toBe(true);
+    expect(hasOwnershipMarker(tags, COLON_KEYS)).toBe(true);
   });
 
   test("absent marker → not owned", () => {
-    expect(hasOwnershipMarker({ team: "payments" }, "aws-tag")).toBe(false);
-    expect(hasOwnershipMarker(undefined, "label")).toBe(false);
+    expect(hasOwnershipMarker({ team: "payments" }, COLON_KEYS)).toBe(false);
+    expect(hasOwnershipMarker(undefined, LABEL_OWNERSHIP_KEYS)).toBe(false);
   });
 
   test("readOwnership recovers stack/env from a marked resource", () => {
-    const labels = ownershipEntries("label", { stack: "billing", env: "prod" });
-    expect(readOwnership(labels, "label")).toEqual({ stack: "billing", env: "prod" });
+    const labels = ownershipEntries(LABEL_OWNERSHIP_KEYS, { stack: "billing", env: "prod" });
+    expect(readOwnership(labels, LABEL_OWNERSHIP_KEYS)).toEqual({ stack: "billing", env: "prod" });
   });
 
   test("readOwnership returns undefined when unmarked", () => {
-    expect(readOwnership({ foo: "bar" }, "label")).toBeUndefined();
+    expect(readOwnership({ foo: "bar" }, LABEL_OWNERSHIP_KEYS)).toBeUndefined();
   });
 });
 
 describe("classifyOwnership / tagArrayToMap (#120)", () => {
   test("marker present → owned, absent → foreign", () => {
-    expect(classifyOwnership({ "chant:managed-by": "chant" }, "aws-tag")).toBe("owned");
-    expect(classifyOwnership({ team: "x" }, "aws-tag")).toBe("foreign");
-    expect(classifyOwnership(undefined, "label")).toBe("foreign");
+    expect(classifyOwnership({ "chant:managed-by": "chant" }, COLON_KEYS)).toBe("owned");
+    expect(classifyOwnership({ team: "x" }, COLON_KEYS)).toBe("foreign");
+    expect(classifyOwnership(undefined, LABEL_OWNERSHIP_KEYS)).toBe("foreign");
   });
 
   test("tagArrayToMap converts CloudFormation {Key,Value} tags", () => {
@@ -78,7 +76,7 @@ describe("classifyOwnership / tagArrayToMap (#120)", () => {
       { Key: "chant:stack", Value: "billing" },
     ]);
     expect(map["chant:managed-by"]).toBe("chant");
-    expect(classifyOwnership(map, "aws-tag")).toBe("owned");
+    expect(classifyOwnership(map, COLON_KEYS)).toBe("owned");
   });
 
   test("tagArrayToMap tolerates undefined / malformed entries", () => {

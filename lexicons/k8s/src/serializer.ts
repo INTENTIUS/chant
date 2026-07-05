@@ -9,7 +9,7 @@ import { createRequire } from "module";
 import type { Declarable } from "@intentius/chant/declarable";
 import { isPropertyDeclarable } from "@intentius/chant/declarable";
 import type { Serializer, SerializerResult, SerializeContext } from "@intentius/chant/serializer";
-import { ownershipEntries } from "@intentius/chant/ownership";
+import { ownershipEntries, LABEL_OWNERSHIP_KEYS } from "@intentius/chant/ownership";
 import type { LexiconOutput } from "@intentius/chant/lexicon-output";
 import { walkValue, type SerializerVisitor } from "@intentius/chant/serializer-walker";
 import { emitYAML } from "@intentius/chant/yaml";
@@ -165,7 +165,7 @@ export const k8sSerializer: Serializer = {
     // labels, so they seed defaultLabelEntries and flow through the same merge
     // (explicit resource labels still win).
     let defaultLabelEntries: Record<string, unknown> = context?.ownership
-      ? { ...ownershipEntries("label", context.ownership) }
+      ? { ...ownershipEntries(LABEL_OWNERSHIP_KEYS, context.ownership) }
       : {};
     let defaultAnnotationEntries: Record<string, unknown> = {};
 

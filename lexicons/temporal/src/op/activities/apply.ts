@@ -1,6 +1,6 @@
 import { exec } from "node:child_process";
 import { promisify } from "node:util";
-import { ownershipKeys, OWNERSHIP_MANAGED_BY_VALUE } from "@intentius/chant/ownership";
+import { LABEL_OWNERSHIP_KEYS, OWNERSHIP_MANAGED_BY_VALUE } from "@intentius/chant/ownership";
 
 const execAsync = promisify(exec);
 
@@ -51,7 +51,7 @@ export function applyCommand(
   switch (target) {
     case "kubectl": {
       const prune = deletes
-        ? ` --prune --selector ${ownershipKeys("label").managedBy}=${OWNERSHIP_MANAGED_BY_VALUE}`
+        ? ` --prune --selector ${LABEL_OWNERSHIP_KEYS.managedBy}=${OWNERSHIP_MANAGED_BY_VALUE}`
         : "";
       return `kubectl apply -f ${output}${prune} --wait=true`;
     }

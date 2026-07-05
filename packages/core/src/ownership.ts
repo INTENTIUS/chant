@@ -28,50 +28,39 @@ export interface OwnershipMarker {
 }
 
 /**
- * The native metadata channel a target stamps into. Tag-key syntax differs:
- * Kubernetes/GCP labels allow a `prefix/name` form; AWS tag keys allow `:`;
- * Azure tag keys forbid `/`, so they use a hyphenated form.
+ * The marker key names a target stamps into — the managed-by/stack/env tag or
+ * label keys. Tag-key syntax differs per provider (Kubernetes/GCP labels allow
+ * a `prefix/name` form; AWS tag keys allow `:`; Azure tag keys forbid `/`), so
+ * each cloud lexicon provides its own `ChannelKeys` and passes it to these
+ * helpers. Core owns the generic stamp/detect logic and the shared label
+ * convention (`LABEL_OWNERSHIP_KEYS`), not a per-provider key registry.
  */
-export type OwnershipChannel = "label" | "aws-tag" | "azure-tag";
-
-interface ChannelKeys {
+export interface ChannelKeys {
   readonly managedBy: string;
   readonly stack: string;
   readonly env: string;
 }
 
-const CHANNEL_KEYS: Record<OwnershipChannel, ChannelKeys> = {
-  label: {
-    managedBy: "app.kubernetes.io/managed-by",
-    stack: "chant.intentius.io/stack",
-    env: "chant.intentius.io/env",
-  },
-  "aws-tag": {
-    managedBy: "chant:managed-by",
-    stack: "chant:stack",
-    env: "chant:env",
-  },
-  "azure-tag": {
-    managedBy: "chant-managed-by",
-    stack: "chant-stack",
-    env: "chant-env",
-  },
+/**
+ * The label-based ownership convention (`app.kubernetes.io/managed-by` +
+ * `chant.intentius.io/{stack,env}`) — the default, shared by every label-based
+ * lexicon (k8s, gcp, helm, and the Temporal apply activity's `kubectl --prune`
+ * selector). AWS and Azure tag keys are defined in their own lexicons.
+ */
+export const LABEL_OWNERSHIP_KEYS: ChannelKeys = {
+  managedBy: "app.kubernetes.io/managed-by",
+  stack: "chant.intentius.io/stack",
+  env: "chant.intentius.io/env",
 };
 
-/** The marker key names used in a given channel. */
-export function ownershipKeys(channel: OwnershipChannel): ChannelKeys {
-  return CHANNEL_KEYS[channel];
-}
-
 /**
- * The key/value entries to stamp for a channel: the managed-by marker, the
- * stack identity, and the env identity when present.
+ * The key/value entries to stamp: the managed-by marker, the stack identity,
+ * and the env identity when present.
  */
 export function ownershipEntries(
-  channel: OwnershipChannel,
+  keys: ChannelKeys,
   marker: OwnershipMarker,
 ): Record<string, string> {
-  const keys = CHANNEL_KEYS[channel];
   const entries: Record<string, string> = {
     [keys.managedBy]: OWNERSHIP_MANAGED_BY_VALUE,
     [keys.stack]: marker.stack,
@@ -86,10 +75,10 @@ export function ownershipEntries(
  */
 export function hasOwnershipMarker(
   tagsOrLabels: Record<string, unknown> | undefined,
-  channel: OwnershipChannel,
+  keys: ChannelKeys,
 ): boolean {
   if (!tagsOrLabels) return false;
-  return tagsOrLabels[CHANNEL_KEYS[channel].managedBy] === OWNERSHIP_MANAGED_BY_VALUE;
+  return tagsOrLabels[keys.managedBy] === OWNERSHIP_MANAGED_BY_VALUE;
 }
 
 /**
@@ -104,9 +93,9 @@ export function hasOwnershipMarker(
  */
 export function classifyOwnership(
   tagsOrLabels: Record<string, unknown> | undefined,
-  channel: OwnershipChannel,
+  keys: ChannelKeys,
 ): "owned" | "foreign" {
-  return hasOwnershipMarker(tagsOrLabels, channel) ? "owned" : "foreign";
+  return hasOwnershipMarker(tagsOrLabels, keys) ? "owned" : "foreign";
 }
 
 /**
@@ -129,10 +118,9 @@ export function tagArrayToMap(
  */
 export function readOwnership(
   tagsOrLabels: Record<string, unknown> | undefined,
-  channel: OwnershipChannel,
+  keys: ChannelKeys,
 ): OwnershipMarker | undefined {
-  if (!hasOwnershipMarker(tagsOrLabels, channel)) return undefined;
-  const keys = CHANNEL_KEYS[channel];
+  if (!hasOwnershipMarker(tagsOrLabels, keys)) return undefined;
   const stack = tagsOrLabels![keys.stack];
   const env = tagsOrLabels![keys.env];
   return {

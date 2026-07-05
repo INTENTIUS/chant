@@ -9,7 +9,7 @@ import { createRequire } from "module";
 import type { Declarable } from "@intentius/chant/declarable";
 import { isPropertyDeclarable } from "@intentius/chant/declarable";
 import type { Serializer, SerializerResult, SerializeContext } from "@intentius/chant/serializer";
-import { ownershipEntries } from "@intentius/chant/ownership";
+import { ownershipEntries, LABEL_OWNERSHIP_KEYS } from "@intentius/chant/ownership";
 import type { LexiconOutput } from "@intentius/chant/lexicon-output";
 import { walkValue, type SerializerVisitor } from "@intentius/chant/serializer-walker";
 import { emitYAML } from "@intentius/chant/yaml";
@@ -127,7 +127,7 @@ export const gcpSerializer: Serializer = {
     // Collect default labels and annotations. Ownership markers are stamped as
     // labels (Config Connector resources carry them in metadata.labels).
     let defaultLabelEntries: Record<string, unknown> = context?.ownership
-      ? { ...ownershipEntries("label", context.ownership) }
+      ? { ...ownershipEntries(LABEL_OWNERSHIP_KEYS, context.ownership) }
       : {};
     let defaultAnnotationEntries: Record<string, unknown> = {};
 
