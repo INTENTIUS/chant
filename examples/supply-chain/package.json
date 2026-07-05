@@ -10,6 +10,7 @@
   },
   "devDependencies": {
     "@intentius/chant": "*",
+    "@intentius/chant-lexicon-aws": "*",
     "typescript": "*"
   },
   "scripts": {

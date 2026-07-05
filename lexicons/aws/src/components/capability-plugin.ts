@@ -12,6 +12,7 @@ import type { Capability } from "@intentius/chant/components/capability";
 import type { CapabilityPlugin } from "@intentius/chant/components/capability-plugin";
 
 import { publishImageCapability, loadImageOnHostCapability, publishArtifactCapability } from "./publish";
+import { extractConfigBomCapability } from "./config-bom";
 import {
   cfnDeployCapability,
   ecsUpdateServiceCapability,
@@ -27,6 +28,8 @@ import { snapshotBeforeCapability, rollbackPreviousCapability } from "./safety";
 
 /** The AWS verb families this plugin contributes, grouped for `families()` — mirrors core's `STARTER_VERB_FAMILIES` shape. */
 export const AWS_VERB_FAMILIES = {
+  // `extract-config-bom` parses a synthesized CloudFormation template (#684).
+  sbom: ["extract-config-bom"],
   publish: ["publish-image", "load-image-on-host", "publish-artifact"],
   apply: ["cfn-deploy", "ecs-update-service", "lambda-deploy", "s3-sync", "cdn-invalidate", "run-migration"],
   jobSubmission: ["emr-start-job-run", "emr-submit-step"],
@@ -38,6 +41,7 @@ export const AWS_VERB_FAMILIES = {
 /** Every AWS-leaf capability, listed individually so each keeps its own `In`/`Out` generics (same reason core's starter plugin lists them one by one). */
 function awsCapabilities(): Array<Capability<never, unknown>> {
   return [
+    extractConfigBomCapability,
     publishImageCapability,
     loadImageOnHostCapability,
     publishArtifactCapability,

@@ -7,6 +7,7 @@
  */
 
 import { step } from "@intentius/chant/components";
+import type { ExtractConfigBomInput } from "./config-bom";
 import type { PublishImageInput, PublishArtifactInput } from "./publish";
 import type {
   CfnDeployInput,
@@ -20,6 +21,9 @@ import type { EmrStartJobRunInput, EmrSubmitStepInput } from "./job-submission";
 import type { CodeDeployInput, CopyToHostInput, RemoteExecInput } from "./host-delivery";
 import type { WaitForStackInput, WaitSteadyStateInput, WaitJobInput } from "./wait-aws";
 import type { SnapshotBeforeInput, RollbackPreviousInput } from "./safety";
+
+// ── sbom ─────────────────────────────────────────────────────────────────────
+export const extractConfigBom = step<ExtractConfigBomInput>("extract-config-bom");
 
 // ── publish ──────────────────────────────────────────────────────────────────
 export const publishImage = step<PublishImageInput>("publish-image");
