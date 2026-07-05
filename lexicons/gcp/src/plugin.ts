@@ -26,6 +26,13 @@ import { gcpHover } from "./lsp/hover";
 
 export const gcpPlugin: LexiconPlugin = {
   name: "gcp",
+  // Self-upgrade: where the pinned Config Connector (KCC) version lives + its upstream (#685).
+  upstreamPin: {
+    file: "src/spec/fetch.ts",
+    pattern: /export const KCC_VERSION\s*=\s*"([^"]+)"/,
+    replace: (v, line) => line.replace(/export const KCC_VERSION\s*=\s*"[^"]+"/, `export const KCC_VERSION = "${v}"`),
+    upstream: { owner: "GoogleCloudPlatform", repo: "k8s-config-connector", kind: "releases" },
+  },
   serializer: gcpSerializer,
 
   lintRules(): LintRule[] {

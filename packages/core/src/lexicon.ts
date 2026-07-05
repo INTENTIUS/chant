@@ -161,6 +161,30 @@ export interface InitTemplateSet {
  * Required lifecycle methods enforce consistency: every lexicon must support
  * generate, validate, coverage, and package operations.
  */
+/**
+ * Where a lexicon pins an upstream schema/spec version, and where to look for a
+ * newer one — the lexicon's own declaration for the self-upgrade tooling
+ * (`chant dev pinned-upgrade`), so core never hard-codes per-lexicon upstream
+ * repos or version-constant locations. See ./codegen/pinned-upgrade.ts.
+ */
+export interface UpstreamPin {
+  /** Source file (relative to the lexicon package root) holding the pinned version constant. */
+  readonly file: string;
+  /** Regex whose first capture group is the current pinned version in `file`. */
+  readonly pattern: RegExp;
+  /** Rebuild a line that matched `pattern`, substituting the new version. */
+  replace(newVersion: string, line: string): string;
+  /** Where to query for the latest stable upstream tag. */
+  readonly upstream: {
+    readonly owner: string;
+    readonly repo: string;
+    /** `releases` = published releases; `tags` = every git tag. */
+    readonly kind: "releases" | "tags";
+    /** Only consider tags ending with this suffix (e.g. "-ee" for GitLab). */
+    readonly tagSuffix?: string;
+  };
+}
+
 export interface LexiconPlugin {
   // ── Required ──────────────────────────────────────────────
   /** Human-readable name (e.g. "aws", "gcp") */
@@ -218,6 +242,9 @@ export interface LexiconPlugin {
 
   /** Optional initialization hook */
   init?(): void | Promise<void>;
+
+  /** How this lexicon pins its upstream schema version + where to check for a newer one (self-upgrade tooling — see ./codegen/pinned-upgrade.ts). Omit for lexicons with no pinned upstream. */
+  readonly upstreamPin?: UpstreamPin;
 
   // LSP
   /** Provide completions for LSP */

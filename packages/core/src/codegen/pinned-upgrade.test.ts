@@ -11,6 +11,7 @@ import {
   applyVersionBump,
   revertVersionBump,
   checkPinnedUpgrade,
+  loadUpstreamPin,
   type LexiconId,
 } from "./pinned-upgrade";
 
@@ -364,5 +365,35 @@ describe("checkPinnedUpgrade — upgrade path (bump + regen + revert)", () => {
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
+  });
+});
+
+describe("loadUpstreamPin — pin descriptors come from the lexicon plugins (#685)", () => {
+  test("k8s declares its schema-version pin + upstream repo", async () => {
+    const pin = await loadUpstreamPin("k8s");
+    expect(pin?.file).toBe("src/spec/fetch.ts");
+    expect(pin?.upstream).toEqual({ owner: "kubernetes", repo: "kubernetes", kind: "releases" });
+    expect(pin?.pattern.test('export const K8S_SCHEMA_VERSION = "v1.32.0";')).toBe(true);
+    expect(pin?.replace("v1.33.0", 'export const K8S_SCHEMA_VERSION = "v1.32.0";')).toBe(
+      'export const K8S_SCHEMA_VERSION = "v1.33.0";',
+    );
+  });
+
+  test("gcp / docker / gitlab each declare their own pin + upstream", async () => {
+    expect((await loadUpstreamPin("gcp"))?.upstream).toEqual({
+      owner: "GoogleCloudPlatform",
+      repo: "k8s-config-connector",
+      kind: "releases",
+    });
+    expect((await loadUpstreamPin("docker"))?.upstream).toMatchObject({ owner: "moby", repo: "moby" });
+    expect((await loadUpstreamPin("gitlab"))?.upstream).toMatchObject({ kind: "tags", tagSuffix: "-ee" });
+  });
+
+  test("a lexicon with no upstreamPin (aws) resolves to null", async () => {
+    expect(await loadUpstreamPin("aws")).toBeNull();
+  });
+
+  test("an unresolvable lexicon package resolves to null (tolerant)", async () => {
+    expect(await loadUpstreamPin("definitely-not-a-lexicon")).toBeNull();
   });
 });
