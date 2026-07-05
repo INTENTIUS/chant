@@ -97,6 +97,8 @@ export interface MockCloudExecutorOptions {
   jobRuns?: Record<string, FakeJobRunConfig>;
   /** Object counts `s3.sync` reports (uploaded always; deleted only when the call passes `delete: true`). */
   s3Sync?: { uploaded?: number; deleted?: number };
+  /** Canned stdout `host.exec` returns (e.g. a byte count for `copy-to-host`, or command output for `remote-exec`). */
+  hostExecStdout?: string;
 }
 
 /** An injected `CloudExecutor` plus the call log and stack-status controls tests use to script scenarios and assert on I/O. */
@@ -322,6 +324,11 @@ export function createMockCloudExecutor(options: MockCloudExecutorOptions = {}):
       record("host", "dockerLoad", args);
       if (options.failHost) throw new Error(`host docker load failed for ${args.host}`);
       return { digest: `sha256:${fakeDigest("host-load", args.host, args.path)}` };
+    },
+    async exec(args) {
+      record("host", "exec", args);
+      if (options.failHost) throw new Error(`host exec failed for ${args.host}`);
+      return { stdout: options.hostExecStdout ?? "", exitCode: 0 };
     },
   };
 
