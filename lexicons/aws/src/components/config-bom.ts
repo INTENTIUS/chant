@@ -35,16 +35,16 @@
  * an image digest, closing the gap.
  */
 
-import type { Capability } from "../capability";
+import type { Capability } from "@intentius/chant/components/capability";
 import {
   addArchiveEntry,
   archiveRelativePath,
   contentDigest,
   createBuildArchiveManifest,
   type BuildArchiveManifest,
-} from "./build-archive";
-import { writeBom, type BomPackage } from "./bom-writer";
-import { DEFAULT_SBOM_FORMAT, type SbomDocument, type SbomFormat } from "./sbom-generator";
+} from "@intentius/chant/components/verbs/build-archive";
+import { writeBom, type BomPackage } from "@intentius/chant/components/verbs/bom-writer";
+import { DEFAULT_SBOM_FORMAT, type SbomDocument, type SbomFormat } from "@intentius/chant/components/verbs/sbom-generator";
 import { writeFileSync, mkdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 

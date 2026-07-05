@@ -11,10 +11,10 @@
  * (lockfile/manifest parsing, no external tool), and `./tool-sbom-generator.ts`
  * (#610) is a real, deep-scan backend for it (`syft`/`docker buildx --sbom`/
  * `cyclonedx-maven`/`cdxgen`, shelling out through the injectable
- * `ProcessRunner`, ./process-runner.ts). `extract-config-bom`
- * (./config-bom.ts, #613) is a real, hermetic, pure-structural capability —
- * no injectable backend needed since it never shells out. Both #613 verbs
- * share one native SPDX/CycloneDX writer, ./bom-writer.ts. ./component-bom.ts
+ * `ProcessRunner`, ./process-runner.ts). `extract-config-bom` (#613) parses a
+ * synthesized CloudFormation template, so it moved to the aws lexicon (#684);
+ * core keeps the agnostic SPDX/CycloneDX writer, ./bom-writer.ts, which both it
+ * and `generate-sbom` share. ./component-bom.ts
  * (#614) composes a component's leaf BOMs into one component-level BOM over
  * that same writer, and ./reproducibility.ts (#614) records per-artifact
  * reproducibility + provenance on each `BuildArchiveEntry`. `publish-image`
@@ -35,7 +35,6 @@ export * from "./sbom-generator";
 export * from "./sbom";
 export * from "./lockfile-sbom-generator";
 export * from "./tool-sbom-generator";
-export * from "./config-bom";
 export * from "./component-bom";
 export * from "./reproducibility";
 export * from "./sign";

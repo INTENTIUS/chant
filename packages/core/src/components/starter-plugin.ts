@@ -32,7 +32,6 @@ import {
   zipPackageCapability,
   jvmBuildCapability,
   generateSbomCapability,
-  extractConfigBomCapability,
   signCapability,
   attestProvenanceCapability,
   verifyCapability,
@@ -55,10 +54,10 @@ import type { CapabilityPlugin } from "./capability-plugin";
  */
 export const STARTER_VERB_FAMILIES = {
   build: ["docker-build", "zip-package", "jvm-build"],
-  // `extract-config-bom` (./verbs/config-bom.ts, #613) was a real, exported
-  // capability that never made it into this registration list — genuinely
-  // unreachable from `chant run --components` until #630 added it here.
-  sbom: ["generate-sbom", "extract-config-bom"],
+  // `extract-config-bom` parses a synthesized CloudFormation template, so it
+  // moved to the aws lexicon (#684) alongside the other AWS leaves; core's sbom
+  // family keeps only the agnostic, artifact-type-keyed `generate-sbom`.
+  sbom: ["generate-sbom"],
   supplyChainSecurity: ["sign", "attest-provenance", "verify"],
   supplyChainPolicy: ["scan-vulnerabilities", "vuln-gate"],
   // Only the *agnostic* wait/verify verbs are in the starter set; the
@@ -81,7 +80,6 @@ function starterCapabilities(): Array<Capability<never, unknown>> {
     zipPackageCapability,
     jvmBuildCapability,
     generateSbomCapability,
-    extractConfigBomCapability,
     signCapability,
     attestProvenanceCapability,
     verifyCapability,

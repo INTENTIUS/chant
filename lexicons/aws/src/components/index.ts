@@ -9,6 +9,7 @@
 
 export { awsCapabilityPlugin, AWS_VERB_FAMILIES } from "./capability-plugin";
 export * from "./builders";
+export * from "./config-bom";
 export * from "./apply";
 export * from "./job-submission";
 export * from "./host-delivery";

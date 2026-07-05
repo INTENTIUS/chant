@@ -19,7 +19,6 @@ import type {
   ZipPackageInput,
   JvmBuildInput,
   GenerateSbomInput,
-  ExtractConfigBomInput,
   SignInput,
   AttestProvenanceInput,
   VerifyInput,
@@ -53,7 +52,6 @@ export const jvmBuild = buildSpec<JvmBuildInput>("jvm-build");
 
 // ── sbom ─────────────────────────────────────────────────────────────────────
 export const generateSbom = step<GenerateSbomInput>("generate-sbom");
-export const extractConfigBom = step<ExtractConfigBomInput>("extract-config-bom");
 
 // ── supply-chain security / policy ───────────────────────────────────────────
 export const sign = step<SignInput>("sign");

@@ -19,9 +19,9 @@ import {
   inventoryToBomPackages,
   createExtractConfigBomCapability,
 } from "./config-bom";
-import { addArchiveTemplate } from "./build";
-import { findArchiveEntry, findConfigBomForSubject, templateEntries } from "./build-archive";
-import { DEFAULT_SBOM_FORMAT, SBOM_MEDIA_TYPES } from "./sbom-generator";
+import { addArchiveTemplate } from "@intentius/chant/components/verbs/build";
+import { findArchiveEntry, findConfigBomForSubject, templateEntries } from "@intentius/chant/components/verbs/build-archive";
+import { DEFAULT_SBOM_FORMAT, SBOM_MEDIA_TYPES } from "@intentius/chant/components/verbs/sbom-generator";
 
 const FIXTURES_DIR = join(import.meta.dirname, "__fixtures__");
 const TEMPLATE = readFileSync(join(FIXTURES_DIR, "synthesized-template.json"), "utf-8");
@@ -146,6 +146,11 @@ describe("extract-config-bom capability (#613)", () => {
     const jsfSchema = loadSchema("jsf-0.82.schema.json");
     const spdxLicenseSchema = loadSchema("cyclonedx-spdx-license.schema.json");
     const ajv = new Ajv({ strict: false, allErrors: true });
+    // The CycloneDX-1.5 schema declares `iri-reference`/`idn-email` string
+    // formats; accept them as-is (this test validates document *structure*, not
+    // format semantics) so it passes regardless of the ambient ajv version.
+    ajv.addFormat("iri-reference", true);
+    ajv.addFormat("idn-email", true);
     ajv.addSchema(jsfSchema as object);
     ajv.addSchema(spdxLicenseSchema as object);
     const validate = ajv.compile(cdxSchema as object);
