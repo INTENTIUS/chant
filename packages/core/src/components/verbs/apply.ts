@@ -319,8 +319,18 @@ export interface S3SyncOutput {
   deleted: number;
 }
 
-/** Sync a directory of static assets to an S3 bucket. */
-export const s3SyncCapability: Capability<S3SyncInput, S3SyncOutput> = stubCapability("s3-sync");
+/** Sync a directory of static assets to an S3 bucket via `aws s3 sync` (endpoint-aware through the `CloudExecutor`). */
+export function createS3SyncCapability(executor: CloudExecutor = defaultCloudExecutor()): Capability<S3SyncInput, S3SyncOutput> {
+  return {
+    kind: "s3-sync",
+    async run(_ctx, input) {
+      return executor.s3.sync({ from: input.from, to: input.to, delete: input.delete });
+    },
+  };
+}
+
+/** Default `s3-sync` capability, backed by the real `CloudExecutor`. */
+export const s3SyncCapability: Capability<S3SyncInput, S3SyncOutput> = createS3SyncCapability();
 
 // ── cdn-invalidate ───────────────────────────────────────────────────────────
 
@@ -336,10 +346,21 @@ export interface CdnInvalidateOutput {
   invalidationId: string;
 }
 
-/** Invalidate CDN cache paths after a content update (e.g. following `s3-sync`). */
-export const cdnInvalidateCapability: Capability<CdnInvalidateInput, CdnInvalidateOutput> = stubCapability(
-  "cdn-invalidate",
-);
+/** Invalidate CDN cache paths after a content update (e.g. following `s3-sync`), via `aws cloudfront create-invalidation`. */
+export function createCdnInvalidateCapability(executor: CloudExecutor = defaultCloudExecutor()): Capability<CdnInvalidateInput, CdnInvalidateOutput> {
+  return {
+    kind: "cdn-invalidate",
+    async run(_ctx, input) {
+      return executor.cloudfront.createInvalidation({
+        distributionId: input.distributionId,
+        paths: input.paths ?? ["/*"],
+      });
+    },
+  };
+}
+
+/** Default `cdn-invalidate` capability, backed by the real `CloudExecutor`. */
+export const cdnInvalidateCapability: Capability<CdnInvalidateInput, CdnInvalidateOutput> = createCdnInvalidateCapability();
 
 // ── run-migration ────────────────────────────────────────────────────────────
 

@@ -3,6 +3,8 @@ import {
   createCfnDeployCapability,
   createEcsUpdateServiceCapability,
   createLambdaDeployCapability,
+  createS3SyncCapability,
+  createCdnInvalidateCapability,
   CfnReplacementBlockedError,
 } from "./apply";
 import { createMockCloudExecutor } from "./__tests__/mock-cloud-executor";
@@ -239,5 +241,39 @@ describe("lambda-deploy (#558) — the one new capability the fourth validation 
 
     const aliasCalls = mock.calls.filter((c) => c.method === "updateAlias");
     expect(aliasCalls).toHaveLength(1); // only the run()'s own updateAlias — rollback found nothing to restore.
+  });
+});
+
+describe("s3-sync (#557)", () => {
+  it("syncs from → to and returns the uploaded/deleted counts", async () => {
+    const mock = createMockCloudExecutor({ s3Sync: { uploaded: 3, deleted: 1 } });
+    const out = await createS3SyncCapability(mock.executor).run(ctx, { from: "dist/", to: "s3://assets/site", delete: true });
+    expect(out).toEqual({ uploaded: 3, deleted: 1 });
+    expect(mock.calls).toEqual([{ client: "s3", method: "sync", args: { from: "dist/", to: "s3://assets/site", delete: true } }]);
+  });
+
+  it("reports 0 deleted when delete is not requested", async () => {
+    const mock = createMockCloudExecutor({ s3Sync: { uploaded: 2, deleted: 5 } });
+    const out = await createS3SyncCapability(mock.executor).run(ctx, { from: "dist/", to: "s3://assets" });
+    expect(out).toEqual({ uploaded: 2, deleted: 0 });
+  });
+
+  it("declares no rollback — a content sync owns its own re-sync", () => {
+    expect(createS3SyncCapability(createMockCloudExecutor().executor).rollback).toBeUndefined();
+  });
+});
+
+describe("cdn-invalidate (#557)", () => {
+  it("invalidates the given paths and returns the batch id", async () => {
+    const mock = createMockCloudExecutor();
+    const out = await createCdnInvalidateCapability(mock.executor).run(ctx, { distributionId: "E123", paths: ["/index.html"] });
+    expect(out).toEqual({ invalidationId: "I-MOCK0001" });
+    expect(mock.calls).toEqual([{ client: "cloudfront", method: "createInvalidation", args: { distributionId: "E123", paths: ["/index.html"] } }]);
+  });
+
+  it("defaults paths to /* when omitted", async () => {
+    const mock = createMockCloudExecutor();
+    await createCdnInvalidateCapability(mock.executor).run(ctx, { distributionId: "E123" });
+    expect(mock.calls[0]!.args).toEqual({ distributionId: "E123", paths: ["/*"] });
   });
 });

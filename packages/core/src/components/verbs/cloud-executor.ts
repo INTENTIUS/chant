@@ -287,6 +287,30 @@ export interface EmrClient {
  * at module scope, overridable via each capability family's
  * `create*Capability(executor)` factory) so tests can swap in a full mock.
  */
+// ── S3 / CloudFront (deploy-time asset sync + CDN invalidation) ───────────────
+
+export interface S3SyncArgs {
+  from: string;
+  to: string;
+  /** Delete destination keys not present in the source. */
+  delete?: boolean;
+}
+
+export interface S3Client {
+  /** `aws s3 sync from to [--delete]`; returns how many objects were uploaded/deleted. */
+  sync(args: S3SyncArgs): Promise<{ uploaded: number; deleted: number }>;
+}
+
+export interface CloudFrontInvalidateArgs {
+  distributionId: string;
+  paths: string[];
+}
+
+export interface CloudFrontClient {
+  /** `aws cloudfront create-invalidation`; returns the invalidation batch id. */
+  createInvalidation(args: CloudFrontInvalidateArgs): Promise<{ invalidationId: string }>;
+}
+
 export interface CloudExecutor {
   docker: DockerClient;
   ecr: EcrClient;
@@ -297,6 +321,8 @@ export interface CloudExecutor {
   lambda: LambdaClient;
   emr: EmrClient;
   host: HostClient;
+  s3: S3Client;
+  cloudfront: CloudFrontClient;
 }
 
 // ── Real executor — shells out to `docker`/`aws`; used outside tests ────────
@@ -642,6 +668,27 @@ function probeBoltPort(endpoint: string, timeoutMs = 5000): Promise<boolean> {
   });
 }
 
+const realS3: S3Client = {
+  async sync(args) {
+    const flags = args.delete ? " --delete" : "";
+    const { stdout } = await run(`aws s3 sync ${q(args.from)} ${q(args.to)}${flags} --no-progress`);
+    // `aws s3 sync` prints one `upload: …` / `delete: …` line per object touched.
+    const count = (re: RegExp) => stdout.split("\n").filter((l) => re.test(l)).length;
+    return { uploaded: count(/^upload:/), deleted: count(/^delete:/) };
+  },
+};
+
+const realCloudFront: CloudFrontClient = {
+  async createInvalidation(args) {
+    const paths = args.paths.map(q).join(" ");
+    const { stdout } = await run(
+      `aws cloudfront create-invalidation --distribution-id ${q(args.distributionId)} --paths ${paths}`,
+    );
+    const id = (JSON.parse(stdout) as { Invalidation?: { Id?: string } }).Invalidation?.Id;
+    return { invalidationId: id ?? "" };
+  },
+};
+
 /** Build a `CloudExecutor` that shells out to real `docker`/`aws` CLIs and probes real bolt ports. Never used in tests. */
 export function realCloudExecutor(): CloudExecutor {
   return {
@@ -654,6 +701,8 @@ export function realCloudExecutor(): CloudExecutor {
     lambda: realLambda,
     emr: realEmr,
     host: realHost,
+    s3: realS3,
+    cloudfront: realCloudFront,
   };
 }
 
