@@ -8,6 +8,7 @@
 import type { LexiconPlugin, IntrinsicDef, InitTemplateSet } from "@intentius/chant/lexicon";
 import type { LintRule } from "@intentius/chant/lint/rule";
 import { postSynthChecks as postSynthCheckList } from "./lint/post-synth";
+import { githubAuditCatalog } from "./lint/audit-catalog";
 import { createSkillsLoader, createDiffTool, createCatalogResource } from "@intentius/chant/lexicon-plugin-helpers";
 import { join, dirname } from "path";
 import { fileURLToPath } from "url";
@@ -33,6 +34,7 @@ import { githubContextTools } from "./mcp/context-tools";
 
 export const githubPlugin: LexiconPlugin = {
   name: "github",
+  auditCatalog: () => githubAuditCatalog,
   serializer: githubSerializer,
 
   lintRules(): LintRule[] {

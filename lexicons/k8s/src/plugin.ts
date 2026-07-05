@@ -9,6 +9,7 @@ import type { LexiconPlugin, InitTemplateSet, ResourceMetadata } from "@intentiu
 import { detectTemplate } from "./detect";
 import type { LintRule } from "@intentius/chant/lint/rule";
 import { postSynthChecks as postSynthCheckList } from "./lint/post-synth";
+import { k8sAuditCatalog } from "./lint/audit-catalog";
 import { createSkillsLoader, createDiffTool, createCatalogResource } from "@intentius/chant/lexicon-plugin-helpers";
 import { join, dirname } from "path";
 import { fileURLToPath } from "url";
@@ -25,6 +26,7 @@ import { K8sGenerator } from "./import/generator";
 
 export const k8sPlugin: LexiconPlugin = {
   name: "k8s",
+  auditCatalog: () => k8sAuditCatalog,
   serializer: k8sSerializer,
   // Self-upgrade: where the pinned Kubernetes schema version lives + its upstream (#685).
   upstreamPin: {

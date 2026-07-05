@@ -8,6 +8,7 @@
 import type { LexiconPlugin, IntrinsicDef, InitTemplateSet } from "@intentius/chant/lexicon";
 import type { LintRule } from "@intentius/chant/lint/rule";
 import { postSynthChecks as postSynthCheckList } from "./lint/post-synth";
+import { gitlabAuditCatalog } from "./lint/audit-catalog";
 import { createSkillsLoader, createDiffTool, createCatalogResource } from "@intentius/chant/lexicon-plugin-helpers";
 import { join, dirname } from "path";
 import { fileURLToPath } from "url";
@@ -25,6 +26,7 @@ import { generateGitlabPipeline } from "./components/generate-pipeline";
 
 export const gitlabPlugin: LexiconPlugin = {
   name: "gitlab",
+  auditCatalog: () => gitlabAuditCatalog,
   // Generate mode (#688): synthesize a .gitlab-ci.yml from the component graph.
   generateComponentPipeline: (components, options) => generateGitlabPipeline(components, options),
   // Self-upgrade: where the pinned GitLab schema version lives + its upstream (#685).

@@ -1,5 +1,5 @@
 import { describe, test, expect } from "vitest";
-import { RULE_CATALOG, RULE_CATEGORY, ruleMeta, auditRule, resolveAuditCatalog } from "./catalog";
+import { RULE_CATALOG, RULE_CATEGORY, auditRule, resolveAuditCatalog } from "./catalog";
 import { loadPlugins } from "../cli/plugins";
 
 const AUDIT_LEXICONS = ["github", "gitlab", "forgejo", "k8s", "docker", "aws", "azure", "gcp", "helm"];
@@ -71,10 +71,11 @@ describe("RULE_CATALOG (aggregated: core static + lexicon-contributed, #687)", (
     }
   });
 
-  test("flagship security rules carry an authority citation", () => {
+  test("flagship security rules carry an authority citation", async () => {
+    const catalog = await aggregate();
     const flagship = ["GHA017", "GHA021", "GHA029", "GHA033", "GHA034", "GHA036", "GHA037", "WGL016", "WGL029"];
     for (const id of flagship) {
-      const m = ruleMeta(id);
+      const m = catalog[id];
       expect(m, `${id} present`).toBeDefined();
       expect(m!.tier).toBe("merge-worthy");
       expect((m!.authority?.length ?? 0), `${id} has authority`).toBeGreaterThan(0);

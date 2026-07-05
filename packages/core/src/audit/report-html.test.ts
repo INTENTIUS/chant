@@ -1,4 +1,5 @@
-import { describe, test, expect } from "vitest";
+import { describe, test, expect, beforeAll } from "vitest";
+import { resolveAuditCatalog, type RuleMeta } from "./catalog";
 import { renderHtml, type AuditSnapshot } from "./report-html";
 import type { AuditFinding } from "./core";
 
@@ -29,9 +30,15 @@ const SNAPSHOT: AuditSnapshot = {
   toolVersion: "0.4.0",
 };
 
+
+let CATALOG: Record<string, RuleMeta>;
+beforeAll(async () => { CATALOG = await resolveAuditCatalog(["github", "gitlab"]); });
+/** renderHtml with the migrated github/gitlab catalog injected (#687). */
+const html2 = (findings: AuditFinding[], opts: Parameters<typeof renderHtml>[1] = {}) => renderHtml(findings, { ...opts, catalog: CATALOG });
+
 describe("renderHtml", () => {
   test("produces a self-contained HTML document with sections and snapshot", () => {
-    const html = renderHtml(FINDINGS, { files: [{ path: ".github/workflows/ci.yml", content: CI }], snapshot: SNAPSHOT });
+    const html = html2(FINDINGS, { files: [{ path: ".github/workflows/ci.yml", content: CI }], snapshot: SNAPSHOT });
     expect(html.startsWith("<!doctype html>")).toBe(true);
     expect(html).toContain("<style>"); // inline CSS, self-contained
     expect(html).toContain("owner/repo");
@@ -43,7 +50,7 @@ describe("renderHtml", () => {
   });
 
   test("embeds the machine-readable JSON report (parseable, escaped)", () => {
-    const html = renderHtml(FINDINGS, { snapshot: SNAPSHOT });
+    const html = html2(FINDINGS, { snapshot: SNAPSHOT });
     const m = html.match(/<script type="application\/json" id="chant-audit-report">(.*?)<\/script>/s);
     expect(m).not.toBeNull();
     // No raw "<" can break out of the script element.
@@ -58,25 +65,25 @@ describe("renderHtml", () => {
     const evil: AuditFinding[] = [
       { checkId: "GHA036", severity: "error", message: "<script>alert(1)</script>", file: "a.yml", lexicon: "github" },
     ];
-    const html = renderHtml(evil);
+    const html = html2(evil);
     expect(html).not.toContain("<script>alert(1)</script>");
     expect(html).toContain("&lt;script&gt;");
   });
 
   test("applies theme knobs (title, accent)", () => {
-    const html = renderHtml(FINDINGS, { theme: { title: "Acme Security", accent: "#ff0000" } });
+    const html = html2(FINDINGS, { theme: { title: "Acme Security", accent: "#ff0000" } });
     expect(html).toContain("<title>Acme Security</title>");
     expect(html).toContain("#ff0000");
   });
 
   test("honours a full template override", () => {
-    const html = renderHtml(FINDINGS, { template: "<html>{{title}}::{{body}}</html>", theme: { title: "X" } });
+    const html = html2(FINDINGS, { template: "<html>{{title}}::{{body}}</html>", theme: { title: "X" } });
     expect(html.startsWith("<html>X::")).toBe(true);
     expect(html).toContain("Quick wins"); // body still rendered
   });
 
   test("clean report when no findings", () => {
-    const html = renderHtml([]);
+    const html = html2([]);
     expect(html).toContain("No issues found.");
     expect(html).not.toContain("Quick wins");
   });
