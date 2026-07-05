@@ -11,9 +11,9 @@ import { writeFileSync, mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createHash } from "node:crypto";
-import { createDockerBuildCapability } from "./build";
+import { createDockerBuildCapability } from "@intentius/chant/components/verbs/build";
 import { createMockCloudExecutor } from "./__tests__/mock-cloud-executor";
-import { createMockProcessRunner } from "./__tests__/mock-process-runner";
+import { createMockProcessRunner } from "@intentius/chant/components/verbs/__tests__/mock-process-runner";
 
 const ctx = { env: "dev", component: "search-service" };
 

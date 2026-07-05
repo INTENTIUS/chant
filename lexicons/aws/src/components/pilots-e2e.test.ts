@@ -23,31 +23,31 @@
  */
 
 import { describe, expect, it } from "vitest";
-import { CapabilityRegistry } from "../capability";
-import { runInterpretDriver, DriverRunFailure, type DriverComponent } from "../driver";
-import { neo4jCluster } from "./neo4j-fanout.pilot";
-import { ordersTable } from "./dynamodb.pilot";
-import { searchService } from "./alb-ecs.pilot";
-import { imageProcessor } from "./lambda.pilot";
-import { jarLib, emrJob } from "./jar-emr.pilot";
-import { projectToJson } from "./project";
-import { createMockCloudExecutor, type MockCloudExecutor } from "../verbs/__tests__/mock-cloud-executor";
-import { createDockerBuildCapability } from "../verbs/build";
-import { createPublishImageCapability } from "../verbs/publish";
+import { CapabilityRegistry } from "@intentius/chant/components/capability";
+import { runInterpretDriver, DriverRunFailure, type DriverComponent } from "@intentius/chant/components/driver";
+import { neo4jCluster } from "@intentius/chant/components/pilots/neo4j-fanout.pilot";
+import { ordersTable } from "@intentius/chant/components/pilots/dynamodb.pilot";
+import { searchService } from "@intentius/chant/components/pilots/alb-ecs.pilot";
+import { imageProcessor } from "@intentius/chant/components/pilots/lambda.pilot";
+import { jarLib, emrJob } from "@intentius/chant/components/pilots/jar-emr.pilot";
+import { projectToJson } from "@intentius/chant/components/pilots/project";
+import { createMockCloudExecutor, type MockCloudExecutor } from "./__tests__/mock-cloud-executor";
+import { createDockerBuildCapability } from "@intentius/chant/components/verbs/build";
+import { createPublishImageCapability } from "./publish";
 import {
   createCfnDeployCapability,
   createEcsUpdateServiceCapability,
   createLambdaDeployCapability,
   CfnReplacementBlockedError,
-} from "../verbs/apply";
-import { createCodeDeployCapability } from "../verbs/host-delivery";
+} from "./apply";
+import { createCodeDeployCapability } from "./host-delivery";
+import { createWaitClusterHealthyCapability } from "@intentius/chant/components/verbs/wait-verify";
 import {
   createWaitForStackCapability,
   createWaitSteadyStateCapability,
-  createWaitClusterHealthyCapability,
   createWaitJobCapability,
-} from "../verbs/wait-verify";
-import { createEmrStartJobRunCapability } from "../verbs/job-submission";
+} from "./wait-aws";
+import { createEmrStartJobRunCapability } from "./job-submission";
 
 /** Build a fresh registry with every real #557/#558/#561 capability wired to one shared mock executor, plus the still-stubbed verbs the pilots also reference (run-migration, health-gate, rollback-previous — none of which #557/#558/#561 scopes). */
 function buildRegistry(mock: MockCloudExecutor): CapabilityRegistry {

@@ -45,12 +45,12 @@
  * one part of this capability that is genuinely best-effort.
  */
 
-import type { Capability } from "../capability";
+import type { Capability } from "@intentius/chant/components/capability";
 import { readFileSync } from "node:fs";
 import { createHash } from "node:crypto";
 import { defaultCloudExecutor, type CloudExecutor } from "./cloud-executor";
-import { archiveRelativePath } from "./build-archive";
-import { defaultProcessRunner, q, type ProcessRunner } from "./process-runner";
+import { archiveRelativePath } from "@intentius/chant/components/verbs/build-archive";
+import { defaultProcessRunner, q, type ProcessRunner } from "@intentius/chant/components/verbs/process-runner";
 
 // ── shared backend interface ─────────────────────────────────────────────────
 

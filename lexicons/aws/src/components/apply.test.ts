@@ -5,6 +5,7 @@ import {
   createLambdaDeployCapability,
   createS3SyncCapability,
   createCdnInvalidateCapability,
+  createRunMigrationCapability,
   CfnReplacementBlockedError,
 } from "./apply";
 import { createMockCloudExecutor } from "./__tests__/mock-cloud-executor";
@@ -275,5 +276,85 @@ describe("cdn-invalidate (#557)", () => {
     const mock = createMockCloudExecutor();
     await createCdnInvalidateCapability(mock.executor).run(ctx, { distributionId: "E123" });
     expect(mock.calls[0]!.args).toEqual({ distributionId: "E123", paths: ["/*"] });
+  });
+});
+
+describe("run-migration", () => {
+  it("ecs-task: runs a one-off task, waits for it to stop, and reports applied on a clean exit", async () => {
+    const mock = createMockCloudExecutor({ ecsTask: { lastStatus: "STOPPED", exitCode: 0 } });
+    const out = await createRunMigrationCapability(mock.executor).run(ctx, {
+      tool: "flyway",
+      target: {
+        via: "ecs-task",
+        cluster: "prod",
+        taskDefinition: "orders-migrate",
+        command: ["flyway", "migrate"],
+        subnets: ["subnet-1"],
+        assignPublicIp: true,
+      },
+    });
+    expect(out).toEqual({ applied: true, version: "" });
+    expect(mock.calls.map((c) => `${c.client}.${c.method}`)).toEqual(["ecs.runTask", "ecs.waitForTask"]);
+    expect((mock.calls[0]!.args as { command: string[] }).command).toEqual(["flyway", "migrate"]);
+  });
+
+  it("ecs-task: throws with the stop reason on a non-zero exit", async () => {
+    const mock = createMockCloudExecutor({ ecsTask: { lastStatus: "STOPPED", exitCode: 1, stoppedReason: "Essential container exited" } });
+    await expect(
+      createRunMigrationCapability(mock.executor).run(ctx, {
+        tool: "flyway",
+        target: { via: "ecs-task", cluster: "prod", taskDefinition: "orders-migrate" },
+      }),
+    ).rejects.toThrow(/exit 1.*Essential container exited/);
+  });
+
+  it("lambda: invokes the function and parses the {applied,version} it reports", async () => {
+    const mock = createMockCloudExecutor({ lambdaInvoke: { statusCode: 200, payload: '{"applied":true,"version":"20260704_02"}' } });
+    const out = await createRunMigrationCapability(mock.executor).run(ctx, {
+      tool: "custom",
+      target: { via: "lambda", function: "orders-migrator", payload: '{"dryRun":false}' },
+    });
+    expect(out).toEqual({ applied: true, version: "20260704_02" });
+    expect(mock.calls).toEqual([{ client: "lambda", method: "invoke", args: { functionName: "orders-migrator", payload: '{"dryRun":false}' } }]);
+  });
+
+  it("lambda: throws when the invocation returns a FunctionError", async () => {
+    const mock = createMockCloudExecutor({ lambdaInvoke: { statusCode: 200, functionError: "Unhandled", payload: '{"errorMessage":"boom"}' } });
+    await expect(
+      createRunMigrationCapability(mock.executor).run(ctx, { tool: "custom", target: { via: "lambda", function: "orders-migrator" } }),
+    ).rejects.toThrow(/Unhandled.*boom/);
+  });
+
+  it("host: runs the command over SSM and parses the trailing report line, ignoring earlier output", async () => {
+    const mock = createMockCloudExecutor({
+      hostExecStdout: "Applying V3__add_index.sql\nApplying V4__backfill.sql\n{\"applied\":true,\"version\":\"V4\"}",
+    });
+    const out = await createRunMigrationCapability(mock.executor).run(ctx, {
+      tool: "flyway",
+      target: { via: "host", host: "i-abc", command: "flyway migrate", cwd: "/opt/app" },
+    });
+    expect(out).toEqual({ applied: true, version: "V4" });
+    expect(mock.calls).toEqual([{ client: "host", method: "exec", args: { host: "i-abc", command: "flyway migrate", cwd: "/opt/app" } }]);
+  });
+
+  it("falls back to applied=true, version='' when the runner reports nothing parseable", async () => {
+    const mock = createMockCloudExecutor({ hostExecStdout: "migrations up to date\n" });
+    const out = await createRunMigrationCapability(mock.executor).run(ctx, {
+      tool: "prisma",
+      target: { via: "host", host: "i-abc", command: "prisma migrate deploy" },
+    });
+    expect(out).toEqual({ applied: true, version: "" });
+  });
+
+  it("host: throws on a non-zero exit code", async () => {
+    const mock = createMockCloudExecutor({ hostExecStdout: "boom" });
+    // force a non-zero exit by wrapping the mock's host.exec — simplest: use failHost is a throw; instead assert the clean path above and the ecs/lambda error paths cover non-zero.
+    const executor = {
+      ...mock.executor,
+      host: { ...mock.executor.host, exec: async () => ({ stdout: "syntax error", exitCode: 2 }) },
+    };
+    await expect(
+      createRunMigrationCapability(executor).run(ctx, { tool: "flyway", target: { via: "host", host: "i-abc", command: "flyway migrate" } }),
+    ).rejects.toThrow(/host i-abc.*exited 2/);
   });
 });

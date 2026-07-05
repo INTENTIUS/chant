@@ -13,14 +13,13 @@
  * #551) over the injectable `CloudExecutor` (./cloud-executor.ts).
  * `lambda-deploy` gained a real implementation in #558 (epic #551) — the one
  * new capability the fourth, genuinely different validation component
- * (image-processor-lambda) needed; see ../SPRAWL-VALIDATION.md. The remaining
- * apply-family verbs (`s3-sync`, `cdn-invalidate`, `run-migration`) are
- * non-pilot verbs and stay typed stubs; see ../capability.ts for the "no cloud
- * implementation yet" contract.
+ * (image-processor-lambda) needed; see ../SPRAWL-VALIDATION.md. `s3-sync`,
+ * `cdn-invalidate`, and `run-migration` are also real over the same executor —
+ * `run-migration` dispatches on its target transport (ECS one-off task, Lambda
+ * invoke, or SSM host command).
  */
 
-import type { Capability } from "../capability";
-import { stubCapability } from "./stub";
+import type { Capability } from "@intentius/chant/components/capability";
 import { defaultCloudExecutor, type CfnChange, type CloudExecutor } from "./cloud-executor";
 
 // ── cfn-deploy ───────────────────────────────────────────────────────────────
@@ -364,24 +363,122 @@ export const cdnInvalidateCapability: Capability<CdnInvalidateInput, CdnInvalida
 
 // ── run-migration ────────────────────────────────────────────────────────────
 
+/**
+ * Where a migration runs. Discriminated on `via` so the composition grammar
+ * stays honest about the transport (each is a different AWS surface), while the
+ * verb reports a single `{applied, version}` regardless.
+ * - `ecs-task`: run the migration image as a one-off ECS/Fargate task (the most
+ *   common DB-migration transport — a Rails/Django/Flyway `migrate` container).
+ * - `lambda`: synchronously invoke a migration function.
+ * - `host`: run a migration command on an SSM-managed host (reuses the same
+ *   transport as `remote-exec`).
+ */
+export type MigrationTarget =
+  | {
+      via: "ecs-task";
+      cluster: string;
+      taskDefinition: string;
+      /** Container to override the command on; defaults to the task def's single container. */
+      container?: string;
+      /** Command (argv) the migration runs; omit to use the task def's own command. */
+      command?: string[];
+      launchType?: "FARGATE" | "EC2";
+      subnets?: string[];
+      securityGroups?: string[];
+      assignPublicIp?: boolean;
+    }
+  | { via: "lambda"; function: string; payload?: string }
+  | { via: "host"; host: string; command: string; cwd?: string };
+
 export interface RunMigrationInput {
-  /** Migration tool/runner identifier (e.g. "flyway", "prisma", "custom"). */
+  /** Migration tool/runner identifier (e.g. "flyway", "prisma", "custom"). Informational — recorded for provenance, does not change the transport. */
   tool: string;
-  /** Where the migration runs (e.g. an ECS task, a host via `remote-exec`, a Lambda invoke). */
-  target: string;
-  /** Reference to the migration artifact (e.g. `"@Publish.digest"` for a migration image). */
+  /** Where the migration runs. */
+  target: MigrationTarget;
+  /** Reference to the migration artifact (e.g. `"@Publish.digest"` for a migration image). Informational. */
   artifactRef?: string;
 }
 
 export interface RunMigrationOutput {
-  /** True if any migrations were applied (false if already up to date). */
+  /** True if any migrations were applied (false if already up to date, when the runner reports it). */
   applied: boolean;
-  /** Migration version/checksum reached. */
+  /** Migration version/checksum reached, when the runner reports one (empty string otherwise). */
   version: string;
 }
 
-/** Run a database/schema migration against a target as a deploy step. */
-export const runMigrationCapability: Capability<RunMigrationInput, RunMigrationOutput> = stubCapability(
-  "run-migration",
-  { rollback: true },
-);
+/**
+ * A runner that reports its outcome does so as a trailing JSON object
+ * `{"applied":bool,"version":"..."}` — on stdout (host) or in the Lambda
+ * response payload. Parse the last such line; when the runner emits nothing
+ * parseable, fall back to `applied` = "the process exited cleanly" and an empty
+ * version (an ECS task exposes only its exit code — no captured stdout — so it
+ * always takes this fallback).
+ */
+function parseMigrationReport(text: string, appliedFallback: boolean): RunMigrationOutput {
+  for (const line of text.split("\n").map((l) => l.trim()).reverse()) {
+    if (!line.startsWith("{")) continue;
+    try {
+      const parsed = JSON.parse(line) as { applied?: boolean; version?: string };
+      if (typeof parsed.applied === "boolean" || typeof parsed.version === "string") {
+        return { applied: parsed.applied ?? appliedFallback, version: parsed.version ?? "" };
+      }
+    } catch {
+      // not the report line — keep scanning older lines.
+    }
+  }
+  return { applied: appliedFallback, version: "" };
+}
+
+/**
+ * Run a database/schema migration against a target as a deploy step, dispatching
+ * on the target transport (ECS one-off task, Lambda invoke, or SSM host command)
+ * through the injectable `CloudExecutor`. A non-clean outcome (non-zero exit, a
+ * Lambda `FunctionError`) throws so the phase fails rather than proceeding on an
+ * unmigrated schema.
+ */
+export function createRunMigrationCapability(executor: CloudExecutor = defaultCloudExecutor()): Capability<RunMigrationInput, RunMigrationOutput> {
+  return {
+    kind: "run-migration",
+    async run(_ctx, input) {
+      const target = input.target;
+      switch (target.via) {
+        case "ecs-task": {
+          const { taskArn } = await executor.ecs.runTask({
+            cluster: target.cluster,
+            taskDefinition: target.taskDefinition,
+            container: target.container,
+            command: target.command,
+            launchType: target.launchType,
+            subnets: target.subnets,
+            securityGroups: target.securityGroups,
+            assignPublicIp: target.assignPublicIp,
+          });
+          const result = await executor.ecs.waitForTask(target.cluster, taskArn);
+          if (result.exitCode !== 0) {
+            throw new Error(
+              `run-migration (ecs-task ${target.cluster}): task ${result.lastStatus} with exit ${result.exitCode ?? "none"}${result.stoppedReason ? ` (${result.stoppedReason})` : ""}`,
+            );
+          }
+          return { applied: true, version: "" };
+        }
+        case "lambda": {
+          const res = await executor.lambda.invoke({ functionName: target.function, payload: target.payload });
+          if (res.functionError) {
+            throw new Error(`run-migration (lambda ${target.function}): ${res.functionError} — ${res.payload.trim()}`);
+          }
+          return parseMigrationReport(res.payload, true);
+        }
+        case "host": {
+          const { stdout, exitCode } = await executor.host.exec({ host: target.host, command: target.command, cwd: target.cwd });
+          if (exitCode !== 0) {
+            throw new Error(`run-migration (host ${target.host}): command exited ${exitCode}`);
+          }
+          return parseMigrationReport(stdout, true);
+        }
+      }
+    },
+  };
+}
+
+/** Default `run-migration` capability, backed by the real `CloudExecutor`. */
+export const runMigrationCapability: Capability<RunMigrationInput, RunMigrationOutput> = createRunMigrationCapability();

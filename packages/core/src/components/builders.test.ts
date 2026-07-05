@@ -1,29 +1,16 @@
 import { describe, test, expect } from "vitest";
 import { phase, projectToJson, type Component } from "./component";
-import {
-  dockerBuild,
-  jvmBuild,
-  publishImage,
-  publishArtifact,
-  publishAsset,
-  cfnDeploy,
-  healthGate,
-  waitJob,
-} from "./builders";
+import { dockerBuild, jvmBuild, healthGate, waitEndpoint, waitClusterHealthy } from "./builders";
 
 describe("step builders (#658)", () => {
   test("a step builder tags its input with the verb kind", () => {
-    expect(publishImage({ from: "archive", to: "$env.registry" })).toEqual({
-      kind: "publish-image",
-      from: "archive",
-      to: "$env.registry",
-    });
-    expect(cfnDeploy({ template: "archive:t.json", imageRef: "@Publish.digest" })).toEqual({
-      kind: "cfn-deploy",
-      template: "archive:t.json",
-      imageRef: "@Publish.digest",
-    });
     expect(healthGate({ path: "/healthz" })).toEqual({ kind: "health-gate", path: "/healthz" });
+    expect(waitEndpoint({ url: "http://x/health" })).toEqual({ kind: "wait-endpoint", url: "http://x/health" });
+    expect(waitClusterHealthy({ cluster: "h:7687", size: 1 })).toEqual({
+      kind: "wait-cluster-healthy",
+      cluster: "h:7687",
+      size: 1,
+    });
   });
 
   test("build-family builders produce a BuildSpec (for the `build` field)", () => {
@@ -40,35 +27,18 @@ describe("step builders (#658)", () => {
     });
   });
 
-  test("publishAsset is an alias of publishArtifact (same publish-artifact kind)", () => {
-    expect(publishAsset).toBe(publishArtifact);
-    expect(publishAsset({ from: "archive", to: "$env.s3" })).toEqual({
-      kind: "publish-artifact",
-      from: "archive",
-      to: "$env.s3",
-    });
-  });
-
   test("a component authored with builders projects identically to kind-literals", () => {
     const built: Component = {
       name: "svc",
       dependsOn: [],
       build: dockerBuild({ context: ".", into: "archive" }),
-      deploy: [
-        phase("Publish", [publishImage({ from: "archive", to: "$env.registry" })]),
-        phase("Apply", [cfnDeploy({ template: "archive:t.json", imageRef: "@Publish.digest" })]),
-        phase("Verify", [waitJob({ runId: "@Apply.runId" })]),
-      ],
+      deploy: [phase("Verify", [healthGate({ path: "/healthz" })])],
     };
     const literal: Component = {
       name: "svc",
       dependsOn: [],
       build: { kind: "docker-build", context: ".", into: "archive" },
-      deploy: [
-        phase("Publish", [{ kind: "publish-image", from: "archive", to: "$env.registry" }]),
-        phase("Apply", [{ kind: "cfn-deploy", template: "archive:t.json", imageRef: "@Publish.digest" }]),
-        phase("Verify", [{ kind: "wait-job", runId: "@Apply.runId" }]),
-      ],
+      deploy: [phase("Verify", [{ kind: "health-gate", path: "/healthz" }])],
     };
     expect(projectToJson(built)).toEqual(projectToJson(literal));
   });

@@ -1,17 +1,11 @@
 /**
  * wait / verify family — poll until a deploy reaches a terminal or healthy
- * state. Split across the cloud boundary: `wait-for-stack` is CFN-specific;
- * `health-gate` / `wait-endpoint` are agnostic (see docs/components/cloud-boundary).
- *
- * `wait-for-stack`, `wait-steady-state`, and `wait-cluster-healthy` are real
- * implementations (#557, epic #551) over the injectable `CloudExecutor`
- * (./cloud-executor.ts): `wait-cluster-healthy` is the Neo4j bolt/quorum probe
- * this issue scopes explicitly. `wait-job` is also a real implementation
- * (#561, epic #551) — the EMR job-run poll the JAR->EMR cross-component
- * example's Verify phase needs to reach completion end to end.
- * `wait-endpoint`/`health-gate` are non-AWS-leaf/non-pilot verbs and stay
- * typed stubs — out of scope for #557/#561; see ../capability.ts for the "no
- * cloud implementation yet" contract.
+ * state. The *agnostic* members live here: `wait-cluster-healthy` (a Neo4j
+ * bolt/quorum probe over the core `CloudExecutor`), and the HTTP waits
+ * `wait-endpoint` / `health-gate` (over an injectable `fetch`). The
+ * cloud-specific members — `wait-for-stack` (CloudFormation),
+ * `wait-steady-state` (ECS), `wait-job` (EMR) — moved to the aws lexicon
+ * alongside their executor clients (see docs/components/cloud-boundary).
  */
 
 import type { Capability } from "../capability";
@@ -20,93 +14,6 @@ import { defaultCloudExecutor, sleep, type CloudExecutor } from "./cloud-executo
 /** Minimal fetch surface the HTTP waits (`wait-endpoint`, `health-gate`) need — injectable for tests. */
 type Fetcher = (url: string) => Promise<{ status: number; ok: boolean }>;
 const defaultFetcher: Fetcher = (url) => fetch(url);
-
-// ── wait-for-stack ───────────────────────────────────────────────────────────
-
-export interface WaitForStackInput {
-  /** CloudFormation stack name. */
-  stack: string;
-  /** Poll interval in ms. Default: 10000. */
-  intervalMs?: number;
-  /** Overall timeout in ms. */
-  timeoutMs?: number;
-}
-
-export interface WaitForStackOutput {
-  /** Terminal stack status (`CREATE_COMPLETE`, `UPDATE_COMPLETE`, ...). */
-  stackStatus: string;
-}
-
-/**
- * Poll a CloudFormation stack until it reaches a terminal status. No
- * rollback: a wait is a read-only observation, never a mutation — nothing to
- * compensate.
- */
-export function createWaitForStackCapability(
-  executor: CloudExecutor = defaultCloudExecutor(),
-): Capability<WaitForStackInput, WaitForStackOutput> {
-  return {
-    kind: "wait-for-stack",
-    async run(_ctx, input) {
-      const { stackStatus } = await executor.cloudformation.waitForStack(input.stack, {
-        intervalMs: input.intervalMs,
-        timeoutMs: input.timeoutMs,
-      });
-      return { stackStatus };
-    },
-  };
-}
-
-/** Default `wait-for-stack` capability, backed by the real `CloudExecutor`. */
-export const waitForStackCapability: Capability<WaitForStackInput, WaitForStackOutput> = createWaitForStackCapability();
-
-// ── wait-steady-state ────────────────────────────────────────────────────────
-
-export interface WaitSteadyStateInput {
-  /** Service identifier (e.g. an ECS service name). */
-  service: string;
-  /** ECS cluster name/ARN the service lives in. Default: "default". */
-  cluster?: string;
-  /** Poll interval in ms. Default: 10000. */
-  intervalMs?: number;
-  /** Overall timeout in ms. Default: 10 minutes. */
-  timeoutMs?: number;
-}
-
-export interface WaitSteadyStateOutput {
-  /** Running task/instance count once steady state is reached. */
-  runningCount: number;
-}
-
-/**
- * Poll an ECS service (`DescribeServices`) until its running count matches
- * desired count and no deployment is still in flight. No rollback: read-only
- * observation.
- */
-export function createWaitSteadyStateCapability(
-  executor: CloudExecutor = defaultCloudExecutor(),
-): Capability<WaitSteadyStateInput, WaitSteadyStateOutput> {
-  return {
-    kind: "wait-steady-state",
-    async run(_ctx, input) {
-      const cluster = input.cluster ?? "default";
-      const intervalMs = input.intervalMs ?? 10_000;
-      const deadline = Date.now() + (input.timeoutMs ?? 10 * 60_000);
-      while (true) {
-        const state = await executor.ecs.describeService(cluster, input.service);
-        if (state.stable) return { runningCount: state.runningCount };
-        if (Date.now() > deadline) {
-          throw new Error(`wait-steady-state "${input.service}" timed out before reaching steady state`);
-        }
-        await sleep(intervalMs);
-      }
-    },
-  };
-}
-
-/** Default `wait-steady-state` capability, backed by the real `CloudExecutor`. */
-export const waitSteadyStateCapability: Capability<WaitSteadyStateInput, WaitSteadyStateOutput> =
-  createWaitSteadyStateCapability();
 
 // ── wait-cluster-healthy ─────────────────────────────────────────────────────
 
@@ -215,51 +122,6 @@ export function createWaitEndpointCapability(fetcher: Fetcher = defaultFetcher):
 
 /** Default `wait-endpoint` capability, backed by the global `fetch`. */
 export const waitEndpointCapability: Capability<WaitEndpointInput, WaitEndpointOutput> = createWaitEndpointCapability();
-
-// ── wait-job ─────────────────────────────────────────────────────────────────
-
-export interface WaitJobInput {
-  /** Job/step run id (e.g. from `emr-start-job-run` or `emr-submit-step`). */
-  runId: string;
-  /** Poll interval in ms. Default: 10000. */
-  intervalMs?: number;
-  /** Overall timeout in ms. */
-  timeoutMs?: number;
-}
-
-export interface WaitJobOutput {
-  /** Terminal job state (`COMPLETED`, `FAILED`, `CANCELLED`). */
-  state: string;
-}
-
-/**
- * Poll a submitted job/step (e.g. an EMR job run started by
- * `emr-start-job-run`) until it reaches a terminal state, failing the step if
- * that state is not `COMPLETED` — matching `cfn-deploy`'s "a terminal status
- * that isn't success is still a failure" convention rather than treating
- * `FAILED`/`CANCELLED` as done. No rollback: read-only observation, nothing
- * to compensate.
- */
-export function createWaitJobCapability(
-  executor: CloudExecutor = defaultCloudExecutor(),
-): Capability<WaitJobInput, WaitJobOutput> {
-  return {
-    kind: "wait-job",
-    async run(_ctx, input) {
-      const { state } = await executor.emr.waitForJobRun(input.runId, {
-        intervalMs: input.intervalMs,
-        timeoutMs: input.timeoutMs,
-      });
-      if (state !== "COMPLETED") {
-        throw new Error(`wait-job "${input.runId}" ended in terminal state "${state}", expected "COMPLETED"`);
-      }
-      return { state };
-    },
-  };
-}
-
-/** Default `wait-job` capability, backed by the real `CloudExecutor`. */
-export const waitJobCapability: Capability<WaitJobInput, WaitJobOutput> = createWaitJobCapability();
 
 // ── health-gate ──────────────────────────────────────────────────────────────
 

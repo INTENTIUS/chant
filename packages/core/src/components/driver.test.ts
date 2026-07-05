@@ -12,7 +12,7 @@
 
 import { describe, expect, it } from "vitest";
 import { CapabilityRegistry, type DeployContext } from "./capability";
-import { createCapabilityRegistry } from "./registry";
+import { stubCapability } from "./verbs/stub";
 import {
   DependencyCycleError,
   DriverGateUnsupportedError,
@@ -545,21 +545,21 @@ describe("runInterpretDriver — end to end", () => {
   });
 });
 
-describe("capabilities are consumed exactly as the stub registry provides them", () => {
-  // `cfn-deploy` gained a real implementation in #557 and `lambda-deploy` in
-  // #558 (see ./verbs/apply.ts) — `run-migration` is a non-pilot apply-family
-  // verb neither issue scopes, so it is still a typed stub here, making it the
-  // right verb to prove a not-yet-implemented capability still surfaces as an
+describe("capabilities are consumed exactly as the registry provides them", () => {
+  // No starter verb is a stub any more, but the stub *mechanism*
+  // (./verbs/stub.ts) stays for third-party plugins / future verbs. A stub
+  // registered by kind must surface its CapabilityNotImplementedError as an
   // ordinary failed step rather than crashing the driver.
-  it("a still-stubbed capability (CapabilityNotImplementedError) surfaces as a failed step, not a driver crash", async () => {
-    const registry = createCapabilityRegistry();
+  it("a stubbed capability (CapabilityNotImplementedError) surfaces as a failed step, not a driver crash", async () => {
+    const registry = new CapabilityRegistry();
+    registry.register(stubCapability("some-future-verb"));
     const component: DriverComponent = {
       name: "c",
-      deploy: [{ phase: "Apply", steps: [{ kind: "run-migration", tool: "custom", target: "x" }] }],
+      deploy: [{ phase: "Apply", steps: [{ kind: "some-future-verb" }] }],
     };
     const result = await runComponentDeploy(component, { env: "dev", component: "c" }, registry, {});
     expect(result.ok).toBe(false);
     const failed = result.records.find((r) => r.status === "fail");
-    expect(failed?.error).toMatch(/capability "run-migration" is not implemented/);
+    expect(failed?.error).toMatch(/capability "some-future-verb" is not implemented/);
   });
 });

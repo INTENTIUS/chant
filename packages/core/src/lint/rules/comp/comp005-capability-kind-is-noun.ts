@@ -41,8 +41,43 @@ import { STARTER_VERB_FAMILIES } from "../../../components/starter-plugin";
 import type { ComponentCheck, ComponentCheckContext, ComponentCheckDiagnostic } from "../../component-checks";
 import { walkComponent } from "./support";
 
-/** Every kind in the bounded starter verb set — never flagged, no matter what a component happens to be named. Widened to `Set<string>` since a step's `kind` (an open, unbounded capability registry — see ../../../components/capability.ts) is plain `string`, not the starter set's literal union. */
-const STARTER_KINDS: Set<string> = new Set(Object.values(STARTER_VERB_FAMILIES).flat());
+/**
+ * Verb kinds contributed by the bundled cloud lexicons (currently aws), which
+ * used to live in the core starter set. They are still well-known verbs, so
+ * they stay on the allowlist — otherwise a component literally named "stack",
+ * "job", "image", or "host" would falsely flag `wait-for-stack`/`emr-*`/
+ * `publish-image`/`load-image-on-host`. This static list is a heuristic
+ * allowlist only (never an implementation); the ideal source is the registered
+ * kinds of the project's active capability plugins, which the lint context does
+ * not yet carry — until then, this keeps the false-positive guard intact.
+ */
+const BUNDLED_LEXICON_VERB_KINDS = [
+  "cfn-deploy",
+  "ecs-update-service",
+  "lambda-deploy",
+  "s3-sync",
+  "cdn-invalidate",
+  "run-migration",
+  "emr-start-job-run",
+  "emr-submit-step",
+  "code-deploy",
+  "copy-to-host",
+  "remote-exec",
+  "publish-image",
+  "load-image-on-host",
+  "publish-artifact",
+  "wait-for-stack",
+  "wait-steady-state",
+  "wait-job",
+  "snapshot-before",
+  "rollback-previous",
+];
+
+/** Every well-known verb kind — the core starter set plus the bundled lexicons' verbs — never flagged, no matter what a component happens to be named. Widened to `Set<string>` since a step's `kind` (an open, unbounded capability registry — see ../../../components/capability.ts) is plain `string`, not a literal union. */
+const STARTER_KINDS: Set<string> = new Set([
+  ...Object.values(STARTER_VERB_FAMILIES).flat(),
+  ...BUNDLED_LEXICON_VERB_KINDS,
+]);
 
 /** True if `kind` is exactly a component name, or that name embedded with `-`-joined affixes (e.g. "deploy-search-service", "search-service-apply"). */
 function kindNamesComponent(kind: string, componentName: string): boolean {

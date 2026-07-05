@@ -12,13 +12,14 @@
  * surface — retries, Serverless vs EMR-on-EC2 branching, Glue/Batch peers —
  * stays out of scope, per #561 explicitly deferring "the emr-start-job-run
  * cloud impl beyond what the example needs"). `emr-submit-step` is a
- * different verb (submit to an already-running cluster rather than starting
- * an ephemeral job run) that #561's example doesn't need, so it stays a typed
- * stub; see ../capability.ts for the "no cloud implementation yet" contract.
+ * different verb (submit a step to an already-running EMR-on-EC2 cluster
+ * rather than starting an ephemeral job run), also real over the executor
+ * (`aws emr add-steps`) and unit-tested against the mock — the same
+ * "mocked cloud is acceptable" basis #561 set for its sibling, since a live
+ * long-running EMR cluster is not part of gating CI.
  */
 
-import type { Capability } from "../capability";
-import { stubCapability } from "./stub";
+import type { Capability } from "@intentius/chant/components/capability";
 import { defaultCloudExecutor, type CloudExecutor } from "./cloud-executor";
 
 // ── emr-start-job-run ────────────────────────────────────────────────────────
@@ -87,14 +88,16 @@ export const emrStartJobRunCapability: Capability<EmrStartJobRunInput, EmrStartJ
 // ── emr-submit-step ──────────────────────────────────────────────────────────
 
 export interface EmrSubmitStepInput {
-  /** EMR cluster id to submit the step to. */
+  /** EMR-on-EC2 cluster id to submit the step to. */
   clusterId: string;
   /** Step name, shown in the EMR console. */
   name: string;
-  /** Entry point artifact reference (e.g. `"@jar-lib.publish.uri"`). */
+  /** Entry point artifact reference (e.g. `"@jar-lib.publish.uri"`) — resolved by the graph before this capability runs, exactly like `emr-start-job-run`'s `jar`. */
   jar: string;
   /** Arguments passed to the step. */
   args?: string[];
+  /** What EMR does if the step fails. Default: "CONTINUE". */
+  actionOnFailure?: "CONTINUE" | "CANCEL_AND_WAIT" | "TERMINATE_CLUSTER";
 }
 
 export interface EmrSubmitStepOutput {
@@ -102,7 +105,32 @@ export interface EmrSubmitStepOutput {
   stepId: string;
 }
 
-/** Submit a step to a long-running EMR cluster (as opposed to starting an ephemeral job run). */
-export const emrSubmitStepCapability: Capability<EmrSubmitStepInput, EmrSubmitStepOutput> = stubCapability(
-  "emr-submit-step",
-);
+/**
+ * Submit a step to a long-running EMR-on-EC2 cluster (as opposed to
+ * `emr-start-job-run`, which starts an ephemeral Serverless/EC2 job run) via
+ * `aws emr add-steps` through the injectable `CloudExecutor`. Returns the step
+ * id for polling via `wait-job`. Like its sibling, `input.jar` arrives
+ * already resolved by the driver's graph-driven wiring, and there is no
+ * rollback — a submitted step has no "undo" that restores prior state.
+ */
+export function createEmrSubmitStepCapability(
+  executor: CloudExecutor = defaultCloudExecutor(),
+): Capability<EmrSubmitStepInput, EmrSubmitStepOutput> {
+  return {
+    kind: "emr-submit-step",
+    async run(_ctx, input) {
+      const { stepId } = await executor.emr.addStep({
+        clusterId: input.clusterId,
+        name: input.name,
+        jar: input.jar,
+        args: input.args,
+        actionOnFailure: input.actionOnFailure,
+      });
+      return { stepId };
+    },
+  };
+}
+
+/** Default `emr-submit-step` capability, backed by the real `CloudExecutor`. */
+export const emrSubmitStepCapability: Capability<EmrSubmitStepInput, EmrSubmitStepOutput> =
+  createEmrSubmitStepCapability();
