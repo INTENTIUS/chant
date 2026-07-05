@@ -12,6 +12,8 @@ import { isCapabilityPlugin, type CapabilityPlugin } from "./capability-plugin";
 import { validateCapabilityManifest, CapabilityManifestSchema } from "./capability-plugin-schema";
 import {
   loadCapabilityPlugin,
+  loadCapabilityPluginFromLexicon,
+  loadCapabilityPluginsFromLexicons,
   registerCapabilityPlugins,
   buildCapabilityRegistry,
   MalformedCapabilityPluginError,
@@ -201,6 +203,24 @@ describe("buildCapabilityRegistry (Phase 2 entry point)", () => {
   test("includeStarter: false omits the starter plugin", async () => {
     const registry = await buildCapabilityRegistry({ includeStarter: false, plugins: [] });
     expect(registry.kinds()).toEqual([]);
+  });
+
+  test("a lexicon that contributes no capability plugin is silently skipped (starter set intact)", async () => {
+    // `loadCapabilityPluginsFromLexicons` is tolerant: an unresolvable or
+    // capability-less lexicon contributes nothing rather than throwing, unlike
+    // the strict `@intentius/chant-capability-<name>` path.
+    const registry = await buildCapabilityRegistry({ lexicons: ["definitely-not-a-real-lexicon"] });
+    expect(registry.kinds()).toEqual([...ALL_STARTER_KINDS].sort());
+  });
+});
+
+describe("loadCapabilityPluginFromLexicon", () => {
+  test("returns null for a lexicon package that cannot be resolved", async () => {
+    expect(await loadCapabilityPluginFromLexicon("definitely-not-a-real-lexicon")).toBeNull();
+  });
+
+  test("loadCapabilityPluginsFromLexicons skips unresolvable lexicons without throwing", async () => {
+    expect(await loadCapabilityPluginsFromLexicons(["definitely-not-a-real-lexicon"])).toEqual([]);
   });
 });
 

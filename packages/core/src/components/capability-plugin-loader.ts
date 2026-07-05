@@ -98,6 +98,47 @@ export async function loadCapabilityPlugins(names: string[]): Promise<Capability
 }
 
 /**
+ * Load the capability plugin a *lexicon* package contributes, if any. A cloud
+ * lexicon (`@intentius/chant-lexicon-<name>`) is the natural home for that
+ * cloud's operational leaves (`cfn-deploy`, `emr-*`, …) — the same seam that
+ * already carries the lexicon's synthesis, `describeResources`, and ownership
+ * markers (docs/components/cloud-boundary). So when a project declares
+ * `lexicons: ["aws"]`, its aws leaves come along automatically: this imports
+ * the lexicon package and returns the first export satisfying
+ * `isCapabilityPlugin`.
+ *
+ * Tolerant by design — a lexicon that contributes *no* capabilities (most do
+ * not yet) simply returns `null` rather than throwing, unlike
+ * `loadCapabilityPlugin`'s strict `@intentius/chant-capability-<name>` contract
+ * where the package's whole reason to exist is the plugin.
+ */
+export async function loadCapabilityPluginFromLexicon(name: string): Promise<CapabilityPlugin | null> {
+  const packageName = `@intentius/chant-lexicon-${name}`;
+  let mod: Record<string, unknown>;
+  try {
+    mod = (await import(packageName)) as Record<string, unknown>;
+  } catch {
+    return null; // lexicon not installed / not resolvable here — nothing to contribute.
+  }
+  for (const value of Object.values(mod)) {
+    if (isCapabilityPlugin(value)) return value;
+  }
+  return null; // lexicon present but contributes no capability plugin.
+}
+
+/** Load the capability plugins contributed by the given lexicons (skipping those that contribute none), initializing each. */
+export async function loadCapabilityPluginsFromLexicons(names: string[]): Promise<CapabilityPlugin[]> {
+  const plugins: CapabilityPlugin[] = [];
+  for (const name of names) {
+    const plugin = await loadCapabilityPluginFromLexicon(name);
+    if (!plugin) continue;
+    if (plugin.init) await plugin.init();
+    plugins.push(plugin);
+  }
+  return plugins;
+}
+
+/**
  * Register every capability every plugin contributes into one registry, in
  * plugin order. Throws `DuplicateCapabilityKindError` if two plugins
  * register the same `kind` (via a pre-check, so the error names every
@@ -134,10 +175,18 @@ export interface BuildCapabilityRegistryOptions {
   /**
    * Additional capability plugin package names to load and register on top
    * of the built-in starter plugin (e.g. third-party/cloud-specific
-   * capability packages). Defaults to none — Phase 1 behavior (just the
-   * starter set) is preserved when omitted.
+   * capability packages `@intentius/chant-capability-<name>`). Defaults to
+   * none — Phase 1 behavior (just the starter set) is preserved when omitted.
    */
   plugins?: string[];
+  /**
+   * Lexicon names (from `chant.config.ts`'s `lexicons`) whose packages may
+   * *also* contribute a capability plugin — the primary way a cloud's
+   * operational leaves are loaded (e.g. `["aws"]` pulls the aws lexicon's
+   * `cfn-deploy`/`emr-*`/… leaves). Lexicons contributing no capabilities are
+   * silently skipped; see `loadCapabilityPluginsFromLexicons`.
+   */
+  lexicons?: string[];
   /**
    * Skip loading the built-in starter plugin. Only meaningful for tests that
    * want a registry seeded purely from explicit `plugins`; real callers
@@ -163,6 +212,7 @@ export async function buildCapabilityRegistry(
   if (options.includeStarter !== false) {
     plugins.push(starterCapabilityPlugin);
   }
+  plugins.push(...(await loadCapabilityPluginsFromLexicons(options.lexicons ?? [])));
   plugins.push(...(await loadCapabilityPlugins(options.plugins ?? [])));
   return registerCapabilityPlugins(registry, plugins);
 }

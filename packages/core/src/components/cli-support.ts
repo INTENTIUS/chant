@@ -384,18 +384,25 @@ export async function runComponents(
     }
   }
 
-  const registry: CapabilityRegistry =
-    options.registry ?? (await buildCapabilityRegistry({ plugins: options.capabilityPlugins }));
-  const env = options.env ?? "local";
-  const selected = targets.map((c) => c.name);
-
   // (#629) Resolve `chant.config.ts`'s `sbom`/`signing`/`vulnPolicy` sections
   // and fill their defaults into every recognized step (`generate-sbom`,
   // `sign`/`attest-provenance`, `verify`, `vuln-gate`) that didn't already
   // specify the value itself, BEFORE dispatching to the driver — the driver
   // itself stays capability-agnostic and never reads project config (see
-  // ./config-defaults.ts's module doc).
+  // ./config-defaults.ts's module doc). Loaded up front here (rather than just
+  // before `applyConfigDefaults`) so the same config drives which capability
+  // plugins the registry loads: a component's cloud leaves (e.g. `cfn-deploy`)
+  // are contributed by the project's active lexicons (`config.lexicons`), not
+  // baked into core — see ./capability-plugin-loader.ts.
   const { config } = options.config ? { config: options.config } : await loadChantConfig(path);
+  const registry: CapabilityRegistry =
+    options.registry ??
+    (await buildCapabilityRegistry({
+      plugins: options.capabilityPlugins ?? config.capabilities,
+      lexicons: config.lexicons,
+    }));
+  const env = options.env ?? "local";
+  const selected = targets.map((c) => c.name);
   const resolvedTargets = targets.map((component) => applyConfigDefaults(component, config));
 
   try {
