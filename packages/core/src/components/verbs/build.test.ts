@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { addArchiveTemplate, createDockerBuildCapability, createZipPackageCapability } from "./build";
+import { addArchiveTemplate, createDockerBuildCapability, createZipPackageCapability, createJvmBuildCapability } from "./build";
 import { createMockCloudExecutor } from "./__tests__/mock-cloud-executor";
 import { createMockProcessRunner } from "./__tests__/mock-process-runner";
 import { findArchiveEntry } from "./build-archive";
@@ -188,5 +188,35 @@ describe("zip-package (#557)", () => {
 
   it("declares no rollback — a local build produces no remote state to compensate", () => {
     expect(createZipPackageCapability(createMockProcessRunner().runner).rollback).toBeUndefined();
+  });
+});
+
+describe("jvm-build (#557)", () => {
+  it("runs mvn package, copies the produced jar into the archive path, and returns its digest", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "chant-jvm-"));
+    const into = join(dir, "app.jar");
+    writeFileSync(into, "JAR-BYTES"); // mock runner won't actually build; pre-create so the digest read works
+    const expected = `sha256:${createHash("sha256").update("JAR-BYTES").digest("hex")}`;
+    const mock = createMockProcessRunner();
+
+    const out = await createJvmBuildCapability(mock.runner).run(
+      { env: "dev", component: "jar-lib" },
+      { tool: "maven", path: "svc", into },
+    );
+
+    expect(out).toEqual({ archivePath: into, digest: expected });
+    expect(mock.calls[0]!.command).toContain(`mvn -q -B -f 'svc/pom.xml' package`);
+    expect(mock.calls[1]!.command).toContain(`ls 'svc/target'/*.jar`);
+    expect(mock.calls[1]!.command).toContain("-sources"); // skips sources/javadoc classifier jars
+  });
+
+  it("uses the gradle wrapper when tool is gradle", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "chant-jvm-"));
+    const into = join(dir, "app.jar");
+    writeFileSync(into, "X");
+    const mock = createMockProcessRunner();
+    await createJvmBuildCapability(mock.runner).run({ env: "dev", component: "lib" }, { tool: "gradle", path: "svc", into });
+    expect(mock.calls[0]!.command).toContain("./gradlew -q build");
+    expect(mock.calls[1]!.command).toContain("build/libs/*.jar");
   });
 });

@@ -3,9 +3,8 @@
  * Fully cloud-agnostic (see docs/components/cloud-boundary). `docker-build` is
  * a real implementation (#557, epic #551) built over the injectable
  * `CloudExecutor` (./cloud-executor.ts) so tests never shell out to a real
- * `docker` daemon. `zip-package`/`jvm-build` are non-AWS/non-pilot verbs and
- * stay typed stubs — out of scope for #557; see ../capability.ts for the "no
- * cloud implementation yet" contract.
+ * `docker` daemon. `zip-package` (via `zip`) and `jvm-build` (via `mvn`/the
+ * gradle wrapper) are real, run through the injectable `ProcessRunner`.
  *
  * `docker-build` also assembles the component's `BuildArchiveManifest`
  * (#564, epic #551 "4. Build archive + deferred publish" — see
@@ -25,7 +24,6 @@
  */
 
 import type { Capability } from "../capability";
-import { stubCapability } from "./stub";
 import { readFileSync } from "node:fs";
 import { createHash } from "node:crypto";
 import { defaultCloudExecutor, type CloudExecutor } from "./cloud-executor";
@@ -223,5 +221,32 @@ export interface JvmBuildOutput {
   digest: string;
 }
 
-/** Compile and package a JVM project (Maven/Gradle) into a jar in the build archive. */
-export const jvmBuildCapability: Capability<JvmBuildInput, JvmBuildOutput> = stubCapability("jvm-build");
+/**
+ * Compile and package a JVM project (Maven or Gradle) into a jar in the build
+ * archive, via the build tool through the injectable `ProcessRunner`. Runs the
+ * package goal, copies the produced jar (skipping `-sources`/`-javadoc`
+ * classifiers) to `into`, and returns its content digest.
+ */
+export function createJvmBuildCapability(processRunner: ProcessRunner = defaultProcessRunner()): Capability<JvmBuildInput, JvmBuildOutput> {
+  return {
+    kind: "jvm-build",
+    async run(_ctx, input) {
+      if (input.tool === "gradle") {
+        const tasks = (input.goals ?? ["build"]).join(" ");
+        await processRunner.run(`./gradlew -q ${tasks}`, { cwd: input.path });
+        await processRunner.run(`cp "$(ls ${q(input.path)}/build/libs/*.jar | head -1)" ${q(input.into)}`);
+      } else {
+        const goals = (input.goals ?? ["package"]).join(" ");
+        await processRunner.run(`mvn -q -B -f ${q(`${input.path}/pom.xml`)} ${goals}`);
+        await processRunner.run(
+          `cp "$(ls ${q(`${input.path}/target`)}/*.jar | grep -Ev '(-sources|-javadoc)\\.jar$' | head -1)" ${q(input.into)}`,
+        );
+      }
+      const digest = `sha256:${createHash("sha256").update(readFileSync(input.into)).digest("hex")}`;
+      return { archivePath: input.into, digest };
+    },
+  };
+}
+
+/** Default `jvm-build` capability, backed by the real process runner. */
+export const jvmBuildCapability: Capability<JvmBuildInput, JvmBuildOutput> = createJvmBuildCapability();
