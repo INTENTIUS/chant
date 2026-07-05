@@ -3,11 +3,11 @@
  * alongside the per-capability `rollback` compensation for cases that need an
  * up-front capture (e.g. before a `cfn-deploy` with `onReplace: "snapshot-first"`).
  *
- * Typed stubs only; see ../capability.ts for the "no cloud implementation yet" contract.
+ * Both dispatch to the kind-appropriate AWS backup/restore mechanism through the
+ * injectable `CloudExecutor` (DynamoDB backup, RDS DB snapshot, EBS snapshot).
  */
 
 import type { Capability } from "../capability";
-import { stubCapability } from "./stub";
 import { defaultCloudExecutor, type CloudExecutor } from "./cloud-executor";
 
 // ── snapshot-before ──────────────────────────────────────────────────────────
@@ -57,6 +57,22 @@ export interface RollbackPreviousOutput {
   restored: boolean;
 }
 
-/** Restore a resource from a prior `snapshot-before` capture — explicit rollback, not auto-triggered. */
+/**
+ * Restore a resource from a prior `snapshot-before` capture — an explicit,
+ * caller-composed rollback (not the auto-triggered per-capability compensation).
+ * Dispatches by the snapshot-id shape through the `CloudExecutor` and waits for
+ * the restore to become available.
+ */
+export function createRollbackPreviousCapability(executor: CloudExecutor = defaultCloudExecutor()): Capability<RollbackPreviousInput, RollbackPreviousOutput> {
+  return {
+    kind: "rollback-previous",
+    async run(_ctx, input) {
+      await executor.snapshot.restore({ resource: input.resource, snapshotId: input.snapshotId });
+      return { restored: true };
+    },
+  };
+}
+
+/** Default `rollback-previous` capability, backed by the real `CloudExecutor`. */
 export const rollbackPreviousCapability: Capability<RollbackPreviousInput, RollbackPreviousOutput> =
-  stubCapability("rollback-previous");
+  createRollbackPreviousCapability();
