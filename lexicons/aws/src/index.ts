@@ -93,3 +93,8 @@ export type {
 export { generate, writeGeneratedFiles } from "./codegen/generate";
 export { packageLexicon } from "./codegen/package";
 export type { PackageOptions, PackageResult } from "./codegen/package";
+
+// Component/release capabilities — the AWS operational leaves (cfn-deploy,
+// emr-*, code-deploy, …) contributed to core's capability-plugin seam. Core
+// loads `awsCapabilityPlugin` when a project's chant.config lists this lexicon.
+export { awsCapabilityPlugin } from "./components/capability-plugin";

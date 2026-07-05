@@ -13,18 +13,18 @@
  */
 
 import { describe, expect, it } from "vitest";
-import { CapabilityRegistry } from "../capability";
-import { runInterpretDriver, type DriverComponent } from "../driver";
-import { projectToJson } from "../component";
-import { searchService } from "../pilots/alb-ecs.pilot";
-import { EcsFargateComponent } from "./ecs-fargate";
-import { LambdaComponent } from "./lambda";
-import { SingleHostComposeComponent } from "./single-host-compose";
-import { createMockCloudExecutor, type MockCloudExecutor } from "../verbs/__tests__/mock-cloud-executor";
-import { createDockerBuildCapability } from "../verbs/build";
-import { createPublishImageCapability, createLoadImageOnHostCapability } from "../verbs/publish";
-import { createCfnDeployCapability, createEcsUpdateServiceCapability, createLambdaDeployCapability } from "../verbs/apply";
-import { createWaitSteadyStateCapability } from "../verbs/wait-verify";
+import { CapabilityRegistry } from "@intentius/chant/components/capability";
+import { runInterpretDriver, type DriverComponent } from "@intentius/chant/components/driver";
+import { projectToJson } from "@intentius/chant/components/component";
+import { searchService } from "@intentius/chant/components/pilots/alb-ecs.pilot";
+import { EcsFargateComponent } from "@intentius/chant/components/presets/ecs-fargate";
+import { LambdaComponent } from "@intentius/chant/components/presets/lambda";
+import { SingleHostComposeComponent } from "@intentius/chant/components/presets/single-host-compose";
+import { createMockCloudExecutor, type MockCloudExecutor } from "./__tests__/mock-cloud-executor";
+import { createDockerBuildCapability } from "@intentius/chant/components/verbs/build";
+import { createPublishImageCapability, createLoadImageOnHostCapability } from "./publish";
+import { createCfnDeployCapability, createEcsUpdateServiceCapability, createLambdaDeployCapability } from "./apply";
+import { createWaitSteadyStateCapability } from "./wait-aws";
 
 /** Same registry-building convention as ../pilots/pilots-e2e.test.ts: real capabilities wired to one shared mock executor, plus fakes for verbs this suite's presets reference but that stay typed stubs (out of scope for #566, matching the pilots' own accounting). */
 function buildRegistry(mock: MockCloudExecutor): CapabilityRegistry {

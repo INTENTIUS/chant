@@ -1,7 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { createEmrStartJobRunCapability, emrSubmitStepCapability as emrSubmitStep } from "./job-submission";
+import { createEmrStartJobRunCapability, createEmrSubmitStepCapability } from "./job-submission";
 import { createMockCloudExecutor } from "./__tests__/mock-cloud-executor";
-import { CapabilityNotImplementedError } from "../capability";
 
 describe("emr-start-job-run (#561)", () => {
   it("starts a job run against the resolved artifact reference and returns the run id", async () => {
@@ -64,10 +63,35 @@ describe("emr-start-job-run (#561)", () => {
   });
 });
 
-describe("emr-submit-step (out of #561's scope — remains a typed stub)", () => {
-  it("rejects with CapabilityNotImplementedError", async () => {
-    await expect(
-      emrSubmitStep.run({ env: "dev", component: "emr-job" }, { clusterId: "j-123", name: "step", jar: "s3://x" }),
-    ).rejects.toBeInstanceOf(CapabilityNotImplementedError);
+describe("emr-submit-step", () => {
+  it("submits a step to the cluster and returns the step id", async () => {
+    const mock = createMockCloudExecutor();
+    const out = await createEmrSubmitStepCapability(mock.executor).run(
+      { env: "dev", component: "emr-job" },
+      { clusterId: "j-123", name: "nightly-rollup", jar: "s3://jar-bucket/jar-lib.jar", args: ["--date", "2026-07-04"] },
+    );
+    expect(out).toEqual({ stepId: "s-MOCK0001" });
+    const call = mock.calls.find((c) => c.client === "emr" && c.method === "addStep")!;
+    expect(call.args).toEqual({
+      clusterId: "j-123",
+      name: "nightly-rollup",
+      jar: "s3://jar-bucket/jar-lib.jar",
+      args: ["--date", "2026-07-04"],
+      actionOnFailure: undefined,
+    });
+  });
+
+  it("passes an unresolved artifact reference straight through (the graph resolves it before run)", async () => {
+    const mock = createMockCloudExecutor();
+    await createEmrSubmitStepCapability(mock.executor).run(
+      { env: "dev", component: "emr-job" },
+      { clusterId: "j-123", name: "step", jar: "@jar-lib.publish.uri", actionOnFailure: "CANCEL_AND_WAIT" },
+    );
+    const call = mock.calls.find((c) => c.method === "addStep")!;
+    expect(call.args).toMatchObject({ jar: "@jar-lib.publish.uri", actionOnFailure: "CANCEL_AND_WAIT" });
+  });
+
+  it("declares no rollback — a submitted step has nothing to compensate", () => {
+    expect(createEmrSubmitStepCapability(createMockCloudExecutor().executor).rollback).toBeUndefined();
   });
 });

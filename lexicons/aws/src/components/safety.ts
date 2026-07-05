@@ -7,7 +7,7 @@
  * injectable `CloudExecutor` (DynamoDB backup, RDS DB snapshot, EBS snapshot).
  */
 
-import type { Capability } from "../capability";
+import type { Capability } from "@intentius/chant/components/capability";
 import { defaultCloudExecutor, type CloudExecutor } from "./cloud-executor";
 
 // ── snapshot-before ──────────────────────────────────────────────────────────

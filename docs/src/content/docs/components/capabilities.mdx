@@ -22,19 +22,21 @@ Typed `In`/`Out` let compositions wire one step's output into the next and let [
 
 ## The families
 
-The set is a plugin registry, not a closed enum. Verbs group into families. A verb marked **‡** is registered but **not yet implemented** — it throws `CapabilityNotImplementedError` at run time; everything else runs today. (Marking them keeps the family shape honest: the composition grammar and lint work against every verb, but a `‡` verb can't actually deploy yet.)
+The set is a plugin registry, not a closed enum. Verbs group into families. The **Plugin** column says who contributes each: *core* ships the cloud-agnostic verbs in its always-loaded starter set; a cloud lexicon contributes its own leaves through the same capability-plugin seam, loaded when a project's `chant.config.ts` lists that lexicon (`lexicons: ["aws"]`). So a component's `cfn-deploy` step resolves only when the aws lexicon is active — core itself has no AWS in it. See [the cloud boundary](/chant/components/cloud-boundary/).
 
-| Family | Verbs | Notes |
-|---|---|---|
-| **build** | `docker-build`, `zip-package`, `jvm-build` | source → archive, keyed by artifact type |
-| **sbom** | `generate-sbom`, `extract-config-bom` | artifact-type-keyed software SBOM (native SPDX/CycloneDX, hermetic lockfile backend) and IaC config-BOM (declared resources/nested stacks/external refs) into the build archive — see [Build Archive](/chant/components/build-archive/#sbom-format-agnostic-generated-at-build-time) |
-| **publish** | `publish-image`, `load-image-on-host`, `publish-asset` / `publish-artifact` | deploy-time, promote by identity; an interface with backends |
-| **apply** | `cfn-deploy`, `ecs-update-service`, `lambda-deploy`, `s3-sync`, `cdn-invalidate`, `run-migration`‡ | `cfn-deploy` carries safety options (changeset preview, `onReplace`, `stageGsi`) |
-| **job submission** | `emr-start-job-run` / `emr-submit-step`‡ | point a running compute service at an artifact; reusable for Glue / Batch / Step Functions |
-| **host / code delivery** | `code-deploy`, `copy-to-host`, `remote-exec` | `code-deploy` = AWS CodeDeploy; the others are SSM host verbs (SSH transport pending) |
-| **wait / verify** | `wait-for-stack`, `wait-steady-state`, `wait-cluster-healthy`, `wait-endpoint`, `wait-job`, `health-gate` | |
-| **safety / rollback** | `snapshot-before`, `rollback-previous` | |
-| **escape hatch** | `shell` | typed, lint-flagged |
+| Family | Verbs | Plugin | Notes |
+|---|---|---|---|
+| **build** | `docker-build`, `zip-package`, `jvm-build` | core | source → archive, keyed by artifact type |
+| **sbom** | `generate-sbom`, `extract-config-bom` | core | artifact-type-keyed software SBOM (native SPDX/CycloneDX, hermetic lockfile backend) and IaC config-BOM (declared resources/nested stacks/external refs) into the build archive — see [Build Archive](/chant/components/build-archive/#sbom-format-agnostic-generated-at-build-time) |
+| **supply chain** | `sign`, `attest-provenance`, `verify`, `scan-vulnerabilities`, `vuln-gate` | core | keyless cosign signing/attestation + a deploy-time verify gate and vulnerability policy gate |
+| **wait / verify (agnostic)** | `wait-cluster-healthy`, `wait-endpoint`, `health-gate` | core | bolt-port cluster probe + HTTP readiness/health gates |
+| **escape hatch** | `shell` | core | typed, lint-flagged |
+| **publish** | `publish-image`, `load-image-on-host`, `publish-asset` / `publish-artifact` | aws | deploy-time, promote by identity; an interface with backends |
+| **apply** | `cfn-deploy`, `ecs-update-service`, `lambda-deploy`, `s3-sync`, `cdn-invalidate`, `run-migration` | aws | `cfn-deploy` carries safety options (changeset preview, `onReplace`, `stageGsi`) |
+| **job submission** | `emr-start-job-run`, `emr-submit-step` | aws | point a running compute service at an artifact; reusable for Glue / Batch / Step Functions |
+| **host / code delivery** | `code-deploy`, `copy-to-host`, `remote-exec` | aws | `code-deploy` = AWS CodeDeploy; the others are SSM host verbs (SSH transport pending) |
+| **wait / verify (cloud)** | `wait-for-stack`, `wait-steady-state`, `wait-job` | aws | CloudFormation / ECS / EMR terminal-state polls |
+| **safety / rollback** | `snapshot-before`, `rollback-previous` | aws | DynamoDB/RDS/EBS snapshot + restore |
 
 A genuinely new apply *family* (job submission was one) is written once and then reused across every component of that shape. A new *component* is a declaration only. This is why the family count grows sub-linearly against components — see [the cloud boundary](/chant/components/cloud-boundary/) for how each family's leaf maps per cloud.
 

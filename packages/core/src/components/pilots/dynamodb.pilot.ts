@@ -18,11 +18,14 @@
  * document; see ./pilots.test.ts, which asserts the two never diverge.
  */
 
-import type { CfnDeployInput } from "../verbs/apply";
 import type { Component } from "../component";
 import { phase } from "../component";
 
-const cfnSafetyOptions: Pick<CfnDeployInput, "onReplace" | "stageGsi"> = {
+// `cfn-deploy`'s safety fields, kept as a plain literal here: the pilot is
+// agnostic component *data* naming the `cfn-deploy` kind, so it does not import
+// the AWS capability's types (those live in the aws lexicon now). The `onReplace`
+// value must match `cfn-deploy`'s `CfnReplacePolicy` union.
+const cfnSafetyOptions: { onReplace: "block" | "allow" | "snapshot-first"; stageGsi: boolean } = {
   onReplace: "block",
   stageGsi: true,
 };

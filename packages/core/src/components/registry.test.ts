@@ -1,6 +1,7 @@
 import { describe, test, expect } from "vitest";
 import { createCapabilityRegistry, STARTER_VERB_FAMILIES } from "./registry";
 import { CapabilityNotImplementedError } from "./capability";
+import { stubCapability } from "./verbs/stub";
 
 const ALL_STARTER_KINDS = Object.values(STARTER_VERB_FAMILIES).flat();
 
@@ -27,6 +28,16 @@ describe("createCapabilityRegistry", () => {
     );
   });
 
+  // The starter set no longer carries any cloud leaf — `cfn-deploy` and the
+  // rest live in the aws lexicon now — so `cfn-deploy` is genuinely unknown to
+  // a core-only registry, resolving only once the aws capability plugin is
+  // loaded (see ./capability-plugin-loader.ts's lexicon path).
+  test("a cloud-leaf kind (cfn-deploy) is not in the core starter set", () => {
+    const registry = createCapabilityRegistry();
+    expect(registry.has("cfn-deploy")).toBe(false);
+    expect(() => registry.resolve("cfn-deploy")).toThrow(/no capability registered for kind "cfn-deploy"/);
+  });
+
   test("registering a duplicate kind throws", () => {
     const registry = createCapabilityRegistry();
     expect(() =>
@@ -37,29 +48,22 @@ describe("createCapabilityRegistry", () => {
     ).toThrow('capability "docker-build" is already registered');
   });
 
-  // `cfn-deploy` gained a real implementation in #557 (see ./verbs/apply.ts)
-  // and `lambda-deploy` gained one in #558 (the fourth validation component's
-  // one new capability); `run-migration` is a non-pilot apply-family verb
-  // neither issue scopes, so it remains the representative still-stubbed
-  // capability for this assertion.
-  test("stub run() rejects with CapabilityNotImplementedError, naming the kind", async () => {
-    const registry = createCapabilityRegistry();
-    const runMigration = registry.resolve("run-migration");
-    await expect(
-      runMigration.run({ env: "dev", component: "test" }, {} as never),
-    ).rejects.toBeInstanceOf(CapabilityNotImplementedError);
-    await expect(
-      runMigration.run({ env: "dev", component: "test" }, {} as never),
-    ).rejects.toThrow('capability "run-migration" is not implemented');
-  });
-
-  test("capabilities declared with rollback also stub rollback() (still-stubbed verb)", async () => {
-    const registry = createCapabilityRegistry();
-    const runMigration = registry.resolve("run-migration");
-    expect(typeof runMigration.rollback).toBe("function");
-    await expect(
-      runMigration.rollback?.({ env: "dev", component: "test" }, {} as never),
-    ).rejects.toBeInstanceOf(CapabilityNotImplementedError);
+  // No starter verb is a stub any more (all implemented), but the stub
+  // *mechanism* (./verbs/stub.ts) stays for third-party plugins / future verbs:
+  // a stub's run()/rollback() reject with CapabilityNotImplementedError, and
+  // the driver surfaces that as a failed step rather than crashing.
+  test("stubCapability run()/rollback() reject with CapabilityNotImplementedError, naming the kind", async () => {
+    const stub = stubCapability("some-future-verb", { rollback: true });
+    await expect(stub.run({ env: "dev", component: "test" }, {} as never)).rejects.toBeInstanceOf(
+      CapabilityNotImplementedError,
+    );
+    await expect(stub.run({ env: "dev", component: "test" }, {} as never)).rejects.toThrow(
+      'capability "some-future-verb" is not implemented',
+    );
+    expect(typeof stub.rollback).toBe("function");
+    await expect(stub.rollback?.({ env: "dev", component: "test" }, {} as never)).rejects.toBeInstanceOf(
+      CapabilityNotImplementedError,
+    );
   });
 
   test("capabilities without declared rollback have none", () => {
@@ -67,58 +71,30 @@ describe("createCapabilityRegistry", () => {
     expect(registry.resolve("zip-package").rollback).toBeUndefined();
   });
 
-  // #557 gave these AWS-leaf verbs real implementations (over an injectable
-  // CloudExecutor — see ./verbs/cloud-executor.ts); #558 added `lambda-deploy`.
-  // They are no longer stubs, and `run`/`rollback` no longer throw
-  // CapabilityNotImplementedError.
-  test("#557/#558 AWS-leaf verbs are real implementations, not stubs", () => {
+  // The agnostic starter verbs are all real implementations — `run` is a real
+  // function, not the stub thrower.
+  test("agnostic starter verbs are real implementations, not stubs", () => {
     const registry = createCapabilityRegistry();
     for (const kind of [
       "docker-build",
-      "publish-image",
-      "cfn-deploy",
-      "ecs-update-service",
-      "code-deploy",
-      "wait-for-stack",
-      "wait-steady-state",
+      "zip-package",
+      "jvm-build",
+      "generate-sbom",
+      "sign",
+      "verify",
+      "vuln-gate",
       "wait-cluster-healthy",
-      "lambda-deploy",
+      "wait-endpoint",
+      "health-gate",
     ]) {
       const capability = registry.resolve(kind);
       expect(typeof capability.run).toBe("function");
     }
   });
 
-  // #561 gave these two verbs real implementations (over the same injectable
-  // CloudExecutor, extended with an `emr` client — see ./verbs/cloud-executor.ts)
-  // so the JAR-producer -> EMR-consumer cross-component example
-  // (../__fixtures__/jar-lib-producer.json / emr-job-consumer.json) can run
-  // end to end against a mocked cloud. `emr-submit-step` (a different verb —
-  // submit to an already-running cluster) stays a stub; #561's example only
-  // needs `emr-start-job-run`.
-  test("#561 job-submission/wait-verify verbs (emr-start-job-run, wait-job) are real implementations, not stubs", () => {
-    const registry = createCapabilityRegistry();
-    for (const kind of ["emr-start-job-run", "wait-job"]) {
-      const capability = registry.resolve(kind);
-      expect(typeof capability.run).toBe("function");
-    }
-  });
-
-  test("family table covers each documented family (docs/components/capabilities.mdx)", () => {
+  test("family table lists exactly the agnostic starter families (cloud leaves moved to lexicons)", () => {
     expect(Object.keys(STARTER_VERB_FAMILIES).sort()).toEqual(
-      [
-        "apply",
-        "build",
-        "sbom",
-        "escapeHatch",
-        "hostDelivery",
-        "jobSubmission",
-        "publish",
-        "supplyChainSecurity",
-        "supplyChainPolicy",
-        "safety",
-        "waitVerify",
-      ].sort(),
+      ["build", "escapeHatch", "sbom", "supplyChainPolicy", "supplyChainSecurity", "waitVerify"].sort(),
     );
   });
 

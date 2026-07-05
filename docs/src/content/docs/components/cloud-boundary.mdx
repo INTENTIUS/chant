@@ -11,6 +11,8 @@ The component model is agnostic in **structure and orchestration**, and spec-tru
 
 A [component](/chant/components/component-contract/) composes over [capability](/chant/components/capabilities/) *families*. Those family interfaces are cloud-agnostic. The concrete verb behind each family is the cloud-specific leaf, contributed by that cloud's [lexicon](/chant/lexicons/overview/) — the same seam that already provides synthesis, `describeResources`, ownership markers, and the [`ApplyOp`](/chant/guide/ops/#apply-code--cloud) `target`. The release layer invents no new per-cloud plugin system.
 
+This is literal, not aspirational: core ships only the agnostic verbs (`docker-build`, `sign`, `wait-endpoint`, …). The AWS leaves — `cfn-deploy`, `ecs-update-service`, `emr-*`, `code-deploy`, the SSM host verbs, the CloudFormation/ECS/EMR waits — live in `@intentius/chant-lexicon-aws` and register through the [`CapabilityPlugin`](/chant/components/capabilities/) contract when a project's `chant.config.ts` lists `lexicons: ["aws"]`. A component's `cfn-deploy` step resolves only when that lexicon is active; core has no AWS in it.
+
 ## Where each family falls
 
 | Family | Where it sits | AWS leaf | Azure | GCP | k8s / generic |
