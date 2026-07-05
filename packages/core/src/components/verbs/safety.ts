@@ -8,6 +8,7 @@
 
 import type { Capability } from "../capability";
 import { stubCapability } from "./stub";
+import { defaultCloudExecutor, type CloudExecutor } from "./cloud-executor";
 
 // ── snapshot-before ──────────────────────────────────────────────────────────
 
@@ -23,9 +24,24 @@ export interface SnapshotBeforeOutput {
   snapshotId: string;
 }
 
-/** Capture a restorable snapshot before a risky/destructive apply step. */
+/**
+ * Capture a restorable snapshot before a risky/destructive apply step, via the
+ * kind-appropriate AWS backup mechanism through the injectable `CloudExecutor`
+ * (DynamoDB on-demand backup, RDS DB snapshot, or EBS volume snapshot). Returns
+ * the backup/snapshot id `rollback-previous` restores from.
+ */
+export function createSnapshotBeforeCapability(executor: CloudExecutor = defaultCloudExecutor()): Capability<SnapshotBeforeInput, SnapshotBeforeOutput> {
+  return {
+    kind: "snapshot-before",
+    async run(_ctx, input) {
+      return executor.snapshot.create({ resource: input.resource, resourceKind: input.resourceKind });
+    },
+  };
+}
+
+/** Default `snapshot-before` capability, backed by the real `CloudExecutor`. */
 export const snapshotBeforeCapability: Capability<SnapshotBeforeInput, SnapshotBeforeOutput> =
-  stubCapability("snapshot-before");
+  createSnapshotBeforeCapability();
 
 // ── rollback-previous ────────────────────────────────────────────────────────
 

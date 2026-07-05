@@ -343,9 +343,15 @@ export function createMockCloudExecutor(options: MockCloudExecutorOptions = {}):
       return { invalidationId: "I-MOCK0001" };
     },
   };
+  const snapshot: CloudExecutor["snapshot"] = {
+    async create(args) {
+      record("snapshot", "create", args);
+      return { snapshotId: `snap-mock-${args.resourceKind}-${args.resource}` };
+    },
+  };
 
   return {
-    executor: { docker, ecr, cloudformation, ecs, codeDeploy, neo4j, lambda, emr, host, s3, cloudfront },
+    executor: { docker, ecr, cloudformation, ecs, codeDeploy, neo4j, lambda, emr, host, s3, cloudfront, snapshot },
     calls,
     setStack: (name, config) => stacks.set(name, { ...stacks.get(name), ...config }),
     setDeployment: (id, config) => deployments.set(id, { ...deployments.get(id), ...config }),
