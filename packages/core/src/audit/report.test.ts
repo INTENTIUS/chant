@@ -119,3 +119,19 @@ describe("renderMarkdown — reworked structure", () => {
     expect(onlyGuidance).not.toContain("Report-only");
   });
 });
+
+describe("catalog threading (#687)", () => {
+  test("buildReportModel uses a passed-in catalog over core's static one", async () => {
+    const { buildReportModel } = await import("./report-model");
+    const findings: AuditFinding[] = [
+      { checkId: "ZZZ999", severity: "warning", message: "made up", file: "x.yml", lexicon: "github" },
+    ];
+    // Not in the static catalog → default model treats it as report-only.
+    expect(buildReportModel(findings).counts.quickWin).toBe(0);
+    // A resolved catalog (as a lexicon would contribute) makes it a deterministic merge-worthy fix.
+    const catalog = {
+      ZZZ999: { id: "ZZZ999", tier: "merge-worthy" as const, fixKind: "deterministic" as const, category: "security" as const, title: "Made up", remediation: "fix it", yamlBased: true },
+    };
+    expect(buildReportModel(findings, { catalog }).counts.quickWin).toBe(1);
+  });
+});

@@ -7,7 +7,8 @@
  * (lowercased) — the anchor `ruleDocUrl()` links to.
  */
 
-import { RULE_CATALOG, type RuleMeta } from "./catalog";
+import { resolveAuditCatalog, type RuleMeta } from "./catalog";
+import { AUDIT_LEXICONS } from "./discover";
 
 const GROUPS: Array<{ heading: string; prefixes: string[]; blurb: string }> = [
   { heading: "GitHub Actions (GHA)", prefixes: ["GHA"], blurb: "Also applied to Forgejo workflows, which are GitHub-dialect." },
@@ -29,11 +30,18 @@ function ruleBlock(m: RuleMeta): string {
   return `### ${m.id}\n\n**${m.title}** — ${tags}\n\n${m.remediation}${authority}`;
 }
 
-/** Render the full audit rules reference page (frontmatter + body). */
-export function renderRulesReference(): string {
-  const ids = Object.keys(RULE_CATALOG).sort();
+/**
+ * Render the full audit rules reference page (frontmatter + body). Aggregates
+ * the catalog across every audit lexicon (#687) — each provider's rule metadata
+ * now lives in its own lexicon and is merged over core's static entries — so the
+ * doc lists them all. Async because it loads the lexicon plugins to collect
+ * their contributed catalogs; a doc-build step has all lexicons installed.
+ */
+export async function renderRulesReference(): Promise<string> {
+  const catalog = await resolveAuditCatalog([...AUDIT_LEXICONS]);
+  const ids = Object.keys(catalog).sort();
   const sections = GROUPS.map(({ heading, prefixes, blurb }) => {
-    const blocks = ids.filter((id) => prefixes.some((p) => id.startsWith(p))).map((id) => ruleBlock(RULE_CATALOG[id]));
+    const blocks = ids.filter((id) => prefixes.some((p) => id.startsWith(p))).map((id) => ruleBlock(catalog[id]));
     if (blocks.length === 0) return "";
     return `## ${heading}\n${blurb ? `\n${blurb}\n` : ""}\n${blocks.join("\n\n")}`;
   }).filter(Boolean);

@@ -37,6 +37,8 @@ export interface RenderOptions {
   resolveDigest?: ProveOptions["resolveDigest"];
   /** Coverage caveats shown near the top (e.g. unresolved GitLab includes). */
   notes?: string[];
+  /** Resolved audit catalog (core static + active lexicons' contributions, #687). Defaults to core's static catalog. */
+  catalog?: Record<string, RuleMeta>;
 }
 
 function escapeCell(s: string): string {
