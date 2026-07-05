@@ -54,57 +54,45 @@ export interface RuleMeta {
 }
 
 // ── Authority references ─────────────────────────────────────────────
-const SCORECARD_TOKEN: Authority = {
+export const SCORECARD_TOKEN: Authority = {
   name: "OSSF Scorecard — Token-Permissions",
   url: "https://github.com/ossf/scorecard/blob/main/docs/checks.md#token-permissions",
 };
-const GH_TOKEN: Authority = {
+export const GH_TOKEN: Authority = {
   name: "GitHub — Automatic token authentication",
   url: "https://docs.github.com/en/actions/security-for-github-actions/security-guides/automatic-token-authentication",
 };
-const SCORECARD_PINNED: Authority = {
+export const SCORECARD_PINNED: Authority = {
   name: "OSSF Scorecard — Pinned-Dependencies",
   url: "https://github.com/ossf/scorecard/blob/main/docs/checks.md#pinned-dependencies",
 };
-const GH_THIRD_PARTY: Authority = {
+export const GH_THIRD_PARTY: Authority = {
   name: "GitHub — Using third-party actions",
   url: "https://docs.github.com/en/actions/security-for-github-actions/security-guides/security-hardening-for-github-actions#using-third-party-actions",
 };
-const GH_INJECTION: Authority = {
+export const GH_INJECTION: Authority = {
   name: "GitHub — Understanding the risk of script injections",
   url: "https://docs.github.com/en/actions/security-for-github-actions/security-guides/security-hardening-for-github-actions#understanding-the-risk-of-script-injections",
 };
-const GH_PWN: Authority = {
+export const GH_PWN: Authority = {
   name: "GitHub Security Lab — Preventing pwn requests",
   url: "https://securitylab.github.com/resources/github-actions-preventing-pwn-requests/",
 };
-const GH_SECRETS: Authority = {
+export const GH_SECRETS: Authority = {
   name: "GitHub — Using secrets in GitHub Actions",
   url: "https://docs.github.com/en/actions/security-for-github-actions/security-guides/using-secrets-in-github-actions",
 };
-const GH_OIDC: Authority = {
+export const GH_OIDC: Authority = {
   name: "GitHub — Security hardening with OpenID Connect",
   url: "https://docs.github.com/en/actions/concepts/security/openid-connect",
 };
-const K8S_PSS: Authority = {
+export const K8S_PSS: Authority = {
   name: "Kubernetes — Pod Security Standards",
   url: "https://kubernetes.io/docs/concepts/security/pod-security-standards/",
 };
-const K8S_SECRETS: Authority = {
+export const K8S_SECRETS: Authority = {
   name: "Kubernetes — Good practices for Secrets",
   url: "https://kubernetes.io/docs/concepts/security/secrets-good-practices/",
-};
-const DOCKER_SEC: Authority = {
-  name: "Docker — Security best practices",
-  url: "https://docs.docker.com/develop/security-best-practices/",
-};
-const AZ_SEC: Authority = {
-  name: "Microsoft Cloud Security Benchmark",
-  url: "https://learn.microsoft.com/en-us/security/benchmark/azure/",
-};
-const GCP_SEC: Authority = {
-  name: "Google Cloud — Security best practices",
-  url: "https://cloud.google.com/security/best-practices",
 };
 
 function meta(
@@ -138,33 +126,7 @@ export const RULE_CATEGORY: Record<string, Category> = {
   ARGO002: "correctness",
   ARGO003: "correctness",
   ARGO005: "best-practice",
-  AZR010: "best-practice",
-  AZR011: "correctness",
-  AZR012: "best-practice",
-  AZR013: "correctness",
-  AZR014: "security",
-  AZR015: "security",
-  AZR016: "best-practice",
-  AZR017: "best-practice",
-  AZR018: "best-practice",
-  AZR019: "security",
-  AZR020: "best-practice",
-  AZR021: "security",
-  AZR022: "security",
-  AZR023: "best-practice",
-  AZR024: "best-practice",
-  AZR025: "best-practice",
-  AZR026: "best-practice",
-  AZR027: "security",
-  AZR028: "best-practice",
-  AZR029: "security",
   COR020: "correctness",
-  DKRD001: "best-practice",
-  DKRD002: "best-practice",
-  DKRD003: "security",
-  DKRD010: "best-practice",
-  DKRD011: "best-practice",
-  DKRD012: "security",
   EXT001: "correctness",
   GHA006: "correctness",
   GHA009: "correctness",
@@ -213,29 +175,6 @@ export const RULE_CATEGORY: Record<string, Category> = {
   GHA058: "best-practice",
   WFJ010: "correctness",
   WFJ011: "correctness",
-  WGC101: "security",
-  WGC102: "security",
-  WGC103: "best-practice",
-  WGC104: "security",
-  WGC105: "security",
-  WGC106: "best-practice",
-  WGC107: "best-practice",
-  WGC108: "best-practice",
-  WGC109: "security",
-  WGC110: "security",
-  WGC111: "correctness",
-  WGC112: "correctness",
-  WGC113: "best-practice",
-  WGC201: "best-practice",
-  WGC202: "security",
-  WGC203: "security",
-  WGC204: "best-practice",
-  WGC301: "best-practice",
-  WGC302: "best-practice",
-  WGC303: "best-practice",
-  WGC401: "correctness",
-  WGC402: "correctness",
-  WGC403: "correctness",
   WGL010: "correctness",
   WGL011: "correctness",
   WGL012: "best-practice",
@@ -449,65 +388,11 @@ export const RULE_CATALOG: Record<string, RuleMeta> = {
   WK8402: meta("WK8402", R, G, "RayCluster missing spec.rayVersion", "Set spec.rayVersion so KubeRay picks the right autoscaler image."),
   WK8403: meta("WK8403", R, G, "rayVersion does not match the head image tag", "Align spec.rayVersion with the Ray version in the head container image."),
 
-  // ── Docker (DKRD) ──────────────────────────────────────────────────
-  DKRD001: meta("DKRD001", M, G, "Service uses :latest or untagged image", "Pin the image to an explicit version tag (ideally a digest).", [SCORECARD_PINNED]),
-  DKRD002: meta("DKRD002", R, G, "Named volume declared but unused", "Remove the unused volume or mount it in a service."),
-  DKRD003: meta("DKRD003", M, G, "Service exposes SSH (port 22)", "Don't expose SSH from a container; use exec/ephemeral access instead.", [DOCKER_SEC]),
-  DKRD010: meta("DKRD010", R, G, "apt-get install without --no-install-recommends", "Add --no-install-recommends to keep images small."),
-  DKRD011: meta("DKRD011", R, G, "ADD used where COPY would do", "Prefer COPY unless fetching a URL or extracting an archive."),
-  DKRD012: meta("DKRD012", M, G, "No USER instruction — container runs as root", "Add a non-root USER instruction.", [DOCKER_SEC]),
-
   // ── CloudFormation cross-cutting (COR / EXT) ───────────────────────
-  // The AWS-specific WAW* entries moved to the aws lexicon's auditCatalog() (#687).
+  // The AWS-specific WAW* entries moved to the aws lexicon's auditCatalog();
+  // the DKRD/AZR/WGC blocks moved to the docker/azure/gcp lexicons (#687).
   COR020: meta("COR020", M, G, "Circular resource dependency", "Break the dependency cycle between resources."),
   EXT001: meta("EXT001", M, G, "Extension constraint violation", "Fix the cross-property constraint flagged by the cfn-lint extension schema."),
-
-  // ── Azure ARM (AZR) ────────────────────────────────────────────────
-  AZR010: meta("AZR010", R, G, "Redundant dependsOn", "Remove dependsOn already implied by reference()/resourceId()."),
-  AZR011: meta("AZR011", M, G, "Missing or invalid apiVersion", "Set a valid YYYY-MM-DD apiVersion on every resource."),
-  AZR012: meta("AZR012", R, G, "Deprecated API version", "Move to a current apiVersion."),
-  AZR013: meta("AZR013", M, G, "Resource missing location", "Add the required location property."),
-  AZR014: meta("AZR014", M, G, "Storage account allows public blob access", "Set allowBlobPublicAccess to false.", [AZ_SEC]),
-  AZR015: meta("AZR015", M, G, "Storage account missing encryption", "Enable encryption services for data at rest.", [AZ_SEC]),
-  AZR016: meta("AZR016", R, G, "Key Vault soft-delete not enabled", "Enable soft-delete."),
-  AZR017: meta("AZR017", R, G, "Key Vault purge protection not enabled", "Enable purge protection."),
-  AZR018: meta("AZR018", R, G, "SQL Server missing auditing", "Enable auditing for compliance and threat detection."),
-  AZR019: meta("AZR019", M, G, "SQL database missing TDE", "Enable Transparent Data Encryption.", [AZ_SEC]),
-  AZR020: meta("AZR020", R, G, "App Service missing managed identity", "Enable a system- or user-assigned identity."),
-  AZR021: meta("AZR021", M, G, "App Service not HTTPS-only", "Set httpsOnly to true.", [AZ_SEC]),
-  AZR022: meta("AZR022", M, G, "App Service min TLS below 1.2", "Set minTlsVersion to 1.2+.", [AZ_SEC]),
-  AZR023: meta("AZR023", R, G, "VM not using a managed disk", "Use a managed disk."),
-  AZR024: meta("AZR024", R, G, "VM missing boot diagnostics", "Enable boot diagnostics."),
-  AZR025: meta("AZR025", R, G, "AKS cluster missing RBAC", "Enable Kubernetes RBAC."),
-  AZR026: meta("AZR026", R, G, "AKS cluster missing network policy", "Configure a networkPolicy."),
-  AZR027: meta("AZR027", M, G, "Container Registry admin user enabled", "Disable the admin user; use Azure AD / service principals.", [AZ_SEC]),
-  AZR028: meta("AZR028", R, G, "Network interface missing NSG", "Associate an NSG to control traffic."),
-  AZR029: meta("AZR029", M, G, "Managed disk missing encryption", "Enable encryption for data at rest.", [AZ_SEC]),
-
-  // ── GCP Config Connector (WGC) ─────────────────────────────────────
-  WGC101: meta("WGC101", M, G, "Storage/SQL without encryption configuration", "Configure encryption (e.g. a CMEK key) for data at rest.", [GCP_SEC]),
-  WGC102: meta("WGC102", M, G, "Public IAM member (allUsers/allAuthenticatedUsers)", "Remove allUsers/allAuthenticatedUsers bindings.", [GCP_SEC]),
-  WGC103: meta("WGC103", R, G, "Missing project-id annotation", "Add the cnrm.cloud.google.com/project-id annotation."),
-  WGC104: meta("WGC104", M, G, "Bucket without uniform bucket-level access", "Enable uniformBucketLevelAccess.", [GCP_SEC]),
-  WGC105: meta("WGC105", M, G, "Cloud SQL open to 0.0.0.0/0", "Restrict authorizedNetworks to known sources.", [GCP_SEC]),
-  WGC106: meta("WGC106", R, G, "Missing deletion-policy annotation", "Add the cnrm.cloud.google.com/deletion-policy annotation."),
-  WGC107: meta("WGC107", R, G, "Bucket versioning disabled", "Enable object versioning."),
-  WGC108: meta("WGC108", R, G, "Cloud SQL backups disabled", "Enable backup configuration."),
-  WGC109: meta("WGC109", M, G, "Firewall open to 0.0.0.0/0", "Restrict sourceRanges to known sources.", [GCP_SEC]),
-  WGC110: meta("WGC110", M, G, "KMS key without rotation", "Set a rotationPeriod on the CryptoKey.", [GCP_SEC]),
-  WGC111: meta("WGC111", M, G, "Reference to an undefined resource", "Point the reference at a resource in the output."),
-  WGC112: meta("WGC112", M, G, "Missing or invalid apiVersion", "Set a valid cnrm.cloud.google.com apiVersion."),
-  WGC113: meta("WGC113", R, G, "Alpha API version", "Move to a beta/GA API version."),
-  WGC201: meta("WGC201", R, G, "Missing managed-by label", "Add the app.kubernetes.io/managed-by label."),
-  WGC202: meta("WGC202", M, G, "Cluster without Workload Identity", "Enable Workload Identity on the ContainerCluster.", [GCP_SEC]),
-  WGC203: meta("WGC203", M, G, "Node pool uses broad cloud-platform scope", "Use narrowly-scoped OAuth scopes instead of cloud-platform.", [GCP_SEC]),
-  WGC204: meta("WGC204", R, G, "Compute instance without Shielded VM", "Enable Shielded VM configuration."),
-  WGC301: meta("WGC301", R, G, "No IAMAuditConfig found", "Configure audit logging via IAMAuditConfig."),
-  WGC302: meta("WGC302", R, G, "No Service (enabled APIs) found", "Declare the GCP APIs you depend on."),
-  WGC303: meta("WGC303", R, G, "No VPC Service Controls perimeter", "Consider an AccessContextManager ServicePerimeter."),
-  WGC401: meta("WGC401", M, G, "Unknown field in resource spec", "Remove the unknown spec field."),
-  WGC402: meta("WGC402", M, G, "Missing required spec field", "Add the required spec field."),
-  WGC403: meta("WGC403", M, G, "Spec field has wrong type/structure", "Fix the field's type/structure."),
 
   // ── Helm (WHM) ─────────────────────────────────────────────────────
   WHM005: meta("WHM005", R, G, "Sub-chart wrapper with no templates", "Deploy the upstream chart directly instead of an empty wrapper."),

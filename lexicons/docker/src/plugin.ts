@@ -9,6 +9,7 @@ import type { LexiconPlugin, IntrinsicDef, InitTemplateSet } from "@intentius/ch
 import { detectTemplate } from "./detect";
 import type { LintRule } from "@intentius/chant/lint/rule";
 import { postSynthChecks as postSynthCheckList } from "./lint/post-synth";
+import { dockerAuditCatalog } from "./lint/audit-catalog";
 import { createSkillsLoader, createDiffTool, createCatalogResource } from "@intentius/chant/lexicon-plugin-helpers";
 import { join, dirname } from "path";
 import { fileURLToPath } from "url";
@@ -20,6 +21,7 @@ import { DockerTemplateParser, DockerTemplateGenerator } from "./import/adapter"
 
 export const dockerPlugin: LexiconPlugin = {
   name: "docker",
+  auditCatalog: () => dockerAuditCatalog,
   // Self-upgrade: the moby/moby tag embedded in the Engine API spec URL + its upstream (#685).
   upstreamPin: {
     file: "src/codegen/versions.ts",
