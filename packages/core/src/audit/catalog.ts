@@ -590,6 +590,54 @@ export const RULE_CATALOG: Record<string, RuleMeta> = {
   WHM502: meta("WHM502", M, G, "Deprecated/invalid Kubernetes API version", "Update to a supported apiVersion."),
 };
 
+/**
+ * Build one catalog entry — the lexicon-facing constructor for
+ * `LexiconPlugin.auditCatalog()` (#687), so a lexicon can declare its own rules'
+ * metadata next to the rules. Unlike the internal `meta()` it takes `category`
+ * explicitly (a lexicon owns its rules' categories) rather than reading core's
+ * curated `RULE_CATEGORY` map: an authority citation still forces `security`,
+ * otherwise the passed `category` (default `best-practice`) applies.
+ */
+export function auditRule(
+  id: string,
+  tier: Tier,
+  fixKind: FixKind,
+  title: string,
+  remediation: string,
+  opts?: { authority?: Authority[]; category?: Category },
+): RuleMeta {
+  const category: Category = opts?.authority && opts.authority.length > 0 ? "security" : (opts?.category ?? "best-practice");
+  return { id, tier, fixKind, category, title, remediation, authority: opts?.authority, yamlBased: true };
+}
+
+/**
+ * Resolve the effective audit catalog for a set of lexicons: core's static
+ * `RULE_CATALOG` with each active lexicon's contributed `auditCatalog()` merged
+ * on top (a lexicon's own entry wins for its ids). This is the aggregation seam
+ * (#687, epic #350) that lets per-provider metadata move out of core into the
+ * lexicon that owns the rules, while the auditor — which already loads those
+ * lexicons to run the rules — reads one merged catalog. Tolerant: a lexicon
+ * that can't be loaded or contributes no catalog is skipped.
+ */
+export async function resolveAuditCatalog(lexicons: string[]): Promise<Record<string, RuleMeta>> {
+  const catalog: Record<string, RuleMeta> = { ...RULE_CATALOG };
+  if (lexicons.length === 0) return catalog;
+  // Lazy import so importing this module doesn't pull in the plugin/config graph
+  // (matches ./core.ts's `load` — see #408).
+  const { loadPlugins } = await import("../cli/plugins");
+  let plugins: Array<{ auditCatalog?(): Record<string, RuleMeta> }>;
+  try {
+    plugins = await loadPlugins(lexicons);
+  } catch {
+    return catalog; // a lexicon package isn't installed — fall back to the static core catalog.
+  }
+  for (const plugin of plugins) {
+    const contributed = plugin?.auditCatalog?.();
+    if (contributed) Object.assign(catalog, contributed);
+  }
+  return catalog;
+}
+
 /** Look up catalog metadata for a check id, if known. */
 export function ruleMeta(id: string): RuleMeta | undefined {
   return RULE_CATALOG[id];

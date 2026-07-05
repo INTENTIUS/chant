@@ -1,5 +1,5 @@
 import { describe, test, expect } from "vitest";
-import { RULE_CATALOG, RULE_CATEGORY, ruleMeta } from "./catalog";
+import { RULE_CATALOG, RULE_CATEGORY, ruleMeta, auditRule, resolveAuditCatalog } from "./catalog";
 import { loadPlugins } from "../cli/plugins";
 
 /** All post-synth check ids the audit can actually surface, from the lexicons. */
@@ -82,5 +82,44 @@ describe("RULE_CATALOG", () => {
     expect(deterministic).toEqual(
       ["GHA017", "GHA021", "GHA029", "GHA030", "GHA033", "WGL031"].sort(),
     );
+  });
+});
+
+describe("auditRule (lexicon-facing catalog constructor, #687)", () => {
+  test("an authority citation forces category=security", () => {
+    const r = auditRule("WAW999", "merge-worthy", "guidance", "T", "fix", {
+      authority: [{ name: "AWS", url: "https://x" }],
+      category: "best-practice", // overridden by the authority
+    });
+    expect(r.category).toBe("security");
+    expect(r.tier).toBe("merge-worthy");
+    expect(r.yamlBased).toBe(true);
+  });
+
+  test("without authority, the explicit category is used (default best-practice)", () => {
+    expect(auditRule("X1", "report-only", "deterministic", "T", "fix", { category: "correctness" }).category).toBe(
+      "correctness",
+    );
+    expect(auditRule("X2", "report-only", "guidance", "T", "fix").category).toBe("best-practice");
+  });
+});
+
+describe("resolveAuditCatalog (#687 aggregation seam)", () => {
+  test("with no lexicons, returns a copy of the static core catalog", async () => {
+    const resolved = await resolveAuditCatalog([]);
+    expect(resolved).toEqual(RULE_CATALOG);
+    expect(resolved).not.toBe(RULE_CATALOG); // a copy, not the same reference
+  });
+
+  test("loading a lexicon that contributes no auditCatalog leaves the static catalog intact", async () => {
+    // aws does not (yet) declare auditCatalog, so the merged result equals static.
+    const resolved = await resolveAuditCatalog(["aws"]);
+    for (const [id, m] of Object.entries(RULE_CATALOG)) {
+      expect(resolved[id]).toEqual(m);
+    }
+  });
+
+  test("an unresolvable lexicon package falls back to the static catalog (tolerant)", async () => {
+    expect(await resolveAuditCatalog(["definitely-not-a-lexicon"])).toEqual(RULE_CATALOG);
   });
 });
