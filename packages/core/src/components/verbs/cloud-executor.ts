@@ -313,6 +313,15 @@ export interface CloudFrontClient {
   createInvalidation(args: CloudFrontInvalidateArgs): Promise<{ invalidationId: string }>;
 }
 
+// ── Snapshot (safety family: on-demand backup before a sticky apply) ──────────
+
+export type SnapshotResourceKind = "dynamodb-table" | "rds-instance" | "opensearch-domain" | "ebs-volume";
+
+export interface SnapshotClient {
+  /** Take an on-demand snapshot/backup of a resource, dispatched by kind; returns the backup/snapshot identifier `rollback-previous` restores from. */
+  create(args: { resource: string; resourceKind: SnapshotResourceKind }): Promise<{ snapshotId: string }>;
+}
+
 export interface CloudExecutor {
   docker: DockerClient;
   ecr: EcrClient;
@@ -325,6 +334,7 @@ export interface CloudExecutor {
   host: HostClient;
   s3: S3Client;
   cloudfront: CloudFrontClient;
+  snapshot: SnapshotClient;
 }
 
 // ── Real executor — shells out to `docker`/`aws`; used outside tests ────────
@@ -694,6 +704,38 @@ const realCloudFront: CloudFrontClient = {
   },
 };
 
+const realSnapshot: SnapshotClient = {
+  async create({ resource, resourceKind }) {
+    const id = `${resource}-${Date.now()}`;
+    switch (resourceKind) {
+      case "dynamodb-table": {
+        const { stdout } = await run(
+          `aws dynamodb create-backup --table-name ${q(resource)} --backup-name ${q(id)} --query 'BackupDetails.BackupArn' --output text`,
+        );
+        return { snapshotId: stdout.trim() };
+      }
+      case "rds-instance": {
+        const { stdout } = await run(
+          `aws rds create-db-snapshot --db-instance-identifier ${q(resource)} --db-snapshot-identifier ${q(id)} --query 'DBSnapshot.DBSnapshotArn' --output text`,
+        );
+        return { snapshotId: stdout.trim() };
+      }
+      case "ebs-volume": {
+        const { stdout } = await run(
+          `aws ec2 create-snapshot --volume-id ${q(resource)} --description ${q(`chant snapshot-before ${id}`)} --query 'SnapshotId' --output text`,
+        );
+        return { snapshotId: stdout.trim() };
+      }
+      case "opensearch-domain":
+        // OpenSearch manual snapshots require a pre-registered S3 repository + a
+        // signed _snapshot REST call, not a one-shot CLI verb — out of scope here.
+        throw new Error(
+          `snapshot-before: opensearch-domain needs a registered S3 snapshot repository; not yet supported (resource "${resource}")`,
+        );
+    }
+  },
+};
+
 /** Build a `CloudExecutor` that shells out to real `docker`/`aws` CLIs and probes real bolt ports. Never used in tests. */
 export function realCloudExecutor(): CloudExecutor {
   return {
@@ -708,6 +750,7 @@ export function realCloudExecutor(): CloudExecutor {
     host: realHost,
     s3: realS3,
     cloudfront: realCloudFront,
+    snapshot: realSnapshot,
   };
 }
 

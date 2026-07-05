@@ -33,7 +33,7 @@ The set is a plugin registry, not a closed enum. Verbs group into families. A ve
 | **job submission** | `emr-start-job-run` / `emr-submit-step`‡ | point a running compute service at an artifact; reusable for Glue / Batch / Step Functions |
 | **host / code delivery** | `code-deploy`, `copy-to-host`‡, `remote-exec`‡ | `code-deploy` = AWS CodeDeploy; the others are SSM/SSH host verbs |
 | **wait / verify** | `wait-for-stack`, `wait-steady-state`, `wait-cluster-healthy`, `wait-endpoint`, `wait-job`, `health-gate` | |
-| **safety / rollback** | `snapshot-before`‡, `rollback-previous`‡ | |
+| **safety / rollback** | `snapshot-before`, `rollback-previous`‡ | |
 | **escape hatch** | `shell` | typed, lint-flagged |
 
 A genuinely new apply *family* (job submission was one) is written once and then reused across every component of that shape. A new *component* is a declaration only. This is why the family count grows sub-linearly against components — see [the cloud boundary](/chant/components/cloud-boundary/) for how each family's leaf maps per cloud.
