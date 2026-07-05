@@ -138,6 +138,7 @@ export interface CopyToHostOutput {
 export function createCopyToHostCapability(executor: CloudExecutor = defaultCloudExecutor()): Capability<CopyToHostInput, CopyToHostOutput> {
   return {
     kind: "copy-to-host",
+    rollbackPolicy: "needs-opt-out",
     async run(_ctx, input) {
       const { stdout } = await executor.host.exec({
         host: input.host,
@@ -178,6 +179,7 @@ export interface RemoteExecOutput {
 export function createRemoteExecCapability(executor: CloudExecutor = defaultCloudExecutor()): Capability<RemoteExecInput, RemoteExecOutput> {
   return {
     kind: "remote-exec",
+    rollbackPolicy: "needs-opt-out",
     async run(_ctx, input) {
       if (input.via === "ssh") {
         throw new Error(`remote-exec: ssh transport not yet supported for host "${input.host}" — use the default ssm transport`);

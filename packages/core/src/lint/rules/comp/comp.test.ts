@@ -14,14 +14,29 @@
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { runComponentChecks } from "../../component-checks";
+import type { RollbackPolicy } from "../../../components/capability";
 import { loadComponentChecks } from "./index";
 
 const FIXTURES_DIR = join(import.meta.dirname, "..", "__fixtures__", "comp");
 const checks = loadComponentChecks();
 
-async function lintFixture(ruleId: string, kind: "pass" | "fail") {
+/**
+ * Rollback dispositions the COMP003 fixtures reference, standing in for what
+ * `chant lint` derives from the project's registry (`cfn-deploy` has a native
+ * `rollback`; `run-migration` declares `needs-opt-out` in the aws lexicon).
+ */
+const FIXTURE_ROLLBACK_POLICIES = new Map<string, RollbackPolicy>([
+  ["cfn-deploy", "native"],
+  ["run-migration", "needs-opt-out"],
+]);
+
+async function lintFixture(
+  ruleId: string,
+  kind: "pass" | "fail",
+  registryContext?: { knownKinds?: ReadonlySet<string>; rollbackPolicies?: ReadonlyMap<string, RollbackPolicy> },
+) {
   const dir = join(FIXTURES_DIR, ruleId.toLowerCase(), kind);
-  return runComponentChecks(dir, checks);
+  return runComponentChecks(dir, checks, registryContext);
 }
 
 describe("COMP000: component discovery errors", () => {
@@ -97,7 +112,7 @@ describe("COMP002: dangling-wiring-ref", () => {
 
 describe("COMP003: mutating-no-rollback", () => {
   it("flags a mutating step (run-migration) with no native rollback and no opt-out", async () => {
-    const diagnostics = await lintFixture("comp003", "fail");
+    const diagnostics = await lintFixture("comp003", "fail", { rollbackPolicies: FIXTURE_ROLLBACK_POLICIES });
     const hits = diagnostics.filter((d) => d.checkId === "COMP003");
     expect(hits).toHaveLength(1);
     expect(hits[0].component).toBe("migrator");
@@ -105,7 +120,7 @@ describe("COMP003: mutating-no-rollback", () => {
   });
 
   it("does not flag a step with a native rollback (cfn-deploy) or an explicit noRollback opt-out", async () => {
-    const diagnostics = await lintFixture("comp003", "pass");
+    const diagnostics = await lintFixture("comp003", "pass", { rollbackPolicies: FIXTURE_ROLLBACK_POLICIES });
     expect(diagnostics.filter((d) => d.checkId === "COMP003")).toHaveLength(0);
   });
 
@@ -117,6 +132,7 @@ describe("COMP003: mutating-no-rollback", () => {
     // every other COMP rule uses.
     const [comp003] = checks.filter((c) => c.id === "COMP003");
     const ctx = {
+      rollbackPolicies: FIXTURE_ROLLBACK_POLICIES,
       components: new Map([
         [
           "fanout-cluster",
@@ -153,6 +169,7 @@ describe("COMP003: mutating-no-rollback", () => {
     // flagged — object identity, not phase-name string, decides "same phase".
     const [comp003] = checks.filter((c) => c.id === "COMP003");
     const ctx = {
+      rollbackPolicies: FIXTURE_ROLLBACK_POLICIES,
       components: new Map([
         [
           "fanout-cluster",

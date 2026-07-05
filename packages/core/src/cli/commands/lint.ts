@@ -9,6 +9,7 @@ import { loadCoreRules } from "../../lint/rules/index";
 import { loadComponentChecks } from "../../lint/rules/comp/index";
 import { runComponentChecks, type ComponentCheckDiagnostic } from "../../lint/component-checks";
 import { buildCapabilityRegistry } from "../../components/capability-plugin-loader";
+import type { RollbackPolicy } from "../../components/capability";
 import { rule } from "../../lint/declarative";
 import { watchDirectory, formatTimestamp, formatChangedFiles } from "../watch";
 import { formatError, formatInfo } from "../format";
@@ -225,20 +226,31 @@ function getDefaultRules(
  * docs/lint-rules/composition.mdx for this documented limitation.
  */
 /**
- * Build the set of capability kinds registered for this project — core's
- * starter set plus whatever the active lexicons contribute (e.g. `cfn-deploy`
- * when `lexicons: ["aws"]`) — so composition checks like COMP005 know every
- * real verb rather than hard-coding a list. Tolerant: any failure (an
- * unresolvable lexicon, a config-less directory) returns `undefined`, letting
- * the checks fall back to core's starter set.
+ * Build the registry-derived context composition checks need — the set of
+ * capability kinds registered for this project (core's starter set plus the
+ * active lexicons' leaves, e.g. `cfn-deploy` when `lexicons: ["aws"]`) and each
+ * verb's rollback disposition — so COMP005/COMP003 read real registry facts
+ * rather than hard-coding verb lists. A verb's rollback policy is its own
+ * declaration (`rollbackPolicy`), else derived: a paired `rollback` method is
+ * `"native"`, everything else `"none-by-design"`. Tolerant: any failure (an
+ * unresolvable lexicon, a config-less directory) returns `undefined` fields,
+ * letting the checks fall back to core's starter set.
  */
-async function resolveKnownKinds(infraPath: string): Promise<ReadonlySet<string> | undefined> {
+async function resolveRegistryContext(
+  infraPath: string,
+): Promise<{ knownKinds?: ReadonlySet<string>; rollbackPolicies?: ReadonlyMap<string, RollbackPolicy> }> {
   try {
     const lexicons = await resolveProjectLexicons(infraPath).catch(() => [] as string[]);
     const registry = await buildCapabilityRegistry({ lexicons });
-    return new Set(registry.kinds());
+    const kinds = registry.kinds();
+    const rollbackPolicies = new Map<string, RollbackPolicy>();
+    for (const kind of kinds) {
+      const capability = registry.resolve(kind);
+      rollbackPolicies.set(kind, capability.rollbackPolicy ?? (capability.rollback ? "native" : "none-by-design"));
+    }
+    return { knownKinds: new Set(kinds), rollbackPolicies };
   } catch {
-    return undefined;
+    return {};
   }
 }
 
@@ -249,8 +261,8 @@ async function runComponentCheckDiagnostics(
   const checks = loadComponentChecks();
   const allCheckIds = new Set(checks.map((c) => c.id));
 
-  const knownKinds = await resolveKnownKinds(infraPath);
-  const raw = await runComponentChecks(infraPath, checks, knownKinds);
+  const registryContext = await resolveRegistryContext(infraPath);
+  const raw = await runComponentChecks(infraPath, checks, registryContext);
 
   const fileDirectivesCache = new Map<string, ReturnType<typeof parseDisableComments>>();
   const fileLevelDisable = (

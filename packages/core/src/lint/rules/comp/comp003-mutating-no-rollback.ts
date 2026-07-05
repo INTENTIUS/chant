@@ -6,27 +6,18 @@
  * rollback and no explicit opt-out reason" guardrail from epic #551 §7 and
  * §"Failure modes".
  *
- * chant's starter capability set (../../../components/starter-plugin.ts)
- * already resolves this for its own apply/host-delivery leaves: `cfn-deploy`,
- * `ecs-update-service`, `lambda-deploy`, and `code-deploy` declare a native
- * `rollback` (see ../../../components/verbs/apply.ts,
- * ../../../components/verbs/host-delivery.ts); the whole publish family
- * (`docker-build`/`zip-package`/`jvm-build`, `publish-image`,
- * `publish-artifact`/`load-image-on-host`) and the wait/verify family declare
- * none *by design*, documented inline in their own module — an already-built
- * or already-published, immutable, content-addressed artifact is not itself a
- * problem to compensate (see ../../../components/verbs/publish.ts's own
- * `publish-image` docstring, which `publish-artifact`/`load-image-on-host`
- * share verbatim). Lint cannot see a capability's own `rollback`
- * implementation (components declare data, not capability instances — see
- * ../../component-checks.ts), so this rule only flags the remaining
- * starter-set families that are mutating but have neither a native rollback
- * nor a documented no-rollback-by-design reason: `s3-sync`, `cdn-invalidate`,
- * `run-migration`, `emr-start-job-run`, `emr-submit-step`, `copy-to-host`,
- * `remote-exec` (all still typed stubs per ../../../components/capability.ts's
- * "no cloud implementation yet" contract) — plus any capability `kind`
- * outside the starter set entirely (a third-party plugin lint has no
- * rollback knowledge of).
+ * Each capability declares its rollback disposition via `rollbackPolicy`
+ * (../../../components/capability.ts): `"native"` (a paired `rollback`, e.g.
+ * `cfn-deploy`/`ecs-update-service`/`lambda-deploy`/`code-deploy`),
+ * `"none-by-design"` (nothing to compensate — the build/publish and wait/verify
+ * families, whose outputs are immutable/content-addressed or read-only), or
+ * `"needs-opt-out"` (a mutating verb with no native rollback and no safe undo,
+ * e.g. `s3-sync`/`run-migration`). This rule flags only `"needs-opt-out"` steps
+ * lacking an explicit opt-out. It reads the disposition from the project's
+ * capability registry (`ctx.rollbackPolicies`, built by `chant lint` from the
+ * active lexicons + core starter — the same seam COMP005 uses for
+ * `ctx.knownKinds`), never a hard-coded verb list, so the aws leaves'
+ * dispositions come from the aws lexicon that owns them.
  *
  * The opt-out: since the capability interface and schema are out of scope for
  * this issue (`Step` already has `additionalProperties: true` — see
@@ -47,29 +38,21 @@
 import type { ComponentCheck, ComponentCheckContext, ComponentCheckDiagnostic } from "../../component-checks";
 import { walkComponent } from "./support";
 
-/** Starter-set mutating kinds with a known native rollback (../../../components/verbs/apply.ts, host-delivery.ts) — never flagged. */
-const NATIVE_ROLLBACK_KINDS = new Set(["cfn-deploy", "ecs-update-service", "lambda-deploy", "code-deploy"]);
-
-/** Starter-set mutating kinds documented as no-rollback-by-design (build/publish: nothing to compensate — an already-built/published, immutable, content-addressed artifact; see ../../../components/verbs/build.ts, publish.ts) — never flagged. */
-const NO_ROLLBACK_BY_DESIGN_KINDS = new Set([
-  "docker-build",
-  "zip-package",
-  "jvm-build",
-  "publish-image",
-  "publish-artifact",
-  "load-image-on-host",
-]);
-
-/** Starter-set mutating kinds with neither — flagged unless the step/component opts out explicitly. */
-const NEEDS_OPT_OUT_KINDS = new Set([
-  "s3-sync",
-  "cdn-invalidate",
-  "run-migration",
-  "emr-start-job-run",
-  "emr-submit-step",
-  "copy-to-host",
-  "remote-exec",
-]);
+/**
+ * A step is flagged only when its verb's rollback disposition is
+ * `"needs-opt-out"` — a mutating capability with no native rollback and no safe
+ * undo. That disposition is the capability's own declaration (`rollbackPolicy`,
+ * ../../../components/capability.ts), surfaced to this rule via
+ * `ctx.rollbackPolicies` (built from the project's registry by `chant lint`,
+ * exactly like `ctx.knownKinds` for COMP005). Verbs with a native rollback
+ * (`cfn-deploy`, …) or nothing to compensate (build/publish/wait) are
+ * `"native"`/`"none-by-design"` and never flagged. When no registry was
+ * resolved (a direct unit test), an unknown verb defaults to
+ * `"none-by-design"` — the rule stays silent rather than guessing.
+ */
+function policyFor(ctx: ComponentCheckContext, kind: string): string {
+  return ctx.rollbackPolicies?.get(kind) ?? "none-by-design";
+}
 
 /** A sibling step kind that itself is (or supplies) compensation — its presence in the same phase is treated as the component handling rollback explicitly, not silence. */
 const COMPENSATION_SIBLING_KINDS = new Set(["rollback-previous", "snapshot-before"]);
@@ -104,8 +87,7 @@ export const comp003MutatingNoRollbackRule: ComponentCheck = {
 
       for (const walked of steps) {
         const { step, phaseName, phase } = walked;
-        if (!NEEDS_OPT_OUT_KINDS.has(step.kind)) continue;
-        if (NATIVE_ROLLBACK_KINDS.has(step.kind) || NO_ROLLBACK_BY_DESIGN_KINDS.has(step.kind)) continue;
+        if (policyFor(ctx, step.kind) !== "needs-opt-out") continue;
 
         const noRollback = (step as { noRollback?: unknown }).noRollback;
         const hasStepOptOut = typeof noRollback === "string" && noRollback.trim().length > 0;

@@ -322,6 +322,7 @@ export interface S3SyncOutput {
 export function createS3SyncCapability(executor: CloudExecutor = defaultCloudExecutor()): Capability<S3SyncInput, S3SyncOutput> {
   return {
     kind: "s3-sync",
+    rollbackPolicy: "needs-opt-out",
     async run(_ctx, input) {
       return executor.s3.sync({ from: input.from, to: input.to, delete: input.delete });
     },
@@ -349,6 +350,7 @@ export interface CdnInvalidateOutput {
 export function createCdnInvalidateCapability(executor: CloudExecutor = defaultCloudExecutor()): Capability<CdnInvalidateInput, CdnInvalidateOutput> {
   return {
     kind: "cdn-invalidate",
+    rollbackPolicy: "needs-opt-out",
     async run(_ctx, input) {
       return executor.cloudfront.createInvalidation({
         distributionId: input.distributionId,
@@ -439,6 +441,7 @@ function parseMigrationReport(text: string, appliedFallback: boolean): RunMigrat
 export function createRunMigrationCapability(executor: CloudExecutor = defaultCloudExecutor()): Capability<RunMigrationInput, RunMigrationOutput> {
   return {
     kind: "run-migration",
+    rollbackPolicy: "needs-opt-out",
     async run(_ctx, input) {
       const target = input.target;
       switch (target.via) {

@@ -25,6 +25,7 @@
 import type { Component } from "../components/component";
 import type { DiscoveredComponent } from "../components/discover";
 import { discoverComponents } from "../components/discover";
+import type { RollbackPolicy } from "../components/capability";
 import type { Severity } from "./rule";
 
 /** One discovered component, keyed by its declared name, with the file it came from. */
@@ -47,6 +48,14 @@ export interface ComponentCheckContext {
    * (e.g. COMP005) read this rather than hard-coding a verb list.
    */
   knownKinds?: ReadonlySet<string>;
+  /**
+   * Each registered verb's rollback disposition (`native`/`none-by-design`/
+   * `needs-opt-out`), derived from the project's capability registry the same
+   * way `knownKinds` is. Read by COMP003 instead of a hard-coded verb list;
+   * undefined when no registry was resolved (a check then treats every kind as
+   * `none-by-design`, i.e. flags nothing).
+   */
+  rollbackPolicies?: ReadonlyMap<string, RollbackPolicy>;
 }
 
 /** A diagnostic from a component composition check. Shaped like `PostSynthDiagnostic`, plus a `file` so it can be merged into `LintDiagnostic`s and reported per-file like every other lint diagnostic. */
@@ -88,7 +97,7 @@ export interface ComponentCheck {
 export async function runComponentChecks(
   path: string,
   checks: ComponentCheck[],
-  knownKinds?: ReadonlySet<string>,
+  registryContext?: Pick<ComponentCheckContext, "knownKinds" | "rollbackPolicies">,
 ): Promise<ComponentCheckDiagnostic[]> {
   if (checks.length === 0) return [];
 
@@ -110,7 +119,11 @@ export async function runComponentChecks(
     components.set(name, { component: discovered.component, filePath: discovered.filePath });
   }
 
-  const ctx: ComponentCheckContext = { components, knownKinds };
+  const ctx: ComponentCheckContext = {
+    components,
+    knownKinds: registryContext?.knownKinds,
+    rollbackPolicies: registryContext?.rollbackPolicies,
+  };
   for (const check of checks) {
     diagnostics.push(...check.check(ctx));
   }

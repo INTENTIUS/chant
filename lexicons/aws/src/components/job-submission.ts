@@ -67,6 +67,7 @@ export function createEmrStartJobRunCapability(
 ): Capability<EmrStartJobRunInput, EmrStartJobRunOutput> {
   return {
     kind: "emr-start-job-run",
+    rollbackPolicy: "needs-opt-out",
     async run(ctx, input) {
       const clusterOrApplicationId =
         input.clusterOrApplicationId ?? (ctx.vars?.emrApplicationId as string | undefined) ?? ctx.component;
@@ -118,6 +119,7 @@ export function createEmrSubmitStepCapability(
 ): Capability<EmrSubmitStepInput, EmrSubmitStepOutput> {
   return {
     kind: "emr-submit-step",
+    rollbackPolicy: "needs-opt-out",
     async run(_ctx, input) {
       const { stepId } = await executor.emr.addStep({
         clusterId: input.clusterId,
