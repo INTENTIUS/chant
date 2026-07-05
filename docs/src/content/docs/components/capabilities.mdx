@@ -31,7 +31,7 @@ The set is a plugin registry, not a closed enum. Verbs group into families. A ve
 | **publish** | `publish-image`, `load-image-on-host`, `publish-asset` / `publish-artifact` | deploy-time, promote by identity; an interface with backends |
 | **apply** | `cfn-deploy`, `ecs-update-service`, `lambda-deploy`, `s3-sync`, `cdn-invalidate`, `run-migration`‡ | `cfn-deploy` carries safety options (changeset preview, `onReplace`, `stageGsi`) |
 | **job submission** | `emr-start-job-run` / `emr-submit-step`‡ | point a running compute service at an artifact; reusable for Glue / Batch / Step Functions |
-| **host / code delivery** | `code-deploy`, `copy-to-host`‡, `remote-exec`‡ | `code-deploy` = AWS CodeDeploy; the others are SSM/SSH host verbs |
+| **host / code delivery** | `code-deploy`, `copy-to-host`, `remote-exec` | `code-deploy` = AWS CodeDeploy; the others are SSM host verbs (SSH transport pending) |
 | **wait / verify** | `wait-for-stack`, `wait-steady-state`, `wait-cluster-healthy`, `wait-endpoint`, `wait-job`, `health-gate` | |
 | **safety / rollback** | `snapshot-before`, `rollback-previous` | |
 | **escape hatch** | `shell` | typed, lint-flagged |

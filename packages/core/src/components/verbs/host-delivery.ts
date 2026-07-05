@@ -15,13 +15,12 @@
  *
  * `code-deploy` is a real implementation (#557, epic #551) over the
  * injectable `CloudExecutor` (./cloud-executor.ts) — the capability the
- * Neo4j fan-out pilot uses once per instance. `copy-to-host`/`remote-exec`
- * are non-AWS-leaf/non-pilot verbs and stay typed stubs — out of scope for
- * #557; see ../capability.ts for the "no cloud implementation yet" contract.
+ * Neo4j fan-out pilot uses once per instance. `copy-to-host` and `remote-exec`
+ * are also real, over the executor's `host.exec` (SSM Run Command, waited to
+ * completion); the SSH transport is not yet implemented.
  */
 
 import type { Capability } from "../capability";
-import { stubCapability } from "./stub";
 import { defaultCloudExecutor, type CloudExecutor } from "./cloud-executor";
 
 // ── code-deploy (AWS CodeDeploy) ─────────────────────────────────────────────
@@ -131,9 +130,26 @@ export interface CopyToHostOutput {
   bytesCopied: number;
 }
 
-/** Copy a file/archive to a host, via SSM or SSH depending on config. Cloud-agnostic. */
-export const copyToHostCapability: Capability<CopyToHostInput, CopyToHostOutput> =
-  stubCapability("copy-to-host");
+/**
+ * Copy a file to a host via SSM Run Command: the host pulls `from` (an S3 URI)
+ * to `to` with `aws s3 cp`, then `stat`s the result for the byte count. `from`
+ * must be reachable from the host (typically a prior `publish-artifact`'s URI).
+ */
+export function createCopyToHostCapability(executor: CloudExecutor = defaultCloudExecutor()): Capability<CopyToHostInput, CopyToHostOutput> {
+  return {
+    kind: "copy-to-host",
+    async run(_ctx, input) {
+      const { stdout } = await executor.host.exec({
+        host: input.host,
+        command: `aws s3 cp ${input.from} ${input.to} >/dev/null 2>&1 && stat -c %s ${input.to}`,
+      });
+      return { bytesCopied: Number.parseInt(stdout.trim(), 10) || 0 };
+    },
+  };
+}
+
+/** Default `copy-to-host` capability, backed by the real `CloudExecutor`. */
+export const copyToHostCapability: Capability<CopyToHostInput, CopyToHostOutput> = createCopyToHostCapability();
 
 // ── remote-exec ──────────────────────────────────────────────────────────────
 
@@ -155,6 +171,21 @@ export interface RemoteExecOutput {
   stdout: string;
 }
 
-/** Run a command on a remote host via SSM Run Command or SSH. Cloud-agnostic. */
-export const remoteExecCapability: Capability<RemoteExecInput, RemoteExecOutput> =
-  stubCapability("remote-exec");
+/**
+ * Run a command on a remote host via SSM Run Command, waiting for it to finish
+ * and returning its stdout + exit code. SSH transport is not yet supported.
+ */
+export function createRemoteExecCapability(executor: CloudExecutor = defaultCloudExecutor()): Capability<RemoteExecInput, RemoteExecOutput> {
+  return {
+    kind: "remote-exec",
+    async run(_ctx, input) {
+      if (input.via === "ssh") {
+        throw new Error(`remote-exec: ssh transport not yet supported for host "${input.host}" — use the default ssm transport`);
+      }
+      return executor.host.exec({ host: input.host, command: input.command, cwd: input.cwd });
+    },
+  };
+}
+
+/** Default `remote-exec` capability, backed by the real `CloudExecutor`. */
+export const remoteExecCapability: Capability<RemoteExecInput, RemoteExecOutput> = createRemoteExecCapability();

@@ -218,6 +218,8 @@ export interface HostClient {
   copyFile(args: HostCopyFileArgs): Promise<void>;
   /** Run `docker load` on the host against a previously copied tarball; returns the digest `docker load` reports, straight into the host's local Docker store (no registry involved). */
   dockerLoad(args: HostDockerLoadArgs): Promise<{ digest: string }>;
+  /** Run a shell command on a host via SSM Run Command, waiting for it to finish; returns captured stdout and exit code (rejects on a non-zero SSM invocation). */
+  exec(args: { host: string; command: string; cwd?: string }): Promise<{ stdout: string; exitCode: number }>;
 }
 
 // ── Lambda (#558's one new capability: lambda-deploy) ───────────────────────
@@ -593,6 +595,28 @@ const realHost: HostClient = {
     );
     const match = stdout.match(/[Ll]oaded image(?: ID)?:\s*(\S+)/);
     return { digest: match?.[1] ?? stdout.trim() };
+  },
+  async exec(args) {
+    const command = args.cwd ? `cd ${args.cwd} && ${args.command}` : args.command;
+    const { stdout: idOut } = await run(
+      `aws ssm send-command --instance-ids ${q(args.host)} --document-name AWS-RunShellScript ` +
+        `--parameters ${q(JSON.stringify({ commands: [command] }))} --query 'Command.CommandId' --output text`,
+    );
+    const commandId = idOut.trim();
+    for (;;) {
+      await sleep(2000);
+      const { stdout } = await run(
+        `aws ssm get-command-invocation --command-id ${q(commandId)} --instance-id ${q(args.host)} --output json`,
+      ).catch(() => ({ stdout: "" }));
+      if (!stdout) continue; // invocation not registered yet
+      const inv = JSON.parse(stdout) as { Status: string; ResponseCode?: number; StandardOutputContent?: string; StandardErrorContent?: string };
+      if (["Success", "Failed", "Cancelled", "TimedOut"].includes(inv.Status)) {
+        if (inv.Status !== "Success") {
+          throw new Error(`remote-exec on ${args.host} ${inv.Status}: ${inv.StandardErrorContent?.trim() ?? ""}`);
+        }
+        return { stdout: inv.StandardOutputContent ?? "", exitCode: inv.ResponseCode ?? 0 };
+      }
+    }
   },
 };
 
