@@ -7,6 +7,11 @@
 // signing/vuln config) — it's `supply-chain-demo-signed`'s sign/verify/
 // vuln-gate steps that pick these up, once cosign/syft/grype are installed.
 export default {
+  // `extract-config-bom` parses a synthesized CloudFormation template, so it is
+  // contributed by the aws lexicon (#684); loading it here lets the component's
+  // ConfigBom phase resolve that verb. `generate-sbom`/`sign`/etc. are agnostic
+  // and come from core.
+  lexicons: ["aws"],
   sbom: {
     // Every generate-sbom step in this example composes its own format, but a
     // project can drop that per-step field entirely once this default is set.
