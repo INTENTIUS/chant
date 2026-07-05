@@ -320,6 +320,8 @@ export type SnapshotResourceKind = "dynamodb-table" | "rds-instance" | "opensear
 export interface SnapshotClient {
   /** Take an on-demand snapshot/backup of a resource, dispatched by kind; returns the backup/snapshot identifier `rollback-previous` restores from. */
   create(args: { resource: string; resourceKind: SnapshotResourceKind }): Promise<{ snapshotId: string }>;
+  /** Restore a resource from a prior snapshot/backup, dispatched by the snapshot-id shape (DynamoDB/RDS ARN); waits for the restore to become available. */
+  restore(args: { resource: string; snapshotId: string }): Promise<void>;
 }
 
 export interface CloudExecutor {
@@ -733,6 +735,20 @@ const realSnapshot: SnapshotClient = {
           `snapshot-before: opensearch-domain needs a registered S3 snapshot repository; not yet supported (resource "${resource}")`,
         );
     }
+  },
+  async restore({ resource, snapshotId }) {
+    // Dispatch by the snapshot-id shape produced by `create` above.
+    if (snapshotId.includes(":dynamodb:") || snapshotId.includes("/backup/")) {
+      await run(`aws dynamodb restore-table-from-backup --target-table-name ${q(resource)} --backup-arn ${q(snapshotId)}`);
+      await run(`aws dynamodb wait table-exists --table-name ${q(resource)}`);
+      return;
+    }
+    if (snapshotId.includes(":rds:") || snapshotId.startsWith("rds:")) {
+      await run(`aws rds restore-db-instance-from-db-snapshot --db-instance-identifier ${q(resource)} --db-snapshot-identifier ${q(snapshotId)}`);
+      await run(`aws rds wait db-instance-available --db-instance-identifier ${q(resource)}`);
+      return;
+    }
+    throw new Error(`rollback-previous: cannot infer the restore mechanism from snapshot id "${snapshotId}" (expected a DynamoDB or RDS backup ARN)`);
   },
 };
 

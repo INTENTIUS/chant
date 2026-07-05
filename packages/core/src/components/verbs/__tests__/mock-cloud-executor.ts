@@ -348,6 +348,9 @@ export function createMockCloudExecutor(options: MockCloudExecutorOptions = {}):
       record("snapshot", "create", args);
       return { snapshotId: `snap-mock-${args.resourceKind}-${args.resource}` };
     },
+    async restore(args) {
+      record("snapshot", "restore", args);
+    },
   };
 
   return {
