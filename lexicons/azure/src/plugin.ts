@@ -6,6 +6,7 @@ import type { TypeScriptGenerator } from "@intentius/chant/import/generator";
 import type { CompletionContext, CompletionItem, HoverContext, HoverInfo } from "@intentius/chant/lsp/types";
 import type { McpToolContribution, McpResourceContribution } from "@intentius/chant/mcp/types";
 import { postSynthChecks as postSynthCheckList } from "./lint/post-synth";
+import { azureAuditCatalog } from "./lint/audit-catalog";
 import { createSkillsLoader } from "@intentius/chant/lexicon-plugin-helpers";
 import { readFileSync, readdirSync, existsSync } from "fs";
 import { join, dirname } from "path";
@@ -27,6 +28,7 @@ import { azureHover } from "./lsp/hover";
  */
 export const azurePlugin: LexiconPlugin = {
   name: "azure",
+  auditCatalog: () => azureAuditCatalog,
   serializer: azureSerializer,
 
   lintRules(): LintRule[] {

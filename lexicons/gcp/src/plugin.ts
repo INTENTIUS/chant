@@ -12,6 +12,7 @@ import type { TemplateParser } from "@intentius/chant/import/parser";
 import type { TypeScriptGenerator } from "@intentius/chant/import/generator";
 import type { CompletionContext, CompletionItem, HoverContext, HoverInfo } from "@intentius/chant/lsp/types";
 import { postSynthChecks as postSynthCheckList } from "./lint/post-synth";
+import { gcpAuditCatalog } from "./lint/audit-catalog";
 import { createSkillsLoader, createDiffTool, createCatalogResource } from "@intentius/chant/lexicon-plugin-helpers";
 import { join, dirname } from "path";
 import { fileURLToPath } from "url";
@@ -26,6 +27,7 @@ import { gcpHover } from "./lsp/hover";
 
 export const gcpPlugin: LexiconPlugin = {
   name: "gcp",
+  auditCatalog: () => gcpAuditCatalog,
   // Self-upgrade: where the pinned Config Connector (KCC) version lives + its upstream (#685).
   upstreamPin: {
     file: "src/spec/fetch.ts",
