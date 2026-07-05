@@ -8,6 +8,7 @@ import type { TypeScriptGenerator } from "@intentius/chant/import/generator";
 import type { CompletionContext, CompletionItem, HoverContext, HoverInfo } from "@intentius/chant/lsp/types";
 import { discoverLintRules } from "@intentius/chant/lint/discover";
 import { postSynthChecks as postSynthCheckList } from "./lint/post-synth";
+import { awsAuditCatalog } from "./lint/audit-catalog";
 import { createSkillsLoader, createDiffTool, createCatalogResource } from "@intentius/chant/lexicon-plugin-helpers";
 import { readFileSync } from "fs";
 import { join, dirname } from "path";
@@ -28,6 +29,8 @@ import { awsHover } from "./lsp/hover";
 export const awsPlugin: LexiconPlugin = {
   name: "aws",
   serializer: awsSerializer,
+  // Audit rule metadata for this lexicon's WAW* checks (#687).
+  auditCatalog: () => awsAuditCatalog,
 
   lintRules(): LintRule[] {
     const rulesDir = join(dirname(fileURLToPath(import.meta.url)), "lint", "rules");
