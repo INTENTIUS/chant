@@ -19,22 +19,24 @@
  * ../../../components/capability.ts's own docstring defines the discipline
  * ("never named after the component that happens to use it").
  *
- * Every `kind` in the bounded starter verb set
- * (../../../components/starter-plugin.ts's `STARTER_VERB_FAMILIES`) is
- * excluded from this check unconditionally, regardless of whether its
- * dash-separated segments happen to overlap a component's name. Without this
- * exclusion, a project with a component literally named e.g. "stack", "job",
- * "image", or "host" would falsely flag the starter verbs
- * `wait-for-stack`/`emr-start-job-run`/`publish-image`/`load-image-on-host`
- * for every component in the project — a real capability's verb-ness is
- * already an established fact of the registry, not something to
- * re-adjudicate by substring match.
+ * Every registered `kind` is excluded from this check unconditionally,
+ * regardless of whether its dash-separated segments happen to overlap a
+ * component's name. The allowlist comes from `ctx.knownKinds` — the kinds the
+ * project's capability registry actually resolves, which `chant lint` builds
+ * from the project's config (core's starter set plus the active lexicons'
+ * leaves, e.g. `cfn-deploy`/`wait-for-stack` when `lexicons: ["aws"]`). Without
+ * this exclusion, a component literally named "stack", "job", "image", or
+ * "host" would falsely flag `wait-for-stack`/`emr-start-job-run`/`publish-image`/
+ * `load-image-on-host` — a real capability's verb-ness is an established fact of
+ * the registry, not something to re-adjudicate by substring match. When no
+ * registry was resolved (a direct unit test), it falls back to core's starter
+ * set (`CORE_STARTER_KINDS`).
  *
  * Triggers on: `{ kind: "search-service" }` or `{ kind: "deploy-search-service" }`
- * in any component, when "search-service" is a discovered component's name
- * and neither form is a known starter-set verb.
+ * in any component, when "search-service" is a discovered component's name and
+ * neither form is a registered verb.
  * OK: `{ kind: "cfn-deploy" }`, `{ kind: "ecs-update-service" }`,
- * `{ kind: "wait-for-stack" }` — verb-named, and/or a known starter verb.
+ * `{ kind: "wait-for-stack" }` — verb-named, and/or a registered verb.
  */
 
 import { STARTER_VERB_FAMILIES } from "../../../components/starter-plugin";
@@ -42,42 +44,13 @@ import type { ComponentCheck, ComponentCheckContext, ComponentCheckDiagnostic } 
 import { walkComponent } from "./support";
 
 /**
- * Verb kinds contributed by the bundled cloud lexicons (currently aws), which
- * used to live in the core starter set. They are still well-known verbs, so
- * they stay on the allowlist — otherwise a component literally named "stack",
- * "job", "image", or "host" would falsely flag `wait-for-stack`/`emr-*`/
- * `publish-image`/`load-image-on-host`. This static list is a heuristic
- * allowlist only (never an implementation); the ideal source is the registered
- * kinds of the project's active capability plugins, which the lint context does
- * not yet carry — until then, this keeps the false-positive guard intact.
+ * Fallback allowlist when the check runs without a resolved registry (e.g. a
+ * direct unit test): core's own starter verbs. The real `chant lint` run passes
+ * `ctx.knownKinds` — every kind the project's registry actually resolves,
+ * including the active lexicons' leaves (`cfn-deploy`, `wait-for-stack`, …) —
+ * so a real project never depends on this fallback for its cloud verbs.
  */
-const BUNDLED_LEXICON_VERB_KINDS = [
-  "cfn-deploy",
-  "ecs-update-service",
-  "lambda-deploy",
-  "s3-sync",
-  "cdn-invalidate",
-  "run-migration",
-  "emr-start-job-run",
-  "emr-submit-step",
-  "code-deploy",
-  "copy-to-host",
-  "remote-exec",
-  "publish-image",
-  "load-image-on-host",
-  "publish-artifact",
-  "wait-for-stack",
-  "wait-steady-state",
-  "wait-job",
-  "snapshot-before",
-  "rollback-previous",
-];
-
-/** Every well-known verb kind — the core starter set plus the bundled lexicons' verbs — never flagged, no matter what a component happens to be named. Widened to `Set<string>` since a step's `kind` (an open, unbounded capability registry — see ../../../components/capability.ts) is plain `string`, not a literal union. */
-const STARTER_KINDS: Set<string> = new Set([
-  ...Object.values(STARTER_VERB_FAMILIES).flat(),
-  ...BUNDLED_LEXICON_VERB_KINDS,
-]);
+const CORE_STARTER_KINDS: ReadonlySet<string> = new Set(Object.values(STARTER_VERB_FAMILIES).flat());
 
 /** True if `kind` is exactly a component name, or that name embedded with `-`-joined affixes (e.g. "deploy-search-service", "search-service-apply"). */
 function kindNamesComponent(kind: string, componentName: string): boolean {
@@ -101,13 +74,19 @@ export const comp005CapabilityKindIsNounRule: ComponentCheck = {
     const componentNames = [...ctx.components.keys()];
     if (componentNames.length === 0) return diagnostics;
 
+    // Every known verb — the project's registered kinds when `chant lint`
+    // resolved a registry (includes active lexicons' leaves), else core's
+    // starter set. A known verb is never a "noun named after the component",
+    // regardless of any substring overlap with a component's name.
+    const knownKinds = ctx.knownKinds ?? CORE_STARTER_KINDS;
+
     for (const [name, { component, filePath }] of ctx.components) {
       const { steps } = walkComponent(component);
       const reported = new Set<string>();
 
       for (const { step, phaseName } of steps) {
         if (step.kind === "gate") continue;
-        if (STARTER_KINDS.has(step.kind)) continue;
+        if (knownKinds.has(step.kind)) continue;
         const matchedComponent = componentNames.find((cn) => kindNamesComponent(step.kind, cn));
         if (!matchedComponent) continue;
 

@@ -217,13 +217,22 @@ describe("COMP005: capability-kind-is-noun", () => {
     expect(diagnostics.filter((d) => d.checkId === "COMP005")).toHaveLength(0);
   });
 
-  it("regression: never flags a known starter-set verb, even when a component's name is a substring of it (e.g. a component named \"stack\")", () => {
-    // Before the STARTER_KINDS guard, a component literally named "stack",
-    // "job", "image", or "host" would falsely flag wait-for-stack /
-    // emr-start-job-run / publish-image / load-image-on-host for every
-    // component in the project purely by dash-segment substring collision.
+  it("regression: never flags a registered verb, even when a component's name is a substring of it (e.g. a component named \"stack\")", () => {
+    // A component literally named "stack", "job", "image", or "host" must not
+    // falsely flag wait-for-stack / emr-start-job-run / publish-image /
+    // load-image-on-host by dash-segment substring collision. `ctx.knownKinds`
+    // is what `chant lint` passes for an aws-active project — the registry's
+    // resolved kinds, which include these lexicon leaves.
     const [comp005] = checks.filter((c) => c.id === "COMP005");
+    const knownKinds = new Set([
+      "docker-build",
+      "wait-for-stack",
+      "emr-start-job-run",
+      "publish-image",
+      "load-image-on-host",
+    ]);
     const ctx = {
+      knownKinds,
       components: new Map([
         [
           "stack",
@@ -273,6 +282,52 @@ describe("COMP005: capability-kind-is-noun", () => {
       ]),
     };
     expect(comp005.check(ctx as never)).toEqual([]);
+  });
+
+  it("falls back to the core starter set when no registry (knownKinds) was resolved — a core verb whose name overlaps a component is still not flagged", () => {
+    const [comp005] = checks.filter((c) => c.id === "COMP005");
+    const ctx = {
+      // no knownKinds -> fall back to core starter (includes wait-cluster-healthy)
+      components: new Map([
+        [
+          "cluster",
+          {
+            component: {
+              name: "cluster",
+              dependsOn: [],
+              deploy: [{ phase: "Verify", steps: [{ kind: "wait-cluster-healthy", size: 1 }] }],
+            },
+            filePath: "cluster.component.ts",
+          },
+        ],
+      ]),
+    };
+    expect(comp005.check(ctx as never)).toEqual([]);
+  });
+
+  it("without a resolved registry, an active-lexicon verb it can't know about IS flagged when it collides with a component name (registry-driven, not hard-coded)", () => {
+    const [comp005] = checks.filter((c) => c.id === "COMP005");
+    const ctx = {
+      // no knownKinds -> `wait-for-stack` is not a core verb, so for a component
+      // literally named "stack" it reads as a noun-collision. A real `chant lint`
+      // run passes knownKinds and avoids this; this documents the fallback edge.
+      components: new Map([
+        [
+          "stack",
+          {
+            component: {
+              name: "stack",
+              dependsOn: [],
+              deploy: [{ phase: "Verify", steps: [{ kind: "wait-for-stack", stack: "stack" }] }],
+            },
+            filePath: "stack.component.ts",
+          },
+        ],
+      ]),
+    };
+    const diagnostics = comp005.check(ctx as never);
+    expect(diagnostics).toHaveLength(1);
+    expect(diagnostics[0].checkId).toBe("COMP005");
   });
 });
 

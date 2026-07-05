@@ -37,6 +37,16 @@ export interface ComponentCheckEntry {
 export interface ComponentCheckContext {
   /** Every discovered component, keyed by `component.name`. */
   components: Map<string, ComponentCheckEntry>;
+  /**
+   * Every capability `kind` registered for this project — core's starter set
+   * plus whatever the active lexicons contribute (e.g. `cfn-deploy` when
+   * `lexicons: ["aws"]`). Supplied by the `chant lint` CLI, which builds the
+   * registry from the project's config; undefined when a check runs without a
+   * resolved registry (e.g. a direct unit test), in which case a rule should
+   * fall back to core's starter set. Rules that key off "is this a known verb"
+   * (e.g. COMP005) read this rather than hard-coding a verb list.
+   */
+  knownKinds?: ReadonlySet<string>;
 }
 
 /** A diagnostic from a component composition check. Shaped like `PostSynthDiagnostic`, plus a `file` so it can be merged into `LintDiagnostic`s and reported per-file like every other lint diagnostic. */
@@ -78,6 +88,7 @@ export interface ComponentCheck {
 export async function runComponentChecks(
   path: string,
   checks: ComponentCheck[],
+  knownKinds?: ReadonlySet<string>,
 ): Promise<ComponentCheckDiagnostic[]> {
   if (checks.length === 0) return [];
 
@@ -99,7 +110,7 @@ export async function runComponentChecks(
     components.set(name, { component: discovered.component, filePath: discovered.filePath });
   }
 
-  const ctx: ComponentCheckContext = { components };
+  const ctx: ComponentCheckContext = { components, knownKinds };
   for (const check of checks) {
     diagnostics.push(...check.check(ctx));
   }
