@@ -9,6 +9,7 @@ import type { LexiconPlugin, IntrinsicDef, InitTemplateSet } from "@intentius/ch
 import { detectTemplate } from "./detect";
 import { discoverLintRules } from "@intentius/chant/lint/discover";
 import { postSynthChecks as postSynthCheckList } from "./lint/post-synth";
+import { helmAuditCatalog } from "./lint/audit-catalog";
 import { createSkillsLoader, createDiffTool } from "@intentius/chant/lexicon-plugin-helpers";
 import { join, dirname } from "path";
 import { fileURLToPath } from "url";
@@ -16,6 +17,7 @@ import { helmSerializer } from "./serializer";
 
 export const helmPlugin: LexiconPlugin = {
   name: "helm",
+  auditCatalog: () => helmAuditCatalog,
   serializer: helmSerializer,
 
   lintRules() {

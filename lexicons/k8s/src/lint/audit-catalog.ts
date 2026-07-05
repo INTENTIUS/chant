@@ -1,0 +1,37 @@
+/**
+ * The k8s lexicon's chant audit catalog — metadata for its post-synth rules
+ * (WK8 and ARGO Kubernetes-manifest rules). Contributed via k8sPlugin.auditCatalog() (#687).
+ */
+import { auditRule, K8S_PSS, K8S_SECRETS, SCORECARD_PINNED, type RuleMeta } from "@intentius/chant/audit/catalog";
+
+export const k8sAuditCatalog: Record<string, RuleMeta> = {
+  ARGO002: auditRule("ARGO002", "merge-worthy", "guidance", "Argo Application references an undeclared AppProject", "Declare the named AppProject or reference an existing project.", { category: "correctness" }),
+  ARGO003: auditRule("ARGO003", "merge-worthy", "guidance", "Argo Application targets an unregistered cluster", "Point spec.destination at a registered cluster or the in-cluster target.", { category: "correctness" }),
+  ARGO005: auditRule("ARGO005", "report-only", "guidance", "Argo source.path may not resolve", "Ensure the source path exists under the build root.", { category: "best-practice" }),
+  WK8005: auditRule("WK8005", "merge-worthy", "guidance", "Hardcoded secret in env var", "Use a secretKeyRef instead of a literal value, and rotate the secret.", { authority: [K8S_SECRETS] }),
+  WK8006: auditRule("WK8006", "merge-worthy", "guidance", "Image uses :latest or no tag", "Pin the image to an explicit version tag (ideally a digest).", { authority: [SCORECARD_PINNED] }),
+  WK8041: auditRule("WK8041", "merge-worthy", "guidance", "Hardcoded API key in env var", "Move the key to a Secret and rotate it.", { authority: [K8S_SECRETS] }),
+  WK8042: auditRule("WK8042", "merge-worthy", "guidance", "Private key stored in a ConfigMap", "Store private keys in a Secret, not a ConfigMap.", { authority: [K8S_SECRETS] }),
+  WK8101: auditRule("WK8101", "merge-worthy", "guidance", "Deployment selector does not match template labels", "Align spec.selector with the pod template labels.", { category: "best-practice" }),
+  WK8102: auditRule("WK8102", "report-only", "guidance", "Resource missing metadata labels", "Add metadata labels for filtering and tooling.", { category: "best-practice" }),
+  WK8103: auditRule("WK8103", "merge-worthy", "guidance", "Container missing name", "Add the required container `name`.", { category: "best-practice" }),
+  WK8104: auditRule("WK8104", "report-only", "guidance", "Container ports not named", "Name ports for clearer Service/NetworkPolicy config.", { category: "best-practice" }),
+  WK8105: auditRule("WK8105", "report-only", "guidance", "imagePullPolicy not explicit", "Set imagePullPolicy explicitly to avoid surprising defaults.", { category: "best-practice" }),
+  WK8201: auditRule("WK8201", "report-only", "guidance", "Container missing resource limits", "Set CPU and memory limits.", { category: "best-practice" }),
+  WK8202: auditRule("WK8202", "merge-worthy", "guidance", "Privileged container", "Remove privileged: true; grant only the specific capabilities needed.", { authority: [K8S_PSS] }),
+  WK8203: auditRule("WK8203", "merge-worthy", "guidance", "Root filesystem is writable", "Set readOnlyRootFilesystem: true.", { authority: [K8S_PSS] }),
+  WK8204: auditRule("WK8204", "merge-worthy", "guidance", "Container may run as root", "Set runAsNonRoot: true (and a non-zero runAsUser).", { authority: [K8S_PSS] }),
+  WK8205: auditRule("WK8205", "merge-worthy", "guidance", "Capabilities not dropped", "drop: [ALL] and add back only what is required.", { authority: [K8S_PSS] }),
+  WK8207: auditRule("WK8207", "merge-worthy", "guidance", "Pod uses host network", "Remove hostNetwork; it bypasses network isolation.", { authority: [K8S_PSS] }),
+  WK8208: auditRule("WK8208", "merge-worthy", "guidance", "Pod shares host PID namespace", "Remove hostPID.", { authority: [K8S_PSS] }),
+  WK8209: auditRule("WK8209", "merge-worthy", "guidance", "Pod shares host IPC namespace", "Remove hostIPC.", { authority: [K8S_PSS] }),
+  WK8301: auditRule("WK8301", "report-only", "guidance", "Container missing probes", "Add liveness and readiness probes.", { category: "best-practice" }),
+  WK8302: auditRule("WK8302", "report-only", "guidance", "Deployment has a single replica", "Use replicas >= 2 for availability.", { category: "best-practice" }),
+  WK8303: auditRule("WK8303", "report-only", "guidance", "No PodDisruptionBudget for an HA Deployment", "Add a PDB to protect availability during disruptions.", { category: "best-practice" }),
+  WK8304: auditRule("WK8304", "report-only", "guidance", "SSL redirect without a certificate", "Provide a certificate and HTTPS listen-ports for the ssl-redirect annotation.", { category: "best-practice" }),
+  WK8305: auditRule("WK8305", "merge-worthy", "guidance", "Ingress backend port does not match the Service", "Point the Ingress backend at a declared Service port.", { category: "best-practice" }),
+  WK8306: auditRule("WK8306", "merge-worthy", "guidance", "Container command starts with a flag", "The first command element should be a binary, not a flag.", { category: "best-practice" }),
+  WK8401: auditRule("WK8401", "merge-worthy", "guidance", "shmSize exceeds the container memory limit", "Lower shmSize or raise the memory limit so the pod can schedule.", { category: "best-practice" }),
+  WK8402: auditRule("WK8402", "report-only", "guidance", "RayCluster missing spec.rayVersion", "Set spec.rayVersion so KubeRay picks the right autoscaler image.", { category: "best-practice" }),
+  WK8403: auditRule("WK8403", "report-only", "guidance", "rayVersion does not match the head image tag", "Align spec.rayVersion with the Ray version in the head container image.", { category: "best-practice" }),
+};

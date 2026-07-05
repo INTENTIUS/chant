@@ -10,6 +10,7 @@
 
 import type { LexiconPlugin, InitTemplateSet, MigrationSource } from "@intentius/chant/lexicon";
 import { postSynthChecks as postSynthCheckList } from "./lint/post-synth";
+import { forgejoAuditCatalog } from "./lint/audit-catalog";
 import { createSkillsLoader, createDiffTool } from "@intentius/chant/lexicon-plugin-helpers";
 import { join, dirname } from "path";
 import { fileURLToPath } from "url";
@@ -21,6 +22,7 @@ const reuseNote =
 
 export const forgejoPlugin: LexiconPlugin = {
   name: "forgejo",
+  auditCatalog: () => forgejoAuditCatalog,
   serializer: forgejoSerializer,
 
   initTemplates(template?: string): InitTemplateSet {
