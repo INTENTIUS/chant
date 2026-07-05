@@ -8,6 +8,7 @@ import type { ArtifactIntegrity } from "./lexicon-integrity";
 import type { CompletionContext, CompletionItem, HoverContext, HoverInfo, CodeActionContext, CodeAction } from "./lsp/types";
 import type { McpToolContribution, McpResourceContribution } from "./mcp/types";
 import type { DriverComponent } from "./components/driver";
+import type { RuleMeta } from "./audit/catalog";
 
 /**
  * Manifest for a packaged lexicon — metadata embedded in the tarball.
@@ -253,6 +254,15 @@ export interface LexiconPlugin {
 
   /** Return post-synthesis checks for build validation */
   postSynthChecks?(): PostSynthCheck[];
+
+  /**
+   * Audit catalog metadata (title/tier/fix/authority/category) for this
+   * lexicon's `postSynthChecks`, keyed by check id — the per-provider half of
+   * `chant audit`'s rule catalog (#687, epic #350). Core aggregates these over
+   * its static catalog via `resolveAuditCatalog` (./audit/catalog.ts). Omit
+   * for lexicons whose rule metadata still lives in core's static catalog.
+   */
+  auditCatalog?(): Record<string, RuleMeta>;
 
   /** Return intrinsic function definitions */
   intrinsics?(): IntrinsicDef[];
