@@ -15,7 +15,7 @@
 import { exec } from "node:child_process";
 import { promisify } from "node:util";
 import type { ResourceMetadata } from "@intentius/chant/lexicon";
-import { hasOwnershipMarker, classifyOwnership } from "@intentius/chant/ownership";
+import { hasOwnershipMarker, classifyOwnership, LABEL_OWNERSHIP_KEYS } from "@intentius/chant/ownership";
 
 const execAsync = promisify(exec);
 
@@ -101,7 +101,7 @@ export async function describeResources(options: {
       const { stdout } = await execAsync(cmd);
       const obj: KubectlResponse = JSON.parse(stdout);
       // owned filter: skip resources not carrying chant's marker label.
-      if (options.owned && !hasOwnershipMarker(obj.metadata?.labels, "label")) {
+      if (options.owned && !hasOwnershipMarker(obj.metadata?.labels, LABEL_OWNERSHIP_KEYS)) {
         continue;
       }
       result[entityName] = {
@@ -109,7 +109,7 @@ export async function describeResources(options: {
         physicalId: obj.metadata?.uid,
         status: statusFromCC(obj),
         lastUpdated: obj.metadata?.creationTimestamp,
-        ownership: classifyOwnership(obj.metadata?.labels, "label"),
+        ownership: classifyOwnership(obj.metadata?.labels, LABEL_OWNERSHIP_KEYS),
         attributes: pruneUndefined({
           namespace: obj.metadata?.namespace,
           labels: obj.metadata?.labels,

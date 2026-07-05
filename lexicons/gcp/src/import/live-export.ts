@@ -1,5 +1,5 @@
 import type { ExportedTemplate, ResourceSelector } from "@intentius/chant/lexicon";
-import { hasOwnershipMarker } from "@intentius/chant/ownership";
+import { hasOwnershipMarker, LABEL_OWNERSHIP_KEYS } from "@intentius/chant/ownership";
 import { GcpParser } from "./parser";
 
 /** Server-written metadata fields, stripped unless `verbatim`. */
@@ -61,7 +61,7 @@ export function buildExportFromObjects(
     ? objects.filter((o) => {
         if (!isRecord(o)) return false;
         const labels = isRecord(o.metadata) ? (o.metadata.labels as Record<string, unknown>) : undefined;
-        return hasOwnershipMarker(labels, "label");
+        return hasOwnershipMarker(labels, LABEL_OWNERSHIP_KEYS);
       })
     : objects;
 

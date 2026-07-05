@@ -1,5 +1,6 @@
 import type { ExportedTemplate, ResourceSelector } from "@intentius/chant/lexicon";
 import { hasOwnershipMarker } from "@intentius/chant/ownership";
+import { AZURE_TAG_OWNERSHIP_KEYS } from "../ownership";
 import { ArmParser } from "./parser";
 
 /**
@@ -35,7 +36,7 @@ export function parseExportedTemplate(
       if (selector?.name !== undefined && r.logicalId !== selector.name) return false;
       if (owned) {
         const tags = (r.properties as { tags?: Record<string, unknown> }).tags;
-        if (!hasOwnershipMarker(tags, "azure-tag")) return false;
+        if (!hasOwnershipMarker(tags, AZURE_TAG_OWNERSHIP_KEYS)) return false;
       }
       return true;
     }),

@@ -2,6 +2,7 @@ import type { Declarable, CoreParameter } from "@intentius/chant/declarable";
 import { isPropertyDeclarable } from "@intentius/chant/declarable";
 import type { Serializer, SerializerResult, SerializeContext } from "@intentius/chant/serializer";
 import { ownershipEntries, type OwnershipMarker } from "@intentius/chant/ownership";
+import { AWS_TAG_OWNERSHIP_KEYS } from "./ownership";
 import type { LexiconOutput } from "@intentius/chant/lexicon-output";
 import { walkValue, type SerializerVisitor } from "@intentius/chant/serializer-walker";
 import { isChildProject, type ChildProjectInstance } from "@intentius/chant/child-project";
@@ -155,7 +156,7 @@ function serializeToTemplate(
   // on key collisions.
   const defaultTagEntries: TagEntry[] = [];
   if (ownership) {
-    for (const [Key, Value] of Object.entries(ownershipEntries("aws-tag", ownership))) {
+    for (const [Key, Value] of Object.entries(ownershipEntries(AWS_TAG_OWNERSHIP_KEYS, ownership))) {
       defaultTagEntries.push({ Key, Value });
     }
   }

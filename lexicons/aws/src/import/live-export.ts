@@ -1,5 +1,6 @@
 import type { ExportedTemplate, ResourceSelector } from "@intentius/chant/lexicon";
 import { hasOwnershipMarker, tagArrayToMap } from "@intentius/chant/ownership";
+import { AWS_TAG_OWNERSHIP_KEYS } from "../ownership";
 import { CFParser } from "./parser";
 
 /**
@@ -30,7 +31,7 @@ export function parseStackTemplate(
       if (selector?.name !== undefined && r.logicalId !== selector.name) return false;
       if (owned) {
         const tags = (r.properties as { Tags?: Array<{ Key?: string; Value?: unknown }> }).Tags;
-        if (!hasOwnershipMarker(tagArrayToMap(tags), "aws-tag")) return false;
+        if (!hasOwnershipMarker(tagArrayToMap(tags), AWS_TAG_OWNERSHIP_KEYS)) return false;
       }
       return true;
     }),

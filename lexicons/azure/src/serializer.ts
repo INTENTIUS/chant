@@ -14,6 +14,7 @@ import type { Declarable, CoreParameter } from "@intentius/chant/declarable";
 import { isPropertyDeclarable } from "@intentius/chant/declarable";
 import type { Serializer, SerializerResult, SerializeContext } from "@intentius/chant/serializer";
 import { ownershipEntries, type OwnershipMarker } from "@intentius/chant/ownership";
+import { AZURE_TAG_OWNERSHIP_KEYS } from "./ownership";
 import type { LexiconOutput } from "@intentius/chant/lexicon-output";
 import { walkValue, type SerializerVisitor } from "@intentius/chant/serializer-walker";
 import { isChildProject, type ChildProjectInstance } from "@intentius/chant/child-project";
@@ -191,7 +192,7 @@ function serializeToTemplate(
   // first so user default tags (and explicit per-resource tags) win.
   const defaultTagEntries: TagEntry[] = [];
   if (ownership) {
-    for (const [key, value] of Object.entries(ownershipEntries("azure-tag", ownership))) {
+    for (const [key, value] of Object.entries(ownershipEntries(AZURE_TAG_OWNERSHIP_KEYS, ownership))) {
       defaultTagEntries.push({ key, value });
     }
   }
