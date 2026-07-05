@@ -333,6 +333,9 @@ export function createMockCloudExecutor(options: MockCloudExecutorOptions = {}):
         deleted: args.delete ? (options.s3Sync?.deleted ?? 0) : 0,
       };
     },
+    async cp(args) {
+      record("s3", "cp", args);
+    },
   };
   const cloudfront: CloudExecutor["cloudfront"] = {
     async createInvalidation(args) {

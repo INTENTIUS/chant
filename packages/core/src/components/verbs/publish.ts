@@ -23,9 +23,10 @@
  * the per-environment choice between them — env config, not a pipeline fork,
  * per docs/components/build-archive.mdx#backend-selection-is-per-environment.
  *
- * `publish-artifact` remains a non-AWS-leaf/non-pilot verb and stays a typed
- * stub — out of scope for #557/#564; see ../capability.ts for the "no cloud
- * implementation yet" contract.
+ * `publish-artifact` (aliased `publish-asset`) uploads a single archive
+ * artifact (jar/zip/asset) to S3 via `aws s3 cp` through the same
+ * endpoint-aware `CloudExecutor`, returning the object URI and a content digest
+ * of the uploaded bytes — the non-image sibling of `publish-image`.
  *
  * **#610 addition: publish-time SBOM/BOM referrer attach.** `publish-image`
  * optionally registers the archive's SBOM (and, when given, the
@@ -45,7 +46,8 @@
  */
 
 import type { Capability } from "../capability";
-import { stubCapability } from "./stub";
+import { readFileSync } from "node:fs";
+import { createHash } from "node:crypto";
 import { defaultCloudExecutor, type CloudExecutor } from "./cloud-executor";
 import { archiveRelativePath } from "./build-archive";
 import { defaultProcessRunner, q, type ProcessRunner } from "./process-runner";
@@ -314,8 +316,31 @@ export interface PublishArtifactOutput {
 }
 
 /** Promote a non-image artifact (jar, zip, arbitrary asset) from the archive to S3/CodeArtifact. */
-export const publishArtifactCapability: Capability<PublishArtifactInput, PublishArtifactOutput> =
-  stubCapability("publish-artifact");
+/**
+ * Publish a single archive artifact (a jar, zip, or asset) to S3 via `aws s3 cp`
+ * (endpoint-aware through the `CloudExecutor`). Returns the object's URI —
+ * referenced downstream as `@<component>.publish.uri` — and a content digest of
+ * the exact bytes uploaded.
+ */
+export function createPublishArtifactCapability(
+  executor: CloudExecutor = defaultCloudExecutor(),
+): Capability<PublishArtifactInput, PublishArtifactOutput> {
+  return {
+    kind: "publish-artifact",
+    async run(_ctx, input) {
+      const localPath = archiveRelativePath(input.from);
+      const digest = `sha256:${createHash("sha256").update(readFileSync(localPath)).digest("hex")}`;
+      const basename = localPath.split("/").pop() ?? localPath;
+      const uri = input.to.endsWith("/") ? `${input.to}${basename}` : input.to;
+      await executor.s3.cp({ from: localPath, to: uri });
+      return { uri, digest };
+    },
+  };
+}
 
-/** Alias for `publishArtifact` — same capability, the docs/epic use both names for the same verb. */
+/** Default `publish-artifact` capability, backed by the real `CloudExecutor`. */
+export const publishArtifactCapability: Capability<PublishArtifactInput, PublishArtifactOutput> =
+  createPublishArtifactCapability();
+
+/** Alias for `publish-artifact` — same capability, the docs/epic use both names for the same verb. */
 export const publishAssetCapability = publishArtifactCapability;
