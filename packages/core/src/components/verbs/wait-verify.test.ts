@@ -4,6 +4,8 @@ import {
   createWaitSteadyStateCapability,
   createWaitClusterHealthyCapability,
   createWaitJobCapability,
+  createWaitEndpointCapability,
+  createHealthGateCapability,
 } from "./wait-verify";
 import { createMockCloudExecutor } from "./__tests__/mock-cloud-executor";
 
@@ -128,5 +130,57 @@ describe("wait-job (#561 — EMR job-run poll)", () => {
   it("declares no rollback — a job-run poll is read-only", () => {
     const capability = createWaitJobCapability(createMockCloudExecutor().executor);
     expect(capability.rollback).toBeUndefined();
+  });
+});
+
+const httpCtx = { env: "dev", component: "svc" };
+
+describe("wait-endpoint (#557)", () => {
+  it("returns the status once the endpoint matches an expected code", async () => {
+    let n = 0;
+    const cap = createWaitEndpointCapability(async () => (++n < 2 ? { status: 503, ok: false } : { status: 200, ok: true }));
+    const out = await cap.run(httpCtx, { url: "http://x/health", intervalMs: 0 });
+    expect(out.status).toBe(200);
+    expect(n).toBe(2); // retried once before success
+  });
+
+  it("keeps polling when fetch throws (endpoint not up yet)", async () => {
+    let n = 0;
+    const cap = createWaitEndpointCapability(async () => {
+      if (++n < 2) throw new Error("ECONNREFUSED");
+      return { status: 200, ok: true };
+    });
+    const out = await cap.run(httpCtx, { url: "http://x", intervalMs: 0 });
+    expect(out.status).toBe(200);
+  });
+
+  it("times out when the endpoint never matches", async () => {
+    const cap = createWaitEndpointCapability(async () => ({ status: 500, ok: false }));
+    await expect(cap.run(httpCtx, { url: "http://x", intervalMs: 0, timeoutMs: 0 })).rejects.toThrow("wait-endpoint");
+  });
+
+  it("declares no rollback — a wait is read-only", () => {
+    expect(createWaitEndpointCapability().rollback).toBeUndefined();
+  });
+});
+
+describe("health-gate (#557)", () => {
+  it("passes only after the required consecutive successes (a failure resets the streak)", async () => {
+    const results = [true, false, true, true];
+    let i = 0;
+    const cap = createHealthGateCapability(async () => ({ status: 200, ok: results[i++] ?? true }));
+    const out = await cap.run(httpCtx, { path: "http://x/healthz", consecutiveSuccesses: 2, intervalMs: 0 });
+    expect(out.healthy).toBe(true);
+    expect(i).toBe(4); // ok, fail(reset), ok, ok -> two in a row
+  });
+
+  it("treats a thrown fetch as unhealthy", async () => {
+    let i = 0;
+    const cap = createHealthGateCapability(async () => {
+      if (++i < 2) throw new Error("down");
+      return { status: 200, ok: true };
+    });
+    const out = await cap.run(httpCtx, { path: "http://x", intervalMs: 0 });
+    expect(out.healthy).toBe(true);
   });
 });

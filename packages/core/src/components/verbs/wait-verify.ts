@@ -15,8 +15,11 @@
  */
 
 import type { Capability } from "../capability";
-import { stubCapability } from "./stub";
 import { defaultCloudExecutor, sleep, type CloudExecutor } from "./cloud-executor";
+
+/** Minimal fetch surface the HTTP waits (`wait-endpoint`, `health-gate`) need — injectable for tests. */
+type Fetcher = (url: string) => Promise<{ status: number; ok: boolean }>;
+const defaultFetcher: Fetcher = (url) => fetch(url);
 
 // ── wait-for-stack ───────────────────────────────────────────────────────────
 
@@ -186,9 +189,32 @@ export interface WaitEndpointOutput {
 }
 
 /** Poll an HTTP(S) endpoint until it responds with an expected status. Cloud-agnostic. */
-export const waitEndpointCapability: Capability<WaitEndpointInput, WaitEndpointOutput> = stubCapability(
-  "wait-endpoint",
-);
+export function createWaitEndpointCapability(fetcher: Fetcher = defaultFetcher): Capability<WaitEndpointInput, WaitEndpointOutput> {
+  return {
+    kind: "wait-endpoint",
+    async run(_ctx, input) {
+      const expect = input.expectStatus ?? [200];
+      const intervalMs = input.intervalMs ?? 5_000;
+      const timeoutMs = input.timeoutMs ?? 5 * 60_000;
+      const deadline = Date.now() + timeoutMs;
+      for (;;) {
+        try {
+          const res = await fetcher(input.url);
+          if (expect.includes(res.status)) return { status: res.status };
+        } catch {
+          // not reachable yet — keep polling until the deadline
+        }
+        if (Date.now() >= deadline) {
+          throw new Error(`wait-endpoint: ${input.url} did not return ${expect.join("/")} within ${timeoutMs}ms`);
+        }
+        await sleep(intervalMs);
+      }
+    },
+  };
+}
+
+/** Default `wait-endpoint` capability, backed by the global `fetch`. */
+export const waitEndpointCapability: Capability<WaitEndpointInput, WaitEndpointOutput> = createWaitEndpointCapability();
 
 // ── wait-job ─────────────────────────────────────────────────────────────────
 
@@ -252,6 +278,32 @@ export interface HealthGateOutput {
 }
 
 /** Block progression until a health check passes — the generic post-deploy verification gate. Cloud-agnostic. */
-export const healthGateCapability: Capability<HealthGateInput, HealthGateOutput> = stubCapability(
-  "health-gate",
-);
+export function createHealthGateCapability(fetcher: Fetcher = defaultFetcher): Capability<HealthGateInput, HealthGateOutput> {
+  return {
+    kind: "health-gate",
+    async run(_ctx, input) {
+      const need = input.consecutiveSuccesses ?? 1;
+      const intervalMs = input.intervalMs ?? 5_000;
+      // HealthGateInput has no timeout field; cap the wait so a never-healthy target fails rather than hangs.
+      const deadline = Date.now() + 5 * 60_000;
+      let streak = 0;
+      for (;;) {
+        let ok = false;
+        try {
+          ok = (await fetcher(input.path)).ok;
+        } catch {
+          ok = false;
+        }
+        streak = ok ? streak + 1 : 0;
+        if (streak >= need) return { healthy: true };
+        if (Date.now() >= deadline) {
+          throw new Error(`health-gate: ${input.path} did not reach ${need} consecutive healthy check(s) within 300000ms`);
+        }
+        await sleep(intervalMs);
+      }
+    },
+  };
+}
+
+/** Default `health-gate` capability, backed by the global `fetch`. */
+export const healthGateCapability: Capability<HealthGateInput, HealthGateOutput> = createHealthGateCapability();
