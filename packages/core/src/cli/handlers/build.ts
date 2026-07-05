@@ -3,9 +3,7 @@ import { dirname, resolve } from "node:path";
 import { buildCommand, buildCommandWatch, printErrors, printWarnings, resolveBuildFormat } from "../commands/build";
 import { formatError, formatInfo, formatSuccess, formatBold } from "../format";
 import type { CommandContext } from "../registry";
-import { generateComponentsPipeline, type GenerateLexicon } from "../../components/cli-support";
-
-const GENERATE_LEXICONS: GenerateLexicon[] = ["gitlab"];
+import { generateComponentsPipeline } from "../../components/cli-support";
 
 /**
  * `chant build --components --generate <lexicon>` — generate mode (#563,
@@ -18,17 +16,12 @@ const GENERATE_LEXICONS: GenerateLexicon[] = ["gitlab"];
 async function runGenerateComponents(ctx: CommandContext): Promise<number> {
   const { args } = ctx;
   const lexicon = args.generate as string;
-  if (!GENERATE_LEXICONS.includes(lexicon as GenerateLexicon)) {
-    console.error(
-      formatError({
-        message: `Unsupported --generate lexicon "${lexicon}". Supported: ${GENERATE_LEXICONS.join(", ")}.`,
-        hint: "Generate mode ships GitLab CI first (#563); GitHub/Forgejo are tracked separately.",
-      }),
-    );
-    return 1;
-  }
 
-  const result = await generateComponentsPipeline(args.path, lexicon as GenerateLexicon, {
+  // Which lexicons support generate mode is a property of the loaded lexicon
+  // plugins (those implementing `generateComponentPipeline`, #688), not a
+  // hard-coded core list — `generateComponentsPipeline` returns a descriptive
+  // error when the target lexicon has no generator.
+  const result = await generateComponentsPipeline(args.path, lexicon, {
     env: args.env,
   });
 

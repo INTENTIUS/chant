@@ -45,12 +45,6 @@ export {
   findComponentGate,
   resolveComponentTargets,
 } from "./cli-support";
-export {
-  type GeneratedJob,
-  type GenerateGitlabOptions,
-  type GenerateGitlabResult,
-  generateGitlabPipeline,
-} from "./generate-gitlab";
 export { renderDriverHuman, renderDriverJson } from "./driver-output";
 export {
   type Capability,

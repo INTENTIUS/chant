@@ -32,54 +32,15 @@
  * touching the component declarations.
  */
 
-import { emitYAML } from "../yaml";
-import { resolveComponentGraph, type DriverComponent } from "./driver";
+import { emitYAML } from "@intentius/chant/yaml";
+import { resolveComponentGraph, type DriverComponent } from "@intentius/chant/components/driver";
+import type {
+  ComponentPipelineJob as GeneratedJob,
+  ComponentPipelineOptions as GenerateGitlabOptions,
+  ComponentPipelineResult as GenerateGitlabResult,
+} from "@intentius/chant/lexicon";
 
-/** One resolved job GitLab CI will run for one component. */
-export interface GeneratedJob {
-  /** The GitLab CI job name (kebab-case, safe as a YAML key). */
-  jobName: string;
-  /** The component this job triggers. */
-  component: string;
-  /** The stage this job runs in — one stage per wave, `wave-1`, `wave-2`, ... */
-  stage: string;
-  /** Direct dependency job names this job `needs:` (mirrors the component's `dependsOn` edges). */
-  needs: string[];
-}
-
-export interface GenerateGitlabOptions {
-  /** Target environment threaded into the trigger command and job `environment:` (default: "production"). */
-  env?: string;
-  /**
-   * The trigger command run for each component, as an argv array with `{name}`
-   * substituted for the component name — the seam a cross-cutting change to
-   * *how components are invoked* goes through once, not per pipeline.
-   * Default: `["chant", "run", "--components", "{name}", "--env", "<env>"]`.
-   */
-  runCommand?: string[];
-  /**
-   * Extra script lines appended to every job, after the trigger command. This
-   * is the one-place seam for a cross-cutting step (image signing, a
-   * post-deploy notification, ...) — add it here once and it appears in
-   * every generated job, never hand-edited per pipeline.
-   */
-  extraScript?: string[];
-  /** Script lines run before the trigger command in every job (e.g. auth/login steps). */
-  beforeScript?: string[];
-  /** Docker image every job runs in (default: "node:22-slim" — anything with a chant-compatible runtime). */
-  image?: string;
-  /** Optional GitLab CI `variables:` block emitted at the top level. */
-  variables?: Record<string, string>;
-}
-
-export interface GenerateGitlabResult {
-  /** The synthesized `.gitlab-ci.yml` content. */
-  yaml: string;
-  /** Wave-ordered stage names, matching `resolveComponentGraph`'s waves 1:1. */
-  stages: string[];
-  /** Every generated job, in the same order they're emitted into the YAML. */
-  jobs: GeneratedJob[];
-}
+export type { GeneratedJob, GenerateGitlabOptions, GenerateGitlabResult };
 
 /** GitLab CI job names must be safe YAML keys; component names are already kebab-case in every fixture, but normalize defensively. */
 function toJobName(componentName: string): string {
@@ -92,8 +53,9 @@ const DEFAULT_IMAGE = "node:22-slim";
  * Synthesize a `.gitlab-ci.yml` pipeline from a set of components: one stage
  * per parallel-safe wave (`resolveComponentGraph`), one thin trigger job per
  * component. Throws `DependencyCycleError`/`UnknownDependencyError` (from
- * `../driver.ts`) exactly like the interpret driver does, since both consume
- * the same graph resolution.
+ * core's driver) exactly like the interpret driver does, since both consume
+ * the same graph resolution. Wired into core's generate mode via the gitlab
+ * lexicon plugin's `generateComponentPipeline` (../plugin.ts).
  */
 export function generateGitlabPipeline(
   components: DriverComponent[],

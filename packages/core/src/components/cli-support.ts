@@ -36,7 +36,7 @@ import {
   type DriverPhase,
   type DriverRunResult,
 } from "./driver";
-import { generateGitlabPipeline, type GenerateGitlabOptions } from "./generate-gitlab";
+import { isLexiconPlugin, type LexiconPlugin, type ComponentPipelineOptions } from "../lexicon";
 import { buildCapabilityRegistry } from "./capability-plugin-loader";
 import type { CapabilityRegistry } from "./capability";
 import { applyConfigDefaults } from "./config-defaults";
@@ -160,19 +160,38 @@ export async function computeComponentGraph(path: string): Promise<ComponentGrap
   }
 }
 
-/** Supported generate-mode target lexicons. GitLab is the only implemented target for v1 (#563) — one lexicon is enough per the epic's phasing. */
-export type GenerateLexicon = "gitlab";
+/** A generate-mode target lexicon name — any lexicon whose plugin implements `generateComponentPipeline` (currently gitlab; github/forgejo as they add it). */
+export type GenerateLexicon = string;
 
 /** Result of `chant build --components --generate <lexicon>`. */
 export interface GenerateComponentsResult {
   success: boolean;
   /** The synthesized CI YAML, when `success` is true. */
   yaml?: string;
-  /** Wave-ordered stage names (GitLab: one `stages:` entry per wave). */
+  /** Wave-ordered stage names (one entry per wave). */
   stages?: string[];
   /** Every generated job, for a machine-readable view (`--format json`). */
   jobs?: Array<{ jobName: string; component: string; stage: string; needs: string[] }>;
   error?: string;
+}
+
+/**
+ * Load a lexicon's plugin (`@intentius/chant-lexicon-<name>`) to reach its
+ * `generateComponentPipeline`. Tolerant: returns null when the package can't be
+ * resolved. Mirrors the lexicon-borne loading the capability + upstream-pin
+ * seams use, kept here so `components` doesn't depend on the `cli` plugin loader.
+ */
+async function loadLexiconPlugin(name: string): Promise<LexiconPlugin | null> {
+  let mod: Record<string, unknown>;
+  try {
+    mod = (await import(`@intentius/chant-lexicon-${name}`)) as Record<string, unknown>;
+  } catch {
+    return null;
+  }
+  for (const value of Object.values(mod)) {
+    if (isLexiconPlugin(value)) return value;
+  }
+  return null;
 }
 
 /**
@@ -181,13 +200,23 @@ export interface GenerateComponentsResult {
  * own composition in dependency order/waves — the same `resolveComponentGraph`
  * order `chant graph --components`/the interpret driver use. No deploy logic
  * is inlined into the generated YAML; a cross-cutting change goes through
- * `options` (see `generateGitlabPipeline`'s docstring), never per component.
+ * `options`, never per component. The CI-specific synthesis is contributed by
+ * the target lexicon's `generateComponentPipeline` (#688); core owns only the
+ * generic discovery + graph.
  */
 export async function generateComponentsPipeline(
   path: string,
   lexicon: GenerateLexicon,
-  options?: GenerateGitlabOptions,
+  options?: ComponentPipelineOptions,
 ): Promise<GenerateComponentsResult> {
+  const plugin = await loadLexiconPlugin(lexicon);
+  if (!plugin?.generateComponentPipeline) {
+    return {
+      success: false,
+      error: `Lexicon "${lexicon}" does not support generate mode (no generateComponentPipeline). GitLab is supported today; GitHub/Forgejo as they add it.`,
+    };
+  }
+
   const result = await discoverComponents(path);
   if (result.errors.length > 0) {
     return { success: false, error: result.errors.map((e) => e.message).join("\n") };
@@ -200,16 +229,8 @@ export async function generateComponentsPipeline(
   }));
 
   try {
-    switch (lexicon) {
-      case "gitlab": {
-        const { yaml, stages, jobs } = generateGitlabPipeline(driverComponents, options);
-        return { success: true, yaml, stages, jobs };
-      }
-      default: {
-        const exhaustive: never = lexicon;
-        return { success: false, error: `Unsupported generate-mode lexicon "${exhaustive as string}". Supported: gitlab.` };
-      }
-    }
+    const { yaml, stages, jobs } = plugin.generateComponentPipeline(driverComponents, options);
+    return { success: true, yaml, stages, jobs };
   } catch (err) {
     if (err instanceof UnknownDependencyError || err instanceof DependencyCycleError) {
       return { success: false, error: err.message };

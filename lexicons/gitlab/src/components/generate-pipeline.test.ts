@@ -16,11 +16,11 @@
  */
 
 import { describe, test, expect } from "vitest";
-import { parseYAML } from "../yaml";
-import { generateGitlabPipeline } from "./generate-gitlab";
-import { resolveComponentGraph, DependencyCycleError, UnknownDependencyError, type DriverComponent } from "./driver";
-import { searchService } from "./pilots/alb-ecs.pilot";
-import { ordersTable } from "./pilots/dynamodb.pilot";
+import { parseYAML } from "@intentius/chant/yaml";
+import { generateGitlabPipeline } from "./generate-pipeline";
+import { resolveComponentGraph, DependencyCycleError, UnknownDependencyError, type DriverComponent } from "@intentius/chant/components/driver";
+import { searchService } from "@intentius/chant/components/pilots/alb-ecs.pilot";
+import { ordersTable } from "@intentius/chant/components/pilots/dynamodb.pilot";
 
 /** Real pilot components (#555) plus the shared-alb infra `search-service` depends on, as a realistic multi-wave input. */
 function pilotComponents(): DriverComponent[] {
