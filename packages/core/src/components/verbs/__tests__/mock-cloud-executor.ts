@@ -95,6 +95,8 @@ export interface MockCloudExecutorOptions {
   lambdas?: Record<string, FakeLambdaConfig>;
   /** Scripted job runs keyed by the run id the test expects (see `MockCloudExecutor.setJobRun` for post-construction control, e.g. before the run id is known). */
   jobRuns?: Record<string, FakeJobRunConfig>;
+  /** Object counts `s3.sync` reports (uploaded always; deleted only when the call passes `delete: true`). */
+  s3Sync?: { uploaded?: number; deleted?: number };
 }
 
 /** An injected `CloudExecutor` plus the call log and stack-status controls tests use to script scenarios and assert on I/O. */
@@ -323,8 +325,24 @@ export function createMockCloudExecutor(options: MockCloudExecutorOptions = {}):
     },
   };
 
+  const s3: CloudExecutor["s3"] = {
+    async sync(args) {
+      record("s3", "sync", args);
+      return {
+        uploaded: options.s3Sync?.uploaded ?? 0,
+        deleted: args.delete ? (options.s3Sync?.deleted ?? 0) : 0,
+      };
+    },
+  };
+  const cloudfront: CloudExecutor["cloudfront"] = {
+    async createInvalidation(args) {
+      record("cloudfront", "createInvalidation", args);
+      return { invalidationId: "I-MOCK0001" };
+    },
+  };
+
   return {
-    executor: { docker, ecr, cloudformation, ecs, codeDeploy, neo4j, lambda, emr, host },
+    executor: { docker, ecr, cloudformation, ecs, codeDeploy, neo4j, lambda, emr, host, s3, cloudfront },
     calls,
     setStack: (name, config) => stacks.set(name, { ...stacks.get(name), ...config }),
     setDeployment: (id, config) => deployments.set(id, { ...deployments.get(id), ...config }),
