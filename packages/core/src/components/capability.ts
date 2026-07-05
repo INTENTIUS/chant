@@ -46,7 +46,20 @@ export interface Capability<In = unknown, Out = unknown> {
   run(ctx: DeployContext, input: In): Promise<Out>;
   /** Optional paired compensation, invoked in reverse order on saga rollback. */
   rollback?(ctx: DeployContext, input: In): Promise<void>;
+  /**
+   * How this verb relates to rollback, for the COMP003 composition check.
+   * Usually derivable and left unset: a capability with a `rollback` method is
+   * treated as `"native"`, everything else as `"none-by-design"` (build/publish/
+   * wait — nothing to compensate). Set it explicitly to `"needs-opt-out"` on a
+   * *mutating* verb that has no rollback and no safe undo (e.g. `s3-sync`,
+   * `run-migration`), so COMP003 requires the component to acknowledge the
+   * compensation gap. See ../lint/rules/comp/comp003-mutating-no-rollback.ts.
+   */
+  readonly rollbackPolicy?: RollbackPolicy;
 }
+
+/** A capability's relationship to rollback — see `Capability.rollbackPolicy`. */
+export type RollbackPolicy = "native" | "none-by-design" | "needs-opt-out";
 
 /** Extract a capability's `In` type. */
 export type CapabilityInput<C> = C extends Capability<infer In, unknown> ? In : never;
