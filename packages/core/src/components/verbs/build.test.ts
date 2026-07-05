@@ -1,7 +1,12 @@
 import { describe, expect, it } from "vitest";
-import { addArchiveTemplate, createDockerBuildCapability } from "./build";
+import { addArchiveTemplate, createDockerBuildCapability, createZipPackageCapability } from "./build";
 import { createMockCloudExecutor } from "./__tests__/mock-cloud-executor";
+import { createMockProcessRunner } from "./__tests__/mock-process-runner";
 import { findArchiveEntry } from "./build-archive";
+import { writeFileSync, mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { createHash } from "node:crypto";
 
 const ctx = { env: "dev", component: "search-service" };
 
@@ -158,5 +163,30 @@ describe("addArchiveTemplate (#564)", () => {
   it("records no provenance link when sourceRef is omitted", () => {
     const { manifest } = addArchiveTemplate({ path: "x.template.json", content: '{"a":1}' });
     expect(findArchiveEntry(manifest, "x.template.json")!.provenance).toBeUndefined();
+  });
+});
+
+describe("zip-package (#557)", () => {
+  it("zips the source into the archive path and returns the content digest", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "chant-zip-"));
+    const into = join(dir, "lambda.zip");
+    writeFileSync(into, "ZIP-BYTES"); // mock runner won't actually zip; pre-create so the digest read works
+    const expected = `sha256:${createHash("sha256").update("ZIP-BYTES").digest("hex")}`;
+    const mock = createMockProcessRunner();
+
+    const out = await createZipPackageCapability(mock.runner).run(
+      { env: "dev", component: "fn" },
+      { source: "src", into, exclude: ["*.test.js"] },
+    );
+
+    expect(out).toEqual({ archivePath: into, digest: expected });
+    const cmd = mock.calls.at(-1)!.command;
+    expect(cmd).toContain(`rm -f '${into}'`); // rebuilt from scratch, not appended
+    expect(cmd).toContain(`zip -r -X '${into}' 'src'`);
+    expect(cmd).toContain(`-x '*.test.js'`);
+  });
+
+  it("declares no rollback — a local build produces no remote state to compensate", () => {
+    expect(createZipPackageCapability(createMockProcessRunner().runner).rollback).toBeUndefined();
   });
 });
