@@ -7,6 +7,7 @@ import type { TypeScriptGenerator } from "./import/generator";
 import type { ArtifactIntegrity } from "./lexicon-integrity";
 import type { CompletionContext, CompletionItem, HoverContext, HoverInfo, CodeActionContext, CodeAction } from "./lsp/types";
 import type { McpToolContribution, McpResourceContribution } from "./mcp/types";
+import type { DriverComponent } from "./components/driver";
 
 /**
  * Manifest for a packaged lexicon — metadata embedded in the tarball.
@@ -185,6 +186,44 @@ export interface UpstreamPin {
   };
 }
 
+/** One CI job in a generated pipeline (generate mode) — a thin trigger for one component in one wave. */
+export interface ComponentPipelineJob {
+  /** CI job name (safe as a YAML key). */
+  jobName: string;
+  /** The component this job triggers. */
+  component: string;
+  /** The stage/wave this job runs in. */
+  stage: string;
+  /** Direct dependency job names this job waits on (mirrors the component's `dependsOn`). */
+  needs: string[];
+}
+
+/** Generic knobs for generate mode, applied once across every generated job (never per component). */
+export interface ComponentPipelineOptions {
+  /** Target environment threaded into the trigger command. */
+  env?: string;
+  /** The trigger command per component, argv with `{name}` substituted. */
+  runCommand?: string[];
+  /** Extra script lines appended to every job. */
+  extraScript?: string[];
+  /** Script lines run before the trigger command in every job. */
+  beforeScript?: string[];
+  /** Container image every job runs in. */
+  image?: string;
+  /** Top-level CI `variables:` block. */
+  variables?: Record<string, string>;
+}
+
+/** The synthesized CI pipeline for a component graph (generate mode). */
+export interface ComponentPipelineResult {
+  /** The synthesized CI YAML (e.g. `.gitlab-ci.yml` content). */
+  yaml: string;
+  /** Wave-ordered stage names (matches the driver's graph waves 1:1). */
+  stages: string[];
+  /** Every generated job, in emit order. */
+  jobs: ComponentPipelineJob[];
+}
+
 export interface LexiconPlugin {
   // ── Required ──────────────────────────────────────────────
   /** Human-readable name (e.g. "aws", "gcp") */
@@ -245,6 +284,18 @@ export interface LexiconPlugin {
 
   /** How this lexicon pins its upstream schema version + where to check for a newer one (self-upgrade tooling — see ./codegen/pinned-upgrade.ts). Omit for lexicons with no pinned upstream. */
   readonly upstreamPin?: UpstreamPin;
+
+  /**
+   * Generate a CI pipeline from the discovered component graph — the
+   * `chant build --components --generate <name>` seam. Only CI-provider
+   * lexicons (gitlab, github, forgejo) implement this; core owns the generic
+   * driver (discovery + graph waves) and dispatches here. Omit for lexicons
+   * that are not CI providers.
+   */
+  generateComponentPipeline?(
+    components: DriverComponent[],
+    options?: ComponentPipelineOptions,
+  ): ComponentPipelineResult;
 
   // LSP
   /** Provide completions for LSP */
