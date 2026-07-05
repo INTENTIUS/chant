@@ -8,7 +8,7 @@
 import { existsSync, statSync, writeFileSync } from "fs";
 import { auditFiles, type AuditInput, type AuditFinding, type ChecksProvider } from "../../audit/core";
 import { discoverByDetection, classifyFiles, loadAuditPlugins, AUDIT_LEXICONS } from "../../audit/discover";
-import { RULE_CATALOG } from "../../audit/catalog";
+import { RULE_CATALOG, resolveAuditCatalog, type RuleMeta } from "../../audit/catalog";
 import { renderMarkdown } from "../../audit/report";
 import { renderHtml, type ReportTheme } from "../../audit/report-html";
 import { buildReportJson, type AuditSnapshot } from "../../audit/report-model";
@@ -88,12 +88,12 @@ function githubToken(env: NodeJS.ProcessEnv = process.env): string | undefined {
   return env.GITHUB_TOKEN ?? env.CHANT_AUDIT_GITHUB_TOKEN;
 }
 
-function isMergeWorthy(f: AuditFinding): boolean {
-  return RULE_CATALOG[f.checkId]?.tier === "merge-worthy";
+function isMergeWorthy(f: AuditFinding, catalog: Record<string, RuleMeta> = RULE_CATALOG): boolean {
+  return catalog[f.checkId]?.tier === "merge-worthy";
 }
 
-function exitCodeFor(findings: AuditFinding[], failOn: AuditFailOn): number {
-  if (failOn === "merge-worthy") return findings.some(isMergeWorthy) ? 1 : 0;
+function exitCodeFor(findings: AuditFinding[], failOn: AuditFailOn, catalog: Record<string, RuleMeta> = RULE_CATALOG): number {
+  if (failOn === "merge-worthy") return findings.some((f) => isMergeWorthy(f, catalog)) ? 1 : 0;
   if (failOn === "warning") {
     return findings.some((f) => f.severity === "error" || f.severity === "warning") ? 1 : 0;
   }
@@ -116,12 +116,12 @@ export function coverageNotes(inputs: AuditInput[]): string[] {
   return notes;
 }
 
-function renderStylish(findings: AuditFinding[], scanned: string[], notes: string[]): string {
+function renderStylish(findings: AuditFinding[], scanned: string[], notes: string[], catalog: Record<string, RuleMeta> = RULE_CATALOG): string {
   const lines: string[] = [];
   for (const note of notes) lines.push(`Note: ${note}`);
   if (notes.length > 0) lines.push("");
-  const mw = findings.filter(isMergeWorthy);
-  const ro = findings.filter((f) => !isMergeWorthy(f));
+  const mw = findings.filter((f) => isMergeWorthy(f, catalog));
+  const ro = findings.filter((f) => !isMergeWorthy(f, catalog));
   lines.push(
     `Audited ${scanned.length} file${scanned.length === 1 ? "" : "s"} — ` +
       `${findings.length} finding${findings.length === 1 ? "" : "s"} ` +
@@ -132,7 +132,7 @@ function renderStylish(findings: AuditFinding[], scanned: string[], notes: strin
     lines.push("", title);
     for (const f of list) {
       const where = f.entity ? `${f.file} (${f.entity})` : f.file;
-      const title = RULE_CATALOG[f.checkId]?.title ?? f.checkId;
+      const title = catalog[f.checkId]?.title ?? f.checkId;
       lines.push(`  [${f.checkId}] ${f.severity}  ${where}  — ${title}`);
     }
   };
@@ -141,10 +141,10 @@ function renderStylish(findings: AuditFinding[], scanned: string[], notes: strin
   return lines.join("\n");
 }
 
-function renderSarif(findings: AuditFinding[]): string {
+function renderSarif(findings: AuditFinding[], catalog: Record<string, RuleMeta> = RULE_CATALOG): string {
   const ruleIds = [...new Set(findings.map((f) => f.checkId))].sort();
   const rules = ruleIds.map((id) => {
-    const m = RULE_CATALOG[id];
+    const m = catalog[id];
     return {
       id,
       name: m?.title ?? id,
@@ -255,7 +255,12 @@ export async function auditCommand(options: AuditCommandOptions): Promise<AuditC
     const msg = err instanceof Error ? err.message : String(err);
     return { success: false, output: "", findings: [], scanned, exitCode: 1, error: msg };
   }
-  if (tier === "merge-worthy") findings = findings.filter(isMergeWorthy);
+  // Resolve the audit catalog once, aggregating the audited lexicons' own
+  // metadata over core's static catalog (#687). The lexicons are already loaded
+  // by `auditFiles` above, so this is cheap.
+  const catalog = await resolveAuditCatalog([...new Set(inputs.map((i) => i.lexicon))]);
+
+  if (tier === "merge-worthy") findings = findings.filter((f) => isMergeWorthy(f, catalog));
   const notes = coverageNotes(inputs);
 
   // Diff-bearing renderers (markdown, html) need action SHAs / image digests
@@ -299,25 +304,25 @@ export async function auditCommand(options: AuditCommandOptions): Promise<AuditC
   switch (format) {
     case "json": {
       const snapshot = await buildSnapshot(options, scanned, isUrl);
-      output = JSON.stringify(buildReportJson(findings, { snapshot, toolVersion: options.toolVersion }), null, 2);
+      output = JSON.stringify(buildReportJson(findings, { snapshot, toolVersion: options.toolVersion, catalog }), null, 2);
       break;
     }
     case "sarif":
-      output = renderSarif(findings);
+      output = renderSarif(findings, catalog);
       break;
     case "markdown":
-      output = renderMarkdown(findings, { target: options.path, files, resolveSha, resolveDigest, notes });
+      output = renderMarkdown(findings, { target: options.path, files, resolveSha, resolveDigest, notes, catalog });
       break;
     case "html": {
       const snapshot = await buildSnapshot(options, scanned, isUrl);
-      output = renderHtml(findings, { files, resolveSha, resolveDigest, notes, snapshot, theme: options.theme, template: options.template });
+      output = renderHtml(findings, { files, resolveSha, resolveDigest, notes, snapshot, theme: options.theme, template: options.template, catalog });
       break;
     }
     default:
-      output = renderStylish(findings, scanned, notes);
+      output = renderStylish(findings, scanned, notes, catalog);
   }
 
-  const exitCode = exitCodeFor(findings, failOn);
+  const exitCode = exitCodeFor(findings, failOn, catalog);
   if (options.output) {
     try {
       writeFileSync(options.output, output);

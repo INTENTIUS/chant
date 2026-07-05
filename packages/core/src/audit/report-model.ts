@@ -112,9 +112,9 @@ export interface AuditReportJson {
   findings: SerializedFinding[];
 }
 
-export function metaFor(id: string): RuleMeta {
+export function metaFor(id: string, catalog: Record<string, RuleMeta> = RULE_CATALOG): RuleMeta {
   return (
-    RULE_CATALOG[id] ?? {
+    catalog[id] ?? {
       id,
       tier: "report-only" as Tier,
       fixKind: "guidance",
@@ -146,7 +146,12 @@ function clusterName(m: RuleMeta): string {
   return m.authority?.[0]?.name ?? "General hardening";
 }
 
-function buildQuickWins(findings: EnrichedFinding[], contents: Map<string, string>, proveOpts: ProveOptions): QuickWinFile[] {
+function buildQuickWins(
+  findings: EnrichedFinding[],
+  contents: Map<string, string>,
+  proveOpts: ProveOptions,
+  catalog: Record<string, RuleMeta> = RULE_CATALOG,
+): QuickWinFile[] {
   const out: QuickWinFile[] = [];
   for (const [file, group] of byFile(findings)) {
     const ids = [...new Set(group.map((f) => f.checkId))].sort();
@@ -157,10 +162,10 @@ function buildQuickWins(findings: EnrichedFinding[], contents: Map<string, strin
 
     if (original !== undefined) {
       for (const id of ids) {
-        const res = proveFix(id, patched ?? original, proveOpts);
+        const res = proveFix(id, patched ?? original, { ...proveOpts, catalog });
         if (res.applied && res.patched !== undefined) {
           patched = res.patched;
-          addressed.push(metaFor(id));
+          addressed.push(metaFor(id, catalog));
         } else if (res.reason === "needs-input") {
           needsInput.push(...group.filter((f) => f.checkId === id));
         }
@@ -215,11 +220,14 @@ export interface BuildModelOptions {
   files?: Array<{ path: string; content: string }>;
   resolveSha?: ProveOptions["resolveSha"];
   resolveDigest?: ProveOptions["resolveDigest"];
+  /** The resolved audit catalog (core static + active lexicons' contributions, #687). Defaults to core's static `RULE_CATALOG`. */
+  catalog?: Record<string, RuleMeta>;
 }
 
 /** Build the structured report model from raw findings. */
 export function buildReportModel(findings: AuditFinding[], opts: BuildModelOptions = {}): ReportModel {
-  const enriched: EnrichedFinding[] = findings.map((f) => ({ ...f, meta: metaFor(f.checkId) }));
+  const catalog = opts.catalog ?? RULE_CATALOG;
+  const enriched: EnrichedFinding[] = findings.map((f) => ({ ...f, meta: metaFor(f.checkId, catalog) }));
   const contents = new Map((opts.files ?? []).map((f) => [f.path, f.content]));
 
   const mergeWorthy = enriched.filter((f) => f.meta.tier === "merge-worthy");
@@ -252,7 +260,7 @@ export function buildReportModel(findings: AuditFinding[], opts: BuildModelOptio
 
   return {
     counts,
-    quickWins: buildQuickWins(quickWinFindings, contents, { resolveSha: opts.resolveSha, resolveDigest: opts.resolveDigest }),
+    quickWins: buildQuickWins(quickWinFindings, contents, { resolveSha: opts.resolveSha, resolveDigest: opts.resolveDigest }, catalog),
     needsReview: buildClusters(needsReviewFindings),
     reportOnly: [...reportOnly].sort(sortFindings),
     findings: [...shown].sort(sortFindings),
@@ -260,8 +268,11 @@ export function buildReportModel(findings: AuditFinding[], opts: BuildModelOptio
 }
 
 /** Build the versioned, machine-readable JSON report (stable contract). */
-export function buildReportJson(findings: AuditFinding[], opts: { snapshot?: AuditSnapshot; toolVersion?: string } = {}): AuditReportJson {
-  const model = buildReportModel(findings);
+export function buildReportJson(
+  findings: AuditFinding[],
+  opts: { snapshot?: AuditSnapshot; toolVersion?: string; catalog?: Record<string, RuleMeta> } = {},
+): AuditReportJson {
+  const model = buildReportModel(findings, { catalog: opts.catalog });
   const version = opts.toolVersion ?? opts.snapshot?.toolVersion ?? "0.0.0";
   return {
     schemaVersion: REPORT_SCHEMA_VERSION,

@@ -12,13 +12,15 @@
  * the patched output differs only where intended — the diff proves it.
  */
 
-import { RULE_CATALOG } from "./catalog";
+import { RULE_CATALOG, type RuleMeta } from "./catalog";
 
 export interface ProveOptions {
   /** Resolve an action ref (e.g. "actions/checkout@v4") to a 40-char SHA. */
   resolveSha?: (action: string, ref: string) => string | undefined;
   /** Resolve a container image (e.g. "node:20") to a "sha256:..." digest. */
   resolveDigest?: (image: string) => string | undefined;
+  /** Resolved audit catalog for the check's `fixKind`/remediation lookup (#687). Defaults to core's static `RULE_CATALOG`. */
+  catalog?: Record<string, RuleMeta>;
 }
 
 export interface ProofResult {
@@ -150,7 +152,7 @@ function narrowWriteAll(content: string): { patched: string; changed: boolean } 
  * Returns `applied: false` with guidance for non-deterministic findings.
  */
 export function proveFix(checkId: string, content: string, opts: ProveOptions = {}): ProofResult {
-  const cat = RULE_CATALOG[checkId];
+  const cat = (opts.catalog ?? RULE_CATALOG)[checkId];
   if (cat && cat.fixKind !== "deterministic") {
     return notApplied(checkId, "guidance", cat.remediation || "Manual fix required.");
   }
