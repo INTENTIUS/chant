@@ -26,7 +26,10 @@
 
 import type { Capability } from "../capability";
 import { stubCapability } from "./stub";
+import { readFileSync } from "node:fs";
+import { createHash } from "node:crypto";
 import { defaultCloudExecutor, type CloudExecutor } from "./cloud-executor";
+import { defaultProcessRunner, q, type ProcessRunner } from "./process-runner";
 import {
   addArchiveEntry,
   contentDigest,
@@ -177,10 +180,28 @@ export interface ZipPackageOutput {
   digest: string;
 }
 
-/** Package a directory into a zip artifact (e.g. a Lambda deployment package) into the build archive. */
-export const zipPackageCapability: Capability<ZipPackageInput, ZipPackageOutput> = stubCapability(
-  "zip-package",
-);
+/**
+ * Package a directory into a zip artifact (e.g. a Lambda deployment package)
+ * inside the build archive, via the `zip` CLI through the injectable
+ * `ProcessRunner`. Removes any prior `into` first so the archive is rebuilt from
+ * scratch (not appended to), then returns its content digest for
+ * promote-by-digest referencing.
+ */
+export function createZipPackageCapability(processRunner: ProcessRunner = defaultProcessRunner()): Capability<ZipPackageInput, ZipPackageOutput> {
+  return {
+    kind: "zip-package",
+    async run(_ctx, input) {
+      const excludes = (input.exclude ?? []).map((p) => `-x ${q(p)}`).join(" ");
+      // `-X` drops extra file attributes; `rm -f` first so a re-run rebuilds rather than updates in place.
+      await processRunner.run(`rm -f ${q(input.into)} && zip -r -X ${q(input.into)} ${q(input.source)}${excludes ? ` ${excludes}` : ""}`);
+      const digest = `sha256:${createHash("sha256").update(readFileSync(input.into)).digest("hex")}`;
+      return { archivePath: input.into, digest };
+    },
+  };
+}
+
+/** Default `zip-package` capability, backed by the real process runner. */
+export const zipPackageCapability: Capability<ZipPackageInput, ZipPackageOutput> = createZipPackageCapability();
 
 // ── jvm-build ────────────────────────────────────────────────────────────────
 
