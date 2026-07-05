@@ -20,6 +20,13 @@ import { DockerTemplateParser, DockerTemplateGenerator } from "./import/adapter"
 
 export const dockerPlugin: LexiconPlugin = {
   name: "docker",
+  // Self-upgrade: the moby/moby tag embedded in the Engine API spec URL + its upstream (#685).
+  upstreamPin: {
+    file: "src/codegen/versions.ts",
+    pattern: /moby\/moby\/([^/]+)\/api\/swagger\.yaml/,
+    replace: (v, line) => line.replace(/moby\/moby\/[^/]+\/api\/swagger\.yaml/, `moby/moby/${v}/api/swagger.yaml`),
+    upstream: { owner: "moby", repo: "moby", kind: "releases" },
+  },
   serializer: dockerSerializer,
 
   lintRules(): LintRule[] {

@@ -24,6 +24,14 @@ import { GitLabGenerator } from "./import/generator";
 
 export const gitlabPlugin: LexiconPlugin = {
   name: "gitlab",
+  // Self-upgrade: where the pinned GitLab schema version lives + its upstream (#685).
+  upstreamPin: {
+    file: "src/codegen/fetch.ts",
+    pattern: /export const GITLAB_SCHEMA_VERSION\s*=\s*"([^"]+)"/,
+    replace: (v, line) =>
+      line.replace(/export const GITLAB_SCHEMA_VERSION\s*=\s*"[^"]+"/, `export const GITLAB_SCHEMA_VERSION = "${v}"`),
+    upstream: { owner: "gitlab-org", repo: "gitlab", kind: "tags", tagSuffix: "-ee" },
+  },
   serializer: gitlabSerializer,
 
   lintRules(): LintRule[] {

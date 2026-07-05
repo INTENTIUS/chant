@@ -26,6 +26,14 @@ import { K8sGenerator } from "./import/generator";
 export const k8sPlugin: LexiconPlugin = {
   name: "k8s",
   serializer: k8sSerializer,
+  // Self-upgrade: where the pinned Kubernetes schema version lives + its upstream (#685).
+  upstreamPin: {
+    file: "src/spec/fetch.ts",
+    pattern: /export const K8S_SCHEMA_VERSION\s*=\s*"([^"]+)"/,
+    replace: (v, line) =>
+      line.replace(/export const K8S_SCHEMA_VERSION\s*=\s*"[^"]+"/, `export const K8S_SCHEMA_VERSION = "${v}"`),
+    upstream: { owner: "kubernetes", repo: "kubernetes", kind: "releases" },
+  },
 
   lintRules(): LintRule[] {
     return [

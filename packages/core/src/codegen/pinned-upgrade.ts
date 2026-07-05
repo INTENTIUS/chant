@@ -22,12 +22,21 @@
  */
 
 import { readFileSync, writeFileSync } from "fs";
+import { join } from "path";
 import { regenLexicon, type RegenResult } from "./lexicon-regen";
 import { fetchWithRetry } from "./fetch";
+import { isLexiconPlugin, type UpstreamPin } from "../lexicon";
 
 // ── Public types ──────────────────────────────────────────────────────
 
-export type LexiconId = "k8s" | "gcp" | "docker" | "gitlab";
+/**
+ * A pinned, self-upgradable lexicon's name (e.g. "k8s"). Any lexicon whose
+ * plugin declares `upstreamPin` (../lexicon.ts) is eligible — the set is no
+ * longer hard-coded here.
+ */
+export type LexiconId = string;
+
+export type { UpstreamPin };
 
 export interface UpgradeCheckResult {
   /** Lexicon identifier. */
@@ -178,56 +187,37 @@ export function revertVersionBump(filePath: string, original: string): void {
   writeFileSync(filePath, original, "utf-8");
 }
 
-// ── Pin locations per lexicon ─────────────────────────────────────────
+// ── Pin descriptor, loaded from the lexicon plugin ────────────────────
 
-type LexiconPinFactory = (lexiconDir: string) => PinLocation;
+/**
+ * Load a lexicon's `upstreamPin` descriptor from its plugin package
+ * (`@intentius/chant-lexicon-<name>`) — the lexicon's own declaration of where
+ * its version constant lives and which upstream repo to check. Returns null
+ * when the package can't be resolved or declares no `upstreamPin` (i.e. it is
+ * not self-upgradable). Mirrors ../components/capability-plugin-loader.ts's
+ * lexicon-borne loading.
+ */
+export async function loadUpstreamPin(lexicon: LexiconId): Promise<UpstreamPin | null> {
+  let mod: Record<string, unknown>;
+  try {
+    mod = (await import(`@intentius/chant-lexicon-${lexicon}`)) as Record<string, unknown>;
+  } catch {
+    return null;
+  }
+  for (const value of Object.values(mod)) {
+    if (isLexiconPlugin(value) && value.upstreamPin) return value.upstreamPin;
+  }
+  return null;
+}
 
-const PIN_LOCATIONS: Record<LexiconId, LexiconPinFactory> = {
-  k8s: (lexiconDir) => ({
-    filePath: `${lexiconDir}/src/spec/fetch.ts`,
-    // Matches: export const K8S_SCHEMA_VERSION = "v1.32.0";
-    pattern: /export const K8S_SCHEMA_VERSION\s*=\s*"([^"]+)"/,
-    buildReplacement: (newVer, _old, line) =>
-      line.replace(
-        /export const K8S_SCHEMA_VERSION\s*=\s*"[^"]+"/,
-        `export const K8S_SCHEMA_VERSION = "${newVer}"`,
-      ),
-  }),
-
-  gcp: (lexiconDir) => ({
-    filePath: `${lexiconDir}/src/spec/fetch.ts`,
-    // Matches: export const KCC_VERSION = "v1.145.0";
-    pattern: /export const KCC_VERSION\s*=\s*"([^"]+)"/,
-    buildReplacement: (newVer, _old, line) =>
-      line.replace(
-        /export const KCC_VERSION\s*=\s*"[^"]+"/,
-        `export const KCC_VERSION = "${newVer}"`,
-      ),
-  }),
-
-  docker: (lexiconDir) => ({
-    filePath: `${lexiconDir}/src/codegen/versions.ts`,
-    // Matches the moby/moby version tag embedded in the ENGINE_API_URL
-    // e.g.: "https://raw.githubusercontent.com/moby/moby/v27.3.1/api/swagger.yaml"
-    pattern: /moby\/moby\/([^/]+)\/api\/swagger\.yaml/,
-    buildReplacement: (newVer, _old, line) =>
-      line.replace(
-        /moby\/moby\/[^/]+\/api\/swagger\.yaml/,
-        `moby/moby/${newVer}/api/swagger.yaml`,
-      ),
-  }),
-
-  gitlab: (lexiconDir) => ({
-    filePath: `${lexiconDir}/src/codegen/fetch.ts`,
-    // Matches: export const GITLAB_SCHEMA_VERSION = "v17.8.1-ee";
-    pattern: /export const GITLAB_SCHEMA_VERSION\s*=\s*"([^"]+)"/,
-    buildReplacement: (newVer, _old, line) =>
-      line.replace(
-        /export const GITLAB_SCHEMA_VERSION\s*=\s*"[^"]+"/,
-        `export const GITLAB_SCHEMA_VERSION = "${newVer}"`,
-      ),
-  }),
-};
+/** Build a concrete `PinLocation` (absolute path + patterns) from a lexicon's descriptor and its checkout dir. */
+function pinLocationFrom(pin: UpstreamPin, lexiconDir: string): PinLocation {
+  return {
+    filePath: join(lexiconDir, pin.file),
+    pattern: pin.pattern,
+    buildReplacement: (newVer, _old, line) => pin.replace(newVer, line),
+  };
+}
 
 // ── Real upstream resolvers ───────────────────────────────────────────
 
@@ -292,21 +282,10 @@ async function latestGitHubRelease(
   return best;
 }
 
-/**
- * Real upstream resolvers — call the GitHub API for each lexicon.
- *
- * - k8s: kubernetes/kubernetes releases (stable GitHub releases only).
- * - gcp: GoogleCloudPlatform/k8s-config-connector releases.
- * - docker: moby/moby releases (the moby repo contains the Engine API spec).
- * - gitlab: gitlab-org/gitlab tags with "-ee" suffix (release tag format is
- *   "v17.x.y-ee"; the releases endpoint is too large to paginate quickly).
- */
-export const REAL_RESOLVERS: Record<LexiconId, UpstreamResolver> = {
-  k8s: () => latestGitHubRelease("kubernetes", "kubernetes", "releases"),
-  gcp: () => latestGitHubRelease("GoogleCloudPlatform", "k8s-config-connector", "releases"),
-  docker: () => latestGitHubRelease("moby", "moby", "releases"),
-  gitlab: () => latestGitHubRelease("gitlab-org", "gitlab", "tags", "-ee"),
-};
+/** Build the real GitHub-backed upstream resolver from a lexicon's declared `upstream` descriptor. */
+function resolverFor(pin: UpstreamPin): UpstreamResolver {
+  return () => latestGitHubRelease(pin.upstream.owner, pin.upstream.repo, pin.upstream.kind, pin.upstream.tagSuffix);
+}
 
 // ── Main function ─────────────────────────────────────────────────────
 
@@ -324,8 +303,18 @@ export const REAL_RESOLVERS: Record<LexiconId, UpstreamResolver> = {
 export async function checkPinnedUpgrade(opts: CheckPinnedUpgradeOptions): Promise<UpgradeCheckResult> {
   const { lexiconDir, lexicon, force = false, verbose = false, skipBuild, skipBundle, skipLint } = opts;
 
-  const pinFactory = PIN_LOCATIONS[lexicon];
-  const location = pinFactory(lexiconDir);
+  const pin = await loadUpstreamPin(lexicon);
+  if (!pin) {
+    return {
+      lexicon,
+      hasUpgrade: false,
+      from: "(unknown)",
+      to: null,
+      validation: null,
+      fetchError: `Lexicon "${lexicon}" declares no upstreamPin (not self-upgradable), or its plugin package could not be loaded.`,
+    };
+  }
+  const location = pinLocationFrom(pin, lexiconDir);
 
   // Read current pin
   const from = readPinnedVersion(location);
@@ -341,7 +330,7 @@ export async function checkPinnedUpgrade(opts: CheckPinnedUpgradeOptions): Promi
   }
 
   // Query upstream
-  const resolver = opts.resolverOverride ?? REAL_RESOLVERS[lexicon];
+  const resolver = opts.resolverOverride ?? resolverFor(pin);
   let latestTag: string | null;
   try {
     latestTag = await resolver();
@@ -418,14 +407,17 @@ export async function checkPinnedUpgrade(opts: CheckPinnedUpgradeOptions): Promi
  * can stage it with `git add`.
  *
  * Unlike `applyVersionBump` (which is generic), this function takes only a
- * lexicon id and directory — it resolves the pin location internally.
+ * lexicon id and directory — it resolves the pin location from the lexicon's
+ * declared `upstreamPin` descriptor.
  */
-export function applyPinnedVersionBump(
+export async function applyPinnedVersionBump(
   lexicon: LexiconId,
   lexiconDir: string,
   newVersion: string,
-): { filePath: string } {
-  const location = PIN_LOCATIONS[lexicon](lexiconDir);
+): Promise<{ filePath: string }> {
+  const pin = await loadUpstreamPin(lexicon);
+  if (!pin) throw new Error(`Lexicon "${lexicon}" declares no upstreamPin (not self-upgradable).`);
+  const location = pinLocationFrom(pin, lexiconDir);
   applyVersionBump(location, newVersion);
   return { filePath: location.filePath };
 }

@@ -122,8 +122,12 @@ export type CheckRollingFn = (opts: {
 /** Minimal shell-exec interface for gh/git invocations. */
 export type GhRunner = (cmd: string) => Promise<{ stdout: string; stderr: string }>;
 
-/** Applies a pinned version bump permanently (no revert). */
-export type ApplyBumpFn = (lexicon: LexiconId, lexiconDir: string, newVersion: string) => { filePath: string };
+/** Applies a pinned version bump permanently (no revert). Async (core loads the lexicon's pin descriptor); a sync mock is also accepted. */
+export type ApplyBumpFn = (
+  lexicon: LexiconId,
+  lexiconDir: string,
+  newVersion: string,
+) => { filePath: string } | Promise<{ filePath: string }>;
 
 /**
  * Write a new version into a package.json, returning the file path.
@@ -596,7 +600,7 @@ export async function lexiconUpgrade(args: LexiconUpgradeArgs): Promise<LexiconU
     // For pinned lexicons: apply the spec version bump permanently on this branch.
     if (isPinned(lexicon) && to) {
       const applyBump = args._applyBump ?? (await getRealApplyBump());
-      const { filePath } = applyBump(lexicon, lexiconDir, to);
+      const { filePath } = await applyBump(lexicon, lexiconDir, to);
       await gh(`git add ${shellQuote(filePath)}`).catch(() => {/* best-effort */});
 
       // Bump the lexicon's package.json version so merging this PR causes
