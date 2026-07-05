@@ -2,14 +2,12 @@
  * escape hatch family — `shell`. Typed, but flagged: a raw shell step run by
  * exactly one component is the "capability-per-component" smell the model
  * exists to avoid (see docs/components/capabilities.mdx#the-discipline).
- * `reason` is required so lint (a later phase — COMP* rules, #562) can flag an
- * escape hatch used without a stated justification.
- *
- * Typed stub only; see ../capability.ts for the "no cloud implementation yet" contract.
+ * `reason` is required so lint (COMP006) can flag an escape hatch used without
+ * a stated justification.
  */
 
 import type { Capability } from "../capability";
-import { stubCapability } from "./stub";
+import { defaultProcessRunner, q, type ProcessRunner } from "./process-runner";
 
 export interface ShellInput {
   /** Command to run. */
@@ -25,9 +23,29 @@ export interface ShellInput {
 export interface ShellOutput {
   /** Captured stdout. */
   stdout: string;
-  /** Process exit code. */
+  /** Process exit code. Always 0 on success — a non-zero exit rejects the run. */
   exitCode: number;
 }
 
-/** Run an arbitrary shell command. The escape hatch — typed, but lint-flagged; requires a `reason`. */
-export const shellCapability: Capability<ShellInput, ShellOutput> = stubCapability("shell");
+/**
+ * Run an arbitrary shell command through the injectable {@link ProcessRunner}.
+ * The escape hatch — typed, lint-flagged, and requires a `reason`. A non-zero
+ * exit rejects (with the command's own stderr), failing the step like any other
+ * capability error, so `onFailure`/rollback fires.
+ */
+export function createShellCapability(processRunner: ProcessRunner = defaultProcessRunner()): Capability<ShellInput, ShellOutput> {
+  return {
+    kind: "shell",
+    async run(_ctx, input) {
+      const envPrefix =
+        input.env && Object.keys(input.env).length > 0
+          ? `env ${Object.entries(input.env).map(([k, v]) => `${k}=${q(v)}`).join(" ")} `
+          : "";
+      const { stdout } = await processRunner.run(`${envPrefix}${input.cmd}`, { cwd: input.cwd });
+      return { stdout, exitCode: 0 };
+    },
+  };
+}
+
+/** Default `shell` capability, backed by the real process runner. */
+export const shellCapability: Capability<ShellInput, ShellOutput> = createShellCapability();
