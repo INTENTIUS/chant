@@ -2,10 +2,15 @@ import { describe, expect, it } from "vitest";
 import {
   createLoadImageOnHostCapability,
   createPublishImageCapability,
+  createPublishArtifactCapability,
   loadImageOnHostCapability as loadImageOnHost,
   publishImageCapability as publishImage,
   selectPublishBackend,
 } from "./publish";
+import { writeFileSync, mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { createHash } from "node:crypto";
 import { createDockerBuildCapability } from "./build";
 import { createMockCloudExecutor } from "./__tests__/mock-cloud-executor";
 import { createMockProcessRunner } from "./__tests__/mock-process-runner";
@@ -269,5 +274,45 @@ describe("promote by digest — deferred publish never rebuilds per environment 
         "something-else",
       ),
     ).toThrow(/no publish backend registered/);
+  });
+});
+
+describe("publish-artifact (#557)", () => {
+  it("uploads the archive file to S3 and returns its uri + content digest", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "chant-pa-"));
+    const file = join(dir, "app.jar");
+    writeFileSync(file, "JAR-BYTES");
+    const expectedDigest = `sha256:${createHash("sha256").update("JAR-BYTES").digest("hex")}`;
+    const mock = createMockCloudExecutor();
+
+    const out = await createPublishArtifactCapability(mock.executor).run(
+      { env: "dev", component: "jar-lib" },
+      { from: file, to: "s3://artifacts/jars/" },
+    );
+
+    expect(out.digest).toBe(expectedDigest);
+    expect(out.uri).toBe("s3://artifacts/jars/app.jar"); // trailing-slash `to` appends the basename
+    expect(mock.calls).toEqual([
+      { client: "s3", method: "cp", args: { from: file, to: "s3://artifacts/jars/app.jar" } },
+    ]);
+  });
+
+  it("strips an archive: prefix and uses `to` verbatim when it is a full key", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "chant-pa-"));
+    const file = join(dir, "asset.bin");
+    writeFileSync(file, "X");
+    const mock = createMockCloudExecutor();
+
+    const out = await createPublishArtifactCapability(mock.executor).run(
+      { env: "dev", component: "c" },
+      { from: `archive:${file}`, to: "s3://b/exact-key" },
+    );
+
+    expect(out.uri).toBe("s3://b/exact-key");
+    expect(mock.calls[0]!.args).toEqual({ from: file, to: "s3://b/exact-key" });
+  });
+
+  it("declares no rollback", () => {
+    expect(createPublishArtifactCapability(createMockCloudExecutor().executor).rollback).toBeUndefined();
   });
 });

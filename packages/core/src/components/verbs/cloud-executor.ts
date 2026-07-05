@@ -299,6 +299,8 @@ export interface S3SyncArgs {
 export interface S3Client {
   /** `aws s3 sync from to [--delete]`; returns how many objects were uploaded/deleted. */
   sync(args: S3SyncArgs): Promise<{ uploaded: number; deleted: number }>;
+  /** `aws s3 cp from to` — upload a single local file to an S3 URI. */
+  cp(args: { from: string; to: string }): Promise<void>;
 }
 
 export interface CloudFrontInvalidateArgs {
@@ -675,6 +677,9 @@ const realS3: S3Client = {
     // `aws s3 sync` prints one `upload: …` / `delete: …` line per object touched.
     const count = (re: RegExp) => stdout.split("\n").filter((l) => re.test(l)).length;
     return { uploaded: count(/^upload:/), deleted: count(/^delete:/) };
+  },
+  async cp(args) {
+    await run(`aws s3 cp ${q(args.from)} ${q(args.to)} --no-progress`);
   },
 };
 
