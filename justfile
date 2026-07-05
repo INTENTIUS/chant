@@ -62,6 +62,10 @@ gitlab-runtime-e2e:
 forgejo-runtime-e2e:
     bash test/forgejo-runtime-e2e.sh
 
+# Deploy the components-aws-e2e example against a local AWS emulator (Floci in Docker; on-demand, needs Docker + aws CLI)
+components-aws-e2e:
+    bash test/components-aws-e2e.sh
+
 # Run all smoke tests
 smoke: smoke-workspace smoke-npm
 
