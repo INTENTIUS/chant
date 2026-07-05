@@ -8,6 +8,7 @@ import { loadLocalRules } from "../../lint/rule-loader";
 import { loadCoreRules } from "../../lint/rules/index";
 import { loadComponentChecks } from "../../lint/rules/comp/index";
 import { runComponentChecks, type ComponentCheckDiagnostic } from "../../lint/component-checks";
+import { buildCapabilityRegistry } from "../../components/capability-plugin-loader";
 import { rule } from "../../lint/declarative";
 import { watchDirectory, formatTimestamp, formatChangedFiles } from "../watch";
 import { formatError, formatInfo } from "../format";
@@ -223,6 +224,24 @@ function getDefaultRules(
  * whole-component diagnostic does not have; see
  * docs/lint-rules/composition.mdx for this documented limitation.
  */
+/**
+ * Build the set of capability kinds registered for this project — core's
+ * starter set plus whatever the active lexicons contribute (e.g. `cfn-deploy`
+ * when `lexicons: ["aws"]`) — so composition checks like COMP005 know every
+ * real verb rather than hard-coding a list. Tolerant: any failure (an
+ * unresolvable lexicon, a config-less directory) returns `undefined`, letting
+ * the checks fall back to core's starter set.
+ */
+async function resolveKnownKinds(infraPath: string): Promise<ReadonlySet<string> | undefined> {
+  try {
+    const lexicons = await resolveProjectLexicons(infraPath).catch(() => [] as string[]);
+    const registry = await buildCapabilityRegistry({ lexicons });
+    return new Set(registry.kinds());
+  } catch {
+    return undefined;
+  }
+}
+
 async function runComponentCheckDiagnostics(
   infraPath: string,
 ): Promise<{ diagnostics: LintDiagnostic[]; suppressed: Array<LintDiagnostic & { reason?: string }> }> {
@@ -230,7 +249,8 @@ async function runComponentCheckDiagnostics(
   const checks = loadComponentChecks();
   const allCheckIds = new Set(checks.map((c) => c.id));
 
-  const raw = await runComponentChecks(infraPath, checks);
+  const knownKinds = await resolveKnownKinds(infraPath);
+  const raw = await runComponentChecks(infraPath, checks, knownKinds);
 
   const fileDirectivesCache = new Map<string, ReturnType<typeof parseDisableComments>>();
   const fileLevelDisable = (
