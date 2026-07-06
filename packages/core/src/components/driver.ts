@@ -555,6 +555,19 @@ export async function runComponentDeploy(
     componentOutputs[component.name] = { ...componentOutputs[component.name], publish: publishOutput };
   }
 
+  // Stack outputs from an apply step (cfn-deploy returns `CfnDeployOutput.outputs`)
+  // become resolvable by downstream components' `stackOutput(<name>, ...)`
+  // references — the cross-stack apply-order integration deferred in #556.
+  // Merged at the top level of this component's entry (peer to `publish`, which
+  // is namespaced under its own key), so `resolveWiring`'s stackOutput branch —
+  // `resolvePath(componentOutputs[stack], name)` — finds each output by name.
+  // Keyed by the component's own name, which by convention is the stack name a
+  // `stackOutput` reference targets (see the pilots and composition-and-wiring.mdx).
+  const stackOutputs = findStackOutputs(phaseOutputs);
+  if (stackOutputs) {
+    componentOutputs[component.name] = { ...componentOutputs[component.name], ...stackOutputs };
+  }
+
   return { component: component.name, ok: true, records };
 }
 
@@ -573,6 +586,27 @@ function findPublishOutput(
   for (const output of Object.values(phaseOutputs)) {
     if (output && ("uri" in output || "digest" in output || "key" in output)) {
       found = { ...found, ...output };
+    }
+  }
+  return found;
+}
+
+/**
+ * Find the stack `outputs` map produced by an apply-style step (cfn-deploy
+ * returns `CfnDeployOutput.outputs`) across every phase this component ran, so
+ * a deployed stack's outputs can seed downstream `stackOutput()` resolution.
+ * Generic by shape — any output carrying an `outputs` record is eligible —
+ * keeping the driver free of per-capability branching, the same way
+ * `findPublishOutput` is.
+ */
+function findStackOutputs(
+  phaseOutputs: Record<string, Record<string, unknown>>,
+): Record<string, unknown> | undefined {
+  let found: Record<string, unknown> | undefined;
+  for (const output of Object.values(phaseOutputs)) {
+    const outputs = output?.outputs;
+    if (outputs && typeof outputs === "object" && !Array.isArray(outputs)) {
+      found = { ...found, ...(outputs as Record<string, unknown>) };
     }
   }
   return found;

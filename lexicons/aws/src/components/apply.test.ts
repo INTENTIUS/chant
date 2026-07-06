@@ -26,6 +26,28 @@ describe("cfn-deploy (#557)", () => {
     expect(mock.calls.map((c) => c.method)).toEqual(["createChangeSet", "executeChangeSet", "waitForStack"]);
   });
 
+  it("throws when the stack rolls back — a failed deploy must not report success", async () => {
+    const mock = createMockCloudExecutor({
+      stacks: { "search-service": { terminalStatus: "ROLLBACK_COMPLETE" } },
+    });
+    const capability = createCfnDeployCapability(mock.executor);
+
+    await expect(
+      capability.run(ctx, { stack: "search-service", template: "archive:search.template.json" }),
+    ).rejects.toThrow(/ROLLBACK_COMPLETE/);
+  });
+
+  it("throws on a hard failure terminal status (*_FAILED)", async () => {
+    const mock = createMockCloudExecutor({
+      stacks: { "search-service": { terminalStatus: "CREATE_FAILED" } },
+    });
+    const capability = createCfnDeployCapability(mock.executor);
+
+    await expect(
+      capability.run(ctx, { stack: "search-service", template: "archive:search.template.json" }),
+    ).rejects.toThrow(/CREATE_FAILED/);
+  });
+
   it("passes wired inputs and imageRef through as CloudFormation parameters", async () => {
     const mock = createMockCloudExecutor({ stacks: { "search-service": {} } });
     const capability = createCfnDeployCapability(mock.executor);

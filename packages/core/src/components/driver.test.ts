@@ -499,6 +499,50 @@ describe("runInterpretDriver — end to end", () => {
     );
   });
 
+  it("feeds a deployed stack's outputs to a downstream component's stackOutput references (cross-stack apply-order, #556 follow-up)", async () => {
+    const registry = new CapabilityRegistry();
+    // shared-alb's apply returns real stack outputs — the values a downstream
+    // service needs (its ECR repo URI, the cluster ARN).
+    registry.register(
+      fakeCapability("cfn-deploy", {
+        run: () => ({
+          stackStatus: "CREATE_COMPLETE",
+          outputs: {
+            ApiRepoUri: "123.dkr.ecr.us-east-1.amazonaws.com/alb-api",
+            ClusterArn: "arn:aws:ecs:us-east-1:123:cluster/shared",
+          },
+        }),
+      }).capability,
+    );
+    registry.register(fakeCapability("docker-build", { run: () => ({ archivePath: "api.tar", digest: "sha256:abc" }) }).capability);
+    const publish = fakeCapability("publish-image", { run: () => ({ uri: "repo@sha256:abc", digest: "sha256:abc" }) });
+    registry.register(publish.capability);
+    const verify = fakeCapability("wait-steady-state", { run: () => ({ ok: true }) });
+    registry.register(verify.capability);
+
+    const sharedAlb: DriverComponent = {
+      name: "shared-alb",
+      dependsOn: [],
+      deploy: [{ phase: "Apply", steps: [{ kind: "cfn-deploy", stack: "shared-alb", template: "shared-alb.json" }] }],
+    };
+    const api: DriverComponent = {
+      name: "api",
+      dependsOn: ["shared-alb"],
+      deploy: [
+        { phase: "Build", steps: [{ kind: "docker-build", context: "./api", into: "api.tar" }] },
+        { phase: "Publish", steps: [{ kind: "publish-image", from: "archive:api.tar", to: { stackOutput: { stack: "shared-alb", name: "ApiRepoUri" } } }] },
+        { phase: "Verify", steps: [{ kind: "wait-steady-state", service: "api", cluster: { stackOutput: { stack: "shared-alb", name: "ClusterArn" } } }] },
+      ],
+    };
+
+    const result = await runInterpretDriver([sharedAlb, api], registry, { env: "prod" });
+    expect(result.ok).toBe(true);
+    // Before this fix the driver dropped shared-alb's outputs, so these refs
+    // resolved to undefined. Now the downstream steps receive the real values.
+    expect((publish.calls[0].input as { to: string }).to).toBe("123.dkr.ecr.us-east-1.amazonaws.com/alb-api");
+    expect((verify.calls[0].input as { cluster: string }).cluster).toBe("arn:aws:ecs:us-east-1:123:cluster/shared");
+  });
+
   it("runs all four components — the original three pilots plus the #558 validation component — through one driver instance with zero per-component driver code (sprawl metric, extended)", async () => {
     const registry = new CapabilityRegistry();
     const kinds = [

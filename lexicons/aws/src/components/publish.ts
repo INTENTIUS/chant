@@ -199,16 +199,26 @@ export function createPublishImageCapability(
     kind: "publish-image",
     async run(_ctx, input) {
       if (!input.to) throw new Error(`publish-image "${input.from}": "to" (destination registry) is required`);
-      const { digest: localDigest } = await executor.docker.load({ inFile: archiveRelativePath(input.from) });
+      // `docker load` reports the archived image's local reference — a name:tag
+      // for a tagged build, or an image id. It's a valid `docker tag` source but
+      // never a registry digest, so the promoted digest is read back from the
+      // push below, not constructed from this.
+      const { digest: localRef } = await executor.docker.load({ inFile: archiveRelativePath(input.from) });
       const repo = input.to.replace(/\/+$/, "");
-      const target = `${repo}@${localDigest}`;
-      await executor.docker.tag({ source: localDigest, target });
+      // Publish under a tag: docker can neither tag nor push a digest-qualified
+      // reference (`repo@sha256:...`), so the transport is a tag and the stable
+      // identifier is the digest the push returns.
+      const pushRef = `${repo}:latest`;
+      await executor.docker.tag({ source: localRef, target: pushRef });
       const registry = repo.split("/")[0]!;
       await executor.ecr.login(registry);
-      const { digest } = await executor.docker.push({ image: target });
+      const { digest: pushed } = await executor.docker.push({ image: pushRef });
+      // Normalize to a bare `sha256:...`, whether the client returned that or a
+      // full `repo@sha256:...` RepoDigest.
+      const digest = pushed.includes("@") ? pushed.slice(pushed.indexOf("@") + 1) : pushed;
       for (const tag of input.tags ?? []) {
         const tagged = `${repo}:${tag}`;
-        await executor.docker.tag({ source: localDigest, target: tagged });
+        await executor.docker.tag({ source: localRef, target: tagged });
         await executor.docker.push({ image: tagged });
       }
 

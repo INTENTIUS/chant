@@ -146,6 +146,18 @@ export function createCfnDeployCapability(
         changeSetName: changeSet.changeSetName,
       });
       const { stackStatus, outputs } = await executor.cloudformation.waitForStack(stack);
+      // `waitForStack` returns on any terminal (`*_COMPLETE`/`*_FAILED`) status,
+      // including the failure ones: a create that fails rolls back to
+      // `ROLLBACK_COMPLETE`, an update to `UPDATE_ROLLBACK_COMPLETE`, and hard
+      // failures end in `*_FAILED`. Treating those as success would report a
+      // failed deploy as green (and hand downstream steps an empty `outputs`),
+      // so throw — the same fail-closed contract the rest of the release model
+      // relies on.
+      if (stackStatus.includes("ROLLBACK") || stackStatus.endsWith("_FAILED")) {
+        throw new Error(
+          `cfn-deploy "${stack}": stack reached ${stackStatus} — the deploy failed and was rolled back. Inspect the stack events for the resource that failed to create/update.`,
+        );
+      }
       return { stackStatus, outputs, ...(snapshotId ? { snapshotId } : {}) };
     },
     async rollback(ctx, input) {

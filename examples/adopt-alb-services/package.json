@@ -1,0 +1,18 @@
+{
+  "name": "adopt-alb-services",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Onboarding: a bespoke multi-service ALB pipeline adopted as build.json components run by one generic driver — no per-service pipelines, no describe-stacks|jq glue.",
+  "devDependencies": {
+    "@intentius/chant": "*",
+    "@intentius/chant-lexicon-aws": "*",
+    "typescript": "*"
+  },
+  "scripts": {
+    "build": "chant build src/shared-alb --lexicon aws -o dist/shared-alb.template.json && chant build src/api --lexicon aws -o dist/api.template.json && chant build src/ui --lexicon aws -o dist/ui.template.json",
+    "deploy": "chant run --components all --env local --no-release-record",
+    "status": "chant components status local --live --no-release-record",
+    "teardown": "aws cloudformation delete-stack --stack-name api; aws cloudformation delete-stack --stack-name ui; aws cloudformation delete-stack --stack-name shared-alb"
+  }
+}
