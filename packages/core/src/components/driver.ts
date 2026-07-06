@@ -161,6 +161,16 @@ export interface DriverRunResult {
   ok: boolean;
   /** Name of the component that terminated the run, if any. */
   failedComponent?: string;
+  /**
+   * The accumulated cross-component/cross-stack outputs after the run — each
+   * component's `publish` output and, for an applied stack, its `cfn-deploy`
+   * outputs, keyed by component name. Seeded from `options.componentOutputs`
+   * and grown as components complete. The CLI's `--dump-outputs` serializes
+   * this so a later, separate run (a downstream CI job) can `--seed-outputs`
+   * it and resolve `stackOutput()`/`@<name>.publish.*` references to a
+   * component that ran in an earlier job.
+   */
+  componentOutputs: Record<string, Record<string, unknown>>;
 }
 
 // ── Graph: order + parallel-safe waves from `dependsOn` ──────────────────────
@@ -674,7 +684,7 @@ export async function runInterpretDriver(
   }
 
   const ok = failedComponent === undefined;
-  const result: DriverRunResult = { order, waves, results, ok, failedComponent };
+  const result: DriverRunResult = { order, waves, results, ok, failedComponent, componentOutputs };
   if (!ok) throw new DriverRunFailure(result);
   return result;
 }

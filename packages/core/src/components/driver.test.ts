@@ -541,6 +541,35 @@ describe("runInterpretDriver — end to end", () => {
     // resolved to undefined. Now the downstream steps receive the real values.
     expect((publish.calls[0].input as { to: string }).to).toBe("123.dkr.ecr.us-east-1.amazonaws.com/alb-api");
     expect((verify.calls[0].input as { cluster: string }).cluster).toBe("arn:aws:ecs:us-east-1:123:cluster/shared");
+    // The accumulated outputs are exposed on the result so the CLI can
+    // `--dump-outputs` them for a downstream job to `--seed-outputs`.
+    expect(result.componentOutputs["shared-alb"]).toMatchObject({
+      ApiRepoUri: "123.dkr.ecr.us-east-1.amazonaws.com/alb-api",
+      ClusterArn: "arn:aws:ecs:us-east-1:123:cluster/shared",
+    });
+  });
+
+  it("seeded componentOutputs let a single downstream component resolve a cross-job stackOutput (artifact threading)", async () => {
+    // Simulates the generated pipeline's downstream job: api runs alone (via the
+    // single-component `runComponentDeploy` path, bypassing whole-graph
+    // resolution — its dependency shared-alb is not in this process), seeded with
+    // shared-alb's outputs from an earlier job, and still resolves the reference.
+    const registry = new CapabilityRegistry();
+    const publish = fakeCapability("publish-image", { run: () => ({ uri: "repo@sha256:abc", digest: "sha256:abc" }) });
+    registry.register(publish.capability);
+
+    const api: DriverComponent = {
+      name: "api",
+      dependsOn: ["shared-alb"],
+      deploy: [
+        { phase: "Publish", steps: [{ kind: "publish-image", from: "archive:api.tar", to: { stackOutput: { stack: "shared-alb", name: "ApiRepoUri" } } }] },
+      ],
+    };
+
+    const seeded = { "shared-alb": { ApiRepoUri: "123.dkr.ecr.us-east-1.amazonaws.com/alb-api" } };
+    const result = await runComponentDeploy(api, { env: "prod", component: "api" }, registry, seeded);
+    expect(result.ok).toBe(true);
+    expect((publish.calls[0].input as { to: string }).to).toBe("123.dkr.ecr.us-east-1.amazonaws.com/alb-api");
   });
 
   it("runs all four components — the original three pilots plus the #558 validation component — through one driver instance with zero per-component driver code (sprawl metric, extended)", async () => {

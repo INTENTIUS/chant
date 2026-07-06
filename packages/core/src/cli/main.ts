@@ -132,6 +132,10 @@ export function parseArgs(args: string[]): ParsedArgs {
       result.components = true;
     } else if (arg === "--generate") {
       result.generate = args[++i];
+    } else if (arg === "--dump-outputs") {
+      result.dumpOutputs = args[++i];
+    } else if (arg === "--seed-outputs") {
+      (result.seedOutputs ??= []).push(args[++i]);
     } else if (arg === "--detail") {
       result.detail = Number(args[++i]);
     } else if (arg === "--lens") {

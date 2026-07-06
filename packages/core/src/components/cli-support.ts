@@ -303,6 +303,15 @@ export interface RunComponentsOptions {
    * `registry` above provides for the capability registry.
    */
   config?: ChantConfig;
+  /**
+   * Cross-component/cross-stack outputs to seed the run with — keyed by
+   * component name, the same shape `DriverRunResult.componentOutputs` produces.
+   * The CLI populates this from `--seed-outputs` files (an upstream CI job's
+   * dumped outputs), so a single-component run in a downstream job can resolve
+   * `stackOutput()`/`@<name>.publish.*` references to a component that already
+   * ran elsewhere. Merged with, and overridden by, outputs this run produces.
+   */
+  componentOutputs?: Record<string, Record<string, unknown>>;
 }
 
 /** Result of `chant run --components <name|all>`. */
@@ -425,22 +434,32 @@ export async function runComponents(
   const env = options.env ?? "local";
   const selected = targets.map((c) => c.name);
   const resolvedTargets = targets.map((component) => applyConfigDefaults(component, config));
+  // Cross-component/cross-stack outputs to resolve references against. Seeded
+  // from a caller (a downstream CI job passing an upstream job's dumped
+  // outputs via `--seed-outputs`); grows as this run's components complete.
+  const seedOutputs = options.componentOutputs ?? {};
 
   try {
     if (selector === "all") {
-      const run = await runInterpretDriver(resolvedTargets, registry, { env });
+      const run = await runInterpretDriver(resolvedTargets, registry, { env, componentOutputs: seedOutputs });
       return { success: true, run, selected };
     }
 
     // Single-component invocation: run just this component, bypassing
-    // whole-graph `dependsOn` resolution (see docstring above).
-    const componentResult = await runComponentDeploy(resolvedTargets[0], { env, component: resolvedTargets[0].name }, registry, {});
+    // whole-graph `dependsOn` resolution (see docstring above). The seeded
+    // outputs stand in for the dependency components that ran in earlier jobs,
+    // so a single-component run still resolves their `stackOutput()`/publish
+    // references. `runComponentDeploy` mutates this map with this component's
+    // own outputs, which `run.componentOutputs` then exposes for `--dump-outputs`.
+    const componentOutputs = { ...seedOutputs };
+    const componentResult = await runComponentDeploy(resolvedTargets[0], { env, component: resolvedTargets[0].name }, registry, componentOutputs);
     const run: DriverRunResult = {
       order: selected,
       waves: [selected],
       results: [componentResult],
       ok: componentResult.ok,
       failedComponent: componentResult.ok ? undefined : componentResult.component,
+      componentOutputs,
     };
     return { success: componentResult.ok, run, selected };
   } catch (err) {

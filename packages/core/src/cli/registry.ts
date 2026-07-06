@@ -114,6 +114,10 @@ export interface ParsedArgs {
   compareTo?: string;
   /** `chant run --components <name> --env <env> --no-release-record` (#597) — opt out of auto-emitting a release-ledger record after a successful component deploy. Default (flag omitted): recording is ON. Also settable project-wide via `chant.config.ts`'s `release.autoRecord: false`. */
   noReleaseRecord?: boolean;
+  /** `chant run --components <name> --dump-outputs <file>` — after the run, write the accumulated cross-component/cross-stack outputs (JSON, keyed by component name) to `<file>`, for a downstream job to `--seed-outputs`. */
+  dumpOutputs?: string;
+  /** `chant run --components <name> --seed-outputs <file>` (repeatable) — before the run, load each JSON outputs file (as written by `--dump-outputs`) and seed cross-component/cross-stack resolution with it, so a `stackOutput()`/`@<dep>.publish.*` reference to a component that ran in an earlier job resolves. */
+  seedOutputs?: string[];
 }
 
 /**

@@ -2,3 +2,9 @@ node_modules/
 dist/
 *.tar
 .chant/
+
+# generated/runtime scratch
+.gitlab-ci.yml
+.gitlab-ci.generated.yml
+*.outputs.json
+.gitlab-ci-local/

@@ -31,6 +31,30 @@ function pilotComponents(): DriverComponent[] {
   ];
 }
 
+describe("generateGitlabPipeline: cross-stack output threading (artifacts)", () => {
+  test("a depended-upon component dumps its outputs as an artifact; its dependents seed from it", () => {
+    // search-service dependsOn shared-alb; orders-table is depended on by nothing.
+    const parsed = parseYAML(generateGitlabPipeline(pilotComponents()).yaml);
+
+    // Producer: shared-alb hands its resolved outputs to a separate downstream
+    // job, so it dumps them and publishes the file as an artifact.
+    const shared = parsed["shared-alb"] as Record<string, unknown>;
+    expect((shared.script as string[]).join(" ")).toContain("--dump-outputs shared-alb.outputs.json");
+    expect(shared.artifacts).toEqual({ paths: ["shared-alb.outputs.json"] });
+
+    // Consumer: search-service seeds from shared-alb's dumped outputs (delivered
+    // across the needs: edge) so its stackOutput() references resolve.
+    const svc = parsed["search-service"] as Record<string, unknown>;
+    expect((svc.script as string[]).join(" ")).toContain("--seed-outputs shared-alb.outputs.json");
+
+    // A component nothing depends on neither dumps nor carries an artifact.
+    const orders = parsed["orders-table"] as Record<string, unknown>;
+    expect((orders.script as string[]).join(" ")).not.toContain("--dump-outputs");
+    expect(orders.artifacts).toBeUndefined();
+    expect((orders.script as string[]).join(" ")).not.toContain("--seed-outputs");
+  });
+});
+
 describe("generateGitlabPipeline: structurally valid YAML", () => {
   test("produces YAML with a stages: list and one job per component", () => {
     const result = generateGitlabPipeline(pilotComponents(), { env: "staging" });
@@ -168,7 +192,9 @@ describe("generateGitlabPipeline: a cross-cutting change is one generator edit, 
 
     for (const job of result.jobs) {
       const script = (parsed[job.jobName] as Record<string, unknown>).script as string[];
-      expect(script[0]).toBe(`chant run --components ${job.component} --env staging --temporal`);
+      // The runCommand prefix reflects in every job; output-threading flags
+      // (--seed-outputs/--dump-outputs) may be appended per the dependency graph.
+      expect(script[0].startsWith(`chant run --components ${job.component} --env staging --temporal`)).toBe(true);
     }
   });
 

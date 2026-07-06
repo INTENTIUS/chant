@@ -30,7 +30,8 @@
  */
 
 import { readdir } from "node:fs/promises";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
+import { pathToFileURL } from "node:url";
 import { existsSync } from "node:fs";
 import { DiscoveryError } from "../errors";
 import { isComponent, type Component } from "./component";
@@ -73,7 +74,12 @@ async function findComponentFiles(path: string): Promise<string[]> {
       const fullPath = join(dir, entry.name);
 
       if (entry.isDirectory()) {
-        if (entry.name === "node_modules") continue;
+        // Skip dependency and tool/VCS directories: component sources never live
+        // in them, and descending in is both wasted work and a correctness bug —
+        // e.g. a CI runner like gitlab-ci-local stages a copy of the project
+        // under `.gitlab-ci-local/`, which discovery would otherwise pick up as
+        // duplicate component names alongside the originals.
+        if (entry.name === "node_modules" || entry.name.startsWith(".")) continue;
 
         const configPath = join(fullPath, "chant.config.ts");
         if (existsSync(configPath)) {
@@ -120,7 +126,11 @@ export async function discoverComponents(path: string): Promise<ComponentDiscove
   for (const filePath of sourceFiles) {
     let exports: Record<string, unknown>;
     try {
-      exports = await import(filePath);
+      // Resolve to an absolute file:// URL before importing. A relative
+      // `filePath` (e.g. from `chant build --components --generate`, which passes
+      // a bare "." path) would otherwise be treated by `import()` as a bare
+      // package specifier and fail with "Cannot find package 'x.component.ts'".
+      exports = await import(pathToFileURL(resolve(filePath)).href);
     } catch (err) {
       errors.push(new DiscoveryError(filePath, err instanceof Error ? err.message : String(err), "import"));
       continue;

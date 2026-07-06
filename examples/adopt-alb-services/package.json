@@ -11,6 +11,7 @@
   },
   "scripts": {
     "build": "chant build src/shared-alb --lexicon aws -o dist/shared-alb.template.json && chant build src/api --lexicon aws -o dist/api.template.json && chant build src/ui --lexicon aws -o dist/ui.template.json",
+    "generate": "chant build --components --generate gitlab -o .gitlab-ci.yml",
     "deploy": "chant run --components all --env local --no-release-record",
     "status": "chant components status local --live --no-release-record",
     "teardown": "aws cloudformation delete-stack --stack-name api; aws cloudformation delete-stack --stack-name ui; aws cloudformation delete-stack --stack-name shared-alb"
