@@ -131,6 +131,40 @@ npm run build && npm run deploy
 npm run teardown   # deletes the api, ui, and shared-alb stacks
 ```
 
+### As a CI pipeline — the real "after"
+
+`npm run deploy` runs everything in one process. In CI you want one job per
+service. chant generates that pipeline from the same components:
+
+```bash
+npm run generate    # chant build --components --generate gitlab -o .gitlab-ci.yml
+```
+
+The result is a thin `.gitlab-ci.yml`: one job per component, ordered into waves
+by `dependsOn` (`shared-alb` in wave-1, `api`/`ui` in wave-2 with `needs:
+shared-alb`). Every job is just `chant run --components <name>` — no
+`describe-stacks | jq`, no per-service deploy script. Compare it to
+[`before/.gitlab-ci.yml`](before/.gitlab-ci.yml): four bespoke jobs with copied
+glue become three thin, generated triggers.
+
+Because each job is a **separate process**, a service can't read shared-alb's
+outputs from memory — shared-alb ran in another job. The generated pipeline
+threads them as CI artifacts: `shared-alb` dumps its outputs
+(`--dump-outputs shared-alb.outputs.json`, published as a job artifact), and
+`api`/`ui` seed from it (`--seed-outputs shared-alb.outputs.json`, delivered
+across the `needs:` edge). A `stackOutput("shared-alb", …)` reference resolves
+from the seeded file.
+
+Prove the generated pipeline deploys the whole thing across isolated jobs
+(needs Docker + the aws CLI):
+
+```bash
+just adopt-alb-services-e2e
+```
+
+It boots Floci, generates the pipeline, runs each job as its own process with
+the outputs threaded between them, and asserts all three stacks land.
+
 ## The point
 
 Adding a service is adding one `build.json`, not one pipeline. The dozen verbs

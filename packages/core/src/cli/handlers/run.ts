@@ -1,5 +1,5 @@
 import { resolve, join, dirname } from "node:path";
-import { existsSync, writeFileSync, mkdirSync } from "node:fs";
+import { existsSync, writeFileSync, mkdirSync, readFileSync } from "node:fs";
 import { createConnection } from "node:net";
 import { spawn as spawnChild, type ChildProcess } from "node:child_process";
 import { loadChantConfig, resolveAutoReleaseDisabled } from "../../config";
@@ -646,7 +646,29 @@ export async function runOpComponents(ctx: CommandContext): Promise<number> {
   if (ctx.args.temporal) return runComponentTemporal(ctx, selector);
 
   const env = ctx.args.env ?? "local";
-  const result = await runComponents(resolve("."), selector, { env: ctx.args.env });
+  // Seed cross-component/cross-stack outputs from upstream jobs' dumped files
+  // (`--seed-outputs`), so a single-component run resolves references to a
+  // component that ran in an earlier CI job.
+  const seededOutputs: Record<string, Record<string, unknown>> = {};
+  for (const file of ctx.args.seedOutputs ?? []) {
+    try {
+      Object.assign(seededOutputs, JSON.parse(readFileSync(resolve(file), "utf8")));
+    } catch (err) {
+      console.error(formatError({
+        message: `--seed-outputs: could not read "${file}": ${err instanceof Error ? err.message : String(err)}`,
+      }));
+      return 1;
+    }
+  }
+  const result = await runComponents(resolve("."), selector, { env: ctx.args.env, componentOutputs: seededOutputs });
+
+  // Dump the accumulated outputs for a downstream job to seed from. Written
+  // even on failure (partial outputs) so a resumed run still has what completed.
+  if (ctx.args.dumpOutputs && result.run) {
+    const dumpPath = resolve(ctx.args.dumpOutputs);
+    mkdirSync(dirname(dumpPath), { recursive: true });
+    writeFileSync(dumpPath, JSON.stringify(result.run.componentOutputs, null, 2));
+  }
 
   if (result.gateUnsupported) {
     console.error(formatError({

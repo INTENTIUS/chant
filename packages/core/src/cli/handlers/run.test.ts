@@ -878,7 +878,7 @@ describe("runOp dispatcher: --components routes to runOpComponents", () => {
     const exit = await runOp({ args: makeArgs({ path: "svc", components: true, temporal: false }), plugins: [], serializers: [] });
 
     expect(exit).toBe(0);
-    expect(runComponentsMock).toHaveBeenCalledWith(expect.any(String), "svc", { env: undefined });
+    expect(runComponentsMock).toHaveBeenCalledWith(expect.any(String), "svc", { env: undefined, componentOutputs: {} });
     expect(discoverOpsMock).not.toHaveBeenCalled();
     vi.restoreAllMocks();
   });
@@ -916,7 +916,7 @@ describe("runOpComponents", () => {
     const exit = await runOpComponents({ args: makeArgs({ path: "svc", temporal: false }), plugins: [], serializers: [] });
 
     expect(exit).toBe(0);
-    expect(runComponentsMock).toHaveBeenCalledWith(expect.any(String), "svc", { env: undefined });
+    expect(runComponentsMock).toHaveBeenCalledWith(expect.any(String), "svc", { env: undefined, componentOutputs: {} });
     const printed = stderrWrite.mock.calls.map((c) => String(c[0])).join("");
     expect(printed).toContain("interpret run completed");
     vi.restoreAllMocks();
@@ -928,7 +928,7 @@ describe("runOpComponents", () => {
 
     await runOpComponents({ args: makeArgs({ path: "svc", env: "staging", temporal: false }), plugins: [], serializers: [] });
 
-    expect(runComponentsMock).toHaveBeenCalledWith(expect.any(String), "svc", { env: "staging" });
+    expect(runComponentsMock).toHaveBeenCalledWith(expect.any(String), "svc", { env: "staging", componentOutputs: {} });
     vi.restoreAllMocks();
   });
 
@@ -964,7 +964,7 @@ describe("runOpComponents", () => {
     const exit = await runOpComponents({ args: makeArgs({ path: "all", temporal: false }), plugins: [], serializers: [] });
 
     expect(exit).toBe(0);
-    expect(runComponentsMock).toHaveBeenCalledWith(expect.any(String), "all", { env: undefined });
+    expect(runComponentsMock).toHaveBeenCalledWith(expect.any(String), "all", { env: undefined, componentOutputs: {} });
     const printed = stderrWrite.mock.calls.map((c) => String(c[0])).join("");
     expect(printed).toContain("shared-alb");
     expect(printed).toContain("search-service");

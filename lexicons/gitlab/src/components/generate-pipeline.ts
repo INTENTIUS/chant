@@ -70,6 +70,18 @@ export function generateGitlabPipeline(
   const { waves } = resolveComponentGraph(components);
   const byName = new Map(components.map((c) => [c.name, c]));
 
+  // Components that something else depends on must hand their resolved outputs
+  // (stack outputs, published artifact refs) to their dependents, which run as
+  // separate jobs/processes. Each such producer dumps its outputs to a file and
+  // declares it a job artifact; each dependent seeds from that file (delivered
+  // across the `needs:` edge by GitLab's artifact passing) so a `stackOutput()`
+  // / `@<dep>.publish.*` reference resolves even though the producer ran in a
+  // different job. Without this, a single-component job has no in-memory outputs
+  // for its dependencies — see epic #551 / the adopt-alb-services example.
+  const dependedUpon = new Set<string>();
+  for (const c of components) for (const dep of c.dependsOn ?? []) dependedUpon.add(dep);
+  const outputsFile = (name: string) => `${name}.outputs.json`;
+
   const stages = waves.map((_, i) => `wave-${i + 1}`);
   const jobs: GeneratedJob[] = [];
   const jobNameByComponent = new Map<string, string>();
@@ -92,11 +104,14 @@ export function generateGitlabPipeline(
 
       jobs.push({ jobName, component: name, stage, needs });
 
-      const script = [
-        ...beforeScript,
-        runCommand.map((part) => part.replace("{name}", name)).join(" "),
-        ...extraScript,
-      ];
+      // Build the run invocation, then append output-threading flags: seed from
+      // each dependency's dumped outputs, and dump this component's own outputs
+      // if a dependent will need them.
+      const runParts = runCommand.map((part) => part.replace("{name}", name));
+      for (const dep of component.dependsOn ?? []) runParts.push("--seed-outputs", outputsFile(dep));
+      if (dependedUpon.has(name)) runParts.push("--dump-outputs", outputsFile(name));
+
+      const script = [...beforeScript, runParts.join(" "), ...extraScript];
 
       const jobProps: Record<string, unknown> = {
         stage,
@@ -104,6 +119,8 @@ export function generateGitlabPipeline(
         script,
       };
       if (needs.length > 0) jobProps.needs = needs;
+      // Publish this component's dumped outputs so dependent jobs receive it.
+      if (dependedUpon.has(name)) jobProps.artifacts = { paths: [outputsFile(name)] };
       doc[jobName] = jobProps;
     }
   });
