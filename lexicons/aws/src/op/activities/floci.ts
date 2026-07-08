@@ -1,7 +1,6 @@
 import { exec } from "node:child_process";
 import { promisify } from "node:util";
-import { safeHeartbeat } from "./heartbeat";
-import { sleep } from "./util";
+import { safeHeartbeat, sleep } from "@intentius/chant/op";
 
 const execAsync = promisify(exec);
 

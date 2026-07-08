@@ -957,9 +957,19 @@ export async function runOpLocal(ctx: CommandContext): Promise<number> {
     return 1;
   }
 
+  // The project's configured lexicons decide which cloud appliers to load
+  // (aws → floci, gcp → gcpApply, azure → az group). Best-effort: an unreadable
+  // config just yields the temporal base activities.
+  let lexicons: string[] = [];
+  try {
+    lexicons = (await loadChantConfig(process.cwd())).config.lexicons ?? [];
+  } catch {
+    // No/invalid chant.config — fall back to base activities only.
+  }
+
   let activities, profiles;
   try {
-    [activities, profiles] = await Promise.all([loadActivities(), loadProfiles()]);
+    [activities, profiles] = await Promise.all([loadActivities(lexicons), loadProfiles()]);
   } catch (err) {
     console.error(formatError({ message: err instanceof Error ? err.message : String(err) }));
     return 1;

@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import { parseYAML } from "@intentius/chant/yaml";
-import { safeHeartbeat } from "./heartbeat";
+import { safeHeartbeat } from "@intentius/chant/op";
 
 const PROJECT_ID_ANNOTATION = "cnrm.cloud.google.com/project-id";
 

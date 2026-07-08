@@ -44,6 +44,11 @@
       "types": "./dist/components/index.d.ts",
       "default": "./src/components/index.ts"
     },
+    "./op/activities": {
+      "development": "./src/op/activities/index.ts",
+      "types": "./dist/op/activities/index.d.ts",
+      "default": "./src/op/activities/index.ts"
+    },
     "./detect": {
       "development": "./src/detect.ts",
       "types": "./dist/detect.d.ts",
