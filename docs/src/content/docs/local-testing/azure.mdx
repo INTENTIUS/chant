@@ -69,6 +69,16 @@ chant run azure
 floci-az covers Storage, KeyVault, Service Bus, and similar resource providers, but not `Microsoft.Web`. An App Service resource can't run locally today, though its ARM expressions evaluate identically — the reference/listKeys logic is verified against the Storage path.
 </Aside>
 
+## Deleting and pruning
+
+`azDelete` is the inverse of `azApply`: it reads the same template and deletes the resources it declares, in reverse dependency order (a referrer goes before what it references), idempotently.
+
+`azApply` also takes `prune: true` for an owned-only prune — after applying, it deletes chant-managed resources of a templated type whose name is no longer in the template. chant stamps a `managed-by: chant` tag on everything it applies and only ever prunes tagged resources, so a foreign resource sharing the group is never touched.
+
+<Aside type="caution">
+Prune keys off resource tags, and floci-az does not currently persist tags. So owned-only prune takes effect against real Azure, not the emulator; the delete mechanics themselves (`azDelete`, and the DELETE calls prune issues) work against either.
+</Aside>
+
 ## From local to real cloud
 
 Drop the `endpoint` override and `azApply` targets real Azure ARM. The template, the ordering, and the expression evaluation are unchanged — only the resource-manager host differs.

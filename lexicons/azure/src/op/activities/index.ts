@@ -8,6 +8,12 @@ export type { AzGroupEnsureArgs, AzGroupDeleteArgs } from "./azure";
 
 export {
   azApply,
+  azDelete,
+  pruneArmOrphans,
+  deleteArmResource,
+  listGroupResources,
+  chantOwnershipTags,
+  isChantOwned,
   evalArm,
   evalArmString,
   armResourceUrl,
@@ -15,4 +21,4 @@ export {
   armDependencies,
   orderArmResources,
 } from "./az-apply";
-export type { AzApplyArgs, ArmEvalCtx, ArmResource, AzHttp } from "./az-apply";
+export type { AzApplyArgs, ArmEvalCtx, ArmResource, ArmListItem, AzHttp } from "./az-apply";
