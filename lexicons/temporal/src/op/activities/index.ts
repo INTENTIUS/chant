@@ -22,6 +22,9 @@ export type { LifecycleSnapshotArgs, LifecycleDiffArgs, LifecycleDiffResult } fr
 export { chantTeardown } from "./teardown";
 export type { ChantTeardownArgs } from "./teardown";
 
+export { k3dUp, k3dDown, k3dUpCommand, k3dDownCommand, k3dExistsCommand } from "./k3d";
+export type { K3dUpArgs, K3dDownArgs } from "./k3d";
+
 export { reconcilePr } from "./reconcile";
 export type { ReconcilePrArgs, ReconcileResult, ReconcileMode, ReconcileEntry } from "./reconcile";
 

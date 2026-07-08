@@ -132,6 +132,26 @@ export const teardown = (path: string): ActivityStep =>
   activity("chantTeardown", { path }, "longInfra");
 
 /**
+ * Create a local k3d cluster (vanilla Kubernetes in Docker) and merge its
+ * kubeconfig / switch context — k3d's defaults. Idempotent: skips creation if a
+ * cluster of the same name already exists. Defaults to the `longInfra` profile
+ * (creating a cluster may pull the k3s image); override via `opts.profile`.
+ *
+ * `opts` accepts `servers`, `agents`, `image`, `ports` (e.g.
+ * `["8080:80@loadbalancer"]`), `registryCreate`, `configFile`, and `timeout`.
+ */
+export const k3dUp = (name: string, opts?: Record<string, unknown>): ActivityStep => {
+  const { args, profile } = takeProfile(opts);
+  return activity("k3dUp", { name, ...args }, profile ?? "longInfra");
+};
+
+/** Delete a local k3d cluster. Defaults to the `fastIdempotent` profile (override via `opts.profile`). */
+export const k3dDown = (name: string, opts?: Record<string, unknown>): ActivityStep => {
+  const { args, profile } = takeProfile(opts);
+  return activity("k3dDown", { name, ...args }, profile ?? "fastIdempotent");
+};
+
+/**
  * Gate an apply on organizational policy: build the project and run its
  * `lint.policies` over the resolved resources, blocking the workflow on any
  * violation. Place it before the apply phase. `env` (or `ownership.env`) lets a
