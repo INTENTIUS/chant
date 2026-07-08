@@ -209,7 +209,15 @@ export const pubSubTopicMapper: ResourceMapper = {
     // Pub/Sub creates a topic with an idempotent PUT to its resource URL; GET the
     // same URL for the existence check.
     const url = `${base}/v1/projects/${encodeURIComponent(project)}/topics/${encodeURIComponent(topic)}`;
-    return { getUrl: url, create: { method: "PUT", url, body: stampOwnership(pubSubTopicBody(resource)) } };
+    const body = stampOwnership(pubSubTopicBody(resource));
+    // UpdateTopic uses the {topic, updateMask} envelope — the mask lists the
+    // fields being set (labels, messageRetentionDuration).
+    const update = {
+      method: "PATCH" as const,
+      url,
+      body: { topic: { name: `projects/${project}/topics/${topic}`, ...body }, updateMask: Object.keys(body).join(",") },
+    };
+    return { getUrl: url, create: { method: "PUT", url, body }, update };
   },
   list: {
     url: ({ base, project }) => `${base}/v1/projects/${encodeURIComponent(project)}/topics`,

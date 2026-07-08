@@ -247,11 +247,30 @@ describe("applyResource create/update (#706)", () => {
     expect(JSON.parse(String((await recorderPatchBody(BUCKET)))).name).toBeUndefined();
   });
 
-  test("existing (GET 200) without update support (topic) → left unchanged", async () => {
+  test("existing (GET 200) without update support (subscription) → left unchanged", async () => {
+    const sub: GcpResource = {
+      kind: "PubSubSubscription",
+      metadata: { name: "s" },
+      spec: { topicRef: { name: "events" } },
+    };
     const { http, calls } = recorder(200);
-    const res = await applyResource(pubSubTopicMapper, TOPIC, { base: "http://x", project: "p" }, http);
-    expect(res).toEqual({ kind: "PubSubTopic", name: "events", created: false, updated: false });
+    const res = await applyResource(pubSubSubscriptionMapper, sub, { base: "http://x", project: "p" }, http);
+    expect(res).toEqual({ kind: "PubSubSubscription", name: "s", created: false, updated: false });
     expect(calls.map((c) => c.method)).toEqual(["GET"]);
+  });
+
+  test("PubSubTopic update uses the {topic, updateMask} envelope", async () => {
+    let patchBody: unknown;
+    const http: GcpHttp = async (method, _url, body) => {
+      if (method === "PATCH") patchBody = body;
+      return { status: 200, text: "{}" };
+    };
+    const res = await applyResource(pubSubTopicMapper, TOPIC, { base: "http://x", project: "p" }, http);
+    expect(res).toEqual({ kind: "PubSubTopic", name: "events", created: false, updated: true });
+    const b = patchBody as { topic: { name: string; labels: Record<string, string> }; updateMask: string };
+    expect(b.topic.name).toBe("projects/p/topics/events");
+    expect(b.topic.labels["managed-by"]).toBe("chant");
+    expect(b.updateMask.split(",")).toContain("labels");
   });
 
   test("create failure surfaces kind + status", async () => {
