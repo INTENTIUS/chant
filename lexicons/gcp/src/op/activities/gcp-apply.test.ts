@@ -2,16 +2,27 @@ import { describe, test, expect } from "vitest";
 import {
   bucketInsertBody,
   pubSubTopicBody,
+  cloudRunServiceBody,
   resolveGcpProject,
   applyResource,
+  waitForOperation,
+  longRunningOperation,
   parseManifest,
   storageBucketMapper,
   pubSubTopicMapper,
+  cloudRunServiceMapper,
   MAPPERS,
   type CnrmStorageBucket,
   type GcpResource,
   type GcpHttp,
 } from "./gcp-apply";
+
+const RUN_SERVICE: GcpResource = {
+  apiVersion: "run.cnrm.cloud.google.com/v1beta1",
+  kind: "RunService",
+  metadata: { name: "hello-svc" },
+  spec: { location: "us-central1", template: { containers: [{ image: "gcr.io/x/hello" }] } },
+};
 
 const BUCKET: CnrmStorageBucket = {
   apiVersion: "storage.cnrm.cloud.google.com/v1beta1",
@@ -90,8 +101,72 @@ describe("mappers build correct plans (#706)", () => {
   });
 
   test("registry keys match each mapper's kind", () => {
-    expect(Object.keys(MAPPERS).sort()).toEqual(["PubSubTopic", "StorageBucket"]);
+    expect(Object.keys(MAPPERS).sort()).toEqual(["PubSubTopic", "RunService", "StorageBucket"]);
     for (const [key, mapper] of Object.entries(MAPPERS)) expect(mapper.kind).toBe(key);
+  });
+});
+
+describe("Cloud Run mapper + LRO (#706)", () => {
+  test("cloudRunServiceBody passes the template through", () => {
+    expect(cloudRunServiceBody(RUN_SERVICE)).toEqual({
+      template: { containers: [{ image: "gcr.io/x/hello" }] },
+    });
+  });
+
+  test("RunService plan → POST v2 services?serviceId, async operation present", () => {
+    const plan = cloudRunServiceMapper.plan(RUN_SERVICE, { base: "http://x", project: "p" });
+    expect(plan.getUrl).toBe("http://x/v2/projects/p/locations/us-central1/services/hello-svc");
+    expect(plan.create.method).toBe("POST");
+    expect(plan.create.url).toBe("http://x/v2/projects/p/locations/us-central1/services?serviceId=hello-svc");
+    expect(cloudRunServiceMapper.operation).toBeDefined();
+  });
+
+  test("longRunningOperation: poll url from an operation name, undefined for a sync resource", () => {
+    const op = longRunningOperation("v2");
+    expect(op.pollUrl({ name: "projects/p/locations/l/operations/abc" }, { base: "http://x", project: "p" }))
+      .toBe("http://x/v2/projects/p/locations/l/operations/abc");
+    // A synchronous create returns the resource (no /operations/ segment) → no poll.
+    expect(op.pollUrl({ name: "projects/p/locations/l/services/hello" }, { base: "http://x", project: "p" }))
+      .toBeUndefined();
+  });
+
+  test("longRunningOperation: isDone + error extraction", () => {
+    const op = longRunningOperation("v2");
+    expect(op.isDone({ done: true })).toBe(true);
+    expect(op.isDone({ done: null })).toBe(false);
+    expect(op.error({ done: true, error: { message: "boom" } })).toBe("boom");
+    expect(op.error({ done: true })).toBeUndefined();
+  });
+
+  test("waitForOperation polls until done", async () => {
+    let polls = 0;
+    const http: GcpHttp = async () => {
+      polls++;
+      return { status: 200, text: JSON.stringify({ done: polls >= 2 }) };
+    };
+    await waitForOperation(longRunningOperation("v2"), "http://x/v2/op", http, undefined, { intervalMs: 1 });
+    expect(polls).toBe(2);
+  });
+
+  test("waitForOperation throws on operation error", async () => {
+    const http: GcpHttp = async () => ({ status: 200, text: JSON.stringify({ done: true, error: { message: "denied" } }) });
+    await expect(
+      waitForOperation(longRunningOperation("v2"), "http://x/v2/op", http, undefined, { intervalMs: 1 }),
+    ).rejects.toThrow(/operation failed: denied/);
+  });
+
+  test("applyResource: async create → polls the operation to done", async () => {
+    const calls: string[] = [];
+    const http: GcpHttp = async (method, url) => {
+      calls.push(`${method} ${url.includes("/operations/") ? "op" : url.includes("?serviceId") ? "create" : "get"}`);
+      if (method === "GET" && url.includes("/operations/")) return { status: 200, text: JSON.stringify({ done: true }) };
+      if (method === "GET") return { status: 404, text: "" }; // service not there yet
+      // create → return an operation
+      return { status: 200, text: JSON.stringify({ name: "projects/p/locations/us-central1/operations/xyz" }) };
+    };
+    const res = await applyResource(cloudRunServiceMapper, RUN_SERVICE, { base: "http://x", project: "p" }, http);
+    expect(res).toEqual({ kind: "RunService", name: "hello-svc", created: true });
+    expect(calls).toEqual(["GET get", "POST create", "GET op"]);
   });
 });
 
