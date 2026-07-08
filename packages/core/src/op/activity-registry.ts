@@ -16,32 +16,51 @@
  */
 export type ActivityFn = (args: Record<string, unknown>, signal?: AbortSignal) => Promise<unknown>;
 
+/** Add every exported function from an activity module to `into`, keyed by name. */
+function collectActivities(mod: Record<string, unknown>, into: Map<string, ActivityFn>): void {
+  for (const [name, value] of Object.entries(mod)) {
+    if (typeof value === "function") {
+      into.set(name, value as ActivityFn);
+    }
+  }
+}
+
 /**
- * Dynamically import the Temporal lexicon's activity library and return a map
- * of every exported function keyed by its export name (`shellCmd`, `chantBuild`,
- * `kubectlApply`, …).
+ * Build the activity map for local execution by importing activity libraries and
+ * keying every exported function by name (`shellCmd`, `kubectlApply`, `gcpApply`, …).
  *
- * Throws a friendly error if the lexicon is not installed — local execution
- * needs the activity implementations even though it never starts a worker.
+ * The base activities always live in the temporal lexicon. Cloud-specific
+ * appliers live in their own lexicon (aws → `flociUp`/`flociDown`, gcp →
+ * `gcpApply`, azure → `azGroupEnsure`/`azGroupDelete`), so `lexicons` — the
+ * project's configured lexicon list — is consulted to pull those in. A lexicon
+ * that ships no `op/activities` module is skipped.
+ *
+ * Throws only if the temporal base library is missing — local execution needs
+ * the activity implementations even though it never starts a worker.
  */
-export async function loadActivities(): Promise<Map<string, ActivityFn>> {
-  let mod: Record<string, unknown>;
+export async function loadActivities(lexicons: string[] = []): Promise<Map<string, ActivityFn>> {
+  const activities = new Map<string, ActivityFn>();
+
   try {
     // Variable specifier so tsc does not statically resolve the optional dep.
     const spec = "@intentius/chant-lexicon-temporal/op/activities";
-    mod = (await import(spec)) as Record<string, unknown>;
+    collectActivities((await import(spec)) as Record<string, unknown>, activities);
   } catch {
     throw new Error(
       "no activities registered — install `@intentius/chant-lexicon-temporal`",
     );
   }
 
-  const activities = new Map<string, ActivityFn>();
-  for (const [name, value] of Object.entries(mod)) {
-    if (typeof value === "function") {
-      activities.set(name, value as ActivityFn);
+  for (const name of lexicons) {
+    if (name === "temporal") continue;
+    try {
+      const spec = `@intentius/chant-lexicon-${name}/op/activities`;
+      collectActivities((await import(spec)) as Record<string, unknown>, activities);
+    } catch {
+      // Lexicon absent or contributes no activities — fine.
     }
   }
+
   return activities;
 }
 

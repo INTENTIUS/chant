@@ -57,3 +57,40 @@ describe("loadActivities — heartbeat-shim safety", () => {
     expect(activities.has("waitForStack")).toBe(true);
   });
 });
+
+// Cloud appliers were relocated out of the temporal lexicon into their own
+// lexicons (#706); the loader pulls them in per the project's configured
+// `lexicons`. Proves the relocation resolves end-to-end.
+describe("loadActivities — multi-lexicon (#706)", () => {
+  test("base (no lexicons): temporal activities present, cloud appliers absent", async () => {
+    const a = await loadActivities();
+    expect(a.has("kubectlApply")).toBe(true); // temporal base
+    expect(a.has("k3dUp")).toBe(true); // cloud-agnostic, stays in temporal
+    expect(a.has("gcpApply")).toBe(false); // relocated to gcp
+    expect(a.has("flociUp")).toBe(false); // relocated to aws
+    expect(a.has("azGroupEnsure")).toBe(false); // relocated to azure
+  });
+
+  test("gcp lexicon contributes the GCP applier", async () => {
+    const a = await loadActivities(["gcp"]);
+    expect(a.has("gcpApply")).toBe(true);
+    expect(a.has("kubectlApply")).toBe(true); // base still loaded alongside
+  });
+
+  test("aws lexicon contributes the Floci lifecycle", async () => {
+    const a = await loadActivities(["aws"]);
+    expect(a.has("flociUp")).toBe(true);
+    expect(a.has("flociDown")).toBe(true);
+  });
+
+  test("azure lexicon contributes the resource-group lifecycle", async () => {
+    const a = await loadActivities(["azure"]);
+    expect(a.has("azGroupEnsure")).toBe(true);
+    expect(a.has("azGroupDelete")).toBe(true);
+  });
+
+  test("unknown lexicon is skipped without throwing", async () => {
+    const a = await loadActivities(["definitely-not-a-lexicon"]);
+    expect(a.has("kubectlApply")).toBe(true);
+  });
+});

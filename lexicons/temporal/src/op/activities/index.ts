@@ -25,42 +25,10 @@ export type { ChantTeardownArgs } from "./teardown";
 export { k3dUp, k3dDown, k3dUpCommand, k3dDownCommand, k3dExistsCommand } from "./k3d";
 export type { K3dUpArgs, K3dDownArgs } from "./k3d";
 
-export {
-  flociUp,
-  flociDown,
-  flociRunCommand,
-  flociRmCommand,
-  flociExistsCommand,
-  flociHealthUrl,
-  flociEnv,
-  isFlociReady,
-} from "./floci";
-export type { FlociUpArgs, FlociDownArgs } from "./floci";
-
-export { azGroupEnsure, azGroupDelete, azGroupEnsureCommand, azGroupDeleteCommand } from "./azure";
-export type { AzGroupEnsureArgs, AzGroupDeleteArgs } from "./azure";
-
-export {
-  gcpApply,
-  applyResource,
-  bucketInsertBody,
-  pubSubTopicBody,
-  storageBucketMapper,
-  pubSubTopicMapper,
-  MAPPERS,
-  resolveGcpProject,
-  parseManifest,
-} from "./gcp-apply";
-export type {
-  GcpApplyArgs,
-  GcpResource,
-  CnrmStorageBucket,
-  BucketInsertBody,
-  PubSubTopicBody,
-  ResourceMapper,
-  ApplyPlan,
-  GcpHttp,
-} from "./gcp-apply";
+// Cloud-specific appliers were relocated to their own lexicons (aws → floci,
+// gcp → gcpApply, azure → az group) and are loaded from there by the core
+// activity registry per the project's configured lexicons. k3d stays here — it
+// is cloud-agnostic (vanilla Kubernetes).
 
 export { reconcilePr } from "./reconcile";
 export type { ReconcilePrArgs, ReconcileResult, ReconcileMode, ReconcileEntry } from "./reconcile";
