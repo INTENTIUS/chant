@@ -6,7 +6,9 @@
  */
 export {
   gcpApply,
+  gcpDelete,
   applyResource,
+  deleteResource,
   waitForOperation,
   longRunningOperation,
   bucketInsertBody,

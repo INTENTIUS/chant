@@ -203,6 +203,12 @@ export const gcpApply = (manifestPath: string, opts?: Record<string, unknown>): 
   return activity("gcpApply", { manifestPath, ...args }, profile ?? "longInfra");
 };
 
+/** Delete the GCP (CNRM) resources in a built manifest — the inverse of {@link gcpApply}. Defaults to the `longInfra` profile (override via `opts.profile`). */
+export const gcpDelete = (manifestPath: string, opts?: Record<string, unknown>): ActivityStep => {
+  const { args, profile } = takeProfile(opts);
+  return activity("gcpDelete", { manifestPath, ...args }, profile ?? "longInfra");
+};
+
 /**
  * Gate an apply on organizational policy: build the project and run its
  * `lint.policies` over the resolved resources, blocking the workflow on any

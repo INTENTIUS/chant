@@ -1,4 +1,4 @@
-import { Op, phase, shell, build, gcpApply } from "@intentius/chant-lexicon-temporal";
+import { Op, phase, shell, build, gcpApply, gcpDelete } from "@intentius/chant-lexicon-temporal";
 
 /**
  * Boot a local floci-gcp emulator, build a GCS bucket, apply it directly to the
@@ -29,6 +29,12 @@ export default Op({
     ]),
     phase("Verify", [
       shell("curl -fs http://localhost:4588/storage/v1/b/my-data-bucket"),
+    ]),
+    phase("Delete", [
+      gcpDelete("lexicons/gcp/examples/basic-bucket/config.yaml", {
+        endpoint: "http://localhost:4588",
+        project: "floci-local",
+      }),
     ]),
     phase("Teardown", [
       shell("docker rm -f chant-floci-gcp"),

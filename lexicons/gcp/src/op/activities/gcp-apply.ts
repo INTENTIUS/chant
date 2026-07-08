@@ -358,3 +358,62 @@ export async function gcpApply(
   }
   return { applied };
 }
+
+/**
+ * Idempotently delete one resource: `DELETE` its resource URL. A 404 means it is
+ * already gone. For async resources, `DELETE` returns a long-running operation
+ * that is polled to completion. `http` is injectable for tests.
+ */
+export async function deleteResource(
+  mapper: ResourceMapper,
+  resource: GcpResource,
+  ctx: { base: string; project: string },
+  http: GcpHttp = defaultHttp,
+  signal?: AbortSignal,
+): Promise<{ kind: string; name: string; deleted: boolean }> {
+  const plan = mapper.plan(resource, ctx);
+  const name = resource.metadata?.name ?? "?";
+  const res = await http("DELETE", plan.getUrl, undefined, signal);
+  if (res.status === 404) {
+    return { kind: mapper.kind, name, deleted: false };
+  }
+  if (res.status >= 300) {
+    throw new Error(`${mapper.kind} ${name} delete failed (${res.status}): ${res.text}`);
+  }
+  if (mapper.operation) {
+    const pollUrl = mapper.operation.pollUrl(parseJson(res.text), ctx);
+    if (pollUrl) {
+      await waitForOperation(mapper.operation, pollUrl, http, signal);
+    }
+  }
+  return { kind: mapper.kind, name, deleted: true };
+}
+
+/**
+ * The inverse of {@link gcpApply} — read a built CNRM manifest and delete the
+ * resources it declares (in reverse order, so dependents go before their
+ * dependencies). Idempotent: already-absent resources are a no-op. Uses
+ * longInfra profile. `http` is injectable for tests.
+ */
+export async function gcpDelete(
+  args: GcpApplyArgs,
+  signal?: AbortSignal,
+  http: GcpHttp = defaultHttp,
+): Promise<{ deleted: Array<{ kind: string; name: string; deleted: boolean }> }> {
+  const resources = parseManifest(readFileSync(args.manifestPath, "utf8"), args.manifestPath);
+  const deleted: Array<{ kind: string; name: string; deleted: boolean }> = [];
+  for (const r of [...resources].reverse()) {
+    const mapper = r.kind ? MAPPERS[r.kind] : undefined;
+    if (!mapper) {
+      if (r.kind) console.log(`skip: no mapper for kind ${r.kind}`);
+      continue;
+    }
+    const base = (args.endpoint ?? mapper.defaultHost).replace(/\/$/, "");
+    const project = args.project ?? resolveGcpProject(r);
+    safeHeartbeat({ step: "gcpDelete", kind: mapper.kind, name: r.metadata?.name });
+    const result = await deleteResource(mapper, r, { base, project }, http, signal);
+    console.log(`${result.deleted ? "deleted" : "absent"}: ${result.kind}/${result.name} (${base})`);
+    deleted.push(result);
+  }
+  return { deleted };
+}
