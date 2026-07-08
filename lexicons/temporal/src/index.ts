@@ -67,6 +67,8 @@ export {
   azGroupDelete,
   azApply,
   azDelete,
+  awsApply,
+  awsDelete,
   gcpApply,
   gcpDelete,
   policyGate,

@@ -115,8 +115,8 @@ export async function flociUp(args: FlociUpArgs, signal?: AbortSignal): Promise<
     if (signal?.aborted) throw new Error("flociUp aborted");
     safeHeartbeat({ step: "flociUp", container: name });
     try {
-      const { stdout } = await execAsync(`curl -fs ${url}`, { signal });
-      if (isFlociReady(stdout, service)) {
+      const res = await fetch(url, { signal });
+      if (res.ok && isFlociReady(await res.text(), service)) {
         ready = true;
         break;
       }

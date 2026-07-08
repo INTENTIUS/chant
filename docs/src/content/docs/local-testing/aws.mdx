@@ -1,11 +1,11 @@
 ---
 title: Local Testing — AWS (Floci)
-description: Deploy chant's CloudFormation output to Floci, a local AWS emulator, with a single endpoint swap and no custom applier.
+description: Deploy chant's CloudFormation output to Floci with awsApply, which calls the CloudFormation API directly — the AWS twin of azApply/gcpApply, no aws CLI.
 ---
 
 import { Aside } from '@astrojs/starlight/components';
 
-AWS is the simplest local path. [Floci](https://github.com/floci-io/floci) emulates the CloudFormation control plane, so chant's normal CloudFormation apply runs against it with nothing changed but the endpoint. This is the same `nativeApply(cloudformation)` you'd use against real AWS.
+AWS keeps CloudFormation as its native format. `awsApply` deploys the built template by calling the CloudFormation API directly — create-or-update the stack, then poll it to a settled state — against Floci's emulated control plane or real AWS by endpoint override. It's the direct twin of `azApply` and `gcpApply`: it speaks the API over HTTP rather than shelling `aws cloudformation deploy`.
 
 <Aside type="tip">
 This page is one cloud of [`examples/local-cloud-trio`](https://github.com/INTENTIUS/chant/tree/main/examples/local-cloud-trio). Start from [Local Testing](/chant/local-testing/overview/) for the cross-cloud picture.
@@ -30,7 +30,7 @@ export const bucket = new Bucket({
 
 ## The op
 
-`chant run aws` boots Floci, builds the stack, applies the CloudFormation, verifies the bucket, and tears the emulator down. Because Floci speaks CloudFormation, the apply is chant's stock `nativeApply` — no AWS-specific applier code.
+`chant run aws` boots Floci, builds the stack, applies it with `awsApply`, verifies the bucket over the S3 API, and tears the emulator down. Every phase is a modeled activity — no raw shell.
 
 ```typescript
 // ops/aws.op.ts
@@ -40,18 +40,26 @@ export default Op({
   phases: [
     phase("Emulator", [flociUp({ dockerSocket: true })]),
     phase("Build",    [build(".", { script: "build:aws" })]),
-    phase("Apply",    [activity("nativeApply", { target: "cloudformation", env: "trio-aws", output: "dist/aws.json" })]),
-    phase("Verify",   [shell("aws --endpoint-url http://localhost:4566 s3api head-bucket --bucket chant-trio-bucket")]),
+    phase("Apply",    [awsApply("dist/aws.json", { stackName: "trio-aws", endpoint: "http://localhost:4566" })]),
+    phase("Verify",   [httpCheck("http://localhost:4566/chant-trio-bucket")]),
     phase("Teardown", [flociDown()]),
   ],
 });
 ```
 
-`flociUp`/`flociDown` are Temporal-lexicon builders that manage the Floci container. `nativeApply` reaches Floci because Floci listens on `:4566` and the applier honors `AWS_ENDPOINT_URL`.
+## How awsApply works
+
+CloudFormation is a control plane: you submit a template to a named stack and it reconciles. `awsApply` drives that plane through its API, no CLI in between:
+
+- **Reads the built template** and calls `DescribeStacks` to decide create vs update.
+- **`CreateStack` or `UpdateStack`** with the template body and capabilities. A no-op update (real AWS's "No updates are to be performed") is treated as unchanged.
+- **Polls `DescribeStacks`** until the stack settles — `CREATE_COMPLETE` / `UPDATE_COMPLETE` — and fails the phase on a `*_FAILED` / `ROLLBACK` state.
+
+The stack is the deploy boundary, so deletes ride CloudFormation itself — `awsDelete` calls `DeleteStack` and polls until the stack is gone. No separate prune.
 
 ## Run it
 
-Requires Docker and the `aws` CLI on PATH.
+Requires Docker.
 
 ```bash
 cd examples/local-cloud-trio
@@ -59,12 +67,10 @@ npm install
 chant run aws
 ```
 
-## How the endpoint gets swapped
+## From local to real cloud
 
-The CloudFormation applier already respects `AWS_ENDPOINT_URL`, the standard AWS SDK override. Point it at Floci and every CloudFormation and S3 call lands on the emulator:
+Drop the `endpoint` override and `awsApply` targets real CloudFormation. The template, the create-or-update logic, and the settle-polling are unchanged — only the API host differs.
 
-```bash
-AWS_ENDPOINT_URL=http://localhost:4566
-```
-
-That's the whole difference between this and a real deploy. Unset it (and supply real credentials) and the identical op targets AWS. Floci's emulated coverage is reported at `/_localstack/health`; a resource whose service isn't listed there can't run locally, though synthesis and lint still validate it.
+<Aside type="note">
+Against a local Floci the API calls are unsigned, which the emulator accepts. Real AWS requires SigV4-signed requests — the same credential layer the Azure and GCP appliers need for real cloud. Floci's emulated coverage is reported at `/_localstack/health`; a resource whose service isn't listed there can't run locally, though synthesis and lint still validate it.
+</Aside>
