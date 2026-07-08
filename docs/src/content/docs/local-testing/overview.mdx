@@ -1,0 +1,75 @@
+---
+title: Local Testing
+description: Deploy chant's real cloud output to a local emulator — no account, no credentials, no cost. One entry point that branches into the AWS, Azure, and GCP Floci paths.
+---
+
+import { Aside, Card, CardGrid, LinkCard } from '@astrojs/starlight/components';
+
+chant synthesizes each cloud's native format — CloudFormation for AWS, ARM for Azure, Config Connector for GCP — and can apply that output to a local emulator instead of a real account. You get a fast, free, offline run of the exact deployer code that stands things up in production, against a real cloud-shaped API.
+
+This is not a mock. The applier issues the same calls it would against AWS, Azure, or GCP; only the endpoint changes. When a local run succeeds, you've exercised synthesis, serialization, and apply end-to-end.
+
+<Aside type="tip" title="See all three at once">
+[`examples/local-cloud-trio`](https://github.com/INTENTIUS/chant/tree/main/examples/local-cloud-trio) deploys the same object store to AWS, Azure, and GCP — each on its own local emulator — with one op per cloud. It's the fastest way to watch every path run. Jump to [The tri-cloud example](#the-tri-cloud-example).
+</Aside>
+
+## What runs locally
+
+Each cloud keeps its native format and its own local target. The emulators are the [Floci](https://github.com/floci-io/floci) suite — LocalStack-compatible, Quarkus/GraalVM native, one per cloud.
+
+| Cloud | Resource shape | Synthesizes to | Applied by | Emulator | Port |
+|-------|----------------|----------------|------------|----------|------|
+| **AWS** | S3, IAM, Lambda, … | CloudFormation | `nativeApply(cloudformation)` | `floci` | `4566` |
+| **Azure** | Storage, KeyVault, … | ARM template | `azApply` | `floci-az` | `4577` |
+| **GCP** | GCS, PubSub, Secrets, … | Config Connector | `gcpApply` | `floci-gcp` | `4588` |
+
+The resource description is identical in shape across clouds. What differs is how each cloud's apply reaches the emulator — because each cloud's control plane is different.
+
+## Why three different appliers
+
+There is no shared apply verb off-cluster. Each cloud's local story forced a different path:
+
+- **AWS** — Floci emulates the CloudFormation control plane, so chant's normal CloudFormation apply runs against it unchanged. The endpoint is a single `AWS_ENDPOINT_URL` swap.
+- **Azure** — floci-az has no `Microsoft.Resources/deployments` provider, so `az deployment` can't run locally. `azApply` reads the ARM template and PUTs each resource directly to floci-az's ARM resource CRUD, in dependency order, resolving `reference()`/`listKeys()` from live responses.
+- **GCP** — GCP has no native deployment service. `gcpApply` maps each Config Connector resource to its underlying REST call and drives create/update/delete itself, including long-running operations and orphan pruning.
+
+In every case the deployer code is the thing under test, run against a real cloud-shaped API.
+
+<Aside type="note">
+Local emulators cover a subset of each cloud's services. Floci reports its coverage at `/_localstack/health`. If a service isn't emulated, that resource can't run locally — but synthesis and lint still validate it, and the same op targets real cloud by dropping the endpoint override.
+</Aside>
+
+## Pick your path
+
+Each page walks the full loop for one cloud: boot the emulator, build the stack, apply it, verify the resource, tear down.
+
+<CardGrid>
+<LinkCard title="AWS — Floci" href="/chant/local-testing/aws/" description="S3 and friends via CloudFormation against floci:4566. The endpoint-swap path — no custom applier needed." />
+<LinkCard title="Azure — floci-az" href="/chant/local-testing/azure/" description="ARM resources applied directly with azApply, since floci-az has no deployments provider." />
+<LinkCard title="GCP — floci-gcp" href="/chant/local-testing/gcp/" description="Config Connector resources driven as native REST calls by gcpApply against floci-gcp:4588." />
+</CardGrid>
+
+## The tri-cloud example
+
+[`examples/local-cloud-trio`](https://github.com/INTENTIUS/chant/tree/main/examples/local-cloud-trio) is the reference for all three paths in one project. The same infrastructure — an object store — is described once per cloud and deployed to each cloud's emulator.
+
+```bash
+cd examples/local-cloud-trio
+npm install
+
+chant run aws     # S3 bucket → Floci
+chant run azure   # storage account → floci-az
+chant run gcp     # GCS bucket → floci-gcp
+```
+
+Each op boots that cloud's emulator, builds the stack, applies it, verifies the resource exists, and tears the emulator down. The project needs Docker plus `aws` and `curl` on PATH — no cloud account.
+
+The `chant.config.ts` loads all three cloud lexicons so `chant run` resolves each cloud's applier activity:
+
+```typescript
+export default { lexicons: ["aws", "azure", "gcp", "temporal"] } satisfies ChantConfig;
+```
+
+## From local to real cloud
+
+The emulator is only an endpoint. The same stacks and ops target a real account by dropping the `endpoint` override — and, for AWS, unsetting `AWS_ENDPOINT_URL`. Nothing about the resources or the apply logic changes, which is what makes a green local run meaningful.
