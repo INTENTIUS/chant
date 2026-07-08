@@ -9,8 +9,12 @@ import {
   waitForOperation,
   longRunningOperation,
   parseManifest,
+  referencedNames,
+  orderByReferences,
+  pubSubSubscriptionBody,
   storageBucketMapper,
   pubSubTopicMapper,
+  pubSubSubscriptionMapper,
   cloudRunServiceMapper,
   MAPPERS,
   type CnrmStorageBucket,
@@ -102,7 +106,7 @@ describe("mappers build correct plans (#706)", () => {
   });
 
   test("registry keys match each mapper's kind", () => {
-    expect(Object.keys(MAPPERS).sort()).toEqual(["PubSubTopic", "RunService", "StorageBucket"]);
+    expect(Object.keys(MAPPERS).sort()).toEqual(["PubSubSubscription", "PubSubTopic", "RunService", "StorageBucket"]);
     for (const [key, mapper] of Object.entries(MAPPERS)) expect(mapper.kind).toBe(key);
   });
 });
@@ -297,6 +301,60 @@ describe("deleteResource (#706)", () => {
     await expect(
       deleteResource(storageBucketMapper, BUCKET, { base: "http://x", project: "p" }, http),
     ).rejects.toThrow(/StorageBucket my-data-bucket delete failed \(409\)/);
+  });
+});
+
+describe("references + ordering (#706)", () => {
+  const topic: GcpResource = { kind: "PubSubTopic", metadata: { name: "orders" } };
+  const sub: GcpResource = {
+    kind: "PubSubSubscription",
+    metadata: { name: "orders-sub" },
+    spec: { topicRef: { name: "orders" }, ackDeadlineSeconds: 20 },
+  };
+
+  test("referencedNames pulls local *Ref names, ignores external", () => {
+    expect(referencedNames(sub)).toEqual(["orders"]);
+    expect(referencedNames({ spec: { topicRef: { external: "projects/p/topics/x" } } })).toEqual([]);
+    expect(referencedNames(topic)).toEqual([]);
+  });
+
+  test("referencedNames handles *Refs arrays and nesting", () => {
+    const r: GcpResource = {
+      spec: { config: { subnetworkRefs: [{ name: "a" }, { name: "b" }], networkRef: { name: "a" } } },
+    };
+    expect(referencedNames(r).sort()).toEqual(["a", "b"]);
+  });
+
+  test("orderByReferences puts a referenced resource before its referrer", () => {
+    // Manifest lists the subscription first (wrong order); ordering fixes it.
+    const ordered = orderByReferences([sub, topic]);
+    expect(ordered.map((r) => r.metadata?.name)).toEqual(["orders", "orders-sub"]);
+  });
+
+  test("orderByReferences is stable for independent resources", () => {
+    const a: GcpResource = { kind: "PubSubTopic", metadata: { name: "a" } };
+    const b: GcpResource = { kind: "PubSubTopic", metadata: { name: "b" } };
+    expect(orderByReferences([a, b]).map((r) => r.metadata?.name)).toEqual(["a", "b"]);
+  });
+
+  test("orderByReferences throws on a cycle", () => {
+    const x: GcpResource = { kind: "K", metadata: { name: "x" }, spec: { yRef: { name: "y" } } };
+    const y: GcpResource = { kind: "K", metadata: { name: "y" }, spec: { xRef: { name: "x" } } };
+    expect(() => orderByReferences([x, y])).toThrow(/reference cycle/);
+  });
+
+  test("pubSubSubscriptionBody resolves topicRef.name to a full topic path", () => {
+    expect(pubSubSubscriptionBody(sub, "floci-local")).toEqual({
+      topic: "projects/floci-local/topics/orders",
+      ackDeadlineSeconds: 20,
+    });
+  });
+
+  test("subscription mapper plan → PUT the subscription URL", () => {
+    const plan = pubSubSubscriptionMapper.plan(sub, { base: "http://x", project: "p" });
+    expect(plan.getUrl).toBe("http://x/v1/projects/p/subscriptions/orders-sub");
+    expect(plan.create.method).toBe("PUT");
+    expect((plan.create.body as { topic: string }).topic).toBe("projects/p/topics/orders");
   });
 });
 
