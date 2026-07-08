@@ -83,10 +83,11 @@ describe("loadActivities — multi-lexicon (#706)", () => {
     expect(a.has("flociDown")).toBe(true);
   });
 
-  test("azure lexicon contributes the resource-group lifecycle", async () => {
+  test("azure lexicon contributes the resource-group lifecycle + ARM applier", async () => {
     const a = await loadActivities(["azure"]);
     expect(a.has("azGroupEnsure")).toBe(true);
     expect(a.has("azGroupDelete")).toBe(true);
+    expect(a.has("azApply")).toBe(true);
   });
 
   test("unknown lexicon is skipped without throwing", async () => {

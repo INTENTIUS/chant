@@ -190,6 +190,20 @@ export const azGroupDelete = (resourceGroup: string, opts?: Record<string, unkno
 };
 
 /**
+ * Apply chant's built ARM template directly to the ARM resource API — the Azure
+ * twin of {@link gcpApply}. Targets floci-az's resource CRUD (which `az deployment`
+ * can't, floci-az having no deployments provider) or real Azure by endpoint
+ * override; ensures the resource group first. Defaults to the `longInfra` profile.
+ *
+ * `opts` requires `resourceGroup`; accepts `location`, `endpoint` (floci-az
+ * `http://localhost:4577`), and `subscriptionId`.
+ */
+export const azApply = (templatePath: string, opts?: Record<string, unknown>): ActivityStep => {
+  const { args, profile } = takeProfile(opts);
+  return activity("azApply", { templatePath, ...args }, profile ?? "longInfra");
+};
+
+/**
  * Apply chant's built GCP (CNRM) resources directly to the GCS REST API,
  * targeting a local floci-gcp emulator or real GCP by endpoint override — the
  * native GCP applier (#706 starter #711), currently handling `StorageBucket`.
