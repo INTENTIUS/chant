@@ -20,7 +20,9 @@ jobs:
     # `npm publish` re-runs the package's prepack (build + validate) anyway.
     if: ${{ startsWith(github.ref, 'refs/tags/') || github.event_name == 'workflow_dispatch' }}
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    # 10 lexicon prepacks (build + validate) plus the full vitest suite — the
+    # suite alone runs ~5m, so a 5m cap gets killed mid-run and skips publish.
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-node@v6
