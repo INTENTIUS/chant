@@ -54,6 +54,8 @@ export {
   lifecycleSnapshot,
   shell,
   teardown,
+  k3dUp,
+  k3dDown,
   policyGate,
 } from "@intentius/chant/op";
 export type { OpConfig, PhaseDefinition, StepDefinition, ActivityStep, GateStep } from "@intentius/chant/op";
