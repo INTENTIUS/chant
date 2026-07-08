@@ -190,6 +190,20 @@ export const azGroupDelete = (resourceGroup: string, opts?: Record<string, unkno
 };
 
 /**
+ * Apply chant's built GCP (CNRM) resources directly to the GCS REST API,
+ * targeting a local floci-gcp emulator or real GCP by endpoint override — the
+ * native GCP applier (#706 starter #711), currently handling `StorageBucket`.
+ * Defaults to the `longInfra` profile (override via `opts.profile`).
+ *
+ * `opts` accepts `endpoint` (default `STORAGE_EMULATOR_HOST` env / real GCS) and
+ * `project` (default `GOOGLE_CLOUD_PROJECT` env / the CNRM project-id annotation).
+ */
+export const gcpApply = (manifestPath: string, opts?: Record<string, unknown>): ActivityStep => {
+  const { args, profile } = takeProfile(opts);
+  return activity("gcpApply", { manifestPath, ...args }, profile ?? "longInfra");
+};
+
+/**
  * Gate an apply on organizational policy: build the project and run its
  * `lint.policies` over the resolved resources, blocking the workflow on any
  * violation. Place it before the apply phase. `env` (or `ownership.env`) lets a
