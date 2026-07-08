@@ -37,6 +37,9 @@ export {
 } from "./floci";
 export type { FlociUpArgs, FlociDownArgs } from "./floci";
 
+export { azGroupEnsure, azGroupDelete, azGroupEnsureCommand, azGroupDeleteCommand } from "./azure";
+export type { AzGroupEnsureArgs, AzGroupDeleteArgs } from "./azure";
+
 export { reconcilePr } from "./reconcile";
 export type { ReconcilePrArgs, ReconcileResult, ReconcileMode, ReconcileEntry } from "./reconcile";
 

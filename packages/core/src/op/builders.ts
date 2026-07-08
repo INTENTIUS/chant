@@ -173,6 +173,23 @@ export const flociDown = (opts?: Record<string, unknown>): ActivityStep => {
 };
 
 /**
+ * Ensure an Azure resource group exists before an ARM apply. `az deployment
+ * group create` (the `arm` apply target) fails without its group, so place this
+ * before the deploy phase. Idempotent. Defaults to the `fastIdempotent` profile
+ * (override via `opts.profile`). `opts` accepts `location` (default `eastus`).
+ */
+export const azGroupEnsure = (resourceGroup: string, opts?: Record<string, unknown>): ActivityStep => {
+  const { args, profile } = takeProfile(opts);
+  return activity("azGroupEnsure", { resourceGroup, ...args }, profile ?? "fastIdempotent");
+};
+
+/** Delete an Azure resource group and its contents (non-blocking). Defaults to the `fastIdempotent` profile (override via `opts.profile`). */
+export const azGroupDelete = (resourceGroup: string, opts?: Record<string, unknown>): ActivityStep => {
+  const { args, profile } = takeProfile(opts);
+  return activity("azGroupDelete", { resourceGroup, ...args }, profile ?? "fastIdempotent");
+};
+
+/**
  * Gate an apply on organizational policy: build the project and run its
  * `lint.policies` over the resolved resources, blocking the workflow on any
  * violation. Place it before the apply phase. `env` (or `ownership.env`) lets a
