@@ -173,6 +173,53 @@ export const flociDown = (opts?: Record<string, unknown>): ActivityStep => {
 };
 
 /**
+ * Boot a local floci-az (Azure emulator) and return its ARM `endpoint` — the
+ * typed twin of {@link flociUp} for `azApply`, so the emulator lifecycle is a
+ * modeled step, not a `docker run` shell. Provided by the azure lexicon; loaded
+ * when the project lists `azure`. Idempotent; defaults to the `longInfra`
+ * profile. `opts` accepts `name`, `port`, `image`, `timeoutMs`, `intervalMs`.
+ */
+export const flociAzUp = (opts?: Record<string, unknown>): ActivityStep => {
+  const { args, profile } = takeProfile(opts);
+  return activity("flociAzUp", args, profile ?? "longInfra");
+};
+
+/** Stop and remove the local floci-az container. Defaults to the `fastIdempotent` profile (override via `opts.profile`). */
+export const flociAzDown = (opts?: Record<string, unknown>): ActivityStep => {
+  const { args, profile } = takeProfile(opts);
+  return activity("flociAzDown", args, profile ?? "fastIdempotent");
+};
+
+/**
+ * Boot a local floci-gcp (GCP emulator) and return its `endpoint` — the typed
+ * twin of {@link flociUp} for `gcpApply`, so the emulator lifecycle is a modeled
+ * step, not a `docker run` shell. Provided by the gcp lexicon; loaded when the
+ * project lists `gcp`. Idempotent; defaults to the `longInfra` profile. `opts`
+ * accepts `name`, `port`, `image`, `timeoutMs`, `intervalMs`.
+ */
+export const flociGcpUp = (opts?: Record<string, unknown>): ActivityStep => {
+  const { args, profile } = takeProfile(opts);
+  return activity("flociGcpUp", args, profile ?? "longInfra");
+};
+
+/** Stop and remove the local floci-gcp container. Defaults to the `fastIdempotent` profile (override via `opts.profile`). */
+export const flociGcpDown = (opts?: Record<string, unknown>): ActivityStep => {
+  const { args, profile } = takeProfile(opts);
+  return activity("flociGcpDown", args, profile ?? "fastIdempotent");
+};
+
+/**
+ * Assert an HTTP endpoint responds as expected — a typed verify step replacing
+ * `shell("curl -fs ...")`. Fails the phase if the status/body doesn't match.
+ * Defaults to the `fastIdempotent` profile. `opts` accepts `method`, `status`
+ * (default any 2xx), `contains` (body substring), `retries`, `intervalMs`.
+ */
+export const httpCheck = (url: string, opts?: Record<string, unknown>): ActivityStep => {
+  const { args, profile } = takeProfile(opts);
+  return activity("httpCheck", { url, ...args }, profile ?? "fastIdempotent");
+};
+
+/**
  * Ensure an Azure resource group exists before an ARM apply. `az deployment
  * group create` (the `arm` apply target) fails without its group, so place this
  * before the deploy phase. Idempotent. Defaults to the `fastIdempotent` profile

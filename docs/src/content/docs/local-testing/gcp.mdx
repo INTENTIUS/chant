@@ -39,11 +39,11 @@ export default Op({
   name: "gcp",
   taskQueue: "trio-gcp",
   phases: [
-    phase("Emulator", [shell("docker run -d --rm --name trio-gcp -p 4588:4588 floci/floci-gcp:latest")]),
+    phase("Emulator", [flociGcpUp()]),
     phase("Build",    [build(".", { script: "build:gcp" })]),
     phase("Apply",    [gcpApply("dist/gcp.yaml", { endpoint: "http://localhost:4588", project: "local-project" })]),
-    phase("Verify",   [shell("curl -fs http://localhost:4588/storage/v1/b/trio-bucket")]),
-    phase("Teardown", [shell("docker rm -f trio-gcp")]),
+    phase("Verify",   [httpCheck("http://localhost:4588/storage/v1/b/trio-bucket")]),
+    phase("Teardown", [flociGcpDown()]),
   ],
 });
 ```

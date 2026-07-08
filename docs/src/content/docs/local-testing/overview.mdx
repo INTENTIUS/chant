@@ -4,10 +4,15 @@ description: Deploy chant's real cloud output to a local emulator — no account
 ---
 
 import { Aside, Card, CardGrid, LinkCard } from '@astrojs/starlight/components';
+import Diagram from '../../../components/Diagram.astro';
 
 chant synthesizes each cloud's native format — CloudFormation for AWS, ARM for Azure, Config Connector for GCP — and can apply that output to a local emulator instead of a real account. You get a fast, free, offline run of the exact deployer code that stands things up in production, against a real cloud-shaped API.
 
 This is not a mock. The applier issues the same calls it would against AWS, Azure, or GCP; only the endpoint changes. When a local run succeeds, you've exercised synthesis, serialization, and apply end-to-end.
+
+<Diagram name="lexicon-floci-apply" alt="Typed resources → chant build → spec-native artifact → native applier (nativeApply / azApply / gcpApply) speaking each cloud's own API → endpoint override → Floci emulator or real cloud" caption="The same pipeline, local or real — the applier speaks each cloud's native protocol, and only the endpoint changes" />
+
+The path deliberately has no CLI shell-out on it. `chant build` is a pure function — typed TypeScript in, a validated spec-native artifact out. The applier then speaks the cloud's own protocol directly: `nativeApply` drives the CloudFormation control plane, `azApply` PUTs ARM resources, `gcpApply` calls the GCS/PubSub/IAM REST APIs. It doesn't wrap `aws`, `az`, or `gcloud`. That's what makes a green local run meaningful — the thing under test is the real deployer, not a script around a CLI.
 
 <Aside type="tip" title="See all three at once">
 [`examples/local-cloud-trio`](https://github.com/INTENTIUS/chant/tree/main/examples/local-cloud-trio) deploys the same object store to AWS, Azure, and GCP — each on its own local emulator — with one op per cloud. It's the fastest way to watch every path run. Jump to [The tri-cloud example](#the-tri-cloud-example).

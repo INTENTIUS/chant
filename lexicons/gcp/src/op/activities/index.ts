@@ -44,3 +44,16 @@ export type {
   ApplyPlan,
   GcpHttp,
 } from "./gcp-apply";
+
+// floci-gcp (GCP emulator) lifecycle — the typed twin of aws's flociUp/Down, so
+// the trio's GCP op boots/tears down the emulator as a modeled step, not a shell.
+export {
+  flociGcpUp,
+  flociGcpDown,
+  flociGcpRunCommand,
+  flociGcpRmCommand,
+  flociGcpExistsCommand,
+  flociGcpHealthUrl,
+  flociGcpEndpoint,
+} from "./floci-gcp";
+export type { FlociGcpUpArgs, FlociGcpDownArgs } from "./floci-gcp";

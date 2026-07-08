@@ -35,7 +35,9 @@ that stands things up."
 
 ## Run it
 
-Requires Docker, plus `aws` and `curl` on PATH.
+Requires Docker. The AWS op additionally uses the `aws` CLI (and `curl`) for its
+Floci health check and verify; the Azure and GCP ops need nothing but Docker —
+their emulator lifecycle and verify are typed activities.
 
 ```bash
 npm install
@@ -46,7 +48,8 @@ chant run gcp     # GCS bucket → floci-gcp
 ```
 
 Each op boots the cloud's emulator, builds that cloud's stack, applies it,
-verifies the resource exists, and tears the emulator down.
+verifies the resource exists, and tears the emulator down — every phase a
+modeled activity (`flociAzUp`/`gcpApply`/`httpCheck`/…), not a shell script.
 
 ## Real cloud
 
