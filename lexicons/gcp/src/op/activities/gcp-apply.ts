@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import { parseYAML } from "@intentius/chant/yaml";
-import { safeHeartbeat } from "@intentius/chant/op";
+import { safeHeartbeat, sleep } from "@intentius/chant/op";
 
 const PROJECT_ID_ANNOTATION = "cnrm.cloud.google.com/project-id";
 
@@ -51,6 +51,23 @@ export interface ApplyPlan {
   create: { method: "POST" | "PUT"; url: string; body: unknown };
 }
 
+/**
+ * Handles an async create whose response is a long-running operation. Present
+ * only on mappers for resources that provision asynchronously (Cloud Run, GKE,
+ * Cloud SQL, …); synchronous resources (buckets, topics) omit it.
+ */
+export interface OperationSpec {
+  /**
+   * URL to poll from the create response, or `undefined` when the create
+   * completed synchronously (returned the resource, not an operation).
+   */
+  pollUrl(createResponseBody: unknown, ctx: { base: string; project: string }): string | undefined;
+  /** True once the polled operation body reports completion. */
+  isDone(operationBody: unknown): boolean;
+  /** An error message from a completed-with-error operation, else undefined. */
+  error(operationBody: unknown): string | undefined;
+}
+
 /** Maps one CNRM kind to its GCP REST operations. The unit of the dispatch table. */
 export interface ResourceMapper {
   /** CNRM kind this handles. */
@@ -59,6 +76,29 @@ export interface ResourceMapper {
   defaultHost: string;
   /** Build the GET + create plan for one resource against `base`. */
   plan(resource: GcpResource, ctx: { base: string; project: string }): ApplyPlan;
+  /** Present for async resources whose create returns a long-running operation. */
+  operation?: OperationSpec;
+}
+
+/**
+ * A standard `google.longrunning` operation spec: the create response carries an
+ * operation `name` (`projects/…/operations/…`), polled at `{base}/{version}/{name}`
+ * until `done: true`. Reused by every service that follows the pattern.
+ */
+export function longRunningOperation(version: string): OperationSpec {
+  return {
+    pollUrl(createResponseBody, { base }) {
+      const opName = (createResponseBody as { name?: string })?.name;
+      if (!opName || !opName.includes("/operations/")) return undefined;
+      return `${base}/${version}/${opName}`;
+    },
+    isDone(operationBody) {
+      return (operationBody as { done?: boolean })?.done === true;
+    },
+    error(operationBody) {
+      return (operationBody as { error?: { message?: string } })?.error?.message;
+    },
+  };
 }
 
 /**
@@ -127,10 +167,40 @@ export const pubSubTopicMapper: ResourceMapper = {
   },
 };
 
+/** Map a CNRM RunService to a Cloud Run v2 Service body. Pure. */
+export function cloudRunServiceBody(resource: GcpResource): { template?: unknown } {
+  const spec = (resource.spec ?? {}) as { template?: unknown };
+  const body: { template?: unknown } = {};
+  if (spec.template) body.template = spec.template;
+  return body;
+}
+
+export const cloudRunServiceMapper: ResourceMapper = {
+  kind: "RunService",
+  defaultHost: "https://run.googleapis.com",
+  // Cloud Run create is asynchronous — it returns a google.longrunning operation.
+  operation: longRunningOperation("v2"),
+  plan(resource, { base, project }) {
+    const name = resource.metadata?.name;
+    if (!name) throw new Error("RunService has no metadata.name");
+    const location = ((resource.spec ?? {}) as { location?: string }).location ?? "us-central1";
+    const services = `${base}/v2/projects/${encodeURIComponent(project)}/locations/${encodeURIComponent(location)}/services`;
+    return {
+      getUrl: `${services}/${encodeURIComponent(name)}`,
+      create: {
+        method: "POST",
+        url: `${services}?serviceId=${encodeURIComponent(name)}`,
+        body: cloudRunServiceBody(resource),
+      },
+    };
+  },
+};
+
 /** The kind → mapper dispatch table. Adding a resource type is a new entry here. */
 export const MAPPERS: Record<string, ResourceMapper> = {
   StorageBucket: storageBucketMapper,
   PubSubTopic: pubSubTopicMapper,
+  RunService: cloudRunServiceMapper,
 };
 
 // ── Resolution + HTTP ─────────────────────────────────────────────────────────
@@ -185,7 +255,55 @@ export async function applyResource(
   if (res.status >= 300) {
     throw new Error(`${mapper.kind} ${name} create failed (${res.status}): ${res.text}`);
   }
+
+  // Async resources return a long-running operation — poll it to completion so
+  // the step doesn't report success before the resource actually exists.
+  if (mapper.operation) {
+    const pollUrl = mapper.operation.pollUrl(parseJson(res.text), ctx);
+    if (pollUrl) {
+      await waitForOperation(mapper.operation, pollUrl, http, signal);
+    }
+  }
+
   return { kind: mapper.kind, name, created: true };
+}
+
+function parseJson(text: string): unknown {
+  try {
+    return JSON.parse(text);
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * Poll a long-running operation until it reports done (or errors / times out).
+ * `http` and the interval are injectable so tests drive it without real waits.
+ */
+export async function waitForOperation(
+  op: OperationSpec,
+  pollUrl: string,
+  http: GcpHttp = defaultHttp,
+  signal?: AbortSignal,
+  opts?: { intervalMs?: number; timeoutMs?: number },
+): Promise<void> {
+  const interval = opts?.intervalMs ?? 2_000;
+  const deadline = Date.now() + (opts?.timeoutMs ?? 300_000);
+  let attempt = 0;
+  while (Date.now() < deadline) {
+    if (signal?.aborted) throw new Error("waitForOperation aborted");
+    attempt++;
+    safeHeartbeat({ step: "waitForOperation", attempt });
+    const res = await http("GET", pollUrl, undefined, signal);
+    const body = res.status < 300 ? parseJson(res.text) : undefined;
+    if (body) {
+      const err = op.error(body);
+      if (err) throw new Error(`operation failed: ${err}`);
+      if (op.isDone(body)) return;
+    }
+    await sleep(interval, signal);
+  }
+  throw new Error(`operation did not complete within timeout: ${pollUrl}`);
 }
 
 /** Parse a built manifest into CNRM resource objects — YAML (multi-doc) or JSON. Pure. */

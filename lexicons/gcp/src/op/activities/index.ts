@@ -7,10 +7,14 @@
 export {
   gcpApply,
   applyResource,
+  waitForOperation,
+  longRunningOperation,
   bucketInsertBody,
   pubSubTopicBody,
+  cloudRunServiceBody,
   storageBucketMapper,
   pubSubTopicMapper,
+  cloudRunServiceMapper,
   MAPPERS,
   resolveGcpProject,
   parseManifest,
@@ -22,6 +26,7 @@ export type {
   BucketInsertBody,
   PubSubTopicBody,
   ResourceMapper,
+  OperationSpec,
   ApplyPlan,
   GcpHttp,
 } from "./gcp-apply";
