@@ -42,13 +42,25 @@ export type { AzGroupEnsureArgs, AzGroupDeleteArgs } from "./azure";
 
 export {
   gcpApply,
-  applyBucket,
+  applyResource,
   bucketInsertBody,
-  resolveGcpEndpoint,
+  pubSubTopicBody,
+  storageBucketMapper,
+  pubSubTopicMapper,
+  MAPPERS,
   resolveGcpProject,
   parseManifest,
 } from "./gcp-apply";
-export type { GcpApplyArgs, CnrmStorageBucket, BucketInsertBody, GcpHttp } from "./gcp-apply";
+export type {
+  GcpApplyArgs,
+  GcpResource,
+  CnrmStorageBucket,
+  BucketInsertBody,
+  PubSubTopicBody,
+  ResourceMapper,
+  ApplyPlan,
+  GcpHttp,
+} from "./gcp-apply";
 
 export { reconcilePr } from "./reconcile";
 export type { ReconcilePrArgs, ReconcileResult, ReconcileMode, ReconcileEntry } from "./reconcile";
