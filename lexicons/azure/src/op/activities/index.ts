@@ -6,6 +6,19 @@
 export { azGroupEnsure, azGroupDelete, azGroupEnsureCommand, azGroupDeleteCommand } from "./azure";
 export type { AzGroupEnsureArgs, AzGroupDeleteArgs } from "./azure";
 
+// floci-az (Azure emulator) lifecycle — the typed twin of aws's flociUp/Down, so
+// the trio's Azure op boots/tears down the emulator as a modeled step, not a shell.
+export {
+  flociAzUp,
+  flociAzDown,
+  flociAzRunCommand,
+  flociAzRmCommand,
+  flociAzExistsCommand,
+  flociAzHealthUrl,
+  flociAzEndpoint,
+} from "./floci-az";
+export type { FlociAzUpArgs, FlociAzDownArgs } from "./floci-az";
+
 export {
   azApply,
   azDelete,

@@ -16,6 +16,9 @@ export type { GitlabPipelineArgs } from "./gitlab";
 export { shellCmd } from "./shell";
 export type { ShellCmdArgs } from "./shell";
 
+export { httpCheck, statusOk } from "./http-check";
+export type { HttpCheckArgs, HttpFetch } from "./http-check";
+
 export { lifecycleSnapshot, lifecycleDiff } from "./lifecycle";
 export type { LifecycleSnapshotArgs, LifecycleDiffArgs, LifecycleDiffResult } from "./lifecycle";
 
