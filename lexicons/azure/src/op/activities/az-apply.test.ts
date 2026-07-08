@@ -4,50 +4,110 @@ import {
   evalArm,
   armResourceUrl,
   armResourceBody,
+  armDependencies,
+  orderArmResources,
   azApply,
-  type ArmContext,
+  type ArmEvalCtx,
   type ArmResource,
   type AzHttp,
 } from "./az-apply";
 
-const CTX: ArmContext = {
-  subscriptionId: "sub-1",
-  resourceGroup: "chant-rg",
-  location: "eastus",
-};
+const noHttp: AzHttp = async () => ({ status: 200, text: "{}" });
 
-describe("evalArmString (#706)", () => {
-  test("resourceGroup().location / .id", () => {
-    expect(evalArmString("[resourceGroup().location]", CTX)).toBe("eastus");
-    expect(evalArmString("[resourceGroup().id]", CTX)).toBe("/subscriptions/sub-1/resourceGroups/chant-rg");
+function ctx(over: Partial<ArmEvalCtx> = {}): ArmEvalCtx {
+  return {
+    subscriptionId: "sub-1",
+    resourceGroup: "chant-rg",
+    location: "eastus",
+    deployed: new Map(),
+    http: noHttp,
+    base: "http://x",
+    ...over,
+  };
+}
+
+describe("evalArmString — static functions (#707)", () => {
+  test("resourceGroup / subscription / concat / uniqueString", async () => {
+    expect(await evalArmString("[resourceGroup().location]", ctx())).toBe("eastus");
+    expect(await evalArmString("[resourceGroup().id]", ctx())).toBe("/subscriptions/sub-1/resourceGroups/chant-rg");
+    expect(await evalArmString("[subscription().subscriptionId]", ctx())).toBe("sub-1");
+    const v = await evalArmString("[concat('store', uniqueString(resourceGroup().id))]", ctx());
+    expect(String(v)).toHaveLength("store".length + 13);
   });
 
-  test("subscription().subscriptionId", () => {
-    expect(evalArmString("[subscription().subscriptionId]", CTX)).toBe("sub-1");
+  test("resourceId('type','name') → the resource-id path", async () => {
+    expect(await evalArmString("[resourceId('Microsoft.Web/serverfarms', 'plan1')]", ctx())).toBe(
+      "/subscriptions/sub-1/resourceGroups/chant-rg/providers/Microsoft.Web/serverfarms/plan1",
+    );
   });
 
-  test("concat with a literal and a nested function", () => {
-    const v = evalArmString("[concat('store', uniqueString(resourceGroup().id))]", CTX);
-    expect(v.startsWith("store")).toBe(true);
-    expect(v).toHaveLength("store".length + 13); // uniqueString → 13 chars
+  test("non-expression + [[ escape passthrough", async () => {
+    expect(await evalArmString("plain", ctx())).toBe("plain");
+    expect(await evalArmString("[[literal]", ctx())).toBe("[literal]");
   });
+});
 
-  test("uniqueString is deterministic for the same inputs", () => {
-    const a = evalArmString("[uniqueString(resourceGroup().id)]", CTX);
-    const b = evalArmString("[uniqueString(resourceGroup().id)]", CTX);
-    expect(a).toBe(b);
+describe("evalArmString — reference() (#707)", () => {
+  test("reference('name') → the applied resource's properties, with .prop access", async () => {
+    const deployed = new Map<string, unknown>([
+      ["mystore", { properties: { primaryEndpoints: { blob: "http://mystore.blob/" } } }],
+    ]);
+    expect(await evalArmString("[reference('mystore').primaryEndpoints.blob]", ctx({ deployed }))).toBe(
+      "http://mystore.blob/",
+    );
   });
+});
 
-  test("non-expression strings pass through; [[ is an escaped literal", () => {
-    expect(evalArmString("plain-name", CTX)).toBe("plain-name");
-    expect(evalArmString("[[literal]", CTX)).toBe("[literal]");
+describe("evalArmString — listKeys() (#707)", () => {
+  test("listKeys(resourceId(...), v).keys[0].value → POSTs the key action and indexes", async () => {
+    const calls: string[] = [];
+    const http: AzHttp = async (method, url) => {
+      calls.push(`${method} ${url}`);
+      return { status: 200, text: JSON.stringify({ keys: [{ value: "SECRET-KEY" }, { value: "k2" }] }) };
+    };
+    const expr = "[concat('AccountKey=', listKeys(resourceId('Microsoft.Storage/storageAccounts', 'st'), '2023-01-01').keys[0].value)]";
+    expect(await evalArmString(expr, ctx({ http }))).toBe("AccountKey=SECRET-KEY");
+    expect(calls[0]).toBe("POST http://x/subscriptions/sub-1/resourceGroups/chant-rg/providers/Microsoft.Storage/storageAccounts/st/listKeys?api-version=2023-01-01");
   });
+});
 
-  test("evalArm recurses into objects and arrays", () => {
-    expect(evalArm({ a: "[resourceGroup().location]", b: ["[subscription().subscriptionId]", 1] }, CTX)).toEqual({
+describe("evalArm recursion (#707)", () => {
+  test("recurses objects/arrays, resolving async expressions", async () => {
+    expect(await evalArm({ a: "[resourceGroup().location]", b: ["[subscription().subscriptionId]", 1] }, ctx())).toEqual({
       a: "eastus",
       b: ["sub-1", 1],
     });
+  });
+});
+
+describe("dependency ordering (#707)", () => {
+  const plan: ArmResource = { type: "Microsoft.Web/serverfarms", apiVersion: "2023-01-01", name: "plan1" };
+  const store: ArmResource = { type: "Microsoft.Storage/storageAccounts", apiVersion: "2023-01-01", name: "st1" };
+  const site: ArmResource = {
+    type: "Microsoft.Web/sites",
+    apiVersion: "2023-01-01",
+    name: "site1",
+    properties: {
+      serverFarmId: "[resourceId('Microsoft.Web/serverfarms', 'plan1')]",
+      conn: "[listKeys(resourceId('Microsoft.Storage/storageAccounts', 'st1'), '2023-01-01')]",
+    },
+  };
+
+  test("armDependencies finds referenced resource names in the template", () => {
+    expect(armDependencies(site, new Set(["plan1", "st1", "site1"])).sort()).toEqual(["plan1", "st1"]);
+    expect(armDependencies(plan, new Set(["plan1", "st1", "site1"]))).toEqual([]);
+  });
+
+  test("orderArmResources applies dependencies before the referrer", () => {
+    const ordered = orderArmResources([site, plan, store]).map((r) => r.name);
+    expect(ordered.indexOf("plan1")).toBeLessThan(ordered.indexOf("site1"));
+    expect(ordered.indexOf("st1")).toBeLessThan(ordered.indexOf("site1"));
+  });
+
+  test("throws on a cycle", () => {
+    const a: ArmResource = { type: "T", apiVersion: "v", name: "a", properties: { r: "[resourceId('T', 'b')]" } };
+    const b: ArmResource = { type: "T", apiVersion: "v", name: "b", properties: { r: "[resourceId('T', 'a')]" } };
+    expect(() => orderArmResources([a, b])).toThrow(/reference cycle/);
   });
 });
 
@@ -62,15 +122,15 @@ const STORAGE: ArmResource = {
   tags: { "managed-by": "chant" },
 };
 
-describe("armResourceUrl / armResourceBody (#706)", () => {
-  test("URL is the resource-id PUT path with api-version", () => {
-    expect(armResourceUrl(STORAGE, CTX, "http://x")).toBe(
+describe("armResourceUrl / armResourceBody (#707)", () => {
+  test("URL is the resource-id PUT path", async () => {
+    expect(await armResourceUrl(STORAGE, ctx())).toBe(
       "http://x/subscriptions/sub-1/resourceGroups/chant-rg/providers/Microsoft.Storage/storageAccounts/chantstore1?api-version=2025-06-01",
     );
   });
 
-  test("body evaluates location, keeps sku/kind/tags/properties", () => {
-    expect(armResourceBody(STORAGE, CTX)).toEqual({
+  test("body evaluates location, keeps sku/kind/tags/properties", async () => {
+    expect(await armResourceBody(STORAGE, ctx())).toEqual({
       location: "eastus",
       sku: { name: "Standard_LRS" },
       kind: "StorageV2",
@@ -80,28 +140,33 @@ describe("armResourceUrl / armResourceBody (#706)", () => {
   });
 });
 
-describe("azApply flow (#706)", () => {
-  test("ensures the resource group, then PUTs each resource", async () => {
+describe("azApply flow (#707)", () => {
+  test("ensures the resource group, applies in dependency order, captures state", async () => {
     const calls: Array<{ method: string; url: string }> = [];
     const http: AzHttp = async (method, url) => {
       calls.push({ method, url });
       return { status: 200, text: "{}" };
     };
-    // Stub the template read via a data: path — azApply reads a file, so drive it
-    // through the pure pieces instead by asserting the call sequence a real run makes.
-    // Here we exercise the HTTP contract with a hand-built template file.
     const fs = await import("node:fs");
     const tmp = `/tmp/chant-arm-${process.pid}.json`;
-    fs.writeFileSync(tmp, JSON.stringify({ resources: [STORAGE] }));
+    const site: ArmResource = {
+      type: "Microsoft.Web/sites",
+      apiVersion: "2023-01-01",
+      name: "site1",
+      properties: { serverFarmId: "[resourceId('Microsoft.Web/serverfarms', 'plan1')]" },
+    };
+    const plan: ArmResource = { type: "Microsoft.Web/serverfarms", apiVersion: "2023-01-01", name: "plan1" };
+    fs.writeFileSync(tmp, JSON.stringify({ resources: [site, plan] })); // listed out of order
     const res = await azApply({ templatePath: tmp, resourceGroup: "chant-rg", location: "eastus", endpoint: "http://x", subscriptionId: "sub-1" }, undefined, http);
     fs.unlinkSync(tmp);
-    expect(res.applied).toEqual([{ type: "Microsoft.Storage/storageAccounts", name: "chantstore1" }]);
-    expect(calls[0].method).toBe("PUT");
-    expect(calls[0].url).toContain("/resourceGroups/chant-rg?api-version=");
-    expect(calls[1].url).toContain("/providers/Microsoft.Storage/storageAccounts/chantstore1?api-version=2025-06-01");
+    // plan (dependency) applied before site (referrer), despite manifest order.
+    expect(res.applied.map((a) => a.name)).toEqual(["plan1", "site1"]);
+    const puts = calls.filter((c) => c.method === "PUT" && c.url.includes("/providers/"));
+    expect(puts[0].url).toContain("/serverfarms/plan1");
+    expect(puts[1].url).toContain("/sites/site1");
   });
 
-  test("surfaces a resource apply failure (RG ok, resource PUT fails)", async () => {
+  test("surfaces a resource apply failure", async () => {
     const fs = await import("node:fs");
     const tmp = `/tmp/chant-arm-fail-${process.pid}.json`;
     fs.writeFileSync(tmp, JSON.stringify({ resources: [STORAGE] }));

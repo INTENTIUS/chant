@@ -6,13 +6,6 @@ import { safeHeartbeat } from "@intentius/chant/op";
 const DEFAULT_SUBSCRIPTION = "00000000-0000-0000-0000-000000000001";
 const DEFAULT_ENDPOINT = "https://management.azure.com";
 
-/** Context for evaluating the ARM template expressions chant emits. */
-export interface ArmContext {
-  subscriptionId: string;
-  resourceGroup: string;
-  location: string;
-}
-
 /** One ARM resource from a `deploymentTemplate.json` `resources[]`. */
 export interface ArmResource {
   type: string;
@@ -23,63 +16,100 @@ export interface ArmResource {
   sku?: unknown;
   kind?: unknown;
   tags?: Record<string, string>;
+  dependsOn?: unknown;
 }
 
-// ── ARM expression evaluation (the subset chant emits) ────────────────────────
+/** Injectable HTTP client — mirrors the GCP applier so tests avoid the network. */
+export type AzHttp = (
+  method: string,
+  url: string,
+  body?: unknown,
+  signal?: AbortSignal,
+) => Promise<{ status: number; text: string }>;
+
+const defaultHttp: AzHttp = async (method, url, body, signal) => {
+  const res = await fetch(url, {
+    method,
+    headers: body === undefined ? undefined : { "content-type": "application/json" },
+    body: body === undefined ? undefined : JSON.stringify(body),
+    signal,
+  });
+  return { status: res.status, text: await res.text() };
+};
+
+// ── ARM expression evaluation ─────────────────────────────────────────────────
 
 /**
- * Evaluate an ARM template expression string (`"[...]"`). Supports the functions
- * chant's serializer emits: `concat`, `uniqueString`, `resourceGroup()` (`.id` /
- * `.location`), `subscription()` (`.subscriptionId`), and string literals. A
- * non-expression string is returned unchanged. Pure.
+ * Context for evaluating ARM template expressions. `deployed` holds the response
+ * bodies of resources already applied this run (keyed by evaluated name) so
+ * `reference()` resolves; `http`/`base` let `listKeys()` call the resource's
+ * key action.
  */
-export function evalArmString(s: string, ctx: ArmContext): string {
-  if (!(s.startsWith("[") && s.endsWith("]"))) return s;
-  // "[[" is an escaped literal "[".
-  if (s.startsWith("[[")) return s.slice(1);
-  return String(new ArmExpr(s.slice(1, -1), ctx).parse());
+export interface ArmEvalCtx {
+  subscriptionId: string;
+  resourceGroup: string;
+  location: string;
+  deployed: Map<string, unknown>;
+  http: AzHttp;
+  base: string;
+  signal?: AbortSignal;
 }
 
-/** Recursively evaluate every string in a value against the ARM context. Pure. */
-export function evalArm(value: unknown, ctx: ArmContext): unknown {
+/** Evaluate an ARM expression string (`"[...]"`); a plain string is returned as-is. */
+export async function evalArmString(s: string, ctx: ArmEvalCtx): Promise<unknown> {
+  if (!(s.startsWith("[") && s.endsWith("]"))) return s;
+  if (s.startsWith("[[")) return s.slice(1); // escaped literal "["
+  return new ArmExpr(s.slice(1, -1), ctx).parse();
+}
+
+/** Recursively evaluate every string in a value against the ARM context. */
+export async function evalArm(value: unknown, ctx: ArmEvalCtx): Promise<unknown> {
   if (typeof value === "string") return evalArmString(value, ctx);
-  if (Array.isArray(value)) return value.map((v) => evalArm(v, ctx));
+  if (Array.isArray(value)) return Promise.all(value.map((v) => evalArm(v, ctx)));
   if (value && typeof value === "object") {
     const out: Record<string, unknown> = {};
-    for (const [k, v] of Object.entries(value)) out[k] = evalArm(v, ctx);
+    for (const [k, v] of Object.entries(value)) out[k] = await evalArm(v, ctx);
     return out;
   }
   return value;
 }
 
-/** Minimal recursive-descent evaluator for the ARM function subset. */
+/**
+ * Recursive-descent evaluator for the ARM function subset chant emits:
+ * `concat`, `uniqueString`, `resourceGroup()`, `subscription()`, `resourceId`,
+ * `reference` (runtime state of an applied resource), and `listKeys` (async key
+ * action), with `.prop` and `[index]` access.
+ */
 class ArmExpr {
   private i = 0;
-  constructor(private readonly src: string, private readonly ctx: ArmContext) {}
+  constructor(private readonly src: string, private readonly ctx: ArmEvalCtx) {}
 
-  parse(): unknown {
-    const v = this.expr();
-    return v;
+  async parse(): Promise<unknown> {
+    return this.access(await this.atom());
   }
 
-  private expr(): unknown {
+  private async atom(): Promise<unknown> {
     this.ws();
-    let v: unknown;
-    if (this.src[this.i] === "'") {
-      v = this.stringLiteral();
-    } else {
-      v = this.call();
-    }
-    // Property access: resourceGroup().location, subscription().subscriptionId
-    while (this.peek() === ".") {
-      this.i++;
-      const prop = this.ident();
-      v = (v as Record<string, unknown>)?.[prop];
-    }
-    return v;
+    return this.src[this.i] === "'" ? this.stringLiteral() : this.call();
   }
 
-  private call(): unknown {
+  /** Postfix `.prop` / `[index]` access. */
+  private async access(v: unknown): Promise<unknown> {
+    for (;;) {
+      const c = this.peek();
+      if (c === ".") {
+        this.i++;
+        v = (v as Record<string, unknown> | undefined)?.[this.ident()];
+      } else if (c === "[") {
+        this.i++;
+        v = (v as unknown[] | undefined)?.[this.indexNumber()];
+      } else {
+        return v;
+      }
+    }
+  }
+
+  private async call(): Promise<unknown> {
     const name = this.ident();
     this.ws();
     const args: unknown[] = [];
@@ -87,11 +117,11 @@ class ArmExpr {
       this.i++;
       this.ws();
       if (this.peek() !== ")") {
-        args.push(this.expr());
+        args.push(await this.parse());
         this.ws();
         while (this.peek() === ",") {
           this.i++;
-          args.push(this.expr());
+          args.push(await this.parse());
           this.ws();
         }
       }
@@ -100,7 +130,7 @@ class ArmExpr {
     return this.applyFn(name, args);
   }
 
-  private applyFn(name: string, args: unknown[]): unknown {
+  private async applyFn(name: string, args: unknown[]): Promise<unknown> {
     switch (name) {
       case "concat":
         return args.map(String).join("");
@@ -110,6 +140,25 @@ class ArmExpr {
         return { location: this.ctx.location, id: `/subscriptions/${this.ctx.subscriptionId}/resourceGroups/${this.ctx.resourceGroup}`, name: this.ctx.resourceGroup };
       case "subscription":
         return { subscriptionId: this.ctx.subscriptionId, id: `/subscriptions/${this.ctx.subscriptionId}` };
+      case "resourceId":
+        // resourceId('Microsoft.X/y', 'name'[, 'child']) → the resource-id path.
+        return `/subscriptions/${this.ctx.subscriptionId}/resourceGroups/${this.ctx.resourceGroup}/providers/${args.map(String).join("/")}`;
+      case "reference": {
+        // reference('name') → the runtime `properties` of an already-applied resource.
+        const dep = this.ctx.deployed.get(String(args[0]));
+        return (dep as { properties?: unknown } | undefined)?.properties ?? dep;
+      }
+      case "listKeys": {
+        // listKeys(resourceId, apiVersion) → POST the resource's key action.
+        const resId = String(args[0]);
+        const apiVersion = String(args[1] ?? "2023-01-01");
+        const res = await this.ctx.http("POST", `${this.ctx.base}${resId}/listKeys?api-version=${apiVersion}`, {}, this.ctx.signal);
+        try {
+          return JSON.parse(res.text);
+        } catch {
+          return {};
+        }
+      }
       default:
         throw new Error(`unsupported ARM function: ${name}`);
     }
@@ -130,6 +179,15 @@ class ArmExpr {
     return out;
   }
 
+  private indexNumber(): number {
+    this.ws();
+    let n = "";
+    while (this.i < this.src.length && /[0-9]/.test(this.src[this.i])) n += this.src[this.i++];
+    this.ws();
+    if (this.peek() === "]") this.i++;
+    return parseInt(n, 10);
+  }
+
   private ws(): void {
     while (this.i < this.src.length && /\s/.test(this.src[this.i])) this.i++;
   }
@@ -140,40 +198,70 @@ class ArmExpr {
   }
 }
 
-// ── HTTP + apply ──────────────────────────────────────────────────────────────
+// ── Dependency ordering ───────────────────────────────────────────────────────
 
-/** Injectable HTTP client — mirrors the GCP applier so tests avoid the network. */
-export type AzHttp = (
-  method: string,
-  url: string,
-  body?: unknown,
-  signal?: AbortSignal,
-) => Promise<{ status: number; text: string }>;
-
-const defaultHttp: AzHttp = async (method, url, body, signal) => {
-  const res = await fetch(url, {
-    method,
-    headers: body === undefined ? undefined : { "content-type": "application/json" },
-    body: body === undefined ? undefined : JSON.stringify(body),
-    signal,
-  });
-  return { status: res.status, text: await res.text() };
-};
-
-/** The ARM resource-ID PUT URL for a resource under a resource group. Pure. */
-export function armResourceUrl(resource: ArmResource, ctx: ArmContext, base: string): string {
-  const name = evalArmString(resource.name, ctx);
-  return `${base}/subscriptions/${ctx.subscriptionId}/resourceGroups/${ctx.resourceGroup}/providers/${resource.type}/${name}?api-version=${resource.apiVersion}`;
+/** Resource names this resource references via `resourceId('type','name')` / `reference('name')`. Pure. */
+export function armDependencies(resource: ArmResource, names: Set<string>): string[] {
+  const deps = new Set<string>();
+  const scan = (v: unknown): void => {
+    if (typeof v === "string") {
+      for (const m of v.matchAll(/resourceId\(\s*'[^']*'\s*,\s*'([^']*)'/g)) if (names.has(m[1])) deps.add(m[1]);
+      for (const m of v.matchAll(/reference\(\s*'([^']*)'/g)) if (names.has(m[1])) deps.add(m[1]);
+    } else if (Array.isArray(v)) {
+      v.forEach(scan);
+    } else if (v && typeof v === "object") {
+      Object.values(v).forEach(scan);
+    }
+  };
+  scan(resource);
+  deps.delete(resource.name);
+  return [...deps];
 }
 
-/** The ARM resource PUT body (location/properties/sku/kind/tags), expressions evaluated. Pure. */
-export function armResourceBody(resource: ArmResource, ctx: ArmContext): Record<string, unknown> {
+/**
+ * Topologically order ARM resources so a referenced resource is applied before
+ * the resource that references it. Names that are expressions are ordered as-is
+ * (they don't match a literal reference). Throws on a cycle. Pure.
+ */
+export function orderArmResources(resources: ArmResource[]): ArmResource[] {
+  const byName = new Map<string, ArmResource>();
+  for (const r of resources) byName.set(r.name, r);
+  const names = new Set(resources.map((r) => r.name));
+  const ordered: ArmResource[] = [];
+  const done = new Set<ArmResource>();
+  const active = new Set<ArmResource>();
+  const visit = (r: ArmResource): void => {
+    if (done.has(r)) return;
+    if (active.has(r)) throw new Error(`ARM reference cycle involving ${r.name}`);
+    active.add(r);
+    for (const dep of armDependencies(r, names)) {
+      const target = byName.get(dep);
+      if (target && target !== r) visit(target);
+    }
+    active.delete(r);
+    done.add(r);
+    ordered.push(r);
+  };
+  for (const r of resources) visit(r);
+  return ordered;
+}
+
+// ── URL + body + apply ────────────────────────────────────────────────────────
+
+/** The ARM resource-ID PUT URL for a resource (name expression evaluated). */
+export async function armResourceUrl(resource: ArmResource, ctx: ArmEvalCtx): Promise<string> {
+  const name = await evalArmString(resource.name, ctx);
+  return `${ctx.base}/subscriptions/${ctx.subscriptionId}/resourceGroups/${ctx.resourceGroup}/providers/${resource.type}/${name}?api-version=${resource.apiVersion}`;
+}
+
+/** The ARM resource PUT body (location/properties/sku/kind/tags), expressions evaluated. */
+export async function armResourceBody(resource: ArmResource, ctx: ArmEvalCtx): Promise<Record<string, unknown>> {
   const body: Record<string, unknown> = {};
-  if (resource.location) body.location = evalArmString(resource.location, ctx);
-  if (resource.properties !== undefined) body.properties = evalArm(resource.properties, ctx);
-  if (resource.sku !== undefined) body.sku = evalArm(resource.sku, ctx);
-  if (resource.kind !== undefined) body.kind = resource.kind;
-  if (resource.tags !== undefined) body.tags = resource.tags;
+  if (resource.location) body.location = await evalArmString(resource.location, ctx);
+  if (resource.properties !== undefined) body.properties = await evalArm(resource.properties, ctx);
+  if (resource.sku !== undefined) body.sku = await evalArm(resource.sku, ctx);
+  if (resource.kind !== undefined) body.kind = await evalArm(resource.kind, ctx);
+  if (resource.tags !== undefined) body.tags = await evalArm(resource.tags, ctx);
   return body;
 }
 
@@ -192,11 +280,11 @@ export interface AzApplyArgs {
 
 /**
  * The native Azure applier — read a built ARM template and PUT each resource
- * directly to the ARM resource-CRUD API, resolving ARM expressions first. This
- * is the direct-apply path (the Azure twin of `gcpApply`): it targets floci-az's
- * ARM resource endpoints — which `az deployment` cannot, since floci-az has no
- * `Microsoft.Resources/deployments` provider — or real Azure by endpoint override.
- * The resource group is ensured first. `http` is injectable for tests.
+ * directly to the ARM resource-CRUD API, in dependency order, resolving ARM
+ * expressions (including `reference()`/`listKeys()` against resources applied
+ * earlier this run). The Azure twin of `gcpApply`: it targets floci-az (which
+ * `az deployment` can't, floci-az having no deployments provider) or real Azure
+ * by endpoint override; the resource group is ensured first.
  */
 export async function azApply(
   args: AzApplyArgs,
@@ -204,10 +292,14 @@ export async function azApply(
   http: AzHttp = defaultHttp,
 ): Promise<{ applied: Array<{ type: string; name: string }> }> {
   const base = (args.endpoint ?? DEFAULT_ENDPOINT).replace(/\/$/, "");
-  const ctx: ArmContext = {
+  const ctx: ArmEvalCtx = {
     subscriptionId: args.subscriptionId ?? DEFAULT_SUBSCRIPTION,
     resourceGroup: args.resourceGroup,
     location: args.location ?? "eastus",
+    deployed: new Map(),
+    http,
+    base,
+    signal,
   };
 
   // Ensure the resource group exists (ARM rejects resource PUTs without it).
@@ -220,12 +312,18 @@ export async function azApply(
 
   const template = JSON.parse(readFileSync(args.templatePath, "utf8")) as { resources?: ArmResource[] };
   const applied: Array<{ type: string; name: string }> = [];
-  for (const resource of template.resources ?? []) {
-    const name = evalArmString(resource.name, ctx);
+  for (const resource of orderArmResources(template.resources ?? [])) {
+    const name = String(await evalArmString(resource.name, ctx));
     safeHeartbeat({ step: "azApply", type: resource.type, name });
-    const res = await http("PUT", armResourceUrl(resource, ctx, base), armResourceBody(resource, ctx), signal);
+    const res = await http("PUT", await armResourceUrl(resource, ctx), await armResourceBody(resource, ctx), signal);
     if (res.status >= 300) {
       throw new Error(`${resource.type} ${name} apply failed (${res.status}): ${res.text}`);
+    }
+    // Capture the applied resource so later reference()/dependents resolve.
+    try {
+      ctx.deployed.set(name, JSON.parse(res.text));
+    } catch {
+      // non-JSON response — reference() to this resource resolves to undefined
     }
     console.log(`applied: ${resource.type}/${name} (${base})`);
     applied.push({ type: resource.type, name });
