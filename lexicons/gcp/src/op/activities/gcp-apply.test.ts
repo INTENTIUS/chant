@@ -5,6 +5,7 @@ import {
   cloudRunServiceBody,
   resolveGcpProject,
   applyResource,
+  deleteResource,
   waitForOperation,
   longRunningOperation,
   parseManifest,
@@ -155,6 +156,19 @@ describe("Cloud Run mapper + LRO (#706)", () => {
     ).rejects.toThrow(/operation failed: denied/);
   });
 
+  test("deleteResource: async delete polls the operation to done", async () => {
+    const calls: string[] = [];
+    const http: GcpHttp = async (method, url) => {
+      calls.push(`${method} ${url.includes("/operations/") ? "op" : "svc"}`);
+      if (method === "GET" && url.includes("/operations/")) return { status: 200, text: JSON.stringify({ done: true }) };
+      // DELETE → returns an operation
+      return { status: 200, text: JSON.stringify({ name: "projects/p/locations/us-central1/operations/del" }) };
+    };
+    const res = await deleteResource(cloudRunServiceMapper, RUN_SERVICE, { base: "http://x", project: "p" }, http);
+    expect(res).toEqual({ kind: "RunService", name: "hello-svc", deleted: true });
+    expect(calls).toEqual(["DELETE svc", "GET op"]);
+  });
+
   test("applyResource: async create → polls the operation to done", async () => {
     const calls: string[] = [];
     const http: GcpHttp = async (method, url) => {
@@ -216,6 +230,32 @@ describe("applyResource idempotency (#706)", () => {
     await expect(
       applyResource(storageBucketMapper, BUCKET, { base: "http://x", project: "p" }, http),
     ).rejects.toThrow(/StorageBucket my-data-bucket create failed \(403\)/);
+  });
+});
+
+describe("deleteResource (#706)", () => {
+  test("sync delete: DELETE the resource URL → deleted", async () => {
+    const calls: Array<{ method: string; url: string }> = [];
+    const http: GcpHttp = async (method, url) => {
+      calls.push({ method, url });
+      return { status: 200, text: "" };
+    };
+    const res = await deleteResource(storageBucketMapper, BUCKET, { base: "http://x", project: "p" }, http);
+    expect(res).toEqual({ kind: "StorageBucket", name: "my-data-bucket", deleted: true });
+    expect(calls).toEqual([{ method: "DELETE", url: "http://x/storage/v1/b/my-data-bucket" }]);
+  });
+
+  test("already-absent (DELETE 404) → deleted:false, idempotent", async () => {
+    const http: GcpHttp = async () => ({ status: 404, text: "" });
+    const res = await deleteResource(pubSubTopicMapper, TOPIC, { base: "http://x", project: "p" }, http);
+    expect(res).toEqual({ kind: "PubSubTopic", name: "events", deleted: false });
+  });
+
+  test("delete failure surfaces kind + status", async () => {
+    const http: GcpHttp = async () => ({ status: 409, text: "in use" });
+    await expect(
+      deleteResource(storageBucketMapper, BUCKET, { base: "http://x", project: "p" }, http),
+    ).rejects.toThrow(/StorageBucket my-data-bucket delete failed \(409\)/);
   });
 });
 

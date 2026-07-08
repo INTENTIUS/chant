@@ -61,6 +61,7 @@ export {
   azGroupEnsure,
   azGroupDelete,
   gcpApply,
+  gcpDelete,
   policyGate,
 } from "@intentius/chant/op";
 export type { OpConfig, PhaseDefinition, StepDefinition, ActivityStep, GateStep } from "@intentius/chant/op";

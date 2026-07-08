@@ -1,6 +1,6 @@
 export { Op, phase, activity, gate, build, kubectlApply, helmInstall, waitForStack,
          gitlabPipeline, lifecycleSnapshot, shell, teardown, k3dUp, k3dDown, flociUp, flociDown,
-         azGroupEnsure, azGroupDelete, gcpApply, policyGate } from "./builders";
+         azGroupEnsure, azGroupDelete, gcpApply, gcpDelete, policyGate } from "./builders";
 export { OpResource } from "./resource";
 export { safeHeartbeat, sleep } from "./activity-runtime";
 export type { OpConfig, PhaseDefinition, StepDefinition, ActivityStep, GateStep } from "./types";
