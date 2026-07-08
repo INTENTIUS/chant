@@ -19,6 +19,8 @@ import {
   pubSubTopicMapper,
   pubSubSubscriptionMapper,
   cloudRunServiceMapper,
+  secretManagerSecretMapper,
+  gcpServiceAccountMapper,
   MAPPERS,
   type CnrmStorageBucket,
   type GcpResource,
@@ -109,7 +111,14 @@ describe("mappers build correct plans (#706)", () => {
   });
 
   test("registry keys match each mapper's kind", () => {
-    expect(Object.keys(MAPPERS).sort()).toEqual(["PubSubSubscription", "PubSubTopic", "RunService", "StorageBucket"]);
+    expect(Object.keys(MAPPERS).sort()).toEqual([
+      "IAMServiceAccount",
+      "PubSubSubscription",
+      "PubSubTopic",
+      "RunService",
+      "SecretManagerSecret",
+      "StorageBucket",
+    ]);
     for (const [key, mapper] of Object.entries(MAPPERS)) expect(mapper.kind).toBe(key);
   });
 });
@@ -323,6 +332,28 @@ describe("deleteResource (#706)", () => {
     await expect(
       deleteResource(storageBucketMapper, BUCKET, { base: "http://x", project: "p" }, http),
     ).rejects.toThrow(/StorageBucket my-data-bucket delete failed \(409\)/);
+  });
+});
+
+describe("Secret Manager + IAM service account mappers (#706)", () => {
+  test("secret: POST ?secretId, default automatic replication, stamped, PATCH updateMask=labels", () => {
+    const secret: GcpResource = { kind: "SecretManagerSecret", metadata: { name: "api-key" }, spec: {} };
+    const plan = secretManagerSecretMapper.plan(secret, { base: "http://x", project: "p" });
+    expect(plan.getUrl).toBe("http://x/v1/projects/p/secrets/api-key");
+    expect(plan.create.url).toBe("http://x/v1/projects/p/secrets?secretId=api-key");
+    expect((plan.create.body as { replication: unknown; labels: Record<string, string> }).replication).toEqual({ automatic: {} });
+    expect((plan.create.body as { labels: Record<string, string> }).labels["managed-by"]).toBe("chant");
+    expect(plan.update?.url).toBe("http://x/v1/projects/p/secrets/api-key?updateMask=labels");
+    expect(secretManagerSecretMapper.list).toBeDefined();
+  });
+
+  test("service account: POST serviceAccounts, GET by derived email, no prune/stamp", () => {
+    const sa: GcpResource = { kind: "IAMServiceAccount", metadata: { name: "deployer" }, spec: { displayName: "Deployer" } };
+    const plan = gcpServiceAccountMapper.plan(sa, { base: "http://x", project: "p" });
+    expect(plan.getUrl).toBe("http://x/v1/projects/p/serviceAccounts/deployer@p.iam.gserviceaccount.com");
+    expect(plan.create.url).toBe("http://x/v1/projects/p/serviceAccounts");
+    expect(plan.create.body).toEqual({ accountId: "deployer", serviceAccount: { displayName: "Deployer" } });
+    expect(gcpServiceAccountMapper.list).toBeUndefined(); // no labels → not pruned
   });
 });
 

@@ -289,11 +289,67 @@ export const pubSubSubscriptionMapper: ResourceMapper = {
   },
 };
 
+/** Map a CNRM SecretManagerSecret to a Secret Manager create body. Pure. */
+export function secretBody(resource: GcpResource): Record<string, unknown> {
+  const spec = (resource.spec ?? {}) as { replication?: unknown };
+  return { replication: spec.replication ?? { automatic: {} } };
+}
+
+export const secretManagerSecretMapper: ResourceMapper = {
+  kind: "SecretManagerSecret",
+  defaultHost: "https://secretmanager.googleapis.com",
+  plan(resource, { base, project }) {
+    const name = resource.metadata?.name;
+    if (!name) throw new Error("SecretManagerSecret has no metadata.name");
+    const secrets = `${base}/v1/projects/${encodeURIComponent(project)}/secrets`;
+    const url = `${secrets}/${encodeURIComponent(name)}`;
+    const body = stampOwnership(secretBody(resource));
+    return {
+      getUrl: url,
+      create: { method: "POST", url: `${secrets}?secretId=${encodeURIComponent(name)}`, body },
+      // UpdateSecret carries the updateMask in the query; only labels are mutable here.
+      update: { method: "PATCH", url: `${url}?updateMask=labels`, body: { labels: body.labels } },
+    };
+  },
+  list: {
+    url: ({ base, project }) => `${base}/v1/projects/${encodeURIComponent(project)}/secrets`,
+    items: (body) =>
+      ((body as { secrets?: Array<{ name: string; labels?: Record<string, string> | null }> })?.secrets ?? []).map(
+        (s) => ({ name: s.name.split("/").pop() ?? s.name, labels: s.labels }),
+      ),
+  },
+};
+
+/** Map a CNRM IAMServiceAccount to a service-account create body. Pure. */
+export function serviceAccountBody(resource: GcpResource, accountId: string): Record<string, unknown> {
+  const spec = (resource.spec ?? {}) as { displayName?: string };
+  return { accountId, serviceAccount: spec.displayName ? { displayName: spec.displayName } : {} };
+}
+
+export const gcpServiceAccountMapper: ResourceMapper = {
+  kind: "IAMServiceAccount",
+  defaultHost: "https://iam.googleapis.com",
+  plan(resource, { base, project }) {
+    const accountId = resource.metadata?.name;
+    if (!accountId) throw new Error("IAMServiceAccount has no metadata.name");
+    // The GCP identity is the derived email; IAM service accounts carry no labels,
+    // so there is no ownership stamping / prune for this kind.
+    const email = `${accountId}@${project}.iam.gserviceaccount.com`;
+    const accounts = `${base}/v1/projects/${encodeURIComponent(project)}/serviceAccounts`;
+    return {
+      getUrl: `${accounts}/${email}`,
+      create: { method: "POST", url: accounts, body: serviceAccountBody(resource, accountId) },
+    };
+  },
+};
+
 /** The kind → mapper dispatch table. Adding a resource type is a new entry here. */
 export const MAPPERS: Record<string, ResourceMapper> = {
   StorageBucket: storageBucketMapper,
   PubSubTopic: pubSubTopicMapper,
   PubSubSubscription: pubSubSubscriptionMapper,
+  SecretManagerSecret: secretManagerSecretMapper,
+  IAMServiceAccount: gcpServiceAccountMapper,
   RunService: cloudRunServiceMapper,
 };
 
