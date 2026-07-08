@@ -210,12 +210,96 @@ export const cloudRunServiceMapper: ResourceMapper = {
   },
 };
 
+/**
+ * Map a CNRM PubSubSubscription to a Pub/Sub Subscription body, resolving the
+ * `topicRef` to a full topic path. Pure.
+ */
+export function pubSubSubscriptionBody(resource: GcpResource, project: string): Record<string, unknown> {
+  const spec = (resource.spec ?? {}) as {
+    topicRef?: { name?: string; external?: string };
+    ackDeadlineSeconds?: number;
+  };
+  const ref = spec.topicRef;
+  const topic = ref?.external ?? (ref?.name ? `projects/${project}/topics/${ref.name}` : undefined);
+  if (!topic) throw new Error("PubSubSubscription has no spec.topicRef.name");
+  const body: Record<string, unknown> = { topic };
+  if (spec.ackDeadlineSeconds !== undefined) body.ackDeadlineSeconds = spec.ackDeadlineSeconds;
+  return body;
+}
+
+export const pubSubSubscriptionMapper: ResourceMapper = {
+  kind: "PubSubSubscription",
+  defaultHost: "https://pubsub.googleapis.com",
+  plan(resource, { base, project }) {
+    const sub = resource.metadata?.name;
+    if (!sub) throw new Error("PubSubSubscription has no metadata.name");
+    const url = `${base}/v1/projects/${encodeURIComponent(project)}/subscriptions/${encodeURIComponent(sub)}`;
+    return { getUrl: url, create: { method: "PUT", url, body: pubSubSubscriptionBody(resource, project) } };
+  },
+};
+
 /** The kind → mapper dispatch table. Adding a resource type is a new entry here. */
 export const MAPPERS: Record<string, ResourceMapper> = {
   StorageBucket: storageBucketMapper,
   PubSubTopic: pubSubTopicMapper,
+  PubSubSubscription: pubSubSubscriptionMapper,
   RunService: cloudRunServiceMapper,
 };
+
+/**
+ * Collect the local resource names this resource references via CNRM `*Ref`
+ * fields (`topicRef: { name }`, `subnetworkRefs: [{ name }]`, …). `external`
+ * refs point outside the manifest and are ignored for ordering. Pure.
+ */
+export function referencedNames(resource: GcpResource): string[] {
+  const names: string[] = [];
+  const visit = (v: unknown, key?: string): void => {
+    if (Array.isArray(v)) {
+      for (const x of v) visit(x, key);
+      return;
+    }
+    if (v && typeof v === "object") {
+      const obj = v as Record<string, unknown>;
+      if (key && /Refs?$/.test(key) && typeof obj.name === "string") {
+        names.push(obj.name);
+      }
+      for (const [k, val] of Object.entries(obj)) visit(val, k);
+    }
+  };
+  visit(resource.spec);
+  return [...new Set(names)];
+}
+
+/**
+ * Topologically order resources so a referenced resource comes before the
+ * resource that references it (apply order; reverse for delete). Refs to names
+ * not in the manifest are left to exist already. Throws on a reference cycle.
+ * Pure — a DFS post-order.
+ */
+export function orderByReferences(resources: GcpResource[]): GcpResource[] {
+  const byName = new Map<string, GcpResource>();
+  for (const r of resources) {
+    const n = r.metadata?.name;
+    if (n) byName.set(n, r);
+  }
+  const ordered: GcpResource[] = [];
+  const done = new Set<GcpResource>();
+  const active = new Set<GcpResource>();
+  const visit = (r: GcpResource): void => {
+    if (done.has(r)) return;
+    if (active.has(r)) throw new Error(`reference cycle involving ${r.metadata?.name ?? "?"}`);
+    active.add(r);
+    for (const ref of referencedNames(r)) {
+      const dep = byName.get(ref);
+      if (dep && dep !== r) visit(dep);
+    }
+    active.delete(r);
+    done.add(r);
+    ordered.push(r);
+  };
+  for (const r of resources) visit(r);
+  return ordered;
+}
 
 // ── Resolution + HTTP ─────────────────────────────────────────────────────────
 
@@ -377,7 +461,7 @@ export async function gcpApply(
   signal?: AbortSignal,
   http: GcpHttp = defaultHttp,
 ): Promise<{ applied: Array<{ kind: string; name: string; created: boolean; updated: boolean }> }> {
-  const resources = parseManifest(readFileSync(args.manifestPath, "utf8"), args.manifestPath);
+  const resources = orderByReferences(parseManifest(readFileSync(args.manifestPath, "utf8"), args.manifestPath));
   const applied: Array<{ kind: string; name: string; created: boolean; updated: boolean }> = [];
   for (const r of resources) {
     const mapper = r.kind ? MAPPERS[r.kind] : undefined;
@@ -437,9 +521,11 @@ export async function gcpDelete(
   signal?: AbortSignal,
   http: GcpHttp = defaultHttp,
 ): Promise<{ deleted: Array<{ kind: string; name: string; deleted: boolean }> }> {
-  const resources = parseManifest(readFileSync(args.manifestPath, "utf8"), args.manifestPath);
+  // Delete in reverse dependency order: a referrer goes before the resource it
+  // references.
+  const resources = orderByReferences(parseManifest(readFileSync(args.manifestPath, "utf8"), args.manifestPath)).reverse();
   const deleted: Array<{ kind: string; name: string; deleted: boolean }> = [];
-  for (const r of [...resources].reverse()) {
+  for (const r of resources) {
     const mapper = r.kind ? MAPPERS[r.kind] : undefined;
     if (!mapper) {
       if (r.kind) console.log(`skip: no mapper for kind ${r.kind}`);
