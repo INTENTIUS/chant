@@ -60,6 +60,7 @@ export {
   flociDown,
   azGroupEnsure,
   azGroupDelete,
+  azApply,
   gcpApply,
   gcpDelete,
   policyGate,

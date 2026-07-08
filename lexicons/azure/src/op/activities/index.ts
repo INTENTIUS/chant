@@ -5,3 +5,6 @@
  */
 export { azGroupEnsure, azGroupDelete, azGroupEnsureCommand, azGroupDeleteCommand } from "./azure";
 export type { AzGroupEnsureArgs, AzGroupDeleteArgs } from "./azure";
+
+export { azApply, evalArm, evalArmString, armResourceUrl, armResourceBody } from "./az-apply";
+export type { AzApplyArgs, ArmContext, ArmResource, AzHttp } from "./az-apply";
