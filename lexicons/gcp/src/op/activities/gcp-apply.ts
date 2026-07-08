@@ -4,6 +4,28 @@ import { safeHeartbeat, sleep } from "@intentius/chant/op";
 
 const PROJECT_ID_ANNOTATION = "cnrm.cloud.google.com/project-id";
 
+// Ownership marker stamped as a GCP resource label so `prune` can identify what
+// chant created (GCP label keys can't hold the k8s `app.kubernetes.io/managed-by`
+// slash/dot form, so this is the GCP-valid equivalent).
+const OWNERSHIP_LABEL_KEY = "managed-by";
+const OWNERSHIP_LABEL_VALUE = "chant";
+
+/** The GCP labels chant stamps on resources it creates. */
+export function chantOwnershipLabels(): Record<string, string> {
+  return { [OWNERSHIP_LABEL_KEY]: OWNERSHIP_LABEL_VALUE };
+}
+
+/** True when a live resource's labels carry chant's ownership marker. */
+export function isChantOwned(labels: Record<string, string> | null | undefined): boolean {
+  return labels?.[OWNERSHIP_LABEL_KEY] === OWNERSHIP_LABEL_VALUE;
+}
+
+/** Merge the ownership marker into a create/update body's `labels`. */
+function stampOwnership<T extends object>(body: T): T & { labels: Record<string, string> } {
+  const existing = (body as { labels?: Record<string, string> }).labels ?? {};
+  return { ...body, labels: { ...existing, ...chantOwnershipLabels() } };
+}
+
 /** Minimal shape of a serialized CNRM resource (`*.cnrm.cloud.google.com`). */
 export interface GcpResource {
   apiVersion?: string;
@@ -73,6 +95,14 @@ export interface OperationSpec {
   error(operationBody: unknown): string | undefined;
 }
 
+/** How to list live resources of a kind, so `prune` can find chant-owned orphans. */
+export interface ListSpec {
+  /** LIST endpoint for the kind. */
+  url(ctx: { base: string; project: string }): string;
+  /** Extract `{ name, labels }` for each item from the LIST response body. */
+  items(responseBody: unknown): Array<{ name: string; labels?: Record<string, string> | null }>;
+}
+
 /** Maps one CNRM kind to its GCP REST operations. The unit of the dispatch table. */
 export interface ResourceMapper {
   /** CNRM kind this handles. */
@@ -83,6 +113,8 @@ export interface ResourceMapper {
   plan(resource: GcpResource, ctx: { base: string; project: string }): ApplyPlan;
   /** Present for async resources whose create returns a long-running operation. */
   operation?: OperationSpec;
+  /** Present when the kind can be pruned (list live → delete chant-owned orphans). */
+  list?: ListSpec;
 }
 
 /**
@@ -151,7 +183,7 @@ export const storageBucketMapper: ResourceMapper = {
   kind: "StorageBucket",
   defaultHost: "https://storage.googleapis.com",
   plan(resource, { base, project }) {
-    const body = bucketInsertBody(resource as CnrmStorageBucket);
+    const body = stampOwnership(bucketInsertBody(resource as CnrmStorageBucket));
     const url = `${base}/storage/v1/b/${encodeURIComponent(body.name)}`;
     // Reconcile in place with a PATCH of the desired mutable fields (the name is
     // immutable and travels in the URL).
@@ -161,6 +193,10 @@ export const storageBucketMapper: ResourceMapper = {
       create: { method: "POST", url: `${base}/storage/v1/b?project=${encodeURIComponent(project)}`, body },
       update: { method: "PATCH", url, body: patch },
     };
+  },
+  list: {
+    url: ({ base, project }) => `${base}/storage/v1/b?project=${encodeURIComponent(project)}`,
+    items: (body) => ((body as { items?: Array<{ name: string; labels?: Record<string, string> | null }> })?.items ?? []),
   },
 };
 
@@ -173,7 +209,14 @@ export const pubSubTopicMapper: ResourceMapper = {
     // Pub/Sub creates a topic with an idempotent PUT to its resource URL; GET the
     // same URL for the existence check.
     const url = `${base}/v1/projects/${encodeURIComponent(project)}/topics/${encodeURIComponent(topic)}`;
-    return { getUrl: url, create: { method: "PUT", url, body: pubSubTopicBody(resource) } };
+    return { getUrl: url, create: { method: "PUT", url, body: stampOwnership(pubSubTopicBody(resource)) } };
+  },
+  list: {
+    url: ({ base, project }) => `${base}/v1/projects/${encodeURIComponent(project)}/topics`,
+    items: (body) =>
+      ((body as { topics?: Array<{ name: string; labels?: Record<string, string> | null }> })?.topics ?? []).map(
+        (t) => ({ name: t.name.split("/").pop() ?? t.name, labels: t.labels }),
+      ),
   },
 };
 
@@ -446,6 +489,49 @@ export interface GcpApplyArgs {
   endpoint?: string;
   /** Project override. Default: `GOOGLE_CLOUD_PROJECT` env / CNRM annotation. */
   project?: string;
+  /**
+   * Delete chant-owned resources of a manifested kind that are no longer in the
+   * manifest (owned-only prune). Destructive — off by default. Only kinds with a
+   * `list` mapper are pruned; foreign (non-chant) resources are never touched.
+   */
+  prune?: boolean;
+}
+
+/**
+ * Owned-only prune: for each manifested kind with `list` support, delete the
+ * chant-owned live resources whose name is not in `desiredByKind`. Foreign
+ * resources (no ownership label) are left alone.
+ */
+export async function pruneOrphans(
+  desired: GcpResource[],
+  resolve: (mapper: ResourceMapper, resource?: GcpResource) => { base: string; project: string },
+  http: GcpHttp = defaultHttp,
+  signal?: AbortSignal,
+): Promise<Array<{ kind: string; name: string; deleted: boolean }>> {
+  const desiredByKind = new Map<string, Set<string>>();
+  for (const r of desired) {
+    if (!r.kind) continue;
+    const names = desiredByKind.get(r.kind) ?? new Set<string>();
+    if (r.metadata?.name) names.add(r.metadata.name);
+    desiredByKind.set(r.kind, names);
+  }
+
+  const pruned: Array<{ kind: string; name: string; deleted: boolean }> = [];
+  for (const [kind, keep] of desiredByKind) {
+    const mapper = MAPPERS[kind];
+    if (!mapper?.list) continue;
+    const ctx = resolve(mapper, desired.find((r) => r.kind === kind));
+    const res = await http("GET", mapper.list.url(ctx), undefined, signal);
+    if (res.status >= 300) continue;
+    for (const item of mapper.list.items(parseJson(res.text))) {
+      if (!isChantOwned(item.labels) || keep.has(item.name)) continue;
+      safeHeartbeat({ step: "prune", kind, name: item.name });
+      const result = await deleteResource(mapper, { kind, metadata: { name: item.name } }, ctx, http, signal);
+      console.log(`pruned: ${kind}/${item.name} (${ctx.base})`);
+      pruned.push(result);
+    }
+  }
+  return pruned;
 }
 
 /**
@@ -460,8 +546,16 @@ export async function gcpApply(
   args: GcpApplyArgs,
   signal?: AbortSignal,
   http: GcpHttp = defaultHttp,
-): Promise<{ applied: Array<{ kind: string; name: string; created: boolean; updated: boolean }> }> {
+): Promise<{
+  applied: Array<{ kind: string; name: string; created: boolean; updated: boolean }>;
+  pruned: Array<{ kind: string; name: string; deleted: boolean }>;
+}> {
   const resources = orderByReferences(parseManifest(readFileSync(args.manifestPath, "utf8"), args.manifestPath));
+  const resolve = (mapper: ResourceMapper, resource?: GcpResource) => ({
+    base: (args.endpoint ?? mapper.defaultHost).replace(/\/$/, ""),
+    project: args.project ?? (resource ? resolveGcpProject(resource) : ""),
+  });
+
   const applied: Array<{ kind: string; name: string; created: boolean; updated: boolean }> = [];
   for (const r of resources) {
     const mapper = r.kind ? MAPPERS[r.kind] : undefined;
@@ -469,15 +563,16 @@ export async function gcpApply(
       if (r.kind) console.log(`skip: no mapper for kind ${r.kind}`);
       continue;
     }
-    const base = (args.endpoint ?? mapper.defaultHost).replace(/\/$/, "");
-    const project = args.project ?? resolveGcpProject(r);
+    const ctx = resolve(mapper, r);
     safeHeartbeat({ step: "gcpApply", kind: mapper.kind, name: r.metadata?.name });
-    const result = await applyResource(mapper, r, { base, project }, http, signal);
+    const result = await applyResource(mapper, r, ctx, http, signal);
     const verb = result.created ? "created" : result.updated ? "updated" : "unchanged";
-    console.log(`${verb}: ${result.kind}/${result.name} (${base})`);
+    console.log(`${verb}: ${result.kind}/${result.name} (${ctx.base})`);
     applied.push(result);
   }
-  return { applied };
+
+  const pruned = args.prune ? await pruneOrphans(resources, resolve, http, signal) : [];
+  return { applied, pruned };
 }
 
 /**

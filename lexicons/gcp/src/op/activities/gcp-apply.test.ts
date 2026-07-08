@@ -11,6 +11,9 @@ import {
   parseManifest,
   referencedNames,
   orderByReferences,
+  pruneOrphans,
+  chantOwnershipLabels,
+  isChantOwned,
   pubSubSubscriptionBody,
   storageBucketMapper,
   pubSubTopicMapper,
@@ -355,6 +358,57 @@ describe("references + ordering (#706)", () => {
     expect(plan.getUrl).toBe("http://x/v1/projects/p/subscriptions/orders-sub");
     expect(plan.create.method).toBe("PUT");
     expect((plan.create.body as { topic: string }).topic).toBe("projects/p/topics/orders");
+  });
+});
+
+describe("ownership + prune (#706)", () => {
+  test("chantOwnershipLabels / isChantOwned", () => {
+    expect(chantOwnershipLabels()).toEqual({ "managed-by": "chant" });
+    expect(isChantOwned({ "managed-by": "chant" })).toBe(true);
+    expect(isChantOwned({ "managed-by": "other" })).toBe(false);
+    expect(isChantOwned(null)).toBe(false);
+    expect(isChantOwned(undefined)).toBe(false);
+  });
+
+  test("create bodies are stamped with the ownership label", () => {
+    const plan = storageBucketMapper.plan(BUCKET, { base: "http://x", project: "p" });
+    expect((plan.create.body as { labels: Record<string, string> }).labels["managed-by"]).toBe("chant");
+    const topicPlan = pubSubTopicMapper.plan(TOPIC, { base: "http://x", project: "p" });
+    expect((topicPlan.create.body as { labels: Record<string, string> }).labels["managed-by"]).toBe("chant");
+  });
+
+  test("list specs read live items (bucket items, topic name from path)", () => {
+    expect(storageBucketMapper.list?.url({ base: "http://x", project: "p" })).toBe("http://x/storage/v1/b?project=p");
+    expect(storageBucketMapper.list?.items({ items: [{ name: "b", labels: null }] })).toEqual([{ name: "b", labels: null }]);
+    expect(pubSubTopicMapper.list?.items({ topics: [{ name: "projects/p/topics/orders", labels: { "managed-by": "chant" } }] }))
+      .toEqual([{ name: "orders", labels: { "managed-by": "chant" } }]);
+  });
+
+  test("pruneOrphans deletes chant-owned resources absent from the manifest, leaves foreign", async () => {
+    const desired: GcpResource[] = [{ kind: "StorageBucket", metadata: { name: "keep" } }];
+    const calls: Array<{ method: string; url: string }> = [];
+    const http: GcpHttp = async (method, url) => {
+      calls.push({ method, url });
+      if (method === "GET") {
+        return {
+          status: 200,
+          text: JSON.stringify({
+            items: [
+              { name: "keep", labels: { "managed-by": "chant" } },
+              { name: "orphan", labels: { "managed-by": "chant" } },
+              { name: "foreign", labels: null },
+            ],
+          }),
+        };
+      }
+      return { status: 200, text: "" }; // DELETE
+    };
+    const resolve = () => ({ base: "http://x", project: "p" });
+    const pruned = await pruneOrphans(desired, resolve, http);
+    expect(pruned).toEqual([{ kind: "StorageBucket", name: "orphan", deleted: true }]);
+    expect(calls.filter((c) => c.method === "DELETE")).toEqual([
+      { method: "DELETE", url: "http://x/storage/v1/b/orphan" },
+    ]);
   });
 });
 
