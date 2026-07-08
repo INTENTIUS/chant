@@ -78,7 +78,7 @@ function takeProfile(
   return { args, profile };
 }
 
-/** Run `npm run build` (or `chant build`) in the given project directory. */
+/** Run an npm build script in the given project directory. `opts.script` selects the script (default `build`, e.g. `build:aws`); `opts.env` adds env vars. */
 export const build = (path: string, opts?: Record<string, unknown>): ActivityStep => {
   const { args, profile } = takeProfile(opts);
   return activity("chantBuild", { path, ...args }, profile);

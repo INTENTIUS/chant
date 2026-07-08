@@ -36,7 +36,7 @@ export default Op({
   taskQueue: "trio-azure",
   phases: [
     phase("Emulator", [shell("docker run -d --rm --name trio-az -p 4577:4577 floci/floci-az:latest")]),
-    phase("Build",    [shell("npx chant build src/azure --lexicon azure -o dist/azure.json")]),
+    phase("Build",    [build(".", { script: "build:azure" })]),
     phase("Apply",    [azApply("dist/azure.json", { resourceGroup: "trio-rg", location: "eastus", endpoint: "http://localhost:4577" })]),
     phase("Verify",   [shell("curl -fs 'http://localhost:4577/subscriptions/.../resourceGroups/trio-rg/providers/Microsoft.Storage/storageAccounts/triostore?api-version=2025-06-01'")]),
     phase("Teardown", [shell("docker rm -f trio-az")]),

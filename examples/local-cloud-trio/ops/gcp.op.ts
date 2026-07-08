@@ -1,4 +1,4 @@
-import { Op, phase, shell, gcpApply } from "@intentius/chant-lexicon-temporal";
+import { Op, phase, shell, build, gcpApply } from "@intentius/chant-lexicon-temporal";
 
 /**
  * Deploy the GCS bucket to a local floci-gcp via `gcpApply`. `chant run gcp`.
@@ -11,7 +11,7 @@ export default Op({
   taskQueue: "trio-gcp",
   phases: [
     phase("Emulator", [shell("docker run -d --rm --name trio-gcp -p 4588:4588 floci/floci-gcp:latest")]),
-    phase("Build", [shell("npx chant build src/gcp --lexicon gcp -o dist/gcp.yaml")]),
+    phase("Build", [build(".", { script: "build:gcp" })]),
     phase("Apply", [gcpApply("dist/gcp.yaml", { endpoint: "http://localhost:4588", project: "local-project" })]),
     phase("Verify", [shell("curl -fs http://localhost:4588/storage/v1/b/trio-bucket")]),
     phase("Teardown", [shell("docker rm -f trio-gcp")]),
