@@ -1,4 +1,4 @@
-import { Op, phase, shell, azApply } from "@intentius/chant-lexicon-temporal";
+import { Op, phase, shell, build, azApply } from "@intentius/chant-lexicon-temporal";
 
 /**
  * Deploy the storage account to a local floci-az via `azApply`. `chant run azure`.
@@ -11,7 +11,7 @@ export default Op({
   taskQueue: "trio-azure",
   phases: [
     phase("Emulator", [shell("docker run -d --rm --name trio-az -p 4577:4577 floci/floci-az:latest")]),
-    phase("Build", [shell("npx chant build src/azure --lexicon azure -o dist/azure.json")]),
+    phase("Build", [build(".", { script: "build:azure" })]),
     phase("Apply", [azApply("dist/azure.json", { resourceGroup: "trio-rg", location: "eastus", endpoint: "http://localhost:4577" })]),
     phase("Verify", [
       shell(
