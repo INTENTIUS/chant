@@ -39,6 +39,11 @@
       "types": "./dist/index.d.ts",
       "default": "./src/index.ts"
     },
+    "./yaml": {
+      "development": "./src/yaml.ts",
+      "types": "./dist/yaml.d.ts",
+      "default": "./src/yaml.ts"
+    },
     "./cli": {
       "development": "./src/cli/index.ts",
       "types": "./dist/cli/index.d.ts",
