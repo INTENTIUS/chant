@@ -17,7 +17,7 @@ digraph lexicon_floci_apply {
     label="Native applier — Ops (no CLI shell-out)"
     style=filled fillcolor="#EFF6FF" color="#2563EB" penwidth=2
     fontname="Helvetica,Arial,sans-serif" fontcolor="#1E3A8A"
-    aws [label="nativeApply\n→ CloudFormation control plane"
+    aws [label="awsApply\n→ CloudFormation API"
          fillcolor="#DBEAFE" color="#2563EB" fontcolor="#1E3A8A"]
     az  [label="azApply\n→ ARM resource CRUD"
          fillcolor="#DBEAFE" color="#2563EB" fontcolor="#1E3A8A"]

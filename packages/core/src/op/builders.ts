@@ -258,6 +258,27 @@ export const azDelete = (templatePath: string, opts?: Record<string, unknown>): 
 };
 
 /**
+ * Deploy a built CloudFormation template by calling the CloudFormation API
+ * directly (create-or-update + poll) — the direct twin of {@link azApply} /
+ * {@link gcpApply} for AWS, targeting a local Floci emulator or real AWS by
+ * endpoint override. Speaks the CFN API over HTTP rather than shelling `aws`
+ * (that path is still `nativeApply({ target: "cloudformation" })`). Provided by
+ * the aws lexicon; loaded when the project lists `aws`. Defaults to the
+ * `longInfra` profile. `opts` requires `stackName`; accepts `endpoint`, `region`,
+ * `capabilities`, `timeoutMs`, `intervalMs`.
+ */
+export const awsApply = (templatePath: string, opts?: Record<string, unknown>): ActivityStep => {
+  const { args, profile } = takeProfile(opts);
+  return activity("awsApply", { templatePath, ...args }, profile ?? "longInfra");
+};
+
+/** Delete a CloudFormation stack — the inverse of {@link awsApply}. Defaults to the `longInfra` profile (override via `opts.profile`). `opts` requires `stackName`. */
+export const awsDelete = (templatePath: string, opts?: Record<string, unknown>): ActivityStep => {
+  const { args, profile } = takeProfile(opts);
+  return activity("awsDelete", { templatePath, ...args }, profile ?? "longInfra");
+};
+
+/**
  * Apply chant's built GCP (CNRM) resources directly to the GCS REST API,
  * targeting a local floci-gcp emulator or real GCP by endpoint override — the
  * native GCP applier (#706 starter #711), currently handling `StorageBucket`.
