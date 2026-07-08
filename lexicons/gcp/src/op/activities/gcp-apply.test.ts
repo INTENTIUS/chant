@@ -179,8 +179,22 @@ describe("Cloud Run mapper + LRO (#706)", () => {
       return { status: 200, text: JSON.stringify({ name: "projects/p/locations/us-central1/operations/xyz" }) };
     };
     const res = await applyResource(cloudRunServiceMapper, RUN_SERVICE, { base: "http://x", project: "p" }, http);
-    expect(res).toEqual({ kind: "RunService", name: "hello-svc", created: true });
+    expect(res).toEqual({ kind: "RunService", name: "hello-svc", created: true, updated: false });
     expect(calls).toEqual(["GET get", "POST create", "GET op"]);
+  });
+
+  test("applyResource: async update (existing) → PATCH then polls the operation", async () => {
+    const calls: string[] = [];
+    const http: GcpHttp = async (method, url) => {
+      calls.push(`${method} ${url.includes("/operations/") ? "op" : "svc"}`);
+      if (method === "GET" && url.includes("/operations/")) return { status: 200, text: JSON.stringify({ done: true }) };
+      if (method === "GET") return { status: 200, text: "{}" }; // service exists → reconcile
+      // PATCH → return an operation
+      return { status: 200, text: JSON.stringify({ name: "projects/p/locations/us-central1/operations/upd" }) };
+    };
+    const res = await applyResource(cloudRunServiceMapper, RUN_SERVICE, { base: "http://x", project: "p" }, http);
+    expect(res).toEqual({ kind: "RunService", name: "hello-svc", created: false, updated: true });
+    expect(calls).toEqual(["GET svc", "PATCH svc", "GET op"]);
   });
 });
 
@@ -200,7 +214,7 @@ describe("resolveGcpProject (#711)", () => {
   });
 });
 
-describe("applyResource idempotency (#706)", () => {
+describe("applyResource create/update (#706)", () => {
   function recorder(getStatus: number): { http: GcpHttp; calls: Array<{ method: string; url: string }> } {
     const calls: Array<{ method: string; url: string }> = [];
     const http: GcpHttp = async (method, url) => {
@@ -210,18 +224,27 @@ describe("applyResource idempotency (#706)", () => {
     return { http, calls };
   }
 
-  test("existing (GET 200) → skip create", async () => {
-    const { http, calls } = recorder(200);
+  test("absent (GET 404) → create (POST)", async () => {
+    const { http, calls } = recorder(404);
     const res = await applyResource(storageBucketMapper, BUCKET, { base: "http://x", project: "p" }, http);
-    expect(res).toEqual({ kind: "StorageBucket", name: "my-data-bucket", created: false });
-    expect(calls.map((c) => c.method)).toEqual(["GET"]);
+    expect(res).toEqual({ kind: "StorageBucket", name: "my-data-bucket", created: true, updated: false });
+    expect(calls.map((c) => c.method)).toEqual(["GET", "POST"]);
   });
 
-  test("absent (GET 404) → create; topic uses PUT", async () => {
-    const { http, calls } = recorder(404);
+  test("existing (GET 200) with update support → reconcile (PATCH)", async () => {
+    const { http, calls } = recorder(200);
+    const res = await applyResource(storageBucketMapper, BUCKET, { base: "http://x", project: "p" }, http);
+    expect(res).toEqual({ kind: "StorageBucket", name: "my-data-bucket", created: false, updated: true });
+    expect(calls.map((c) => c.method)).toEqual(["GET", "PATCH"]);
+    // name is immutable — the PATCH body omits it.
+    expect(JSON.parse(String((await recorderPatchBody(BUCKET)))).name).toBeUndefined();
+  });
+
+  test("existing (GET 200) without update support (topic) → left unchanged", async () => {
+    const { http, calls } = recorder(200);
     const res = await applyResource(pubSubTopicMapper, TOPIC, { base: "http://x", project: "p" }, http);
-    expect(res).toEqual({ kind: "PubSubTopic", name: "events", created: true });
-    expect(calls.map((c) => c.method)).toEqual(["GET", "PUT"]);
+    expect(res).toEqual({ kind: "PubSubTopic", name: "events", created: false, updated: false });
+    expect(calls.map((c) => c.method)).toEqual(["GET"]);
   });
 
   test("create failure surfaces kind + status", async () => {
@@ -231,6 +254,24 @@ describe("applyResource idempotency (#706)", () => {
       applyResource(storageBucketMapper, BUCKET, { base: "http://x", project: "p" }, http),
     ).rejects.toThrow(/StorageBucket my-data-bucket create failed \(403\)/);
   });
+
+  test("update failure surfaces kind + status", async () => {
+    const http: GcpHttp = async (method) =>
+      method === "GET" ? { status: 200, text: "" } : { status: 409, text: "conflict" };
+    await expect(
+      applyResource(storageBucketMapper, BUCKET, { base: "http://x", project: "p" }, http),
+    ).rejects.toThrow(/StorageBucket my-data-bucket update failed \(409\)/);
+  });
+
+  async function recorderPatchBody(res: CnrmStorageBucket): Promise<string> {
+    let patchBody = "{}";
+    const http: GcpHttp = async (method, _url, body) => {
+      if (method === "PATCH") patchBody = JSON.stringify(body);
+      return { status: 200, text: "" };
+    };
+    await applyResource(storageBucketMapper, res, { base: "http://x", project: "p" }, http);
+    return patchBody;
+  }
 });
 
 describe("deleteResource (#706)", () => {

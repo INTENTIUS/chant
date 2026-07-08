@@ -45,10 +45,15 @@ export interface PubSubTopicBody {
 
 // ── Resource mappers (kind → REST) ────────────────────────────────────────────
 
-/** One HTTP plan: an idempotency `GET` (200 = exists) and the create request. */
+/**
+ * One HTTP plan: an idempotency `GET` (200 = exists), the create request, and —
+ * when the resource supports in-place reconcile — the update request. A mapper
+ * that omits `update` leaves an existing resource untouched (skip-if-exists).
+ */
 export interface ApplyPlan {
   getUrl: string;
   create: { method: "POST" | "PUT"; url: string; body: unknown };
+  update?: { method: "PATCH" | "PUT"; url: string; body: unknown };
 }
 
 /**
@@ -147,9 +152,14 @@ export const storageBucketMapper: ResourceMapper = {
   defaultHost: "https://storage.googleapis.com",
   plan(resource, { base, project }) {
     const body = bucketInsertBody(resource as CnrmStorageBucket);
+    const url = `${base}/storage/v1/b/${encodeURIComponent(body.name)}`;
+    // Reconcile in place with a PATCH of the desired mutable fields (the name is
+    // immutable and travels in the URL).
+    const { name: _name, ...patch } = body;
     return {
-      getUrl: `${base}/storage/v1/b/${encodeURIComponent(body.name)}`,
+      getUrl: url,
       create: { method: "POST", url: `${base}/storage/v1/b?project=${encodeURIComponent(project)}`, body },
+      update: { method: "PATCH", url, body: patch },
     };
   },
 };
@@ -185,13 +195,17 @@ export const cloudRunServiceMapper: ResourceMapper = {
     if (!name) throw new Error("RunService has no metadata.name");
     const location = ((resource.spec ?? {}) as { location?: string }).location ?? "us-central1";
     const services = `${base}/v2/projects/${encodeURIComponent(project)}/locations/${encodeURIComponent(location)}/services`;
+    const url = `${services}/${encodeURIComponent(name)}`;
     return {
-      getUrl: `${services}/${encodeURIComponent(name)}`,
+      getUrl: url,
       create: {
         method: "POST",
         url: `${services}?serviceId=${encodeURIComponent(name)}`,
         body: cloudRunServiceBody(resource),
       },
+      // Cloud Run reconciles with a PATCH of the service; like create it returns
+      // a long-running operation, polled via the mapper's `operation`.
+      update: { method: "PATCH", url, body: cloudRunServiceBody(resource) },
     };
   },
 };
@@ -235,8 +249,10 @@ const defaultHttp: GcpHttp = async (method, url, body, signal) => {
 };
 
 /**
- * Idempotently apply one resource via its mapper: `GET` it, skip on 200, else
- * issue the mapper's create request. `http` is injectable for tests.
+ * Reconcile one resource via its mapper: `GET` it; if present, PATCH it to the
+ * desired state (when the mapper supports `update`, else leave it); if absent,
+ * create it. Async create/update return an operation that is polled to
+ * completion. `http` is injectable for tests.
  */
 export async function applyResource(
   mapper: ResourceMapper,
@@ -244,28 +260,48 @@ export async function applyResource(
   ctx: { base: string; project: string },
   http: GcpHttp = defaultHttp,
   signal?: AbortSignal,
-): Promise<{ kind: string; name: string; created: boolean }> {
+): Promise<{ kind: string; name: string; created: boolean; updated: boolean }> {
   const plan = mapper.plan(resource, ctx);
   const name = resource.metadata?.name ?? "?";
   const get = await http("GET", plan.getUrl, undefined, signal);
+
   if (get.status === 200) {
-    return { kind: mapper.kind, name, created: false };
+    // Exists. Reconcile to desired if the mapper supports it; otherwise leave it.
+    if (!plan.update) {
+      return { kind: mapper.kind, name, created: false, updated: false };
+    }
+    const res = await http(plan.update.method, plan.update.url, plan.update.body, signal);
+    if (res.status >= 300) {
+      throw new Error(`${mapper.kind} ${name} update failed (${res.status}): ${res.text}`);
+    }
+    await pollIfAsync(mapper, res.text, ctx, http, signal);
+    return { kind: mapper.kind, name, created: false, updated: true };
   }
+
   const res = await http(plan.create.method, plan.create.url, plan.create.body, signal);
   if (res.status >= 300) {
     throw new Error(`${mapper.kind} ${name} create failed (${res.status}): ${res.text}`);
   }
+  await pollIfAsync(mapper, res.text, ctx, http, signal);
+  return { kind: mapper.kind, name, created: true, updated: false };
+}
 
-  // Async resources return a long-running operation — poll it to completion so
-  // the step doesn't report success before the resource actually exists.
-  if (mapper.operation) {
-    const pollUrl = mapper.operation.pollUrl(parseJson(res.text), ctx);
-    if (pollUrl) {
-      await waitForOperation(mapper.operation, pollUrl, http, signal);
-    }
+/**
+ * When a mapper is async, extract the long-running operation from a create/update
+ * response and poll it to completion so the step never reports success early.
+ */
+async function pollIfAsync(
+  mapper: ResourceMapper,
+  responseText: string,
+  ctx: { base: string; project: string },
+  http: GcpHttp,
+  signal?: AbortSignal,
+): Promise<void> {
+  if (!mapper.operation) return;
+  const pollUrl = mapper.operation.pollUrl(parseJson(responseText), ctx);
+  if (pollUrl) {
+    await waitForOperation(mapper.operation, pollUrl, http, signal);
   }
-
-  return { kind: mapper.kind, name, created: true };
 }
 
 function parseJson(text: string): unknown {
@@ -340,9 +376,9 @@ export async function gcpApply(
   args: GcpApplyArgs,
   signal?: AbortSignal,
   http: GcpHttp = defaultHttp,
-): Promise<{ applied: Array<{ kind: string; name: string; created: boolean }> }> {
+): Promise<{ applied: Array<{ kind: string; name: string; created: boolean; updated: boolean }> }> {
   const resources = parseManifest(readFileSync(args.manifestPath, "utf8"), args.manifestPath);
-  const applied: Array<{ kind: string; name: string; created: boolean }> = [];
+  const applied: Array<{ kind: string; name: string; created: boolean; updated: boolean }> = [];
   for (const r of resources) {
     const mapper = r.kind ? MAPPERS[r.kind] : undefined;
     if (!mapper) {
@@ -353,7 +389,8 @@ export async function gcpApply(
     const project = args.project ?? resolveGcpProject(r);
     safeHeartbeat({ step: "gcpApply", kind: mapper.kind, name: r.metadata?.name });
     const result = await applyResource(mapper, r, { base, project }, http, signal);
-    console.log(`${result.created ? "created" : "exists"}: ${result.kind}/${result.name} (${base})`);
+    const verb = result.created ? "created" : result.updated ? "updated" : "unchanged";
+    console.log(`${verb}: ${result.kind}/${result.name} (${base})`);
     applied.push(result);
   }
   return { applied };
