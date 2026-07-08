@@ -276,6 +276,12 @@ export interface AzApplyArgs {
   endpoint?: string;
   /** Subscription id. Default: floci-az's local subscription. */
   subscriptionId?: string;
+  /**
+   * Delete chant-owned resources of a templated type that are no longer in the
+   * template (owned-only prune). Destructive — off by default. Foreign
+   * (non-chant) resources are never touched.
+   */
+  prune?: boolean;
 }
 
 /**
@@ -290,7 +296,7 @@ export async function azApply(
   args: AzApplyArgs,
   signal?: AbortSignal,
   http: AzHttp = defaultHttp,
-): Promise<{ applied: Array<{ type: string; name: string }> }> {
+): Promise<{ applied: Array<{ type: string; name: string }>; pruned: Array<{ type: string; name: string; deleted: boolean }> }> {
   const base = (args.endpoint ?? DEFAULT_ENDPOINT).replace(/\/$/, "");
   const ctx: ArmEvalCtx = {
     subscriptionId: args.subscriptionId ?? DEFAULT_SUBSCRIPTION,
@@ -311,11 +317,16 @@ export async function azApply(
   );
 
   const template = JSON.parse(readFileSync(args.templatePath, "utf8")) as { resources?: ArmResource[] };
+  const resources = template.resources ?? [];
   const applied: Array<{ type: string; name: string }> = [];
-  for (const resource of orderArmResources(template.resources ?? [])) {
+  for (const resource of orderArmResources(resources)) {
     const name = String(await evalArmString(resource.name, ctx));
     safeHeartbeat({ step: "azApply", type: resource.type, name });
-    const res = await http("PUT", await armResourceUrl(resource, ctx), await armResourceBody(resource, ctx), signal);
+    // Stamp chant ownership so a later prune can tell chant-managed resources
+    // apart from foreign ones in the same group.
+    const body = await armResourceBody(resource, ctx);
+    body.tags = { ...((body.tags as Record<string, string> | undefined) ?? {}), ...chantOwnershipTags() };
+    const res = await http("PUT", await armResourceUrl(resource, ctx), body, signal);
     if (res.status >= 300) {
       throw new Error(`${resource.type} ${name} apply failed (${res.status}): ${res.text}`);
     }
@@ -328,5 +339,130 @@ export async function azApply(
     console.log(`applied: ${resource.type}/${name} (${base})`);
     applied.push({ type: resource.type, name });
   }
-  return { applied };
+
+  const pruned = args.prune ? await pruneArmOrphans(resources, ctx, http, signal) : [];
+  return { applied, pruned };
+}
+
+// ── Ownership + prune + delete ────────────────────────────────────────────────
+
+// chant stamps this tag on every resource it applies; prune only ever deletes
+// resources carrying it, so a foreign resource sharing the group is never
+// touched. Real Azure persists resource tags; note that floci-az currently drops
+// them, so owned-only prune only takes effect against real Azure (the delete
+// mechanics themselves work against either — see azDelete).
+const OWNERSHIP_TAG_KEY = "managed-by";
+const OWNERSHIP_TAG_VALUE = "chant";
+
+/** The ownership tag azApply stamps on every resource it applies. */
+export function chantOwnershipTags(): Record<string, string> {
+  return { [OWNERSHIP_TAG_KEY]: OWNERSHIP_TAG_VALUE };
+}
+
+/** Whether a resource's tags mark it chant-owned. */
+export function isChantOwned(tags: Record<string, string> | null | undefined): boolean {
+  return tags?.[OWNERSHIP_TAG_KEY] === OWNERSHIP_TAG_VALUE;
+}
+
+/** One resource from the ARM resource-group listing. */
+export interface ArmListItem {
+  id: string;
+  name: string;
+  type: string;
+  tags?: Record<string, string>;
+}
+
+/** List the resources in the group via the ARM resource-list endpoint. */
+export async function listGroupResources(ctx: ArmEvalCtx, http: AzHttp = defaultHttp, signal?: AbortSignal): Promise<ArmListItem[]> {
+  const url = `${ctx.base}/subscriptions/${ctx.subscriptionId}/resourceGroups/${ctx.resourceGroup}/resources?api-version=2021-04-01`;
+  const res = await http("GET", url, undefined, signal);
+  if (res.status >= 300) return [];
+  try {
+    return ((JSON.parse(res.text) as { value?: ArmListItem[] }).value ?? []).filter((r) => r?.type && r?.name);
+  } catch {
+    return [];
+  }
+}
+
+/** Idempotently delete one ARM resource by type/name/apiVersion. A 404 means it is already gone. */
+export async function deleteArmResource(
+  type: string,
+  name: string,
+  apiVersion: string,
+  ctx: ArmEvalCtx,
+  http: AzHttp = defaultHttp,
+  signal?: AbortSignal,
+): Promise<{ type: string; name: string; deleted: boolean }> {
+  const url = `${ctx.base}/subscriptions/${ctx.subscriptionId}/resourceGroups/${ctx.resourceGroup}/providers/${type}/${name}?api-version=${apiVersion}`;
+  const res = await http("DELETE", url, undefined, signal);
+  if (res.status === 404) return { type, name, deleted: false };
+  if (res.status >= 300) throw new Error(`${type} ${name} delete failed (${res.status}): ${res.text}`);
+  return { type, name, deleted: true };
+}
+
+/**
+ * Owned-only prune: for each resource type present in the template, delete the
+ * chant-owned live resources of that type whose (evaluated) name is not in the
+ * template. Scoped to templated types — like the GCP applier — so a type chant
+ * isn't managing this run is left alone, and the type's `apiVersion` is taken
+ * from the template. Foreign (non-chant) resources are never touched.
+ */
+export async function pruneArmOrphans(
+  desired: ArmResource[],
+  ctx: ArmEvalCtx,
+  http: AzHttp = defaultHttp,
+  signal?: AbortSignal,
+): Promise<Array<{ type: string; name: string; deleted: boolean }>> {
+  const byType = new Map<string, { keep: Set<string>; apiVersion: string }>();
+  for (const r of desired) {
+    const name = String(await evalArmString(r.name, ctx));
+    const entry = byType.get(r.type) ?? { keep: new Set<string>(), apiVersion: r.apiVersion };
+    entry.keep.add(name);
+    byType.set(r.type, entry);
+  }
+
+  const pruned: Array<{ type: string; name: string; deleted: boolean }> = [];
+  for (const item of await listGroupResources(ctx, http, signal)) {
+    const entry = byType.get(item.type);
+    if (!entry || !isChantOwned(item.tags) || entry.keep.has(item.name)) continue;
+    safeHeartbeat({ step: "azPrune", type: item.type, name: item.name });
+    const result = await deleteArmResource(item.type, item.name, entry.apiVersion, ctx, http, signal);
+    console.log(`pruned: ${item.type}/${item.name} (${ctx.base})`);
+    pruned.push(result);
+  }
+  return pruned;
+}
+
+/**
+ * The inverse of {@link azApply} — read a built ARM template and delete the
+ * resources it declares, in reverse dependency order (a referrer goes before the
+ * resource it references). Idempotent: already-absent resources are a no-op. The
+ * Azure twin of `gcpDelete`; `http` is injectable for tests.
+ */
+export async function azDelete(
+  args: AzApplyArgs,
+  signal?: AbortSignal,
+  http: AzHttp = defaultHttp,
+): Promise<{ deleted: Array<{ type: string; name: string; deleted: boolean }> }> {
+  const base = (args.endpoint ?? DEFAULT_ENDPOINT).replace(/\/$/, "");
+  const ctx: ArmEvalCtx = {
+    subscriptionId: args.subscriptionId ?? DEFAULT_SUBSCRIPTION,
+    resourceGroup: args.resourceGroup,
+    location: args.location ?? "eastus",
+    deployed: new Map(),
+    http,
+    base,
+    signal,
+  };
+
+  const template = JSON.parse(readFileSync(args.templatePath, "utf8")) as { resources?: ArmResource[] };
+  const deleted: Array<{ type: string; name: string; deleted: boolean }> = [];
+  for (const resource of orderArmResources(template.resources ?? []).reverse()) {
+    const name = String(await evalArmString(resource.name, ctx));
+    safeHeartbeat({ step: "azDelete", type: resource.type, name });
+    const result = await deleteArmResource(resource.type, name, resource.apiVersion, ctx, http, signal);
+    console.log(`${result.deleted ? "deleted" : "absent"}: ${resource.type}/${name} (${base})`);
+    deleted.push(result);
+  }
+  return { deleted };
 }

@@ -7,6 +7,12 @@ import {
   armDependencies,
   orderArmResources,
   azApply,
+  azDelete,
+  pruneArmOrphans,
+  deleteArmResource,
+  listGroupResources,
+  chantOwnershipTags,
+  isChantOwned,
   type ArmEvalCtx,
   type ArmResource,
   type AzHttp,
@@ -176,5 +182,150 @@ describe("azApply flow (#707)", () => {
       azApply({ templatePath: tmp, resourceGroup: "rg", endpoint: "http://x" }, undefined, http),
     ).rejects.toThrow(/Microsoft.Storage\/storageAccounts chantstore1 apply failed \(400\)/);
     fs.unlinkSync(tmp);
+  });
+
+  test("stamps chant ownership on the PUT body", async () => {
+    const fs = await import("node:fs");
+    const tmp = `/tmp/chant-arm-own-${process.pid}.json`;
+    fs.writeFileSync(tmp, JSON.stringify({ resources: [{ type: "T", apiVersion: "v", name: "r1" }] }));
+    let putBody: Record<string, unknown> | undefined;
+    const http: AzHttp = async (method, url, body) => {
+      if (method === "PUT" && url.includes("/providers/")) putBody = body as Record<string, unknown>;
+      return { status: 200, text: "{}" };
+    };
+    await azApply({ templatePath: tmp, resourceGroup: "rg", endpoint: "http://x" }, undefined, http);
+    fs.unlinkSync(tmp);
+    expect((putBody?.tags as Record<string, string>)["managed-by"]).toBe("chant");
+  });
+});
+
+describe("ownership helpers (#azure-prune)", () => {
+  test("chantOwnershipTags / isChantOwned", () => {
+    expect(chantOwnershipTags()).toEqual({ "managed-by": "chant" });
+    expect(isChantOwned({ "managed-by": "chant" })).toBe(true);
+    expect(isChantOwned({ "managed-by": "someone-else" })).toBe(false);
+    expect(isChantOwned(undefined)).toBe(false);
+  });
+});
+
+describe("deleteArmResource (#azure-prune)", () => {
+  test("DELETEs the resource-id path; 404 is not-deleted", async () => {
+    const calls: string[] = [];
+    const http: AzHttp = async (method, url) => {
+      calls.push(`${method} ${url}`);
+      return { status: 200, text: "" };
+    };
+    const res = await deleteArmResource("Microsoft.Storage/storageAccounts", "st1", "2023-01-01", ctx(), http);
+    expect(res).toEqual({ type: "Microsoft.Storage/storageAccounts", name: "st1", deleted: true });
+    expect(calls[0]).toBe(
+      "DELETE http://x/subscriptions/sub-1/resourceGroups/chant-rg/providers/Microsoft.Storage/storageAccounts/st1?api-version=2023-01-01",
+    );
+    const gone = await deleteArmResource("T", "x", "v", ctx(), async () => ({ status: 404, text: "" }));
+    expect(gone.deleted).toBe(false);
+  });
+
+  test("throws on a non-404 error", async () => {
+    await expect(
+      deleteArmResource("T", "x", "v", ctx(), async () => ({ status: 403, text: "no" })),
+    ).rejects.toThrow(/T x delete failed \(403\)/);
+  });
+});
+
+describe("listGroupResources (#azure-prune)", () => {
+  test("returns the value[] items, filtering malformed entries", async () => {
+    const http: AzHttp = async () => ({
+      status: 200,
+      text: JSON.stringify({ value: [{ id: "/a", name: "a", type: "T", tags: { "managed-by": "chant" } }, { id: "/bad" }] }),
+    });
+    const items = await listGroupResources(ctx(), http);
+    expect(items.map((i) => i.name)).toEqual(["a"]);
+  });
+
+  test("returns [] on an error status", async () => {
+    expect(await listGroupResources(ctx(), async () => ({ status: 500, text: "" }))).toEqual([]);
+  });
+});
+
+describe("pruneArmOrphans (#azure-prune)", () => {
+  const desired: ArmResource[] = [{ type: "Microsoft.Storage/storageAccounts", apiVersion: "2023-01-01", name: "keep1" }];
+
+  test("deletes only chant-owned, templated-type resources not in the template", async () => {
+    const live = {
+      value: [
+        { id: "/1", name: "keep1", type: "Microsoft.Storage/storageAccounts", tags: { "managed-by": "chant" } }, // in template → keep
+        { id: "/2", name: "orphan1", type: "Microsoft.Storage/storageAccounts", tags: { "managed-by": "chant" } }, // owned, not in template → prune
+        { id: "/3", name: "foreign", type: "Microsoft.Storage/storageAccounts", tags: {} }, // not owned → skip
+        { id: "/4", name: "othertype", type: "Microsoft.Web/sites", tags: { "managed-by": "chant" } }, // type not templated → skip
+      ],
+    };
+    const deletes: string[] = [];
+    const http: AzHttp = async (method, url) => {
+      if (method === "DELETE") deletes.push(url);
+      return { status: 200, text: method === "GET" ? JSON.stringify(live) : "" };
+    };
+    const pruned = await pruneArmOrphans(desired, ctx(), http);
+    expect(pruned).toEqual([{ type: "Microsoft.Storage/storageAccounts", name: "orphan1", deleted: true }]);
+    expect(deletes).toHaveLength(1);
+    expect(deletes[0]).toContain("/storageAccounts/orphan1?api-version=2023-01-01"); // apiVersion from the template
+  });
+});
+
+describe("azApply prune flag (#azure-prune)", () => {
+  test("prunes owned orphans of a templated type after applying", async () => {
+    const fs = await import("node:fs");
+    const tmp = `/tmp/chant-arm-prune-${process.pid}.json`;
+    fs.writeFileSync(tmp, JSON.stringify({ resources: [{ type: "T", apiVersion: "v", name: "keep1" }] }));
+    const live = { value: [{ id: "/o", name: "orphan1", type: "T", tags: { "managed-by": "chant" } }] };
+    const deletes: string[] = [];
+    const http: AzHttp = async (method, url) => {
+      if (method === "DELETE") deletes.push(url);
+      return { status: 200, text: method === "GET" ? JSON.stringify(live) : "{}" };
+    };
+    const res = await azApply({ templatePath: tmp, resourceGroup: "rg", endpoint: "http://x", prune: true }, undefined, http);
+    fs.unlinkSync(tmp);
+    expect(res.applied.map((a) => a.name)).toEqual(["keep1"]);
+    expect(res.pruned).toEqual([{ type: "T", name: "orphan1", deleted: true }]);
+    expect(deletes[0]).toContain("/providers/T/orphan1");
+  });
+
+  test("no prune when the flag is off", async () => {
+    const fs = await import("node:fs");
+    const tmp = `/tmp/chant-arm-noprune-${process.pid}.json`;
+    fs.writeFileSync(tmp, JSON.stringify({ resources: [{ type: "T", apiVersion: "v", name: "keep1" }] }));
+    let listed = false;
+    const http: AzHttp = async (method, url) => {
+      if (method === "GET" && url.includes("/resources?")) listed = true;
+      return { status: 200, text: "{}" };
+    };
+    const res = await azApply({ templatePath: tmp, resourceGroup: "rg", endpoint: "http://x" }, undefined, http);
+    fs.unlinkSync(tmp);
+    expect(res.pruned).toEqual([]);
+    expect(listed).toBe(false);
+  });
+});
+
+describe("azDelete (#azure-prune)", () => {
+  test("deletes declared resources in reverse dependency order", async () => {
+    const fs = await import("node:fs");
+    const tmp = `/tmp/chant-arm-del-${process.pid}.json`;
+    const site: ArmResource = {
+      type: "Microsoft.Web/sites",
+      apiVersion: "2023-01-01",
+      name: "site1",
+      properties: { serverFarmId: "[resourceId('Microsoft.Web/serverfarms', 'plan1')]" },
+    };
+    const plan: ArmResource = { type: "Microsoft.Web/serverfarms", apiVersion: "2023-01-01", name: "plan1" };
+    fs.writeFileSync(tmp, JSON.stringify({ resources: [plan, site] }));
+    const deletes: string[] = [];
+    const http: AzHttp = async (method, url) => {
+      if (method === "DELETE") deletes.push(url);
+      return { status: 200, text: "" };
+    };
+    const res = await azDelete({ templatePath: tmp, resourceGroup: "chant-rg", endpoint: "http://x" }, undefined, http);
+    fs.unlinkSync(tmp);
+    // referrer (site) deleted before the resource it references (plan).
+    expect(res.deleted.map((d) => d.name)).toEqual(["site1", "plan1"]);
+    expect(deletes[0]).toContain("/sites/site1");
+    expect(deletes[1]).toContain("/serverfarms/plan1");
   });
 });

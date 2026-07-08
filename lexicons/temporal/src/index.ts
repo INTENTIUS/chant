@@ -61,6 +61,7 @@ export {
   azGroupEnsure,
   azGroupDelete,
   azApply,
+  azDelete,
   gcpApply,
   gcpDelete,
   policyGate,

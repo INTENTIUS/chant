@@ -196,11 +196,18 @@ export const azGroupDelete = (resourceGroup: string, opts?: Record<string, unkno
  * override; ensures the resource group first. Defaults to the `longInfra` profile.
  *
  * `opts` requires `resourceGroup`; accepts `location`, `endpoint` (floci-az
- * `http://localhost:4577`), and `subscriptionId`.
+ * `http://localhost:4577`), `subscriptionId`, and `prune` (owned-only prune of
+ * chant-managed resources no longer in the template — destructive, off by default).
  */
 export const azApply = (templatePath: string, opts?: Record<string, unknown>): ActivityStep => {
   const { args, profile } = takeProfile(opts);
   return activity("azApply", { templatePath, ...args }, profile ?? "longInfra");
+};
+
+/** Delete the Azure (ARM) resources in a built template — the inverse of {@link azApply}. Defaults to the `longInfra` profile (override via `opts.profile`). `opts` requires `resourceGroup`. */
+export const azDelete = (templatePath: string, opts?: Record<string, unknown>): ActivityStep => {
+  const { args, profile } = takeProfile(opts);
+  return activity("azDelete", { templatePath, ...args }, profile ?? "longInfra");
 };
 
 /**
