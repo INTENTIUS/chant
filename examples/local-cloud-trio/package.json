@@ -1,0 +1,23 @@
+{
+  "name": "local-cloud-trio-example",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build:aws": "chant build src/aws --lexicon aws -o dist/aws.json",
+    "build:azure": "chant build src/azure --lexicon azure -o dist/azure.json",
+    "build:gcp": "chant build src/gcp --lexicon gcp -o dist/gcp.yaml",
+    "build": "npm run build:aws && npm run build:azure && npm run build:gcp",
+    "lint": "chant lint src"
+  },
+  "dependencies": {
+    "@intentius/chant": "*",
+    "@intentius/chant-lexicon-aws": "*",
+    "@intentius/chant-lexicon-azure": "*",
+    "@intentius/chant-lexicon-gcp": "*",
+    "@intentius/chant-lexicon-temporal": "*"
+  },
+  "devDependencies": {
+    "typescript": "*"
+  }
+}
