@@ -22,6 +22,9 @@ export {
   MAPPERS,
   referencedNames,
   orderByReferences,
+  pruneOrphans,
+  chantOwnershipLabels,
+  isChantOwned,
   resolveGcpProject,
   parseManifest,
 } from "./gcp-apply";
@@ -33,6 +36,7 @@ export type {
   PubSubTopicBody,
   ResourceMapper,
   OperationSpec,
+  ListSpec,
   ApplyPlan,
   GcpHttp,
 } from "./gcp-apply";
