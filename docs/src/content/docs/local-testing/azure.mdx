@@ -1,0 +1,74 @@
+---
+title: Local Testing — Azure (floci-az)
+description: Deploy chant's ARM output to floci-az with azApply, which PUTs each resource directly since the emulator has no deployments provider.
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+floci-az emulates Azure's resource CRUD but not the `Microsoft.Resources/deployments` provider, so `az deployment` has nothing to talk to. `azApply` closes the gap: it reads the ARM template chant synthesizes and PUTs each resource straight to floci-az's ARM resource endpoints, in dependency order, resolving ARM expressions from live responses as it goes.
+
+<Aside type="tip">
+This page is one cloud of [`examples/local-cloud-trio`](https://github.com/INTENTIUS/chant/tree/main/examples/local-cloud-trio). Start from [Local Testing](/chant/local-testing/overview/) for the cross-cloud picture.
+</Aside>
+
+## The resource
+
+A storage account, described as data. It synthesizes to an ARM template:
+
+```typescript
+// src/azure/infra.ts — StorageAccountSecure is a composite (secure defaults)
+export const { storageAccount } = StorageAccountSecure({
+  name: "triostore",
+  location: "eastus",
+  sku: "Standard_LRS",
+  tags: { project: "cross-cloud-demo" },
+});
+```
+
+## The op
+
+`chant run azure` boots floci-az, builds the ARM template, applies it with `azApply`, verifies the account over the ARM endpoint, and removes the container.
+
+```typescript
+// ops/azure.op.ts
+export default Op({
+  name: "azure",
+  taskQueue: "trio-azure",
+  phases: [
+    phase("Emulator", [shell("docker run -d --rm --name trio-az -p 4577:4577 floci/floci-az:latest")]),
+    phase("Build",    [shell("npx chant build src/azure --lexicon azure -o dist/azure.json")]),
+    phase("Apply",    [azApply("dist/azure.json", { resourceGroup: "trio-rg", location: "eastus", endpoint: "http://localhost:4577" })]),
+    phase("Verify",   [shell("curl -fs 'http://localhost:4577/subscriptions/.../resourceGroups/trio-rg/providers/Microsoft.Storage/storageAccounts/triostore?api-version=2025-06-01'")]),
+    phase("Teardown", [shell("docker rm -f trio-az")]),
+  ],
+});
+```
+
+## How azApply works
+
+`az deployment` submits a whole template to the deployments provider and lets Azure order and resolve it. floci-az has no such provider, so `azApply` does that work itself:
+
+- **Reads the ARM template** chant emitted and ensures the resource group exists.
+- **Orders resources** by their `resourceId`/`reference` references — a referenced resource applies before the one that references it — and detects cycles.
+- **Evaluates ARM expressions** as it applies: `resourceGroup()`, `subscription()`, `concat`, `uniqueString`, `resourceId(...)`, plus the runtime-state functions `reference('name')` and `listKeys(id, apiVersion)`, resolved from the live PUT responses of resources applied earlier in the run.
+- **PUTs each resource** to `{endpoint}{resourceId}?api-version=...` and captures the response so later resources can reference it.
+
+This is the same evaluation a real ARM deployment performs; azApply just runs it client-side against the emulator's resource CRUD.
+
+## Run it
+
+Requires Docker and `curl` on PATH.
+
+```bash
+cd examples/local-cloud-trio
+npm install
+chant run azure
+```
+
+<Aside type="note">
+floci-az covers Storage, KeyVault, Service Bus, and similar resource providers, but not `Microsoft.Web`. An App Service resource can't run locally today, though its ARM expressions evaluate identically — the reference/listKeys logic is verified against the Storage path.
+</Aside>
+
+## From local to real cloud
+
+Drop the `endpoint` override and `azApply` targets real Azure ARM. The template, the ordering, and the expression evaluation are unchanged — only the resource-manager host differs.

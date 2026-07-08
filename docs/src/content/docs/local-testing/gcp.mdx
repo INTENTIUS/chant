@@ -1,0 +1,78 @@
+---
+title: Local Testing — GCP (floci-gcp)
+description: Deploy chant's Config Connector output to floci-gcp with gcpApply, which drives each resource as a native REST call — no cluster, no deployment service.
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+GCP has no native deployment service — Deployment Manager is retired, and Config Connector needs a cluster running its operator. `gcpApply` bridges chant's Config Connector output to a local emulator directly: it maps each resource to its underlying Google REST API and drives create, update, and delete itself against [floci-gcp](https://github.com/floci-io/floci).
+
+<Aside type="tip">
+This page is one cloud of [`examples/local-cloud-trio`](https://github.com/INTENTIUS/chant/tree/main/examples/local-cloud-trio). Start from [Local Testing](/chant/local-testing/overview/) for the cross-cloud picture.
+</Aside>
+
+## The resource
+
+A GCS bucket, described as data. It synthesizes to a Config Connector manifest:
+
+```typescript
+// src/gcp/infra.ts
+export const bucket = new StorageBucket({
+  metadata: {
+    name: "trio-bucket",
+    labels: { "app.kubernetes.io/managed-by": "chant" },
+  },
+  location: "US",
+  storageClass: "STANDARD",
+  uniformBucketLevelAccess: true,
+  versioning: { enabled: true },
+});
+```
+
+## The op
+
+`chant run gcp` boots floci-gcp, builds the manifest, applies it with `gcpApply`, verifies the bucket over the GCS REST API, and removes the container.
+
+```typescript
+// ops/gcp.op.ts
+export default Op({
+  name: "gcp",
+  taskQueue: "trio-gcp",
+  phases: [
+    phase("Emulator", [shell("docker run -d --rm --name trio-gcp -p 4588:4588 floci/floci-gcp:latest")]),
+    phase("Build",    [shell("npx chant build src/gcp --lexicon gcp -o dist/gcp.yaml")]),
+    phase("Apply",    [gcpApply("dist/gcp.yaml", { endpoint: "http://localhost:4588", project: "local-project" })]),
+    phase("Verify",   [shell("curl -fs http://localhost:4588/storage/v1/b/trio-bucket")]),
+    phase("Teardown", [shell("docker rm -f trio-gcp")]),
+  ],
+});
+```
+
+## How gcpApply works
+
+Config Connector normally reconciles a CRD on a cluster into Google API calls. `gcpApply` performs that reconciliation directly, no cluster involved:
+
+- **Maps each kind** to its REST resource via a dispatch table — Storage buckets, PubSub topics and subscriptions, Secret Manager secrets, IAM service accounts, Cloud Run services.
+- **Orders resources** by their references so a dependency applies before its dependent.
+- **Drives full CRUD**, following long-running operations to completion where the API returns one.
+- **Prunes orphans** it owns — resources carrying the `managed-by: chant` label that are no longer in the manifest — and leaves everything else alone.
+
+Every call is the real GCS/PubSub/IAM shape, pointed at the emulator.
+
+## Run it
+
+Requires Docker and `curl` on PATH.
+
+```bash
+cd examples/local-cloud-trio
+npm install
+chant run gcp
+```
+
+<Aside type="note">
+floci-gcp emulates a subset of GCP services; `gcpApply` currently maps six resource kinds. A resource outside that set can't run locally yet, though synthesis and lint still validate it.
+</Aside>
+
+## From local to real cloud
+
+Drop the `endpoint` override and `gcpApply` targets the real Google APIs for the same project. The manifest and the reconciliation logic are unchanged — this is the same code path a live apply takes.

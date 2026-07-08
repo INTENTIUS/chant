@@ -101,6 +101,15 @@ export default defineConfig({
 					],
 				},
 				{
+					label: 'Local Testing',
+					items: [
+						{ label: 'Overview', slug: 'local-testing/overview' },
+						{ label: 'AWS (Floci)', slug: 'local-testing/aws' },
+						{ label: 'Azure (floci-az)', slug: 'local-testing/azure' },
+						{ label: 'GCP (floci-gcp)', slug: 'local-testing/gcp' },
+					],
+				},
+				{
 					label: 'Lexicons',
 					items: [
 						{ label: 'Overview', slug: 'lexicons/overview' },
