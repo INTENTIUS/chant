@@ -152,6 +152,27 @@ export const k3dDown = (name: string, opts?: Record<string, unknown>): ActivityS
 };
 
 /**
+ * Boot a local Floci AWS emulator in Docker and point subsequent steps at it —
+ * sets `AWS_ENDPOINT_URL` + test creds in the process env so a following
+ * `cloudformation` apply targets the emulator (local executor). Idempotent:
+ * reuses a running container of the same name. Defaults to the `longInfra`
+ * profile (the image may pull); override via `opts.profile`.
+ *
+ * `opts` accepts `name`, `port`, `image`, `dockerSocket` (mount the docker
+ * socket for the ECR backing registry), `region`, `readyService`, `timeoutMs`.
+ */
+export const flociUp = (opts?: Record<string, unknown>): ActivityStep => {
+  const { args, profile } = takeProfile(opts);
+  return activity("flociUp", args, profile ?? "longInfra");
+};
+
+/** Stop and remove the local Floci emulator container. Defaults to the `fastIdempotent` profile (override via `opts.profile`). */
+export const flociDown = (opts?: Record<string, unknown>): ActivityStep => {
+  const { args, profile } = takeProfile(opts);
+  return activity("flociDown", args, profile ?? "fastIdempotent");
+};
+
+/**
  * Gate an apply on organizational policy: build the project and run its
  * `lint.policies` over the resolved resources, blocking the workflow on any
  * violation. Place it before the apply phase. `env` (or `ownership.env`) lets a
