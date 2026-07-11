@@ -10,6 +10,7 @@ chant graph [path] [--stacks] [--json]
 chant graph [path] [--components] [--json]
 chant graph [path] --format ir|mermaid|dot|layout [--detail 0..3] [--lens <kind>:<target>] [--up] [--down]
 chant graph [path] --format layout [--node-sizes <json|-|@file>] [--layout-engine dagre|graphviz]
+chant graph --format ir --live --env <name>
 ```
 
 ## Description
@@ -22,6 +23,16 @@ chant graph [path] --format layout [--node-sizes <json|-|@file>] [--layout-engin
 - **`--format ir|mermaid|dot|layout`** — the **infrastructure graph** chant resolves during synthesis, emitted for diagrams. This is the graph of your declared resources and the references between them.
 
 The infra-graph formats are a pure function of lint-clean source — every node traces to a source file, every edge is a real cross-resource reference. They are **lint-gated**: chant refuses to emit a graph for source that does not pass `chant lint`, because the graph represents valid infrastructure.
+
+### `--live` — the provisioned graph
+
+`--format ir --live --env <name>` emits the graph of what's **actually deployed** in that environment, not what source declares. It queries each lexicon's live observation (`describeResources`) for the chant-managed resources and projects them into the same IR. Nodes carry their observed `physicalId` and ownership marker.
+
+```bash
+chant graph --format ir --live --env prod    # the provisioned resources as IR
+```
+
+This is the first step of the provisioned-diagram work: nodes only. Reconstructing the edges between live resources (they reference each other by physical id, not declared references) and drawing the result as an AWS-style architecture diagram are tracked separately. Scope today is **managed-only** — resources carrying chant's ownership marker; it isn't a full-account scan. Unlike the source graph, `--live` is not lint-gated (it reads the cloud, not source).
 
 ## Infra graph: `--format`
 

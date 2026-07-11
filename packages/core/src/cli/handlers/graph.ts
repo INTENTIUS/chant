@@ -1,8 +1,10 @@
 import { resolve } from "node:path";
 import { discoverOps } from "../../op/discover";
 import { discover } from "../../discovery/index";
-import { partitionByLexicon, computeStackGraph } from "../../build";
-import { buildGraphIr, type GraphIR } from "../../graph-ir";
+import { partitionByLexicon, computeStackGraph, build } from "../../build";
+import { buildGraphIr, buildLiveGraphIr, type GraphIR } from "../../graph-ir";
+import { observeResources } from "../../lifecycle/observe";
+import { loadChantConfig } from "../../config";
 import { applyDetail, type DetailLevel } from "../../graph-detail";
 import { applyLens, parseLens } from "../../graph-lens";
 import { toMermaid } from "../../graph-mermaid";
@@ -24,12 +26,77 @@ import { computeComponentGraph } from "../../components/cli-support";
  */
 export async function runGraph(ctx: CommandContext): Promise<number> {
   const viewFormats = ["ir", "mermaid", "dot", "layout"] as const;
-  if ((viewFormats as readonly string[]).includes(ctx.args.format)) {
+  const isViewFormat = (viewFormats as readonly string[]).includes(ctx.args.format);
+  // `--live` graphs the provisioned (observed) infrastructure, not the declared
+  // source (epic #776). It only makes sense as a view format; default to `ir`.
+  if (ctx.args.live) {
+    return runGraphLive(ctx, isViewFormat ? (ctx.args.format as (typeof viewFormats)[number]) : "ir");
+  }
+  if (isViewFormat) {
     return runGraphView(ctx, ctx.args.format as (typeof viewFormats)[number]);
   }
   if (ctx.args.components) return runComponentGraph(ctx);
   if (ctx.args.stacks) return runStackGraph(ctx);
   return runOpGraph();
+}
+
+/**
+ * `chant graph --live --env <name> [--format ir|mermaid|dot|layout]` — the
+ * **provisioned** graph (C1 of epic #776). Queries each lexicon's
+ * `describeResources()` for the environment (managed-only: `owned`) and projects
+ * the observed resources into IR nodes. Nodes only — edges are reconstructed by
+ * the reference resolver (#778), containment by #779. No lint gate: this reads
+ * the cloud, not source.
+ */
+async function runGraphLive(
+  ctx: CommandContext,
+  format: "ir" | "mermaid" | "dot" | "layout",
+): Promise<number> {
+  const { args, plugins } = ctx;
+  const environment = args.env;
+  if (!environment) {
+    console.error(formatError({ message: "chant graph --live needs an environment: --live --env <name>" }));
+    return 1;
+  }
+
+  const projectPath = resolve(".");
+  const { config } = await loadChantConfig(projectPath);
+  if (config.environments && !config.environments.includes(environment)) {
+    console.error(formatError({
+      message: `Unknown environment "${environment}"`,
+      hint: `Defined environments: ${config.environments.join(", ")}`,
+    }));
+    return 1;
+  }
+
+  // Build to get each lexicon's entity names + output (the scope
+  // describeResources needs), mirroring `chant lifecycle snapshot`.
+  const buildResult = await build(resolve(args.src ?? config.sourceDir ?? "."), plugins.map((p) => p.serializer));
+  if (buildResult.errors.length > 0) {
+    console.error(formatError({ message: "Build failed — fix errors before graphing live state" }));
+    return 1;
+  }
+
+  const observing = plugins.filter((p) => p.describeResources);
+  if (observing.length === 0) {
+    console.error(formatError({ message: "No lexicons implement describeResources — nothing to observe live." }));
+    return 1;
+  }
+
+  const { observations, errors } = await observeResources(environment, observing, buildResult, { owned: true });
+  for (const e of errors) console.error(formatWarning({ message: e }));
+
+  let ir: GraphIR = buildLiveGraphIr(observations);
+  if (args.lens) {
+    try {
+      ir = applyLens(ir, parseLens(args.lens, { up: args.up, down: args.down }));
+    } catch (err) {
+      console.error(formatError({ message: err instanceof Error ? err.message : String(err) }));
+      return 1;
+    }
+  }
+  ir = applyDetail(ir, (args.detail ?? 2) as DetailLevel);
+  return emitIr(ir, ctx, format);
 }
 
 /**
@@ -124,7 +191,16 @@ async function runGraphView(
     }
   }
   ir = applyDetail(ir, level as DetailLevel);
+  return emitIr(ir, ctx, format);
+}
 
+/** Emit a built IR in the requested view format — shared by the source
+ * (`runGraphView`) and live (`runGraphLive`) paths. */
+async function emitIr(
+  ir: GraphIR,
+  ctx: CommandContext,
+  format: "ir" | "mermaid" | "dot" | "layout",
+): Promise<number> {
   switch (format) {
     case "mermaid":
       console.log(toMermaid(ir));
