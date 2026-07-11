@@ -1,0 +1,24 @@
+{
+  "nodes": [
+    {"id": "CLI", "kind": "", "lexicon": "", "attrs": {"verbs": "build · lint · run · serve mcp"}},
+    {"id": "Build pipeline", "kind": "", "lexicon": "", "attrs": {"does": "discovery · evaluation", "then": "topological sort"}},
+    {"id": "Lint engine", "kind": "", "lexicon": "", "attrs": {"kinds": "EVL · semantic · post-synth"}},
+    {"id": "Codegen infra", "kind": "", "lexicon": "", "attrs": {"has": "generate/package Pipeline", "plus": "NamingStrategy · LexiconIndex"}},
+    {"id": "Serializer", "kind": "", "lexicon": "", "attrs": {"does": "target format output"}},
+    {"id": "Lint rules + post-synth checks", "kind": "", "lexicon": "", "attrs": {}},
+    {"id": "LSP · MCP · Skills", "kind": "", "lexicon": "", "attrs": {"give": "completions · hover · tools"}},
+    {"id": "@intentius/chant-test-utils", "kind": "", "lexicon": "", "attrs": {"has": "mocks · harness · assertions"}}
+  ],
+  "edges": [
+    {"from": "CLI", "to": "Build pipeline", "kind": "ref", "viaAttr": "build() · lint()"},
+    {"from": "Build pipeline", "to": "Serializer", "kind": "ref", "viaAttr": "serialize()"},
+    {"from": "Lint engine", "to": "Lint rules + post-synth checks", "kind": "ref", "viaAttr": "runRules()"},
+    {"from": "Build pipeline", "to": "LSP · MCP · Skills", "kind": "ref", "viaAttr": "completions() · hover()"},
+    {"from": "Codegen infra", "to": "Lint rules + post-synth checks", "kind": "ref", "viaAttr": "generatePipeline()"},
+    {"from": "@intentius/chant-test-utils", "to": "Build pipeline", "kind": "ref", "viaAttr": "test helpers"}
+  ],
+  "groups": {"byStack": {
+    "@intentius/chant": ["Build pipeline", "Lint engine", "Codegen infra"],
+    "Lexicon Plugin  (aws · k8s · temporal · …)": ["Serializer", "Lint rules + post-synth checks", "LSP · MCP · Skills"]
+  }}
+}

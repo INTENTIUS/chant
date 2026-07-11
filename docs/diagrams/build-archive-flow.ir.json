@@ -1,0 +1,19 @@
+{
+  "nodes": [
+    {"id": "build", "kind": "", "lexicon": "", "attrs": {"makes": "image / zip / jar"}},
+    {"id": "image tarball", "kind": "", "lexicon": "", "attrs": {"layout": "OCI"}},
+    {"id": "templates", "kind": "", "lexicon": "", "attrs": {}},
+    {"id": "manifest", "kind": "", "lexicon": "", "attrs": {}},
+    {"id": "publish-image", "kind": "", "lexicon": "", "attrs": {"to": "registry (ECR)"}},
+    {"id": "load-image-on-host", "kind": "", "lexicon": "", "attrs": {"via": "docker load · no registry"}},
+    {"id": "apply", "kind": "", "lexicon": "", "attrs": {"references": "the digest"}}
+  ],
+  "edges": [
+    {"from": "build", "to": "image tarball", "kind": "ref", "viaAttr": "save"},
+    {"from": "image tarball", "to": "publish-image", "kind": "ref", "viaAttr": "deploy-time · by digest"},
+    {"from": "image tarball", "to": "load-image-on-host", "kind": "ref", "viaAttr": "deploy-time · by digest"},
+    {"from": "publish-image", "to": "apply", "kind": "ref"},
+    {"from": "load-image-on-host", "to": "apply", "kind": "ref"}
+  ],
+  "groups": {"byStack": {"build archive (self-contained)": ["image tarball", "templates", "manifest"]}}
+}

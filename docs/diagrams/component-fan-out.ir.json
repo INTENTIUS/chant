@@ -1,0 +1,30 @@
+{
+  "nodes": [
+    {"id": "neo4j-cluster", "kind": "one component", "lexicon": "", "attrs": {}},
+    {"id": "cfn-deploy (seed)", "kind": "", "lexicon": "", "attrs": {}},
+    {"id": "code-deploy (seed)", "kind": "", "lexicon": "", "attrs": {}},
+    {"id": "wait-cluster-healthy (seed)", "kind": "", "lexicon": "", "attrs": {}},
+    {"id": "cfn-deploy (n2)", "kind": "", "lexicon": "", "attrs": {}},
+    {"id": "code-deploy (n2)", "kind": "", "lexicon": "", "attrs": {}},
+    {"id": "wait-cluster-healthy (n2)", "kind": "", "lexicon": "", "attrs": {}},
+    {"id": "cfn-deploy (n3)", "kind": "", "lexicon": "", "attrs": {}},
+    {"id": "code-deploy (n3)", "kind": "", "lexicon": "", "attrs": {}},
+    {"id": "wait-cluster-healthy (n3)", "kind": "", "lexicon": "", "attrs": {}}
+  ],
+  "edges": [
+    {"from": "neo4j-cluster", "to": "cfn-deploy (seed)", "kind": "ref", "viaAttr": "fan-out over instances"},
+    {"from": "cfn-deploy (seed)", "to": "code-deploy (seed)", "kind": "ref"},
+    {"from": "code-deploy (seed)", "to": "wait-cluster-healthy (seed)", "kind": "ref"},
+    {"from": "wait-cluster-healthy (seed)", "to": "cfn-deploy (n2)", "kind": "ref", "viaAttr": "health gate"},
+    {"from": "cfn-deploy (n2)", "to": "code-deploy (n2)", "kind": "ref"},
+    {"from": "code-deploy (n2)", "to": "wait-cluster-healthy (n2)", "kind": "ref"},
+    {"from": "wait-cluster-healthy (n2)", "to": "cfn-deploy (n3)", "kind": "ref", "viaAttr": "health gate"},
+    {"from": "cfn-deploy (n3)", "to": "code-deploy (n3)", "kind": "ref"},
+    {"from": "code-deploy (n3)", "to": "wait-cluster-healthy (n3)", "kind": "ref"}
+  ],
+  "groups": {"byStack": {
+    "Seed": ["cfn-deploy (seed)", "code-deploy (seed)", "wait-cluster-healthy (seed)"],
+    "Node 2 (rolling)": ["cfn-deploy (n2)", "code-deploy (n2)", "wait-cluster-healthy (n2)"],
+    "Node 3 (rolling)": ["cfn-deploy (n3)", "code-deploy (n3)", "wait-cluster-healthy (n3)"]
+  }}
+}

@@ -1,0 +1,23 @@
+{
+  "nodes": [
+    {"id": "component declarations", "kind": "", "lexicon": "", "attrs": {}},
+    {"id": "chant graph --stacks", "kind": "", "lexicon": "", "attrs": {"gives": "order + waves"}},
+    {"id": "one orchestrator Op", "kind": "", "lexicon": "", "attrs": {}},
+    {"id": "local executor", "kind": "", "lexicon": "", "attrs": {"is": "default"}},
+    {"id": "Temporal", "kind": "", "lexicon": "", "attrs": {"adds": "gates · durable resume"}},
+    {"id": "github / gitlab / forgejo lexicon", "kind": "", "lexicon": "", "attrs": {}},
+    {"id": "plain CI YAML", "kind": "", "lexicon": "", "attrs": {"is": "thin trigger + runner"}}
+  ],
+  "edges": [
+    {"from": "component declarations", "to": "chant graph --stacks", "kind": "ref"},
+    {"from": "chant graph --stacks", "to": "one orchestrator Op", "kind": "ref"},
+    {"from": "one orchestrator Op", "to": "local executor", "kind": "ref"},
+    {"from": "one orchestrator Op", "to": "Temporal", "kind": "ref", "viaAttr": "opt-in"},
+    {"from": "component declarations", "to": "github / gitlab / forgejo lexicon", "kind": "ref"},
+    {"from": "github / gitlab / forgejo lexicon", "to": "plain CI YAML", "kind": "ref"}
+  ],
+  "groups": {"byStack": {
+    "interpret mode": ["chant graph --stacks", "one orchestrator Op", "local executor", "Temporal"],
+    "generate mode": ["github / gitlab / forgejo lexicon", "plain CI YAML"]
+  }}
+}
