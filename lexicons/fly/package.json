@@ -1,0 +1,27 @@
+{
+  "name": "@intentius/chant-lexicon-fly",
+  "version": "0.0.1",
+  "type": "module",
+  "private": true,
+  "files": [
+    "src/",
+    "dist/"
+  ],
+  "exports": {
+    ".": "./src/index.ts",
+    "./*": "./src/*",
+    "./manifest": "./dist/manifest.json",
+    "./meta": "./dist/meta.json",
+    "./types": "./dist/types/index.d.ts"
+  },
+  "scripts": {
+    "generate": "npx tsx src/codegen/generate-cli.ts",
+    "validate": "npx tsx src/validate-cli.ts",
+    "docs": "npx tsx src/codegen/docs-cli.ts",
+    "prepack": "npm run generate && npm run validate"
+  },
+  "devDependencies": {
+    "@intentius/chant": "*",
+    "typescript": "^5.9.3"
+  }
+}
