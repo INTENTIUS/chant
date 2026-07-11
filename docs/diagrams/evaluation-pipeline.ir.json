@@ -1,0 +1,22 @@
+{
+  "nodes": [
+    {"id": "TypeScript source files", "kind": "input", "lexicon": "", "attrs": {}},
+    {"id": "1 · Discovery", "kind": "", "lexicon": "", "attrs": {"scan": ".ts files", "exclude": "tests"}},
+    {"id": "2 · Parse + Lint", "kind": "", "lexicon": "", "attrs": {"build": "AST · type check", "gate": "EVL rules"}},
+    {"id": "3 · Resolve Imports", "kind": "", "lexicon": "", "attrs": {"build": "module graph", "link": "cross-file refs"}},
+    {"id": "4 · Extract + Evaluate", "kind": "", "lexicon": "", "attrs": {"walk": "AST", "resolve": "const refs"}},
+    {"id": "5 · Expand Composites", "kind": "", "lexicon": "", "attrs": {"substitute": "props", "resolve": "siblings"}},
+    {"id": "6 · Emit", "kind": "", "lexicon": "", "attrs": {"serialize": "to target format"}},
+    {"id": "Deployment artifacts", "kind": "output", "lexicon": "", "attrs": {}}
+  ],
+  "edges": [
+    {"from": "TypeScript source files", "to": "1 · Discovery", "kind": "ref"},
+    {"from": "1 · Discovery", "to": "2 · Parse + Lint", "kind": "ref"},
+    {"from": "2 · Parse + Lint", "to": "3 · Resolve Imports", "kind": "ref"},
+    {"from": "3 · Resolve Imports", "to": "4 · Extract + Evaluate", "kind": "ref"},
+    {"from": "4 · Extract + Evaluate", "to": "5 · Expand Composites", "kind": "ref"},
+    {"from": "5 · Expand Composites", "to": "6 · Emit", "kind": "ref"},
+    {"from": "6 · Emit", "to": "Deployment artifacts", "kind": "ref"}
+  ],
+  "groups": {}
+}

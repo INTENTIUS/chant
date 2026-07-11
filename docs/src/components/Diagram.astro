@@ -1,4 +1,6 @@
 ---
+import { existsSync } from 'node:fs';
+
 interface Props {
   name: string;
   alt: string;
@@ -7,8 +9,27 @@ interface Props {
 const { name, alt, caption } = Astro.props;
 const base = import.meta.env.BASE_URL.replace(/\/$/, '');
 const src = `${base}/diagrams/${name}.svg`;
+const darkSrc = `${base}/diagrams/${name}-dark.svg`;
+// Diagrams repainted through pinhole are baked per theme (pinhole bakes one theme
+// per SVG). When a `<name>-dark.svg` exists we render both and swap on the site
+// theme; single-file diagrams (graphviz, transparent) show in both.
+const hasDark = existsSync(`public/diagrams/${name}-dark.svg`);
 ---
 <figure class="diagram not-content" style="overflow-x:auto;margin:1.5rem 0;">
-  <img src={src} alt={alt} loading="lazy" decoding="async" style="display:block;max-width:100%;height:auto;margin:0 auto;" />
+  {hasDark ? (
+    <>
+      <img class="diagram-light" src={src} alt={alt} loading="lazy" decoding="async" />
+      <img class="diagram-dark" src={darkSrc} alt={alt} loading="lazy" decoding="async" />
+    </>
+  ) : (
+    <img src={src} alt={alt} loading="lazy" decoding="async" style="display:block;max-width:100%;height:auto;margin:0 auto;" />
+  )}
   {caption && <figcaption style="text-align:center;font-size:0.875rem;color:var(--sl-color-gray-3);margin-top:0.5rem;">{caption}</figcaption>}
 </figure>
+<style>
+  .diagram img { display: block; max-width: 100%; height: auto; margin: 0 auto; }
+  /* Show the theme-matched variant; Starlight stamps data-theme on <html>. */
+  .diagram-dark { display: none; }
+  :global([data-theme='dark']) .diagram-light { display: none; }
+  :global([data-theme='dark']) .diagram-dark { display: block; }
+</style>

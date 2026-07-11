@@ -1,0 +1,15 @@
+{
+  "nodes": [
+    {"id": "Deterministic Core", "kind": "the foundation", "lexicon": "",
+     "attrs": {"chant build": "discover · evaluate · serialize", "guarantees": "typed · pure · no side effects"}},
+    {"id": "The Lifecycle You Choose", "kind": "per environment", "lexicon": "",
+     "attrs": {"dial": "observe · reconcile · apply", "form": "Ops (*.op.ts) · Components"}},
+    {"id": "Agent / CI / Operator", "kind": "the runtime edge", "lexicon": "",
+     "attrs": {"acts": "deploy · monitor · remediate · approve"}}
+  ],
+  "edges": [
+    {"from": "Deterministic Core", "to": "The Lifecycle You Choose", "kind": "ref", "viaAttr": "built on"},
+    {"from": "The Lifecycle You Choose", "to": "Agent / CI / Operator", "kind": "ref", "viaAttr": "acted on by"}
+  ],
+  "groups": {}
+}

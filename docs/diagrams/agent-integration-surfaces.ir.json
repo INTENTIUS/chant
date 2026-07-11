@@ -1,0 +1,15 @@
+{
+  "nodes": [
+    {"id": "AI Agent", "kind": "", "lexicon": "", "attrs": {}},
+    {"id": "Skills", "kind": "", "lexicon": "", "attrs": {"are": "operational playbooks", "installed to": "skills/"}},
+    {"id": "MCP Tools", "kind": "", "lexicon": "", "attrs": {"core": "build · lint · import", "ops": "op-run · op-status · op-signal"}},
+    {"id": "Ops", "kind": "", "lexicon": "", "attrs": {"are": "*.op.ts workflows", "traits": "durable · observable · gate-able"}}
+  ],
+  "edges": [
+    {"from": "AI Agent", "to": "Skills", "kind": "ref", "viaAttr": "reads · always-on guidance"},
+    {"from": "AI Agent", "to": "MCP Tools", "kind": "ref", "viaAttr": "calls · programmatic actions"},
+    {"from": "AI Agent", "to": "Ops", "kind": "ref", "viaAttr": "triggers via op-run"},
+    {"from": "Skills", "to": "MCP Tools", "kind": "ref", "viaAttr": "guides"}
+  ],
+  "groups": {}
+}
