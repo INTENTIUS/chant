@@ -1,7 +1,15 @@
 import type { LintRule } from "@intentius/chant/lint/rule";
-import { sampleRule } from "./sample";
+import { validRegionRule } from "./valid-region";
+import { guestSizingRule } from "./guest-sizing";
+import { noSecretLiteralsRule } from "./no-secret-literals";
 
-export { sampleRule } from "./sample";
+export { validRegionRule } from "./valid-region";
+export { guestSizingRule } from "./guest-sizing";
+export { noSecretLiteralsRule } from "./no-secret-literals";
 
 /** All lint rules provided by the fly lexicon. */
-export const rules: LintRule[] = [sampleRule];
+export const rules: LintRule[] = [
+  validRegionRule,
+  guestSizingRule,
+  noSecretLiteralsRule,
+];
