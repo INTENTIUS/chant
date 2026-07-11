@@ -2,7 +2,16 @@ import { join } from "path";
 import { homedir } from "os";
 import { fetchWithCache } from "@intentius/chant/codegen/fetch";
 
-/** Fly's published Machines API (flaps) OpenAPI 3.0.1 spec. */
+/**
+ * Fly's published Machines API (flaps) OpenAPI 3.0.1 spec.
+ *
+ * This is an unversioned live endpoint: it always serves the current spec with
+ * no version or release tag to pin. There is nothing for the self-upgrade
+ * tooling (#685) to bump, so the plugin declares no `upstreamPin` — unlike gcp
+ * (`KCC_VERSION`) or k8s (`K8S_SCHEMA_VERSION`), which pin a released schema
+ * version. Re-running `generate` simply picks up whatever this URL currently
+ * serves.
+ */
 const SCHEMA_URL = "https://docs.machines.dev/openapi.json";
 /**
  * Cache under `~/.chant` (like the k8s lexicon) so CI's `~/.chant` schema

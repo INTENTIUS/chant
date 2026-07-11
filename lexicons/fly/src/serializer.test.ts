@@ -1,7 +1,8 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 import type { Declarable } from "@intentius/chant";
 import { flySerializer } from "./serializer";
 import { App, Machine, MachineConfig, MachineGuest, Volume, IPAddress, Certificate, Secret } from "./generated/index";
+import { Fly } from "./pseudo";
 
 /** Author a map of declarables keyed by logical name, in insertion order. */
 function stack(...entries: Array<[string, unknown]>): Map<string, Declarable> {
@@ -170,5 +171,62 @@ describe("fly serializer", () => {
       body: { value: "s3cret" },
       applyOnly: true,
     });
+  });
+});
+
+// ── Pseudo-parameters (Fly.Region / Fly.OrgSlug) ────────────────────────────
+describe("fly serializer pseudo-parameters", () => {
+  const saved = {
+    FLY_REGION: process.env.FLY_REGION,
+    FLY_ORG: process.env.FLY_ORG,
+    FLY_ORG_SLUG: process.env.FLY_ORG_SLUG,
+  };
+
+  afterEach(() => {
+    for (const [key, value] of Object.entries(saved)) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+  });
+
+  it("resolves Fly.Region from FLY_REGION in the serialized body", () => {
+    process.env.FLY_REGION = "lhr";
+    const entities = stack(
+      ["app", new App({ name: "my-app" })],
+      ["web", new Machine({ region: Fly.Region, config: new MachineConfig({ image: "nginx" }) })],
+    );
+    const body = JSON.parse(flySerializer.serialize(entities)).web.body;
+    expect(body.region).toBe("lhr");
+  });
+
+  it("falls back to iad when FLY_REGION is unset", () => {
+    delete process.env.FLY_REGION;
+    const entities = stack(
+      ["app", new App({ name: "my-app" })],
+      ["web", new Machine({ region: Fly.Region, config: new MachineConfig({ image: "nginx" }) })],
+    );
+    const body = JSON.parse(flySerializer.serialize(entities)).web.body;
+    expect(body.region).toBe("iad");
+  });
+
+  it("resolves Fly.OrgSlug from FLY_ORG (preferred over FLY_ORG_SLUG)", () => {
+    process.env.FLY_ORG = "acme";
+    process.env.FLY_ORG_SLUG = "ignored";
+    const out = JSON.parse(flySerializer.serialize(stack(["app", new App({ name: "my-app", org_slug: Fly.OrgSlug })])));
+    expect(out.app.body.org_slug).toBe("acme");
+  });
+
+  it("resolves Fly.OrgSlug from FLY_ORG_SLUG when FLY_ORG is unset", () => {
+    delete process.env.FLY_ORG;
+    process.env.FLY_ORG_SLUG = "beta-org";
+    const out = JSON.parse(flySerializer.serialize(stack(["app", new App({ name: "my-app", org_slug: Fly.OrgSlug })])));
+    expect(out.app.body.org_slug).toBe("beta-org");
+  });
+
+  it("falls back to personal for Fly.OrgSlug when no org env var is set", () => {
+    delete process.env.FLY_ORG;
+    delete process.env.FLY_ORG_SLUG;
+    const out = JSON.parse(flySerializer.serialize(stack(["app", new App({ name: "my-app", org_slug: Fly.OrgSlug })])));
+    expect(out.app.body.org_slug).toBe("personal");
   });
 });

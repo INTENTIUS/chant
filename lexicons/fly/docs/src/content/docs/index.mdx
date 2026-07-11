@@ -1,50 +1,54 @@
 ---
-title: Overview
-description: The Fly.io lexicon for chant — typed Fly infrastructure, applied straight to the Machines API.
+title: "Fly Machines"
+description: "Typed constructors for Fly.io apps and machines, serialized to Machines API create bodies"
 ---
 
-The Fly.io lexicon lets you declare Fly apps, machines, volumes, IPs, certificates, and secrets as typed TypeScript and apply them straight to the Fly Machines API.
+The **Fly Machines** lexicon defines Fly.io apps and machines using chant's declarative TypeScript syntax. Resources are serialized to the JSON create bodies the Machines API ("flaps") accepts, so the applier can POST them straight through and the mudflaps emulator can round-trip them offline.
 
-chant is a type system for operations: you describe infrastructure as typed TypeScript, and each lexicon turns those declarations into real provider API calls. This one covers Fly.
+This lexicon is generated from Fly's published [Machines API OpenAPI spec](https://docs.machines.dev/openapi.json).
 
-## Test it without a Fly account
-
-Fly's Machines API is emulated by [mudflaps](https://github.com/intentius/mudflaps), a stateful Fly Machines API emulator. The entire apply-and-deploy loop runs against a local mudflaps container in CI, with no Fly account and no bill. The same code deploys to a real org by changing one endpoint, so the loop you test offline is the loop you ship.
+Install it with:
 
 ```bash
-cd examples/local-fly
-chant run fly        # boots mudflaps, applies an App + Machine, waits for started, tears down
+npm install --save-dev @intentius/chant-lexicon-fly
 ```
 
-## What you get
+## Quick Start
 
-- Typed resources generated from the real API. `App`, `Machine`, `Volume`, `IPAddress`, `Certificate`, and `Secret` come from Fly's Machines API OpenAPI spec, so `MachineConfig` is typed all the way down through guest, services, mounts, and checks, with full editor autocomplete.
-- Apply without a state file. `flyApply` speaks the Machines API directly, with no `flyctl` and no state file. It creates and updates machines, waits each to `started` over `/wait`, prunes only what carries the `managed-by: chant` marker, and speaks the lease protocol so concurrent operators stay out of each other's way.
-- Build-time lint. Invalid regions, bad guest sizing, mounts that point at an undeclared volume, and inline secret literals fail `chant build` before anything reaches the API.
-- A deploy Op you can run offline. It runs the phases boot, build, apply, verify, and teardown, and a `local-fly` starter runs the whole loop against the [mudflaps](https://github.com/intentius/mudflaps) emulator in CI with no Fly account. Set `FLY_API_TOKEN` and drop the local endpoint to deploy the same code to a real org.
+```typescript
+import { App, Machine, MachineConfig, MachineGuest, Fly } from "@intentius/chant-lexicon-fly";
 
-## Author an App and a Machine
+const app = new App({ name: "my-app", org_slug: Fly.OrgSlug });
 
-```ts
-import { App, Machine, MachineConfig, MachineGuest } from "@intentius/chant-lexicon-fly";
-
-export const app = new App({ name: "my-app" });
-
-export const web = new Machine({
-  region: "iad",
+const web = new Machine({
+  name: "web",
+  region: Fly.Region,
   config: new MachineConfig({
     image: "flyio/hellofly:latest",
     guest: new MachineGuest({ cpu_kind: "shared", cpus: 1, memory_mb: 256 }),
   }),
 });
+
+export { app, web };
 ```
 
-## Agent skill
+`Fly.Region` and `Fly.OrgSlug` are pseudo-parameters resolved from the environment at build time (`FLY_REGION`, `FLY_ORG` / `FLY_ORG_SLUG`).
 
-The agent-facing entry point is the `chant-fly` skill, a short "Deploy to Fly" playbook that leads an agent through authoring an App and Machine, linting with `chant build`, and reconciling over the Machines API with `flyApply`, including the `FLY_FLAPS_BASE_URL` switch between mudflaps and a real org. It ships alongside `chant-fly-patterns` (volumes, IPs, certificates, secrets, and ownership) and `chant-fly-ops` (waiting, leases, prune, and teardown).
+## At a Glance
 
-## One endpoint, local or real
+| Metric | Count |
+|--------|-------|
+| Resources | 3 |
+| Property types | 35 |
+| Services | 3 |
+| Intrinsic functions | 0 |
+| Pseudo-parameters | 0 |
+| Lint rules | 5 |
 
-The endpoint is a single switch. `FLY_FLAPS_BASE_URL` (or an explicit `endpoint`) chooses between a real Fly org and a local emulator, with no code change.
+**Lexicon version:** 0.0.1  
+**Namespace:** `fly`
 
-Run `chant dev generate` to populate this site with generated resource reference pages.
+- [Resource Reference](./resources)
+- [Pseudo-parameters](./pseudo-params)
+- [Lint Rules](./rules) — 5 rules
+- [Serialization](./serialization) — output format details
