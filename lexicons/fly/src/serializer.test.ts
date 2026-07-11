@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { Declarable } from "@intentius/chant";
 import { flySerializer } from "./serializer";
-import { App, Machine, MachineConfig, MachineGuest } from "./generated/index";
+import { App, Machine, MachineConfig, MachineGuest, Volume, IPAddress, Certificate, Secret } from "./generated/index";
 
 /** Author a map of declarables keyed by logical name, in insertion order. */
 function stack(...entries: Array<[string, unknown]>): Map<string, Declarable> {
@@ -113,5 +113,62 @@ describe("fly serializer", () => {
     // Only fields present on flaps CreateMachineRequest / MachineConfig.
     expect(Object.keys(body).sort()).toEqual(["config", "name", "region"]);
     expect(Object.keys(body.config.guest ?? {})).toEqual([]);
+  });
+
+  // ── #741 app-scoped, metadata-less resources ────────────────────────────────
+
+  it("emits the Volume create body (CreateVolumeRequest: name/region/size_gb/encrypted) under the app", () => {
+    const entities = stack(
+      ["app", new App({ name: "my-app" })],
+      ["data", new Volume({ name: "data", region: "iad", size_gb: 10, encrypted: true })],
+    );
+    const out = JSON.parse(flySerializer.serialize(entities));
+    expect(out.data).toEqual({
+      endpoint: "/v1/apps/my-app/volumes",
+      method: "POST",
+      body: { name: "data", region: "iad", size_gb: 10, encrypted: true },
+    });
+    // No ownership marker — metadata-less type owned at the app boundary (D2).
+    expect(out.data.body.metadata).toBeUndefined();
+  });
+
+  it("emits the IPAddress assign body (assignIPRequest: type/org_slug/...) under the app", () => {
+    const entities = stack(
+      ["app", new App({ name: "my-app" })],
+      ["ip", new IPAddress({ type: "shared_v4", region: "iad", org_slug: "acme", service_name: "web", network: "default" })],
+    );
+    const out = JSON.parse(flySerializer.serialize(entities));
+    expect(out.ip).toEqual({
+      endpoint: "/v1/apps/my-app/ip_assignments",
+      method: "POST",
+      body: { type: "shared_v4", region: "iad", org_slug: "acme", service_name: "web", network: "default" },
+    });
+  });
+
+  it("emits the Certificate create body (createCertificateRequest: hostname) under the app", () => {
+    const entities = stack(
+      ["app", new App({ name: "my-app" })],
+      ["cert", new Certificate({ hostname: "example.com" })],
+    );
+    const out = JSON.parse(flySerializer.serialize(entities));
+    expect(out.cert).toEqual({
+      endpoint: "/v1/apps/my-app/certificates",
+      method: "POST",
+      body: { hostname: "example.com" },
+    });
+  });
+
+  it("emits the Secret set body (SetAppSecretRequest: value) and flags it apply-only (D7)", () => {
+    const entities = stack(
+      ["app", new App({ name: "my-app" })],
+      ["db-password", new Secret({ value: "s3cret" })],
+    );
+    const out = JSON.parse(flySerializer.serialize(entities));
+    expect(out["db-password"]).toEqual({
+      endpoint: "/v1/apps/my-app/secrets/db-password",
+      method: "POST",
+      body: { value: "s3cret" },
+      applyOnly: true,
+    });
   });
 });

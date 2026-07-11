@@ -1,22 +1,42 @@
 import { describe, test, expect } from "vitest";
+import { mkdtempSync, writeFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import {
   resolveEndpoint,
   parsePlan,
   isAppRequest,
   isMachineRequest,
+  isVolumeRequest,
+  isIpRequest,
+  isCertRequest,
+  isSecretRequest,
+  resourceAppSegment,
+  secretNameSegment,
   machineAppSegment,
   resolveApp,
   appNameFromRequest,
   isChantOwned,
   configEqual,
   isLeaseConflict,
+  ipType,
+  declaredIpType,
   applyApp,
   applyMachine,
+  applyVolume,
+  applyIp,
+  applyCert,
+  applySecret,
   destroyMachine,
   pruneMachines,
+  pruneVolumes,
+  pruneIps,
+  pruneCerts,
+  pruneSecrets,
   acquireLease,
   withLease,
   waitForMachine,
+  flyApply,
   DEFAULT_FLAPS_BASE_URL,
   LEASE_NONCE_HEADER,
   type FlyHttp,
@@ -329,5 +349,165 @@ describe("destroy + wait", () => {
     };
     await waitForMachine(CTX, "demo", "m1", "INST", http, undefined, { intervalMs: 0, deadlineMs: 5_000 });
     expect(n).toBe(2);
+  });
+});
+
+// ── #741 breadth: Volume + IPAddress + Certificate + Secret ───────────────────
+
+describe("app-scoped resource classification + segments", () => {
+  test("each kind is recognized by its endpoint", () => {
+    const at = (endpoint: string): FlapsRequest => ({ endpoint, method: "POST", body: {} });
+    expect(isVolumeRequest(at("/v1/apps/demo/volumes"))).toBe(true);
+    expect(isIpRequest(at("/v1/apps/demo/ip_assignments"))).toBe(true);
+    expect(isCertRequest(at("/v1/apps/demo/certificates"))).toBe(true);
+    expect(isSecretRequest(at("/v1/apps/demo/secrets/db"))).toBe(true);
+    // Cross-checks: a secret endpoint is not a machine/volume request.
+    expect(isMachineRequest(at("/v1/apps/demo/secrets/db"))).toBe(false);
+    expect(isVolumeRequest(at("/v1/apps/demo/machines"))).toBe(false);
+  });
+
+  test("resourceAppSegment / secretNameSegment", () => {
+    expect(resourceAppSegment("/v1/apps/demo/volumes")).toBe("demo");
+    expect(resourceAppSegment("/v1/apps/demo/secrets/db-password")).toBe("demo");
+    expect(secretNameSegment("/v1/apps/demo/secrets/db-password")).toBe("db-password");
+  });
+
+  test("ipType / declaredIpType collapse to a stable family key", () => {
+    expect(ipType(true, "66.241.125.1")).toBe("shared_v4");
+    expect(ipType(false, "137.66.1.2")).toBe("v4");
+    expect(ipType(false, "2604:1380:ab::1")).toBe("v6");
+    expect(declaredIpType("shared_v4")).toBe("shared_v4");
+    expect(declaredIpType("v6")).toBe("v6");
+    expect(declaredIpType("private_v6")).toBe("v6");
+    expect(declaredIpType("dedicated_v4")).toBe("v4");
+  });
+});
+
+describe("applyVolume / applyIp / applyCert idempotency (drift handling)", () => {
+  const volReq: FlapsRequest = { endpoint: "/v1/apps/demo/volumes", method: "POST", body: { name: "data", region: "iad", size_gb: 10 } };
+
+  test("volume absent → create; present (by name) → no-op", async () => {
+    let posted = 0;
+    const empty: FlyHttp = async (method) => (method === "GET" ? { status: 200, text: "[]" } : ((posted++), { status: 200, text: "{}" }));
+    expect(await applyVolume(CTX, "demo", "data", volReq, empty)).toEqual({ action: "created", name: "data" });
+    expect(posted).toBe(1);
+
+    const present: FlyHttp = async (method) =>
+      method === "GET" ? { status: 200, text: JSON.stringify([{ id: "v1", name: "data" }]) } : { status: 500, text: "" };
+    expect(await applyVolume(CTX, "demo", "data", volReq, present)).toEqual({ action: "noop", name: "data" });
+  });
+
+  test("ip absent type → assign; same declared family present → no-op", async () => {
+    const req: FlapsRequest = { endpoint: "/v1/apps/demo/ip_assignments", method: "POST", body: { type: "shared_v4", region: "iad", org_slug: "acme" } };
+    let posted = 0;
+    const empty: FlyHttp = async (method) => (method === "GET" ? { status: 200, text: JSON.stringify({ ips: [] }) } : ((posted++), { status: 200, text: "{}" }));
+    expect(await applyIp(CTX, "demo", req, empty)).toEqual({ action: "created", type: "shared_v4" });
+    expect(posted).toBe(1);
+
+    const present: FlyHttp = async (method) =>
+      method === "GET" ? { status: 200, text: JSON.stringify({ ips: [{ ip: "66.241.125.1", shared: true }] }) } : { status: 500, text: "" };
+    expect(await applyIp(CTX, "demo", req, present)).toEqual({ action: "noop", type: "shared_v4" });
+  });
+
+  test("cert absent → create; present (by hostname) → no-op", async () => {
+    const req: FlapsRequest = { endpoint: "/v1/apps/demo/certificates", method: "POST", body: { hostname: "example.com" } };
+    const present: FlyHttp = async (method) =>
+      method === "GET" ? { status: 200, text: JSON.stringify({ certificates: [{ hostname: "example.com" }] }) } : { status: 500, text: "" };
+    expect(await applyCert(CTX, "demo", req, present)).toEqual({ action: "noop", hostname: "example.com" });
+  });
+});
+
+describe("secret is apply-only (D7): set, never read-diffed", () => {
+  test("applySecret POSTs the value with no read-back GET", async () => {
+    const calls: string[] = [];
+    const http: FlyHttp = async (method, url) => {
+      calls.push(`${method} ${url}`);
+      return { status: 200, text: JSON.stringify({ name: "db", digest: "sha256:..." }) };
+    };
+    const req: FlapsRequest = { endpoint: "/v1/apps/demo/secrets/db", method: "POST", body: { value: "s3cret" }, applyOnly: true };
+    expect(await applySecret(CTX, "demo", "db", req, http)).toEqual({ action: "set", name: "db" });
+    // No GET — the digest-only read can't diff, so the secret never enters one.
+    expect(calls).toEqual(["POST http://localhost:4280/v1/apps/demo/secrets/db"]);
+  });
+});
+
+describe("app-scoped prune (D2) — metadata-less types prune wholesale", () => {
+  test("pruneVolumes destroys an undeclared volume even with NO ownership marker", async () => {
+    // Unlike a machine (which survives when unmarked), a metadata-less volume is
+    // owned at the app boundary, so an undeclared one is pruned regardless.
+    const deleted: string[] = [];
+    const http: FlyHttp = async (method, url) => {
+      if (method === "GET") return { status: 200, text: JSON.stringify([{ id: "v-data", name: "data" }, { id: "v-old", name: "old" }]) };
+      if (method === "DELETE") { deleted.push(url.split("/").pop() ?? ""); return { status: 200, text: "{}" }; }
+      return { status: 500, text: "" };
+    };
+    const pruned = await pruneVolumes(CTX, "demo", new Set(["data"]), http);
+    expect(pruned).toEqual([{ app: "demo", name: "old", id: "v-old" }]);
+    expect(deleted).toEqual(["v-old"]);
+  });
+
+  test("pruneIps releases IPs whose family is not declared", async () => {
+    const deleted: string[] = [];
+    const http: FlyHttp = async (method, url) => {
+      if (method === "GET") return { status: 200, text: JSON.stringify({ ips: [{ ip: "66.241.125.1", shared: true }, { ip: "2604:1380:ab::1", shared: false }] }) };
+      if (method === "DELETE") { deleted.push(url.split("/").pop() ?? ""); return { status: 200, text: "{}" }; }
+      return { status: 500, text: "" };
+    };
+    const pruned = await pruneIps(CTX, "demo", new Set(["shared_v4"]), http);
+    expect(pruned).toEqual([{ app: "demo", address: "2604:1380:ab::1" }]);
+    expect(deleted).toEqual(["2604%3A1380%3Aab%3A%3A1"]); // v6 released, shared_v4 kept
+  });
+
+  test("pruneCerts and pruneSecrets drop undeclared entries by name", async () => {
+    const certHttp: FlyHttp = async (method) =>
+      method === "GET"
+        ? { status: 200, text: JSON.stringify({ certificates: [{ hostname: "keep.com" }, { hostname: "drop.com" }] }) }
+        : { status: 200, text: "{}" };
+    expect(await pruneCerts(CTX, "demo", new Set(["keep.com"]), certHttp)).toEqual([{ app: "demo", hostname: "drop.com" }]);
+
+    const secretHttp: FlyHttp = async (method) =>
+      method === "GET"
+        ? { status: 200, text: JSON.stringify({ secrets: [{ name: "keep" }, { name: "drop" }] }) }
+        : { status: 200, text: "{}" };
+    expect(await pruneSecrets(CTX, "demo", new Set(["keep"]), secretHttp)).toEqual([{ app: "demo", name: "drop" }]);
+  });
+});
+
+describe("flyApply orders volumes before the machines that mount them", () => {
+  test("a mounting machine finds its volume already created", async () => {
+    const tmp = mkdtempSync(join(tmpdir(), "fly-order-"));
+    try {
+      const plan = {
+        app: { endpoint: "/v1/apps", method: "POST", body: { app_name: "demo" } },
+        web: {
+          endpoint: "/v1/apps/demo/machines",
+          method: "POST",
+          body: { name: "web", config: { image: "img:1", mounts: [{ volume: "data", path: "/data" }], metadata: { "managed-by": "chant" } } },
+        },
+        data: { endpoint: "/v1/apps/demo/volumes", method: "POST", body: { name: "data", region: "iad", size_gb: 10 } },
+      };
+      const planPath = join(tmp, "plan.json");
+      writeFileSync(planPath, JSON.stringify(plan));
+
+      const order: string[] = [];
+      const http: FlyHttp = async (method, url) => {
+        if (method === "GET" && /\/apps\/demo$/.test(url)) return { status: 404, text: "" };
+        if (method === "POST" && /\/apps$/.test(url)) { order.push("app"); return { status: 200, text: "{}" }; }
+        if (method === "GET" && url.endsWith("/volumes")) return { status: 200, text: "[]" };
+        if (method === "POST" && url.endsWith("/volumes")) { order.push("volume"); return { status: 200, text: JSON.stringify({ id: "v1", name: "data" }) }; }
+        if (method === "GET" && url.endsWith("/machines")) return { status: 200, text: "[]" };
+        if (method === "POST" && url.endsWith("/machines")) { order.push("machine"); return { status: 200, text: JSON.stringify({ id: "m1", name: "web", state: "created", instance_id: "I1", config: { image: "img:1" } }) }; }
+        if (method === "GET" && url.includes("/wait")) return { status: 200, text: JSON.stringify({ ok: true }) };
+        return { status: 500, text: url };
+      };
+
+      const out = await flyApply({ planPath, endpoint: "http://localhost:4280", wait: { intervalMs: 0, deadlineMs: 5_000 } }, undefined, http);
+      expect(out.volumes).toEqual([{ app: "demo", name: "data", action: "created" }]);
+      expect(out.machines).toEqual([{ app: "demo", name: "web", action: "created" }]);
+      // The volume was created before the machine that mounts it.
+      expect(order).toEqual(["app", "volume", "machine"]);
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
   });
 });

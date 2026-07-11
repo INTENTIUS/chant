@@ -7,6 +7,10 @@ import {
   flyApply,
   defaultFlyHttp,
   listMachines,
+  listVolumes,
+  listIps,
+  listCerts,
+  listSecrets,
   acquireLease,
   releaseLease,
   isLeaseConflict,
@@ -47,6 +51,16 @@ const machineReq = (image: string) => ({
 });
 
 const appReq = { endpoint: "/v1/apps", method: "POST", body: { app_name: APP, org_slug: "personal" } };
+
+const volumeReq = { endpoint: `/v1/apps/${APP}/volumes`, method: "POST", body: { name: "data", region: "iad", size_gb: 1 } };
+const mountingMachineReq = {
+  endpoint: `/v1/apps/${APP}/machines`,
+  method: "POST",
+  body: { name: "web", region: "iad", config: { image: "nginx:1", mounts: [{ volume: "data", path: "/data" }], metadata: { "managed-by": "chant" } } },
+};
+const ipReq = { endpoint: `/v1/apps/${APP}/ip_assignments`, method: "POST", body: { type: "shared_v4", region: "global", org_slug: "personal" } };
+const certReq = { endpoint: `/v1/apps/${APP}/certificates`, method: "POST", body: { hostname: "example.com" } };
+const secretReq = { endpoint: `/v1/apps/${APP}/secrets/db-password`, method: "POST", body: { value: "s3cret" }, applyOnly: true };
 
 beforeAll(async () => {
   // Deterministically skip in CI. GitHub runners have docker, so relying on
@@ -152,4 +166,80 @@ describe("flyApply against live mudflaps (#739)", () => {
     const settled = (await listMachines(cctx, APP, http)).find((m) => m.name === "leased");
     expect(settled?.config?.image).toBe("nginx:2");
   }, 90_000);
+
+  // ── #741 breadth: Volume + IPAddress + Certificate + Secret ─────────────────
+
+  test("volume applies before a mounting machine; ip + cert prune app-scoped; secret set never diffs", async (ctx) => {
+    if (!available) ctx.skip();
+    const cctx: ApplyCtx = { base: endpoint };
+
+    // 1. Apply app + volume + a machine that mounts it, plus an ip, a cert, and
+    //    an apply-only secret. The volume must be created before the machine.
+    //    An http wrapper records the real POST order against live mudflaps.
+    const createOrder: string[] = [];
+    const recording: typeof http = async (method, url, body, headers, signal) => {
+      if (method === "POST" && url.endsWith("/volumes")) createOrder.push("volume");
+      if (method === "POST" && url.endsWith("/machines")) createOrder.push("machine");
+      return http(method, url, body, headers, signal);
+    };
+    const applied = await flyApply({
+      planPath: planFile("b1", { app: appReq, web: mountingMachineReq, data: volumeReq, ip: ipReq, cert: certReq, "db-password": secretReq }),
+      endpoint,
+      wait: WAIT,
+    }, undefined, recording);
+
+    // Volume provisioned; machine that mounts it reached started.
+    expect(applied.volumes).toEqual([{ app: APP, name: "data", action: "created" }]);
+    expect(applied.machines).toEqual([{ app: APP, name: "web", action: "created" }]);
+    // Dependency order proven on the wire: the volume was POSTed first.
+    expect(createOrder).toEqual(["volume", "machine"]);
+    const vols = await listVolumes(cctx, APP, http);
+    expect(vols.map((v) => v.name)).toContain("data");
+    const web = (await listMachines(cctx, APP, http)).find((m) => m.name === "web");
+    expect(web?.state).toBe("started");
+
+    // IP + certificate applied.
+    expect(applied.ips).toEqual([{ app: APP, type: "shared_v4", action: "created" }]);
+    expect(applied.certs).toEqual([{ app: APP, hostname: "example.com", action: "created" }]);
+    expect((await listIps(cctx, APP, http)).length).toBeGreaterThan(0);
+    expect((await listCerts(cctx, APP, http)).map((c) => c.hostname)).toContain("example.com");
+
+    // Secret set. flaps returns only a digest, never the value → apply-only (D7).
+    expect(applied.secrets).toEqual([{ app: APP, name: "db-password" }]);
+    const liveSecret = (await listSecrets(cctx, APP, http)).find((s) => s.name === "db-password");
+    expect(liveSecret).toBeDefined();
+    expect((liveSecret as { value?: unknown } | undefined)?.value ?? null).toBeNull(); // never read back
+
+    // 2. Re-apply the identical plan. The secret is always re-set (apply-only,
+    //    never a diff-driven no-op); the ip/cert/volume are idempotent no-ops.
+    const reapply = await flyApply({
+      planPath: planFile("b1b", { app: appReq, web: mountingMachineReq, data: volumeReq, ip: ipReq, cert: certReq, "db-password": secretReq }),
+      endpoint,
+      wait: WAIT,
+    });
+    expect(reapply.volumes).toEqual([{ app: APP, name: "data", action: "noop" }]);
+    expect(reapply.ips).toEqual([{ app: APP, type: "shared_v4", action: "noop" }]);
+    expect(reapply.certs).toEqual([{ app: APP, hostname: "example.com", action: "noop" }]);
+    expect(reapply.secrets).toEqual([{ app: APP, name: "db-password" }]); // set again, no diff
+
+    // 3. Drop the ip + cert + secret from the plan and prune. App-scoped (D2):
+    //    the metadata-less types are owned wholesale, so undeclared ones go.
+    const pruned = await flyApply({
+      planPath: planFile("b2", { app: appReq, web: mountingMachineReq, data: volumeReq }),
+      endpoint,
+      prune: true,
+      wait: WAIT,
+    });
+    expect(pruned.prunedIps.length).toBeGreaterThan(0);
+    expect(pruned.prunedCerts.map((c) => c.hostname)).toContain("example.com");
+    expect(pruned.prunedSecrets.map((s) => s.name)).toContain("db-password");
+    // The still-declared volume + machine survive the app-scoped prune.
+    expect(pruned.prunedVolumes).toEqual([]);
+    expect(pruned.pruned.map((p) => p.name)).not.toContain("web");
+
+    expect((await listCerts(cctx, APP, http)).map((c) => c.hostname)).not.toContain("example.com");
+    expect((await listSecrets(cctx, APP, http)).map((s) => s.name)).not.toContain("db-password");
+    expect((await listVolumes(cctx, APP, http)).map((v) => v.name)).toContain("data");
+    expect((await listMachines(cctx, APP, http)).map((m) => m.name)).toContain("web");
+  }, 120_000);
 });

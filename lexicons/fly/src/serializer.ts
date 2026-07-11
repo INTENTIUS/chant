@@ -1,9 +1,10 @@
 /**
  * fly (Machines API / "flaps") serializer.
  *
- * Turns declared `App` and `Machine` resources into the JSON create bodies the
- * flaps REST API accepts, so #739's applier can POST them straight through and
- * mudflaps (#740) can round-trip them.
+ * Turns declared `App`, `Machine`, `Volume`, `IPAddress`, `Certificate`, and
+ * `Secret` resources into the JSON create bodies the flaps REST API accepts, so
+ * #739's applier can POST them straight through and mudflaps (#740) can
+ * round-trip them.
  *
  * Output shape — a JSON object keyed by entity name. Each value is a single
  * flaps request:
@@ -38,12 +39,22 @@ import { FLY_METADATA_OWNERSHIP_KEYS } from "./ownership";
 
 const APP_ENTITY_TYPE = "Fly::Machines::App";
 const MACHINE_ENTITY_TYPE = "Fly::Machines::Machine";
+const VOLUME_ENTITY_TYPE = "Fly::Machines::Volume";
+const IP_ENTITY_TYPE = "Fly::Machines::IPAddress";
+const CERTIFICATE_ENTITY_TYPE = "Fly::Machines::Certificate";
+const SECRET_ENTITY_TYPE = "Fly::Machines::Secret";
 
 /** A single flaps REST call the applier can issue verbatim. */
 interface FlapsRequest {
   endpoint: string;
   method: "POST";
   body: Record<string, unknown>;
+  /**
+   * D7: apply-only resources (Secrets) are set through POST but never read back
+   * for a diff — flaps returns only a digest, never the value. The applier
+   * honors this flag by skipping the drift/diff read and always POSTing.
+   */
+  applyOnly?: boolean;
 }
 
 /**
@@ -113,8 +124,11 @@ export const flySerializer: Serializer = {
     }
     const soleApp = apps.length === 1 ? appName(apps[0][1], apps[0][0]) : undefined;
 
-    const resolveMachineApp = (machine: Declarable): string => {
-      const app = readProps(machine).app;
+    // The owning app of any app-scoped resource (machine, volume, ip, cert,
+    // secret): an explicit `app` prop (string or `App` reference), else the
+    // stack's sole app, else a `{app}` placeholder for the applier to fill.
+    const resolveOwningApp = (entity: Declarable): string => {
+      const app = readProps(entity).app;
       if (typeof app === "string") return app;
       if (app && typeof app === "object" && "entityType" in app) {
         const decl = app as Declarable;
@@ -167,14 +181,52 @@ export const flySerializer: Serializer = {
         body.config = config;
 
         requests[name] = {
-          endpoint: `/v1/apps/${resolveMachineApp(entity)}/machines`,
+          endpoint: `/v1/apps/${resolveOwningApp(entity)}/machines`,
           method: "POST",
           body,
         };
         continue;
       }
 
-      // Other resource types (e.g. Volume) are out of scope for #738.
+      // ── App-scoped, metadata-less resources (#741, D2). ──────────────────
+      // Each spreads its scalar create-body props straight through; the `app`
+      // association hint is a URL segment, not a body field, so it is dropped.
+      // Ownership is at the app boundary, so none carry a metadata marker.
+      if (
+        entityType === VOLUME_ENTITY_TYPE ||
+        entityType === IP_ENTITY_TYPE ||
+        entityType === CERTIFICATE_ENTITY_TYPE ||
+        entityType === SECRET_ENTITY_TYPE
+      ) {
+        const app = resolveOwningApp(entity);
+
+        if (entityType === SECRET_ENTITY_TYPE) {
+          // Apply-only (D7): name is the URL segment; `value` is the only body
+          // field. mudflaps returns just a digest, so this never enters a diff.
+          const secretName = typeof props.name === "string" ? props.name : name;
+          requests[name] = {
+            endpoint: `/v1/apps/${app}/secrets/${encodeURIComponent(secretName)}`,
+            method: "POST",
+            body: props.value !== undefined ? { value: props.value } : {},
+            applyOnly: true,
+          };
+          continue;
+        }
+
+        const segment =
+          entityType === VOLUME_ENTITY_TYPE
+            ? "volumes"
+            : entityType === IP_ENTITY_TYPE
+              ? "ip_assignments"
+              : "certificates";
+        const body: Record<string, unknown> = {};
+        for (const [key, value] of Object.entries(props)) {
+          if (key === "app" || value === undefined) continue;
+          body[key] = walkValue(value, entityNames, visitor);
+        }
+        requests[name] = { endpoint: `/v1/apps/${app}/${segment}`, method: "POST", body };
+        continue;
+      }
     }
 
     return JSON.stringify(requests, null, 2);

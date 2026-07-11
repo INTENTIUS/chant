@@ -40,6 +40,12 @@ export interface FlapsRequest {
   endpoint: string;
   method: string;
   body: Record<string, unknown>;
+  /**
+   * D7: apply-only resources (Secrets) are POSTed but never read back for a
+   * diff — flaps returns only a digest, never the value. `flyApply` always
+   * POSTs these and excludes them from any drift/diff.
+   */
+  applyOnly?: boolean;
 }
 
 /** The serializer's whole output: entity name → flaps create request. */
@@ -88,6 +94,43 @@ export function isMachineRequest(req: FlapsRequest): boolean {
 export function machineAppSegment(endpoint: string): string {
   const m = endpoint.match(/^\/v1\/apps\/([^/]+)\/machines\/?$/);
   if (!m) throw new Error(`not a machine endpoint: ${endpoint}`);
+  return decodeURIComponent(m[1]);
+}
+
+/** True when a request creates a Volume (`.../volumes`). Pure. */
+export function isVolumeRequest(req: FlapsRequest): boolean {
+  return /^\/v1\/apps\/[^/]+\/volumes\/?$/.test(req.endpoint);
+}
+
+/** True when a request assigns an IP (`.../ip_assignments`). Pure. */
+export function isIpRequest(req: FlapsRequest): boolean {
+  return /^\/v1\/apps\/[^/]+\/ip_assignments\/?$/.test(req.endpoint);
+}
+
+/** True when a request creates a Certificate (`.../certificates`). Pure. */
+export function isCertRequest(req: FlapsRequest): boolean {
+  return /^\/v1\/apps\/[^/]+\/certificates\/?$/.test(req.endpoint);
+}
+
+/** True when a request sets a Secret (`.../secrets/{name}`). Pure. */
+export function isSecretRequest(req: FlapsRequest): boolean {
+  return /^\/v1\/apps\/[^/]+\/secrets\/[^/]+\/?$/.test(req.endpoint);
+}
+
+/**
+ * The app segment of any app-scoped resource endpoint (volumes, ip_assignments,
+ * certificates, secrets), or the literal `{app}` placeholder. Pure.
+ */
+export function resourceAppSegment(endpoint: string): string {
+  const m = endpoint.match(/^\/v1\/apps\/([^/]+)\//);
+  if (!m) throw new Error(`not an app-scoped endpoint: ${endpoint}`);
+  return decodeURIComponent(m[1]);
+}
+
+/** The secret name segment of a `.../secrets/{name}` endpoint. Pure. */
+export function secretNameSegment(endpoint: string): string {
+  const m = endpoint.match(/^\/v1\/apps\/[^/]+\/secrets\/([^/]+)\/?$/);
+  if (!m) throw new Error(`not a secret endpoint: ${endpoint}`);
   return decodeURIComponent(m[1]);
 }
 
@@ -173,6 +216,18 @@ const machinesUrl = (base: string, app: string): string => `${appUrl(base, app)}
 const machineUrl = (base: string, app: string, id: string): string =>
   `${machinesUrl(base, app)}/${encodeURIComponent(id)}`;
 const leaseUrl = (base: string, app: string, id: string): string => `${machineUrl(base, app, id)}/lease`;
+
+const volumesUrl = (base: string, app: string): string => `${appUrl(base, app)}/volumes`;
+const volumeUrl = (base: string, app: string, id: string): string =>
+  `${volumesUrl(base, app)}/${encodeURIComponent(id)}`;
+const ipsUrl = (base: string, app: string): string => `${appUrl(base, app)}/ip_assignments`;
+const ipUrl = (base: string, app: string, ip: string): string => `${ipsUrl(base, app)}/${encodeURIComponent(ip)}`;
+const certsUrl = (base: string, app: string): string => `${appUrl(base, app)}/certificates`;
+const certUrl = (base: string, app: string, hostname: string): string =>
+  `${certsUrl(base, app)}/${encodeURIComponent(hostname)}`;
+const secretsUrl = (base: string, app: string): string => `${appUrl(base, app)}/secrets`;
+const secretUrl = (base: string, app: string, secretName: string): string =>
+  `${secretsUrl(base, app)}/${encodeURIComponent(secretName)}`;
 
 function waitUrl(base: string, app: string, id: string, state: string, version: string, timeoutSecs: number): string {
   const q = new URLSearchParams({ state, timeout: String(timeoutSecs) });
@@ -480,6 +535,240 @@ export async function pruneMachines(
   return pruned;
 }
 
+// ── App-scoped, metadata-less resources (#741, D2) ───────────────────────────
+//
+// Volumes, IPs, certificates, and secrets carry no ownership marker, so they are
+// owned at the app boundary (D2): everything under a chant-managed app is chant's
+// and prune is app-scoped, not metadata-filtered like machines. Each resource
+// creates if absent (idempotent by its natural key) and prunes anything live
+// that the plan no longer declares. Secrets are apply-only (D7): always POSTed,
+// never read back for a diff.
+
+/** A live volume as flaps lists it. */
+export interface FlapsVolume {
+  id: string;
+  name: string;
+  state?: string;
+}
+
+/** A live IP assignment as flaps lists it. */
+export interface FlapsIp {
+  ip: string;
+  shared?: boolean;
+}
+
+/** A live certificate as flaps lists it. */
+export interface FlapsCert {
+  hostname: string;
+}
+
+/** A live secret as flaps lists it (digest only, never the value). */
+export interface FlapsSecret {
+  name: string;
+}
+
+/**
+ * The declared identity of an IP: its `type` collapses to a family key the
+ * live-list can be mapped back to (shared v4 / dedicated v4 / v6). This lets a
+ * re-apply of the same declared type be a no-op even though the address is
+ * server-allocated. Pure.
+ */
+export function ipType(shared: boolean | undefined, address: string): string {
+  if (shared) return "shared_v4";
+  return address.includes(":") ? "v6" : "v4";
+}
+
+/** The declared IP family from a request body's `type`. Pure. */
+export function declaredIpType(type: unknown): string {
+  if (type === "shared_v4") return "shared_v4";
+  if (type === "v6" || type === "private_v6") return "v6";
+  return "v4";
+}
+
+/** List an app's live volumes (flaps returns a bare array). */
+export async function listVolumes(ctx: ApplyCtx, app: string, http: FlyHttp, signal?: AbortSignal): Promise<FlapsVolume[]> {
+  const res = await http("GET", volumesUrl(ctx.base, app), undefined, undefined, signal);
+  if (res.status === 404) return [];
+  if (res.status >= 300) throw new Error(`volume list failed for ${app} (${res.status}): ${res.text}`);
+  const list = parseJson(res.text);
+  return Array.isArray(list) ? (list as FlapsVolume[]) : [];
+}
+
+/** List an app's live IP assignments (`{ ips: [...] }`). */
+export async function listIps(ctx: ApplyCtx, app: string, http: FlyHttp, signal?: AbortSignal): Promise<FlapsIp[]> {
+  const res = await http("GET", ipsUrl(ctx.base, app), undefined, undefined, signal);
+  if (res.status === 404) return [];
+  if (res.status >= 300) throw new Error(`ip list failed for ${app} (${res.status}): ${res.text}`);
+  const body = parseJson(res.text) as { ips?: FlapsIp[] } | undefined;
+  return body?.ips ?? [];
+}
+
+/** List an app's live certificates (`{ certificates: [...] }`). */
+export async function listCerts(ctx: ApplyCtx, app: string, http: FlyHttp, signal?: AbortSignal): Promise<FlapsCert[]> {
+  const res = await http("GET", certsUrl(ctx.base, app), undefined, undefined, signal);
+  if (res.status === 404) return [];
+  if (res.status >= 300) throw new Error(`certificate list failed for ${app} (${res.status}): ${res.text}`);
+  const body = parseJson(res.text) as { certificates?: FlapsCert[] } | undefined;
+  return body?.certificates ?? [];
+}
+
+/** List an app's live secrets (`{ secrets: [...] }`; digests only, never values). */
+export async function listSecrets(ctx: ApplyCtx, app: string, http: FlyHttp, signal?: AbortSignal): Promise<FlapsSecret[]> {
+  const res = await http("GET", secretsUrl(ctx.base, app), undefined, undefined, signal);
+  if (res.status === 404) return [];
+  if (res.status >= 300) throw new Error(`secret list failed for ${app} (${res.status}): ${res.text}`);
+  const body = parseJson(res.text) as { secrets?: FlapsSecret[] } | undefined;
+  return body?.secrets ?? [];
+}
+
+/** Create a volume if absent (idempotent by name). Machines that mount it apply after. */
+export async function applyVolume(
+  ctx: ApplyCtx,
+  app: string,
+  entityName: string,
+  req: FlapsRequest,
+  http: FlyHttp,
+  signal?: AbortSignal,
+): Promise<{ action: "created" | "noop"; name: string }> {
+  const name = typeof req.body.name === "string" && req.body.name ? req.body.name : entityName;
+  if ((await listVolumes(ctx, app, http, signal)).some((v) => v.name === name)) {
+    return { action: "noop", name };
+  }
+  const res = await http("POST", volumesUrl(ctx.base, app), { ...req.body, name }, undefined, signal);
+  if (res.status >= 300) throw new Error(`volume ${app}/${name} create failed (${res.status}): ${res.text}`);
+  return { action: "created", name };
+}
+
+/** Assign an IP if the declared type is not already present (idempotent by family). */
+export async function applyIp(
+  ctx: ApplyCtx,
+  app: string,
+  req: FlapsRequest,
+  http: FlyHttp,
+  signal?: AbortSignal,
+): Promise<{ action: "created" | "noop"; type: string }> {
+  const type = declaredIpType(req.body.type);
+  const present = new Set((await listIps(ctx, app, http, signal)).map((ip) => ipType(ip.shared, ip.ip)));
+  if (present.has(type)) return { action: "noop", type };
+  const res = await http("POST", ipsUrl(ctx.base, app), req.body, undefined, signal);
+  if (res.status >= 300) throw new Error(`ip assign failed for ${app} (${res.status}): ${res.text}`);
+  return { action: "created", type };
+}
+
+/** Create a certificate if absent (idempotent by hostname). */
+export async function applyCert(
+  ctx: ApplyCtx,
+  app: string,
+  req: FlapsRequest,
+  http: FlyHttp,
+  signal?: AbortSignal,
+): Promise<{ action: "created" | "noop"; hostname: string }> {
+  const hostname = String(req.body.hostname ?? "");
+  if (!hostname) throw new Error(`certificate request for ${app} has no hostname`);
+  if ((await listCerts(ctx, app, http, signal)).some((c) => c.hostname === hostname)) {
+    return { action: "noop", hostname };
+  }
+  const res = await http("POST", certsUrl(ctx.base, app), req.body, undefined, signal);
+  if (res.status >= 300) throw new Error(`certificate ${app}/${hostname} create failed (${res.status}): ${res.text}`);
+  return { action: "created", hostname };
+}
+
+/**
+ * Set a secret (D7, apply-only): always POST, never read back for a diff. flaps
+ * returns only a digest, so there is nothing to compare — every apply re-sets it.
+ */
+export async function applySecret(
+  ctx: ApplyCtx,
+  app: string,
+  name: string,
+  req: FlapsRequest,
+  http: FlyHttp,
+  signal?: AbortSignal,
+): Promise<{ action: "set"; name: string }> {
+  const res = await http("POST", secretUrl(ctx.base, app, name), req.body, undefined, signal);
+  if (res.status >= 300) throw new Error(`secret ${app}/${name} set failed (${res.status}): ${res.text}`);
+  return { action: "set", name };
+}
+
+/** App-scoped prune (D2): destroy volumes the plan no longer declares (by name). */
+export async function pruneVolumes(
+  ctx: ApplyCtx,
+  app: string,
+  keep: Set<string>,
+  http: FlyHttp,
+  signal?: AbortSignal,
+): Promise<Array<{ app: string; name: string; id: string }>> {
+  const pruned: Array<{ app: string; name: string; id: string }> = [];
+  for (const v of await listVolumes(ctx, app, http, signal)) {
+    if (keep.has(v.name)) continue;
+    const res = await http("DELETE", volumeUrl(ctx.base, app, v.id), undefined, undefined, signal);
+    if (res.status >= 300 && res.status !== 404) throw new Error(`volume ${app}/${v.name} delete failed (${res.status}): ${res.text}`);
+    console.log(`pruned: volume/${app}/${v.name} (${ctx.base})`);
+    pruned.push({ app, name: v.name, id: v.id });
+  }
+  return pruned;
+}
+
+/** App-scoped prune (D2): release IP assignments whose type the plan no longer declares. */
+export async function pruneIps(
+  ctx: ApplyCtx,
+  app: string,
+  keep: Set<string>,
+  http: FlyHttp,
+  signal?: AbortSignal,
+): Promise<Array<{ app: string; address: string }>> {
+  const pruned: Array<{ app: string; address: string }> = [];
+  for (const ip of await listIps(ctx, app, http, signal)) {
+    if (keep.has(ipType(ip.shared, ip.ip))) continue;
+    const res = await http("DELETE", ipUrl(ctx.base, app, ip.ip), undefined, undefined, signal);
+    if (res.status >= 300 && res.status !== 404) throw new Error(`ip ${app}/${ip.ip} delete failed (${res.status}): ${res.text}`);
+    console.log(`pruned: ip/${app}/${ip.ip} (${ctx.base})`);
+    pruned.push({ app, address: ip.ip });
+  }
+  return pruned;
+}
+
+/** App-scoped prune (D2): destroy certificates whose hostname the plan no longer declares. */
+export async function pruneCerts(
+  ctx: ApplyCtx,
+  app: string,
+  keep: Set<string>,
+  http: FlyHttp,
+  signal?: AbortSignal,
+): Promise<Array<{ app: string; hostname: string }>> {
+  const pruned: Array<{ app: string; hostname: string }> = [];
+  for (const c of await listCerts(ctx, app, http, signal)) {
+    if (keep.has(c.hostname)) continue;
+    const res = await http("DELETE", certUrl(ctx.base, app, c.hostname), undefined, undefined, signal);
+    if (res.status >= 300 && res.status !== 404) throw new Error(`certificate ${app}/${c.hostname} delete failed (${res.status}): ${res.text}`);
+    console.log(`pruned: certificate/${app}/${c.hostname} (${ctx.base})`);
+    pruned.push({ app, hostname: c.hostname });
+  }
+  return pruned;
+}
+
+/**
+ * App-scoped prune (D2) for apply-only secrets: a declared-then-removed secret
+ * is still prunable by name, even though it never enters a drift/diff.
+ */
+export async function pruneSecrets(
+  ctx: ApplyCtx,
+  app: string,
+  keep: Set<string>,
+  http: FlyHttp,
+  signal?: AbortSignal,
+): Promise<Array<{ app: string; name: string }>> {
+  const pruned: Array<{ app: string; name: string }> = [];
+  for (const s of await listSecrets(ctx, app, http, signal)) {
+    if (keep.has(s.name)) continue;
+    const res = await http("DELETE", secretUrl(ctx.base, app, s.name), undefined, undefined, signal);
+    if (res.status >= 300 && res.status !== 404) throw new Error(`secret ${app}/${s.name} delete failed (${res.status}): ${res.text}`);
+    console.log(`pruned: secret/${app}/${s.name} (${ctx.base})`);
+    pruned.push({ app, name: s.name });
+  }
+  return pruned;
+}
+
 // ── Top-level applier ──────────────────────────────────────────────────────────
 
 export interface FlyApplyArgs {
@@ -490,9 +779,11 @@ export interface FlyApplyArgs {
   /** Bearer token for real Fly. Default: `FLY_API_TOKEN`. mudflaps ignores it. */
   token?: string;
   /**
-   * Owned-only prune (D2): destroy chant-owned machines in a declared app that
-   * are no longer declared. Destructive — off by default. Never touches an
-   * unmarked (foreign) machine.
+   * Prune (D2): destroy declared-then-removed resources. Machines are owned-only
+   * (chant metadata marker); an unmarked machine is never touched. The
+   * metadata-less types (volumes/ips/certs/secrets) are app-scoped: anything the
+   * plan no longer declares under a managed app is removed. Destructive — off by
+   * default.
    */
   prune?: boolean;
   /** Wait-loop tuning (mainly for tests). */
@@ -500,9 +791,13 @@ export interface FlyApplyArgs {
 }
 
 /**
- * The native fly applier (#739): read the serialized plan and apply it straight
- * to flaps in dependency order — app → (volumes, #741) → machines — then
- * optionally owned-only prune. `http` is injectable for tests.
+ * The native fly applier (#739, #741): read the serialized plan and apply it
+ * straight to flaps in dependency order — app → volumes → machines → ips →
+ * certificates → secrets — then optionally prune. Machines prune owned-only via
+ * the metadata marker (D2); the metadata-less types (volumes/ips/certs/secrets)
+ * prune app-scoped: everything the plan no longer declares under a managed app.
+ * Secrets are apply-only (D7): set, never read back for a diff. `http` is
+ * injectable for tests.
  */
 export async function flyApply(
   args: FlyApplyArgs,
@@ -511,7 +806,15 @@ export async function flyApply(
 ): Promise<{
   apps: Array<{ app: string; created: boolean }>;
   machines: Array<{ app: string; name: string; action: "created" | "updated" | "noop" }>;
+  volumes: Array<{ app: string; name: string; action: "created" | "noop" }>;
+  ips: Array<{ app: string; type: string; action: "created" | "noop" }>;
+  certs: Array<{ app: string; hostname: string; action: "created" | "noop" }>;
+  secrets: Array<{ app: string; name: string }>;
   pruned: Array<{ app: string; name: string; id: string }>;
+  prunedVolumes: Array<{ app: string; name: string; id: string }>;
+  prunedIps: Array<{ app: string; address: string }>;
+  prunedCerts: Array<{ app: string; hostname: string }>;
+  prunedSecrets: Array<{ app: string; name: string }>;
 }> {
   const plan = parsePlan(readFileSync(args.planPath, "utf8"));
   const ctx: ApplyCtx = { base: resolveEndpoint(args) };
@@ -519,10 +822,17 @@ export async function flyApply(
 
   const appReqs: FlapsRequest[] = [];
   const machineReqs: Array<[string, FlapsRequest]> = [];
+  const volumeReqs: Array<[string, FlapsRequest]> = [];
+  const ipReqs: Array<[string, FlapsRequest]> = [];
+  const certReqs: Array<[string, FlapsRequest]> = [];
+  const secretReqs: Array<[string, FlapsRequest]> = [];
   for (const [entityName, req] of Object.entries(plan)) {
     if (isAppRequest(req)) appReqs.push(req);
     else if (isMachineRequest(req)) machineReqs.push([entityName, req]);
-    // Other resource types (volumes/IPs/certs/secrets) land in #741.
+    else if (isVolumeRequest(req)) volumeReqs.push([entityName, req]);
+    else if (isIpRequest(req)) ipReqs.push([entityName, req]);
+    else if (isCertRequest(req)) certReqs.push([entityName, req]);
+    else if (isSecretRequest(req)) secretReqs.push([entityName, req]);
   }
 
   const appNames = appReqs.map(appNameFromRequest);
@@ -537,35 +847,107 @@ export async function flyApply(
     apps.push(result);
   }
 
-  // #741 hook: volumes are applied here, between apps and machines, so a machine
-  // that mounts a volume finds it already provisioned.
+  // Keep-sets per app, one per resource kind. Seeded empty for every declared
+  // app so an app whose resources were all removed still prunes them. These are
+  // app-scoped (D2): metadata-less types are owned wholesale under a managed app.
+  const keepMachines = new Map<string, Set<string>>();
+  const keepVolumes = new Map<string, Set<string>>();
+  const keepIps = new Map<string, Set<string>>();
+  const keepCerts = new Map<string, Set<string>>();
+  const keepSecrets = new Map<string, Set<string>>();
+  for (const app of appNames) {
+    keepMachines.set(app, new Set());
+    keepVolumes.set(app, new Set());
+    keepIps.set(app, new Set());
+    keepCerts.set(app, new Set());
+    keepSecrets.set(app, new Set());
+  }
+  const track = (m: Map<string, Set<string>>, app: string, key: string) => {
+    const set = m.get(app) ?? new Set<string>();
+    set.add(key);
+    m.set(app, set);
+  };
 
-  // Seed the keep-set with every declared app (empty), so an app whose machines
-  // were all removed still prunes them.
-  const declaredByApp = new Map<string, Set<string>>();
-  for (const app of appNames) declaredByApp.set(app, new Set<string>());
+  // Volumes before machines: a machine's `config.mounts[]` references a volume
+  // by name, so the volume must exist first.
+  const volumes: Array<{ app: string; name: string; action: "created" | "noop" }> = [];
+  for (const [entityName, req] of volumeReqs) {
+    const app = resolveApp(resourceAppSegment(req.endpoint), soleApp);
+    safeHeartbeat({ step: "flyApply", kind: "volume", name: entityName });
+    const result = await applyVolume(ctx, app, entityName, req, http, signal);
+    track(keepVolumes, app, result.name);
+    console.log(`${result.action}: volume/${app}/${result.name} (${ctx.base})`);
+    volumes.push({ app, name: result.name, action: result.action });
+  }
 
   const machines: Array<{ app: string; name: string; action: "created" | "updated" | "noop" }> = [];
   for (const [entityName, req] of machineReqs) {
     const app = resolveApp(machineAppSegment(req.endpoint), soleApp);
     const name = typeof req.body.name === "string" && req.body.name ? req.body.name : entityName;
-    const keep = declaredByApp.get(app) ?? new Set<string>();
-    keep.add(name);
-    declaredByApp.set(app, keep);
+    track(keepMachines, app, name);
     safeHeartbeat({ step: "flyApply", kind: "machine", name });
     const result = await applyMachine(ctx, app, entityName, req, http, signal, opts);
     console.log(`${result.action}: machine/${app}/${result.name} (${ctx.base})`);
     machines.push({ app, name: result.name, action: result.action });
   }
 
+  // IPs, certificates, secrets after machines (independent of them).
+  const ips: Array<{ app: string; type: string; action: "created" | "noop" }> = [];
+  for (const [entityName, req] of ipReqs) {
+    const app = resolveApp(resourceAppSegment(req.endpoint), soleApp);
+    safeHeartbeat({ step: "flyApply", kind: "ip", name: entityName });
+    const result = await applyIp(ctx, app, req, http, signal);
+    track(keepIps, app, result.type);
+    console.log(`${result.action}: ip/${app}/${result.type} (${ctx.base})`);
+    ips.push({ app, type: result.type, action: result.action });
+  }
+
+  const certs: Array<{ app: string; hostname: string; action: "created" | "noop" }> = [];
+  for (const [, req] of certReqs) {
+    const app = resolveApp(resourceAppSegment(req.endpoint), soleApp);
+    safeHeartbeat({ step: "flyApply", kind: "certificate", name: String(req.body.hostname ?? "") });
+    const result = await applyCert(ctx, app, req, http, signal);
+    track(keepCerts, app, result.hostname);
+    console.log(`${result.action}: certificate/${app}/${result.hostname} (${ctx.base})`);
+    certs.push({ app, hostname: result.hostname, action: result.action });
+  }
+
+  // Secrets are apply-only (D7): always set, never read back for a diff.
+  const secrets: Array<{ app: string; name: string }> = [];
+  for (const [, req] of secretReqs) {
+    const app = resolveApp(resourceAppSegment(req.endpoint), soleApp);
+    const name = secretNameSegment(req.endpoint);
+    track(keepSecrets, app, name);
+    safeHeartbeat({ step: "flyApply", kind: "secret", name });
+    const result = await applySecret(ctx, app, name, req, http, signal);
+    console.log(`set: secret/${app}/${result.name} (${ctx.base})`);
+    secrets.push({ app, name: result.name });
+  }
+
   const pruned: Array<{ app: string; name: string; id: string }> = [];
+  const prunedVolumes: Array<{ app: string; name: string; id: string }> = [];
+  const prunedIps: Array<{ app: string; address: string }> = [];
+  const prunedCerts: Array<{ app: string; hostname: string }> = [];
+  const prunedSecrets: Array<{ app: string; name: string }> = [];
   if (args.prune) {
-    for (const [app, keep] of declaredByApp) {
+    for (const [app, keep] of keepMachines) {
       pruned.push(...(await pruneMachines(ctx, app, keep, http, signal, opts)));
+    }
+    for (const [app, keep] of keepVolumes) {
+      prunedVolumes.push(...(await pruneVolumes(ctx, app, keep, http, signal)));
+    }
+    for (const [app, keep] of keepIps) {
+      prunedIps.push(...(await pruneIps(ctx, app, keep, http, signal)));
+    }
+    for (const [app, keep] of keepCerts) {
+      prunedCerts.push(...(await pruneCerts(ctx, app, keep, http, signal)));
+    }
+    for (const [app, keep] of keepSecrets) {
+      prunedSecrets.push(...(await pruneSecrets(ctx, app, keep, http, signal)));
     }
   }
 
-  return { apps, machines, pruned };
+  return { apps, machines, volumes, ips, certs, secrets, pruned, prunedVolumes, prunedIps, prunedCerts, prunedSecrets };
 }
 
 /**
