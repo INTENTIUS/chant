@@ -1,0 +1,16 @@
+{
+  "nodes": [
+    {"id": "src/app.ts", "kind": "", "lexicon": "", "attrs": {"_status": "warn", "state": "⚠ affected"}},
+    {"id": "src/resources.ts", "kind": "", "lexicon": "", "attrs": {"_status": "warn", "state": "⚠ affected"}},
+    {"id": "src/config.ts", "kind": "", "lexicon": "", "attrs": {}},
+    {"id": "src/shared.ts", "kind": "", "lexicon": "", "attrs": {"_status": "accent", "state": "● changed"}}
+  ],
+  "edges": [
+    {"from": "src/app.ts", "to": "src/resources.ts", "kind": "ref", "viaAttr": "imports"},
+    {"from": "src/app.ts", "to": "src/config.ts", "kind": "ref", "viaAttr": "imports"},
+    {"from": "src/resources.ts", "to": "src/shared.ts", "kind": "ref", "viaAttr": "imports"},
+    {"from": "src/shared.ts", "to": "src/resources.ts", "kind": "ref", "viaAttr": "re-evaluate", "style": "dashed"},
+    {"from": "src/resources.ts", "to": "src/app.ts", "kind": "ref", "viaAttr": "re-evaluate", "style": "dashed"}
+  ],
+  "groups": {}
+}

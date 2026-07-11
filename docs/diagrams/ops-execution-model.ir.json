@@ -1,23 +1,120 @@
 {
   "nodes": [
-    {"id": "chant run <name>", "kind": "", "lexicon": "", "attrs": {"_status": "good", "does": "spawn worker · submit workflow"}},
-    {"id": "Phase — sequential steps", "kind": "", "lexicon": "", "attrs": {"flow": "A → B → C", "each": "retry policy"}},
-    {"id": "Phase — parallel steps", "kind": "", "lexicon": "", "attrs": {"flag": "parallel: true", "how": "Temporal schedules concurrently"}},
-    {"id": "Gate step", "kind": "", "lexicon": "", "attrs": {"_status": "accent", "does": "pause · await signal", "or": "timeout expires"}},
-    {"id": "Remaining phases…", "kind": "", "lexicon": "", "attrs": {}},
-    {"id": "Terminal error?", "kind": "", "lexicon": "", "attrs": {"_status": "warn"}},
-    {"id": "onFailure phases", "kind": "", "lexicon": "", "attrs": {"_status": "warn", "does": "compensation · rollback"}},
-    {"id": "Workflow complete", "kind": "", "lexicon": "", "attrs": {"_status": "good"}}
+    {
+      "id": "chant run <name>",
+      "kind": "",
+      "lexicon": "",
+      "attrs": {
+        "_status": "good",
+        "does": "spawn worker · submit workflow"
+      }
+    },
+    {
+      "id": "Phase — sequential steps",
+      "kind": "",
+      "lexicon": "",
+      "attrs": {
+        "flow": "A → B → C",
+        "each": "retry policy"
+      }
+    },
+    {
+      "id": "Phase — parallel steps",
+      "kind": "",
+      "lexicon": "",
+      "attrs": {
+        "flag": "parallel: true",
+        "how": "Temporal schedules concurrently"
+      }
+    },
+    {
+      "id": "Gate step",
+      "kind": "",
+      "lexicon": "",
+      "attrs": {
+        "_status": "accent",
+        "does": "pause · await signal",
+        "or": "timeout expires"
+      }
+    },
+    {
+      "id": "Remaining phases…",
+      "kind": "",
+      "lexicon": "",
+      "attrs": {}
+    },
+    {
+      "id": "Terminal error?",
+      "kind": "",
+      "lexicon": "",
+      "attrs": {
+        "_status": "warn"
+      }
+    },
+    {
+      "id": "onFailure phases",
+      "kind": "",
+      "lexicon": "",
+      "attrs": {
+        "_status": "warn",
+        "does": "compensation · rollback"
+      }
+    },
+    {
+      "id": "Workflow complete",
+      "kind": "",
+      "lexicon": "",
+      "attrs": {
+        "_status": "good"
+      }
+    }
   ],
   "edges": [
-    {"from": "chant run <name>", "to": "Phase — sequential steps", "kind": "ref"},
-    {"from": "Phase — sequential steps", "to": "Phase — parallel steps", "kind": "ref"},
-    {"from": "Phase — parallel steps", "to": "Gate step", "kind": "ref"},
-    {"from": "Gate step", "to": "Remaining phases…", "kind": "ref", "viaAttr": "signal received"},
-    {"from": "Remaining phases…", "to": "Terminal error?", "kind": "ref"},
-    {"from": "Terminal error?", "to": "onFailure phases", "kind": "ref", "viaAttr": "yes"},
-    {"from": "Terminal error?", "to": "Workflow complete", "kind": "ref", "viaAttr": "no"},
-    {"from": "onFailure phases", "to": "Workflow complete", "kind": "ref", "viaAttr": "after compensation"}
+    {
+      "from": "chant run <name>",
+      "to": "Phase — sequential steps",
+      "kind": "ref"
+    },
+    {
+      "from": "Phase — sequential steps",
+      "to": "Phase — parallel steps",
+      "kind": "ref"
+    },
+    {
+      "from": "Phase — parallel steps",
+      "to": "Gate step",
+      "kind": "ref"
+    },
+    {
+      "from": "Gate step",
+      "to": "Remaining phases…",
+      "kind": "ref",
+      "viaAttr": "signal received"
+    },
+    {
+      "from": "Remaining phases…",
+      "to": "Terminal error?",
+      "kind": "ref"
+    },
+    {
+      "from": "Terminal error?",
+      "to": "onFailure phases",
+      "kind": "ref",
+      "viaAttr": "yes"
+    },
+    {
+      "from": "Terminal error?",
+      "to": "Workflow complete",
+      "kind": "ref",
+      "viaAttr": "no"
+    },
+    {
+      "from": "onFailure phases",
+      "to": "Workflow complete",
+      "kind": "ref",
+      "viaAttr": "after compensation",
+      "style": "dashed"
+    }
   ],
   "groups": {}
 }
