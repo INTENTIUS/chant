@@ -8,9 +8,11 @@ import { azureSerializer } from "@intentius/chant-lexicon-azure";
 import { k8sSerializer } from "@intentius/chant-lexicon-k8s";
 import { gitlabSerializer } from "@intentius/chant-lexicon-gitlab";
 import { helmSerializer } from "@intentius/chant-lexicon-helm";
+import { flySerializer } from "@intentius/chant-lexicon-fly";
 import type { PostSynthContext } from "@intentius/chant/lint/post-synth";
 import { k8sPlugin } from "@intentius/chant-lexicon-k8s/plugin";
 import deployOp from "./getting-started/deploy.op";
+import flyDeployOp from "./local-fly/ops/fly.op";
 import deployGatedOp from "./getting-started/deploy-gated.op";
 import observeOp from "./getting-started/observe.op";
 import reconcileOp from "./getting-started/reconcile.op";
@@ -166,6 +168,57 @@ describeExample(
     },
   },
 );
+
+// ── Fly deploy — local-fly (#744) ────────────────────────────────────
+// Build-validated in CI (the deploy Op boots mudflaps in Docker, which CI can't
+// run). The serializer build asserts the flaps create bodies; a separate block
+// compile-validates the Op, mirroring the getting-started deploy Op above.
+
+describeExample(
+  "local-fly",
+  {
+    lexicon: "fly",
+    serializer: [flySerializer],
+    outputKey: "fly",
+    examplesDir: import.meta.dirname,
+  },
+  {
+    checks: (output) => {
+      const plan = JSON.parse(output) as Record<
+        string,
+        { endpoint: string; method: string; body: Record<string, any> }
+      >;
+      const reqs = Object.values(plan);
+      // App create body: POST /v1/apps { app_name }.
+      const app = reqs.find((r) => r.endpoint === "/v1/apps");
+      expect(app).toBeDefined();
+      expect(app!.body.app_name).toBe("local-fly-demo");
+      // Machine create body under the app, with a config and the stamped marker.
+      const machine = reqs.find((r) => /\/v1\/apps\/[^/]+\/machines$/.test(r.endpoint));
+      expect(machine).toBeDefined();
+      expect(machine!.endpoint).toBe("/v1/apps/local-fly-demo/machines");
+      expect(machine!.body.config).toBeDefined();
+      expect(machine!.body.config.image).toBe("flyio/hellofly:latest");
+      expect(machine!.body.config.metadata["managed-by"]).toBe("chant");
+    },
+  },
+);
+
+describe("local-fly deploy Op (#744)", () => {
+  test("compiles to a well-formed Op with the deploy phases", () => {
+    const props = (flyDeployOp as unknown as {
+      props: { name: string; phases: Array<{ name: string }> };
+    }).props;
+    expect(props.name).toBe("fly");
+    expect(props.phases.map((p) => p.name)).toEqual([
+      "Emulator",
+      "Build",
+      "Apply",
+      "Verify",
+      "Teardown",
+    ]);
+  });
+});
 
 // ── K8s + AWS EKS microservice (comprehensive) ──────────────────────
 
