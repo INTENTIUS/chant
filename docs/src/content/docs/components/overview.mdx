@@ -36,7 +36,7 @@ Two things are true at once, and holding both is the whole design:
 
 Sprawl is that bounded set re-expressed as bespoke pipeline code once per component. The fix is to express the primitives once as [capabilities](/chant/components/capabilities/) and let each [component](/chant/components/component-contract/) be a unique composition of them. Uniqueness lives in the composition, which is cheap and declarative. Commonality lives in the capabilities, which are coded and tested. The expensive part stops being copied.
 
-<Diagram name="component-layers" alt="Three concentric layers: pure synthesis (chant build) at the core, the build archive around it, and release orchestration — capabilities composed into components — on the outside." caption="Components sit above synthesis: a generic orchestrator drives declarations composed from a bounded capability set." />
+<Diagram name="component-layers" alt="Three layers: the deterministic core (chant build) at the base, the build archive on it, and release orchestration — capabilities composed into components — on top." caption="Components sit on top of the deterministic core: a generic orchestrator drives declarations composed from a bounded capability set." />
 
 ## What you get
 
