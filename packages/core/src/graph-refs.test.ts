@@ -1,0 +1,105 @@
+import { describe, it, expect } from "vitest";
+import { reconstructEdges, readPath, mergeCatalogs, type ReferenceCatalog } from "./graph-refs";
+import type { IRNode } from "./graph-ir";
+
+const node = (id: string, kind: string, attrs: Record<string, unknown>, physicalId?: string): IRNode => ({
+  id,
+  kind,
+  lexicon: "test",
+  attrs,
+  ...(physicalId ? { physicalId } : {}),
+});
+
+describe("readPath", () => {
+  it("reads nested keys", () => {
+    expect(readPath({ a: { b: "x" } }, "a.b")).toEqual(["x"]);
+  });
+  it("fans out over arrays", () => {
+    expect(readPath({ sgs: [{ id: "sg-1" }, { id: "sg-2" }] }, "sgs[].id")).toEqual(["sg-1", "sg-2"]);
+  });
+  it("reads an array of scalars", () => {
+    expect(readPath({ subnets: ["s-1", "s-2"] }, "subnets[]")).toEqual(["s-1", "s-2"]);
+  });
+  it("returns nothing for a missing path", () => {
+    expect(readPath({ a: 1 }, "b.c")).toEqual([]);
+  });
+});
+
+describe("reconstructEdges", () => {
+  // A tiny synthetic model: a "box" contains "things"; things reference a "peer".
+  const catalog: ReferenceCatalog = {
+    identities: [
+      { kind: "Box", ids: ["BoxId"] },
+      { kind: "Thing", ids: ["ThingId"] },
+      { kind: "Peer", ids: ["PeerId"] },
+    ],
+    refs: [
+      { from: "Thing", path: "boxId", targetKind: "Box", relation: "containment", label: "in box" },
+      { from: "Thing", path: "peerIds[]", targetKind: "Peer", relation: "reference", label: "uses" },
+    ],
+  };
+
+  const nodes: IRNode[] = [
+    node("box", "Box", { BoxId: "box-1" }),
+    node("thing", "Thing", { ThingId: "thing-1", boxId: "box-1", peerIds: ["peer-1", "peer-2"] }),
+    node("peerA", "Peer", { PeerId: "peer-1" }),
+    node("peerB", "Peer", { PeerId: "peer-2" }),
+  ];
+
+  it("emits reference edges (holder → referenced)", () => {
+    const { edges } = reconstructEdges(nodes, catalog);
+    expect(edges).toEqual([
+      { from: "thing", to: "peerA", kind: "ref", viaAttr: "uses" },
+      { from: "thing", to: "peerB", kind: "ref", viaAttr: "uses" },
+    ]);
+  });
+
+  it("emits containment separately, not as edges", () => {
+    const { edges, containment } = reconstructEdges(nodes, catalog);
+    expect(containment).toEqual([{ child: "thing", parent: "box", label: "in box" }]);
+    // containment is NOT in edges
+    expect(edges.some((e) => e.to === "box")).toBe(false);
+  });
+
+  it("surfaces references to absent targets as dangling, never a wrong edge", () => {
+    const withDangling = [...nodes, node("orphan", "Thing", { ThingId: "t-2", boxId: "box-1", peerIds: ["peer-GONE"] })];
+    const { edges, dangling } = reconstructEdges(withDangling, catalog);
+    expect(dangling).toContainEqual({ from: "orphan", path: "peerIds[]", value: "peer-GONE", targetKind: "Peer" });
+    expect(edges.some((e) => e.to === undefined)).toBe(false);
+  });
+
+  it("resolves against physicalId too", () => {
+    const cat: ReferenceCatalog = { identities: [], refs: [{ from: "Thing", path: "peer", relation: "reference" }] };
+    const ns = [node("t", "Thing", { peer: "phys-9" }), node("p", "Peer", {}, "phys-9")];
+    expect(reconstructEdges(ns, cat).edges).toEqual([{ from: "t", to: "p", kind: "ref", viaAttr: "peer" }]);
+  });
+
+  it("disambiguates identifier collisions by targetKind", () => {
+    const cat: ReferenceCatalog = {
+      identities: [{ kind: "A", ids: ["id"] }, { kind: "B", ids: ["id"] }],
+      refs: [{ from: "H", path: "ref", targetKind: "B", relation: "reference" }],
+    };
+    const ns = [node("a", "A", { id: "dup" }), node("b", "B", { id: "dup" }), node("h", "H", { ref: "dup" })];
+    expect(reconstructEdges(ns, cat).edges).toEqual([{ from: "h", to: "b", kind: "ref", viaAttr: "ref" }]);
+  });
+
+  it("drops self-references", () => {
+    const cat: ReferenceCatalog = { identities: [{ kind: "SG", ids: ["id"] }], refs: [{ from: "SG", path: "peers[]", relation: "reference" }] };
+    const ns = [node("sg", "SG", { id: "sg-1", peers: ["sg-1"] })];
+    expect(reconstructEdges(ns, cat).edges).toEqual([]);
+  });
+
+  it("is deterministic", () => {
+    expect(JSON.stringify(reconstructEdges(nodes, catalog))).toBe(JSON.stringify(reconstructEdges(nodes, catalog)));
+  });
+});
+
+describe("mergeCatalogs", () => {
+  it("concatenates identities and refs", () => {
+    const a: ReferenceCatalog = { identities: [{ kind: "A", ids: ["x"] }], refs: [{ from: "A", path: "p", relation: "reference" }] };
+    const b: ReferenceCatalog = { identities: [{ kind: "B", ids: ["y"] }], refs: [] };
+    const m = mergeCatalogs([a, b]);
+    expect(m.identities).toHaveLength(2);
+    expect(m.refs).toHaveLength(1);
+  });
+});

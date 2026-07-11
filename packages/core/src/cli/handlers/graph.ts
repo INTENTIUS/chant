@@ -3,6 +3,7 @@ import { discoverOps } from "../../op/discover";
 import { discover } from "../../discovery/index";
 import { partitionByLexicon, computeStackGraph, build } from "../../build";
 import { buildGraphIr, buildLiveGraphIr, type GraphIR } from "../../graph-ir";
+import { reconstructEdges, mergeCatalogs, type ReferenceCatalog } from "../../graph-refs";
 import { observeResources } from "../../lifecycle/observe";
 import { loadChantConfig } from "../../config";
 import { applyDetail, type DetailLevel } from "../../graph-detail";
@@ -87,6 +88,16 @@ async function runGraphLive(
   for (const e of errors) console.error(formatWarning({ message: e }));
 
   let ir: GraphIR = buildLiveGraphIr(observations);
+
+  // Reconstruct edges from live references (#778): merge the observing lexicons'
+  // reference catalogs and resolve them over the live nodes. Containment pairs
+  // are computed too — #779 will turn them into boundary groups.
+  const catalogs = observing.map((p) => p.referenceCatalog).filter((c): c is ReferenceCatalog => !!c);
+  if (catalogs.length > 0) {
+    const { edges } = reconstructEdges(ir.nodes, mergeCatalogs(catalogs));
+    ir = { ...ir, edges };
+  }
+
   if (args.lens) {
     try {
       ir = applyLens(ir, parseLens(args.lens, { up: args.up, down: args.down }));

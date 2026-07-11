@@ -9,6 +9,11 @@ import type { CompletionContext, CompletionItem, HoverContext, HoverInfo, CodeAc
 import type { McpToolContribution, McpResourceContribution } from "./mcp/types";
 import type { DriverComponent } from "./components/driver";
 import type { RuleMeta } from "./audit/catalog";
+import type { ReferenceCatalog } from "./graph-refs";
+
+// Re-exported so lexicons can author a reference catalog (#778) from the same
+// `@intentius/chant/lexicon` entry they import the plugin contract from.
+export type { ReferenceCatalog, IdentityRule, RefRule } from "./graph-refs";
 
 /**
  * Manifest for a packaged lexicon — metadata embedded in the tarball.
@@ -368,6 +373,16 @@ export interface LexiconPlugin {
      */
     owned?: boolean;
   }): Promise<Record<string, ResourceMetadata>>;
+
+  /**
+   * Reference catalog for live edge reconstruction (#778). Declares how this
+   * lexicon's observed resources reference each other — an identity map (which
+   * attrs identify each kind) plus reference rules (which attr paths point at
+   * other resources, as a peer edge or containment). Consumed by
+   * `chant graph --live` to turn a bag of live nodes into a graph. Data, not a
+   * method. Opt-in.
+   */
+  referenceCatalog?: ReferenceCatalog;
 
   /**
    * List runtime artifacts in the given environment. Opt-in.

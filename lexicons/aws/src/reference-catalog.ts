@@ -1,0 +1,56 @@
+import type { ReferenceCatalog } from "@intentius/chant/lexicon";
+
+/**
+ * AWS reference catalog (#778, epic #776 v1) — how observed AWS resources
+ * reference each other, so `chant graph --live` can reconstruct the topology.
+ *
+ * Keyed to the per-resource describe/export attribute shape (`VpcId`,
+ * `SecurityGroups[].GroupId`, `TargetGroupArn`, …), not the thin
+ * `describe-stack-resources` metadata. Enough to draw the canonical 3-tier VPC
+ * (internet → ALB → ECS service → RDS, with SG attachments). `containment`
+ * relations (subnet ∈ VPC) feed #779's boundary boxes; `reference` relations are
+ * edges.
+ */
+export const awsReferenceCatalog: ReferenceCatalog = {
+  identities: [
+    { kind: "AWS::EC2::VPC", ids: ["VpcId"] },
+    { kind: "AWS::EC2::Subnet", ids: ["SubnetId"] },
+    { kind: "AWS::EC2::SecurityGroup", ids: ["GroupId"] },
+    { kind: "AWS::EC2::Instance", ids: ["InstanceId"] },
+    { kind: "AWS::EC2::InternetGateway", ids: ["InternetGatewayId"] },
+    { kind: "AWS::EC2::NatGateway", ids: ["NatGatewayId"] },
+    { kind: "AWS::EC2::RouteTable", ids: ["RouteTableId"] },
+    { kind: "AWS::ElasticLoadBalancingV2::LoadBalancer", ids: ["LoadBalancerArn", "DNSName"] },
+    { kind: "AWS::ElasticLoadBalancingV2::TargetGroup", ids: ["TargetGroupArn"] },
+    { kind: "AWS::ECS::Cluster", ids: ["ClusterArn", "ClusterName"] },
+    { kind: "AWS::ECS::Service", ids: ["ServiceArn"] },
+    { kind: "AWS::ECS::TaskDefinition", ids: ["TaskDefinitionArn"] },
+    { kind: "AWS::RDS::DBInstance", ids: ["DBInstanceArn", "Endpoint.Address"] },
+  ],
+  refs: [
+    // ── containment (→ boundary boxes, #779) ──
+    { from: "AWS::EC2::Subnet", path: "VpcId", targetKind: "AWS::EC2::VPC", relation: "containment", label: "in VPC" },
+    { from: "AWS::EC2::SecurityGroup", path: "VpcId", targetKind: "AWS::EC2::VPC", relation: "containment", label: "in VPC" },
+    { from: "AWS::EC2::RouteTable", path: "VpcId", targetKind: "AWS::EC2::VPC", relation: "containment", label: "in VPC" },
+    { from: "AWS::EC2::Instance", path: "SubnetId", targetKind: "AWS::EC2::Subnet", relation: "containment", label: "in subnet" },
+    { from: "AWS::EC2::NatGateway", path: "SubnetId", targetKind: "AWS::EC2::Subnet", relation: "containment", label: "in subnet" },
+    { from: "AWS::ElasticLoadBalancingV2::LoadBalancer", path: "AvailabilityZones[].SubnetId", targetKind: "AWS::EC2::Subnet", relation: "containment", label: "in subnet" },
+    { from: "AWS::ElasticLoadBalancingV2::TargetGroup", path: "VpcId", targetKind: "AWS::EC2::VPC", relation: "containment", label: "in VPC" },
+    { from: "AWS::ECS::Service", path: "NetworkConfiguration.AwsvpcConfiguration.Subnets[]", targetKind: "AWS::EC2::Subnet", relation: "containment", label: "in subnet" },
+    { from: "AWS::RDS::DBInstance", path: "DBSubnetGroup.Subnets[].SubnetIdentifier", targetKind: "AWS::EC2::Subnet", relation: "containment", label: "in subnet" },
+
+    // ── references (→ edges) ──
+    { from: "AWS::EC2::Instance", path: "SecurityGroups[].GroupId", targetKind: "AWS::EC2::SecurityGroup", relation: "reference", label: "sg" },
+    { from: "AWS::EC2::SecurityGroup", path: "IpPermissions[].UserIdGroupPairs[].GroupId", targetKind: "AWS::EC2::SecurityGroup", relation: "reference", label: "allows" },
+    { from: "AWS::EC2::Route", path: "GatewayId", targetKind: "AWS::EC2::InternetGateway", relation: "reference", label: "via" },
+    { from: "AWS::EC2::Route", path: "NatGatewayId", targetKind: "AWS::EC2::NatGateway", relation: "reference", label: "via" },
+    { from: "AWS::ElasticLoadBalancingV2::LoadBalancer", path: "SecurityGroups[]", targetKind: "AWS::EC2::SecurityGroup", relation: "reference", label: "sg" },
+    { from: "AWS::ElasticLoadBalancingV2::Listener", path: "LoadBalancerArn", targetKind: "AWS::ElasticLoadBalancingV2::LoadBalancer", relation: "reference", label: "on" },
+    { from: "AWS::ElasticLoadBalancingV2::Listener", path: "DefaultActions[].TargetGroupArn", targetKind: "AWS::ElasticLoadBalancingV2::TargetGroup", relation: "reference", label: "forwards to" },
+    { from: "AWS::ECS::Service", path: "ClusterArn", targetKind: "AWS::ECS::Cluster", relation: "reference", label: "in cluster" },
+    { from: "AWS::ECS::Service", path: "TaskDefinition", targetKind: "AWS::ECS::TaskDefinition", relation: "reference", label: "runs" },
+    { from: "AWS::ECS::Service", path: "LoadBalancers[].TargetGroupArn", targetKind: "AWS::ElasticLoadBalancingV2::TargetGroup", relation: "reference", label: "registered in" },
+    { from: "AWS::ECS::Service", path: "NetworkConfiguration.AwsvpcConfiguration.SecurityGroups[]", targetKind: "AWS::EC2::SecurityGroup", relation: "reference", label: "sg" },
+    { from: "AWS::RDS::DBInstance", path: "VpcSecurityGroups[].VpcSecurityGroupId", targetKind: "AWS::EC2::SecurityGroup", relation: "reference", label: "sg" },
+  ],
+};
