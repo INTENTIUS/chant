@@ -6,6 +6,15 @@ The Fly.io lexicon for [chant](https://intentius.io/chant/). Declare Fly apps, m
 npm install --save-dev @intentius/chant @intentius/chant-lexicon-fly
 ```
 
+## Test it without a Fly account
+
+Fly's Machines API is emulated by [mudflaps](https://github.com/intentius/mudflaps), a stateful Fly Machines API emulator. The entire apply-and-deploy loop runs against a local mudflaps container in CI, with no Fly account and no bill. The same code then deploys to a real org by changing one endpoint, so the loop you test offline is the loop you ship.
+
+```bash
+cd examples/local-fly
+chant run fly        # boots mudflaps, applies an App + Machine, waits for started, tears down
+```
+
 ## What it does
 
 chant is a type system for operations: you describe infrastructure as typed TypeScript, and each lexicon turns those declarations into real provider API calls. This one covers Fly.
@@ -51,16 +60,9 @@ Lint rules run during `chant build`, before anything reaches the API:
 - Every machine mount must reference a `Volume` declared in the stack, checked across files.
 - Secret values may not be written inline; they belong in a `Secret` or a reference.
 
-## Deploy, and test the whole loop offline
+## The deploy Op
 
-The lexicon ships a deploy Op that runs the phases boot, build, apply, verify, and teardown, and a runnable [`examples/local-fly`](../../examples/local-fly) starter. The Fly Machines API is emulated by [mudflaps](https://github.com/intentius/mudflaps), so the entire deploy loop runs against a local container in CI, with no Fly account:
-
-```bash
-cd examples/local-fly
-chant run fly        # boots mudflaps, applies an App + Machine, waits for started, tears down
-```
-
-Drop the local endpoint and set `FLY_API_TOKEN`, and the same Op deploys to a real Fly org.
+The lexicon ships a deploy Op that runs the phases boot, build, apply, verify, and teardown, and a runnable [`examples/local-fly`](../../examples/local-fly) starter. As shown above, `chant run fly` boots mudflaps, builds the plan, applies the App and Machine, waits for the machine to reach `started`, and tears the emulator down. Drop the local endpoint and set `FLY_API_TOKEN`, and the same Op deploys to a real Fly org.
 
 ## Compared to a Terraform provider for Fly
 
