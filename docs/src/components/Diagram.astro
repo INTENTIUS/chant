@@ -27,9 +27,13 @@ const hasDark = existsSync(`public/diagrams/${name}-dark.svg`);
   {caption && <figcaption style="text-align:center;font-size:0.875rem;color:var(--sl-color-gray-3);margin-top:0.5rem;">{caption}</figcaption>}
 </figure>
 <style>
-  .diagram img { display: block; max-width: 100%; height: auto; margin: 0 auto; }
-  /* Show the theme-matched variant; Starlight stamps data-theme on <html>. */
-  .diagram-dark { display: none; }
+  .diagram img { max-width: 100%; height: auto; }
+  /* Show only the theme-matched variant. Display lives on the variant classes,
+   * NOT on `.diagram img` — a `.diagram img` display rule (specificity 0,1,1)
+   * would outrank `.diagram-dark` (0,1,0) and leak both variants. Starlight
+   * stamps data-theme on <html>. */
+  .diagram-light { display: block; margin: 0 auto; }
+  .diagram-dark { display: none; margin: 0 auto; }
   :global([data-theme='dark']) .diagram-light { display: none; }
   :global([data-theme='dark']) .diagram-dark { display: block; }
 </style>
