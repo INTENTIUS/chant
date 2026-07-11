@@ -152,4 +152,13 @@ export const flyPlugin: LexiconPlugin = {
     const { generateDocs } = await import("./codegen/docs");
     return generateDocs(options);
   },
+
+  // State: the read-back seam for plan + drift (#767). Lists live Fly resources
+  // over flaps, keyed by chant entity name, with an ownership verdict core's
+  // change set reads. Endpoint + auth reuse the applier (FLY_FLAPS_BASE_URL /
+  // FLY_API_TOKEN), so it reads the same target flyApply writes.
+  async describeResources(options) {
+    const { describeResources } = await import("./describe-resources");
+    return describeResources(options);
+  },
 };
