@@ -542,7 +542,7 @@ export async function pruneMachines(
 // ── App-scoped, metadata-less resources (#741, #743, D2) ─────────────────────
 //
 // The fly ownership convention (#743) is asymmetric, and the asymmetry is
-// deliberate, not an oversight:
+// deliberate:
 //
 //   - Machines carry `config.metadata`, so they get the primary marker
 //     (`managed-by: chant`, FLY_METADATA_OWNERSHIP_KEYS). `pruneMachines`
@@ -553,9 +553,9 @@ export async function pruneMachines(
 //     treated as chant's, and prune is app-scoped — anything live that the plan
 //     no longer declares is removed.
 //
-// The gap to be honest about: because these types have no marker, a resource
-// created out-of-band inside a chant-managed app is indistinguishable from a
-// chant one and CAN be pruned. That is the price of app-boundary ownership; the
+// The limitation: because these types have no marker, a resource created
+// out-of-band inside a chant-managed app is indistinguishable from a chant one
+// and CAN be pruned. That is the price of app-boundary ownership; the
 // safeguard is that the app boundary is itself only ever chant-managed when the
 // app carries the marker via its machines. Never widen app-scoped prune beyond
 // a single chant-declared app.

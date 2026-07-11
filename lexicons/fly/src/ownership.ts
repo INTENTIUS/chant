@@ -19,7 +19,7 @@
  *      arbitrary metadata, so for them the Fly app is the ownership boundary
  *      (like a CloudFormation stack): chant owns the app's declared-type
  *      resources and prunes owned orphans within app scope. See the app-scoped
- *      prune block in op/activities/fly-apply.ts for the honest gap this leaves.
+ *      prune block in op/activities/fly-apply.ts for the limitation this leaves.
  */
 
 import type { ChannelKeys } from "@intentius/chant/ownership";
