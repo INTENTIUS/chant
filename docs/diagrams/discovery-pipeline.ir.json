@@ -1,0 +1,20 @@
+{
+  "nodes": [
+    {"id": "discover('./src')", "kind": "entry point", "lexicon": "", "attrs": {}},
+    {"id": "1 · Scan files", "kind": "", "lexicon": "", "attrs": {"find": "*.ts", "exclude": "tests · node_modules"}},
+    {"id": "2 · Import modules", "kind": "", "lexicon": "", "attrs": {"how": "dynamic import", "on failure": "DiscoveryError"}},
+    {"id": "3 · Collect entities", "kind": "", "lexicon": "", "attrs": {"extract": "Declarable exports", "into": "Map<name, Declarable>"}},
+    {"id": "4 · Resolve AttrRefs", "kind": "", "lexicon": "", "attrs": {"set": "logical names", "enable": "toJSON()"}},
+    {"id": "5 · Build graph", "kind": "", "lexicon": "", "attrs": {"build": "dependency graph", "detect": "cycles"}},
+    {"id": "DiscoveryResult", "kind": "result", "lexicon": "", "attrs": {"holds": "entities · dependencies", "plus": "sourceFiles · errors"}}
+  ],
+  "edges": [
+    {"from": "discover('./src')", "to": "1 · Scan files", "kind": "ref"},
+    {"from": "1 · Scan files", "to": "2 · Import modules", "kind": "ref"},
+    {"from": "2 · Import modules", "to": "3 · Collect entities", "kind": "ref"},
+    {"from": "3 · Collect entities", "to": "4 · Resolve AttrRefs", "kind": "ref"},
+    {"from": "4 · Resolve AttrRefs", "to": "5 · Build graph", "kind": "ref"},
+    {"from": "5 · Build graph", "to": "DiscoveryResult", "kind": "ref"}
+  ],
+  "groups": {}
+}

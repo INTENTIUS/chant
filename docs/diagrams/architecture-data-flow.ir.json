@@ -1,0 +1,22 @@
+{
+  "nodes": [
+    {"id": "User writes TypeScript", "kind": "source", "lexicon": "", "attrs": {"using": "lexicon resources"}},
+    {"id": "CLI invokes discovery", "kind": "", "lexicon": "", "attrs": {}},
+    {"id": "Scan · import · collect", "kind": "", "lexicon": "", "attrs": {"produces": "entity map"}},
+    {"id": "Resolve AttrRefs · build graph", "kind": "", "lexicon": "", "attrs": {}},
+    {"id": "Detect cycles · topological sort", "kind": "", "lexicon": "", "attrs": {}},
+    {"id": "serializer.serialize(entities)", "kind": "", "lexicon": "", "attrs": {}},
+    {"id": "CLI writes output", "kind": "", "lexicon": "", "attrs": {}},
+    {"id": "Deployment artifacts", "kind": "output", "lexicon": "", "attrs": {"targets": "CloudFormation · K8s · GitLab CI · …"}}
+  ],
+  "edges": [
+    {"from": "User writes TypeScript", "to": "CLI invokes discovery", "kind": "ref"},
+    {"from": "CLI invokes discovery", "to": "Scan · import · collect", "kind": "ref"},
+    {"from": "Scan · import · collect", "to": "Resolve AttrRefs · build graph", "kind": "ref"},
+    {"from": "Resolve AttrRefs · build graph", "to": "Detect cycles · topological sort", "kind": "ref"},
+    {"from": "Detect cycles · topological sort", "to": "serializer.serialize(entities)", "kind": "ref"},
+    {"from": "serializer.serialize(entities)", "to": "CLI writes output", "kind": "ref"},
+    {"from": "CLI writes output", "to": "Deployment artifacts", "kind": "ref"}
+  ],
+  "groups": {}
+}
