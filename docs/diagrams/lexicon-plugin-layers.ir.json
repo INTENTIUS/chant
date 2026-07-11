@@ -1,0 +1,22 @@
+{
+  "nodes": [
+    {"id": "LexiconPlugin", "kind": "entry point", "lexicon": "", "attrs": {}},
+    {"id": "Generated Types (.d.ts)", "kind": "", "lexicon": "", "attrs": {"gives": "autocompletion · type safety", "does": "property validation"}},
+    {"id": "Serializer", "kind": "", "lexicon": "", "attrs": {"turns": "entities → target format", "out": "YAML · JSON · shell · …"}},
+    {"id": "Lint rules", "kind": "", "lexicon": "", "attrs": {"kinds": "EVL · semantic · style", "form": "declarative + imperative"}},
+    {"id": "Post-synth checks", "kind": "", "lexicon": "", "attrs": {"validate": "output artifacts", "for": "security · correctness · naming"}},
+    {"id": "LSP providers", "kind": "", "lexicon": "", "attrs": {"give": "completions · hover"}},
+    {"id": "MCP tools + resources", "kind": "", "lexicon": "", "attrs": {"give": "programmatic agent access"}},
+    {"id": "Skills", "kind": "", "lexicon": "", "attrs": {"are": "agent playbooks (markdown)", "pattern": "core / platform / advanced"}}
+  ],
+  "edges": [
+    {"from": "LexiconPlugin", "to": "Generated Types (.d.ts)", "kind": "ref"},
+    {"from": "LexiconPlugin", "to": "Lint rules", "kind": "ref"},
+    {"from": "LexiconPlugin", "to": "LSP providers", "kind": "ref"}
+  ],
+  "groups": {"byStack": {
+    "Synthesis": ["Generated Types (.d.ts)", "Serializer"],
+    "Quality": ["Lint rules", "Post-synth checks"],
+    "Integration": ["LSP providers", "MCP tools + resources", "Skills"]
+  }}
+}

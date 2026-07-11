@@ -1,0 +1,22 @@
+{
+  "nodes": [
+    {"id": "build", "kind": "", "lexicon": "", "attrs": {"makes": "image"}},
+    {"id": "publish", "kind": "", "lexicon": "", "attrs": {"to": "registry · by digest"}},
+    {"id": "generate-sbom", "kind": "", "lexicon": "", "attrs": {"emits": "SBOM"}},
+    {"id": "attest-provenance", "kind": "", "lexicon": "", "attrs": {"emits": "SLSA provenance"}},
+    {"id": "sign", "kind": "", "lexicon": "", "attrs": {"emits": "keyless signature"}},
+    {"id": "verify", "kind": "", "lexicon": "", "attrs": {"checks": "signature + provenance", "against": "identity policy"}},
+    {"id": "apply", "kind": "", "lexicon": "", "attrs": {"does": "deploy", "gate": "throws on failure"}}
+  ],
+  "edges": [
+    {"from": "build", "to": "publish", "kind": "ref", "viaAttr": "digest assigned"},
+    {"from": "publish", "to": "generate-sbom", "kind": "ref"},
+    {"from": "publish", "to": "attest-provenance", "kind": "ref"},
+    {"from": "publish", "to": "sign", "kind": "ref"},
+    {"from": "attest-provenance", "to": "verify", "kind": "ref"},
+    {"from": "sign", "to": "verify", "kind": "ref", "viaAttr": "same digest"},
+    {"from": "generate-sbom", "to": "verify", "kind": "ref"},
+    {"from": "verify", "to": "apply", "kind": "ref"}
+  ],
+  "groups": {"byStack": {"one artifact digest (sha256:…)": ["generate-sbom", "attest-provenance", "sign"]}}
+}

@@ -1,0 +1,31 @@
+{
+  "nodes": [
+    {"id": "search-service", "kind": "component", "lexicon": "", "attrs": {}},
+    {"id": "ddb-table", "kind": "component", "lexicon": "", "attrs": {}},
+    {"id": "neo4j-cluster", "kind": "component", "lexicon": "", "attrs": {}},
+    {"id": "jar-lib → emr-job", "kind": "component", "lexicon": "", "attrs": {}},
+    {"id": "legacy-app (compose)", "kind": "component", "lexicon": "", "attrs": {}},
+    {"id": "Generic orchestrator", "kind": "", "lexicon": "", "attrs": {"has": "no per-component code"}},
+    {"id": "cfn-deploy", "kind": "capability", "lexicon": "", "attrs": {}},
+    {"id": "publish-image", "kind": "capability", "lexicon": "", "attrs": {}},
+    {"id": "code-deploy", "kind": "capability", "lexicon": "", "attrs": {}},
+    {"id": "emr-start-job-run", "kind": "capability", "lexicon": "", "attrs": {}},
+    {"id": "wait / health-gate", "kind": "capability", "lexicon": "", "attrs": {}}
+  ],
+  "edges": [
+    {"from": "search-service", "to": "Generic orchestrator", "kind": "ref"},
+    {"from": "ddb-table", "to": "Generic orchestrator", "kind": "ref"},
+    {"from": "neo4j-cluster", "to": "Generic orchestrator", "kind": "ref"},
+    {"from": "jar-lib → emr-job", "to": "Generic orchestrator", "kind": "ref"},
+    {"from": "legacy-app (compose)", "to": "Generic orchestrator", "kind": "ref"},
+    {"from": "Generic orchestrator", "to": "cfn-deploy", "kind": "ref"},
+    {"from": "Generic orchestrator", "to": "publish-image", "kind": "ref"},
+    {"from": "Generic orchestrator", "to": "code-deploy", "kind": "ref"},
+    {"from": "Generic orchestrator", "to": "emr-start-job-run", "kind": "ref"},
+    {"from": "Generic orchestrator", "to": "wait / health-gate", "kind": "ref"}
+  ],
+  "groups": {"byStack": {
+    "Components (unbounded, each unique)": ["search-service", "ddb-table", "neo4j-cluster", "jar-lib → emr-job", "legacy-app (compose)"],
+    "Capabilities (bounded, shared)": ["cfn-deploy", "publish-image", "code-deploy", "emr-start-job-run", "wait / health-gate"]
+  }}
+}

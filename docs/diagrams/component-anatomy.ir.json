@@ -1,0 +1,17 @@
+{
+  "nodes": [
+    {"id": "build", "kind": "", "lexicon": "", "attrs": {"does": "source → archive"}},
+    {"id": "publish", "kind": "", "lexicon": "", "attrs": {"does": "promote at deploy time"}},
+    {"id": "apply", "kind": "", "lexicon": "", "attrs": {"does": "deploy the stack/service"}},
+    {"id": "verify", "kind": "", "lexicon": "", "attrs": {"does": "wait healthy / gate"}},
+    {"id": "Service", "kind": "archetype", "lexicon": "", "attrs": {"phases": "build · publish · apply · verify"}},
+    {"id": "Infra", "kind": "archetype", "lexicon": "", "attrs": {"phases": "apply · verify  (no build)"}},
+    {"id": "Producer / library", "kind": "archetype", "lexicon": "", "attrs": {"phases": "build · publish  (no service apply)"}}
+  ],
+  "edges": [
+    {"from": "build", "to": "publish", "kind": "ref"},
+    {"from": "publish", "to": "apply", "kind": "ref"},
+    {"from": "apply", "to": "verify", "kind": "ref"}
+  ],
+  "groups": {"byStack": {"A component's deploy composition": ["build", "publish", "apply", "verify"]}}
+}
