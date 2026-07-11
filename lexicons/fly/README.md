@@ -74,6 +74,10 @@ The lexicon ships a deploy Op that runs the phases boot, build, apply, verify, a
 
 The same code applies to a local emulator and to a real Fly org; the only difference is the endpoint.
 
+## Agent skill
+
+The agent-facing entry point is the `chant-fly` skill: a short operational playbook that walks an agent through authoring an `App` and `Machine`, linting with `chant build`, and reconciling over the Machines API with `flyApply`, including the `FLY_FLAPS_BASE_URL` switch between mudflaps and a real org. It ships with two companions, `chant-fly-patterns` (volumes, IPs, certificates, apply-only secrets, and the ownership model) and `chant-fly-ops` (waiting, leases, prune, and teardown). The skill sources live in [`src/skills/`](src/skills/).
+
 ## Related packages
 
 | Package                                                                                    | Role                                  |
