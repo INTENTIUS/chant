@@ -1,0 +1,23 @@
+import { App, Machine, MachineConfig, MachineGuest } from "@intentius/chant-lexicon-fly";
+
+// One Fly app and one machine — the smallest complete deploy. The serializer
+// (#738) turns these into the flaps create bodies flyApply POSTs: the App into
+// `POST /v1/apps { app_name }`, the Machine into
+// `POST /v1/apps/local-fly-demo/machines { name, region, config }` (a machine's
+// owning app is the stack's sole app when it names none).
+//
+// The machine carries no manual metadata: the serializer stamps the
+// `managed-by: chant` ownership marker into `config.metadata` on its own, which
+// is what the owned-only prune reads back (D2).
+const app = new App({ name: "local-fly-demo" });
+
+const web = new Machine({
+  name: "web",
+  region: "iad",
+  config: new MachineConfig({
+    image: "flyio/hellofly:latest",
+    guest: new MachineGuest({ cpu_kind: "shared", cpus: 1, memory_mb: 256 }),
+  }),
+});
+
+export { app, web };
