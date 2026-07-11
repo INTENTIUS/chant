@@ -5,7 +5,7 @@ description: How to extend chant's lifecycle layer — write your own as Ops, or
 
 import { Aside } from '@astrojs/starlight/components';
 
-chant's product is the synthesis core: pure, deterministic, lint-gated TypeScript-to-spec compilation. Everything past synthesis — state, apply, drift, reconcile, retire — is the **lifecycle**, and it is a bolt-on, not the core. The shape of the project is:
+chant's core is a compiler: pure, deterministic, lint-gated TypeScript-to-spec compilation. Everything past synthesis — state, apply, drift, reconcile, retire — is the **lifecycle**, a first-class layer you build on that core rather than a fixed part of it. The shape of the project is:
 
 > **Pluggable lexicons in. Pluggable lifecycles out. Pure synthesis in the middle.**
 

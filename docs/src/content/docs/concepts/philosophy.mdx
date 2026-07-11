@@ -7,7 +7,7 @@ import Diagram from '../../../components/Diagram.astro';
 
 Infrastructure tools give you syntax — YAML schemas, HCL blocks, SDK constructors. What they don't give you is semantics: whether what you declared actually makes sense in context. That's the gap chant closes.
 
-<Diagram name="philosophy-layers" alt="Three-layer architecture: Synthesis Core at the base, Operational Extensions in the middle, Agent Integration at the top" caption="chant's three conceptual layers" />
+<Diagram name="philosophy-layers" alt="A deterministic core as the foundation, the lifecycle you choose built on it, and the agents and operators that act on it" caption="The deterministic core and the lifecycle built on it" />
 
 ## Two Ideas
 
@@ -15,15 +15,15 @@ Infrastructure tools give you syntax — YAML schemas, HCL blocks, SDK construct
 
 **Synthesis** takes typed TypeScript declarations in and produces validated artifacts out. You write TypeScript objects, chant resolves dependencies, and serializes to the target format.
 
-## A Synthesis Compiler
+## A Compiler at the Core
 
-chant is a compiler. TypeScript in, spec-native output out. This isn't a new idea — it's an approach that was always available. Nobody built it because the industry was racing to own the full lifecycle: state management, deployment, drift detection, rollback. chant does one thing and stops at the boundary where operational tooling begins.
+chant is a compiler at its core. TypeScript in, spec-native output out. This isn't a new idea — it's an approach that was always available. Nobody built it because the industry was racing to weld one lifecycle to the compiler: state management, deployment, drift detection, rollback, owned end to end. chant keeps the compiler deterministic and lets the lifecycle be yours — built on top of that core, not fused into it.
 
 ## TypeScript as Data
 
 Most IaC tools that use general-purpose languages — CDK, Pulumi, Terraform's CDK — work by *executing* your code. Your program runs, makes API calls, and the tool captures the result.
 
-chant runs synthesis only. It imports your `.ts` files, reads the resource objects they export, and emits output. It never calls a cloud API, reads or writes state, or deploys. Your TypeScript declares intent. The build turns that intent into an artifact and stops.
+The build runs only synthesis. It imports your `.ts` files, reads the resource objects they export, and emits output. It never calls a cloud API, reads or writes state, or deploys. Your TypeScript declares intent. The build turns that intent into an artifact — deterministically, with no side effects. Deploying that artifact is the lifecycle's job, one layer up.
 
 Synthesis does run your code. It runs only a constrained slice of it. The evaluability lint rules (EVL) reject anything that would make a resource depend on more than literals, constants, and cross-resource references. No function calls in props. No control flow around resources. With those rules satisfied, running the file is equivalent to reading static data. That constraint is the point. Because synthesis is side-effect-free and deterministic for conforming source:
 
@@ -40,18 +40,18 @@ Each lexicon is faithful to its target spec. The AWS lexicon generates from the 
 
 This means walk-away cost is zero. The output is standard CloudFormation, standard GitLab CI, standard whatever-the-lexicon-targets. If you stop using chant, the artifacts keep working. There's nothing chant-specific in the output.
 
-## What chant Doesn't Do
+## Where the Build Path Ends
 
-`chant build` produces artifacts — it doesn't deploy them, call cloud APIs, or manage state. Synthesis is pure and deterministic: same source in, same output out, zero side effects. This is a deliberate scope boundary, not a limitation. A pure core also owns less machinery — no provider SDKs, state backend, or network at build time — which means a smaller surface to audit; see [Owning less](/chant/concepts/comparison/#owning-less).
+`chant build` produces artifacts — it doesn't deploy them, call cloud APIs, or manage state. Synthesis is pure and deterministic: same source in, same output out, zero side effects. That boundary is deliberate. Deployment, drift, and reconciliation live one layer up, in the lifecycle you choose ([Lifecycle Models](/chant/concepts/lifecycle-models/)) — kept separate so the build path stays a small, side-effect-free thing to audit, with no provider SDKs, state backend, or network at build time; see [Owning less](/chant/concepts/comparison/#owning-less).
 
-The deployment and operational layer is increasingly handled by agents, CI pipelines, and platform tooling. chant's job is to make the synthesis step typed, linted, and deterministic — then hand off a native artifact that any deployment mechanism can consume.
+The lifecycle above the build runs either way you want it: as chant's own durable Ops, or handed off to agents, CI pipelines, and platform tooling. The core's job is to make synthesis typed, linted, and deterministic — then carry that trust up into deploy, observe, and reconcile, or hand a native artifact to any mechanism that consumes it.
 
 Anything with a schema is a potential lexicon target. chant doesn't replace your cloud tooling. It's a semantic layer on top of it. You can import existing templates, give them types, and lint them alongside everything else.
 
-## Operational Assistance
+## The Lifecycle on Top
 
-chant's architecture is concentric: a pure synthesis core surrounded by opt-in operational extensions. The core never changes — `chant build` is deterministic and side-effect-free. Extensions add operational context without touching the build pipeline.
+chant's architecture is layered: a deterministic synthesis core as the foundation, with the lifecycle you choose built on top of it. The core never changes — `chant build` is deterministic and side-effect-free — and each lifecycle layer adds operational reach without touching the build pipeline.
 
-The design supports declarative deployment workflows ([`Op`](/chant/guide/ops/) — phased Temporal workflows declared in `*.op.ts` files, run via `chant run`), continuous lifecycle observation ([`WatchOp`](/chant/guide/watching-lifecycle/) — periodic snapshot+diff scheduled via Temporal), observational lifecycle ([`chant lifecycle`](/chant/cli/lifecycle/) — non-authoritative snapshots; see [Drift Detection](/chant/concepts/drift-detection/) for the model), a release model ([Components](/chant/concepts/components/) — releasable units composed from a bounded capability set and run by a generated Op), and agentic skills for import and drift detection. These extensions share a principle: chant provides context and structure, agents and operators do the operational work.
+The lifecycle spans declarative deployment workflows ([`Op`](/chant/guide/ops/) — phased Temporal workflows declared in `*.op.ts` files, run via `chant run`), continuous observation ([`WatchOp`](/chant/guide/watching-lifecycle/) — periodic snapshot+diff scheduled via Temporal), the observational lifecycle model ([`chant lifecycle`](/chant/cli/lifecycle/) — non-authoritative snapshots; see [Drift Detection](/chant/concepts/drift-detection/)), a release model ([Components](/chant/concepts/components/) — releasable units composed from a bounded capability set and run by a generated Op), and agentic skills for import and drift detection. They share a principle: the deterministic core provides context and structure that the durable layers, agents, and operators act on with the same auditability underneath.
 
-Opt-in is implicit. If you never use operational extensions, chant is a pure synthesis compiler and nothing more.
+The lifecycle is opt-in per environment. Use none of it and chant is a deterministic compiler you hand off from; use all of it and chant deploys, observes, and reconciles — the same core underneath either way.

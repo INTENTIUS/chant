@@ -1,30 +1,30 @@
 ---
 title: Choosing Your Deployment Model
-description: Synthesis-only, Ops, or raw Temporal — pick the right fit for your project
+description: Hand off to your own pipeline, Ops, Components, or raw Temporal — pick the right fit for your project
 ---
 
 import { Aside } from '@astrojs/starlight/components';
 import Diagram from '../../../components/Diagram.astro';
 
-chant covers the synthesis step — TypeScript in, validated artifacts out — and offers optional layers beyond that: Ops, the lifecycle dial, and the component release model. Knowing which layer fits your situation avoids unnecessary setup.
+chant covers the synthesis step — TypeScript in, validated artifacts out — and the lifecycle layers built on top of it: Ops, the lifecycle dial, and the component release model. Knowing which layer fits your situation avoids unnecessary setup.
 
-If you never use the operational layers, chant is a pure synthesis compiler — no executor, no state file, nothing to run. The orchestration layer is Temporal-native when you want durability and zero-dependency when you don't: the local executor runs Ops in-process, and only gated or destructive applies need a Temporal cluster.
+Use none of the lifecycle layers and chant is a deterministic compiler you hand off from — no executor, no state file, nothing to run. The orchestration layer is Temporal-native when you want durability and zero-dependency when you don't: the local executor runs Ops in-process, and only gated or destructive applies need a Temporal cluster.
 
-<Diagram name="deployment-paths" alt="Decision tree: existing deploy pipeline → synthesis only; need observability/gates → Ops or Raw Temporal" caption="Choosing your deployment model" />
+<Diagram name="deployment-paths" alt="Decision tree: existing deploy pipeline → hand off; need observability, gates, or rollback → Ops or Raw Temporal" caption="Choosing your deployment model" />
 
-## Synthesis Only
+## Hand Off to an Existing Pipeline
 
-`chant build` produces spec-native artifacts (CloudFormation, GitLab CI, Kubernetes manifests, etc.) and stops. Deployment happens however it always has: a CI pipeline, ArgoCD, Terraform, a manual `kubectl apply`. Nothing else to install.
+`chant build` produces spec-native artifacts (CloudFormation, GitLab CI, Kubernetes manifests, etc.) and hands them off. Deployment happens however it always has: a CI pipeline, ArgoCD, Terraform, a manual `kubectl apply`. Nothing else to install — the lifecycle layers below simply go unused.
 
 **Use this when:**
 - You already have a deployment pipeline you trust
 - You want to adopt typed, linted IaC without changing operational tooling
 - Your deployments are short-running or trivially retried from scratch
 
-**How to get started:** [Quick Start](/chant/getting-started/quick-start/) — the entire guide is synthesis-only.
+**How to get started:** [Quick Start](/chant/getting-started/quick-start/) — the entire guide covers this hand-off path.
 
 ```bash
-# That's the complete picture for synthesis-only users
+# The complete picture when you hand off to your own tooling
 chant build
 kubectl apply -f dist/infra.yaml   # or whatever your tooling does next
 ```
@@ -109,7 +109,7 @@ Ops and raw Temporal are not mutually exclusive. A project can have `*.op.ts` fi
 
 | Situation | Model |
 |-----------|-------|
-| I have ArgoCD / Terraform / an existing deploy pipeline | Synthesis only |
+| I have ArgoCD / Terraform / an existing deploy pipeline | Hand off (existing pipeline) |
 | My deployment script is more than 50 lines and fails unpredictably | Ops |
 | I need a human approval gate mid-deploy | Ops |
 | I have many deployable units each dragging its own pipeline | Components |

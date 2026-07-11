@@ -11,7 +11,7 @@ For the model's own internals — the contract, the capability registry, wiring,
 
 ## Where it sits
 
-chant is a pure synthesis core with three opt-in layers around it. Components are the outermost.
+chant is a deterministic synthesis core with the lifecycle built on top in layers. Components are the outermost.
 
 | Ring | Layer | What it does |
 |---|---|---|
@@ -20,7 +20,7 @@ chant is a pure synthesis core with three opt-in layers around it. Components ar
 | 2 | [Lifecycle dial](/chant/concepts/lifecycle-models/) | observe, reconcile, or apply — per environment |
 | 3 | Components | a release composed from a bounded capability set |
 
-Synthesis produces artifacts and stops. Components turn those artifacts into a release — build once, publish at deploy time, apply, verify, roll back — driven by a generated Op. If you never author a component, none of this runs.
+Synthesis produces the artifacts; Components turn them into a release — build once, publish at deploy time, apply, verify, roll back — driven by a generated Op. If you never author a component, none of this runs.
 
 ## Component is not Composite
 

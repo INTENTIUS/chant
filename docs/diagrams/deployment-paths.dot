@@ -16,7 +16,7 @@ digraph deployment_paths {
   q3 [label="Already running\nTemporal?"
       shape=diamond fillcolor="#FEF3C7" color="#D97706" fontcolor="#78350F" margin="0.3,0.15"]
 
-  synth [label="Synthesis Only\nchant build → hand off\nno Temporal required"
+  synth [label="Hand Off to Your Pipeline\nchant build → your pipeline\nno Temporal required"
          fillcolor="#DCFCE7" color="#16A34A" fontcolor="#14532D"]
 
   ops   [label="Ops\n*.op.ts → chant build → chant run\nphases · gates · compensation"
