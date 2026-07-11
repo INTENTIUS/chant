@@ -4,6 +4,8 @@ export { Op, phase, activity, gate, build, kubectlApply, helmInstall, waitForSta
          azGroupEnsure, azGroupDelete, azApply, azDelete, awsApply, awsDelete, gcpApply, gcpDelete, policyGate } from "./builders";
 export { OpResource } from "./resource";
 export { safeHeartbeat, sleep } from "./activity-runtime";
+export { emulatorLifecycle } from "./emulator-lifecycle";
+export type { EmulatorSpec, EmulatorUpArgs, EmulatorLifecycle } from "./emulator-lifecycle";
 export type { OpConfig, PhaseDefinition, StepDefinition, ActivityStep, GateStep } from "./types";
 export { discoverOps } from "./discover";
 export type { DiscoveredOp, OpDiscoveryResult } from "./discover";
