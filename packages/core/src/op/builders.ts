@@ -298,6 +298,79 @@ export const gcpDelete = (manifestPath: string, opts?: Record<string, unknown>):
   return activity("gcpDelete", { manifestPath, ...args }, profile ?? "longInfra");
 };
 
+// ── Sprites (#762) — imperative, checkpointable sandbox steps ──────────────────
+//
+// The builder and the executor-side activity function share a name (e.g.
+// `spriteCreate`), and that is intentional: the builder here returns an
+// `activity("spriteCreate", ...)` step; `loadActivities` loads the function of
+// the same name from the temporal lexicon to run the HTTP. They live in
+// different modules and are both exported — exactly how `flapsUp`/`flapsDown`
+// already work. Op files import these builders; the executor resolves the
+// function by name. Endpoint override + bearer are read by the activity from
+// `SPRITES_BASE_URL` / `SPRITES_API_TOKEN` (or an explicit `endpoint` arg).
+
+/** Create a sprite with a caller-chosen `name` (used as its id). Defaults to the `longInfra` profile (override via `profile`). */
+export const spriteCreate = (args: {
+  name: string;
+  image?: string;
+  size?: string;
+  policy?: unknown;
+  endpoint?: string;
+  token?: string;
+  profile?: ActivityStep["profile"];
+}): ActivityStep => {
+  const { profile, ...rest } = args;
+  return activity("spriteCreate", rest, profile ?? "longInfra");
+};
+
+/** Run a command in a sprite; a non-zero exit fails the step. Defaults to the `longInfra` profile (override via `profile`). */
+export const spriteExec = (args: {
+  id: string;
+  cmd: string;
+  timeoutMs?: number;
+  endpoint?: string;
+  token?: string;
+  profile?: ActivityStep["profile"];
+}): ActivityStep => {
+  const { profile, ...rest } = args;
+  return activity("spriteExec", rest, profile ?? "longInfra");
+};
+
+/** Checkpoint a sprite under a caller-chosen `label` (the transactional boundary). Defaults to the `longInfra` profile (override via `profile`). */
+export const spriteCheckpoint = (args: {
+  id: string;
+  label?: string;
+  endpoint?: string;
+  token?: string;
+  profile?: ActivityStep["profile"];
+}): ActivityStep => {
+  const { profile, ...rest } = args;
+  return activity("spriteCheckpoint", rest, profile ?? "longInfra");
+};
+
+/** Restore a sprite to a labeled `checkpoint` — the checkpoint-as-compensation step (S5). Defaults to the `longInfra` profile (override via `profile`). */
+export const spriteRestore = (args: {
+  id: string;
+  checkpoint: string;
+  endpoint?: string;
+  token?: string;
+  profile?: ActivityStep["profile"];
+}): ActivityStep => {
+  const { profile, ...rest } = args;
+  return activity("spriteRestore", rest, profile ?? "longInfra");
+};
+
+/** Destroy a sprite (idempotent). Defaults to the `fastIdempotent` profile (override via `profile`). */
+export const spriteDestroy = (args: {
+  id: string;
+  endpoint?: string;
+  token?: string;
+  profile?: ActivityStep["profile"];
+}): ActivityStep => {
+  const { profile, ...rest } = args;
+  return activity("spriteDestroy", rest, profile ?? "fastIdempotent");
+};
+
 /**
  * Gate an apply on organizational policy: build the project and run its
  * `lint.policies` over the resolved resources, blocking the workflow on any

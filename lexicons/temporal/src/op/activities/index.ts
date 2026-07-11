@@ -28,6 +28,36 @@ export type { ChantTeardownArgs } from "./teardown";
 export { k3dUp, k3dDown, k3dUpCommand, k3dDownCommand, k3dExistsCommand } from "./k3d";
 export type { K3dUpArgs, K3dDownArgs } from "./k3d";
 
+// Sprites (#762): imperative, checkpointable sandbox activities. Loaded by name
+// through `loadActivities(["temporal"])`; the fake lives in `sprites-fake.ts`
+// and is imported only by tests (not re-exported here — it is not an activity).
+export {
+  spriteCreate,
+  spriteExec,
+  spriteCheckpoint,
+  spriteRestore,
+  spriteDestroy,
+  resolveSpritesEndpoint,
+  defaultSpritesHttp,
+  spriteCreateBody,
+  spriteExecBody,
+  parseCreateResponse,
+  parseExecResponse,
+  parseCheckpointResponse,
+  DEFAULT_SPRITES_BASE_URL,
+} from "./sprites";
+export type {
+  SpritesHttp,
+  SpriteCreateArgs,
+  SpriteCreateResult,
+  SpriteExecArgs,
+  SpriteExecResult,
+  SpriteCheckpointArgs,
+  SpriteCheckpointResult,
+  SpriteRestoreArgs,
+  SpriteDestroyArgs,
+} from "./sprites";
+
 // Cloud-specific appliers were relocated to their own lexicons (aws → floci,
 // gcp → gcpApply, azure → az group) and are loaded from there by the core
 // activity registry per the project's configured lexicons. k3d stays here — it
