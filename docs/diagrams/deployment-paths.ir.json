@@ -1,0 +1,21 @@
+{
+  "nodes": [
+    {"id": "I need to deploy infrastructure", "kind": "", "lexicon": "", "attrs": {}},
+    {"id": "Existing deploy pipeline?", "kind": "", "lexicon": "", "attrs": {"_status": "accent", "e.g.": "CI · ArgoCD · Terraform"}},
+    {"id": "Need observability, gates, or rollback?", "kind": "", "lexicon": "", "attrs": {"_status": "accent"}},
+    {"id": "Already running Temporal?", "kind": "", "lexicon": "", "attrs": {"_status": "accent"}},
+    {"id": "Hand Off to Your Pipeline", "kind": "", "lexicon": "", "attrs": {"_status": "good", "how": "chant build → your pipeline", "needs": "no Temporal"}},
+    {"id": "Ops", "kind": "", "lexicon": "", "attrs": {"flow": "*.op.ts → build → run", "has": "phases · gates · compensation"}},
+    {"id": "Raw Temporal + chant", "kind": "", "lexicon": "", "attrs": {"you": "write your own workflow", "get": "full signal / query / update"}}
+  ],
+  "edges": [
+    {"from": "I need to deploy infrastructure", "to": "Existing deploy pipeline?", "kind": "ref"},
+    {"from": "Existing deploy pipeline?", "to": "Hand Off to Your Pipeline", "kind": "ref", "viaAttr": "yes — keep it"},
+    {"from": "Existing deploy pipeline?", "to": "Need observability, gates, or rollback?", "kind": "ref", "viaAttr": "no / not yet"},
+    {"from": "Need observability, gates, or rollback?", "to": "Hand Off to Your Pipeline", "kind": "ref", "viaAttr": "no"},
+    {"from": "Need observability, gates, or rollback?", "to": "Already running Temporal?", "kind": "ref", "viaAttr": "yes"},
+    {"from": "Already running Temporal?", "to": "Raw Temporal + chant", "kind": "ref", "viaAttr": "yes"},
+    {"from": "Already running Temporal?", "to": "Ops", "kind": "ref", "viaAttr": "no"}
+  ],
+  "groups": {}
+}
