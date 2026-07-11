@@ -1,8 +1,46 @@
 ---
 title: Overview
-description: Fly lexicon for chant
+description: The Fly.io lexicon for chant — typed Fly infrastructure, applied straight to the Machines API.
 ---
 
-Welcome to the Fly lexicon documentation.
+The Fly.io lexicon lets you declare Fly apps, machines, volumes, IPs, certificates, and secrets as typed TypeScript and apply them straight to the Fly Machines API.
 
-Run `just generate` to populate this site with generated reference pages.
+chant is a type system for operations: you describe infrastructure as typed TypeScript, and each lexicon turns those declarations into real provider API calls. This one covers Fly.
+
+## Test it without a Fly account
+
+Fly's Machines API is emulated by [mudflaps](https://github.com/intentius/mudflaps), a stateful Fly Machines API emulator. The entire apply-and-deploy loop runs against a local mudflaps container in CI, with no Fly account and no bill. The same code deploys to a real org by changing one endpoint, so the loop you test offline is the loop you ship.
+
+```bash
+cd examples/local-fly
+chant run fly        # boots mudflaps, applies an App + Machine, waits for started, tears down
+```
+
+## What you get
+
+- Typed resources generated from the real API. `App`, `Machine`, `Volume`, `IPAddress`, `Certificate`, and `Secret` come from Fly's Machines API OpenAPI spec, so `MachineConfig` is typed all the way down through guest, services, mounts, and checks, with full editor autocomplete.
+- Apply without a state file. `flyApply` speaks the Machines API directly, with no `flyctl` and no state file. It creates and updates machines, waits each to `started` over `/wait`, prunes only what carries the `managed-by: chant` marker, and speaks the lease protocol so concurrent operators stay out of each other's way.
+- Build-time lint. Invalid regions, bad guest sizing, mounts that point at an undeclared volume, and inline secret literals fail `chant build` before anything reaches the API.
+- A deploy Op you can run offline. It runs the phases boot, build, apply, verify, and teardown, and a `local-fly` starter runs the whole loop against the [mudflaps](https://github.com/intentius/mudflaps) emulator in CI with no Fly account. Set `FLY_API_TOKEN` and drop the local endpoint to deploy the same code to a real org.
+
+## Author an App and a Machine
+
+```ts
+import { App, Machine, MachineConfig, MachineGuest } from "@intentius/chant-lexicon-fly";
+
+export const app = new App({ name: "my-app" });
+
+export const web = new Machine({
+  region: "iad",
+  config: new MachineConfig({
+    image: "flyio/hellofly:latest",
+    guest: new MachineGuest({ cpu_kind: "shared", cpus: 1, memory_mb: 256 }),
+  }),
+});
+```
+
+## One endpoint, local or real
+
+The endpoint is a single switch. `FLY_FLAPS_BASE_URL` (or an explicit `endpoint`) chooses between a real Fly org and a local emulator, with no code change.
+
+Run `chant dev generate` to populate this site with generated resource reference pages.
