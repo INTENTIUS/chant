@@ -24,16 +24,14 @@
 
 import { readFileSync } from "node:fs";
 import { safeHeartbeat, sleep } from "@intentius/chant/op";
+import { hasOwnershipMarker } from "@intentius/chant/ownership";
+import { FLY_METADATA_OWNERSHIP_KEYS } from "../../ownership";
 
 /** Default flaps host when neither an `endpoint` arg nor `FLY_FLAPS_BASE_URL` is set. */
 export const DEFAULT_FLAPS_BASE_URL = "https://api.machines.dev";
 
 /** Header carrying a lease nonce on a mutating request, matching fly-go/flaps. */
 export const LEASE_NONCE_HEADER = "fly-machine-lease-nonce";
-
-/** Machine `config.metadata` key that marks chant ownership (D2). */
-const OWNERSHIP_KEY = "managed-by";
-const OWNERSHIP_VALUE = "chant";
 
 /** One flaps REST call as emitted by the #738 serializer. */
 export interface FlapsRequest {
@@ -152,9 +150,15 @@ export function appNameFromRequest(req: FlapsRequest): string {
   return name;
 }
 
-/** True when a machine's live metadata carries chant's ownership marker (D2). Pure. */
+/**
+ * True when a machine's live metadata carries chant's ownership marker (D2).
+ * Pure. Reads the key convention the fly lexicon declares via the #686 seam
+ * (`FLY_METADATA_OWNERSHIP_KEYS`) through core's `hasOwnershipMarker`, so the
+ * prune filter and the serializer's stamp can never drift apart — the marker
+ * key lives in exactly one place.
+ */
 export function isChantOwned(metadata: Record<string, string> | null | undefined): boolean {
-  return metadata?.[OWNERSHIP_KEY] === OWNERSHIP_VALUE;
+  return hasOwnershipMarker(metadata ?? undefined, FLY_METADATA_OWNERSHIP_KEYS);
 }
 
 /** Structural equality over two config values, order-insensitive. Pure. */
@@ -535,13 +539,29 @@ export async function pruneMachines(
   return pruned;
 }
 
-// ── App-scoped, metadata-less resources (#741, D2) ───────────────────────────
+// ── App-scoped, metadata-less resources (#741, #743, D2) ─────────────────────
 //
-// Volumes, IPs, certificates, and secrets carry no ownership marker, so they are
-// owned at the app boundary (D2): everything under a chant-managed app is chant's
-// and prune is app-scoped, not metadata-filtered like machines. Each resource
-// creates if absent (idempotent by its natural key) and prunes anything live
-// that the plan no longer declares. Secrets are apply-only (D7): always POSTed,
+// The fly ownership convention (#743) is asymmetric, and the asymmetry is
+// deliberate:
+//
+//   - Machines carry `config.metadata`, so they get the primary marker
+//     (`managed-by: chant`, FLY_METADATA_OWNERSHIP_KEYS). `pruneMachines`
+//     filters on it, so a foreign machine in the same app is never touched.
+//   - Volumes, IPs, certificates, and secrets carry no arbitrary metadata, so
+//     they have no marker channel. Their ownership boundary is the app itself
+//     (like a CloudFormation stack): everything under a chant-managed app is
+//     treated as chant's, and prune is app-scoped — anything live that the plan
+//     no longer declares is removed.
+//
+// The limitation: because these types have no marker, a resource created
+// out-of-band inside a chant-managed app is indistinguishable from a chant one
+// and CAN be pruned. That is the price of app-boundary ownership; the
+// safeguard is that the app boundary is itself only ever chant-managed when the
+// app carries the marker via its machines. Never widen app-scoped prune beyond
+// a single chant-declared app.
+//
+// Each resource creates if absent (idempotent by its natural key) and prunes
+// what the plan no longer declares. Secrets are apply-only (D7): always POSTed,
 // never read back for a diff.
 
 /** A live volume as flaps lists it. */
