@@ -38,8 +38,10 @@ to `aws cloudformation deploy` / `kubectl` / `az deployment`.)
 
 ## Run it
 
-Requires only Docker. Every op's emulator lifecycle, apply, and verify are typed
-activities — no `aws`/`az`/`gcloud`/`curl` on PATH.
+Requires only Docker. The apply and verify phases are shell-free (no
+`aws`/`az`/`gcloud`/`curl` on PATH — they speak each API directly). The one
+exception is the emulator lifecycle itself: `flociUp`/`flociDown` shell out to
+`docker run`/`docker ps`/`docker rm`, which is why Docker is the sole prerequisite.
 
 ```bash
 npm install
@@ -52,6 +54,22 @@ chant run gcp     # GCS bucket → floci-gcp
 Each op boots the cloud's emulator, builds that cloud's stack, applies it,
 verifies the resource exists, and tears the emulator down — every phase a
 modeled activity (`flociAzUp`/`gcpApply`/`httpCheck`/…), not a shell script.
+
+## Floci: one family, two lineages
+
+"Floci" is a family of emulators, not a single codebase — which is why AWS's
+health check looks different from the others:
+
+- **AWS** runs the **LocalStack-compatible** `floci/floci` image: health at
+  `/_localstack/health`, and readiness is gated on the `cloudformation` service
+  appearing in that payload.
+- **Azure and GCP** run **bespoke** `floci-az` / `floci-gcp` images with their
+  own health endpoints — purpose-built ARM and GCP-REST fakes, not LocalStack.
+
+So AWS is the adopted (LocalStack-lineage) member and az/gcp are custom. If a
+fourth cloud is added, note that each cloud's `floci*.ts` lifecycle wrapper is a
+near-duplicate today (same structure; port/image/health differ) — a shared
+emulator-lifecycle helper is worth considering before the copy count grows.
 
 ## Real cloud
 

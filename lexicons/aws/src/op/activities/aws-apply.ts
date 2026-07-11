@@ -54,7 +54,14 @@ export function capabilityParams(capabilities: string[]): Record<string, string>
   return out;
 }
 
-/** First `<tag>…</tag>` text in a CFN XML response. */
+/**
+ * First `<tag>…</tag>` text in a CFN XML response.
+ *
+ * Assumes flat scalar fields — the CloudFormation Query API returns simple
+ * `<StackStatus>…</StackStatus>` style leaves, so `[^<]*` is sufficient. It does
+ * NOT handle nested tags or XML entities in the value; if a field ever carries
+ * either, replace this with a real XML parser.
+ */
 export function xmlField(xml: string, tag: string): string | undefined {
   return xml.match(new RegExp(`<${tag}>([^<]*)</${tag}>`))?.[1];
 }
