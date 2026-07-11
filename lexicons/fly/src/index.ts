@@ -4,6 +4,10 @@ export { flyPlugin } from "./plugin";
 // Serializer
 export { flySerializer } from "./serializer";
 
-// Generated resources — export everything from generated index
-// After running `chant generate`, this re-exports all resource classes
-// export * from "./generated/index";
+// Ownership marker convention (machine config.metadata keys)
+export { FLY_METADATA_OWNERSHIP_KEYS } from "./ownership";
+
+// Generated resources — export everything from generated index.
+// Provides `App`, `Machine`, `Volume`, and the property types
+// (`MachineConfig`, `MachineGuest`, `MachineService`, ...) for authoring.
+export * from "./generated/index";

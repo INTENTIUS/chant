@@ -1,8 +1,15 @@
+import { join } from "path";
+import { homedir } from "os";
 import { fetchWithCache } from "@intentius/chant/codegen/fetch";
 
 /** Fly's published Machines API (flaps) OpenAPI 3.0.1 spec. */
 const SCHEMA_URL = "https://docs.machines.dev/openapi.json";
-const CACHE_FILE = ".cache/openapi3.json";
+/**
+ * Cache under `~/.chant` (like the k8s lexicon) so CI's `~/.chant` schema
+ * cache covers it — a `docs.machines.dev` hiccup then falls back to the cache
+ * instead of failing the generate step.
+ */
+const CACHE_FILE = join(homedir(), ".chant", "fly-machines-openapi.json");
 
 /**
  * Fetch the flaps OpenAPI spec and return it as a Map<typeName, Buffer>
