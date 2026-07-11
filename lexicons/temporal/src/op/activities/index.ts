@@ -58,6 +58,21 @@ export type {
   SpriteDestroyArgs,
 } from "./sprites";
 
+// spritzer (the Sprites API emulator) Docker lifecycle — the twin of fly's
+// flapsUp/flapsDown. `spritesUp`/`spritesDown` resolve by name so an Op can
+// boot/tear down the emulator as a modeled step; the sprite activities target it
+// via SPRITES_BASE_URL.
+export {
+  spritesUp,
+  spritesDown,
+  spritesRunCommand,
+  spritesRmCommand,
+  spritesExistsCommand,
+  spritesHealthUrl,
+  spritesEndpoint,
+} from "./sprites-emulator";
+export type { SpritesUpArgs, SpritesDownArgs } from "./sprites-emulator";
+
 // Cloud-specific appliers were relocated to their own lexicons (aws → floci,
 // gcp → gcpApply, azure → az group) and are loaded from there by the core
 // activity registry per the project's configured lexicons. k3d stays here — it
