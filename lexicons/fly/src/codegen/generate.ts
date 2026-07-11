@@ -1,75 +1,106 @@
-import { generatePipeline, writeGeneratedArtifacts } from "@intentius/chant/codegen/generate";
-import type { GenerateResult } from "@intentius/chant/codegen/generate";
-import { dirname } from "path";
-import { fileURLToPath } from "url";
+/**
+ * Fly generation pipeline — uses core generatePipeline with fly-specific
+ * fetch, parse, naming, and generation callbacks.
+ */
+
+import {
+  generatePipeline,
+  writeGeneratedArtifacts,
+  type GenerateOptions,
+  type GenerateResult,
+  type GeneratePipelineConfig,
+} from "@intentius/chant/codegen/generate";
+import { fetchSchemas } from "../spec/fetch";
+import { parseFlyOpenAPI, type FlyParseResult } from "../spec/parse";
+import { NamingStrategy } from "./naming";
+import { generateLexiconJSON } from "./generate-lexicon";
+import { generateTypeScriptDeclarations } from "./generate-typescript";
+import {
+  generateRuntimeIndex as coreGenerateRuntimeIndex,
+  type RuntimeIndexEntry,
+  type RuntimeIndexPropertyEntry,
+} from "@intentius/chant/codegen/generate-runtime-index";
+
+export type { GenerateResult };
 
 /**
- * Run the code generation pipeline.
- *
- * Each callback has a TODO describing what to implement.
+ * Run the full fly generation pipeline.
  */
-export async function generate(options?: { verbose?: boolean; force?: boolean }): Promise<GenerateResult> {
-  const result = await generatePipeline({
-    // Must return Map<typeName, Buffer> — each entry is one schema file.
-    // Example: fetch a zip, extract JSON files, key by type name.
-    // See lexicons/aws/src/spec/fetch.ts for a working example.
-    fetchSchemas: async (opts) => {
-      const { fetchSchemas } = await import("../spec/fetch");
-      return fetchSchemas({ force: opts.force });
+export async function generate(opts: GenerateOptions = {}): Promise<GenerateResult> {
+  // The flaps spec is a single document — parseFlyOpenAPI returns multiple
+  // results. The pipeline calls parseSchema once, so we return the first result
+  // and inject the rest via augmentResults.
+  let pendingResults: FlyParseResult[] = [];
+
+  const config: GeneratePipelineConfig<FlyParseResult> = {
+    fetchSchemas: (fetchOpts) => fetchSchemas({ force: fetchOpts.force }),
+
+    parseSchema: (_typeName, data) => {
+      const results = parseFlyOpenAPI(data);
+      if (results.length === 0) return null;
+      pendingResults = results.slice(1);
+      return results[0];
     },
 
-    // Must return a ParsedResult (with propertyTypes[] and enums[] at minimum).
-    // Return null to skip a schema file.
-    // See lexicons/aws/src/spec/parse.ts for a working example.
-    parseSchema: (name, data) => {
-      throw new Error("TODO: implement parseSchema — parse a single schema file");
+    createNaming: (results) => new NamingStrategy(results),
+
+    augmentResults: (results, _opts, log) => {
+      if (pendingResults.length > 0) {
+        results.push(...pendingResults);
+        log(`Added ${pendingResults.length} additional fly schemas from OpenAPI spec`);
+        pendingResults = [];
+      }
+      log(`Total: ${results.length} fly resource/property schemas`);
+      return { results };
     },
 
-    // Must return a NamingStrategy instance.
-    // See lexicons/aws/src/codegen/naming.ts and ./naming.ts for setup.
-    createNaming: (results) => {
-      throw new Error("TODO: implement createNaming — return a NamingStrategy instance");
-    },
+    generateRegistry: (results, naming) => generateLexiconJSON(results, naming as NamingStrategy),
 
-    // Must return a string of JSON (the lexicon registry).
-    // Use buildRegistry + serializeRegistry from @intentius/chant/codegen/generate-registry.
-    // See lexicons/aws/src/codegen/generate.ts for a working example.
-    generateRegistry: (results, naming) => {
-      throw new Error("TODO: implement generateRegistry — produce lexicon JSON");
-    },
+    generateTypes: (results, naming) => generateTypeScriptDeclarations(results, naming as NamingStrategy),
 
-    // Must return a string of TypeScript declarations (.d.ts content).
-    // See lexicons/aws/src/codegen/generate.ts for a working example.
-    generateTypes: (results, naming) => {
-      throw new Error("TODO: implement generateTypes — produce .d.ts content");
-    },
+    generateRuntimeIndex: (results, naming) => generateRuntimeIndex(results, naming as NamingStrategy),
+  };
 
-    // Must return a string of TypeScript (runtime index with factory exports).
-    // Use generateRuntimeIndex from @intentius/chant/codegen/generate-runtime-index.
-    // See lexicons/aws/src/codegen/generate.ts for a working example.
-    generateRuntimeIndex: (results, naming) => {
-      throw new Error("TODO: implement generateRuntimeIndex — produce index.ts content");
-    },
-  });
-
-  if (options?.verbose) {
-    console.error(`Generated ${result.resources} resources, ${result.properties} property types`);
-  }
-
-  return result;
+  return generatePipeline(config, opts);
 }
 
 /**
- * Write generated files to the package directory.
+ * Write generated artifacts to disk.
  */
-export function writeGeneratedFiles(result: GenerateResult, pkgDir?: string): void {
-  const dir = pkgDir ?? dirname(dirname(fileURLToPath(import.meta.url)));
+export function writeGeneratedFiles(result: GenerateResult, baseDir: string): void {
   writeGeneratedArtifacts({
-    baseDir: dir,
+    baseDir,
     files: {
-      "lexicon.json": result.lexiconJSON,
+      "lexicon-fly.json": result.lexiconJSON,
       "index.d.ts": result.typesDTS,
       "index.ts": result.indexTS,
+      "runtime.ts": `/**\n * Runtime factory constructors — re-exported from core.\n */\nexport { createResource, createProperty } from "@intentius/chant/runtime";\n`,
     },
   });
+}
+
+/**
+ * Generate the runtime index.ts with factory constructor exports.
+ */
+function generateRuntimeIndex(results: FlyParseResult[], naming: NamingStrategy): string {
+  const resourceEntries: RuntimeIndexEntry[] = [];
+  const propertyEntries: RuntimeIndexPropertyEntry[] = [];
+
+  for (const r of results) {
+    const typeName = r.resource.typeName;
+    const tsName = naming.resolve(typeName);
+    if (!tsName) continue;
+
+    if (r.isProperty) {
+      propertyEntries.push({ tsName, resourceType: typeName });
+    } else {
+      const attrs: Record<string, string> = {};
+      for (const attr of r.resource.attributes) {
+        attrs[attr.name] = attr.name;
+      }
+      resourceEntries.push({ tsName, resourceType: typeName, attrs });
+    }
+  }
+
+  return coreGenerateRuntimeIndex(resourceEntries, propertyEntries, { lexiconName: "fly" });
 }

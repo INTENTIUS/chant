@@ -1,33 +1,45 @@
-import { NamingStrategy, type NamingConfig, type NamingInput } from "@intentius/chant/codegen/naming";
-
 /**
- * Naming configuration for this lexicon.
- *
- * TODO: Populate these tables with your provider's naming conventions.
+ * Fly naming strategy — maps Fly::Machines::{Kind} type names to
+ * user-friendly TypeScript class names.
  */
-export const namingConfig: NamingConfig = {
-  // High-priority short names for common resource types
-  priorityNames: {},
 
-  // Aliases for resource types that need alternate names
+import {
+  NamingStrategy as CoreNamingStrategy,
+  type NamingConfig,
+  type NamingInput,
+} from "@intentius/chant/codegen/naming";
+import { flyShortName, flyServiceName, type FlyParseResult } from "../spec/parse";
+
+export { propertyTypeName, extractDefName } from "@intentius/chant/codegen/naming";
+
+const flyNamingConfig: NamingConfig = {
+  priorityNames: {
+    "Fly::Machines::App": "App",
+    "Fly::Machines::Machine": "Machine",
+    "Fly::Machines::Volume": "Volume",
+  },
+
   priorityAliases: {},
 
-  // Aliases for property types
   priorityPropertyAliases: {},
 
-  // Abbreviations for service names (used in collision resolution)
-  serviceAbbreviations: {},
+  serviceAbbreviations: {
+    Machines: "Machines",
+  },
 
-  // Extract the short name from a fully-qualified type string
-  shortName: (typeName: string) => typeName.split("::").pop()!,
-
-  // Extract the service name from a fully-qualified type string
-  serviceName: (typeName: string) => typeName.split("::")[1] ?? typeName,
+  shortName: flyShortName,
+  serviceName: flyServiceName,
 };
 
 /**
- * Create a NamingStrategy instance from parsed results.
+ * Fly-specific naming strategy. Extends the core strategy with the fly config.
  */
-export function createNaming(inputs: NamingInput[]): NamingStrategy {
-  return new NamingStrategy(inputs, namingConfig);
+export class NamingStrategy extends CoreNamingStrategy {
+  constructor(results: FlyParseResult[]) {
+    const inputs: NamingInput[] = results.map((r) => ({
+      typeName: r.resource.typeName,
+      propertyTypes: r.propertyTypes,
+    }));
+    super(inputs, flyNamingConfig);
+  }
 }
