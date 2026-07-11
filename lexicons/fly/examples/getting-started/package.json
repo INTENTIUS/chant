@@ -1,0 +1,9 @@
+{
+  "name": "@intentius/chant-lexicon-fly-example-getting-started",
+  "version": "0.0.1",
+  "private": true,
+  "dependencies": {
+    "@intentius/chant-lexicon-fly": "workspace:*",
+    "@intentius/chant": "workspace:*"
+  }
+}
