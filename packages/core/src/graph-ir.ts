@@ -5,6 +5,7 @@ import { type Declarable, isDeclarable } from "./declarable";
 import { isLexiconOutput, type LexiconOutput } from "./lexicon-output";
 import { getProvenance } from "./provenance";
 import { INTRINSIC_MARKER } from "./intrinsic";
+import type { ResourceMetadata } from "./lexicon";
 
 /**
  * Graph IR — the engine-neutral, lint-gated representation of a project's
@@ -54,6 +55,17 @@ export interface IRNode {
   attrs: Record<string, unknown>;
   /** Where the node was declared. */
   sourceLoc?: SourceLoc;
+  /**
+   * Live-only (`chant graph --live`): the observed physical identifier
+   * (id / ARN). Absent for source-derived IR. The reference resolver (#778)
+   * indexes on this to reconstruct edges from live resource references.
+   */
+  physicalId?: string;
+  /**
+   * Live-only: ownership verdict read from the resource's marker (#119/#120).
+   * `owned` = chant-managed. Absent for source-derived IR.
+   */
+  ownership?: "owned" | "foreign";
 }
 
 /** A directed dependency: `from` references an attribute of `to`. */
@@ -330,4 +342,55 @@ function sortKeys(rec: Record<string, string[]>): Record<string, string[]> {
   const out: Record<string, string[]> = {};
   for (const k of Object.keys(rec).sort()) out[k] = rec[k];
   return out;
+}
+
+/** One lexicon's observed resources, keyed by logical name — the output of a
+ * plugin's `describeResources()`. The input to {@link buildLiveGraphIr}. */
+export interface LiveObservation {
+  lexicon: string;
+  resources: Record<string, ResourceMetadata>;
+}
+
+/**
+ * Build the graph IR from **live-observed** resources (`chant graph --live`) —
+ * the provisioned graph, not the declared one. This is the C1 half of epic #776:
+ * nodes only. Edges are reconstructed separately by the per-lexicon reference
+ * resolver (#778); containment grouping by #779. Pure and deterministic given a
+ * fixed observation set (nodes and group ids sorted), so the same snapshot yields
+ * identical IR.
+ *
+ * Each node carries the observed `physicalId` (the reference resolver's index
+ * key) and `ownership` marker. `attrs` is the resource's observed attributes.
+ */
+export function buildLiveGraphIr(observations: LiveObservation[]): GraphIR {
+  const nodes: IRNode[] = [];
+  const byLexicon: Record<string, string[]> = {};
+  const byStack: Record<string, string[]> = {};
+
+  for (const { lexicon, resources } of observations) {
+    for (const [name, meta] of Object.entries(resources)) {
+      const node: IRNode = {
+        id: name,
+        kind: meta.type,
+        lexicon,
+        attrs: meta.attributes ?? {},
+      };
+      if (meta.physicalId) node.physicalId = meta.physicalId;
+      if (meta.ownership) node.ownership = meta.ownership;
+      nodes.push(node);
+      (byLexicon[lexicon] ??= []).push(name);
+      // A live lexicon maps to one deployable stack, same as the source IR.
+      (byStack[lexicon] ??= []).push(name);
+    }
+  }
+
+  nodes.sort((a, b) => a.id.localeCompare(b.id));
+  for (const ids of Object.values(byLexicon)) ids.sort();
+  for (const ids of Object.values(byStack)) ids.sort();
+
+  const groups: IRGroups = {};
+  if (Object.keys(byLexicon).length) groups.byLexicon = sortKeys(byLexicon);
+  if (Object.keys(byStack).length) groups.byStack = sortKeys(byStack);
+
+  return { nodes, edges: [], groups };
 }
