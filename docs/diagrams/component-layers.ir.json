@@ -1,0 +1,12 @@
+{
+  "nodes": [
+    {"id": "Deterministic core", "kind": "the foundation", "lexicon": "", "attrs": {"chant build": "TypeScript → spec-native artifacts"}},
+    {"id": "Build archive", "kind": "", "lexicon": "", "attrs": {"holds": "image · templates · manifest", "is": "self-contained"}},
+    {"id": "Release orchestration", "kind": "", "lexicon": "", "attrs": {"turns": "capabilities → components", "by": "one generic orchestrator"}}
+  ],
+  "edges": [
+    {"from": "Deterministic core", "to": "Build archive", "kind": "ref", "viaAttr": "wrapped by"},
+    {"from": "Build archive", "to": "Release orchestration", "kind": "ref", "viaAttr": "wrapped by"}
+  ],
+  "groups": {}
+}
