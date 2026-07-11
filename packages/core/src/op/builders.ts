@@ -372,6 +372,30 @@ export const spriteDestroy = (args: {
 };
 
 /**
+ * Boot a local spritzer (Fly Sprites API emulator) in Docker — the typed twin of
+ * `flociGcpUp` for Sprites. Resolves to the `spritesUp` activity. Defaults to the
+ * `longInfra` profile (the image may pull); override via `profile`.
+ */
+export const spritesUp = (args: {
+  name?: string;
+  port?: number;
+  image?: string;
+  profile?: ActivityStep["profile"];
+} = {}): ActivityStep => {
+  const { profile, ...rest } = args;
+  return activity("spritesUp", rest, profile ?? "longInfra");
+};
+
+/** Stop and remove the local spritzer container. Resolves to the `spritesDown` activity. Defaults to the `fastIdempotent` profile (override via `profile`). */
+export const spritesDown = (args: {
+  name?: string;
+  profile?: ActivityStep["profile"];
+} = {}): ActivityStep => {
+  const { profile, ...rest } = args;
+  return activity("spritesDown", rest, profile ?? "fastIdempotent");
+};
+
+/**
  * Gate an apply on organizational policy: build the project and run its
  * `lint.policies` over the resolved resources, blocking the workflow on any
  * violation. Place it before the apply phase. `env` (or `ownership.env`) lets a
