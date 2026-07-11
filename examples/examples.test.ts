@@ -13,6 +13,8 @@ import type { PostSynthContext } from "@intentius/chant/lint/post-synth";
 import { k8sPlugin } from "@intentius/chant-lexicon-k8s/plugin";
 import deployOp from "./getting-started/deploy.op";
 import flyDeployOp from "./local-fly/ops/fly.op";
+import agentTaskOp from "./sprites-agent-task/ops/agent-task.op";
+import guardedTaskOp from "./sprites-agent-task/ops/guarded-task.op";
 import deployGatedOp from "./getting-started/deploy-gated.op";
 import observeOp from "./getting-started/observe.op";
 import reconcileOp from "./getting-started/reconcile.op";
@@ -217,6 +219,48 @@ describe("local-fly deploy Op (#744)", () => {
       "Verify",
       "Teardown",
     ]);
+  });
+});
+
+// ── Sprites agent task — sprites-agent-task (#762) ───────────────────
+// Pure activity-sequence Ops (no build, no serialized plan). The live run is
+// documented in the example README (against the in-process fake or real
+// Sprites); CI compile/shape-validates both Ops, mirroring the deploy Op blocks
+// above. The activities + fake have their own unit/integration coverage under
+// lexicons/temporal/src/op/activities/sprites{,.integration}.test.ts.
+
+describe("sprites-agent-task Ops (#762)", () => {
+  test("agent-task compiles to the happy-path phase sequence", () => {
+    const props = (agentTaskOp as unknown as {
+      props: { name: string; taskQueue?: string; phases: Array<{ name: string; steps: Array<{ fn: string }> }> };
+    }).props;
+    expect(props.name).toBe("agent-task");
+    expect(props.taskQueue).toBe("sprites");
+    expect(props.phases.map((p) => p.name)).toEqual(["Create", "Checkpoint", "Run", "Verify", "Destroy"]);
+    // Each phase step resolves to a sprite activity by name.
+    expect(props.phases[0].steps[0].fn).toBe("spriteCreate");
+    expect(props.phases[4].steps[0].fn).toBe("spriteDestroy");
+  });
+
+  test("guarded-task compiles with an onFailure Restore (checkpoint-as-compensation)", () => {
+    const props = (guardedTaskOp as unknown as {
+      props: {
+        name: string;
+        phases: Array<{ name: string; steps: Array<{ fn: string; args?: Record<string, unknown> }> }>;
+        onFailure?: Array<{ name: string; steps: Array<{ fn: string; args?: Record<string, unknown> }> }>;
+      };
+    }).props;
+    expect(props.name).toBe("guarded-task");
+    expect(props.phases.map((p) => p.name)).toEqual(["Create", "Checkpoint", "Run", "Destroy"]);
+    // The checkpoint label the restore references is a static string (S4).
+    const checkpoint = props.phases.find((p) => p.name === "Checkpoint")!.steps[0];
+    expect(checkpoint.fn).toBe("spriteCheckpoint");
+    expect(checkpoint.args).toMatchObject({ id: "task-1", label: "pre-run" });
+    // onFailure restores that same label.
+    expect(props.onFailure?.map((p) => p.name)).toEqual(["Restore"]);
+    const restore = props.onFailure![0].steps[0];
+    expect(restore.fn).toBe("spriteRestore");
+    expect(restore.args).toMatchObject({ id: "task-1", checkpoint: "pre-run" });
   });
 });
 
