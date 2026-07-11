@@ -1,0 +1,30 @@
+---
+title: "Serialization"
+description: "Output format for the Fly Machines lexicon"
+---
+
+The fly lexicon serializes resources into the JSON create bodies the Machines API ("flaps") accepts.
+
+## Building
+
+Each declared resource becomes a single flaps request keyed by its logical name:
+
+```json
+{
+  "web": {
+    "endpoint": "/v1/apps/my-app/machines",
+    "method": "POST",
+    "body": { "name": "web", "region": "iad", "config": { ... } }
+  }
+}
+```
+
+- An `App` becomes `POST /v1/apps { app_name, org_slug? }`.
+- A `Machine` becomes `POST /v1/apps/{app}/machines` with the full `MachineConfig` as `config`. The owning app is a URL path segment, not a body field.
+- `Volume`, `IPAddress`, `Certificate`, and `Secret` are app-scoped and POST under their app.
+
+Every serialized machine carries the `managed-by: chant` ownership marker in `config.metadata`, which the owned-only prune reads back.
+
+## Applying
+
+The output is applied against flaps directly (or the mudflaps emulator offline). Endpoint and auth come from `FLY_FLAPS_BASE_URL` and `FLY_API_TOKEN`.

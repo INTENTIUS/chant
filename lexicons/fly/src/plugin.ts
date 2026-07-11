@@ -1,4 +1,4 @@
-import type { LexiconPlugin, SkillDefinition, IntrinsicDef } from "@intentius/chant/lexicon";
+import type { LexiconPlugin, SkillDefinition, IntrinsicDef, InitTemplateSet } from "@intentius/chant/lexicon";
 import type { LintRule } from "@intentius/chant/lint/rule";
 import type { PostSynthCheck } from "@intentius/chant/lint/post-synth";
 import type { CompletionContext, CompletionItem, HoverContext, HoverInfo } from "@intentius/chant/lsp/types";
@@ -138,6 +138,104 @@ export const flyPlugin: LexiconPlugin = {
 
   detectTemplate(data: unknown) {
     return false; // TODO: Detect if a template belongs to this lexicon
+  },
+
+  pseudoParameters(): string[] {
+    return [
+      "Fly::Region",
+      "Fly::OrgSlug",
+      "Fly::AppName",
+    ];
+  },
+
+  initTemplates(template?: string): InitTemplateSet {
+    if (template === "volume") {
+      return {
+        src: {
+          "infra.ts": `import { App, Machine, MachineConfig, MachineGuest, MachineMount, Volume, Fly } from "@intentius/chant-lexicon-fly";
+
+// An app, a persistent volume, and a machine that mounts it. The serializer
+// (#738) turns these into the flaps create bodies flyApply POSTs. The region
+// comes from Fly.Region (resolved from FLY_REGION, defaulting to "iad").
+const app = new App({ name: "my-app", org_slug: Fly.OrgSlug });
+
+const data = new Volume({
+  name: "data",
+  region: Fly.Region,
+  size_gb: 10,
+});
+
+const web = new Machine({
+  name: "web",
+  region: Fly.Region,
+  config: new MachineConfig({
+    image: "flyio/hellofly:latest",
+    guest: new MachineGuest({ cpu_kind: "shared", cpus: 1, memory_mb: 256 }),
+    mounts: [new MachineMount({ volume: "data", path: "/data" })],
+  }),
+});
+
+export { app, data, web };
+`,
+        },
+      };
+    }
+
+    if (template === "service") {
+      return {
+        src: {
+          "infra.ts": `import { App, Machine, MachineConfig, MachineGuest, MachineService, MachinePort, Fly } from "@intentius/chant-lexicon-fly";
+
+// An app and a machine exposing a public HTTPS service on port 443 to internal
+// 8080. The region comes from Fly.Region (resolved from FLY_REGION, defaulting
+// to "iad").
+const app = new App({ name: "my-app", org_slug: Fly.OrgSlug });
+
+const web = new Machine({
+  name: "web",
+  region: Fly.Region,
+  config: new MachineConfig({
+    image: "flyio/hellofly:latest",
+    guest: new MachineGuest({ cpu_kind: "shared", cpus: 1, memory_mb: 256 }),
+    services: [
+      new MachineService({
+        protocol: "tcp",
+        internal_port: 8080,
+        ports: [new MachinePort({ port: 443, handlers: ["tls", "http"] })],
+      }),
+    ],
+  }),
+});
+
+export { app, web };
+`,
+        },
+      };
+    }
+
+    // Default: one app and one machine — the smallest complete deploy.
+    return {
+      src: {
+        "infra.ts": `import { App, Machine, MachineConfig, MachineGuest, Fly } from "@intentius/chant-lexicon-fly";
+
+// One Fly app and one machine — the smallest complete deploy. The serializer
+// (#738) turns these into the flaps create bodies flyApply POSTs. The region
+// comes from Fly.Region (resolved from FLY_REGION, defaulting to "iad").
+const app = new App({ name: "my-app", org_slug: Fly.OrgSlug });
+
+const web = new Machine({
+  name: "web",
+  region: Fly.Region,
+  config: new MachineConfig({
+    image: "flyio/hellofly:latest",
+    guest: new MachineGuest({ cpu_kind: "shared", cpus: 1, memory_mb: 256 }),
+  }),
+});
+
+export { app, web };
+`,
+      },
+    };
   },
 
   completionProvider(ctx: CompletionContext) {

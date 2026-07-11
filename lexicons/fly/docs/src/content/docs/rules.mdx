@@ -1,0 +1,23 @@
+---
+title: "Lint Rules"
+description: "Lint rules and post-synth checks provided by the Fly Machines lexicon"
+---
+
+The Fly Machines lexicon provides **5** rules: 3 lint rules and 2 post-synth checks.
+
+## Lint Rules
+
+| ID | Severity | Category | Description |
+|----|----------|----------|-------------|
+| `FLY001` | error | correctness | Valid Fly region |
+| `FLY002` | error | correctness | Sane guest sizing |
+| `FLY004` | warning | security | No secret literals in machine config |
+
+## Post-Synth Checks
+
+Post-synth checks validate the serialized output after the build pipeline completes.
+
+| ID | Description |
+|----|-------------|
+| `FLY010` | Machine config must specify an image — a Machine cannot boot without one |
+| `FLY011` | A machine mount's volume must resolve to a Volume declared in the stack |

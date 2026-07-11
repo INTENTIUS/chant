@@ -4,6 +4,10 @@ export { flyPlugin } from "./plugin";
 // Serializer
 export { flySerializer } from "./serializer";
 
+// Pseudo-parameters — environment-resolved values (`Fly.Region`, `Fly.OrgSlug`,
+// `Fly.AppName`) usable in place of hard-coded strings.
+export { Fly, Region, OrgSlug, AppName, PseudoParameter } from "./pseudo";
+
 // Ownership marker convention (machine config.metadata keys)
 export { FLY_METADATA_OWNERSHIP_KEYS } from "./ownership";
 

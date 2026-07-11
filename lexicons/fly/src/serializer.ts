@@ -35,6 +35,7 @@ import type { Serializer, SerializeContext } from "@intentius/chant/serializer";
 import type { LexiconOutput } from "@intentius/chant/lexicon-output";
 import { ownershipEntries, OWNERSHIP_MANAGED_BY_VALUE } from "@intentius/chant/ownership";
 import { walkValue, type SerializerVisitor } from "@intentius/chant/serializer-walker";
+import { INTRINSIC_MARKER } from "@intentius/chant/intrinsic";
 import { FLY_METADATA_OWNERSHIP_KEYS } from "./ownership";
 
 const APP_ENTITY_TYPE = "Fly::Machines::App";
@@ -81,6 +82,62 @@ function flyVisitor(): SerializerVisitor {
 function readProps(entity: Declarable): Record<string, unknown> {
   const props = (entity as unknown as { props?: unknown }).props;
   return props && typeof props === "object" ? (props as Record<string, unknown>) : {};
+}
+
+/**
+ * Pseudo-parameter → environment variable mapping. flaps create bodies are
+ * plain JSON, so `Fly.Region` / `Fly.OrgSlug` / `Fly.AppName` (which the walker
+ * lowers to a `{ Ref: "Fly::..." }` marker) are resolved from the environment
+ * at build time, mirroring gcp's PSEUDO_ENV_MAP. The first set env var wins;
+ * absent all of them, the fallback keeps output valid offline (mudflaps).
+ */
+const PSEUDO_ENV_MAP: Record<string, { envVars: string[]; fallback: string }> = {
+  "Fly::Region": { envVars: ["FLY_REGION"], fallback: "iad" },
+  "Fly::OrgSlug": { envVars: ["FLY_ORG", "FLY_ORG_SLUG"], fallback: "personal" },
+  "Fly::AppName": { envVars: ["FLY_APP_NAME"], fallback: "app" },
+};
+
+function resolvePseudoRef(ref: string): string | undefined {
+  const mapping = PSEUDO_ENV_MAP[ref];
+  if (!mapping) return undefined;
+  for (const envVar of mapping.envVars) {
+    const value = process.env[envVar];
+    if (value) return value;
+  }
+  return mapping.fallback;
+}
+
+/**
+ * Recursively replace pseudo-parameters with their resolved environment value.
+ * Handles both a raw `PseudoParameter` instance (any intrinsic carrying the
+ * marker, unwrapped via `toJSON()`) and the already-walked `{ Ref: "Fly::X" }`
+ * shape. Non-Fly `{ Ref }` shapes and every other value pass through untouched.
+ */
+function resolvePseudoParameters(value: unknown): unknown {
+  if (Array.isArray(value)) {
+    return value.map(resolvePseudoParameters);
+  }
+  if (value && typeof value === "object") {
+    const record = value as Record<string, unknown>;
+
+    // Unwrap an intrinsic (e.g. a PseudoParameter assigned without walking) to
+    // the { Ref } envelope it serializes to, then resolve that.
+    if (INTRINSIC_MARKER in record && typeof record.toJSON === "function") {
+      return resolvePseudoParameters(record.toJSON());
+    }
+
+    const keys = Object.keys(record);
+    if (keys.length === 1 && keys[0] === "Ref" && typeof record.Ref === "string") {
+      const resolved = resolvePseudoRef(record.Ref);
+      if (resolved !== undefined) return resolved;
+    }
+    const result: Record<string, unknown> = {};
+    for (const [key, val] of Object.entries(record)) {
+      result[key] = resolvePseudoParameters(val);
+    }
+    return result;
+  }
+  return value;
 }
 
 /** The app_name flaps expects: an explicit `name` prop, else the entity name. */
@@ -229,6 +286,8 @@ export const flySerializer: Serializer = {
       }
     }
 
-    return JSON.stringify(requests, null, 2);
+    // Resolve pseudo-parameter markers (Fly.Region, Fly.OrgSlug, ...) to their
+    // environment value so create bodies carry plain strings, not `{ Ref }`.
+    return JSON.stringify(resolvePseudoParameters(requests), null, 2);
   },
 };

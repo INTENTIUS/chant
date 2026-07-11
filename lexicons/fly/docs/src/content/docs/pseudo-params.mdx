@@ -1,0 +1,27 @@
+---
+title: "Pseudo-parameters"
+description: "Environment-resolved values: Fly.Region, Fly.OrgSlug, Fly.AppName"
+---
+Pseudo-parameters stand in for values that vary by environment. Reference them instead of hard-coding, and the serializer resolves each from an environment variable at build time.
+
+| Pseudo-parameter | Environment variable | Fallback |
+|------------------|----------------------|----------|
+| `Fly.Region` | `FLY_REGION` | `iad` |
+| `Fly.OrgSlug` | `FLY_ORG`, then `FLY_ORG_SLUG` | `personal` |
+| `Fly.AppName` | `FLY_APP_NAME` | `app` |
+
+```typescript
+import { App, Machine, MachineConfig, MachineGuest, Fly } from "@intentius/chant-lexicon-fly";
+
+const app = new App({ name: "my-app", org_slug: Fly.OrgSlug });
+
+const web = new Machine({
+  region: Fly.Region,
+  config: new MachineConfig({
+    image: "flyio/hellofly:latest",
+    guest: new MachineGuest({ cpu_kind: "shared", cpus: 1, memory_mb: 256 }),
+  }),
+});
+```
+
+With `FLY_REGION=lhr` set, `region` serializes to `"lhr"`; unset, it falls back to `"iad"`.
