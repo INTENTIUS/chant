@@ -1,14 +1,11 @@
-import { exec } from "node:child_process";
-import { promisify } from "node:util";
-import { safeHeartbeat, sleep } from "@intentius/chant/op";
-
-const execAsync = promisify(exec);
+import { emulatorLifecycle } from "@intentius/chant/op";
 
 const DEFAULT_NAME = "chant-floci";
 const DEFAULT_PORT = 4566;
 const DEFAULT_IMAGE = "floci/floci:latest";
 const DEFAULT_REGION = "us-east-1";
 const DEFAULT_READY_SERVICE = "cloudformation";
+const DOCKER_SOCK = ["-v", "/var/run/docker.sock:/var/run/docker.sock"] as const;
 
 export interface FlociUpArgs {
   /** Container name. Default: `chant-floci`. */
@@ -34,30 +31,9 @@ export interface FlociDownArgs {
   name?: string;
 }
 
-/** `docker ps -q -f name=<name>` — non-empty stdout means the container is running. */
-export function flociExistsCommand(name: string): string {
-  return `docker ps -q -f name=${name}`;
-}
-
-/** Build the `docker run` command that boots Floci. */
-export function flociRunCommand(args: FlociUpArgs): string {
-  const name = args.name ?? DEFAULT_NAME;
-  const port = args.port ?? DEFAULT_PORT;
-  const image = args.image ?? DEFAULT_IMAGE;
-  const parts = ["docker", "run", "-d", "--rm", "--name", name, "-p", `${port}:4566`];
-  if (args.dockerSocket) parts.push("-v", "/var/run/docker.sock:/var/run/docker.sock");
-  parts.push(image);
-  return parts.join(" ");
-}
-
-/** Build the `docker rm -f` command. */
-export function flociRmCommand(name: string): string {
-  return `docker rm -f ${name}`;
-}
-
-/** The Floci health endpoint URL for a host port. */
-export function flociHealthUrl(port: number): string {
-  return `http://localhost:${port}/_localstack/health`;
+/** True once the health body reports the required service (e.g. `"cloudformation"`). */
+export function isFlociReady(healthBody: string, service: string): boolean {
+  return healthBody.includes(`"${service}"`);
 }
 
 /** The AWS env vars that point the `aws` CLI / SDK at a local Floci endpoint. */
@@ -70,9 +46,32 @@ export function flociEnv(port: number, region: string): Record<string, string> {
   };
 }
 
-/** True once the health body reports the required service (e.g. `"cloudformation"`). */
-export function isFlociReady(healthBody: string, service: string): boolean {
-  return healthBody.includes(`"${service}"`);
+// AWS runs the LocalStack-compatible floci/floci image, so readiness is gated on
+// a service (`cloudformation`) appearing in `/_localstack/health` — unlike the
+// bespoke az/gcp fakes. Shared lifecycle: emulatorLifecycle (#746).
+const flociFor = (readyService: string) =>
+  emulatorLifecycle({
+    name: DEFAULT_NAME,
+    image: DEFAULT_IMAGE,
+    containerPort: DEFAULT_PORT,
+    healthPath: "/_localstack/health",
+    ready: (body) => isFlociReady(body, readyService),
+  });
+
+const builders = flociFor(DEFAULT_READY_SERVICE);
+
+export const flociExistsCommand = builders.existsCommand;
+export const flociRmCommand = builders.rmCommand;
+export const flociHealthUrl = builders.healthUrl;
+
+/** Build the `docker run` command that boots Floci. */
+export function flociRunCommand(args: FlociUpArgs = {}): string {
+  return builders.runCommand({
+    name: args.name,
+    port: args.port,
+    image: args.image,
+    extraArgs: args.dockerSocket ? [...DOCKER_SOCK] : [],
+  });
 }
 
 /**
@@ -81,69 +80,28 @@ export function isFlociReady(healthBody: string, service: string): boolean {
  * Idempotent: reuses a running container of the same name. Waits for the health
  * endpoint to report `readyService`, then sets `AWS_ENDPOINT_URL` + test creds in
  * the process environment so a following `nativeApply`/`cfn-deploy` targets the
- * emulator. Env injection assumes the in-process **local executor**; under a
+ * emulator. Env injection assumes the in-process local executor; under a
  * distributed Temporal worker, pass the endpoint explicitly instead.
- *
- * Uses longInfra profile — 20m timeout, heartbeat every poll (the image may pull).
  */
-export async function flociUp(args: FlociUpArgs, signal?: AbortSignal): Promise<{ endpoint: string }> {
-  const name = args.name ?? DEFAULT_NAME;
-  const port = args.port ?? DEFAULT_PORT;
+export async function flociUp(args: FlociUpArgs = {}, signal?: AbortSignal): Promise<{ endpoint: string }> {
   const region = args.region ?? DEFAULT_REGION;
   const service = args.readyService ?? DEFAULT_READY_SERVICE;
-  const timeoutMs = args.timeoutMs ?? 60_000;
-  const intervalMs = args.intervalMs ?? 2_000;
-
-  let running = false;
-  try {
-    const { stdout } = await execAsync(flociExistsCommand(name), { signal });
-    running = Boolean(stdout.trim());
-  } catch {
-    // `docker ps` failed — assume not running and try to start it.
-  }
-
-  if (running) {
-    console.log(`Floci container "${name}" already running — reusing`);
-  } else {
-    await execAsync(flociRunCommand({ ...args, name, port }), { signal });
-  }
-
-  const url = flociHealthUrl(port);
-  const deadline = Date.now() + timeoutMs;
-  let ready = false;
-  while (Date.now() < deadline) {
-    if (signal?.aborted) throw new Error("flociUp aborted");
-    safeHeartbeat({ step: "flociUp", container: name });
-    try {
-      const res = await fetch(url, { signal });
-      if (res.ok && isFlociReady(await res.text(), service)) {
-        ready = true;
-        break;
-      }
-    } catch {
-      // Not up yet (connection refused / non-2xx) — retry.
-    }
-    await sleep(intervalMs, signal);
-  }
-  if (!ready) {
-    throw new Error(`Floci "${name}" did not become ready within ${timeoutMs}ms`);
-  }
-
-  const env = flociEnv(port, region);
-  Object.assign(process.env, env);
-  console.log(`Floci ready on ${env.AWS_ENDPOINT_URL} (service: ${service})`);
-  return { endpoint: env.AWS_ENDPOINT_URL };
+  const { endpoint } = await flociFor(service).up(
+    {
+      name: args.name,
+      port: args.port,
+      image: args.image,
+      timeoutMs: args.timeoutMs,
+      intervalMs: args.intervalMs,
+      extraArgs: args.dockerSocket ? [...DOCKER_SOCK] : [],
+    },
+    signal,
+  );
+  Object.assign(process.env, flociEnv(args.port ?? DEFAULT_PORT, region));
+  return { endpoint };
 }
 
-/**
- * Stop and remove the local Floci emulator container. A no-op success when the
- * container is already gone. Uses fastIdempotent profile — 5m timeout.
- */
-export async function flociDown(args: FlociDownArgs, signal?: AbortSignal): Promise<void> {
-  const name = args.name ?? DEFAULT_NAME;
-  try {
-    await execAsync(flociRmCommand(name), { signal });
-  } catch {
-    // Already removed (`--rm` on exit, or never started) — treat as success.
-  }
+/** Stop and remove the local Floci emulator container (no-op if already gone). */
+export async function flociDown(args: FlociDownArgs = {}, signal?: AbortSignal): Promise<void> {
+  return builders.down(args, signal);
 }
