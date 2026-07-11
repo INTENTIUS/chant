@@ -74,6 +74,9 @@ const RESOURCES: ResourceSpec[] = [
   { typeName: `Fly::${SERVICE}::App`, request: "CreateAppRequest", response: "App" },
   { typeName: `Fly::${SERVICE}::Machine`, request: "CreateMachineRequest", response: "Machine" },
   { typeName: `Fly::${SERVICE}::Volume`, request: "CreateVolumeRequest", response: "Volume" },
+  { typeName: `Fly::${SERVICE}::IPAddress`, request: "assignIPRequest", response: "IPAssignment" },
+  { typeName: `Fly::${SERVICE}::Certificate`, request: "createAcmeCertificateRequest", response: "CertificateDetail" },
+  { typeName: `Fly::${SERVICE}::Secret`, request: "SetAppSecretRequest", response: "AppSecret" },
 ];
 
 const REF_PREFIX = "#/components/schemas/";
