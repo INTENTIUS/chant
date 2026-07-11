@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { reconstructEdges, readPath, mergeCatalogs, type ReferenceCatalog } from "./graph-refs";
+import { reconstructEdges, readPath, mergeCatalogs, containmentGroups, type ReferenceCatalog } from "./graph-refs";
 import type { IRNode } from "./graph-ir";
 
 const node = (id: string, kind: string, attrs: Record<string, unknown>, physicalId?: string): IRNode => ({
@@ -91,6 +91,32 @@ describe("reconstructEdges", () => {
 
   it("is deterministic", () => {
     expect(JSON.stringify(reconstructEdges(nodes, catalog))).toBe(JSON.stringify(reconstructEdges(nodes, catalog)));
+  });
+});
+
+describe("containmentGroups", () => {
+  it("inverts pairs into container → members, representing nesting flatly", () => {
+    const groups = containmentGroups([
+      { child: "subnetA", parent: "vpc" },
+      { child: "subnetB", parent: "vpc" },
+      { child: "instance1", parent: "subnetA" },
+    ]);
+    // vpc contains its subnets; subnetA is a key with its own members (nesting).
+    expect(groups).toEqual({ vpc: ["subnetA", "subnetB"], subnetA: ["instance1"] });
+  });
+
+  it("dedupes members and sorts keys + members", () => {
+    expect(
+      containmentGroups([
+        { child: "b", parent: "a" },
+        { child: "b", parent: "a" },
+        { child: "a", parent: "z" },
+      ]),
+    ).toEqual({ a: ["b"], z: ["a"] });
+  });
+
+  it("is empty for no containment", () => {
+    expect(containmentGroups([])).toEqual({});
   });
 });
 
