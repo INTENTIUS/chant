@@ -172,3 +172,21 @@ export function reconstructEdges(nodes: IRNode[], catalog: ReferenceCatalog): Re
 
   return { edges, containment, dangling };
 }
+
+/**
+ * Invert containment pairs into grouping metadata (#779): container node id → the
+ * node ids directly inside it. The result is the `IRGroups.byContainer` shape a
+ * renderer draws as boundary boxes. It represents the full nesting *flatly* — a
+ * subnet is both a member of its VPC's entry and a key with its own members —
+ * so a boundary-box renderer recurses it (VPC ⊃ subnet ⊃ resources). Sorted for
+ * determinism.
+ */
+export function containmentGroups(pairs: ContainmentPair[]): Record<string, string[]> {
+  const byParent = new Map<string, Set<string>>();
+  for (const { child, parent } of pairs) {
+    (byParent.get(parent) ?? byParent.set(parent, new Set()).get(parent)!).add(child);
+  }
+  const out: Record<string, string[]> = {};
+  for (const parent of [...byParent.keys()].sort()) out[parent] = [...byParent.get(parent)!].sort();
+  return out;
+}

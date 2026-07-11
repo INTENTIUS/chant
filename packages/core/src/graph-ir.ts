@@ -88,6 +88,12 @@ export interface IRGroups {
    * partition today; #513 phase 2 regroups by nested child-project. Consumers
    * (e.g. pinhole's boundary boxes) read this rather than inferring stacks. */
   byStack?: Record<string, string[]>;
+  /** Live containment (#779): a container node id → the node ids directly inside
+   * it (VPC → subnets/SGs, subnet → instances/service). Nested *flatly* — a
+   * subnet is both a member of its VPC's entry and a key with its own members —
+   * so a boundary-box renderer recurses it. Populated by `chant graph --live`
+   * from the reference resolver's containment output; absent for source IR. */
+  byContainer?: Record<string, string[]>;
 }
 
 /** A cross-stack export this stack publishes (a `stackOutput`/`output`): its

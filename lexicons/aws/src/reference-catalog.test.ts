@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { reconstructEdges } from "@intentius/chant/graph-refs";
+import { reconstructEdges, containmentGroups } from "@intentius/chant/graph-refs";
 import type { IRNode } from "@intentius/chant/graph-ir";
 import { awsReferenceCatalog } from "./reference-catalog";
 
@@ -61,5 +61,14 @@ describe("awsReferenceCatalog — golden 3-tier VPC", () => {
   it("reference edges point holder → referenced", () => {
     // e.g. the service references the cluster, not the reverse
     expect(hasEdge("cluster", "svc")).toBe(false);
+  });
+
+  it("containment groups nest VPC → subnets → resources (#779)", () => {
+    const groups = containmentGroups(containment);
+    // the VPC contains its subnets, SGs, and target group
+    expect(groups.vpc).toEqual(expect.arrayContaining(["pubA", "pubB", "privA", "privB", "albSg", "appSg", "tg"]));
+    // public subnets contain the ALB; private subnets contain the service + RDS
+    expect(groups.pubA).toContain("alb");
+    expect(groups.privA).toEqual(expect.arrayContaining(["svc", "rds"]));
   });
 });

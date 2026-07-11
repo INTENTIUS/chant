@@ -3,7 +3,7 @@ import { discoverOps } from "../../op/discover";
 import { discover } from "../../discovery/index";
 import { partitionByLexicon, computeStackGraph, build } from "../../build";
 import { buildGraphIr, buildLiveGraphIr, type GraphIR } from "../../graph-ir";
-import { reconstructEdges, mergeCatalogs, type ReferenceCatalog } from "../../graph-refs";
+import { reconstructEdges, mergeCatalogs, containmentGroups, type ReferenceCatalog, type ContainmentPair } from "../../graph-refs";
 import { observeResources } from "../../lifecycle/observe";
 import { loadChantConfig } from "../../config";
 import { applyDetail, type DetailLevel } from "../../graph-detail";
@@ -89,13 +89,14 @@ async function runGraphLive(
 
   let ir: GraphIR = buildLiveGraphIr(observations);
 
-  // Reconstruct edges from live references (#778): merge the observing lexicons'
-  // reference catalogs and resolve them over the live nodes. Containment pairs
-  // are computed too — #779 will turn them into boundary groups.
+  // Reconstruct edges + containment from live references (#778): merge the
+  // observing lexicons' reference catalogs and resolve them over the live nodes.
   const catalogs = observing.map((p) => p.referenceCatalog).filter((c): c is ReferenceCatalog => !!c);
+  let containment: ContainmentPair[] = [];
   if (catalogs.length > 0) {
-    const { edges } = reconstructEdges(ir.nodes, mergeCatalogs(catalogs));
-    ir = { ...ir, edges };
+    const reconstructed = reconstructEdges(ir.nodes, mergeCatalogs(catalogs));
+    ir = { ...ir, edges: reconstructed.edges };
+    containment = reconstructed.containment;
   }
 
   if (args.lens) {
@@ -107,6 +108,17 @@ async function runGraphLive(
     }
   }
   ir = applyDetail(ir, (args.detail ?? 2) as DetailLevel);
+
+  // Containment grouping (#779) → boundary boxes. Built after lens/detail and
+  // filtered to surviving nodes, so a lens can't leave dangling group refs.
+  if (containment.length > 0) {
+    const present = new Set(ir.nodes.map((n) => n.id));
+    const byContainer = containmentGroups(containment.filter((c) => present.has(c.child) && present.has(c.parent)));
+    if (Object.keys(byContainer).length > 0) {
+      ir = { ...ir, groups: { ...ir.groups, byContainer } };
+    }
+  }
+
   return emitIr(ir, ctx, format);
 }
 
