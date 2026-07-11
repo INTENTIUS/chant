@@ -39,6 +39,10 @@ export const web = new Machine({
 });
 ```
 
+## Agent skill
+
+The agent-facing entry point is the `chant-fly` skill, a short "Deploy to Fly" playbook that leads an agent through authoring an App and Machine, linting with `chant build`, and reconciling over the Machines API with `flyApply`, including the `FLY_FLAPS_BASE_URL` switch between mudflaps and a real org. It ships alongside `chant-fly-patterns` (volumes, IPs, certificates, secrets, and ownership) and `chant-fly-ops` (waiting, leases, prune, and teardown).
+
 ## One endpoint, local or real
 
 The endpoint is a single switch. `FLY_FLAPS_BASE_URL` (or an explicit `endpoint`) chooses between a real Fly org and a local emulator, with no code change.

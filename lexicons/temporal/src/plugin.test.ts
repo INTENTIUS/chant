@@ -42,17 +42,20 @@ describe("temporal plugin", () => {
     expect(uris).toContain("temporal:resource-catalog");
   });
 
-  it("skills() returns 2 skill entries", () => {
+  it("skills() returns 3 skill entries", () => {
     const skills = temporalPlugin.skills?.();
     expect(Array.isArray(skills)).toBe(true);
-    expect(skills?.length).toBe(2);
+    expect(skills?.length).toBe(3);
   });
 
-  it("skills include chant-temporal and chant-temporal-ops", () => {
+  it("skills include chant-temporal, chant-temporal-ops, and chant-temporal-sprites", () => {
     const skills = temporalPlugin.skills?.() ?? [];
     const names = skills.map((s) => s.name);
     expect(names).toContain("chant-temporal");
     expect(names).toContain("chant-temporal-ops");
+    expect(names).toContain("chant-temporal-sprites");
+    const sprites = skills.find((s) => s.name === "chant-temporal-sprites");
+    expect(sprites?.content).toContain("checkpoint-as-compensation");
   });
 
   describe("initTemplates", () => {
