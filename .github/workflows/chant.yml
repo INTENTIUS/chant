@@ -54,6 +54,7 @@ jobs:
           npm run --prefix lexicons/helm prepack
           npm run --prefix lexicons/docker prepack
           npm run --prefix lexicons/temporal prepack
+          npm run --prefix lexicons/fly prepack
 
       - name: Typecheck
         run: npx tsc --noEmit -p packages/core/tsconfig.json
@@ -118,6 +119,7 @@ jobs:
           npm run --prefix lexicons/helm prepack
           npm run --prefix lexicons/docker prepack
           npm run --prefix lexicons/temporal prepack
+          npm run --prefix lexicons/fly prepack
 
       - name: Run tests
         run: npx vitest run
