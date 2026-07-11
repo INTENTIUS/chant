@@ -1,0 +1,26 @@
+{
+  "nodes": [
+    {"id": "Typed resources", "kind": "", "lexicon": "", "attrs": {"e.g.": "new Bucket() · StorageAccountSecure()"}},
+    {"id": "chant build", "kind": "", "lexicon": "", "attrs": {"_status": "good", "pure": "TypeScript → artifact", "is": "typed · linted"}},
+    {"id": "Spec-native artifact", "kind": "", "lexicon": "", "attrs": {"_status": "good", "targets": "CloudFormation · ARM · Config Connector"}},
+    {"id": "awsApply", "kind": "", "lexicon": "", "attrs": {"to": "CloudFormation API"}},
+    {"id": "azApply", "kind": "", "lexicon": "", "attrs": {"to": "ARM resource CRUD"}},
+    {"id": "gcpApply", "kind": "", "lexicon": "", "attrs": {"to": "GCS · PubSub · IAM REST"}},
+    {"id": "endpoint override?", "kind": "", "lexicon": "", "attrs": {"_status": "accent"}},
+    {"id": "Floci emulator", "kind": "", "lexicon": "", "attrs": {"_status": "good", "ports": "floci :4566 · -az :4577 · -gcp :4588", "is": "local · no account · no cost"}},
+    {"id": "Real cloud", "kind": "", "lexicon": "", "attrs": {"same": "applier · artifact", "changes": "only the endpoint"}}
+  ],
+  "edges": [
+    {"from": "Typed resources", "to": "chant build", "kind": "ref"},
+    {"from": "chant build", "to": "Spec-native artifact", "kind": "ref"},
+    {"from": "Spec-native artifact", "to": "awsApply", "kind": "ref", "viaAttr": "serialize"},
+    {"from": "Spec-native artifact", "to": "azApply", "kind": "ref"},
+    {"from": "Spec-native artifact", "to": "gcpApply", "kind": "ref"},
+    {"from": "awsApply", "to": "endpoint override?", "kind": "ref"},
+    {"from": "azApply", "to": "endpoint override?", "kind": "ref"},
+    {"from": "gcpApply", "to": "endpoint override?", "kind": "ref"},
+    {"from": "endpoint override?", "to": "Floci emulator", "kind": "ref", "viaAttr": "localhost"},
+    {"from": "endpoint override?", "to": "Real cloud", "kind": "ref", "viaAttr": "cloud host (BYO creds)"}
+  ],
+  "groups": {"byStack": {"Native applier — Ops (no CLI shell-out)": ["awsApply", "azApply", "gcpApply"]}}
+}
