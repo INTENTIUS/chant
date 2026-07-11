@@ -7,6 +7,7 @@
  */
 
 import type { PostSynthCheck, PostSynthContext, PostSynthDiagnostic } from "@intentius/chant/lint/post-synth";
+import { readProps, entityTypeOf } from "./fly-helpers";
 
 export const fly010: PostSynthCheck = {
   id: "FLY010",
@@ -16,14 +17,12 @@ export const fly010: PostSynthCheck = {
     const diagnostics: PostSynthDiagnostic[] = [];
 
     for (const [name, entity] of ctx.entities) {
-      const et = (entity as unknown as Record<string, unknown>).entityType as string | undefined;
-      if (et !== "Fly::Machines::Machine") continue;
+      if (entityTypeOf(entity) !== "Fly::Machines::Machine") continue;
 
-      const props = (entity as { props?: Record<string, unknown> }).props ?? {};
-      const config = props.config as Record<string, unknown> | undefined;
+      const config = readProps(entity).config;
       if (!config) continue; // no config authored — a different concern
 
-      const image = config.image;
+      const image = readProps(config).image;
       if (typeof image !== "string" || image.length === 0) {
         diagnostics.push({
           checkId: "FLY010",
