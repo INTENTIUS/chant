@@ -29,17 +29,18 @@ export default defineConfig({
 				{
 					label: 'Core Concepts',
 					items: [
+						{ label: 'What chant is', slug: 'concepts/overview' },
 						{ label: 'Philosophy', slug: 'concepts/philosophy' },
 						{ label: 'How chant compares', slug: 'concepts/comparison' },
+						{ label: 'Lifecycle Models', slug: 'concepts/lifecycle-models' },
+						{ label: 'Choosing Your Deployment Model', slug: 'concepts/deployment-paths' },
+						{ label: 'Components', slug: 'concepts/components' },
 						{ label: 'TypeScript as Data', slug: 'concepts/typescript-as-data' },
 						{ label: 'Where Values Come From', slug: 'concepts/where-values-come-from' },
 						{ label: 'Evaluation Pipeline', slug: 'concepts/evaluation-pipeline' },
-						{ label: 'Choosing Your Deployment Model', slug: 'concepts/deployment-paths' },
-						{ label: 'Lifecycle Models', slug: 'concepts/lifecycle-models' },
 						{ label: 'State and Governance', slug: 'concepts/governance' },
 						{ label: 'Drift Detection', slug: 'concepts/drift-detection' },
 						{ label: 'Durable Workflows', slug: 'concepts/durable-workflows' },
-						{ label: 'Components', slug: 'concepts/components' },
 					],
 				},
 				{

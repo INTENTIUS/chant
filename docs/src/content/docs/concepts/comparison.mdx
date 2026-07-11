@@ -3,13 +3,13 @@ title: How chant compares
 description: Where chant fits in the infrastructure tooling landscape.
 ---
 
-## What chant is (and isn't)
+## What chant is
 
-chant is a **synthesis compiler**: TypeScript in, spec-native output out. You declare infrastructure as typed TypeScript objects, chant validates them against a lexicon's semantic rules, and emits the target format — CloudFormation, GitLab CI, or whatever the lexicon targets.
+chant is typed infrastructure, end to end: a **compiler at its core** — TypeScript in, spec-native output out — with the lifecycle you choose built on top. You declare infrastructure as typed TypeScript objects, chant validates them against a lexicon's semantic rules, and emits the target format — CloudFormation, GitLab CI, or whatever the lexicon targets.
 
-chant **doesn't manage deployment or drift**. chant's core scope is synthesis: parsing, type-checking, linting, and emitting artifacts. The architecture is designed for opt-in operational extensions — observational lifecycle, structured agent workflows — that add context without touching the build pipeline.
+The build path is pure synthesis: parsing, type-checking, linting, and emitting artifacts, with no API calls and no state. Deployment and drift live one layer up, in the lifecycle you choose — observational diff, `cloud → code` reconcile, or gated `code → cloud` apply — built as durable Ops on that core rather than welded into it.
 
-This isn't a reaction to other tools' failures — it's an approach that was always available. Nobody built it because the industry was racing to own the full lifecycle. chant does one thing and stops.
+This isn't a reaction to other tools' failures — it's an approach that was always available. Nobody built it because the industry was racing to weld one lifecycle to the compiler. chant keeps the compiler deterministic and lets the lifecycle be yours.
 
 For the model behind the rows below — the three axes of state and where each tool sits — see [Lifecycle Models](/chant/concepts/lifecycle-models/).
 
@@ -42,7 +42,7 @@ These tools make different design decisions. Each decision has consequences — 
 | **Language** | HCL (custom DSL) | TypeScript, Python, Java, Go, C# (executed) | TypeScript, Python, Go, C#, Java, YAML (executed) | TypeScript (static subset) |
 | **Spec fidelity** | Provider-mapped | Abstracted (L2/L3) | Provider-mapped | Spec-true |
 | **Output** | State + API calls | CloudFormation | State + API calls | Native spec output |
-| **Lifecycle scope** | Full | Full (via CloudFormation) | Full | Synthesis + opt-in observability |
+| **Lifecycle scope** | Full | Full (via CloudFormation) | Full | Deterministic core + chosen lifecycle (observe / reconcile / apply) |
 | **State model** | Authoritative | Authoritative (via CloudFormation) | Authoritative | No authoritative state file; precise change set via live projection + cloud-side ownership |
 | **Reconciliation** | `code → cloud` | `code → cloud` | `code → cloud` | none / `code → cloud` / `cloud → code` (chosen per environment) |
 | **Determinism** | Mostly | No (code executes) | No (code executes) | Yes (for lint-conforming source) |
@@ -100,13 +100,13 @@ The most consequential design difference after execution model is the lifecycle 
 
 **Pulumi** optimizes for general-purpose language IaC with state management and multi-cloud support. Real TypeScript/Python/Go with the full language available. The trade-off: code execution brings nondeterminism, and state management has the same operational burden as Terraform.
 
-**chant** optimizes for typed, linted, deterministic synthesis that's true to the underlying spec. The output is native to the target platform with zero lock-in. The trade-off: chant doesn't deploy anything — you need something else for that.
+**chant** optimizes for typed, linted, deterministic synthesis that's true to the underlying spec, then lets you choose the lifecycle on top. The output is native to the target platform with zero lock-in. The trade-off: the build path itself doesn't apply — you deploy through a chant Op or hand the artifact to your own mechanism.
 
 ## Trade-offs
 
 chant's design decisions have real consequences:
 
-- **chant doesn't deploy.** You need a deployment mechanism: the CloudFormation CLI, a CI pipeline, an agent, or whatever your workflow uses. chant produces the artifact; something else applies it.
+- **The build path doesn't apply.** Deployment runs one layer up — a chant Op (local or durable), the CloudFormation CLI, a CI pipeline, an agent. chant produces the artifact; an Op or your pipeline applies it. The build stays pure so that step is a choice, not a coupling.
 
 - **Static evaluation means no runtime lookups at build time.** You can't call an API during synthesis to get a VPC ID or read a secret. Cross-resource references within a project work (via attribute references). For values that need to be resolved at deploy time, lexicons provide intrinsics. For values that need to be resolved before synthesis, agents or scripts can populate source files.
 

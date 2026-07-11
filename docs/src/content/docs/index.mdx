@@ -1,9 +1,9 @@
 ---
 title: chant
-description: A synthesis compiler for infrastructure
+description: Typed infrastructure, end to end
 template: splash
 hero:
-  tagline: A synthesis compiler for infrastructure. Typed TypeScript in, spec-native artifacts out, validated by semantic lint rules.
+  tagline: Typed infrastructure, end to end. A deterministic core — typed TypeScript in, spec-native artifacts out, validated by semantic lint rules — and the lifecycle you choose on top, durable when you need it.
   actions:
     - text: Get Started
       link: /chant/getting-started/introduction/
@@ -15,20 +15,20 @@ import { Card, CardGrid } from '@astrojs/starlight/components';
 ## Features
 
 <CardGrid stagger>
+	<Card title="Plain TypeScript" icon="puzzle">
+		Declare infrastructure as exported TypeScript objects — no DSL, no YAML, no decorators. Full type safety and IDE support.
+	</Card>
 	<Card title="Semantic Linting" icon="approve-check">
 		Lint rules validate meaning, not structure. Rules operate on concepts like "resource has encryption" rather than cloud-specific property names.
-	</Card>
-	<Card title="Plain TypeScript" icon="puzzle">
-		Declare operations as exported TypeScript objects — no DSL, no YAML, no decorators. Full type safety and IDE support.
-	</Card>
-	<Card title="Lexicons" icon="rocket">
-		Each operational area is a lexicon. Ten ship today — [AWS](/chant/lexicons/aws/) (1500+ resources, full type coverage), Azure, GCP, Kubernetes, Helm, Docker, GitHub Actions, GitLab CI, Forgejo, and Temporal. Build your own for any operational area.
 	</Card>
 	<Card title="Spec-True Output" icon="star">
 		Output is native to the target spec — standard CloudFormation, standard GitLab CI. Zero lock-in. If you stop using chant, the artifacts keep working.
 	</Card>
-	<Card title="Composable" icon="document">
-		Build reusable presets and composite resources with plain functions and the spread operator.
+	<Card title="Lexicons" icon="rocket">
+		Each operational area is a lexicon. Ten ship today — [AWS](/chant/lexicons/aws/) (1500+ resources, full type coverage), Azure, GCP, Kubernetes, Helm, Docker, GitHub Actions, GitLab CI, Forgejo, and Temporal. Build your own for any operational area.
+	</Card>
+	<Card title="Bring Your Own Lifecycle" icon="setting">
+		Pluggable lexicons in, pluggable lifecycles out, deterministic synthesis in the middle. The compiler is the foundation; the lifecycle is yours to choose — observe drift, reconcile (`cloud → code` PRs), or apply (`code → cloud`), per environment, with no authoritative state file. Lexicons are a shipped plugin contract; lifecycles today are durable rails you compose from Ops, with a foreign-backend plug as stated direction. [Lifecycle Models](/chant/concepts/lifecycle-models/).
 	</Card>
 	<Card title="Deployment Ops & Drift" icon="approve-check-circle">
 		Declare deployment phases in `*.op.ts`. `chant build` generates Temporal worker code; `chant run` starts a durable workflow with gate steps, parallel phases, and automatic rollback. `chant lifecycle diff --live` catches out-of-band drift across nine lexicons; `WatchOp` runs the same check on a cron.
@@ -36,10 +36,10 @@ import { Card, CardGrid } from '@astrojs/starlight/components';
 	<Card title="Component Releases" icon="add-document">
 		Declare a releasable unit in `*.component.ts` — what it builds, what it produces, how it deploys — and one generic orchestrator runs it. Compose from a bounded capability set, with SBOM, SLSA provenance, and keyless signing attached to the artifact and a `verify` gate before apply. New components add no new pipelines. [Components](/chant/components/overview/).
 	</Card>
-	<Card title="Bring Your Own Lifecycle" icon="setting">
-		Pluggable lexicons in, pluggable lifecycles out, pure synthesis in the middle. The product is the synthesis core; state, apply, drift, and reconcile are opt-in bolt-ons. Observe, reconcile (`cloud → code` PRs), or apply (`code → cloud`) — chosen per environment, no authoritative state file. Lexicons are a shipped plugin contract; lifecycles today are durable rails you compose from Ops, with a foreign-backend plug as stated direction. [Lifecycle Models](/chant/concepts/lifecycle-models/).
-	</Card>
 	<Card title="Cross-Platform Migration" icon="random">
 		Translate workflows between lexicons with `chant migrate`. v1 ships GitHub Actions → GitLab CI/CD: 33 curated marketplace-action mappings, typed provenance, SARIF reporting, and optional composite-pattern recognition. [Read more](/chant/lexicons/gitlab/migration/).
+	</Card>
+	<Card title="Composable" icon="document">
+		Build reusable presets and composite resources with plain functions and the spread operator.
 	</Card>
 </CardGrid>
