@@ -4,11 +4,16 @@ import type { PostSynthCheck } from "@intentius/chant/lint/post-synth";
 import type { CompletionContext, CompletionItem, HoverContext, HoverInfo } from "@intentius/chant/lsp/types";
 import type { McpToolContribution, McpResourceContribution } from "@intentius/chant/mcp/types";
 import { createSkillsLoader } from "@intentius/chant/lexicon-plugin-helpers";
+import type { TemplateParser } from "@intentius/chant/import/parser";
+import type { TypeScriptGenerator } from "@intentius/chant/import/generator";
 import { flySerializer } from "./serializer";
 import { rules } from "./lint/rules";
 import { postSynthChecks } from "./lint/post-synth";
 import { completions } from "./lsp/completions";
 import { hover } from "./lsp/hover";
+import { detectTemplate as detectFlyTemplate } from "./detect";
+import { FlyParser } from "./import/parser";
+import { FlyGenerator } from "./import/generator";
 
 /**
  * fly lexicon plugin.
@@ -137,7 +142,15 @@ export const flyPlugin: LexiconPlugin = {
   },
 
   detectTemplate(data: unknown) {
-    return false; // TODO: Detect if a template belongs to this lexicon
+    return detectFlyTemplate(data);
+  },
+
+  templateParser(): TemplateParser {
+    return new FlyParser();
+  },
+
+  templateGenerator(): TypeScriptGenerator {
+    return new FlyGenerator();
   },
 
   pseudoParameters(): string[] {
@@ -258,5 +271,15 @@ export { app, web };
   async describeResources(options) {
     const { describeResources } = await import("./describe-resources");
     return describeResources(options);
+  },
+
+  // Live export (cloud → code): read live flaps state and regenerate App/Machine
+  // TypeScript. Strips server-written fields to the authored shape; honors the
+  // `owned` filter (machine marker; app-boundary inference for the marker-less
+  // app, logged per the seam contract). Reuses the applier's endpoint/auth and
+  // listMachines so it reads the same target flyApply writes.
+  async exportResources(options) {
+    const { exportResources } = await import("./export-resources");
+    return exportResources(options);
   },
 };
