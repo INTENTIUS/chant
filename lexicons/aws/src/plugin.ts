@@ -14,6 +14,7 @@ import { readFileSync } from "fs";
 import { join, dirname } from "path";
 import { fileURLToPath } from "url";
 import { awsSerializer } from "./serializer";
+import { awsReferenceCatalog } from "./reference-catalog";
 import { CFParser } from "./import/parser";
 import { CFGenerator } from "./import/generator";
 import { parseStackTemplate } from "./import/live-export";
@@ -31,6 +32,8 @@ export const awsPlugin: LexiconPlugin = {
   serializer: awsSerializer,
   // Audit rule metadata for this lexicon's WAW* checks (#687).
   auditCatalog: () => awsAuditCatalog,
+  // Live edge reconstruction for `chant graph --live` (#778).
+  referenceCatalog: awsReferenceCatalog,
 
   lintRules(): LintRule[] {
     const rulesDir = join(dirname(fileURLToPath(import.meta.url)), "lint", "rules");
