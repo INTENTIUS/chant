@@ -5,6 +5,7 @@ import type { CompletionContext, CompletionItem, HoverContext, HoverInfo } from 
 import type { McpToolContribution, McpResourceContribution } from "@intentius/chant/mcp/types";
 import { flySerializer } from "./serializer";
 import { rules } from "./lint/rules";
+import { postSynthChecks } from "./lint/post-synth";
 import { completions } from "./lsp/completions";
 import { hover } from "./lsp/hover";
 
@@ -56,7 +57,7 @@ export const flyPlugin: LexiconPlugin = {
   },
 
   postSynthChecks() {
-    return []; // TODO: Add post-synth checks
+    return postSynthChecks;
   },
 
   skills() {
