@@ -11,6 +11,7 @@ chant graph [path] [--components] [--json]
 chant graph [path] --format ir|mermaid|dot|layout [--detail 0..3] [--lens <kind>:<target>] [--up] [--down]
 chant graph [path] --format layout [--node-sizes <json|-|@file>] [--layout-engine dagre|graphviz]
 chant graph --format ir --live --env <name>
+chant graph --format ir --live --env <name> --overlay
 ```
 
 ## Description
@@ -37,6 +38,18 @@ Edges are **reconstructed** from the live references: observed resources point a
 Scope today is **managed-only** — resources carrying chant's ownership marker; it isn't a full-account scan. Unlike the source graph, `--live` is not lint-gated (it reads the cloud, not source).
 
 Edge reconstruction is only as rich as the observed node attributes. AWS's plain `describe-stack-resources` metadata is too thin, so the AWS lexicon enriches from the deployed CloudFormation template (its `{Ref}`/`{Fn::GetAtt}` references, resolved to node ids) before reconstruction — so a managed AWS stack produces its topology. A lexicon without that enrichment yields nodes with fewer edges.
+
+#### `--overlay` — declared vs provisioned
+
+`--live --overlay` also reads your declared source and classifies every resource, tagging each node so a renderer colours the drift:
+
+- **managed** — declared *and* provisioned
+- **foreign** — provisioned but not declared (in the cloud, not in your source)
+- **pending** — declared but not yet provisioned (appended to the graph)
+
+```bash
+chant graph --format ir --live --env prod --overlay
+```
 
 ## Infra graph: `--format`
 

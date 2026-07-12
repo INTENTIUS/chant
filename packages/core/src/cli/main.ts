@@ -92,6 +92,8 @@ export function parseArgs(args: string[]): ParsedArgs {
       }
     } else if (arg === "--live") {
       result.live = true;
+    } else if (arg === "--overlay") {
+      result.overlay = true;
     } else if (arg === "--from") {
       // Shared by `migrate --from <lexicon>` and `import --from <env>`; the
       // two commands never run together, so one field carries both.

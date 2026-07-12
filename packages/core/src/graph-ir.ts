@@ -400,3 +400,24 @@ export function buildLiveGraphIr(observations: LiveObservation[]): GraphIR {
 
   return { nodes, edges: [], groups };
 }
+
+/**
+ * Overlay the declared graph on the provisioned one (#780, `chant graph --live
+ * --overlay`) and classify each resource, tagging a `_status` a renderer colours:
+ *   - **managed** (declared + provisioned) → `good`
+ *   - **foreign** (provisioned, not declared) → `warn`
+ *   - **pending** (declared, not yet provisioned) → `accent`
+ * Live nodes keep their edges/containment; pending nodes are appended (they have
+ * no live edges). Sorted; the live groups pass through unchanged.
+ */
+export function overlayGraphs(live: GraphIR, declared: GraphIR): GraphIR {
+  const declaredIds = new Set(declared.nodes.map((n) => n.id));
+  const liveIds = new Set(live.nodes.map((n) => n.id));
+  const tagged = (n: IRNode, status: "good" | "warn" | "accent"): IRNode => ({ ...n, attrs: { ...n.attrs, _status: status } });
+
+  const nodes: IRNode[] = live.nodes.map((n) => tagged(n, declaredIds.has(n.id) ? "good" : "warn"));
+  for (const n of declared.nodes) if (!liveIds.has(n.id)) nodes.push(tagged(n, "accent"));
+  nodes.sort((a, b) => a.id.localeCompare(b.id));
+
+  return { ...live, nodes };
+}
