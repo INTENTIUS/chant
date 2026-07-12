@@ -1,15 +1,15 @@
+import { Op, phase, build, httpCheck } from "@intentius/chant-lexicon-temporal";
 import {
-  Op,
-  phase,
-  build,
-  httpCheck,
   spriteCreate,
   spriteExec,
   spriteCheckpoint,
   spriteDestroy,
-} from "@intentius/chant-lexicon-temporal";
-import { spritesUp, spritesDown } from "@intentius/chant/op";
-import { flapsUp, flapsDown, flyApplyStep } from "@intentius/chant-lexicon-fly";
+  spritesUp,
+  spritesDown,
+  flapsUp,
+  flapsDown,
+  flyApplyStep,
+} from "@intentius/chant-lexicon-fly";
 
 // Offline (default/CI) sets FLY_FLAPS_BASE_URL + SPRITES_BASE_URL to the local
 // emulators; the fly + sprite activities resolve their endpoint as: an explicit

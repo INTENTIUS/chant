@@ -1,5 +1,6 @@
-import { Op, phase, spriteCreate, spriteCheckpoint, spriteExec, spriteDestroy }
-  from "@intentius/chant-lexicon-temporal";
+import { Op, phase } from "@intentius/chant-lexicon-temporal";
+import { spriteCreate, spriteCheckpoint, spriteExec, spriteDestroy }
+  from "@intentius/chant-lexicon-fly";
 
 /**
  * Happy-path agent task on a Sprite ([sprites.dev](https://sprites.dev)):

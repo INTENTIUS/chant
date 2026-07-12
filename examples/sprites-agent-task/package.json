@@ -8,6 +8,7 @@
   },
   "dependencies": {
     "@intentius/chant": "*",
+    "@intentius/chant-lexicon-fly": "*",
     "@intentius/chant-lexicon-temporal": "*"
   },
   "devDependencies": {

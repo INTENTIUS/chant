@@ -12,7 +12,7 @@ This is the direct-API, Op-driven way to drive a Sprite: a structured, replayabl
 
 ## The five activities
 
-Each activity is a direct REST call over an injectable HTTP client, imported from `@intentius/chant-lexicon-temporal`:
+Each activity is a direct REST call over an injectable HTTP client, imported from `@intentius/chant-lexicon-fly` (Sprites are a Fly product, so they live in the fly lexicon alongside Machines):
 
 | Activity | What it does |
 |----------|--------------|
@@ -29,8 +29,9 @@ The sprite `id` and the checkpoint `label` are static strings the Op author writ
 Compose the activities into an Op as phases:
 
 ```ts
-import { Op, phase, spriteCreate, spriteCheckpoint, spriteExec, spriteDestroy }
-  from "@intentius/chant-lexicon-temporal";
+import { Op, phase } from "@intentius/chant-lexicon-temporal";
+import { spriteCreate, spriteCheckpoint, spriteExec, spriteDestroy }
+  from "@intentius/chant-lexicon-fly";
 
 export default Op({
   name: "agent-task",
@@ -55,8 +56,9 @@ The reason Sprites map onto chant Ops so well is rollback. A VM checkpoint is a 
 Put the `spriteRestore` in the Op's `onFailure`, referencing the same label the `Checkpoint` phase wrote:
 
 ```ts
-import { Op, phase, spriteCreate, spriteCheckpoint, spriteExec, spriteDestroy, spriteRestore }
-  from "@intentius/chant-lexicon-temporal";
+import { Op, phase } from "@intentius/chant-lexicon-temporal";
+import { spriteCreate, spriteCheckpoint, spriteExec, spriteDestroy, spriteRestore }
+  from "@intentius/chant-lexicon-fly";
 
 export default Op({
   name: "guarded-task",

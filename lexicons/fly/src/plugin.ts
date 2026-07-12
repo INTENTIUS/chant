@@ -133,6 +133,19 @@ export const flyPlugin: LexiconPlugin = {
         },
       ],
     },
+    {
+      file: "chant-fly-sprites.md",
+      name: "chant-fly-sprites",
+      description: "Run an agent task in a Sprite as a chant Op — create, exec, checkpoint, restore, destroy, with checkpoint-as-compensation",
+      triggers: [
+        { type: "context" as const, value: "sprite" },
+        { type: "context" as const, value: "sprites.dev" },
+        { type: "context" as const, value: "agent sandbox" },
+        { type: "context" as const, value: "checkpoint compensation" },
+      ],
+      parameters: [],
+      examples: [],
+    },
   ]),
 
   mcpTools() {

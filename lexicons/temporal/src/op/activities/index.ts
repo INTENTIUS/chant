@@ -28,60 +28,14 @@ export type { ChantTeardownArgs } from "./teardown";
 export { k3dUp, k3dDown, k3dUpCommand, k3dDownCommand, k3dExistsCommand } from "./k3d";
 export type { K3dUpArgs, K3dDownArgs } from "./k3d";
 
-// Sprites (#762): imperative, checkpointable sandbox activities. Loaded by name
-// through `loadActivities(["temporal"])`; the fake lives in `sprites-fake.ts`
-// and is imported only by tests (not re-exported here — it is not an activity).
-export {
-  spriteCreate,
-  spriteExec,
-  spriteCheckpoint,
-  spriteRestore,
-  listCheckpoints,
-  spriteDestroy,
-  resolveSpritesEndpoint,
-  defaultSpritesHttp,
-  spriteCreateBody,
-  parseCreateResponse,
-  accumulateExecFrames,
-  parseCheckpointNdjson,
-  pickCheckpointByComment,
-  splitCommand,
-  spriteExecWsUrl,
-  DEFAULT_SPRITES_BASE_URL,
-} from "./sprites";
-export type {
-  SpritesHttp,
-  SpriteCreateArgs,
-  SpriteCreateResult,
-  SpriteExecArgs,
-  SpriteExecResult,
-  SpriteCheckpointArgs,
-  SpriteCheckpointResult,
-  SpriteRestoreArgs,
-  ListCheckpointsArgs,
-  Checkpoint,
-  SpriteDestroyArgs,
-} from "./sprites";
-
-// spritzer (the Sprites API emulator) Docker lifecycle — the twin of fly's
-// flapsUp/flapsDown. `spritesUp`/`spritesDown` resolve by name so an Op can
-// boot/tear down the emulator as a modeled step; the sprite activities target it
-// via SPRITES_BASE_URL.
-export {
-  spritesUp,
-  spritesDown,
-  spritesRunCommand,
-  spritesRmCommand,
-  spritesExistsCommand,
-  spritesHealthUrl,
-  spritesEndpoint,
-} from "./sprites-emulator";
-export type { SpritesUpArgs, SpritesDownArgs } from "./sprites-emulator";
-
-// Cloud-specific appliers were relocated to their own lexicons (aws → floci,
+// Sprites (Fly product) moved to the fly lexicon — a lexicon owns its own
+// product's activities. `loadActivities(["fly"])` now provides the sprite
+// activities + the spritzer emulator lifecycle. See lexicons/fly/src/op/activities.
+//
+// Cloud-specific appliers likewise live in their own lexicons (aws → floci,
 // gcp → gcpApply, azure → az group) and are loaded from there by the core
 // activity registry per the project's configured lexicons. k3d stays here — it
-// is cloud-agnostic (vanilla Kubernetes).
+// is cloud-agnostic (vanilla Kubernetes), not a single product's surface.
 
 export { reconcilePr } from "./reconcile";
 export type { ReconcilePrArgs, ReconcileResult, ReconcileMode, ReconcileEntry } from "./reconcile";

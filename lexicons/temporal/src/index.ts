@@ -72,11 +72,5 @@ export {
   gcpApply,
   gcpDelete,
   policyGate,
-  spriteCreate,
-  spriteExec,
-  spriteCheckpoint,
-  spriteRestore,
-  listCheckpoints,
-  spriteDestroy,
 } from "@intentius/chant/op";
 export type { OpConfig, PhaseDefinition, StepDefinition, ActivityStep, GateStep } from "@intentius/chant/op";

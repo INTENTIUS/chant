@@ -1,15 +1,16 @@
+import { Op, phase, build } from "@intentius/chant-lexicon-temporal";
 import {
-  Op,
-  phase,
-  build,
   spriteCreate,
   spriteExec,
   spriteCheckpoint,
   spriteRestore,
   spriteDestroy,
-} from "@intentius/chant-lexicon-temporal";
-import { spritesUp, spritesDown } from "@intentius/chant/op";
-import { flapsUp, flapsDown, flyApplyStep } from "@intentius/chant-lexicon-fly";
+  spritesUp,
+  spritesDown,
+  flapsUp,
+  flapsDown,
+  flyApplyStep,
+} from "@intentius/chant-lexicon-fly";
 
 // After the rollback, read the marker back so its value lands in the step
 // record's `outcome` — the visible proof that the sandbox is at `known-good`

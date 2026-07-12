@@ -1,5 +1,6 @@
-import { Op, phase, spriteCreate, spriteCheckpoint, spriteExec, spriteDestroy, spriteRestore }
-  from "@intentius/chant-lexicon-temporal";
+import { Op, phase } from "@intentius/chant-lexicon-temporal";
+import { spriteCreate, spriteCheckpoint, spriteExec, spriteDestroy, spriteRestore }
+  from "@intentius/chant-lexicon-fly";
 
 /**
  * Checkpoint-as-compensation (S5): checkpoint before a risky step and, on

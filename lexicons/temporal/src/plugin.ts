@@ -85,19 +85,8 @@ export const temporalPlugin: LexiconPlugin = {
         parameters: [],
         examples: [],
       },
-      {
-        file: "chant-temporal-sprites.md",
-        name: "chant-temporal-sprites",
-        description: "Run an agent task in a Sprite as a chant Op — create, exec, checkpoint, restore, destroy, with checkpoint-as-compensation",
-        triggers: [
-          { type: "context", value: "sprite" },
-          { type: "context", value: "sprites.dev" },
-          { type: "context", value: "agent sandbox" },
-          { type: "context", value: "checkpoint compensation" },
-        ],
-        parameters: [],
-        examples: [],
-      },
+      // Sprites skill (chant-fly-sprites) moved to the fly lexicon — Sprites are
+      // a Fly product, so the skill lives with the fly Sprite activities.
     ])();
   },
 
