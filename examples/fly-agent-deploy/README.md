@@ -29,7 +29,12 @@ flaps via `flyApply`) and [`sprites-agent-task`](../sprites-agent-task)
 deploy, authored declaratively:
 
 ```ts
-const app = new App({ name: "fly-agent-demo" });
+import { App, Machine, MachineConfig, MachineGuest, Fly } from "@intentius/chant-lexicon-fly";
+
+// org_slug is required by the Machines API (real Fly rejects app creation
+// without it). Fly.OrgSlug resolves from FLY_ORG at build time, default
+// "personal".
+const app = new App({ name: "fly-agent-demo", org_slug: Fly.OrgSlug });
 
 const web = new Machine({
   name: "web",
@@ -42,7 +47,7 @@ const web = new Machine({
 ```
 
 `build:fly` serializes these into the flaps create bodies `flyApply` POSTs: the
-App into `POST /v1/apps { app_name }`, the Machine into `POST
+App into `POST /v1/apps { app_name, org_slug }`, the Machine into `POST
 /v1/apps/fly-agent-demo/machines { name, region, config }`. The serializer
 stamps `managed-by: chant` into `config.metadata`, the ownership marker the
 owned-only prune reads back.
@@ -51,8 +56,9 @@ owned-only prune reads back.
 
 `ops/agent-deploy.op.ts` lays the flow out as modeled activities, no raw shell:
 
-- **Emulators** — boot spritzer (the Sprites API fake) and mudflaps (the flaps
-  fake) with `spritesUp` / `flapsUp`.
+- **Emulators** (offline only) — boot spritzer (the Sprites API fake) and
+  mudflaps (the flaps fake) with `spritesUp` / `flapsUp`. Each emulator is booted
+  only when its base-URL env var is set, so real mode boots no container.
 - **Sandbox** — `spriteCreate` the agent's workspace Sprite, then `spriteExec`
   to seed its known-good state.
 - **Checkpoint** — `spriteCheckpoint` the Sprite under the label `known-good`.
@@ -61,7 +67,8 @@ owned-only prune reads back.
 - **Deploy** — `flyApply` the App + Machine, waiting each machine to `started`
   over `/wait`.
 - **Verify** — GET the app's machines and assert one reached `started`.
-- **Teardown** — destroy the Sprite, then remove both emulator containers.
+- **Teardown** — destroy the Sprite, then remove whichever emulator containers
+  were booted (none in real mode).
 
 ## Watch the bad deploy roll back
 
@@ -92,13 +99,19 @@ The run below shows `RiskyChange` failing, then `Rollback` restoring — the
 started:
 
 ```
-  Deploy       flyApply         ok
-  RiskyChange  spriteExec       fail    exited 1: risky.sh: failed
-  Rollback     spriteRestore    ok
-  Rollback     spriteExec       ok      outcome={ name: state, value: known-good }
-  Rollback     spriteDestroy    ok
-  Rollback     flapsDown        ok
-  Rollback     spritesDown      ok
+[phase] Deploy
+  ✓ flyApply(planPath=dist/fly.json)   165ms
+[phase] RiskyChange
+  ✗ spriteExec(id=deploy-agent, cmd=./risky.sh)   5ms
+    sprite deploy-agent exec "./risky.sh" exited 1: risky.sh: failed
+[phase] Rollback
+  ✓ spriteRestore(id=deploy-agent, comment=known-good)   3ms
+  ✓ spriteExec(id=deploy-agent, cmd=cat /work/state)   3ms
+    [outcome] state=known-good
+  ✓ spriteDestroy(id=deploy-agent)   1ms
+  ✓ flapsDown()   149ms
+  ✓ spritesDown()   132ms
+Op "agent-deploy-guarded" failed after 1.4s
 ```
 
 ## What's real vs modeled offline
@@ -140,7 +153,7 @@ chant run agent-deploy-guarded
 `RiskyChange` phase fails, the `onFailure` `Rollback` runs, and the Sprite is
 back at its `known-good` checkpoint.
 
-Add `--json` for machine-readable phase records (used by CI and the run above).
+Add `--json` for machine-readable phase records (used by CI).
 
 > In this dev checkout, run the Op through the workspace CLI —
 > `npx tsx ../../packages/core/src/cli/main.ts run agent-deploy` — rather than a
@@ -163,7 +176,9 @@ chant run agent-deploy
 
 The fly and sprite activities resolve their endpoint the same way: an explicit
 `endpoint` arg, then the env var, then the real API. The Op passes no `endpoint`
-arg, so unsetting the two env vars is the whole switch. The `Verify` step is a
-plain unauthenticated GET, so it runs only against the local flaps (which needs
-no auth); against real Fly the Deploy step's own `/wait` on `started` is the
-verification, and `Verify` is skipped.
+arg, so unsetting the two env vars is the whole switch. Each env var also gates
+its emulator, so real mode boots no `spritzer`/`mudflaps` container — **no Docker
+required** — and the phase list is just `Sandbox → Checkpoint → Build → Deploy →
+Teardown`. The `Verify` step is a plain unauthenticated GET that runs only
+against the local flaps (which needs no auth); against real Fly the Deploy step's
+own `/wait` on `started` is the verification, and `Verify` is skipped.

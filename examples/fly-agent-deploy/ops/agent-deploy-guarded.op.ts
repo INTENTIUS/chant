@@ -20,6 +20,25 @@ const proveRewound = {
   outcomeAttribute: { name: "state", from: "stdout" },
 };
 
+// Each base URL is the offline/real switch for its service (see agent-deploy):
+// an emulator is booted and torn down only when its URL points at localhost, so
+// real mode ($SPRITES_BASE_URL / $FLY_FLAPS_BASE_URL unset) boots no container.
+const flapsBase = process.env.FLY_FLAPS_BASE_URL;
+const spritesBase = process.env.SPRITES_BASE_URL;
+
+const emulators = [];
+if (spritesBase) emulators.push(spritesUp());
+if (flapsBase) emulators.push(flapsUp());
+
+const setup = [];
+if (emulators.length) setup.push(phase("Emulators", emulators));
+
+// onFailure runs in reverse of the phases it compensates: restore, prove the
+// rewind, destroy the Sprite, then stop whichever emulators were booted.
+const rollback = [spriteRestore({ id: "deploy-agent", comment: "known-good" }), proveRewound, spriteDestroy({ id: "deploy-agent" })];
+if (flapsBase) rollback.push(flapsDown());
+if (spritesBase) rollback.push(spritesDown());
+
 /**
  * The rollback climax. Same setup as `agent-deploy`, but after the good deploy
  * the agent attempts a risky change (`./risky.sh`) that corrupts its workspace
@@ -42,7 +61,7 @@ export default Op({
   overview: "Agent's risky Fly deploy fails; the Sprite rewinds to its known-good checkpoint",
   taskQueue: "fly-agent",
   phases: [
-    phase("Emulators", [spritesUp(), flapsUp()]),
+    ...setup,
     phase("Sandbox", [
       spriteCreate({ name: "deploy-agent", image: "sprites/base:latest" }),
       spriteExec({ id: "deploy-agent", cmd: "echo known-good > /work/state" }),
@@ -57,13 +76,5 @@ export default Op({
       spriteExec({ id: "deploy-agent", cmd: "./risky.sh", profile: "policyCheck" }),
     ]),
   ],
-  onFailure: [
-    phase("Rollback", [
-      spriteRestore({ id: "deploy-agent", comment: "known-good" }),
-      proveRewound,
-      spriteDestroy({ id: "deploy-agent" }),
-      flapsDown(),
-      spritesDown(),
-    ]),
-  ],
+  onFailure: [phase("Rollback", rollback)],
 });

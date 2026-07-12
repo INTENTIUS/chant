@@ -1,4 +1,13 @@
-import { describe, test, expect } from "vitest";
+import { describe, test, expect, vi } from "vitest";
+// The fly-agent-deploy Ops gate their Emulators/Verify/teardown phases on the
+// emulator base-URL env vars (present offline, unset in real mode). Set them
+// before the Op modules load — via vi.hoisted, which runs above the imports —
+// so the shape assertions below see the full offline phase list. `??=` leaves a
+// real run's own values untouched.
+vi.hoisted(() => {
+  process.env.FLY_FLAPS_BASE_URL ??= "http://localhost:4280";
+  process.env.SPRITES_BASE_URL ??= "http://localhost:4290";
+});
 import { describeExample } from "@intentius/chant-test-utils/example-harness";
 import { build } from "@intentius/chant/build";
 import { lintCommand } from "@intentius/chant/cli/commands/lint";

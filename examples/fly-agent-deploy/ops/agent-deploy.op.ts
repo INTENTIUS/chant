@@ -15,13 +15,21 @@ import { flapsUp, flapsDown, flyApplyStep } from "@intentius/chant-lexicon-fly";
 // emulators; the fly + sprite activities resolve their endpoint as: an explicit
 // `endpoint` arg, then the env var, then the real API. The Op passes no endpoint
 // args, so it targets real Fly + real Sprites when those two env vars are unset
-// (with FLY_API_TOKEN / SPRITES_API_TOKEN). The Verify step is a plain GET, so it
-// runs only against the local flaps (mudflaps needs no auth) — hence gated on the
-// env var, matching how the flaps applier resolves the same endpoint.
+// (with FLY_API_TOKEN / SPRITES_API_TOKEN). Each env var is therefore the
+// offline/real switch for its service: an emulator is booted (and torn down)
+// only when its base URL points at localhost, and the plain-GET `Verify` runs
+// only against the local flaps (mudflaps needs no auth). In real mode no
+// container is booted — no Docker required.
 const flapsBase = process.env.FLY_FLAPS_BASE_URL;
+const spritesBase = process.env.SPRITES_BASE_URL;
 
-const phases = [
-  phase("Emulators", [spritesUp(), flapsUp()]),
+const emulators = [];
+if (spritesBase) emulators.push(spritesUp());
+if (flapsBase) emulators.push(flapsUp());
+
+const phases = [];
+if (emulators.length) phases.push(phase("Emulators", emulators));
+phases.push(
   phase("Sandbox", [
     spriteCreate({ name: "deploy-agent", image: "sprites/base:latest" }),
     spriteExec({ id: "deploy-agent", cmd: "echo known-good > /work/state" }),
@@ -29,7 +37,7 @@ const phases = [
   phase("Checkpoint", [spriteCheckpoint({ id: "deploy-agent", comment: "known-good" })]),
   phase("Build", [build(".", { script: "build:fly" })]),
   phase("Deploy", [flyApplyStep("dist/fly.json")]),
-];
+);
 
 if (flapsBase) {
   phases.push(
@@ -43,7 +51,10 @@ if (flapsBase) {
   );
 }
 
-phases.push(phase("Teardown", [spriteDestroy({ id: "deploy-agent" }), flapsDown(), spritesDown()]));
+const teardown = [spriteDestroy({ id: "deploy-agent" })];
+if (flapsBase) teardown.push(flapsDown());
+if (spritesBase) teardown.push(spritesDown());
+phases.push(phase("Teardown", teardown));
 
 /**
  * Happy path: an agent, working inside a checkpointable Sprite, deploys the Fly
