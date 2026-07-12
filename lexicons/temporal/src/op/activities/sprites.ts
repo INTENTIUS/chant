@@ -172,19 +172,38 @@ export function spriteExecWsUrl(base: string, id: string, cmd: string): string {
 // ── Checkpoint NDJSON + comment picker ─────────────────────────────────────────
 
 /**
- * Parse a checkpoint create/restore NDJSON body (line-delimited JSON progress
- * events) and capture the `complete` event's `id`. Pure. Blank/unparseable
- * lines are skipped; `checkpointId` is "" when no completion event is present.
+ * Parse a checkpoint create NDJSON body (line-delimited JSON progress events)
+ * and capture the created version id. Real Sprites tags each event with a
+ * `type` and a human `data` string — the version id rides inside the text
+ * ("  ID: v1" and "Checkpoint v1 created successfully"), not a structured
+ * field. The in-process fake mirrors that. An older shape (`{event, id}`) is
+ * still honored so a structured id always wins. Pure; blank/unparseable lines
+ * are skipped; `checkpointId` is "" when the stream carries no id.
  */
 export function parseCheckpointNdjson(text: string): SpriteCheckpointResult {
-  let checkpointId = "";
+  let structuredId = "";
+  let textId = "";
   for (const line of text.split("\n")) {
     const t = line.trim();
     if (!t) continue;
-    const obj = safeJson(t) as { event?: string; id?: string } | undefined;
-    if (obj && obj.event === "complete" && typeof obj.id === "string") checkpointId = obj.id;
+    const obj = safeJson(t) as
+      | { event?: string; type?: string; id?: string; data?: string }
+      | undefined;
+    if (!obj) continue;
+    const kind = obj.event ?? obj.type;
+    // Structured id (older emulator shape) — always preferred when present.
+    if (kind === "complete" && typeof obj.id === "string" && obj.id) structuredId = obj.id;
+    // Otherwise mine the version id out of the message text. The "  ID: v1"
+    // detail line and the "Checkpoint v1 created successfully" completion line
+    // both carry it; either is enough.
+    if (typeof obj.data === "string") {
+      const fromId = obj.data.match(/(?:^|\s)ID:\s*(\S+)/);
+      if (fromId) textId = fromId[1];
+      const fromComplete = obj.data.match(/Checkpoint\s+(\S+)\s+created/i);
+      if (fromComplete) textId = fromComplete[1];
+    }
   }
-  return { checkpointId };
+  return { checkpointId: structuredId || textId };
 }
 
 /**
@@ -427,7 +446,8 @@ export async function spriteExec(args: SpriteExecArgs, signal?: AbortSignal): Pr
 /**
  * Checkpoint the sprite. `POST /v1/sprites/{id}/checkpoint` (singular); the
  * `comment` key is omitted when empty. The response is an NDJSON progress
- * stream; the created version id comes from the `complete` event.
+ * stream; the created version id is mined from the message text (see
+ * `parseCheckpointNdjson`).
  */
 export async function spriteCheckpoint(
   args: SpriteCheckpointArgs,
