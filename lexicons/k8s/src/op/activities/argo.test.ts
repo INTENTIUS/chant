@@ -5,7 +5,9 @@ import {
   type ArgoAppStatus,
   type ArgoStatusFetcher,
 } from "./argo";
-import { TEMPORAL_ACTIVITY_PROFILES } from "../../config";
+// Activity profiles live centrally in the temporal lexicon (loadProfiles reads
+// them there); argoSync marks ArgoSyncFailedError non-retryable for this activity.
+import { TEMPORAL_ACTIVITY_PROFILES } from "@intentius/chant-lexicon-temporal/config";
 
 /** A fetcher that returns a scripted sequence of statuses, repeating the last. */
 function scriptedFetcher(sequence: ArgoAppStatus[]): ArgoStatusFetcher {

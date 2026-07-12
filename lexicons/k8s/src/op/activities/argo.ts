@@ -1,7 +1,6 @@
 import { exec } from "node:child_process";
 import { promisify } from "node:util";
-import { safeHeartbeat } from "./heartbeat";
-import { sleep } from "./util";
+import { safeHeartbeat, sleep } from "@intentius/chant/op";
 
 const execAsync = promisify(exec);
 
@@ -9,12 +8,13 @@ const execAsync = promisify(exec);
  * waitForArgoSync — block until an Argo CD Application reports
  * `health=Healthy && sync=Synced`.
  *
- * This activity is intentionally **dependency-free**: it must not import the k8s
- * lexicon or its generated Argo CRD types. Its signature is primitives-only
- * (app name / namespace / server). It reads the Application's status either via
- * `kubectl get application` (default) or the Argo CD REST API (when `server` is
- * given), so Temporal can gate procedural steps on a declarative apply that Argo
- * owns.
+ * This activity is intentionally **dependency-light**: though it now lives in the
+ * k8s lexicon (#809), it must not import the lexicon's generated Argo CRD types —
+ * its signature is primitives-only (app name / namespace / server), so a Temporal
+ * worker can load it without pulling in the declarable surface. It reads the
+ * Application's status either via `kubectl get application` (default) or the Argo
+ * CD REST API (when `server` is given), so an Op can gate procedural steps on a
+ * declarative apply that Argo owns.
  */
 
 export interface WaitForArgoSyncArgs {

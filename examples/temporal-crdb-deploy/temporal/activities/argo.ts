@@ -16,7 +16,7 @@ import {
   waitForArgoSync as _waitForArgoSync,
   type WaitForArgoSyncArgs,
   type ArgoAppStatus,
-} from '@intentius/chant-lexicon-temporal/op/activities';
+} from '@intentius/chant-lexicon-k8s/op/activities';
 import type { DeployParams } from '../types.js';
 
 const execAsync = promisify(exec);
