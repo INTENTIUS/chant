@@ -15,9 +15,9 @@ Beyond the App and Machine covered in `chant-fly`, the lexicon models `Volume`, 
 The FLY011 build check enforces the link statically: every machine mount must reference a `Volume` declared in the stack, checked across files. A mount that points at an undeclared volume fails `chant build` before anything reaches the API.
 
 ```ts
-import { App, Machine, MachineConfig, MachineGuest, Volume } from "@intentius/chant-lexicon-fly";
+import { App, Machine, MachineConfig, MachineGuest, Volume, Fly } from "@intentius/chant-lexicon-fly";
 
-export const app = new App({ name: "my-app" });
+export const app = new App({ name: "my-app", org_slug: Fly.OrgSlug });
 
 export const data = new Volume({ name: "data", region: "iad", size_gb: 10 });
 

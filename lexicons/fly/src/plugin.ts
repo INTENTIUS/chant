@@ -88,7 +88,7 @@ export const flyPlugin: LexiconPlugin = {
       examples: [
         {
           title: "Author an App and a Machine",
-          output: "new App({ name: \"my-app\" });\nnew Machine({ region: \"iad\", config: new MachineConfig({ image: \"flyio/hellofly:latest\" }) })",
+          output: "new App({ name: \"my-app\", org_slug: Fly.OrgSlug });\nnew Machine({ region: \"iad\", config: new MachineConfig({ image: \"flyio/hellofly:latest\" }) })",
         },
         {
           title: "Deploy against mudflaps offline",

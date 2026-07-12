@@ -76,12 +76,25 @@ describe("accumulateExecFrames", () => {
 // ── Checkpoint NDJSON parsing ─────────────────────────────────────────────────
 
 describe("parseCheckpointNdjson", () => {
-  test("captures the complete event's id past the info lines", () => {
+  test("mines the version id from real Sprites' message text (type/data shape)", () => {
+    // Verbatim shape from api.sprites.dev: no structured id field — the version
+    // rides inside the "  ID: v1" detail line and the completion message.
+    const body = [
+      '{"type":"info","data":"Creating checkpoint...","time":"2026-07-12T05:01:17Z"}',
+      '{"type":"info","data":"Checkpoint created successfully"}',
+      '{"type":"info","data":"  ID: v1"}',
+      '{"type":"info","data":"  Path: checkpoints/v1"}',
+      '{"type":"complete","data":"Checkpoint v1 created successfully"}',
+    ].join("\n");
+    expect(parseCheckpointNdjson(body)).toEqual({ checkpointId: "v1" });
+  });
+
+  test("honors a structured id from the older {event, id} shape", () => {
     const body = '{"event":"info","message":"checkpointing"}\n{"event":"complete","id":"v3"}\n';
     expect(parseCheckpointNdjson(body)).toEqual({ checkpointId: "v3" });
   });
 
-  test("blank and unparseable lines are skipped; no completion → empty id", () => {
+  test("blank and unparseable lines are skipped; no id → empty", () => {
     expect(parseCheckpointNdjson('\n{"event":"info"}\nnot-json\n')).toEqual({ checkpointId: "" });
   });
 });

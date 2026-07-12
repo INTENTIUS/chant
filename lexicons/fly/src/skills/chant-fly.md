@@ -40,9 +40,9 @@ That Op runs the phases boot, build, apply, verify, and teardown against a local
 Import resource types from `@intentius/chant-lexicon-fly`. They are generated from Fly's Machines API OpenAPI spec, so `MachineConfig` is typed all the way down through guest, services, mounts, and checks.
 
 ```ts
-import { App, Machine, MachineConfig, MachineGuest } from "@intentius/chant-lexicon-fly";
+import { App, Machine, MachineConfig, MachineGuest, Fly } from "@intentius/chant-lexicon-fly";
 
-export const app = new App({ name: "my-app" });
+export const app = new App({ name: "my-app", org_slug: Fly.OrgSlug });
 
 export const web = new Machine({
   name: "web",

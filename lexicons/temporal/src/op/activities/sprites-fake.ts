@@ -10,7 +10,7 @@
  * replaces `fs` with that copy. Started in-process by a test and reached via
  * `SPRITES_BASE_URL`, so the same activities that hit real Sprites hit the fake.
  *
- * The wire surface matches the released `spritzer:0.3.0` image so the CI
+ * The wire surface matches the released `spritzer:0.3.1` image so the CI
  * fake-based test and the docker test exercise the same protocol:
  *  - `exec` over the control WebSocket with `[StreamID][payload]` binary framing;
  *  - `POST /checkpoint` (singular) returning NDJSON progress + a `complete` event;
@@ -237,9 +237,13 @@ export function createSpritesFake(): Promise<{ url: string; close(): Promise<voi
           fs: copyFs(sprite.fs),
         };
         sprite.checkpoints.push(cp);
+        // Mirror real Sprites: `{type, data}` progress lines carrying the
+        // version id in the message text, not a structured field.
         return sendNdjson(200, [
-          { event: "info", message: `checkpointing ${id}` },
-          { event: "complete", id: cp.id },
+          { type: "info", data: "Creating checkpoint..." },
+          { type: "info", data: "Checkpoint created successfully" },
+          { type: "info", data: `  ID: ${cp.id}` },
+          { type: "complete", data: `Checkpoint ${cp.id} created successfully` },
         ]);
       }
 
@@ -267,8 +271,8 @@ export function createSpritesFake(): Promise<{ url: string; close(): Promise<voi
         sprite.fs = copyFs(cp.fs);
         sprite.status = "running";
         return sendNdjson(200, [
-          { event: "info", message: `restoring ${id} to ${cpId}` },
-          { event: "complete", id: cp.id },
+          { type: "info", data: `Restoring checkpoint ${cpId}...` },
+          { type: "complete", data: `Checkpoint ${cpId} restored successfully` },
         ]);
       }
 
