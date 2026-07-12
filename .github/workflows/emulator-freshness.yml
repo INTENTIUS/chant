@@ -1,0 +1,59 @@
+name: emulator-freshness
+
+# Weekly advisory check: are the pinned Fly emulator images (mudflaps / spritzer)
+# behind their latest upstream release? Surfaces a single tracking issue when so —
+# never an auto-bump. The tag lives in one place
+# (lexicons/fly/src/op/activities/emulator-images.ts) and moves only when a
+# consuming test needs the newer emulator (#808 T2 policy).
+run-name: emulator-freshness — ${{ github.event_name }}
+
+on:
+  # Mondays at 07:00 UTC — an hour after lexicon-upgrade, to spread the load.
+  schedule:
+    - cron: '0 7 * * 1'
+  workflow_dispatch:
+
+concurrency:
+  group: emulator-freshness
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '24'
+          cache: 'npm'
+      - name: Install dependencies
+        run: npm install
+
+      - name: Check emulator pin freshness
+        id: freshness
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: npx tsx lexicons/fly/src/emulator-freshness-cli.ts
+
+      # Open or refresh a single tracking issue when a pin is behind. Advisory —
+      # a human reviews and bumps the pin per the #808 policy.
+      - name: Surface a tracking issue when behind
+        if: ${{ steps.freshness.outputs.behind == 'true' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TITLE: 'chore: Fly emulator image pin(s) behind latest release'
+          BODY: ${{ steps.freshness.outputs.body }}
+        run: |
+          existing=$(gh issue list --state open --search "in:title $TITLE" --json number --jq '.[0].number // empty')
+          if [ -n "$existing" ]; then
+            gh issue edit "$existing" --body "$BODY"
+            echo "Refreshed issue #$existing"
+          else
+            gh issue create --title "$TITLE" --body "$BODY" --label chore
+            echo "Opened a new tracking issue"
+          fi
