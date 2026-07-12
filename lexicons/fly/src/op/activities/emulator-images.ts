@@ -15,7 +15,7 @@
  */
 
 /** Pinned mudflaps (Fly Machines / flaps emulator) image. */
-export const MUDFLAPS_IMAGE = "ghcr.io/intentius/mudflaps:0.3.1";
+export const MUDFLAPS_IMAGE = "ghcr.io/intentius/mudflaps:0.4.0";
 
 /** Pinned spritzer (Fly Sprites emulator) image. */
 export const SPRITZER_IMAGE = "ghcr.io/intentius/spritzer:0.3.1";
