@@ -54,7 +54,7 @@
     "build": "tsc -p tsconfig.build.json && tsc-alias -p tsconfig.build.json && find dist -type f \\( -name \"*.js\" -o -name \"*.js.map\" \\) -delete"
   },
   "peerDependencies": {
-    "@intentius/chant": "^0.15.3"
+    "@intentius/chant": "^0.16.0"
   },
   "dependencies": {
     "ws": "^8.18.0"
