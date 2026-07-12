@@ -14,6 +14,8 @@ import { hover } from "./lsp/hover";
 import { detectTemplate as detectFlyTemplate } from "./detect";
 import { FlyParser } from "./import/parser";
 import { FlyGenerator } from "./import/generator";
+import { flyReferenceCatalog } from "./reference-catalog";
+import { flyContextTools } from "./mcp/context-tools";
 
 /**
  * fly lexicon plugin.
@@ -39,8 +41,8 @@ export const flyPlugin: LexiconPlugin = {
   },
 
   async coverage(options?: { verbose?: boolean; minOverall?: number }): Promise<void> {
-    // TODO: Implement coverage analysis
-    console.error("Coverage analysis not yet implemented");
+    const { analyzeFlyCoverage } = await import("./coverage");
+    await analyzeFlyCoverage({ verbose: options?.verbose, minOverall: options?.minOverall });
   },
 
   async package(options?: { verbose?: boolean; force?: boolean }): Promise<void> {
@@ -134,11 +136,14 @@ export const flyPlugin: LexiconPlugin = {
   ]),
 
   mcpTools() {
-    return []; // TODO: Implement MCP tools
+    return flyContextTools();
   },
 
   mcpResources() {
-    return []; // TODO: Implement MCP resources
+    // No standing MCP resources: Fly's read-only context is the fly:* tools above
+    // (build-from-source) plus the chant-fly skills. There's no static catalog or
+    // per-project artifact to expose as a resource.
+    return [];
   },
 
   detectTemplate(data: unknown) {
@@ -282,4 +287,9 @@ export { app, web };
     const { exportResources } = await import("./export-resources");
     return exportResources(options);
   },
+
+  // Live graph edges (#804): how observed Fly resources reference each other, so
+  // `chant graph --live` reconstructs the topology (App boundary + mount edges).
+  // No `enrichLiveAttrs` needed — describeResources already returns rich attrs.
+  referenceCatalog: flyReferenceCatalog,
 };
