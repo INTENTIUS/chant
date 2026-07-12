@@ -7,5 +7,5 @@ import type { ChantConfig } from "@intentius/chant";
 //               spriteRestore / spriteDestroy) and the spritzer lifecycle
 //               (spritesUp / spritesDown) — Sprites are a Fly product too.
 //   temporal  — the base activities (chantBuild, httpCheck) and the Op DSL.
-// `chant run agent-deploy` resolves each Op step's `fn` against these.
+// `chant run deploy` resolves each Op step's `fn` against these.
 export default { lexicons: ["fly", "temporal"] } satisfies ChantConfig;

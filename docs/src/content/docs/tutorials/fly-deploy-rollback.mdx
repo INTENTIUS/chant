@@ -1,28 +1,36 @@
 ---
-title: Fly Agent Deploy with Rollback
-description: An agent deploys a Fly App + Machine from inside a checkpointed Sprite, and a botched change rewinds the whole workspace to a known-good checkpoint. Runs offline against emulators, or against real Fly + real Sprites by changing two environment variables.
+title: Fly Deploy with Checkpoint Rollback
+description: Wrap a transactional rollback boundary around a Fly App + Machine deploy, using a Sprite checkpoint as the commit point — when a risky post-deploy step fails, the sandbox rewinds to its known-good checkpoint. Runs offline against emulators, or against real Fly + real Sprites by changing two environment variables.
 ---
 
 import { Aside } from '@astrojs/starlight/components';
 
-The [`fly-agent-deploy`](https://github.com/INTENTIUS/chant/tree/main/examples/fly-agent-deploy)
-example is for teams already on Fly Machines. It puts three things together into
-one flow:
+The [`fly-deploy-rollback`](https://github.com/INTENTIUS/chant/tree/main/examples/fly-deploy-rollback)
+example is for teams already on Fly Machines. It wraps a **transactional rollback
+boundary** around a Fly deploy, using a Sprite checkpoint as the commit point:
 
 - **declarative infra-as-code** for your Machines — a Fly `App` and a `Machine`
   you author in TypeScript, applied straight to the Machines API;
-- an **agent that deploys from inside an isolated Sprite** (Fly's stateful,
-  checkpointable sandbox);
-- **checkpoint-backed rollback** — a botched deploy rewinds the agent's whole
-  workspace to a known-good checkpoint in roughly the time a VM restore takes.
+- a **Sprite sandbox** (Fly's stateful, checkpointable VM) whose checkpoint is a
+  clean rewind point;
+- **checkpoint-as-compensation** — when a risky post-deploy step fails, restoring
+  the checkpoint rewinds the whole sandbox to its known-good state in roughly the
+  time a VM restore takes, instead of a hand-written undo.
 
 The whole flow runs offline against the emulators (no Fly account, no cost), and
 points at real Fly + real Sprites by changing two environment variables.
 
 | Op | Point |
 |----|-------|
-| `agent-deploy` | the happy path — checkpoint, build, deploy, verify, tear down |
-| `agent-deploy-guarded` | the rollback climax — a risky change fails and the Sprite rewinds |
+| `deploy` | the happy path — checkpoint, build, deploy, verify, tear down |
+| `deploy-guarded` | the rollback climax — a risky follow-up step fails and the Sprite rewinds |
+
+<Aside type="note">
+The deploy itself — `build:fly` then `flyApply` — is orchestrated by the Op, not
+run from inside the Sprite. The Sprite is a stateful sandbox that holds workspace
+state and whose checkpoint is the rollback boundary. The point is the boundary:
+checkpoint = commit, restore = rollback.
+</Aside>
 
 It composes two smaller examples:
 [`local-fly`](https://github.com/INTENTIUS/chant/tree/main/examples/local-fly)
@@ -30,7 +38,7 @@ It composes two smaller examples:
 [`sprites-agent-task`](https://github.com/INTENTIUS/chant/tree/main/examples/sprites-agent-task)
 (checkpoint-as-compensation on a Sprite).
 
-## The infra the agent deploys
+## The infra to deploy
 
 `src/infra.ts` is one Fly `App` and one `Machine` — the smallest complete
 deploy, authored declaratively:
@@ -41,7 +49,7 @@ import { App, Machine, MachineConfig, MachineGuest, Fly } from "@intentius/chant
 // org_slug is required by the Machines API (real Fly rejects app creation
 // without it). Fly.OrgSlug resolves from FLY_ORG at build time, default
 // "personal".
-const app = new App({ name: "fly-agent-demo", org_slug: Fly.OrgSlug });
+const app = new App({ name: "fly-deploy-demo", org_slug: Fly.OrgSlug });
 
 const web = new Machine({
   name: "web",
@@ -55,7 +63,7 @@ const web = new Machine({
 
 `build:fly` serializes these into the flaps create bodies `flyApply` POSTs: the
 App into `POST /v1/apps { app_name, org_slug }`, the Machine into
-`POST /v1/apps/fly-agent-demo/machines { name, region, config }`. The serializer
+`POST /v1/apps/fly-deploy-demo/machines { name, region, config }`. The serializer
 stamps `managed-by: chant` into `config.metadata`, the ownership marker the
 owned-only prune reads back.
 
@@ -70,50 +78,50 @@ owned-only prune reads back.
 Point the two activity endpoints at the local emulators and run the Op:
 
 ```bash
-cd examples/fly-agent-deploy
+cd examples/fly-deploy-rollback
 npm install
 
 export FLY_FLAPS_BASE_URL=http://localhost:4280
 export SPRITES_BASE_URL=http://localhost:4290
 
-chant run agent-deploy
-chant run agent-deploy-guarded
+chant run deploy
+chant run deploy-guarded
 ```
 
-`agent-deploy` exits `ok`. The phases run with no raw shell: boot the emulators,
-create the agent's Sprite and seed its `known-good` state, checkpoint it, build
-the flaps plan, `flyApply` the App + Machine (waiting each machine to `started`),
-verify, then tear down.
+`deploy` exits `ok`. The phases run with no raw shell: boot the emulators, create
+the Sprite sandbox and seed its `known-good` state, checkpoint it, build the flaps
+plan, `flyApply` the App + Machine (waiting each machine to `started`), verify,
+then tear down.
 
 <Aside type="note">
 In a dev checkout, run the Op through the workspace CLI —
-`npx tsx ../../packages/core/src/cli/main.ts run agent-deploy` — rather than a
-globally linked `chant`, which double-loads modules here and can produce an empty
-plan. A normal install of `chant` does not have this quirk.
+`npx tsx ../../packages/core/src/cli/main.ts run deploy` — rather than a globally
+linked `chant`, which double-loads modules here and can produce an empty plan. A
+normal install of `chant` does not have this quirk.
 </Aside>
 
 ## Watch the bad deploy roll back
 
-`agent-deploy-guarded` is the same setup, then the agent attempts a risky change
-(`./risky.sh`) that corrupts its workspace and exits non-zero. The failing
+`deploy-guarded` is the same setup, then a risky follow-up step (`./risky.sh`, run
+in the Sprite) corrupts the sandbox's state and exits non-zero. The failing
 `RiskyChange` phase triggers the Op-level `onFailure` `Rollback`, which restores
-the `known-good` checkpoint — rewinding the agent's whole workspace — then proves
-the rewind and cleans up. It exits non-zero on purpose:
+the `known-good` checkpoint — rewinding the whole sandbox — then proves the rewind
+and cleans up. It exits non-zero on purpose:
 
 ```
 [phase] Deploy
   ✓ flyApply(planPath=dist/fly.json)   165ms
 [phase] RiskyChange
-  ✗ spriteExec(id=deploy-agent, cmd=./risky.sh)   5ms
-    sprite deploy-agent exec "./risky.sh" exited 1: risky.sh: failed
+  ✗ spriteExec(id=deploy-sandbox, cmd=./risky.sh)   5ms
+    sprite deploy-sandbox exec "./risky.sh" exited 1: risky.sh: failed
 [phase] Rollback
-  ✓ spriteRestore(id=deploy-agent, comment=known-good)   3ms
-  ✓ spriteExec(id=deploy-agent, cmd=cat /work/state)   3ms
+  ✓ spriteRestore(id=deploy-sandbox, comment=known-good)   3ms
+  ✓ spriteExec(id=deploy-sandbox, cmd=cat /work/state)   3ms
     [outcome] state=known-good
-  ✓ spriteDestroy(id=deploy-agent)   1ms
+  ✓ spriteDestroy(id=deploy-sandbox)   1ms
   ✓ flapsDown()   149ms
   ✓ spritesDown()   132ms
-Op "agent-deploy-guarded" failed after 1.4s
+Op "deploy-guarded" failed after 1.4s
 ```
 
 A Sprite checkpoint is the transactional boundary, so recovery is a restore, not
@@ -131,11 +139,12 @@ unset SPRITES_BASE_URL         # the sprite steps fall through to real Sprites
 export FLY_API_TOKEN=...       # a Fly deploy token
 export SPRITES_API_TOKEN=...   # a Sprites token
 
-chant run agent-deploy
+chant run deploy
 ```
 
 Each env var also gates its emulator, so real mode boots no container (no Docker
 required) and the phase list is just `Sandbox → Checkpoint → Build → Deploy →
-Teardown`. See the
-[example README](https://github.com/INTENTIUS/chant/tree/main/examples/fly-agent-deploy)
-for what is real vs modeled in each mode.
+Teardown`. The deploy is orchestrated by the Op in both modes; the Sprite is the
+rollback boundary, not the deploy host. See the
+[example README](https://github.com/INTENTIUS/chant/tree/main/examples/fly-deploy-rollback)
+for the full real-vs-modeled breakdown.

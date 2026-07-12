@@ -17,11 +17,11 @@ import {
 // again (the typed `spriteExec` builder does not expose `outcomeAttribute`, so
 // spread the step and add it).
 const proveRewound = {
-  ...spriteExec({ id: "deploy-agent", cmd: "cat /work/state" }),
+  ...spriteExec({ id: "deploy-sandbox", cmd: "cat /work/state" }),
   outcomeAttribute: { name: "state", from: "stdout" },
 };
 
-// Each base URL is the offline/real switch for its service (see agent-deploy):
+// Each base URL is the offline/real switch for its service (see deploy.op.ts):
 // an emulator is booted and torn down only when its URL points at localhost, so
 // real mode ($SPRITES_BASE_URL / $FLY_FLAPS_BASE_URL unset) boots no container.
 const flapsBase = process.env.FLY_FLAPS_BASE_URL;
@@ -36,17 +36,17 @@ if (emulators.length) setup.push(phase("Emulators", emulators));
 
 // onFailure runs in reverse of the phases it compensates: restore, prove the
 // rewind, destroy the Sprite, then stop whichever emulators were booted.
-const rollback = [spriteRestore({ id: "deploy-agent", comment: "known-good" }), proveRewound, spriteDestroy({ id: "deploy-agent" })];
+const rollback = [spriteRestore({ id: "deploy-sandbox", comment: "known-good" }), proveRewound, spriteDestroy({ id: "deploy-sandbox" })];
 if (flapsBase) rollback.push(flapsDown());
 if (spritesBase) rollback.push(spritesDown());
 
 /**
- * The rollback climax. Same setup as `agent-deploy`, but after the good deploy
- * the agent attempts a risky change (`./risky.sh`) that corrupts its workspace
+ * The rollback climax. Same setup as `deploy`, but after the good deploy a risky
+ * follow-up step (`./risky.sh`, run in the Sprite) corrupts the sandbox's state
  * and exits non-zero. The failing `RiskyChange` phase triggers the Op-level
  * `onFailure` `Rollback`, which restores the `known-good` checkpoint — rewinding
- * the agent's whole workspace — then proves it and tears the emulators down.
- * `chant run agent-deploy-guarded` (exits non-zero: the risk fails on purpose).
+ * the whole sandbox — then proves it and tears the emulators down.
+ * `chant run deploy-guarded` (exits non-zero: the risk fails on purpose).
  *
  * Checkpoint-as-compensation: a Sprite checkpoint is the transactional boundary,
  * so recovery is a restore instead of a hand-written inverse action. The
@@ -55,26 +55,26 @@ if (spritesBase) rollback.push(spritesDown());
  *
  * `onFailure` phases run in reverse of the phases they compensate, so the single
  * `Rollback` phase holds the whole failure path in order: restore, prove the
- * rewind, then clean up the Sprite and both containers.
+ * rewind, then clean up the Sprite and whichever emulators were booted.
  */
 export default Op({
-  name: "agent-deploy-guarded",
-  overview: "Agent's risky Fly deploy fails; the Sprite rewinds to its known-good checkpoint",
-  taskQueue: "fly-agent",
+  name: "deploy-guarded",
+  overview: "A risky post-deploy step fails; the Sprite rewinds to its known-good checkpoint",
+  taskQueue: "fly-deploy",
   phases: [
     ...setup,
     phase("Sandbox", [
-      spriteCreate({ name: "deploy-agent", image: "sprites/base:latest" }),
-      spriteExec({ id: "deploy-agent", cmd: "echo known-good > /work/state" }),
+      spriteCreate({ name: "deploy-sandbox", image: "sprites/base:latest" }),
+      spriteExec({ id: "deploy-sandbox", cmd: "echo known-good > /work/state" }),
     ]),
-    phase("Checkpoint", [spriteCheckpoint({ id: "deploy-agent", comment: "known-good" })]),
+    phase("Checkpoint", [spriteCheckpoint({ id: "deploy-sandbox", comment: "known-good" })]),
     phase("Build", [build(".", { script: "build:fly" })]),
     phase("Deploy", [flyApplyStep("dist/fly.json")]),
     // The risky change is a deterministic failure, so retrying it is pointless —
     // `policyCheck` is the single-attempt profile, so it fails fast into Rollback
     // instead of burning the default retry budget.
     phase("RiskyChange", [
-      spriteExec({ id: "deploy-agent", cmd: "./risky.sh", profile: "policyCheck" }),
+      spriteExec({ id: "deploy-sandbox", cmd: "./risky.sh", profile: "policyCheck" }),
     ]),
   ],
   onFailure: [phase("Rollback", rollback)],
