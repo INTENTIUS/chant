@@ -52,5 +52,31 @@ export const awsReferenceCatalog: ReferenceCatalog = {
     { from: "AWS::ECS::Service", path: "LoadBalancers[].TargetGroupArn", targetKind: "AWS::ElasticLoadBalancingV2::TargetGroup", relation: "reference", label: "registered in" },
     { from: "AWS::ECS::Service", path: "NetworkConfiguration.AwsvpcConfiguration.SecurityGroups[]", targetKind: "AWS::EC2::SecurityGroup", relation: "reference", label: "sg" },
     { from: "AWS::RDS::DBInstance", path: "VpcSecurityGroups[].VpcSecurityGroupId", targetKind: "AWS::EC2::SecurityGroup", relation: "reference", label: "sg" },
+
+    // ── CloudFormation *template* property paths (#784) ──
+    // `enrichLiveAttrs` resolves the deployed template's `{Ref}`/`{Fn::GetAtt}`
+    // intrinsics to bare logical ids (= node ids), so these match by node id; the
+    // property names are the CFN template shape (SecurityGroupIds, Cluster, …),
+    // which differs from the describe/SDK shape above. No targetKind needed —
+    // logical ids are unique.
+    { from: "AWS::EC2::Subnet", path: "VpcId", relation: "containment", label: "in VPC" },
+    { from: "AWS::EC2::SecurityGroup", path: "VpcId", relation: "containment", label: "in VPC" },
+    { from: "AWS::EC2::RouteTable", path: "VpcId", relation: "containment", label: "in VPC" },
+    { from: "AWS::EC2::Instance", path: "SubnetId", relation: "containment", label: "in subnet" },
+    { from: "AWS::EC2::Instance", path: "SecurityGroupIds[]", relation: "reference", label: "sg" },
+    { from: "AWS::EC2::NatGateway", path: "SubnetId", relation: "containment", label: "in subnet" },
+    { from: "AWS::EC2::Route", path: "RouteTableId", relation: "reference", label: "in" },
+    { from: "AWS::EC2::Route", path: "GatewayId", relation: "reference", label: "via" },
+    { from: "AWS::EC2::Route", path: "NatGatewayId", relation: "reference", label: "via" },
+    { from: "AWS::ElasticLoadBalancingV2::LoadBalancer", path: "Subnets[]", relation: "containment", label: "in subnet" },
+    { from: "AWS::ElasticLoadBalancingV2::LoadBalancer", path: "SecurityGroups[]", relation: "reference", label: "sg" },
+    { from: "AWS::ElasticLoadBalancingV2::TargetGroup", path: "VpcId", relation: "containment", label: "in VPC" },
+    { from: "AWS::ElasticLoadBalancingV2::Listener", path: "LoadBalancerArn", relation: "reference", label: "on" },
+    { from: "AWS::ElasticLoadBalancingV2::Listener", path: "DefaultActions[].TargetGroupArn", relation: "reference", label: "forwards to" },
+    { from: "AWS::ECS::Service", path: "Cluster", relation: "reference", label: "in cluster" },
+    { from: "AWS::ECS::Service", path: "TaskDefinition", relation: "reference", label: "runs" },
+    { from: "AWS::ECS::Service", path: "LoadBalancers[].TargetGroupArn", relation: "reference", label: "registered in" },
+    { from: "AWS::RDS::DBInstance", path: "DBSubnetGroupName", relation: "reference", label: "subnets" },
+    { from: "AWS::RDS::DBInstance", path: "VPCSecurityGroups[]", relation: "reference", label: "sg" },
   ],
 };

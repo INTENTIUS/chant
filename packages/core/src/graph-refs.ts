@@ -126,6 +126,10 @@ export function reconstructEdges(nodes: IRNode[], catalog: ReferenceCatalog): Re
     (index.get(value) ?? index.set(value, []).get(value)!).push({ id, kind });
   };
   for (const node of nodes) {
+    // Every node is identified by its own logical id — so references resolved to
+    // a logical id (e.g. a CloudFormation `{Ref: LogicalId}` from exportResources,
+    // #784) match directly — plus its physical id and any catalog identity attrs.
+    add(node.id, node.id, node.kind);
     if (node.physicalId) add(node.physicalId, node.id, node.kind);
     for (const rule of catalog.identities) {
       if (rule.kind !== node.kind) continue;

@@ -34,7 +34,9 @@ chant graph --format ir --live --env prod    # the provisioned resources as IR
 
 Edges are **reconstructed** from the live references: observed resources point at each other by physical id (a subnet's `VpcId`, an ALB listener's `TargetGroupArn`), and each lexicon ships a reference catalog that turns those into graph edges (peer references) and containment (subnet ∈ VPC). A reference whose target isn't in the observed set is reported as dangling, never a wrong edge.
 
-Scope today is **managed-only** — resources carrying chant's ownership marker; it isn't a full-account scan. Unlike the source graph, `--live` is not lint-gated (it reads the cloud, not source). Edge reconstruction is only as rich as the observed node attributes: a lexicon whose live observation returns thin metadata yields few edges until its attribute source is enriched.
+Scope today is **managed-only** — resources carrying chant's ownership marker; it isn't a full-account scan. Unlike the source graph, `--live` is not lint-gated (it reads the cloud, not source).
+
+Edge reconstruction is only as rich as the observed node attributes. AWS's plain `describe-stack-resources` metadata is too thin, so the AWS lexicon enriches from the deployed CloudFormation template (its `{Ref}`/`{Fn::GetAtt}` references, resolved to node ids) before reconstruction — so a managed AWS stack produces its topology. A lexicon without that enrichment yields nodes with fewer edges.
 
 ## Infra graph: `--format`
 
