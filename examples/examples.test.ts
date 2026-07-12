@@ -24,8 +24,8 @@ import deployOp from "./getting-started/deploy.op";
 import flyDeployOp from "./local-fly/ops/fly.op";
 import agentTaskOp from "./sprites-agent-task/ops/agent-task.op";
 import guardedTaskOp from "./sprites-agent-task/ops/guarded-task.op";
-import flyRollbackOp from "./fly-deploy-rollback/ops/deploy.op";
-import flyRollbackGuardedOp from "./fly-deploy-rollback/ops/deploy-guarded.op";
+import flyRollbackOp from "./fly-deploy-rollback/ops/fly-deploy.op";
+import flyRollbackGuardedOp from "./fly-deploy-rollback/ops/fly-deploy-guarded.op";
 import deployGatedOp from "./getting-started/deploy-gated.op";
 import observeOp from "./getting-started/observe.op";
 import reconcileOp from "./getting-started/reconcile.op";
@@ -324,7 +324,7 @@ describe("fly-deploy-rollback Ops", () => {
     const props = (flyRollbackOp as unknown as {
       props: { name: string; taskQueue?: string; phases: Array<{ name: string; steps: Array<{ fn: string }> }> };
     }).props;
-    expect(props.name).toBe("deploy");
+    expect(props.name).toBe("fly-deploy");
     expect(props.taskQueue).toBe("fly-deploy");
     // The optional Verify phase is env-gated (offline only), so assert the core
     // sequence with Verify filtered out — stable whether or not FLY_FLAPS_BASE_URL
@@ -348,7 +348,7 @@ describe("fly-deploy-rollback Ops", () => {
         onFailure?: Array<{ name: string; steps: Array<{ fn: string; args?: Record<string, unknown> }> }>;
       };
     }).props;
-    expect(props.name).toBe("deploy-guarded");
+    expect(props.name).toBe("fly-deploy-guarded");
     expect(props.phases.map((p) => p.name)).toEqual([
       "Emulators",
       "Sandbox",

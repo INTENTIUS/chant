@@ -41,12 +41,12 @@ if (flapsBase) rollback.push(flapsDown());
 if (spritesBase) rollback.push(spritesDown());
 
 /**
- * The rollback climax. Same setup as `deploy`, but after the good deploy a risky
+ * The rollback climax. Same setup as `fly-deploy`, but after the good deploy a risky
  * follow-up step (`./risky.sh`, run in the Sprite) corrupts the sandbox's state
  * and exits non-zero. The failing `RiskyChange` phase triggers the Op-level
  * `onFailure` `Rollback`, which restores the `known-good` checkpoint — rewinding
  * the whole sandbox — then proves it and tears the emulators down.
- * `chant run deploy-guarded` (exits non-zero: the risk fails on purpose).
+ * `chant run fly-deploy-guarded` (exits non-zero: the risk fails on purpose).
  *
  * Checkpoint-as-compensation: a Sprite checkpoint is the transactional boundary,
  * so recovery is a restore instead of a hand-written inverse action. The
@@ -58,7 +58,7 @@ if (spritesBase) rollback.push(spritesDown());
  * rewind, then clean up the Sprite and whichever emulators were booted.
  */
 export default Op({
-  name: "deploy-guarded",
+  name: "fly-deploy-guarded",
   overview: "A risky post-deploy step fails; the Sprite rewinds to its known-good checkpoint",
   taskQueue: "fly-deploy",
   phases: [

@@ -22,8 +22,8 @@ points at real Fly + real Sprites by changing two environment variables.
 
 | Op | Point |
 |----|-------|
-| `deploy` | the happy path — checkpoint, build, deploy, verify, tear down |
-| `deploy-guarded` | the rollback climax — a risky follow-up step fails and the Sprite rewinds |
+| `fly-deploy` | the happy path — checkpoint, build, deploy, verify, tear down |
+| `fly-deploy-guarded` | the rollback climax — a risky follow-up step fails and the Sprite rewinds |
 
 <Aside type="note">
 The deploy itself — `build:fly` then `flyApply` — is orchestrated by the Op, not
@@ -84,11 +84,11 @@ npm install
 export FLY_FLAPS_BASE_URL=http://localhost:4280
 export SPRITES_BASE_URL=http://localhost:4290
 
-chant run deploy
-chant run deploy-guarded
+chant run fly-deploy
+chant run fly-deploy-guarded
 ```
 
-`deploy` exits `ok`. The phases run with no raw shell: boot the emulators, create
+`fly-deploy` exits `ok`. The phases run with no raw shell: boot the emulators, create
 the Sprite sandbox and seed its `known-good` state, checkpoint it, build the flaps
 plan, `flyApply` the App + Machine (waiting each machine to `started`), verify,
 then tear down.
@@ -102,7 +102,7 @@ normal install of `chant` does not have this quirk.
 
 ## Watch the bad deploy roll back
 
-`deploy-guarded` is the same setup, then a risky follow-up step (`./risky.sh`, run
+`fly-deploy-guarded` is the same setup, then a risky follow-up step (`./risky.sh`, run
 in the Sprite) corrupts the sandbox's state and exits non-zero. The failing
 `RiskyChange` phase triggers the Op-level `onFailure` `Rollback`, which restores
 the `known-good` checkpoint — rewinding the whole sandbox — then proves the rewind
@@ -121,7 +121,7 @@ and cleans up. It exits non-zero on purpose:
   ✓ spriteDestroy(id=deploy-sandbox)   1ms
   ✓ flapsDown()   149ms
   ✓ spritesDown()   132ms
-Op "deploy-guarded" failed after 1.4s
+Op "fly-deploy-guarded" failed after 1.4s
 ```
 
 A Sprite checkpoint is the transactional boundary, so recovery is a restore, not
@@ -139,7 +139,7 @@ unset SPRITES_BASE_URL         # the sprite steps fall through to real Sprites
 export FLY_API_TOKEN=...       # a Fly deploy token
 export SPRITES_API_TOKEN=...   # a Sprites token
 
-chant run deploy
+chant run fly-deploy
 ```
 
 Each env var also gates its emulator, so real mode boots no container (no Docker

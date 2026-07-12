@@ -17,8 +17,8 @@ points at real Fly + real Sprites by changing two environment variables.
 
 | Op | Phases | Point |
 |----|--------|-------|
-| `deploy` | Emulators → Sandbox → Checkpoint → Build → Deploy → Verify → Teardown | the happy path |
-| `deploy-guarded` | Emulators → Sandbox → Checkpoint → Build → Deploy → RiskyChange, with `onFailure: Rollback` | the rollback climax |
+| `fly-deploy` | Emulators → Sandbox → Checkpoint → Build → Deploy → Verify → Teardown | the happy path |
+| `fly-deploy-guarded` | Emulators → Sandbox → Checkpoint → Build → Deploy → RiskyChange, with `onFailure: Rollback` | the rollback climax |
 
 It composes two other examples: [`local-fly`](../local-fly) (App + Machine →
 flaps via `flyApply`) and [`sprites-agent-task`](../sprites-agent-task)
@@ -62,7 +62,7 @@ owned-only prune reads back.
 
 ## The phases
 
-`ops/deploy.op.ts` lays the flow out as modeled activities, no raw shell:
+`ops/fly-deploy.op.ts` lays the flow out as modeled activities, no raw shell:
 
 - **Emulators** (offline only) — boot spritzer (the Sprites API fake) and
   mudflaps (the flaps fake) with `spritesUp` / `flapsUp`. Each emulator is booted
@@ -80,7 +80,7 @@ owned-only prune reads back.
 
 ## Watch the bad deploy roll back
 
-`ops/deploy-guarded.op.ts` is the same setup, then a risky follow-up step
+`ops/fly-deploy-guarded.op.ts` is the same setup, then a risky follow-up step
 (`./risky.sh`, run in the Sprite) corrupts the sandbox's state and exits
 non-zero. The failing `RiskyChange` phase triggers the Op-level `onFailure`
 `Rollback`, which restores the `known-good` checkpoint:
@@ -119,7 +119,7 @@ started:
   ✓ spriteDestroy(id=deploy-sandbox)   1ms
   ✓ flapsDown()   149ms
   ✓ spritesDown()   132ms
-Op "deploy-guarded" failed after 1.4s
+Op "fly-deploy-guarded" failed after 1.4s
 ```
 
 ## What's real vs modeled offline
@@ -160,11 +160,11 @@ npm install
 export FLY_FLAPS_BASE_URL=http://localhost:4280
 export SPRITES_BASE_URL=http://localhost:4290
 
-chant run deploy
-chant run deploy-guarded
+chant run fly-deploy
+chant run fly-deploy-guarded
 ```
 
-`deploy` exits `ok`. `deploy-guarded` exits non-zero on purpose: the
+`fly-deploy` exits `ok`. `fly-deploy-guarded` exits non-zero on purpose: the
 `RiskyChange` phase fails, the `onFailure` `Rollback` runs, and the Sprite is
 back at its `known-good` checkpoint.
 
@@ -186,7 +186,7 @@ unset SPRITES_BASE_URL         # the sprite steps fall through to real Sprites
 export FLY_API_TOKEN=...       # a Fly deploy token
 export SPRITES_API_TOKEN=...   # a Sprites token
 
-chant run deploy
+chant run fly-deploy
 ```
 
 The fly and sprite activities resolve their endpoint the same way: an explicit

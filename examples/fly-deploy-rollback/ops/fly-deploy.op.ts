@@ -59,7 +59,7 @@ phases.push(phase("Teardown", teardown));
 /**
  * Happy path: deploy the Fly App + Machine from `src/infra.ts`, with a
  * checkpointable Sprite sandbox standing by as the rollback boundary the guarded
- * variant uses. `chant run deploy`.
+ * variant uses. `chant run fly-deploy`.
  *
  * The deploy itself (Build + Deploy) is orchestrated by the Op, not run from
  * inside the Sprite — the Sprite is a stateful sandbox whose checkpoint is a
@@ -79,7 +79,7 @@ phases.push(phase("Teardown", teardown));
  *   Teardown    destroy the Sprite, then remove whichever emulators were booted.
  */
 export default Op({
-  name: "deploy",
+  name: "fly-deploy",
   overview: "Deploy a Fly App + Machine, with a Sprite checkpoint as the rollback boundary",
   taskQueue: "fly-deploy",
   phases,
