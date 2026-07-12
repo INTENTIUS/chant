@@ -49,6 +49,7 @@ jobs:
       - run: npm run --prefix lexicons/helm prepack
       - run: npm run --prefix lexicons/docker prepack
       - run: npm run --prefix lexicons/temporal prepack
+      - run: npm run --prefix lexicons/fly prepack
       - run: npx vitest run
 
   publish:
@@ -152,4 +153,11 @@ jobs:
         run: |
           V=$(node -e "process.stdout.write(require('./package.json').version)")
           P=$(npm view @intentius/chant-lexicon-temporal version 2>/dev/null || echo "none")
+          [ "$V" = "$P" ] && echo "Already at $V, skipping" || npm publish --access public --provenance
+
+      - name: Publish @intentius/chant-lexicon-fly
+        working-directory: lexicons/fly
+        run: |
+          V=$(node -e "process.stdout.write(require('./package.json').version)")
+          P=$(npm view @intentius/chant-lexicon-fly version 2>/dev/null || echo "none")
           [ "$V" = "$P" ] && echo "Already at $V, skipping" || npm publish --access public --provenance
