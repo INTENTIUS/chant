@@ -47,8 +47,12 @@
     "prepack": "npm run generate && npm run bundle && npm run validate && npm run build",
     "build": "tsc -p tsconfig.build.json && tsc-alias -p tsconfig.build.json && find dist -type f \\( -name \"*.js\" -o -name \"*.js.map\" \\) -delete"
   },
+  "dependencies": {
+    "ws": "^8.18.0"
+  },
   "devDependencies": {
     "@intentius/chant": "*",
+    "@types/ws": "^8.5.12",
     "tsc-alias": "^1.8.17",
     "typescript": "^5.9.3"
   },

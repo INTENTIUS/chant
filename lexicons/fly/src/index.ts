@@ -17,6 +17,21 @@ export { FLY_METADATA_OWNERSHIP_KEYS } from "./ownership";
 export { flyDeploy, flapsUp, flapsDown, flyApplyStep, LOCAL_FLAPS_ENDPOINT } from "./composites/fly-deploy";
 export type { FlyDeployOpts, FlyApplyStepOpts, FlapsStepOpts } from "./composites/fly-deploy";
 
+// Sprite Op step builders (re-exported from core for single-import convenience).
+// These author `activity("spriteCreate", ...)` steps; `loadActivities(["fly"])`
+// binds them to the implementations in ./op/activities/sprites.ts. The `spritesUp`
+// /`spritesDown` builders boot/tear down the spritzer emulator as modeled steps.
+export {
+  spriteCreate,
+  spriteExec,
+  spriteCheckpoint,
+  spriteRestore,
+  listCheckpoints,
+  spriteDestroy,
+  spritesUp,
+  spritesDown,
+} from "@intentius/chant/op";
+
 // Generated resources — export everything from generated index.
 // Provides `App`, `Machine`, `Volume`, and the property types
 // (`MachineConfig`, `MachineGuest`, `MachineService`, ...) for authoring.
