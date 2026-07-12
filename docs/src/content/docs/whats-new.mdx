@@ -7,9 +7,22 @@ A hand-curated rollup of capabilities shipped recently. If you learned chant bef
 
 For the day-to-day reference docs see [Lifecycle Models](/chant/concepts/lifecycle-models/), [`chant lifecycle`](/chant/cli/lifecycle/), [Live Import](/chant/guide/live-import/), [Reconciling Lifecycle](/chant/guide/reconciling-lifecycle/), [Drift Detection](/chant/concepts/drift-detection/), and [Implementing Observation](/chant/lexicon-authoring/observation/).
 
+## Provisioned infrastructure diagrams
+
+The newest thread. `chant graph` gained a **live** data source: `chant graph --live --env <name>` graphs the *actually-provisioned* infrastructure, not the declared source — nodes from each lexicon's observation, **edges reconstructed** from the live references between resources (a subnet's VPC, an ALB's target group), and **containment** (VPC ⊃ subnet ⊃ resource) as boundary structure. `--overlay` classifies each resource against declared source — managed / foreign / pending — so the diagram shows drift. The companion painter, [pinhole](https://github.com/INTENTIUS/pinhole), renders the result as an AWS-style architecture diagram. AWS is enriched from the deployed CloudFormation template, so a managed AWS stack draws its real topology. Scope is managed-only (owned resources); a full-account scan is the natural next phase. See [`chant graph --live`](/chant/cli/graph/) and [Implementing Observation](/chant/lexicon-authoring/observation/) for the lexicon-author hooks.
+
+| # | Capability |
+|---|---|
+| [#777](https://github.com/INTENTIUS/chant/pull/783) | `chant graph --live` — project observed resources into IR nodes (physicalId + ownership) |
+| [#778](https://github.com/INTENTIUS/chant/pull/785) | Live edge reconstruction — a per-lexicon `referenceCatalog` (identities + reference/containment rules) + AWS catalog |
+| [#779](https://github.com/INTENTIUS/chant/pull/794) | Live containment grouping (`byContainer`) — VPC / subnet boundaries for the renderer |
+| [#784](https://github.com/INTENTIUS/chant/pull/796) | `enrichLiveAttrs` — real AWS edges by resolving the deployed CloudFormation template's `{Ref}`/`{Fn::GetAtt}` to node ids |
+| [#780](https://github.com/INTENTIUS/chant/pull/798) | `--overlay` — declared-vs-provisioned drift (managed / foreign / pending) on the diagram |
+| [pinhole#74](https://github.com/INTENTIUS/pinhole/pull/76), [pinhole#75](https://github.com/INTENTIUS/pinhole/pull/78) | pinhole architecture render (nested boundary boxes) + AWS icon pack |
+
 ## Components & supply-chain attestations
 
-The newest thread. The [components](/chant/components/overview/) release model — a deploy composed from a bounded set of capabilities, run by one generic orchestrator — gained supply-chain attestations: SBOM, SLSA provenance, and keyless signing attached to the artifact digest, with a `verify` gate that halts a deploy before apply. `chant run --components` runs a component's `deploy` composition on the local executor by default. The `dir`/`zip`/`jar` SBOM path is hermetic — no external tool. See [Supply-Chain Attestations](/chant/components/supply-chain/).
+An earlier thread. The [components](/chant/components/overview/) release model — a deploy composed from a bounded set of capabilities, run by one generic orchestrator — gained supply-chain attestations: SBOM, SLSA provenance, and keyless signing attached to the artifact digest, with a `verify` gate that halts a deploy before apply. `chant run --components` runs a component's `deploy` composition on the local executor by default. The `dir`/`zip`/`jar` SBOM path is hermetic — no external tool. See [Supply-Chain Attestations](/chant/components/supply-chain/).
 
 | # | Capability |
 |---|---|
