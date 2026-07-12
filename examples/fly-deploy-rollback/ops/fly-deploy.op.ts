@@ -31,10 +31,10 @@ const phases = [];
 if (emulators.length) phases.push(phase("Emulators", emulators));
 phases.push(
   phase("Sandbox", [
-    spriteCreate({ name: "deploy-agent", image: "sprites/base:latest" }),
-    spriteExec({ id: "deploy-agent", cmd: "echo known-good > /work/state" }),
+    spriteCreate({ name: "deploy-sandbox", image: "sprites/base:latest" }),
+    spriteExec({ id: "deploy-sandbox", cmd: "echo known-good > /work/state" }),
   ]),
-  phase("Checkpoint", [spriteCheckpoint({ id: "deploy-agent", comment: "known-good" })]),
+  phase("Checkpoint", [spriteCheckpoint({ id: "deploy-sandbox", comment: "known-good" })]),
   phase("Build", [build(".", { script: "build:fly" })]),
   phase("Deploy", [flyApplyStep("dist/fly.json")]),
 );
@@ -42,7 +42,7 @@ phases.push(
 if (flapsBase) {
   phases.push(
     phase("Verify", [
-      httpCheck(`${flapsBase}/v1/apps/fly-agent-demo/machines`, {
+      httpCheck(`${flapsBase}/v1/apps/fly-deploy-demo/machines`, {
         contains: "started",
         retries: 15,
         intervalMs: 2000,
@@ -51,21 +51,23 @@ if (flapsBase) {
   );
 }
 
-const teardown = [spriteDestroy({ id: "deploy-agent" })];
+const teardown = [spriteDestroy({ id: "deploy-sandbox" })];
 if (flapsBase) teardown.push(flapsDown());
 if (spritesBase) teardown.push(spritesDown());
 phases.push(phase("Teardown", teardown));
 
 /**
- * Happy path: an agent, working inside a checkpointable Sprite, deploys the Fly
- * App + Machine from `src/infra.ts`. `chant run agent-deploy`.
+ * Happy path: deploy the Fly App + Machine from `src/infra.ts`, with a
+ * checkpointable Sprite sandbox standing by as the rollback boundary the guarded
+ * variant uses. `chant run fly-deploy`.
  *
- * The phases model the full flow with no raw shell:
+ * The deploy itself (Build + Deploy) is orchestrated by the Op, not run from
+ * inside the Sprite — the Sprite is a stateful sandbox whose checkpoint is a
+ * clean rewind point. The phases model the flow with no raw shell:
  *   Emulators   boot spritzer (the Sprites API fake) and mudflaps (the flaps
  *               fake) via `spritesUp` / `flapsUp`.
- *   Sandbox     create the agent's workspace Sprite and seed its known-good
- *               state (offline: a marker file; real: the agent checks out and
- *               authors the project).
+ *   Sandbox     create the Sprite sandbox and seed its known-good state (a
+ *               marker file standing in for accumulated workspace state).
  *   Checkpoint  checkpoint the Sprite as `known-good` — the rewind target the
  *               guarded variant restores to.
  *   Build       run `build:fly` -> the serialized flaps plan (`dist/fly.json`).
@@ -74,11 +76,11 @@ phases.push(phase("Teardown", teardown));
  *   Verify      (offline) GET the app's machines and assert one reached
  *               `started`. Skipped against real Fly, where the Deploy step's own
  *               `/wait` is the verification.
- *   Teardown    destroy the Sprite, then remove both emulator containers.
+ *   Teardown    destroy the Sprite, then remove whichever emulators were booted.
  */
 export default Op({
-  name: "agent-deploy",
-  overview: "Agent deploys a Fly App + Machine from inside a checkpointed Sprite",
-  taskQueue: "fly-agent",
+  name: "fly-deploy",
+  overview: "Deploy a Fly App + Machine, with a Sprite checkpoint as the rollback boundary",
+  taskQueue: "fly-deploy",
   phases,
 });

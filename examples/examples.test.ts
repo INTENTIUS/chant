@@ -1,5 +1,5 @@
 import { describe, test, expect, vi } from "vitest";
-// The fly-agent-deploy Ops gate their Emulators/Verify/teardown phases on the
+// The fly-deploy-rollback Ops gate their Emulators/Verify/teardown phases on the
 // emulator base-URL env vars (present offline, unset in real mode). Set them
 // before the Op modules load — via vi.hoisted, which runs above the imports —
 // so the shape assertions below see the full offline phase list. `??=` leaves a
@@ -24,8 +24,8 @@ import deployOp from "./getting-started/deploy.op";
 import flyDeployOp from "./local-fly/ops/fly.op";
 import agentTaskOp from "./sprites-agent-task/ops/agent-task.op";
 import guardedTaskOp from "./sprites-agent-task/ops/guarded-task.op";
-import agentDeployOp from "./fly-agent-deploy/ops/agent-deploy.op";
-import agentDeployGuardedOp from "./fly-agent-deploy/ops/agent-deploy-guarded.op";
+import flyRollbackOp from "./fly-deploy-rollback/ops/fly-deploy.op";
+import flyRollbackGuardedOp from "./fly-deploy-rollback/ops/fly-deploy-guarded.op";
 import deployGatedOp from "./getting-started/deploy-gated.op";
 import observeOp from "./getting-started/observe.op";
 import reconcileOp from "./getting-started/reconcile.op";
@@ -278,7 +278,7 @@ describe("sprites-agent-task Ops (#762)", () => {
   });
 });
 
-// ── Fly agent deploy — fly-agent-deploy ──────────────────────────────
+// ── Fly agent deploy — fly-deploy-rollback ──────────────────────────────
 // Composes local-fly (App+Machine → flaps) with sprites-agent-task
 // (checkpoint-as-compensation): an agent deploys the Fly infra from inside a
 // checkpointed Sprite, and a botched change rewinds the sandbox. The live run
@@ -287,7 +287,7 @@ describe("sprites-agent-task Ops (#762)", () => {
 // local-fly + sprites-agent-task blocks above.
 
 describeExample(
-  "fly-agent-deploy",
+  "fly-deploy-rollback",
   {
     lexicon: "fly",
     serializer: [flySerializer],
@@ -306,12 +306,12 @@ describeExample(
       // creation without it); Fly.OrgSlug resolves to "personal" offline.
       const app = reqs.find((r) => r.endpoint === "/v1/apps");
       expect(app).toBeDefined();
-      expect(app!.body.app_name).toBe("fly-agent-demo");
+      expect(app!.body.app_name).toBe("fly-deploy-demo");
       expect(app!.body.org_slug).toBe("personal");
       // Machine create body under the app, with a config and the stamped marker.
       const machine = reqs.find((r) => /\/v1\/apps\/[^/]+\/machines$/.test(r.endpoint));
       expect(machine).toBeDefined();
-      expect(machine!.endpoint).toBe("/v1/apps/fly-agent-demo/machines");
+      expect(machine!.endpoint).toBe("/v1/apps/fly-deploy-demo/machines");
       expect(machine!.body.config).toBeDefined();
       expect(machine!.body.config.image).toBe("flyio/hellofly:latest");
       expect(machine!.body.config.metadata["managed-by"]).toBe("chant");
@@ -319,13 +319,13 @@ describeExample(
   },
 );
 
-describe("fly-agent-deploy Ops", () => {
-  test("agent-deploy composes the sprite + fly phases (checkpoint → deploy)", () => {
-    const props = (agentDeployOp as unknown as {
+describe("fly-deploy-rollback Ops", () => {
+  test("deploy composes the sprite + fly phases (checkpoint → deploy)", () => {
+    const props = (flyRollbackOp as unknown as {
       props: { name: string; taskQueue?: string; phases: Array<{ name: string; steps: Array<{ fn: string }> }> };
     }).props;
-    expect(props.name).toBe("agent-deploy");
-    expect(props.taskQueue).toBe("fly-agent");
+    expect(props.name).toBe("fly-deploy");
+    expect(props.taskQueue).toBe("fly-deploy");
     // The optional Verify phase is env-gated (offline only), so assert the core
     // sequence with Verify filtered out — stable whether or not FLY_FLAPS_BASE_URL
     // is set when the Op module loads.
@@ -340,15 +340,15 @@ describe("fly-agent-deploy Ops", () => {
     expect(deploy.steps[0].fn).toBe("flyApply");
   });
 
-  test("agent-deploy-guarded rolls the sandbox back on a failed change (onFailure Restore)", () => {
-    const props = (agentDeployGuardedOp as unknown as {
+  test("deploy-guarded rolls the sandbox back on a failed change (onFailure Restore)", () => {
+    const props = (flyRollbackGuardedOp as unknown as {
       props: {
         name: string;
         phases: Array<{ name: string; steps: Array<{ fn: string; args?: Record<string, unknown> }> }>;
         onFailure?: Array<{ name: string; steps: Array<{ fn: string; args?: Record<string, unknown> }> }>;
       };
     }).props;
-    expect(props.name).toBe("agent-deploy-guarded");
+    expect(props.name).toBe("fly-deploy-guarded");
     expect(props.phases.map((p) => p.name)).toEqual([
       "Emulators",
       "Sandbox",
@@ -360,7 +360,7 @@ describe("fly-agent-deploy Ops", () => {
     // The Checkpoint the restore targets is a static `known-good` label.
     const checkpoint = props.phases.find((p) => p.name === "Checkpoint")!.steps[0];
     expect(checkpoint.fn).toBe("spriteCheckpoint");
-    expect(checkpoint.args).toMatchObject({ id: "deploy-agent", comment: "known-good" });
+    expect(checkpoint.args).toMatchObject({ id: "deploy-sandbox", comment: "known-good" });
     // The risky change is the failing step that triggers the rollback.
     const risky = props.phases.find((p) => p.name === "RiskyChange")!.steps[0];
     expect(risky.fn).toBe("spriteExec");
@@ -369,7 +369,7 @@ describe("fly-agent-deploy Ops", () => {
     expect(props.onFailure?.map((p) => p.name)).toEqual(["Rollback"]);
     const restore = props.onFailure![0].steps[0];
     expect(restore.fn).toBe("spriteRestore");
-    expect(restore.args).toMatchObject({ id: "deploy-agent", comment: "known-good" });
+    expect(restore.args).toMatchObject({ id: "deploy-sandbox", comment: "known-good" });
   });
 });
 

@@ -1,5 +1,5 @@
 {
-  "name": "fly-agent-deploy-example",
+  "name": "fly-deploy-rollback-example",
   "version": "0.0.1",
   "private": true,
   "type": "module",

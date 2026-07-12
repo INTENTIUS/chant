@@ -1,0 +1,150 @@
+---
+title: Fly Deploy with Checkpoint Rollback
+description: Wrap a transactional rollback boundary around a Fly App + Machine deploy, using a Sprite checkpoint as the commit point — when a risky post-deploy step fails, the sandbox rewinds to its known-good checkpoint. Runs offline against emulators, or against real Fly + real Sprites by changing two environment variables.
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+The [`fly-deploy-rollback`](https://github.com/INTENTIUS/chant/tree/main/examples/fly-deploy-rollback)
+example is for teams already on Fly Machines. It wraps a **transactional rollback
+boundary** around a Fly deploy, using a Sprite checkpoint as the commit point:
+
+- **declarative infra-as-code** for your Machines — a Fly `App` and a `Machine`
+  you author in TypeScript, applied straight to the Machines API;
+- a **Sprite sandbox** (Fly's stateful, checkpointable VM) whose checkpoint is a
+  clean rewind point;
+- **checkpoint-as-compensation** — when a risky post-deploy step fails, restoring
+  the checkpoint rewinds the whole sandbox to its known-good state in roughly the
+  time a VM restore takes, instead of a hand-written undo.
+
+The whole flow runs offline against the emulators (no Fly account, no cost), and
+points at real Fly + real Sprites by changing two environment variables.
+
+| Op | Point |
+|----|-------|
+| `fly-deploy` | the happy path — checkpoint, build, deploy, verify, tear down |
+| `fly-deploy-guarded` | the rollback climax — a risky follow-up step fails and the Sprite rewinds |
+
+<Aside type="note">
+The deploy itself — `build:fly` then `flyApply` — is orchestrated by the Op, not
+run from inside the Sprite. The Sprite is a stateful sandbox that holds workspace
+state and whose checkpoint is the rollback boundary. The point is the boundary:
+checkpoint = commit, restore = rollback.
+</Aside>
+
+It composes two smaller examples:
+[`local-fly`](https://github.com/INTENTIUS/chant/tree/main/examples/local-fly)
+(App + Machine → flaps via `flyApply`) and
+[`sprites-agent-task`](https://github.com/INTENTIUS/chant/tree/main/examples/sprites-agent-task)
+(checkpoint-as-compensation on a Sprite).
+
+## The infra to deploy
+
+`src/infra.ts` is one Fly `App` and one `Machine` — the smallest complete
+deploy, authored declaratively:
+
+```ts
+import { App, Machine, MachineConfig, MachineGuest, Fly } from "@intentius/chant-lexicon-fly";
+
+// org_slug is required by the Machines API (real Fly rejects app creation
+// without it). Fly.OrgSlug resolves from FLY_ORG at build time, default
+// "personal".
+const app = new App({ name: "fly-deploy-demo", org_slug: Fly.OrgSlug });
+
+const web = new Machine({
+  name: "web",
+  region: "iad",
+  config: new MachineConfig({
+    image: "flyio/hellofly:latest",
+    guest: new MachineGuest({ cpu_kind: "shared", cpus: 1, memory_mb: 256 }),
+  }),
+});
+```
+
+`build:fly` serializes these into the flaps create bodies `flyApply` POSTs: the
+App into `POST /v1/apps { app_name, org_slug }`, the Machine into
+`POST /v1/apps/fly-deploy-demo/machines { name, region, config }`. The serializer
+stamps `managed-by: chant` into `config.metadata`, the ownership marker the
+owned-only prune reads back.
+
+## Prerequisites
+
+- Node.js and `npm`.
+- Docker (for the offline run — it boots the `spritzer` and `mudflaps` emulators
+  in containers). Real mode needs no Docker.
+
+## Run it offline
+
+Point the two activity endpoints at the local emulators and run the Op:
+
+```bash
+cd examples/fly-deploy-rollback
+npm install
+
+export FLY_FLAPS_BASE_URL=http://localhost:4280
+export SPRITES_BASE_URL=http://localhost:4290
+
+chant run fly-deploy
+chant run fly-deploy-guarded
+```
+
+`fly-deploy` exits `ok`. The phases run with no raw shell: boot the emulators, create
+the Sprite sandbox and seed its `known-good` state, checkpoint it, build the flaps
+plan, `flyApply` the App + Machine (waiting each machine to `started`), verify,
+then tear down.
+
+<Aside type="note">
+In a dev checkout, run the Op through the workspace CLI —
+`npx tsx ../../packages/core/src/cli/main.ts run deploy` — rather than a globally
+linked `chant`, which double-loads modules here and can produce an empty plan. A
+normal install of `chant` does not have this quirk.
+</Aside>
+
+## Watch the bad deploy roll back
+
+`fly-deploy-guarded` is the same setup, then a risky follow-up step (`./risky.sh`, run
+in the Sprite) corrupts the sandbox's state and exits non-zero. The failing
+`RiskyChange` phase triggers the Op-level `onFailure` `Rollback`, which restores
+the `known-good` checkpoint — rewinding the whole sandbox — then proves the rewind
+and cleans up. It exits non-zero on purpose:
+
+```
+[phase] Deploy
+  ✓ flyApply(planPath=dist/fly.json)   165ms
+[phase] RiskyChange
+  ✗ spriteExec(id=deploy-sandbox, cmd=./risky.sh)   5ms
+    sprite deploy-sandbox exec "./risky.sh" exited 1: risky.sh: failed
+[phase] Rollback
+  ✓ spriteRestore(id=deploy-sandbox, comment=known-good)   3ms
+  ✓ spriteExec(id=deploy-sandbox, cmd=cat /work/state)   3ms
+    [outcome] state=known-good
+  ✓ spriteDestroy(id=deploy-sandbox)   1ms
+  ✓ flapsDown()   149ms
+  ✓ spritesDown()   132ms
+Op "fly-deploy-guarded" failed after 1.4s
+```
+
+A Sprite checkpoint is the transactional boundary, so recovery is a restore, not
+a hand-written inverse action. The checkpoint `comment` and Sprite `id` are
+static strings, so nothing has to be threaded out of a prior phase.
+
+## Run it against real Fly + real Sprites
+
+Drop the two emulator overrides and provide tokens. No code change:
+
+```bash
+unset FLY_FLAPS_BASE_URL       # flyApply falls through to real Fly (api.machines.dev)
+unset SPRITES_BASE_URL         # the sprite steps fall through to real Sprites
+
+export FLY_API_TOKEN=...       # a Fly deploy token
+export SPRITES_API_TOKEN=...   # a Sprites token
+
+chant run fly-deploy
+```
+
+Each env var also gates its emulator, so real mode boots no container (no Docker
+required) and the phase list is just `Sandbox → Checkpoint → Build → Deploy →
+Teardown`. The deploy is orchestrated by the Op in both modes; the Sprite is the
+rollback boundary, not the deploy host. See the
+[example README](https://github.com/INTENTIUS/chant/tree/main/examples/fly-deploy-rollback)
+for the full real-vs-modeled breakdown.
