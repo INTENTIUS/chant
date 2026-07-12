@@ -15,6 +15,7 @@ import { join, dirname } from "path";
 import { fileURLToPath } from "url";
 import { awsSerializer } from "./serializer";
 import { awsReferenceCatalog } from "./reference-catalog";
+import { resolveTemplateAttrs } from "./live-attrs";
 import { CFParser } from "./import/parser";
 import { CFGenerator } from "./import/generator";
 import { parseStackTemplate } from "./import/live-export";
@@ -581,6 +582,15 @@ aws cloudformation wait stack-update-complete --stack-name my-app-prod`,
     }
 
     return parseStackTemplate(parsed.TemplateBody, options.selector, options.owned);
+  },
+
+  // Live attribute enrichment for `chant graph --live` edge reconstruction (#784).
+  // describe-stack-resources is too thin; the deployed template (exportResources)
+  // carries the references. Resolve its `{Ref}`/`{Fn::GetAtt}` intrinsics to bare
+  // logical ids so the reference resolver matches them.
+  async enrichLiveAttrs(options: { environment: string; owned?: boolean }): Promise<Record<string, Record<string, unknown>>> {
+    const template = await this.exportResources!({ environment: options.environment, owned: options.owned });
+    return resolveTemplateAttrs(template);
   },
 
   mcpTools() {

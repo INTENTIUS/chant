@@ -385,6 +385,16 @@ export interface LexiconPlugin {
   referenceCatalog?: ReferenceCatalog;
 
   /**
+   * Enrich live IR node attributes for edge reconstruction (#784). Returns
+   * `nodeId → attributes` with cross-resource references resolved to the
+   * referenced node id, so the reference resolver ({@link referenceCatalog}) can
+   * match them. Opt-in — for lexicons whose `describeResources` metadata is too
+   * thin to carry references (e.g. AWS CloudFormation, where it's sourced from
+   * the fuller `exportResources` config).
+   */
+  enrichLiveAttrs?(options: { environment: string; owned?: boolean }): Promise<Record<string, Record<string, unknown>>>;
+
+  /**
    * List runtime artifacts in the given environment. Opt-in.
    *
    * Use this for lexicons whose chant entities describe *authoring*

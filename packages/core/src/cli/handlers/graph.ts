@@ -89,6 +89,24 @@ async function runGraphLive(
 
   let ir: GraphIR = buildLiveGraphIr(observations);
 
+  // Enrich node attrs from the fuller live config (#784) so references are
+  // present for edge reconstruction — describeResources metadata alone is often
+  // too thin (e.g. AWS returns stack outputs, not per-resource references).
+  for (const p of observing) {
+    if (!p.enrichLiveAttrs) continue;
+    try {
+      const enriched = await p.enrichLiveAttrs({ environment, owned: true });
+      ir = {
+        ...ir,
+        nodes: ir.nodes.map((n) =>
+          n.lexicon === p.name && enriched[n.id] ? { ...n, attrs: { ...n.attrs, ...enriched[n.id] } } : n,
+        ),
+      };
+    } catch (err) {
+      console.error(formatWarning({ message: `${p.name}: live attr enrichment failed — edges may be sparse (${err instanceof Error ? err.message : String(err)})` }));
+    }
+  }
+
   // Reconstruct edges + containment from live references (#778): merge the
   // observing lexicons' reference catalogs and resolve them over the live nodes.
   const catalogs = observing.map((p) => p.referenceCatalog).filter((c): c is ReferenceCatalog => !!c);
