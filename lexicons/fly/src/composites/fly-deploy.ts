@@ -36,7 +36,7 @@ export interface FlapsStepOpts {
   name?: string;
   /** Host port mapped to the emulator's `:4280`. Default: `4280`. */
   port?: number;
-  /** Image. Default: `ghcr.io/intentius/mudflaps:0.3.0`. */
+  /** Image. Default: the pinned mudflaps image (`MUDFLAPS_IMAGE`, from the flapsUp activity). */
   image?: string;
   /** Readiness timeout in ms. */
   timeoutMs?: number;

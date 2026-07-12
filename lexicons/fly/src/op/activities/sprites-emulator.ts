@@ -1,11 +1,12 @@
 import { emulatorLifecycle } from "@intentius/chant/op";
+import { SPRITZER_IMAGE } from "./emulator-images";
 
 export interface SpritesUpArgs {
   /** Container name. Default: `chant-spritzer`. */
   name?: string;
   /** Host port mapped to the emulator's `:4290`. Default: `4290`. */
   port?: number;
-  /** Image. Default: `ghcr.io/intentius/spritzer:0.3.1`. */
+  /** Image. Default: the pinned spritzer image ({@link SPRITZER_IMAGE}). */
   image?: string;
   /** Readiness timeout in ms. Default: `60000`. */
   timeoutMs?: number;
@@ -24,7 +25,7 @@ export interface SpritesDownArgs {
 // helper that boots mudflaps for fly).
 const spritzer = emulatorLifecycle({
   name: "chant-spritzer",
-  image: "ghcr.io/intentius/spritzer:0.3.1",
+  image: SPRITZER_IMAGE,
   containerPort: 4290,
   healthPath: "/_spritzer/health",
 });
