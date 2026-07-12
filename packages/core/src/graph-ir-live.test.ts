@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { buildLiveGraphIr, type LiveObservation } from "./graph-ir";
+import { buildLiveGraphIr, overlayGraphs, type LiveObservation, type GraphIR } from "./graph-ir";
 
 // A fixture "snapshot" — what a lexicon's describeResources() returns for a live
 // environment (managed-only). Two AWS resources; the subnet references the VPC by
@@ -64,5 +64,25 @@ describe("buildLiveGraphIr", () => {
     expect(JSON.stringify(buildLiveGraphIr(observations))).toBe(
       JSON.stringify(buildLiveGraphIr(observations)),
     );
+  });
+});
+
+describe("overlayGraphs (#780 drift overlay)", () => {
+  const node = (id: string) => ({ id, kind: "AWS::EC2::VPC", lexicon: "aws", attrs: {} });
+  const live: GraphIR = { nodes: [node("web-vpc"), node("rogue-sg")], edges: [], groups: {} };
+  const declared: GraphIR = { nodes: [node("web-vpc"), node("planned-db")], edges: [], groups: {} };
+
+  it("classifies managed / foreign / pending via _status", () => {
+    const ir = overlayGraphs(live, declared);
+    const statusOf = (id: string) => (ir.nodes.find((n) => n.id === id)!.attrs as { _status?: string })._status;
+    expect(statusOf("web-vpc")).toBe("good"); // declared + provisioned
+    expect(statusOf("rogue-sg")).toBe("warn"); // provisioned, not declared → foreign
+    expect(statusOf("planned-db")).toBe("accent"); // declared, not provisioned → pending
+  });
+
+  it("appends pending nodes and keeps live edges/groups", () => {
+    const ir = overlayGraphs({ ...live, edges: [{ from: "rogue-sg", to: "web-vpc", kind: "ref" }] }, declared);
+    expect(ir.nodes.map((n) => n.id).sort()).toEqual(["planned-db", "rogue-sg", "web-vpc"]);
+    expect(ir.edges).toHaveLength(1);
   });
 });

@@ -2,7 +2,7 @@ import { resolve } from "node:path";
 import { discoverOps } from "../../op/discover";
 import { discover } from "../../discovery/index";
 import { partitionByLexicon, computeStackGraph, build } from "../../build";
-import { buildGraphIr, buildLiveGraphIr, type GraphIR } from "../../graph-ir";
+import { buildGraphIr, buildLiveGraphIr, overlayGraphs, type GraphIR } from "../../graph-ir";
 import { reconstructEdges, mergeCatalogs, containmentGroups, type ReferenceCatalog, type ContainmentPair } from "../../graph-refs";
 import { observeResources } from "../../lifecycle/observe";
 import { loadChantConfig } from "../../config";
@@ -115,6 +115,17 @@ async function runGraphLive(
     const reconstructed = reconstructEdges(ir.nodes, mergeCatalogs(catalogs));
     ir = { ...ir, edges: reconstructed.edges };
     containment = reconstructed.containment;
+  }
+
+  // Drift overlay (#780): classify the provisioned graph against declared source
+  // (managed / foreign / pending) so a renderer colours the drift.
+  if (args.overlay) {
+    const declared = await discover(resolve(args.src ?? config.sourceDir ?? "."));
+    if (declared.errors.length === 0) {
+      ir = overlayGraphs(ir, buildGraphIr(declared.entities, projectPath));
+    } else {
+      console.error(formatWarning({ message: "overlay: source has discovery errors — showing the provisioned graph without the declared overlay" }));
+    }
   }
 
   if (args.lens) {

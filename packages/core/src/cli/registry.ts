@@ -58,6 +58,9 @@ export interface ParsedArgs {
   env?: string;
   /** `chant graph --stacks` — render the cross-stack apply-ordering graph */
   stacks?: boolean;
+  /** `chant graph --live --overlay` — classify the provisioned graph against
+   * declared source: managed / foreign / pending (#780). */
+  overlay?: boolean;
   /** `chant list --components` / `chant graph --components` — surface discovered
    * `Component` declarations (#560) instead of/alongside lexicon resources. */
   components?: boolean;
