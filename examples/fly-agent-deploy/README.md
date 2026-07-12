@@ -134,6 +134,13 @@ flaps apply against a stateful fake, but the emulator does not run real `chant`
 inside the Sprite. Do not read the offline run as the agent shelling out to
 `chant` in the sandbox; that only happens in real mode.
 
+The same split applies to `agent-deploy-guarded`'s `RiskyChange`: offline,
+spritzer recognizes `./risky.sh` and runs it to a scripted exit 1; on a real
+Sprite there is no such file, so it fails as command-not-found (exit 127). The
+failure is different, but either way it is a non-zero exit, so the `onFailure`
+`Rollback` fires and the checkpoint restore is exercised the same. What the
+offline run demonstrates is the compensation boundary, not that exact command.
+
 ## Run it offline
 
 Requires only Docker. Point the two activity endpoints at the local emulators
