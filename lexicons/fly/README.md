@@ -26,9 +26,9 @@ It fits two kinds of user: teams running on Fly who want their infrastructure as
 ## Author infrastructure as typed code
 
 ```ts
-import { App, Machine, MachineConfig, MachineGuest } from "@intentius/chant-lexicon-fly";
+import { App, Machine, MachineConfig, MachineGuest, Fly } from "@intentius/chant-lexicon-fly";
 
-export const app = new App({ name: "my-app" });
+export const app = new App({ name: "my-app", org_slug: Fly.OrgSlug });
 
 export const web = new Machine({
   region: "iad",

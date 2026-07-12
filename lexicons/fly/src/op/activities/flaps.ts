@@ -5,7 +5,7 @@ export interface FlapsUpArgs {
   name?: string;
   /** Host port mapped to the emulator's `:4280`. Default: `4280`. */
   port?: number;
-  /** Image. Default: `ghcr.io/intentius/mudflaps:0.3.0`. */
+  /** Image. Default: `ghcr.io/intentius/mudflaps:0.3.1`. */
   image?: string;
   /** Readiness timeout in ms. Default: `60000`. */
   timeoutMs?: number;
@@ -23,7 +23,7 @@ export interface FlapsDownArgs {
 // with FLY_FLAPS_BASE_URL. Shared lifecycle: emulatorLifecycle (#746).
 const flaps = emulatorLifecycle({
   name: "chant-mudflaps",
-  image: "ghcr.io/intentius/mudflaps:0.3.0",
+  image: "ghcr.io/intentius/mudflaps:0.3.1",
   containerPort: 4280,
   healthPath: "/_mudflaps/health",
 });

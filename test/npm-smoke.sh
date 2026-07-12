@@ -69,7 +69,7 @@ verify_tarball_contains /tarballs/core.tgz "package/bin/chant" "core tarball con
 verify_tarball_contains /tarballs/core.tgz "package/src/cli/main.ts" "core tarball contains CLI entrypoint"
 verify_tarball_contains /tarballs/core.tgz "package/src/index.ts" "core tarball contains main export"
 
-for lex in aws azure gcp gitlab k8s docker; do
+for lex in aws azure gcp gitlab k8s docker fly; do
   verify_tarball_contains "/tarballs/lexicon-$lex.tgz" "package/dist/manifest.json" "$lex tarball contains dist/manifest.json"
   verify_tarball_contains "/tarballs/lexicon-$lex.tgz" "package/dist/meta.json" "$lex tarball contains dist/meta.json"
   verify_tarball_contains "/tarballs/lexicon-$lex.tgz" "package/dist/types/index.d.ts" "$lex tarball contains dist/types/index.d.ts"
@@ -159,6 +159,61 @@ export const storage = new StorageAccount({
 test_manual_project "gcp" "/tarballs/lexicon-gcp.tgz" \
   'import { StorageBucket } from "@intentius/chant-lexicon-gcp";
 export const bucket = new StorageBucket({ resourceID: "test-bucket", location: "US" });'
+
+# ── Test: fly build emits org_slug ────────────────────────────────────────────
+# The Machines API rejects POST /v1/apps without org_slug (real Fly returns 400;
+# mudflaps >=0.3.1 mirrors it). The fly serializer must carry App.org_slug into
+# the create body — Fly.OrgSlug resolves to "personal" offline. This guards the
+# published serializer against silently dropping it, which the generic
+# build-exits-0 check would miss.
+test_fly_org_slug() {
+  local label="npm-fly-org-slug"
+  echo ""
+  echo "=== Test: $label ==="
+
+  local dir="/tmp/test-$label"
+  rm -rf "$dir"
+  mkdir -p "$dir/src"
+  cd "$dir"
+
+  pkg_init
+  if [ "$INSTALL_MODE" = "registry" ]; then
+    install_from_registry "@intentius/chant-lexicon-fly"
+  else
+    install_from_tarballs /tarballs/lexicon-fly.tgz
+  fi
+
+  cat > src/infra.ts <<'SRC'
+import { App, Machine, MachineConfig, MachineGuest, Fly } from "@intentius/chant-lexicon-fly";
+export const app = new App({ name: "smoke-app", org_slug: Fly.OrgSlug });
+export const web = new Machine({
+  name: "web",
+  region: "iad",
+  config: new MachineConfig({
+    image: "flyio/hellofly:latest",
+    guest: new MachineGuest({ cpu_kind: "shared", cpus: 1, memory_mb: 256 }),
+  }),
+});
+SRC
+
+  if pkg_run chant build src --lexicon fly -o plan.json 2>&1; then
+    pass "$label: chant build"
+  else
+    fail "$label: chant build"
+    return
+  fi
+
+  # The App create body (POST /v1/apps) must carry org_slug, defaulting to
+  # "personal" when FLY_ORG is unset.
+  if grep -Eq '"org_slug": *"personal"' plan.json; then
+    pass "$label: app create body carries org_slug"
+  else
+    fail "$label: app create body missing org_slug"
+    echo "    plan.json was:"
+    sed 's/^/    /' plan.json 2>/dev/null || echo "    (no plan.json written)"
+  fi
+}
+test_fly_org_slug
 
 
 # ── Test: type resolution ─────────────────────────────────────────────────────

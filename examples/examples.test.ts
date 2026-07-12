@@ -15,6 +15,8 @@ import deployOp from "./getting-started/deploy.op";
 import flyDeployOp from "./local-fly/ops/fly.op";
 import agentTaskOp from "./sprites-agent-task/ops/agent-task.op";
 import guardedTaskOp from "./sprites-agent-task/ops/guarded-task.op";
+import agentDeployOp from "./fly-agent-deploy/ops/agent-deploy.op";
+import agentDeployGuardedOp from "./fly-agent-deploy/ops/agent-deploy-guarded.op";
 import deployGatedOp from "./getting-started/deploy-gated.op";
 import observeOp from "./getting-started/observe.op";
 import reconcileOp from "./getting-started/reconcile.op";
@@ -191,10 +193,13 @@ describeExample(
         { endpoint: string; method: string; body: Record<string, any> }
       >;
       const reqs = Object.values(plan);
-      // App create body: POST /v1/apps { app_name }.
+      // App create body: POST /v1/apps { app_name, org_slug }. org_slug is
+      // required by the Machines API (real Fly and mudflaps >=0.3.1 reject app
+      // creation without it); Fly.OrgSlug resolves to "personal" offline.
       const app = reqs.find((r) => r.endpoint === "/v1/apps");
       expect(app).toBeDefined();
       expect(app!.body.app_name).toBe("local-fly-demo");
+      expect(app!.body.org_slug).toBe("personal");
       // Machine create body under the app, with a config and the stamped marker.
       const machine = reqs.find((r) => /\/v1\/apps\/[^/]+\/machines$/.test(r.endpoint));
       expect(machine).toBeDefined();
@@ -261,6 +266,101 @@ describe("sprites-agent-task Ops (#762)", () => {
     const restore = props.onFailure![0].steps[0];
     expect(restore.fn).toBe("spriteRestore");
     expect(restore.args).toMatchObject({ id: "task-1", comment: "pre-run" });
+  });
+});
+
+// ── Fly agent deploy — fly-agent-deploy ──────────────────────────────
+// Composes local-fly (App+Machine → flaps) with sprites-agent-task
+// (checkpoint-as-compensation): an agent deploys the Fly infra from inside a
+// checkpointed Sprite, and a botched change rewinds the sandbox. The live run
+// boots spritzer + mudflaps in Docker (out of CI's reach), so this block
+// build-validates the Fly plan and compile-validates the two Ops, mirroring the
+// local-fly + sprites-agent-task blocks above.
+
+describeExample(
+  "fly-agent-deploy",
+  {
+    lexicon: "fly",
+    serializer: [flySerializer],
+    outputKey: "fly",
+    examplesDir: import.meta.dirname,
+  },
+  {
+    checks: (output) => {
+      const plan = JSON.parse(output) as Record<
+        string,
+        { endpoint: string; method: string; body: Record<string, any> }
+      >;
+      const reqs = Object.values(plan);
+      // App create body: POST /v1/apps { app_name, org_slug }. org_slug is
+      // required by the Machines API (real Fly and mudflaps >=0.3.1 reject app
+      // creation without it); Fly.OrgSlug resolves to "personal" offline.
+      const app = reqs.find((r) => r.endpoint === "/v1/apps");
+      expect(app).toBeDefined();
+      expect(app!.body.app_name).toBe("fly-agent-demo");
+      expect(app!.body.org_slug).toBe("personal");
+      // Machine create body under the app, with a config and the stamped marker.
+      const machine = reqs.find((r) => /\/v1\/apps\/[^/]+\/machines$/.test(r.endpoint));
+      expect(machine).toBeDefined();
+      expect(machine!.endpoint).toBe("/v1/apps/fly-agent-demo/machines");
+      expect(machine!.body.config).toBeDefined();
+      expect(machine!.body.config.image).toBe("flyio/hellofly:latest");
+      expect(machine!.body.config.metadata["managed-by"]).toBe("chant");
+    },
+  },
+);
+
+describe("fly-agent-deploy Ops", () => {
+  test("agent-deploy composes the sprite + fly phases (checkpoint → deploy)", () => {
+    const props = (agentDeployOp as unknown as {
+      props: { name: string; taskQueue?: string; phases: Array<{ name: string; steps: Array<{ fn: string }> }> };
+    }).props;
+    expect(props.name).toBe("agent-deploy");
+    expect(props.taskQueue).toBe("fly-agent");
+    // The optional Verify phase is env-gated (offline only), so assert the core
+    // sequence with Verify filtered out — stable whether or not FLY_FLAPS_BASE_URL
+    // is set when the Op module loads.
+    const names = props.phases.map((p) => p.name).filter((n) => n !== "Verify");
+    expect(names).toEqual(["Emulators", "Sandbox", "Checkpoint", "Build", "Deploy", "Teardown"]);
+    // Emulators boots both fakes; Deploy applies the fly plan.
+    const emulators = props.phases.find((p) => p.name === "Emulators")!;
+    expect(emulators.steps.map((s) => s.fn)).toEqual(["spritesUp", "flapsUp"]);
+    const checkpoint = props.phases.find((p) => p.name === "Checkpoint")!;
+    expect(checkpoint.steps[0].fn).toBe("spriteCheckpoint");
+    const deploy = props.phases.find((p) => p.name === "Deploy")!;
+    expect(deploy.steps[0].fn).toBe("flyApply");
+  });
+
+  test("agent-deploy-guarded rolls the sandbox back on a failed change (onFailure Restore)", () => {
+    const props = (agentDeployGuardedOp as unknown as {
+      props: {
+        name: string;
+        phases: Array<{ name: string; steps: Array<{ fn: string; args?: Record<string, unknown> }> }>;
+        onFailure?: Array<{ name: string; steps: Array<{ fn: string; args?: Record<string, unknown> }> }>;
+      };
+    }).props;
+    expect(props.name).toBe("agent-deploy-guarded");
+    expect(props.phases.map((p) => p.name)).toEqual([
+      "Emulators",
+      "Sandbox",
+      "Checkpoint",
+      "Build",
+      "Deploy",
+      "RiskyChange",
+    ]);
+    // The Checkpoint the restore targets is a static `known-good` label.
+    const checkpoint = props.phases.find((p) => p.name === "Checkpoint")!.steps[0];
+    expect(checkpoint.fn).toBe("spriteCheckpoint");
+    expect(checkpoint.args).toMatchObject({ id: "deploy-agent", comment: "known-good" });
+    // The risky change is the failing step that triggers the rollback.
+    const risky = props.phases.find((p) => p.name === "RiskyChange")!.steps[0];
+    expect(risky.fn).toBe("spriteExec");
+    expect(risky.args).toMatchObject({ cmd: "./risky.sh" });
+    // onFailure restores that same label, then proves + cleans up.
+    expect(props.onFailure?.map((p) => p.name)).toEqual(["Rollback"]);
+    const restore = props.onFailure![0].steps[0];
+    expect(restore.fn).toBe("spriteRestore");
+    expect(restore.args).toMatchObject({ id: "deploy-agent", comment: "known-good" });
   });
 });
 

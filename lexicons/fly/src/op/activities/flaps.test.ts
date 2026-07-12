@@ -10,7 +10,7 @@ import {
 describe("flaps (mudflaps) lifecycle commands", () => {
   test("run command uses defaults and maps the port", () => {
     expect(flapsRunCommand({})).toBe(
-      "docker run -d --rm --name chant-mudflaps -p 4280:4280 ghcr.io/intentius/mudflaps:0.3.0",
+      "docker run -d --rm --name chant-mudflaps -p 4280:4280 ghcr.io/intentius/mudflaps:0.3.1",
     );
   });
 
