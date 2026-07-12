@@ -1,22 +1,37 @@
 /**
- * In-process Sprites emulator (#762, S7) — a v0 fake of the Sprites REST surface
- * for offline, Docker-free integration tests.
+ * In-process Sprites fake (#762, #766, S7) — a fake of the faithful Sprites API
+ * surface for offline, Docker-free integration tests.
  *
  * It models the lifecycle state machine and checkpoint/restore semantics, not
  * real Firecracker VMs or real code execution (that fidelity is out of scope).
  * A sprite's filesystem is a `Record<string, string>`; `exec` runs a small
  * scripted interpreter that can write/modify an `fs` key so checkpoint/restore
- * is observable; `checkpoint` deep-copies `fs` under a label; `restore` replaces
- * `fs` with that copy. Started in-process by a test and reached via
+ * is observable; `checkpoint` deep-copies `fs` under a version id; `restore`
+ * replaces `fs` with that copy. Started in-process by a test and reached via
  * `SPRITES_BASE_URL`, so the same activities that hit real Sprites hit the fake.
  *
- * TODO(confirm against sprites.dev API): the endpoint shapes mirror the
- * provisional surface in `sprites.ts` (S6); align both together once confirmed.
+ * The wire surface matches the released `spritzer:0.3.0` image so the CI
+ * fake-based test and the docker test exercise the same protocol:
+ *  - `exec` over the control WebSocket with `[StreamID][payload]` binary framing;
+ *  - `POST /checkpoint` (singular) returning NDJSON progress + a `complete` event;
+ *  - `GET /checkpoints` returning a bare array of `{ id, comment, create_time, is_auto }`;
+ *  - `POST /checkpoints/{id}/restore` returning NDJSON.
+ * Checkpoint ids are server versions (`v1`, `v2`, ...).
  */
 
-import { createServer, type Server } from "node:http";
+import { createServer, type Server, type IncomingMessage, type ServerResponse } from "node:http";
+import type { Duplex } from "node:stream";
+import { WebSocketServer, type WebSocket } from "ws";
 
 type SpriteStatus = "starting" | "running" | "paused" | "destroyed";
+
+interface StoredCheckpoint {
+  id: string;
+  comment: string;
+  create_time: string;
+  is_auto: boolean;
+  fs: Record<string, string>;
+}
 
 interface SpriteState {
   id: string;
@@ -24,8 +39,10 @@ interface SpriteState {
   url: string;
   /** Filesystem model: path → contents. */
   fs: Record<string, string>;
-  /** Checkpoints keyed by label; each a full copy of `fs` at checkpoint time. */
-  checkpoints: Map<string, Record<string, string>>;
+  /** Checkpoints in creation order; each holds a full copy of `fs` at that time. */
+  checkpoints: StoredCheckpoint[];
+  /** Monotonic version counter for `v<N>` ids. */
+  version: number;
   policy?: unknown;
 }
 
@@ -96,7 +113,16 @@ function copyFs(fs: Record<string, string>): Record<string, string> {
   return { ...fs };
 }
 
-async function readBody(req: import("node:http").IncomingMessage): Promise<unknown> {
+// Stream ids for the non-PTY exec framing (mirror sprites.ts).
+const STREAM_STDOUT = 1;
+const STREAM_STDERR = 2;
+const STREAM_EXIT = 3;
+
+function frame(stream: number, payload: Buffer): Buffer {
+  return Buffer.concat([Buffer.of(stream), payload]);
+}
+
+async function readBody(req: IncomingMessage): Promise<unknown> {
   const chunks: Buffer[] = [];
   for await (const c of req) chunks.push(c as Buffer);
   if (chunks.length === 0) return undefined;
@@ -123,10 +149,41 @@ export function createSpritesFake(): Promise<{ url: string; close(): Promise<voi
     });
   });
 
-  async function handle(
-    req: import("node:http").IncomingMessage,
-    res: import("node:http").ServerResponse,
-  ): Promise<void> {
+  // The control WebSocket exec endpoint. noServer + a manual `upgrade` handler so
+  // the same http server serves both the REST/NDJSON routes and the exec socket.
+  const wss = new WebSocketServer({ noServer: true });
+
+  server.on("upgrade", (req: IncomingMessage, socket: Duplex, head: Buffer) => {
+    const url = new URL(req.url ?? "/", `http://${req.headers.host ?? "localhost"}`);
+    const m = url.pathname.match(/^\/v1\/sprites\/([^/]+)\/exec\/?$/);
+    if (!m) {
+      socket.destroy();
+      return;
+    }
+    const id = decodeURIComponent(m[1]);
+    wss.handleUpgrade(req, socket, head, (ws) => runExec(ws, sprites.get(id), url));
+  });
+
+  function runExec(ws: WebSocket, sprite: SpriteState | undefined, url: URL): void {
+    if (!sprite || sprite.status === "destroyed") {
+      ws.send(frame(STREAM_STDERR, Buffer.from(`no sprite\n`)));
+      ws.send(frame(STREAM_EXIT, Buffer.of(127)));
+      ws.close();
+      return;
+    }
+    // argv arrives as repeated `cmd` params; reconstruct the script the small
+    // interpreter understands (the tokens round-trip for the space-separated
+    // command forms the example Ops use).
+    const argv = url.searchParams.getAll("cmd");
+    const script = argv.join(" ");
+    const result = fakeExec(sprite, script);
+    if (result.stdout) ws.send(frame(STREAM_STDOUT, Buffer.from(result.stdout)));
+    if (result.stderr) ws.send(frame(STREAM_STDERR, Buffer.from(result.stderr)));
+    ws.send(frame(STREAM_EXIT, Buffer.of(result.exitCode & 0xff)));
+    ws.close();
+  }
+
+  async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> {
     const method = req.method ?? "GET";
     const url = new URL(req.url ?? "/", `http://${req.headers.host ?? "localhost"}`);
     const path = url.pathname;
@@ -134,6 +191,11 @@ export function createSpritesFake(): Promise<{ url: string; close(): Promise<voi
     const send = (status: number, body: unknown): void => {
       res.writeHead(status, { "content-type": "application/json" });
       res.end(JSON.stringify(body ?? {}));
+    };
+    // NDJSON progress stream: an `info` line then a terminal `complete` line.
+    const sendNdjson = (status: number, events: Array<Record<string, unknown>>): void => {
+      res.writeHead(status, { "content-type": "application/x-ndjson" });
+      res.end(events.map((e) => JSON.stringify(e)).join("\n") + "\n");
     };
 
     // POST /v1/sprites — create.
@@ -146,45 +208,68 @@ export function createSpritesFake(): Promise<{ url: string; close(): Promise<voi
         status: "running",
         url: `http://${host}/s/${encodeURIComponent(id)}`,
         fs: {},
-        checkpoints: new Map(),
+        checkpoints: [],
+        version: 0,
         policy: body.policy,
       };
       sprites.set(id, sprite);
       return send(201, { id: sprite.id, url: sprite.url });
     }
 
-    const m = path.match(/^\/v1\/sprites\/([^/]+)(\/exec|\/checkpoints|\/restore)?\/?$/);
+    const m = path.match(/^\/v1\/sprites\/([^/]+)(\/checkpoint|\/checkpoints(?:\/([^/]+)(\/restore)?)?)?\/?$/);
     if (m) {
       const id = decodeURIComponent(m[1]);
       const sub = m[2];
+      const cpId = m[3] ? decodeURIComponent(m[3]) : undefined;
+      const isRestore = Boolean(m[4]);
       const sprite = sprites.get(id);
       if (!sprite || sprite.status === "destroyed") return send(404, { error: `no sprite ${id}` });
 
-      // POST /v1/sprites/{id}/exec
-      if (method === "POST" && sub === "/exec") {
-        const body = ((await readBody(req)) ?? {}) as { cmd?: string };
-        const result = fakeExec(sprite, body.cmd ?? "");
-        return send(200, result);
+      // POST /v1/sprites/{id}/checkpoint — snapshot fs under a new version id.
+      if (method === "POST" && sub === "/checkpoint") {
+        const body = ((await readBody(req)) ?? {}) as { comment?: string };
+        sprite.version += 1;
+        const cp: StoredCheckpoint = {
+          id: `v${sprite.version}`,
+          comment: body.comment ?? "",
+          create_time: new Date().toISOString(),
+          is_auto: false,
+          fs: copyFs(sprite.fs),
+        };
+        sprite.checkpoints.push(cp);
+        return sendNdjson(200, [
+          { event: "info", message: `checkpointing ${id}` },
+          { event: "complete", id: cp.id },
+        ]);
       }
 
-      // POST /v1/sprites/{id}/checkpoints — deep-copy fs under the label.
-      if (method === "POST" && sub === "/checkpoints") {
-        const body = ((await readBody(req)) ?? {}) as { label?: string };
-        const label = body.label ?? `cp-${sprite.checkpoints.size + 1}`;
-        sprite.checkpoints.set(label, copyFs(sprite.fs));
-        return send(201, { checkpointId: label });
+      // GET /v1/sprites/{id}/checkpoints — bare array (auto excluded).
+      if (method === "GET" && sub === "/checkpoints" && !cpId) {
+        return send(
+          200,
+          sprite.checkpoints
+            .filter((c) => !c.is_auto)
+            .map((c) => ({ id: c.id, comment: c.comment, create_time: c.create_time, is_auto: c.is_auto })),
+        );
       }
 
-      // POST /v1/sprites/{id}/restore — replace fs with the labeled checkpoint's copy.
-      if (method === "POST" && sub === "/restore") {
-        const body = ((await readBody(req)) ?? {}) as { checkpoint?: string };
-        const label = body.checkpoint;
-        if (!label || !sprite.checkpoints.has(label)) {
-          return send(404, { error: `no checkpoint "${label}" for sprite ${id}` });
-        }
-        sprite.fs = copyFs(sprite.checkpoints.get(label)!);
+      // GET /v1/sprites/{id}/checkpoints/{cp} — a single checkpoint.
+      if (method === "GET" && cpId && !isRestore) {
+        const cp = sprite.checkpoints.find((c) => c.id === cpId);
+        if (!cp) return send(404, { error: `no checkpoint ${cpId} for sprite ${id}` });
+        return send(200, { id: cp.id, comment: cp.comment, create_time: cp.create_time });
+      }
+
+      // POST /v1/sprites/{id}/checkpoints/{cp}/restore — replace fs with the snapshot.
+      if (method === "POST" && cpId && isRestore) {
+        const cp = sprite.checkpoints.find((c) => c.id === cpId);
+        if (!cp) return send(404, { error: `no checkpoint ${cpId} for sprite ${id}` });
+        sprite.fs = copyFs(cp.fs);
         sprite.status = "running";
-        return send(200, {});
+        return sendNdjson(200, [
+          { event: "info", message: `restoring ${id} to ${cpId}` },
+          { event: "complete", id: cp.id },
+        ]);
       }
 
       // DELETE /v1/sprites/{id}
@@ -193,14 +278,14 @@ export function createSpritesFake(): Promise<{ url: string; close(): Promise<voi
         return send(200, {});
       }
 
-      // GET /v1/sprites/{id} — inspection (fs + checkpoints), used by tests/verify.
+      // GET /v1/sprites/{id} — inspection (fs + checkpoint ids), used by tests/verify.
       if (method === "GET" && !sub) {
         return send(200, {
           id: sprite.id,
           status: sprite.status,
           url: sprite.url,
           fs: sprite.fs,
-          checkpoints: [...sprite.checkpoints.keys()],
+          checkpoints: sprite.checkpoints.map((c) => c.id),
         });
       }
     }
@@ -216,6 +301,7 @@ export function createSpritesFake(): Promise<{ url: string; close(): Promise<voi
         url: `http://127.0.0.1:${port}`,
         close: () =>
           new Promise<void>((res, rej) => {
+            wss.close();
             server.close((err) => (err ? rej(err) : res()));
           }),
       });

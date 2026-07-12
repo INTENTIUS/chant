@@ -36,14 +36,17 @@ export {
   spriteExec,
   spriteCheckpoint,
   spriteRestore,
+  listCheckpoints,
   spriteDestroy,
   resolveSpritesEndpoint,
   defaultSpritesHttp,
   spriteCreateBody,
-  spriteExecBody,
   parseCreateResponse,
-  parseExecResponse,
-  parseCheckpointResponse,
+  accumulateExecFrames,
+  parseCheckpointNdjson,
+  pickCheckpointByComment,
+  splitCommand,
+  spriteExecWsUrl,
   DEFAULT_SPRITES_BASE_URL,
 } from "./sprites";
 export type {
@@ -55,6 +58,8 @@ export type {
   SpriteCheckpointArgs,
   SpriteCheckpointResult,
   SpriteRestoreArgs,
+  ListCheckpointsArgs,
+  Checkpoint,
   SpriteDestroyArgs,
 } from "./sprites";
 

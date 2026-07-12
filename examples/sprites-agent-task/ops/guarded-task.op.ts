@@ -15,11 +15,11 @@ export default Op({
   taskQueue: "sprites",
   phases: [
     phase("Create",     [spriteCreate({ name: "task-1" })]),
-    phase("Checkpoint", [spriteCheckpoint({ id: "task-1", label: "pre-run" })]),
+    phase("Checkpoint", [spriteCheckpoint({ id: "task-1", comment: "pre-run" })]),
     phase("Run",        [spriteExec({ id: "task-1", cmd: "./risky.sh" })]),
     phase("Destroy",    [spriteDestroy({ id: "task-1" })]),
   ],
   onFailure: [
-    phase("Restore", [spriteRestore({ id: "task-1", checkpoint: "pre-run" })]),
+    phase("Restore", [spriteRestore({ id: "task-1", comment: "pre-run" })]),
   ],
 });

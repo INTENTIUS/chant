@@ -65,7 +65,7 @@ describe("agent-task happy path", () => {
       taskQueue: "sprites",
       phases: [
         phase("Create", [spriteCreate({ name: "task-1" })]),
-        phase("Checkpoint", [spriteCheckpoint({ id: "task-1", label: "pre-run" })]),
+        phase("Checkpoint", [spriteCheckpoint({ id: "task-1", comment: "pre-run" })]),
         phase("Run", [spriteExec({ id: "task-1", cmd: "echo hello > /work/output" })]),
         phase("Verify", [spriteExec({ id: "task-1", cmd: "cat /work/output" })]),
         phase("Destroy", [spriteDestroy({ id: "task-1" })]),
@@ -107,12 +107,12 @@ describe("guarded-task — checkpoint-as-compensation (S5)", () => {
       phases: [
         phase("Create", [spriteCreate({ name: "guard-1" })]),
         phase("Seed", [spriteExec({ id: "guard-1", cmd: "echo good > /state" })]),
-        phase("Checkpoint", [spriteCheckpoint({ id: "guard-1", label: "pre-run" })]),
+        phase("Checkpoint", [spriteCheckpoint({ id: "guard-1", comment: "pre-run" })]),
         // Overwrites the good state, then fails — the risky phase.
         phase("Run", [spriteExec({ id: "guard-1", cmd: "echo bad > /state; false" })]),
         phase("Destroy", [spriteDestroy({ id: "guard-1" })]),
       ],
-      onFailure: [phase("Restore", [spriteRestore({ id: "guard-1", checkpoint: "pre-run" })])],
+      onFailure: [phase("Restore", [spriteRestore({ id: "guard-1", comment: "pre-run" })])],
     };
 
     let failure: OpRunFailure | undefined;
@@ -147,7 +147,7 @@ describe("guarded-task — checkpoint-as-compensation (S5)", () => {
       phases: [
         phase("Create", [spriteCreate({ name: "unguard-1" })]),
         phase("Seed", [spriteExec({ id: "unguard-1", cmd: "echo good > /state" })]),
-        phase("Checkpoint", [spriteCheckpoint({ id: "unguard-1", label: "pre-run" })]),
+        phase("Checkpoint", [spriteCheckpoint({ id: "unguard-1", comment: "pre-run" })]),
         phase("Run", [spriteExec({ id: "unguard-1", cmd: "echo bad > /state; false" })]),
       ],
     };

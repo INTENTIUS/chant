@@ -255,12 +255,12 @@ describe("sprites-agent-task Ops (#762)", () => {
     // The checkpoint label the restore references is a static string (S4).
     const checkpoint = props.phases.find((p) => p.name === "Checkpoint")!.steps[0];
     expect(checkpoint.fn).toBe("spriteCheckpoint");
-    expect(checkpoint.args).toMatchObject({ id: "task-1", label: "pre-run" });
+    expect(checkpoint.args).toMatchObject({ id: "task-1", comment: "pre-run" });
     // onFailure restores that same label.
     expect(props.onFailure?.map((p) => p.name)).toEqual(["Restore"]);
     const restore = props.onFailure![0].steps[0];
     expect(restore.fn).toBe("spriteRestore");
-    expect(restore.args).toMatchObject({ id: "task-1", checkpoint: "pre-run" });
+    expect(restore.args).toMatchObject({ id: "task-1", comment: "pre-run" });
   });
 });
 

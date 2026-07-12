@@ -16,7 +16,7 @@ export default Op({
   taskQueue: "sprites",
   phases: [
     phase("Create", [spriteCreate({ name: "task-1", image: "sprites/base:latest" })]),
-    phase("Checkpoint", [spriteCheckpoint({ id: "task-1", label: "pre-run" })]),
+    phase("Checkpoint", [spriteCheckpoint({ id: "task-1", comment: "pre-run" })]),
     phase("Run", [spriteExec({ id: "task-1", cmd: "echo hello > /work/output" })]),
     phase("Verify", [spriteExec({ id: "task-1", cmd: "cat /work/output" })]),
     phase("Destroy", [spriteDestroy({ id: "task-1" })]),

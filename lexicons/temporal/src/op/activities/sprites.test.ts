@@ -1,22 +1,31 @@
 import { describe, test, expect } from "vitest";
 import {
   resolveSpritesEndpoint,
+  DEFAULT_SPRITES_BASE_URL,
+  accumulateExecFrames,
+  parseCheckpointNdjson,
+  pickCheckpointByComment,
+  splitCommand,
+  spriteExecWsUrl,
   defaultSpritesHttp,
-  spriteCreateBody,
-  spriteExecBody,
-  parseCreateResponse,
-  parseExecResponse,
-  parseCheckpointResponse,
   spriteCreate,
-  spriteExec,
   spriteCheckpoint,
   spriteRestore,
+  listCheckpoints,
   spriteDestroy,
-  DEFAULT_SPRITES_BASE_URL,
   type SpritesHttp,
+  type Checkpoint,
 } from "./sprites";
 
-// A recording HTTP stub: captures every call and answers from a queue/map.
+const enc = new TextEncoder();
+
+/** Build one exec frame `[stream][payload]`. */
+function frame(stream: number, payload?: string | number[]): Uint8Array {
+  const body = typeof payload === "string" ? enc.encode(payload) : Uint8Array.from(payload ?? []);
+  return Uint8Array.from([stream, ...body]);
+}
+
+// A recording HTTP stub: captures every call and answers from a callback.
 function recorder(answer: (method: string, url: string, body?: unknown) => { status: number; text: string }) {
   const calls: Array<{ method: string; url: string; body?: unknown; headers?: Record<string, string> }> = [];
   const http: SpritesHttp = async (method, url, body, headers) => {
@@ -25,6 +34,75 @@ function recorder(answer: (method: string, url: string, body?: unknown) => { sta
   };
   return { http, calls };
 }
+
+// ── Exec frame accumulator (the WS framing, socket-free) ──────────────────────
+
+describe("accumulateExecFrames", () => {
+  test("stdout then exit 0", () => {
+    expect(accumulateExecFrames([frame(1, "hi\n"), frame(3, [0])])).toEqual({
+      stdout: "hi\n",
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  test("stderr then exit 1", () => {
+    expect(accumulateExecFrames([frame(2, "err"), frame(3, [1])])).toEqual({
+      stdout: "",
+      stderr: "err",
+      exitCode: 1,
+    });
+  });
+
+  test("concatenates multiple stdout frames and ignores stdin/eof frames", () => {
+    const frames = [frame(1, "foo"), frame(0), frame(1, "bar"), frame(2, "warn"), frame(4), frame(3, [7])];
+    expect(accumulateExecFrames(frames)).toEqual({ stdout: "foobar", stderr: "warn", exitCode: 7 });
+  });
+
+  test("no exit frame defaults exitCode to 0; empty frames are skipped", () => {
+    expect(accumulateExecFrames([new Uint8Array(0), frame(1, "x")])).toEqual({
+      stdout: "x",
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  test("a multi-byte character split across two stdout frames decodes intact", () => {
+    // "€" is E2 82 AC; split after the first byte across two frames.
+    expect(accumulateExecFrames([frame(1, [0xe2]), frame(1, [0x82, 0xac]), frame(3, [0])]).stdout).toBe("€");
+  });
+});
+
+// ── Checkpoint NDJSON parsing ─────────────────────────────────────────────────
+
+describe("parseCheckpointNdjson", () => {
+  test("captures the complete event's id past the info lines", () => {
+    const body = '{"event":"info","message":"checkpointing"}\n{"event":"complete","id":"v3"}\n';
+    expect(parseCheckpointNdjson(body)).toEqual({ checkpointId: "v3" });
+  });
+
+  test("blank and unparseable lines are skipped; no completion → empty id", () => {
+    expect(parseCheckpointNdjson('\n{"event":"info"}\nnot-json\n')).toEqual({ checkpointId: "" });
+  });
+});
+
+// ── Comment picker (newest match) ─────────────────────────────────────────────
+
+describe("pickCheckpointByComment", () => {
+  const list: Checkpoint[] = [
+    { id: "v1", comment: "pre-run", create_time: "2026-01-01T00:00:00.000Z", is_auto: false },
+    { id: "v2", comment: "other", create_time: "2026-01-01T00:00:01.000Z", is_auto: false },
+    { id: "v3", comment: "pre-run", create_time: "2026-01-01T00:00:02.000Z", is_auto: false },
+  ];
+
+  test("returns the newest checkpoint carrying the comment", () => {
+    expect(pickCheckpointByComment(list, "pre-run")?.id).toBe("v3");
+  });
+
+  test("returns undefined when nothing matches", () => {
+    expect(pickCheckpointByComment(list, "nope")).toBeUndefined();
+  });
+});
 
 // ── Endpoint resolution (S3) ──────────────────────────────────────────────────
 
@@ -52,100 +130,109 @@ describe("resolveSpritesEndpoint (S3)", () => {
   });
 });
 
-// ── Pure request/response mappers ─────────────────────────────────────────────
+// ── Command tokenizing + exec WS url ──────────────────────────────────────────
 
-describe("request/response mappers", () => {
-  test("spriteCreateBody includes only the fields set", () => {
-    expect(spriteCreateBody({ name: "a" })).toEqual({ name: "a" });
-    expect(spriteCreateBody({ name: "a", image: "img", size: "sm", policy: { net: "off" } })).toEqual({
-      name: "a",
-      image: "img",
-      size: "sm",
-      policy: { net: "off" },
-    });
-  });
-
-  test("parseCreateResponse falls back to the caller name as id (S4)", () => {
-    expect(parseCreateResponse('{"url":"http://h/s/a"}', "a")).toEqual({ id: "a", url: "http://h/s/a" });
-    expect(parseCreateResponse('{"id":"srv-1","url":"u"}', "a")).toEqual({ id: "srv-1", url: "u" });
-    expect(parseCreateResponse("not-json", "a")).toEqual({ id: "a", url: "" });
-  });
-
-  test("spriteExecBody carries cmd and optional timeout", () => {
-    expect(spriteExecBody({ id: "a", cmd: "ls" })).toEqual({ cmd: "ls" });
-    expect(spriteExecBody({ id: "a", cmd: "ls", timeoutMs: 500 })).toEqual({ cmd: "ls", timeoutMs: 500 });
-  });
-
-  test("parseExecResponse defaults missing fields", () => {
-    expect(parseExecResponse('{"stdout":"hi","stderr":"","exitCode":0}')).toEqual({ stdout: "hi", stderr: "", exitCode: 0 });
-    expect(parseExecResponse("{}")).toEqual({ stdout: "", stderr: "", exitCode: 0 });
-  });
-
-  test("parseCheckpointResponse falls back to the label", () => {
-    expect(parseCheckpointResponse('{"checkpointId":"cp9"}', "pre-run")).toEqual({ checkpointId: "cp9" });
-    expect(parseCheckpointResponse("{}", "pre-run")).toEqual({ checkpointId: "pre-run" });
+describe("splitCommand", () => {
+  test("splits on whitespace and respects quotes", () => {
+    expect(splitCommand("echo hi")).toEqual(["echo", "hi"]);
+    expect(splitCommand('sh -c "exit 7"')).toEqual(["sh", "-c", "exit 7"]);
+    expect(splitCommand("echo bad > /state; false")).toEqual(["echo", "bad", ">", "/state;", "false"]);
   });
 });
 
-// ── Per-activity request shape + response parse (injected SpritesHttp) ─────────
+describe("spriteExecWsUrl", () => {
+  test("http → ws with cmd/path/stdin/cc params", () => {
+    const url = new URL(spriteExecWsUrl("http://x:9000", "task-1", "echo hi"));
+    expect(url.protocol).toBe("ws:");
+    expect(url.pathname).toBe("/v1/sprites/task-1/exec");
+    expect(url.searchParams.getAll("cmd")).toEqual(["echo", "hi"]);
+    expect(url.searchParams.get("path")).toBe("echo");
+    expect(url.searchParams.get("stdin")).toBe("false");
+    expect(url.searchParams.get("cc")).toBe("true");
+  });
+
+  test("https → wss", () => {
+    expect(spriteExecWsUrl("https://api.sprites.dev", "s", "ls").startsWith("wss://api.sprites.dev/")).toBe(true);
+  });
+});
+
+// ── Activity request shapes (injected SpritesHttp; no real sockets) ───────────
 
 describe("spriteCreate", () => {
   test("POSTs /v1/sprites with the name and parses { id, url }", async () => {
-    const { http, calls } = recorder(() => ({ status: 201, text: JSON.stringify({ id: "task-1", url: "http://h/s/task-1" }) }));
+    const { http, calls } = recorder(() => ({
+      status: 201,
+      text: JSON.stringify({ id: "sprite-1", url: "http://h/s/task-1" }),
+    }));
     const res = await spriteCreate({ name: "task-1", endpoint: "http://x:9000", image: "base:1" }, undefined, http);
-    expect(res).toEqual({ id: "task-1", url: "http://h/s/task-1" });
+    expect(res).toEqual({ id: "sprite-1", url: "http://h/s/task-1" });
     expect(calls[0].method).toBe("POST");
     expect(calls[0].url).toBe("http://x:9000/v1/sprites");
     expect(calls[0].body).toEqual({ name: "task-1", image: "base:1" });
   });
-
-  test("throws on a non-2xx create", async () => {
-    const { http } = recorder(() => ({ status: 500, text: "boom" }));
-    await expect(spriteCreate({ name: "task-1", endpoint: "http://x" }, undefined, http)).rejects.toThrow(/create failed/);
-  });
-});
-
-describe("spriteExec", () => {
-  test("POSTs /v1/sprites/{id}/exec and returns stdout/stderr/exitCode", async () => {
-    const { http, calls } = recorder(() => ({ status: 200, text: JSON.stringify({ stdout: "ok", stderr: "", exitCode: 0 }) }));
-    const res = await spriteExec({ id: "task-1", cmd: "echo ok", endpoint: "http://x" }, undefined, http);
-    expect(res).toEqual({ stdout: "ok", stderr: "", exitCode: 0 });
-    expect(calls[0].url).toBe("http://x/v1/sprites/task-1/exec");
-    expect(calls[0].body).toEqual({ cmd: "echo ok" });
-  });
-
-  test("a non-zero exit throws (so a risky step fails its phase, S5)", async () => {
-    const { http } = recorder(() => ({ status: 200, text: JSON.stringify({ stdout: "", stderr: "nope", exitCode: 1 }) }));
-    await expect(spriteExec({ id: "task-1", cmd: "./risky.sh", endpoint: "http://x" }, undefined, http)).rejects.toThrow(
-      /exited 1/,
-    );
-  });
 });
 
 describe("spriteCheckpoint", () => {
-  test("POSTs /v1/sprites/{id}/checkpoints with the label", async () => {
-    const { http, calls } = recorder(() => ({ status: 201, text: JSON.stringify({ checkpointId: "pre-run" }) }));
-    const res = await spriteCheckpoint({ id: "task-1", label: "pre-run", endpoint: "http://x" }, undefined, http);
-    expect(res).toEqual({ checkpointId: "pre-run" });
+  test("POSTs the singular /checkpoint with the comment and reads the NDJSON complete id", async () => {
+    const { http, calls } = recorder(() => ({
+      status: 200,
+      text: '{"event":"info"}\n{"event":"complete","id":"v5"}\n',
+    }));
+    const res = await spriteCheckpoint({ id: "task-1", comment: "pre-run", endpoint: "http://x" }, undefined, http);
+    expect(res).toEqual({ checkpointId: "v5" });
+    expect(calls[0].url).toBe("http://x/v1/sprites/task-1/checkpoint");
+    expect(calls[0].body).toEqual({ comment: "pre-run" });
+  });
+
+  test("omits the comment key when empty", async () => {
+    const { http, calls } = recorder(() => ({ status: 200, text: '{"event":"complete","id":"v1"}\n' }));
+    await spriteCheckpoint({ id: "task-1", endpoint: "http://x" }, undefined, http);
+    expect(calls[0].body).toBeUndefined();
+  });
+});
+
+describe("listCheckpoints", () => {
+  test("GETs the plural /checkpoints and returns the array", async () => {
+    const list = [{ id: "v1", comment: "pre-run", create_time: "2026-01-01T00:00:00.000Z", is_auto: false }];
+    const { http, calls } = recorder(() => ({ status: 200, text: JSON.stringify(list) }));
+    const res = await listCheckpoints({ id: "task-1", endpoint: "http://x" }, undefined, http);
+    expect(res).toEqual(list);
+    expect(calls[0].method).toBe("GET");
     expect(calls[0].url).toBe("http://x/v1/sprites/task-1/checkpoints");
-    expect(calls[0].body).toEqual({ label: "pre-run" });
   });
 });
 
 describe("spriteRestore", () => {
-  test("POSTs /v1/sprites/{id}/restore referencing the checkpoint label (S5)", async () => {
-    const { http, calls } = recorder(() => ({ status: 200, text: "{}" }));
-    const res = await spriteRestore({ id: "task-1", checkpoint: "pre-run", endpoint: "http://x" }, undefined, http);
+  test("explicit checkpoint id → POST /checkpoints/{id}/restore", async () => {
+    const { http, calls } = recorder(() => ({ status: 200, text: '{"event":"complete","id":"v2"}\n' }));
+    const res = await spriteRestore({ id: "task-1", checkpoint: "v2", endpoint: "http://x" }, undefined, http);
     expect(res).toEqual({});
-    expect(calls[0].url).toBe("http://x/v1/sprites/task-1/restore");
-    expect(calls[0].body).toEqual({ checkpoint: "pre-run" });
+    expect(calls).toHaveLength(1);
+    expect(calls[0].method).toBe("POST");
+    expect(calls[0].url).toBe("http://x/v1/sprites/task-1/checkpoints/v2/restore");
   });
 
-  test("throws when the checkpoint is unknown", async () => {
-    const { http } = recorder(() => ({ status: 404, text: "no checkpoint" }));
-    await expect(spriteRestore({ id: "task-1", checkpoint: "nope", endpoint: "http://x" }, undefined, http)).rejects.toThrow(
-      /restore to "nope" failed/,
+  test("comment → list, pick newest match, then restore that id", async () => {
+    const list: Checkpoint[] = [
+      { id: "v1", comment: "pre-run", create_time: "2026-01-01T00:00:00.000Z", is_auto: false },
+      { id: "v4", comment: "pre-run", create_time: "2026-01-01T00:00:09.000Z", is_auto: false },
+    ];
+    const { http, calls } = recorder((method) =>
+      method === "GET"
+        ? { status: 200, text: JSON.stringify(list) }
+        : { status: 200, text: '{"event":"complete","id":"v4"}\n' },
     );
+    await spriteRestore({ id: "task-1", comment: "pre-run", endpoint: "http://x" }, undefined, http);
+    expect(calls[0].method).toBe("GET");
+    expect(calls[0].url).toBe("http://x/v1/sprites/task-1/checkpoints");
+    expect(calls[1].url).toBe("http://x/v1/sprites/task-1/checkpoints/v4/restore");
+  });
+
+  test("throws when no checkpoint carries the comment", async () => {
+    const { http } = recorder(() => ({ status: 200, text: "[]" }));
+    await expect(
+      spriteRestore({ id: "task-1", comment: "nope", endpoint: "http://x" }, undefined, http),
+    ).rejects.toThrow(/no checkpoint matching comment "nope"/);
   });
 });
 
@@ -183,7 +270,6 @@ describe("defaultSpritesHttp bearer header", () => {
       seen.push(init?.headers);
       return { status: 200, text: async () => "{}" } as unknown as Response;
     }) as unknown as typeof fetch;
-    // Guard against a real SPRITES_API_TOKEN in the environment.
     const prev = process.env.SPRITES_API_TOKEN;
     delete process.env.SPRITES_API_TOKEN;
     try {
