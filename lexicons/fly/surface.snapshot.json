@@ -1,0 +1,214 @@
+{
+  "schemaVersion": 1,
+  "generatedAt": "2026-07-12T07:17:37.002Z",
+  "entries": {
+    "App": {
+      "kind": "resource",
+      "resourceType": "Fly::Machines::App",
+      "props": [
+        "enable_subdomains:false",
+        "name:false",
+        "network:false",
+        "org_slug:false"
+      ]
+    },
+    "Certificate": {
+      "kind": "resource",
+      "resourceType": "Fly::Machines::Certificate",
+      "props": [
+        "hostname:false"
+      ]
+    },
+    "ContainerConfig": {
+      "kind": "property",
+      "resourceType": "Fly::Machines::ContainerConfig"
+    },
+    "ContainerDependency": {
+      "kind": "property",
+      "resourceType": "Fly::Machines::ContainerDependency"
+    },
+    "ContainerHealthcheck": {
+      "kind": "property",
+      "resourceType": "Fly::Machines::ContainerHealthcheck"
+    },
+    "DNSConfig": {
+      "kind": "property",
+      "resourceType": "Fly::Machines::DNSConfig"
+    },
+    "DnsForwardRule": {
+      "kind": "property",
+      "resourceType": "Fly::Machines::DnsForwardRule"
+    },
+    "DnsOption": {
+      "kind": "property",
+      "resourceType": "Fly::Machines::DnsOption"
+    },
+    "EnvFrom": {
+      "kind": "property",
+      "resourceType": "Fly::Machines::EnvFrom"
+    },
+    "ExecHealthcheck": {
+      "kind": "property",
+      "resourceType": "Fly::Machines::ExecHealthcheck"
+    },
+    "File": {
+      "kind": "property",
+      "resourceType": "Fly::Machines::File"
+    },
+    "HTTPHealthcheck": {
+      "kind": "property",
+      "resourceType": "Fly::Machines::HTTPHealthcheck"
+    },
+    "HTTPOptions": {
+      "kind": "property",
+      "resourceType": "Fly::Machines::HTTPOptions"
+    },
+    "HTTPResponseOptions": {
+      "kind": "property",
+      "resourceType": "Fly::Machines::HTTPResponseOptions"
+    },
+    "IPAddress": {
+      "kind": "resource",
+      "resourceType": "Fly::Machines::IPAddress",
+      "props": [
+        "network:false",
+        "org_slug:false",
+        "region:false",
+        "service_name:false",
+        "type:false"
+      ]
+    },
+    "Machine": {
+      "kind": "resource",
+      "resourceType": "Fly::Machines::Machine",
+      "props": [
+        "config:false",
+        "lease_ttl:false",
+        "min_secrets_version:false",
+        "name:false",
+        "region:false",
+        "skip_launch:false",
+        "skip_secrets:false",
+        "skip_service_registration:false"
+      ]
+    },
+    "MachineCacheDrive": {
+      "kind": "property",
+      "resourceType": "Fly::Machines::MachineCacheDrive"
+    },
+    "MachineCheck": {
+      "kind": "property",
+      "resourceType": "Fly::Machines::MachineCheck"
+    },
+    "MachineConfig": {
+      "kind": "property",
+      "resourceType": "Fly::Machines::MachineConfig"
+    },
+    "MachineGuest": {
+      "kind": "property",
+      "resourceType": "Fly::Machines::MachineGuest"
+    },
+    "MachineHTTPHeader": {
+      "kind": "property",
+      "resourceType": "Fly::Machines::MachineHTTPHeader"
+    },
+    "MachineInit": {
+      "kind": "property",
+      "resourceType": "Fly::Machines::MachineInit"
+    },
+    "MachineMetrics": {
+      "kind": "property",
+      "resourceType": "Fly::Machines::MachineMetrics"
+    },
+    "MachineMount": {
+      "kind": "property",
+      "resourceType": "Fly::Machines::MachineMount"
+    },
+    "MachinePort": {
+      "kind": "property",
+      "resourceType": "Fly::Machines::MachinePort"
+    },
+    "MachineProcess": {
+      "kind": "property",
+      "resourceType": "Fly::Machines::MachineProcess"
+    },
+    "MachineRestart": {
+      "kind": "property",
+      "resourceType": "Fly::Machines::MachineRestart"
+    },
+    "MachineRootfs": {
+      "kind": "property",
+      "resourceType": "Fly::Machines::MachineRootfs"
+    },
+    "MachineSecret": {
+      "kind": "property",
+      "resourceType": "Fly::Machines::MachineSecret"
+    },
+    "MachineService": {
+      "kind": "property",
+      "resourceType": "Fly::Machines::MachineService"
+    },
+    "MachineServiceCheck": {
+      "kind": "property",
+      "resourceType": "Fly::Machines::MachineServiceCheck"
+    },
+    "MachineServiceConcurrency": {
+      "kind": "property",
+      "resourceType": "Fly::Machines::MachineServiceConcurrency"
+    },
+    "MachineSpot": {
+      "kind": "property",
+      "resourceType": "Fly::Machines::MachineSpot"
+    },
+    "ProxyProtoOptions": {
+      "kind": "property",
+      "resourceType": "Fly::Machines::ProxyProtoOptions"
+    },
+    "ReplayCache": {
+      "kind": "property",
+      "resourceType": "Fly::Machines::ReplayCache"
+    },
+    "Secret": {
+      "kind": "resource",
+      "resourceType": "Fly::Machines::Secret",
+      "props": [
+        "value:false"
+      ]
+    },
+    "Static": {
+      "kind": "property",
+      "resourceType": "Fly::Machines::Static"
+    },
+    "StopConfig": {
+      "kind": "property",
+      "resourceType": "Fly::Machines::StopConfig"
+    },
+    "TCPHealthcheck": {
+      "kind": "property",
+      "resourceType": "Fly::Machines::TCPHealthcheck"
+    },
+    "TLSOptions": {
+      "kind": "property",
+      "resourceType": "Fly::Machines::TLSOptions"
+    },
+    "Volume": {
+      "kind": "resource",
+      "resourceType": "Fly::Machines::Volume",
+      "props": [
+        "auto_backup_enabled:false",
+        "compute:false",
+        "compute_image:false",
+        "encrypted:false",
+        "fstype:false",
+        "name:false",
+        "region:false",
+        "require_unique_zone:false",
+        "size_gb:false",
+        "snapshot_id:false",
+        "snapshot_retention:false",
+        "source_volume_id:false",
+        "unique_zone_app_wide:false"
+      ]
+    }
+  }
+}

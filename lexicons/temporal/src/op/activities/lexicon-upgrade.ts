@@ -48,7 +48,7 @@ export interface LexiconUpgradeArgs {
   /**
    * Which lexicon to check. Determines pinned vs rolling dispatch:
    *   PINNED: k8s, gcp, docker, gitlab
-   *   ROLLING: aws, azure, github
+   *   ROLLING: aws, azure, github, fly
    */
   lexicon: SupportedLexicon;
   /**
@@ -164,7 +164,7 @@ export function computeBumpedVersion(
 // ── Classification ────────────────────────────────────────────────────
 
 const PINNED_LEXICONS: ReadonlySet<string> = new Set<LexiconId>(["k8s", "gcp", "docker", "gitlab"]);
-const ROLLING_LEXICONS: ReadonlySet<string> = new Set<RollingLexicon>(["aws", "azure", "github"]);
+const ROLLING_LEXICONS: ReadonlySet<string> = new Set<RollingLexicon>(["aws", "azure", "github", "fly"]);
 
 /** Return true when the lexicon uses a pinned version constant. */
 export function isPinned(lexicon: SupportedLexicon): lexicon is LexiconId {
