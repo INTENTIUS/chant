@@ -4,14 +4,14 @@ export type { ChantBuildArgs } from "./build";
 export { kubectlApply } from "./kubectl";
 export type { KubectlApplyArgs } from "./kubectl";
 
-export { helmInstall } from "./helm";
-export type { HelmInstallArgs } from "./helm";
+// helm activity relocated to the helm lexicon (#809) — loadActivities(["helm"])
+// provides helmInstall. The helmInstall step builder stays in core.
 
 export { waitForStack } from "./wait";
 export type { WaitForStackArgs } from "./wait";
 
-export { gitlabPipeline } from "./gitlab";
-export type { GitlabPipelineArgs } from "./gitlab";
+// gitlab activity relocated to the gitlab lexicon (#809) — loadActivities(["gitlab"])
+// provides gitlabPipeline. The gitlabPipeline step builder stays in core.
 
 export { shellCmd } from "./shell";
 export type { ShellCmdArgs } from "./shell";
