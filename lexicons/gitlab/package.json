@@ -44,6 +44,11 @@
       "types": "./dist/lint/post-synth/index.d.ts",
       "default": "./src/lint/post-synth/index.ts"
     },
+    "./op/activities": {
+      "development": "./src/op/activities/index.ts",
+      "types": "./dist/op/activities/index.d.ts",
+      "default": "./src/op/activities/index.ts"
+    },
     "./manifest": "./dist/manifest.json",
     "./meta": "./dist/meta.json",
     "./types": "./dist/types/index.d.ts"
