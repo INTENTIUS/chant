@@ -336,10 +336,10 @@ export const spriteExec = (args: {
   return activity("spriteExec", rest, profile ?? "longInfra");
 };
 
-/** Checkpoint a sprite under a caller-chosen `label` (the transactional boundary). Defaults to the `longInfra` profile (override via `profile`). */
+/** Checkpoint a sprite under a caller-chosen `comment` (the transactional boundary). Defaults to the `longInfra` profile (override via `profile`). */
 export const spriteCheckpoint = (args: {
   id: string;
-  label?: string;
+  comment?: string;
   endpoint?: string;
   token?: string;
   profile?: ActivityStep["profile"];
@@ -348,16 +348,33 @@ export const spriteCheckpoint = (args: {
   return activity("spriteCheckpoint", rest, profile ?? "longInfra");
 };
 
-/** Restore a sprite to a labeled `checkpoint` — the checkpoint-as-compensation step (S5). Defaults to the `longInfra` profile (override via `profile`). */
+/**
+ * Restore a sprite — the checkpoint-as-compensation step (S5). Target an
+ * explicit `checkpoint` id, or the newest checkpoint carrying `comment`, or (with
+ * neither) the newest checkpoint overall. Defaults to the `longInfra` profile
+ * (override via `profile`).
+ */
 export const spriteRestore = (args: {
   id: string;
-  checkpoint: string;
+  checkpoint?: string;
+  comment?: string;
   endpoint?: string;
   token?: string;
   profile?: ActivityStep["profile"];
 }): ActivityStep => {
   const { profile, ...rest } = args;
   return activity("spriteRestore", rest, profile ?? "longInfra");
+};
+
+/** List a sprite's checkpoints (`[{ id, comment, create_time, is_auto }]`). Defaults to the `fastIdempotent` profile (override via `profile`). */
+export const listCheckpoints = (args: {
+  id: string;
+  endpoint?: string;
+  token?: string;
+  profile?: ActivityStep["profile"];
+}): ActivityStep => {
+  const { profile, ...rest } = args;
+  return activity("listCheckpoints", rest, profile ?? "fastIdempotent");
 };
 
 /** Destroy a sprite (idempotent). Defaults to the `fastIdempotent` profile (override via `profile`). */

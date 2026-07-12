@@ -2,7 +2,7 @@ export { Op, phase, activity, gate, build, kubectlApply, helmInstall, waitForSta
          gitlabPipeline, lifecycleSnapshot, shell, teardown, k3dUp, k3dDown, flociUp, flociDown,
          flociAzUp, flociAzDown, flociGcpUp, flociGcpDown, httpCheck,
          azGroupEnsure, azGroupDelete, azApply, azDelete, awsApply, awsDelete, gcpApply, gcpDelete, policyGate,
-         spriteCreate, spriteExec, spriteCheckpoint, spriteRestore, spriteDestroy,
+         spriteCreate, spriteExec, spriteCheckpoint, spriteRestore, listCheckpoints, spriteDestroy,
          spritesUp, spritesDown } from "./builders";
 export { OpResource } from "./resource";
 export { safeHeartbeat, sleep } from "./activity-runtime";
