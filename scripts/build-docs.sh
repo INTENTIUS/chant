@@ -64,6 +64,15 @@ cd docs && npm install && npm run build && cd ../../..
 mkdir -p "$SITE/lexicons/gcp"
 cp -r lexicons/gcp/docs/dist/* "$SITE/lexicons/gcp/"
 
+# 7b. Generate + build Fly lexicon docs
+echo "Building Fly lexicon docs..."
+cd lexicons/fly
+npm run prepack
+npx tsx src/codegen/docs-cli.ts
+cd docs && npm install && npm run build && cd ../../..
+mkdir -p "$SITE/lexicons/fly"
+cp -r lexicons/fly/docs/dist/* "$SITE/lexicons/fly/"
+
 # 8. Generate + build Helm lexicon docs
 echo "Building Helm lexicon docs..."
 cd lexicons/helm

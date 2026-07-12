@@ -117,6 +117,7 @@ export default defineConfig({
 						{ label: 'AWS CloudFormation', link: '/lexicons/aws/' },
 						{ label: 'Azure ARM', link: '/lexicons/azure/' },
 						{ label: 'GCP Config Connector', link: '/lexicons/gcp/' },
+						{ label: 'Fly Machines', link: '/lexicons/fly/' },
 						{
 						label: 'Kubernetes',
 						items: [
