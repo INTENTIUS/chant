@@ -336,10 +336,10 @@ export const spriteExec = (args: {
   return activity("spriteExec", rest, profile ?? "longInfra");
 };
 
-/** Checkpoint a sprite under a caller-chosen `label` (the transactional boundary). Defaults to the `longInfra` profile (override via `profile`). */
+/** Checkpoint a sprite, stamping an optional `comment` the restore step matches on (the transactional boundary). Defaults to the `longInfra` profile (override via `profile`). */
 export const spriteCheckpoint = (args: {
   id: string;
-  label?: string;
+  comment?: string;
   endpoint?: string;
   token?: string;
   profile?: ActivityStep["profile"];
@@ -348,10 +348,16 @@ export const spriteCheckpoint = (args: {
   return activity("spriteCheckpoint", rest, profile ?? "longInfra");
 };
 
-/** Restore a sprite to a labeled `checkpoint` — the checkpoint-as-compensation step (S5). Defaults to the `longInfra` profile (override via `profile`). */
+/**
+ * Restore a sprite (S5, checkpoint-as-compensation). Pass a `comment` to restore
+ * the newest checkpoint carrying it, an explicit `checkpoint` version id to
+ * restore that one directly, or neither to restore the latest. Defaults to the
+ * `longInfra` profile (override via `profile`).
+ */
 export const spriteRestore = (args: {
   id: string;
-  checkpoint: string;
+  comment?: string;
+  checkpoint?: string;
   endpoint?: string;
   token?: string;
   profile?: ActivityStep["profile"];

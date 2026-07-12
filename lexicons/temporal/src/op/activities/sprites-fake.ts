@@ -6,17 +6,27 @@
  * real Firecracker VMs or real code execution (that fidelity is out of scope).
  * A sprite's filesystem is a `Record<string, string>`; `exec` runs a small
  * scripted interpreter that can write/modify an `fs` key so checkpoint/restore
- * is observable; `checkpoint` deep-copies `fs` under a label; `restore` replaces
- * `fs` with that copy. Started in-process by a test and reached via
- * `SPRITES_BASE_URL`, so the same activities that hit real Sprites hit the fake.
+ * is observable; `checkpoint` deep-copies `fs` under a server-assigned version id
+ * (`v1`, `v2`, …) and the caller's optional comment; `restore` addresses a
+ * checkpoint by that id and replaces `fs` with its copy. Started in-process by a
+ * test and reached via `SPRITES_BASE_URL`, so the same activities that hit real
+ * Sprites hit the fake.
  *
- * TODO(confirm against sprites.dev API): the endpoint shapes mirror the
- * provisional surface in `sprites.ts` (S6); align both together once confirmed.
+ * This mirrors the confirmed Sprites v0.2.0 surface in `sprites.ts` (#766) and
+ * the released spritzer:0.2.0 image the docker integration test boots.
  */
 
 import { createServer, type Server } from "node:http";
 
 type SpriteStatus = "starting" | "running" | "paused" | "destroyed";
+
+interface Checkpoint {
+  /** Server-assigned version id (`v1`, `v2`, …). */
+  id: string;
+  comment?: string;
+  /** Full copy of `fs` at checkpoint time. */
+  fs: Record<string, string>;
+}
 
 interface SpriteState {
   id: string;
@@ -24,8 +34,8 @@ interface SpriteState {
   url: string;
   /** Filesystem model: path → contents. */
   fs: Record<string, string>;
-  /** Checkpoints keyed by label; each a full copy of `fs` at checkpoint time. */
-  checkpoints: Map<string, Record<string, string>>;
+  /** Checkpoints in creation order (newest last); ids are assigned sequentially. */
+  checkpoints: Checkpoint[];
   policy?: unknown;
 }
 
@@ -146,14 +156,29 @@ export function createSpritesFake(): Promise<{ url: string; close(): Promise<voi
         status: "running",
         url: `http://${host}/s/${encodeURIComponent(id)}`,
         fs: {},
-        checkpoints: new Map(),
+        checkpoints: [],
         policy: body.policy,
       };
       sprites.set(id, sprite);
       return send(201, { id: sprite.id, url: sprite.url });
     }
 
-    const m = path.match(/^\/v1\/sprites\/([^/]+)(\/exec|\/checkpoints|\/restore)?\/?$/);
+    // POST /v1/sprites/{id}/checkpoints/{checkpointId}/restore — replace fs with
+    // that checkpoint's copy (restore addresses a checkpoint by its id).
+    const restoreMatch = path.match(/^\/v1\/sprites\/([^/]+)\/checkpoints\/([^/]+)\/restore\/?$/);
+    if (method === "POST" && restoreMatch) {
+      const id = decodeURIComponent(restoreMatch[1]);
+      const checkpointId = decodeURIComponent(restoreMatch[2]);
+      const sprite = sprites.get(id);
+      if (!sprite || sprite.status === "destroyed") return send(404, { error: `no sprite ${id}` });
+      const cp = sprite.checkpoints.find((c) => c.id === checkpointId);
+      if (!cp) return send(404, { error: `no checkpoint "${checkpointId}" for sprite ${id}` });
+      sprite.fs = copyFs(cp.fs);
+      sprite.status = "running";
+      return send(200, {});
+    }
+
+    const m = path.match(/^\/v1\/sprites\/([^/]+)(\/exec|\/checkpoints)?\/?$/);
     if (m) {
       const id = decodeURIComponent(m[1]);
       const sub = m[2];
@@ -167,24 +192,26 @@ export function createSpritesFake(): Promise<{ url: string; close(): Promise<voi
         return send(200, result);
       }
 
-      // POST /v1/sprites/{id}/checkpoints — deep-copy fs under the label.
+      // POST /v1/sprites/{id}/checkpoints — deep-copy fs under a new version id.
       if (method === "POST" && sub === "/checkpoints") {
-        const body = ((await readBody(req)) ?? {}) as { label?: string };
-        const label = body.label ?? `cp-${sprite.checkpoints.size + 1}`;
-        sprite.checkpoints.set(label, copyFs(sprite.fs));
-        return send(201, { checkpointId: label });
+        const body = ((await readBody(req)) ?? {}) as { comment?: string };
+        const cp: Checkpoint = {
+          id: `v${sprite.checkpoints.length + 1}`,
+          ...(typeof body.comment === "string" ? { comment: body.comment } : {}),
+          fs: copyFs(sprite.fs),
+        };
+        sprite.checkpoints.push(cp);
+        return send(201, { id: cp.id });
       }
 
-      // POST /v1/sprites/{id}/restore — replace fs with the labeled checkpoint's copy.
-      if (method === "POST" && sub === "/restore") {
-        const body = ((await readBody(req)) ?? {}) as { checkpoint?: string };
-        const label = body.checkpoint;
-        if (!label || !sprite.checkpoints.has(label)) {
-          return send(404, { error: `no checkpoint "${label}" for sprite ${id}` });
-        }
-        sprite.fs = copyFs(sprite.checkpoints.get(label)!);
-        sprite.status = "running";
-        return send(200, {});
+      // GET /v1/sprites/{id}/checkpoints — list in creation order (newest last).
+      if (method === "GET" && sub === "/checkpoints") {
+        return send(200, {
+          checkpoints: sprite.checkpoints.map((c) => ({
+            id: c.id,
+            ...(c.comment !== undefined ? { comment: c.comment } : {}),
+          })),
+        });
       }
 
       // DELETE /v1/sprites/{id}
@@ -200,7 +227,10 @@ export function createSpritesFake(): Promise<{ url: string; close(): Promise<voi
           status: sprite.status,
           url: sprite.url,
           fs: sprite.fs,
-          checkpoints: [...sprite.checkpoints.keys()],
+          checkpoints: sprite.checkpoints.map((c) => ({
+            id: c.id,
+            ...(c.comment !== undefined ? { comment: c.comment } : {}),
+          })),
         });
       }
     }

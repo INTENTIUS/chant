@@ -11,25 +11,19 @@
  * when a token is set.
  *
  * The headline capability is checkpoint-as-compensation (S5): an Op checkpoints
- * before a risky phase and, on failure, `spriteRestore`s the labeled checkpoint
- * instead of unwinding with an inverse action — the environment itself is the
+ * before a risky phase and, on failure, `spriteRestore`s that checkpoint instead
+ * of unwinding with an inverse action — the environment itself is the
  * transaction.
  *
  * S3: endpoint override via `SPRITES_BASE_URL` (an explicit `endpoint` arg wins,
  * then the env, then the real Sprites base), so the same Op targets real Sprites
  * or the in-process fake with no code change.
  *
- * S6: the REST surface below is provisional — confirm it against the official
- * Sprites API before wiring the real path. The activity input/output contracts
- * (the `Args`/`Result` shapes) are the stable interface the Ops and the emulator
- * are written against; only the endpoint constants may move.
+ * The REST surface below is the confirmed Sprites v0.2.0 API (#766). Checkpoints
+ * are server-assigned version ids (`v1`, `v2`, …); the caller controls only an
+ * optional `comment`, and restore addresses a checkpoint by id in the path.
  */
 
-/**
- * TODO(confirm against sprites.dev API): default host + path shapes are
- * provisional (S6). The fake and the activities agree on these; align to the
- * official REST surface once confirmed and keep the activity contracts stable.
- */
 export const DEFAULT_SPRITES_BASE_URL = "https://api.sprites.dev";
 
 // ── Pure helpers (unit-testable without http) ─────────────────────────────────
@@ -48,12 +42,12 @@ export function resolveSpritesEndpoint(
   return base.replace(/\/$/, "");
 }
 
-// TODO(confirm against sprites.dev API): provisional REST paths (S6).
 const spritesUrl = (base: string): string => `${base}/v1/sprites`;
 const spriteUrl = (base: string, id: string): string => `${spritesUrl(base)}/${encodeURIComponent(id)}`;
 const spriteExecUrl = (base: string, id: string): string => `${spriteUrl(base, id)}/exec`;
 const spriteCheckpointsUrl = (base: string, id: string): string => `${spriteUrl(base, id)}/checkpoints`;
-const spriteRestoreUrl = (base: string, id: string): string => `${spriteUrl(base, id)}/restore`;
+const spriteRestoreUrl = (base: string, id: string, checkpointId: string): string =>
+  `${spriteCheckpointsUrl(base, id)}/${encodeURIComponent(checkpointId)}/restore`;
 
 function safeJson(text: string): unknown {
   try {
@@ -63,7 +57,7 @@ function safeJson(text: string): unknown {
   }
 }
 
-// ── Activity contracts (S6: the stable interface) ─────────────────────────────
+// ── Activity contracts ────────────────────────────────────────────────────────
 
 export interface SpriteCreateArgs {
   /** Caller-chosen name, used as the sprite `id` (S4). Every later activity keys on it. */
@@ -104,20 +98,37 @@ export interface SpriteExecResult {
 
 export interface SpriteCheckpointArgs {
   id: string;
-  /** Caller-chosen checkpoint label (S4); `spriteRestore` references the same one. */
+  /** Caller-chosen comment stamped on the checkpoint; `spriteRestore` matches on it. */
+  comment?: string;
+  /** Deprecated alias for `comment`. */
   label?: string;
   endpoint?: string;
   token?: string;
 }
 
 export interface SpriteCheckpointResult {
+  /** Server-assigned version id (`v1`, `v2`, …). */
   checkpointId: string;
+}
+
+/** One checkpoint as reported by `GET /v1/sprites/{id}/checkpoints`. */
+export interface SpriteCheckpointInfo {
+  id: string;
+  comment?: string;
 }
 
 export interface SpriteRestoreArgs {
   id: string;
-  /** The label passed to a prior `spriteCheckpoint`. */
-  checkpoint: string;
+  /** Match the newest checkpoint carrying this comment (the compensation handle). */
+  comment?: string;
+  /** Restore an explicit server checkpoint id directly, skipping the comment lookup. */
+  checkpoint?: string;
+  endpoint?: string;
+  token?: string;
+}
+
+export interface SpriteListCheckpointsArgs {
+  id: string;
   endpoint?: string;
   token?: string;
 }
@@ -149,7 +160,14 @@ export function spriteExecBody(args: SpriteExecArgs): Record<string, unknown> {
   return { cmd: args.cmd, ...(args.timeoutMs !== undefined ? { timeoutMs: args.timeoutMs } : {}) };
 }
 
-/** Parse an exec response into the stdout/stderr/exitCode contract. Pure. */
+/**
+ * Parse an exec response into the stdout/stderr/exitCode contract. Pure.
+ *
+ * TODO(confirm REST exec response — WSS is the real primary): real Sprites exec
+ * is WebSocket-primary (`WSS /v1/sprites/{id}/exec?cmd=`); this REST POST is the
+ * documented alternative but its exact body shape is unpublished. The
+ * `{stdout,stderr,exitCode}` shape is what the emulator and the Op loop agree on.
+ */
 export function parseExecResponse(text: string): SpriteExecResult {
   const b = safeJson(text) as Partial<SpriteExecResult> | undefined;
   return {
@@ -159,10 +177,42 @@ export function parseExecResponse(text: string): SpriteExecResult {
   };
 }
 
-/** Parse a checkpoint response; the label is the checkpointId fallback (S4). Pure. */
-export function parseCheckpointResponse(text: string, label: string): SpriteCheckpointResult {
-  const b = safeJson(text) as { checkpointId?: string } | undefined;
-  return { checkpointId: b?.checkpointId ?? label };
+/** Build the `POST /v1/sprites/{id}/checkpoints` body — only the `comment` when set. Pure. */
+export function spriteCheckpointBody(args: SpriteCheckpointArgs): Record<string, unknown> {
+  const comment = args.comment ?? args.label;
+  return comment !== undefined ? { comment } : {};
+}
+
+/** Parse the checkpoint response; the server assigns the version `id`. Pure. */
+export function parseCheckpointResponse(text: string): SpriteCheckpointResult {
+  const b = safeJson(text) as { id?: string } | undefined;
+  return { checkpointId: b?.id ?? "" };
+}
+
+/** Parse the checkpoint list response into `{ id, comment }[]` (creation order). Pure. */
+export function parseCheckpointsResponse(text: string): SpriteCheckpointInfo[] {
+  const b = safeJson(text) as { checkpoints?: unknown } | undefined;
+  const list = Array.isArray(b?.checkpoints) ? b!.checkpoints : [];
+  return list
+    .map((c) => c as { id?: unknown; comment?: unknown })
+    .filter((c): c is { id: string; comment?: unknown } => typeof c.id === "string")
+    .map((c) => ({ id: c.id, ...(typeof c.comment === "string" ? { comment: c.comment } : {}) }));
+}
+
+/**
+ * Pick the newest checkpoint carrying `comment` from a creation-ordered list
+ * (newest last), returning `undefined` when none match. Pure — the core of
+ * comment-tagged restore, so re-runs that re-checkpoint the same comment resolve
+ * to the latest one rather than a stale earlier copy.
+ */
+export function pickCheckpointByComment(
+  checkpoints: SpriteCheckpointInfo[],
+  comment: string,
+): SpriteCheckpointInfo | undefined {
+  for (let i = checkpoints.length - 1; i >= 0; i--) {
+    if (checkpoints[i].comment === comment) return checkpoints[i];
+  }
+  return undefined;
 }
 
 // ── HTTP ───────────────────────────────────────────────────────────────────────
@@ -236,25 +286,44 @@ export async function spriteExec(
   return result;
 }
 
-/** Checkpoint the sprite under a caller-chosen label (S4). `POST /v1/sprites/{id}/checkpoints`. */
+/**
+ * Checkpoint the sprite, stamping the caller's optional `comment`. The server
+ * assigns the version id (`v1`, `v2`, …) that comes back as `checkpointId`.
+ * `POST /v1/sprites/{id}/checkpoints`.
+ */
 export async function spriteCheckpoint(
   args: SpriteCheckpointArgs,
   signal?: AbortSignal,
   http: SpritesHttp = defaultSpritesHttp(args.token),
 ): Promise<SpriteCheckpointResult> {
   const base = resolveSpritesEndpoint(args);
-  const label = args.label ?? "checkpoint";
-  const body = { ...(args.label !== undefined ? { label: args.label } : {}) };
-  const res = await http("POST", spriteCheckpointsUrl(base, args.id), body, undefined, signal);
+  const res = await http("POST", spriteCheckpointsUrl(base, args.id), spriteCheckpointBody(args), undefined, signal);
   if (res.status >= 300) throw new Error(`sprite ${args.id} checkpoint failed (${res.status}): ${res.text}`);
-  const result = parseCheckpointResponse(res.text, label);
+  const result = parseCheckpointResponse(res.text);
   console.log(`checkpoint: sprite/${args.id} @${result.checkpointId} (${base})`);
   return result;
 }
 
+/** List a sprite's checkpoints in creation order (newest last). `GET /v1/sprites/{id}/checkpoints`. */
+export async function listCheckpoints(
+  args: SpriteListCheckpointsArgs,
+  signal?: AbortSignal,
+  http: SpritesHttp = defaultSpritesHttp(args.token),
+): Promise<SpriteCheckpointInfo[]> {
+  const base = resolveSpritesEndpoint(args);
+  const res = await http("GET", spriteCheckpointsUrl(base, args.id), undefined, undefined, signal);
+  if (res.status >= 300) throw new Error(`sprite ${args.id} list checkpoints failed (${res.status}): ${res.text}`);
+  return parseCheckpointsResponse(res.text);
+}
+
 /**
- * Restore the sprite to a labeled checkpoint (S5, the compensation path).
- * `POST /v1/sprites/{id}/restore`.
+ * Restore the sprite to a checkpoint (S5, the compensation path). Checkpoints
+ * are addressed by their server-assigned version id in the path, so the id has
+ * to be resolved first:
+ *   - `checkpoint` given → restore that explicit id directly.
+ *   - else `comment` given → list checkpoints, pick the newest with that comment.
+ *   - else → restore the newest checkpoint (latest fallback).
+ * `POST /v1/sprites/{id}/checkpoints/{checkpointId}/restore`.
  */
 export async function spriteRestore(
   args: SpriteRestoreArgs,
@@ -262,9 +331,26 @@ export async function spriteRestore(
   http: SpritesHttp = defaultSpritesHttp(args.token),
 ): Promise<Record<string, never>> {
   const base = resolveSpritesEndpoint(args);
-  const res = await http("POST", spriteRestoreUrl(base, args.id), { checkpoint: args.checkpoint }, undefined, signal);
-  if (res.status >= 300) throw new Error(`sprite ${args.id} restore to "${args.checkpoint}" failed (${res.status}): ${res.text}`);
-  console.log(`restored: sprite/${args.id} → ${args.checkpoint} (${base})`);
+
+  let checkpointId = args.checkpoint;
+  if (checkpointId === undefined) {
+    const checkpoints = await listCheckpoints(args, signal, http);
+    if (args.comment !== undefined) {
+      const match = pickCheckpointByComment(checkpoints, args.comment);
+      if (!match) throw new Error(`sprite ${args.id} has no checkpoint with comment "${args.comment}"`);
+      checkpointId = match.id;
+    } else {
+      const latest = checkpoints[checkpoints.length - 1];
+      if (!latest) throw new Error(`sprite ${args.id} has no checkpoints to restore`);
+      checkpointId = latest.id;
+    }
+  }
+
+  const res = await http("POST", spriteRestoreUrl(base, args.id, checkpointId), undefined, undefined, signal);
+  if (res.status >= 300) {
+    throw new Error(`sprite ${args.id} restore to "${checkpointId}" failed (${res.status}): ${res.text}`);
+  }
+  console.log(`restored: sprite/${args.id} to ${checkpointId} (${base})`);
   return {};
 }
 

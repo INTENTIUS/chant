@@ -34,9 +34,15 @@ let endpoint = "";
 let activities: Map<string, ActivityFn>;
 let prevBaseUrl: string | undefined;
 
-async function inspect(id: string): Promise<{ status: string; fs: Record<string, string>; checkpoints: string[] }> {
+async function inspect(
+  id: string,
+): Promise<{ status: string; fs: Record<string, string>; checkpoints: Array<{ id: string; comment?: string }> }> {
   const res = await fetch(`${endpoint}/v1/sprites/${id}`);
-  return (await res.json()) as { status: string; fs: Record<string, string>; checkpoints: string[] };
+  return (await res.json()) as {
+    status: string;
+    fs: Record<string, string>;
+    checkpoints: Array<{ id: string; comment?: string }>;
+  };
 }
 
 beforeAll(async () => {
@@ -72,11 +78,11 @@ describe("sprites against the live spritzer image (#786)", () => {
       phases: [
         phase("Create", [spriteCreate({ name: "guard-1" })]),
         phase("Seed", [spriteExec({ id: "guard-1", cmd: "echo good > /state" })]),
-        phase("Checkpoint", [spriteCheckpoint({ id: "guard-1", label: "pre-run" })]),
+        phase("Checkpoint", [spriteCheckpoint({ id: "guard-1", comment: "pre-run" })]),
         phase("Run", [spriteExec({ id: "guard-1", cmd: "echo bad > /state; false" })]),
         phase("Destroy", [spriteDestroy({ id: "guard-1" })]),
       ],
-      onFailure: [phase("Restore", [spriteRestore({ id: "guard-1", checkpoint: "pre-run" })])],
+      onFailure: [phase("Restore", [spriteRestore({ id: "guard-1", comment: "pre-run" })])],
     };
 
     let failure: OpRunFailure | undefined;

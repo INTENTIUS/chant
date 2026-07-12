@@ -5,7 +5,7 @@ export interface SpritesUpArgs {
   name?: string;
   /** Host port mapped to the emulator's `:4290`. Default: `4290`. */
   port?: number;
-  /** Image. Default: `ghcr.io/intentius/spritzer:0.1.0`. */
+  /** Image. Default: `ghcr.io/intentius/spritzer:0.2.0`. */
   image?: string;
   /** Readiness timeout in ms. Default: `60000`. */
   timeoutMs?: number;
@@ -24,7 +24,7 @@ export interface SpritesDownArgs {
 // helper that boots mudflaps for fly).
 const spritzer = emulatorLifecycle({
   name: "chant-spritzer",
-  image: "ghcr.io/intentius/spritzer:0.1.0",
+  image: "ghcr.io/intentius/spritzer:0.2.0",
   containerPort: 4290,
   healthPath: "/_spritzer/health",
 });

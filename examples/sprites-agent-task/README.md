@@ -15,20 +15,26 @@ There is no `build` phase, no serialized plan, and no `dist/`.
 
 The reason Sprites map onto chant Ops so well is rollback. A VM checkpoint is a
 fast transactional boundary: an Op checkpoints before a risky phase and, on
-failure, restores the labeled checkpoint instead of running an inverse action.
-The environment itself is the transaction, so there is nothing to unwind by
-hand. `guarded-task` runs `./risky.sh` (which corrupts the workspace and exits
+failure, restores that checkpoint instead of running an inverse action. The
+environment itself is the transaction, so there is nothing to unwind by hand.
+`guarded-task` runs `./risky.sh` (which corrupts the workspace and exits
 non-zero); the failing `Run` phase triggers the Op-level `onFailure` `Restore`,
 which rewinds the sprite to its `pre-run` checkpoint.
 
 ```ts
+phase("Checkpoint", [spriteCheckpoint({ id: "task-1", comment: "pre-run" })]),
+// ...
 onFailure: [
-  phase("Restore", [spriteRestore({ id: "task-1", checkpoint: "pre-run" })]),
+  phase("Restore", [spriteRestore({ id: "task-1", comment: "pre-run" })]),
 ],
 ```
 
-The checkpoint `label` and the sprite `id` are static strings the Op author
-writes, so nothing has to be threaded from a prior phase's output.
+Real Sprites assigns each checkpoint a version id (`v1`, `v2`, …); the caller
+controls only the `comment`. So `spriteRestore` matches on the comment, restoring
+the newest checkpoint that carries it (newest wins on re-runs). The comment and
+the sprite `id` are static strings the Op author writes, so nothing has to be
+threaded from a prior phase's output. Pass an explicit `checkpoint` version id to
+restore one directly, or neither to restore the latest.
 
 ## Run it
 

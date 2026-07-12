@@ -4,9 +4,12 @@ import {
   defaultSpritesHttp,
   spriteCreateBody,
   spriteExecBody,
+  spriteCheckpointBody,
   parseCreateResponse,
   parseExecResponse,
   parseCheckpointResponse,
+  parseCheckpointsResponse,
+  pickCheckpointByComment,
   spriteCreate,
   spriteExec,
   spriteCheckpoint,
@@ -81,9 +84,44 @@ describe("request/response mappers", () => {
     expect(parseExecResponse("{}")).toEqual({ stdout: "", stderr: "", exitCode: 0 });
   });
 
-  test("parseCheckpointResponse falls back to the label", () => {
-    expect(parseCheckpointResponse('{"checkpointId":"cp9"}', "pre-run")).toEqual({ checkpointId: "cp9" });
-    expect(parseCheckpointResponse("{}", "pre-run")).toEqual({ checkpointId: "pre-run" });
+  test("spriteCheckpointBody carries only the comment when set", () => {
+    expect(spriteCheckpointBody({ id: "a" })).toEqual({});
+    expect(spriteCheckpointBody({ id: "a", comment: "pre-run" })).toEqual({ comment: "pre-run" });
+    // `label` stays a trivial alias for `comment` (backward compat).
+    expect(spriteCheckpointBody({ id: "a", label: "pre-run" })).toEqual({ comment: "pre-run" });
+  });
+
+  test("parseCheckpointResponse reads the server-assigned version id", () => {
+    expect(parseCheckpointResponse('{"id":"v3"}')).toEqual({ checkpointId: "v3" });
+    expect(parseCheckpointResponse("{}")).toEqual({ checkpointId: "" });
+  });
+
+  test("parseCheckpointsResponse maps { id, comment } in order, dropping malformed entries", () => {
+    expect(
+      parseCheckpointsResponse('{"checkpoints":[{"id":"v1","comment":"pre-run"},{"id":"v2"},{"comment":"x"}]}'),
+    ).toEqual([{ id: "v1", comment: "pre-run" }, { id: "v2" }]);
+    expect(parseCheckpointsResponse("{}")).toEqual([]);
+  });
+});
+
+// ── pickCheckpointByComment (newest wins) ─────────────────────────────────────
+
+describe("pickCheckpointByComment", () => {
+  const list = [
+    { id: "v1", comment: "pre-run" },
+    { id: "v2", comment: "other" },
+    { id: "v3", comment: "pre-run" },
+    { id: "v4" },
+  ];
+
+  test("returns the NEWEST checkpoint carrying the comment (creation order, newest last)", () => {
+    expect(pickCheckpointByComment(list, "pre-run")).toEqual({ id: "v3", comment: "pre-run" });
+    expect(pickCheckpointByComment(list, "other")).toEqual({ id: "v2", comment: "other" });
+  });
+
+  test("returns undefined when no checkpoint matches", () => {
+    expect(pickCheckpointByComment(list, "nope")).toBeUndefined();
+    expect(pickCheckpointByComment([], "pre-run")).toBeUndefined();
   });
 });
 
@@ -123,29 +161,83 @@ describe("spriteExec", () => {
 });
 
 describe("spriteCheckpoint", () => {
-  test("POSTs /v1/sprites/{id}/checkpoints with the label", async () => {
-    const { http, calls } = recorder(() => ({ status: 201, text: JSON.stringify({ checkpointId: "pre-run" }) }));
-    const res = await spriteCheckpoint({ id: "task-1", label: "pre-run", endpoint: "http://x" }, undefined, http);
-    expect(res).toEqual({ checkpointId: "pre-run" });
+  test("POSTs /v1/sprites/{id}/checkpoints with the comment and returns the server id", async () => {
+    const { http, calls } = recorder(() => ({ status: 201, text: JSON.stringify({ id: "v1" }) }));
+    const res = await spriteCheckpoint({ id: "task-1", comment: "pre-run", endpoint: "http://x" }, undefined, http);
+    expect(res).toEqual({ checkpointId: "v1" });
+    expect(calls[0].method).toBe("POST");
     expect(calls[0].url).toBe("http://x/v1/sprites/task-1/checkpoints");
-    expect(calls[0].body).toEqual({ label: "pre-run" });
+    expect(calls[0].body).toEqual({ comment: "pre-run" });
+  });
+
+  test("omits the body comment when none is given", async () => {
+    const { http, calls } = recorder(() => ({ status: 201, text: JSON.stringify({ id: "v2" }) }));
+    await spriteCheckpoint({ id: "task-1", endpoint: "http://x" }, undefined, http);
+    expect(calls[0].body).toEqual({});
   });
 });
 
 describe("spriteRestore", () => {
-  test("POSTs /v1/sprites/{id}/restore referencing the checkpoint label (S5)", async () => {
+  // A recording stub that also answers GET .../checkpoints from a fixed list.
+  function restoreRecorder(list: Array<{ id: string; comment?: string }>) {
+    return recorder((method, url) => {
+      if (method === "GET" && url.endsWith("/checkpoints")) {
+        return { status: 200, text: JSON.stringify({ checkpoints: list }) };
+      }
+      return { status: 200, text: "{}" };
+    });
+  }
+
+  test("explicit checkpoint id restores by id in the path, no list lookup (S5)", async () => {
     const { http, calls } = recorder(() => ({ status: 200, text: "{}" }));
-    const res = await spriteRestore({ id: "task-1", checkpoint: "pre-run", endpoint: "http://x" }, undefined, http);
+    const res = await spriteRestore({ id: "task-1", checkpoint: "v7", endpoint: "http://x" }, undefined, http);
     expect(res).toEqual({});
-    expect(calls[0].url).toBe("http://x/v1/sprites/task-1/restore");
-    expect(calls[0].body).toEqual({ checkpoint: "pre-run" });
+    expect(calls).toHaveLength(1);
+    expect(calls[0].method).toBe("POST");
+    expect(calls[0].url).toBe("http://x/v1/sprites/task-1/checkpoints/v7/restore");
   });
 
-  test("throws when the checkpoint is unknown", async () => {
-    const { http } = recorder(() => ({ status: 404, text: "no checkpoint" }));
-    await expect(spriteRestore({ id: "task-1", checkpoint: "nope", endpoint: "http://x" }, undefined, http)).rejects.toThrow(
-      /restore to "nope" failed/,
+  test("comment restores the NEWEST matching checkpoint's id", async () => {
+    const { http, calls } = restoreRecorder([
+      { id: "v1", comment: "pre-run" },
+      { id: "v2", comment: "other" },
+      { id: "v3", comment: "pre-run" },
+    ]);
+    await spriteRestore({ id: "task-1", comment: "pre-run", endpoint: "http://x" }, undefined, http);
+    expect(calls[0].method).toBe("GET");
+    expect(calls[0].url).toBe("http://x/v1/sprites/task-1/checkpoints");
+    expect(calls[1].method).toBe("POST");
+    expect(calls[1].url).toBe("http://x/v1/sprites/task-1/checkpoints/v3/restore");
+  });
+
+  test("no comment and no id restores the newest checkpoint (latest fallback)", async () => {
+    const { http, calls } = restoreRecorder([
+      { id: "v1", comment: "pre-run" },
+      { id: "v2", comment: "later" },
+    ]);
+    await spriteRestore({ id: "task-1", endpoint: "http://x" }, undefined, http);
+    expect(calls[1].url).toBe("http://x/v1/sprites/task-1/checkpoints/v2/restore");
+  });
+
+  test("throws when no checkpoint carries the comment", async () => {
+    const { http } = restoreRecorder([{ id: "v1", comment: "pre-run" }]);
+    await expect(
+      spriteRestore({ id: "task-1", comment: "nope", endpoint: "http://x" }, undefined, http),
+    ).rejects.toThrow(/no checkpoint with comment "nope"/);
+  });
+
+  test("throws on the latest fallback when the sprite has no checkpoints", async () => {
+    const { http } = restoreRecorder([]);
+    await expect(spriteRestore({ id: "task-1", endpoint: "http://x" }, undefined, http)).rejects.toThrow(
+      /no checkpoints to restore/,
     );
+  });
+
+  test("propagates a non-2xx restore as an error", async () => {
+    const { http } = recorder(() => ({ status: 404, text: "gone" }));
+    await expect(
+      spriteRestore({ id: "task-1", checkpoint: "v9", endpoint: "http://x" }, undefined, http),
+    ).rejects.toThrow(/restore to "v9" failed/);
   });
 });
 
