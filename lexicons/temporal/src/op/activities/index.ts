@@ -1,8 +1,8 @@
 export { chantBuild } from "./build";
 export type { ChantBuildArgs } from "./build";
 
-export { kubectlApply } from "./kubectl";
-export type { KubectlApplyArgs } from "./kubectl";
+// kubectl activity relocated to the k8s lexicon (#809) — loadActivities(["k8s"])
+// provides kubectlApply. The kubectlApply step builder stays in core.
 
 // helm activity relocated to the helm lexicon (#809) — loadActivities(["helm"])
 // provides helmInstall. The helmInstall step builder stays in core.
@@ -25,17 +25,17 @@ export type { LifecycleSnapshotArgs, LifecycleDiffArgs, LifecycleDiffResult } fr
 export { chantTeardown } from "./teardown";
 export type { ChantTeardownArgs } from "./teardown";
 
-export { k3dUp, k3dDown, k3dUpCommand, k3dDownCommand, k3dExistsCommand } from "./k3d";
-export type { K3dUpArgs, K3dDownArgs } from "./k3d";
+// k3d activities relocated to the k8s lexicon (#809) — loadActivities(["k8s"])
+// provides k3dUp/k3dDown. The step builders stay in core.
 
 // Sprites (Fly product) moved to the fly lexicon — a lexicon owns its own
 // product's activities. `loadActivities(["fly"])` now provides the sprite
 // activities + the spritzer emulator lifecycle. See lexicons/fly/src/op/activities.
 //
-// Cloud-specific appliers likewise live in their own lexicons (aws → floci,
-// gcp → gcpApply, azure → az group) and are loaded from there by the core
-// activity registry per the project's configured lexicons. k3d stays here — it
-// is cloud-agnostic (vanilla Kubernetes), not a single product's surface.
+// Cloud/k8s-specific activities likewise live in their own lexicons (aws → floci,
+// gcp → gcpApply, azure → az group, k8s → kubectl/k3d/argo) and are loaded from
+// there by the core activity registry per the project's configured lexicons.
+// What remains here is genuinely product-agnostic or Temporal-native.
 
 export { reconcilePr } from "./reconcile";
 export type { ReconcilePrArgs, ReconcileResult, ReconcileMode, ReconcileEntry } from "./reconcile";
@@ -43,8 +43,8 @@ export type { ReconcilePrArgs, ReconcileResult, ReconcileMode, ReconcileEntry } 
 export { nativeApply, compensateApply } from "./apply";
 export type { NativeApplyArgs, CompensateApplyArgs, ApplyTarget, DeleteMode } from "./apply";
 
-export { waitForArgoSync, defaultArgoStatusFetcher, ArgoSyncFailedError } from "./argo";
-export type { WaitForArgoSyncArgs, ArgoAppStatus, ArgoStatusFetcher } from "./argo";
+// argo activity (waitForArgoSync) relocated to the k8s lexicon (#809) —
+// loadActivities(["k8s"]) provides it. Argo CD is Kubernetes-native.
 
 export { policyGate } from "./policy";
 export type { PolicyGateArgs } from "./policy";

@@ -12,7 +12,7 @@ describe("loadActivities", () => {
     // Real export names from lexicons/temporal/src/op/activities.
     expect(activities.has("shellCmd")).toBe(true);
     expect(activities.has("chantBuild")).toBe(true);
-    expect(activities.has("kubectlApply")).toBe(true);
+    expect(activities.has("waitForStack")).toBe(true);
     expect(activities.has("lifecycleDiff")).toBe(true);
     expect(typeof activities.get("shellCmd")).toBe("function");
   });
@@ -49,12 +49,12 @@ describe("resolveActivity", () => {
 
 describe("loadActivities — heartbeat-shim safety", () => {
   test("the activity library loads without @temporalio/activity installed", async () => {
-    // kubectlApply/helmInstall/waitForStack/gitlabPipeline heartbeat via the
-    // lazy shim; if the shim statically required the SDK, this import would
-    // throw (the SDK is not installed in this environment).
+    // waitForStack (and the relocated kubectlApply/helmInstall/gitlabPipeline)
+    // heartbeat via the lazy shim; if the shim statically required the SDK, this
+    // import would throw (the SDK is not installed in this environment).
     const activities = await loadActivities();
-    expect(activities.has("kubectlApply")).toBe(true);
     expect(activities.has("waitForStack")).toBe(true);
+    expect(activities.has("chantBuild")).toBe(true);
   });
 });
 
@@ -62,10 +62,12 @@ describe("loadActivities — heartbeat-shim safety", () => {
 // lexicons (#706); the loader pulls them in per the project's configured
 // `lexicons`. Proves the relocation resolves end-to-end.
 describe("loadActivities — multi-lexicon (#706)", () => {
-  test("base (no lexicons): temporal activities present, cloud appliers absent", async () => {
+  test("base (no lexicons): temporal activities present, product activities absent", async () => {
     const a = await loadActivities();
-    expect(a.has("kubectlApply")).toBe(true); // temporal base
-    expect(a.has("k3dUp")).toBe(true); // cloud-agnostic, stays in temporal
+    expect(a.has("waitForStack")).toBe(true); // temporal base
+    expect(a.has("shellCmd")).toBe(true); // temporal base
+    expect(a.has("kubectlApply")).toBe(false); // relocated to k8s (#809)
+    expect(a.has("k3dUp")).toBe(false); // relocated to k8s (#809)
     expect(a.has("gcpApply")).toBe(false); // relocated to gcp
     expect(a.has("flociUp")).toBe(false); // relocated to aws
     expect(a.has("azGroupEnsure")).toBe(false); // relocated to azure
@@ -74,7 +76,16 @@ describe("loadActivities — multi-lexicon (#706)", () => {
   test("gcp lexicon contributes the GCP applier", async () => {
     const a = await loadActivities(["gcp"]);
     expect(a.has("gcpApply")).toBe(true);
-    expect(a.has("kubectlApply")).toBe(true); // base still loaded alongside
+    expect(a.has("waitForStack")).toBe(true); // base still loaded alongside
+  });
+
+  test("k8s lexicon contributes kubectl / k3d / argo activities (#809)", async () => {
+    const a = await loadActivities(["k8s"]);
+    expect(a.has("kubectlApply")).toBe(true);
+    expect(a.has("k3dUp")).toBe(true);
+    expect(a.has("k3dDown")).toBe(true);
+    expect(a.has("waitForArgoSync")).toBe(true);
+    expect(a.has("waitForStack")).toBe(true); // base still loaded alongside
   });
 
   test("aws lexicon contributes the Floci lifecycle", async () => {
@@ -92,6 +103,6 @@ describe("loadActivities — multi-lexicon (#706)", () => {
 
   test("unknown lexicon is skipped without throwing", async () => {
     const a = await loadActivities(["definitely-not-a-lexicon"]);
-    expect(a.has("kubectlApply")).toBe(true);
+    expect(a.has("waitForStack")).toBe(true); // temporal base still loads
   });
 });
