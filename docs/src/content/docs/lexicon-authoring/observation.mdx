@@ -290,8 +290,43 @@ Live-export coverage today:
 | K8s | ✅ | `kubectl get <kinds> -A -o json`, stripped of `status`/`managedFields`/server metadata (kept under `--verbatim`), parsed by the K8s import parser |
 | GCP (Config Connector) | ✅ | `kubectl get <*.cnrm.cloud.google.com> -A -o json` (each CC object is its manifest), stripped of `status`/server metadata/`cnrm.cloud.google.com/*` annotations, parsed by the GCP import parser |
 
+## Live graph edges: `referenceCatalog` + `enrichLiveAttrs`
+
+`describeResources()` gives [`chant graph --live`](/chant/cli/graph/) its **nodes** — the provisioned resources. To get **edges** — the topology between them — a lexicon declares a **reference catalog**. A live resource has no declared AttrRefs; it references others by physical identifier buried in its attributes (a subnet's `VpcId`, an ALB listener's `TargetGroupArn`). The catalog tells chant how to reconstruct those into a graph.
+
+```typescript
+referenceCatalog?: ReferenceCatalog;   // { identities, refs }
+```
+
+- **`identities`** — which attr paths identify each kind (its id / ARN / name). chant indexes every node by these (and its `physicalId`, and its own id).
+- **`refs`** — per `(kind, attr path)`, that the value there references another resource. Each rule is tagged `reference` (→ a graph edge) or **`containment`** (subnet ∈ VPC → a boundary box, not a line). `path` supports `a.b` and `arr[].id`.
+
+```typescript
+export const myReferenceCatalog: ReferenceCatalog = {
+  identities: [{ kind: "Subnet", ids: ["SubnetId"] }, { kind: "Vpc", ids: ["VpcId"] }],
+  refs: [{ from: "Subnet", path: "VpcId", targetKind: "Vpc", relation: "containment", label: "in VPC" }],
+};
+```
+
+A reference whose target isn't in the observed set is reported as dangling — never a wrong edge.
+
+### When `describeResources` is too thin: `enrichLiveAttrs`
+
+Edge reconstruction only works if the observed nodes actually carry those reference attributes. Some observation APIs return thin metadata — AWS `describe-stack-resources`, for instance, gives stack outputs, not per-resource references. When that's the case, implement `enrichLiveAttrs` to source richer attributes for graphing:
+
+```typescript
+enrichLiveAttrs?(options: { environment: string; owned?: boolean }): Promise<Record<string, Record<string, unknown>>>;
+```
+
+It returns `nodeId → attributes` with cross-resource references resolved to the referenced **node id**, which chant merges into the live nodes before reconstruction. The AWS lexicon sources these from the deployed CloudFormation template (via `exportResources()`), resolving `{Ref}` / `{Fn::GetAtt}` intrinsics — which reference by logical id (= the node id) — to bare strings the resolver matches. See `lexicons/aws/src/reference-catalog.ts` and `live-attrs.ts` for the reference implementation.
+
+<Aside type="note">
+Both are opt-in. A lexicon with neither still contributes nodes to `chant graph --live`; it just won't draw edges between them.
+</Aside>
+
 ## See also
 
+- [`chant graph --live`](/chant/cli/graph/) — the provisioned graph these hooks feed
 - [`chant lifecycle`](/chant/cli/lifecycle/) — user-facing CLI reference
 - [Watching Lifecycle](/chant/guide/watching-lifecycle/) — how observation feeds into continuous drift detection via `WatchOp`
 - [Completeness Checklist](/chant/lexicon-authoring/completeness-checklist/) — full list of what a production-ready lexicon implements
