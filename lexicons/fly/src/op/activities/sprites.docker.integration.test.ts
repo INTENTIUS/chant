@@ -49,7 +49,7 @@ beforeAll(async () => {
     endpoint = up.endpoint;
     prevBaseUrl = process.env.SPRITES_BASE_URL;
     process.env.SPRITES_BASE_URL = endpoint;
-    activities = await loadActivities(["temporal"]);
+    activities = await loadActivities(["fly"]);
     available = true;
   } catch {
     available = false;

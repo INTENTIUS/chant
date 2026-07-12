@@ -16,7 +16,7 @@ import {
 import { createSpritesFake } from "./sprites-fake";
 
 // End-to-end against the in-process fake (S7) — no Docker, runs in CI. The
-// activities resolve by name through `loadActivities(["temporal"])` and reach
+// activities resolve by name through `loadActivities(["fly"])` and reach
 // the fake via `SPRITES_BASE_URL`. Fast profiles so retry loops run in ms.
 
 const PROFILES: Record<string, ActivityProfile> = {
@@ -34,7 +34,7 @@ beforeAll(async () => {
   // no code change. Activities read SPRITES_BASE_URL when no `endpoint` arg is set.
   prevBaseUrl = process.env.SPRITES_BASE_URL;
   process.env.SPRITES_BASE_URL = fake.url;
-  activities = await loadActivities(["temporal"]);
+  activities = await loadActivities(["fly"]);
 });
 
 afterAll(async () => {
@@ -50,7 +50,7 @@ async function inspect(id: string): Promise<{ status: string; fs: Record<string,
 }
 
 describe("sprite activities resolve by name (S2)", () => {
-  test("loadActivities([\"temporal\"]) exposes the five sprite activities", () => {
+  test("loadActivities([\"fly\"]) exposes the five sprite activities", () => {
     for (const fn of ["spriteCreate", "spriteExec", "spriteCheckpoint", "spriteRestore", "spriteDestroy"]) {
       expect(typeof activities.get(fn)).toBe("function");
     }
