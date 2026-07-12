@@ -13,6 +13,7 @@ import type { RollbackPolicy } from "../../components/capability";
 import { rule } from "../../lint/declarative";
 import { watchDirectory, formatTimestamp, formatChangedFiles } from "../watch";
 import { formatError, formatInfo } from "../format";
+import { GENERATED_MARKER } from "../../discovery/files";
 
 // Import config loader
 import { loadConfig, resolveRulesForFile, parseRuleConfig } from "../../lint/config";
@@ -156,6 +157,11 @@ function getTypeScriptFiles(dir: string): string[] {
           scan(fullPath);
         }
       } else if (entry.endsWith(".ts") && !entry.endsWith(".test.ts") && !entry.endsWith(".spec.ts")) {
+        // Skip chant-generated files (worker/workflow/activities bootstrap): they
+        // hold no authored source and use runtime patterns the EVL* rules forbid.
+        if (readFileSync(fullPath, "utf-8").slice(0, 256).includes(GENERATED_MARKER)) {
+          continue;
+        }
         files.push(fullPath);
       }
     }
