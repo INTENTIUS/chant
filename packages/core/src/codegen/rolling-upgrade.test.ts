@@ -211,6 +211,65 @@ describe("checkRollingUpgrade — surface changed vs unchanged", () => {
   });
 });
 
+// ── fly lexicon detection (rolls off the live Fly Machines OpenAPI) ────
+
+function baselineFly(): SurfaceSnapshot {
+  return {
+    schemaVersion: 1,
+    generatedAt: "2026-01-01T00:00:00.000Z",
+    entries: {
+      Machine: {
+        kind: "resource",
+        resourceType: "Fly::Machines::Machine",
+        props: ["name:false", "region:false", "config:false"],
+      },
+    },
+  };
+}
+
+/** Adds a new resource → additive upgrade. */
+function freshFlyAdditive(): SurfaceSnapshot {
+  const s = baselineFly();
+  s.entries.Volume = {
+    kind: "resource",
+    resourceType: "Fly::Machines::Volume",
+    props: ["name:false", "size_gb:false"],
+  };
+  return s;
+}
+
+describe("checkRollingUpgrade — fly", () => {
+  test("detects fly lexicon by package name", async () => {
+    const dir = makeLexiconDir("fly", baselineFly());
+    try {
+      const res = await checkRollingUpgrade({
+        lexiconDir: dir,
+        _regenFn: makeRegen(baselineFly(), baselineFly()),
+      });
+      expect(res.lexicon).toBe("fly");
+      expect(res.hasUpgrade).toBe(false);
+      expect(res.apiVersionDelta).toEqual([]); // fly has no ARM-style version delta
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("a new resource in the Machines surface is an additive upgrade", async () => {
+    const dir = makeLexiconDir("fly", baselineFly());
+    try {
+      const res = await checkRollingUpgrade({
+        lexiconDir: dir,
+        _regenFn: makeRegen(freshFlyAdditive(), baselineFly()),
+      });
+      expect(res.lexicon).toBe("fly");
+      expect(res.hasUpgrade).toBe(true);
+      expect(res.severity).toBe("additive");
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
 // ── azure lexicon detection + apiVersionDelta ─────────────────────────
 
 describe("checkRollingUpgrade — azure", () => {

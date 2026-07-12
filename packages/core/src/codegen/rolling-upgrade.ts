@@ -34,7 +34,7 @@ import { regenLexicon, SNAPSHOT_FILENAME, type RegenOptions, type RegenResult } 
 
 // ── Public types ──────────────────────────────────────────────────────
 
-export type RollingLexicon = "aws" | "azure" | "github";
+export type RollingLexicon = "aws" | "azure" | "github" | "fly";
 
 /**
  * An API-version change for one Azure ARM provider.
@@ -157,6 +157,7 @@ function detectLexicon(lexiconDir: string): RollingLexicon {
       const name = pkg.name ?? "";
       if (name.includes("azure")) return "azure";
       if (name.includes("github")) return "github";
+      if (name.includes("fly")) return "fly";
     }
   } catch {
     // Fall through to directory-based detection
@@ -165,6 +166,7 @@ function detectLexicon(lexiconDir: string): RollingLexicon {
   const normalized = lexiconDir.replace(/\\/g, "/");
   if (/\/azure(\/|$)/.test(normalized)) return "azure";
   if (/\/github(\/|$)/.test(normalized)) return "github";
+  if (/\/fly(\/|$)/.test(normalized)) return "fly";
   return "aws";
 }
 
