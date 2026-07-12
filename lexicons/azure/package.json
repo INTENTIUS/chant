@@ -1,6 +1,6 @@
 {
   "name": "@intentius/chant-lexicon-azure",
-  "version": "0.16.0",
+  "version": "0.17.0",
   "description": "Azure lexicon for chant — declarative IaC in TypeScript",
   "license": "Apache-2.0",
   "homepage": "https://intentius.io/chant",
@@ -74,6 +74,6 @@
     "typescript": "^5.9.3"
   },
   "peerDependencies": {
-    "@intentius/chant": "^0.16.0"
+    "@intentius/chant": "^0.17.0"
   }
 }
