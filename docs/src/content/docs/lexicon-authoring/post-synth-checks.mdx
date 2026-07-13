@@ -143,6 +143,55 @@ describe("MYD010: My Check", () => {
 });
 ```
 
+## Cross-resource (bundle-join) checks
+
+The examples above judge one resource in isolation. The higher-value checks judge a resource **against the rest of the bundle** — a reference that must resolve, an owner that must exist, a name that must be unique across the output. The shape is always the same: collect every manifest of one kind, then validate each manifest of another kind against that set.
+
+`ARGO003` in the k8s lexicon (`lint/post-synth/argo003.ts`) is the reference. It gathers the registered cluster Secrets, then checks that every Argo `Application` targets one of them:
+
+```typescript
+import { allManifests, manifestsOfKind, isClusterSecret, secretField } from "./argo-helpers";
+
+check(ctx: PostSynthContext): PostSynthDiagnostic[] {
+  const diagnostics: PostSynthDiagnostic[] = [];
+  const manifests = allManifests(ctx);
+
+  // Pass 1 — collect the set to validate against.
+  const registered = new Set<string>();
+  for (const secret of manifests.filter(isClusterSecret)) {
+    const name = secretField(secret, "name") ?? secret.metadata?.name;
+    if (typeof name === "string") registered.add(name);
+  }
+
+  // Pass 2 — validate each consumer against that set.
+  for (const app of manifestsOfKind(manifests, "Application")) {
+    const target = app.spec?.destination?.name;
+    if (typeof target === "string" && !registered.has(target)) {
+      diagnostics.push({
+        checkId: "ARGO003",
+        severity: "error",
+        message: `Application "${app.metadata?.name}" targets unregistered cluster "${target}".`,
+        entity: app.metadata?.name,
+        lexicon: "k8s",
+      });
+    }
+  }
+  return diagnostics;
+}
+```
+
+The helpers do the parsing so the check stays about the rule, not YAML wrangling:
+
+| Helper | Returns |
+|---|---|
+| `allManifests(ctx)` | every parsed manifest across all lexicon outputs |
+| `manifestsOfKind(manifests, kind)` | the manifests of one kind |
+| `getPrimaryOutput(output)` / `parseK8sManifests(yaml)` | the lower-level parse, from `k8s-helpers.ts` |
+
+Keep helpers in a `*-helpers.ts` file — the barrel generator skips them (they export no check), so a shared-utility module never registers as a rule.
+
+This join is the pattern behind conformance checks generally — a custom resource against the schema that defines it, a composition against the kinds it references. Any check that needs to know about *other* resources in the output is a post-synth check, and this is its shape.
+
 ## Universal Check Patterns
 
 These patterns apply to most IaC formats:
@@ -160,15 +209,20 @@ These patterns apply to most IaC formats:
 
 ## Wiring Checks into Plugin
 
-Return checks from your plugin's `postSynthChecks()` method:
+Checks are **discovered by directory**, not registered by hand. Any file in `lint/post-synth/` that exports a `PostSynthCheck` is picked up automatically — the generator scans the directory and emits a committed barrel (`lint/post-synth/index.ts`, marked `DO NOT EDIT`) with explicit static imports, and the plugin's `postSynthChecks()` returns that barrel:
 
 ```typescript
-postSynthChecks(): PostSynthCheck[] {
-  const { myCheck010 } = require("./lint/post-synth/check010");
-  const { myCheck011 } = require("./lint/post-synth/check011");
-  return [myCheck010, myCheck011];
+// plugin.ts
+import { postSynthChecks as postSynthCheckList } from "./lint/post-synth";
+// ...
+postSynthChecks() {
+  return postSynthCheckList;
 }
 ```
+
+So adding a check is one step: drop the file. Files that export no check (helpers) are skipped, so name shared utilities `*-helpers.ts` and keep them beside the checks. Detection reuses the same `isPostSynthCheck` predicate the runtime uses, so the barrel contains exactly what discovery would.
+
+> Pre-synth rules (imperative and declarative) are the exception — they are **not** auto-discovered. Import them into the `lintRules()` array in your `plugin.ts`. See [Write Lint Rules](/chant/lexicon-authoring/lint-rules/).
 
 ## Target Count
 

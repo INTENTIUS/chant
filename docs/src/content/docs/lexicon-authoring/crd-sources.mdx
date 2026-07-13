@@ -1,0 +1,94 @@
+---
+title: Add a Third-Party CRD
+description: Extend the Kubernetes lexicon with an operator's CRDs — typed resources plus rules — without building a new lexicon.
+---
+
+Most operators ship their API as Kubernetes CustomResourceDefinitions. Because a CRD carries an `openAPIV3Schema`, the k8s lexicon can generate typed resources from it the same way it generates the built-in Kubernetes types. You do not write a new lexicon for KubeRay, Argo CD, cert-manager, or Crossplane — you add their CRDs to the k8s lexicon and, optionally, author rules against the kinds they introduce.
+
+This is the path KubeRay, Argo CD, Gateway API, the CockroachDB operator, cert-manager, and the Prometheus operator all took. This page documents it.
+
+:::note[New lexicon vs. third-party CRD]
+Build a [new lexicon](/chant/lexicon-authoring/overview/) when the target is a non-Kubernetes spec (a cloud API, a CI format). Add a CRD here when the target already speaks Kubernetes — anything installed as a CRD belongs in the k8s lexicon, not a lexicon of its own.
+:::
+
+## The CRD source list
+
+Generation reads its third-party CRDs from one array, `CRD_SOURCES` in `lexicons/k8s/src/crd/crd-sources.ts`. Each entry names where a CRD document is fetched from at generation time:
+
+```typescript
+export const CRD_SOURCES: CRDSource[] = [
+  // KubeRay — ray.io/v1
+  { type: "url", url: `${KUBERAY_CRD_BASE}/ray.io_rayclusters.yaml` },
+  { type: "url", url: `${KUBERAY_CRD_BASE}/ray.io_rayjobs.yaml` },
+  { type: "url", url: `${KUBERAY_CRD_BASE}/ray.io_rayservices.yaml` },
+  // ...cert-manager, Argo, Gateway API, Prometheus, Cockroach
+];
+```
+
+A `CRDSource` is one of three shapes:
+
+| Shape | Fields | Use |
+|---|---|---|
+| `{ type: "url", url }` | a raw CRD YAML URL | the default — pin an operator release |
+| `{ type: "file", path }` | a local path | a CRD vendored into the repo |
+| `{ type: "cluster", context?, namespace? }` | a kubectl context | read CRDs already installed in a cluster |
+
+Pin the operator version in a `const` next to the entry (see the `KUBERAY_VERSION` / `ARGOCD_VERSION` constants at the top of `crd-sources.ts`) so an upgrade is a one-line change and the source URL always resolves to a known revision.
+
+> The CRD YAML is fetched and baked in at generation time, not at build time. `chant build` stays offline and deterministic.
+
+## Generate
+
+From the k8s lexicon package, run generation. It fetches each source, parses the schema, and emits the typed surface:
+
+```bash
+npm run generate -w @intentius/chant-lexicon-k8s
+```
+
+Generation writes three artifacts into `src/generated/`: `index.d.ts` (the types), `index.ts` (the runtime factory index), and `lexicon-k8s.json` (the registry). The log line reports the counts and any CRD it failed to load.
+
+### What a CRD becomes
+
+Each CRD kind becomes a resource type `K8s::<Namespace>::<Kind>`. The namespace comes from the CRD's API group: the first segment of the group is PascalCased, with a small override table for groups whose first segment reads badly.
+
+| CRD group | Namespace | Example type |
+|---|---|---|
+| `ray.io` | `Ray` | `K8s::Ray::RayCluster` |
+| `cert-manager.io` | `CertManager` | `K8s::CertManager::Certificate` |
+| `monitoring.coreos.com` | `Monitoring` | `K8s::Monitoring::ServiceMonitor` |
+| `argoproj.io` | `Argo` (override) | `K8s::Argo::Application` |
+
+> The mapping lives in `normalizeGroupName` / `GROUP_NAMESPACE_OVERRIDES` in `lexicons/k8s/src/crd/parser.ts`. Add an override there if a group's first segment collides or reads poorly.
+
+The generator types the writable `spec`. It deliberately drops `apiVersion`, `kind`, and `status` (see `extractProperties` in `crd/parser.ts`) — `status` is runtime state, not authoring input.
+
+### Verify
+
+Confirm the kind you added is present and the package still builds:
+
+```bash
+grep -R "RayCluster" src/generated/index.d.ts        # the type exists
+npm run build -w @intentius/chant-lexicon-k8s          # the lexicon compiles
+```
+
+Then import it in a scratch file and check that editor completion resolves the `spec` — that is the fastest confirmation the schema round-tripped.
+
+## Scale — do not fetch a whole provider
+
+A CRD source is one CRD document. Some operators ship hundreds — a full Crossplane `provider-aws` is on the order of a thousand kinds. Generating all of them at once produces an enormous types file and slow type-checking (the same failure mode the Azure codegen hit). Add the specific kinds a project uses, or scope by resource group. Never point a source at an operator's entire CRD bundle without a reason.
+
+## Add rules for the new kinds
+
+Types give you structural validation for free — a misspelled field or a wrong type will not compile. Everything semantic is a rule you author against the kind by name. The kind being CRD-derived changes nothing; rules target it exactly as they target a built-in resource.
+
+Argo CD is the worked precedent. It arrives through `CRD_SOURCES` and carries a full rule set:
+
+- **Pre-synth** (source AST) — [`ARGO001`](/chant/lexicon-authoring/lint-rules/) in `lint/rules/argo-automated-prune.ts` flags a production `Application` that enables `syncPolicy.automated.prune`. Wire a pre-synth rule by importing it into the `lintRules()` array in `lexicons/k8s/src/plugin.ts`.
+- **Post-synth** (emitted manifests) — `ARGO003` in `lint/post-synth/argo003.ts` checks each `Application.spec.destination` against the cluster Secrets in the same output. Drop a post-synth check file in `lint/post-synth/` and it is discovered automatically; no manual registration.
+
+The post-synth cross-resource pattern — collect every manifest of kind A, validate each kind B against them — is the one worth studying, because XR-against-XRD conformance and Composition-references-a-real-kind checks are the same shape. See [Post-Synth Checks](/chant/lexicon-authoring/post-synth-checks/#cross-resource-bundle-join-checks) for that pattern in full.
+
+## Next steps
+
+- [Write Lint Rules](/chant/lexicon-authoring/lint-rules/) — pre-synth imperative and declarative rules
+- [Post-Synth Checks](/chant/lexicon-authoring/post-synth-checks/) — validate the serialized bundle, including cross-resource checks
