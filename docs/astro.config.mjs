@@ -198,6 +198,7 @@ export default defineConfig({
 						{ label: 'Overview', slug: 'lexicon-authoring/overview' },
 						{ label: 'Scaffold a Lexicon', slug: 'lexicon-authoring/scaffold' },
 						{ label: 'Implement Generate', slug: 'lexicon-authoring/generate' },
+						{ label: 'Add a Third-Party CRD', slug: 'lexicon-authoring/crd-sources' },
 						{ label: 'Create a Serializer', slug: 'lexicon-authoring/serializer' },
 						{ label: 'Implementing Observation', slug: 'lexicon-authoring/observation' },
 						{ label: 'Implementing Live Export', slug: 'lexicon-authoring/live-export' },

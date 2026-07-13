@@ -19,6 +19,10 @@ You're in the right place if you want to:
 
 If you're **using** an existing lexicon (like AWS CloudFormation), see the [User Guide](/chant/guide/writing-resources/) instead.
 
+:::tip[Adding a Kubernetes operator? You don't need a new lexicon.]
+Anything installed as a CustomResourceDefinition — KubeRay, Argo CD, cert-manager, Crossplane — belongs in the **k8s lexicon**, not a lexicon of its own. Add the CRD to the source list, generate typed resources, and author rules against the new kinds. See [Add a Third-Party CRD](/chant/lexicon-authoring/crd-sources/). Build a new lexicon only for a non-Kubernetes spec.
+:::
+
 ## The LexiconPlugin Interface
 
 Every lexicon exports a `LexiconPlugin` object:

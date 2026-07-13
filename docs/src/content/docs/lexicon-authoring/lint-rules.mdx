@@ -5,6 +5,8 @@ description: Imperative rules, declarative rules, and post-synth checks for your
 
 Lexicons can contribute three kinds of validation: **imperative rules** (TypeScript compiler API), **declarative rules** (pattern matching DSL), and **post-synth checks** (validate serialized output).
 
+Rules target a resource kind by name, so a rule works the same whether the kind is a built-in resource or one generated from an imported CRD. The k8s lexicon's `ARGO001`–`ARGO005` are the worked example: they lint the Argo `Application` kind, which arrives through [a CRD source](/chant/lexicon-authoring/crd-sources/), not hand-written types.
+
 ## Imperative Rules
 
 Imperative rules use the TypeScript compiler API to inspect AST nodes:
@@ -25,7 +27,16 @@ export const myRule: LintRule = {
 };
 ```
 
-Return these from your plugin's `lintRules()` method.
+Wire imperative and declarative rules by importing them into the `lintRules()` array in your `plugin.ts` — they are not auto-discovered (post-synth checks are; see [Post-Synth Checks](/chant/lexicon-authoring/post-synth-checks/#wiring-checks-into-plugin)).
+
+```typescript
+// plugin.ts
+import { argoAutomatedPruneRule } from "./lint/rules/argo-automated-prune";
+
+lintRules(): LintRule[] {
+  return [argoAutomatedPruneRule /* , ...others */];
+}
+```
 
 ## Declarative Rules
 
