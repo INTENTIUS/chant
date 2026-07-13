@@ -61,6 +61,11 @@ export interface ParsedArgs {
   /** `chant graph --live --overlay` — classify the provisioned graph against
    * declared source: managed / foreign / pending (#780). */
   overlay?: boolean;
+  /** `chant graph --live --overlay --overlay-anchor <source|live>` (#821) — which
+   * graph is the canvas. `source` (default) keeps the declared edges (the
+   * cross-substrate topology) and joins live status per node; `live` keeps the
+   * provisioned graph's reconstructed edges (the pre-#821 behaviour). */
+  overlayAnchor?: "source" | "live";
   /** `chant list --components` / `chant graph --components` — surface discovered
    * `Component` declarations (#560) instead of/alongside lexicon resources. */
   components?: boolean;
