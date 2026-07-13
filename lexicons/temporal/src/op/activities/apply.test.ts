@@ -1,5 +1,5 @@
 import { describe, test, expect } from "vitest";
-import { applyCommand, rollbackCommand } from "./apply";
+import { applyCommand, rollbackCommand, defaultOutput } from "./apply";
 
 describe("applyCommand (#124)", () => {
   test("kubectl never → plain apply, no prune", () => {
@@ -50,5 +50,13 @@ describe("rollbackCommand (#125)", () => {
   test("kubectl / arm have no native single-command rollback", () => {
     expect(rollbackCommand("kubectl", "prod")).toBeUndefined();
     expect(rollbackCommand("arm", "rg")).toBeUndefined();
+  });
+});
+
+describe('defaultOutput (target-aware apply output)', () => {
+  test('kubectl → dist (dir); cloudformation/arm → template.json (file)', () => {
+    expect(defaultOutput('kubectl')).toBe('dist');
+    expect(defaultOutput('cloudformation')).toBe('template.json');
+    expect(defaultOutput('arm')).toBe('template.json');
   });
 });

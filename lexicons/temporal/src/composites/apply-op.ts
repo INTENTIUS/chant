@@ -31,7 +31,7 @@
  */
 
 import { Op, phase, activity, gate, OpResource } from "@intentius/chant/op";
-import type { ApplyTarget, DeleteMode } from "../op/activities/apply";
+import { defaultOutput, type ApplyTarget, type DeleteMode } from "../op/activities/apply";
 
 export interface ApplyOpConfig {
   /** Op name (kebab-case). */
@@ -40,7 +40,8 @@ export interface ApplyOpConfig {
   env: string;
   /** Native apply mechanism. Default: "kubectl". */
   target?: ApplyTarget;
-  /** Built manifest/template path (or directory for kubectl). Default: "dist". */
+  /** Built manifest/template path. Default per target: `dist` (dir) for kubectl,
+   * `template.json` (file) for CloudFormation/ARM. Must match your build output. */
   output?: string;
   /** Project directory to build. Default: ".". */
   path?: string;
@@ -70,7 +71,7 @@ export interface ApplyOpResources {
 export function ApplyOp(config: ApplyOpConfig): ApplyOpResources {
   const taskQueue = config.taskQueue ?? config.name;
   const target = config.target ?? "kubectl";
-  const output = config.output ?? "dist";
+  const output = config.output ?? defaultOutput(target);
   const deleteMode = config.delete ?? "never";
   const gated = deleteMode === "gated" || config.gate !== undefined;
 

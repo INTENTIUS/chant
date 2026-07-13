@@ -22,7 +22,8 @@ export interface NativeApplyArgs {
   target: ApplyTarget;
   /** Environment — CFN stack name / ARM resource group. */
   env: string;
-  /** Built manifest/template path (or directory for kubectl). Default: dist. */
+  /** Built manifest/template path. Default per target ({@link defaultOutput}):
+   * `dist` (a dir) for kubectl, `template.json` (a file) for CloudFormation/ARM. */
   output?: string;
   /** Delete handling. Default: never. */
   deleteMode?: DeleteMode;
@@ -66,12 +67,22 @@ export function applyCommand(
 }
 
 /**
+ * Sensible default build output per target. kubectl `apply -f` takes a directory
+ * (all manifests), so `dist`. CloudFormation/ARM `--template-file` needs a single
+ * template *file* — a directory is rejected ("Invalid template path") — so the
+ * conventional `template.json`. Pure — exported for testing.
+ */
+export function defaultOutput(target: ApplyTarget): string {
+  return target === "kubectl" ? "dist" : "template.json";
+}
+
+/**
  * Apply declared source to the cloud via the target's native mechanism.
  * Deletes (when enabled) are limited to chant-owned orphans by construction —
  * the native prune/complete path is scoped to the ownership marker.
  */
 export async function nativeApply(args: NativeApplyArgs, signal?: AbortSignal): Promise<{ command: string }> {
-  const output = args.output ?? "dist";
+  const output = args.output ?? defaultOutput(args.target);
   const deleteMode = args.deleteMode ?? "never";
   const command = applyCommand(args.target, args.env, output, deleteMode);
   const { stdout, stderr } = await execAsync(command, { signal });
