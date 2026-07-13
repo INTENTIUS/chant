@@ -69,6 +69,16 @@ export function ReconcileOp(config: ReconcileOpConfig): ReconcileOpResources {
   const onDrift = config.onDrift ?? "pull-request";
   const owned = config.scope?.owned ?? false;
 
+  // The reconcile's headline output is the opened PR (or issue) URL. Expose it as
+  // an outcome attribute so it prints in `chant run` and is queryable on Temporal.
+  // `report` mode opens nothing, so it has no URL outcome.
+  const reconcileOutcome =
+    onDrift === "pull-request"
+      ? { name: "PR", from: "prUrl" }
+      : onDrift === "issue"
+        ? { name: "Issue", from: "issueUrl" }
+        : undefined;
+
   const op = Op({
     name: config.name,
     overview: `Reconcile the ${config.env} environment into source (cloud → code)`,
@@ -89,8 +99,15 @@ export function ReconcileOp(config: ReconcileOpConfig): ReconcileOpResources {
       ]),
       phase("Reconcile", [
         // reconcilePr derives the change set from `chant lifecycle plan`,
-        // regenerates via `chant import --from`, and opens a PR.
-        activity("reconcilePr", { env: config.env, mode: onDrift, owned }),
+        // regenerates via `chant import --from`, and opens a PR. Surface the
+        // opened PR/issue URL as an outcome so `chant run` prints it and it lands
+        // as a Temporal search attribute — the reconcile's result is the link.
+        {
+          kind: "activity" as const,
+          fn: "reconcilePr",
+          args: { env: config.env, mode: onDrift, owned },
+          ...(reconcileOutcome ? { outcomeAttribute: reconcileOutcome } : {}),
+        },
       ]),
     ],
   });
