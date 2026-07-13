@@ -493,6 +493,50 @@ export const spriteApplyServices = (args: {
   return activity("spriteApplyServices", rest, profile ?? "fastIdempotent");
 };
 
+// ── Sprite keep-alive Task steps (#847) — hold a Sprite active for a session ──
+//
+// A hold stops the Sprite pausing while a session runs; release frees it. A
+// session that can outlast the 1-hour task cap refreshes in its own loop.
+// `loadActivities(["fly"])` binds the impls in fly's `op/activities/sprite-tasks.ts`.
+
+/** Create a keep-alive task holding the sprite active. Defaults to the `fastIdempotent` profile (override via `profile`). */
+export const spriteTaskCreate = (args: {
+  id: string;
+  name: string;
+  expire?: number | string;
+  endpoint?: string;
+  token?: string;
+  profile?: ActivityStep["profile"];
+}): ActivityStep => {
+  const { profile, ...rest } = args;
+  return activity("spriteTaskCreate", rest, profile ?? "fastIdempotent");
+};
+
+/** Refresh a keep-alive task's expiry. Defaults to the `fastIdempotent` profile (override via `profile`). */
+export const spriteTaskRefresh = (args: {
+  id: string;
+  name: string;
+  expire?: number | string;
+  endpoint?: string;
+  token?: string;
+  profile?: ActivityStep["profile"];
+}): ActivityStep => {
+  const { profile, ...rest } = args;
+  return activity("spriteTaskRefresh", rest, profile ?? "fastIdempotent");
+};
+
+/** Release a keep-alive task (idempotent). Defaults to the `fastIdempotent` profile (override via `profile`). */
+export const spriteTaskRelease = (args: {
+  id: string;
+  name: string;
+  endpoint?: string;
+  token?: string;
+  profile?: ActivityStep["profile"];
+}): ActivityStep => {
+  const { profile, ...rest } = args;
+  return activity("spriteTaskRelease", rest, profile ?? "fastIdempotent");
+};
+
 /**
  * Boot a local spritzer (Fly Sprites API emulator) in Docker — the typed twin of
  * `flociGcpUp` for Sprites. Resolves to the `spritesUp` activity. Defaults to the

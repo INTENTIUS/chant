@@ -5,6 +5,7 @@ export { Op, phase, activity, gate, build, kubectlApply, helmInstall, waitForSta
          spriteCreate, spriteExec, spriteCheckpoint, spriteRestore, listCheckpoints, spriteDestroy,
          spriteWriteFile, spriteReadFile, spriteListDir, spriteRemove,
          spriteApplyNetworkPolicy, spriteApplyServices,
+         spriteTaskCreate, spriteTaskRefresh, spriteTaskRelease,
          spritesUp, spritesDown } from "./builders";
 export { OpResource } from "./resource";
 export { safeHeartbeat, sleep } from "./activity-runtime";
