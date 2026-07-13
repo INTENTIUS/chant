@@ -1,6 +1,7 @@
 #!/usr/bin/env tsx
 
 import { resolve } from "node:path";
+import { isEntryPoint } from "./is-entry-point";
 import { formatSuccess, formatError } from "./format";
 import { loadPlugins, resolveProjectLexicons } from "./plugins";
 import { resolveCommand, type CommandDef, type ParsedArgs } from "./registry";
@@ -536,8 +537,10 @@ async function main(): Promise<void> {
   process.exit(await match.def.handler(ctx));
 }
 
-// Only run main when executed directly, not when imported
-const isMain = import.meta.url === `file://${process.argv[1]}`;
+// Only run main when executed directly, not when imported. Robust to symlinked
+// invocation paths — see isEntryPoint (a raw string compare silently no-ops the
+// whole CLI through the npm .bin shim / a symlinked checkout).
+const isMain = isEntryPoint(process.argv[1], import.meta.url);
 if (isMain) {
   main().catch((err) => {
     const verbose = process.argv.includes("--verbose") || process.argv.includes("-v");
