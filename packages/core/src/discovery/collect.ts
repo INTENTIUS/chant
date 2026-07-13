@@ -1,8 +1,21 @@
+import { basename } from "node:path";
 import { isDeclarable, type Declarable } from "../declarable";
 import { isCompositeInstance, expandComposite } from "../composite";
 import { isLexiconOutput } from "../lexicon-output";
 import { DiscoveryError } from "../errors";
 import { setProvenance } from "../provenance";
+
+/**
+ * The entity key for an export. `export default` is per-module — the `Op` pattern
+ * (`export default op`) uses it, and two op files must not collide on the literal
+ * name "default". Key a default export by the file's basename so distinct files
+ * stay distinct; named exports keep their name. (Serializers that care about the
+ * declared name — e.g. the Op serializer — read it from the entity, not this key.)
+ */
+function exportKey(rawName: string, file: string): string {
+  if (rawName !== "default") return rawName;
+  return basename(file).replace(/\.ts$/, "").replace(/\.op$/, "");
+}
 
 /**
  * Collects all declarable entities from imported modules.
@@ -21,7 +34,8 @@ export function collectEntities(
   const entities = new Map<string, Declarable>();
 
   for (const { file, exports } of modules) {
-    for (const [name, value] of Object.entries(exports)) {
+    for (const [rawName, value] of Object.entries(exports)) {
+      const name = exportKey(rawName, file);
       if (isDeclarable(value)) {
         if (entities.has(name)) {
           // Same object re-exported from multiple files (e.g. re-exports from multiple files) is fine
