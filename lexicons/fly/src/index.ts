@@ -28,6 +28,10 @@ export {
   spriteRestore,
   listCheckpoints,
   spriteDestroy,
+  spriteWriteFile,
+  spriteReadFile,
+  spriteListDir,
+  spriteRemove,
   spritesUp,
   spritesDown,
 } from "@intentius/chant/op";

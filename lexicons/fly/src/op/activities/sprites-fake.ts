@@ -68,7 +68,12 @@ export function fakeExec(sprite: SpriteState, cmd: string): ExecResult {
     if (!seg) continue;
 
     let m: RegExpMatchArray | null;
-    if ((m = seg.match(/^echo\s+(.+?)\s*>\s*(\S+)$/))) {
+    if ((m = seg.match(/^cat\s+(\S+)\s*>\s*(\S+)$/))) {
+      // Copy a file: `cat SRC > DEST`. Lets an Op stage input with spriteWriteFile,
+      // process it with exec, then read the result with spriteReadFile.
+      sprite.fs[m[2]] = sprite.fs[m[1]] ?? "";
+      exitCode = 0;
+    } else if ((m = seg.match(/^echo\s+(.+?)\s*>\s*(\S+)$/))) {
       sprite.fs[m[2]] = unquote(m[1]);
       exitCode = 0;
     } else if ((m = seg.match(/^echo\s+(.+)$/))) {
@@ -133,6 +138,36 @@ async function readBody(req: IncomingMessage): Promise<unknown> {
   } catch {
     return undefined;
   }
+}
+
+/** Read the request body as raw text (for the filesystem write endpoint). */
+async function readRawBody(req: IncomingMessage): Promise<string> {
+  const chunks: Buffer[] = [];
+  for await (const c of req) chunks.push(c as Buffer);
+  return Buffer.concat(chunks).toString("utf8");
+}
+
+/**
+ * Immediate children of `dir` in a flat `path → contents` map: a key
+ * `${dir}/name` is a file; `${dir}/name/...` contributes the dir `name` once.
+ * Pure — the filesystem-list model for the fake.
+ */
+export function fakeListDir(fs: Record<string, string>, dir: string): Array<{ name: string; type: "file" | "dir"; size?: number }> {
+  const prefix = dir.replace(/\/+$/, "") + "/";
+  const files = new Map<string, number>();
+  const dirs = new Set<string>();
+  for (const [key, val] of Object.entries(fs)) {
+    if (!key.startsWith(prefix)) continue;
+    const rest = key.slice(prefix.length);
+    if (!rest) continue;
+    const slash = rest.indexOf("/");
+    if (slash === -1) files.set(rest, val.length);
+    else dirs.add(rest.slice(0, slash));
+  }
+  return [
+    ...[...dirs].sort().map((name) => ({ name, type: "dir" as const })),
+    ...[...files.entries()].sort(([a], [b]) => a.localeCompare(b)).map(([name, size]) => ({ name, type: "file" as const, size })),
+  ];
 }
 
 /**
@@ -214,6 +249,53 @@ export function createSpritesFake(): Promise<{ url: string; close(): Promise<voi
       };
       sprites.set(id, sprite);
       return send(201, { id: sprite.id, url: sprite.url });
+    }
+
+    // Filesystem API: /v1/sprites/{id}/fs/{read|write|list|delete}. read/write
+    // move raw bytes; list/delete use query params + JSON/empty responses.
+    const fsm = path.match(/^\/v1\/sprites\/([^/]+)\/fs\/(read|write|list|delete)\/?$/);
+    if (fsm) {
+      const id = decodeURIComponent(fsm[1]);
+      const op = fsm[2];
+      const sprite = sprites.get(id);
+      if (!sprite || sprite.status === "destroyed") return send(404, { error: `no sprite ${id}` });
+      const p = url.searchParams.get("path") ?? "";
+      if (!p) return send(400, { error: "path is required" });
+      const sendRaw = (status: number, body: string): void => {
+        res.writeHead(status, { "content-type": "application/octet-stream" });
+        res.end(body);
+      };
+
+      if (method === "PUT" && op === "write") {
+        sprite.fs[p] = await readRawBody(req);
+        return send(200, {});
+      }
+      if (method === "GET" && op === "read") {
+        const content = sprite.fs[p];
+        if (content === undefined) return send(404, { error: `no file ${p}` });
+        return sendRaw(200, content);
+      }
+      if (method === "GET" && op === "list") {
+        return send(200, fakeListDir(sprite.fs, p));
+      }
+      if (method === "DELETE" && op === "delete") {
+        const recursive = url.searchParams.get("recursive") === "true";
+        if (recursive) {
+          const prefix = p.replace(/\/+$/, "");
+          let removed = 0;
+          for (const key of Object.keys(sprite.fs)) {
+            if (key === prefix || key.startsWith(prefix + "/")) {
+              delete sprite.fs[key];
+              removed += 1;
+            }
+          }
+          return removed > 0 ? send(200, {}) : send(404, { error: `no path ${p}` });
+        }
+        if (!(p in sprite.fs)) return send(404, { error: `no file ${p}` });
+        delete sprite.fs[p];
+        return send(200, {});
+      }
+      return send(404, { error: `not found: ${method} ${path}` });
     }
 
     const m = path.match(/^\/v1\/sprites\/([^/]+)(\/checkpoint|\/checkpoints(?:\/([^/]+)(\/restore)?)?)?\/?$/);

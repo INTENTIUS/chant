@@ -85,6 +85,26 @@ export type {
   SpriteDestroyArgs,
 } from "./sprites";
 
+// Sprite filesystem activities (#848) — imperative file I/O over the fs API.
+// `loadActivities(["fly"])` binds these; the step builders live in core.
+export {
+  spriteWriteFile,
+  spriteReadFile,
+  spriteListDir,
+  spriteRemove,
+  spriteFsUrl,
+  defaultSpritesRawHttp,
+} from "./sprite-fs";
+export type {
+  SpritesRawHttp,
+  SpriteWriteFileArgs,
+  SpriteReadFileArgs,
+  SpriteReadFileResult,
+  SpriteListDirArgs,
+  SpriteDirEntry,
+  SpriteRemoveArgs,
+} from "./sprite-fs";
+
 // spritzer (the Sprites API emulator) Docker lifecycle — the twin of mudflaps
 // above. `spritesUp`/`spritesDown` resolve by name so an Op can boot/tear down
 // the emulator as a modeled step; the sprite activities target it via

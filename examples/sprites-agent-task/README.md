@@ -8,8 +8,13 @@ There is no `build` phase, no serialized plan, and no `dist/`.
 
 | Op | Phases | Point |
 |----|--------|-------|
-| `agent-task` | Create → Checkpoint → Run → Verify → Destroy | the happy path |
+| `agent-task` | Create → Checkpoint → Stage → Run → Collect → Destroy | the happy path |
 | `guarded-task` | Create → Checkpoint → Run → Destroy, with `onFailure: Restore` | checkpoint-as-compensation |
+
+`agent-task` stages its input and reads its result with the filesystem
+activities (`spriteWriteFile` / `spriteReadFile`) instead of shelling file I/O
+through `spriteExec`. An Op writes a file into the sandbox, runs the work, and
+reads the output back directly over the Sprites fs API.
 
 ## Checkpoint-as-compensation
 
@@ -64,6 +69,7 @@ chant run agent-task
 ```
 
 The offline, Docker-free version of the emulator used by CI is
-`createSpritesFake()` in the temporal lexicon
-(`lexicons/temporal/src/op/activities/sprites-fake.ts`); the sprite activities
-and their tests live alongside it in `sprites.ts` / `sprites.integration.test.ts`.
+`createSpritesFake()` in the fly lexicon
+(`lexicons/fly/src/op/activities/sprites-fake.ts`); the sprite activities and
+their tests live alongside it in `sprites.ts` / `sprites-fs.ts` /
+`sprites.integration.test.ts`.
