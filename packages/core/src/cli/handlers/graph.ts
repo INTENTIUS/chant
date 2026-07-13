@@ -12,6 +12,7 @@ import { toMermaid } from "../../graph-mermaid";
 import { toDot } from "../../graph-dot";
 import { getLayoutEngine, toLayoutInput, type NodeSize } from "../../graph-layout";
 import { lintCommand } from "../commands/lint";
+import { loadPlugins, resolveProjectLexicons } from "../plugins";
 import { readFileSync } from "node:fs";
 import { formatError, formatWarning, formatBold } from "../format";
 import type { CommandContext } from "../registry";
@@ -53,7 +54,7 @@ async function runGraphLive(
   ctx: CommandContext,
   format: "ir" | "mermaid" | "dot" | "layout",
 ): Promise<number> {
-  const { args, plugins } = ctx;
+  const { args } = ctx;
   const environment = args.env;
   if (!environment) {
     console.error(formatError({ message: "chant graph --live needs an environment: --live --env <name>" }));
@@ -62,6 +63,10 @@ async function runGraphLive(
 
   const projectPath = resolve(".");
   const { config } = await loadChantConfig(projectPath);
+  // `graph` is not `requiresPlugins` (Op/source-graph modes must work without a
+  // lexicon), so `ctx.plugins` is empty. The live path needs the project's
+  // observation plugins — load them here, mirroring the lifecycle handlers.
+  const plugins = ctx.plugins.length > 0 ? ctx.plugins : await loadPlugins(await resolveProjectLexicons(projectPath));
   if (config.environments && !config.environments.includes(environment)) {
     console.error(formatError({
       message: `Unknown environment "${environment}"`,
