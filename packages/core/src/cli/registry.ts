@@ -61,6 +61,10 @@ export interface ParsedArgs {
   /** `chant graph --live --overlay` — classify the provisioned graph against
    * declared source: managed / foreign / pending (#780). */
   overlay?: boolean;
+  /** `chant lifecycle diff <env> --between <refA> <refB>` (#822) — diff two saved
+   * snapshots (orphan-branch commits from `lifecycle log`) against each other. */
+  betweenA?: string;
+  betweenB?: string;
   /** `chant graph --live --overlay --overlay-anchor <source|live>` (#821) — which
    * graph is the canvas. `source` (default) keeps the declared edges (the
    * cross-substrate topology) and joins live status per node; `live` keeps the

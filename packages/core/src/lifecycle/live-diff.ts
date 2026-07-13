@@ -90,6 +90,46 @@ function shallowEqual(a: unknown, b: unknown): boolean {
   return JSON.stringify(a) === JSON.stringify(b);
 }
 
+/** The delta between two saved snapshots (#822): a two-way observed diff. */
+export interface SnapshotDiffResult {
+  /** In `next`, not in `prev`. */
+  added: string[];
+  /** In `prev`, not in `next`. */
+  removed: string[];
+  /** In both; metadata differs (with the attribute-level changes). */
+  changed: ResourceDrift[];
+  /** In both; metadata identical. */
+  unchanged: string[];
+}
+
+/**
+ * Diff two **observed** snapshots (#822) — `prev` vs `next`, each a resources map
+ * read from the orphan branch. A two-way diff (no "declared" axis), so it answers
+ * "what changed in the cloud between two points" independent of source. Pure and
+ * deterministic (results sorted). Feeds the deployment-lanes frame-pair diff.
+ */
+export function diffSnapshots(
+  prev: Record<string, ResourceMetadata>,
+  next: Record<string, ResourceMetadata>,
+): SnapshotDiffResult {
+  const added: string[] = [];
+  const removed: string[] = [];
+  const changed: ResourceDrift[] = [];
+  const unchanged: string[] = [];
+  for (const name of [...new Set([...Object.keys(prev), ...Object.keys(next)])].sort()) {
+    const a = prev[name];
+    const b = next[name];
+    if (!a && b) added.push(name);
+    else if (a && !b) removed.push(name);
+    else if (a && b) {
+      const changes = compareMetadata(a, b);
+      if (changes.length > 0) changed.push({ name, type: b.type ?? a.type, changes });
+      else unchanged.push(name);
+    }
+  }
+  return { added, removed, changed, unchanged };
+}
+
 export function diffLive(input: DiffLiveInput): LiveDiffResult {
   const { declared, observedNow, observedThen } = input;
   const observedThenMap = observedThen ?? {};

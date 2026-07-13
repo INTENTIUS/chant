@@ -167,6 +167,27 @@ export async function readSnapshot(
 }
 
 /**
+ * Read a snapshot at a specific orphan-branch commit (#822). `readSnapshot` reads
+ * the branch tip; this reads `<ref>:<env>/<lexicon>.json` for any commit `ref`
+ * (as listed by {@link listSnapshots}), so two historical snapshots can be diffed.
+ * Returns null if that env/lexicon wasn't captured at `ref`.
+ */
+export async function readSnapshotAt(
+  environment: string,
+  lexicon: string,
+  ref: string,
+  opts?: { cwd?: string },
+): Promise<string | null> {
+  const rt = getRuntime();
+  const result = await rt.spawn(
+    ["git", "show", `${ref}:${environment}/${lexicon}.json`],
+    { cwd: opts?.cwd },
+  );
+  if (result.exitCode !== 0) return null;
+  return result.stdout;
+}
+
+/**
  * Append one immutable release record line to `<environment>/releases.jsonl`
  * on the orphan branch (#568, epic #551 "Build & deploy observability"). Same
  * git-plumbing path `writeSnapshot` uses, just a different filename under the

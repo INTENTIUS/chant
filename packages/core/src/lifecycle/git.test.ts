@@ -6,6 +6,7 @@ import { join } from "node:path";
 import {
   writeSnapshot,
   readSnapshot,
+  readSnapshotAt,
   readEnvironmentSnapshots,
   listSnapshots,
   getHeadCommit,
@@ -53,6 +54,21 @@ describe("lifecycle/git", () => {
       await initRepo(dir);
       const out = await readSnapshot("prod", "aws", { cwd: dir });
       expect(out).toBeNull();
+    });
+  });
+
+  test("readSnapshotAt reads a snapshot at a historical orphan-branch commit (#822)", async () => {
+    await withTestDir(async (dir) => {
+      await initRepo(dir);
+      await writeSnapshot("prod", "aws", JSON.stringify({ resources: { vpc: { type: "T", status: "OK" } } }), { cwd: dir });
+      await writeSnapshot("prod", "aws", JSON.stringify({ resources: { vpc: { type: "T", status: "OK" }, subnet: { type: "S", status: "OK" } } }), { cwd: dir });
+      const snaps = await listSnapshots({ cwd: dir }); // newest-first
+      expect(snaps.length).toBeGreaterThanOrEqual(2);
+      const older = await readSnapshotAt("prod", "aws", snaps[1].commit, { cwd: dir });
+      const newer = await readSnapshotAt("prod", "aws", snaps[0].commit, { cwd: dir });
+      expect(Object.keys(JSON.parse(older!).resources)).toEqual(["vpc"]);
+      expect(Object.keys(JSON.parse(newer!).resources).sort()).toEqual(["subnet", "vpc"]);
+      expect(await readSnapshotAt("prod", "gcp", snaps[0].commit, { cwd: dir })).toBeNull();
     });
   });
 

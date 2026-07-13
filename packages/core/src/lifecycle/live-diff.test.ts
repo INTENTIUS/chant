@@ -1,5 +1,5 @@
 import { describe, test, expect } from "vitest";
-import { diffLive, diffLiveArtifacts } from "./live-diff";
+import { diffLive, diffLiveArtifacts, diffSnapshots } from "./live-diff";
 import type { ResourceMetadata, ArtifactMetadata } from "../lexicon";
 
 const meta = (overrides: Partial<ResourceMetadata> = {}): ResourceMetadata => ({
@@ -180,5 +180,32 @@ describe("diffLiveArtifacts", () => {
     expect(result.removed).toEqual(["release/default/a"]);
     expect(result.changed.map((c) => c.name)).toEqual(["release/default/c"]);
     expect(result.unchanged).toEqual(["release/default/b"]);
+  });
+});
+
+describe("diffSnapshots (#822)", () => {
+  test("classifies added / removed / changed / unchanged between two snapshots", () => {
+    const prev = {
+      vpc: meta({ physicalId: "vpc-1" }),
+      subnet: meta({ physicalId: "subnet-1", status: "CREATE_COMPLETE" }),
+      gone: meta({ physicalId: "old" }),
+    };
+    const next = {
+      vpc: meta({ physicalId: "vpc-1" }), // unchanged
+      subnet: meta({ physicalId: "subnet-1", status: "UPDATE_COMPLETE" }), // changed (status)
+      fresh: meta({ physicalId: "new" }), // added
+    };
+    const d = diffSnapshots(prev, next);
+    expect(d.added).toEqual(["fresh"]);
+    expect(d.removed).toEqual(["gone"]);
+    expect(d.unchanged).toEqual(["vpc"]);
+    expect(d.changed.map((c) => c.name)).toEqual(["subnet"]);
+    expect(d.changed[0].changes.map((c) => c.path)).toContain("status");
+  });
+
+  test("empty vs empty is all-unchanged-empty; results are sorted", () => {
+    expect(diffSnapshots({}, {})).toEqual({ added: [], removed: [], changed: [], unchanged: [] });
+    const d = diffSnapshots({}, { b: meta(), a: meta() });
+    expect(d.added).toEqual(["a", "b"]);
   });
 });
