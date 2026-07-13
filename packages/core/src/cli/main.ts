@@ -94,6 +94,10 @@ export function parseArgs(args: string[]): ParsedArgs {
       result.live = true;
     } else if (arg === "--overlay") {
       result.overlay = true;
+    } else if (arg === "--between") {
+      result.betweenA = args[++i];
+      result.betweenB = args[++i];
+      if (!result.betweenA || !result.betweenB) throw new Error("--between needs two snapshot refs: --between <refA> <refB>");
     } else if (arg === "--overlay-anchor") {
       const v = args[++i];
       if (v !== "source" && v !== "live") throw new Error(`--overlay-anchor must be 'source' or 'live', got '${v}'`);

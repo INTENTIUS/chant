@@ -1,9 +1,9 @@
 import { resolve } from "node:path";
 import { build } from "../../build";
 import { takeSnapshot } from "../../lifecycle/snapshot";
-import { readSnapshot, readEnvironmentSnapshots, listSnapshots, fetchLifecycle, StaleLifecycleBranchError } from "../../lifecycle/git";
+import { readSnapshot, readSnapshotAt, readEnvironmentSnapshots, listSnapshots, fetchLifecycle, StaleLifecycleBranchError } from "../../lifecycle/git";
 import { computeBuildDigest, diffDigests } from "../../lifecycle/digest";
-import { diffLive, diffLiveArtifacts, type LiveDiffResult, type LiveArtifactDiffResult } from "../../lifecycle/live-diff";
+import { diffLive, diffLiveArtifacts, diffSnapshots, type LiveDiffResult, type LiveArtifactDiffResult, type SnapshotDiffResult } from "../../lifecycle/live-diff";
 import { buildChangeSet, renderChangeSet, gitlabMrReport, type ChangeSet } from "../../lifecycle/change-set";
 import { affectedStacks } from "../../lifecycle/affected";
 import { loadChantConfig } from "../../config";
@@ -159,6 +159,18 @@ export async function runLifecycleDiff(ctx: CommandContext): Promise<number> {
     return 1;
   }
 
+  // `--between <refA> <refB>` (#822): diff two saved snapshots against each other.
+  // Purely historical — no build, no cloud query; reads the orphan branch.
+  if (args.betweenA && args.betweenB) {
+    return runLifecycleDiffBetween({
+      environment,
+      lexiconFilter,
+      refA: args.betweenA,
+      refB: args.betweenB,
+      json: !!args.json,
+    });
+  }
+
   // Filter serializers to target lexicon before building
   const targetSerializers = lexiconFilter
     ? plugins.filter((p) => p.name === lexiconFilter).map((p) => p.serializer)
@@ -184,6 +196,71 @@ export async function runLifecycleDiff(ctx: CommandContext): Promise<number> {
   }
 
   return runLifecycleDiffDigest({ environment, lexicons, buildResult });
+}
+
+interface BetweenDiffArgs {
+  environment: string;
+  lexiconFilter?: string;
+  refA: string;
+  refB: string;
+  json: boolean;
+}
+
+/**
+ * `chant lifecycle diff <env> --between <refA> <refB>` (#822). Diffs two saved
+ * snapshots against each other — read-only, no build, no cloud query. Reads
+ * `<ref>:<env>/<lexicon>.json` from the orphan branch at each ref and reports the
+ * two-way delta per lexicon.
+ */
+async function runLifecycleDiffBetween(args: BetweenDiffArgs): Promise<number> {
+  await fetchLifecycle();
+  const { config } = await loadChantConfig(resolve("."));
+  const lexicons = args.lexiconFilter ? [args.lexiconFilter] : config.lexicons ?? [];
+  if (lexicons.length === 0) {
+    console.error(formatError({ message: "No lexicons to diff — pass a lexicon or declare `lexicons` in chant.config." }));
+    return 1;
+  }
+
+  const parseResources = (content: string | null): Record<string, ResourceMetadata> | null => {
+    if (content === null) return null;
+    try {
+      return (JSON.parse(content) as LifecycleSnapshot).resources ?? {};
+    } catch {
+      return null;
+    }
+  };
+
+  const byLexicon: Record<string, SnapshotDiffResult> = {};
+  for (const lexicon of lexicons) {
+    const prev = parseResources(await readSnapshotAt(args.environment, lexicon, args.refA));
+    const next = parseResources(await readSnapshotAt(args.environment, lexicon, args.refB));
+    if (prev === null && next === null) {
+      if (!args.json) console.error(formatWarning({ message: `${lexicon}: not captured at either ref — skipping` }));
+      continue;
+    }
+    byLexicon[lexicon] = diffSnapshots(prev ?? {}, next ?? {});
+  }
+
+  if (args.json) {
+    console.log(JSON.stringify({ environment: args.environment, refA: args.refA, refB: args.refB, lexicons: byLexicon }, null, 2));
+    return 0;
+  }
+
+  if (Object.keys(byLexicon).length === 0) {
+    console.log(`No snapshots for ${args.environment} at ${args.refA} / ${args.refB}.`);
+    return 0;
+  }
+
+  console.log(formatBold(`Snapshot diff — ${args.environment}: ${args.refA} → ${args.refB}`));
+  for (const [lexicon, d] of Object.entries(byLexicon)) {
+    console.log(
+      `\n${formatBold(lexicon)} — ${d.added.length} added, ${d.removed.length} removed, ${d.changed.length} changed, ${d.unchanged.length} unchanged`,
+    );
+    for (const name of d.added) console.log(`  + ${name}`);
+    for (const name of d.removed) console.log(`  - ${name}`);
+    for (const drift of d.changed) console.log(`  ~ ${drift.name} (${drift.changes.map((c) => c.path).join(", ")})`);
+  }
+  return 0;
 }
 
 interface DigestDiffArgs {

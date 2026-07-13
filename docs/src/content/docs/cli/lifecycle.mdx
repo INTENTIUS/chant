@@ -9,6 +9,7 @@ description: Capture, diff, and plan against deployed infrastructure — the obs
 chant lifecycle snapshot <env> [lexicon] [--src <dir>]
 chant lifecycle show <env>
 chant lifecycle diff <env> [--live] [--src <dir>]
+chant lifecycle diff <env> --between <refA> <refB> [lexicon] [--json]
 chant lifecycle plan <env> [lexicon] [--json] [--owned] [--report gitlab-mr] [--src <dir>]
 chant lifecycle affected --base <ref> [--head <ref>] [--include-dependents] [--json]
 chant lifecycle log [env]
@@ -80,6 +81,18 @@ Output is grouped into six categories per lexicon:
 | **unchanged** | Observed in both snapshots; metadata identical |
 
 Drifted entries include attribute-level deltas (`status`, `physicalId`, `lastUpdated`, and each `attributes.*` key).
+
+#### `--between <refA> <refB>` — two saved snapshots
+
+Every `snapshot` is a commit on the `chant/lifecycle` orphan branch (list them with `lifecycle log`). `--between` diffs two of them against **each other** — a purely historical, read-only comparison (no build, no cloud query). It answers "what changed in the cloud between Tuesday and Thursday" independent of source.
+
+```bash
+chant lifecycle log prod                      # find the two commits
+chant lifecycle diff prod --between <shaA> <shaB>
+chant lifecycle diff prod --between <shaA> <shaB> aws --json
+```
+
+Per lexicon (all declared, or the one you name), it reports a two-way delta: **added** (in B, not A), **removed** (in A, not B), **changed** (in both, metadata differs, with the attribute paths), and **unchanged**. `--json` emits `{ environment, refA, refB, lexicons }`. This feeds the deployment-lanes frame-pair diff.
 
 ### `lifecycle plan <env>`
 
