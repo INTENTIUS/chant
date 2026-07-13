@@ -24,6 +24,7 @@ import deployOp from "./getting-started/deploy.op";
 import flyDeployOp from "./local-fly/ops/fly.op";
 import agentTaskOp from "./sprites-agent-task/ops/agent-task.op";
 import guardedTaskOp from "./sprites-agent-task/ops/guarded-task.op";
+import managedAgentSessionOp from "./sprites-managed-agent-worker/ops/managed-agent-session.op";
 import flyRollbackOp from "./fly-deploy-rollback/ops/fly-deploy.op";
 import flyRollbackGuardedOp from "./fly-deploy-rollback/ops/fly-deploy-guarded.op";
 import deployGatedOp from "./getting-started/deploy-gated.op";
@@ -286,6 +287,59 @@ describe("sprites-agent-task Ops (#762)", () => {
     const restore = props.onFailure![0].steps[0];
     expect(restore.fn).toBe("spriteRestore");
     expect(restore.args).toMatchObject({ id: "task-1", comment: "pre-run" });
+  });
+});
+
+// ── Managed Agents worker — sprites-managed-agent-worker (#847) ──────────
+// One per-session Op composing every Sprite config primitive: create → egress
+// policy → keep-alive task → env-contract file → runner-as-service → run →
+// release → destroy, with an onFailure that frees the hold and tears down. The
+// activities + fake have offline coverage under lexicons/fly/src/op/activities/
+// (sprite-tasks/config/fs .test.ts); this compile-validates the session shape.
+
+describe("sprites-managed-agent-worker Op (#847)", () => {
+  test("managed-agent-session composes the session phase sequence", () => {
+    const props = (managedAgentSessionOp as unknown as {
+      props: {
+        name: string;
+        taskQueue?: string;
+        phases: Array<{ name: string; steps: Array<{ fn: string; args?: Record<string, unknown> }> }>;
+        onFailure?: Array<{ name: string; steps: Array<{ fn: string }> }>;
+      };
+    }).props;
+    expect(props.name).toBe("managed-agent-session");
+    expect(props.taskQueue).toBe("sprites");
+    expect(props.phases.map((p) => p.name)).toEqual([
+      "Create",
+      "Secure",
+      "Hold",
+      "Stage",
+      "Runner",
+      "Run",
+      "Release",
+      "Destroy",
+    ]);
+    // Each phase resolves to the right Sprite activity by name.
+    expect(props.phases.map((p) => p.steps[0].fn)).toEqual([
+      "spriteCreate",
+      "spriteApplyNetworkPolicy",
+      "spriteTaskCreate",
+      "spriteWriteFile",
+      "spriteApplyServices",
+      "spriteExec",
+      "spriteTaskRelease",
+      "spriteDestroy",
+    ]);
+    // The egress policy allows Anthropic first and denies by default last.
+    const secure = props.phases.find((p) => p.name === "Secure")!.steps[0];
+    const rules = secure.args?.rules as Array<{ domain: string; action: string }>;
+    expect(rules[0]).toMatchObject({ domain: "api.anthropic.com", action: "allow" });
+    expect(rules[rules.length - 1]).toMatchObject({ domain: "*", action: "deny" });
+    // onFailure frees the keep-alive hold and destroys the Sprite.
+    expect(props.onFailure?.flatMap((p) => p.steps.map((s) => s.fn))).toEqual([
+      "spriteTaskRelease",
+      "spriteDestroy",
+    ]);
   });
 });
 

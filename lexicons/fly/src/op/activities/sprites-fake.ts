@@ -59,6 +59,8 @@ interface SpriteState {
   netPolicy: Array<{ domain: string; action: string }>;
   /** Background services keyed by name (create-or-update via PUT). */
   services: Record<string, StoredService>;
+  /** Keep-alive tasks keyed by name; while any exists the sprite stays active. */
+  tasks: Record<string, { name: string; expire?: number | string }>;
 }
 
 interface ExecResult {
@@ -263,9 +265,40 @@ export function createSpritesFake(): Promise<{ url: string; close(): Promise<voi
         policy: body.policy,
         netPolicy: [],
         services: {},
+        tasks: {},
       };
       sprites.set(id, sprite);
       return send(201, { id: sprite.id, url: sprite.url });
+    }
+
+    // Keep-alive tasks: /v1/sprites/{id}/tasks[/{name}].
+    const tm = path.match(/^\/v1\/sprites\/([^/]+)\/tasks(?:\/([^/]+))?\/?$/);
+    if (tm) {
+      const id = decodeURIComponent(tm[1]);
+      const name = tm[2] ? decodeURIComponent(tm[2]) : undefined;
+      const sprite = sprites.get(id);
+      if (!sprite || sprite.status === "destroyed") return send(404, { error: `no sprite ${id}` });
+
+      if (method === "GET" && !name) return send(200, Object.values(sprite.tasks));
+      if (method === "POST" && !name) {
+        const b = ((await readBody(req)) ?? {}) as { name?: string; expire?: number | string };
+        if (!b.name) return send(400, { error: "name is required" });
+        sprite.tasks[b.name] = { name: b.name, expire: b.expire };
+        return send(201, { name: b.name, expires_at: "2026-01-01T00:00:00Z" });
+      }
+      if (method === "PUT" && name) {
+        const b = ((await readBody(req)) ?? {}) as { expire?: number | string };
+        const t = sprite.tasks[name];
+        if (!t) return send(404, { error: `no task ${name}` });
+        t.expire = b.expire ?? t.expire;
+        return send(200, { name, expires_at: "2026-01-01T00:00:00Z" });
+      }
+      if (method === "DELETE" && name) {
+        if (!(name in sprite.tasks)) return send(404, { error: `no task ${name}` });
+        delete sprite.tasks[name];
+        return send(204, {});
+      }
+      return send(404, { error: `not found: ${method} ${path}` });
     }
 
     // Network policy: GET/POST /v1/sprites/{id}/policy/network (whole-object replace).
@@ -455,6 +488,7 @@ export function createSpritesFake(): Promise<{ url: string; close(): Promise<voi
           checkpoints: sprite.checkpoints.map((c) => c.id),
           netPolicy: sprite.netPolicy,
           services: sprite.services,
+          tasks: sprite.tasks,
         });
       }
     }
