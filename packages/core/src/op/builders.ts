@@ -452,6 +452,47 @@ export const spriteRemove = (args: {
   return activity("spriteRemove", rest, profile ?? "fastIdempotent");
 };
 
+// ── Sprite config reconcile steps (#849) — desired-state on a live Sprite ──────
+//
+// Apply-activities, not a declarable resource: `spriteApplyNetworkPolicy`
+// whole-object-replaces the outbound policy; `spriteApplyServices` create-or-
+// updates each desired background service (optionally starting them in
+// dependency order). Validation runs pure before any HTTP. `loadActivities(["fly"])`
+// binds the impls in fly's `op/activities/sprite-config.ts`.
+
+/** Reconcile a sprite's outbound network policy (whole-object replace). Defaults to the `fastIdempotent` profile (override via `profile`). */
+export const spriteApplyNetworkPolicy = (args: {
+  id: string;
+  rules: Array<{ domain: string; action: "allow" | "deny" }>;
+  endpoint?: string;
+  token?: string;
+  profile?: ActivityStep["profile"];
+}): ActivityStep => {
+  const { profile, ...rest } = args;
+  return activity("spriteApplyNetworkPolicy", rest, profile ?? "fastIdempotent");
+};
+
+/** Reconcile a sprite's background services (create-or-update, optionally start). Defaults to the `fastIdempotent` profile (override via `profile`). */
+export const spriteApplyServices = (args: {
+  id: string;
+  services: Array<{
+    name: string;
+    cmd: string;
+    args?: string[];
+    env?: Record<string, string>;
+    dir?: string;
+    needs?: string[];
+    http_port?: number;
+  }>;
+  start?: boolean;
+  endpoint?: string;
+  token?: string;
+  profile?: ActivityStep["profile"];
+}): ActivityStep => {
+  const { profile, ...rest } = args;
+  return activity("spriteApplyServices", rest, profile ?? "fastIdempotent");
+};
+
 /**
  * Boot a local spritzer (Fly Sprites API emulator) in Docker — the typed twin of
  * `flociGcpUp` for Sprites. Resolves to the `spritesUp` activity. Defaults to the

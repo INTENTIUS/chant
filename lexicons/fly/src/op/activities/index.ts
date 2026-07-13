@@ -105,6 +105,27 @@ export type {
   SpriteRemoveArgs,
 } from "./sprite-fs";
 
+// Sprite config reconcile activities (#849) — the desired-state a Sprite carries:
+// its outbound network policy and its background services. `loadActivities(["fly"])`
+// binds these; the step builders live in core. Apply-activities, not a declarable
+// resource — a Sprite has no build→plan→apply pipeline.
+export {
+  spriteApplyNetworkPolicy,
+  spriteApplyServices,
+  validateNetworkRules,
+  networkRulesEqual,
+  validateServices,
+  serviceConfigEqual,
+} from "./sprite-config";
+export type {
+  NetworkRule,
+  SpriteApplyNetworkPolicyArgs,
+  SpriteApplyNetworkPolicyResult,
+  ServiceSpec,
+  SpriteApplyServicesArgs,
+  SpriteApplyServicesResult,
+} from "./sprite-config";
+
 // spritzer (the Sprites API emulator) Docker lifecycle — the twin of mudflaps
 // above. `spritesUp`/`spritesDown` resolve by name so an Op can boot/tear down
 // the emulator as a modeled step; the sprite activities target it via

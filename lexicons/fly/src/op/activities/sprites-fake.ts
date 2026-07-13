@@ -33,6 +33,17 @@ interface StoredCheckpoint {
   fs: Record<string, string>;
 }
 
+interface StoredService {
+  name: string;
+  cmd: string;
+  args?: string[];
+  env?: Record<string, string>;
+  dir?: string;
+  needs?: string[];
+  http_port?: number;
+  state: { name: string; pid: number; status: string; started_at?: string };
+}
+
 interface SpriteState {
   id: string;
   status: SpriteStatus;
@@ -44,6 +55,10 @@ interface SpriteState {
   /** Monotonic version counter for `v<N>` ids. */
   version: number;
   policy?: unknown;
+  /** Outbound network policy (whole-object replace via /policy/network). */
+  netPolicy: Array<{ domain: string; action: string }>;
+  /** Background services keyed by name (create-or-update via PUT). */
+  services: Record<string, StoredService>;
 }
 
 interface ExecResult {
@@ -246,9 +261,75 @@ export function createSpritesFake(): Promise<{ url: string; close(): Promise<voi
         checkpoints: [],
         version: 0,
         policy: body.policy,
+        netPolicy: [],
+        services: {},
       };
       sprites.set(id, sprite);
       return send(201, { id: sprite.id, url: sprite.url });
+    }
+
+    // Network policy: GET/POST /v1/sprites/{id}/policy/network (whole-object replace).
+    const pm = path.match(/^\/v1\/sprites\/([^/]+)\/policy\/network\/?$/);
+    if (pm) {
+      const id = decodeURIComponent(pm[1]);
+      const sprite = sprites.get(id);
+      if (!sprite || sprite.status === "destroyed") return send(404, { error: `no sprite ${id}` });
+      if (method === "GET") return send(200, { rules: sprite.netPolicy });
+      if (method === "POST") {
+        const body = ((await readBody(req)) ?? {}) as { rules?: Array<{ domain: string; action: string }> };
+        sprite.netPolicy = body.rules ?? [];
+        return send(200, { rules: sprite.netPolicy });
+      }
+      return send(404, { error: `not found: ${method} ${path}` });
+    }
+
+    // Services: /v1/sprites/{id}/services[/{svc}[/start|stop|restart]].
+    const svcm = path.match(/^\/v1\/sprites\/([^/]+)\/services(?:\/([^/]+)(\/start|\/stop|\/restart)?)?\/?$/);
+    if (svcm) {
+      const id = decodeURIComponent(svcm[1]);
+      const svc = svcm[2] ? decodeURIComponent(svcm[2]) : undefined;
+      const action = svcm[3];
+      const sprite = sprites.get(id);
+      if (!sprite || sprite.status === "destroyed") return send(404, { error: `no sprite ${id}` });
+
+      // GET /services — list.
+      if (method === "GET" && !svc) return send(200, Object.values(sprite.services));
+
+      if (svc && !action) {
+        // GET /services/{svc}
+        if (method === "GET") {
+          const s = sprite.services[svc];
+          return s ? send(200, s) : send(404, { error: `no service ${svc}` });
+        }
+        // PUT /services/{svc} — create or update.
+        if (method === "PUT") {
+          const b = ((await readBody(req)) ?? {}) as Omit<StoredService, "name" | "state">;
+          sprite.services[svc] = {
+            name: svc,
+            cmd: b.cmd,
+            args: b.args,
+            env: b.env,
+            dir: b.dir,
+            needs: b.needs,
+            http_port: b.http_port,
+            state: sprite.services[svc]?.state ?? { name: svc, pid: 0, status: "stopped" },
+          };
+          return send(200, sprite.services[svc]);
+        }
+      }
+
+      // POST /services/{svc}/start|stop|restart — NDJSON, flips status.
+      if (method === "POST" && svc && action) {
+        const s = sprite.services[svc];
+        if (!s) return send(404, { error: `no service ${svc}` });
+        const stopped = action === "/stop";
+        s.state = { name: svc, pid: stopped ? 0 : 4321, status: stopped ? "stopped" : "running", started_at: new Date().toISOString() };
+        return sendNdjson(200, [
+          { type: stopped ? "stopping" : "started", data: `${svc} ${stopped ? "stopping" : "started"}` },
+          { type: "complete", data: `${svc} ${action.slice(1)} complete` },
+        ]);
+      }
+      return send(404, { error: `not found: ${method} ${path}` });
     }
 
     // Filesystem API: /v1/sprites/{id}/fs/{read|write|list|delete}. read/write
@@ -364,7 +445,7 @@ export function createSpritesFake(): Promise<{ url: string; close(): Promise<voi
         return send(200, {});
       }
 
-      // GET /v1/sprites/{id} — inspection (fs + checkpoint ids), used by tests/verify.
+      // GET /v1/sprites/{id} — inspection (fs + checkpoint ids + config), used by tests/verify.
       if (method === "GET" && !sub) {
         return send(200, {
           id: sprite.id,
@@ -372,6 +453,8 @@ export function createSpritesFake(): Promise<{ url: string; close(): Promise<voi
           url: sprite.url,
           fs: sprite.fs,
           checkpoints: sprite.checkpoints.map((c) => c.id),
+          netPolicy: sprite.netPolicy,
+          services: sprite.services,
         });
       }
     }
