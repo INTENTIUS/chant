@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { buildLiveGraphIr, overlayGraphs, type LiveObservation, type GraphIR } from "./graph-ir";
+import { buildLiveGraphIr, overlayGraphs, sourceOverlayGraphs, type LiveObservation, type GraphIR } from "./graph-ir";
 
 // A fixture "snapshot" — what a lexicon's describeResources() returns for a live
 // environment (managed-only). Two AWS resources; the subnet references the VPC by
@@ -84,5 +84,60 @@ describe("overlayGraphs (#780 drift overlay)", () => {
     const ir = overlayGraphs({ ...live, edges: [{ from: "rogue-sg", to: "web-vpc", kind: "ref" }] }, declared);
     expect(ir.nodes.map((n) => n.id).sort()).toEqual(["planned-db", "rogue-sg", "web-vpc"]);
     expect(ir.edges).toHaveLength(1);
+  });
+});
+
+describe("sourceOverlayGraphs (#821 source-anchored overlay)", () => {
+  const n = (id: string, lexicon = "aws") => ({ id, kind: "K", lexicon, attrs: {} });
+  // Declared graph carries a *cross-substrate* edge (a k8s ingress → an aws vpc)
+  // that live reconstruction — per-substrate identifier matching — can never make.
+  const declared: GraphIR = {
+    nodes: [n("web-vpc", "aws"), n("app-ingress", "k8s"), n("planned-db", "aws")],
+    edges: [{ from: "app-ingress", to: "web-vpc", kind: "ref", viaAttr: "vpcId" }],
+    groups: { byLexicon: { aws: ["planned-db", "web-vpc"], k8s: ["app-ingress"] } },
+  };
+  const live: GraphIR = {
+    nodes: [
+      { id: "web-vpc", kind: "AWS::EC2::VPC", lexicon: "aws", attrs: {}, physicalId: "vpc-0a1b", ownership: "owned" },
+      n("app-ingress", "k8s"),
+      n("rogue-sg", "aws"),
+    ],
+    edges: [{ from: "rogue-sg", to: "web-vpc", kind: "ref", viaAttr: "sg" }],
+    groups: {},
+  };
+  const statusOf = (ir: GraphIR, id: string) =>
+    (ir.nodes.find((x) => x.id === id)!.attrs as { _status?: string })._status;
+
+  it("classifies managed / pending / foreign via _status", () => {
+    const ir = sourceOverlayGraphs(declared, live);
+    expect(statusOf(ir, "web-vpc")).toBe("good"); // declared + provisioned
+    expect(statusOf(ir, "app-ingress")).toBe("good"); // declared + provisioned
+    expect(statusOf(ir, "planned-db")).toBe("accent"); // declared, not provisioned
+    expect(statusOf(ir, "rogue-sg")).toBe("warn"); // provisioned, not declared → foreign
+  });
+
+  it("keeps the declared cross-substrate edge (the whole point of source-anchoring)", () => {
+    const ir = sourceOverlayGraphs(declared, live);
+    expect(ir.edges).toContainEqual({ from: "app-ingress", to: "web-vpc", kind: "ref", viaAttr: "vpcId" });
+  });
+
+  it("carries the observed physicalId/ownership onto a managed declared node", () => {
+    const ir = sourceOverlayGraphs(declared, live);
+    const vpc = ir.nodes.find((x) => x.id === "web-vpc")!;
+    expect(vpc.physicalId).toBe("vpc-0a1b");
+    expect(vpc.ownership).toBe("owned");
+  });
+
+  it("appends foreign nodes with their live edges, and keeps declared groups", () => {
+    const ir = sourceOverlayGraphs(declared, live);
+    expect(ir.nodes.map((x) => x.id)).toContain("rogue-sg");
+    expect(ir.edges).toContainEqual({ from: "rogue-sg", to: "web-vpc", kind: "ref", viaAttr: "sg" }); // foreign-touching
+    expect(ir.groups.byLexicon).toEqual({ aws: ["planned-db", "web-vpc"], k8s: ["app-ingress"] });
+  });
+
+  it("drops a live edge between two managed nodes — declared edges already cover it", () => {
+    const liveDup: GraphIR = { ...live, edges: [{ from: "app-ingress", to: "web-vpc", kind: "ref", viaAttr: "live-label" }] };
+    const ir = sourceOverlayGraphs(declared, liveDup);
+    expect(ir.edges.filter((e) => e.from === "app-ingress" && e.to === "web-vpc")).toHaveLength(1);
   });
 });

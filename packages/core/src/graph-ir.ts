@@ -421,3 +421,54 @@ export function overlayGraphs(live: GraphIR, declared: GraphIR): GraphIR {
 
   return { ...live, nodes };
 }
+
+/**
+ * Source-anchored overlay (#821) — the inverse of {@link overlayGraphs}. The
+ * **declared** graph is the canvas, so its edges are kept: cross-substrate edges
+ * (an ECS service wired to a k8s workload) are a source-graph property, since live
+ * reconstruction is per-substrate (identifier value-match) and never crosses
+ * providers. Use this when the overlay must keep the mixed topology; use
+ * `overlayGraphs` when the provisioned graph itself is the subject.
+ *
+ * Each declared node is classified against live observation and tagged `_status`:
+ *   - **managed** (declared + provisioned) → `good`, carrying the observed
+ *     `physicalId` / `ownership` onto the declared node
+ *   - **pending** (declared, not provisioned) → `accent`
+ * **Foreign** resources (provisioned, not declared) are appended and tagged
+ * `warn`, together with any live-reconstructed edges that touch them — a declared
+ * edge cannot describe an undeclared resource. Declared groups/exports pass
+ * through unchanged; nodes and edges are sorted for deterministic output.
+ */
+export function sourceOverlayGraphs(declared: GraphIR, live: GraphIR): GraphIR {
+  const liveById = new Map(live.nodes.map((n) => [n.id, n]));
+  const declaredIds = new Set(declared.nodes.map((n) => n.id));
+  const foreignIds = new Set(live.nodes.filter((n) => !declaredIds.has(n.id)).map((n) => n.id));
+  const tagged = (n: IRNode, status: "good" | "warn" | "accent"): IRNode => ({ ...n, attrs: { ...n.attrs, _status: status } });
+
+  const nodes: IRNode[] = declared.nodes.map((n) => {
+    const obs = liveById.get(n.id);
+    if (!obs) return tagged(n, "accent"); // pending — declared, not provisioned
+    const merged: IRNode = { ...n }; // managed — carry the observed identity
+    if (obs.physicalId) merged.physicalId = obs.physicalId;
+    if (obs.ownership) merged.ownership = obs.ownership;
+    return tagged(merged, "good");
+  });
+  for (const n of live.nodes) if (foreignIds.has(n.id)) nodes.push(tagged(n, "warn")); // foreign
+  nodes.sort((a, b) => a.id.localeCompare(b.id));
+
+  // Declared edges are the canvas (the cross-substrate topology). Add only the
+  // live edges that touch a foreign node — declared edges already cover every
+  // declared relationship, so keeping all live edges would double managed ones.
+  const seen = new Set(declared.edges.map(edgeKey));
+  const edges = [...declared.edges];
+  for (const e of live.edges) {
+    if (!(foreignIds.has(e.from) || foreignIds.has(e.to))) continue;
+    const k = edgeKey(e);
+    if (seen.has(k)) continue;
+    seen.add(k);
+    edges.push(e);
+  }
+  edges.sort((a, b) => edgeKey(a).localeCompare(edgeKey(b)));
+
+  return { ...declared, nodes, edges };
+}

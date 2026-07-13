@@ -51,6 +51,18 @@ Edge reconstruction is only as rich as the observed node attributes. AWS's plain
 chant graph --format ir --live --env prod --overlay
 ```
 
+##### `--overlay-anchor <source|live>` — which graph is the canvas
+
+The overlay merges two graphs; the anchor decides which one's **edges** survive.
+
+- **`source` (default)** — the declared graph is the canvas, so its edges are kept. This matters because cross-substrate edges (an ECS service wired to a k8s workload) are a *source-graph* property: live edges are reconstructed per-substrate by identifier match and never cross providers, so the mixed topology exists only in the declared graph. Each declared node is tagged `managed` or `pending` and carries the observed `physicalId`/ownership; foreign resources are appended with any live edges that touch them.
+- **`live`** — the provisioned graph is the canvas, keeping its reconstructed live edges (the original behaviour). Use it when the provisioned graph itself is the subject and per-substrate islands are acceptable.
+
+```bash
+chant graph --format ir --live --env prod --overlay                     # source-anchored (keeps cross-substrate edges)
+chant graph --format ir --live --env prod --overlay --overlay-anchor live  # provisioned graph's own edges
+```
+
 ## Infra graph: `--format`
 
 ```bash

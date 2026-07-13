@@ -2,7 +2,7 @@ import { resolve } from "node:path";
 import { discoverOps } from "../../op/discover";
 import { discover } from "../../discovery/index";
 import { partitionByLexicon, computeStackGraph, build } from "../../build";
-import { buildGraphIr, buildLiveGraphIr, overlayGraphs, type GraphIR } from "../../graph-ir";
+import { buildGraphIr, buildLiveGraphIr, overlayGraphs, sourceOverlayGraphs, type GraphIR } from "../../graph-ir";
 import { reconstructEdges, mergeCatalogs, containmentGroups, type ReferenceCatalog, type ContainmentPair } from "../../graph-refs";
 import { observeResources } from "../../lifecycle/observe";
 import { loadChantConfig } from "../../config";
@@ -117,12 +117,19 @@ async function runGraphLive(
     containment = reconstructed.containment;
   }
 
-  // Drift overlay (#780): classify the provisioned graph against declared source
-  // (managed / foreign / pending) so a renderer colours the drift.
+  // Drift overlay: classify each resource against declared source (managed /
+  // foreign / pending) so a renderer colours the drift. Two anchorings:
+  //   - source (default, #821): declared graph is the canvas — keeps its edges,
+  //     so cross-substrate topology survives; live status joined per node.
+  //   - live (#780): provisioned graph is the canvas — reconstructed live edges.
   if (args.overlay) {
     const declared = await discover(resolve(args.src ?? config.sourceDir ?? "."));
     if (declared.errors.length === 0) {
-      ir = overlayGraphs(ir, buildGraphIr(declared.entities, projectPath));
+      const declaredIr = buildGraphIr(declared.entities, projectPath);
+      ir =
+        args.overlayAnchor === "live"
+          ? overlayGraphs(ir, declaredIr)
+          : sourceOverlayGraphs(declaredIr, ir);
     } else {
       console.error(formatWarning({ message: "overlay: source has discovery errors — showing the provisioned graph without the declared overlay" }));
     }

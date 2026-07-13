@@ -94,6 +94,10 @@ export function parseArgs(args: string[]): ParsedArgs {
       result.live = true;
     } else if (arg === "--overlay") {
       result.overlay = true;
+    } else if (arg === "--overlay-anchor") {
+      const v = args[++i];
+      if (v !== "source" && v !== "live") throw new Error(`--overlay-anchor must be 'source' or 'live', got '${v}'`);
+      result.overlayAnchor = v;
     } else if (arg === "--from") {
       // Shared by `migrate --from <lexicon>` and `import --from <env>`; the
       // two commands never run together, so one field carries both.
