@@ -26,6 +26,28 @@ vi.mock("../../graph-layout", () => ({
   getLayoutEngine: (name?: string) => ({ name: name ?? "dagre", layout: (input: unknown) => layoutMock(input) }),
 }));
 
+// --live path deps. `graph` isn't `requiresPlugins`, so the live handler loads
+// plugins itself; mock that plus observation/build/config (existing tests only
+// hit the Op-graph and source-view modes, so these mocks don't touch them).
+const loadPluginsMock = vi.fn();
+const resolveLexMock = vi.fn();
+vi.mock("../plugins", () => ({
+  loadPlugins: (...a: unknown[]) => loadPluginsMock(...a),
+  resolveProjectLexicons: (...a: unknown[]) => resolveLexMock(...a),
+}));
+const observeMock = vi.fn();
+vi.mock("../../lifecycle/observe", () => ({
+  observeResources: (...a: unknown[]) => observeMock(...a),
+}));
+vi.mock("../../config", () => ({
+  loadChantConfig: () => Promise.resolve({ config: {} }),
+}));
+vi.mock("../../build", () => ({
+  build: () => Promise.resolve({ errors: [] }),
+  partitionByLexicon: () => ({}),
+  computeStackGraph: () => ({}),
+}));
+
 const { runGraph } = await import("./graph");
 
 function makeArgs(overrides: Partial<ParsedArgs> = {}): ParsedArgs {
@@ -202,6 +224,28 @@ describe("runGraph", () => {
       const exit = await runGraph({ args: makeArgs({ format: "ir" }), plugins: [], serializers: [] });
       expect(exit).toBe(1);
       expect(stderrBuf.join("\n")).toContain("boom");
+    });
+  });
+
+  describe("live graph (--live)", () => {
+    // Regression: `graph` is not `requiresPlugins`, so `ctx.plugins` is empty. The
+    // live path must load the project's plugins itself — otherwise it wrongly
+    // reports "No lexicons implement describeResources" and observes nothing.
+    test("loads plugins for --live when ctx.plugins is empty", async () => {
+      resolveLexMock.mockResolvedValue(["aws"]);
+      loadPluginsMock.mockResolvedValue([
+        { name: "aws", serializer: {}, describeResources: () => Promise.resolve({}) },
+      ]);
+      observeMock.mockResolvedValue({
+        observations: [{ lexicon: "aws", resources: { "web-vpc": { type: "AWS::EC2::VPC", status: "OK" } } }],
+        errors: [],
+      });
+      const exit = await runGraph({ args: makeArgs({ format: "ir", live: true, env: "prod" }), plugins: [], serializers: [] });
+      expect(exit).toBe(0);
+      expect(loadPluginsMock).toHaveBeenCalled();
+      const out = stdoutBuf.join("\n");
+      expect(out).not.toContain("No lexicons implement describeResources");
+      expect(out).toContain("web-vpc");
     });
   });
 });
