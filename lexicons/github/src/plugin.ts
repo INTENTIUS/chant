@@ -31,10 +31,13 @@ import { githubHover } from "./lsp/hover";
 import { GitHubActionsParser } from "./import/parser";
 import { GitHubActionsGenerator } from "./import/generator";
 import { githubContextTools } from "./mcp/context-tools";
+import { generateGithubPipeline } from "./components/generate-pipeline";
 
 export const githubPlugin: LexiconPlugin = {
   name: "github",
   auditCatalog: () => githubAuditCatalog,
+  // Generate mode (#891): synthesize a GitHub Actions workflow from the component graph.
+  generateComponentPipeline: (components, options) => generateGithubPipeline(components, options),
   serializer: githubSerializer,
 
   lintRules(): LintRule[] {
