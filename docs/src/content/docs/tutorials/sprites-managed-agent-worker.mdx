@@ -1,0 +1,150 @@
+---
+title: Managed Agents Worker on Sprites
+description: Run a Claude Managed Agents session inside a per-session Sprite — an egress allowlist, a keep-alive hold, the runner env-contract staged as a file, and the runner as a supervised service, torn down on exit. Runs offline against the emulator, or against real Sprites + real Managed Agents by changing two environment variables.
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+The [`sprites-managed-agent-worker`](https://github.com/INTENTIUS/chant/tree/main/examples/sprites-managed-agent-worker)
+example runs a [Claude Managed Agents](https://docs.sprites.dev/integrations/claude-managed-agents/)
+session inside a per-session [Sprite](https://sprites.dev) — Fly.io's stateful,
+checkpointable sandbox.
+
+Anthropic runs the agent loop and the model and queues work items. A **worker**
+on your infrastructure claims each item and spawns a Sprite that executes the
+tools, so the agent's filesystem and network egress never leave your account.
+The org API key stays with the worker — only a scoped environment key reaches
+the Sprite.
+
+This tutorial is the **per-session unit** the worker runs once per claimed work
+item. One Op composes every Sprite runtime primitive in turn:
+
+- **Secure** — an egress allowlist so the sandbox reaches only Anthropic and the
+  package registries (`spriteApplyNetworkPolicy`);
+- **Hold** — a keep-alive task so the Sprite will not pause mid-session
+  (`spriteTaskCreate`, released on exit);
+- **Stage** — the runner env-contract written to a file, never process args
+  (`spriteWriteFile`);
+- **Runner** — Anthropic's runner as a supervised service (`spriteApplyServices`);
+- **Run**, then **Release** and **Destroy** — the session works, then tears down.
+
+The whole flow runs offline against the emulator (no Anthropic key, no Fly
+account), and points at real Sprites + real Managed Agents by changing two
+environment variables.
+
+| Phase | Activity | Point |
+|-------|----------|-------|
+| Create | `spriteCreate` | spawn the per-session sandbox |
+| Secure | `spriteApplyNetworkPolicy` | egress allowlist — Anthropic + registries, deny the rest |
+| Hold | `spriteTaskCreate` | keep-alive task so the Sprite will not pause |
+| Stage | `spriteWriteFile` | the runner env-contract, written to a file |
+| Runner | `spriteApplyServices` | Anthropic's runner as a supervised service, started |
+| Run | `spriteExec` | the session's tool calls execute in the sandbox |
+| Release / Destroy | `spriteTaskRelease` / `spriteDestroy` | free the hold and tear down |
+
+`onFailure` releases the hold and destroys the Sprite, so a stuck session never
+leaves a paused-but-billed sandbox behind.
+
+<Aside type="note">
+Where the agent **lives** and where it **executes** are separate decisions. The
+Sprite is where a session's tools execute; the worker that claims work and spawns
+Sprites lives on your infrastructure. This example is the per-session unit, so
+the Anthropic work-queue side is faked — the session id is a static string, as if
+a single work item had been claimed. A production worker replaces that with a
+poll or webhook against `client.beta.environments.work`.
+</Aside>
+
+## The session
+
+`ops/managed-agent-session.op.ts` is a pure activity sequence — no `build` phase,
+no serialized plan. The Secure phase locks egress before anything runs:
+
+```ts
+phase("Secure", [
+  spriteApplyNetworkPolicy({
+    id: SESSION,
+    rules: [
+      { domain: "api.anthropic.com", action: "allow" },
+      { domain: "*.pypi.org", action: "allow" },
+      { domain: "*", action: "deny" },
+    ],
+  }),
+]),
+```
+
+The Stage phase writes the runner's environment to a file — never process args,
+so the scoped key never shows up in a process listing — and the Runner phase
+starts Anthropic's runner as a service that sources it:
+
+```ts
+phase("Stage", [
+  spriteWriteFile({ id: SESSION, path: "/run/agent.env", mkdir: true, mode: "0600", content: envContract }),
+]),
+phase("Runner", [
+  spriteApplyServices({
+    id: SESSION,
+    start: true,
+    services: [{ name: "agent-runner", cmd: "sh", args: ["-c", "set -a; . /run/agent.env; exec agent-runner"], dir: "/run", http_port: 8080 }],
+  }),
+]),
+```
+
+## The keep-alive hold
+
+A task holds the Sprite active while the session runs; without it the Sprite
+pauses after a short idle window. A task's `expire` is capped at one hour, so a
+session that can run longer refreshes its hold on a shorter interval (the docs
+recommend a 5-minute expiry refreshed every 60 seconds with `spriteTaskRefresh`).
+That refresh loop lives in the long-running worker around this Op; this bounded
+session takes a single 5-minute hold and releases it at the end.
+
+## Prerequisites
+
+- Node.js and `npm`.
+- Docker (for the offline run — it boots the `spritzer` emulator in a container).
+  Real mode needs no Docker.
+
+## Run it offline
+
+Boot the `spritzer` emulator, point the sprite endpoint at it, and run the Op:
+
+```bash
+docker run -d --rm -p 4290:4290 --name spritzer ghcr.io/intentius/spritzer:0.4.0
+
+cd examples/sprites-managed-agent-worker
+npm install
+
+export SPRITES_BASE_URL=http://localhost:4290
+
+chant run managed-agent-session
+
+docker rm -f spritzer   # stop the emulator when done
+```
+
+The phases run end to end against the emulator with no key: create the sandbox,
+apply the egress policy, take the keep-alive hold, stage the env-contract file,
+start the runner service, run the session, then release and destroy.
+
+## Run it against real Sprites + real Managed Agents
+
+Drop the emulator override and provide the tokens. No code change:
+
+```bash
+unset SPRITES_BASE_URL                  # the sprite steps fall through to real Sprites
+
+export SPRITES_API_TOKEN=...            # a Sprites token
+export ANTHROPIC_ENVIRONMENT_KEY=...    # the scoped environment key, not your org API key
+```
+
+The scoped environment key is the one that reaches the Sprite; the org API key
+stays with the worker. See the
+[example README](https://github.com/INTENTIUS/chant/tree/main/examples/sprites-managed-agent-worker)
+for the worker loop and the Managed Agents setup.
+
+<Aside type="tip">
+For the filesystem activities on their own — staging an input file and reading a
+result back without shelling I/O through `spriteExec` — see the smaller
+[`sprites-agent-task`](https://github.com/INTENTIUS/chant/tree/main/examples/sprites-agent-task)
+example (`chant run agent-task`), which stages and collects with `spriteWriteFile`
+/ `spriteReadFile`.
+</Aside>
