@@ -307,11 +307,11 @@ describe("serializeOps()", () => {
       expect(w).toContain("NativeConnection");
     });
 
-    it("reads chant.config.js (relative import from ops/<name>/)", () => {
+    it("reads the project chant.config.ts (three levels up from ops/<name>/)", () => {
       const ops = new Map([makeOp({ name: "op", overview: "o", phases: [] })]);
       const w = serializeOps(ops)["ops/op/worker.ts"];
-      expect(w).toContain("chant.config.js");
-      expect(w).toContain("../../chant.config.js");
+      // tsx-native: import the project source config directly, not a dist/ copy.
+      expect(w).toContain("../../../chant.config.ts");
     });
 
     it("uses op name as default task queue when taskQueue not specified", () => {
@@ -326,10 +326,10 @@ describe("serializeOps()", () => {
       expect(w).toContain("custom-q");
     });
 
-    it("references workflow.js (compiled JS) not workflow.ts", () => {
+    it("points workflowsPath at ./workflow.ts (Temporal's bundler reads it directly under tsx)", () => {
       const ops = new Map([makeOp({ name: "op", overview: "o", phases: [] })]);
       const w = serializeOps(ops)["ops/op/worker.ts"];
-      expect(w).toContain("./workflow.js");
+      expect(w).toContain("./workflow.ts");
     });
 
     it("imports activities from ./activities.js", () => {

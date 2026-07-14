@@ -59,6 +59,32 @@ export async function makeTemporalClient(profileName: string | undefined, projec
   return { client, profile, config };
 }
 
+/**
+ * Register the Keyword search attributes the generated workflow upserts
+ * (`OpName`, `Phase`, plus any op-declared) on the namespace, so the first
+ * workflow task does not fail with `BadSearchAttributes`. Registered one at a
+ * time so an already-present attribute (`ALREADY_EXISTS`) does not block the
+ * rest. Only used for the autoStart dev server — a real server (autoStart=false)
+ * is expected to have these pre-registered (it may reject registration).
+ */
+async function ensureSearchAttributes(client: unknown, namespace: string, names: string[]): Promise<void> {
+  const operatorService = (
+    client as { connection?: { operatorService?: { addSearchAttributes?: (r: unknown) => Promise<unknown> } } }
+  ).connection?.operatorService;
+  if (!operatorService?.addSearchAttributes) return;
+  const KEYWORD = 2; // Temporal IndexedValueType KEYWORD
+  for (const name of names) {
+    try {
+      await operatorService.addSearchAttributes({ namespace, searchAttributes: { [name]: KEYWORD } });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      if (!/already|exists/i.test(msg)) {
+        console.error(formatWarning({ message: `Could not register search attribute "${name}": ${msg}` }));
+      }
+    }
+  }
+}
+
 // ── chant run list ──────────────────────────────────���─────────────────────────
 
 export async function runOpList(ctx: CommandContext): Promise<number> {
@@ -803,6 +829,12 @@ async function runComponentTemporal(ctx: CommandContext, selector: string): Prom
     return 1;
   }
 
+  // Register the search attributes the generated component workflow upserts
+  // (ComponentName/Phase) on the autoStart dev server (mirrors runOpTemporal).
+  if (profile.autoStart) {
+    await ensureSearchAttributes(client, profile.namespace, ["ComponentName", "Phase"]);
+  }
+
   const profileName = ctx.args.profile ??
     (((chantConfig as Record<string, unknown>).temporal as Record<string, unknown> | undefined)?.defaultProfile as string | undefined) ??
     "local";
@@ -1096,6 +1128,17 @@ async function runOpTemporal(ctx: CommandContext): Promise<number> {
   } catch (err) {
     console.error(formatError({ message: err instanceof Error ? err.message : String(err) }));
     return 1;
+  }
+
+  // On the autoStart dev server, register the search attributes the generated
+  // workflow upserts (OpName/Phase + any op-declared) so the first workflow task
+  // does not fail with BadSearchAttributes.
+  if (profile.autoStart) {
+    await ensureSearchAttributes(client, profile.namespace, [
+      "OpName",
+      "Phase",
+      ...Object.keys((config as { searchAttributes?: Record<string, string> }).searchAttributes ?? {}),
+    ]);
   }
 
   // Spawn worker process
