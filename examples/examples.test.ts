@@ -281,7 +281,7 @@ describe("fly-reconcile op (#868)", () => {
     const props = (flyReconcileOp as unknown as {
       props: { name: string; phases: Array<{ name: string; steps: Array<{ fn: string; args?: Record<string, any> }> }> };
     }).props;
-    expect(props.name).toBe("fly");
+    expect(props.name).toBe("fly-reconcile");
     expect(props.phases.map((p) => p.name)).toEqual(["Build", "Apply"]);
     const apply = props.phases.find((p) => p.name === "Apply")!.steps[0];
     expect(apply.fn).toBe("flyApply");
