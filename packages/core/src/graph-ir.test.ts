@@ -5,9 +5,15 @@ import { AttrRef } from "./attrref";
 import { LexiconOutput } from "./lexicon-output";
 import { resolveAttrRefs } from "./discovery/resolve";
 import { setProvenance } from "./provenance";
+import { INTRINSIC_MARKER } from "./intrinsic";
 
 function decl<T extends object>(base: T): Declarable & T {
   return { [DECLARABLE_MARKER]: true, ...base } as Declarable & T;
+}
+
+/** A `Ref`-style intrinsic (CloudFormation `{ Ref: name }` shape). */
+function ref(targetName: string): object {
+  return { [INTRINSIC_MARKER]: true, toJSON: () => ({ Ref: targetName }) };
 }
 
 describe("buildGraphIr", () => {
@@ -24,6 +30,35 @@ describe("buildGraphIr", () => {
     // Framework fields are scrubbed out of attrs.
     expect(ir.nodes[0].attrs).not.toHaveProperty("lexicon");
     expect(ir.nodes[0].attrs).not.toHaveProperty("entityType");
+  });
+
+  test("resolves a Ref-to-node intrinsic into an edge + $ref, and lists parameter imports (#513)", () => {
+    const cluster = decl({ lexicon: "aws", entityType: "AWS::CloudFormation::Parameter" });
+    const service = decl({ lexicon: "aws", entityType: "AWS::ECS::Service", props: { Cluster: ref("clusterArn") } });
+    const entities = new Map<string, Declarable>([
+      ["clusterArn", cluster],
+      ["service", service],
+    ]);
+    resolveAttrRefs(entities);
+
+    const ir = buildGraphIr(entities);
+    // The Ref becomes a real dependency edge, not a dropped intrinsic.
+    expect(ir.edges).toContainEqual({ from: "service", to: "clusterArn", kind: "ref", viaAttr: "Cluster" });
+    // attrs mirror the edge as a $ref envelope, not {$intrinsic}.
+    expect(ir.nodes.find((n) => n.id === "service")!.attrs.Cluster).toEqual({ $ref: "clusterArn" });
+    // Parameter nodes are surfaced as import handles.
+    expect(ir.imports).toEqual([{ name: "clusterArn", node: "clusterArn" }]);
+  });
+
+  test("a Ref to a non-node (pseudo-parameter) stays an opaque intrinsic — no phantom edge (#513)", () => {
+    const service = decl({ lexicon: "aws", entityType: "AWS::ECS::Service", props: { Region: ref("AWS::Region") } });
+    const entities = new Map<string, Declarable>([["service", service]]);
+    resolveAttrRefs(entities);
+
+    const ir = buildGraphIr(entities);
+    expect(ir.edges).toEqual([]);
+    expect(ir.nodes[0].attrs.Region).toEqual({ $intrinsic: true });
+    expect(ir.imports).toBeUndefined();
   });
 
   test("derives ref edges labelled with the consumer property", () => {
