@@ -317,7 +317,10 @@ async function runLifecycleDiffLive(args: LiveDiffArgs): Promise<number> {
   let totalLexiconsChecked = 0;
   // Collected per-lexicon results, emitted as one JSON object when --json is set
   // (parsed by programmatic consumers, e.g. behold's inspect diff — #852).
-  const byLexicon: Record<string, { resources?: LiveDiffResult; artifacts?: LiveArtifactDiffResult }> = {};
+  const byLexicon: Record<
+    string,
+    { resources?: LiveDiffResult; observed?: Record<string, ResourceMetadata>; artifacts?: LiveArtifactDiffResult }
+  > = {};
 
   for (const lexiconName of args.lexicons) {
     const plugin = args.plugins.find((p) => p.name === lexiconName);
@@ -379,8 +382,11 @@ async function runLifecycleDiffLive(args: LiveDiffArgs): Promise<number> {
       const observedThen = prevSnapshot?.resources;
       const diff = diffLive({ declared, observedNow, observedThen });
       totalDrift += diff.driftedSinceSnapshot.length + diff.missing.length + diff.orphan.length + diff.disappeared.length;
-      if (args.json) (byLexicon[lexiconName] ??= {}).resources = diff;
-      else renderLiveDiff(lexiconName, args.environment, diff);
+      if (args.json) {
+        const entry = (byLexicon[lexiconName] ??= {});
+        entry.resources = diff;
+        entry.observed = observedNow; // live state (#862) — status/attributes per resource
+      } else renderLiveDiff(lexiconName, args.environment, diff);
       lexiconChecked = true;
     }
 
