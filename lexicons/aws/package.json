@@ -80,6 +80,7 @@
     "typescript": "^5.9.3"
   },
   "peerDependencies": {
-    "@intentius/chant": "^0.18.11"
+    "@intentius/chant": "^0.18.11",
+    "typescript": "^5.9.3"
   }
 }

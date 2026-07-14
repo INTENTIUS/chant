@@ -67,13 +67,16 @@
     "build": "tsc -p tsconfig.build.json && tsc-alias -p tsconfig.build.json && find dist -type f \\( -name \"*.js\" -o -name \"*.js.map\" \\) -delete"
   },
   "dependencies": {
-    "@intentius/chant-lexicon-k8s": "*"
+    "@intentius/chant-lexicon-k8s": "*",
+    "js-yaml": "^4.1.0"
   },
   "devDependencies": {
     "@intentius/chant": "*",
-    "typescript": "^5.9.3"
+    "typescript": "^5.9.3",
+    "@types/js-yaml": "^4.0.9"
   },
   "peerDependencies": {
-    "@intentius/chant": "^0.18.11"
+    "@intentius/chant": "^0.18.11",
+    "typescript": "^5.9.3"
   }
 }
