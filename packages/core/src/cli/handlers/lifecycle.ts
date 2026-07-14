@@ -6,6 +6,7 @@ import { computeBuildDigest, diffDigests } from "../../lifecycle/digest";
 import { diffLive, diffLiveArtifacts, diffSnapshots, type LiveDiffResult, type LiveArtifactDiffResult, type SnapshotDiffResult } from "../../lifecycle/live-diff";
 import { buildChangeSet, renderChangeSet, gitlabMrReport, type ChangeSet } from "../../lifecycle/change-set";
 import { affectedStacks } from "../../lifecycle/affected";
+import { rollbackToRevision } from "../../lifecycle/rollback";
 import { loadChantConfig } from "../../config";
 import { formatError, formatWarning, formatSuccess, formatBold } from "../format";
 import type { CommandContext } from "../registry";
@@ -144,6 +145,38 @@ export async function runLifecycleShow(ctx: CommandContext): Promise<number> {
   }
 
   return 0;
+}
+
+/**
+ * chant lifecycle rollback [<environment>] --to <ref>
+ *
+ * Open a PR restoring `sourceDir` to a prior git revision (#873). Source-level,
+ * reviewable, no cloud mutation — a human merges, then a gated apply rolls the
+ * env back. The `<env>` positional is PR context.
+ */
+export async function runLifecycleRollback(ctx: CommandContext): Promise<number> {
+  const { args } = ctx;
+  const environment = args.extraPositional; // optional — PR context/title
+  const ref = args.migrateTo; // the --to value
+  if (!ref) {
+    console.error(formatError({ message: "Target revision required: chant lifecycle rollback [<env>] --to <ref>" }));
+    return 1;
+  }
+  const { config } = await loadChantConfig(resolve("."));
+  const sourceDir = config.sourceDir ?? ".";
+  try {
+    const result = await rollbackToRevision({ ref, env: environment, sourceDir, cwd: resolve(".") });
+    if (result.noop) {
+      console.error(formatSuccess(`${sourceDir} already matches ${ref} — nothing to roll back`));
+      return 0;
+    }
+    console.log(result.prUrl); // the PR URL — the consumer (behold) reads this from stdout
+    console.error(formatSuccess(`Opened rollback PR on ${result.branch}`));
+    return 0;
+  } catch (err) {
+    console.error(formatError({ message: `rollback failed — ${err instanceof Error ? err.message : String(err)}` }));
+    return 1;
+  }
 }
 
 /**
