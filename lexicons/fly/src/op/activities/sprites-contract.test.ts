@@ -7,15 +7,29 @@ import { SPRITES_CONTRACT, normalizeEndpoint, contractKeys } from "./sprites-con
 describe("SPRITES_CONTRACT", () => {
   test("covers every sprite activity that calls the Sprites API", () => {
     const activities = new Set(SPRITES_CONTRACT.map((e) => e.activity));
-    // The six ./sprites.ts activities that make an HTTP/WS call.
+    // Every activity across the lifecycle, filesystem, config-reconcile, and
+    // keep-alive modules that makes an HTTP/WS call.
     expect(activities).toEqual(
       new Set([
+        // lifecycle (./sprites.ts)
         "spriteCreate",
         "spriteExec",
         "spriteCheckpoint",
         "listCheckpoints",
         "spriteRestore",
         "spriteDestroy",
+        // filesystem (./sprite-fs.ts)
+        "spriteWriteFile",
+        "spriteReadFile",
+        "spriteListDir",
+        "spriteRemove",
+        // config reconcile (./sprite-config.ts)
+        "spriteApplyNetworkPolicy",
+        "spriteApplyServices",
+        // keep-alive tasks (./sprite-tasks.ts)
+        "spriteTaskCreate",
+        "spriteTaskRefresh",
+        "spriteTaskRelease",
       ]),
     );
   });
@@ -23,7 +37,7 @@ describe("SPRITES_CONTRACT", () => {
   test("every entry has a v1 path and a known method", () => {
     for (const e of SPRITES_CONTRACT) {
       expect(e.path.startsWith("/v1/sprites")).toBe(true);
-      expect(["GET", "POST", "DELETE", "WS"]).toContain(e.method);
+      expect(["GET", "POST", "PUT", "DELETE", "WS"]).toContain(e.method);
     }
   });
 
@@ -43,18 +57,22 @@ describe("SPRITES_CONTRACT", () => {
     expect(keys.size).toBe(SPRITES_CONTRACT.length);
   });
 
-  test("every contract path segment appears in the sprites.ts source (drift anchor)", () => {
+  test("every contract path segment appears in the activity source (drift anchor)", () => {
     // Anchors the hand-authored contract to the activity implementations: if an
     // activity's endpoint path changes, a segment goes missing here and the
-    // contract must be updated in the same change.
-    const src = readFileSync(join(dirname(fileURLToPath(import.meta.url)), "sprites.ts"), "utf-8");
+    // contract must be updated in the same change. Scans every module that owns
+    // contract endpoints, not just the lifecycle one.
+    const dir = dirname(fileURLToPath(import.meta.url));
+    const src = ["sprites.ts", "sprite-fs.ts", "sprite-config.ts", "sprite-tasks.ts"]
+      .map((f) => readFileSync(join(dir, f), "utf-8"))
+      .join("\n");
     const segments = new Set(
       SPRITES_CONTRACT.flatMap((e) =>
         e.path.split("/").filter((s) => s.length > 0 && !s.startsWith("{")),
       ),
     );
     for (const seg of segments) {
-      expect(src, `path segment "${seg}" from the contract is absent from sprites.ts`).toContain(seg);
+      expect(src, `path segment "${seg}" from the contract is absent from the activity source`).toContain(seg);
     }
   });
 });
