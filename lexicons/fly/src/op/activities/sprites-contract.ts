@@ -5,8 +5,8 @@
  * the fly resource surface generates + drift-checks against. The Sprites API
  * (api.sprites.dev) ships no such spec at any conventional path, so there is
  * nothing to diff automatically. This module is the manual stand-in: the exact
- * endpoint set the fly sprite activities (./sprites.ts) depend on, maintained by
- * hand from https://docs.sprites.dev.
+ * endpoint set the fly sprite activities (lifecycle, filesystem, config, tasks)
+ * depend on, maintained by hand from https://docs.sprites.dev.
  *
  * It anchors two fidelity checks:
  *   1. Coverage — every endpoint here must be served by the pinned spritzer
@@ -24,24 +24,45 @@
 /** One endpoint the fly sprite activities call. */
 export interface SpritesEndpoint {
   /** HTTP method, or "WS" for the control-WebSocket exec channel. */
-  method: "GET" | "POST" | "DELETE" | "WS";
+  method: "GET" | "POST" | "PUT" | "DELETE" | "WS";
   /** Path template under the Sprites base, e.g. `/v1/sprites/{id}/checkpoint`. */
   path: string;
-  /** The fly activity that calls it (./sprites.ts export). */
+  /** The fly activity that calls it (an activity module export). */
   activity: string;
 }
 
 /**
- * The Sprites endpoints ./sprites.ts depends on. Keep in sync with the activity
- * implementations — the unit test asserts every sprite activity is represented.
+ * The Sprites endpoints the fly sprite activities depend on, across the lifecycle
+ * (./sprites.ts), filesystem (./sprite-fs.ts), config reconcile
+ * (./sprite-config.ts), and keep-alive tasks (./sprite-tasks.ts) modules. Keep in
+ * sync with the activity implementations — the unit test asserts every sprite
+ * activity is represented, and the coverage test asserts the pinned spritzer
+ * serves each one.
  */
 export const SPRITES_CONTRACT: readonly SpritesEndpoint[] = [
+  // Lifecycle (./sprites.ts)
   { method: "POST", path: "/v1/sprites", activity: "spriteCreate" },
   { method: "WS", path: "/v1/sprites/{id}/exec", activity: "spriteExec" },
   { method: "POST", path: "/v1/sprites/{id}/checkpoint", activity: "spriteCheckpoint" },
   { method: "GET", path: "/v1/sprites/{id}/checkpoints", activity: "listCheckpoints" },
   { method: "POST", path: "/v1/sprites/{id}/checkpoints/{cp}/restore", activity: "spriteRestore" },
   { method: "DELETE", path: "/v1/sprites/{id}", activity: "spriteDestroy" },
+  // Filesystem (./sprite-fs.ts)
+  { method: "PUT", path: "/v1/sprites/{id}/fs/write", activity: "spriteWriteFile" },
+  { method: "GET", path: "/v1/sprites/{id}/fs/read", activity: "spriteReadFile" },
+  { method: "GET", path: "/v1/sprites/{id}/fs/list", activity: "spriteListDir" },
+  { method: "DELETE", path: "/v1/sprites/{id}/fs/delete", activity: "spriteRemove" },
+  // Network policy (./sprite-config.ts)
+  { method: "GET", path: "/v1/sprites/{id}/policy/network", activity: "spriteApplyNetworkPolicy" },
+  { method: "POST", path: "/v1/sprites/{id}/policy/network", activity: "spriteApplyNetworkPolicy" },
+  // Services (./sprite-config.ts)
+  { method: "GET", path: "/v1/sprites/{id}/services", activity: "spriteApplyServices" },
+  { method: "PUT", path: "/v1/sprites/{id}/services/{svc}", activity: "spriteApplyServices" },
+  { method: "POST", path: "/v1/sprites/{id}/services/{svc}/start", activity: "spriteApplyServices" },
+  // Keep-alive tasks (./sprite-tasks.ts)
+  { method: "POST", path: "/v1/sprites/{id}/tasks", activity: "spriteTaskCreate" },
+  { method: "PUT", path: "/v1/sprites/{id}/tasks/{name}", activity: "spriteTaskRefresh" },
+  { method: "DELETE", path: "/v1/sprites/{id}/tasks/{name}", activity: "spriteTaskRelease" },
 ] as const;
 
 /**
