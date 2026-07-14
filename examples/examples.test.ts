@@ -22,6 +22,7 @@ import type { PostSynthContext } from "@intentius/chant/lint/post-synth";
 import { k8sPlugin } from "@intentius/chant-lexicon-k8s/plugin";
 import deployOp from "./getting-started/deploy.op";
 import flyDeployOp from "./local-fly/ops/fly.op";
+import flyReconcileOp from "./fly-reconcile/ops/fly.op";
 import agentTaskOp from "./sprites-agent-task/ops/agent-task.op";
 import guardedTaskOp from "./sprites-agent-task/ops/guarded-task.op";
 import managedAgentSessionOp from "./sprites-managed-agent-worker/ops/managed-agent-session.op";
@@ -234,6 +235,50 @@ describe("local-fly deploy Op (#744)", () => {
       "Verify",
       "Teardown",
     ]);
+  });
+});
+
+// ── Fly reconcile — fly-reconcile (#868) ─────────────────────────────
+// A multi-machine stack whose op reconciles against a *running* mudflaps (no
+// boot/teardown), so re-runs show create → no-op → update → owned-only prune.
+// Build-validated here (the live reconcile is documented in the tutorial); a
+// separate block compile-validates the Build → Apply op.
+
+describeExample(
+  "fly-reconcile",
+  {
+    lexicon: "fly",
+    serializer: [flySerializer],
+    outputKey: "fly",
+    examplesDir: import.meta.dirname,
+  },
+  {
+    checks: (output) => {
+      const plan = JSON.parse(output) as Record<
+        string,
+        { endpoint: string; method: string; body: Record<string, any> }
+      >;
+      const reqs = Object.values(plan);
+      const app = reqs.find((r) => r.endpoint === "/v1/apps");
+      expect(app!.body.app_name).toBe("fly-reconcile-demo");
+      // Two machines, each carrying the managed-by marker the prune reads back.
+      const machines = reqs.filter((r) => /\/v1\/apps\/[^/]+\/machines$/.test(r.endpoint));
+      expect(machines.map((m) => m.body.name).sort()).toEqual(["web", "worker"]);
+      for (const m of machines) expect(m.body.config.metadata["managed-by"]).toBe("chant");
+    },
+  },
+);
+
+describe("fly-reconcile op (#868)", () => {
+  test("compiles to a Build → Apply reconcile with prune on", () => {
+    const props = (flyReconcileOp as unknown as {
+      props: { name: string; phases: Array<{ name: string; steps: Array<{ fn: string; args?: Record<string, any> }> }> };
+    }).props;
+    expect(props.name).toBe("fly");
+    expect(props.phases.map((p) => p.name)).toEqual(["Build", "Apply"]);
+    const apply = props.phases.find((p) => p.name === "Apply")!.steps[0];
+    expect(apply.fn).toBe("flyApply");
+    expect(apply.args?.prune).toBe(true);
   });
 });
 
