@@ -26,6 +26,7 @@ import flyReconcileOp from "./fly-reconcile/ops/fly.op";
 import agentTaskOp from "./sprites-agent-task/ops/agent-task.op";
 import guardedTaskOp from "./sprites-agent-task/ops/guarded-task.op";
 import managedAgentSessionOp from "./sprites-managed-agent-worker/ops/managed-agent-session.op";
+import buildSandboxOp from "./sprites-build-sandbox/ops/build-sandbox.op";
 import flyRollbackOp from "./fly-deploy-rollback/ops/fly-deploy.op";
 import flyRollbackGuardedOp from "./fly-deploy-rollback/ops/fly-deploy-guarded.op";
 import deployGatedOp from "./getting-started/deploy-gated.op";
@@ -391,6 +392,46 @@ describe("sprites-managed-agent-worker Op (#847)", () => {
       "spriteTaskRelease",
       "spriteDestroy",
     ]);
+  });
+});
+
+// ── Sprites build sandbox — sprites-build-sandbox (#869) ─────────────
+// Disposable build box: warm a toolchain, checkpoint it (the prepared pool),
+// build from staged source, collect the artifact, reset to the checkpoint,
+// destroy. Compile-validates the phase sequence; the live run is in the tutorial.
+
+describe("sprites-build-sandbox Op (#869)", () => {
+  test("build-sandbox composes the warm → checkpoint → build → reset sequence", () => {
+    const props = (buildSandboxOp as unknown as {
+      props: { name: string; taskQueue?: string; phases: Array<{ name: string; steps: Array<{ fn: string; args?: Record<string, unknown> }> }> };
+    }).props;
+    expect(props.name).toBe("build-sandbox");
+    expect(props.taskQueue).toBe("sprites");
+    expect(props.phases.map((p) => p.name)).toEqual([
+      "Create",
+      "Warm",
+      "Checkpoint",
+      "Stage",
+      "Build",
+      "Collect",
+      "Reset",
+      "Destroy",
+    ]);
+    expect(props.phases.map((p) => p.steps[0].fn)).toEqual([
+      "spriteCreate",
+      "spriteExec",
+      "spriteCheckpoint",
+      "spriteWriteFile",
+      "spriteExec",
+      "spriteReadFile",
+      "spriteRestore",
+      "spriteDestroy",
+    ]);
+    // Reset restores the same checkpoint the Checkpoint phase wrote (the pool).
+    const checkpoint = props.phases.find((p) => p.name === "Checkpoint")!.steps[0];
+    const reset = props.phases.find((p) => p.name === "Reset")!.steps[0];
+    expect(checkpoint.args?.comment).toBe("toolchain-ready");
+    expect(reset.args?.comment).toBe("toolchain-ready");
   });
 });
 

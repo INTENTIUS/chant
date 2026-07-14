@@ -1,0 +1,17 @@
+{
+  "name": "sprites-build-sandbox-example",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "lint": "chant lint ops"
+  },
+  "dependencies": {
+    "@intentius/chant": "*",
+    "@intentius/chant-lexicon-fly": "*",
+    "@intentius/chant-lexicon-temporal": "*"
+  },
+  "devDependencies": {
+    "typescript": "*"
+  }
+}
