@@ -388,6 +388,70 @@ export const spriteDestroy = (args: {
   return activity("spriteDestroy", rest, profile ?? "fastIdempotent");
 };
 
+// ── Sprite filesystem steps (#848) — stage inputs / read results without exec ──
+//
+// Same builder/activity split as the lifecycle steps above: these author
+// `activity("spriteWriteFile", ...)` steps; `loadActivities(["fly"])` binds them
+// to the implementations in fly's `op/activities/sprite-fs.ts`. All default to
+// `fastIdempotent` — write/remove converge on the same end state under retry.
+
+/** Write a file into a sprite. Defaults to the `fastIdempotent` profile (override via `profile`). */
+export const spriteWriteFile = (args: {
+  id: string;
+  path: string;
+  content: string;
+  mode?: string;
+  mkdir?: boolean;
+  workingDir?: string;
+  endpoint?: string;
+  token?: string;
+  profile?: ActivityStep["profile"];
+}): ActivityStep => {
+  const { profile, ...rest } = args;
+  return activity("spriteWriteFile", rest, profile ?? "fastIdempotent");
+};
+
+/** Read a file from a sprite (returns `{ content }`). Defaults to the `fastIdempotent` profile (override via `profile`). */
+export const spriteReadFile = (args: {
+  id: string;
+  path: string;
+  workingDir?: string;
+  endpoint?: string;
+  token?: string;
+  profile?: ActivityStep["profile"];
+}): ActivityStep => {
+  const { profile, ...rest } = args;
+  return activity("spriteReadFile", rest, profile ?? "fastIdempotent");
+};
+
+/** List a directory in a sprite (returns `[{ name, type, size? }]`). Defaults to the `fastIdempotent` profile (override via `profile`). */
+export const spriteListDir = (args: {
+  id: string;
+  path: string;
+  workingDir?: string;
+  endpoint?: string;
+  token?: string;
+  profile?: ActivityStep["profile"];
+}): ActivityStep => {
+  const { profile, ...rest } = args;
+  return activity("spriteListDir", rest, profile ?? "fastIdempotent");
+};
+
+/** Remove a path in a sprite (idempotent). Defaults to the `fastIdempotent` profile (override via `profile`). */
+export const spriteRemove = (args: {
+  id: string;
+  path: string;
+  recursive?: boolean;
+  asRoot?: boolean;
+  workingDir?: string;
+  endpoint?: string;
+  token?: string;
+  profile?: ActivityStep["profile"];
+}): ActivityStep => {
+  const { profile, ...rest } = args;
+  return activity("spriteRemove", rest, profile ?? "fastIdempotent");
+};
+
 /**
  * Boot a local spritzer (Fly Sprites API emulator) in Docker — the typed twin of
  * `flociGcpUp` for Sprites. Resolves to the `spritesUp` activity. Defaults to the

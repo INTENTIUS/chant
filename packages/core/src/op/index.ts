@@ -3,6 +3,7 @@ export { Op, phase, activity, gate, build, kubectlApply, helmInstall, waitForSta
          flociAzUp, flociAzDown, flociGcpUp, flociGcpDown, httpCheck,
          azGroupEnsure, azGroupDelete, azApply, azDelete, awsApply, awsDelete, gcpApply, gcpDelete, policyGate,
          spriteCreate, spriteExec, spriteCheckpoint, spriteRestore, listCheckpoints, spriteDestroy,
+         spriteWriteFile, spriteReadFile, spriteListDir, spriteRemove,
          spritesUp, spritesDown } from "./builders";
 export { OpResource } from "./resource";
 export { safeHeartbeat, sleep } from "./activity-runtime";

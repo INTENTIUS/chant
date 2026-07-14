@@ -241,7 +241,8 @@ describe("local-fly deploy Op (#744)", () => {
 // documented in the example README (against the in-process fake or real
 // Sprites); CI compile/shape-validates both Ops, mirroring the deploy Op blocks
 // above. The activities + fake have their own unit/integration coverage under
-// lexicons/temporal/src/op/activities/sprites{,.integration}.test.ts.
+// lexicons/fly/src/op/activities/sprites{,.integration}.test.ts and
+// sprite-fs.test.ts.
 
 describe("sprites-agent-task Ops (#762)", () => {
   test("agent-task compiles to the happy-path phase sequence", () => {
@@ -250,10 +251,20 @@ describe("sprites-agent-task Ops (#762)", () => {
     }).props;
     expect(props.name).toBe("agent-task");
     expect(props.taskQueue).toBe("sprites");
-    expect(props.phases.map((p) => p.name)).toEqual(["Create", "Checkpoint", "Run", "Verify", "Destroy"]);
-    // Each phase step resolves to a sprite activity by name.
+    expect(props.phases.map((p) => p.name)).toEqual([
+      "Create",
+      "Checkpoint",
+      "Stage",
+      "Run",
+      "Collect",
+      "Destroy",
+    ]);
+    // Each phase step resolves to a sprite activity by name. Stage/Collect use
+    // the filesystem activities rather than shelling file I/O through exec.
     expect(props.phases[0].steps[0].fn).toBe("spriteCreate");
-    expect(props.phases[4].steps[0].fn).toBe("spriteDestroy");
+    expect(props.phases[2].steps[0].fn).toBe("spriteWriteFile");
+    expect(props.phases[4].steps[0].fn).toBe("spriteReadFile");
+    expect(props.phases[5].steps[0].fn).toBe("spriteDestroy");
   });
 
   test("guarded-task compiles with an onFailure Restore (checkpoint-as-compensation)", () => {
