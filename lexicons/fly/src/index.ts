@@ -32,6 +32,8 @@ export {
   spriteReadFile,
   spriteListDir,
   spriteRemove,
+  spriteApplyNetworkPolicy,
+  spriteApplyServices,
   spritesUp,
   spritesDown,
 } from "@intentius/chant/op";
