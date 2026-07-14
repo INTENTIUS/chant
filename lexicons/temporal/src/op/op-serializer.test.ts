@@ -307,11 +307,12 @@ describe("serializeOps()", () => {
       expect(w).toContain("NativeConnection");
     });
 
-    it("reads the project chant.config.ts (three levels up from ops/<name>/)", () => {
+    it("reads the project chant.config (three levels up from ops/<name>/)", () => {
       const ops = new Map([makeOp({ name: "op", overview: "o", phases: [] })]);
       const w = serializeOps(ops)["ops/op/worker.ts"];
-      // tsx-native: import the project source config directly, not a dist/ copy.
-      expect(w).toContain("../../../chant.config.ts");
+      // Project source config, not a dist/ copy. The `.js` suffix resolves to the
+      // .ts source under bundler/tsx — type-checks and runs.
+      expect(w).toContain("../../../chant.config.js");
     });
 
     it("uses op name as default task queue when taskQueue not specified", () => {
