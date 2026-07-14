@@ -125,6 +125,29 @@ export function getSecurityGroupIngress(
 }
 
 /**
+ * Extract an ECS TaskDefinition's container definitions (shared by the
+ * WAW046/047/048 ECS checks).
+ */
+export function getContainerDefinitions(resource: CFResource): Array<Record<string, unknown>> {
+  const props = resource.Properties ?? {};
+  const defs = props.ContainerDefinitions;
+  if (!Array.isArray(defs)) return [];
+  return defs.filter((d): d is Record<string, unknown> => typeof d === "object" && d !== null);
+}
+
+/**
+ * Whether a build's `env` (from `--env` or the project's `ownership.env`, see
+ * PostSynthContext#env and #201) should be treated as the strict "full"/
+ * production tier for tier-gated checks, vs a relaxed "light" tier acceptable
+ * for local/Floci-style stacks. Reuses the existing `ctx.env` seam — no new
+ * tier field. An undefined or unrecognized env is treated as non-strict so a
+ * project that never sets `--env`/`ownership.env` isn't unexpectedly hard-failed.
+ */
+export function isFullTierEnv(env: string | undefined): boolean {
+  return env === "prod" || env === "production" || env === "full";
+}
+
+/**
  * Check if a port range [fromPort, toPort] contains any of the sensitive ports.
  */
 export function portRangeContainsSensitive(
