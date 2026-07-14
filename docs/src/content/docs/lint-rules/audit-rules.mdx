@@ -1057,6 +1057,142 @@ Remove non-ASCII characters rejected at changeset time.
 
 Fix the invalid AttrRef producing null property values.
 
+### WAW038
+
+**RDS instance is publicly accessible** — merge-worthy · guidance
+
+Set PubliclyAccessible: false and reach the database through the VPC.
+
+Authority: [AWS — Security Pillar (Well-Architected)](https://docs.aws.amazon.com/wellarchitected/latest/security-pillar/welcome.html)
+
+### WAW039
+
+**RDS automated backups disabled** — merge-worthy · guidance
+
+Set a positive BackupRetentionPeriod.
+
+### WAW040
+
+**RDS deletion protection disabled (full tier)** — merge-worthy · guidance
+
+Set DeletionProtection: true on the full/production tier.
+
+### WAW041
+
+**RDS Proxy does not require TLS** — merge-worthy · guidance
+
+Set RequireTLS: true on the DB proxy.
+
+Authority: [AWS — Security Pillar (Well-Architected)](https://docs.aws.amazon.com/wellarchitected/latest/security-pillar/welcome.html)
+
+### WAW042
+
+**S3 bucket missing a TLS-only bucket policy** — merge-worthy · guidance
+
+Add a Deny statement keyed on aws:SecureTransport = false.
+
+Authority: [AWS — Security Pillar (Well-Architected)](https://docs.aws.amazon.com/wellarchitected/latest/security-pillar/welcome.html)
+
+### WAW043
+
+**KMS key rotation disabled** — merge-worthy · guidance
+
+Set EnableKeyRotation: true on the customer-managed key.
+
+Authority: [AWS — Security Pillar (Well-Architected)](https://docs.aws.amazon.com/wellarchitected/latest/security-pillar/welcome.html)
+
+### WAW044
+
+**ALB HTTP listener does not redirect to HTTPS** — merge-worthy · guidance
+
+Add a redirect DefaultAction (Protocol: HTTPS) to the HTTP listener.
+
+Authority: [AWS — Security Pillar (Well-Architected)](https://docs.aws.amazon.com/wellarchitected/latest/security-pillar/welcome.html)
+
+### WAW045
+
+**ALB listener uses a weak or missing TLS policy** — merge-worthy · guidance
+
+Set SslPolicy to a TLS 1.2+ predefined policy.
+
+Authority: [AWS — Security Pillar (Well-Architected)](https://docs.aws.amazon.com/wellarchitected/latest/security-pillar/welcome.html)
+
+### WAW046
+
+**ECS container passes a secret via plaintext Environment** — merge-worthy · guidance
+
+Move the value to Secrets (Secrets Manager/SSM Parameter Store).
+
+Authority: [AWS — Security Pillar (Well-Architected)](https://docs.aws.amazon.com/wellarchitected/latest/security-pillar/welcome.html)
+
+### WAW047
+
+**ECS container runs privileged** — merge-worthy · guidance
+
+Remove Privileged: true from the container definition.
+
+Authority: [AWS — Security Pillar (Well-Architected)](https://docs.aws.amazon.com/wellarchitected/latest/security-pillar/welcome.html)
+
+### WAW048
+
+**ECS container missing log configuration** — report-only · guidance
+
+Add a LogConfiguration (e.g. awslogs) to the container.
+
+### WAW049
+
+**Security group allows unrestricted ingress on a non-ALB port** — merge-worthy · guidance
+
+Restrict the CIDR; only ALB:443 is exempt from this rule.
+
+Authority: [AWS — Security Pillar (Well-Architected)](https://docs.aws.amazon.com/wellarchitected/latest/security-pillar/welcome.html)
+
+### WAW050
+
+**Cognito advanced security disabled** — merge-worthy · guidance
+
+Set UserPoolAddOns.AdvancedSecurityMode to AUDIT or ENFORCED.
+
+Authority: [AWS — Security Pillar (Well-Architected)](https://docs.aws.amazon.com/wellarchitected/latest/security-pillar/welcome.html)
+
+### WAW051
+
+**Cognito UserPoolClient allows the implicit OAuth grant** — merge-worthy · guidance
+
+Drop "implicit" from AllowedOAuthFlows; use the code grant.
+
+Authority: [AWS — Security Pillar (Well-Architected)](https://docs.aws.amazon.com/wellarchitected/latest/security-pillar/welcome.html)
+
+### WAW052
+
+**Cognito MFA not required (full tier)** — merge-worthy · guidance
+
+Set MfaConfiguration: ON on the full/production tier.
+
+Authority: [AWS — Security Pillar (Well-Architected)](https://docs.aws.amazon.com/wellarchitected/latest/security-pillar/welcome.html)
+
+### WAW053
+
+**ECR repository does not scan images on push** — merge-worthy · guidance
+
+Set ImageScanningConfiguration.ScanOnPush: true.
+
+Authority: [AWS — Security Pillar (Well-Architected)](https://docs.aws.amazon.com/wellarchitected/latest/security-pillar/welcome.html)
+
+### WAW054
+
+**ECR repository allows mutable image tags** — merge-worthy · guidance
+
+Set ImageTagMutability: IMMUTABLE.
+
+Authority: [AWS — Security Pillar (Well-Architected)](https://docs.aws.amazon.com/wellarchitected/latest/security-pillar/welcome.html)
+
+### WAW055
+
+**CloudWatch Logs log group has no retention period** — report-only · guidance
+
+Set an explicit RetentionInDays.
+
 ## Azure ARM (AZR)
 
 Run against ARM deployment templates (JSON).

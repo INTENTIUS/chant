@@ -29,6 +29,24 @@ import { waw034 } from "./waw034";
 import { waw035 } from "./waw035";
 import { waw036 } from "./waw036";
 import { waw037 } from "./waw037";
+import { waw038 } from "./waw038";
+import { waw039 } from "./waw039";
+import { waw040 } from "./waw040";
+import { waw041 } from "./waw041";
+import { waw042 } from "./waw042";
+import { waw043 } from "./waw043";
+import { waw044 } from "./waw044";
+import { waw045 } from "./waw045";
+import { waw046 } from "./waw046";
+import { waw047 } from "./waw047";
+import { waw048 } from "./waw048";
+import { waw049 } from "./waw049";
+import { waw050 } from "./waw050";
+import { waw051 } from "./waw051";
+import { waw052 } from "./waw052";
+import { waw053 } from "./waw053";
+import { waw054 } from "./waw054";
+import { waw055 } from "./waw055";
 
 export const postSynthChecks: PostSynthCheck[] = [
   cor020,
@@ -60,4 +78,22 @@ export const postSynthChecks: PostSynthCheck[] = [
   waw035,
   waw036,
   waw037,
+  waw038,
+  waw039,
+  waw040,
+  waw041,
+  waw042,
+  waw043,
+  waw044,
+  waw045,
+  waw046,
+  waw047,
+  waw048,
+  waw049,
+  waw050,
+  waw051,
+  waw052,
+  waw053,
+  waw054,
+  waw055,
 ];
