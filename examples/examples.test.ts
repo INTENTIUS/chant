@@ -27,6 +27,7 @@ import agentTaskOp from "./sprites-agent-task/ops/agent-task.op";
 import guardedTaskOp from "./sprites-agent-task/ops/guarded-task.op";
 import managedAgentSessionOp from "./sprites-managed-agent-worker/ops/managed-agent-session.op";
 import buildSandboxOp from "./sprites-build-sandbox/ops/build-sandbox.op";
+import flyDurableDeployOp from "./fly-durable-deploy/ops/fly-durable-deploy.op";
 import flyRollbackOp from "./fly-deploy-rollback/ops/fly-deploy.op";
 import flyRollbackGuardedOp from "./fly-deploy-rollback/ops/fly-deploy-guarded.op";
 import deployGatedOp from "./getting-started/deploy-gated.op";
@@ -432,6 +433,26 @@ describe("sprites-build-sandbox Op (#869)", () => {
     const reset = props.phases.find((p) => p.name === "Reset")!.steps[0];
     expect(checkpoint.args?.comment).toBe("toolchain-ready");
     expect(reset.args?.comment).toBe("toolchain-ready");
+  });
+});
+
+// ── Durable Fly deploy on Temporal — fly-durable-deploy (#870) ──────────
+// The same App+Machine deploy as local-fly, but run as a durable Temporal Op:
+// Build serializes src/infra.ts, Deploy applies it via flyApply. The live run
+// (chant run fly-durable-deploy --temporal against mudflaps) is in the tutorial;
+// here we compile-validate the two-phase shape and the flyApply activity.
+
+describe("fly-durable-deploy Op (#870)", () => {
+  test("composes Build → Deploy with flyApply on its own task queue", () => {
+    const props = (flyDurableDeployOp as unknown as {
+      props: { name: string; taskQueue?: string; phases: Array<{ name: string; steps: Array<{ fn: string }> }> };
+    }).props;
+    // Globally-unique Op name (must not collide with fly-deploy-rollback's "fly-deploy").
+    expect(props.name).toBe("fly-durable-deploy");
+    expect(props.taskQueue).toBe("fly-durable");
+    expect(props.phases.map((p) => p.name)).toEqual(["Build", "Deploy"]);
+    expect(props.phases.find((p) => p.name === "Build")!.steps[0].fn).toBe("chantBuild");
+    expect(props.phases.find((p) => p.name === "Deploy")!.steps[0].fn).toBe("flyApply");
   });
 });
 

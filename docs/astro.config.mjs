@@ -91,6 +91,7 @@ export default defineConfig({
 								{ label: 'Deploy Fly Machines Offline', slug: 'tutorials/local-fly' },
 								{ label: 'Reconcile Fly Machines', slug: 'tutorials/fly-machines-reconcile' },
 								{ label: 'Fly Deploy with Checkpoint Rollback', slug: 'tutorials/fly-deploy-rollback' },
+								{ label: 'Durable Fly Deploy on Temporal', slug: 'tutorials/fly-durable-deploy' },
 								{ label: 'Managed Agents Worker on Sprites', slug: 'tutorials/sprites-managed-agent-worker' },
 								{ label: 'Disposable Build Sandbox on Sprites', slug: 'tutorials/sprites-build-sandbox' },
 							],

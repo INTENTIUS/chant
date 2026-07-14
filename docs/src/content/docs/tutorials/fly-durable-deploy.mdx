@@ -1,0 +1,144 @@
+---
+title: Durable Fly Deploy on Temporal
+description: Run a Fly Machines deploy as a durable Temporal workflow — chant generates the worker, auto-starts a local Temporal server, and applies the App + Machine against mudflaps. Kill the worker mid-deploy and it resumes from Temporal's persisted state. Offline, or real Fly by changing two environment variables.
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+The [`fly-durable-deploy`](https://github.com/INTENTIUS/chant/tree/main/examples/fly-durable-deploy)
+example runs a Fly Machines deploy as a **durable Temporal workflow**. Where the
+other Fly tutorials run the deploy on chant's local executor, this one runs the
+same kind of Op on Temporal — so if the worker crashes mid-deploy, restarting it
+resumes exactly where it left off, from state Temporal persisted.
+
+Where [`fly-deploy-rollback`](/chant/tutorials/fly-deploy-rollback/) uses a Sprite
+checkpoint as its recovery boundary, here **Temporal itself is the durability
+layer** — the workflow's progress is the checkpoint.
+
+## How chant runs an Op on Temporal
+
+`chant build` compiles each `*.op.ts` into a Temporal workflow, worker, and
+activities under `dist/ops/<name>/`. `chant run <op> --temporal` then auto-starts
+a local `temporal server start-dev`, spawns the generated worker, submits the
+workflow, and streams progress until it completes:
+
+```
+chant.config.ts ──chant build──▶ dist/ops/fly-durable-deploy/{workflow,worker,activities}.ts
+                                        │
+                 chant run fly-durable-deploy --temporal
+                                        ▼
+   temporal server start-dev  ◀──polls──  worker (flyApply → mudflaps)
+```
+
+## The op
+
+`ops/fly-durable-deploy.op.ts` is two durable phases:
+
+```ts
+import { Op, phase, build } from "@intentius/chant-lexicon-temporal";
+import { flyApplyStep } from "@intentius/chant-lexicon-fly";
+
+export default Op({
+  name: "fly-durable-deploy",
+  overview: "Durably deploy the Fly App + Machine on Temporal",
+  taskQueue: "fly-durable",
+  phases: [
+    phase("Build", [build(".", { script: "build:fly" })]),
+    phase("Deploy", [flyApplyStep("dist/fly.json")]),
+  ],
+});
+```
+
+`Build` serializes `src/infra.ts` (one App + Machine) into the flaps plan;
+`Deploy` applies it straight to the Machines API and waits each machine to
+`started`. The flaps endpoint comes from `FLY_FLAPS_BASE_URL` — local mudflaps
+offline, real Fly when unset.
+
+`chant.config.ts` declares the Temporal profile the generated worker reads:
+
+```ts
+temporal: {
+  profiles: { local: { address: "localhost:7233", namespace: "default", taskQueue: "fly-durable", autoStart: true } },
+  defaultProfile: "local",
+}
+```
+
+`autoStart: true` is what lets `chant run --temporal` boot the dev server for you.
+
+## Prerequisites
+
+- Node.js and `npm`.
+- Docker (for the mudflaps emulator).
+- The [`temporal` CLI](https://docs.temporal.io/cli) (`brew install temporal`) —
+  `chant run --temporal` shells `temporal server start-dev`.
+
+## Run it
+
+Boot mudflaps, generate the worker, and run the deploy durably:
+
+```bash
+docker run -d --rm -p 4280:4280 --name mudflaps ghcr.io/intentius/mudflaps:0.4.1
+
+cd examples/fly-durable-deploy
+npm install
+export FLY_FLAPS_BASE_URL=http://localhost:4280
+
+chant build                       # generates dist/ops/fly-durable-deploy/
+chant run fly-durable-deploy --temporal   # auto-starts Temporal, runs the durable deploy
+```
+
+```
+autoStart: Starting temporal server start-dev...
+Temporal server ready.
+Spawning worker for Op "fly-durable-deploy" (profile: local)...
+Workflow started: chant-op-fly-durable-deploy
+Op "fly-durable-deploy" completed successfully.
+```
+
+The App + Machine are now in mudflaps:
+
+```bash
+curl -s http://localhost:4280/v1/apps/fly-durable-demo/machines | jq '.[].state'
+# "started"
+```
+
+<Aside type="note">
+In a dev checkout, run through the workspace CLI —
+`npx tsx ../../packages/core/src/cli/main.ts run fly-durable-deploy --temporal`.
+</Aside>
+
+## Watch it resume after a crash
+
+The point of running on Temporal is durability. To see it, run the worker in one
+terminal and the workflow-start in another, then kill the worker mid-deploy:
+
+```bash
+# terminal 1 — the worker
+npx tsx dist/ops/fly-durable-deploy/worker.ts
+
+# terminal 2 — start the workflow, then Ctrl-C terminal 1 during Deploy
+temporal workflow start --type flyDurableDeployWorkflow --task-queue fly-durable \
+  --workflow-id chant-op-fly-durable-deploy --namespace default
+```
+
+Temporal has persisted the workflow's history. Restart the worker in terminal 1
+and it picks up from the last completed activity — the `Build` result is not
+recomputed, and `Deploy` continues. Nothing is threaded by hand; the workflow
+state is the checkpoint.
+
+## Run it against real Fly
+
+Drop the emulator override and give it a token — the same op, no code change:
+
+```bash
+docker rm -f mudflaps
+unset FLY_FLAPS_BASE_URL       # flyApply falls through to real Fly
+export FLY_API_TOKEN=...
+
+chant run fly-durable-deploy --temporal
+```
+
+Against a real Temporal cluster instead of the local dev server, point the
+`local` profile's `address` at it (and set `autoStart: false`); the generated
+worker connects there, and the search attributes it upserts (`OpName`, `Phase`)
+must be registered on that namespace once.

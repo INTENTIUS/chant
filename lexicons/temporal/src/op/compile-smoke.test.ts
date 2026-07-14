@@ -36,7 +36,7 @@ const temporal: TemporalChantConfig = {
   profiles: { local: { address: "localhost:7233", namespace: "default", taskQueue: "tq" } },
   defaultProfile: "local",
 };
-export default { temporal };
+export default { lexicons: ["temporal"], temporal };
 `;
 
 /** Serialize `ops` into a temp project and return any type diagnostics. */
@@ -65,6 +65,10 @@ function compileGenerated(label: string, ops: Map<string, Declarable>): string[]
     // Bundler resolution mirrors how chant resolves its `.js`-suffixed ESM
     // imports back to the `.ts` sources (the same model tsx uses at runtime).
     moduleResolution: ts.ModuleResolutionKind.Bundler,
+    // Resolve `@intentius/*` package imports to their `development` (source)
+    // export condition, as tsx does at runtime — otherwise the `types` condition
+    // resolves a possibly-stale built `dist/*.d.ts` (e.g. an old loadActivities).
+    customConditions: ["development"],
     esModuleInterop: true,
     types: [],
   });
