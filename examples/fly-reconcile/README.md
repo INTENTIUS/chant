@@ -24,8 +24,8 @@ Boot mudflaps once, then run the op as many times as you like:
 docker run -d --rm -p 4280:4280 --name mudflaps ghcr.io/intentius/mudflaps:0.4.1
 
 npm install
-chant run fly            # first run: creates app + volume + web + worker
-chant run fly            # second run: no-op — nothing changed
+chant run fly-reconcile  # first run: creates app + volume + web + worker
+chant run fly-reconcile  # second run: no-op — nothing changed
 ```
 
 Then exercise the reconcile:
@@ -55,7 +55,7 @@ phase("Apply", [flyApplyStep("dist/fly.json", { prune: true })]),   // no endpoi
 
 ```bash
 export FLY_API_TOKEN=...
-chant run fly
+chant run fly-reconcile
 ```
 
 With no `endpoint`, `flyApply` falls through to `FLY_FLAPS_BASE_URL` (or Fly's
