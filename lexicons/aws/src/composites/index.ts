@@ -34,3 +34,5 @@ export { MinimalVpc } from "./minimal-vpc";
 export type { MinimalVpcProps } from "./minimal-vpc";
 export { MicrovmApp } from "./microvm-app";
 export type { MicrovmAppProps, MicrovmAppResult, MicrovmAppBuildConnectorProps } from "./microvm-app";
+export { AgentCoreAgent } from "./agentcore-agent";
+export type { AgentCoreAgentProps, AgentCoreAgentResult } from "./agentcore-agent";
