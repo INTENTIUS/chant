@@ -32,3 +32,5 @@ export { Ec2InstanceRole } from "./ec2-instance-role";
 export type { Ec2InstanceRoleProps } from "./ec2-instance-role";
 export { MinimalVpc } from "./minimal-vpc";
 export type { MinimalVpcProps } from "./minimal-vpc";
+export { MicrovmApp } from "./microvm-app";
+export type { MicrovmAppProps, MicrovmAppResult, MicrovmAppBuildConnectorProps } from "./microvm-app";
