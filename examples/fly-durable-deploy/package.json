@@ -1,0 +1,17 @@
+{
+  "name": "fly-durable-deploy-example",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build:fly": "chant build src --lexicon fly -o dist/fly.json",
+    "build": "chant build",
+    "lint": "chant lint src"
+  },
+  "dependencies": {
+    "@intentius/chant": "*",
+    "@intentius/chant-lexicon-fly": "*",
+    "@intentius/chant-lexicon-temporal": "*"
+  },
+  "devDependencies": { "typescript": "*" }
+}

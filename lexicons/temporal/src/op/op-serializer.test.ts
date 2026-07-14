@@ -333,10 +333,13 @@ describe("serializeOps()", () => {
       expect(w).toContain("./workflow.ts");
     });
 
-    it("imports activities from ./activities.js", () => {
+    it("registers activities from every configured lexicon via loadActivities", () => {
       const ops = new Map([makeOp({ name: "op", overview: "o", phases: [] })]);
       const w = serializeOps(ops)["ops/op/worker.ts"];
-      expect(w).toContain("./activities.js");
+      // Not a hardcoded ./activities.js import — a multi-lexicon Op (e.g. fly +
+      // temporal) needs every lexicon's activities, like the local executor.
+      expect(w).toContain("loadActivities(chantConfig.lexicons");
+      expect(w).toContain("@intentius/chant/op");
     });
 
     it("resolves TLS and apiKey from profile", () => {
