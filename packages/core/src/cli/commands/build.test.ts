@@ -201,6 +201,39 @@ export const testEntity = {
     expect(existsSync(join(testDir, "dist", "ops", "alb-deploy", "worker.ts"))).toBe(true);
   });
 
+  test("op worker files go to <project>/dist/ops even with no --output (#878)", async () => {
+    // The generated Op worker must land where `chant run <op> --temporal` reads it
+    // (`<project>/dist/ops/<name>/worker.ts`) even when the build has no --output
+    // (a Temporal Op project often has no primary resource manifest to route).
+    const opSerializer: Serializer = {
+      name: "multi",
+      rulePrefix: "MULTI",
+      serialize: () => ({
+        primary: "{}",
+        files: {
+          "ops/durable-hello/workflow.ts": "// workflow\n",
+          "ops/durable-hello/worker.ts": "// worker\n",
+          "ops/durable-hello/activities.ts": "// activities\n",
+        },
+      }),
+    };
+    await writeFile(
+      join(testDir, "infra.ts"),
+      `export const x = { [Symbol.for("chant.declarable")]: true, entityType: "X", lexicon: "multi", kind: "resource", props: {}, attributes: {} };`,
+    );
+
+    const result = await buildCommand({
+      path: testDir,
+      format: "json",
+      serializers: [opSerializer],
+      // no `output`
+    } as BuildOptions);
+
+    expect(result.errors).toEqual([]);
+    expect(existsSync(join(testDir, "dist", "ops", "durable-hello", "worker.ts"))).toBe(true);
+    expect(existsSync(join(testDir, "dist", "ops", "durable-hello", "workflow.ts"))).toBe(true);
+  });
+
   // ── #284 bug 2: array-of-objects must serialize to valid YAML ──────────
   test("yaml format serializes an array of objects to valid, round-trippable YAML", async () => {
     // A serializer that emits a CloudFormation-shaped template with a tag list.
