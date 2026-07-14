@@ -264,6 +264,34 @@ export async function buildCommand(options: BuildOptions): Promise<BuildResult> 
       }
     }
 
+    // Op worker artifacts (`ops/<name>/{workflow,worker,activities}.ts`) always
+    // go to `<project>/dist/ops/` — the fixed location `chant run <op> --temporal`
+    // reads (`join(projectPath, "dist", "ops", ...)`) — independent of `--output`,
+    // which routes the primary resource manifest. Without this, a bare `chant build`
+    // only printed them to stderr and `--output foo.yaml` scattered them next to
+    // `foo.yaml`, so the durable-run worker was never where `run --temporal` looks.
+    const projectDist = resolve(options.path ?? ".", "dist");
+    let opsWritten = 0;
+    for (const [filename, content] of [...additionalFiles]) {
+      if (!filename.startsWith("ops/")) continue;
+      additionalFiles.delete(filename);
+      try {
+        const targetPath = join(projectDist, filename);
+        mkdirSync(dirname(targetPath), { recursive: true });
+        writeFileSync(targetPath, content);
+        opsWritten += 1;
+      } catch (err) {
+        errors.push(
+          formatError({
+            message: `Failed to write Op worker file ${filename}: ${err instanceof Error ? err.message : String(err)}`,
+          }),
+        );
+      }
+    }
+    if (opsWritten > 0) {
+      console.error(formatInfo(`Wrote ${opsWritten} Op worker file(s) under ${join(options.path ?? ".", "dist", "ops")}/`));
+    }
+
     if (options.output) {
       // Write to file — ensure parent directories exist for both the primary
       // output path and any nested additional-file paths (e.g. ops/<name>/...).
