@@ -107,15 +107,28 @@ export interface IRExport {
   attr?: string;
 }
 
+/** A cross-stack import this stack consumes — a `Parameter` fed from another
+ * stack's output at deploy time. A viewer matches an import `name` to another
+ * stack's export `name` to draw the cross-stack edge; the parameter's in-stack
+ * consumers are ordinary `$ref` edges to `node` (#513). */
+export interface IRImport {
+  /** Parameter name — the cross-stack handle (e.g. "clusterArn"). */
+  name: string;
+  /** Logical name of the parameter node. */
+  node: string;
+}
+
 /** The full graph IR for a project at the default (declarable) detail level. */
 export interface GraphIR {
   nodes: IRNode[];
   edges: IREdge[];
   groups: IRGroups;
-  /** Outputs this stack publishes for other stacks to import. Imports are already
-   * nodes (`AWS::CloudFormation::Parameter` etc.); a viewer matches an import's
-   * name to an export's name to draw the cross-stack edge to its producer (#513). */
+  /** Outputs this stack publishes for other stacks to import (#513). */
   exports?: IRExport[];
+  /** Parameters this stack imports from other stacks. A viewer matches an import's
+   * `name` to another stack's export `name` to draw the cross-stack edge; the
+   * parameter's in-stack consumers are ordinary `$ref` edges to it (#513). */
+  imports?: IRImport[];
 }
 
 /** A node is anything that serializes to a resource — not a property or output. */
@@ -134,6 +147,22 @@ function relFile(file: string | undefined, projectPath?: string): string | undef
   return file;
 }
 
+/** The logical name a `Ref`-style intrinsic points at, or undefined. Lexicon-
+ * agnostic: reads the intrinsic's `toJSON()` for the CloudFormation `{ Ref: name }`
+ * shape (aws `RefIntrinsic` etc.). A `Ref` to a node is a real dependency edge,
+ * not an opaque intrinsic (#513) — so we resolve it rather than flatten it. */
+function refIntrinsicTarget(value: unknown): string | undefined {
+  try {
+    const json = (value as { toJSON?: () => unknown }).toJSON?.();
+    if (json && typeof json === "object" && typeof (json as { Ref?: unknown }).Ref === "string") {
+      return (json as { Ref: string }).Ref;
+    }
+  } catch {
+    // Unresolvable at graph-build time — leave it as an opaque intrinsic.
+  }
+  return undefined;
+}
+
 /** Resolve the producer (logical name) an AttrRef points at. */
 function refTarget(ref: AttrRef, reverse: Map<object, string>): string | undefined {
   // Nested refs (under `props`) aren't assigned a logical name by resolveAttrRefs,
@@ -143,7 +172,7 @@ function refTarget(ref: AttrRef, reverse: Map<object, string>): string | undefin
 }
 
 /** Project a value into a JSON-safe, scrubbed form. References become `{ $ref }`. */
-function project(value: unknown, seen: Set<unknown>, reverse: Map<object, string>): unknown {
+function project(value: unknown, seen: Set<unknown>, reverse: Map<object, string>, nodeIds: Set<string>): unknown {
   if (value === null) return null;
   const t = typeof value;
   if (t === "string" || t === "number" || t === "boolean") return value;
@@ -157,8 +186,12 @@ function project(value: unknown, seen: Set<unknown>, reverse: Map<object, string
     const to = refTarget(value, reverse);
     return { $ref: to ? `${to}.${value.attribute}` : value.attribute } satisfies AttrRefEnvelope;
   }
-  // Other intrinsics (interpolations, pseudo-parameters): mark, don't inline.
   if ((value as Record<symbol, unknown>)[INTRINSIC_MARKER] === true) {
+    // A `Ref` to a known node is a real reference — surface it as `$ref` so attrs
+    // match the edge (#513). Other intrinsics (interpolations, pseudo-parameters,
+    // Ref to a non-node) stay opaque.
+    const to = refIntrinsicTarget(value);
+    if (to && nodeIds.has(to)) return { $ref: to } satisfies AttrRefEnvelope;
     return { $intrinsic: true };
   }
 
@@ -168,20 +201,20 @@ function project(value: unknown, seen: Set<unknown>, reverse: Map<object, string
   // Nested declarables (e.g. an inlined property-kind resource) keep their
   // config in a non-enumerable `props` bag, like top-level nodes — project that.
   if (isDeclarable(value)) {
-    const out = projectConfig(value, seen, reverse);
+    const out = projectConfig(value, seen, reverse, nodeIds);
     seen.delete(value);
     return out;
   }
 
   if (Array.isArray(value)) {
-    const out = value.map((v) => project(v, seen, reverse)).filter((v) => v !== undefined);
+    const out = value.map((v) => project(v, seen, reverse, nodeIds)).filter((v) => v !== undefined);
     seen.delete(value);
     return out;
   }
 
   const out: Record<string, unknown> = {};
   for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
-    const p = project(v, seen, reverse);
+    const p = project(v, seen, reverse, nodeIds);
     if (p !== undefined) out[k] = p;
   }
   seen.delete(value);
@@ -212,10 +245,11 @@ function projectConfig(
   entity: Declarable,
   seen: Set<unknown>,
   reverse: Map<object, string>,
+  nodeIds: Set<string>,
 ): Record<string, unknown> {
   const out: Record<string, unknown> = {};
   for (const [k, v] of configRoots(entity)) {
-    const p = project(v, seen, reverse);
+    const p = project(v, seen, reverse, nodeIds);
     if (p !== undefined) out[k] = p;
   }
   return out;
@@ -239,7 +273,13 @@ function collectEdges(
       }
       return;
     }
-    if ((value as Record<symbol, unknown>)[INTRINSIC_MARKER] === true) return;
+    if ((value as Record<symbol, unknown>)[INTRINSIC_MARKER] === true) {
+      // A `Ref` to a known node (a Parameter, or a resource) is a real dependency
+      // — resolve it to an edge instead of dropping it as an opaque intrinsic (#513).
+      const to = refIntrinsicTarget(value);
+      if (to && to !== from && nodeIds.has(to)) edges.push({ from, to, kind: "ref", viaAttr });
+      return;
+    }
     if (seen.has(value)) return;
     seen.add(value);
     if (Array.isArray(value)) {
@@ -287,7 +327,7 @@ export function buildGraphIr(
       id: name,
       kind: entity.entityType,
       lexicon: entity.lexicon,
-      attrs: projectConfig(entity, new Set(), reverse),
+      attrs: projectConfig(entity, new Set(), reverse, nodeIds),
     };
     if (prov?.composite) node.compositeParent = prov.composite;
     if (prov?.compositeInstance) node.compositeInstance = prov.compositeInstance;
@@ -339,8 +379,17 @@ export function buildGraphIr(
   }
   exports.sort((a, b) => a.name.localeCompare(b.name));
 
+  // Cross-stack imports: parameter nodes are the handles this stack imports by,
+  // matched to another stack's export names (#513). Detected by kind — the aws
+  // `Parameter` is the cross-stack input mechanism.
+  const imports: IRImport[] = nodes
+    .filter((n) => /(^|::)Parameter$/i.test(n.kind))
+    .map((n) => ({ name: n.id, node: n.id }))
+    .sort((a, b) => a.name.localeCompare(b.name));
+
   const ir: GraphIR = { nodes, edges, groups };
   if (exports.length) ir.exports = exports;
+  if (imports.length) ir.imports = imports;
   return ir;
 }
 
