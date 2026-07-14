@@ -192,7 +192,7 @@ export async function runLifecycleDiff(ctx: CommandContext): Promise<number> {
     : Array.from(buildResult.manifest.lexicons);
 
   if (args.live) {
-    return runLifecycleDiffLive({ environment, lexicons, plugins, buildResult });
+    return runLifecycleDiffLive({ environment, lexicons, plugins, buildResult, json: !!args.json });
   }
 
   return runLifecycleDiffDigest({ environment, lexicons, buildResult });
@@ -308,11 +308,16 @@ interface LiveDiffArgs {
   lexicons: string[];
   plugins: ObservationLexicon[];
   buildResult: BuildResult;
+  /** Emit machine-readable JSON on stdout instead of the human report (#852). */
+  json: boolean;
 }
 
 async function runLifecycleDiffLive(args: LiveDiffArgs): Promise<number> {
   let totalDrift = 0;
   let totalLexiconsChecked = 0;
+  // Collected per-lexicon results, emitted as one JSON object when --json is set
+  // (parsed by programmatic consumers, e.g. behold's inspect diff — #852).
+  const byLexicon: Record<string, { resources?: LiveDiffResult; artifacts?: LiveArtifactDiffResult }> = {};
 
   for (const lexiconName of args.lexicons) {
     const plugin = args.plugins.find((p) => p.name === lexiconName);
@@ -374,7 +379,8 @@ async function runLifecycleDiffLive(args: LiveDiffArgs): Promise<number> {
       const observedThen = prevSnapshot?.resources;
       const diff = diffLive({ declared, observedNow, observedThen });
       totalDrift += diff.driftedSinceSnapshot.length + diff.missing.length + diff.orphan.length + diff.disappeared.length;
-      renderLiveDiff(lexiconName, args.environment, diff);
+      if (args.json) (byLexicon[lexiconName] ??= {}).resources = diff;
+      else renderLiveDiff(lexiconName, args.environment, diff);
       lexiconChecked = true;
     }
 
@@ -392,7 +398,8 @@ async function runLifecycleDiffLive(args: LiveDiffArgs): Promise<number> {
       const observedThen = prevSnapshot?.artifacts;
       const adiff = diffLiveArtifacts({ observedNow, observedThen });
       totalDrift += adiff.added.length + adiff.removed.length + adiff.changed.length;
-      renderLiveArtifactDiff(lexiconName, args.environment, adiff);
+      if (args.json) (byLexicon[lexiconName] ??= {}).artifacts = adiff;
+      else renderLiveArtifactDiff(lexiconName, args.environment, adiff);
       lexiconChecked = true;
     }
 
@@ -404,6 +411,11 @@ async function runLifecycleDiffLive(args: LiveDiffArgs): Promise<number> {
       message: "No lexicons implement describeResources or listArtifacts — nothing to diff in --live mode",
     }));
     return 1;
+  }
+
+  if (args.json) {
+    console.log(JSON.stringify({ environment: args.environment, lexicons: byLexicon }));
+    return 0;
   }
 
   if (totalDrift === 0) {
