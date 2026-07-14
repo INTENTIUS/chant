@@ -1,14 +1,14 @@
 # fly-reconcile
 
-One Fly **app + two machines**, reconciled against a **running** mudflaps by
-`flyApply`. Where [`local-fly`](../local-fly) boots and tears down the emulator
-each run, this example points at a persistent mudflaps so you can run it
-repeatedly and watch the reconcile: create → no-op → in-place update → owned-only
-prune. No `flyctl`, no state file.
+One Fly **app + a volume + two machines** (`web` mounts the volume), reconciled
+against a **running** mudflaps by `flyApply`. Where [`local-fly`](../local-fly)
+boots and tears down the emulator each run, this example points at a persistent
+mudflaps so you can run it repeatedly and watch the reconcile: create → no-op →
+in-place update → owned-only prune. No `flyctl`, no state file.
 
 | Resource | Serializes to | Applied by |
 |----------|---------------|------------|
-| App + 2 Machines | flaps create bodies (JSON) | `flyApply` (prune on) |
+| App + Volume + 2 Machines | flaps create bodies (JSON) | `flyApply` (prune on) |
 
 The op is `Build → Apply` only — it does not manage the emulator, so state
 survives between runs. `flyApply` GET-then-creates each resource, updates changed
@@ -21,10 +21,10 @@ longer declared. A machine created directly in mudflaps, without the
 Boot mudflaps once, then run the op as many times as you like:
 
 ```bash
-docker run -d --rm -p 4280:4280 --name mudflaps ghcr.io/intentius/mudflaps:0.4.0
+docker run -d --rm -p 4280:4280 --name mudflaps ghcr.io/intentius/mudflaps:0.4.1
 
 npm install
-chant run fly            # first run: creates app + web + worker
+chant run fly            # first run: creates app + volume + web + worker
 chant run fly            # second run: no-op — nothing changed
 ```
 

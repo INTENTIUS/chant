@@ -261,10 +261,16 @@ describeExample(
       const reqs = Object.values(plan);
       const app = reqs.find((r) => r.endpoint === "/v1/apps");
       expect(app!.body.app_name).toBe("fly-reconcile-demo");
+      // A volume, created before the machine that mounts it.
+      const volume = reqs.find((r) => /\/v1\/apps\/[^/]+\/volumes$/.test(r.endpoint));
+      expect(volume!.body.name).toBe("data");
       // Two machines, each carrying the managed-by marker the prune reads back.
       const machines = reqs.filter((r) => /\/v1\/apps\/[^/]+\/machines$/.test(r.endpoint));
       expect(machines.map((m) => m.body.name).sort()).toEqual(["web", "worker"]);
       for (const m of machines) expect(m.body.config.metadata["managed-by"]).toBe("chant");
+      // web mounts the volume by name.
+      const web = machines.find((m) => m.body.name === "web");
+      expect(web!.body.config.mounts).toEqual([{ volume: "data", path: "/data" }]);
     },
   },
 );
