@@ -33,12 +33,12 @@ describe("serializeComponent()", () => {
     expect(activities).toContain("export { runCapabilityStep, rollbackCapabilityStep } from '@intentius/chant-lexicon-temporal/component-op/activities';");
   });
 
-  it("worker.ts bootstraps a Worker pointed at workflow.js with the component name as the default task queue", () => {
+  it("worker.ts bootstraps a Worker pointed at workflow.ts with the component name as the default task queue", () => {
     const component: DriverComponent = { name: "svc", dependsOn: [], deploy: [] };
     const worker = serializeComponent(component)["components/svc/worker.ts"];
     expect(worker).toContain("Worker.create");
     expect(worker).toContain('taskQueue: profile.taskQueue ?? "svc"');
-    expect(worker).toContain("workflowsPath: fileURLToPath(new URL('./workflow.js', import.meta.url))");
+    expect(worker).toContain("workflowsPath: fileURLToPath(new URL('./workflow.ts', import.meta.url))");
   });
 
   // ── env/vars threading (#589 review: --env was silently dropped) ──────────

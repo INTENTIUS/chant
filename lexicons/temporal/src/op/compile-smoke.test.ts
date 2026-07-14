@@ -48,7 +48,9 @@ function compileGenerated(label: string, ops: Map<string, Declarable>): string[]
   const files = serializeOps(ops);
   const targets: string[] = [];
   for (const [rel, content] of Object.entries(files)) {
-    const abs = join(projectDir, rel);
+    // Match the real build layout: generated files live under dist/ (so the
+    // worker's `../../../chant.config.js` resolves to the project config).
+    const abs = join(projectDir, "dist", rel);
     mkdirSync(join(abs, ".."), { recursive: true });
     writeFileSync(abs, content as string);
     targets.push(abs);
