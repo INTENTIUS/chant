@@ -80,6 +80,7 @@ export {
   VpcDefault, FargateAlb, AlbShared, FargateService, RdsInstance, RdsPostgres,
   EfsWithAccessPoint,
   Ec2InstanceRole, MinimalVpc,
+  AgentCoreAgent,
 } from "./composites/index";
 export type {
   LambdaFunctionProps, LambdaApiProps, ScheduledLambdaProps,
@@ -87,6 +88,7 @@ export type {
   VpcDefaultProps, FargateAlbProps, AlbSharedProps, FargateServiceProps, RdsInstanceProps, RdsPostgresProps,
   EfsWithAccessPointProps,
   Ec2InstanceRoleProps, MinimalVpcProps,
+  AgentCoreAgentProps, AgentCoreAgentResult,
 } from "./composites/index";
 
 // Code generation pipeline
