@@ -85,8 +85,14 @@ export default defineConfig({
 					label: 'Tutorials',
 					items: [
 						{ label: 'Alert Triage (local)', slug: 'tutorials/alert-triage-local' },
-						{ label: 'Fly Deploy with Checkpoint Rollback', slug: 'tutorials/fly-deploy-rollback' },
-						{ label: 'Managed Agents Worker on Sprites', slug: 'tutorials/sprites-managed-agent-worker' },
+						{
+							label: 'Fly',
+							items: [
+								{ label: 'Deploy Fly Machines Offline', slug: 'tutorials/local-fly' },
+								{ label: 'Fly Deploy with Checkpoint Rollback', slug: 'tutorials/fly-deploy-rollback' },
+								{ label: 'Managed Agents Worker on Sprites', slug: 'tutorials/sprites-managed-agent-worker' },
+							],
+						},
 						{ label: 'GCP GKE + Kubernetes', slug: 'tutorials/gke-kubernetes' },
 						{ label: 'GKE Composites', link: '/lexicons/k8s/gke-composites/' },
 						{ label: 'AWS EKS + Kubernetes', slug: 'tutorials/eks-kubernetes' },
