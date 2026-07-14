@@ -126,6 +126,21 @@ export type {
   SpriteApplyServicesResult,
 } from "./sprite-config";
 
+// Sprite keep-alive Tasks activities (#847) — a hold that stops a Sprite pausing
+// mid-session. `loadActivities(["fly"])` binds these; step builders live in core.
+export {
+  spriteTaskCreate,
+  spriteTaskRefresh,
+  spriteTaskRelease,
+  spriteTasksUrl,
+  spriteTaskUrl,
+} from "./sprite-tasks";
+export type {
+  SpriteTaskCreateArgs,
+  SpriteTaskRefreshArgs,
+  SpriteTaskReleaseArgs,
+} from "./sprite-tasks";
+
 // spritzer (the Sprites API emulator) Docker lifecycle — the twin of mudflaps
 // above. `spritesUp`/`spritesDown` resolve by name so an Op can boot/tear down
 // the emulator as a modeled step; the sprite activities target it via

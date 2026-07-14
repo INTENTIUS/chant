@@ -99,6 +99,20 @@ The offline, Docker-free emulator that CI runs against is `createSpritesFake()` 
 
 The real Sprites REST surface is provisional (S6, tracked in #766): the endpoint constants may still move to match the official API. The activity input and output contracts (the `Args` and `Result` shapes shown above) are the stable interface the Ops and the emulator are written against, so build your Ops on those.
 
+## Beyond the five: filesystem, config, and keep-alive
+
+The same lexicon ships more Sprite primitives, all imported from `@intentius/chant-lexicon-fly` and resolved by `loadActivities(["fly"])`:
+
+| Family | Activities | Use |
+|--------|-----------|-----|
+| Filesystem (#848) | `spriteWriteFile` / `spriteReadFile` / `spriteListDir` / `spriteRemove` | stage an input file and read a result out without shelling `spriteExec` + `cat` |
+| Config reconcile (#849) | `spriteApplyNetworkPolicy` / `spriteApplyServices` | reconcile a Sprite's egress allowlist and background services against typed config (validated before any HTTP; a whole-object replace for policy, create-or-update by name for services) |
+| Keep-alive (#847) | `spriteTaskCreate` / `spriteTaskRefresh` / `spriteTaskRelease` | hold a Sprite active for a session so it will not pause; a session past the 1-hour task cap refreshes on an interval |
+
+These are still runtime-orchestration primitives, not declarable resources — a Sprite has no desired-state create body to reconcile.
+
 ## Where it fits
 
 The runnable starter is [`examples/sprites-agent-task`](../../examples/sprites-agent-task), which ships both Ops above. Run `chant run agent-task` for the happy path and `chant run guarded-task` to watch the checkpoint-as-compensation rollback. `guarded-task` exits non-zero on purpose: the `Run` phase fails, the `onFailure` `Restore` runs, and the sprite is back at `pre-run`.
+
+[`examples/sprites-managed-agent-worker`](../../examples/sprites-managed-agent-worker) composes the config and keep-alive families into one [Claude Managed Agents](https://docs.sprites.dev/integrations/claude-managed-agents/) session: create → egress policy → keep-alive task → env-contract file → runner-as-service → run → release → destroy, with an `onFailure` that frees the hold and tears the Sprite down.

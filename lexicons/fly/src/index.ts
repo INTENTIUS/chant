@@ -34,6 +34,9 @@ export {
   spriteRemove,
   spriteApplyNetworkPolicy,
   spriteApplyServices,
+  spriteTaskCreate,
+  spriteTaskRefresh,
+  spriteTaskRelease,
   spritesUp,
   spritesDown,
 } from "@intentius/chant/op";
