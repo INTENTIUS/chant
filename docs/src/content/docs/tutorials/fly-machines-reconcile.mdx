@@ -57,7 +57,7 @@ import { Op, phase, build } from "@intentius/chant/op";
 import { flyApplyStep } from "@intentius/chant-lexicon-fly";
 
 export default Op({
-  name: "fly",
+  name: "fly-reconcile",
   overview: "Reconcile the plan against a running mudflaps (create / update / prune)",
   taskQueue: "fly",
   phases: [
@@ -77,7 +77,7 @@ docker run -d --rm -p 4280:4280 --name mudflaps ghcr.io/intentius/mudflaps:0.4.1
 cd examples/fly-reconcile
 npm install
 
-chant run fly
+chant run fly-reconcile
 ```
 
 The first run creates everything:
@@ -91,7 +91,7 @@ created: machine/fly-reconcile-demo/worker
 
 <Aside type="note">
 In a dev checkout, run through the workspace CLI —
-`npx tsx ../../packages/core/src/cli/main.ts run fly` — rather than a globally
+`npx tsx ../../packages/core/src/cli/main.ts run fly-reconcile` — rather than a globally
 linked `chant`, which double-loads modules here.
 </Aside>
 
@@ -156,7 +156,7 @@ phase("Apply", [flyApplyStep("dist/fly.json", { prune: true })]),   // no endpoi
 
 ```bash
 export FLY_API_TOKEN=...
-chant run fly
+chant run fly-reconcile
 ```
 
 With no `endpoint`, `flyApply` falls through to `FLY_FLAPS_BASE_URL` (or Fly's

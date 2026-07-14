@@ -1,0 +1,106 @@
+---
+title: Disposable Build Sandbox on Sprites
+description: Warm a toolchain once, checkpoint it, then build from staged source and read the artifact out — resetting to the warm checkpoint so the next build starts fast. Runs offline against the spritzer emulator, or real Sprites by dropping one override.
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+The [`sprites-build-sandbox`](https://github.com/INTENTIUS/chant/tree/main/examples/sprites-build-sandbox)
+example is a disposable build box on a [Sprite](https://sprites.dev) — Fly.io's
+stateful, checkpointable sandbox. It warms a toolchain once, **checkpoints** it,
+then builds from staged source and reads the artifact out — resetting to the warm
+checkpoint so the next build starts fast.
+
+Two ideas do the work:
+
+- the **Sprite** is the disposable box — create it, use it, throw it away;
+- the **checkpoint** is the prepared pool — a warm toolchain you restore per
+  build instead of re-installing.
+
+The filesystem activities stage the source in and read the artifact out without
+shelling I/O through `spriteExec`. Sprites are imperative and ephemeral, so this
+lives in chant's Op/activity layer — no `build` phase, no serialized plan.
+
+| Phase | Activity | Point |
+|-------|----------|-------|
+| Create | `spriteCreate` | spawn the sandbox |
+| Warm | `spriteExec` | install the toolchain / prime caches (once) |
+| Checkpoint | `spriteCheckpoint` | snapshot the warm toolchain — the prepared pool |
+| Stage | `spriteWriteFile` | write the source in |
+| Build | `spriteExec` | produce the artifact |
+| Collect | `spriteReadFile` | read the artifact out |
+| Reset | `spriteRestore` | rewind to the warm toolchain for the next build |
+| Destroy | `spriteDestroy` | throw the box away |
+
+## The op
+
+`ops/build-sandbox.op.ts` is a pure activity sequence:
+
+```ts
+import { Op, phase } from "@intentius/chant-lexicon-temporal";
+import { spriteCreate, spriteExec, spriteCheckpoint, spriteWriteFile, spriteReadFile, spriteRestore, spriteDestroy }
+  from "@intentius/chant-lexicon-fly";
+
+export default Op({
+  name: "build-sandbox",
+  taskQueue: "sprites",
+  phases: [
+    phase("Create", [spriteCreate({ name: "builder", image: "sprites/base:latest" })]),
+    phase("Warm", [spriteExec({ id: "builder", cmd: "echo ready > /opt/toolchain" })]),
+    phase("Checkpoint", [spriteCheckpoint({ id: "builder", comment: "toolchain-ready" })]),
+    phase("Stage", [spriteWriteFile({ id: "builder", path: "/src/main.txt", content: "hello", mkdir: true })]),
+    phase("Build", [spriteExec({ id: "builder", cmd: "cat /src/main.txt > /out/artifact.txt" })]),
+    phase("Collect", [spriteReadFile({ id: "builder", path: "/out/artifact.txt" })]),
+    phase("Reset", [spriteRestore({ id: "builder", comment: "toolchain-ready" })]),
+    phase("Destroy", [spriteDestroy({ id: "builder" })]),
+  ],
+});
+```
+
+## Run it
+
+Boot the `spritzer` emulator, point at it, and run the Op — no Sprites account,
+no key:
+
+```bash
+docker run -d --rm -p 4290:4290 --name spritzer ghcr.io/intentius/spritzer:0.4.1
+
+cd examples/sprites-build-sandbox
+npm install
+export SPRITES_BASE_URL=http://localhost:4290
+
+chant run build-sandbox
+
+docker rm -f spritzer   # stop the emulator when done
+```
+
+<Aside type="note">
+In a dev checkout, run through the workspace CLI —
+`npx tsx ../../packages/core/src/cli/main.ts run build-sandbox` — rather than a
+globally linked `chant`, which double-loads modules here.
+</Aside>
+
+## The prepared pool
+
+Warming a toolchain — installing compilers, priming caches — is the slow part of
+a build. `spriteCheckpoint` snapshots it once; `spriteRestore` rewinds to it in
+seconds. In a real pool you keep the Sprite alive and restore the warm checkpoint
+per build, so each build starts from the toolchain, not a cold install. This
+example checkpoints, builds, then resets to the checkpoint to show the cycle —
+the same checkpoint-as-a-fast-reset that
+[`fly-deploy-rollback`](/chant/tutorials/fly-deploy-rollback/) uses for
+rollback, pointed at reuse instead.
+
+## Real Sprites
+
+Drop the `SPRITES_BASE_URL` override and set a token — the same Op, no code
+change:
+
+```bash
+unset SPRITES_BASE_URL
+export SPRITES_API_TOKEN=...
+chant run build-sandbox
+```
+
+The endpoint resolves to real Sprites, and the build runs in a real Firecracker
+sandbox instead of the emulator's scripted interpreter.
