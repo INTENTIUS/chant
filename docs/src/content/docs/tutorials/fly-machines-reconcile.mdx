@@ -1,0 +1,164 @@
+---
+title: Reconcile Fly Machines
+description: flyApply reconciles typed Machines against the live Fly control plane with no state file — create, no-op re-apply, in-place update, and owned-only prune that leaves foreign machines alone. Runs offline against a persistent mudflaps emulator, or real Fly by dropping one override.
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+The [`fly-reconcile`](https://github.com/INTENTIUS/chant/tree/main/examples/fly-reconcile)
+example shows chant's differentiator on Fly: a **stateless reconcile**. Fly's
+Machines API has no server-side declarative apply and chant keeps **no state
+file**, so `flyApply` does the reconcile itself — it diffs your typed resources
+against what the platform reports, and prunes only the machines it owns.
+
+Where [`local-fly`](/chant/tutorials/local-fly/) boots and tears down the
+emulator each run, this example points at a **persistent** mudflaps, so you run
+the op repeatedly and watch the reconcile converge.
+
+## The infra
+
+`src/infra.ts` is one app, a persistent volume, and two machines — `web` (which
+mounts the volume) and `worker`:
+
+```ts
+import { App, Machine, Volume, MachineConfig, MachineGuest, MachineMount, Fly } from "@intentius/chant-lexicon-fly";
+
+const app = new App({ name: "fly-reconcile-demo", org_slug: Fly.OrgSlug });
+const data = new Volume({ name: "data", region: "iad", size_gb: 1 });
+const guest = new MachineGuest({ cpu_kind: "shared", cpus: 1, memory_mb: 256 });
+
+const web = new Machine({
+  name: "web",
+  region: "iad",
+  config: new MachineConfig({
+    image: "flyio/hellofly:latest",
+    guest,
+    mounts: [new MachineMount({ volume: "data", path: "/data" })],
+  }),
+});
+const worker = new Machine({ name: "worker", region: "iad", config: new MachineConfig({ image: "flyio/hellofly:latest", guest }) });
+
+export { app, data, web, worker };
+```
+
+The serializer stamps `managed-by: chant` into each machine's `config.metadata`
+on its own — the ownership marker the owned-only prune reads back. `flyApply`
+creates the volume before the machine that mounts it (the dependency is on the
+wire — the volume is POSTed first), and FLY011 checks at build time that the
+mount names a declared volume.
+
+## The op
+
+`ops/fly.op.ts` is `Build → Apply` only — no emulator lifecycle, so state
+persists between runs:
+
+```ts
+import { Op, phase, build } from "@intentius/chant/op";
+import { flyApplyStep } from "@intentius/chant-lexicon-fly";
+
+export default Op({
+  name: "fly",
+  overview: "Reconcile the plan against a running mudflaps (create / update / prune)",
+  taskQueue: "fly",
+  phases: [
+    phase("Build", [build(".", { script: "build:fly" })]),
+    phase("Apply", [flyApplyStep("dist/fly.json", { endpoint: "http://localhost:4280", prune: true })]),
+  ],
+});
+```
+
+## Run it
+
+Boot mudflaps once, then run the op:
+
+```bash
+docker run -d --rm -p 4280:4280 --name mudflaps ghcr.io/intentius/mudflaps:0.4.1
+
+cd examples/fly-reconcile
+npm install
+
+chant run fly
+```
+
+The first run creates everything:
+
+```
+created: app/fly-reconcile-demo
+created: volume/fly-reconcile-demo/data
+created: machine/fly-reconcile-demo/web
+created: machine/fly-reconcile-demo/worker
+```
+
+<Aside type="note">
+In a dev checkout, run through the workspace CLI —
+`npx tsx ../../packages/core/src/cli/main.ts run fly` — rather than a globally
+linked `chant`, which double-loads modules here.
+</Aside>
+
+## Watch it reconcile
+
+The point is what re-running does. State lives on the platform, not in a file, so
+`flyApply` reads it back each time.
+
+**Re-apply is a no-op.** Run it again with no source change — nothing is touched:
+
+```
+unchanged: app/fly-reconcile-demo
+noop: volume/fly-reconcile-demo/data
+noop: machine/fly-reconcile-demo/web
+noop: machine/fly-reconcile-demo/worker
+```
+
+**A config change updates in place.** Edit `web`'s `config.image` in
+`src/infra.ts` and re-run — `flyApply` leases the machine, updates it, and waits
+the new instance to `started`. `worker`, unchanged, still no-ops:
+
+```
+updated: machine/fly-reconcile-demo/web
+noop: machine/fly-reconcile-demo/worker
+```
+
+**Removing a machine prunes it.** Delete the `worker` machine from `src/infra.ts`
+and re-run. Prune is on, so the machine chant no longer declares is destroyed —
+it carries the `managed-by: chant` marker:
+
+```
+noop: machine/fly-reconcile-demo/web
+pruned: fly-reconcile-demo/worker
+```
+
+**Foreign machines survive.** Create a machine directly in mudflaps, without the
+ownership marker, then re-run:
+
+```bash
+curl -X POST http://localhost:4280/v1/apps/fly-reconcile-demo/machines \
+  -H 'content-type: application/json' \
+  -d '{"name":"legacy","region":"iad","config":{"image":"flyio/hellofly:latest"}}'
+```
+
+The owned-only prune leaves `legacy` alone — chant deletes only what it owns, so
+a resource created outside chant is never touched. Authority stays with the
+platform; chant reconciles its own slice of it.
+
+Stop the emulator when done:
+
+```bash
+docker rm -f mudflaps
+```
+
+## Run it against real Fly
+
+Drop the endpoint override and give it a token — the same op, no code change:
+
+```ts
+phase("Apply", [flyApplyStep("dist/fly.json", { prune: true })]),   // no endpoint
+```
+
+```bash
+export FLY_API_TOKEN=...
+chant run fly
+```
+
+With no `endpoint`, `flyApply` falls through to `FLY_FLAPS_BASE_URL` (or Fly's
+`https://api.machines.dev`) and authenticates with the token. The reconcile is
+the same against real Fly — the emulator is just an endpoint swap.
