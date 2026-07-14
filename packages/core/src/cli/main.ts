@@ -16,7 +16,7 @@ import { runInit, runInitLexicon } from "./handlers/init";
 import { runList, runDescribe, runImport, runAudit, runUpdate, runDoctor } from "./handlers/misc";
 import { runVendor } from "./handlers/vendor";
 import { runMigrate } from "./handlers/migrate";
-import { runLifecycleSnapshot, runLifecycleShow, runLifecycleDiff, runLifecyclePlan, runLifecycleAffected, runLifecycleLog, runLifecycleUnknown } from "./handlers/lifecycle";
+import { runLifecycleSnapshot, runLifecycleShow, runLifecycleDiff, runLifecycleRollback, runLifecyclePlan, runLifecycleAffected, runLifecycleLog, runLifecycleUnknown } from "./handlers/lifecycle";
 import { runComponentsStatus, runComponentsReleaseRecord, runComponentsUnknown } from "./handlers/components";
 import { runGraph } from "./handlers/graph";
 import { runOp, runOpList, runOpStatus, runOpSignal, runOpCancel, runOpLog } from "./handlers/run";
@@ -445,6 +445,7 @@ const registry: CommandDef[] = [
   { name: "lifecycle snapshot", requiresPlugins: true, handler: runLifecycleSnapshot },
   { name: "lifecycle show", handler: runLifecycleShow },
   { name: "lifecycle diff", requiresPlugins: true, handler: runLifecycleDiff },
+  { name: "lifecycle rollback", handler: runLifecycleRollback },
   { name: "lifecycle plan", requiresPlugins: true, handler: runLifecyclePlan },
   { name: "lifecycle affected", requiresPlugins: true, handler: runLifecycleAffected },
   { name: "lifecycle log", handler: runLifecycleLog },
