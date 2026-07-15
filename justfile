@@ -11,8 +11,44 @@ install:
 build:
     npx tsc --noEmit -p packages/core/tsconfig.json
 
-# Run tests
-test:
+# Build any missing lexicon test artifacts (#923). The suite consumes each
+# lexicon's `src/generated/` barrel (imported by the package) and `dist/meta.json`
+# (loaded by import/audit); CI produces both via each lexicon's `prepack`, but a
+# fresh clone has only `npm install`. Idempotent — a lexicon is (re)built only
+# when its barrel or meta.json is missing, so repeat runs are a no-op. Use
+# `just regen` to force a full rebuild.
+_ensure-gen:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    for lex in lexicons/*/; do
+      grep -q '"generate"' "${lex}package.json" 2>/dev/null || continue
+      needs=false
+      # packages that import ./generated need the src barrel
+      if grep -qE 'from "\./generated' "${lex}src/index.ts" 2>/dev/null \
+         && [ ! -f "${lex}src/generated/index.ts" ]; then needs=true; fi
+      # import/audit load the bundled dist/meta.json
+      if grep -q '"bundle"' "${lex}package.json" 2>/dev/null \
+         && [ ! -f "${lex}dist/meta.json" ]; then needs=true; fi
+      if [ "$needs" = true ]; then
+        echo "gen: $(basename "$lex")"
+        npm run --prefix "$lex" generate
+        grep -q '"bundle"' "${lex}package.json" 2>/dev/null && npm run --prefix "$lex" bundle
+      fi
+    done
+
+# Force-rebuild every lexicon's test artifacts (generate + bundle)
+regen:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    for lex in lexicons/*/; do
+      grep -q '"generate"' "${lex}package.json" 2>/dev/null || continue
+      echo "gen: $(basename "$lex")"
+      npm run --prefix "$lex" generate
+      grep -q '"bundle"' "${lex}package.json" 2>/dev/null && npm run --prefix "$lex" bundle
+    done
+
+# Run tests (builds missing lexicon artifacts first — see _ensure-gen)
+test: _ensure-gen
     npx vitest run
 
 # Run linter
