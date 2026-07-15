@@ -24,6 +24,13 @@ import { parseStackTemplate } from "./import/live-export";
 import { awsCompletions } from "./lsp/completions";
 import { awsHover } from "./lsp/hover";
 
+/** True when a CloudFormation CLI error means the stack simply isn't there yet
+ * (`ValidationError … does not exist`) — the pre-first-apply state, which live
+ * queries should treat as "nothing deployed", not a failure. Exported for testing. */
+export function stackDoesNotExist(stderr: string): boolean {
+  return /does not exist/i.test(stderr);
+}
+
 /**
  * AWS CloudFormation lexicon plugin.
  *
@@ -497,6 +504,13 @@ aws cloudformation wait stack-update-complete --stack-name my-app-prod`,
     ], process.env.AWS_ENDPOINT_URL));
 
     if (listResult.exitCode !== 0) {
+      // A stack that doesn't exist yet is the pre-first-apply state: nothing is
+      // deployed for this env, so there are no live resources (every declared
+      // resource is "pending") — not an error. Returning empty lets `lifecycle
+      // diff --live` / the overlay show pending nodes instead of failing hard.
+      if (stackDoesNotExist(listResult.stderr)) {
+        return resources;
+      }
       throw new Error(`Failed to describe stack "${stackName}": ${listResult.stderr}`);
     }
 
@@ -579,6 +593,12 @@ aws cloudformation wait stack-update-complete --stack-name my-app-prod`,
       "--output", "json",
     ], process.env.AWS_ENDPOINT_URL));
     if (result.exitCode !== 0) {
+      // Not deployed yet → no template to export (nothing live), not an error.
+      // Keeps `chant graph --live` edge enrichment and `import --from` quiet
+      // before the first apply.
+      if (stackDoesNotExist(result.stderr)) {
+        return parseStackTemplate({ Resources: {} }, options.selector, options.owned);
+      }
       throw new Error(`Failed to get template for stack "${stackName}": ${result.stderr}`);
     }
 

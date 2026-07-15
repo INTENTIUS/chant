@@ -1,6 +1,18 @@
 import { describe, test, expect } from "vitest";
-import { awsPlugin } from "./plugin";
+import { awsPlugin, stackDoesNotExist } from "./plugin";
 import { isLexiconPlugin } from "@intentius/chant/lexicon";
+
+describe("stackDoesNotExist (pre-first-apply live state)", () => {
+  test("true for the CloudFormation 'does not exist' error", () => {
+    expect(stackDoesNotExist(
+      "An error occurred (ValidationError) when calling the DescribeStackResources operation: Stack with id prod does not exist",
+    )).toBe(true);
+  });
+  test("false for other failures (auth, network) — those still throw", () => {
+    expect(stackDoesNotExist("An error occurred (InvalidClientTokenId) ...")).toBe(false);
+    expect(stackDoesNotExist("Could not connect to the endpoint URL")).toBe(false);
+  });
+});
 
 describe("awsPlugin", () => {
   // -----------------------------------------------------------------------
