@@ -67,6 +67,18 @@ export function applyCommand(
 }
 
 /**
+ * Inject `--endpoint-url <endpoint>` into a CloudFormation `aws …` command when an
+ * endpoint is set (from AWS_ENDPOINT_URL), so `ApplyOp(target: "cloudformation")`
+ * deploys to a local emulator (Floci) instead of real AWS — regardless of aws-CLI
+ * version, which only reads AWS_ENDPOINT_URL itself on ≥2.13 (#926). Only the
+ * cloudformation target uses the aws CLI; kubectl/arm pass through. Pure.
+ */
+export function applyEndpoint(command: string, target: ApplyTarget, endpoint: string | undefined): string {
+  if (target !== "cloudformation" || !endpoint || !/^aws\s/.test(command)) return command;
+  return command.replace(/^aws\s/, `aws --endpoint-url '${endpoint}' `);
+}
+
+/**
  * Sensible default build output per target. kubectl `apply -f` takes a directory
  * (all manifests), so `dist`. CloudFormation/ARM `--template-file` needs a single
  * template *file* — a directory is rejected ("Invalid template path") — so the
@@ -84,7 +96,11 @@ export function defaultOutput(target: ApplyTarget): string {
 export async function nativeApply(args: NativeApplyArgs, signal?: AbortSignal): Promise<{ command: string }> {
   const output = args.output ?? defaultOutput(args.target);
   const deleteMode = args.deleteMode ?? "never";
-  const command = applyCommand(args.target, args.env, output, deleteMode);
+  const command = applyEndpoint(
+    applyCommand(args.target, args.env, output, deleteMode),
+    args.target,
+    process.env.AWS_ENDPOINT_URL,
+  );
   const { stdout, stderr } = await execAsync(command, { signal });
   if (stdout) console.log(stdout);
   if (stderr) console.error(stderr);

@@ -344,6 +344,18 @@ export function applyAwsEndpoint(command: string, endpoint: string | undefined):
   return command.replace(/^aws\s/, `aws --endpoint-url ${q(endpoint)} `);
 }
 
+/**
+ * argv-form of {@link applyAwsEndpoint}: insert `--endpoint-url <endpoint>` right
+ * after `aws` (argv[0]) when an endpoint is set, so a *spawned* `aws …` call (live
+ * acquisition, `graph --live`) targets a local emulator instead of real AWS.
+ * Non-`aws` argvs pass through untouched. Same reason as the string form — older
+ * `aws` v2 (<2.13) ignores `AWS_ENDPOINT_URL`.
+ */
+export function applyAwsEndpointArgv(argv: string[], endpoint: string | undefined): string[] {
+  if (!endpoint || argv[0] !== "aws") return argv;
+  return [argv[0], "--endpoint-url", endpoint, ...argv.slice(1)];
+}
+
 function run(command: string): Promise<{ stdout: string; stderr: string }> {
   return execFileAsync(applyAwsEndpoint(command, process.env.AWS_ENDPOINT_URL), {
     maxBuffer: 64 * 1024 * 1024,
