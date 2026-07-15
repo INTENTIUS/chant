@@ -1,4 +1,5 @@
 #!/usr/bin/env tsx
 import { validate } from "./validate";
 
-await validate({ verbose: true });
+// `validate` takes an optional { basePath }; defaults to the lexicon root.
+await validate();

@@ -51,6 +51,20 @@ regen:
 test: _ensure-gen
     npx vitest run
 
+# Scaffold a throwaway lexicon and verify it installs + typechecks (#749 guard).
+# Catches core-API drift that would break `chant init lexicon`. Needs the network
+# (npm install). On-demand; not part of gating `check`.
+scaffold-check:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    name="_scaffold_check"
+    trap 'rm -rf "lexicons/$name"; npm install >/dev/null 2>&1 || true' EXIT
+    rm -rf "lexicons/$name"
+    npx tsx packages/core/src/cli/main.ts init lexicon "$name" >/dev/null
+    npm install >/dev/null
+    npx tsc --noEmit -p "lexicons/$name/tsconfig.build.json"
+    echo "scaffold-check: a fresh lexicon installs and typechecks ✓"
+
 # Run linter
 lint:
     npx eslint packages/

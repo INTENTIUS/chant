@@ -20,12 +20,14 @@ export function generatePackageJson(name: string, names: { packageName: string }
       generate: "npx tsx src/codegen/generate-cli.ts",
       validate: "npx tsx src/validate-cli.ts",
       docs: "npx tsx src/codegen/docs-cli.ts",
-      prepack: "npm run generate && npm run validate",
-    },
-    dependencies: {
-      "@intentius/chant": "workspace:*",
+      build: "tsc -p tsconfig.build.json && tsc-alias -p tsconfig.build.json",
+      prepack: "npm run generate && npm run validate && npm run build",
     },
     devDependencies: {
+      // `*` (not `workspace:*`) so a fresh lexicon `npm install`s under plain npm
+      // (the `workspace:` protocol is rejected outside a workspace).
+      "@intentius/chant": "*",
+      "tsc-alias": "^1.8.17",
       typescript: "^5.9.3",
     },
   };
@@ -41,6 +43,34 @@ export function generateTsConfig(): string {
       outDir: "./dist",
     },
     include: ["src/**/*"],
+  };
+
+  return JSON.stringify(config, null, 2) + "\n";
+}
+
+/**
+ * Build config used by `npm run build` (and CI's `tsc --noEmit`). Uses `bundler`
+ * resolution + the `development` condition so `@intentius/chant/*` resolves to the
+ * workspace source, and excludes tests/docs — the same setup the shipped lexicons
+ * use. (The plain `tsconfig.json` extends the monorepo root and can't be tsc'd on
+ * its own.)
+ */
+export function generateTsConfigBuild(): string {
+  const config = {
+    extends: "../../tsconfig.json",
+    compilerOptions: {
+      noEmit: false,
+      declaration: true,
+      declarationMap: true,
+      outDir: "dist",
+      rootDir: "src",
+      paths: {},
+      moduleResolution: "bundler",
+      customConditions: ["development"],
+    },
+    include: ["src/**/*"],
+    exclude: ["**/*.test.ts", "node_modules", "dist", "docs"],
+    "tsc-alias": { resolveFullPaths: true },
   };
 
   return JSON.stringify(config, null, 2) + "\n";
@@ -177,6 +207,7 @@ export function generateValidateCliTs(): string {
   return `#!/usr/bin/env tsx
 import { validate } from "./validate";
 
-await validate({ verbose: true });
+// \`validate\` takes an optional { basePath }; defaults to the lexicon root.
+await validate();
 `;
 }

@@ -18,12 +18,12 @@
     "generate": "npx tsx src/codegen/generate-cli.ts",
     "validate": "npx tsx src/validate-cli.ts",
     "docs": "npx tsx src/codegen/docs-cli.ts",
-    "prepack": "npm run generate && npm run validate"
-  },
-  "dependencies": {
-    "@intentius/chant": "workspace:*"
+    "build": "tsc -p tsconfig.build.json && tsc-alias -p tsconfig.build.json",
+    "prepack": "npm run generate && npm run validate && npm run build"
   },
   "devDependencies": {
+    "@intentius/chant": "*",
+    "tsc-alias": "^1.8.17",
     "typescript": "^5.9.3"
   }
 }
