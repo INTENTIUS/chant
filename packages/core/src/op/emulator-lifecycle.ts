@@ -97,7 +97,9 @@ export function emulatorLifecycle(spec: EmulatorSpec): EmulatorLifecycle {
     }
 
     if (running) {
-      console.log(`emulator container "${name}" already running — reusing`);
+      // Progress → stderr, so a `--json` consumer (chant emulator, behold) reads
+      // clean JSON on stdout. runOp/Op activities capture both streams regardless.
+      console.error(`emulator container "${name}" already running — reusing`);
     } else {
       await execAsync(runCommand({ ...args, name, port }), { signal });
     }
@@ -124,7 +126,7 @@ export function emulatorLifecycle(spec: EmulatorSpec): EmulatorLifecycle {
     }
 
     const ep = endpoint(port);
-    console.log(`emulator "${name}" ready on ${ep}`);
+    console.error(`emulator "${name}" ready on ${ep}`);
     return { endpoint: ep };
   }
 
