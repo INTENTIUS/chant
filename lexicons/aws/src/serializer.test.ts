@@ -305,6 +305,23 @@ describe("LexiconOutput serialization", () => {
     });
   });
 
+  test("resolves an AttrRef nested in an intrinsic output → Fn::GetAtt, not __attrRef (#935)", () => {
+    const b1 = new MockBucket({ BucketName: "b1" });
+    const b2 = new MockBucket({ BucketName: "b2" });
+    const r1 = new AttrRef(b1, "Arn"); r1._setLogicalName("B1");
+    const r2 = new AttrRef(b2, "Arn"); r2._setLogicalName("B2");
+    const joined = new LexiconOutput(Join(",", [r1, r2]), "oArns");
+
+    const entities = new Map<string, Declarable>();
+    entities.set("B1", b1);
+    entities.set("B2", b2);
+
+    const template = JSON.parse(awsSerializer.serialize(entities, [joined]) as string);
+    expect(template.Outputs.oArns.Value).toEqual({
+      "Fn::Join": [",", [{ "Fn::GetAtt": ["B1", "Arn"] }, { "Fn::GetAtt": ["B2", "Arn"] }]],
+    });
+  });
+
   test("omits Outputs section when no LexiconOutputs provided", () => {
     const entities = new Map<string, Declarable>();
     entities.set("MyBucket", new MockBucket({ BucketName: "bucket" }));
