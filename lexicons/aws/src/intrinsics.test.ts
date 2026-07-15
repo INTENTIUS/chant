@@ -116,6 +116,22 @@ describe("Join intrinsic", () => {
       "Fn::Join": ["-", [{ Ref: "Prefix" }, "bucket"]],
     });
   });
+
+  test("accepts a single list-returning intrinsic (not only an array) (#517)", () => {
+    // Fn::Join's second arg legitimately takes a list-returning intrinsic
+    // (GetAtt of a list attr, Split, Ref to a List<>) — emitted as-is, no `.map`.
+    expect(Join(",", GetAtt("Zone", "NameServers")).toJSON()).toEqual({
+      "Fn::Join": [",", { "Fn::GetAtt": ["Zone", "NameServers"] }],
+    });
+    expect(Join(",", Split(",", "a,b")).toJSON()).toEqual({
+      "Fn::Join": [",", { "Fn::Split": [",", "a,b"] }],
+    });
+  });
+
+  test("throws a clear error for a non-array, non-intrinsic value (#517)", () => {
+    // @ts-expect-error — exercising the runtime guard
+    expect(() => Join(",", "oops")).toThrow(/array or a list-returning intrinsic/);
+  });
 });
 
 describe("Select intrinsic", () => {

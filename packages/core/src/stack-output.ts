@@ -7,7 +7,8 @@
  */
 
 import { DECLARABLE_MARKER, type Declarable } from "./declarable";
-import type { AttrRef } from "./attrref";
+import { AttrRef } from "./attrref";
+import { isIntrinsic, type Intrinsic } from "./intrinsic";
 
 /**
  * Marker symbol for stack output identification.
@@ -24,8 +25,24 @@ export interface StackOutput extends Declarable {
   readonly lexicon: string;
   readonly entityType: string;
   readonly kind: "output";
-  readonly sourceRef: AttrRef;
+  /** The exported value: a bare attribute reference, or an intrinsic wrapping
+   * one (e.g. `Join(",", zone.NameServers)`). */
+  readonly sourceRef: AttrRef | Intrinsic;
   readonly description?: string;
+}
+
+/** Find the first AttrRef anywhere inside a value (walking intrinsics/objects/
+ * arrays), so a wrapping intrinsic can still borrow its parent's lexicon. */
+function firstAttrRef(value: unknown, seen = new Set<unknown>()): AttrRef | undefined {
+  if (value === null || typeof value !== "object" || seen.has(value)) return undefined;
+  if (value instanceof AttrRef) return value;
+  seen.add(value);
+  const children = Array.isArray(value) ? value : Object.values(value as Record<string, unknown>);
+  for (const child of children) {
+    const found = firstAttrRef(child, seen);
+    if (found) return found;
+  }
+  return undefined;
 }
 
 /**
@@ -59,11 +76,16 @@ export function isStackOutput(value: unknown): value is StackOutput {
  * ```
  */
 export function stackOutput(
-  ref: AttrRef,
+  ref: AttrRef | Intrinsic,
   options?: { description?: string },
 ): StackOutput {
-  // Derive lexicon from the AttrRef's parent entity
-  const parent = ref.parent.deref();
+  if (!(ref instanceof AttrRef) && !isIntrinsic(ref)) {
+    throw new Error("stackOutput(ref): ref must be an attribute reference or an intrinsic wrapping one");
+  }
+  // Derive lexicon from the referenced entity — for a bare AttrRef, its parent;
+  // for an intrinsic (Join etc.), the first AttrRef nested inside it.
+  const anchor = ref instanceof AttrRef ? ref : firstAttrRef(ref);
+  const parent = anchor?.parent.deref();
   const lexicon = parent && typeof (parent as Record<string, unknown>).lexicon === "string"
     ? (parent as Record<string, unknown>).lexicon as string
     : "unknown";
