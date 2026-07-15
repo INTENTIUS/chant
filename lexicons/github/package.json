@@ -1,6 +1,6 @@
 {
   "name": "@intentius/chant-lexicon-github",
-  "version": "0.18.12",
+  "version": "0.18.13",
   "description": "GitHub Actions lexicon for chant — declarative IaC in TypeScript",
   "license": "Apache-2.0",
   "homepage": "https://intentius.io/chant",
@@ -61,7 +61,7 @@
     "typescript": "^5.9.3"
   },
   "peerDependencies": {
-    "@intentius/chant": "^0.18.12",
+    "@intentius/chant": "^0.18.13",
     "typescript": "^5.9.3"
   }
 }
