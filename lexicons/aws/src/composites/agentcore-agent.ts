@@ -107,7 +107,7 @@ export type AgentCoreAgentResult = {
 export const AgentCoreAgent = Composite<AgentCoreAgentProps, AgentCoreAgentResult>((props) => {
   const { defaults } = props;
   const networkMode = props.networkMode ?? "PUBLIC";
-  if (networkMode === "VPC" && (!props.vpcSubnetIds?.length || !props.vpcSecurityGroupIds?.length)) {
+  if (networkMode === "VPC" && (props.vpcSubnetIds === undefined || props.vpcSecurityGroupIds === undefined)) {
     throw new Error("AgentCoreAgent requires vpcSubnetIds and vpcSecurityGroupIds when networkMode is \"VPC\"");
   }
   const memoryEventExpiryDays = props.memoryEventExpiryDays ?? 30;

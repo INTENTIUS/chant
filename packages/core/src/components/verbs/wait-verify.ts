@@ -128,6 +128,8 @@ export const waitEndpointCapability: Capability<WaitEndpointInput, WaitEndpointO
 export interface HealthGateInput {
   /** Health check path or full URL. */
   path: string;
+  /** Optional base URL (scheme + host) composed with `path` via `new URL(path, host)`. May be a cross-stack Wiring value (an ALB DNS name from a sibling stack); a bare host gets `http://` prepended. */
+  host?: string;
   /** Number of consecutive successes required. Default: 1. */
   consecutiveSuccesses?: number;
   /** Poll interval in ms. Default: 5000. */
@@ -137,6 +139,13 @@ export interface HealthGateInput {
 export interface HealthGateOutput {
   /** True once the health check passed the required consecutive count. */
   healthy: boolean;
+}
+
+/** Compose the fetchable URL: if `host` is set, resolve `path` against it (bare host → `http://` prepended); otherwise use `path` as-is. */
+function healthGateUrl(input: HealthGateInput): string {
+  if (!input.host) return input.path;
+  const base = /^https?:\/\//.test(input.host) ? input.host : `http://${input.host}`;
+  return new URL(input.path, base).toString();
 }
 
 /** Block progression until a health check passes — the generic post-deploy verification gate. Cloud-agnostic. */
@@ -152,14 +161,14 @@ export function createHealthGateCapability(fetcher: Fetcher = defaultFetcher): C
       for (;;) {
         let ok = false;
         try {
-          ok = (await fetcher(input.path)).ok;
+          ok = (await fetcher(healthGateUrl(input))).ok;
         } catch {
           ok = false;
         }
         streak = ok ? streak + 1 : 0;
         if (streak >= need) return { healthy: true };
         if (Date.now() >= deadline) {
-          throw new Error(`health-gate: ${input.path} did not reach ${need} consecutive healthy check(s) within 300000ms`);
+          throw new Error(`health-gate: ${healthGateUrl(input)} did not reach ${need} consecutive healthy check(s) within 300000ms`);
         }
         await sleep(intervalMs);
       }

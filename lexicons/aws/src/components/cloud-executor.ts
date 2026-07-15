@@ -471,7 +471,7 @@ const realEcs: EcsClient = {
     if (args.forceNewDeployment) parts.push(`--force-new-deployment`);
     const { stdout } = await run(parts.join(" "));
     const described = JSON.parse(stdout) as { service: { deployments: Array<{ id: string }> } };
-    return { deploymentId: described.service.deployments[0]?.id ?? "" };
+    return { deploymentId: described.service.deployments?.[0]?.id ?? "" };
   },
   async describeService(cluster, service) {
     const { stdout } = await run(
@@ -483,7 +483,7 @@ const realEcs: EcsClient = {
     const svc = described.services[0];
     const running = svc?.runningCount ?? 0;
     const desired = svc?.desiredCount ?? 0;
-    return { runningCount: running, desiredCount: desired, stable: running === desired && (svc?.deployments.length ?? 0) <= 1 };
+    return { runningCount: running, desiredCount: desired, stable: running === desired && (svc?.deployments?.length ?? 0) <= 1 };
   },
   async rollbackService(args) {
     await realEcs.updateService(args);

@@ -313,7 +313,7 @@ function serializeToTemplate(
     template.Outputs = template.Outputs ?? {};
     for (const output of outputs) {
       template.Outputs[output.outputName] = {
-        Value: output.getOutputValue(),
+        Value: toCFValue(output.getOutputValue(), entityNames),
       };
     }
   }
