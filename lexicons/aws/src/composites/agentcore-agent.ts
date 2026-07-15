@@ -107,7 +107,11 @@ export type AgentCoreAgentResult = {
 export const AgentCoreAgent = Composite<AgentCoreAgentProps, AgentCoreAgentResult>((props) => {
   const { defaults } = props;
   const networkMode = props.networkMode ?? "PUBLIC";
-  if (networkMode === "VPC" && (!props.vpcSubnetIds?.length || !props.vpcSecurityGroupIds?.length)) {
+  // Check presence, not `.length`: a cross-stack value (Fn::Split of a Parameter,
+  // the shape stackOutput/Ref/Split produce) is a truthy intrinsic object with no
+  // `.length`, so a `.length` check wrongly rejects a value that WAS supplied
+  // (#938). An actually-empty list is caught by CloudFormation at deploy time.
+  if (networkMode === "VPC" && (props.vpcSubnetIds === undefined || props.vpcSecurityGroupIds === undefined)) {
     throw new Error("AgentCoreAgent requires vpcSubnetIds and vpcSecurityGroupIds when networkMode is \"VPC\"");
   }
   const memoryEventExpiryDays = props.memoryEventExpiryDays ?? 30;

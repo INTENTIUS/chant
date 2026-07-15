@@ -7,6 +7,7 @@ import { AttrRef } from "@intentius/chant/attrref";
 // precedent for aws-lexicon integration-style tests.
 import { resolveAttrRefs } from "../../../../packages/core/src/discovery/resolve";
 import { AgentCoreAgent } from "./agentcore-agent";
+import { Split, Ref } from "../intrinsics";
 import { awsSerializer } from "../serializer";
 
 const baseProps = {
@@ -102,6 +103,17 @@ describe("AgentCoreAgent", () => {
     expect(() => AgentCoreAgent({ ...baseProps, networkMode: "VPC" })).toThrow(
       "AgentCoreAgent requires vpcSubnetIds and vpcSecurityGroupIds when networkMode is \"VPC\"",
     );
+  });
+
+  test("VPC mode accepts a cross-stack intrinsic (Fn::Split) — checks presence, not .length (#938)", () => {
+    // A cross-stack value (Split of a Parameter) is a truthy intrinsic with no
+    // `.length`; it WAS supplied, so the composite must not reject it.
+    const subnets = Split(",", Ref("SubnetIdsParam")) as unknown as string[];
+    const sgs = Split(",", Ref("SgIdsParam")) as unknown as string[];
+    const instance = AgentCoreAgent({ ...baseProps, networkMode: "VPC", vpcSubnetIds: subnets, vpcSecurityGroupIds: sgs });
+    const vpcConfigProps = ((instance.runtime as any).props.NetworkConfiguration as any).props.NetworkModeConfig.props;
+    expect(vpcConfigProps.Subnets).toBe(subnets);
+    expect(vpcConfigProps.SecurityGroups).toBe(sgs);
   });
 
   test("throws when memoryEventExpiryDays is out of CFN bounds (3-365)", () => {
