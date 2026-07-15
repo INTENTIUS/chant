@@ -262,6 +262,23 @@ describe("intrinsic serialization", () => {
 });
 
 describe("LexiconOutput serialization", () => {
+  test("resolves AttrRef nested in a Join output to Fn::GetAtt, not the __attrRef envelope (chant#935)", () => {
+    const s1 = new MockBucket({ BucketName: "subnet-1" });
+    const s2 = new MockBucket({ BucketName: "subnet-2" });
+    (s1.arn as Record<string, unknown>)._setLogicalName("Subnet1");
+    (s2.arn as Record<string, unknown>)._setLogicalName("Subnet2");
+    const joined = new LexiconOutput(Join(":", [s1.arn, s2.arn]), "SubnetIds");
+    joined._setSourceEntity("Subnet1");
+    const entities = new Map<string, Declarable>();
+    entities.set("Subnet1", s1);
+    entities.set("Subnet2", s2);
+    const template = JSON.parse(awsSerializer.serialize(entities, [joined]));
+    const value = JSON.stringify(template.Outputs.SubnetIds.Value);
+    expect(value).not.toContain("__attrRef");
+    expect(value).toContain("Fn::GetAtt");
+    expect(value).toContain("Fn::Join");
+  });
+
   test("generates CF Outputs section for LexiconOutputs", () => {
     const bucket = new MockBucket({ BucketName: "data-bucket" });
     const lexiconOutput = new LexiconOutput(bucket.arn, "DataBucketArn");
