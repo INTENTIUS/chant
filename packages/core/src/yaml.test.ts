@@ -211,3 +211,36 @@ describe("parseScalar", () => {
     expect(parseScalar("hello")).toBe("hello");
   });
 });
+
+// Block scalars (#910) — round-trip parity with js-yaml for literal/folded/chomping,
+// including block scalars nested inside array items (the case that mis-parsed).
+describe("parseYAML block scalars (#910)", () => {
+  test("top-level literal | keeps newlines, clips to one trailing", () => {
+    expect(parseYAML("run: |\n  line1\n  line2\n")).toEqual({ run: "line1\nline2\n" });
+  });
+
+  test("literal | nested inside a later array item (the reported bug)", () => {
+    expect(
+      parseYAML("steps:\n  - name: first\n    run: echo hi\n  - name: second\n    run: |\n      line1\n      line2\n"),
+    ).toEqual({
+      steps: [
+        { name: "first", run: "echo hi" },
+        { name: "second", run: "line1\nline2\n" },
+      ],
+    });
+  });
+
+  test("block scalar as an array item's first key, with a sibling key after", () => {
+    expect(parseYAML("steps:\n  - run: |\n      a\n      b\n    name: x\n")).toEqual({
+      steps: [{ run: "a\nb\n", name: "x" }],
+    });
+  });
+
+  test("strip |- drops the trailing newline; a sibling key after still parses", () => {
+    expect(parseYAML("a: |-\n  x\n  y\nb: 2\n")).toEqual({ a: "x\ny", b: 2 });
+  });
+
+  test("folded > folds line breaks to spaces, blank line to one newline", () => {
+    expect(parseYAML("msg: >\n  a\n  b\n\n  c\n")).toEqual({ msg: "a b\nc\n" });
+  });
+});
