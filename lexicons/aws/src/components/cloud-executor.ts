@@ -463,6 +463,23 @@ const realCloudFormation: CloudFormationClient = {
   },
 };
 
+/** Deployment id from an ECS `update-service` response. Tolerant of Floci, whose
+ * `service` omits `deployments` entirely (real AWS always includes it) — guards
+ * the index, not just `.id` (#937). Exported for testing. */
+export function ecsDeploymentId(described: { service: { deployments?: Array<{ id: string }> } }): string {
+  return described.service.deployments?.[0]?.id ?? "";
+}
+
+/** Whether an ECS service is steady (running == desired, ≤1 active deployment).
+ * Tolerant of Floci's missing `deployments` field. Exported for testing. */
+export function ecsServiceStable(
+  svc: { runningCount?: number; desiredCount?: number; deployments?: unknown[] } | undefined,
+): boolean {
+  const running = svc?.runningCount ?? 0;
+  const desired = svc?.desiredCount ?? 0;
+  return running === desired && (svc?.deployments?.length ?? 0) <= 1;
+}
+
 const realEcs: EcsClient = {
   async updateService(args) {
     const parts = [`aws ecs update-service`, `--cluster ${q(args.cluster)}`, `--service ${q(args.service)}`];
@@ -470,20 +487,18 @@ const realEcs: EcsClient = {
     if (args.desiredCount !== undefined) parts.push(`--desired-count ${args.desiredCount}`);
     if (args.forceNewDeployment) parts.push(`--force-new-deployment`);
     const { stdout } = await run(parts.join(" "));
-    const described = JSON.parse(stdout) as { service: { deployments: Array<{ id: string }> } };
-    return { deploymentId: described.service.deployments[0]?.id ?? "" };
+    const described = JSON.parse(stdout) as { service: { deployments?: Array<{ id: string }> } };
+    return { deploymentId: ecsDeploymentId(described) };
   },
   async describeService(cluster, service) {
     const { stdout } = await run(
       `aws ecs describe-services --cluster ${q(cluster)} --services ${q(service)}`,
     );
     const described = JSON.parse(stdout) as {
-      services: Array<{ runningCount: number; desiredCount: number; deployments: unknown[] }>;
+      services: Array<{ runningCount: number; desiredCount: number; deployments?: unknown[] }>;
     };
     const svc = described.services[0];
-    const running = svc?.runningCount ?? 0;
-    const desired = svc?.desiredCount ?? 0;
-    return { runningCount: running, desiredCount: desired, stable: running === desired && (svc?.deployments.length ?? 0) <= 1 };
+    return { runningCount: svc?.runningCount ?? 0, desiredCount: svc?.desiredCount ?? 0, stable: ecsServiceStable(svc) };
   },
   async rollbackService(args) {
     await realEcs.updateService(args);

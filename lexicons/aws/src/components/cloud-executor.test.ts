@@ -1,5 +1,25 @@
 import { describe, test, expect } from "vitest";
-import { applyAwsEndpoint, applyAwsEndpointArgv } from "./cloud-executor";
+import { applyAwsEndpoint, applyAwsEndpointArgv, ecsDeploymentId, ecsServiceStable } from "./cloud-executor";
+
+describe("ecsDeploymentId / ecsServiceStable — tolerate Floci's missing deployments (#937)", () => {
+  test("deployment id: real AWS shape", () => {
+    expect(ecsDeploymentId({ service: { deployments: [{ id: "ecs-svc/123" }] } })).toBe("ecs-svc/123");
+  });
+  test("deployment id: Floci omits `deployments` entirely → '' (no crash)", () => {
+    expect(ecsDeploymentId({ service: {} })).toBe("");
+    expect(ecsDeploymentId({ service: { deployments: [] } })).toBe("");
+  });
+
+  test("stable: running==desired with ≤1 deployment", () => {
+    expect(ecsServiceStable({ runningCount: 2, desiredCount: 2, deployments: [{}] })).toBe(true);
+    expect(ecsServiceStable({ runningCount: 1, desiredCount: 2, deployments: [{}] })).toBe(false);
+    expect(ecsServiceStable({ runningCount: 2, desiredCount: 2, deployments: [{}, {}] })).toBe(false);
+  });
+  test("stable: Floci omits `deployments` → treated as 0, no crash", () => {
+    expect(ecsServiceStable({ runningCount: 2, desiredCount: 2 })).toBe(true);
+    expect(ecsServiceStable(undefined)).toBe(true); // 0 == 0
+  });
+});
 
 describe("applyAwsEndpoint", () => {
   const url = "http://localhost:4566";
