@@ -24,6 +24,18 @@ export interface EmulatorSpec {
   runArgs?: readonly string[];
 }
 
+/**
+ * A lexicon's local-emulator capability (#920) — what `chant emulator` needs to
+ * boot it and point tooling at it. The `spec` drives the Docker lifecycle; `env`
+ * returns the variables that redirect the SDK / `chant graph --live` / a triggered
+ * Op at the running emulator (e.g. `AWS_ENDPOINT_URL`). `env` is `{}` when the
+ * emulator is reached only via an explicit apply argument, not a global variable.
+ */
+export interface EmulatorCapability {
+  spec: EmulatorSpec;
+  env(endpoint: string): Record<string, string>;
+}
+
 /** Per-call overrides for {@link EmulatorLifecycle.up} / `runCommand`. */
 export interface EmulatorUpArgs {
   name?: string;

@@ -20,6 +20,7 @@ import { runLifecycleSnapshot, runLifecycleShow, runLifecycleDiff, runLifecycleR
 import { runComponentsStatus, runComponentsReleaseRecord, runComponentsUnknown } from "./handlers/components";
 import { runGraph } from "./handlers/graph";
 import { runOp, runOpList, runOpStatus, runOpSignal, runOpCancel, runOpLog } from "./handlers/run";
+import { runEmulator } from "./handlers/emulator";
 
 /**
  * Parse command line arguments
@@ -309,6 +310,10 @@ Lexicon development:
                            latest, diff surface vs committed baseline, print delta + PR
                            label (dry run; --force bypasses the spec cache, --format json)
 
+Local:
+  emulator <up|down|status>  Boot/stop/inspect configured lexicons' local
+                           emulators (Floci etc.); --lexicon <name>, --json
+
 Servers:
   serve lsp             Start the LSP server (stdio)
   serve mcp             Start the MCP server (stdio)
@@ -454,11 +459,18 @@ const registry: CommandDef[] = [
   { name: "components status", requiresPlugins: true, handler: runComponentsStatus },
   { name: "components release", handler: runComponentsReleaseRecord },
 
+  // Local emulators of configured lexicons (#920). Compound so the action word
+  // lands in args.path (not consumed as a project dir) and projectPath is forced ".".
+  { name: "emulator up", requiresPlugins: true, handler: runEmulator },
+  { name: "emulator down", requiresPlugins: true, handler: runEmulator },
+  { name: "emulator status", requiresPlugins: true, handler: runEmulator },
+
   // Serve subcommands
   { name: "serve lsp", requiresPlugins: true, handler: runServeLsp },
   { name: "serve mcp", requiresPlugins: true, handler: runServeMcp },
 
   // Fallback for unknown subcommands (must come after compound entries)
+  { name: "emulator", requiresPlugins: true, handler: runEmulator },
   { name: "lifecycle", handler: runLifecycleUnknown },
   { name: "dev", handler: runDevUnknown },
   { name: "serve", handler: runServeUnknown },
@@ -527,8 +539,12 @@ async function main(): Promise<void> {
   // missing plugins there is "no live evidence" (a warning), not a hard exit.
   const isGenerateComponents = match.def.name === "build" && args.components && !!args.generate;
   const isComponentsStatus = match.def.name === "components status";
+  // `emulator` (#920) is a property of the *configured* lexicons, not of any infra
+  // file — a fresh/local project with no declarables still boots Floci. Load from
+  // chant.config best-effort, like components status, rather than detectLexicon.
+  const isEmulator = match.def.name === "emulator" || match.def.name.startsWith("emulator ");
   const plugins = match.def.requiresPlugins
-    ? isGenerateComponents || isComponentsStatus
+    ? isGenerateComponents || isComponentsStatus || isEmulator
       ? await loadPlugins(await resolveProjectLexicons(resolve(projectPath)).catch(() => [])).catch(() => [])
       : await loadPluginsOrExit(projectPath)
     : [];

@@ -1,4 +1,4 @@
-import { emulatorLifecycle } from "@intentius/chant/op";
+import { emulatorLifecycle, type EmulatorSpec, type EmulatorCapability } from "@intentius/chant/op";
 
 const DEFAULT_NAME = "chant-floci";
 const DEFAULT_PORT = 4566;
@@ -49,14 +49,30 @@ export function flociEnv(port: number, region: string): Record<string, string> {
 // AWS runs the LocalStack-compatible floci/floci image, so readiness is gated on
 // a service (`cloudformation`) appearing in `/_localstack/health` — unlike the
 // bespoke az/gcp fakes. Shared lifecycle: emulatorLifecycle (#746).
-const flociFor = (readyService: string) =>
-  emulatorLifecycle({
-    name: DEFAULT_NAME,
-    image: DEFAULT_IMAGE,
-    containerPort: DEFAULT_PORT,
-    healthPath: "/_localstack/health",
-    ready: (body) => isFlociReady(body, readyService),
-  });
+const flociSpecFor = (readyService: string): EmulatorSpec => ({
+  name: DEFAULT_NAME,
+  image: DEFAULT_IMAGE,
+  containerPort: DEFAULT_PORT,
+  healthPath: "/_localstack/health",
+  ready: (body) => isFlociReady(body, readyService),
+});
+
+/** The Floci emulator spec — the aws plugin's `emulator` capability (#920). */
+export const FLOCI_SPEC: EmulatorSpec = flociSpecFor(DEFAULT_READY_SERVICE);
+
+/** The aws plugin's emulator capability (#920): Floci + the AWS env that points
+ * the SDK / `chant graph --live` / a triggered Op at it. */
+export const FLOCI_EMULATOR: EmulatorCapability = {
+  spec: FLOCI_SPEC,
+  env: (endpoint) => ({
+    AWS_ENDPOINT_URL: endpoint,
+    AWS_ACCESS_KEY_ID: "test",
+    AWS_SECRET_ACCESS_KEY: "test",
+    AWS_REGION: DEFAULT_REGION,
+  }),
+};
+
+const flociFor = (readyService: string) => emulatorLifecycle(flociSpecFor(readyService));
 
 const builders = flociFor(DEFAULT_READY_SERVICE);
 

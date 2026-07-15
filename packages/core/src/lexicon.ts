@@ -8,6 +8,7 @@ import type { ArtifactIntegrity } from "./lexicon-integrity";
 import type { CompletionContext, CompletionItem, HoverContext, HoverInfo, CodeActionContext, CodeAction } from "./lsp/types";
 import type { McpToolContribution, McpResourceContribution } from "./mcp/types";
 import type { DriverComponent } from "./components/driver";
+import type { EmulatorCapability } from "./op/emulator-lifecycle";
 import type { RuleMeta } from "./audit/catalog";
 import type { ReferenceCatalog } from "./graph-refs";
 
@@ -249,6 +250,12 @@ export interface LexiconPlugin {
 
   /** Package lexicon into distributable tarball */
   package(options?: { verbose?: boolean; force?: boolean }): Promise<void>;
+
+  /** Local emulator (#920), if this lexicon has one (Floci for aws, floci-az/gcp,
+   * mudflaps/spritzer for fly). Drives `chant emulator up|down|status` and lets a
+   * consumer (behold `--local`) boot it + point apply/observe at it — no cloud
+   * account. Absent when the lexicon has no local emulator. */
+  readonly emulator?: EmulatorCapability;
 
   // ── Optional extensions ───────────────────────────────────
   /** Return lint rules provided by this lexicon */
