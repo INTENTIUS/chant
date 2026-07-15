@@ -323,7 +323,8 @@ describe("detectCrossLexiconRefs", () => {
     expect(detected[0].sourceLexicon).toBe("alpha");
     expect(detected[0].sourceEntity).toBe("dataBucket");
     expect(detected[0].sourceAttribute).toBe("Endpoint");
-    expect(detected[0].outputName).toBe("dataBucket_Endpoint");
+    expect(detected[0].outputName).toBe("dataBucketEndpoint");
+    expect(detected[0].outputName).toMatch(/^[A-Za-z0-9]+$/);
   });
 
   test("explicit output() overrides auto-detected name", () => {
@@ -351,7 +352,7 @@ describe("detectCrossLexiconRefs", () => {
     // Auto-detect finds the cross-lexicon ref
     const autoDetected = detectCrossLexiconRefs(entities);
     expect(autoDetected).toHaveLength(1);
-    expect(autoDetected[0].outputName).toBe("dataBucket_Arn");
+    expect(autoDetected[0].outputName).toBe("dataBucketArn");
 
     // But when collecting explicit outputs, the explicit one is found
     const explicitOutputs = collectLexiconOutputs(entities);
@@ -459,7 +460,44 @@ describe("detectCrossLexiconRefs", () => {
 
     const detected = detectCrossLexiconRefs(entities);
     expect(detected).toHaveLength(1);
-    expect(detected[0].outputName).toBe("dataBucket_Endpoint");
+    expect(detected[0].outputName).toBe("dataBucketEndpoint");
+  });
+
+  // chant#930 — a nested Fn::GetAtt attribute path (dots) on a cross-lexicon
+  // ref must not leak into the auto-generated Output logical id: CFN logical
+  // ids (including Outputs keys) are alphanumeric-only (^[A-Za-z0-9]+$), and
+  // cfn-lint (E6001) rejects anything else.
+  test("auto-generated Output logical id is valid CFN form for a nested attribute path", () => {
+    const alphaBucket = {
+      lexicon: "alpha",
+      entityType: "Alpha::Storage::Bucket",
+      [DECLARABLE_MARKER]: true,
+    } as Declarable;
+
+    const nestedRef = new AttrRef(
+      alphaBucket,
+      "MetadataConfiguration.AnnotationTableConfiguration.TableArn"
+    );
+
+    const ghAction = {
+      lexicon: "github",
+      entityType: "Action",
+      [DECLARABLE_MARKER]: true,
+      props: { arn: nestedRef },
+    } as unknown as Declarable;
+
+    const entities = new Map<string, Declarable>([
+      ["foundationArtifactBucket", alphaBucket],
+      ["deployAction", ghAction],
+    ]);
+
+    const detected = detectCrossLexiconRefs(entities);
+
+    expect(detected).toHaveLength(1);
+    expect(detected[0].outputName).toMatch(/^[A-Za-z0-9]+$/);
+    expect(detected[0].outputName).toBe(
+      "foundationArtifactBucketMetadataConfigurationAnnotationTableConfigurationTableArn"
+    );
   });
 });
 

@@ -100,18 +100,18 @@ describe("LexiconOutput.auto", () => {
     const result = LexiconOutput.auto(bucket.arn, "dataBucket");
 
     expect(result).toBeInstanceOf(LexiconOutput);
-    expect(result.outputName).toBe("dataBucket_Arn");
+    expect(result.outputName).toBe("dataBucketArn");
     expect(result.sourceLexicon).toBe("testdom");
     expect(result.sourceEntity).toBe("dataBucket");
     expect(result.sourceAttribute).toBe("Arn");
   });
 
-  test("auto-generated name follows {entityName}_{attribute} pattern", () => {
+  test("auto-generated name follows {entityName}{Attribute} camelCase pattern", () => {
     const bucket = new MockResource();
     const endpointRef = new AttrRef(bucket, "Endpoint");
     const result = LexiconOutput.auto(endpointRef, "myBucket");
 
-    expect(result.outputName).toBe("myBucket_Endpoint");
+    expect(result.outputName).toBe("myBucketEndpoint");
   });
 
   test("sets sourceEntity immediately", () => {
@@ -120,6 +120,37 @@ describe("LexiconOutput.auto", () => {
 
     // sourceEntity should be set right away, not empty
     expect(result.sourceEntity).toBe("logsBucket");
+  });
+
+  // chant#930 — CFN logical ids (including Outputs keys) must be alphanumeric
+  // only. A nested Fn::GetAtt attribute path (dots) must not leak through.
+  test("sanitizes dotted nested-attribute paths to a valid CFN logical id", () => {
+    const bucket = new MockResource();
+    const nestedRef = new AttrRef(
+      bucket,
+      "MetadataConfiguration.AnnotationTableConfiguration.TableArn"
+    );
+    const result = LexiconOutput.auto(nestedRef, "foundationArtifactBucket");
+
+    expect(result.outputName).toMatch(/^[A-Za-z0-9]+$/);
+    expect(result.outputName).toBe(
+      "foundationArtifactBucketMetadataConfigurationAnnotationTableConfigurationTableArn"
+    );
+  });
+
+  test("auto-generated output names are always valid CFN logical ids", () => {
+    const bucket = new MockResource();
+    const cases: Array<[string, string]> = [
+      ["dataBucket", "Arn"],
+      ["my-bucket_2", "Some.Nested.Attr"],
+      ["logsBucket", "Endpoint.Hostname"],
+    ];
+
+    for (const [entityName, attribute] of cases) {
+      const ref = new AttrRef(bucket, attribute);
+      const result = LexiconOutput.auto(ref, entityName);
+      expect(result.outputName).toMatch(/^[A-Za-z0-9]+$/);
+    }
   });
 });
 
