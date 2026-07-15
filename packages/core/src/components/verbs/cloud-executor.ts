@@ -19,6 +19,7 @@
 import { exec } from "node:child_process";
 import { createConnection } from "node:net";
 import { promisify } from "node:util";
+import { isAbsolute, join } from "node:path";
 
 export const execFileAsync = promisify(exec);
 
@@ -104,7 +105,11 @@ function q(value: string): string {
 export const realDocker: DockerClient = {
   async build(args) {
     const parts = [`docker build`, `-t ${q(args.tag)}`];
-    if (args.dockerfile) parts.push(`-f ${q(args.dockerfile)}`);
+    if (args.dockerfile) {
+      // dockerfile is relative to `context` (its documented contract); docker's `-f` resolves a relative path against cwd, not the context dir, so join them here (chant#936).
+      const dockerfilePath = isAbsolute(args.dockerfile) ? args.dockerfile : join(args.context, args.dockerfile);
+      parts.push(`-f ${q(dockerfilePath)}`);
+    }
     if (args.target) parts.push(`--target ${q(args.target)}`);
     for (const [k, v] of Object.entries(args.buildArgs ?? {})) parts.push(`--build-arg ${q(`${k}=${v}`)}`);
     parts.push(q(args.context));
