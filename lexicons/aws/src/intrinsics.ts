@@ -1,4 +1,4 @@
-import { INTRINSIC_MARKER, resolveIntrinsicValue, type Intrinsic } from "@intentius/chant/intrinsic";
+import { INTRINSIC_MARKER, resolveIntrinsicValue, isIntrinsic, type Intrinsic } from "@intentius/chant/intrinsic";
 import { buildInterpolatedString, defaultInterpolationSerializer } from "@intentius/chant/intrinsic-interpolation";
 import { type Declarable } from "@intentius/chant/declarable";
 import { getLogicalName } from "@intentius/chant/utils";
@@ -129,22 +129,35 @@ export function If(conditionName: string, valueIfTrue: unknown, valueIfFalse: un
 export class JoinIntrinsic implements Intrinsic {
   readonly [INTRINSIC_MARKER] = true as const;
   private delimiter: string;
-  private values: unknown[];
+  private values: unknown[] | Intrinsic;
 
-  constructor(delimiter: string, values: unknown[]) {
+  constructor(delimiter: string, values: unknown[] | Intrinsic) {
     this.delimiter = delimiter;
     this.values = values;
   }
 
-  toJSON(): { "Fn::Join": [string, unknown[]] } {
-    return { "Fn::Join": [this.delimiter, this.values.map(resolveIntrinsicValue)] };
+  toJSON(): { "Fn::Join": [string, unknown] } {
+    // Fn::Join's second arg is either a literal list of values OR a single
+    // list-returning intrinsic (GetAtt of a list attr, Split, Ref to a List<>
+    // param). Only the array form gets `.map`; a lone intrinsic is emitted as-is
+    // (#517 — mapping over it dereferenced undefined and crashed the build).
+    const list = Array.isArray(this.values)
+      ? this.values.map(resolveIntrinsicValue)
+      : resolveIntrinsicValue(this.values);
+    return { "Fn::Join": [this.delimiter, list] };
   }
 }
 
 /**
- * Create a Join intrinsic
+ * Create a Join intrinsic. `values` is a literal array, or a single
+ * list-returning intrinsic (e.g. `Join(",", zone.NameServers)`).
  */
-export function Join(delimiter: string, values: unknown[]): JoinIntrinsic {
+export function Join(delimiter: string, values: unknown[] | Intrinsic): JoinIntrinsic {
+  if (!Array.isArray(values) && !isIntrinsic(values)) {
+    throw new Error(
+      "Join(delimiter, values): values must be an array or a list-returning intrinsic (GetAtt/Split/Ref to a List)",
+    );
+  }
   return new JoinIntrinsic(delimiter, values);
 }
 

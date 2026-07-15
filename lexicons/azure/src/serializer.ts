@@ -19,6 +19,7 @@ import type { LexiconOutput } from "@intentius/chant/lexicon-output";
 import { walkValue, type SerializerVisitor } from "@intentius/chant/serializer-walker";
 import { isChildProject, type ChildProjectInstance } from "@intentius/chant/child-project";
 import { isStackOutput, type StackOutput } from "@intentius/chant/stack-output";
+import { isAttrRefLike } from "@intentius/chant/utils";
 import { resolveDependsOn } from "@intentius/chant/resource-attributes";
 import { isDefaultTags, type TagEntry } from "./default-tags";
 import { loadTaggableResources } from "./taggable";
@@ -375,13 +376,18 @@ function serializeToTemplate(
     if (isStackOutput(entity)) {
       if (!template.outputs) template.outputs = {};
       const stackOutput = entity as StackOutput;
-      const ref = stackOutput.sourceRef;
-      const logicalName = ref.getLogicalName();
-      if (logicalName) {
-        template.outputs[name] = {
-          type: "string",
-          value: `[reference('${logicalName}').${ref.attribute}]`,
-        };
+      // `unknown` so isAttrRefLike narrows cleanly across the workspace/published
+      // type boundary. An intrinsic-wrapped output (#517) has no bare ARM
+      // reference form, so skip it here (only aws/CFN emits those).
+      const ref: unknown = stackOutput.sourceRef;
+      if (isAttrRefLike(ref)) {
+        const logicalName = ref.getLogicalName();
+        if (logicalName) {
+          template.outputs[name] = {
+            type: "string",
+            value: `[reference('${logicalName}').${ref.attribute}]`,
+          };
+        }
       }
     }
   }

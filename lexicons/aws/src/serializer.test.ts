@@ -3,7 +3,7 @@ import { awsSerializer } from "./serializer";
 import { AttrRef } from "@intentius/chant/attrref";
 import { DECLARABLE_MARKER, type Declarable } from "@intentius/chant/declarable";
 import { LexiconOutput } from "@intentius/chant/lexicon-output";
-import { Sub } from "./intrinsics";
+import { Sub, Join } from "./intrinsics";
 import { AWS } from "./pseudo";
 import { nestedStack, NestedStackOutputRef } from "./nested-stack";
 import { stackOutput } from "@intentius/chant/stack-output";
@@ -362,6 +362,23 @@ describe("stackOutput serialization", () => {
 
     expect(template.Outputs.MyBucketArn.Value).toEqual({
       "Fn::GetAtt": ["MyBucket", "Arn"],
+    });
+  });
+
+  test("intrinsic-wrapped output (Join over a ref) → Fn::Join + Fn::GetAtt (#517)", () => {
+    const bucket = new MockBucket({ BucketName: "my-bucket" });
+    // Deliberately NOT pre-resolved — the serializer must set the nested ref's
+    // logical name from the entity map (resolveAttrRefs doesn't reach it here).
+    const arnRef = new AttrRef(bucket, "Arn");
+    const output = stackOutput(Join(",", arnRef));
+
+    const entities = new Map<string, Declarable>();
+    entities.set("MyBucket", bucket);
+    entities.set("MyBucketJoined", output as unknown as Declarable);
+
+    const template = JSON.parse(awsSerializer.serialize(entities) as string);
+    expect(template.Outputs.MyBucketJoined.Value).toEqual({
+      "Fn::Join": [",", { "Fn::GetAtt": ["MyBucket", "Arn"] }],
     });
   });
 });

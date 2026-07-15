@@ -7,6 +7,7 @@ import type { LexiconOutput } from "@intentius/chant/lexicon-output";
 import { walkValue, type SerializerVisitor } from "@intentius/chant/serializer-walker";
 import { isChildProject, type ChildProjectInstance } from "@intentius/chant/child-project";
 import { isStackOutput, type StackOutput } from "@intentius/chant/stack-output";
+import { isAttrRefLike } from "@intentius/chant/utils";
 import { resolveDependsOn } from "@intentius/chant/resource-attributes";
 import { isDefaultTags, type TagEntry } from "./default-tags";
 import { loadTaggableResources } from "./taggable";
@@ -99,6 +100,31 @@ function cfnVisitor(entityNames: Map<Declarable, string>): SerializerVisitor {
  */
 function toCFValue(value: unknown, entityNames: Map<Declarable, string>): unknown {
   return walkValue(value, entityNames, cfnVisitor(entityNames));
+}
+
+/**
+ * Set logical names on any AttrRefs nested inside a value (e.g. inside a `Join`
+ * that a `stackOutput` exports). resolveAttrRefs only reaches entity attributes,
+ * not refs buried in an output's intrinsic — without this the walker would throw
+ * "logical name not set" for them (#517).
+ */
+function resolveNestedAttrRefs(
+  value: unknown,
+  entityNames: Map<Declarable, string>,
+  seen = new Set<unknown>(),
+): void {
+  if (value === null || typeof value !== "object" || seen.has(value)) return;
+  seen.add(value);
+  if (isAttrRefLike(value)) {
+    if (!value.getLogicalName()) {
+      const parent = value.parent.deref();
+      const parentName = parent ? entityNames.get(parent as Declarable) : undefined;
+      if (parentName) value._setLogicalName(parentName);
+    }
+    return;
+  }
+  const children = Array.isArray(value) ? value : Object.values(value as Record<string, unknown>);
+  for (const child of children) resolveNestedAttrRefs(child, entityNames, seen);
 }
 
 /**
@@ -289,22 +315,29 @@ function serializeToTemplate(
         template.Outputs = {};
       }
       const stackOutput = entity as StackOutput;
-      const ref = stackOutput.sourceRef;
-      const logicalName = ref.getLogicalName();
-      if (logicalName) {
+      // Typed `unknown` so `isAttrRefLike` narrows cleanly regardless of how the
+      // AttrRef type resolves across the workspace/published boundary.
+      const ref: unknown = stackOutput.sourceRef;
+      let value: unknown;
+      if (isAttrRefLike(ref)) {
+        const logicalName = ref.getLogicalName();
+        if (!logicalName) continue;
         // Use Ref for primary identifier ("Id") since not all resources
         // support Fn::GetAtt for their primary identifier (e.g. ACM Certificate).
         // Ref always returns the primary identifier for any CF resource.
-        const output: CFOutput = {
-          Value: ref.attribute === "Id"
-            ? { Ref: logicalName }
-            : { "Fn::GetAtt": [logicalName, ref.attribute] },
-        };
-        if (stackOutput.description) {
-          output.Description = stackOutput.description;
-        }
-        template.Outputs[name] = output;
+        value = ref.attribute === "Id" ? { Ref: logicalName } : { "Fn::GetAtt": [logicalName, ref.attribute] };
+      } else {
+        // An intrinsic wrapping refs (e.g. Join(",", zone.NameServers), #517):
+        // resolve the nested AttrRefs' logical names from the entity map, then
+        // serialize through the CF walker → {Fn::Join:[",",{Fn::GetAtt:[…]}]}.
+        resolveNestedAttrRefs(ref, entityNames);
+        value = toCFValue(ref, entityNames);
       }
+      const output: CFOutput = { Value: value };
+      if (stackOutput.description) {
+        output.Description = stackOutput.description;
+      }
+      template.Outputs[name] = output;
     }
   }
 
