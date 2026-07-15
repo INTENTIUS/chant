@@ -1,5 +1,5 @@
 import { describe, test, expect } from "vitest";
-import { applyCommand, rollbackCommand, defaultOutput } from "./apply";
+import { applyCommand, rollbackCommand, defaultOutput, applyEndpoint } from "./apply";
 
 describe("applyCommand (#124)", () => {
   test("kubectl never → plain apply, no prune", () => {
@@ -30,6 +30,27 @@ describe("applyCommand (#124)", () => {
   test("arm uses Complete mode only when deleting", () => {
     expect(applyCommand("arm", "rg", "t.json", "owned-only")).toContain("--mode Complete");
     expect(applyCommand("arm", "rg", "t.json", "never")).toContain("--mode Incremental");
+  });
+});
+
+describe("applyEndpoint (#926)", () => {
+  const url = "http://localhost:4566";
+
+  test("injects --endpoint-url into the cloudformation deploy when an endpoint is set", () => {
+    const cmd = applyEndpoint(applyCommand("cloudformation", "prod", "template.json", "never"), "cloudformation", url);
+    expect(cmd).toBe(
+      `aws --endpoint-url '${url}' cloudformation deploy --template-file template.json --stack-name prod --capabilities CAPABILITY_NAMED_IAM`,
+    );
+  });
+
+  test("passes through with no endpoint, or for non-cloudformation targets", () => {
+    const cfn = applyCommand("cloudformation", "prod", "template.json", "never");
+    expect(applyEndpoint(cfn, "cloudformation", undefined)).toBe(cfn);
+    expect(applyEndpoint(cfn, "cloudformation", "")).toBe(cfn);
+    const k = applyCommand("kubectl", "prod", "dist", "never");
+    expect(applyEndpoint(k, "kubectl", url)).toBe(k);
+    const arm = applyCommand("arm", "rg", "t.json", "never");
+    expect(applyEndpoint(arm, "arm", url)).toBe(arm);
   });
 
   test("never deletes a foreign resource: prune is always marker-scoped", () => {

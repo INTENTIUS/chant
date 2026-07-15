@@ -15,6 +15,7 @@ import { join, dirname } from "path";
 import { fileURLToPath } from "url";
 import { awsSerializer } from "./serializer";
 import { FLOCI_EMULATOR } from "./op/activities/floci";
+import { applyAwsEndpointArgv } from "./components/cloud-executor";
 import { awsReferenceCatalog } from "./reference-catalog";
 import { resolveTemplateAttrs } from "./live-attrs";
 import { CFParser } from "./import/parser";
@@ -486,12 +487,14 @@ aws cloudformation wait stack-update-complete --stack-name my-app-prod`,
     // Try to parse the build output to detect stack name from Metadata or use convention
     const stackName = `${options.environment}`;
 
-    // Describe stack resources
-    const listResult = await rt.spawn([
+    // Describe stack resources. Inject --endpoint-url from AWS_ENDPOINT_URL so a
+    // local emulator (Floci) is observed instead of real AWS (#926) — behold
+    // serve --local relies on this for the overlay.
+    const listResult = await rt.spawn(applyAwsEndpointArgv([
       "aws", "cloudformation", "describe-stack-resources",
       "--stack-name", stackName,
       "--output", "json",
-    ]);
+    ], process.env.AWS_ENDPOINT_URL));
 
     if (listResult.exitCode !== 0) {
       throw new Error(`Failed to describe stack "${stackName}": ${listResult.stderr}`);
@@ -514,11 +517,11 @@ aws cloudformation wait stack-update-complete --stack-name my-app-prod`,
     }
 
     // Get stack outputs
-    const describeResult = await rt.spawn([
+    const describeResult = await rt.spawn(applyAwsEndpointArgv([
       "aws", "cloudformation", "describe-stacks",
       "--stack-name", stackName,
       "--output", "json",
-    ]);
+    ], process.env.AWS_ENDPOINT_URL));
 
     let stackOutputs: Record<string, string> = {};
     if (describeResult.exitCode === 0) {
@@ -569,12 +572,12 @@ aws cloudformation wait stack-update-complete --stack-name my-app-prod`,
     // Same stack-name convention as describeResources.
     const stackName = `${options.environment}`;
 
-    const result = await rt.spawn([
+    const result = await rt.spawn(applyAwsEndpointArgv([
       "aws", "cloudformation", "get-template",
       "--stack-name", stackName,
       "--template-stage", "Original",
       "--output", "json",
-    ]);
+    ], process.env.AWS_ENDPOINT_URL));
     if (result.exitCode !== 0) {
       throw new Error(`Failed to get template for stack "${stackName}": ${result.stderr}`);
     }
