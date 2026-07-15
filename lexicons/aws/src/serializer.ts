@@ -315,7 +315,9 @@ function serializeToTemplate(
         template.Outputs = {};
       }
       const stackOutput = entity as StackOutput;
-      const ref = stackOutput.sourceRef;
+      // Typed `unknown` so `isAttrRefLike` narrows cleanly regardless of how the
+      // AttrRef type resolves across the workspace/published boundary.
+      const ref: unknown = stackOutput.sourceRef;
       let value: unknown;
       if (isAttrRefLike(ref)) {
         const logicalName = ref.getLogicalName();
