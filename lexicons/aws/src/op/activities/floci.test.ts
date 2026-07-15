@@ -6,6 +6,8 @@ import {
   flociHealthUrl,
   flociEnv,
   isFlociReady,
+  FLOCI_SPEC,
+  FLOCI_EMULATOR,
 } from "./floci";
 
 describe("flociRunCommand (#704)", () => {
@@ -47,6 +49,30 @@ describe("flociHealthUrl / flociEnv (#704)", () => {
 
   test("env points the aws CLI at the endpoint with test creds", () => {
     expect(flociEnv(4566, "us-east-1")).toEqual({
+      AWS_ENDPOINT_URL: "http://localhost:4566",
+      AWS_ACCESS_KEY_ID: "test",
+      AWS_SECRET_ACCESS_KEY: "test",
+      AWS_REGION: "us-east-1",
+    });
+  });
+});
+
+describe("FLOCI_SPEC / FLOCI_EMULATOR — the aws plugin's emulator capability (#920)", () => {
+  test("spec pins the Floci container identity the shared lifecycle boots", () => {
+    expect(FLOCI_SPEC.name).toBe("chant-floci");
+    expect(FLOCI_SPEC.image).toBe("floci/floci:latest");
+    expect(FLOCI_SPEC.containerPort).toBe(4566);
+    expect(FLOCI_SPEC.healthPath).toBe("/_localstack/health");
+  });
+
+  test("ready predicate gates on cloudformation appearing in the health body", () => {
+    expect(FLOCI_SPEC.ready?.('{"services": {"cloudformation": "available"}}')).toBe(true);
+    expect(FLOCI_SPEC.ready?.('{"services": {"s3": "available"}}')).toBe(false);
+  });
+
+  test("capability env redirects the aws SDK at the running endpoint with test creds", () => {
+    expect(FLOCI_EMULATOR.spec).toBe(FLOCI_SPEC);
+    expect(FLOCI_EMULATOR.env("http://localhost:4566")).toEqual({
       AWS_ENDPOINT_URL: "http://localhost:4566",
       AWS_ACCESS_KEY_ID: "test",
       AWS_SECRET_ACCESS_KEY: "test",

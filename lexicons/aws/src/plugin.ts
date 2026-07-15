@@ -14,6 +14,7 @@ import { readFileSync } from "fs";
 import { join, dirname } from "path";
 import { fileURLToPath } from "url";
 import { awsSerializer } from "./serializer";
+import { FLOCI_EMULATOR } from "./op/activities/floci";
 import { awsReferenceCatalog } from "./reference-catalog";
 import { resolveTemplateAttrs } from "./live-attrs";
 import { CFParser } from "./import/parser";
@@ -31,6 +32,8 @@ import { awsHover } from "./lsp/hover";
 export const awsPlugin: LexiconPlugin = {
   name: "aws",
   serializer: awsSerializer,
+  // Local emulator (#920): Floci + the AWS env that redirects the SDK / observe.
+  emulator: FLOCI_EMULATOR,
   // Audit rule metadata for this lexicon's WAW* checks (#687).
   auditCatalog: () => awsAuditCatalog,
   // Live edge reconstruction for `chant graph --live` (#778).
