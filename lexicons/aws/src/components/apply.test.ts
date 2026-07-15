@@ -48,6 +48,57 @@ describe("cfn-deploy (#557)", () => {
     ).rejects.toThrow(/CREATE_FAILED/);
   });
 
+  it("throws fail-closed on an undefined stack status (Floci) instead of a TypeError (#947)", async () => {
+    const base = createMockCloudExecutor({ stacks: { "search-service": {} } });
+    const executor = {
+      ...base.executor,
+      cloudformation: {
+        ...base.executor.cloudformation,
+        waitForStack: async () => ({ stackStatus: undefined as unknown as string, outputs: {} }),
+      },
+    };
+    const capability = createCfnDeployCapability(executor);
+    await expect(
+      capability.run(ctx, { stack: "search-service", template: "archive:search.template.json" }),
+    ).rejects.toThrow(/indeterminate status/);
+  });
+
+  it("rollback degrades gracefully when the target lacks RollbackStack (Floci) (#947)", async () => {
+    const base = createMockCloudExecutor({ stacks: { "search-service": {} } });
+    const executor = {
+      ...base.executor,
+      cloudformation: {
+        ...base.executor.cloudformation,
+        rollbackStack: async () => {
+          throw new Error(
+            "An error occurred (UnknownAction) when calling the RollbackStack operation: Action RollbackStack is not supported.",
+          );
+        },
+      },
+    };
+    const capability = createCfnDeployCapability(executor);
+    await expect(
+      capability.rollback!(ctx, { stack: "search-service", template: "archive:search.template.json" }),
+    ).resolves.toBeUndefined();
+  });
+
+  it("rollback rethrows a genuine failure (not an unsupported action) (#947)", async () => {
+    const base = createMockCloudExecutor({ stacks: { "search-service": {} } });
+    const executor = {
+      ...base.executor,
+      cloudformation: {
+        ...base.executor.cloudformation,
+        rollbackStack: async () => {
+          throw new Error("An error occurred (AccessDenied): not authorized to RollbackStack");
+        },
+      },
+    };
+    const capability = createCfnDeployCapability(executor);
+    await expect(
+      capability.rollback!(ctx, { stack: "search-service", template: "archive:search.template.json" }),
+    ).rejects.toThrow(/AccessDenied/);
+  });
+
   it("passes wired inputs and imageRef through as CloudFormation parameters", async () => {
     const mock = createMockCloudExecutor({ stacks: { "search-service": {} } });
     const capability = createCfnDeployCapability(mock.executor);
