@@ -153,15 +153,33 @@ export function createCfnDeployCapability(
       // failed deploy as green (and hand downstream steps an empty `outputs`),
       // so throw — the same fail-closed contract the rest of the release model
       // relies on.
-      if (stackStatus.includes("ROLLBACK") || stackStatus.endsWith("_FAILED")) {
+      // A missing status is fail-closed too: Floci's describe-stacks can omit
+      // StackStatus mid-rollback, and `undefined.includes` would throw a TypeError
+      // that masks the real deploy failure (#947).
+      if (!stackStatus || stackStatus.includes("ROLLBACK") || stackStatus.endsWith("_FAILED")) {
         throw new Error(
-          `cfn-deploy "${stack}": stack reached ${stackStatus} — the deploy failed and was rolled back. Inspect the stack events for the resource that failed to create/update.`,
+          `cfn-deploy "${stack}": stack reached ${stackStatus ?? "an indeterminate status"} — the deploy failed and was rolled back. Inspect the stack events for the resource that failed to create/update.`,
         );
       }
       return { stackStatus, outputs, ...(snapshotId ? { snapshotId } : {}) };
     },
     async rollback(ctx, input) {
-      await executor.cloudformation.rollbackStack(input.stack ?? ctx.component);
+      const stack = input.stack ?? ctx.component;
+      try {
+        await executor.cloudformation.rollbackStack(stack);
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        // Local emulators (Floci) don't implement RollbackStack → `UnknownAction`.
+        // The stack is already in a terminal failed state; degrade to a clear
+        // message instead of crashing the compensation phase (#947).
+        if (/UnknownAction|not supported/i.test(message)) {
+          console.error(
+            `cfn-deploy rollback "${stack}": the target doesn't support RollbackStack (a local emulator such as Floci) — skipping automated rollback. Original: ${message}`,
+          );
+          return;
+        }
+        throw err;
+      }
     },
   };
 }
