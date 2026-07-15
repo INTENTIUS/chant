@@ -41,14 +41,24 @@ describe("aws exportResources I/O glue (#160)", () => {
     expect(ir.resources.map((r) => r.logicalId)).toEqual(["MyBucket"]);
   });
 
-  test("a non-zero exit throws with the stderr surfaced", async () => {
+  test("a not-yet-deployed stack returns empty live state (pre-first-apply), not an error", async () => {
     spawnMock.mockResolvedValue({
       stdout: "",
-      stderr: "Stack with id ghost does not exist",
+      stderr: "An error occurred (ValidationError) …: Stack with id ghost does not exist",
       exitCode: 254,
     });
-    await expect(awsPlugin.exportResources!({ environment: "ghost" })).rejects.toThrow(
-      /Failed to get template for stack "ghost".*does not exist/,
+    const ir = await awsPlugin.exportResources!({ environment: "ghost" });
+    expect(ir.resources).toEqual([]);
+  });
+
+  test("a genuine failure (not 'does not exist') still throws with the stderr surfaced", async () => {
+    spawnMock.mockResolvedValue({
+      stdout: "",
+      stderr: "An error occurred (AccessDenied) …: not authorized",
+      exitCode: 254,
+    });
+    await expect(awsPlugin.exportResources!({ environment: "prod" })).rejects.toThrow(
+      /Failed to get template for stack "prod".*AccessDenied/,
     );
   });
 
