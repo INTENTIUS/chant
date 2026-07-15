@@ -341,12 +341,16 @@ function serializeToTemplate(
     }
   }
 
-  // Add CF Outputs for LexiconOutputs produced by this lexicon
+  // Add CF Outputs for LexiconOutputs produced by this lexicon. Run the value
+  // through the CF walker so an AttrRef nested in an intrinsic (e.g.
+  // Join(",", [subnet1.SubnetId, …])) becomes Fn::GetAtt instead of leaking the
+  // generic `{__attrRef}` envelope — the same conversion resource Properties get
+  // (#935). A bare Fn::GetAtt value walks through unchanged.
   if (outputs && outputs.length > 0) {
     template.Outputs = template.Outputs ?? {};
     for (const output of outputs) {
       template.Outputs[output.outputName] = {
-        Value: output.getOutputValue(),
+        Value: toCFValue(output.getOutputValue(), entityNames),
       };
     }
   }
