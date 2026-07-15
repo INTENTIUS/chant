@@ -2,6 +2,33 @@ import { INTRINSIC_MARKER, type Intrinsic } from "./intrinsic";
 import { AttrRef } from "./attrref";
 
 /**
+ * Sanitize auto-generated Output name parts into a valid CloudFormation
+ * logical id. Real CloudFormation logical ids (including `Outputs` keys)
+ * must match `^[A-Za-z0-9]+$` — no dots, underscores, or other punctuation.
+ *
+ * Splits every part on runs of non-alphanumeric characters (dots from a
+ * nested `Fn::GetAtt` attribute path, underscores, hyphens, etc.) and
+ * re-joins the resulting segments in camelCase. This keeps the id
+ * deterministic and unique per (entityName, attribute) pair while
+ * discarding only punctuation — no information is lost, so two distinct
+ * inputs only collide if they already differ solely by punctuation.
+ *
+ * @internal
+ */
+export function sanitizeLogicalId(...parts: string[]): string {
+  const segments = parts
+    .join("_")
+    .split(/[^A-Za-z0-9]+/)
+    .filter((segment) => segment.length > 0);
+
+  if (segments.length === 0) return "Output";
+
+  return segments
+    .map((segment, i) => (i === 0 ? segment : segment.charAt(0).toUpperCase() + segment.slice(1)))
+    .join("");
+}
+
+/**
  * Represents a cross-lexicon output that bridges a producing lexicon (e.g. AWS)
  * with any consuming lexicon (e.g. GitHub, Cloudflare).
  *
@@ -76,12 +103,17 @@ export class LexiconOutput implements Intrinsic {
    * Create a LexiconOutput with an auto-generated name from entity name and attribute.
    * Used during cross-lexicon ref auto-detection.
    *
+   * The name is sanitized to a valid CloudFormation logical id (see
+   * {@link sanitizeLogicalId}) since it is used verbatim as the `Outputs`
+   * key by lexicon serializers (e.g. AWS CloudFormation), which reject
+   * dots or underscores in logical ids.
+   *
    * @param ref - The AttrRef pointing to the source entity
    * @param entityName - The logical name of the source entity
-   * @returns A LexiconOutput with name `{entityName}_{attribute}`
+   * @returns A LexiconOutput with a name derived from `{entityName}{Attribute}`
    */
   static auto(ref: AttrRef, entityName: string): LexiconOutput {
-    const name = `${entityName}_${ref.attribute}`;
+    const name = sanitizeLogicalId(entityName, ref.attribute);
     const output = new LexiconOutput(ref, name);
     output._setSourceEntity(entityName);
     return output;
