@@ -156,6 +156,85 @@ export function parseYAML(content: string): Record<string, unknown> {
 }
 
 /**
+ * A block-scalar header: `|` (literal, keep newlines) or `>` (folded, newlines →
+ * spaces), with a chomping indicator (`-` strip trailing newlines, `+` keep them,
+ * default clip to a single one). Returns null when `inline` isn't a block header.
+ */
+interface BlockScalarHeader {
+  style: "literal" | "folded";
+  chomp: "clip" | "strip" | "keep";
+}
+function blockScalarHeader(inline: string): BlockScalarHeader | null {
+  const m = inline.match(/^([|>])([+-]?)(?:\s+#.*)?$/);
+  if (!m) return null;
+  return {
+    style: m[1] === "|" ? "literal" : "folded",
+    chomp: m[2] === "-" ? "strip" : m[2] === "+" ? "keep" : "clip",
+  };
+}
+
+/**
+ * Parse a block scalar's body — the lines indented past `parentIndent`, dedented
+ * by the block's own indent (the first content line's). Handles literal/folded
+ * styles and clip/strip/keep chomping, matching js-yaml. Returns the string value
+ * and the index of the first line that is NOT part of the block.
+ */
+function parseBlockScalar(
+  lines: string[],
+  startIndex: number,
+  parentIndent: number,
+  header: BlockScalarHeader,
+): { value: string; endIndex: number } {
+  const raw: string[] = [];
+  let blockIndent = -1;
+  let i = startIndex;
+  for (; i < lines.length; i++) {
+    const line = lines[i];
+    if (line.trim() === "") {
+      raw.push(""); // a blank line is part of the block (kept/chomped later)
+      continue;
+    }
+    const ni = line.search(/\S/);
+    if (ni <= parentIndent) break; // dedented out of the block
+    if (blockIndent === -1) blockIndent = ni;
+    if (ni < blockIndent) break;
+    raw.push(line.slice(blockIndent));
+  }
+  // Trailing blank lines belong to the block (chomping decides their fate).
+  let text: string;
+  if (header.style === "folded") {
+    // Fold each run of non-empty lines into a space-joined paragraph; a run of N
+    // blank lines between paragraphs becomes N newlines (a single blank → one
+    // newline), matching YAML folded semantics.
+    text = "";
+    let buf: string[] = [];
+    let blankRun = 0;
+    let wrote = false;
+    const flush = (): void => {
+      if (buf.length === 0) return;
+      if (wrote) text += "\n".repeat(blankRun);
+      text += buf.join(" ");
+      buf = [];
+      blankRun = 0;
+      wrote = true;
+    };
+    for (const l of raw) {
+      if (l === "") { flush(); blankRun++; }
+      else buf.push(l);
+    }
+    flush();
+  } else {
+    text = raw.join("\n");
+  }
+  const trailing = text.match(/\n*$/)?.[0].length ?? 0;
+  const stripped = text.replace(/\n+$/, "");
+  if (header.chomp === "strip") text = stripped;
+  else if (header.chomp === "keep") text = stripped + "\n".repeat(Math.max(trailing, raw.length > 0 ? 1 : 0));
+  else text = stripped === "" ? "" : stripped + "\n"; // clip
+  return { value: text, endIndex: i };
+}
+
+/**
  * Parse indentation-based YAML lines into a key-value object.
  */
 export function parseYAMLLines(
@@ -222,8 +301,15 @@ export function parseYAMLLines(
         }
         i++;
       } else {
-        result[key] = parseScalar(inlineValue);
-        i++;
+        const header = blockScalarHeader(inlineValue);
+        if (header) {
+          const block = parseBlockScalar(lines, i + 1, indent, header);
+          result[key] = block.value;
+          i = block.endIndex;
+        } else {
+          result[key] = parseScalar(inlineValue);
+          i++;
+        }
       }
     } else if (line.trimStart().startsWith("- ")) {
       break;
@@ -246,6 +332,15 @@ function parseArrayItemValue(
   childIndent: number,
 ): unknown {
   if (inlineValue !== "" && !inlineValue.startsWith("#")) {
+    const header = blockScalarHeader(inlineValue);
+    if (header) {
+      // Block scalar nested under an array-item key (e.g. `- name: x\n  run: |`).
+      // The body is indented past the key's column. On a `- key: |` line the key
+      // sits 2 cols past the dash; on its own line it's the line's indent (#910).
+      const dash = lines[currentIndex].match(/^(\s*)- /);
+      const keyIndent = dash ? dash[1].length + 2 : lines[currentIndex].search(/\S/);
+      return parseBlockScalar(lines, currentIndex + 1, keyIndent, header).value;
+    }
     if (inlineValue.startsWith("[")) {
       try { return JSON.parse(inlineValue); } catch { return inlineValue; }
     }
@@ -323,9 +418,13 @@ export function parseYAMLArray(
         obj[kvMatch[1].trim()] = parseArrayItemValue(kvMatch[2].trim(), lines, i, indent + 2);
         // Check for more keys at indent+2
         const nextIndent = indent + 2;
-        let j = kvMatch[2].trim() === "" || kvMatch[2].trim().startsWith("#")
+        const firstVal = kvMatch[2].trim();
+        let j = firstVal === "" || firstVal.startsWith("#")
           ? skipNestedBlock(lines, i + 1, nextIndent)
-          : i + 1;
+          : blockScalarHeader(firstVal)
+            // Block body is indented past the key (nextIndent); skip it (#910).
+            ? skipNestedBlock(lines, i + 1, nextIndent + 1)
+            : i + 1;
         while (j < lines.length) {
           const nextLine = lines[j];
           if (nextLine.trim() === "" || nextLine.trim().startsWith("#")) {
@@ -341,6 +440,9 @@ export function parseYAMLArray(
             obj[nextKV[2].trim()] = parseArrayItemValue(nextVal, lines, j, ni + 2);
             if (nextVal === "" || nextVal.startsWith("#")) {
               j = skipNestedBlock(lines, j + 1, ni + 2);
+            } else if (blockScalarHeader(nextVal)) {
+              // Skip the block body (indented past this key at `ni`) (#910).
+              j = skipNestedBlock(lines, j + 1, ni + 1);
             } else {
               j++;
             }
