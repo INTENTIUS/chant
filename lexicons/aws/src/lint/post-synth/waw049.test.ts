@@ -6,7 +6,7 @@ function makeCtx(template: object) {
   return createPostSynthContext({ aws: template });
 }
 
-describe("WAW049: Security Group Broad Ingress (any port, except ALB:443)", () => {
+describe("WAW049: Security Group Broad Ingress (any port, except ALB:80/443)", () => {
   test("check metadata", () => {
     expect(waw049.id).toBe("WAW049");
     expect(waw049.description).toContain("443");
@@ -36,6 +36,20 @@ describe("WAW049: Security Group Broad Ingress (any port, except ALB:443)", () =
           Type: "AWS::EC2::SecurityGroup",
           Properties: {
             SecurityGroupIngress: [{ CidrIp: "0.0.0.0/0", IpProtocol: "tcp", FromPort: 443, ToPort: 443 }],
+          },
+        },
+      },
+    });
+    expect(checkBroadIngress(ctx)).toHaveLength(0);
+  });
+
+  test("allows 0.0.0.0/0 ingress on exactly port 80 (light-tier public HTTP ALB, #917)", () => {
+    const ctx = makeCtx({
+      Resources: {
+        MySg: {
+          Type: "AWS::EC2::SecurityGroup",
+          Properties: {
+            SecurityGroupIngress: [{ CidrIp: "0.0.0.0/0", IpProtocol: "tcp", FromPort: 80, ToPort: 80 }],
           },
         },
       },

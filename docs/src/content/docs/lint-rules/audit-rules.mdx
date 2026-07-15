@@ -1103,9 +1103,9 @@ Authority: [AWS — Security Pillar (Well-Architected)](https://docs.aws.amazon.
 
 ### WAW044
 
-**ALB HTTP listener does not redirect to HTTPS** — merge-worthy · guidance
+**ALB HTTP listener does not redirect to HTTPS (full tier)** — merge-worthy · guidance
 
-Add a redirect DefaultAction (Protocol: HTTPS) to the HTTP listener.
+Add a redirect DefaultAction (Protocol: HTTPS) to the HTTP listener on the full/production tier.
 
 Authority: [AWS — Security Pillar (Well-Architected)](https://docs.aws.amazon.com/wellarchitected/latest/security-pillar/welcome.html)
 
@@ -1143,7 +1143,7 @@ Add a LogConfiguration (e.g. awslogs) to the container.
 
 **Security group allows unrestricted ingress on a non-ALB port** — merge-worthy · guidance
 
-Restrict the CIDR; only ALB:443 is exempt from this rule.
+Restrict the CIDR; only ALB:80/443 is exempt from this rule.
 
 Authority: [AWS — Security Pillar (Well-Architected)](https://docs.aws.amazon.com/wellarchitected/latest/security-pillar/welcome.html)
 
