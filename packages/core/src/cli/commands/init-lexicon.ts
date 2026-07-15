@@ -8,7 +8,7 @@ import { generateCodegenGenerateTs, generateCodegenGenerateCliTs, generateCodege
 import { generateSpecFetchTs, generateSpecParseTs } from "./init-lexicon/templates/spec";
 import { generateSampleRuleTs, generateLintRulesIndexTs } from "./init-lexicon/templates/lint";
 import { generateLspCompletionsTs, generateLspHoverTs } from "./init-lexicon/templates/lsp";
-import { generatePackageJson, generateTsConfig, generateJustfile, generateGitignore, generateReadme, generateSerializerTs, generateValidateTs, generateValidateCliTs } from "./init-lexicon/templates/project";
+import { generatePackageJson, generateTsConfig, generateTsConfigBuild, generateJustfile, generateGitignore, generateReadme, generateSerializerTs, generateValidateTs, generateValidateCliTs } from "./init-lexicon/templates/project";
 import { generatePluginTestTs, generateSerializerTestTs, generateCompletionsTestTs, generateHoverTestTs } from "./init-lexicon/templates/tests";
 import { generateDocsPackageJson, generateDocsTsConfig, generateDocsAstroConfig, generateDocsContentConfig, generateDocsIndexMdx } from "./init-lexicon/templates/docs";
 import { generateExamplePackageJson, generateExampleInfraTs } from "./init-lexicon/templates/examples";
@@ -150,6 +150,7 @@ export async function initLexiconCommand(options: InitLexiconOptions): Promise<I
     "src/validate-cli.ts": generateValidateCliTs(),
     "package.json": generatePackageJson(name, names),
     "tsconfig.json": generateTsConfig(),
+    "tsconfig.build.json": generateTsConfigBuild(),
     "justfile": generateJustfile(name),
     ".gitignore": generateGitignore(),
     "README.md": generateReadme(name, names),

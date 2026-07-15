@@ -232,6 +232,39 @@ describe("scaffold content validation", () => {
     // AWS references
     expect(content).toContain("lexicons/aws/");
   });
+
+  // Drift guards — keep the scaffold compiling/installing against current core (#749).
+  test("package.json installs under plain npm and can build (#749)", () => {
+    const pkg = JSON.parse(readFileSync(join(targetDir, "package.json"), "utf-8"));
+    expect(JSON.stringify(pkg)).not.toContain("workspace:"); // rejected by plain npm
+    expect(pkg.devDependencies["@intentius/chant"]).toBe("*");
+    expect(pkg.dependencies).toBeUndefined();
+    expect(pkg.devDependencies["tsc-alias"]).toBeTruthy();
+    expect(pkg.scripts.build).toContain("tsconfig.build.json");
+  });
+
+  test("tsconfig.build.json uses bundler resolution + the development condition (#749)", () => {
+    const cfg = JSON.parse(readFileSync(join(targetDir, "tsconfig.build.json"), "utf-8"));
+    expect(cfg.compilerOptions.moduleResolution).toBe("bundler");
+    expect(cfg.compilerOptions.customConditions).toContain("development");
+  });
+
+  test("spec/fetch.ts matches fetchWithCache(config, force) → Map<string, Buffer> (#749)", () => {
+    const content = readFileSync(join(targetDir, "src/spec/fetch.ts"), "utf-8");
+    expect(content).toContain("Promise<Map<string, Buffer>>");
+    expect(content).not.toMatch(/force:\s*options/); // force is the 2nd arg, not a FetchConfig field
+  });
+
+  test("validate-cli.ts calls validate() with no verbose arg (#749)", () => {
+    const content = readFileSync(join(targetDir, "src/validate-cli.ts"), "utf-8");
+    expect(content).toContain("await validate();");
+    expect(content).not.toContain("verbose");
+  });
+
+  test("lint/rules/index.ts exports a `rules` array (plugin.ts imports it) (#749)", () => {
+    const content = readFileSync(join(targetDir, "src/lint/rules/index.ts"), "utf-8");
+    expect(content).toContain("export const rules");
+  });
 });
 
 // ── Fixture snapshot tests ──────────────────────────────────────────
