@@ -52,6 +52,11 @@ export interface CfnChangeSet {
   changeSetName: string;
   stackName: string;
   status: string;
+  /** CloudFormation's `StatusReason` for the change set, when present. A FAILED
+   * change set whose reason names an empty diff ("didn't contain changes" / "No
+   * updates are to be performed") is a no-op, not a real failure — see
+   * {@link isNoopChangeSet}. */
+  statusReason?: string;
   /** True the first time this stack is created (no prior stack exists). */
   isCreate: boolean;
   changes: CfnChange[];
@@ -404,6 +409,7 @@ const realCloudFormation: CloudFormationClient = {
     );
     const described = JSON.parse(stdout) as {
       Status: string;
+      StatusReason?: string;
       Changes?: Array<{
         ResourceChange: {
           Action: string;
@@ -418,6 +424,7 @@ const realCloudFormation: CloudFormationClient = {
       changeSetName,
       stackName: args.stackName,
       status: described.Status,
+      statusReason: described.StatusReason,
       isCreate: described.Status === "CREATE_COMPLETE" && !described.Changes?.length,
       changes: (described.Changes ?? []).map((c) => ({
         action: c.ResourceChange.Action as CfnChange["action"],

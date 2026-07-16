@@ -26,6 +26,28 @@ describe("cfn-deploy (#557)", () => {
     expect(mock.calls.map((c) => c.method)).toEqual(["createChangeSet", "executeChangeSet", "waitForStack"]);
   });
 
+  it("treats a no-change changeset as an idempotent no-op success, never executing it (#960)", async () => {
+    const mock = createMockCloudExecutor({
+      stacks: {
+        "loom-cognito": {
+          noChanges: true,
+          terminalStatus: "CREATE_COMPLETE",
+          outputs: { UserPoolId: "us-east-2_abc123" },
+        },
+      },
+    });
+    const capability = createCfnDeployCapability(mock.executor);
+
+    const output = await capability.run(ctx, { stack: "loom-cognito", template: "archive:cognito.template.json" });
+
+    // Reports the stack's current state (so downstream steps still get real
+    // outputs) instead of throwing on execute-change-set.
+    expect(output.stackStatus).toBe("CREATE_COMPLETE");
+    expect(output.outputs).toEqual({ UserPoolId: "us-east-2_abc123" });
+    // The empty change set is deleted and never executed.
+    expect(mock.calls.map((c) => c.method)).toEqual(["createChangeSet", "deleteChangeSet", "describeStack"]);
+  });
+
   it("throws when the stack rolls back — a failed deploy must not report success", async () => {
     const mock = createMockCloudExecutor({
       stacks: { "search-service": { terminalStatus: "ROLLBACK_COMPLETE" } },

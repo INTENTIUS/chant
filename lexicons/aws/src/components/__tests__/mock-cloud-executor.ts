@@ -68,6 +68,11 @@ export interface FakeStackConfig {
   terminalStatus?: string;
   /** True if this is a brand-new stack (no prior stack) — affects `isCreate`. Default: false. */
   isCreate?: boolean;
+  /** When true, the next changeset created against this (already-current) stack
+   * reports a FAILED "no changes" status, as real CloudFormation does for an
+   * update with an empty diff — cfn-deploy must treat it as an idempotent no-op
+   * success (#960). */
+  noChanges?: boolean;
 }
 
 export interface FakeDeploymentConfig {
@@ -200,6 +205,18 @@ export function createMockCloudExecutor(options: MockCloudExecutorOptions = {}):
       const changeSetName = `mock-changeset-${changeSetCounter}`;
       const config = stacks.get(args.stackName);
       const changes = config?.changes ?? [];
+      if (config?.noChanges) {
+        // Real CloudFormation: an update change set with an empty diff is
+        // created FAILED with a "didn't contain changes" reason (#960).
+        return {
+          changeSetName,
+          stackName: args.stackName,
+          status: "FAILED",
+          statusReason: "The submitted information didn't contain changes. Submit different information to create a change set.",
+          isCreate: false,
+          changes: [],
+        };
+      }
       pendingChangeSets.set(changeSetName, { stackName: args.stackName, changes });
       return {
         changeSetName,

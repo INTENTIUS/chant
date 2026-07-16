@@ -20,7 +20,27 @@
  */
 
 import type { Capability } from "@intentius/chant/components/capability";
-import { defaultCloudExecutor, type CfnChange, type CloudExecutor } from "./cloud-executor";
+import { defaultCloudExecutor, type CfnChange, type CfnChangeSet, type CloudExecutor } from "./cloud-executor";
+
+/** CloudFormation's wording when a change set has nothing to apply — the stack
+ * is already current. AWS phrases it "The submitted information didn't contain
+ * changes."; `aws cloudformation deploy` reports "No updates are to be
+ * performed."; keep both plus a bare "no changes" for other backends/Floci. */
+const NO_CHANGE_REASON = /(did ?n['’]?t|does ?n['’]?t|did not|does not) contain changes|no updates are to be performed|no changes/i;
+
+/**
+ * True when CloudFormation reports the change set has nothing to apply. AWS
+ * surfaces this as a FAILED change set whose `StatusReason` names the empty
+ * diff (executing it then errors); when no reason is available, a FAILED set
+ * with zero proposed changes is the same no-op. A FAILED set with any other
+ * reason is a genuine create failure and must NOT be treated as a no-op.
+ */
+export function isNoopChangeSet(changeSet: CfnChangeSet): boolean {
+  if (changeSet.status !== "FAILED") return false;
+  return changeSet.statusReason
+    ? NO_CHANGE_REASON.test(changeSet.statusReason)
+    : changeSet.changes.length === 0;
+}
 
 // ── cfn-deploy ───────────────────────────────────────────────────────────────
 
@@ -120,6 +140,22 @@ export function createCfnDeployCapability(
         templatePath: input.template,
         parameters: flattenCfnInputs(input),
       });
+
+      // An unchanged stack yields a change set with nothing to apply.
+      // `execute-change-set` rejects it ("The submitted information didn't
+      // contain changes"), which would fail this component and stop the whole
+      // run — so a re-run of `--components all` dies on the first already-current
+      // stack. Treat it as an idempotent no-op success instead: delete the empty
+      // change set and report the stack's current status/outputs so downstream
+      // steps still get real outputs and the run proceeds (#960).
+      if (isNoopChangeSet(changeSet)) {
+        await executor.cloudformation.deleteChangeSet({
+          stackName: stack,
+          changeSetName: changeSet.changeSetName,
+        });
+        const { stackStatus, outputs } = await executor.cloudformation.describeStack(stack);
+        return { stackStatus, outputs };
+      }
 
       const replacements = changeSet.changes.filter((c) => c.replacement);
       let snapshotId: string | undefined;
