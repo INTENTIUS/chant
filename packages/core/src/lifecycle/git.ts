@@ -142,6 +142,19 @@ export async function readBlobFromPath(
 }
 
 /**
+ * Storage key for a snapshot on the orphan branch. Single-stack projects key by
+ * lexicon (`<env>/<lexicon>.json`, unchanged). A multi-stack project (see
+ * `stacks` in ChantConfig, #932) folds the stack in as `<stack>__<lexicon>`
+ * (`<env>/<stack>__<lexicon>.json`) so sibling stacks that deploy the same
+ * lexicon don't overwrite each other's snapshots. The `__` separator can't
+ * collide with a lexicon name (lexicons are single tokens) and round-trips
+ * through `readSnapshot`/`readEnvironmentSnapshots` unchanged.
+ */
+export function snapshotStorageKey(lexicon: string, stack?: string): string {
+  return stack ? `${stack}__${lexicon}` : lexicon;
+}
+
+/**
  * Write a state snapshot JSON to the orphan branch.
  *
  * Pipeline: hash-object → mktree → commit-tree → update-ref

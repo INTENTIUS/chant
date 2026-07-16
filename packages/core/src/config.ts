@@ -82,6 +82,23 @@ export interface ChantConfig {
    */
   sourceDir?: string;
 
+  /**
+   * Multi-stack projects: the independently-deployed CloudFormation stacks this
+   * project comprises, each built from its own source directory. When set,
+   * lifecycle commands (`snapshot`/`diff`) iterate every stack — building each
+   * `src` scoped (so its logical ids match what that stack actually deploys) and
+   * observing it against its own live stack `name` — instead of assuming one
+   * stack per environment. Leave unset for a single-stack project (the default:
+   * one build from `sourceDir`/root, observed as the stack named after the
+   * environment). See {@link resolveStackTargets}.
+   */
+  stacks?: Array<{
+    /** The deployed CloudFormation stack name (what `cfn-deploy` targets). */
+    name: string;
+    /** Source directory to build for this stack, relative to the project root. */
+    src: string;
+  }>;
+
   /** Lint configuration (rules, extends, overrides, plugins) */
   lint?: LintConfig;
 

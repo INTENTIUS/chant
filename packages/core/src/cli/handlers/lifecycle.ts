@@ -1,7 +1,7 @@
 import { resolve } from "node:path";
 import { build } from "../../build";
 import { takeSnapshot } from "../../lifecycle/snapshot";
-import { readSnapshot, readSnapshotAt, readEnvironmentSnapshots, listSnapshots, fetchLifecycle, StaleLifecycleBranchError } from "../../lifecycle/git";
+import { readSnapshot, readSnapshotAt, readEnvironmentSnapshots, listSnapshots, fetchLifecycle, snapshotStorageKey, StaleLifecycleBranchError } from "../../lifecycle/git";
 import { computeBuildDigest, diffDigests } from "../../lifecycle/digest";
 import { diffLive, diffLiveArtifacts, diffSnapshots, type LiveDiffResult, type LiveArtifactDiffResult, type SnapshotDiffResult } from "../../lifecycle/live-diff";
 import { buildChangeSet, renderChangeSet, gitlabMrReport, type ChangeSet } from "../../lifecycle/change-set";
@@ -27,6 +27,34 @@ import type { ChantConfig } from "../../config";
  */
 function resolveBuildRoot(args: ParsedArgs, config: ChantConfig): string {
   return resolve(args.src ?? config.sourceDir ?? ".");
+}
+
+/** One stack a lifecycle command operates on: its build root and, for a
+ * multi-stack project, the deployed CloudFormation stack name it observes
+ * against. */
+interface StackTarget {
+  /** The deployed stack name to observe (undefined ⇒ single-stack convention:
+   * the stack named after the environment). */
+  stack?: string;
+  /** Build root to synthesize this stack from, scoped so its logical ids match
+   * what the stack actually deploys. */
+  root: string;
+}
+
+/**
+ * The stacks a lifecycle command (`snapshot`/`diff`) iterates. A multi-stack
+ * project declares them via `stacks` in chant.config (#932) — each built from
+ * its own `src` and observed against its own live stack `name`. A single-stack
+ * project (no `stacks`) resolves to one target built from `sourceDir`/root and
+ * observed as the stack named after the environment (unchanged behavior). An
+ * explicit `--src` always wins and forces a single scoped target.
+ */
+function resolveStackTargets(args: ParsedArgs, config: ChantConfig): StackTarget[] {
+  if (args.src) return [{ root: resolve(args.src) }];
+  if (config.stacks && config.stacks.length > 0) {
+    return config.stacks.map((s) => ({ stack: s.name, root: resolve(s.src) }));
+  }
+  return [{ root: resolveBuildRoot(args, config) }];
 }
 
 /**
@@ -59,13 +87,6 @@ export async function runLifecycleSnapshot(ctx: CommandContext): Promise<number>
     : plugins;
   const targetSerializers = targetPlugins.map((p) => p.serializer);
 
-  // Build first to get entity names and build output
-  const buildResult = await build(resolveBuildRoot(args, config), targetSerializers);
-  if (buildResult.errors.length > 0) {
-    console.error(formatError({ message: "Build failed — fix errors before taking a snapshot" }));
-    return 1;
-  }
-
   const observingPlugins = targetPlugins.filter((p) => p.describeResources || p.listArtifacts);
   if (observingPlugins.length === 0) {
     console.error(formatError({
@@ -75,35 +96,55 @@ export async function runLifecycleSnapshot(ctx: CommandContext): Promise<number>
     return 1;
   }
 
-  let result;
-  try {
-    result = await takeSnapshot(environment, observingPlugins, buildResult);
-  } catch (err) {
-    if (err instanceof StaleLifecycleBranchError) {
-      console.error(formatError({
-        message: `Another snapshot completed for chant/lifecycle after this run started (env: ${environment}).`,
-        hint: `Pull and retry: \`git fetch origin ${"chant/lifecycle"}:${"chant/lifecycle"}\` && \`chant lifecycle snapshot ${environment}\`.`,
-      }));
-      return 1;
+  // One target per stack (single-stack projects: exactly one). Each stack builds
+  // from its own scoped root — so its logical ids match what it deploys — and
+  // snapshots against its own live stack name (#932).
+  const targets = resolveStackTargets(args, config);
+  let anySnapshotSaved = false;
+  let anyHardError = false;
+
+  for (const target of targets) {
+    const label = target.stack ? `stack "${target.stack}"` : "project";
+    const buildResult = await build(target.root, targetSerializers);
+    if (buildResult.errors.length > 0) {
+      console.error(formatError({ message: `Build failed for ${label} — fix errors before taking a snapshot` }));
+      anyHardError = true;
+      continue;
     }
-    throw err;
+
+    let result;
+    try {
+      result = await takeSnapshot(environment, observingPlugins, buildResult, { stack: target.stack });
+    } catch (err) {
+      if (err instanceof StaleLifecycleBranchError) {
+        console.error(formatError({
+          message: `Another snapshot completed for chant/lifecycle after this run started (env: ${environment}).`,
+          hint: `Pull and retry: \`git fetch origin ${"chant/lifecycle"}:${"chant/lifecycle"}\` && \`chant lifecycle snapshot ${environment}\`.`,
+        }));
+        return 1;
+      }
+      throw err;
+    }
+
+    for (const w of result.warnings) {
+      console.error(formatWarning({ message: w }));
+    }
+    for (const e of result.errors) {
+      console.error(formatError({ message: e }));
+    }
+
+    if (result.snapshots.length > 0) {
+      anySnapshotSaved = true;
+      const prefix = target.stack ? `${target.stack}: ` : "";
+      const counts = result.snapshots
+        .map((s) => `${s.lexicon}(${Object.keys(s.resources).length})`)
+        .join(" ");
+      console.error(formatSuccess(`${prefix}Snapshot saved to chant/lifecycle (${counts})`));
+    }
+    if (result.errors.length > 0) anyHardError = true;
   }
 
-  for (const w of result.warnings) {
-    console.error(formatWarning({ message: w }));
-  }
-  for (const e of result.errors) {
-    console.error(formatError({ message: e }));
-  }
-
-  if (result.snapshots.length > 0) {
-    const counts = result.snapshots
-      .map((s) => `${s.lexicon}(${Object.keys(s.resources).length})`)
-      .join(" ");
-    console.error(formatSuccess(`Snapshot saved to chant/lifecycle (${counts})`));
-  }
-
-  return result.errors.length > 0 && result.snapshots.length === 0 ? 1 : 0;
+  return anyHardError && !anySnapshotSaved ? 1 : 0;
 }
 
 /**
@@ -209,26 +250,68 @@ export async function runLifecycleDiff(ctx: CommandContext): Promise<number> {
     ? plugins.filter((p) => p.name === lexiconFilter).map((p) => p.serializer)
     : serializers;
 
-  // Build to get current state (from the configured source root, not necessarily ".")
+  // Fetch previous snapshots once (all stacks share the orphan branch).
   const { config } = await loadChantConfig(resolve("."));
-  const buildResult = await build(resolveBuildRoot(args, config), targetSerializers);
-  if (buildResult.errors.length > 0) {
-    console.error(formatError({ message: "Build failed — fix errors before diffing" }));
-    return 1;
-  }
-
-  // Fetch and read previous snapshot
   await fetchLifecycle();
 
-  const lexicons = lexiconFilter
-    ? [lexiconFilter]
-    : Array.from(buildResult.manifest.lexicons);
+  // One target per stack (single-stack projects: exactly one), each built from
+  // its own scoped root and diffed against its own live stack name (#932).
+  const targets = resolveStackTargets(args, config);
+  const json = !!args.json;
+  const perStackJson: Record<string, unknown> = {};
+  let combinedLexiconsJson: Record<string, unknown> | undefined;
+  let totalDrift = 0;
+  let totalChecked = 0;
+  let anyBuildError = false;
 
-  if (args.live) {
-    return runLifecycleDiffLive({ environment, lexicons, plugins, buildResult, json: !!args.json });
+  for (const target of targets) {
+    const buildResult = await build(target.root, targetSerializers);
+    if (buildResult.errors.length > 0) {
+      const label = target.stack ? `stack "${target.stack}"` : "project";
+      console.error(formatError({ message: `Build failed for ${label} — fix errors before diffing` }));
+      anyBuildError = true;
+      continue;
+    }
+
+    const lexicons = lexiconFilter
+      ? [lexiconFilter]
+      : Array.from(buildResult.manifest.lexicons);
+
+    if (args.live) {
+      const r = await runLifecycleDiffLive({ environment, lexicons, plugins, buildResult, json, stack: target.stack });
+      totalDrift += r.totalDrift;
+      totalChecked += r.totalLexiconsChecked;
+      if (json) {
+        if (target.stack) perStackJson[target.stack] = r.byLexicon;
+        else combinedLexiconsJson = r.byLexicon;
+      }
+    } else {
+      await runLifecycleDiffDigest({ environment, lexicons, buildResult, stack: target.stack });
+    }
   }
 
-  return runLifecycleDiffDigest({ environment, lexicons, buildResult });
+  if (args.live) {
+    if (json) {
+      // Single-stack keeps the original `{ environment, lexicons }` shape
+      // (behold's inspect diff, #852); multi-stack nests under `stacks`.
+      console.log(
+        JSON.stringify(
+          combinedLexiconsJson !== undefined
+            ? { environment, lexicons: combinedLexiconsJson }
+            : { environment, stacks: perStackJson },
+        ),
+      );
+    } else if (totalChecked === 0) {
+      console.error(formatWarning({
+        message: "No lexicons implement describeResources or listArtifacts — nothing to diff in --live mode",
+      }));
+      return 1;
+    } else if (totalDrift === 0) {
+      console.error(formatSuccess(`No drift detected across ${totalChecked} lexicon(s)`));
+    }
+  }
+
+  return anyBuildError ? 1 : 0;
 }
 
 interface BetweenDiffArgs {
@@ -300,13 +383,16 @@ interface DigestDiffArgs {
   environment: string;
   lexicons: string[];
   buildResult: BuildResult;
+  /** Deployed stack name for a multi-stack project (#932); scopes the snapshot read. */
+  stack?: string;
 }
 
 async function runLifecycleDiffDigest(args: DigestDiffArgs): Promise<number> {
   const currentDigest = computeBuildDigest(args.buildResult);
+  if (args.stack) console.log(`\n${formatBold(`■ stack ${args.stack}`)}`);
 
   for (const lexicon of args.lexicons) {
-    const content = await readSnapshot(args.environment, lexicon);
+    const content = await readSnapshot(args.environment, snapshotStorageKey(lexicon, args.stack));
     let previousDigest = undefined;
     if (content) {
       const snapshot: LifecycleSnapshot = JSON.parse(content);
@@ -343,17 +429,28 @@ interface LiveDiffArgs {
   buildResult: BuildResult;
   /** Emit machine-readable JSON on stdout instead of the human report (#852). */
   json: boolean;
+  /** Deployed stack name for a multi-stack project (#932); scopes the live
+   * observation (which CloudFormation stack to query) and the snapshot read. */
+  stack?: string;
 }
 
-async function runLifecycleDiffLive(args: LiveDiffArgs): Promise<number> {
-  let totalDrift = 0;
-  let totalLexiconsChecked = 0;
-  // Collected per-lexicon results, emitted as one JSON object when --json is set
-  // (parsed by programmatic consumers, e.g. behold's inspect diff — #852).
-  const byLexicon: Record<
+interface LiveDiffOutcome {
+  byLexicon: Record<
     string,
     { resources?: LiveDiffResult; observed?: Record<string, ResourceMetadata>; artifacts?: LiveArtifactDiffResult }
-  > = {};
+  >;
+  totalDrift: number;
+  totalLexiconsChecked: number;
+}
+
+/** Diff current build vs live cloud for one stack. Renders the human report
+ * inline; returns per-lexicon results so the caller emits the aggregate `--json`
+ * once (single-stack keeps the original shape; multi-stack nests under `stacks`). */
+async function runLifecycleDiffLive(args: LiveDiffArgs): Promise<LiveDiffOutcome> {
+  let totalDrift = 0;
+  let totalLexiconsChecked = 0;
+  const byLexicon: LiveDiffOutcome["byLexicon"] = {};
+  if (!args.json && args.stack) console.log(`\n${formatBold(`■ stack ${args.stack}`)}`);
 
   for (const lexiconName of args.lexicons) {
     const plugin = args.plugins.find((p) => p.name === lexiconName);
@@ -391,7 +488,7 @@ async function runLifecycleDiffLive(args: LiveDiffArgs): Promise<number> {
 
     // Read previous snapshot once; both flows pull what they need.
     let prevSnapshot: LifecycleSnapshot | undefined;
-    const content = await readSnapshot(args.environment, lexiconName);
+    const content = await readSnapshot(args.environment, snapshotStorageKey(lexiconName, args.stack));
     if (content) prevSnapshot = JSON.parse(content);
 
     let lexiconChecked = false;
@@ -405,6 +502,7 @@ async function runLifecycleDiffLive(args: LiveDiffArgs): Promise<number> {
           buildOutput,
           entityNames: Array.from(declared),
           entities,
+          stack: args.stack,
         });
       } catch (err) {
         console.error(formatError({
@@ -427,7 +525,7 @@ async function runLifecycleDiffLive(args: LiveDiffArgs): Promise<number> {
     if (plugin.listArtifacts) {
       let observedNow: Record<string, ArtifactMetadata>;
       try {
-        observedNow = await plugin.listArtifacts({ environment: args.environment, entities });
+        observedNow = await plugin.listArtifacts({ environment: args.environment, entities, stack: args.stack });
       } catch (err) {
         console.error(formatError({
           message: `${lexiconName}: listArtifacts failed — ${err instanceof Error ? err.message : String(err)}`,
@@ -445,23 +543,7 @@ async function runLifecycleDiffLive(args: LiveDiffArgs): Promise<number> {
     if (lexiconChecked) totalLexiconsChecked++;
   }
 
-  if (totalLexiconsChecked === 0) {
-    console.error(formatWarning({
-      message: "No lexicons implement describeResources or listArtifacts — nothing to diff in --live mode",
-    }));
-    return 1;
-  }
-
-  if (args.json) {
-    console.log(JSON.stringify({ environment: args.environment, lexicons: byLexicon }));
-    return 0;
-  }
-
-  if (totalDrift === 0) {
-    console.error(formatSuccess(`No drift detected across ${totalLexiconsChecked} lexicon(s)`));
-  }
-
-  return 0;
+  return { byLexicon, totalDrift, totalLexiconsChecked };
 }
 
 function renderLiveDiff(lexiconName: string, environment: string, diff: LiveDiffResult): void {

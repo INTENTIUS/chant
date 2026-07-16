@@ -8,6 +8,7 @@ const pushLifecycleMock = vi.fn();
 
 vi.mock("./git", () => ({
   writeSnapshot: (...args: unknown[]) => writeSnapshotMock(...args),
+  snapshotStorageKey: (lexicon: string, stack?: string) => (stack ? `${stack}__${lexicon}` : lexicon),
   getHeadCommit: () => getHeadCommitMock(),
   pushLifecycle: () => pushLifecycleMock(),
 }));
@@ -57,6 +58,29 @@ describe("takeSnapshot", () => {
     });
     expect(writeSnapshotMock).toHaveBeenCalledTimes(1);
     expect(pushLifecycleMock).toHaveBeenCalledTimes(1);
+    // Single-stack: written under the bare lexicon key, snapshot carries no stack.
+    expect(writeSnapshotMock.mock.calls[0][1]).toBe("aws");
+    expect(result.snapshots[0].stack).toBeUndefined();
+  });
+
+  // #932 — a multi-stack project observes each stack against its own live stack
+  // and stores its snapshot under a stack-scoped key so siblings don't overwrite.
+  test("stack option: observes the named stack and stores under a stack-scoped key", async () => {
+    let observedStack: string | undefined = "unset";
+    const plugin = createMockPlugin({
+      name: "aws",
+      describeResources: async (options: { stack?: string }) => {
+        observedStack = options.stack;
+        return { bucket: { type: "AWS::S3::Bucket", status: "CREATE_COMPLETE", physicalId: "b" } };
+      },
+    });
+    const result = await takeSnapshot("prod", [plugin], makeBuildResult({ aws: ["bucket"] }), { stack: "loom-backend" });
+    // describeResources was told which live stack to query.
+    expect(observedStack).toBe("loom-backend");
+    // The snapshot records its stack …
+    expect(result.snapshots[0].stack).toBe("loom-backend");
+    // … and is stored under `<stack>__<lexicon>`, not the bare lexicon key.
+    expect(writeSnapshotMock.mock.calls[0][1]).toBe("loom-backend__aws");
   });
 
   test("plugin without describeResources is skipped", async () => {
