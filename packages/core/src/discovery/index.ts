@@ -67,7 +67,7 @@ export async function discover(path: string): Promise<DiscoveryResult> {
   let entities = new Map<string, Declarable>();
 
   try {
-    entities = collectEntities(modules);
+    entities = collectEntities(modules, path);
   } catch (error) {
     // Collect resolution errors
     if (error instanceof Error && error.name === "DiscoveryError") {

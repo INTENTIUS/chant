@@ -280,6 +280,97 @@ describe("collectEntities", () => {
   });
 });
 
+// #932 — a multi-stack project (independently-deployed sibling stacks under one
+// root) legitimately reuses conventional cross-stack Parameter names across
+// siblings. The unscoped whole-project build must namespace by directory instead
+// of throwing, while a per-stack scoped build keeps the raw (deployed) names.
+describe("collectEntities — cross-directory namespaces (#932)", () => {
+  test("the same bare name in two different directories is disambiguated by a stack prefix, not thrown", () => {
+    const agentsBucket = createMockEntity("param");
+    const backendBucket = createMockEntity("param");
+
+    const result = collectEntities(
+      [
+        { file: "src/loom-agents/params.ts", exports: { pArtifactBucket: agentsBucket } },
+        { file: "src/loom-backend/params.ts", exports: { pArtifactBucket: backendBucket } },
+      ],
+      "src",
+    );
+
+    expect(result.size).toBe(2);
+    expect(result.get("LoomAgentspArtifactBucket")).toBe(agentsBucket);
+    expect(result.get("LoomBackendpArtifactBucket")).toBe(backendBucket);
+    // The raw name is not used when it collides across directories.
+    expect(result.has("pArtifactBucket")).toBe(false);
+    // Disambiguated keys stay within CloudFormation's logical-id grammar.
+    for (const key of result.keys()) expect(key).toMatch(/^[A-Za-z0-9]+$/);
+  });
+
+  test("a genuine same-directory duplicate still throws", async () => {
+    const a = createMockEntity("param");
+    const b = createMockEntity("param");
+
+    await expectToThrow(
+      () =>
+        collectEntities(
+          [
+            { file: "src/loom-backend/params.ts", exports: { pArtifactBucket: a } },
+            { file: "src/loom-backend/more.ts", exports: { pArtifactBucket: b } },
+          ],
+          "src",
+        ),
+      DiscoveryError,
+      (error) => {
+        expect(error.type).toBe("resolution");
+        expect(error.message).toBe('Duplicate export name "pArtifactBucket" found');
+      },
+    );
+  });
+
+  test("the same object re-exported from two directories stays one raw-named entity", () => {
+    const shared = createMockEntity("param");
+
+    const result = collectEntities(
+      [
+        { file: "src/a/x.ts", exports: { shared } },
+        { file: "src/b/y.ts", exports: { shared } },
+      ],
+      "src",
+    );
+
+    expect(result.size).toBe(1);
+    expect(result.get("shared")).toBe(shared);
+  });
+
+  test("non-colliding names in different directories keep their raw names (single-stack subdirs unaffected)", () => {
+    const vpc = createMockEntity("resource");
+    const app = createMockEntity("resource");
+
+    const result = collectEntities(
+      [
+        { file: "src/network/vpc.ts", exports: { vpc } },
+        { file: "src/compute/app.ts", exports: { app } },
+      ],
+      "src",
+    );
+
+    expect(result.size).toBe(2);
+    expect(result.get("vpc")).toBe(vpc);
+    expect(result.get("app")).toBe(app);
+  });
+
+  test("a scoped per-stack build (buildRoot == the stack dir) keeps raw names — deploy fidelity", () => {
+    const bucket = createMockEntity("param");
+
+    const result = collectEntities(
+      [{ file: "src/loom-backend/params.ts", exports: { pArtifactBucket: bucket } }],
+      "src/loom-backend",
+    );
+
+    expect(result.get("pArtifactBucket")).toBe(bucket);
+  });
+});
+
 describe("collectEntities with composites", () => {
   beforeEach(() => {
     CompositeRegistry.clear();
