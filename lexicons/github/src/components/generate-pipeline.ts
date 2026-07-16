@@ -54,6 +54,26 @@ import type {
 
 export type { GeneratedJob, GenerateGithubOptions, GenerateGithubResult };
 
+/**
+ * The structured pipeline document behind {@link generateGithubPipeline}: the
+ * `on`/`env`/`jobs` mappings plus the machine-readable `stages`/`jobs` views,
+ * before YAML emission. Exposed so a GitHub-Actions dialect (the forgejo
+ * lexicon, #969) can reuse the exact job/`needs:`/artifact structure and only
+ * apply its dialect transform + emit, rather than re-deriving the graph.
+ */
+export interface GithubPipelineDoc {
+  /** The `on:` trigger mapping (a bare `workflow_dispatch`). */
+  on: Record<string, unknown>;
+  /** The `env:` mapping, when `options.variables` is set. */
+  env?: Record<string, unknown>;
+  /** The `jobs:` mapping — one entry per component. */
+  jobsDoc: Record<string, unknown>;
+  /** Wave-ordered stage names (parity with gitlab's `--format json`). */
+  stages: string[];
+  /** Every generated job, for the machine-readable view. */
+  jobs: GeneratedJob[];
+}
+
 /** GitHub Actions job ids must match `[a-zA-Z_][a-zA-Z0-9_-]*`; component names are already kebab-case in every fixture, but normalize defensively (mirrors gitlab's `toJobName`). */
 function toJobName(componentName: string): string {
   return componentName.replace(/([a-z0-9])([A-Z])/g, "$1-$2").toLowerCase();
@@ -80,10 +100,10 @@ function artifactName(name: string): string {
  * resolution. Wired into core's generate mode via the github lexicon plugin's
  * `generateComponentPipeline` (../plugin.ts).
  */
-export function generateGithubPipeline(
+export function buildGithubPipelineDoc(
   components: DriverComponent[],
   options: GenerateGithubOptions = {},
-): GenerateGithubResult {
+): GithubPipelineDoc {
   const env = options.env ?? "production";
   const image = options.image ?? DEFAULT_IMAGE;
   const runCommand = options.runCommand ?? ["chant", "run", "--components", "{name}", "--env", env];
@@ -164,12 +184,39 @@ export function generateGithubPipeline(
     }
   });
 
-  const sections: string[] = [];
-  sections.push("on:" + emitYAML({ workflow_dispatch: {} }, 1));
-  if (options.variables && Object.keys(options.variables).length > 0) {
-    sections.push("env:" + emitYAML(options.variables, 1));
-  }
-  sections.push("jobs:" + emitYAML(jobsDoc, 1));
+  return {
+    on: { workflow_dispatch: {} },
+    ...(options.variables && Object.keys(options.variables).length > 0 ? { env: options.variables } : {}),
+    jobsDoc,
+    stages,
+    jobs,
+  };
+}
 
-  return { yaml: sections.join("\n\n") + "\n", stages, jobs };
+/**
+ * Emit a `GithubPipelineDoc`'s `on`/`env`/`jobs` mappings as workflow YAML.
+ * Shared with the forgejo dialect (#969), which transforms the doc first.
+ */
+export function emitPipelineYAML(doc: GithubPipelineDoc): string {
+  const sections: string[] = [];
+  sections.push("on:" + emitYAML(doc.on, 1));
+  if (doc.env && Object.keys(doc.env).length > 0) {
+    sections.push("env:" + emitYAML(doc.env, 1));
+  }
+  sections.push("jobs:" + emitYAML(doc.jobsDoc, 1));
+  return sections.join("\n\n") + "\n";
+}
+
+/**
+ * Synthesize a `.github/workflows/*.yml` pipeline from a set of components:
+ * one job per component, `needs:` expressing the wave-ordered dependency DAG
+ * from `resolveComponentGraph`. Thin wrapper over {@link buildGithubPipelineDoc}
+ * + {@link emitPipelineYAML}.
+ */
+export function generateGithubPipeline(
+  components: DriverComponent[],
+  options: GenerateGithubOptions = {},
+): GenerateGithubResult {
+  const doc = buildGithubPipelineDoc(components, options);
+  return { yaml: emitPipelineYAML(doc), stages: doc.stages, jobs: doc.jobs };
 }

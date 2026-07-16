@@ -160,7 +160,7 @@ export async function computeComponentGraph(path: string): Promise<ComponentGrap
   }
 }
 
-/** A generate-mode target lexicon name — any lexicon whose plugin implements `generateComponentPipeline` (currently gitlab; github/forgejo as they add it). */
+/** A generate-mode target lexicon name — any lexicon whose plugin implements `generateComponentPipeline` (gitlab, github, and forgejo today). */
 export type GenerateLexicon = string;
 
 /** Result of `chant build --components --generate <lexicon>`. */
@@ -213,7 +213,7 @@ export async function generateComponentsPipeline(
   if (!plugin?.generateComponentPipeline) {
     return {
       success: false,
-      error: `Lexicon "${lexicon}" does not support generate mode (no generateComponentPipeline). GitLab is supported today; GitHub/Forgejo as they add it.`,
+      error: `Lexicon "${lexicon}" does not support generate mode (no generateComponentPipeline). GitLab, GitHub, and Forgejo are supported today.`,
     };
   }
 

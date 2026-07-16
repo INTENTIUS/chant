@@ -16,6 +16,7 @@ import { join, dirname } from "path";
 import { fileURLToPath } from "url";
 import { forgejoSerializer } from "./serializer";
 import { forgejoContextTools } from "./mcp/context-tools";
+import { generateForgejoPipeline } from "./components/generate-pipeline";
 
 const reuseNote =
   "forgejo reuses the github lexicon's entities — run `chant generate` in the github lexicon instead.";
@@ -24,6 +25,11 @@ export const forgejoPlugin: LexiconPlugin = {
   name: "forgejo",
   auditCatalog: () => forgejoAuditCatalog,
   serializer: forgejoSerializer,
+
+  // Generate mode (#969): component graph → Forgejo Actions workflow. Reuses
+  // github's pipeline structure and applies the Forgejo dialect (runner labels,
+  // `uses:` resolution) — see ./components/generate-pipeline.
+  generateComponentPipeline: (components, options) => generateForgejoPipeline(components, options),
 
   initTemplates(template?: string): InitTemplateSet {
     if (template === "docker-build") {
