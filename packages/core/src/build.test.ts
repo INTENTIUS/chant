@@ -499,6 +499,49 @@ describe("detectCrossLexiconRefs", () => {
       "foundationArtifactBucketMetadataConfigurationAnnotationTableConfigurationTableArn"
     );
   });
+
+  // chant#959 — referencing a WHOLE resource object (e.g. `Ref(bucket)`, which
+  // embeds the resource) must not harvest the resource's latent per-attribute
+  // AttrRefs as cross-lexicon outputs. Every resource instance materializes an
+  // AttrRef for every attribute in its spec (runtime.ts); config-gated ones
+  // (S3 `WebsiteURL`, `MetadataConfiguration.*`) don't exist at deploy time
+  // unless the matching config block is set, so emitting `Fn::GetAtt` outputs
+  // for them makes real CloudFormation reject the template. Only an
+  // explicitly-accessed attribute (a standalone AttrRef value) should output.
+  test("does not harvest a whole resource's latent attribute refs (Ref of a resource)", () => {
+    // A resource that carries materialized AttrRef accessors for every attribute,
+    // exactly as runtime.ts builds them — including config-gated ones.
+    const bucket = {
+      lexicon: "aws",
+      entityType: "AWS::S3::Bucket",
+      [DECLARABLE_MARKER]: true,
+    } as unknown as Record<string, unknown>;
+    for (const attr of ["Arn", "DomainName", "WebsiteURL", "MetadataConfiguration.InventoryTableConfiguration.TableName"]) {
+      bucket[attr.replace(/\W/g, "")] = new AttrRef(bucket as unknown as Declarable, attr);
+    }
+
+    // An output entity (no lexicon) that references the whole bucket object,
+    // the way `output(Ref(bucket), "oArtifactBucket")` does — a Ref intrinsic
+    // whose value is the resource object itself.
+    const refIntrinsic = {
+      [INTRINSIC_MARKER]: true as const,
+      value: bucket,
+      toJSON: () => ({ Ref: "foundationArtifactBucket" }),
+    };
+    const bucketOutput = {
+      entityType: "Output",
+      [DECLARABLE_MARKER]: true,
+      props: { ref: refIntrinsic },
+    } as unknown as Declarable;
+
+    const entities = new Map<string, Declarable>([
+      ["foundationArtifactBucket", bucket as unknown as Declarable],
+      ["oArtifactBucket", bucketOutput],
+    ]);
+
+    const detected = detectCrossLexiconRefs(entities);
+    expect(detected).toHaveLength(0);
+  });
 });
 
 describe("computeStackGraph (#200 — cross-stack apply ordering)", () => {

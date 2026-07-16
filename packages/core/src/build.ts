@@ -318,6 +318,17 @@ export function detectCrossLexiconRefs(
     // Skip LexiconOutput instances — these are explicit outputs
     if (isLexiconOutput(value)) return;
 
+    // Do not descend into a whole resource entity (e.g. `Ref(bucket)` embeds
+    // the resource object). Every resource instance carries a latent AttrRef
+    // for *every* attribute in its spec (see runtime.ts) — most are never
+    // referenced and, for config-gated attributes (S3 `WebsiteURL`,
+    // `MetadataConfiguration.*`), don't exist at deploy time unless the
+    // matching config block is set. Harvesting those as cross-lexicon outputs
+    // emits `Fn::GetAtt` outputs for nonexistent attributes, which real
+    // CloudFormation rejects (#959). Only an explicitly-accessed attribute
+    // (a standalone AttrRef value, handled above) should produce an output.
+    if (objectToName.has(value as object)) return;
+
     if (Array.isArray(value)) {
       for (const item of value) {
         walk(item, consumingLexicon, visited);
