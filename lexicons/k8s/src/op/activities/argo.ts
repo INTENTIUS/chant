@@ -1,6 +1,6 @@
 import { exec } from "node:child_process";
 import { promisify } from "node:util";
-import { safeHeartbeat, sleep } from "@intentius/chant/op";
+import { readinessFor, waitForReady, ReadinessFailedError, type ResourceFetcher } from "./wait-for-ready";
 
 const execAsync = promisify(exec);
 
@@ -8,13 +8,16 @@ const execAsync = promisify(exec);
  * waitForArgoSync — block until an Argo CD Application reports
  * `health=Healthy && sync=Synced`.
  *
- * This activity is intentionally **dependency-light**: though it now lives in the
- * k8s lexicon (#809), it must not import the lexicon's generated Argo CRD types —
- * its signature is primitives-only (app name / namespace / server), so a Temporal
- * worker can load it without pulling in the declarable surface. It reads the
- * Application's status either via `kubectl get application` (default) or the Argo
- * CD REST API (when `server` is given), so an Op can gate procedural steps on a
- * declarative apply that Argo owns.
+ * As of #957 this is a thin wrapper over the generic `waitForReady`: the
+ * Healthy/Synced ready condition and the Degraded/Missing terminal condition
+ * live in the shared readiness registry (`argoproj.io/Application`), so there is
+ * a single poll loop. This activity keeps its own status **fetchers** because
+ * Argo exposes a REST API that `kubectl` can't cover; it adapts them into a
+ * `ResourceFetcher` for `waitForReady`.
+ *
+ * It stays **dependency-light** — primitives-only signature (app name /
+ * namespace / server), no generated Argo CRD types — so a Temporal worker loads
+ * it cheaply.
  */
 
 export interface WaitForArgoSyncArgs {
@@ -50,9 +53,6 @@ export type ArgoStatusFetcher = (
   args: WaitForArgoSyncArgs,
   signal?: AbortSignal,
 ) => Promise<ArgoAppStatus>;
-
-/** Health states that will never become Healthy without intervention. */
-const TERMINAL_UNHEALTHY = new Set(["Degraded", "Missing"]);
 
 /** Error thrown when the Application reaches a terminal unhealthy state. */
 export class ArgoSyncFailedError extends Error {
@@ -111,8 +111,13 @@ export const defaultArgoStatusFetcher: ArgoStatusFetcher = (args, signal) =>
 /**
  * Poll until the Application is Healthy and Synced. Throws
  * `ArgoSyncFailedError` if it reaches a terminal unhealthy state (Degraded /
- * Missing). Heartbeats every poll so the `argoSync` profile's 60s heartbeat
- * timeout never trips.
+ * Missing).
+ *
+ * Delegates the poll loop, heartbeat, and ready/terminal evaluation to the
+ * generic `waitForReady` using the shared `argoproj.io/Application` readiness
+ * spec. The Argo `ArgoStatusFetcher` is adapted into a `ResourceFetcher` that
+ * shapes `{health, sync}` into the `status.health.status` / `status.sync.status`
+ * paths the spec reads — so the REST-API path is preserved.
  *
  * @param fetcher injectable status reader (defaults to kubectl/REST). Tests pass
  *   a fake to drive Healthy/Progressing/Degraded transitions.
@@ -122,26 +127,37 @@ export async function waitForArgoSync(
   signal?: AbortSignal,
   fetcher: ArgoStatusFetcher = defaultArgoStatusFetcher,
 ): Promise<ArgoAppStatus> {
-  const interval = args.intervalMs ?? 15_000;
-  let attempt = 0;
+  const spec = readinessFor("argoproj.io", "Application");
 
-  while (true) {
-    if (signal?.aborted) throw new Error("waitForArgoSync aborted");
-    attempt++;
+  // Adapt the Argo status fetcher into the object shape the spec's paths read.
+  const resourceFetcher: ResourceFetcher = async (_a, s) => {
+    const status = await fetcher(args, s);
+    return { status: { health: { status: status.health }, sync: { status: status.sync } } };
+  };
 
-    const status = await fetcher(args, signal);
-    safeHeartbeat({ step: "waitForArgoSync", app: args.appName, attempt, ...status });
-
-    if (TERMINAL_UNHEALTHY.has(status.health)) {
+  try {
+    const obj = await waitForReady(
+      {
+        kind: "application",
+        name: args.appName,
+        namespace: args.namespace ?? "argocd",
+        group: "argoproj.io",
+        spec,
+        intervalMs: args.intervalMs ?? 15_000,
+      },
+      signal,
+      resourceFetcher,
+    );
+    const status = (obj as { status: { health: { status: string }; sync: { status: string } } }).status;
+    return { health: status.health.status, sync: status.sync.status };
+  } catch (err) {
+    // Preserve the Argo-specific error type (the argoSync profile marks it
+    // non-retryable) while reusing the generic terminal detection.
+    if (err instanceof ReadinessFailedError) {
       throw new ArgoSyncFailedError(
-        `Argo Application "${args.appName}" is ${status.health} (sync=${status.sync}) — it will not become Healthy without intervention.`,
+        `Argo Application "${args.appName}" reached a terminal unhealthy state (Degraded / Missing) — it will not become Healthy without intervention.`,
       );
     }
-
-    if (status.health === "Healthy" && status.sync === "Synced") {
-      return status;
-    }
-
-    await sleep(interval, signal);
+    throw err;
   }
 }
