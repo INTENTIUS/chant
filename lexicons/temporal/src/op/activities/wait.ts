@@ -19,6 +19,13 @@ export interface WaitForStackArgs {
 /**
  * Poll until a Kubernetes Deployment or StatefulSet named `name` is fully rolled out.
  * Uses k8sWait profile — 15m timeout, heartbeat every poll.
+ *
+ * Deliberately NOT migrated onto the generic `waitForReady` (#957): `kubectl
+ * rollout status` encodes rollout-specific semantics — progress-deadline
+ * timeouts, partial/paused rollouts, generation tracking — that a status-field
+ * predicate spec does not replicate, and it targets built-in workloads rather
+ * than arbitrary operator CRDs. `waitForReady` is the right tool for CRD
+ * readiness; `waitForStack` stays the right tool for workload rollouts.
  */
 export async function waitForStack(args: WaitForStackArgs, signal?: AbortSignal): Promise<void> {
   const ns = args.namespace ? `-n ${args.namespace}` : "";
