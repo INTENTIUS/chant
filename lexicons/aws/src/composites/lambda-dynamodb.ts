@@ -28,21 +28,15 @@ export interface LambdaDynamoDBProps extends LambdaFunctionProps {
 }
 
 export const LambdaDynamoDB = Composite<LambdaDynamoDBProps>((props) => {
+  // Conditional entries via spread keep the `new`s out of the `if` (EVL002).
   const attributeDefinitions = [
     new Table_AttributeDefinition({ AttributeName: props.partitionKey, AttributeType: "S" }),
+    ...(props.sortKey ? [new Table_AttributeDefinition({ AttributeName: props.sortKey, AttributeType: "S" })] : []),
   ];
   const keySchema: InstanceType<typeof Table_KeySchema>[] = [
     new Table_KeySchema({ AttributeName: props.partitionKey, KeyType: "HASH" }),
+    ...(props.sortKey ? [new Table_KeySchema({ AttributeName: props.sortKey, KeyType: "RANGE" })] : []),
   ];
-
-  if (props.sortKey) {
-    attributeDefinitions.push(
-      new Table_AttributeDefinition({ AttributeName: props.sortKey, AttributeType: "S" }),
-    );
-    keySchema.push(
-      new Table_KeySchema({ AttributeName: props.sortKey, KeyType: "RANGE" }),
-    );
-  }
 
   const { defaults } = props;
 
@@ -59,40 +53,37 @@ export const LambdaDynamoDB = Composite<LambdaDynamoDBProps>((props) => {
   }, defaults?.table));
 
   const access = props.access ?? "ReadWrite";
-  const policies: InstanceType<typeof Role_Policy>[] = [];
-
-  if (access !== "None") {
-    policies.push(new Role_Policy({
-      PolicyName: `DynamoDB${access}`,
-      PolicyDocument: {
-        Version: "2012-10-17",
-        Statement: [{ Effect: "Allow", Action: DynamoDBActions[access], Resource: table.Arn }],
-      },
-    }));
-  }
-
-  if (props.streams) {
-    policies.push(new Role_Policy({
-      PolicyName: "DynamoDBStreamRead",
-      PolicyDocument: {
-        Version: "2012-10-17",
-        Statement: [{
-          Effect: "Allow",
-          Action: [
-            "dynamodb:GetRecords",
-            "dynamodb:GetShardIterator",
-            "dynamodb:DescribeStream",
-            "dynamodb:ListStreams",
-          ],
-          Resource: table.StreamArn,
-        }],
-      },
-    }));
-  }
-
-  if (props.Policies) {
-    policies.push(...props.Policies);
-  }
+  // Build the policy list with conditional spreads (no push-inside-if) (EVL002).
+  const policies: InstanceType<typeof Role_Policy>[] = [
+    ...(access !== "None"
+      ? [new Role_Policy({
+          PolicyName: `DynamoDB${access}`,
+          PolicyDocument: {
+            Version: "2012-10-17",
+            Statement: [{ Effect: "Allow", Action: DynamoDBActions[access], Resource: table.Arn }],
+          },
+        })]
+      : []),
+    ...(props.streams
+      ? [new Role_Policy({
+          PolicyName: "DynamoDBStreamRead",
+          PolicyDocument: {
+            Version: "2012-10-17",
+            Statement: [{
+              Effect: "Allow",
+              Action: [
+                "dynamodb:GetRecords",
+                "dynamodb:GetShardIterator",
+                "dynamodb:DescribeStream",
+                "dynamodb:ListStreams",
+              ],
+              Resource: table.StreamArn,
+            }],
+          },
+        })]
+      : []),
+    ...(props.Policies ?? []),
+  ];
 
   const env = props.Environment ?? { Variables: {} };
   const variables = { ...((env as any).Variables ?? {}), TABLE_NAME: table.Ref };
@@ -102,17 +93,15 @@ export const LambdaDynamoDB = Composite<LambdaDynamoDBProps>((props) => {
     Environment: { Variables: variables },
   });
 
-  let eventSourceMapping: InstanceType<typeof EventSourceMapping> | undefined;
-  if (props.streams) {
-    const { startingPosition = "TRIM_HORIZON", batchSize, bisectOnFunctionError } = props.streams;
-    eventSourceMapping = new EventSourceMapping(mergeDefaults({
-      FunctionName: func.Arn,
-      EventSourceArn: table.StreamArn,
-      StartingPosition: startingPosition,
-      ...(batchSize !== undefined && { BatchSize: batchSize }),
-      ...(bisectOnFunctionError !== undefined && { BisectBatchOnFunctionError: bisectOnFunctionError }),
-    }, defaults?.eventSourceMapping));
-  }
+  const eventSourceMapping: InstanceType<typeof EventSourceMapping> | undefined = props.streams
+    ? new EventSourceMapping(mergeDefaults({
+        FunctionName: func.Arn,
+        EventSourceArn: table.StreamArn,
+        StartingPosition: props.streams.startingPosition ?? "TRIM_HORIZON",
+        ...(props.streams.batchSize !== undefined && { BatchSize: props.streams.batchSize }),
+        ...(props.streams.bisectOnFunctionError !== undefined && { BisectBatchOnFunctionError: props.streams.bisectOnFunctionError }),
+      }, defaults?.eventSourceMapping))
+    : undefined;
 
   return { table, role, func, ...(eventSourceMapping ? { eventSourceMapping } : {}) };
 }, "LambdaDynamoDB");

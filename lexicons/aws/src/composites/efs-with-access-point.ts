@@ -29,22 +29,12 @@ export interface EfsWithAccessPointProps {
 }
 
 export const EfsWithAccessPoint = Composite<EfsWithAccessPointProps>((props) => {
-  const ingressRules: InstanceType<typeof SecurityGroup_Ingress>[] = [];
-  if (props.sourceSecurityGroupId) {
-    ingressRules.push(new SecurityGroup_Ingress({
-      IpProtocol: "tcp",
-      FromPort: 2049,
-      ToPort: 2049,
-      SourceSecurityGroupId: props.sourceSecurityGroupId,
-    }));
-  } else if (props.ingressCidr) {
-    ingressRules.push(new SecurityGroup_Ingress({
-      IpProtocol: "tcp",
-      FromPort: 2049,
-      ToPort: 2049,
-      CidrIp: props.ingressCidr,
-    }));
-  }
+  // Ternary (not push-inside-if) keeps the `new`s out of control flow (EVL002).
+  const ingressRules: InstanceType<typeof SecurityGroup_Ingress>[] = props.sourceSecurityGroupId
+    ? [new SecurityGroup_Ingress({ IpProtocol: "tcp", FromPort: 2049, ToPort: 2049, SourceSecurityGroupId: props.sourceSecurityGroupId })]
+    : props.ingressCidr
+      ? [new SecurityGroup_Ingress({ IpProtocol: "tcp", FromPort: 2049, ToPort: 2049, CidrIp: props.ingressCidr })]
+      : [];
 
   const securityGroup = new SecurityGroup({
     GroupDescription: "EFS mount target SG",

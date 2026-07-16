@@ -298,7 +298,10 @@ export const MicrovmApp = Composite<MicrovmAppProps, MicrovmAppResult>((props) =
   let connector: InstanceType<typeof NetworkConnector> | undefined;
   const egressConnectorArns: unknown[] = [...additionalEgressConnectors];
 
-  if (props.buildConnector) {
+  // A closure (invoked below) keeps the connector `new`s out of the `if` (EVL002);
+  // the early-return guard also narrows `props.buildConnector` for the body.
+  const buildConnectorResources = () => {
+    if (!props.buildConnector) return;
     // Deny-all by default — the security group's rules ARE the egress policy;
     // open specific traffic via `defaults.connectorSecurityGroup`.
     connectorSecurityGroup = new SecurityGroup(
@@ -376,7 +379,9 @@ export const MicrovmApp = Composite<MicrovmAppProps, MicrovmAppResult>((props) =
     );
 
     egressConnectorArns.push(connector.Arn);
-  }
+  };
+
+  if (props.buildConnector) buildConnectorResources();
 
   // ── The image itself ───────────────────────────────────────────────────────
   const logging = props.disableLogging

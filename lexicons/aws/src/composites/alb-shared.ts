@@ -103,14 +103,12 @@ export const AlbShared = Composite<AlbSharedProps>((props) => {
     Port: listenerPort,
     Protocol: protocol,
     DefaultActions: [defaultAction],
+    // HTTPS listeners carry a cert; a ternary keeps the `new` out of an `if` (EVL002).
+    Certificates:
+      protocol === "HTTPS" && props.certificateArn
+        ? [new Listener_Certificate({ CertificateArn: props.certificateArn })]
+        : undefined,
   };
-
-  if (protocol === "HTTPS" && props.certificateArn) {
-    const cert = new Listener_Certificate({
-      CertificateArn: props.certificateArn,
-    });
-    listenerProps.Certificates = [cert];
-  }
 
   const listener = new Listener(mergeDefaults(listenerProps, defs?.listener));
 
