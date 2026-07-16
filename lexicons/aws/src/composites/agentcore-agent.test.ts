@@ -84,6 +84,63 @@ describe("AgentCoreAgent", () => {
     expect(networkProps.NetworkModeConfig).toBeUndefined();
   });
 
+  test("code-config path wires CodeConfiguration (S3 zip on a managed runtime) instead of a container", () => {
+    const instance = AgentCoreAgent({
+      name: "support-agent",
+      code: {
+        s3Bucket: "loom-artifacts",
+        s3Prefix: "agents/assistant.zip",
+        runtime: "PYTHON_3_12",
+        entryPoint: ["app.py"],
+      },
+    });
+    const artifactProps = ((instance.runtime as any).props.AgentRuntimeArtifact as any).props;
+    expect(artifactProps.ContainerConfiguration).toBeUndefined();
+    const codeProps = (artifactProps.CodeConfiguration as any).props;
+    expect(codeProps.Runtime).toBe("PYTHON_3_12");
+    expect(codeProps.EntryPoint).toEqual(["app.py"]);
+    const s3 = (codeProps.Code as any).props.S3;
+    expect(s3).toEqual({ Bucket: "loom-artifacts", Prefix: "agents/assistant.zip" });
+  });
+
+  test("code-config VersionId is threaded through only when supplied", () => {
+    const withVersion = AgentCoreAgent({
+      name: "support-agent",
+      code: { s3Bucket: "b", s3Prefix: "k.zip", runtime: "PYTHON_3_12", entryPoint: ["app.py"], s3VersionId: "v1" },
+    });
+    const s3 = (((withVersion.runtime as any).props.AgentRuntimeArtifact as any).props.CodeConfiguration as any).props.Code.props.S3;
+    expect(s3.VersionId).toBe("v1");
+  });
+
+  test("throws when neither containerUri nor code is supplied", () => {
+    expect(() => AgentCoreAgent({ name: "support-agent" } as any)).toThrow(
+      "AgentCoreAgent requires exactly one of containerUri or code",
+    );
+  });
+
+  test("throws when both containerUri and code are supplied", () => {
+    expect(() => AgentCoreAgent({
+      ...baseProps,
+      code: { s3Bucket: "b", s3Prefix: "k.zip", runtime: "PYTHON_3_12", entryPoint: ["app.py"] },
+    })).toThrow("AgentCoreAgent requires exactly one of containerUri or code");
+  });
+
+  test("code-config serializes to a valid CloudFormation Runtime resource", () => {
+    const expanded = expandComposite("agent", AgentCoreAgent({
+      name: "support-agent",
+      code: { s3Bucket: "loom-artifacts", s3Prefix: "agents/assistant.zip", runtime: "PYTHON_3_12", entryPoint: ["app.py"] },
+    }));
+    resolveAttrRefs(expanded);
+    const template = JSON.parse(awsSerializer.serialize(expanded));
+    const artifact = template.Resources.agentRuntime.Properties.AgentRuntimeArtifact;
+    expect(artifact.ContainerConfiguration).toBeUndefined();
+    expect(artifact.CodeConfiguration).toEqual({
+      Code: { S3: { Bucket: "loom-artifacts", Prefix: "agents/assistant.zip" } },
+      EntryPoint: ["app.py"],
+      Runtime: "PYTHON_3_12",
+    });
+  });
+
   test("VPC network mode wires NetworkModeConfig from vpcSubnetIds/vpcSecurityGroupIds", () => {
     const instance = AgentCoreAgent({
       ...baseProps,

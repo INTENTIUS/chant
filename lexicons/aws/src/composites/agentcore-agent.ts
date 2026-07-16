@@ -4,6 +4,8 @@ import {
   Role_Policy,
   Runtime,
   Runtime_AgentRuntimeArtifact,
+  Runtime_Code,
+  Runtime_CodeConfiguration,
   Runtime_ContainerConfiguration,
   Runtime_NetworkConfiguration,
   Runtime_VpcConfig,
@@ -13,6 +15,20 @@ import {
   GatewayTarget,
   WorkloadIdentity,
 } from "../generated";
+
+/**
+ * Managed language runtimes AgentCore can run a code-config zip on. Inlined
+ * from the generated `Runtime_AgentManagedRuntimeType` CFN enum (which the
+ * generated barrel exports as a type declaration only), matching how
+ * `protocolConfiguration`/`gatewayAuthorizerType` inline their enums below.
+ */
+export type AgentManagedRuntime =
+  | "NODE_22"
+  | "PYTHON_3_10"
+  | "PYTHON_3_11"
+  | "PYTHON_3_12"
+  | "PYTHON_3_13"
+  | "PYTHON_3_14";
 import { agentCoreTrustPolicy } from "./agentcore-trust-policy";
 
 /**
@@ -31,6 +47,26 @@ function toRuntimeIdentifier(name: string): string {
   return identifier.slice(0, 48);
 }
 
+/**
+ * Managed-runtime code artifact — the S3-zip alternative to `containerUri`.
+ * Mirrors CFN `Runtime.CodeConfiguration`: AgentCore runs a zipped agent on
+ * a managed language runtime, no container image to build or host. This is
+ * how a Strands agent actually ships (a Python zip in S3), which is why the
+ * composite offers it alongside the container path.
+ */
+export interface AgentCoreCodeArtifact {
+  /** S3 bucket holding the agent's zipped code. */
+  s3Bucket: string;
+  /** S3 key (or prefix) of the zip within `s3Bucket`. */
+  s3Prefix: string;
+  /** Optional S3 object version id, pinning a specific upload. */
+  s3VersionId?: string;
+  /** Managed runtime the zip runs on, e.g. `"PYTHON_3_12"`. Mirrors the generated CFN enum. */
+  runtime: AgentManagedRuntime;
+  /** Entry point, 1-2 items — e.g. `["app.py"]` or `["python", "app.py"]` (CFN bounds the list to 2). */
+  entryPoint: string[];
+}
+
 export interface AgentCoreAgentProps {
   /**
    * Base name for the agent's resources. `toRuntimeIdentifier(name)` derives
@@ -38,8 +74,16 @@ export interface AgentCoreAgentProps {
    * WorkloadIdentity use `name` as-is (hyphens are valid there).
    */
   name: string;
-  /** ECR image URI the Runtime runs, e.g. `"123456789012.dkr.ecr.us-east-1.amazonaws.com/agent:latest"`. */
-  containerUri: string;
+  /**
+   * ECR image URI the Runtime runs, e.g. `"123456789012.dkr.ecr.us-east-1.amazonaws.com/agent:latest"`.
+   * Supply exactly one of `containerUri` or `code`.
+   */
+  containerUri?: string;
+  /**
+   * S3-zip code artifact run on a managed runtime — the alternative to
+   * `containerUri`. Supply exactly one of the two.
+   */
+  code?: AgentCoreCodeArtifact;
   /** Runtime network mode. Default: "PUBLIC". */
   networkMode?: "PUBLIC" | "VPC";
   /** Subnets for the Runtime's ENIs. Required when `networkMode` is "VPC". */
@@ -106,6 +150,12 @@ export type AgentCoreAgentResult = {
  */
 export const AgentCoreAgent = Composite<AgentCoreAgentProps, AgentCoreAgentResult>((props) => {
   const { defaults } = props;
+  // Exactly one artifact source. Both-or-neither is a modeling mistake CFN
+  // would also reject (AgentRuntimeArtifact is a one-of), caught here so the
+  // error names the composite prop rather than a raw CFN validation string.
+  if ((props.containerUri === undefined) === (props.code === undefined)) {
+    throw new Error("AgentCoreAgent requires exactly one of containerUri or code");
+  }
   const networkMode = props.networkMode ?? "PUBLIC";
   // Check presence, not `.length`: a cross-stack value (Fn::Split of a Parameter,
   // the shape stackOutput/Ref/Split produce) is a truthy intrinsic object with no
@@ -146,13 +196,32 @@ export const AgentCoreAgent = Composite<AgentCoreAgentProps, AgentCoreAgentResul
       : undefined,
   });
 
+  // CFN `Code.S3` is a free-form location object in the generated type; its
+  // keys (Bucket/Prefix/VersionId) come straight from the CloudFormation
+  // schema for AWS::BedrockAgentCore::Runtime.
+  const artifact = props.code
+    ? new Runtime_AgentRuntimeArtifact({
+      CodeConfiguration: new Runtime_CodeConfiguration({
+        Code: new Runtime_Code({
+          S3: {
+            Bucket: props.code.s3Bucket,
+            Prefix: props.code.s3Prefix,
+            ...(props.code.s3VersionId !== undefined ? { VersionId: props.code.s3VersionId } : {}),
+          },
+        }),
+        EntryPoint: props.code.entryPoint,
+        Runtime: props.code.runtime,
+      }),
+    })
+    : new Runtime_AgentRuntimeArtifact({
+      ContainerConfiguration: new Runtime_ContainerConfiguration({
+        ContainerUri: props.containerUri as string,
+      }),
+    });
+
   const runtime = new Runtime(mergeDefaults({
     AgentRuntimeName: runtimeName,
-    AgentRuntimeArtifact: new Runtime_AgentRuntimeArtifact({
-      ContainerConfiguration: new Runtime_ContainerConfiguration({
-        ContainerUri: props.containerUri,
-      }),
-    }),
+    AgentRuntimeArtifact: artifact,
     RoleArn: role.Arn,
     NetworkConfiguration: networkConfiguration,
     ProtocolConfiguration: props.protocolConfiguration ?? "MCP",
