@@ -170,45 +170,37 @@ export const VpcDefault = Composite<VpcDefaultProps, VpcDefaultResult>((props) =
 
   // ── AZ3 (optional) ──────────────────────────────────────────────
 
-  if (azCount >= 3) {
-    const az3 = Select(2, GetAZs(""));
-    const publicSubnet3Cidr = props.publicSubnet3Cidr ?? "10.0.32.0/20";
-    const privateSubnet3Cidr = props.privateSubnet3Cidr ?? "10.0.160.0/20";
-
-    const publicSubnet3 = new Subnet(mergeDefaults({
-      VpcId: vpc.VpcId,
-      CidrBlock: publicSubnet3Cidr,
-      AvailabilityZone: az3,
-      MapPublicIpOnLaunch: true,
-    }, defs?.publicSubnet3));
-
-    const privateSubnet3 = new Subnet(mergeDefaults({
-      VpcId: vpc.VpcId,
-      CidrBlock: privateSubnet3Cidr,
-      AvailabilityZone: az3,
-    }, defs?.privateSubnet3));
-
-    const publicRta3 = new SubnetRouteTableAssociation({
-      SubnetId: publicSubnet3.SubnetId,
-      RouteTableId: publicRouteTable.RouteTableId,
-    });
-
-    const privateRta3 = new SubnetRouteTableAssociation({
-      SubnetId: privateSubnet3.SubnetId,
-      RouteTableId: privateRouteTable.RouteTableId,
-    });
-
-    return {
-      vpc, igw, igwAttachment,
-      publicSubnet1, publicSubnet2, publicSubnet3,
-      privateSubnet1, privateSubnet2, privateSubnet3,
-      publicRouteTable, publicRoute,
-      publicRta1, publicRta2, publicRta3,
-      privateRouteTable, privateRoute,
-      privateRta1, privateRta2, privateRta3,
-      natEip, natGateway,
-    };
-  }
+  // Ternaries keep the `new`s out of the `if` (EVL002); the AZ3 resources fold
+  // into one return via a conditional spread.
+  const publicSubnet3 =
+    azCount >= 3
+      ? new Subnet(mergeDefaults({
+          VpcId: vpc.VpcId,
+          CidrBlock: props.publicSubnet3Cidr ?? "10.0.32.0/20",
+          AvailabilityZone: Select(2, GetAZs("")),
+          MapPublicIpOnLaunch: true,
+        }, defs?.publicSubnet3))
+      : undefined;
+  const privateSubnet3 =
+    azCount >= 3
+      ? new Subnet(mergeDefaults({
+          VpcId: vpc.VpcId,
+          CidrBlock: props.privateSubnet3Cidr ?? "10.0.160.0/20",
+          AvailabilityZone: Select(2, GetAZs("")),
+        }, defs?.privateSubnet3))
+      : undefined;
+  const publicRta3 = publicSubnet3
+    ? new SubnetRouteTableAssociation({
+        SubnetId: publicSubnet3.SubnetId,
+        RouteTableId: publicRouteTable.RouteTableId,
+      })
+    : undefined;
+  const privateRta3 = privateSubnet3
+    ? new SubnetRouteTableAssociation({
+        SubnetId: privateSubnet3.SubnetId,
+        RouteTableId: privateRouteTable.RouteTableId,
+      })
+    : undefined;
 
   return {
     vpc, igw, igwAttachment,
@@ -219,5 +211,6 @@ export const VpcDefault = Composite<VpcDefaultProps, VpcDefaultResult>((props) =
     privateRouteTable, privateRoute,
     privateRta1, privateRta2,
     natEip, natGateway,
+    ...(publicSubnet3 ? { publicSubnet3, privateSubnet3, publicRta3, privateRta3 } : {}),
   };
 }, "VpcDefault");

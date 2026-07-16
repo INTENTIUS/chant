@@ -140,14 +140,10 @@ export const FargateService = Composite<FargateServiceProps>((props) => {
     },
   });
 
-  const environmentVars: InstanceType<typeof TaskDefinition_KeyValuePair>[] = [];
-  if (props.environment) {
-    for (const [name, value] of Object.entries(props.environment)) {
-      environmentVars.push(
-        new TaskDefinition_KeyValuePair({ Name: name, Value: value }),
-      );
-    }
-  }
+  // `.map` keeps the `new`s out of the `for`/`if` (EVL002).
+  const environmentVars: InstanceType<typeof TaskDefinition_KeyValuePair>[] = props.environment
+    ? Object.entries(props.environment).map(([name, value]) => new TaskDefinition_KeyValuePair({ Name: name, Value: value }))
+    : [];
 
   // EFS volumes and mount points
   const efsVolumes = (props.efsMounts ?? []).map((m, i) =>
@@ -222,31 +218,21 @@ export const FargateService = Composite<FargateServiceProps>((props) => {
   }, defs?.targetGroup));
 
   // Listener rule conditions
-  const conditions: InstanceType<typeof ListenerRule_RuleCondition>[] = [];
-
-  if (props.pathPatterns) {
-    const pathConfig = new ListenerRule_PathPatternConfig({
-      Values: props.pathPatterns,
-    });
-    conditions.push(
-      new ListenerRule_RuleCondition({
-        Field: "path-pattern",
-        PathPatternConfig: pathConfig,
-      }),
-    );
-  }
-
-  if (props.hostHeaders) {
-    const hostConfig = new ListenerRule_HostHeaderConfig({
-      Values: props.hostHeaders,
-    });
-    conditions.push(
-      new ListenerRule_RuleCondition({
-        Field: "host-header",
-        HostHeaderConfig: hostConfig,
-      }),
-    );
-  }
+  // Conditional entries via spread keep the `new`s out of the `if`s (EVL002).
+  const conditions: InstanceType<typeof ListenerRule_RuleCondition>[] = [
+    ...(props.pathPatterns
+      ? [new ListenerRule_RuleCondition({
+          Field: "path-pattern",
+          PathPatternConfig: new ListenerRule_PathPatternConfig({ Values: props.pathPatterns }),
+        })]
+      : []),
+    ...(props.hostHeaders
+      ? [new ListenerRule_RuleCondition({
+          Field: "host-header",
+          HostHeaderConfig: new ListenerRule_HostHeaderConfig({ Values: props.hostHeaders }),
+        })]
+      : []),
+  ];
 
   // Listener rule
   const ruleAction = new ListenerRule_Action({
@@ -294,7 +280,10 @@ export const FargateService = Composite<FargateServiceProps>((props) => {
   let scalableTarget: InstanceType<typeof ScalableTarget> | undefined;
   let scalingPolicy: InstanceType<typeof ApplicationAutoScalingScalingPolicy> | undefined;
 
-  if (props.autoscaling) {
+  // Closure (invoked below) keeps the autoscaling `new`s out of the `if` (EVL002);
+  // the guard narrows `props.autoscaling` for the body.
+  const buildAutoscaling = () => {
+    if (!props.autoscaling) return;
     const { minCapacity = 1, maxCapacity, cpuTarget = 60, scaleInCooldown, scaleOutCooldown } = props.autoscaling;
 
     const resourceId = Join("/", ["service", Select(1, Split("/", props.clusterArn)), service.Name]);
@@ -324,7 +313,9 @@ export const FargateService = Composite<FargateServiceProps>((props) => {
       ResourceId: resourceId,
       TargetTrackingScalingPolicyConfiguration: trackingConfig,
     });
-  }
+  };
+
+  if (props.autoscaling) buildAutoscaling();
 
   return {
     taskRole,

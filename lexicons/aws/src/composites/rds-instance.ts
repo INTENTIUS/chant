@@ -99,26 +99,12 @@ export const RdsInstance = Composite<RdsInstanceProps>((props) => {
   }, defs?.subnetGroup));
 
   // Security Group
-  const ingressRules: InstanceType<typeof SecurityGroup_Ingress>[] = [];
-  if (props.ingressSourceSG) {
-    ingressRules.push(
-      new SecurityGroup_Ingress({
-        IpProtocol: "tcp",
-        FromPort: port,
-        ToPort: port,
-        SourceSecurityGroupId: props.ingressSourceSG,
-      }),
-    );
-  } else if (props.ingressCidr) {
-    ingressRules.push(
-      new SecurityGroup_Ingress({
-        IpProtocol: "tcp",
-        FromPort: port,
-        ToPort: port,
-        CidrIp: props.ingressCidr,
-      }),
-    );
-  }
+  // Ternary (not push-inside-if) keeps the `new`s out of control flow (EVL002).
+  const ingressRules: InstanceType<typeof SecurityGroup_Ingress>[] = props.ingressSourceSG
+    ? [new SecurityGroup_Ingress({ IpProtocol: "tcp", FromPort: port, ToPort: port, SourceSecurityGroupId: props.ingressSourceSG })]
+    : props.ingressCidr
+      ? [new SecurityGroup_Ingress({ IpProtocol: "tcp", FromPort: port, ToPort: port, CidrIp: props.ingressCidr })]
+      : [];
 
   const sg = new SecurityGroup(mergeDefaults({
     GroupDescription: "Security group for RDS instance",
@@ -126,15 +112,14 @@ export const RdsInstance = Composite<RdsInstanceProps>((props) => {
     SecurityGroupIngress: ingressRules.length > 0 ? ingressRules : undefined,
   }, defs?.sg));
 
-  // Optional Parameter Group
-  let parameterGroup: InstanceType<typeof RDSDBParameterGroup> | undefined;
-  if (props.parameterGroupFamily) {
-    parameterGroup = new RDSDBParameterGroup(mergeDefaults({
-      Family: props.parameterGroupFamily,
-      Description: "Custom parameter group",
-      Parameters: props.parameters,
-    }, defs?.parameterGroup));
-  }
+  // Optional Parameter Group — ternary keeps the `new` out of the `if` (EVL002).
+  const parameterGroup: InstanceType<typeof RDSDBParameterGroup> | undefined = props.parameterGroupFamily
+    ? new RDSDBParameterGroup(mergeDefaults({
+        Family: props.parameterGroupFamily,
+        Description: "Custom parameter group",
+        Parameters: props.parameters,
+      }, defs?.parameterGroup))
+    : undefined;
 
   // DB Instance
   const dbProps: Record<string, any> = {

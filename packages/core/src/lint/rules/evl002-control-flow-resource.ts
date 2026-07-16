@@ -20,6 +20,23 @@ const CONTROL_FLOW_KINDS = new Set([
   ts.SyntaxKind.TryStatement,
 ]);
 
+/**
+ * JS built-ins that are never a cloud resource. The rule guards resource
+ * declarations, so a guard clause like `if (bad) throw new Error(...)` — or a
+ * local `new Map()`/`new Set()` — must not be flagged as a control-flow resource.
+ */
+const NON_RESOURCE_CONSTRUCTORS = new Set([
+  "Error", "TypeError", "RangeError", "SyntaxError", "ReferenceError",
+  "EvalError", "URIError", "AggregateError",
+  "Map", "Set", "WeakMap", "WeakSet", "WeakRef", "Date", "RegExp", "Promise",
+  "Array", "Object", "String", "Number", "Boolean",
+]);
+
+/** The constructor identifier of a `new X(...)`, if it's a bare name. */
+function constructorName(node: ts.NewExpression): string | undefined {
+  return ts.isIdentifier(node.expression) ? node.expression.text : undefined;
+}
+
 function isInsideControlFlow(node: ts.Node): boolean {
   let current = node.parent;
   while (current) {
@@ -30,7 +47,7 @@ function isInsideControlFlow(node: ts.Node): boolean {
 }
 
 function checkNode(node: ts.Node, context: LintContext, diagnostics: LintDiagnostic[]): void {
-  if (ts.isNewExpression(node)) {
+  if (ts.isNewExpression(node) && !NON_RESOURCE_CONSTRUCTORS.has(constructorName(node) ?? "")) {
     if (isInsideControlFlow(node)) {
       const { line, character } = context.sourceFile.getLineAndCharacterOfPosition(
         node.getStart(context.sourceFile),

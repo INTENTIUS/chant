@@ -32,6 +32,18 @@ describe("EVL002: control-flow-resource", () => {
     expect(diags[0].message).toContain("control flow");
   });
 
+  test("does not flag a built-in constructor in control flow (guard clauses, collections)", () => {
+    // `new Error()` in a guard, or a local `new Map()`/`new Set()`, is not a resource.
+    for (const code of [
+      `if (bad) { throw new Error("boom"); }`,
+      `if (bad) { throw new TypeError("boom"); }`,
+      `for (const x of xs) { const m = new Map(); }`,
+      `if (cond) { const s = new Set([1]); }`,
+    ]) {
+      expect(evl002ControlFlowResourceRule.check(createContext(code))).toHaveLength(0);
+    }
+  });
+
   test("flags resource inside for loop", () => {
     const ctx = createContext(`
       for (let i = 0; i < 3; i++) {

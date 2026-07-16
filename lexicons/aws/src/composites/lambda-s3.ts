@@ -50,7 +50,9 @@ export const LambdaS3 = Composite<LambdaS3Props, LambdaFunctionResult & { bucket
   const { defaults } = props;
   const access = props.access ?? "ReadWrite";
 
-  if (props.trigger) {
+  // The triggered path builds its resources in a closure so the `new`s aren't
+  // under the `if` (EVL002); it's invoked below only when a trigger is declared.
+  const buildTriggered = () => {
     // Create Lambda first to break the circular CFN dependency.
     // Compute bucket ARN from name (no GetAtt on bucket → no resource dep).
     const name = props.bucketName ?? Sub`\${AWS::StackName}-bucket`;
@@ -77,7 +79,8 @@ export const LambdaS3 = Composite<LambdaS3Props, LambdaFunctionResult & { bucket
       SourceArn: bucketArnBase,
     });
 
-    const { events = ["s3:ObjectCreated:*"], prefix, suffix } = props.trigger;
+    // Non-null: the closure is only invoked when `props.trigger` is set (below).
+    const { events = ["s3:ObjectCreated:*"], prefix, suffix } = props.trigger!;
     const rules: Array<{ Name: string; Value: string }> = [];
     if (prefix) rules.push({ Name: "prefix", Value: prefix });
     if (suffix) rules.push({ Name: "suffix", Value: suffix });
@@ -100,7 +103,9 @@ export const LambdaS3 = Composite<LambdaS3Props, LambdaFunctionResult & { bucket
     }, defaults?.bucket), { DependsOn: [permission] });
 
     return { bucket, role, func, permission };
-  }
+  };
+
+  if (props.trigger) return buildTriggered();
 
   // Non-trigger path: original flow
   const bucket = new Bucket(mergeDefaults({

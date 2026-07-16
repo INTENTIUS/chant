@@ -143,14 +143,10 @@ export const FargateAlb = Composite<FargateAlbProps>((props) => {
     },
   });
 
-  const environmentVars: InstanceType<typeof TaskDefinition_KeyValuePair>[] = [];
-  if (props.environment) {
-    for (const [name, value] of Object.entries(props.environment)) {
-      environmentVars.push(
-        new TaskDefinition_KeyValuePair({ Name: name, Value: value }),
-      );
-    }
-  }
+  // `.map` keeps the `new`s out of the `for`/`if` (EVL002).
+  const environmentVars: InstanceType<typeof TaskDefinition_KeyValuePair>[] = props.environment
+    ? Object.entries(props.environment).map(([name, value]) => new TaskDefinition_KeyValuePair({ Name: name, Value: value }))
+    : [];
 
   const container = new TaskDefinition_ContainerDefinition({
     Name: "app",
@@ -232,40 +228,38 @@ export const FargateAlb = Composite<FargateAlbProps>((props) => {
     TargetGroupArn: targetGroup.TargetGroupArn,
   });
 
-  let listener: InstanceType<typeof Listener>;
-  let redirectListener: InstanceType<typeof Listener> | undefined;
-
-  if (props.certificateArn) {
-    listener = new Listener({
-      LoadBalancerArn: alb.LoadBalancerArn,
-      Port: 443,
-      Protocol: "HTTPS",
-      Certificates: [new Listener_Certificate({ CertificateArn: props.certificateArn })],
-      DefaultActions: [forwardAction],
-    });
-    redirectListener = new Listener({
-      LoadBalancerArn: alb.LoadBalancerArn,
-      Port: 80,
-      Protocol: "HTTP",
-      DefaultActions: [
-        new Listener_Action({
-          Type: "redirect",
-          RedirectConfig: new Listener_RedirectConfig({
-            Protocol: "HTTPS",
-            Port: "443",
-            StatusCode: "HTTP_301",
+  // Ternaries keep the `new`s out of the `if`/`else` (EVL002).
+  const listener: InstanceType<typeof Listener> = props.certificateArn
+    ? new Listener({
+        LoadBalancerArn: alb.LoadBalancerArn,
+        Port: 443,
+        Protocol: "HTTPS",
+        Certificates: [new Listener_Certificate({ CertificateArn: props.certificateArn })],
+        DefaultActions: [forwardAction],
+      })
+    : new Listener({
+        LoadBalancerArn: alb.LoadBalancerArn,
+        Port: listenerPort,
+        Protocol: "HTTP",
+        DefaultActions: [forwardAction],
+      });
+  const redirectListener: InstanceType<typeof Listener> | undefined = props.certificateArn
+    ? new Listener({
+        LoadBalancerArn: alb.LoadBalancerArn,
+        Port: 80,
+        Protocol: "HTTP",
+        DefaultActions: [
+          new Listener_Action({
+            Type: "redirect",
+            RedirectConfig: new Listener_RedirectConfig({
+              Protocol: "HTTPS",
+              Port: "443",
+              StatusCode: "HTTP_301",
+            }),
           }),
-        }),
-      ],
-    });
-  } else {
-    listener = new Listener({
-      LoadBalancerArn: alb.LoadBalancerArn,
-      Port: listenerPort,
-      Protocol: "HTTP",
-      DefaultActions: [forwardAction],
-    });
-  }
+        ],
+      })
+    : undefined;
 
   // ECS Service
   const serviceLoadBalancer = new EcsService_LoadBalancer({
