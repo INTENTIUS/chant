@@ -579,14 +579,16 @@ aws cloudformation wait stack-update-complete --stack-name my-app-prod`,
 
   async exportResources(options: {
     environment: string;
+    stack?: string;
     selector?: ResourceSelector;
     owned?: boolean;
   }): Promise<ExportedTemplate> {
     const { getRuntime } = await import("@intentius/chant/runtime-adapter");
     const rt = getRuntime();
 
-    // Same stack-name convention as describeResources.
-    const stackName = `${options.environment}`;
+    // Same stack-name convention as describeResources: an explicit multi-stack
+    // stack name (#932), else the stack named after the environment.
+    const stackName = options.stack ?? `${options.environment}`;
 
     const result = await rt.spawn(applyAwsEndpointArgv([
       "aws", "cloudformation", "get-template",
@@ -616,8 +618,8 @@ aws cloudformation wait stack-update-complete --stack-name my-app-prod`,
   // describe-stack-resources is too thin; the deployed template (exportResources)
   // carries the references. Resolve its `{Ref}`/`{Fn::GetAtt}` intrinsics to bare
   // logical ids so the reference resolver matches them.
-  async enrichLiveAttrs(options: { environment: string; owned?: boolean }): Promise<Record<string, Record<string, unknown>>> {
-    const template = await this.exportResources!({ environment: options.environment, owned: options.owned });
+  async enrichLiveAttrs(options: { environment: string; stack?: string; owned?: boolean }): Promise<Record<string, Record<string, unknown>>> {
+    const template = await this.exportResources!({ environment: options.environment, stack: options.stack, owned: options.owned });
     return resolveTemplateAttrs(template);
   },
 
