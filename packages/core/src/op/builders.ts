@@ -106,6 +106,12 @@ export const waitForStack = (name: string, opts?: Record<string, unknown>): Acti
   return activity("waitForStack", { name, ...args }, profile ?? "k8sWait");
 };
 
+/** Poll any operator-backed Kubernetes resource until it reports ready, driven by a data-only readiness spec (CRD-aware; #365). Defaults to the `k8sWait` profile (override via `opts.profile`). */
+export const waitForReady = (kind: string, name: string, opts?: Record<string, unknown>): ActivityStep => {
+  const { args, profile } = takeProfile(opts);
+  return activity("waitForReady", { kind, name, ...args }, profile ?? "k8sWait");
+};
+
 /** Trigger and wait for a GitLab CI pipeline to complete. Defaults to the `longInfra` profile (override via `opts.profile`). */
 export const gitlabPipeline = (name: string, opts?: Record<string, unknown>): ActivityStep => {
   const { args, profile } = takeProfile(opts);

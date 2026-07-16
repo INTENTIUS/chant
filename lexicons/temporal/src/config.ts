@@ -113,7 +113,14 @@ export const TEMPORAL_ACTIVITY_PROFILES = {
   k8sWait: {
     startToCloseTimeout: "15m",
     heartbeatTimeout: "60s",
-    retry: { maximumAttempts: 3, initialInterval: "10s", backoffCoefficient: 2 },
+    // A terminal-state resource (waitForReady's ReadinessFailedError) will never
+    // become ready — fail fast instead of exhausting retries.
+    retry: {
+      maximumAttempts: 3,
+      initialInterval: "10s",
+      backoffCoefficient: 2,
+      nonRetryableErrorTypes: ["ReadinessFailedError"],
+    },
   },
 
   /**

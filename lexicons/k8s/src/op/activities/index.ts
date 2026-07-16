@@ -19,3 +19,22 @@ export type { K3dUpArgs, K3dDownArgs } from "./k3d";
 
 export { waitForArgoSync, defaultArgoStatusFetcher, ArgoSyncFailedError } from "./argo";
 export type { WaitForArgoSyncArgs, ArgoAppStatus, ArgoStatusFetcher } from "./argo";
+
+export {
+  waitForReady,
+  defaultResourceFetcher,
+  ReadinessFailedError,
+  readinessFor,
+  isReady,
+  firstTerminal,
+  DEFAULT_READINESS,
+  READINESS_OVERRIDES,
+} from "./wait-for-ready";
+export type {
+  WaitForReadyArgs,
+  ResourceFetcher,
+  ReadinessSpec,
+  ReadinessMatch,
+  ConditionMatch,
+  PathMatch,
+} from "./wait-for-ready";
