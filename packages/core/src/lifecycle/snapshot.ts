@@ -7,7 +7,7 @@ import type { BuildResult } from "../build";
 import type { SerializerResult } from "../serializer";
 import type { LifecycleSnapshot } from "./types";
 import { computeBuildDigest } from "./digest";
-import { writeSnapshot, getHeadCommit, pushLifecycle } from "./git";
+import { writeSnapshot, snapshotStorageKey, getHeadCommit, pushLifecycle } from "./git";
 import { sortedJsonReplacer } from "../utils";
 
 /** Patterns in attribute names that suggest sensitive data. */
@@ -84,8 +84,9 @@ export async function takeSnapshot(
   environment: string,
   plugins: ObservationLexicon[],
   buildResult: BuildResult,
-  opts?: { cwd?: string },
+  opts?: { cwd?: string; stack?: string },
 ): Promise<TakeSnapshotResult> {
+  const stack = opts?.stack;
   const warnings: string[] = [];
   const errors: string[] = [];
   const snapshots: LifecycleSnapshot[] = [];
@@ -131,6 +132,7 @@ export async function takeSnapshot(
           buildOutput,
           entityNames,
           entities,
+          stack,
         });
         const { valid, dropped, warnings: validationWarnings } = validateResources(raw);
         warnings.push(...validationWarnings);
@@ -141,7 +143,7 @@ export async function takeSnapshot(
       }
 
       if (plugin.listArtifacts) {
-        const raw = await plugin.listArtifacts({ environment, entities });
+        const raw = await plugin.listArtifacts({ environment, entities, stack });
         const { valid, dropped, warnings: validationWarnings } = validateResources(raw);
         warnings.push(...validationWarnings);
         if (dropped.length > 0) {
@@ -158,6 +160,7 @@ export async function takeSnapshot(
       const snapshot: LifecycleSnapshot = {
         lexicon: plugin.name,
         environment,
+        ...(stack ? { stack } : {}),
         commit: headCommit,
         timestamp,
         resources,
@@ -179,7 +182,7 @@ export async function takeSnapshot(
     const json = JSON.stringify(snapshot, sortedJsonReplacer, 2);
     commitSha = await writeSnapshot(
       snapshot.environment,
-      snapshot.lexicon,
+      snapshotStorageKey(snapshot.lexicon, snapshot.stack),
       json,
       opts,
     );

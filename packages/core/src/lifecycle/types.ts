@@ -8,6 +8,10 @@ export type { ResourceMetadata, ArtifactMetadata } from "../lexicon";
 export interface LifecycleSnapshot {
   lexicon: string;
   environment: string;
+  /** Deployed stack name, for a multi-stack project (see `stacks` in
+   * ChantConfig). Absent for single-stack projects. Snapshots are stored per
+   * `<env>/<stack>/<lexicon>` when set, so sibling stacks don't overwrite. */
+  stack?: string;
   /** Main branch commit this corresponds to */
   commit: string;
   /** ISO timestamp when the snapshot was taken */

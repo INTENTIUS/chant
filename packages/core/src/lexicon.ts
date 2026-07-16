@@ -373,6 +373,13 @@ export interface LexiconPlugin {
     entityNames: string[];
     entities: Map<string, { entityType: string; props: Record<string, unknown> }>;
     /**
+     * The deployed stack name to observe, for a multi-stack project where the
+     * stack is not named after the environment (see `stacks` in {@link
+     * ChantConfig}). When omitted, an implementation keeps its single-stack
+     * convention (AWS: the stack named after `environment`).
+     */
+    stack?: string;
+    /**
      * Restrict the result to chant-owned resources (those carrying the
      * ownership marker, #119). Where a lexicon has no durable marker channel,
      * it must log that ownership is unavailable rather than silently returning
@@ -418,6 +425,9 @@ export interface LexiconPlugin {
   listArtifacts?(options: {
     environment: string;
     entities: Map<string, { entityType: string; props: Record<string, unknown> }>;
+    /** The deployed stack to scope enumeration to, for a multi-stack project
+     * (see `stacks` in {@link ChantConfig}). Omitted for single-stack projects. */
+    stack?: string;
   }): Promise<Record<string, ArtifactMetadata>>;
 
   // Live export (cloud → code)

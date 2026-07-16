@@ -19,6 +19,7 @@ vi.mock("../../lifecycle/git", () => ({
   readSnapshot: (...args: unknown[]) => readSnapshotMock(...args),
   readEnvironmentSnapshots: (...args: unknown[]) => readEnvironmentSnapshotsMock(...args),
   listSnapshots: (...args: unknown[]) => listSnapshotsMock(...args),
+  snapshotStorageKey: (lexicon: string, stack?: string) => (stack ? `${stack}__${lexicon}` : lexicon),
 }));
 vi.mock("../../lifecycle/snapshot", () => ({
   takeSnapshot: (...args: unknown[]) => takeSnapshotMock(...args),
@@ -165,6 +166,47 @@ describe("runLifecycleDiff --live", () => {
     expect(exit).toBe(0);
     const builtPath = buildMock.mock.calls[0][0] as string;
     expect(builtPath.endsWith(`${sep}infra`)).toBe(true);
+  });
+
+  // #932 — a multi-stack project builds each stack from its own source and
+  // observes each against its own live CloudFormation stack (not one stack/env).
+  test("multi-stack: config.stacks builds each stack scoped and observes its own stack name", async () => {
+    buildMock.mockResolvedValue(makeBuildResult({ aws: ["bucket"] }));
+    fetchLifecycleMock.mockResolvedValue(undefined);
+    readSnapshotMock.mockResolvedValue(null);
+    loadChantConfigMock.mockResolvedValue({ config: { stacks: [
+      { name: "loom-backend", src: "src/loom-backend" },
+      { name: "loom-agents", src: "src/loom-agents" },
+    ] } });
+
+    const observedStacks: (string | undefined)[] = [];
+    const plugins: LexiconPlugin[] = [
+      createMockPlugin({
+        name: "aws",
+        describeResources: async (options: { stack?: string }) => {
+          observedStacks.push(options.stack);
+          return {};
+        },
+      }),
+    ];
+
+    const exit = await runLifecycleDiff({
+      args: makeArgs({ path: "diff", extraPositional: "prod", live: true }),
+      plugins,
+      serializers: plugins.map((p) => p.serializer),
+    });
+
+    expect(exit).toBe(0);
+    // Each stack built from its own source directory.
+    const builtPaths = buildMock.mock.calls.map((c) => c[0] as string);
+    expect(builtPaths.some((p) => p.endsWith(`${sep}src${sep}loom-backend`))).toBe(true);
+    expect(builtPaths.some((p) => p.endsWith(`${sep}src${sep}loom-agents`))).toBe(true);
+    // Each observed against its own live stack name.
+    expect(observedStacks).toEqual(["loom-backend", "loom-agents"]);
+    // Each read its own stack-scoped snapshot key.
+    const readKeys = readSnapshotMock.mock.calls.map((c) => c[1]);
+    expect(readKeys).toContain("loom-backend__aws");
+    expect(readKeys).toContain("loom-agents__aws");
   });
 
   test("warns and skips lexicons without describeResources", async () => {

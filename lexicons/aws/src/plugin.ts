@@ -475,6 +475,7 @@ aws cloudformation wait stack-update-complete --stack-name my-app-prod`,
     environment: string;
     buildOutput: string;
     entityNames: string[];
+    stack?: string;
     owned?: boolean;
   }): Promise<Record<string, ResourceMetadata>> {
     const { getRuntime } = await import("@intentius/chant/runtime-adapter");
@@ -490,9 +491,10 @@ aws cloudformation wait stack-update-complete --stack-name my-app-prod`,
       );
     }
 
-    // Derive stack name: environment-based convention
-    // Try to parse the build output to detect stack name from Metadata or use convention
-    const stackName = `${options.environment}`;
+    // Derive stack name. A multi-stack project passes the explicit CloudFormation
+    // stack this observation targets (see `stacks` in ChantConfig); otherwise the
+    // single-stack convention is the stack named after the environment (#932).
+    const stackName = options.stack ?? `${options.environment}`;
 
     // Describe stack resources. Inject --endpoint-url from AWS_ENDPOINT_URL so a
     // local emulator (Floci) is observed instead of real AWS (#926) — behold
