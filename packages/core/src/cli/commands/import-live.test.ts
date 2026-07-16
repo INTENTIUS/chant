@@ -123,4 +123,32 @@ describe("liveImportFromPlugins (#114)", () => {
     expect(result.success).toBe(false);
     expect(result.error).toContain("No resources exported");
   });
+
+  // #932 — a multi-stack reconcile imports each stack from its own live
+  // CloudFormation stack; the `stack` option must reach `exportResources` so
+  // the right stack is queried (not one env-named stack for all of them).
+  test("threads the stack option through to exportResources", async () => {
+    let seenStack: string | undefined = "unset";
+    const capturing: LexiconPlugin = {
+      name: "aws",
+      serializer: {} as never,
+      generate: async () => {},
+      validate: async () => {},
+      coverage: async () => {},
+      package: async () => {},
+      templateGenerator: () => generator,
+      async exportResources(opts: { stack?: string }): Promise<ExportedTemplate> {
+        seenStack = opts.stack;
+        return sampleIR;
+      },
+    };
+    const result = await liveImportFromPlugins([capturing], {
+      environment: "prod",
+      stack: "loom-backend",
+      output: outputDir,
+      force: true,
+    });
+    expect(result.success).toBe(true);
+    expect(seenStack).toBe("loom-backend");
+  });
 });

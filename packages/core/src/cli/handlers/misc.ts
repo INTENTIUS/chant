@@ -1,6 +1,8 @@
 import { listCommand, printListResult } from "../commands/list";
 import { describeCommand, printDescribeResult } from "../commands/describe";
-import { importCommand, importFromLive, printImportResult } from "../commands/import";
+import { importCommand, importFromLive, importFromLiveStacks, printImportResult } from "../commands/import";
+import { loadChantConfig } from "../../config";
+import { resolve } from "path";
 import { auditCommand, printAuditResult, type AuditFormat, type AuditTier, type AuditFailOn } from "../commands/audit";
 import type { ReportTheme } from "../../audit/report-html";
 import type { ResourceSelector } from "../../lexicon";
@@ -180,6 +182,25 @@ export async function runImport(ctx: CommandContext): Promise<number> {
     console.error(formatWarning({
       message: "Live import may emit sensitive values (keys, tokens, passwords) into generated source. Review before committing.",
     }));
+
+    // Multi-stack project (#932): import each declared stack from its own live
+    // CloudFormation stack into its own source directory, rather than one flat
+    // import against a single env-named stack. `--output` is per-stack here (the
+    // stack's `src`), so it is ignored when `stacks` is configured.
+    const { config } = await loadChantConfig(resolve("."));
+    if (config.stacks && config.stacks.length > 0) {
+      const perStack = await importFromLiveStacks(
+        { environment: args.migrateFrom, lexicon: args.lexicon, force: args.force, selector, owned: args.owned, verbatim: args.verbatim },
+        config.stacks,
+      );
+      let anyFailure = false;
+      for (const { stack, result } of perStack) {
+        console.error(formatBold(`■ stack ${stack} → ${config.stacks.find((s) => s.name === stack)?.src ?? ""}`));
+        printImportResult(result);
+        if (!result.success) anyFailure = true;
+      }
+      return anyFailure ? 1 : 0;
+    }
 
     const result = await importFromLive({
       environment: args.migrateFrom,

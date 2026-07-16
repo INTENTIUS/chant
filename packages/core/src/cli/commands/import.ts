@@ -316,6 +316,10 @@ export async function importCommand(options: ImportOptions): Promise<ImportResul
 export interface LiveImportOptions {
   /** Environment to resolve (passed to each lexicon's exportResources). */
   environment: string;
+  /** The deployed stack to export from, for a multi-stack project (#932). When
+   * omitted, the single-stack convention applies (the stack named after the
+   * environment). */
+  stack?: string;
   /** Restrict to one lexicon by name (e.g. "aws", "k8s"). */
   lexicon?: string;
   /** Output directory (defaults to ./infra/). */
@@ -369,6 +373,35 @@ export async function importFromLive(options: LiveImportOptions): Promise<Import
 }
 
 /**
+ * Multi-stack live import (#932): for a project that declares `stacks` in
+ * chant.config, import each stack from its own live CloudFormation stack
+ * (`exportResources({ stack })`) into its own source directory (`src`). Plugins
+ * are resolved once from the project root; each stack regenerates independently,
+ * so a reconcile of a multi-stack project touches the right source per stack
+ * instead of one flat import against a single env-named stack. Returns one
+ * result per stack, in declaration order.
+ */
+export async function importFromLiveStacks(
+  options: Omit<LiveImportOptions, "stack" | "output">,
+  stacks: Array<{ name: string; src: string }>,
+): Promise<Array<{ stack: string; result: ImportResult }>> {
+  let plugins: LexiconPlugin[];
+  try {
+    const lexiconNames = await resolveProjectLexicons(resolve("."));
+    plugins = await loadPlugins(lexiconNames);
+  } catch {
+    plugins = [];
+  }
+
+  const results: Array<{ stack: string; result: ImportResult }> = [];
+  for (const s of stacks) {
+    const result = await liveImportFromPlugins(plugins, { ...options, stack: s.name, output: s.src });
+    results.push({ stack: s.name, result });
+  }
+  return results;
+}
+
+/**
  * Live-import core: given resolved plugins, export and generate. Split from
  * plugin resolution so it can be tested with fake exporters (no cloud calls).
  */
@@ -403,6 +436,7 @@ export async function liveImportFromPlugins(
     try {
       ir = await plugin.exportResources!({
         environment: options.environment,
+        stack: options.stack,
         selector: options.selector,
         owned: options.owned,
         verbatim: options.verbatim,

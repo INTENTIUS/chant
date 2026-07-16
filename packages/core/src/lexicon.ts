@@ -406,7 +406,7 @@ export interface LexiconPlugin {
    * thin to carry references (e.g. AWS CloudFormation, where it's sourced from
    * the fuller `exportResources` config).
    */
-  enrichLiveAttrs?(options: { environment: string; owned?: boolean }): Promise<Record<string, Record<string, unknown>>>;
+  enrichLiveAttrs?(options: { environment: string; stack?: string; owned?: boolean }): Promise<Record<string, Record<string, unknown>>>;
 
   /**
    * List runtime artifacts in the given environment. Opt-in.
@@ -454,6 +454,11 @@ export interface LexiconPlugin {
    */
   exportResources?(options: {
     environment: string;
+    /** The deployed stack to export from, for a multi-stack project (see
+     * `stacks` in {@link ChantConfig}, #932). When omitted, an implementation
+     * keeps its single-stack convention (AWS: the stack named after
+     * `environment`). */
+    stack?: string;
     selector?: ResourceSelector;
     owned?: boolean;
     verbatim?: boolean;
