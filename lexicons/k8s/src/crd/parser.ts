@@ -91,20 +91,24 @@ export function parseCRDSpec(spec: CRDSpec): K8sParseResult[] {
   const schema = targetVersion.schema?.openAPIV3Schema as OpenAPISchema | undefined;
   const properties = schema ? extractProperties(schema) : [];
   const propertyTypes = schema ? extractPropertyTypes(schema, typeName) : [];
+  const status = schema ? extractStatusType(schema, typeName) : {};
+
+  const attributes = [
+    { name: "name", tsType: "string" },
+    { name: "namespace", tsType: "string" },
+    { name: "uid", tsType: "string" },
+  ];
+  if (status.attribute) attributes.push(status.attribute);
 
   results.push({
     resource: {
       typeName,
       description: `Custom resource: ${spec.names.kind} (${spec.group})`,
       properties,
-      attributes: [
-        { name: "name", tsType: "string" },
-        { name: "namespace", tsType: "string" },
-        { name: "uid", tsType: "string" },
-      ],
+      attributes,
       deprecatedProperties: [],
     },
-    propertyTypes,
+    propertyTypes: status.propertyType ? [...propertyTypes, status.propertyType] : propertyTypes,
     enums: [],
     gvk,
   });
@@ -243,6 +247,51 @@ function extractPropertyTypes(schema: OpenAPISchema, parentTypeName: string): Pa
   }
 
   return results;
+}
+
+/**
+ * Extract the read-only `status` sub-object as a property type plus a `status`
+ * attribute on the resource. Status is never part of the writable spec surface
+ * (it is server-owned), so it is exposed only as a read-only output.
+ *
+ * Shallow by design, mirroring extractPropertyTypes: scalar leaves are typed,
+ * nested objects and arrays-of-objects degrade to `Record<string, any>`. Status
+ * with `x-kubernetes-preserve-unknown-fields` (or no properties) degrades to a
+ * bare `Record<string, any>` attribute with no property type.
+ */
+function extractStatusType(
+  schema: OpenAPISchema,
+  parentTypeName: string,
+): { attribute?: { name: string; tsType: string }; propertyType?: ParsedPropertyType } {
+  const statusSchema = schema.properties?.status;
+  if (!statusSchema) return {};
+
+  // The `.d.ts` accessor is deliberately opaque — CRD typing lives in the
+  // lexicon JSON (the same channel `spec` uses, which is also `Record<string,
+  // unknown>` in the constructor). The rich, per-field status shape is carried
+  // by the property type below, surfaced through LSP / validation / MCP.
+  const attribute = { name: "status", tsType: "Record<string, unknown>" };
+
+  // Opaque status (preserve-unknown or no schema) → read-only record only.
+  if (statusSchema["x-kubernetes-preserve-unknown-fields"] || !statusSchema.properties) {
+    return { attribute };
+  }
+
+  const shortName = parentTypeName.split("::").pop()!;
+  const propertyType: ParsedPropertyType = {
+    name: `${shortName}_Status`,
+    defType: "status",
+    properties: Object.entries(statusSchema.properties).map(([pName, pSchema]) => ({
+      name: pName,
+      tsType: resolveSchemaType(pSchema),
+      required: new Set<string>(statusSchema.required ?? []).has(pName),
+      description: pSchema.description,
+      enum: pSchema.enum,
+      constraints: extractConstraints(pSchema),
+    })),
+  };
+
+  return { attribute, propertyType };
 }
 
 /**
