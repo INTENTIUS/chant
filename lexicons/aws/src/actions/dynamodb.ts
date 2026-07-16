@@ -34,3 +34,14 @@ export const DynamoDBActions = {
   Query: ["dynamodb:Query"],
   Scan: ["dynamodb:Scan"],
 } as const;
+
+export type DynamoDBAccessLevel = keyof typeof DynamoDBActions;
+
+// Map-backed lookup — avoids computed element access `DynamoDBActions[access]`
+// that the evaluability lint (EVL003) flags despite the statically-typed key (#952).
+const DYNAMODB_ACTIONS = new Map<DynamoDBAccessLevel, readonly string[]>(
+  Object.entries(DynamoDBActions) as [DynamoDBAccessLevel, readonly string[]][],
+);
+export function dynamoDBActionsFor(access: DynamoDBAccessLevel): readonly string[] {
+  return DYNAMODB_ACTIONS.get(access) ?? [];
+}

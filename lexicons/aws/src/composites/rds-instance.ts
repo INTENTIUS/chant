@@ -7,11 +7,13 @@ import {
   SecurityGroup_Ingress,
 } from "../generated";
 
-const ENGINE_DEFAULTS: Record<string, { port: number; username: string; version: string; logExport: string }> = {
-  postgres: { port: 5432, username: "postgres", version: "16.6",  logExport: "postgresql" },
-  mysql:    { port: 3306, username: "admin",    version: "8.0.40", logExport: "general" },
-  mariadb:  { port: 3306, username: "admin",    version: "11.4.3", logExport: "general" },
-};
+// A Map (not a Record) so the per-engine lookup uses `.get()` rather than the
+// computed `ENGINE_DEFAULTS[engine]` element access the evaluability lint flags (#952).
+const ENGINE_DEFAULTS = new Map<string, { port: number; username: string; version: string; logExport: string }>([
+  ["postgres", { port: 5432, username: "postgres", version: "16.6",  logExport: "postgresql" }],
+  ["mysql",    { port: 3306, username: "admin",    version: "8.0.40", logExport: "general" }],
+  ["mariadb",  { port: 3306, username: "admin",    version: "11.4.3", logExport: "general" }],
+]);
 
 export interface RdsInstanceProps {
   // ── Engine ──────────────────────────────────────────────────────
@@ -76,7 +78,7 @@ export interface RdsInstanceProps {
 
 export const RdsInstance = Composite<RdsInstanceProps>((props) => {
   const engine = props.engine ?? "postgres";
-  const defaults = ENGINE_DEFAULTS[engine];
+  const defaults = ENGINE_DEFAULTS.get(engine)!;
   const port = props.port ?? defaults.port;
   const masterUsername = props.masterUsername ?? defaults.username;
   const engineVersion = props.engineVersion ?? defaults.version;
