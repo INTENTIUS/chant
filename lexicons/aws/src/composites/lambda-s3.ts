@@ -11,7 +11,7 @@ import {
   Role_Policy,
 } from "../generated";
 import { Sub, Join } from "../intrinsics";
-import { S3Actions } from "../actions/s3";
+import { s3ActionsFor } from "../actions/s3";
 import { LambdaFunction, type LambdaFunctionProps, type LambdaFunctionResult } from "./lambda-function";
 
 export interface LambdaS3Props extends LambdaFunctionProps {
@@ -63,7 +63,7 @@ export const LambdaS3 = Composite<LambdaS3Props, LambdaFunctionResult & { bucket
       PolicyName: `S3${access}`,
       PolicyDocument: {
         Version: "2012-10-17",
-        Statement: [{ Effect: "Allow", Action: S3Actions[access], Resource: [bucketArnBase, bucketArnWildcard] }],
+        Statement: [{ Effect: "Allow", Action: s3ActionsFor(access), Resource: [bucketArnBase, bucketArnWildcard] }],
       },
     });
 
@@ -116,7 +116,7 @@ export const LambdaS3 = Composite<LambdaS3Props, LambdaFunctionResult & { bucket
 
   const s3PolicyDocument = {
     Version: "2012-10-17",
-    Statement: [{ Effect: "Allow", Action: S3Actions[access], Resource: [bucket.Arn, Sub`${bucket.Arn}/*`] }],
+    Statement: [{ Effect: "Allow", Action: s3ActionsFor(access), Resource: [bucket.Arn, Sub`${bucket.Arn}/*`] }],
   };
 
   const s3Policy = new Role_Policy({ PolicyName: `S3${access}`, PolicyDocument: s3PolicyDocument });

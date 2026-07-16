@@ -7,7 +7,7 @@ import {
   Role_Policy,
   EventSourceMapping,
 } from "../generated";
-import { DynamoDBActions } from "../actions/dynamodb";
+import { dynamoDBActionsFor } from "../actions/dynamodb";
 import { LambdaFunction, type LambdaFunctionProps } from "./lambda-function";
 
 export interface LambdaDynamoDBProps extends LambdaFunctionProps {
@@ -60,7 +60,7 @@ export const LambdaDynamoDB = Composite<LambdaDynamoDBProps>((props) => {
           PolicyName: `DynamoDB${access}`,
           PolicyDocument: {
             Version: "2012-10-17",
-            Statement: [{ Effect: "Allow", Action: DynamoDBActions[access], Resource: table.Arn }],
+            Statement: [{ Effect: "Allow", Action: dynamoDBActionsFor(access), Resource: table.Arn }],
           },
         })]
       : []),

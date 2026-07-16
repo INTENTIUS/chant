@@ -1,7 +1,7 @@
 import { describe, test, expect } from "vitest";
-import { S3Actions } from "./s3";
+import { S3Actions, s3ActionsFor } from "./s3";
 import { LambdaActions } from "./lambda";
-import { DynamoDBActions } from "./dynamodb";
+import { DynamoDBActions, dynamoDBActionsFor } from "./dynamodb";
 import { SQSActions } from "./sqs";
 import { SNSActions } from "./sns";
 import { IAMActions } from "./iam";
@@ -71,5 +71,19 @@ describe("Action Constants", () => {
         expect(DynamoDBActions.ReadWrite).toContain(action);
       }
     });
+  });
+});
+
+// The EVL003-clean lookup helpers must return the same arrays as the tables (#952).
+describe("action-level lookup helpers", () => {
+  test("s3ActionsFor mirrors S3Actions for every access level", () => {
+    for (const level of Object.keys(S3Actions) as (keyof typeof S3Actions)[]) {
+      expect(s3ActionsFor(level)).toEqual(S3Actions[level]);
+    }
+  });
+  test("dynamoDBActionsFor mirrors DynamoDBActions for every access level", () => {
+    for (const level of Object.keys(DynamoDBActions) as (keyof typeof DynamoDBActions)[]) {
+      expect(dynamoDBActionsFor(level)).toEqual(DynamoDBActions[level]);
+    }
   });
 });

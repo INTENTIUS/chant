@@ -59,6 +59,10 @@ jobs:
       - name: Typecheck
         run: npx tsc --noEmit -p packages/core/tsconfig.json
 
+      - name: Lint aws reference composites (EVL regression guard, #916/#952)
+        # The lexicon's own composites must obey the evaluability rules they teach.
+        run: npx tsx packages/core/src/cli/main.ts lint lexicons/aws/src/composites
+
       - name: Audit runtime dependencies
         run: node scripts/depcheck.mjs
 

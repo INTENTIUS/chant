@@ -388,8 +388,9 @@ export const MicrovmApp = Composite<MicrovmAppProps, MicrovmAppResult>((props) =
     ? new MicrovmImage_Logging({ Disabled: true })
     : new MicrovmImage_Logging({ CloudWatch: new MicrovmImage_CloudWatchLogging({ LogGroup: logGroupName }) });
 
-  const environmentVariables = environmentKeys.map(
-    (key) => new MicrovmImage_EnvironmentVariable({ Key: key, Value: environment[key] }),
+  // Object.entries avoids the computed `environment[key]` access (EVL003, #952).
+  const environmentVariables = Object.entries(environment).map(
+    ([key, value]) => new MicrovmImage_EnvironmentVariable({ Key: key, Value: value }),
   );
 
   // `Hooks` is required by the CFN schema but every nested field is optional —
