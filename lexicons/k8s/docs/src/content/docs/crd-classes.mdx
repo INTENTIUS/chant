@@ -153,6 +153,28 @@ The operator-managed `CrdbCluster` is the common single-region production path. 
 
 The first two CRD sources. KubeRay (`ray.io`, **v1.3.0**) produces `RayCluster`, `RayJob`, and `RayService`. Argo CD (`argoproj.io`, **v2.13.3**) produces `Application`, `ApplicationSet`, and `AppProject`. Both ship value-add composites — see [Argo CD Composites](/chant/lexicons/k8s/argo-composites/) and the [Ray + KubeRay on GKE tutorial](/chant/tutorials/ray-kuberay-gke/).
 
+## Read-only status
+
+Generated CRD classes expose a read-only `status` accessor alongside `name`, `namespace`, and `uid`. It carries the resource's server-owned runtime state — never part of the writable constructor.
+
+```typescript
+import { Certificate } from "@intentius/chant-lexicon-k8s";
+
+const cert = new Certificate({
+  metadata: { name: "web-tls", namespace: "prod" },
+  spec: { secretName: "web-tls", issuerRef: { name: "letsencrypt" } },
+});
+
+// Read-only — populated at apply time, typed from the CRD's status schema.
+cert.status; // Certificate_Status — notAfter, notBefore, renewalTime, revision, conditions
+```
+
+The per-field status shape is generated from the CRD's `openAPIV3Schema` the same way `spec` field typing is — surfaced through LSP hover, validation, and MCP. Scalar leaves (`notAfter`, `revision`, a `RayCluster`'s `head.serviceIP`) are typed; deeply nested or `x-kubernetes-preserve-unknown-fields` status degrades to an opaque record. CRDs without a status schema (config-only kinds like a Prometheus `ServiceMonitor`) get no `status` accessor.
+
+<Aside type="caution">
+Status is a **runtime** value. chant synthesis is pure and stateless — a resource's `.status` does not exist at build time, so it cannot feed another resource's `spec`. Read it after apply inside an Op step (e.g. via the k8s lexicon's `waitForReady`), never as a build-time reference.
+</Aside>
+
 ## Adding your own CRD
 
 Append an entry to `CRD_SOURCES` in `lexicons/k8s/src/crd/crd-sources.ts` and re-run codegen:
