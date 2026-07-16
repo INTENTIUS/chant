@@ -4,6 +4,7 @@ description: Define named, phased Temporal workflows alongside your chant specs 
 ---
 
 import Diagram from '../../components/Diagram.astro';
+import { Aside } from '@astrojs/starlight/components';
 
 An **Op** is a named, phased Temporal workflow defined in a `*.op.ts` file. Ops replace ad-hoc deployment scripts with durable workflows that survive restarts, surface progress in the Temporal UI, and can pause at gate steps until a signal unblocks them.
 
@@ -70,7 +71,8 @@ These functions return an `ActivityStep` wired to the corresponding pre-built ac
 | `build(path)` | `chant build` on the given path |
 | `kubectlApply(manifest, opts?)` | `kubectl apply -f` |
 | `helmInstall(name, chart, opts?)` | `helm upgrade --install` |
-| `waitForStack(stackFile, opts?)` | Poll until a chant stack output is ready |
+| `waitForStack(stackFile, opts?)` | Poll until a chant Deployment/StatefulSet rollout is ready |
+| `waitForReady(kind, name, opts?)` | Poll any operator-backed CRD until it reports ready |
 | `gitlabPipeline(projectId, ref, opts?)` | Trigger a GitLab pipeline and wait |
 | `stateSnapshot(env, opts?)` | `chant state snapshot` |
 | `teardown(path, opts?)` | `chant build` + destroy |
@@ -100,6 +102,33 @@ await waitForArgoSync({ appName: "east-crdb", namespace: "argocd" });
 ```
 
 See the [Argo CD composites](/chant/lexicons/k8s/argo-composites/) in the k8s lexicon for the manifest side, and the [CockroachDB multi-region tutorial](/chant/tutorials/temporal-crdb-deploy/) for the full Argo + Temporal split.
+
+## Waiting on any operator CRD
+
+`waitForArgoSync` is one case of a general pattern. `waitForReady` blocks on **any** operator-backed resource — cert-manager `Certificate`, a KubeRay `RayCluster`, a CockroachDB `CrdbCluster` — driven by a data-only **readiness spec** rather than a bespoke activity per operator. Like `waitForArgoSync`, it is dependency-light (primitives + spec, no generated CRD types) and runs under the `k8sWait` profile.
+
+```ts
+// Default readiness: a `Ready` condition of True, plus observedGeneration caught up.
+await waitForReady("certificate", "web-tls", { namespace: "prod" });
+```
+
+The default predicate is kstatus-style and covers most operators (cert-manager, Gateway API, KubeRay, the CockroachDB operator). Resources that report readiness differently carry an override in the registry — Argo's `Application` uses `health`/`sync` instead of a `Ready` condition. You can also pass an explicit `spec`:
+
+```ts
+await waitForReady("raycluster.ray.io", "train", {
+  namespace: "ml",
+  spec: {
+    ready: [{ path: "status.state", equals: "ready" }],
+    terminal: [{ path: "status.state", equals: "failed" }],
+  },
+});
+```
+
+A `ready` predicate is either a condition match (`{ conditionType, status }`) or a path match (`{ path, equals | oneOf }`); all `ready` predicates must hold. Any matching `terminal` predicate fails fast with `ReadinessFailedError` (non-retryable under `k8sWait`) instead of polling to timeout.
+
+<Aside type="caution">
+Status is a **runtime** value, read after apply. chant synthesis is pure and stateless — a resource's `.status` does not exist at build time, so it can never feed another resource's `spec` as a synthesis-graph input. Consume status inside an Op step (on a `waitForReady` return), never as a build-time reference.
+</Aside>
 
 ## Gate steps
 
