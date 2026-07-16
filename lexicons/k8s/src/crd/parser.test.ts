@@ -275,4 +275,104 @@ describe("parseCRDSpec", () => {
     // No duplicate identifiers.
     expect(new Set(names).size).toBe(names.length);
   });
+
+  test("extracts read-only typed status as a property type and status attribute", () => {
+    const spec = {
+      group: "cert-manager.io",
+      names: { kind: "Certificate", plural: "certificates" },
+      scope: "Namespaced" as const,
+      versions: [
+        {
+          name: "v1",
+          served: true,
+          storage: true,
+          schema: {
+            openAPIV3Schema: {
+              type: "object",
+              properties: {
+                spec: { type: "object", properties: { secretName: { type: "string" } } },
+                status: {
+                  type: "object",
+                  properties: {
+                    notAfter: { type: "string" },
+                    revision: { type: "integer" },
+                    conditions: { type: "array", items: { type: "object", properties: { type: { type: "string" } } } },
+                  },
+                },
+              },
+            },
+          },
+        },
+      ],
+    };
+
+    const results = parseCRDSpec(spec);
+    const res = results[0];
+
+    // A read-only `status` attribute is present; status is never a writable property.
+    const statusAttr = res.resource.attributes.find((a) => a.name === "status");
+    expect(statusAttr).toBeDefined();
+    expect(res.resource.properties.some((p) => p.name === "status")).toBe(false);
+
+    // Rich per-field status type carried as a property type (the lexicon-JSON channel).
+    const statusType = res.propertyTypes.find((pt) => pt.name === "Certificate_Status");
+    expect(statusType).toBeDefined();
+    expect(statusType!.defType).toBe("status");
+    const byName = Object.fromEntries(statusType!.properties.map((p) => [p.name, p.tsType]));
+    expect(byName.notAfter).toBe("string");
+    expect(byName.revision).toBe("number");
+  });
+
+  test("no status attribute or type when the CRD has no status schema", () => {
+    const spec = {
+      group: "example.com",
+      names: { kind: "Config", plural: "configs" },
+      scope: "Namespaced" as const,
+      versions: [
+        {
+          name: "v1",
+          served: true,
+          storage: true,
+          schema: {
+            openAPIV3Schema: {
+              type: "object",
+              properties: { spec: { type: "object", properties: { k: { type: "string" } } } },
+            },
+          },
+        },
+      ],
+    };
+
+    const results = parseCRDSpec(spec);
+    expect(results[0].resource.attributes.some((a) => a.name === "status")).toBe(false);
+    expect(results[0].propertyTypes.some((pt) => pt.name === "Config_Status")).toBe(false);
+  });
+
+  test("preserve-unknown status degrades to a read-only record with no property type", () => {
+    const spec = {
+      group: "example.com",
+      names: { kind: "Widget", plural: "widgets" },
+      scope: "Namespaced" as const,
+      versions: [
+        {
+          name: "v1",
+          served: true,
+          storage: true,
+          schema: {
+            openAPIV3Schema: {
+              type: "object",
+              properties: {
+                spec: { type: "object", properties: { k: { type: "string" } } },
+                status: { type: "object", "x-kubernetes-preserve-unknown-fields": true },
+              },
+            },
+          },
+        },
+      ],
+    };
+
+    const results = parseCRDSpec(spec);
+    expect(results[0].resource.attributes.some((a) => a.name === "status")).toBe(true);
+    expect(results[0].propertyTypes.some((pt) => pt.name === "Widget_Status")).toBe(false);
+  });
 });
