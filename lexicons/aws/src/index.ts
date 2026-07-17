@@ -4,6 +4,8 @@ export { Parameter } from "./parameter";
 // Default Tags
 export { defaultTags, isDefaultTags, DEFAULT_TAGS_MARKER } from "./default-tags";
 export type { DefaultTags, TagEntry } from "./default-tags";
+export { templateTransform, isTemplateTransform, TEMPLATE_TRANSFORM_MARKER } from "./template-transform";
+export type { TemplateTransform } from "./template-transform";
 
 // Serializer
 export { awsSerializer } from "./serializer";

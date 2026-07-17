@@ -10,6 +10,7 @@ import { isStackOutput, type StackOutput } from "@intentius/chant/stack-output";
 import { isAttrRefLike } from "@intentius/chant/utils";
 import { resolveDependsOn } from "@intentius/chant/resource-attributes";
 import { isDefaultTags, type TagEntry } from "./default-tags";
+import { isTemplateTransform } from "./template-transform";
 import { loadTaggableResources } from "./taggable";
 
 /**
@@ -25,6 +26,7 @@ function isCoreParameter(entity: Declarable): entity is CoreParameter {
 interface CFTemplate {
   AWSTemplateFormatVersion: "2010-09-09";
   Description?: string;
+  Transform?: string | string[];
   Parameters?: Record<string, CFParameter>;
   Resources: Record<string, CFResource>;
   Outputs?: Record<string, CFOutput>;
@@ -192,6 +194,21 @@ function serializeToTemplate(
     }
   }
 
+  // Collect top-level Transform macros (e.g. AWS::SecretsManager-2020-07-23),
+  // de-duplicated in declaration order. One → a string, several → a list,
+  // matching CloudFormation's own `Transform` shape.
+  const transforms: string[] = [];
+  for (const [, entity] of entities) {
+    if (isTemplateTransform(entity) && !transforms.includes(entity.transform)) {
+      transforms.push(entity.transform);
+    }
+  }
+  if (transforms.length === 1) {
+    template.Transform = transforms[0];
+  } else if (transforms.length > 1) {
+    template.Transform = transforms;
+  }
+
   // Process entities
   for (const [name, entity] of entities) {
     // Skip StackOutput entities — they go in the Outputs section
@@ -201,6 +218,11 @@ function serializeToTemplate(
 
     // Skip DefaultTags entities — handled via tag injection below
     if (isDefaultTags(entity)) {
+      continue;
+    }
+
+    // Skip TemplateTransform entities — lifted to the top-level Transform above
+    if (isTemplateTransform(entity)) {
       continue;
     }
 
