@@ -15,13 +15,24 @@ const baseProps = {
   containerUri: "123456789012.dkr.ecr.us-east-1.amazonaws.com/support-agent:latest",
 };
 
+// The endpoint is opt-in (#978) — it races the Runtime's async version-READY when
+// created in the same apply. Tests that exercise the endpoint pass this variant.
+const withEndpoint = { ...baseProps, provisionEndpoint: true };
+
 describe("AgentCoreAgent", () => {
-  test("returns all 8 members", () => {
+  test("returns 7 members by default; the endpoint is opt-in (#978)", () => {
     const instance = AgentCoreAgent(baseProps);
     expect(Object.keys(instance.members)).toEqual([
-      "role", "gatewayRole", "runtime", "endpoint", "memory",
+      "role", "gatewayRole", "runtime", "memory",
       "workloadIdentity", "gateway", "gatewayTarget",
     ]);
+    expect((instance as any).endpoint).toBeUndefined();
+  });
+
+  test("provisionEndpoint adds the endpoint as an 8th member", () => {
+    const instance = AgentCoreAgent(withEndpoint);
+    expect(Object.keys(instance.members)).toContain("endpoint");
+    expect(Object.keys(instance.members)).toHaveLength(8);
   });
 
   test("expandComposite produces correct logical names", () => {
@@ -29,12 +40,14 @@ describe("AgentCoreAgent", () => {
     expect(expanded.has("agentRole")).toBe(true);
     expect(expanded.has("agentGatewayRole")).toBe(true);
     expect(expanded.has("agentRuntime")).toBe(true);
-    expect(expanded.has("agentEndpoint")).toBe(true);
+    expect(expanded.has("agentEndpoint")).toBe(false); // opt-in (#978)
     expect(expanded.has("agentMemory")).toBe(true);
     expect(expanded.has("agentWorkloadIdentity")).toBe(true);
     expect(expanded.has("agentGateway")).toBe(true);
     expect(expanded.has("agentGatewayTarget")).toBe(true);
-    expect(expanded.size).toBe(8);
+    expect(expanded.size).toBe(7);
+    // With the endpoint opted in, it appears as agentEndpoint.
+    expect(expandComposite("agent", AgentCoreAgent(withEndpoint)).has("agentEndpoint")).toBe(true);
   });
 
   test("role and gatewayRole trust bedrock-agentcore.amazonaws.com", () => {
@@ -50,7 +63,7 @@ describe("AgentCoreAgent", () => {
   });
 
   test("kebab-case name is sanitized for Runtime/RuntimeEndpoint/Memory (no hyphens)", () => {
-    const instance = AgentCoreAgent(baseProps);
+    const instance = AgentCoreAgent(withEndpoint);
     const runtimeProps = (instance.runtime as any).props;
     const endpointProps = (instance.endpoint as any).props;
     const memoryProps = (instance.memory as any).props;
@@ -182,8 +195,8 @@ describe("AgentCoreAgent", () => {
     );
   });
 
-  test("RuntimeEndpoint references runtime.AgentRuntimeId", () => {
-    const instance = AgentCoreAgent(baseProps);
+  test("RuntimeEndpoint references runtime.AgentRuntimeId (when opted in)", () => {
+    const instance = AgentCoreAgent(withEndpoint);
     const endpointProps = (instance.endpoint as any).props;
     expect(endpointProps.AgentRuntimeId).toBeInstanceOf(AttrRef);
   });
@@ -222,7 +235,7 @@ describe("AgentCoreAgent", () => {
 
   test("per-member defaults are applied (e.g. custom endpoint description)", () => {
     const instance = AgentCoreAgent({
-      ...baseProps,
+      ...withEndpoint,
       defaults: { endpoint: { Description: "prod alias" } },
     });
     const endpointProps = (instance.endpoint as any).props;
@@ -230,7 +243,7 @@ describe("AgentCoreAgent", () => {
   });
 
   test("serializes to a valid CloudFormation template with the expected resource types", () => {
-    const expanded = expandComposite("agent", AgentCoreAgent(baseProps));
+    const expanded = expandComposite("agent", AgentCoreAgent(withEndpoint));
     resolveAttrRefs(expanded);
     const output = awsSerializer.serialize(expanded);
     const template = JSON.parse(output);
