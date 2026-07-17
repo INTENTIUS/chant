@@ -1,6 +1,6 @@
 {
   "name": "@intentius/chant-lexicon-docker",
-  "version": "0.18.25",
+  "version": "0.18.26",
   "description": "Docker lexicon for chant — declarative IaC in TypeScript",
   "license": "Apache-2.0",
   "homepage": "https://intentius.io/chant",
@@ -67,7 +67,7 @@
     "typescript": "^5.9.3"
   },
   "peerDependencies": {
-    "@intentius/chant": "^0.18.25",
+    "@intentius/chant": "^0.18.26",
     "typescript": "^5.9.3"
   }
 }
