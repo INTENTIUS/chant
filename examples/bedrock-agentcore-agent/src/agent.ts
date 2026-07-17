@@ -11,4 +11,8 @@ export const agent = AgentCoreAgent({
   environmentVariables: {
     LOG_LEVEL: "info",
   },
+  // Opt in to the RuntimeEndpoint so this example shows the full bundle. On a real
+  // apply the endpoint must be created after the Runtime's version is READY, so it
+  // is off by default (#978) — see the AgentCoreAgent `provisionEndpoint` prop.
+  provisionEndpoint: true,
 });

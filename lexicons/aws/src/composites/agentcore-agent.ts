@@ -96,6 +96,18 @@ export interface AgentCoreAgentProps {
   environmentVariables?: Record<string, string>;
   /** RuntimeEndpoint name — the alias a version-promotion capability would repoint (deferred, see #882). Default: "DEFAULT". */
   endpointName?: string;
+  /**
+   * Create the `RuntimeEndpoint` in this template. **Default: false.** A
+   * RuntimeEndpoint can only be created once the Runtime's agent *version* is
+   * READY, which is asynchronous and is NOT gated by the Runtime resource's own
+   * CloudFormation `CREATE_COMPLETE` — so creating the endpoint in the same apply
+   * as the Runtime races and fails on a real deploy ("Agent version 1 must be in
+   * READY status. Current status: CREATING", #978). Leave this off and create the
+   * endpoint out-of-band once the runtime is READY — which is what Bedrock
+   * AgentCore's own tooling (and Loom's app) does. Opt in only when you know the
+   * Runtime will already be READY (e.g. a version-promotion flow on an existing runtime).
+   */
+  provisionEndpoint?: boolean;
   /** Memory event retention, in days. CFN bounds: 3-365. Default: 30. */
   memoryEventExpiryDays?: number;
   /** Gateway authorizer. Mirrors the generated `BedrockAgentCoreGateway_AuthorizerType` CFN enum. Default: "AWS_IAM". */
@@ -122,7 +134,8 @@ export type AgentCoreAgentResult = {
   role: InstanceType<typeof Role>;
   gatewayRole: InstanceType<typeof Role>;
   runtime: InstanceType<typeof Runtime>;
-  endpoint: InstanceType<typeof RuntimeEndpoint>;
+  /** Present only when `provisionEndpoint` is set — see that prop (#978). */
+  endpoint?: InstanceType<typeof RuntimeEndpoint>;
   memory: InstanceType<typeof Memory>;
   workloadIdentity: InstanceType<typeof WorkloadIdentity>;
   gateway: InstanceType<typeof BedrockAgentCoreGateway>;
@@ -228,10 +241,14 @@ export const AgentCoreAgent = Composite<AgentCoreAgentProps, AgentCoreAgentResul
     EnvironmentVariables: props.environmentVariables,
   }, defaults?.runtime));
 
-  const endpoint = new RuntimeEndpoint(mergeDefaults({
-    AgentRuntimeId: runtime.AgentRuntimeId,
-    Name: toRuntimeIdentifier(props.endpointName ?? "DEFAULT"),
-  }, defaults?.endpoint));
+  // Opt-in only (#978): the endpoint races the Runtime's async version-READY when
+  // created in the same apply. Off by default; create it out-of-band post-READY.
+  const endpoint = props.provisionEndpoint
+    ? new RuntimeEndpoint(mergeDefaults({
+        AgentRuntimeId: runtime.AgentRuntimeId,
+        Name: toRuntimeIdentifier(props.endpointName ?? "DEFAULT"),
+      }, defaults?.endpoint))
+    : undefined;
 
   const memory = new Memory(mergeDefaults({
     Name: `${runtimeName}Memory`.slice(0, 48),
@@ -264,5 +281,5 @@ export const AgentCoreAgent = Composite<AgentCoreAgentProps, AgentCoreAgentResul
     },
   }, defaults?.gatewayTarget));
 
-  return { role, gatewayRole, runtime, endpoint, memory, workloadIdentity, gateway, gatewayTarget };
+  return { role, gatewayRole, runtime, ...(endpoint ? { endpoint } : {}), memory, workloadIdentity, gateway, gatewayTarget };
 }, "AgentCoreAgent");
