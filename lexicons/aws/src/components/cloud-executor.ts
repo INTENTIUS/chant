@@ -384,6 +384,20 @@ async function cfnChangeSetType(stackName: string): Promise<"CREATE" | "UPDATE">
   }
 }
 
+/**
+ * The `--capabilities` a deploy needs for a template. `CAPABILITY_NAMED_IAM` is
+ * always required (chant emits named IAM roles); `CAPABILITY_AUTO_EXPAND` is added
+ * whenever the template declares a top-level `Transform` macro (e.g.
+ * `AWS::SecretsManager-2020-07-23` for a HostedRotationLambda rotation, or SAM) —
+ * the macro expands into nested stacks/resources during change-set creation, and
+ * CloudFormation refuses without the acknowledgement.
+ */
+export function awsDeployCapabilities(template: { Transform?: unknown }): string {
+  return template.Transform !== undefined
+    ? "CAPABILITY_NAMED_IAM CAPABILITY_AUTO_EXPAND"
+    : "CAPABILITY_NAMED_IAM";
+}
+
 const realCloudFormation: CloudFormationClient = {
   async createChangeSet(args) {
     const changeSetName = `cs-${Date.now()}`;
@@ -396,10 +410,14 @@ const realCloudFormation: CloudFormationClient = {
     // for one still in REVIEW_IN_PROGRESS (a prior CREATE change set never
     // executed), mirroring what `aws cloudformation deploy` does under the hood.
     const changeSetType = await cfnChangeSetType(args.stackName);
+    let capabilities = "CAPABILITY_NAMED_IAM";
+    try {
+      capabilities = awsDeployCapabilities(JSON.parse(readFileSync(args.templatePath, "utf8")) as { Transform?: unknown });
+    } catch { /* unreadable/non-JSON template — keep the default capability */ }
     await run(
       `aws cloudformation create-change-set --stack-name ${q(args.stackName)} --change-set-name ${q(changeSetName)} ` +
         `--change-set-type ${changeSetType} ` +
-        `--template-body file://${args.templatePath} --capabilities CAPABILITY_NAMED_IAM${paramFlag}`,
+        `--template-body file://${args.templatePath} --capabilities ${capabilities}${paramFlag}`,
     );
     await run(
       `aws cloudformation wait change-set-create-complete --stack-name ${q(args.stackName)} --change-set-name ${q(changeSetName)}`,

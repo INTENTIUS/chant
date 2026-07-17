@@ -1,5 +1,5 @@
 import { describe, test, expect } from "vitest";
-import { applyAwsEndpoint, applyAwsEndpointArgv, ecsDeploymentId, ecsServiceStable } from "./cloud-executor";
+import { applyAwsEndpoint, applyAwsEndpointArgv, awsDeployCapabilities, ecsDeploymentId, ecsServiceStable } from "./cloud-executor";
 
 describe("ecsDeploymentId / ecsServiceStable — tolerate Floci's missing deployments (#937)", () => {
   test("deployment id: real AWS shape", () => {
@@ -60,5 +60,18 @@ describe("applyAwsEndpointArgv (#926)", () => {
 
   test("leaves a non-aws argv untouched", () => {
     expect(applyAwsEndpointArgv(["docker", "ps"], url)).toEqual(["docker", "ps"]);
+  });
+});
+
+describe("awsDeployCapabilities — CAPABILITY_AUTO_EXPAND for Transform macros", () => {
+  test("plain template → CAPABILITY_NAMED_IAM only", () => {
+    expect(awsDeployCapabilities({})).toBe("CAPABILITY_NAMED_IAM");
+    expect(awsDeployCapabilities({ Transform: undefined })).toBe("CAPABILITY_NAMED_IAM");
+  });
+  test("a top-level Transform → adds CAPABILITY_AUTO_EXPAND", () => {
+    expect(awsDeployCapabilities({ Transform: "AWS::SecretsManager-2020-07-23" })).toBe(
+      "CAPABILITY_NAMED_IAM CAPABILITY_AUTO_EXPAND",
+    );
+    expect(awsDeployCapabilities({ Transform: ["AWS::LanguageExtensions"] })).toContain("CAPABILITY_AUTO_EXPAND");
   });
 });
