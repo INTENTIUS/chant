@@ -12,6 +12,7 @@ import type { SerializerResult } from "@intentius/chant/serializer";
 import type { BuildResult } from "@intentius/chant/build";
 import { Parameter } from "./parameter";
 import { defaultTags } from "./default-tags";
+import { templateTransform } from "./template-transform";
 
 // Mock S3 Bucket for testing
 class MockBucket implements Declarable {
@@ -66,6 +67,38 @@ describe("awsSerializer.serialize", () => {
     expect(template.Resources.MyBucket).toBeDefined();
     expect(template.Resources.MyBucket.Type).toBe("AWS::S3::Bucket");
     expect(template.Resources.MyBucket.Properties.BucketName).toBe("my-bucket");
+  });
+
+  test("lifts a templateTransform to the top-level Transform, not a resource", () => {
+    const entities = new Map<string, Declarable>();
+    entities.set("MyBucket", new MockBucket({ BucketName: "my-bucket" }));
+    entities.set("rotationTransform", templateTransform("AWS::SecretsManager-2020-07-23"));
+
+    const template = JSON.parse(awsSerializer.serialize(entities));
+
+    expect(template.Transform).toBe("AWS::SecretsManager-2020-07-23");
+    expect(template.Resources.rotationTransform).toBeUndefined();
+    expect(template.Resources.MyBucket).toBeDefined();
+  });
+
+  test("merges + de-duplicates multiple transforms into a list", () => {
+    const entities = new Map<string, Declarable>();
+    entities.set("t1", templateTransform("AWS::SecretsManager-2020-07-23"));
+    entities.set("t2", templateTransform("AWS::LanguageExtensions"));
+    entities.set("t3", templateTransform("AWS::SecretsManager-2020-07-23")); // dup
+
+    const template = JSON.parse(awsSerializer.serialize(entities));
+
+    expect(template.Transform).toEqual(["AWS::SecretsManager-2020-07-23", "AWS::LanguageExtensions"]);
+  });
+
+  test("no Transform when none is declared", () => {
+    const entities = new Map<string, Declarable>();
+    entities.set("MyBucket", new MockBucket({ BucketName: "my-bucket" }));
+
+    const template = JSON.parse(awsSerializer.serialize(entities));
+
+    expect(template.Transform).toBeUndefined();
   });
 
   test("serializes parameters", () => {
