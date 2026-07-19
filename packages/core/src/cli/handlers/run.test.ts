@@ -945,6 +945,60 @@ describe("runOpComponents", () => {
     vi.restoreAllMocks();
   });
 
+  // ── --progress-json (M3, behold roadmap) ──────────────────────────────────
+
+  test("--progress-json streams NDJSON progress events to stdout as runComponents emits them", async () => {
+    runComponentsMock.mockImplementation(
+      async (_path: string, _selector: string, options: { onProgress?: (e: unknown) => void }) => {
+        options.onProgress?.({ type: "run-start", waves: [["svc"]] });
+        options.onProgress?.({ type: "run-done", status: "ok" });
+        return {
+          success: true,
+          selected: ["svc"],
+          run: { order: ["svc"], waves: [["svc"]], results: [{ component: "svc", ok: true, records: [] }], ok: true },
+        };
+      },
+    );
+    const stdoutWrite = vi.spyOn(process.stdout, "write").mockImplementation(() => true);
+    vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+
+    const exit = await runOpComponents({
+      args: makeArgs({ path: "svc", progressJson: true, temporal: false }),
+      plugins: [],
+      serializers: [],
+    });
+
+    expect(exit).toBe(0);
+    const lines = stdoutWrite.mock.calls.map((c) => String(c[0])).filter((s) => s.trim().length > 0);
+    expect(lines.map((l) => JSON.parse(l))).toEqual([
+      { type: "run-start", waves: [["svc"]] },
+      { type: "run-done", status: "ok" },
+    ]);
+    // Every line is a single, complete JSON object — real NDJSON, not one big blob.
+    for (const line of lines) expect(() => JSON.parse(line)).not.toThrow();
+    vi.restoreAllMocks();
+  });
+
+  test("without --progress-json, runComponents receives onProgress: undefined and nothing streams", async () => {
+    runComponentsMock.mockResolvedValue({
+      success: true,
+      selected: ["svc"],
+      run: { order: ["svc"], waves: [["svc"]], results: [{ component: "svc", ok: true, records: [] }], ok: true },
+    });
+    const stdoutWrite = vi.spyOn(process.stdout, "write").mockImplementation(() => true);
+    vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+
+    await runOpComponents({ args: makeArgs({ path: "svc", temporal: false }), plugins: [], serializers: [] });
+
+    expect(runComponentsMock).toHaveBeenCalledWith(expect.any(String), "svc", {
+      env: undefined,
+      componentOutputs: {},
+      onProgress: undefined,
+    });
+    expect(stdoutWrite).not.toHaveBeenCalled();
+    vi.restoreAllMocks();
+  });
+
   test("all: dispatches the 'all' selector and renders every component", async () => {
     runComponentsMock.mockResolvedValue({
       success: true,

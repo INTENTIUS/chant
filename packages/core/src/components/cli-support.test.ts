@@ -16,7 +16,7 @@ import Ajv2020 from "ajv/dist/2020";
 import componentSchema from "./component.schema.json";
 import { listComponents, describeComponent, computeComponentGraph, runComponents, findComponentGate } from "./cli-support";
 import { CapabilityRegistry, type DeployContext } from "./capability";
-import type { DriverComponent } from "./driver";
+import type { DriverComponent, RunProgressEvent } from "./driver";
 
 describe("listComponents", () => {
   let testDir: string;
@@ -575,5 +575,96 @@ describe("runComponents", () => {
     });
 
     expect(capability.calls[0]?.input).toMatchObject({ format: "cyclonedx" });
+  });
+});
+
+describe("runComponents — onProgress (--progress-json wiring, M3)", () => {
+  let testDir: string;
+
+  beforeEach(async () => {
+    testDir = join(tmpdir(), `chant-run-components-progress-test-${Date.now()}-${Math.random()}`);
+    await mkdir(testDir, { recursive: true });
+  });
+
+  afterEach(async () => {
+    await rm(testDir, { recursive: true, force: true });
+  });
+
+  test("selector 'all': onProgress sees the same run-start/wave-*/component-*/run-done envelope runInterpretDriver emits", async () => {
+    await writeFile(
+      join(testDir, "alb.component.ts"),
+      `export const alb = { name: "shared-alb", dependsOn: [], deploy: [{ phase: "Apply", steps: [{ kind: "deploy-thing" }] }] };`,
+    );
+    await writeFile(
+      join(testDir, "svc.component.ts"),
+      `export const svc = { name: "search-service", dependsOn: ["shared-alb"], deploy: [{ phase: "Apply", steps: [{ kind: "deploy-thing" }] }] };`,
+    );
+
+    const registry = fakeRegistry();
+    const events: RunProgressEvent[] = [];
+    const result = await runComponents(testDir, "all", { registry, onProgress: (e) => events.push(e) });
+
+    expect(result.success).toBe(true);
+    expect(events[0]).toEqual({ type: "run-start", waves: [["shared-alb"], ["search-service"]] });
+    expect(events.at(-1)).toEqual({ type: "run-done", status: "ok" });
+    expect(events.filter((e) => e.type === "component-start")).toEqual([
+      { type: "component-start", wave: 1, component: "shared-alb" },
+      { type: "component-start", wave: 2, component: "search-service" },
+    ]);
+  });
+
+  test("single-component selector: onProgress still gets a well-formed single-wave envelope (bypasses runInterpretDriver)", async () => {
+    await writeFile(
+      join(testDir, "svc.component.ts"),
+      `export const svc = { name: "svc", dependsOn: [], deploy: [{ phase: "Apply", steps: [{ kind: "deploy-thing" }] }] };`,
+    );
+
+    const registry = fakeRegistry();
+    const events: RunProgressEvent[] = [];
+    const result = await runComponents(testDir, "svc", { registry, onProgress: (e) => events.push(e) });
+
+    expect(result.success).toBe(true);
+    expect(events.map((e) => e.type)).toEqual([
+      "run-start",
+      "wave-start",
+      "component-start",
+      "phase-start",
+      "step",
+      "step",
+      "phase-done",
+      "component-done",
+      "wave-done",
+      "run-done",
+    ]);
+    expect(events[0]).toEqual({ type: "run-start", waves: [["svc"]] });
+    expect(events[2]).toEqual({ type: "component-start", wave: 1, component: "svc" });
+    expect(events.at(-1)).toEqual({ type: "run-done", status: "ok" });
+  });
+
+  test("single-component selector: a failing step still yields component-done/wave-done/run-done status:\"failed\"", async () => {
+    await writeFile(
+      join(testDir, "svc.component.ts"),
+      `export const svc = { name: "svc", dependsOn: [], deploy: [{ phase: "Apply", steps: [{ kind: "deploy-thing" }] }] };`,
+    );
+
+    const registry = fakeRegistry({ failRun: true });
+    const events: RunProgressEvent[] = [];
+    const result = await runComponents(testDir, "svc", { registry, onProgress: (e) => events.push(e) });
+
+    expect(result.success).toBe(false);
+    expect(events.at(-3)).toEqual({ type: "component-done", wave: 1, component: "svc", status: "failed" });
+    expect(events.at(-2)).toEqual({ type: "wave-done", wave: 1, status: "failed" });
+    expect(events.at(-1)).toEqual({ type: "run-done", status: "failed" });
+  });
+
+  test("no onProgress passed → no behavior change (result identical, and it's simply never called)", async () => {
+    await writeFile(
+      join(testDir, "svc.component.ts"),
+      `export const svc = { name: "svc", dependsOn: [], deploy: [{ phase: "Apply", steps: [{ kind: "deploy-thing" }] }] };`,
+    );
+
+    const result = await runComponents(testDir, "svc", { registry: fakeRegistry() });
+    expect(result.success).toBe(true);
+    expect(result.run?.ok).toBe(true);
   });
 });

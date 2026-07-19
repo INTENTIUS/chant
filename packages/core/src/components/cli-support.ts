@@ -37,6 +37,7 @@ import {
   type DriverRunResult,
 } from "./driver";
 import { isLexiconPlugin, type LexiconPlugin, type ComponentPipelineOptions } from "../lexicon";
+import type { RunProgressEvent } from "./run-progress";
 import { relative } from "node:path";
 import { buildCapabilityRegistry } from "./capability-plugin-loader";
 import type { CapabilityRegistry } from "./capability";
@@ -323,6 +324,18 @@ export interface RunComponentsOptions {
    * ran elsewhere. Merged with, and overridden by, outputs this run produces.
    */
   componentOutputs?: Record<string, Record<string, unknown>>;
+  /**
+   * Opt-in structured progress observer (`chant run --components <name|all>
+   * --progress-json`, see ./run-progress.ts). Threaded straight through to
+   * `runInterpretDriver` for `selector === "all"`; for a single-component
+   * selector (which bypasses `runInterpretDriver` — see the docstring above),
+   * this function emits the same `run-start`/`wave-start`/`component-start`/
+   * …/`run-done` envelope itself, treating the one component as a run with a
+   * single wave, so `--progress-json` produces a well-formed event stream
+   * regardless of selector. Left `undefined` by every caller that didn't pass
+   * `--progress-json`, in which case nothing changes.
+   */
+  onProgress?: (event: RunProgressEvent) => void;
 }
 
 /** Result of `chant run --components <name|all>`. */
@@ -449,10 +462,11 @@ export async function runComponents(
   // from a caller (a downstream CI job passing an upstream job's dumped
   // outputs via `--seed-outputs`); grows as this run's components complete.
   const seedOutputs = options.componentOutputs ?? {};
+  const { onProgress } = options;
 
   try {
     if (selector === "all") {
-      const run = await runInterpretDriver(resolvedTargets, registry, { env, componentOutputs: seedOutputs });
+      const run = await runInterpretDriver(resolvedTargets, registry, { env, componentOutputs: seedOutputs, onProgress });
       return { success: true, run, selected };
     }
 
@@ -462,8 +476,28 @@ export async function runComponents(
     // so a single-component run still resolves their `stackOutput()`/publish
     // references. `runComponentDeploy` mutates this map with this component's
     // own outputs, which `run.componentOutputs` then exposes for `--dump-outputs`.
+    //
+    // There's no `runInterpretDriver` call here to thread progress through
+    // (that's the whole point of the single-component bypass), so the
+    // run-start/wave-start/component-start/…/run-done envelope is emitted by
+    // hand, treating this one component as a single-wave run — the same shape
+    // `run.waves`/`run.order` below already give it.
     const componentOutputs = { ...seedOutputs };
-    const componentResult = await runComponentDeploy(resolvedTargets[0], { env, component: resolvedTargets[0].name }, registry, componentOutputs);
+    const componentName = resolvedTargets[0].name;
+    onProgress?.({ type: "run-start", waves: [selected] });
+    onProgress?.({ type: "wave-start", wave: 1, components: selected });
+    onProgress?.({ type: "component-start", wave: 1, component: componentName });
+    const componentResult = await runComponentDeploy(
+      resolvedTargets[0],
+      { env, component: componentName },
+      registry,
+      componentOutputs,
+      onProgress,
+    );
+    const status: "ok" | "failed" = componentResult.ok ? "ok" : "failed";
+    onProgress?.({ type: "component-done", wave: 1, component: componentName, status });
+    onProgress?.({ type: "wave-done", wave: 1, status });
+    onProgress?.({ type: "run-done", status });
     const run: DriverRunResult = {
       order: selected,
       waves: [selected],

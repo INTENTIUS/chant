@@ -43,6 +43,9 @@
 
 import { topoSort } from "../codegen/topo-sort";
 import type { CapabilityRegistry, DeployContext } from "./capability";
+import type { RunProgressEvent } from "./run-progress";
+
+export type { RunProgressEvent } from "./run-progress";
 
 // ── Component-shaped input (mirrors component.schema.json / ./component.ts) ──
 
@@ -375,6 +378,15 @@ async function runCapabilityStep(
  * inheriting `parallel` from its own definition, not its parent's). Steps run
  * sequentially unless `phase.parallel` is set, in which case they run via
  * `Promise.all`, matching ../op/local-executor.ts's phase semantics.
+ *
+ * `onProgress`, when supplied, is called with a `phase-start` event before any
+ * step runs, a `step` event around each capability invocation (`"running"`
+ * then `"ok"`/`"failed"`), and a `phase-done` event once the phase settles —
+ * purely additive observation, never consulted for control flow. Recursion
+ * into a nested fan-out phase passes the same callback through, so a nested
+ * phase's events use its own name. Left `undefined` by every caller that
+ * doesn't opt into `--progress-json` (see ./run-progress.ts), in which case
+ * every `onProgress?.(...)` call below is a no-op and behavior is unchanged.
  */
 async function runPhase(
   phaseDef: DriverPhase,
@@ -382,6 +394,7 @@ async function runPhase(
   registry: CapabilityRegistry,
   phaseOutputs: Record<string, Record<string, unknown>>,
   componentOutputs: Record<string, Record<string, unknown>>,
+  onProgress?: (event: RunProgressEvent) => void,
 ): Promise<{ records: DriverStepRecord[]; executed: ExecutedStep[] }> {
   const gate = phaseDef.steps.find(isGateStep);
   if (gate) throw new DriverGateUnsupportedError(ctx.component, gate.signalName);
@@ -393,13 +406,14 @@ async function runPhase(
   ): Promise<{ records: DriverStepRecord[]; executed: ExecutedStep[]; failed: boolean }> => {
     if (isPhaseStep(entry)) {
       try {
-        const nested = await runPhase(entry, ctx, registry, phaseOutputs, componentOutputs);
+        const nested = await runPhase(entry, ctx, registry, phaseOutputs, componentOutputs, onProgress);
         return { ...nested, failed: false };
       } catch (err) {
         if (err instanceof StepFailure) return { records: err.records, executed: err.executed, failed: true };
         throw err;
       }
     }
+    onProgress?.({ type: "step", component: ctx.component, phase: phaseDef.phase, step: entry.kind, status: "running" });
     const { record, resolvedInput, output } = await runCapabilityStep(
       entry,
       phaseDef.phase,
@@ -408,6 +422,14 @@ async function runPhase(
       phaseOutputs,
       componentOutputs,
     );
+    onProgress?.({
+      type: "step",
+      component: ctx.component,
+      phase: phaseDef.phase,
+      step: entry.kind,
+      status: record.status === "ok" ? "ok" : "failed",
+      ...(record.error !== undefined ? { error: record.error } : {}),
+    });
     if (record.status === "ok") {
       phaseOutputs[phaseDef.phase] = { ...(phaseOutputs[phaseDef.phase] ?? {}), ...(output as object) };
     }
@@ -418,35 +440,49 @@ async function runPhase(
     };
   };
 
-  if (phaseDef.parallel) {
-    const results = await Promise.all(entries.map(runEntry));
-    const records = results.flatMap((r) => r.records);
-    const executed = results.flatMap((r) => r.executed);
-    if (results.some((r) => r.failed)) throw new StepFailure(records, executed);
-    return { records, executed };
-  }
-
-  const records: DriverStepRecord[] = [];
-  const executed: ExecutedStep[] = [];
-  for (let i = 0; i < entries.length; i++) {
-    const result = await runEntry(entries[i]);
-    records.push(...result.records);
-    executed.push(...result.executed);
-    if (result.failed) {
-      for (const skipped of entries.slice(i + 1)) {
-        const skippedKind = isPhaseStep(skipped) ? skipped.phase : (skipped as DriverStep).kind;
-        records.push({
-          component: ctx.component,
-          phase: phaseDef.phase,
-          kind: skippedKind,
-          status: "skipped",
-          durationMs: 0,
-        });
-      }
-      throw new StepFailure(records, executed);
+  const runEntries = async (): Promise<{ records: DriverStepRecord[]; executed: ExecutedStep[] }> => {
+    if (phaseDef.parallel) {
+      const results = await Promise.all(entries.map(runEntry));
+      const records = results.flatMap((r) => r.records);
+      const executed = results.flatMap((r) => r.executed);
+      if (results.some((r) => r.failed)) throw new StepFailure(records, executed);
+      return { records, executed };
     }
+
+    const records: DriverStepRecord[] = [];
+    const executed: ExecutedStep[] = [];
+    for (let i = 0; i < entries.length; i++) {
+      const result = await runEntry(entries[i]);
+      records.push(...result.records);
+      executed.push(...result.executed);
+      if (result.failed) {
+        for (const skipped of entries.slice(i + 1)) {
+          const skippedKind = isPhaseStep(skipped) ? skipped.phase : (skipped as DriverStep).kind;
+          records.push({
+            component: ctx.component,
+            phase: phaseDef.phase,
+            kind: skippedKind,
+            status: "skipped",
+            durationMs: 0,
+          });
+        }
+        throw new StepFailure(records, executed);
+      }
+    }
+    return { records, executed };
+  };
+
+  onProgress?.({ type: "phase-start", component: ctx.component, phase: phaseDef.phase });
+  try {
+    const result = await runEntries();
+    onProgress?.({ type: "phase-done", component: ctx.component, phase: phaseDef.phase, status: "ok" });
+    return result;
+  } catch (err) {
+    if (err instanceof StepFailure) {
+      onProgress?.({ type: "phase-done", component: ctx.component, phase: phaseDef.phase, status: "failed" });
+    }
+    throw err;
   }
-  return { records, executed };
 }
 
 /**
@@ -517,12 +553,22 @@ async function rollbackExecuted(
  * handling. Cross-component artifact outputs this component published (if
  * any) are recorded into `componentOutputs` under its own name so downstream
  * components can reference `@<name>.publish.*`.
+ *
+ * `onProgress`, when supplied, is forwarded to every `runPhase` call (both the
+ * forward `deploy` phases and, on failure, the component's own authored
+ * `rollback` phases) so a `--progress-json` consumer sees `phase-start`/
+ * `step`/`phase-done` events for whichever phases actually ran. The saga
+ * unwind step-by-step compensation (`rollbackExecuted` below) is not part of
+ * the `RunProgressEvent` contract and stays silent — it isn't a `deploy`
+ * phase, and its record statuses (`rolled-back`/`rollback-opted-out`) don't
+ * map onto the `step` event's `running`/`ok`/`failed` shape.
  */
 export async function runComponentDeploy(
   component: DriverComponent,
   ctx: DeployContext,
   registry: CapabilityRegistry,
   componentOutputs: Record<string, Record<string, unknown>>,
+  onProgress?: (event: RunProgressEvent) => void,
 ): Promise<DriverComponentResult> {
   const phaseOutputs: Record<string, Record<string, unknown>> = {};
   const records: DriverStepRecord[] = [];
@@ -530,7 +576,7 @@ export async function runComponentDeploy(
 
   try {
     for (const phaseDef of component.deploy) {
-      const result = await runPhase(phaseDef, ctx, registry, phaseOutputs, componentOutputs);
+      const result = await runPhase(phaseDef, ctx, registry, phaseOutputs, componentOutputs, onProgress);
       records.push(...result.records);
       allExecuted.push(...result.executed);
     }
@@ -546,7 +592,7 @@ export async function runComponentDeploy(
 
     for (const phaseDef of [...(component.rollback ?? [])].reverse()) {
       try {
-        const result = await runPhase(phaseDef, ctx, registry, phaseOutputs, componentOutputs);
+        const result = await runPhase(phaseDef, ctx, registry, phaseOutputs, componentOutputs, onProgress);
         records.push(...result.records);
       } catch (compErr) {
         if (compErr instanceof StepFailure) records.push(...compErr.records);
@@ -635,6 +681,16 @@ export interface InterpretRunOptions {
   vars?: Record<string, unknown>;
   /** Pre-seeded cross-component/cross-stack outputs (e.g. from a prior run, or a caller resolving `stackOutput` externally). Merged with outputs this run produces. */
   componentOutputs?: Record<string, Record<string, unknown>>;
+  /**
+   * Opt-in structured progress observer (`chant run --components all
+   * --progress-json`, see ./run-progress.ts). Called with `run-start`/
+   * `wave-start`/`component-start`/…/`run-done` events as the run executes;
+   * never consulted for control flow, so leaving it `undefined` (the default
+   * for every caller that didn't pass `--progress-json`) makes every
+   * `onProgress?.(...)` call below a no-op and this function's behavior is
+   * byte-for-byte the same as before this option existed.
+   */
+  onProgress?: (event: RunProgressEvent) => void;
 }
 
 /**
@@ -659,24 +715,34 @@ export async function runInterpretDriver(
   const { order, waves } = resolveComponentGraph(components);
   const byName = new Map(components.map((c) => [c.name, c]));
   const componentOutputs: Record<string, Record<string, unknown>> = { ...(options.componentOutputs ?? {}) };
+  const { onProgress } = options;
+
+  onProgress?.({ type: "run-start", waves });
 
   const results: DriverComponentResult[] = [];
   let failedComponent: string | undefined;
 
-  waveLoop: for (const wave of waves) {
+  waveLoop: for (const [waveIndex, wave] of waves.entries()) {
+    const waveNum = waveIndex + 1;
+    onProgress?.({ type: "wave-start", wave: waveNum, components: wave });
     const waveComponents = wave.map((name) => byName.get(name)!);
     const waveResults = await Promise.all(
-      waveComponents.map((component) =>
-        runComponentDeploy(
+      waveComponents.map(async (component) => {
+        onProgress?.({ type: "component-start", wave: waveNum, component: component.name });
+        const result = await runComponentDeploy(
           component,
           { env: options.env, component: component.name, vars: options.vars },
           registry,
           componentOutputs,
-        ),
-      ),
+          onProgress,
+        );
+        onProgress?.({ type: "component-done", wave: waveNum, component: component.name, status: result.ok ? "ok" : "failed" });
+        return result;
+      }),
     );
     results.push(...waveResults);
     const failed = waveResults.find((r) => !r.ok);
+    onProgress?.({ type: "wave-done", wave: waveNum, status: failed ? "failed" : "ok" });
     if (failed) {
       failedComponent = failed.component;
       break waveLoop;
@@ -684,6 +750,7 @@ export async function runInterpretDriver(
   }
 
   const ok = failedComponent === undefined;
+  onProgress?.({ type: "run-done", status: ok ? "ok" : "failed" });
   const result: DriverRunResult = { order, waves, results, ok, failedComponent, componentOutputs };
   if (!ok) throw new DriverRunFailure(result);
   return result;

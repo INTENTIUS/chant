@@ -234,6 +234,20 @@ describe("parseArgs", () => {
     const result = parseArgs(["run", "--components", "search-service"]);
     expect(result.noReleaseRecord).toBeUndefined();
   });
+
+  // ── --progress-json (M3, behold roadmap) ─────────────────────────────────
+
+  test("parses --progress-json for run --components", () => {
+    const result = parseArgs(["run", "--components", "search-service", "--env", "staging", "--progress-json"]);
+    expect(result.components).toBe(true);
+    expect(result.env).toBe("staging");
+    expect(result.progressJson).toBe(true);
+  });
+
+  test("--progress-json is undefined (not false) when omitted", () => {
+    const result = parseArgs(["run", "--components", "search-service"]);
+    expect(result.progressJson).toBeUndefined();
+  });
 });
 
 // ── resolveCommand tests ──────────────────────────────────────────

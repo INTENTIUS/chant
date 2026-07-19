@@ -21,6 +21,7 @@ import {
 import { generateReport, writeReport } from "./run-report";
 import { runComponents, resolveComponentTargets, findComponentGate, listComponents } from "../../components/cli-support";
 import { renderDriverHuman, renderDriverJson } from "../../components/driver-output";
+import { ndjsonProgressSink } from "../../components/run-progress";
 import { loadComponentTemporalCodegen } from "../../components/temporal-codegen-loader";
 import { applyConfigDefaults } from "../../components/config-defaults";
 import { maybeRecordAutoRelease, extractRunDigestFromPhaseOutputs } from "../../components/auto-release";
@@ -686,7 +687,14 @@ export async function runOpComponents(ctx: CommandContext): Promise<number> {
       return 1;
     }
   }
-  const result = await runComponents(resolve("."), selector, { env: ctx.args.env, componentOutputs: seededOutputs });
+  // `--progress-json` (#M3, behold roadmap): stream one NDJSON RunProgressEvent
+  // per line to stdout while the run executes, so a consumer (e.g. behold) can
+  // render live wave/component/phase/step progress instead of tailing raw
+  // logs. Purely additive: when the flag is absent, `onProgress` stays
+  // `undefined` and every `onProgress?.(...)` call in the driver is a no-op —
+  // behavior is byte-for-byte unchanged from before this flag existed.
+  const onProgress = ctx.args.progressJson ? ndjsonProgressSink() : undefined;
+  const result = await runComponents(resolve("."), selector, { env: ctx.args.env, componentOutputs: seededOutputs, onProgress });
 
   // Dump the accumulated outputs for a downstream job to seed from. Written
   // even on failure (partial outputs) so a resumed run still has what completed.

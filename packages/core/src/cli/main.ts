@@ -172,6 +172,8 @@ export function parseArgs(args: string[]): ParsedArgs {
       result.temporal = true;
     } else if (arg === "--json") {
       result.json = true;
+    } else if (arg === "--progress-json") {
+      result.progressJson = true;
     } else if (arg === "--update-snapshot") {
       result.updateSnapshot = true;
     } else if (arg === "--run-examples") {
@@ -262,6 +264,11 @@ Ops:
                         On success, auto-emits a release-ledger record per
                         component that published a digest (default: on;
                         --no-release-record to opt out; #597)
+                        --progress-json: stream one NDJSON RunProgressEvent
+                        per line to stdout while the run executes, for a
+                        consumer to render live wave/component/phase/step
+                        progress instead of tailing raw logs (additive; run
+                        semantics/exit code unchanged)
 
   graph                 Show Op dependency graph (--stacks for cross-stack order,
                         --format ir|mermaid|dot|layout for the lint-gated graph IR,

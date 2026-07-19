@@ -23,6 +23,8 @@ import {
   runComponentDeploy,
   runInterpretDriver,
   type DriverComponent,
+  type DriverStepRecord,
+  type RunProgressEvent,
 } from "./driver";
 import { neo4jCluster } from "./pilots/neo4j-fanout.pilot";
 import { ordersTable } from "./pilots/dynamodb.pilot";
@@ -615,6 +617,194 @@ describe("runInterpretDriver — end to end", () => {
     expect(result.results.map((r) => r.component).sort()).toEqual(
       ["shared-alb", "orders-table", "neo4j-cluster", "search-service", "image-processor-lambda"].sort(),
     );
+  });
+});
+
+describe("onProgress — --progress-json event stream (M3, additive over the wave/component/phase/step loop)", () => {
+  /** Drop the nondeterministic `durationMs` field so a run's records can be compared for equality across two invocations. */
+  function stripTiming(records: DriverStepRecord[]): Omit<DriverStepRecord, "durationMs">[] {
+    return records.map(({ durationMs: _durationMs, ...rest }) => rest);
+  }
+
+  it("emits run-start -> wave-start -> component-start -> phase-start -> step(running/ok) -> phase-done -> component-done -> wave-done, once per wave, then run-done", async () => {
+    const registry = new CapabilityRegistry();
+    registry.register(fakeCapability("step-a", { run: () => ({ ok: true }) }).capability);
+    registry.register(fakeCapability("step-b", { run: () => ({ ok: true }) }).capability);
+
+    const a: DriverComponent = { name: "a", dependsOn: [], deploy: [{ phase: "Apply", steps: [{ kind: "step-a" }] }] };
+    const b: DriverComponent = { name: "b", dependsOn: ["a"], deploy: [{ phase: "Apply", steps: [{ kind: "step-b" }] }] };
+
+    const events: RunProgressEvent[] = [];
+    const result = await runInterpretDriver([a, b], registry, { env: "dev", onProgress: (e) => events.push(e) });
+
+    expect(result.ok).toBe(true);
+    expect(events.map((e) => e.type)).toEqual([
+      "run-start",
+      "wave-start",
+      "component-start",
+      "phase-start",
+      "step",
+      "step",
+      "phase-done",
+      "component-done",
+      "wave-done",
+      "wave-start",
+      "component-start",
+      "phase-start",
+      "step",
+      "step",
+      "phase-done",
+      "component-done",
+      "wave-done",
+      "run-done",
+    ]);
+
+    // Wave 1: component "a".
+    expect(events[0]).toEqual({ type: "run-start", waves: [["a"], ["b"]] });
+    expect(events[1]).toEqual({ type: "wave-start", wave: 1, components: ["a"] });
+    expect(events[2]).toEqual({ type: "component-start", wave: 1, component: "a" });
+    expect(events[3]).toEqual({ type: "phase-start", component: "a", phase: "Apply" });
+    expect(events[4]).toEqual({ type: "step", component: "a", phase: "Apply", step: "step-a", status: "running" });
+    expect(events[5]).toEqual({ type: "step", component: "a", phase: "Apply", step: "step-a", status: "ok" });
+    expect(events[6]).toEqual({ type: "phase-done", component: "a", phase: "Apply", status: "ok" });
+    expect(events[7]).toEqual({ type: "component-done", wave: 1, component: "a", status: "ok" });
+    expect(events[8]).toEqual({ type: "wave-done", wave: 1, status: "ok" });
+
+    // Wave 2: component "b" (1-based wave numbering).
+    expect(events[9]).toEqual({ type: "wave-start", wave: 2, components: ["b"] });
+    expect(events[10]).toEqual({ type: "component-start", wave: 2, component: "b" });
+    expect(events[15]).toEqual({ type: "component-done", wave: 2, component: "b", status: "ok" });
+    expect(events[16]).toEqual({ type: "wave-done", wave: 2, status: "ok" });
+
+    expect(events[17]).toEqual({ type: "run-done", status: "ok" });
+  });
+
+  it("a failing step yields step:failed (with error), phase-done:failed, component-done:failed, wave-done:failed, run-done:failed — and a later wave never starts", async () => {
+    const registry = new CapabilityRegistry();
+    registry.register(fakeCapability("bad-step", { failRun: true }).capability);
+    registry.register(fakeCapability("step-b", { run: () => ({ ok: true }) }).capability);
+
+    const a: DriverComponent = { name: "a", dependsOn: [], deploy: [{ phase: "Apply", steps: [{ kind: "bad-step" }] }] };
+    const b: DriverComponent = { name: "b", dependsOn: ["a"], deploy: [{ phase: "Apply", steps: [{ kind: "step-b" }] }] };
+
+    const events: RunProgressEvent[] = [];
+    await expect(
+      runInterpretDriver([a, b], registry, { env: "dev", onProgress: (e) => events.push(e) }),
+    ).rejects.toThrow(DriverRunFailure);
+
+    expect(events.map((e) => e.type)).toEqual([
+      "run-start",
+      "wave-start",
+      "component-start",
+      "phase-start",
+      "step",
+      "step",
+      "phase-done",
+      "component-done",
+      "wave-done",
+      "run-done",
+    ]);
+    // Only wave 1 ever starts — the driver stops at the first failed
+    // component, so wave 2 (containing "b") never runs.
+    expect(events.filter((e) => e.type === "wave-start")).toHaveLength(1);
+    expect(events.filter((e) => e.type === "component-start")).toEqual([{ type: "component-start", wave: 1, component: "a" }]);
+
+    expect(events[4]).toEqual({ type: "step", component: "a", phase: "Apply", step: "bad-step", status: "running" });
+    expect(events[5]).toEqual({
+      type: "step",
+      component: "a",
+      phase: "Apply",
+      step: "bad-step",
+      status: "failed",
+      error: "bad-step failed",
+    });
+    expect(events[6]).toEqual({ type: "phase-done", component: "a", phase: "Apply", status: "failed" });
+    expect(events[7]).toEqual({ type: "component-done", wave: 1, component: "a", status: "failed" });
+    expect(events[8]).toEqual({ type: "wave-done", wave: 1, status: "failed" });
+    expect(events[9]).toEqual({ type: "run-done", status: "failed" });
+  });
+
+  it("produces the identical DriverRunResult (minus timing) whether or not onProgress is passed", async () => {
+    function buildRegistry(): CapabilityRegistry {
+      const registry = new CapabilityRegistry();
+      registry.register(fakeCapability("step-a", { run: () => ({ ok: true }) }).capability);
+      registry.register(fakeCapability("step-b", { run: () => ({ ok: true }) }).capability);
+      return registry;
+    }
+    const a: DriverComponent = { name: "a", dependsOn: [], deploy: [{ phase: "Apply", steps: [{ kind: "step-a" }] }] };
+    const b: DriverComponent = { name: "b", dependsOn: ["a"], deploy: [{ phase: "Apply", steps: [{ kind: "step-b" }] }] };
+
+    const withoutProgress = await runInterpretDriver([a, b], buildRegistry(), { env: "dev" });
+    const events: RunProgressEvent[] = [];
+    const withProgress = await runInterpretDriver([a, b], buildRegistry(), {
+      env: "dev",
+      onProgress: (e) => events.push(e),
+    });
+
+    // onProgress was actually exercised — otherwise this comparison would be vacuous.
+    expect(events.length).toBeGreaterThan(0);
+
+    const normalize = (r: typeof withoutProgress) => ({
+      ...r,
+      results: r.results.map((cr) => ({ ...cr, records: stripTiming(cr.records) })),
+    });
+    expect(normalize(withProgress)).toEqual(normalize(withoutProgress));
+  });
+
+  it("runComponentDeploy behaves identically with onProgress omitted (undefined-safe, no-op)", async () => {
+    const registry = new CapabilityRegistry();
+    registry.register(fakeCapability("step-a", { run: () => ({ ok: true }) }).capability);
+    const component: DriverComponent = { name: "c", deploy: [{ phase: "Apply", steps: [{ kind: "step-a" }] }] };
+
+    const result = await runComponentDeploy(component, { env: "dev", component: "c" }, registry, {});
+
+    expect(result.ok).toBe(true);
+    expect(stripTiming(result.records)).toEqual([
+      { component: "c", phase: "Apply", kind: "step-a", status: "ok", output: { ok: true } },
+    ]);
+  });
+
+  it("onFailure saga rollback: rollback-unwind steps are not reported as `step` progress events (only the forward failing step and the component's own authored rollback phase are)", async () => {
+    const registry = new CapabilityRegistry();
+    registry.register(
+      fakeCapability("provision", { run: () => ({ id: "res-1" }), rollback: () => {} }).capability,
+    );
+    registry.register(fakeCapability("apply-final", { failRun: true }).capability);
+    registry.register(fakeCapability("compensate", { run: () => ({ restored: true }) }).capability);
+
+    const component: DriverComponent = {
+      name: "c",
+      deploy: [
+        { phase: "Provision", steps: [{ kind: "provision" }] },
+        { phase: "Apply", steps: [{ kind: "apply-final" }] },
+      ],
+      rollback: [{ phase: "Rollback", steps: [{ kind: "compensate" }] }],
+    };
+
+    const events: RunProgressEvent[] = [];
+    const result = await runComponentDeploy(component, { env: "dev", component: "c" }, registry, {}, (e) =>
+      events.push(e),
+    );
+
+    expect(result.ok).toBe(false);
+    const stepEvents = events.filter((e): e is Extract<RunProgressEvent, { type: "step" }> => e.type === "step");
+    // "provision" (forward, ok), "apply-final" (forward, failed), "compensate"
+    // (the component's own authored rollback phase) — never the saga unwind's
+    // reverse-order capability.rollback() call for "provision", which the
+    // driver still performs but doesn't surface as a `step` event.
+    expect(stepEvents.map((e) => `${e.step}:${e.status}`)).toEqual([
+      "provision:running",
+      "provision:ok",
+      "apply-final:running",
+      "apply-final:failed",
+      "compensate:running",
+      "compensate:ok",
+    ]);
+    expect(events.filter((e) => e.type === "phase-start").map((e) => (e as { phase: string }).phase)).toEqual([
+      "Provision",
+      "Apply",
+      "Rollback",
+    ]);
   });
 });
 
