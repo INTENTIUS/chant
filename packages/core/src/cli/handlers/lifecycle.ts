@@ -5,6 +5,8 @@ import { readSnapshot, readSnapshotAt, readEnvironmentSnapshots, listSnapshots, 
 import { computeBuildDigest, diffDigests } from "../../lifecycle/digest";
 import { diffLive, diffLiveArtifacts, diffSnapshots, type LiveDiffResult, type LiveArtifactDiffResult, type SnapshotDiffResult } from "../../lifecycle/live-diff";
 import { buildChangeSet, renderChangeSet, gitlabMrReport, type ChangeSet } from "../../lifecycle/change-set";
+import { discoverComponents } from "../../components/discover";
+import { cfnDeployStacks } from "./components";
 import { affectedStacks } from "../../lifecycle/affected";
 import { rollbackToRevision } from "../../lifecycle/rollback";
 import { loadChantConfig } from "../../config";
@@ -661,6 +663,21 @@ export async function runLifecyclePlan(ctx: CommandContext): Promise<number> {
 
   const lexicons = lexiconFilter ? [lexiconFilter] : Array.from(buildResult.manifest.lexicons);
 
+  // Multi-stack component projects deploy one CFN stack per component, so the
+  // single-stack-per-env observe below would see nothing live and plan every
+  // resource as "create". Resolve each component's cfn-deploy stack(s) and
+  // observe them all — the same fix runGraphLive uses (graph.ts). Empty for a
+  // single-stack project → the original single-call path is kept.
+  let componentStacks: string[] = [];
+  try {
+    const disc = await discoverComponents(resolveBuildRoot(args, config));
+    const set = new Set<string>();
+    for (const { component } of disc.components.values()) for (const s of cfnDeployStacks(component.deploy)) set.add(s);
+    componentStacks = [...set];
+  } catch {
+    // no components / discovery failed → single-stack path
+  }
+
   const merged: ChangeSet = { env: environment, entries: [] };
   let checked = 0;
 
@@ -697,15 +714,25 @@ export async function runLifecyclePlan(ctx: CommandContext): Promise<number> {
           ? rawOutput
           : (rawOutput as SerializerResult).primary;
 
-    let observedNow: Record<string, ResourceMetadata>;
+    let observedNow: Record<string, ResourceMetadata> = {};
     try {
-      observedNow = await plugin.describeResources({
-        environment,
-        buildOutput,
-        entityNames: Array.from(declared),
-        entities,
-        owned: args.owned,
-      });
+      if (componentStacks.length > 0) {
+        // Observe each component's own stack and union — the multi-stack fix.
+        for (const stack of componentStacks) {
+          Object.assign(
+            observedNow,
+            await plugin.describeResources({ environment, buildOutput, entityNames: Array.from(declared), entities, stack, owned: args.owned }),
+          );
+        }
+      } else {
+        observedNow = await plugin.describeResources({
+          environment,
+          buildOutput,
+          entityNames: Array.from(declared),
+          entities,
+          owned: args.owned,
+        });
+      }
     } catch (err) {
       console.error(formatError({
         message: `${lexiconName}: describeResources failed — ${err instanceof Error ? err.message : String(err)}`,

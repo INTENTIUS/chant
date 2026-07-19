@@ -1,6 +1,6 @@
 {
   "name": "@intentius/chant-lexicon-fly",
-  "version": "0.18.32",
+  "version": "0.18.33",
   "type": "module",
   "files": [
     "src/",
@@ -57,7 +57,7 @@
     "typescript": "^5.9.3"
   },
   "peerDependencies": {
-    "@intentius/chant": "^0.18.32",
+    "@intentius/chant": "^0.18.33",
     "typescript": "^5.9.3"
   },
   "description": "Google Cloud lexicon for chant \u2014 declarative IaC in TypeScript",

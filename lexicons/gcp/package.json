@@ -1,6 +1,6 @@
 {
   "name": "@intentius/chant-lexicon-gcp",
-  "version": "0.18.32",
+  "version": "0.18.33",
   "description": "Google Cloud lexicon for chant \u2014 declarative IaC in TypeScript",
   "license": "Apache-2.0",
   "homepage": "https://intentius.io/chant",
@@ -76,7 +76,7 @@
     "typescript": "^5.9.3"
   },
   "peerDependencies": {
-    "@intentius/chant": "^0.18.32",
+    "@intentius/chant": "^0.18.33",
     "typescript": "^5.9.3"
   }
 }
