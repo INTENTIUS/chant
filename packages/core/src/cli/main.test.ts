@@ -1,5 +1,6 @@
 import { describe, test, expect } from "vitest";
-import { parseArgs } from "./main";
+import { EventEmitter } from "node:events";
+import { parseArgs, waitForStreamDrain } from "./main";
 import { resolveCommand, type CommandDef, type ParsedArgs } from "./registry";
 
 describe("parseArgs", () => {
@@ -414,5 +415,52 @@ describe("parseArgs — run flags", () => {
     expect(result.path).toBe("signal");
     expect(result.extraPositional).toBe("alb-deploy");
     expect(result.extraPositional2).toBe("gate-dns");
+  });
+});
+
+describe("waitForStreamDrain", () => {
+  // Minimal writable stub — just the surface waitForStreamDrain reads.
+  function fakeStream(len: number): NodeJS.WriteStream & { writableLength: number } {
+    const s = new EventEmitter() as unknown as NodeJS.WriteStream & { writableLength: number };
+    s.writableLength = len;
+    (s as { writableEnded: boolean }).writableEnded = false;
+    (s as { destroyed: boolean }).destroyed = false;
+    return s;
+  }
+
+  test("resolves immediately when nothing is buffered (e.g. a TTY)", async () => {
+    await expect(waitForStreamDrain(fakeStream(0))).resolves.toBeUndefined();
+  });
+
+  test("waits through drains until the buffer is actually empty", async () => {
+    const s = fakeStream(1000);
+    let done = false;
+    const p = waitForStreamDrain(s).then(() => (done = true));
+    await Promise.resolve();
+    expect(done).toBe(false);
+    // A drain while still buffered must NOT resolve (large one-shot write, kernel
+    // took a slice, more remains) — it re-arms.
+    s.emit("drain");
+    await Promise.resolve();
+    expect(done).toBe(false);
+    // Fully flushed now.
+    s.writableLength = 0;
+    s.emit("drain");
+    await p;
+    expect(done).toBe(true);
+  });
+
+  test("resolves on error so a reader that closed early (EPIPE) can't hang exit", async () => {
+    const s = fakeStream(500);
+    const p = waitForStreamDrain(s);
+    s.emit("error", new Error("EPIPE"));
+    await expect(p).resolves.toBeUndefined();
+  });
+
+  test("resolves on close as well", async () => {
+    const s = fakeStream(500);
+    const p = waitForStreamDrain(s);
+    s.emit("close");
+    await expect(p).resolves.toBeUndefined();
   });
 });
