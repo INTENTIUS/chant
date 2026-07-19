@@ -1,6 +1,6 @@
 {
   "name": "@intentius/chant-lexicon-helm",
-  "version": "0.18.27",
+  "version": "0.18.28",
   "description": "Helm chart lexicon for chant \u2014 declarative IaC in TypeScript",
   "license": "Apache-2.0",
   "homepage": "https://intentius.io/chant",
@@ -76,7 +76,7 @@
     "@types/js-yaml": "^4.0.9"
   },
   "peerDependencies": {
-    "@intentius/chant": "^0.18.27",
+    "@intentius/chant": "^0.18.28",
     "typescript": "^5.9.3"
   }
 }
