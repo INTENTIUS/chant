@@ -324,6 +324,29 @@ function loadConfigFile(configPath: string, visited: Set<string> = new Set()): L
 }
 
 /**
+ * Walk up from `startDir` to the nearest ancestor holding a chant project
+ * config (`chant.config.ts` or `chant.config.json`). Returns that directory, or
+ * `startDir` unchanged when none is found before the filesystem root.
+ *
+ * Linting a subpath (`chant graph src --format ir`, `chant lint src/lib`) must
+ * still see the project-root config: its `lint.overrides` globs are written
+ * project-root-relative (`src/lib/**`), and a rule set scoped only to the lint
+ * arg would silently drop them. Config discovery therefore anchors on the
+ * project root, not the path being linted.
+ */
+export function findProjectRoot(startDir: string): string {
+  let dir = resolve(startDir);
+  for (;;) {
+    if (existsSync(join(dir, "chant.config.ts")) || existsSync(join(dir, "chant.config.json"))) {
+      return dir;
+    }
+    const parent = dirname(dir);
+    if (parent === dir) return resolve(startDir);
+    dir = parent;
+  }
+}
+
+/**
  * Load lint configuration from a directory.
  *
  * Tries `chant.config.ts` first (extracts `lint` property from ChantConfig),

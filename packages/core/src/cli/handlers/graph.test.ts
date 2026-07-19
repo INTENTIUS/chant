@@ -18,6 +18,11 @@ vi.mock("../commands/lint", () => ({
   lintCommand: () => lintMock(),
 }));
 
+const componentGraphMock = vi.fn();
+vi.mock("../../components/cli-support", () => ({
+  computeComponentGraph: () => componentGraphMock(),
+}));
+
 // Avoid running a real layout engine in tests; the format dispatch + size/engine
 // plumbing is what matters here (engines have their own unit tests).
 const layoutMock = vi.fn();
@@ -87,6 +92,7 @@ describe("runGraph", () => {
     discoverMock.mockReset();
     lintMock.mockReset();
     layoutMock.mockReset();
+    componentGraphMock.mockReset();
   });
 
   describe("Op graph (default)", () => {
@@ -224,6 +230,79 @@ describe("runGraph", () => {
       const exit = await runGraph({ args: makeArgs({ format: "ir" }), plugins: [], serializers: [] });
       expect(exit).toBe(1);
       expect(stderrBuf.join("\n")).toContain("boom");
+    });
+  });
+
+  describe("component DAG view (--components --format ir|layout)", () => {
+    // shared-foundation (wave 1) <- loom-db (wave 2) <- loom-backend (wave 3).
+    const componentGraphClean = (): void => {
+      componentGraphMock.mockResolvedValue({
+        success: true,
+        order: ["shared-foundation", "loom-db", "loom-backend"],
+        waves: [["shared-foundation"], ["loom-db"], ["loom-backend"]],
+        edges: [
+          { from: "loom-db", to: "shared-foundation" },
+          { from: "loom-backend", to: "loom-db" },
+        ],
+        files: {
+          "shared-foundation": "components/shared-foundation.component.ts",
+          "loom-db": "components/loom-db.component.ts",
+          "loom-backend": "components/loom-backend.component.ts",
+        },
+      });
+    };
+
+    test("--components --format ir emits component nodes, byWave groups, and dependsOn edges", async () => {
+      lintMock.mockResolvedValue({ success: true });
+      componentGraphClean();
+      const exit = await runGraph({ args: makeArgs({ format: "ir", components: true }), plugins: [], serializers: [] });
+      expect(exit).toBe(0);
+      const ir = JSON.parse(stdoutBuf.join("\n"));
+      // One node per component (not per resource); wave carried on the node.
+      expect(ir.nodes.map((n: { id: string }) => n.id)).toEqual(["shared-foundation", "loom-db", "loom-backend"]);
+      expect(ir.nodes.every((n: { kind: string; lexicon: string }) => n.kind === "Component" && n.lexicon === "chant")).toBe(true);
+      expect(ir.nodes.find((n: { id: string }) => n.id === "loom-backend").attrs.wave).toBe(3);
+      // Each component node deep-links to its source file.
+      expect(ir.nodes.find((n: { id: string }) => n.id === "loom-db").sourceLoc).toEqual({
+        file: "components/loom-db.component.ts",
+      });
+      // dependsOn edges, consumer → producer.
+      expect(ir.edges).toContainEqual({ from: "loom-db", to: "shared-foundation", kind: "ref" });
+      // Waves as groups.
+      expect(ir.groups.byWave).toEqual({
+        "wave-1": ["shared-foundation"],
+        "wave-2": ["loom-db"],
+        "wave-3": ["loom-backend"],
+      });
+      // The entity-graph discovery path is not taken for the component projection.
+      expect(discoverMock).not.toHaveBeenCalled();
+    });
+
+    test("--components --format mermaid lanes the components by wave", async () => {
+      lintMock.mockResolvedValue({ success: true });
+      componentGraphClean();
+      const exit = await runGraph({ args: makeArgs({ format: "mermaid", components: true }), plugins: [], serializers: [] });
+      expect(exit).toBe(0);
+      const out = stdoutBuf.join("\n");
+      expect(out).toContain("flowchart TD");
+      expect(out).toContain("wave-1");
+    });
+
+    test("--components view is lint-gated like the entity view", async () => {
+      lintMock.mockResolvedValue({ success: false });
+      const exit = await runGraph({ args: makeArgs({ format: "ir", components: true }), plugins: [], serializers: [] });
+      expect(exit).toBe(1);
+      expect(stdoutBuf.join("\n")).toBe("");
+      expect(stderrBuf.join("\n")).toMatch(/lint errors/i);
+      expect(componentGraphMock).not.toHaveBeenCalled();
+    });
+
+    test("propagates a component-graph failure (unknown dep / cycle) as a non-zero exit", async () => {
+      lintMock.mockResolvedValue({ success: true });
+      componentGraphMock.mockResolvedValue({ success: false, order: [], waves: [], edges: [], error: "cycle: a ↔ b" });
+      const exit = await runGraph({ args: makeArgs({ format: "ir", components: true }), plugins: [], serializers: [] });
+      expect(exit).toBe(1);
+      expect(stderrBuf.join("\n")).toContain("cycle: a ↔ b");
     });
   });
 

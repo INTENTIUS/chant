@@ -231,6 +231,25 @@ export interface ComponentPipelineResult {
   jobs: ComponentPipelineJob[];
 }
 
+/**
+ * Live status of a single deploy unit (a CloudFormation stack, a K8s release, …)
+ * addressed by its deployed name — the per-component presence signal
+ * `chant components status --live` needs (#57). A component's deploy step carries
+ * the exact unit name it targets (e.g. a `cfn-deploy` step's `stack`), which is
+ * the identity in a multi-stack component project where `describeResources`
+ * (entity-keyed, single-stack-per-env) can't see the component's own stack.
+ */
+export interface StackStatusObservation {
+  /** The deploy-unit name queried (the stack name). */
+  stack: string;
+  /** False when the unit does not exist yet — the pre-first-apply state. */
+  present: boolean;
+  /** Provider-native status string, e.g. CloudFormation "CREATE_COMPLETE". */
+  status?: string;
+  /** True when `status` is a terminal *success* state (deployed and healthy). */
+  healthy?: boolean;
+}
+
 export interface LexiconPlugin {
   // ── Required ──────────────────────────────────────────────
   /** Human-readable name (e.g. "aws", "gcp") */
@@ -387,6 +406,22 @@ export interface LexiconPlugin {
      */
     owned?: boolean;
   }): Promise<Record<string, ResourceMetadata>>;
+
+  /**
+   * Report the live status of one deploy unit by its deployed name. Opt-in.
+   *
+   * Complements {@link describeResources}: that observes a stack's *entities*
+   * keyed by chant entity name (and assumes one stack per environment), which
+   * can't see a multi-stack component project where each component owns its own
+   * stack. `chant components status --live` resolves a component's deploy-step
+   * target (e.g. a `cfn-deploy` step's `stack`) and calls this to learn whether
+   * that unit is present and healthy — a component-level presence signal.
+   *
+   * Returns `null` when the lexicon cannot determine status (e.g. the provider
+   * CLI failed for a reason other than "does not exist"); a genuinely absent
+   * unit returns `{ present: false }`.
+   */
+  describeStackStatus?(options: { environment: string; stack: string }): Promise<StackStatusObservation | null>;
 
   /**
    * Reference catalog for live edge reconstruction (#778). Declares how this

@@ -37,6 +37,7 @@ import {
   type DriverRunResult,
 } from "./driver";
 import { isLexiconPlugin, type LexiconPlugin, type ComponentPipelineOptions } from "../lexicon";
+import { relative } from "node:path";
 import { buildCapabilityRegistry } from "./capability-plugin-loader";
 import type { CapabilityRegistry } from "./capability";
 import { applyConfigDefaults } from "./config-defaults";
@@ -129,6 +130,10 @@ export interface ComponentGraphResult {
   order: string[];
   waves: string[][];
   edges: Array<{ from: string; to: string }>;
+  /** Component name → its declaring `*.component.ts` file (relative to `path`),
+   * so a renderer can deep-link a component node to source (`chant graph
+   * --components --format ir` sets `sourceLoc` from this). */
+  files?: Record<string, string>;
   error?: string;
 }
 
@@ -145,13 +150,19 @@ export async function computeComponentGraph(path: string): Promise<ComponentGrap
     deploy: component.deploy,
   }));
 
+  // component name → its declaring file, relative to `path`, for node deep-links.
+  const files: Record<string, string> = {};
+  for (const [name, discovered] of result.components) {
+    files[name] = relative(path, discovered.filePath);
+  }
+
   try {
     const { order, waves } = resolveComponentGraph(driverComponents);
     const edges: Array<{ from: string; to: string }> = [];
     for (const c of driverComponents) {
       for (const dep of c.dependsOn ?? []) edges.push({ from: c.name, to: dep });
     }
-    return { success: true, order, waves, edges };
+    return { success: true, order, waves, edges, files };
   } catch (err) {
     if (err instanceof UnknownDependencyError || err instanceof DependencyCycleError) {
       return { success: false, order: [], waves: [], edges: [], error: err.message };

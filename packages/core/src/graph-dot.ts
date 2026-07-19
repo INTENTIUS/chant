@@ -12,12 +12,13 @@ import type { GraphIR, IRNode, IREdge } from "./graph-ir";
 export function toDot(ir: GraphIR): string {
   const lines: string[] = ["digraph chant {", "  rankdir=TB;", '  node [shape=box];'];
 
-  const byLexicon = ir.groups.byLexicon;
+  // Cluster by wave (component graph) when present, else by lexicon (entity graph).
+  const clusters = ir.groups.byWave ?? ir.groups.byLexicon;
   const grouped = new Set<string>();
-  if (byLexicon) {
-    for (const [lexicon, members] of Object.entries(byLexicon)) {
-      lines.push(`  subgraph ${q(`cluster_${lexicon}`)} {`);
-      lines.push(`    label=${q(lexicon)};`);
+  if (clusters) {
+    for (const [name, members] of Object.entries(clusters)) {
+      lines.push(`  subgraph ${q(`cluster_${name}`)} {`);
+      lines.push(`    label=${q(name)};`);
       for (const id of members) {
         const node = ir.nodes.find((n) => n.id === id);
         if (!node) continue;

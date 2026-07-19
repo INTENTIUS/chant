@@ -20,13 +20,15 @@ export function toMermaid(ir: GraphIR): string {
 
   const lines: string[] = ["flowchart TD"];
 
-  // Cluster by lexicon when grouping is available; nodes outside any group fall
-  // through to the top level. byLexicon is sorted, so output is deterministic.
-  const byLexicon = ir.groups.byLexicon;
+  // Cluster by wave (component graph) when present, else by lexicon (entity
+  // graph); nodes outside any group fall through to the top level. Both are
+  // sorted, so output is deterministic.
+  const clusters = ir.groups.byWave ?? ir.groups.byLexicon;
+  const clusterPrefix = ir.groups.byWave ? "wave" : "lex";
   const grouped = new Set<string>();
-  if (byLexicon) {
-    for (const [lexicon, members] of Object.entries(byLexicon)) {
-      lines.push(`  subgraph ${safeId(`lex_${lexicon}`, ids)}[${quote(lexicon)}]`);
+  if (clusters) {
+    for (const [name, members] of Object.entries(clusters)) {
+      lines.push(`  subgraph ${safeId(`${clusterPrefix}_${name}`, ids)}[${quote(name)}]`);
       for (const id of members) {
         const node = ir.nodes.find((n) => n.id === id);
         if (!node) continue;

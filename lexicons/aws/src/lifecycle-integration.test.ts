@@ -102,4 +102,38 @@ describe("aws lifecycle integration (#163)", () => {
     });
     expect(cs2.entries.find((e) => e.name === "MyBucket")!.action).toBe("noop");
   });
+
+  describe("describeStackStatus (#57 — per-component stack presence)", () => {
+    const err = (stderr: string) => ({ stdout: "", stderr, exitCode: 255 });
+
+    test("present + healthy for a terminal-success stack", async () => {
+      spawnMock.mockResolvedValue(ok(JSON.stringify({ Stacks: [{ StackStatus: "CREATE_COMPLETE" }] })));
+      const obs = await awsPlugin.describeStackStatus!({ environment: "local", stack: "loom-local-a-loom-db" });
+      expect(obs).toEqual({ stack: "loom-local-a-loom-db", present: true, status: "CREATE_COMPLETE", healthy: true });
+    });
+
+    test("present but not healthy for a rollback/failed state", async () => {
+      spawnMock.mockResolvedValue(ok(JSON.stringify({ Stacks: [{ StackStatus: "ROLLBACK_COMPLETE" }] })));
+      const obs = await awsPlugin.describeStackStatus!({ environment: "local", stack: "s" });
+      expect(obs).toMatchObject({ present: true, status: "ROLLBACK_COMPLETE", healthy: false });
+    });
+
+    test("in-progress is present but not yet healthy", async () => {
+      spawnMock.mockResolvedValue(ok(JSON.stringify({ Stacks: [{ StackStatus: "UPDATE_IN_PROGRESS" }] })));
+      const obs = await awsPlugin.describeStackStatus!({ environment: "local", stack: "s" });
+      expect(obs).toMatchObject({ present: true, healthy: false });
+    });
+
+    test("absent (does-not-exist) reports present: false, not an error", async () => {
+      spawnMock.mockResolvedValue(err("ValidationError: Stack with id s does not exist"));
+      const obs = await awsPlugin.describeStackStatus!({ environment: "local", stack: "s" });
+      expect(obs).toEqual({ stack: "s", present: false });
+    });
+
+    test("any other CLI failure is indeterminate → null (never a false 'gone')", async () => {
+      spawnMock.mockResolvedValue(err("Unable to locate credentials"));
+      const obs = await awsPlugin.describeStackStatus!({ environment: "local", stack: "s" });
+      expect(obs).toBeNull();
+    });
+  });
 });

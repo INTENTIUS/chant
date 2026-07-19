@@ -3,6 +3,7 @@ import { lintCommand, isLintRule, loadPluginRules, type LintOptions } from "./li
 import { mkdir, rm, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { tmpdir } from "node:os";
+import { execFileSync } from "node:child_process";
 
 describe("lintCommand", () => {
   let testDir: string;
@@ -328,5 +329,93 @@ describe("plugin integration", () => {
     const pluginDiags = result.diagnostics.filter((d) => d.ruleId === "PLUG002");
     // Plugin rule should produce exactly one diagnostic (one source file)
     expect(pluginDiags.length).toBe(1);
+  });
+});
+
+describe("lintCommand — project-root config resolution (scoped lint)", () => {
+  let testDir: string;
+
+  beforeEach(async () => {
+    testDir = join(tmpdir(), `chant-lint-scope-${Date.now()}-${Math.random()}`);
+    await mkdir(join(testDir, "src", "lib"), { recursive: true });
+    process.env.NO_COLOR = "1";
+    // Root config disables EVL003 for src/lib/** — a project-root-relative glob.
+    await writeFile(
+      join(testDir, "chant.config.json"),
+      JSON.stringify({ overrides: [{ files: ["src/lib/**"], rules: { EVL003: "off" } }] }),
+    );
+    // A runtime helper with dynamic property access — EVL003 fires unless overridden.
+    await writeFile(
+      join(testDir, "src", "lib", "naming.ts"),
+      `const table = { a: 1 };\nexport function pick(k: string) { return table[k]; }\n`,
+    );
+  });
+
+  afterEach(async () => {
+    await rm(testDir, { recursive: true, force: true });
+    delete process.env.NO_COLOR;
+  });
+
+  test("linting the project root applies the src/lib/** override", async () => {
+    const result = await lintCommand({ path: testDir, format: "stylish" });
+    expect(result.diagnostics.filter((d) => d.ruleId === "EVL003")).toHaveLength(0);
+  });
+
+  test("linting a subpath still finds the root config and applies the override", async () => {
+    // Regression: overrides are project-root-relative, so a scoped lint must
+    // anchor config discovery + glob matching on the root, not the path arg.
+    const result = await lintCommand({ path: join(testDir, "src"), format: "stylish" });
+    expect(result.diagnostics.filter((d) => d.ruleId === "EVL003")).toHaveLength(0);
+  });
+
+  test("a file outside the override glob still reports EVL003 under a scoped lint", async () => {
+    await mkdir(join(testDir, "src", "runtime"), { recursive: true });
+    await writeFile(
+      join(testDir, "src", "runtime", "other.ts"),
+      `const t = { a: 1 };\nexport function g(k: string) { return t[k]; }\n`,
+    );
+    const result = await lintCommand({ path: join(testDir, "src"), format: "stylish" });
+    const evl003 = result.diagnostics.filter((d) => d.ruleId === "EVL003");
+    expect(evl003).toHaveLength(1);
+    expect(evl003[0].file).toContain(join("src", "runtime", "other.ts"));
+  });
+});
+
+describe("lintCommand — git-ignored files are not linted", () => {
+  let testDir: string;
+
+  beforeEach(async () => {
+    testDir = join(tmpdir(), `chant-lint-gitignore-${Date.now()}-${Math.random()}`);
+    await mkdir(join(testDir, "vendor"), { recursive: true });
+    process.env.NO_COLOR = "1";
+    execFileSync("git", ["init", "-q"], { cwd: testDir });
+    await writeFile(join(testDir, ".gitignore"), "vendor/\n");
+    // Vendored code full of a pattern EVL003 forbids — but it's not our source.
+    await writeFile(
+      join(testDir, "vendor", "app.ts"),
+      `const t = { a: 1 };\nexport function g(k: string) { return t[k]; }\n`,
+    );
+    // A clean authored file at the root.
+    await writeFile(join(testDir, "index.ts"), `export const x = 1;\n`);
+  });
+
+  afterEach(async () => {
+    await rm(testDir, { recursive: true, force: true });
+    delete process.env.NO_COLOR;
+  });
+
+  test("skips gitignored vendor/ so its EVL violations don't gate the project", async () => {
+    const result = await lintCommand({ path: testDir, format: "stylish" });
+    expect(result.diagnostics.filter((d) => d.file.includes("vendor"))).toHaveLength(0);
+    expect(result.success).toBe(true);
+  });
+
+  test("still lints a non-ignored file with the same violation", async () => {
+    await writeFile(
+      join(testDir, "authored.ts"),
+      `const t = { a: 1 };\nexport function g(k: string) { return t[k]; }\n`,
+    );
+    const result = await lintCommand({ path: testDir, format: "stylish" });
+    expect(result.diagnostics.some((d) => d.file.includes("authored.ts") && d.ruleId === "EVL003")).toBe(true);
   });
 });

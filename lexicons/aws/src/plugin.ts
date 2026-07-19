@@ -1,6 +1,6 @@
 import { createRequire } from "module";
 import { detectTemplate } from "./detect";
-import type { LexiconPlugin, IntrinsicDef, ResourceMetadata, ExportedTemplate, ResourceSelector, InitTemplateSet } from "@intentius/chant/lexicon";
+import type { LexiconPlugin, IntrinsicDef, ResourceMetadata, ExportedTemplate, ResourceSelector, InitTemplateSet, StackStatusObservation } from "@intentius/chant/lexicon";
 const require = createRequire(import.meta.url);
 import type { LintRule } from "@intentius/chant/lint/rule";
 import type { TemplateParser } from "@intentius/chant/import/parser";
@@ -575,6 +575,34 @@ aws cloudformation wait stack-update-complete --stack-name my-app-prod`,
     }
 
     return resources;
+  },
+
+  async describeStackStatus(options: { environment: string; stack: string }): Promise<StackStatusObservation | null> {
+    const { getRuntime } = await import("@intentius/chant/runtime-adapter");
+    const rt = getRuntime();
+
+    const result = await rt.spawn(applyAwsEndpointArgv([
+      "aws", "cloudformation", "describe-stacks",
+      "--stack-name", options.stack,
+      "--output", "json",
+    ], process.env.AWS_ENDPOINT_URL));
+
+    if (result.exitCode !== 0) {
+      // A stack that doesn't exist yet is the pre-first-apply state (absent, not
+      // an error). Any other failure is indeterminate → null, so the caller
+      // degrades rather than reporting a healthy stack as gone.
+      if (stackDoesNotExist(result.stderr)) return { stack: options.stack, present: false };
+      return null;
+    }
+
+    const parsed = JSON.parse(result.stdout) as { Stacks?: Array<{ StackStatus?: string }> };
+    const status = parsed.Stacks?.[0]?.StackStatus;
+    if (!status) return { stack: options.stack, present: false };
+    // Healthy = a terminal *success* apply. Rollback/failed/in-progress/delete
+    // states are present-but-not-healthy, so a renderer can distinguish
+    // deployed-green from mid-deploy or broken.
+    const healthy = /^(CREATE|UPDATE|IMPORT)_COMPLETE$/.test(status);
+    return { stack: options.stack, present: true, status, healthy };
   },
 
   async exportResources(options: {

@@ -87,6 +87,33 @@ export interface LiveComponentEvidence {
 }
 
 /**
+ * Overlay per-component stack-presence evidence onto change-set evidence.
+ *
+ * The change-set axis (`liveEvidenceFromChangeSet`) is entity-keyed and, for
+ * AWS, single-stack-per-env — it can't see a multi-stack component project where
+ * each component owns its own stack (#57). `supplement` carries the direct
+ * per-component stack observation (from a lexicon's `describeStackStatus`), which
+ * is authoritative for **presence** (`live`) and **ownership**; the change-set's
+ * `action` is kept, since drift is still assessed from the diff. A component in
+ * only one map passes through unchanged.
+ */
+export function mergeLiveEvidence(
+  base: Map<string, LiveComponentEvidence> | undefined,
+  supplement: Map<string, LiveComponentEvidence>,
+): Map<string, LiveComponentEvidence> {
+  const merged = new Map(base ?? []);
+  for (const [component, sup] of supplement) {
+    const b = merged.get(component);
+    merged.set(component, {
+      live: sup.live,
+      ownership: sup.ownership ?? b?.ownership,
+      action: b?.action,
+    });
+  }
+  return merged;
+}
+
+/**
  * Component -> live entity/resource name(s) it owns (#598). Mirrors
  * `Component.liveNames` (../components/component.ts) without importing it —
  * this module stays decoupled from the typed authoring form, since a

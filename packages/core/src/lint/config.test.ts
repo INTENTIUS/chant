@@ -1,5 +1,5 @@
 import { describe, test, expect, beforeEach, afterEach } from "vitest";
-import { loadConfig, DEFAULT_CONFIG } from "./config";
+import { loadConfig, DEFAULT_CONFIG, findProjectRoot } from "./config";
 import { writeFileSync, mkdirSync, rmSync } from "fs";
 import { join } from "path";
 
@@ -682,5 +682,33 @@ describe("loadConfig", () => {
 
     expect(config.rules?.["test-rule"]).toBe("error");
     expect(config.rules?.["noisy-rule"]).toBe("off");
+  });
+});
+
+describe("findProjectRoot", () => {
+  test("returns the directory holding chant.config.json", () => {
+    writeFileSync(join(TEST_DIR, "chant.config.json"), "{}");
+    expect(findProjectRoot(TEST_DIR)).toBe(TEST_DIR);
+  });
+
+  test("walks up from a subpath to the config-bearing root", () => {
+    writeFileSync(join(TEST_DIR, "chant.config.json"), "{}");
+    const sub = join(TEST_DIR, "src", "lib");
+    mkdirSync(sub, { recursive: true });
+    expect(findProjectRoot(sub)).toBe(TEST_DIR);
+  });
+
+  test("also recognizes chant.config.ts as a project root", () => {
+    writeFileSync(join(TEST_DIR, "chant.config.ts"), "export default {};");
+    const sub = join(TEST_DIR, "src");
+    mkdirSync(sub, { recursive: true });
+    expect(findProjectRoot(sub)).toBe(TEST_DIR);
+  });
+
+  test("falls back to the start dir when no config is found", () => {
+    const sub = join(TEST_DIR, "nowhere");
+    mkdirSync(sub, { recursive: true });
+    // No chant.config anywhere under TEST_DIR — returns the (resolved) start dir.
+    expect(findProjectRoot(sub)).toBe(sub);
   });
 });

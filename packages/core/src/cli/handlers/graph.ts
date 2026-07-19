@@ -24,7 +24,9 @@ import { computeComponentGraph } from "../../components/cli-support";
  * cross-lexicon references; `--components` (#560) renders the same
  * order/waves shape for discovered `Component` declarations, from their
  * `dependsOn`; `--format ir|mermaid` emits the lint-gated entity-graph IR (or
- * a Mermaid flowchart of it) for diagrams (#493/#496).
+ * a Mermaid flowchart of it) for diagrams (#493/#496). `--components` with a
+ * `--format` projects the component DAG itself into that format (nodes =
+ * components, wave groups, `dependsOn` edges) — the graph behold renders.
  */
 export async function runGraph(ctx: CommandContext): Promise<number> {
   const viewFormats = ["ir", "mermaid", "dot", "layout"] as const;
@@ -35,6 +37,11 @@ export async function runGraph(ctx: CommandContext): Promise<number> {
     return runGraphLive(ctx, isViewFormat ? (ctx.args.format as (typeof viewFormats)[number]) : "ir");
   }
   if (isViewFormat) {
+    // `--components` projects the component DAG (nodes = components, wave groups,
+    // dependsOn edges) into the same view formats; without it, the entity graph.
+    if (ctx.args.components) {
+      return runComponentGraphView(ctx, ctx.args.format as (typeof viewFormats)[number]);
+    }
     return runGraphView(ctx, ctx.args.format as (typeof viewFormats)[number]);
   }
   if (ctx.args.components) return runComponentGraph(ctx);
@@ -202,6 +209,63 @@ async function runComponentGraph(ctx: CommandContext): Promise<number> {
   }
 
   return 0;
+}
+
+/**
+ * `chant graph --components --format ir|mermaid|dot|layout` — the component DAG
+ * projected into the renderable IR (nodes = components, `groups.byWave` = the
+ * parallel-safe deploy waves, edges = `dependsOn` consumer → producer). This is
+ * the graph behold paints: read one way it is the deploy order, read the other
+ * the CI pipeline. Distinct from `runGraphView`, which emits the AWS *entity*
+ * graph — the component projection has one node per component, not per resource.
+ *
+ * Lint-gated like the entity view: the DAG stands for deployable source, so we
+ * refuse to emit it for source that does not pass lint.
+ */
+async function runComponentGraphView(
+  ctx: CommandContext,
+  format: "ir" | "mermaid" | "dot" | "layout",
+): Promise<number> {
+  const projectPath = resolve(ctx.args.path === "." ? "." : ctx.args.path);
+
+  const lint = await lintCommand({ path: ctx.args.path, format: "stylish" });
+  if (!lint.success) {
+    console.error(
+      formatError({
+        message: "Refusing to emit graph: source has lint errors. Run `chant lint` and fix them first.",
+      }),
+    );
+    return 1;
+  }
+
+  const graph = await computeComponentGraph(projectPath);
+  if (!graph.success) {
+    console.error(formatError({ message: graph.error ?? "Failed to compute component graph" }));
+    return 1;
+  }
+
+  // One node per component; wave index carried on the node so a renderer that
+  // ignores groups can still lane by it. `dependsOn` is a plain name edge —
+  // `kind: "ref"` matches the entity graph's edge vocabulary the emitters read.
+  const waveOf = new Map<string, number>();
+  graph.waves.forEach((wave, i) => wave.forEach((name) => waveOf.set(name, i + 1)));
+
+  const ir: GraphIR = {
+    nodes: graph.order.map((name) => ({
+      id: name,
+      kind: "Component",
+      lexicon: "chant",
+      attrs: { wave: waveOf.get(name) ?? null },
+      // Deep-link the node to its `*.component.ts` (behold's inspect panel).
+      ...(graph.files?.[name] ? { sourceLoc: { file: graph.files[name] } } : {}),
+    })),
+    edges: graph.edges.map(({ from, to }) => ({ from, to, kind: "ref" as const })),
+    groups: {
+      byWave: Object.fromEntries(graph.waves.map((wave, i) => [`wave-${i + 1}`, [...wave]])),
+    },
+  };
+
+  return emitIr(ir, ctx, format);
 }
 
 /**

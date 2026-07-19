@@ -94,6 +94,11 @@ export interface IRGroups {
    * so a boundary-box renderer recurses it. Populated by `chant graph --live`
    * from the reference resolver's containment output; absent for source IR. */
   byContainer?: Record<string, string[]>;
+  /** Component-graph deploy wave (`chant graph --components --format ir`):
+   * `wave-N → component node ids` that deploy in parallel in that wave. A
+   * wave-laned renderer reads this the way `byStack` drives boundary boxes.
+   * Present only for the component-DAG projection; absent for entity IR. */
+  byWave?: Record<string, string[]>;
 }
 
 /** A cross-stack export this stack publishes (a `stackOutput`/`output`): its

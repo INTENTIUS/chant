@@ -4,6 +4,7 @@ import {
   liveEvidenceFromChangeSet,
   resolveLiveNames,
   compareAcrossEnvironments,
+  mergeLiveEvidence,
   type LiveComponentEvidence,
   type LiveNameMapping,
 } from "./status";
@@ -325,6 +326,37 @@ describe("status", () => {
       expect(result.digestA).toBeUndefined();
       expect(result.digestB).toBe("sha256:abc");
       expect(result.same).toBe(false);
+    });
+  });
+
+  describe("mergeLiveEvidence (#57 — per-component stack presence overlay)", () => {
+    test("stack presence overrides change-set 'not live' but keeps its drift action", () => {
+      const base = new Map<string, LiveComponentEvidence>([
+        ["shared-foundation", { live: false }], // entity-keyed observe saw nothing
+        ["loom-backend", { live: true, action: "update", ownership: "owned" }],
+      ]);
+      const supplement = new Map<string, LiveComponentEvidence>([
+        ["shared-foundation", { live: true, ownership: "owned" }], // its stack IS present
+        ["loom-backend", { live: true, ownership: "owned" }],
+      ]);
+      const merged = mergeLiveEvidence(base, supplement);
+      expect(merged.get("shared-foundation")).toEqual({ live: true, ownership: "owned", action: undefined });
+      // loom-backend: presence confirmed, change-set drift action preserved.
+      expect(merged.get("loom-backend")).toEqual({ live: true, ownership: "owned", action: "update" });
+    });
+
+    test("a component only in the supplement is added; base-only entries pass through", () => {
+      const base = new Map<string, LiveComponentEvidence>([["only-base", { live: true, ownership: "foreign" }]]);
+      const supplement = new Map<string, LiveComponentEvidence>([["only-sup", { live: false }]]);
+      const merged = mergeLiveEvidence(base, supplement);
+      expect(merged.get("only-base")).toEqual({ live: true, ownership: "foreign" });
+      expect(merged.get("only-sup")).toEqual({ live: false, ownership: undefined, action: undefined });
+    });
+
+    test("undefined base (no --live change-set) still yields the supplement", () => {
+      const supplement = new Map<string, LiveComponentEvidence>([["c", { live: true, ownership: "owned" }]]);
+      const merged = mergeLiveEvidence(undefined, supplement);
+      expect(merged.get("c")).toEqual({ live: true, ownership: "owned", action: undefined });
     });
   });
 });

@@ -34,7 +34,7 @@ import {
   listReleaseEnvironments,
   InvalidReleaseRecordError,
 } from "../../lifecycle/release-ledger";
-import { reconcileStatus, liveEvidenceFromChangeSet, compareAcrossEnvironments } from "../../lifecycle/status";
+import { reconcileStatus, liveEvidenceFromChangeSet, compareAcrossEnvironments, mergeLiveEvidence, type LiveComponentEvidence } from "../../lifecycle/status";
 import { buildChangeSet } from "../../lifecycle/change-set";
 import { buildLedgerEntries, componentBomSummary, type BuildLedgerEntry } from "../../lifecycle/build-ledger";
 import { findBuildManifestByArtifactDigest } from "../../lifecycle/build-ledger-store";
@@ -44,7 +44,8 @@ import { build } from "../../build";
 import { discoverComponents } from "../../components/discover";
 import { formatError, formatWarning, formatSuccess, formatBold } from "../format";
 import type { CommandContext } from "../registry";
-import type { ResourceMetadata } from "../../lexicon";
+import type { ResourceMetadata, LexiconPlugin } from "../../lexicon";
+import type { Phase, Component } from "../../components/component";
 
 /**
  * chant components release <env> --component <name> --digest <sha256:...>
@@ -189,6 +190,58 @@ interface StatusJsonRow {
  * the epic names explicitly: "which build is in `<env>`, and is it the one
  * tested in `<compare-to>`."
  */
+/** Every distinct `cfn-deploy` stack name a component's deploy phases target. A
+ * step may itself be a nested `Phase`, so walk recursively; a resolved component
+ * carries the stack as a concrete string. */
+function cfnDeployStacks(deploy: Phase[]): string[] {
+  const stacks = new Set<string>();
+  const walkSteps = (steps: Phase["steps"]): void => {
+    for (const step of steps) {
+      // A step may itself be a nested Phase (it carries its own `steps`). Step is
+      // open-typed (capability inputs), so discriminate structurally on `steps`.
+      const nested = (step as { steps?: unknown }).steps;
+      if (Array.isArray(nested)) {
+        walkSteps(nested as Phase["steps"]);
+        continue;
+      }
+      const s = step as { kind?: string; stack?: unknown };
+      if (s.kind === "cfn-deploy" && typeof s.stack === "string") stacks.add(s.stack);
+    }
+  };
+  for (const phase of deploy) walkSteps(phase.steps);
+  return [...stacks];
+}
+
+/**
+ * Per-component stack presence for `--live`: resolve each component's own
+ * `cfn-deploy` stack(s) and observe them directly via a lexicon's
+ * `describeStackStatus`. This is the multi-stack component signal that
+ * `describeResources` (entity-keyed, single-stack-per-env) misses (#57): a
+ * component whose stack is present reconciles as live/owned, joined to the DAG
+ * by component name. Components with no `cfn-deploy` stack — or where the
+ * observer can't determine any of theirs — are omitted, so the change-set
+ * evidence still governs them.
+ */
+async function observeComponentStacks(
+  components: Map<string, { component: Component }>,
+  observer: LexiconPlugin,
+  environment: string,
+): Promise<Map<string, LiveComponentEvidence>> {
+  const evidence = new Map<string, LiveComponentEvidence>();
+  for (const [name, { component }] of components) {
+    const stacks = cfnDeployStacks(component.deploy);
+    if (stacks.length === 0) continue;
+    const observed = await Promise.all(
+      stacks.map((stack) => observer.describeStackStatus!({ environment, stack }).catch(() => null)),
+    );
+    const determinate = observed.filter((o): o is NonNullable<typeof o> => o !== null);
+    if (determinate.length === 0) continue;
+    const present = determinate.every((o) => o.present);
+    evidence.set(name, { live: present, ownership: present ? "owned" : undefined });
+  }
+  return evidence;
+}
+
 export async function runComponentsStatus(ctx: CommandContext): Promise<number> {
   const { args, plugins, serializers } = ctx;
   const requestedEnv = args.extraPositional;
@@ -261,6 +314,16 @@ export async function runComponentsStatus(ctx: CommandContext): Promise<number> 
         merged.entries.push(...cs.entries);
       }
       liveEvidence = liveEvidenceFromChangeSet(merged, liveNameMapping);
+
+      // Multi-stack component projects (each component owns its own stack) are
+      // invisible to the entity-keyed, single-stack `describeResources` above —
+      // observe each component's own cfn-deploy stack directly and overlay it as
+      // the authoritative presence signal (#57).
+      const stackObserver = plugins.find((p) => p.describeStackStatus);
+      if (stackObserver) {
+        const stackEvidence = await observeComponentStacks(discovery.components, stackObserver, environment);
+        liveEvidence = mergeLiveEvidence(liveEvidence, stackEvidence);
+      }
     }
 
     // #609: resolve the persisted build manifest behind each recorded digest
