@@ -41,6 +41,27 @@ describe("rollback-previous (#557)", () => {
     ]);
   });
 
+  it("rolls an ECS service back via the executor for the {service, cluster} shape (#990)", async () => {
+    // The ecs-fargate preset / ALB-ECS pilot (and loomster's loom-frontend)
+    // compose rollback-previous with an ECS service, NOT a snapshot id. This
+    // used to reach the snapshot path and throw "Cannot read properties of
+    // undefined (reading 'includes')" on the absent snapshotId.
+    const mock = createMockCloudExecutor();
+    const out = await createRollbackPreviousCapability(mock.executor).run(ctx, {
+      service: "loom-frontend-svc",
+      cluster: "arn:aws:ecs:us-east-1:1:cluster/loom",
+    });
+    expect(out).toEqual({ restored: true });
+    expect(mock.calls).toEqual([
+      { client: "ecs", method: "rollbackService", args: { cluster: "arn:aws:ecs:us-east-1:1:cluster/loom", service: "loom-frontend-svc", taskDefinition: undefined, desiredCount: undefined } },
+    ]);
+  });
+
+  it("fails with a clear message (not a cryptic undefined access) for an unrecognized shape", async () => {
+    const cap = createRollbackPreviousCapability(createMockCloudExecutor().executor);
+    await expect(cap.run(ctx, {} as never)).rejects.toThrow(/expected \{ service, cluster \}|\{ snapshotId, resource \}/);
+  });
+
   it("declares no rollback — it is the rollback", () => {
     expect(createRollbackPreviousCapability(createMockCloudExecutor().executor).rollback).toBeUndefined();
   });

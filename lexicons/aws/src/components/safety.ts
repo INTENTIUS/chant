@@ -45,30 +45,66 @@ export const snapshotBeforeCapability: Capability<SnapshotBeforeInput, SnapshotB
 
 // ── rollback-previous ────────────────────────────────────────────────────────
 
-export interface RollbackPreviousInput {
+/** Restore a resource from a prior `snapshot-before` capture (DynamoDB/RDS/EBS). */
+export interface RollbackPreviousSnapshotInput {
   /** Snapshot identifier to restore (typically `"@snapshot-before.snapshotId"`). */
   snapshotId: string;
   /** Resource identifier being restored. */
   resource: string;
 }
 
+/** Roll an ECS service back to its previously recorded task definition — the
+ * shape the `ecs-fargate` preset and the ALB/ECS pilot compose (e.g. loomster's
+ * `loom-frontend`). */
+export interface RollbackPreviousEcsInput {
+  /** ECS service name. */
+  service: string;
+  /** ECS cluster (name or ARN). */
+  cluster: string;
+  /** Explicit task definition to roll to; omitted → the executor's recorded previous. */
+  taskDefinition?: string;
+  desiredCount?: number;
+}
+
+/** `rollback-previous` accepts EITHER a snapshot restore or an ECS service
+ * rollback — the two things components actually compose it for. */
+export type RollbackPreviousInput = RollbackPreviousSnapshotInput | RollbackPreviousEcsInput;
+
 export interface RollbackPreviousOutput {
-  /** True once the restore completed. */
+  /** True once the restore/rollback completed. */
   restored: boolean;
 }
 
 /**
- * Restore a resource from a prior `snapshot-before` capture — an explicit,
- * caller-composed rollback (not the auto-triggered per-capability compensation).
- * Dispatches by the snapshot-id shape through the `CloudExecutor` and waits for
- * the restore to become available.
+ * Roll a resource back to its prior state — an explicit, caller-composed
+ * compensation (not the auto-triggered per-capability `rollback`). Dispatches by
+ * the input shape: an ECS service (`{service, cluster}`) rolls to its previous
+ * task definition; a snapshot (`{snapshotId, resource}`) restores that capture.
+ * An unrecognized shape fails with a clear message rather than a cryptic
+ * `undefined` access (chant #990 — an ECS-shaped input used to reach the
+ * snapshot path and throw "reading 'includes'" on the absent snapshotId).
  */
 export function createRollbackPreviousCapability(executor: CloudExecutor = defaultCloudExecutor()): Capability<RollbackPreviousInput, RollbackPreviousOutput> {
   return {
     kind: "rollback-previous",
     async run(_ctx, input) {
-      await executor.snapshot.restore({ resource: input.resource, snapshotId: input.snapshotId });
-      return { restored: true };
+      if ("service" in input && input.service) {
+        await executor.ecs.rollbackService({
+          cluster: input.cluster,
+          service: input.service,
+          taskDefinition: input.taskDefinition,
+          desiredCount: input.desiredCount,
+        });
+        return { restored: true };
+      }
+      if ("snapshotId" in input && input.snapshotId) {
+        await executor.snapshot.restore({ resource: input.resource, snapshotId: input.snapshotId });
+        return { restored: true };
+      }
+      throw new Error(
+        `rollback-previous: unrecognized input — expected { service, cluster } (ECS service rollback) or ` +
+          `{ snapshotId, resource } (snapshot restore), got keys [${Object.keys(input).join(", ")}]`,
+      );
     },
   };
 }
