@@ -1,7 +1,7 @@
 {
   "name": "@intentius/chant-lexicon-forgejo",
-  "version": "0.18.33",
-  "description": "Forgejo / Codeberg / Gitea Actions lexicon for chant \u2014 a thin GitHub Actions dialect",
+  "version": "0.18.34",
+  "description": "Forgejo / Codeberg / Gitea Actions lexicon for chant — a thin GitHub Actions dialect",
   "license": "Apache-2.0",
   "homepage": "https://intentius.io/chant",
   "repository": {
@@ -53,8 +53,8 @@
     "typescript": "^5.9.3"
   },
   "peerDependencies": {
-    "@intentius/chant": "^0.18.33",
-    "@intentius/chant-lexicon-github": "^0.18.33"
+    "@intentius/chant": "^0.18.34",
+    "@intentius/chant-lexicon-github": "^0.18.34"
   },
   "scripts": {
     "build": "tsc -p tsconfig.build.json && tsc-alias -p tsconfig.build.json && find dist -type f \\( -name \"*.js\" -o -name \"*.js.map\" \\) -delete",
