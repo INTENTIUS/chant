@@ -287,6 +287,16 @@ function collectEdges(
     }
     if (seen.has(value)) return;
     seen.add(value);
+    // A nested declarable (an inlined property-kind resource, e.g. a listener's
+    // `DefaultActions: [Listener_Action{ TargetGroupArn: tg.TargetGroupArn }]`)
+    // keeps its config in a NON-enumerable `props` bag, so `Object.values`
+    // below would walk right past the ref inside it and drop the edge. Descend
+    // via `configRoots` (which reads `props`), mirroring `project`'s handling —
+    // the ref then resolves to a real from→to edge on the containing node.
+    if (isDeclarable(value)) {
+      for (const [, v] of configRoots(value)) visit(v, viaAttr);
+      return;
+    }
     if (Array.isArray(value)) {
       for (const item of value) visit(item, viaAttr);
       return;

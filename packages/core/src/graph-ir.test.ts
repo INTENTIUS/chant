@@ -78,6 +78,33 @@ describe("buildGraphIr", () => {
     });
   });
 
+  test("follows a ref nested inside a property-kind declarable (a listener's forward action)", () => {
+    // Regression: an inlined property-kind declarable (e.g. a Listener Action)
+    // keeps its config in the NON-enumerable `props` bag. collectEdges used to
+    // recurse with Object.values(), which skips `props`, so a ref buried in
+    // `DefaultActions: [Action{ TargetGroupArn: tg.TargetGroupArn }]` produced
+    // NO edge — the target group floated even though it deploys wired.
+    const tg = decl({ lexicon: "aws", entityType: "AWS::ElasticLoadBalancingV2::TargetGroup" });
+    const action = decl({
+      lexicon: "aws",
+      entityType: "AWS::ElasticLoadBalancingV2::Listener.Action",
+      props: { Type: "forward", TargetGroupArn: new AttrRef(tg, "TargetGroupArn") },
+    });
+    const listener = decl({
+      lexicon: "aws",
+      entityType: "AWS::ElasticLoadBalancingV2::Listener",
+      props: { DefaultActions: [action] },
+    });
+    const entities = new Map<string, Declarable>([
+      ["tg", tg],
+      ["listener", listener],
+    ]);
+    resolveAttrRefs(entities);
+
+    const ir = buildGraphIr(entities);
+    expect(ir.edges).toContainEqual({ from: "listener", to: "tg", kind: "ref", viaAttr: "DefaultActions" });
+  });
+
   test("treats a foreign AttrRef (different @intentius/chant copy) as a ref, not an opaque intrinsic (#511)", () => {
     // A lexicon built against a *separate* copy of chant produces AttrRefs that
     // fail `instanceof AttrRef` here but carry the global-symbol brand + shape.
