@@ -135,6 +135,29 @@ describe("status", () => {
       expect(rows[0].reconciliation).toBe("drifted");
     });
 
+    test("surfaces machine-readable live + stack status when observed (#57 hardening)", () => {
+      const liveEvidence = new Map<string, LiveComponentEvidence>([
+        ["search-service", { live: true, ownership: "owned", stack: { name: "app-prod-search", status: "CREATE_COMPLETE", healthy: true } }],
+      ]);
+      const rows = reconcileStatus("prod", [record()], { liveEvidence });
+      expect(rows[0].live).toBe(true);
+      expect(rows[0].stack).toEqual({ name: "app-prod-search", status: "CREATE_COMPLETE", healthy: true });
+    });
+
+    test("live is false (never undefined) under --live when a component's stack is absent", () => {
+      const liveEvidence = new Map<string, LiveComponentEvidence>([
+        ["search-service", { live: false }],
+      ]);
+      const rows = reconcileStatus("prod", [record()], { liveEvidence });
+      expect(rows[0].live).toBe(false);
+    });
+
+    test("live is absent (not queried) when no liveEvidence is passed", () => {
+      const rows = reconcileStatus("prod", [record()]);
+      expect(rows[0].live).toBeUndefined();
+      expect(rows[0].stack).toBeUndefined();
+    });
+
     test("recorded but nothing live -> stale", () => {
       const liveEvidence = new Map<string, LiveComponentEvidence>();
       const rows = reconcileStatus("prod", [record()], { liveEvidence });

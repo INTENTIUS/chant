@@ -172,6 +172,8 @@ interface StatusJsonRow {
   } | null;
   reconciliation: string;
   detail: string;
+  live?: boolean;
+  stack?: { name: string; status?: string; healthy?: boolean };
 }
 
 /**
@@ -237,7 +239,15 @@ async function observeComponentStacks(
     const determinate = observed.filter((o): o is NonNullable<typeof o> => o !== null);
     if (determinate.length === 0) continue;
     const present = determinate.every((o) => o.present);
-    evidence.set(name, { live: present, ownership: present ? "owned" : undefined });
+    // Surface the (first present, else first) stack's raw status for a richer
+    // palette than the reconciliation verdict. One cfn-deploy stack per component
+    // is the norm; a multi-stack component reports its representative unit.
+    const repr = determinate.find((o) => o.present) ?? determinate[0];
+    evidence.set(name, {
+      live: present,
+      ownership: present ? "owned" : undefined,
+      stack: { name: repr.stack, status: repr.status, healthy: repr.healthy },
+    });
   }
   return evidence;
 }
@@ -396,6 +406,8 @@ export async function runComponentsStatus(ctx: CommandContext): Promise<number> 
           : null,
         reconciliation: row.reconciliation,
         detail: row.detail,
+        ...(row.live !== undefined ? { live: row.live } : {}),
+        ...(row.stack ? { stack: row.stack } : {}),
       });
     }
   }

@@ -60,6 +60,29 @@ export interface ComponentStatusRow {
   reconciliation: "reconciled" | "unrecorded" | "stale" | "drifted" | "unknown";
   /** Human-readable detail backing the verdict. */
   detail: string;
+  /**
+   * Machine-readable "observed live", when live evidence was gathered (`--live`).
+   * A consumer joining this row onto a graph node should read this rather than
+   * string-matching `detail`. Absent when `--live` was not requested.
+   */
+  live?: boolean;
+  /**
+   * The owning deploy unit's raw status, when a lexicon reported it (AWS: the
+   * component's own CFN stack via `describeStackStatus`). Lets a renderer paint a
+   * richer palette than the reconciliation verdict — `healthy` green,
+   * present-but-not-healthy amber (mid-deploy) / red (rollback/failed).
+   */
+  stack?: LiveStackInfo;
+}
+
+/** A component's owning deploy unit and its provider-native status. */
+export interface LiveStackInfo {
+  /** The deploy-unit name (e.g. the CloudFormation stack name). */
+  name: string;
+  /** Provider-native status string, e.g. "CREATE_COMPLETE". */
+  status?: string;
+  /** True when `status` is a terminal success state. */
+  healthy?: boolean;
 }
 
 export interface ComponentStatusResult {
@@ -84,6 +107,9 @@ export interface LiveComponentEvidence {
   action?: ChangeAction;
   /** Ownership verdict, when known. */
   ownership?: "owned" | "foreign" | "unknown";
+  /** The owning deploy unit's raw status, when observed (AWS: the component's own
+   * CFN stack). Surfaced onto `ComponentStatusRow.stack` for a richer palette. */
+  stack?: LiveStackInfo;
 }
 
 /**
@@ -108,6 +134,7 @@ export function mergeLiveEvidence(
       live: sup.live,
       ownership: sup.ownership ?? b?.ownership,
       action: b?.action,
+      stack: sup.stack ?? b?.stack,
     });
   }
   return merged;
@@ -265,7 +292,17 @@ export function reconcileStatus(
       detail = `recorded ${recorded!.timestamp} (digest ${recorded!.digest}), live and consistent`;
     }
 
-    rows.push({ component, env, recorded, build, componentBom, reconciliation, detail });
+    rows.push({
+      component,
+      env,
+      recorded,
+      build,
+      componentBom,
+      reconciliation,
+      detail,
+      ...(liveEvidence ? { live: !!evidence?.live } : {}),
+      ...(evidence?.stack ? { stack: evidence.stack } : {}),
+    });
   }
 
   return rows;
