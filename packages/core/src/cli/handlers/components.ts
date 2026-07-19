@@ -194,8 +194,14 @@ interface StatusJsonRow {
  */
 /** Every distinct `cfn-deploy` stack name a component's deploy phases target. A
  * step may itself be a nested `Phase`, so walk recursively; a resolved component
- * carries the stack as a concrete string. */
-function cfnDeployStacks(deploy: Phase[]): string[] {
+ * carries the stack as a concrete string.
+ *
+ * Exported for `chant graph --live` (../handlers/graph.ts's `runGraphLive`,
+ * #57): the same per-component stack resolution this file uses for `chant
+ * components status --live` is also how the live graph learns which stacks to
+ * observe on a multi-stack, per-component project (`describeResources`'s
+ * single-stack-named-after-the-environment convention never matches one). */
+export function cfnDeployStacks(deploy: Phase[]): string[] {
   const stacks = new Set<string>();
   const walkSteps = (steps: Phase["steps"]): void => {
     for (const step of steps) {

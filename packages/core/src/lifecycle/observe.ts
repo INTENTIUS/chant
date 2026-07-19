@@ -27,14 +27,27 @@ export interface ObserveResult {
  * marker channel logs and returns everything (its own contract). Plugins that
  * throw are collected into `errors` and skipped — one failing lexicon never
  * sinks the whole graph.
+ *
+ * `stacks` (#57) is for a multi-stack, per-component project (e.g. loomster)
+ * where there is no single stack named after the environment — AWS's
+ * single-stack convention (`lexicons/aws/src/plugin.ts`'s `describeResources`,
+ * absent an explicit `stack`) queries a stack that simply doesn't exist there,
+ * so the single-call path always observes zero nodes. When `stacks` is
+ * present and non-empty, each observing plugin's `describeResources` is
+ * called once per stack (same `environment`/`entities`/`entityNames`, only
+ * `stack` varies) and the returned resource maps are unioned — a resource
+ * appears under whichever stack contains its logical id. When `stacks` is
+ * absent or empty, behavior is exactly the single call of before (no `stack`
+ * key at all), so a single-stack project is unaffected.
  */
 export async function observeResources(
   environment: string,
   plugins: ObservationLexicon[],
   buildResult: BuildResult,
-  opts?: { owned?: boolean },
+  opts?: { owned?: boolean; stacks?: string[] },
 ): Promise<ObserveResult> {
   const owned = opts?.owned ?? true;
+  const stacks = opts?.stacks ?? [];
   const observations: LiveObservation[] = [];
   const warnings: string[] = [];
   const errors: string[] = [];
@@ -64,13 +77,29 @@ export async function observeResources(
     }
 
     try {
-      const resources: Record<string, ResourceMetadata> = await plugin.describeResources({
-        environment,
-        buildOutput,
-        entityNames,
-        entities,
-        owned,
-      });
+      let resources: Record<string, ResourceMetadata>;
+      if (stacks.length > 0) {
+        resources = {};
+        for (const stack of stacks) {
+          const perStack = await plugin.describeResources({
+            environment,
+            buildOutput,
+            entityNames,
+            entities,
+            owned,
+            stack,
+          });
+          Object.assign(resources, perStack);
+        }
+      } else {
+        resources = await plugin.describeResources({
+          environment,
+          buildOutput,
+          entityNames,
+          entities,
+          owned,
+        });
+      }
       if (Object.keys(resources).length > 0) {
         observations.push({ lexicon: plugin.name, resources });
       }

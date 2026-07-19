@@ -17,6 +17,8 @@ import { readFileSync } from "node:fs";
 import { formatError, formatWarning, formatBold } from "../format";
 import type { CommandContext } from "../registry";
 import { computeComponentGraph } from "../../components/cli-support";
+import { discoverComponents } from "../../components/discover";
+import { cfnDeployStacks } from "./components";
 
 /**
  * `chant graph` — the Op dependency graph by default; `--stacks` renders the
@@ -96,7 +98,31 @@ async function runGraphLive(
     return 1;
   }
 
-  const { observations, errors } = await observeResources(environment, observing, buildResult, { owned: true });
+  // Multi-stack, per-component projects (loomster/Floci, #57): AWS's
+  // single-stack convention (`describeResources` defaults to a stack named
+  // after the environment, lexicons/aws/src/plugin.ts) never matches a
+  // per-component layout (e.g. `loom-local-a-<component>`), so the plain
+  // single call always observes zero nodes. Resolve every discovered
+  // component's `cfn-deploy` stack(s) — the same walk `chant components
+  // status --live` uses (`cfnDeployStacks`, ./components.ts) — and hand them
+  // to `observeResources`, which queries `describeResources` once per stack
+  // and unions the results. A project with no components (or whose discovery
+  // errors) yields no stacks, so `observeResources` falls back to its
+  // original single-stack call — unchanged.
+  const componentsDiscovery = await discoverComponents(resolve(args.src ?? config.sourceDir ?? "."));
+  const stacks = new Set<string>();
+  if (componentsDiscovery.errors.length === 0) {
+    for (const { component } of componentsDiscovery.components.values()) {
+      for (const stack of cfnDeployStacks(component.deploy)) stacks.add(stack);
+    }
+  } else {
+    console.error(formatWarning({ message: "component discovery failed — observing the single-stack convention instead" }));
+  }
+
+  const { observations, errors } = await observeResources(environment, observing, buildResult, {
+    owned: true,
+    stacks: [...stacks],
+  });
   for (const e of errors) console.error(formatWarning({ message: e }));
 
   let ir: GraphIR = buildLiveGraphIr(observations);

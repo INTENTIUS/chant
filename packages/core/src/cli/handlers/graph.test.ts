@@ -44,6 +44,14 @@ const observeMock = vi.fn();
 vi.mock("../../lifecycle/observe", () => ({
   observeResources: (...a: unknown[]) => observeMock(...a),
 }));
+// `runGraphLive` resolves each component's `cfn-deploy` stack(s) (#57) so a
+// multi-stack, per-component project observes the right stacks; default to
+// "no components" (empty map, no errors) so the existing single-stack --live
+// test is unaffected unless a test opts into a component layout below.
+const discoverComponentsMock = vi.fn();
+vi.mock("../../components/discover", () => ({
+  discoverComponents: (...a: unknown[]) => discoverComponentsMock(...a),
+}));
 vi.mock("../../config", () => ({
   loadChantConfig: () => Promise.resolve({ config: {} }),
 }));
@@ -93,6 +101,12 @@ describe("runGraph", () => {
     lintMock.mockReset();
     layoutMock.mockReset();
     componentGraphMock.mockReset();
+    discoverComponentsMock.mockReset();
+    // Default: no components — the single-stack --live path most tests exercise.
+    discoverComponentsMock.mockResolvedValue({ components: new Map(), sourceFiles: [], errors: [] });
+    observeMock.mockReset();
+    loadPluginsMock.mockReset();
+    resolveLexMock.mockReset();
   });
 
   describe("Op graph (default)", () => {
@@ -325,6 +339,84 @@ describe("runGraph", () => {
       const out = stdoutBuf.join("\n");
       expect(out).not.toContain("No lexicons implement describeResources");
       expect(out).toContain("web-vpc");
+    });
+
+    // Regression for #57: a single-stack project (no `*.component.ts` files —
+    // discoverComponents returns an empty map) must observe exactly as before,
+    // no `stacks` collected.
+    test("single-stack project (no components): observeResources gets an empty stacks list", async () => {
+      resolveLexMock.mockResolvedValue(["aws"]);
+      loadPluginsMock.mockResolvedValue([
+        { name: "aws", serializer: {}, describeResources: () => Promise.resolve({}) },
+      ]);
+      observeMock.mockResolvedValue({ observations: [], errors: [] });
+      const exit = await runGraph({ args: makeArgs({ format: "ir", live: true, env: "prod" }), plugins: [], serializers: [] });
+      expect(exit).toBe(0);
+      expect(observeMock).toHaveBeenCalledWith("prod", expect.anything(), expect.anything(), {
+        owned: true,
+        stacks: [],
+      });
+    });
+
+    // The bug this branch fixes (#57): a multi-stack, per-component project
+    // (loomster/Floci) has no stack literally named after the environment, so
+    // the live graph must resolve each component's own `cfn-deploy` stack(s)
+    // and pass them through to `observeResources` for the per-stack union.
+    test("multi-stack component project: resolves each component's cfn-deploy stack(s) and passes them to observeResources", async () => {
+      resolveLexMock.mockResolvedValue(["aws"]);
+      loadPluginsMock.mockResolvedValue([
+        { name: "aws", serializer: {}, describeResources: () => Promise.resolve({}) },
+      ]);
+      discoverComponentsMock.mockResolvedValue({
+        errors: [],
+        sourceFiles: [],
+        components: new Map([
+          ["loom-db", { component: { name: "loom-db", dependsOn: [], deploy: [
+            { phase: "deploy", steps: [{ kind: "cfn-deploy", stack: "loom-local-a-loom-db" }] },
+          ] }, exportName: "loomDb", filePath: "components/loom-db.component.ts" }],
+          // Multi-stack component: two cfn-deploy steps, nested under a sub-phase.
+          ["loom-backend", { component: { name: "loom-backend", dependsOn: ["loom-db"], deploy: [
+            { phase: "deploy", steps: [
+              { phase: "nested", steps: [{ kind: "cfn-deploy", stack: "loom-local-a-loom-backend" }] },
+              { kind: "cfn-deploy", stack: "loom-local-a-loom-backend-jobs" },
+            ] },
+          ] }, exportName: "loomBackend", filePath: "components/loom-backend.component.ts" }],
+          // Non-aws / no cfn-deploy component: contributes no stacks.
+          ["loom-frontend", { component: { name: "loom-frontend", dependsOn: [], deploy: [
+            { phase: "deploy", steps: [{ kind: "s3-sync" }] },
+          ] }, exportName: "loomFrontend", filePath: "components/loom-frontend.component.ts" }],
+        ]),
+      });
+      observeMock.mockResolvedValue({
+        observations: [{ lexicon: "aws", resources: { "loom-db": { type: "AWS::RDS::DBInstance", status: "OK" } } }],
+        errors: [],
+      });
+      const exit = await runGraph({ args: makeArgs({ format: "ir", live: true, env: "local" }), plugins: [], serializers: [] });
+      expect(exit).toBe(0);
+      expect(observeMock).toHaveBeenCalledTimes(1);
+      const [, , , opts] = observeMock.mock.calls[0];
+      expect((opts as { stacks: string[] }).stacks.sort()).toEqual([
+        "loom-local-a-loom-backend",
+        "loom-local-a-loom-backend-jobs",
+        "loom-local-a-loom-db",
+      ]);
+      expect((opts as { owned: boolean }).owned).toBe(true);
+    });
+
+    test("component discovery errors: falls back to the single-stack path with a warning", async () => {
+      resolveLexMock.mockResolvedValue(["aws"]);
+      loadPluginsMock.mockResolvedValue([
+        { name: "aws", serializer: {}, describeResources: () => Promise.resolve({}) },
+      ]);
+      discoverComponentsMock.mockResolvedValue({ errors: [{ message: "bad component" }], sourceFiles: [], components: new Map() });
+      observeMock.mockResolvedValue({ observations: [], errors: [] });
+      const exit = await runGraph({ args: makeArgs({ format: "ir", live: true, env: "prod" }), plugins: [], serializers: [] });
+      expect(exit).toBe(0);
+      expect(observeMock).toHaveBeenCalledWith("prod", expect.anything(), expect.anything(), {
+        owned: true,
+        stacks: [],
+      });
+      expect(stderrBuf.join("\n")).toMatch(/component discovery failed/i);
     });
   });
 });
