@@ -57,6 +57,19 @@ describe("applyDetail", () => {
     expect(ir.edges).toContainEqual({ from: "subnet", to: "vpc", kind: "ref", viaAttr: "network" });
   });
 
+  test("T1 (composites) carries the cross-stack imports forward (survive the collapse as plain nodes)", () => {
+    const withImports: GraphIR = {
+      ...base,
+      nodes: [...base.nodes, { id: "pClusterArn", kind: "AWS::CloudFormation::Parameter", lexicon: "aws", attrs: {} }],
+      imports: [{ name: "pClusterArn", node: "pClusterArn" }],
+    };
+    const ir = applyDetail(withImports, DETAIL.COMPOSITES);
+    // The import node isn't a composite, so it survives — and `imports` rides
+    // along so a viewer can hide/match it at this tier too (not just base + T3).
+    expect(ir.nodes.some((n) => n.id === "pClusterArn")).toBe(true);
+    expect(ir.imports).toEqual([{ name: "pClusterArn", node: "pClusterArn" }]);
+  });
+
   test("T1 node count is between T0 and T2", () => {
     const t0 = applyDetail(base, DETAIL.STACKS).nodes.length;
     const t1 = applyDetail(base, DETAIL.COMPOSITES).nodes.length;

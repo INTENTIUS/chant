@@ -111,7 +111,18 @@ function toComposites(ir: GraphIR): GraphIR {
   }
 
   nodes.sort((a, b) => a.id.localeCompare(b.id));
-  return { nodes, edges: sortEdges([...seen.values()]), groups: { byLexicon: byLexiconOf(nodes) } };
+  // Carry the cross-stack import list forward: parameter/import nodes aren't
+  // composites, so they survive the collapse as plain nodes — a viewer that
+  // hides imports (or matches them across stacks) needs `imports` at every tier,
+  // not just the base + ATTRIBUTES. Filter to handles whose node survived.
+  const surviving = new Set(nodes.map((n) => n.id));
+  const imports = ir.imports?.filter((i) => surviving.has(i.node));
+  return {
+    nodes,
+    edges: sortEdges([...seen.values()]),
+    groups: { byLexicon: byLexiconOf(nodes) },
+    ...(imports && imports.length ? { imports } : {}),
+  };
 }
 
 /** T3 — annotate each edge with the producer attribute it references. */
