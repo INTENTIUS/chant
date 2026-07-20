@@ -280,7 +280,21 @@ export async function runLifecycleDiff(ctx: CommandContext): Promise<number> {
       : Array.from(buildResult.manifest.lexicons);
 
     if (args.live) {
-      const r = await runLifecycleDiffLive({ environment, lexicons, plugins, buildResult, json, stack: target.stack });
+      // Multi-stack component projects: observe each component's own cfn stack
+      // and union (same fix runGraphLive / plan use), so a deployed resource
+      // isn't reported "missing". Only when this target has no explicit stack.
+      let componentStacks: string[] = [];
+      if (!target.stack) {
+        try {
+          const disc = await discoverComponents(target.root);
+          const set = new Set<string>();
+          for (const { component } of disc.components.values()) for (const s of cfnDeployStacks(component.deploy)) set.add(s);
+          componentStacks = [...set];
+        } catch {
+          // no components / discovery failed → single-stack observe path
+        }
+      }
+      const r = await runLifecycleDiffLive({ environment, lexicons, plugins, buildResult, json, stack: target.stack, componentStacks });
       totalDrift += r.totalDrift;
       totalChecked += r.totalLexiconsChecked;
       if (json) {
@@ -434,6 +448,10 @@ interface LiveDiffArgs {
   /** Deployed stack name for a multi-stack project (#932); scopes the live
    * observation (which CloudFormation stack to query) and the snapshot read. */
   stack?: string;
+  /** Component projects deploy one CFN stack per component; observe them all and
+   * union (the same fix graph/plan use), else every deployed resource reads as
+   * "missing". Empty → the single-stack observe path. */
+  componentStacks?: string[];
 }
 
 interface LiveDiffOutcome {
@@ -497,15 +515,25 @@ async function runLifecycleDiffLive(args: LiveDiffArgs): Promise<LiveDiffOutcome
 
     // ── Resources path (entity-keyed) ──────────────────────────────────────
     if (plugin.describeResources) {
-      let observedNow: Record<string, ResourceMetadata>;
+      let observedNow: Record<string, ResourceMetadata> = {};
       try {
-        observedNow = await plugin.describeResources({
-          environment: args.environment,
-          buildOutput,
-          entityNames: Array.from(declared),
-          entities,
-          stack: args.stack,
-        });
+        if (args.componentStacks && args.componentStacks.length > 0) {
+          // Observe each component's own stack and union — the multi-stack fix.
+          for (const stack of args.componentStacks) {
+            Object.assign(
+              observedNow,
+              await plugin.describeResources({ environment: args.environment, buildOutput, entityNames: Array.from(declared), entities, stack }),
+            );
+          }
+        } else {
+          observedNow = await plugin.describeResources({
+            environment: args.environment,
+            buildOutput,
+            entityNames: Array.from(declared),
+            entities,
+            stack: args.stack,
+          });
+        }
       } catch (err) {
         console.error(formatError({
           message: `${lexiconName}: describeResources failed — ${err instanceof Error ? err.message : String(err)}`,
