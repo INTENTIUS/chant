@@ -1,6 +1,6 @@
 ---
 title: "CRD-Generated Classes"
-description: "Typed K8s::* classes generated from third-party CRDs — Gateway API, cert-manager, the CockroachDB operator, KubeRay, and Argo CD — plus how the CRD source list works and how to add your own."
+description: "Typed K8s::* classes generated from third-party CRDs — Gateway API, cert-manager, the CockroachDB operator, KubeRay, Argo CD, and Flux — plus how the CRD source list works and how to add your own."
 ---
 
 import { Aside } from '@astrojs/starlight/components';
@@ -24,7 +24,11 @@ gateway.networking.k8s.io      Gateway          K8s::Gateway::HTTPRoute
 crdb.cockroachlabs.com         Crdb             K8s::Crdb::CrdbCluster
 cert-manager.io                CertManager      K8s::CertManager::Certificate
 acme.cert-manager.io           Acme             K8s::Acme::Challenge
+*.toolkit.fluxcd.io            Flux             K8s::Flux::Kustomization
+fluxcd.controlplane.io         Flux             K8s::Flux::FluxInstance
 ```
+
+The Flux rows show the override at work: six distinct groups all map to one `Flux` namespace (see [Flux](#flux)), rather than each group's first segment.
 
 ## Gateway API
 
@@ -152,6 +156,69 @@ The operator-managed `CrdbCluster` is the common single-region production path. 
 ## KubeRay & Argo CD
 
 The first two CRD sources. KubeRay (`ray.io`, **v1.3.0**) produces `RayCluster`, `RayJob`, and `RayService`. Argo CD (`argoproj.io`, **v2.13.3**) produces `Application`, `ApplicationSet`, and `AppProject`. Both ship value-add composites — see [Argo CD Composites](/chant/lexicons/k8s/argo-composites/) and the [Ray + KubeRay on GKE tutorial](/chant/tutorials/ray-kuberay-gke/).
+
+## Flux
+
+The Flux GitOps Toolkit (pinned to flux2 **v2.9.1**) and the Flux Operator (**v0.54.1**). The toolkit spreads across five `*.toolkit.fluxcd.io` groups and the operator adds `fluxcd.controlplane.io`; all six collapse to a single `Flux` namespace, so a `GitRepository` and a `Kustomization` read as `K8s::Flux::*` siblings rather than scattering across `Source`, `Kustomize`, `Helm`, `Notification`, and `Image`.
+
+Both sources are the release `install.yaml` — a multi-doc bundle of controllers, RBAC, and CRDs. The parser keeps only the CRD documents, and a `kinds` allowlist on each `CRD_SOURCES` entry narrows those to the supported set (the bundle also carries the experimental `ExternalArtifact` and `ArtifactGenerator`, left out for now).
+
+| Type | apiVersion / kind |
+|---|---|
+| `GitRepository` | `source.toolkit.fluxcd.io/v1` |
+| `OCIRepository` | `source.toolkit.fluxcd.io/v1` |
+| `HelmRepository` | `source.toolkit.fluxcd.io/v1` |
+| `HelmChart` | `source.toolkit.fluxcd.io/v1` |
+| `Bucket` | `source.toolkit.fluxcd.io/v1` |
+| `Kustomization` | `kustomize.toolkit.fluxcd.io/v1` |
+| `HelmRelease` | `helm.toolkit.fluxcd.io/v2` |
+| `Provider` | `notification.toolkit.fluxcd.io/v1beta3` |
+| `Alert` | `notification.toolkit.fluxcd.io/v1beta3` |
+| `Receiver` | `notification.toolkit.fluxcd.io/v1` |
+| `ImagePolicy` | `image.toolkit.fluxcd.io/v1` |
+| `ImageRepository` | `image.toolkit.fluxcd.io/v1` |
+| `ImageUpdateAutomation` | `image.toolkit.fluxcd.io/v1` |
+| `FluxInstance` | `fluxcd.controlplane.io/v1` |
+| `FluxReport` | `fluxcd.controlplane.io/v1` |
+| `ResourceSet` | `fluxcd.controlplane.io/v1` |
+| `ResourceSetInputProvider` | `fluxcd.controlplane.io/v1` |
+
+Install the toolkit and, optionally, the operator:
+
+```bash
+# GitOps Toolkit controllers (source, kustomize, helm, notification, image)
+kubectl apply -f https://github.com/fluxcd/flux2/releases/download/v2.9.1/install.yaml
+
+# Flux Operator (manages a Flux instance declaratively)
+kubectl apply -f https://github.com/controlplaneio-fluxcd/flux-operator/releases/download/v0.54.1/install.yaml
+```
+
+```typescript
+import { GitRepository, Kustomization } from "@intentius/chant-lexicon-k8s";
+
+export const podinfo = new GitRepository({
+  metadata: { name: "podinfo", namespace: "flux-system" },
+  spec: {
+    interval: "1m",
+    url: "https://github.com/stefanprodan/podinfo",
+    ref: { branch: "master" },
+  },
+});
+
+export const apps = new Kustomization({
+  metadata: { name: "apps", namespace: "flux-system" },
+  spec: {
+    interval: "10m",
+    path: "./kustomize",
+    prune: true,
+    sourceRef: { kind: "GitRepository", name: "podinfo" },
+  },
+});
+```
+
+<Aside type="note">
+Flux is a **source-as-truth** reconciler — its controllers converge the cluster to what's in git. That is a different lifecycle model from chant's own observational one; chant only **emits** the typed Flux resources. The role split mirrors [Argo CD](/chant/lexicons/k8s/argo-composites/#the-three-layer-model-argo-vs-temporal-vs-ci): reach for Flux (or Argo) when the desired state lives in git and converges; reach for an [Op](/chant/guide/ops/) when the step is a procedure with ordering or gates.
+</Aside>
 
 ## Read-only status
 

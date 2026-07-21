@@ -16,7 +16,12 @@ import { parseCRD } from "./parser";
  */
 export async function loadCRDs(source: CRDSource): Promise<K8sParseResult[]> {
   const content = await fetchCRDContent(source);
-  return parseCRD(content);
+  const parsed = parseCRD(content);
+  if (source.kinds && source.kinds.length > 0) {
+    const allow = new Set(source.kinds);
+    return parsed.filter((r) => allow.has(r.gvk.kind));
+  }
+  return parsed;
 }
 
 /**
