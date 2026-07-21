@@ -229,6 +229,26 @@ describe("parseCRDSpec", () => {
     expect(results[0].resource.typeName).toBe("K8s::Argo::Application");
   });
 
+  test("all Flux toolkit + operator groups collapse to the Flux namespace", () => {
+    const cases: Array<[string, string]> = [
+      ["source.toolkit.fluxcd.io", "GitRepository"],
+      ["kustomize.toolkit.fluxcd.io", "Kustomization"],
+      ["helm.toolkit.fluxcd.io", "HelmRelease"],
+      ["notification.toolkit.fluxcd.io", "Alert"],
+      ["image.toolkit.fluxcd.io", "ImagePolicy"],
+      ["fluxcd.controlplane.io", "FluxInstance"],
+    ];
+    for (const [group, kind] of cases) {
+      const results = parseCRDSpec({
+        group,
+        names: { kind, plural: `${kind.toLowerCase()}s` },
+        scope: "Namespaced" as const,
+        versions: [{ name: "v1", served: true, storage: true }],
+      });
+      expect(results[0].resource.typeName).toBe(`K8s::Flux::${kind}`);
+    }
+  });
+
   test("dedupes property-type names when a scalar and array sibling collide", () => {
     // Argo Application has both `source` (object) and `sources` (array of the
     // same shape); singularizing `sources` → `Source` would collide.

@@ -16,9 +16,22 @@ import { loadAll } from "js-yaml";
  * Group names whose first segment doesn't yield the conventional namespace.
  * "argoproj.io" → "Argo" (not "Argoproj") to match the Argo CD vocabulary
  * and the ArgoAppFor / ArgoAppSetForRegions composites.
+ *
+ * The Flux toolkit spreads across five `*.toolkit.fluxcd.io` groups plus the
+ * Flux Operator's `fluxcd.controlplane.io`; all six collapse to a single `Flux`
+ * namespace so a GitRepository and a Kustomization read as `K8s::Flux::*`
+ * siblings rather than scattering to Source / Kustomize / Helm / Notification /
+ * Image / Fluxcd. (`helm.toolkit.fluxcd.io` → `Helm` would also collide
+ * confusingly with the separate helm lexicon.)
  */
 const GROUP_NAMESPACE_OVERRIDES: Record<string, string> = {
   "argoproj.io": "Argo",
+  "source.toolkit.fluxcd.io": "Flux",
+  "kustomize.toolkit.fluxcd.io": "Flux",
+  "helm.toolkit.fluxcd.io": "Flux",
+  "notification.toolkit.fluxcd.io": "Flux",
+  "image.toolkit.fluxcd.io": "Flux",
+  "fluxcd.controlplane.io": "Flux",
 };
 
 /**

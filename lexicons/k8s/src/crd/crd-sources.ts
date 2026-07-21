@@ -107,6 +107,49 @@ const CERT_MANAGER_CRD_BUNDLE = `https://github.com/cert-manager/cert-manager/re
 const PROM_OPERATOR_VERSION = "v0.79.2";
 const PROM_OPERATOR_CRD_BASE = `https://raw.githubusercontent.com/prometheus-operator/prometheus-operator/${PROM_OPERATOR_VERSION}/example/prometheus-operator-crd`;
 
+/**
+ * Flux GitOps Toolkit CRDs — the five `*.toolkit.fluxcd.io` groups.
+ *
+ * The flux2 release `install.yaml` is a single multi-doc bundle (controllers,
+ * RBAC, and CRDs); the parser keeps only the CustomResourceDefinition docs, and
+ * the `kinds` allowlist below narrows those to the supported set — the bundle
+ * also carries `ExternalArtifact` and `ArtifactGenerator` (experimental, and a
+ * separate `source.extensions.fluxcd.io` group), which are intentionally left
+ * out. All groups map to the `Flux` namespace (see GROUP_NAMESPACE_OVERRIDES in
+ * crd/parser.ts):
+ *   K8s::Flux::GitRepository / OCIRepository / HelmRepository / HelmChart / Bucket
+ *                                          → source.toolkit.fluxcd.io/v1
+ *   K8s::Flux::Kustomization               → kustomize.toolkit.fluxcd.io/v1
+ *   K8s::Flux::HelmRelease                 → helm.toolkit.fluxcd.io/v2
+ *   K8s::Flux::Provider / Alert            → notification.toolkit.fluxcd.io/v1beta3
+ *   K8s::Flux::Receiver                    → notification.toolkit.fluxcd.io/v1
+ *   K8s::Flux::ImagePolicy / ImageRepository / ImageUpdateAutomation
+ *                                          → image.toolkit.fluxcd.io/v1
+ *
+ * Controller install: kubectl apply -f
+ *   https://github.com/fluxcd/flux2/releases/download/v2.9.1/install.yaml
+ */
+const FLUX_TOOLKIT_VERSION = "v2.9.1";
+const FLUX_TOOLKIT_INSTALL = `https://github.com/fluxcd/flux2/releases/download/${FLUX_TOOLKIT_VERSION}/install.yaml`;
+
+/**
+ * Flux Operator CRDs — fluxcd.controlplane.io/v1
+ *
+ * The operator that installs and manages a Flux instance declaratively. Its
+ * release `install.yaml` bundles the four CRDs alongside the operator
+ * Deployment/RBAC; the parser keeps only the CRDs. They map to the `Flux`
+ * namespace (GROUP_NAMESPACE_OVERRIDES):
+ *   K8s::Flux::FluxInstance              → fluxcd.controlplane.io/v1
+ *   K8s::Flux::FluxReport                → fluxcd.controlplane.io/v1
+ *   K8s::Flux::ResourceSet               → fluxcd.controlplane.io/v1
+ *   K8s::Flux::ResourceSetInputProvider  → fluxcd.controlplane.io/v1
+ *
+ * Operator install: kubectl apply -f
+ *   https://github.com/controlplaneio-fluxcd/flux-operator/releases/download/v0.54.1/install.yaml
+ */
+const FLUX_OPERATOR_VERSION = "v0.54.1";
+const FLUX_OPERATOR_INSTALL = `https://github.com/controlplaneio-fluxcd/flux-operator/releases/download/${FLUX_OPERATOR_VERSION}/install.yaml`;
+
 export const CRD_SOURCES: CRDSource[] = [
   { type: "url", url: `${KUBERAY_CRD_BASE}/ray.io_rayclusters.yaml` },
   { type: "url", url: `${KUBERAY_CRD_BASE}/ray.io_rayjobs.yaml` },
@@ -123,4 +166,28 @@ export const CRD_SOURCES: CRDSource[] = [
   { type: "url", url: CERT_MANAGER_CRD_BUNDLE },
   { type: "url", url: `${PROM_OPERATOR_CRD_BASE}/monitoring.coreos.com_servicemonitors.yaml` },
   { type: "url", url: `${PROM_OPERATOR_CRD_BASE}/monitoring.coreos.com_prometheusrules.yaml` },
+  {
+    type: "url",
+    url: FLUX_TOOLKIT_INSTALL,
+    kinds: [
+      "GitRepository",
+      "OCIRepository",
+      "HelmRepository",
+      "HelmChart",
+      "Bucket",
+      "Kustomization",
+      "HelmRelease",
+      "Provider",
+      "Alert",
+      "Receiver",
+      "ImagePolicy",
+      "ImageRepository",
+      "ImageUpdateAutomation",
+    ],
+  },
+  {
+    type: "url",
+    url: FLUX_OPERATOR_INSTALL,
+    kinds: ["FluxInstance", "FluxReport", "ResourceSet", "ResourceSetInputProvider"],
+  },
 ];

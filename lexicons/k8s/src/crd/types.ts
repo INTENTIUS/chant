@@ -19,6 +19,13 @@ export interface CRDSource {
   context?: string;
   /** Namespace to scope the CRD lookup for type="cluster" */
   namespace?: string;
+  /**
+   * Optional allowlist of CRD `kind` names to keep from this source. When a
+   * source is a multi-doc install bundle (as with Flux, whose release
+   * `install.yaml` also carries out-of-scope CRDs), this restricts codegen to
+   * the intended kinds. Omit to generate every CRD the source contains.
+   */
+  kinds?: string[];
 }
 
 /**

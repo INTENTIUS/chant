@@ -153,6 +153,52 @@ describe("k8sSerializer", () => {
     expect(result).toContain("project: default");
   });
 
+  test("Flux CRDs serialize with the correct per-group GVK", () => {
+    const entities = new Map<string, any>();
+    entities.set(
+      "podinfoRepo",
+      mockResource("K8s::Flux::GitRepository", {
+        metadata: { name: "podinfo", namespace: "flux-system" },
+        spec: { url: "https://github.com/stefanprodan/podinfo", interval: "1m" },
+      }),
+    );
+    entities.set(
+      "apps",
+      mockResource("K8s::Flux::Kustomization", {
+        metadata: { name: "apps", namespace: "flux-system" },
+        spec: { interval: "10m", path: "./apps", prune: true },
+      }),
+    );
+    entities.set(
+      "podinfoRelease",
+      mockResource("K8s::Flux::HelmRelease", {
+        metadata: { name: "podinfo", namespace: "flux-system" },
+        spec: { interval: "5m", chart: { spec: { chart: "podinfo" } } },
+      }),
+    );
+    entities.set(
+      "flux",
+      mockResource("K8s::Flux::FluxInstance", {
+        metadata: { name: "flux", namespace: "flux-system" },
+        spec: { distribution: { version: "2.x", registry: "ghcr.io/fluxcd" } },
+      }),
+    );
+
+    const result = k8sSerializer.serialize(entities);
+    // source-controller v1
+    expect(result).toContain("apiVersion: source.toolkit.fluxcd.io/v1");
+    expect(result).toContain("kind: GitRepository");
+    // kustomize-controller v1
+    expect(result).toContain("apiVersion: kustomize.toolkit.fluxcd.io/v1");
+    expect(result).toContain("kind: Kustomization");
+    // helm-controller — the one on v2, not v1
+    expect(result).toContain("apiVersion: helm.toolkit.fluxcd.io/v2");
+    expect(result).toContain("kind: HelmRelease");
+    // Flux Operator v1
+    expect(result).toContain("apiVersion: fluxcd.controlplane.io/v1");
+    expect(result).toContain("kind: FluxInstance");
+  });
+
   test("Namespace is specless type", () => {
     const entities = new Map<string, any>();
     entities.set(
