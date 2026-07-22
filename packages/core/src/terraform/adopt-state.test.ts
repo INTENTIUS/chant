@@ -1,5 +1,5 @@
 import { describe, test, expect } from "vitest";
-import { adoptFromState, canAdoptFromState } from "./adopt-state";
+import { adoptFromState, canAdoptFromState, supportedStateAdoptionTypes } from "./adopt-state";
 import type { StateResource } from "./state";
 
 describe("adoptFromState", () => {
@@ -48,6 +48,14 @@ describe("adoptFromState", () => {
   test("canAdoptFromState gates on a known native constructor", () => {
     expect(canAdoptFromState("aws_s3_bucket")).toBe(true);
     expect(canAdoptFromState("random_pet")).toBe(false);
+  });
+
+  test("supportedStateAdoptionTypes lists the mappable types, sorted", () => {
+    const types = supportedStateAdoptionTypes();
+    expect(types).toContain("aws_s3_bucket");
+    expect(types).toContain("aws_sqs_queue");
+    expect(types).toEqual([...types].sort());
+    expect(types).not.toContain("aws_subnet"); // ranked by advise, not yet emittable
   });
 
   test("returns null for a type with no native constructor", () => {
