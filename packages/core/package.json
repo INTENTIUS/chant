@@ -83,6 +83,7 @@
     "zod": "^4.3.6"
   },
   "devDependencies": {
+    "@cdktf/hcl2json": "^0.21.0",
     "ajv": "^8.20.0"
   }
 }

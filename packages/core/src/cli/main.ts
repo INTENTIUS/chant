@@ -16,6 +16,7 @@ import { runInit, runInitLexicon } from "./handlers/init";
 import { runList, runDescribe, runImport, runAudit, runUpdate, runDoctor } from "./handlers/misc";
 import { runVendor } from "./handlers/vendor";
 import { runMigrate } from "./handlers/migrate";
+import { runCarveAdvise, runCarveUnknown } from "./handlers/carve";
 import { runLifecycleSnapshot, runLifecycleShow, runLifecycleDiff, runLifecycleRollback, runLifecyclePlan, runLifecycleAffected, runLifecycleLog, runLifecycleUnknown } from "./handlers/lifecycle";
 import { runComponentsStatus, runComponentsReleaseRecord, runComponentsUnknown } from "./handlers/components";
 import { runGraph } from "./handlers/graph";
@@ -245,6 +246,10 @@ Commands:
                          --template <file> / --theme <file> for the html report)
   migrate <file>        Translate a workflow between lexicons
                         (default: --from github --to gitlab)
+  carve advise          Read-only Terraform peelability advisor: rank which
+                        --from <tf-dir>   resources are cheap to carve into native chant
+                        (--json, --report <path>). Emits nothing, changes nothing.
+                        Needs @cdktf/hcl2json (install on demand; run the carve skill).
 
 Ops:
   run <name>            Start an Op workflow (spawns worker + submits to Temporal)
@@ -428,6 +433,9 @@ const registry: CommandDef[] = [
   { name: "import", handler: runImport },
   { name: "audit", handler: runAudit },
   { name: "migrate", handler: runMigrate },
+  // Read-only Terraform peelability advisor (#214). Compound so "advise" lands
+  // in args.path; the estate dir comes from --from. No plugins, no project.
+  { name: "carve advise", handler: runCarveAdvise },
   { name: "init", handler: runInit },
   { name: "init lexicon", handler: runInitLexicon },
 { name: "update", handler: runUpdate },
@@ -477,6 +485,7 @@ const registry: CommandDef[] = [
   { name: "serve mcp", requiresPlugins: true, handler: runServeMcp },
 
   // Fallback for unknown subcommands (must come after compound entries)
+  { name: "carve", handler: runCarveUnknown },
   { name: "emulator", requiresPlugins: true, handler: runEmulator },
   { name: "lifecycle", handler: runLifecycleUnknown },
   { name: "dev", handler: runDevUnknown },
