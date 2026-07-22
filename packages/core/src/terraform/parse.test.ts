@@ -23,7 +23,7 @@ describe("loadHcl2json", () => {
   test("missing parser throws an install-hint error, not a raw MODULE_NOT_FOUND", () => {
     const err = new Hcl2JsonNotInstalled(new Error("Cannot find module '@cdktf/hcl2json'"));
     expect(err.message).toContain("npm install -D @cdktf/hcl2json");
-    expect(err.message).toContain("carve");
+    expect(err.message).toContain("HCL parser");
     expect(err.name).toBe("Hcl2JsonNotInstalled");
   });
 });

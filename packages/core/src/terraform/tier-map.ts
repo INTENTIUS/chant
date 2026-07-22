@@ -31,6 +31,10 @@ export const TIER_MAP: Record<string, TierInfo> = {
   aws_sqs_queue: { tier: 1, mapsTo: "AWS::SQS::Queue" },
   aws_dynamodb_table: { tier: 1, mapsTo: "AWS::DynamoDB::Table" },
   aws_vpc: { tier: 1, mapsTo: "AWS::EC2::VPC" },
+  aws_subnet: { tier: 1, mapsTo: "AWS::EC2::Subnet" },
+  aws_security_group: { tier: 1, mapsTo: "AWS::EC2::SecurityGroup" },
+  aws_route_table: { tier: 1, mapsTo: "AWS::EC2::RouteTable" },
+  aws_internet_gateway: { tier: 1, mapsTo: "AWS::EC2::InternetGateway" },
   // AWS tier-2 (reshaped / composite-ish)
   aws_lambda_function: { tier: 2, mapsTo: "AWS::Lambda::Function" },
   aws_ecs_service: { tier: 2, mapsTo: "AWS::ECS::Service" },

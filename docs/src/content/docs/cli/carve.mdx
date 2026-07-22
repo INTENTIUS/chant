@@ -1,0 +1,100 @@
+---
+title: "chant carve advise"
+description: Read-only Terraform peelability advisor — rank which resources are cheap to carve into native chant
+---
+
+## Synopsis
+
+```
+chant carve advise --from <terraform-dir> [flags]
+```
+
+## Description
+
+`chant carve advise` points at a Terraform estate and ranks each resource and module by **peelability**: how cleanly it could be carved into native chant source. Clean leaves score high, load-bearing or unmappable resources score low.
+
+It is read-only. It parses `.tf` (and optionally `.tfstate`), scores, and prints. It emits no chant source, patches no Terraform, and touches no live resource. The emit, boundary-bridging, and apply phases are a separate, gated design (see issue #197); this command is the analysis slice that is useful on its own.
+
+Use it to decide where an incremental move off Terraform is worth starting. The point is not to carve the whole estate. Small, cleanly-mappable pieces move; the gnarly long tail stays in Terraform.
+
+## Flags
+
+| Flag | Description |
+|------|-------------|
+| `--from <dir>` | The Terraform estate directory to analyze (required) |
+| `--state <path>` | Optional `.tfstate` for accurate `count`/`for_each` instance counts |
+| `--json` | Emit the full per-resource breakdown as JSON |
+| `--report <path>` | Write the JSON report to a file |
+
+## The parser is installed on demand
+
+The advisor parses HCL with [`@cdktf/hcl2json`](https://www.npmjs.com/package/@cdktf/hcl2json), HashiCorp's own parser compiled to wasm. It is not a chant dependency, because only carve-out users need it. The first run without it fails with an install hint:
+
+```bash
+npm install -D @cdktf/hcl2json
+```
+
+## Scoring model
+
+Each resource starts at 100 and loses points for boundary work and mapping difficulty:
+
+```
+score = 100
+  - 12 * inbound          # survivors that depend on this → a data-source patch each
+  -  4 * outbound         # this depends on survivors → a deferred input each
+  - 15 * (tier - 1)       # native-spec map: tier1=0, tier2=-15, tier3=-30
+  - 10 * has_dynamic      # count / for_each / data present
+  -  3 * (instances - 1)  # state-expanded instance count
+clamp 0..100              # no known native mapping → 0
+```
+
+**Inbound** edges are the expensive ones: each resource that still depends on a carved piece needs its Terraform rewritten to a `data` source. **Outbound** edges are cheaper — a value the carved piece reads from a survivor becomes a deploy-time input, deferred until you actually apply.
+
+| Score | Band | Meaning |
+|-------|------|---------|
+| 80–100 | clean leaf | carve now |
+| 50–79 | carvable w/ edits | has boundary work |
+| 0–49 | leave in Terraform | unmappable or load-bearing |
+
+Terraform sub-resources that inline into a parent (for example `aws_s3_bucket_versioning` into `aws_s3_bucket`) are folded into the parent's carve set. They are not ranked on their own, and their edge to the parent is not counted as boundary work.
+
+## Example
+
+Run it against the sample estate bundled with the tests:
+
+```
+$ chant carve advise --from packages/core/src/terraform/__fixtures__/sample-estate
+
+Terraform carve-out advisory for .../sample-estate
+  8 resource(s)/module(s) scored. Advises only — nothing is emitted or changed.
+
+CLEAN LEAF — carve now  (6)
+  100  aws_cloudwatch_log_group.api -> AWS::Logs::LogGroup
+       clean 1:1 native map, no boundary edges
+   96  aws_subnet.a -> AWS::EC2::Subnet
+       1 outbound (deferred input each)
+   88  aws_s3_bucket.assets -> AWS::S3::Bucket
+       1 inbound (data-source patch each)
+   81  aws_lambda_function.api -> AWS::Lambda::Function
+       1 outbound (deferred input each), tier 2 map
+
+CARVABLE — has boundary work  (1)
+   64  aws_vpc.main -> AWS::EC2::VPC
+       3 inbound (data-source patch each)
+
+LEAVE IN TERRAFORM  (1)
+    0  random_pet.suffix
+       no known native mapping (unsupported provider/type)
+
+Bands: 80-100 carve now | 50-79 carve with boundary edits | 0-49 leave in Terraform
+```
+
+Read it top to bottom: the log group has no dependents and a clean native map, so it carves for free. The bucket is a clean leaf too, held back one notch by the one Lambda that reads it. The VPC is carvable but three subnets hang off it, so carving it means three data-source patches. `random_pet` has no native mapping at all, so it stays.
+
+## Coverage
+
+The tier map is a curated seed covering the common tier-1 leaves people carve first. A resource type it does not know scores 0 (leave in Terraform), which is the safe default: the advisor never claims a resource is carvable when it cannot map it. State is read only for root-module resources; resources nested inside a module are not descended into.
+
+:::caution
+This command advises only. It reads `.tf` and (with `--state`) `.tfstate`, and prints a ranking. It writes nothing to your Terraform, generates no chant source, and makes no cloud API calls.
+:::

@@ -5,7 +5,7 @@
  *
  * `@cdktf/hcl2json` is NOT a chant dependency — it carries a ~1.8 MB wasm blob
  * and only carve-out users need it. It is lazy-loaded here and, if absent, the
- * advisor fails with an install hint (the `carve` skill automates the install).
+ * advisor fails with a one-line install hint.
  */
 
 import { readdirSync, readFileSync } from "fs";
@@ -22,7 +22,6 @@ export class Hcl2JsonNotInstalled extends Error {
     super(
       "Terraform carve-out needs the HCL parser, which is not installed.\n" +
         "  Install it once:  npm install -D @cdktf/hcl2json\n" +
-        "  or let the agent do it:  run the `carve` skill\n" +
         `(underlying error: ${cause instanceof Error ? cause.message : String(cause)})`,
     );
     this.name = "Hcl2JsonNotInstalled";

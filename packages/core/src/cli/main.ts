@@ -251,7 +251,7 @@ Commands:
   carve advise          Read-only Terraform peelability advisor: rank which
                         --from <tf-dir>   resources are cheap to carve into native chant
                         (--json, --report <path>). Emits nothing, changes nothing.
-                        Needs @cdktf/hcl2json (install on demand; run the carve skill).
+                        Needs @cdktf/hcl2json (npm install -D @cdktf/hcl2json).
 
 Ops:
   run <name>            Start an Op workflow (spawns worker + submits to Temporal)
