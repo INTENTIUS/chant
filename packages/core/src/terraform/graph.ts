@@ -7,6 +7,7 @@
  * parser and feeds this.
  */
 
+import { IDENTITY_ATTR } from "./tier-map";
 import type { Hcl2JsonTree, TfEdge, TfGraph, TfNode } from "./types";
 
 /**
@@ -74,6 +75,15 @@ function blockHasMeta(block: unknown, key: string): boolean {
   return !!block && typeof block === "object" && key in (block as Record<string, unknown>);
 }
 
+/** The resource's physical name, if its identity attribute is a plain literal (not interpolated). */
+function literalIdentity(block: unknown, type: string): string | undefined {
+  const attr = IDENTITY_ATTR[type];
+  if (!attr || !block || typeof block !== "object") return undefined;
+  const value = (block as Record<string, unknown>)[attr];
+  if (typeof value !== "string" || value.includes("${")) return undefined;
+  return value;
+}
+
 /**
  * Build the dependency graph from a merged hcl2json tree.
  *
@@ -109,6 +119,7 @@ export function buildGraph(tree: Hcl2JsonTree): TfGraph {
         name,
         instances: 1,
         hasDynamic: dynamic || touchesData,
+        identity: literalIdentity(block, type),
       });
     }
   }
