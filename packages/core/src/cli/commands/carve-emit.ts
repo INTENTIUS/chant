@@ -18,7 +18,7 @@ import { parseTerraformDir, Hcl2JsonNotInstalled } from "../../terraform/parse";
 import { boundaryReport, type CarveReport } from "../../terraform/carve";
 import { resolveTier } from "../../terraform/tier-map";
 import { readStateResource } from "../../terraform/state";
-import { adoptFromState, canAdoptFromState } from "../../terraform/adopt-state";
+import { adoptFromState, canAdoptFromState, supportedStateAdoptionTypes } from "../../terraform/adopt-state";
 import type { LexiconPlugin, ResourceSelector } from "../../lexicon";
 import type { ImportResult, LiveImportOptions } from "./import";
 
@@ -101,7 +101,13 @@ export async function carveEmit(opts: CarveEmitOptions, deps: CarveEmitDeps): Pr
   // ── Adoption path 1: from .tfstate (offline, correct for TF-managed) ──
   if (opts.statePath) {
     if (!canAdoptFromState(tfType!)) {
-      return { ok: false, error: `${tfType} cannot be adopted from state yet (no native constructor mapping).` };
+      return {
+        ok: false,
+        error:
+          `${tfType} cannot be adopted from state yet (no native constructor mapping).\n` +
+          `Supported types: ${supportedStateAdoptionTypes().join(", ")}. ` +
+          `Coverage is expanding — see chant issue #1001.`,
+      };
     }
     const stateResource = readStateResource(opts.statePath, opts.select);
     if (!stateResource) {

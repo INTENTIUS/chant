@@ -25,10 +25,16 @@ cd examples/terraform-carve-out
 
 The rest of this page walks the same steps individually.
 
-<Aside type="note">
-The advisor parses HCL with `@cdktf/hcl2json`, installed on demand:
-`npm install -D @cdktf/hcl2json`.
-</Aside>
+## Prerequisites
+
+```bash
+# the chant CLI and the AWS lexicon (the carve emit target)
+npm install --save-dev @intentius/chant @intentius/chant-lexicon-aws
+# the HCL parser the carve commands use
+npm install --save-dev @cdktf/hcl2json
+```
+
+Run `chant` via `npx chant` (or add `node_modules/.bin` to your PATH).
 
 ## 1. See what is cheap to carve
 
@@ -103,7 +109,7 @@ chant carve apply --from ./terraform --select aws_s3_bucket.assets --env prod --
 
 `carve apply` resolves the ownership marker (`chant:managed-by/stack/env`) and
 prints the finalized runbook. It makes no cloud call — the apply is whatever
-lifecycle you brought.
+lifecycle you brought, which stamps the marker the emitted source carries.
 
 The one genuinely live part, when you are ready to hand off for real:
 
@@ -112,11 +118,6 @@ terraform state rm aws_s3_bucket.assets        # stop managing it; does NOT dest
 terraform plan && terraform apply               # apply the bridge patch to survivors
 ```
 
-`carve apply` resolves the ownership marker (`chant:managed-by/stack/env`) and
-prints the finalized apply runbook. It makes no cloud call — the apply is
-whatever lifecycle you brought, which stamps the marker the emitted source
-carries.
-
 <Aside type="caution">
 `carve bridge --apply-rewrites`, `terraform state rm`, and `terraform apply`
 change what Terraform manages. Review the generated proposals and the runbook
@@ -124,8 +125,31 @@ first. The carve is reversible with `terraform import aws_s3_bucket.assets
 myapp-assets-prod` up until graduation.
 </Aside>
 
-## What next
+## Try it on your own estate
 
-`chant carve advise` and `chant carve bridge` are offline and safe to run
-against any Terraform tree — point them at your own estate to see what is cheap
-to leave. See the [carve CLI reference](/chant/cli/carve-out/) for every flag.
+Point it at your own Terraform. Two of the four steps work on any tree today;
+the other two have narrower coverage, so it is worth knowing what to expect
+before you run them.
+
+- **`carve advise` and `carve bridge` — any Terraform tree.** Both are offline,
+  read-only, and lexicon-agnostic. Run them against your real estate right now:
+  ```bash
+  chant carve advise --from /path/to/your/terraform
+  chant carve bridge --from /path/to/your/terraform --select <address> --output ./carveout
+  ```
+
+- **`carve emit` and `carve apply` — AWS only, for now.** Emit produces native
+  chant source, which currently means the AWS lexicon. Adoption from state
+  (`--state`) maps these Terraform types today: `aws_s3_bucket`,
+  `aws_cloudwatch_log_group`, `aws_sns_topic`, `aws_sqs_queue`. Other types
+  (and other clouds) report "cannot be adopted from state yet."
+
+<Aside type="note">
+`advise` ranks more types than `emit` can currently produce — for example it
+scores subnets and VPCs, which emit does not map yet. A high advise score means
+"cheap to carve *once emit supports it*," not "emittable today." Coverage is
+tracked in [issue #1001](https://github.com/intentius/chant/issues/1001), and
+Kubernetes support in [#999](https://github.com/intentius/chant/issues/999).
+</Aside>
+
+See the [carve CLI reference](/chant/cli/carve-out/) for every flag.

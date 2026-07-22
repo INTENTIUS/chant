@@ -81,6 +81,11 @@ export function canAdoptFromState(tfType: string): boolean {
   return tfType in NATIVE_CTOR;
 }
 
+/** Terraform types that can currently be adopted from state, for user-facing hints. */
+export function supportedStateAdoptionTypes(): string[] {
+  return Object.keys(NATIVE_CTOR).sort();
+}
+
 /**
  * Render chant source for a state-adopted resource. Emits the native
  * constructor with mapped properties, plus a reference comment listing the
