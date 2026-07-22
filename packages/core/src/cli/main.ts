@@ -263,10 +263,10 @@ Commands:
                         --from <tf-dir>   resources are cheap to carve into native chant
                         (--json, --report <path>). Emits nothing, changes nothing.
                         Needs @cdktf/hcl2json (npm install -D @cdktf/hcl2json).
-  carve emit            Adopt a selected TF resource into chant source via live
-                        --from <tf-dir>   import (cloud→code) and report its boundary.
-                        --select <addr>   Observe position, reversible; patches nothing.
-                        --env <env>       (next: carve bridge patches the surviving TF)
+  carve emit            Adopt a selected TF resource into chant source + report
+                        --from <tf-dir>   its boundary. --state <tfstate> adopts offline
+                        --select <addr>   (recommended for TF-managed resources); --env
+                        --state|--env     <env> adopts via live cloud import. Reversible.
   carve bridge          Generate the surviving-TF patch (data sources + rewired
                         --from <tf-dir>   refs) + deferred inputs + reversible runbook.
                         --select <addr>   Writes proposals for review; --apply-rewrites
@@ -461,9 +461,10 @@ const registry: CommandDef[] = [
   // Read-only Terraform peelability advisor (#214). Compound so "advise" lands
   // in args.path; the estate dir comes from --from. No plugins, no project.
   { name: "carve advise", handler: runCarveAdvise },
-  // Emit step (#197): adopt a selected TF resource into chant source via live
-  // import. Needs the target lexicon's plugins for the cloud→code export.
-  { name: "carve emit", requiresPlugins: true, handler: runCarveEmit },
+  // Emit step (#197): adopt a selected TF resource into chant source. The
+  // --state path is offline (no plugins); the --env live path loads the target
+  // lexicon lazily in the handler, so this command does not require plugins.
+  { name: "carve emit", handler: runCarveEmit },
   // Boundary bridging (#197): patch the surviving TF (data sources + rewired
   // refs) + runbook. No plugins; Terraform-side only. Read-only unless
   // --apply-rewrites.

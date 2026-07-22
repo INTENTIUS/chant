@@ -1,17 +1,29 @@
 import { carveEmit, formatCarveEmit } from "../commands/carve-emit";
 import { liveImportFromPlugins } from "../commands/import";
+import { loadPlugins } from "../plugins";
 import { formatError } from "../format";
 import type { CommandContext } from "../registry";
 
 /**
- * `chant carve emit --from <tf-dir> --select <address> --env <env> [--output <dir>] [--report <path>]`
+ * `chant carve emit --from <tf-dir> --select <address> (--state <tfstate> | --env <env>)`
  *
- * Adopts the selected Terraform resource into typed chant source (cloud→code
- * live import) and reports its boundary. Requires the target lexicon's plugins
- * (loaded from the project) for the live export.
+ * Adopts the selected Terraform resource into typed chant source. `--state`
+ * adopts offline from the tfstate (no plugins); `--env` adopts via the live
+ * cloud import path, for which the target lexicon is loaded lazily here — so a
+ * state-only carve never pays the plugin-load cost.
  */
 export async function runCarveEmit(ctx: CommandContext): Promise<number> {
-  const { args, plugins } = ctx;
+  const { args } = ctx;
+
+  // Load plugins only for the live path; the offline --state path needs none.
+  let plugins = ctx.plugins;
+  if (!args.statePath && args.env) {
+    try {
+      plugins = await loadPlugins(["aws"]);
+    } catch {
+      // fall through with whatever ctx provided; carveEmit surfaces a clear error
+    }
+  }
 
   const result = await carveEmit(
     {

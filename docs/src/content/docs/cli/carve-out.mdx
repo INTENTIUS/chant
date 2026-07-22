@@ -21,13 +21,16 @@ The flow is three steps.
 
 ### 1. `carve emit` — adopt into chant source
 
-Adopts the selected live resource into typed chant source via the cloud→code live-import path, and reports the boundary — every dependency edge the carve would cut.
+Adopts the selected resource into typed chant source and reports the boundary — every dependency edge the carve would cut. There are two adoption sources:
+
+- **`--state <tfstate>` (recommended)** adopts offline, straight from the Terraform state file. This is the correct source for a Terraform-managed resource: it is created through the provider API, not CloudFormation, so it is not in any CFN stack, but its resolved attributes are in the state. No cloud call.
+- **`--env <env>`** adopts via the live cloud→code import path (for resources already in a CloudFormation stack).
 
 ```
-chant carve emit --from ./infra --select aws_s3_bucket.assets --env prod
+chant carve emit --from ./infra --select aws_s3_bucket.assets --state ./terraform.tfstate
 ```
 
-It refuses to emit a resource with no native mapping (the advisor bands those "leave in Terraform"). Nothing is patched or applied; the resource lands at the observe position.
+The state path emits a native chant Declarable with CloudFormation-style properties mapped from the Terraform attributes; attributes without a mapping are preserved in a reference comment so nothing is dropped. It refuses to emit a resource with no native mapping. Nothing is patched or applied; the resource lands at the observe position.
 
 ### 2. `carve bridge` — patch the survivors
 

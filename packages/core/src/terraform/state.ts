@@ -21,11 +21,38 @@ interface TfStateResource {
   mode?: "managed" | "data";
   type: string;
   name: string;
-  instances?: unknown[];
+  instances?: Array<{ attributes?: Record<string, unknown> }>;
 }
 interface TfState {
   version?: number;
   resources?: TfStateResource[];
+}
+
+/** A resource's resolved attributes, read from state for adoption. */
+export interface StateResource {
+  type: string;
+  name: string;
+  /** The first instance's resolved attributes (id, arn, tags, ...). */
+  attributes: Record<string, unknown>;
+}
+
+/**
+ * Read one root-module managed resource's resolved attributes from state, by
+ * Terraform address (`aws_s3_bucket.assets`). This is the true source of a
+ * Terraform-managed resource's live shape — unlike a CloudFormation export, it
+ * exists whether or not the resource was ever in a CFN stack. Returns null if
+ * the address is absent, is a data source, or is module-nested.
+ */
+export function readStateResource(statePath: string, address: string): StateResource | null {
+  const state = JSON.parse(readFileSync(statePath, "utf-8")) as TfState;
+  for (const res of state.resources ?? []) {
+    if (res.mode === "data" || res.module) continue;
+    if (`${res.type}.${res.name}` !== address) continue;
+    const attributes = res.instances?.[0]?.attributes;
+    if (!attributes) return null;
+    return { type: res.type, name: res.name, attributes };
+  }
+  return null;
 }
 
 /**
