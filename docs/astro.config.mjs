@@ -86,6 +86,7 @@ export default defineConfig({
 					label: 'Tutorials',
 					items: [
 						{ label: 'Alert Triage (local)', slug: 'tutorials/alert-triage-local' },
+						{ label: 'Carve out of Terraform', slug: 'tutorials/terraform-carve-out' },
 						{
 							label: 'Fly',
 							items: [

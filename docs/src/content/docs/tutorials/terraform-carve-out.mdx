@@ -1,0 +1,97 @@
+---
+title: "Carve a resource out of Terraform"
+description: "Incrementally move a resource from a Terraform estate into native chant — advise, bridge, emit, graduate — reversibly."
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+This tutorial carves a single resource out of a Terraform estate into native
+chant, incrementally and reversibly. You never carve the whole estate — small,
+cleanly-mappable pieces move; the long tail stays in Terraform.
+
+The **advise** and **bridge** steps run offline, so you can follow them right
+now with no cloud account. The **emit** and **apply** steps adopt a live
+resource and are shown as the live steps.
+
+The runnable estate is in
+[`examples/terraform-carve-out`](https://github.com/intentius/chant/tree/main/examples/terraform-carve-out).
+
+<Aside type="note">
+The advisor parses HCL with `@cdktf/hcl2json`, installed on demand:
+`npm install -D @cdktf/hcl2json`.
+</Aside>
+
+## 1. See what is cheap to carve
+
+```bash
+cd examples/terraform-carve-out
+chant carve advise --from ./terraform
+```
+
+The estate is ranked into three bands:
+
+```
+CLEAN LEAF — carve now
+  100  aws_cloudwatch_log_group.api -> AWS::Logs::LogGroup
+   96  aws_subnet.a -> AWS::EC2::Subnet
+   88  aws_s3_bucket.assets -> AWS::S3::Bucket
+   81  aws_lambda_function.api -> AWS::Lambda::Function
+CARVABLE — has boundary work
+   64  aws_vpc.main -> AWS::EC2::VPC
+LEAVE IN TERRAFORM
+    0  random_pet.suffix
+```
+
+The bucket is a clean leaf held back one notch by the one Lambda that reads it.
+The VPC is carvable, but three subnets hang off it. `random_pet` has no native
+mapping, so it stays.
+
+## 2. Bridge the boundary
+
+Carving the bucket cuts one edge: the Lambda reads it. Generate the edits to the
+surviving Terraform so its plan stays valid.
+
+```bash
+chant carve bridge --from ./terraform --select aws_s3_bucket.assets --output ./carveout
+```
+
+This writes to `./carveout/`: a `data "aws_s3_bucket" "assets"` block, a
+rewritten `api.tf` with the Lambda's references rewired to `data.aws_s3_bucket.assets.*`,
+and a reversible runbook. Nothing in `./terraform` changes. `--apply-rewrites`
+edits the survivor `.tf` in place instead.
+
+## 3. Adopt the live resource (live)
+
+```bash
+chant carve emit --from ./terraform --select aws_s3_bucket.assets --env prod
+```
+
+Adopts the live bucket into typed chant source via the cloud→code import path.
+The resource now sits at the observe position: emitted, reversible, nothing
+applied.
+
+## 4. Hand off and graduate (live)
+
+```bash
+terraform state rm aws_s3_bucket.assets        # stop managing it; does NOT destroy
+terraform plan && terraform apply               # apply the bridge patch to survivors
+chant carve apply --from ./terraform --select aws_s3_bucket.assets --env prod --stack assets
+```
+
+`carve apply` resolves the ownership marker (`chant:managed-by/stack/env`) and
+prints the finalized apply runbook. It makes no cloud call — the apply is
+whatever lifecycle you brought, which stamps the marker the emitted source
+carries.
+
+<Aside type="caution">
+`carve bridge --apply-rewrites`, `terraform state rm`, and `terraform apply`
+change what Terraform manages. Review the generated proposals and the runbook
+first. The carve is reversible with `terraform import aws_s3_bucket.assets
+myapp-assets-prod` up until graduation.
+</Aside>
+
+## What next
+
+`chant carve advise` and `chant carve bridge` are offline and safe to run
+against any Terraform tree — point them at your own estate to see what is cheap
+to leave. See the [carve CLI reference](/chant/cli/carve-out/) for every flag.

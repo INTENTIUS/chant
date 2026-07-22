@@ -539,6 +539,52 @@ for example_dir in /app/examples/*/; do
   rm -f "$example_dir/node_modules"
 done
 
+# ── Terraform carve-out (offline: advise + bridge) ─────────────────────
+# @cdktf/hcl2json is a devDependency, installed by the `npm install` above, so
+# the parser is available in this workspace image. Only advise + bridge are
+# offline; emit/apply need a live cloud and are not smoked here.
+
+log "test_carve_out"
+CARVE_TF="/app/examples/terraform-carve-out/terraform"
+if [ -d "$CARVE_TF" ]; then
+  # advise: ranked peelability report as JSON
+  if ADVISE=$($CHANT carve advise --from "$CARVE_TF" --json 2>/dev/null); then
+    if echo "$ADVISE" | grep -q '"advisory"' && echo "$ADVISE" | grep -q 'aws_s3_bucket.assets'; then
+      pass "carve advise ranks the estate"
+    else
+      echo "  output: $(echo "$ADVISE" | head -c 200)"
+      fail "carve advise output missing expected content"
+    fi
+  else
+    ADVISE_ERR=$($CHANT carve advise --from "$CARVE_TF" 2>&1 >/dev/null || true)
+    echo "  stderr: $ADVISE_ERR"
+    fail "carve advise failed"
+  fi
+
+  # bridge: generate the survivor data source + runbook for one carve
+  CARVE_OUT=$(mktemp -d)
+  if $CHANT carve bridge --from "$CARVE_TF" --select aws_s3_bucket.assets --output "$CARVE_OUT" >/dev/null 2>&1; then
+    if grep -q 'data "aws_s3_bucket" "assets"' "$CARVE_OUT"/aws_s3_bucket-assets-datasources.tf 2>/dev/null; then
+      pass "carve bridge generates the survivor data source"
+    else
+      fail "carve bridge did not generate the expected data source"
+    fi
+    # the original estate is untouched (dry-run)
+    if grep -q 'data.aws_s3_bucket.assets' "$CARVE_TF"/main.tf 2>/dev/null; then
+      fail "carve bridge mutated the source estate (should be dry-run)"
+    else
+      pass "carve bridge leaves the source estate untouched"
+    fi
+  else
+    CARVE_ERR=$($CHANT carve bridge --from "$CARVE_TF" --select aws_s3_bucket.assets --output "$CARVE_OUT" 2>&1 >/dev/null || true)
+    echo "  stderr: $CARVE_ERR"
+    fail "carve bridge failed"
+  fi
+  rm -rf "$CARVE_OUT"
+else
+  fail "carve example fixture missing at $CARVE_TF"
+fi
+
 # ── Misc tests ────────────────────────────────────────────────────────
 
 log "test_unknown_command"
