@@ -12,10 +12,13 @@
  * resource at the observe position: emitted, reversible, nothing mutated.
  */
 
-import { existsSync, statSync, writeFileSync } from "fs";
+import { existsSync, statSync, writeFileSync, mkdirSync } from "fs";
+import { join } from "path";
 import { parseTerraformDir, Hcl2JsonNotInstalled } from "../../terraform/parse";
 import { boundaryReport, type CarveReport } from "../../terraform/carve";
 import { resolveTier } from "../../terraform/tier-map";
+import { readStateResource } from "../../terraform/state";
+import { adoptFromState, canAdoptFromState } from "../../terraform/adopt-state";
 import type { LexiconPlugin, ResourceSelector } from "../../lexicon";
 import type { ImportResult, LiveImportOptions } from "./import";
 
@@ -45,14 +48,22 @@ export interface CarveEmitResult {
   error?: string;
   report?: CarveReport;
   emit?: ImportResult;
-  /** The selector used for the live adoption, for transparency. */
+  /** The selector used for the live adoption, for transparency (cloud path). */
   selector?: ResourceSelector;
+  /** How the resource was adopted. */
+  source?: "tfstate" | "live";
+  /** Emitted file path(s). */
+  emittedFiles?: string[];
 }
 
 export async function carveEmit(opts: CarveEmitOptions, deps: CarveEmitDeps): Promise<CarveEmitResult> {
   if (!opts.from) return { ok: false, error: "chant carve emit requires --from <terraform-dir>" };
   if (!opts.select) return { ok: false, error: "chant carve emit requires --select <tf-address>" };
-  if (!opts.env) return { ok: false, error: "chant carve emit requires --env <environment> to adopt the live resource" };
+  // Adoption source: --state adopts offline from tfstate (correct for a
+  // Terraform-managed resource); --env adopts via the live cloud import path.
+  if (!opts.statePath && !opts.env) {
+    return { ok: false, error: "chant carve emit requires --state <tfstate> (offline, recommended) or --env <environment>" };
+  }
   if (!existsSync(opts.from) || !statSync(opts.from).isDirectory()) {
     return { ok: false, error: `Not a directory: ${opts.from}` };
   }
@@ -81,21 +92,42 @@ export async function carveEmit(opts: CarveEmitOptions, deps: CarveEmitDeps): Pr
     };
   }
 
+  if (opts.reportFile) writeFileSync(opts.reportFile, JSON.stringify(report, null, 2));
+
+  // ── Adoption path 1: from .tfstate (offline, correct for TF-managed) ──
+  if (opts.statePath) {
+    if (!canAdoptFromState(tfType!)) {
+      return { ok: false, error: `${tfType} cannot be adopted from state yet (no native constructor mapping).` };
+    }
+    const stateResource = readStateResource(opts.statePath, opts.select);
+    if (!stateResource) {
+      return { ok: false, error: `${opts.select} not found in state ${opts.statePath} (or is a data source / module-nested).` };
+    }
+    const adopted = adoptFromState(stateResource);
+    if (!adopted) return { ok: false, error: `Could not adopt ${opts.select} from state.` };
+
+    const outDir = opts.output ?? join(opts.from, "carveout");
+    mkdirSync(outDir, { recursive: true });
+    const outPath = join(outDir, adopted.fileName);
+    writeFileSync(outPath, adopted.content);
+
+    return { ok: true, report, source: "tfstate", emittedFiles: [outPath] };
+  }
+
+  // ── Adoption path 2: live import (cloud→code) ──
   // Build the live-import selector: native type from the tier map, physical
   // name from the HCL identity attribute (falling back to the TF logical name).
   const name = identity ?? opts.select!.split(".").slice(1).join(".");
   const selector: ResourceSelector = { type: tier.mapsTo, name };
 
   const emit = await deps.liveImport(deps.plugins, {
-    environment: opts.env,
+    environment: opts.env!,
     selector,
     output: opts.output,
     lexicon: tier.mapsTo.split("::")[0]?.toLowerCase() === "aws" ? "aws" : undefined,
   });
 
-  if (opts.reportFile) writeFileSync(opts.reportFile, JSON.stringify(report, null, 2));
-
-  return { ok: true, report, emit, selector };
+  return { ok: true, report, emit, selector, source: "live", emittedFiles: emit.generatedFiles };
 }
 
 /** Human-readable emit summary: what was adopted and what boundary work remains. */
@@ -104,9 +136,13 @@ export function formatCarveEmit(result: CarveEmitResult): string {
   const r = result.report;
   const lines: string[] = [];
   lines.push(`Carved ${r.target} (peelability ${r.peelability}) — observe position, reversible.`);
-  if (result.selector) lines.push(`  Adopted live as ${result.selector.type} "${result.selector.name}".`);
-  if (result.emit?.generatedFiles?.length) {
-    lines.push(`  Emitted: ${result.emit.generatedFiles.join(", ")}`);
+  if (result.source === "tfstate") {
+    lines.push("  Adopted from Terraform state (offline).");
+  } else if (result.selector) {
+    lines.push(`  Adopted live as ${result.selector.type} "${result.selector.name}".`);
+  }
+  if (result.emittedFiles?.length) {
+    lines.push(`  Emitted: ${result.emittedFiles.join(", ")}`);
   }
   if (r.carveSet.length > 1) {
     const folded = r.carveSet.filter((m) => m.foldedInto).map((m) => m.address);
