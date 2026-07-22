@@ -63,3 +63,19 @@ export const FOLDS_INTO: Record<string, string> = {
 export function resolveTier(tfType: string): TierInfo | null {
   return TIER_MAP[tfType] ?? null;
 }
+
+/**
+ * The HCL attribute that carries a resource's physical name, per type. Used to
+ * build the live-import selector when emitting a carve (map a TF address to the
+ * real cloud resource to adopt). Absent → fall back to the TF logical name.
+ */
+export const IDENTITY_ATTR: Record<string, string> = {
+  aws_s3_bucket: "bucket",
+  aws_cloudwatch_log_group: "name",
+  aws_iam_policy: "name",
+  aws_iam_role: "name",
+  aws_sns_topic: "name",
+  aws_sqs_queue: "name",
+  aws_dynamodb_table: "name",
+  aws_lambda_function: "function_name",
+};

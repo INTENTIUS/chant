@@ -33,6 +33,8 @@ export interface ParsedArgs {
   migrateFrom?: string;
   /** `chant carve advise --state <path>` — opt-in .tfstate for accurate instance counts */
   statePath?: string;
+  /** `chant carve emit --select <tf-address>` — the Terraform resource to carve */
+  selectAddress?: string;
   /** `chant migrate --to <name>` (default "gitlab") */
   migrateTo?: string;
   /** `chant migrate --emit yaml|ts` */

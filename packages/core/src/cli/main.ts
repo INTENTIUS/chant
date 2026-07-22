@@ -17,6 +17,7 @@ import { runList, runDescribe, runImport, runAudit, runUpdate, runDoctor } from 
 import { runVendor } from "./handlers/vendor";
 import { runMigrate } from "./handlers/migrate";
 import { runCarveAdvise, runCarveUnknown } from "./handlers/carve";
+import { runCarveEmit } from "./handlers/carve-emit";
 import { runLifecycleSnapshot, runLifecycleShow, runLifecycleDiff, runLifecycleRollback, runLifecyclePlan, runLifecycleAffected, runLifecycleLog, runLifecycleUnknown } from "./handlers/lifecycle";
 import { runComponentsStatus, runComponentsReleaseRecord, runComponentsUnknown } from "./handlers/components";
 import { runGraph } from "./handlers/graph";
@@ -119,6 +120,8 @@ export function parseArgs(args: string[]): ParsedArgs {
       result.verbatim = true;
     } else if (arg === "--state") {
       result.statePath = args[++i];
+    } else if (arg === "--select") {
+      result.selectAddress = args[++i];
     } else if (arg === "--to") {
       result.migrateTo = args[++i];
     } else if (arg === "--emit") {
@@ -252,6 +255,10 @@ Commands:
                         --from <tf-dir>   resources are cheap to carve into native chant
                         (--json, --report <path>). Emits nothing, changes nothing.
                         Needs @cdktf/hcl2json (npm install -D @cdktf/hcl2json).
+  carve emit            Adopt a selected TF resource into chant source via live
+                        --from <tf-dir>   import (cloud→code) and report its boundary.
+                        --select <addr>   Observe position, reversible; patches nothing.
+                        --env <env>       (next: carve bridge patches the surviving TF)
 
 Ops:
   run <name>            Start an Op workflow (spawns worker + submits to Temporal)
@@ -438,6 +445,9 @@ const registry: CommandDef[] = [
   // Read-only Terraform peelability advisor (#214). Compound so "advise" lands
   // in args.path; the estate dir comes from --from. No plugins, no project.
   { name: "carve advise", handler: runCarveAdvise },
+  // Emit step (#197): adopt a selected TF resource into chant source via live
+  // import. Needs the target lexicon's plugins for the cloud→code export.
+  { name: "carve emit", requiresPlugins: true, handler: runCarveEmit },
   { name: "init", handler: runInit },
   { name: "init lexicon", handler: runInitLexicon },
 { name: "update", handler: runUpdate },

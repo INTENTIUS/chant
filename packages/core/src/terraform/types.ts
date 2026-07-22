@@ -28,6 +28,12 @@ export interface TfNode {
   instances: number;
   /** `count`, `for_each`, a `data` source, or an unresolved interpolation is present. */
   hasDynamic: boolean;
+  /**
+   * The resource's physical name, when it is a plain literal in the HCL (e.g.
+   * `bucket = "myapp-assets-prod"`). Used to build the live-import selector on
+   * emit. Undefined when the identity attribute is absent or interpolated.
+   */
+  identity?: string;
 }
 
 /**
