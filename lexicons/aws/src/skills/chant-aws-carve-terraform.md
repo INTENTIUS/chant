@@ -1,5 +1,5 @@
 ---
-skill: chant-carve-terraform
+skill: chant-aws-carve-terraform
 description: Demo carving a resource out of Terraform into native chant — advise, emit, bridge, apply — fully offline
 user-invocable: true
 ---

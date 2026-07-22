@@ -12,7 +12,7 @@ cloud, no Terraform binary.
 ```
 
 That runs all four steps (advise → emit → bridge → apply) with commentary.
-Agents can drive the same demo via the `chant-carve-terraform` skill.
+Agents can drive the same demo via the `chant-aws-carve-terraform` skill.
 
 The steps individually are below.
 
