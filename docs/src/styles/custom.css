@@ -1,0 +1,42 @@
+/* Comparison and feature tables — make grids stand out. */
+.sl-markdown-content table {
+	width: 100%;
+	border-collapse: collapse;
+	margin-block: 1.75rem;
+	font-size: 0.95rem;
+	border: 1px solid var(--sl-color-gray-5);
+	border-radius: 0.5rem;
+	overflow: clip;
+}
+
+.sl-markdown-content table thead th {
+	background: var(--sl-color-gray-6);
+	font-weight: 600;
+	text-align: left;
+	white-space: nowrap;
+	border-bottom: 2px solid #3fb950;
+}
+
+.sl-markdown-content table th,
+.sl-markdown-content table td {
+	padding: 0.55rem 0.85rem;
+	border: 1px solid var(--sl-color-gray-5);
+	vertical-align: top;
+	line-height: 1.4;
+}
+
+/* first column holds the row labels (tool names, decisions) */
+.sl-markdown-content table tbody td:first-child {
+	font-weight: 600;
+	white-space: nowrap;
+}
+
+/* zebra striping */
+.sl-markdown-content table tbody tr:nth-of-type(even) td {
+	background: color-mix(in srgb, var(--sl-color-gray-6) 40%, transparent);
+}
+
+/* row hover, tinted with the brand green */
+.sl-markdown-content table tbody tr:hover td {
+	background: color-mix(in srgb, #3fb950 12%, transparent);
+}
