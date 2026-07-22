@@ -1,18 +1,18 @@
 /**
  * Terraform-type → native-spec tier map for the carve-out advisor (#214 T3).
  *
- * Peelability scoring needs to know, per Terraform resource type, how cleanly it
- * maps to a native chant target:
- *   tier 1 — a clean 1:1 native resource (e.g. `aws_s3_bucket` → `AWS::S3::Bucket`)
- *   tier 2 — maps, but with reshaping (multiple TF blocks → one native resource)
+ * The AWS entries are derived from the single AWS carve-out table
+ * (`aws-resources.ts`), so the advisor ranks exactly the AWS types `carve emit`
+ * can produce — no advise↔emit cliff. Non-AWS entries (e.g. `kubernetes_manifest`)
+ * are listed here directly; emit for those is a separate target.
+ *
+ *   tier 1 — a clean 1:1 native resource
+ *   tier 2 — maps, but with reshaping
  *   tier 3 — a hard/partial map
  *   null   — no known native mapping (unsupported provider/type) → score 0
- *
- * This is a curated seed, not exhaustive. It covers the #197 worked examples and
- * the common tier-1 leaves the advisor is most useful on. It is deliberately
- * data so the eventual emit phase (#197) and lexicon coverage metadata can grow
- * it — the honest v1 scope is "score the leaves people actually carve first."
  */
+
+import { AWS_CARVE_TYPES } from "./aws-resources";
 
 export interface TierInfo {
   tier: 1 | 2 | 3;
@@ -22,23 +22,9 @@ export interface TierInfo {
 
 /** TF resource type → native tier. Absent = unsupported (score 0). */
 export const TIER_MAP: Record<string, TierInfo> = {
-  // AWS tier-1 leaves
-  aws_s3_bucket: { tier: 1, mapsTo: "AWS::S3::Bucket" },
-  aws_cloudwatch_log_group: { tier: 1, mapsTo: "AWS::Logs::LogGroup" },
-  aws_iam_policy: { tier: 1, mapsTo: "AWS::IAM::ManagedPolicy" },
-  aws_iam_role: { tier: 1, mapsTo: "AWS::IAM::Role" },
-  aws_sns_topic: { tier: 1, mapsTo: "AWS::SNS::Topic" },
-  aws_sqs_queue: { tier: 1, mapsTo: "AWS::SQS::Queue" },
-  aws_dynamodb_table: { tier: 1, mapsTo: "AWS::DynamoDB::Table" },
-  aws_vpc: { tier: 1, mapsTo: "AWS::EC2::VPC" },
-  aws_subnet: { tier: 1, mapsTo: "AWS::EC2::Subnet" },
-  aws_security_group: { tier: 1, mapsTo: "AWS::EC2::SecurityGroup" },
-  aws_route_table: { tier: 1, mapsTo: "AWS::EC2::RouteTable" },
-  aws_internet_gateway: { tier: 1, mapsTo: "AWS::EC2::InternetGateway" },
-  // AWS tier-2 (reshaped / composite-ish)
-  aws_lambda_function: { tier: 2, mapsTo: "AWS::Lambda::Function" },
-  aws_ecs_service: { tier: 2, mapsTo: "AWS::ECS::Service" },
-  // Kubernetes — near-1:1 manifest
+  // AWS: derived from the carve-out table so advise and emit stay in lockstep.
+  ...Object.fromEntries(AWS_CARVE_TYPES.map((t) => [t.tfType, { tier: t.tier, mapsTo: t.nativeType }])),
+  // Kubernetes — near-1:1 manifest. Ranked by advise; emit support is a separate target.
   kubernetes_manifest: { tier: 1, mapsTo: "k8s:manifest" },
 };
 
@@ -60,22 +46,15 @@ export const FOLDS_INTO: Record<string, string> = {
   aws_s3_bucket_lifecycle_configuration: "aws_s3_bucket",
 };
 
+/**
+ * The HCL attribute carrying a resource's physical name, per type — derived
+ * from the AWS carve-out table. Used for the graph's identity and the
+ * live-import hint. Absent → fall back to the TF logical name.
+ */
+export const IDENTITY_ATTR: Record<string, string> = Object.fromEntries(
+  AWS_CARVE_TYPES.filter((t) => t.identityAttr).map((t) => [t.tfType, t.identityAttr!]),
+);
+
 export function resolveTier(tfType: string): TierInfo | null {
   return TIER_MAP[tfType] ?? null;
 }
-
-/**
- * The HCL attribute that carries a resource's physical name, per type. Used to
- * build the live-import selector when emitting a carve (map a TF address to the
- * real cloud resource to adopt). Absent → fall back to the TF logical name.
- */
-export const IDENTITY_ATTR: Record<string, string> = {
-  aws_s3_bucket: "bucket",
-  aws_cloudwatch_log_group: "name",
-  aws_iam_policy: "name",
-  aws_iam_role: "name",
-  aws_sns_topic: "name",
-  aws_sqs_queue: "name",
-  aws_dynamodb_table: "name",
-  aws_lambda_function: "function_name",
-};
