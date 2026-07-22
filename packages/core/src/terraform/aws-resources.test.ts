@@ -27,10 +27,17 @@ describe("AWS carve-out table", () => {
     expect(AWS_CARVE_TYPES.length).toBeGreaterThanOrEqual(20);
   });
 
-  test("every constructor name is unique and non-empty", () => {
-    const ctors = AWS_CARVE_TYPES.map((t) => t.ctor);
-    expect(ctors.every((c) => c.length > 0)).toBe(true);
-    expect(new Set(ctors).size).toBe(ctors.length);
+  test("constructors are non-empty and consistent per native type", () => {
+    // A constructor may be shared by TF aliases for the same native resource
+    // (e.g. aws_lb and aws_alb both → LoadBalancer), but a given native type
+    // must always map to the same constructor.
+    const byNative = new Map<string, string>();
+    for (const t of AWS_CARVE_TYPES) {
+      expect(t.ctor.length).toBeGreaterThan(0);
+      const seen = byNative.get(t.nativeType);
+      if (seen) expect(t.ctor).toBe(seen);
+      else byNative.set(t.nativeType, t.ctor);
+    }
   });
 });
 

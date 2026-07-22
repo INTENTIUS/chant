@@ -108,6 +108,66 @@ export const AWS_CARVE_TYPES: AwsCarveType[] = [
     fields: { name: "LogGroupName", retention_in_days: "RetentionInDays", kms_key_id: "KmsKeyId" }, tags: true },
   { tfType: "aws_cloudwatch_metric_alarm", tier: 2, nativeType: "AWS::CloudWatch::Alarm", ctor: "Alarm", identityAttr: "alarm_name",
     fields: { alarm_name: "AlarmName", comparison_operator: "ComparisonOperator", metric_name: "MetricName", namespace: "Namespace", threshold: "Threshold", evaluation_periods: "EvaluationPeriods", period: "Period", statistic: "Statistic", alarm_description: "AlarmDescription" }, tags: true },
+  { tfType: "aws_cloudwatch_event_rule", tier: 2, nativeType: "AWS::Events::Rule", ctor: "EventRule", identityAttr: "name",
+    fields: { name: "Name", schedule_expression: "ScheduleExpression", event_pattern: json("EventPattern"), description: "Description", state: "State" } },
+
+  // ── Compute (EC2 / ECS / ASG) ──
+  { tfType: "aws_instance", tier: 2, nativeType: "AWS::EC2::Instance", ctor: "Instance",
+    fields: { ami: "ImageId", instance_type: "InstanceType", subnet_id: "SubnetId", key_name: "KeyName", availability_zone: "AvailabilityZone", iam_instance_profile: "IamInstanceProfile" }, tags: true },
+  { tfType: "aws_launch_template", tier: 2, nativeType: "AWS::EC2::LaunchTemplate", ctor: "LaunchTemplate", identityAttr: "name",
+    fields: { name: "LaunchTemplateName" }, tags: true },
+  { tfType: "aws_autoscaling_group", tier: 2, nativeType: "AWS::AutoScaling::AutoScalingGroup", ctor: "AutoScalingGroup", identityAttr: "name",
+    fields: { name: "AutoScalingGroupName", min_size: "MinSize", max_size: "MaxSize", desired_capacity: "DesiredCapacity", vpc_zone_identifier: "VPCZoneIdentifier", health_check_type: "HealthCheckType" } },
+  { tfType: "aws_ecs_cluster", tier: 1, nativeType: "AWS::ECS::Cluster", ctor: "EcsCluster", identityAttr: "name",
+    fields: { name: "ClusterName" }, tags: true },
+  { tfType: "aws_ecs_task_definition", tier: 3, nativeType: "AWS::ECS::TaskDefinition", ctor: "TaskDefinition",
+    fields: { family: "Family", cpu: "Cpu", memory: "Memory", network_mode: "NetworkMode", execution_role_arn: "ExecutionRoleArn", task_role_arn: "TaskRoleArn" }, tags: true },
+  { tfType: "aws_ebs_volume", tier: 1, nativeType: "AWS::EC2::Volume", ctor: "EC2Volume",
+    fields: { availability_zone: "AvailabilityZone", size: "Size", type: "VolumeType", encrypted: "Encrypted", iops: "Iops" }, tags: true },
+
+  // ── Load balancing (ELBv2; aws_alb is a legacy alias) ──
+  { tfType: "aws_lb", tier: 2, nativeType: "AWS::ElasticLoadBalancingV2::LoadBalancer", ctor: "LoadBalancer", identityAttr: "name",
+    fields: { name: "Name", load_balancer_type: "Type", internal: { prop: "Scheme", transform: (v) => (v === true ? "internal" : v === false ? "internet-facing" : v) } }, tags: true },
+  { tfType: "aws_alb", tier: 2, nativeType: "AWS::ElasticLoadBalancingV2::LoadBalancer", ctor: "LoadBalancer", identityAttr: "name",
+    fields: { name: "Name", load_balancer_type: "Type", internal: { prop: "Scheme", transform: (v) => (v === true ? "internal" : v === false ? "internet-facing" : v) } }, tags: true },
+  { tfType: "aws_lb_target_group", tier: 2, nativeType: "AWS::ElasticLoadBalancingV2::TargetGroup", ctor: "TargetGroup", identityAttr: "name",
+    fields: { name: "Name", port: "Port", protocol: "Protocol", vpc_id: "VpcId", target_type: "TargetType" }, tags: true },
+  { tfType: "aws_lb_listener", tier: 2, nativeType: "AWS::ElasticLoadBalancingV2::Listener", ctor: "Listener",
+    fields: { port: "Port", protocol: "Protocol", load_balancer_arn: "LoadBalancerArn" } },
+
+  // ── Databases & cache ──
+  { tfType: "aws_db_instance", tier: 2, nativeType: "AWS::RDS::DBInstance", ctor: "DbInstance", identityAttr: "identifier",
+    fields: { identifier: "DBInstanceIdentifier", engine: "Engine", engine_version: "EngineVersion", instance_class: "DBInstanceClass", allocated_storage: "AllocatedStorage", db_name: "DBName", multi_az: "MultiAZ", storage_encrypted: "StorageEncrypted" }, tags: true },
+  { tfType: "aws_db_subnet_group", tier: 1, nativeType: "AWS::RDS::DBSubnetGroup", ctor: "RDSDBSubnetGroup", identityAttr: "name",
+    fields: { name: "DBSubnetGroupName", description: "DBSubnetGroupDescription", subnet_ids: "SubnetIds" }, tags: true },
+  { tfType: "aws_elasticache_cluster", tier: 2, nativeType: "AWS::ElastiCache::CacheCluster", ctor: "CacheCluster",
+    fields: { engine: "Engine", node_type: "CacheNodeType", num_cache_nodes: "NumCacheNodes", engine_version: "EngineVersion" }, tags: true },
+  { tfType: "aws_elasticache_replication_group", tier: 2, nativeType: "AWS::ElastiCache::ReplicationGroup", ctor: "ReplicationGroup", identityAttr: "replication_group_id",
+    fields: { replication_group_id: "ReplicationGroupId", description: "ReplicationGroupDescription", node_type: "CacheNodeType", engine: "Engine" }, tags: true },
+
+  // ── DNS, CDN & API ──
+  { tfType: "aws_route53_record", tier: 2, nativeType: "AWS::Route53::RecordSet", ctor: "RecordSet",
+    fields: { name: "Name", type: "Type", ttl: "TTL", zone_id: "HostedZoneId", records: "ResourceRecords" } },
+  { tfType: "aws_api_gateway_rest_api", tier: 2, nativeType: "AWS::ApiGateway::RestApi", ctor: "RestApi", identityAttr: "name",
+    fields: { name: "Name", description: "Description" }, tags: true },
+  { tfType: "aws_apigatewayv2_api", tier: 2, nativeType: "AWS::ApiGatewayV2::Api", ctor: "HttpApi", identityAttr: "name",
+    fields: { name: "Name", protocol_type: "ProtocolType", description: "Description" }, tags: true },
+
+  // ── IAM (users/groups), certs & keys ──
+  { tfType: "aws_iam_user", tier: 1, nativeType: "AWS::IAM::User", ctor: "IAMUser", identityAttr: "name",
+    fields: { name: "UserName", path: "Path" }, tags: true },
+  { tfType: "aws_iam_group", tier: 1, nativeType: "AWS::IAM::Group", ctor: "IAMGroup", identityAttr: "name",
+    fields: { name: "GroupName", path: "Path" } },
+  { tfType: "aws_acm_certificate", tier: 2, nativeType: "AWS::CertificateManager::Certificate", ctor: "AcmCertificate", identityAttr: "domain_name",
+    fields: { domain_name: "DomainName", validation_method: "ValidationMethod", subject_alternative_names: "SubjectAlternativeNames" }, tags: true },
+  { tfType: "aws_kms_alias", tier: 1, nativeType: "AWS::KMS::Alias", ctor: "KMSAlias", identityAttr: "name",
+    fields: { name: "AliasName", target_key_id: "TargetKeyId" } },
+
+  // ── Messaging & step functions ──
+  { tfType: "aws_sns_topic_subscription", tier: 2, nativeType: "AWS::SNS::Subscription", ctor: "Subscription",
+    fields: { protocol: "Protocol", endpoint: "Endpoint", topic_arn: "TopicArn" } },
+  { tfType: "aws_sfn_state_machine", tier: 3, nativeType: "AWS::StepFunctions::StateMachine", ctor: "StateMachine", identityAttr: "name",
+    fields: { name: "StateMachineName", role_arn: "RoleArn", type: "StateMachineType" }, tags: true },
 ];
 
 const BY_TYPE = new Map(AWS_CARVE_TYPES.map((t) => [t.tfType, t]));

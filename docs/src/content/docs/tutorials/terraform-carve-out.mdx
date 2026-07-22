@@ -139,13 +139,17 @@ before you run them.
   ```
 
 - **`carve emit` and `carve apply` — AWS.** Emit produces native chant source
-  for the AWS lexicon and covers the common carve targets: S3, IAM (role /
-  policy / instance profile), DynamoDB, SNS, SQS, Lambda, KMS, Secrets Manager,
-  SSM parameters, ECR, CloudWatch (log groups / alarms), Route 53, EFS, and the
-  core EC2 networking resources (VPC, subnet, security group, route table,
-  internet/NAT gateway, EIP). Advise and emit cover exactly the same AWS types,
-  so anything advise ranks, emit can produce. A type outside that set reports
-  the supported list. Other clouds are not carved yet.
+  for the AWS lexicon across ~50 common carve targets: S3, IAM (role / policy /
+  instance profile / user / group), DynamoDB, SNS, SQS, Lambda, KMS, Secrets
+  Manager, SSM, ECR, CloudWatch (log groups / alarms / event rules), Route 53
+  (zones / records), EFS, EC2 (instances, VPC, subnet, security group, route
+  table, internet/NAT gateway, EIP, EBS volumes, launch templates), autoscaling
+  groups, ELBv2 (load balancers / target groups / listeners), RDS (instances /
+  subnet groups), ElastiCache, API Gateway (REST / HTTP), Step Functions, ACM
+  certificates, and ECS (clusters / services / task definitions). Advise and
+  emit cover exactly the same AWS types, so anything advise ranks, emit can
+  produce. A type outside that set reports the supported list. Other clouds are
+  not carved yet.
 
 <Aside type="note">
 After emit, run `chant lint ./carveout --lexicon aws`: chant audits the resource
