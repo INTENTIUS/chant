@@ -55,7 +55,7 @@ describe("adoptFromState", () => {
     expect(types).toContain("aws_s3_bucket");
     expect(types).toContain("aws_sqs_queue");
     expect(types).toEqual([...types].sort());
-    expect(types).not.toContain("aws_instance"); // not yet mapped
+    expect(types).not.toContain("aws_glue_job"); // not yet mapped
   });
 
   test("returns null for a type with no native constructor", () => {
