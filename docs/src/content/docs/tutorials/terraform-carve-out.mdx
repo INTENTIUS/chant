@@ -138,18 +138,22 @@ before you run them.
   chant carve bridge --from /path/to/your/terraform --select <address> --output ./carveout
   ```
 
-- **`carve emit` and `carve apply` — AWS only, for now.** Emit produces native
-  chant source, which currently means the AWS lexicon. Adoption from state
-  (`--state`) maps these Terraform types today: `aws_s3_bucket`,
-  `aws_cloudwatch_log_group`, `aws_sns_topic`, `aws_sqs_queue`. Other types
-  (and other clouds) report "cannot be adopted from state yet."
+- **`carve emit` and `carve apply` — AWS.** Emit produces native chant source
+  for the AWS lexicon and covers the common carve targets: S3, IAM (role /
+  policy / instance profile), DynamoDB, SNS, SQS, Lambda, KMS, Secrets Manager,
+  SSM parameters, ECR, CloudWatch (log groups / alarms), Route 53, EFS, and the
+  core EC2 networking resources (VPC, subnet, security group, route table,
+  internet/NAT gateway, EIP). Advise and emit cover exactly the same AWS types,
+  so anything advise ranks, emit can produce. A type outside that set reports
+  the supported list. Other clouds are not carved yet.
 
 <Aside type="note">
-`advise` ranks more types than `emit` can currently produce — for example it
-scores subnets and VPCs, which emit does not map yet. A high advise score means
-"cheap to carve *once emit supports it*," not "emittable today." Coverage is
-tracked in [issue #1001](https://github.com/intentius/chant/issues/1001), and
-Kubernetes support in [#999](https://github.com/intentius/chant/issues/999).
+After emit, run `chant lint ./carveout --lexicon aws`: chant audits the resource
+you inherited from Terraform. Some findings are advisory (warnings you may
+choose to fix); some are errors that block `chant build` until resolved — for
+example a carved S3 bucket with no public-access block. That audit is part of
+the value: chant tells you what is wrong with what you adopted. Kubernetes carve
+support is tracked in [#999](https://github.com/intentius/chant/issues/999).
 </Aside>
 
 See the [carve CLI reference](/chant/cli/carve-out/) for every flag.

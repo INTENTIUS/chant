@@ -565,17 +565,31 @@ if [ -d "$CARVE_TF" ]; then
   CARVE_OUT=$(mktemp -d)
 
   # emit: adopt the bucket from tfstate into native chant source (offline)
-  if $CHANT carve emit --from "$CARVE_TF" --select aws_s3_bucket.assets --state "$CARVE_STATE" --output "$CARVE_OUT" >/dev/null 2>&1; then
-    if grep -q 'new Bucket({' "$CARVE_OUT"/assets.ts 2>/dev/null && grep -q 'BucketName: "myapp-assets-prod"' "$CARVE_OUT"/assets.ts 2>/dev/null; then
+  EMIT_OUT=$(mktemp -d)
+  if $CHANT carve emit --from "$CARVE_TF" --select aws_s3_bucket.assets --state "$CARVE_STATE" --output "$EMIT_OUT" >/dev/null 2>&1; then
+    if grep -q 'new Bucket({' "$EMIT_OUT"/assets.ts 2>/dev/null && grep -q 'BucketName: "myapp-assets-prod"' "$EMIT_OUT"/assets.ts 2>/dev/null; then
       pass "carve emit adopts a resource from tfstate into chant source"
     else
       fail "carve emit did not produce the expected chant source"
     fi
+    # the emitted source must actually build against the aws lexicon → valid CFN.
+    # Use the log group: a carved bucket faithfully lacks chant's stricter S3
+    # security posture (PublicAccessBlock / TLS policy), so `build` lints it as a
+    # finding — that is expected for adopted live infra, not an emit defect.
+    BUILD_OUT=$(mktemp -d)
+    $CHANT carve emit --from "$CARVE_TF" --select aws_cloudwatch_log_group.api --state "$CARVE_STATE" --output "$BUILD_OUT" >/dev/null 2>&1
+    if BUILT=$($CHANT build "$BUILD_OUT" --lexicon aws 2>/dev/null) && echo "$BUILT" | grep -q '"AWS::Logs::LogGroup"' && echo "$BUILT" | grep -q '"LogGroupName": "/myapp/api"'; then
+      pass "emitted chant source builds to valid CloudFormation"
+    else
+      fail "emitted chant source did not build to the expected CloudFormation"
+    fi
+    rm -rf "$BUILD_OUT"
   else
-    EMIT_ERR=$($CHANT carve emit --from "$CARVE_TF" --select aws_s3_bucket.assets --state "$CARVE_STATE" --output "$CARVE_OUT" 2>&1 >/dev/null || true)
+    EMIT_ERR=$($CHANT carve emit --from "$CARVE_TF" --select aws_s3_bucket.assets --state "$CARVE_STATE" --output "$EMIT_OUT" 2>&1 >/dev/null || true)
     echo "  stderr: $EMIT_ERR"
     fail "carve emit failed"
   fi
+  rm -rf "$EMIT_OUT"
 
   # bridge: generate the survivor data source + runbook for one carve
   if $CHANT carve bridge --from "$CARVE_TF" --select aws_s3_bucket.assets --output "$CARVE_OUT" >/dev/null 2>&1; then

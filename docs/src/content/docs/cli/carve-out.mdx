@@ -30,7 +30,9 @@ Adopts the selected resource into typed chant source and reports the boundary �
 chant carve emit --from ./infra --select aws_s3_bucket.assets --state ./terraform.tfstate
 ```
 
-The state path emits a native chant Declarable with CloudFormation-style properties mapped from the Terraform attributes; attributes without a mapping are preserved in a reference comment so nothing is dropped. It refuses to emit a resource with no native mapping. Nothing is patched or applied; the resource lands at the observe position.
+The state path emits a native chant Declarable with CloudFormation-style properties mapped from the Terraform attributes; attributes without a mapping are preserved in a reference comment so nothing is dropped. It covers the common AWS carve targets (S3, IAM, DynamoDB, SNS/SQS, Lambda, KMS, Secrets Manager, SSM, ECR, CloudWatch, Route 53, EFS, and core EC2 networking); advise and emit cover exactly the same AWS types, so there is no rank-it-but-can't-emit gap. A type outside that set reports the supported list. Nothing is patched or applied; the resource lands at the observe position.
+
+After emit, `chant lint ./out --lexicon aws` audits the adopted resource — advisory findings you may choose to fix, and errors that block `chant build` (e.g. a bucket with no public-access block). Auditing what you inherited is part of the point.
 
 ### 2. `carve bridge` — patch the survivors
 

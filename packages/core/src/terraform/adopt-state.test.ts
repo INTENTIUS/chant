@@ -40,7 +40,7 @@ describe("adoptFromState", () => {
       name: "api",
       attributes: { id: "/myapp/api", name: "/myapp/api", retention_in_days: 30, arn: "arn:...:log-group:/myapp/api" },
     })!;
-    expect(out.content).toContain("new LogsLogGroup({");
+    expect(out.content).toContain("new LogGroup({");
     expect(out.content).toContain('LogGroupName: "/myapp/api"');
     expect(out.content).toContain("RetentionInDays: 30");
   });
@@ -55,7 +55,7 @@ describe("adoptFromState", () => {
     expect(types).toContain("aws_s3_bucket");
     expect(types).toContain("aws_sqs_queue");
     expect(types).toEqual([...types].sort());
-    expect(types).not.toContain("aws_subnet"); // ranked by advise, not yet emittable
+    expect(types).not.toContain("aws_instance"); // not yet mapped
   });
 
   test("returns null for a type with no native constructor", () => {

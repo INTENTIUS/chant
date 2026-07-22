@@ -58,7 +58,19 @@ From `examples/terraform-carve-out`, with `TF=./terraform`:
    Explain: a Terraform-managed resource is not in any CloudFormation stack, so
    the correct source of its live shape is the state file, not a cloud read.
 
-3. **Bridge — patch the surviving Terraform.**
+3. **Lint the inherited resource — optional, offer it.**
+   ```bash
+   chant lint ./carveout --lexicon aws
+   ```
+   After emit, offer to lint the carved source. chant audits the resource you
+   inherited from Terraform against the AWS lexicon's rules. Findings have a
+   severity: `error` (must fix before `chant build` will emit — e.g. an S3
+   bucket with no public-access block) and `warning`/`info` (advisory — e.g.
+   DynamoDB point-in-time recovery). This is a feature of carving: chant
+   immediately tells the person what is wrong with what they adopted. Whether to
+   fix an advisory finding is their call; errors block the build until resolved.
+
+4. **Bridge — patch the surviving Terraform.**
    ```bash
    chant carve bridge --from ./terraform --select aws_s3_bucket.assets --output ./carveout
    ```
@@ -66,7 +78,7 @@ From `examples/terraform-carve-out`, with `TF=./terraform`:
    Emphasize it is dry-run: nothing in `./terraform` changed. `--apply-rewrites`
    would edit it in place.
 
-4. **Apply — graduation plan.**
+5. **Apply — graduation plan.**
    ```bash
    chant carve apply --from ./terraform --select aws_s3_bucket.assets --env prod --stack assets
    ```
