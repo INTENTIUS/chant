@@ -11,6 +11,7 @@
 import { readdirSync, readFileSync } from "fs";
 import { join } from "path";
 import { buildGraph } from "./graph";
+import { readStateInstanceCounts, applyStateCounts } from "./state";
 import type { Hcl2JsonTree, TfGraph } from "./types";
 
 /** Minimal shape of the parser export we depend on. */
@@ -62,12 +63,18 @@ function listTfFiles(dir: string): string[] {
     .sort();
 }
 
+export interface ParseTerraformOptions {
+  /** Opt-in `.tfstate` path (#214 T2): overlays state-expanded instance counts. */
+  statePath?: string;
+}
+
 /**
- * Parse a Terraform directory into a dependency graph. Reads only `.tf` (state
- * is a separate opt-in, #214 T2). Pure `.tf` estates parse fully; `count`/
- * `for_each` blocks report a single instance and are flagged `hasDynamic`.
+ * Parse a Terraform directory into a dependency graph. Reads only `.tf` unless
+ * `statePath` is given. Pure `.tf` estates parse fully; `count`/`for_each`
+ * blocks report a single instance and are flagged `hasDynamic`. With state, the
+ * instance counts become accurate (see `state.ts`).
  */
-export async function parseTerraformDir(dir: string): Promise<TfGraph> {
+export async function parseTerraformDir(dir: string, opts: ParseTerraformOptions = {}): Promise<TfGraph> {
   const parse = await loadHcl2json();
   const files = listTfFiles(dir);
   const merged: Hcl2JsonTree = {};
@@ -75,5 +82,7 @@ export async function parseTerraformDir(dir: string): Promise<TfGraph> {
     const tree = await parse(file, readFileSync(file, "utf-8"));
     mergeTrees(merged, tree);
   }
-  return buildGraph(merged);
+  const graph = buildGraph(merged);
+  if (opts.statePath) applyStateCounts(graph, readStateInstanceCounts(opts.statePath));
+  return graph;
 }

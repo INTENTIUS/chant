@@ -117,6 +117,8 @@ export function parseArgs(args: string[]): ParsedArgs {
       result.owned = true;
     } else if (arg === "--verbatim") {
       result.verbatim = true;
+    } else if (arg === "--state") {
+      result.statePath = args[++i];
     } else if (arg === "--to") {
       result.migrateTo = args[++i];
     } else if (arg === "--emit") {

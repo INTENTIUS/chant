@@ -14,6 +14,8 @@ import { scoreEstate, type Peelability, type PeelabilityBand } from "../../terra
 export interface CarveAdviseOptions {
   /** Terraform estate directory (from `--from`). */
   from?: string;
+  /** Opt-in `.tfstate` path (from `--state`): accurate fan-out instance counts. */
+  statePath?: string;
   /** Write the full JSON report to this path (from `--report <path>`). */
   reportFile?: string;
 }
@@ -34,10 +36,13 @@ export async function carveAdvise(opts: CarveAdviseOptions): Promise<CarveAdvise
   if (!existsSync(opts.from) || !statSync(opts.from).isDirectory()) {
     return { ok: false, error: `Not a directory: ${opts.from}` };
   }
+  if (opts.statePath && !existsSync(opts.statePath)) {
+    return { ok: false, error: `State file not found: ${opts.statePath}` };
+  }
 
   let results: Peelability[];
   try {
-    results = scoreEstate(await parseTerraformDir(opts.from));
+    results = scoreEstate(await parseTerraformDir(opts.from, { statePath: opts.statePath }));
   } catch (err) {
     if (err instanceof Hcl2JsonNotInstalled) return { ok: false, error: err.message };
     return { ok: false, error: `Failed to parse Terraform in ${opts.from}: ${err instanceof Error ? err.message : String(err)}` };

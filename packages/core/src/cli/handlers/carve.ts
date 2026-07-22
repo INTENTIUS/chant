@@ -14,6 +14,7 @@ export async function runCarveAdvise(ctx: CommandContext): Promise<number> {
 
   const result = await carveAdvise({
     from: args.migrateFrom, // `--from <terraform-dir>`
+    statePath: args.statePath, // `--state <tfstate>`
     reportFile: args.reportFile, // `--report <path>`
   });
 
