@@ -18,6 +18,7 @@ import { runVendor } from "./handlers/vendor";
 import { runMigrate } from "./handlers/migrate";
 import { runCarveAdvise, runCarveUnknown } from "./handlers/carve";
 import { runCarveEmit } from "./handlers/carve-emit";
+import { runCarveBridge } from "./handlers/carve-bridge";
 import { runLifecycleSnapshot, runLifecycleShow, runLifecycleDiff, runLifecycleRollback, runLifecyclePlan, runLifecycleAffected, runLifecycleLog, runLifecycleUnknown } from "./handlers/lifecycle";
 import { runComponentsStatus, runComponentsReleaseRecord, runComponentsUnknown } from "./handlers/components";
 import { runGraph } from "./handlers/graph";
@@ -122,6 +123,8 @@ export function parseArgs(args: string[]): ParsedArgs {
       result.statePath = args[++i];
     } else if (arg === "--select") {
       result.selectAddress = args[++i];
+    } else if (arg === "--apply-rewrites") {
+      result.applyRewrites = true;
     } else if (arg === "--to") {
       result.migrateTo = args[++i];
     } else if (arg === "--emit") {
@@ -259,6 +262,10 @@ Commands:
                         --from <tf-dir>   import (cloud→code) and report its boundary.
                         --select <addr>   Observe position, reversible; patches nothing.
                         --env <env>       (next: carve bridge patches the surviving TF)
+  carve bridge          Generate the surviving-TF patch (data sources + rewired
+                        --from <tf-dir>   refs) + deferred inputs + reversible runbook.
+                        --select <addr>   Writes proposals for review; --apply-rewrites
+                                          edits the .tf in place.
 
 Ops:
   run <name>            Start an Op workflow (spawns worker + submits to Temporal)
@@ -448,6 +455,10 @@ const registry: CommandDef[] = [
   // Emit step (#197): adopt a selected TF resource into chant source via live
   // import. Needs the target lexicon's plugins for the cloud→code export.
   { name: "carve emit", requiresPlugins: true, handler: runCarveEmit },
+  // Boundary bridging (#197): patch the surviving TF (data sources + rewired
+  // refs) + runbook. No plugins; Terraform-side only. Read-only unless
+  // --apply-rewrites.
+  { name: "carve bridge", handler: runCarveBridge },
   { name: "init", handler: runInit },
   { name: "init lexicon", handler: runInitLexicon },
 { name: "update", handler: runUpdate },
