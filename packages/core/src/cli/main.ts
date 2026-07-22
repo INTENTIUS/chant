@@ -19,6 +19,7 @@ import { runMigrate } from "./handlers/migrate";
 import { runCarveAdvise, runCarveUnknown } from "./handlers/carve";
 import { runCarveEmit } from "./handlers/carve-emit";
 import { runCarveBridge } from "./handlers/carve-bridge";
+import { runCarveApply } from "./handlers/carve-apply";
 import { runLifecycleSnapshot, runLifecycleShow, runLifecycleDiff, runLifecycleRollback, runLifecyclePlan, runLifecycleAffected, runLifecycleLog, runLifecycleUnknown } from "./handlers/lifecycle";
 import { runComponentsStatus, runComponentsReleaseRecord, runComponentsUnknown } from "./handlers/components";
 import { runGraph } from "./handlers/graph";
@@ -125,6 +126,10 @@ export function parseArgs(args: string[]): ParsedArgs {
       result.selectAddress = args[++i];
     } else if (arg === "--apply-rewrites") {
       result.applyRewrites = true;
+    } else if (arg === "--stack") {
+      result.carveStack = args[++i];
+    } else if (arg === "--write") {
+      result.write = true;
     } else if (arg === "--to") {
       result.migrateTo = args[++i];
     } else if (arg === "--emit") {
@@ -266,6 +271,10 @@ Commands:
                         --from <tf-dir>   refs) + deferred inputs + reversible runbook.
                         --select <addr>   Writes proposals for review; --apply-rewrites
                                           edits the .tf in place.
+  carve apply           Apply graduation: ownership marker + finalized apply
+                        --from <tf-dir>   runbook (dial-turn observe→apply). BYOL —
+                        --select <addr>   no cloud call; --write saves the doc.
+                        --env <env>
 
 Ops:
   run <name>            Start an Op workflow (spawns worker + submits to Temporal)
@@ -459,6 +468,9 @@ const registry: CommandDef[] = [
   // refs) + runbook. No plugins; Terraform-side only. Read-only unless
   // --apply-rewrites.
   { name: "carve bridge", handler: runCarveBridge },
+  // Apply graduation (#197): ownership marker + finalized apply runbook.
+  // BYOL-honest — no cloud call; --write saves the graduation doc.
+  { name: "carve apply", handler: runCarveApply },
   { name: "init", handler: runInit },
   { name: "init lexicon", handler: runInitLexicon },
 { name: "update", handler: runUpdate },

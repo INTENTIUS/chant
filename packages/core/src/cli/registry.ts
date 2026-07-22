@@ -37,6 +37,10 @@ export interface ParsedArgs {
   selectAddress?: string;
   /** `chant carve bridge --apply-rewrites` — write rewritten survivor .tf in place */
   applyRewrites?: boolean;
+  /** `chant carve apply --stack <name>` — ownership-marker stack for graduation */
+  carveStack?: string;
+  /** `chant carve apply --write` — save the graduation doc */
+  write?: boolean;
   /** `chant migrate --to <name>` (default "gitlab") */
   migrateTo?: string;
   /** `chant migrate --emit yaml|ts` */
