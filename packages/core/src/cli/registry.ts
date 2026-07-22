@@ -35,6 +35,8 @@ export interface ParsedArgs {
   statePath?: string;
   /** `chant carve emit --select <tf-address>` — the Terraform resource to carve */
   selectAddress?: string;
+  /** `chant carve bridge --apply-rewrites` — write rewritten survivor .tf in place */
+  applyRewrites?: boolean;
   /** `chant migrate --to <name>` (default "gitlab") */
   migrateTo?: string;
   /** `chant migrate --emit yaml|ts` */
