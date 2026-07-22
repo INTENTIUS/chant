@@ -54,7 +54,7 @@ describe("carve arc: emit → bridge → apply", () => {
       // 1. emit: adopt + boundary (Lambda inbound; versioning folded).
       const emit = await carveEmit({ from: dir, select: sel, env: "prod" }, { plugins: [], liveImport: fakeImport });
       expect(emit.ok).toBe(true);
-      expect(emit.selector).toEqual({ type: "AWS::S3::Bucket", name: "myapp-assets-prod" });
+      expect(emit.selector).toEqual({ type: "AWS::S3::Bucket" }); // live selector is by native type
       expect(emit.report!.inbound.map((e) => e.survivor)).toEqual(["aws_lambda_function.api"]);
 
       // 2. bridge: data source + rewired survivor (dry-run).

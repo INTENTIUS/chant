@@ -80,12 +80,13 @@ describe("carveEmit — emit + boundary", () => {
       );
 
       expect(res.ok).toBe(true);
-      // Selector: native type from the tier map, physical name from the HCL.
-      expect(res.selector).toEqual({ type: "AWS::S3::Bucket", name: "myapp-assets-prod" });
+      // Live selector is by native type: the CFN import filters by logical id,
+      // which is not the Terraform physical name, so name is not passed here.
+      expect(res.selector).toEqual({ type: "AWS::S3::Bucket" });
       expect(li).toHaveBeenCalledOnce();
       expect(li.mock.calls[0][1]).toMatchObject({
         environment: "prod",
-        selector: { type: "AWS::S3::Bucket", name: "myapp-assets-prod" },
+        selector: { type: "AWS::S3::Bucket" },
       });
 
       // Boundary: one inbound edge from the Lambda; versioning folded away.
@@ -135,9 +136,23 @@ describe("carveEmit — emit + boundary", () => {
       );
       const text = formatCarveEmit(res);
       expect(text).toContain("observe position, reversible");
-      expect(text).toContain('AWS::S3::Bucket "myapp-assets-prod"');
+      expect(text).toContain("Adopted live as AWS::S3::Bucket");
       expect(text).toContain("inbound");
       expect(text).toContain("carve bridge"); // points at the next step
+    });
+  });
+
+  test("--live-name narrows the live selector to a CFN logical id", async () => {
+    if (!parserAvailable) return;
+    await withEstate(async (dir) => {
+      const li = fakeImport(["infra/assets.ts"]);
+      const res = await carveEmit(
+        { from: dir, select: "aws_s3_bucket.assets", env: "prod", liveName: "AssetsBucket" },
+        { plugins: noPlugins, liveImport: li },
+      );
+      expect(res.ok).toBe(true);
+      expect(res.selector).toEqual({ type: "AWS::S3::Bucket", name: "AssetsBucket" });
+      expect(formatCarveEmit(res)).toContain('logical id "AssetsBucket"');
     });
   });
 });

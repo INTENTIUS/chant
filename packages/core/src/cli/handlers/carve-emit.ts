@@ -30,6 +30,7 @@ export async function runCarveEmit(ctx: CommandContext): Promise<number> {
       from: args.migrateFrom, // `--from <terraform-dir>`
       select: args.selectAddress, // `--select <tf-address>`
       env: args.env,
+      liveName: args.liveName, // `--live-name <cfn-logical-id>`
       statePath: args.statePath,
       output: args.output,
       reportFile: args.reportFile,

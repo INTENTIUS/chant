@@ -24,7 +24,7 @@ The flow is three steps.
 Adopts the selected resource into typed chant source and reports the boundary — every dependency edge the carve would cut. There are two adoption sources:
 
 - **`--state <tfstate>` (recommended)** adopts offline, straight from the Terraform state file. This is the correct source for a Terraform-managed resource: it is created through the provider API, not CloudFormation, so it is not in any CFN stack, but its resolved attributes are in the state. No cloud call.
-- **`--env <env>`** adopts via the live cloud→code import path (for resources already in a CloudFormation stack).
+- **`--env <env>`** adopts via the live cloud→code import path (for resources already in a CloudFormation stack). It selects by native type; if the stack has several resources of that type, narrow it with `--live-name <logical-id>`. This path is exercised end to end against a real AWS endpoint by `just carve-emit-e2e` (Floci in Docker).
 
 ```
 chant carve emit --from ./infra --select aws_s3_bucket.assets --state ./terraform.tfstate
