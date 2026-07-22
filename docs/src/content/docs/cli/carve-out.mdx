@@ -1,0 +1,83 @@
+---
+title: "chant carve (emit / bridge / apply)"
+description: Incrementally carve a resource out of Terraform into native chant — emit, bridge the boundary, graduate to apply
+---
+
+## Synopsis
+
+```
+chant carve emit   --from <tf-dir> --select <address> --env <env>
+chant carve bridge --from <tf-dir> --select <address> [--apply-rewrites]
+chant carve apply  --from <tf-dir> --select <address> --env <env> [--write]
+```
+
+## Description
+
+The carve commands peel a resource out of a Terraform estate into native chant source — incrementally, never the whole estate. The long tail stays in Terraform; "we can't map this" becomes "leave it where it is," not a failure. Start with [`chant carve advise`](/chant/cli/carve/) to see what is cheap to carve.
+
+A carve never destroys or recreates. It reuses the adopt-an-orphan loop: Terraform stops managing the resource, chant adopts the still-live resource, and you sit at the observe position until you turn the dial to apply. Every step before graduation is reversible with `terraform import`.
+
+The flow is three steps.
+
+### 1. `carve emit` — adopt into chant source
+
+Adopts the selected live resource into typed chant source via the cloud→code live-import path, and reports the boundary — every dependency edge the carve would cut.
+
+```
+chant carve emit --from ./infra --select aws_s3_bucket.assets --env prod
+```
+
+It refuses to emit a resource with no native mapping (the advisor bands those "leave in Terraform"). Nothing is patched or applied; the resource lands at the observe position.
+
+### 2. `carve bridge` — patch the survivors
+
+Generates the edits to the Terraform you leave behind so its plan stays valid once the resource is chant-owned.
+
+- **Inbound edges** (a survivor reads the carved resource) become a `data` source plus rewired references. Required immediately, or `terraform plan` errors on the dangling reference.
+- **Outbound edges** (the carved resource read a survivor) become deferred deploy-time inputs, wired at apply.
+
+```
+chant carve bridge --from ./infra --select aws_s3_bucket.assets
+```
+
+Safe by default: it writes the proposed data sources, rewritten survivor files, and a runbook to an output directory for review. `--apply-rewrites` edits the survivor `.tf` in place. The rewrite is idempotent and never touches the carved resource's own declaration.
+
+### 3. `carve apply` — graduate
+
+Resolves the ownership marker that makes the resource chant-owned and finalizes the ordered apply runbook.
+
+```
+chant carve apply --from ./infra --select aws_s3_bucket.assets --env prod --stack assets
+```
+
+This is BYOL-honest: it makes no cloud call. It computes the marker and the plan; the apply itself is whatever lifecycle you brought — the native CLI, a CI pipeline, an ApplyOp — and it stamps the ownership marker the emitted source carries. `--write` saves the graduation doc.
+
+## The handoff, end to end
+
+```
+# 1. see what's cheap to carve
+chant carve advise --from ./infra
+
+# 2. adopt the bucket into chant source, see its boundary
+chant carve emit --from ./infra --select aws_s3_bucket.assets --env prod
+
+# 3. Terraform stops managing it (does NOT destroy it)
+terraform state rm aws_s3_bucket.assets
+
+# 4. patch the survivors so their plan stays valid
+chant carve bridge --from ./infra --select aws_s3_bucket.assets --apply-rewrites
+terraform plan && terraform apply
+
+# 5. graduate: mark it chant-owned, then apply with your lifecycle
+chant carve apply --from ./infra --select aws_s3_bucket.assets --env prod --write
+```
+
+At every step before 5, rollback is `terraform import aws_s3_bucket.assets <id>`.
+
+## Scope
+
+These are the emit, boundary-bridging, and apply-graduation phases of the strangler-fig design (#197), built on the read-only advisor (#214). Emit targets a Declarable (a single native resource); a whole service with a deploy pipeline is a Component, not a leaf carve. Removing the carved resource's own block from the `.tf` is a runbook step, not an automatic edit — the parser has no source spans to excise a block precisely.
+
+:::caution
+`carve bridge --apply-rewrites` edits your Terraform in place, and `terraform state rm` / `terraform apply` change what Terraform manages. Review the generated proposals and the runbook before running them. The carve is reversible via `terraform import` up until apply graduation.
+:::

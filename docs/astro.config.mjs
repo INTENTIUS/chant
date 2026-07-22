@@ -160,6 +160,7 @@ export default defineConfig({
 						{ label: 'vendor', slug: 'cli/vendor' },
 						{ label: 'import', slug: 'cli/import' },
 						{ label: 'carve advise', slug: 'cli/carve' },
+						{ label: 'carve out (emit/bridge/apply)', slug: 'cli/carve-out' },
 						{ label: 'audit', slug: 'cli/audit' },
 						{ label: 'update', slug: 'cli/update' },
 						{ label: 'doctor', slug: 'cli/doctor' },
