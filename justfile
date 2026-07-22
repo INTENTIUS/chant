@@ -120,6 +120,10 @@ components-aws-e2e:
 adopt-alb-services-e2e:
     bash test/adopt-alb-services-e2e.sh
 
+# Prove `chant carve emit --env` adopts a LIVE AWS resource into chant source against a real endpoint (Floci in Docker; on-demand, needs Docker + aws CLI). The offline --state path is unit-tested separately.
+carve-emit-e2e:
+    bash test/carve-emit-e2e.sh
+
 # Run all smoke tests
 smoke: smoke-workspace smoke-npm
 

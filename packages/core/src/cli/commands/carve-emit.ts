@@ -29,6 +29,13 @@ export interface CarveEmitOptions {
   select?: string;
   /** Live environment to adopt from (`--env`). */
   env?: string;
+  /**
+   * CloudFormation logical ID to adopt on the live path (`--live-name`). The
+   * live import filters a stack's template by logical ID, which is not the
+   * Terraform physical name — so the live selector is by native type by
+   * default, and this narrows it when a stack has several of that type.
+   */
+  liveName?: string;
   /** Opt-in `.tfstate` for instance counts (`--state`). */
   statePath?: string;
   /** Output directory for the emitted source (`--output`). */
@@ -69,14 +76,11 @@ export async function carveEmit(opts: CarveEmitOptions, deps: CarveEmitDeps): Pr
   }
 
   let report: CarveReport | null;
-  let identity: string | undefined;
   let tfType: string | undefined;
   try {
     const graph = await parseTerraformDir(opts.from, { statePath: opts.statePath });
     report = boundaryReport(graph, opts.select);
-    const node = graph.nodes.find((n) => n.address === opts.select);
-    identity = node?.identity;
-    tfType = node?.type;
+    tfType = graph.nodes.find((n) => n.address === opts.select)?.type;
   } catch (err) {
     if (err instanceof Hcl2JsonNotInstalled) return { ok: false, error: err.message };
     return { ok: false, error: `Failed to parse Terraform in ${opts.from}: ${err instanceof Error ? err.message : String(err)}` };
@@ -115,10 +119,13 @@ export async function carveEmit(opts: CarveEmitOptions, deps: CarveEmitDeps): Pr
   }
 
   // ── Adoption path 2: live import (cloud→code) ──
-  // Build the live-import selector: native type from the tier map, physical
-  // name from the HCL identity attribute (falling back to the TF logical name).
-  const name = identity ?? opts.select!.split(".").slice(1).join(".");
-  const selector: ResourceSelector = { type: tier.mapsTo, name };
+  // The live import filters a CloudFormation stack's template by logical ID, not
+  // the Terraform physical name — so select by native type, narrowing to a
+  // logical ID only when the caller passes --live-name (a stack with several of
+  // that type). `identity` (the TF physical name) is not a valid CFN selector.
+  const selector: ResourceSelector = opts.liveName
+    ? { type: tier.mapsTo, name: opts.liveName }
+    : { type: tier.mapsTo };
 
   const emit = await deps.liveImport(deps.plugins, {
     environment: opts.env!,
@@ -139,7 +146,8 @@ export function formatCarveEmit(result: CarveEmitResult): string {
   if (result.source === "tfstate") {
     lines.push("  Adopted from Terraform state (offline).");
   } else if (result.selector) {
-    lines.push(`  Adopted live as ${result.selector.type} "${result.selector.name}".`);
+    const named = result.selector.name ? ` (logical id "${result.selector.name}")` : "";
+    lines.push(`  Adopted live as ${result.selector.type}${named}.`);
   }
   if (result.emittedFiles?.length) {
     lines.push(`  Emitted: ${result.emittedFiles.join(", ")}`);

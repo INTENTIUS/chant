@@ -124,6 +124,8 @@ export function parseArgs(args: string[]): ParsedArgs {
       result.statePath = args[++i];
     } else if (arg === "--select") {
       result.selectAddress = args[++i];
+    } else if (arg === "--live-name") {
+      result.liveName = args[++i];
     } else if (arg === "--apply-rewrites") {
       result.applyRewrites = true;
     } else if (arg === "--stack") {
@@ -266,7 +268,8 @@ Commands:
   carve emit            Adopt a selected TF resource into chant source + report
                         --from <tf-dir>   its boundary. --state <tfstate> adopts offline
                         --select <addr>   (recommended for TF-managed resources); --env
-                        --state|--env     <env> adopts via live cloud import. Reversible.
+                        --state|--env     <env> adopts via live cloud import (--live-name
+                                          <logical-id> narrows a multi-resource stack).
   carve bridge          Generate the surviving-TF patch (data sources + rewired
                         --from <tf-dir>   refs) + deferred inputs + reversible runbook.
                         --select <addr>   Writes proposals for review; --apply-rewrites

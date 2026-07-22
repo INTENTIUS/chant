@@ -35,6 +35,8 @@ export interface ParsedArgs {
   statePath?: string;
   /** `chant carve emit --select <tf-address>` — the Terraform resource to carve */
   selectAddress?: string;
+  /** `chant carve emit --live-name <logicalId>` — CFN logical ID for live adoption */
+  liveName?: string;
   /** `chant carve bridge --apply-rewrites` — write rewritten survivor .tf in place */
   applyRewrites?: boolean;
   /** `chant carve apply --stack <name>` — ownership-marker stack for graduation */
