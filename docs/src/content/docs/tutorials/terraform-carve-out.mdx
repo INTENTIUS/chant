@@ -9,12 +9,21 @@ This tutorial carves a single resource out of a Terraform estate into native
 chant, incrementally and reversibly. You never carve the whole estate — small,
 cleanly-mappable pieces move; the long tail stays in Terraform.
 
-The **advise** and **bridge** steps run offline, so you can follow them right
-now with no cloud account. The **emit** and **apply** steps adopt a live
-resource and are shown as the live steps.
+**The whole flow runs offline** — no cloud account, no Terraform binary, no
+state backend. It works against the bundled estate and its state file. The one
+genuinely live part (`terraform state rm` / `apply`) is shown but not required
+to follow along.
 
 The runnable estate is in
 [`examples/terraform-carve-out`](https://github.com/intentius/chant/tree/main/examples/terraform-carve-out).
+To watch all four steps at once:
+
+```bash
+cd examples/terraform-carve-out
+./demo.sh
+```
+
+The rest of this page walks the same steps individually.
 
 <Aside type="note">
 The advisor parses HCL with `@cdktf/hcl2json`, installed on demand:
@@ -60,22 +69,47 @@ rewritten `api.tf` with the Lambda's references rewired to `data.aws_s3_bucket.a
 and a reversible runbook. Nothing in `./terraform` changes. `--apply-rewrites`
 edits the survivor `.tf` in place instead.
 
-## 3. Adopt the live resource (live)
+## 3. Adopt the bucket into chant source (offline, from state)
 
 ```bash
-chant carve emit --from ./terraform --select aws_s3_bucket.assets --env prod
+chant carve emit --from ./terraform --select aws_s3_bucket.assets \
+  --state ./terraform/terraform.tfstate --output ./carveout
 ```
 
-Adopts the live bucket into typed chant source via the cloud→code import path.
-The resource now sits at the observe position: emitted, reversible, nothing
-applied.
+This writes `./carveout/assets.ts`:
 
-## 4. Hand off and graduate (live)
+```ts
+// Adopted from Terraform state: aws_s3_bucket.assets -> AWS::S3::Bucket
+import { Bucket } from "@intentius/chant-lexicon-aws";
+
+export const assets = new Bucket({
+  BucketName: "myapp-assets-prod",
+  Tags: [{"Key":"Team","Value":"web"},{"Key":"Env","Value":"prod"}],
+});
+```
+
+A Terraform-managed resource is created through the provider API, not
+CloudFormation, so it is not in any CFN stack — its resolved shape lives in the
+state file. `--state` adopts straight from there, no cloud call. (A resource
+already in a CloudFormation stack can be adopted live with `--env <env>`
+instead.) The resource now sits at the observe position: emitted, reversible,
+nothing applied.
+
+## 4. Graduate
+
+```bash
+chant carve apply --from ./terraform --select aws_s3_bucket.assets --env prod --stack assets
+```
+
+`carve apply` resolves the ownership marker (`chant:managed-by/stack/env`) and
+prints the finalized runbook. It makes no cloud call — the apply is whatever
+lifecycle you brought.
+
+The one genuinely live part, when you are ready to hand off for real:
 
 ```bash
 terraform state rm aws_s3_bucket.assets        # stop managing it; does NOT destroy
 terraform plan && terraform apply               # apply the bridge patch to survivors
-chant carve apply --from ./terraform --select aws_s3_bucket.assets --env prod --stack assets
 ```
 
 `carve apply` resolves the ownership marker (`chant:managed-by/stack/env`) and

@@ -2,11 +2,19 @@
 
 Practice carving a resource out of a Terraform estate into native chant,
 incrementally and reversibly. The `terraform/` directory is a small estate to
-carve from.
+carve from, with a `terraform.tfstate` so the whole flow runs **offline** — no
+cloud, no Terraform binary.
 
-The **advise** and **bridge** steps run offline — no cloud, no Terraform state.
-The **emit** and **apply** steps adopt a live resource and are shown as the
-live steps.
+## Run the whole demo
+
+```bash
+./demo.sh
+```
+
+That runs all four steps (advise → emit → bridge → apply) with commentary.
+Agents can drive the same demo via the `chant-carve-terraform` skill.
+
+The steps individually are below.
 
 ## Prerequisites
 
@@ -16,50 +24,57 @@ The advisor parses HCL with `@cdktf/hcl2json`, installed on demand:
 npm install -D @cdktf/hcl2json
 ```
 
-## 1. See what is cheap to carve (offline)
+## 1. See what is cheap to carve
 
 ```bash
 chant carve advise --from ./terraform
 ```
 
-You will see the estate ranked into three bands: clean leaves (carve now),
-carvable with edits (has boundary work), and leave in Terraform (unmappable or
-load-bearing). `aws_cloudwatch_log_group.api` is a clean leaf; `aws_vpc.main`
-is carvable with edits (three subnets depend on it); `random_pet.suffix` has no
-native mapping.
+The estate ranks into three bands: clean leaves (carve now), carvable with edits
+(has boundary work), and leave in Terraform (unmappable or load-bearing).
+`aws_cloudwatch_log_group.api` is a clean leaf; `aws_vpc.main` is carvable with
+edits (three subnets depend on it); `random_pet.suffix` has no native mapping.
 
-## 2. See the boundary of one resource (offline)
+## 2. Adopt a resource into chant source (offline, from state)
+
+```bash
+chant carve emit --from ./terraform --select aws_s3_bucket.assets \
+  --state ./terraform/terraform.tfstate --output ./carveout
+```
+
+Writes `./carveout/assets.ts` — a real `new Bucket({ BucketName, Tags })` with
+CloudFormation-style properties mapped from the Terraform state attributes. A
+Terraform-managed resource is not in any CloudFormation stack, so the state file
+is the correct source of its live shape. (`--env <env>` adopts a
+CloudFormation-managed resource live instead.)
+
+## 3. Bridge the boundary
 
 ```bash
 chant carve bridge --from ./terraform --select aws_s3_bucket.assets --output ./carveout
 ```
 
-This writes, to `./carveout/`, the `data` source the surviving Lambda will read,
-the rewritten `api.tf` (references rewired to the data source), and a reversible
+Writes the `data "aws_s3_bucket" "assets"` block the surviving Lambda will read,
+the rewritten `main.tf` (references rewired to the data source), and a reversible
 runbook. Nothing in `./terraform` changes. Add `--apply-rewrites` to edit the
 survivor `.tf` in place.
 
-## 3. Adopt the live resource into chant (live)
+## 4. Graduate
 
 ```bash
-chant carve emit --from ./terraform --select aws_s3_bucket.assets --env prod
+chant carve apply --from ./terraform --select aws_s3_bucket.assets --env prod --stack assets
 ```
 
-Adopts the live bucket into typed chant source via the cloud→code import path,
-and reports its boundary. The resource now sits at the observe position:
-emitted, reversible, nothing applied.
+Resolves the ownership marker + finalized runbook. No cloud call — the apply is
+your lifecycle.
 
-## 4. Hand off Terraform, then graduate (live)
+## Going live
+
+The real handoff adds three Terraform commands between steps 3 and 4:
 
 ```bash
-# Terraform stops managing the bucket — does NOT destroy it
-terraform state rm aws_s3_bucket.assets
-
-# apply the bridge patch so the survivors' plan stays valid
-terraform plan && terraform apply
-
-# graduate: resolve the ownership marker + finalized runbook
-chant carve apply --from ./terraform --select aws_s3_bucket.assets --env prod --stack assets
+terraform state rm aws_s3_bucket.assets   # stop managing it — does NOT destroy
+terraform plan && terraform apply          # apply the bridge patch to survivors
 ```
 
 Rollback at any point before graduation:

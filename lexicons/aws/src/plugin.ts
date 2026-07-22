@@ -461,6 +461,44 @@ aws cloudformation wait stack-update-complete --stack-name my-app-prod`,
         },
       ],
     },
+    {
+      file: "chant-carve-terraform.md",
+      name: "chant-carve-terraform",
+      description: "Demo carving a resource out of Terraform into native chant — advise, emit, bridge, apply — fully offline",
+      triggers: [
+        { type: "context", value: "terraform" },
+        { type: "context", value: "carve" },
+        { type: "context", value: "migrate" },
+        { type: "file-pattern", value: "**/*.tf" },
+        { type: "file-pattern", value: "**/terraform.tfstate" },
+      ],
+      preConditions: [
+        "chant CLI is installed (chant --version succeeds)",
+        "@cdktf/hcl2json is installed (npm install -D @cdktf/hcl2json)",
+      ],
+      parameters: [
+        {
+          name: "address",
+          description: "Terraform address to carve, e.g. aws_s3_bucket.assets",
+          type: "string",
+          required: false,
+        },
+      ],
+      examples: [
+        {
+          title: "Run the offline demo",
+          description: "Demo the full advise → emit → bridge → apply loop with no cloud",
+          input: "Show me how chant carves a resource out of Terraform",
+          output: "cd examples/terraform-carve-out && ./demo.sh",
+        },
+        {
+          title: "Adopt a resource from state",
+          description: "Emit native chant source for a Terraform-managed resource, offline",
+          input: "Adopt aws_s3_bucket.assets into chant",
+          output: "chant carve emit --from ./terraform --select aws_s3_bucket.assets --state ./terraform/terraform.tfstate",
+        },
+      ],
+    },
   ]),
 
   completionProvider(ctx: CompletionContext): CompletionItem[] {

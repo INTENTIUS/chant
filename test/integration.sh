@@ -539,13 +539,14 @@ for example_dir in /app/examples/*/; do
   rm -f "$example_dir/node_modules"
 done
 
-# ── Terraform carve-out (offline: advise + bridge) ─────────────────────
+# ── Terraform carve-out (full offline flow: advise → emit → bridge → apply) ──
 # @cdktf/hcl2json is a devDependency, installed by the `npm install` above, so
-# the parser is available in this workspace image. Only advise + bridge are
-# offline; emit/apply need a live cloud and are not smoked here.
+# the parser is available in this workspace image. The whole flow is offline:
+# emit adopts from terraform.tfstate, so no cloud is needed.
 
 log "test_carve_out"
 CARVE_TF="/app/examples/terraform-carve-out/terraform"
+CARVE_STATE="$CARVE_TF/terraform.tfstate"
 if [ -d "$CARVE_TF" ]; then
   # advise: ranked peelability report as JSON
   if ADVISE=$($CHANT carve advise --from "$CARVE_TF" --json 2>/dev/null); then
@@ -561,8 +562,22 @@ if [ -d "$CARVE_TF" ]; then
     fail "carve advise failed"
   fi
 
-  # bridge: generate the survivor data source + runbook for one carve
   CARVE_OUT=$(mktemp -d)
+
+  # emit: adopt the bucket from tfstate into native chant source (offline)
+  if $CHANT carve emit --from "$CARVE_TF" --select aws_s3_bucket.assets --state "$CARVE_STATE" --output "$CARVE_OUT" >/dev/null 2>&1; then
+    if grep -q 'new Bucket({' "$CARVE_OUT"/assets.ts 2>/dev/null && grep -q 'BucketName: "myapp-assets-prod"' "$CARVE_OUT"/assets.ts 2>/dev/null; then
+      pass "carve emit adopts a resource from tfstate into chant source"
+    else
+      fail "carve emit did not produce the expected chant source"
+    fi
+  else
+    EMIT_ERR=$($CHANT carve emit --from "$CARVE_TF" --select aws_s3_bucket.assets --state "$CARVE_STATE" --output "$CARVE_OUT" 2>&1 >/dev/null || true)
+    echo "  stderr: $EMIT_ERR"
+    fail "carve emit failed"
+  fi
+
+  # bridge: generate the survivor data source + runbook for one carve
   if $CHANT carve bridge --from "$CARVE_TF" --select aws_s3_bucket.assets --output "$CARVE_OUT" >/dev/null 2>&1; then
     if grep -q 'data "aws_s3_bucket" "assets"' "$CARVE_OUT"/aws_s3_bucket-assets-datasources.tf 2>/dev/null; then
       pass "carve bridge generates the survivor data source"
@@ -580,6 +595,18 @@ if [ -d "$CARVE_TF" ]; then
     echo "  stderr: $CARVE_ERR"
     fail "carve bridge failed"
   fi
+
+  # apply: graduation plan (ownership marker; no cloud call)
+  if APPLY=$($CHANT carve apply --from "$CARVE_TF" --select aws_s3_bucket.assets --env prod --stack assets 2>/dev/null); then
+    if echo "$APPLY" | grep -q 'chant:managed-by = chant'; then
+      pass "carve apply resolves the ownership marker"
+    else
+      fail "carve apply did not resolve the ownership marker"
+    fi
+  else
+    fail "carve apply failed"
+  fi
+
   rm -rf "$CARVE_OUT"
 else
   fail "carve example fixture missing at $CARVE_TF"
