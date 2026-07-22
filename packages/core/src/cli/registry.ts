@@ -31,6 +31,8 @@ export interface ParsedArgs {
   live: boolean;
   /** `chant migrate --from <name>` (default "github") */
   migrateFrom?: string;
+  /** `chant carve advise --state <path>` — opt-in .tfstate for accurate instance counts */
+  statePath?: string;
   /** `chant migrate --to <name>` (default "gitlab") */
   migrateTo?: string;
   /** `chant migrate --emit yaml|ts` */
