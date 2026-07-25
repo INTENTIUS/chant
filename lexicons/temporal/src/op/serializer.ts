@@ -89,11 +89,17 @@ function generateWorkflow(config: OpConfig): string {
     lines.push("");
   }
 
-  // Gate signals declarations
+  // Gate signals declarations. The signal carries an approver identity in its
+  // payload so that "who approved this gate" is persisted in the Temporal
+  // workflow history (the WorkflowExecutionSignaled event records the signal
+  // input) — the durable, attributable half of the approval, sent by whoever
+  // clears the gate (see `chant run signal ... --approver`). The field is
+  // optional at the type level so an older approver client that sends no
+  // payload still clears the gate (approver simply stays undefined).
   if (allGateSteps.length > 0) {
     for (const gate of allGateSteps) {
       const varName = signalVarName(gate.signalName);
-      lines.push(`const ${varName} = defineSignal<[]>(${JSON.stringify(gate.signalName)});`);
+      lines.push(`const ${varName} = defineSignal<[{ approver?: string }?]>(${JSON.stringify(gate.signalName)});`);
     }
     lines.push("");
   }
@@ -198,8 +204,21 @@ function generateWorkflow(config: OpConfig): string {
           phaseLines.push(`  // Gate: ${gateStep.signalName}`);
         }
         phaseLines.push(`  let ${varName}Cleared = false;`);
-        phaseLines.push(`  setHandler(${varName}, () => { ${varName}Cleared = true; });`);
+        // Capture the approver identity from the signal payload. It rides in
+        // the signal event, so Temporal persists it in the workflow history
+        // even though the workflow itself only needs the boolean to proceed.
+        phaseLines.push(`  let ${varName}Approver: string | undefined;`);
+        phaseLines.push(`  setHandler(${varName}, (arg) => { ${varName}Approver = arg?.approver; ${varName}Cleared = true; });`);
         phaseLines.push(`  await condition(() => ${varName}Cleared, ${JSON.stringify(timeout)});`);
+        // Surface the approver in a search attribute when the caller opted a
+        // stack into one (config.searchAttributes contains "Approver"): only
+        // then is the attribute guaranteed registered, so an unconditional
+        // upsert can never break a gate on a cluster that never declared it.
+        if (config.searchAttributes && "Approver" in config.searchAttributes) {
+          phaseLines.push(`  upsertSearchAttributes({ Approver: [${varName}Approver ?? "unknown"] });`);
+        } else {
+          phaseLines.push(`  void ${varName}Approver;`);
+        }
       }
 
       lines.push(...phaseLines);

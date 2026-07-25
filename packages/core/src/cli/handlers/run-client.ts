@@ -29,7 +29,7 @@ export interface WorkflowHandleRaw {
   result(): Promise<unknown>;
   describe(): Promise<WorkflowExecutionDescription>;
   fetchHistory(): Promise<WorkflowHistoryRaw>;
-  signal(signalName: string): Promise<void>;
+  signal(signalName: string, ...args: unknown[]): Promise<void>;
   cancel(): Promise<void>;
 }
 

@@ -79,7 +79,7 @@ export async function runComponentsReleaseRecord(ctx: CommandContext): Promise<n
   if (!component || !digest) {
     console.error(formatError({
       message: "--component and --digest are required",
-      hint: "chant components release <env> --component <name> --digest <sha256:...> [--git-sha <sha>] [--run-id <id>] [--actor <name>]",
+      hint: "chant components release <env> --component <name> --digest <sha256:...> [--git-sha <sha>] [--run-id <id>] [--actor <name>] [--approver <name>]",
     }));
     return 1;
   }
@@ -87,6 +87,10 @@ export async function runComponentsReleaseRecord(ctx: CommandContext): Promise<n
   const gitSha = args.gitSha ?? (await getHeadCommit().catch(() => undefined));
   const runId = args.runId ?? process.env.GITHUB_RUN_ID ?? process.env.CI_PIPELINE_ID ?? `local-${Date.now()}`;
   const actor = args.actor ?? process.env.GITHUB_ACTOR ?? process.env.GITLAB_USER_LOGIN ?? process.env.USER;
+  // Who approved a gated change (#1035). Optional — omitted for an ungated
+  // change, and never defaulted to `actor`, since recording the approver as the
+  // triggerer would defeat the separation-of-duties the field exists to attest.
+  const approver = args.approver;
 
   if (!gitSha) {
     console.error(formatError({ message: "Could not resolve --git-sha (not in a git repo?) — pass it explicitly." }));
@@ -111,6 +115,7 @@ export async function runComponentsReleaseRecord(ctx: CommandContext): Promise<n
       runId,
       timestamp,
       actor,
+      ...(approver ? { approver } : {}),
     });
     await pushLifecycle();
     if (args.json) {

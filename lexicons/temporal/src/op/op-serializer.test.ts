@@ -179,6 +179,25 @@ describe("serializeOps()", () => {
       expect(wf).toContain('"48h"');
     });
 
+    it("gate signal carries an approver identity captured from the payload (#1035)", () => {
+      const ops = new Map([
+        makeOp({
+          name: "gate-op", overview: "o",
+          phases: [{
+            name: "Approval",
+            steps: [{ kind: "gate", signalName: "gate-dns-delegation", timeout: "48h" }],
+          }],
+        }),
+      ]);
+      const wf = serializeOps(ops)["ops/gate-op/workflow.ts"];
+      // Signal payload declares an approver so Temporal persists "who approved"
+      // in the workflow history (the signal event input).
+      expect(wf).toContain("defineSignal<[{ approver?: string }?]>");
+      // The handler captures the approver off the signal argument.
+      expect(wf).toContain("resumeDnsDelegationApprover");
+      expect(wf).toContain("arg?.approver");
+    });
+
     it("uses 48h as default gate timeout when not specified", () => {
       const ops = new Map([
         makeOp({

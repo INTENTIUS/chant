@@ -210,6 +210,8 @@ export function parseArgs(args: string[]): ParsedArgs {
       result.runId = args[++i];
     } else if (arg === "--actor") {
       result.actor = args[++i];
+    } else if (arg === "--approver") {
+      result.approver = args[++i];
     } else if (arg === "--compare-to") {
       result.compareTo = args[++i];
     } else if (arg === "--no-release-record") {
