@@ -189,4 +189,36 @@ describe("tryFoldFile", () => {
     if (result.ok) return;
     expect(result.reason).toContain("not a `new Type(...)` resource declaration");
   });
+
+  // #1025 differential regression: the constructor's optional second
+  // argument (CFN-style resource attributes — DependsOn, Condition,
+  // DeletionPolicy, …) was folded by fold.ts's `foldResource` but then
+  // dropped on the floor here — only `entry.spec.props` was ever passed to
+  // `new ResourceCtor(...)`. Confirms the fix actually reaches the
+  // constructed `Declarable`, not just the intermediate `FoldedResource`
+  // spec (see fold.test.ts for that narrower unit).
+  test("passes the folded second argument through as the constructed entity's attributes", async () => {
+    await writeResourceDefs();
+    const file = join(testDir, "main.ts");
+    await writeFile(
+      file,
+      `
+        import { Bucket } from "./resources";
+        export const bucket = new Bucket(
+          { name: "my-bucket" },
+          { DeletionPolicy: "Retain", DependsOn: "otherResource" },
+        );
+      `,
+    );
+
+    const result = await tryFoldFile(file);
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    const [, entity] = result.entities[0];
+    expect((entity as unknown as { attributes: unknown }).attributes).toEqual({
+      DeletionPolicy: "Retain",
+      DependsOn: "otherResource",
+    });
+  });
 });

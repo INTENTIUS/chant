@@ -105,6 +105,14 @@ export interface SymbolicValue {
 export interface FoldedResource {
   __resource: string;
   props: { [key: string]: FoldedValue };
+  /**
+   * The constructor's optional second argument — CFN-style resource-level
+   * attributes (`DependsOn`, `Condition`, `DeletionPolicy`,
+   * `UpdateReplacePolicy`, `CreationPolicy`, `Metadata`, …) some lexicons
+   * accept alongside `props` (see `createResource`'s `attributes` param,
+   * ../runtime.ts). Present only when the source actually passed one.
+   */
+  attributes?: { [key: string]: FoldedValue };
 }
 
 /**
@@ -449,9 +457,12 @@ export function fold(
 }
 
 /**
- * Fold a resource constructor call — `new Type({ ...props })` — to its spec.
- * The constructor argument, if present, must be an object literal (anything
- * else is not statically evaluable and throws a located {@link FoldError}).
+ * Fold a resource constructor call — `new Type({ ...props }, { ...attributes
+ * })` — to its spec. Each argument present must be an object literal
+ * (anything else is not statically evaluable and throws a located
+ * {@link FoldError}). The second argument (CFN-style resource attributes —
+ * `DependsOn`, `Condition`, `DeletionPolicy`, …) is optional, matching
+ * `createResource`'s runtime constructor signature (../runtime.ts).
  */
 export function foldResource(
   node: ts.NewExpression,
@@ -459,7 +470,7 @@ export function foldResource(
   intrinsics: readonly IntrinsicDef[] = [],
 ): FoldedResource {
   const typeName = node.expression.getText();
-  const [firstArg] = node.arguments ?? [];
+  const [firstArg, secondArg] = node.arguments ?? [];
 
   if (!firstArg) {
     return { __resource: typeName, props: {} };
@@ -467,9 +478,16 @@ export function foldResource(
   if (!ts.isObjectLiteralExpression(firstArg)) {
     throw foldError(firstArg, resourceCtorArgMessage(typeName));
   }
-
   const props = fold(firstArg, consts, intrinsics) as { [key: string]: FoldedValue };
-  return { __resource: typeName, props };
+
+  if (!secondArg) {
+    return { __resource: typeName, props };
+  }
+  if (!ts.isObjectLiteralExpression(secondArg)) {
+    throw foldError(secondArg, `resource attributes argument must be an object literal: ${typeName}(...)`);
+  }
+  const attributes = fold(secondArg, consts, intrinsics) as { [key: string]: FoldedValue };
+  return { __resource: typeName, props, attributes };
 }
 
 function hasExportModifier(statement: ts.VariableStatement): boolean {
