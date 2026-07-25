@@ -129,6 +129,34 @@ describe("release-ledger", () => {
       });
     });
 
+    test("records an approver, distinct from the actor, for a gated change (#1035)", async () => {
+      await withTestDir(async (dir) => {
+        await initRepo(dir);
+        await appendReleaseRecord(
+          makeInput({ actor: "ci-bot", approver: "alice@corp" }),
+          { cwd: dir },
+        );
+        const { records } = await readReleaseLedger("prod", { cwd: dir });
+        expect(records).toHaveLength(1);
+        expect(records[0].actor).toBe("ci-bot");
+        expect(records[0].approver).toBe("alice@corp");
+        // Separation of duties: approver is not just an echo of actor.
+        expect(records[0].approver).not.toBe(records[0].actor);
+      });
+    });
+
+    test("approver is absent for an ungated change (#1035)", async () => {
+      await withTestDir(async (dir) => {
+        await initRepo(dir);
+        await appendReleaseRecord(makeInput(), { cwd: dir });
+        const { records } = await readReleaseLedger("prod", { cwd: dir });
+        expect(records).toHaveLength(1);
+        expect(records[0].approver).toBeUndefined();
+        // The optional approver never blocks a valid ungated record.
+        expect(validateReleaseRecord({ version: 1, ...makeInput() })).toEqual([]);
+      });
+    });
+
     test("release ledger and snapshot coexist on the same orphan branch without clobbering each other", async () => {
       const { writeSnapshot, readSnapshot } = await import("./git");
       await withTestDir(async (dir) => {

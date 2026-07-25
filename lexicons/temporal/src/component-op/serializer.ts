@@ -141,7 +141,9 @@ function generateWorkflow(component: DriverComponent, options: SerializeComponen
 
   if (allGates.length > 0) {
     for (const gateStep of allGates) {
-      lines.push(`const ${gateSignalVarName(gateStep.signalName)} = defineSignal<[]>(${JSON.stringify(gateStep.signalName)});`);
+      // Approver identity rides in the signal payload so it lands in the
+      // Temporal workflow history — mirrors ../op/serializer.ts's Op gate.
+      lines.push(`const ${gateSignalVarName(gateStep.signalName)} = defineSignal<[{ approver?: string }?]>(${JSON.stringify(gateStep.signalName)});`);
     }
     lines.push("");
   }
@@ -241,8 +243,10 @@ function generateWorkflow(component: DriverComponent, options: SerializeComponen
       if (gateStep.description) lines.push(`${indent}// Gate: ${gateStep.signalName} — ${gateStep.description}`);
       else lines.push(`${indent}// Gate: ${gateStep.signalName}`);
       lines.push(`${indent}let ${varName}Cleared = false;`);
-      lines.push(`${indent}setHandler(${varName}, () => { ${varName}Cleared = true; });`);
+      lines.push(`${indent}let ${varName}Approver: string | undefined;`);
+      lines.push(`${indent}setHandler(${varName}, (arg) => { ${varName}Approver = arg?.approver; ${varName}Cleared = true; });`);
       lines.push(`${indent}await condition(() => ${varName}Cleared, ${JSON.stringify(timeout)});`);
+      lines.push(`${indent}void ${varName}Approver;`);
     }
 
     lines.push("");

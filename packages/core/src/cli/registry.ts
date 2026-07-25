@@ -136,6 +136,8 @@ export interface ParsedArgs {
   runId?: string;
   /** `chant components release record --actor <name>` (#568) — who/what triggered the deploy. */
   actor?: string;
+  /** `--approver <name>` (#1035) — who approved a gated change. Supplied to `chant run signal` (rides the gate signal payload into workflow history) and to `chant components release` (recorded on the release ledger). Optional; absent for ungated changes. */
+  approver?: string;
   /** `chant components status <env> --compare-to <env>` (#568) — a second environment to cross-check the same component's recorded digest against. */
   compareTo?: string;
   /** `chant run --components <name> --env <env> --no-release-record` (#597) — opt out of auto-emitting a release-ledger record after a successful component deploy. Default (flag omitted): recording is ON. Also settable project-wide via `chant.config.ts`'s `release.autoRecord: false`. */

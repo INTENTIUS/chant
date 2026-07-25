@@ -442,17 +442,27 @@ export async function runOpSignal(ctx: CommandContext): Promise<number> {
 
   const projectPath = resolve(".");
   const workflowId = ctx.args.components ? componentWorkflowId(name) : resolveWorkflowId(name);
+  // Approver identity for an approval gate (#1035): supplied via --approver, or
+  // resolved from the CI/user environment the same way `chant components
+  // release` resolves --actor. Rides the gate signal payload so Temporal
+  // persists "who approved" in the workflow history. Optional — a signal that
+  // is not an approval gate (or an approver who declines to identify) sends no
+  // payload and the gate still clears.
+  const approver = ctx.args.approver ?? process.env.GITHUB_ACTOR ?? process.env.GITLAB_USER_LOGIN ?? process.env.USER;
   let handle: WorkflowHandleRaw;
   try {
     const { client } = await makeTemporalClient(ctx.args.profile, projectPath);
     handle = client.workflow.getHandle(workflowId);
-    await handle.signal(signalName);
+    await handle.signal(signalName, ...(approver ? [{ approver }] : []));
   } catch (err) {
     console.error(formatError({ message: err instanceof Error ? err.message : String(err) }));
     return 1;
   }
 
-  console.error(formatSuccess(`Signal "${signalName}" sent to ${ctx.args.components ? "component" : "Op"} "${name}"`));
+  console.error(formatSuccess(
+    `Signal "${signalName}" sent to ${ctx.args.components ? "component" : "Op"} "${name}"` +
+      (approver ? ` (approver: ${approver})` : ""),
+  ));
   return 0;
 }
 
