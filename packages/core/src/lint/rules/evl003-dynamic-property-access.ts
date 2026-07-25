@@ -1,19 +1,28 @@
 import * as ts from "typescript";
 import type { LintRule, LintContext, LintDiagnostic } from "../rule";
+import { isLiteralElementKey } from "../../fold/subset";
 
 /**
  * EVL003: Dynamic Property Access
  *
  * Computed property access (obj[key]) must use a string or numeric literal key.
  * Dynamic keys (variables, expressions) are not statically evaluable.
+ *
+ * Shares its key-shape predicate with `fold()`'s `elementKey()`
+ * ({@link "../../fold/fold"}) via {@link "../../fold/subset"} (#1024) — a
+ * dynamic element-access key is exactly the construct `fold()` rejects with
+ * `FoldError.ruleId === "EVL003"`, and the diagnostic is located at the key
+ * itself (not the whole `obj[key]` access), matching where `fold()`'s
+ * `elementKey()` throws — so a rejection and its EVL003 diagnostic cite the
+ * same position, not just the same rule id.
  */
 
 function checkNode(node: ts.Node, context: LintContext, diagnostics: LintDiagnostic[]): void {
   if (ts.isElementAccessExpression(node)) {
     const arg = node.argumentExpression;
-    if (!ts.isStringLiteral(arg) && !ts.isNumericLiteral(arg)) {
+    if (!isLiteralElementKey(arg)) {
       const { line, character } = context.sourceFile.getLineAndCharacterOfPosition(
-        node.getStart(context.sourceFile),
+        arg.getStart(context.sourceFile),
       );
       diagnostics.push({
         file: context.filePath,

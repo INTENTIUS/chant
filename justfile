@@ -51,6 +51,14 @@ regen:
 test: _ensure-gen
     npx vitest run
 
+# chant #1025 — the fold-vs-run differential corpus, standalone with its
+# per-source report (fold / run-fallback / drift). Already part of `just
+# test`/CI's "Run tests" step (it's a normal vitest file, gated the same as
+# everything else there) — this target is for running just the differential
+# on demand and seeing its report without the rest of the suite's noise.
+fold-differential: _ensure-gen
+    npx vitest run examples/fold-differential.test.ts --reporter=verbose
+
 # Scaffold a throwaway lexicon and verify it installs + typechecks (#749 guard).
 # Catches core-API drift that would break `chant init lexicon`. Needs the network
 # (npm install). On-demand; not part of gating `check`.

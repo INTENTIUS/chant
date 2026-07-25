@@ -90,6 +90,7 @@ export async function runBuild(ctx: CommandContext): Promise<number> {
       format: buildFormat,
       serializers,
       plugins,
+      fold: args.fold,
     });
     process.on("SIGINT", () => {
       cleanup();
@@ -107,6 +108,7 @@ export async function runBuild(ctx: CommandContext): Promise<number> {
     plugins,
     verbose: args.verbose,
     env: args.env,
+    fold: args.fold,
   });
 
   // When --lexicon filters to a subset, suppress "No serializer" warnings for excluded lexicons

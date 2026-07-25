@@ -5,6 +5,8 @@ description: Rules that flag TypeScript patterns the evaluator cannot statically
 
 Evaluability rules flag TypeScript patterns that the chant evaluator cannot statically resolve. All evaluability rules have severity **error**.
 
+These are a diagnostic layer, not the guarantee itself: EVL001 and the static folder (`fold()`) share a single definition of the supported expression subset, so a pattern EVL001 flags is exactly a pattern the folder rejects, at the same line. EVL exists to catch it early — in your editor and in `chant lint`, before a build — while the folder is what actually enforces it.
+
 ---
 
 ## EVL001: Non-Literal Expression

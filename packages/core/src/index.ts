@@ -33,6 +33,7 @@ export * from "./graph-dot";
 export * from "./graph-layout";
 export * from "./graph-lens";
 export * from "./detectLexicon";
+export * from "./fold/fold";
 export * from "./lint/parser";
 export * from "./lint/rule";
 export * from "./lint/rules";

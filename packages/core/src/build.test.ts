@@ -64,6 +64,44 @@ export const testEntity = {
     expect(result.entities.size).toBe(1);
     expect(result.entities.has("testEntity")).toBe(true);
     expect(result.errors.length).toBe(0);
+    expect(result.foldDecisions).toEqual([]);
+  });
+
+  test("#1022 — --fold folds a leaf-only module and surfaces foldDecisions", async () => {
+    const { dirname, resolve: resolvePath } = await import("node:path");
+    const { fileURLToPath } = await import("node:url");
+    const thisDir = dirname(fileURLToPath(import.meta.url));
+    const runtimePath = resolvePath(thisDir, "runtime");
+
+    await writeFile(
+      join(testDir, "resources.ts"),
+      `
+        import { createResource } from ${JSON.stringify(runtimePath)};
+        export const Bucket = createResource("Test::Bucket", "aws", { arn: "Arn" });
+      `
+    );
+    await writeFile(
+      join(testDir, "main.ts"),
+      `
+        import { Bucket } from "./resources";
+        throw new Error("must never execute — sentinel for #1022 fold verification");
+        export const bucket = new Bucket({ name: "my-bucket" });
+      `
+    );
+
+    const mockSerializer: Serializer = {
+      name: "aws",
+      rulePrefix: "TEST",
+      serialize: (entities) => JSON.stringify([...entities.keys()]),
+    };
+
+    const result = await build(testDir, [mockSerializer], undefined, { fold: true });
+
+    expect(result.errors).toEqual([]);
+    expect(result.entities.size).toBe(1);
+    expect(result.entities.has("bucket")).toBe(true);
+    const mainDecision = result.foldDecisions.find((d) => d.file.endsWith("main.ts"));
+    expect(mainDecision?.mode).toBe("fold");
   });
 
   test("handles discovery errors", async () => {

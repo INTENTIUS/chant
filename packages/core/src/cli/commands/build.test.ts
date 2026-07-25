@@ -1,11 +1,12 @@
-import { describe, test, expect, beforeEach, afterEach } from "vitest";
+import { describe, test, expect, beforeEach, afterEach, vi } from "vitest";
 import { buildCommand, resolveBuildFormat, type BuildOptions } from "./build";
 import type { Serializer } from "../../serializer";
 import { parseYAML } from "../../yaml";
 import { mkdir, rm, writeFile } from "node:fs/promises";
 import { existsSync, readFileSync } from "node:fs";
-import { join } from "node:path";
+import { join, dirname, resolve as resolvePath } from "node:path";
 import { tmpdir } from "node:os";
+import { fileURLToPath } from "node:url";
 
 describe("buildCommand", () => {
   let testDir: string;
@@ -131,6 +132,82 @@ export const testEntity = {
 
     expect(result.resourceCount).toBeDefined();
     expect(result.fileCount).toBeDefined();
+  });
+
+  test("#1022 — --fold folds a leaf-only module and logs the fold decision", async () => {
+    const thisDir = dirname(fileURLToPath(import.meta.url));
+    const runtimePath = resolvePath(thisDir, "../../runtime");
+
+    await writeFile(
+      join(testDir, "resources.ts"),
+      `
+        import { createResource } from ${JSON.stringify(runtimePath)};
+        export const Bucket = createResource("Test::Bucket", "aws", { arn: "Arn" });
+      `
+    );
+    await writeFile(
+      join(testDir, "main.ts"),
+      `
+        import { Bucket } from "./resources";
+        throw new Error("must never execute — sentinel for #1022 fold verification");
+        export const bucket = new Bucket({ name: "my-bucket" });
+      `
+    );
+
+    const awsSerializer: Serializer = {
+      name: "aws",
+      rulePrefix: "TEST",
+      serialize: (entities) => JSON.stringify([...entities.keys()]),
+    };
+
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      const result = await buildCommand({
+        path: testDir,
+        format: "json",
+        serializers: [awsSerializer],
+        fold: true,
+      });
+
+      expect(result.success).toBe(true);
+      expect(result.resourceCount).toBe(1);
+
+      const loggedFoldLine = errorSpy.mock.calls
+        .map((call) => String(call[0]))
+        .some((line) => line.includes("[fold:fold]") && line.includes("main.ts"));
+      expect(loggedFoldLine).toBe(true);
+    } finally {
+      errorSpy.mockRestore();
+    }
+  });
+
+  test("--fold is opt-in: omitting it builds via the unchanged run path", async () => {
+    await writeFile(
+      join(testDir, "test.infra.ts"),
+      `
+        export const testEntity = {
+          lexicon: "test",
+          entityType: "TestEntity",
+          [Symbol.for("chant.declarable")]: true,
+        };
+      `
+    );
+
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      const result = await buildCommand({
+        path: testDir,
+        format: "json",
+        serializers: [mockSerializer],
+      });
+
+      expect(result.success).toBe(true);
+      expect(result.resourceCount).toBe(1);
+      const anyFoldLine = errorSpy.mock.calls.map((call) => String(call[0])).some((line) => line.includes("[fold:"));
+      expect(anyFoldLine).toBe(false);
+    } finally {
+      errorSpy.mockRestore();
+    }
   });
 
   test("creates parent directories for the primary output path (#38)", async () => {

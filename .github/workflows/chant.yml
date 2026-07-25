@@ -128,6 +128,12 @@ jobs:
           npm run --prefix lexicons/temporal prepack
           npm run --prefix lexicons/fly prepack
 
+      # Includes examples/fold-differential.test.ts (#1025, epic #1019) — the
+      # fold-vs-run zero-drift gate over examples/* + every lexicon's own
+      # examples/* fixtures. It's a normal vitest file (see
+      # vitest.config.ts's `include`), gated here like everything else in
+      # this step; `just fold-differential` runs it alone with its
+      # per-source report.
       - name: Run tests
         run: npx vitest run
 

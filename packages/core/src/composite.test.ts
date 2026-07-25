@@ -181,6 +181,27 @@ describe("expandComposite", () => {
     expect(expanded.get("sBucket")).toBe(bucket);
   });
 
+  test("is idempotent — repeated expansion does not duplicate shared array props (#1032)", () => {
+    const member = new MockResource({ type: "Bucket", tags: [{ key: "app", value: "x" }] });
+    const Comp = Composite<{}>(() => ({ bucket: member as unknown as Declarable }));
+    const instance = propagate(
+      Comp({}) as never,
+      { tags: [{ key: "env", value: "prod" }] },
+    );
+
+    const first = expandComposite("s", instance);
+    const firstTags = (first.get("sBucket") as unknown as MockResource).props.tags as unknown[];
+    // Expand the SAME singleton instance again (what building one tree twice in a
+    // process does) — must not re-merge onto the already-merged props.
+    const second = expandComposite("s", instance);
+    const secondTags = (second.get("sBucket") as unknown as MockResource).props.tags as unknown[];
+
+    // shared [env] + member [app] = 2 tags, both times — not 3 on the second pass.
+    expect(firstTags).toHaveLength(2);
+    expect(secondTags).toHaveLength(2);
+    expect(secondTags).toEqual(firstTags);
+  });
+
   test("handles empty composite", () => {
     const Empty = Composite<{}>(() => ({} as Record<string, Declarable>));
     const expanded = expandComposite("e", Empty({}));
