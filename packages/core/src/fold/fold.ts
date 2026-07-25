@@ -1,0 +1,326 @@
+import * as ts from "typescript";
+
+/**
+ * fold — static AST value reducer (chant #1026, part of epic #1019)
+ *
+ * Reduces a single-file TypeScript expression AST to a value with NO
+ * module execution. Covers exactly the subset that EVL001/003/004 already
+ * permit: literals, template interpolation, object/array literals (incl.
+ * spread), `const` identifier resolution, property access (incl. the
+ * cross-resource `{ __ref, attr }` case), unary `!`/`-`, the binary
+ * operators `+ - * / === !== > < >= <=`, short-circuit `&& || ??`,
+ * conditional expressions, and `as`/`satisfies`/parenthesized unwrapping.
+ *
+ * A `CallExpression` has no case — a function call as a value is
+ * structurally unrepresentable, not merely linted against. Composite
+ * factory calls are out of scope here (epic Phase 5, #1023).
+ */
+
+/**
+ * The result of folding an AST node: a plain value, a symbolic reference to
+ * a sibling resource's attribute, or a folded resource spec.
+ */
+export type FoldedValue =
+  | string
+  | number
+  | boolean
+  | null
+  | undefined
+  | FoldedValue[]
+  | { [key: string]: FoldedValue }
+  | AttrRefValue
+  | FoldedResource;
+
+/**
+ * Symbolic reference produced when a property access resolves to an
+ * attribute of another `const`-declared resource in the same file, e.g.
+ * `bucket.name` where `bucket` is `const bucket = new S3Bucket({...})`.
+ */
+export interface AttrRefValue {
+  __ref: string;
+  attr: string;
+}
+
+/**
+ * The result of folding a resource constructor: `new Type({ ...props })`.
+ */
+export interface FoldedResource {
+  __resource: string;
+  props: { [key: string]: FoldedValue };
+}
+
+/** One entry per exported `const` resource declaration in {@link foldModule}'s result. */
+export type FoldModuleEntry =
+  | { ok: true; spec: FoldedResource }
+  | { ok: false; error: string };
+
+/**
+ * Error thrown when a node cannot be folded to a value without executing
+ * code. Carries the node's source position (1-based, matching `LintError`)
+ * so callers can report a located diagnostic.
+ */
+export class FoldError extends Error {
+  readonly line: number;
+  readonly column: number;
+
+  constructor(message: string, line: number, column: number) {
+    super(`${line}:${column} - ${message}`);
+    this.name = "FoldError";
+    this.line = line;
+    this.column = column;
+  }
+}
+
+/** Resolve a node's 1-based line/column via its owning `SourceFile`. */
+function locate(node: ts.Node): { line: number; column: number } {
+  const sourceFile = node.getSourceFile();
+  const { line, character } = sourceFile.getLineAndCharacterOfPosition(node.getStart());
+  return { line: line + 1, column: character + 1 };
+}
+
+function foldError(node: ts.Node, message: string): FoldError {
+  const { line, column } = locate(node);
+  return new FoldError(message, line, column);
+}
+
+/**
+ * Collect every top-level `const x = <initializer>` in a source file into a
+ * name -> initializer map. Single-file only (cross-file is #1020).
+ */
+export function collectConsts(sourceFile: ts.SourceFile): Map<string, ts.Expression> {
+  const consts = new Map<string, ts.Expression>();
+  for (const statement of sourceFile.statements) {
+    if (!ts.isVariableStatement(statement)) continue;
+    if ((statement.declarationList.flags & ts.NodeFlags.Const) === 0) continue;
+    for (const decl of statement.declarationList.declarations) {
+      if (ts.isIdentifier(decl.name) && decl.initializer) {
+        consts.set(decl.name.text, decl.initializer);
+      }
+    }
+  }
+  return consts;
+}
+
+/** A property/element key foldable without execution: identifier, string, or numeric literal. */
+function propName(node: ts.PropertyName): string {
+  if (ts.isIdentifier(node) || ts.isStringLiteral(node) || ts.isNumericLiteral(node)) {
+    return node.text;
+  }
+  throw foldError(node, `computed/dynamic property name not foldable: ${node.getText()}`);
+}
+
+/** True when `ident` is a `const` bound to a `new Type(...)` resource constructor. */
+function resolvesToResource(consts: Map<string, ts.Expression>, ident: ts.Identifier): boolean {
+  const init = consts.get(ident.text);
+  return init !== undefined && ts.isNewExpression(init);
+}
+
+/**
+ * Fold a single expression node to a value. Throws {@link FoldError} for
+ * anything outside the supported subset — including any `CallExpression`.
+ */
+export function fold(node: ts.Expression, consts: Map<string, ts.Expression>): FoldedValue {
+  if (ts.isParenthesizedExpression(node) || ts.isAsExpression(node) || ts.isSatisfiesExpression(node)) {
+    return fold(node.expression, consts);
+  }
+
+  if (ts.isStringLiteral(node) || ts.isNoSubstitutionTemplateLiteral(node)) {
+    return node.text;
+  }
+
+  if (ts.isNumericLiteral(node)) {
+    return Number(node.text);
+  }
+
+  if (node.kind === ts.SyntaxKind.TrueKeyword) return true;
+  if (node.kind === ts.SyntaxKind.FalseKeyword) return false;
+  if (node.kind === ts.SyntaxKind.NullKeyword) return null;
+
+  if (ts.isIdentifier(node) && node.text === "undefined") return undefined;
+
+  if (ts.isTemplateExpression(node)) {
+    let out = node.head.text;
+    for (const span of node.templateSpans) {
+      out += String(fold(span.expression, consts)) + span.literal.text;
+    }
+    return out;
+  }
+
+  if (ts.isObjectLiteralExpression(node)) {
+    const obj: { [key: string]: FoldedValue } = {};
+    for (const prop of node.properties) {
+      if (ts.isPropertyAssignment(prop)) {
+        obj[propName(prop.name)] = fold(prop.initializer, consts);
+      } else if (ts.isShorthandPropertyAssignment(prop)) {
+        obj[prop.name.text] = fold(prop.name, consts);
+      } else if (ts.isSpreadAssignment(prop)) {
+        const src = fold(prop.expression, consts);
+        if (src === null || typeof src !== "object") {
+          throw foldError(prop, "spread source not an object");
+        }
+        Object.assign(obj, src);
+      } else {
+        throw foldError(prop, "unsupported object member");
+      }
+    }
+    return obj;
+  }
+
+  if (ts.isArrayLiteralExpression(node)) {
+    const arr: FoldedValue[] = [];
+    for (const el of node.elements) {
+      if (ts.isSpreadElement(el)) {
+        const src = fold(el.expression, consts);
+        if (!Array.isArray(src)) {
+          throw foldError(el, "spread source not an array");
+        }
+        arr.push(...src);
+      } else {
+        arr.push(fold(el, consts));
+      }
+    }
+    return arr;
+  }
+
+  if (ts.isIdentifier(node)) {
+    if (!consts.has(node.text)) {
+      throw foldError(node, `unresolved identifier: ${node.text}`);
+    }
+    return fold(consts.get(node.text) as ts.Expression, consts);
+  }
+
+  if (ts.isPropertyAccessExpression(node)) {
+    if (ts.isIdentifier(node.expression) && resolvesToResource(consts, node.expression)) {
+      return { __ref: node.expression.text, attr: node.name.text };
+    }
+    const obj = fold(node.expression, consts);
+    if (obj === null || obj === undefined) return undefined;
+    return (obj as { [key: string]: FoldedValue })[node.name.text];
+  }
+
+  if (ts.isPrefixUnaryExpression(node)) {
+    const value = fold(node.operand, consts);
+    if (node.operator === ts.SyntaxKind.ExclamationToken) return !value;
+    if (node.operator === ts.SyntaxKind.MinusToken) return -(value as unknown as number);
+    throw foldError(node, "unsupported unary");
+  }
+
+  if (ts.isBinaryExpression(node)) {
+    const opKind = node.operatorToken.kind;
+    const S = ts.SyntaxKind;
+
+    if (opKind === S.AmpersandAmpersandToken) {
+      const left = fold(node.left, consts);
+      return left ? fold(node.right, consts) : left;
+    }
+    if (opKind === S.BarBarToken) {
+      const left = fold(node.left, consts);
+      return left ? left : fold(node.right, consts);
+    }
+    if (opKind === S.QuestionQuestionToken) {
+      const left = fold(node.left, consts);
+      return left === null || left === undefined ? fold(node.right, consts) : left;
+    }
+
+    const left = fold(node.left, consts);
+    const right = fold(node.right, consts);
+    switch (opKind) {
+      case S.PlusToken:
+        return (left as unknown as string) + (right as unknown as string);
+      case S.MinusToken:
+        return (left as unknown as number) - (right as unknown as number);
+      case S.AsteriskToken:
+        return (left as unknown as number) * (right as unknown as number);
+      case S.SlashToken:
+        return (left as unknown as number) / (right as unknown as number);
+      case S.EqualsEqualsEqualsToken:
+        return left === right;
+      case S.ExclamationEqualsEqualsToken:
+        return left !== right;
+      case S.GreaterThanToken:
+        return (left as unknown as string) > (right as unknown as string);
+      case S.LessThanToken:
+        return (left as unknown as string) < (right as unknown as string);
+      case S.GreaterThanEqualsToken:
+        return (left as unknown as string) >= (right as unknown as string);
+      case S.LessThanEqualsToken:
+        return (left as unknown as string) <= (right as unknown as string);
+      default:
+        throw foldError(node, `unsupported binary operator: ${ts.SyntaxKind[opKind]}`);
+    }
+  }
+
+  if (ts.isConditionalExpression(node)) {
+    return fold(node.condition, consts) ? fold(node.whenTrue, consts) : fold(node.whenFalse, consts);
+  }
+
+  if (ts.isCallExpression(node)) {
+    throw foldError(node, `function call as a value is not foldable: ${node.expression.getText()}(...)`);
+  }
+
+  throw foldError(node, `unsupported expression: ${ts.SyntaxKind[node.kind]}`);
+}
+
+/**
+ * Fold a resource constructor call — `new Type({ ...props })` — to its spec.
+ * The constructor argument, if present, must be an object literal (anything
+ * else is not statically evaluable and throws a located {@link FoldError}).
+ */
+export function foldResource(node: ts.NewExpression, consts: Map<string, ts.Expression>): FoldedResource {
+  const typeName = node.expression.getText();
+  const [firstArg] = node.arguments ?? [];
+
+  if (!firstArg) {
+    return { __resource: typeName, props: {} };
+  }
+  if (!ts.isObjectLiteralExpression(firstArg)) {
+    throw foldError(firstArg, `resource constructor argument must be an object literal: ${typeName}(...)`);
+  }
+
+  const props = fold(firstArg, consts) as { [key: string]: FoldedValue };
+  return { __resource: typeName, props };
+}
+
+function hasExportModifier(statement: ts.VariableStatement): boolean {
+  return statement.modifiers?.some((m) => m.kind === ts.SyntaxKind.ExportKeyword) ?? false;
+}
+
+/**
+ * Fold every exported `const X = new Type({...})` resource declaration in a
+ * source file to its spec, with no module execution.
+ *
+ * Non-resource `const` exports (anything whose initializer isn't a `new`
+ * expression) are left out of the result rather than folded or errored —
+ * `new`-less resource forms (composite factory calls) are epic Phase 5
+ * (#1023) and are not attempted here.
+ */
+export function foldModule(source: string, fileName = "module.ts"): Record<string, FoldModuleEntry> {
+  const sourceFile = ts.createSourceFile(fileName, source, ts.ScriptTarget.Latest, /* setParentNodes */ true);
+  const consts = collectConsts(sourceFile);
+  const result: Record<string, FoldModuleEntry> = {};
+
+  for (const statement of sourceFile.statements) {
+    if (!ts.isVariableStatement(statement)) continue;
+    if (!hasExportModifier(statement)) continue;
+    if ((statement.declarationList.flags & ts.NodeFlags.Const) === 0) continue;
+
+    for (const decl of statement.declarationList.declarations) {
+      if (!ts.isIdentifier(decl.name) || !decl.initializer) continue;
+      if (!ts.isNewExpression(decl.initializer)) continue;
+
+      const name = decl.name.text;
+      try {
+        const spec = foldResource(decl.initializer, consts);
+        result[name] = { ok: true, spec };
+      } catch (err) {
+        if (err instanceof FoldError) {
+          result[name] = { ok: false, error: err.message };
+        } else {
+          throw err;
+        }
+      }
+    }
+  }
+
+  return result;
+}
