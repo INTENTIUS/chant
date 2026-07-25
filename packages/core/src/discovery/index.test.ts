@@ -1,8 +1,9 @@
 import { describe, test, expect, beforeEach, afterEach } from "vitest";
 import { discover } from "./index";
 import { mkdir, writeFile, rm } from "node:fs/promises";
-import { join } from "node:path";
+import { join, dirname, resolve } from "node:path";
 import { tmpdir } from "node:os";
+import { fileURLToPath } from "node:url";
 import { DECLARABLE_MARKER } from "../declarable";
 
 describe("discover", () => {
@@ -268,5 +269,113 @@ describe("discover", () => {
 
     const deps2 = result.dependencies.get("standalone2");
     expect(deps2?.size).toBe(0);
+  });
+});
+
+describe("discover — fold mode (#1022, epic #1019)", () => {
+  let testDir: string;
+  const thisDir = dirname(fileURLToPath(import.meta.url));
+  const runtimePath = resolve(thisDir, "../runtime");
+  const compositePath = resolve(thisDir, "../composite");
+
+  beforeEach(async () => {
+    testDir = join(tmpdir(), `chant-discover-fold-test-${Date.now()}-${Math.random()}`);
+    await mkdir(testDir, { recursive: true });
+  });
+
+  afterEach(async () => {
+    await rm(testDir, { recursive: true, force: true });
+  });
+
+  test("default (flag omitted) leaves foldDecisions empty and behavior unchanged", async () => {
+    await writeFile(
+      join(testDir, "app.ts"),
+      `
+        export const entity = {
+          entityType: "Entity",
+          [Symbol.for("chant.declarable")]: true,
+        };
+      `,
+    );
+
+    const result = await discover(testDir);
+
+    expect(result.entities.size).toBe(1);
+    expect(result.foldDecisions).toEqual([]);
+  });
+
+  test("folds a leaf-only module with zero execution (throw sentinel never fires)", async () => {
+    await writeFile(
+      join(testDir, "resources.ts"),
+      `
+        import { createResource } from ${JSON.stringify(runtimePath)};
+        export const Bucket = createResource("Test::Bucket", "aws", { arn: "Arn" });
+      `,
+    );
+    await writeFile(
+      join(testDir, "main.ts"),
+      `
+        import { Bucket } from "./resources";
+        throw new Error("must never execute — sentinel for #1022 fold verification");
+        export const bucket = new Bucket({ name: "my-bucket" });
+      `,
+    );
+
+    // Sanity check: running this directory the normal way really does fire
+    // the sentinel (a collected import error), proving fold isn't just
+    // accidentally skipping a no-op file.
+    const ran = await discover(testDir);
+    expect(ran.errors.some((e) => e.message.includes("must never execute"))).toBe(true);
+
+    const result = await discover(testDir, { fold: true });
+
+    expect(result.errors).toEqual([]);
+    expect(result.entities.size).toBe(1);
+    expect(result.entities.has("bucket")).toBe(true);
+    const bucket = result.entities.get("bucket")!;
+    expect((bucket as unknown as { lexicon: string }).lexicon).toBe("aws");
+    expect((bucket as unknown as { entityType: string }).entityType).toBe("Test::Bucket");
+
+    expect(result.foldDecisions).toHaveLength(2);
+    const mainDecision = result.foldDecisions.find((d) => d.file.endsWith("main.ts"));
+    expect(mainDecision?.mode).toBe("fold");
+    expect(mainDecision?.resourceCount).toBe(1);
+  });
+
+  test("a module instantiating a composite falls back to run; output is unchanged", async () => {
+    await writeFile(
+      join(testDir, "composites.ts"),
+      `
+        import { createResource } from ${JSON.stringify(runtimePath)};
+        import { Composite } from ${JSON.stringify(compositePath)};
+        const Bucket = createResource("Test::Bucket", "aws", { arn: "Arn" });
+        export const MyStack = Composite<{ name: string }>((props) => {
+          const bucket = new Bucket({ name: props.name });
+          return { bucket };
+        });
+      `,
+    );
+    await writeFile(
+      join(testDir, "stack.ts"),
+      `
+        import { MyStack } from "./composites";
+        export const stack = MyStack({ name: "composite-bucket" });
+      `,
+    );
+
+    const withoutFold = await discover(testDir);
+    const withFold = await discover(testDir, { fold: true });
+
+    expect(withFold.errors).toEqual([]);
+    expect(withFold.entities.size).toBe(withoutFold.entities.size);
+    expect([...withFold.entities.keys()].sort()).toEqual([...withoutFold.entities.keys()].sort());
+    expect(withFold.entities.has("stackBucket")).toBe(true);
+    const folded = withFold.entities.get("stackBucket")! as unknown as { props: { name: string } };
+    const run = withoutFold.entities.get("stackBucket")! as unknown as { props: { name: string } };
+    expect(folded.props).toEqual(run.props);
+
+    const stackDecision = withFold.foldDecisions.find((d) => d.file.endsWith("stack.ts"));
+    expect(stackDecision?.mode).toBe("run");
+    expect(stackDecision?.reason).toContain("not a `new Type(...)` resource declaration");
   });
 });

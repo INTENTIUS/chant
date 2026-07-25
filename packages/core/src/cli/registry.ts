@@ -144,6 +144,8 @@ export interface ParsedArgs {
   dumpOutputs?: string;
   /** `chant run --components <name> --seed-outputs <file>` (repeatable) — before the run, load each JSON outputs file (as written by `--dump-outputs`) and seed cross-component/cross-stack resolution with it, so a `stackOutput()`/`@<dep>.publish.*` reference to a component that ran in an earlier job resolves. */
   seedOutputs?: string[];
+  /** `chant build --fold` (#1022, epic #1019) — opt-in: fold source modules statically instead of importing/running them, falling back to run per-file for anything the folder can't represent (composite factory calls, non-`new` exports, …). Also settable project-wide via `chant.config.ts`'s `build.fold: true`; the flag always wins when set. Default (flag omitted): the existing run path, unchanged. */
+  fold?: boolean;
 }
 
 /**

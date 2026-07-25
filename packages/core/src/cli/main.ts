@@ -214,6 +214,8 @@ export function parseArgs(args: string[]): ParsedArgs {
       result.compareTo = args[++i];
     } else if (arg === "--no-release-record") {
       result.noReleaseRecord = true;
+    } else if (arg === "--fold") {
+      result.fold = true;
     } else if (!arg.startsWith("-")) {
       if (!result.command) {
         result.command = arg;
@@ -403,12 +405,18 @@ Options:
                         successful \`run --components\` deploy (default: on;
                         also settable via chant.config.ts's
                         release.autoRecord: false; #597)
+  --fold                (build) Fold source modules statically instead of
+                        running them; falls back to run per-file for
+                        composites or anything else outside the fold subset.
+                        Logs which path each file took. Default: off (also
+                        settable via chant.config.ts's build.fold: true; #1022)
 
 Examples:
   chant build ./infra/
   chant build ./infra/ --output stack.json
   chant build ./infra/ --format yaml
   chant build ./infra/ --watch
+  chant build ./infra/ --fold
   chant build ./infra/ --components --generate gitlab
   chant build ./infra/ --components --generate gitlab --output .gitlab-ci.yml
   chant run --components search-service --env staging

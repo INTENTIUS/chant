@@ -21,6 +21,9 @@ export const ChantConfigSchema = z.object({
     env: z.string().min(1).optional(),
     enabled: z.boolean().optional(),
   }).optional(),
+  build: z.object({
+    fold: z.boolean().optional(),
+  }).optional(),
   release: z.object({
     autoRecord: z.boolean().optional(),
   }).optional(),
@@ -115,6 +118,21 @@ export interface ChantConfig {
     env?: string;
     /** Set false to disable stamping even when `stack` is present. */
     enabled?: boolean;
+  };
+
+  /**
+   * `chant build` behavior toggles (#1022, epic #1019).
+   */
+  build?: {
+    /**
+     * Opt-in: fold source modules statically instead of importing/running
+     * them, falling back to run per-file for anything the folder can't
+     * represent (composite factory calls, non-`new` exports, …). Default
+     * `false`. The `--fold` CLI flag overrides this per-invocation (a flag
+     * of `true` always wins; the flag cannot force fold *off* when this is
+     * `true`). See {@link resolveFoldEnabled}.
+     */
+    fold?: boolean;
   };
 
   /**
@@ -263,6 +281,18 @@ export function resolveOwnershipMarker(config: ChantConfig): OwnershipMarker | u
 export function resolveAutoReleaseDisabled(config: ChantConfig, cliFlag?: boolean): boolean {
   if (cliFlag) return true;
   return config.release?.autoRecord === false;
+}
+
+/**
+ * Whether `chant build` should use the fold path (#1022, epic #1019)
+ * instead of running each source module. Opt-in: off unless the CLI's
+ * `--fold` flag was passed (`cliFlag`) or the project config sets
+ * `build.fold: true` — the flag always wins for that one invocation,
+ * regardless of config.
+ */
+export function resolveFoldEnabled(config: ChantConfig, cliFlag?: boolean): boolean {
+  if (cliFlag) return true;
+  return config.build?.fold === true;
 }
 
 /**

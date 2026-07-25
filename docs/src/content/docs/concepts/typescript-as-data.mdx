@@ -194,6 +194,21 @@ export const store = new StorageType({
 
 For the full EVL rule reference with configuration options, see [Evaluability Rules](/chant/lint-rules/evaluability/).
 
+## Folded vs Run
+
+`chant build --fold` is an opt-in, in-progress alternate build path (part of the fold epic, #1019). By default `chant build` imports and runs every source file to collect the exported resource objects — this is unchanged whether or not `--fold` exists. With `--fold`, chant instead tries to reduce each file's AST directly to the resource spec, without importing or executing the file at all.
+
+Only the leaf pattern folds today: `export const x = new Type({ ...literals, const refs, templates })`. Anything outside that subset — most notably a composite factory call (`export const stack = MyStack({...})`), a re-export, `export default`, or a `let`/`var` — makes the whole file fall back to the normal run path, transparently and per-file. `chant build --fold` logs which path each file took:
+
+```
+[fold:fold] main.ts — 1 resource(s), no module execution
+[fold:run] stack.ts — exported "stack" is not a `new Type(...)` resource declaration (composite call or plain value)
+```
+
+A folded file and a run file produce the same resource objects downstream — same serialization, same lint. Also settable project-wide via `chant.config.ts`'s `build.fold: true`; the `--fold` flag always wins when passed.
+
+This is a migration path, not a new authoring model: the supported subset above already describes what folds. As more of it is covered statically (cross-file resolution, composite interpretation), more files fold and fewer run — with zero change to what you write.
+
 ## Why These Constraints?
 
 The supported subset is the set of TypeScript patterns whose value is fully determined by literals, known constants, and symbolic cross-resource references. `chant build` imports and runs your files. The evaluability rules reject patterns that would make the result depend on anything else, so running the supported subset has no side effects.
