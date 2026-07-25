@@ -1,6 +1,11 @@
 import { describe, test, expect } from "vitest";
 import * as ts from "typescript";
 import { fold, foldModule, collectConsts, FoldError, type FoldedValue } from "./fold";
+import { createResource } from "../runtime";
+import { resolveAttrRefs } from "../discovery/resolve";
+import type { Declarable } from "../declarable";
+import type { AttrRef } from "../attrref";
+import type { IntrinsicDef } from "../lexicon";
 
 /** Parse a snippet and return its top-level `const` map, for direct `fold()` tests. */
 function parseConsts(source: string): Map<string, ts.Expression> {
@@ -115,7 +120,7 @@ describe("fold — cross-resource attribute refs", () => {
       const bucket = new S3Bucket({ name: "my-bucket" });
       const ref = bucket.name;
     `;
-    expect(foldConst(src, "ref")).toEqual({ __ref: "bucket", attr: "name" });
+    expect(foldConst(src, "ref")).toEqual({ __attrRef: { entity: "bucket", attribute: "name" } });
   });
 
   test("property access on a plain object indexes the folded value", () => {
@@ -124,6 +129,157 @@ describe("fold — cross-resource attribute refs", () => {
       const x = obj.name;
     `;
     expect(foldConst(src, "x")).toBe("plain");
+  });
+
+  test("differential: fold(bucket.arn) matches the AttrRef.toJSON() the run path yields", () => {
+    // Run path: build a real resource instance the way generated lexicon
+    // code does (runtime.createResource), then resolve it exactly like
+    // discovery does for a real project (discovery/resolve.ts).
+    const Bucket = createResource("S3Bucket", "aws", { arn: "arn" });
+    const bucket = new Bucket({ name: "my-bucket" }) as unknown as Declarable & { arn: AttrRef };
+    const entities = new Map<string, Declarable>([["bucket", bucket]]);
+    resolveAttrRefs(entities);
+    const runResult = bucket.arn.toJSON();
+
+    // Fold path: the same source, folded with no module execution.
+    const src = `
+      const bucket = new S3Bucket({ name: "my-bucket" });
+      const ref = bucket.arn;
+    `;
+    const foldResult = foldConst(src, "ref");
+
+    expect(foldResult).toEqual(runResult);
+    expect(foldResult).toEqual({ __attrRef: { entity: "bucket", attribute: "arn" } });
+  });
+});
+
+describe("fold — element access", () => {
+  test("string literal key on a plain object indexes the folded value", () => {
+    const src = `
+      const obj = { name: "plain" };
+      const x = obj["name"];
+    `;
+    expect(foldConst(src, "x")).toBe("plain");
+  });
+
+  test("numeric literal key indexes a folded array", () => {
+    const src = `
+      const arr = ["a", "b", "c"];
+      const x = arr[1];
+    `;
+    expect(foldConst(src, "x")).toBe("b");
+  });
+
+  test("element access on a const bound to `new` becomes a symbolic ref, same as dot access", () => {
+    const src = `
+      const bucket = new S3Bucket({ name: "my-bucket" });
+      const ref = bucket["name"];
+    `;
+    expect(foldConst(src, "ref")).toEqual({ __attrRef: { entity: "bucket", attribute: "name" } });
+  });
+
+  test("numeric element access on a const bound to `new` becomes a symbolic ref with a stringified attribute", () => {
+    const src = `
+      const thing = new Thing({});
+      const ref = thing[0];
+    `;
+    expect(foldConst(src, "ref")).toEqual({ __attrRef: { entity: "thing", attribute: "0" } });
+  });
+
+  test("a dynamic/computed element key throws a located FoldError (EVL003 semantics)", () => {
+    const src = `
+      const key = "dynamic";
+      const obj = { dynamic: 1 };
+      const bad = obj[key];
+    `;
+    let error: unknown;
+    try {
+      foldConst(src, "bad");
+    } catch (e) {
+      error = e;
+    }
+    expect(error).toBeInstanceOf(FoldError);
+    expect((error as FoldError).message).toContain("computed key must be a string or numeric literal");
+  });
+
+  test("a dynamic element key on a resource ref is also rejected", () => {
+    const src = `
+      const key = "arn";
+      const bucket = new S3Bucket({});
+      const bad = bucket[key];
+    `;
+    expect(() => foldConst(src, "bad")).toThrow(FoldError);
+  });
+});
+
+describe("fold — intrinsic tagged templates", () => {
+  const SUB: IntrinsicDef = { name: "Sub", isTag: true, outputKey: "Fn::Sub" };
+
+  test("a registered tag folds to the intrinsic node form", () => {
+    const src = `const x = Sub\`\${name}-data\`;`;
+    const consts = parseConsts(`const name = "prefix"; ${src}`);
+    const expr = consts.get("x");
+    if (!expr) throw new Error("fixture error");
+    expect(fold(expr, consts, [SUB])).toEqual({
+      __intrinsic: "Sub",
+      strings: ["", "-data"],
+      values: ["prefix"],
+    });
+  });
+
+  test("Params.StackName-style pseudo-parameter access is preserved symbolically, not stringified", () => {
+    const consts = parseConsts(`const x = Intrinsic\`\${Params.StackName}-data\`;`);
+    const expr = consts.get("x");
+    if (!expr) throw new Error("fixture error");
+    const INTRINSIC: IntrinsicDef = { name: "Intrinsic", isTag: true };
+    expect(fold(expr, consts, [INTRINSIC])).toEqual({
+      __intrinsic: "Intrinsic",
+      strings: ["", "-data"],
+      values: [{ __symbol: "Params.StackName" }],
+    });
+  });
+
+  test("folds only the interpolated sub-expressions — a nested resource ref stays a ref, not a string", () => {
+    const src = `
+      const bucket = new S3Bucket({ name: "my-bucket" });
+      const x = Sub\`\${bucket.arn}/*\`;
+    `;
+    const consts = parseConsts(src);
+    const expr = consts.get("x");
+    if (!expr) throw new Error("fixture error");
+    expect(fold(expr, consts, [SUB])).toEqual({
+      __intrinsic: "Sub",
+      strings: ["", "/*"],
+      values: [{ __attrRef: { entity: "bucket", attribute: "arn" } }],
+    });
+  });
+
+  test("a no-substitution tagged template folds with an empty values array", () => {
+    const consts = parseConsts("const x = Sub`plain-value`;");
+    const expr = consts.get("x");
+    if (!expr) throw new Error("fixture error");
+    expect(fold(expr, consts, [SUB])).toEqual({ __intrinsic: "Sub", strings: ["plain-value"], values: [] });
+  });
+
+  test("an unregistered tagged template is rejected with a located FoldError", () => {
+    const consts = parseConsts("const x = Unknown`${1}`;");
+    const expr = consts.get("x");
+    if (!expr) throw new Error("fixture error");
+    let error: unknown;
+    try {
+      fold(expr, consts, [SUB]);
+    } catch (e) {
+      error = e;
+    }
+    expect(error).toBeInstanceOf(FoldError);
+    expect((error as FoldError).message).toContain("Unknown");
+  });
+
+  test("a tagged template is rejected when no intrinsics are registered at all", () => {
+    const consts = parseConsts("const x = Sub`${1}`;");
+    const expr = consts.get("x");
+    if (!expr) throw new Error("fixture error");
+    expect(() => fold(expr, consts)).toThrow(FoldError);
   });
 });
 
@@ -306,7 +462,10 @@ describe("foldModule", () => {
     const result = foldModule(src);
     expect(result.policy).toEqual({
       ok: true,
-      spec: { __resource: "BucketPolicy", props: { bucketName: { __ref: "bucket", attr: "name" } } },
+      spec: {
+        __resource: "BucketPolicy",
+        props: { bucketName: { __attrRef: { entity: "bucket", attribute: "name" } } },
+      },
     });
   });
 

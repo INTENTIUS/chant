@@ -1,24 +1,28 @@
 import * as ts from "typescript";
+import type { IntrinsicDef } from "../lexicon";
 
 /**
- * fold — static AST value reducer (chant #1026, part of epic #1019)
+ * fold — static AST value reducer (chant #1026/#1021, part of epic #1019)
  *
  * Reduces a single-file TypeScript expression AST to a value with NO
  * module execution. Covers exactly the subset that EVL001/003/004 already
  * permit: literals, template interpolation, object/array literals (incl.
- * spread), `const` identifier resolution, property access (incl. the
- * cross-resource `{ __ref, attr }` case), unary `!`/`-`, the binary
- * operators `+ - * / === !== > < >= <=`, short-circuit `&& || ??`,
- * conditional expressions, and `as`/`satisfies`/parenthesized unwrapping.
+ * spread), `const` identifier resolution, property and element access
+ * (incl. the cross-resource `{ __attrRef }` case, literal-key-only), unary
+ * `!`/`-`, the binary operators `+ - * / === !== > < >= <=`, short-circuit
+ * `&& || ??`, conditional expressions, `as`/`satisfies`/parenthesized
+ * unwrapping, and registered lexicon intrinsic tagged templates.
  *
  * A `CallExpression` has no case — a function call as a value is
  * structurally unrepresentable, not merely linted against. Composite
- * factory calls are out of scope here (epic Phase 5, #1023).
+ * factory calls are out of scope here (epic Phase 5, #1023). Cross-file
+ * identifier resolution (imports) is #1020 — single-file only.
  */
 
 /**
  * The result of folding an AST node: a plain value, a symbolic reference to
- * a sibling resource's attribute, or a folded resource spec.
+ * a sibling resource's attribute, a folded intrinsic tagged template, an
+ * unresolved external symbol chain, or a folded resource spec.
  */
 export type FoldedValue =
   | string
@@ -29,16 +33,51 @@ export type FoldedValue =
   | FoldedValue[]
   | { [key: string]: FoldedValue }
   | AttrRefValue
+  | FoldedIntrinsic
+  | SymbolicValue
   | FoldedResource;
 
 /**
- * Symbolic reference produced when a property access resolves to an
+ * Symbolic reference produced when a property/element access resolves to an
  * attribute of another `const`-declared resource in the same file, e.g.
- * `bucket.name` where `bucket` is `const bucket = new S3Bucket({...})`.
+ * `bucket.name` (or `bucket["name"]`) where `bucket` is
+ * `const bucket = new S3Bucket({...})`.
+ *
+ * This is the SAME envelope `AttrRef.prototype.toJSON()` produces at
+ * runtime ({@link "../attrref"}) — `serializer-walker.ts`'s `walkValue`
+ * already recognizes a plain `{ __attrRef }` object as an AttrRef envelope
+ * (it doesn't require a live `AttrRef` instance), so this is not an
+ * invented shape: it's the existing envelope, produced without running the
+ * module that would otherwise construct the real `AttrRef`.
  */
 export interface AttrRefValue {
-  __ref: string;
-  attr: string;
+  __attrRef: { entity: string; attribute: string };
+}
+
+/**
+ * The result of folding a registered lexicon intrinsic tagged template
+ * (e.g. `Sub\`${AWS.StackName}-x\``) to its node form: tag name, cooked
+ * template string parts, and folded interpolated values (in order).
+ * Mirrors the runtime call shape `Tag(strings, ...values)` so a later
+ * build path can replay it into the real intrinsic object (#1022).
+ */
+export interface FoldedIntrinsic {
+  __intrinsic: string;
+  strings: string[];
+  values: FoldedValue[];
+}
+
+/**
+ * A sub-expression inside a folded intrinsic that fold could not reduce to
+ * a value without resolving an identifier from outside this file — e.g. an
+ * imported pseudo-parameter namespace access like `AWS.StackName`.
+ * Cross-file import resolution is #1020; until then the raw source text is
+ * preserved verbatim (never stringified, never rejected) instead of being
+ * treated as an unresolved-identifier error. Only appears inside a folded
+ * intrinsic's `values` — see {@link foldIntrinsicValue}.
+ */
+export interface SymbolicValue {
+  __symbol: string;
 }
 
 /**
@@ -109,6 +148,21 @@ function propName(node: ts.PropertyName): string {
   throw foldError(node, `computed/dynamic property name not foldable: ${node.getText()}`);
 }
 
+/**
+ * An element-access key foldable without execution: a string or numeric
+ * LITERAL only (EVL003 semantics — a variable or expression key is a
+ * dynamic key and is rejected).
+ */
+function elementKey(node: ts.Expression): string {
+  if (ts.isStringLiteral(node) || ts.isNumericLiteral(node)) {
+    return node.text;
+  }
+  throw foldError(
+    node,
+    `dynamic property access — computed key must be a string or numeric literal: ${node.getText()}`,
+  );
+}
+
 /** True when `ident` is a `const` bound to a `new Type(...)` resource constructor. */
 function resolvesToResource(consts: Map<string, ts.Expression>, ident: ts.Identifier): boolean {
   const init = consts.get(ident.text);
@@ -116,12 +170,81 @@ function resolvesToResource(consts: Map<string, ts.Expression>, ident: ts.Identi
 }
 
 /**
- * Fold a single expression node to a value. Throws {@link FoldError} for
- * anything outside the supported subset — including any `CallExpression`.
+ * True when `node` is an identifier, or a dotted/bracketed access chain
+ * rooted at an identifier, that isn't bound in `consts` — e.g.
+ * `AWS.StackName` from an imported pseudo-parameter namespace, or a bare
+ * imported identifier. Resolving what it actually refers to requires
+ * following an import (#1020), which is out of scope here.
  */
-export function fold(node: ts.Expression, consts: Map<string, ts.Expression>): FoldedValue {
+function isUnresolvedSymbolChain(node: ts.Expression, consts: Map<string, ts.Expression>): boolean {
+  if (ts.isIdentifier(node)) return node.text !== "undefined" && !consts.has(node.text);
+  if (ts.isPropertyAccessExpression(node)) return isUnresolvedSymbolChain(node.expression, consts);
+  if (ts.isElementAccessExpression(node)) return isUnresolvedSymbolChain(node.expression, consts);
+  return false;
+}
+
+/**
+ * Fold one interpolated sub-expression of a registered intrinsic tagged
+ * template. Identical to {@link fold}, except an unresolved external
+ * symbol chain (a pseudo-parameter-style access this file can't see the
+ * import for) folds to a {@link SymbolicValue} instead of throwing — the
+ * run path resolves it once the module actually imports and runs; fold
+ * preserves it symbolically rather than stringifying or rejecting it.
+ */
+function foldIntrinsicValue(
+  node: ts.Expression,
+  consts: Map<string, ts.Expression>,
+  intrinsics: readonly IntrinsicDef[],
+): FoldedValue {
+  if (isUnresolvedSymbolChain(node, consts)) {
+    return { __symbol: node.getText() };
+  }
+  return fold(node, consts, intrinsics);
+}
+
+/**
+ * Fold a `TaggedTemplateExpression` whose tag is a registered lexicon
+ * intrinsic (`IntrinsicDef.isTag === true`) to its node form. An
+ * unregistered tag throws a located {@link FoldError}.
+ */
+function foldTaggedTemplate(
+  node: ts.TaggedTemplateExpression,
+  consts: Map<string, ts.Expression>,
+  intrinsics: readonly IntrinsicDef[],
+): FoldedIntrinsic {
+  const tagName = node.tag.getText();
+  const isRegistered = intrinsics.some((i) => i.isTag === true && i.name === tagName);
+  if (!isRegistered) {
+    throw foldError(node, `unregistered tagged template intrinsic: ${tagName}\`...\``);
+  }
+
+  const template = node.template;
+  if (ts.isNoSubstitutionTemplateLiteral(template)) {
+    return { __intrinsic: tagName, strings: [template.text], values: [] };
+  }
+
+  const strings = [template.head.text, ...template.templateSpans.map((span) => span.literal.text)];
+  const values = template.templateSpans.map((span) => foldIntrinsicValue(span.expression, consts, intrinsics));
+  return { __intrinsic: tagName, strings, values };
+}
+
+/**
+ * Fold a single expression node to a value. Throws {@link FoldError} for
+ * anything outside the supported subset — including any `CallExpression`
+ * that isn't a registered intrinsic tagged template.
+ *
+ * @param intrinsics - Lexicon-registered intrinsic tags (`IntrinsicDef`
+ *   entries with `isTag: true`, e.g. `Sub`). A tagged template whose tag
+ *   isn't in this list is rejected. Defaults to none — pass the target
+ *   lexicon's manifest `intrinsics` to recognize its tags.
+ */
+export function fold(
+  node: ts.Expression,
+  consts: Map<string, ts.Expression>,
+  intrinsics: readonly IntrinsicDef[] = [],
+): FoldedValue {
   if (ts.isParenthesizedExpression(node) || ts.isAsExpression(node) || ts.isSatisfiesExpression(node)) {
-    return fold(node.expression, consts);
+    return fold(node.expression, consts, intrinsics);
   }
 
   if (ts.isStringLiteral(node) || ts.isNoSubstitutionTemplateLiteral(node)) {
@@ -138,10 +261,14 @@ export function fold(node: ts.Expression, consts: Map<string, ts.Expression>): F
 
   if (ts.isIdentifier(node) && node.text === "undefined") return undefined;
 
+  if (ts.isTaggedTemplateExpression(node)) {
+    return foldTaggedTemplate(node, consts, intrinsics);
+  }
+
   if (ts.isTemplateExpression(node)) {
     let out = node.head.text;
     for (const span of node.templateSpans) {
-      out += String(fold(span.expression, consts)) + span.literal.text;
+      out += String(fold(span.expression, consts, intrinsics)) + span.literal.text;
     }
     return out;
   }
@@ -150,11 +277,11 @@ export function fold(node: ts.Expression, consts: Map<string, ts.Expression>): F
     const obj: { [key: string]: FoldedValue } = {};
     for (const prop of node.properties) {
       if (ts.isPropertyAssignment(prop)) {
-        obj[propName(prop.name)] = fold(prop.initializer, consts);
+        obj[propName(prop.name)] = fold(prop.initializer, consts, intrinsics);
       } else if (ts.isShorthandPropertyAssignment(prop)) {
-        obj[prop.name.text] = fold(prop.name, consts);
+        obj[prop.name.text] = fold(prop.name, consts, intrinsics);
       } else if (ts.isSpreadAssignment(prop)) {
-        const src = fold(prop.expression, consts);
+        const src = fold(prop.expression, consts, intrinsics);
         if (src === null || typeof src !== "object") {
           throw foldError(prop, "spread source not an object");
         }
@@ -170,13 +297,13 @@ export function fold(node: ts.Expression, consts: Map<string, ts.Expression>): F
     const arr: FoldedValue[] = [];
     for (const el of node.elements) {
       if (ts.isSpreadElement(el)) {
-        const src = fold(el.expression, consts);
+        const src = fold(el.expression, consts, intrinsics);
         if (!Array.isArray(src)) {
           throw foldError(el, "spread source not an array");
         }
         arr.push(...src);
       } else {
-        arr.push(fold(el, consts));
+        arr.push(fold(el, consts, intrinsics));
       }
     }
     return arr;
@@ -186,20 +313,30 @@ export function fold(node: ts.Expression, consts: Map<string, ts.Expression>): F
     if (!consts.has(node.text)) {
       throw foldError(node, `unresolved identifier: ${node.text}`);
     }
-    return fold(consts.get(node.text) as ts.Expression, consts);
+    return fold(consts.get(node.text) as ts.Expression, consts, intrinsics);
   }
 
   if (ts.isPropertyAccessExpression(node)) {
     if (ts.isIdentifier(node.expression) && resolvesToResource(consts, node.expression)) {
-      return { __ref: node.expression.text, attr: node.name.text };
+      return { __attrRef: { entity: node.expression.text, attribute: node.name.text } };
     }
-    const obj = fold(node.expression, consts);
+    const obj = fold(node.expression, consts, intrinsics);
     if (obj === null || obj === undefined) return undefined;
     return (obj as { [key: string]: FoldedValue })[node.name.text];
   }
 
+  if (ts.isElementAccessExpression(node)) {
+    const key = elementKey(node.argumentExpression);
+    if (ts.isIdentifier(node.expression) && resolvesToResource(consts, node.expression)) {
+      return { __attrRef: { entity: node.expression.text, attribute: key } };
+    }
+    const obj = fold(node.expression, consts, intrinsics);
+    if (obj === null || obj === undefined) return undefined;
+    return (obj as { [key: string]: FoldedValue })[key];
+  }
+
   if (ts.isPrefixUnaryExpression(node)) {
-    const value = fold(node.operand, consts);
+    const value = fold(node.operand, consts, intrinsics);
     if (node.operator === ts.SyntaxKind.ExclamationToken) return !value;
     if (node.operator === ts.SyntaxKind.MinusToken) return -(value as unknown as number);
     throw foldError(node, "unsupported unary");
@@ -210,20 +347,20 @@ export function fold(node: ts.Expression, consts: Map<string, ts.Expression>): F
     const S = ts.SyntaxKind;
 
     if (opKind === S.AmpersandAmpersandToken) {
-      const left = fold(node.left, consts);
-      return left ? fold(node.right, consts) : left;
+      const left = fold(node.left, consts, intrinsics);
+      return left ? fold(node.right, consts, intrinsics) : left;
     }
     if (opKind === S.BarBarToken) {
-      const left = fold(node.left, consts);
-      return left ? left : fold(node.right, consts);
+      const left = fold(node.left, consts, intrinsics);
+      return left ? left : fold(node.right, consts, intrinsics);
     }
     if (opKind === S.QuestionQuestionToken) {
-      const left = fold(node.left, consts);
-      return left === null || left === undefined ? fold(node.right, consts) : left;
+      const left = fold(node.left, consts, intrinsics);
+      return left === null || left === undefined ? fold(node.right, consts, intrinsics) : left;
     }
 
-    const left = fold(node.left, consts);
-    const right = fold(node.right, consts);
+    const left = fold(node.left, consts, intrinsics);
+    const right = fold(node.right, consts, intrinsics);
     switch (opKind) {
       case S.PlusToken:
         return (left as unknown as string) + (right as unknown as string);
@@ -251,7 +388,9 @@ export function fold(node: ts.Expression, consts: Map<string, ts.Expression>): F
   }
 
   if (ts.isConditionalExpression(node)) {
-    return fold(node.condition, consts) ? fold(node.whenTrue, consts) : fold(node.whenFalse, consts);
+    return fold(node.condition, consts, intrinsics)
+      ? fold(node.whenTrue, consts, intrinsics)
+      : fold(node.whenFalse, consts, intrinsics);
   }
 
   if (ts.isCallExpression(node)) {
@@ -266,7 +405,11 @@ export function fold(node: ts.Expression, consts: Map<string, ts.Expression>): F
  * The constructor argument, if present, must be an object literal (anything
  * else is not statically evaluable and throws a located {@link FoldError}).
  */
-export function foldResource(node: ts.NewExpression, consts: Map<string, ts.Expression>): FoldedResource {
+export function foldResource(
+  node: ts.NewExpression,
+  consts: Map<string, ts.Expression>,
+  intrinsics: readonly IntrinsicDef[] = [],
+): FoldedResource {
   const typeName = node.expression.getText();
   const [firstArg] = node.arguments ?? [];
 
@@ -277,7 +420,7 @@ export function foldResource(node: ts.NewExpression, consts: Map<string, ts.Expr
     throw foldError(firstArg, `resource constructor argument must be an object literal: ${typeName}(...)`);
   }
 
-  const props = fold(firstArg, consts) as { [key: string]: FoldedValue };
+  const props = fold(firstArg, consts, intrinsics) as { [key: string]: FoldedValue };
   return { __resource: typeName, props };
 }
 
@@ -293,8 +436,15 @@ function hasExportModifier(statement: ts.VariableStatement): boolean {
  * expression) are left out of the result rather than folded or errored —
  * `new`-less resource forms (composite factory calls) are epic Phase 5
  * (#1023) and are not attempted here.
+ *
+ * @param intrinsics - Lexicon-registered intrinsic tags, forwarded to
+ *   {@link fold} for every resource. See {@link fold}'s `intrinsics` param.
  */
-export function foldModule(source: string, fileName = "module.ts"): Record<string, FoldModuleEntry> {
+export function foldModule(
+  source: string,
+  fileName = "module.ts",
+  intrinsics: readonly IntrinsicDef[] = [],
+): Record<string, FoldModuleEntry> {
   const sourceFile = ts.createSourceFile(fileName, source, ts.ScriptTarget.Latest, /* setParentNodes */ true);
   const consts = collectConsts(sourceFile);
   const result: Record<string, FoldModuleEntry> = {};
@@ -310,7 +460,7 @@ export function foldModule(source: string, fileName = "module.ts"): Record<strin
 
       const name = decl.name.text;
       try {
-        const spec = foldResource(decl.initializer, consts);
+        const spec = foldResource(decl.initializer, consts, intrinsics);
         result[name] = { ok: true, spec };
       } catch (err) {
         if (err instanceof FoldError) {
