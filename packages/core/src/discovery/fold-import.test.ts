@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
 import { tryFoldFile } from "./fold-import";
 import { isDeclarable } from "../declarable";
+import { isCompositeInstance } from "../composite";
 
 const thisDir = dirname(fileURLToPath(import.meta.url));
 /** Absolute path to `packages/core/src/runtime.ts` — the real `createResource`
@@ -56,7 +57,7 @@ describe("tryFoldFile", () => {
     expect(result.entities).toHaveLength(1);
     const [name, entity] = result.entities[0];
     expect(name).toBe("bucket");
-    expect(isDeclarable(entity)).toBe(true);
+    if (!isDeclarable(entity)) throw new Error("expected a Declarable");
     expect(entity.lexicon).toBe("aws");
     expect(entity.entityType).toBe("Test::Bucket");
     expect((entity as unknown as { props: unknown }).props).toEqual({
@@ -84,7 +85,12 @@ describe("tryFoldFile", () => {
     expect(result.entities.map(([name]) => name).sort()).toEqual(["a", "b"]);
   });
 
-  test("falls back when the file instantiates a composite (call, not `new`)", async () => {
+  // chant #1023 (epic #1019 Phase 5): a bare composite factory call, resolved
+  // through the file's own imports, now folds — the factory is invoked for
+  // real with statically-folded props, exactly as `#1022`'s resource
+  // constructors already were. This used to be the canonical fallback case;
+  // flipping it to fold is the point of #1023.
+  test("folds a top-level composite factory call, zero module execution", async () => {
     await writeResourceDefs();
     await writeFile(
       join(testDir, "composites.ts"),
@@ -95,7 +101,7 @@ describe("tryFoldFile", () => {
         export const MyStack = Composite<{ name: string }>((props) => {
           const bucket = new Bucket({ name: props.name });
           return { bucket };
-        });
+        }, "MyStack");
       `,
     );
     const file = join(testDir, "stack.ts");
@@ -103,7 +109,38 @@ describe("tryFoldFile", () => {
       file,
       `
         import { MyStack } from "./composites";
+        throw new Error("must never execute — sentinel for #1023 fold verification");
         export const stack = MyStack({ name: "composite-bucket" });
+      `,
+    );
+
+    const result = await tryFoldFile(file);
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.entities).toHaveLength(1);
+    const [name, entity] = result.entities[0];
+    expect(name).toBe("stack");
+    expect(isCompositeInstance(entity)).toBe(true);
+    const bucket = (entity as unknown as { bucket: unknown }).bucket;
+    if (!isDeclarable(bucket)) throw new Error("expected the composite's `bucket` member to be a Declarable");
+    expect(bucket.entityType).toBe("Test::Bucket");
+    expect((bucket as unknown as { props: unknown }).props).toEqual({ name: "composite-bucket" });
+  });
+
+  test("falls back when the composite factory is defined locally (not resolvable via import)", async () => {
+    await writeResourceDefs();
+    const file = join(testDir, "stack.ts");
+    await writeFile(
+      file,
+      `
+        import { Bucket } from "./resources";
+        import { Composite } from ${JSON.stringify(compositePath)};
+        const LocalStack = Composite<{ name: string }>((props) => {
+          const bucket = new Bucket({ name: props.name });
+          return { bucket };
+        }, "LocalStack");
+        export const stack = LocalStack({ name: "composite-bucket" });
       `,
     );
 
@@ -111,7 +148,7 @@ describe("tryFoldFile", () => {
 
     expect(result.ok).toBe(false);
     if (result.ok) return;
-    expect(result.reason).toContain("not a `new Type(...)` resource declaration");
+    expect(result.reason).toContain("LocalStack");
   });
 
   test("falls back when a prop value is not foldable", async () => {

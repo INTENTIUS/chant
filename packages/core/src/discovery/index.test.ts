@@ -342,7 +342,13 @@ describe("discover — fold mode (#1022, epic #1019)", () => {
     expect(mainDecision?.resourceCount).toBe(1);
   });
 
-  test("a module instantiating a composite falls back to run; output is unchanged", async () => {
+  // chant #1023 (epic #1019 Phase 5): a bare composite factory call now
+  // folds too — the factory is resolved through the file's imports and
+  // invoked for real with statically-folded props, exactly as a resource
+  // constructor already was (#1022). Fold and run must still agree
+  // byte-for-byte on the expanded entities (this is the unit-level version
+  // of the #1025 fold-vs-run differential).
+  test("a module instantiating a composite folds too; output is unchanged", async () => {
     await writeFile(
       join(testDir, "composites.ts"),
       `
@@ -352,7 +358,7 @@ describe("discover — fold mode (#1022, epic #1019)", () => {
         export const MyStack = Composite<{ name: string }>((props) => {
           const bucket = new Bucket({ name: props.name });
           return { bucket };
-        });
+        }, "MyStack");
       `,
     );
     await writeFile(
@@ -375,7 +381,38 @@ describe("discover — fold mode (#1022, epic #1019)", () => {
     expect(folded.props).toEqual(run.props);
 
     const stackDecision = withFold.foldDecisions.find((d) => d.file.endsWith("stack.ts"));
+    expect(stackDecision?.mode).toBe("fold");
+    expect(stackDecision?.resourceCount).toBe(1);
+  });
+
+  test("a composite factory defined locally (not resolvable via import) still falls back to run; output is unchanged", async () => {
+    await writeFile(
+      join(testDir, "stack.ts"),
+      `
+        import { createResource } from ${JSON.stringify(runtimePath)};
+        import { Composite } from ${JSON.stringify(compositePath)};
+        const Bucket = createResource("Test::Bucket", "aws", { arn: "Arn" });
+        const LocalStack = Composite<{ name: string }>((props) => {
+          const bucket = new Bucket({ name: props.name });
+          return { bucket };
+        }, "LocalStack");
+        export const stack = LocalStack({ name: "composite-bucket" });
+      `,
+    );
+
+    const withoutFold = await discover(testDir);
+    const withFold = await discover(testDir, { fold: true });
+
+    expect(withFold.errors).toEqual([]);
+    expect(withFold.entities.size).toBe(withoutFold.entities.size);
+    expect([...withFold.entities.keys()].sort()).toEqual([...withoutFold.entities.keys()].sort());
+    expect(withFold.entities.has("stackBucket")).toBe(true);
+    const folded = withFold.entities.get("stackBucket")! as unknown as { props: { name: string } };
+    const run = withoutFold.entities.get("stackBucket")! as unknown as { props: { name: string } };
+    expect(folded.props).toEqual(run.props);
+
+    const stackDecision = withFold.foldDecisions.find((d) => d.file.endsWith("stack.ts"));
     expect(stackDecision?.mode).toBe("run");
-    expect(stackDecision?.reason).toContain("not a `new Type(...)` resource declaration");
+    expect(stackDecision?.reason).toContain("LocalStack");
   });
 });

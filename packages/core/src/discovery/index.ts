@@ -5,7 +5,7 @@ import { importModule } from "./import";
 import { collectEntities } from "./collect";
 import { resolveAttrRefs } from "./resolve";
 import { buildDependencyGraph } from "./graph";
-import { tryFoldFile } from "./fold-import";
+import { tryFoldFile, planFoldTaint } from "./fold-import";
 
 /**
  * Per-file fold-vs-run outcome (chant #1022, epic #1019), populated only
@@ -29,11 +29,15 @@ export interface FoldDecision {
  */
 export interface DiscoveryOptions {
   /**
-   * chant #1022 (epic #1019) — opt-in: for each source file, try to fold it
-   * to `Declarable` entities statically (no module execution) before
-   * falling back to importing/running it. Anything the folder can't
-   * represent (composite factory calls, non-`new` exports, …) falls back
-   * per-file. Default `false` — behavior is unchanged unless requested.
+   * chant #1022/#1023 (epic #1019) — opt-in: for each source file, try to
+   * fold it to `Declarable`/`CompositeInstance` entities statically (no
+   * module execution) before falling back to importing/running it. Anything
+   * the folder can't represent (a non-`new`, non-composite-call export, a
+   * cross-file-only reference, …) falls back per-file — see
+   * {@link planFoldTaint} for the one case where a file that WOULD fold in
+   * isolation is still forced back to run, to keep fold and run from ever
+   * disagreeing about a shared entity's identity. Default `false` — behavior
+   * is unchanged unless requested.
    */
   fold?: boolean;
 }
@@ -78,22 +82,43 @@ export async function discover(path: string, options?: DiscoveryOptions): Promis
   // Step 2: Import all modules
   const modules: Array<{ file: string; exports: Record<string, unknown> }> = [];
 
+  // Fold path (#1022/#1023): try the static folder on EVERY file first,
+  // independently, before committing any decision. A file that folds
+  // successfully in isolation must still be forced back to run if some
+  // OTHER file that itself falls back to run imports it (directly or
+  // transitively) — otherwise the run-fallback file's real re-import
+  // produces a SECOND, non-identical copy of the same entities this file
+  // already folded, and cross-file AttrRefs between them can never resolve
+  // (see {@link planFoldTaint}'s doc for the full story). This is only
+  // knowable after every file's fold has been attempted, hence the two
+  // passes instead of committing per-file as they're visited.
+  const foldAttempts = new Map<string, Awaited<ReturnType<typeof tryFoldFile>>>();
+  if (options?.fold) {
+    for (const file of files) {
+      foldAttempts.set(file, await tryFoldFile(file));
+    }
+  }
+  const taintedFiles = options?.fold
+    ? await planFoldTaint(
+        files,
+        new Map(files.map((file) => [file, foldAttempts.get(file)?.ok === true])),
+      )
+    : new Set<string>();
+
   for (const file of files) {
-    // Fold path (#1022): try the static folder first. On success, the file
-    // contributes its folded entities directly and `importModule` (which
-    // would execute the file) is skipped entirely. On any construct the
-    // folder can't represent, fall back to the exact run path used when
-    // `fold` is off.
     if (options?.fold) {
-      const folded = await tryFoldFile(file);
-      if (folded.ok) {
+      const folded = foldAttempts.get(file)!;
+      if (folded.ok && !taintedFiles.has(file)) {
         const exportsObj: Record<string, unknown> = {};
         for (const [name, value] of folded.entities) exportsObj[name] = value;
         modules.push({ file, exports: exportsObj });
         foldDecisions.push({ file, mode: "fold", resourceCount: folded.entities.length });
         continue;
       }
-      foldDecisions.push({ file, mode: "run", reason: folded.reason });
+      const reason = !folded.ok
+        ? folded.reason
+        : `would fold in isolation, but a file that imports it (directly or transitively) falls back to run — folding independently would create a duplicate, non-identical instance`;
+      foldDecisions.push({ file, mode: "run", reason });
     }
 
     try {
