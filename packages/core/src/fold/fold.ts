@@ -1,17 +1,36 @@
 import * as ts from "typescript";
 import type { IntrinsicDef } from "../lexicon";
+import {
+  SUPPORTED_BINARY_OPERATORS,
+  SUPPORTED_UNARY_OPERATORS,
+  UNSUPPORTED_OBJECT_MEMBER_MESSAGE,
+  UNSUPPORTED_UNARY_MESSAGE,
+  callExpressionMessage,
+  computedPropertyNameMessage,
+  dynamicElementAccessMessage,
+  isLiteralElementKey,
+  isLiteralPropertyName,
+  resourceCtorArgMessage,
+  unsupportedBinaryMessage,
+  unsupportedExpressionMessage,
+  type SubsetRuleId,
+} from "./subset";
 
 /**
- * fold — static AST value reducer (chant #1026/#1021, part of epic #1019)
+ * fold — static AST value reducer (chant #1026/#1021/#1024, part of epic #1019)
  *
  * Reduces a single-file TypeScript expression AST to a value with NO
- * module execution. Covers exactly the subset that EVL001/003/004 already
- * permit: literals, template interpolation, object/array literals (incl.
- * spread), `const` identifier resolution, property and element access
- * (incl. the cross-resource `{ __attrRef }` case, literal-key-only), unary
- * `!`/`-`, the binary operators `+ - * / === !== > < >= <=`, short-circuit
- * `&& || ??`, conditional expressions, `as`/`satisfies`/parenthesized
- * unwrapping, and registered lexicon intrinsic tagged templates.
+ * module execution. The node-kind/operator/key subset it covers — literals,
+ * template interpolation, object/array literals (incl. spread), `const`
+ * identifier resolution, property and element access (incl. the
+ * cross-resource `{ __attrRef }` case, literal-key-only), unary `!`/`-`,
+ * the binary operators `+ - * / === !== > < >= <=`, short-circuit
+ * `&& || ??`, conditional expressions, `as`/`satisfies`/`!`/parenthesized
+ * unwrapping, a nested `new Type({...})` resource-as-value, and registered
+ * lexicon intrinsic tagged templates — is defined ONCE, in {@link "./subset"}
+ * ({@link findSubsetViolation}), and shared with EVL001/EVL003
+ * ({@link "../lint/rules/evl001-non-literal-expression"}), so the linted
+ * subset and the folded subset can never drift apart (#1024).
  *
  * A `CallExpression` has no case — a function call as a value is
  * structurally unrepresentable, not merely linted against. Composite
@@ -88,25 +107,42 @@ export interface FoldedResource {
   props: { [key: string]: FoldedValue };
 }
 
-/** One entry per exported `const` resource declaration in {@link foldModule}'s result. */
+/**
+ * One entry per exported `const` resource declaration in {@link foldModule}'s
+ * result. The `ok: false` case surfaces the same located, rule-id-tagged
+ * shape as {@link FoldError} (#1024) — `error` stays the formatted message
+ * string for backward-compat display, while `ruleId`/`line`/`column` let a
+ * caller cite the exact same rule id + position an EVL diagnostic for the
+ * same construct would.
+ */
 export type FoldModuleEntry =
   | { ok: true; spec: FoldedResource }
-  | { ok: false; error: string };
+  | { ok: false; error: string; ruleId: SubsetRuleId; line: number; column: number };
 
 /**
  * Error thrown when a node cannot be folded to a value without executing
  * code. Carries the node's source position (1-based, matching `LintError`)
- * so callers can report a located diagnostic.
+ * so callers can report a located diagnostic, and the id of the EVL rule
+ * that flags the same construct (#1024) — "EVL001" (the general
+ * not-statically-evaluable umbrella) unless the rejection is specifically a
+ * dynamic element-access key, which is "EVL003"'s construct. A rejection
+ * with no EVL equivalent (unresolved identifier, unregistered intrinsic tag,
+ * spread of a value that turns out not to be an object/array — all
+ * environment/value-dependent, see {@link "./subset"}'s module doc) still
+ * defaults to "EVL001" since that's the closest umbrella rule, even though
+ * EVL can't actually detect it ahead of a real fold.
  */
 export class FoldError extends Error {
   readonly line: number;
   readonly column: number;
+  readonly ruleId: SubsetRuleId;
 
-  constructor(message: string, line: number, column: number) {
+  constructor(message: string, line: number, column: number, ruleId: SubsetRuleId = "EVL001") {
     super(`${line}:${column} - ${message}`);
     this.name = "FoldError";
     this.line = line;
     this.column = column;
+    this.ruleId = ruleId;
   }
 }
 
@@ -117,9 +153,9 @@ function locate(node: ts.Node): { line: number; column: number } {
   return { line: line + 1, column: character + 1 };
 }
 
-function foldError(node: ts.Node, message: string): FoldError {
+function foldError(node: ts.Node, message: string, ruleId: SubsetRuleId = "EVL001"): FoldError {
   const { line, column } = locate(node);
-  return new FoldError(message, line, column);
+  return new FoldError(message, line, column, ruleId);
 }
 
 /**
@@ -142,10 +178,8 @@ export function collectConsts(sourceFile: ts.SourceFile): Map<string, ts.Express
 
 /** A property/element key foldable without execution: identifier, string, or numeric literal. */
 function propName(node: ts.PropertyName): string {
-  if (ts.isIdentifier(node) || ts.isStringLiteral(node) || ts.isNumericLiteral(node)) {
-    return node.text;
-  }
-  throw foldError(node, `computed/dynamic property name not foldable: ${node.getText()}`);
+  if (isLiteralPropertyName(node)) return node.text;
+  throw foldError(node, computedPropertyNameMessage(node));
 }
 
 /**
@@ -154,13 +188,8 @@ function propName(node: ts.PropertyName): string {
  * dynamic key and is rejected).
  */
 function elementKey(node: ts.Expression): string {
-  if (ts.isStringLiteral(node) || ts.isNumericLiteral(node)) {
-    return node.text;
-  }
-  throw foldError(
-    node,
-    `dynamic property access — computed key must be a string or numeric literal: ${node.getText()}`,
-  );
+  if (isLiteralElementKey(node)) return node.text;
+  throw foldError(node, dynamicElementAccessMessage(node), "EVL003");
 }
 
 /** True when `ident` is a `const` bound to a `new Type(...)` resource constructor. */
@@ -180,6 +209,7 @@ function isUnresolvedSymbolChain(node: ts.Expression, consts: Map<string, ts.Exp
   if (ts.isIdentifier(node)) return node.text !== "undefined" && !consts.has(node.text);
   if (ts.isPropertyAccessExpression(node)) return isUnresolvedSymbolChain(node.expression, consts);
   if (ts.isElementAccessExpression(node)) return isUnresolvedSymbolChain(node.expression, consts);
+  if (ts.isNonNullExpression(node)) return isUnresolvedSymbolChain(node.expression, consts);
   return false;
 }
 
@@ -243,7 +273,12 @@ export function fold(
   consts: Map<string, ts.Expression>,
   intrinsics: readonly IntrinsicDef[] = [],
 ): FoldedValue {
-  if (ts.isParenthesizedExpression(node) || ts.isAsExpression(node) || ts.isSatisfiesExpression(node)) {
+  if (
+    ts.isParenthesizedExpression(node) ||
+    ts.isAsExpression(node) ||
+    ts.isSatisfiesExpression(node) ||
+    ts.isNonNullExpression(node)
+  ) {
     return fold(node.expression, consts, intrinsics);
   }
 
@@ -287,7 +322,7 @@ export function fold(
         }
         Object.assign(obj, src);
       } else {
-        throw foldError(prop, "unsupported object member");
+        throw foldError(prop, UNSUPPORTED_OBJECT_MEMBER_MESSAGE);
       }
     }
     return obj;
@@ -336,10 +371,12 @@ export function fold(
   }
 
   if (ts.isPrefixUnaryExpression(node)) {
+    if (!SUPPORTED_UNARY_OPERATORS.has(node.operator)) {
+      throw foldError(node, UNSUPPORTED_UNARY_MESSAGE);
+    }
     const value = fold(node.operand, consts, intrinsics);
     if (node.operator === ts.SyntaxKind.ExclamationToken) return !value;
-    if (node.operator === ts.SyntaxKind.MinusToken) return -(value as unknown as number);
-    throw foldError(node, "unsupported unary");
+    return -(value as unknown as number); // ts.SyntaxKind.MinusToken — the only other supported operator
   }
 
   if (ts.isBinaryExpression(node)) {
@@ -357,6 +394,10 @@ export function fold(
     if (opKind === S.QuestionQuestionToken) {
       const left = fold(node.left, consts, intrinsics);
       return left === null || left === undefined ? fold(node.right, consts, intrinsics) : left;
+    }
+
+    if (!SUPPORTED_BINARY_OPERATORS.has(opKind)) {
+      throw foldError(node, unsupportedBinaryMessage(opKind));
     }
 
     const left = fold(node.left, consts, intrinsics);
@@ -383,7 +424,10 @@ export function fold(
       case S.LessThanEqualsToken:
         return (left as unknown as string) <= (right as unknown as string);
       default:
-        throw foldError(node, `unsupported binary operator: ${ts.SyntaxKind[opKind]}`);
+        // Unreachable given the SUPPORTED_BINARY_OPERATORS guard above —
+        // kept as a defensive fallback in case that set and this switch
+        // ever fall out of sync.
+        throw foldError(node, unsupportedBinaryMessage(opKind));
     }
   }
 
@@ -393,11 +437,15 @@ export function fold(
       : fold(node.whenFalse, consts, intrinsics);
   }
 
-  if (ts.isCallExpression(node)) {
-    throw foldError(node, `function call as a value is not foldable: ${node.expression.getText()}(...)`);
+  if (ts.isNewExpression(node)) {
+    return foldResource(node, consts, intrinsics);
   }
 
-  throw foldError(node, `unsupported expression: ${ts.SyntaxKind[node.kind]}`);
+  if (ts.isCallExpression(node)) {
+    throw foldError(node, callExpressionMessage(node));
+  }
+
+  throw foldError(node, unsupportedExpressionMessage(node));
 }
 
 /**
@@ -417,7 +465,7 @@ export function foldResource(
     return { __resource: typeName, props: {} };
   }
   if (!ts.isObjectLiteralExpression(firstArg)) {
-    throw foldError(firstArg, `resource constructor argument must be an object literal: ${typeName}(...)`);
+    throw foldError(firstArg, resourceCtorArgMessage(typeName));
   }
 
   const props = fold(firstArg, consts, intrinsics) as { [key: string]: FoldedValue };
@@ -464,7 +512,7 @@ export function foldModule(
         result[name] = { ok: true, spec };
       } catch (err) {
         if (err instanceof FoldError) {
-          result[name] = { ok: false, error: err.message };
+          result[name] = { ok: false, error: err.message, ruleId: err.ruleId, line: err.line, column: err.column };
         } else {
           throw err;
         }
