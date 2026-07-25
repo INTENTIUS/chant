@@ -150,7 +150,20 @@ export function expandComposite(
   if (shared) {
     for (const entity of result.values()) {
       if ("props" in entity) {
-        const existing = entity.props as Record<string, unknown>;
+        // Merge shared props onto each member's ORIGINAL props, not its current
+        // props. Members are module-level singletons, so without stashing the
+        // original a second expansion (e.g. building the same tree twice in one
+        // process) would re-merge shared arrays like tags onto the already-merged
+        // value, duplicating them on every rebuild (#1032). Stashing the original
+        // once makes expansion idempotent: same input -> same output, every time.
+        const store = entity as unknown as Record<symbol, unknown>;
+        let existing = store[ORIGINAL_PROPS] as Record<string, unknown> | undefined;
+        if (existing === undefined) {
+          existing = entity.props as Record<string, unknown>;
+          Object.defineProperty(entity, ORIGINAL_PROPS, {
+            value: existing, enumerable: false, configurable: true,
+          });
+        }
         const merged: Record<string, unknown> = {};
         for (const [k, v] of Object.entries(shared)) {
           if (v !== undefined) {
@@ -215,6 +228,12 @@ export function withDefaults<P, M extends CompositeMembers, D extends Partial<P>
  * Symbol key for shared props attached by propagate().
  */
 export const SHARED_PROPS = Symbol.for("chant.composite.shared");
+
+/**
+ * Symbol key stashing a member's original (pre-merge) props, so expandComposite()
+ * is idempotent across repeated expansions of the same singleton instance (#1032).
+ */
+export const ORIGINAL_PROPS = Symbol.for("chant.composite.origProps");
 
 /**
  * Attaches shared properties to a composite instance.

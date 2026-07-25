@@ -52,7 +52,6 @@ const SUPPORTED_CASES: SubsetCase[] = [
   { name: "satisfies", expr: `"ok" satisfies string` },
   { name: "parenthesized", expr: `(("nested"))` },
   { name: "non-null assertion", preamble: `const n = 5;`, expr: `n!` },
-  { name: "nested resource constructor as a value", expr: `new Inner({ y: 1 })` },
   {
     name: "registered intrinsic tagged template with foldable interior",
     preamble: `const name = "prefix";`,
@@ -76,7 +75,6 @@ const UNSUPPORTED_CASES: SubsetCase[] = [
     expr: "Sub`${getName()}`",
     intrinsics: [{ name: "Sub", isTag: true }],
   },
-  { name: "nested resource constructor with a non-object-literal argument", expr: `new Inner("nope")` },
 ];
 
 interface RunResult {
@@ -209,5 +207,23 @@ describe("documented divergences — NOT unified by design (see subset.ts module
     const sourceFile = ts.createSourceFile("t.ts", source, ts.ScriptTarget.Latest, true);
     const context: LintContext = { sourceFile, entities: [], filePath: "t.ts", lexicon: undefined };
     expect(evl001NonLiteralExpressionRule.check(context).length).toBeGreaterThan(0);
+  });
+
+  test("nested resource construction: fold rejects a nested `new Type()` used as a value (falls back to run); EVL001 allows it statically", () => {
+    // A top-level `new Type()` folds (fold-import constructs a real Declarable),
+    // but a NESTED one as a property value can only fold to a {__resource,props}
+    // envelope that is never constructed, so it would serialize wrong (real
+    // fold-vs-run drift, caught by the #1025 differential on gitlab). fold()
+    // therefore rejects it, falling the file back to run; EVL allows it (a valid
+    // TS constructor call), so this is an inherent, out-of-scope divergence.
+    const source = `const bad = new Thing({ x: new Inner({ y: 1 }) });`;
+    const sourceFile = ts.createSourceFile("t.ts", source, ts.ScriptTarget.Latest, true);
+    const consts = collectConsts(sourceFile);
+    const badInit = consts.get("bad") as ts.NewExpression;
+
+    expect(() => foldResource(badInit, consts, [])).toThrow(FoldError);
+
+    const context: LintContext = { sourceFile, entities: [], filePath: "t.ts", lexicon: undefined };
+    expect(evl001NonLiteralExpressionRule.check(context)).toHaveLength(0);
   });
 });

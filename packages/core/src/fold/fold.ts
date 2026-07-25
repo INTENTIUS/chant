@@ -446,7 +446,17 @@ export function fold(
   }
 
   if (ts.isNewExpression(node)) {
-    return foldResource(node, consts, intrinsics);
+    // A nested `new Type({...})` used as a property VALUE is not leaf-foldable.
+    // fold can only produce the {__resource, props} envelope, and — unlike a
+    // TOP-LEVEL resource, which fold-import constructs into a real Declarable —
+    // a nested one is never constructed, so the envelope leaks into serialization
+    // as the wrong value (real fold-vs-run drift; the #1025 differential caught
+    // this on gitlab/multi-stage-deploy, where `new Image({...})` as a job's
+    // `image:` must serialize as `{ name }`, not `{ __resource, props }`).
+    // Reject so the file falls back to run, which constructs and serializes it
+    // correctly. EVL permits this statically — it's a documented fold/EVL
+    // divergence, like identifier resolution and spread runtime type.
+    throw foldError(node, `nested \`new ${node.expression.getText()}(...)\` as a value is not foldable — falls back to run`);
   }
 
   if (ts.isCallExpression(node)) {
