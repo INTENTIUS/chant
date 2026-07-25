@@ -1,5 +1,5 @@
 import { build } from "../../build";
-import { loadChantConfig, resolveOwnershipMarker } from "../../config";
+import { loadChantConfig, resolveOwnershipMarker, resolveFoldEnabled } from "../../config";
 import type { Serializer, SerializerResult } from "../../serializer";
 import type { LexiconPlugin } from "../../lexicon";
 import { runPostSynthChecks } from "../../lint/post-synth";
@@ -7,7 +7,7 @@ import { loadPolicyChecks } from "../../lint/policy";
 import { sortedJsonReplacer } from "../../utils";
 import { formatError, formatWarning, formatSuccess, formatBold, formatInfo } from "../format";
 import { writeFileSync, mkdirSync } from "fs";
-import { resolve, dirname, join } from "path";
+import { resolve, dirname, join, relative } from "path";
 import { watchDirectory, formatTimestamp, formatChangedFiles } from "../watch";
 
 /**
@@ -32,6 +32,14 @@ export interface BuildOptions {
    * policy can branch on environment.
    */
   env?: string;
+  /**
+   * chant #1022 (epic #1019) — opt-in: fold source modules statically
+   * instead of importing/running them (`chant build --fold`). Falls back to
+   * run per-file for anything the folder can't represent. Merged with the
+   * project's `chant.config.ts` `build.fold` via {@link resolveFoldEnabled}
+   * — this flag, when true, always wins for the invocation.
+   */
+  fold?: boolean;
 }
 
 /**
@@ -110,11 +118,29 @@ export async function buildCommand(options: BuildOptions): Promise<BuildResult> 
     ? await loadPolicyChecks(config.lint.policies, configDir)
     : [];
 
+  // #1022 — opt-in fold path: the CLI flag wins over `chant.config.ts`'s
+  // `build.fold`, which wins over the (unchanged) default of running every
+  // module.
+  const fold = resolveFoldEnabled(config, options.fold);
+
   // Run the build
   const result = await build(infraPath, options.serializers, undefined, {
     ownership,
     config: config as unknown as Record<string, unknown>,
+    fold,
   });
+
+  // #1022 — report per-file fold vs run so it's visible what still runs.
+  if (fold) {
+    for (const decision of result.foldDecisions) {
+      const rel = relative(infraPath, decision.file) || decision.file;
+      const detail =
+        decision.mode === "fold"
+          ? `${decision.resourceCount ?? 0} resource(s), no module execution`
+          : (decision.reason ?? "fell back to run");
+      console.error(formatInfo(`[fold:${decision.mode}] ${rel} — ${detail}`));
+    }
+  }
 
   // Format errors
   for (const error of result.errors) {

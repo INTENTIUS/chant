@@ -6,7 +6,7 @@ import { BuildError as BuildErrorClass } from "./errors";
 import { LexiconOutput, isLexiconOutput } from "./lexicon-output";
 import { AttrRef } from "./attrref";
 import { isChildProject, type ChildProjectInstance } from "./child-project";
-import { discover } from "./discovery/index";
+import { discover, type FoldDecision } from "./discovery/index";
 import { topologicalSort } from "./sort";
 import { resolve } from "node:path";
 
@@ -149,6 +149,14 @@ export interface BuildOptions {
    * {@link SerializeContext} so a dialect can read its lexicon-scoped settings.
    */
   config?: Record<string, unknown>;
+
+  /**
+   * chant #1022 (epic #1019) — opt-in: fold source modules statically
+   * instead of importing/running them, falling back to run per-file for
+   * anything the folder can't represent. Default `false` (unchanged
+   * behavior). See {@link DiscoveryOptions.fold} in `./discovery/index`.
+   */
+  fold?: boolean;
 }
 
 export interface BuildResult {
@@ -166,6 +174,11 @@ export interface BuildResult {
   manifest: BuildManifest;
   /** Number of source files processed */
   sourceFileCount: number;
+  /**
+   * Per-file fold-vs-run decisions (#1022). Empty unless
+   * {@link BuildOptions.fold} was set.
+   */
+  foldDecisions: FoldDecision[];
 }
 
 /**
@@ -456,7 +469,7 @@ export async function build(
   const errors: Array<DiscoveryError | BuildError> = [];
 
   // Step 1: Discover entities and dependencies
-  const discoveryResult = await discover(path);
+  const discoveryResult = await discover(path, { fold: options?.fold });
 
   // Collect discovery errors
   errors.push(...discoveryResult.errors);
@@ -596,5 +609,6 @@ export async function build(
     errors,
     manifest,
     sourceFileCount: discoveryResult.sourceFiles.length,
+    foldDecisions: discoveryResult.foldDecisions,
   };
 }
