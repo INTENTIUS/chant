@@ -70,11 +70,6 @@ const UNSUPPORTED_CASES: SubsetCase[] = [
   { name: "unsupported object member (accessor)", expr: `{ get y() { return 1; } }` },
   { name: "unsupported expression kind (arrow function)", expr: `() => 1` },
   { name: "template literal with an unfoldable interpolation", expr: "`pre-${getName()}`" },
-  {
-    name: "registered intrinsic tagged template with an unfoldable interior",
-    expr: "Sub`${getName()}`",
-    intrinsics: [{ name: "Sub", isTag: true }],
-  },
 ];
 
 interface RunResult {
@@ -207,6 +202,23 @@ describe("documented divergences — NOT unified by design (see subset.ts module
     const sourceFile = ts.createSourceFile("t.ts", source, ts.ScriptTarget.Latest, true);
     const context: LintContext = { sourceFile, entities: [], filePath: "t.ts", lexicon: undefined };
     expect(evl001NonLiteralExpressionRule.check(context).length).toBeGreaterThan(0);
+  });
+
+  test("tagged-template interior: fold rejects an unfoldable interpolation in a registered intrinsic tag; EVL is lenient (no registry, interiors opaque)", () => {
+    // `Sub`${getName()}`` — fold, with the intrinsic registry, folds the Sub
+    // tag's interior and rejects the getName() call. EVL has no registry and
+    // can't tell an intrinsic call (Ref, legit) from a plain one, so it treats
+    // tagged-template interiors as opaque and does not flag — otherwise it would
+    // false-flag `Sub`${Ref(env)}`` and break every intrinsic-using example.
+    const source = "const bad = new Thing({ x: Sub`${getName()}` });";
+    const sourceFile = ts.createSourceFile("t.ts", source, ts.ScriptTarget.Latest, true);
+    const consts = collectConsts(sourceFile);
+    const badInit = consts.get("bad") as ts.NewExpression;
+
+    expect(() => foldResource(badInit, consts, [{ name: "Sub", isTag: true }])).toThrow(FoldError);
+
+    const context: LintContext = { sourceFile, entities: [], filePath: "t.ts", lexicon: undefined };
+    expect(evl001NonLiteralExpressionRule.check(context)).toHaveLength(0);
   });
 
   test("nested resource construction: fold rejects a nested `new Type()` used as a value (falls back to run); EVL001 allows it statically", () => {

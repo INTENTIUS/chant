@@ -207,14 +207,16 @@ export function findSubsetViolation(node: ts.Node): SubsetViolation | undefined 
   if (ts.isIdentifier(node)) return undefined;
 
   if (ts.isTaggedTemplateExpression(node)) {
-    // Tag registration is environment-dependent (see module doc) — shape
-    // only classifies the interpolated values.
-    const template = node.template;
-    if (ts.isNoSubstitutionTemplateLiteral(template)) return undefined;
-    for (const span of template.templateSpans) {
-      const v = findSubsetViolation(span.expression);
-      if (v) return v;
-    }
+    // Tagged-template interiors are OPAQUE to the shape classifier. A tagged
+    // template may be a registered lexicon intrinsic (e.g. Sub`...`) whose
+    // interpolations legitimately contain deploy-time intrinsic references
+    // (Ref(env), AWS.StackName, ...) — valid, but not statically foldable. EVL
+    // has no intrinsic registry at lint time (see module doc), so it cannot tell
+    // an intrinsic call from a plain one; recursing here would false-flag Ref()
+    // inside Sub`...` and break every intrinsic-using example. fold() DOES have
+    // the registry: it recurses into a *registered* tag's interior itself
+    // (foldIntrinsicValue) and rejects an unfoldable one there. So an unfoldable
+    // tagged-template interior is a documented fold/EVL divergence, not a hole.
     return undefined;
   }
 
