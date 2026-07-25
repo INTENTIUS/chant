@@ -488,4 +488,48 @@ describe("foldModule", () => {
     const result = foldModule(src);
     expect(result.thing).toEqual({ ok: true, spec: { __resource: "Thing", props: { value: "ok" } } });
   });
+
+  // #1025 differential regression: `new Type(props, attributes)`'s second
+  // argument (CFN-style resource attributes — DependsOn, Condition,
+  // DeletionPolicy, UpdateReplacePolicy, CreationPolicy, Metadata — see
+  // `createResource`'s `attributes` param in ../runtime.ts) was silently
+  // dropped by `foldResource`, which only ever read `node.arguments[0]`. The
+  // #1025 fold-vs-run differential corpus caught this as real drift on
+  // `lexicons/aws/examples/docs-snippets` (its `resource-attributes.ts` and
+  // `depends-on.ts` snippets both pass a second argument) before this fix.
+  test("folds the optional second constructor argument as `attributes`", () => {
+    const src = `
+      export const dbInstance = new DbInstance(
+        { Engine: "postgres" },
+        { DeletionPolicy: "Snapshot", UpdateReplacePolicy: "Snapshot" },
+      );
+    `;
+    const result = foldModule(src);
+    expect(result.dbInstance).toEqual({
+      ok: true,
+      spec: {
+        __resource: "DbInstance",
+        props: { Engine: "postgres" },
+        attributes: { DeletionPolicy: "Snapshot", UpdateReplacePolicy: "Snapshot" },
+      },
+    });
+  });
+
+  test("omits `attributes` from the spec when the constructor takes only props", () => {
+    const src = `export const bucket = new S3Bucket({ name: "my-bucket" });`;
+    const result = foldModule(src);
+    expect(result.bucket?.ok).toBe(true);
+    if (result.bucket?.ok) {
+      expect(result.bucket.spec.attributes).toBeUndefined();
+    }
+  });
+
+  test("a non-object-literal second argument is not foldable", () => {
+    const src = `
+      const attrs = computeAttrs();
+      export const bad = new Thing({ value: "ok" }, attrs);
+    `;
+    const result = foldModule(src);
+    expect(result.bad?.ok).toBe(false);
+  });
 });

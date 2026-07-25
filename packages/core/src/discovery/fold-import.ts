@@ -217,8 +217,20 @@ export async function tryFoldFile(file: string): Promise<FoldFileResult> {
         return { ok: false, reason: `"${binding.imported}" from "${binding.specifier}" is not a constructor` };
       }
 
-      const ResourceCtor = Ctor as new (props: Record<string, unknown>) => Declarable;
-      const entity = new ResourceCtor(entry.spec.props as Record<string, unknown>);
+      // The runtime constructor's optional second argument (`attributes` —
+      // CFN's DependsOn/Condition/DeletionPolicy/…, see createResource in
+      // ../runtime.ts) is only present in `entry.spec` when the source
+      // actually passed one (see foldResource in ../fold/fold.ts). Passing
+      // `undefined` when it's absent matches the run path's own default
+      // (`attributes ?? {}` inside the constructor).
+      const ResourceCtor = Ctor as new (
+        props: Record<string, unknown>,
+        attributes?: Record<string, unknown>,
+      ) => Declarable;
+      const entity = new ResourceCtor(
+        entry.spec.props as Record<string, unknown>,
+        entry.spec.attributes as Record<string, unknown> | undefined,
+      );
       entities.push([name, entity]);
     }
 

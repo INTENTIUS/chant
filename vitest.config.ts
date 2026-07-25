@@ -15,6 +15,10 @@ export default defineConfig({
       // activities. (examples/ is not globbed wholesale — fargate's docker
       // e2e/volume suites need Docker and aren't CI unit tests.)
       "examples/alert-triage/**/*.test.ts",
+      // chant #1025 — the fold-vs-run differential corpus. Walks examples/
+      // and lexicons/*/examples/ itself (no Docker), so it's included
+      // explicitly the same way examples.test.ts is.
+      "examples/fold-differential.test.ts",
     ],
     environment: "node",
     // The Temporal runtime/compile-smoke suites bundle workflows with webpack
