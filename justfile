@@ -59,6 +59,12 @@ test: _ensure-gen
 fold-differential: _ensure-gen
     npx vitest run examples/fold-differential.test.ts --reporter=verbose
 
+# chant #1045 Phase 2 — the sandboxed-run-vs-in-process-run differential.
+# Same corpus, same on-demand-report shape as `fold-differential` above.
+# Already part of `just test` too.
+sandbox-differential: _ensure-gen
+    npx vitest run examples/sandbox-differential.test.ts --reporter=verbose
+
 # Scaffold a throwaway lexicon and verify it installs + typechecks (#749 guard).
 # Catches core-API drift that would break `chant init lexicon`. Needs the network
 # (npm install). On-demand; not part of gating `check`.

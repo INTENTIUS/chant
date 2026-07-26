@@ -218,6 +218,8 @@ export function parseArgs(args: string[]): ParsedArgs {
       result.noReleaseRecord = true;
     } else if (arg === "--fold") {
       result.fold = true;
+    } else if (arg === "--sandbox") {
+      result.sandbox = true;
     } else if (!arg.startsWith("-")) {
       if (!result.command) {
         result.command = arg;
@@ -415,6 +417,14 @@ Options:
                         \`export default\`, ...). Logs which path each file
                         took. Default: off (also settable via
                         chant.config.ts's build.fold: true; #1022)
+  --sandbox             (build) Run run-fallback source files (or every
+                        file, without --fold) together, isolated, in one
+                        sandboxed child process instead of in-process
+                        (#1045). No filesystem write, no child process, no
+                        worker threads, no ambient environment visible to
+                        project source; network egress is NOT blocked (see
+                        docs). Default: off (also settable via
+                        chant.config.ts's build.sandbox: true; #1045)
 
 Examples:
   chant build ./infra/

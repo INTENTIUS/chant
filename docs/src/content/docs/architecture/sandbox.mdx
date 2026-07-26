@@ -1,0 +1,72 @@
+---
+title: Sandboxed Execution
+description: What chant build --sandbox isolates project source from, and what it deliberately does not
+---
+
+`chant build --fold` folds a subset of source files with zero module execution ([TypeScript as Data](/chant/concepts/typescript-as-data/#folded-vs-run)). Everything outside that subset — most source files today — falls back to importing and running the file for real. Run in-process, that execution has the same filesystem, network, environment, and process-spawn access as the `chant` CLI itself.
+
+`chant build --sandbox` (chant #1045 Phase 2) moves that execution off the CLI's own process: every run-fallback file for a build runs together, as one bundled module graph, inside one child process with Node's Permission Model locked down. This is the isolation the fold epic (#1019) was building toward — coverage of the fold *subset* stops being the security-relevant number, because the remainder no longer runs unrestricted.
+
+## Why this is independent of fold coverage
+
+A file that folds executes zero of its own code either way — folding was already safe. The files that mattered for isolation were always the run-fallback ones, and partial fold coverage did nothing for them: an attacker's payload just needs to land in any file the folder doesn't recognize (an arrow function, a cross-file reference, an ordinary composite call), which is unremarkable, idiomatic chant. `--sandbox` isolates that remainder directly, so the property holds regardless of what fraction of files happen to fold today.
+
+## What `--sandbox` does
+
+For one build:
+
+1. `chant build`'s existing fold/run decision runs exactly as it does without `--sandbox` (or, without `--fold`, every file is a run-fallback file). Folded files are constructed by reducing their AST — chant #1022/#1023 — never executed, so they stay exactly where they are: in the CLI's own process, unsandboxed, because there's nothing to isolate.
+2. Every run-fallback file for the build is bundled together into ONE self-contained module with [esbuild](https://esbuild.github.io/) — not split into one bundle per file. This matters for correctness, not just efficiency: two files in the same build that both import a third all need to observe the SAME object instance for cross-file references to resolve, exactly as they would running unbundled in one process today. Bundling the whole set together, once, preserves that.
+3. The bundle runs in a child process started with Node's `--permission` flag and a scrubbed environment.
+4. The child does its own entity collection and reference resolution over just that run-fallback set, then reports back a plain JSON entity set (chant #1045 Phase 1's wire format) over the process's IPC channel — never live objects, which can't cross a process boundary anyway.
+5. The parent decodes that JSON, merges it with whatever folded in-process, and continues the build exactly as it would without `--sandbox`.
+
+Enable it with the CLI flag or project-wide:
+
+```typescript
+// chant.config.ts
+export default {
+  build: {
+    fold: true,
+    sandbox: true,
+  },
+};
+```
+
+```bash
+chant build ./infra/ --fold --sandbox
+```
+
+`--sandbox` composes with `--fold` but doesn't require it: without `--fold`, every discovered file is a run-fallback file, and `--sandbox` isolates all of them.
+
+## What is isolated (verified on Node v24.13.1)
+
+| Vector | Mechanism | Result |
+| --- | --- | --- |
+| Filesystem read | `--allow-fs-read` scoped to the bundle and the project directory | Any other path — `readFileSync("/etc/hosts")`, a sibling repo, `$HOME` — is denied |
+| Filesystem write | Not granted at all | Any write anywhere is denied |
+| Spawning a process | Not granted at all | `child_process.execSync`/`spawn`/`fork` are denied |
+| Worker threads | Not granted at all | `new Worker(...)` is denied — meaningful because bundling removes the need for a TypeScript loader (`tsx`) inside the child, which itself needed worker threads and a writable temp directory |
+| Ambient environment | The child is spawned with a scrubbed `env`, not a permission flag | `process.env` shows only `PATH`; nothing the parent process had is visible |
+
+A denial surfaces as a chant `DiscoveryError` naming the file and the operation (e.g. `sandbox denied FileSystemRead (/etc/hosts): "…/evil.ts" attempted an operation outside the sandbox's allowlist`) — never Node's raw `ERR_ACCESS_DENIED`.
+
+## What is explicitly NOT isolated: network egress
+
+Node has no permission flag for network access. `--permission` does not gate `fetch`, `http`, `https`, `net`, `dns`, or any wrapping library — a run-fallback file can make outbound requests inside the sandbox exactly as it could outside it. This is not an oversight; there is nothing in Node to turn off. A bootstrap-time patch over `fetch`/`http`/`net` inside the child would raise the bar against accidental egress but is trivially defeatable by anything that imports its own copy of `node:http` or shells out through a still-open vector, and is not shipped here — claiming it as a boundary would be dishonest about what it actually stops.
+
+**If you need to block egress, do it outside Node**, at the OS or container layer:
+
+- **Container with no egress** — run the sandboxed build inside a container whose network namespace has no route out (no default gateway, or an explicit deny-all egress `NetworkPolicy`/security group). This is the right shape for a service like [behold](https://github.com/INTENTIUS/behold) that computes specs for repositories it does not own: the container is the actual trust boundary, and `--sandbox` is what makes the filesystem/process/environment portion of that boundary meaningful.
+- **Network namespace locally** — `unshare --net` (Linux) or an equivalent sandboxed network namespace with no interface configured.
+- **`sandbox-exec` (macOS)** — a `seatbelt` profile denying network sockets, layered on top of `--sandbox`'s filesystem/process/environment restrictions.
+
+## What is deliberately NOT sandboxed
+
+- **chant itself and the lexicon packages.** The boundary is around executing *project source* — the untrusted input. chant's own discovery/collection/resolution code (and the lexicon a project imports) is trusted, and runs the same whether or not `--sandbox` is on.
+- **Folded files.** They already execute zero of their own top-level code; there's nothing to isolate.
+- **`typescript`, resolved and loaded directly.** Several lexicons' lint rules do AST-based analysis with the `typescript` compiler package, which every one of those lexicons re-exports eagerly — bundling it runs into a well-known esbuild limitation (its own internal `require("fs")`-style calls don't survive being bundled into an ESM module). It's left unbundled and resolved to its real, fixed location on disk instead, which the sandboxed child is also granted read access to. This is a fixed, chant-shipped dependency; project source never controls what's installed there, so this doesn't weaken the boundary around untrusted code.
+
+## Fold coverage today
+
+Fold currently covers 15 of the corpus's 98 example directories in full; the other 83 have at least one file that falls back to run. `--sandbox` isolates that 83 today, at the same coverage fold has now — increasing fold coverage (tracked separately, #1020/#1044) is an optimization on top of that, not a precondition for it.

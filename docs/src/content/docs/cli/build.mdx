@@ -22,6 +22,7 @@ chant build [path] [flags]
 | `-d, --lexicon` | `string` | all | Build only the specified lexicon (e.g. `aws`, `gitlab`) |
 | `-w, --watch` | `bool` | `false` | Watch for file changes and rebuild |
 | `--fold` | `bool` | `false` | Fold source files statically instead of importing and running them (opt-in). Falls back to running a file, per file, for anything outside the fold subset — logged as `[fold:fold]` or `[fold:run] <reason>` |
+| `--sandbox` | `bool` | `false` | Run run-fallback source files (or every file, without `--fold`) together, isolated, in one sandboxed child process instead of in-process (opt-in). No filesystem write, no process spawn, no worker threads, no ambient environment visible to project source; network egress is not blocked — see [Sandboxed Execution](/chant/architecture/sandbox/) |
 
 ## Usage
 
@@ -43,6 +44,9 @@ chant build --watch
 
 # Fold statically instead of running (opt-in)
 chant build --fold
+
+# Isolate run-fallback files in a sandboxed child process (opt-in)
+chant build --fold --sandbox
 ```
 
 ## Fold vs run
@@ -59,6 +63,19 @@ export default {
 ```
 
 The `--fold` flag always wins over `build.fold` when both are present.
+
+## Sandboxed execution
+
+`--sandbox` runs every run-fallback file for the build together, isolated, in one child process with the filesystem, process-spawn, worker-thread, and environment access locked down — see [Sandboxed Execution](/chant/architecture/sandbox/) for exactly what that isolates (and, importantly, what it doesn't: Node has no way to block network egress, so that's a documented residual risk with its own deployment guidance, not something this flag claims to close). It composes with `--fold`: folded files are unaffected, and the run-fallback remainder is what gets sandboxed.
+
+```typescript
+// chant.config.ts
+export default {
+  build: { fold: true, sandbox: true },
+};
+```
+
+The `--sandbox` flag always wins over `build.sandbox` when both are present.
 
 ## Exit Codes
 

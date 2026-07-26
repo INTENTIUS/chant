@@ -1,5 +1,5 @@
 import { build } from "../../build";
-import { loadChantConfig, resolveOwnershipMarker, resolveFoldEnabled } from "../../config";
+import { loadChantConfig, resolveOwnershipMarker, resolveFoldEnabled, resolveSandboxEnabled } from "../../config";
 import type { Serializer, SerializerResult } from "../../serializer";
 import type { LexiconPlugin } from "../../lexicon";
 import { runPostSynthChecks } from "../../lint/post-synth";
@@ -40,6 +40,15 @@ export interface BuildOptions {
    * — this flag, when true, always wins for the invocation.
    */
   fold?: boolean;
+
+  /**
+   * chant #1045 Phase 2 — opt-in: run-fallback source files (or, without
+   * `fold`, every file) execute together, isolated, in one sandboxed child
+   * process (`chant build --sandbox`). Merged with the project's
+   * `chant.config.ts` `build.sandbox` via {@link resolveSandboxEnabled} —
+   * this flag, when true, always wins for the invocation.
+   */
+  sandbox?: boolean;
 }
 
 /**
@@ -123,6 +132,11 @@ export async function buildCommand(options: BuildOptions): Promise<BuildResult> 
   // module.
   const fold = resolveFoldEnabled(config, options.fold);
 
+  // #1045 Phase 2 — opt-in sandboxed execution of run-fallback files (or,
+  // without --fold, every file). Same CLI-flag-wins-over-config precedence
+  // as fold, resolved independently.
+  const sandbox = resolveSandboxEnabled(config, options.sandbox);
+
   // #1039 — thread each loaded plugin's registered intrinsics (e.g. AWS's
   // `Sub`) through to the fold path, so a file using a registered intrinsic
   // tagged template folds instead of unconditionally falling back to run.
@@ -135,6 +149,7 @@ export async function buildCommand(options: BuildOptions): Promise<BuildResult> 
     ownership,
     config: config as unknown as Record<string, unknown>,
     fold,
+    sandbox,
     intrinsics,
   });
 

@@ -251,6 +251,7 @@ export default defineConfig({
 						{ label: 'Core Type System', slug: 'architecture/core-type-system' },
 						{ label: 'File Discovery', slug: 'architecture/discovery' },
 						{ label: 'Evaluator Engine', slug: 'architecture/evaluator' },
+						{ label: 'Sandboxed Execution', slug: 'architecture/sandbox' },
 						{ label: 'Module Graph', slug: 'architecture/module-graph' },
 						{ label: 'Lexicon Registry', slug: 'architecture/lexicon-registry' },
 						{ label: 'Serializer', slug: 'architecture/serializer' },

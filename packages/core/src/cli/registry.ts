@@ -148,6 +148,8 @@ export interface ParsedArgs {
   seedOutputs?: string[];
   /** `chant build --fold` (#1022/#1023, epic #1019) — opt-in: fold source modules statically instead of importing/running them; folds resource constructors and composite factory calls, falling back to run per-file for anything the folder can't represent (a cross-file-only reference, a re-export, `export default`, …). Also settable project-wide via `chant.config.ts`'s `build.fold: true`; the flag always wins when set. Default (flag omitted): the existing run path, unchanged. */
   fold?: boolean;
+  /** `chant build --sandbox` (#1045 Phase 2) — opt-in: run-fallback source files (or every file, without `--fold`) execute together, isolated, in one sandboxed child process instead of in-process. Also settable project-wide via `chant.config.ts`'s `build.sandbox: true`; the flag always wins when set. Default (flag omitted): in-process execution, unchanged. */
+  sandbox?: boolean;
 }
 
 /**
