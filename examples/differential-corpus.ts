@@ -98,6 +98,23 @@ export const INTRINSICS_BY_LEXICON: Record<string, IntrinsicDef[]> = {
   fly: flyPlugin.intrinsics?.() ?? [],
 };
 
+/**
+ * chant #1062 — how a corpus entry classifies for a single `{ fold: true }`
+ * probe build: "fold" (every file folded, zero execution), "run-fallback"
+ * (at least one file fell back to running), or "empty" (no fold decisions
+ * at all — nothing exported). Shared by every consumer that needs this
+ * classification — `fold-differential.test.ts`'s own report/regression
+ * gate/coverage guard, and `scripts/generate-fold-coverage.ts` — so there's
+ * one definition of "counts as folding", not a copy per caller that could
+ * quietly diverge.
+ */
+export type FoldMode = "fold" | "run-fallback" | "empty";
+
+export function classifyFoldMode(foldDecisions: Array<{ mode: "fold" | "run" }>): FoldMode {
+  if (foldDecisions.length === 0) return "empty";
+  return foldDecisions.every((d) => d.mode === "fold") ? "fold" : "run-fallback";
+}
+
 export interface CorpusEntry {
   /** Repo-relative label used in test names and the report. */
   name: string;

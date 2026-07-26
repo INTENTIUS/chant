@@ -1,3 +1,5 @@
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { afterAll, describe, expect, test, vi } from "vitest";
 import { build } from "@intentius/chant/build";
 import {
@@ -5,8 +7,11 @@ import {
   normalizeOutputs,
   outputsEqual,
   normalizeErrors,
+  classifyFoldMode,
   type CorpusEntry,
+  type FoldMode,
 } from "./differential-corpus";
+import { extractFoldCoverageBlock, renderFoldCoverageBlock } from "./fold-coverage";
 
 /**
  * chant #1025 (epic #1019) — the fold-vs-run differential safety net.
@@ -43,13 +48,6 @@ import {
  * a registered intrinsic tagged template (e.g. AWS `Sub`) would be reported
  * as run-fallback here even once the fold-import wiring recognizes it.
  */
-
-type FoldMode = "fold" | "run-fallback" | "empty";
-
-function classify(foldDecisions: Array<{ mode: "fold" | "run" }>): FoldMode {
-  if (foldDecisions.length === 0) return "empty";
-  return foldDecisions.every((d) => d.mode === "fold") ? "fold" : "run-fallback";
-}
 
 const CORPUS = discoverCorpus();
 
@@ -180,7 +178,7 @@ describe("fold differential — fold output === run output (#1025, epic #1019)",
       // whole module graph) is what makes the full corpus intractable now that
       // many entries fall back, and it buys nothing for entries we don't gate.
       const probe = await build(entry.srcDir, entry.serializers, undefined, { fold: true, intrinsics: entry.intrinsics });
-      const mode = classify(probe.foldDecisions);
+      const mode = classifyFoldMode(probe.foldDecisions);
       if (mode !== "fold") {
         report.push({ name: entry.name, mode, identical: true, fileCount: probe.foldDecisions.length, neededIsolation: false });
         return;
@@ -211,6 +209,35 @@ describe("fold differential — fold output === run output (#1025, epic #1019)",
     const byName = new Map(report.map((r) => [r.name, r]));
     const regressed = EXPECTED_FOLD.filter((name) => byName.get(name)?.mode !== "fold");
     expect(regressed, `these entries folded before but fell back to run: ${regressed.join(", ")}`).toEqual([]);
+  });
+
+  // chant #1062 — the fold-coverage count published in the docs
+  // (typescript-as-data.mdx) must match what THIS run actually found, not a
+  // hand-typed snapshot from whenever someone last remembered to update it.
+  // Reuses `report`, already fully populated by the per-entry tests above —
+  // no second corpus build. A drift here (the corpus grew/shrank, or fold
+  // coverage moved) is expected to happen and is meant to fail loudly: run
+  // `npm run generate:fold-coverage` to refresh the committed number, then
+  // commit the result alongside whatever changed it.
+  test("published fold coverage count matches this run's live count", () => {
+    const docPath = join(
+      import.meta.dirname,
+      "..",
+      "docs",
+      "src",
+      "content",
+      "docs",
+      "concepts",
+      "typescript-as-data.mdx",
+    );
+    const doc = readFileSync(docPath, "utf-8");
+    const foldCount = report.filter((r) => r.mode === "fold").length;
+    const expected = renderFoldCoverageBlock(foldCount, report.length);
+    const actual = extractFoldCoverageBlock(doc);
+    expect(
+      actual,
+      `published fold coverage is stale (live: ${foldCount} of ${report.length}) — run \`npm run generate:fold-coverage\` and commit docs/src/content/docs/concepts/typescript-as-data.mdx`,
+    ).toBe(expected);
   });
 
   afterAll(() => {

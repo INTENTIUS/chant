@@ -5,14 +5,14 @@ description: "Built-in intrinsic functions for the Helm lexicon"
 
 The Helm lexicon provides **7** intrinsic functions.
 
-The **Tag?** column matters for [`chant build --fold`](/chant/concepts/typescript-as-data/#folded-vs-run): only a genuine tagged template (`Yes`) can ever fold, and only once its tag is registered for folding. A plain function call (`No`) is never fold-representable — a resource or composite that uses one anywhere forces its file back to the normal run path.
+**Tag?** shows how an intrinsic is authored: a genuine tagged template (`Sub\`...\``) or a plain function call (`Ref(...)`). **Folds?** shows whether [`chant build --fold`](/chant/concepts/typescript-as-data/#folded-vs-run) can reduce a call to this intrinsic today, without running the file — generated directly from this lexicon's registration, not restated by hand. Right now folding only reaches tagged templates, so most rows read `No`; that reflects the current state of the folder, not something specific to these intrinsics, and it changes as folding gains coverage.
 
-| Function | Description | Output Key | Tag? |
-|----------|-------------|------------|------|
-| `values` | Proxy accessor for \{\{ .Values.x \}\} references | `values` | No |
-| `Release` | Built-in Release object | `Release` | No |
-| `ChartRef` | Built-in Chart object | `ChartRef` | No |
-| `include` | Include a named template | `include` | No |
-| `If` | Conditional resource/value | `If` | No |
-| `Range` | Range loop | `Range` | No |
-| `With` | With scope | `With` | No |
+| Function | Description | Output Key | Tag? | Folds? |
+|----------|-------------|------------|------|--------|
+| `values` | Proxy accessor for \{\{ .Values.x \}\} references | `values` | No | No |
+| `Release` | Built-in Release object | `Release` | No | No |
+| `ChartRef` | Built-in Chart object | `ChartRef` | No | No |
+| `include` | Include a named template | `include` | No | No |
+| `If` | Conditional resource/value | `If` | No | No |
+| `Range` | Range loop | `Range` | No | No |
+| `With` | With scope | `With` | No | No |

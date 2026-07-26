@@ -5,6 +5,7 @@
  */
 
 import { escapeMdx } from "./docs-file-markers";
+import { intrinsicFolds } from "../lexicon";
 import type { DocsConfig, ManifestJSON, MetaEntry, RuleMeta } from "./docs-types";
 
 export function generateOverview(
@@ -94,16 +95,17 @@ export function generateIntrinsics(
     "",
     `The ${config.displayName} lexicon provides **${intrinsics.length}** intrinsic functions.`,
     "",
-    `The **Tag?** column matters for [\`chant build --fold\`](/chant/concepts/typescript-as-data/#folded-vs-run): only a genuine tagged template (\`Yes\`) can ever fold, and only once its tag is registered for folding. A plain function call (\`No\`) is never fold-representable — a resource or composite that uses one anywhere forces its file back to the normal run path.`,
+    `**Tag?** shows how an intrinsic is authored: a genuine tagged template (\`Sub\\\`...\\\`\`) or a plain function call (\`Ref(...)\`). **Folds?** shows whether [\`chant build --fold\`](/chant/concepts/typescript-as-data/#folded-vs-run) can reduce a call to this intrinsic today, without running the file — generated directly from this lexicon's registration, not restated by hand. Right now folding only reaches tagged templates, so most rows read \`No\`; that reflects the current state of the folder, not something specific to these intrinsics, and it changes as folding gains coverage.`,
     "",
-    "| Function | Description | Output Key | Tag? |",
-    "|----------|-------------|------------|------|",
+    "| Function | Description | Output Key | Tag? | Folds? |",
+    "|----------|-------------|------------|------|--------|",
   ];
 
   for (const fn of intrinsics) {
     const tag = fn.isTag ? "Yes" : "No";
+    const folds = intrinsicFolds(fn) ? "Yes" : "No";
     lines.push(
-      `| \`${fn.name}\` | ${escapeMdx(fn.description ?? "—")} | \`${fn.outputKey ?? fn.name}\` | ${tag} |`,
+      `| \`${fn.name}\` | ${escapeMdx(fn.description ?? "—")} | \`${fn.outputKey ?? fn.name}\` | ${tag} | ${folds} |`,
     );
   }
 

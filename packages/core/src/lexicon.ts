@@ -106,6 +106,29 @@ export interface IntrinsicDef {
 }
 
 /**
+ * Whether `chant build --fold` can ever fold a call to this intrinsic
+ * (chant #1062, epic #1019). Today the answer is a direct function of
+ * `isTag`: `fold()` (../fold/fold.ts) has no `CallExpression` case at all —
+ * a plain-call intrinsic (`Ref(...)`, `Concat(...)`, `reference(...)`, …) is
+ * always a run-fallback, no matter what it's named or registered as — while
+ * a *registered* tagged-template intrinsic (`Sub\`...\``) folds because
+ * `foldTaggedTemplate` recognizes its tag and recurses into the interior.
+ *
+ * This function is the single predicate both `fold()` (deciding whether a
+ * tag is registered for real) and the generated per-lexicon intrinsics page
+ * (`../codegen/docs-sections.ts`'s "Folds?" column) call — never two copies
+ * of the same `isTag === true` check that could silently drift. #1044 (per-
+ * intrinsic, per-lexicon foldability) changes this function's body to
+ * consult something more than `isTag` for a plain call that becomes
+ * foldable; every caller keeps working unchanged, and the generated matrix
+ * updates the moment a lexicon's registration says a given intrinsic now
+ * folds — no doc rewrite, no second code path to remember.
+ */
+export function intrinsicFolds(def: Pick<IntrinsicDef, "isTag">): boolean {
+  return def.isTag === true;
+}
+
+/**
  * Options passed to a MigrationSource by `chant migrate`.
  */
 export interface MigrateOptions {
