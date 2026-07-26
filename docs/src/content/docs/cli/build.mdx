@@ -21,6 +21,7 @@ chant build [path] [flags]
 | `-f, --format` | `string` | `json` | Output format: `json` or `yaml` |
 | `-d, --lexicon` | `string` | all | Build only the specified lexicon (e.g. `aws`, `gitlab`) |
 | `-w, --watch` | `bool` | `false` | Watch for file changes and rebuild |
+| `--fold` | `bool` | `false` | Fold source files statically instead of importing and running them (opt-in). Falls back to running a file, per file, for anything outside the fold subset — logged as `[fold:fold]` or `[fold:run] <reason>` |
 
 ## Usage
 
@@ -39,7 +40,25 @@ chant build --format yaml --output stack.yaml
 
 # Watch mode
 chant build --watch
+
+# Fold statically instead of running (opt-in)
+chant build --fold
 ```
+
+## Fold vs run
+
+`chant build` imports and runs your source files by default. Pass `--fold` to instead reduce each file's AST directly to the resource spec, with no module execution — a file outside the supported subset (see [Folded vs Run](/chant/concepts/typescript-as-data/#folded-vs-run)) falls back to running, transparently, per file. Nothing about how you write resources changes to use it.
+
+`--fold` is also settable project-wide, so you don't have to pass the flag on every invocation:
+
+```typescript
+// chant.config.ts
+export default {
+  build: { fold: true },
+};
+```
+
+The `--fold` flag always wins over `build.fold` when both are present.
 
 ## Exit Codes
 

@@ -606,6 +606,8 @@ export const build = new Job({
 
 {{file:docs-snippets/src/composites-usage.ts}}
 
+**A note on \`chant build --fold\`.** These two composite shapes fold differently (see [Folded vs Run](/chant/concepts/typescript-as-data/#folded-vs-run)). A single-action wrapper like \`Checkout({...})\` is normally embedded inline as \`checkout.step\` inside a \`Job\`'s \`steps\` array — a call nested as a value inside another resource's own properties, which is outside the fold subset, so a file using it falls back to the normal run path. A multi-job pipeline composite like \`NodePipeline({...})\` is normally consumed the other way: bound to a local \`const\`, then each member re-exported separately (\`export const nodeWorkflow = node.workflow\`) — a top-level export whose value is a call result's member access, which is exactly the composite-call shape \`chant build --fold\` resolves (chant #1023).
+
 ## Checkout
 
 Wraps \`actions/checkout@v4\`. Clones the repository.

@@ -96,6 +96,8 @@ export const healthApi = SecureApi({
 
 During build, composites expand to flat CloudFormation resources: `healthApiRole`, `healthApiFunc`, `healthApiPermission`.
 
+A top-level composite call assigned directly to an export — like `healthApi` above — is one of the patterns [`chant build --fold`](/chant/concepts/typescript-as-data/#folded-vs-run) can reduce with no module execution (chant #1023). Defining a composite (the `Composite(...)` call inside `lambda-api.ts` itself) doesn't fold — its factory callback is a function, which is outside the fold subset — and neither does a composite call embedded as a nested value inside another resource's own properties; only a composite call that is itself a file's top-level export (or destructured/re-exported from one) is eligible.
+
 ## Built-in composites
 
 The AWS lexicon ships ready-to-use composites for common patterns. Import them from `@intentius/chant-lexicon-aws`:

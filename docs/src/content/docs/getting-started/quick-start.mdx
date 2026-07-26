@@ -64,7 +64,7 @@ For a complete walkthrough with S3 buckets, IAM roles, Lambda functions, and cro
 :::
 
 :::caution[Property constraints]
-Resource properties must be statically evaluable — chant reads your TypeScript as data, it never executes it. See [TypeScript as Data](/chant/concepts/typescript-as-data/) for supported patterns.
+Resource properties must be statically evaluable — literals, constants, and cross-resource references only. `chant build` imports and runs your file by default (the evaluability rules keep that safe); pass `--fold` to reduce supported files to data with no execution at all. See [TypeScript as Data](/chant/concepts/typescript-as-data/) for supported patterns.
 :::
 
 ## Step 4: Build
