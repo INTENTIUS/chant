@@ -6,6 +6,7 @@ import { fileURLToPath } from "node:url";
 import { tryFoldFile } from "./fold-import";
 import { isDeclarable } from "../declarable";
 import { isCompositeInstance } from "../composite";
+import type { IntrinsicDef } from "../lexicon";
 
 const thisDir = dirname(fileURLToPath(import.meta.url));
 /** Absolute path to `packages/core/src/runtime.ts` — the real `createResource`
@@ -15,6 +16,12 @@ const runtimePath = resolve(thisDir, "../runtime");
 /** Absolute path to `packages/core/src/composite.ts` — the real `Composite`
  * factory, used to build a genuine composite fixture. */
 const compositePath = resolve(thisDir, "../composite");
+/** Absolute path to `packages/core/src/intrinsic.ts` — the real `Intrinsic`
+ * marker/interface every lexicon's own intrinsic classes (AWS's `Sub`,
+ * gitlab's `reference`, …) implement. Used below to build a tagged-template
+ * intrinsic fixture that is structurally identical to a real lexicon's,
+ * not a simplified stand-in. */
+const intrinsicPath = resolve(thisDir, "../intrinsic");
 
 describe("tryFoldFile", () => {
   let testDir: string;
@@ -257,5 +264,154 @@ describe("tryFoldFile", () => {
       DeletionPolicy: "Retain",
       DependsOn: "otherResource",
     });
+  });
+});
+
+// chant #1039 — the CLI fold path hardcoded `intrinsics` to `[]` at both
+// `fold-import.ts` call sites, so a registered lexicon intrinsic tagged
+// template (e.g. AWS `Sub`\`...\`) never folded in production even though
+// `tryFoldFile` accepted an `intrinsics` parameter. These tests exercise
+// that parameter end-to-end with a REAL tagged-template intrinsic — built on
+// the same `Intrinsic`/`INTRINSIC_MARKER` contract every lexicon's own
+// intrinsic classes implement (see `intrinsicPath` above), not a fabricated
+// shape — rather than the hand-rolled `IntrinsicDef` used by `fold.test.ts`'s
+// narrower unit tests of the reducer alone.
+describe("tryFoldFile — registered intrinsic tagged templates (#1039)", () => {
+  let testDir: string;
+
+  beforeEach(async () => {
+    testDir = join(tmpdir(), `chant-fold-import-intrinsic-test-${Date.now()}-${Math.random()}`);
+    await mkdir(testDir, { recursive: true });
+  });
+
+  afterEach(async () => {
+    await rm(testDir, { recursive: true, force: true });
+  });
+
+  const SUB: IntrinsicDef = { name: "Sub", isTag: true, outputKey: "Test::Sub" };
+
+  /** A tagged-template intrinsic + pseudo-parameter namespace, shaped exactly like a real lexicon's (AWS's `Sub`/`AWS.StackName`): a class implementing `Intrinsic`, and a factory function invoked as `Sub`\`...\``. */
+  async function writeIntrinsicDefs(): Promise<void> {
+    await writeFile(
+      join(testDir, "intrinsics.ts"),
+      `
+        import { INTRINSIC_MARKER } from ${JSON.stringify(intrinsicPath)};
+
+        export class SubIntrinsic {
+          constructor(strings, values) {
+            this[INTRINSIC_MARKER] = true;
+            this.strings = strings;
+            this.values = values;
+          }
+          toJSON() {
+            let out = "";
+            for (let i = 0; i < this.strings.length; i++) {
+              out += this.strings[i];
+              if (i < this.values.length) out += String(this.values[i]);
+            }
+            return { "Test::Sub": out };
+          }
+        }
+
+        export function Sub(strings, ...values) {
+          return new SubIntrinsic(strings, values);
+        }
+
+        export const NS = { Region: "NS::Region" };
+      `,
+    );
+  }
+
+  async function writeResourceDefs(): Promise<void> {
+    await writeFile(
+      join(testDir, "resources.ts"),
+      `
+        import { createResource } from ${JSON.stringify(runtimePath)};
+        export const Bucket = createResource("Test::Bucket", "aws", { arn: "Arn" });
+      `,
+    );
+  }
+
+  test("a registered tag folds end-to-end to the real intrinsic's value — zero module execution", async () => {
+    await writeIntrinsicDefs();
+    await writeResourceDefs();
+    const file = join(testDir, "main.ts");
+    await writeFile(
+      file,
+      `
+        import { Bucket } from "./resources";
+        import { Sub, NS } from "./intrinsics";
+        throw new Error("must never execute — sentinel for #1039 fold verification");
+        export const bucket = new Bucket({ name: Sub\`\${NS.Region}-data\` });
+      `,
+    );
+
+    const result = await tryFoldFile(file, [SUB]);
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.entities).toHaveLength(1);
+    const [name, entity] = result.entities[0];
+    expect(name).toBe("bucket");
+    if (!isDeclarable(entity)) throw new Error("expected a Declarable");
+    // The revived value must be a genuine, live `SubIntrinsic` instance —
+    // constructed by actually invoking the real `Sub` tag function through
+    // this file's own imports, with "NS::Region" resolved via its `NS`
+    // import — not the raw `{ __intrinsic, strings, values }` / `{ __symbol
+    // }` envelope fold() produces internally (that envelope is meant to be
+    // replayed, not serialized — see fold-import.ts's "Intrinsic revival"
+    // section). A serializer calls `.toJSON()` on it exactly like it would
+    // for any other lexicon intrinsic (e.g. AWS's real `Sub`).
+    const bucketName = (entity as unknown as { props: { name: unknown } }).props.name;
+    expect(bucketName).toBeInstanceOf(Object);
+    expect((bucketName as { toJSON(): unknown }).toJSON()).toEqual({ "Test::Sub": "NS::Region-data" });
+  });
+
+  test("an unregistered tag still falls back to run when no intrinsics are passed", async () => {
+    await writeIntrinsicDefs();
+    await writeResourceDefs();
+    const file = join(testDir, "main.ts");
+    await writeFile(
+      file,
+      `
+        import { Bucket } from "./resources";
+        import { Sub, NS } from "./intrinsics";
+        export const bucket = new Bucket({ name: Sub\`\${NS.Region}-data\` });
+      `,
+    );
+
+    // No second argument — reproduces the exact pre-#1039 production bug
+    // (the CLI fold path hardcoded this to `[]`).
+    const result = await tryFoldFile(file);
+
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.reason).toContain("unregistered tagged template intrinsic: Sub");
+  });
+
+  test("a same-file resource reference inside a folded intrinsic's interpolation falls back to run rather than folding to the wrong value", async () => {
+    await writeIntrinsicDefs();
+    await writeResourceDefs();
+    const file = join(testDir, "main.ts");
+    await writeFile(
+      file,
+      `
+        import { Bucket } from "./resources";
+        import { Sub } from "./intrinsics";
+        export const a = new Bucket({ name: "a" });
+        export const b = new Bucket({ name: Sub\`\${a.arn}-clone\` });
+      `,
+    );
+
+    const result = await tryFoldFile(file, [SUB]);
+
+    // Reviving would need a genuine live `AttrRef` wired to the sibling
+    // entity (a WeakRef into an object this file's fold hasn't necessarily
+    // constructed yet) — out of scope for #1039, same call as the existing
+    // "nested `new Type(...)` as a value" rejection. Falling back to run is
+    // always safe; silently folding to the raw envelope would not be.
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.reason).toContain("not foldable");
   });
 });

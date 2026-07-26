@@ -1,5 +1,6 @@
 import type { Declarable } from "../declarable";
 import type { DiscoveryError } from "../errors";
+import type { IntrinsicDef } from "../lexicon";
 import { findInfraFiles } from "./files";
 import { importModule } from "./import";
 import { collectEntities } from "./collect";
@@ -40,6 +41,16 @@ export interface DiscoveryOptions {
    * is unchanged unless requested.
    */
   fold?: boolean;
+
+  /**
+   * chant #1039 — lexicon-registered intrinsic tags (e.g. AWS's `Sub`) to
+   * recognize while folding. Threaded down to `tryFoldFile`/the static
+   * folder so a registered tagged template folds instead of falling back to
+   * run. Only meaningful when {@link fold} is set; ignored otherwise.
+   * Default: none (an intrinsic-using file still folds up to that point,
+   * then falls back to run at the unregistered tag).
+   */
+  intrinsics?: IntrinsicDef[];
 }
 
 /**
@@ -95,7 +106,7 @@ export async function discover(path: string, options?: DiscoveryOptions): Promis
   const foldAttempts = new Map<string, Awaited<ReturnType<typeof tryFoldFile>>>();
   if (options?.fold) {
     for (const file of files) {
-      foldAttempts.set(file, await tryFoldFile(file));
+      foldAttempts.set(file, await tryFoldFile(file, options.intrinsics));
     }
   }
   const taintedFiles = options?.fold

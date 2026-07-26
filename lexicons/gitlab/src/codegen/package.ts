@@ -34,9 +34,13 @@ export async function packageLexicon(opts: PackageOptions = {}): Promise<Package
         const intrinsics: IntrinsicDef[] = [
           {
             name: "reference",
+            // Kept in sync with ../plugin.ts's own registration — see its
+            // comment: `reference(...)` is a plain call, not a tagged
+            // template, and the YAML `!reference` tag renders via
+            // `ReferenceIntrinsic.toYAML()`, unrelated to this flag.
             description: "!reference tag — reference another job's properties",
             outputKey: "!reference",
-            isTag: true,
+            isTag: false,
           },
         ];
 

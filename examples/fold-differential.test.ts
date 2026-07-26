@@ -4,17 +4,18 @@ import { resolve } from "node:path";
 import { build } from "@intentius/chant/build";
 import type { Serializer, SerializerResult } from "@intentius/chant/serializer";
 import type { DiscoveryError, BuildError } from "@intentius/chant/errors";
-import { awsSerializer } from "@intentius/chant-lexicon-aws";
-import { gcpSerializer } from "@intentius/chant-lexicon-gcp";
-import { azureSerializer } from "@intentius/chant-lexicon-azure";
-import { k8sSerializer } from "@intentius/chant-lexicon-k8s";
-import { gitlabSerializer } from "@intentius/chant-lexicon-gitlab";
-import { githubSerializer } from "@intentius/chant-lexicon-github";
-import { forgejoSerializer } from "@intentius/chant-lexicon-forgejo";
-import { helmSerializer } from "@intentius/chant-lexicon-helm";
-import { dockerSerializer } from "@intentius/chant-lexicon-docker";
-import { temporalSerializer } from "@intentius/chant-lexicon-temporal";
-import { flySerializer } from "@intentius/chant-lexicon-fly";
+import type { IntrinsicDef } from "@intentius/chant/lexicon";
+import { awsSerializer, awsPlugin } from "@intentius/chant-lexicon-aws";
+import { gcpSerializer, gcpPlugin } from "@intentius/chant-lexicon-gcp";
+import { azureSerializer, azurePlugin } from "@intentius/chant-lexicon-azure";
+import { k8sSerializer, k8sPlugin } from "@intentius/chant-lexicon-k8s";
+import { gitlabSerializer, gitlabPlugin } from "@intentius/chant-lexicon-gitlab";
+import { githubSerializer, githubPlugin } from "@intentius/chant-lexicon-github";
+import { forgejoSerializer, forgejoPlugin } from "@intentius/chant-lexicon-forgejo";
+import { helmSerializer, helmPlugin } from "@intentius/chant-lexicon-helm";
+import { dockerSerializer, dockerPlugin } from "@intentius/chant-lexicon-docker";
+import { temporalSerializer, temporalPlugin } from "@intentius/chant-lexicon-temporal";
+import { flySerializer, flyPlugin } from "@intentius/chant-lexicon-fly";
 
 /**
  * chant #1025 (epic #1019) — the fold-vs-run differential safety net.
@@ -43,6 +44,13 @@ import { flySerializer } from "@intentius/chant-lexicon-fly";
  * on. Fallback entries are still built and reported (drift visible), and once
  * #1023 (module→Composite folding) lands they become "fold" and re-enter the
  * strict gate automatically. What is NEVER allowed is drift on a folded entry.
+ *
+ * chant #1039 — every `{ fold: true }` build below passes `intrinsics`,
+ * reproducing the CLI's own `options.plugins.flatMap(p => p.intrinsics?.() ??
+ * [])` step (`cli/commands/build.ts`). Without this the differential doesn't
+ * reflect what `chant build --fold` actually does in production: a file using
+ * a registered intrinsic tagged template (e.g. AWS `Sub`) would be reported
+ * as run-fallback here even once the fold-import wiring recognizes it.
  */
 
 const ROOT = resolve(import.meta.dirname, "..");
@@ -81,6 +89,49 @@ const SERIALIZER_BY_LEXICON: Record<string, Serializer> = {
   fly: flySerializer,
 };
 
+/**
+ * chant #1039 — every loaded plugin's registered intrinsics, combined. This
+ * differential builds directly through core's `build()` (not the CLI), so it
+ * has to reproduce `cli/commands/build.ts`'s own
+ * `options.plugins.flatMap(p => p.intrinsics?.() ?? [])` step itself for the
+ * fold path to recognize any intrinsic tagged template (e.g. AWS `Sub`) —
+ * otherwise this corpus would never reflect what `chant build --fold`
+ * actually does in production, and would keep reporting intrinsic-using
+ * entries as run-fallback even after the fold-import wiring is fixed.
+ */
+const ALL_INTRINSICS: IntrinsicDef[] = [
+  awsPlugin,
+  gcpPlugin,
+  azurePlugin,
+  k8sPlugin,
+  gitlabPlugin,
+  githubPlugin,
+  forgejoPlugin,
+  helmPlugin,
+  dockerPlugin,
+  temporalPlugin,
+  flyPlugin,
+].flatMap((plugin) => plugin.intrinsics?.() ?? []);
+
+/**
+ * One lexicon's own intrinsics, keyed the same way as
+ * {@link SERIALIZER_BY_LEXICON} — used for `lexicons/*<dot>/examples/*`
+ * corpus entries, which likewise only get their own lexicon's serializer.
+ */
+const INTRINSICS_BY_LEXICON: Record<string, IntrinsicDef[]> = {
+  aws: awsPlugin.intrinsics?.() ?? [],
+  gcp: gcpPlugin.intrinsics?.() ?? [],
+  azure: azurePlugin.intrinsics?.() ?? [],
+  k8s: k8sPlugin.intrinsics?.() ?? [],
+  gitlab: gitlabPlugin.intrinsics?.() ?? [],
+  github: githubPlugin.intrinsics?.() ?? [],
+  forgejo: forgejoPlugin.intrinsics?.() ?? [],
+  helm: helmPlugin.intrinsics?.() ?? [],
+  docker: dockerPlugin.intrinsics?.() ?? [],
+  temporal: temporalPlugin.intrinsics?.() ?? [],
+  fly: flyPlugin.intrinsics?.() ?? [],
+};
+
 interface CorpusEntry {
   /** Repo-relative label used in test names and the report. */
   name: string;
@@ -88,6 +139,8 @@ interface CorpusEntry {
   srcDir: string;
   /** Serializers to build this entry with. */
   serializers: Serializer[];
+  /** Intrinsics to fold with (chant #1039) — see {@link ALL_INTRINSICS}/{@link INTRINSICS_BY_LEXICON}. */
+  intrinsics: IntrinsicDef[];
 }
 
 function isDir(p: string): boolean {
@@ -133,7 +186,7 @@ function discoverCorpus(): CorpusEntry[] {
     if (!dirent.isDirectory()) continue;
     const srcDir = resolve(examplesDir, dirent.name, "src");
     if (isDir(srcDir)) {
-      entries.push({ name: `examples/${dirent.name}`, srcDir, serializers: ALL_SERIALIZERS });
+      entries.push({ name: `examples/${dirent.name}`, srcDir, serializers: ALL_SERIALIZERS, intrinsics: ALL_INTRINSICS });
     }
   }
 
@@ -152,6 +205,7 @@ function discoverCorpus(): CorpusEntry[] {
           name: `lexicons/${lexDirent.name}/examples/${exDirent.name}`,
           srcDir,
           serializers: [serializer],
+          intrinsics: INTRINSICS_BY_LEXICON[lexDirent.name] ?? [],
         });
       }
     }
@@ -217,6 +271,44 @@ interface ReportRow {
 const report: ReportRow[] = [];
 
 /**
+ * chant #1039 — fold COVERAGE regression gate.
+ *
+ * The byte-identical assertion below only fires for entries that already
+ * fold (mode "fold") — an entry that quietly stops folding and falls back to
+ * run instead reports `identical: true` (run-vs-run has no drift by
+ * definition) and the whole suite stays green. That is a real, silent
+ * coverage regression the differential's original design (#1025) had no gate
+ * for at all.
+ *
+ * This is the committed baseline: every corpus entry that folds today (as of
+ * this branch — see the PR that introduced this list for the exact
+ * before/after against `main`). A name-by-name check, not just a count,
+ * because a count alone can't tell "A regressed, B started folding" apart
+ * from "nothing changed" — exactly the failure mode a bare total would hide.
+ * Update this list only when you've confirmed (via `just fold-differential
+ * --reporter=verbose`, comparing the full per-entry classification against
+ * `main`, not just the summary line) that a removal is an intentional,
+ * understood behavior change — never to silence a red run.
+ */
+const EXPECTED_FOLD: readonly string[] = [
+  "examples/components-aws-e2e",
+  "examples/local-cloud-trio",
+  "lexicons/docker/examples/basic-app",
+  "lexicons/gitlab/examples/node-pipeline",
+  "lexicons/gitlab/examples/python-pipeline",
+  "lexicons/helm/examples/composites-basic",
+  "lexicons/helm/examples/composites-infrastructure",
+  "lexicons/helm/examples/composites-production",
+  "lexicons/helm/examples/helm-render-external-secrets",
+  "lexicons/helm/examples/microservice-chart",
+  "lexicons/helm/examples/web-app-with-ingress",
+  "lexicons/k8s/examples/batch-workers",
+  "lexicons/k8s/examples/namespace-rbac",
+  "lexicons/k8s/examples/org-policy",
+  "lexicons/k8s/examples/web-platform",
+];
+
+/**
  * Build `srcDir` both ways and return normalized outputs for comparison.
  *
  * The fast path builds run-then-fold back to back with no module-cache
@@ -247,7 +339,7 @@ async function buildBothWays(
   entry: CorpusEntry,
 ): Promise<{ run: Awaited<ReturnType<typeof build>>; fold: Awaited<ReturnType<typeof build>>; neededIsolation: boolean }> {
   const run = await build(entry.srcDir, entry.serializers, undefined, { fold: false });
-  const fold = await build(entry.srcDir, entry.serializers, undefined, { fold: true });
+  const fold = await build(entry.srcDir, entry.serializers, undefined, { fold: true, intrinsics: entry.intrinsics });
 
   if (outputsEqual(normalizeOutputs(fold.outputs), normalizeOutputs(run.outputs))) {
     return { run, fold, neededIsolation: false };
@@ -256,7 +348,7 @@ async function buildBothWays(
   vi.resetModules();
   const freshRun = await build(entry.srcDir, entry.serializers, undefined, { fold: false });
   vi.resetModules();
-  const freshFold = await build(entry.srcDir, entry.serializers, undefined, { fold: true });
+  const freshFold = await build(entry.srcDir, entry.serializers, undefined, { fold: true, intrinsics: entry.intrinsics });
   return { run: freshRun, fold: freshFold, neededIsolation: true };
 }
 
@@ -274,7 +366,7 @@ describe("fold differential — fold output === run output (#1025, epic #1019)",
       // both-ways comparison + module-reset retry; that retry (which reloads the
       // whole module graph) is what makes the full corpus intractable now that
       // many entries fall back, and it buys nothing for entries we don't gate.
-      const probe = await build(entry.srcDir, entry.serializers, undefined, { fold: true });
+      const probe = await build(entry.srcDir, entry.serializers, undefined, { fold: true, intrinsics: entry.intrinsics });
       const mode = classify(probe.foldDecisions);
       if (mode !== "fold") {
         report.push({ name: entry.name, mode, identical: true, fileCount: probe.foldDecisions.length, neededIsolation: false });
@@ -297,6 +389,16 @@ describe("fold differential — fold output === run output (#1025, epic #1019)",
       expect(foldNorm, `fold-vs-run output drift in ${entry.name}`).toEqual(runNorm);
     });
   }
+
+  // Runs last (vitest executes tests within a `describe` in declaration
+  // order) — by now every corpus entry above has pushed its classification
+  // into `report`. See {@link EXPECTED_FOLD}'s doc for why this checks names,
+  // not just a total.
+  test("fold coverage regression gate — every entry known to fold today still folds", () => {
+    const byName = new Map(report.map((r) => [r.name, r]));
+    const regressed = EXPECTED_FOLD.filter((name) => byName.get(name)?.mode !== "fold");
+    expect(regressed, `these entries folded before but fell back to run: ${regressed.join(", ")}`).toEqual([]);
+  });
 
   afterAll(() => {
     const foldCount = report.filter((r) => r.mode === "fold").length;
