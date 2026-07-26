@@ -45,6 +45,9 @@ export default defineConfig({
       // and lexicons/*/examples/ itself (no Docker), so it's included
       // explicitly the same way examples.test.ts is.
       "examples/fold-differential.test.ts",
+      // chant #1045 Phase 1 — the JSON entity-boundary differential. Same
+      // corpus-walking shape as fold-differential.test.ts above (no Docker).
+      "examples/json-boundary-differential.test.ts",
     ],
     environment: "node",
     poolOptions: {
