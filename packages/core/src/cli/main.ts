@@ -408,10 +408,13 @@ Options:
                         also settable via chant.config.ts's
                         release.autoRecord: false; #597)
   --fold                (build) Fold source modules statically instead of
-                        running them; falls back to run per-file for
-                        composites or anything else outside the fold subset.
-                        Logs which path each file took. Default: off (also
-                        settable via chant.config.ts's build.fold: true; #1022)
+                        running them; folds resource constructors and
+                        composite factory calls (#1022/#1023), falling back
+                        to run per-file for anything else outside the fold
+                        subset (a cross-file-only reference, a re-export,
+                        \`export default\`, ...). Logs which path each file
+                        took. Default: off (also settable via
+                        chant.config.ts's build.fold: true; #1022)
 
 Examples:
   chant build ./infra/
