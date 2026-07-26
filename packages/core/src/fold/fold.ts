@@ -1,5 +1,5 @@
 import * as ts from "typescript";
-import type { IntrinsicDef } from "../lexicon";
+import { intrinsicFolds, type IntrinsicDef } from "../lexicon";
 import {
   SUPPORTED_BINARY_OPERATORS,
   SUPPORTED_UNARY_OPERATORS,
@@ -300,9 +300,10 @@ function foldIntrinsicValue(
 }
 
 /**
- * Fold a `TaggedTemplateExpression` whose tag is a registered lexicon
- * intrinsic (`IntrinsicDef.isTag === true`) to its node form. An
- * unregistered tag throws a located {@link FoldError}.
+ * Fold a `TaggedTemplateExpression` whose tag is a registered, foldable
+ * lexicon intrinsic ({@link intrinsicFolds}, `../lexicon.ts`) to its node
+ * form. An unregistered — or registered-but-not-foldable — tag throws a
+ * located {@link FoldError}.
  */
 function foldTaggedTemplate(
   node: ts.TaggedTemplateExpression,
@@ -311,7 +312,7 @@ function foldTaggedTemplate(
   externals?: ReadonlyMap<string, unknown>,
 ): FoldedIntrinsic {
   const tagName = node.tag.getText();
-  const isRegistered = intrinsics.some((i) => i.isTag === true && i.name === tagName);
+  const isRegistered = intrinsics.some((i) => i.name === tagName && intrinsicFolds(i));
   if (!isRegistered) {
     throw foldError(node, `unregistered tagged template intrinsic: ${tagName}\`...\``);
   }
@@ -333,10 +334,11 @@ function foldTaggedTemplate(
  * anything outside the supported subset — including any `CallExpression`
  * that isn't a registered intrinsic tagged template.
  *
- * @param intrinsics - Lexicon-registered intrinsic tags (`IntrinsicDef`
- *   entries with `isTag: true`, e.g. `Sub`). A tagged template whose tag
- *   isn't in this list is rejected. Defaults to none — pass the target
- *   lexicon's manifest `intrinsics` to recognize its tags.
+ * @param intrinsics - Lexicon-registered intrinsics that fold
+ *   ({@link intrinsicFolds}, e.g. `Sub`). A tagged template whose tag isn't
+ *   in this list, or is registered but not foldable, is rejected. Defaults
+ *   to none — pass the target lexicon's manifest `intrinsics` to recognize
+ *   its tags.
  * @param externals - chant #1020: pre-resolved imported bindings, consulted
  *   only when an identifier isn't in `consts`. See the module doc above.
  *   `undefined` (the default) preserves the exact pre-#1020 single-file
