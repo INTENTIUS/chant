@@ -6,11 +6,11 @@ describe("generateDocs", () => {
     expect(typeof generateDocs).toBe("function");
   });
 
-  test("generateDocs returns a promise", () => {
-    const result = generateDocs({ verbose: false });
-    expect(result).toBeDefined();
-    expect(typeof result.then).toBe("function");
-    // Suppress unhandled rejection if it fails due to missing data
-    result.catch(() => {});
+  // Asserted from the declaration rather than by calling it: generateDocs
+  // writes the real docs tree under lexicons/gcp/docs, so invoking it here
+  // rewrote tracked .mdx files (index.mdx's "Lexicon version") on every
+  // `vitest run` — and did it in a floating promise, off the test's timeline.
+  test("generateDocs is async, so it returns a promise", () => {
+    expect(generateDocs.constructor.name).toBe("AsyncFunction");
   });
 });
