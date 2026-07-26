@@ -168,6 +168,15 @@ export interface BuildOptions {
    * The CLI populates this from `options.plugins.flatMap(p => p.intrinsics?.() ?? [])`.
    */
   intrinsics?: IntrinsicDef[];
+
+  /**
+   * chant #1045 Phase 2 — opt-in: run-fallback files (or, when {@link fold}
+   * isn't set, every file) execute together, isolated, in one sandboxed
+   * child process instead of in-process. Passed straight through to
+   * {@link DiscoveryOptions.sandbox} in `./discovery/index`. Default `false`
+   * (unchanged behavior/performance).
+   */
+  sandbox?: boolean;
 }
 
 export interface BuildResult {
@@ -477,7 +486,11 @@ export async function build(
   options?: BuildOptions,
 ): Promise<BuildResult> {
   // Step 1: Discover entities and dependencies
-  const discoveryResult = await discover(path, { fold: options?.fold, intrinsics: options?.intrinsics });
+  const discoveryResult = await discover(path, {
+    fold: options?.fold,
+    intrinsics: options?.intrinsics,
+    sandbox: options?.sandbox,
+  });
 
   return buildFromDiscoveryResult(discoveryResult, path, serializers, parentBuildStack, options);
 }

@@ -2,7 +2,15 @@
  * Error types for chant discovery, build, and lint failures
  */
 
-export type DiscoveryErrorType = "import" | "resolution" | "circular";
+/**
+ * `"permission"` (chant #1045 Phase 2) — a run-fallback file executing inside
+ * the sandboxed child (`./discovery/sandbox/`) hit Node's Permission Model
+ * (`ERR_ACCESS_DENIED`) — filesystem, child-process, or worker-thread access
+ * outside the sandbox's allowlist. Distinct from `"import"` (a module simply
+ * failed to load/execute for an ordinary reason) so a permission denial is
+ * recognizable as a sandbox boundary hit, not a generic import failure.
+ */
+export type DiscoveryErrorType = "import" | "resolution" | "circular" | "permission";
 
 /**
  * Error during file discovery or module import

@@ -47,8 +47,21 @@ interface PendingEntry {
 /**
  * Flatten every module's exports into the ordered list of entities they
  * contribute — declarables directly, arrays element-by-element (indexed names),
- * composite instances expanded into members, and LexiconOutputs. Order is
- * preserved so downstream serializers emit resources in a stable order.
+ * composite instances expanded into members, and LexiconOutputs. `modules`
+ * order (one discovered file after another) is preserved so downstream
+ * serializers emit resources in a stable, file-discovery-order sequence.
+ *
+ * Within one module, exports are visited in ascending name order rather than
+ * `Object.entries()`'s own — a real ECMAScript Module namespace object
+ * already enumerates its (non-default) string keys this way per spec
+ * (`[[OwnPropertyKeys]]`, sorted), regardless of source declaration order;
+ * sorting here just makes that the case EXPLICITLY, so this doesn't quietly
+ * depend on whichever loader imported the file preserving (or not) that spec
+ * behavior — chant #1045 Phase 2 found `vite-node` (vitest's own in-process
+ * transform) does NOT sort, unlike plain Node, which made comparing an
+ * in-process build against a real-subprocess one (its differential's whole
+ * point) spuriously "drift" on multi-export-per-file modules whenever the
+ * in-process side ran under vitest.
  */
 function enumerateEntries(
   modules: Array<{ file: string; exports: Record<string, unknown> }>,
@@ -56,7 +69,8 @@ function enumerateEntries(
   const entries: PendingEntry[] = [];
 
   for (const { file, exports } of modules) {
-    for (const [rawName, value] of Object.entries(exports)) {
+    const sortedExports = Object.entries(exports).sort(([a], [b]) => a.localeCompare(b));
+    for (const [rawName, value] of sortedExports) {
       const name = exportKey(rawName, file);
       if (isDeclarable(value)) {
         entries.push({ bareKey: name, value, file, provenance: { sourceFile: file } });

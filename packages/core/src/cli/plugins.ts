@@ -1,6 +1,6 @@
 import { isLexiconPlugin, type LexiconPlugin } from "../lexicon";
 import { loadChantConfig } from "../config";
-import { discover, detectLexicons } from "../index";
+import { findInfraFiles, detectLexicons } from "../index";
 import { checkConflicts } from "./conflict-check";
 
 /**
@@ -80,6 +80,22 @@ export async function loadPlugins(lexiconNames: string[]): Promise<LexiconPlugin
  *
  * Reads `lexicons` from `chant.config.ts` / `chant.config.json` if present.
  * Falls back to source-file detection via `detectLexicons()`.
+ *
+ * chant #1045 Phase 2 — this used to fall back to a full `discover()` call
+ * just to read its `sourceFiles` list, which imports and RUNS every project
+ * source file to collect entities that are then discarded here. That ran
+ * unconditionally, on every command that reaches this function without an
+ * explicit `chant.config.ts` `lexicons` list (`build`, `lint`, `doctor`,
+ * `import`, `graph`, the MCP server — effectively the whole CLI), with no
+ * `--fold`/`--sandbox` involved at all: a project could omit `lexicons` and
+ * every file would execute here, in the CLI's own process, before the
+ * caller's OWN (possibly folded, possibly sandboxed) build ever ran. Fixed
+ * by using `findInfraFiles()` alone — the pure directory walk `discover()`
+ * itself starts from, no import, no execution — since `detectLexicons()` is
+ * already a plain text/regex scan over file contents (`../detectLexicon.ts`)
+ * that never needed live module exports to begin with. This is strictly
+ * better than routing the detection through the sandbox: it removes the
+ * execution entirely rather than containing it, at no bundling/spawn cost.
  */
 export async function resolveProjectLexicons(projectPath: string): Promise<string[]> {
   const { config } = await loadChantConfig(projectPath);
@@ -88,7 +104,7 @@ export async function resolveProjectLexicons(projectPath: string): Promise<strin
     return config.lexicons;
   }
 
-  // Fallback: detect from source imports
-  const discoveryResult = await discover(projectPath);
-  return detectLexicons(discoveryResult.sourceFiles);
+  // Fallback: detect from source imports — a pure text scan, no execution.
+  const files = await findInfraFiles(projectPath);
+  return detectLexicons(files);
 }

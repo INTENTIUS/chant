@@ -133,6 +133,16 @@ export interface ChantConfig {
      * `true`). See {@link resolveFoldEnabled}.
      */
     fold?: boolean;
+
+    /**
+     * chant #1045 Phase 2 — opt-in: run-fallback source files (or, when
+     * `fold` above isn't set, every file) execute together, isolated, in one
+     * sandboxed child process instead of in-process. Default `false`. The
+     * `--sandbox` CLI flag overrides this per-invocation (a flag of `true`
+     * always wins; the flag cannot force sandboxing *off* when this is
+     * `true`). See {@link resolveSandboxEnabled}.
+     */
+    sandbox?: boolean;
   };
 
   /**
@@ -293,6 +303,21 @@ export function resolveAutoReleaseDisabled(config: ChantConfig, cliFlag?: boolea
 export function resolveFoldEnabled(config: ChantConfig, cliFlag?: boolean): boolean {
   if (cliFlag) return true;
   return config.build?.fold === true;
+}
+
+/**
+ * Whether `chant build` should run its run-fallback files (or, without
+ * `--fold`, every file) in an isolated sandboxed child process rather than
+ * in-process (chant #1045 Phase 2). Opt-in: off unless the CLI's `--sandbox`
+ * flag was passed (`cliFlag`) or the project config sets `build.sandbox:
+ * true` — the flag always wins for that one invocation, regardless of
+ * config. Independent of {@link resolveFoldEnabled}: sandboxing without
+ * folding isolates every discovered file; sandboxing with folding isolates
+ * only the per-file run-fallback remainder.
+ */
+export function resolveSandboxEnabled(config: ChantConfig, cliFlag?: boolean): boolean {
+  if (cliFlag) return true;
+  return config.build?.sandbox === true;
 }
 
 /**

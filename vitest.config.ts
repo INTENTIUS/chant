@@ -48,6 +48,10 @@ export default defineConfig({
       // chant #1045 Phase 1 — the JSON entity-boundary differential. Same
       // corpus-walking shape as fold-differential.test.ts above (no Docker).
       "examples/json-boundary-differential.test.ts",
+      // chant #1045 Phase 2 — the sandboxed-run-vs-in-process-run
+      // differential. Same corpus-walking shape as the two above (no Docker;
+      // spawns real, short-lived child processes of its own instead).
+      "examples/sandbox-differential.test.ts",
     ],
     environment: "node",
     poolOptions: {

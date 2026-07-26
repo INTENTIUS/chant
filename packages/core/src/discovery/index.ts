@@ -7,6 +7,7 @@ import { collectEntities } from "./collect";
 import { resolveAttrRefs } from "./resolve";
 import { buildDependencyGraph } from "./graph";
 import { tryFoldFile, planFoldTaint } from "./fold-import";
+import { getProvenance } from "../provenance";
 
 /**
  * Per-file fold-vs-run outcome (chant #1022, epic #1019), populated only
@@ -51,6 +52,18 @@ export interface DiscoveryOptions {
    * then falls back to run at the unregistered tag).
    */
   intrinsics?: IntrinsicDef[];
+
+  /**
+   * chant #1045 Phase 2 — opt-in: whatever would otherwise reach the
+   * in-process `importModule` step (every file, when {@link fold} isn't set;
+   * only the per-file run-fallback remainder, when it is) instead runs
+   * together, isolated, in one sandboxed child process — see
+   * `./sandbox/run.ts`. Folded files are unaffected: fold already executes
+   * zero of a file's own top-level code, so it stays in this process exactly
+   * as it does today. Default `false` — behavior, including performance
+   * (no bundling, no child process, no IPC), is unchanged unless requested.
+   */
+  sandbox?: boolean;
 }
 
 /**
@@ -92,6 +105,11 @@ export async function discover(path: string, options?: DiscoveryOptions): Promis
 
   // Step 2: Import all modules
   const modules: Array<{ file: string; exports: Record<string, unknown> }> = [];
+  // chant #1045 Phase 2 — files that would reach the in-process importModule()
+  // call below are instead queued here when options.sandbox is set, and run
+  // together afterward in one isolated child (see the merge step after
+  // collectEntities).
+  const sandboxFiles: string[] = [];
 
   // Fold path (#1022/#1023): try the static folder on EVERY file first,
   // independently, before committing any decision. A file that folds
@@ -130,6 +148,11 @@ export async function discover(path: string, options?: DiscoveryOptions): Promis
         ? folded.reason
         : `would fold in isolation, but a file that imports it (directly or transitively) falls back to run — folding independently would create a duplicate, non-identical instance`;
       foldDecisions.push({ file, mode: "run", reason });
+    }
+
+    if (options?.sandbox) {
+      sandboxFiles.push(file);
+      continue;
     }
 
     try {
@@ -182,6 +205,86 @@ export async function discover(path: string, options?: DiscoveryOptions): Promis
       errors,
       foldDecisions,
     };
+  }
+
+  // chant #1045 Phase 2 — run the queued sandbox files together, isolated, in
+  // one child process, and merge its already-named, already-ref-resolved
+  // entities in. The child performs its OWN collectEntities/resolveAttrRefs
+  // over just this subset (see ./sandbox/run.ts) rather than sharing live
+  // objects with the fold-only `entities` map above — a real object can't
+  // cross a process boundary, and `planFoldTaint` already guarantees no
+  // folded file is ever referenced by a run-fallback one (or vice versa), so
+  // the two subsets never share cross-references. A name collision between
+  // them is therefore always a genuine duplicate (never the same object
+  // legitimately re-exported), reported exactly like collectEntities' own
+  // same-key check above rather than silently overwritten. (One narrower gap
+  // than the single unified collectEntities call this replaces: cross-
+  // directory stack-prefix disambiguation, #932, is computed separately for
+  // each subset, so a bare-name collision that spans a folded directory and a
+  // run-fallback directory won't be disambiguated the same way a single
+  // combined call would. Not hit by any corpus entry today.)
+  if (options?.sandbox && sandboxFiles.length > 0) {
+    try {
+      // Dynamic, not static — `./sandbox/run` imports `esbuild`, a large CJS
+      // package with its own module-scope filesystem access (the same class
+      // of thing `entity-wire.ts`'s split from `entity-wire-codec.ts` avoids
+      // for `typescript`). `discover()` is re-exported from the package root
+      // (`@intentius/chant`), and project source commonly imports that root
+      // — a STATIC top-level import here would make `esbuild` transitively
+      // reachable, and therefore BUNDLED AND EAGERLY EVALUATED, by every
+      // project file the sandboxed child imports that happens to import
+      // chant itself. A dynamic import is only ever actually reached here,
+      // at runtime, when a caller opts into `sandbox: true` — never from
+      // inside a bundled project file (project code never calls `discover()`
+      // itself), so esbuild only ever bundles it as inert, un-evaluated code
+      // when it's pulled in transitively.
+      const { runFallbackFilesSandboxed } = await import("./sandbox/run");
+      const sandboxResult = await runFallbackFilesSandboxed(sandboxFiles, path);
+      errors.push(...sandboxResult.errors);
+      for (const [name, entity] of sandboxResult.entities) {
+        if (entities.has(name)) {
+          const { DiscoveryError: DiscoveryErrorClass } = await import("../errors");
+          const file = sandboxResult.provenanceByName[name] ?? path;
+          errors.push(new DiscoveryErrorClass(file, `Duplicate export name "${name}" found`, "resolution"));
+          continue;
+        }
+        entities.set(name, entity);
+      }
+
+      // Re-order the merged map to match original file discovery order.
+      // Without this, every fold entity (inserted above via the parent's own
+      // collectEntities call) sorts before every sandboxed entity (appended
+      // by the loop just above) — a fold-block-then-run-block order, not the
+      // per-file INTERLEAVED order a single unified collectEntities call
+      // over `files` would produce. Several downstream consumers iterate the
+      // entities map directly and are order-sensitive (e.g. a serializer's
+      // auto-detected cross-lexicon `Parameters`), so this isn't cosmetic —
+      // uncorrected, it's real, if harmless (still a valid template),
+      // byte-level drift. Ordered by each entity's OWN provenance
+      // (`../provenance.ts`) rather than by which loop produced it: a fold
+      // entity's provenance is read directly (a live object, still in this
+      // process); a sandboxed entity's provenance didn't survive the wire —
+      // `encodeEntitySet` deliberately drops build metadata, not declared
+      // configuration — so `sandboxResult.provenanceByName` (a side channel
+      // the child computes for exactly this, see ./sandbox/run.ts) is used
+      // instead. `Array.prototype.sort` is stable (guaranteed since ES2019),
+      // so entities from the same file (already correctly ordered by
+      // whichever collectEntities call produced them) keep their relative
+      // order — only which FILE's block comes first changes.
+      const fileOrder = new Map(files.map((file, i) => [file, i]));
+      const withIndex = [...entities.entries()].map(([name, entity]) => {
+        const sourceFile = getProvenance(entity)?.sourceFile ?? sandboxResult.provenanceByName[name];
+        const index = sourceFile !== undefined ? fileOrder.get(sourceFile) : undefined;
+        return { name, entity, index: index ?? Number.MAX_SAFE_INTEGER };
+      });
+      withIndex.sort((a, b) => a.index - b.index);
+      entities = new Map(withIndex.map(({ name, entity }) => [name, entity]));
+    } catch (error) {
+      const { DiscoveryError: DiscoveryErrorClass } = await import("../errors");
+      errors.push(
+        new DiscoveryErrorClass(path, error instanceof Error ? error.message : String(error), "resolution"),
+      );
+    }
   }
 
   // Step 4: Resolve AttrRefs

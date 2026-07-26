@@ -231,6 +231,10 @@ None of this is something you opt into piecemeal or write differently for — it
 
 `chant build --fold` and `chant build` (run) produce byte-identical serialized output for every file that folds — same resource objects, same serialization, same lint. This is proven by a differential test across every shipped example ([#1025](https://github.com/INTENTIUS/chant/issues/1025)); run it yourself with `just fold-differential`.
 
+### Isolating the run-fallback path
+
+Folded files execute none of their own code, but a run-fallback file does — in the CLI's own process by default. `chant build --sandbox` (#1045) runs every run-fallback file for a build together, isolated, in one child process with the filesystem, process-spawn, and environment access locked down, instead of trusting the file to behave. It composes with `--fold`: folded files are unaffected (there's nothing to isolate), and the run-fallback remainder is what gets sandboxed — see [Sandboxed Execution](/chant/architecture/sandbox/) for exactly what that does and does not protect against.
+
 ## Why These Constraints?
 
 The supported subset is the set of TypeScript patterns whose value is fully determined by literals, known constants, and symbolic cross-resource references. `chant build` imports and runs your files. The evaluability rules reject patterns that would make the result depend on anything else, so running the supported subset has no side effects.
