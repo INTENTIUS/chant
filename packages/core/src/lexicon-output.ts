@@ -45,8 +45,13 @@ export class LexiconOutput implements Intrinsic {
   readonly outputName: string;
   /** @internal WeakRef to the source entity object for identity-based matching */
   readonly _sourceParent: WeakRef<object> | null;
-  /** @internal Intrinsic value when constructed from an Intrinsic rather than AttrRef */
-  private readonly _intrinsic: Intrinsic | null;
+  /**
+   * @internal Intrinsic value when constructed from an Intrinsic rather than AttrRef.
+   * Readable outside the class (like `_sourceParent` above) so the entity-wire
+   * encoder can reach it without an `as unknown as` cast that would erase type
+   * checking on every field it reads (#1047).
+   */
+  readonly _intrinsic: Intrinsic | null;
 
   constructor(ref: AttrRef | Intrinsic | string, name: string) {
     if (ref instanceof AttrRef) {

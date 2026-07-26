@@ -158,14 +158,13 @@ const CORE_FIELD_NAMES = new Set(["lexicon", "entityType", "kind", "props", "att
  * names through) since it never went through `resolveAttrRefs`.
  */
 function lexiconOutputRef(output: LexiconOutput, entityNames: Map<unknown, string>): AttrRef | Intrinsic {
-  const internal = output as unknown as { _intrinsic: Intrinsic | null; _sourceParent: WeakRef<object> | null; sourceAttribute: string | null };
-  if (internal._intrinsic) return internal._intrinsic;
-  const parent = internal._sourceParent?.deref();
+  if (output._intrinsic) return output._intrinsic;
+  const parent = output._sourceParent?.deref();
   const parentName = parent ? entityNames.get(parent) : undefined;
-  if (!parent || internal.sourceAttribute === null || !parentName) {
+  if (!parent || output.sourceAttribute === null || !parentName) {
     throw new Error(`encodeEntitySet: LexiconOutput "${output.outputName}" has neither a resolvable AttrRef parent nor an intrinsic`);
   }
-  const ref = new AttrRef(parent, internal.sourceAttribute);
+  const ref = new AttrRef(parent, output.sourceAttribute);
   ref._setLogicalName(parentName);
   return ref;
 }
