@@ -282,7 +282,9 @@ export async function runComponentsStatus(ctx: CommandContext): Promise<number> 
   // Discover components (best-effort) so a live/owned-but-never-recorded
   // component still gets a row, not just those that appear in the ledger.
   const { config } = await loadChantConfig(resolve("."));
-  const discovery = await discoverComponents(resolve(args.src ?? config.sourceDir ?? "."));
+  const discovery = await discoverComponents(resolve(args.src ?? config.sourceDir ?? "."), {
+    sandbox: args.sandbox,
+  });
   const allComponents = [...discovery.components.keys()];
 
   // Component -> live entity/resource name(s) it owns (#598), when declared

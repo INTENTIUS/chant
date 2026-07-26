@@ -176,7 +176,7 @@ async function runComponentsList(ctx: CommandContext): Promise<number> {
   if (!requireTemporalMode(ctx, "chant run list --components")) return 1;
 
   const projectPath = resolve(".");
-  const result = await listComponents(projectPath);
+  const result = await listComponents(projectPath, ctx.args.sandbox);
 
   if (!result.success) {
     for (const err of result.errors) console.error(formatError({ message: err }));
@@ -704,7 +704,12 @@ export async function runOpComponents(ctx: CommandContext): Promise<number> {
   // `undefined` and every `onProgress?.(...)` call in the driver is a no-op —
   // behavior is byte-for-byte unchanged from before this flag existed.
   const onProgress = ctx.args.progressJson ? ndjsonProgressSink() : undefined;
-  const result = await runComponents(resolve("."), selector, { env: ctx.args.env, componentOutputs: seededOutputs, onProgress });
+  const result = await runComponents(resolve("."), selector, {
+    env: ctx.args.env,
+    componentOutputs: seededOutputs,
+    onProgress,
+    sandbox: ctx.args.sandbox,
+  });
 
   // Dump the accumulated outputs for a downstream job to seed from. Written
   // even on failure (partial outputs) so a resumed run still has what completed.
@@ -777,7 +782,7 @@ async function runComponentTemporal(ctx: CommandContext, selector: string): Prom
   }
 
   const projectPath = resolve(".");
-  const resolved = await resolveComponentTargets(projectPath, selector);
+  const resolved = await resolveComponentTargets(projectPath, selector, ctx.args.sandbox);
   if (!resolved.success || resolved.targets.length === 0) {
     console.error(formatError({ message: resolved.error ?? `Component "${selector}" not found` }));
     return 1;

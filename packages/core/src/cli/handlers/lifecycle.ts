@@ -286,7 +286,7 @@ export async function runLifecycleDiff(ctx: CommandContext): Promise<number> {
       let componentStacks: string[] = [];
       if (!target.stack) {
         try {
-          const disc = await discoverComponents(target.root);
+          const disc = await discoverComponents(target.root, { sandbox: args.sandbox });
           const set = new Set<string>();
           for (const { component } of disc.components.values()) for (const s of cfnDeployStacks(component.deploy)) set.add(s);
           componentStacks = [...set];
@@ -698,7 +698,7 @@ export async function runLifecyclePlan(ctx: CommandContext): Promise<number> {
   // single-stack project → the original single-call path is kept.
   let componentStacks: string[] = [];
   try {
-    const disc = await discoverComponents(resolveBuildRoot(args, config));
+    const disc = await discoverComponents(resolveBuildRoot(args, config), { sandbox: args.sandbox });
     const set = new Set<string>();
     for (const { component } of disc.components.values()) for (const s of cfnDeployStacks(component.deploy)) set.add(s);
     componentStacks = [...set];
