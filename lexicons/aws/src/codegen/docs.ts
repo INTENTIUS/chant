@@ -324,6 +324,8 @@ Tag values support strings, \`Parameter\` references, and intrinsic functions (\
         description: "CloudFormation intrinsic functions and their chant syntax",
         content: `CloudFormation intrinsic functions are available as imports from the lexicon. They produce the corresponding \`Fn::\` calls in the serialized template.
 
+Only \`Sub\` is a tagged template — the others below are plain function calls. That distinction matters for [\`chant build --fold\`](/chant/concepts/typescript-as-data/#folded-vs-run): a registered intrinsic tagged template is one of the shapes the static folder can reduce with no module execution, while a plain function call used as a value is never fold-representable, tag or no tag. Using \`Ref\`, \`GetAtt\`, \`If\`, \`Join\`, \`Select\`, \`Split\`, \`Base64\`, or \`GetAZs\` anywhere in a resource's props forces that file back to the normal run path under \`--fold\`.
+
 Here is a complete example using all intrinsic functions:
 
 {{file:docs-snippets/src/intrinsics.ts}}
@@ -399,6 +401,8 @@ Instantiate and export:
 {{file:lambda-api/src/health-api.ts}}
 
 During build, composites expand to flat CloudFormation resources: \`healthApiRole\`, \`healthApiFunc\`, \`healthApiPermission\`.
+
+A top-level composite call assigned directly to an export — like \`healthApi\` above — is one of the patterns [\`chant build --fold\`](/chant/concepts/typescript-as-data/#folded-vs-run) can reduce with no module execution (chant #1023). Defining a composite (the \`Composite(...)\` call inside \`lambda-api.ts\` itself) doesn't fold — its factory callback is a function, which is outside the fold subset — and neither does a composite call embedded as a nested value inside another resource's own properties; only a composite call that is itself a file's top-level export (or destructured/re-exported from one) is eligible.
 
 ## Built-in composites
 

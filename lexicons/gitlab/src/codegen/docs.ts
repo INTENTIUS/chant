@@ -304,6 +304,8 @@ Jobs can override any default property individually.
         description: "GitLab CI/CD intrinsic functions and their chant syntax",
         content: `The GitLab lexicon provides one intrinsic function: \`reference()\`, which maps to GitLab's \`!reference\` YAML tag.
 
+\`reference()\` is a plain function call, not a TypeScript tagged template — like any function call used as a value, it's outside the subset [\`chant build --fold\`](/chant/concepts/typescript-as-data/#folded-vs-run) can reduce. A file that calls \`reference()\` anywhere in a resource's properties falls back to the normal run path under \`--fold\`.
+
 ## \`reference()\` — reuse job properties
 
 The \`reference()\` intrinsic lets you reuse properties from other jobs or hidden keys. It produces the \`!reference\` YAML tag:

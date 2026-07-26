@@ -94,6 +94,8 @@ export function generateIntrinsics(
     "",
     `The ${config.displayName} lexicon provides **${intrinsics.length}** intrinsic functions.`,
     "",
+    `The **Tag?** column matters for [\`chant build --fold\`](/chant/concepts/typescript-as-data/#folded-vs-run): only a genuine tagged template (\`Yes\`) can ever fold, and only once its tag is registered for folding. A plain function call (\`No\`) is never fold-representable — a resource or composite that uses one anywhere forces its file back to the normal run path.`,
+    "",
     "| Function | Description | Output Key | Tag? |",
     "|----------|-------------|------------|------|",
   ];

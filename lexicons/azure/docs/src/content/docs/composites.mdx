@@ -5,6 +5,8 @@ description: "High-level resource composites for common Azure patterns"
 
 Composites are factory functions that return multiple related resources with best-practice defaults. They eliminate boilerplate and enforce security patterns.
 
+A composite call like the ones below — assigned to a top-level `export const`, including the destructuring form shown here — is one of the patterns `chant build --fold` can reduce statically with no module execution (chant #1023). See [Folded vs Run](/chant/concepts/typescript-as-data/#folded-vs-run) for what folds and what still falls back to running the file.
+
 ## StorageAccountSecure
 
 A storage account with HTTPS-only, encryption at rest, TLS 1.2, and default-deny network rules.
