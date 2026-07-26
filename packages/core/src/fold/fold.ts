@@ -34,8 +34,24 @@ import {
  *
  * A `CallExpression` has no case — a function call as a value is
  * structurally unrepresentable, not merely linted against. Composite
- * factory calls are out of scope here (epic Phase 5, #1023). Cross-file
- * identifier resolution (imports) is #1020 — single-file only.
+ * factory calls are out of scope here (epic Phase 5, #1023).
+ *
+ * Cross-file identifier resolution (chant #1020): `consts` alone is always
+ * this file's own top-level bindings — that part stays single-file, and
+ * nothing about the supported node-kind subset changes. But an identifier
+ * `fold()` can't find in `consts` isn't necessarily a dead end: the optional
+ * `externals` map (populated by ../discovery/fold-import.ts, which owns the
+ * module graph traversal) lets a caller pre-resolve an *imported* binding to
+ * its real value — a plain value for an imported `const`, or the REAL,
+ * already-constructed `Declarable`/`CompositeInstance` for a name bound to a
+ * resource/composite in the defining module — and `fold()` just returns it
+ * for the identifier, unchanged. This is why a bare object/array bracket
+ * index a few lines down (`obj[key]`) is enough to make `network.vpc.VpcId`
+ * fold correctly once `network` resolves via `externals` to the real,
+ * shared composite instance object: indexing a live class instance the same
+ * way as a plain object returns its real getter's real `AttrRef`, wired to
+ * the real shared parent — see fold-import.ts's module doc for why that
+ * shared identity is the entire hard part of #1020.
  */
 
 /**
@@ -139,6 +155,30 @@ export type FoldModuleEntry =
  * environment/value-dependent, see {@link "./subset"}'s module doc) still
  * defaults to "EVL001" since that's the closest umbrella rule, even though
  * EVL can't actually detect it ahead of a real fold.
+ *
+ * chant #1020 hang fix — every `FoldError` is thrown for a routine, EXPECTED
+ * outcome (this node's shape isn't in the fold subset) and is ALWAYS caught
+ * a few frames up (`tryFoldFileCore`'s own top-level catch, ultimately),
+ * reduced to `.message`; `.stack` is never read anywhere on this path. V8
+ * still eagerly walks live JS frames to populate the (lazy) `.stack` getter's
+ * backing data at CONSTRUCTION time regardless of whether it's ever read —
+ * cheap for a shallow call stack, but expensive once the surrounding
+ * functions are hot enough for V8 to aggressively inline them (every corpus
+ * entry re-triggers the same call shapes across `foldFileMemoized` ->
+ * `buildExternals` -> `tryFoldFileCore` -> `resolveDeclaratorValue` ->
+ * `resolveLiveValue` -> `resolveCallExpression`/`fold`, chant #1020's
+ * cross-file resolution making that chain several layers deeper than the
+ * pre-#1020 single-file fold ever needed): capturing a stack from deep,
+ * optimized/inlined frames requires V8 to reconstruct them from deopt
+ * metadata, confirmed via `sample` to dominate CPU during the observed
+ * multi-minute stall (`Isolate::CaptureAndSetErrorStack` /
+ * `OptimizedJSFrame::Summarize` / `DeoptTranslationIterator`). Most files in
+ * the corpus (77/98 entries have at least one run-fallback file) throw one
+ * of these, so the cost compounds across a build. `Error.stackTraceLimit = 0`
+ * for the duration of `super()` makes V8 capture zero frames — free
+ * regardless of stack depth/optimization state — then the limit is restored
+ * immediately, so it doesn't suppress a real stack trace anywhere else in
+ * the process.
  */
 export class FoldError extends Error {
   readonly line: number;
@@ -146,7 +186,10 @@ export class FoldError extends Error {
   readonly ruleId: SubsetRuleId;
 
   constructor(message: string, line: number, column: number, ruleId: SubsetRuleId = "EVL001") {
+    const prevStackTraceLimit = Error.stackTraceLimit;
+    Error.stackTraceLimit = 0;
     super(`${line}:${column} - ${message}`);
+    Error.stackTraceLimit = prevStackTraceLimit;
     this.name = "FoldError";
     this.line = line;
     this.column = column;
@@ -154,8 +197,14 @@ export class FoldError extends Error {
   }
 }
 
-/** Resolve a node's 1-based line/column via its owning `SourceFile`. */
-function locate(node: ts.Node): { line: number; column: number } {
+/**
+ * Resolve a node's 1-based line/column via its owning `SourceFile`. Exported
+ * (chant #1020) so fold-import.ts can build its own located `FoldError`s
+ * (e.g. an import-cycle diagnostic pointing at the specific `import`
+ * statement that closes the cycle) using the exact same position math
+ * `foldError` uses here, rather than a second hand-rolled implementation.
+ */
+export function locate(node: ts.Node): { line: number; column: number } {
   const sourceFile = node.getSourceFile();
   const { line, character } = sourceFile.getLineAndCharacterOfPosition(node.getStart());
   return { line: line + 1, column: character + 1 };
@@ -233,11 +282,21 @@ function foldIntrinsicValue(
   node: ts.Expression,
   consts: Map<string, ts.Expression>,
   intrinsics: readonly IntrinsicDef[],
+  externals?: ReadonlyMap<string, unknown>,
 ): FoldedValue {
+  // Deliberately checks `consts` only, not `externals` — an imported
+  // identifier here still folds to a symbolic `{__symbol}` node exactly as
+  // before #1020, revived later by fold-import.ts's own
+  // `resolveSymbolicValue` (a real, trusted import of the defining module —
+  // fine for a plain pseudo-parameter-style namespace, the only shape this
+  // path exists for). Wiring `externals` in here too would mean two
+  // different mechanisms resolving the same cross-file name inside an
+  // intrinsic interpolation; out of scope for #1020, which only needs
+  // identifiers/property access OUTSIDE tagged templates to resolve.
   if (isUnresolvedSymbolChain(node, consts)) {
     return { __symbol: node.getText() };
   }
-  return fold(node, consts, intrinsics);
+  return fold(node, consts, intrinsics, externals);
 }
 
 /**
@@ -249,6 +308,7 @@ function foldTaggedTemplate(
   node: ts.TaggedTemplateExpression,
   consts: Map<string, ts.Expression>,
   intrinsics: readonly IntrinsicDef[],
+  externals?: ReadonlyMap<string, unknown>,
 ): FoldedIntrinsic {
   const tagName = node.tag.getText();
   const isRegistered = intrinsics.some((i) => i.isTag === true && i.name === tagName);
@@ -262,7 +322,9 @@ function foldTaggedTemplate(
   }
 
   const strings = [template.head.text, ...template.templateSpans.map((span) => span.literal.text)];
-  const values = template.templateSpans.map((span) => foldIntrinsicValue(span.expression, consts, intrinsics));
+  const values = template.templateSpans.map((span) =>
+    foldIntrinsicValue(span.expression, consts, intrinsics, externals),
+  );
   return { __intrinsic: tagName, strings, values };
 }
 
@@ -275,11 +337,16 @@ function foldTaggedTemplate(
  *   entries with `isTag: true`, e.g. `Sub`). A tagged template whose tag
  *   isn't in this list is rejected. Defaults to none — pass the target
  *   lexicon's manifest `intrinsics` to recognize its tags.
+ * @param externals - chant #1020: pre-resolved imported bindings, consulted
+ *   only when an identifier isn't in `consts`. See the module doc above.
+ *   `undefined` (the default) preserves the exact pre-#1020 single-file
+ *   behavior — every identifier not in `consts` is unresolved.
  */
 export function fold(
   node: ts.Expression,
   consts: Map<string, ts.Expression>,
   intrinsics: readonly IntrinsicDef[] = [],
+  externals?: ReadonlyMap<string, unknown>,
 ): FoldedValue {
   if (
     ts.isParenthesizedExpression(node) ||
@@ -287,7 +354,7 @@ export function fold(
     ts.isSatisfiesExpression(node) ||
     ts.isNonNullExpression(node)
   ) {
-    return fold(node.expression, consts, intrinsics);
+    return fold(node.expression, consts, intrinsics, externals);
   }
 
   if (ts.isStringLiteral(node) || ts.isNoSubstitutionTemplateLiteral(node)) {
@@ -305,13 +372,13 @@ export function fold(
   if (ts.isIdentifier(node) && node.text === "undefined") return undefined;
 
   if (ts.isTaggedTemplateExpression(node)) {
-    return foldTaggedTemplate(node, consts, intrinsics);
+    return foldTaggedTemplate(node, consts, intrinsics, externals);
   }
 
   if (ts.isTemplateExpression(node)) {
     let out = node.head.text;
     for (const span of node.templateSpans) {
-      out += String(fold(span.expression, consts, intrinsics)) + span.literal.text;
+      out += String(fold(span.expression, consts, intrinsics, externals)) + span.literal.text;
     }
     return out;
   }
@@ -320,11 +387,11 @@ export function fold(
     const obj: { [key: string]: FoldedValue } = {};
     for (const prop of node.properties) {
       if (ts.isPropertyAssignment(prop)) {
-        obj[propName(prop.name)] = fold(prop.initializer, consts, intrinsics);
+        obj[propName(prop.name)] = fold(prop.initializer, consts, intrinsics, externals);
       } else if (ts.isShorthandPropertyAssignment(prop)) {
-        obj[prop.name.text] = fold(prop.name, consts, intrinsics);
+        obj[prop.name.text] = fold(prop.name, consts, intrinsics, externals);
       } else if (ts.isSpreadAssignment(prop)) {
-        const src = fold(prop.expression, consts, intrinsics);
+        const src = fold(prop.expression, consts, intrinsics, externals);
         if (src === null || typeof src !== "object") {
           throw foldError(prop, "spread source not an object");
         }
@@ -340,13 +407,13 @@ export function fold(
     const arr: FoldedValue[] = [];
     for (const el of node.elements) {
       if (ts.isSpreadElement(el)) {
-        const src = fold(el.expression, consts, intrinsics);
+        const src = fold(el.expression, consts, intrinsics, externals);
         if (!Array.isArray(src)) {
           throw foldError(el, "spread source not an array");
         }
         arr.push(...src);
       } else {
-        arr.push(fold(el, consts, intrinsics));
+        arr.push(fold(el, consts, intrinsics, externals));
       }
     }
     return arr;
@@ -354,16 +421,27 @@ export function fold(
 
   if (ts.isIdentifier(node)) {
     if (!consts.has(node.text)) {
+      // chant #1020 — an imported binding fold-import.ts already resolved
+      // (to a plain value, or the real live Declarable/CompositeInstance a
+      // sibling file's own fold produced) is returned as-is: for a plain
+      // value this is exactly like resolving a local const; for a real live
+      // object, the property-access branches below just index it like any
+      // other object, which is what makes a real, correctly-identified
+      // `AttrRef` fall out of `network.vpc.VpcId` with zero special-casing
+      // here (see fold-import.ts's module doc).
+      if (externals?.has(node.text)) {
+        return externals.get(node.text) as FoldedValue;
+      }
       throw foldError(node, `unresolved identifier: ${node.text}`);
     }
-    return fold(consts.get(node.text) as ts.Expression, consts, intrinsics);
+    return fold(consts.get(node.text) as ts.Expression, consts, intrinsics, externals);
   }
 
   if (ts.isPropertyAccessExpression(node)) {
     if (ts.isIdentifier(node.expression) && resolvesToResource(consts, node.expression)) {
       return { __attrRef: { entity: node.expression.text, attribute: node.name.text } };
     }
-    const obj = fold(node.expression, consts, intrinsics);
+    const obj = fold(node.expression, consts, intrinsics, externals);
     if (obj === null || obj === undefined) return undefined;
     return (obj as { [key: string]: FoldedValue })[node.name.text];
   }
@@ -373,7 +451,7 @@ export function fold(
     if (ts.isIdentifier(node.expression) && resolvesToResource(consts, node.expression)) {
       return { __attrRef: { entity: node.expression.text, attribute: key } };
     }
-    const obj = fold(node.expression, consts, intrinsics);
+    const obj = fold(node.expression, consts, intrinsics, externals);
     if (obj === null || obj === undefined) return undefined;
     return (obj as { [key: string]: FoldedValue })[key];
   }
@@ -382,7 +460,7 @@ export function fold(
     if (!SUPPORTED_UNARY_OPERATORS.has(node.operator)) {
       throw foldError(node, UNSUPPORTED_UNARY_MESSAGE);
     }
-    const value = fold(node.operand, consts, intrinsics);
+    const value = fold(node.operand, consts, intrinsics, externals);
     if (node.operator === ts.SyntaxKind.ExclamationToken) return !value;
     return -(value as unknown as number); // ts.SyntaxKind.MinusToken — the only other supported operator
   }
@@ -392,24 +470,24 @@ export function fold(
     const S = ts.SyntaxKind;
 
     if (opKind === S.AmpersandAmpersandToken) {
-      const left = fold(node.left, consts, intrinsics);
-      return left ? fold(node.right, consts, intrinsics) : left;
+      const left = fold(node.left, consts, intrinsics, externals);
+      return left ? fold(node.right, consts, intrinsics, externals) : left;
     }
     if (opKind === S.BarBarToken) {
-      const left = fold(node.left, consts, intrinsics);
-      return left ? left : fold(node.right, consts, intrinsics);
+      const left = fold(node.left, consts, intrinsics, externals);
+      return left ? left : fold(node.right, consts, intrinsics, externals);
     }
     if (opKind === S.QuestionQuestionToken) {
-      const left = fold(node.left, consts, intrinsics);
-      return left === null || left === undefined ? fold(node.right, consts, intrinsics) : left;
+      const left = fold(node.left, consts, intrinsics, externals);
+      return left === null || left === undefined ? fold(node.right, consts, intrinsics, externals) : left;
     }
 
     if (!SUPPORTED_BINARY_OPERATORS.has(opKind)) {
       throw foldError(node, unsupportedBinaryMessage(opKind));
     }
 
-    const left = fold(node.left, consts, intrinsics);
-    const right = fold(node.right, consts, intrinsics);
+    const left = fold(node.left, consts, intrinsics, externals);
+    const right = fold(node.right, consts, intrinsics, externals);
     switch (opKind) {
       case S.PlusToken:
         return (left as unknown as string) + (right as unknown as string);
@@ -440,9 +518,9 @@ export function fold(
   }
 
   if (ts.isConditionalExpression(node)) {
-    return fold(node.condition, consts, intrinsics)
-      ? fold(node.whenTrue, consts, intrinsics)
-      : fold(node.whenFalse, consts, intrinsics);
+    return fold(node.condition, consts, intrinsics, externals)
+      ? fold(node.whenTrue, consts, intrinsics, externals)
+      : fold(node.whenFalse, consts, intrinsics, externals);
   }
 
   if (ts.isNewExpression(node)) {
@@ -478,6 +556,7 @@ export function foldResource(
   node: ts.NewExpression,
   consts: Map<string, ts.Expression>,
   intrinsics: readonly IntrinsicDef[] = [],
+  externals?: ReadonlyMap<string, unknown>,
 ): FoldedResource {
   const typeName = node.expression.getText();
   const [firstArg, secondArg] = node.arguments ?? [];
@@ -488,7 +567,7 @@ export function foldResource(
   if (!ts.isObjectLiteralExpression(firstArg)) {
     throw foldError(firstArg, resourceCtorArgMessage(typeName));
   }
-  const props = fold(firstArg, consts, intrinsics) as { [key: string]: FoldedValue };
+  const props = fold(firstArg, consts, intrinsics, externals) as { [key: string]: FoldedValue };
 
   if (!secondArg) {
     return { __resource: typeName, props };
@@ -496,7 +575,7 @@ export function foldResource(
   if (!ts.isObjectLiteralExpression(secondArg)) {
     throw foldError(secondArg, `resource attributes argument must be an object literal: ${typeName}(...)`);
   }
-  const attributes = fold(secondArg, consts, intrinsics) as { [key: string]: FoldedValue };
+  const attributes = fold(secondArg, consts, intrinsics, externals) as { [key: string]: FoldedValue };
   return { __resource: typeName, props, attributes };
 }
 

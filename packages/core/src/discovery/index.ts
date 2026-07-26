@@ -6,7 +6,7 @@ import { importModule } from "./import";
 import { collectEntities } from "./collect";
 import { resolveAttrRefs } from "./resolve";
 import { buildDependencyGraph } from "./graph";
-import { tryFoldFile, planFoldTaint } from "./fold-import";
+import { tryFoldFile, planFoldTaint, createFoldSession } from "./fold-import";
 import { getProvenance } from "../provenance";
 
 /**
@@ -122,9 +122,16 @@ export async function discover(path: string, options?: DiscoveryOptions): Promis
   // knowable after every file's fold has been attempted, hence the two
   // passes instead of committing per-file as they're visited.
   const foldAttempts = new Map<string, Awaited<ReturnType<typeof tryFoldFile>>>();
+  // chant #1020 — ONE session, shared by every top-level `tryFoldFile` call
+  // below AND by any cross-file reference one file's fold attempt makes into
+  // another (see fold-import.ts's `FoldSession` doc): this is what guarantees
+  // a project file imported by several others is folded exactly once, so
+  // every referrer shares the identical constructed Declarable/
+  // CompositeInstance objects rather than each building its own copy.
+  const foldSession = options?.fold ? createFoldSession(options.intrinsics) : undefined;
   if (options?.fold) {
     for (const file of files) {
-      foldAttempts.set(file, await tryFoldFile(file, options.intrinsics));
+      foldAttempts.set(file, await tryFoldFile(file, options.intrinsics, foldSession));
     }
   }
   const taintedFiles = options?.fold

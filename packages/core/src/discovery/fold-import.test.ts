@@ -3,9 +3,11 @@ import { mkdir, writeFile, rm } from "node:fs/promises";
 import { join, dirname, resolve } from "node:path";
 import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
-import { tryFoldFile } from "./fold-import";
+import { tryFoldFile, createFoldSession } from "./fold-import";
 import { isDeclarable } from "../declarable";
 import { isCompositeInstance } from "../composite";
+import { isAttrRefLike } from "../utils";
+import type { AttrRef } from "../attrref";
 import type { IntrinsicDef } from "../lexicon";
 
 const thisDir = dirname(fileURLToPath(import.meta.url));
@@ -223,15 +225,26 @@ describe("tryFoldFile", () => {
     expect(result.reason).toBe("no foldable resource exports");
   });
 
-  test("falls back when an exported const is a plain value, not a resource", async () => {
+  // chant #1020: a plain-value-only export now folds too (contributing
+  // nothing to `entities` — only Declarable/CompositeInstance land there —
+  // but recorded in `exportedValues`). This is intentional, not a relaxed
+  // subset: `fold()` already reduced a bare literal trivially; the only
+  // change is that `tryFoldFile` now ALSO tries it for a "single" declarator
+  // instead of only the composite-call spine. It matters for #1020's own
+  // acceptance criterion — a config/params file that exports nothing but
+  // plain consts must be safe to fold (0 entities either way), or
+  // `planFoldTaint` would needlessly force every file that imports one of
+  // its constants back to run too.
+  test("a plain-value-only export now folds — zero entities, but the value is recorded for cross-file reference", async () => {
     const file = join(testDir, "main.ts");
     await writeFile(file, `export const helperValue = 5;`);
 
     const result = await tryFoldFile(file);
 
-    expect(result.ok).toBe(false);
-    if (result.ok) return;
-    expect(result.reason).toContain("not a `new Type(...)` resource declaration");
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.entities).toEqual([]);
+    expect(result.exportedValues.get("helperValue")).toBe(5);
   });
 
   // #1025 differential regression: the constructor's optional second
@@ -265,6 +278,415 @@ describe("tryFoldFile", () => {
       DependsOn: "otherResource",
     });
   });
+});
+
+// chant #1020 (epic #1019) — cross-file resolution: an imported binding now
+// folds by resolving it to its `export const` initializer and folding it in
+// the DEFINING module's own scope, instead of failing the whole importing
+// file on the first identifier it doesn't recognize.
+describe("tryFoldFile — cross-file resolution (chant #1020)", () => {
+  let testDir: string;
+
+  beforeEach(async () => {
+    testDir = join(tmpdir(), `chant-fold-import-crossfile-test-${Date.now()}-${Math.random()}`);
+    await mkdir(testDir, { recursive: true });
+  });
+
+  afterEach(async () => {
+    await rm(testDir, { recursive: true, force: true });
+  });
+
+  async function writeResourceDefs(): Promise<void> {
+    await writeFile(
+      join(testDir, "resources.ts"),
+      `
+        import { createResource } from ${JSON.stringify(runtimePath)};
+        export const Bucket = createResource("Test::Bucket", "aws", { arn: "Arn" });
+        export const Vpc = createResource("Test::Vpc", "aws", { vpcId: "VpcId" });
+        export const Alb = createResource("Test::Alb", "aws", { albArn: "AlbArn" });
+      `,
+    );
+  }
+
+  test("an imported plain const folds identically to an inline one", async () => {
+    await writeResourceDefs();
+    await writeFile(join(testDir, "config.ts"), `export const REGION = "us-east-1";`);
+    const file = join(testDir, "main.ts");
+    await writeFile(
+      file,
+      `
+        import { Bucket } from "./resources";
+        import { REGION } from "./config";
+        export const bucket = new Bucket({ name: "b", region: REGION });
+      `,
+    );
+
+    const result = await tryFoldFile(file);
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    const [, entity] = result.entities[0];
+    expect((entity as unknown as { props: unknown }).props).toEqual({ name: "b", region: "us-east-1" });
+  });
+
+  test("config.ts's own fold succeeds with zero entities — a plain-const-only file must not be tainted merely for existing", async () => {
+    const file = join(testDir, "config.ts");
+    await writeFile(file, `export const REGION = "us-east-1";\nexport const RETRIES = 3;`);
+
+    const result = await tryFoldFile(file);
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.entities).toEqual([]);
+    expect(result.exportedValues.get("REGION")).toBe("us-east-1");
+    expect(result.exportedValues.get("RETRIES")).toBe(3);
+  });
+
+  test("a cross-file resource attribute reference folds to a real AttrRef", async () => {
+    await writeResourceDefs();
+    await writeFile(
+      join(testDir, "network.ts"),
+      `
+        import { Vpc } from "./resources";
+        export const vpc = new Vpc({ cidr: "10.0.0.0/16" });
+      `,
+    );
+    const file = join(testDir, "alb.ts");
+    await writeFile(
+      file,
+      `
+        import { Alb } from "./resources";
+        import { vpc } from "./network";
+        export const alb = new Alb({ vpcId: vpc.vpcId });
+      `,
+    );
+
+    const result = await tryFoldFile(file);
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    const [, entity] = result.entities[0];
+    const vpcId = (entity as unknown as { props: { vpcId: unknown } }).props.vpcId;
+    expect(isAttrRefLike(vpcId)).toBe(true);
+  });
+
+  // The hard part (see planFoldTaint's module doc): fold and run must never
+  // disagree about object identity. If `alb.ts` reached into `network.ts`
+  // and built a SECOND copy of `network.vpc`, that copy would never match
+  // discover()'s entities map by identity and serialization would crash, not
+  // drift. Asserted with `toBe` — identity, not `toEqual`'s structural check.
+  test("a cross-file reference shares the EXACT SAME entity instance as the defining file's own fold — not a duplicate", async () => {
+    await writeResourceDefs();
+    const networkFile = join(testDir, "network.ts");
+    await writeFile(
+      networkFile,
+      `
+        import { Vpc } from "./resources";
+        export const vpc = new Vpc({ cidr: "10.0.0.0/16" });
+      `,
+    );
+    const albFile = join(testDir, "alb.ts");
+    await writeFile(
+      albFile,
+      `
+        import { Alb } from "./resources";
+        import { vpc } from "./network";
+        export const alb = new Alb({ vpcId: vpc.vpcId });
+      `,
+    );
+
+    // One shared session, exactly as `discover()` gives its own per-file
+    // loop — this is what a real build does; two independent `tryFoldFile`
+    // calls with no session would each fold `network.ts` on their own and
+    // legitimately produce two different (if structurally equal) objects.
+    const session = createFoldSession();
+    const networkResult = await tryFoldFile(networkFile, [], session);
+    const albResult = await tryFoldFile(albFile, [], session);
+
+    expect(networkResult.ok).toBe(true);
+    expect(albResult.ok).toBe(true);
+    if (!networkResult.ok || !albResult.ok) return;
+
+    const [, vpcEntity] = networkResult.entities[0];
+    const [, albEntity] = albResult.entities[0];
+    const vpcIdRef = (albEntity as unknown as { props: { vpcId: AttrRef } }).props.vpcId;
+    expect(vpcIdRef.parent.deref()).toBe(vpcEntity);
+  });
+
+  // A diamond — TWO paths reaching the SAME module (b.ts and c.ts both
+  // import hub.ts; neither imports the other) — is the case that silently
+  // degrades to duplicated (or, nested a few levels deep, EXPONENTIAL) work
+  // without a resolution memo, yet produces no error at all: each path just
+  // independently re-resolves the shared module. Distinct from the reference
+  // CYCLE tests below, which fail loudly; this one must instead prove the
+  // hub was folded exactly once and every referrer shares that one object.
+  // An explicit test timeout below turns a reintroduced non-terminating bug
+  // into a fast, clearly-labeled failure instead of a hung test run.
+  test(
+    "a diamond (two independent paths reaching the same module) resolves without re-resolving the shared module",
+    async () => {
+      await writeResourceDefs();
+      await writeFile(
+        join(testDir, "hub.ts"),
+        `
+          import { Vpc } from "./resources";
+          export const vpc = new Vpc({ cidr: "10.0.0.0/16" });
+        `,
+      );
+      await writeFile(
+        join(testDir, "b.ts"),
+        `
+          import { Alb } from "./resources";
+          import { vpc } from "./hub";
+          export const b = new Alb({ vpcId: vpc.vpcId });
+        `,
+      );
+      await writeFile(
+        join(testDir, "c.ts"),
+        `
+          import { Alb } from "./resources";
+          import { vpc } from "./hub";
+          export const c = new Alb({ vpcId: vpc.vpcId });
+        `,
+      );
+
+      const session = createFoldSession();
+      const hubResult = await tryFoldFile(join(testDir, "hub.ts"), [], session);
+      const bResult = await tryFoldFile(join(testDir, "b.ts"), [], session);
+      const cResult = await tryFoldFile(join(testDir, "c.ts"), [], session);
+
+      expect(hubResult.ok).toBe(true);
+      expect(bResult.ok).toBe(true);
+      expect(cResult.ok).toBe(true);
+      if (!hubResult.ok || !bResult.ok || !cResult.ok) return;
+
+      const [, hubVpc] = hubResult.entities[0];
+      const [, bEntity] = bResult.entities[0];
+      const [, cEntity] = cResult.entities[0];
+      const bVpcId = (bEntity as unknown as { props: { vpcId: AttrRef } }).props.vpcId;
+      const cVpcId = (cEntity as unknown as { props: { vpcId: AttrRef } }).props.vpcId;
+      // If the hub were re-resolved once per path (the un-memoized failure
+      // mode), each path would construct its OWN, distinct `Vpc` instance —
+      // these `toBe` checks would fail (not hang) in that case.
+      expect(bVpcId.parent.deref()).toBe(hubVpc);
+      expect(cVpcId.parent.deref()).toBe(hubVpc);
+      // hub.ts/b.ts/c.ts (3) plus the two shared fixture-support files each
+      // of them transitively imports — resources.ts, and (via its own
+      // absolute-path import, see `runtimePath`'s doc above) runtime.ts
+      // itself — each attempted/cached exactly ONCE too, not once per
+      // referrer. The point of this count isn't the literal number 5; it's
+      // that it's flat regardless of how many paths (b.ts AND c.ts) lead to
+      // the SAME file, which is what a broken/missing memo would violate.
+      expect(session.cache.size).toBe(5);
+    },
+    5000,
+  );
+
+  // A wider fan-out (many files, all reaching one shared hub, plus a short
+  // dependency chain) than the minimal diamond above — cheap enough to stay
+  // well under the explicit timeout if resolution is O(files), but would
+  // measurably blow up if the hub (or the chain) were re-resolved once per
+  // referrer instead of once per session.
+  test(
+    "a wide fan-out to one shared hub resolves promptly (no combinatorial blowup)",
+    async () => {
+      await writeResourceDefs();
+      await writeFile(
+        join(testDir, "hub.ts"),
+        `
+          import { Vpc } from "./resources";
+          export const vpc = new Vpc({ cidr: "10.0.0.0/16" });
+        `,
+      );
+      const FANOUT = 15;
+      const files: string[] = [];
+      for (let i = 0; i < FANOUT; i++) {
+        const f = join(testDir, `leaf${i}.ts`);
+        await writeFile(
+          f,
+          `
+            import { Alb } from "./resources";
+            import { vpc } from "./hub";
+            export const leaf = new Alb({ vpcId: vpc.vpcId });
+          `,
+        );
+        files.push(f);
+      }
+
+      const session = createFoldSession();
+      const hubResult = await tryFoldFile(join(testDir, "hub.ts"), [], session);
+      expect(hubResult.ok).toBe(true);
+      if (!hubResult.ok) return;
+      const [, hubVpc] = hubResult.entities[0];
+
+      for (const f of files) {
+        const result = await tryFoldFile(f, [], session);
+        expect(result.ok).toBe(true);
+        if (!result.ok) continue;
+        const [, entity] = result.entities[0];
+        const vpcId = (entity as unknown as { props: { vpcId: AttrRef } }).props.vpcId;
+        expect(vpcId.parent.deref()).toBe(hubVpc);
+      }
+
+      // hub.ts + the two shared fixture-support files (resources.ts,
+      // runtime.ts — see the diamond test above) + FANOUT leaves. Flat in
+      // FANOUT's shared dependencies regardless of FANOUT's size is exactly
+      // the property a broken memo would violate.
+      expect(session.cache.size).toBe(FANOUT + 3);
+    },
+    5000,
+  );
+
+  test("a namespace import's member access resolves cross-file (import * as ns)", async () => {
+    await writeResourceDefs();
+    await writeFile(
+      join(testDir, "ecr.ts"),
+      `
+        import { Bucket } from "./resources";
+        export const apiRepo = new Bucket({ name: "api-repo" });
+        export const uiRepo = new Bucket({ name: "ui-repo" });
+      `,
+    );
+    const file = join(testDir, "outputs.ts");
+    await writeFile(
+      file,
+      `
+        import { Alb } from "./resources";
+        import * as ecr from "./ecr";
+        export const alb = new Alb({ albArn: ecr.apiRepo.arn });
+      `,
+    );
+
+    const result = await tryFoldFile(file);
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    const [, entity] = result.entities[0];
+    const albArn = (entity as unknown as { props: { albArn: unknown } }).props.albArn;
+    expect(isAttrRefLike(albArn)).toBe(true);
+  });
+
+  test("a re-export chain (`export { x } from \"./y\"`) resolves cross-file, sharing the same instance", async () => {
+    await writeResourceDefs();
+    const implFile = join(testDir, "impl.ts");
+    await writeFile(
+      implFile,
+      `
+        import { Bucket } from "./resources";
+        export const bucket = new Bucket({ name: "impl-bucket" });
+      `,
+    );
+    const barrelFile = join(testDir, "barrel.ts");
+    await writeFile(barrelFile, `export { bucket } from "./impl";`);
+
+    const session = createFoldSession();
+    const implResult = await tryFoldFile(implFile, [], session);
+    const barrelResult = await tryFoldFile(barrelFile, [], session);
+
+    expect(implResult.ok).toBe(true);
+    expect(barrelResult.ok).toBe(true);
+    if (!implResult.ok || !barrelResult.ok) return;
+    expect(barrelResult.entities).toHaveLength(1);
+    const [name, barrelBucket] = barrelResult.entities[0];
+    expect(name).toBe("bucket");
+    const [, implBucket] = implResult.entities[0];
+    expect(barrelBucket).toBe(implBucket);
+  });
+
+  test("a re-export chain resolves transitively through more than one hop", async () => {
+    await writeResourceDefs();
+    await writeFile(
+      join(testDir, "impl.ts"),
+      `
+        import { Bucket } from "./resources";
+        export const bucket = new Bucket({ name: "impl-bucket" });
+      `,
+    );
+    await writeFile(join(testDir, "mid-barrel.ts"), `export { bucket } from "./impl";`);
+    const topBarrel = join(testDir, "top-barrel.ts");
+    await writeFile(topBarrel, `export { bucket as sharedBucket } from "./mid-barrel";`);
+
+    const result = await tryFoldFile(topBarrel);
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.entities).toHaveLength(1);
+    const [name, entity] = result.entities[0];
+    expect(name).toBe("sharedBucket");
+    if (!isDeclarable(entity)) throw new Error("expected a Declarable");
+    expect((entity as unknown as { props: unknown }).props).toEqual({ name: "impl-bucket" });
+  });
+
+  // Explicit timeouts throughout this describe's cycle tests: a regression
+  // that broke cycle detection (rather than just mis-formatting its message)
+  // would hang, not fail — a bounded test timeout turns that into a fast,
+  // clearly-labeled failure instead of a stuck test run.
+  test(
+    "an import cycle produces a located FoldError naming the cycle path",
+    async () => {
+      await writeFile(
+        join(testDir, "a.ts"),
+        `
+        import { B_VALUE } from "./b";
+        export const A_VALUE = "a-" + B_VALUE;
+      `,
+      );
+      await writeFile(
+        join(testDir, "b.ts"),
+        `
+        import { A_VALUE } from "./a";
+        export const B_VALUE = "b-" + A_VALUE;
+      `,
+      );
+
+      const result = await tryFoldFile(join(testDir, "a.ts"));
+
+      expect(result.ok).toBe(false);
+      if (result.ok) return;
+      expect(result.reason).toContain("import cycle");
+      expect(result.reason).toContain("a.ts");
+      expect(result.reason).toContain("b.ts");
+      // Located — "line:col - message", the same `FoldError` formatting as
+      // every other fold rejection, not a bare unpositioned string.
+      expect(result.reason).toMatch(/\d+:\d+ - /);
+    },
+    5000,
+  );
+
+  test(
+    "a self-cycle (a file whose own re-export chain reaches back to itself) is also detected",
+    async () => {
+      await writeFile(join(testDir, "a.ts"), `export { x } from "./b";`);
+      const file = join(testDir, "b.ts");
+      await writeFile(file, `export { x } from "./a";`);
+
+      const result = await tryFoldFile(file);
+
+      expect(result.ok).toBe(false);
+      if (result.ok) return;
+      expect(result.reason).toContain("import cycle");
+    },
+    5000,
+  );
+
+  // A 3-file cycle where the loop closes several hops away from where it
+  // started (a -> b -> c -> a), not just a direct pair — proves cycle
+  // detection walks the whole `stack`, not just the immediate caller.
+  test(
+    "a longer cycle (three files) is detected, not just a direct pair",
+    async () => {
+      await writeFile(join(testDir, "a.ts"), `import { c } from "./c";\nexport const a = "a" + c;`);
+      await writeFile(join(testDir, "b.ts"), `import { a } from "./a";\nexport const b = "b" + a;`);
+      await writeFile(join(testDir, "c.ts"), `import { b } from "./b";\nexport const c = "c" + b;`);
+
+      const result = await tryFoldFile(join(testDir, "b.ts"));
+
+      expect(result.ok).toBe(false);
+      if (result.ok) return;
+      expect(result.reason).toContain("import cycle");
+    },
+    5000,
+  );
 });
 
 // chant #1039 — the CLI fold path hardcoded `intrinsics` to `[]` at both
