@@ -86,3 +86,11 @@ src/defaults.ts:2:14 warning [COR010] export "legacyTags" has no consumers
 The resource class isn't recognized by the installed lexicon.
 
 **Fix:** Check for typos, then update the lexicon (`npm update`) and run `chant update` to sync lexicon types.
+
+## `[fold:run] <file> — <reason>` (using `chant build --fold`)
+
+**Symptom:** Running `chant build --fold` logs `[fold:run]` for a file you expected to fold.
+
+**Cause:** This isn't an error — the file simply falls back to the normal run path for this build, exactly as if `--fold` hadn't been passed. The reason on the line says why: a construct outside the fold subset (a re-export, `export default`, a nested composite/resource call used as a value), or — the most common cause — a reference to another file's export, which cross-file resolution doesn't support yet (#1020).
+
+**Fix:** Nothing is required; the build still succeeds. To make more files fold, keep resources inside the subset described in [TypeScript as Data](/chant/concepts/typescript-as-data/#folded-vs-run) and avoid cross-file references in files you want to fold. Compare fold vs. run output for your whole project with `just fold-differential` (in the chant repo) or by diffing `chant build` against `chant build --fold`.

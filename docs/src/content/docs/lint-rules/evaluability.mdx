@@ -5,7 +5,17 @@ description: Rules that flag TypeScript patterns the evaluator cannot statically
 
 Evaluability rules flag TypeScript patterns that the chant evaluator cannot statically resolve. All evaluability rules have severity **error**.
 
-These are a diagnostic layer, not the guarantee itself: EVL001 and the static folder (`fold()`) share a single definition of the supported expression subset, so a pattern EVL001 flags is exactly a pattern the folder rejects, at the same line. EVL exists to catch it early — in your editor and in `chant lint`, before a build — while the folder is what actually enforces it.
+These are a diagnostic layer over one specific enforcement mechanism, not a guarantee that holds regardless of it. EVL001 and EVL003 share a single subset definition with `fold()`, the static AST reducer `chant build --fold` uses (see [TypeScript as Data](/chant/concepts/typescript-as-data/#folded-vs-run)) — so a shape either rule flags is, with a few environment-dependent exceptions below, exactly a shape the folder rejects, at the same line. EVL exists to catch it early — in your editor and in `chant lint`, before a build — while `fold()` is what actually enforces it, and only when `--fold` is passed. The default `chant build` runs your file either way; EVL is what keeps that run itself inside the deterministic subset.
+
+**Where EVL and `fold()` diverge.** Both import the same classifier (`fold/subset.ts`) so they can't drift on node kinds or operators, but four things are inherently environment-dependent and can't be decided from shape alone:
+
+- **Identifier resolution** — EVL treats any bare name as valid; `fold()` alone resolves it against the file's `const`s and rejects an unbound one. A false negative on EVL's part, never the reverse.
+- **Intrinsic tag registration** — EVL has no lexicon registry at lint time, so it can't tell a registered intrinsic tagged template from a made-up one; it treats any tagged-template interior as opaque. `fold()` has the registry and rejects an unregistered tag.
+- **Spread-source runtime type** — EVL (via EVL004) checks that a spread source is traceable to a `const`; `fold()` additionally rejects it if that const turns out not to be an object or array at all.
+- **A nested `new Type(...)` used as a property value** — shape-valid to EVL either way, but `fold()` rejects a nested resource constructor (as opposed to the top-level one being folded) as a value, because it can't be represented without actually constructing it — the file falls back to run.
+- **Short-circuit laziness** — `fold()` evaluates `&&`/`||`/`??`/`? :` lazily, so an unfoldable *untaken* branch doesn't reject. EVL has no notion of "taken" and requires every branch to be shape-valid — a false positive relative to `fold()`, never the reverse.
+
+None of these change what EVL catches in practice; they're the edge cases where a passing lint doesn't guarantee a fold, or a stricter EVL flag doesn't mean `fold()` would actually have rejected the code.
 
 ---
 

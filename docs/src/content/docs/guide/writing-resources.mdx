@@ -27,7 +27,7 @@ See your lexicon's documentation for available resource types and concrete examp
 
 ## Property Rules
 
-chant reads TypeScript as data. It never executes your code. This means resource properties must be **statically evaluable** — the evaluator must be able to resolve every value at build time.
+chant reads TypeScript as data. By default, `chant build` imports and runs your file — the evaluability rules (below) are what keep that run side-effect-free, so it behaves like reading static data. Pass `--fold` to skip execution entirely for files that stay inside the supported subset (see [Folded vs Run](/chant/concepts/typescript-as-data/#folded-vs-run)). Either way, resource properties must be **statically evaluable** — the build must be able to resolve every value without depending on anything outside the source.
 
 **Allowed expressions:**
 

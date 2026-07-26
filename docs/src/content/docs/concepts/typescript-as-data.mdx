@@ -144,7 +144,9 @@ timeout: props.timeout ?? 30,
 
 ## Unsupported Patterns
 
-The following patterns are caught by the evaluability lint rules (EVL). Your editor shows them as lint errors, and `chant lint` reports them in CI. They are not enforced by `chant build`, so run lint, or rely on your editor, to keep source inside the supported subset.
+The following patterns are caught by the evaluability lint rules (EVL). Your editor shows them as lint errors, and `chant lint` reports them in CI. By default, `chant build` does not enforce them — it imports and runs your file regardless, so a pattern below still produces whatever JavaScript produces, correct or not. Run lint, or rely on your editor, to keep source inside the supported subset.
+
+Under `chant build --fold` (see [Folded vs Run](#folded-vs-run) below), the same subset is what a file must stay inside to fold at all: a pattern below makes fold reject that one file and fall back to running it, logged with the reason. That fallback is not a build error either — it just means the file loses the no-execution property for this run.
 
 ### Function calls as values
 
@@ -196,18 +198,38 @@ For the full EVL rule reference with configuration options, see [Evaluability Ru
 
 ## Folded vs Run
 
-`chant build --fold` is an opt-in, in-progress alternate build path (part of the fold epic, #1019). By default `chant build` imports and runs every source file to collect the exported resource objects — this is unchanged whether or not `--fold` exists. With `--fold`, chant instead tries to reduce each file's AST directly to the resource spec, without importing or executing the file at all.
+By default, `chant build` imports and runs every source file to collect the exported resource objects. The evaluability rules (EVL, above) are what keep that run deterministic: they reject anything a running file could do besides read literals, constants, and cross-resource references, so running the supported subset has no side effects and no dependency on the environment.
 
-Only the leaf pattern folds today: `export const x = new Type({ ...literals, const refs, templates })`. Anything outside that subset — most notably a composite factory call (`export const stack = MyStack({...})`), a re-export, `export default`, or a `let`/`var` — makes the whole file fall back to the normal run path, transparently and per-file. `chant build --fold` logs which path each file took:
+`chant build --fold` (opt-in — part of the fold epic, #1019) takes a different path: instead of importing and running a file, chant reduces its AST directly to the resource spec, with zero module execution. Nothing changes about what you write to use it — the supported subset above is the same subset that folds. What changes is how the build gets there:
+
+| | Default (run) | `--fold` |
+|---|---|---|
+| Mechanism | Imports and executes the file | Reduces the AST to a value — no execution |
+| What keeps it deterministic | The evaluability rules (a lint-time discipline) | The fold subset itself (a build-time construction) |
+| A pattern outside the subset | Still runs; produces whatever the code produces | Rejected for that file, which falls back to running it instead |
+| Output | Resource objects | Same resource objects — [byte-identical serialized output](#byte-identical-output) |
+| Default state | On, always | Off — pass `--fold` or set `build.fold: true` |
+
+Folding happens per file, not per project. A file either folds entirely or falls back to running entirely — chant never partially executes a file. `chant build --fold` logs which path each file took, and why, in a real run:
 
 ```
-[fold:fold] main.ts — 1 resource(s), no module execution
-[fold:run] stack.ts — exported "stack" is not a `new Type(...)` resource declaration (composite call or plain value)
+[fold:fold] tags.ts — 1 resource(s), no module execution
+[fold:run] outputs.ts — "dataBucketArn" is not foldable: 4:37 - unresolved identifier: dataBucket
 ```
 
-A folded file and a run file produce the same resource objects downstream — same serialization, same lint. Also settable project-wide via `chant.config.ts`'s `build.fold: true`; the `--fold` flag always wins when passed.
+Fold covers more than a single leaf resource now:
 
-This is a migration path, not a new authoring model: the supported subset above already describes what folds. As more of it is covered statically (cross-file resolution, composite interpretation), more files fold and fewer run — with zero change to what you write.
+- **Leaf resources** — `export const x = new Type({ ...literals, const refs, templates })` (#1021/#1026).
+- **Composite factory calls** — `export const stack = MyStack({...})`, `propagate(MyStack({...}), {...})`, member access on the result (`web.deployment`), and destructuring (`export const { a, b } = MyStack({...})`, or a local `const` destructured and re-exported by name) all fold too (#1023). A composite factory is a pure function of its props, so chant resolves it through the file's own imports and calls it for real with statically-folded arguments — no execution of the file itself.
+- **Registered intrinsic tagged templates** — a lexicon can register a tagged template (e.g. a string-substitution helper) as foldable; when it's registered, an interpolation inside it folds like any other value in the subset. A tagged template whose tag *isn't* registered — or any intrinsic implemented as a plain function call rather than a tagged template — falls outside the subset: a function call as a value is never fold-representable, full stop, tags or no tags. See your lexicon's intrinsics page for which of its intrinsics are tagged templates.
+
+What still forces a fallback to run, per file: a composite call or `new Type(...)` nested as a *value* inside something else (rather than being the file's own top-level export), a re-export, `export default`, `let`/`var`, an exported function or class declaration, and — the largest remaining gap — a reference to another file's export that isn't itself a top-level resource/composite fold (cross-file identifier and attribute resolution, #1020). Fold and run are also kept from ever disagreeing about a shared entity's identity: if file B imports file A and B falls back to run, A is forced back to run too, even if A would have folded on its own — otherwise B's real import of A and A's own folded copy would be two different objects.
+
+None of this is something you opt into piecemeal or write differently for — it's the existing supported subset, enforced by construction instead of by lint. Also settable project-wide via `chant.config.ts`'s `build.fold: true`; the `--fold` flag always wins when passed.
+
+### Byte-identical output
+
+`chant build --fold` and `chant build` (run) produce byte-identical serialized output for every file that folds — same resource objects, same serialization, same lint. This is proven by a differential test across every shipped example ([#1025](https://github.com/INTENTIUS/chant/issues/1025)); run it yourself with `just fold-differential`.
 
 ## Why These Constraints?
 
