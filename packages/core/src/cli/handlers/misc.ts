@@ -92,7 +92,7 @@ export async function runList(ctx: CommandContext): Promise<number> {
   // `lexicon`/`entityType`), so it is a separate branch rather than folded
   // into `listCommand`'s Declarable-shaped `ListEntity` rows.
   if (args.components) {
-    const result = await listComponents(args.path);
+    const result = await listComponents(args.path, args.sandbox);
     if (!result.success) {
       for (const e of result.errors) console.error(formatError({ message: e }));
       return 1;
@@ -143,7 +143,7 @@ export async function runDescribe(ctx: CommandContext): Promise<number> {
   // `Component` (its full JSON contract projection) rather than a lexicon
   // resource's resolved props bag.
   if (args.components) {
-    const result = await describeComponent(args.extraPositional ?? ".", component);
+    const result = await describeComponent(args.extraPositional ?? ".", component, args.sandbox);
     if (!result.success || !result.described) {
       console.log(result.output);
       return 1;

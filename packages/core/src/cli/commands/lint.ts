@@ -39,6 +39,26 @@ export function isLintRule(value: unknown): value is LintRule {
 /**
  * Load custom lint rules from plugin files.
  * Each plugin file is dynamically imported and all exports conforming to LintRule are collected.
+ *
+ * chant #1051 — this (and `loadLocalRules`, `../../lint/rule-loader.ts`, for
+ * `.chant/rules/*.ts`) is unconditional project-source `import()` with no
+ * `--sandbox` equivalent, the same class of gap #1051 closes for
+ * `discoverComponents`. Deliberately NOT sandboxed here, and not a "decide by
+ * omission": a `LintRule` is not a one-shot data producer like `Component`/
+ * `Declarable` — its `check(context)` is a function the rule engine invokes
+ * inline, once per linted file, for the whole `chant lint` run. There is no
+ * cheap "collect once, JSON-serialize the result, hand it back" shape the way
+ * there is for a `Component` (plain JSON) or an entity (a wire codec) —
+ * `check` has to keep running as live JS in whichever process calls it. A
+ * shallow fix that sandboxed only the *import* step (mirroring
+ * `discoverComponents`) would give a false sense of safety: it would close
+ * off "malicious top-level module code" but leave `check()`'s own executable
+ * body — the dominant part of a rule's attack surface, since it runs for
+ * every file, every lint invocation — entirely unsandboxed regardless. A real
+ * fix needs either the AST/`ts.SourceFile` itself to cross the sandbox
+ * boundary or the whole custom-rule evaluation to run inside the child; both
+ * are materially harder, separate design problems from this issue's `Component`
+ * fix and are tracked separately (chant #1052).
  */
 export async function loadPluginRules(
   plugins: string[],
@@ -122,6 +142,13 @@ export interface LintOptions {
   format: "stylish" | "json" | "sarif";
   /** Rules to use (defaults to all) */
   rules?: LintRule[];
+  /**
+   * chant #1051 — opt-in: discover `*.component.ts` files (for the COMP*
+   * composition checks) in a sandboxed child process instead of the CLI's
+   * own process (`chant lint --sandbox`). See `discoverComponents`'s
+   * `sandbox` option (../../components/discover.ts).
+   */
+  sandbox?: boolean;
 }
 
 /**
@@ -296,6 +323,7 @@ async function resolveRegistryContext(
 
 async function runComponentCheckDiagnostics(
   infraPath: string,
+  sandbox?: boolean,
 ): Promise<{ diagnostics: LintDiagnostic[]; suppressed: Array<LintDiagnostic & { reason?: string }> }> {
   // Discovery stays scoped to the lint arg; COMP* severity overrides come from
   // the project-root config, same as the AST-rule pass.
@@ -304,7 +332,7 @@ async function runComponentCheckDiagnostics(
   const allCheckIds = new Set(checks.map((c) => c.id));
 
   const registryContext = await resolveRegistryContext(infraPath);
-  const raw = await runComponentChecks(infraPath, checks, registryContext);
+  const raw = await runComponentChecks(infraPath, checks, registryContext, sandbox);
 
   const fileDirectivesCache = new Map<string, ReturnType<typeof parseDisableComments>>();
   const fileLevelDisable = (
@@ -439,7 +467,7 @@ export async function lintCommand(options: LintOptions): Promise<LintResult> {
   // structurally distinct check family (whole-project, post-discovery,
   // see ../../lint/component-checks.ts) but the same `chant lint` output and
   // the same error-severity gating as every COR/EVL diagnostic.
-  const componentResult = await runComponentCheckDiagnostics(infraPath);
+  const componentResult = await runComponentCheckDiagnostics(infraPath, options.sandbox);
   diagnostics.push(...componentResult.diagnostics);
   suppressed.push(...componentResult.suppressed);
 
@@ -487,7 +515,7 @@ export async function lintCommand(options: LintOptions): Promise<LintResult> {
     // `*.component.ts` file on their behalf), but a fix applied to another
     // rule could still be in the same file a component was discovered from —
     // re-run for consistency with the AST re-lint above.
-    const postComponentResult = await runComponentCheckDiagnostics(infraPath);
+    const postComponentResult = await runComponentCheckDiagnostics(infraPath, options.sandbox);
     diagnostics.push(...postComponentResult.diagnostics);
     suppressed.push(...postComponentResult.suppressed);
   }

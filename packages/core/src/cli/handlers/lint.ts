@@ -16,6 +16,7 @@ export async function runLint(ctx: CommandContext): Promise<number> {
       path: args.path,
       fix: args.fix,
       format: lintFormat,
+      sandbox: args.sandbox,
     });
     process.on("SIGINT", () => {
       cleanup();
@@ -29,6 +30,7 @@ export async function runLint(ctx: CommandContext): Promise<number> {
     path: args.path,
     fix: args.fix,
     format: lintFormat,
+    sandbox: args.sandbox,
   });
 
   printLintResult(result);

@@ -109,7 +109,9 @@ async function runGraphLive(
   // and unions the results. A project with no components (or whose discovery
   // errors) yields no stacks, so `observeResources` falls back to its
   // original single-stack call — unchanged.
-  const componentsDiscovery = await discoverComponents(resolve(args.src ?? config.sourceDir ?? "."));
+  const componentsDiscovery = await discoverComponents(resolve(args.src ?? config.sourceDir ?? "."), {
+    sandbox: args.sandbox,
+  });
   const stacks = new Set<string>();
   if (componentsDiscovery.errors.length === 0) {
     for (const { component } of componentsDiscovery.components.values()) {
@@ -207,7 +209,7 @@ async function runGraphLive(
  */
 async function runComponentGraph(ctx: CommandContext): Promise<number> {
   const projectPath = resolve(ctx.args.path === "." ? "." : ctx.args.path);
-  const graph = await computeComponentGraph(projectPath);
+  const graph = await computeComponentGraph(projectPath, ctx.args.sandbox);
 
   if (!graph.success) {
     console.error(formatError({ message: graph.error ?? "Failed to compute component graph" }));
@@ -254,7 +256,7 @@ async function runComponentGraphView(
 ): Promise<number> {
   const projectPath = resolve(ctx.args.path === "." ? "." : ctx.args.path);
 
-  const lint = await lintCommand({ path: ctx.args.path, format: "stylish" });
+  const lint = await lintCommand({ path: ctx.args.path, format: "stylish", sandbox: ctx.args.sandbox });
   if (!lint.success) {
     console.error(
       formatError({
@@ -264,7 +266,7 @@ async function runComponentGraphView(
     return 1;
   }
 
-  const graph = await computeComponentGraph(projectPath);
+  const graph = await computeComponentGraph(projectPath, ctx.args.sandbox);
   if (!graph.success) {
     console.error(formatError({ message: graph.error ?? "Failed to compute component graph" }));
     return 1;
@@ -316,7 +318,7 @@ async function runGraphView(
   }
 
   // Gate: only emit for lint-clean source.
-  const lint = await lintCommand({ path: ctx.args.path, format: "stylish" });
+  const lint = await lintCommand({ path: ctx.args.path, format: "stylish", sandbox: ctx.args.sandbox });
   if (!lint.success) {
     console.error(
       formatError({

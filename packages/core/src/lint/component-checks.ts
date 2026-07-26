@@ -93,15 +93,22 @@ export interface ComponentCheck {
  * error under the pseudo-check id "COMP000" rather than silently dropped —
  * matching how `discoverComponents`'s caller (`../components/cli-support.ts`)
  * always surfaces `result.errors` rather than ignoring them.
+ *
+ * `sandbox` (chant #1051, `chant lint --sandbox`) is threaded straight
+ * through to `discoverComponents` — `chant lint`'s own AST-only rule engine
+ * never executes project source (see this module's own doc comment), but
+ * COMP* checks exist precisely because they need the discovered `Component`
+ * graph, which does mean importing `*.component.ts` files.
  */
 export async function runComponentChecks(
   path: string,
   checks: ComponentCheck[],
   registryContext?: Pick<ComponentCheckContext, "knownKinds" | "rollbackPolicies">,
+  sandbox?: boolean,
 ): Promise<ComponentCheckDiagnostic[]> {
   if (checks.length === 0) return [];
 
-  const result = await discoverComponents(path);
+  const result = await discoverComponents(path, { sandbox });
   const diagnostics: ComponentCheckDiagnostic[] = [];
 
   for (const err of result.errors) {

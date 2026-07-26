@@ -21,9 +21,12 @@ async function runGenerateComponents(ctx: CommandContext): Promise<number> {
   // plugins (those implementing `generateComponentPipeline`, #688), not a
   // hard-coded core list — `generateComponentsPipeline` returns a descriptive
   // error when the target lexicon has no generator.
-  const result = await generateComponentsPipeline(args.path, lexicon, {
-    env: args.env,
-  });
+  const result = await generateComponentsPipeline(
+    args.path,
+    lexicon,
+    { env: args.env },
+    args.sandbox,
+  );
 
   if (!result.success) {
     console.error(formatError({ message: result.error ?? "Failed to generate CI pipeline from components" }));

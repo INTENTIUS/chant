@@ -61,8 +61,8 @@ export interface ListComponentsResult {
 }
 
 /** Discover components under `path` and shape them for `chant list --components`. */
-export async function listComponents(path: string): Promise<ListComponentsResult> {
-  const result = await discoverComponents(path);
+export async function listComponents(path: string, sandbox?: boolean): Promise<ListComponentsResult> {
+  const result = await discoverComponents(path, { sandbox });
   if (result.errors.length > 0) {
     return { success: false, components: [], errors: result.errors.map((e) => e.message) };
   }
@@ -100,8 +100,8 @@ export interface DescribeComponentResult {
 }
 
 /** Find and project one named component, for `chant describe <name> --components`. */
-export async function describeComponent(path: string, name: string): Promise<DescribeComponentResult> {
-  const result = await discoverComponents(path);
+export async function describeComponent(path: string, name: string, sandbox?: boolean): Promise<DescribeComponentResult> {
+  const result = await discoverComponents(path, { sandbox });
   if (result.errors.length > 0) {
     return { success: false, component: name, output: result.errors.map((e) => e.message).join("\n") };
   }
@@ -139,8 +139,8 @@ export interface ComponentGraphResult {
 }
 
 /** Compute the components' dependency graph under `path`, for `chant graph --components`. */
-export async function computeComponentGraph(path: string): Promise<ComponentGraphResult> {
-  const result = await discoverComponents(path);
+export async function computeComponentGraph(path: string, sandbox?: boolean): Promise<ComponentGraphResult> {
+  const result = await discoverComponents(path, { sandbox });
   if (result.errors.length > 0) {
     return { success: false, order: [], waves: [], edges: [], error: result.errors.map((e) => e.message).join("\n") };
   }
@@ -220,6 +220,7 @@ export async function generateComponentsPipeline(
   path: string,
   lexicon: GenerateLexicon,
   options?: ComponentPipelineOptions,
+  sandbox?: boolean,
 ): Promise<GenerateComponentsResult> {
   const plugin = await loadLexiconPlugin(lexicon);
   if (!plugin?.generateComponentPipeline) {
@@ -229,7 +230,7 @@ export async function generateComponentsPipeline(
     };
   }
 
-  const result = await discoverComponents(path);
+  const result = await discoverComponents(path, { sandbox });
   if (result.errors.length > 0) {
     return { success: false, error: result.errors.map((e) => e.message).join("\n") };
   }
@@ -295,6 +296,13 @@ export function findComponentGate(component: DriverComponent): { signalName: str
 export interface RunComponentsOptions {
   /** Target environment name, threaded into every capability's `DeployContext.env` (default: "local"). */
   env?: string;
+  /**
+   * chant #1051 — opt-in: discover `*.component.ts` files in a sandboxed
+   * child process (`chant run --components <name|all> --sandbox`) instead of
+   * in the CLI's own process. See `discoverComponents`'s `sandbox` option
+   * (../discover.ts).
+   */
+  sandbox?: boolean;
   /** Additional capability plugin package names to load on top of the built-in starter set (see `buildCapabilityRegistry`). */
   capabilityPlugins?: string[];
   /**
@@ -392,8 +400,12 @@ export interface ResolvedComponentTargets {
  * without also inheriting the local executor's pre-flight gate rejection
  * (gates are exactly what the durable path exists to support).
  */
-export async function resolveComponentTargets(path: string, selector: string): Promise<ResolvedComponentTargets> {
-  const result = await discoverComponents(path);
+export async function resolveComponentTargets(
+  path: string,
+  selector: string,
+  sandbox?: boolean,
+): Promise<ResolvedComponentTargets> {
+  const result = await discoverComponents(path, { sandbox });
   if (result.errors.length > 0) {
     return { success: false, targets: [], error: result.errors.map((e) => e.message).join("\n") };
   }
@@ -421,7 +433,7 @@ export async function runComponents(
   selector: string,
   options: RunComponentsOptions = {},
 ): Promise<RunComponentsResult> {
-  const resolved = await resolveComponentTargets(path, selector);
+  const resolved = await resolveComponentTargets(path, selector, options.sandbox);
   if (!resolved.success) {
     return { success: false, selected: [], error: resolved.error };
   }
