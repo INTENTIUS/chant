@@ -1,13 +1,15 @@
 import type { Declarable } from "./declarable";
 import type { Serializer, SerializerResult } from "./serializer";
 import type { OwnershipMarker } from "./ownership";
-import type { DiscoveryError, BuildError } from "./errors";
+import type { BuildError, DiscoveryErrorType } from "./errors";
 import type { IntrinsicDef } from "./lexicon";
-import { BuildError as BuildErrorClass } from "./errors";
+import { DiscoveryError, BuildError as BuildErrorClass } from "./errors";
 import { LexiconOutput, isLexiconOutput } from "./lexicon-output";
 import { AttrRef } from "./attrref";
 import { isChildProject, type ChildProjectInstance } from "./child-project";
-import { discover, type FoldDecision } from "./discovery/index";
+import { discover, type DiscoveryResult, type FoldDecision } from "./discovery/index";
+import { decodeEntitySet, type DiscoveredEntitiesJson } from "./discovery/entity-wire";
+import { buildDependencyGraph } from "./discovery/graph";
 import { topologicalSort } from "./sort";
 import { resolve } from "node:path";
 
@@ -474,11 +476,36 @@ export async function build(
   parentBuildStack?: Set<string>,
   options?: BuildOptions,
 ): Promise<BuildResult> {
-  const warnings: string[] = [];
-  const errors: Array<DiscoveryError | BuildError> = [];
-
   // Step 1: Discover entities and dependencies
   const discoveryResult = await discover(path, { fold: options?.fold, intrinsics: options?.intrinsics });
+
+  return buildFromDiscoveryResult(discoveryResult, path, serializers, parentBuildStack, options);
+}
+
+/**
+ * chant #1045 (Phase 1) — build from a discovery result produced OUTSIDE the
+ * normal `discover(path)` call, i.e. decoded from {@link DiscoveredEntitiesJson}
+ * (see {@link buildFromEntitiesJson}). Everything from here on (topological
+ * sort, recursive child-project builds, partitioning, output detection,
+ * serialization, manifest) is exactly what `build()` already does after its
+ * own `discover()` call — extracted so the JSON path reuses it verbatim
+ * instead of forking it.
+ *
+ * @param resolvedPathForChildStack - Used only to seed the circular-nested-
+ *   stack detection (`buildStack`); the JSON path has no single directory a
+ *   decoded entity set came from, so callers without one may pass any stable
+ *   label (child projects aren't supported by the JSON boundary yet — see
+ *   `discovery/entity-wire.ts` — so this is inert for that path today).
+ */
+async function buildFromDiscoveryResult(
+  discoveryResult: DiscoveryResult,
+  resolvedPathForChildStack: string,
+  serializers: Serializer[],
+  parentBuildStack?: Set<string>,
+  options?: BuildOptions,
+): Promise<BuildResult> {
+  const warnings: string[] = [];
+  const errors: Array<DiscoveryError | BuildError> = [];
 
   // Collect discovery errors
   errors.push(...discoveryResult.errors);
@@ -508,7 +535,7 @@ export async function build(
   }
 
   // Step 4: Recursively build child projects
-  const resolvedPath = resolve(path);
+  const resolvedPath = resolve(resolvedPathForChildStack);
   const buildStack = parentBuildStack
     ? new Set(parentBuildStack)
     : new Set<string>();
@@ -620,4 +647,52 @@ export async function build(
     sourceFileCount: discoveryResult.sourceFiles.length,
     foldDecisions: discoveryResult.foldDecisions,
   };
+}
+
+/**
+ * chant #1045 (Phase 1) — build directly from a JSON-encoded discovery
+ * result (see {@link discoverEntitySetJson} in `./discovery/entity-wire.ts`)
+ * instead of pointing `build()` at a directory.
+ *
+ * Decodes the wire entity set back into a live entities map — see
+ * `decodeEntitySet`'s doc for why the decoded entities are functionally
+ * indistinguishable from what `discover()` produces in-process (real
+ * `AttrRef` instances, whole-entity identity preserved by reference, not by
+ * clone) — then runs the exact same post-discovery pipeline `build()` uses
+ * ({@link buildFromDiscoveryResult}), so partitioning, output detection,
+ * serialization, and the manifest are the SAME code path, not a fork of it.
+ *
+ * Dependencies aren't part of the wire format: unlike entities, a dependency
+ * graph is plain name-to-name data with no identity problem, so it's cheaper
+ * and more honest to recompute it from the decoded entities via the same
+ * `buildDependencyGraph()` `discover()` itself uses than to carry a second,
+ * redundant wire shape across the boundary.
+ *
+ * @param label - Used only to seed circular-nested-stack detection; a JSON
+ *   entity set has no single source directory the way a `build(path, …)`
+ *   call does. Inert today — child projects (`nestedStack()`) aren't
+ *   supported by the JSON boundary yet (see `discovery/entity-wire.ts`).
+ */
+export async function buildFromEntitiesJson(
+  json: DiscoveredEntitiesJson,
+  serializers: Serializer[],
+  label = "<json-entity-set>",
+  parentBuildStack?: Set<string>,
+  options?: BuildOptions,
+): Promise<BuildResult> {
+  const entities = decodeEntitySet(json.entitySet);
+  const dependencies = buildDependencyGraph(entities);
+  const errors: DiscoveryError[] = json.errors.map(
+    (e) => new DiscoveryError(e.file, e.message, e.type as DiscoveryErrorType),
+  );
+
+  const discoveryResult: DiscoveryResult = {
+    entities,
+    dependencies,
+    sourceFiles: json.sourceFiles,
+    errors,
+    foldDecisions: json.foldDecisions,
+  };
+
+  return buildFromDiscoveryResult(discoveryResult, label, serializers, parentBuildStack, options);
 }
