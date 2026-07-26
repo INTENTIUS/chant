@@ -2,6 +2,7 @@ import { describe, test, expect } from "vitest";
 import { withTestDir } from "@intentius/chant-test-utils";
 import { spawnSync } from "node:child_process";
 import { writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   writeSnapshot,
@@ -182,12 +183,16 @@ describe("lifecycle/git", () => {
    * `origin`. Returns the clone path; the caller writes snapshots there.
    */
   async function setupClonePair(): Promise<{ clonePath: string; remotePath: string; cleanup: () => Promise<void> }> {
-    const remotePath = join(import.meta.dirname ?? "/tmp", `chant-state-remote-${Date.now()}-${Math.random()}`);
-    const clonePath = join(import.meta.dirname ?? "/tmp", `chant-state-clone-${Date.now()}-${Math.random()}`);
+    // These land in the OS temp dir, never under `import.meta.dirname` — that
+    // would put live git repos inside `packages/core/src`, which other suites
+    // walk recursively while this one creates and deletes them (update.test.ts
+    // -> copyTypeFiles hit ENOENT mid-walk that way).
+    const remotePath = join(tmpdir(), `chant-state-remote-${Date.now()}-${Math.random()}`);
+    const clonePath = join(tmpdir(), `chant-state-clone-${Date.now()}-${Math.random()}`);
     const { mkdir, rm } = await import("node:fs/promises");
     await mkdir(remotePath, { recursive: true });
     git(["init", "-q", "--bare", "-b", "main"], remotePath);
-    git(["clone", "-q", remotePath, clonePath], import.meta.dirname ?? "/tmp");
+    git(["clone", "-q", remotePath, clonePath], tmpdir());
     git(["config", "user.email", "test@chant.dev"], clonePath);
     git(["config", "user.name", "Test"], clonePath);
     writeFileSync(join(clonePath, "README.md"), "fixture\n");
@@ -233,9 +238,9 @@ describe("lifecycle/git", () => {
   test("concurrent write rejected: second push throws StaleLifecycleBranchError", async () => {
     // Simulate two concurrent operators by setting up two clones of the same remote.
     const { clonePath: cloneA, remotePath, cleanup } = await setupClonePair();
-    const cloneB = join(import.meta.dirname ?? "/tmp", `chant-state-clone-b-${Date.now()}-${Math.random()}`);
+    const cloneB = join(tmpdir(), `chant-state-clone-b-${Date.now()}-${Math.random()}`);
     try {
-      git(["clone", "-q", remotePath, cloneB], import.meta.dirname ?? "/tmp");
+      git(["clone", "-q", remotePath, cloneB], tmpdir());
       git(["config", "user.email", "test@chant.dev"], cloneB);
       git(["config", "user.name", "Test"], cloneB);
 
