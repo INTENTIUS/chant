@@ -271,6 +271,44 @@ interface ReportRow {
 const report: ReportRow[] = [];
 
 /**
+ * chant #1039 — fold COVERAGE regression gate.
+ *
+ * The byte-identical assertion below only fires for entries that already
+ * fold (mode "fold") — an entry that quietly stops folding and falls back to
+ * run instead reports `identical: true` (run-vs-run has no drift by
+ * definition) and the whole suite stays green. That is a real, silent
+ * coverage regression the differential's original design (#1025) had no gate
+ * for at all.
+ *
+ * This is the committed baseline: every corpus entry that folds today (as of
+ * this branch — see the PR that introduced this list for the exact
+ * before/after against `main`). A name-by-name check, not just a count,
+ * because a count alone can't tell "A regressed, B started folding" apart
+ * from "nothing changed" — exactly the failure mode a bare total would hide.
+ * Update this list only when you've confirmed (via `just fold-differential
+ * --reporter=verbose`, comparing the full per-entry classification against
+ * `main`, not just the summary line) that a removal is an intentional,
+ * understood behavior change — never to silence a red run.
+ */
+const EXPECTED_FOLD: readonly string[] = [
+  "examples/components-aws-e2e",
+  "examples/local-cloud-trio",
+  "lexicons/docker/examples/basic-app",
+  "lexicons/gitlab/examples/node-pipeline",
+  "lexicons/gitlab/examples/python-pipeline",
+  "lexicons/helm/examples/composites-basic",
+  "lexicons/helm/examples/composites-infrastructure",
+  "lexicons/helm/examples/composites-production",
+  "lexicons/helm/examples/helm-render-external-secrets",
+  "lexicons/helm/examples/microservice-chart",
+  "lexicons/helm/examples/web-app-with-ingress",
+  "lexicons/k8s/examples/batch-workers",
+  "lexicons/k8s/examples/namespace-rbac",
+  "lexicons/k8s/examples/org-policy",
+  "lexicons/k8s/examples/web-platform",
+];
+
+/**
  * Build `srcDir` both ways and return normalized outputs for comparison.
  *
  * The fast path builds run-then-fold back to back with no module-cache
@@ -351,6 +389,16 @@ describe("fold differential — fold output === run output (#1025, epic #1019)",
       expect(foldNorm, `fold-vs-run output drift in ${entry.name}`).toEqual(runNorm);
     });
   }
+
+  // Runs last (vitest executes tests within a `describe` in declaration
+  // order) — by now every corpus entry above has pushed its classification
+  // into `report`. See {@link EXPECTED_FOLD}'s doc for why this checks names,
+  // not just a total.
+  test("fold coverage regression gate — every entry known to fold today still folds", () => {
+    const byName = new Map(report.map((r) => [r.name, r]));
+    const regressed = EXPECTED_FOLD.filter((name) => byName.get(name)?.mode !== "fold");
+    expect(regressed, `these entries folded before but fell back to run: ${regressed.join(", ")}`).toEqual([]);
+  });
 
   afterAll(() => {
     const foldCount = report.filter((r) => r.mode === "fold").length;
