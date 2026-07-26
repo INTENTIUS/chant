@@ -83,10 +83,28 @@ const report: ReportRow[] = [];
  * --reporter=verbose`, comparing the full per-entry classification against
  * `main`, not just the summary line) that a removal is an intentional,
  * understood behavior change — never to silence a red run.
+ *
+ * chant #1020 (epic #1019) grew this from 15 to 21 by resolving identifiers
+ * across the module graph — an imported `const`, or an imported resource
+ * referenced via `.attr`, now folds instead of failing the whole importing
+ * file on the first identifier it doesn't recognize. The 6 entries added
+ * here (`alert-triage`, `bedrock-agentcore-agent`, `getting-started`,
+ * `temporal-stack`, `lifecycle-reconcile-aws`, `layered-config`) were
+ * exactly the corpus entries where cross-file resolution was the ONLY
+ * remaining blocker; most of the run-fallback corpus needs #1044
+ * (call-as-a-value) too, or an unrelated shape gap (a resource constructor
+ * whose first argument isn't the props object literal, a nested `new` used
+ * as a value — pre-existing #1022-era limitations, not cross-file), so this
+ * PR doesn't move those, by design.
  */
 const EXPECTED_FOLD: readonly string[] = [
+  "examples/alert-triage",
+  "examples/bedrock-agentcore-agent",
   "examples/components-aws-e2e",
+  "examples/getting-started",
   "examples/local-cloud-trio",
+  "examples/temporal-stack",
+  "lexicons/aws/examples/lifecycle-reconcile-aws",
   "lexicons/docker/examples/basic-app",
   "lexicons/gitlab/examples/node-pipeline",
   "lexicons/gitlab/examples/python-pipeline",
@@ -97,6 +115,7 @@ const EXPECTED_FOLD: readonly string[] = [
   "lexicons/helm/examples/microservice-chart",
   "lexicons/helm/examples/web-app-with-ingress",
   "lexicons/k8s/examples/batch-workers",
+  "lexicons/k8s/examples/layered-config",
   "lexicons/k8s/examples/namespace-rbac",
   "lexicons/k8s/examples/org-policy",
   "lexicons/k8s/examples/web-platform",

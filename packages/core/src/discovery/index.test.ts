@@ -415,4 +415,48 @@ describe("discover — fold mode (#1022, epic #1019)", () => {
     expect(stackDecision?.mode).toBe("run");
     expect(stackDecision?.reason).toContain("LocalStack");
   });
+
+  // chant #1020 — the full `discover()` pipeline, not just `tryFoldFile` in
+  // isolation: two files, one importing a resource attribute from the
+  // other, both fold, and `resolveAttrRefs` (the same identity-matching pass
+  // the run path always used) must assign the cross-file AttrRef the
+  // correct logical name with ZERO special-casing — proof the shared
+  // `FoldSession` this module wires into every top-level `tryFoldFile` call
+  // really does give `alb.ts` and `network.ts` the same `vpc` object.
+  test("cross-file resource reference resolves end-to-end: both files fold and the AttrRef gets the right logical name", async () => {
+    await writeFile(
+      join(testDir, "resources.ts"),
+      `
+        import { createResource } from ${JSON.stringify(runtimePath)};
+        export const Vpc = createResource("Test::Vpc", "aws", { vpcId: "VpcId" });
+        export const Alb = createResource("Test::Alb", "aws", { albArn: "AlbArn" });
+      `,
+    );
+    await writeFile(
+      join(testDir, "network.ts"),
+      `
+        import { Vpc } from "./resources";
+        export const vpc = new Vpc({ cidr: "10.0.0.0/16" });
+      `,
+    );
+    await writeFile(
+      join(testDir, "alb.ts"),
+      `
+        import { Alb } from "./resources";
+        import { vpc } from "./network";
+        export const alb = new Alb({ vpcId: vpc.vpcId });
+      `,
+    );
+
+    const result = await discover(testDir, { fold: true });
+
+    expect(result.errors).toEqual([]);
+    expect(result.foldDecisions.every((d) => d.mode === "fold")).toBe(true);
+    expect(result.entities.has("vpc")).toBe(true);
+    expect(result.entities.has("alb")).toBe(true);
+
+    const alb = result.entities.get("alb")! as unknown as { props: { vpcId: { getLogicalName(): string | undefined; attribute: string } } };
+    expect(alb.props.vpcId.getLogicalName()).toBe("vpc");
+    expect(alb.props.vpcId.attribute).toBe("VpcId");
+  });
 });
