@@ -1,6 +1,6 @@
 import * as ts from "typescript";
 import { readFile } from "node:fs/promises";
-import { existsSync, statSync } from "node:fs";
+import { existsSync, statSync, readFileSync, realpathSync } from "node:fs";
 import { dirname, basename, join, isAbsolute, resolve as resolvePath } from "node:path";
 import { createRequire } from "node:module";
 import { isDeclarable, type Declarable } from "../declarable";
@@ -105,11 +105,178 @@ export interface FoldSession {
   readonly intrinsics: readonly IntrinsicDef[];
   readonly cache: Map<string, Promise<FoldFileResult>>;
   readonly stack: string[];
+  /**
+   * Per-build memo (chant #1020 hang fix) for {@link importModule} itself —
+   * keyed by resolved absolute module path, shared session-wide exactly like
+   * {@link cache} above. Cross-file resolution means MANY files in one
+   * directory can each independently resolve the SAME constructor/composite-
+   * factory import (e.g. every file that constructs an AWS resource imports
+   * the same lexicon barrel) — before this, every one of those calls issued
+   * its own `await import(path)`, relying entirely on the runtime's own
+   * module cache to make the repeats cheap. That assumption holds for a
+   * plain `node`/`tsx` process, but NOT for a real dynamic import running
+   * inside a vitest worker: `vite-node`'s own SSR module graph can take a
+   * real, non-trivial amount of wall-clock time to re-resolve/re-register an
+   * already-loaded module on EVERY call, not just the first — harmless at
+   * single-digit call counts, but #1020's cross-file resolution can issue
+   * several times as many `importModule` calls for the same handful of large
+   * lexicon barrels within one `discover()` pass as the pre-#1020 single-file
+   * fold did. Memoizing the import itself (not just the path resolution)
+   * caps it at exactly one real `import()` per unique path per session,
+   * regardless of how many files reference it — this is what actually keeps
+   * a session-local retry (e.g. `sandbox-differential.test.ts`'s
+   * `vi.resetModules()` + rebuild path, which reruns fold from a cold
+   * module cache) from compounding into a multi-minute stall. Purely a cache
+   * over an idempotent operation (the same resolved path always yields the
+   * same module namespace object) — doesn't change what folds.
+   */
+  readonly importCache: Map<string, Promise<Record<string, unknown>>>;
+  /**
+   * Per-build memo (chant #1020 hang fix) for {@link resolveModulePath}'s
+   * RELATIVE/absolute-specifier branch only — keyed by
+   * `${dirname(fromFile)}\0${specifier}`. See {@link resolveModulePathMemoized}'s
+   * doc for the full story, including why bare (package) specifiers are
+   * memoized in a separate, process-wide cache instead of this session-
+   * scoped one: a relative specifier resolves against PROJECT source, which
+   * `chant build --watch` can legitimately change between rebuilds (a new
+   * sibling file appearing mid-session), so this cache is intentionally
+   * thrown away with the rest of the session at the end of every
+   * `discover()` call, unlike the bare-specifier one.
+   */
+  readonly resolvePathCache: Map<string, string>;
 }
 
 /** Create a fresh, empty {@link FoldSession}. */
 export function createFoldSession(intrinsics: readonly IntrinsicDef[] = []): FoldSession {
-  return { intrinsics, cache: new Map(), stack: [] };
+  return { intrinsics, cache: new Map(), stack: [], importCache: new Map(), resolvePathCache: new Map() };
+}
+
+/**
+ * chant #1020 hang fix — memo for {@link resolveModulePath}'s BARE
+ * (package) specifier branch, deliberately PROCESS-WIDE rather than
+ * session-scoped (contrast {@link FoldSession.resolvePathCache}, used for
+ * relative specifiers). A bare specifier like `@intentius/chant-lexicon-aws`
+ * resolves via `createRequire(fromFile).resolve(specifier)` — which package
+ * a name refers to cannot change mid-process (Node's own module cache
+ * already assumes this: nothing invalidates `require.cache`/the dynamic
+ * `import()` cache either if `node_modules` changes under a running
+ * process), so caching the answer for the process's lifetime, across every
+ * `discover()` call/`FoldSession`, is exactly as safe as Node's own
+ * assumptions — unlike a relative specifier (a project file `chant build
+ * --watch` can legitimately add/remove between rebuilds), never unsafe to
+ * reuse.
+ *
+ * This is what actually fixes the hang, not just reduces it: profiling (a
+ * real `sample` during the observed multi-minute stall) traced the cost to
+ * `createRequire(fromFile).resolve(specifier)` ITSELF taking upwards of a
+ * minute — measured on this exact call, in this exact spot, nowhere else —
+ * specifically for the FIRST bare-specifier resolution inside a
+ * `FoldSession` created right after `vitest`'s `vi.resetModules()`
+ * (`sandbox-differential.test.ts`'s own retry path, pre-existing and
+ * unrelated to #1020 — confirmed on `main`, which hits the identical retry
+ * for the identical reason and stays fast). Two narrower versions of this
+ * fix (session-scoped; then process-wide but still keyed by directory) each
+ * still paid that cost at least once more: directory-scoping alone pays it
+ * once per NEW directory a corpus entry introduces, and #1020's cross-file
+ * resolution reaches a real constructor/composite-factory/intrinsic
+ * resolution — hence a real bare-specifier resolve — from strictly more
+ * directories across a 98-entry corpus than the pre-#1020 single-file fold
+ * ever did. Keyed by specifier ALONE (see {@link resolveModulePathMemoized}'s
+ * doc for the directory-independence assumption this relies on), the answer
+ * computed the first time ANY directory needed a given package is there for
+ * every directory after it, `vi.resetModules()` retry or not — the slow call
+ * never has to happen a second time in the same process, for any package.
+ */
+const bareSpecifierPathCache = new Map<string, string>();
+
+/**
+ * Memoized {@link resolveModulePath}. A relative/absolute specifier goes
+ * through the session-scoped `resolvePathCache`, keyed by DIRECTORY (not the
+ * full file path: `resolveModulePath` only ever consults `dirname(fromFile)`
+ * — the relative branch resolves against `dirname(fromFile)`, so the
+ * specific FILE within a directory never affects the answer) — a project
+ * file can legitimately be added/removed between builds (`chant build
+ * --watch`), so this cache is thrown away with the rest of the session.
+ *
+ * A bare (package) specifier goes through {@link bareSpecifierPathCache}
+ * instead, keyed by the specifier ALONE — process-wide, no directory
+ * component. `createRequire(fromFile).resolve(specifier)` technically CAN
+ * answer differently for the same specifier from two directories (nested
+ * `node_modules` with a version override), but `discover()`'s real usage is
+ * one `srcDir` per build, whose files overwhelmingly share one effective
+ * `node_modules` resolution — the same assumption bundlers (webpack,
+ * esbuild, vite) already make for their own module resolution caches. See
+ * {@link bareSpecifierPathCache}'s own doc for why process-wide (not just
+ * directory-scoped) is what actually fixes the hang: `examples/foo`'s
+ * directory and `lexicons/aws/examples/bar`'s directory both need
+ * `@intentius/chant-lexicon-aws`, and directory-scoping alone still pays the
+ * pathological cost once per NEW directory, not just once per package.
+ */
+function resolveModulePathMemoized(
+  specifier: string,
+  fromFile: string,
+  resolvePathCache: Map<string, string>,
+): string {
+  const isBare = !specifier.startsWith(".") && !isAbsolute(specifier);
+  if (isBare) {
+    const cached = bareSpecifierPathCache.get(specifier);
+    if (cached !== undefined) return cached;
+    const resolved = resolveModulePath(specifier, fromFile);
+    bareSpecifierPathCache.set(specifier, resolved);
+    return resolved;
+  }
+  const key = `${dirname(fromFile)}\0${specifier}`;
+  const cached = resolvePathCache.get(key);
+  if (cached !== undefined) return cached;
+  const resolved = resolveModulePath(specifier, fromFile);
+  resolvePathCache.set(key, resolved);
+  return resolved;
+}
+
+/**
+ * chant #1020 hang fix — construct an `Error` for a routine, EXPECTED
+ * cross-file resolution failure (an unresolvable import, a non-function
+ * export, a shape this module doesn't support) WITHOUT V8's normal eager
+ * stack-frame capture. Every one of these is thrown, then caught a few
+ * frames up and reduced to `.message` — `tryFoldFileCore`'s own top-level
+ * catch, ultimately, same as {@link FoldError} (see its own doc in
+ * ../fold/fold.ts for the full mechanism and profiling evidence): `.stack` is
+ * never read on this path. Cheap for a shallow call stack, but this module's
+ * cross-file recursion (`foldFileMemoized` -> `buildExternals` ->
+ * `tryFoldFileCore` -> `resolveDeclaratorValue`/`resolveLiveValue` ->
+ * `resolveCallExpression`/`resolveImportedExport`, sometimes several files
+ * deep) makes the live stack deep enough, and hot enough for V8 to inline
+ * aggressively across a 98-entry corpus, that eager capture becomes the
+ * dominant cost — confirmed via `sample` during the observed multi-minute
+ * stall. Every throw site in this module that isn't a {@link FoldError}
+ * itself should use this instead of `new Error(...)`.
+ */
+function cheapError(message: string): Error {
+  const prevStackTraceLimit = Error.stackTraceLimit;
+  Error.stackTraceLimit = 0;
+  try {
+    return new Error(message);
+  } finally {
+    Error.stackTraceLimit = prevStackTraceLimit;
+  }
+}
+
+/**
+ * Memoized {@link importModule} — see {@link FoldSession.importCache}'s doc
+ * for why this exists. Keyed by `modulePath` exactly as callers already pass
+ * it (the output of {@link resolveModulePath}, always an absolute path), so
+ * every caller resolving the same module shares the identical in-flight/
+ * settled promise instead of issuing its own `import()`.
+ */
+function importModuleMemoized(
+  modulePath: string,
+  importCache: Map<string, Promise<Record<string, unknown>>>,
+): Promise<Record<string, unknown>> {
+  const cached = importCache.get(modulePath);
+  if (cached) return cached;
+  const promise = importModule(modulePath);
+  importCache.set(modulePath, promise);
+  return promise;
 }
 
 /** True when `node` carries the `export` modifier. */
@@ -432,12 +599,110 @@ function collectImports(sourceFile: ts.SourceFile): CollectedImports {
 }
 
 /**
+ * chant #1020 hang fix — best-effort fast path for resolving a BARE
+ * specifier by walking `node_modules` directly with the same primitives
+ * (`existsSync`/`readFileSync`) the relative-specifier branch below already
+ * uses, reading `package.json`'s "exports"/"main" field by hand instead of
+ * calling `createRequire(fromFile).resolve(specifier)`. Returns `undefined`
+ * — never throws — for anything beyond the simple, single-target shape
+ * (a string `"exports"`, or an object whose `"."` entry is a string or a
+ * flat, string-valued condition map): the caller falls back to the slow,
+ * authoritative `createRequire().resolve()` path whenever this returns
+ * `undefined`, so a genuinely complex `package.json` (a conditions array, a
+ * self-reference, a `"."` entry the fast path doesn't recognize) is still
+ * resolved correctly, just not quickly.
+ *
+ * Why this exists at all: profiling traced the hang to
+ * `createRequire(fromFile).resolve(specifier)` ITSELF taking upwards of a
+ * minute — and, worse, growing (measured 60s, then 69s, then 361s for
+ * successive NEW packages later in the same run) — inside a vitest worker,
+ * specifically for the FIRST resolution of a given bare specifier in the
+ * process (session-level and even process-wide-by-specifier caching, see
+ * {@link bareSpecifierPathCache}, only avoid paying that cost a SECOND
+ * time). The relative-specifier branch just below, using these exact same
+ * `existsSync`/`statSync` primitives, never showed this slowdown anywhere
+ * in the same profiling — the cost is specific to Node's own
+ * `Module._resolveFilename` machinery, not to file-system access in
+ * general, so replacing just that one call with plain `existsSync`/
+ * `readFileSync` sidesteps it entirely for the common case every
+ * `@intentius/chant*` package (and most well-formed npm packages) ships.
+ */
+function fastResolveBareSpecifier(specifier: string, fromFile: string): string | undefined {
+  let dir = dirname(fromFile);
+  for (;;) {
+    const packageDir = join(dir, "node_modules", specifier);
+    if (existsSync(packageDir)) {
+      const entry = fastResolvePackageEntry(packageDir);
+      if (entry === undefined) return undefined;
+      const resolved = resolvePath(packageDir, entry);
+      if (!existsSync(resolved) || !statSync(resolved).isFile()) return undefined;
+      try {
+        return realpathSync(resolved);
+      } catch {
+        return undefined;
+      }
+    }
+    const parent = dirname(dir);
+    if (parent === dir) return undefined; // reached the filesystem root, unresolved
+    dir = parent;
+  }
+}
+
+/** Read `<packageDir>/package.json`'s "." export target — see {@link fastResolveBareSpecifier}'s doc for exactly which shapes this recognizes; anything else returns `undefined`. */
+function fastResolvePackageEntry(packageDir: string): string | undefined {
+  const pkgJsonPath = join(packageDir, "package.json");
+  if (!existsSync(pkgJsonPath)) return undefined;
+  let pkg: unknown;
+  try {
+    pkg = JSON.parse(readFileSync(pkgJsonPath, "utf-8"));
+  } catch {
+    return undefined;
+  }
+  if (typeof pkg !== "object" || pkg === null) return undefined;
+  const exportsField = (pkg as Record<string, unknown>).exports;
+
+  if (exportsField !== undefined) {
+    if (typeof exportsField === "string") return exportsField;
+    if (typeof exportsField !== "object" || exportsField === null || Array.isArray(exportsField)) {
+      return undefined;
+    }
+    const exportsObj = exportsField as Record<string, unknown>;
+    // No "." key at all means the WHOLE object IS the "." export's own
+    // condition map (the shorthand form) — only when none of its OWN keys
+    // look like a subpath/condition-name ambiguity risk (a key starting
+    // with "." that isn't literally "." itself signals real subpath
+    // exports present, so bail rather than misparse).
+    const hasSubpathKeys = Object.keys(exportsObj).some((k) => k.startsWith(".") && k !== ".");
+    const target = "." in exportsObj ? exportsObj["."] : hasSubpathKeys ? undefined : exportsObj;
+    if (target === undefined) return undefined;
+    if (typeof target === "string") return target;
+    if (typeof target !== "object" || target === null || Array.isArray(target)) return undefined;
+    const conditions = target as Record<string, unknown>;
+    // Prefer "default" (present on every chant/lexicon package and the
+    // overwhelming majority of well-formed dual-mode npm packages); "node"/
+    // "import" as narrower fallbacks. Every chant package's own "default"
+    // and "development" conditions point at the identical source file, so
+    // which one Node's own algorithm would have picked never matters here.
+    for (const key of ["default", "node", "import"]) {
+      const val = conditions[key];
+      if (typeof val === "string") return val;
+    }
+    return undefined;
+  }
+
+  const main = (pkg as Record<string, unknown>).main;
+  if (main !== undefined) return typeof main === "string" ? main : undefined;
+  return "index.js";
+}
+
+/**
  * Resolve an import specifier to an absolute module path, the way the
  * declaring file's own `import` would — without depending on a TS-aware
  * loader being active. Relative/absolute specifiers are probed against real
- * TS/JS candidate files on disk; bare package specifiers are resolved via
- * Node's own CJS algorithm from the declaring file's location (lexicon
- * packages ship built JS, so this needs no `.ts` awareness).
+ * TS/JS candidate files on disk; bare package specifiers try
+ * {@link fastResolveBareSpecifier} first, falling back to Node's own CJS
+ * algorithm from the declaring file's location (lexicon packages ship built
+ * JS, so this needs no `.ts` awareness) whenever that returns `undefined`.
  */
 function resolveModulePath(specifier: string, fromFile: string): string {
   if (specifier.startsWith(".") || isAbsolute(specifier)) {
@@ -459,6 +724,8 @@ function resolveModulePath(specifier: string, fromFile: string): string {
     return base;
   }
 
+  const fast = fastResolveBareSpecifier(specifier, fromFile);
+  if (fast !== undefined) return fast;
   return createRequire(fromFile).resolve(specifier);
 }
 
@@ -509,6 +776,21 @@ interface ResolveCtx {
    * behavior doesn't depend on it.
    */
   crossFileFailures: Map<string, string>;
+  /**
+   * chant #1020 hang fix — session-wide {@link importModule} memo (see
+   * {@link FoldSession.importCache}'s doc). Every constructor/composite-
+   * factory/intrinsic import in this module goes through
+   * {@link importModuleMemoized} with this map, not a bare `importModule`
+   * call.
+   */
+  importCache: Map<string, Promise<Record<string, unknown>>>;
+  /**
+   * chant #1020 hang fix — session-wide {@link resolveModulePath} memo (see
+   * {@link FoldSession.resolvePathCache}'s doc). Every constructor/composite-
+   * factory/intrinsic/re-export resolution in this module goes through
+   * {@link resolveModulePathMemoized} with this map.
+   */
+  resolvePathCache: Map<string, string>;
 }
 
 /** `{ value }` when `node`'s shape was recognized and resolved (value may itself be `undefined`/`null` — e.g. an optional composite member that wasn't created); `undefined` when the shape isn't one the live resolver understands (a plain literal, etc.) — callers fall back to the original, unchanged handling for that shape. */
@@ -564,7 +846,7 @@ async function resolveLiveValue(node: ts.Expression, ctx: ResolveCtx): Promise<L
     if (resolvedSource === undefined) return undefined;
     if (binding.propKey === undefined) return resolvedSource;
     if (!isIndexableObject(resolvedSource.value)) {
-      throw new Error(`destructured member "${binding.propKey}" is not on a composite value`);
+      throw cheapError(`destructured member "${binding.propKey}" is not on a composite value`);
     }
     return { value: (resolvedSource.value as unknown as Record<string, unknown>)[binding.propKey] };
   }
@@ -578,7 +860,7 @@ async function resolveLiveValue(node: ts.Expression, ctx: ResolveCtx): Promise<L
     if (base === undefined) return undefined;
     const key = node.name.text;
     if (!isIndexableObject(base.value)) {
-      throw new Error(`property access ".${key}" on a non-composite value is not foldable`);
+      throw cheapError(`property access ".${key}" on a non-composite value is not foldable`);
     }
     return { value: (base.value as unknown as Record<string, unknown>)[key] };
   }
@@ -605,19 +887,19 @@ async function resolveLiveValue(node: ts.Expression, ctx: ResolveCtx): Promise<L
  */
 async function resolveCallExpression(node: ts.CallExpression, ctx: ResolveCtx): Promise<unknown> {
   if (!ts.isIdentifier(node.expression)) {
-    throw new Error(`call expression as a value is not foldable: ${node.expression.getText()}(...)`);
+    throw cheapError(`call expression as a value is not foldable: ${node.expression.getText()}(...)`);
   }
   const calleeName = node.expression.text;
   const binding = ctx.imports.get(calleeName);
   if (!binding) {
-    throw new Error(`call expression as a value is not foldable: ${calleeName}(...)`);
+    throw cheapError(`call expression as a value is not foldable: ${calleeName}(...)`);
   }
 
   let modulePath: string;
   try {
-    modulePath = resolveModulePath(binding.specifier, ctx.file);
+    modulePath = resolveModulePathMemoized(binding.specifier, ctx.file, ctx.resolvePathCache);
   } catch (err) {
-    throw new Error(
+    throw cheapError(
       `could not resolve import "${binding.specifier}" for "${calleeName}": ${err instanceof Error ? err.message : String(err)}`,
     );
   }
@@ -637,16 +919,16 @@ async function resolveCallExpression(node: ts.CallExpression, ctx: ResolveCtx): 
   // (`Cannot serialize AttrRef ...: logical name not set`).
   let mod: Record<string, unknown>;
   try {
-    mod = await importModule(modulePath);
+    mod = await importModuleMemoized(modulePath, ctx.importCache);
   } catch (err) {
-    throw new Error(
+    throw cheapError(
       `could not import "${binding.specifier}" to resolve "${calleeName}": ${err instanceof Error ? err.message : String(err)}`,
     );
   }
 
   const Fn = mod[binding.imported];
   if (typeof Fn !== "function") {
-    throw new Error(`"${binding.imported}" from "${binding.specifier}" is not a function`);
+    throw cheapError(`"${binding.imported}" from "${binding.specifier}" is not a function`);
   }
 
   const args: unknown[] = [];
@@ -728,23 +1010,23 @@ function applyResolvedValue(
 async function resolveImportedExport(name: string, ctx: ResolveCtx): Promise<unknown> {
   const binding = ctx.imports.get(name);
   if (!binding) {
-    throw new Error(`"${name}" is not a resolvable import`);
+    throw cheapError(`"${name}" is not a resolvable import`);
   }
 
   let modulePath: string;
   try {
-    modulePath = resolveModulePath(binding.specifier, ctx.file);
+    modulePath = resolveModulePathMemoized(binding.specifier, ctx.file, ctx.resolvePathCache);
   } catch (err) {
-    throw new Error(
+    throw cheapError(
       `could not resolve import "${binding.specifier}" for "${name}": ${err instanceof Error ? err.message : String(err)}`,
     );
   }
 
   let mod: Record<string, unknown>;
   try {
-    mod = await importModule(modulePath);
+    mod = await importModuleMemoized(modulePath, ctx.importCache);
   } catch (err) {
-    throw new Error(
+    throw cheapError(
       `could not import "${binding.specifier}" to resolve "${name}": ${err instanceof Error ? err.message : String(err)}`,
     );
   }
@@ -758,13 +1040,13 @@ const SIMPLE_DOTTED_CHAIN = /^[A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)*$/;
 /** Resolve a folded `SymbolicValue`'s raw source text (e.g. `"AWS.StackName"`) back to the real value it refers to, by resolving its root identifier through this file's own imports and then doing real property access down the rest of the chain — reproducing exactly what evaluating that expression at runtime would have done. */
 async function resolveSymbolicValue(text: string, ctx: ResolveCtx): Promise<unknown> {
   if (!SIMPLE_DOTTED_CHAIN.test(text)) {
-    throw new Error(`symbol "${text}" is not a simple dotted import reference`);
+    throw cheapError(`symbol "${text}" is not a simple dotted import reference`);
   }
   const [root, ...path] = text.split(".");
   let value = await resolveImportedExport(root, ctx);
   for (const key of path) {
     if (value === null || value === undefined) {
-      throw new Error(`symbol "${text}": "${root}" has no "${key}"`);
+      throw cheapError(`symbol "${text}": "${root}" has no "${key}"`);
     }
     value = (value as Record<string, unknown>)[key];
   }
@@ -812,7 +1094,7 @@ async function reviveFoldedValue(value: FoldedValue, ctx: ResolveCtx, insideIntr
     const intrinsic = value as FoldedIntrinsic;
     const Fn = await resolveImportedExport(intrinsic.__intrinsic, ctx);
     if (typeof Fn !== "function") {
-      throw new Error(`intrinsic tag "${intrinsic.__intrinsic}" did not resolve to a function`);
+      throw cheapError(`intrinsic tag "${intrinsic.__intrinsic}" did not resolve to a function`);
     }
     const revivedValues: unknown[] = [];
     for (const v of intrinsic.values) revivedValues.push(await reviveFoldedValue(v, ctx, true));
@@ -821,7 +1103,7 @@ async function reviveFoldedValue(value: FoldedValue, ctx: ResolveCtx, insideIntr
 
   if ("__attrRef" in value) {
     if (insideIntrinsic) {
-      throw new Error(
+      throw cheapError(
         "a same-file resource reference inside a folded intrinsic's interpolation is not foldable yet",
       );
     }
@@ -831,7 +1113,7 @@ async function reviveFoldedValue(value: FoldedValue, ctx: ResolveCtx, insideIntr
   if ("__resource" in value) {
     // fold() itself already rejects a nested `new Type(...)` as a value
     // (see its own comment) — this is defensive, not a reachable path today.
-    throw new Error("nested resource as a value is not foldable");
+    throw cheapError("nested resource as a value is not foldable");
   }
 
   const revived: Record<string, unknown> = {};
@@ -898,7 +1180,7 @@ async function resolveResourceEntity(
 
   let modulePath: string;
   try {
-    modulePath = resolveModulePath(binding.specifier, ctx.file);
+    modulePath = resolveModulePathMemoized(binding.specifier, ctx.file, ctx.resolvePathCache);
   } catch (err) {
     return {
       ok: false,
@@ -909,7 +1191,7 @@ async function resolveResourceEntity(
   // Same import mechanism as `resolveCallExpression` above — see its comment.
   let mod: Record<string, unknown>;
   try {
-    mod = await importModule(modulePath);
+    mod = await importModuleMemoized(modulePath, ctx.importCache);
   } catch (err) {
     return {
       ok: false,
@@ -1060,7 +1342,7 @@ async function buildExternals(
     if (!isProjectFileSpecifier(binding.specifier)) continue;
     let targetPath: string;
     try {
-      targetPath = resolveModulePath(binding.specifier, file);
+      targetPath = resolveModulePathMemoized(binding.specifier, file, session.resolvePathCache);
     } catch {
       continue;
     }
@@ -1083,7 +1365,7 @@ async function buildExternals(
     if (!isProjectFileSpecifier(binding.specifier)) continue;
     let targetPath: string;
     try {
-      targetPath = resolveModulePath(binding.specifier, file);
+      targetPath = resolveModulePathMemoized(binding.specifier, file, session.resolvePathCache);
     } catch {
       continue;
     }
@@ -1154,6 +1436,8 @@ async function tryFoldFileCore(file: string, session: FoldSession): Promise<Fold
       intrinsics: session.intrinsics,
       externals,
       crossFileFailures: failures,
+      importCache: session.importCache,
+      resolvePathCache: session.resolvePathCache,
     };
 
     const entities: FoldedEntity[] = [];
@@ -1223,7 +1507,7 @@ async function tryFoldFileCore(file: string, session: FoldSession): Promise<Fold
       // edge in the same module graph.
       let targetPath: string;
       try {
-        targetPath = resolveModulePath(decl.specifier, file);
+        targetPath = resolveModulePathMemoized(decl.specifier, file, session.resolvePathCache);
       } catch (err) {
         return {
           ok: false,

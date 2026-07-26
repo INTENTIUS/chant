@@ -155,6 +155,30 @@ export type FoldModuleEntry =
  * environment/value-dependent, see {@link "./subset"}'s module doc) still
  * defaults to "EVL001" since that's the closest umbrella rule, even though
  * EVL can't actually detect it ahead of a real fold.
+ *
+ * chant #1020 hang fix — every `FoldError` is thrown for a routine, EXPECTED
+ * outcome (this node's shape isn't in the fold subset) and is ALWAYS caught
+ * a few frames up (`tryFoldFileCore`'s own top-level catch, ultimately),
+ * reduced to `.message`; `.stack` is never read anywhere on this path. V8
+ * still eagerly walks live JS frames to populate the (lazy) `.stack` getter's
+ * backing data at CONSTRUCTION time regardless of whether it's ever read —
+ * cheap for a shallow call stack, but expensive once the surrounding
+ * functions are hot enough for V8 to aggressively inline them (every corpus
+ * entry re-triggers the same call shapes across `foldFileMemoized` ->
+ * `buildExternals` -> `tryFoldFileCore` -> `resolveDeclaratorValue` ->
+ * `resolveLiveValue` -> `resolveCallExpression`/`fold`, chant #1020's
+ * cross-file resolution making that chain several layers deeper than the
+ * pre-#1020 single-file fold ever needed): capturing a stack from deep,
+ * optimized/inlined frames requires V8 to reconstruct them from deopt
+ * metadata, confirmed via `sample` to dominate CPU during the observed
+ * multi-minute stall (`Isolate::CaptureAndSetErrorStack` /
+ * `OptimizedJSFrame::Summarize` / `DeoptTranslationIterator`). Most files in
+ * the corpus (77/98 entries have at least one run-fallback file) throw one
+ * of these, so the cost compounds across a build. `Error.stackTraceLimit = 0`
+ * for the duration of `super()` makes V8 capture zero frames — free
+ * regardless of stack depth/optimization state — then the limit is restored
+ * immediately, so it doesn't suppress a real stack trace anywhere else in
+ * the process.
  */
 export class FoldError extends Error {
   readonly line: number;
@@ -162,7 +186,10 @@ export class FoldError extends Error {
   readonly ruleId: SubsetRuleId;
 
   constructor(message: string, line: number, column: number, ruleId: SubsetRuleId = "EVL001") {
+    const prevStackTraceLimit = Error.stackTraceLimit;
+    Error.stackTraceLimit = 0;
     super(`${line}:${column} - ${message}`);
+    Error.stackTraceLimit = prevStackTraceLimit;
     this.name = "FoldError";
     this.line = line;
     this.column = column;
