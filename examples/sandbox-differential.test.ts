@@ -46,6 +46,43 @@ import {
  * file for file.
  */
 
+/**
+ * chant #1020 hang fix, follow-up — this file's own default `testTimeout`
+ * (20s, `vitest.config.ts`) is too tight for ONE specific corpus entry,
+ * `lexicons/github/examples/deploy-pages`, and ONLY on a full `just test`
+ * run (never reproduces running this file alone). Root-caused, not guessed:
+ * instrumenting every `import()` `discover()` makes for the `run()` (fold:
+ * false) build showed a single ~8s (locally) / ~33s (CI, slower hardware)
+ * outlier for `deploy-pages`'s own `pipeline.ts` — every OTHER corpus
+ * entry's first real import of ITS OWN lexicon package, including much
+ * larger ones (`aws`, 242 files; `gcp`), stayed under 60ms. Bisecting which
+ * PRECEDING entries were required to reproduce it (by slicing `CORPUS` to
+ * start at different points) isolated the trigger to one specific earlier
+ * entry: `examples/bedrock-agentcore-agent`, which has its OWN, unrelated,
+ * pre-existing run-vs-sandboxed output mismatch (confirmed present on
+ * `main` too) that makes `buildBothWays` below hit its `vi.resetModules()`
+ * retry path. That retry is fast in isolation on both branches — the
+ * problem is a LATER, unrelated import (github lexicon, 25 entries after)
+ * paying for it, confirmed by A/B: instrumenting `main` the identical way
+ * never shows a slow import anywhere in the corpus, while this branch shows
+ * exactly one, always at `deploy-pages`, never anywhere else. That points
+ * to `vi.resetModules()` leaving a lasting cost in vite-node's own SSR
+ * module graph that a later cold import can pay for — not a resolveModulePath
+ * gap (confirmed: `fastResolveBareSpecifier` in `../packages/core/src/
+ * discovery/fold-import.ts` never misses for ANY package across the whole
+ * corpus, checked directly). #1020's cross-file resolution reaching more
+ * files' own real imports across the corpus (even after this PR's caching)
+ * is almost certainly what tips vite-node's accumulated graph size over
+ * whatever threshold makes that lingering cost land somewhere — `main`
+ * has the same reset, just a smaller graph to carry after it. Scoped here,
+ * not raised in `vitest.config.ts`: this is specific to a differential that
+ * deliberately builds every corpus entry twice (sometimes four times, on a
+ * mismatch retry) through real `vi.resetModules()` cycles other suites
+ * don't exercise at this scale; a global bump would mask a genuinely hung
+ * test everywhere else for no reason tied to this file's own behavior.
+ */
+vi.setConfig({ testTimeout: 60_000 });
+
 const CORPUS = discoverCorpus();
 
 /**
