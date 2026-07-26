@@ -5,8 +5,18 @@ import { dirname, join, isAbsolute, resolve as resolvePath } from "node:path";
 import { createRequire } from "node:module";
 import { isDeclarable, type Declarable } from "../declarable";
 import { isCompositeInstance, type CompositeInstance } from "../composite";
-import { collectConsts, foldResource, fold, FoldError, type FoldedResource } from "../fold/fold";
+import {
+  collectConsts,
+  foldResource,
+  fold,
+  FoldError,
+  type FoldedResource,
+  type FoldedValue,
+  type FoldedIntrinsic,
+  type SymbolicValue,
+} from "../fold/fold";
 import { importModule } from "./import";
+import type { IntrinsicDef } from "../lexicon";
 
 /**
  * Bridges the static folder ({@link ../fold/fold}, #1026) into discovery
@@ -335,6 +345,11 @@ interface ResolveCtx {
   imports: Map<string, ImportBinding>;
   /** Memoizes by initializer node so a composite call referenced by several member accesses / destructured names is invoked exactly once — matching what actually running the file would do. */
   memo: Map<ts.Expression, Promise<LiveResolution>>;
+  /** Lexicon-registered intrinsic tags (chant #1039) — passed through to
+   * {@link fold}/{@link foldResource} so a registered tagged template
+   * (e.g. AWS `Sub`\`...\`) folds instead of throwing "unregistered tagged
+   * template intrinsic". Empty when the caller (`discover()`) wasn't given any. */
+  intrinsics: readonly IntrinsicDef[];
 }
 
 /** `{ value }` when `node`'s shape was recognized and resolved (value may itself be `undefined`/`null` — e.g. an optional composite member that wasn't created); `undefined` when the shape isn't one the live resolver understands (a plain literal, etc.) — callers fall back to the original, unchanged handling for that shape. */
@@ -468,7 +483,11 @@ async function resolveCallExpression(node: ts.CallExpression, ctx: ResolveCtx): 
   const args: unknown[] = [];
   for (const argNode of node.arguments) {
     const live = await resolveLiveValue(argNode, ctx);
-    args.push(live !== undefined ? live.value : fold(argNode, ctx.consts, []));
+    // chant #1039 — a folded (non-live) argument may itself contain a
+    // registered intrinsic tagged template; revive it into the real value
+    // before the composite factory actually runs on it (see the "Intrinsic
+    // revival" section below `resolveResourceEntity` uses the same way).
+    args.push(live !== undefined ? live.value : await reviveFoldedValue(fold(argNode, ctx.consts, ctx.intrinsics), ctx, false));
   }
 
   return (Fn as (...fnArgs: unknown[]) => unknown)(...args);
@@ -495,6 +514,152 @@ function applyResolvedValue(
 }
 
 // ─────────────────────────────────────────────────────────────────────────
+// Intrinsic revival (chant #1039).
+//
+// `fold()`/`foldResource()` reduce a registered intrinsic tagged template
+// (e.g. AWS `Sub`\`...\`) to a symbolic `FoldedIntrinsic` node —
+// `{ __intrinsic, strings, values }` — and an unresolved external symbol
+// chain inside it (e.g. `AWS.StackName`) to a `SymbolicValue` —
+// `{ __symbol }` (../fold/fold.ts's own doc: "mirrors the runtime call shape
+// `Tag(strings, ...values)` so a later build path can replay it into the
+// real intrinsic object"). This IS that later build path: without it, the
+// symbolic envelope would be passed straight into the constructed entity's
+// props as an inert plain object — the entity would be built (no crash), but
+// its serialized output would silently diverge from the run path's real
+// `Sub`/`PseudoParameter` instances (caught by the #1025 differential the
+// moment intrinsics started actually folding). `reviveFoldedProps` walks the
+// folded props/attributes tree and, for each `{__intrinsic}`/`{__symbol}`
+// node, resolves the real tag function / pseudo-parameter through this
+// file's own imports (same mechanism `resolveResourceEntity` already uses
+// for the resource constructor itself) and invokes/accesses it for real —
+// exactly what running the original tagged template would have done.
+//
+// `{__attrRef}` (a same-file sibling-resource reference, ../fold/fold.ts's
+// `AttrRefValue`) is left untouched when it is NOT nested inside a revived
+// intrinsic: the serializer's generic walker already recognizes that plain
+// envelope structurally (see ../serializer-walker.ts) with no revival
+// needed. But an intrinsic's OWN implementation (e.g. `SubIntrinsic`) needs
+// a genuine `AttrRef` instance internally (`instanceof` checks), which would
+// require wiring a live `WeakRef` to the sibling entity — out of scope here,
+// same call as the existing "nested `new Type(...)` as a value" rejection
+// a few lines up: reject (fall back to run) rather than risk silently wrong
+// output.
+// ─────────────────────────────────────────────────────────────────────────
+
+/** Resolve a bare name bound by this file's own `import` to its real, live export — the same two-step (resolve module path, then `importModule`) `resolveResourceEntity`/`resolveCallExpression` already use for constructors and composite factories. */
+async function resolveImportedExport(name: string, ctx: ResolveCtx): Promise<unknown> {
+  const binding = ctx.imports.get(name);
+  if (!binding) {
+    throw new Error(`"${name}" is not a resolvable import`);
+  }
+
+  let modulePath: string;
+  try {
+    modulePath = resolveModulePath(binding.specifier, ctx.file);
+  } catch (err) {
+    throw new Error(
+      `could not resolve import "${binding.specifier}" for "${name}": ${err instanceof Error ? err.message : String(err)}`,
+    );
+  }
+
+  let mod: Record<string, unknown>;
+  try {
+    mod = await importModule(modulePath);
+  } catch (err) {
+    throw new Error(
+      `could not import "${binding.specifier}" to resolve "${name}": ${err instanceof Error ? err.message : String(err)}`,
+    );
+  }
+
+  return mod[binding.imported];
+}
+
+/** A bare identifier, or simple dotted access chain rooted at one (`AWS.StackName`, `Azure.ResourceGroupName`) — the only shape {@link fold.ts}'s `isUnresolvedSymbolChain` actually produces `SymbolicValue` text for in practice (element access/non-null on a pseudo-parameter-style namespace isn't a real authoring pattern anywhere in a lexicon today). Anything else is rejected rather than guessed at. */
+const SIMPLE_DOTTED_CHAIN = /^[A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)*$/;
+
+/** Resolve a folded `SymbolicValue`'s raw source text (e.g. `"AWS.StackName"`) back to the real value it refers to, by resolving its root identifier through this file's own imports and then doing real property access down the rest of the chain — reproducing exactly what evaluating that expression at runtime would have done. */
+async function resolveSymbolicValue(text: string, ctx: ResolveCtx): Promise<unknown> {
+  if (!SIMPLE_DOTTED_CHAIN.test(text)) {
+    throw new Error(`symbol "${text}" is not a simple dotted import reference`);
+  }
+  const [root, ...path] = text.split(".");
+  let value = await resolveImportedExport(root, ctx);
+  for (const key of path) {
+    if (value === null || value === undefined) {
+      throw new Error(`symbol "${text}": "${root}" has no "${key}"`);
+    }
+    value = (value as Record<string, unknown>)[key];
+  }
+  return value;
+}
+
+/**
+ * Revive a folded value tree: replace any `{__intrinsic}`/`{__symbol}`
+ * envelope with the real value it represents. `insideIntrinsic` tracks
+ * whether the CURRENT node is (transitively) one of a `{__intrinsic}`'s own
+ * `values` — see the module-doc note above on why `{__attrRef}` is only
+ * rejected there, not everywhere.
+ */
+async function reviveFoldedValue(value: FoldedValue, ctx: ResolveCtx, insideIntrinsic: boolean): Promise<unknown> {
+  if (value === null || typeof value !== "object") return value;
+
+  if (Array.isArray(value)) {
+    const revived: unknown[] = [];
+    for (const el of value) revived.push(await reviveFoldedValue(el, ctx, insideIntrinsic));
+    return revived;
+  }
+
+  if ("__symbol" in value) {
+    const symbolic = value as SymbolicValue;
+    return resolveSymbolicValue(symbolic.__symbol, ctx);
+  }
+
+  if ("__intrinsic" in value) {
+    const intrinsic = value as FoldedIntrinsic;
+    const Fn = await resolveImportedExport(intrinsic.__intrinsic, ctx);
+    if (typeof Fn !== "function") {
+      throw new Error(`intrinsic tag "${intrinsic.__intrinsic}" did not resolve to a function`);
+    }
+    const revivedValues: unknown[] = [];
+    for (const v of intrinsic.values) revivedValues.push(await reviveFoldedValue(v, ctx, true));
+    return (Fn as (...fnArgs: unknown[]) => unknown)(intrinsic.strings, ...revivedValues);
+  }
+
+  if ("__attrRef" in value) {
+    if (insideIntrinsic) {
+      throw new Error(
+        "a same-file resource reference inside a folded intrinsic's interpolation is not foldable yet",
+      );
+    }
+    return value;
+  }
+
+  if ("__resource" in value) {
+    // fold() itself already rejects a nested `new Type(...)` as a value
+    // (see its own comment) — this is defensive, not a reachable path today.
+    throw new Error("nested resource as a value is not foldable");
+  }
+
+  const revived: Record<string, unknown> = {};
+  for (const [key, v] of Object.entries(value)) {
+    revived[key] = await reviveFoldedValue(v as FoldedValue, ctx, insideIntrinsic);
+  }
+  return revived;
+}
+
+/** Revive every value in a folded props/attributes object (see {@link reviveFoldedValue}). */
+async function reviveFoldedProps(
+  props: { [key: string]: FoldedValue },
+  ctx: ResolveCtx,
+): Promise<Record<string, unknown>> {
+  const revived: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(props)) {
+    revived[key] = await reviveFoldedValue(value, ctx, false);
+  }
+  return revived;
+}
+
+// ─────────────────────────────────────────────────────────────────────────
 // Resource construction — unchanged from #1022 (folds the ctor call's props
 // via `fold()`, resolves the constructor through this file's imports,
 // constructs the real Declarable).
@@ -507,12 +672,28 @@ async function resolveResourceEntity(
 ): Promise<{ ok: true; entity: Declarable } | { ok: false; reason: string }> {
   let spec: FoldedResource;
   try {
-    spec = foldResource(node, ctx.consts, []);
+    spec = foldResource(node, ctx.consts, ctx.intrinsics);
   } catch (err) {
     if (err instanceof FoldError) {
       return { ok: false, reason: `"${name}" is not foldable: ${err.message}` };
     }
     throw err;
+  }
+
+  // chant #1039 — replay any folded intrinsic/symbol envelopes into their
+  // real runtime values before constructing the entity. A no-op walk when
+  // this file used no registered intrinsics (the overwhelming majority of
+  // cases today).
+  let props: Record<string, unknown>;
+  let attributes: Record<string, unknown> | undefined;
+  try {
+    props = await reviveFoldedProps(spec.props, ctx);
+    attributes = spec.attributes ? await reviveFoldedProps(spec.attributes, ctx) : undefined;
+  } catch (err) {
+    return {
+      ok: false,
+      reason: `"${name}" is not foldable: ${err instanceof Error ? err.message : String(err)}`,
+    };
   }
 
   const typeName = spec.__resource;
@@ -557,10 +738,7 @@ async function resolveResourceEntity(
     props: Record<string, unknown>,
     attributes?: Record<string, unknown>,
   ) => Declarable;
-  const entity = new ResourceCtor(
-    spec.props as Record<string, unknown>,
-    spec.attributes as Record<string, unknown> | undefined,
-  );
+  const entity = new ResourceCtor(props, attributes);
   return { ok: true, entity };
 }
 
@@ -573,8 +751,18 @@ async function resolveResourceEntity(
  * code. Returns the folded, instantiated entities on success, or a reason
  * to fall back to the run path (`importModule`) on the first construct
  * outside the fold subset.
+ *
+ * @param intrinsics - Lexicon-registered intrinsic tags (chant #1039), e.g.
+ *   AWS's `Sub`. Threaded down to {@link fold}/{@link foldResource} so a
+ *   registered tagged template folds instead of unconditionally throwing
+ *   "unregistered tagged template intrinsic". Defaults to none — the caller
+ *   (`discover()`, ultimately `chant build --fold`) is expected to pass the
+ *   target lexicons' combined `intrinsics()`.
  */
-export async function tryFoldFile(file: string): Promise<FoldFileResult> {
+export async function tryFoldFile(
+  file: string,
+  intrinsics: readonly IntrinsicDef[] = [],
+): Promise<FoldFileResult> {
   try {
     const source = await readFile(file, "utf-8");
     const sourceFile = ts.createSourceFile(file, source, ts.ScriptTarget.Latest, /* setParentNodes */ true);
@@ -589,6 +777,7 @@ export async function tryFoldFile(file: string): Promise<FoldFileResult> {
       locals: collectLocalBindings(sourceFile),
       imports: collectImports(sourceFile),
       memo: new Map(),
+      intrinsics,
     };
 
     const entities: FoldedEntity[] = [];

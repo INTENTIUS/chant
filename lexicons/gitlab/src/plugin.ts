@@ -51,9 +51,15 @@ export const gitlabPlugin: LexiconPlugin = {
     return [
       {
         name: "reference",
+        // Authored as a plain call — `reference("job", "script")` — not a JS
+        // tagged template, so `isTag` (chant #1039: "authored as a tagged
+        // template", consumed by the static folder to recognize `Tag`...``)
+        // must be false. The `!reference` YAML tag it produces is rendered
+        // via `ReferenceIntrinsic.toYAML()` (see ../serializer.ts's generic
+        // `toYAML` duck-typing) — independent of this flag.
         description: "!reference tag — reference another job's properties",
         outputKey: "!reference",
-        isTag: true,
+        isTag: false,
       },
     ];
   },

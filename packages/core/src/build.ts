@@ -2,6 +2,7 @@ import type { Declarable } from "./declarable";
 import type { Serializer, SerializerResult } from "./serializer";
 import type { OwnershipMarker } from "./ownership";
 import type { DiscoveryError, BuildError } from "./errors";
+import type { IntrinsicDef } from "./lexicon";
 import { BuildError as BuildErrorClass } from "./errors";
 import { LexiconOutput, isLexiconOutput } from "./lexicon-output";
 import { AttrRef } from "./attrref";
@@ -157,6 +158,14 @@ export interface BuildOptions {
    * behavior). See {@link DiscoveryOptions.fold} in `./discovery/index`.
    */
   fold?: boolean;
+
+  /**
+   * chant #1039 — lexicon-registered intrinsic tags (e.g. AWS's `Sub`) to
+   * recognize while folding. Passed straight through to
+   * {@link DiscoveryOptions.intrinsics}; ignored unless {@link fold} is set.
+   * The CLI populates this from `options.plugins.flatMap(p => p.intrinsics?.() ?? [])`.
+   */
+  intrinsics?: IntrinsicDef[];
 }
 
 export interface BuildResult {
@@ -469,7 +478,7 @@ export async function build(
   const errors: Array<DiscoveryError | BuildError> = [];
 
   // Step 1: Discover entities and dependencies
-  const discoveryResult = await discover(path, { fold: options?.fold });
+  const discoveryResult = await discover(path, { fold: options?.fold, intrinsics: options?.intrinsics });
 
   // Collect discovery errors
   errors.push(...discoveryResult.errors);

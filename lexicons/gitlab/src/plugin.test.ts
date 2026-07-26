@@ -26,7 +26,11 @@ describe("gitlabPlugin", () => {
     expect(intrinsics).toHaveLength(1);
     expect(intrinsics[0].name).toBe("reference");
     expect(intrinsics[0].outputKey).toBe("!reference");
-    expect(intrinsics[0].isTag).toBe(true);
+    // #1039: `reference(...)` is authored as a plain call, not a JS tagged
+    // template — `isTag` must be false so the static folder doesn't mistake
+    // `reference`...`` for a registered tag. The `!reference` YAML tag still
+    // renders fine (via `ReferenceIntrinsic.toYAML()`, unrelated to `isTag`).
+    expect(intrinsics[0].isTag).toBe(false);
   });
 
   // -----------------------------------------------------------------------

@@ -123,11 +123,19 @@ export async function buildCommand(options: BuildOptions): Promise<BuildResult> 
   // module.
   const fold = resolveFoldEnabled(config, options.fold);
 
+  // #1039 — thread each loaded plugin's registered intrinsics (e.g. AWS's
+  // `Sub`) through to the fold path, so a file using a registered intrinsic
+  // tagged template folds instead of unconditionally falling back to run.
+  // `intrinsics` is an optional plugin extension (not every lexicon defines
+  // any), hence the guard.
+  const intrinsics = options.plugins?.flatMap((plugin) => plugin.intrinsics?.() ?? []) ?? [];
+
   // Run the build
   const result = await build(infraPath, options.serializers, undefined, {
     ownership,
     config: config as unknown as Record<string, unknown>,
     fold,
+    intrinsics,
   });
 
   // #1022 — report per-file fold vs run so it's visible what still runs.

@@ -54,7 +54,7 @@ export const awsPlugin: LexiconPlugin = {
 
   intrinsics(): IntrinsicDef[] {
     return [
-      { name: "Sub", description: "Fn::Sub template string interpolation" },
+      { name: "Sub", description: "Fn::Sub template string interpolation", isTag: true },
       { name: "Ref", description: "Reference a parameter or resource" },
       { name: "GetAtt", description: "Fn::GetAtt — get resource attribute" },
       { name: "If", description: "Fn::If — conditional value" },
