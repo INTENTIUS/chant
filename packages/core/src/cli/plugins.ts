@@ -1,5 +1,5 @@
 import { isLexiconPlugin, type LexiconPlugin } from "../lexicon";
-import { loadChantConfig } from "../config";
+import { loadChantConfigUpward } from "../config";
 import { findInfraFiles, detectLexicons } from "../index";
 import { checkConflicts } from "./conflict-check";
 
@@ -96,9 +96,17 @@ export async function loadPlugins(lexiconNames: string[]): Promise<LexiconPlugin
  * that never needed live module exports to begin with. This is strictly
  * better than routing the detection through the sandbox: it removes the
  * execution entirely rather than containing it, at no bundling/spawn cost.
+ *
+ * chant #1117 — walks up from `projectPath` to the project root
+ * (`loadChantConfigUpward`) rather than reading `projectPath` alone: `chant
+ * build src/<stack>` calls this with the stack's own subdirectory, and a
+ * project that declares `lexicons` only in its root `chant.config.ts` (never
+ * detectable by `detectLexicons()`'s import scan alone, e.g. a lexicon that's
+ * loaded but never imported by name in that particular stack's files) would
+ * otherwise silently miss it.
  */
 export async function resolveProjectLexicons(projectPath: string): Promise<string[]> {
-  const { config } = await loadChantConfig(projectPath);
+  const { config } = await loadChantConfigUpward(projectPath);
 
   if (config.lexicons && config.lexicons.length > 0) {
     return config.lexicons;
