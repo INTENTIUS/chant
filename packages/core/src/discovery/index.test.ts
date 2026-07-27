@@ -277,6 +277,8 @@ describe("discover — fold mode (#1022, epic #1019)", () => {
   const thisDir = dirname(fileURLToPath(import.meta.url));
   const runtimePath = resolve(thisDir, "../runtime");
   const compositePath = resolve(thisDir, "../composite");
+  const lexiconOutputPath = resolve(thisDir, "../lexicon-output");
+  const stackOutputPath = resolve(thisDir, "../stack-output");
 
   beforeEach(async () => {
     testDir = join(tmpdir(), `chant-discover-fold-test-${Date.now()}-${Math.random()}`);
@@ -383,6 +385,135 @@ describe("discover — fold mode (#1022, epic #1019)", () => {
     const stackDecision = withFold.foldDecisions.find((d) => d.file.endsWith("stack.ts"));
     expect(stackDecision?.mode).toBe("fold");
     expect(stackDecision?.resourceCount).toBe(1);
+  });
+
+  // chant #1112 — a folded file's `output(...)` used to be resolved and then
+  // thrown away: the fold path handed discovery only the Declarable/
+  // CompositeInstance exports it had picked out itself, and a `LexiconOutput`
+  // is neither. `build()` never saw it, and the template lost its whole
+  // Outputs section with no warning and exit 0. Discovery now hands
+  // `collectEntities` the file's WHOLE folded export namespace, so both paths
+  // filter exports through the same code.
+  test("a folded file's output(...) export reaches the entities map, exactly as running it does", async () => {
+    await writeFile(
+      join(testDir, "resources.ts"),
+      `
+        import { createResource } from ${JSON.stringify(runtimePath)};
+        export const Bucket = createResource("Test::Bucket", "aws", { arn: "Arn" });
+      `,
+    );
+    await writeFile(
+      join(testDir, "main.ts"),
+      `
+        import { Bucket } from "./resources";
+        export const bucket = new Bucket({ name: "my-bucket" });
+      `,
+    );
+    // Cross-file, which is what real projects do (a dedicated outputs.ts) and
+    // what makes the ref resolve to a genuine live AttrRef, so the file folds.
+    await writeFile(
+      join(testDir, "outputs.ts"),
+      `
+        import { output } from ${JSON.stringify(lexiconOutputPath)};
+        import { bucket } from "./main";
+        export const bucketArn = output(bucket.arn, "BucketArn");
+      `,
+    );
+
+    const withoutFold = await discover(testDir);
+    const withFold = await discover(testDir, { fold: true });
+
+    expect(withFold.errors).toEqual([]);
+    expect(withFold.foldDecisions.every((d) => d.mode === "fold")).toBe(true);
+    expect([...withFold.entities.keys()].sort()).toEqual([...withoutFold.entities.keys()].sort());
+    expect(withFold.entities.has("bucketArn")).toBe(true);
+
+    const folded = withFold.entities.get("bucketArn")! as unknown as { outputName: string };
+    const run = withoutFold.entities.get("bucketArn")! as unknown as { outputName: string };
+    expect(folded.outputName).toBe("BucketArn");
+    expect(folded.outputName).toBe(run.outputName);
+
+    // An output is not a resource — the fold decision line still counts only
+    // what this file contributed to Resources.
+    const outputsDecision = withFold.foldDecisions.find((d) => d.file.endsWith("outputs.ts"));
+    expect(outputsDecision?.resourceCount).toBe(0);
+  });
+
+  // The sibling primitive, checked in the same shape so a future change can't
+  // fix one and regress the other. `stackOutput()` returns a real Declarable,
+  // so it was never dropped — this pins that.
+  test("a folded file's stackOutput(...) export reaches the entities map too", async () => {
+    await writeFile(
+      join(testDir, "resources.ts"),
+      `
+        import { createResource } from ${JSON.stringify(runtimePath)};
+        export const Bucket = createResource("Test::Bucket", "aws", { arn: "Arn" });
+      `,
+    );
+    await writeFile(
+      join(testDir, "main.ts"),
+      `
+        import { Bucket } from "./resources";
+        export const bucket = new Bucket({ name: "my-bucket" });
+      `,
+    );
+    await writeFile(
+      join(testDir, "outputs.ts"),
+      `
+        import { stackOutput } from ${JSON.stringify(stackOutputPath)};
+        import { bucket } from "./main";
+        export const bucketArn = stackOutput(bucket.arn);
+      `,
+    );
+
+    const withoutFold = await discover(testDir);
+    const withFold = await discover(testDir, { fold: true });
+
+    expect(withFold.errors).toEqual([]);
+    expect(withFold.foldDecisions.every((d) => d.mode === "fold")).toBe(true);
+    expect([...withFold.entities.keys()].sort()).toEqual([...withoutFold.entities.keys()].sort());
+    expect(withFold.entities.has("bucketArn")).toBe(true);
+    expect((withFold.entities.get("bucketArn")! as unknown as { kind: string }).kind).toBe("output");
+  });
+
+  // chant #1112 — the other half. An authoring helper reads THROUGH its ref
+  // (`output()` derefs the WeakRef parent), so handing it fold's symbolic
+  // `{__attrRef}` envelope for a SAME-FILE resource would build a
+  // `LexiconOutput` wrapping an inert object — output that is wrong rather
+  // than absent, which is worse. `reviveHelperCall` already refused this for a
+  // helper nested in a value; a top-level `export const x = output(...)` goes
+  // through the composite-factory spine instead and did not. Both now apply
+  // the same rule, and the file falls back to run.
+  test("a same-file resource reference passed to output(...) falls back to run rather than folding a wrong output", async () => {
+    await writeFile(
+      join(testDir, "resources.ts"),
+      `
+        import { createResource } from ${JSON.stringify(runtimePath)};
+        export const Bucket = createResource("Test::Bucket", "aws", { arn: "Arn" });
+      `,
+    );
+    await writeFile(
+      join(testDir, "stack.ts"),
+      `
+        import { Bucket } from "./resources";
+        import { output } from ${JSON.stringify(lexiconOutputPath)};
+        export const bucket = new Bucket({ name: "my-bucket" });
+        export const bucketArn = output(bucket.arn, "BucketArn");
+      `,
+    );
+
+    const withoutFold = await discover(testDir);
+    const withFold = await discover(testDir, { fold: true });
+
+    const decision = withFold.foldDecisions.find((d) => d.file.endsWith("stack.ts"));
+    expect(decision?.mode).toBe("run");
+    expect(decision?.reason).toContain("same-file resource reference");
+
+    // Falling back is not a loss of output — the run path produces exactly
+    // what it always did.
+    expect(withFold.errors).toEqual([]);
+    expect([...withFold.entities.keys()].sort()).toEqual([...withoutFold.entities.keys()].sort());
+    expect(withFold.entities.has("bucketArn")).toBe(true);
   });
 
   test("a composite factory defined locally (not resolvable via import) still falls back to run; output is unchanged", async () => {

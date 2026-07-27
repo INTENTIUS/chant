@@ -117,6 +117,19 @@ describeAllExamples(config, {
       resourceCount: 17,
     }),
   },
+  // chant #1112 — all three output shapes, declared in a file separate from
+  // the resources they reference. `--fold` used to drop the two `output(...)`
+  // ones (a `LexiconOutput` is not a `Declarable`, and the fold path filtered
+  // exports on its own instead of letting `collectEntities` do it), which is
+  // what this entry — and its counterpart in the fold differential — exist to
+  // keep from coming back.
+  "stack-outputs": {
+    checks: cfnChecks({
+      resources: ["networkVpc", "networkPublicSubnet1"],
+      resourceCount: 17,
+      outputs: ["VpcId", "VpcArn", "PublicSubnetId"],
+    }),
+  },
   "fargate-alb": {
     checks: cfnChecks({
       resources: ["networkVpc", "networkIgw", "webCluster", "webAlb", "webService"],

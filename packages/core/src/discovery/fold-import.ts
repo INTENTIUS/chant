@@ -20,7 +20,7 @@ import {
   type FoldedHelperCall,
   type SymbolicValue,
 } from "../fold/fold";
-import { isChantOwnedSpecifier } from "../fold/foldable-helpers";
+import { isChantOwnedSpecifier, isFoldableHelperName } from "../fold/foldable-helpers";
 import { briefNodeText, callExpressionMessage } from "../fold/subset";
 import { importModule } from "./import";
 import type { IntrinsicDef } from "../lexicon";
@@ -74,16 +74,29 @@ export type FoldedEntity = [name: string, entity: Declarable | CompositeInstance
 export type FoldFileResult =
   | {
       ok: true;
+      /**
+       * The `Declarable`/`CompositeInstance` subset of {@link
+       * FoldFileResult.exportedValues} — how many resources this file
+       * contributed, for the `[fold:fold] x.ts — N resource(s)` decision
+       * line. chant #1112: NOT what discovery collects from. Collection
+       * reads `exportedValues`, so that `./collect.ts` stays the single
+       * owner of which exports become entities — see {@link
+       * applyResolvedValue}.
+       */
       entities: FoldedEntity[];
       /**
        * chant #1020 — EVERY exported name's fully-resolved value, not just
-       * the `Declarable`/`CompositeInstance` ones already in `entities`: a
-       * plain value folds too (a string, a number, a plain object), it just
-       * contributes nothing to `entities` (see {@link applyResolvedValue}).
-       * This is the table another file's cross-file reference resolves
-       * against — see `buildExternals` below and the module doc on
-       * `planFoldTaint` for why a resource/composite value here MUST be the
-       * exact same object every referencing file sees.
+       * the `Declarable`/`CompositeInstance` ones also listed in `entities`:
+       * a plain value folds too (a string, a number, a plain object). A
+       * successful fold means `scanExports` recognized every export the file
+       * has (anything else disqualifies the whole file), so this IS the
+       * file's complete export namespace — the same table the run path gets
+       * from actually importing it. Two consumers: `discover()` passes it
+       * straight to `collectEntities` (chant #1112), and another file's
+       * cross-file reference resolves against it — see `buildExternals`
+       * below and the module doc on `planFoldTaint` for why a
+       * resource/composite value here MUST be the exact same object every
+       * referencing file sees.
        */
       exportedValues: Map<string, unknown>;
       /**
@@ -1189,6 +1202,22 @@ async function resolveCallExpression(node: ts.CallExpression, ctx: ResolveCtx): 
     throw cheapError(`"${binding.imported}" from "${binding.specifier}" is not a function`);
   }
 
+  // chant #1112 — ONE rule for a registered authoring helper's arguments,
+  // applied at BOTH sites that can invoke one. `reviveHelperCall` (the
+  // nested-value site, #1082) already revives a helper's arguments with
+  // `requireLiveRefs`, because a helper reads THROUGH its ref (`output()`
+  // derefs the `WeakRef` parent) and a look-alike `{__attrRef}` envelope
+  // makes it produce a wrong result rather than none. This site — a
+  // top-level `export const oArn = output(bucket.Arn, "oArn")` — took the
+  // composite-factory rule (`false`) instead, which is right for a factory
+  // (its props keep the envelope, and the serializer's own walker resolves
+  // it) and wrong for a helper. It went unnoticed while the resulting
+  // `LexiconOutput` was being discarded anyway; with the export namespace
+  // now collected in full, a same-file `output(...)` would reach the
+  // serializer holding an inert envelope where the run path has a real
+  // reference. Rejected here instead, which falls the file back to run —
+  // absent output, never a wrong one.
+  const helperArgs = isFoldableHelperName(calleeName);
   const args: unknown[] = [];
   for (const argNode of node.arguments) {
     const live = await resolveLiveValue(argNode, ctx);
@@ -1199,7 +1228,7 @@ async function resolveCallExpression(node: ts.CallExpression, ctx: ResolveCtx): 
     args.push(
       live !== undefined
         ? live.value
-        : await reviveFoldedValue(fold(argNode, ctx.consts, ctx.intrinsics, ctx.externals), ctx, false),
+        : await reviveFoldedValue(fold(argNode, ctx.consts, ctx.intrinsics, ctx.externals), ctx, helperArgs),
     );
   }
 
@@ -1207,17 +1236,23 @@ async function resolveCallExpression(node: ts.CallExpression, ctx: ResolveCtx): 
 }
 
 /**
- * Record one exported name's fully-resolved value: into `entities` when
- * it's a real `Declarable`/`CompositeInstance` (`collectEntities`, and
- * therefore serialization, only cares about these), and — chant #1020 —
- * unconditionally into `exportedValues` too, so a plain value (a string, a
- * number, a plain object, `undefined`/`null`) is still available for
- * ANOTHER file's cross-file reference to this export, exactly as it would
- * be if this file were actually imported and its real `exports` object read
- * directly. A plain value contributing nothing to `entities` isn't a
- * failure: the run path's real `exports` object would contain it too, and
- * `collectEntities` already silently ignores a non-Declarable/array/
- * CompositeInstance export the same way (see enumerateEntries, ../collect.ts).
+ * Record one exported name's fully-resolved value: unconditionally into
+ * `exportedValues` (chant #1020) — the file's export namespace, which is
+ * what discovery hands to `collectEntities` and what another file's
+ * cross-file reference resolves against — and, additionally, into `entities`
+ * when the value is a real `Declarable`/`CompositeInstance`.
+ *
+ * chant #1112 — `entities` is a REPORTING subset, not a filter. It used to
+ * be the only thing discovery passed on, which made this function a second
+ * owner of the "which export becomes an entity" decision; it had one fewer
+ * case than the real owner (`enumerateEntries`, ../collect.ts), so a
+ * `LexiconOutput` export folded fine and was then thrown away, and the
+ * template silently lost its `Outputs` section. Discovery now passes
+ * `exportedValues` — the whole namespace, exactly like the run path's real
+ * `exports` object — and `collectEntities` filters it, so nothing here can
+ * fall behind what collection understands. What `entities` still answers is
+ * "how many resources did this file contribute", for the `[fold:fold] x.ts —
+ * N resource(s)` decision line.
  */
 function applyResolvedValue(
   name: string,
